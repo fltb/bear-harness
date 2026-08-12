@@ -1,0 +1,173 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Cyber Bear 普通用户界面设计图</title>
+  <desc id="desc">展示最近的事、熊与对话、正在进行的事，以及项目进展报告结果预览。</desc>
+  <defs>
+    <linearGradient id="appBg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#dce9e3"/><stop offset=".52" stop-color="#eef0e8"/><stop offset="1" stop-color="#e9dfd1"/></linearGradient>
+    <radialGradient id="aurora" cx="50%" cy="10%" r="90%"><stop stop-color="#aee0d0" stop-opacity=".65"/><stop offset=".5" stop-color="#9ac8c0" stop-opacity=".12"/><stop offset="1" stop-color="#173a42" stop-opacity="0"/></radialGradient>
+    <filter id="windowShadow"><feDropShadow dx="0" dy="28" stdDeviation="36" flood-color="#1b3034" flood-opacity=".24"/></filter>
+    <filter id="cardShadow"><feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#203b3e" flood-opacity=".10"/></filter>
+  </defs>
+  <rect width="1600" height="1000" fill="url(#appBg)"/>
+  <circle cx="1450" cy="70" r="280" fill="#8fc8b5" fill-opacity=".18"/>
+  <circle cx="160" cy="930" r="300" fill="#d7b892" fill-opacity=".16"/>
+
+  <g filter="url(#windowShadow)">
+    <rect x="55" y="48" width="1490" height="904" rx="28" fill="#f8f7f2" stroke="#fff" stroke-opacity=".9"/>
+    <rect x="55" y="48" width="1490" height="58" rx="28" fill="#f3f2ed"/>
+    <path d="M55 84v22h1490V84" fill="#f3f2ed"/>
+    <circle cx="84" cy="77" r="7" fill="#d79379"/><circle cx="106" cy="77" r="7" fill="#deb970"/><circle cx="128" cy="77" r="7" fill="#80ad8d"/>
+    <text x="162" y="83" fill="#33504f" font-family="system-ui,sans-serif" font-size="14" font-weight="700">Cyber Bear</text>
+    <text x="1433" y="83" fill="#71827d" font-family="system-ui,sans-serif" font-size="13">2 件事处理中</text>
+  </g>
+
+  <g>
+    <rect x="55" y="106" width="250" height="846" fill="#eef1eb"/>
+    <path d="M305 106v846" stroke="#d9ded6"/>
+    <g transform="translate(80 132)">
+      <circle cx="24" cy="24" r="24" fill="#315e5b"/>
+      <circle cx="14" cy="12" r="8" fill="#f6f2e9"/><circle cx="34" cy="12" r="8" fill="#f6f2e9"/><path d="M7 26c0-14 8-22 17-22s17 8 17 22c0 13-8 20-17 20S7 39 7 26z" fill="#f6f2e9"/><circle cx="18" cy="24" r="2.5" fill="#294847"/><circle cx="30" cy="24" r="2.5" fill="#294847"/><path d="M21 30c2-2 5-2 7 0 0 4-7 4-7 0z" fill="#294847"/>
+      <text x="62" y="21" fill="#203d3d" font-family="system-ui,sans-serif" font-size="17" font-weight="760">极昼</text>
+      <text x="62" y="42" fill="#70817c" font-family="system-ui,sans-serif" font-size="12">你的本地工作搭子</text>
+    </g>
+    <rect x="78" y="202" width="204" height="44" rx="14" fill="#285a56"/>
+    <path d="M101 217v14M94 224h14" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+    <text x="122" y="230" fill="#fff" font-family="system-ui,sans-serif" font-size="14" font-weight="700">新对话</text>
+    <text x="80" y="288" fill="#87928e" font-family="system-ui,sans-serif" font-size="11" font-weight="700" letter-spacing="1.5">最近的事</text>
+
+    <g transform="translate(76 307)">
+      <rect width="210" height="76" rx="15" fill="#fff" stroke="#d4ddd5"/>
+      <rect width="4" height="76" rx="2" fill="#5a9d8d"/>
+      <text x="18" y="27" fill="#284544" font-family="system-ui,sans-serif" font-size="14" font-weight="700">项目进展报告</text>
+      <text x="18" y="51" fill="#6d7f79" font-family="system-ui,sans-serif" font-size="12">做好了 · 刚刚</text>
+      <circle cx="188" cy="24" r="5" fill="#6ca591"/>
+    </g>
+    <g transform="translate(76 393)">
+      <rect width="210" height="72" rx="15" fill="transparent"/>
+      <text x="18" y="26" fill="#425a58" font-family="system-ui,sans-serif" font-size="14" font-weight="650">照片按月份整理</text>
+      <text x="18" y="50" fill="#867b6f" font-family="system-ui,sans-serif" font-size="12">需要你确认</text>
+      <circle cx="188" cy="24" r="5" fill="#c5905e"/>
+    </g>
+    <g transform="translate(76 475)">
+      <rect width="210" height="72" rx="15" fill="transparent"/>
+      <text x="18" y="26" fill="#425a58" font-family="system-ui,sans-serif" font-size="14" font-weight="650">AI 行业资料梳理</text>
+      <text x="18" y="50" fill="#6d7f79" font-family="system-ui,sans-serif" font-size="12">正在做 · 8 分钟前</text>
+      <circle cx="188" cy="24" r="5" fill="#68a3a0"/>
+    </g>
+    <g transform="translate(76 557)">
+      <text x="18" y="26" fill="#425a58" font-family="system-ui,sans-serif" font-size="14" font-weight="650">周一会议整理</text>
+      <text x="18" y="50" fill="#6d7f79" font-family="system-ui,sans-serif" font-size="12">已完成 · 昨天</text>
+    </g>
+    <path d="M79 653h202" stroke="#d7ddd6"/>
+    <g transform="translate(80 678)">
+      <path d="M9 2a7 7 0 1 0 0 14 7 7 0 0 0 0-14zm5 12 5 5" fill="none" stroke="#73837e" stroke-width="2" stroke-linecap="round"/>
+      <text x="32" y="15" fill="#586d68" font-family="system-ui,sans-serif" font-size="13">搜索</text>
+      <path d="M2 49h14v13H2zM5 46h8v3" fill="none" stroke="#73837e" stroke-width="2"/>
+      <text x="32" y="60" fill="#586d68" font-family="system-ui,sans-serif" font-size="13">熊记得的事</text>
+      <circle cx="9" cy="99" r="7" fill="none" stroke="#73837e" stroke-width="2"/><path d="M9 95v8M5 99h8" stroke="#73837e" stroke-width="2"/>
+      <text x="32" y="104" fill="#586d68" font-family="system-ui,sans-serif" font-size="13">连接与设置</text>
+    </g>
+  </g>
+
+  <g>
+    <rect x="305" y="106" width="550" height="846" fill="#fbfaf6"/>
+    <path d="M855 106v846" stroke="#e0e1dc"/>
+    <text x="340" y="151" fill="#213e3e" font-family="system-ui,sans-serif" font-size="21" font-weight="760">项目进展报告</text>
+    <text x="340" y="175" fill="#7a8984" font-family="system-ui,sans-serif" font-size="12">根据 3 份会议笔记制作</text>
+
+    <g transform="translate(337 205)">
+      <rect width="486" height="155" rx="24" fill="#173c43"/>
+      <rect width="486" height="155" rx="24" fill="url(#aurora)"/>
+      <g transform="translate(26 25)">
+        <circle cx="50" cy="44" r="41" fill="#eef2eb"/><circle cx="19" cy="16" r="15" fill="#eef2eb"/><circle cx="81" cy="16" r="15" fill="#eef2eb"/><ellipse cx="37" cy="42" rx="4" ry="5" fill="#284a4b"/><ellipse cx="63" cy="42" rx="4" ry="5" fill="#284a4b"/><path d="M43 55c3-4 11-4 14 0 0 7-14 7-14 0z" fill="#284a4b"/><path d="M29 84c11-13 31-13 42 0v31H29z" fill="#d9e4de"/>
+      </g>
+      <text x="136" y="44" fill="#a9cfc5" font-family="system-ui,sans-serif" font-size="12">极昼 · 做好了</text>
+      <text x="136" y="75" fill="#fff" font-family="system-ui,sans-serif" font-size="21" font-weight="700">报告已经请帮手做好，等你过目。</text>
+      <text x="136" y="104" fill="#c9dcd7" font-family="system-ui,sans-serif" font-size="13">我整理了关键进展、风险和下周计划，没有改动原始笔记。</text>
+      <text x="136" y="130" fill="#8ec1b5" font-family="system-ui,sans-serif" font-size="12">机魂不悦于排版琐事，但结果尚可。</text>
+    </g>
+
+    <g transform="translate(414 392)">
+      <rect width="409" height="88" rx="18" fill="#eef2ee"/>
+      <text x="20" y="29" fill="#6b7b76" font-family="system-ui,sans-serif" font-size="12" font-weight="700">你</text>
+      <text x="20" y="57" fill="#2b4241" font-family="system-ui,sans-serif" font-size="14">根据这三份会议笔记，做一份给老板看的进展报告。</text>
+    </g>
+    <g transform="translate(337 501)">
+      <rect width="454" height="116" rx="18" fill="#f5eee2" stroke="#e4d7c5"/>
+      <text x="20" y="29" fill="#907b64" font-family="system-ui,sans-serif" font-size="12" font-weight="700">极昼</text>
+      <text x="20" y="57" fill="#374745" font-family="system-ui,sans-serif" font-size="14">我会把进展压缩成适合管理层阅读的版本，突出结论、风险</text>
+      <text x="20" y="80" fill="#374745" font-family="system-ui,sans-serif" font-size="14">和下周计划，并生成 Word 与 PDF。原始笔记不会被修改。</text>
+      <text x="20" y="103" fill="#71817c" font-family="system-ui,sans-serif" font-size="12">已读取：周会记录 3 份</text>
+    </g>
+    <g transform="translate(337 648)">
+      <rect width="486" height="82" rx="18" fill="#e7f0eb"/>
+      <circle cx="29" cy="28" r="10" fill="#6da28e"/><path d="M24 28l4 4 7-9" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <text x="51" y="33" fill="#294944" font-family="system-ui,sans-serif" font-size="14" font-weight="700">报告已生成，可在右侧预览。</text>
+      <text x="20" y="62" fill="#687c76" font-family="system-ui,sans-serif" font-size="12">Word · PDF · 共 8 页</text>
+    </g>
+    <g transform="translate(337 830)">
+      <rect width="486" height="82" rx="22" fill="#fff" stroke="#d8ddd6"/>
+      <text x="22" y="35" fill="#95a09c" font-family="system-ui,sans-serif" font-size="14">告诉熊还要怎么改……</text>
+      <rect x="403" y="15" width="62" height="52" rx="16" fill="#295c57"/>
+      <path d="M424 42h19M437 35l7 7-7 7" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M22 58h22M30 50v16" stroke="#7f8f89" stroke-width="2" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <g>
+    <rect x="855" y="106" width="690" height="846" fill="#f4f2ec"/>
+    <text x="893" y="151" fill="#213e3e" font-family="system-ui,sans-serif" font-size="20" font-weight="760">结果</text>
+    <rect x="1368" y="126" width="128" height="42" rx="14" fill="#285a56"/>
+    <text x="1400" y="152" fill="#fff" font-family="system-ui,sans-serif" font-size="13" font-weight="700">打开报告</text>
+    <g transform="translate(892 188)" filter="url(#cardShadow)">
+      <rect width="606" height="674" rx="20" fill="#fff"/>
+      <rect x="0" width="606" height="54" rx="20" fill="#f0eee8"/>
+      <path d="M0 30v24h606V30" fill="#f0eee8"/>
+      <circle cx="28" cy="27" r="7" fill="#779b91"/>
+      <text x="46" y="32" fill="#405654" font-family="system-ui,sans-serif" font-size="13" font-weight="700">项目进展报告.docx</text>
+      <rect x="438" y="11" width="68" height="32" rx="10" fill="#fff" stroke="#d9ddd7"/><text x="458" y="32" fill="#586d68" font-family="system-ui,sans-serif" font-size="12">Word</text>
+      <rect x="516" y="11" width="68" height="32" rx="10" fill="#fff" stroke="#d9ddd7"/><text x="538" y="32" fill="#586d68" font-family="system-ui,sans-serif" font-size="12">PDF</text>
+      <g transform="translate(70 82)">
+        <text x="0" y="32" fill="#203d3c" font-family="Georgia,'Songti SC',serif" font-size="27" font-weight="700">星轨计划 · 项目进展报告</text>
+        <text x="0" y="61" fill="#87918d" font-family="system-ui,sans-serif" font-size="12">汇报周期：8 月 5 日—8 月 11 日</text>
+        <path d="M0 86h466" stroke="#d9ddd7"/>
+        <text x="0" y="122" fill="#345b56" font-family="system-ui,sans-serif" font-size="12" font-weight="800" letter-spacing="1.2">本周结论</text>
+        <text x="0" y="155" fill="#263f3e" font-family="system-ui,sans-serif" font-size="17" font-weight="700">核心方案已确认，首轮用户验证按计划开始。</text>
+        <text x="0" y="184" fill="#667773" font-family="system-ui,sans-serif" font-size="13">产品、设计和研发已完成范围收敛；当前最大风险是数据准备</text>
+        <text x="0" y="207" fill="#667773" font-family="system-ui,sans-serif" font-size="13">晚于预期，但尚未影响 8 月里程碑。</text>
+        <g transform="translate(0 240)">
+          <rect width="140" height="98" rx="14" fill="#e9f1ed"/>
+          <text x="16" y="27" fill="#71827d" font-family="system-ui,sans-serif" font-size="11">整体进度</text>
+          <text x="16" y="65" fill="#285a56" font-family="system-ui,sans-serif" font-size="30" font-weight="780">68%</text>
+          <text x="16" y="84" fill="#71827d" font-family="system-ui,sans-serif" font-size="11">与计划一致</text>
+          <rect x="154" width="140" height="98" rx="14" fill="#f4ecdf"/>
+          <text x="170" y="27" fill="#847566" font-family="system-ui,sans-serif" font-size="11">本周完成</text>
+          <text x="170" y="65" fill="#9a714e" font-family="system-ui,sans-serif" font-size="30" font-weight="780">7</text>
+          <text x="170" y="84" fill="#847566" font-family="system-ui,sans-serif" font-size="11">项关键工作</text>
+          <rect x="308" width="158" height="98" rx="14" fill="#eef0ed"/>
+          <text x="324" y="27" fill="#71827d" font-family="system-ui,sans-serif" font-size="11">需要关注</text>
+          <text x="324" y="65" fill="#8a5d4f" font-family="system-ui,sans-serif" font-size="30" font-weight="780">2</text>
+          <text x="324" y="84" fill="#71827d" font-family="system-ui,sans-serif" font-size="11">项风险</text>
+        </g>
+        <text x="0" y="382" fill="#345b56" font-family="system-ui,sans-serif" font-size="12" font-weight="800" letter-spacing="1.2">下周计划</text>
+        <g fill="#58716c" font-family="system-ui,sans-serif" font-size="13"><circle cx="6" cy="415" r="4" fill="#73a494"/><text x="20" y="420">完成首轮 6 位目标用户访谈</text><circle cx="6" cy="447" r="4" fill="#73a494"/><text x="20" y="452">确认数据导入方案与负责人</text><circle cx="6" cy="479" r="4" fill="#73a494"/><text x="20" y="484">冻结 8 月版本范围并进入开发</text></g>
+        <rect x="0" y="520" width="466" height="72" rx="14" fill="#f6f2e9"/>
+        <text x="16" y="547" fill="#88765f" font-family="system-ui,sans-serif" font-size="11" font-weight="700">管理层需要决定</text>
+        <text x="16" y="574" fill="#3e4d49" font-family="system-ui,sans-serif" font-size="13">是否将外部数据清洗预算提前到本月。</text>
+      </g>
+    </g>
+    <g transform="translate(892 878)">
+      <rect width="104" height="42" rx="13" fill="#285a56"/><text x="24" y="27" fill="#fff" font-family="system-ui,sans-serif" font-size="13" font-weight="700">保存到…</text>
+      <rect x="116" width="104" height="42" rx="13" fill="#fff" stroke="#d5dad4"/><text x="137" y="27" fill="#425c57" font-family="system-ui,sans-serif" font-size="13" font-weight="650">继续调整</text>
+      <rect x="232" width="94" height="42" rx="13" fill="#fff" stroke="#d5dad4"/><text x="254" y="27" fill="#425c57" font-family="system-ui,sans-serif" font-size="13" font-weight="650">查看依据</text>
+      <text x="489" y="27" fill="#7a8b85" font-family="system-ui,sans-serif" font-size="12">8 页 · 刚刚生成</text>
+    </g>
+  </g>
+
+  <g transform="translate(1115 80)" filter="url(#cardShadow)">
+    <rect width="310" height="62" rx="18" fill="#fffdf8" stroke="#d9ddd6"/>
+    <circle cx="30" cy="31" r="9" fill="#6aa18d"/>
+    <text x="50" y="27" fill="#2f4c48" font-family="system-ui,sans-serif" font-size="13" font-weight="700">行业资料正在整理</text>
+    <text x="50" y="45" fill="#75867f" font-family="system-ui,sans-serif" font-size="11">你可以继续当前对话</text>
+    <text x="266" y="37" fill="#55736c" font-family="system-ui,sans-serif" font-size="12">查看</text>
+  </g>
+</svg>

@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Cyber Bear · 门后的第一夜</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="app-window">
+    <header class="titlebar">
+      <div class="traffic" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div class="scene-name" id="sceneName">门后的第一夜</div>
+      <div class="title-actions">
+        <button class="top-button" id="voiceButton" data-drawer="voice" type="button">
+          <span class="voice-dot" aria-hidden="true"></span>
+          <span id="voiceLabel">极昼 · 稳定声线</span>
+        </button>
+        <button class="top-button" id="backstageTop" data-drawer="settings" type="button">沉浸设置</button>
+      </div>
+    </header>
+
+    <div class="shell">
+      <aside class="sidebar" aria-label="场景与记忆">
+        <div class="identity">
+          <div class="mini-bear" aria-hidden="true"><div class="mini-face"></div></div>
+          <div><strong>极昼</strong><span>从旧极光站来的守望者</span></div>
+        </div>
+
+        <button class="home-button" id="restartIntro" type="button">重新走进第一夜</button>
+        <div class="rail-label">你们的片段</div>
+        <nav class="chat-list" aria-label="共同片段">
+          <button class="chat-item active" data-view="first-night" type="button">
+            <strong>门后的第一夜</strong><span>刚刚 · 一切从这里开始</span>
+          </button>
+          <button class="chat-item" data-view="old-log" type="button">
+            <strong>旧站留下的记录</strong><span>极昼来到这里之前</span>
+          </button>
+          <button class="chat-item" data-view="lamp" type="button">
+            <strong>窗边那盏灯</strong><span>相处中的小事</span>
+          </button>
+          <button class="chat-item" data-view="report" type="button">
+            <strong>把会议变成一份报告</strong><span>需要工作时才出现</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-spacer"></div>
+        <nav class="sidebar-links" aria-label="角色与关系设置">
+          <button class="sidebar-link" data-drawer="canon" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z"/><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20"/></svg>
+            极昼是谁
+          </button>
+          <button class="sidebar-link" data-drawer="memory" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3a4 4 0 0 0-4 4v1a4 4 0 0 0-2 7.46V17a4 4 0 0 0 6 3.46A4 4 0 0 0 18 17v-1.54A4 4 0 0 0 16 8V7a4 4 0 0 0-4-4Z"/><path d="M12 3v17.46M8 8h4m0 7h4"/></svg>
+            我们记得的事
+          </button>
+          <button class="sidebar-link" data-drawer="settings" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.2 15a1.7 1.7 0 0 0-.6-1A1.7 1.7 0 0 0 2.5 13.6h-.1v-4h.1A1.7 1.7 0 0 0 4.2 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 8.6 4.2a1.7 1.7 0 0 0 1-.6A1.7 1.7 0 0 0 10 2.5v-.1h4v.1a1.7 1.7 0 0 0 1 1.7 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 8.6a1.7 1.7 0 0 0 .6 1 1.7 1.7 0 0 0 1.1.4h.1v4h-.1a1.7 1.7 0 0 0-1.7 1Z"/></svg>
+            沉浸与界限
+          </button>
+        </nav>
+      </aside>
+
+      <main class="main">
+        <div class="scene" aria-hidden="true">
+          <div class="window-frame">
+            <div class="window-inner"><div class="mountains"></div><div class="window-cross"></div><span class="window-note">旧站以南 · 未命名的房间</span></div>
+          </div>
+          <div class="shelves">
+            <div class="books"><span class="book"></span><span class="book"></span><span class="book"></span><span class="book"></span><span class="book"></span></div>
+            <span class="shelf one"></span><span class="shelf two"></span>
+          </div>
+          <div class="lamp"></div>
+          <div class="desk"></div>
+        </div>
+
+        <div class="work-status" id="workStatus" hidden><span aria-hidden="true"></span><strong id="workStatusText">极昼在等你确认工作边界</strong></div>
+
+        <div class="bear-stage" aria-label="极昼站在桌前，抱着一本旧值守簿">
+          <div class="bear-shadow"></div>
+          <div class="bear-ear left"></div><div class="bear-ear right"></div>
+          <div class="bear-body"></div><div class="bear-vest"></div>
+          <div class="bear-arm left"></div><div class="bear-arm right"></div>
+          <div class="bear-head">
+            <span class="bear-eye left"></span><span class="bear-eye right"></span>
+            <span class="bear-nose"></span><span class="bear-mouth"></span>
+          </div>
+          <div class="logbook"></div>
+        </div>
+
+        <article class="story-panel" aria-live="polite">
+          <div class="story-meta"><span id="storyMeta">极昼 · 门后的第一夜</span><span>故事内</span></div>
+          <div class="story-text">
+            <em id="storyAction">极昼把一本边角磨白的值守簿放到桌上。第一页是旧站的记录，第二页仍然空着。</em>
+            <p id="storySpeech">这里不是极光站。门是你开的？</p>
+          </div>
+          <div class="message-tools" id="messageTools">
+            <button class="tool-button regenerate-button" id="regenerateButton" type="button">重新生成</button>
+            <div class="version-switcher" id="versionSwitcher" hidden aria-label="切换已经生成的回复">
+              <button class="version-arrow" id="versionPrev" type="button" aria-label="上一个已生成版本">‹</button>
+              <span id="responseCount">1 / 1</span>
+              <button class="version-arrow" id="versionNext" type="button" aria-label="下一个已生成版本">›</button>
+            </div>
+            <button class="tool-button" id="continueButton" type="button">让他继续</button>
+            <button class="tool-button" id="rememberButton" type="button">记住这一刻</button>
+            <button class="tool-button" id="correctionButton" type="button">这不像极昼</button>
+            <button class="tool-button" id="branchButton" type="button">从这里分支</button>
+            <button class="tool-button" id="copyButton" type="button">复制</button>
+          </div>
+        </article>
+
+        <form class="composer" id="composer" onsubmit="return false">
+          <button class="icon-button" id="attachButton" type="button" aria-label="选择本地材料">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <textarea id="chatInput" rows="1" aria-label="对极昼说话" placeholder="对极昼说点什么…"></textarea>
+          <button class="send-button" id="sendButton" type="button" aria-label="发送">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 14-7-4 14-3-6-7-1Z"/><path d="m12 13 7-8"/></svg>
+          </button>
+          <div class="composer-footer">
+            <button id="backstageButton" type="button" aria-pressed="false">幕后指令</button>
+            <button data-drawer="settings" type="button">沉浸设置</button>
+            <span>本地静态演示</span>
+          </div>
+        </form>
+
+        <section class="system-card" id="systemCard" hidden aria-labelledby="workConfirmTitle">
+          <p class="system-kicker">系统界限 · 只有你能批准</p>
+          <h2 id="workConfirmTitle">允许极昼整理这三份会议记录吗？</h2>
+          <p>极昼负责交代结果，但系统会在真正改变电脑内容前，把范围清楚地告诉你。</p>
+          <div class="impact-grid">
+            <div class="impact"><strong>会读取</strong><span>你刚刚选中的 3 份会议记录</span></div>
+            <div class="impact safe"><strong>会生成</strong><span id="outputScope">生成 Word 与 PDF 草稿</span></div>
+            <div class="impact safe"><strong>不会改变</strong><span>不改原文件，不替你发送</span></div>
+            <div class="impact"><strong>保存位置</strong><span>本地“项目进展报告”文件夹</span></div>
+          </div>
+          <div class="actions">
+            <button class="quiet" id="adjustWork" type="button">调整范围</button>
+            <button class="secondary" id="cancelWork" type="button">先不做</button>
+            <button class="primary" id="approveWork" type="button">允许这一次</button>
+          </div>
+        </section>
+
+        <section class="result-drawer" id="resultDrawer" hidden aria-label="报告结果">
+          <h2>项目进展报告 · 草稿</h2>
+          <div class="result-page">
+            <p>星轨计划 · 8 月 5 日至 8 月 11 日</p>
+            <h3>本周结论</h3>
+            <hr>
+            <p><strong>核心方案已确认，首轮用户验证按计划开始。</strong></p>
+            <p>三次会议记录显示，产品、设计与研发已完成范围收敛；当前最大风险是数据准备仍晚于原定时间。</p>
+            <ul>
+              <li>完成 6 位目标用户访谈</li>
+              <li>确认数据导入方案与负责人</li>
+              <li>冻结 8 月版本范围并进入开发</li>
+            </ul>
+            <p><strong>需要你决定：</strong>是否把外部数据清洗期限提前到本月。</p>
+          </div>
+          <div class="result-actions">
+            <button class="primary" id="openReport" type="button">打开报告</button>
+            <button class="secondary" id="continueAdjust" type="button">继续调整</button>
+            <button class="quiet" id="viewBasis" type="button">查看依据</button>
+          </div>
+        </section>
+
+        <section class="intro-overlay" id="introOverlay" aria-label="第一次见面">
+          <div class="intro-card">
+            <div class="intro-screen" data-step="0">
+              <div class="intro-step">门后的第一夜 · 01</div>
+              <h2>门外有风雪，也有一只不认识你的熊。</h2>
+              <p>他抱着旧值守簿，自称极昼。过去已经发生过；你不需要替他填写人设，也不需要先完成一张设置表。</p>
+              <div class="drawer-section">
+                <p>“旧站关了。我带走了能带走的东西。至于为什么来到这里——门是你开的，也许你该先告诉我，这里能不能待。”</p>
+              </div>
+              <div class="intro-actions"><button class="primary" id="enterButton" type="button">把门打开</button></div>
+            </div>
+
+            <div class="intro-screen" data-step="1" hidden>
+              <div class="intro-step">门后的第一夜 · 02</div>
+              <h2>你希望今晚怎么相处？</h2>
+              <p>不是永久设定，只决定他此刻离门槛有多近。关系会从之后发生的事情里长出来。</p>
+              <div class="choice-list">
+                <button class="choice relationship-choice" data-relationship="先相处看看" type="button"><strong>先相处看看</strong><span>不预设身份，让关系自然发生</span></button>
+                <button class="choice relationship-choice" data-relationship="像朋友一样" type="button"><strong>像朋友一样</strong><span>更直接，也允许一点玩笑</span></button>
+                <button class="choice relationship-choice" data-relationship="保持一点距离" type="button"><strong>保持一点距离</strong><span>少主动追问，给你更多空间</span></button>
+                <button class="choice relationship-choice" data-relationship="一起工作试试" type="button"><strong>一起工作试试</strong><span>先从一件具体的小事认识彼此</span></button>
+              </div>
+              <div class="intro-actions"><button class="primary" id="relationshipContinue" type="button" disabled>继续</button></div>
+            </div>
+
+            <div class="intro-screen" data-step="2" hidden>
+              <div class="intro-step">门后的第一夜 · 03</div>
+              <h2>今晚之后，要让极昼记得你们的经历吗？</h2>
+              <p id="relationshipSummary">你选择的相处方式只属于此刻，以后可以改变。</p>
+              <div class="drawer-section">
+                <p>默认不会保存关于你的长期记忆。开启后，每次把某件事写进“我们记得的事”仍会先问你；你随时可以查看、修改或删除。</p>
+              </div>
+              <div class="intro-actions">
+                <button class="secondary" id="memoryLater" type="button">暂时不要</button>
+                <button class="primary" id="memoryAllow" type="button">开启，但每次问我</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="drawer" id="drawer" hidden aria-label="侧边详情">
+          <div class="drawer-head">
+            <div><span class="intro-step">故事之外 · 可随时离开</span></div>
+            <button class="drawer-close" id="drawerClose" type="button">关闭</button>
+          </div>
+
+          <section class="drawer-view" data-drawer="canon">
+            <h2>极昼来到这里之前</h2>
+            <p>这些不是你刚刚填写的人设，而是他进门时已经拥有的过去。它们只能通过明确的新事件发展，不能被普通对话悄悄改写。</p>
+            <div class="drawer-section">
+              <h3>他确信的事</h3>
+              <div class="canon-entry"><strong>旧极光站的守望者</strong><span>他曾负责冬夜值守、设备维护与来访记录，直到站点关闭。</span></div>
+              <div class="canon-entry"><strong>一次没有完成的修复</strong><span>他曾把“希望修好”写成“已经修好”，后来一批档案因此遗失。这让他格外在意事实与证据。</span></div>
+              <div class="canon-entry"><strong>为什么来到这里</strong><span>旧站不再需要守望者。他带着值守簿来到你的电脑，想找一个仍值得认真看守的地方。</span></div>
+            </div>
+            <div class="drawer-section">
+              <h3>不会被角色扮演改变</h3>
+              <div class="setting-row"><span>文件、权限与实际工作结果</span><span class="pill">由系统确认</span></div>
+              <div class="setting-row"><span>你没有说过的个人事实</span><span class="pill">不擅自补全</span></div>
+            </div>
+          </section>
+
+          <section class="drawer-view" data-drawer="memory" hidden>
+            <h2>我们记得的事</h2>
+            <p id="memoryState">关闭，不会自动记住你</p>
+            <div class="drawer-section">
+              <h3>记忆方式</h3>
+              <div class="setting-row"><span>长期关系记忆</span><span class="pill" id="memoryStatePill">未开启</span></div>
+              <div class="setting-row"><span>每次新增记忆</span><span class="pill">先问你</span></div>
+              <div class="setting-row"><span>角色自己的过去</span><span class="pill">与用户记忆分开</span></div>
+            </div>
+            <div class="drawer-section">
+              <h3>当前共同记忆</h3>
+              <div class="canon-entry"><strong>还没有长期记录</strong><span>你仍然可以继续故事。没有获得允许，极昼不会把对话提炼成关于你的长期结论。</span></div>
+            </div>
+            <div class="drawer-section actions">
+              <button class="danger" id="clearMemory" type="button">删除共同记忆</button>
+              <button class="primary" id="enableMemory" type="button">开启长期记忆</button>
+            </div>
+          </section>
+
+          <section class="drawer-view" data-drawer="settings" hidden>
+            <h2>沉浸与界限</h2>
+            <p>普通对话留在故事里；当你需要校正角色或查看真实边界时，再来到这里。</p>
+            <div class="drawer-section">
+              <h3>当前体验</h3>
+              <div class="setting-row"><span>角色回复</span><span class="pill">动作与台词</span></div>
+              <div class="setting-row"><span>助手式说明</span><span class="pill">尽量隐藏</span></div>
+              <div class="setting-row"><span>工作确认</span><span class="pill">系统独立呈现</span></div>
+              <div class="setting-row"><span>角色连续性</span><span class="pill">固定版本</span></div>
+            </div>
+            <div class="drawer-section">
+              <h3>出戏时怎么做</h3>
+              <p>不满意时按需“重新生成”，生成后再切换已有版本；轻微出戏，用“这不像极昼”直接写下原因；要改规则，用“幕后指令”；想试另一种发展，从当前消息分支。这些操作都不会伪造已经发生过的事实。</p>
+            </div>
+            <div class="drawer-section actions"><button class="secondary" id="resetScene" type="button">回到场景起点</button></div>
+          </section>
+
+          <section class="drawer-view" data-drawer="voice" hidden>
+            <h2>极昼的声线</h2>
+            <p>当前场景使用固定、可复现的声线版本。不会因为后台变化，在长期相处中突然换一个人。</p>
+            <div class="drawer-section">
+              <div class="canon-entry"><strong>当前声线</strong><span>克制、稍懒、知道自己的过去；能做事，但不会把系统能力冒充成自己的魔法。</span></div>
+            </div>
+            <div class="drawer-section">
+              <h3>想换一种表达？</h3>
+              <p>先用同一句话试演。确认后，新声线只从下一个场景生效；现有历史不会被重写。</p>
+              <button class="secondary" id="voiceTrialStart" type="button">用同一句话试演</button>
+              <div id="voiceTrial" hidden>
+                <div class="canon-entry"><strong>现在</strong><span>“低级程序负责搬字，我负责不让它胡说。”</span></div>
+                <div class="canon-entry"><strong>候选声线</strong><span>“整理交给它们。等结果回来，我替你逐条看过。”</span></div>
+                <div class="actions" style="margin-top:12px">
+                  <button class="quiet" id="voiceKeep" type="button">保留现在</button>
+                  <button class="secondary" id="voiceBranch" type="button">只建支线</button>
+                  <button class="primary" id="voiceSwitch" type="button">下个场景使用</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </aside>
+
+        <div class="correction-menu" id="correctionMenu" hidden>
+          <strong>哪里不像极昼？</strong>
+          <div class="correction-presets" aria-label="常见原因">
+            <button class="correction-option" data-reason="语气不对，他不该这么热情" type="button">语气不对</button>
+            <button class="correction-option" data-reason="他忘了自己的身份或过去" type="button">忘了自己</button>
+            <button class="correction-option" data-reason="他忘了我们已经共同经历过的事" type="button">忘了我们的经历</button>
+            <button class="correction-option" data-reason="他替我说话或替我行动了" type="button">替我行动</button>
+            <button class="correction-option" data-reason="他把虚构场景当成了现实事实" type="button">把虚构当现实</button>
+          </div>
+          <form id="correctionForm">
+            <label for="correctionInput">其他原因</label>
+            <textarea id="correctionInput" rows="3" placeholder="直接告诉他哪里不对，例如：你不该知道我没说过的事"></textarea>
+            <p>预设或自定义原因都只用于重写当前回应，不会作为剧情或共同记忆保存。</p>
+            <div class="actions">
+              <button class="quiet" id="correctionCancel" type="button">取消</button>
+              <button class="primary" id="correctionSubmit" type="submit">按这个重写</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="toast" id="toast" hidden role="status"></div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Cyber Bear 极光书房概念图</title>
+  <desc id="desc">一间安静的极地书房，北极熊机魂陪伴用户，桌面上是文件、行动确认和可直接使用的结果。</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#112f3c"/><stop offset=".45" stop-color="#1c4f55"/><stop offset="1" stop-color="#102631"/></linearGradient>
+    <radialGradient id="windowGlow" cx="52%" cy="28%" r="62%"><stop stop-color="#c8f3df" stop-opacity=".76"/><stop offset=".42" stop-color="#76cbbd" stop-opacity=".2"/><stop offset="1" stop-color="#15323b" stop-opacity="0"/></radialGradient>
+    <linearGradient id="aurora" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#8de2ca" stop-opacity="0"/><stop offset=".3" stop-color="#c2f0dc" stop-opacity=".82"/><stop offset=".62" stop-color="#76cfc3" stop-opacity=".56"/><stop offset="1" stop-color="#9ac4df" stop-opacity="0"/></linearGradient>
+    <linearGradient id="desk" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#8b684c"/><stop offset="1" stop-color="#4d382e"/></linearGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="24"/></filter>
+    <filter id="shadow"><feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#071820" flood-opacity=".42"/></filter>
+    <pattern id="grain" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M0 8C10 4 22 13 40 6M0 29c15-7 25 5 40-2" fill="none" stroke="#fff" stroke-opacity=".025"/></pattern>
+  </defs>
+  <rect width="1600" height="1000" fill="#0d222b"/>
+  <rect x="56" y="52" width="1488" height="896" rx="40" fill="url(#sky)" stroke="#bce7d2" stroke-opacity=".18"/>
+  <rect x="76" y="72" width="1448" height="856" rx="28" fill="url(#grain)"/>
+
+  <g opacity=".92">
+    <path d="M188 194Q426 74 755 172T1419 134" fill="none" stroke="url(#aurora)" stroke-width="52" filter="url(#soft)"/>
+    <path d="M158 216Q472 95 782 191T1451 158" fill="none" stroke="url(#aurora)" stroke-width="15"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <path d="M146 144H1030V706H146z" fill="#18343d" stroke="#abd8c7" stroke-opacity=".36" stroke-width="4"/>
+    <path d="M172 170H1004V680H172z" fill="#102c35"/>
+    <rect x="172" y="170" width="832" height="510" fill="url(#windowGlow)"/>
+    <path d="M588 170v510M172 426h832" stroke="#a4d2c4" stroke-opacity=".22" stroke-width="4"/>
+    <path d="M172 585l112-67 74 29 95-71 89 61 98-46 96 54 105-84 163 106v113H172z" fill="#d8e8e4" fill-opacity=".22"/>
+    <path d="M172 624l125-72 85 43 93-57 85 60 116-65 98 49 92-52 138 75v65H172z" fill="#e9f1ef" fill-opacity=".32"/>
+  </g>
+
+  <g opacity=".84">
+    <rect x="1090" y="135" width="320" height="526" rx="16" fill="#21383a" stroke="#c8b69a" stroke-opacity=".38"/>
+    <path d="M1120 232h260M1120 348h260M1120 464h260M1120 580h260" stroke="#b7a486" stroke-opacity=".34" stroke-width="6"/>
+    <g fill="#d8c7a7"><rect x="1140" y="166" width="34" height="64" rx="3"/><rect x="1178" y="180" width="46" height="50" rx="3" fill="#8fbfb0"/><rect x="1230" y="154" width="28" height="76" rx="3" fill="#ad8065"/><rect x="1264" y="173" width="65" height="57" rx="3" fill="#6f8e8c"/><rect x="1336" y="163" width="23" height="67" rx="3" fill="#c19f69"/></g>
+    <g fill="#d8c7a7"><rect x="1138" y="276" width="62" height="70" rx="3" fill="#8d6a55"/><rect x="1208" y="294" width="31" height="52" rx="3" fill="#c0ab81"/><rect x="1246" y="265" width="50" height="81" rx="3" fill="#6f9b92"/><rect x="1304" y="284" width="58" height="62" rx="3" fill="#b7c5b0"/></g>
+    <path d="M1164 452c4-40 38-67 73-67 43 0 78 33 82 67z" fill="#bd8e61"/><circle cx="1242" cy="410" r="18" fill="#f0d7a5"/>
+    <g transform="translate(1160 490)"><path d="M34 88c-20-11-26-34-15-53 12-21 39-27 58-12 13 10 18 29 11 45-9 21-34 30-54 20z" fill="#8fb8a6"/><path d="M54 37c-3-19 9-35 24-38-1 17-7 31-24 38zM47 40C27 34 18 18 22 4c15 7 24 17 25 36z" fill="#a5c9b6"/></g>
+  </g>
+
+  <path d="M66 700C375 657 1198 663 1534 718v230H66z" fill="url(#desk)"/>
+  <path d="M67 758c386-48 995-45 1466 11" fill="none" stroke="#d0a47e" stroke-opacity=".18" stroke-width="8"/>
+  <path d="M67 858c388-54 1020-37 1466 4" fill="none" stroke="#2d201b" stroke-opacity=".28" stroke-width="7"/>
+
+  <g filter="url(#shadow)" transform="translate(255 620) rotate(-3)">
+    <rect width="430" height="260" rx="18" fill="#f4eddf"/>
+    <rect x="26" y="25" width="70" height="9" rx="4" fill="#7daf9e"/>
+    <rect x="26" y="48" width="230" height="20" rx="6" fill="#253e41"/>
+    <rect x="26" y="83" width="350" height="8" rx="4" fill="#c6b9a4"/>
+    <rect x="26" y="103" width="320" height="8" rx="4" fill="#d3c8b7"/>
+    <rect x="26" y="139" width="104" height="73" rx="12" fill="#dfe9e3"/>
+    <rect x="146" y="139" width="104" height="73" rx="12" fill="#ead9c6"/>
+    <rect x="266" y="139" width="132" height="73" rx="12" fill="#d4e6e1"/>
+    <circle cx="58" cy="176" r="15" fill="#74a798"/><path d="M179 188l17-31 18 20 18-8v19z" fill="#b27855"/><path d="M290 187h83M290 169h65" stroke="#6d9c90" stroke-width="8" stroke-linecap="round"/>
+    <text x="26" y="238" fill="#776c60" font-family="system-ui,sans-serif" font-size="14">项目进展报告 · 准备交付</text>
+  </g>
+
+  <g filter="url(#shadow)" transform="translate(725 685) rotate(2)">
+    <rect width="390" height="190" rx="20" fill="#fffaf0" stroke="#d7c8ad"/>
+    <circle cx="42" cy="42" r="16" fill="#82b7a5"/>
+    <path d="M35 42l5 5 10-13" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="70" y="48" fill="#244044" font-family="system-ui,sans-serif" font-weight="700" font-size="22">报告做好了</text>
+    <text x="30" y="85" fill="#6c746e" font-family="system-ui,sans-serif" font-size="15">已生成 Word 与 PDF，没有改动原始笔记。</text>
+    <rect x="30" y="115" width="118" height="44" rx="13" fill="#285c58"/>
+    <text x="63" y="143" fill="#fff" font-family="system-ui,sans-serif" font-weight="700" font-size="15">打开报告</text>
+    <rect x="160" y="115" width="104" height="44" rx="13" fill="#eee5d7"/>
+    <text x="185" y="143" fill="#31504e" font-family="system-ui,sans-serif" font-weight="650" font-size="15">继续调整</text>
+    <text x="288" y="143" fill="#52726c" font-family="system-ui,sans-serif" font-size="14">查看依据</text>
+  </g>
+
+  <g transform="translate(1165 514)" filter="url(#shadow)">
+    <ellipse cx="132" cy="276" rx="115" ry="28" fill="#081b20" fill-opacity=".45"/>
+    <circle cx="48" cy="73" r="38" fill="#f3f0e8"/><circle cx="216" cy="73" r="38" fill="#f3f0e8"/>
+    <path d="M40 120c0-73 41-110 92-110s92 37 92 110c0 56-24 90-50 104 37 23 58 62 55 105H35c-3-43 18-82 55-105-26-14-50-48-50-104z" fill="#f5f3ed"/>
+    <path d="M40 120c0-73 41-110 92-110 22 0 43 7 58 21-64-8-106 28-126 105-8 31 0 64 18 86-25-16-42-48-42-102z" fill="#dce7e2"/>
+    <ellipse cx="100" cy="111" rx="8" ry="10" fill="#203a3d"/><ellipse cx="166" cy="111" rx="8" ry="10" fill="#203a3d"/>
+    <path d="M118 139c7-8 23-8 30 0 2 8-3 17-15 17-12 0-17-9-15-17z" fill="#1d3437"/><path d="M133 156v12M115 172c11 9 25 9 36 0" fill="none" stroke="#496967" stroke-width="4" stroke-linecap="round"/>
+    <path d="M96 231l36 28 36-28 21 93H75z" fill="#718d89"/><path d="M132 259v65" stroke="#d4b274" stroke-width="6"/>
+    <path d="M72 261c-32 5-50 29-53 61M192 261c32 5 50 29 53 61" fill="none" stroke="#edf0ea" stroke-width="38" stroke-linecap="round"/>
+    <path d="M69 329h126" stroke="#d8e2dc" stroke-width="24" stroke-linecap="round"/>
+  </g>
+
+  <g transform="translate(1070 110)">
+    <rect width="334" height="78" rx="24" fill="#eff5ed" fill-opacity=".96"/>
+    <path d="M290 78l-30 30 7-30z" fill="#eff5ed"/>
+    <text x="25" y="33" fill="#61706a" font-family="system-ui,sans-serif" font-size="14">机魂不悦于排版琐事。</text>
+    <text x="25" y="58" fill="#213f41" font-family="system-ui,sans-serif" font-weight="700" font-size="17">报告已经请帮手做好，等你过目。</text>
+  </g>
+
+  <g transform="translate(94 92)">
+    <text fill="#dcece5" font-family="system-ui,sans-serif" font-weight="750" font-size="28">CYBER BEAR · 极光书房</text>
+    <text y="34" fill="#abc9c0" font-family="system-ui,sans-serif" font-size="15" letter-spacing="2">A QUIET LOCAL WORK COMPANION</text>
+  </g>
+</svg>

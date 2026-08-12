@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Cyber Bear Roleplay-first 高保真设计图</title>
+  <desc id="desc">极光书房成为主场景，极昼与用户持续相处；现实工作以独立系统行动卡短暂拉开幕布。</desc>
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#cadbd5"/><stop offset=".48" stop-color="#e7e6de"/><stop offset="1" stop-color="#d8c7b4"/></linearGradient>
+    <linearGradient id="scene" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#17333b"/><stop offset=".52" stop-color="#21484a"/><stop offset="1" stop-color="#162a33"/></linearGradient>
+    <radialGradient id="warm" cx="79%" cy="77%" r="42%"><stop stop-color="#dfbe82" stop-opacity=".56"/><stop offset=".46" stop-color="#b97e56" stop-opacity=".15"/><stop offset="1" stop-color="#172f37" stop-opacity="0"/></radialGradient>
+    <linearGradient id="aurora" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#98e1cc" stop-opacity="0"/><stop offset=".4" stop-color="#a9e6d3" stop-opacity=".72"/><stop offset=".72" stop-color="#73aeb9" stop-opacity=".36"/><stop offset="1" stop-color="#98e1cc" stop-opacity="0"/></linearGradient>
+    <filter id="windowShadow"><feDropShadow dx="0" dy="30" stdDeviation="38" flood-color="#172e30" flood-opacity=".26"/></filter>
+    <filter id="cardShadow"><feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#142b2d" flood-opacity=".18"/></filter>
+  </defs>
+
+  <rect width="1600" height="1000" fill="url(#page)"/>
+  <circle cx="1475" cy="40" r="280" fill="#74b39f" opacity=".14"/>
+  <circle cx="92" cy="940" r="260" fill="#ba8767" opacity=".15"/>
+
+  <g filter="url(#windowShadow)">
+    <rect x="42" y="38" width="1516" height="924" rx="29" fill="#f6f3eb" stroke="#fff" stroke-opacity=".9"/>
+    <rect x="42" y="38" width="1516" height="57" rx="29" fill="#eceee8"/>
+    <path d="M42 72v23h1516V72" fill="#eceee8"/>
+    <circle cx="72" cy="66" r="7" fill="#d9957c"/><circle cx="95" cy="66" r="7" fill="#dfba70"/><circle cx="118" cy="66" r="7" fill="#7eac8b"/>
+    <text x="147" y="71" fill="#34504e" font-family="system-ui,sans-serif" font-size="13" font-weight="750">Cyber Bear</text>
+    <text x="758" y="71" fill="#304a48" font-family="Georgia,'Songti SC',serif" font-size="14" text-anchor="middle">极光书房 · 第一夜</text>
+    <circle cx="1348" cy="66" r="5" fill="#73a698"/><text x="1360" y="71" fill="#6f817c" font-family="system-ui,sans-serif" font-size="11">极昼的声音稳定</text>
+    <rect x="1462" y="50" width="72" height="32" rx="10" fill="#dfe8e2"/><text x="1498" y="71" fill="#41625d" font-family="system-ui,sans-serif" font-size="11" text-anchor="middle">幕后</text>
+  </g>
+
+  <g>
+    <rect x="42" y="95" width="230" height="867" fill="#e7ece6"/>
+    <path d="M272 95v867" stroke="#d2d9d2"/>
+    <g transform="translate(66 121)">
+      <circle cx="26" cy="26" r="26" fill="#285754"/>
+      <circle cx="16" cy="13" r="9" fill="#f2f0e8"/><circle cx="37" cy="13" r="9" fill="#f2f0e8"/>
+      <path d="M8 28c0-15 8-23 18-23s18 8 18 23c0 13-8 22-18 22S8 41 8 28z" fill="#f2f0e8"/>
+      <circle cx="20" cy="27" r="2.5" fill="#274847"/><circle cx="33" cy="27" r="2.5" fill="#274847"/><path d="M23 34c2-3 6-3 8 0 0 4-8 4-8 0z" fill="#274847"/>
+      <text x="66" y="22" fill="#203f3e" font-family="system-ui,sans-serif" font-size="17" font-weight="760">极昼</text>
+      <text x="66" y="44" fill="#71827d" font-family="system-ui,sans-serif" font-size="11">旧极光站的守护核心</text>
+    </g>
+    <rect x="65" y="196" width="184" height="42" rx="13" fill="#285b57"/><text x="157" y="222" fill="#fff" font-family="system-ui,sans-serif" font-size="13" font-weight="700" text-anchor="middle">回到书房</text>
+    <text x="70" y="278" fill="#84928e" font-family="system-ui,sans-serif" font-size="10" font-weight="800" letter-spacing="1.5">最近的对话</text>
+
+    <g transform="translate(63 296)">
+      <rect width="191" height="73" rx="14" fill="#fff"/>
+      <rect width="4" height="73" rx="2" fill="#72a797"/>
+      <text x="17" y="27" fill="#294846" font-family="system-ui,sans-serif" font-size="13" font-weight="700">门后的第一夜</text>
+      <text x="17" y="51" fill="#75857f" font-family="system-ui,sans-serif" font-size="11">初次见面 · 正在继续</text>
+    </g>
+    <g transform="translate(63 380)"><text x="17" y="27" fill="#445d59" font-family="system-ui,sans-serif" font-size="13" font-weight="650">旧日志与那场风暴</text><text x="17" y="50" fill="#75857f" font-family="system-ui,sans-serif" font-size="11">关于极昼的过去</text></g>
+    <g transform="translate(63 448)"><text x="17" y="27" fill="#445d59" font-family="system-ui,sans-serif" font-size="13" font-weight="650">给老板看的报告</text><text x="17" y="50" fill="#75857f" font-family="system-ui,sans-serif" font-size="11">现实工作 · 做好了</text></g>
+    <g transform="translate(63 516)"><text x="17" y="27" fill="#445d59" font-family="system-ui,sans-serif" font-size="13" font-weight="650">窗边的坏灯</text><text x="17" y="50" fill="#75857f" font-family="system-ui,sans-serif" font-size="11">共同经历 · 已记住</text></g>
+
+    <path d="M67 614h180" stroke="#d0d8d1"/>
+    <text x="70" y="647" fill="#84928e" font-family="system-ui,sans-serif" font-size="10" font-weight="800" letter-spacing="1.5">你们之间</text>
+    <g transform="translate(70 668)">
+      <path d="M3 4h17v17H3zM7 8h9M7 12h9M7 16h6" fill="none" stroke="#668078" stroke-width="1.7"/>
+      <text x="33" y="17" fill="#516a65" font-family="system-ui,sans-serif" font-size="12">极昼是谁</text>
+      <path d="M3 48c0-7 5-12 11-12s11 5 11 12-5 12-11 12S3 55 3 48zM9 48h10" fill="none" stroke="#668078" stroke-width="1.7"/>
+      <text x="33" y="52" fill="#516a65" font-family="system-ui,sans-serif" font-size="12">熊记得的你</text>
+      <path d="M4 79h20v17H4zM8 75h12v4" fill="none" stroke="#668078" stroke-width="1.7"/>
+      <text x="33" y="90" fill="#516a65" font-family="system-ui,sans-serif" font-size="12">共同经历</text>
+      <circle cx="14" cy="125" r="10" fill="none" stroke="#668078" stroke-width="1.7"/><path d="M14 120v10M9 125h10" stroke="#668078" stroke-width="1.7"/>
+      <text x="33" y="129" fill="#516a65" font-family="system-ui,sans-serif" font-size="12">相处设定</text>
+    </g>
+  </g>
+
+  <g>
+    <rect x="272" y="95" width="1286" height="867" fill="url(#scene)"/>
+    <rect x="272" y="95" width="1286" height="867" fill="url(#warm)"/>
+    <path d="M272 191Q625 89 930 181t628-18" fill="none" stroke="url(#aurora)" stroke-width="38" opacity=".7"/>
+    <path d="M272 198Q624 108 930 196t628-18" fill="none" stroke="url(#aurora)" stroke-width="7"/>
+
+    <g transform="translate(326 133)">
+      <rect width="560" height="346" rx="13" fill="#112930" stroke="#91beb4" stroke-opacity=".35" stroke-width="3"/>
+      <rect x="18" y="18" width="524" height="310" fill="#173741"/>
+      <path d="M18 239l82-61 71 45 75-84 94 77 69-47 75 58 58-38v139H18z" fill="#bfd4d1" fill-opacity=".22"/>
+      <path d="M18 277l83-45 62 39 91-52 79 53 76-38 75 44 58-21v71H18z" fill="#dce7e4" fill-opacity=".34"/>
+      <path d="M280 18v310M18 177h524" stroke="#9bc0b9" stroke-opacity=".18" stroke-width="3"/>
+      <text x="29" y="40" fill="#81aaa2" font-family="system-ui,sans-serif" font-size="9" letter-spacing="1.4">窗外只是书房的场景，不是现实天气</text>
+    </g>
+
+    <g transform="translate(1008 150)" opacity=".88">
+      <rect width="412" height="318" rx="13" fill="#21393a" stroke="#9dae9f" stroke-opacity=".28"/>
+      <path d="M25 103h362M25 207h362" stroke="#9eaa9c" stroke-opacity=".25" stroke-width="5"/>
+      <g fill="#cabd9f"><rect x="48" y="35" width="31" height="66" rx="3"/><rect x="86" y="48" width="48" height="53" rx="3" fill="#75a69b"/><rect x="142" y="27" width="26" height="74" rx="3" fill="#a1715e"/><rect x="177" y="43" width="60" height="58" rx="3" fill="#7c9590"/><rect x="246" y="34" width="23" height="67" rx="3" fill="#bd9d68"/><rect x="277" y="50" width="75" height="51" rx="3" fill="#aab9a8"/></g>
+      <path d="M72 290c4-46 41-76 79-76 45 0 83 35 87 76z" fill="#bb8959"/><circle cx="155" cy="242" r="18" fill="#f0d4a0"/>
+      <g transform="translate(275 223)"><path d="M31 66C8 53 4 30 18 14 34-5 65 1 72 26c7 25-17 54-41 40z" fill="#749f91"/><path d="M43 24C41 7 53-5 68-8 66 8 59 19 43 24zM37 27C19 22 10 8 14-6c14 7 22 16 23 33z" fill="#94b7a4"/></g>
+    </g>
+
+    <g transform="translate(396 422)" filter="url(#cardShadow)">
+      <ellipse cx="137" cy="304" rx="123" ry="24" fill="#08191e" fill-opacity=".42"/>
+      <circle cx="63" cy="70" r="42" fill="#f0f1ea"/><circle cx="211" cy="70" r="42" fill="#f0f1ea"/>
+      <path d="M50 118C50 41 89 9 137 9s87 32 87 109c0 53-22 85-47 99 42 23 66 66 62 112H35c-4-46 20-89 62-112-25-14-47-46-47-99z" fill="#f3f2eb"/>
+      <path d="M50 118C50 41 89 9 137 9c19 0 36 5 50 16-57 5-95 45-109 114-7 33 2 65 19 85-29-17-47-51-47-96z" fill="#d5e1dc"/>
+      <ellipse cx="103" cy="106" rx="7" ry="9" fill="#1f3c3d"/><ellipse cx="170" cy="106" rx="7" ry="9" fill="#1f3c3d"/>
+      <path d="M121 133c7-8 24-8 31 0 2 9-3 17-15 17s-18-8-16-17z" fill="#1e3739"/>
+      <path d="M137 150v12M119 166c11 8 25 8 36 0" fill="none" stroke="#516f6b" stroke-width="4" stroke-linecap="round"/>
+      <path d="M96 222l41 31 41-31 25 106H71z" fill="#6b8782"/>
+      <path d="M137 253v75" stroke="#d2b375" stroke-width="6"/>
+      <path d="M73 246c-31 7-48 32-52 65M201 246c31 7 48 32 52 65" fill="none" stroke="#edf0e9" stroke-width="38" stroke-linecap="round"/>
+      <rect x="92" y="292" width="92" height="38" rx="8" fill="#243e40"/>
+    </g>
+
+    <g transform="translate(700 518)" filter="url(#cardShadow)">
+      <rect width="654" height="205" rx="24" fill="#f7f3e9"/>
+      <text x="28" y="31" fill="#71817c" font-family="system-ui,sans-serif" font-size="11">极昼 · 第一个回应</text>
+      <text x="28" y="70" fill="#273f3f" font-family="Georgia,'Songti SC',serif" font-size="23" font-weight="700">“这不是极光站。”</text>
+      <text x="28" y="102" fill="#4f6661" font-family="system-ui,sans-serif" font-size="13">他看了一眼仍亮着的台灯，又看向门边的你。</text>
+      <text x="28" y="134" fill="#273f3f" font-family="Georgia,'Songti SC',serif" font-size="20">“不过这里至少还有人在工作。门是你开的？”</text>
+      <path d="M28 160h598" stroke="#ded7c8"/>
+      <text x="28" y="188" fill="#536f68" font-family="system-ui,sans-serif" font-size="11" font-weight="700">重新生成</text>
+      <text x="102" y="188" fill="#70827c" font-family="system-ui,sans-serif" font-size="11">生成后可 ‹ 1 / 2 › 切换</text>
+      <text x="245" y="188" fill="#70827c" font-family="system-ui,sans-serif" font-size="11">继续</text>
+      <text x="299" y="188" fill="#70827c" font-family="system-ui,sans-serif" font-size="11">记住这一刻</text>
+      <text x="388" y="188" fill="#70827c" font-family="system-ui,sans-serif" font-size="11">这不像极昼…</text>
+      <text x="486" y="188" fill="#70827c" font-family="system-ui,sans-serif" font-size="11">从这里另开一段</text>
+    </g>
+    <g transform="translate(1050 716)" filter="url(#cardShadow)">
+      <rect width="338" height="190" rx="18" fill="#fffaf1" stroke="#d9d2c4"/>
+      <text x="18" y="27" fill="#314c48" font-family="system-ui,sans-serif" font-size="11" font-weight="700">哪里不像极昼？</text>
+      <g fill="#fff" stroke="#ddd6c8">
+        <rect x="18" y="41" width="76" height="28" rx="8"/><rect x="101" y="41" width="76" height="28" rx="8"/>
+        <rect x="184" y="41" width="116" height="28" rx="8"/><rect x="18" y="76" width="86" height="28" rx="8"/>
+        <rect x="111" y="76" width="104" height="28" rx="8"/>
+      </g>
+      <g fill="#61726d" font-family="system-ui,sans-serif" font-size="9">
+        <text x="32" y="59">语气不对</text><text x="115" y="59">忘了自己</text><text x="198" y="59">忘了我们的经历</text>
+        <text x="32" y="94">替我行动</text><text x="125" y="94">把虚构当现实</text>
+      </g>
+      <text x="18" y="124" fill="#61726d" font-family="system-ui,sans-serif" font-size="9" font-weight="700">其他原因</text>
+      <rect x="18" y="133" width="302" height="39" rx="9" fill="#fff" stroke="#d8d2c5"/>
+      <text x="30" y="157" fill="#98a29e" font-family="system-ui,sans-serif" font-size="9">也可以直接写哪里不对……</text>
+    </g>
+
+    <g transform="translate(700 747)" filter="url(#cardShadow)">
+      <rect width="654" height="101" rx="19" fill="#fffdf7" stroke="#d6d8d0"/>
+      <rect x="18" y="16" width="618" height="51" rx="14" fill="#fff" stroke="#d5dad3"/>
+      <text x="37" y="47" fill="#94a09b" font-family="system-ui,sans-serif" font-size="13">对极昼说点什么……</text>
+      <circle cx="599" cy="42" r="18" fill="#285b57"/><path d="M591 42h15M600 35l7 7-7 7" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="20" y="89" fill="#61766f" font-family="system-ui,sans-serif" font-size="11">＋ 添加材料</text>
+      <text x="113" y="89" fill="#61766f" font-family="system-ui,sans-serif" font-size="11">幕后</text>
+      <text x="547" y="89" fill="#85928d" font-family="system-ui,sans-serif" font-size="11">角色感</text>
+    </g>
+
+    <g transform="translate(1110 841)" filter="url(#cardShadow)">
+      <rect width="360" height="88" rx="18" fill="#f3eee4"/>
+      <circle cx="28" cy="28" r="10" fill="#c38d5d"/>
+      <text x="48" y="26" fill="#5f695f" font-family="system-ui,sans-serif" font-size="11">系统层 · 首次关系记忆请求</text>
+      <text x="20" y="51" fill="#334947" font-family="system-ui,sans-serif" font-size="12">允许极昼记住确认的称呼和共同经历？</text>
+      <rect x="207" y="60" width="58" height="23" rx="8" fill="#fff" stroke="#d3d5cd"/><text x="236" y="76" fill="#65746f" font-family="system-ui,sans-serif" font-size="10" text-anchor="middle">暂不</text>
+      <rect x="273" y="60" width="67" height="23" rx="8" fill="#315f5a"/><text x="306" y="76" fill="#fff" font-family="system-ui,sans-serif" font-size="10" text-anchor="middle">允许</text>
+    </g>
+
+    <g transform="translate(300 873)">
+      <circle cx="6" cy="6" r="6" fill="#6fa493"/><text x="20" y="10" fill="#9fbbb4" font-family="system-ui,sans-serif" font-size="10">没有读取任何文件 · 没有现实行动 · 关系记忆尚未启用</text>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Cyber Bear 门后的第一夜概念图</title>
+  <desc id="desc">用户第一次打开极光书房的门，已有过去的机魂北极熊极昼从旧极光站的风雪中跨入新居所。</desc>
+  <defs>
+    <linearGradient id="room" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#172a31"/><stop offset=".52" stop-color="#213b3e"/><stop offset="1" stop-color="#15252d"/></linearGradient>
+    <radialGradient id="hearth" cx="67%" cy="72%" r="38%"><stop stop-color="#e7c98d" stop-opacity=".74"/><stop offset=".45" stop-color="#b97c51" stop-opacity=".18"/><stop offset="1" stop-color="#13262d" stop-opacity="0"/></radialGradient>
+    <linearGradient id="door" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#dff7f0"/><stop offset=".28" stop-color="#7ed4c7"/><stop offset=".68" stop-color="#4b8b97"/><stop offset="1" stop-color="#1c3944"/></linearGradient>
+    <linearGradient id="aurora" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#88e0c6" stop-opacity="0"/><stop offset=".38" stop-color="#aaf0d4" stop-opacity=".9"/><stop offset=".7" stop-color="#86bfd1" stop-opacity=".45"/><stop offset="1" stop-color="#8fdcc8" stop-opacity="0"/></linearGradient>
+    <linearGradient id="desk" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#72503d"/><stop offset="1" stop-color="#382821"/></linearGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="24"/></filter>
+    <filter id="shadow"><feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#06171d" flood-opacity=".55"/></filter>
+    <pattern id="wood" width="90" height="38" patternUnits="userSpaceOnUse"><path d="M0 12c24-8 47 8 90-2M0 31c29-7 62 6 90-3" fill="none" stroke="#edcfac" stroke-opacity=".055" stroke-width="2"/></pattern>
+  </defs>
+
+  <rect width="1600" height="1000" fill="#0c1b22"/>
+  <rect x="38" y="36" width="1524" height="928" rx="38" fill="url(#room)" stroke="#90c5ba" stroke-opacity=".18" stroke-width="2"/>
+  <rect x="38" y="36" width="1524" height="928" rx="38" fill="url(#hearth)"/>
+
+  <g opacity=".92">
+    <path d="M32 145Q354 34 692 122t754 8" fill="none" stroke="url(#aurora)" stroke-width="54" filter="url(#soft)"/>
+    <path d="M35 158Q362 54 695 139t754 7" fill="none" stroke="url(#aurora)" stroke-width="11"/>
+  </g>
+
+  <g transform="translate(88 95)">
+    <text fill="#dcebe6" font-family="system-ui,sans-serif" font-size="25" font-weight="750">门后的第一夜</text>
+    <text y="31" fill="#8fb5ad" font-family="system-ui,sans-serif" font-size="13" letter-spacing="2.7">THE THRESHOLD ROOM · CYBER BEAR</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <path d="M92 220h405v594H92z" fill="#10252d" stroke="#a4d7cc" stroke-opacity=".38" stroke-width="5"/>
+    <path d="M120 248h347v538H120z" fill="url(#door)"/>
+    <path d="M120 248h347v538H120z" fill="#b8e3dc" opacity=".12"/>
+    <path d="M120 624l63-52 52 26 62-71 63 49 51-34 56 48v196H120z" fill="#e6f0ed" fill-opacity=".36"/>
+    <path d="M120 672l68-43 56 31 53-37 71 46 55-26 44 31v112H120z" fill="#f6f7f3" fill-opacity=".45"/>
+    <path d="M120 248h347M120 786h347" stroke="#e5f1ed" stroke-opacity=".4" stroke-width="4"/>
+    <path d="M92 814h405" stroke="#80644e" stroke-width="18"/>
+  </g>
+
+  <g transform="translate(213 355)" filter="url(#shadow)">
+    <ellipse cx="113" cy="385" rx="116" ry="24" fill="#07171c" fill-opacity=".48"/>
+    <circle cx="43" cy="94" r="39" fill="#f0f2ec"/><circle cx="186" cy="94" r="39" fill="#f0f2ec"/>
+    <path d="M34 137C34 55 69 22 115 22s81 33 81 115c0 54-20 87-43 103 39 24 60 69 56 126H20c-4-57 17-102 56-126-23-16-42-49-42-103z" fill="#f4f4ed"/>
+    <path d="M34 137C34 55 69 22 115 22c18 0 35 5 48 16-53 6-87 45-103 115-7 32 0 65 15 89-25-19-41-53-41-105z" fill="#d6e2dd"/>
+    <ellipse cx="86" cy="123" rx="7" ry="9" fill="#213d40"/><ellipse cx="145" cy="123" rx="7" ry="9" fill="#213d40"/>
+    <path d="M101 151c7-8 22-8 29 0 2 8-3 16-14 16-12 0-17-8-15-16z" fill="#1f383b"/>
+    <path d="M115 167v12M98 182c10 8 24 8 34 0" fill="none" stroke="#53716d" stroke-width="4" stroke-linecap="round"/>
+    <path d="M76 246l39 31 39-31 24 118H52z" fill="#6c8783"/>
+    <path d="M115 277v87" stroke="#d2b475" stroke-width="6"/>
+    <path d="M57 276c-31 7-48 34-51 73M173 276c31 7 48 34 51 73" fill="none" stroke="#eef1eb" stroke-width="36" stroke-linecap="round"/>
+    <rect x="72" y="327" width="90" height="42" rx="8" fill="#263f42"/>
+    <path d="M85 339h64M85 349h50M85 359h57" stroke="#83b4a9" stroke-width="3" stroke-linecap="round"/>
+  </g>
+
+  <g transform="translate(555 196)">
+    <path d="M0 535h968v233H0z" fill="url(#desk)"/>
+    <path d="M0 535h968v233H0z" fill="url(#wood)"/>
+    <path d="M0 535c255-28 663-33 968 6" fill="none" stroke="#c19572" stroke-opacity=".2" stroke-width="8"/>
+    <rect x="0" y="536" width="968" height="16" fill="#a77b5f" fill-opacity=".25"/>
+
+    <g transform="translate(82 62)" opacity=".92">
+      <rect width="330" height="364" rx="12" fill="#21383a" stroke="#b7c7b9" stroke-opacity=".3"/>
+      <path d="M25 104h280M25 209h280M25 314h280" stroke="#9cab9d" stroke-opacity=".28" stroke-width="5"/>
+      <g fill="#d1c4a5"><rect x="43" y="38" width="32" height="64" rx="3"/><rect x="82" y="51" width="46" height="51" rx="3" fill="#79a69c"/><rect x="136" y="29" width="25" height="73" rx="3" fill="#a3725d"/><rect x="168" y="44" width="55" height="58" rx="3" fill="#7d9692"/><rect x="230" y="35" width="22" height="67" rx="3" fill="#bd9e6a"/></g>
+      <g fill="#d1c4a5"><rect x="42" y="147" width="63" height="60" rx="3" fill="#8a6753"/><rect x="113" y="161" width="28" height="46" rx="3" fill="#c6ad7c"/><rect x="149" y="134" width="48" height="73" rx="3" fill="#6e9b90"/><rect x="205" y="151" width="76" height="56" rx="3" fill="#b5c5b2"/></g>
+      <path d="M77 300c5-42 37-70 72-70 41 0 74 31 79 70z" fill="#be8e5e"/><circle cx="152" cy="257" r="17" fill="#eed4a2"/>
+    </g>
+
+    <g transform="translate(493 62)" filter="url(#shadow)">
+      <rect width="386" height="308" rx="18" fill="#122a31" stroke="#91b9b1" stroke-opacity=".33"/>
+      <text x="28" y="36" fill="#93beb4" font-family="system-ui,sans-serif" font-size="11" letter-spacing="2">旧极光站 · 保存下来的记录</text>
+      <path d="M28 57h330" stroke="#45615f"/>
+      <g transform="translate(30 83)">
+        <circle cx="25" cy="25" r="25" fill="#31565a"/><path d="M13 25h24M25 13v24" stroke="#9fd4c7" stroke-width="3"/>
+        <text x="67" y="19" fill="#dce8e3" font-family="system-ui,sans-serif" font-size="14" font-weight="700">维护规程 07</text>
+        <text x="67" y="42" fill="#8eaaa3" font-family="system-ui,sans-serif" font-size="12">风暴前必须核对真实回报。</text>
+      </g>
+      <g transform="translate(30 157)">
+        <circle cx="25" cy="25" r="25" fill="#5b4640"/><path d="M14 18h22M14 26h15M14 34h18" stroke="#d0a68e" stroke-width="3" stroke-linecap="round"/>
+        <text x="67" y="19" fill="#dce8e3" font-family="system-ui,sans-serif" font-size="14" font-weight="700">损坏日志 214</text>
+        <text x="67" y="42" fill="#8eaaa3" font-family="system-ui,sans-serif" font-size="12">“修复完成”——后来证明并非如此。</text>
+      </g>
+      <g transform="translate(30 231)">
+        <circle cx="25" cy="25" r="25" fill="#4b5d4f"/><path d="M13 29c8-17 16-17 24 0M17 19h16" fill="none" stroke="#b9d1ad" stroke-width="3"/>
+        <text x="67" y="19" fill="#dce8e3" font-family="system-ui,sans-serif" font-size="14" font-weight="700">北地故事 · 作者未知</text>
+        <text x="67" y="42" fill="#8eaaa3" font-family="system-ui,sans-serif" font-size="12">第一则故事仍没有署名。</text>
+      </g>
+    </g>
+
+    <g transform="translate(92 564) rotate(-2)" filter="url(#shadow)">
+      <rect width="390" height="166" rx="16" fill="#f3eee3"/>
+      <text x="25" y="30" fill="#8b795f" font-family="system-ui,sans-serif" font-size="11" font-weight="700">留给新居所的第一张空白记录</text>
+      <path d="M25 52h340M25 79h300M25 106h327" stroke="#cfc3af" stroke-width="4" stroke-linecap="round"/>
+      <text x="25" y="142" fill="#405653" font-family="system-ui,sans-serif" font-size="14">这里还没有关于你的过去。那部分从今天开始。</text>
+    </g>
+
+    <g transform="translate(537 560)" filter="url(#shadow)">
+      <rect width="348" height="136" rx="22" fill="#f9f6ed"/>
+      <text x="25" y="31" fill="#75847f" font-family="system-ui,sans-serif" font-size="11">极昼</text>
+      <text x="25" y="62" fill="#203f3e" font-family="Georgia,'Songti SC',serif" font-size="20" font-weight="700">“这不是极光站。”</text>
+      <text x="25" y="89" fill="#536c67" font-family="system-ui,sans-serif" font-size="13">“不过这里至少还有人在工作。”</text>
+      <text x="25" y="115" fill="#315f59" font-family="system-ui,sans-serif" font-size="13" font-weight="700">“门是你开的？”</text>
+      <path d="M70 136l-30 24 8-24z" fill="#f9f6ed"/>
+    </g>
+  </g>
+
+  <g transform="translate(103 866)">
+    <rect width="455" height="58" rx="17" fill="#10272d" fill-opacity=".88" stroke="#719d94" stroke-opacity=".35"/>
+    <text x="20" y="25" fill="#8db9af" font-family="system-ui,sans-serif" font-size="10" letter-spacing="1.8">SELF CANON</text>
+    <text x="20" y="44" fill="#d6e5df" font-family="system-ui,sans-serif" font-size="13">他带着自己的过去到来，却没有伪造与你的过去。</text>
+  </g>
+  <g transform="translate(1116 866)">
+    <text x="0" y="17" fill="#91aaa4" font-family="system-ui,sans-serif" font-size="11">角色是主体</text>
+    <path d="M83 13h64" stroke="#708d87"/>
+    <text x="160" y="17" fill="#91aaa4" font-family="system-ui,sans-serif" font-size="11">工作是能力</text>
+    <path d="M235 13h64" stroke="#708d87"/>
+    <text x="312" y="17" fill="#d1b782" font-family="system-ui,sans-serif" font-size="11">系统是边界</text>
+  </g>
+</svg>
