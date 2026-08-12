@@ -1,0 +1,3008 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Bear Harness · 极光圣所本地交互原型">
+  <title>极光圣所 · Bear Harness</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink-0: #07131f;
+      --ink-1: #0a1c2b;
+      --ink-2: #0e2938;
+      --ink-3: #153b4a;
+      --ice-0: #ecf7f5;
+      --ice-1: #c9e3e2;
+      --ice-2: #8eafb3;
+      --ice-3: #5f7f87;
+      --aurora-0: #d1ffef;
+      --aurora-1: #66e5d3;
+      --aurora-2: #25b7b0;
+      --aurora-3: #147b82;
+      --amber-0: #fff2bf;
+      --amber-1: #f2c56e;
+      --amber-2: #c78b39;
+      --danger-0: #ffd4cc;
+      --danger-1: #ed9187;
+      --danger-2: #9c514f;
+      --violet-0: #d8d5ff;
+      --violet-1: #9899df;
+      --line: rgba(177, 231, 226, 0.16);
+      --line-strong: rgba(177, 231, 226, 0.32);
+      --line-amber: rgba(242, 197, 110, 0.4);
+      --glass: rgba(8, 26, 39, 0.84);
+      --glass-soft: rgba(10, 33, 47, 0.68);
+      --s-1: 4px;
+      --s-2: 8px;
+      --s-3: 12px;
+      --s-4: 16px;
+      --s-5: 20px;
+      --s-6: 24px;
+      --s-7: 28px;
+      --s-8: 32px;
+      --s-10: 40px;
+      --s-12: 48px;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --radius-pill: 999px;
+      --shadow-deep: 0 24px 60px rgba(1, 8, 14, 0.44);
+      --shadow-panel: 0 12px 28px rgba(1, 8, 14, 0.24);
+      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+      --fast: 160ms;
+      --slow: 480ms;
+      --topbar-height: 84px;
+      --rail-height: 92px;
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-width: 320px;
+      background: var(--ink-0);
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      overflow-x: hidden;
+      color: var(--ice-0);
+      background:
+        radial-gradient(circle at 50% -20%, rgba(34, 139, 150, 0.24), transparent 46%),
+        radial-gradient(circle at 8% 42%, rgba(27, 91, 112, 0.16), transparent 30%),
+        var(--ink-0);
+      font-family: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", ui-sans-serif, system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      letter-spacing: 0.01em;
+    }
+
+    body::before {
+      position: fixed;
+      z-index: -2;
+      inset: 0;
+      pointer-events: none;
+      content: "";
+      opacity: 0.26;
+      background-image:
+        linear-gradient(rgba(170, 221, 215, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(170, 221, 215, 0.025) 1px, transparent 1px);
+      background-size: 32px 32px;
+      mask-image: linear-gradient(to bottom, black, transparent 90%);
+    }
+
+    body::after {
+      position: fixed;
+      z-index: 20;
+      inset: 0;
+      display: none;
+      pointer-events: none;
+      content: "";
+      background: rgba(2, 11, 17, 0.68);
+    }
+
+    body.drawer-open::after {
+      display: block;
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+    }
+
+    button,
+    summary {
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    textarea:focus-visible,
+    summary:focus-visible {
+      outline: 2px solid var(--amber-1);
+      outline-offset: 3px;
+    }
+
+    .app-shell {
+      width: min(1680px, 100%);
+      min-height: 100vh;
+      margin: 0 auto;
+      padding: var(--s-5) var(--s-6) var(--rail-height);
+    }
+
+    .topbar {
+      position: relative;
+      z-index: 3;
+      display: flex;
+      min-height: var(--topbar-height);
+      align-items: center;
+      gap: var(--s-6);
+      padding: var(--s-4) var(--s-5);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background: linear-gradient(110deg, rgba(9, 29, 43, 0.96), rgba(8, 24, 37, 0.82));
+      box-shadow: var(--shadow-panel);
+    }
+
+    .brand-lockup {
+      display: flex;
+      flex: 1 1 auto;
+      min-width: 210px;
+      align-items: center;
+      gap: var(--s-3);
+    }
+
+    .brand-mark {
+      position: relative;
+      display: grid;
+      width: 40px;
+      height: 40px;
+      flex: 0 0 40px;
+      place-items: center;
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px 8px 8px 2px;
+      background: var(--ink-2);
+      color: var(--aurora-1);
+      transform: rotate(45deg);
+    }
+
+    .brand-mark::before,
+    .brand-mark::after {
+      position: absolute;
+      content: "";
+      border: 1px solid currentColor;
+      opacity: 0.7;
+    }
+
+    .brand-mark::before {
+      width: 17px;
+      height: 17px;
+      transform: rotate(45deg);
+    }
+
+    .brand-mark::after {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--amber-1);
+    }
+
+    .brand-copy {
+      min-width: 0;
+    }
+
+    .kicker,
+    .eyebrow {
+      margin: 0;
+      color: var(--ice-3);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
+
+    .brand-copy h1 {
+      margin: var(--s-1) 0 0;
+      color: var(--ice-0);
+      font-family: Georgia, "Noto Serif SC", serif;
+      font-size: clamp(19px, 2vw, 25px);
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      line-height: 1.15;
+    }
+
+    .session-context {
+      display: flex;
+      min-width: 190px;
+      flex-direction: column;
+      gap: var(--s-1);
+      padding: 0 var(--s-5);
+      border-right: 1px solid var(--line);
+      border-left: 1px solid var(--line);
+    }
+
+    .session-context strong {
+      overflow: hidden;
+      color: var(--ice-1);
+      font-size: 13px;
+      font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .session-context span:last-child {
+      color: var(--aurora-1);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+    }
+
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      gap: var(--s-2);
+    }
+
+    .host-chip,
+    .source-badge,
+    .status-pill,
+    .mini-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--s-1);
+      white-space: nowrap;
+    }
+
+    .host-chip {
+      padding: 7px 10px;
+      border: 1px solid var(--line-amber);
+      border-radius: var(--radius-pill);
+      background: rgba(199, 139, 57, 0.12);
+      color: var(--amber-0);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+
+    .host-chip::before {
+      width: 7px;
+      height: 7px;
+      border: 1px solid var(--amber-0);
+      border-radius: 50%;
+      background: var(--amber-1);
+      content: "";
+      box-shadow: 0 0 0 3px rgba(242, 197, 110, 0.12);
+    }
+
+    .icon-button,
+    .primary-button,
+    .secondary-button,
+    .quiet-button,
+    .danger-button {
+      min-height: 36px;
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+      transition: border-color var(--fast) var(--ease-out), background-color var(--fast) var(--ease-out), color var(--fast) var(--ease-out), transform var(--fast) var(--ease-out);
+    }
+
+    .icon-button:hover,
+    .primary-button:hover,
+    .secondary-button:hover,
+    .quiet-button:hover,
+    .danger-button:hover {
+      transform: translateY(-1px);
+    }
+
+    .icon-button:active,
+    .primary-button:active,
+    .secondary-button:active,
+    .quiet-button:active,
+    .danger-button:active {
+      transform: translateY(0);
+    }
+
+    .icon-button,
+    .quiet-button {
+      padding: 0 var(--s-3);
+      border: 1px solid var(--line);
+      background: rgba(13, 43, 56, 0.54);
+      color: var(--ice-1);
+    }
+
+    .icon-button:hover,
+    .quiet-button:hover {
+      border-color: var(--line-strong);
+      background: rgba(23, 65, 76, 0.72);
+      color: var(--ice-0);
+    }
+
+    .primary-button {
+      padding: 0 var(--s-4);
+      border: 1px solid var(--aurora-1);
+      background: var(--aurora-2);
+      color: #062329;
+      font-weight: 700;
+    }
+
+    .primary-button:hover {
+      background: var(--aurora-1);
+    }
+
+    .secondary-button {
+      padding: 0 var(--s-4);
+      border: 1px solid var(--line-strong);
+      background: rgba(23, 66, 77, 0.64);
+      color: var(--ice-0);
+      font-weight: 600;
+    }
+
+    .secondary-button:hover {
+      border-color: var(--aurora-1);
+      color: var(--aurora-0);
+    }
+
+    .danger-button {
+      padding: 0 var(--s-4);
+      border: 1px solid rgba(237, 145, 135, 0.46);
+      background: rgba(156, 81, 79, 0.14);
+      color: var(--danger-0);
+      font-weight: 600;
+    }
+
+    .danger-button:hover {
+      border-color: var(--danger-1);
+      background: rgba(156, 81, 79, 0.3);
+    }
+
+    .button-small {
+      min-height: 30px;
+      padding: 0 var(--s-3);
+      font-size: 12px;
+    }
+
+    .button-wide {
+      width: 100%;
+    }
+
+    kbd {
+      padding: 1px 5px;
+      border: 1px solid var(--line-strong);
+      border-radius: 3px;
+      color: var(--ice-3);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+    }
+
+    .concept-details {
+      position: relative;
+    }
+
+    .concept-details summary {
+      display: flex;
+      min-height: 36px;
+      align-items: center;
+      gap: var(--s-2);
+      padding: 0 var(--s-3);
+      cursor: pointer;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      color: var(--ice-1);
+      font-size: 12px;
+      list-style: none;
+    }
+
+    .concept-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .concept-details summary::before {
+      width: 9px;
+      height: 9px;
+      border: 1px solid var(--aurora-1);
+      content: "";
+      transform: rotate(45deg);
+    }
+
+    .concept-details summary::after {
+      margin-left: var(--s-1);
+      color: var(--ice-3);
+      content: "↗";
+      font-size: 14px;
+    }
+
+    .concept-details[open] summary::after {
+      content: "↘";
+    }
+
+    .concept-view {
+      position: absolute;
+      z-index: 25;
+      top: calc(100% + var(--s-3));
+      right: 0;
+      width: min(360px, calc(100vw - 32px));
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-md);
+      background: var(--ink-1);
+      box-shadow: var(--shadow-deep);
+    }
+
+    .concept-view img {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16 / 10;
+      object-fit: cover;
+      background:
+        linear-gradient(135deg, rgba(26, 133, 136, 0.5), transparent 44%),
+        linear-gradient(180deg, #102f40, #071722 72%);
+    }
+
+    .concept-view figcaption,
+    .concept-note {
+      margin: 0;
+      padding: var(--s-3) var(--s-4);
+      color: var(--ice-2);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .concept-note strong {
+      color: var(--amber-1);
+      font-weight: 600;
+    }
+
+    .main-layout {
+      display: grid;
+      grid-template-columns: minmax(210px, 240px) minmax(420px, 1fr) minmax(320px, 380px);
+      align-items: start;
+      gap: var(--s-4);
+      margin-top: var(--s-5);
+    }
+
+    .left-column,
+    .center-column,
+    .right-column {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      gap: var(--s-4);
+    }
+
+    .panel {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--glass);
+      box-shadow: var(--shadow-panel);
+    }
+
+    .panel::before {
+      position: absolute;
+      top: 0;
+      right: 0;
+      left: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(102, 229, 211, 0.4), transparent);
+      content: "";
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: var(--s-3);
+      padding: var(--s-4) var(--s-4) var(--s-3);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-header h2,
+    .panel-header h3 {
+      margin: var(--s-1) 0 0;
+      color: var(--ice-0);
+      font-size: 14px;
+      font-weight: 650;
+      letter-spacing: 0.03em;
+    }
+
+    .panel-header .eyebrow {
+      color: var(--aurora-1);
+    }
+
+    .panel-body {
+      padding: var(--s-4);
+    }
+
+    .source-badge {
+      min-height: 20px;
+      padding: 2px 7px 2px 5px;
+      border: 1px solid currentColor;
+      border-radius: 3px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      line-height: 1;
+    }
+
+    .source-badge::before {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      flex: 0 0 8px;
+      content: "";
+    }
+
+    .source-badge.bear {
+      color: var(--aurora-0);
+      background: rgba(37, 183, 176, 0.12);
+    }
+
+    .source-badge.bear::before {
+      border: 1px solid currentColor;
+      border-radius: 50% 50% 45% 45%;
+      background: rgba(102, 229, 211, 0.7);
+    }
+
+    .source-badge.worker {
+      color: var(--violet-0);
+      background: rgba(152, 153, 223, 0.1);
+    }
+
+    .source-badge.worker::before {
+      border-radius: 2px;
+      background: currentColor;
+      clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    }
+
+    .source-badge.you {
+      color: var(--amber-0);
+      background: rgba(242, 197, 110, 0.1);
+    }
+
+    .source-badge.you::before {
+      border: 1px solid currentColor;
+      background: transparent;
+      transform: rotate(45deg);
+    }
+
+    .source-badge.host {
+      color: var(--amber-0);
+      background: rgba(242, 197, 110, 0.1);
+    }
+
+    .source-badge.host::before {
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 0 2px rgba(242, 197, 110, 0.12);
+    }
+
+    .status-pill {
+      padding: 4px 8px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-pill);
+      color: var(--ice-1);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+
+    .status-pill.running,
+    .status-pill.queued {
+      border-color: rgba(102, 229, 211, 0.52);
+      color: var(--aurora-0);
+    }
+
+    .status-pill.running::before {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--aurora-1);
+      content: "";
+      box-shadow: 0 0 0 3px rgba(102, 229, 211, 0.12);
+    }
+
+    .status-pill.draft {
+      border-color: var(--line-amber);
+      color: var(--amber-0);
+    }
+
+    .status-pill.returned,
+    .status-pill.accepted {
+      border-color: rgba(102, 229, 211, 0.52);
+      color: var(--aurora-0);
+    }
+
+    .status-pill.failed,
+    .status-pill.unknown,
+    .status-pill.canceled,
+    .status-pill.rejected {
+      border-color: rgba(237, 145, 135, 0.52);
+      color: var(--danger-0);
+    }
+
+    .session-list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-1);
+      padding: var(--s-2);
+    }
+
+    .session-item {
+      position: relative;
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: var(--s-2);
+      min-width: 0;
+      padding: var(--s-3);
+      cursor: pointer;
+      border: 1px solid transparent;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--ice-2);
+      text-align: left;
+      transition: background-color var(--fast) var(--ease-out), border-color var(--fast) var(--ease-out), color var(--fast) var(--ease-out);
+    }
+
+    .session-item:hover {
+      border-color: var(--line);
+      background: rgba(23, 66, 77, 0.34);
+      color: var(--ice-0);
+    }
+
+    .session-item.active {
+      border-color: rgba(102, 229, 211, 0.42);
+      background: rgba(37, 183, 176, 0.12);
+      color: var(--ice-0);
+    }
+
+    .session-item.active::before {
+      position: absolute;
+      top: 9px;
+      bottom: 9px;
+      left: -1px;
+      width: 2px;
+      background: var(--aurora-1);
+      content: "";
+    }
+
+    .session-glyph {
+      display: grid;
+      width: 18px;
+      height: 18px;
+      place-items: center;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      color: var(--aurora-1);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 9px;
+    }
+
+    .session-item:nth-child(2) .session-glyph {
+      border-radius: 3px;
+      color: var(--amber-1);
+      transform: rotate(45deg);
+    }
+
+    .session-item:nth-child(2) .session-glyph span {
+      transform: rotate(-45deg);
+    }
+
+    .session-item:nth-child(3) .session-glyph {
+      border-radius: 2px;
+      color: var(--violet-1);
+      clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    }
+
+    .session-copy {
+      min-width: 0;
+    }
+
+    .session-copy strong,
+    .session-copy span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .session-copy strong {
+      color: inherit;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .session-copy span {
+      margin-top: 2px;
+      color: var(--ice-3);
+      font-size: 10px;
+    }
+
+    .session-item .unread {
+      display: grid;
+      width: 18px;
+      height: 18px;
+      place-items: center;
+      border: 1px solid var(--line-amber);
+      border-radius: 50%;
+      color: var(--amber-1);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 9px;
+    }
+
+    .facts-list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-3);
+      margin: 0;
+    }
+
+    .fact-row {
+      display: grid;
+      grid-template-columns: 74px minmax(0, 1fr);
+      gap: var(--s-3);
+      margin: 0;
+    }
+
+    .fact-row dt {
+      color: var(--ice-3);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .fact-row dd {
+      min-width: 0;
+      margin: 0;
+      color: var(--ice-1);
+      font-size: 11px;
+      overflow-wrap: anywhere;
+    }
+
+    .fact-row dd strong {
+      color: var(--amber-1);
+      font-weight: 600;
+    }
+
+    .fact-note {
+      margin: var(--s-4) 0 0;
+      padding-top: var(--s-3);
+      border-top: 1px solid var(--line);
+      color: var(--ice-3);
+      font-size: 10px;
+      line-height: 1.55;
+    }
+
+    .legend-list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-2);
+    }
+
+    .legend-row {
+      display: flex;
+      align-items: center;
+      gap: var(--s-2);
+      color: var(--ice-2);
+      font-size: 11px;
+    }
+
+    .legend-row .source-badge {
+      flex: 0 0 auto;
+    }
+
+    .presence-plane {
+      position: relative;
+      min-height: 520px;
+      overflow: hidden;
+      isolation: isolate;
+      border: 1px solid rgba(102, 229, 211, 0.28);
+      border-radius: var(--radius-lg);
+      background:
+        radial-gradient(ellipse at 50% 58%, rgba(33, 117, 124, 0.28), transparent 35%),
+        linear-gradient(155deg, rgba(13, 50, 65, 0.78), rgba(5, 18, 30, 0.96) 64%);
+      box-shadow: var(--shadow-deep);
+    }
+
+    .presence-plane::before {
+      position: absolute;
+      z-index: -1;
+      inset: 0;
+      pointer-events: none;
+      content: "";
+      background:
+        linear-gradient(118deg, transparent 0 28%, rgba(178, 242, 224, 0.07) 29% 29.3%, transparent 29.5% 63%, rgba(178, 242, 224, 0.06) 63.3% 63.7%, transparent 64%),
+        linear-gradient(64deg, transparent 0 46%, rgba(178, 242, 224, 0.06) 46.2% 46.5%, transparent 47% 78%, rgba(178, 242, 224, 0.08) 78.2% 78.5%, transparent 79%);
+      opacity: 0.7;
+    }
+
+    .presence-plane::after {
+      position: absolute;
+      z-index: -1;
+      right: -15%;
+      bottom: -28%;
+      left: -15%;
+      height: 55%;
+      pointer-events: none;
+      content: "";
+      border-top: 1px solid rgba(102, 229, 211, 0.26);
+      background: linear-gradient(180deg, rgba(17, 62, 74, 0.2), transparent);
+      transform: perspective(340px) rotateX(62deg);
+      transform-origin: top;
+    }
+
+    .scene-topline,
+    .scene-footerline {
+      position: absolute;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--s-3);
+      color: var(--ice-3);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+    }
+
+    .scene-topline {
+      top: var(--s-5);
+      right: var(--s-6);
+      left: var(--s-6);
+    }
+
+    .scene-footerline {
+      right: var(--s-6);
+      bottom: var(--s-5);
+      left: var(--s-6);
+    }
+
+    .scene-topline span:last-child {
+      color: var(--amber-1);
+    }
+
+    .scene-footerline span:last-child {
+      color: var(--aurora-1);
+    }
+
+    .scene-grid {
+      position: absolute;
+      z-index: -1;
+      inset: 14% 12% 12%;
+      border: 1px solid rgba(126, 221, 211, 0.14);
+      clip-path: polygon(12% 0, 88% 0, 100% 100%, 0 100%);
+      opacity: 0.76;
+    }
+
+    .scene-grid::before,
+    .scene-grid::after {
+      position: absolute;
+      inset: 0;
+      content: "";
+      border: 1px solid rgba(126, 221, 211, 0.09);
+      clip-path: polygon(20% 0, 80% 0, 92% 100%, 8% 100%);
+    }
+
+    .scene-grid::after {
+      transform: scale(0.84) translateY(7%);
+    }
+
+    .aurora-ribbon {
+      position: absolute;
+      z-index: -1;
+      top: -16%;
+      left: 4%;
+      width: 92%;
+      height: 52%;
+      border-radius: 50%;
+      border-top: 1px solid rgba(174, 255, 226, 0.7);
+      box-shadow:
+        0 -10px 24px rgba(37, 183, 176, 0.3),
+        0 0 54px rgba(37, 183, 176, 0.1);
+      opacity: 0.72;
+      transform: rotate(-9deg) skewX(-17deg);
+    }
+
+    .aurora-ribbon::before,
+    .aurora-ribbon::after {
+      position: absolute;
+      content: "";
+      border-radius: 50%;
+      border-top: 1px solid rgba(102, 229, 211, 0.5);
+    }
+
+    .aurora-ribbon::before {
+      inset: 22px 7% -2px;
+      opacity: 0.66;
+    }
+
+    .aurora-ribbon::after {
+      inset: 44px 15% -6px;
+      opacity: 0.48;
+    }
+
+    .particle-field {
+      position: absolute;
+      z-index: 0;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .particle {
+      position: absolute;
+      width: 2px;
+      height: 2px;
+      border-radius: 50%;
+      background: var(--ice-1);
+      box-shadow: 0 0 8px var(--aurora-1);
+      opacity: 0.54;
+      animation: drift 9s var(--ease-out) infinite alternate;
+      animation-delay: var(--delay);
+    }
+
+    .particle:nth-child(3n) {
+      width: 3px;
+      height: 3px;
+      background: var(--amber-1);
+      box-shadow: 0 0 8px var(--amber-1);
+    }
+
+    .p-1 { top: 17%; left: 18%; --delay: -2s; }
+    .p-2 { top: 30%; left: 9%; --delay: -7s; }
+    .p-3 { top: 41%; left: 24%; --delay: -4s; }
+    .p-4 { top: 20%; left: 74%; --delay: -6s; }
+    .p-5 { top: 35%; left: 87%; --delay: -1s; }
+    .p-6 { top: 54%; left: 14%; --delay: -3s; }
+    .p-7 { top: 63%; left: 78%; --delay: -8s; }
+    .p-8 { top: 71%; left: 31%; --delay: -5s; }
+    .p-9 { top: 12%; left: 52%; --delay: -7s; }
+    .p-10 { top: 48%; left: 92%; --delay: -2s; }
+    .p-11 { top: 79%; left: 62%; --delay: -5s; }
+    .p-12 { top: 26%; left: 42%; --delay: -9s; }
+    .p-13 { top: 83%; left: 8%; --delay: -2s; }
+    .p-14 { top: 60%; left: 48%; --delay: -8s; }
+
+    @keyframes drift {
+      from { transform: translate3d(0, 0, 0); opacity: 0.3; }
+      to { transform: translate3d(8px, -14px, 0); opacity: 0.78; }
+    }
+
+    .bear-stage {
+      position: absolute;
+      z-index: 1;
+      top: 15%;
+      right: 12%;
+      bottom: 9%;
+      left: 12%;
+      display: grid;
+      place-items: center;
+    }
+
+    .bear-aura {
+      position: absolute;
+      width: min(66%, 330px);
+      aspect-ratio: 1;
+      border: 1px solid rgba(102, 229, 211, 0.46);
+      border-radius: 50%;
+      box-shadow: 0 0 0 16px rgba(102, 229, 211, 0.03), 0 0 56px rgba(37, 183, 176, 0.2);
+      transform: rotate(12deg) scaleY(0.78);
+    }
+
+    .bear-aura::before,
+    .bear-aura::after {
+      position: absolute;
+      inset: 11%;
+      border: 1px solid rgba(242, 197, 110, 0.28);
+      content: "";
+      transform: rotate(33deg) scaleY(0.75);
+    }
+
+    .bear-aura::after {
+      inset: 20%;
+      border-color: rgba(102, 229, 211, 0.22);
+      transform: rotate(-21deg) scaleY(0.76);
+    }
+
+    .bear-svg {
+      position: relative;
+      width: min(70%, 360px);
+      max-height: 370px;
+      overflow: visible;
+      filter: drop-shadow(0 18px 24px rgba(1, 9, 14, 0.46));
+    }
+
+    .bear-shadow {
+      fill: rgba(1, 11, 17, 0.46);
+    }
+
+    .bear-fur {
+      fill: #d9eceb;
+      stroke: #9fc4c4;
+      stroke-width: 2;
+    }
+
+    .bear-fur-shadow {
+      fill: #91b5b7;
+      stroke: #6e989d;
+      stroke-width: 2;
+    }
+
+    .bear-face {
+      fill: #e7f4f0;
+      stroke: #acd0cb;
+      stroke-width: 2;
+    }
+
+    .bear-dark {
+      fill: #1a4b59;
+    }
+
+    .bear-line {
+      fill: none;
+      stroke: #5b8990;
+      stroke-width: 2;
+      stroke-linecap: round;
+      opacity: 0.86;
+    }
+
+    .bear-glow {
+      fill: var(--aurora-1);
+      stroke: var(--aurora-0);
+      stroke-width: 1.5;
+      filter: drop-shadow(0 0 7px rgba(102, 229, 211, 0.8));
+    }
+
+    .bear-amber {
+      fill: var(--amber-1);
+      stroke: var(--amber-0);
+      stroke-width: 1.5;
+      filter: drop-shadow(0 0 6px rgba(242, 197, 110, 0.5));
+    }
+
+    .presence-copy {
+      position: absolute;
+      z-index: 2;
+      right: var(--s-6);
+      bottom: 14%;
+      left: var(--s-6);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: var(--s-2);
+      text-align: center;
+    }
+
+    .presence-copy h2 {
+      max-width: 520px;
+      margin: 0;
+      color: var(--ice-0);
+      font-family: Georgia, "Noto Serif SC", serif;
+      font-size: clamp(20px, 3vw, 32px);
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      line-height: 1.25;
+    }
+
+    .presence-copy p {
+      max-width: 580px;
+      margin: 0;
+      color: var(--ice-2);
+      font-size: 12px;
+    }
+
+    .presence-copy p strong {
+      color: var(--amber-1);
+      font-weight: 600;
+    }
+
+    .presence-status {
+      display: flex;
+      align-items: center;
+      gap: var(--s-2);
+      color: var(--aurora-1);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+      letter-spacing: 0.13em;
+    }
+
+    .presence-status::before {
+      width: 7px;
+      height: 7px;
+      border: 1px solid var(--aurora-0);
+      border-radius: 50%;
+      background: var(--aurora-1);
+      content: "";
+      box-shadow: 0 0 0 4px rgba(102, 229, 211, 0.1);
+    }
+
+    .conversation-panel {
+      display: flex;
+      min-height: 390px;
+      flex-direction: column;
+    }
+
+    .conversation-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--s-3);
+      padding: var(--s-4) var(--s-5) var(--s-3);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .conversation-head h2 {
+      margin: var(--s-1) 0 0;
+      font-size: 15px;
+      font-weight: 650;
+    }
+
+    .conversation-head .eyebrow {
+      color: var(--aurora-1);
+    }
+
+    .chat-list {
+      display: flex;
+      max-height: 360px;
+      min-height: 190px;
+      flex: 1 1 auto;
+      flex-direction: column;
+      gap: var(--s-4);
+      overflow: auto;
+      padding: var(--s-5);
+      scrollbar-color: var(--ink-3) transparent;
+    }
+
+    .message {
+      display: flex;
+      max-width: 88%;
+      flex-direction: column;
+      gap: var(--s-2);
+    }
+
+    .message.you {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+
+    .message-meta {
+      display: flex;
+      align-items: center;
+      gap: var(--s-2);
+      color: var(--ice-3);
+      font-size: 10px;
+    }
+
+    .message.you .message-meta {
+      flex-direction: row-reverse;
+    }
+
+    .message-bubble {
+      padding: var(--s-3) var(--s-4);
+      border: 1px solid var(--line);
+      border-radius: 3px var(--radius-md) var(--radius-md) var(--radius-md);
+      background: rgba(16, 47, 59, 0.72);
+      color: var(--ice-1);
+      font-size: 13px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+    }
+
+    .message.you .message-bubble {
+      border-color: rgba(242, 197, 110, 0.28);
+      border-radius: var(--radius-md) 3px var(--radius-md) var(--radius-md);
+      background: rgba(111, 76, 33, 0.22);
+      color: var(--amber-0);
+    }
+
+    .message-bubble strong {
+      color: var(--aurora-0);
+      font-weight: 600;
+    }
+
+    .composer {
+      display: flex;
+      align-items: flex-end;
+      gap: var(--s-2);
+      padding: var(--s-3) var(--s-4) var(--s-4);
+      border-top: 1px solid var(--line);
+    }
+
+    .composer textarea,
+    .steer-form input,
+    .terminal-form input,
+    .edit-fields input {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+      outline: 0;
+      background: rgba(4, 17, 27, 0.74);
+      color: var(--ice-0);
+    }
+
+    .composer textarea {
+      min-height: 44px;
+      max-height: 110px;
+      resize: vertical;
+      padding: 11px var(--s-3);
+      line-height: 1.4;
+    }
+
+    .composer textarea::placeholder,
+    .steer-form input::placeholder,
+    .terminal-form input::placeholder,
+    .edit-fields input::placeholder {
+      color: var(--ice-3);
+    }
+
+    .composer textarea:focus,
+    .steer-form input:focus,
+    .terminal-form input:focus,
+    .edit-fields input:focus {
+      border-color: var(--aurora-1);
+      box-shadow: 0 0 0 3px rgba(102, 229, 211, 0.1);
+    }
+
+    .right-column {
+      position: sticky;
+      top: var(--s-5);
+      max-height: calc(100vh - var(--s-5));
+      overflow: auto;
+      scrollbar-color: var(--ink-3) transparent;
+    }
+
+    .commission-card {
+      overflow: visible;
+    }
+
+    .commission-card .panel-header {
+      align-items: center;
+    }
+
+    .commission-id {
+      margin-top: var(--s-1);
+      color: var(--ice-3);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+    }
+
+    .commission-intro {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-2);
+      padding: var(--s-4);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .commission-intro h2 {
+      margin: 0;
+      color: var(--ice-0);
+      font-size: 18px;
+      font-weight: 650;
+      letter-spacing: 0.02em;
+      line-height: 1.25;
+    }
+
+    .commission-intro p {
+      margin: 0;
+      color: var(--ice-2);
+      font-size: 11px;
+      line-height: 1.55;
+    }
+
+    .commission-intro p strong {
+      color: var(--amber-1);
+      font-weight: 600;
+    }
+
+    .commission-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      margin: 0 var(--s-4) var(--s-4);
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+
+    .commission-field {
+      min-width: 0;
+      padding: var(--s-3);
+      background: rgba(8, 27, 39, 0.9);
+    }
+
+    .commission-field.full {
+      grid-column: 1 / -1;
+    }
+
+    .commission-field span {
+      display: block;
+      margin-bottom: var(--s-1);
+      color: var(--ice-3);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .commission-field strong,
+    .commission-field code {
+      display: block;
+      overflow-wrap: anywhere;
+      color: var(--ice-1);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .commission-field code {
+      color: var(--aurora-0);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-weight: 500;
+    }
+
+    .commission-field .source-badge {
+      display: inline-flex;
+    }
+
+    .commission-notice {
+      margin: 0 var(--s-4) var(--s-4);
+      padding: var(--s-3);
+      border-left: 2px solid var(--amber-1);
+      background: rgba(199, 139, 57, 0.1);
+      color: var(--amber-0);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .commission-notice.error {
+      border-color: var(--danger-1);
+      background: rgba(156, 81, 79, 0.12);
+      color: var(--danger-0);
+    }
+
+    .commission-notice.success {
+      border-color: var(--aurora-1);
+      background: rgba(37, 183, 176, 0.1);
+      color: var(--aurora-0);
+    }
+
+    .commission-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--s-2);
+      padding: 0 var(--s-4) var(--s-4);
+    }
+
+    .commission-actions .primary-button,
+    .commission-actions .secondary-button,
+    .commission-actions .danger-button,
+    .commission-actions .quiet-button {
+      flex: 1 1 110px;
+    }
+    .commission-actions.compact {
+      padding: 0;
+    }
+
+    .edit-fields {
+      display: none;
+      gap: var(--s-2);
+      margin: 0 var(--s-4) var(--s-4);
+      padding: var(--s-3);
+      border: 1px solid var(--line-amber);
+      background: rgba(111, 76, 33, 0.12);
+    }
+
+    .edit-fields.visible {
+      display: grid;
+    }
+
+    .edit-fields label {
+      display: grid;
+      gap: var(--s-1);
+      color: var(--amber-0);
+      font-size: 10px;
+    }
+
+    .edit-fields input {
+      min-height: 34px;
+      padding: 0 var(--s-2);
+      font-size: 12px;
+    }
+
+    .state-demo {
+      padding: var(--s-3) var(--s-4) var(--s-4);
+      border-top: 1px solid var(--line);
+    }
+
+    .state-demo-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: var(--s-2);
+      color: var(--ice-3);
+      font-size: 10px;
+    }
+
+    .state-demo-label span:last-child {
+      color: var(--ice-3);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .state-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--s-1);
+    }
+
+    .state-button {
+      min-height: 26px;
+      padding: 0 var(--s-2);
+      cursor: pointer;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: rgba(13, 43, 56, 0.44);
+      color: var(--ice-3);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 9px;
+      letter-spacing: 0.05em;
+      transition: color var(--fast) var(--ease-out), border-color var(--fast) var(--ease-out), background-color var(--fast) var(--ease-out);
+    }
+
+    .state-button:hover,
+    .state-button.active {
+      border-color: var(--aurora-1);
+      background: rgba(37, 183, 176, 0.12);
+      color: var(--aurora-0);
+    }
+
+    .state-button[data-state="failed"]:hover,
+    .state-button[data-state="unknown"]:hover,
+    .state-button[data-state="failed"].active,
+    .state-button[data-state="unknown"].active {
+      border-color: var(--danger-1);
+      color: var(--danger-0);
+    }
+
+    .console-card {
+      overflow: visible;
+    }
+
+    .console-card .panel-header {
+      align-items: center;
+    }
+
+    .console-title {
+      display: flex;
+      align-items: center;
+      gap: var(--s-2);
+    }
+
+    .console-title::before {
+      width: 7px;
+      height: 7px;
+      border: 1px solid var(--aurora-0);
+      border-radius: 50%;
+      background: var(--aurora-1);
+      content: "";
+      box-shadow: 0 0 0 3px rgba(102, 229, 211, 0.12);
+    }
+
+    .console-toggle {
+      min-height: 28px;
+      padding: 0 var(--s-2);
+      cursor: pointer;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      background: transparent;
+      color: var(--ice-2);
+      font-size: 10px;
+    }
+
+    .console-toggle:hover {
+      border-color: var(--line-strong);
+      color: var(--ice-0);
+    }
+
+    .console-body {
+      display: block;
+    }
+
+    .console-body.collapsed {
+      display: none;
+    }
+
+    .console-tabs {
+      display: flex;
+      gap: 0;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--line);
+      scrollbar-width: thin;
+    }
+
+    .console-tab {
+      position: relative;
+      flex: 0 0 auto;
+      min-height: 36px;
+      padding: 0 var(--s-3);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: var(--ice-3);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .console-tab:hover,
+    .console-tab[aria-selected="true"] {
+      color: var(--aurora-0);
+    }
+
+    .console-tab[aria-selected="true"] {
+      border-color: var(--aurora-1);
+    }
+
+    .console-panel {
+      display: none;
+      padding: var(--s-3);
+    }
+
+    .console-panel.visible {
+      display: block;
+    }
+
+    .console-panel > p {
+      margin: 0 0 var(--s-3);
+      color: var(--ice-2);
+      font-size: 11px;
+      line-height: 1.55;
+    }
+
+    .console-panel > p strong {
+      color: var(--amber-1);
+      font-weight: 600;
+    }
+
+    .console-lines {
+      display: flex;
+      max-height: 176px;
+      flex-direction: column;
+      gap: var(--s-2);
+      overflow: auto;
+      padding: var(--s-3);
+      border: 1px solid rgba(102, 229, 211, 0.14);
+      background: rgba(3, 14, 23, 0.76);
+      scrollbar-color: var(--ink-3) transparent;
+    }
+
+    .console-line {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: start;
+      gap: var(--s-2);
+      color: var(--ice-2);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+      line-height: 1.45;
+    }
+
+    .console-line .source-badge {
+      min-height: 18px;
+      padding-top: 1px;
+      padding-bottom: 1px;
+    }
+
+    .console-line code {
+      color: var(--ice-1);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .console-line code.ok {
+      color: var(--aurora-0);
+    }
+
+    .console-line code.warn {
+      color: var(--amber-0);
+    }
+
+    .console-line code.error {
+      color: var(--danger-0);
+    }
+
+    .steer-form,
+    .terminal-form {
+      display: flex;
+      gap: var(--s-2);
+      margin-top: var(--s-3);
+    }
+
+    .steer-form input,
+    .terminal-form input {
+      min-height: 34px;
+      padding: 0 var(--s-2);
+      font-size: 11px;
+    }
+
+    .steer-form button,
+    .terminal-form button {
+      flex: 0 0 auto;
+    }
+
+    .takeover-banner {
+      display: none;
+      align-items: center;
+      gap: var(--s-2);
+      margin-bottom: var(--s-3);
+      padding: var(--s-2) var(--s-3);
+      border-left: 2px solid var(--amber-1);
+      background: rgba(111, 76, 33, 0.18);
+      color: var(--amber-0);
+      font-size: 10px;
+    }
+
+    .takeover-banner.visible {
+      display: flex;
+    }
+
+    .takeover-banner strong {
+      font-weight: 700;
+    }
+
+    .terminal-panel.takeover {
+      border: 1px solid rgba(242, 197, 110, 0.42);
+      background: rgba(111, 76, 33, 0.08);
+    }
+
+    .terminal-hint {
+      margin: var(--s-2) 0 0;
+      color: var(--ice-3);
+      font-size: 10px;
+    }
+
+    .work-rail {
+      position: fixed;
+      z-index: 10;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      display: flex;
+      min-height: var(--rail-height);
+      align-items: center;
+      justify-content: center;
+      padding: var(--s-3) var(--s-6);
+      border-top: 1px solid var(--line-strong);
+      background: rgba(5, 17, 27, 0.94);
+      box-shadow: 0 -14px 34px rgba(1, 8, 14, 0.32);
+      backdrop-filter: blur(14px);
+    }
+
+    .work-rail-inner {
+      display: grid;
+      width: min(1680px, 100%);
+      grid-template-columns: minmax(170px, 0.7fr) minmax(0, 2fr);
+      align-items: center;
+      gap: var(--s-5);
+    }
+
+    .rail-heading {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      gap: var(--s-1);
+    }
+
+    .rail-heading strong {
+      color: var(--ice-0);
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .rail-heading span:last-child {
+      overflow: hidden;
+      color: var(--amber-1);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .rail-runs {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--s-2);
+    }
+
+    .run-chip {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: var(--s-2);
+      min-width: 0;
+      padding: var(--s-2) var(--s-3);
+      cursor: pointer;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: rgba(13, 43, 56, 0.5);
+      color: var(--ice-2);
+      text-align: left;
+      transition: border-color var(--fast) var(--ease-out), background-color var(--fast) var(--ease-out);
+    }
+
+    .run-chip:hover,
+    .run-chip.active {
+      border-color: rgba(102, 229, 211, 0.46);
+      background: rgba(37, 183, 176, 0.12);
+    }
+
+    .run-chip.active {
+      box-shadow: inset 2px 0 0 var(--aurora-1);
+    }
+
+    .run-chip .run-glyph {
+      display: grid;
+      width: 22px;
+      height: 22px;
+      place-items: center;
+      border: 1px solid var(--violet-1);
+      border-radius: 3px;
+      color: var(--violet-0);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 9px;
+      clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    }
+
+    .run-copy {
+      min-width: 0;
+    }
+
+    .run-copy strong,
+    .run-copy span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .run-copy strong {
+      color: var(--ice-1);
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .run-copy span {
+      color: var(--ice-3);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 9px;
+    }
+
+    .run-status {
+      color: var(--aurora-1);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 9px;
+      letter-spacing: 0.04em;
+    }
+
+    .run-status.waiting {
+      color: var(--amber-1);
+    }
+
+    .evidence-drawer {
+      position: fixed;
+      z-index: 30;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      width: min(440px, calc(100vw - 24px));
+      flex-direction: column;
+      border-left: 1px solid var(--line-strong);
+      background: #091c2b;
+      box-shadow: -20px 0 60px rgba(1, 8, 14, 0.46);
+      transform: translateX(102%);
+      transition: transform var(--slow) var(--ease-out);
+    }
+
+    .evidence-drawer.open {
+      transform: translateX(0);
+    }
+
+    .evidence-drawer-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: var(--s-3);
+      padding: var(--s-6);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .evidence-drawer-header h2 {
+      margin: var(--s-1) 0 0;
+      font-family: Georgia, "Noto Serif SC", serif;
+      font-size: 22px;
+      font-weight: 500;
+    }
+
+    .evidence-drawer-header p {
+      margin: var(--s-2) 0 0;
+      color: var(--ice-2);
+      font-size: 11px;
+    }
+
+    .evidence-list {
+      display: flex;
+      flex: 1 1 auto;
+      flex-direction: column;
+      gap: var(--s-3);
+      overflow: auto;
+      padding: var(--s-5) var(--s-6);
+    }
+
+    .evidence-entry {
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr);
+      gap: var(--s-3);
+      padding-bottom: var(--s-3);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .evidence-index {
+      display: grid;
+      width: 26px;
+      height: 26px;
+      place-items: center;
+      border: 1px solid var(--line-amber);
+      border-radius: 50%;
+      color: var(--amber-1);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+    }
+
+    .evidence-entry h3 {
+      margin: 0;
+      color: var(--ice-1);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .evidence-entry p {
+      margin: var(--s-1) 0 0;
+      color: var(--ice-2);
+      font-size: 11px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    .evidence-entry code {
+      color: var(--aurora-0);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10px;
+    }
+
+    .evidence-footer {
+      padding: var(--s-4) var(--s-6) var(--s-6);
+      border-top: 1px solid var(--line);
+      color: var(--ice-3);
+      font-size: 10px;
+      line-height: 1.5;
+    }
+
+    .evidence-footer strong {
+      color: var(--amber-1);
+      font-weight: 600;
+    }
+
+    .toast {
+      position: fixed;
+      z-index: 50;
+      right: var(--s-5);
+      bottom: calc(var(--rail-height) + var(--s-5));
+      max-width: min(360px, calc(100vw - 40px));
+      padding: var(--s-3) var(--s-4);
+      border: 1px solid var(--line-strong);
+      border-left: 2px solid var(--aurora-1);
+      border-radius: var(--radius-sm);
+      background: rgba(7, 25, 37, 0.96);
+      color: var(--ice-0);
+      box-shadow: var(--shadow-panel);
+      font-size: 11px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(10px);
+      transition: opacity var(--fast) var(--ease-out), transform var(--fast) var(--ease-out);
+    }
+
+    .toast.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .evidence-only .presence-plane {
+      min-height: 220px;
+      border-color: var(--line-amber);
+    }
+
+    .evidence-only .presence-plane .bear-stage,
+    .evidence-only .presence-plane .aurora-ribbon,
+    .evidence-only .presence-plane .particle-field,
+    .evidence-only .presence-plane .scene-grid {
+      display: none;
+    }
+
+    .evidence-only .presence-plane {
+      background:
+        linear-gradient(90deg, rgba(199, 139, 57, 0.1), transparent 48%),
+        var(--ink-1);
+    }
+
+    .evidence-only .presence-copy {
+      align-items: flex-start;
+      text-align: left;
+    }
+
+    .evidence-only .presence-copy h2 {
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 20px;
+    }
+
+    .evidence-only .presence-copy p {
+      max-width: 680px;
+    }
+
+    .evidence-only .presence-status {
+      color: var(--amber-1);
+    }
+
+    .evidence-only .presence-status::before {
+      border-radius: 2px;
+      background: var(--amber-1);
+      box-shadow: none;
+      transform: rotate(45deg);
+    }
+
+    .status-failed .presence-status,
+    .status-unknown .presence-status {
+      color: var(--danger-0);
+    }
+
+    .status-failed .presence-status::before,
+    .status-unknown .presence-status::before {
+      border-color: var(--danger-0);
+      background: var(--danger-1);
+      box-shadow: none;
+    }
+
+    .status-failed .console-title::before,
+    .status-unknown .console-title::before {
+      border-color: var(--danger-0);
+      background: var(--danger-1);
+      box-shadow: none;
+    }
+
+    @media (max-width: 1260px) {
+      .app-shell {
+        padding-right: var(--s-4);
+        padding-left: var(--s-4);
+      }
+
+      .main-layout {
+        grid-template-columns: minmax(200px, 224px) minmax(380px, 1fr) minmax(300px, 340px);
+        gap: var(--s-3);
+      }
+
+      .presence-plane {
+        min-height: 500px;
+      }
+
+      .session-context {
+        min-width: 150px;
+        padding-right: var(--s-3);
+        padding-left: var(--s-3);
+      }
+    }
+
+    @media (max-width: 1010px) {
+      .topbar {
+        flex-wrap: wrap;
+        gap: var(--s-3);
+      }
+
+      .brand-lockup {
+        flex: 1 1 260px;
+      }
+
+      .session-context {
+        order: 3;
+        width: 100%;
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        padding: var(--s-2) 0 0;
+        border-top: 1px solid var(--line);
+        border-right: 0;
+        border-left: 0;
+      }
+
+      .main-layout {
+        grid-template-columns: minmax(190px, 220px) minmax(0, 1fr);
+      }
+
+      .right-column {
+        position: static;
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        align-items: start;
+        max-height: none;
+        overflow: visible;
+      }
+    }
+
+    @media (max-width: 720px) {
+      :root {
+        --rail-height: 142px;
+      }
+
+      .app-shell {
+        padding: var(--s-3) var(--s-3) calc(var(--rail-height) + var(--s-4));
+      }
+
+      .topbar {
+        padding: var(--s-3);
+      }
+
+      .brand-lockup {
+        min-width: 0;
+      }
+
+      .topbar-actions {
+        width: 100%;
+        justify-content: space-between;
+      }
+
+      .concept-details {
+        flex: 1 1 auto;
+      }
+
+      .concept-details summary {
+        justify-content: center;
+      }
+
+      .main-layout {
+        display: flex;
+        flex-direction: column;
+        gap: var(--s-3);
+        margin-top: var(--s-3);
+      }
+
+      .center-column {
+        order: 1;
+      }
+
+      .left-column {
+        order: 2;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        align-items: start;
+      }
+
+      .right-column {
+        order: 3;
+        display: flex;
+      }
+
+      .presence-plane {
+        min-height: 470px;
+      }
+
+      .bear-stage {
+        top: 14%;
+        right: 8%;
+        left: 8%;
+      }
+
+      .presence-copy {
+        bottom: 11%;
+      }
+
+      .conversation-panel {
+        min-height: 360px;
+      }
+
+      .work-rail {
+        padding: var(--s-3);
+      }
+
+      .work-rail-inner {
+        grid-template-columns: 1fr;
+        gap: var(--s-2);
+      }
+
+      .rail-runs {
+        gap: var(--s-1);
+      }
+
+      .run-chip {
+        padding: var(--s-2);
+      }
+
+      .run-chip .run-glyph {
+        display: none;
+      }
+
+      .run-status {
+        display: none;
+      }
+
+      .toast {
+        right: var(--s-3);
+        bottom: calc(var(--rail-height) + var(--s-3));
+      }
+    }
+
+    @media (max-width: 480px) {
+      body {
+        font-size: 13px;
+      }
+
+      .session-context {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: var(--s-1);
+      }
+
+      .left-column {
+        display: flex;
+      }
+
+      .presence-plane {
+        min-height: 450px;
+      }
+
+      .scene-topline,
+      .scene-footerline {
+        right: var(--s-3);
+        left: var(--s-3);
+        font-size: 8px;
+      }
+
+      .scene-topline {
+        top: var(--s-3);
+      }
+
+      .scene-footerline {
+        bottom: var(--s-3);
+      }
+
+      .presence-copy {
+        right: var(--s-3);
+        left: var(--s-3);
+      }
+
+      .presence-copy h2 {
+        font-size: 22px;
+      }
+
+      .message {
+        max-width: 95%;
+      }
+
+      .composer {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .composer .primary-button {
+        width: 100%;
+      }
+
+      .commission-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .commission-field.full {
+        grid-column: auto;
+      }
+
+      .right-column {
+        gap: var(--s-3);
+      }
+
+      .rail-heading strong {
+        font-size: 12px;
+      }
+
+      .run-copy strong {
+        font-size: 10px;
+      }
+
+      .run-copy span {
+        font-size: 8px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 1ms !important;
+      }
+    }
+  </style>
+</head>
+<body class="status-running">
+  <div class="app-shell">
+    <header class="topbar" aria-label="极光圣所顶部控制栏">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div class="brand-copy">
+          <p class="kicker">BEAR HARNESS / LOCAL COMPANION</p>
+          <h1>极光圣所</h1>
+        </div>
+      </div>
+      <div class="session-context" aria-live="polite">
+        <p class="eyebrow">COMPANION IDENTITY</p>
+        <strong id="companionIdentity">极昼守望者 · 01</strong>
+        <span id="sessionStatus">SESSION 01 / ACTIVE</span>
+      </div>
+      <div class="topbar-actions">
+        <button class="icon-button" id="evidenceToggle" type="button" aria-pressed="false">证据抽屉 <kbd>E</kbd></button>
+        <button class="icon-button" id="evidenceOnlyToggle" type="button" aria-pressed="false"><span id="evidenceOnlyLabel">Evidence-only</span></button>
+        <details class="concept-details">
+          <summary>概念氛围图</summary>
+          <div class="concept-view">
+            <img src="concept.png" alt="极光圣所冰原神殿概念氛围图" onerror="this.hidden=true; this.nextElementSibling.hidden=false">
+            <p class="concept-note" hidden><strong>concept.png</strong> 将由本地原型目录提供。当前用场景中的冰晶切面作为预览。</p>
+            <p class="concept-note">这是 <strong>Presence Plane</strong> 的氛围参考；委托、证据和工作栏始终属于清晰的 Work Plane。</p>
+          </div>
+        </details>
+        <span class="host-chip">HOST VERIFIED</span>
+      </div>
+    </header>
+
+    <main class="main-layout">
+      <aside class="left-column" aria-label="会话与事实工作区">
+        <section class="panel session-panel" aria-labelledby="sessionsHeading">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">COMPANION SESSIONS</p>
+              <h2 id="sessionsHeading">会话航线</h2>
+            </div>
+            <span class="mini-tag">3</span>
+          </div>
+          <nav class="session-list" aria-label="切换会话">
+            <button class="session-item active" type="button" data-session="north" aria-current="page">
+              <span class="session-glyph" aria-hidden="true">01</span>
+              <span class="session-copy"><strong>极昼交接</strong><span>构建信号与委托</span></span>
+              <span class="unread">2</span>
+            </button>
+            <button class="session-item" type="button" data-session="mirror">
+              <span class="session-glyph" aria-hidden="true"><span>02</span></span>
+              <span class="session-copy"><strong>镜面湖畔</strong><span>研究笔记 · 暂停</span></span>
+              <span class="unread">1</span>
+            </button>
+            <button class="session-item" type="button" data-session="archive">
+              <span class="session-glyph" aria-hidden="true">03</span>
+              <span class="session-copy"><strong>归档门廊</strong><span>复盘与验收</span></span>
+              <span></span>
+            </button>
+          </nav>
+        </section>
+
+        <section class="panel facts-panel" aria-labelledby="factsHeading">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">OPERATIONAL TRUTH</p>
+              <h2 id="factsHeading">机魂状态图</h2>
+            </div>
+            <span class="source-badge host">HOST</span>
+          </div>
+          <div class="panel-body">
+            <dl class="facts-list">
+              <div class="fact-row"><dt>事实源</dt><dd><strong>Host journal</strong> · 本地只读投影</dd></div>
+              <div class="fact-row"><dt>工作区</dt><dd><code>~/icefield/aurora-shrine</code></dd></div>
+              <div class="fact-row"><dt>工作树</dt><dd><strong>feature/signal-lantern</strong> · clean</dd></div>
+              <div class="fact-row"><dt>Envelope</dt><dd>只写 worktree · 网络关闭 · 80 calls</dd></div>
+              <div class="fact-row"><dt>证据</dt><dd id="factEvidence">6 条 · hash <strong>9c7e…3a1b</strong></dd></div>
+            </dl>
+            <p class="fact-note">熊的叙事与动画只读取这层已验证事实。模型、worker 和用户终端都不能改写 Host 的状态结论。</p>
+          </div>
+        </section>
+
+        <section class="panel legend-panel" aria-labelledby="legendHeading">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">SOURCE LEGEND</p>
+              <h2 id="legendHeading">谁在说话</h2>
+            </div>
+          </div>
+          <div class="panel-body legend-list">
+            <div class="legend-row"><span class="source-badge bear">BEAR</span><span>Presence / 陪伴与解释</span></div>
+            <div class="legend-row"><span class="source-badge worker">WORKER</span><span>External / 受限执行器</span></div>
+            <div class="legend-row"><span class="source-badge you">YOU</span><span>用户 / steer 或终端</span></div>
+            <div class="legend-row"><span class="source-badge host">HOST</span><span>Verified / 唯一事实源</span></div>
+          </div>
+        </section>
+      </aside>
+
+      <section class="center-column" aria-label="Presence Plane 与对话">
+        <section class="presence-plane" aria-labelledby="presenceHeading">
+          <div class="scene-topline"><span>PRESENCE PLANE / 2.5D ICE TEMPLE</span><span id="sceneRunId">RUN · AUR-042</span></div>
+          <div class="aurora-ribbon" aria-hidden="true"></div>
+          <div class="scene-grid" aria-hidden="true"></div>
+          <div class="particle-field" aria-hidden="true">
+            <span class="particle p-1"></span><span class="particle p-2"></span><span class="particle p-3"></span><span class="particle p-4"></span>
+            <span class="particle p-5"></span><span class="particle p-6"></span><span class="particle p-7"></span><span class="particle p-8"></span>
+            <span class="particle p-9"></span><span class="particle p-10"></span><span class="particle p-11"></span><span class="particle p-12"></span>
+            <span class="particle p-13"></span><span class="particle p-14"></span>
+          </div>
+          <div class="bear-stage" aria-label="原创拟人北极熊 Presence Plane">
+            <div class="bear-aura" aria-hidden="true"></div>
+            <svg class="bear-svg" viewBox="0 0 320 400" role="img" aria-labelledby="bearTitle bearDesc">
+              <title id="bearTitle">极光圣所的风暴守望熊</title>
+              <desc id="bearDesc">一只原创拟人北极熊，站在冰晶切面的中心，不代表执行器。</desc>
+              <ellipse class="bear-shadow" cx="160" cy="376" rx="86" ry="13"></ellipse>
+              <path class="bear-fur-shadow" d="M93 346c-17-26-20-57-9-87 7-20 17-34 33-43l-18-35c-7-14-3-29 8-36 9-5 19-3 26 5l11 15 3-1V121c-1-7 2-14 8-19 4-3 9-5 14-5 5 0 10 2 14 5 6 5 9 12 8 19v38l4 1 12-16c7-8 17-10 26-5 11 7 14 22 7 36l-19 36c17 10 29 25 35 45 9 31 5 60-11 85l-5 9H98l-5-9z"></path>
+              <path class="bear-fur" d="M113 346c-15-26-15-54-4-79 8-19 21-34 38-43 8-4 18-7 28-7s20 3 28 7c17 9 30 24 38 43 11 25 11 53-4 79l-7 13H120l-7-13z"></path>
+              <path class="bear-fur" d="M111 181c-7-15-2-28 7-33 9-5 18-1 24 8l15 25-28 18-18-18z"></path>
+              <path class="bear-fur" d="M209 181c7-15 2-28-7-33-9-5-18-1-24 8l-15 25 28 18 18-18z"></path>
+              <path class="bear-face" d="M112 116c0-34 20-62 48-62s48 28 48 62c0 27-10 49-29 60-12 7-26 7-38 0-19-11-29-33-29-60z"></path>
+              <path class="bear-fur-shadow" d="M112 117c1-36 20-63 48-63 18 0 33 12 42 30-12-8-25-12-40-11-24 2-39 16-50 44z"></path>
+              <path class="bear-dark" d="M132 100c-6-7-16-4-18 4 0 8 9 11 17 8 5-2 6-8 1-12z"></path>
+              <path class="bear-dark" d="M188 100c6-7 16-4 18 4 0 8-9 11-17 8-5-2-6-8-1-12z"></path>
+              <path class="bear-glow" d="M127 103l7-3 7 5-7 5-7-2z"></path>
+              <path class="bear-glow" d="M193 103l-7-3-7 5 7 5 7-2z"></path>
+              <path class="bear-dark" d="M146 125c5-5 23-5 28 0 5 5 1 14-4 18-6 4-14 4-20 0-5-4-9-13-4-18z"></path>
+              <path class="bear-line" d="M160 142v9M148 153c7 5 17 5 24 0"></path>
+              <path class="bear-amber" d="M160 181l11 11-11 19-11-19z"></path>
+              <path class="bear-line" d="M160 215v75M136 240c9 6 17 8 24 8s15-2 24-8M140 294c7 5 13 7 20 7s13-2 20-7"></path>
+              <path class="bear-fur-shadow" d="M99 253c-20 5-29 18-30 34-1 16 7 28 19 31l17-17 9-45-15-3z"></path>
+              <path class="bear-fur" d="M221 253c20 5 29 18 30 34 1 16-7 28-19 31l-17-17-9-45 15-3z"></path>
+              <path class="bear-fur" d="M121 346c-3 12-1 20 9 25h35l-4-18-14-10-26 3z"></path>
+              <path class="bear-fur" d="M199 346c3 12 1 20-9 25h-35l4-18 14-10 26 3z"></path>
+              <path class="bear-line" d="M91 295l-10 9M87 287l-12 1M229 295l10 9M233 287l12 1"></path>
+            </svg>
+          </div>
+          <div class="presence-copy">
+            <span class="source-badge bear">BEAR / PRESENCE</span>
+            <h2 id="presenceHeading">风暴守望，事实不由风讲述。</h2>
+            <p id="presenceDescription">我在这里陪你；这一刻的工作由 <strong>WORKER</strong> 在冻结的 envelope 内推进，结论只认 <strong>HOST VERIFIED</strong>。</p>
+            <span class="presence-status" id="presenceStatus">WORKING · 外部委托运行中</span>
+          </div>
+          <div class="scene-footerline"><span>COMPANION / ATTENTIVE</span><span>HOST JOURNAL · 09:42:18</span></div>
+        </section>
+
+        <section class="panel conversation-panel" aria-labelledby="conversationHeading">
+          <div class="conversation-head">
+            <div>
+              <p class="eyebrow">COMPANION SESSION <span id="conversationSessionCode">01</span></p>
+              <h2 id="conversationHeading">与熊对话 · <span id="conversationSessionTitle">极昼交接</span></h2>
+            </div>
+            <span class="source-badge bear">BEAR</span>
+          </div>
+          <div class="chat-list" id="chatList" role="log" aria-live="polite" aria-label="与熊的对话记录"></div>
+          <form class="composer" id="chatForm">
+            <textarea id="chatInput" rows="1" placeholder="对熊说点什么……例如：把验收口径收窄到构建日志" aria-label="输入给熊的消息"></textarea>
+            <button class="primary-button" type="submit">发送 <kbd>↵</kbd></button>
+          </form>
+        </section>
+      </section>
+
+      <aside class="right-column" aria-label="Action Commission 与 Executor Console">
+        <section class="panel commission-card" id="commissionCard" aria-labelledby="commissionHeading">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">ACTION COMMISSION</p>
+              <h2 id="commissionHeading">冻结委托卡</h2>
+              <p class="commission-id" id="commissionId">AUR-042 · ENVELOPE FROZEN</p>
+            </div>
+            <span class="status-pill running" id="commissionStatus">RUNNING</span>
+          </div>
+          <div class="commission-intro">
+            <h2 id="commissionTitle">核对极昼构建信号</h2>
+            <p id="commissionDescription">让外部执行器读取指定 worktree 的构建日志，整理一份可追溯的异常摘要；<strong>不改动源文件，不开放网络。</strong></p>
+          </div>
+          <div class="commission-grid">
+            <div class="commission-field full"><span>DELIVERABLE</span><strong id="commissionDeliverable">build-signal-review.md · 草稿</strong></div>
+            <div class="commission-field"><span>EXECUTOR</span><span class="source-badge worker">WORKER</span></div>
+            <div class="commission-field"><span>PROFILE</span><code id="commissionProfile">pi.rpc-worker · 0.8.4</code></div>
+            <div class="commission-field"><span>WORKSPACE</span><code>feature/signal-lantern</code></div>
+            <div class="commission-field"><span>EFFECT</span><strong>write worktree only</strong></div>
+          </div>
+          <div class="commission-notice" id="commissionNotice">Host 已记录 approval · worker stream 每一步都有可展开证据。</div>
+          <div class="edit-fields" id="editFields">
+            <label>委托标题<input id="editTitle" type="text" value="核对极昼构建信号" aria-label="编辑委托标题"></label>
+            <label>交付物名称<input id="editDeliverable" type="text" value="build-signal-review.md" aria-label="编辑交付物名称"></label>
+            <div class="commission-actions compact">
+              <button class="primary-button button-small" id="saveEditButton" type="button">保存修改</button>
+              <button class="quiet-button button-small" id="cancelEditButton" type="button">取消</button>
+            </div>
+          </div>
+          <div class="commission-actions" id="commissionActions">
+            <button class="primary-button" id="approveButton" type="button">批准并启动</button>
+            <button class="secondary-button" id="editButton" type="button">编辑 draft</button>
+            <button class="danger-button" id="rejectButton" type="button">拒绝</button>
+            <button class="danger-button" id="stopButton" type="button">停止 run</button>
+            <button class="primary-button" id="acceptButton" type="button">接受结果</button>
+            <button class="secondary-button" id="changeButton" type="button">请求修改</button>
+            <button class="danger-button" id="rejectResultButton" type="button">拒绝结果</button>
+            <button class="secondary-button button-wide" id="resetDraftButton" type="button">重新拟定 Commission</button>
+          </div>
+          <div class="state-demo">
+            <div class="state-demo-label"><span>演示 Host lifecycle projection</span><span>LOCAL MOCK</span></div>
+            <div class="state-buttons" role="group" aria-label="切换模拟委托状态">
+              <button class="state-button" type="button" data-state="draft">DRAFT</button>
+              <button class="state-button" type="button" data-state="running">RUNNING</button>
+              <button class="state-button" type="button" data-state="returned">RETURNED</button>
+              <button class="state-button" type="button" data-state="failed">FAILED</button>
+              <button class="state-button" type="button" data-state="unknown">UNKNOWN</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel console-card" id="consoleCard" aria-labelledby="consoleHeading">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">EXECUTOR CONSOLE</p>
+              <h2 class="console-title" id="consoleHeading">AUR-042 / 可展开操作面</h2>
+            </div>
+            <button class="console-toggle" id="consoleToggle" type="button" aria-expanded="true">收起</button>
+          </div>
+          <div class="console-body" id="consoleBody">
+            <div class="console-tabs" role="tablist" aria-label="Executor Console tabs">
+              <button class="console-tab" type="button" role="tab" aria-selected="true" data-tab="brief">Brief</button>
+              <button class="console-tab" type="button" role="tab" aria-selected="false" data-tab="agent">Agent Console</button>
+              <button class="console-tab" type="button" role="tab" aria-selected="false" data-tab="terminal">Worktree Terminal</button>
+              <button class="console-tab" type="button" role="tab" aria-selected="false" data-tab="tty">Native TTY</button>
+            </div>
+            <section class="console-panel visible" data-panel="brief" role="tabpanel">
+              <p><strong>冻结 Brief</strong> · Worker 只能读取这个 envelope 与 Host 派发的 project facts；relationship memory 不会进入。</p>
+              <div class="console-lines">
+                <div class="console-line"><span class="source-badge host">HOST</span><code class="ok">09:42:18 packet hash 9c7e…3a1b verified</code></div>
+                <div class="console-line"><span class="source-badge worker">WORKER</span><code>09:42:21 pi.rpc-worker attached · session wkr-77</code></div>
+                <div class="console-line"><span class="source-badge host">HOST</span><code>scope: read logs / write report · network: denied</code></div>
+              </div>
+            </section>
+            <section class="console-panel" data-panel="agent" role="tabpanel">
+              <p><strong>Agent Console</strong> · 这里的输出是 worker stream；发送 steer 不会扩大委托边界。</p>
+              <div class="console-lines" id="agentLines">
+                <div class="console-line"><span class="source-badge worker">WORKER</span><code>scan 18 build events · anomaly cluster at 09:17</code></div>
+                <div class="console-line"><span class="source-badge worker">WORKER</span><code class="ok">drafting evidence references… 68%</code></div>
+              </div>
+              <form class="steer-form" id="steerForm">
+                <input id="steerInput" type="text" placeholder="给 worker 一条 envelope 内 steer…" aria-label="发送 steer 给 worker">
+                <button class="secondary-button button-small" type="submit">发送 steer</button>
+              </form>
+            </section>
+            <section class="console-panel terminal-panel" id="terminalPanel" data-panel="terminal" role="tabpanel">
+              <div class="takeover-banner" id="takeoverBanner"><span class="source-badge you">YOU</span><span><strong>USER TAKEOVER</strong> · 你正在这个 frozen worktree 中操作</span></div>
+              <p><strong>Worktree Terminal</strong> · 用户输入和 worker 输出分栏记录；接管前不会执行任何命令。</p>
+              <div class="console-lines" id="terminalLines">
+                <div class="console-line"><span class="source-badge host">HOST</span><code>terminal ready · takeover is opt-in</code></div>
+                <div class="console-line"><span class="source-badge worker">WORKER</span><code>worktree unchanged · waiting for report write</code></div>
+              </div>
+              <form class="terminal-form" id="terminalForm">
+                <input id="terminalInput" type="text" placeholder="先进入 user takeover，再输入本地命令" aria-label="用户接管后的终端输入" disabled>
+                <button class="secondary-button button-small" id="runTerminalButton" type="submit">进入 takeover</button>
+              </form>
+              <p class="terminal-hint" id="terminalHint">Native TTY 只在适用 profile 启用；本原型用本地 mock 记录操作。</p>
+            </section>
+            <section class="console-panel" data-panel="tty" role="tabpanel">
+              <p><strong>Native TTY</strong> · Hermes 类 profile 才会接通原生 TTY；本次 Pi run 保留入口以展示清晰边界。</p>
+              <div class="console-lines">
+                <div class="console-line"><span class="source-badge host">HOST</span><code class="warn">profile capability: native_tty = not applicable</code></div>
+                <div class="console-line"><span class="source-badge you">YOU</span><code>可切换 Worktree Terminal 进行 user takeover</code></div>
+              </div>
+            </section>
+          </div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <footer class="work-rail" id="globalWorkRail" aria-label="全局工作栏">
+    <div class="work-rail-inner">
+      <div class="rail-heading">
+        <p class="eyebrow">GLOBAL WORK RAIL · MAX 2 ACTIVE RUNS</p>
+        <strong><span id="activeRunCount">2</span> 个外部工作正在被 Host 追踪</strong>
+        <span id="railOrigin">origin session · 极昼交接 / SESSION 01</span>
+      </div>
+      <div class="rail-runs">
+        <button class="run-chip active" type="button" data-run="aur-042" aria-label="选择 AUR-042 运行">
+          <span class="run-glyph" aria-hidden="true">W</span>
+          <span class="run-copy"><strong><span class="source-badge worker">WORKER</span> AUR-042 · 构建信号</strong><span>origin: 极昼交接 · wkr-77</span></span>
+          <span class="run-status">RUNNING</span>
+        </button>
+        <button class="run-chip" type="button" data-run="mrr-018" aria-label="选择 MRR-018 运行">
+          <span class="run-glyph" aria-hidden="true">W</span>
+          <span class="run-copy"><strong><span class="source-badge worker">WORKER</span> MRR-018 · 研究索引</strong><span>origin: 镜面湖畔 · paused</span></span>
+          <span class="run-status waiting">PAUSED</span>
+        </button>
+      </div>
+    </div>
+  </footer>
+
+  <aside class="evidence-drawer" id="evidenceDrawer" aria-hidden="true" aria-labelledby="evidenceHeading">
+    <div class="evidence-drawer-header">
+      <div>
+        <p class="eyebrow">HOST JOURNAL / EVIDENCE</p>
+        <h2 id="evidenceHeading">证据抽屉</h2>
+        <p id="evidenceSummary">只展示可追溯事件，不把叙事当成结论。</p>
+      </div>
+      <button class="icon-button" id="evidenceClose" type="button" aria-label="关闭证据抽屉">关闭</button>
+    </div>
+    <div class="evidence-list" id="evidenceList">
+      <article class="evidence-entry"><span class="evidence-index">01</span><div><h3><span class="source-badge host">HOST</span> packet frozen</h3><p>09:41:58 · <code>commission AUR-042</code> 的 workspace、effect 和工具上限被锁定。</p></div></article>
+      <article class="evidence-entry"><span class="evidence-index">02</span><div><h3><span class="source-badge host">HOST</span> approval recorded</h3><p>09:42:03 · 用户批准 draft；approval hash <code>apv-18d2</code>。</p></div></article>
+      <article class="evidence-entry"><span class="evidence-index">03</span><div><h3><span class="source-badge worker">WORKER</span> stream normalized</h3><p>09:42:21 · worker session <code>wkr-77</code> 回传 18 个 build event。</p></div></article>
+      <article class="evidence-entry"><span class="evidence-index">04</span><div><h3><span class="source-badge you">YOU</span> user controls available</h3><p>steer、stop 和 user takeover 由用户明确触发，并单独记录为用户来源。</p></div></article>
+    </div>
+    <div class="evidence-footer"><strong>Host verified</strong> · 证据抽屉可以展开，但不会改变委托范围或接受结论。</div>
+  </aside>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    (() => {
+      const sessionData = {
+        north: {
+          code: "01",
+          title: "极昼交接",
+          status: "SESSION 01 / ACTIVE",
+          messages: [
+            { source: "bear", name: "熊 · Presence", time: "09:40", text: "我在机魂状态图里看见一条构建信号的异常簇。真正的读取和写入会交给受限 worker；先把验收口径钉住。" },
+            { source: "you", name: "你", time: "09:40", text: "只要整理异常摘要，不要碰源文件。" },
+            { source: "bear", name: "熊 · Presence", time: "09:41", text: "边界已写入 Action Commission：只读日志、只写报告、网络关闭。当前 run 仍在运行，不等于已接受。" }
+          ]
+        },
+        mirror: {
+          code: "02",
+          title: "镜面湖畔",
+          status: "SESSION 02 / PAUSED",
+          messages: [
+            { source: "bear", name: "熊 · Presence", time: "昨天", text: "这条研究线暂时停在资料索引。你可以继续对话；没有新的外部工作会悄悄启动。" },
+            { source: "you", name: "你", time: "昨天", text: "保留现有笔记，等我确认来源。" }
+          ]
+        },
+        archive: {
+          code: "03",
+          title: "归档门廊",
+          status: "SESSION 03 / ARCHIVED",
+          messages: [
+            { source: "bear", name: "熊 · Presence", time: "周一", text: "上一轮运行返回了报告，但完成不是验收。归档前仍保留 Host evidence 和你的决定。" },
+            { source: "you", name: "你", time: "周一", text: "把验收和运行状态分开记。" }
+          ]
+        }
+      };
+
+      const stateMeta = {
+        draft: {
+          label: "DRAFT",
+          className: "draft",
+          presence: "PLANNING · 等待你的批准",
+          notice: "Action Commission 仍是草稿；在 approve 前不会启动任何 effectful 工作。",
+          noticeClass: "",
+          title: "核对极昼构建信号",
+          description: "让外部执行器读取指定 worktree 的构建日志，整理一份可追溯的异常摘要；不改动源文件，不开放网络。",
+          deliverable: "build-signal-review.md · 草稿"
+        },
+        queued: {
+          label: "QUEUED",
+          className: "queued",
+          presence: "QUEUED · 已进入 Host 队列",
+          notice: "approval 已写入 Host journal；正在等待该 workspace 的唯一写入槽。",
+          noticeClass: "",
+          title: "核对极昼构建信号",
+          description: "委托范围已冻结，worker 尚未开始写入报告。",
+          deliverable: "build-signal-review.md · 待生成"
+        },
+        running: {
+          label: "RUNNING",
+          className: "running",
+          presence: "WORKING · 外部委托运行中",
+          notice: "Host 已记录 approval · worker stream 每一步都有可展开证据。",
+          noticeClass: "",
+          title: "核对极昼构建信号",
+          description: "让外部执行器读取指定 worktree 的构建日志，整理一份可追溯的异常摘要；不改动源文件，不开放网络。",
+          deliverable: "build-signal-review.md · 生成中"
+        },
+        returned: {
+          label: "RETURNED",
+          className: "returned",
+          presence: "RETURNED · 等待你的验收",
+          notice: "worker 已返回报告；完成不等于 accepted，请检查 evidence 后决定。",
+          noticeClass: "success",
+          title: "异常摘要已返回",
+          description: "报告和引用已由 Host 收拢。它现在等待你的 acceptance，不会自动变成成功。",
+          deliverable: "build-signal-review.md · returned"
+        },
+        accepted: {
+          label: "ACCEPTED",
+          className: "accepted",
+          presence: "ACCEPTED · 你已明确验收",
+          notice: "Host 已记录 acceptance；这个结论来自你的决定，不是熊的动画。",
+          noticeClass: "success",
+          title: "异常摘要已验收",
+          description: "报告已经被你接受；原始 evidence 仍可从抽屉复查。",
+          deliverable: "build-signal-review.md · accepted"
+        },
+        failed: {
+          label: "FAILED",
+          className: "failed",
+          presence: "FAILED · 需要查看证据",
+          notice: "worker 返回 non-zero；失败不会播放庆祝效果，先查看 Host 记录的错误证据。",
+          noticeClass: "error",
+          title: "构建信号检查失败",
+          description: "执行器在读取第 18 条事件时退出。没有把不完整的报告标成成功。",
+          deliverable: "build-signal-review.md · incomplete"
+        },
+        unknown: {
+          label: "UNKNOWN",
+          className: "unknown",
+          presence: "UNKNOWN · 证据不完整",
+          notice: "Host 无法确认 worker 的最终状态；unknown 不是成功，也不应被叙事填平。",
+          noticeClass: "error",
+          title: "工作状态无法确认",
+          description: "连接在最后一个 checkpoint 后中断。保留 worktree 与证据，等待你决定下一步。",
+          deliverable: "build-signal-review.md · unknown"
+        },
+        canceled: {
+          label: "CANCELED",
+          className: "canceled",
+          presence: "CANCELED · 已停止",
+          notice: "Host 记录了你的 stop；未完成产物不会被宣布为成功。",
+          noticeClass: "error",
+          title: "运行已停止",
+          description: "用户停止了这个 run。委托范围没有扩大，残留 worktree 仍可复查。",
+          deliverable: "build-signal-review.md · canceled"
+        },
+        rejected: {
+          label: "REJECTED",
+          className: "rejected",
+          presence: "REJECTED · 未接受",
+          notice: "Host 记录了拒绝；没有新的工作会因为拒绝而自动启动。",
+          noticeClass: "error",
+          title: "委托未被接受",
+          description: "这张 commission 被拒绝或结果被拒绝。若要继续，请重新拟定边界。",
+          deliverable: "build-signal-review.md · rejected"
+        }
+      };
+
+      let activeSession = "north";
+      let currentState = "running";
+      let consoleOpen = true;
+      let activeTab = "brief";
+      let takeover = false;
+      let editMode = false;
+      let toastTimer;
+      let runTimer;
+
+      const $ = (id) => document.getElementById(id);
+      const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", "\"": "&quot;" }[char]));
+      const badge = (source) => ({
+        bear: '<span class="source-badge bear">BEAR</span>',
+        worker: '<span class="source-badge worker">WORKER</span>',
+        you: '<span class="source-badge you">YOU</span>',
+        host: '<span class="source-badge host">HOST</span>'
+      }[source]);
+
+      function showToast(message, tone = "normal") {
+        const toast = $("toast");
+        toast.textContent = message;
+        toast.style.borderLeftColor = tone === "error" ? "var(--danger-1)" : tone === "warn" ? "var(--amber-1)" : "var(--aurora-1)";
+        toast.classList.add("visible");
+        window.clearTimeout(toastTimer);
+        toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 3200);
+      }
+
+      function renderMessages() {
+        const session = sessionData[activeSession];
+        $("chatList").innerHTML = session.messages.map((message) => `
+          <article class="message ${message.source === "you" ? "you" : ""}">
+            <div class="message-meta">${badge(message.source)}<span>${escapeHtml(message.name)} · ${escapeHtml(message.time)}</span></div>
+            <div class="message-bubble">${escapeHtml(message.text)}</div>
+          </article>
+        `).join("");
+        const chatList = $("chatList");
+        chatList.scrollTop = chatList.scrollHeight;
+      }
+
+      function switchSession(sessionId) {
+        if (!sessionData[sessionId]) return;
+        activeSession = sessionId;
+        const session = sessionData[sessionId];
+        document.querySelectorAll(".session-item").forEach((item) => {
+          const active = item.dataset.session === sessionId;
+          item.classList.toggle("active", active);
+          if (active) item.setAttribute("aria-current", "page");
+          else item.removeAttribute("aria-current");
+        });
+        $("companionIdentity").textContent = "极昼守望者 · 01";
+        $("sessionStatus").textContent = session.status;
+        $("conversationSessionCode").textContent = session.code;
+        $("conversationSessionTitle").textContent = session.title;
+        renderMessages();
+        showToast(`已切换到 ${session.title} · Host 保持同一 Companion Identity`);
+      }
+
+      function updateStateButtons() {
+        document.querySelectorAll(".state-button").forEach((button) => button.classList.toggle("active", button.dataset.state === currentState));
+      }
+
+      function renderState() {
+        const meta = stateMeta[currentState] || stateMeta.running;
+        document.body.className = `status-${meta.className}` + (document.body.classList.contains("evidence-only") ? " evidence-only" : "") + (document.body.classList.contains("drawer-open") ? " drawer-open" : "");
+        const status = $("commissionStatus");
+        status.className = `status-pill ${meta.className}`;
+        status.textContent = meta.label;
+        $("presenceStatus").textContent = meta.presence;
+        $("commissionTitle").textContent = meta.title;
+        $("commissionDescription").innerHTML = escapeHtml(meta.description).replace("不改动源文件，不开放网络。", "<strong>不改动源文件，不开放网络。</strong>");
+        $("commissionDeliverable").textContent = meta.deliverable;
+        const notice = $("commissionNotice");
+        notice.className = `commission-notice ${meta.noticeClass}`;
+        notice.textContent = meta.notice;
+        $("presenceDescription").innerHTML = currentState === "failed" || currentState === "unknown"
+          ? "我不会用叙事替你补齐缺失证据；请从 <strong>HOST VERIFIED</strong> 的记录决定下一步。"
+          : currentState === "returned"
+            ? "报告已经回来，但完成不等于验收；请以 <strong>HOST VERIFIED</strong> 的 evidence 作决定。"
+            : "我在这里陪你；这一刻的工作由 <strong>WORKER</strong> 在冻结的 envelope 内推进，结论只认 <strong>HOST VERIFIED</strong>。";
+        $("approveButton").hidden = currentState !== "draft";
+        $("editButton").hidden = currentState !== "draft";
+        $("rejectButton").hidden = currentState !== "draft";
+        $("stopButton").hidden = !["queued", "running"].includes(currentState);
+        $("acceptButton").hidden = currentState !== "returned";
+        $("changeButton").hidden = currentState !== "returned";
+        $("rejectResultButton").hidden = currentState !== "returned";
+        $("resetDraftButton").hidden = !["accepted", "failed", "unknown", "canceled", "rejected"].includes(currentState);
+        updateStateButtons();
+        updateEvidenceForState();
+      }
+
+      function setState(nextState, announce = true) {
+        if (!stateMeta[nextState]) return;
+        currentState = nextState;
+        editMode = false;
+        $("editFields").classList.remove("visible");
+        if (runTimer) window.clearTimeout(runTimer);
+        renderState();
+        if (announce) {
+          const announcement = stateMeta[nextState].label;
+          showToast(`Host mock state → ${announcement}`, ["failed", "unknown"].includes(nextState) ? "error" : nextState === "draft" ? "warn" : "normal");
+        }
+      }
+
+      function updateEvidenceForState() {
+        const list = $("evidenceList");
+        const existing = list.querySelector(".state-evidence");
+        if (existing) existing.remove();
+        if (["failed", "unknown", "canceled", "rejected"].includes(currentState)) {
+          const meta = stateMeta[currentState];
+          const entry = document.createElement("article");
+          entry.className = "evidence-entry state-evidence";
+          entry.innerHTML = `<span class="evidence-index">!</span><div><h3>${badge("host")} ${meta.label.toLowerCase()} projection</h3><p>Host journal · <code>AUR-042</code> · ${escapeHtml(meta.notice)}</p></div>`;
+          list.prepend(entry);
+          $("factEvidence").innerHTML = `7 条 · hash <strong>9c7e…3a1b</strong>`;
+        } else {
+          $("factEvidence").innerHTML = `6 条 · hash <strong>9c7e…3a1b</strong>`;
+        }
+        $("evidenceSummary").textContent = `${currentState.toUpperCase()} · 只展示可追溯事件，不把叙事当成结论。`;
+      }
+
+      function openEditMode() {
+        editMode = true;
+        $("editFields").classList.add("visible");
+        $("editTitle").focus();
+        showToast("进入 draft 编辑：保存前不会启动工作", "warn");
+      }
+
+      function saveEdit() {
+        const title = $("editTitle").value.trim();
+        const deliverable = $("editDeliverable").value.trim();
+        if (!title || !deliverable) {
+          showToast("标题和交付物不能为空", "error");
+          return;
+        }
+        stateMeta.draft.title = title;
+        stateMeta.draft.deliverable = `${deliverable} · 草稿`;
+        $("editFields").classList.remove("visible");
+        editMode = false;
+        setState("draft", false);
+        showToast("draft 已保存；仍需 approve 才会启动", "warn");
+      }
+
+      function appendConsoleLine(containerId, source, text, tone = "") {
+        const container = $(containerId);
+        const row = document.createElement("div");
+        row.className = "console-line";
+        row.innerHTML = `${badge(source)}<code class="${tone}">${escapeHtml(text)}</code>`;
+        container.appendChild(row);
+        container.scrollTop = container.scrollHeight;
+      }
+
+      function openEvidence() {
+        document.body.classList.add("drawer-open");
+        $("evidenceDrawer").classList.add("open");
+        $("evidenceDrawer").setAttribute("aria-hidden", "false");
+        $("evidenceToggle").setAttribute("aria-pressed", "true");
+      }
+
+      function closeEvidence() {
+        document.body.classList.remove("drawer-open");
+        $("evidenceDrawer").classList.remove("open");
+        $("evidenceDrawer").setAttribute("aria-hidden", "true");
+        $("evidenceToggle").setAttribute("aria-pressed", "false");
+      }
+
+      function toggleEvidenceOnly() {
+        const enabled = !document.body.classList.contains("evidence-only");
+        document.body.classList.toggle("evidence-only", enabled);
+        $("evidenceOnlyLabel").textContent = enabled ? "返回沉浸" : "Evidence-only";
+        $("evidenceOnlyToggle").setAttribute("aria-pressed", String(enabled));
+        showToast(enabled ? "Evidence-only：隐藏装饰，只保留可核对工作面" : "已返回 Presence Plane 沉浸视图");
+      }
+
+      function selectTab(tabName) {
+        activeTab = tabName;
+        document.querySelectorAll(".console-tab").forEach((tab) => tab.setAttribute("aria-selected", String(tab.dataset.tab === tabName)));
+        document.querySelectorAll(".console-panel").forEach((panel) => panel.classList.toggle("visible", panel.dataset.panel === tabName));
+      }
+
+      function toggleConsole() {
+        consoleOpen = !consoleOpen;
+        $("consoleBody").classList.toggle("collapsed", !consoleOpen);
+        $("consoleToggle").textContent = consoleOpen ? "收起" : "展开";
+        $("consoleToggle").setAttribute("aria-expanded", String(consoleOpen));
+      }
+
+      function toggleTakeover() {
+        takeover = !takeover;
+        $("takeoverBanner").classList.toggle("visible", takeover);
+        $("terminalPanel").classList.toggle("takeover", takeover);
+        $("terminalInput").disabled = !takeover;
+        $("terminalInput").placeholder = takeover ? "输入会被标记为 YOU / terminal action" : "先进入 user takeover，再输入本地命令";
+        $("runTerminalButton").textContent = takeover ? "退出 takeover" : "进入 takeover";
+        if (takeover) {
+          selectTab("terminal");
+          $("terminalInput").focus();
+          showToast("已进入 user takeover：你的操作会与 worker 明确分栏", "warn");
+        } else {
+          showToast("已退出 user takeover；worker console 仍可查看");
+        }
+      }
+
+      function submitChat(event) {
+        event.preventDefault();
+        const input = $("chatInput");
+        const text = input.value.trim();
+        if (!text) {
+          showToast("先告诉熊你要核对什么", "warn");
+          input.focus();
+          return;
+        }
+        const session = sessionData[activeSession];
+        const now = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+        session.messages.push({ source: "you", name: "你", time: now, text });
+        const reply = /委托|生成|写|检查|整理|执行/.test(text)
+          ? "收到。我会先把边界写进 Action Commission；在你 approve 之前，任何 effectful 工作都不会发生。"
+          : "记下了。这是普通对话，不会因为你说了一句话就启动 worker；需要外部工作时，我会先给你一张委托卡。";
+        session.messages.push({ source: "bear", name: "熊 · Presence", time: now, text: reply });
+        input.value = "";
+        renderMessages();
+        showToast("对话已写入当前 Companion Session");
+      }
+
+      function submitSteer(event) {
+        event.preventDefault();
+        const input = $("steerInput");
+        const text = input.value.trim();
+        if (!text) {
+          showToast("写一条 envelope 内 steer 再发送", "warn");
+          input.focus();
+          return;
+        }
+        appendConsoleLine("agentLines", "you", text);
+        appendConsoleLine("agentLines", "host", "steer accepted · scope unchanged", "ok");
+        input.value = "";
+        showToast("steer 已记录为 YOU → WORKER，不会扩大委托", "warn");
+      }
+
+      function submitTerminal(event) {
+        event.preventDefault();
+        if (!takeover) {
+          toggleTakeover();
+          return;
+        }
+        const input = $("terminalInput");
+        const command = input.value.trim();
+        if (!command) {
+          showToast("输入一条 terminal action", "warn");
+          input.focus();
+          return;
+        }
+        appendConsoleLine("terminalLines", "you", `$ ${command}`);
+        appendConsoleLine("terminalLines", "host", "user action journaled · worker stream remains separate", "ok");
+        input.value = "";
+        showToast("terminal action 已标记为 YOU，并写入本地 mock evidence", "warn");
+      }
+
+      document.querySelectorAll(".session-item").forEach((button) => button.addEventListener("click", () => switchSession(button.dataset.session)));
+      document.querySelectorAll(".state-button").forEach((button) => button.addEventListener("click", () => setState(button.dataset.state)));
+      document.querySelectorAll(".console-tab").forEach((button) => button.addEventListener("click", () => selectTab(button.dataset.tab)));
+      document.querySelectorAll(".run-chip").forEach((button) => button.addEventListener("click", () => {
+        document.querySelectorAll(".run-chip").forEach((chip) => chip.classList.toggle("active", chip === button));
+        if (button.dataset.run === "aur-042") {
+          selectTab("brief");
+          showToast("已聚焦 AUR-042 · console origin: 极昼交接");
+        } else {
+          showToast("MRR-018 来自镜面湖畔 · 当前 paused，不会抢占前台", "warn");
+        }
+      }));
+      $("chatForm").addEventListener("submit", submitChat);
+      $("steerForm").addEventListener("submit", submitSteer);
+      $("terminalForm").addEventListener("submit", submitTerminal);
+      $("evidenceToggle").addEventListener("click", openEvidence);
+      $("evidenceOnlyToggle").addEventListener("click", toggleEvidenceOnly);
+      $("evidenceClose").addEventListener("click", closeEvidence);
+      $("consoleToggle").addEventListener("click", toggleConsole);
+      $("approveButton").addEventListener("click", () => {
+        setState("queued");
+        runTimer = window.setTimeout(() => setState("running", false), 850);
+        showToast("approval 已记录 · Host 正在排队 AUR-042");
+      });
+      $("editButton").addEventListener("click", openEditMode);
+      $("saveEditButton").addEventListener("click", saveEdit);
+      $("cancelEditButton").addEventListener("click", () => {
+        $("editFields").classList.remove("visible");
+        editMode = false;
+        showToast("保留原 draft，未写入修改", "warn");
+      });
+      $("rejectButton").addEventListener("click", () => setState("rejected"));
+      $("stopButton").addEventListener("click", () => setState("canceled"));
+      $("acceptButton").addEventListener("click", () => setState("accepted"));
+      $("changeButton").addEventListener("click", () => {
+        setState("draft");
+        showToast("request change → 新 draft；旧 run 保留在 Host journal", "warn");
+      });
+      $("rejectResultButton").addEventListener("click", () => setState("rejected"));
+      $("resetDraftButton").addEventListener("click", () => setState("draft"));
+      $("runTerminalButton").addEventListener("click", (event) => {
+        if (!takeover) return;
+        event.preventDefault();
+        toggleTakeover();
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key.toLowerCase() === "e" && !event.metaKey && !event.ctrlKey && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) {
+          openEvidence();
+        }
+        if (event.key === "Escape" && document.body.classList.contains("drawer-open")) closeEvidence();
+      });
+
+      renderMessages();
+      renderState();
+      selectTab(activeTab);
+    })();
+  </script>
+</body>
+</html>

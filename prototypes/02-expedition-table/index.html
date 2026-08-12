@@ -1,0 +1,1157 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Bear Harness · 雪原远征桌</title>
+  <style>
+    :root {
+      --paper: #f5efe2;
+      --paper-light: #fbf8ef;
+      --paper-deep: #e7dac1;
+      --paper-line: #cdbd9f;
+      --ink: #292a25;
+      --graphite: #4d4e47;
+      --muted: #766f62;
+      --muted-light: #9b9181;
+      --snow: #f8f6ef;
+      --orange: #cf5e2c;
+      --orange-deep: #a74327;
+      --orange-soft: #f0d0b8;
+      --pine: #315346;
+      --pine-dark: #213d32;
+      --pine-soft: #d7e0d3;
+      --wood: #806047;
+      --wood-dark: #513c2f;
+      --wood-light: #a17c59;
+      --danger: #9d372f;
+      --unknown: #725f47;
+      --shadow-paper: 0 3px 0 rgba(67, 48, 30, .12), 0 12px 24px rgba(54, 39, 27, .13);
+      --shadow-lift: 0 5px 0 rgba(67, 48, 30, .15), 0 16px 26px rgba(54, 39, 27, .16);
+      --space-0: 2px;
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 20px;
+      --space-6: 24px;
+      --space-7: 32px;
+      --space-8: 40px;
+      --space-9: 48px;
+      --radius-sm: 5px;
+      --radius-md: 9px;
+      --radius-lg: 14px;
+      --radius-pill: 999px;
+      --text-xs: .72rem;
+      --text-sm: .82rem;
+      --text-md: .94rem;
+      --text-lg: 1.2rem;
+      --text-xl: clamp(1.45rem, 2vw, 2rem);
+      --font-sans: "Segoe UI", "Noto Sans SC", Arial, sans-serif;
+      --font-serif: Georgia, "Noto Serif SC", serif;
+      --ease: cubic-bezier(.22, .8, .2, 1);
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 300px; scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background-color: var(--wood);
+      background-image: repeating-linear-gradient(87deg, rgba(255, 239, 212, .08) 0 2px, rgba(58, 34, 20, .06) 2px 5px, transparent 5px 17px);
+      font-family: var(--font-sans);
+      line-height: 1.45;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      opacity: .28;
+      background-image: radial-gradient(rgba(27, 23, 17, .2) .55px, transparent .65px);
+      background-size: 5px 5px;
+      mix-blend-mode: multiply;
+    }
+    button, input, textarea { font: inherit; }
+    button { color: inherit; }
+    button, summary { cursor: pointer; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible, [contenteditable="true"]:focus-visible {
+      outline: 3px solid var(--orange);
+      outline-offset: 3px;
+    }
+    [hidden] { display: none !important; }
+
+    .cabin-shell {
+      width: min(1480px, calc(100% - var(--space-6)));
+      margin: var(--space-6) auto;
+    }
+    .masthead {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: var(--space-5);
+      padding: var(--space-5) var(--space-6) var(--space-4);
+      color: var(--paper-light);
+      border: 1px solid rgba(246, 224, 192, .34);
+      border-bottom: 0;
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+      background: rgba(66, 46, 35, .88);
+      box-shadow: 0 3px 0 rgba(48, 30, 20, .3);
+    }
+    .brand-lockup { display: flex; align-items: center; gap: var(--space-4); }
+    .bear-avatar {
+      position: relative;
+      width: 55px;
+      height: 55px;
+      flex: 0 0 auto;
+      border: 3px solid var(--paper-light);
+      border-radius: 50%;
+      background: var(--snow);
+      box-shadow: inset 0 -7px 0 rgba(202, 202, 190, .35), 0 3px 0 rgba(33, 24, 17, .28);
+    }
+    .bear-avatar::before, .bear-avatar::after {
+      content: "";
+      position: absolute;
+      top: -8px;
+      width: 18px;
+      height: 18px;
+      border: 3px solid var(--paper-light);
+      border-radius: 50%;
+      background: var(--snow);
+    }
+    .bear-avatar::before { left: 4px; }
+    .bear-avatar::after { right: 4px; }
+    .bear-eyes { position: absolute; top: 22px; left: 14px; width: 5px; height: 5px; border-radius: 50%; background: var(--ink); box-shadow: 17px 0 0 var(--ink); }
+    .bear-nose { position: absolute; left: 21px; top: 31px; width: 9px; height: 7px; border-radius: 50% 50% 45% 45%; background: var(--ink); }
+    .bear-nose::after { content: ""; position: absolute; left: 4px; top: 6px; width: 2px; height: 7px; background: var(--ink); }
+    .eyebrow, .section-kicker, .micro-label {
+      font-size: var(--text-xs);
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .masthead .eyebrow { color: #e9b18c; }
+    .masthead h1 { margin: var(--space-0) 0 0; font: 700 var(--text-xl)/1.12 var(--font-serif); letter-spacing: .02em; }
+    .masthead p { margin: var(--space-1) 0 0; color: #e2d5c0; font-size: var(--text-sm); }
+    .masthead-meta { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; justify-content: flex-end; }
+    .edition-mark { padding: var(--space-2) var(--space-3); border: 1px solid rgba(235, 210, 173, .55); border-radius: var(--radius-sm); color: #f0d8b6; font-size: var(--text-xs); font-weight: 800; letter-spacing: .1em; }
+
+    .fact-strip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-4);
+      padding: var(--space-3) var(--space-5);
+      background: var(--paper-light);
+      border: 1px solid var(--paper-line);
+      border-top: 0;
+      box-shadow: 0 4px 0 rgba(67, 48, 30, .1);
+    }
+    .fact-main, .fact-meta { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+    .fact-main { min-width: 0; }
+    .fact-copy { font-size: var(--text-sm); color: var(--graphite); }
+    .fact-copy strong { color: var(--ink); }
+    .stamp {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+      min-height: 24px;
+      padding: var(--space-1) var(--space-2);
+      border: 1px solid currentColor;
+      border-radius: var(--radius-sm);
+      font-size: var(--text-xs);
+      font-weight: 850;
+      letter-spacing: .06em;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .stamp::before { content: "◆"; font-size: .55rem; }
+    .stamp-host { color: var(--pine-dark); background: var(--pine-soft); }
+    .stamp-bear { color: var(--orange-deep); background: #f5ddc8; }
+    .stamp-worker { color: #5f4a34; background: #ead9bc; }
+    .stamp-you { color: #3d4d56; background: #dce6e8; }
+    .mode-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+      border: 1px solid var(--paper-line);
+      border-radius: var(--radius-pill);
+      background: var(--paper);
+      color: var(--graphite);
+      font-size: var(--text-sm);
+      font-weight: 750;
+      transition: background .2s var(--ease), border-color .2s var(--ease), color .2s var(--ease);
+    }
+    .mode-switch:hover { border-color: var(--orange); color: var(--orange-deep); }
+    .mode-switch[aria-pressed="true"] { border-color: var(--pine); background: var(--pine-dark); color: var(--paper-light); }
+    .toggle-dot { width: 12px; height: 12px; border: 2px solid currentColor; border-radius: 50%; background: transparent; }
+    .mode-switch[aria-pressed="true"] .toggle-dot { background: var(--orange); box-shadow: inset 0 0 0 2px var(--pine-dark); }
+
+    .work-rail {
+      margin-top: var(--space-5);
+      padding: var(--space-4);
+      border: 1px solid var(--paper-line);
+      border-radius: var(--radius-md);
+      background: var(--paper);
+      box-shadow: var(--shadow-paper);
+    }
+    .rail-heading { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
+    .rail-heading h2, .panel-title, .side-title { margin: 0; font: 700 var(--text-lg)/1.15 var(--font-serif); }
+    .rail-heading small { color: var(--muted); font-size: var(--text-xs); }
+    .route-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+    .route-card {
+      position: relative;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: var(--space-3);
+      min-width: 0;
+      padding: var(--space-3) var(--space-4);
+      border: 1px solid var(--paper-line);
+      border-left: 5px solid var(--muted-light);
+      border-radius: var(--radius-sm);
+      background: var(--paper-light);
+      text-align: left;
+      box-shadow: 0 2px 0 rgba(67, 48, 30, .08);
+      transition: transform .2s var(--ease), border-color .2s var(--ease), box-shadow .2s var(--ease);
+    }
+    .route-card:hover { transform: translateY(-2px); border-color: var(--orange); box-shadow: var(--shadow-paper); }
+    .route-card.is-selected { border-color: var(--orange); border-left-color: var(--orange); box-shadow: inset 0 0 0 1px var(--orange), var(--shadow-paper); }
+    .route-card:active { transform: translateY(0); }
+    .route-copy { min-width: 0; }
+    .route-name { display: block; overflow: hidden; color: var(--ink); font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+    .route-origin { display: block; margin-top: var(--space-1); overflow: hidden; color: var(--muted); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+    .route-status { display: flex; align-items: center; gap: var(--space-1); align-self: start; padding-top: var(--space-1); color: var(--muted); font-size: var(--text-xs); font-weight: 850; letter-spacing: .08em; white-space: nowrap; }
+    .status-pip { width: 8px; height: 8px; border: 1px solid currentColor; border-radius: 50%; background: currentColor; }
+    .status-running { color: var(--orange-deep); }
+    .status-returned { color: var(--pine-dark); }
+    .status-failed { color: var(--danger); }
+    .status-unknown { color: var(--unknown); }
+
+    .desk-grid { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: var(--space-5); align-items: start; margin-top: var(--space-5); }
+    .atlas-index, .side-table, .map-panel, .commission-card, .console-card {
+      border: 1px solid var(--paper-line);
+      background: var(--paper);
+      box-shadow: var(--shadow-paper);
+    }
+    .atlas-index { padding: var(--space-4); border-radius: var(--radius-md); }
+    .atlas-index header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding-bottom: var(--space-3); border-bottom: 1px dashed var(--paper-line); }
+    .atlas-index h2 { margin: 0; font: 700 var(--text-lg)/1.1 var(--font-serif); }
+    .page-count { color: var(--muted); font-size: var(--text-xs); }
+    .session-list { display: grid; gap: var(--space-2); margin-top: var(--space-3); }
+    .session-tab {
+      position: relative;
+      display: grid;
+      grid-template-columns: 30px 1fr;
+      gap: var(--space-2);
+      align-items: center;
+      width: calc(100% + var(--space-2));
+      margin-left: calc(var(--space-2) * -1);
+      padding: var(--space-3) var(--space-2);
+      border: 1px solid transparent;
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      background: transparent;
+      text-align: left;
+      transition: background .2s var(--ease), border-color .2s var(--ease), transform .2s var(--ease);
+    }
+    .session-tab:hover { border-color: var(--paper-line); background: var(--paper-light); transform: translateX(var(--space-1)); }
+    .session-tab.is-active { border-color: var(--paper-line); border-left: 4px solid var(--orange); background: var(--paper-light); box-shadow: 3px 2px 0 rgba(67, 48, 30, .1); }
+    .session-number { display: grid; place-items: center; width: 28px; height: 36px; border: 1px solid var(--paper-line); color: var(--orange-deep); font: 700 var(--text-sm)/1 var(--font-serif); background: var(--paper-deep); clip-path: polygon(0 0, 100% 0, 100% 84%, 50% 100%, 0 84%); }
+    .session-tab strong { display: block; overflow: hidden; font-size: var(--text-sm); text-overflow: ellipsis; white-space: nowrap; }
+    .session-tab small { display: block; margin-top: var(--space-1); overflow: hidden; color: var(--muted); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+    .index-note { margin: var(--space-6) 0 0; padding-top: var(--space-4); border-top: 1px solid var(--paper-line); color: var(--muted); font-size: var(--text-xs); }
+    .index-note strong { display: block; margin-bottom: var(--space-1); color: var(--ink); font-size: var(--text-sm); }
+
+    .main-stage { display: grid; gap: var(--space-5); min-width: 0; }
+    .map-panel { overflow: hidden; border-radius: var(--radius-md); }
+    .panel-header { display: flex; justify-content: space-between; gap: var(--space-4); padding: var(--space-6) var(--space-6) var(--space-4); border-bottom: 1px solid var(--paper-line); background: var(--paper-light); }
+    .panel-header .eyebrow, .side-table .eyebrow { color: var(--orange-deep); }
+    .panel-header h2 { margin: var(--space-1) 0 0; font: 700 var(--text-xl)/1.1 var(--font-serif); }
+    .panel-header p { margin: var(--space-2) 0 0; color: var(--muted); font-size: var(--text-sm); }
+    .session-fact { align-self: start; max-width: 230px; padding: var(--space-2) var(--space-3); border-left: 3px solid var(--pine); background: var(--pine-soft); color: var(--pine-dark); font-size: var(--text-xs); }
+    .map-band { position: relative; padding: var(--space-5) var(--space-6); background-color: #ded8c6; background-image: repeating-linear-gradient(0deg, rgba(64, 57, 44, .08) 0 1px, transparent 1px 7px); }
+    .map-band::before { content: ""; position: absolute; inset: var(--space-3); border: 1px solid rgba(91, 81, 62, .28); pointer-events: none; }
+    .map-route { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(3, 1fr); align-items: start; gap: var(--space-4); min-height: 91px; }
+    .map-route::before { content: ""; position: absolute; top: 17px; right: 12%; left: 12%; border-top: 2px dashed rgba(78, 70, 52, .6); transform: rotate(-4deg); }
+    .map-stop { position: relative; display: grid; justify-items: center; gap: var(--space-2); color: var(--graphite); text-align: center; }
+    .stop-marker { display: grid; place-items: center; width: 35px; height: 35px; border: 2px solid var(--graphite); border-radius: 50%; background: var(--paper); box-shadow: 2px 2px 0 rgba(77, 69, 53, .22); font: 800 var(--text-sm)/1 var(--font-serif); }
+    .map-stop.is-current .stop-marker { border-color: var(--orange-deep); color: var(--orange-deep); background: var(--orange-soft); }
+    .map-stop.is-done .stop-marker { border-color: var(--pine-dark); color: var(--paper-light); background: var(--pine); }
+    .map-stop strong { font-size: var(--text-xs); }
+    .map-stop small { color: var(--muted); font-size: var(--text-xs); }
+
+    .dialogue-panel { padding: var(--space-6); }
+    .dialogue-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-4); }
+    .dialogue-header h3 { margin: 0; font: 700 var(--text-lg)/1.1 var(--font-serif); }
+    .dialogue-header small { color: var(--muted); font-size: var(--text-xs); }
+    .message-list { display: grid; gap: var(--space-4); max-height: 540px; overflow: auto; padding-right: var(--space-2); }
+    .message { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-3); align-items: start; }
+    .message.is-you { grid-template-columns: minmax(0, 1fr) auto; }
+    .message.is-you .message-body { order: -1; justify-self: end; }
+    .message-body { width: min(100%, 640px); padding: var(--space-3) var(--space-4); border: 1px solid var(--paper-line); border-radius: var(--radius-md); background: var(--paper-light); }
+    .message.is-bear .message-body { border-left: 4px solid var(--orange); }
+    .message.is-worker .message-body { border-left: 4px dashed var(--wood); }
+    .message.is-host .message-body { border-left: 4px double var(--pine); background: #eef1e8; }
+    .message.is-you .message-body { border-right: 4px solid #6a7c84; background: #edf1ef; }
+    .message-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-1); }
+    .message-meta time { color: var(--muted-light); font-size: var(--text-xs); }
+    .message-body p { margin: 0; color: var(--graphite); font-size: var(--text-md); }
+    .ticket {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 69px;
+      min-height: 28px;
+      padding: var(--space-1) var(--space-2);
+      border: 1px solid currentColor;
+      color: var(--graphite);
+      background: var(--paper-deep);
+      font-size: var(--text-xs);
+      font-weight: 850;
+      letter-spacing: .08em;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .ticket-bear { border-radius: 50% 50% 44% 44%; color: var(--orange-deep); background: #f2d6bf; }
+    .ticket-worker { border-radius: var(--radius-sm) 14px var(--radius-sm) 14px; color: #65462f; background: #e9d6b5; }
+    .ticket-you { border-radius: 4px 12px 12px 4px; color: #425962; background: #dce7e9; }
+    .ticket-host { border-radius: 3px; color: var(--pine-dark); background: var(--pine-soft); }
+    .ticket::before { content: ""; width: 5px; height: 5px; margin-right: var(--space-1); border: 1px solid currentColor; border-radius: 50%; }
+    .composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3); margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px dashed var(--paper-line); }
+    .composer textarea { min-height: 48px; resize: vertical; padding: var(--space-3); border: 1px solid var(--paper-line); border-radius: var(--radius-sm); background: var(--snow); color: var(--ink); }
+    .composer textarea::placeholder { color: var(--muted-light); }
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-2);
+      min-height: 38px;
+      padding: var(--space-2) var(--space-4);
+      border: 1px solid var(--graphite);
+      border-radius: var(--radius-sm);
+      background: var(--paper-light);
+      color: var(--ink);
+      font-size: var(--text-sm);
+      font-weight: 800;
+      transition: transform .2s var(--ease), box-shadow .2s var(--ease), background .2s var(--ease), border-color .2s var(--ease);
+    }
+    .button:hover { transform: translateY(-1px); border-color: var(--orange); box-shadow: 0 3px 0 rgba(67, 48, 30, .13); }
+    .button:active { transform: translateY(1px); box-shadow: none; }
+    .button-primary { border-color: var(--orange-deep); background: var(--orange); color: #fff6ea; }
+    .button-primary:hover { border-color: var(--orange-deep); background: var(--orange-deep); }
+    .button-pine { border-color: var(--pine-dark); background: var(--pine); color: var(--paper-light); }
+    .button-danger { border-color: var(--danger); color: var(--danger); background: #f5e4de; }
+    .button-small { min-height: 30px; padding: var(--space-1) var(--space-2); font-size: var(--text-xs); }
+    .button:disabled { cursor: not-allowed; opacity: .48; transform: none; box-shadow: none; }
+
+    .evidence-only-note { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); padding: var(--space-3) var(--space-4); border: 1px solid var(--pine); border-left: 5px solid var(--pine); background: var(--pine-soft); color: var(--pine-dark); }
+    .evidence-only-note strong { display: block; font-size: var(--text-sm); }
+    .evidence-only-note span { color: var(--graphite); font-size: var(--text-xs); }
+
+    .commission-card { overflow: hidden; border-radius: var(--radius-md); }
+    .commission-card[data-state="approved"] { border-color: var(--pine); }
+    .commission-card[data-state="rejected"] { border-color: var(--danger); }
+    .commission-head { display: flex; justify-content: space-between; gap: var(--space-4); padding: var(--space-5) var(--space-6) var(--space-4); border-bottom: 1px solid var(--paper-line); background: #f2e7d4; }
+    .commission-head h2 { margin: var(--space-1) 0 0; font: 700 var(--text-lg)/1.1 var(--font-serif); }
+    .commission-head p { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-xs); }
+    .commission-status { align-self: start; padding: var(--space-2) var(--space-3); border: 1px solid var(--orange-deep); color: var(--orange-deep); background: #f8dfca; font-size: var(--text-xs); font-weight: 850; letter-spacing: .06em; white-space: nowrap; }
+    .commission-card[data-state="approved"] .commission-status { border-color: var(--pine); color: var(--pine-dark); background: var(--pine-soft); }
+    .commission-card[data-state="rejected"] .commission-status { border-color: var(--danger); color: var(--danger); background: #f5e4de; }
+    .commission-body { padding: var(--space-5) var(--space-6); }
+    .commission-intro { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); color: var(--graphite); font-size: var(--text-sm); }
+    .commission-intro strong { color: var(--ink); }
+    .commission-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+    .commission-field { min-width: 0; padding: var(--space-3); border: 1px solid var(--paper-line); background: var(--paper-light); }
+    .commission-field dt { color: var(--muted); font-size: var(--text-xs); font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+    .commission-field dd { margin: var(--space-1) 0 0; color: var(--ink); font-size: var(--text-sm); }
+    .commission-field dd[contenteditable="true"] { padding: var(--space-1); border: 1px dashed var(--orange); background: #fff9ee; }
+    .commission-footnote { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-4); padding: var(--space-3); border-top: 1px dashed var(--paper-line); color: var(--muted); font-size: var(--text-xs); }
+    .commission-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-4); }
+    .commission-actions .action-result { margin-left: auto; color: var(--muted); font-size: var(--text-xs); }
+
+    .console-card { overflow: hidden; border-radius: var(--radius-md); }
+    .console-card[data-status="failed"], .console-card[data-status="unknown"] { border-color: var(--danger); }
+    .console-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-4) var(--space-6); border-bottom: 1px solid var(--wood-dark); color: var(--paper-light); background: var(--wood-dark); }
+    .console-head h2 { margin: var(--space-1) 0 0; font: 700 var(--text-lg)/1.1 var(--font-serif); }
+    .console-head .eyebrow { color: #e8b18e; }
+    .console-head p { margin: var(--space-1) 0 0; color: #dbc8ae; font-size: var(--text-xs); }
+    .console-head-right { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; }
+    .console-toggle { border-color: rgba(241, 219, 190, .55); color: var(--paper-light); background: transparent; }
+    .console-toggle:hover { border-color: #f0b08b; background: rgba(255, 243, 224, .1); }
+    .console-head .status-chip { padding: var(--space-1) var(--space-2); border: 1px solid currentColor; border-radius: var(--radius-sm); font-size: var(--text-xs); font-weight: 850; letter-spacing: .07em; }
+    .console-body { background: #272b29; color: #e9e5d9; }
+    .console-contract { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-6); border-bottom: 1px solid rgba(228, 210, 180, .2); color: #cfd8c9; font-size: var(--text-xs); }
+    .console-contract .stamp { min-height: 22px; padding: var(--space-1); color: #b8d4bd; background: transparent; }
+    .console-tabs { display: flex; gap: var(--space-1); overflow-x: auto; padding: var(--space-3) var(--space-6) 0; border-bottom: 1px solid rgba(228, 210, 180, .2); }
+    .console-tab { flex: 0 0 auto; padding: var(--space-2) var(--space-3); border: 1px solid transparent; border-bottom: 0; border-radius: var(--radius-sm) var(--radius-sm) 0 0; color: #b6b4aa; background: transparent; font-size: var(--text-sm); font-weight: 750; }
+    .console-tab:hover { color: var(--paper-light); background: rgba(255, 243, 224, .08); }
+    .console-tab[aria-selected="true"] { border-color: rgba(228, 210, 180, .25); color: var(--paper-light); background: #343a36; }
+    .console-panels { padding: var(--space-5) var(--space-6); }
+    .console-panel h3 { margin: 0 0 var(--space-3); color: var(--paper-light); font: 700 var(--text-md)/1.1 var(--font-serif); }
+    .brief-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+    .brief-cell { padding: var(--space-3); border: 1px solid rgba(228, 210, 180, .2); background: rgba(255, 245, 225, .055); }
+    .brief-cell strong { display: block; margin-top: var(--space-1); color: #f0e7d6; font-size: var(--text-sm); }
+    .brief-cell small { color: #aeb7a8; font-size: var(--text-xs); }
+    .dark-label { color: #9da99b; font-size: var(--text-xs); font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+    .state-note { margin: var(--space-4) 0 0; padding: var(--space-3); border-left: 3px solid var(--pine); color: #d3dfcf; background: rgba(95, 139, 105, .13); font-size: var(--text-sm); }
+    .state-note.is-warn { border-left-color: #d38459; color: #f1d5c1; background: rgba(191, 94, 48, .15); }
+    .state-note.is-unknown { border-left-color: #c3a16e; color: #eddcbf; background: rgba(141, 112, 62, .18); }
+    .status-demo { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid rgba(228, 210, 180, .2); }
+    .status-demo > span { margin-right: var(--space-1); color: #9da99b; font-size: var(--text-xs); }
+    .status-button { padding: var(--space-1) var(--space-2); border: 1px solid rgba(228, 210, 180, .35); border-radius: var(--radius-sm); color: #ded7c8; background: transparent; font-size: var(--text-xs); font-weight: 800; }
+    .status-button:hover { border-color: #efb28b; color: #fff3e5; }
+    .event-list { display: grid; gap: var(--space-2); max-height: 250px; overflow: auto; padding: 0; margin: 0; list-style: none; }
+    .event-row { display: grid; grid-template-columns: auto 1fr auto; gap: var(--space-2); align-items: start; padding: var(--space-2) 0; border-bottom: 1px dashed rgba(228, 210, 180, .17); }
+    .event-row:last-child { border-bottom: 0; }
+    .event-row p { margin: 0; color: #e1ded3; font-size: var(--text-sm); }
+    .event-row time { color: #8f988c; font-size: var(--text-xs); }
+    .event-row .ticket { min-width: 61px; min-height: 22px; padding: var(--space-1); font-size: .63rem; }
+    .steer-form, .terminal-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2); margin-top: var(--space-4); }
+    .dark-input { min-width: 0; padding: var(--space-2) var(--space-3); border: 1px solid rgba(228, 210, 180, .35); border-radius: var(--radius-sm); color: #f1eadb; background: #1f2422; }
+    .dark-input::placeholder { color: #899187; }
+    .terminal-window { overflow: auto; min-height: 190px; max-height: 275px; padding: var(--space-4); border: 1px solid rgba(228, 210, 180, .25); border-radius: var(--radius-sm); background: #171b1a; font: .78rem/1.6 "SFMono-Regular", Consolas, monospace; }
+    .terminal-line { margin: 0; color: #b6c3b2; white-space: pre-wrap; word-break: break-word; }
+    .terminal-line .terminal-source { color: #db9a6e; }
+    .terminal-line.is-you { color: #dbe9ee; }
+    .terminal-line.is-host { color: #b8d4bd; }
+    .takeover-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-top: var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid rgba(228, 210, 180, .2); color: #bfc8bc; background: rgba(255, 245, 225, .05); font-size: var(--text-xs); }
+    .takeover-bar.is-active { border-color: #d4885b; color: #f2c4a7; background: rgba(196, 84, 43, .15); }
+    .takeover-bar strong { font-size: var(--text-sm); }
+    .tty-empty { display: grid; grid-template-columns: auto 1fr; gap: var(--space-3); align-items: start; padding: var(--space-4); border: 1px dashed rgba(228, 210, 180, .3); color: #c6c7bd; background: rgba(255, 245, 225, .04); }
+    .tty-empty strong { display: block; color: #f0e7d6; }
+    .tty-empty p { margin: var(--space-1) 0 0; font-size: var(--text-sm); }
+    .console-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; padding: var(--space-3) var(--space-6); border-top: 1px solid rgba(228, 210, 180, .2); background: #303632; }
+    .console-footer-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+    .console-footer .button { border-color: rgba(228, 210, 180, .45); color: #f1eadb; background: transparent; }
+    .console-footer .button:hover { border-color: #efb28b; background: rgba(255, 245, 225, .08); }
+    .acceptance { color: #b4c3b3; font-size: var(--text-xs); font-weight: 750; }
+    .acceptance strong { color: #dfe9db; }
+
+    .side-table { display: grid; gap: var(--space-5); padding: var(--space-4); border-radius: var(--radius-md); }
+    .side-section { padding-bottom: var(--space-4); border-bottom: 1px dashed var(--paper-line); }
+    .side-section:last-child { padding-bottom: 0; border-bottom: 0; }
+    .side-table h2 { margin: var(--space-1) 0 0; font: 700 var(--text-lg)/1.1 var(--font-serif); }
+    .side-table p { margin: var(--space-2) 0 0; color: var(--muted); font-size: var(--text-sm); }
+    .concept-figure { margin-top: var(--space-3); border: 1px solid var(--paper-line); background: var(--paper-light); }
+    .concept-figure summary { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-3); color: var(--ink); font-size: var(--text-sm); font-weight: 800; list-style: none; }
+    .concept-figure summary::-webkit-details-marker { display: none; }
+    .concept-figure summary::after { content: "+"; color: var(--orange-deep); font-size: var(--text-lg); line-height: 1; }
+    .concept-figure[open] summary::after { content: "−"; }
+    .concept-figure summary small { color: var(--muted); font-size: var(--text-xs); font-weight: 500; }
+    .concept-frame { position: relative; min-height: 118px; border-top: 1px solid var(--paper-line); background: #d7d0bd; }
+    .concept-frame img { display: block; width: 100%; height: auto; min-height: 118px; object-fit: cover; }
+    .concept-fallback { position: absolute; inset: 0; display: grid; place-items: center; padding: var(--space-4); color: var(--muted); font-size: var(--text-xs); text-align: center; }
+    .evidence-summary { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-top: var(--space-3); padding: var(--space-3); border: 1px solid var(--paper-line); background: var(--paper-light); }
+    .evidence-summary strong { display: block; font: 700 var(--text-lg)/1 var(--font-serif); }
+    .evidence-summary span { color: var(--muted); font-size: var(--text-xs); }
+    .evidence-list-mini { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
+    .specimen { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2); align-items: start; padding: var(--space-2); border: 1px solid var(--paper-line); background: var(--paper-light); }
+    .specimen-number { display: grid; place-items: center; width: 24px; height: 27px; border: 1px solid var(--wood); color: var(--wood-dark); font: 700 var(--text-xs)/1 var(--font-serif); background: #eadcc1; }
+    .specimen strong { display: block; font-size: var(--text-xs); }
+    .specimen code { display: block; margin-top: var(--space-1); color: var(--muted); font: .65rem/1.2 "SFMono-Regular", Consolas, monospace; word-break: break-all; }
+    .fact-ledger { display: grid; gap: var(--space-2); margin-top: var(--space-3); }
+    .fact-ledger p { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2); align-items: start; margin: 0; padding: var(--space-2); border-left: 3px solid var(--pine); background: #edf0e8; color: var(--graphite); font-size: var(--text-xs); }
+    .fact-ledger strong { color: var(--pine-dark); }
+
+    .drawer-backdrop { position: fixed; inset: 0; z-index: 10; background: rgba(32, 27, 22, .48); }
+    .evidence-drawer { position: fixed; z-index: 11; top: 0; right: 0; display: flex; flex-direction: column; width: min(440px, calc(100% - var(--space-5))); height: 100%; padding: var(--space-6); border-left: 1px solid var(--paper-line); background: var(--paper); box-shadow: -8px 0 24px rgba(35, 25, 18, .22); transform: translateX(100%); transition: transform .28s var(--ease); }
+    .evidence-drawer.is-open { transform: translateX(0); }
+    .drawer-head { display: flex; align-items: start; justify-content: space-between; gap: var(--space-3); padding-bottom: var(--space-4); border-bottom: 1px solid var(--paper-line); }
+    .drawer-head h2 { margin: var(--space-1) 0 0; font: 700 var(--text-xl)/1.1 var(--font-serif); }
+    .drawer-head p { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-xs); }
+    .drawer-close { width: 32px; height: 32px; border: 1px solid var(--paper-line); border-radius: var(--radius-sm); background: var(--paper-light); font-size: var(--text-lg); line-height: 1; }
+    .drawer-intro { margin: var(--space-4) 0; padding: var(--space-3); border-left: 4px solid var(--pine); color: var(--graphite); background: var(--pine-soft); font-size: var(--text-sm); }
+    .drawer-evidence-list { display: grid; gap: var(--space-3); overflow: auto; padding-right: var(--space-1); }
+    .drawer-specimen { display: grid; grid-template-columns: 34px 1fr; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--paper-line); background: var(--paper-light); box-shadow: 2px 2px 0 rgba(67, 48, 30, .08); }
+    .drawer-specimen-number { display: grid; place-items: center; width: 34px; height: 38px; border: 1px solid var(--wood); color: var(--wood-dark); font: 700 var(--text-md)/1 var(--font-serif); background: #eadcc1; clip-path: polygon(0 0, 100% 0, 100% 83%, 50% 100%, 0 83%); }
+    .drawer-specimen h3 { margin: 0; color: var(--ink); font-size: var(--text-sm); }
+    .drawer-specimen p { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--text-xs); }
+    .drawer-specimen code { display: block; margin-top: var(--space-2); padding: var(--space-1); color: var(--pine-dark); background: #e6eee3; font: .68rem/1.35 "SFMono-Regular", Consolas, monospace; word-break: break-all; }
+    .drawer-footer { margin-top: auto; padding-top: var(--space-4); border-top: 1px dashed var(--paper-line); color: var(--muted); font-size: var(--text-xs); }
+    .toast { position: fixed; right: var(--space-5); bottom: var(--space-5); z-index: 20; max-width: min(390px, calc(100% - var(--space-6))); padding: var(--space-3) var(--space-4); border: 1px solid var(--pine); border-left: 5px solid var(--pine); color: var(--pine-dark); background: var(--paper-light); box-shadow: var(--shadow-lift); font-size: var(--text-sm); }
+
+    @media (min-width: 1180px) {
+      .desk-grid { grid-template-columns: 232px minmax(0, 1fr) 276px; }
+      .main-stage { grid-column: 2; }
+      .side-table { grid-column: 3; grid-row: 1; }
+    }
+    @media (max-width: 1179px) {
+      .side-table { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .side-section { padding-right: var(--space-4); border-right: 1px dashed var(--paper-line); border-bottom: 0; }
+      .side-section:last-child { padding-right: 0; border-right: 0; }
+    }
+    @media (max-width: 820px) {
+      .cabin-shell { width: min(100% - var(--space-4), 720px); margin-top: var(--space-4); }
+      .masthead { align-items: flex-start; flex-direction: column; }
+      .masthead-meta { justify-content: flex-start; }
+      .fact-strip { align-items: flex-start; flex-direction: column; }
+      .route-list { grid-template-columns: 1fr; }
+      .desk-grid { grid-template-columns: 1fr; }
+      .atlas-index { order: 0; }
+      .main-stage { order: 1; }
+      .side-table { order: 2; }
+      .side-table { grid-template-columns: 1fr; }
+      .side-section { padding-right: 0; border-right: 0; border-bottom: 1px dashed var(--paper-line); }
+      .side-section:last-child { border-bottom: 0; }
+      .panel-header { flex-direction: column; }
+      .session-fact { max-width: none; }
+      .brief-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 560px) {
+      .cabin-shell { width: calc(100% - var(--space-4)); }
+      .masthead, .panel-header, .dialogue-panel, .commission-body, .commission-head, .console-panels { padding-right: var(--space-4); padding-left: var(--space-4); }
+      .fact-strip, .work-rail, .atlas-index, .side-table { padding-right: var(--space-3); padding-left: var(--space-3); }
+      .map-band { padding-right: var(--space-4); padding-left: var(--space-4); }
+      .map-route { gap: var(--space-2); }
+      .map-stop strong { font-size: .65rem; }
+      .map-stop small { display: none; }
+      .message, .message.is-you { grid-template-columns: 1fr; }
+      .message.is-you .message-body { order: 0; justify-self: stretch; }
+      .message .ticket { justify-self: start; }
+      .message.is-you .ticket { justify-self: end; }
+      .composer, .steer-form, .terminal-form { grid-template-columns: 1fr; }
+      .commission-grid { grid-template-columns: 1fr; }
+      .commission-actions .action-result { width: 100%; margin-left: 0; }
+      .console-head, .console-contract, .console-tabs, .console-footer { padding-right: var(--space-4); padding-left: var(--space-4); }
+      .console-head { align-items: flex-start; flex-direction: column; }
+      .console-head-right { justify-content: flex-start; }
+      .console-contract { align-items: flex-start; flex-direction: column; }
+      .console-footer { align-items: flex-start; flex-direction: column; }
+      .evidence-only-note { grid-template-columns: auto 1fr; }
+      .evidence-only-note .button { grid-column: 1 / -1; justify-self: start; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="cabin-shell">
+    <header class="masthead">
+      <div class="brand-lockup">
+        <div class="bear-avatar" aria-hidden="true"><span class="bear-eyes"></span><span class="bear-nose"></span></div>
+        <div>
+          <div class="eyebrow">BEAR HARNESS · FIELD DESK</div>
+          <h1>雪原远征桌</h1>
+          <p>把每一条外派路线钉回事实桌面。</p>
+        </div>
+      </div>
+      <div class="masthead-meta">
+        <span class="edition-mark">EXPEDITION TABLE / 02</span>
+        <span class="stamp stamp-bear">BEAR · 风暴守护</span>
+      </div>
+    </header>
+
+    <section class="fact-strip" aria-label="Host facts and view mode">
+      <div class="fact-main">
+        <span class="stamp stamp-host">HOST VERIFIED</span>
+        <div class="fact-copy"><strong>Host 是唯一事实源。</strong> 叙事、worker 输出与用户动作分栏记录。</div>
+      </div>
+      <div class="fact-meta">
+        <span class="fact-copy">本地 mock · 无真实执行</span>
+        <button class="mode-switch" id="evidenceOnlyToggle" type="button" aria-pressed="false"><span class="toggle-dot" aria-hidden="true"></span><span>证据只读</span></button>
+      </div>
+    </section>
+
+    <section class="work-rail" aria-labelledby="workRailTitle">
+      <div class="rail-heading">
+        <h2 id="workRailTitle">GLOBAL WORK RAIL · 桌面路线</h2>
+        <small>最多 2 条 active run · 点击路线查看控制台</small>
+      </div>
+      <div class="route-list" id="routeList"></div>
+    </section>
+
+    <div class="desk-grid">
+      <aside class="atlas-index" aria-labelledby="atlasTitle">
+        <header>
+          <h2 id="atlasTitle">地图册页签</h2>
+          <span class="page-count">3 SESSIONS</span>
+        </header>
+        <nav class="session-list" id="sessionList" aria-label="切换会话"></nav>
+        <div class="index-note">
+          <strong>同一位远征队长</strong>
+          熊的关系记忆留在 Companion Session；外派 worker 只拿到冻结的 Commission Packet。
+        </div>
+      </aside>
+
+      <main class="main-stage">
+        <section class="map-panel" aria-labelledby="sessionTitle">
+          <header class="panel-header">
+            <div>
+              <div class="eyebrow">ATLAS PAGE <span id="sessionNumber">01</span> · COMPANION SESSION</div>
+              <h2 id="sessionTitle">冰脊侦察 · 第一页</h2>
+              <p id="sessionMeta">最近 checkpoint：今天 12:04 · 仍由 Host 保存原始历史</p>
+            </div>
+            <div class="session-fact"><span class="stamp stamp-host">HOST VERIFIED</span><br>这张地图是会话视图，不是 operational truth 的替代品。</div>
+          </header>
+          <div class="map-band" aria-label="远征路线进度">
+            <div class="map-route">
+              <div class="map-stop is-done"><span class="stop-marker">01</span><strong>营火复盘</strong><small>对话事实</small></div>
+              <div class="map-stop is-current"><span class="stop-marker">02</span><strong>冰脊取样</strong><small>待批准委托</small></div>
+              <div class="map-stop"><span class="stop-marker">03</span><strong>验收桌</strong><small>YOU 决定</small></div>
+            </div>
+          </div>
+
+          <div class="dialogue-panel" id="dialoguePanel">
+            <div class="dialogue-header">
+              <h3>会话日志 · 熊与远征队</h3>
+              <small id="dialogueCount">Host journal · 3 entries</small>
+            </div>
+            <div class="message-list" id="messageList" aria-live="polite"></div>
+            <form class="composer" id="chatForm">
+              <label class="sr-only" for="chatInput">写给熊的消息</label>
+              <textarea id="chatInput" rows="2" placeholder="告诉熊下一步想看什么……"></textarea>
+              <button class="button button-primary" type="submit">记入会话</button>
+            </form>
+          </div>
+          <div class="evidence-only-note" id="evidenceOnlyNote" hidden>
+            <span class="stamp stamp-host">EVIDENCE ONLY</span>
+            <div><strong>现在只呈现 Host 证据。</strong><span>对话和新的用户消息暂时收起，事实不被熊的叙事覆盖。</span></div>
+            <button class="button button-small button-pine" id="evidenceOnlyOpen" type="button">打开证据抽屉</button>
+          </div>
+        </section>
+
+        <section class="commission-card" id="commissionCard" data-state="draft" aria-labelledby="commissionTitle">
+          <header class="commission-head">
+            <div>
+              <div class="eyebrow">ACTION COMMISSION · BEFORE EFFECT</div>
+              <h2 id="commissionTitle">冰脊风向标取样</h2>
+              <p>盖章以前没有 worker 可以开始；编辑会重算契约，拒绝会留下决定记录。</p>
+            </div>
+            <div class="commission-status" id="commissionStatus" role="status">DRAFT · 待 YOU 审批</div>
+          </header>
+          <div class="commission-body">
+            <div class="commission-intro"><span class="ticket ticket-bear">BEAR</span><span><strong>远征队长建议：</strong>先把可验证的路线交给外部 worker，再由 YOU 验收返回物。</span></div>
+            <dl class="commission-grid">
+              <div class="commission-field"><dt>目标 / Target</dt><dd data-editable="target">确认冰脊样本的来源与三处坐标</dd></div>
+              <div class="commission-field"><dt>交付物 / Deliverable</dt><dd data-editable="deliverable">坐标表、来源摘要、原始输出引用</dd></div>
+              <div class="commission-field"><dt>Executor / Version</dt><dd data-editable="executor">Pi RPC Worker · 0.4.2 · isolated</dd></div>
+              <div class="commission-field"><dt>Workspace / Envelope</dt><dd data-editable="workspace">/expedition/ice-ridge · 只读 · 无网络</dd></div>
+              <div class="commission-field"><dt>验收证据 / Evidence</dt><dd data-editable="evidence">E-044 至 E-047，含时间戳、退出码、sha256</dd></div>
+              <div class="commission-field"><dt>限制 / Limits</dt><dd data-editable="limits">最多 80 次 effectful call · 12 分钟 · 不触碰关系记忆</dd></div>
+            </dl>
+            <div class="commission-footnote"><span class="ticket ticket-host">HOST VERIFIED</span><span>Host 将保存冻结版本、权限边界与 approval；worker 无法改写 UI 或事实状态。</span></div>
+            <div class="commission-actions">
+              <button class="button button-primary" id="commissionApprove" type="button">批准并冻结契约</button>
+              <button class="button" id="commissionEdit" type="button">编辑草案</button>
+              <button class="button button-danger" id="commissionReject" type="button">拒绝</button>
+              <button class="button" id="commissionReset" type="button" hidden>重新起草</button>
+              <button class="button button-pine" id="commissionStart" type="button" hidden>开始这条路线（模拟）</button>
+              <span class="action-result" id="commissionResult">等待 YOU 的决定。</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="console-card" id="executorConsole" data-status="running" aria-labelledby="consoleTitle">
+          <header class="console-head">
+            <div>
+              <div class="eyebrow">EXECUTOR CONSOLE · HOST PROJECTION</div>
+              <h2 id="consoleTitle">R-014 · 风暴线 / 北坡</h2>
+              <p id="consoleOrigin">源会话：冰脊侦察 · worker 与 Companion 隔离</p>
+            </div>
+            <div class="console-head-right">
+              <span class="status-chip status-running" id="consoleStatus">RUNNING</span>
+              <button class="button button-small console-toggle" id="consoleToggle" type="button" aria-expanded="true" aria-controls="consoleBody">收起控制台</button>
+            </div>
+          </header>
+          <div id="consoleBody">
+            <div class="console-contract"><span class="stamp">HOST VERIFIED</span><span>Brief、Agent Console、Worktree Terminal 始终指向 Host 记录；Native TTY 仅在 profile 支持时显示。</span></div>
+            <div class="console-tabs" role="tablist" aria-label="Executor Console tabs">
+              <button class="console-tab" type="button" role="tab" aria-selected="true" aria-controls="panelBrief" data-console-tab="brief" id="tabBrief">Brief</button>
+              <button class="console-tab" type="button" role="tab" aria-selected="false" aria-controls="panelAgent" data-console-tab="agent" id="tabAgent">Agent Console</button>
+              <button class="console-tab" type="button" role="tab" aria-selected="false" aria-controls="panelTerminal" data-console-tab="terminal" id="tabTerminal">Worktree Terminal</button>
+              <button class="console-tab" type="button" role="tab" aria-selected="false" aria-controls="panelTTY" data-console-tab="tty" id="tabTTY">Native TTY · 适用时</button>
+            </div>
+            <div class="console-panels">
+              <section class="console-panel" id="panelBrief" role="tabpanel" aria-labelledby="tabBrief" data-console-panel="brief">
+                <h3>Frozen Brief · worker 看见的最小上下文</h3>
+                <div class="brief-grid">
+                  <div class="brief-cell"><span class="dark-label">Commission</span><strong id="briefCommission">冰脊风向标取样</strong><small>版本 01 · approval 已记录</small></div>
+                  <div class="brief-cell"><span class="dark-label">Executor</span><strong id="briefExecutor">Pi RPC Worker</strong><small id="briefProfile">pi.rpc-worker 0.4.2</small></div>
+                  <div class="brief-cell"><span class="dark-label">Origin session</span><strong id="briefOrigin">冰脊侦察</strong><small>relationship memory 未注入</small></div>
+                </div>
+                <div class="state-note" id="stateNote" role="status">Worker 正在隔离 worktree 中运行；当前没有 YOU 的 acceptance。</div>
+                <div class="status-demo"><span>切换 mock 状态（Host projection）：</span><button class="status-button" type="button" data-set-status="running">running</button><button class="status-button" type="button" data-set-status="returned">returned</button><button class="status-button" type="button" data-set-status="failed">failed</button><button class="status-button" type="button" data-set-status="unknown">unknown</button></div>
+              </section>
+              <section class="console-panel" id="panelAgent" role="tabpanel" aria-labelledby="tabAgent" data-console-panel="agent" hidden>
+                <h3>Agent Console · 外部 worker 输出</h3>
+                <ol class="event-list" id="eventList" aria-live="polite"></ol>
+                <form class="steer-form" id="steerForm">
+                  <label class="sr-only" for="steerInput">发送 steer 给 worker</label>
+                  <input class="dark-input" id="steerInput" type="text" placeholder="向 worker 发送 steer（会写入 Host journal）">
+                  <button class="button button-primary" type="submit">发送 steer</button>
+                </form>
+              </section>
+              <section class="console-panel" id="panelTerminal" role="tabpanel" aria-labelledby="tabTerminal" data-console-panel="terminal" hidden>
+                <h3>Worktree Terminal · 用户可接管的窄门</h3>
+                <div class="terminal-window" id="terminalWindow" aria-label="Worktree terminal transcript"></div>
+                <div class="takeover-bar" id="takeoverBar"><div><strong id="takeoverTitle">worker terminal · 只读观察</strong><br><span id="takeoverHelp">点击“接管终端”后，命令才会以 YOU 身份进入 Host journal。</span></div><button class="button button-small" id="takeoverButton" type="button">接管终端</button></div>
+                <form class="terminal-form" id="terminalForm">
+                  <label class="sr-only" for="terminalInput">输入用户 terminal 命令</label>
+                  <input class="dark-input" id="terminalInput" type="text" disabled placeholder="先接管终端，再输入命令">
+                  <button class="button button-primary" id="terminalSend" type="submit" disabled>执行（mock）</button>
+                </form>
+              </section>
+              <section class="console-panel" id="panelTTY" role="tabpanel" aria-labelledby="tabTTY" data-console-panel="tty" hidden>
+                <h3>Native TTY · profile capability</h3>
+                <div class="tty-empty"><span class="ticket ticket-worker">WORKER</span><div><strong id="ttyTitle">当前 run 使用 Pi RPC Worker，Native TTY 不适用。</strong><p id="ttyCopy">这不是失败；Host 没有为不支持的 profile 假造终端。切到 Hermes run 时会展示真实的 TTY 投影。</p></div></div>
+              </section>
+            </div>
+            <footer class="console-footer">
+              <div class="console-footer-actions"><button class="button button-small" id="evidenceOpen" type="button">打开证据袋 · 04</button><button class="button button-small button-danger" id="stopRun" type="button">停止 run</button></div>
+              <div class="console-footer-actions"><span class="acceptance" id="acceptanceState">ACCEPTANCE: <strong>待 YOU 验收</strong></span><button class="button button-small button-pine" id="acceptRun" type="button">记录 YOU 验收</button></div>
+            </footer>
+          </div>
+        </section>
+      </main>
+
+      <aside class="side-table" aria-label="桌面概念与证据摘要">
+        <section class="side-section">
+          <div class="eyebrow">TABLETOP CONCEPT</div>
+          <h2 class="side-title">桌面概念图</h2>
+          <p>木桌上的纸张、路线和标本袋；展开查看本套视觉方向。</p>
+          <details class="concept-figure">
+            <summary><span>concept.png</span><small>点击展开</small></summary>
+            <div class="concept-frame"><img src="concept.png" alt="雪原远征桌概念图：木屋桌面、地图页签与标本袋" onerror="this.hidden=true; this.nextElementSibling.hidden=false"><p class="concept-fallback" hidden>等待同目录 concept.png 装订。</p></div>
+          </details>
+        </section>
+        <section class="side-section">
+          <div class="eyebrow">EVIDENCE SPECIMENS</div>
+          <h2 class="side-title">标本袋 · Host 记录</h2>
+          <div class="evidence-summary"><div><strong>04</strong><span>已挂接证据</span></div><button class="button button-small" id="evidenceOpenSide" type="button">查看抽屉</button></div>
+          <div class="evidence-list-mini">
+            <div class="specimen"><span class="specimen-number">01</span><div><strong>Frozen commission</strong><code>sha256:6f1c…a9e2</code></div></div>
+            <div class="specimen"><span class="specimen-number">02</span><div><strong>Worker event stream</strong><code>sha256:80b2…0d71</code></div></div>
+            <div class="specimen"><span class="specimen-number">03</span><div><strong>Exit record</strong><code>sha256:c3ae…7f04</code></div></div>
+          </div>
+        </section>
+        <section class="side-section">
+          <div class="eyebrow">FACT LEDGER</div>
+          <h2 class="side-title">三道边界</h2>
+          <div class="fact-ledger">
+            <p><span class="stamp stamp-host">HOST</span><span><strong>事实</strong> · 状态、权限、证据与 acceptance 由 Host 写入。</span></p>
+            <p><span class="stamp stamp-bear">BEAR</span><span><strong>建议</strong> · 熊是陪伴与提议，不是执行器。</span></p>
+            <p><span class="stamp stamp-worker">WORKER</span><span><strong>输出</strong> · 外部程序只处理冻结委托，不能改 UI。</span></p>
+          </div>
+        </section>
+      </aside>
+    </div>
+  </div>
+
+  <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
+  <aside class="evidence-drawer" id="evidenceDrawer" aria-hidden="true" inert aria-labelledby="drawerTitle">
+    <header class="drawer-head">
+      <div><div class="eyebrow">HOST JOURNAL · EVIDENCE DRAWER</div><h2 id="drawerTitle">证据袋 · R-014</h2><p id="drawerOrigin">源会话：冰脊侦察</p></div>
+      <button class="drawer-close" id="drawerClose" type="button" aria-label="关闭证据抽屉">×</button>
+    </header>
+    <div class="drawer-intro"><span class="stamp stamp-host">HOST VERIFIED</span> 编号、时间和哈希来自本地 mock journal；worker 的叙述不能替代这些记录。</div>
+    <div class="drawer-evidence-list" id="drawerEvidenceList"></div>
+    <div class="drawer-footer">Evidence-only mode 只读这些标本；它不会自动把 returned 变成 accepted。</div>
+  </aside>
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const state = {
+        activeSession: 'ridge',
+        selectedRun: 'r014',
+        consoleTab: 'brief',
+        consoleOpen: true,
+        evidenceOnly: false,
+        takeover: false,
+        commission: { status: 'draft', editing: false },
+        sessions: {
+          ridge: {
+            number: '01', title: '冰脊侦察 · 第一页', meta: '最近 checkpoint：今天 12:04 · 仍由 Host 保存原始历史', short: '冰脊侦察', note: '坐标与风向的第一条路线。',
+            messages: [
+              { source: 'bear', time: '12:01', text: '我在地图边缘听见风向变了。先把问题拆成可验收的冰脊取样，好吗？' },
+              { source: 'you', time: '12:02', text: '先确认来源，不要把推测当成坐标。' },
+              { source: 'host', time: '12:04', text: 'Host 已整理出 1 个 Action Commission 草案；批准以前不会创建 effectful worker run。' }
+            ]
+          },
+          supply: {
+            number: '02', title: '南侧补给 · 第二页', meta: '最近 checkpoint：昨天 18:36 · 2 条未完成事项', short: '南侧补给', note: '补给箱的 provenance 还缺一枚证据。',
+            messages: [
+              { source: 'bear', time: '18:21', text: '南侧补给箱的木牌褪色了。我可以先列出缺失的 provenance，再决定是否外派。' },
+              { source: 'you', time: '18:28', text: '把验收条件写得比路线故事更清楚。' },
+              { source: 'host', time: '18:36', text: 'Host checkpoint 已保存；当前没有批准中的委托。' }
+            ]
+          },
+          archive: {
+            number: '03', title: '旧风暴档案 · 第三页', meta: '最近 checkpoint：周一 09:12 · 已归档', short: '旧风暴档案', note: '只读历史；不向 worker 暴露关系记忆。',
+            messages: [
+              { source: 'bear', time: '09:02', text: '这页记着旧风暴，但它属于我们的 Companion Session，不会进入外部 worker 的包。' },
+              { source: 'you', time: '09:08', text: '保留原始日志，摘要只作为导航。' },
+              { source: 'host', time: '09:12', text: 'Host 已归档该页；原始事件与证据仍可从事实账本恢复。' }
+            ]
+          }
+        },
+        runs: {
+          r014: {
+            id: 'R-014', title: '风暴线 / 北坡', origin: '冰脊侦察', status: 'running', profile: 'pi.rpc-worker 0.4.2', executor: 'Pi RPC Worker', accepted: false,
+            events: [
+              { source: 'host', time: '12:06', text: 'Frozen Commission packet 已送入 isolated worktree。' },
+              { source: 'worker', time: '12:07', text: '读取 3 个只读坐标文件；没有访问 relationship memory。' },
+              { source: 'worker', time: '12:08', text: '发现第二坐标的来源链需要复核，暂不宣告完成。' }
+            ],
+            terminal: [
+              { source: 'host', text: 'HOST VERIFIED · worktree mounted read-only' },
+              { source: 'worker', text: 'worker$ scan --manifest ice-ridge' },
+              { source: 'worker', text: 'worker> 3 files indexed · awaiting source check' }
+            ]
+          },
+          r013: {
+            id: 'R-013', title: '南侧补给 / provenance', origin: '南侧补给', status: 'returned', profile: 'hermes.console 0.9.1', executor: 'Hermes Console', accepted: false,
+            events: [
+              { source: 'host', time: '昨日 18:11', text: 'Frozen Commission packet 已送入 Hermes worktree。' },
+              { source: 'worker', time: '昨日 18:28', text: '返回来源表与 2 个待核对条目。' },
+              { source: 'host', time: '昨日 18:36', text: 'Returned 已挂接 evidence；等待 YOU acceptance，未宣告成功。' }
+            ],
+            terminal: [
+              { source: 'host', text: 'HOST VERIFIED · hermes PTY attached' },
+              { source: 'worker', text: 'hermes$ provenance --check south-cache' },
+              { source: 'worker', text: 'hermes> returned 2 unresolved provenance links' }
+            ]
+          }
+        }
+      };
+
+      const sourceMeta = {
+        bear: { label: 'BEAR', ticket: 'ticket-bear', className: 'is-bear' },
+        worker: { label: 'WORKER', ticket: 'ticket-worker', className: 'is-worker' },
+        you: { label: 'YOU', ticket: 'ticket-you', className: 'is-you' },
+        host: { label: 'HOST VERIFIED', ticket: 'ticket-host', className: 'is-host' }
+      };
+      const statusMeta = {
+        running: { label: 'RUNNING', className: 'status-running', note: 'Worker 正在隔离 worktree 中运行；当前没有 YOU 的 acceptance。' },
+        returned: { label: 'RETURNED · 待验收', className: 'status-returned', note: 'Worker 已返回输出，但 returned 不等于 accepted；等待 YOU 查看证据并决定。' },
+        failed: { label: 'FAILED · 未完成', className: 'status-failed', note: '失败状态：Host 没有足够事实宣布完成，也不会庆祝这条路线。' },
+        unknown: { label: 'UNKNOWN · 证据不足', className: 'status-unknown', note: '未知状态：证据不完整或冲突；Host 保留 unknown，不将它解释成成功。' }
+      };
+
+      const $ = (selector, root = document) => root.querySelector(selector);
+      const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+      const escapeHTML = (value) => String(value).replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
+      const formatTime = () => new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+      let toastTimer;
+
+      function showToast(message) {
+        const toast = $('#toast');
+        toast.textContent = message;
+        toast.hidden = false;
+        window.clearTimeout(toastTimer);
+        toastTimer = window.setTimeout(() => { toast.hidden = true; }, 3600);
+      }
+
+      function renderSessions() {
+        const list = $('#sessionList');
+        list.innerHTML = Object.entries(state.sessions).map(([key, session]) => `
+          <button class="session-tab${key === state.activeSession ? ' is-active' : ''}" type="button" data-session="${key}" aria-current="${key === state.activeSession ? 'page' : 'false'}">
+            <span class="session-number">${session.number}</span>
+            <span><strong>${escapeHTML(session.short)}</strong><small>${escapeHTML(session.note)}</small></span>
+          </button>`).join('');
+        $$('.session-tab', list).forEach((button) => button.addEventListener('click', () => {
+          state.activeSession = button.dataset.session;
+          const session = state.sessions[state.activeSession];
+          $('#sessionNumber').textContent = session.number;
+          $('#sessionTitle').textContent = session.title;
+          $('#sessionMeta').textContent = session.meta;
+          renderSessions();
+          renderMessages();
+          showToast(`已切换到 ${session.short}；Host 保留该页的独立历史。`);
+        }));
+      }
+
+      function renderMessages() {
+        const session = state.sessions[state.activeSession];
+        $('#messageList').innerHTML = session.messages.map((message) => {
+          const meta = sourceMeta[message.source];
+          return `<article class="message ${meta.className}">
+            <span class="ticket ${meta.ticket}">${meta.label}</span>
+            <div class="message-body"><div class="message-meta"><span class="micro-label">${message.source === 'host' ? 'FACT RECORD' : message.source === 'bear' ? 'COMPANION NOTE' : 'USER NOTE'}</span><time>${escapeHTML(message.time)}</time></div><p>${escapeHTML(message.text)}</p></div>
+          </article>`;
+        }).join('');
+        $('#dialogueCount').textContent = `Host journal · ${session.messages.length} entries`;
+      }
+
+      function runStatusLabel(run) { return statusMeta[run.status].label; }
+
+      function renderRoutes() {
+        const list = $('#routeList');
+        list.innerHTML = Object.entries(state.runs).map(([key, run]) => {
+          const meta = statusMeta[run.status];
+          return `<button class="route-card${key === state.selectedRun ? ' is-selected' : ''}" type="button" data-run="${key}" aria-current="${key === state.selectedRun ? 'true' : 'false'}">
+            <span class="ticket ticket-worker">WORKER</span>
+            <span class="route-copy"><span class="route-name">${escapeHTML(run.id)} · ${escapeHTML(run.title)}</span><span class="route-origin">源会话：${escapeHTML(run.origin)}</span></span>
+            <span class="route-status ${meta.className}"><i class="status-pip" aria-hidden="true"></i>${meta.label}</span>
+          </button>`;
+        }).join('');
+        $$('.route-card', list).forEach((button) => button.addEventListener('click', () => {
+          state.selectedRun = button.dataset.run;
+          state.takeover = false;
+          renderRoutes();
+          renderRun();
+          showToast(`已聚焦 ${state.runs[state.selectedRun].id}；控制台仍由 Host 投影。`);
+        }));
+      }
+
+      function renderEvents(run) {
+        $('#eventList').innerHTML = run.events.map((event) => {
+          const meta = sourceMeta[event.source];
+          return `<li class="event-row"><span class="ticket ${meta.ticket}">${meta.label}</span><p>${escapeHTML(event.text)}</p><time>${escapeHTML(event.time)}</time></li>`;
+        }).join('');
+      }
+
+      function renderTerminal(run) {
+        $('#terminalWindow').innerHTML = run.terminal.map((line) => {
+          const meta = sourceMeta[line.source];
+          return `<p class="terminal-line ${meta.className}"><span class="terminal-source">${meta.label}</span> · ${escapeHTML(line.text)}</p>`;
+        }).join('');
+        const terminalWindow = $('#terminalWindow');
+        terminalWindow.scrollTop = terminalWindow.scrollHeight;
+      }
+
+      function renderRun() {
+        const run = state.runs[state.selectedRun];
+        const meta = statusMeta[run.status];
+        $('#consoleTitle').textContent = `${run.id} · ${run.title}`;
+        $('#consoleOrigin').textContent = `源会话：${run.origin} · worker 与 Companion 隔离`;
+        const statusChip = $('#consoleStatus');
+        statusChip.textContent = runStatusLabel(run);
+        statusChip.className = `status-chip ${meta.className}`;
+        $('#executorConsole').dataset.status = run.status;
+        $('#stateNote').textContent = meta.note;
+        $('#stateNote').className = `state-note${run.status === 'unknown' ? ' is-unknown' : run.status === 'failed' ? ' is-warn' : ''}`;
+        $('#briefExecutor').textContent = run.executor;
+        $('#briefProfile').textContent = run.profile;
+        $('#briefOrigin').textContent = run.origin;
+        $('#drawerTitle').textContent = `证据袋 · ${run.id}`;
+        $('#drawerOrigin').textContent = `源会话：${run.origin}`;
+        $('#ttyTitle').textContent = run.executor === 'Hermes Console' ? 'Hermes profile 支持 Native TTY；此处为 Host-owned PTY 投影。' : '当前 run 使用 Pi RPC Worker，Native TTY 不适用。';
+        $('#ttyCopy').textContent = run.executor === 'Hermes Console' ? 'TTY 中的每条输入仍带有 YOU / WORKER 标签并写回 Host journal；它不是 worker 的隐形后门。' : '这不是失败；Host 没有为不支持的 profile 假造终端。切到 Hermes run 时会展示真实的 TTY 投影。';
+        $('#acceptanceState').innerHTML = `ACCEPTANCE: <strong>${run.accepted ? '已由 YOU 记录' : '待 YOU 验收'}</strong>`;
+        $('#acceptRun').disabled = run.status !== 'returned' || run.accepted;
+        $('#stopRun').disabled = run.status !== 'running';
+        renderEvents(run);
+        renderTerminal(run);
+        renderEvidence();
+        setTakeoverUI();
+      }
+
+      function renderEvidence() {
+        const run = state.runs[state.selectedRun];
+        const items = [
+          { n: '01', title: 'Frozen Commission packet', detail: 'approval、envelope 与 executor profile 的不可变副本', hash: `sha256:6f1c2a09…${run.id === 'R-014' ? 'a9e2' : 'e12b'}` },
+          { n: '02', title: 'Normalized worker stream', detail: `${run.status === 'unknown' ? '流中出现缺口；状态保留 unknown' : '带来源标签的外部输出事件'}`, hash: `sha256:80b2d41c…${run.id === 'R-014' ? '0d71' : 'b880'}` },
+          { n: '03', title: 'Exit / return record', detail: run.status === 'returned' ? '返回记录已挂接；尚未等同 acceptance' : '当前 run 的退出码与 Host 接收时间', hash: `sha256:c3ae09bf…${run.id === 'R-014' ? '7f04' : '9a62'}` },
+          { n: '04', title: 'Workspace boundary', detail: 'worktree、只读路径与关系记忆隔离声明', hash: `sha256:1d7aa1f4…${run.id === 'R-014' ? '42c6' : '66b1'}` }
+        ];
+        $('#drawerEvidenceList').innerHTML = items.map((item) => `<article class="drawer-specimen"><span class="drawer-specimen-number">${item.n}</span><div><h3>${item.title}</h3><p>${item.detail}</p><code>${item.hash}</code></div></article>`).join('');
+      }
+
+      function setConsoleTab(tab) {
+        state.consoleTab = tab;
+        $$('[data-console-tab]').forEach((button) => button.setAttribute('aria-selected', String(button.dataset.consoleTab === tab)));
+        $$('[data-console-panel]').forEach((panel) => { panel.hidden = panel.dataset.consolePanel !== tab; });
+      }
+
+      function setTakeoverUI() {
+        const active = state.takeover;
+        const bar = $('#takeoverBar');
+        bar.classList.toggle('is-active', active);
+        $('#takeoverTitle').textContent = active ? 'YOU TAKEOVER · 用户操作已接管' : 'worker terminal · 只读观察';
+        $('#takeoverHelp').textContent = active ? '命令将以 YOU 身份记录；worker 不会伪造用户输入。' : '点击“接管终端”后，命令才会以 YOU 身份进入 Host journal。';
+        $('#takeoverButton').textContent = active ? '退出接管' : '接管终端';
+        $('#terminalInput').disabled = !active;
+        $('#terminalSend').disabled = !active;
+        if (!active) $('#terminalInput').value = '';
+      }
+
+      function renderCommission() {
+        const commission = state.commission;
+        const card = $('#commissionCard');
+        const status = $('#commissionStatus');
+        card.dataset.state = commission.status;
+        if (commission.status === 'draft') status.textContent = 'DRAFT · 待 YOU 审批';
+        if (commission.status === 'approved') status.textContent = 'APPROVED · Host 已冻结';
+        if (commission.status === 'running') status.textContent = 'RUNNING · mock route';
+        if (commission.status === 'rejected') status.textContent = 'REJECTED · 已记录';
+        $('#commissionApprove').hidden = commission.status !== 'draft';
+        $('#commissionReject').hidden = commission.status !== 'draft';
+        $('#commissionReset').hidden = commission.status !== 'rejected';
+        $('#commissionStart').hidden = commission.status !== 'approved';
+        $('#commissionEdit').disabled = commission.status === 'running';
+        $('#commissionEdit').textContent = commission.editing ? '保存修改' : '编辑草案';
+        $$('#commissionCard [data-editable]').forEach((field) => {
+          field.contentEditable = commission.editing ? 'true' : 'false';
+          field.setAttribute('aria-label', `编辑 ${field.dataset.editable}`);
+        });
+        const result = $('#commissionResult');
+        if (commission.status === 'draft') result.textContent = commission.editing ? '正在编辑冻结前草案。' : '等待 YOU 的决定。';
+        if (commission.status === 'approved') result.textContent = 'approval 已记入 Host；可选择开始 mock route。';
+        if (commission.status === 'running') result.textContent = '这只是本地 mock；没有真实 effect。';
+        if (commission.status === 'rejected') result.textContent = '拒绝决定已记入 Host；可重新起草。';
+      }
+
+      function openEvidence() {
+        $('#drawerBackdrop').hidden = false;
+        $('#evidenceDrawer').classList.add('is-open');
+        $('#evidenceDrawer').removeAttribute('inert');
+        $('#evidenceDrawer').setAttribute('aria-hidden', 'false');
+        $('#drawerClose').focus();
+      }
+      function closeEvidence() {
+        $('#drawerBackdrop').hidden = true;
+        $('#evidenceDrawer').classList.remove('is-open');
+        $('#evidenceDrawer').setAttribute('aria-hidden', 'true');
+        $('#evidenceDrawer').setAttribute('inert', '');
+      }
+
+      $('#chatForm').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const input = $('#chatInput');
+        const text = input.value.trim();
+        if (!text) { input.focus(); return; }
+        state.sessions[state.activeSession].messages.push({ source: 'you', time: formatTime(), text });
+        input.value = '';
+        renderMessages();
+        showToast('YOU 的消息已写入当前 Host session（mock）。');
+      });
+
+      $('#evidenceOnlyToggle').addEventListener('click', () => {
+        state.evidenceOnly = !state.evidenceOnly;
+        $('#evidenceOnlyToggle').setAttribute('aria-pressed', String(state.evidenceOnly));
+        $('#evidenceOnlyToggle').querySelector('span:last-child').textContent = state.evidenceOnly ? '退出证据只读' : '证据只读';
+        $('#dialoguePanel').hidden = state.evidenceOnly;
+        $('#evidenceOnlyNote').hidden = !state.evidenceOnly;
+        if (state.evidenceOnly) { openEvidence(); showToast('Evidence-only 已开启；对话暂时收起，Host 证据保持只读。'); }
+        else { closeEvidence(); showToast('已返回会话桌面。'); }
+      });
+      $('#evidenceOnlyOpen').addEventListener('click', openEvidence);
+
+      $$('.console-tab').forEach((button) => button.addEventListener('click', () => setConsoleTab(button.dataset.consoleTab)));
+      $('#consoleToggle').addEventListener('click', () => {
+        state.consoleOpen = !state.consoleOpen;
+        $('#consoleBody').hidden = !state.consoleOpen;
+        $('#consoleToggle').setAttribute('aria-expanded', String(state.consoleOpen));
+        $('#consoleToggle').textContent = state.consoleOpen ? '收起控制台' : '展开控制台';
+      });
+      $('#steerForm').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const input = $('#steerInput');
+        const text = input.value.trim();
+        if (!text) { input.focus(); return; }
+        const run = state.runs[state.selectedRun];
+        run.events.push({ source: 'you', time: formatTime(), text: `Steer · ${text}` });
+        input.value = '';
+        renderRun();
+        setConsoleTab('agent');
+        showToast('Steer 已以 YOU 身份写入 Host journal（mock）。');
+      });
+      $('#takeoverButton').addEventListener('click', () => {
+        state.takeover = !state.takeover;
+        setTakeoverUI();
+        setConsoleTab('terminal');
+        showToast(state.takeover ? '用户已接管 terminal；下一条命令会带 YOU 标签。' : '已退出 terminal takeover，恢复只读观察。');
+      });
+      $('#terminalForm').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const input = $('#terminalInput');
+        const command = input.value.trim();
+        if (!state.takeover || !command) { if (!state.takeover) showToast('请先接管 terminal；worker 不接受隐形用户输入。'); return; }
+        const run = state.runs[state.selectedRun];
+        run.terminal.push({ source: 'you', text: `YOU$ ${command}` });
+        run.terminal.push({ source: 'host', text: 'HOST VERIFIED · user terminal action recorded (mock)' });
+        input.value = '';
+        renderTerminal(run);
+        showToast('用户 terminal 动作已记录；未执行真实命令。');
+      });
+      $$('.status-button').forEach((button) => button.addEventListener('click', () => {
+        const run = state.runs[state.selectedRun];
+        run.status = button.dataset.setStatus;
+        if (run.status !== 'returned') run.accepted = false;
+        renderRoutes();
+        renderRun();
+        showToast(`Host mock state 已切换为 ${statusMeta[run.status].label}。`);
+      }));
+      $('#stopRun').addEventListener('click', () => {
+        const run = state.runs[state.selectedRun];
+        if (run.status !== 'running') return;
+        run.status = 'failed';
+        run.events.push({ source: 'you', time: formatTime(), text: 'YOU requested stop；Host 将 run 保留为 failed，等待证据复核。' });
+        renderRoutes();
+        renderRun();
+        setConsoleTab('agent');
+        showToast('停止请求已记录；run 不会被庆祝为完成。');
+      });
+      $('#acceptRun').addEventListener('click', () => {
+        const run = state.runs[state.selectedRun];
+        if (run.status !== 'returned' || run.accepted) return;
+        run.accepted = true;
+        run.events.push({ source: 'you', time: formatTime(), text: 'YOU recorded acceptance after reviewing the evidence drawer.' });
+        renderRun();
+        setConsoleTab('agent');
+        showToast('YOU acceptance 已单独写入 Host；returned 状态仍保留。');
+      });
+      $('#commissionApprove').addEventListener('click', () => {
+        if (state.commission.status !== 'draft') return;
+        state.commission.editing = false;
+        state.commission.status = 'approved';
+        renderCommission();
+        showToast('Action Commission 已由 YOU 批准并冻结；尚未启动 worker。');
+      });
+      $('#commissionEdit').addEventListener('click', () => {
+        if (state.commission.status === 'running') return;
+        state.commission.editing = !state.commission.editing;
+        renderCommission();
+        if (state.commission.editing) $('[data-editable]').focus();
+        else showToast('草案修改已保存到待审批版本（mock）；仍需 YOU 批准。');
+      });
+      $('#commissionReject').addEventListener('click', () => {
+        if (state.commission.status !== 'draft') return;
+        state.commission.editing = false;
+        state.commission.status = 'rejected';
+        renderCommission();
+        showToast('拒绝决定已记录；没有创建 effectful worker。');
+      });
+      $('#commissionReset').addEventListener('click', () => {
+        state.commission.status = 'draft';
+        renderCommission();
+        showToast('已重新起草；仍需批准后才可能产生 effect。');
+      });
+      $('#commissionStart').addEventListener('click', () => {
+        if (state.commission.status !== 'approved') return;
+        state.commission.status = 'running';
+        state.runs.r014.status = 'running';
+        state.selectedRun = 'r014';
+        renderCommission();
+        renderRoutes();
+        renderRun();
+        setConsoleTab('brief');
+        showToast('已进入本地 mock route；没有真实 worker 或外部副作用。');
+      });
+      $('#evidenceOpen').addEventListener('click', openEvidence);
+      $('#evidenceOpenSide').addEventListener('click', openEvidence);
+      $('#drawerClose').addEventListener('click', closeEvidence);
+      $('#drawerBackdrop').addEventListener('click', closeEvidence);
+      document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && $('#evidenceDrawer').getAttribute('aria-hidden') === 'false') closeEvidence(); });
+
+      const srStyle = document.createElement('style');
+      srStyle.textContent = '.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}';
+      document.head.appendChild(srStyle);
+
+      renderSessions();
+      renderMessages();
+      renderRoutes();
+      renderCommission();
+      renderRun();
+      setConsoleTab('brief');
+    }());
+  </script>
+</body>
+</html>
