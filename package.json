@@ -1,0 +1,40 @@
+{
+	"name": "bear-harness",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Cyber Bear — roleplay-first local companion desktop framework (npm workspaces monorepo).",
+	"workspaces": [
+		"apps/*"
+	],
+	"engines": {
+		"node": "24.19.0",
+		"npm": "11.17.0"
+	},
+	"packageManager": "npm@11.17.0",
+	"scripts": {
+		"format": "biome check --write",
+		"lint": "biome ci && node scripts/validate-workflow.mjs && npm run lint --workspace @bear-harness/desktop",
+		"typecheck": "npm run typecheck --workspace @bear-harness/desktop",
+		"test:unit": "npm run test:unit --workspace @bear-harness/desktop",
+		"test:coverage": "npm run test:coverage --workspace @bear-harness/desktop",
+		"test:e2e": "npm run test:e2e --workspace @bear-harness/desktop",
+		"test:e2e:packaged": "npm run test:e2e:packaged --workspace @bear-harness/desktop",
+		"test:diagnostics:crash": "npm run test:diagnostics:crash --workspace @bear-harness/desktop",
+		"build": "npm run build --workspace @bear-harness/desktop",
+		"package:mac": "npm run package:mac --workspace @bear-harness/desktop",
+		"package:win": "npm run package:win --workspace @bear-harness/desktop",
+		"package:linux": "npm run package:linux --workspace @bear-harness/desktop",
+		"audit": "npm audit --audit-level=high && npm audit signatures",
+		"check": "npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run test:e2e"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.8",
+		"yaml": "2.8.1"
+	},
+	"allowScripts": {
+		"electron-winstaller@5.4.0": true,
+		"fsevents@2.3.2": true,
+		"fsevents@2.3.3": true
+	}
+}

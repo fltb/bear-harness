@@ -1,0 +1,478 @@
+@import "tailwindcss";
+
+/**
+ * Cyber Bear desktop theme (Prototype 06): 16 semantic tokens.
+ * Layout and components are Tailwind utilities; this file keeps only the
+ * tokens, the CSS-drawn room/bear art and the reduced-motion rules that
+ * Tailwind cannot express.
+ */
+
+@theme {
+	--color-night: #07171c;
+	--color-night-2: #102a31;
+	--color-night-3: #183a40;
+	--color-paper: #f7f3e9;
+	--color-paper-2: #ece5d7;
+	--color-ink: #263f3d;
+	--color-muted: #6d7d78;
+	--color-ice: #e8f2ee;
+	--color-mist: #9ab2ab;
+	--color-aurora: #8bd0bb;
+	--color-green: #2e625b;
+	--color-amber: #cf9d5b;
+	--color-danger: #b9685f;
+	--color-line: rgba(161, 207, 194, 0.22);
+	--shadow-app: 0 25px 70px rgba(0, 10, 13, 0.4);
+	--font-sans: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
+	--font-serif: "Songti SC", "STSong", Georgia, serif;
+}
+
+html,
+body {
+	width: 100%;
+	height: 100%;
+}
+
+body {
+	color-scheme: dark;
+	min-width: 1050px;
+	min-height: 680px;
+	overflow: hidden;
+	background:
+		radial-gradient(circle at 82% 5%, rgba(109, 197, 178, 0.17), transparent 28%),
+		var(--color-night);
+}
+
+button:focus-visible,
+textarea:focus-visible {
+	outline: 3px solid rgba(139, 208, 187, 0.45);
+	outline-offset: 2px;
+}
+
+button:disabled {
+	cursor: not-allowed;
+	opacity: 0.6;
+}
+
+/* ------------------------------------------------------------------ */
+/* App frame                                                           */
+/* ------------------------------------------------------------------ */
+
+.app {
+	@apply grid h-[calc(100vh-28px)] w-[calc(100vw-28px)] grid-rows-[52px_minmax(0,1fr)] overflow-hidden rounded-3xl border border-line bg-night-2 shadow-app;
+	margin: 14px;
+}
+
+.titlebar {
+	@apply grid grid-cols-[1fr_auto_1fr] items-center border-b border-line bg-[rgba(8,25,30,0.96)] px-[17px];
+}
+
+.traffic {
+	@apply flex gap-[7px];
+}
+
+.traffic i {
+	@apply h-[10px] w-[10px] rounded-full;
+	background: #b96f65;
+}
+
+.traffic i:nth-child(2) {
+	background: #c49d5d;
+}
+
+.traffic i:nth-child(3) {
+	background: #6f9e83;
+}
+
+.scene-title {
+	@apply font-serif text-[14px] text-ice;
+}
+
+.top-actions {
+	@apply flex justify-end gap-2;
+}
+
+.top-actions button {
+	@apply rounded-[10px] border border-line px-[11px] py-2 text-[#b9ccc6];
+	background: rgba(132, 196, 177, 0.05);
+}
+
+/* ------------------------------------------------------------------ */
+/* Sidebar                                                             */
+/* ------------------------------------------------------------------ */
+
+.shell {
+	@apply grid min-h-0 grid-cols-[230px_minmax(0,1fr)] max-[1200px]:grid-cols-[205px_minmax(0,1fr)];
+}
+
+.sidebar {
+	@apply flex min-h-0 flex-col border-r border-line bg-[#10282e] px-[13px] py-[17px];
+}
+
+.identity {
+	@apply flex items-center gap-[10px] px-[5px] pb-[15px];
+}
+
+.identity strong {
+	@apply block text-[15px] text-ice;
+}
+
+.identity span {
+	@apply mt-[3px] block text-[9px] text-[#78958d];
+}
+
+.avatar {
+	@apply relative h-[44px] w-[44px] rounded-full;
+	background: #2a5b56;
+}
+
+.avatar::before,
+.avatar::after {
+	content: "";
+	@apply absolute top-[4px] h-[13px] w-[13px] rounded-full;
+	background: #eef2eb;
+}
+
+.avatar::before {
+	left: 5px;
+}
+
+.avatar::after {
+	right: 5px;
+}
+
+.face {
+	@apply absolute inset-[9px_5px_4px] rounded-full;
+	background: #eef2eb;
+}
+
+.face::after {
+	content: "";
+	@apply absolute bottom-[8px] left-1/2 h-[6px] w-[8px] -translate-x-1/2 rounded-full;
+	background: #23403f;
+}
+
+.sidebar-tools {
+	@apply flex gap-2;
+}
+
+.search-trigger {
+	@apply flex min-h-[38px] min-w-0 flex-1 items-center gap-2 rounded-[11px] border border-line px-[10px] text-[#9cb2ac];
+	background: rgba(5, 20, 25, 0.22);
+}
+
+.search-trigger kbd {
+	@apply ml-auto rounded-md border border-line px-[5px] py-[2px] text-[8px] text-[#708f87];
+	background: rgba(3, 14, 18, 0.22);
+}
+
+.new-conversation {
+	@apply grid h-[28px] w-[28px] shrink-0 place-items-center rounded-lg border border-line text-[16px] text-[#91ada5];
+	background: rgba(6, 21, 25, 0.16);
+}
+
+.nav-scroll {
+	@apply min-h-0 flex-1 overflow-y-auto;
+	scrollbar-width: thin;
+	scrollbar-color: rgba(161, 207, 194, 0.25) transparent;
+}
+
+.nav-scroll::-webkit-scrollbar {
+	width: 8px;
+}
+
+.nav-scroll::-webkit-scrollbar-thumb {
+	background: rgba(161, 207, 194, 0.22);
+	border-radius: 99px;
+}
+
+.nav-scroll::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.nav-list {
+	@apply mt-[14px] grid gap-1;
+}
+
+.nav-item {
+	@apply relative grid w-full min-h-[58px] gap-1 rounded-xl border-0 px-3 py-[10px] text-left text-[#dce8e4];
+	background: transparent;
+}
+
+.nav-item:hover:not(:disabled) {
+	background: rgba(232, 241, 236, 0.08);
+}
+
+.nav-item[aria-current="page"] {
+	background: rgba(232, 241, 236, 0.08);
+}
+
+.nav-item[aria-current="page"]::before {
+	content: "";
+	@apply absolute inset-y-[10px] left-0 w-[3px] rounded-[3px] bg-aurora;
+}
+
+.nav-item strong {
+	@apply text-[11px] font-semibold;
+}
+
+.nav-item span {
+	@apply text-[9px] text-[#809b94];
+}
+
+.system-section {
+	@apply mt-[13px] border-t border-[rgba(161,207,194,0.13)] pt-[11px];
+}
+
+.section-label {
+	@apply mb-2 text-[9px] font-extrabold tracking-[0.15em] text-[#6f8f87];
+}
+
+.system-nav {
+	@apply flex min-h-[38px] w-full items-center rounded-[10px] border border-line px-[10px] text-left text-[#9db3ad];
+	background: rgba(6, 21, 25, 0.18);
+}
+
+.system-nav .gear {
+	@apply mr-2 text-[#75968d];
+}
+
+/* ------------------------------------------------------------------ */
+/* Scene                                                                */
+/* ------------------------------------------------------------------ */
+
+.main {
+	@apply relative min-h-0 min-w-0 overflow-hidden;
+	background: linear-gradient(130deg, #17383f, #20474a 58%, #10272f);
+}
+
+.scene {
+	@apply absolute inset-0 overflow-hidden;
+}
+
+.scene::before {
+	content: "";
+	@apply absolute left-[-5%] right-[-5%] top-[40px] h-[90px] opacity-70;
+	background: linear-gradient(
+		90deg,
+		transparent,
+		rgba(148, 224, 202, 0.42),
+		rgba(104, 164, 186, 0.2),
+		transparent
+	);
+	filter: blur(23px);
+	transform: rotate(-4deg);
+}
+
+.window {
+	@apply absolute left-[4.5%] top-[62px] h-[35%] w-[39%] border-[3px] border-[rgba(160,204,193,0.2)];
+	background: linear-gradient(150deg, #173b44, #112c35);
+	box-shadow: 0 14px 35px rgba(0, 10, 13, 0.25);
+}
+
+.mountains {
+	@apply absolute inset-x-0 bottom-0 h-[48%] opacity-25;
+	background: #c5d9d5;
+	clip-path: polygon(
+		0 88%,
+		12% 30%,
+		25% 65%,
+		39% 10%,
+		56% 68%,
+		69% 28%,
+		83% 75%,
+		93% 44%,
+		100% 72%,
+		100% 100%,
+		0 100%
+	);
+}
+
+.shelf {
+	@apply absolute right-[6%] top-[68px] h-[33%] w-[30%] rounded-xl border border-[rgba(166,195,184,0.18)];
+	background: rgba(27, 54, 54, 0.7);
+}
+
+.shelf::before,
+.shelf::after {
+	content: "";
+	@apply absolute inset-x-[20px] h-[4px];
+	background: rgba(165, 174, 156, 0.2);
+}
+
+.shelf::before {
+	top: 34%;
+}
+
+.shelf::after {
+	top: 68%;
+}
+
+.books {
+	@apply absolute bottom-[18px] left-[22px] h-[76px] w-[80px] opacity-85;
+	background: linear-gradient(
+		90deg,
+		#9f8067 0 18%,
+		transparent 18% 24%,
+		#6f9b92 24% 45%,
+		transparent 45% 52%,
+		#c0a66f 52% 70%,
+		transparent 70% 77%,
+		#819994 77%
+	);
+}
+
+.lamp {
+	@apply absolute bottom-[18%] right-[24%] h-[56px] w-[88px] rounded-[50px_50px_8px_8px];
+	background: #b78456;
+	box-shadow: 0 0 55px rgba(235, 181, 95, 0.42);
+}
+
+.desk {
+	@apply absolute inset-x-0 bottom-0 h-[24%];
+	background: linear-gradient(#72513d, #382820);
+	box-shadow: 0 -8px 30px rgba(5, 17, 20, 0.24);
+}
+
+/* ------------------------------------------------------------------ */
+/* The bear                                                             */
+/* ------------------------------------------------------------------ */
+
+.bear {
+	@apply absolute bottom-[11%] left-[6%] z-[2] h-[350px] w-[245px];
+}
+
+.bear-shadow {
+	@apply absolute inset-x-[15px] bottom-0 h-[24px] rounded-full;
+	background: rgba(1, 10, 13, 0.45);
+	filter: blur(4px);
+}
+
+.ear {
+	@apply absolute top-[36px] h-[62px] w-[62px] rounded-full;
+	background: #eef1ea;
+}
+
+.ear.l {
+	left: 29px;
+}
+
+.ear.r {
+	right: 29px;
+}
+
+.body {
+	@apply absolute bottom-[22px] left-[23px] right-[23px] h-[180px] rounded-[45%_45%_18%_18%];
+	background: #e6ece6;
+	box-shadow: inset 25px 0 rgba(197, 216, 208, 0.7);
+}
+
+.head {
+	@apply absolute left-[52px] top-[44px] z-[2] h-[155px] w-[142px] rounded-[47%_47%_43%_43%];
+	background: #f1f2eb;
+	box-shadow: inset 20px 2px rgba(209, 225, 218, 0.65);
+}
+
+.head::before {
+	content: "";
+	@apply absolute left-[38px] top-[71px] h-[13px] w-[10px] rounded-full;
+	background: #203c3c;
+	box-shadow: 56px 0 #203c3c;
+}
+
+.head::after {
+	content: "";
+	@apply absolute left-[59px] top-[98px] h-[17px] w-[24px] rounded-full;
+	background: #20393a;
+}
+
+.vest {
+	@apply absolute bottom-[24px] left-[52px] right-[52px] z-[1] h-[138px];
+	background: #68847f;
+	clip-path: polygon(0 0, 50% 27%, 100% 0, 86% 100%, 14% 100%);
+}
+
+.log {
+	@apply absolute bottom-[22px] left-[70px] z-[4] h-[52px] w-[105px] rounded-lg;
+	background: #263f42;
+}
+
+.log::after {
+	content: "";
+	@apply absolute inset-[13px];
+	background: repeating-linear-gradient(#7aa89b 0 3px, transparent 3px 9px);
+}
+
+/* ------------------------------------------------------------------ */
+/* Thread + composer                                                    */
+/* ------------------------------------------------------------------ */
+
+.thread {
+	@apply absolute bottom-[19%] right-[6%] top-[88px] z-[4] flex w-[min(610px,54%)] flex-col gap-[10px] overflow-y-auto px-1 pb-3;
+	scrollbar-width: thin;
+	scrollbar-color: rgba(161, 207, 194, 0.25) transparent;
+}
+
+.thread::-webkit-scrollbar {
+	width: 8px;
+}
+
+.thread::-webkit-scrollbar-thumb {
+	background: rgba(161, 207, 194, 0.22);
+	border-radius: 99px;
+}
+
+.msg {
+	@apply max-w-[88%] rounded-2xl px-[13px] py-[11px] text-[11px] leading-[1.6];
+}
+
+.bear-msg {
+	@apply self-start border border-[rgba(113,145,136,0.22)] text-ink;
+	background: rgba(247, 242, 231, 0.97);
+	box-shadow: 0 12px 28px rgba(3, 17, 20, 0.2);
+}
+
+.msg-meta {
+	@apply mb-[3px] text-[9px] text-[#75837e];
+}
+
+.bear-msg em {
+	@apply mb-[6px] mt-[2px] block text-[10px] not-italic text-[#566b66];
+}
+
+.bear-msg p {
+	@apply m-0 font-serif text-[clamp(15px,1.25vw,18px)] leading-[1.6];
+}
+
+.composer {
+	@apply absolute bottom-[5%] right-[6%] z-[5] grid w-[min(610px,54%)] grid-cols-[auto_1fr_auto] gap-2 rounded-[18px] border border-[rgba(183,206,198,0.35)] p-2;
+	background: rgba(246, 243, 235, 0.98);
+	box-shadow: 0 12px 30px rgba(3, 17, 20, 0.22);
+}
+
+.composer textarea {
+	@apply min-h-[42px] resize-none border-0 bg-transparent px-1 py-[10px] text-ink outline-0;
+}
+
+.circle {
+	@apply grid h-[42px] w-[42px] place-items-center rounded-[13px] border-0 text-[#5e726c];
+	background: #e8ece5;
+}
+
+.send {
+	@apply grid h-[42px] w-[42px] place-items-center rounded-[13px] border-0 text-white;
+	background: #285b57;
+}
+
+/* ------------------------------------------------------------------ */
+/* Reduced motion                                                       */
+/* ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		transition: none !important;
+		animation: none !important;
+	}
+}

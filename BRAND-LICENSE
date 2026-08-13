@@ -1,0 +1,28 @@
+# Cyber Bear Brand Assets — License & Attribution
+
+The official name **Cyber Bear**, the character **极昼 (Jizhou)**, the 极光书房 /
+旧极光站 setting and storyline, and all accompanying copy and visual assets
+(together, the "Brand Assets") are licensed under the
+**Creative Commons Attribution-ShareAlike 4.0 International** license
+(CC BY-SA 4.0).
+
+- 作品名 (Work): Cyber Bear Brand Assets
+- 作者 (Creator): fltb
+- 署名 (Attribution): fltb — Cyber Bear Brand Assets
+- 上游仓库 (Upstream repository): https://github.com/fltb/bear-harness
+- 许可 (License): https://creativecommons.org/licenses/by-sa/4.0/
+- 修改声明 (Modification): 修改后须注明修改，并以相同或兼容许可分享。
+  If you adapt or modify the Brand Assets, you must indicate that changes were
+  made and share your adaptation under the same or a compatible license.
+
+Notes:
+
+- CC BY-SA 4.0 grants copyright and related rights only. Trademark rights are
+  NOT granted by the CC license; using the Cyber Bear name or marks does not
+  imply endorsement by or affiliation with the upstream project or its author.
+- The code in this repository remains licensed separately under the GPL-3.0
+  license in the root `LICENSE` file. This notice applies only to the Brand
+  Assets listed above, not to the source code.
+- A per-build attribution file (`BRAND-ATTRIBUTION.txt`) is generated from the
+  product configuration by the build tooling and shipped inside every
+  installation artifact.

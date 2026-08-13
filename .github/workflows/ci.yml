@@ -1,0 +1,162 @@
+name: bear-harness-ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:coverage
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: error
+      - run: npm run build
+
+  upstream-brand:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: node apps/desktop/scripts/check-upstream-brand.mjs
+
+  security:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm audit signatures
+
+  e2e:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Install Electron runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgtk-3-0 libgbm1 libasound2t64 libxss1 libxshmfence1 xvfb
+      - run: xvfb-run -a npm run test:e2e
+
+  package:
+    needs: [quality]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            os-name: mac
+            arch: universal
+            package-cmd: package:mac
+            exts: dmg zip
+            upload-glob: |
+              apps/desktop/release/*.dmg
+              apps/desktop/release/*.zip
+          - os: windows-2025
+            os-name: win
+            arch: x64
+            package-cmd: package:win
+            exts: exe zip
+            upload-glob: |
+              apps/desktop/release/*.exe
+              apps/desktop/release/*.zip
+          - os: ubuntu-24.04
+            os-name: linux
+            arch: x64
+            package-cmd: package:linux
+            exts: AppImage deb
+            upload-glob: |
+              apps/desktop/release/*.AppImage
+              apps/desktop/release/*.deb
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Crashpad smoke (production config, temp root)
+        run: npm run test:diagnostics:crash
+      - name: Package
+        run: npm run ${{ matrix.package-cmd }}
+      - name: Verify dynamic artifact names and sizes
+        run: node scripts/verify-package.mjs ${{ matrix.os-name }} ${{ matrix.arch }} ${{ matrix.exts }}
+      - name: Verify macOS universal binaries
+        if: matrix.os-name == 'mac'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=$(ls -d apps/desktop/release/mac*/*.app | head -1)
+          EXE="$APP/Contents/MacOS/$(node --input-type=module -e "const { productConfig } = await import('./apps/desktop/product.config.ts'); process.stdout.write(productConfig.executableName)")"
+          lipo -archs "$EXE" | grep -q arm64
+          lipo -archs "$EXE" | grep -q x86_64
+          FRAMEWORK="$APP/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework"
+          lipo -archs "$FRAMEWORK" | grep -q arm64
+          lipo -archs "$FRAMEWORK" | grep -q x86_64
+      - name: Verify Windows x64 PE machine
+        if: matrix.os-name == 'win'
+        shell: pwsh
+        run: |
+          $exeName = node --input-type=module -e "const { productConfig } = await import('./apps/desktop/product.config.ts'); process.stdout.write(productConfig.executableName)"
+          $exe = Get-ChildItem apps/desktop/release/win-unpacked -Filter "$exeName.exe" | Select-Object -First 1
+          if (-not $exe) { throw "packaged exe not found" }
+          node --input-type=module -e "const fs = require('node:fs'); const buf = fs.readFileSync(process.argv[1]); const pe = buf.readUInt32LE(0x3c); const machine = buf.readUInt16LE(pe + 4); if (machine !== 0x8664) { throw new Error('expected x64 (0x8664), got 0x' + machine.toString(16)); }" $exe.FullName
+      - name: Verify Linux x64 artifacts
+        if: matrix.os-name == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEB=$(ls apps/desktop/release/*.deb | head -1)
+          dpkg-deb --info "$DEB" | grep -q "Architecture: amd64"
+          APPIMAGE=$(ls apps/desktop/release/*.AppImage | head -1)
+          chmod +x "$APPIMAGE"
+          APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE" --appimage-extract >/dev/null
+          BIN=$(node --input-type=module -e "const { productConfig } = await import('./apps/desktop/product.config.ts'); process.stdout.write(productConfig.executableName)")
+          file "squashfs-root/usr/bin/$BIN" | grep -q "x86-64"
+      - name: Packaged app smoke
+        shell: bash
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          if [ "${{ matrix.os-name }}" = "linux" ]; then
+            xvfb-run -a npm run test:e2e:packaged
+          else
+            npm run test:e2e:packaged
+          fi
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: cyber-bear-${{ matrix.os-name }}-${{ matrix.arch }}
+          path: ${{ matrix.upload-glob }}
+          if-no-files-found: error
