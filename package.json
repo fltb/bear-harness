@@ -33,8 +33,11 @@
 		"yaml": "2.8.1"
 	},
 	"allowScripts": {
+		"@google/genai@1.52.0": true,
 		"electron-winstaller@5.4.0": true,
+		"esbuild@0.28.2": true,
 		"fsevents@2.3.2": true,
-		"fsevents@2.3.3": true
+		"fsevents@2.3.3": true,
+		"protobufjs@7.6.5": true
 	}
 }

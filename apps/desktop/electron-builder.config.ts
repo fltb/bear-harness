@@ -35,7 +35,7 @@ const config: Configuration = {
 		output: "release",
 	},
 	asar: true,
-	files: ["dist/**"],
+	files: ["dist/**", "!dist/.runtime-build/**", "!**/*.node"],
 	// Desktop identity: package.json metadata's desktopName is overridden to
 	// appId so Linux desktop integration matches the configured app id.
 	extraMetadata: {

@@ -32,4 +32,5 @@ run("npx", ["--no-install", "tsc", "-p", "tsconfig.main.json"]);
 flattenMainEmit(desktop);
 run("npx", ["--no-install", "tsc", "-p", "tsconfig.preload.json"]);
 run("npx", ["--no-install", "rsbuild", "build"]);
+run("node", ["scripts/build-companion-runtime.mjs"]);
 process.stdout.write("build: ok\n");
