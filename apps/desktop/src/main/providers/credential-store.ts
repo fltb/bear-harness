@@ -3,16 +3,15 @@
  * interface for provider API keys and OAuth tokens.
  *
  * On macOS/Windows, safeStorage encrypts the BLOB before writing to the
- * `provider_accounts` table. On Linux, safeStorage may use `basic_text`
- * (libsecret) or fall back to weak storage; the UI shows the credential
- * status accordingly and never claims encryption.
+ * `provider_accounts` table. If the OS keychain is unavailable, credentials
+ * remain in memory for this session; they are never persisted in plaintext.
+ * Linux may explicitly use Electron's documented weak-storage fallback.
  *
  * OAuth refresh tokens are managed per-provider via `modify()`; secrets
  * never enter the renderer, run manifest, evidence, or diagnostics.
  */
 
 import { safeStorage } from "electron";
-import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 export type CredentialStatus =
@@ -40,7 +39,11 @@ export class CredentialStore {
 
 	constructor(db: DatabaseSync) {
 		this.db = db;
-		this.encryptionAvailable = safeStorage.isEncryptionAvailable();
+		try {
+			this.encryptionAvailable = safeStorage.isEncryptionAvailable();
+		} catch {
+			this.encryptionAvailable = false;
+		}
 	}
 
 	/** Store a credential for a provider. */
@@ -52,28 +55,45 @@ export class CredentialStore {
 		const id = providerId;
 		const now = new Date().toISOString();
 
-		if (options?.sessionOnly) {
-			// Session-only: keep in memory, not in DB
+		const useSessionOnly =
+			options?.sessionOnly === true || (!this.encryptionAvailable && process.platform !== "linux");
+		if (useSessionOnly) {
+			// No OS keychain means no persistent macOS/Windows fallback. Keep the
+			// secret only for the current run and record no plaintext blob.
 			if (credential.apiKey) this.sessionKeys.set(providerId, credential.apiKey);
 			const status: CredentialStatus = "session_only";
 			this.db
 				.prepare(
-					"INSERT INTO provider_accounts (id, provider_id, credential_blob, credential_status, updated_at) VALUES (?, ?, NULL, ?, ?) ON CONFLICT(id) DO UPDATE SET credential_status = ?, updated_at = ?",
+					"INSERT INTO provider_accounts (id, provider_id, credential_blob, credential_status, updated_at) VALUES (?, ?, NULL, ?, ?) ON CONFLICT(id) DO UPDATE SET credential_blob = NULL, credential_status = ?, updated_at = ?",
 				)
 				.run(id, providerId, status, now, status, now);
 			return status;
 		}
 
-		// Persist with safeStorage encryption
 		const plaintext = JSON.stringify(credential);
-		let blob: Buffer | null = null;
+		let blob: Buffer;
 		let status: CredentialStatus;
-
 		if (this.encryptionAvailable) {
-			blob = safeStorage.encryptString(plaintext);
-			status = "stored";
+			try {
+				blob = safeStorage.encryptString(plaintext);
+				status = "stored";
+			} catch {
+				// isEncryptionAvailable() can succeed while the keychain daemon is
+				// unavailable. Downgrade this process to session-only without
+				// repeatedly invoking the broken keychain.
+				this.encryptionAvailable = false;
+				if (credential.apiKey) this.sessionKeys.set(providerId, credential.apiKey);
+				status = "session_only";
+				this.db
+					.prepare(
+						"INSERT INTO provider_accounts (id, provider_id, credential_blob, credential_status, updated_at) VALUES (?, ?, NULL, ?, ?) ON CONFLICT(id) DO UPDATE SET credential_blob = NULL, credential_status = ?, updated_at = ?",
+					)
+					.run(id, providerId, status, now, status, now);
+				return status;
+			}
 		} else {
-			// Linux fallback: store as plaintext BLOB with warning
+			// Electron documents weak storage only for Linux. Keep that explicit
+			// instead of silently accepting a plaintext macOS/Windows fallback.
 			blob = Buffer.from(plaintext, "utf8");
 			status = "weak_storage";
 		}
@@ -83,7 +103,6 @@ export class CredentialStore {
 				"INSERT INTO provider_accounts (id, provider_id, credential_blob, credential_status, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET credential_blob = ?, credential_status = ?, updated_at = ?",
 			)
 			.run(id, providerId, blob, status, now, blob, status, now);
-
 		return status;
 	}
 

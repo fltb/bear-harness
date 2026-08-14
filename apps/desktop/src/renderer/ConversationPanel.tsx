@@ -1,14 +1,13 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
-import type { ProductCharacter } from "../../product.config";
-import type { Message, MessageVersion } from "./stores/companion.js";
+import type { CharacterDisplay, Message, MessageVersion } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
 
 /**
  * ConversationPanel: the live thread. Messages come from the store's active
  * conversation; user and assistant messages get role-based styling. Per plan
  * §7.9, message operations (regenerate, switch version, continue, edit,
- * correct "这不像极昼", branch) appear only on hover or keyboard focus of
- * the message — the buttons stay in the tab order so they are keyboard
+ * package-labelled correction, branch) appear only on hover or keyboard focus
+ * of the message — the buttons stay in the tab order so they are keyboard
  * reachable, just visually deferred.
  */
 
@@ -40,6 +39,7 @@ function adoptedVersion(message: Message): MessageVersion | undefined {
 function MessageItem(props: {
 	message: Message;
 	characterName: string;
+	correction?: CharacterDisplay["character"]["correction"];
 	lastAssistant: boolean;
 }) {
 	const store = useCompanionStore();
@@ -139,7 +139,7 @@ function MessageItem(props: {
 				</Show>
 
 				<Show when={correcting()}>
-					<div class="correct-panel" role="group" aria-label="这不像极昼，因为">
+					<div class="correct-panel" role="group" aria-label={props.correction?.reason_group_label}>
 						<div class="correct-reasons">
 							<For each={CORRECT_REASONS}>
 								{(preset) => (
@@ -208,17 +208,21 @@ function MessageItem(props: {
 							<button type="button" onClick={startEdit}>
 								编辑
 							</button>
-							<button
-								type="button"
-								onClick={() => {
-									setReason("");
-									setCustomReason("");
-									setScope("once");
-									setCorrecting(true);
-								}}
-							>
-								这不像极昼
-							</button>
+							<Show when={props.correction}>
+								{(copy) => (
+									<button
+										type="button"
+										onClick={() => {
+											setReason("");
+											setCustomReason("");
+											setScope("once");
+											setCorrecting(true);
+										}}
+									>
+										{copy().trigger_label}
+									</button>
+								)}
+							</Show>
 							<Show when={props.lastAssistant}>
 								<button type="button" onClick={() => void store.continueConversation()}>
 									继续
@@ -246,7 +250,7 @@ function formatTime(iso: string): string {
 	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
-export function ConversationPanel(props: { character: ProductCharacter }) {
+export function ConversationPanel(props: { character: CharacterDisplay | undefined }) {
 	const store = useCompanionStore();
 
 	let threadRef: HTMLElement | undefined;
@@ -285,19 +289,24 @@ export function ConversationPanel(props: { character: ProductCharacter }) {
 			<Show
 				when={store.activeMessages.length > 0}
 				fallback={
-					<div class="msg bear-msg">
-						<div class="msg-meta">
-							{props.character.name} · 雪停以后
-						</div>
-						<p>{props.character.greeting}</p>
-					</div>
+					<Show when={props.character}>
+						{(character) => (
+							<div class="msg bear-msg">
+								<div class="msg-meta">
+									{character().name} · {character().character.scene_title}
+								</div>
+								<p>{character().character.greeting}</p>
+							</div>
+						)}
+					</Show>
 				}
 			>
 				<For each={store.activeMessages}>
 					{(message) => (
 						<MessageItem
 							message={message}
-							characterName={props.character.name}
+							characterName={props.character?.name ?? ""}
+							correction={props.character?.character.correction}
 							lastAssistant={
 								message.role === "assistant" && message.id === lastAssistantId()
 							}

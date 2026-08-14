@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 245 350">
+  <defs>
+    <linearGradient id="body-shade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#c5d8d0" stop-opacity=".7"/>
+      <stop offset=".13" stop-color="#c5d8d0" stop-opacity=".35"/>
+      <stop offset=".28" stop-color="#e6ece6" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="head-shade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#d1e1da" stop-opacity=".65"/>
+      <stop offset=".18" stop-color="#d1e1da" stop-opacity=".22"/>
+      <stop offset=".34" stop-color="#f1f2eb" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-100%" width="140%" height="300%">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+  <!-- Prototype 06: 15px/24px inset shadow, 62px ears, 199px body. -->
+  <ellipse cx="122.5" cy="338" rx="107.5" ry="12" fill="rgba(1,10,13,.45)" filter="url(#shadow)"/>
+  <circle cx="60" cy="67" r="31" fill="#eef1ea"/>
+  <circle cx="185" cy="67" r="31" fill="#eef1ea"/>
+  <path d="M68 148 H177 C202 148 222 178 222 206 V295 C222 314 204 328 186 328 H59 C41 328 23 314 23 295 V206 C23 178 43 148 68 148 Z" fill="#e6ece6"/>
+  <path d="M68 148 H177 C202 148 222 178 222 206 V295 C222 314 204 328 186 328 H59 C41 328 23 314 23 295 V206 C23 178 43 148 68 148 Z" fill="url(#body-shade)"/>
+  <path d="M52 188 L122.5 225.26 L193 188 L173.26 326 L71.74 326 Z" fill="#68847f"/>
+  <path d="M119 44 C160 44 194 78 194 117 V151 C194 180 164 199 123 199 C82 199 52 180 52 151 V117 C52 78 80 44 119 44 Z" fill="#f1f2eb"/>
+  <path d="M119 44 C160 44 194 78 194 117 V151 C194 180 164 199 123 199 C82 199 52 180 52 151 V117 C52 78 80 44 119 44 Z" fill="url(#head-shade)"/>
+  <!-- Original face: two 10 × 13 eyes and one 24 × 17 nose; no added mouth. -->
+  <rect x="90" y="115" width="10" height="13" rx="5" fill="#203c3c"/>
+  <rect x="146" y="115" width="10" height="13" rx="5" fill="#203c3c"/>
+  <rect x="111" y="142" width="24" height="17" rx="8.5" fill="#20393a"/>
+  <rect x="70" y="276" width="105" height="52" rx="8" fill="#263f42"/>
+  <path d="M83 289 H162 M83 298 H162 M83 307 H162" stroke="#7aa89b" stroke-width="3" fill="none"/>
+</svg>

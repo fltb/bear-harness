@@ -41,7 +41,7 @@ export function Composer(props: { placeholder: string }) {
 			<textarea
 				rows={1}
 				placeholder={props.placeholder}
-				aria-label="对极昼说点什么"
+				aria-label="发送消息"
 				value={text()}
 				onInput={(event) => setText(event.currentTarget.value)}
 				onKeyDown={handleKeyDown}

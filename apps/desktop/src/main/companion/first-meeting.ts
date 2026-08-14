@@ -21,7 +21,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { EventBus } from "../storage/event-bus.js";
-import { productConfig } from "../../../product.config.js";
+import { loadCharacter } from "./character-loader.js";
 
 export type OnboardingState =
 	| "door_closed"
@@ -202,7 +202,9 @@ export class FirstMeetingMachine {
 		const advancing = current.state === "voice_ready";
 		const conversationId = randomUUID();
 		const branchId = randomUUID();
-		const sceneTitle = productConfig.defaultCharacter.sceneTitle || "极光书房";
+		const character = loadCharacter(companionId);
+		if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
+		const sceneTitle = character.character.scene_title;
 		let conversationCreated = false;
 
 		this.db.exec("BEGIN IMMEDIATE");

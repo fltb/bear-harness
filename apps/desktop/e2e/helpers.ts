@@ -4,11 +4,20 @@ import type { ProductConfig } from "../product.config";
 
 export type ElectronApp = Awaited<ReturnType<typeof _electron.launch>>;
 
+interface CharacterProjection {
+	name: string;
+	character: {
+		subtitle: string;
+		scene_title: string;
+		greeting: string;
+		composer_placeholder: string;
+	};
+}
+
 /**
- * Shared packaged/source UI assertions. Every mode must show the configured
- * product: native window title, document title, character identity, the
- * greeting, a read-only composer, and a preload surface limited to platform
- * plus the fixed renderer-fault reporter.
+ * Shared packaged/source UI assertions. Product identity comes from
+ * `product.config`; character identity and copy are read through the real
+ * preload snapshot, never duplicated in the product configuration or test.
  */
 export async function assertProductWindow(
 	electronApp: ElectronApp,
@@ -16,17 +25,29 @@ export async function assertProductWindow(
 ) {
 	const window = await electronApp.firstWindow();
 	await window.waitForLoadState("domcontentloaded");
+	const character = (await window.evaluate(async () => {
+		const response = (await window.bearDesktop.companion.snapshot.get()) as {
+			ok?: boolean;
+			data?: { character?: unknown };
+			error?: { kind?: string; reason?: string };
+		};
+		if (!response.ok || !response.data?.character) {
+			throw new Error(
+				`character snapshot unavailable: ${response.error?.kind ?? "unknown"}: ${response.error?.reason ?? "unknown"}`,
+			);
+		}
+		return response.data.character;
+	})) as CharacterProjection;
 
-	const character = product.defaultCharacter;
 	await expect(window).toHaveTitle(product.productName);
-	await expect(window.getByRole("heading", { level: 1 })).toHaveText(character.sceneTitle);
+	await expect(window.getByRole("heading", { level: 1 })).toHaveText(character.character.scene_title);
 	await expect(window.getByText(character.name, { exact: true })).toBeVisible();
-	await expect(window.getByText(character.subtitle, { exact: true })).toBeVisible();
-	await expect(window.getByText(character.greeting)).toBeVisible();
+	await expect(window.getByText(character.character.subtitle, { exact: true })).toBeVisible();
+	await expect(window.getByText(character.character.greeting)).toBeVisible();
 
-	const composer = window.getByPlaceholder(`对${character.name}说点什么…`);
+	const composer = window.getByPlaceholder(character.character.composer_placeholder);
 	await expect(composer).toBeVisible();
-	await expect(composer).toHaveAttribute("readonly", "");
+	await expect(composer).toBeDisabled();
 
 	// Preload exposes platform, diagnostics, and companion facade.
 	const bridge = await window.evaluate(() => {

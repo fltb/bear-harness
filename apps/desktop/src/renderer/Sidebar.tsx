@@ -1,24 +1,33 @@
 import { For, Show } from "solid-js";
-import type { ProductCharacter } from "../../product.config";
-import { useCompanionStore } from "./stores/companion.js";
+import { useCompanionStore, type CharacterDisplay } from "./stores/companion.js";
 
 /**
  * Sidebar: identity, search (not yet wired), new-conversation, the live
  * conversation list from the store and the disabled system section.
  */
-export function Sidebar(props: { character: ProductCharacter }) {
+export function Sidebar(props: { character: CharacterDisplay | undefined }) {
 	const store = useCompanionStore();
 
 	return (
 		<aside class="sidebar">
 			<div class="identity">
-				<div class="avatar" aria-hidden="true">
-					<div class="face" />
-				</div>
-				<div>
-					<strong>{props.character.name}</strong>
-					<span>{props.character.subtitle}</span>
-				</div>
+				<Show when={props.character}>
+					{(character) => (
+						<>
+							<img
+								class="identity-avatar"
+								src={character().visual.avatarUrl}
+								alt=""
+								aria-hidden="true"
+								draggable={false}
+							/>
+							<div>
+								<strong>{character().name}</strong>
+								<span>{character().character.subtitle}</span>
+							</div>
+						</>
+					)}
+				</Show>
 			</div>
 			<div class="sidebar-tools">
 				<button type="button" class="search-trigger" disabled>

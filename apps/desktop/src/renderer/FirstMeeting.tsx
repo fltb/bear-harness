@@ -87,7 +87,7 @@ export function FirstMeeting() {
 						<h2>先自然地认识彼此。</h2>
 						<p>不用填写 Persona 表。这个称呼只在你确认后进入关系设置。</p>
 						<div class="intro-form">
-							<label for="intro-name">希望极昼怎么称呼你？</label>
+							<label for="intro-name">希望我怎么称呼你？</label>
 							<input
 								id="intro-name"
 								type="text"
@@ -170,7 +170,7 @@ export function FirstMeeting() {
 					<Show when={state() === "voice_ready"}>
 						<h2>声音正在就绪。</h2>
 						<p>
-							极昼正在准备自己的声音。这一步由系统自动完成，不需要你操作；准备好之后，这扇门就正式打开了。
+							正在准备声音。这一步由系统自动完成，准备好之后，这扇门就正式打开了。
 						</p>
 						<p class="memory-note" aria-live="polite">
 							正在等待系统确认声音设置…

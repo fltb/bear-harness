@@ -7,6 +7,7 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import { productConfig } from "../../product.config.js";
 import type { EventBus } from "./storage/event-bus.js";
 import type { ArtifactStore } from "./artifacts/index.js";
 import type { CompanionSupervisor } from "./companion/supervisor.js";
@@ -18,6 +19,12 @@ import { VoiceStackManager } from "./companion/voice-stack.js";
 import { CommissionService } from "./commissions/service.js";
 import { CredentialStore } from "./providers/credential-store.js";
 import { ProviderCatalog } from "./providers/catalog.js";
+import {
+	characterDisplay,
+	getActiveCharacterId,
+	loadCharacter,
+	seedCharacterPackage,
+} from "./companion/character-loader.js";
 
 export interface HostServices {
 	db: DatabaseSync;
@@ -42,7 +49,17 @@ export function getServices(): HostServices {
 
 /** Wire all IPC handlers to domain services. Call once after openDatabase(). */
 export function wireAllHandlers(s: HostServices): void {
+	// Load and seed the active character package from config/characters once.
+	ensureCharacterSeeded(s);
 	services = s;
+
+	// --- character package -----------------------------------------------------
+	registerHandler("character.get:v1", async () => {
+		const companionId = await getCompanionId(s);
+		const character = loadCharacter(companionId);
+		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
+		return { character: characterDisplay(character) };
+	});
 
 	// --- onboarding ----------------------------------------------------------
 	registerHandler("onboarding.get:v1", async () => {
@@ -105,13 +122,16 @@ export function wireAllHandlers(s: HostServices): void {
 		const id = crypto.randomUUID();
 		const branchId = crypto.randomUUID();
 		const title = (_p as { title?: string }).title ?? "新对话";
+		const character = loadCharacter(companionId);
+		if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
+		const sceneTitle = character.character.scene_title;
 		s.db.exec("BEGIN IMMEDIATE");
 		try {
 			s.db
 				.prepare(
 					"INSERT INTO conversations (id, companion_id, title, scene_title) VALUES (?, ?, ?, ?)",
 				)
-				.run(id, companionId, title, "极光书房");
+				.run(id, companionId, title, sceneTitle);
 			s.db
 				.prepare(
 					"INSERT INTO branches (id, conversation_id, label, adopted) VALUES (?, ?, 'main', 1)",
@@ -353,13 +373,15 @@ export function wireAllHandlers(s: HostServices): void {
 		const companionId = await getCompanionId(s);
 		const state = s.onboarding.getState(companionId);
 		const stateJson = state.stateJson as Record<string, unknown>;
+		const character = loadCharacter(companionId);
+		if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
 		return {
 			settings: {
 				relationshipMemoryEnabled: Boolean(stateJson.memoryEnabled),
 				pauseLearning: false,
 				immersionLevel: "roleplay",
-				currentScene: "极光书房",
-				theme: "aurora-study",
+				currentScene: character.visual.default_scene,
+				theme: "character-package",
 			},
 		};
 	});
@@ -384,12 +406,17 @@ export function wireAllHandlers(s: HostServices): void {
 	registerHandler("snapshot.get:v1", async () => {
 		const companionId = await getCompanionId(s);
 		const onboarding = s.onboarding.getState(companionId);
+		const character = loadCharacter(companionId);
+		if (!character) {
+			throw { kind: "unavailable", reason: "character_package_missing" };
+		}
 		const convRows = s.db
 			.prepare("SELECT id, title, scene_title, updated_at FROM conversations ORDER BY updated_at DESC LIMIT 100")
 			.all() as Array<{ id: string; title: string; scene_title: string; updated_at: string }>;
 		return {
 			eventSeq: s.eventBus.currentSeq,
 			onboarding,
+			character: characterDisplay(character),
 			conversation: {
 				conversations: convRows.map((r) => ({
 					id: r.id,
@@ -402,8 +429,8 @@ export function wireAllHandlers(s: HostServices): void {
 			settings: {
 				relationshipMemoryEnabled: false,
 				immersionLevel: "roleplay",
-				currentScene: "极光书房",
-				theme: "aurora-study",
+				currentScene: character.visual.default_scene,
+				theme: "character-package",
 			},
 		};
 	});
@@ -414,12 +441,19 @@ async function getCompanionId(s: HostServices): Promise<string> {
 		| { id: string }
 		| undefined;
 	if (row) return row.id;
-	// Auto-seed the default companion from product config
-	const productConfig = (await import("../../product.config.js")).productConfig;
-	const c = productConfig.defaultCharacter;
-	const id = c.id;
-	s.db
-		.prepare("INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES (?, 'builtin', ?, ?)")
-		.run(id, c.name, `你是${c.name}，${c.subtitle}。`);
-	return id;
+	const packageId = productConfig.defaultCharacterId;
+	ensureCharacterSeeded(s);
+	const seeded = s.db.prepare("SELECT id FROM companion_identity WHERE id = ?").get(packageId) as
+		| { id: string }
+		| undefined;
+	if (!seeded) throw { kind: "unavailable", reason: "character_package_missing" };
+	return seeded.id;
+}
+
+/** Seed the active character package if it has not been seeded yet. */
+function ensureCharacterSeeded(s: HostServices): void {
+	const activeId = getActiveCharacterId(s.db, productConfig.defaultCharacterId);
+	const character = loadCharacter(activeId);
+	if (!character) throw new Error(`character package missing: ${activeId}`);
+	seedCharacterPackage(s.db, s.eventBus, character);
 }

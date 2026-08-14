@@ -45,6 +45,7 @@ const config: Configuration = {
 		{ from: "../../LICENSE", to: "LICENSE" },
 		{ from: "../../BRAND-LICENSE", to: "BRAND-LICENSE" },
 		{ from: "dist/brand/BRAND-ATTRIBUTION.txt", to: "BRAND-ATTRIBUTION.txt" },
+		{ from: "../../config", to: "config" },
 	],
 	mac: {
 		identity: null,

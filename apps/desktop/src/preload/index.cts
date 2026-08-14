@@ -91,14 +91,17 @@ function reportRendererFault(input: unknown): void {
 
 const companionFacade = Object.freeze({
 	snapshot: Object.freeze({
-		get: () => ipcRenderer.invoke("snapshot.get:v1"),
+		get: () => ipcRenderer.invoke("snapshot.get:v1", {}),
+	}),
+	character: Object.freeze({
+		get: () => ipcRenderer.invoke("character.get:v1", {}),
 	}),
 	events: Object.freeze({
 		subscribe: (afterSeq: number) =>
 			ipcRenderer.invoke("events.subscribe:v1", { afterSeq }),
 	}),
 	onboarding: Object.freeze({
-		get: () => ipcRenderer.invoke("onboarding.get:v1"),
+		get: () => ipcRenderer.invoke("onboarding.get:v1", {}),
 		setName: (name: string) => ipcRenderer.invoke("onboarding.setName:v1", { name }),
 		setRelation: (kind: string) =>
 			ipcRenderer.invoke("onboarding.setRelation:v1", { kind }),
@@ -106,11 +109,14 @@ const companionFacade = Object.freeze({
 			ipcRenderer.invoke("onboarding.setMemoryDecision:v1", { enabled }),
 	}),
 	conversation: Object.freeze({
-		list: () => ipcRenderer.invoke("conversation.list:v1"),
+		list: () => ipcRenderer.invoke("conversation.list:v1", {}),
 		create: (title?: string) =>
-			ipcRenderer.invoke("conversation.create:v1", { title }),
+			ipcRenderer.invoke("conversation.create:v1", title === undefined ? {} : { title }),
 		select: (id: string, branchId?: string) =>
-			ipcRenderer.invoke("conversation.select:v1", { id, branchId }),
+			ipcRenderer.invoke(
+				"conversation.select:v1",
+				branchId === undefined ? { id } : { id, branchId },
+			),
 	}),
 	message: Object.freeze({
 		send: (conversationId: string, text: string) =>
@@ -131,15 +137,24 @@ const companionFacade = Object.freeze({
 			ipcRenderer.invoke("message.abort:v1", { conversationId }),
 	}),
 	memory: Object.freeze({
-		listCandidates: () => ipcRenderer.invoke("memory.listCandidates:v1"),
+		listCandidates: () => ipcRenderer.invoke("memory.listCandidates:v1", {}),
 		decideCandidate: (
 			candidateId: string,
 			decision: string,
 			editedText?: string,
 			scope?: string,
-		) => ipcRenderer.invoke("memory.decideCandidate:v1", { candidateId, decision, editedText, scope }),
+		) =>
+			ipcRenderer.invoke("memory.decideCandidate:v1", {
+				candidateId,
+				decision,
+				...(editedText === undefined ? {} : { editedText }),
+				...(scope === undefined ? {} : { scope }),
+			}),
 		search: (query: string, scope?: string) =>
-			ipcRenderer.invoke("memory.search:v1", { query, scope }),
+			ipcRenderer.invoke("memory.search:v1", {
+				query,
+				...(scope === undefined ? {} : { scope }),
+			}),
 		list: (params?: Record<string, unknown>) =>
 			ipcRenderer.invoke("memory.list:v1", params ?? {}),
 		pin: (entryId: string, pinned: boolean) =>
@@ -152,30 +167,34 @@ const companionFacade = Object.freeze({
 			ipcRenderer.invoke("memory.edit:v1", { entryId, newText }),
 	}),
 	provider: Object.freeze({
-		list: () => ipcRenderer.invoke("provider.list:v1"),
+		list: () => ipcRenderer.invoke("provider.list:v1", {}),
 		setApiKey: (providerId: string, apiKey: string, sessionOnly?: boolean) =>
-			ipcRenderer.invoke("provider.setApiKey:v1", { providerId, apiKey, sessionOnly }),
+			ipcRenderer.invoke("provider.setApiKey:v1", {
+				providerId,
+				apiKey,
+				...(sessionOnly === undefined ? {} : { sessionOnly }),
+			}),
 		login: (providerId: string) =>
 			ipcRenderer.invoke("provider.login:v1", { providerId, authType: "oauth" }),
 		logout: (providerId: string) =>
 			ipcRenderer.invoke("provider.logout:v1", { providerId }),
 	}),
 	voice: Object.freeze({
-		list: () => ipcRenderer.invoke("voice.list:v1"),
+		list: () => ipcRenderer.invoke("voice.list:v1", {}),
 		switch: (stackId: string, scope: string) =>
 			ipcRenderer.invoke("voice.switch:v1", { stackId, scope, rollbackAvailable: true }),
 	}),
 	commission: Object.freeze({
-		list: () => ipcRenderer.invoke("commission.list:v1"),
+		list: () => ipcRenderer.invoke("commission.list:v1", {}),
 	}),
 	run: Object.freeze({
-		list: () => ipcRenderer.invoke("run.list:v1"),
+		list: () => ipcRenderer.invoke("run.list:v1", {}),
 	}),
 	artifact: Object.freeze({
-		list: () => ipcRenderer.invoke("artifact.list:v1"),
+		list: () => ipcRenderer.invoke("artifact.list:v1", {}),
 	}),
 	settings: Object.freeze({
-		get: () => ipcRenderer.invoke("settings.get:v1"),
+		get: () => ipcRenderer.invoke("settings.get:v1", {}),
 		set: (settings: Record<string, unknown>) =>
 			ipcRenderer.invoke("settings.set:v1", { settings }),
 	}),

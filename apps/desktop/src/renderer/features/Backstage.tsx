@@ -1,5 +1,6 @@
 import { Dialog, Tabs } from "@kobalte/core";
 import { Show } from "solid-js";
+import type { CharacterDisplay } from "../stores/companion.js";
 import { MemoryEntryList, MemorySheet } from "./MemorySheet.js";
 import { SettingsSheet } from "./SettingsSheet.js";
 
@@ -11,7 +12,11 @@ import { SettingsSheet } from "./SettingsSheet.js";
  * styled as the prototype's right-side panel. The three backstage pages —
  * 关系档案 / 记忆 / 系统设置 — live in `Tabs`; page state is internal.
  */
-export function Backstage(props: { open: boolean; onClose: () => void }) {
+export function Backstage(props: {
+	open: boolean;
+	onClose: () => void;
+	character: CharacterDisplay | undefined;
+}) {
 	return (
 		<Dialog.Root
 			open={props.open}
@@ -41,7 +46,7 @@ export function Backstage(props: { open: boolean; onClose: () => void }) {
 							</Tabs.Trigger>
 						</Tabs.List>
 						<Tabs.Content value="relationship" class="tab-panel">
-							<RelationshipArchive />
+							<RelationshipArchive character={props.character} />
 						</Tabs.Content>
 						<Tabs.Content value="memory" class="tab-panel">
 							<MemorySheet />
@@ -57,24 +62,21 @@ export function Backstage(props: { open: boolean; onClose: () => void }) {
 }
 
 /** 关系档案: locked self-canon plus the relationship-scoped memories. */
-function RelationshipArchive() {
-	const character = __PRODUCT_CONFIG__.defaultCharacter;
+function RelationshipArchive(props: { character: CharacterDisplay | undefined }) {
 	return (
 		<div class="sheet-panel">
-			<div class="detail-card">
-				<strong>{character.name}是谁</strong>
-				<span>
-					{character.subtitle} · {character.sceneTitle}
-				</span>
-			</div>
-			<p class="drawer-note">这份自我设定随产品版本锁定；普通对话和现实工作都不能改写它。</p>
-			<Show when={character.oldStationTitle}>
-				<div class="detail-card">
-					<strong>旧站留下的记录</strong>
-					<span>{character.oldStationGreeting}</span>
-				</div>
+			<Show when={props.character}>
+				{(character) => (
+					<div class="detail-card">
+						<strong>{character().name}是谁</strong>
+						<span>
+							{character().character.subtitle} · {character().character.scene_title}
+						</span>
+					</div>
+				)}
 			</Show>
-			<MemoryEntryList scope="relationship" title="熊记得的你" />
+			<p class="drawer-note">这份自我设定随产品版本锁定；普通对话和现实工作都不能改写它。</p>
+			<MemoryEntryList scope="relationship" title="已确认的关系记忆" />
 		</div>
 	);
 }

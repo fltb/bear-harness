@@ -108,6 +108,7 @@ export const SnapshotResponse = Type.Object(
 	{
 		eventSeq: EventSeq,
 		onboarding: Type.Optional(Type.Unknown()),
+		character: Type.Optional(Type.Unknown()),
 		conversation: Type.Optional(Type.Unknown()),
 		memory: Type.Optional(Type.Unknown()),
 		provider: Type.Optional(Type.Unknown()),
@@ -140,6 +141,7 @@ export type OnboardingState = Static<typeof OnboardingState>;
 
 export const OnboardingGetRequest = Type.Object({}, { additionalProperties: false });
 export const OnboardingAdvanceRequest = Type.Object({}, { additionalProperties: false });
+export const CharacterGetRequest = Type.Object({}, { additionalProperties: false });
 export const OnboardingResponse = Type.Object(
 	{
 		state: OnboardingState,
@@ -763,6 +765,7 @@ export const SettingsSetRequest = Type.Object(
 /** Map of IPC channel name → request schema for the main-side router. */
 export const REQUEST_SCHEMAS: Record<string, TSchema> = {
 	"snapshot.get:v1": SnapshotGetRequest,
+	"character.get:v1": CharacterGetRequest,
 	"events.subscribe:v1": EventSubscribeRequest,
 	"onboarding.get:v1": OnboardingGetRequest,
 	"onboarding.advance:v1": OnboardingAdvanceRequest,

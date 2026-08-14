@@ -16,6 +16,7 @@ declare global {
 			}>;
 			companion: Readonly<{
 				snapshot: { get(): Promise<unknown> };
+				character: { get(): Promise<unknown> };
 				events: { subscribe(afterSeq: number): Promise<unknown> };
 				onboarding: {
 					get(): Promise<unknown>;

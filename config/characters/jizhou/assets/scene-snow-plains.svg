@@ -1,0 +1,32 @@
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680">
+  <defs>
+    <linearGradient id="night-sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#102a31"/>
+      <stop offset=".62" stop-color="#244b50"/>
+      <stop offset="1" stop-color="#b7cbc6"/>
+    </linearGradient>
+    <linearGradient id="snow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e8f0ec"/>
+      <stop offset="1" stop-color="#c4d5d0"/>
+    </linearGradient>
+    <radialGradient id="camp-light" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#f7d797" stop-opacity=".88"/>
+      <stop offset="1" stop-color="#cf9d5b" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="camp-glow" x="-120%" y="-120%" width="340%" height="340%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="680" fill="url(#night-sky)"/>
+  <path d="M-40 165 C150 96 255 174 410 128 C590 74 738 160 920 104 C1040 68 1135 102 1240 72" stroke="#94e0ca" stroke-width="38" opacity=".16" fill="none"/>
+  <circle cx="970" cy="106" r="31" fill="#eaf2ee" opacity=".82"/>
+  <path d="M0 480 L145 242 L285 418 L455 188 L612 433 L788 258 L972 457 L1120 304 L1200 430 L1200 680 L0 680 Z" fill="#a9c2be" opacity=".32"/>
+  <path d="M0 540 C180 500 350 560 540 518 C744 473 960 536 1200 500 L1200 680 L0 680 Z" fill="url(#snow)"/>
+  <path d="M0 598 C260 560 400 625 620 574 C850 520 1035 590 1200 558 L1200 680 L0 680 Z" fill="#c0d4ce"/>
+  <ellipse cx="820" cy="548" rx="86" ry="42" fill="url(#camp-light)" filter="url(#camp-glow)"/>
+  <path d="M758 552 L820 464 L882 552 Z" fill="#4a6b68"/>
+  <path d="M774 552 L820 486 L866 552 Z" fill="#27474b"/>
+  <path d="M812 575 L828 575 L820 538 Z" fill="#f1c272"/>
+  <path d="M790 578 H850" stroke="#72513d" stroke-width="7" stroke-linecap="round"/>
+</svg>

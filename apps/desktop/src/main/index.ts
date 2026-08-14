@@ -268,7 +268,6 @@ function initHostServices(): HostServices | null {
 		void supervisor.start();
 		return services;
 	} catch (error) {
-		diagnostics.emit("host.storage_unavailable", {});
 		process.stderr.write(`storage unavailable: ${(error as Error)?.message ?? String(error)}\n`);
 		return null;
 	}
@@ -293,6 +292,7 @@ diagnostics.runInSession(() => {
 	app
 		.whenReady()
 		.then(() => {
+			if (!initHostServices()) failInit("Failed to initialize companion host services");
 			createMainWindow();
 		})
 		.catch((error: unknown) => {

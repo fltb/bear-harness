@@ -15,15 +15,7 @@ export const FORK_PRODUCT: Readonly<ProductConfig> = {
 	dataDirectoryName: "north-companion",
 	artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
 	executableName: "north-companion",
-	defaultCharacter: {
-		id: "beixing",
-		name: "北星",
-		subtitle: "极地信号站的守灯人",
-		sceneTitle: "灯塔 · 夜航未竟",
-		greeting: "你回来了。今晚是要守灯，还是只想坐一会儿？",
-		oldStationTitle: "旧信号站",
-		oldStationGreeting: "旧信号站的灯灭了三年。后来它重新亮起时，我不再相信没人说过的话。",
-	},
+	defaultCharacterId: "beixing",
 	brandLicense: {
 		spdx: "CC-BY-SA-4.0",
 		workTitle: "North Companion Brand Assets",

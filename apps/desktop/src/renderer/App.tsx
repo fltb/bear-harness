@@ -2,11 +2,11 @@ import { createEffect, createSignal } from "solid-js";
 import type { ProductConfig } from "../../product.config";
 import { createCompanionStore, DesktopProvider } from "./stores/companion.js";
 import { Backstage } from "./features/Backstage.js";
-import { AuroraScene } from "./AuroraScene";
+import { CharacterPresence } from "./CharacterPresence";
 import { Composer } from "./Composer";
 import { ConversationPanel } from "./ConversationPanel";
 import { FirstMeeting } from "./FirstMeeting";
-import { JizhouPresence } from "./JizhouPresence";
+import { SceneBackdrop } from "./SceneBackdrop";
 import { Sidebar } from "./Sidebar";
 import { Titlebar } from "./Titlebar";
 
@@ -25,14 +25,16 @@ export function App(props: { product: Readonly<ProductConfig> }) {
 		document.title = props.product.productName;
 	});
 
-	const character = () => props.product.defaultCharacter;
-
+	const character = () => store.character;
 	const activeConversation = () =>
-		store.conversations.find((conversation) => conversation.id === store.activeConversationId) ??
-		null;
-
-	const sceneTitle = () => activeConversation()?.sceneTitle || character().sceneTitle;
-	const composerPlaceholder = () => `对${character().name}说点什么…`;
+		store.conversations.find((conversation) => conversation.id === store.activeConversationId);
+	const activeScene = () => {
+		const identity = character();
+		return identity?.scenes.find((scene) => scene.id === identity.visual.defaultSceneId);
+	};
+	const sceneTitle = () =>
+		activeConversation()?.sceneTitle ?? character()?.character.scene_title ?? "";
+	const composerPlaceholder = () => character()?.character.composer_placeholder ?? "说点什么…";
 
 	return (
 		<DesktopProvider store={store}>
@@ -41,14 +43,18 @@ export function App(props: { product: Readonly<ProductConfig> }) {
 				<div class="shell">
 					<Sidebar character={character()} />
 					<main class="main">
-						<AuroraScene />
-						<JizhouPresence characterName={character().name} />
+						<SceneBackdrop scene={activeScene()} />
+						<CharacterPresence character={character()} presence={store.presence} />
 						<ConversationPanel character={character()} />
 						<Composer placeholder={composerPlaceholder()} />
 						<FirstMeeting />
 					</main>
 				</div>
-				<Backstage open={backstageOpen()} onClose={() => setBackstageOpen(false)} />
+				<Backstage
+					open={backstageOpen()}
+					onClose={() => setBackstageOpen(false)}
+					character={character()}
+				/>
 			</div>
 		</DesktopProvider>
 	);

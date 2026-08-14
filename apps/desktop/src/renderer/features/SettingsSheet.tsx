@@ -1,5 +1,5 @@
 import { Select, Switch } from "@kobalte/core";
-import { createEffect, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { useCompanionStore, type ImmersionLevel, type SettingsData } from "../stores/companion.js";
 
 /**
@@ -28,17 +28,6 @@ const THEME_OPTIONS: SettingsOption<string>[] = [
 	{ value: "paper", label: "纸页" },
 ];
 
-/** The scene selector mirrors the two role-content scenes from the product config. */
-const SCENE_OPTIONS: SettingsOption<string>[] = [
-	{
-		value: __PRODUCT_CONFIG__.defaultCharacter.sceneTitle,
-		label: __PRODUCT_CONFIG__.defaultCharacter.sceneTitle,
-	},
-	{
-		value: __PRODUCT_CONFIG__.defaultCharacter.oldStationTitle,
-		label: __PRODUCT_CONFIG__.defaultCharacter.oldStationTitle,
-	},
-];
 
 const DEFAULT_SETTINGS: SettingsData = {
 	relationshipMemoryEnabled: false,
@@ -128,6 +117,9 @@ export function SettingsSheet() {
 	}
 
 	const disabled = () => saving() || loading();
+	const sceneOptions = createMemo<SettingsOption<string>[]>(() =>
+		store.character?.scenes.map((scene) => ({ value: scene.id, label: scene.label })) ?? [],
+	);
 
 	return (
 		<div class="sheet-panel">
@@ -179,10 +171,10 @@ export function SettingsSheet() {
 			/>
 			<FieldSelect
 				label="当前场景"
-				options={SCENE_OPTIONS}
-				selected={SCENE_OPTIONS.find((option) => option.value === settings().currentScene) ?? null}
+				options={sceneOptions()}
+				selected={sceneOptions().find((option) => option.value === settings().currentScene) ?? null}
 				placeholder="选择场景"
-				disabled={disabled()}
+				disabled={disabled() || sceneOptions().length === 0}
 				onChange={(value) => save({ currentScene: value }, "已切换场景")}
 			/>
 			<FieldSelect

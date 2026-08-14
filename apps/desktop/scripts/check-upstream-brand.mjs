@@ -29,7 +29,7 @@ const ALL_FIELDS = [
 	"dataDirectoryName",
 	"artifactName",
 	"executableName",
-	"defaultCharacter",
+	"defaultCharacterId",
 	"brandLicense",
 	"icon",
 ];

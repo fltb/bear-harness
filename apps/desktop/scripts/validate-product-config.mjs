@@ -32,7 +32,7 @@ const IDENTITY_FIELDS = [
 	"dataDirectoryName",
 	"artifactName",
 	"executableName",
-	"defaultCharacter",
+	"defaultCharacterId",
 	"icon",
 ];
 
@@ -80,27 +80,11 @@ export function validateProductConfig(config) {
 		}
 	}
 
-	const dc = config.defaultCharacter;
-	if (!dc || typeof dc !== "object" || Array.isArray(dc)) {
-		fail("defaultCharacter", "must be an object");
-	} else {
-		for (const field of [
-			"id",
-			"name",
-			"subtitle",
-			"sceneTitle",
-			"greeting",
-			"oldStationTitle",
-			"oldStationGreeting",
-		]) {
-			const value = dc[field];
-			if (typeof value !== "string" || value.trim() === "") {
-				fail(`defaultCharacter.${field}`, "must be a non-empty string");
-			}
-		}
-		if (typeof dc.id === "string" && !KEBAB_RE.test(dc.id)) {
-			fail("defaultCharacter.id", "must be ASCII kebab-case");
-		}
+	const dci = config.defaultCharacterId;
+	if (typeof dci !== "string" || dci.trim() === "") {
+		fail("defaultCharacterId", "must be a non-empty string");
+	} else if (!KEBAB_RE.test(dci)) {
+		fail("defaultCharacterId", "must be ASCII kebab-case, got " + JSON.stringify(dci));
 	}
 
 	const bl = config.brandLicense;

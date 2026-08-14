@@ -327,8 +327,37 @@ export interface MemorySnapshot {
 	entries?: MemoryEntry[];
 }
 
+export interface SceneDisplay {
+	id: string;
+	label: string;
+	description: string;
+	backgroundUrl?: string;
+}
+
+export interface CharacterDisplay {
+	id: string;
+	name: string;
+	character: {
+		subtitle: string;
+		scene_title: string;
+		greeting: string;
+		composer_placeholder: string;
+		first_meeting: Record<string, unknown>;
+		correction: { trigger_label: string; reason_group_label: string };
+	};
+	theme: Record<string, unknown>;
+	scenes: SceneDisplay[];
+	visual: {
+		defaultSceneId: string;
+		avatarUrl: string;
+		presence: Record<string, string>;
+		stateLabels: Record<string, string>;
+	};
+}
+
 export interface Snapshot {
 	eventSeq: number;
+	character?: CharacterDisplay;
 	onboarding?: OnboardingData;
 	conversation?: ConversationSnapshot;
 	memory?: MemorySnapshot;
@@ -435,6 +464,45 @@ export function isOnboardingData(value: unknown): value is OnboardingData {
 		isOnboardingStep(value.state) &&
 		(value.greeting === undefined || typeof value.greeting === "string") &&
 		(value.scene === undefined || typeof value.scene === "string")
+	);
+}
+
+/** Validate the Host-projected, renderer-safe part of a character package. */
+export function isCharacterDisplay(value: unknown): value is CharacterDisplay {
+	if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") {
+		return false;
+	}
+	const character = value.character;
+	const visual = value.visual;
+	if (
+		!isRecord(character) ||
+		typeof character.subtitle !== "string" ||
+		typeof character.scene_title !== "string" ||
+		typeof character.greeting !== "string" ||
+		typeof character.composer_placeholder !== "string" ||
+		!isRecord(character.correction) ||
+		typeof character.correction.trigger_label !== "string" ||
+		typeof character.correction.reason_group_label !== "string" ||
+		!isRecord(character.first_meeting) ||
+		!isRecord(value.theme) ||
+		!isRecord(visual) ||
+		typeof visual.defaultSceneId !== "string" ||
+		typeof visual.avatarUrl !== "string" ||
+		!isRecord(visual.presence) ||
+		!Object.values(visual.presence).every((asset) => typeof asset === "string") ||
+		!isRecord(visual.stateLabels) ||
+		!Object.values(visual.stateLabels).every((label) => typeof label === "string") ||
+		!Array.isArray(value.scenes)
+	) {
+		return false;
+	}
+	return value.scenes.every(
+		(scene) =>
+			isRecord(scene) &&
+			typeof scene.id === "string" &&
+			typeof scene.label === "string" &&
+			typeof scene.description === "string" &&
+			(scene.backgroundUrl === undefined || typeof scene.backgroundUrl === "string"),
 	);
 }
 
@@ -701,5 +769,6 @@ export function sanitizeSnapshot(value: unknown): Snapshot {
 	const artifacts = normalizeArtifactList(value.artifact);
 	if (artifacts) out.artifact = artifacts;
 	if (isSettingsData(value.settings)) out.settings = value.settings;
+	if (isCharacterDisplay(value.character)) out.character = value.character;
 	return out;
 }

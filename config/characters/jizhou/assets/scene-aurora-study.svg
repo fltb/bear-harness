@@ -1,0 +1,57 @@
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680">
+  <defs>
+    <linearGradient id="room" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#17383f"/>
+      <stop offset=".58" stop-color="#20474a"/>
+      <stop offset="1" stop-color="#10272f"/>
+    </linearGradient>
+    <linearGradient id="window-sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#173b44"/>
+      <stop offset="1" stop-color="#112c35"/>
+    </linearGradient>
+    <linearGradient id="aurora" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#94e0ca" stop-opacity="0"/>
+      <stop offset=".48" stop-color="#94e0ca" stop-opacity=".42"/>
+      <stop offset=".68" stop-color="#68a4ba" stop-opacity=".2"/>
+      <stop offset="1" stop-color="#94e0ca" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="desk" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#72513d"/>
+      <stop offset="1" stop-color="#382820"/>
+    </linearGradient>
+    <filter id="aurora-blur" x="-10%" y="-100%" width="120%" height="300%">
+      <feGaussianBlur stdDeviation="23"/>
+    </filter>
+    <filter id="window-shadow" x="-15%" y="-25%" width="130%" height="160%">
+      <feDropShadow dx="0" dy="14" stdDeviation="17" flood-color="#000a0d" flood-opacity=".25"/>
+    </filter>
+    <filter id="lamp-glow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+    <clipPath id="window-view"><rect x="54" y="62" width="468" height="238"/></clipPath>
+  </defs>
+  <rect width="1200" height="680" fill="url(#room)"/>
+  <rect x="-60" y="40" width="1320" height="90" fill="url(#aurora)" filter="url(#aurora-blur)" transform="rotate(-4 600 85)"/>
+  <g filter="url(#window-shadow)">
+    <rect x="54" y="62" width="468" height="238" fill="url(#window-sky)"/>
+    <g clip-path="url(#window-view)" opacity=".25">
+      <path d="M54 270 L110 164 L171 242 L236 130 L316 245 L377 180 L442 257 L489 206 L522 235 L522 300 L54 300 Z" fill="#c5d9d5"/>
+    </g>
+    <rect x="54" y="62" width="468" height="238" fill="none" stroke="rgba(160,204,193,.2)" stroke-width="3"/>
+  </g>
+  <rect x="768" y="68" width="360" height="224" rx="12" fill="rgba(27,54,54,.7)" stroke="rgba(166,195,184,.18)"/>
+  <rect x="788" y="144" width="320" height="4" fill="rgba(165,174,156,.2)"/>
+  <rect x="788" y="220" width="320" height="4" fill="rgba(165,174,156,.2)"/>
+  <g opacity=".85">
+    <rect x="790" y="198" width="14" height="76" fill="#9f8067"/>
+    <rect x="809" y="198" width="17" height="76" fill="#6f9b92"/>
+    <rect x="832" y="198" width="15" height="76" fill="#c0a66f"/>
+    <rect x="853" y="198" width="19" height="76" fill="#819994"/>
+  </g>
+  <rect x="0" y="517" width="1200" height="163" fill="url(#desk)"/>
+  <rect x="0" y="517" width="1200" height="8" fill="rgba(255,255,255,.08)"/>
+  <ellipse cx="868" cy="510" rx="62" ry="30" fill="#ebb55f" opacity=".28" filter="url(#lamp-glow)"/>
+  <path d="M824 516 H912 V532 H824 Z" fill="#b78456"/>
+  <path d="M824 516 C824 481 842 460 868 460 C894 460 912 481 912 516 Z" fill="#b78456"/>
+</svg>

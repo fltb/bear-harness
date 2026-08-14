@@ -31,15 +31,15 @@ describe("check-upstream-brand", () => {
 		expect(result.stdout).toContain("Upstream brand match");
 	});
 
-	it("fails when the role changes while reusing the official appId", () => {
+	it("fails when the default character id changes while reusing the official appId", () => {
 		const config = {
 			...OFFICIAL_PRODUCT,
-			defaultCharacter: { ...OFFICIAL_PRODUCT.defaultCharacter, name: "北极星" },
+			defaultCharacterId: "beixing",
 		};
 		const file = writeFixture(dir, "role-change", config);
 		const result = runGate(file);
 		expect(result.status).not.toBe(0);
-		expect(result.stderr).toContain("Upstream brand mismatch: defaultCharacter");
+		expect(result.stderr).toContain("Upstream brand mismatch: defaultCharacterId");
 	});
 
 	it("fails when the release identity changes while reusing the official dataDirectoryName", () => {

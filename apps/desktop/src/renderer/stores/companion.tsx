@@ -52,6 +52,7 @@ import {
 	type ArtifactListData,
 	type Commission,
 	type CommissionListData,
+	type CharacterDisplay,
 	type ConversationCreateResult,
 	type ConversationListData,
 	type ConversationSummary,
@@ -198,6 +199,7 @@ export interface CompanionStore {
 	readonly activeMessages: Message[];
 	readonly runs: RunInfo[];
 	readonly presence: PresenceState;
+	readonly character: CharacterDisplay | undefined;
 
 	refresh(): Promise<void>;
 	selectConversation(id: string, branchId?: string): Promise<void>;
@@ -348,7 +350,11 @@ export function createCompanionStore(): CompanionStore {
 	const [stale, setStale] = createSignal(false);
 
 	const [snapshotResource, snapshotActions] = createResource<Snapshot>(
-		() => invoke<Snapshot>(() => window.bearDesktop.companion.snapshot.get()).then(sanitizeSnapshot),
+		() => {
+			const companion = window.bearDesktop?.companion;
+			if (!companion) return { eventSeq: 0 };
+			return invoke<Snapshot>(() => companion.snapshot.get()).then(sanitizeSnapshot);
+		},
 		{ initialValue: { eventSeq: 0 } },
 	);
 
@@ -477,8 +483,10 @@ export function createCompanionStore(): CompanionStore {
 		setStale(false);
 		if (!booted) {
 			booted = true;
-			void refreshConversations().catch((e) => setState("error", messageOf(e)));
-			refreshSupplementary();
+			if (window.bearDesktop?.companion) {
+				void refreshConversations().catch((e) => setState("error", messageOf(e)));
+				refreshSupplementary();
+			}
 		}
 	});
 
@@ -572,6 +580,7 @@ export function createCompanionStore(): CompanionStore {
 	};
 
 	createEffect(() => {
+		if (!window.bearDesktop?.companion) return;
 		const loading = snapshotResource.loading;
 		if (loading || snapshotResource.error !== undefined) return;
 		const data = snapshotValue();
@@ -956,6 +965,9 @@ export function createCompanionStore(): CompanionStore {
 			}
 		},
 
+		get character() {
+			return snapshotResource.latest?.character;
+		},
 		get snapshot() {
 			return snapshotApi;
 		},

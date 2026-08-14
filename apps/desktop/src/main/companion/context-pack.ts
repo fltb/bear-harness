@@ -13,6 +13,7 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import { loadCharacter } from "./character-loader.js";
 
 export interface ContextPackBlock {
 	layer: "identity" | "canon" | "scene" | "relationship" | "real_context";
@@ -95,26 +96,18 @@ export class ContextPackCompiler {
 	}
 
 	private getIdentityCore(conversationId: string): string {
-		// Companion identity from companion_identity
 		const row = this.db
 			.prepare(
-				`SELECT ci.name, ci.self_canon
+				`SELECT ci.package_id
 				 FROM conversations c
 				 JOIN companion_identity ci ON ci.id = c.companion_id
 				 WHERE c.id = ?`,
 			)
-			.get(conversationId) as { name: string; self_canon: string } | undefined;
-
-		if (!row) {
-			return "你是极昼，旧极光站的守护核心。我们正在对话。";
-		}
-
-		return [
-			`你是${row.name}。`,
-			row.self_canon.slice(0, 2000),
-			"你与用户的关系和称呼由对方确认。",
-			"角色语言与系统事实分离：不替用户说话、行动或决定。",
-		].join("\n");
+			.get(conversationId) as { package_id: string } | undefined;
+		if (!row) throw new Error(`conversation has no companion identity: ${conversationId}`);
+		const character = loadCharacter(row.package_id);
+		if (!character) throw new Error(`character package missing: ${row.package_id}`);
+		return character.identity_core;
 	}
 
 	private getSelfCanon(conversationId: string): string | null {

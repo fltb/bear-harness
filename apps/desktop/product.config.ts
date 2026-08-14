@@ -13,17 +13,6 @@
  * It never reads environment variables or user files.
  */
 
-export interface ProductCharacter {
-	/** ASCII kebab-case id (^[a-z0-9]+(?:-[a-z0-9]+)*$). */
-	id: string;
-	name: string;
-	subtitle: string;
-	sceneTitle: string;
-	greeting: string;
-	oldStationTitle: string;
-	oldStationGreeting: string;
-}
-
 export interface BrandLicense {
 	/** Fixed: brand assets are CC BY-SA 4.0. */
 	spdx: "CC-BY-SA-4.0";
@@ -47,7 +36,13 @@ export interface ProductConfig {
 	artifactName: string;
 	/** ASCII kebab-case executable name. */
 	executableName: string;
-	defaultCharacter: ProductCharacter;
+	/**
+	 * ASCII kebab-case id of the DEFAULT character package. Points into
+	 * `config/characters/<id>/character.yaml` — the package is the single
+	 * source of all character content (name, canon, theme, copy). This file
+	 * never holds character strings.
+	 */
+	defaultCharacterId: string;
 	brandLicense: BrandLicense;
 	/** Repo-root-relative path to a 1024x1024 PNG or a readable SVG, or null for the default icon. */
 	icon: string | null;
@@ -59,16 +54,7 @@ export const productConfig: ProductConfig = {
 	dataDirectoryName: "cyber-bear",
 	artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
 	executableName: "cyber-bear",
-	defaultCharacter: {
-		id: "jizhou",
-		name: "极昼",
-		subtitle: "旧极光站的守望者",
-		sceneTitle: "极光书房 · 雪停以后",
-		greeting: "你回来了。今晚是想说会儿话，还是有东西要我替你看着？",
-		oldStationTitle: "旧站留下的记录",
-		oldStationGreeting:
-			"我曾信过一次没有依据的“已经修好”。后来档案丢了。所以现在，不知道就是不知道。",
-	},
+	defaultCharacterId: "jizhou",
 	brandLicense: {
 		spdx: "CC-BY-SA-4.0",
 		workTitle: "Cyber Bear Brand Assets",
