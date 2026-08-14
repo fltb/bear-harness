@@ -18,8 +18,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { EventBus } from "../storage/event-bus.js";
-import type { CompanionSupervisor } from "../companion/supervisor.js";
 import type { ArtifactStore } from "../artifacts/index.js";
+import type {
+	ExecutorCommission,
+	ExecutorEvent,
+	ExecutorRouter,
+	ExecutorRun,
+} from "../executors/router.js";
 
 /** Max runs that may be active at once (enqueued/running/needs_user). */
 export const MAX_ACTIVE_RUNS = 2;
@@ -79,7 +84,7 @@ export interface CommissionLaunchResult {
 	runId: string;
 	commissionId: string;
 	executorProfile: string;
-	status: "enqueued";
+	status: RunStatus;
 }
 
 export interface RunSummary {
@@ -153,20 +158,19 @@ type CountRow = {
 export class CommissionService {
 	private db: DatabaseSync;
 	private eventBus: EventBus;
-	/** Reserved for the executor adapters (Pi/Codex hand-off); unused by the FSM itself. */
-	private supervisor: CompanionSupervisor;
 	private artifactStore: ArtifactStore;
+	private executorRouter: ExecutorRouter;
 
 	constructor(
 		db: DatabaseSync,
 		eventBus: EventBus,
-		supervisor: CompanionSupervisor,
 		artifactStore: ArtifactStore,
+		executorRouter: ExecutorRouter,
 	) {
 		this.db = db;
 		this.eventBus = eventBus;
-		this.supervisor = supervisor;
 		this.artifactStore = artifactStore;
+		this.executorRouter = executorRouter;
 	}
 
 	/** Run fn inside a BEGIN IMMEDIATE transaction; roll back on any throw. */
@@ -230,6 +234,76 @@ export class CommissionService {
 			startedAt: row.started_at,
 			completedAt: row.completed_at,
 		};
+	}
+
+	/** Convert a persisted run row to the narrow executor command shape. */
+	private executorRun(row: RunRow): ExecutorRun {
+		return {
+			runId: row.id,
+			commissionId: row.commission_id,
+			executorProfile: row.executor_profile,
+		};
+	}
+
+	/** Persist executor-produced evidence through the Host's canonical boundary. */
+	private recordExecutorEvidence(runId: string, kind: string, data: unknown): void {
+		const evidenceId = randomUUID();
+		this.db
+			.prepare("INSERT INTO evidence (id, run_id, kind, data) VALUES (?, ?, ?, ?)")
+			.run(evidenceId, runId, kind, JSON.stringify(data));
+		this.eventBus.publish("evidence.collected", { runId, evidenceId, kind });
+	}
+
+	/**
+	 * Accept an event emitted by the profile router. Controllers cannot update
+	 * runs or evidence themselves; every accepted event is validated against
+	 * the Host's FSM before persistence.
+	 */
+	handleExecutorEvent(runId: string, event: ExecutorEvent): void {
+		const run = this.getRun(runId);
+		if (run.completed_at !== null) return;
+
+		switch (event.type) {
+			case "started":
+				if (run.status === "enqueued") this.startRun(runId);
+				else if (run.status !== "running") {
+					throw { kind: "conflict", reason: "executor_started_invalid_run_state" };
+				}
+				return;
+			case "evidence":
+				if (event.kind.length === 0 || event.kind.length > 128) {
+					throw { kind: "validation_failed", reason: "executor_evidence_kind_invalid" };
+				}
+				this.recordExecutorEvidence(runId, event.kind, event.data);
+				return;
+			case "needs_user":
+				if (run.status === "running") this.needsUser(runId, event.prompt);
+				else if (run.status !== "needs_user") {
+					throw { kind: "conflict", reason: "executor_needs_user_invalid_run_state" };
+				}
+				if (event.requestId) {
+					this.recordExecutorEvidence(runId, "executor.permission_requested", {
+						requestId: event.requestId,
+						prompt: event.prompt,
+					});
+				}
+				return;
+			case "completed":
+				if (run.status !== "running" && run.status !== "needs_user") {
+					throw { kind: "conflict", reason: "executor_completed_invalid_run_state" };
+				}
+				if (event.summary) this.recordExecutorEvidence(runId, "executor.summary", { text: event.summary });
+				this.completeRun(runId, "completed");
+				return;
+			case "failed":
+				this.recordExecutorEvidence(runId, "executor.failed", { reason: event.reason });
+				this.completeRun(runId, "failed");
+				return;
+			case "cancelled":
+				if (event.reason) this.recordExecutorEvidence(runId, "executor.cancelled", { reason: event.reason });
+				this.completeRun(runId, "cancelled");
+				return;
+		}
 	}
 
 	// -----------------------------------------------------------------------
@@ -302,39 +376,87 @@ export class CommissionService {
 	// Run FSM
 	// -----------------------------------------------------------------------
 
-	/** Enqueue a run for an approved commission (max MAX_ACTIVE_RUNS active). */
-	launch(params: CommissionLaunchParams): CommissionLaunchResult {
-		const runId = this.withTransaction(() => {
+	/**
+	 * Create an enqueued run, then hand it to the selected profile controller.
+	 * The controller's first accepted event moves the run to `running`; a
+	 * failed hand-off is persisted as a terminal failed run before surfacing
+	 * the launcher error to the caller.
+	 */
+	async launch(params: CommissionLaunchParams): Promise<CommissionLaunchResult> {
+		const launch = this.withTransaction(() => {
 			const activeRow = this.db
 				.prepare(
 					`SELECT COUNT(*) AS n FROM runs
 					 WHERE status IN (${ACTIVE_RUN_STATUSES.map(() => "?").join(", ")})`,
 				)
 				.get(...ACTIVE_RUN_STATUSES) as CountRow | undefined;
-			const active = activeRow?.n ?? 0;
-			if (active >= MAX_ACTIVE_RUNS) {
+			if ((activeRow?.n ?? 0) >= MAX_ACTIVE_RUNS) {
 				throw { kind: "conflict", reason: "max_active_runs" };
 			}
-			const commission = this.getCommission(params.commissionId);
-			if (commission.status !== "approved") {
+
+			const commissionRow = this.getCommission(params.commissionId);
+			if (commissionRow.status !== "approved") {
 				throw { kind: "conflict", reason: "commission_not_approved" };
 			}
+
 			const id = randomUUID();
 			this.db
 				.prepare(
 					"INSERT INTO runs (id, commission_id, executor_profile, status) VALUES (?, ?, ?, 'enqueued')",
 				)
 				.run(id, params.commissionId, params.executorProfile);
-			return id;
+
+			const draft = this.parseDraft(commissionRow.draft_json);
+			const run: ExecutorRun = {
+				runId: id,
+				commissionId: params.commissionId,
+				executorProfile: params.executorProfile,
+			};
+			const commission: ExecutorCommission = {
+				id: params.commissionId,
+				title: draft.title,
+				description: draft.description,
+				reads: draft.reads,
+				writes: draft.writes,
+				networkAllowed: draft.networkAllowed,
+				toolNames: draft.toolNames,
+			};
+			return { run, commission };
 		});
-		const result: CommissionLaunchResult = {
-			runId,
-			commissionId: params.commissionId,
-			executorProfile: params.executorProfile,
+
+		this.eventBus.publish("run.enqueued", {
+			runId: launch.run.runId,
+			commissionId: launch.run.commissionId,
+			executorProfile: launch.run.executorProfile,
 			status: "enqueued",
+		});
+
+		try {
+			await this.executorRouter.launch(launch.run, launch.commission, (event) => {
+				this.handleExecutorEvent(launch.run.runId, event);
+			});
+		} catch (error) {
+			const reason =
+				error &&
+				typeof error === "object" &&
+				"reason" in error &&
+				typeof error.reason === "string"
+					? error.reason
+					: "executor_launch_failed";
+			this.recordExecutorEvidence(launch.run.runId, "executor.launch_failed", { reason });
+			if (this.getRun(launch.run.runId).completed_at === null) {
+				this.completeRun(launch.run.runId, "failed");
+			}
+			throw error;
+		}
+
+		const run = this.getRun(launch.run.runId);
+		return {
+			runId: run.id,
+			commissionId: run.commission_id,
+			executorProfile: run.executor_profile,
+			status: run.status,
 		};
-		this.eventBus.publish("run.enqueued", result);
-		return result;
 	}
 
 	/** Start an enqueued run: status → running, started_at set. */
@@ -375,11 +497,12 @@ export class CommissionService {
 	}
 
 	/** Send a steering instruction to an active run (no state change). */
-	steerRun(runId: string, instruction: string): void {
+	async steerRun(runId: string, instruction: string): Promise<void> {
 		const run = this.getRun(runId);
 		if (run.status !== "running" && run.status !== "needs_user") {
 			throw { kind: "conflict", reason: "run_not_steerable" };
 		}
+		await this.executorRouter.steer(this.executorRun(run), instruction);
 		this.eventBus.publish("run.steered", { runId, instruction });
 	}
 
@@ -408,7 +531,7 @@ export class CommissionService {
 	}
 
 	/** Cancel an active or transient run (terminal, completed_at set). */
-	cancelRun(runId: string): RunSummary {
+	async cancelRun(runId: string): Promise<RunSummary> {
 		const run = this.getRun(runId);
 		const cancellable =
 			run.completed_at === null &&
@@ -419,6 +542,7 @@ export class CommissionService {
 		if (!cancellable) {
 			throw { kind: "conflict", reason: "run_not_cancellable" };
 		}
+		await this.executorRouter.cancel(this.executorRun(run));
 		this.db
 			.prepare("UPDATE runs SET status = 'cancelled', completed_at = ? WHERE id = ?")
 			.run(new Date().toISOString(), runId);

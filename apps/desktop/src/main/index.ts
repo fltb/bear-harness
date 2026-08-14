@@ -43,6 +43,7 @@ import { FirstMeetingMachine } from "./companion/first-meeting.js";
 import { TurnPipeline } from "./companion/turn-pipeline.js";
 import { VoiceStackManager } from "./companion/voice-stack.js";
 import { CommissionService } from "./commissions/service.js";
+import { ExecutorRouter } from "./executors/router.js";
 import { CredentialStore } from "./providers/credential-store.js";
 import { ProviderCatalog } from "./providers/catalog.js";
 import { wireAllHandlers, type HostServices } from "./composition.js";
@@ -262,7 +263,8 @@ function initHostServices(): HostServices | null {
 		const onboarding = new FirstMeetingMachine(db, eventBus);
 		const turns = new TurnPipeline(db, supervisor, eventBus);
 		const voice = new VoiceStackManager(db, eventBus);
-		const commissions = new CommissionService(db, eventBus, supervisor, artifactStore);
+		const executorRouter = new ExecutorRouter(db);
+		const commissions = new CommissionService(db, eventBus, artifactStore, executorRouter);
 		const services: HostServices = {
 			db,
 			eventBus,
