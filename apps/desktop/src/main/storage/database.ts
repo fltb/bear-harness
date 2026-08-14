@@ -464,4 +464,16 @@ export const MIGRATIONS: Migration[] = [
 			END;
 		`,
 	},
+	{
+		id: 3,
+		description: "onboarding state table",
+		up: `
+			CREATE TABLE onboarding_state (
+				companion_id TEXT PRIMARY KEY,
+				state TEXT NOT NULL,
+				state_json TEXT NOT NULL DEFAULT '{}',
+				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+		`,
+	},
 ];
