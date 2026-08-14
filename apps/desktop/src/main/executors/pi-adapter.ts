@@ -1,148 +1,93 @@
 /**
- * Pi RPC worker adapter (M3 executor layer).
- * Thin adapter over the Companion runtime command surface for Pi RPC
- * commissions. The runtime is Host-local; this adapter receives plain Host
- * command objects and normalizes its domain evidence into evidence rows.
+ * Pi ACP executor profile.
  *
- * The adapter does not own run lifecycle state — the CommissionService
- * tracks runs and the run FSM (max 2 active) gates transitions. The adapter:
- *
- *   1. records a run manifest at launch, carrying a startCursor into the
- *      event bus so evidence published since launch can be replayed after a
- *      crash,
- *   2. dispatches RPC commands via the supervisor's sendCommand,
- *   3. normalizes inbound worker events into evidence rows,
- *   4. exposes run-scoped observation of the normalized evidence stream, and
- *   5. marks runs disposed, dropping any evidence that arrives afterwards.
- *
- * Secrets never enter the manifest: only envKeys are recorded, matching the
- * credential-store contract ("secrets never enter the renderer, run
- * manifest, evidence, or diagnostics").
+ * The conversational Companion is never reused for commissions. Each approved
+ * run starts the dedicated `pi-acp-worker` ACP agent, which can reach the Host
+ * only through ACP filesystem requests guarded by the commission envelope.
  */
 
 import { randomUUID } from "node:crypto";
-import { type DatabaseSync } from "node:sqlite";
-import type { EventBus, EventListener } from "../storage/event-bus.js";
-import type { CompanionSupervisor } from "../companion/supervisor.js";
+import { statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { DatabaseSync } from "node:sqlite";
+import { AcpExecutorController } from "./acp-executor.js";
+import type { AcpProcessSpec } from "./acp-client.js";
+import type { ExecutorLaunchRequest } from "./router.js";
 
-export interface PiLaunchParams {
-	commissionId: string;
-	runId: string;
-	cwd: string;
-	authorizedRoots?: string[];
-	toolSet?: string[];
-	env?: Record<string, string>;
-}
-
-/** The manifest recorded in `run_manifests.manifest_json` at launch. */
 export interface PiRunManifest {
+	executor: "pi-acp";
+	profileId: string;
+	runId: string;
 	commissionId: string;
-	runId: string;
-	cwd: string;
-	authorizedRoots: string[];
-	toolSet: string[];
-	envKeys: string[];
-	/** Event bus seq at launch; replay `evidence.collected` from here to recover. */
-	startCursor: number;
+	workerPath: string;
+	authDir: string;
+	launchedAt: string;
 }
 
-/** Payload of the `evidence.collected` domain event (seq rides on the HostEvent). */
-export interface EvidenceCollected {
-	runId: string;
-	evidenceId: string;
-	kind: string;
+/** Default first-party ACP profile, seeded once with no secret capability data. */
+export const PI_ACP_PROFILE_ID = "pi-product-managed";
+
+export function seedPiAcpProfile(db: DatabaseSync): void {
+	db.prepare(
+		"INSERT INTO executor_profiles (id, profile_type, capability_json) VALUES (?, 'product-managed', ?) ON CONFLICT(id) DO NOTHING",
+	).run(PI_ACP_PROFILE_ID, JSON.stringify({ transport: "acp", worker: "pi" }));
 }
 
-export class PiRpcAdapter {
-	private db: DatabaseSync;
-	private eventBus: EventBus;
-	private supervisor: CompanionSupervisor;
-	private disposedRuns = new Set<string>();
-
-	constructor(db: DatabaseSync, eventBus: EventBus, supervisor: CompanionSupervisor) {
-		this.db = db;
-		this.eventBus = eventBus;
-		this.supervisor = supervisor;
+/** Host-managed Pi worker for `product-managed` executor profiles. */
+export class PiAcpAdapter extends AcpExecutorController {
+	constructor(
+		private readonly db: DatabaseSync,
+		private readonly userDataDir: string,
+		private readonly workerPath = fileURLToPath(new URL("./pi-acp-worker.js", import.meta.url)),
+	) {
+		super();
 	}
 
-	/**
-	 * Record a run manifest and dispatch the start RPC command.
-	 *
-	 * The `runs` row is expected to already exist (created by the
-	 * CommissionService/run FSM before a run is launched); the adapter only
-	 * writes the manifest and hands the run to the worker.
-	 */
-	async launch(params: PiLaunchParams): Promise<PiRunManifest> {
-		const { commissionId, runId, cwd } = params;
+	override async launch(request: ExecutorLaunchRequest): Promise<void> {
 		const manifest: PiRunManifest = {
-			commissionId,
-			runId,
-			cwd,
-			authorizedRoots: params.authorizedRoots ?? [],
-			toolSet: params.toolSet ?? [],
-			envKeys: Object.keys(params.env ?? {}),
-			startCursor: this.eventBus.currentSeq,
+			executor: "pi-acp",
+			profileId: request.profile.id,
+			runId: request.run.runId,
+			commissionId: request.commission.id,
+			workerPath: this.workerPath,
+			authDir: resolve(this.userDataDir, "companion-runtime"),
+			launchedAt: new Date().toISOString(),
 		};
-
 		this.db
 			.prepare("INSERT INTO run_manifests (id, run_id, manifest_json) VALUES (?, ?, ?)")
-			.run(randomUUID(), runId, JSON.stringify(manifest));
+			.run(randomUUID(), request.run.runId, JSON.stringify(manifest));
+		await super.launch(request);
+	}
 
-		// Dispatch the run over the supervisor's postMessage bridge; the
-		// bridge applies the LF JSONL framing (verified in M0), so sendCommand
-		// receives the plain JSON object.
-		this.supervisor.sendCommand({
-			type: "run.start",
-			commissionId,
-			runId,
+	protected processSpec(request: ExecutorLaunchRequest): AcpProcessSpec {
+		const cwd = workspaceFor(request);
+		const authDir = resolve(this.userDataDir, "companion-runtime");
+		const sessionDir = resolve(this.userDataDir, "executor-runs", "pi");
+		return {
+			command: process.execPath,
+			args: [this.workerPath],
 			cwd,
-			authorizedRoots: manifest.authorizedRoots,
-			toolSet: manifest.toolSet,
-			env: params.env ?? {},
-		});
-
-		return manifest;
+			env: {
+				PATH: process.env.PATH,
+				HOME: process.env.HOME,
+				LANG: process.env.LANG,
+				LC_ALL: process.env.LC_ALL,
+				ELECTRON_RUN_AS_NODE: "1",
+				BEAR_PI_AUTH_DIR: authDir,
+				BEAR_PI_SESSION_DIR: sessionDir,
+			},
+		};
 	}
+}
 
-	/**
-	 * Normalize an already-framed worker event into an evidence row.
-	 *
-	 * Called by the postMessage bridge owner (CommissionService) for each
-	 * inbound worker message. Events for disposed runs are dropped.
-	 */
-	collectEvidence(runId: string, event: { type: string; [key: string]: unknown }): void {
-		if (this.disposedRuns.has(runId)) return;
-
-		const evidenceId = randomUUID();
-		this.db
-			.prepare("INSERT INTO evidence (id, run_id, kind, data) VALUES (?, ?, ?, ?)")
-			.run(evidenceId, runId, event.type, JSON.stringify(event));
-
-		this.eventBus.publish("evidence.collected", {
-			runId,
-			evidenceId,
-			kind: event.type,
-		} satisfies EvidenceCollected);
-	}
-
-	/**
-	 * Subscribe to evidence events for a run. Returns an unsubscribe function.
-	 *
-	 * Pass `afterSeq` (e.g. the manifest's startCursor) to replay evidence
-	 * collected since that event bus seq — the recovery path after a crash.
-	 */
-	observe(runId: string, listener: EventListener, afterSeq?: number): () => void {
-		return this.eventBus.subscribe((event) => {
-			if (event.kind !== "evidence.collected") return;
-			const payload = event.payload as EvidenceCollected | null;
-			if (payload?.runId !== runId) return;
-			listener(event);
-		}, afterSeq);
-	}
-
-	/** Mark a run disposed; evidence arriving afterwards is dropped. */
-	dispose(runId: string): void {
-		this.disposedRuns.add(runId);
-		this.eventBus.publish("run.disposed", { runId });
+function workspaceFor(request: ExecutorLaunchRequest): string {
+	const root = request.commission.reads[0] ?? request.commission.writes[0];
+	if (!root) throw { kind: "validation_failed", reason: "executor_workspace_not_declared" };
+	const absolute = resolve(root);
+	try {
+		return statSync(absolute).isDirectory() ? absolute : dirname(absolute);
+	} catch {
+		throw { kind: "validation_failed", reason: "executor_workspace_not_found" };
 	}
 }

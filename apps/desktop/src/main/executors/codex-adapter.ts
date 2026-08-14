@@ -1,35 +1,24 @@
 /**
- * Codex executor adapter (M3 executor layer).
+ * Codex ACP executor profile.
  *
- * Operational truth boundary for the Codex app-server: discovery, consent,
- * launch-intent, and status. Per plan §9.4 the harness never installs or
- * upgrades Codex for the user — a profile becomes usable only when an exact
- * pinned-version binary is discovered and explicitly consented to.
- *
- * Discovery checks, in order: (1) PATH entries for `codex`/`codex.exe`,
- * (2) the official standalone default entry `~/.local/bin/codex`
- * (macOS/Linux). Each candidate is lstat-walked through its symlink chain
- * (bounded; a chain escaping its declared install root is rejected),
- * realpath'd, probed with a hidden-argv `codex --version` (10s timeout,
- * windowsHide), and accepted ONLY at the pinned version. SHA-256 is computed
- * for every candidate that yields a parseable version, so mismatch evidence
- * is recorded too.
- *
- * The adapter does not own run lifecycle state — the CommissionService
- * creates the `runs` row and the run FSM (max 2 active) gates transitions.
- * `launch()` only verifies consent and records the run manifest (intent +
- * evidence); the actual codex app-server process management is a future
- * concern.
+ * The consented Codex binary remains user-owned and is re-verified at every
+ * launch. The maintained ACP adapter is the only transport: its stdout is
+ * ACP JSONL, and its tool updates, permission requests, completion, and
+ * cancellation flow through the shared Host controller.
  */
 
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { createReadStream, lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { type DatabaseSync } from "node:sqlite";
 import { pipeline } from "node:stream/promises";
 import type { EventBus } from "../storage/event-bus.js";
+import { AcpExecutorController } from "./acp-executor.js";
+import type { AcpProcessSpec } from "./acp-client.js";
+import type { ExecutorLaunchRequest } from "./router.js";
 
 /** The only Codex app-server version the harness will run (pinned). */
 const PINNED_VERSION = "0.147.0";
@@ -118,11 +107,13 @@ function probeVersion(finalBin: string): string | null {
 	return match?.[1] ?? null;
 }
 
-export class CodexAdapter {
+export class CodexAdapter extends AcpExecutorController {
 	private db: DatabaseSync;
 	private eventBus: EventBus;
+	private readonly adapterPath = createRequire(import.meta.url).resolve("@agentclientprotocol/codex-acp");
 
 	constructor(db: DatabaseSync, eventBus: EventBus) {
+		super();
 		this.db = db;
 		this.eventBus = eventBus;
 	}
@@ -293,32 +284,27 @@ export class CodexAdapter {
 	}
 
 	/**
-	 * Record launch intent for a consented profile. The CommissionService
-	 * creates the `runs` row before calling this; the adapter only writes the
-	 * manifest (FK on run_id is satisfied by the caller) and publishes
-	 * `codex.launched`. Actual app-server process management is future work.
+	 * Re-verify the user-consented Codex binary, record a secret-free manifest,
+	 * then start its maintained ACP adapter. Completion and evidence are
+	 * delivered to CommissionService through AcpExecutorController.
 	 */
-	async launch(profileId: string, runId: string, commissionId: string): Promise<CodexRunManifest> {
-		const row = this.db
-			.prepare("SELECT capability_json FROM executor_profiles WHERE id = ? AND profile_type = 'codex'")
-			.get(profileId) as { capability_json: string } | undefined;
-		if (!row) fail("profile_not_found", `no codex executor profile '${profileId}'`);
-
-		let capability: CodexProfileCapability;
-		try {
-			capability = JSON.parse(row.capability_json) as CodexProfileCapability;
-		} catch {
-			fail("profile_invalid", `codex profile '${profileId}' has unreadable capability_json`);
+	override async launch(request: ExecutorLaunchRequest): Promise<void> {
+		const capability = codexCapability(request.profile.capabilities);
+		if (capability.version !== PINNED_VERSION) {
+			fail("profile_invalid", `codex profile version must remain ${PINNED_VERSION}`);
 		}
-		if (typeof capability.consentedAt !== "string") {
-			fail("not_consented", `codex profile '${profileId}' has no consent record`);
+		if (probeVersion(capability.canonicalPath) !== capability.version) {
+			fail("executor_binary_changed", "consented Codex version no longer matches");
+		}
+		if ((await sha256Of(capability.canonicalPath)) !== capability.sha256) {
+			fail("executor_binary_changed", "consented Codex hash no longer matches");
 		}
 
 		const manifest: CodexRunManifest = {
 			executor: "codex",
-			profileId,
-			runId,
-			commissionId,
+			profileId: request.profile.id,
+			runId: request.run.runId,
+			commissionId: request.commission.id,
 			version: capability.version,
 			sha256: capability.sha256,
 			canonicalPath: capability.canonicalPath,
@@ -327,10 +313,28 @@ export class CodexAdapter {
 		};
 		this.db
 			.prepare("INSERT INTO run_manifests (id, run_id, manifest_json) VALUES (?, ?, ?)")
-			.run(randomUUID(), runId, JSON.stringify(manifest));
-
+			.run(randomUUID(), request.run.runId, JSON.stringify(manifest));
 		this.eventBus.publish("codex.launched", manifest);
-		return manifest;
+		await super.launch(request);
+	}
+
+	protected processSpec(request: ExecutorLaunchRequest): AcpProcessSpec {
+		const capability = codexCapability(request.profile.capabilities);
+		return {
+			command: process.execPath,
+			args: [this.adapterPath],
+			cwd: workspaceFor(request),
+			env: {
+				PATH: process.env.PATH,
+				HOME: process.env.HOME,
+				LANG: process.env.LANG,
+				LC_ALL: process.env.LC_ALL,
+				ELECTRON_RUN_AS_NODE: "1",
+				NO_BROWSER: "1",
+				CODEX_PATH: capability.canonicalPath,
+				CODEX_HOME: capability.codexHome,
+			},
+		};
 	}
 
 	/** Current Codex availability. */
@@ -367,5 +371,37 @@ export class CodexAdapter {
 			}
 		}
 		return { available: false, reason: "no_codex_found" };
+	}
+}
+
+function codexCapability(value: Record<string, unknown>): CodexProfileCapability {
+	if (
+		typeof value.canonicalPath !== "string" ||
+		!isAbsolute(value.canonicalPath) ||
+		typeof value.version !== "string" ||
+		typeof value.sha256 !== "string" ||
+		typeof value.codexHome !== "string" ||
+		!isAbsolute(value.codexHome) ||
+		typeof value.consentedAt !== "string"
+	) {
+		fail("profile_invalid", "Codex executor profile has invalid capability data");
+	}
+	return {
+		canonicalPath: value.canonicalPath,
+		version: value.version,
+		sha256: value.sha256,
+		codexHome: value.codexHome,
+		consentedAt: value.consentedAt,
+	};
+}
+
+function workspaceFor(request: ExecutorLaunchRequest): string {
+	const root = request.commission.reads[0] ?? request.commission.writes[0];
+	if (!root) fail("validation_failed", "executor_workspace_not_declared");
+	const absolute = resolve(root);
+	try {
+		return statSync(absolute).isDirectory() ? absolute : dirname(absolute);
+	} catch {
+		fail("validation_failed", "executor_workspace_not_found");
 	}
 }

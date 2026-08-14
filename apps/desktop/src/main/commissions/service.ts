@@ -530,6 +530,20 @@ export class CommissionService {
 		return this.summarizeRun(this.getRun(runId));
 	}
 
+	/** Resolve an ACP permission request and resume the paused executor turn. */
+	async respondToExecutorPermission(
+		runId: string,
+		requestId: string,
+		optionId: string,
+	): Promise<RunSummary> {
+		const run = this.getRun(runId);
+		if (run.status !== "needs_user" || run.completed_at !== null) {
+			throw { kind: "conflict", reason: "run_not_awaiting_permission" };
+		}
+		await this.executorRouter.resume(this.executorRun(run), { requestId, optionId });
+		return this.resumeRun(runId);
+	}
+
 	/** Cancel an active or transient run (terminal, completed_at set). */
 	async cancelRun(runId: string): Promise<RunSummary> {
 		const run = this.getRun(runId);

@@ -21,6 +21,8 @@
 		"package:linux": "node scripts/validate-product-config.mjs && electron-builder --config electron-builder.config.ts --linux AppImage deb --x64"
 	},
 	"dependencies": {
+		"@agentclientprotocol/codex-acp": "^1.2.0",
+		"@agentclientprotocol/sdk": "^1.3.0",
 		"@earendil-works/pi-coding-agent": "0.84.1",
 		"@kobalte/core": "0.13.13",
 		"csv-parse": "7.0.2",
@@ -38,8 +40,8 @@
 		"remark-gfm": "4.0.1",
 		"solid-markdown": "2.1.1",
 		"typebox": "1.3.13",
-		"yaml": "2.9.0",
-		"xlsx": "file:vendor/xlsx-0.20.3.tgz"
+		"xlsx": "file:vendor/xlsx-0.20.3.tgz",
+		"yaml": "2.9.0"
 	},
 	"devDependencies": {
 		"@rsbuild/core": "2.1.11",

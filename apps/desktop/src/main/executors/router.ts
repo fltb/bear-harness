@@ -47,12 +47,17 @@ export interface ExecutorLaunchRequest {
 	emit(event: ExecutorEvent): void;
 }
 
+export interface ExecutorPermissionResponse {
+	requestId: string;
+	optionId: string;
+}
+
 /** A worker implementation for one profile type. */
 export interface ExecutorController {
 	launch(request: ExecutorLaunchRequest): Promise<void>;
 	cancel?(run: ExecutorRun): Promise<void>;
 	steer?(run: ExecutorRun, instruction: string): Promise<void>;
-	resume?(run: ExecutorRun, input?: string): Promise<void>;
+	resume?(run: ExecutorRun, response: ExecutorPermissionResponse): Promise<void>;
 }
 
 type ProfileRow = {
@@ -108,10 +113,10 @@ export class ExecutorRouter {
 		await controller.steer(run, instruction);
 	}
 
-	async resume(run: ExecutorRun, input?: string): Promise<void> {
+	async resume(run: ExecutorRun, response: ExecutorPermissionResponse): Promise<void> {
 		const { controller } = this.resolve(run.executorProfile);
 		if (!controller.resume) unavailable("executor_resume_unsupported");
-		await controller.resume(run, input);
+		await controller.resume(run, response);
 	}
 
 	private resolve(profileId: string): { profile: ExecutorProfile; controller: ExecutorController } {
