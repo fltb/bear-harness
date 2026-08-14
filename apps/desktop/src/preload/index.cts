@@ -89,6 +89,88 @@ function reportRendererFault(input: unknown): void {
 	ipcRenderer.send("diagnostics:renderer-fault:v1", { traceparent, fault: input });
 }
 
+const companionFacade = Object.freeze({
+	snapshot: Object.freeze({
+		get: () => ipcRenderer.invoke("snapshot.get:v1"),
+	}),
+	events: Object.freeze({
+		subscribe: (afterSeq: number) =>
+			ipcRenderer.invoke("events.subscribe:v1", { afterSeq }),
+	}),
+	onboarding: Object.freeze({
+		get: () => ipcRenderer.invoke("onboarding.get:v1"),
+		setName: (name: string) => ipcRenderer.invoke("onboarding.setName:v1", { name }),
+		setRelation: (kind: string) =>
+			ipcRenderer.invoke("onboarding.setRelation:v1", { kind }),
+		setMemoryDecision: (enabled: boolean) =>
+			ipcRenderer.invoke("onboarding.setMemoryDecision:v1", { enabled }),
+	}),
+	conversation: Object.freeze({
+		list: () => ipcRenderer.invoke("conversation.list:v1"),
+		create: (title?: string) =>
+			ipcRenderer.invoke("conversation.create:v1", { title }),
+		select: (id: string, branchId?: string) =>
+			ipcRenderer.invoke("conversation.select:v1", { id, branchId }),
+	}),
+	message: Object.freeze({
+		send: (conversationId: string, text: string) =>
+			ipcRenderer.invoke("message.send:v1", { conversationId, text }),
+		regenerate: (conversationId: string, messageId: string) =>
+			ipcRenderer.invoke("message.regenerate:v1", { conversationId, messageId }),
+		switchVersion: (conversationId: string, messageId: string, versionId: string) =>
+			ipcRenderer.invoke("message.switchVersion:v1", { conversationId, messageId, versionId }),
+		edit: (conversationId: string, messageId: string, text: string, isUserMessage: boolean) =>
+			ipcRenderer.invoke("message.edit:v1", { conversationId, messageId, text, isUserMessage }),
+		continue: (conversationId: string) =>
+			ipcRenderer.invoke("message.continue:v1", { conversationId }),
+		correct: (conversationId: string, reason: string, applyScope: string) =>
+			ipcRenderer.invoke("message.correct:v1", { conversationId, reason, applyScope }),
+		branch: (conversationId: string, messageId: string) =>
+			ipcRenderer.invoke("message.branch:v1", { conversationId, messageId }),
+		abort: (conversationId: string) =>
+			ipcRenderer.invoke("message.abort:v1", { conversationId }),
+	}),
+	memory: Object.freeze({
+		listCandidates: () => ipcRenderer.invoke("memory.listCandidates:v1"),
+		decideCandidate: (
+			candidateId: string,
+			decision: string,
+			editedText?: string,
+			scope?: string,
+		) => ipcRenderer.invoke("memory.decideCandidate:v1", { candidateId, decision, editedText, scope }),
+		search: (query: string, scope?: string) =>
+			ipcRenderer.invoke("memory.search:v1", { query, scope }),
+	}),
+	provider: Object.freeze({
+		list: () => ipcRenderer.invoke("provider.list:v1"),
+		setApiKey: (providerId: string, apiKey: string, sessionOnly?: boolean) =>
+			ipcRenderer.invoke("provider.setApiKey:v1", { providerId, apiKey, sessionOnly }),
+		login: (providerId: string) =>
+			ipcRenderer.invoke("provider.login:v1", { providerId, authType: "oauth" }),
+		logout: (providerId: string) =>
+			ipcRenderer.invoke("provider.logout:v1", { providerId }),
+	}),
+	voice: Object.freeze({
+		list: () => ipcRenderer.invoke("voice.list:v1"),
+		switch: (stackId: string, scope: string) =>
+			ipcRenderer.invoke("voice.switch:v1", { stackId, scope, rollbackAvailable: true }),
+	}),
+	commission: Object.freeze({
+		list: () => ipcRenderer.invoke("commission.list:v1"),
+	}),
+	run: Object.freeze({
+		list: () => ipcRenderer.invoke("run.list:v1"),
+	}),
+	artifact: Object.freeze({
+		list: () => ipcRenderer.invoke("artifact.list:v1"),
+	}),
+	settings: Object.freeze({
+		get: () => ipcRenderer.invoke("settings.get:v1"),
+		set: (settings: Record<string, unknown>) =>
+			ipcRenderer.invoke("settings.set:v1", { settings }),
+	}),
+});
+
 contextBridge.exposeInMainWorld(
 	"bearDesktop",
 	Object.freeze({
@@ -96,5 +178,6 @@ contextBridge.exposeInMainWorld(
 		diagnostics: Object.freeze({
 			reportRendererFault,
 		}),
+		companion: companionFacade,
 	}),
 );

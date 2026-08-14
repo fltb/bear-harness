@@ -28,19 +28,25 @@ export async function assertProductWindow(
 	await expect(composer).toBeVisible();
 	await expect(composer).toHaveAttribute("readonly", "");
 
-	// Preload exposes only platform + the fixed reporter.
+	// Preload exposes platform, diagnostics, and companion facade.
 	const bridge = await window.evaluate(() => {
 		const keys = Object.keys(window.bearDesktop);
 		const diagnosticsKeys = Object.keys(window.bearDesktop.diagnostics);
+		const companionKeys = Object.keys(window.bearDesktop.companion);
 		return {
 			keys,
 			diagnosticsKeys,
+			companionKeys,
 			platform: window.bearDesktop.platform,
 			reporterType: typeof window.bearDesktop.diagnostics.reportRendererFault,
 		};
 	});
-	expect(bridge.keys).toEqual(["platform", "diagnostics"]);
+	expect(bridge.keys).toEqual(["platform", "diagnostics", "companion"]);
 	expect(bridge.diagnosticsKeys).toEqual(["reportRendererFault"]);
+	expect(bridge.companionKeys).toContain("snapshot");
+	expect(bridge.companionKeys).toContain("conversation");
+	expect(bridge.companionKeys).toContain("message");
+	expect(bridge.companionKeys).toContain("settings");
 	expect(bridge.platform).toMatch(/^(darwin|win32|linux)$/);
 	expect(bridge.reporterType).toBe("function");
 
