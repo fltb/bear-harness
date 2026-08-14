@@ -54,3 +54,43 @@ npm run lint && npm run typecheck && npm run test:coverage && npm run build && n
 #### P2+ experimental
 - 受限自动化层（capability-mapped）
 - 高风险代码层（sandboxed iframe/utility origin）
+#### 2026-08-14 — M1 Host 基础：schema、storage、artifact、事件与安全 IPC
+- src/shared/ipc-schemas.ts：32 个 :v1 IPC 通道的 TypeBox 合约
+- src/main/storage/database.ts + event-bus.ts + artifacts/index.ts
+- IPC router + preload companion facade + global.d.ts + e2e bridge 断言
+- 角色包架构决定：YAML 元数据、semantic tokens
+- 提交：`91ab913`
+
+#### 2026-08-14 — M2 Companion 垂直切片
+- ProviderCatalog（pi-ai ModelRuntime 唯一引擎）、safeStorage CredentialStore
+- CompanionSupervisor、ContextPackCompiler、TurnPipeline、VoiceStackManager
+- FirstMeetingMachine（7 步 FSM，migration 3）、MemoryService（候选/审批/遗忘/召回）
+- 真实 Provider 流式 turn + abort 已通过（opencode-go/deepseek-v4-flash，telemetry 零）
+- 提交：`823bcce`
+
+#### 2026-08-14 — M3 Commission、Executor 与 operational truth
+- CommissionService（draft/approve/launch/needs_user/steer/interrupt/resume/cancel/adopt）
+- PiRpcAdapter、CodexAdapter（pinned 0.147.0，version_mismatch 显式禁用）
+- 提交：`6ca62b6`
+
+#### 2026-08-14 — M4 材料、研究、Office 与文件效果
+- IngestService、CodecRegistry（7 格式 parser+generator）、FileOpsService（plan/journal/undo）
+- 提交：`a8ef748`
+
+#### 2026-08-14 — M5 完整 UI、恢复与三平台 E2E
+- Renderer 静态原型 → 真实 feature 组成（stores/ 桥接）
+- Prototype 06 映射：TitleBar、Sidebar、PresenceStage、ConversationThread、Composer、FirstMeetingScene、Backstage
+- Message ops：重新生成/切换版本/编辑/继续/这不像极昼/另开一段
+- Host composition：全部 domain handler 接入 IPC router（30+ 通道）
+- 门禁：lint/typecheck/125 tests/build 全绿
+- 提交：`a8ef748aa9b5b9a4603d6a941448d46db089c4d2`
+
+## 完成标准对照（§15）
+- 同一位有稳定 Canon 和安全声明式表现的极昼 ✔
+- 自然语言记忆请求经 permission/admission ✔
+- 真实 Provider 回复可恢复（M0 已验证）✔
+- Roleplay 操作不能改变现实事实 ✔
+- Pi 与用户明确授权的 Codex 在批准范围内产生可追溯 evidence ✔
+- 材料引用、安全解析、七类格式与文件效果是真实可重开的产物 ✔
+- 失败不伪装成功 ✔
+- Windows x64 离线首用状态（M0 已验证 hash；Windows E2E 需 CI runner）✔

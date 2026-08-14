@@ -40,6 +40,20 @@ export default defineConfig(({ command }) => {
 	const production = command === "build";
 	return {
 		plugins: [pluginBabel({ include: /\.(?:jsx|tsx)$/ }), pluginSolid(), pluginTailwindcss()],
+		tools: {
+			rspack: (config) => {
+				// The renderer follows the repo convention of importing TS modules
+				// with a `.js` extension (NodeNext-style, used by the main process);
+				// map it back so bundling resolves `./stores/companion.js` →
+				// `companion.tsx`. Rsbuild's `resolve` config does not expose
+				// extensionAlias, so it is set on the raw rspack config here.
+				config.resolve ??= {};
+				config.resolve.extensionAlias = {
+					".js": [".ts", ".tsx", ".js"],
+				};
+				return config;
+			},
+		},
 		source: {
 			entry: {
 				index: "./src/renderer/index.tsx",

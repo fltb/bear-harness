@@ -28,6 +28,19 @@ import {
 } from "./diagnostics/electron.js";
 import { createDiagnostics, type Diagnostics } from "./diagnostics/index.js";
 import { formatTraceparent } from "./diagnostics/trace.js";
+import { openDatabase, migrate, MIGRATIONS } from "./storage/database.js";
+import { EventBus } from "./storage/event-bus.js";
+import { ArtifactStore } from "./artifacts/index.js";
+import { CompanionSupervisor } from "./companion/supervisor.js";
+import { MemoryService } from "./memory/service.js";
+import { FirstMeetingMachine } from "./companion/first-meeting.js";
+import { TurnPipeline } from "./companion/turn-pipeline.js";
+import { VoiceStackManager } from "./companion/voice-stack.js";
+import { CommissionService } from "./commissions/service.js";
+import { CredentialStore } from "./providers/credential-store.js";
+import { ProviderCatalog } from "./providers/catalog.js";
+import { wireAllHandlers, type HostServices } from "./composition.js";
+import { wireIpcHandlers } from "./ipc-router.js";
 
 const DEV_RENDERER_URL = "http://127.0.0.1:3100";
 const DEV_RENDERER_URL_WITH_SLASH = `${DEV_RENDERER_URL}/`;
@@ -216,6 +229,48 @@ function createMainWindow(): void {
 		void win.loadFile(rendererHtmlPath);
 	} else {
 		void win.loadURL(DEV_RENDERER_URL);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Host services (companion domain) — after diagnostics, before window.
+// ---------------------------------------------------------------------------
+
+function initHostServices(): HostServices | null {
+	try {
+		const db = openDatabase(join(userData, "storage"));
+		migrate(MIGRATIONS);
+		const eventBus = new EventBus(db);
+		const artifactStore = new ArtifactStore(db, join(userData, "artifacts"));
+		const supervisor = new CompanionSupervisor(userData, eventBus);
+		const memory = new MemoryService(db, eventBus);
+		const onboarding = new FirstMeetingMachine(db, eventBus);
+		const turns = new TurnPipeline(db, supervisor, eventBus);
+		const voice = new VoiceStackManager(db, eventBus);
+		const commissions = new CommissionService(db, eventBus, supervisor, artifactStore);
+		const credentials = new CredentialStore(db);
+		const providers = new ProviderCatalog(credentials, join(userData, "companion-runtime"));
+		const services: HostServices = {
+			db,
+			eventBus,
+			artifactStore,
+			supervisor,
+			memory,
+			onboarding,
+			turns,
+			voice,
+			commissions,
+			credentials,
+			providers,
+		};
+		wireAllHandlers(services);
+		wireIpcHandlers();
+		void supervisor.start();
+		return services;
+	} catch (error) {
+		diagnostics.emit("host.storage_unavailable", {});
+		process.stderr.write(`storage unavailable: ${(error as Error)?.message ?? String(error)}\n`);
+		return null;
 	}
 }
 

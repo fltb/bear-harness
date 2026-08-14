@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import solidPlugin from "vite-plugin-solid";
 import { defineConfig } from "vitest/config";
+import { productConfig } from "./product.config.ts";
 
 /**
  * Unit/contract test runner.
@@ -16,6 +17,9 @@ import { defineConfig } from "vitest/config";
  */
 
 export default defineConfig({
+	define: {
+		__PRODUCT_CONFIG__: JSON.stringify(productConfig),
+	},
 	plugins: [solidPlugin()],
 	test: {
 		environment: "jsdom",

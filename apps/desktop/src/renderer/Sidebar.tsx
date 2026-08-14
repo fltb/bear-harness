@@ -1,22 +1,13 @@
+import { For, Show } from "solid-js";
 import type { ProductCharacter } from "../../product.config";
-import type { ActiveSection } from "./App";
+import { useCompanionStore } from "./stores/companion.js";
 
 /**
- * Sidebar: identity, disabled search/new-conversation tools, the two
- * role-content navigation items (the only interactive controls besides the
- * scene switch) and the disabled system section.
+ * Sidebar: identity, search (not yet wired), new-conversation, the live
+ * conversation list from the store and the disabled system section.
  */
-export function Sidebar(props: {
-	character: ProductCharacter;
-	activeSection: ActiveSection;
-	onSelect: (section: ActiveSection) => void;
-}) {
-	// Nav labels derive from the scene titles (the part after " · " when present)
-	// so forks get natural labels without duplicating copy.
-	const homeLabel = () =>
-		props.character.sceneTitle.split(" · ").pop() ?? props.character.sceneTitle;
-	const oldStationLabel = () =>
-		props.character.oldStationTitle.split(" · ").pop() ?? props.character.oldStationTitle;
+export function Sidebar(props: { character: ProductCharacter }) {
+	const store = useCompanionStore();
 
 	return (
 		<aside class="sidebar">
@@ -35,38 +26,45 @@ export function Sidebar(props: {
 					<span>搜索</span>
 					<kbd>⌘K</kbd>
 				</button>
-				<button type="button" class="new-conversation" disabled aria-label="新建对话">
+				<button
+					type="button"
+					class="new-conversation"
+					aria-label="新建对话"
+					title="新建对话"
+					onClick={() => void store.createConversation()}
+				>
 					＋
 				</button>
 			</div>
 			<div class="nav-scroll">
 				<nav class="nav-list" aria-label="对话">
-					<button
-						type="button"
-						class="nav-item"
-						aria-current={props.activeSection === "home" ? "page" : undefined}
-						onClick={() => props.onSelect("home")}
+					<Show
+						when={store.conversations.length > 0}
+						fallback={
+							<div class="conversations-empty" role="note">
+								还没有对话。点右上角的 ＋ 开始第一段。
+							</div>
+						}
 					>
-						<strong>{homeLabel()}</strong>
-						<span>今晚 · 继续相处</span>
-					</button>
-					<button
-						type="button"
-						class="nav-item"
-						aria-current={props.activeSection === "old-station" ? "page" : undefined}
-						onClick={() => props.onSelect("old-station")}
-					>
-						<strong>{oldStationLabel()}</strong>
-						<span>关于{props.character.name}的过去</span>
-					</button>
-					<button type="button" class="nav-item" disabled>
-						<strong>把会议变成报告</strong>
-						<span>等你开始</span>
-					</button>
-					<button type="button" class="nav-item" disabled>
-						<strong>把夏天归进月份</strong>
-						<span>等你开始</span>
-					</button>
+						<For each={store.conversations}>
+							{(conversation) => (
+								<button
+									type="button"
+									class="nav-item"
+									aria-current={
+										conversation.id === store.activeConversationId ? "page" : undefined
+									}
+									onClick={() => void store.selectConversation(conversation.id)}
+								>
+									<strong>{conversation.title}</strong>
+									<span>{conversation.sceneTitle}</span>
+									<Show when={conversation.unread}>
+										<i class="unread-dot" aria-label="有未读消息" />
+									</Show>
+								</button>
+							)}
+						</For>
+					</Show>
 				</nav>
 				<div class="system-section">
 					<div class="section-label">应用</div>

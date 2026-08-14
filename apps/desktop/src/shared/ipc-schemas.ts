@@ -139,6 +139,7 @@ export const OnboardingState = Type.Union(
 export type OnboardingState = Static<typeof OnboardingState>;
 
 export const OnboardingGetRequest = Type.Object({}, { additionalProperties: false });
+export const OnboardingAdvanceRequest = Type.Object({}, { additionalProperties: false });
 export const OnboardingResponse = Type.Object(
 	{
 		state: OnboardingState,
@@ -439,6 +440,46 @@ export const MemorySearchResponse = Type.Object(
 	{ additionalProperties: false },
 );
 
+export const MemoryListRequest = Type.Object(
+	{
+		scope: Type.Optional(MemoryScope),
+		enabled: Type.Optional(Type.Boolean()),
+		limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+	},
+	{ additionalProperties: false },
+);
+
+export const MemoryPinRequest = Type.Object(
+	{
+		entryId: Type.String({ maxLength: 64 }),
+		pinned: Type.Boolean(),
+	},
+	{ additionalProperties: false },
+);
+
+export const MemoryForgetRequest = Type.Object(
+	{
+		entryId: Type.String({ maxLength: 64 }),
+	},
+	{ additionalProperties: false },
+);
+
+export const MemoryExcludeRequest = Type.Object(
+	{
+		entryId: Type.String({ maxLength: 64 }),
+		excluded: Type.Boolean(),
+	},
+	{ additionalProperties: false },
+);
+
+export const MemoryEditRequest = Type.Object(
+	{
+		entryId: Type.String({ maxLength: 64 }),
+		newText: Type.String({ minLength: 1, maxLength: MAX_STRING_LENGTH }),
+	},
+	{ additionalProperties: false },
+);
+
 // ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
@@ -724,6 +765,7 @@ export const REQUEST_SCHEMAS: Record<string, TSchema> = {
 	"snapshot.get:v1": SnapshotGetRequest,
 	"events.subscribe:v1": EventSubscribeRequest,
 	"onboarding.get:v1": OnboardingGetRequest,
+	"onboarding.advance:v1": OnboardingAdvanceRequest,
 	"onboarding.setName:v1": OnboardingSetNameRequest,
 	"onboarding.setRelation:v1": OnboardingSetRelationRequest,
 	"onboarding.setMemoryDecision:v1": OnboardingSetMemoryDecisionRequest,
@@ -741,6 +783,11 @@ export const REQUEST_SCHEMAS: Record<string, TSchema> = {
 	"memory.listCandidates:v1": MemoryListCandidatesRequest,
 	"memory.decideCandidate:v1": MemoryDecideCandidateRequest,
 	"memory.search:v1": MemorySearchRequest,
+	"memory.list:v1": MemoryListRequest,
+	"memory.pin:v1": MemoryPinRequest,
+	"memory.forget:v1": MemoryForgetRequest,
+	"memory.exclude:v1": MemoryExcludeRequest,
+	"memory.edit:v1": MemoryEditRequest,
 	"provider.list:v1": ProviderListRequest,
 	"provider.setApiKey:v1": ProviderSetApiKeyRequest,
 	"provider.login:v1": ProviderLoginRequest,

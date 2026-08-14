@@ -140,6 +140,16 @@ const companionFacade = Object.freeze({
 		) => ipcRenderer.invoke("memory.decideCandidate:v1", { candidateId, decision, editedText, scope }),
 		search: (query: string, scope?: string) =>
 			ipcRenderer.invoke("memory.search:v1", { query, scope }),
+		list: (params?: Record<string, unknown>) =>
+			ipcRenderer.invoke("memory.list:v1", params ?? {}),
+		pin: (entryId: string, pinned: boolean) =>
+			ipcRenderer.invoke("memory.pin:v1", { entryId, pinned }),
+		forget: (entryId: string) =>
+			ipcRenderer.invoke("memory.forget:v1", { entryId }),
+		exclude: (entryId: string, excluded: boolean) =>
+			ipcRenderer.invoke("memory.exclude:v1", { entryId, excluded }),
+		edit: (entryId: string, newText: string) =>
+			ipcRenderer.invoke("memory.edit:v1", { entryId, newText }),
 	}),
 	provider: Object.freeze({
 		list: () => ipcRenderer.invoke("provider.list:v1"),

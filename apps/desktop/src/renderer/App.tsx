@@ -1,56 +1,55 @@
 import { createEffect, createSignal } from "solid-js";
 import type { ProductConfig } from "../../product.config";
+import { createCompanionStore, DesktopProvider } from "./stores/companion.js";
+import { Backstage } from "./features/Backstage.js";
 import { AuroraScene } from "./AuroraScene";
 import { Composer } from "./Composer";
 import { ConversationPanel } from "./ConversationPanel";
+import { FirstMeeting } from "./FirstMeeting";
 import { JizhouPresence } from "./JizhouPresence";
 import { Sidebar } from "./Sidebar";
 import { Titlebar } from "./Titlebar";
 
-export type ActiveSection = "home" | "old-station";
-
 /**
- * Idle desktop frame from Prototype 06 (thread variant).
+ * Desktop frame from Prototype 06, wired to the Companion store.
  *
- * The only meaningful state is `activeSection`: clicking the two role-content
- * navigation items switches the selected item, the scene title and the static
- * copy. Everything else is static visual — no conversation, memory, files,
- * executors or role-package imports in this framework.
+ * The store owns the snapshot + event subscription (conversations, active
+ * conversation messages, runs, onboarding, presence); this component only
+ * composes the layout and holds the backstage sheet's open state.
  */
 export function App(props: { product: Readonly<ProductConfig> }) {
-	const [activeSection, setActiveSection] = createSignal<ActiveSection>("home");
+	const store = createCompanionStore();
+	const [backstageOpen, setBackstageOpen] = createSignal(false);
 
 	createEffect(() => {
 		document.title = props.product.productName;
 	});
 
 	const character = () => props.product.defaultCharacter;
-	const sceneTitle = () =>
-		activeSection() === "home" ? character().sceneTitle : character().oldStationTitle;
-	const greeting = () =>
-		activeSection() === "home" ? character().greeting : character().oldStationGreeting;
+
+	const activeConversation = () =>
+		store.conversations.find((conversation) => conversation.id === store.activeConversationId) ??
+		null;
+
+	const sceneTitle = () => activeConversation()?.sceneTitle || character().sceneTitle;
 	const composerPlaceholder = () => `对${character().name}说点什么…`;
 
 	return (
-		<div class="app">
-			<Titlebar sceneTitle={sceneTitle()} />
-			<div class="shell">
-				<Sidebar
-					character={character()}
-					activeSection={activeSection()}
-					onSelect={setActiveSection}
-				/>
-				<main class="main">
-					<AuroraScene />
-					<JizhouPresence characterName={character().name} />
-					<ConversationPanel
-						character={character()}
-						section={activeSection()}
-						greeting={greeting()}
-					/>
-					<Composer placeholder={composerPlaceholder()} />
-				</main>
+		<DesktopProvider store={store}>
+			<div class="app">
+				<Titlebar sceneTitle={sceneTitle()} onOpenBackstage={() => setBackstageOpen(true)} />
+				<div class="shell">
+					<Sidebar character={character()} />
+					<main class="main">
+						<AuroraScene />
+						<JizhouPresence characterName={character().name} />
+						<ConversationPanel character={character()} />
+						<Composer placeholder={composerPlaceholder()} />
+						<FirstMeeting />
+					</main>
+				</div>
+				<Backstage open={backstageOpen()} onClose={() => setBackstageOpen(false)} />
 			</div>
-		</div>
+		</DesktopProvider>
 	);
 }

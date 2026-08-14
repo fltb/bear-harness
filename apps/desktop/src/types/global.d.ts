@@ -42,6 +42,11 @@ declare global {
 					listCandidates(): Promise<unknown>;
 					decideCandidate(candidateId: string, decision: string, editedText?: string, scope?: string): Promise<unknown>;
 					search(query: string, scope?: string): Promise<unknown>;
+					list(params?: Record<string, unknown>): Promise<unknown>;
+					pin(entryId: string, pinned: boolean): Promise<unknown>;
+					forget(entryId: string): Promise<unknown>;
+					exclude(entryId: string, excluded: boolean): Promise<unknown>;
+					edit(entryId: string, newText: string): Promise<unknown>;
 				};
 				provider: {
 					list(): Promise<unknown>;
