@@ -33,8 +33,8 @@ test("source build loads from file:// with official identity and isolated diagno
 		const pageUrl = window.url();
 		expect(pageUrl.startsWith("file://")).toBe(true);
 
-		// Persistent userData keeps the fork-isolated directory name; the
-		// diagnostics root for this run is the test temp dir.
+		// Persistent userData keeps the product directory name; the diagnostics
+		// root for this run is the test temp dir.
 		const paths = await electronApp.evaluate(({ app }) => ({
 			userData: app.getPath("userData"),
 			logs: app.getPath("logs"),
@@ -56,6 +56,7 @@ test("source build loads from file:// with official identity and isolated diagno
 			"src",
 			/^data:image\/svg\+xml;base64,/,
 		);
+
 	} finally {
 		await electronApp.close();
 		rmSync(tempRoot, { recursive: true, force: true });

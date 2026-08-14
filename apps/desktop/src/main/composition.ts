@@ -410,9 +410,41 @@ export function wireAllHandlers(s: HostServices): void {
 		if (!character) {
 			throw { kind: "unavailable", reason: "character_package_missing" };
 		}
+		const allowedSceneIds = new Set(character.scenes.map((scene) => scene.id));
+		const allowedVisualStates = new Set(Object.keys(character.visual.presence));
 		const convRows = s.db
 			.prepare("SELECT id, title, scene_title, updated_at FROM conversations ORDER BY updated_at DESC LIMIT 100")
 			.all() as Array<{ id: string; title: string; scene_title: string; updated_at: string }>;
+		const conversationIds = new Set(convRows.map((row) => row.id));
+		const characterRuntimeByConversation: Record<string, { sceneId: string; visualState: string }> = {};
+		const sceneRows = s.db
+			.prepare("SELECT conversation_id, scene, state_json FROM scene_state ORDER BY updated_at DESC")
+			.all() as Array<{ conversation_id: string; scene: string; state_json: string }>;
+		for (const row of sceneRows) {
+			if (!conversationIds.has(row.conversation_id) || characterRuntimeByConversation[row.conversation_id]) {
+				continue;
+			}
+			try {
+				const state = JSON.parse(row.state_json) as unknown;
+				if (
+					state &&
+					typeof state === "object" &&
+					!Array.isArray(state) &&
+					"visualState" in state &&
+					typeof state.visualState === "string" &&
+					allowedSceneIds.has(row.scene) &&
+					allowedVisualStates.has(state.visualState) &&
+					typeof row.scene === "string"
+				) {
+					characterRuntimeByConversation[row.conversation_id] = {
+						sceneId: row.scene,
+						visualState: state.visualState,
+					};
+				}
+			} catch {
+				// Invalid historical state is omitted; package defaults remain visible.
+			}
+		}
 		return {
 			eventSeq: s.eventBus.currentSeq,
 			onboarding,
@@ -426,6 +458,7 @@ export function wireAllHandlers(s: HostServices): void {
 					updatedAt: r.updated_at,
 				})),
 			},
+			characterRuntime: { byConversation: characterRuntimeByConversation },
 			settings: {
 				relationshipMemoryEnabled: false,
 				immersionLevel: "roleplay",

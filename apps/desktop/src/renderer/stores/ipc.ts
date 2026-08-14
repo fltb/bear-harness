@@ -355,6 +355,17 @@ export interface CharacterDisplay {
 	};
 }
 
+/** Host-projected, per-conversation scene and expression state. */
+export interface CharacterRuntimeState {
+	sceneId: string;
+	visualState: string;
+}
+
+export interface CharacterRuntimeSnapshot {
+	byConversation: Record<string, CharacterRuntimeState>;
+}
+
+
 export interface Snapshot {
 	eventSeq: number;
 	character?: CharacterDisplay;
@@ -367,6 +378,7 @@ export interface Snapshot {
 	run?: RunListData;
 	artifact?: ArtifactListData;
 	settings?: SettingsData;
+	characterRuntime?: CharacterRuntimeSnapshot;
 }
 
 // ---------------------------------------------------------------------------
@@ -435,6 +447,7 @@ const RUN_STATUSES: readonly RunStatus[] = [
 	"interrupted",
 	"forced_termination",
 ];
+
 
 const ARTIFACT_STATUSES: readonly ArtifactStatus[] = [
 	"created",
@@ -742,6 +755,24 @@ export function normalizeArtifactList(value: unknown): ArtifactListData | null {
 	return { artifacts: value.artifacts };
 }
 
+function normalizeCharacterRuntimeSnapshot(value: unknown): CharacterRuntimeSnapshot | null {
+	if (!isRecord(value) || !isRecord(value.byConversation)) return null;
+	const byConversation: Record<string, CharacterRuntimeState> = {};
+	for (const [conversationId, state] of Object.entries(value.byConversation)) {
+		if (
+			typeof conversationId !== "string" ||
+			!isRecord(state) ||
+			typeof state.sceneId !== "string" ||
+			typeof state.visualState !== "string"
+		) {
+			return null;
+		}
+		byConversation[conversationId] = { sceneId: state.sceneId, visualState: state.visualState };
+	}
+	return { byConversation };
+}
+
+
 /**
  * Sanitize the boot snapshot before it enters reactive state: require a
  * valid `eventSeq`, validate each domain projection, and drop everything
@@ -770,5 +801,7 @@ export function sanitizeSnapshot(value: unknown): Snapshot {
 	if (artifacts) out.artifact = artifacts;
 	if (isSettingsData(value.settings)) out.settings = value.settings;
 	if (isCharacterDisplay(value.character)) out.character = value.character;
+	const characterRuntime = normalizeCharacterRuntimeSnapshot(value.characterRuntime);
+	if (characterRuntime) out.characterRuntime = characterRuntime;
 	return out;
 }

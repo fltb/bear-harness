@@ -53,6 +53,7 @@ import {
 	type Commission,
 	type CommissionListData,
 	type CharacterDisplay,
+	type CharacterRuntimeState,
 	type ConversationCreateResult,
 	type ConversationListData,
 	type ConversationSummary,
@@ -200,6 +201,7 @@ export interface CompanionStore {
 	readonly runs: RunInfo[];
 	readonly presence: PresenceState;
 	readonly character: CharacterDisplay | undefined;
+	readonly characterRuntimeByConversation: Readonly<Record<string, CharacterRuntimeState>>;
 
 	refresh(): Promise<void>;
 	selectConversation(id: string, branchId?: string): Promise<void>;
@@ -255,7 +257,7 @@ export function useCompanionStore(): CompanionStore {
 // Internal state + presence derivation
 // ---------------------------------------------------------------------------
 
-type CompanionProcessState = "running" | "crashed" | "unavailable" | "stopped" | "unknown";
+type CompanionProcessState = "starting" | "running" | "crashed" | "unavailable" | "stopped" | "unknown";
 
 interface CompanionState {
 	loading: boolean;
@@ -266,6 +268,7 @@ interface CompanionState {
 	activeMessages: Message[];
 	runs: RunInfo[];
 	presence: PresenceState;
+	characterRuntimeByConversation: Record<string, CharacterRuntimeState>;
 	memoryCandidates: MemoryCandidate[];
 	memoryEntries: MemoryEntry[] | undefined;
 	settingsData: SettingsData | undefined;
@@ -336,6 +339,7 @@ export function createCompanionStore(): CompanionStore {
 		runs: [],
 		presence: "idle",
 		memoryCandidates: [],
+		characterRuntimeByConversation: {},
 		memoryEntries: undefined,
 		settingsData: undefined,
 		providers: [],
@@ -456,6 +460,7 @@ export function createCompanionStore(): CompanionStore {
 		if (snap.commission) setState("commissions", snap.commission.commissions);
 		if (snap.artifact) setState("artifacts", snap.artifact.artifacts);
 		if (snap.settings) setState("settingsData", snap.settings);
+		if (snap.characterRuntime) setState("characterRuntimeByConversation", snap.characterRuntime.byConversation);
 		setLastSeq(Math.max(lastSeq(), snap.eventSeq));
 	};
 
@@ -521,6 +526,16 @@ export function createCompanionStore(): CompanionStore {
 			case "message.aborted":
 				setState("sending", false);
 				return;
+			case "character.scene_changed":
+			case "character.visual_state_changed": {
+				const conversationId = payloadString(event.payload, "conversationId");
+				const sceneId = payloadString(event.payload, "sceneId");
+				const visualState = payloadString(event.payload, "visualState");
+				if (conversationId && sceneId && visualState) {
+					setState("characterRuntimeByConversation", conversationId, { sceneId, visualState });
+				}
+				return;
+			}
 			case "conversation.created": {
 				const id = payloadString(event.payload, "conversationId");
 				if (id) setState("activeConversationId", id);
@@ -967,6 +982,9 @@ export function createCompanionStore(): CompanionStore {
 
 		get character() {
 			return snapshotResource.latest?.character;
+		},
+		get characterRuntimeByConversation() {
+			return state.characterRuntimeByConversation;
 		},
 		get snapshot() {
 			return snapshotApi;

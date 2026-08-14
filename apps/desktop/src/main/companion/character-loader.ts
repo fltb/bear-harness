@@ -11,7 +11,7 @@
  * DB, and makes the package available to the rest of the Host.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,6 +74,23 @@ export interface CharacterVisuals {
 	presence: Record<string, string>;
 }
 
+export interface HostEventReaction {
+	event: string;
+	visual_state: string;
+}
+
+export interface CharacterHostBehavior {
+	event_reactions: HostEventReaction[];
+}
+
+export interface CompanionPiConfiguration {
+	append_system_prompt: string;
+}
+
+export interface CharacterCompanionConfiguration {
+	pi: CompanionPiConfiguration;
+}
+
 export interface CharacterPackage {
 	id: string;
 	name: string;
@@ -85,7 +102,8 @@ export interface CharacterPackage {
 	scenes: ScenePreset[];
 	visual_states: VisualState;
 	visual: CharacterVisuals;
-	manifest: Array<{ path: string; type: string; description: string }>;
+	host: CharacterHostBehavior;
+	companion: CharacterCompanionConfiguration;
 }
 
 export interface CharacterDisplay {
@@ -142,26 +160,86 @@ function configRoot(): string {
 }
 
 /**
- * Resolve a declared package asset without allowing it to leave that
- * package's directory. This is the filesystem boundary for package assets.
+ * Resolve package content without allowing it to leave that package's
+ * directory. This guards assets, Pi skill directories, and Pi plugin paths.
  */
-function characterAssetPath(characterId: string, assetPath: string): string {
-	const packageDir = resolve(configRoot(), characterId);
-	const resolvedAsset = resolve(packageDir, assetPath);
-	const packageRelativePath = relative(packageDir, resolvedAsset);
+function characterPackagePath(characterId: string, packagePath: string): string {
+	const charactersRoot = realpathSync(resolve(configRoot()));
+	const declaredPackageDir = resolve(charactersRoot, characterId);
+	const packageRelativePath = relative(charactersRoot, declaredPackageDir);
 	if (
-		!assetPath ||
+		!characterId ||
 		packageRelativePath.length === 0 ||
 		packageRelativePath === ".." ||
 		packageRelativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) ||
 		isAbsolute(packageRelativePath)
 	) {
-		throw new Error(`character package ${characterId}: asset path escapes package: ${assetPath}`);
+		throw new Error(`character package path escapes config root: ${characterId}`);
 	}
-	if (!existsSync(resolvedAsset)) {
-		throw new Error(`character package ${characterId}: manifest asset missing: ${assetPath}`);
+	const packageDir = realpathSync(declaredPackageDir);
+	const declaredPath = resolve(packageDir, packagePath);
+	const declaredRelativePath = relative(packageDir, declaredPath);
+	if (
+		!packagePath ||
+		declaredRelativePath.length === 0 ||
+		declaredRelativePath === ".." ||
+		declaredRelativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) ||
+		isAbsolute(declaredRelativePath)
+	) {
+		throw new Error(`character package ${characterId}: path escapes package: ${packagePath}`);
 	}
-	return resolvedAsset;
+	if (!existsSync(declaredPath)) {
+		throw new Error(`character package ${characterId}: package content missing: ${packagePath}`);
+	}
+	const resolvedPath = realpathSync(declaredPath);
+	const resolvedRelativePath = relative(packageDir, resolvedPath);
+	if (
+		resolvedRelativePath === ".." ||
+		resolvedRelativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) ||
+		isAbsolute(resolvedRelativePath)
+	) {
+		throw new Error(`character package ${characterId}: path resolves outside package: ${packagePath}`);
+	}
+	return resolvedPath;
+}
+
+/** Refuse symlinks anywhere in resources passed from a role package to Pi. */
+function ensureContainedTree(characterId: string, path: string): void {
+	const stat = lstatSync(path);
+	if (stat.isSymbolicLink()) {
+		throw new Error(`character package ${characterId}: Pi resource symlinks are not allowed`);
+	}
+	if (!stat.isDirectory()) return;
+	for (const entry of readdirSync(path, { withFileTypes: true })) {
+		ensureContainedTree(characterId, join(path, entry.name));
+	}
+}
+
+function ensureImageAsset(characterId: string, assetPath: string): void {
+	if (!IMAGE_MIME_BY_EXTENSION[extname(assetPath).toLowerCase()]) {
+		throw new Error(`character package ${characterId}: unsupported image asset: ${assetPath}`);
+	}
+	characterPackagePath(characterId, assetPath);
+}
+
+function collectPluginFiles(characterId: string, pluginsDir: string): string[] {
+	ensureContainedTree(characterId, pluginsDir);
+	const pluginPaths: string[] = [];
+	const visit = (directory: string): void => {
+		for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
+			left.name.localeCompare(right.name),
+		)) {
+			const path = join(directory, entry.name);
+			const stat = lstatSync(path);
+			if (stat.isDirectory()) {
+				visit(path);
+			} else if (stat.isFile() && [".cjs", ".js", ".mjs", ".ts"].includes(extname(entry.name))) {
+				pluginPaths.push(path);
+			}
+		}
+	};
+	visit(pluginsDir);
+	return pluginPaths;
 }
 
 /**
@@ -173,7 +251,7 @@ function characterAssetDataUrl(characterId: string, assetPath: string): string {
 	if (!mime) {
 		throw new Error(`character package ${characterId}: unsupported image asset: ${assetPath}`);
 	}
-	return `data:${mime};base64,${readFileSync(characterAssetPath(characterId, assetPath)).toString("base64")}`;
+	return `data:${mime};base64,${readFileSync(characterPackagePath(characterId, assetPath)).toString("base64")}`;
 }
 
 /**
@@ -181,22 +259,15 @@ function characterAssetDataUrl(characterId: string, assetPath: string): string {
  * compatibility path: a missing field/asset is a package error.
  */
 export function loadCharacter(id: string): CharacterPackage | null {
+
 	const path = join(configRoot(), id, "character.yaml");
 	if (!existsSync(path)) return null;
 	const parsed = parse(readFileSync(path, "utf8")) as CharacterPackage;
 	if (parsed.id !== id) {
 		throw new Error(`character package ${id}: yaml id must equal directory id`);
 	}
-	if (!Array.isArray(parsed.manifest) || !Array.isArray(parsed.scenes)) {
-		throw new Error(`character package ${id}: manifest and scenes are required arrays`);
-	}
-	const manifestPaths = new Set<string>();
-	for (const asset of parsed.manifest) {
-		if (!asset || typeof asset.path !== "string" || typeof asset.type !== "string") {
-			throw new Error(`character package ${id}: invalid manifest entry`);
-		}
-		characterAssetPath(id, asset.path);
-		manifestPaths.add(asset.path);
+	if (!Array.isArray(parsed.scenes)) {
+		throw new Error(`character package ${id}: scenes is required array`);
 	}
 	if (
 		!parsed.visual ||
@@ -212,24 +283,78 @@ export function loadCharacter(id: string): CharacterPackage | null {
 	if (!parsed.scenes.some((scene) => scene.id === parsed.visual.default_scene)) {
 		throw new Error(`character package ${id}: visual.default_scene is not a declared scene`);
 	}
-	if (!manifestPaths.has(parsed.visual.avatar)) {
-		throw new Error(`character package ${id}: visual.avatar must reference a manifest asset`);
-	}
+	ensureImageAsset(id, parsed.visual.avatar);
 	for (const state of PRESENCE_ASSET_KEYS) {
 		const assetPath = parsed.visual.presence[state];
-		if (typeof assetPath !== "string" || !manifestPaths.has(assetPath)) {
-			throw new Error(`character package ${id}: visual.presence.${state} must reference a manifest asset`);
+		if (typeof assetPath !== "string") {
+			throw new Error(`character package ${id}: visual.presence.${state} is required`);
 		}
+		ensureImageAsset(id, assetPath);
 	}
 	for (const scene of parsed.scenes) {
 		if (!scene || typeof scene.id !== "string" || typeof scene.label !== "string") {
 			throw new Error(`character package ${id}: invalid scene`);
 		}
-		if (scene.background !== null && (!manifestPaths.has(scene.background) || typeof scene.background !== "string")) {
-			throw new Error(`character package ${id}: scene ${scene.id} background must reference a manifest asset`);
+		if (scene.background !== null) {
+			if (typeof scene.background !== "string") {
+				throw new Error(`character package ${id}: scene ${scene.id} background is invalid`);
+			}
+			ensureImageAsset(id, scene.background);
 		}
 	}
+	if (
+		!parsed.host ||
+		!Array.isArray(parsed.host.event_reactions) ||
+		!parsed.companion ||
+		!parsed.companion.pi ||
+		typeof parsed.companion.pi.append_system_prompt !== "string"
+	) {
+		throw new Error(`character package ${id}: host reactions and companion.pi configuration are required`);
+	}
+	const validStates = new Set([
+		...parsed.visual_states.required.map((state) => state.id),
+		...parsed.visual_states.optional.map((state) => state.id),
+	]);
+	const reactionEvents = new Set<string>();
+	for (const reaction of parsed.host.event_reactions) {
+		if (
+			!reaction ||
+			typeof reaction.event !== "string" ||
+			typeof reaction.visual_state !== "string" ||
+			reactionEvents.has(reaction.event) ||
+			!validStates.has(reaction.visual_state) ||
+			typeof parsed.visual.presence[reaction.visual_state] !== "string"
+		) {
+			throw new Error(`character package ${id}: invalid or duplicate host event reaction`);
+		}
+		reactionEvents.add(reaction.event);
+	}
 	return parsed;
+}
+
+/**
+ * Resolve role-owned Pi resources by convention, not YAML plumbing:
+ * `skills/…/SKILL.md` and JavaScript or TypeScript files below `plugins/` are optional,
+ * package-private extensions of a role. Missing directories mean no role-
+ * specific dynamic behavior.
+ */
+export function characterPiResources(character: CharacterPackage): {
+	skillPaths: string[];
+	pluginPaths: string[];
+	appendSystemPrompt: string;
+} {
+	const packageDir = resolve(configRoot(), character.id);
+	const skillsDir = join(packageDir, "skills");
+	const pluginsDir = join(packageDir, "plugins");
+	const skillPaths = existsSync(skillsDir) ? [characterPackagePath(character.id, "skills")] : [];
+	const pluginRoot = existsSync(pluginsDir) ? characterPackagePath(character.id, "plugins") : undefined;
+	const pluginPaths = pluginRoot ? collectPluginFiles(character.id, pluginRoot) : [];
+	for (const path of skillPaths) ensureContainedTree(character.id, path);
+	return {
+		skillPaths,
+		pluginPaths,
+		appendSystemPrompt: `${character.identity_core}\n\n${character.companion.pi.append_system_prompt}`,
+	};
 }
 
 /** Project package presentation data into renderer-safe strings and data URLs. */

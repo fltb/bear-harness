@@ -1,12 +1,8 @@
 /**
  * Pi RPC worker adapter (M3 executor layer).
- *
- * Thin adapter over the Companion supervisor's utilityProcess postMessage
- * bridge for Pi RPC commissions. The LF JSONL framing between the Host and
- * the Pi worker was verified in M0; the bridge hands this adapter
- * already-framed JSON messages (routed here by the CommissionService), and
- * they are normalized into `evidence` rows plus an `evidence.collected`
- * domain event.
+ * Thin adapter over the Companion runtime command surface for Pi RPC
+ * commissions. The runtime is Host-local; this adapter receives plain Host
+ * command objects and normalizes its domain evidence into evidence rows.
  *
  * The adapter does not own run lifecycle state — the CommissionService
  * tracks runs and the run FSM (max 2 active) gates transitions. The adapter:

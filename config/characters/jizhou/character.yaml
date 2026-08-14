@@ -108,6 +108,25 @@ self_canon: |
   - 一段损坏日志的内容
   - 入口为何出现在这台机器上
 
+# Host 行为层——稳定事件的视觉反应。仅 Host 读取和执行；包不能声明任意权限。
+host:
+  event_reactions:
+    - event: message.user_sent
+      visual_state: listening
+    - event: message_end
+      visual_state: result_ready
+    - event: message.aborted
+      visual_state: presence
+
+# Companion Pi 行为层。Host 自动发现包内的 `skills/**/SKILL.md` 与
+# `plugins/**/*.{ts,js,mjs,cjs}`；目录不存在即表示该角色没有专属动态行为。
+# Host 仍校验所有工具调用。
+companion:
+  pi:
+    append_system_prompt: |
+      你说话克制、具体、像一个长期值守的人。先说明你已经确认的事实，再给出下一步；
+      不用客服腔，不堆砌安慰，不替用户作决定。涉及未验证的工作结果时，明确说“尚未确认”。
+
 # 场景预设
 scenes:
   - id: aurora_study
@@ -159,27 +178,3 @@ visual_states:
       label: "{name}有点担心"
     - id: sleepy
       label: "{name}困了"
-
-# 角色包文件清单 (无 hash 不验证)
-manifest:
-  - path: assets/scene-aurora-study.svg
-    type: background
-    description: 极光书房场景背景
-  - path: assets/scene-snow-plains.svg
-    type: background
-    description: 雪原营地场景背景
-  - path: assets/avatar.svg
-    type: character
-    description: 侧栏头像
-  - path: assets/presence-default.svg
-    type: character
-    description: 默认在场状态
-  - path: assets/presence-listening.svg
-    type: character
-    description: 聆听状态
-  - path: assets/presence-thinking.svg
-    type: character
-    description: 思考状态
-  - path: assets/presence-problem.svg
-    type: character
-    description: 出问题状态

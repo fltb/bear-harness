@@ -121,6 +121,11 @@ export class ProviderCatalog {
 		return this.runtime;
 	}
 
+	/** Shared in-process runtime for the Companion session after Host auth policy. */
+	async getModelRuntime(): Promise<ModelRuntime> {
+		return this.getRuntime();
+	}
+
 	/** List providers visible to the product, with models and credential status. */
 	async listProviders(): Promise<ProviderInfo[]> {
 		const runtime = await this.getRuntime();

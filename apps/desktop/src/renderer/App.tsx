@@ -28,9 +28,14 @@ export function App(props: { product: Readonly<ProductConfig> }) {
 	const character = () => store.character;
 	const activeConversation = () =>
 		store.conversations.find((conversation) => conversation.id === store.activeConversationId);
+	const activeCharacterRuntime = () => {
+		const conversationId = store.activeConversationId;
+		return conversationId ? store.characterRuntimeByConversation[conversationId] : undefined;
+	};
 	const activeScene = () => {
 		const identity = character();
-		return identity?.scenes.find((scene) => scene.id === identity.visual.defaultSceneId);
+		const sceneId = activeCharacterRuntime()?.sceneId ?? identity?.visual.defaultSceneId;
+		return identity?.scenes.find((scene) => scene.id === sceneId);
 	};
 	const sceneTitle = () =>
 		activeConversation()?.sceneTitle ?? character()?.character.scene_title ?? "";
@@ -44,7 +49,11 @@ export function App(props: { product: Readonly<ProductConfig> }) {
 					<Sidebar character={character()} />
 					<main class="main">
 						<SceneBackdrop scene={activeScene()} />
-						<CharacterPresence character={character()} presence={store.presence} />
+						<CharacterPresence
+							character={character()}
+							presence={store.presence}
+							visualState={activeCharacterRuntime()?.visualState}
+						/>
 						<ConversationPanel character={character()} />
 						<Composer placeholder={composerPlaceholder()} />
 						<FirstMeeting />

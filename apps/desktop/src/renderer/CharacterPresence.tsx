@@ -18,8 +18,12 @@ const VISUAL_STATE_BY_PRESENCE: Record<PresenceState, string> = {
 export function CharacterPresence(props: {
 	character: CharacterDisplay | undefined;
 	presence: PresenceState;
+	visualState?: string;
 }) {
-	const visualState = () => VISUAL_STATE_BY_PRESENCE[props.presence];
+	const visualState = () =>
+		props.visualState && props.character?.visual.presence[props.visualState]
+			? props.visualState
+			: VISUAL_STATE_BY_PRESENCE[props.presence];
 	const source = () => props.character?.visual.presence[visualState()];
 	const label = () => props.character?.visual.stateLabels[visualState()];
 

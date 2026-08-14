@@ -32,6 +32,12 @@ import { openDatabase, migrate, MIGRATIONS } from "./storage/database.js";
 import { EventBus } from "./storage/event-bus.js";
 import { ArtifactStore } from "./artifacts/index.js";
 import { CompanionSupervisor } from "./companion/supervisor.js";
+import { CharacterBehaviorService } from "./companion/character-behavior.js";
+import {
+	characterPiResources,
+	getActiveCharacterId,
+	loadCharacter,
+} from "./companion/character-loader.js";
 import { MemoryService } from "./memory/service.js";
 import { FirstMeetingMachine } from "./companion/first-meeting.js";
 import { TurnPipeline } from "./companion/turn-pipeline.js";
@@ -52,8 +58,11 @@ const electronApp: {
 	on(eventName: string, listener: (...args: unknown[]) => void): unknown;
 } = app;
 
+const isSourceE2E =
+	!app.isPackaged && process.env.NODE_ENV === "test" && process.env.BEAR_E2E_SOURCE === "1";
+
 // ---------------------------------------------------------------------------
-// userData / sessionData isolation (fork data directories stay separate).
+// userData / sessionData isolation.
 // ---------------------------------------------------------------------------
 
 function failInit(message: string): never {
@@ -83,8 +92,6 @@ app.setPath("sessionData", sessionData);
 // Diagnostics (before any BrowserWindow).
 // ---------------------------------------------------------------------------
 
-const isSourceE2E =
-	!app.isPackaged && process.env.NODE_ENV === "test" && process.env.BEAR_E2E_SOURCE === "1";
 const diagnosticsRoot =
 	isSourceE2E && process.env.BEAR_DIAGNOSTICS_ROOT && isAbsolute(process.env.BEAR_DIAGNOSTICS_ROOT)
 		? process.env.BEAR_DIAGNOSTICS_ROOT
@@ -105,6 +112,7 @@ const windowRegistry = new Map<number, WindowRegistration>();
 const windowSpans: Array<{ end(status: "ok" | "error" | "cancelled"): void }> = [];
 let shutdownRequested = false;
 let shutdownComplete = false;
+let hostServices: HostServices | null = null;
 
 // ---------------------------------------------------------------------------
 // Lifecycle.
@@ -121,9 +129,12 @@ app.on("before-quit", (event) => {
 	if (shutdownComplete) return;
 	event.preventDefault();
 	for (const span of windowSpans.splice(0)) span.end("cancelled");
-	void diagnostics.shutdown().then(() => {
-		shutdownComplete = true;
-		app.quit();
+	const stopCompanion = hostServices ? hostServices.supervisor.stop() : Promise.resolve();
+	void stopCompanion.finally(() => {
+		void diagnostics.shutdown().then(() => {
+			shutdownComplete = true;
+			app.quit();
+		});
 	});
 });
 
@@ -242,14 +253,16 @@ function initHostServices(): HostServices | null {
 		migrate(MIGRATIONS);
 		const eventBus = new EventBus(db);
 		const artifactStore = new ArtifactStore(db, join(userData, "artifacts"));
-		const supervisor = new CompanionSupervisor(userData, eventBus);
+		const credentials = new CredentialStore(db);
+		const providers = new ProviderCatalog(credentials, join(userData, "companion-runtime"));
+		const supervisor = new CompanionSupervisor(userData, eventBus, providers);
+		const characterBehavior = new CharacterBehaviorService(db, eventBus);
+		supervisor.setHostToolHandler((call) => characterBehavior.invoke(call));
 		const memory = new MemoryService(db, eventBus);
 		const onboarding = new FirstMeetingMachine(db, eventBus);
 		const turns = new TurnPipeline(db, supervisor, eventBus);
 		const voice = new VoiceStackManager(db, eventBus);
 		const commissions = new CommissionService(db, eventBus, supervisor, artifactStore);
-		const credentials = new CredentialStore(db);
-		const providers = new ProviderCatalog(credentials, join(userData, "companion-runtime"));
 		const services: HostServices = {
 			db,
 			eventBus,
@@ -264,8 +277,13 @@ function initHostServices(): HostServices | null {
 			providers,
 		};
 		wireAllHandlers(services);
+		const activeCharacterId = getActiveCharacterId(db, productConfig.defaultCharacterId);
+		const activeCharacter = loadCharacter(activeCharacterId);
+		if (!activeCharacter) throw new Error(`character package missing: ${activeCharacterId}`);
+		supervisor.configureRuntime(characterPiResources(activeCharacter));
 		wireIpcHandlers();
 		void supervisor.start();
+		hostServices = services;
 		return services;
 	} catch (error) {
 		process.stderr.write(`storage unavailable: ${(error as Error)?.message ?? String(error)}\n`);
