@@ -343,28 +343,70 @@ export function wireAllHandlers(s: HostServices): void {
 		};
 	});
 	registerHandler("commission.list:v1", async () => {
-		const rows = s.db
-			.prepare("SELECT id, draft_json, status, created_at FROM commissions ORDER BY created_at DESC LIMIT 30")
-			.all() as Array<{ id: string; draft_json: string; status: string; created_at: string }>;
 		return {
-			commissions: rows.map((r) => {
-				const draft = JSON.parse(r.draft_json ?? "{}") as Record<string, unknown>;
-				return {
-					id: r.id,
-					status: r.status,
-					createdAt: r.created_at,
-					draft: {
-						id: r.id,
-						title: String(draft.title ?? ""),
-						description: String(draft.description ?? ""),
-						reads: (draft.reads as string[]) ?? [],
-						writes: (draft.writes as string[]) ?? [],
-						networkAllowed: Boolean(draft.networkAllowed),
-						toolNames: (draft.toolNames as string[]) ?? [],
-						hash: String(draft.draftHash ?? ""),
-					},
-				};
-			}),
+			commissions: s.commissions.list().map((commission) => ({
+				id: commission.id,
+				status: commission.status,
+				createdAt: commission.createdAt,
+				draft: commission.draft,
+			})),
+		};
+	});
+	registerHandler("commission.draft:v1", async (_p) => {
+		const params = _p as {
+			conversationId: string;
+			title: string;
+			description: string;
+			reads?: string[];
+			writes?: string[];
+			networkAllowed?: boolean;
+			toolNames?: string[];
+		};
+		return s.commissions.draft(params);
+	});
+	registerHandler("commission.approve:v1", async (_p) => {
+		const { commissionId, approvedHash } = _p as { commissionId: string; approvedHash: string };
+		s.commissions.approve(commissionId, approvedHash);
+		return {};
+	});
+	registerHandler("commission.launch:v1", async (_p) => {
+		const { commissionId, executorProfile } = _p as {
+			commissionId: string;
+			executorProfile: string;
+		};
+		return s.commissions.launch({ commissionId, executorProfile });
+	});
+	registerHandler("run.steer:v1", async (_p) => {
+		const { runId, instruction } = _p as { runId: string; instruction: string };
+		await s.commissions.steerRun(runId, instruction);
+		return {};
+	});
+	registerHandler("run.cancel:v1", async (_p) => {
+		const { runId } = _p as { runId: string };
+		const run = await s.commissions.cancelRun(runId);
+		return {
+			id: run.id,
+			commissionId: run.commissionId,
+			executorProfile: run.executorProfile,
+			status: run.status,
+			startedAt: run.startedAt ?? undefined,
+			completedAt: run.completedAt ?? undefined,
+		};
+	});
+	registerHandler("run.respondPermission:v1", async (_p) => {
+		const { runId, requestId, optionId } = _p as {
+			runId: string;
+			requestId: string;
+			optionId: string;
+		};
+		const run = await s.commissions.respondToExecutorPermission(runId, requestId, optionId);
+		return {
+			id: run.id,
+			commissionId: run.commissionId,
+			executorProfile: run.executorProfile,
+			status: run.status,
+			startedAt: run.startedAt ?? undefined,
+			completedAt: run.completedAt ?? undefined,
 		};
 	});
 

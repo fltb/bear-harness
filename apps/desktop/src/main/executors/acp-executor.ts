@@ -224,6 +224,11 @@ export abstract class AcpExecutorController implements ExecutorController {
 			type: "needs_user",
 			requestId: request.requestId,
 			prompt: request.toolCall.title ?? request.toolCall.name ?? "The worker needs permission to continue.",
+			options: request.options.map((option) => ({
+				optionId: option.optionId,
+				kind: option.kind,
+				name: option.name,
+			})),
 		});
 		active.request.emit({
 			type: "evidence",

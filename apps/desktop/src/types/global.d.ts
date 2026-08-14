@@ -59,8 +59,26 @@ declare global {
 					list(): Promise<unknown>;
 					switch(stackId: string, scope: string): Promise<unknown>;
 				};
-				commission: { list(): Promise<unknown> };
-				run: { list(): Promise<unknown> };
+				commission: {
+					list(): Promise<unknown>;
+					draft(params: {
+						conversationId: string;
+						title: string;
+						description: string;
+						reads?: string[];
+						writes?: string[];
+						networkAllowed?: boolean;
+						toolNames?: string[];
+					}): Promise<unknown>;
+					approve(commissionId: string, approvedHash: string): Promise<unknown>;
+					launch(commissionId: string, executorProfile: string): Promise<unknown>;
+				};
+				run: {
+					list(): Promise<unknown>;
+					steer(runId: string, instruction: string): Promise<unknown>;
+					cancel(runId: string): Promise<unknown>;
+					respondPermission(runId: string, requestId: string, optionId: string): Promise<unknown>;
+				};
 				artifact: { list(): Promise<unknown> };
 				settings: {
 					get(): Promise<unknown>;

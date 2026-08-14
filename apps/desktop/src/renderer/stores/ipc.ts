@@ -240,6 +240,28 @@ export interface CommissionListData {
 	commissions: Commission[];
 }
 
+export interface CommissionDraftParams {
+	conversationId: string;
+	title: string;
+	description: string;
+	reads?: string[];
+	writes?: string[];
+	networkAllowed?: boolean;
+	toolNames?: string[];
+}
+
+export interface CommissionDraftResult {
+	commissionId: string;
+	draftHash: string;
+}
+
+export interface CommissionLaunchResult {
+	runId: string;
+	commissionId: string;
+	executorProfile: string;
+	status: RunStatus;
+}
+
 export type RunStatus =
 	| "enqueued"
 	| "running"
@@ -261,6 +283,19 @@ export interface RunInfo {
 
 export interface RunListData {
 	runs: RunInfo[];
+}
+
+export interface RunPermissionOption {
+	optionId: string;
+	kind: string;
+	name: string;
+}
+
+export interface RunPermissionRequest {
+	runId: string;
+	requestId: string;
+	prompt: string;
+	options: RunPermissionOption[];
 }
 
 export type ArtifactStatus = "created" | "verified" | "verification_failed" | "adopted" | "saved";

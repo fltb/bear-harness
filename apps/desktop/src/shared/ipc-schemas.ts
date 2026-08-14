@@ -648,6 +648,67 @@ export const CommissionListResponse = Type.Object(
 	{ additionalProperties: false },
 );
 
+export const CommissionDraftRequest = Type.Object(
+	{
+		conversationId: Type.String({ minLength: 1, maxLength: 64 }),
+		title: Type.String({ minLength: 1, maxLength: MAX_STRING_LENGTH }),
+		description: Type.String({ minLength: 1, maxLength: MAX_STRING_LENGTH }),
+		reads: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: MAX_PATH_LENGTH }), { maxItems: 20 })),
+		writes: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: MAX_PATH_LENGTH }), { maxItems: 20 })),
+		networkAllowed: Type.Optional(Type.Boolean()),
+		toolNames: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 20 })),
+	},
+	{ additionalProperties: false },
+);
+
+export const CommissionDraftResponse = Type.Object(
+	{
+		commissionId: Type.String({ maxLength: 64 }),
+		draftHash: Type.String({ maxLength: 128 }),
+	},
+	{ additionalProperties: false },
+);
+
+export const CommissionApproveRequest = Type.Object(
+	{
+		commissionId: Type.String({ minLength: 1, maxLength: 64 }),
+		approvedHash: Type.String({ minLength: 1, maxLength: 128 }),
+	},
+	{ additionalProperties: false },
+);
+
+export const CommissionLaunchRequest = Type.Object(
+	{
+		commissionId: Type.String({ minLength: 1, maxLength: 64 }),
+		executorProfile: Type.String({ minLength: 1, maxLength: 64 }),
+	},
+	{ additionalProperties: false },
+);
+
+export const RunSteerRequest = Type.Object(
+	{
+		runId: Type.String({ minLength: 1, maxLength: 64 }),
+		instruction: Type.String({ minLength: 1, maxLength: MAX_STRING_LENGTH }),
+	},
+	{ additionalProperties: false },
+);
+
+export const RunCancelRequest = Type.Object(
+	{
+		runId: Type.String({ minLength: 1, maxLength: 64 }),
+	},
+	{ additionalProperties: false },
+);
+
+export const RunRespondPermissionRequest = Type.Object(
+	{
+		runId: Type.String({ minLength: 1, maxLength: 64 }),
+		requestId: Type.String({ minLength: 1, maxLength: 128 }),
+		optionId: Type.String({ minLength: 1, maxLength: 128 }),
+	},
+	{ additionalProperties: false },
+);
+
 // ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
@@ -798,7 +859,13 @@ export const REQUEST_SCHEMAS: Record<string, TSchema> = {
 	"voice.list:v1": VoiceStackListRequest,
 	"voice.switch:v1": VoiceStackSwitchRequest,
 	"commission.list:v1": CommissionListRequest,
+	"commission.draft:v1": CommissionDraftRequest,
+	"commission.approve:v1": CommissionApproveRequest,
+	"commission.launch:v1": CommissionLaunchRequest,
 	"run.list:v1": RunListRequest,
+	"run.steer:v1": RunSteerRequest,
+	"run.cancel:v1": RunCancelRequest,
+	"run.respondPermission:v1": RunRespondPermissionRequest,
 	"artifact.list:v1": ArtifactListRequest,
 	"settings.get:v1": SettingsGetRequest,
 	"settings.set:v1": SettingsSetRequest,

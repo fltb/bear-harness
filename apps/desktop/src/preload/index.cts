@@ -186,9 +186,27 @@ const companionFacade = Object.freeze({
 	}),
 	commission: Object.freeze({
 		list: () => ipcRenderer.invoke("commission.list:v1", {}),
+		draft: (params: {
+			conversationId: string;
+			title: string;
+			description: string;
+			reads?: string[];
+			writes?: string[];
+			networkAllowed?: boolean;
+			toolNames?: string[];
+		}) => ipcRenderer.invoke("commission.draft:v1", params),
+		approve: (commissionId: string, approvedHash: string) =>
+			ipcRenderer.invoke("commission.approve:v1", { commissionId, approvedHash }),
+		launch: (commissionId: string, executorProfile: string) =>
+			ipcRenderer.invoke("commission.launch:v1", { commissionId, executorProfile }),
 	}),
 	run: Object.freeze({
 		list: () => ipcRenderer.invoke("run.list:v1", {}),
+		steer: (runId: string, instruction: string) =>
+			ipcRenderer.invoke("run.steer:v1", { runId, instruction }),
+		cancel: (runId: string) => ipcRenderer.invoke("run.cancel:v1", { runId }),
+		respondPermission: (runId: string, requestId: string, optionId: string) =>
+			ipcRenderer.invoke("run.respondPermission:v1", { runId, requestId, optionId }),
 	}),
 	artifact: Object.freeze({
 		list: () => ipcRenderer.invoke("artifact.list:v1", {}),

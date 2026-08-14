@@ -138,6 +138,7 @@ describe("CommissionService executor routing", () => {
 		expect(
 			fixture.db.prepare("SELECT kind FROM evidence WHERE run_id = ? ORDER BY rowid").all(result.runId),
 		).toEqual([{ kind: "tool_call" }, { kind: "executor.summary" }]);
+		expect(fixture.service.list()[0]).toMatchObject({ id: commissionId, status: "completed" });
 	});
 
 	it("marks a run failed when its selected profile is not wired", async () => {
@@ -181,5 +182,52 @@ describe("CommissionService executor routing", () => {
 
 		expect(controls).toEqual(["steer:Use the shorter path.", "cancel"]);
 		expect(cancelled.status).toBe("cancelled");
+		expect(fixture.service.list()[0]).toMatchObject({ status: "cancelled" });
+	});
+	it("publishes a permission request and resumes only the matching active worker", async () => {
+		const responses: Array<{ requestId: string; optionId: string }> = [];
+		const fixture = createFixture({
+			async launch(request) {
+				request.emit({ type: "started" });
+				request.emit({
+					type: "needs_user",
+					prompt: "Write the approved report?",
+					requestId: "permission-1",
+					options: [{ optionId: "allow", kind: "allow_once", name: "Allow once" }],
+				});
+			},
+			async resume(_run, response) {
+				responses.push(response);
+			},
+		});
+		fixtures.push(fixture);
+
+		const launched = await fixture.service.launch({
+			commissionId: approvedCommission(fixture.service),
+			executorProfile: "pi-worker",
+		});
+		expect(launched.status).toBe("needs_user");
+		expect(
+			JSON.parse(
+				(
+					fixture.db.prepare("SELECT payload FROM events WHERE kind = 'run.needs_user'").get() as {
+						payload: string;
+					}
+				).payload,
+			),
+		).toMatchObject({
+			runId: launched.runId,
+			requestId: "permission-1",
+			options: [{ optionId: "allow", kind: "allow_once" }],
+		});
+
+		const resumed = await fixture.service.respondToExecutorPermission(
+			launched.runId,
+			"permission-1",
+			"allow",
+		);
+		expect(responses).toEqual([{ requestId: "permission-1", optionId: "allow" }]);
+		expect(resumed.status).toBe("running");
+		expect(fixture.service.list()[0]).toMatchObject({ status: "running" });
 	});
 });

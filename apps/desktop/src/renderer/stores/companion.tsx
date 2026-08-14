@@ -36,6 +36,8 @@ import { createOnboardingStore } from "./onboarding.js";
 import { createVoiceStore } from "./voice.js";
 import {
 	invoke,
+	isRecord,
+	isRun,
 	isOnboardingStep,
 	isSettingsData,
 	normalizeArtifactList,
@@ -51,6 +53,9 @@ import {
 	type Artifact,
 	type ArtifactListData,
 	type Commission,
+	type CommissionDraftParams,
+	type CommissionDraftResult,
+	type CommissionLaunchResult,
 	type CommissionListData,
 	type CharacterDisplay,
 	type CharacterRuntimeState,
@@ -77,6 +82,7 @@ import {
 	type RelationKind,
 	type RunInfo,
 	type RunListData,
+	type RunPermissionRequest,
 	type SettingsData,
 	type SettingsResponseData,
 	type Snapshot,
@@ -113,6 +119,50 @@ function sleep(ms: number): Promise<void> {
 
 function messageOf(value: unknown): string {
 	return value instanceof Error ? value.message : String(value);
+}
+
+function parseRunPermission(payload: unknown): RunPermissionRequest | null {
+	if (
+		!isRecord(payload) ||
+		typeof payload.runId !== "string" ||
+		typeof payload.requestId !== "string" ||
+		typeof payload.prompt !== "string" ||
+		!Array.isArray(payload.options)
+	) {
+		return null;
+	}
+	const options = payload.options;
+	if (
+		!options.every(
+			(option) =>
+				isRecord(option) &&
+				typeof option.optionId === "string" &&
+				typeof option.kind === "string" &&
+				typeof option.name === "string",
+		)
+	) {
+		return null;
+	}
+	return {
+		runId: payload.runId,
+		requestId: payload.requestId,
+		prompt: payload.prompt,
+		options: options as RunPermissionRequest["options"],
+	};
+}
+
+function isCommissionDraftResult(value: unknown): value is CommissionDraftResult {
+	return isRecord(value) && typeof value.commissionId === "string" && typeof value.draftHash === "string";
+}
+
+function isCommissionLaunchResult(value: unknown): value is CommissionLaunchResult {
+	return (
+		isRecord(value) &&
+		typeof value.runId === "string" &&
+		typeof value.commissionId === "string" &&
+		typeof value.executorProfile === "string" &&
+		typeof value.status === "string"
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +230,17 @@ export interface VoiceApi {
 export interface CommissionApi {
 	commissions(): Commission[];
 	list(): Promise<CommissionListData>;
+	draft(params: CommissionDraftParams): Promise<CommissionDraftResult>;
+	approve(commissionId: string, approvedHash: string): Promise<void>;
+	launch(commissionId: string, executorProfile: string): Promise<CommissionLaunchResult>;
+}
+
+export interface RunApi {
+	list(): Promise<RunListData>;
+	pendingPermissions(): RunPermissionRequest[];
+	steer(runId: string, instruction: string): Promise<void>;
+	cancel(runId: string): Promise<RunInfo>;
+	respondPermission(runId: string, requestId: string, optionId: string): Promise<RunInfo>;
 }
 
 export interface ArtifactApi {
@@ -228,6 +289,7 @@ export interface CompanionStore {
 	readonly provider: ProviderApi;
 	readonly voice: VoiceApi;
 	readonly commission: CommissionApi;
+	readonly run: RunApi;
 	readonly artifact: ArtifactApi;
 }
 
@@ -278,6 +340,7 @@ interface CompanionState {
 	companionState: CompanionProcessState;
 	sending: boolean;
 	lastRunEvent: "adopted" | null;
+	pendingRunPermissions: Record<string, RunPermissionRequest>;
 }
 
 function runTimestamp(run: RunInfo): number {
@@ -348,6 +411,7 @@ export function createCompanionStore(): CompanionStore {
 		companionState: "unknown",
 		sending: false,
 		lastRunEvent: null,
+		pendingRunPermissions: {},
 	});
 
 	const [lastSeq, setLastSeq] = createSignal(0);
@@ -563,6 +627,14 @@ export function createCompanionStore(): CompanionStore {
 				if (next === "crashed" || next === "unavailable") void snapshotActions.refetch();
 				return;
 			}
+			case "run.needs_user": {
+				const permission = parseRunPermission(event.payload);
+				if (permission) {
+					setState("pendingRunPermissions", permission.runId, permission);
+				}
+				debouncedRefetch(refreshRuns);
+				return;
+			}
 			case "run.result_adopted":
 				setState("lastRunEvent", "adopted");
 				debouncedRefetch(refreshRuns);
@@ -584,6 +656,17 @@ export function createCompanionStore(): CompanionStore {
 		} else if (kind.startsWith("commission.")) {
 			debouncedRefetch(refreshCommissions);
 		} else if (kind.startsWith("run.")) {
+			const runId = payloadString(event.payload, "runId");
+			if (
+				runId &&
+				(kind === "run.resumed" ||
+					kind === "run.completed" ||
+					kind === "run.cancelled" ||
+					kind === "run.interrupted")
+			) {
+				const { [runId]: _resolved, ...remaining } = state.pendingRunPermissions;
+				setState("pendingRunPermissions", remaining);
+			}
 			debouncedRefetch(refreshRuns);
 		} else if (kind.startsWith("artifact.")) {
 			debouncedRefetch(refreshArtifacts);
@@ -772,6 +855,58 @@ export function createCompanionStore(): CompanionStore {
 			const data = await invoke<CommissionListData>(() => window.bearDesktop.companion.commission.list());
 			const parsed = normalizeCommissionList(data);
 			if (parsed) setState("commissions", parsed.commissions);
+			return data;
+		},
+		draft: async (params) => {
+			const data = await invoke<unknown>(() => window.bearDesktop.companion.commission.draft(params));
+			if (!isCommissionDraftResult(data)) throw new Error("invalid commission draft response");
+			void refreshCommissions();
+			return data;
+		},
+		approve: async (commissionId, approvedHash) => {
+			await invoke<void>(() => window.bearDesktop.companion.commission.approve(commissionId, approvedHash));
+			void refreshCommissions();
+		},
+		launch: async (commissionId, executorProfile) => {
+			const data = await invoke<unknown>(() =>
+				window.bearDesktop.companion.commission.launch(commissionId, executorProfile),
+			);
+			if (!isCommissionLaunchResult(data)) throw new Error("invalid commission launch response");
+			void refreshCommissions();
+			void refreshRuns();
+			return data;
+		},
+	};
+
+	const runApi: RunApi = {
+		list: async () => {
+			const data = await invoke<RunListData>(() => window.bearDesktop.companion.run.list());
+			const parsed = normalizeRunList(data);
+			if (parsed) setState("runs", parsed.runs);
+			return data;
+		},
+		pendingPermissions: () => Object.values(state.pendingRunPermissions),
+		steer: async (runId, instruction) => {
+			await invoke<void>(() => window.bearDesktop.companion.run.steer(runId, instruction));
+		},
+		cancel: async (runId) => {
+			const data = await invoke<unknown>(() => window.bearDesktop.companion.run.cancel(runId));
+			if (!isRun(data)) throw new Error("invalid run cancellation response");
+			const { [runId]: _permission, ...remaining } = state.pendingRunPermissions;
+			setState("pendingRunPermissions", remaining);
+			void refreshRuns();
+			void refreshCommissions();
+			return data;
+		},
+		respondPermission: async (runId, requestId, optionId) => {
+			const data = await invoke<unknown>(() =>
+				window.bearDesktop.companion.run.respondPermission(runId, requestId, optionId),
+			);
+			if (!isRun(data)) throw new Error("invalid run permission response");
+			const { [runId]: _permission, ...remaining } = state.pendingRunPermissions;
+			setState("pendingRunPermissions", remaining);
+			void refreshRuns();
+			void refreshCommissions();
 			return data;
 		},
 	};
@@ -1006,6 +1141,9 @@ export function createCompanionStore(): CompanionStore {
 		},
 		get commission() {
 			return commissionApi;
+		},
+		get run() {
+			return runApi;
 		},
 		get artifact() {
 			return artifactApi;

@@ -22,6 +22,7 @@ import type { ArtifactStore } from "../artifacts/index.js";
 import type {
 	ExecutorCommission,
 	ExecutorEvent,
+	ExecutorPermissionOption,
 	ExecutorRouter,
 	ExecutorRun,
 } from "../executors/router.js";
@@ -277,7 +278,7 @@ export class CommissionService {
 				this.recordExecutorEvidence(runId, event.kind, event.data);
 				return;
 			case "needs_user":
-				if (run.status === "running") this.needsUser(runId, event.prompt);
+				if (run.status === "running") this.needsUser(runId, event.prompt, event.requestId, event.options);
 				else if (run.status !== "needs_user") {
 					throw { kind: "conflict", reason: "executor_needs_user_invalid_run_state" };
 				}
@@ -285,6 +286,7 @@ export class CommissionService {
 					this.recordExecutorEvidence(runId, "executor.permission_requested", {
 						requestId: event.requestId,
 						prompt: event.prompt,
+						options: event.options ?? [],
 					});
 				}
 				return;
@@ -405,6 +407,7 @@ export class CommissionService {
 					"INSERT INTO runs (id, commission_id, executor_profile, status) VALUES (?, ?, ?, 'enqueued')",
 				)
 				.run(id, params.commissionId, params.executorProfile);
+			this.db.prepare("UPDATE commissions SET status = 'queued' WHERE id = ?").run(params.commissionId);
 
 			const draft = this.parseDraft(commissionRow.draft_json);
 			const run: ExecutorRun = {
@@ -429,6 +432,10 @@ export class CommissionService {
 			commissionId: launch.run.commissionId,
 			executorProfile: launch.run.executorProfile,
 			status: "enqueued",
+		});
+		this.eventBus.publish("commission.status_changed", {
+			commissionId: launch.run.commissionId,
+			status: "queued",
 		});
 
 		try {
@@ -468,7 +475,12 @@ export class CommissionService {
 		this.db
 			.prepare("UPDATE runs SET status = 'running', started_at = ? WHERE id = ?")
 			.run(new Date().toISOString(), runId);
+		this.db.prepare("UPDATE commissions SET status = 'running' WHERE id = ?").run(run.commission_id);
 		this.eventBus.publish("run.started", { runId });
+		this.eventBus.publish("commission.status_changed", {
+			commissionId: run.commission_id,
+			status: "running",
+		});
 		return this.summarizeRun(this.getRun(runId));
 	}
 
@@ -481,18 +493,39 @@ export class CommissionService {
 		this.db
 			.prepare("UPDATE runs SET status = ?, completed_at = ? WHERE id = ?")
 			.run(terminalStatus, new Date().toISOString(), runId);
+		const commissionStatus: CommissionStatus =
+			terminalStatus === "completed"
+				? "completed"
+				: terminalStatus === "cancelled"
+					? "cancelled"
+					: "failed";
+		this.db.prepare("UPDATE commissions SET status = ? WHERE id = ?").run(commissionStatus, run.commission_id);
 		this.eventBus.publish("run.completed", { runId, status: terminalStatus });
+		this.eventBus.publish("commission.status_changed", {
+			commissionId: run.commission_id,
+			status: commissionStatus,
+		});
 		return this.summarizeRun(this.getRun(runId));
 	}
 
 	/** Pause a running run for user input. */
-	needsUser(runId: string, prompt: string): RunSummary {
+	needsUser(
+		runId: string,
+		prompt: string,
+		requestId?: string,
+		options: ExecutorPermissionOption[] = [],
+	): RunSummary {
 		const run = this.getRun(runId);
 		if (run.status !== "running") {
 			throw { kind: "conflict", reason: "run_not_active" };
 		}
 		this.db.prepare("UPDATE runs SET status = 'needs_user' WHERE id = ?").run(runId);
-		this.eventBus.publish("run.needs_user", { runId, prompt });
+		this.db.prepare("UPDATE commissions SET status = 'needs_user' WHERE id = ?").run(run.commission_id);
+		this.eventBus.publish("run.needs_user", { runId, prompt, requestId, options });
+		this.eventBus.publish("commission.status_changed", {
+			commissionId: run.commission_id,
+			status: "needs_user",
+		});
 		return this.summarizeRun(this.getRun(runId));
 	}
 
@@ -526,7 +559,12 @@ export class CommissionService {
 			throw { kind: "conflict", reason: "run_not_resumable" };
 		}
 		this.db.prepare("UPDATE runs SET status = 'running' WHERE id = ?").run(runId);
+		this.db.prepare("UPDATE commissions SET status = 'running' WHERE id = ?").run(run.commission_id);
 		this.eventBus.publish("run.resumed", { runId });
+		this.eventBus.publish("commission.status_changed", {
+			commissionId: run.commission_id,
+			status: "running",
+		});
 		return this.summarizeRun(this.getRun(runId));
 	}
 
@@ -560,7 +598,12 @@ export class CommissionService {
 		this.db
 			.prepare("UPDATE runs SET status = 'cancelled', completed_at = ? WHERE id = ?")
 			.run(new Date().toISOString(), runId);
+		this.db.prepare("UPDATE commissions SET status = 'cancelled' WHERE id = ?").run(run.commission_id);
 		this.eventBus.publish("run.cancelled", { runId });
+		this.eventBus.publish("commission.status_changed", {
+			commissionId: run.commission_id,
+			status: "cancelled",
+		});
 		return this.summarizeRun(this.getRun(runId));
 	}
 

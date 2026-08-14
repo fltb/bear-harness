@@ -20,7 +20,7 @@ import { AcpExecutorController } from "./acp-executor.js";
 import type { AcpProcessSpec } from "./acp-client.js";
 import type { ExecutorLaunchRequest } from "./router.js";
 
-/** The only Codex app-server version the harness will run (pinned). */
+/** The only user-consented Codex CLI version the harness will run (pinned). */
 const PINNED_VERSION = "0.147.0";
 /** Bounded `codex --version` probe timeout. */
 const VERSION_PROBE_TIMEOUT_MS = 10_000;

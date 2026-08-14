@@ -35,7 +35,7 @@ export interface ExecutorCommission {
 export type ExecutorEvent =
 	| { type: "started" }
 	| { type: "evidence"; kind: string; data: unknown }
-	| { type: "needs_user"; prompt: string; requestId?: string }
+	| { type: "needs_user"; prompt: string; requestId?: string; options?: ExecutorPermissionOption[] }
 	| { type: "completed"; summary?: string }
 	| { type: "failed"; reason: string }
 	| { type: "cancelled"; reason?: string };
@@ -50,6 +50,12 @@ export interface ExecutorLaunchRequest {
 export interface ExecutorPermissionResponse {
 	requestId: string;
 	optionId: string;
+}
+
+export interface ExecutorPermissionOption {
+	optionId: string;
+	kind: string;
+	name: string;
 }
 
 /** A worker implementation for one profile type. */
