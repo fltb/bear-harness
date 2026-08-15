@@ -394,6 +394,10 @@ function debouncedRefetch(fn: () => void, ms = 250): void {
 	);
 }
 
+function isStaleOnboardingStep(error: unknown): boolean {
+	return messageOf(error) === "conflict: stale_onboarding_step";
+}
+
 export function createCompanionStore(client: CompanionClient): CompanionStore {
 	const [state, setState] = createStore<CompanionState>({
 		loading: true,
@@ -1072,8 +1076,17 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			try {
 				await onboardingStore.submit(stepId, answer);
 				setState("error", null);
-			} catch (e) {
-				setState("error", messageOf(e));
+			} catch (error) {
+				if (isStaleOnboardingStep(error)) {
+					try {
+						await onboardingStore.resync();
+						setState("error", null);
+					} catch (resyncError) {
+						setState("error", messageOf(resyncError));
+					}
+					return;
+				}
+				setState("error", messageOf(error));
 			}
 		},
 

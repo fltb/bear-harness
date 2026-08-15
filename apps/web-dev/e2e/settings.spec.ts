@@ -14,7 +14,9 @@ test("browser completes the real role-defined onboarding without a provider gate
 		await expect.poll(() => onboarding.getAttribute("data-onboarding-step")).not.toBe(previous);
 	};
 
-	await advance();
+	await onboarding.getByRole("button").first().dblclick();
+	await expect.poll(() => onboarding.getAttribute("data-onboarding-step")).toBe("introduced");
+	await expect(onboarding.getByRole("alert")).toHaveCount(0);
 	await advance();
 
 	const name = onboarding.getByRole("textbox");

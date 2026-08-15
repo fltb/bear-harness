@@ -15,6 +15,16 @@ export function FirstMeeting() {
 	const store = useCompanionStore();
 	const [textAnswer, setTextAnswer] = createSignal("");
 	const flow = () => store.character?.character.first_meeting;
+	const [submitting, setSubmitting] = createSignal(false);
+	const submit = async (stepId: string, answer?: string): Promise<void> => {
+		if (submitting()) return;
+		setSubmitting(true);
+		try {
+			await store.submitOnboarding(stepId, answer);
+		} finally {
+			setSubmitting(false);
+		}
+	};
 	const currentStep = (): CharacterOnboardingStep | undefined => {
 		const definition = flow();
 		const stepId = store.onboarding.currentStepId;
@@ -30,7 +40,8 @@ export function FirstMeeting() {
 					<button
 						type="button"
 						class="primary"
-						onClick={() => void store.submitOnboarding(step.id)}
+						disabled={submitting()}
+						onClick={() => void submit(step.id)}
 					>
 						{step.submit_label}
 					</button>
@@ -55,10 +66,11 @@ export function FirstMeeting() {
 							type="button"
 							class="primary"
 							disabled={
+								submitting() ||
 								textAnswer().trim().length < step.min_length ||
 								textAnswer().trim().length > step.max_length
 							}
-							onClick={() => void store.submitOnboarding(step.id, textAnswer().trim())}
+							onClick={() => void submit(step.id, textAnswer().trim())}
 						>
 							{step.submit_label}
 						</button>
@@ -73,7 +85,8 @@ export function FirstMeeting() {
 						<button
 							type="button"
 							class="intro-choice"
-							onClick={() => void store.submitOnboarding(step.id, choice.value)}
+							disabled={submitting()}
+							onClick={() => void submit(step.id, choice.value)}
 						>
 							<strong>{choice.label}</strong>
 							<span>{choice.description}</span>

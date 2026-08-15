@@ -14,6 +14,7 @@ export interface OnboardingStore {
 	error(): unknown;
 	refetch(): void;
 	get(): Promise<OnboardingData>;
+	resync(): Promise<void>;
 	submit(stepId: string, answer?: string): Promise<void>;
 	/** @internal hydrate from the boot snapshot; used by createCompanionStore. */
 	_hydrate(value: unknown): void;
@@ -46,6 +47,8 @@ export function createOnboardingStore(client: CompanionClient): OnboardingStore 
 		void actions.refetch();
 	};
 
+	const get = (): Promise<OnboardingData> => invoke(client, () => client.onboarding.get());
+
 	return {
 		data,
 		loading: () => resource.loading,
@@ -54,7 +57,8 @@ export function createOnboardingStore(client: CompanionClient): OnboardingStore 
 			setApplied(undefined);
 			void actions.refetch();
 		},
-		get: () => invoke(client, () => client.onboarding.get()),
+		get,
+		resync: async () => apply(await get()),
 		submit: async (stepId, answer) => {
 			const result = await invoke<unknown>(client, () => client.onboarding.submit(stepId, answer));
 			apply(result);
