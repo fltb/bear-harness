@@ -1,14 +1,13 @@
 /**
- * Locates the unpacked packaged binary for the current platform (from
- * product.config.ts) and runs the packaged smoke spec with
- * BEAR_PACKAGED_BINARY set. Fails loudly when the release is missing.
+ * Locates the unpacked packaged binary from @bear-harness/product-config and
+ * runs the packaged smoke with BEAR_PACKAGED_BINARY set.
  */
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { productConfig } from "../product.config.ts";
+import { productConfig } from "@bear-harness/product-config";
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const releaseDir = join(desktop, "release");

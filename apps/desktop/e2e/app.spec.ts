@@ -1,11 +1,11 @@
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { productConfig } from "@bear-harness/product-config";
 import { _electron as electron } from "playwright";
 import { expect, test } from "playwright/test";
-import { productConfig } from "../product.config";
 import { assertProductWindow } from "./helpers";
 
 const desktopRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -56,7 +56,6 @@ test("source build loads from file:// with official identity and isolated diagno
 			"src",
 			/^data:image\/svg\+xml;base64,/,
 		);
-
 	} finally {
 		await electronApp.close();
 		rmSync(tempRoot, { recursive: true, force: true });

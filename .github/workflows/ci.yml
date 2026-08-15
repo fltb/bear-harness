@@ -3,6 +3,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -51,6 +54,8 @@ jobs:
       - run: npm audit signatures
 
   e2e:
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    needs: [quality, web-e2e]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
@@ -64,10 +69,24 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgtk-3-0 libgbm1 libasound2t64 libxss1 libxshmfence1 xvfb
-      - run: xvfb-run -a npm run test:e2e
+      - run: xvfb-run -a npm run test:e2e:electron
+
+  web-e2e:
+    needs: [quality]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npx --no-install playwright install --with-deps chromium
+      - run: npm run test:e2e:web
 
   package:
-    needs: [quality]
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    needs: [quality, web-e2e, e2e]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -119,7 +138,7 @@ jobs:
         run: |
           set -euo pipefail
           APP=$(ls -d apps/desktop/release/mac*/*.app | head -1)
-          EXE="$APP/Contents/MacOS/$(node --input-type=module -e "const { productConfig } = await import('./apps/desktop/product.config.ts'); process.stdout.write(productConfig.executableName)")"
+          EXE="$APP/Contents/MacOS/$(node --input-type=module -e "const { productConfig } = await import('@bear-harness/product-config'); process.stdout.write(productConfig.executableName)")"
           lipo -archs "$EXE" | grep -q arm64
           lipo -archs "$EXE" | grep -q x86_64
           FRAMEWORK="$APP/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework"
@@ -129,7 +148,7 @@ jobs:
         if: matrix.os-name == 'win'
         shell: pwsh
         run: |
-          $exeName = node --input-type=module -e "const { productConfig } = await import('./apps/desktop/product.config.ts'); process.stdout.write(productConfig.executableName)"
+          $exeName = node --input-type=module -e "const { productConfig } = await import('@bear-harness/product-config'); process.stdout.write(productConfig.executableName)"
           $exe = Get-ChildItem apps/desktop/release/win-unpacked -Filter "$exeName.exe" | Select-Object -First 1
           if (-not $exe) { throw "packaged exe not found" }
           node --input-type=module -e "const fs = require('node:fs'); const buf = fs.readFileSync(process.argv[1]); const pe = buf.readUInt32LE(0x3c); const machine = buf.readUInt16LE(pe + 4); if (machine !== 0x8664) { throw new Error('expected x64 (0x8664), got 0x' + machine.toString(16)); }" $exe.FullName
@@ -143,7 +162,7 @@ jobs:
           APPIMAGE=$(ls apps/desktop/release/*.AppImage | head -1)
           chmod +x "$APPIMAGE"
           APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE" --appimage-extract >/dev/null
-          BIN=$(node --input-type=module -e "const { productConfig } = await import('./apps/desktop/product.config.ts'); process.stdout.write(productConfig.executableName)")
+          BIN=$(node --input-type=module -e "const { productConfig } = await import('@bear-harness/product-config'); process.stdout.write(productConfig.executableName)")
           file "squashfs-root/usr/bin/$BIN" | grep -q "x86-64"
       - name: Packaged app smoke
         shell: bash

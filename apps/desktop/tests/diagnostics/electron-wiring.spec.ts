@@ -1,14 +1,14 @@
 // @vitest-environment node
 
+import type { Diagnostics } from "@bear-harness/host-runtime";
+import { DIAGNOSTICS_POLICY } from "@bear-harness/host-runtime";
 import { describe, expect, it, vi } from "vitest";
-import { DIAGNOSTICS_POLICY } from "../../src/main/diagnostics/contracts.js";
 import {
 	type IpcEventLike,
 	registerElectronDiagnostics,
 	registerWindowHooks,
 	type WindowRegistration,
 } from "../../src/main/diagnostics/electron.js";
-import type { Diagnostics } from "../../src/main/diagnostics/index.js";
 
 const ALLOWED_URL = "file:///dist/renderer/index.html";
 const TRACEPARENT = `00-${"aa".repeat(16)}-${"bb".repeat(8)}-01`;

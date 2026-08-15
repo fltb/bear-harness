@@ -1,6 +1,6 @@
+import type { ProductConfig } from "@bear-harness/product-config";
 import type { _electron } from "playwright";
 import { expect } from "playwright/test";
-import type { ProductConfig } from "../product.config";
 
 export type ElectronApp = Awaited<ReturnType<typeof _electron.launch>>;
 
@@ -16,7 +16,7 @@ interface CharacterProjection {
 
 /**
  * Shared packaged/source UI assertions. Product identity comes from
- * `product.config`; character identity and copy are read through the real
+ * `@bear-harness/product-config`; character identity and copy are read through the real
  * preload snapshot, never duplicated in the product configuration or test.
  */
 export async function assertProductWindow(
@@ -40,7 +40,9 @@ export async function assertProductWindow(
 	})) as CharacterProjection;
 
 	await expect(window).toHaveTitle(product.productName);
-	await expect(window.getByRole("heading", { level: 1 })).toHaveText(character.character.scene_title);
+	await expect(window.getByRole("heading", { level: 1 })).toHaveText(
+		character.character.scene_title,
+	);
 	await expect(window.getByText(character.name, { exact: true })).toBeVisible();
 	await expect(window.getByText(character.character.subtitle, { exact: true })).toBeVisible();
 	await expect(window.getByText(character.character.greeting)).toBeVisible();

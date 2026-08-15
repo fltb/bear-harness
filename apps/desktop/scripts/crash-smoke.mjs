@@ -11,26 +11,26 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const crashpadModule = join(desktop, "dist/main/diagnostics/crashpad.js");
+const crashpadModule = resolve(desktop, "../../packages/host-runtime/dist/diagnostics/crashpad.js");
 
 if (!existsSync(crashpadModule)) {
 	process.stderr.write(
-		"crash smoke: dist/main/diagnostics/crashpad.js missing; run npm run build first\n",
+		"crash smoke: host-runtime Crashpad module missing; run npm run build first\n",
 	);
 	process.exit(1);
 }
 
 const root = mkdtempSync(join(tmpdir(), "bear-crash-smoke-"));
 const launchId = randomUUID();
-const entry = join(root, "entry.cjs");
+const entry = join(root, "entry.mjs");
 writeFileSync(
 	entry,
 	[
-		'const { app, crashReporter } = require("electron");',
-		`const { configureCrashpad } = require(${JSON.stringify(crashpadModule)});`,
+		'import { app, crashReporter } from "electron";',
+		`import { configureCrashpad } from ${JSON.stringify(pathToFileURL(crashpadModule).href)};`,
 		`configureCrashpad({ app, reporter: crashReporter, root: ${JSON.stringify(root)}, launchId: ${JSON.stringify(launchId)} });`,
 		"app.whenReady().then(() => { setTimeout(() => process.crash(), 200); });",
 		"",

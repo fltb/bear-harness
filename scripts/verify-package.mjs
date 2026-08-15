@@ -1,6 +1,6 @@
 /**
- * Package artifact gate: reads the dynamic release identity from
- * product.config.ts (never hardcoding Cyber Bear), expands the artifactName
+ * Package artifact gate: reads the dynamic release identity from the shared
+ * product-config package (never hardcoding Cyber Bear), expands the artifactName
  * macro template for the requested os/arch/extensions, and verifies each
  * artifact exists with non-zero size under apps/desktop/release. Prints a
  * JSON manifest (paths + sizes) that CI uses for uploads and arch proofs.
@@ -17,7 +17,7 @@ const repoRoot = resolve(here, "..");
 const desktopRoot = join(repoRoot, "apps/desktop");
 const releaseDir = join(desktopRoot, "release");
 
-const { productConfig } = await import(join(desktopRoot, "product.config.ts"));
+const { productConfig } = await import(join(repoRoot, "packages/product-config/src/index.ts"));
 const version = JSON.parse(readFileSync(join(desktopRoot, "package.json"), "utf8")).version;
 
 const [osName, arch, ...extensions] = process.argv.slice(2);
@@ -27,11 +27,13 @@ if (!osName || !arch || extensions.length === 0) {
 }
 
 function expand(ext) {
+	const targetArch =
+		osName === "linux" && arch === "x64" ? (ext === "deb" ? "amd64" : "x86_64") : arch;
 	return productConfig.artifactName
 		.replaceAll("${productName}", productConfig.productName)
 		.replaceAll("${version}", String(version))
 		.replaceAll("${os}", osName)
-		.replaceAll("${arch}", arch)
+		.replaceAll("${arch}", targetArch)
 		.replaceAll("${ext}", ext);
 }
 

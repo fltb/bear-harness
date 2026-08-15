@@ -1,6 +1,6 @@
+import { productConfig } from "@bear-harness/product-config";
 import { _electron as electron } from "playwright";
 import { expect, test } from "playwright/test";
-import { productConfig } from "../product.config";
 import { assertProductWindow } from "./helpers";
 
 /**
