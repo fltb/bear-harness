@@ -11,11 +11,11 @@
  *   node apps/desktop/scripts/m0-spikes/codex-discovery-spike.mjs
  */
 
-import { statSync, realpathSync, readlinkSync, lstatSync, createReadStream } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { execFileSync, spawnSync } from "node:child_process";
+import { createReadStream, lstatSync, readlinkSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 const PINNED_VERSION = "0.147.0";
 const report = { pinnedVersion: PINNED_VERSION, candidates: [], decision: null };
@@ -54,7 +54,16 @@ function resolveChain(start) {
 }
 
 async function probeCandidate(name, entry) {
-	const rec = { name, entry, chain: null, version: null, versionExact: false, sha256: null, status: null, note: null };
+	const rec = {
+		name,
+		entry,
+		chain: null,
+		version: null,
+		versionExact: false,
+		sha256: null,
+		status: null,
+		note: null,
+	};
 	try {
 		const resolved = resolveChain(entry);
 		rec.chain = resolved.chain;
@@ -66,7 +75,11 @@ async function probeCandidate(name, entry) {
 		}
 		const finalBin = resolved.chain[resolved.chain.length - 1];
 		// Reject if the final target escapes its declared install root.
-		const root = entry.startsWith("/opt/homebrew") ? "/opt/homebrew" : entry.startsWith("/usr/local") ? "/usr/local" : homedir();
+		const root = entry.startsWith("/opt/homebrew")
+			? "/opt/homebrew"
+			: entry.startsWith("/usr/local")
+				? "/usr/local"
+				: homedir();
 		if (!finalBin.startsWith(root)) {
 			rec.status = "rejected";
 			rec.note = `final target escapes declared install root: ${finalBin}`;
@@ -74,10 +87,14 @@ async function probeCandidate(name, entry) {
 			return rec;
 		}
 		// Bounded hidden-argv version probe; parse the FIRST numeric token.
-		const out = spawnSync(finalBin, ["--version"], { encoding: "utf8", timeout: 10000, windowsHide: true });
+		const out = spawnSync(finalBin, ["--version"], {
+			encoding: "utf8",
+			timeout: 10000,
+			windowsHide: true,
+		});
 		const raw = (out.stdout ?? "") + (out.stderr ?? "");
 		const m = raw.match(/(\d+\.\d+\.\d+)/);
-		rec.version = m ? m[1] : (raw.trim().slice(0, 60) || null);
+		rec.version = m ? m[1] : raw.trim().slice(0, 60) || null;
 		rec.versionExact = rec.version === PINNED_VERSION;
 		rec.sha256 = await sha256Of(finalBin);
 		rec.status = rec.versionExact ? "usable" : "version_mismatch";
@@ -98,7 +115,9 @@ async function addCandidate(name, entry) {
 	await probeCandidate(name, entry);
 }
 
-const pathEntries = (process.env.PATH ?? "").split(":").map((d) => join(d, process.platform === "win32" ? "codex.exe" : "codex"));
+const pathEntries = (process.env.PATH ?? "")
+	.split(":")
+	.map((d) => join(d, process.platform === "win32" ? "codex.exe" : "codex"));
 for (const p of pathEntries) {
 	if (p.startsWith(homedir() + "/.nvm") || p.startsWith(homedir() + "/.fnm")) continue; // keep the walk bounded
 	try {
@@ -113,7 +132,12 @@ await addCandidate("homebrew", "/opt/homebrew/bin/codex");
 // Decision: only an exact 0.147.0 candidate makes the profile usable.
 const usable = report.candidates.find((c) => c.status === "usable");
 if (usable) {
-	report.decision = { status: "usable", profile: "user-codex-0.147.0", canonicalPath: usable.chain.at(-1), sha256: usable.sha256 };
+	report.decision = {
+		status: "usable",
+		profile: "user-codex-0.147.0",
+		canonicalPath: usable.chain.at(-1),
+		sha256: usable.sha256,
+	};
 } else {
 	const mismatches = report.candidates.filter((c) => c.status === "version_mismatch");
 	report.decision = {

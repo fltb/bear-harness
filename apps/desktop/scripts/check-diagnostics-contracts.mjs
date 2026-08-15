@@ -10,7 +10,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const contractsUrl = pathToFileURL(resolve(here, "../src/main/diagnostics/contracts.ts")).href;
+const contractsUrl = pathToFileURL(
+	resolve(here, "../../../packages/host-runtime/src/diagnostics/contracts.ts"),
+).href;
 
 const EXPECTED_POLICY = {
 	localOnly: true,

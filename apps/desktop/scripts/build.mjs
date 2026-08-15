@@ -3,11 +3,10 @@
  * dist/brand/BRAND-ATTRIBUTION.txt), compile main, flatten the main emit
  * layout, compile preload, then run the Rsbuild renderer build.
  *
- * The main tsc config uses `rootDir: "."` because the main process imports
- * product.config.ts; tsc emits `dist/main/src/main/*` and
- * `dist/main/product.config.js`. This script flattens `dist/main/src/main/*`
- * up to `dist/main/` so the package `main` field (`dist/main/index.js`) and
- * the `../renderer` / `../preload` relative paths hold in every mode.
+ * The app's main TypeScript project emits `dist/main/src/main/*`; this
+ * script promotes that entry to `dist/main/index.js` after building the
+ * shared runtime packages. The desktop shell only imports those packages
+ * through their public exports.
  */
 
 import { spawnSync } from "node:child_process";
@@ -18,6 +17,7 @@ import { flattenMainEmit } from "./flatten-main.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const desktop = resolve(here, "..");
+const repoRoot = resolve(desktop, "..", "..");
 
 function run(cmd, args, cwd = desktop) {
 	const result = spawnSync(cmd, args, { cwd, stdio: "inherit" });
@@ -27,6 +27,15 @@ function run(cmd, args, cwd = desktop) {
 }
 
 rmSync(resolve(desktop, "dist"), { recursive: true, force: true });
+for (const workspace of [
+	"@bear-harness/product-config",
+	"@bear-harness/protocol",
+	"@bear-harness/companion-types",
+	"@bear-harness/host-runtime",
+	"@bear-harness/companion-ui",
+]) {
+	run("npm", ["run", "build", "--workspace", workspace], repoRoot);
+}
 run("node", ["scripts/validate-product-config.mjs"]);
 run("npx", ["--no-install", "tsc", "-p", "tsconfig.main.json"]);
 flattenMainEmit(desktop);

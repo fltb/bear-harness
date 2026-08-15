@@ -1,0 +1,112 @@
+.web-dev-debug-toggle {
+	position: fixed;
+	right: 22px;
+	bottom: 22px;
+	z-index: 40;
+	border: 1px solid #8bd0bb;
+	border-radius: 999px;
+	background: #102a31;
+	color: #e8f2ee;
+	padding: 8px 12px;
+	font:
+		600 12px / 1 "Avenir Next",
+		"PingFang SC",
+		sans-serif;
+}
+
+.web-dev-debug-panel {
+	position: fixed;
+	right: 18px;
+	bottom: 18px;
+	z-index: 41;
+	width: min(460px, calc(100vw - 36px));
+	max-height: calc(100vh - 36px);
+	overflow: auto;
+	border: 1px solid rgba(139, 208, 187, 0.48);
+	border-radius: 14px;
+	background: #07171c;
+	box-shadow: 0 18px 60px rgba(0, 0, 0, 0.46);
+	color: #e8f2ee;
+	padding: 14px;
+	font:
+		13px / 1.45 "Avenir Next",
+		"PingFang SC",
+		sans-serif;
+}
+
+.web-dev-debug-panel header,
+.web-dev-debug-panel section {
+	display: grid;
+	gap: 8px;
+}
+
+.web-dev-debug-panel header {
+	grid-template-columns: 1fr auto;
+	align-items: center;
+}
+
+.web-dev-debug-panel section {
+	margin-top: 14px;
+	border-top: 1px solid rgba(139, 208, 187, 0.2);
+	padding-top: 12px;
+}
+
+.web-dev-debug-panel h2 {
+	margin: 0;
+	font-size: 13px;
+}
+
+.web-dev-debug-panel p {
+	margin: 9px 0 0;
+	color: #b9ccc6;
+}
+
+.web-dev-debug-panel label {
+	display: grid;
+	gap: 4px;
+}
+
+.web-dev-debug-panel input,
+.web-dev-debug-panel select,
+.web-dev-debug-panel textarea {
+	width: 100%;
+	box-sizing: border-box;
+	border: 1px solid rgba(139, 208, 187, 0.3);
+	border-radius: 7px;
+	background: #102a31;
+	color: #e8f2ee;
+	padding: 7px;
+	font: inherit;
+}
+
+.web-dev-debug-panel textarea {
+	min-height: 84px;
+	resize: vertical;
+	font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.web-dev-debug-panel button {
+	justify-self: start;
+	border: 1px solid rgba(139, 208, 187, 0.48);
+	border-radius: 7px;
+	background: #183a40;
+	color: #e8f2ee;
+	padding: 6px 9px;
+	font: inherit;
+}
+
+.web-dev-debug-panel pre {
+	margin: 12px 0 0;
+	overflow: auto;
+	border-radius: 7px;
+	background: #102a31;
+	padding: 8px;
+	font:
+		11px / 1.35 "SFMono-Regular",
+		Consolas,
+		monospace;
+}
+
+.web-dev-debug-error {
+	color: #f0aaa1 !important;
+}

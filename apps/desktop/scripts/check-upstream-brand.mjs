@@ -17,7 +17,9 @@ import { validateProductConfig } from "./validate-product-config.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const explicitPath = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
-const configPath = explicitPath ? resolve(explicitPath) : resolve(here, "../product.config.ts");
+const configPath = explicitPath
+	? resolve(explicitPath)
+	: resolve(here, "../../../packages/product-config/src/index.ts");
 
 function deepEqual(a, b) {
 	return JSON.stringify(a) === JSON.stringify(b);

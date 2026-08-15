@@ -8,8 +8,8 @@
  * Writes a JSON report to stdout (and <outdir>/report.json).
  */
 
-import { mkdir, writeFile, readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -132,8 +132,7 @@ function record(format, ok, checks) {
 		rows: cell.length,
 		cellB2: cell[1]?.[1],
 	};
-	checks.ok =
-		checks.sheetName === "统计" && checks.rows === 3 && String(checks.cellB2) === "42";
+	checks.ok = checks.sheetName === "统计" && checks.rows === 3 && String(checks.cellB2) === "42";
 	await writeFile(join(outDir, "spike-report.xlsx"), buf);
 	const saved = await readFile(join(outDir, "spike-report.xlsx"));
 	const wb3 = XLSX.read(saved, { type: "buffer" });
@@ -182,7 +181,11 @@ function record(format, ok, checks) {
 {
 	const XLSX = await import("xlsx");
 	const wb = XLSX.utils.book_new();
-	const ws = XLSX.utils.aoa_to_sheet([["=HYPERLINK(\"http://evil\",\"x\")"], ["+SUM(1,1)"], ["-1+1"], ["@cmd"], ["\tTAB"]].map((r) => [guard(r[0])]));
+	const ws = XLSX.utils.aoa_to_sheet(
+		[['=HYPERLINK("http://evil","x")'], ["+SUM(1,1)"], ["-1+1"], ["@cmd"], ["\tTAB"]].map((r) => [
+			guard(r[0]),
+		]),
+	);
 	XLSX.utils.book_append_sheet(wb, ws, "guard");
 	const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 	const wb2 = XLSX.read(buf, { type: "buffer" });
@@ -199,5 +202,7 @@ function guard(v) {
 await writeFile(join(outDir, "report.json"), JSON.stringify(report, null, 2));
 const allOk = report.every((r) => r.ok);
 console.log(JSON.stringify(report, null, 2));
-console.log(`\nM0 office spike: ${allOk ? "PASS" : "FAIL"} (report at ${join(outDir, "report.json")})`);
+console.log(
+	`\nM0 office spike: ${allOk ? "PASS" : "FAIL"} (report at ${join(outDir, "report.json")})`,
+);
 process.exit(allOk ? 0 : 1);

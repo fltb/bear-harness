@@ -1,5 +1,5 @@
-import type { ProductConfig } from "../product.config";
-import { productConfig as officialConfig } from "../product.config";
+import type { ProductConfig } from "@bear-harness/product-config";
+import { productConfig as officialConfig } from "@bear-harness/product-config";
 
 /** The official product config as shipped. */
 export const OFFICIAL_PRODUCT: Readonly<ProductConfig> = officialConfig;

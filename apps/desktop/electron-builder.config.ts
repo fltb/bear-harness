@@ -1,7 +1,6 @@
 /**
- * electron-builder configuration. The single source of release identity is
- * product.config.ts; this file only maps it onto electron-builder options so
- * the UI title and the installation identity can never drift apart.
+ * electron-builder configuration. @bear-harness/product-config is the single
+ * source of release identity, so UI title and installation identity cannot drift.
  *
  * - Linux desktop entry Name = productName; `desktopName` in the package
  *   metadata is overridden to appId via extraMetadata (so the .desktop
@@ -17,12 +16,12 @@
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { productConfig } from "@bear-harness/product-config";
 import type { Configuration } from "electron-builder";
-import { productConfig } from "./product.config.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..");
-// Icon paths in product.config.ts are repo-root-relative.
+// Icon paths in the shared product config are repo-root-relative.
 const icon = productConfig.icon ? resolve(repoRoot, productConfig.icon) : undefined;
 
 const config: Configuration = {
@@ -35,7 +34,8 @@ const config: Configuration = {
 		output: "release",
 	},
 	asar: true,
-	files: ["dist/**", "!dist/.runtime-build/**", "!**/*.node"],
+	asarUnpack: ["node_modules/@napi-rs/canvas*/**/*"],
+	files: ["dist/**", "!dist/.runtime-build/**"],
 	// Desktop identity: package.json metadata's desktopName is overridden to
 	// appId so Linux desktop integration matches the configured app id.
 	extraMetadata: {
@@ -49,20 +49,21 @@ const config: Configuration = {
 	],
 	mac: {
 		identity: null,
-		...(icon ? { icon } : {}),
+		icon,
 	},
 	linux: {
 		category: "Utility",
+		maintainer: productConfig.brandLicense.creator,
 		syncDesktopName: true,
 		desktop: {
 			entry: {
 				Name: productConfig.productName,
 			},
 		},
-		...(icon ? { icon } : {}),
+		icon,
 	},
 	win: {
-		...(icon ? { icon } : {}),
+		icon,
 	},
 };
 

@@ -1,0 +1,15 @@
+{
+	"compilerOptions": {
+		"target": "ES2023",
+		"lib": ["ES2024"],
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		"forceConsistentCasingInFileNames": true,
+		"skipLibCheck": true,
+		"verbatimModuleSyntax": true,
+		"types": ["node"]
+	},
+	"include": ["server/**/*.ts", "scripts/**/*.mjs"]
+}

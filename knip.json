@@ -1,0 +1,53 @@
+{
+	"$schema": "./node_modules/knip/schema.json",
+	"include": ["files", "dependencies", "devDependencies", "unlisted", "unresolved"],
+	"workspaces": {
+		".": {
+			"entry": ["scripts/**/*.mjs", "prototypes/**/*.js"],
+			"project": ["scripts/**/*.mjs", "prototypes/**/*.js"]
+		},
+		"apps/desktop": {
+			"entry": [
+				"src/main/index.ts",
+				"src/preload/index.cts",
+				"src/renderer/index.tsx",
+				"e2e/**/*.ts",
+				"scripts/**/*.mjs",
+				"electron-builder.config.ts",
+				"playwright*.config.ts"
+			],
+			"project": ["src/**/*.{ts,cts,tsx}", "e2e/**/*.ts", "scripts/**/*.mjs", "*.config.ts"]
+		},
+		"apps/web-dev": {
+			"entry": ["server/index.ts", "e2e/**/*.ts", "scripts/**/*.mjs", "*.config.ts"],
+			"project": [
+				"src/**/*.{ts,tsx}",
+				"server/**/*.ts",
+				"e2e/**/*.ts",
+				"scripts/**/*.mjs",
+				"*.config.ts"
+			]
+		},
+		"packages/product-config": {
+			"project": ["src/**/*.ts"]
+		},
+		"packages/protocol": {
+			"project": ["src/**/*.ts"]
+		},
+		"packages/companion-types": {
+			"project": ["src/**/*.ts"]
+		},
+		"packages/companion-client": {
+			"project": ["src/**/*.ts"]
+		},
+		"packages/companion-ui": {
+			"entry": ["tests/**/*.tsx"],
+			"project": ["src/**/*.{ts,tsx}", "src/**/*.css", "tests/**/*.tsx"]
+		},
+		"packages/host-runtime": {
+			"entry": ["tests/**/*.ts"],
+			"project": ["src/**/*.ts", "tests/**/*.ts"],
+			"ignoreDependencies": ["@agentclientprotocol/codex-acp"]
+		}
+	}
+}

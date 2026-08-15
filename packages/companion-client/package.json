@@ -1,0 +1,23 @@
+{
+	"name": "@bear-harness/companion-client",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"typecheck": "tsc -p tsconfig.json --noEmit"
+	},
+	"dependencies": {
+		"@bear-harness/companion-types": "file:../companion-types",
+		"@bear-harness/protocol": "file:../protocol"
+	},
+	"devDependencies": {
+		"typescript": "7.0.2"
+	}
+}

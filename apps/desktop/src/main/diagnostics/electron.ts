@@ -18,10 +18,13 @@
  * rate-limit rejection is written at most once per 60 s per window.
  */
 
-import type { DiagnosticName } from "./contracts.js";
-import { isErrorType, RENDERER_FAULT_KINDS } from "./contracts.js";
-import type { Diagnostics } from "./index.js";
-import { parseTraceparent } from "./trace.js";
+import {
+	type DiagnosticName,
+	type Diagnostics,
+	isErrorType,
+	parseTraceparent,
+	RENDERER_FAULT_KINDS,
+} from "@bear-harness/host-runtime";
 
 export interface WindowRegistration {
 	traceparent: string;

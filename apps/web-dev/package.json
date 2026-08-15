@@ -1,0 +1,30 @@
+{
+	"name": "@bear-harness/web-dev",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "node scripts/dev.mjs",
+		"build": "node scripts/build.mjs",
+		"typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+		"test:e2e": "playwright test"
+	},
+	"dependencies": {
+		"@bear-harness/companion-client": "file:../../packages/companion-client",
+		"@bear-harness/companion-types": "file:../../packages/companion-types",
+		"@bear-harness/companion-ui": "file:../../packages/companion-ui",
+		"@bear-harness/host-runtime": "file:../../packages/host-runtime",
+		"@bear-harness/product-config": "file:../../packages/product-config",
+		"@bear-harness/protocol": "file:../../packages/protocol"
+	},
+	"devDependencies": {
+		"@rsbuild/core": "2.1.11",
+		"@rsbuild/plugin-babel": "2.0.1",
+		"@rsbuild/plugin-solid": "1.2.2",
+		"@rsbuild/plugin-tailwindcss": "2.0.3",
+		"@types/node": "24.13.3",
+		"playwright": "1.62.1",
+		"solid-js": "1.9.14",
+		"typescript": "7.0.2"
+	}
+}

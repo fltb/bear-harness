@@ -10,12 +10,12 @@
  *   node scripts/m0-spikes/rpc-framing-spike.mjs
  */
 
-import { statSync } from "node:fs";
-import { PassThrough } from "node:stream";
 import { spawn } from "node:child_process";
+import { statSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -48,7 +48,12 @@ function record(name, ok, checks) {
 
 // --- 1. serializeJsonLine round-trip -------------------------------------
 {
-	const obj = { type: "response", command: "get_state", success: true, data: { id: "x\u2028y\u2029z" } };
+	const obj = {
+		type: "response",
+		command: "get_state",
+		success: true,
+		data: { id: "x\u2028y\u2029z" },
+	};
 	const line = serializeJsonLine(obj);
 	const checks = {
 		endsWithLf: line.endsWith("\n"),
@@ -103,7 +108,11 @@ function record(name, ok, checks) {
 		bothChunkedRecords: received.some((l) => l.n === 1) && received.some((l) => l.n === 2),
 		badJsonIsError: errors.length === 1 && errors[0] === "{not json}",
 	};
-	checks.ok = checks.firstParsesWithU2028 && checks.crlfStripped && checks.bothChunkedRecords && checks.badJsonIsError;
+	checks.ok =
+		checks.firstParsesWithU2028 &&
+		checks.crlfStripped &&
+		checks.bothChunkedRecords &&
+		checks.badJsonIsError;
 	record("framing-adapter-corpus", checks.ok, checks);
 }
 
@@ -157,7 +166,11 @@ function record(name, ok, checks) {
 		killedAfterStdinEof: exitCode !== 0, // SIGTERM after stdin EOF is the expected lifecycle
 		stderrBounded: stderrChunks.length < 200,
 	};
-	checks.ok = checks.everyLineParsesAsJson && checks.gotResponse && checks.responseSuccess && checks.killedAfterStdinEof;
+	checks.ok =
+		checks.everyLineParsesAsJson &&
+		checks.gotResponse &&
+		checks.responseSuccess &&
+		checks.killedAfterStdinEof;
 	record("rpc-entry-end-to-end", checks.ok, checks);
 	await rm(agentDir, { recursive: true, force: true });
 }

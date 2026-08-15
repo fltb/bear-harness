@@ -1,6 +1,10 @@
 {
 	"files": [],
 	"references": [
+		{ "path": "./packages/product-config/tsconfig.json" },
+		{ "path": "./packages/protocol/tsconfig.json" },
+		{ "path": "./packages/companion-client/tsconfig.json" },
+		{ "path": "./packages/host-runtime/tsconfig.json" },
 		{ "path": "./apps/desktop/tsconfig.main.json" },
 		{ "path": "./apps/desktop/tsconfig.preload.json" },
 		{ "path": "./apps/desktop/tsconfig.renderer.json" }

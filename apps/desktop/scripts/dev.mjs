@@ -19,6 +19,7 @@ import { flattenMainEmit } from "./flatten-main.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const desktop = resolve(here, "..");
+const repoRoot = resolve(desktop, "..", "..");
 const distMain = resolve(desktop, "dist/main");
 const nestedMain = resolve(distMain, "src/main");
 
@@ -69,6 +70,19 @@ function portOpen() {
 }
 
 async function main() {
+	for (const workspace of [
+		"@bear-harness/product-config",
+		"@bear-harness/protocol",
+		"@bear-harness/companion-types",
+		"@bear-harness/host-runtime",
+	]) {
+		const result = spawnSync("npm", ["run", "build", "--workspace", workspace], {
+			cwd: repoRoot,
+			stdio: "inherit",
+		});
+		if (result.status !== 0) process.exit(result.status ?? 1);
+	}
+
 	// Validate first (writes dist/brand/BRAND-ATTRIBUTION.txt).
 	const validator = spawnSync("node", ["scripts/validate-product-config.mjs"], {
 		cwd: desktop,

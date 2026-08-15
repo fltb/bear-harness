@@ -97,16 +97,15 @@ const companionFacade = Object.freeze({
 		get: () => ipcRenderer.invoke("character.get:v1", {}),
 	}),
 	events: Object.freeze({
-		subscribe: (afterSeq: number) =>
-			ipcRenderer.invoke("events.subscribe:v1", { afterSeq }),
+		subscribe: (afterSeq: number) => ipcRenderer.invoke("events.subscribe:v1", { afterSeq }),
 	}),
 	onboarding: Object.freeze({
 		get: () => ipcRenderer.invoke("onboarding.get:v1", {}),
-		setName: (name: string) => ipcRenderer.invoke("onboarding.setName:v1", { name }),
-		setRelation: (kind: string) =>
-			ipcRenderer.invoke("onboarding.setRelation:v1", { kind }),
-		setMemoryDecision: (enabled: boolean) =>
-			ipcRenderer.invoke("onboarding.setMemoryDecision:v1", { enabled }),
+		submit: (stepId: string, answer?: string) =>
+			ipcRenderer.invoke(
+				"onboarding.submit:v1",
+				answer === undefined ? { stepId } : { stepId, answer },
+			),
 	}),
 	conversation: Object.freeze({
 		list: () => ipcRenderer.invoke("conversation.list:v1", {}),
@@ -133,17 +132,11 @@ const companionFacade = Object.freeze({
 			ipcRenderer.invoke("message.correct:v1", { conversationId, reason, applyScope }),
 		branch: (conversationId: string, messageId: string) =>
 			ipcRenderer.invoke("message.branch:v1", { conversationId, messageId }),
-		abort: (conversationId: string) =>
-			ipcRenderer.invoke("message.abort:v1", { conversationId }),
+		abort: (conversationId: string) => ipcRenderer.invoke("message.abort:v1", { conversationId }),
 	}),
 	memory: Object.freeze({
 		listCandidates: () => ipcRenderer.invoke("memory.listCandidates:v1", {}),
-		decideCandidate: (
-			candidateId: string,
-			decision: string,
-			editedText?: string,
-			scope?: string,
-		) =>
+		decideCandidate: (candidateId: string, decision: string, editedText?: string, scope?: string) =>
 			ipcRenderer.invoke("memory.decideCandidate:v1", {
 				candidateId,
 				decision,
@@ -155,12 +148,10 @@ const companionFacade = Object.freeze({
 				query,
 				...(scope === undefined ? {} : { scope }),
 			}),
-		list: (params?: Record<string, unknown>) =>
-			ipcRenderer.invoke("memory.list:v1", params ?? {}),
+		list: (params?: Record<string, unknown>) => ipcRenderer.invoke("memory.list:v1", params ?? {}),
 		pin: (entryId: string, pinned: boolean) =>
 			ipcRenderer.invoke("memory.pin:v1", { entryId, pinned }),
-		forget: (entryId: string) =>
-			ipcRenderer.invoke("memory.forget:v1", { entryId }),
+		forget: (entryId: string) => ipcRenderer.invoke("memory.forget:v1", { entryId }),
 		exclude: (entryId: string, excluded: boolean) =>
 			ipcRenderer.invoke("memory.exclude:v1", { entryId, excluded }),
 		edit: (entryId: string, newText: string) =>
@@ -176,8 +167,7 @@ const companionFacade = Object.freeze({
 			}),
 		login: (providerId: string) =>
 			ipcRenderer.invoke("provider.login:v1", { providerId, authType: "oauth" }),
-		logout: (providerId: string) =>
-			ipcRenderer.invoke("provider.logout:v1", { providerId }),
+		logout: (providerId: string) => ipcRenderer.invoke("provider.logout:v1", { providerId }),
 	}),
 	voice: Object.freeze({
 		list: () => ipcRenderer.invoke("voice.list:v1", {}),
@@ -213,8 +203,7 @@ const companionFacade = Object.freeze({
 	}),
 	settings: Object.freeze({
 		get: () => ipcRenderer.invoke("settings.get:v1", {}),
-		set: (settings: Record<string, unknown>) =>
-			ipcRenderer.invoke("settings.set:v1", { settings }),
+		set: (settings: Record<string, unknown>) => ipcRenderer.invoke("settings.set:v1", { settings }),
 	}),
 });
 

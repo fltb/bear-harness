@@ -4,7 +4,7 @@
  * Usage:
  *   node scripts/validate-product-config.mjs [configPath] [--no-write]
  *
- * - configPath defaults to ../product.config.ts (relative to this script).
+ * - configPath defaults to the shared product-config package source.
  * - Dynamically imports the config (Node 24 executes erasable TypeScript).
  * - On any failure prints `Invalid product config: <field>: <reason>` per
  *   error and exits non-zero. There is no silent fallback.
@@ -20,8 +20,10 @@ import { OFFICIAL_BRAND } from "./official-brand.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const explicitPath = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
 // Explicit paths resolve against the caller's cwd; the default is the
-// workspace product.config.ts relative to this script's location.
-const configPath = explicitPath ? resolve(explicitPath) : resolve(here, "../product.config.ts");
+// shared product-config package source.
+const configPath = explicitPath
+	? resolve(explicitPath)
+	: resolve(here, "../../../packages/product-config/src/index.ts");
 const noWrite = process.argv.includes("--no-write");
 
 const KEBAB_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;

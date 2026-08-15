@@ -5,9 +5,8 @@
  * - Entry `src/renderer/index.tsx`, HTML template `src/renderer/index.html`,
  *   output fixed to `dist/renderer` with a relative asset prefix and no
  *   sourcemaps so the packaged app can load via `file://`.
- * - `__PRODUCT_CONFIG__` is injected at compile time from product.config.ts
- *   via `source.define`; the renderer never reads runtime config files and
- *   never sees the builder configuration.
+ * - Renderer product identity is injected by the thin desktop entry from
+ *   `@bear-harness/product-config`; this config never serializes it.
  * - CSP meta is injected per Rsbuild command mode (development vs production),
  *   never from a runtime NODE_ENV.
  */
@@ -16,7 +15,6 @@ import { defineConfig } from "@rsbuild/core";
 import { pluginBabel } from "@rsbuild/plugin-babel";
 import { pluginSolid } from "@rsbuild/plugin-solid";
 import { pluginTailwindcss } from "@rsbuild/plugin-tailwindcss";
-import { productConfig } from "./product.config.ts";
 
 const DEV_CSP = [
 	"default-src 'self'",
@@ -57,9 +55,6 @@ export default defineConfig(({ command }) => {
 		source: {
 			entry: {
 				index: "./src/renderer/index.tsx",
-			},
-			define: {
-				__PRODUCT_CONFIG__: JSON.stringify(productConfig),
 			},
 		},
 		html: {

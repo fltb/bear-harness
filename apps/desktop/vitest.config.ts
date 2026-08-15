@@ -1,40 +1,31 @@
 import { fileURLToPath } from "node:url";
-import solidPlugin from "vite-plugin-solid";
 import { defineConfig } from "vitest/config";
-import { productConfig } from "./product.config.ts";
 
 /**
- * Unit/contract test runner.
+ * Unit/contract test runner for desktop-native code.
  *
- * - Renderer tests run in jsdom with vite-plugin-solid and the Solid testing
- *   library; main diagnostics tests opt into a pure Node environment with a
- *   `// @vitest-environment node` docblock.
- * - Coverage (v8) reports to the repository-root `coverage/` directory and
- *   includes every renderer source file and every diagnostics module — even
- *   those not directly imported by a test — excluding only the renderer entry
- *   and pure type declarations.
- * - Global thresholds: lines/statements/functions >= 80%, branches >= 70%.
+ * - Only desktop-native suites run here: product-config validation and the
+ *   Electron diagnostics wiring. Host-runtime and companion-ui suites live in
+ *   their respective packages.
+ * - All retained suites run in a pure Node environment; no renderer plugins,
+ *   jsdom, or product-config defines are needed.
+ * - Coverage (v8) reports to `coverage/desktop` under the repository root,
+ *   restricted to the desktop-only Electron wiring module.
  */
 
 export default defineConfig({
-	define: {
-		__PRODUCT_CONFIG__: JSON.stringify(productConfig),
-	},
-	plugins: [solidPlugin()],
 	test: {
-		environment: "jsdom",
-		include: ["tests/**/*.spec.{ts,tsx}"],
-		setupFiles: ["./tests/setup.ts"],
+		environment: "node",
+		include: [
+			"tests/config/**/*.spec.ts",
+			"tests/diagnostics/electron-wiring.spec.ts",
+			"tests/ipc-router.spec.ts",
+		],
 		coverage: {
 			provider: "v8",
 			reporter: ["text", "json", "html", "lcov"],
-			reportsDirectory: fileURLToPath(new URL("../../coverage", import.meta.url)),
-			include: ["src/renderer/**/*.{ts,tsx}", "src/main/diagnostics/**/*.ts"],
-			exclude: [
-				"src/renderer/index.tsx",
-				"src/renderer/**/*.d.ts",
-				"src/main/diagnostics/**/*.d.ts",
-			],
+			reportsDirectory: fileURLToPath(new URL("../../coverage/desktop", import.meta.url)),
+			include: ["src/main/diagnostics/electron.ts", "src/main/ipc-router.ts"],
 			thresholds: {
 				lines: 80,
 				statements: 80,

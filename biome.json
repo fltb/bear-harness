@@ -17,6 +17,7 @@
 			"!test-results",
 			"!playwright-report",
 			"!prototypes",
+			"!config/characters/**/*.svg",
 			"!.git"
 		]
 	},
