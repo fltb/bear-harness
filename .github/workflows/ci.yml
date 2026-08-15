@@ -54,8 +54,7 @@ jobs:
       - run: npm audit signatures
 
   e2e:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    needs: [quality, web-e2e]
+    needs: [quality]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1

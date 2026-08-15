@@ -3,9 +3,19 @@
 > 永久维护的路线图，记录已确认的范围、完成记录和明确的后续阶段边界。
 > 阶段边界变化必须先改本文件再实施。
 
-## 本期范围（P0）
+## 当前交付范围（V1）
 
-核心 Companion 与真实工作闭环，包含 M0–M5 六个里程碑。详见 `docs/bear-harness-plan.md` 和 `local://core-companion-functionality-plan.md`。
+核心 Companion 与真实工作闭环，包含 M0–M5 六个里程碑及其完成后的可用性收口。详见 `docs/bear-harness-plan.md`。
+
+### 2026-08-15 — V1 可用性收口
+
+- WebDev 与桌面共用同一 HostRuntime、持久化数据库与角色包；WebDev 使用机器本地 AES-GCM 凭据 vault。
+- 角色对话连续性、自动记忆、敏感记忆确认、故事档案与持久化的 AU 模糊变更确认均已接通。
+- Canon Hub 已交付：原作资料分段、检索、可引用层级剧情模块和按话题激活的 Context Pack 路径。
+- 普通用户使用角色管理、关系记忆与故事档案；高级制作使用角色包工坊，不向前者泄露 module、scope 或原始 prompt。
+- 角色可提出现实工作草案；用户确认读写/联网范围后才执行，获准写入文件会登记为可下载成果。
+- 会话支持新建、搜索、重命名、归档和删除；删除会保留已形成记忆但解除原会话引用。
+- API key 与 OAuth 模型服务均有设置页路径；已保存 API key 会在重启后重新载入运行时。
 
 ### 完成记录
 
@@ -36,26 +46,26 @@ npm run lint && npm run typecheck && npm run test:coverage && npm run build && n
 
 ### 本期不做、方向已定的后续阶段
 
-#### P1
-- 自有角色包 schema/作者表单/校验/导出/导入入口（§12.3）
+#### 后续
+- 角色包导出/导入入口（当前已有本地角色包、作者工坊与 schema）
 - MemoryCore 可选后端（§8.6）
 - 云盘连接器
 - 外部发送/分享
 - Durable daemon（租约/重连/kill token，§9.5）
 - 仅当 10,000 条真实消息 benchmark 失败才引入的 virtualization（条件项）
 
-#### P2
+#### 后续扩展
 - data-only SillyTavern importer（§12.3）
 - 定时自动化
 - 图片生成（Provider 能力成熟后）
 - Hermes ACP/PTY（§9.4）
 - Live2D 等表现 runtime（三平台+安全+许可证 gate 通过后，§12.3）
 
-#### P2+ experimental
+#### 实验性扩展
 - 受限自动化层（capability-mapped）
 - 高风险代码层（sandboxed iframe/utility origin）
 #### 2026-08-14 — M1 Host 基础：schema、storage、artifact、事件与安全 IPC
-- src/shared/ipc-schemas.ts：32 个 :v1 IPC 通道的 TypeBox 合约
+- `packages/protocol/src/schema.ts`：统一 Zod 4 的 :v1 IPC 合约
 - src/main/storage/database.ts + event-bus.ts + artifacts/index.ts
 - IPC router + preload companion facade + global.d.ts + e2e bridge 断言
 - 角色包架构决定：YAML 元数据、semantic tokens
