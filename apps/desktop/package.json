@@ -14,7 +14,7 @@
 		"build": "node scripts/build.mjs",
 		"test:unit": "vitest run",
 		"test:coverage": "vitest run --coverage",
-		"test:e2e": "playwright test",
+		"test:e2e": "npm run build && playwright test",
 		"test:e2e:packaged": "node scripts/resolve-packaged-binary.mjs",
 		"test:diagnostics:crash": "node scripts/crash-smoke.mjs",
 		"package:mac": "npm run build && electron-builder --config electron-builder.config.ts --mac dmg zip --universal",

@@ -17,7 +17,7 @@ import {
 	type HostRuntime,
 } from "@bear-harness/host-runtime";
 import { productConfig } from "@bear-harness/product-config";
-import { app, BrowserWindow, crashReporter, ipcMain } from "electron";
+import { app, BrowserWindow, crashReporter, ipcMain, shell } from "electron";
 import {
 	registerElectronDiagnostics,
 	registerWindowHooks,
@@ -188,7 +188,10 @@ function createMainWindow(): void {
 	window.webContents.on("will-navigate", (event, url) => {
 		if (url !== allowedUrl) event.preventDefault();
 	});
-	window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+	window.webContents.setWindowOpenHandler(({ url }) => {
+		if (url.startsWith("https://")) void shell.openExternal(url);
+		return { action: "deny" };
+	});
 
 	const loadSpan = diagnostics.startSpan("window.load", {});
 	window.webContents.once("did-finish-load", () => {

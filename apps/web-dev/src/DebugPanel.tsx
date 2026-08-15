@@ -153,7 +153,7 @@ export function WebDevDebugPanel(props: {
 						</button>
 					</section>
 					<Show when={error()}>{(message) => <p class="web-dev-debug-error">{message()}</p>}</Show>
-					<Show when={output()}>{(value) => <pre>{value()}</pre>}</Show>
+					<Show when={output()}>{(value) => <pre role="status">{value()}</pre>}</Show>
 				</aside>
 			</Show>
 		</>

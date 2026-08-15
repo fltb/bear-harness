@@ -95,6 +95,8 @@ const companionFacade = Object.freeze({
 	}),
 	character: Object.freeze({
 		get: () => ipcRenderer.invoke("character.get:v1", {}),
+		list: () => ipcRenderer.invoke("character.list:v1", {}),
+		activate: (characterId: string) => ipcRenderer.invoke("character.activate:v1", { characterId }),
 	}),
 	events: Object.freeze({
 		subscribe: (afterSeq: number) => ipcRenderer.invoke("events.subscribe:v1", { afterSeq }),
@@ -116,6 +118,11 @@ const companionFacade = Object.freeze({
 				"conversation.select:v1",
 				branchId === undefined ? { id } : { id, branchId },
 			),
+		rename: (id: string, title: string) =>
+			ipcRenderer.invoke("conversation.rename:v1", { id, title }),
+		archive: (id: string, archived = true) =>
+			ipcRenderer.invoke("conversation.archive:v1", { id, archived }),
+		delete: (id: string) => ipcRenderer.invoke("conversation.delete:v1", { id }),
 	}),
 	message: Object.freeze({
 		send: (conversationId: string, text: string) =>
@@ -157,6 +164,50 @@ const companionFacade = Object.freeze({
 		edit: (entryId: string, newText: string) =>
 			ipcRenderer.invoke("memory.edit:v1", { entryId, newText }),
 	}),
+	story: Object.freeze({
+		listChanges: (branchId?: string) =>
+			ipcRenderer.invoke("story.listChanges:v1", branchId === undefined ? {} : { branchId }),
+		applyChange: (
+			text: string,
+			scope: "global" | "branch",
+			conversationId?: string,
+			branchId?: string,
+		) =>
+			ipcRenderer.invoke("story.applyChange:v1", {
+				text,
+				scope,
+				...(conversationId === undefined ? {} : { conversationId }),
+				...(branchId === undefined ? {} : { branchId }),
+			}),
+		revertChange: (changeId: string, conversationId?: string) =>
+			ipcRenderer.invoke("story.revertChange:v1", {
+				changeId,
+				...(conversationId === undefined ? {} : { conversationId }),
+			}),
+		reset: (conversationId?: string, branchId?: string) =>
+			ipcRenderer.invoke("story.reset:v1", {
+				...(conversationId === undefined ? {} : { conversationId }),
+				...(branchId === undefined ? {} : { branchId }),
+			}),
+		listProposals: (conversationId?: string) =>
+			ipcRenderer.invoke(
+				"story.listProposals:v1",
+				conversationId === undefined ? {} : { conversationId },
+			),
+		resolveProposal: (proposalId: string, accept: boolean) =>
+			ipcRenderer.invoke("story.resolveProposal:v1", { proposalId, accept }),
+	}),
+	canon: Object.freeze({
+		listSources: () => ipcRenderer.invoke("canon.listSources:v1", {}),
+		addSource: (logicalName: string, content: string) =>
+			ipcRenderer.invoke("canon.addSource:v1", { logicalName, content }),
+		search: (query: string) => ipcRenderer.invoke("canon.search:v1", { query }),
+		removeSource: (sourceId: string) => ipcRenderer.invoke("canon.removeSource:v1", { sourceId }),
+		listModules: () => ipcRenderer.invoke("canon.listModules:v1", {}),
+		upsertModule: (params: Record<string, unknown>) =>
+			ipcRenderer.invoke("canon.upsertModule:v1", params),
+		deleteModule: (id: string) => ipcRenderer.invoke("canon.deleteModule:v1", { id }),
+	}),
 	provider: Object.freeze({
 		list: () => ipcRenderer.invoke("provider.list:v1", {}),
 		setApiKey: (providerId: string, apiKey: string, sessionOnly?: boolean) =>
@@ -167,10 +218,20 @@ const companionFacade = Object.freeze({
 			}),
 		login: (providerId: string) =>
 			ipcRenderer.invoke("provider.login:v1", { providerId, authType: "oauth" }),
+		loginStatus: (providerId: string) =>
+			ipcRenderer.invoke("provider.loginStatus:v1", { providerId }),
+		loginAnswer: (providerId: string, answer: string) =>
+			ipcRenderer.invoke("provider.loginAnswer:v1", { providerId, answer }),
 		logout: (providerId: string) => ipcRenderer.invoke("provider.logout:v1", { providerId }),
 	}),
 	voice: Object.freeze({
 		list: () => ipcRenderer.invoke("voice.list:v1", {}),
+		pin: (providerId: string, modelId: string, label?: string) =>
+			ipcRenderer.invoke("voice.pin:v1", {
+				providerId,
+				modelId,
+				...(label === undefined ? {} : { label }),
+			}),
 		switch: (stackId: string, scope: string) =>
 			ipcRenderer.invoke("voice.switch:v1", { stackId, scope, rollbackAvailable: true }),
 	}),
@@ -187,6 +248,7 @@ const companionFacade = Object.freeze({
 		}) => ipcRenderer.invoke("commission.draft:v1", params),
 		approve: (commissionId: string, approvedHash: string) =>
 			ipcRenderer.invoke("commission.approve:v1", { commissionId, approvedHash }),
+		reject: (commissionId: string) => ipcRenderer.invoke("commission.reject:v1", { commissionId }),
 		launch: (commissionId: string, executorProfile: string) =>
 			ipcRenderer.invoke("commission.launch:v1", { commissionId, executorProfile }),
 	}),
@@ -200,6 +262,7 @@ const companionFacade = Object.freeze({
 	}),
 	artifact: Object.freeze({
 		list: () => ipcRenderer.invoke("artifact.list:v1", {}),
+		read: (artifactId: string) => ipcRenderer.invoke("artifact.read:v1", { artifactId }),
 	}),
 	settings: Object.freeze({
 		get: () => ipcRenderer.invoke("settings.get:v1", {}),

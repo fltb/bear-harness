@@ -20,6 +20,7 @@ export interface WebDevBootstrap {
 		icon: string | null;
 	};
 	token: string;
+	debugEnabled: boolean;
 }
 
 export function createHttpTransport(token: string): HostTransport {

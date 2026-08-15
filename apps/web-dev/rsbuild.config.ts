@@ -22,7 +22,7 @@ export default defineConfig({
 	},
 	server: {
 		host: "127.0.0.1",
-		port: 3200,
+		port: Number(process.env.BEAR_WEB_DEV_PORT ?? "3200"),
 		strictPort: true,
 		proxy: {
 			"/bootstrap": hostTarget,

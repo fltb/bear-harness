@@ -36,6 +36,15 @@ const ALL_FIELDS = [
 	"icon",
 ];
 
+export function checkUpstreamBrand(config) {
+	for (const field of ALL_FIELDS) {
+		if (!deepEqual(config[field], OFFICIAL_BRAND[field])) return field;
+	}
+	if (config.brandLicense.modified !== false) return "brandLicense.modified";
+	const genericErrors = validateProductConfig(config);
+	return genericErrors[0] ? `${genericErrors[0].field}: ${genericErrors[0].reason}` : null;
+}
+
 async function main() {
 	let config;
 	try {
@@ -47,23 +56,9 @@ async function main() {
 
 	// Exact-equality snapshot comparison first so identity changes report the
 	// upstream gate message rather than being masked by generic validation.
-	for (const field of ALL_FIELDS) {
-		if (!deepEqual(config[field], OFFICIAL_BRAND[field])) {
-			process.stderr.write(`Upstream brand mismatch: ${field}\n`);
-			process.exit(1);
-		}
-	}
-	if (config.brandLicense.modified !== false) {
-		process.stderr.write("Upstream brand mismatch: brandLicense.modified\n");
-		process.exit(1);
-	}
-
-	// Belt and suspenders: the official snapshot must also satisfy the generic rules.
-	const genericErrors = validateProductConfig(config);
-	if (genericErrors.length > 0) {
-		for (const { field, reason } of genericErrors) {
-			process.stderr.write(`Invalid product config: ${field}: ${reason}\n`);
-		}
+	const mismatch = checkUpstreamBrand(config);
+	if (mismatch) {
+		process.stderr.write(`Upstream brand mismatch: ${mismatch}\n`);
 		process.exit(1);
 	}
 

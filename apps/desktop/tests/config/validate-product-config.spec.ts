@@ -1,41 +1,20 @@
 // @vitest-environment node
 
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { validateProductConfig } from "../../scripts/validate-product-config.mjs";
 import { FORK_PRODUCT, OFFICIAL_PRODUCT } from "../fixtures";
 
 const desktopRoot = fileURLToPath(new URL("../../", import.meta.url));
-const validator = join(desktopRoot, "scripts/validate-product-config.mjs");
-
-function writeFixture(dir: string, name: string, config: unknown): string {
-	const file = join(dir, `${name}.ts`);
-	writeFileSync(file, `export const productConfig = ${JSON.stringify(config)};\n`, "utf8");
-	return file;
-}
-
-function runValidator(fixturePath: string) {
-	return spawnSync(process.execPath, [validator, fixturePath, "--no-write"], {
-		encoding: "utf8",
-	});
-}
-
 describe("validate-product-config", () => {
-	const dir = mkdtempSync(join(tmpdir(), "bear-config-"));
-
 	it("accepts the official config", () => {
-		const file = writeFixture(dir, "official", OFFICIAL_PRODUCT);
-		const result = runValidator(file);
-		expect(result.status).toBe(0);
+		expect(validateProductConfig(OFFICIAL_PRODUCT)).toEqual([]);
 	});
 
 	it("accepts a complete fork config", () => {
-		const file = writeFixture(dir, "fork", FORK_PRODUCT);
-		const result = runValidator(file);
-		expect(result.status).toBe(0);
+		expect(validateProductConfig(FORK_PRODUCT)).toEqual([]);
 	});
 
 	it.each([
@@ -57,18 +36,12 @@ describe("validate-product-config", () => {
 		],
 		["nonexistent icon", { ...FORK_PRODUCT, icon: "assets/does-not-exist.png" }, "icon"],
 	])("rejects %s with the fixed prefix", (_label, config, field) => {
-		const file = writeFixture(dir, "invalid", config);
-		const result = runValidator(file);
-		expect(result.status).not.toBe(0);
-		expect(result.stderr).toContain(`Invalid product config: ${field}:`);
+		expect(validateProductConfig(config).map((error) => error.field)).toContain(field);
 	});
 
 	it("rejects an identity change that keeps the official appId", () => {
 		const config = { ...OFFICIAL_PRODUCT, productName: "Renamed" };
-		const file = writeFixture(dir, "same-appid", config);
-		const result = runValidator(file);
-		expect(result.status).not.toBe(0);
-		expect(result.stderr).toContain("Invalid product config: appId:");
+		expect(validateProductConfig(config).map((error) => error.field)).toContain("appId");
 	});
 
 	it("rejects a non-1024x1024 PNG icon", () => {
@@ -85,10 +58,7 @@ describe("validate-product-config", () => {
 		);
 		try {
 			const config = { ...FORK_PRODUCT, icon: relative };
-			const file = writeFixture(dir, "small-icon", config);
-			const result = runValidator(file);
-			expect(result.status).not.toBe(0);
-			expect(result.stderr).toContain("Invalid product config: icon:");
+			expect(validateProductConfig(config).map((error) => error.field)).toContain("icon");
 		} finally {
 			rmSync(pngPath, { force: true });
 		}

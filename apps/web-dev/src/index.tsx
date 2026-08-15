@@ -1,5 +1,6 @@
 import { createCompanionClient } from "@bear-harness/companion-client";
 import { CompanionApp, installRendererFaultReporting } from "@bear-harness/companion-ui";
+import { Show } from "solid-js";
 import { render } from "solid-js/web";
 import "@bear-harness/companion-ui/styles.css";
 import { WebDevDebugPanel } from "./DebugPanel";
@@ -27,7 +28,9 @@ render(
 	() => (
 		<>
 			<CompanionApp product={bootstrap.product} client={client} />
-			<WebDevDebugPanel client={client} transport={transport} token={bootstrap.token} />
+			<Show when={bootstrap.debugEnabled}>
+				<WebDevDebugPanel client={client} transport={transport} token={bootstrap.token} />
+			</Show>
 		</>
 	),
 	root,
