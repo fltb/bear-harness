@@ -1,5 +1,5 @@
 {
-	"name": "@bear-harness/protocol",
+	"name": "@bear-harness/schema",
 	"version": "0.0.0",
 	"private": true,
 	"type": "module",
@@ -7,10 +7,6 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
-		},
-		"./schema": {
-			"types": "./dist/schema.d.ts",
-			"import": "./dist/schema.js"
 		}
 	},
 	"scripts": {
@@ -18,7 +14,7 @@
 		"typecheck": "tsc -p tsconfig.json --noEmit"
 	},
 	"dependencies": {
-		"@bear-harness/schema": "file:../schema"
+		"zod": "4.4.3"
 	},
 	"devDependencies": {
 		"typescript": "7.0.2"

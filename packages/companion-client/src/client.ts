@@ -18,6 +18,8 @@ export function createCompanionClient(transport: HostTransport): CompanionClient
 		}),
 		character: Object.freeze({
 			get: () => transport.invoke("character.get:v1", {}),
+			list: () => transport.invoke("character.list:v1", {}),
+			activate: (characterId: string) => transport.invoke("character.activate:v1", { characterId }),
 		}),
 		events: Object.freeze({
 			subscribe: (afterSeq: number) => transport.invoke("events.subscribe:v1", { afterSeq }),
@@ -39,6 +41,11 @@ export function createCompanionClient(transport: HostTransport): CompanionClient
 					"conversation.select:v1",
 					branchId === undefined ? { id } : { id, branchId },
 				),
+			rename: (id: string, title: string) =>
+				transport.invoke("conversation.rename:v1", { id, title }),
+			archive: (id: string, archived = true) =>
+				transport.invoke("conversation.archive:v1", { id, archived }),
+			delete: (id: string) => transport.invoke("conversation.delete:v1", { id }),
 		}),
 		message: Object.freeze({
 			send: (conversationId: string, text: string) =>
@@ -89,8 +96,62 @@ export function createCompanionClient(transport: HostTransport): CompanionClient
 			edit: (entryId: string, newText: string) =>
 				transport.invoke("memory.edit:v1", { entryId, newText }),
 		}),
+		story: Object.freeze({
+			listChanges: (branchId?: string) =>
+				transport.invoke("story.listChanges:v1", branchId === undefined ? {} : { branchId }),
+			applyChange: (
+				text: string,
+				scope: "global" | "branch",
+				conversationId?: string,
+				branchId?: string,
+			) =>
+				transport.invoke("story.applyChange:v1", {
+					text,
+					scope,
+					...(conversationId === undefined ? {} : { conversationId }),
+					...(branchId === undefined ? {} : { branchId }),
+				}),
+			revertChange: (changeId: string, conversationId?: string) =>
+				transport.invoke("story.revertChange:v1", {
+					changeId,
+					...(conversationId === undefined ? {} : { conversationId }),
+				}),
+			reset: (conversationId?: string, branchId?: string) =>
+				transport.invoke("story.reset:v1", {
+					...(conversationId === undefined ? {} : { conversationId }),
+					...(branchId === undefined ? {} : { branchId }),
+				}),
+			listProposals: (conversationId?: string) =>
+				transport.invoke(
+					"story.listProposals:v1",
+					conversationId === undefined ? {} : { conversationId },
+				),
+			resolveProposal: (proposalId: string, accept: boolean) =>
+				transport.invoke("story.resolveProposal:v1", { proposalId, accept }),
+		}),
+		canon: Object.freeze({
+			listSources: () => transport.invoke("canon.listSources:v1", {}),
+			addSource: (logicalName: string, content: string) =>
+				transport.invoke("canon.addSource:v1", { logicalName, content }),
+			search: (query: string) => transport.invoke("canon.search:v1", { query }),
+			removeSource: (sourceId: string) => transport.invoke("canon.removeSource:v1", { sourceId }),
+			listModules: () => transport.invoke("canon.listModules:v1", {}),
+			upsertModule: (params: Record<string, unknown>) =>
+				transport.invoke("canon.upsertModule:v1", params),
+			deleteModule: (id: string) => transport.invoke("canon.deleteModule:v1", { id }),
+		}),
 		provider: Object.freeze({
 			list: () => transport.invoke("provider.list:v1", {}),
+			customUpsert: (params: {
+				providerId: string;
+				name: string;
+				baseUrl: string;
+				modelId: string;
+				apiKey?: string;
+				supportsImages?: boolean;
+			}) => transport.invoke("provider.customUpsert:v1", params),
+			overrideBaseUrl: (params: { providerId: string; baseUrl: string }) =>
+				transport.invoke("provider.overrideBaseUrl:v1", params),
 			setApiKey: (providerId: string, apiKey: string, sessionOnly?: boolean) =>
 				transport.invoke("provider.setApiKey:v1", {
 					providerId,
@@ -99,10 +160,20 @@ export function createCompanionClient(transport: HostTransport): CompanionClient
 				}),
 			login: (providerId: string) =>
 				transport.invoke("provider.login:v1", { providerId, authType: "oauth" }),
+			loginStatus: (providerId: string) =>
+				transport.invoke("provider.loginStatus:v1", { providerId }),
+			loginAnswer: (providerId: string, answer: string) =>
+				transport.invoke("provider.loginAnswer:v1", { providerId, answer }),
 			logout: (providerId: string) => transport.invoke("provider.logout:v1", { providerId }),
 		}),
 		voice: Object.freeze({
 			list: () => transport.invoke("voice.list:v1", {}),
+			pin: (providerId: string, modelId: string, label?: string) =>
+				transport.invoke("voice.pin:v1", {
+					providerId,
+					modelId,
+					...(label === undefined ? {} : { label }),
+				}),
 			switch: (stackId: string, scope: string) =>
 				transport.invoke("voice.switch:v1", { stackId, scope, rollbackAvailable: true }),
 		}),
@@ -119,6 +190,7 @@ export function createCompanionClient(transport: HostTransport): CompanionClient
 			}) => transport.invoke("commission.draft:v1", params),
 			approve: (commissionId: string, approvedHash: string) =>
 				transport.invoke("commission.approve:v1", { commissionId, approvedHash }),
+			reject: (commissionId: string) => transport.invoke("commission.reject:v1", { commissionId }),
 			launch: (commissionId: string, executorProfile: string) =>
 				transport.invoke("commission.launch:v1", { commissionId, executorProfile }),
 		}),
@@ -132,6 +204,7 @@ export function createCompanionClient(transport: HostTransport): CompanionClient
 		}),
 		artifact: Object.freeze({
 			list: () => transport.invoke("artifact.list:v1", {}),
+			read: (artifactId: string) => transport.invoke("artifact.read:v1", { artifactId }),
 		}),
 		settings: Object.freeze({
 			get: () => transport.invoke("settings.get:v1", {}),

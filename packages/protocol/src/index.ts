@@ -4,12 +4,12 @@
  * Every type here is the inferred static shape of the corresponding schema
  * in `./schema.ts` (the runtime module, imported via
  * `@bear-harness/protocol/schema`). This entry imports nothing at runtime —
- * all exports are erased to an empty module — so type-only consumers never
- * pull in TypeBox at runtime. Keep the two modules in sync: schema.ts owns
+ * all exports are erased to an empty module, so type-only consumers never
+ * pull in Zod at runtime. Keep the two modules in sync: schema.ts owns
  * the wire contract, index.ts only mirrors its inferred types.
  */
 
-import type { Static } from "typebox";
+import type { Infer as Static } from "@bear-harness/schema";
 import type * as schema from "./schema.js";
 
 // ---------------------------------------------------------------------------
@@ -68,6 +68,10 @@ export type OnboardingStatus = Static<typeof schema.OnboardingStatus>;
 export type OnboardingGetRequest = Static<typeof schema.OnboardingGetRequest>;
 export type OnboardingSubmitRequest = Static<typeof schema.OnboardingSubmitRequest>;
 export type CharacterGetRequest = Static<typeof schema.CharacterGetRequest>;
+export type CharacterSummary = Static<typeof schema.CharacterSummary>;
+export type CharacterListRequest = Static<typeof schema.CharacterListRequest>;
+export type CharacterListResponse = Static<typeof schema.CharacterListResponse>;
+export type CharacterActivateRequest = Static<typeof schema.CharacterActivateRequest>;
 export type OnboardingResponse = Static<typeof schema.OnboardingResponse>;
 export type OnboardingStateData = Static<typeof schema.OnboardingStateData>;
 
@@ -124,6 +128,25 @@ export type MemoryExcludeRequest = Static<typeof schema.MemoryExcludeRequest>;
 export type MemoryEditRequest = Static<typeof schema.MemoryEditRequest>;
 
 // ---------------------------------------------------------------------------
+// Story archive
+// ---------------------------------------------------------------------------
+
+export type StoryChangeScope = Static<typeof schema.StoryChangeScope>;
+export type StoryChangeSource = Static<typeof schema.StoryChangeSource>;
+export type StoryChange = Static<typeof schema.StoryChange>;
+export type StoryListChangesRequest = Static<typeof schema.StoryListChangesRequest>;
+export type StoryListChangesResponse = Static<typeof schema.StoryListChangesResponse>;
+export type StoryApplyChangeRequest = Static<typeof schema.StoryApplyChangeRequest>;
+export type StoryApplyChangeResponse = Static<typeof schema.StoryApplyChangeResponse>;
+export type StoryRevertChangeRequest = Static<typeof schema.StoryRevertChangeRequest>;
+export type StoryResetRequest = Static<typeof schema.StoryResetRequest>;
+export type StoryResetResponse = Static<typeof schema.StoryResetResponse>;
+export type StoryChangeProposal = Static<typeof schema.StoryChangeProposal>;
+export type StoryListProposalsRequest = Static<typeof schema.StoryListProposalsRequest>;
+export type StoryListProposalsResponse = Static<typeof schema.StoryListProposalsResponse>;
+export type StoryResolveProposalRequest = Static<typeof schema.StoryResolveProposalRequest>;
+
+// ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
 
@@ -133,6 +156,8 @@ export type ProviderListResponse = Static<typeof schema.ProviderListResponse>;
 export type ProviderSetApiKeyRequest = Static<typeof schema.ProviderSetApiKeyRequest>;
 export type ProviderLoginRequest = Static<typeof schema.ProviderLoginRequest>;
 export type ProviderLoginResponse = Static<typeof schema.ProviderLoginResponse>;
+export type ProviderLoginStatusRequest = Static<typeof schema.ProviderLoginStatusRequest>;
+export type ProviderLoginAnswerRequest = Static<typeof schema.ProviderLoginAnswerRequest>;
 export type ProviderLogoutRequest = Static<typeof schema.ProviderLogoutRequest>;
 
 // ---------------------------------------------------------------------------
@@ -143,6 +168,7 @@ export type VoiceStack = Static<typeof schema.VoiceStack>;
 export type VoiceStackListRequest = Static<typeof schema.VoiceStackListRequest>;
 export type VoiceStackListResponse = Static<typeof schema.VoiceStackListResponse>;
 export type VoiceStackSwitchRequest = Static<typeof schema.VoiceStackSwitchRequest>;
+export type VoiceStackPinRequest = Static<typeof schema.VoiceStackPinRequest>;
 
 // ---------------------------------------------------------------------------
 // Commission

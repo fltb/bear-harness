@@ -24,6 +24,13 @@ export function unwrap<T>(result: unknown): T {
 		typeof envelope.error === "object" && envelope.error !== null ? envelope.error : {}
 	) as Partial<IpcError>;
 	const kind = typeof error.kind === "string" ? error.kind : "internal";
-	const reason = typeof error.reason === "string" ? error.reason : "unknown error";
-	throw new Error(`${kind}: ${reason}`);
+	throw new Error(userFacingError(kind));
+}
+
+function userFacingError(kind: string): string {
+	if (kind === "not_found") return "The requested item could not be found.";
+	if (kind === "conflict") return "The state changed. Refresh and try again.";
+	if (kind === "unavailable") return "This service is currently unavailable.";
+	if (kind === "invalid_request") return "The submitted information is incomplete.";
+	return "The operation could not be completed.";
 }
