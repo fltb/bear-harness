@@ -24,6 +24,8 @@
 
 import type { CompanionClient } from "@bear-harness/companion-types";
 import { productUi } from "@bear-harness/product-config";
+import { ProviderListSchema, SettingsResponseSchema, VoiceListSchema } from "@bear-harness/schema";
+import { useQueryClient } from "@tanstack/solid-query";
 import {
 	createContext,
 	createEffect,
@@ -34,11 +36,18 @@ import {
 	useContext,
 } from "solid-js";
 import { createStore } from "solid-js/store";
+import { IpcInvocationError } from "../lib/ipc.js";
 import {
 	type Artifact,
 	type ArtifactListData,
+	type CanonChunk,
+	type CanonModule,
+	type CanonModuleKind,
+	type CanonSource,
 	type CharacterDisplay,
+	type CharacterListData,
 	type CharacterRuntimeState,
+	type CharacterSummary,
 	type Commission,
 	type CommissionDraftParams,
 	type CommissionDraftResult,
@@ -52,7 +61,6 @@ import {
 	invoke,
 	isRecord,
 	isRun,
-	isSettingsData,
 	type MemoryCandidate,
 	type MemoryDecision,
 	type MemoryEntry,
@@ -64,12 +72,17 @@ import {
 	type MessageBranchResult,
 	type MessageSendResult,
 	normalizeArtifactList,
+	normalizeCanonChunks,
+	normalizeCanonModules,
+	normalizeCanonSources,
+	normalizeCharacterList,
 	normalizeCommissionList,
 	normalizeConversationList,
+	normalizeConversationSnapshot,
 	normalizeMemoryEntries,
 	normalizeMemorySnapshot,
-	normalizeProviderList,
 	normalizeRunList,
+	normalizeStoryList,
 	type OnboardingData,
 	type ProviderInfo,
 	type ProviderListData,
@@ -79,21 +92,23 @@ import {
 	type RunListData,
 	type RunPermissionRequest,
 	type SettingsData,
-	type SettingsResponseData,
+	type SettingsPatch,
 	type Snapshot,
+	type StoryChange,
+	type StoryChangeProposal,
+	type StoryChangeScope,
+	type StoryListData,
 	sanitizeSnapshot,
 	type VoiceListData,
 	type VoiceStack,
 	type VoiceSwitchScope,
 } from "./ipc.js";
 import { createOnboardingStore } from "./onboarding.js";
-import { createVoiceStore } from "./voice.js";
+import { createRpcMutation, createRpcQuery, hydrateRpcQuery, queryKeys } from "./rpc-query.js";
 
 export * from "./ipc.js";
 export type { OnboardingStore } from "./onboarding.js";
 export { createOnboardingStore } from "./onboarding.js";
-export type { VoiceStore } from "./voice.js";
-export { createVoiceStore } from "./voice.js";
 
 // ---------------------------------------------------------------------------
 // Contract types
@@ -108,7 +123,6 @@ export type PresenceState =
 	| "problem";
 
 const POLL_INTERVAL_MS = 1000;
-const MAX_EVENTS_PER_BATCH = 100;
 const SNAPSHOT_RETRY_MS = 5000;
 
 function sleep(ms: number): Promise<void> {
@@ -205,14 +219,25 @@ export interface MemoryApi {
 export interface SettingsApi {
 	data(): SettingsData | undefined;
 	get(): Promise<SettingsData>;
-	set(settings: Partial<SettingsData>): Promise<void>;
+	set(settings: SettingsPatch): Promise<void>;
 }
 
 export interface ProviderApi {
 	providers(): ProviderInfo[];
 	list(): Promise<ProviderListData>;
+	customUpsert(params: {
+		providerId: string;
+		name: string;
+		baseUrl: string;
+		modelId: string;
+		apiKey?: string;
+		supportsImages?: boolean;
+	}): Promise<void>;
+	overrideBaseUrl(params: { providerId: string; baseUrl: string }): Promise<void>;
 	setApiKey(providerId: string, apiKey: string, sessionOnly?: boolean): Promise<void>;
 	login(providerId: string): Promise<ProviderLoginResult>;
+	loginStatus(providerId: string): Promise<ProviderLoginResult>;
+	loginAnswer(providerId: string, answer: string): Promise<ProviderLoginResult>;
 	logout(providerId: string): Promise<void>;
 }
 
@@ -225,6 +250,7 @@ export interface VoiceApi {
 	refetch(): void;
 	list(): Promise<VoiceListData>;
 	switch(stackId: string, scope: VoiceSwitchScope): Promise<void>;
+	pin(providerId: string, modelId: string, label?: string): Promise<void>;
 }
 
 export interface CommissionApi {
@@ -232,6 +258,7 @@ export interface CommissionApi {
 	list(): Promise<CommissionListData>;
 	draft(params: CommissionDraftParams): Promise<CommissionDraftResult>;
 	approve(commissionId: string, approvedHash: string): Promise<void>;
+	reject(commissionId: string): Promise<void>;
 	launch(commissionId: string, executorProfile: string): Promise<CommissionLaunchResult>;
 }
 
@@ -246,6 +273,41 @@ export interface RunApi {
 export interface ArtifactApi {
 	artifacts(): Artifact[];
 	list(): Promise<ArtifactListData>;
+	download(artifactId: string): Promise<void>;
+}
+
+export interface StoryApi {
+	changes(): StoryChange[];
+	proposals(): StoryChangeProposal[];
+	list(branchId?: string): Promise<StoryListData>;
+	apply(text: string, scope: StoryChangeScope): Promise<void>;
+	revert(changeId: string): Promise<void>;
+	reset(): Promise<void>;
+	resolveProposal(proposalId: string, accept: boolean): Promise<void>;
+}
+
+export interface CharacterApi {
+	characters(): CharacterSummary[];
+	list(): Promise<CharacterListData>;
+	activate(characterId: string): Promise<void>;
+}
+export interface CanonApi {
+	sources(): CanonSource[];
+	modules(): CanonModule[];
+	listSources(): Promise<void>;
+	addSource(logicalName: string, content: string): Promise<void>;
+	search(query: string): Promise<CanonChunk[]>;
+	removeSource(sourceId: string): Promise<void>;
+	listModules(): Promise<void>;
+	upsertModule(params: {
+		id?: string;
+		parentId?: string;
+		kind: CanonModuleKind;
+		title: string;
+		instructions: string;
+		sourceChunkIds: string[];
+	}): Promise<void>;
+	deleteModule(id: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +321,9 @@ export interface CompanionStore {
 	readonly conversations: ConversationSummary[];
 	readonly activeConversationId: string | null;
 	readonly activeMessages: Message[];
+	readonly pendingUserText: string | undefined;
+	readonly streamingAssistantText: string;
+	readonly assistantStreaming: boolean;
 	readonly runs: RunInfo[];
 	readonly presence: PresenceState;
 	readonly character: CharacterDisplay | undefined;
@@ -267,6 +332,9 @@ export interface CompanionStore {
 	refresh(): Promise<void>;
 	selectConversation(id: string, branchId?: string): Promise<void>;
 	createConversation(title?: string): Promise<void>;
+	renameConversation(id: string, title: string): Promise<void>;
+	archiveConversation(id: string): Promise<void>;
+	deleteConversation(id: string): Promise<void>;
 	sendMessage(text: string): Promise<void>;
 	regenerateMessage(messageId: string): Promise<void>;
 	switchVersion(messageId: string, versionId: string): Promise<void>;
@@ -288,6 +356,9 @@ export interface CompanionStore {
 	readonly commission: CommissionApi;
 	readonly run: RunApi;
 	readonly artifact: ArtifactApi;
+	readonly story: StoryApi;
+	readonly characters: CharacterApi;
+	readonly canon: CanonApi;
 }
 
 // ---------------------------------------------------------------------------
@@ -331,15 +402,22 @@ interface CompanionState {
 	activeConversationId: string | null;
 	activeBranchId: string | null;
 	activeMessages: Message[];
+	pendingUserText: string | undefined;
+	streamingAssistantText: string;
+	committedStreamingMessageId: string | null;
+	assistantStreaming: boolean;
 	runs: RunInfo[];
 	presence: PresenceState;
 	characterRuntimeByConversation: Record<string, CharacterRuntimeState>;
 	memoryCandidates: MemoryCandidate[];
 	memoryEntries: MemoryEntry[] | undefined;
-	settingsData: SettingsData | undefined;
-	providers: ProviderInfo[];
 	commissions: Commission[];
 	artifacts: Artifact[];
+	storyChanges: StoryChange[];
+	storyProposals: StoryChangeProposal[];
+	characters: CharacterSummary[];
+	canonSources: CanonSource[];
+	canonModules: CanonModule[];
 	companionState: CompanionProcessState;
 	sending: boolean;
 	lastRunEvent: "adopted" | null;
@@ -395,10 +473,11 @@ function debouncedRefetch(fn: () => void, ms = 250): void {
 }
 
 function isStaleOnboardingStep(error: unknown): boolean {
-	return messageOf(error) === "conflict: stale_onboarding_step";
+	return error instanceof IpcInvocationError && error.kind === "conflict";
 }
 
 export function createCompanionStore(client: CompanionClient): CompanionStore {
+	const queryClient = useQueryClient();
 	const [state, setState] = createStore<CompanionState>({
 		loading: true,
 		error: null,
@@ -406,15 +485,22 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		activeConversationId: null,
 		activeBranchId: null,
 		activeMessages: [],
+		pendingUserText: undefined,
+		streamingAssistantText: "",
+		committedStreamingMessageId: null,
+		assistantStreaming: false,
 		runs: [],
 		presence: "idle",
 		memoryCandidates: [],
 		characterRuntimeByConversation: {},
 		memoryEntries: undefined,
-		settingsData: undefined,
-		providers: [],
 		commissions: [],
 		artifacts: [],
+		storyChanges: [],
+		storyProposals: [],
+		characters: [],
+		canonSources: [],
+		canonModules: [],
 		companionState: "unknown",
 		sending: false,
 		lastRunEvent: null,
@@ -433,7 +519,45 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 	);
 
 	const onboardingStore = createOnboardingStore(client);
-	const voiceStore = createVoiceStore(client);
+	const settingsRequest = async () =>
+		SettingsResponseSchema.parse(await invoke<unknown>(client, () => client.settings.get()));
+	const providersRequest = async () =>
+		ProviderListSchema.parse(await invoke<unknown>(client, () => client.provider.list()));
+	const voiceRequest = async () =>
+		VoiceListSchema.parse(await invoke<unknown>(client, () => client.voice.list()));
+	const settingsQuery = createRpcQuery({
+		client: queryClient,
+		key: queryKeys.settings,
+		request: settingsRequest,
+		schema: SettingsResponseSchema,
+	});
+	const providersQuery = createRpcQuery({
+		client: queryClient,
+		key: queryKeys.providers,
+		request: providersRequest,
+		schema: ProviderListSchema,
+	});
+	const voiceQuery = createRpcQuery({
+		client: queryClient,
+		key: queryKeys.voice,
+		request: voiceRequest,
+		schema: VoiceListSchema,
+	});
+	const settingsMutation = createRpcMutation<() => Promise<unknown>>({
+		client: queryClient,
+		request: (request) => request(),
+		invalidates: [queryKeys.settings],
+	});
+	const providerMutation = createRpcMutation<() => Promise<unknown>>({
+		client: queryClient,
+		request: (request) => request(),
+		invalidates: [queryKeys.providers],
+	});
+	const voiceMutation = createRpcMutation<() => Promise<unknown>>({
+		client: queryClient,
+		request: (request) => request(),
+		invalidates: [queryKeys.voice],
+	});
 
 	let booted = false;
 
@@ -463,12 +587,6 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		if (entries) setState("memoryEntries", entries);
 	};
 
-	const refreshProviders = async (): Promise<void> => {
-		const data = await invoke<ProviderListData>(client, () => client.provider.list());
-		const parsed = normalizeProviderList(data);
-		if (parsed) setState("providers", parsed.providers);
-	};
-
 	const refreshCommissions = async (): Promise<void> => {
 		const data = await invoke<CommissionListData>(client, () => client.commission.list());
 		const parsed = normalizeCommissionList(data);
@@ -481,20 +599,47 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		if (parsed) setState("artifacts", parsed.artifacts);
 	};
 
-	const refreshSettings = async (): Promise<void> => {
-		const data = await invoke<SettingsResponseData>(client, () => client.settings.get());
-		if (isSettingsData(data.settings)) setState("settingsData", data.settings);
+	const refreshStory = async (): Promise<void> => {
+		const data = await invoke<StoryListData>(client, () =>
+			client.story.listChanges(state.activeBranchId ?? undefined),
+		);
+		const parsed = normalizeStoryList(data);
+		if (parsed) setState("storyChanges", parsed.changes);
+	};
+
+	const refreshStoryProposals = async (): Promise<void> => {
+		const data = await invoke<unknown>(client, () =>
+			client.story.listProposals(state.activeConversationId ?? undefined),
+		);
+		if (!isRecord(data) || !Array.isArray(data.proposals)) return;
+		const proposals = data.proposals.filter(
+			(value): value is StoryChangeProposal =>
+				isRecord(value) &&
+				typeof value.id === "string" &&
+				typeof value.conversationId === "string" &&
+				typeof value.branchId === "string" &&
+				typeof value.text === "string" &&
+				typeof value.createdAt === "string",
+		);
+		setState("storyProposals", proposals);
+	};
+
+	const refreshCharacters = async (): Promise<void> => {
+		const data = await invoke<CharacterListData>(client, () => client.character.list());
+		const parsed = normalizeCharacterList(data);
+		if (parsed) setState("characters", parsed.characters);
 	};
 
 	const refreshSupplementary = (): void => {
 		void Promise.allSettled([
 			refreshMemory(),
 			refreshMemoryEntries(),
-			Promise.resolve(voiceStore.refetch()),
 			refreshCommissions(),
 			refreshRuns(),
 			refreshArtifacts(),
-			refreshSettings(),
+			refreshStory(),
+			refreshStoryProposals(),
+			refreshCharacters(),
 		]);
 	};
 
@@ -502,7 +647,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 
 	const hydrateFromSnapshot = (snap: Snapshot): void => {
 		onboardingStore._hydrate(snap.onboarding);
-		voiceStore._hydrate(snap.voice);
+		if (snap.voice) hydrateRpcQuery(queryClient, queryKeys.voice, VoiceListSchema, snap.voice);
 		const conversation = snap.conversation;
 		if (conversation) {
 			if (conversation.activeConversationId !== undefined) {
@@ -511,7 +656,14 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			if (conversation.activeBranchId !== undefined) {
 				setState("activeBranchId", conversation.activeBranchId);
 			}
-			if (conversation.messages !== undefined) setState("activeMessages", conversation.messages);
+			if (conversation.messages !== undefined) {
+				setState("activeMessages", conversation.messages);
+				const committedId = state.committedStreamingMessageId;
+				if (committedId && conversation.messages.some((message) => message.id === committedId)) {
+					setState("streamingAssistantText", "");
+					setState("committedStreamingMessageId", null);
+				}
+			}
 			if (conversation.conversations !== undefined) {
 				setState("conversations", conversation.conversations);
 			}
@@ -521,11 +673,16 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				setState("memoryCandidates", snap.memory.candidates);
 			if (snap.memory.entries !== undefined) setState("memoryEntries", snap.memory.entries);
 		}
-		if (snap.provider) setState("providers", snap.provider.providers);
+		if (snap.provider)
+			hydrateRpcQuery(queryClient, queryKeys.providers, ProviderListSchema, snap.provider);
 		if (snap.run) setState("runs", snap.run.runs);
 		if (snap.commission) setState("commissions", snap.commission.commissions);
 		if (snap.artifact) setState("artifacts", snap.artifact.artifacts);
-		if (snap.settings) setState("settingsData", snap.settings);
+		if (snap.story) setState("storyChanges", snap.story.changes);
+		if (snap.settings)
+			hydrateRpcQuery(queryClient, queryKeys.settings, SettingsResponseSchema, {
+				settings: snap.settings,
+			});
 		if (snap.characterRuntime)
 			setState("characterRuntimeByConversation", snap.characterRuntime.byConversation);
 		setLastSeq(Math.max(lastSeq(), snap.eventSeq));
@@ -582,16 +739,37 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				return;
 			case "message_start":
 				setState("sending", true);
+				setState("assistantStreaming", true);
 				return;
-			case "message_update":
-				// Streaming progress; main commits the message at message_end.
+			case "message_update": {
+				const chunk = payloadString(event.payload, "text") ?? "";
+				setState("assistantStreaming", true);
+				setState("streamingAssistantText", (current) =>
+					chunk.startsWith(current) ? chunk : `${current}${chunk}`,
+				);
 				return;
-			case "message_end":
+			}
+			case "message_end": {
+				const finalText = payloadString(event.payload, "text");
+				if (finalText !== undefined) setState("streamingAssistantText", finalText);
 				setState("sending", false);
+				setState("assistantStreaming", false);
 				void snapshotActions.refetch();
 				return;
+			}
+			case "message.assistant_committed": {
+				const messageId = payloadString(event.payload, "messageId");
+				if (messageId) setState("committedStreamingMessageId", messageId);
+				setState("sending", false);
+				setState("assistantStreaming", false);
+				void snapshotActions.refetch();
+				return;
+			}
 			case "message.aborted":
 				setState("sending", false);
+				setState("assistantStreaming", false);
+				setState("streamingAssistantText", "");
+				setState("committedStreamingMessageId", null);
 				return;
 			case "character.scene_changed":
 			case "character.visual_state_changed": {
@@ -653,9 +831,9 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			debouncedRefetch(refreshMemory);
 			debouncedRefetch(refreshMemoryEntries);
 		} else if (kind.startsWith("provider.")) {
-			debouncedRefetch(refreshProviders);
+			void queryClient.invalidateQueries({ queryKey: queryKeys.providers });
 		} else if (kind.startsWith("voice.")) {
-			voiceStore._applyEvent(event);
+			void queryClient.invalidateQueries({ queryKey: queryKeys.voice });
 		} else if (kind.startsWith("commission.")) {
 			debouncedRefetch(refreshCommissions);
 		} else if (kind.startsWith("run.")) {
@@ -673,8 +851,14 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			debouncedRefetch(refreshRuns);
 		} else if (kind.startsWith("artifact.")) {
 			debouncedRefetch(refreshArtifacts);
+		} else if (kind.startsWith("story.")) {
+			debouncedRefetch(refreshStory);
+			debouncedRefetch(refreshStoryProposals);
+		} else if (kind.startsWith("character.")) {
+			debouncedRefetch(refreshCharacters);
+			void snapshotActions.refetch();
 		} else if (kind.startsWith("settings.")) {
-			debouncedRefetch(refreshSettings);
+			void queryClient.invalidateQueries({ queryKey: queryKeys.settings });
 		}
 		// Other kinds (evidence.collected, codex.*, fsops.*, diagnostics.* …)
 		// are intentionally ignored: they do not invalidate projected state.
@@ -726,8 +910,9 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				for (const event of batch) dispatchEvent(event);
 				afterSeq = last.seq;
 				setLastSeq(afterSeq);
-				if (batch.length >= MAX_EVENTS_PER_BATCH) continue; // drain a backlog
-				await sleep(POLL_INTERVAL_MS);
+				// A successful subscription is a long-poll boundary. Re-subscribe
+				// immediately so streamed tokens are never held behind the retry delay.
+				continue;
 			}
 		})();
 	});
@@ -803,47 +988,71 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 	};
 
 	const settingsApi: SettingsApi = {
-		data: () => state.settingsData,
+		data: () => settingsQuery.data?.settings,
 		get: async () => {
-			const data = await invoke<SettingsResponseData>(client, () => client.settings.get());
-			if (isSettingsData(data.settings)) setState("settingsData", data.settings);
+			const data = await queryClient.ensureQueryData({
+				queryKey: queryKeys.settings,
+				queryFn: settingsRequest,
+			});
 			return data.settings;
 		},
 		set: async (settings) => {
-			await invoke<void>(client, () => client.settings.set(settings));
-			void refreshSettings();
+			await settingsMutation.mutateAsync(() =>
+				invoke<void>(client, () => client.settings.set(settings)),
+			);
 		},
 	};
 
 	const providerApi: ProviderApi = {
-		providers: () => state.providers,
-		list: async () => {
-			const data = await invoke<ProviderListData>(client, () => client.provider.list());
-			const parsed = normalizeProviderList(data);
-			if (parsed) setState("providers", parsed.providers);
-			return data;
+		providers: () => providersQuery.data?.providers ?? [],
+		list: () =>
+			queryClient.ensureQueryData({ queryKey: queryKeys.providers, queryFn: providersRequest }),
+		customUpsert: async (params) => {
+			await providerMutation.mutateAsync(() =>
+				invoke<void>(client, () => client.provider.customUpsert(params)),
+			);
+		},
+		overrideBaseUrl: async (params) => {
+			await providerMutation.mutateAsync(() =>
+				invoke<void>(client, () => client.provider.overrideBaseUrl(params)),
+			);
 		},
 		setApiKey: async (providerId, apiKey, sessionOnly) => {
-			await invoke<void>(client, () => client.provider.setApiKey(providerId, apiKey, sessionOnly));
-			debouncedRefetch(refreshProviders);
+			await providerMutation.mutateAsync(() =>
+				invoke<void>(client, () => client.provider.setApiKey(providerId, apiKey, sessionOnly)),
+			);
 		},
 		login: (providerId) =>
 			invoke<ProviderLoginResult>(client, () => client.provider.login(providerId)),
+		loginStatus: (providerId) =>
+			invoke<ProviderLoginResult>(client, () => client.provider.loginStatus(providerId)),
+		loginAnswer: (providerId, answer) =>
+			invoke<ProviderLoginResult>(client, () => client.provider.loginAnswer(providerId, answer)),
 		logout: async (providerId) => {
-			await invoke<void>(client, () => client.provider.logout(providerId));
-			debouncedRefetch(refreshProviders);
+			await providerMutation.mutateAsync(() =>
+				invoke<void>(client, () => client.provider.logout(providerId)),
+			);
 		},
 	};
 
 	const voiceApi: VoiceApi = {
-		data: voiceStore.data,
-		stacks: voiceStore.stacks,
-		activeStackId: voiceStore.activeStackId,
-		loading: voiceStore.loading,
-		error: voiceStore.error,
-		refetch: voiceStore.refetch,
-		list: voiceStore.list,
-		switch: voiceStore.switch,
+		data: () => voiceQuery.data ?? { stacks: [] },
+		stacks: () => voiceQuery.data?.stacks ?? [],
+		activeStackId: () => voiceQuery.data?.stacks.find((stack) => stack.active)?.id,
+		loading: () => voiceQuery.isPending,
+		error: () => voiceQuery.error,
+		refetch: () => void voiceQuery.refetch(),
+		list: () => queryClient.ensureQueryData({ queryKey: queryKeys.voice, queryFn: voiceRequest }),
+		switch: async (stackId, scope) => {
+			await voiceMutation.mutateAsync(() =>
+				invoke<void>(client, () => client.voice.switch(stackId, scope)),
+			);
+		},
+		pin: async (providerId, modelId, label) => {
+			await voiceMutation.mutateAsync(() =>
+				invoke<void>(client, () => client.voice.pin(providerId, modelId, label)),
+			);
+		},
 	};
 
 	const commissionApi: CommissionApi = {
@@ -862,6 +1071,10 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		},
 		approve: async (commissionId, approvedHash) => {
 			await invoke<void>(client, () => client.commission.approve(commissionId, approvedHash));
+			void refreshCommissions();
+		},
+		reject: async (commissionId) => {
+			await invoke<void>(client, () => client.commission.reject(commissionId));
 			void refreshCommissions();
 		},
 		launch: async (commissionId, executorProfile) => {
@@ -916,6 +1129,125 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			if (parsed) setState("artifacts", parsed.artifacts);
 			return data;
 		},
+		download: async (artifactId) => {
+			const data = await invoke<{ logicalName: string; mime: string; base64: string }>(client, () =>
+				client.artifact.read(artifactId),
+			);
+			if (
+				!isRecord(data) ||
+				typeof data.logicalName !== "string" ||
+				typeof data.mime !== "string" ||
+				typeof data.base64 !== "string"
+			)
+				throw new Error(productUi.errors.artifactUnavailable);
+			const bytes = Uint8Array.from(atob(data.base64), (char) => char.charCodeAt(0));
+			const url = URL.createObjectURL(new Blob([bytes], { type: data.mime }));
+			const anchor = document.createElement("a");
+			anchor.href = url;
+			anchor.download = data.logicalName;
+			anchor.click();
+			setTimeout(() => URL.revokeObjectURL(url), 1000);
+		},
+	};
+
+	const storyApi: StoryApi = {
+		changes: () => state.storyChanges,
+		proposals: () =>
+			state.storyProposals.filter(
+				(proposal) => proposal.conversationId === state.activeConversationId,
+			),
+		list: async (branchId) => {
+			const data = await invoke<StoryListData>(client, () => client.story.listChanges(branchId));
+			const parsed = normalizeStoryList(data);
+			if (parsed) setState("storyChanges", parsed.changes);
+			return data;
+		},
+		apply: async (text, scope) => {
+			await invoke(client, () =>
+				client.story.applyChange(
+					text,
+					scope,
+					state.activeConversationId ?? undefined,
+					state.activeBranchId ?? undefined,
+				),
+			);
+			await refreshStory();
+		},
+		revert: async (changeId) => {
+			await invoke(client, () =>
+				client.story.revertChange(changeId, state.activeConversationId ?? undefined),
+			);
+			await refreshStory();
+		},
+		reset: async () => {
+			await invoke(client, () =>
+				client.story.reset(
+					state.activeConversationId ?? undefined,
+					state.activeBranchId ?? undefined,
+				),
+			);
+			await refreshStory();
+		},
+		resolveProposal: async (proposalId, accept) => {
+			await invoke(client, () => client.story.resolveProposal(proposalId, accept));
+			await Promise.all([refreshStory(), refreshStoryProposals()]);
+		},
+	};
+
+	const characterApi: CharacterApi = {
+		characters: () => state.characters,
+		list: async () => {
+			const data = await invoke<CharacterListData>(client, () => client.character.list());
+			const parsed = normalizeCharacterList(data);
+			if (parsed) setState("characters", parsed.characters);
+			return data;
+		},
+		activate: async (characterId) => {
+			await invoke(client, () => client.character.activate(characterId));
+			setState("activeConversationId", null);
+			setState("activeBranchId", null);
+			setState("activeMessages", []);
+			await Promise.all([
+				refreshCharacters(),
+				refreshConversations(),
+				Promise.resolve(snapshotActions.refetch()),
+			]);
+		},
+	};
+
+	const canonApi: CanonApi = {
+		sources: () => state.canonSources,
+		modules: () => state.canonModules,
+		listSources: async () => {
+			const data = await invoke(client, () => client.canon.listSources());
+			const parsed = normalizeCanonSources(data);
+			if (parsed) setState("canonSources", parsed);
+		},
+		addSource: async (logicalName, content) => {
+			await invoke(client, () => client.canon.addSource(logicalName, content));
+			await canonApi.listSources();
+		},
+		search: async (query) => {
+			const data = await invoke(client, () => client.canon.search(query));
+			return normalizeCanonChunks(data) ?? [];
+		},
+		removeSource: async (sourceId) => {
+			await invoke(client, () => client.canon.removeSource(sourceId));
+			await canonApi.listSources();
+		},
+		listModules: async () => {
+			const data = await invoke(client, () => client.canon.listModules());
+			const parsed = normalizeCanonModules(data);
+			if (parsed) setState("canonModules", parsed);
+		},
+		upsertModule: async (params) => {
+			await invoke(client, () => client.canon.upsertModule(params));
+			await canonApi.listModules();
+		},
+		deleteModule: async (id) => {
+			await invoke(client, () => client.canon.deleteModule(id));
+			await canonApi.listModules();
+		},
 	};
 
 	return {
@@ -936,6 +1268,15 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		},
 		get activeMessages() {
 			return state.activeMessages;
+		},
+		get pendingUserText() {
+			return state.pendingUserText;
+		},
+		get streamingAssistantText() {
+			return state.streamingAssistantText;
+		},
+		get assistantStreaming() {
+			return state.assistantStreaming;
 		},
 		get runs() {
 			return state.runs;
@@ -959,11 +1300,13 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 
 		selectConversation: async (id, branchId) => {
 			try {
-				await invoke<void>(client, () => client.conversation.select(id, branchId));
-				setState("activeConversationId", id);
-				setState("activeBranchId", branchId ?? null);
+				const data = await invoke<unknown>(client, () => client.conversation.select(id, branchId));
+				const projection = normalizeConversationSnapshot(data);
+				setState("activeConversationId", projection?.activeConversationId ?? id);
+				setState("activeBranchId", projection?.activeBranchId ?? branchId ?? null);
+				setState("activeMessages", projection?.messages ?? []);
 				setState("error", null);
-				void snapshotActions.refetch();
+				void refreshStoryProposals();
 			} catch (e) {
 				setState("error", messageOf(e));
 			}
@@ -976,6 +1319,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				);
 				setState("activeConversationId", result.id);
 				setState("activeBranchId", null);
+				setState("activeMessages", []);
 				setState("error", null);
 				void refreshConversations().catch((e) => setState("error", messageOf(e)));
 			} catch (e) {
@@ -983,12 +1327,44 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			}
 		},
 
+		renameConversation: async (id, title) => {
+			await invoke(client, () => client.conversation.rename(id, title));
+			await refreshConversations();
+		},
+
+		archiveConversation: async (id) => {
+			await invoke(client, () => client.conversation.archive(id));
+			if (state.activeConversationId === id) {
+				setState("activeConversationId", null);
+				setState("activeBranchId", null);
+				setState("activeMessages", []);
+			}
+			await refreshConversations();
+		},
+
+		deleteConversation: async (id) => {
+			await invoke(client, () => client.conversation.delete(id));
+			if (state.activeConversationId === id) {
+				setState("activeConversationId", null);
+				setState("activeBranchId", null);
+				setState("activeMessages", []);
+			}
+			await refreshConversations();
+		},
+
 		sendMessage: async (text) => {
+			setState("pendingUserText", text);
+			setState("streamingAssistantText", "");
+			setState("committedStreamingMessageId", null);
+			setState("assistantStreaming", true);
 			try {
 				const conversationId = requireActiveConversation();
 				await invoke<MessageSendResult>(client, () => client.message.send(conversationId, text));
+				await snapshotActions.refetch();
+				setState("pendingUserText", undefined);
 				setState("error", null);
 			} catch (e) {
+				setState("assistantStreaming", false);
 				setState("error", messageOf(e));
 			}
 		},
@@ -1021,6 +1397,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				await invoke<void>(client, () =>
 					client.message.edit(conversationId, messageId, text, isUserMessage),
 				);
+				await snapshotActions.refetch();
 				setState("error", null);
 			} catch (e) {
 				setState("error", messageOf(e));
@@ -1122,6 +1499,15 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		},
 		get artifact() {
 			return artifactApi;
+		},
+		get story() {
+			return storyApi;
+		},
+		get characters() {
+			return characterApi;
+		},
+		get canon() {
+			return canonApi;
 		},
 	};
 }

@@ -1,7 +1,8 @@
 import { productUi } from "@bear-harness/product-config";
 import { Dialog, Tabs } from "@kobalte/core";
-import { Show } from "solid-js";
-import type { CharacterDisplay } from "../stores/companion.js";
+import { createEffect, createSignal, For, Show } from "solid-js";
+import { type CharacterDisplay, useCompanionStore } from "../stores/companion.js";
+import { CanonStudio } from "./CanonStudio.js";
 import { MemoryEntryList, MemorySheet } from "./MemorySheet.js";
 import { SettingsSheet } from "./SettingsSheet.js";
 
@@ -17,7 +18,10 @@ export function Backstage(props: {
 	open: boolean;
 	onClose: () => void;
 	character: CharacterDisplay | undefined;
+	initialTab?: "relationship" | "settings";
 }) {
+	const [selectedTab, setSelectedTab] = createSignal(props.initialTab ?? "relationship");
+	createEffect(() => setSelectedTab(props.initialTab ?? "relationship"));
 	return (
 		<Dialog.Root
 			open={props.open}
@@ -35,7 +39,8 @@ export function Backstage(props: {
 						</Dialog.CloseButton>
 					</div>
 					<Tabs.Root
-						defaultValue="relationship"
+						value={selectedTab()}
+						onChange={setSelectedTab}
 						class="backstage-tabs"
 						aria-label={productUi.backstage.tabsLabel}
 					>
@@ -43,26 +48,154 @@ export function Backstage(props: {
 							<Tabs.Trigger value="relationship" class="tab">
 								{productUi.backstage.relationshipArchive}
 							</Tabs.Trigger>
+							<Tabs.Trigger value="roles" class="tab">
+								{productUi.backstage.roleManagement}
+							</Tabs.Trigger>
 							<Tabs.Trigger value="memory" class="tab">
 								{productUi.backstage.memory}
 							</Tabs.Trigger>
+							<Tabs.Trigger value="story" class="tab">
+								{productUi.backstage.storyArchive}
+							</Tabs.Trigger>
 							<Tabs.Trigger value="settings" class="tab">
 								{productUi.backstage.systemSettings}
+							</Tabs.Trigger>
+							<Tabs.Trigger value="studio" class="tab">
+								{productUi.backstage.packageWorkshop}
 							</Tabs.Trigger>
 						</Tabs.List>
 						<Tabs.Content value="relationship" class="tab-panel">
 							<RelationshipArchive character={props.character} />
 						</Tabs.Content>
+						<Tabs.Content value="roles" class="tab-panel">
+							<RoleManager />
+						</Tabs.Content>
 						<Tabs.Content value="memory" class="tab-panel">
 							<MemorySheet />
 						</Tabs.Content>
+						<Tabs.Content value="story" class="tab-panel">
+							<StoryArchive />
+						</Tabs.Content>
 						<Tabs.Content value="settings" class="tab-panel">
 							<SettingsSheet />
+						</Tabs.Content>
+						<Tabs.Content value="studio" class="tab-panel">
+							<CanonStudio />
 						</Tabs.Content>
 					</Tabs.Root>
 				</Dialog.Content>
 			</Dialog.Portal>
 		</Dialog.Root>
+	);
+}
+
+function RoleManager() {
+	const store = useCompanionStore();
+	const [busyId, setBusyId] = createSignal<string>();
+	return (
+		<div class="sheet-panel role-list">
+			<For each={store.characters.characters()}>
+				{(character) => (
+					<div class="role-row">
+						<img src={character.avatarUrl} alt="" aria-hidden="true" />
+						<div>
+							<strong>{character.name}</strong>
+							<span>{character.subtitle}</span>
+						</div>
+						<Show
+							when={!character.active}
+							fallback={<span class="role-active">{productUi.backstage.roleActive}</span>}
+						>
+							<button
+								type="button"
+								disabled={busyId() !== undefined}
+								onClick={() => {
+									setBusyId(character.id);
+									void store.characters.activate(character.id).finally(() => setBusyId());
+								}}
+							>
+								{productUi.backstage.roleSwitch}
+							</button>
+						</Show>
+					</div>
+				)}
+			</For>
+		</div>
+	);
+}
+
+function StoryArchive() {
+	const store = useCompanionStore();
+	const [text, setText] = createSignal("");
+	const [branchOnly, setBranchOnly] = createSignal(false);
+	const [busy, setBusy] = createSignal(false);
+
+	const add = async (event: SubmitEvent) => {
+		event.preventDefault();
+		const value = text().trim();
+		if (!value) return;
+		setBusy(true);
+		try {
+			await store.story.apply(value, branchOnly() ? "branch" : "global");
+			setText("");
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	return (
+		<div class="sheet-panel story-archive">
+			<p class="drawer-note">{productUi.backstage.storyOriginal}</p>
+			<Show
+				when={store.story.changes().length > 0}
+				fallback={<p class="drawer-note">{productUi.backstage.storyEmpty}</p>}
+			>
+				<div class="story-change-list">
+					<For each={store.story.changes()}>
+						{(change) => (
+							<div class="story-change">
+								<span>{change.text}</span>
+								<button
+									type="button"
+									disabled={busy()}
+									onClick={() => void store.story.revert(change.id)}
+								>
+									{productUi.backstage.storyUndo}
+								</button>
+							</div>
+						)}
+					</For>
+				</div>
+			</Show>
+			<form class="story-add" onSubmit={add}>
+				<textarea
+					rows={3}
+					aria-label={productUi.backstage.storyAddPlaceholder}
+					placeholder={productUi.backstage.storyAddPlaceholder}
+					value={text()}
+					onInput={(event) => setText(event.currentTarget.value)}
+				/>
+				<label>
+					<input
+						type="checkbox"
+						checked={branchOnly()}
+						onChange={(event) => setBranchOnly(event.currentTarget.checked)}
+					/>
+					{productUi.backstage.storyBranchOnly}
+				</label>
+				<button type="submit" disabled={busy() || !text().trim()}>
+					{productUi.backstage.storyAdd}
+				</button>
+			</form>
+			<button
+				type="button"
+				class="story-reset"
+				disabled={busy()}
+				onClick={() => void store.story.reset()}
+			>
+				{productUi.backstage.storyReset}
+			</button>
+		</div>
 	);
 }
 

@@ -9,8 +9,8 @@ export function SceneBackdrop(props: { scene: SceneDisplay | undefined }) {
 	return (
 		<Show when={props.scene?.backgroundUrl}>
 			{(source) => (
-				<div class="scene-backdrop" aria-hidden="true">
-					<img src={source()} alt="" draggable={false} />
+				<div class="scene-backdrop">
+					<img src={source()} alt={props.scene?.label ?? ""} draggable={false} />
 				</div>
 			)}
 		</Show>

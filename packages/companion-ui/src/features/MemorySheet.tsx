@@ -56,6 +56,8 @@ export function MemoryEntryList(props: {
 	const [error, setError] = createSignal<string | null>(null);
 	const [feedback, setFeedback] = createSignal<string | null>(null);
 	const [busyId, setBusyId] = createSignal<string | null>(null);
+	const [editingEntryId, setEditingEntryId] = createSignal<string | null>(null);
+	const [editedEntryText, setEditedEntryText] = createSignal("");
 
 	let requestSeq = 0;
 
@@ -110,6 +112,16 @@ export function MemoryEntryList(props: {
 		runEntryAction(entry.id, () => store.memory.forget(entry.id), productUi.memory.forget);
 	const exclude = (entry: MemoryEntry) => () =>
 		runEntryAction(entry.id, () => store.memory.exclude(entry.id, true), productUi.memory.exclude);
+	const saveEdit = (entry: MemoryEntry) => async () => {
+		const text = editedEntryText().trim();
+		if (!text) return;
+		await runEntryAction(
+			entry.id,
+			() => store.memory.edit(entry.id, text),
+			productUi.memory.approvedEdited,
+		);
+		setEditingEntryId(null);
+	};
 
 	const title = () => props.title ?? productUi.memory.defaultEntriesTitle;
 
@@ -141,7 +153,32 @@ export function MemoryEntryList(props: {
 				<For each={entries()}>
 					{(entry) => (
 						<li class="memory-entry" data-pinned={entry.pinned || undefined}>
-							<p class="memory-text">{entry.text}</p>
+							<Show
+								when={editingEntryId() === entry.id}
+								fallback={<p class="memory-text">{entry.text}</p>}
+							>
+								<div class="candidate-edit">
+									<textarea
+										rows={3}
+										value={editedEntryText()}
+										onInput={(event) => setEditedEntryText(event.currentTarget.value)}
+										aria-label={productUi.memory.editedContent}
+									/>
+									<div class="candidate-actions">
+										<button
+											type="button"
+											class="mini-btn primary"
+											disabled={busyId() === entry.id || !editedEntryText().trim()}
+											onClick={saveEdit(entry)}
+										>
+											{productUi.memory.saveEdit}
+										</button>
+										<button type="button" class="mini-btn" onClick={() => setEditingEntryId(null)}>
+											{productUi.messages.cancel}
+										</button>
+									</div>
+								</div>
+							</Show>
 							<div class="memory-meta">
 								<span class="memory-kind">{KIND_LABELS[entry.kind] ?? entry.kind}</span>
 								<span>
@@ -155,6 +192,17 @@ export function MemoryEntryList(props: {
 								</Show>
 							</div>
 							<div class="memory-actions">
+								<button
+									type="button"
+									class="mini-btn"
+									disabled={busyId() === entry.id}
+									onClick={() => {
+										setEditingEntryId(entry.id);
+										setEditedEntryText(entry.text);
+									}}
+								>
+									{productUi.memory.edit}
+								</button>
 								<button
 									type="button"
 									class="mini-btn"

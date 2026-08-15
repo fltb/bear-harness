@@ -9,7 +9,7 @@
  * `Promise<T>` plus client-unavailable handling.
  *
  * The model types mirror the wire contract of the host IPC schemas. They
- * are mirrored (not imported) so the package never pulls typebox into the
+ * are mirrored (not imported) so the package never pulls schema validation into the
  * page, and every value that crosses the client is validated by a narrow
  * guard before it is allowed into reactive state — hostile or malformed
  * payloads are dropped, never projected.
@@ -24,7 +24,7 @@ import { unwrap } from "../lib/ipc.js";
 
 /**
  * Call a client method and unwrap the IPC envelope. Rejects with a plain
- * Error carrying the wire `kind: reason` when the client reports a failure,
+ * user-facing Error when the client reports a failure,
  * or when the call itself throws (e.g. the client is missing).
  */
 export async function invoke<T>(client: CompanionClient, call: () => Promise<unknown>): Promise<T> {
@@ -110,6 +110,85 @@ export interface ConversationCreateResult {
 	id: string;
 }
 
+export interface CanonSource {
+	id: string;
+	logicalName: string;
+	mime: string;
+	sha256: string;
+	chunkCount: number;
+	createdAt: string;
+}
+export interface CanonChunk {
+	id: string;
+	sourceId: string;
+	sourceName: string;
+	ordinal: number;
+	content: string;
+}
+export type CanonModuleKind =
+	| "root"
+	| "arc"
+	| "event"
+	| "entity"
+	| "relationship"
+	| "location"
+	| "object"
+	| "behavior";
+export interface CanonModule {
+	id: string;
+	parentId?: string;
+	kind: CanonModuleKind;
+	title: string;
+	instructions: string;
+	sourceChunkIds: string[];
+	createdAt: string;
+}
+export function normalizeCanonSources(value: unknown): CanonSource[] | null {
+	if (!isRecord(value) || !Array.isArray(value.sources)) return null;
+	return value.sources.every(
+		(item) =>
+			isRecord(item) &&
+			typeof item.id === "string" &&
+			typeof item.logicalName === "string" &&
+			typeof item.mime === "string" &&
+			typeof item.sha256 === "string" &&
+			typeof item.chunkCount === "number" &&
+			typeof item.createdAt === "string",
+	)
+		? (value.sources as CanonSource[])
+		: null;
+}
+export function normalizeCanonChunks(value: unknown): CanonChunk[] | null {
+	if (!isRecord(value) || !Array.isArray(value.chunks)) return null;
+	return value.chunks.every(
+		(item) =>
+			isRecord(item) &&
+			typeof item.id === "string" &&
+			typeof item.sourceId === "string" &&
+			typeof item.sourceName === "string" &&
+			typeof item.ordinal === "number" &&
+			typeof item.content === "string",
+	)
+		? (value.chunks as CanonChunk[])
+		: null;
+}
+export function normalizeCanonModules(value: unknown): CanonModule[] | null {
+	if (!isRecord(value) || !Array.isArray(value.modules)) return null;
+	return value.modules.every(
+		(item) =>
+			isRecord(item) &&
+			typeof item.id === "string" &&
+			(item.parentId === undefined || typeof item.parentId === "string") &&
+			typeof item.kind === "string" &&
+			typeof item.title === "string" &&
+			typeof item.instructions === "string" &&
+			isStringArray(item.sourceChunkIds) &&
+			typeof item.createdAt === "string",
+	)
+		? (value.modules as CanonModule[])
+		: null;
+}
+
 export interface MessageSendResult {
 	messageId: string;
 }
@@ -187,9 +266,18 @@ export interface ProviderListData {
 }
 
 export interface ProviderLoginResult {
+	providerId: string;
+	status: "running" | "waiting_input" | "completed" | "failed";
 	authUrl?: string;
 	deviceCode?: string;
 	verificationUri?: string;
+	message?: string;
+	prompt?: {
+		type: "text" | "secret" | "select" | "manual_code";
+		message: string;
+		placeholder?: string;
+		options?: Array<{ id: string; label: string; description?: string }>;
+	};
 }
 
 export interface VoiceStack {
@@ -232,6 +320,7 @@ export type CommissionStatus =
 
 export interface Commission {
 	id: string;
+	conversationId?: string;
 	draft: ActionDraft;
 	status: CommissionStatus;
 	createdAt: string;
@@ -316,8 +405,41 @@ export interface ArtifactListData {
 	artifacts: Artifact[];
 }
 
+export type StoryChangeScope = "global" | "branch";
+export interface StoryChange {
+	id: string;
+	text: string;
+	scope: StoryChangeScope;
+	source: "user_explicit" | "story_event" | "user_confirmed";
+	conversationId?: string;
+	branchId?: string;
+	createdAt: string;
+}
+export interface StoryListData {
+	changes: StoryChange[];
+}
+export interface StoryChangeProposal {
+	id: string;
+	conversationId: string;
+	branchId: string;
+	text: string;
+	createdAt: string;
+}
+
 export interface SettingsData {
 	relationshipMemoryEnabled: boolean;
+	textFallback?: ModelRoute;
+	multimodalFallback?: ModelRoute;
+}
+
+export type SettingsPatch = Omit<Partial<SettingsData>, "textFallback" | "multimodalFallback"> & {
+	textFallback?: ModelRoute | null;
+	multimodalFallback?: ModelRoute | null;
+};
+
+export interface ModelRoute {
+	providerId: string;
+	modelId: string;
 }
 
 /** Wire shape of `settings.get` — the data sits under a `settings` key. */
@@ -341,7 +463,7 @@ export interface EventBatch {
 
 /**
  * Shape of the boot snapshot. The wire schema leaves the per-domain fields
- * open (`Type.Unknown()`); the structured fields below are the renderer's
+ * open; the structured fields below are the renderer's
  * best-known projection, and every value is validated by a narrow guard
  * before it enters reactive state.
  */
@@ -413,9 +535,25 @@ export interface CharacterOnboardingFlow {
 	steps: CharacterOnboardingStep[];
 }
 
+export interface CharacterTheme {
+	radius: { sm: number; md: number; lg: number };
+	color: {
+		surface: string;
+		surface_alt: string;
+		text: string;
+		text_muted: string;
+		accent: string;
+		line: string;
+		danger: string;
+		amber: string;
+	};
+	font: { body: string; heading: string };
+}
+
 export interface CharacterDisplay {
 	id: string;
 	name: string;
+	language: string;
 	character: {
 		subtitle: string;
 		scene_title: string;
@@ -424,7 +562,7 @@ export interface CharacterDisplay {
 		first_meeting: CharacterOnboardingFlow;
 		correction: { trigger_label: string; reason_group_label: string };
 	};
-	theme: Record<string, unknown>;
+	theme: CharacterTheme;
 	scenes: SceneDisplay[];
 	visual: {
 		defaultSceneId: string;
@@ -444,6 +582,19 @@ export interface CharacterRuntimeSnapshot {
 	byConversation: Record<string, CharacterRuntimeState>;
 }
 
+export interface CharacterSummary {
+	id: string;
+	name: string;
+	version: string;
+	subtitle: string;
+	avatarUrl: string;
+	active: boolean;
+}
+
+export interface CharacterListData {
+	characters: CharacterSummary[];
+}
+
 export interface Snapshot {
 	eventSeq: number;
 	character?: CharacterDisplay;
@@ -455,6 +606,7 @@ export interface Snapshot {
 	commission?: CommissionListData;
 	run?: RunListData;
 	artifact?: ArtifactListData;
+	story?: StoryListData;
 	settings?: SettingsData;
 	characterRuntime?: CharacterRuntimeSnapshot;
 }
@@ -616,9 +768,36 @@ function isCharacterOnboardingFlow(value: unknown): value is CharacterOnboarding
 	);
 }
 
+function isCharacterTheme(value: unknown): value is CharacterTheme {
+	if (
+		!isRecord(value) ||
+		!isRecord(value.radius) ||
+		!isRecord(value.color) ||
+		!isRecord(value.font)
+	) {
+		return false;
+	}
+	const radius = value.radius;
+	const color = value.color;
+	const font = value.font;
+	return (
+		["sm", "md", "lg"].every((key) => typeof radius[key] === "number") &&
+		["surface", "surface_alt", "text", "text_muted", "accent", "line", "danger", "amber"].every(
+			(key) => typeof color[key] === "string",
+		) &&
+		typeof font.body === "string" &&
+		typeof font.heading === "string"
+	);
+}
+
 /** Validate the Host-projected, renderer-safe part of a character package. */
 export function isCharacterDisplay(value: unknown): value is CharacterDisplay {
-	if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") {
+	if (
+		!isRecord(value) ||
+		typeof value.id !== "string" ||
+		typeof value.name !== "string" ||
+		typeof value.language !== "string"
+	) {
 		return false;
 	}
 	const character = value.character;
@@ -633,7 +812,7 @@ export function isCharacterDisplay(value: unknown): value is CharacterDisplay {
 		typeof character.correction.trigger_label !== "string" ||
 		typeof character.correction.reason_group_label !== "string" ||
 		!isCharacterOnboardingFlow(character.first_meeting) ||
-		!isRecord(value.theme) ||
+		!isCharacterTheme(value.theme) ||
 		!isRecord(visual) ||
 		typeof visual.defaultSceneId !== "string" ||
 		typeof visual.avatarUrl !== "string" ||
@@ -769,6 +948,7 @@ export function isCommission(value: unknown): value is Commission {
 	return (
 		isRecord(value) &&
 		typeof value.id === "string" &&
+		(value.conversationId === undefined || typeof value.conversationId === "string") &&
 		isActionDraft(value.draft) &&
 		isOneOf(value.status, COMMISSION_STATUSES) &&
 		typeof value.createdAt === "string"
@@ -803,8 +983,52 @@ export function isArtifact(value: unknown): value is Artifact {
 	);
 }
 
+export function isStoryChange(value: unknown): value is StoryChange {
+	return (
+		isRecord(value) &&
+		typeof value.id === "string" &&
+		typeof value.text === "string" &&
+		(value.scope === "global" || value.scope === "branch") &&
+		(value.source === "user_explicit" ||
+			value.source === "story_event" ||
+			value.source === "user_confirmed") &&
+		(value.conversationId === undefined || typeof value.conversationId === "string") &&
+		(value.branchId === undefined || typeof value.branchId === "string") &&
+		typeof value.createdAt === "string"
+	);
+}
+
+export function normalizeCharacterList(value: unknown): CharacterListData | null {
+	if (!isRecord(value) || !Array.isArray(value.characters)) return null;
+	if (
+		!value.characters.every(
+			(character) =>
+				isRecord(character) &&
+				typeof character.id === "string" &&
+				typeof character.name === "string" &&
+				typeof character.version === "string" &&
+				typeof character.subtitle === "string" &&
+				typeof character.avatarUrl === "string" &&
+				typeof character.active === "boolean",
+		)
+	)
+		return null;
+	return { characters: value.characters as CharacterSummary[] };
+}
+
 export function isSettingsData(value: unknown): value is SettingsData {
-	return isRecord(value) && typeof value.relationshipMemoryEnabled === "boolean";
+	return (
+		isRecord(value) &&
+		typeof value.relationshipMemoryEnabled === "boolean" &&
+		(value.textFallback === undefined || isModelRoute(value.textFallback)) &&
+		(value.multimodalFallback === undefined || isModelRoute(value.multimodalFallback))
+	);
+}
+
+function isModelRoute(value: unknown): value is ModelRoute {
+	return (
+		isRecord(value) && typeof value.providerId === "string" && typeof value.modelId === "string"
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -839,7 +1063,7 @@ export function normalizeConversationSnapshot(value: unknown): ConversationSnaps
 
 /** Accept either `{ entries: [...] }` (wire list/search shape) or a bare array. */
 export function normalizeMemoryEntries(value: unknown): MemoryEntry[] | null {
-	const candidates = isRecord(value) ? value.entries : value;
+	const candidates = Array.isArray(value) ? value : isRecord(value) ? value.entries : value;
 	if (!Array.isArray(candidates) || !candidates.every(isMemoryEntry)) return null;
 	return candidates;
 }
@@ -883,6 +1107,12 @@ export function normalizeArtifactList(value: unknown): ArtifactListData | null {
 	if (!isRecord(value) || !Array.isArray(value.artifacts)) return null;
 	if (!value.artifacts.every(isArtifact)) return null;
 	return { artifacts: value.artifacts };
+}
+
+export function normalizeStoryList(value: unknown): StoryListData | null {
+	if (!isRecord(value) || !Array.isArray(value.changes)) return null;
+	if (!value.changes.every(isStoryChange)) return null;
+	return { changes: value.changes };
 }
 
 function normalizeCharacterRuntimeSnapshot(value: unknown): CharacterRuntimeSnapshot | null {
@@ -933,6 +1163,8 @@ export function sanitizeSnapshot(value: unknown): Snapshot {
 	if (runs) out.run = runs;
 	const artifacts = normalizeArtifactList(value.artifact);
 	if (artifacts) out.artifact = artifacts;
+	const story = normalizeStoryList(value.story);
+	if (story) out.story = story;
 	if (isSettingsData(value.settings)) out.settings = value.settings;
 	if (isCharacterDisplay(value.character)) out.character = value.character;
 	const characterRuntime = normalizeCharacterRuntimeSnapshot(value.characterRuntime);

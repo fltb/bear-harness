@@ -75,11 +75,13 @@ export function Titlebar(props: { sceneTitle: string; onOpenBackstage: () => voi
 								fallback={<div class="empty">{productUi.titlebar.noRunningWork}</div>}
 							>
 								<For each={activeRuns()}>
-									{(run) => (
+									{(run, index) => (
 										<div class="run">
-											<strong>{run.executorProfile}</strong>
+											<strong>
+												{productUi.titlebar.runningWorkItem} {index() + 1}
+											</strong>
 											<span>
-												{RUN_STATUS_TEXT[run.status] ?? run.status} · {run.id.slice(0, 8)}
+												{RUN_STATUS_TEXT[run.status] ?? productUi.titlebar.statusUpdating}
 											</span>
 										</div>
 									)}

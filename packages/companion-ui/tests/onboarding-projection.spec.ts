@@ -1,5 +1,6 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { waitFor } from "@testing-library/dom";
-import { createRoot } from "solid-js";
+import { createComponent, createRoot } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { createCompanionStore } from "../src/stores/companion.js";
 import type { OnboardingData } from "../src/stores/ipc.js";
@@ -16,10 +17,18 @@ function onboarding(currentStepId: string, eventSeq: number): OnboardingData {
 
 function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["client"]) {
 	let dispose: () => void = () => undefined;
-	const store = createRoot((cleanup) => {
+	let store: ReturnType<typeof createCompanionStore> | undefined;
+	createRoot((cleanup) => {
 		dispose = cleanup;
-		return createCompanionStore(client);
+		createComponent(QueryClientProvider, {
+			client: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+			get children() {
+				store = createCompanionStore(client);
+				return undefined;
+			},
+		});
 	});
+	if (!store) throw new Error("store was not created inside QueryClientProvider");
 	return { store, dispose };
 }
 

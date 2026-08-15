@@ -1,23 +1,40 @@
 import { productUi } from "@bear-harness/product-config";
-import { createSignal } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import { useCompanionStore } from "./stores/companion.js";
 
 /**
  * Composer: live input wired to `message.send`. Enter sends, Shift+Enter
- * inserts a newline. The attach button is a placeholder: the materials
- * pipeline is not part of the bridge yet, so it stays disabled with an
- * explanatory label instead of pretending to work.
+ * inserts a newline. Small text-based materials are read locally and sent
+ * with the next message; binary documents use the Host material workflow.
  */
 export function Composer(props: { placeholder: string }) {
 	const store = useCompanionStore();
 	const [text, setText] = createSignal("");
+	const [attachments, setAttachments] = createSignal<Array<{ name: string; content: string }>>([]);
+	let fileInput: HTMLInputElement | undefined;
 
 	const send = (event: SubmitEvent) => {
 		event.preventDefault();
 		const value = text().trim();
-		if (!value) return;
+		if (!value && attachments().length === 0) return;
+		const materials = attachments()
+			.map((file) => `\n\n[${productUi.composer.materialLabel}：${file.name}]\n${file.content}`)
+			.join("");
 		setText("");
-		void store.sendMessage(value);
+		setAttachments([]);
+		void store.sendMessage(`${value}${materials}`.trim());
+	};
+
+	const chooseFiles = async (event: Event) => {
+		const input = event.currentTarget as HTMLInputElement;
+		const files = [...(input.files ?? [])].slice(0, 10);
+		const loaded: Array<{ name: string; content: string }> = [];
+		for (const file of files) {
+			if (file.size > 10 * 1024 * 1024) continue;
+			loaded.push({ name: file.name, content: await file.text() });
+		}
+		setAttachments(loaded);
+		input.value = "";
 	};
 
 	const handleKeyDown = (event: KeyboardEvent) => {
@@ -30,14 +47,27 @@ export function Composer(props: { placeholder: string }) {
 
 	return (
 		<form class="composer" onSubmit={send}>
+			<input
+				ref={(element) => {
+					fileInput = element;
+				}}
+				class="material-picker"
+				type="file"
+				aria-label={productUi.composer.attachTitle}
+				multiple
+				accept="text/*,.md,.markdown,.json,.csv,.yaml,.yml,.toml,.xml,.js,.ts,.tsx,.jsx,.py,.rs,.go,.java,.c,.cpp,.h,.sql"
+				onChange={(event) => void chooseFiles(event)}
+			/>
 			<button
 				type="button"
 				class="circle"
-				disabled
-				aria-label={productUi.composer.attachUnavailableLabel}
-				title={productUi.composer.attachUnavailableTitle}
+				aria-label={productUi.composer.attachLabel}
+				title={productUi.composer.attachTitle}
+				onClick={() => fileInput?.click()}
 			>
-				＋
+				<Show when={attachments().length > 0} fallback="＋">
+					{attachments().length}
+				</Show>
 			</button>
 			<textarea
 				rows={1}
@@ -52,7 +82,10 @@ export function Composer(props: { placeholder: string }) {
 				type="submit"
 				class="send"
 				aria-label={productUi.composer.sendLabel}
-				disabled={store.activeConversationId === null || text().trim().length === 0}
+				disabled={
+					store.activeConversationId === null ||
+					(text().trim().length === 0 && attachments().length === 0)
+				}
 			>
 				➤
 			</button>

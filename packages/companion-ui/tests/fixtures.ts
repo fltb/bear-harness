@@ -1,10 +1,59 @@
 import type { CompanionClient } from "@bear-harness/companion-types";
 import { type ProductConfig, productConfig } from "@bear-harness/product-config";
 import { vi } from "vitest";
-import type { SettingsData } from "../src/index.js";
+import type { CharacterDisplay, SettingsData } from "../src/index.js";
 
 /** The official product config as shipped. */
 export const OFFICIAL_PRODUCT: Readonly<ProductConfig> = productConfig;
+
+export const THEMED_CHARACTER: CharacterDisplay = {
+	id: "test-character",
+	name: "Test Character",
+	language: "ja-JP",
+	theme: {
+		radius: { sm: 3, md: 5, lg: 7 },
+		color: {
+			surface: "#101820",
+			surface_alt: "#18242d",
+			text: "#f3f6f5",
+			text_muted: "#a8b6b2",
+			accent: "#42c7a5",
+			line: "#395048",
+			danger: "#ef6b73",
+			amber: "#e2b45e",
+		},
+		font: { body: "system-ui", heading: "serif" },
+	},
+	character: {
+		subtitle: "Test subtitle",
+		scene_title: "Test scene",
+		greeting: "Hello",
+		composer_placeholder: "Message",
+		correction: { trigger_label: "Correct", reason_group_label: "Reason" },
+		first_meeting: {
+			version: 1,
+			step_label: "Step",
+			dialog_label: "Introduction",
+			error_prefix: "Error",
+			steps: [
+				{
+					id: "hello",
+					kind: "acknowledge",
+					heading: "Hello",
+					body: "Welcome",
+					submit_label: "Continue",
+				},
+			],
+		},
+	},
+	scenes: [],
+	visual: {
+		defaultSceneId: "default",
+		avatarUrl: "data:image/svg+xml;base64,PHN2Zy8+",
+		presence: {},
+		stateLabels: {},
+	},
+};
 
 /**
  * A complete fork fixture: different identity fields, data directory,
@@ -54,7 +103,12 @@ export function createTestClient() {
 
 	const settingsGet = vi.fn(() => ok({ settings }));
 	const settingsSet = vi.fn(async (patch: Record<string, unknown>) => {
-		settings = { ...settings, ...patch } as SettingsData;
+		const next: Record<string, unknown> = { ...settings };
+		for (const [key, value] of Object.entries(patch)) {
+			if (value === null) delete next[key];
+			else next[key] = value;
+		}
+		settings = next as unknown as SettingsData;
 		return ok(null);
 	});
 
@@ -63,7 +117,11 @@ export function createTestClient() {
 
 	const client: CompanionClient = {
 		snapshot: { get: vi.fn(() => ok({ eventSeq: 0 })) },
-		character: { get: vi.fn(() => ok(null)) },
+		character: {
+			get: vi.fn(() => ok(null)),
+			list: vi.fn(() => ok({ characters: [] })),
+			activate: vi.fn(() => ok(null)),
+		},
 		events: { subscribe: vi.fn(() => new Promise<never>(() => {})) },
 		onboarding: {
 			get: vi.fn(() =>
@@ -85,6 +143,9 @@ export function createTestClient() {
 			list: conversationList,
 			create: vi.fn(() => ok({ id: "c1" })),
 			select: vi.fn(() => ok(null)),
+			rename: vi.fn(() => ok(null)),
+			archive: vi.fn(() => ok(null)),
+			delete: vi.fn(() => ok(null)),
 		},
 		message: {
 			send: vi.fn(() => ok({ messageId: "m1" })),
@@ -106,20 +167,43 @@ export function createTestClient() {
 			exclude: vi.fn(() => ok(null)),
 			edit: vi.fn(() => ok(null)),
 		},
+		story: {
+			listChanges: vi.fn(() => ok({ changes: [] })),
+			applyChange: vi.fn(() => ok(null)),
+			revertChange: vi.fn(() => ok(null)),
+			reset: vi.fn(() => ok(null)),
+			listProposals: vi.fn(() => ok({ proposals: [] })),
+			resolveProposal: vi.fn(() => ok(null)),
+		},
+		canon: {
+			listSources: vi.fn(() => ok({ sources: [] })),
+			addSource: vi.fn(() => ok(null)),
+			search: vi.fn(() => ok({ chunks: [] })),
+			removeSource: vi.fn(() => ok(null)),
+			listModules: vi.fn(() => ok({ modules: [] })),
+			upsertModule: vi.fn(() => ok(null)),
+			deleteModule: vi.fn(() => ok(null)),
+		},
 		provider: {
 			list: providerList,
+			customUpsert: vi.fn(() => ok(null)),
+			overrideBaseUrl: vi.fn(() => ok(null)),
 			setApiKey: vi.fn(() => ok(null)),
-			login: vi.fn(() => ok(null)),
+			login: vi.fn(() => ok({ providerId: "test", status: "completed" })),
+			loginStatus: vi.fn(() => ok({ providerId: "test", status: "completed" })),
+			loginAnswer: vi.fn(() => ok({ providerId: "test", status: "running" })),
 			logout: vi.fn(() => ok(null)),
 		},
 		voice: {
 			list: vi.fn(() => ok({ stacks: [] })),
+			pin: vi.fn(() => ok(null)),
 			switch: vi.fn(() => ok(null)),
 		},
 		commission: {
 			list: vi.fn(() => ok({ commissions: [] })),
 			draft: vi.fn(() => ok({ commissionId: "c1", draftHash: "h" })),
 			approve: vi.fn(() => ok(null)),
+			reject: vi.fn(() => ok(null)),
 			launch: vi.fn(() => ok({ commissionId: "c1", draftHash: "h" })),
 		},
 		run: {
@@ -130,6 +214,7 @@ export function createTestClient() {
 		},
 		artifact: {
 			list: vi.fn(() => ok({ artifacts: [] })),
+			read: vi.fn(() => ok({ logicalName: "result.txt", mime: "text/plain", base64: "" })),
 		},
 		settings: { get: settingsGet, set: settingsSet },
 	};

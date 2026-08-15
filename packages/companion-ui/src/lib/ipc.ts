@@ -9,9 +9,21 @@
  * fallback).
  */
 
+import { productUi } from "@bear-harness/product-config";
+
 export interface IpcError {
 	kind: string;
 	reason: string;
+}
+
+export class IpcInvocationError extends Error {
+	constructor(
+		readonly kind: string,
+		message: string,
+	) {
+		super(message);
+		this.name = "IpcInvocationError";
+	}
 }
 
 /** Unwrap an IPC response envelope; throws on failure or malformed shape. */
@@ -27,6 +39,20 @@ export function unwrap<T>(result: unknown): T {
 		typeof envelope.error === "object" && envelope.error !== null ? envelope.error : {}
 	) as Partial<IpcError>;
 	const kind = typeof error.kind === "string" ? error.kind : "internal";
-	const reason = typeof error.reason === "string" ? error.reason : "unknown error";
-	throw new Error(`${kind}: ${reason}`);
+	throw new IpcInvocationError(kind, userFacingError(kind));
+}
+
+function userFacingError(kind: string): string {
+	switch (kind) {
+		case "not_found":
+			return productUi.errors.notFound;
+		case "conflict":
+			return productUi.errors.conflict;
+		case "unavailable":
+			return productUi.errors.unavailable;
+		case "invalid_request":
+			return productUi.errors.invalidRequest;
+		default:
+			return productUi.errors.generic;
+	}
 }

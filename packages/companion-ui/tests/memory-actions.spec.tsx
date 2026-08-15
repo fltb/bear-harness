@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from "@solidjs/testing-library";
+import { productUi } from "@bear-harness/product-config";
+import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
@@ -62,19 +63,53 @@ describe("memory controls", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		await user.click(await screen.findByRole("button", { name: "幕后" }));
-		await user.click(screen.getByRole("tab", { name: "记忆" }));
+		await user.click(await screen.findByRole("button", { name: productUi.titlebar.backstage }));
+		await user.click(screen.getByRole("tab", { name: productUi.backstage.memory }));
 		await screen.findAllByText(candidate.text);
-		await user.click(screen.getByRole("button", { name: "记住" }));
-		await user.click(screen.getByRole("button", { name: "置顶" }));
-		const query = screen.getByRole("searchbox", { name: "搜索记忆" });
+		await user.click(screen.getByRole("button", { name: productUi.memory.remember }));
+		await user.click(screen.getByRole("button", { name: productUi.memory.pin }));
+		const query = screen.getByRole("searchbox", { name: productUi.memory.searchLabel });
 		await user.type(query, "夜里");
-		await user.click(screen.getByRole("button", { name: "搜索" }));
+		await user.click(screen.getByRole("button", { name: productUi.memory.search }));
 
 		await waitFor(() => {
 			expect(decideCandidate).toHaveBeenCalledWith("candidate-1", "approve", undefined, "self");
 			expect(pin).toHaveBeenCalledWith("entry-1", true);
 			expect(search).toHaveBeenCalledWith("夜里", "self");
 		});
+	});
+
+	it("edits an approved entry and replaces the visible memory with the canonical result", async () => {
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		let currentEntry = entry;
+		client.memory.listCandidates = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { candidates: [] } }),
+		);
+		client.memory.search = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { entries: [currentEntry] } }),
+		);
+		client.memory.edit = vi.fn((_entryId, newText) => {
+			currentEntry = { ...currentEntry, id: "entry-2", text: newText, normalizedText: newText };
+			return Promise.resolve({ ok: true as const, data: null });
+		});
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		await user.click(await screen.findByRole("button", { name: productUi.titlebar.backstage }));
+		await user.click(screen.getByRole("tab", { name: productUi.backstage.memory }));
+		const entries = await screen.findByRole("region", {
+			name: productUi.memory.defaultEntriesTitle,
+		});
+		await user.click(within(entries).getByRole("button", { name: productUi.memory.edit }));
+		const editor = within(entries).getByRole("textbox", { name: productUi.memory.editedContent });
+		await user.clear(editor);
+		await user.type(editor, "用户喜欢在清晨工作");
+		await user.click(within(entries).getByRole("button", { name: productUi.memory.saveEdit }));
+
+		await waitFor(() =>
+			expect(client.memory.edit).toHaveBeenCalledWith("entry-1", "用户喜欢在清晨工作"),
+		);
+		expect(await within(entries).findByText("用户喜欢在清晨工作")).toBeInTheDocument();
+		expect(within(entries).queryByText(entry.text)).not.toBeInTheDocument();
 	});
 });

@@ -1,3 +1,4 @@
+import { productUi } from "@bear-harness/product-config";
 import { render, screen, waitFor } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -56,6 +57,44 @@ function activeConversationSnapshot() {
 }
 
 describe("conversation message controls", () => {
+	it("requires selecting a reply model before entering the first meeting", async () => {
+		const { client } = createTestClient();
+		client.provider.list = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					providers: [
+						{
+							id: "test-provider",
+							name: "Test Provider",
+							authType: "api_key" as const,
+							credentialStatus: "missing" as const,
+							availableModels: [
+								{
+									id: "test-model",
+									name: "Test Model",
+									supportsImages: false,
+									cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+								},
+							],
+							unavailable: [],
+						},
+					],
+				},
+			}),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		const setup = await screen.findByRole("dialog", { name: productUi.modelSetup.dialogLabel });
+		expect(setup).toHaveTextContent(productUi.modelSetup.title);
+		expect(screen.getByRole("combobox", { name: productUi.settings.serviceLabel })).toHaveValue(
+			"test-provider",
+		);
+		expect(screen.getByRole("combobox", { name: productUi.modelSetup.modelLabel })).toHaveValue(
+			"test-model",
+		);
+	});
+
 	it("routes version, regenerate, edit, continue and branch controls through the active conversation", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
@@ -80,15 +119,15 @@ describe("conversation message controls", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		await screen.findByText("当前回答");
-		await user.click(screen.getByRole("button", { name: "上一个版本" }));
-		await user.click(screen.getByRole("button", { name: "重新生成" }));
-		await user.click(screen.getByRole("button", { name: "编辑" }));
-		const editor = screen.getByRole("textbox", { name: "编辑消息" });
+		await user.click(screen.getByRole("button", { name: productUi.messages.previousVersion }));
+		await user.click(screen.getByRole("button", { name: productUi.messages.regenerate }));
+		await user.click(screen.getByRole("button", { name: productUi.messages.edit }));
+		const editor = screen.getByRole("textbox", { name: productUi.messages.editLabel });
 		await user.clear(editor);
 		await user.type(editor, "修订后的回答");
-		await user.click(screen.getByRole("button", { name: "保存" }));
-		await user.click(screen.getByRole("button", { name: "继续" }));
-		await user.click(screen.getByRole("button", { name: "从这里另开一段" }));
+		await user.click(screen.getByRole("button", { name: productUi.messages.save }));
+		await user.click(screen.getByRole("button", { name: productUi.messages.continue }));
+		await user.click(screen.getByRole("button", { name: productUi.messages.branch }));
 
 		await waitFor(() => {
 			expect(switchVersion).toHaveBeenCalledWith("conversation-1", "assistant-1", "version-1");

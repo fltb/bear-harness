@@ -35,6 +35,7 @@ function MessageItem(props: {
 }) {
 	const store = useCompanionStore();
 	const [editing, setEditing] = createSignal(false);
+	const [actionsOpen, setActionsOpen] = createSignal(false);
 	const [editText, setEditText] = createSignal("");
 	const [correcting, setCorrecting] = createSignal(false);
 	const [reason, setReason] = createSignal("");
@@ -58,6 +59,7 @@ function MessageItem(props: {
 
 	const startEdit = () => {
 		setEditText(content());
+		setActionsOpen(false);
 		setEditing(true);
 	};
 
@@ -78,9 +80,16 @@ function MessageItem(props: {
 	};
 
 	return (
-		<div class={isUser() ? "msg user" : "msg bear-msg"} data-message-id={props.message.id}>
+		<article
+			class={isUser() ? "msg user" : "msg bear-msg"}
+			data-message-id={props.message.id}
+			aria-label={meta()}
+		>
 			<Show when={editing()}>
 				<div class="msg-meta">{meta()}</div>
+				<Show when={isUser()}>
+					<p class="edit-branch-note">{productUi.messages.userEditBranchNote}</p>
+				</Show>
 				<textarea
 					class="edit-box"
 					rows={3}
@@ -99,7 +108,18 @@ function MessageItem(props: {
 			</Show>
 
 			<Show when={!editing()}>
-				<div class="msg-meta">{meta()}</div>
+				<div class="msg-heading">
+					<div class="msg-meta">{meta()}</div>
+					<button
+						type="button"
+						class="msg-menu-trigger"
+						aria-label={productUi.messages.operations}
+						aria-expanded={actionsOpen()}
+						onClick={() => setActionsOpen((open) => !open)}
+					>
+						···
+					</button>
+				</div>
 				<p>{content()}</p>
 
 				<Show when={props.message.versions.length > 1}>
@@ -189,7 +209,12 @@ function MessageItem(props: {
 				</Show>
 
 				<Show when={!correcting()}>
-					<div class="msg-tools" role="toolbar" aria-label={productUi.messages.operations}>
+					<div
+						class="msg-tools"
+						classList={{ "is-open": actionsOpen() }}
+						role="toolbar"
+						aria-label={productUi.messages.operations}
+					>
 						<Show when={!isUser()}>
 							<button type="button" onClick={() => void store.regenerateMessage(props.message.id)}>
 								{productUi.messages.regenerate}
@@ -229,7 +254,7 @@ function MessageItem(props: {
 					</div>
 				</Show>
 			</Show>
-		</div>
+		</article>
 	);
 }
 
@@ -277,7 +302,12 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 			</Show>
 
 			<Show
-				when={store.activeMessages.length > 0}
+				when={
+					store.activeMessages.length > 0 ||
+					store.pendingUserText !== undefined ||
+					store.assistantStreaming ||
+					store.streamingAssistantText.length > 0
+				}
 				fallback={
 					<Show when={props.character}>
 						{(character) => (
@@ -301,6 +331,27 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 						/>
 					)}
 				</For>
+				<Show when={store.pendingUserText}>
+					{(text) => (
+						<article class="msg user optimistic-message" aria-label={productUi.messages.userMeta}>
+							<div class="msg-meta">{productUi.messages.userMeta}</div>
+							<p>{text()}</p>
+						</article>
+					)}
+				</Show>
+				<Show when={store.assistantStreaming || store.streamingAssistantText.length > 0}>
+					<article class="msg bear-msg streaming-message" aria-label={props.character?.name ?? ""}>
+						<div class="msg-meta">{props.character?.name ?? ""}</div>
+						<p>{store.streamingAssistantText}</p>
+						<Show when={store.assistantStreaming}>
+							<span
+								class="streaming-status"
+								role="status"
+								aria-label={productUi.messages.responding}
+							/>
+						</Show>
+					</article>
+				</Show>
 			</Show>
 		</section>
 	);
