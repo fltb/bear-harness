@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { Value } from "typebox/value";
 import type { EventBus } from "../storage/event-bus.js";
 import type { CharacterLoader } from "./character-loader.js";
 import type {
@@ -147,7 +146,8 @@ export class FirstMeetingMachine {
 			value = {};
 		}
 		const source = isRecord(value) ? value : {};
-		const storedAnswers = Value.Check(OnboardingStateDataSchema, source) ? source.answers : {};
+		const parsedState = OnboardingStateDataSchema.safeParse(source);
+		const storedAnswers = parsedState.success ? parsedState.data.answers : {};
 		const legacyName = typeof source.name === "string" ? source.name : undefined;
 		const legacyRelation = typeof source.relation === "string" ? source.relation : undefined;
 		const legacyMemory =

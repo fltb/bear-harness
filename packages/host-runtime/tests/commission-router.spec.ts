@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -161,6 +161,36 @@ describe("CommissionService executor routing", () => {
 		expect(fixture.db.prepare("SELECT kind FROM evidence").all()).toEqual([
 			{ kind: "executor.launch_failed" },
 		]);
+	});
+
+	it("collects ordinary files from approved write paths as verified run artifacts", async () => {
+		let output = "";
+		const fixture = createFixture({
+			async launch(request) {
+				writeFileSync(output, "finished report", "utf8");
+				request.emit({ type: "started" });
+				request.emit({ type: "completed" });
+			},
+		});
+		fixtures.push(fixture);
+		output = join(fixture.tmp, "report.md");
+		const { commissionId, draftHash } = fixture.service.draft({
+			conversationId: "conversation-1",
+			title: "Write report",
+			description: "Create the approved report.",
+			writes: [output],
+			toolNames: ["write"],
+		});
+		fixture.service.approve(commissionId, draftHash);
+		const result = await fixture.service.launch({ commissionId, executorProfile: "pi-worker" });
+
+		expect(
+			fixture.db.prepare("SELECT logical_name, status, producer_run_id FROM artifacts").get(),
+		).toEqual({
+			logical_name: "report.md",
+			status: "verified",
+			producer_run_id: result.runId,
+		});
 	});
 
 	it("sends steering and cancellation to the launched profile before changing Host state", async () => {

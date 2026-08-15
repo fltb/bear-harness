@@ -8,6 +8,7 @@ id: jizhou
 name: 极昼
 version: 1.0.0
 bridge_api_version: 1
+language: zh-CN
 
 # 主题 (semantic tokens → Host CSS custom properties)
 # 只能改配色/圆角/字体，不能改布局或系统层元素
@@ -20,7 +21,7 @@ theme:
     surface: "#102a31"
     surface_alt: "#183a40"
     text: "#e8f2ee"
-    text_muted: "#6d7d78"
+    text_muted: "#9ab2ab"
     accent: "#8bd0bb"
     line: "rgba(161,207,194,.22)"
     danger: "#b9685f"

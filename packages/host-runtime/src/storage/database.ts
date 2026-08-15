@@ -487,4 +487,164 @@ export const MIGRATIONS: Migration[] = [
 			);
 		`,
 	},
+	{
+		id: 4,
+		description: "Canon Hub, story changes, and creator source graph",
+		up: `
+			CREATE TABLE story_changes (
+				id TEXT PRIMARY KEY,
+				companion_id TEXT NOT NULL REFERENCES companion_identity(id),
+				conversation_id TEXT REFERENCES conversations(id),
+				branch_id TEXT REFERENCES branches(id),
+				text TEXT NOT NULL,
+				normalized_text TEXT NOT NULL,
+				scope TEXT NOT NULL CHECK (scope IN ('global','branch')),
+				source TEXT NOT NULL CHECK (source IN ('user_explicit','story_event','user_confirmed')),
+				status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','reverted')),
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				reverted_at TEXT
+			);
+
+			CREATE TABLE story_change_events (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				change_id TEXT REFERENCES story_changes(id),
+				action TEXT NOT NULL CHECK (action IN ('applied','reverted','reset')),
+				conversation_id TEXT REFERENCES conversations(id),
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+
+			CREATE TABLE canon_sources (
+				id TEXT PRIMARY KEY,
+				companion_id TEXT NOT NULL REFERENCES companion_identity(id),
+				logical_name TEXT NOT NULL,
+				mime TEXT NOT NULL,
+				sha256 TEXT NOT NULL,
+				artifact_id TEXT REFERENCES artifacts(id),
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+
+			CREATE TABLE canon_chunks (
+				id TEXT PRIMARY KEY,
+				source_id TEXT NOT NULL REFERENCES canon_sources(id) ON DELETE CASCADE,
+				ordinal INTEGER NOT NULL,
+				content TEXT NOT NULL,
+				start_offset INTEGER NOT NULL,
+				end_offset INTEGER NOT NULL,
+				token_count INTEGER NOT NULL DEFAULT 0,
+				embedding BLOB,
+				UNIQUE(source_id, ordinal)
+			);
+
+			CREATE VIRTUAL TABLE canon_chunks_fts USING fts5(
+				content,
+				content='canon_chunks',
+				content_rowid='rowid',
+				tokenize='unicode61'
+			);
+
+			CREATE TRIGGER canon_chunks_fts_insert AFTER INSERT ON canon_chunks BEGIN
+				INSERT INTO canon_chunks_fts(rowid, content) VALUES (new.rowid, new.content);
+			END;
+			CREATE TRIGGER canon_chunks_fts_delete AFTER DELETE ON canon_chunks BEGIN
+				INSERT INTO canon_chunks_fts(canon_chunks_fts, rowid, content)
+				VALUES ('delete', old.rowid, old.content);
+			END;
+			CREATE TRIGGER canon_chunks_fts_update AFTER UPDATE ON canon_chunks BEGIN
+				INSERT INTO canon_chunks_fts(canon_chunks_fts, rowid, content)
+				VALUES ('delete', old.rowid, old.content);
+				INSERT INTO canon_chunks_fts(rowid, content) VALUES (new.rowid, new.content);
+			END;
+
+			CREATE TABLE canon_entities (
+				id TEXT PRIMARY KEY,
+				companion_id TEXT NOT NULL REFERENCES companion_identity(id),
+				kind TEXT NOT NULL,
+				name TEXT NOT NULL,
+				aliases_json TEXT NOT NULL DEFAULT '[]',
+				description TEXT NOT NULL DEFAULT '',
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+
+			CREATE TABLE canon_relations (
+				id TEXT PRIMARY KEY,
+				from_entity_id TEXT NOT NULL REFERENCES canon_entities(id) ON DELETE CASCADE,
+				to_entity_id TEXT NOT NULL REFERENCES canon_entities(id) ON DELETE CASCADE,
+				kind TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				source_chunk_id TEXT REFERENCES canon_chunks(id),
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+
+			CREATE TABLE story_modules (
+				id TEXT PRIMARY KEY,
+				companion_id TEXT NOT NULL REFERENCES companion_identity(id),
+				parent_id TEXT REFERENCES story_modules(id),
+				kind TEXT NOT NULL CHECK (kind IN ('root','arc','event','entity','relationship','location','object','behavior')),
+				name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				source_refs_json TEXT NOT NULL DEFAULT '[]',
+				dependencies_json TEXT NOT NULL DEFAULT '[]',
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+
+			CREATE INDEX idx_story_changes_companion ON story_changes(companion_id, status, created_at);
+			CREATE INDEX idx_story_changes_branch ON story_changes(branch_id, status, created_at);
+			CREATE INDEX idx_canon_sources_companion ON canon_sources(companion_id, created_at);
+			CREATE INDEX idx_canon_chunks_source ON canon_chunks(source_id, ordinal);
+			CREATE INDEX idx_canon_entities_companion ON canon_entities(companion_id, name);
+			CREATE INDEX idx_story_modules_companion ON story_modules(companion_id, kind);
+		`,
+	},
+	{
+		id: 5,
+		description: "Persist the active installed character",
+		up: `
+			CREATE TABLE active_character (
+				singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+				character_id TEXT NOT NULL REFERENCES companion_identity(id),
+				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+		`,
+	},
+	{
+		id: 6,
+		description: "Conversation archive state",
+		up: `
+			ALTER TABLE conversations ADD COLUMN archived_at TEXT;
+			CREATE INDEX idx_conversations_active
+				ON conversations(companion_id, archived_at, updated_at);
+		`,
+	},
+	{
+		id: 7,
+		description: "Persistent story change confirmations",
+		up: `
+			CREATE TABLE story_change_proposals (
+				id TEXT PRIMARY KEY,
+				companion_id TEXT NOT NULL REFERENCES companion_identity(id),
+				conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+				branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+				text TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','dismissed')),
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				decided_at TEXT
+			);
+			CREATE INDEX idx_story_proposals_pending
+				ON story_change_proposals(companion_id, conversation_id, status, created_at);
+		`,
+	},
+	{
+		id: 8,
+		description: "Persistent text and multimodal model fallback routes",
+		up: `
+			CREATE TABLE model_route_settings (
+				companion_id TEXT PRIMARY KEY REFERENCES companion_identity(id),
+				text_provider_id TEXT,
+				text_model_id TEXT,
+				multimodal_provider_id TEXT,
+				multimodal_model_id TEXT,
+				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+		`,
+	},
 ];

@@ -19,6 +19,7 @@
 		"@agentclientprotocol/codex-acp": "^1.2.0",
 		"@agentclientprotocol/sdk": "^1.3.0",
 		"@bear-harness/protocol": "file:../protocol",
+		"@bear-harness/schema": "file:../schema",
 		"@earendil-works/pi-coding-agent": "0.84.1",
 		"csv-parse": "7.0.2",
 		"docx": "9.7.1",
@@ -31,7 +32,6 @@
 		"pdf-lib": "1.17.1",
 		"pdfjs-dist": "6.2.108",
 		"pptxgenjs": "4.0.1",
-		"typebox": "1.3.13",
 		"xlsx": "file:../../apps/desktop/vendor/xlsx-0.20.3.tgz",
 		"yaml": "2.9.0"
 	},

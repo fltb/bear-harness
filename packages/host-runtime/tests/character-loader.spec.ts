@@ -24,6 +24,8 @@ describe("character package visual projection", () => {
 		if (!character) throw new Error("jizhou package is required for the official build");
 
 		const display = loader.display(character);
+		expect(display.language).toBe("zh-CN");
+		expect(display.theme.color.accent).toBe("#8bd0bb");
 		expect(display.visual.avatarUrl).toMatch(/^data:image\/svg\+xml;base64,/);
 		for (const state of [
 			"presence",

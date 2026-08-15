@@ -19,6 +19,12 @@ export default defineConfig({
 			provider: "v8",
 			reporter: ["text", "json", "html", "lcov"],
 			reportsDirectory: fileURLToPath(new URL("../../coverage/host", import.meta.url)),
+			thresholds: {
+				statements: 65,
+				branches: 55,
+				functions: 65,
+				lines: 65,
+			},
 		},
 	},
 });

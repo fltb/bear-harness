@@ -15,7 +15,8 @@
  * auth errors reported by pi-ai.
  */
 
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { CredentialStatus, CredentialStore } from "./credential-store.js";
 
@@ -97,8 +98,25 @@ export interface OAuthLoginResult {
 	verificationUri?: string;
 }
 
+export interface OAuthSessionState extends OAuthLoginResult {
+	providerId: string;
+	status: "running" | "waiting_input" | "completed" | "failed";
+	message?: string;
+	prompt?: {
+		type: "text" | "secret" | "select" | "manual_code";
+		message: string;
+		placeholder?: string;
+		options?: readonly { id: string; label: string; description?: string }[];
+	};
+}
+
+interface OAuthSessionInternal extends OAuthSessionState {
+	resolvePrompt?: (answer: string) => void;
+}
+
 export class ProviderCatalog {
 	private runtime: Promise<ModelRuntime> | null = null;
+	private oauthSessions = new Map<string, OAuthSessionInternal>();
 
 	constructor(
 		private readonly credentialStore: CredentialStore,
@@ -108,11 +126,7 @@ export class ProviderCatalog {
 	/** Lazily create (and cache) the pi-ai runtime; never refresh on create. */
 	private async getRuntime(): Promise<ModelRuntime> {
 		if (!this.runtime) {
-			this.runtime = ModelRuntime.create({
-				authPath: join(this.agentDir, "auth.json"),
-				modelsPath: join(this.agentDir, "models.json"),
-				refreshOnCreate: false,
-			}).catch((error) => {
+			this.runtime = this.createRuntime().catch((error) => {
 				// A failed create must not poison the cache for later retries.
 				this.runtime = null;
 				throw error;
@@ -121,9 +135,139 @@ export class ProviderCatalog {
 		return this.runtime;
 	}
 
+	private async createRuntime(): Promise<ModelRuntime> {
+		const runtime = await ModelRuntime.create({
+			authPath: join(this.agentDir, "auth.json"),
+			modelsPath: join(this.agentDir, "models.json"),
+			refreshOnCreate: false,
+		});
+		for (const account of await this.credentialStore.list()) {
+			if (account.status === "invalid" || account.status === "unavailable") continue;
+			const credential = await this.credentialStore.get(account.providerId);
+			if (!credential?.apiKey || BLOCKED_PROVIDER_ID_PATTERN.test(account.providerId)) continue;
+			if (!runtime.getProvider(account.providerId)) continue;
+			await runtime.setRuntimeApiKey(account.providerId, credential.apiKey);
+		}
+		return runtime;
+	}
+
 	/** Shared in-process runtime for the Companion session after Host auth policy. */
 	async getModelRuntime(): Promise<ModelRuntime> {
 		return this.getRuntime();
+	}
+
+	async upsertCustomProvider(input: {
+		providerId: string;
+		name: string;
+		baseUrl: string;
+		modelId: string;
+		apiKey?: string;
+		supportsImages?: boolean;
+	}): Promise<void> {
+		assertAllowedProvider(input.providerId);
+		let endpoint: URL;
+		try {
+			endpoint = new URL(input.baseUrl);
+		} catch {
+			throw { kind: "invalid_request", reason: "custom_provider_url_invalid" };
+		}
+		if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
+			throw { kind: "invalid_request", reason: "custom_provider_url_invalid" };
+		}
+		const modelsPath = join(this.agentDir, "models.json");
+		const temporaryPath = `${modelsPath}.tmp`;
+		let providers: Record<string, unknown> = {};
+		if (existsSync(modelsPath)) {
+			try {
+				const current = JSON.parse(readFileSync(modelsPath, "utf8")) as { providers?: unknown };
+				if (current.providers && typeof current.providers === "object") {
+					providers = current.providers as Record<string, unknown>;
+				}
+			} catch {
+				throw { kind: "conflict", reason: "custom_provider_config_invalid" };
+			}
+		}
+		mkdirSync(dirname(modelsPath), { recursive: true, mode: 0o700 });
+		writeFileSync(
+			temporaryPath,
+			`${JSON.stringify(
+				{
+					providers: {
+						...providers,
+						[input.providerId]: {
+							name: input.name,
+							baseUrl: endpoint.toString().replace(/\/$/, ""),
+							api: "openai-completions",
+							authHeader: true,
+							models: [
+								{
+									id: input.modelId,
+									name: input.modelId,
+									...(input.supportsImages ? { input: ["text", "image"] } : {}),
+								},
+							],
+						},
+					},
+				},
+				null,
+				2,
+			)}\n`,
+			{ mode: 0o600 },
+		);
+		renameSync(temporaryPath, modelsPath);
+		this.runtime = null;
+		if (input.apiKey) await this.setApiKey(input.providerId, input.apiKey);
+	}
+
+	async overrideProviderBaseUrl(input: { providerId: string; baseUrl: string }): Promise<void> {
+		assertAllowedProvider(input.providerId);
+		let endpoint: URL;
+		try {
+			endpoint = new URL(input.baseUrl);
+		} catch {
+			throw { kind: "invalid_request", reason: "custom_provider_url_invalid" };
+		}
+		if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
+			throw { kind: "invalid_request", reason: "custom_provider_url_invalid" };
+		}
+		const modelsPath = join(this.agentDir, "models.json");
+		const temporaryPath = `${modelsPath}.tmp`;
+		let document: Record<string, unknown> = {};
+		let providers: Record<string, unknown> = {};
+		if (existsSync(modelsPath)) {
+			try {
+				document = JSON.parse(readFileSync(modelsPath, "utf8")) as Record<string, unknown>;
+				if (document.providers && typeof document.providers === "object") {
+					providers = document.providers as Record<string, unknown>;
+				}
+			} catch {
+				throw { kind: "conflict", reason: "custom_provider_config_invalid" };
+			}
+		}
+		const current = providers[input.providerId];
+		const currentConfig =
+			current && typeof current === "object" ? (current as Record<string, unknown>) : {};
+		mkdirSync(dirname(modelsPath), { recursive: true, mode: 0o700 });
+		writeFileSync(
+			temporaryPath,
+			`${JSON.stringify(
+				{
+					...document,
+					providers: {
+						...providers,
+						[input.providerId]: {
+							...currentConfig,
+							baseUrl: endpoint.toString().replace(/\/$/, ""),
+						},
+					},
+				},
+				null,
+				2,
+			)}\n`,
+			{ mode: 0o600 },
+		);
+		renameSync(temporaryPath, modelsPath);
+		this.runtime = null;
 	}
 
 	/** List providers visible to the product, with models and credential status. */
@@ -143,11 +287,15 @@ export class ProviderCatalog {
 		const providers: ProviderInfo[] = [];
 		for (const provider of runtime.getProviders()) {
 			if (BLOCKED_PROVIDER_ID_PATTERN.test(provider.id)) continue;
+			const hostStatus = await this.credentialStore.getStatus(provider.id);
 			providers.push({
 				id: provider.id,
 				name: provider.name,
 				authType: provider.auth.oauth ? "oauth" : "api_key",
-				credentialStatus: mapCredentialStatus(runtime.getProviderAuthStatus(provider.id)),
+				credentialStatus:
+					hostStatus === "stored" || hostStatus === "weak_storage"
+						? "stored"
+						: mapCredentialStatus(runtime.getProviderAuthStatus(provider.id)),
 				availableModels: runtime.getModels(provider.id).map((model) => ({
 					id: model.id,
 					name: model.name,
@@ -217,6 +365,70 @@ export class ProviderCatalog {
 		return { authUrl, deviceCode, verificationUri };
 	}
 
+	startOAuth(providerId: string): OAuthSessionState {
+		const current = this.oauthSessions.get(providerId);
+		if (current && (current.status === "running" || current.status === "waiting_input")) {
+			return publicOAuthSession(current);
+		}
+		const session: OAuthSessionInternal = { providerId, status: "running" };
+		this.oauthSessions.set(providerId, session);
+		void this.loginOAuth(providerId, {
+			notify: (event) => {
+				if (event.type === "auth_url") session.authUrl = event.url;
+				if (event.type === "device_code") {
+					session.deviceCode = event.userCode;
+					session.verificationUri = event.verificationUri;
+				}
+				if (event.type === "info" || event.type === "progress") session.message = event.message;
+			},
+			prompt: (prompt) =>
+				new Promise<string>((resolve) => {
+					session.status = "waiting_input";
+					session.prompt = {
+						type: prompt.type,
+						message: prompt.message,
+						...("placeholder" in prompt && prompt.placeholder
+							? { placeholder: prompt.placeholder }
+							: {}),
+						...(prompt.type === "select" ? { options: prompt.options } : {}),
+					};
+					session.resolvePrompt = resolve;
+				}),
+		})
+			.then((result) => {
+				Object.assign(session, result);
+				session.status = "completed";
+				session.prompt = undefined;
+				session.resolvePrompt = undefined;
+			})
+			.catch(() => {
+				session.status = "failed";
+				session.message = "登录没有完成，请重试。";
+				session.prompt = undefined;
+				session.resolvePrompt = undefined;
+			});
+		return publicOAuthSession(session);
+	}
+
+	getOAuthSession(providerId: string): OAuthSessionState {
+		const session = this.oauthSessions.get(providerId);
+		if (!session) throw { kind: "not_found", reason: "oauth_session_not_found" };
+		return publicOAuthSession(session);
+	}
+
+	answerOAuth(providerId: string, answer: string): OAuthSessionState {
+		const session = this.oauthSessions.get(providerId);
+		if (!session?.resolvePrompt || session.status !== "waiting_input") {
+			throw { kind: "conflict", reason: "oauth_input_not_requested" };
+		}
+		const resolve = session.resolvePrompt;
+		session.resolvePrompt = undefined;
+		session.prompt = undefined;
+		session.status = "running";
+		resolve(answer);
+		return publicOAuthSession(session);
+	}
+
 	/** Host credential status for a provider (from the CredentialStore). */
 	async authStatus(providerId: string): Promise<CredentialStatus> {
 		return this.credentialStore.getStatus(providerId);
@@ -226,6 +438,11 @@ export class ProviderCatalog {
 	dispose(): void {
 		this.runtime = null;
 	}
+}
+
+function publicOAuthSession(session: OAuthSessionInternal): OAuthSessionState {
+	const { resolvePrompt: _resolvePrompt, ...result } = session;
+	return result;
 }
 
 function assertAllowedProvider(providerId: string): void {

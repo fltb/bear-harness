@@ -8,6 +8,7 @@
 
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
+import { toJsonSchema, z } from "@bear-harness/schema";
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
 	createAgentSession,
@@ -15,7 +16,6 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { type TSchema, Type } from "typebox";
 import type { EventBus } from "../storage/event-bus.js";
 import type { CompanionHostToolCall, CompanionHostToolResult } from "./character-behavior.js";
 
@@ -31,6 +31,10 @@ export interface CompanionRuntimeConfig {
 type HostToolHandler = (
 	call: CompanionHostToolCall,
 ) => CompanionHostToolResult | Promise<CompanionHostToolResult>;
+type ModelSelectionHandler = (
+	conversationId: string,
+) => { providerId: string; modelId: string } | undefined;
+type ContextHandler = (conversationId: string, includeHistory: boolean, message: string) => string;
 
 /** Host provider boundary required by the in-process Pi session. */
 export interface CompanionModelRuntimeSource {
@@ -49,9 +53,12 @@ export class CompanionSupervisor {
 		appendSystemPrompt: "",
 	};
 	private hostToolHandler: HostToolHandler | null = null;
+	private modelSelectionHandler: ModelSelectionHandler | null = null;
+	private contextHandler: ContextHandler | null = null;
 	private session: AgentSession | null = null;
+	private readonly sessions = new Map<string, AgentSession>();
 	private modelRuntime: ModelRuntime | null = null;
-	private initialization: Promise<AgentSession> | null = null;
+	private readonly initializations = new Map<string, Promise<AgentSession>>();
 	private activeConversationId: string | null = null;
 	private promptQueue: Promise<void> = Promise.resolve();
 
@@ -78,30 +85,41 @@ export class CompanionSupervisor {
 		this.hostToolHandler = handler;
 	}
 
+	setModelSelectionHandler(handler: ModelSelectionHandler): void {
+		this.modelSelectionHandler = handler;
+	}
+
+	setContextHandler(handler: ContextHandler): void {
+		this.contextHandler = handler;
+	}
+
 	/** Mark the Host runtime available; the Pi session is loaded on first turn. */
 	async start(): Promise<void> {
 		if (this.state === "running") return;
 		Object.assign(globalThis, {
 			bearHostCall: (tool: string, args: unknown) => this.callHost(tool, args),
-			bearPiType: Type,
 		});
 		this.state = "running";
 		this.eventBus.publish("companion.state_changed", { state: "running" });
 	}
 
-	private async initializeSession(): Promise<AgentSession> {
-		if (this.session) return this.session;
-		if (this.initialization) return this.initialization;
-		const initialization = this.createSession();
-		this.initialization = initialization;
+	private async initializeSession(conversationId: string): Promise<AgentSession> {
+		const existing = this.sessions.get(conversationId);
+		if (existing) return existing;
+		const pending = this.initializations.get(conversationId);
+		if (pending) return pending;
+		const initialization = this.createSession(conversationId);
+		this.initializations.set(conversationId, initialization);
 		try {
 			return await initialization;
 		} finally {
-			if (this.initialization === initialization) this.initialization = null;
+			if (this.initializations.get(conversationId) === initialization) {
+				this.initializations.delete(conversationId);
+			}
 		}
 	}
 
-	private async createSession(): Promise<AgentSession> {
+	private async createSession(conversationId: string): Promise<AgentSession> {
 		const settings = SettingsManager.inMemory(
 			{ enableAnalytics: false, enableInstallTelemetry: false, defaultProjectTrust: "never" },
 			{ projectTrusted: false },
@@ -109,7 +127,7 @@ export class CompanionSupervisor {
 		const modelRuntime = await this.providers.getModelRuntime();
 		const resourceLoader = new DefaultResourceLoader({
 			cwd: this.agentDir,
-			agentDir: this.agentDir,
+			agentDir: this.conversationAgentDir(conversationId),
 			settingsManager: settings,
 			additionalSkillPaths: this.runtimeConfig.skillPaths,
 			additionalExtensionPaths: this.runtimeConfig.pluginPaths,
@@ -121,6 +139,7 @@ export class CompanionSupervisor {
 			systemPrompt:
 				"You are the local Companion runtime. Use only injected Host tools for application state. " +
 				"Use the read tool to load an applicable role Skill before following it. " +
+				"When the user asks for real-world work, call host_propose_work with a precise plain-language scope; never claim the work started before user approval. " +
 				"Never claim a state change unless its Host tool succeeded.",
 			appendSystemPrompt: this.runtimeConfig.appendSystemPrompt
 				? [this.runtimeConfig.appendSystemPrompt]
@@ -136,13 +155,16 @@ export class CompanionSupervisor {
 		}
 		const { session } = await createAgentSession({
 			cwd: this.agentDir,
-			agentDir: this.agentDir,
+			agentDir: this.conversationAgentDir(conversationId),
 			modelRuntime,
 			settingsManager: settings,
 			resourceLoader,
 			noTools: "builtin",
 			customTools: [this.skillReadTool(), ...this.hostTools()],
-			sessionManager: SessionManager.create(this.agentDir),
+			sessionManager: SessionManager.create(
+				this.agentDir,
+				this.conversationAgentDir(conversationId),
+			),
 		});
 		// Pi builds custom-prompt skill indexes from active tool names. Rebuild
 		// after custom tools register so `read` and role Skills are discoverable.
@@ -152,6 +174,7 @@ export class CompanionSupervisor {
 			throw new Error("companion stopped while initializing");
 		}
 		this.session = session;
+		this.sessions.set(conversationId, session);
 		this.modelRuntime = modelRuntime;
 		this.eventBus.publish("companion.runtime_ready", {
 			skills: resourceLoader.getSkills().skills.map((skill) => skill.name),
@@ -161,15 +184,18 @@ export class CompanionSupervisor {
 	}
 
 	async stop(): Promise<void> {
-		const session = this.session;
+		this.state = "stopped";
+		for (const session of this.sessions.values()) await session.abort();
+		await Promise.allSettled(this.initializations.values());
+		await this.promptQueue.catch(() => undefined);
 		this.session = null;
 		this.modelRuntime = null;
 		this.activeConversationId = null;
-		if (session) {
-			await session.abort();
+		for (const session of this.sessions.values()) {
 			session.dispose();
 		}
-		this.state = "stopped";
+		this.sessions.clear();
+		this.initializations.clear();
 		this.eventBus.publish("companion.state_changed", { state: "stopped" });
 	}
 
@@ -195,6 +221,7 @@ export class CompanionSupervisor {
 			this.promptQueue = this.promptQueue
 				.then(() => this.prompt(conversationId, message))
 				.catch((error: unknown) => {
+					if (this.state === "stopped") return;
 					this.eventBus.publish("companion.runtime_error", {
 						code: "turn_dispatch_failed",
 						message: error instanceof Error ? error.message : String(error),
@@ -220,17 +247,24 @@ export class CompanionSupervisor {
 		return resolve(this.userDataDir, "companion-runtime");
 	}
 
+	private conversationAgentDir(conversationId: string): string {
+		return resolve(this.agentDir, "conversations", conversationId);
+	}
+
 	private async prompt(conversationId: string, message: string): Promise<void> {
 		this.activeConversationId = conversationId;
+		const includeHistory = !this.sessions.has(conversationId);
 		let session: AgentSession;
 		try {
-			session = await this.initializeSession();
+			session = await this.initializeSession(conversationId);
 		} catch (error) {
+			if (this.state === "stopped") return;
 			this.state = "unavailable";
 			this.eventBus.publish("companion.state_changed", {
 				state: "unavailable",
 				error: error instanceof Error ? error.message : String(error),
 			});
+			this.eventBus.publish("message_end", { conversationId, failed: true });
 			return;
 		}
 		const modelRuntime = this.modelRuntime;
@@ -239,19 +273,31 @@ export class CompanionSupervisor {
 				conversationId,
 				code: "companion_unavailable",
 			});
+			this.eventBus.publish("message_end", { conversationId, failed: true });
 			return;
 		}
-		if (!(await this.selectConfiguredModel(modelRuntime, session))) {
+		if (!(await this.selectConfiguredModel(modelRuntime, session, conversationId))) {
 			this.eventBus.publish("companion.runtime_error", {
 				conversationId,
 				code: "provider_auth_required",
 			});
+			this.eventBus.publish("message_end", { conversationId, failed: true });
 			return;
 		}
 		this.eventBus.publish("message_start", { conversationId });
+		const unsubscribe = session.subscribe((event) => {
+			if (event.type !== "message_update") return;
+			const text = extractMessageText(event.message);
+			if (text) this.eventBus.publish("message_update", { conversationId, text });
+		});
 		try {
-			await session.prompt(message, { streamingBehavior: "followUp" });
-			this.eventBus.publish("message_end", { conversationId });
+			const context = this.contextHandler?.(conversationId, includeHistory, message).trim();
+			const prompt = context
+				? `<host_context>\n${context}\n</host_context>\n\n<current_user_message>\n${message}\n</current_user_message>`
+				: message;
+			await session.prompt(prompt, { streamingBehavior: "followUp" });
+			const text = extractMessageText(session.agent.state.messages.at(-1));
+			this.eventBus.publish("message_end", { conversationId, text });
 		} catch (error) {
 			this.eventBus.publish("companion.runtime_error", {
 				conversationId,
@@ -259,13 +305,28 @@ export class CompanionSupervisor {
 				message: error instanceof Error ? error.message : String(error),
 			});
 			this.eventBus.publish("message_end", { conversationId, failed: true });
+		} finally {
+			unsubscribe();
 		}
 	}
 
 	private async selectConfiguredModel(
 		modelRuntime: ModelRuntime,
 		session: AgentSession,
+		conversationId: string,
 	): Promise<boolean> {
+		const selected = this.modelSelectionHandler?.(conversationId);
+		if (selected && modelRuntime.hasConfiguredAuth(selected.providerId)) {
+			const model = modelRuntime
+				.getModels(selected.providerId)
+				.find((candidate) => candidate.id === selected.modelId);
+			if (model) {
+				if (session.model?.provider !== model.provider || session.model?.id !== model.id) {
+					await session.setModel(model);
+				}
+				return true;
+			}
+		}
 		if (session.model) return true;
 		for (const provider of modelRuntime.getProviders()) {
 			if (!modelRuntime.hasConfiguredAuth(provider.id)) continue;
@@ -283,24 +344,39 @@ export class CompanionSupervisor {
 				"host_get_state",
 				"Read character UI state",
 				"Read the active role's permitted scenes, expressions, and current UI state.",
-				Type.Object({}),
+				toolParameters(z.strictObject({})),
 			),
 			this.hostTool(
 				"host_set_scene",
 				"Set character scene",
 				"Change the active scene only after confirming a permitted scene ID with host_get_state.",
-				Type.Object({ sceneId: Type.String({ minLength: 1, maxLength: 64 }) }),
+				toolParameters(z.strictObject({ sceneId: z.string().min(1).max(64) })),
 			),
 			this.hostTool(
 				"host_set_expression",
 				"Set character expression",
 				"Change the active expression only after confirming a permitted visual state with host_get_state.",
-				Type.Object({ visualState: Type.String({ minLength: 1, maxLength: 64 }) }),
+				toolParameters(z.strictObject({ visualState: z.string().min(1).max(64) })),
+			),
+			this.hostTool(
+				"host_propose_work",
+				"Propose real-world work for user approval",
+				"Create a plain-language action proposal when the user asks for real work. This never starts work; the user must approve the exact read, write, network and tool scope in the system UI.",
+				toolParameters(
+					z.strictObject({
+						title: z.string().min(1).max(200),
+						description: z.string().min(1).max(4000),
+						reads: z.array(z.string().min(1).max(1024)).max(20).default([]),
+						writes: z.array(z.string().min(1).max(1024)).max(20).default([]),
+						networkAllowed: z.boolean().default(false),
+						toolNames: z.array(z.string().min(1).max(64)).max(20).default([]),
+					}),
+				),
 			),
 		];
 	}
 
-	private hostTool(name: string, label: string, description: string, parameters: TSchema) {
+	private hostTool(name: string, label: string, description: string, parameters: never) {
 		return {
 			name,
 			label,
@@ -318,11 +394,13 @@ export class CompanionSupervisor {
 			label: "Read role Skill",
 			description:
 				"Read a role-specific Skill Markdown file when the skill index says it is needed.",
-			parameters: Type.Object({
-				path: Type.String({ minLength: 1 }),
-				offset: Type.Optional(Type.Integer({ minimum: 1 })),
-				limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
-			}),
+			parameters: toolParameters(
+				z.strictObject({
+					path: z.string().min(1),
+					offset: z.number().int().min(1).optional(),
+					limit: z.number().int().min(1).max(500).optional(),
+				}),
+			),
 			execute: async (
 				_toolCallId: string,
 				params: { path: string; offset?: number; limit?: number },
@@ -403,6 +481,34 @@ export class CompanionSupervisor {
 			...(result.ok ? {} : { isError: true }),
 		};
 	}
+}
+
+function toolParameters(schema: z.ZodType): never {
+	return toJsonSchema(schema) as never;
+}
+
+function extractMessageText(value: unknown): string {
+	if (
+		!value ||
+		typeof value !== "object" ||
+		!("content" in value) ||
+		!Array.isArray(value.content)
+	) {
+		return "";
+	}
+	return value.content
+		.filter((part): part is { type: "text"; text: string } =>
+			Boolean(
+				part &&
+					typeof part === "object" &&
+					"type" in part &&
+					part.type === "text" &&
+					"text" in part &&
+					typeof part.text === "string",
+			),
+		)
+		.map((part) => part.text)
+		.join("");
 }
 
 function pathInside(root: string, candidate: string): boolean {

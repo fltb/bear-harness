@@ -11,6 +11,7 @@ import { mkdirSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
+import { toJsonSchema, z } from "@bear-harness/schema";
 import type { AgentSession, ModelRuntime as PiModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
 	createAgentSession,
@@ -19,7 +20,6 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 
 type PiSession = {
 	agent: AgentSession;
@@ -133,7 +133,7 @@ class PiAcpAgent {
 			resourceLoader: resources,
 			noTools: "builtin",
 			customTools: [this.readTool(id), this.writeTool(id)],
-			sessionManager: SessionManager.create(runDir),
+			sessionManager: SessionManager.create(cwd, runDir),
 		});
 		session.setActiveToolsByName(session.getActiveToolNames());
 		if (!session.model && !(await selectConfiguredModel(runtime, session))) {
@@ -148,11 +148,13 @@ class PiAcpAgent {
 			name: "read",
 			label: "Read approved file",
 			description: "Read a text file that the approved action explicitly allows.",
-			parameters: Type.Object({
-				path: Type.String({ minLength: 1 }),
-				line: Type.Optional(Type.Integer({ minimum: 1 })),
-				limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 2000 })),
-			}),
+			parameters: toolParameters(
+				z.strictObject({
+					path: z.string().min(1),
+					line: z.number().int().min(1).optional(),
+					limit: z.number().int().min(1).max(2000).optional(),
+				}),
+			),
 			execute: async (
 				_toolCallId: string,
 				params: { path: string; line?: number; limit?: number },
@@ -178,10 +180,7 @@ class PiAcpAgent {
 			label: "Write approved file",
 			description:
 				"Create or replace a text file only when the approved action explicitly allows it.",
-			parameters: Type.Object({
-				path: Type.String({ minLength: 1 }),
-				content: Type.String(),
-			}),
+			parameters: toolParameters(z.strictObject({ path: z.string().min(1), content: z.string() })),
 			execute: async (_toolCallId: string, params: { path: string; content: string }) => {
 				const context = this.requireContext(sessionId);
 				await context.request(acp.methods.client.fs.writeTextFile, {
@@ -239,6 +238,10 @@ class PiAcpAgent {
 		if (!context) throw new Error("Pi tool call outside an ACP prompt");
 		return context;
 	}
+}
+
+function toolParameters(schema: z.ZodType): never {
+	return toJsonSchema(schema) as never;
 }
 
 async function selectConfiguredModel(

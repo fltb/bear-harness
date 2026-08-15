@@ -16,6 +16,8 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
+import { basename, extname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { ArtifactStore } from "../artifacts/index.js";
 import type {
@@ -297,6 +299,7 @@ export class CommissionService {
 				}
 				if (event.summary)
 					this.recordExecutorEvidence(runId, "executor.summary", { text: event.summary });
+				this.collectRunArtifacts(runId, this.getCommission(run.commission_id));
 				this.completeRun(runId, "completed");
 				return;
 			case "failed":
@@ -309,6 +312,48 @@ export class CommissionService {
 				this.completeRun(runId, "cancelled");
 				return;
 		}
+	}
+
+	private collectRunArtifacts(runId: string, commission: CommissionRow): void {
+		const draft = this.parseDraft(commission.draft_json);
+		let files = 0;
+		let bytes = 0;
+		const visit = (path: string): void => {
+			if (files >= 50 || bytes >= 200 * 1024 * 1024) return;
+			let stat: ReturnType<typeof lstatSync>;
+			try {
+				stat = lstatSync(path);
+			} catch {
+				return;
+			}
+			if (stat.isSymbolicLink()) return;
+			if (stat.isDirectory()) {
+				for (const entry of readdirSync(path, { withFileTypes: true })) {
+					if (entry.isSymbolicLink()) continue;
+					visit(join(path, entry.name));
+				}
+				return;
+			}
+			if (!stat.isFile() || stat.size > 50 * 1024 * 1024 || bytes + stat.size > 200 * 1024 * 1024)
+				return;
+			try {
+				const artifact = this.artifactStore.create({
+					logicalName: basename(path),
+					buffer: readFileSync(path),
+					mime: mimeForPath(path),
+					producerRunId: runId,
+				});
+				this.artifactStore.markVerified(artifact.id);
+				files += 1;
+				bytes += stat.size;
+				this.eventBus.publish("artifact.created", { artifactId: artifact.id, runId });
+			} catch {
+				this.recordExecutorEvidence(runId, "artifact.collection_failed", {
+					path: basename(path),
+				});
+			}
+		};
+		for (const path of draft.writes) visit(path);
 	}
 
 	// -----------------------------------------------------------------------
@@ -683,5 +728,29 @@ export class CommissionService {
 		}
 		this.artifactStore.markAdopted(artifactId, runId);
 		this.eventBus.publish("run.result_adopted", { commissionId, artifactId, runId });
+	}
+}
+
+function mimeForPath(path: string): string {
+	switch (extname(path).toLowerCase()) {
+		case ".json":
+			return "application/json";
+		case ".html":
+			return "text/html";
+		case ".css":
+			return "text/css";
+		case ".csv":
+			return "text/csv";
+		case ".md":
+			return "text/markdown";
+		case ".png":
+			return "image/png";
+		case ".jpg":
+		case ".jpeg":
+			return "image/jpeg";
+		case ".pdf":
+			return "application/pdf";
+		default:
+			return "application/octet-stream";
 	}
 }

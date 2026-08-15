@@ -1,138 +1,109 @@
-import { type Static, Type } from "typebox";
-import { Value } from "typebox/value";
+import { z } from "@bear-harness/schema";
 
 const MAX_COPY_LENGTH = 4_096;
-const Identifier = Type.String({
-	minLength: 1,
-	maxLength: 64,
-	pattern: "^[a-z][a-z0-9_]*$",
-});
-const Copy = Type.String({ minLength: 1, maxLength: MAX_COPY_LENGTH });
+const Identifier = z
+	.string()
+	.min(1)
+	.max(64)
+	.regex(/^[a-z][a-z0-9_]*$/);
+const Copy = z.string().min(1).max(MAX_COPY_LENGTH);
 
-const OnboardingEffectSchema = Type.Union([
-	Type.Object({ type: Type.Literal("identity.nickname") }, { additionalProperties: false }),
-	Type.Object({ type: Type.Literal("relationship.kind") }, { additionalProperties: false }),
-	Type.Object(
-		{
-			type: Type.Literal("relationship.memory"),
-			enabled_when: Identifier,
-		},
-		{ additionalProperties: false },
-	),
+const OnboardingEffectSchema = z.discriminatedUnion("type", [
+	z.strictObject({ type: z.literal("identity.nickname") }),
+	z.strictObject({ type: z.literal("relationship.kind") }),
+	z.strictObject({ type: z.literal("relationship.memory"), enabled_when: Identifier }),
 ]);
 
 const StepPresentationSchema = {
 	id: Identifier,
 	heading: Copy,
 	body: Copy,
-	quote: Type.Optional(Copy),
-	note: Type.Optional(Copy),
-	effects: Type.Optional(Type.Array(OnboardingEffectSchema, { maxItems: 3 })),
+	quote: Copy.optional(),
+	note: Copy.optional(),
+	effects: z.array(OnboardingEffectSchema).max(3).optional(),
 };
 
-const AcknowledgeStepSchema = Type.Object(
-	{
-		...StepPresentationSchema,
-		kind: Type.Literal("acknowledge"),
-		submit_label: Copy,
-	},
-	{ additionalProperties: false },
-);
+const AcknowledgeStepSchema = z.strictObject({
+	...StepPresentationSchema,
+	kind: z.literal("acknowledge"),
+	submit_label: Copy,
+});
 
-const TextStepSchema = Type.Object(
-	{
-		...StepPresentationSchema,
-		kind: Type.Literal("text"),
-		answer_key: Identifier,
-		input_label: Copy,
-		input_placeholder: Copy,
-		min_length: Type.Integer({ minimum: 1, maximum: 4_096 }),
-		max_length: Type.Integer({ minimum: 1, maximum: 4_096 }),
-		submit_label: Copy,
-	},
-	{ additionalProperties: false },
-);
+const TextStepSchema = z.strictObject({
+	...StepPresentationSchema,
+	kind: z.literal("text"),
+	answer_key: Identifier,
+	input_label: Copy,
+	input_placeholder: Copy,
+	min_length: z.number().int().min(1).max(4_096),
+	max_length: z.number().int().min(1).max(4_096),
+	submit_label: Copy,
+});
 
-const ChoiceStepSchema = Type.Object(
-	{
-		...StepPresentationSchema,
-		kind: Type.Literal("choice"),
-		answer_key: Identifier,
-		choices: Type.Array(
-			Type.Object(
-				{
-					value: Identifier,
-					label: Copy,
-					description: Copy,
-				},
-				{ additionalProperties: false },
-			),
-			{ minItems: 2, maxItems: 12 },
-		),
-	},
-	{ additionalProperties: false },
-);
+const ChoiceStepSchema = z.strictObject({
+	...StepPresentationSchema,
+	kind: z.literal("choice"),
+	answer_key: Identifier,
+	choices: z
+		.array(
+			z.strictObject({
+				value: Identifier,
+				label: Copy,
+				description: Copy,
+			}),
+		)
+		.min(2)
+		.max(12),
+});
 
 /**
  * Role-package DSL for the first meeting. It contains presentation, valid
  * answers and a small, Host-owned effect vocabulary; role packages cannot
  * declare arbitrary code or privileged side effects.
  */
-export const CharacterOnboardingFlowSchema = Type.Object(
-	{
-		version: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
-		step_label: Copy,
-		dialog_label: Copy,
-		error_prefix: Copy,
-		steps: Type.Array(Type.Union([AcknowledgeStepSchema, TextStepSchema, ChoiceStepSchema]), {
-			minItems: 1,
-			maxItems: 12,
-		}),
-		completion: Type.Object(
-			{
-				conversation_title: Copy,
-			},
-			{ additionalProperties: false },
-		),
-	},
-	{ additionalProperties: false },
-);
+export const CharacterOnboardingFlowSchema = z.strictObject({
+	version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+	step_label: Copy,
+	dialog_label: Copy,
+	error_prefix: Copy,
+	steps: z
+		.array(z.discriminatedUnion("kind", [AcknowledgeStepSchema, TextStepSchema, ChoiceStepSchema]))
+		.min(1)
+		.max(12),
+	completion: z.strictObject({ conversation_title: Copy }),
+});
 
 /** Canonical, versioned persistence shape for role-defined onboarding answers. */
-export const OnboardingStateDataSchema = Type.Object(
-	{
-		schema_version: Type.Literal(1),
-		flow_version: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
-		answers: Type.Record(Identifier, Type.String({ maxLength: MAX_COPY_LENGTH })),
-		decisions: Type.Object(
-			{
-				relationship_kind: Type.Optional(Identifier),
-				relationship_memory_enabled: Type.Optional(Type.Boolean()),
-			},
-			{ additionalProperties: false },
-		),
-	},
-	{ additionalProperties: false },
-);
+export const OnboardingStateDataSchema = z.strictObject({
+	schema_version: z.literal(1),
+	flow_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+	answers: z.record(Identifier, z.string().max(MAX_COPY_LENGTH)),
+	decisions: z.strictObject({
+		relationship_kind: Identifier.optional(),
+		relationship_memory_enabled: z.boolean().optional(),
+	}),
+});
 
-export type OnboardingStateData = Static<typeof OnboardingStateDataSchema>;
+export type OnboardingStateData = z.infer<typeof OnboardingStateDataSchema>;
 
-export type CharacterOnboardingFlow = Static<typeof CharacterOnboardingFlowSchema>;
+export type CharacterOnboardingFlow = z.infer<typeof CharacterOnboardingFlowSchema>;
 export type CharacterOnboardingStep = CharacterOnboardingFlow["steps"][number];
-export type CharacterOnboardingEffect = Static<typeof OnboardingEffectSchema>;
+export type CharacterOnboardingEffect = z.infer<typeof OnboardingEffectSchema>;
 
 export function validateCharacterOnboardingFlow(
 	value: unknown,
 	characterId: string,
 ): asserts value is CharacterOnboardingFlow {
-	if (!Value.Check(CharacterOnboardingFlowSchema, value)) {
+	const parsed = CharacterOnboardingFlowSchema.safeParse(value);
+	if (!parsed.success) {
 		throw new Error(`character package ${characterId}: invalid first_meeting schema`);
 	}
+	const flow = parsed.data;
 
 	const stepIds = new Set<string>();
 	const answerKeys = new Set<string>();
 	const effectKinds = new Set<string>();
-	for (const step of value.steps) {
+	for (const step of flow.steps) {
 		if (step.id === "complete" || stepIds.has(step.id)) {
 			throw new Error(`character package ${characterId}: first_meeting step ids must be unique`);
 		}

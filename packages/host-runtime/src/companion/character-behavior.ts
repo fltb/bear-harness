@@ -10,7 +10,11 @@ import type { DatabaseSync } from "node:sqlite";
 import type { EventBus, HostEvent } from "../storage/event-bus.js";
 import type { CharacterLoader, CharacterPackage } from "./character-loader.js";
 
-export type CompanionHostToolName = "host_get_state" | "host_set_scene" | "host_set_expression";
+export type CompanionHostToolName =
+	| "host_get_state"
+	| "host_set_scene"
+	| "host_set_expression"
+	| "host_propose_work";
 
 export interface CompanionHostToolCall {
 	conversationId: string;
@@ -23,6 +27,7 @@ export interface CompanionHostToolResult {
 	code?: string;
 	message: string;
 	state?: CharacterRuntimeState;
+	data?: unknown;
 }
 
 export interface CharacterRuntimeState {

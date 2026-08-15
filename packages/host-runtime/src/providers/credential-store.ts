@@ -22,6 +22,8 @@ import type { DatabaseSync } from "node:sqlite";
  * when `isEncryptionAvailable()` is true.
  */
 export interface CredentialVault {
+	/** OS keychain on desktop, machine-local encrypted file for WebDev. */
+	readonly securityLevel?: "os" | "machine";
 	isEncryptionAvailable(): boolean;
 	encryptString(plaintext: string): Buffer;
 	decryptString(blob: Buffer): string;
@@ -90,7 +92,7 @@ export class CredentialStore {
 		if (this.encryptionAvailable) {
 			try {
 				blob = this.vault.encryptString(plaintext);
-				status = "stored";
+				status = this.vault.securityLevel === "machine" ? "weak_storage" : "stored";
 			} catch {
 				// isEncryptionAvailable() can succeed while the keychain daemon is
 				// unavailable. Downgrade this process to session-only without
@@ -148,7 +150,8 @@ export class CredentialStore {
 		if (row.credential_blob) {
 			try {
 				const plaintext =
-					row.credential_status === "stored" && this.encryptionAvailable
+					(row.credential_status === "stored" || row.credential_status === "weak_storage") &&
+					this.encryptionAvailable
 						? this.vault.decryptString(row.credential_blob)
 						: row.credential_blob.toString("utf8");
 				credential = JSON.parse(plaintext);

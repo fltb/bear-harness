@@ -19,10 +19,11 @@ async function settleRuntime(): Promise<void> {
 }
 
 async function waitForSession(runtime: CompanionSupervisor) {
-	for (let attempt = 0; attempt < 20; attempt += 1) {
+	const deadline = Date.now() + 2_000;
+	while (Date.now() < deadline) {
 		const session = Reflect.get(runtime, "session");
 		if (session) return session;
-		await settleRuntime();
+		await new Promise<void>((resolve) => setTimeout(resolve, 5));
 	}
 	throw new Error("Companion Pi session did not initialize");
 }
@@ -51,7 +52,10 @@ describe("in-process Companion Host bridge", () => {
 		db.exec(
 			"CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL)",
 		);
-		const runtime = new CompanionSupervisor(root, new EventBus(db), providers);
+		const eventBus = new EventBus(db);
+		const events: Array<{ kind: string; payload: unknown }> = [];
+		eventBus.subscribe((event) => events.push(event));
+		const runtime = new CompanionSupervisor(root, eventBus, providers);
 		const hostCalls: Array<{ conversationId: string; tool: string; args: unknown }> = [];
 		runtime.setHostToolHandler((call) => {
 			hostCalls.push(call);
@@ -68,6 +72,12 @@ describe("in-process Companion Host bridge", () => {
 			message: "切换到雪原",
 		});
 		await settleRuntime();
+		expect(events).toContainEqual(
+			expect.objectContaining({
+				kind: "message_end",
+				payload: { conversationId: "conversation-1", failed: true },
+			}),
+		);
 		const hostCall = Reflect.get(globalThis, "bearHostCall");
 		if (typeof hostCall !== "function") throw new Error("Host bridge was not injected");
 		const result = await hostCall("host_set_scene", { sceneId: "snow_plains" });

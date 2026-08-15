@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { z } from "@bear-harness/schema";
 import { parse } from "yaml";
 import type { EventBus } from "../storage/event-bus.js";
 import {
@@ -28,8 +29,17 @@ import {
 
 export interface ThemeTokens {
 	radius: { sm: number; md: number; lg: number };
-	color: Record<string, string>;
-	font: Record<string, string>;
+	color: {
+		surface: string;
+		surface_alt: string;
+		text: string;
+		text_muted: string;
+		accent: string;
+		line: string;
+		danger: string;
+		amber: string;
+	};
+	font: { body: string; heading: string };
 }
 
 export interface CharacterStrings {
@@ -85,6 +95,7 @@ export interface CharacterPackage {
 	id: string;
 	name: string;
 	version: string;
+	language: string;
 	theme: ThemeTokens;
 	character: CharacterStrings;
 	identity_core: string;
@@ -99,6 +110,7 @@ export interface CharacterPackage {
 export interface CharacterDisplay {
 	id: string;
 	name: string;
+	language: string;
 	character: CharacterStrings;
 	theme: ThemeTokens;
 	scenes: Array<{
@@ -113,6 +125,15 @@ export interface CharacterDisplay {
 		presence: Record<string, string>;
 		stateLabels: Record<string, string>;
 	};
+}
+
+export interface CharacterSummary {
+	id: string;
+	name: string;
+	version: string;
+	subtitle: string;
+	avatarUrl: string;
+	active: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +157,48 @@ const IMAGE_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
 	".svg": "image/svg+xml",
 	".webp": "image/webp",
 };
+
+const LanguageTagSchema = z
+	.string()
+	.max(35)
+	.refine((value) => {
+		try {
+			return Intl.getCanonicalLocales(value).length === 1;
+		} catch {
+			return false;
+		}
+	}, "must be a valid BCP-47 language tag");
+
+const SafeCssValueSchema = z
+	.string()
+	.min(1)
+	.max(256)
+	.refine((value) => !/[;{}<>]/.test(value) && !/url\s*\(/i.test(value), "unsafe CSS value");
+
+const ThemeTokensSchema = z.strictObject({
+	radius: z.strictObject({
+		sm: z.number().finite().min(0).max(40),
+		md: z.number().finite().min(0).max(40),
+		lg: z.number().finite().min(0).max(40),
+	}),
+	color: z.strictObject({
+		surface: SafeCssValueSchema,
+		surface_alt: SafeCssValueSchema,
+		text: SafeCssValueSchema,
+		text_muted: SafeCssValueSchema,
+		accent: SafeCssValueSchema,
+		line: SafeCssValueSchema,
+		danger: SafeCssValueSchema,
+		amber: SafeCssValueSchema,
+	}),
+	font: z.strictObject({ body: SafeCssValueSchema, heading: SafeCssValueSchema }),
+});
+
+function validateTheme(value: unknown, characterId: string): asserts value is ThemeTokens {
+	const result = ThemeTokensSchema.safeParse(value);
+	if (!result.success)
+		throw new Error(`character package ${characterId}: theme tokens are invalid`);
+}
 
 /**
  * Character package loader — resolves role packages from an injected
@@ -256,6 +319,10 @@ export class CharacterLoader {
 		if (parsed.id !== id) {
 			throw new Error(`character package ${id}: yaml id must equal directory id`);
 		}
+		if (!LanguageTagSchema.safeParse(parsed.language).success) {
+			throw new Error(`character package ${id}: language must be a BCP-47 language tag`);
+		}
+		validateTheme(parsed.theme, id);
 		if (!Array.isArray(parsed.scenes)) {
 			throw new Error(`character package ${id}: scenes is required array`);
 		}
@@ -365,6 +432,7 @@ export class CharacterLoader {
 		return {
 			id: character.id,
 			name: character.name,
+			language: character.language,
 			character: character.character,
 			theme: character.theme,
 			scenes: character.scenes.map((scene) => ({
@@ -395,10 +463,37 @@ export class CharacterLoader {
 	}
 
 	getActiveCharacterId(db: DatabaseSync, defaultCharacterId: string): string {
-		const row = db.prepare("SELECT id FROM companion_identity LIMIT 1").get() as
-			| { id: string }
+		const row = db.prepare("SELECT character_id FROM active_character WHERE singleton = 1").get() as
+			| { character_id: string }
 			| undefined;
-		return row?.id ?? defaultCharacterId;
+		return row?.character_id ?? defaultCharacterId;
+	}
+
+	list(db: DatabaseSync, defaultCharacterId: string): CharacterSummary[] {
+		const activeId = this.getActiveCharacterId(db, defaultCharacterId);
+		return readdirSync(this.characterRoot, { withFileTypes: true })
+			.filter((entry) => entry.isDirectory())
+			.map((entry) => this.load(entry.name))
+			.filter((character): character is CharacterPackage => character !== null)
+			.map((character) => ({
+				id: character.id,
+				name: character.name,
+				version: character.version,
+				subtitle: character.character.subtitle,
+				avatarUrl: this.characterAssetDataUrl(character.id, character.visual.avatar),
+				active: character.id === activeId,
+			}));
+	}
+
+	activate(db: DatabaseSync, eventBus: EventBus, character: CharacterPackage): void {
+		this.seed(db, eventBus, character);
+		db.prepare(
+			`INSERT INTO active_character (singleton, character_id, updated_at)
+			 VALUES (1, ?, datetime('now'))
+			 ON CONFLICT(singleton) DO UPDATE SET
+			 character_id = excluded.character_id, updated_at = excluded.updated_at`,
+		).run(character.id);
+		eventBus.publish("character.activated", { characterId: character.id });
 	}
 
 	/** Seed the database from a character package. Idempotent (checks companion_identity). */

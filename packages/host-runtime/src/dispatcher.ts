@@ -1,6 +1,6 @@
 /**
  * Host RPC dispatcher — validates every incoming request against the shared
- * TypeBox schemas, routes to the registered domain handlers, and returns the
+ * Zod schemas, routes to the registered domain handlers, and returns the
  * shared response envelope.
  *
  * This is the runtime-independent replacement for the legacy Electron
@@ -11,7 +11,6 @@
  */
 
 import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
-import { Value } from "typebox/value";
 
 /** Wire error body: a fixed kind plus a localizable reason string. */
 export interface RpcError {
@@ -44,13 +43,13 @@ export class Dispatcher {
 		}
 
 		// Validate the request body against the schema
-		if (!Value.Check(schema, params)) {
-			const errors = [...Value.Errors(schema, params)];
+		const parsed = schema.safeParse(params);
+		if (!parsed.success) {
 			return {
 				ok: false,
 				error: {
 					kind: "invalid_request",
-					reason: `validation failed: ${errors.map((e) => String(e.message ?? e)).join("; ")}`,
+					reason: "request_validation_failed",
 				},
 			};
 		}
@@ -61,7 +60,7 @@ export class Dispatcher {
 		}
 
 		try {
-			const data = await handler(params);
+			const data = await handler(parsed.data);
 			return { ok: true, data };
 		} catch (e) {
 			const err = e as { kind?: string; reason?: string; message?: string };

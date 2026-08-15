@@ -17,9 +17,11 @@
 
 import { join } from "node:path";
 import { ArtifactStore } from "./artifacts/index.js";
+import { CanonHubService } from "./canon/service.js";
 import { CommissionService } from "./commissions/service.js";
 import { CharacterBehaviorService } from "./companion/character-behavior.js";
 import { CharacterLoader } from "./companion/character-loader.js";
+import { ContextPackCompiler } from "./companion/context-pack.js";
 import { FirstMeetingMachine } from "./companion/first-meeting.js";
 import { CompanionSupervisor } from "./companion/supervisor.js";
 import { TurnPipeline } from "./companion/turn-pipeline.js";
@@ -29,11 +31,13 @@ import { Dispatcher, type RpcResponse } from "./dispatcher.js";
 import { CodexAdapter } from "./executors/codex-adapter.js";
 import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
 import { ExecutorRouter } from "./executors/router.js";
+import { MemoryAutomation } from "./memory/automation.js";
 import { MemoryService } from "./memory/service.js";
 import { ProviderCatalog } from "./providers/catalog.js";
 import { CredentialStore, type CredentialVault } from "./providers/credential-store.js";
 import { Database, MIGRATIONS } from "./storage/database.js";
 import { EventBus } from "./storage/event-bus.js";
+import { StoryService } from "./story/service.js";
 
 /** The subset of the product configuration the host runtime consumes. */
 export interface RuntimeProductConfig {
@@ -70,6 +74,8 @@ export class HostRuntime {
 	private readonly supervisor: CompanionSupervisor;
 	private readonly characterBehavior: CharacterBehaviorService;
 	private readonly characterLoader: CharacterLoader;
+	private readonly memoryAutomation: MemoryAutomation;
+	private readonly unsubscribeStoryAutomation: () => void;
 	private readonly composition: HostCompositionContext;
 	private started = false;
 	private closed = false;
@@ -90,11 +96,65 @@ export class HostRuntime {
 		const characterLoader = new CharacterLoader(characterRoot);
 		const supervisor = new CompanionSupervisor(dataDir, eventBus, providers);
 		const characterBehavior = new CharacterBehaviorService(dbConnection, eventBus, characterLoader);
-		supervisor.setHostToolHandler((call) => characterBehavior.invoke(call));
 		const memory = new MemoryService(dbConnection, eventBus);
+		const memoryAutomation = new MemoryAutomation(dbConnection, eventBus, memory);
+		const story = new StoryService(dbConnection, eventBus);
+		const canon = new CanonHubService(dbConnection, artifactStore, eventBus);
+		const contextPack = new ContextPackCompiler(dbConnection, characterLoader);
+		supervisor.setContextHandler((conversationId, includeHistory, message) =>
+			contextPack.render(
+				contextPack.compile(conversationId, {
+					includeConversationHistory: includeHistory,
+					canonQuery: message,
+				}),
+			),
+		);
+		const unsubscribeStoryAutomation = eventBus.subscribe((event) => {
+			if (event.kind !== "message.user_sent" || !event.payload || typeof event.payload !== "object")
+				return;
+			const payload = event.payload as Record<string, unknown>;
+			if (
+				typeof payload.conversationId !== "string" ||
+				typeof payload.messageId !== "string" ||
+				typeof payload.text !== "string"
+			)
+				return;
+			const context = dbConnection
+				.prepare(
+					`SELECT c.companion_id, m.branch_id FROM conversations c
+					 JOIN messages m ON m.conversation_id = c.id
+					 WHERE c.id = ? AND m.id = ?`,
+				)
+				.get(payload.conversationId, payload.messageId) as
+				| { companion_id: string; branch_id: string }
+				| undefined;
+			if (!context) return;
+			const result = story.handleUserText({
+				companionId: context.companion_id,
+				conversationId: payload.conversationId,
+				branchId: context.branch_id,
+				text: payload.text,
+			});
+			if (result.action === "ambiguous") {
+				story.propose({
+					companionId: context.companion_id,
+					conversationId: payload.conversationId,
+					branchId: context.branch_id,
+					text: payload.text,
+				});
+			}
+		});
 		const onboarding = new FirstMeetingMachine(dbConnection, eventBus, characterLoader);
 		const turns = new TurnPipeline(dbConnection, supervisor, eventBus);
 		const voice = new VoiceStackManager(dbConnection, eventBus);
+		supervisor.setModelSelectionHandler((conversationId) => {
+			const row = dbConnection
+				.prepare("SELECT companion_id FROM conversations WHERE id = ?")
+				.get(conversationId) as { companion_id: string } | undefined;
+			if (!row) return undefined;
+			const stack = voice.current(row.companion_id);
+			return stack ? { providerId: stack.providerId, modelId: stack.modelId } : undefined;
+		});
 		seedPiAcpProfile(dbConnection);
 		const executorRouter = new ExecutorRouter(dbConnection);
 		executorRouter.register("product-managed", new PiAcpAdapter(dbConnection, dataDir));
@@ -105,12 +165,31 @@ export class HostRuntime {
 			artifactStore,
 			executorRouter,
 		);
+		supervisor.setHostToolHandler((call) => {
+			if (call.tool !== "host_propose_work") return characterBehavior.invoke(call);
+			const args = call.args as {
+				title: string;
+				description: string;
+				reads: string[];
+				writes: string[];
+				networkAllowed: boolean;
+				toolNames: string[];
+			};
+			const draft = commissions.draft({ conversationId: call.conversationId, ...args });
+			return {
+				ok: true,
+				message: "Action proposal created and is waiting for user approval.",
+				data: draft,
+			};
+		});
 
 		this.db = db;
 		this.providers = providers;
 		this.supervisor = supervisor;
 		this.characterBehavior = characterBehavior;
 		this.characterLoader = characterLoader;
+		this.memoryAutomation = memoryAutomation;
+		this.unsubscribeStoryAutomation = unsubscribeStoryAutomation;
 		this.composition = {
 			db: dbConnection,
 			eventBus,
@@ -119,6 +198,10 @@ export class HostRuntime {
 			voice,
 			memory,
 			commissions,
+			artifacts: artifactStore,
+			story,
+			canon,
+			supervisor,
 			providers,
 			characterLoader,
 			defaultCharacterId: options.productConfig.defaultCharacterId,
@@ -154,6 +237,9 @@ export class HostRuntime {
 		if (this.closed) return;
 		this.closed = true;
 		await this.supervisor.stop();
+		this.composition.turns.dispose();
+		this.memoryAutomation.dispose();
+		this.unsubscribeStoryAutomation();
 		this.characterBehavior.dispose();
 		this.providers.dispose();
 		this.db.close();
