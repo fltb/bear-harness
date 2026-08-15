@@ -25,6 +25,22 @@ npm run check
 
 `npm run check` 包含 lint、typecheck、coverage、两套应用 build 与 `test:e2e:web`；它不启动 Electron。
 
+## 交互契约覆盖
+
+`apps/web-dev/e2e/settings.spec.ts` 使用真实 HTTP Host 验证：
+
+| 交互 | 断言 |
+| --- | --- |
+| 首次见面 | 双击只提交一次；步骤在 500 ms 后仍保持为 Host 返回的下一步；完整流程会创建首个对话。 |
+| 对话 | 新建和选择对话更新真实 Host projection 与侧栏选中状态。 |
+| 幕后与设置 | 工作队列开合；drawer/tab 导航；关系记忆开关真实持久化并重新读取。 |
+| Web Dev | 枚举每个注册 RPC channel，并发送一次 authenticated 真 Host 调用。 |
+| 未交付入口 | 搜索、侧栏“关系档案/系统设置”和材料导入必须禁用，不能伪装成已接通的功能。 |
+
+`packages/companion-ui` 单元测试覆盖 UI 到 transport 的参数契约：composer 的提交/Shift+Enter、消息版本/再生成/编辑/继续/分支、记忆批准/置顶/搜索，以及旧 snapshot 与跨 renderer stale submit 的恢复。
+
+当前设置页只保留有真实 Host effect 的**关系记忆**。沉浸程度、场景和主题之前只回显临时值，不会改变 Host 或界面；已删除，而不是保留误导性的可点击控件。
+
 ## Electron：发布前验证
 
 Electron 仍是唯一生产壳。它负责 preload/context isolation、safeStorage、Crashpad、file/asar、原生窗口和安装包；WebDev 不替代这些验证。

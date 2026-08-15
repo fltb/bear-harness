@@ -70,6 +70,8 @@ export interface OnboardingStateData {
 export interface OnboardingData {
 	status: OnboardingStatus;
 	currentStepId?: string;
+	/** Monotonic Host event cursor paired with this exact state projection. */
+	eventSeq: number;
 	stateData: OnboardingStateData;
 }
 
@@ -314,14 +316,8 @@ export interface ArtifactListData {
 	artifacts: Artifact[];
 }
 
-export type ImmersionLevel = "concise" | "roleplay" | "narrative";
-
 export interface SettingsData {
 	relationshipMemoryEnabled: boolean;
-	pauseLearning: boolean;
-	immersionLevel: ImmersionLevel;
-	currentScene: string;
-	theme: string;
 }
 
 /** Wire shape of `settings.get` — the data sits under a `settings` key. */
@@ -530,8 +526,6 @@ const ARTIFACT_STATUSES: readonly ArtifactStatus[] = [
 	"saved",
 ];
 
-const IMMERSION_LEVELS: readonly ImmersionLevel[] = ["concise", "roleplay", "narrative"];
-
 function isOneOf(value: unknown, options: readonly string[]): value is string {
 	return typeof value === "string" && options.includes(value);
 }
@@ -563,6 +557,9 @@ export function isOnboardingData(value: unknown): value is OnboardingData {
 	return (
 		isRecord(value) &&
 		isOneOf(value.status, ONBOARDING_STATUSES) &&
+		typeof value.eventSeq === "number" &&
+		Number.isSafeInteger(value.eventSeq) &&
+		value.eventSeq >= 0 &&
 		(value.currentStepId === undefined || typeof value.currentStepId === "string") &&
 		isOnboardingStateData(value.stateData)
 	);
@@ -807,14 +804,7 @@ export function isArtifact(value: unknown): value is Artifact {
 }
 
 export function isSettingsData(value: unknown): value is SettingsData {
-	return (
-		isRecord(value) &&
-		typeof value.relationshipMemoryEnabled === "boolean" &&
-		typeof value.pauseLearning === "boolean" &&
-		isOneOf(value.immersionLevel, IMMERSION_LEVELS) &&
-		typeof value.currentScene === "string" &&
-		typeof value.theme === "string"
-	);
+	return isRecord(value) && typeof value.relationshipMemoryEnabled === "boolean";
 }
 
 // ---------------------------------------------------------------------------

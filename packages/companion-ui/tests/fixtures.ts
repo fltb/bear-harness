@@ -33,10 +33,6 @@ export const FORK_PRODUCT: Readonly<ProductConfig> = {
 
 const DEFAULT_SETTINGS: SettingsData = {
 	relationshipMemoryEnabled: false,
-	pauseLearning: false,
-	immersionLevel: "concise",
-	currentScene: "",
-	theme: "",
 };
 
 /**
@@ -73,12 +69,14 @@ export function createTestClient() {
 			get: vi.fn(() =>
 				ok({
 					status: "complete",
+					eventSeq: 0,
 					stateData: { schema_version: 1, flow_version: 1, answers: {}, decisions: {} },
 				}),
 			),
 			submit: vi.fn(() =>
 				ok({
 					status: "complete",
+					eventSeq: 0,
 					stateData: { schema_version: 1, flow_version: 1, answers: {}, decisions: {} },
 				}),
 			),

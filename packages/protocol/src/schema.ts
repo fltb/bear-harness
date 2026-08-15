@@ -167,6 +167,8 @@ export const OnboardingResponse = Type.Object(
 		currentStepId: Type.Optional(
 			Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9_]*$" }),
 		),
+		/** Monotonic Host event cursor for ordering concurrent projections. */
+		eventSeq: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 		stateData: OnboardingStateData,
 	},
 	{ additionalProperties: false },
@@ -777,13 +779,6 @@ export const ArtifactListResponse = Type.Object(
 export const SettingsData = Type.Object(
 	{
 		relationshipMemoryEnabled: Type.Boolean(),
-		pauseLearning: Type.Boolean(),
-		immersionLevel: Type.Union(
-			[Type.Literal("concise"), Type.Literal("roleplay"), Type.Literal("narrative")],
-			{ additionalProperties: false },
-		),
-		currentScene: Type.String({ maxLength: MAX_STRING_LENGTH }),
-		theme: Type.String({ maxLength: MAX_STRING_LENGTH }),
 	},
 	{ additionalProperties: false },
 );
@@ -796,9 +791,15 @@ export const SettingsResponse = Type.Object(
 	{ additionalProperties: false },
 );
 
+export const SettingsPatch = Type.Object(
+	{
+		relationshipMemoryEnabled: Type.Optional(Type.Boolean()),
+	},
+	{ additionalProperties: false },
+);
 export const SettingsSetRequest = Type.Object(
 	{
-		settings: Type.Partial(SettingsData),
+		settings: SettingsPatch,
 	},
 	{ additionalProperties: false },
 );

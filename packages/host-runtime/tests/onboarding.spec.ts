@@ -84,6 +84,45 @@ describe("role-defined onboarding", () => {
 		await runtime.close();
 	});
 
+	it("pairs onboarding and snapshot projections with a monotonic event cursor", async () => {
+		const runtime = runtimeForTest();
+		await runtime.start();
+
+		const initial = (await data(runtime, "onboarding.get:v1", {})) as { eventSeq: number };
+		const transitioned = (await data(runtime, "onboarding.submit:v1", {
+			stepId: "door_closed",
+		})) as { currentStepId: string; eventSeq: number };
+		const snapshot = (await data(runtime, "snapshot.get:v1", {})) as {
+			eventSeq: number;
+			onboarding: { currentStepId: string; eventSeq: number };
+		};
+
+		expect(transitioned).toMatchObject({ currentStepId: "introduced" });
+		expect(transitioned.eventSeq).toBeGreaterThan(initial.eventSeq);
+		expect(snapshot.onboarding).toMatchObject({
+			currentStepId: "introduced",
+			eventSeq: snapshot.eventSeq,
+		});
+		expect(snapshot.eventSeq).toBeGreaterThanOrEqual(transitioned.eventSeq);
+		await runtime.close();
+	});
+
+	it("exposes only settings with a persisted Host effect", async () => {
+		const runtime = runtimeForTest();
+		await runtime.start();
+
+		await expect(data(runtime, "settings.get:v1", {})).resolves.toEqual({
+			settings: { relationshipMemoryEnabled: false },
+		});
+		await expect(
+			runtime.dispatch("settings.set:v1", { settings: { immersionLevel: "roleplay" } }),
+		).resolves.toMatchObject({
+			ok: false,
+			error: { kind: "invalid_request" },
+		});
+		await runtime.close();
+	});
+
 	it("migrates a persisted voice gate into a completed role-defined flow", async () => {
 		const runtime = runtimeForTest();
 		const database = Reflect.get(runtime, "db") as {

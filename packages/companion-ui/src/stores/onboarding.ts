@@ -5,6 +5,7 @@ import { invoke, isOnboardingData } from "./ipc.js";
 
 const INITIAL_ONBOARDING: OnboardingData = {
 	status: "active",
+	eventSeq: 0,
 	stateData: { schema_version: 1, flow_version: 1, answers: {}, decisions: {} },
 };
 
@@ -37,14 +38,16 @@ export function createOnboardingStore(client: CompanionClient): OnboardingStore 
 	const data = (): OnboardingData =>
 		applied() ??
 		(resource.error !== undefined ? INITIAL_ONBOARDING : (resource.latest ?? INITIAL_ONBOARDING));
+
 	const apply = (value: unknown): void => {
-		if (isOnboardingData(value)) {
-			setApplied(value);
-			actions.mutate(value);
+		if (!isOnboardingData(value)) {
+			if (applied() === undefined) void actions.refetch();
 			return;
 		}
-		setApplied(undefined);
-		void actions.refetch();
+		const current = applied();
+		if (current !== undefined && value.eventSeq < current.eventSeq) return;
+		setApplied(value);
+		actions.mutate(value);
 	};
 
 	const get = (): Promise<OnboardingData> => invoke(client, () => client.onboarding.get());
@@ -54,7 +57,6 @@ export function createOnboardingStore(client: CompanionClient): OnboardingStore 
 		loading: () => resource.loading,
 		error: () => resource.error,
 		refetch: () => {
-			setApplied(undefined);
 			void actions.refetch();
 		},
 		get,
@@ -66,7 +68,11 @@ export function createOnboardingStore(client: CompanionClient): OnboardingStore 
 		_hydrate: apply,
 		_applyEvent: (event) => {
 			if (event.kind === "onboarding.state_changed") {
-				apply(event.payload);
+				const payload =
+					typeof event.payload === "object" && event.payload !== null
+						? { ...event.payload, eventSeq: event.seq }
+						: event.payload;
+				apply(payload);
 				return;
 			}
 			if (event.kind === "onboarding.reset") {

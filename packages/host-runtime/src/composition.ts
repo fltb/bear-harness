@@ -53,12 +53,15 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	// --- role-defined onboarding -----------------------------------------------
 	dispatcher.registerHandler("onboarding.get:v1", async () => {
 		const companionId = await getCompanionId(s);
-		return s.onboarding.getState(companionId);
+		return { ...s.onboarding.getState(companionId), eventSeq: s.eventBus.currentSeq };
 	});
 	dispatcher.registerHandler("onboarding.submit:v1", async (_p) => {
 		const { stepId, answer } = _p as { stepId: string; answer?: string };
 		const companionId = await getCompanionId(s);
-		return s.onboarding.submit(companionId, stepId, answer);
+		return {
+			...s.onboarding.submit(companionId, stepId, answer),
+			eventSeq: s.eventBus.currentSeq,
+		};
 	});
 
 	// --- conversation ---------------------------------------------------------
@@ -370,26 +373,24 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler("settings.get:v1", async () => {
 		const companionId = await getCompanionId(s);
 		const stateData = s.onboarding.getState(companionId).stateData;
-		const character = s.characterLoader.load(companionId);
-		if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
 		return {
 			settings: {
 				relationshipMemoryEnabled: stateData.decisions.relationship_memory_enabled ?? false,
-				pauseLearning: false,
-				immersionLevel: "roleplay",
-				currentScene: character.visual.default_scene,
-				theme: "character-package",
 			},
 		};
 	});
 	dispatcher.registerHandler("settings.set:v1", async (_p) => {
 		const { settings } = _p as { settings: Record<string, unknown> };
+		const companionId = await getCompanionId(s);
 		if ("relationshipMemoryEnabled" in settings) {
-			const companionId = await getCompanionId(s);
 			s.onboarding.setRelationshipMemory(companionId, Boolean(settings.relationshipMemoryEnabled));
 		}
-		s.eventBus.publish("settings.changed", { settings });
-		return { settings };
+		const stateData = s.onboarding.getState(companionId).stateData;
+		const nextSettings = {
+			relationshipMemoryEnabled: stateData.decisions.relationship_memory_enabled ?? false,
+		};
+		s.eventBus.publish("settings.changed", { settings: nextSettings });
+		return { settings: nextSettings };
 	});
 
 	// --- events -----------------------------------------------------------------------
@@ -452,9 +453,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				// Invalid historical state is omitted; package defaults remain visible.
 			}
 		}
+		const eventSeq = s.eventBus.currentSeq;
 		return {
-			eventSeq: s.eventBus.currentSeq,
-			onboarding,
+			eventSeq,
+			onboarding: { ...onboarding, eventSeq },
 			character: s.characterLoader.display(character),
 			conversation: {
 				conversations: convRows.map((r) => ({
@@ -467,10 +469,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			},
 			characterRuntime: { byConversation: characterRuntimeByConversation },
 			settings: {
-				relationshipMemoryEnabled: false,
-				immersionLevel: "roleplay",
-				currentScene: character.visual.default_scene,
-				theme: "character-package",
+				relationshipMemoryEnabled:
+					onboarding.stateData.decisions.relationship_memory_enabled ?? false,
 			},
 		};
 	});

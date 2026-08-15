@@ -16,8 +16,8 @@
 	"scripts": {
 		"build": "tsc -p tsconfig.json --noEmit",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test:unit": "vitest run",
-		"test:coverage": "vitest run --coverage"
+		"test:unit": "npm --prefix ../product-config run build && npm --prefix ../companion-types run build && vitest run",
+		"test:coverage": "npm --prefix ../product-config run build && npm --prefix ../companion-types run build && vitest run --coverage"
 	},
 	"dependencies": {
 		"@bear-harness/companion-types": "file:../companion-types",
