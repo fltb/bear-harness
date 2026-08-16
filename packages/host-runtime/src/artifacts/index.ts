@@ -25,7 +25,9 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
+import { and, desc, eq, lt, ne } from "drizzle-orm";
+import type { AppDatabase } from "../storage/database.js";
+import { artifactAdoptions, artifacts } from "../storage/schema.js";
 
 export interface ArtifactRecord {
 	id: string;
@@ -39,10 +41,10 @@ export interface ArtifactRecord {
 }
 
 export class ArtifactStore {
-	private db: DatabaseSync;
+	private db: AppDatabase;
 	private casDir: string;
 
-	constructor(db: DatabaseSync, casDir: string) {
+	constructor(db: AppDatabase, casDir: string) {
 		this.db = db;
 		this.casDir = casDir;
 		mkdirSync(casDir, { recursive: true });
@@ -69,10 +71,17 @@ export class ArtifactStore {
 
 		const mime = params.mime;
 		this.db
-			.prepare(
-				"INSERT INTO artifacts (id, logical_name, mime, bytes, sha256, status, producer_run_id) VALUES (?, ?, ?, ?, ?, 'created', ?)",
-			)
-			.run(id, params.logicalName, mime, bytes, sha256, params.producerRunId ?? null);
+			.insert(artifacts)
+			.values({
+				id,
+				logicalName: params.logicalName,
+				mime,
+				bytes,
+				sha256,
+				status: "created",
+				producerRunId: params.producerRunId ?? null,
+			})
+			.run();
 
 		return {
 			id,
@@ -88,44 +97,47 @@ export class ArtifactStore {
 
 	/** Mark an artifact as verified (re-opened, hash/MIME/structure all pass). */
 	markVerified(id: string): void {
-		this.db.prepare("UPDATE artifacts SET status = 'verified' WHERE id = ?").run(id);
+		this.db.update(artifacts).set({ status: "verified" }).where(eq(artifacts.id, id)).run();
 	}
 
 	/** Mark verification failed. */
 	markVerificationFailed(id: string): void {
-		this.db.prepare("UPDATE artifacts SET status = 'verification_failed' WHERE id = ?").run(id);
+		this.db
+			.update(artifacts)
+			.set({ status: "verification_failed" })
+			.where(eq(artifacts.id, id))
+			.run();
 	}
 
 	/** Mark as adopted by the user. */
 	markAdopted(id: string, runId: string): void {
-		this.db.prepare("UPDATE artifacts SET status = 'adopted' WHERE id = ?").run(id);
-		this.db
-			.prepare("INSERT INTO artifact_adoptions (id, artifact_id, run_id) VALUES (?, ?, ?)")
-			.run(randomUUID(), id, runId);
+		this.db.transaction((transaction) => {
+			transaction.update(artifacts).set({ status: "adopted" }).where(eq(artifacts.id, id)).run();
+			transaction
+				.insert(artifactAdoptions)
+				.values({ id: randomUUID(), artifactId: id, runId })
+				.run();
+		});
 	}
 
 	/** Mark as saved to a user-chosen location. */
 	markSaved(id: string): void {
-		this.db.prepare("UPDATE artifacts SET status = 'saved' WHERE id = ?").run(id);
+		this.db.update(artifacts).set({ status: "saved" }).where(eq(artifacts.id, id)).run();
 	}
 
 	/** Get an artifact record by ID. */
 	get(id: string): ArtifactRecord | null {
-		const row = this.db
-			.prepare(
-				"SELECT id, logical_name, mime, bytes, sha256, status, producer_run_id, created_at FROM artifacts WHERE id = ?",
-			)
-			.get(id) as Record<string, unknown> | undefined;
+		const row = this.db.select().from(artifacts).where(eq(artifacts.id, id)).get();
 		if (!row) return null;
 		return {
-			id: row.id as string,
-			logicalName: row.logical_name as string,
-			mime: row.mime as string,
-			bytes: row.bytes as number,
-			sha256: row.sha256 as string,
+			id: row.id,
+			logicalName: row.logicalName,
+			mime: row.mime,
+			bytes: row.bytes,
+			sha256: row.sha256,
 			status: row.status as ArtifactRecord["status"],
-			producerRunId: (row.producer_run_id as string) ?? null,
-			createdAt: row.created_at as string,
+			producerRunId: row.producerRunId,
+			createdAt: row.createdAt,
 		};
 	}
 
@@ -147,21 +159,21 @@ export class ArtifactStore {
 
 	/** List all artifacts (optionally filtered by run). */
 	list(producerRunId?: string): ArtifactRecord[] {
-		const sql = producerRunId
-			? "SELECT id, logical_name, mime, bytes, sha256, status, producer_run_id, created_at FROM artifacts WHERE producer_run_id = ? ORDER BY created_at DESC"
-			: "SELECT id, logical_name, mime, bytes, sha256, status, producer_run_id, created_at FROM artifacts ORDER BY created_at DESC";
-		const rows = (
-			producerRunId ? this.db.prepare(sql).all(producerRunId) : this.db.prepare(sql).all()
-		) as Array<Record<string, unknown>>;
+		const rows = this.db
+			.select()
+			.from(artifacts)
+			.where(producerRunId ? eq(artifacts.producerRunId, producerRunId) : undefined)
+			.orderBy(desc(artifacts.createdAt))
+			.all();
 		return rows.map((row) => ({
-			id: row.id as string,
-			logicalName: row.logical_name as string,
-			mime: row.mime as string,
-			bytes: row.bytes as number,
-			sha256: row.sha256 as string,
+			id: row.id,
+			logicalName: row.logicalName,
+			mime: row.mime,
+			bytes: row.bytes,
+			sha256: row.sha256,
 			status: row.status as ArtifactRecord["status"],
-			producerRunId: (row.producer_run_id as string) ?? null,
-			createdAt: row.created_at as string,
+			producerRunId: row.producerRunId,
+			createdAt: row.createdAt,
 		}));
 	}
 
@@ -169,11 +181,12 @@ export class ArtifactStore {
 	gc(options: { retentionDays: number }): number {
 		const cutoff = new Date(Date.now() - options.retentionDays * 86400000).toISOString();
 		const used = new Set(
-			(
-				this.db
-					.prepare("SELECT DISTINCT sha256 FROM artifacts WHERE status NOT IN ('created')")
-					.all() as Array<{ sha256: string }>
-			).map((r) => r.sha256),
+			this.db
+				.selectDistinct({ sha256: artifacts.sha256 })
+				.from(artifacts)
+				.where(ne(artifacts.status, "created"))
+				.all()
+				.map((row) => row.sha256),
 		);
 
 		let removed = 0;
@@ -182,9 +195,17 @@ export class ArtifactStore {
 			if (used.has(file)) continue;
 			// Check age via the artifact's created_at
 			const old = this.db
-				.prepare("SELECT created_at FROM artifacts WHERE sha256 = ? AND status = 'created'")
-				.get(file) as { created_at: string } | undefined;
-			if (old && old.created_at < cutoff) {
+				.select({ createdAt: artifacts.createdAt })
+				.from(artifacts)
+				.where(
+					and(
+						eq(artifacts.sha256, file),
+						eq(artifacts.status, "created"),
+						lt(artifacts.createdAt, cutoff),
+					),
+				)
+				.get();
+			if (old) {
 				rmSync(join(this.casDir, file));
 				removed += 1;
 			}

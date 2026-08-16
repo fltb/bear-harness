@@ -9,8 +9,9 @@
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import type { AppDatabase } from "../storage/database.js";
+import { executorProfiles, runManifests } from "../storage/schema.js";
 import type { AcpProcessSpec } from "./acp-client.js";
 import { AcpExecutorController } from "./acp-executor.js";
 import type { ExecutorLaunchRequest } from "./router.js";
@@ -28,16 +29,21 @@ export interface PiRunManifest {
 /** Default first-party ACP profile, seeded once with no secret capability data. */
 export const PI_ACP_PROFILE_ID = "pi-product-managed";
 
-export function seedPiAcpProfile(db: DatabaseSync): void {
-	db.prepare(
-		"INSERT INTO executor_profiles (id, profile_type, capability_json) VALUES (?, 'product-managed', ?) ON CONFLICT(id) DO NOTHING",
-	).run(PI_ACP_PROFILE_ID, JSON.stringify({ transport: "acp", worker: "pi" }));
+export function seedPiAcpProfile(db: AppDatabase): void {
+	db.insert(executorProfiles)
+		.values({
+			id: PI_ACP_PROFILE_ID,
+			profileType: "product-managed",
+			capabilityJson: { transport: "acp", worker: "pi" },
+		})
+		.onConflictDoNothing()
+		.run();
 }
 
 /** Host-managed Pi worker for `product-managed` executor profiles. */
 export class PiAcpAdapter extends AcpExecutorController {
 	constructor(
-		private readonly db: DatabaseSync,
+		private readonly db: AppDatabase,
 		private readonly userDataDir: string,
 		private readonly workerPath = fileURLToPath(new URL("./pi-acp-worker.js", import.meta.url)),
 	) {
@@ -55,8 +61,9 @@ export class PiAcpAdapter extends AcpExecutorController {
 			launchedAt: new Date().toISOString(),
 		};
 		this.db
-			.prepare("INSERT INTO run_manifests (id, run_id, manifest_json) VALUES (?, ?, ?)")
-			.run(randomUUID(), request.run.runId, JSON.stringify(manifest));
+			.insert(runManifests)
+			.values({ id: randomUUID(), runId: request.run.runId, manifestJson: { ...manifest } })
+			.run();
 		await super.launch(request);
 	}
 

@@ -39,8 +39,9 @@ function createFixture(): {
 		"conversation-1",
 		"jizhou",
 	);
-	const eventBus = new EventBus(drizzle({ client: db }));
-	return { db, eventBus, behavior: new CharacterBehaviorService(db, eventBus, characterLoader) };
+	const orm = drizzle({ client: db });
+	const eventBus = new EventBus(orm);
+	return { db, eventBus, behavior: new CharacterBehaviorService(orm, eventBus, characterLoader) };
 }
 
 describe("CharacterBehaviorService", () => {

@@ -1,5 +1,8 @@
-import type { DatabaseSync } from "node:sqlite";
+import { and, eq } from "drizzle-orm";
+import { OnboardingStateDataSchema } from "../companion/onboarding-schema.js";
+import type { AppDatabase } from "../storage/database.js";
 import type { EventBus, HostEvent } from "../storage/event-bus.js";
+import { conversations, messages, onboardingState } from "../storage/schema.js";
 import type { MemoryKind, MemoryService } from "./service.js";
 
 const SENSITIVE = /密码|密钥|身份证|银行卡|住址|电话|病历|诊断|收入|工资|债务|性取向|政治|宗教/;
@@ -8,7 +11,7 @@ export class MemoryAutomation {
 	private readonly unsubscribe: () => void;
 
 	constructor(
-		private readonly db: DatabaseSync,
+		private readonly db: AppDatabase,
 		private readonly eventBus: EventBus,
 		private readonly memory: MemoryService,
 	) {
@@ -33,26 +36,28 @@ export class MemoryAutomation {
 		const detected = detectMemory(payload.text);
 		if (!detected) return;
 		const context = this.db
-			.prepare(
-				`SELECT c.companion_id, m.branch_id FROM conversations c
-				 JOIN messages m ON m.conversation_id = c.id
-				 JOIN onboarding_state o ON o.companion_id = c.companion_id
-				 WHERE c.id = ? AND m.id = ?
-				   AND COALESCE(json_extract(o.state_json, '$.decisions.relationship_memory_enabled'), 0) = 1`,
-			)
-			.get(payload.conversationId, payload.messageId) as
-			| { companion_id: string; branch_id: string }
-			| undefined;
+			.select({
+				companionId: conversations.companionId,
+				branchId: messages.branchId,
+				stateData: onboardingState.stateJson,
+			})
+			.from(conversations)
+			.innerJoin(messages, eq(messages.conversationId, conversations.id))
+			.innerJoin(onboardingState, eq(onboardingState.companionId, conversations.companionId))
+			.where(and(eq(conversations.id, payload.conversationId), eq(messages.id, payload.messageId)))
+			.get();
 		if (!context) return;
+		const stateData = OnboardingStateDataSchema.parse(context.stateData);
+		if (stateData.decisions.relationship_memory_enabled !== true) return;
 		const candidateId = this.memory.proposeCandidate({
-			companionId: context.companion_id,
+			companionId: context.companionId,
 			kind: detected.kind,
 			text: detected.text,
 			why: detected.why,
 			suggestedScope: "relationship",
 			sourceKind: "extractor",
 			sourceConversationId: payload.conversationId,
-			sourceBranchId: context.branch_id,
+			sourceBranchId: context.branchId,
 			sourceMessageVersionId: payload.versionId,
 		});
 		if (!detected.needsConfirmation) {

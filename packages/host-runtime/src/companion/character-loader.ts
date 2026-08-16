@@ -24,10 +24,17 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, extname, isAbsolute, join, posix, relative, resolve } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
 import { z } from "@bear-harness/schema";
+import { eq, sql } from "drizzle-orm";
 import { parse } from "yaml";
+import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
+import {
+	activeCharacter,
+	companionIdentity,
+	companionPackages,
+	selfCanonVersions,
+} from "../storage/schema.js";
 import {
 	type CharacterOnboardingFlow,
 	validateCharacterOnboardingFlow,
@@ -484,14 +491,16 @@ export class CharacterLoader {
 		};
 	}
 
-	getActiveCharacterId(db: DatabaseSync, defaultCharacterId: string): string {
-		const row = db.prepare("SELECT character_id FROM active_character WHERE singleton = 1").get() as
-			| { character_id: string }
-			| undefined;
-		return row?.character_id ?? defaultCharacterId;
+	getActiveCharacterId(db: AppDatabase, defaultCharacterId: string): string {
+		const row = db
+			.select({ characterId: activeCharacter.characterId })
+			.from(activeCharacter)
+			.where(eq(activeCharacter.singleton, 1))
+			.get();
+		return row?.characterId ?? defaultCharacterId;
 	}
 
-	list(db: DatabaseSync, defaultCharacterId: string): CharacterSummary[] {
+	list(db: AppDatabase, defaultCharacterId: string): CharacterSummary[] {
 		const activeId = this.getActiveCharacterId(db, defaultCharacterId);
 		const ids = new Set<string>();
 		for (const root of [this.characterRoot, this.installedRoot]) {
@@ -576,26 +585,28 @@ export class CharacterLoader {
 		}
 	}
 
-	activate(db: DatabaseSync, eventBus: EventBus, character: CharacterPackage): void {
+	activate(db: AppDatabase, eventBus: EventBus, character: CharacterPackage): void {
 		this.seed(db, eventBus, character);
-		db.prepare(
-			`INSERT INTO active_character (singleton, character_id, updated_at)
-			 VALUES (1, ?, datetime('now'))
-			 ON CONFLICT(singleton) DO UPDATE SET
-			 character_id = excluded.character_id, updated_at = excluded.updated_at`,
-		).run(character.id);
+		db.insert(activeCharacter)
+			.values({ singleton: 1, characterId: character.id })
+			.onConflictDoUpdate({
+				target: activeCharacter.singleton,
+				set: { characterId: character.id, updatedAt: sql`datetime('now')` },
+			})
+			.run();
 		eventBus.publish("character.activated", { characterId: character.id });
 	}
 
 	/** Seed the database from a character package. Idempotent (checks companion_identity). */
-	seed(db: DatabaseSync, eventBus: EventBus, character: CharacterPackage): void {
+	seed(db: AppDatabase, eventBus: EventBus, character: CharacterPackage): void {
 		const existing = db
-			.prepare("SELECT id FROM companion_identity WHERE id = ?")
-			.get(character.id) as { id: string } | undefined;
+			.select({ id: companionIdentity.id })
+			.from(companionIdentity)
+			.where(eq(companionIdentity.id, character.id))
+			.get();
 		if (existing) return; // already seeded
 
-		db.exec("BEGIN IMMEDIATE");
-		try {
+		db.transaction((transaction) => {
 			const packageHash = createHash("sha256")
 				.update(character.id)
 				.update("\0")
@@ -607,32 +618,43 @@ export class CharacterLoader {
 				.update("\0")
 				.update(character.self_canon)
 				.digest("hex");
-			db.prepare(
-				`INSERT INTO companion_packages (id, name, version, hash)
-				 VALUES (?, ?, ?, ?)
-				 ON CONFLICT(id) DO UPDATE SET name = excluded.name, version = excluded.version, hash = excluded.hash`,
-			).run(character.id, character.name, character.version, packageHash);
+			transaction
+				.insert(companionPackages)
+				.values({
+					id: character.id,
+					name: character.name,
+					version: character.version,
+					hash: packageHash,
+				})
+				.onConflictDoUpdate({
+					target: companionPackages.id,
+					set: { name: character.name, version: character.version, hash: packageHash },
+				})
+				.run();
 			// Insert the companion identity
-			db.prepare(
-				"INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES (?, ?, ?, ?)",
-			).run(character.id, character.id, character.name, character.self_canon);
+			transaction
+				.insert(companionIdentity)
+				.values({
+					id: character.id,
+					packageId: character.id,
+					name: character.name,
+					selfCanon: character.self_canon,
+				})
+				.run();
 
 			// Insert the first Self Canon version
-			db.prepare(
-				"INSERT INTO self_canon_versions (companion_id, canon, version, hash) VALUES (?, ?, 1, ?)",
-			).run(
-				character.id,
-				character.self_canon,
-				createHash("sha256").update(character.self_canon).digest("hex"),
-			);
+			transaction
+				.insert(selfCanonVersions)
+				.values({
+					companionId: character.id,
+					canon: character.self_canon,
+					version: 1,
+					hash: createHash("sha256").update(character.self_canon).digest("hex"),
+				})
+				.run();
 
 			// The first meeting FSM creates the initial conversation, so we don't seed one here.
-
-			db.exec("COMMIT");
-			eventBus.publish("character.seeded", { id: character.id, name: character.name });
-		} catch (e) {
-			db.exec("ROLLBACK");
-			throw e;
-		}
+		});
+		eventBus.publish("character.seeded", { id: character.id, name: character.name });
 	}
 }

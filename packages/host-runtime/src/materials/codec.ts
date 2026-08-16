@@ -191,11 +191,12 @@ async function parsePptx(buffer: Buffer): Promise<CodecResult> {
 /** Image preview: dimensions, format and EXIF metadata — no pixel analysis. */
 async function parseImage(buffer: Buffer): Promise<CodecResult> {
 	try {
-		const [{ imageSize }, { default: exifr }] = await Promise.all([
-			import("image-size"),
+		const [{ imageDimensionsFromData }, { default: exifr }] = await Promise.all([
+			import("image-dimensions"),
 			import("exifr"),
 		]);
-		const size = imageSize(new Uint8Array(buffer));
+		const size = imageDimensionsFromData(new Uint8Array(buffer));
+		if (!size) throw new Error("unsupported_or_invalid_image");
 		const metadata: Record<string, unknown> = {
 			width: size.width,
 			height: size.height,
@@ -218,16 +219,6 @@ async function parseImage(buffer: Buffer): Promise<CodecResult> {
 // ---------------------------------------------------------------------------
 // Built-in generators
 // ---------------------------------------------------------------------------
-
-/** Minimal structural view of the pptxgenjs API surface this module uses. */
-interface PptxGenSlideApi {
-	addText(text: string, options?: Record<string, unknown>): void;
-}
-
-interface PptxGenApi {
-	addSlide(): PptxGenSlideApi;
-	write(options: { outputType: "nodebuffer" }): Promise<Uint8Array>;
-}
 
 /** DOCX generator: title heading (when given) plus one paragraph per entry. */
 async function generateDocx(params: Record<string, unknown>): Promise<Buffer> {
@@ -294,26 +285,28 @@ async function generatePdf(params: Record<string, unknown>): Promise<Buffer> {
 /** PPTX generator: one slide per entry, title on top and body below. */
 async function generatePptx(params: Record<string, unknown>): Promise<Buffer> {
 	try {
-		// pptxgenjs's bundled d.ts mis-types its default export under ESM
-		// resolution (the UMD `export as namespace` shadows the class binding),
-		// so the runtime default is cast to the small structural API we use.
-		const PptxGenJS = (await import("pptxgenjs")).default as unknown as new () => PptxGenApi;
+		const {
+			addContentSlide,
+			addSlide,
+			createPresentation,
+			findSlideLayoutByType,
+			savePresentation,
+		} = await import("@office-kit/pptx");
 		const { slides } = params as { slides?: Array<{ title?: string; body?: string }> };
-		const pptx = new PptxGenJS();
+		const presentation = createPresentation();
 		const list = slides ?? [];
 		if (list.length === 0) {
-			pptx.addSlide();
+			const blankLayout = findSlideLayoutByType(presentation, "blank");
+			if (!blankLayout) throw new Error("blank_slide_layout_missing");
+			addSlide(presentation, { layout: blankLayout });
 		}
 		for (const slide of list) {
-			const page = pptx.addSlide();
-			if (slide.title !== undefined && slide.title !== "") {
-				page.addText(slide.title, { x: 0.5, y: 0.4, w: 9, h: 0.7, fontSize: 28, bold: true });
-			}
-			if (slide.body !== undefined && slide.body !== "") {
-				page.addText(slide.body, { x: 0.5, y: 1.3, w: 9, h: 4.2, fontSize: 14 });
-			}
+			addContentSlide(presentation, {
+				title: slide.title ?? "",
+				body: slide.body ?? "",
+			});
 		}
-		const out = await pptx.write({ outputType: "nodebuffer" });
+		const out = await savePresentation(presentation);
 		return Buffer.from(out);
 	} catch (e) {
 		throw new Error(String(e));

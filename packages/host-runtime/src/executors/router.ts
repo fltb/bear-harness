@@ -6,7 +6,9 @@
  * returned as events to CommissionService, which owns the run FSM.
  */
 
-import type { DatabaseSync } from "node:sqlite";
+import { eq } from "drizzle-orm";
+import type { AppDatabase } from "../storage/database.js";
+import { executorProfiles } from "../storage/schema.js";
 
 export type ExecutorProfileType = "product-managed" | "native-full" | "codex";
 
@@ -66,12 +68,6 @@ export interface ExecutorController {
 	resume?(run: ExecutorRun, response: ExecutorPermissionResponse): Promise<void>;
 }
 
-type ProfileRow = {
-	id: string;
-	profile_type: ExecutorProfileType;
-	capability_json: string;
-};
-
 const PROFILE_TYPES = new Set<ExecutorProfileType>(["product-managed", "native-full", "codex"]);
 
 function unavailable(reason: string): never {
@@ -84,10 +80,10 @@ function unavailable(reason: string): never {
  * known profile type.
  */
 export class ExecutorRouter {
-	private readonly db: DatabaseSync;
+	private readonly db: AppDatabase;
 	private readonly controllers = new Map<ExecutorProfileType, ExecutorController>();
 
-	constructor(db: DatabaseSync) {
+	constructor(db: AppDatabase) {
 		this.db = db;
 	}
 
@@ -127,24 +123,17 @@ export class ExecutorRouter {
 
 	private resolve(profileId: string): { profile: ExecutorProfile; controller: ExecutorController } {
 		const row = this.db
-			.prepare("SELECT id, profile_type, capability_json FROM executor_profiles WHERE id = ?")
-			.get(profileId) as ProfileRow | undefined;
+			.select()
+			.from(executorProfiles)
+			.where(eq(executorProfiles.id, profileId))
+			.get();
 		if (!row) unavailable("executor_profile_not_found");
-		if (!PROFILE_TYPES.has(row.profile_type)) unavailable("executor_profile_type_invalid");
+		if (!PROFILE_TYPES.has(row.profileType)) unavailable("executor_profile_type_invalid");
 
-		let capabilities: Record<string, unknown>;
-		try {
-			const parsed = JSON.parse(row.capability_json) as unknown;
-			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-				unavailable("executor_profile_invalid");
-			}
-			capabilities = parsed as Record<string, unknown>;
-		} catch {
-			unavailable("executor_profile_invalid");
-		}
+		const capabilities = row.capabilityJson;
 
-		const controller = this.controllers.get(row.profile_type);
+		const controller = this.controllers.get(row.profileType);
 		if (!controller) unavailable("executor_profile_not_wired");
-		return { profile: { id: row.id, type: row.profile_type, capabilities }, controller };
+		return { profile: { id: row.id, type: row.profileType, capabilities }, controller };
 	}
 }

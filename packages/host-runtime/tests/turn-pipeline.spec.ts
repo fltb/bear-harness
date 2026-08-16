@@ -45,7 +45,7 @@ describe("TurnPipeline conversation state contract", () => {
 				commands.push(command);
 			},
 		} as unknown as CompanionSupervisor;
-		pipeline = new TurnPipeline(db, supervisor, events);
+		pipeline = new TurnPipeline(database.orm, supervisor, events);
 	});
 
 	afterEach(() => {

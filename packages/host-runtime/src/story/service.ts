@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
+import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
+import { storyChangeEvents, storyChangeProposals, storyChanges } from "../storage/schema.js";
 
 export type StoryChangeScope = "global" | "branch";
 export type StoryChangeSource = "user_explicit" | "story_event" | "user_confirmed";
@@ -32,65 +34,60 @@ export type StoryTextResult =
 
 export class StoryService {
 	constructor(
-		private readonly db: DatabaseSync,
+		private readonly db: AppDatabase,
 		private readonly eventBus: EventBus,
 	) {}
 
 	list(params: { companionId: string; branchId?: string }): StoryChange[] {
 		const rows = this.db
-			.prepare(
-				`SELECT id, text, scope, source, conversation_id, branch_id, created_at
-				 FROM story_changes
-				 WHERE companion_id = ? AND status = 'active'
-				   AND (scope = 'global' OR branch_id = ?)
-				 ORDER BY created_at`,
+			.select()
+			.from(storyChanges)
+			.where(
+				and(
+					eq(storyChanges.companionId, params.companionId),
+					eq(storyChanges.status, "active"),
+					or(
+						eq(storyChanges.scope, "global"),
+						params.branchId
+							? eq(storyChanges.branchId, params.branchId)
+							: isNull(storyChanges.branchId),
+					),
+				),
 			)
-			.all(params.companionId, params.branchId ?? null) as Array<{
-			id: string;
-			text: string;
-			scope: StoryChangeScope;
-			source: StoryChangeSource;
-			conversation_id: string | null;
-			branch_id: string | null;
-			created_at: string;
-		}>;
+			.orderBy(asc(storyChanges.createdAt))
+			.all();
 		return rows.map((row) => ({
 			id: row.id,
 			text: row.text,
 			scope: row.scope,
 			source: row.source,
-			...(row.conversation_id ? { conversationId: row.conversation_id } : {}),
-			...(row.branch_id ? { branchId: row.branch_id } : {}),
-			createdAt: row.created_at,
+			...(row.conversationId ? { conversationId: row.conversationId } : {}),
+			...(row.branchId ? { branchId: row.branchId } : {}),
+			createdAt: row.createdAt,
 		}));
 	}
 
 	listProposals(params: { companionId: string; conversationId?: string }): StoryChangeProposal[] {
 		const rows = this.db
-			.prepare(
-				`SELECT id, conversation_id, branch_id, text, created_at
-				 FROM story_change_proposals
-				 WHERE companion_id = ? AND status = 'pending'
-				   AND (? IS NULL OR conversation_id = ?)
-				 ORDER BY created_at`,
+			.select()
+			.from(storyChangeProposals)
+			.where(
+				and(
+					eq(storyChangeProposals.companionId, params.companionId),
+					eq(storyChangeProposals.status, "pending"),
+					params.conversationId
+						? eq(storyChangeProposals.conversationId, params.conversationId)
+						: undefined,
+				),
 			)
-			.all(
-				params.companionId,
-				params.conversationId ?? null,
-				params.conversationId ?? null,
-			) as Array<{
-			id: string;
-			conversation_id: string;
-			branch_id: string;
-			text: string;
-			created_at: string;
-		}>;
+			.orderBy(asc(storyChangeProposals.createdAt))
+			.all();
 		return rows.map((row) => ({
 			id: row.id,
-			conversationId: row.conversation_id,
-			branchId: row.branch_id,
+			conversationId: row.conversationId,
+			branchId: row.branchId,
 			text: row.text,
-			createdAt: row.created_at,
+			createdAt: row.createdAt,
 		}));
 	}
 
@@ -101,17 +98,29 @@ export class StoryService {
 		text: string;
 	}): StoryChangeProposal {
 		const existing = this.db
-			.prepare(
-				"SELECT id FROM story_change_proposals WHERE conversation_id = ? AND text = ? AND status = 'pending' LIMIT 1",
+			.select({ id: storyChangeProposals.id })
+			.from(storyChangeProposals)
+			.where(
+				and(
+					eq(storyChangeProposals.conversationId, params.conversationId),
+					eq(storyChangeProposals.text, normalize(params.text)),
+					eq(storyChangeProposals.status, "pending"),
+				),
 			)
-			.get(params.conversationId, normalize(params.text)) as { id: string } | undefined;
+			.limit(1)
+			.get();
 		if (existing) return this.getProposal(existing.id);
 		const id = randomUUID();
 		this.db
-			.prepare(
-				"INSERT INTO story_change_proposals (id, companion_id, conversation_id, branch_id, text) VALUES (?, ?, ?, ?, ?)",
-			)
-			.run(id, params.companionId, params.conversationId, params.branchId, normalize(params.text));
+			.insert(storyChangeProposals)
+			.values({
+				id,
+				companionId: params.companionId,
+				conversationId: params.conversationId,
+				branchId: params.branchId,
+				text: normalize(params.text),
+			})
+			.run();
 		const proposal = this.getProposal(id);
 		this.eventBus.publish("story.change_needs_confirmation", { proposal });
 		return proposal;
@@ -120,10 +129,15 @@ export class StoryService {
 	resolveProposal(params: { proposalId: string; accept: boolean }): StoryChange | undefined {
 		const proposal = this.getProposal(params.proposalId);
 		const result = this.db
-			.prepare(
-				"UPDATE story_change_proposals SET status = ?, decided_at = datetime('now') WHERE id = ? AND status = 'pending'",
+			.update(storyChangeProposals)
+			.set({ status: params.accept ? "accepted" : "dismissed", decidedAt: sql`datetime('now')` })
+			.where(
+				and(
+					eq(storyChangeProposals.id, params.proposalId),
+					eq(storyChangeProposals.status, "pending"),
+				),
 			)
-			.run(params.accept ? "accepted" : "dismissed", params.proposalId);
+			.run();
 		if (result.changes === 0) throw { kind: "conflict", reason: "story_proposal_already_decided" };
 		if (!params.accept) {
 			this.eventBus.publish("story.change_confirmation_dismissed", {
@@ -132,10 +146,13 @@ export class StoryService {
 			return undefined;
 		}
 		const companion = this.db
-			.prepare("SELECT companion_id FROM story_change_proposals WHERE id = ?")
-			.get(params.proposalId) as { companion_id: string };
+			.select({ companionId: storyChangeProposals.companionId })
+			.from(storyChangeProposals)
+			.where(eq(storyChangeProposals.id, params.proposalId))
+			.get();
+		if (!companion) throw { kind: "not_found", reason: "story_proposal_not_found" };
 		return this.apply({
-			companionId: companion.companion_id,
+			companionId: companion.companionId,
 			conversationId: proposal.conversationId,
 			branchId: proposal.branchId,
 			text: proposal.text,
@@ -158,44 +175,44 @@ export class StoryService {
 			throw { kind: "invalid_request", reason: "story_branch_required" };
 		}
 		const existing = this.db
-			.prepare(
-				"SELECT id FROM story_changes WHERE companion_id = ? AND normalized_text = ? AND status = 'active' AND scope = ? AND COALESCE(branch_id, '') = COALESCE(?, '') LIMIT 1",
+			.select({ id: storyChanges.id })
+			.from(storyChanges)
+			.where(
+				and(
+					eq(storyChanges.companionId, params.companionId),
+					eq(storyChanges.normalizedText, text),
+					eq(storyChanges.status, "active"),
+					eq(storyChanges.scope, params.scope),
+					params.branchId
+						? eq(storyChanges.branchId, params.branchId)
+						: isNull(storyChanges.branchId),
+				),
 			)
-			.get(params.companionId, text, params.scope, params.branchId ?? null) as
-			| { id: string }
-			| undefined;
+			.limit(1)
+			.get();
 		if (existing) {
 			return this.get(existing.id);
 		}
 		const id = randomUUID();
-		this.db.exec("BEGIN IMMEDIATE");
-		try {
-			this.db
-				.prepare(
-					`INSERT INTO story_changes
-					 (id, companion_id, conversation_id, branch_id, text, normalized_text, scope, source)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-				)
-				.run(
+		this.db.transaction((transaction) => {
+			transaction
+				.insert(storyChanges)
+				.values({
 					id,
-					params.companionId,
-					params.conversationId ?? null,
-					params.scope === "branch" ? (params.branchId ?? null) : null,
+					companionId: params.companionId,
+					conversationId: params.conversationId ?? null,
+					branchId: params.scope === "branch" ? (params.branchId ?? null) : null,
 					text,
-					text,
-					params.scope,
-					params.source,
-				);
-			this.db
-				.prepare(
-					"INSERT INTO story_change_events (change_id, action, conversation_id) VALUES (?, 'applied', ?)",
-				)
-				.run(id, params.conversationId ?? null);
-			this.db.exec("COMMIT");
-		} catch (error) {
-			this.db.exec("ROLLBACK");
-			throw error;
-		}
+					normalizedText: text,
+					scope: params.scope,
+					source: params.source,
+				})
+				.run();
+			transaction
+				.insert(storyChangeEvents)
+				.values({ changeId: id, action: "applied", conversationId: params.conversationId ?? null })
+				.run();
+		});
 		const change = this.get(id);
 		this.eventBus.publish("story.change_applied", { change });
 		return change;
@@ -207,20 +224,23 @@ export class StoryService {
 		branchId?: string;
 	}): string | undefined {
 		const row = this.db
-			.prepare(
-				`SELECT id FROM story_changes
-				 WHERE companion_id = ? AND status = 'active'
-				   AND (? IS NULL OR conversation_id = ?)
-				   AND (? IS NULL OR branch_id = ? OR scope = 'global')
-				 ORDER BY created_at DESC LIMIT 1`,
+			.select({ id: storyChanges.id })
+			.from(storyChanges)
+			.where(
+				and(
+					eq(storyChanges.companionId, params.companionId),
+					eq(storyChanges.status, "active"),
+					params.conversationId
+						? eq(storyChanges.conversationId, params.conversationId)
+						: undefined,
+					params.branchId
+						? or(eq(storyChanges.branchId, params.branchId), eq(storyChanges.scope, "global"))
+						: undefined,
+				),
 			)
-			.get(
-				params.companionId,
-				params.conversationId ?? null,
-				params.conversationId ?? null,
-				params.branchId ?? null,
-				params.branchId ?? null,
-			) as { id: string } | undefined;
+			.orderBy(desc(storyChanges.createdAt))
+			.limit(1)
+			.get();
 		if (!row) return undefined;
 		this.revert(row.id, params.conversationId);
 		return row.id;
@@ -228,32 +248,36 @@ export class StoryService {
 
 	revert(changeId: string, conversationId?: string): void {
 		const result = this.db
-			.prepare(
-				"UPDATE story_changes SET status = 'reverted', reverted_at = datetime('now') WHERE id = ? AND status = 'active'",
-			)
-			.run(changeId);
+			.update(storyChanges)
+			.set({ status: "reverted", revertedAt: sql`datetime('now')` })
+			.where(and(eq(storyChanges.id, changeId), eq(storyChanges.status, "active")))
+			.run();
 		if (result.changes === 0) throw { kind: "not_found", reason: "story_change_not_found" };
 		this.db
-			.prepare(
-				"INSERT INTO story_change_events (change_id, action, conversation_id) VALUES (?, 'reverted', ?)",
-			)
-			.run(changeId, conversationId ?? null);
+			.insert(storyChangeEvents)
+			.values({ changeId, action: "reverted", conversationId: conversationId ?? null })
+			.run();
 		this.eventBus.publish("story.change_reverted", { changeId, conversationId });
 	}
 
 	reset(params: { companionId: string; conversationId?: string; branchId?: string }): number {
 		const result = this.db
-			.prepare(
-				`UPDATE story_changes SET status = 'reverted', reverted_at = datetime('now')
-				 WHERE companion_id = ? AND status = 'active'
-				   AND (? IS NULL OR branch_id = ? OR scope = 'global')`,
+			.update(storyChanges)
+			.set({ status: "reverted", revertedAt: sql`datetime('now')` })
+			.where(
+				and(
+					eq(storyChanges.companionId, params.companionId),
+					eq(storyChanges.status, "active"),
+					params.branchId
+						? or(eq(storyChanges.branchId, params.branchId), eq(storyChanges.scope, "global"))
+						: undefined,
+				),
 			)
-			.run(params.companionId, params.branchId ?? null, params.branchId ?? null);
+			.run();
 		this.db
-			.prepare(
-				"INSERT INTO story_change_events (change_id, action, conversation_id) VALUES (NULL, 'reset', ?)",
-			)
-			.run(params.conversationId ?? null);
+			.insert(storyChangeEvents)
+			.values({ changeId: null, action: "reset", conversationId: params.conversationId ?? null })
+			.run();
 		this.eventBus.publish("story.reset", {
 			conversationId: params.conversationId,
 			count: result.changes,
@@ -292,54 +316,32 @@ export class StoryService {
 	}
 
 	private get(id: string): StoryChange {
-		const row = this.db
-			.prepare(
-				"SELECT id, text, scope, source, conversation_id, branch_id, created_at FROM story_changes WHERE id = ?",
-			)
-			.get(id) as
-			| {
-					id: string;
-					text: string;
-					scope: StoryChangeScope;
-					source: StoryChangeSource;
-					conversation_id: string | null;
-					branch_id: string | null;
-					created_at: string;
-			  }
-			| undefined;
+		const row = this.db.select().from(storyChanges).where(eq(storyChanges.id, id)).get();
 		if (!row) throw { kind: "not_found", reason: "story_change_not_found" };
 		return {
 			id: row.id,
 			text: row.text,
 			scope: row.scope,
 			source: row.source,
-			...(row.conversation_id ? { conversationId: row.conversation_id } : {}),
-			...(row.branch_id ? { branchId: row.branch_id } : {}),
-			createdAt: row.created_at,
+			...(row.conversationId ? { conversationId: row.conversationId } : {}),
+			...(row.branchId ? { branchId: row.branchId } : {}),
+			createdAt: row.createdAt,
 		};
 	}
 
 	private getProposal(id: string): StoryChangeProposal {
 		const row = this.db
-			.prepare(
-				"SELECT id, conversation_id, branch_id, text, created_at FROM story_change_proposals WHERE id = ?",
-			)
-			.get(id) as
-			| {
-					id: string;
-					conversation_id: string;
-					branch_id: string;
-					text: string;
-					created_at: string;
-			  }
-			| undefined;
+			.select()
+			.from(storyChangeProposals)
+			.where(eq(storyChangeProposals.id, id))
+			.get();
 		if (!row) throw { kind: "not_found", reason: "story_proposal_not_found" };
 		return {
 			id: row.id,
-			conversationId: row.conversation_id,
-			branchId: row.branch_id,
+			conversationId: row.conversationId,
+			branchId: row.branchId,
 			text: row.text,
-			createdAt: row.created_at,
+			createdAt: row.createdAt,
 		};
 	}
 }

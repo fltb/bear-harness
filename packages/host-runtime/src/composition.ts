@@ -12,7 +12,6 @@
  * registered and keep returning `handler_not_registered`.
  */
 
-import type { DatabaseSync } from "node:sqlite";
 import { CharacterRuntimeState, RPC } from "@bear-harness/protocol/schema";
 import { desc, eq } from "drizzle-orm";
 import type { ArtifactStore } from "./artifacts/index.js";
@@ -34,7 +33,6 @@ import type { StoryService } from "./story/service.js";
 
 /** Domain services and runtime-owned inputs the handlers read and mutate. */
 export interface HostCompositionContext {
-	db: DatabaseSync;
 	orm: AppDatabase;
 	eventBus: EventBus;
 	onboarding: FirstMeetingMachine;
@@ -77,7 +75,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return { character: s.characterLoader.display(character) };
 	});
 	dispatcher.registerHandler(RPC.character.list, async () => ({
-		characters: s.characterLoader.list(s.db, s.defaultCharacterId),
+		characters: s.characterLoader.list(s.orm, s.defaultCharacterId),
 	}));
 	dispatcher.registerHandler(RPC.character.activate, async (_p) => {
 		const { characterId } = _p as { characterId: string };
@@ -86,7 +84,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		if ((await getCompanionId(s)) === characterId) {
 			return { character: s.characterLoader.display(character) };
 		}
-		s.characterLoader.activate(s.db, s.eventBus, character);
+		s.characterLoader.activate(s.orm, s.eventBus, character);
 		await s.supervisor.stop();
 		s.supervisor.configureRuntime(s.characterLoader.piResources(character));
 		await s.supervisor.start();
@@ -104,7 +102,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				reason: error instanceof Error ? error.message : "character_package_invalid",
 			};
 		}
-		s.characterLoader.seed(s.db, s.eventBus, character);
+		s.characterLoader.seed(s.orm, s.eventBus, character);
 		s.eventBus.publish("character.imported", { characterId: character.id });
 		return { character: s.characterLoader.display(character) };
 	});
@@ -753,7 +751,7 @@ function modelDefaultsWire(defaults: {
 }
 
 async function getCompanionId(s: HostCompositionContext): Promise<string> {
-	const packageId = s.characterLoader.getActiveCharacterId(s.db, s.defaultCharacterId);
+	const packageId = s.characterLoader.getActiveCharacterId(s.orm, s.defaultCharacterId);
 	ensureCharacterSeeded(s);
 	const seeded = s.orm
 		.select({ id: companionIdentity.id })
@@ -766,14 +764,14 @@ async function getCompanionId(s: HostCompositionContext): Promise<string> {
 
 /** Seed the active character package if it has not been seeded yet. */
 function ensureCharacterSeeded(s: HostCompositionContext): void {
-	const activeId = s.characterLoader.getActiveCharacterId(s.db, s.defaultCharacterId);
+	const activeId = s.characterLoader.getActiveCharacterId(s.orm, s.defaultCharacterId);
 	const character = s.characterLoader.load(activeId);
 	if (!character) throw new Error(`character package missing: ${activeId}`);
-	s.characterLoader.seed(s.db, s.eventBus, character);
+	s.characterLoader.seed(s.orm, s.eventBus, character);
 	const active = s.orm
 		.select({ characterId: activeCharacter.characterId })
 		.from(activeCharacter)
 		.where(eq(activeCharacter.singleton, 1))
 		.get();
-	if (!active) s.characterLoader.activate(s.db, s.eventBus, character);
+	if (!active) s.characterLoader.activate(s.orm, s.eventBus, character);
 }

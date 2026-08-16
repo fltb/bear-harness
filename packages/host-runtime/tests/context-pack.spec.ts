@@ -2,6 +2,7 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { drizzle } from "drizzle-orm/node-sqlite";
 import { describe, expect, it } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import { ContextPackCompiler } from "../src/companion/context-pack.js";
@@ -33,12 +34,13 @@ describe("ContextPackCompiler character package identity", () => {
 		expect(character).not.toBeNull();
 		if (!character) throw new Error("jizhou package is required for the official build");
 
-		const pack = new ContextPackCompiler(db, characterLoader).compile("conversation-1");
+		const orm = drizzle({ client: db });
+		const pack = new ContextPackCompiler(orm, characterLoader).compile("conversation-1");
 		expect(pack.blocks.find((block) => block.layer === "identity")?.content).toBe(
 			character.identity_core,
 		);
 		expect(() =>
-			new ContextPackCompiler(db, characterLoader).compile("missing-conversation"),
+			new ContextPackCompiler(orm, characterLoader).compile("missing-conversation"),
 		).toThrow("conversation has no companion identity");
 		db.close();
 	});

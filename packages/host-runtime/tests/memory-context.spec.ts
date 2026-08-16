@@ -46,9 +46,10 @@ describe("relationship memory context", () => {
 		db.prepare(
 			"INSERT INTO onboarding_state (companion_id, state, state_json) VALUES (?, ?, ?)",
 		).run("jizhou", "complete", onboardingState(true));
-		const events = new EventBus(drizzle({ client: db }));
-		memory = new MemoryService(db, events);
-		compiler = new ContextPackCompiler(db, new CharacterLoader(characterRoot));
+		const orm = drizzle({ client: db });
+		const events = new EventBus(orm);
+		memory = new MemoryService(orm, events);
+		compiler = new ContextPackCompiler(orm, new CharacterLoader(characterRoot));
 	});
 
 	function approve(text: string): string {

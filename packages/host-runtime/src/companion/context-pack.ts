@@ -12,12 +12,25 @@
  * Only adopted versions on active branches are included.
  */
 
-import type { DatabaseSync } from "node:sqlite";
-import { z } from "zod";
+import { and, asc, desc, eq, or, sql } from "drizzle-orm";
+import type { AppDatabase } from "../storage/database.js";
+import {
+	branches,
+	canonChunks,
+	canonSources,
+	companionIdentity,
+	conversations,
+	messages,
+	messageVersions,
+	onboardingState,
+	relationshipMemoryEntries,
+	sceneState,
+	selfCanonVersions,
+	storyChanges,
+	storyModules,
+} from "../storage/schema.js";
 import type { CharacterLoader } from "./character-loader.js";
 import { OnboardingStateDataSchema } from "./onboarding-schema.js";
-
-const SourceRefsSchema = z.array(z.string());
 
 export interface ContextPackBlock {
 	layer:
@@ -42,10 +55,10 @@ export interface ContextPack {
 }
 
 export class ContextPackCompiler {
-	private db: DatabaseSync;
+	private db: AppDatabase;
 	private characterLoader: CharacterLoader;
 
-	constructor(db: DatabaseSync, characterLoader: CharacterLoader) {
+	constructor(db: AppDatabase, characterLoader: CharacterLoader) {
 		this.db = db;
 		this.characterLoader = characterLoader;
 	}
@@ -155,40 +168,40 @@ ${modules.join("\n")}`,
 
 	private getIdentityCore(conversationId: string): string {
 		const row = this.db
-			.prepare(
-				`SELECT ci.package_id
-				 FROM conversations c
-				 JOIN companion_identity ci ON ci.id = c.companion_id
-				 WHERE c.id = ?`,
-			)
-			.get(conversationId) as { package_id: string } | undefined;
+			.select({ packageId: companionIdentity.packageId })
+			.from(conversations)
+			.innerJoin(companionIdentity, eq(companionIdentity.id, conversations.companionId))
+			.where(eq(conversations.id, conversationId))
+			.get();
 		if (!row) throw new Error(`conversation has no companion identity: ${conversationId}`);
-		const character = this.characterLoader.load(row.package_id);
-		if (!character) throw new Error(`character package missing: ${row.package_id}`);
+		const character = this.characterLoader.load(row.packageId);
+		if (!character) throw new Error(`character package missing: ${row.packageId}`);
 		return character.identity_core;
 	}
 
 	private getSelfCanon(conversationId: string): string | null {
 		const row = this.db
-			.prepare(
-				`SELECT scv.canon
-				 FROM conversations c
-				 JOIN companion_identity ci ON ci.id = c.companion_id
-				 JOIN self_canon_versions scv ON scv.companion_id = ci.id
-				 WHERE c.id = ? AND scv.version = (SELECT MAX(version) FROM self_canon_versions WHERE companion_id = ci.id)`,
-			)
-			.get(conversationId) as { canon: string } | undefined;
+			.select({ canon: selfCanonVersions.canon })
+			.from(conversations)
+			.innerJoin(companionIdentity, eq(companionIdentity.id, conversations.companionId))
+			.innerJoin(selfCanonVersions, eq(selfCanonVersions.companionId, companionIdentity.id))
+			.where(eq(conversations.id, conversationId))
+			.orderBy(desc(selfCanonVersions.version))
+			.limit(1)
+			.get();
 		return row?.canon ?? null;
 	}
 
 	private getSceneState(conversationId: string): string | null {
 		const row = this.db
-			.prepare(
-				"SELECT scene, state_json FROM scene_state WHERE conversation_id = ? ORDER BY updated_at DESC LIMIT 1",
-			)
-			.get(conversationId) as { scene: string; state_json: string } | undefined;
+			.select({ scene: sceneState.scene, stateData: sceneState.stateJson })
+			.from(sceneState)
+			.where(eq(sceneState.conversationId, conversationId))
+			.orderBy(desc(sceneState.updatedAt))
+			.limit(1)
+			.get();
 		if (!row) return null;
-		return `当前场景：${row.scene}\n${row.state_json}`;
+		return `当前场景：${row.scene}\n${JSON.stringify(row.stateData)}`;
 	}
 
 	private getCanonEvidence(conversationId: string, query: string): string[] {
@@ -196,22 +209,25 @@ ${modules.join("\n")}`,
 			...new Set(query.split(/[\s，。！？；、]+/).filter((term) => term.length >= 2)),
 		].slice(0, 6);
 		if (terms.length === 0) return [];
-		const clauses = terms.map(() => "cc.content LIKE ?").join(" OR ");
 		const rows = this.db
-			.prepare(
-				`SELECT cs.logical_name, cc.ordinal, cc.content
-				 FROM conversations c
-				 JOIN canon_sources cs ON cs.companion_id = c.companion_id
-				 JOIN canon_chunks cc ON cc.source_id = cs.id
-				 WHERE c.id = ? AND (${clauses})
-				 ORDER BY cc.source_id, cc.ordinal LIMIT 6`,
+			.select({
+				logicalName: canonSources.logicalName,
+				ordinal: canonChunks.ordinal,
+				content: canonChunks.content,
+			})
+			.from(conversations)
+			.innerJoin(canonSources, eq(canonSources.companionId, conversations.companionId))
+			.innerJoin(canonChunks, eq(canonChunks.sourceId, canonSources.id))
+			.where(
+				and(
+					eq(conversations.id, conversationId),
+					or(...terms.map((term) => sql`instr(${canonChunks.content}, ${term}) > 0`)),
+				),
 			)
-			.all(conversationId, ...terms.map((term) => `%${term}%`)) as Array<{
-			logical_name: string;
-			ordinal: number;
-			content: string;
-		}>;
-		return rows.map((row) => `【${row.logical_name} · ${row.ordinal + 1}】\n${row.content}`);
+			.orderBy(asc(canonChunks.sourceId), asc(canonChunks.ordinal))
+			.limit(6)
+			.all();
+		return rows.map((row) => `【${row.logicalName} · ${row.ordinal + 1}】\n${row.content}`);
 	}
 
 	private getCanonModules(conversationId: string, query: string): string[] {
@@ -219,37 +235,40 @@ ${modules.join("\n")}`,
 			...new Set(query.split(/[\s，。！？；、]+/).filter((term) => term.length >= 2)),
 		].slice(0, 6);
 		const rows = this.db
-			.prepare(
-				`SELECT sm.id, sm.parent_id, sm.kind, sm.name, sm.description, sm.source_refs_json
-				 FROM story_modules sm JOIN conversations c ON c.companion_id = sm.companion_id
-				 WHERE c.id = ? ORDER BY sm.created_at`,
-			)
-			.all(conversationId) as Array<{
-			id: string;
-			parent_id: string | null;
-			kind: string;
-			name: string;
-			description: string;
-			source_refs_json: string;
-		}>;
+			.select({
+				id: storyModules.id,
+				parentId: storyModules.parentId,
+				kind: storyModules.kind,
+				name: storyModules.name,
+				description: storyModules.description,
+				sourceRefs: storyModules.sourceRefsJson,
+			})
+			.from(storyModules)
+			.innerJoin(conversations, eq(conversations.companionId, storyModules.companionId))
+			.where(eq(conversations.id, conversationId))
+			.orderBy(asc(storyModules.createdAt))
+			.all();
 		const evidenceIds = new Set(
 			terms.length === 0
 				? []
-				: (
-						this.db
-							.prepare(
-								`SELECT cc.id FROM canon_chunks cc
-								 JOIN canon_sources cs ON cs.id = cc.source_id
-								 JOIN conversations c ON c.companion_id = cs.companion_id
-								 WHERE c.id = ? AND (${terms.map(() => "cc.content LIKE ?").join(" OR ")})`,
-							)
-							.all(conversationId, ...terms.map((term) => `%${term}%`)) as Array<{ id: string }>
-					).map((row) => row.id),
+				: this.db
+						.select({ id: canonChunks.id })
+						.from(canonChunks)
+						.innerJoin(canonSources, eq(canonSources.id, canonChunks.sourceId))
+						.innerJoin(conversations, eq(conversations.companionId, canonSources.companionId))
+						.where(
+							and(
+								eq(conversations.id, conversationId),
+								or(...terms.map((term) => sql`instr(${canonChunks.content}, ${term}) > 0`)),
+							),
+						)
+						.all()
+						.map((row) => row.id),
 		);
 		const byId = new Map(rows.map((row) => [row.id, row]));
 		const selected = new Set<string>();
 		for (const row of rows) {
-			const refs = SourceRefsSchema.parse(JSON.parse(row.source_refs_json));
+			const refs = row.sourceRefs;
 			const searchable = `${row.name} ${row.description}`;
 			if (
 				row.kind === "root" ||
@@ -257,10 +276,10 @@ ${modules.join("\n")}`,
 				refs.some((id) => evidenceIds.has(id))
 			) {
 				selected.add(row.id);
-				let parentId = row.parent_id;
+				let parentId = row.parentId;
 				while (parentId && !selected.has(parentId)) {
 					selected.add(parentId);
-					parentId = byId.get(parentId)?.parent_id ?? null;
+					parentId = byId.get(parentId)?.parentId ?? null;
 				}
 			}
 		}
@@ -272,67 +291,82 @@ ${modules.join("\n")}`,
 
 	private getStoryChanges(conversationId: string): string[] {
 		const branch = this.db
-			.prepare(
-				"SELECT id FROM branches WHERE conversation_id = ? AND adopted = 1 ORDER BY created_at DESC LIMIT 1",
-			)
-			.get(conversationId) as { id: string } | undefined;
+			.select({ id: branches.id })
+			.from(branches)
+			.where(and(eq(branches.conversationId, conversationId), eq(branches.adopted, 1)))
+			.orderBy(desc(branches.createdAt))
+			.limit(1)
+			.get();
 		const rows = this.db
-			.prepare(
-				`SELECT sc.text, sc.scope
-				 FROM story_changes sc
-				 JOIN conversations c ON c.companion_id = sc.companion_id
-				 WHERE c.id = ? AND sc.status = 'active'
-				 AND (sc.scope = 'global' OR (sc.scope = 'branch' AND sc.branch_id = ?))
-				 ORDER BY sc.created_at ASC LIMIT 40`,
+			.select({ text: storyChanges.text, scope: storyChanges.scope })
+			.from(storyChanges)
+			.innerJoin(conversations, eq(conversations.companionId, storyChanges.companionId))
+			.where(
+				and(
+					eq(conversations.id, conversationId),
+					eq(storyChanges.status, "active"),
+					or(
+						eq(storyChanges.scope, "global"),
+						and(eq(storyChanges.scope, "branch"), eq(storyChanges.branchId, branch?.id ?? "")),
+					),
+				),
 			)
-			.all(conversationId, branch?.id ?? "") as Array<{ text: string; scope: string }>;
+			.orderBy(asc(storyChanges.createdAt))
+			.limit(40)
+			.all();
 		return rows.map((row) => `- ${row.text}${row.scope === "branch" ? "（仅当前分支）" : ""}`);
 	}
 
 	private relationshipMemoryEnabled(conversationId: string): boolean {
 		const row = this.db
-			.prepare(
-				`SELECT os.state_json
-				 FROM conversations c
-				 LEFT JOIN onboarding_state os ON os.companion_id = c.companion_id
-				 WHERE c.id = ?`,
-			)
-			.get(conversationId) as { state_json: string | null } | undefined;
-		if (!row?.state_json) return false;
-		const state = OnboardingStateDataSchema.parse(JSON.parse(row.state_json));
+			.select({ stateData: onboardingState.stateJson })
+			.from(conversations)
+			.leftJoin(onboardingState, eq(onboardingState.companionId, conversations.companionId))
+			.where(eq(conversations.id, conversationId))
+			.get();
+		if (!row?.stateData) return false;
+		const state = OnboardingStateDataSchema.parse(row.stateData);
 		return state.decisions.relationship_memory_enabled === true;
 	}
 
 	private getConversationHistory(conversationId: string): string[] {
 		const branch = this.db
-			.prepare(
-				"SELECT id FROM branches WHERE conversation_id = ? AND adopted = 1 ORDER BY created_at DESC LIMIT 1",
-			)
-			.get(conversationId) as { id: string } | undefined;
+			.select({ id: branches.id })
+			.from(branches)
+			.where(and(eq(branches.conversationId, conversationId), eq(branches.adopted, 1)))
+			.orderBy(desc(branches.createdAt))
+			.limit(1)
+			.get();
 		if (!branch) return [];
 		const rows = this.db
-			.prepare(
-				`SELECT m.role, v.content
-				 FROM messages m
-				 JOIN message_versions v ON v.message_id = m.id AND v.adopted = 1
-				 WHERE m.conversation_id = ? AND m.branch_id = ?
-				 ORDER BY m.created_at DESC LIMIT 40 OFFSET 1`,
+			.select({ role: messages.role, content: messageVersions.content })
+			.from(messages)
+			.innerJoin(
+				messageVersions,
+				and(eq(messageVersions.messageId, messages.id), eq(messageVersions.adopted, 1)),
 			)
-			.all(conversationId, branch.id) as Array<{ role: string; content: string }>;
+			.where(and(eq(messages.conversationId, conversationId), eq(messages.branchId, branch.id)))
+			.orderBy(desc(messages.createdAt))
+			.limit(40)
+			.offset(1)
+			.all();
 		return rows.reverse().map((row) => `${row.role === "user" ? "用户" : "角色"}：${row.content}`);
 	}
 
 	private getRelationshipMemory(conversationId: string): { entries: string[] } {
 		const rows = this.db
-			.prepare(
-				`SELECT rme.text
-				 FROM relationship_memory_entries rme
-				 WHERE rme.status = 'active'
-				 AND EXISTS (SELECT 1 FROM conversations c WHERE c.id = ? AND c.companion_id = rme.companion_id)
-				 ORDER BY rme.pinned_at DESC NULLS LAST, rme.updated_at DESC
-				 LIMIT 12`,
+			.select({ text: relationshipMemoryEntries.text })
+			.from(relationshipMemoryEntries)
+			.innerJoin(
+				conversations,
+				eq(conversations.companionId, relationshipMemoryEntries.companionId),
 			)
-			.all(conversationId) as Array<{ text: string }>;
+			.where(
+				and(eq(conversations.id, conversationId), eq(relationshipMemoryEntries.status, "active")),
+			)
+			.orderBy(desc(relationshipMemoryEntries.pinnedAt), desc(relationshipMemoryEntries.updatedAt))
+			.limit(12)
+			.all();
 		return { entries: rows.map((r) => r.text) };
 	}
 }

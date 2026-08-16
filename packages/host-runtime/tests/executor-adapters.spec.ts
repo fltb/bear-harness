@@ -68,7 +68,7 @@ describe("ACP executor adapters", () => {
 	it("launches Pi as a dedicated ACP worker and records no secret manifest data", async () => {
 		const cwd = fixtureDirectory();
 		const { db } = createDatabase();
-		const adapter = new PiAcpAdapter(db, cwd, fixturePath);
+		const adapter = new PiAcpAdapter(drizzle({ client: db }), cwd, fixturePath);
 		const completed = Promise.withResolvers<void>();
 		const run = request(cwd, {
 			id: "pi-product-managed",
@@ -106,7 +106,7 @@ describe("ACP executor adapters", () => {
 				return fixtureSpec(cwd);
 			}
 		}
-		const adapter = new FixtureCodexAdapter(db, eventBus);
+		const adapter = new FixtureCodexAdapter(drizzle({ client: db }), eventBus);
 		const completed = Promise.withResolvers<void>();
 		const run = request(cwd, {
 			id: "codex-fixture",

@@ -6,8 +6,15 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import { desc, eq, sql } from "drizzle-orm";
+import type { AppDatabase } from "../storage/database.js";
 import type { EventBus, HostEvent } from "../storage/event-bus.js";
+import {
+	companionIdentity,
+	companionPackages,
+	conversations,
+	sceneState,
+} from "../storage/schema.js";
 import type { CharacterLoader, CharacterPackage } from "./character-loader.js";
 
 export type CompanionHostToolName =
@@ -41,7 +48,7 @@ export interface CharacterRuntimeState {
 interface StoredSceneState {
 	id: string;
 	scene: string;
-	state_json: string;
+	stateJson: unknown;
 }
 
 /** Host-owned, allowlisted character UI controls. */
@@ -49,7 +56,7 @@ export class CharacterBehaviorService {
 	private readonly unsubscribe: () => void;
 
 	constructor(
-		private readonly db: DatabaseSync,
+		private readonly db: AppDatabase,
 		private readonly eventBus: EventBus,
 		private readonly characterLoader: CharacterLoader,
 	) {
@@ -158,11 +165,13 @@ export class CharacterBehaviorService {
 
 	private currentState(conversationId: string, character: CharacterPackage): CharacterRuntimeState {
 		const stored = this.db
-			.prepare(
-				"SELECT id, scene, state_json FROM scene_state WHERE conversation_id = ? ORDER BY updated_at DESC LIMIT 1",
-			)
-			.get(conversationId) as StoredSceneState | undefined;
-		const parsed = parseStoredState(stored?.state_json);
+			.select({ id: sceneState.id, scene: sceneState.scene, stateJson: sceneState.stateJson })
+			.from(sceneState)
+			.where(eq(sceneState.conversationId, conversationId))
+			.orderBy(desc(sceneState.updatedAt))
+			.limit(1)
+			.get() as StoredSceneState | undefined;
+		const parsed = parseStoredState(stored?.stateJson);
 		const sceneId = character.scenes.some((scene) => scene.id === stored?.scene)
 			? (stored?.scene ?? character.visual.default_scene)
 			: character.visual.default_scene;
@@ -188,34 +197,37 @@ export class CharacterBehaviorService {
 		const character = this.characterForConversation(conversationId);
 		if (!character) throw new Error(`conversation not found: ${conversationId}`);
 		const existing = this.db
-			.prepare(
-				"SELECT id FROM scene_state WHERE conversation_id = ? ORDER BY updated_at DESC LIMIT 1",
-			)
-			.get(conversationId) as { id: string } | undefined;
-		const stateJson = JSON.stringify({ visualState });
+			.select({ id: sceneState.id })
+			.from(sceneState)
+			.where(eq(sceneState.conversationId, conversationId))
+			.orderBy(desc(sceneState.updatedAt))
+			.limit(1)
+			.get();
+		const stateJson = { visualState };
 		if (existing) {
 			this.db
-				.prepare(
-					"UPDATE scene_state SET scene = ?, state_json = ?, updated_at = datetime('now') WHERE id = ?",
-				)
-				.run(sceneId, stateJson, existing.id);
+				.update(sceneState)
+				.set({ scene: sceneId, stateJson, updatedAt: sql`datetime('now')` })
+				.where(eq(sceneState.id, existing.id))
+				.run();
 		} else {
 			this.db
-				.prepare(
-					"INSERT INTO scene_state (id, conversation_id, scene, state_json) VALUES (?, ?, ?, ?)",
-				)
-				.run(randomUUID(), conversationId, sceneId, stateJson);
+				.insert(sceneState)
+				.values({ id: randomUUID(), conversationId, scene: sceneId, stateJson })
+				.run();
 		}
 		return this.currentState(conversationId, character);
 	}
 
 	private characterForConversation(conversationId: string): CharacterPackage | null {
 		const row = this.db
-			.prepare(
-				"SELECT cp.id AS package_id FROM conversations c JOIN companion_identity ci ON ci.id = c.companion_id JOIN companion_packages cp ON cp.id = ci.package_id WHERE c.id = ?",
-			)
-			.get(conversationId) as { package_id: string } | undefined;
-		return row ? this.characterLoader.load(row.package_id) : null;
+			.select({ packageId: companionPackages.id })
+			.from(conversations)
+			.innerJoin(companionIdentity, eq(companionIdentity.id, conversations.companionId))
+			.innerJoin(companionPackages, eq(companionPackages.id, companionIdentity.packageId))
+			.where(eq(conversations.id, conversationId))
+			.get();
+		return row ? this.characterLoader.load(row.packageId) : null;
 	}
 }
 
@@ -240,13 +252,12 @@ function conversationIdFrom(payload: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined;
 }
 
-function parseStoredState(value: string | undefined): Record<string, unknown> {
+function parseStoredState(value: unknown): Record<string, unknown> {
 	if (!value) return {};
-	const parsed: unknown = JSON.parse(value);
-	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+	if (typeof value !== "object" || Array.isArray(value)) {
 		throw new Error("persisted character state must be an object");
 	}
-	return parsed as Record<string, unknown>;
+	return value as Record<string, unknown>;
 }
 
 function unavailableConversationResult(conversationId: string): CompanionHostToolResult {

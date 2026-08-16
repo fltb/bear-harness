@@ -14,8 +14,15 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import { and, desc, eq, sql } from "drizzle-orm";
+import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
+import {
+	conversations,
+	memoryCandidates,
+	memoryDecisions,
+	relationshipMemoryEntries,
+} from "../storage/schema.js";
 
 export type MemoryKind = "fact" | "preference" | "event" | "self_canon_summary";
 export type MemoryScope = "self" | "relationship" | "scene";
@@ -83,35 +90,35 @@ export interface MemoryCandidateSummary {
 
 interface CandidateRow {
 	id: string;
-	companion_id: string;
+	companionId: string;
 	kind: MemoryKind;
 	status: CandidateStatus;
-	source_message_version_id: string | null;
-	source_branch_id: string | null;
-	source_conversation_id: string | null;
-	source_kind: MemorySourceKind;
-	normalized_text: string;
-	suggested_scope: MemoryScope;
+	sourceMessageVersionId: string | null;
+	sourceBranchId: string | null;
+	sourceConversationId: string | null;
+	sourceKind: MemorySourceKind;
+	normalizedText: string;
+	suggestedScope: MemoryScope;
 }
 
 interface EntryRow {
 	id: string;
-	companion_id: string;
+	companionId: string;
 	kind: MemoryKind;
 	scope: MemoryScope;
-	source_message_version_id: string | null;
-	source_branch_id: string | null;
-	source_conversation_id: string | null;
-	source_kind: MemorySourceKind;
-	scene_id: string | null;
+	sourceMessageVersionId: string | null;
+	sourceBranchId: string | null;
+	sourceConversationId: string | null;
+	sourceKind: MemorySourceKind;
+	sceneId: string | null;
 }
 
 export class MemoryService {
-	private db: DatabaseSync;
+	private db: AppDatabase;
 	private eventBus: EventBus;
 	private options?: MemoryServiceOptions;
 
-	constructor(db: DatabaseSync, eventBus: EventBus, options?: MemoryServiceOptions) {
+	constructor(db: AppDatabase, eventBus: EventBus, options?: MemoryServiceOptions) {
 		this.db = db;
 		this.eventBus = eventBus;
 		this.options = options;
@@ -128,29 +135,38 @@ export class MemoryService {
 		return text.normalize("NFKC").replace(/\s+/g, " ").trim();
 	}
 
-	/** Escape LIKE wildcards so the user's query matches literally. */
-	private escapeLike(term: string): string {
-		return term.replace(/[\\%_]/g, (ch) => `\\${ch}`);
-	}
-
 	/** Fetch a candidate row, throwing not_found when missing. */
 	private getCandidate(candidateId: string): CandidateRow {
 		const row = this.db
-			.prepare(
-				`SELECT id, companion_id, kind, status, source_message_version_id, source_branch_id,
-				        source_conversation_id, source_kind, normalized_text, suggested_scope
-				 FROM memory_candidates WHERE id = ?`,
-			)
-			.get(candidateId) as CandidateRow | undefined;
+			.select({
+				id: memoryCandidates.id,
+				companionId: memoryCandidates.companionId,
+				kind: memoryCandidates.kind,
+				status: memoryCandidates.status,
+				sourceMessageVersionId: memoryCandidates.sourceMessageVersionId,
+				sourceBranchId: memoryCandidates.sourceBranchId,
+				sourceConversationId: memoryCandidates.sourceConversationId,
+				sourceKind: memoryCandidates.sourceKind,
+				normalizedText: memoryCandidates.normalizedText,
+				suggestedScope: memoryCandidates.suggestedScope,
+			})
+			.from(memoryCandidates)
+			.where(eq(memoryCandidates.id, candidateId))
+			.get() as CandidateRow | undefined;
 		if (!row) throw { kind: "not_found", reason: "candidate_not_found" };
 		return row;
 	}
 
 	/** Fetch a memory entry's identity, throwing not_found when missing. */
-	private getEntry(entryId: string): { id: string; companion_id: string } {
+	private getEntry(entryId: string): { id: string; companionId: string } {
 		const row = this.db
-			.prepare("SELECT id, companion_id FROM relationship_memory_entries WHERE id = ?")
-			.get(entryId) as { id: string; companion_id: string } | undefined;
+			.select({
+				id: relationshipMemoryEntries.id,
+				companionId: relationshipMemoryEntries.companionId,
+			})
+			.from(relationshipMemoryEntries)
+			.where(eq(relationshipMemoryEntries.id, entryId))
+			.get();
 		if (!row) throw { kind: "not_found", reason: "memory_entry_not_found" };
 		return row;
 	}
@@ -160,24 +176,21 @@ export class MemoryService {
 		const id = randomUUID();
 		const normalizedText = this.normalize(params.text);
 		this.db
-			.prepare(
-				`INSERT INTO memory_candidates (
-					id, companion_id, kind, source_message_version_id, source_branch_id,
-					source_conversation_id, source_kind, normalized_text, why, suggested_scope, status
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-			)
-			.run(
+			.insert(memoryCandidates)
+			.values({
 				id,
-				params.companionId,
-				params.kind,
-				params.sourceMessageVersionId ?? null,
-				params.sourceBranchId ?? null,
-				params.sourceConversationId ?? null,
-				params.sourceKind,
+				companionId: params.companionId,
+				kind: params.kind,
+				sourceMessageVersionId: params.sourceMessageVersionId ?? null,
+				sourceBranchId: params.sourceBranchId ?? null,
+				sourceConversationId: params.sourceConversationId ?? null,
+				sourceKind: params.sourceKind,
 				normalizedText,
-				params.why ?? "",
-				params.suggestedScope,
-			);
+				why: params.why ?? "",
+				suggestedScope: params.suggestedScope,
+				status: "pending",
+			})
+			.run();
 		this.eventBus.publish("memory.candidate_proposed", {
 			candidateId: id,
 			companionId: params.companionId,
@@ -201,57 +214,55 @@ export class MemoryService {
 		const text =
 			params.decision === "approve_edited" && params.editedText !== undefined
 				? params.editedText
-				: candidate.normalized_text;
+				: candidate.normalizedText;
 		const normalizedText = this.normalize(text);
 
 		let entryId: string | null = null;
-		this.db.exec("BEGIN IMMEDIATE");
 		try {
-			// Finalize the candidate (any decision, including approve_edited)
-			this.db
-				.prepare("UPDATE memory_candidates SET status = ?, decided_at = ? WHERE id = ?")
-				.run(approved ? "approved" : "rejected", now, params.candidateId);
-
-			// Append-only decision log
-			this.db
-				.prepare(
-					`INSERT INTO memory_decisions (
-						id, candidate_id, decision, edited_text, decided_scope, decided_at
-					) VALUES (?, ?, ?, ?, ?, ?)`,
-				)
-				.run(
-					randomUUID(),
-					params.candidateId,
-					params.decision,
-					params.decision === "approve_edited" ? (params.editedText ?? null) : null,
-					params.decision === "approve_edited" ? (params.decidedScope ?? null) : null,
-					now,
-				);
-
-			if (approved) {
-				entryId = this.insertEntry({
-					companionId: candidate.companion_id,
-					kind: candidate.kind,
-					scope: params.decidedScope ?? candidate.suggested_scope,
-					text,
-					normalizedText,
-					sourceMessageVersionId: candidate.source_message_version_id,
-					sourceBranchId: candidate.source_branch_id,
-					sourceConversationId: candidate.source_conversation_id,
-					sourceKind: candidate.source_kind,
-					sceneId: null,
-					now,
-				});
-			}
-			this.db.exec("COMMIT");
+			this.db.transaction((transaction) => {
+				transaction
+					.update(memoryCandidates)
+					.set({ status: approved ? "approved" : "rejected", decidedAt: now })
+					.where(eq(memoryCandidates.id, params.candidateId))
+					.run();
+				transaction
+					.insert(memoryDecisions)
+					.values({
+						id: randomUUID(),
+						candidateId: params.candidateId,
+						decision: params.decision,
+						editedText: params.decision === "approve_edited" ? (params.editedText ?? null) : null,
+						decidedScope:
+							params.decision === "approve_edited" ? (params.decidedScope ?? null) : null,
+						decidedAt: now,
+					})
+					.run();
+				if (approved) {
+					entryId = this.insertEntry(
+						{
+							companionId: candidate.companionId,
+							kind: candidate.kind,
+							scope: params.decidedScope ?? candidate.suggestedScope,
+							text,
+							normalizedText,
+							sourceMessageVersionId: candidate.sourceMessageVersionId,
+							sourceBranchId: candidate.sourceBranchId,
+							sourceConversationId: candidate.sourceConversationId,
+							sourceKind: candidate.sourceKind,
+							sceneId: null,
+							now,
+						},
+						transaction,
+					);
+				}
+			});
 		} catch (e) {
-			this.db.exec("ROLLBACK");
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
 
 		this.eventBus.publish("memory.candidate_decided", {
 			candidateId: params.candidateId,
-			companionId: candidate.companion_id,
+			companionId: candidate.companionId,
 			decision: params.decision,
 			entryId,
 		});
@@ -261,55 +272,61 @@ export class MemoryService {
 	 * Insert an active entry, or refresh `updated_at` when an active entry
 	 * with the same normalized text already exists for the companion.
 	 */
-	private insertEntry(params: {
-		companionId: string;
-		kind: MemoryKind;
-		scope: MemoryScope;
-		text: string;
-		normalizedText: string;
-		sourceMessageVersionId: string | null;
-		sourceBranchId: string | null;
-		sourceConversationId: string | null;
-		sourceKind: MemorySourceKind;
-		sceneId: string | null;
-		now: string;
-	}): string {
-		const existing = this.db
-			.prepare(
-				"SELECT id FROM relationship_memory_entries WHERE companion_id = ? AND normalized_text = ? AND status = 'active' LIMIT 1",
+	private insertEntry(
+		params: {
+			companionId: string;
+			kind: MemoryKind;
+			scope: MemoryScope;
+			text: string;
+			normalizedText: string;
+			sourceMessageVersionId: string | null;
+			sourceBranchId: string | null;
+			sourceConversationId: string | null;
+			sourceKind: MemorySourceKind;
+			sceneId: string | null;
+			now: string;
+		},
+		db: Pick<AppDatabase, "select" | "insert" | "update"> = this.db,
+	): string {
+		const existing = db
+			.select({ id: relationshipMemoryEntries.id })
+			.from(relationshipMemoryEntries)
+			.where(
+				and(
+					eq(relationshipMemoryEntries.companionId, params.companionId),
+					eq(relationshipMemoryEntries.normalizedText, params.normalizedText),
+					eq(relationshipMemoryEntries.status, "active"),
+				),
 			)
-			.get(params.companionId, params.normalizedText) as { id: string } | undefined;
+			.limit(1)
+			.get();
 		if (existing) {
-			this.db
-				.prepare("UPDATE relationship_memory_entries SET updated_at = ? WHERE id = ?")
-				.run(params.now, existing.id);
+			db.update(relationshipMemoryEntries)
+				.set({ updatedAt: params.now })
+				.where(eq(relationshipMemoryEntries.id, existing.id))
+				.run();
 			return existing.id;
 		}
 
 		const entryId = randomUUID();
-		this.db
-			.prepare(
-				`INSERT INTO relationship_memory_entries (
-					id, companion_id, kind, scope, text, normalized_text,
-					source_message_version_id, source_branch_id, source_conversation_id, source_kind,
-					status, scene_id, created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
-			)
-			.run(
-				entryId,
-				params.companionId,
-				params.kind,
-				params.scope,
-				params.text,
-				params.normalizedText,
-				params.sourceMessageVersionId,
-				params.sourceBranchId,
-				params.sourceConversationId,
-				params.sourceKind,
-				params.sceneId,
-				params.now,
-				params.now,
-			);
+		db.insert(relationshipMemoryEntries)
+			.values({
+				id: entryId,
+				companionId: params.companionId,
+				kind: params.kind,
+				scope: params.scope,
+				text: params.text,
+				normalizedText: params.normalizedText,
+				sourceMessageVersionId: params.sourceMessageVersionId,
+				sourceBranchId: params.sourceBranchId,
+				sourceConversationId: params.sourceConversationId,
+				sourceKind: params.sourceKind,
+				status: "active",
+				sceneId: params.sceneId,
+				createdAt: params.now,
+				updatedAt: params.now,
+			})
+			.run();
 		return entryId;
 	}
 
@@ -317,22 +334,24 @@ export class MemoryService {
 	forget(entryId: string): void {
 		const entry = this.getEntry(entryId);
 		this.db
-			.prepare(
-				"UPDATE relationship_memory_entries SET status = 'forgotten', forgotten_at = ? WHERE id = ?",
-			)
-			.run(this.now(), entryId);
-		this.eventBus.publish("memory.entry_forgotten", { entryId, companionId: entry.companion_id });
+			.update(relationshipMemoryEntries)
+			.set({ status: "forgotten", forgottenAt: this.now() })
+			.where(eq(relationshipMemoryEntries.id, entryId))
+			.run();
+		this.eventBus.publish("memory.entry_forgotten", { entryId, companionId: entry.companionId });
 	}
 
 	/** Exclude (or re-include) an entry. Excluded entries stay visible but are not recalled. */
 	exclude(entryId: string, excluded: boolean): void {
 		const entry = this.getEntry(entryId);
 		this.db
-			.prepare("UPDATE relationship_memory_entries SET status = ? WHERE id = ?")
-			.run(excluded ? "excluded" : "active", entryId);
+			.update(relationshipMemoryEntries)
+			.set({ status: excluded ? "excluded" : "active" })
+			.where(eq(relationshipMemoryEntries.id, entryId))
+			.run();
 		this.eventBus.publish("memory.entry_excluded", {
 			entryId,
-			companionId: entry.companion_id,
+			companionId: entry.companionId,
 			excluded,
 		});
 	}
@@ -344,58 +363,61 @@ export class MemoryService {
 	 */
 	edit(entryId: string, newText: string): string {
 		const row = this.db
-			.prepare(
-				`SELECT id, companion_id, kind, scope, source_message_version_id, source_branch_id,
-				        source_conversation_id, source_kind, scene_id
-				 FROM relationship_memory_entries WHERE id = ?`,
-			)
-			.get(entryId) as EntryRow | undefined;
+			.select({
+				id: relationshipMemoryEntries.id,
+				companionId: relationshipMemoryEntries.companionId,
+				kind: relationshipMemoryEntries.kind,
+				scope: relationshipMemoryEntries.scope,
+				sourceMessageVersionId: relationshipMemoryEntries.sourceMessageVersionId,
+				sourceBranchId: relationshipMemoryEntries.sourceBranchId,
+				sourceConversationId: relationshipMemoryEntries.sourceConversationId,
+				sourceKind: relationshipMemoryEntries.sourceKind,
+				sceneId: relationshipMemoryEntries.sceneId,
+			})
+			.from(relationshipMemoryEntries)
+			.where(eq(relationshipMemoryEntries.id, entryId))
+			.get() as EntryRow | undefined;
 		if (!row) throw { kind: "not_found", reason: "memory_entry_not_found" };
 
 		const newEntryId = randomUUID();
 		const now = this.now();
 		const normalizedText = this.normalize(newText);
 
-		this.db.exec("BEGIN IMMEDIATE");
 		try {
-			this.db
-				.prepare(
-					`INSERT INTO relationship_memory_entries (
-						id, companion_id, kind, scope, text, normalized_text,
-						source_message_version_id, source_branch_id, source_conversation_id, source_kind,
-						status, scene_id, created_at, updated_at
-					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
-				)
-				.run(
-					newEntryId,
-					row.companion_id,
-					row.kind,
-					row.scope,
-					newText,
-					normalizedText,
-					row.source_message_version_id,
-					row.source_branch_id,
-					row.source_conversation_id,
-					row.source_kind,
-					row.scene_id,
-					now,
-					now,
-				);
-			this.db
-				.prepare(
-					"UPDATE relationship_memory_entries SET status = 'excluded', updated_at = ? WHERE id = ?",
-				)
-				.run(now, entryId);
-			this.db.exec("COMMIT");
+			this.db.transaction((transaction) => {
+				transaction
+					.insert(relationshipMemoryEntries)
+					.values({
+						id: newEntryId,
+						companionId: row.companionId,
+						kind: row.kind,
+						scope: row.scope,
+						text: newText,
+						normalizedText,
+						sourceMessageVersionId: row.sourceMessageVersionId,
+						sourceBranchId: row.sourceBranchId,
+						sourceConversationId: row.sourceConversationId,
+						sourceKind: row.sourceKind,
+						status: "active",
+						sceneId: row.sceneId,
+						createdAt: now,
+						updatedAt: now,
+					})
+					.run();
+				transaction
+					.update(relationshipMemoryEntries)
+					.set({ status: "excluded", updatedAt: now })
+					.where(eq(relationshipMemoryEntries.id, entryId))
+					.run();
+			});
 		} catch (e) {
-			this.db.exec("ROLLBACK");
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
 
 		this.eventBus.publish("memory.entry_edited", {
 			entryId: newEntryId,
 			previousEntryId: entryId,
-			companionId: row.companion_id,
+			companionId: row.companionId,
 		});
 		return newEntryId;
 	}
@@ -404,11 +426,13 @@ export class MemoryService {
 	pin(entryId: string, pinned: boolean): void {
 		const entry = this.getEntry(entryId);
 		this.db
-			.prepare("UPDATE relationship_memory_entries SET pinned_at = ? WHERE id = ?")
-			.run(pinned ? this.now() : null, entryId);
+			.update(relationshipMemoryEntries)
+			.set({ pinnedAt: pinned ? this.now() : null })
+			.where(eq(relationshipMemoryEntries.id, entryId))
+			.run();
 		this.eventBus.publish("memory.entry_pinned", {
 			entryId,
-			companionId: entry.companion_id,
+			companionId: entry.companionId,
 			pinned,
 		});
 	}
@@ -423,50 +447,41 @@ export class MemoryService {
 
 		const limit = Math.max(1, Math.min(params.limit ?? 50, 100));
 		const query = this.normalize(params.query);
-		const exact = query;
-		const prefix = `${this.escapeLike(query)}%`;
-		const substring = `%${this.escapeLike(query)}%`;
 
 		const rows = this.db
-			.prepare(
-				`SELECT e.id, e.kind, e.scope, e.text, e.normalized_text, e.pinned_at, e.created_at,
-				        c.title AS source_conversation_title
-				 FROM relationship_memory_entries e
-				 LEFT JOIN conversations c ON c.id = e.source_conversation_id
-				 WHERE e.companion_id = ? AND e.status = 'active'
-				   AND (? IS NULL OR e.scope = ?)
-				   AND (e.normalized_text = ? OR e.normalized_text LIKE ? ESCAPE '\\' OR e.normalized_text LIKE ? ESCAPE '\\')
-				 ORDER BY e.pinned_at DESC NULLS LAST, e.updated_at DESC
-				 LIMIT ?`,
+			.select({
+				id: relationshipMemoryEntries.id,
+				kind: relationshipMemoryEntries.kind,
+				scope: relationshipMemoryEntries.scope,
+				text: relationshipMemoryEntries.text,
+				normalizedText: relationshipMemoryEntries.normalizedText,
+				pinnedAt: relationshipMemoryEntries.pinnedAt,
+				createdAt: relationshipMemoryEntries.createdAt,
+				sourceConversationTitle: conversations.title,
+			})
+			.from(relationshipMemoryEntries)
+			.leftJoin(conversations, eq(conversations.id, relationshipMemoryEntries.sourceConversationId))
+			.where(
+				and(
+					eq(relationshipMemoryEntries.companionId, params.companionId),
+					eq(relationshipMemoryEntries.status, "active"),
+					params.scope ? eq(relationshipMemoryEntries.scope, params.scope) : undefined,
+					sql`instr(${relationshipMemoryEntries.normalizedText}, ${query}) > 0`,
+				),
 			)
-			.all(
-				params.companionId,
-				params.scope ?? null,
-				params.scope ?? null,
-				exact,
-				prefix,
-				substring,
-				limit,
-			) as Array<{
-			id: string;
-			kind: MemoryKind;
-			scope: MemoryScope;
-			text: string;
-			normalized_text: string;
-			pinned_at: string | null;
-			created_at: string;
-			source_conversation_title: string | null;
-		}>;
+			.orderBy(desc(relationshipMemoryEntries.pinnedAt), desc(relationshipMemoryEntries.updatedAt))
+			.limit(limit)
+			.all();
 
 		return rows.map((row) => ({
 			id: row.id,
 			kind: row.kind,
 			scope: row.scope,
 			text: row.text,
-			normalizedText: row.normalized_text,
-			sourceConversationTitle: row.source_conversation_title ?? "",
-			pinned: row.pinned_at !== null,
-			createdAt: row.created_at,
+			normalizedText: row.normalizedText,
+			sourceConversationTitle: row.sourceConversationTitle ?? "",
+			pinned: row.pinnedAt !== null,
+			createdAt: row.createdAt,
 		}));
 	}
 
@@ -477,34 +492,27 @@ export class MemoryService {
 	}): MemoryCandidateSummary[] {
 		const status = params.status ?? "pending";
 		const rows = this.db
-			.prepare(
-				`SELECT id, companion_id, kind, suggested_scope, normalized_text, why, status, created_at, decided_at
-				 FROM memory_candidates
-				 WHERE companion_id = ? AND status = ?
-				 ORDER BY created_at DESC`,
+			.select()
+			.from(memoryCandidates)
+			.where(
+				and(
+					eq(memoryCandidates.companionId, params.companionId),
+					eq(memoryCandidates.status, status),
+				),
 			)
-			.all(params.companionId, status) as Array<{
-			id: string;
-			companion_id: string;
-			kind: MemoryKind;
-			suggested_scope: MemoryScope;
-			normalized_text: string;
-			why: string;
-			status: CandidateStatus;
-			created_at: string;
-			decided_at: string | null;
-		}>;
+			.orderBy(desc(memoryCandidates.createdAt))
+			.all();
 
 		return rows.map((row) => ({
 			id: row.id,
-			companionId: row.companion_id,
+			companionId: row.companionId,
 			kind: row.kind,
-			scope: row.suggested_scope,
-			text: row.normalized_text,
+			scope: row.suggestedScope,
+			text: row.normalizedText,
 			why: row.why,
 			status: row.status,
-			createdAt: row.created_at,
-			decidedAt: row.decided_at,
+			createdAt: row.createdAt,
+			decidedAt: row.decidedAt,
 		}));
 	}
 }

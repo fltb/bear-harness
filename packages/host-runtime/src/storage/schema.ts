@@ -169,15 +169,21 @@ export const relationshipMemoryEntries = sqliteTable(
 		companionId: text("companion_id")
 			.notNull()
 			.references(() => companionIdentity.id),
-		kind: text().notNull(),
-		scope: text().notNull(),
+		kind: text({ enum: ["fact", "preference", "event", "self_canon_summary"] }).notNull(),
+		scope: text({ enum: ["self", "relationship", "scene"] }).notNull(),
 		text: text().notNull(),
 		normalizedText: text("normalized_text").notNull(),
 		sourceMessageVersionId: text("source_message_version_id").references(() => messageVersions.id),
 		sourceBranchId: text("source_branch_id").references(() => branches.id),
 		sourceConversationId: text("source_conversation_id").references(() => conversations.id),
-		sourceKind: text("source_kind").default("user_button").notNull(),
-		status: text().default("active").notNull(),
+		sourceKind: text("source_kind", {
+			enum: ["user_button", "user_request", "companion_suggestion", "extractor"],
+		})
+			.default("user_button")
+			.notNull(),
+		status: text({ enum: ["active", "excluded", "forgotten"] })
+			.default("active")
+			.notNull(),
 		pinnedAt: text("pinned_at"),
 		sceneId: text("scene_id"),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
@@ -206,15 +212,19 @@ export const memoryCandidates = sqliteTable(
 		companionId: text("companion_id")
 			.notNull()
 			.references(() => companionIdentity.id),
-		kind: text().notNull(),
+		kind: text({ enum: ["fact", "preference", "event", "self_canon_summary"] }).notNull(),
 		sourceMessageVersionId: text("source_message_version_id").references(() => messageVersions.id),
 		sourceBranchId: text("source_branch_id").references(() => branches.id),
 		sourceConversationId: text("source_conversation_id").references(() => conversations.id),
-		sourceKind: text("source_kind").notNull(),
+		sourceKind: text("source_kind", {
+			enum: ["user_button", "user_request", "companion_suggestion", "extractor"],
+		}).notNull(),
 		normalizedText: text("normalized_text").notNull(),
 		why: text().default("").notNull(),
-		suggestedScope: text("suggested_scope").notNull(),
-		status: text().default("pending").notNull(),
+		suggestedScope: text("suggested_scope", { enum: ["self", "relationship", "scene"] }).notNull(),
+		status: text({ enum: ["pending", "approved", "rejected", "expired"] })
+			.default("pending")
+			.notNull(),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 		decidedAt: text("decided_at"),
 	},
@@ -252,13 +262,37 @@ export const memoryDecisions = sqliteTable(
 	],
 );
 
+export interface CommissionDraftData {
+	conversationId: string;
+	title: string;
+	description: string;
+	reads: string[];
+	writes: string[];
+	networkAllowed: boolean;
+	toolNames: string[];
+}
+
 export const commissions = sqliteTable(
 	"commissions",
 	{
 		id: text().primaryKey(),
 		conversationId: text("conversation_id").references(() => conversations.id),
-		status: text().default("draft").notNull(),
-		draftJson: text("draft_json", { mode: "json" }).default({}).notNull(),
+		status: text({
+			enum: [
+				"draft",
+				"awaiting_approval",
+				"approved",
+				"queued",
+				"running",
+				"needs_user",
+				"completed",
+				"failed",
+				"cancelled",
+			],
+		})
+			.default("draft")
+			.notNull(),
+		draftJson: text("draft_json", { mode: "json" }).$type<CommissionDraftData>().notNull(),
 		approvalHash: text("approval_hash"),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	},
@@ -289,7 +323,20 @@ export const runs = sqliteTable(
 			.notNull()
 			.references(() => commissions.id),
 		executorProfile: text("executor_profile").notNull(),
-		status: text().default("enqueued").notNull(),
+		status: text({
+			enum: [
+				"enqueued",
+				"running",
+				"needs_user",
+				"completed",
+				"failed",
+				"cancelled",
+				"interrupted",
+				"forced_termination",
+			],
+		})
+			.default("enqueued")
+			.notNull(),
 		startedAt: text("started_at"),
 		completedAt: text("completed_at"),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
@@ -308,7 +355,10 @@ export const runManifests = sqliteTable("run_manifests", {
 	runId: text("run_id")
 		.notNull()
 		.references(() => runs.id),
-	manifestJson: text("manifest_json", { mode: "json" }).default({}).notNull(),
+	manifestJson: text("manifest_json", { mode: "json" })
+		.$type<Record<string, unknown>>()
+		.default({})
+		.notNull(),
 	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 });
 
@@ -327,7 +377,7 @@ export const evidence = sqliteTable("evidence", {
 	id: text().primaryKey(),
 	runId: text("run_id").references(() => runs.id),
 	kind: text().notNull(),
-	data: text({ mode: "json" }).default({}).notNull(),
+	data: text({ mode: "json" }).$type<unknown>().default({}).notNull(),
 	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 });
 
@@ -433,8 +483,13 @@ export const executorProfiles = sqliteTable(
 	"executor_profiles",
 	{
 		id: text().primaryKey(),
-		profileType: text("profile_type").notNull(),
-		capabilityJson: text("capability_json", { mode: "json" }).default({}).notNull(),
+		profileType: text("profile_type", {
+			enum: ["product-managed", "native-full", "codex"],
+		}).notNull(),
+		capabilityJson: text("capability_json", { mode: "json" })
+			.$type<Record<string, unknown>>()
+			.default({})
+			.notNull(),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	},
 	(table) => [
@@ -479,9 +534,11 @@ export const storyChanges = sqliteTable(
 		branchId: text("branch_id").references(() => branches.id),
 		text: text().notNull(),
 		normalizedText: text("normalized_text").notNull(),
-		scope: text().notNull(),
-		source: text().notNull(),
-		status: text().default("active").notNull(),
+		scope: text({ enum: ["global", "branch"] }).notNull(),
+		source: text({ enum: ["user_explicit", "story_event", "user_confirmed"] }).notNull(),
+		status: text({ enum: ["active", "reverted"] })
+			.default("active")
+			.notNull(),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 		revertedAt: text("reverted_at"),
 	},
@@ -580,11 +637,19 @@ export const storyModules = sqliteTable(
 			.notNull()
 			.references(() => companionIdentity.id),
 		parentId: text("parent_id").references((): AnySQLiteColumn => storyModules.id),
-		kind: text().notNull(),
+		kind: text({
+			enum: ["root", "arc", "event", "entity", "relationship", "location", "object", "behavior"],
+		}).notNull(),
 		name: text().notNull(),
 		description: text().default("").notNull(),
-		sourceRefsJson: text("source_refs_json", { mode: "json" }).default([]).notNull(),
-		dependenciesJson: text("dependencies_json", { mode: "json" }).default([]).notNull(),
+		sourceRefsJson: text("source_refs_json", { mode: "json" })
+			.$type<string[]>()
+			.default([])
+			.notNull(),
+		dependenciesJson: text("dependencies_json", { mode: "json" })
+			.$type<string[]>()
+			.default([])
+			.notNull(),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	},
 	(table) => [
@@ -622,7 +687,9 @@ export const storyChangeProposals = sqliteTable(
 			.notNull()
 			.references(() => branches.id, { onDelete: "cascade" }),
 		text: text().notNull(),
-		status: text().default("pending").notNull(),
+		status: text({ enum: ["pending", "accepted", "dismissed"] })
+			.default("pending")
+			.notNull(),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 		decidedAt: text("decided_at"),
 	},

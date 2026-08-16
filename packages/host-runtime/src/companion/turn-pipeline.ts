@@ -14,8 +14,17 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
+import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
+import {
+	branches,
+	conversationDirectives,
+	conversations,
+	messages,
+	messageVersions,
+	turns,
+} from "../storage/schema.js";
 import type { CompanionSupervisor } from "./supervisor.js";
 
 export interface TurnResult {
@@ -25,7 +34,7 @@ export interface TurnResult {
 }
 
 export class TurnPipeline {
-	private db: DatabaseSync;
+	private db: AppDatabase;
 	private supervisor: CompanionSupervisor;
 	private eventBus: EventBus;
 	private activeTurns = new Map<
@@ -34,7 +43,7 @@ export class TurnPipeline {
 	>();
 	private readonly unsubscribe: () => void;
 
-	constructor(db: DatabaseSync, supervisor: CompanionSupervisor, eventBus: EventBus) {
+	constructor(db: AppDatabase, supervisor: CompanionSupervisor, eventBus: EventBus) {
 		this.db = db;
 		this.supervisor = supervisor;
 		this.eventBus = eventBus;
@@ -65,30 +74,31 @@ export class TurnPipeline {
 		const messageId = randomUUID();
 		const versionId = randomUUID();
 		const branchRow = this.db
-			.prepare(
-				"SELECT id FROM branches WHERE conversation_id = ? AND adopted = 1 ORDER BY created_at DESC LIMIT 1",
-			)
-			.get(conversationId) as { id: string } | undefined;
+			.select({ id: branches.id })
+			.from(branches)
+			.where(and(eq(branches.conversationId, conversationId), eq(branches.adopted, 1)))
+			.orderBy(desc(branches.createdAt))
+			.limit(1)
+			.get();
 		const branchId = branchRow?.id ?? conversationId;
 
-		this.db.exec("BEGIN IMMEDIATE");
 		try {
-			this.db
-				.prepare(
-					"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES (?, ?, ?, 'user')",
-				)
-				.run(messageId, conversationId, branchId);
-			this.db
-				.prepare(
-					"INSERT INTO message_versions (id, message_id, content, edited_by_user, adopted) VALUES (?, ?, ?, 0, 1)",
-				)
-				.run(versionId, messageId, text);
-			this.db
-				.prepare("UPDATE conversations SET updated_at = datetime('now') WHERE id = ?")
-				.run(conversationId);
-			this.db.exec("COMMIT");
+			this.db.transaction((transaction) => {
+				transaction
+					.insert(messages)
+					.values({ id: messageId, conversationId, branchId, role: "user" })
+					.run();
+				transaction
+					.insert(messageVersions)
+					.values({ id: versionId, messageId, content: text, editedByUser: 0, adopted: 1 })
+					.run();
+				transaction
+					.update(conversations)
+					.set({ updatedAt: sql`datetime('now')` })
+					.where(eq(conversations.id, conversationId))
+					.run();
+			});
 		} catch (e) {
-			this.db.exec("ROLLBACK");
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
 
@@ -125,8 +135,10 @@ export class TurnPipeline {
 	async regenerate(conversationId: string, messageId: string): Promise<TurnResult> {
 		// Locate the user parent (the message before the assistant message)
 		const row = this.db
-			.prepare("SELECT id, role FROM messages WHERE id = ? AND conversation_id = ?")
-			.get(messageId, conversationId) as { id: string; role: string } | undefined;
+			.select({ id: messages.id, role: messages.role })
+			.from(messages)
+			.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
+			.get();
 		if (!row) throw { kind: "not_found", reason: "message_not_found" };
 
 		if (this.activeTurns.has(conversationId)) {
@@ -136,37 +148,28 @@ export class TurnPipeline {
 			throw { kind: "conflict", reason: "assistant_message_required" };
 		}
 		const parent = this.db
-			.prepare(
-				`SELECT user_message_id AS id
-				 FROM turns
-				 WHERE conversation_id = ? AND assistant_message_id = ?
-				 ORDER BY rowid DESC LIMIT 1`,
-			)
-			.get(conversationId, messageId) as { id: string } | undefined;
-		const legacyParent = parent
-			? undefined
-			: (this.db
-					.prepare(
-						`SELECT parent.id
-						 FROM messages AS parent
-						 JOIN messages AS assistant ON assistant.id = ?
-						 WHERE parent.conversation_id = ?
-						   AND parent.role = 'user'
-						   AND parent.rowid < assistant.rowid
-						 ORDER BY parent.rowid DESC LIMIT 1`,
-					)
-					.get(messageId, conversationId) as { id: string } | undefined);
-		const userParent = parent ?? legacyParent;
+			.select({ id: turns.userMessageId })
+			.from(turns)
+			.where(and(eq(turns.conversationId, conversationId), eq(turns.assistantMessageId, messageId)))
+			.orderBy(desc(turns.createdAt))
+			.limit(1)
+			.get();
+		const userParent = parent;
 		if (!userParent) throw { kind: "not_found", reason: "parent_message_not_found" };
 
 		// Create a sibling assistant version, then actually ask the model again.
 		const newVersionId = randomUUID();
-		this.db.prepare("UPDATE message_versions SET adopted = 0 WHERE message_id = ?").run(messageId);
-		this.db
-			.prepare(
-				"INSERT INTO message_versions (id, message_id, content, edited_by_user, adopted) VALUES (?, ?, '', 0, 1)",
-			)
-			.run(newVersionId, messageId);
+		this.db.transaction((transaction) => {
+			transaction
+				.update(messageVersions)
+				.set({ adopted: 0 })
+				.where(eq(messageVersions.messageId, messageId))
+				.run();
+			transaction
+				.insert(messageVersions)
+				.values({ id: newVersionId, messageId, content: "", editedByUser: 0, adopted: 1 })
+				.run();
+		});
 
 		this.eventBus.publish("message.regenerated", {
 			conversationId,
@@ -179,10 +182,12 @@ export class TurnPipeline {
 			assistantVersionId: newVersionId,
 		});
 		const parentText = this.db
-			.prepare(
-				"SELECT content FROM message_versions WHERE message_id = ? AND adopted = 1 ORDER BY created_at DESC LIMIT 1",
-			)
-			.get(userParent.id) as { content: string } | undefined;
+			.select({ content: messageVersions.content })
+			.from(messageVersions)
+			.where(and(eq(messageVersions.messageId, userParent.id), eq(messageVersions.adopted, 1)))
+			.orderBy(desc(messageVersions.createdAt))
+			.limit(1)
+			.get();
 		this.supervisor.sendCommand({
 			type: "prompt",
 			conversationId,
@@ -194,19 +199,26 @@ export class TurnPipeline {
 	/** Switch the adopted version of a message (no model call). */
 	async switchVersion(conversationId: string, messageId: string, versionId: string): Promise<void> {
 		const exists = this.db
-			.prepare("SELECT id FROM message_versions WHERE id = ? AND message_id = ?")
-			.get(versionId, messageId);
+			.select({ id: messageVersions.id })
+			.from(messageVersions)
+			.where(and(eq(messageVersions.id, versionId), eq(messageVersions.messageId, messageId)))
+			.get();
 		if (!exists) throw { kind: "not_found", reason: "version_not_found" };
 
-		this.db.exec("BEGIN IMMEDIATE");
 		try {
-			this.db
-				.prepare("UPDATE message_versions SET adopted = 0 WHERE message_id = ?")
-				.run(messageId);
-			this.db.prepare("UPDATE message_versions SET adopted = 1 WHERE id = ?").run(versionId);
-			this.db.exec("COMMIT");
+			this.db.transaction((transaction) => {
+				transaction
+					.update(messageVersions)
+					.set({ adopted: 0 })
+					.where(eq(messageVersions.messageId, messageId))
+					.run();
+				transaction
+					.update(messageVersions)
+					.set({ adopted: 1 })
+					.where(eq(messageVersions.id, versionId))
+					.run();
+			});
 		} catch (e) {
-			this.db.exec("ROLLBACK");
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
 		this.eventBus.publish("message.version_switched", { conversationId, messageId, versionId });
@@ -226,40 +238,52 @@ export class TurnPipeline {
 			throw { kind: "unavailable", reason: "companion_unavailable" };
 		}
 		const newVersionId = randomUUID();
-		this.db.exec("BEGIN IMMEDIATE");
 		try {
-			if (isUserMessage) {
-				// Editing a user message creates a new branch from this point
-				const branchId = randomUUID();
-				this.db
-					.prepare(
-						"INSERT INTO branches (id, conversation_id, parent_branch_id, fork_message_id, label, adopted) VALUES (?, ?, NULL, ?, 'edited', 1)",
-					)
-					.run(branchId, conversationId, messageId);
-				this.db
-					.prepare("UPDATE branches SET adopted = 0 WHERE conversation_id = ? AND id != ?")
-					.run(conversationId, branchId);
-				this.db
-					.prepare(
-						"INSERT INTO message_versions (id, message_id, content, edited_by_user, adopted) VALUES (?, ?, ?, 1, 1)",
-					)
-					.run(newVersionId, messageId, text);
-				this.db
-					.prepare("UPDATE message_versions SET adopted = 0 WHERE message_id = ? AND id != ?")
-					.run(messageId, newVersionId);
-			} else {
-				this.db
-					.prepare(
-						"INSERT INTO message_versions (id, message_id, content, edited_by_user, adopted) VALUES (?, ?, ?, 1, 1)",
-					)
-					.run(newVersionId, messageId, text);
-				this.db
-					.prepare("UPDATE message_versions SET adopted = 0 WHERE message_id = ? AND id != ?")
-					.run(messageId, newVersionId);
-			}
-			this.db.exec("COMMIT");
+			this.db.transaction((transaction) => {
+				if (isUserMessage) {
+					// Editing a user message creates a new branch from this point
+					const branchId = randomUUID();
+					transaction
+						.insert(branches)
+						.values({
+							id: branchId,
+							conversationId,
+							forkMessageId: messageId,
+							label: "edited",
+							adopted: 1,
+						})
+						.run();
+					transaction
+						.update(branches)
+						.set({ adopted: 0 })
+						.where(and(eq(branches.conversationId, conversationId), ne(branches.id, branchId)))
+						.run();
+					transaction
+						.insert(messageVersions)
+						.values({ id: newVersionId, messageId, content: text, editedByUser: 1, adopted: 1 })
+						.run();
+					transaction
+						.update(messageVersions)
+						.set({ adopted: 0 })
+						.where(
+							and(eq(messageVersions.messageId, messageId), ne(messageVersions.id, newVersionId)),
+						)
+						.run();
+				} else {
+					transaction
+						.insert(messageVersions)
+						.values({ id: newVersionId, messageId, content: text, editedByUser: 1, adopted: 1 })
+						.run();
+					transaction
+						.update(messageVersions)
+						.set({ adopted: 0 })
+						.where(
+							and(eq(messageVersions.messageId, messageId), ne(messageVersions.id, newVersionId)),
+						)
+						.run();
+				}
+			});
 		} catch (e) {
-			this.db.exec("ROLLBACK");
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
 		this.eventBus.publish("message.edited", {
@@ -295,10 +319,9 @@ export class TurnPipeline {
 		applyScope: "once" | "session" | "always",
 	): Promise<void> {
 		this.db
-			.prepare(
-				"INSERT INTO conversation_directives (id, conversation_id, directive, scope) VALUES (?, ?, ?, ?)",
-			)
-			.run(randomUUID(), conversationId, reason, applyScope);
+			.insert(conversationDirectives)
+			.values({ id: randomUUID(), conversationId, directive: reason, scope: applyScope })
+			.run();
 		if (this.supervisor.isRunning) {
 			this.supervisor.sendCommand({ type: "prompt", conversationId, message: reason });
 		}
@@ -308,19 +331,25 @@ export class TurnPipeline {
 	/** Create a narrative branch at a specified message. */
 	async branch(conversationId: string, messageId: string): Promise<string> {
 		const branchId = randomUUID();
-		this.db.exec("BEGIN IMMEDIATE");
 		try {
-			this.db
-				.prepare(
-					"INSERT INTO branches (id, conversation_id, parent_branch_id, fork_message_id, label, adopted) VALUES (?, ?, NULL, ?, 'branch', 1)",
-				)
-				.run(branchId, conversationId, messageId);
-			this.db
-				.prepare("UPDATE branches SET adopted = 0 WHERE conversation_id = ? AND id != ?")
-				.run(conversationId, branchId);
-			this.db.exec("COMMIT");
+			this.db.transaction((transaction) => {
+				transaction
+					.insert(branches)
+					.values({
+						id: branchId,
+						conversationId,
+						forkMessageId: messageId,
+						label: "branch",
+						adopted: 1,
+					})
+					.run();
+				transaction
+					.update(branches)
+					.set({ adopted: 0 })
+					.where(and(eq(branches.conversationId, conversationId), ne(branches.id, branchId)))
+					.run();
+			});
 		} catch (e) {
-			this.db.exec("ROLLBACK");
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
 		this.eventBus.publish("conversation.branched", { conversationId, messageId, branchId });
@@ -344,47 +373,65 @@ export class TurnPipeline {
 		const assistantMessageId = active.assistantMessageId ?? randomUUID();
 		const assistantVersionId = active.assistantVersionId ?? randomUUID();
 		const branch = this.db
-			.prepare(
-				"SELECT id FROM branches WHERE conversation_id = ? AND adopted = 1 ORDER BY created_at DESC LIMIT 1",
-			)
-			.get(conversationId) as { id: string } | undefined;
+			.select({ id: branches.id })
+			.from(branches)
+			.where(and(eq(branches.conversationId, conversationId), eq(branches.adopted, 1)))
+			.orderBy(desc(branches.createdAt))
+			.limit(1)
+			.get();
 		if (!branch) return;
 
-		this.db.exec("BEGIN IMMEDIATE");
 		try {
-			if (!active.assistantMessageId) {
-				this.db
-					.prepare(
-						"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES (?, ?, ?, 'assistant')",
-					)
-					.run(assistantMessageId, conversationId, branch.id);
-				this.db
-					.prepare(
-						"INSERT INTO message_versions (id, message_id, content, edited_by_user, adopted) VALUES (?, ?, ?, 0, 1)",
-					)
-					.run(assistantVersionId, assistantMessageId, text);
-			} else {
-				this.db
-					.prepare("UPDATE message_versions SET content = ? WHERE id = ? AND message_id = ?")
-					.run(text, assistantVersionId, assistantMessageId);
-			}
-			this.db
-				.prepare(
-					"INSERT INTO turns (id, conversation_id, user_message_id, assistant_message_id, status) VALUES (?, ?, ?, ?, ?)",
-				)
-				.run(
-					randomUUID(),
-					conversationId,
-					active.userMessageId,
-					assistantMessageId,
-					failed ? "failed" : "completed",
-				);
-			this.db
-				.prepare("UPDATE conversations SET updated_at = datetime('now') WHERE id = ?")
-				.run(conversationId);
-			this.db.exec("COMMIT");
+			this.db.transaction((transaction) => {
+				if (!active.assistantMessageId) {
+					transaction
+						.insert(messages)
+						.values({
+							id: assistantMessageId,
+							conversationId,
+							branchId: branch.id,
+							role: "assistant",
+						})
+						.run();
+					transaction
+						.insert(messageVersions)
+						.values({
+							id: assistantVersionId,
+							messageId: assistantMessageId,
+							content: text,
+							editedByUser: 0,
+							adopted: 1,
+						})
+						.run();
+				} else {
+					transaction
+						.update(messageVersions)
+						.set({ content: text })
+						.where(
+							and(
+								eq(messageVersions.id, assistantVersionId),
+								eq(messageVersions.messageId, assistantMessageId),
+							),
+						)
+						.run();
+				}
+				transaction
+					.insert(turns)
+					.values({
+						id: randomUUID(),
+						conversationId,
+						userMessageId: active.userMessageId,
+						assistantMessageId,
+						status: failed ? "failed" : "completed",
+					})
+					.run();
+				transaction
+					.update(conversations)
+					.set({ updatedAt: sql`datetime('now')` })
+					.where(eq(conversations.id, conversationId))
+					.run();
+			});
 		} catch (error) {
-			this.db.exec("ROLLBACK");
 			this.activeTurns.delete(conversationId);
 			throw error;
 		}

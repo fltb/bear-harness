@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { drizzle } from "drizzle-orm/node-sqlite";
 import JSZip from "jszip";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ArtifactStore } from "../../src/artifacts/index.js";
@@ -132,7 +133,7 @@ describe("IngestService", () => {
 			)`,
 		);
 		casDir = mkdtempSync(join(tmpdir(), "bear-ingest-cas-"));
-		service = new IngestService(db, new ArtifactStore(db, casDir));
+		service = new IngestService(new ArtifactStore(drizzle({ client: db }), casDir));
 	});
 
 	afterAll(() => {

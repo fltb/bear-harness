@@ -37,6 +37,7 @@ function createFixture(controller?: ExecutorController): Fixture {
 			id TEXT PRIMARY KEY,
 			commission_id TEXT NOT NULL,
 			draft_hash TEXT NOT NULL,
+			approved_by TEXT NOT NULL DEFAULT 'user',
 			expires_at TEXT,
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
@@ -46,7 +47,8 @@ function createFixture(controller?: ExecutorController): Fixture {
 			executor_profile TEXT NOT NULL,
 			status TEXT NOT NULL,
 			started_at TEXT,
-			completed_at TEXT
+			completed_at TEXT,
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
 		CREATE TABLE evidence (
 			id TEXT PRIMARY KEY,
@@ -82,13 +84,14 @@ function createFixture(controller?: ExecutorController): Fixture {
 		"INSERT INTO executor_profiles (id, profile_type, capability_json) VALUES (?, 'product-managed', '{}')",
 	).run("pi-worker");
 
-	const eventBus = new EventBus(drizzle({ client: db }));
-	const router = new ExecutorRouter(db);
+	const orm = drizzle({ client: db });
+	const eventBus = new EventBus(orm);
+	const router = new ExecutorRouter(orm);
 	if (controller) router.register("product-managed", controller);
 	const tmp = mkdtempSync(join(tmpdir(), "bear-commission-router-"));
 	return {
 		db,
-		service: new CommissionService(db, eventBus, new ArtifactStore(db, tmp), router),
+		service: new CommissionService(orm, eventBus, new ArtifactStore(orm, tmp), router),
 		tmp,
 	};
 }

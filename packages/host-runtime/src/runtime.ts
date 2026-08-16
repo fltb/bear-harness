@@ -92,20 +92,19 @@ export class HostRuntime {
 		const db = new Database(join(dataDir, "storage"));
 		db.migrate(MIGRATIONS);
 		db.assertSchemaContract();
-		const dbConnection = db.connection;
 
 		const eventBus = new EventBus(db.orm);
-		const artifactStore = new ArtifactStore(dbConnection, join(dataDir, "artifacts"));
+		const artifactStore = new ArtifactStore(db.orm, join(dataDir, "artifacts"));
 		const credentials = new CredentialStore(db.orm, options.credentialVault);
 		const providers = new ProviderCatalog(credentials, join(dataDir, "companion-runtime"));
 		const characterLoader = new CharacterLoader(characterRoot, join(dataDir, "characters"));
 		const supervisor = new CompanionSupervisor(dataDir, eventBus, providers);
-		const characterBehavior = new CharacterBehaviorService(dbConnection, eventBus, characterLoader);
-		const memory = new MemoryService(dbConnection, eventBus);
-		const memoryAutomation = new MemoryAutomation(dbConnection, eventBus, memory);
-		const story = new StoryService(dbConnection, eventBus);
-		const canon = new CanonHubService(dbConnection, artifactStore, eventBus);
-		const contextPack = new ContextPackCompiler(dbConnection, characterLoader);
+		const characterBehavior = new CharacterBehaviorService(db.orm, eventBus, characterLoader);
+		const memory = new MemoryService(db.orm, eventBus);
+		const memoryAutomation = new MemoryAutomation(db.orm, eventBus, memory);
+		const story = new StoryService(db.orm, eventBus);
+		const canon = new CanonHubService(db.orm, artifactStore, eventBus);
+		const contextPack = new ContextPackCompiler(db.orm, characterLoader);
 		supervisor.setContextHandler((conversationId, includeHistory, message) =>
 			contextPack.render(
 				contextPack.compile(conversationId, {
@@ -148,8 +147,8 @@ export class HostRuntime {
 				});
 			}
 		});
-		const onboarding = new FirstMeetingMachine(dbConnection, eventBus, characterLoader);
-		const turns = new TurnPipeline(dbConnection, supervisor, eventBus);
+		const onboarding = new FirstMeetingMachine(db.orm, eventBus, characterLoader);
+		const turns = new TurnPipeline(db.orm, supervisor, eventBus);
 		const models = new ModelRegistry(db.orm, eventBus);
 		onboarding.setConversationCreatedHandler((companionId, conversationId) => {
 			models.applyDefaultToConversation(companionId, conversationId);
@@ -157,16 +156,11 @@ export class HostRuntime {
 		supervisor.setModelSelectionHandler((conversationId, requiresImages) =>
 			models.resolve(conversationId, requiresImages),
 		);
-		seedPiAcpProfile(dbConnection);
-		const executorRouter = new ExecutorRouter(dbConnection);
-		executorRouter.register("product-managed", new PiAcpAdapter(dbConnection, dataDir));
-		executorRouter.register("codex", new CodexAdapter(dbConnection, eventBus));
-		const commissions = new CommissionService(
-			dbConnection,
-			eventBus,
-			artifactStore,
-			executorRouter,
-		);
+		seedPiAcpProfile(db.orm);
+		const executorRouter = new ExecutorRouter(db.orm);
+		executorRouter.register("product-managed", new PiAcpAdapter(db.orm, dataDir));
+		executorRouter.register("codex", new CodexAdapter(db.orm, eventBus));
+		const commissions = new CommissionService(db.orm, eventBus, artifactStore, executorRouter);
 		supervisor.setHostToolHandler((call) => {
 			if (call.tool !== "host_propose_work") return characterBehavior.invoke(call);
 			const args = call.args as {
@@ -193,7 +187,6 @@ export class HostRuntime {
 		this.memoryAutomation = memoryAutomation;
 		this.unsubscribeStoryAutomation = unsubscribeStoryAutomation;
 		this.composition = {
-			db: dbConnection,
 			orm: db.orm,
 			eventBus,
 			onboarding,
@@ -237,7 +230,7 @@ export class HostRuntime {
 		if (this.started) return;
 		this.started = true;
 		const activeCharacterId = this.characterLoader.getActiveCharacterId(
-			this.composition.db,
+			this.composition.orm,
 			this.composition.defaultCharacterId,
 		);
 		const activeCharacter = this.characterLoader.load(activeCharacterId);

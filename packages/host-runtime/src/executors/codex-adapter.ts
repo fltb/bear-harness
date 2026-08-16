@@ -20,9 +20,11 @@ import {
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
 import { pipeline } from "node:stream/promises";
+import { desc, eq } from "drizzle-orm";
+import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
+import { executorProfiles, runManifests } from "../storage/schema.js";
 import type { AcpProcessSpec } from "./acp-client.js";
 import { AcpExecutorController } from "./acp-executor.js";
 import type { ExecutorLaunchRequest } from "./router.js";
@@ -115,13 +117,13 @@ function probeVersion(finalBin: string): string | null {
 }
 
 export class CodexAdapter extends AcpExecutorController {
-	private db: DatabaseSync;
+	private db: AppDatabase;
 	private eventBus: EventBus;
 	private readonly adapterPath = createRequire(import.meta.url).resolve(
 		"@agentclientprotocol/codex-acp",
 	);
 
-	constructor(db: DatabaseSync, eventBus: EventBus) {
+	constructor(db: AppDatabase, eventBus: EventBus) {
 		super();
 		this.db = db;
 		this.eventBus = eventBus;
@@ -287,10 +289,13 @@ export class CodexAdapter extends AcpExecutorController {
 				.slice(0, 16);
 
 		this.db
-			.prepare(
-				"INSERT INTO executor_profiles (id, profile_type, capability_json) VALUES (?, 'codex', ?) ON CONFLICT(id) DO UPDATE SET capability_json = excluded.capability_json",
-			)
-			.run(profileId, JSON.stringify(capability));
+			.insert(executorProfiles)
+			.values({ id: profileId, profileType: "codex", capabilityJson: { ...capability } })
+			.onConflictDoUpdate({
+				target: executorProfiles.id,
+				set: { capabilityJson: { ...capability } },
+			})
+			.run();
 
 		this.eventBus.publish("codex.consented", { profileId, ...capability });
 		return { profileId, ...capability };
@@ -325,8 +330,9 @@ export class CodexAdapter extends AcpExecutorController {
 			launchedAt: new Date().toISOString(),
 		};
 		this.db
-			.prepare("INSERT INTO run_manifests (id, run_id, manifest_json) VALUES (?, ?, ?)")
-			.run(randomUUID(), request.run.runId, JSON.stringify(manifest));
+			.insert(runManifests)
+			.values({ id: randomUUID(), runId: request.run.runId, manifestJson: { ...manifest } })
+			.run();
 		this.eventBus.publish("codex.launched", manifest);
 		await super.launch(request);
 	}
@@ -353,17 +359,14 @@ export class CodexAdapter extends AcpExecutorController {
 	/** Current Codex availability. */
 	async status(): Promise<CodexStatus> {
 		const row = this.db
-			.prepare(
-				"SELECT id, capability_json FROM executor_profiles WHERE profile_type = 'codex' ORDER BY created_at DESC LIMIT 1",
-			)
-			.get() as { id: string; capability_json: string } | undefined;
+			.select({ id: executorProfiles.id, capability: executorProfiles.capabilityJson })
+			.from(executorProfiles)
+			.where(eq(executorProfiles.profileType, "codex"))
+			.orderBy(desc(executorProfiles.createdAt))
+			.limit(1)
+			.get();
 		if (row) {
-			let capability: Partial<CodexProfileCapability> | null = null;
-			try {
-				capability = JSON.parse(row.capability_json) as Partial<CodexProfileCapability>;
-			} catch {
-				capability = null;
-			}
+			const capability = row.capability as Partial<CodexProfileCapability>;
 			if (
 				capability &&
 				typeof capability.consentedAt === "string" &&

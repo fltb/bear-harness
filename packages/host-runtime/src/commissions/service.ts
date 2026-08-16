@@ -18,7 +18,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
+import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
 import type { ArtifactStore } from "../artifacts/index.js";
 import type {
 	ExecutorCommission,
@@ -27,7 +27,15 @@ import type {
 	ExecutorRouter,
 	ExecutorRun,
 } from "../executors/router.js";
+import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
+import {
+	approvals,
+	type CommissionDraftData,
+	commissions,
+	evidence,
+	runs,
+} from "../storage/schema.js";
 
 /** Max runs that may be active at once (enqueued/running/needs_user). */
 export const MAX_ACTIVE_RUNS = 2;
@@ -125,7 +133,7 @@ export interface CommissionListParams {
 }
 
 /** Draft fields stored in commissions.draft_json (snake_case columns below). */
-interface DraftPayload {
+interface DraftPayload extends CommissionDraftData {
 	conversationId: string;
 	title: string;
 	description: string;
@@ -137,35 +145,31 @@ interface DraftPayload {
 
 type CommissionRow = {
 	id: string;
-	conversation_id: string | null;
+	conversationId: string | null;
 	status: CommissionStatus;
-	draft_json: string;
-	approval_hash: string | null;
-	created_at: string;
+	draftJson: DraftPayload;
+	approvalHash: string | null;
+	createdAt: string;
 };
 
 type RunRow = {
 	id: string;
-	commission_id: string;
-	executor_profile: string;
+	commissionId: string;
+	executorProfile: string;
 	status: RunStatus;
-	started_at: string | null;
-	completed_at: string | null;
+	startedAt: string | null;
+	completedAt: string | null;
 };
 
 /** Row shape for `SELECT COUNT(*) AS n` queries. */
-type CountRow = {
-	n: number;
-};
-
 export class CommissionService {
-	private db: DatabaseSync;
+	private db: AppDatabase;
 	private eventBus: EventBus;
 	private artifactStore: ArtifactStore;
 	private executorRouter: ExecutorRouter;
 
 	constructor(
-		db: DatabaseSync,
+		db: AppDatabase,
 		eventBus: EventBus,
 		artifactStore: ArtifactStore,
 		executorRouter: ExecutorRouter,
@@ -176,66 +180,36 @@ export class CommissionService {
 		this.executorRouter = executorRouter;
 	}
 
-	/** Run fn inside a BEGIN IMMEDIATE transaction; roll back on any throw. */
-	private withTransaction<T>(fn: () => T): T {
-		this.db.exec("BEGIN IMMEDIATE");
-		try {
-			const result = fn();
-			this.db.exec("COMMIT");
-			return result;
-		} catch (e) {
-			this.db.exec("ROLLBACK");
-			throw e;
-		}
-	}
-
 	/** Fetch a commission row, throwing not_found when missing. */
 	private getCommission(commissionId: string): CommissionRow {
-		const row = this.db
-			.prepare(
-				`SELECT id, conversation_id, status, draft_json, approval_hash, created_at
-				 FROM commissions WHERE id = ?`,
-			)
-			.get(commissionId) as CommissionRow | undefined;
+		const row = this.db.select().from(commissions).where(eq(commissions.id, commissionId)).get() as
+			| CommissionRow
+			| undefined;
 		if (!row) throw { kind: "not_found", reason: "commission_not_found" };
 		return row;
 	}
 
 	/** Fetch a run row, throwing not_found when missing. */
 	private getRun(runId: string): RunRow {
-		const row = this.db
-			.prepare(
-				`SELECT id, commission_id, executor_profile, status, started_at, completed_at
-				 FROM runs WHERE id = ?`,
-			)
-			.get(runId) as RunRow | undefined;
+		const row = this.db.select().from(runs).where(eq(runs.id, runId)).get() as RunRow | undefined;
 		if (!row) throw { kind: "not_found", reason: "run_not_found" };
 		return row;
 	}
 
 	/** Parse stored draft JSON with defensive defaults for legacy rows. */
-	private parseDraft(json: string): DraftPayload {
-		const raw = JSON.parse(json) as Partial<DraftPayload> | null;
-		return {
-			conversationId: typeof raw?.conversationId === "string" ? raw.conversationId : "",
-			title: typeof raw?.title === "string" ? raw.title : "",
-			description: typeof raw?.description === "string" ? raw.description : "",
-			reads: Array.isArray(raw?.reads) ? raw.reads : [],
-			writes: Array.isArray(raw?.writes) ? raw.writes : [],
-			networkAllowed: typeof raw?.networkAllowed === "boolean" ? raw.networkAllowed : false,
-			toolNames: Array.isArray(raw?.toolNames) ? raw.toolNames : [],
-		};
+	private parseDraft(draft: DraftPayload): DraftPayload {
+		return draft;
 	}
 
 	/** Map a run row to its public summary shape. */
 	private summarizeRun(row: RunRow): RunSummary {
 		return {
 			id: row.id,
-			commissionId: row.commission_id,
-			executorProfile: row.executor_profile,
+			commissionId: row.commissionId,
+			executorProfile: row.executorProfile,
 			status: row.status,
-			startedAt: row.started_at,
-			completedAt: row.completed_at,
+			startedAt: row.startedAt,
+			completedAt: row.completedAt,
 		};
 	}
 
@@ -243,17 +217,15 @@ export class CommissionService {
 	private executorRun(row: RunRow): ExecutorRun {
 		return {
 			runId: row.id,
-			commissionId: row.commission_id,
-			executorProfile: row.executor_profile,
+			commissionId: row.commissionId,
+			executorProfile: row.executorProfile,
 		};
 	}
 
 	/** Persist executor-produced evidence through the Host's canonical boundary. */
 	private recordExecutorEvidence(runId: string, kind: string, data: unknown): void {
 		const evidenceId = randomUUID();
-		this.db
-			.prepare("INSERT INTO evidence (id, run_id, kind, data) VALUES (?, ?, ?, ?)")
-			.run(evidenceId, runId, kind, JSON.stringify(data));
+		this.db.insert(evidence).values({ id: evidenceId, runId, kind, data }).run();
 		this.eventBus.publish("evidence.collected", { runId, evidenceId, kind });
 	}
 
@@ -264,7 +236,7 @@ export class CommissionService {
 	 */
 	handleExecutorEvent(runId: string, event: ExecutorEvent): void {
 		const run = this.getRun(runId);
-		if (run.completed_at !== null) return;
+		if (run.completedAt !== null) return;
 
 		switch (event.type) {
 			case "started":
@@ -299,7 +271,7 @@ export class CommissionService {
 				}
 				if (event.summary)
 					this.recordExecutorEvidence(runId, "executor.summary", { text: event.summary });
-				this.collectRunArtifacts(runId, this.getCommission(run.commission_id));
+				this.collectRunArtifacts(runId, this.getCommission(run.commissionId));
 				this.completeRun(runId, "completed");
 				return;
 			case "failed":
@@ -315,7 +287,7 @@ export class CommissionService {
 	}
 
 	private collectRunArtifacts(runId: string, commission: CommissionRow): void {
-		const draft = this.parseDraft(commission.draft_json);
+		const draft = this.parseDraft(commission.draftJson);
 		let files = 0;
 		let bytes = 0;
 		const visit = (path: string): void => {
@@ -377,10 +349,15 @@ export class CommissionService {
 		const draftHash = createHash("sha256").update(JSON.stringify(draft), "utf8").digest("hex");
 		const commissionId = randomUUID();
 		this.db
-			.prepare(
-				"INSERT INTO commissions (id, conversation_id, status, draft_json, approval_hash) VALUES (?, ?, 'draft', ?, ?)",
-			)
-			.run(commissionId, draft.conversationId, JSON.stringify(draft), draftHash);
+			.insert(commissions)
+			.values({
+				id: commissionId,
+				conversationId: draft.conversationId,
+				status: "draft",
+				draftJson: draft,
+				approvalHash: draftHash,
+			})
+			.run();
 		this.eventBus.publish("commission.drafted", { commissionId, draftHash });
 		return { commissionId, draftHash };
 	}
@@ -391,17 +368,20 @@ export class CommissionService {
 		if (commission.status !== "draft") {
 			throw { kind: "conflict", reason: "commission_not_draft" };
 		}
-		if (commission.approval_hash !== approvedHash) {
+		if (commission.approvalHash !== approvedHash) {
 			throw { kind: "conflict", reason: "draft_hash_mismatch" };
 		}
 		const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-		this.withTransaction(() => {
-			this.db.prepare("UPDATE commissions SET status = 'approved' WHERE id = ?").run(commissionId);
-			this.db
-				.prepare(
-					"INSERT INTO approvals (id, commission_id, draft_hash, expires_at) VALUES (?, ?, ?, ?)",
-				)
-				.run(randomUUID(), commissionId, approvedHash, expiresAt);
+		this.db.transaction((transaction) => {
+			transaction
+				.update(commissions)
+				.set({ status: "approved" })
+				.where(eq(commissions.id, commissionId))
+				.run();
+			transaction
+				.insert(approvals)
+				.values({ id: randomUUID(), commissionId, draftHash: approvedHash, expiresAt })
+				.run();
 		});
 		this.eventBus.publish("commission.approved", { commissionId, draftHash: approvedHash });
 	}
@@ -416,7 +396,11 @@ export class CommissionService {
 		) {
 			throw { kind: "conflict", reason: "commission_not_rejectable" };
 		}
-		this.db.prepare("UPDATE commissions SET status = 'cancelled' WHERE id = ?").run(commissionId);
+		this.db
+			.update(commissions)
+			.set({ status: "cancelled" })
+			.where(eq(commissions.id, commissionId))
+			.run();
 		this.eventBus.publish("commission.rejected", { commissionId });
 	}
 
@@ -431,33 +415,43 @@ export class CommissionService {
 	 * the launcher error to the caller.
 	 */
 	async launch(params: CommissionLaunchParams): Promise<CommissionLaunchResult> {
-		const launch = this.withTransaction(() => {
-			const activeRow = this.db
-				.prepare(
-					`SELECT COUNT(*) AS n FROM runs
-					 WHERE status IN (${ACTIVE_RUN_STATUSES.map(() => "?").join(", ")})`,
-				)
-				.get(...ACTIVE_RUN_STATUSES) as CountRow | undefined;
+		const launch = this.db.transaction((transaction) => {
+			const activeRow = transaction
+				.select({ n: count() })
+				.from(runs)
+				.where(inArray(runs.status, ACTIVE_RUN_STATUSES))
+				.get();
 			if ((activeRow?.n ?? 0) >= MAX_ACTIVE_RUNS) {
 				throw { kind: "conflict", reason: "max_active_runs" };
 			}
 
-			const commissionRow = this.getCommission(params.commissionId);
+			const commissionRow = transaction
+				.select()
+				.from(commissions)
+				.where(eq(commissions.id, params.commissionId))
+				.get() as CommissionRow | undefined;
+			if (!commissionRow) throw { kind: "not_found", reason: "commission_not_found" };
 			if (commissionRow.status !== "approved") {
 				throw { kind: "conflict", reason: "commission_not_approved" };
 			}
 
 			const id = randomUUID();
-			this.db
-				.prepare(
-					"INSERT INTO runs (id, commission_id, executor_profile, status) VALUES (?, ?, ?, 'enqueued')",
-				)
-				.run(id, params.commissionId, params.executorProfile);
-			this.db
-				.prepare("UPDATE commissions SET status = 'queued' WHERE id = ?")
-				.run(params.commissionId);
+			transaction
+				.insert(runs)
+				.values({
+					id,
+					commissionId: params.commissionId,
+					executorProfile: params.executorProfile,
+					status: "enqueued",
+				})
+				.run();
+			transaction
+				.update(commissions)
+				.set({ status: "queued" })
+				.where(eq(commissions.id, params.commissionId))
+				.run();
 
-			const draft = this.parseDraft(commissionRow.draft_json);
+			const draft = this.parseDraft(commissionRow.draftJson);
 			const run: ExecutorRun = {
 				runId: id,
 				commissionId: params.commissionId,
@@ -496,7 +490,7 @@ export class CommissionService {
 					? error.reason
 					: "executor_launch_failed";
 			this.recordExecutorEvidence(launch.run.runId, "executor.launch_failed", { reason });
-			if (this.getRun(launch.run.runId).completed_at === null) {
+			if (this.getRun(launch.run.runId).completedAt === null) {
 				this.completeRun(launch.run.runId, "failed");
 			}
 			throw error;
@@ -505,8 +499,8 @@ export class CommissionService {
 		const run = this.getRun(launch.run.runId);
 		return {
 			runId: run.id,
-			commissionId: run.commission_id,
-			executorProfile: run.executor_profile,
+			commissionId: run.commissionId,
+			executorProfile: run.executorProfile,
 			status: run.status,
 		};
 	}
@@ -518,14 +512,18 @@ export class CommissionService {
 			throw { kind: "conflict", reason: "run_not_startable" };
 		}
 		this.db
-			.prepare("UPDATE runs SET status = 'running', started_at = ? WHERE id = ?")
-			.run(new Date().toISOString(), runId);
+			.update(runs)
+			.set({ status: "running", startedAt: new Date().toISOString() })
+			.where(eq(runs.id, runId))
+			.run();
 		this.db
-			.prepare("UPDATE commissions SET status = 'running' WHERE id = ?")
-			.run(run.commission_id);
+			.update(commissions)
+			.set({ status: "running" })
+			.where(eq(commissions.id, run.commissionId))
+			.run();
 		this.eventBus.publish("run.started", { runId });
 		this.eventBus.publish("commission.status_changed", {
-			commissionId: run.commission_id,
+			commissionId: run.commissionId,
 			status: "running",
 		});
 		return this.summarizeRun(this.getRun(runId));
@@ -534,12 +532,14 @@ export class CommissionService {
 	/** Land a run in a terminal status with completed_at (idempotence guard). */
 	completeRun(runId: string, terminalStatus: TerminalRunStatus): RunSummary {
 		const run = this.getRun(runId);
-		if (run.completed_at !== null) {
+		if (run.completedAt !== null) {
 			throw { kind: "conflict", reason: "run_already_terminated" };
 		}
 		this.db
-			.prepare("UPDATE runs SET status = ?, completed_at = ? WHERE id = ?")
-			.run(terminalStatus, new Date().toISOString(), runId);
+			.update(runs)
+			.set({ status: terminalStatus, completedAt: new Date().toISOString() })
+			.where(eq(runs.id, runId))
+			.run();
 		const commissionStatus: CommissionStatus =
 			terminalStatus === "completed"
 				? "completed"
@@ -547,11 +547,13 @@ export class CommissionService {
 					? "cancelled"
 					: "failed";
 		this.db
-			.prepare("UPDATE commissions SET status = ? WHERE id = ?")
-			.run(commissionStatus, run.commission_id);
+			.update(commissions)
+			.set({ status: commissionStatus })
+			.where(eq(commissions.id, run.commissionId))
+			.run();
 		this.eventBus.publish("run.completed", { runId, status: terminalStatus });
 		this.eventBus.publish("commission.status_changed", {
-			commissionId: run.commission_id,
+			commissionId: run.commissionId,
 			status: commissionStatus,
 		});
 		return this.summarizeRun(this.getRun(runId));
@@ -568,13 +570,15 @@ export class CommissionService {
 		if (run.status !== "running") {
 			throw { kind: "conflict", reason: "run_not_active" };
 		}
-		this.db.prepare("UPDATE runs SET status = 'needs_user' WHERE id = ?").run(runId);
+		this.db.update(runs).set({ status: "needs_user" }).where(eq(runs.id, runId)).run();
 		this.db
-			.prepare("UPDATE commissions SET status = 'needs_user' WHERE id = ?")
-			.run(run.commission_id);
+			.update(commissions)
+			.set({ status: "needs_user" })
+			.where(eq(commissions.id, run.commissionId))
+			.run();
 		this.eventBus.publish("run.needs_user", { runId, prompt, requestId, options });
 		this.eventBus.publish("commission.status_changed", {
-			commissionId: run.commission_id,
+			commissionId: run.commissionId,
 			status: "needs_user",
 		});
 		return this.summarizeRun(this.getRun(runId));
@@ -596,7 +600,7 @@ export class CommissionService {
 		if (run.status !== "running" && run.status !== "needs_user") {
 			throw { kind: "conflict", reason: "run_not_interruptible" };
 		}
-		this.db.prepare("UPDATE runs SET status = 'interrupted' WHERE id = ?").run(runId);
+		this.db.update(runs).set({ status: "interrupted" }).where(eq(runs.id, runId)).run();
 		this.eventBus.publish("run.interrupted", { runId });
 		return this.summarizeRun(this.getRun(runId));
 	}
@@ -605,17 +609,19 @@ export class CommissionService {
 	resumeRun(runId: string): RunSummary {
 		const run = this.getRun(runId);
 		const resumable =
-			(run.status === "interrupted" || run.status === "needs_user") && run.completed_at === null;
+			(run.status === "interrupted" || run.status === "needs_user") && run.completedAt === null;
 		if (!resumable) {
 			throw { kind: "conflict", reason: "run_not_resumable" };
 		}
-		this.db.prepare("UPDATE runs SET status = 'running' WHERE id = ?").run(runId);
+		this.db.update(runs).set({ status: "running" }).where(eq(runs.id, runId)).run();
 		this.db
-			.prepare("UPDATE commissions SET status = 'running' WHERE id = ?")
-			.run(run.commission_id);
+			.update(commissions)
+			.set({ status: "running" })
+			.where(eq(commissions.id, run.commissionId))
+			.run();
 		this.eventBus.publish("run.resumed", { runId });
 		this.eventBus.publish("commission.status_changed", {
-			commissionId: run.commission_id,
+			commissionId: run.commissionId,
 			status: "running",
 		});
 		return this.summarizeRun(this.getRun(runId));
@@ -628,7 +634,7 @@ export class CommissionService {
 		optionId: string,
 	): Promise<RunSummary> {
 		const run = this.getRun(runId);
-		if (run.status !== "needs_user" || run.completed_at !== null) {
+		if (run.status !== "needs_user" || run.completedAt !== null) {
 			throw { kind: "conflict", reason: "run_not_awaiting_permission" };
 		}
 		await this.executorRouter.resume(this.executorRun(run), { requestId, optionId });
@@ -639,7 +645,7 @@ export class CommissionService {
 	async cancelRun(runId: string): Promise<RunSummary> {
 		const run = this.getRun(runId);
 		const cancellable =
-			run.completed_at === null &&
+			run.completedAt === null &&
 			(run.status === "enqueued" ||
 				run.status === "running" ||
 				run.status === "needs_user" ||
@@ -649,14 +655,18 @@ export class CommissionService {
 		}
 		await this.executorRouter.cancel(this.executorRun(run));
 		this.db
-			.prepare("UPDATE runs SET status = 'cancelled', completed_at = ? WHERE id = ?")
-			.run(new Date().toISOString(), runId);
+			.update(runs)
+			.set({ status: "cancelled", completedAt: new Date().toISOString() })
+			.where(eq(runs.id, runId))
+			.run();
 		this.db
-			.prepare("UPDATE commissions SET status = 'cancelled' WHERE id = ?")
-			.run(run.commission_id);
+			.update(commissions)
+			.set({ status: "cancelled" })
+			.where(eq(commissions.id, run.commissionId))
+			.run();
 		this.eventBus.publish("run.cancelled", { runId });
 		this.eventBus.publish("commission.status_changed", {
-			commissionId: run.commission_id,
+			commissionId: run.commissionId,
 			status: "cancelled",
 		});
 		return this.summarizeRun(this.getRun(runId));
@@ -664,33 +674,30 @@ export class CommissionService {
 
 	/** Number of runs currently sitting in the enqueued queue. */
 	queue(): number {
-		const row = this.db.prepare("SELECT COUNT(*) AS n FROM runs WHERE status = 'enqueued'").get() as
-			| CountRow
-			| undefined;
+		const row = this.db.select({ n: count() }).from(runs).where(eq(runs.status, "enqueued")).get();
 		return row?.n ?? 0;
 	}
 
 	/** List commissions (optionally by status) with their runs and draft summary. */
 	list(params: CommissionListParams = {}): CommissionSummary[] {
-		const commissions = this.db
-			.prepare(
-				`SELECT id, conversation_id, status, draft_json, approval_hash, created_at
-				 FROM commissions ${params.status ? "WHERE status = ?" : ""}
-				 ORDER BY created_at DESC, rowid DESC`,
-			)
-			.all(...(params.status ? [params.status] : [])) as CommissionRow[];
-		return commissions.map((row) => {
-			const draft = this.parseDraft(row.draft_json);
-			const draftHash = row.approval_hash ?? "";
-			const runs = this.db
-				.prepare(
-					`SELECT id, commission_id, executor_profile, status, started_at, completed_at
-					 FROM runs WHERE commission_id = ? ORDER BY rowid`,
-				)
-				.all(row.id) as RunRow[];
+		const rows = this.db
+			.select()
+			.from(commissions)
+			.where(params.status ? eq(commissions.status, params.status) : undefined)
+			.orderBy(desc(commissions.createdAt), desc(commissions.id))
+			.all() as CommissionRow[];
+		return rows.map((row) => {
+			const draft = this.parseDraft(row.draftJson);
+			const draftHash = row.approvalHash ?? "";
+			const commissionRuns = this.db
+				.select()
+				.from(runs)
+				.where(eq(runs.commissionId, row.id))
+				.orderBy(asc(runs.createdAt), asc(runs.id))
+				.all() as RunRow[];
 			return {
 				id: row.id,
-				conversationId: row.conversation_id,
+				conversationId: row.conversationId,
 				status: row.status,
 				draft: {
 					id: row.id,
@@ -703,8 +710,8 @@ export class CommissionService {
 					hash: draftHash,
 				},
 				draftHash,
-				createdAt: row.created_at,
-				runs: runs.map((run) => this.summarizeRun(run)),
+				createdAt: row.createdAt,
+				runs: commissionRuns.map((run) => this.summarizeRun(run)),
 			};
 		});
 	}
@@ -720,7 +727,7 @@ export class CommissionService {
 	 */
 	adoptResult(commissionId: string, artifactId: string, runId: string): void {
 		const run = this.getRun(runId);
-		if (run.commission_id !== commissionId) {
+		if (run.commissionId !== commissionId) {
 			throw { kind: "conflict", reason: "run_commission_mismatch" };
 		}
 		if (!this.artifactStore.get(artifactId)) {

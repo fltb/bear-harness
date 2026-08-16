@@ -25,7 +25,6 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { extname } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
 import type { FileTypeResult } from "file-type";
 import { fileTypeFromBuffer } from "file-type";
 import JSZip from "jszip";
@@ -500,11 +499,9 @@ function isAborted(signal: AbortSignal | undefined): boolean {
 }
 
 export class IngestService {
-	private db: DatabaseSync;
 	private artifactStore: ArtifactStore;
 
-	constructor(db: DatabaseSync, artifactStore: ArtifactStore) {
-		this.db = db;
+	constructor(artifactStore: ArtifactStore) {
 		this.artifactStore = artifactStore;
 	}
 

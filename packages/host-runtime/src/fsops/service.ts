@@ -48,8 +48,10 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, resolve, sep } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
+import { and, eq } from "drizzle-orm";
+import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
+import { evidence } from "../storage/schema.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -223,10 +225,10 @@ interface StoredFsopPlan {
 // ---------------------------------------------------------------------------
 
 export class FileOpsService {
-	private db: DatabaseSync;
+	private db: AppDatabase;
 	private eventBus: EventBus;
 
-	constructor(db: DatabaseSync, eventBus: EventBus) {
+	constructor(db: AppDatabase, eventBus: EventBus) {
 		this.db = db;
 		this.eventBus = eventBus;
 	}
@@ -249,9 +251,7 @@ export class FileOpsService {
 		});
 		const id = randomUUID();
 		const stored: StoredFsopPlan = { id, ops: storedOps, authorizedRoots: roots };
-		this.db
-			.prepare("INSERT INTO evidence (id, kind, data) VALUES (?, ?, ?)")
-			.run(id, PLAN_KIND, JSON.stringify(stored));
+		this.db.insert(evidence).values({ id, kind: PLAN_KIND, data: stored }).run();
 		this.eventBus.publish("fsops.plan_created", { planId: id, opCount: storedOps.length });
 		return { id, ops: params.ops, authorizedRoots: roots };
 	}
@@ -612,33 +612,42 @@ export class FileOpsService {
 	/** Map a journalId (plan id or any of its entry ids) to the plan id. */
 	private resolveJournalPlan(journalId: string): string | null {
 		const row = this.db
-			.prepare("SELECT data FROM evidence WHERE id = ? AND kind IN (?, ?)")
-			.get(journalId, JOURNAL_KIND, UNDO_KIND) as { data: string } | undefined;
-		if (row) return (JSON.parse(row.data) as FsopJournal).planId;
+			.select({ data: evidence.data })
+			.from(evidence)
+			.where(eq(evidence.id, journalId))
+			.get();
+		if (row && this.isJournal(row.data)) return row.data.planId;
 		return this.loadPlan(journalId)?.id ?? null;
 	}
 
 	private loadPlan(planId: string): StoredFsopPlan | null {
 		const row = this.db
-			.prepare("SELECT data FROM evidence WHERE id = ? AND kind = ?")
-			.get(planId, PLAN_KIND) as { data: string } | undefined;
+			.select({ data: evidence.data })
+			.from(evidence)
+			.where(and(eq(evidence.id, planId), eq(evidence.kind, PLAN_KIND)))
+			.get();
 		if (!row) return null;
-		return JSON.parse(row.data) as StoredFsopPlan;
+		return row.data as StoredFsopPlan;
 	}
 
 	private loadJournalEntries(planId: string): FsopJournal[] {
 		const rows = this.db
-			.prepare("SELECT data FROM evidence WHERE kind = ? AND json_extract(data, '$.planId') = ?")
-			.all(JOURNAL_KIND, planId) as Array<{ data: string }>;
+			.select({ data: evidence.data })
+			.from(evidence)
+			.where(eq(evidence.kind, JOURNAL_KIND))
+			.all();
 		return rows
-			.map((row) => JSON.parse(row.data) as FsopJournal)
+			.map((row) => row.data)
+			.filter((data): data is FsopJournal => this.isJournal(data) && data.planId === planId)
 			.sort((a, b) => a.opIndex - b.opIndex);
 	}
 
 	private appendJournal(entry: FsopJournal, kind: string = JOURNAL_KIND): void {
-		this.db
-			.prepare("INSERT INTO evidence (id, kind, data) VALUES (?, ?, ?)")
-			.run(entry.id, kind, JSON.stringify(entry));
+		this.db.insert(evidence).values({ id: entry.id, kind, data: entry }).run();
+	}
+
+	private isJournal(data: unknown): data is FsopJournal {
+		return typeof data === "object" && data !== null && "planId" in data;
 	}
 
 	// -----------------------------------------------------------------------

@@ -142,15 +142,15 @@ function record(format, ok, checks) {
 }
 
 // ---------------------------------------------------------------------------
-// PPTX: generate with `pptxgenjs`, reopen raw with jszip + fast-xml-parser.
+// PPTX: generate with `@office-kit/pptx`, reopen raw with jszip + fast-xml-parser.
 // ---------------------------------------------------------------------------
 {
-	const { default: PptxGenJS } = await import("pptxgenjs");
-	const pptx = new PptxGenJS();
-	const slide = pptx.addSlide();
-	slide.addText("雪原营地周会", { x: 0.5, y: 0.5, w: 8, h: 1, fontSize: 28 });
-	slide.addText("议程：材料整理", { x: 0.5, y: 2, w: 8, h: 0.8, fontSize: 16 });
-	const buf = await pptx.write({ outputType: "nodebuffer" });
+	const { addContentSlide, createPresentation, savePresentation } = await import(
+		"@office-kit/pptx"
+	);
+	const pptx = createPresentation();
+	addContentSlide(pptx, { title: "雪原营地周会", body: "议程：材料整理" });
+	const buf = Buffer.from(await savePresentation(pptx));
 	const { default: JSZip } = await import("jszip");
 	const zip = await JSZip.loadAsync(buf);
 	const slideXml = await zip.file("ppt/slides/slide1.xml").async("string");

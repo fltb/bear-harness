@@ -1,17 +1,27 @@
-import { readFileSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const orchestrationModules = [
-	"packages/host-runtime/src/composition.ts",
-	"packages/host-runtime/src/runtime.ts",
+const sourceRoot = resolve(repoRoot, "packages/host-runtime/src");
+const allowedRawDatabaseModule = resolve(sourceRoot, "storage/database.ts");
+const forbidden = [
+	/import\s+(?:type\s+)?[^;]*from\s+["']node:sqlite["']/,
+	/\.prepare\s*\(/,
+	/(?:\bdb|this\.db|\bconnection|this\.connection)\.exec\s*\(/,
 ];
-const forbidden = [/\.prepare\s*\(/, /\.exec\s*\(/];
 const findings = [];
 
-for (const modulePath of orchestrationModules) {
-	const absolutePath = resolve(repoRoot, modulePath);
+function sourceFiles(directory) {
+	return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+		const path = join(directory, entry.name);
+		if (entry.isDirectory()) return sourceFiles(path);
+		return extname(entry.name) === ".ts" ? [path] : [];
+	});
+}
+
+for (const absolutePath of sourceFiles(sourceRoot)) {
+	if (absolutePath === allowedRawDatabaseModule) continue;
 	for (const [index, line] of readFileSync(absolutePath, "utf8").split("\n").entries()) {
 		if (forbidden.some((pattern) => pattern.test(line))) {
 			findings.push(`${relative(repoRoot, absolutePath)}:${index + 1}`);
@@ -21,7 +31,7 @@ for (const modulePath of orchestrationModules) {
 
 if (findings.length > 0) {
 	process.stderr.write(
-		`RPC and runtime orchestration must use typed repositories or Drizzle services:\n${findings.join("\n")}\n`,
+		`Host business modules must use Drizzle; raw SQLite is restricted to storage/database.ts:\n${findings.join("\n")}\n`,
 	);
 	process.exit(1);
 }
