@@ -1,6 +1,7 @@
+import type { CompanionClient, HostTransport } from "@bear-harness/companion-client";
 import { unwrap } from "@bear-harness/companion-client";
-import type { CompanionClient, HostTransport } from "@bear-harness/companion-types";
 import { productUi } from "@bear-harness/product-config";
+import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { createSignal, For, Show } from "solid-js";
 import { loadDebugChannels } from "./http-client";
 import "./web-dev-debug.css";
@@ -53,7 +54,9 @@ export function WebDevDebugPanel(props: {
 	const invokeRaw = async () => {
 		try {
 			const parsed: unknown = JSON.parse(params());
-			const result = await props.transport.invoke(channel(), parsed);
+			const endpoint = CHANNEL_CONTRACTS[channel()];
+			if (!endpoint) throw new Error("unknown RPC channel");
+			const result = await props.transport.invoke(endpoint, endpoint.request.parse(parsed));
 			setOutput(format(result));
 			setError(null);
 		} catch (cause) {
@@ -73,7 +76,13 @@ export function WebDevDebugPanel(props: {
 	};
 	const setSessionKey = async () => {
 		try {
-			await unwrap(props.client.provider.setApiKey(providerId(), apiKey(), true));
+			await unwrap(
+				props.client.provider.setApiKey({
+					providerId: providerId(),
+					apiKey: apiKey(),
+					sessionOnly: true,
+				}),
+			);
 			setApiKey("");
 			await loadProviders();
 		} catch (cause) {

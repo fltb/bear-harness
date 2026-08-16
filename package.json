@@ -15,9 +15,9 @@
 	"packageManager": "npm@11.17.0",
 	"scripts": {
 		"format": "biome format --write",
-		"lint": "biome ci --diagnostic-level=error && npm run lint:knip && node scripts/check-ui-copy-ownership.mjs && node scripts/check-test-quality.mjs && node scripts/validate-workflow.mjs && npm run lint --workspace @bear-harness/desktop",
+		"lint": "biome ci --diagnostic-level=error && npm run lint:knip && node scripts/check-ui-copy-ownership.mjs && node scripts/check-test-quality.mjs && node scripts/check-rpc-contracts.mjs && node scripts/validate-workflow.mjs && npm run lint --workspace @bear-harness/desktop",
 		"lint:knip": "knip",
-		"typecheck": "npm run typecheck --workspace @bear-harness/product-config && npm run typecheck --workspace @bear-harness/schema && npm run typecheck --workspace @bear-harness/protocol && npm run typecheck --workspace @bear-harness/companion-types && npm run typecheck --workspace @bear-harness/companion-client && npm run typecheck --workspace @bear-harness/host-runtime && npm run typecheck --workspace @bear-harness/companion-ui && npm run typecheck --workspace @bear-harness/desktop && npm run typecheck --workspace @bear-harness/web-dev",
+		"typecheck": "npm run typecheck --workspace @bear-harness/product-config && npm run typecheck --workspace @bear-harness/schema && npm run typecheck --workspace @bear-harness/protocol && npm run typecheck --workspace @bear-harness/companion-client && npm run typecheck --workspace @bear-harness/host-runtime && npm run typecheck --workspace @bear-harness/companion-ui && npm run typecheck --workspace @bear-harness/desktop && npm run typecheck --workspace @bear-harness/web-dev",
 		"test:unit": "npm run test:unit --workspace @bear-harness/host-runtime && npm run test:unit --workspace @bear-harness/companion-ui && npm run test:unit --workspace @bear-harness/desktop",
 		"test:coverage": "npm run test:coverage --workspace @bear-harness/host-runtime && npm run test:coverage --workspace @bear-harness/companion-ui && npm run test:coverage --workspace @bear-harness/desktop",
 		"test:e2e": "npm run test:e2e:web",

@@ -1,4 +1,3 @@
-import type { z } from "@bear-harness/schema";
 import {
 	createMutation,
 	createQuery,
@@ -12,19 +11,16 @@ export const queryKeys = {
 	voice: ["voice"] as const,
 };
 
-type RpcSchema<T> = z.ZodType<T>;
-
 export function createRpcQuery<T>(input: {
 	client: QueryClient;
 	key: QueryKey;
-	request: () => Promise<unknown>;
-	schema: RpcSchema<T>;
+	request: () => Promise<T>;
 	initialData?: T;
 }) {
 	return createQuery(
 		() => ({
 			queryKey: input.key,
-			queryFn: async () => input.schema.parse(await input.request()),
+			queryFn: input.request,
 			initialData: input.initialData,
 		}),
 		() => input.client,
@@ -49,12 +45,6 @@ export function createRpcMutation<TVariables>(input: {
 	);
 }
 
-export function hydrateRpcQuery<T>(
-	client: QueryClient,
-	key: QueryKey,
-	schema: RpcSchema<T>,
-	value: unknown,
-): void {
-	const parsed = schema.safeParse(value);
-	if (parsed.success) client.setQueryData(key, parsed.data);
+export function hydrateRpcQuery<T>(client: QueryClient, key: QueryKey, value: T): void {
+	client.setQueryData(key, value);
 }

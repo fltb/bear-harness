@@ -22,13 +22,13 @@
 		"package:linux": "npm run build && electron-builder --config electron-builder.config.ts --linux AppImage deb --x64"
 	},
 	"dependencies": {
+		"@bear-harness/companion-client": "file:../../packages/companion-client",
 		"@bear-harness/companion-ui": "file:../../packages/companion-ui",
 		"@bear-harness/host-runtime": "file:../../packages/host-runtime",
 		"@bear-harness/product-config": "file:../../packages/product-config",
 		"@bear-harness/protocol": "file:../../packages/protocol"
 	},
 	"devDependencies": {
-		"@bear-harness/companion-types": "file:../../packages/companion-types",
 		"@rsbuild/core": "2.1.11",
 		"@rsbuild/plugin-babel": "2.0.1",
 		"@rsbuild/plugin-solid": "1.2.2",

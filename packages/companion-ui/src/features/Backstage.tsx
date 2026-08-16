@@ -11,17 +11,17 @@ import { SettingsSheet } from "./SettingsSheet.js";
  *
  * Kobalte 0.13 ships no `Sheet` primitive, so the drawer is built on the
  * `Dialog` family (focus trap, ESC-to-close, aria-modal, labelled title),
- * styled as the prototype's right-side panel. The three backstage pages —
- * 关系档案 / 记忆 / 系统设置 — live in `Tabs`; page state is internal.
+ * styled as the prototype's right-side panel. Its role, memory, story, system,
+ * and package-authoring areas live in `Tabs`; page state is internal.
  */
 export function Backstage(props: {
 	open: boolean;
 	onClose: () => void;
 	character: CharacterDisplay | undefined;
-	initialTab?: "relationship" | "settings";
+	initialTab?: "roles" | "settings";
 }) {
-	const [selectedTab, setSelectedTab] = createSignal(props.initialTab ?? "relationship");
-	createEffect(() => setSelectedTab(props.initialTab ?? "relationship"));
+	const [selectedTab, setSelectedTab] = createSignal(props.initialTab ?? "roles");
+	createEffect(() => setSelectedTab(props.initialTab ?? "roles"));
 	return (
 		<Dialog.Root
 			open={props.open}
@@ -92,8 +92,57 @@ export function Backstage(props: {
 function RoleManager() {
 	const store = useCompanionStore();
 	const [busyId, setBusyId] = createSignal<string>();
+	const [importing, setImporting] = createSignal(false);
+	const [feedback, setFeedback] = createSignal<string>();
+	const importPackage = async (files: FileList | null) => {
+		if (!files?.length) return;
+		setImporting(true);
+		setFeedback();
+		try {
+			const payload = await Promise.all(
+				[...files].map(async (file) => {
+					const bytes = new Uint8Array(await file.arrayBuffer());
+					let binary = "";
+					for (let offset = 0; offset < bytes.length; offset += 32_768) {
+						binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
+					}
+					return {
+						path: file.webkitRelativePath || file.name,
+						base64: btoa(binary),
+					};
+				}),
+			);
+			await store.characters.import(payload);
+			setFeedback(productUi.backstage.roleImportDone);
+		} catch (error) {
+			setFeedback(
+				`${productUi.backstage.roleImportFailed}${error instanceof Error ? error.message : String(error)}`,
+			);
+		} finally {
+			setImporting(false);
+		}
+	};
 	return (
 		<div class="sheet-panel role-list">
+			<div class="role-import">
+				<p class="drawer-note">{productUi.backstage.roleImportHint}</p>
+				<label class="button-like">
+					{importing() ? productUi.backstage.roleImportBusy : productUi.backstage.roleImport}
+					<input
+						type="file"
+						multiple
+						aria-label={productUi.backstage.roleImport}
+						disabled={importing()}
+						ref={(element) => element.setAttribute("webkitdirectory", "")}
+						onChange={(event) => void importPackage(event.currentTarget.files)}
+					/>
+				</label>
+				<Show when={feedback()}>
+					<p role="status" class="status-line">
+						{feedback()}
+					</p>
+				</Show>
+			</div>
 			<For each={store.characters.characters()}>
 				{(character) => (
 					<div class="role-row">

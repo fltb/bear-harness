@@ -63,6 +63,33 @@ describe("first meeting journeys", () => {
 		expect(pin).toHaveBeenCalledWith("openai-relay", "gpt-test", "OpenAI Relay");
 	});
 
+	it("shows one primary action and no key field when the provider credential is stored", async () => {
+		const user = userEvent.setup();
+		const pin = vi.fn(() => Promise.resolve());
+		const provider = {
+			id: "stored-relay",
+			name: "Stored Relay",
+			authType: "api_key" as const,
+			credentialStatus: "stored" as const,
+			availableModels: [{ id: "stored-model", name: "Stored Model" }],
+		};
+		renderMeeting({
+			...baseStore(),
+			provider: {
+				providers: () => [provider],
+				list: () => Promise.resolve({ providers: [provider] }),
+			} as never,
+			voice: { loading: () => false, activeStackId: () => undefined, pin } as never,
+		});
+
+		const dialog = await screen.findByRole("dialog", { name: productUi.modelSetup.dialogLabel });
+		expect(within(dialog).queryByLabelText(productUi.settings.apiKeyLabel)).not.toBeInTheDocument();
+		const actions = within(dialog).getAllByRole("button", { name: productUi.modelSetup.continue });
+		expect(actions).toHaveLength(1);
+		await user.click(actions[0]);
+		expect(pin).toHaveBeenCalledWith("stored-relay", "stored-model", "Stored Relay");
+	});
+
 	it("submits role-package text and choice steps without hardcoded story copy", async () => {
 		const user = userEvent.setup();
 		const submitText = vi.fn(() => Promise.resolve());
@@ -75,6 +102,7 @@ describe("first meeting journeys", () => {
 					step_label: "Step {step}/{total}",
 					dialog_label: "Text introduction",
 					error_prefix: "Error: ",
+					completion: { conversation_title: "Text conversation" },
 					steps: [
 						{
 							id: "name",

@@ -142,19 +142,25 @@ describe("store RPC contract", () => {
 			await store.artifact.list();
 
 			expect(client.settings.set).toHaveBeenCalled();
-			expect(client.memory.edit).toHaveBeenCalledWith("memory-1", "new memory");
+			expect(client.memory.edit).toHaveBeenCalledWith({
+				entryId: "memory-1",
+				newText: "new memory",
+			});
 			expect(client.provider.overrideBaseUrl).toHaveBeenCalledWith({
 				providerId: "relay",
 				baseUrl: "https://override.example/v1",
 			});
-			expect(client.story.applyChange).toHaveBeenCalledWith(
-				"AU change",
-				"branch",
-				"conversation-1",
-				undefined,
-			);
+			expect(client.story.applyChange).toHaveBeenCalledWith({
+				text: "AU change",
+				scope: "branch",
+				conversationId: "conversation-1",
+				branchId: undefined,
+			});
 			expect(client.canon.upsertModule).toHaveBeenCalled();
-			expect(client.commission.launch).toHaveBeenCalledWith("commission-1", "pi-product-managed");
+			expect(client.commission.launch).toHaveBeenCalledWith({
+				commissionId: "commission-1",
+				executorProfile: "pi-product-managed",
+			});
 		} finally {
 			dispose();
 		}

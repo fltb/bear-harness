@@ -151,6 +151,28 @@ describe("role-defined onboarding", () => {
 		await runtime.close();
 	});
 
+	it("rejects corrupt current-version state instead of treating it as legacy data", async () => {
+		const runtime = runtimeForTest();
+		const database = Reflect.get(runtime, "db") as {
+			connection: { prepare(sql: string): { run(...params: unknown[]): void } };
+		};
+		database.connection
+			.prepare(
+				"INSERT INTO onboarding_state (companion_id, state, state_json, updated_at) VALUES (?, ?, ?, datetime('now'))",
+			)
+			.run(
+				productConfig.defaultCharacterId,
+				"door_closed",
+				JSON.stringify({ schema_version: 1, decisions: {} }),
+			);
+
+		await expect(runtime.dispatch("onboarding.get:v1", {})).resolves.toMatchObject({
+			ok: false,
+			error: { kind: "internal" },
+		});
+		await runtime.close();
+	});
+
 	it("rejects a value outside the active role-defined choice set", async () => {
 		const runtime = runtimeForTest();
 		await runtime.start();

@@ -26,9 +26,7 @@ describe("idle homepage (fork config injection, no bridge)", () => {
 			screen.getByRole("navigation", { name: productUi.sidebar.conversations }),
 		).toBeInTheDocument();
 		expect(screen.getByRole("searchbox", { name: productUi.sidebar.search })).toBeEnabled();
-		expect(
-			screen.getByRole("button", { name: productUi.sidebar.relationshipArchive }),
-		).toBeEnabled();
+		expect(screen.getByRole("button", { name: productUi.sidebar.characterSettings })).toBeEnabled();
 		expect(screen.getByRole("button", { name: productUi.sidebar.systemSettings })).toBeEnabled();
 	});
 });

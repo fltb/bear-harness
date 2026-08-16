@@ -11,7 +11,7 @@
  * - `installRendererFaultReporting(reporter?)` — metadata-only fault
  *   reporting with an optional reporter callback.
  *
- * `CompanionClient` is imported type-only from `@bear-harness/companion-types`;
+ * `CompanionClient` is imported type-only from `@bear-harness/companion-client`;
  * it mirrors the preload `companion` facade (one async `Promise<unknown>`
  * function per IPC channel, envelope-unwrapped by `invoke`). Stores treat it
  * as required, but keep runtime guards so an absent client degrades like a

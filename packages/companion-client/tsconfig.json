@@ -13,6 +13,6 @@
 		"skipLibCheck": true,
 		"verbatimModuleSyntax": true
 	},
-	"references": [{ "path": "../companion-types" }, { "path": "../protocol" }],
+	"references": [{ "path": "../protocol" }],
 	"include": ["src/**/*.ts"]
 }

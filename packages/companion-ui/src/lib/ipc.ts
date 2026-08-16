@@ -10,6 +10,7 @@
  */
 
 import { productUi } from "@bear-harness/product-config";
+import type { IpcEnvelope } from "@bear-harness/protocol";
 
 export interface IpcError {
 	kind: string;
@@ -26,20 +27,10 @@ export class IpcInvocationError extends Error {
 	}
 }
 
-/** Unwrap an IPC response envelope; throws on failure or malformed shape. */
-export function unwrap<T>(result: unknown): T {
-	if (typeof result !== "object" || result === null) {
-		throw new Error("invalid IPC response");
-	}
-	const envelope = result as { ok?: unknown; data?: unknown; error?: unknown };
-	if (envelope.ok === true) {
-		return envelope.data as T;
-	}
-	const error = (
-		typeof envelope.error === "object" && envelope.error !== null ? envelope.error : {}
-	) as Partial<IpcError>;
-	const kind = typeof error.kind === "string" ? error.kind : "internal";
-	throw new IpcInvocationError(kind, userFacingError(kind));
+/** Unwrap the envelope already validated by the generated client. */
+export function unwrap<T>(result: IpcEnvelope<T>): T {
+	if (result.ok) return result.data;
+	throw new IpcInvocationError(result.error.kind, userFacingError(result.error.kind));
 }
 
 function userFacingError(kind: string): string {

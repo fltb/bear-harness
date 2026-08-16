@@ -15,46 +15,7 @@
  * types from the package entry (`@bear-harness/protocol`).
  */
 
-import { type Infer, type Schema, z } from "@bear-harness/schema";
-
-type Static<T extends Schema> = Infer<T>;
-type TSchema = Schema;
-
-type StringOptions = { minLength?: number; maxLength?: number; pattern?: string };
-type NumberOptions = { minimum?: number; maximum?: number };
-type ArrayOptions = { maxItems?: number };
-
-const S = {
-	String(options: StringOptions = {}) {
-		let schema = z.string();
-		if (options.minLength !== undefined) schema = schema.min(options.minLength);
-		if (options.maxLength !== undefined) schema = schema.max(options.maxLength);
-		if (options.pattern !== undefined) schema = schema.regex(new RegExp(options.pattern));
-		return schema;
-	},
-	Integer(options: NumberOptions = {}) {
-		let schema = z.number().int().safe();
-		if (options.minimum !== undefined) schema = schema.min(options.minimum);
-		if (options.maximum !== undefined) schema = schema.max(options.maximum);
-		return schema;
-	},
-	Boolean: () => z.boolean(),
-	Null: () => z.null(),
-	Literal: <T extends string | number | boolean>(value: T) => z.literal(value),
-	Optional: <T extends Schema>(schema: T) => schema.optional(),
-	Array<T extends Schema>(schema: T, options: ArrayOptions = {}) {
-		let array = z.array(schema);
-		if (options.maxItems !== undefined) array = array.max(options.maxItems);
-		return array;
-	},
-	Object: <T extends z.ZodRawShape>(shape: T, _options?: { additionalProperties?: false }) =>
-		z.strictObject(shape),
-	Union: <T extends readonly [Schema, Schema, ...Schema[]]>(schemas: T, _options?: unknown) =>
-		z.union(schemas),
-	Record: <K extends z.core.$ZodRecordKey, V extends Schema>(key: K, value: V) =>
-		z.record(key, value),
-	Unknown: () => z.unknown(),
-};
+import { type Schema, z } from "@bear-harness/schema";
 
 // ---------------------------------------------------------------------------
 // Shared wire types
@@ -67,1140 +28,1195 @@ const MAX_SAFE_INT = 9007199254740991;
 const UINT32_MAX = 4294967295;
 
 /** Localizable reason codes for wire errors. */
-export const IpcErrorKind = S.Union(
-	[
-		S.Literal("invalid_request"),
-		S.Literal("not_found"),
-		S.Literal("conflict"),
-		S.Literal("unavailable"),
-		S.Literal("internal"),
-	],
-	{ additionalProperties: false },
-);
-export type IpcErrorKind = Static<typeof IpcErrorKind>;
+export const IpcErrorKind = z.union([
+	z.literal("invalid_request"),
+	z.literal("not_found"),
+	z.literal("conflict"),
+	z.literal("unavailable"),
+	z.literal("internal"),
+]);
+export type IpcErrorKind = z.infer<typeof IpcErrorKind>;
 
 /** Every IPC response body is either data or an error with this shape. */
-export const IpcResponse = <T extends TSchema>(data: T) =>
-	S.Union(
-		[
-			S.Object(
-				{
-					ok: S.Literal(true),
-					data,
-				},
-				{ additionalProperties: false },
-			),
-			S.Object(
-				{
-					ok: S.Literal(false),
-					error: S.Object(
-						{
-							kind: IpcErrorKind,
-							reason: S.String({ maxLength: MAX_STRING_LENGTH }),
-						},
-						{ additionalProperties: false },
-					),
-				},
-				{ additionalProperties: false },
-			),
-		],
-		{ additionalProperties: false },
-	);
+export const IpcResponse = <T extends Schema>(data: T) =>
+	z.union([
+		z.strictObject({
+			ok: z.literal(true),
+			data,
+		}),
+		z.strictObject({
+			ok: z.literal(false),
+			error: z.strictObject({
+				kind: IpcErrorKind,
+				reason: z.string().max(MAX_STRING_LENGTH),
+			}),
+		}),
+	]);
+export const EmptyResponse = z.strictObject({});
 
 // ---------------------------------------------------------------------------
 // Event bus
 // ---------------------------------------------------------------------------
 
-export const EventSeq = S.Integer({ minimum: 0, maximum: MAX_SAFE_INT });
+export const EventSeq = z.number().int().safe().min(0).max(MAX_SAFE_INT);
 
 /** A single domain event published after the Host commits the state change. */
-export const DomainEvent = S.Object(
-	{
-		seq: EventSeq,
-		kind: S.String({ maxLength: 128 }),
-		payload: S.Unknown(),
-	},
-	{ additionalProperties: false },
-);
-
-export const EventSubscribeRequest = S.Object(
-	{
-		afterSeq: S.Optional(EventSeq),
-	},
-	{ additionalProperties: false },
-);
-
-export const EventSubscribeResponse = S.Object(
-	{
-		events: S.Array(DomainEvent, { maxItems: MAX_ARRAY_LENGTH }),
-	},
-	{ additionalProperties: false },
-);
+export const DomainEvent = z.strictObject({
+	seq: EventSeq,
+	kind: z.string().max(128),
+	payload: z.unknown(),
+});
+export const EventSubscribeRequest = z.strictObject({
+	afterSeq: EventSeq.optional(),
+});
+export const EventSubscribeResponse = z.strictObject({
+	events: z.array(DomainEvent).max(MAX_ARRAY_LENGTH),
+});
 
 // ---------------------------------------------------------------------------
 // Snapshot
 // ---------------------------------------------------------------------------
 
-export const SnapshotGetRequest = S.Object({}, { additionalProperties: false });
-
-export const SnapshotResponse = S.Object(
-	{
-		eventSeq: EventSeq,
-		onboarding: S.Optional(S.Unknown()),
-		character: S.Optional(S.Unknown()),
-		conversation: S.Optional(S.Unknown()),
-		memory: S.Optional(S.Unknown()),
-		provider: S.Optional(S.Unknown()),
-		voice: S.Optional(S.Unknown()),
-		commission: S.Optional(S.Unknown()),
-		run: S.Optional(S.Unknown()),
-		artifact: S.Optional(S.Unknown()),
-		settings: S.Optional(S.Unknown()),
-	},
-	{ additionalProperties: false },
-);
+export const SnapshotGetRequest = z.strictObject({});
 
 // ---------------------------------------------------------------------------
 // Onboarding (first-meeting FSM)
 // ---------------------------------------------------------------------------
 
-export const OnboardingStatus = S.Union([S.Literal("active"), S.Literal("complete")], {
-	additionalProperties: false,
+export const OnboardingStatus = z.union([z.literal("active"), z.literal("complete")]);
+export type OnboardingStatus = z.infer<typeof OnboardingStatus>;
+export const OnboardingGetRequest = z.strictObject({});
+export const OnboardingSubmitRequest = z.strictObject({
+	stepId: z
+		.string()
+		.min(1)
+		.max(64)
+		.regex(/^[a-z][a-z0-9_]*$/),
+	answer: z.string().max(MAX_STRING_LENGTH).optional(),
 });
-export type OnboardingStatus = Static<typeof OnboardingStatus>;
+export const OnboardingStateData = z.strictObject({
+	schema_version: z.literal(1),
+	flow_version: z.number().int().safe().min(1).max(Number.MAX_SAFE_INTEGER),
+	answers: z.record(
+		z
+			.string()
+			.min(1)
+			.max(64)
+			.regex(/^[a-z][a-z0-9_]*$/),
+		z.string().max(MAX_STRING_LENGTH),
+	),
+	decisions: z.strictObject({
+		relationship_kind: z
+			.string()
+			.min(1)
+			.max(64)
+			.regex(/^[a-z][a-z0-9_]*$/)
+			.optional(),
+		relationship_memory_enabled: z.boolean().optional(),
+	}),
+});
+export const CharacterGetRequest = z.strictObject({});
+export const CharacterSummary = z.strictObject({
+	id: z.string().min(1).max(64),
+	name: z.string().min(1).max(MAX_STRING_LENGTH),
+	version: z.string().min(1).max(64),
+	subtitle: z.string().max(MAX_STRING_LENGTH),
+	avatarUrl: z.string().min(1).max(2_000_000),
+	active: z.boolean(),
+});
+export const CharacterListRequest = z.strictObject({});
+export const CharacterListResponse = z.strictObject({
+	characters: z.array(CharacterSummary).max(100),
+});
 
-export const OnboardingGetRequest = S.Object({}, { additionalProperties: false });
-export const OnboardingSubmitRequest = S.Object(
-	{
-		stepId: S.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9_]*$" }),
-		answer: S.Optional(S.String({ maxLength: MAX_STRING_LENGTH })),
-	},
-	{ additionalProperties: false },
-);
-export const OnboardingStateData = S.Object(
-	{
-		schema_version: S.Literal(1),
-		flow_version: S.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
-		answers: S.Record(
-			S.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9_]*$" }),
-			S.String({ maxLength: MAX_STRING_LENGTH }),
-		),
-		decisions: S.Object(
-			{
-				relationship_kind: S.Optional(
-					S.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9_]*$" }),
-				),
-				relationship_memory_enabled: S.Optional(S.Boolean()),
-			},
-			{ additionalProperties: false },
-		),
-	},
-	{ additionalProperties: false },
-);
-
-export const CharacterGetRequest = S.Object({}, { additionalProperties: false });
-export const CharacterSummary = S.Object(
-	{
-		id: S.String({ minLength: 1, maxLength: 64 }),
-		name: S.String({ minLength: 1, maxLength: MAX_STRING_LENGTH }),
-		version: S.String({ minLength: 1, maxLength: 64 }),
-		subtitle: S.String({ maxLength: MAX_STRING_LENGTH }),
-		avatarUrl: S.String({ minLength: 1, maxLength: 2_000_000 }),
-		active: S.Boolean(),
-	},
-	{ additionalProperties: false },
-);
-export const CharacterListRequest = S.Object({}, { additionalProperties: false });
-export const CharacterListResponse = S.Object(
-	{ characters: S.Array(CharacterSummary, { maxItems: 100 }) },
-	{ additionalProperties: false },
-);
-export const CharacterActivateRequest = S.Object(
-	{ characterId: S.String({ minLength: 1, maxLength: 64 }) },
-	{ additionalProperties: false },
-);
-export const OnboardingResponse = S.Object(
-	{
-		status: OnboardingStatus,
-		currentStepId: S.Optional(
-			S.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9_]*$" }),
-		),
-		/** Monotonic Host event cursor for ordering concurrent projections. */
-		eventSeq: S.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
-		stateData: OnboardingStateData,
-	},
-	{ additionalProperties: false },
-);
+const CharacterCopy = z.string().min(1).max(MAX_STRING_LENGTH);
+const CharacterIdentifier = z
+	.string()
+	.min(1)
+	.max(64)
+	.regex(/^[a-z][a-z0-9_]*$/);
+const CharacterOnboardingEffect = z.discriminatedUnion("type", [
+	z.strictObject({ type: z.literal("identity.nickname") }),
+	z.strictObject({ type: z.literal("relationship.kind") }),
+	z.strictObject({ type: z.literal("relationship.memory"), enabled_when: CharacterIdentifier }),
+]);
+const CharacterStepPresentation = {
+	id: CharacterIdentifier,
+	heading: CharacterCopy,
+	body: CharacterCopy,
+	quote: CharacterCopy.optional(),
+	note: CharacterCopy.optional(),
+	effects: z.array(CharacterOnboardingEffect).max(3).optional(),
+};
+export const CharacterOnboardingFlow = z.strictObject({
+	version: z.number().int().safe().min(1).max(MAX_SAFE_INT),
+	step_label: CharacterCopy,
+	dialog_label: CharacterCopy,
+	error_prefix: CharacterCopy,
+	steps: z
+		.array(
+			z.discriminatedUnion("kind", [
+				z.strictObject({
+					...CharacterStepPresentation,
+					kind: z.literal("acknowledge"),
+					submit_label: CharacterCopy,
+				}),
+				z.strictObject({
+					...CharacterStepPresentation,
+					kind: z.literal("text"),
+					answer_key: CharacterIdentifier,
+					input_label: CharacterCopy,
+					input_placeholder: CharacterCopy,
+					min_length: z.number().int().safe().min(1).max(MAX_STRING_LENGTH),
+					max_length: z.number().int().safe().min(1).max(MAX_STRING_LENGTH),
+					submit_label: CharacterCopy,
+				}),
+				z.strictObject({
+					...CharacterStepPresentation,
+					kind: z.literal("choice"),
+					answer_key: CharacterIdentifier,
+					choices: z
+						.array(
+							z.strictObject({
+								value: CharacterIdentifier,
+								label: CharacterCopy,
+								description: CharacterCopy,
+							}),
+						)
+						.min(2)
+						.max(12),
+				}),
+			]),
+		)
+		.min(1)
+		.max(12),
+	completion: z.strictObject({ conversation_title: CharacterCopy }),
+});
+export const CharacterTheme = z.strictObject({
+	radius: z.strictObject({ sm: z.number(), md: z.number(), lg: z.number() }),
+	color: z.strictObject({
+		surface: z.string(),
+		surface_alt: z.string(),
+		text: z.string(),
+		text_muted: z.string(),
+		accent: z.string(),
+		line: z.string(),
+		danger: z.string(),
+		amber: z.string(),
+	}),
+	font: z.strictObject({ body: z.string(), heading: z.string() }),
+});
+export const CharacterDisplay = z.strictObject({
+	id: z.string().min(1).max(64),
+	name: CharacterCopy,
+	language: z.string().min(1).max(64),
+	character: z.strictObject({
+		subtitle: z.string().max(MAX_STRING_LENGTH),
+		scene_title: z.string().max(MAX_STRING_LENGTH),
+		greeting: z.string().max(MAX_STRING_LENGTH),
+		composer_placeholder: z.string().max(MAX_STRING_LENGTH),
+		correction: z.strictObject({
+			trigger_label: z.string().max(MAX_STRING_LENGTH),
+			reason_group_label: z.string().max(MAX_STRING_LENGTH),
+		}),
+		first_meeting: CharacterOnboardingFlow,
+	}),
+	theme: CharacterTheme,
+	scenes: z
+		.array(
+			z.strictObject({
+				id: z.string().min(1).max(64),
+				label: z.string().max(MAX_STRING_LENGTH),
+				description: z.string().max(MAX_STRING_LENGTH),
+				backgroundUrl: z.string().max(2_000_000).optional(),
+			}),
+		)
+		.max(MAX_ARRAY_LENGTH),
+	visual: z.strictObject({
+		defaultSceneId: z.string().min(1).max(64),
+		avatarUrl: z.string().min(1).max(2_000_000),
+		presence: z.record(z.string().max(64), z.string().max(2_000_000)),
+		stateLabels: z.record(z.string().max(64), z.string().max(MAX_STRING_LENGTH)),
+	}),
+});
+export const CharacterResponse = z.strictObject({
+	character: CharacterDisplay,
+});
+export const CharacterActivateRequest = z.strictObject({
+	characterId: z.string().min(1).max(64),
+});
+export const CharacterImportRequest = z.strictObject({
+	files: z
+		.array(
+			z.strictObject({
+				path: z.string().min(1).max(512),
+				base64: z.string().max(8_000_000),
+			}),
+		)
+		.min(1)
+		.max(500),
+});
+export const OnboardingResponse = z.strictObject({
+	status: OnboardingStatus,
+	currentStepId: z
+		.string()
+		.min(1)
+		.max(64)
+		.regex(/^[a-z][a-z0-9_]*$/)
+		.optional(),
+	/** Monotonic Host event cursor for ordering concurrent projections. */
+	eventSeq: z.number().int().safe().min(0).max(Number.MAX_SAFE_INTEGER),
+	stateData: OnboardingStateData,
+});
 
 // ---------------------------------------------------------------------------
 // Conversation
 // ---------------------------------------------------------------------------
 
-export const ConversationId = S.String({ minLength: 1, maxLength: 64 });
-export const BranchId = S.String({ minLength: 1, maxLength: 64 });
-export const MessageId = S.String({ minLength: 1, maxLength: 64 });
-export const MessageVersionId = S.String({ minLength: 1, maxLength: 64 });
-
-export const ConversationSummary = S.Object(
-	{
-		id: ConversationId,
-		title: S.String({ maxLength: MAX_STRING_LENGTH }),
-		sceneTitle: S.String({ maxLength: MAX_STRING_LENGTH }),
-		unread: S.Boolean(),
-		updatedAt: S.String({ maxLength: 64 }),
-	},
-	{ additionalProperties: false },
-);
-
-export const ConversationListRequest = S.Object({}, { additionalProperties: false });
-export const ConversationListResponse = S.Object(
-	{
-		conversations: S.Array(ConversationSummary, { maxItems: MAX_ARRAY_LENGTH }),
-	},
-	{ additionalProperties: false },
-);
-
-export const ConversationCreateRequest = S.Object(
-	{
-		title: S.Optional(S.String({ maxLength: MAX_STRING_LENGTH })),
-	},
-	{ additionalProperties: false },
-);
-export const ConversationCreateResponse = S.Object(
-	{
-		id: ConversationId,
-	},
-	{ additionalProperties: false },
-);
-
-export const ConversationSelectRequest = S.Object(
-	{
-		id: ConversationId,
-		branchId: S.Optional(BranchId),
-	},
-	{ additionalProperties: false },
-);
-export const ConversationRenameRequest = S.Object(
-	{ id: ConversationId, title: S.String({ minLength: 1, maxLength: 200 }) },
-	{ additionalProperties: false },
-);
-export const ConversationArchiveRequest = S.Object(
-	{ id: ConversationId, archived: S.Boolean() },
-	{ additionalProperties: false },
-);
-export const ConversationDeleteRequest = S.Object(
-	{ id: ConversationId },
-	{ additionalProperties: false },
-);
+export const ConversationId = z.string().min(1).max(64);
+export const BranchId = z.string().min(1).max(64);
+export const MessageId = z.string().min(1).max(64);
+export const MessageVersionId = z.string().min(1).max(64);
+export const ConversationSummary = z.strictObject({
+	id: ConversationId,
+	title: z.string().max(MAX_STRING_LENGTH),
+	sceneTitle: z.string().max(MAX_STRING_LENGTH),
+	unread: z.boolean(),
+	updatedAt: z.string().max(64),
+});
+export const ConversationListRequest = z.strictObject({});
+export const ConversationListResponse = z.strictObject({
+	conversations: z.array(ConversationSummary).max(MAX_ARRAY_LENGTH),
+});
+export const ConversationCreateRequest = z.strictObject({
+	title: z.string().max(MAX_STRING_LENGTH).optional(),
+});
+export const ConversationCreateResponse = z.strictObject({
+	id: ConversationId,
+});
+export const ConversationSelectRequest = z.strictObject({
+	id: ConversationId,
+	branchId: BranchId.optional(),
+});
+export const ConversationRenameRequest = z.strictObject({
+	id: ConversationId,
+	title: z.string().min(1).max(200),
+});
+export const ConversationArchiveRequest = z.strictObject({
+	id: ConversationId,
+	archived: z.boolean(),
+});
+export const ConversationDeleteRequest = z.strictObject({
+	id: ConversationId,
+});
 
 // ---------------------------------------------------------------------------
 // Message
 // ---------------------------------------------------------------------------
 
-export const MessageRole = S.Union(
-	[S.Literal("user"), S.Literal("assistant"), S.Literal("system")],
-	{ additionalProperties: false },
-);
-
-export const MessageVersion = S.Object(
-	{
-		id: MessageVersionId,
-		role: MessageRole,
-		content: S.String({ maxLength: 65536 }),
-		editedByUser: S.Boolean(),
-		createdAt: S.String({ maxLength: 64 }),
-		adopted: S.Boolean(),
-	},
-	{ additionalProperties: false },
-);
-
-export const Message = S.Object(
-	{
-		id: MessageId,
-		role: MessageRole,
-		adoptedVersionId: S.Optional(MessageVersionId),
-		versions: S.Array(MessageVersion, { maxItems: 20 }),
-		createdAt: S.String({ maxLength: 64 }),
-	},
-	{ additionalProperties: false },
-);
-
-export const MessageSendRequest = S.Object(
-	{
-		conversationId: ConversationId,
-		text: S.String({ minLength: 1, maxLength: 65536 }),
-	},
-	{ additionalProperties: false },
-);
-
-export const MessageSendResponse = S.Object(
-	{
-		messageId: MessageId,
-	},
-	{ additionalProperties: false },
-);
-
-export const MessageRegenerateRequest = S.Object(
-	{
-		conversationId: ConversationId,
-		messageId: MessageId,
-	},
-	{ additionalProperties: false },
-);
-
-export const MessageSwitchVersionRequest = S.Object(
-	{
-		conversationId: ConversationId,
-		messageId: MessageId,
-		versionId: MessageVersionId,
-	},
-	{ additionalProperties: false },
-);
-
-export const MessageEditRequest = S.Object(
-	{
-		conversationId: ConversationId,
-		messageId: MessageId,
-		text: S.String({ minLength: 1, maxLength: 65536 }),
-		isUserMessage: S.Boolean(),
-	},
-	{ additionalProperties: false },
-);
-
-export const MessageContinueRequest = S.Object(
-	{
-		conversationId: ConversationId,
-	},
-	{ additionalProperties: false },
-);
-
-export const MessageCorrectRequest = S.Object(
-	{
-		conversationId: ConversationId,
-		reason: S.String({ maxLength: MAX_STRING_LENGTH }),
-		applyScope: S.Union([S.Literal("once"), S.Literal("session"), S.Literal("always")], {
-			additionalProperties: false,
-		}),
-	},
-	{ additionalProperties: false },
-);
-
-export const MessageBranchRequest = S.Object(
-	{
-		conversationId: ConversationId,
-		messageId: MessageId,
-	},
-	{ additionalProperties: false },
-);
-
-export const MessageBranchResponse = S.Object(
-	{
-		branchId: BranchId,
-	},
-	{ additionalProperties: false },
-);
-
-export const MessageAbortRequest = S.Object(
-	{
-		conversationId: ConversationId,
-	},
-	{ additionalProperties: false },
-);
+export const MessageRole = z.union([
+	z.literal("user"),
+	z.literal("assistant"),
+	z.literal("system"),
+]);
+export const MessageVersion = z.strictObject({
+	id: MessageVersionId,
+	role: MessageRole,
+	content: z.string().max(65536),
+	editedByUser: z.boolean(),
+	createdAt: z.string().max(64),
+	adopted: z.boolean(),
+});
+export const Message = z.strictObject({
+	id: MessageId,
+	role: MessageRole,
+	adoptedVersionId: MessageVersionId.optional(),
+	versions: z.array(MessageVersion).max(20),
+	createdAt: z.string().max(64),
+});
+export const ConversationSelectResponse = z.strictObject({
+	activeConversationId: ConversationId,
+	activeBranchId: BranchId.optional(),
+	id: ConversationId,
+	title: z.string().max(MAX_STRING_LENGTH),
+	sceneTitle: z.string().max(MAX_STRING_LENGTH),
+	messages: z.array(Message).max(MAX_ARRAY_LENGTH),
+});
+export const MessageSendRequest = z.strictObject({
+	conversationId: ConversationId,
+	text: z.string().min(1).max(65536),
+});
+export const MessageSendResponse = z.strictObject({
+	messageId: MessageId,
+	versionId: MessageVersionId,
+	status: z.union([z.literal("completed"), z.literal("failed"), z.literal("aborted")]),
+});
+export const MessageRegenerateRequest = z.strictObject({
+	conversationId: ConversationId,
+	messageId: MessageId,
+});
+export const MessageSwitchVersionRequest = z.strictObject({
+	conversationId: ConversationId,
+	messageId: MessageId,
+	versionId: MessageVersionId,
+});
+export const MessageEditRequest = z.strictObject({
+	conversationId: ConversationId,
+	messageId: MessageId,
+	text: z.string().min(1).max(65536),
+	isUserMessage: z.boolean(),
+});
+export const MessageContinueRequest = z.strictObject({
+	conversationId: ConversationId,
+});
+export const MessageCorrectRequest = z.strictObject({
+	conversationId: ConversationId,
+	reason: z.string().max(MAX_STRING_LENGTH),
+	applyScope: z.union([z.literal("once"), z.literal("session"), z.literal("always")]),
+});
+export const MessageBranchRequest = z.strictObject({
+	conversationId: ConversationId,
+	messageId: MessageId,
+});
+export const MessageBranchResponse = z.strictObject({
+	branchId: BranchId,
+});
+export const MessageAbortRequest = z.strictObject({
+	conversationId: ConversationId,
+});
 
 // ---------------------------------------------------------------------------
 // Memory
 // ---------------------------------------------------------------------------
 
-export const MemoryScope = S.Union(
-	[S.Literal("self"), S.Literal("relationship"), S.Literal("scene")],
-	{ additionalProperties: false },
-);
-
-export const MemoryCandidate = S.Object(
-	{
-		id: S.String({ maxLength: 64 }),
-		kind: S.Union(
-			[
-				S.Literal("fact"),
-				S.Literal("preference"),
-				S.Literal("event"),
-				S.Literal("self_canon_summary"),
-			],
-			{ additionalProperties: false },
-		),
-		scope: MemoryScope,
-		text: S.String({ maxLength: MAX_STRING_LENGTH }),
-		why: S.String({ maxLength: MAX_STRING_LENGTH }),
-		status: S.Union(
-			[S.Literal("pending"), S.Literal("approved"), S.Literal("rejected"), S.Literal("expired")],
-			{ additionalProperties: false },
-		),
-		createdAt: S.String({ maxLength: 64 }),
-	},
-	{ additionalProperties: false },
-);
-
-export const MemoryEntry = S.Object(
-	{
-		id: S.String({ maxLength: 64 }),
-		kind: S.String({ maxLength: 64 }),
-		scope: MemoryScope,
-		text: S.String({ maxLength: MAX_STRING_LENGTH }),
-		normalizedText: S.String({ maxLength: MAX_STRING_LENGTH }),
-		sourceConversationTitle: S.String({ maxLength: MAX_STRING_LENGTH }),
-		pinned: S.Boolean(),
-		createdAt: S.String({ maxLength: 64 }),
-	},
-	{ additionalProperties: false },
-);
-
-export const MemoryListCandidatesRequest = S.Object({}, { additionalProperties: false });
-export const MemoryListCandidatesResponse = S.Object(
-	{
-		candidates: S.Array(MemoryCandidate, { maxItems: MAX_ARRAY_LENGTH }),
-	},
-	{ additionalProperties: false },
-);
-
-export const MemoryApprovalDecision = S.Union(
-	[S.Literal("approve"), S.Literal("approve_edited"), S.Literal("reject")],
-	{ additionalProperties: false },
-);
-
-export const MemoryDecideCandidateRequest = S.Object(
-	{
-		candidateId: S.String({ maxLength: 64 }),
-		decision: MemoryApprovalDecision,
-		editedText: S.Optional(S.String({ maxLength: MAX_STRING_LENGTH })),
-		scope: S.Optional(MemoryScope),
-	},
-	{ additionalProperties: false },
-);
-
-export const MemorySearchRequest = S.Object(
-	{
-		query: S.String({ maxLength: MAX_STRING_LENGTH }),
-		scope: S.Optional(MemoryScope),
-	},
-	{ additionalProperties: false },
-);
-
-export const MemorySearchResponse = S.Object(
-	{
-		entries: S.Array(MemoryEntry, { maxItems: MAX_ARRAY_LENGTH }),
-	},
-	{ additionalProperties: false },
-);
-
-export const MemoryListRequest = S.Object(
-	{
-		scope: S.Optional(MemoryScope),
-		enabled: S.Optional(S.Boolean()),
-		limit: S.Optional(S.Integer({ minimum: 1, maximum: 100 })),
-	},
-	{ additionalProperties: false },
-);
-
-export const MemoryPinRequest = S.Object(
-	{
-		entryId: S.String({ maxLength: 64 }),
-		pinned: S.Boolean(),
-	},
-	{ additionalProperties: false },
-);
-
-export const MemoryForgetRequest = S.Object(
-	{
-		entryId: S.String({ maxLength: 64 }),
-	},
-	{ additionalProperties: false },
-);
-
-export const MemoryExcludeRequest = S.Object(
-	{
-		entryId: S.String({ maxLength: 64 }),
-		excluded: S.Boolean(),
-	},
-	{ additionalProperties: false },
-);
-
-export const MemoryEditRequest = S.Object(
-	{
-		entryId: S.String({ maxLength: 64 }),
-		newText: S.String({ minLength: 1, maxLength: MAX_STRING_LENGTH }),
-	},
-	{ additionalProperties: false },
-);
+export const MemoryScope = z.union([
+	z.literal("self"),
+	z.literal("relationship"),
+	z.literal("scene"),
+]);
+export const MemoryCandidate = z.strictObject({
+	id: z.string().max(64),
+	kind: z.union([
+		z.literal("fact"),
+		z.literal("preference"),
+		z.literal("event"),
+		z.literal("self_canon_summary"),
+	]),
+	scope: MemoryScope,
+	text: z.string().max(MAX_STRING_LENGTH),
+	why: z.string().max(MAX_STRING_LENGTH),
+	status: z.union([
+		z.literal("pending"),
+		z.literal("approved"),
+		z.literal("rejected"),
+		z.literal("expired"),
+	]),
+	createdAt: z.string().max(64),
+});
+export const MemoryEntry = z.strictObject({
+	id: z.string().max(64),
+	kind: z.string().max(64),
+	scope: MemoryScope,
+	text: z.string().max(MAX_STRING_LENGTH),
+	normalizedText: z.string().max(MAX_STRING_LENGTH),
+	sourceConversationTitle: z.string().max(MAX_STRING_LENGTH),
+	pinned: z.boolean(),
+	createdAt: z.string().max(64),
+});
+export const MemoryListCandidatesRequest = z.strictObject({});
+export const MemoryListCandidatesResponse = z.strictObject({
+	candidates: z.array(MemoryCandidate).max(MAX_ARRAY_LENGTH),
+});
+export const MemoryApprovalDecision = z.union([
+	z.literal("approve"),
+	z.literal("approve_edited"),
+	z.literal("reject"),
+]);
+export const MemoryDecideCandidateRequest = z.strictObject({
+	candidateId: z.string().max(64),
+	decision: MemoryApprovalDecision,
+	editedText: z.string().max(MAX_STRING_LENGTH).optional(),
+	scope: MemoryScope.optional(),
+});
+export const MemorySearchRequest = z.strictObject({
+	query: z.string().max(MAX_STRING_LENGTH),
+	scope: MemoryScope.optional(),
+});
+export const MemorySearchResponse = z.strictObject({
+	entries: z.array(MemoryEntry).max(MAX_ARRAY_LENGTH),
+});
+export const MemoryListResponse = MemorySearchResponse;
+export const MemoryListRequest = z.strictObject({
+	scope: MemoryScope.optional(),
+	enabled: z.boolean().optional(),
+	limit: z.number().int().safe().min(1).max(100).optional(),
+});
+export const MemoryPinRequest = z.strictObject({
+	entryId: z.string().max(64),
+	pinned: z.boolean(),
+});
+export const MemoryForgetRequest = z.strictObject({
+	entryId: z.string().max(64),
+});
+export const MemoryExcludeRequest = z.strictObject({
+	entryId: z.string().max(64),
+	excluded: z.boolean(),
+});
+export const MemoryEditRequest = z.strictObject({
+	entryId: z.string().max(64),
+	newText: z.string().min(1).max(MAX_STRING_LENGTH),
+});
 
 // ---------------------------------------------------------------------------
 // Story archive (natural-language changes over read-only source canon)
 // ---------------------------------------------------------------------------
 
-export const StoryChangeScope = S.Union([S.Literal("global"), S.Literal("branch")], {
-	additionalProperties: false,
+export const StoryChangeScope = z.union([z.literal("global"), z.literal("branch")]);
+export const StoryChangeSource = z.union([
+	z.literal("user_explicit"),
+	z.literal("story_event"),
+	z.literal("user_confirmed"),
+]);
+export const StoryChange = z.strictObject({
+	id: z.string().min(1).max(64),
+	text: z.string().min(1).max(MAX_STRING_LENGTH),
+	scope: StoryChangeScope,
+	source: StoryChangeSource,
+	conversationId: ConversationId.optional(),
+	branchId: BranchId.optional(),
+	createdAt: z.string().max(64),
 });
-export const StoryChangeSource = S.Union(
-	[S.Literal("user_explicit"), S.Literal("story_event"), S.Literal("user_confirmed")],
-	{ additionalProperties: false },
-);
-export const StoryChange = S.Object(
-	{
-		id: S.String({ minLength: 1, maxLength: 64 }),
-		text: S.String({ minLength: 1, maxLength: MAX_STRING_LENGTH }),
-		scope: StoryChangeScope,
-		source: StoryChangeSource,
-		conversationId: S.Optional(ConversationId),
-		branchId: S.Optional(BranchId),
-		createdAt: S.String({ maxLength: 64 }),
-	},
-	{ additionalProperties: false },
-);
-export const StoryListChangesRequest = S.Object(
-	{ branchId: S.Optional(BranchId) },
-	{ additionalProperties: false },
-);
-export const StoryListChangesResponse = S.Object(
-	{ changes: S.Array(StoryChange, { maxItems: MAX_ARRAY_LENGTH }) },
-	{ additionalProperties: false },
-);
-export const StoryApplyChangeRequest = S.Object(
-	{
-		conversationId: S.Optional(ConversationId),
-		branchId: S.Optional(BranchId),
-		text: S.String({ minLength: 1, maxLength: MAX_STRING_LENGTH }),
-		scope: StoryChangeScope,
-	},
-	{ additionalProperties: false },
-);
-export const StoryApplyChangeResponse = S.Object(
-	{ change: StoryChange },
-	{ additionalProperties: false },
-);
-export const StoryRevertChangeRequest = S.Object(
-	{
-		changeId: S.String({ minLength: 1, maxLength: 64 }),
-		conversationId: S.Optional(ConversationId),
-	},
-	{ additionalProperties: false },
-);
-export const StoryResetRequest = S.Object(
-	{ conversationId: S.Optional(ConversationId), branchId: S.Optional(BranchId) },
-	{ additionalProperties: false },
-);
-export const StoryResetResponse = S.Object(
-	{ count: S.Integer({ minimum: 0, maximum: MAX_SAFE_INT }) },
-	{ additionalProperties: false },
-);
-export const StoryChangeProposal = S.Object(
-	{
-		id: S.String({ minLength: 1, maxLength: 64 }),
-		conversationId: ConversationId,
-		branchId: BranchId,
-		text: S.String({ minLength: 1, maxLength: MAX_STRING_LENGTH }),
-		createdAt: S.String({ maxLength: 64 }),
-	},
-	{ additionalProperties: false },
-);
-export const StoryListProposalsRequest = S.Object(
-	{ conversationId: S.Optional(ConversationId) },
-	{ additionalProperties: false },
-);
-export const StoryListProposalsResponse = S.Object(
-	{ proposals: S.Array(StoryChangeProposal, { maxItems: MAX_ARRAY_LENGTH }) },
-	{ additionalProperties: false },
-);
-export const StoryResolveProposalRequest = S.Object(
-	{
-		proposalId: S.String({ minLength: 1, maxLength: 64 }),
-		accept: S.Boolean(),
-	},
-	{ additionalProperties: false },
-);
+export const StoryListChangesRequest = z.strictObject({
+	branchId: BranchId.optional(),
+});
+export const StoryListChangesResponse = z.strictObject({
+	changes: z.array(StoryChange).max(MAX_ARRAY_LENGTH),
+});
+export const StoryApplyChangeRequest = z.strictObject({
+	conversationId: ConversationId.optional(),
+	branchId: BranchId.optional(),
+	text: z.string().min(1).max(MAX_STRING_LENGTH),
+	scope: StoryChangeScope,
+});
+export const StoryApplyChangeResponse = z.strictObject({
+	change: StoryChange,
+});
+export const StoryRevertChangeRequest = z.strictObject({
+	changeId: z.string().min(1).max(64),
+	conversationId: ConversationId.optional(),
+});
+export const StoryResetRequest = z.strictObject({
+	conversationId: ConversationId.optional(),
+	branchId: BranchId.optional(),
+});
+export const StoryResetResponse = z.strictObject({
+	count: z.number().int().safe().min(0).max(MAX_SAFE_INT),
+});
+export const StoryChangeProposal = z.strictObject({
+	id: z.string().min(1).max(64),
+	conversationId: ConversationId,
+	branchId: BranchId,
+	text: z.string().min(1).max(MAX_STRING_LENGTH),
+	createdAt: z.string().max(64),
+});
+export const StoryListProposalsRequest = z.strictObject({
+	conversationId: ConversationId.optional(),
+});
+export const StoryListProposalsResponse = z.strictObject({
+	proposals: z.array(StoryChangeProposal).max(MAX_ARRAY_LENGTH),
+});
+export const StoryResolveProposalRequest = z.strictObject({
+	proposalId: z.string().min(1).max(64),
+	accept: z.boolean(),
+});
+export const StoryResolveProposalResponse = z.strictObject({
+	change: StoryChange.optional(),
+});
 
 // ---------------------------------------------------------------------------
 // Canon Hub (advanced package authoring)
 // ---------------------------------------------------------------------------
 
-export const CanonSource = S.Object(
-	{
-		id: S.String({ minLength: 1, maxLength: 64 }),
-		logicalName: S.String({ minLength: 1, maxLength: 255 }),
-		mime: S.String({ minLength: 1, maxLength: 128 }),
-		sha256: S.String({ minLength: 1, maxLength: 128 }),
-		chunkCount: S.Integer({ minimum: 0, maximum: MAX_SAFE_INT }),
-		createdAt: S.String({ maxLength: 64 }),
-	},
-	{ additionalProperties: false },
-);
-export const CanonChunk = S.Object(
-	{
-		id: S.String({ minLength: 1, maxLength: 64 }),
-		sourceId: S.String({ minLength: 1, maxLength: 64 }),
-		sourceName: S.String({ minLength: 1, maxLength: 255 }),
-		ordinal: S.Integer({ minimum: 0, maximum: MAX_SAFE_INT }),
-		content: S.String({ maxLength: 4096 }),
-	},
-	{ additionalProperties: false },
-);
-export const CanonListSourcesRequest = S.Object({}, { additionalProperties: false });
-export const CanonAddSourceRequest = S.Object(
-	{
-		logicalName: S.String({ minLength: 1, maxLength: 255 }),
-		content: S.String({ minLength: 1, maxLength: 1_048_576 }),
-	},
-	{ additionalProperties: false },
-);
-export const CanonSearchRequest = S.Object(
-	{ query: S.String({ minLength: 1, maxLength: 1000 }) },
-	{ additionalProperties: false },
-);
-export const CanonRemoveSourceRequest = S.Object(
-	{ sourceId: S.String({ minLength: 1, maxLength: 64 }) },
-	{ additionalProperties: false },
-);
-export const CanonModuleKind = S.Union([
-	S.Literal("root"),
-	S.Literal("arc"),
-	S.Literal("event"),
-	S.Literal("entity"),
-	S.Literal("relationship"),
-	S.Literal("location"),
-	S.Literal("object"),
-	S.Literal("behavior"),
+export const CanonSource = z.strictObject({
+	id: z.string().min(1).max(64),
+	logicalName: z.string().min(1).max(255),
+	mime: z.string().min(1).max(128),
+	sha256: z.string().min(1).max(128),
+	chunkCount: z.number().int().safe().min(0).max(MAX_SAFE_INT),
+	createdAt: z.string().max(64),
+});
+export const CanonChunk = z.strictObject({
+	id: z.string().min(1).max(64),
+	sourceId: z.string().min(1).max(64),
+	sourceName: z.string().min(1).max(255),
+	ordinal: z.number().int().safe().min(0).max(MAX_SAFE_INT),
+	content: z.string().max(4096),
+});
+export const CanonListSourcesRequest = z.strictObject({});
+export const CanonAddSourceRequest = z.strictObject({
+	logicalName: z.string().min(1).max(255),
+	content: z.string().min(1).max(1_048_576),
+});
+export const CanonSearchRequest = z.strictObject({
+	query: z.string().min(1).max(1000),
+});
+export const CanonRemoveSourceRequest = z.strictObject({
+	sourceId: z.string().min(1).max(64),
+});
+export const CanonModuleKind = z.union([
+	z.literal("root"),
+	z.literal("arc"),
+	z.literal("event"),
+	z.literal("entity"),
+	z.literal("relationship"),
+	z.literal("location"),
+	z.literal("object"),
+	z.literal("behavior"),
 ]);
-export const CanonModule = S.Object(
-	{
-		id: S.String({ minLength: 1, maxLength: 64 }),
-		parentId: S.Optional(S.String({ minLength: 1, maxLength: 64 })),
-		kind: CanonModuleKind,
-		title: S.String({ minLength: 1, maxLength: 255 }),
-		instructions: S.String({ maxLength: 16_384 }),
-		sourceChunkIds: S.Array(S.String({ minLength: 1, maxLength: 64 }), { maxItems: 100 }),
-		createdAt: S.String({ maxLength: 64 }),
-	},
-	{ additionalProperties: false },
-);
-export const CanonListModulesRequest = S.Object({}, { additionalProperties: false });
-export const CanonUpsertModuleRequest = S.Object(
-	{
-		id: S.Optional(S.String({ minLength: 1, maxLength: 64 })),
-		parentId: S.Optional(S.String({ minLength: 1, maxLength: 64 })),
-		kind: CanonModuleKind,
-		title: S.String({ minLength: 1, maxLength: 255 }),
-		instructions: S.String({ maxLength: 16_384 }),
-		sourceChunkIds: S.Array(S.String({ minLength: 1, maxLength: 64 }), { maxItems: 100 }),
-	},
-	{ additionalProperties: false },
-);
-export const CanonDeleteModuleRequest = S.Object(
-	{ id: S.String({ minLength: 1, maxLength: 64 }) },
-	{ additionalProperties: false },
-);
+export const CanonModule = z.strictObject({
+	id: z.string().min(1).max(64),
+	parentId: z.string().min(1).max(64).optional(),
+	kind: CanonModuleKind,
+	title: z.string().min(1).max(255),
+	instructions: z.string().max(16_384),
+	sourceChunkIds: z.array(z.string().min(1).max(64)).max(100),
+	createdAt: z.string().max(64),
+});
+export const CanonListModulesRequest = z.strictObject({});
+export const CanonUpsertModuleRequest = z.strictObject({
+	id: z.string().min(1).max(64).optional(),
+	parentId: z.string().min(1).max(64).optional(),
+	kind: CanonModuleKind,
+	title: z.string().min(1).max(255),
+	instructions: z.string().max(16_384),
+	sourceChunkIds: z.array(z.string().min(1).max(64)).max(100),
+});
+export const CanonDeleteModuleRequest = z.strictObject({
+	id: z.string().min(1).max(64),
+});
+export const CanonListSourcesResponse = z.strictObject({
+	sources: z.array(CanonSource).max(MAX_ARRAY_LENGTH),
+});
+export const CanonAddSourceResponse = z.strictObject({
+	source: CanonSource,
+});
+export const CanonSearchResponse = z.strictObject({
+	chunks: z.array(CanonChunk).max(MAX_ARRAY_LENGTH),
+});
+export const CanonListModulesResponse = z.strictObject({
+	modules: z.array(CanonModule).max(MAX_ARRAY_LENGTH),
+});
+export const CanonUpsertModuleResponse = z.strictObject({
+	module: CanonModule,
+});
 
 // ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
 
-export const ProviderInfo = S.Object(
-	{
-		id: S.String({ maxLength: 64 }),
-		name: S.String({ maxLength: MAX_STRING_LENGTH }),
-		authType: S.Union([S.Literal("api_key"), S.Literal("oauth")], {
-			additionalProperties: false,
-		}),
-		credentialStatus: S.Union(
-			[
-				S.Literal("missing"),
-				S.Literal("session_only"),
-				S.Literal("stored"),
-				S.Literal("weak_storage"),
-				S.Literal("refreshing"),
-				S.Literal("invalid"),
-				S.Literal("unavailable"),
-			],
-			{ additionalProperties: false },
-		),
-		availableModels: S.Array(
-			S.Object(
-				{
-					id: S.String({ maxLength: 128 }),
-					name: S.String({ maxLength: MAX_STRING_LENGTH }),
-					supportsImages: S.Boolean(),
-				},
-				{ additionalProperties: false },
-			),
-			{ maxItems: MAX_ARRAY_LENGTH },
-		),
-	},
-	{ additionalProperties: false },
+const ProviderModelCost: z.ZodType<{
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	tiers?: Array<{
+		input: number;
+		output: number;
+		cacheRead: number;
+		cacheWrite: number;
+		inputTokensAbove: number;
+	}>;
+}> = z.lazy(() =>
+	z.strictObject({
+		input: z.number().finite(),
+		output: z.number().finite(),
+		cacheRead: z.number().finite(),
+		cacheWrite: z.number().finite(),
+		tiers: z
+			.array(
+				z.strictObject({
+					input: z.number().finite(),
+					output: z.number().finite(),
+					cacheRead: z.number().finite(),
+					cacheWrite: z.number().finite(),
+					inputTokensAbove: z.number().int().safe().nonnegative(),
+				}),
+			)
+			.max(20)
+			.optional(),
+	}),
 );
-
-export const ProviderListRequest = S.Object({}, { additionalProperties: false });
-export const ProviderListResponse = S.Object(
-	{
-		providers: S.Array(ProviderInfo, { maxItems: 30 }),
-	},
-	{ additionalProperties: false },
-);
-
-export const ProviderSetApiKeyRequest = S.Object(
-	{
-		providerId: S.String({ maxLength: 64 }),
-		apiKey: S.String({ minLength: 1, maxLength: 2048 }),
-		sessionOnly: S.Optional(S.Boolean()),
-	},
-	{ additionalProperties: false },
-);
-
-export const ProviderLoginRequest = S.Object(
-	{
-		providerId: S.String({ maxLength: 64 }),
-		authType: S.Literal("oauth"),
-	},
-	{ additionalProperties: false },
-);
-
-export const ProviderLoginResponse = S.Object(
-	{
-		providerId: S.String({ maxLength: 64 }),
-		status: S.Union([
-			S.Literal("running"),
-			S.Literal("waiting_input"),
-			S.Literal("completed"),
-			S.Literal("failed"),
-		]),
-		authUrl: S.Optional(S.String({ maxLength: 2048 })),
-		deviceCode: S.Optional(S.String({ maxLength: 128 })),
-		verificationUri: S.Optional(S.String({ maxLength: 2048 })),
-		message: S.Optional(S.String({ maxLength: MAX_STRING_LENGTH })),
-		prompt: S.Optional(
-			S.Object(
-				{
-					type: S.Union([
-						S.Literal("text"),
-						S.Literal("secret"),
-						S.Literal("select"),
-						S.Literal("manual_code"),
-					]),
-					message: S.String({ maxLength: MAX_STRING_LENGTH }),
-					placeholder: S.Optional(S.String({ maxLength: MAX_STRING_LENGTH })),
-					options: S.Optional(
-						S.Array(
-							S.Object(
-								{
-									id: S.String(),
-									label: S.String(),
-									description: S.Optional(S.String()),
-								},
-								{ additionalProperties: false },
-							),
-							{ maxItems: 30 },
-						),
-					),
-				},
-				{ additionalProperties: false },
-			),
-		),
-	},
-	{ additionalProperties: false },
-);
-export const ProviderLoginStatusRequest = S.Object(
-	{ providerId: S.String({ maxLength: 64 }) },
-	{ additionalProperties: false },
-);
-export const ProviderLoginAnswerRequest = S.Object(
-	{ providerId: S.String({ maxLength: 64 }), answer: S.String({ maxLength: 4096 }) },
-	{ additionalProperties: false },
-);
-
-export const ProviderLogoutRequest = S.Object(
-	{
-		providerId: S.String({ maxLength: 64 }),
-	},
-	{ additionalProperties: false },
-);
+export const ProviderInfo = z.strictObject({
+	id: z.string().max(64),
+	name: z.string().max(MAX_STRING_LENGTH),
+	authType: z.union([z.literal("api_key"), z.literal("oauth")]),
+	credentialStatus: z.union([
+		z.literal("missing"),
+		z.literal("session_only"),
+		z.literal("stored"),
+		z.literal("weak_storage"),
+		z.literal("refreshing"),
+		z.literal("invalid"),
+		z.literal("unavailable"),
+	]),
+	availableModels: z
+		.array(
+			z.strictObject({
+				id: z.string().max(128),
+				name: z.string().max(MAX_STRING_LENGTH),
+				supportsImages: z.boolean(),
+				cost: ProviderModelCost,
+			}),
+		)
+		.max(1000),
+	unavailable: z.array(z.string().min(1).max(64)).max(30),
+});
+export const ProviderListRequest = z.strictObject({});
+export const ProviderListResponse = z.strictObject({
+	providers: z.array(ProviderInfo).max(30),
+});
+export const ProviderSetApiKeyRequest = z.strictObject({
+	providerId: z.string().max(64),
+	apiKey: z.string().min(1).max(2048),
+	sessionOnly: z.boolean().optional(),
+});
+export const ProviderSetApiKeyResponse = z.strictObject({
+	status: ProviderInfo.shape.credentialStatus,
+});
+export const ProviderLoginRequest = z.strictObject({
+	providerId: z.string().max(64),
+	authType: z.literal("oauth"),
+});
+export const ProviderLoginResponse = z.strictObject({
+	providerId: z.string().max(64),
+	status: z.union([
+		z.literal("running"),
+		z.literal("waiting_input"),
+		z.literal("completed"),
+		z.literal("failed"),
+	]),
+	authUrl: z.string().max(2048).optional(),
+	deviceCode: z.string().max(128).optional(),
+	verificationUri: z.string().max(2048).optional(),
+	message: z.string().max(MAX_STRING_LENGTH).optional(),
+	prompt: z
+		.strictObject({
+			type: z.union([
+				z.literal("text"),
+				z.literal("secret"),
+				z.literal("select"),
+				z.literal("manual_code"),
+			]),
+			message: z.string().max(MAX_STRING_LENGTH),
+			placeholder: z.string().max(MAX_STRING_LENGTH).optional(),
+			options: z
+				.array(
+					z.strictObject({
+						id: z.string(),
+						label: z.string(),
+						description: z.string().optional(),
+					}),
+				)
+				.max(30)
+				.optional(),
+		})
+		.optional(),
+});
+export const ProviderLoginStatusRequest = z.strictObject({
+	providerId: z.string().max(64),
+});
+export const ProviderLoginAnswerRequest = z.strictObject({
+	providerId: z.string().max(64),
+	answer: z.string().max(4096),
+});
+export const ProviderLogoutRequest = z.strictObject({
+	providerId: z.string().max(64),
+});
 
 // ---------------------------------------------------------------------------
 // Voice Stack
 // ---------------------------------------------------------------------------
 
-export const VoiceStack = S.Object(
-	{
-		id: S.String({ maxLength: 64 }),
-		providerId: S.String({ maxLength: 64 }),
-		modelId: S.String({ maxLength: 128 }),
-		revision: S.Integer({ minimum: 0, maximum: MAX_SAFE_INT }),
-		label: S.String({ maxLength: MAX_STRING_LENGTH }),
-		active: S.Boolean(),
-		createdAt: S.String({ maxLength: 64 }),
-	},
-	{ additionalProperties: false },
-);
-
-export const VoiceStackListRequest = S.Object({}, { additionalProperties: false });
-export const VoiceStackListResponse = S.Object(
-	{
-		stacks: S.Array(VoiceStack, { maxItems: 20 }),
-	},
-	{ additionalProperties: false },
-);
-
-export const VoiceStackSwitchRequest = S.Object(
-	{
-		stackId: S.String({ maxLength: 64 }),
-		scope: S.Union([S.Literal("next_scene"), S.Literal("branch_only")], {
-			additionalProperties: false,
-		}),
-		rollbackAvailable: S.Boolean(),
-	},
-	{ additionalProperties: false },
-);
-export const VoiceStackPinRequest = S.Object(
-	{
-		providerId: S.String({ minLength: 1, maxLength: 64 }),
-		modelId: S.String({ minLength: 1, maxLength: 128 }),
-		label: S.Optional(S.String({ maxLength: MAX_STRING_LENGTH })),
-	},
-	{ additionalProperties: false },
-);
+export const VoiceStack = z.strictObject({
+	id: z.string().max(64),
+	companionId: z.string().min(1).max(64),
+	providerId: z.string().max(64),
+	modelId: z.string().max(128),
+	revision: z.number().int().safe().min(0).max(MAX_SAFE_INT),
+	label: z.string().max(MAX_STRING_LENGTH),
+	active: z.boolean(),
+	createdAt: z.string().max(64),
+});
+export const VoiceStackListRequest = z.strictObject({});
+export const VoiceStackListResponse = z.strictObject({
+	stacks: z.array(VoiceStack).max(20),
+});
+export const VoiceStackSwitchRequest = z.strictObject({
+	stackId: z.string().max(64),
+	scope: z.union([z.literal("next_scene"), z.literal("branch_only")]),
+	rollbackAvailable: z.boolean(),
+});
+export const VoiceStackPinRequest = z.strictObject({
+	providerId: z.string().min(1).max(64),
+	modelId: z.string().min(1).max(128),
+	label: z.string().max(MAX_STRING_LENGTH).optional(),
+});
+export const VoiceStackResponse = z.strictObject({
+	stack: VoiceStack,
+});
 
 // ---------------------------------------------------------------------------
 // Commission
 // ---------------------------------------------------------------------------
 
-export const ActionDraft = S.Object(
-	{
-		id: S.String({ maxLength: 64 }),
-		title: S.String({ maxLength: MAX_STRING_LENGTH }),
-		description: S.String({ maxLength: MAX_STRING_LENGTH }),
-		reads: S.Array(S.String({ maxLength: MAX_PATH_LENGTH }), { maxItems: 20 }),
-		writes: S.Array(S.String({ maxLength: MAX_PATH_LENGTH }), { maxItems: 20 }),
-		networkAllowed: S.Boolean(),
-		toolNames: S.Array(S.String({ maxLength: 64 }), { maxItems: 20 }),
-		hash: S.String({ maxLength: 128 }),
-	},
-	{ additionalProperties: false },
-);
-
-export const Commission = S.Object(
-	{
-		id: S.String({ maxLength: 64 }),
-		conversationId: S.Optional(ConversationId),
-		draft: ActionDraft,
-		status: S.Union(
-			[
-				S.Literal("draft"),
-				S.Literal("awaiting_approval"),
-				S.Literal("approved"),
-				S.Literal("queued"),
-				S.Literal("running"),
-				S.Literal("needs_user"),
-				S.Literal("completed"),
-				S.Literal("failed"),
-				S.Literal("cancelled"),
-			],
-			{ additionalProperties: false },
-		),
-		createdAt: S.String({ maxLength: 64 }),
-	},
-	{ additionalProperties: false },
-);
-
-export const CommissionListRequest = S.Object({}, { additionalProperties: false });
-export const CommissionListResponse = S.Object(
-	{
-		commissions: S.Array(Commission, { maxItems: MAX_ARRAY_LENGTH }),
-	},
-	{ additionalProperties: false },
-);
-
-export const CommissionDraftRequest = S.Object(
-	{
-		conversationId: S.String({ minLength: 1, maxLength: 64 }),
-		title: S.String({ minLength: 1, maxLength: MAX_STRING_LENGTH }),
-		description: S.String({ minLength: 1, maxLength: MAX_STRING_LENGTH }),
-		reads: S.Optional(
-			S.Array(S.String({ minLength: 1, maxLength: MAX_PATH_LENGTH }), { maxItems: 20 }),
-		),
-		writes: S.Optional(
-			S.Array(S.String({ minLength: 1, maxLength: MAX_PATH_LENGTH }), { maxItems: 20 }),
-		),
-		networkAllowed: S.Optional(S.Boolean()),
-		toolNames: S.Optional(S.Array(S.String({ minLength: 1, maxLength: 64 }), { maxItems: 20 })),
-	},
-	{ additionalProperties: false },
-);
-
-export const CommissionDraftResponse = S.Object(
-	{
-		commissionId: S.String({ maxLength: 64 }),
-		draftHash: S.String({ maxLength: 128 }),
-	},
-	{ additionalProperties: false },
-);
-
-export const CommissionApproveRequest = S.Object(
-	{
-		commissionId: S.String({ minLength: 1, maxLength: 64 }),
-		approvedHash: S.String({ minLength: 1, maxLength: 128 }),
-	},
-	{ additionalProperties: false },
-);
-export const CommissionRejectRequest = S.Object(
-	{ commissionId: S.String({ minLength: 1, maxLength: 64 }) },
-	{ additionalProperties: false },
-);
-
-export const CommissionLaunchRequest = S.Object(
-	{
-		commissionId: S.String({ minLength: 1, maxLength: 64 }),
-		executorProfile: S.String({ minLength: 1, maxLength: 64 }),
-	},
-	{ additionalProperties: false },
-);
-
-export const RunSteerRequest = S.Object(
-	{
-		runId: S.String({ minLength: 1, maxLength: 64 }),
-		instruction: S.String({ minLength: 1, maxLength: MAX_STRING_LENGTH }),
-	},
-	{ additionalProperties: false },
-);
-
-export const RunCancelRequest = S.Object(
-	{
-		runId: S.String({ minLength: 1, maxLength: 64 }),
-	},
-	{ additionalProperties: false },
-);
-
-export const RunRespondPermissionRequest = S.Object(
-	{
-		runId: S.String({ minLength: 1, maxLength: 64 }),
-		requestId: S.String({ minLength: 1, maxLength: 128 }),
-		optionId: S.String({ minLength: 1, maxLength: 128 }),
-	},
-	{ additionalProperties: false },
-);
+export const ActionDraft = z.strictObject({
+	id: z.string().max(64),
+	title: z.string().max(MAX_STRING_LENGTH),
+	description: z.string().max(MAX_STRING_LENGTH),
+	reads: z.array(z.string().max(MAX_PATH_LENGTH)).max(20),
+	writes: z.array(z.string().max(MAX_PATH_LENGTH)).max(20),
+	networkAllowed: z.boolean(),
+	toolNames: z.array(z.string().max(64)).max(20),
+	hash: z.string().max(128),
+});
+export const Commission = z.strictObject({
+	id: z.string().max(64),
+	conversationId: ConversationId.optional(),
+	draft: ActionDraft,
+	status: z.union([
+		z.literal("draft"),
+		z.literal("awaiting_approval"),
+		z.literal("approved"),
+		z.literal("queued"),
+		z.literal("running"),
+		z.literal("needs_user"),
+		z.literal("completed"),
+		z.literal("failed"),
+		z.literal("cancelled"),
+	]),
+	createdAt: z.string().max(64),
+});
+export const CommissionListRequest = z.strictObject({});
+export const CommissionListResponse = z.strictObject({
+	commissions: z.array(Commission).max(MAX_ARRAY_LENGTH),
+});
+export const CommissionDraftRequest = z.strictObject({
+	conversationId: z.string().min(1).max(64),
+	title: z.string().min(1).max(MAX_STRING_LENGTH),
+	description: z.string().min(1).max(MAX_STRING_LENGTH),
+	reads: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).max(20).optional(),
+	writes: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).max(20).optional(),
+	networkAllowed: z.boolean().optional(),
+	toolNames: z.array(z.string().min(1).max(64)).max(20).optional(),
+});
+export const CommissionDraftResponse = z.strictObject({
+	commissionId: z.string().max(64),
+	draftHash: z.string().max(128),
+});
+export const CommissionApproveRequest = z.strictObject({
+	commissionId: z.string().min(1).max(64),
+	approvedHash: z.string().min(1).max(128),
+});
+export const CommissionRejectRequest = z.strictObject({
+	commissionId: z.string().min(1).max(64),
+});
+export const CommissionLaunchRequest = z.strictObject({
+	commissionId: z.string().min(1).max(64),
+	executorProfile: z.string().min(1).max(64),
+});
+export const CommissionLaunchResponse = z.strictObject({
+	runId: z.string().max(64),
+	commissionId: z.string().max(64),
+	executorProfile: z.string().max(64),
+	status: z.string().max(64),
+});
+export const RunSteerRequest = z.strictObject({
+	runId: z.string().min(1).max(64),
+	instruction: z.string().min(1).max(MAX_STRING_LENGTH),
+});
+export const RunCancelRequest = z.strictObject({
+	runId: z.string().min(1).max(64),
+});
+export const RunRespondPermissionRequest = z.strictObject({
+	runId: z.string().min(1).max(64),
+	requestId: z.string().min(1).max(128),
+	optionId: z.string().min(1).max(128),
+});
 
 // ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
 
-export const RunStatus = S.Union(
-	[
-		S.Literal("enqueued"),
-		S.Literal("running"),
-		S.Literal("needs_user"),
-		S.Literal("completed"),
-		S.Literal("failed"),
-		S.Literal("cancelled"),
-		S.Literal("interrupted"),
-		S.Literal("forced_termination"),
-	],
-	{ additionalProperties: false },
-);
-
-export const Run = S.Object(
-	{
-		id: S.String({ maxLength: 64 }),
-		commissionId: S.String({ maxLength: 64 }),
-		executorProfile: S.String({ maxLength: 64 }),
-		status: RunStatus,
-		startedAt: S.Optional(S.String({ maxLength: 64 })),
-		completedAt: S.Optional(S.String({ maxLength: 64 })),
-	},
-	{ additionalProperties: false },
-);
-
-export const RunListRequest = S.Object({}, { additionalProperties: false });
-export const RunListResponse = S.Object(
-	{
-		runs: S.Array(Run, { maxItems: 10 }),
-	},
-	{ additionalProperties: false },
-);
+export const RunStatus = z.union([
+	z.literal("enqueued"),
+	z.literal("running"),
+	z.literal("needs_user"),
+	z.literal("completed"),
+	z.literal("failed"),
+	z.literal("cancelled"),
+	z.literal("interrupted"),
+	z.literal("forced_termination"),
+]);
+export const Run = z.strictObject({
+	id: z.string().max(64),
+	commissionId: z.string().max(64),
+	executorProfile: z.string().max(64),
+	status: RunStatus,
+	startedAt: z.string().max(64).optional(),
+	completedAt: z.string().max(64).optional(),
+});
+export const RunListRequest = z.strictObject({});
+export const RunListResponse = z.strictObject({
+	runs: z.array(Run).max(10),
+});
+export const RunResponse = Run;
 
 // ---------------------------------------------------------------------------
 // Artifact
 // ---------------------------------------------------------------------------
 
-export const Artifact = S.Object(
-	{
-		id: S.String({ maxLength: 64 }),
-		logicalName: S.String({ maxLength: MAX_STRING_LENGTH }),
-		mime: S.String({ maxLength: 128 }),
-		bytes: S.Integer({ minimum: 0, maximum: UINT32_MAX }),
-		sha256: S.String({ maxLength: 128 }),
-		status: S.Union(
-			[
-				S.Literal("created"),
-				S.Literal("verified"),
-				S.Literal("verification_failed"),
-				S.Literal("adopted"),
-				S.Literal("saved"),
-			],
-			{ additionalProperties: false },
-		),
-		producerRunId: S.Optional(S.String({ maxLength: 64 })),
-		createdAt: S.String({ maxLength: 64 }),
-	},
-	{ additionalProperties: false },
-);
-
-export const ArtifactListRequest = S.Object({}, { additionalProperties: false });
-export const ArtifactReadRequest = S.Object(
-	{ artifactId: S.String({ minLength: 1, maxLength: 64 }) },
-	{ additionalProperties: false },
-);
-export const ArtifactListResponse = S.Object(
-	{
-		artifacts: S.Array(Artifact, { maxItems: MAX_ARRAY_LENGTH }),
-	},
-	{ additionalProperties: false },
-);
+export const Artifact = z.strictObject({
+	id: z.string().max(64),
+	logicalName: z.string().max(MAX_STRING_LENGTH),
+	mime: z.string().max(128),
+	bytes: z.number().int().safe().min(0).max(UINT32_MAX),
+	sha256: z.string().max(128),
+	status: z.union([
+		z.literal("created"),
+		z.literal("verified"),
+		z.literal("verification_failed"),
+		z.literal("adopted"),
+		z.literal("saved"),
+	]),
+	producerRunId: z.string().max(64).optional(),
+	createdAt: z.string().max(64),
+});
+export const ArtifactListRequest = z.strictObject({});
+export const ArtifactReadRequest = z.strictObject({
+	artifactId: z.string().min(1).max(64),
+});
+export const ArtifactListResponse = z.strictObject({
+	artifacts: z.array(Artifact).max(MAX_ARRAY_LENGTH),
+});
+export const ArtifactReadResponse = z.strictObject({
+	logicalName: z.string().max(MAX_STRING_LENGTH),
+	mime: z.string().max(128),
+	base64: z.string().max(64_000_000),
+});
 
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
 
-export const SettingsData = S.Object(
-	{
-		relationshipMemoryEnabled: S.Boolean(),
-		textFallback: S.Optional(
-			S.Object(
-				{
-					providerId: S.String({ minLength: 1, maxLength: 64 }),
-					modelId: S.String({ minLength: 1, maxLength: 200 }),
-				},
-				{ additionalProperties: false },
-			),
-		),
-		multimodalFallback: S.Optional(
-			S.Object(
-				{
-					providerId: S.String({ minLength: 1, maxLength: 64 }),
-					modelId: S.String({ minLength: 1, maxLength: 200 }),
-				},
-				{ additionalProperties: false },
-			),
-		),
-	},
-	{ additionalProperties: false },
-);
+export const SettingsData = z.strictObject({
+	relationshipMemoryEnabled: z.boolean(),
+	textFallback: z
+		.strictObject({
+			providerId: z.string().min(1).max(64),
+			modelId: z.string().min(1).max(200),
+		})
+		.optional(),
+	multimodalFallback: z
+		.strictObject({
+			providerId: z.string().min(1).max(64),
+			modelId: z.string().min(1).max(200),
+		})
+		.optional(),
+});
+export const SettingsGetRequest = z.strictObject({});
+export const SettingsResponse = z.strictObject({
+	settings: SettingsData,
+});
+export const SettingsPatch = z.strictObject({
+	relationshipMemoryEnabled: z.boolean().optional(),
+	textFallback: z.union([SettingsData.shape.textFallback, z.null()]).optional(),
+	multimodalFallback: z.union([SettingsData.shape.multimodalFallback, z.null()]).optional(),
+});
+export const SettingsSetRequest = z.strictObject({
+	settings: SettingsPatch,
+});
+export const ProviderCustomUpsertRequest = z.strictObject({
+	providerId: z
+		.string()
+		.min(1)
+		.max(64)
+		.regex(/^[a-z0-9][a-z0-9._-]*$/),
+	name: z.string().min(1).max(100),
+	baseUrl: z.string().min(8).max(2048),
+	modelId: z.string().min(1).max(200),
+	apiKey: z.string().min(1).max(8192).optional(),
+	supportsImages: z.boolean().optional(),
+});
+export const ProviderOverrideBaseUrlRequest = z.strictObject({
+	providerId: z
+		.string()
+		.min(1)
+		.max(64)
+		.regex(/^[a-z0-9][a-z0-9._-]*$/),
+	baseUrl: z.string().min(8).max(2048),
+});
 
-export const SettingsGetRequest = S.Object({}, { additionalProperties: false });
-export const SettingsResponse = S.Object(
-	{
-		settings: SettingsData,
-	},
-	{ additionalProperties: false },
-);
+// ---------------------------------------------------------------------------
+// Composed boot snapshot
+// ---------------------------------------------------------------------------
 
-export const SettingsPatch = S.Object(
-	{
-		relationshipMemoryEnabled: S.Optional(S.Boolean()),
-		textFallback: S.Optional(S.Union([SettingsData.shape.textFallback, S.Null()])),
-		multimodalFallback: S.Optional(S.Union([SettingsData.shape.multimodalFallback, S.Null()])),
-	},
-	{ additionalProperties: false },
-);
-export const SettingsSetRequest = S.Object(
-	{
-		settings: SettingsPatch,
-	},
-	{ additionalProperties: false },
-);
-
-export const ProviderCustomUpsertRequest = S.Object(
-	{
-		providerId: S.String({ minLength: 1, maxLength: 64, pattern: "^[a-z0-9][a-z0-9._-]*$" }),
-		name: S.String({ minLength: 1, maxLength: 100 }),
-		baseUrl: S.String({ minLength: 8, maxLength: 2048 }),
-		modelId: S.String({ minLength: 1, maxLength: 200 }),
-		apiKey: S.Optional(S.String({ minLength: 1, maxLength: 8192 })),
-		supportsImages: S.Optional(S.Boolean()),
-	},
-	{ additionalProperties: false },
-);
-export const ProviderOverrideBaseUrlRequest = S.Object(
-	{
-		providerId: S.String({ minLength: 1, maxLength: 64, pattern: "^[a-z0-9][a-z0-9._-]*$" }),
-		baseUrl: S.String({ minLength: 8, maxLength: 2048 }),
-	},
-	{ additionalProperties: false },
-);
+export const ConversationSnapshot = z.strictObject({
+	conversations: z.array(ConversationSummary).max(MAX_ARRAY_LENGTH).optional(),
+	activeConversationId: ConversationId.optional(),
+	activeBranchId: BranchId.optional(),
+	id: ConversationId.optional(),
+	title: z.string().max(MAX_STRING_LENGTH).optional(),
+	sceneTitle: z.string().max(MAX_STRING_LENGTH).optional(),
+	messages: z.array(Message).max(MAX_ARRAY_LENGTH).optional(),
+});
+export const MemorySnapshot = z.strictObject({
+	candidates: z.array(MemoryCandidate).max(MAX_ARRAY_LENGTH).optional(),
+	entries: z.array(MemoryEntry).max(MAX_ARRAY_LENGTH).optional(),
+});
+export const CharacterRuntimeState = z.strictObject({
+	sceneId: z.string().min(1).max(64),
+	visualState: z.string().min(1).max(64),
+});
+export const CharacterRuntimeSnapshot = z.strictObject({
+	byConversation: z.record(ConversationId, CharacterRuntimeState),
+});
+export const SnapshotResponse = z.strictObject({
+	eventSeq: EventSeq,
+	onboarding: OnboardingResponse.optional(),
+	character: CharacterDisplay.optional(),
+	conversation: ConversationSnapshot.optional(),
+	memory: MemorySnapshot.optional(),
+	provider: ProviderListResponse.optional(),
+	voice: VoiceStackListResponse.optional(),
+	commission: CommissionListResponse.optional(),
+	run: RunListResponse.optional(),
+	artifact: ArtifactListResponse.optional(),
+	story: StoryListChangesResponse.optional(),
+	characterRuntime: CharacterRuntimeSnapshot.optional(),
+	settings: SettingsData.optional(),
+});
 
 // ---------------------------------------------------------------------------
 // Channel registry (for main-side validation)
 // ---------------------------------------------------------------------------
 
-/** Map of IPC channel name → request schema for the main-side router. */
-export const REQUEST_SCHEMAS: Record<string, TSchema> = {
-	"snapshot.get:v1": SnapshotGetRequest,
-	"character.get:v1": CharacterGetRequest,
-	"character.list:v1": CharacterListRequest,
-	"character.activate:v1": CharacterActivateRequest,
-	"events.subscribe:v1": EventSubscribeRequest,
-	"onboarding.get:v1": OnboardingGetRequest,
-	"onboarding.submit:v1": OnboardingSubmitRequest,
-	"conversation.list:v1": ConversationListRequest,
-	"conversation.create:v1": ConversationCreateRequest,
-	"conversation.select:v1": ConversationSelectRequest,
-	"conversation.rename:v1": ConversationRenameRequest,
-	"conversation.archive:v1": ConversationArchiveRequest,
-	"conversation.delete:v1": ConversationDeleteRequest,
-	"message.send:v1": MessageSendRequest,
-	"message.regenerate:v1": MessageRegenerateRequest,
-	"message.switchVersion:v1": MessageSwitchVersionRequest,
-	"message.edit:v1": MessageEditRequest,
-	"message.continue:v1": MessageContinueRequest,
-	"message.correct:v1": MessageCorrectRequest,
-	"message.branch:v1": MessageBranchRequest,
-	"message.abort:v1": MessageAbortRequest,
-	"memory.listCandidates:v1": MemoryListCandidatesRequest,
-	"memory.decideCandidate:v1": MemoryDecideCandidateRequest,
-	"memory.search:v1": MemorySearchRequest,
-	"memory.list:v1": MemoryListRequest,
-	"memory.pin:v1": MemoryPinRequest,
-	"memory.forget:v1": MemoryForgetRequest,
-	"memory.exclude:v1": MemoryExcludeRequest,
-	"memory.edit:v1": MemoryEditRequest,
-	"story.listChanges:v1": StoryListChangesRequest,
-	"story.applyChange:v1": StoryApplyChangeRequest,
-	"story.revertChange:v1": StoryRevertChangeRequest,
-	"story.reset:v1": StoryResetRequest,
-	"story.listProposals:v1": StoryListProposalsRequest,
-	"story.resolveProposal:v1": StoryResolveProposalRequest,
-	"canon.listSources:v1": CanonListSourcesRequest,
-	"canon.addSource:v1": CanonAddSourceRequest,
-	"canon.search:v1": CanonSearchRequest,
-	"canon.removeSource:v1": CanonRemoveSourceRequest,
-	"canon.listModules:v1": CanonListModulesRequest,
-	"canon.upsertModule:v1": CanonUpsertModuleRequest,
-	"canon.deleteModule:v1": CanonDeleteModuleRequest,
-	"provider.list:v1": ProviderListRequest,
-	"provider.customUpsert:v1": ProviderCustomUpsertRequest,
-	"provider.overrideBaseUrl:v1": ProviderOverrideBaseUrlRequest,
-	"provider.setApiKey:v1": ProviderSetApiKeyRequest,
-	"provider.login:v1": ProviderLoginRequest,
-	"provider.loginStatus:v1": ProviderLoginStatusRequest,
-	"provider.loginAnswer:v1": ProviderLoginAnswerRequest,
-	"provider.logout:v1": ProviderLogoutRequest,
-	"voice.list:v1": VoiceStackListRequest,
-	"voice.switch:v1": VoiceStackSwitchRequest,
-	"voice.pin:v1": VoiceStackPinRequest,
-	"commission.list:v1": CommissionListRequest,
-	"commission.draft:v1": CommissionDraftRequest,
-	"commission.approve:v1": CommissionApproveRequest,
-	"commission.reject:v1": CommissionRejectRequest,
-	"commission.launch:v1": CommissionLaunchRequest,
-	"run.list:v1": RunListRequest,
-	"run.steer:v1": RunSteerRequest,
-	"run.cancel:v1": RunCancelRequest,
-	"run.respondPermission:v1": RunRespondPermissionRequest,
-	"artifact.list:v1": ArtifactListRequest,
-	"artifact.read:v1": ArtifactReadRequest,
-	"settings.get:v1": SettingsGetRequest,
-	"settings.set:v1": SettingsSetRequest,
-};
+export interface RpcEndpoint<
+	ChannelName extends `${string}:v1` = `${string}:v1`,
+	Request extends Schema = Schema,
+	Response extends Schema = Schema,
+> {
+	readonly kind: "rpc";
+	readonly channel: ChannelName;
+	readonly request: Request;
+	readonly response: Response;
+}
+const endpoint = <
+	const ChannelName extends `${string}:v1`,
+	Request extends Schema,
+	Response extends Schema,
+>(
+	channel: ChannelName,
+	request: Request,
+	response: Response,
+): RpcEndpoint<ChannelName, Request, Response> => ({
+	kind: "rpc",
+	channel,
+	request,
+	response,
+});
+
+/** The sole runtime and type-level source of truth for every Host RPC channel. */
+export const RPC = {
+	snapshot: {
+		get: endpoint("snapshot.get:v1", SnapshotGetRequest, SnapshotResponse),
+	},
+	character: {
+		get: endpoint("character.get:v1", CharacterGetRequest, CharacterResponse),
+		list: endpoint("character.list:v1", CharacterListRequest, CharacterListResponse),
+		activate: endpoint("character.activate:v1", CharacterActivateRequest, CharacterResponse),
+		import: endpoint("character.import:v1", CharacterImportRequest, CharacterResponse),
+	},
+	events: {
+		subscribe: endpoint("events.subscribe:v1", EventSubscribeRequest, EventSubscribeResponse),
+	},
+	onboarding: {
+		get: endpoint("onboarding.get:v1", OnboardingGetRequest, OnboardingResponse),
+		submit: endpoint("onboarding.submit:v1", OnboardingSubmitRequest, OnboardingResponse),
+	},
+	conversation: {
+		list: endpoint("conversation.list:v1", ConversationListRequest, ConversationListResponse),
+		create: endpoint(
+			"conversation.create:v1",
+			ConversationCreateRequest,
+			ConversationCreateResponse,
+		),
+		select: endpoint(
+			"conversation.select:v1",
+			ConversationSelectRequest,
+			ConversationSelectResponse,
+		),
+		rename: endpoint("conversation.rename:v1", ConversationRenameRequest, EmptyResponse),
+		archive: endpoint("conversation.archive:v1", ConversationArchiveRequest, EmptyResponse),
+		delete: endpoint("conversation.delete:v1", ConversationDeleteRequest, EmptyResponse),
+	},
+	message: {
+		send: endpoint("message.send:v1", MessageSendRequest, MessageSendResponse),
+		regenerate: endpoint("message.regenerate:v1", MessageRegenerateRequest, MessageSendResponse),
+		switchVersion: endpoint("message.switchVersion:v1", MessageSwitchVersionRequest, EmptyResponse),
+		edit: endpoint("message.edit:v1", MessageEditRequest, EmptyResponse),
+		continue: endpoint("message.continue:v1", MessageContinueRequest, EmptyResponse),
+		correct: endpoint("message.correct:v1", MessageCorrectRequest, EmptyResponse),
+		branch: endpoint("message.branch:v1", MessageBranchRequest, MessageBranchResponse),
+		abort: endpoint("message.abort:v1", MessageAbortRequest, EmptyResponse),
+	},
+	memory: {
+		listCandidates: endpoint(
+			"memory.listCandidates:v1",
+			MemoryListCandidatesRequest,
+			MemoryListCandidatesResponse,
+		),
+		decideCandidate: endpoint(
+			"memory.decideCandidate:v1",
+			MemoryDecideCandidateRequest,
+			EmptyResponse,
+		),
+		search: endpoint("memory.search:v1", MemorySearchRequest, MemorySearchResponse),
+		list: endpoint("memory.list:v1", MemoryListRequest, MemoryListResponse),
+		pin: endpoint("memory.pin:v1", MemoryPinRequest, EmptyResponse),
+		forget: endpoint("memory.forget:v1", MemoryForgetRequest, EmptyResponse),
+		exclude: endpoint("memory.exclude:v1", MemoryExcludeRequest, EmptyResponse),
+		edit: endpoint("memory.edit:v1", MemoryEditRequest, EmptyResponse),
+	},
+	story: {
+		listChanges: endpoint(
+			"story.listChanges:v1",
+			StoryListChangesRequest,
+			StoryListChangesResponse,
+		),
+		applyChange: endpoint(
+			"story.applyChange:v1",
+			StoryApplyChangeRequest,
+			StoryApplyChangeResponse,
+		),
+		revertChange: endpoint("story.revertChange:v1", StoryRevertChangeRequest, EmptyResponse),
+		reset: endpoint("story.reset:v1", StoryResetRequest, StoryResetResponse),
+		listProposals: endpoint(
+			"story.listProposals:v1",
+			StoryListProposalsRequest,
+			StoryListProposalsResponse,
+		),
+		resolveProposal: endpoint(
+			"story.resolveProposal:v1",
+			StoryResolveProposalRequest,
+			StoryResolveProposalResponse,
+		),
+	},
+	canon: {
+		listSources: endpoint(
+			"canon.listSources:v1",
+			CanonListSourcesRequest,
+			CanonListSourcesResponse,
+		),
+		addSource: endpoint("canon.addSource:v1", CanonAddSourceRequest, CanonAddSourceResponse),
+		search: endpoint("canon.search:v1", CanonSearchRequest, CanonSearchResponse),
+		removeSource: endpoint("canon.removeSource:v1", CanonRemoveSourceRequest, EmptyResponse),
+		listModules: endpoint(
+			"canon.listModules:v1",
+			CanonListModulesRequest,
+			CanonListModulesResponse,
+		),
+		upsertModule: endpoint(
+			"canon.upsertModule:v1",
+			CanonUpsertModuleRequest,
+			CanonUpsertModuleResponse,
+		),
+		deleteModule: endpoint("canon.deleteModule:v1", CanonDeleteModuleRequest, EmptyResponse),
+	},
+	provider: {
+		list: endpoint("provider.list:v1", ProviderListRequest, ProviderListResponse),
+		customUpsert: endpoint("provider.customUpsert:v1", ProviderCustomUpsertRequest, EmptyResponse),
+		overrideBaseUrl: endpoint(
+			"provider.overrideBaseUrl:v1",
+			ProviderOverrideBaseUrlRequest,
+			EmptyResponse,
+		),
+		setApiKey: endpoint("provider.setApiKey:v1", ProviderSetApiKeyRequest, EmptyResponse),
+		login: endpoint("provider.login:v1", ProviderLoginRequest, ProviderLoginResponse),
+		loginStatus: endpoint(
+			"provider.loginStatus:v1",
+			ProviderLoginStatusRequest,
+			ProviderLoginResponse,
+		),
+		loginAnswer: endpoint(
+			"provider.loginAnswer:v1",
+			ProviderLoginAnswerRequest,
+			ProviderLoginResponse,
+		),
+		logout: endpoint("provider.logout:v1", ProviderLogoutRequest, EmptyResponse),
+	},
+	voice: {
+		list: endpoint("voice.list:v1", VoiceStackListRequest, VoiceStackListResponse),
+		switch: endpoint("voice.switch:v1", VoiceStackSwitchRequest, VoiceStackResponse),
+		pin: endpoint("voice.pin:v1", VoiceStackPinRequest, VoiceStackResponse),
+	},
+	commission: {
+		list: endpoint("commission.list:v1", CommissionListRequest, CommissionListResponse),
+		draft: endpoint("commission.draft:v1", CommissionDraftRequest, CommissionDraftResponse),
+		approve: endpoint("commission.approve:v1", CommissionApproveRequest, EmptyResponse),
+		reject: endpoint("commission.reject:v1", CommissionRejectRequest, EmptyResponse),
+		launch: endpoint("commission.launch:v1", CommissionLaunchRequest, CommissionLaunchResponse),
+	},
+	run: {
+		list: endpoint("run.list:v1", RunListRequest, RunListResponse),
+		steer: endpoint("run.steer:v1", RunSteerRequest, EmptyResponse),
+		cancel: endpoint("run.cancel:v1", RunCancelRequest, RunResponse),
+		respondPermission: endpoint(
+			"run.respondPermission:v1",
+			RunRespondPermissionRequest,
+			RunResponse,
+		),
+	},
+	artifact: {
+		list: endpoint("artifact.list:v1", ArtifactListRequest, ArtifactListResponse),
+		read: endpoint("artifact.read:v1", ArtifactReadRequest, ArtifactReadResponse),
+	},
+	settings: {
+		get: endpoint("settings.get:v1", SettingsGetRequest, SettingsResponse),
+		set: endpoint("settings.set:v1", SettingsSetRequest, SettingsResponse),
+	},
+} as const;
+export type AnyRpcEndpoint = RpcEndpoint;
+export type RequestOf<E extends AnyRpcEndpoint> = z.infer<E["request"]>;
+export type ResponseOf<E extends AnyRpcEndpoint> = z.infer<E["response"]>;
+type EndpointIn<Node> = Node extends AnyRpcEndpoint
+	? Node
+	: Node extends object
+		? { [Key in keyof Node]: EndpointIn<Node[Key]> }[keyof Node]
+		: never;
+export type DeclaredRpcEndpoint = EndpointIn<typeof RPC>;
+function flattenRpc(
+	node: object,
+	output: Record<string, AnyRpcEndpoint> = {},
+): Record<string, AnyRpcEndpoint> {
+	for (const value of Object.values(node)) {
+		if (typeof value === "object" && value !== null && "kind" in value && value.kind === "rpc") {
+			const rpc = value as AnyRpcEndpoint;
+			if (output[rpc.channel]) throw new Error(`duplicate RPC channel: ${rpc.channel}`);
+			output[rpc.channel] = rpc;
+		} else if (typeof value === "object" && value !== null) {
+			flattenRpc(value, output);
+		}
+	}
+	return output;
+}
+
+/** Dynamic lookup used only at inbound transport boundaries. Business code uses `RPC.*` endpoints. */
+export const CHANNEL_CONTRACTS = Object.freeze(flattenRpc(RPC));
+export type Channel = DeclaredRpcEndpoint["channel"];
+
+/** Compatibility view for channel enumeration at transport boundaries. */
+export const REQUEST_SCHEMAS = Object.freeze(
+	Object.fromEntries(
+		Object.entries(CHANNEL_CONTRACTS).map(([channel, value]) => [channel, value.request]),
+	),
+);

@@ -242,14 +242,11 @@ function conversationIdFrom(payload: unknown): string | undefined {
 
 function parseStoredState(value: string | undefined): Record<string, unknown> {
 	if (!value) return {};
-	try {
-		const parsed = JSON.parse(value) as unknown;
-		return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-			? (parsed as Record<string, unknown>)
-			: {};
-	} catch {
-		return {};
+	const parsed: unknown = JSON.parse(value);
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+		throw new Error("persisted character state must be an object");
 	}
+	return parsed as Record<string, unknown>;
 }
 
 function unavailableConversationResult(conversationId: string): CompanionHostToolResult {

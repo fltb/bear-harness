@@ -1,6 +1,8 @@
-import type { CompanionClient } from "@bear-harness/companion-types";
+import type { CompanionClient } from "@bear-harness/companion-client";
+import { createCompanionClient } from "@bear-harness/companion-client";
 import { CompanionApp, installRendererFaultReporting } from "@bear-harness/companion-ui";
 import { productConfig } from "@bear-harness/product-config";
+import type { AnyRpcEndpoint, RequestOf } from "@bear-harness/protocol";
 import { render } from "solid-js/web";
 import "@bear-harness/companion-ui/styles.css";
 
@@ -11,7 +13,9 @@ declare global {
 			diagnostics: Readonly<{
 				reportRendererFault(input: unknown): void;
 			}>;
-			companion: CompanionClient;
+			transport: Readonly<{
+				invoke(channel: string, request: unknown): Promise<unknown>;
+			}>;
 		}>;
 	}
 }
@@ -21,4 +25,9 @@ if (!root) throw new Error("missing #root element");
 
 installRendererFaultReporting((fault) => window.bearDesktop.diagnostics.reportRendererFault(fault));
 
-render(() => <CompanionApp product={productConfig} client={window.bearDesktop.companion} />, root);
+const client: CompanionClient = createCompanionClient({
+	invoke: <E extends AnyRpcEndpoint>(endpoint: E, request: RequestOf<E>) =>
+		window.bearDesktop.transport.invoke(endpoint.channel, request),
+});
+
+render(() => <CompanionApp product={productConfig} client={client} />, root);

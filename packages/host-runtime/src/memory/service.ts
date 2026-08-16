@@ -63,6 +63,7 @@ export interface MemoryEntrySummary {
 	kind: MemoryKind;
 	scope: MemoryScope;
 	text: string;
+	normalizedText: string;
 	sourceConversationTitle: string;
 	pinned: boolean;
 	createdAt: string;
@@ -428,7 +429,7 @@ export class MemoryService {
 
 		const rows = this.db
 			.prepare(
-				`SELECT e.id, e.kind, e.scope, e.text, e.pinned_at, e.created_at,
+				`SELECT e.id, e.kind, e.scope, e.text, e.normalized_text, e.pinned_at, e.created_at,
 				        c.title AS source_conversation_title
 				 FROM relationship_memory_entries e
 				 LEFT JOIN conversations c ON c.id = e.source_conversation_id
@@ -451,6 +452,7 @@ export class MemoryService {
 			kind: MemoryKind;
 			scope: MemoryScope;
 			text: string;
+			normalized_text: string;
 			pinned_at: string | null;
 			created_at: string;
 			source_conversation_title: string | null;
@@ -461,6 +463,7 @@ export class MemoryService {
 			kind: row.kind,
 			scope: row.scope,
 			text: row.text,
+			normalizedText: row.normalized_text,
 			sourceConversationTitle: row.source_conversation_title ?? "",
 			pinned: row.pinned_at !== null,
 			createdAt: row.created_at,

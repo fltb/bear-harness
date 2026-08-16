@@ -5,13 +5,18 @@ import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
 import { createTestClient, OFFICIAL_PRODUCT } from "./fixtures.js";
 
+const FREE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+
 const PROVIDERS = [
 	{
 		id: "unused-provider",
 		name: "Unused Provider",
 		authType: "api_key" as const,
 		credentialStatus: "missing" as const,
-		availableModels: [{ id: "unused-model", name: "Unused Model", supportsImages: false }],
+		availableModels: [
+			{ id: "unused-model", name: "Unused Model", supportsImages: false, cost: FREE },
+		],
+		unavailable: [],
 	},
 	{
 		id: "opencode-go",
@@ -19,9 +24,10 @@ const PROVIDERS = [
 		authType: "api_key" as const,
 		credentialStatus: "stored" as const,
 		availableModels: [
-			{ id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", supportsImages: false },
-			{ id: "vision-model", name: "Vision Model", supportsImages: true },
+			{ id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", supportsImages: false, cost: FREE },
+			{ id: "vision-model", name: "Vision Model", supportsImages: true, cost: FREE },
 		],
+		unavailable: [],
 	},
 ];
 
@@ -31,6 +37,7 @@ function configuredClient() {
 		stacks: [
 			{
 				id: "primary-stack",
+				companionId: "test-character",
 				providerId: "opencode-go",
 				modelId: "deepseek-v4-flash",
 				revision: 1,
@@ -206,13 +213,17 @@ describe("model settings contract", () => {
 				name: `${productUi.settings.saveKey} ${productUi.settings.apiKeyLabel}`,
 			}),
 		);
-		expect(client.provider.setApiKey).toHaveBeenCalledWith("opencode-go", "primary-key", undefined);
+		expect(client.provider.setApiKey).toHaveBeenCalledWith({
+			providerId: "opencode-go",
+			apiKey: "primary-key",
+			sessionOnly: undefined,
+		});
 		await user.click(view.getByRole("button", { name: productUi.settings.useModel }));
-		expect(client.voice.pin).toHaveBeenCalledWith(
-			"opencode-go",
-			"deepseek-v4-flash",
-			"OpenCode Go",
-		);
+		expect(client.voice.pin).toHaveBeenCalledWith({
+			providerId: "opencode-go",
+			modelId: "deepseek-v4-flash",
+			label: "OpenCode Go",
+		});
 
 		const textToggle = view.getByRole("switch", { name: productUi.settings.textFallbackEnable });
 		await user.click(textToggle);
@@ -224,18 +235,20 @@ describe("model settings contract", () => {
 				name: `${productUi.settings.saveKey} ${productUi.settings.textFallbackApiKey}`,
 			}),
 		);
-		expect(client.provider.setApiKey).toHaveBeenCalledWith(
-			"opencode-go",
-			"fallback-key",
-			undefined,
-		);
+		expect(client.provider.setApiKey).toHaveBeenCalledWith({
+			providerId: "opencode-go",
+			apiKey: "fallback-key",
+			sessionOnly: undefined,
+		});
 		await user.selectOptions(
 			view.getByRole("combobox", { name: productUi.settings.textFallbackProvider }),
 			"unused-provider",
 		);
 		await waitFor(() =>
 			expect(settingsSet).toHaveBeenCalledWith({
-				textFallback: { providerId: "unused-provider", modelId: "unused-model" },
+				settings: {
+					textFallback: { providerId: "unused-provider", modelId: "unused-model" },
+				},
 			}),
 		);
 		await waitFor(() =>
@@ -244,7 +257,9 @@ describe("model settings contract", () => {
 			).toHaveValue("unused-provider"),
 		);
 		await user.click(textToggle);
-		await waitFor(() => expect(settingsSet).toHaveBeenCalledWith({ textFallback: null }));
+		await waitFor(() =>
+			expect(settingsSet).toHaveBeenCalledWith({ settings: { textFallback: null } }),
+		);
 		await waitFor(() => expect(textToggle).toHaveAttribute("aria-checked", "false"));
 
 		const multimodalToggle = view.getByRole("switch", {
@@ -259,8 +274,14 @@ describe("model settings contract", () => {
 				name: `${productUi.settings.saveKey} ${productUi.settings.multimodalFallbackApiKey}`,
 			}),
 		);
-		expect(client.provider.setApiKey).toHaveBeenCalledWith("opencode-go", "vision-key", undefined);
+		expect(client.provider.setApiKey).toHaveBeenCalledWith({
+			providerId: "opencode-go",
+			apiKey: "vision-key",
+			sessionOnly: undefined,
+		});
 		await user.click(multimodalToggle);
-		await waitFor(() => expect(settingsSet).toHaveBeenCalledWith({ multimodalFallback: null }));
+		await waitFor(() =>
+			expect(settingsSet).toHaveBeenCalledWith({ settings: { multimodalFallback: null } }),
+		);
 	});
 });

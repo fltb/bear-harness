@@ -242,94 +242,106 @@ export function FirstMeeting() {
 								</select>
 							</label>
 							<Show
-								when={selectedProvider()?.authType === "api_key"}
-								fallback={
+								when={
+									selectedProvider()?.credentialStatus !== "stored" &&
+									selectedProvider()?.credentialStatus !== "session_only"
+								}
+							>
+								<Show
+									when={selectedProvider()?.authType === "api_key"}
+									fallback={
+										<div class="intro-form">
+											<button
+												type="button"
+												class="primary"
+												disabled={setupBusy() || !providerId()}
+												onClick={() => void beginOauth()}
+											>
+												{productUi.settings.loginWithBrowser}
+											</button>
+											<Show when={oauth()}>
+												{(state) => (
+													<div class="oauth-login">
+														<Show when={state().authUrl ?? state().verificationUri}>
+															{(url) => (
+																<a href={url()} target="_blank" rel="noreferrer">
+																	{productUi.settings.oauthOpen}
+																</a>
+															)}
+														</Show>
+														<Show when={state().deviceCode}>
+															<p>
+																{productUi.settings.oauthCode}:{" "}
+																<strong>{state().deviceCode}</strong>
+															</p>
+														</Show>
+														<Show when={state().message}>
+															<p>{state().message}</p>
+														</Show>
+														<Show when={state().prompt}>
+															{(prompt) => (
+																<label class="intro-form">
+																	<span>{prompt().message}</span>
+																	<Show
+																		when={prompt().type === "select"}
+																		fallback={
+																			<input
+																				type={prompt().type === "secret" ? "password" : "text"}
+																				value={oauthAnswer()}
+																				onInput={(event) =>
+																					setOauthAnswer(event.currentTarget.value)
+																				}
+																			/>
+																		}
+																	>
+																		<select
+																			value={oauthAnswer()}
+																			onChange={(event) =>
+																				setOauthAnswer(event.currentTarget.value)
+																			}
+																		>
+																			<For each={prompt().options ?? []}>
+																				{(option) => (
+																					<option value={option.id}>{option.label}</option>
+																				)}
+																			</For>
+																		</select>
+																	</Show>
+																	<button
+																		type="button"
+																		disabled={setupBusy() || !oauthAnswer()}
+																		onClick={() => void answerOauth()}
+																	>
+																		{productUi.settings.oauthSubmit}
+																	</button>
+																</label>
+															)}
+														</Show>
+													</div>
+												)}
+											</Show>
+										</div>
+									}
+								>
 									<div class="intro-form">
+										<label for="initial-api-key">{productUi.settings.apiKeyLabel}</label>
+										<input
+											id="initial-api-key"
+											type="password"
+											autocomplete="off"
+											value={apiKey()}
+											onInput={(event) => setApiKey(event.currentTarget.value)}
+										/>
 										<button
 											type="button"
 											class="primary"
-											disabled={setupBusy() || !providerId()}
-											onClick={() => void beginOauth()}
+											disabled={setupBusy() || !apiKey().trim() || !modelId()}
+											onClick={() => void saveKeyAndPin()}
 										>
-											{productUi.settings.loginWithBrowser}
+											{productUi.modelSetup.continue}
 										</button>
-										<Show when={oauth()}>
-											{(state) => (
-												<div class="oauth-login">
-													<Show when={state().authUrl ?? state().verificationUri}>
-														{(url) => (
-															<a href={url()} target="_blank" rel="noreferrer">
-																{productUi.settings.oauthOpen}
-															</a>
-														)}
-													</Show>
-													<Show when={state().deviceCode}>
-														<p>
-															{productUi.settings.oauthCode}: <strong>{state().deviceCode}</strong>
-														</p>
-													</Show>
-													<Show when={state().message}>
-														<p>{state().message}</p>
-													</Show>
-													<Show when={state().prompt}>
-														{(prompt) => (
-															<label class="intro-form">
-																<span>{prompt().message}</span>
-																<Show
-																	when={prompt().type === "select"}
-																	fallback={
-																		<input
-																			type={prompt().type === "secret" ? "password" : "text"}
-																			value={oauthAnswer()}
-																			onInput={(event) => setOauthAnswer(event.currentTarget.value)}
-																		/>
-																	}
-																>
-																	<select
-																		value={oauthAnswer()}
-																		onChange={(event) => setOauthAnswer(event.currentTarget.value)}
-																	>
-																		<For each={prompt().options ?? []}>
-																			{(option) => (
-																				<option value={option.id}>{option.label}</option>
-																			)}
-																		</For>
-																	</select>
-																</Show>
-																<button
-																	type="button"
-																	disabled={setupBusy() || !oauthAnswer()}
-																	onClick={() => void answerOauth()}
-																>
-																	{productUi.settings.oauthSubmit}
-																</button>
-															</label>
-														)}
-													</Show>
-												</div>
-											)}
-										</Show>
 									</div>
-								}
-							>
-								<div class="intro-form">
-									<label for="initial-api-key">{productUi.settings.apiKeyLabel}</label>
-									<input
-										id="initial-api-key"
-										type="password"
-										autocomplete="off"
-										value={apiKey()}
-										onInput={(event) => setApiKey(event.currentTarget.value)}
-									/>
-									<button
-										type="button"
-										class="primary"
-										disabled={setupBusy() || !apiKey().trim() || !modelId()}
-										onClick={() => void saveKeyAndPin()}
-									>
-										{productUi.modelSetup.continue}
-									</button>
-								</div>
+								</Show>
 							</Show>
 							<Show
 								when={

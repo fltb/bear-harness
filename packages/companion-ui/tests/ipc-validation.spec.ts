@@ -1,32 +1,40 @@
-import { describe, expect, it } from "vitest";
 import {
-	isActionDraft,
-	isArtifact,
-	isCharacterDisplay,
-	isCommission,
-	isConversationSummary,
-	isMemoryCandidate,
-	isMemoryEntry,
-	isMessage,
-	isMessageVersion,
-	isOnboardingData,
-	isProviderInfo,
-	isRun,
-	isSettingsData,
-	isStoryChange,
-	isVoiceStack,
-	normalizeArtifactList,
-	normalizeCommissionList,
-	normalizeConversationList,
-	normalizeConversationSnapshot,
-	normalizeMemoryEntries,
-	normalizeMemorySnapshot,
-	normalizeProviderList,
-	normalizeRunList,
-	normalizeStoryList,
-	normalizeVoiceList,
-} from "../src/stores/ipc.js";
+	ActionDraft,
+	Artifact,
+	CharacterDisplay,
+	Commission,
+	ConversationSummary,
+	MemoryCandidate,
+	MemoryEntry,
+	Message,
+	MessageVersion,
+	OnboardingResponse,
+	ProviderInfo,
+	Run,
+	SettingsData,
+	StoryChange,
+	VoiceStack,
+} from "@bear-harness/protocol/schema";
+import { describe, expect, it } from "vitest";
 import { THEMED_CHARACTER } from "./fixtures.js";
+
+const guard = (schema: { safeParse(value: unknown): { success: boolean } }) => (value: unknown) =>
+	schema.safeParse(value).success;
+const isActionDraft = guard(ActionDraft);
+const isArtifact = guard(Artifact);
+const isCharacterDisplay = guard(CharacterDisplay);
+const isCommission = guard(Commission);
+const isConversationSummary = guard(ConversationSummary);
+const isMemoryCandidate = guard(MemoryCandidate);
+const isMemoryEntry = guard(MemoryEntry);
+const isMessage = guard(Message);
+const isMessageVersion = guard(MessageVersion);
+const isOnboardingData = guard(OnboardingResponse);
+const isProviderInfo = guard(ProviderInfo);
+const isRun = guard(Run);
+const isSettingsData = guard(SettingsData);
+const isStoryChange = guard(StoryChange);
+const isVoiceStack = guard(VoiceStack);
 
 const timestamp = "2026-08-16T00:00:00Z";
 const conversation = {
@@ -75,10 +83,19 @@ const provider = {
 	name: "Provider",
 	authType: "api_key",
 	credentialStatus: "stored",
-	availableModels: [{ id: "model-1", name: "Model", supportsImages: false }],
+	availableModels: [
+		{
+			id: "model-1",
+			name: "Model",
+			supportsImages: false,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		},
+	],
+	unavailable: [],
 };
 const voice = {
 	id: "stack-1",
+	companionId: "companion-1",
 	providerId: "provider-1",
 	modelId: "model-1",
 	revision: 1,
@@ -191,6 +208,7 @@ describe("host projection validation", () => {
 		expect(isProviderInfo({ ...provider, availableModels: [{ id: "model-1" }] })).toBe(false);
 		expectRequiredFields(isVoiceStack, voice, [
 			"id",
+			"companionId",
 			"providerId",
 			"modelId",
 			"revision",
@@ -312,7 +330,10 @@ describe("host projection validation", () => {
 			heading: "Relation",
 			body: "Choose relation",
 			answer_key: "relation",
-			choices: [{ value: "friend", label: "Friend", description: "A friend" }],
+			choices: [
+				{ value: "friend", label: "Friend", description: "A friend" },
+				{ value: "partner", label: "Partner", description: "A partner" },
+			],
 		};
 		for (const step of [textStep, choiceStep]) {
 			expect(
@@ -337,44 +358,5 @@ describe("host projection validation", () => {
 				},
 			}),
 		).toBe(false);
-	});
-
-	it("drops malformed list members and keeps complete valid snapshots", () => {
-		const cases: Array<[(value: unknown) => unknown, string, unknown]> = [
-			[normalizeConversationList, "conversations", conversation],
-			[normalizeProviderList, "providers", provider],
-			[normalizeVoiceList, "stacks", voice],
-			[normalizeCommissionList, "commissions", commission],
-			[normalizeRunList, "runs", run],
-			[normalizeArtifactList, "artifacts", artifact],
-			[normalizeStoryList, "changes", story],
-		];
-		for (const [normalize, key, member] of cases) {
-			expect(normalize(null), key).toBeNull();
-			expect(normalize({ [key]: "invalid" }), key).toBeNull();
-			expect(normalize({ [key]: [member] }), key).not.toBeNull();
-			expect(normalize({ [key]: [member, null] }), key).toBeNull();
-		}
-
-		expect(normalizeConversationSnapshot(null)).toBeNull();
-		expect(normalizeConversationSnapshot({})).toBeNull();
-		expect(
-			normalizeConversationSnapshot({
-				activeConversationId: "conversation-1",
-				activeBranchId: "branch-1",
-				conversations: [conversation],
-				messages: [message],
-			}),
-		).toMatchObject({ activeConversationId: "conversation-1", activeBranchId: "branch-1" });
-		expect(normalizeMemoryEntries([memoryEntry])).toEqual([memoryEntry]);
-		expect(normalizeMemoryEntries({ entries: [memoryEntry] })).toEqual([memoryEntry]);
-		expect(normalizeMemoryEntries({ entries: [null] })).toBeNull();
-		expect(normalizeMemorySnapshot(null)).toBeNull();
-		expect(
-			normalizeMemorySnapshot({ candidates: [memoryCandidate], entries: [memoryEntry] }),
-		).toEqual({
-			candidates: [memoryCandidate],
-			entries: [memoryEntry],
-		});
 	});
 });

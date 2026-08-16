@@ -13,9 +13,10 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import { RPC } from "@bear-harness/protocol/schema";
 import type { ArtifactStore } from "./artifacts/index.js";
 import type { CanonHubService } from "./canon/service.js";
-import type { CommissionService } from "./commissions/service.js";
+import type { CommissionService, RunStatus } from "./commissions/service.js";
 import type { CharacterLoader } from "./companion/character-loader.js";
 import type { FirstMeetingMachine } from "./companion/first-meeting.js";
 import type { CompanionSupervisor } from "./companion/supervisor.js";
@@ -45,22 +46,34 @@ export interface HostCompositionContext {
 	defaultCharacterId: string;
 }
 
+function oauthWire(state: Awaited<ReturnType<ProviderCatalog["startOAuth"]>>) {
+	return {
+		...state,
+		prompt: state.prompt
+			? {
+					...state.prompt,
+					options: state.prompt.options ? [...state.prompt.options] : undefined,
+				}
+			: undefined,
+	};
+}
+
 /** Wire all RPC handlers to domain services. Call once per dispatcher. */
 export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionContext): void {
 	// Load and seed the active character package from the character root once.
 	ensureCharacterSeeded(s);
 
 	// --- character package -----------------------------------------------------
-	dispatcher.registerHandler("character.get:v1", async () => {
+	dispatcher.registerHandler(RPC.character.get, async () => {
 		const companionId = await getCompanionId(s);
 		const character = s.characterLoader.load(companionId);
 		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
 		return { character: s.characterLoader.display(character) };
 	});
-	dispatcher.registerHandler("character.list:v1", async () => ({
+	dispatcher.registerHandler(RPC.character.list, async () => ({
 		characters: s.characterLoader.list(s.db, s.defaultCharacterId),
 	}));
-	dispatcher.registerHandler("character.activate:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.character.activate, async (_p) => {
 		const { characterId } = _p as { characterId: string };
 		const character = s.characterLoader.load(characterId);
 		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
@@ -73,13 +86,29 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		await s.supervisor.start();
 		return { character: s.characterLoader.display(character) };
 	});
+	dispatcher.registerHandler(RPC.character.import, async (_p) => {
+		const { files } = _p as { files: Array<{ path: string; base64: string }> };
+		let character: ReturnType<CharacterLoader["install"]>;
+		try {
+			character = s.characterLoader.install(files);
+		} catch (error) {
+			if (error && typeof error === "object" && "kind" in error) throw error;
+			throw {
+				kind: "invalid_request",
+				reason: error instanceof Error ? error.message : "character_package_invalid",
+			};
+		}
+		s.characterLoader.seed(s.db, s.eventBus, character);
+		s.eventBus.publish("character.imported", { characterId: character.id });
+		return { character: s.characterLoader.display(character) };
+	});
 
 	// --- role-defined onboarding -----------------------------------------------
-	dispatcher.registerHandler("onboarding.get:v1", async () => {
+	dispatcher.registerHandler(RPC.onboarding.get, async () => {
 		const companionId = await getCompanionId(s);
 		return { ...s.onboarding.getState(companionId), eventSeq: s.eventBus.currentSeq };
 	});
-	dispatcher.registerHandler("onboarding.submit:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.onboarding.submit, async (_p) => {
 		const { stepId, answer } = _p as { stepId: string; answer?: string };
 		const companionId = await getCompanionId(s);
 		return {
@@ -89,7 +118,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 
 	// --- conversation ---------------------------------------------------------
-	dispatcher.registerHandler("conversation.list:v1", async () => {
+	dispatcher.registerHandler(RPC.conversation.list, async () => {
 		const companionId = await getCompanionId(s);
 		const rows = s.db
 			.prepare(
@@ -111,7 +140,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			})),
 		};
 	});
-	dispatcher.registerHandler("conversation.create:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.conversation.create, async (_p) => {
 		const companionId = await getCompanionId(s);
 		const id = crypto.randomUUID();
 		const branchId = crypto.randomUUID();
@@ -139,7 +168,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		s.eventBus.publish("conversation.created", { conversationId: id });
 		return { id };
 	});
-	dispatcher.registerHandler("conversation.select:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.conversation.select, async (_p) => {
 		const { id } = _p as { id: string };
 		const companionId = await getCompanionId(s);
 		const row = s.db
@@ -151,7 +180,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		s.eventBus.publish("conversation.selected", { id });
 		return conversationProjection(s.db, row.id, row.title, row.scene_title);
 	});
-	dispatcher.registerHandler("conversation.rename:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.conversation.rename, async (_p) => {
 		const { id, title } = _p as { id: string; title: string };
 		const companionId = await getCompanionId(s);
 		const result = s.db
@@ -163,7 +192,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		s.eventBus.publish("conversation.renamed", { conversationId: id, title: title.trim() });
 		return {};
 	});
-	dispatcher.registerHandler("conversation.archive:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.conversation.archive, async (_p) => {
 		const { id, archived } = _p as { id: string; archived: boolean };
 		const companionId = await getCompanionId(s);
 		const result = s.db
@@ -175,7 +204,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		s.eventBus.publish("conversation.archived", { conversationId: id, archived });
 		return {};
 	});
-	dispatcher.registerHandler("conversation.delete:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.conversation.delete, async (_p) => {
 		const { id } = _p as { id: string };
 		const companionId = await getCompanionId(s);
 		const exists = s.db
@@ -219,27 +248,27 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			s.db.exec("COMMIT");
 		} catch (error) {
 			s.db.exec("ROLLBACK");
-			throw { kind: "conflict", reason: "conversation_has_linked_work" };
+			throw error;
 		}
 		s.eventBus.publish("conversation.deleted", { conversationId: id });
 		return {};
 	});
 
 	// --- message ----------------------------------------------------------------
-	dispatcher.registerHandler("message.send:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.message.send, async (_p) => {
 		const { conversationId, text } = _p as { conversationId: string; text: string };
 		return s.turns.sendUserMessage(conversationId, text);
 	});
-	dispatcher.registerHandler("message.abort:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.message.abort, async (_p) => {
 		const { conversationId } = _p as { conversationId: string };
 		await s.turns.abort(conversationId);
 		return {};
 	});
-	dispatcher.registerHandler("message.regenerate:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.message.regenerate, async (_p) => {
 		const { conversationId, messageId } = _p as { conversationId: string; messageId: string };
 		return s.turns.regenerate(conversationId, messageId);
 	});
-	dispatcher.registerHandler("message.switchVersion:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.message.switchVersion, async (_p) => {
 		const { conversationId, messageId, versionId } = _p as {
 			conversationId: string;
 			messageId: string;
@@ -248,7 +277,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		await s.turns.switchVersion(conversationId, messageId, versionId);
 		return {};
 	});
-	dispatcher.registerHandler("message.edit:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.message.edit, async (_p) => {
 		const { conversationId, messageId, text, isUserMessage } = _p as {
 			conversationId: string;
 			messageId: string;
@@ -258,12 +287,12 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		await s.turns.edit(conversationId, messageId, text, isUserMessage);
 		return {};
 	});
-	dispatcher.registerHandler("message.continue:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.message.continue, async (_p) => {
 		const { conversationId } = _p as { conversationId: string };
 		await s.turns.continue(conversationId);
 		return {};
 	});
-	dispatcher.registerHandler("message.correct:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.message.correct, async (_p) => {
 		const { conversationId, reason, applyScope } = _p as {
 			conversationId: string;
 			reason: string;
@@ -272,7 +301,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		await s.turns.correct(conversationId, reason, applyScope);
 		return {};
 	});
-	dispatcher.registerHandler("message.branch:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.message.branch, async (_p) => {
 		const { conversationId, messageId } = _p as { conversationId: string; messageId: string };
 		const branchId = await s.turns.branch(conversationId, messageId);
 		return { branchId };
@@ -280,11 +309,11 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 
 	// --- memory ------------------------------------------------------------------
 	const memory = s.memory;
-	dispatcher.registerHandler("memory.listCandidates:v1", async () => {
+	dispatcher.registerHandler(RPC.memory.listCandidates, async () => {
 		const companionId = await getCompanionId(s);
 		return { candidates: memory.listCandidates({ companionId }) };
 	});
-	dispatcher.registerHandler("memory.decideCandidate:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.memory.decideCandidate, async (_p) => {
 		const params = _p as {
 			candidateId: string;
 			decision: "approve" | "approve_edited" | "reject";
@@ -299,12 +328,12 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		});
 		return {};
 	});
-	dispatcher.registerHandler("memory.search:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.memory.search, async (_p) => {
 		const { query, scope } = _p as { query: string; scope?: string };
 		const companionId = await getCompanionId(s);
 		return { entries: memory.recall({ companionId, query, scope: scope as never, enabled: true }) };
 	});
-	dispatcher.registerHandler("memory.list:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.memory.list, async (_p) => {
 		const { scope, limit } = _p as { scope?: string; limit?: number };
 		const companionId = await getCompanionId(s);
 		return {
@@ -317,33 +346,33 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			}),
 		};
 	});
-	dispatcher.registerHandler("memory.pin:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.memory.pin, async (_p) => {
 		const { entryId, pinned } = _p as { entryId: string; pinned: boolean };
 		memory.pin(entryId, pinned);
 		return {};
 	});
-	dispatcher.registerHandler("memory.forget:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.memory.forget, async (_p) => {
 		const { entryId } = _p as { entryId: string };
 		memory.forget(entryId);
 		return {};
 	});
-	dispatcher.registerHandler("memory.exclude:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.memory.exclude, async (_p) => {
 		const { entryId, excluded } = _p as { entryId: string; excluded: boolean };
 		memory.exclude(entryId, excluded);
 		return {};
 	});
-	dispatcher.registerHandler("memory.edit:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.memory.edit, async (_p) => {
 		const { entryId, newText } = _p as { entryId: string; newText: string };
 		memory.edit(entryId, newText);
 		return {};
 	});
 
 	// --- story archive -------------------------------------------------------------
-	dispatcher.registerHandler("story.listChanges:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.story.listChanges, async (_p) => {
 		const { branchId } = _p as { branchId?: string };
 		return { changes: s.story.list({ companionId: await getCompanionId(s), branchId }) };
 	});
-	dispatcher.registerHandler("story.applyChange:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.story.applyChange, async (_p) => {
 		const params = _p as {
 			conversationId?: string;
 			branchId?: string;
@@ -358,12 +387,12 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			}),
 		};
 	});
-	dispatcher.registerHandler("story.revertChange:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.story.revertChange, async (_p) => {
 		const { changeId, conversationId } = _p as { changeId: string; conversationId?: string };
 		s.story.revert(changeId, conversationId);
 		return {};
 	});
-	dispatcher.registerHandler("story.reset:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.story.reset, async (_p) => {
 		const { conversationId, branchId } = _p as { conversationId?: string; branchId?: string };
 		return {
 			count: s.story.reset({
@@ -373,7 +402,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			}),
 		};
 	});
-	dispatcher.registerHandler("story.listProposals:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.story.listProposals, async (_p) => {
 		const { conversationId } = _p as { conversationId?: string };
 		return {
 			proposals: s.story.listProposals({
@@ -382,45 +411,45 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			}),
 		};
 	});
-	dispatcher.registerHandler("story.resolveProposal:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.story.resolveProposal, async (_p) => {
 		const { proposalId, accept } = _p as { proposalId: string; accept: boolean };
 		return { change: s.story.resolveProposal({ proposalId, accept }) };
 	});
 
 	// --- canon hub (advanced authoring) ---------------------------------------------
-	dispatcher.registerHandler("canon.listSources:v1", async () => ({
+	dispatcher.registerHandler(RPC.canon.listSources, async () => ({
 		sources: s.canon.listSources(await getCompanionId(s)),
 	}));
-	dispatcher.registerHandler("canon.addSource:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.canon.addSource, async (_p) => {
 		const { logicalName, content } = _p as { logicalName: string; content: string };
 		return { source: s.canon.addSource(await getCompanionId(s), logicalName, content) };
 	});
-	dispatcher.registerHandler("canon.search:v1", async (_p) => ({
+	dispatcher.registerHandler(RPC.canon.search, async (_p) => ({
 		chunks: s.canon.search(await getCompanionId(s), (_p as { query: string }).query),
 	}));
-	dispatcher.registerHandler("canon.removeSource:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.canon.removeSource, async (_p) => {
 		s.canon.removeSource(await getCompanionId(s), (_p as { sourceId: string }).sourceId);
 		return {};
 	});
-	dispatcher.registerHandler("canon.listModules:v1", async () => ({
+	dispatcher.registerHandler(RPC.canon.listModules, async () => ({
 		modules: s.canon.listModules(await getCompanionId(s)),
 	}));
-	dispatcher.registerHandler("canon.upsertModule:v1", async (_p) => ({
+	dispatcher.registerHandler(RPC.canon.upsertModule, async (_p) => ({
 		module: s.canon.upsertModule({
 			...(_p as Parameters<CanonHubService["upsertModule"]>[0]),
 			companionId: await getCompanionId(s),
 		}),
 	}));
-	dispatcher.registerHandler("canon.deleteModule:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.canon.deleteModule, async (_p) => {
 		s.canon.deleteModule(await getCompanionId(s), (_p as { id: string }).id);
 		return {};
 	});
 
 	// --- provider ------------------------------------------------------------------
-	dispatcher.registerHandler("provider.list:v1", async () => {
+	dispatcher.registerHandler(RPC.provider.list, async () => {
 		return { providers: await s.providers.listProviders() };
 	});
-	dispatcher.registerHandler("provider.customUpsert:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.provider.customUpsert, async (_p) => {
 		const input = _p as {
 			providerId: string;
 			name: string;
@@ -434,51 +463,51 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		await s.supervisor.start();
 		return {};
 	});
-	dispatcher.registerHandler("provider.overrideBaseUrl:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.provider.overrideBaseUrl, async (_p) => {
 		const input = _p as { providerId: string; baseUrl: string };
 		await s.providers.overrideProviderBaseUrl(input);
 		await s.supervisor.stop();
 		await s.supervisor.start();
 		return {};
 	});
-	dispatcher.registerHandler("provider.setApiKey:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.provider.setApiKey, async (_p) => {
 		const { providerId, apiKey, sessionOnly } = _p as {
 			providerId: string;
 			apiKey: string;
 			sessionOnly?: boolean;
 		};
-		const status = await s.providers.setApiKey(providerId, apiKey, sessionOnly);
-		return { status };
+		await s.providers.setApiKey(providerId, apiKey, sessionOnly);
+		return {};
 	});
-	dispatcher.registerHandler("provider.login:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.provider.login, async (_p) => {
 		const { providerId } = _p as { providerId: string };
-		return s.providers.startOAuth(providerId);
+		return oauthWire(await s.providers.startOAuth(providerId));
 	});
-	dispatcher.registerHandler("provider.loginStatus:v1", async (_p) => {
-		return s.providers.getOAuthSession((_p as { providerId: string }).providerId);
+	dispatcher.registerHandler(RPC.provider.loginStatus, async (_p) => {
+		return oauthWire(await s.providers.getOAuthSession((_p as { providerId: string }).providerId));
 	});
-	dispatcher.registerHandler("provider.loginAnswer:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.provider.loginAnswer, async (_p) => {
 		const { providerId, answer } = _p as { providerId: string; answer: string };
-		return s.providers.answerOAuth(providerId, answer);
+		return oauthWire(await s.providers.answerOAuth(providerId, answer));
 	});
-	dispatcher.registerHandler("provider.logout:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.provider.logout, async (_p) => {
 		const { providerId } = _p as { providerId: string };
 		await s.providers.logout(providerId);
 		return {};
 	});
 
 	// --- voice ------------------------------------------------------------------------
-	dispatcher.registerHandler("voice.list:v1", async () => {
+	dispatcher.registerHandler(RPC.voice.list, async () => {
 		const companionId = await getCompanionId(s);
 		return { stacks: s.voice.list(companionId) };
 	});
-	dispatcher.registerHandler("voice.switch:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.voice.switch, async (_p) => {
 		const { stackId, scope } = _p as { stackId: string; scope: "next_scene" | "branch_only" };
 		const companionId = await getCompanionId(s);
 		const stack = s.voice.switchScope(companionId, stackId, scope);
 		return { stack };
 	});
-	dispatcher.registerHandler("voice.pin:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.voice.pin, async (_p) => {
 		const { providerId, modelId, label } = _p as {
 			providerId: string;
 			modelId: string;
@@ -493,7 +522,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 
 	// --- run ------------------------------------------------------------------------
-	dispatcher.registerHandler("run.list:v1", async () => {
+	dispatcher.registerHandler(RPC.run.list, async () => {
 		const rows = s.db
 			.prepare(
 				"SELECT id, commission_id, executor_profile, status, started_at, completed_at FROM runs ORDER BY created_at DESC LIMIT 10",
@@ -502,7 +531,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			id: string;
 			commission_id: string;
 			executor_profile: string;
-			status: string;
+			status: RunStatus;
 			started_at: string | null;
 			completed_at: string | null;
 		}>;
@@ -517,7 +546,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			})),
 		};
 	});
-	dispatcher.registerHandler("commission.list:v1", async () => {
+	dispatcher.registerHandler(RPC.commission.list, async () => {
 		return {
 			commissions: s.commissions.list().map((commission) => ({
 				id: commission.id,
@@ -528,7 +557,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			})),
 		};
 	});
-	dispatcher.registerHandler("commission.draft:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.commission.draft, async (_p) => {
 		const params = _p as {
 			conversationId: string;
 			title: string;
@@ -540,28 +569,28 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 		return s.commissions.draft(params);
 	});
-	dispatcher.registerHandler("commission.approve:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.commission.approve, async (_p) => {
 		const { commissionId, approvedHash } = _p as { commissionId: string; approvedHash: string };
 		s.commissions.approve(commissionId, approvedHash);
 		return {};
 	});
-	dispatcher.registerHandler("commission.reject:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.commission.reject, async (_p) => {
 		s.commissions.reject((_p as { commissionId: string }).commissionId);
 		return {};
 	});
-	dispatcher.registerHandler("commission.launch:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.commission.launch, async (_p) => {
 		const { commissionId, executorProfile } = _p as {
 			commissionId: string;
 			executorProfile: string;
 		};
 		return s.commissions.launch({ commissionId, executorProfile });
 	});
-	dispatcher.registerHandler("run.steer:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.run.steer, async (_p) => {
 		const { runId, instruction } = _p as { runId: string; instruction: string };
 		await s.commissions.steerRun(runId, instruction);
 		return {};
 	});
-	dispatcher.registerHandler("run.cancel:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.run.cancel, async (_p) => {
 		const { runId } = _p as { runId: string };
 		const run = await s.commissions.cancelRun(runId);
 		return {
@@ -573,7 +602,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			completedAt: run.completedAt ?? undefined,
 		};
 	});
-	dispatcher.registerHandler("run.respondPermission:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.run.respondPermission, async (_p) => {
 		const { runId, requestId, optionId } = _p as {
 			runId: string;
 			requestId: string;
@@ -591,13 +620,13 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 
 	// --- artifacts ------------------------------------------------------------------
-	dispatcher.registerHandler("artifact.list:v1", async () => ({
+	dispatcher.registerHandler(RPC.artifact.list, async () => ({
 		artifacts: s.artifacts.list().map((artifact) => ({
 			...artifact,
 			producerRunId: artifact.producerRunId ?? undefined,
 		})),
 	}));
-	dispatcher.registerHandler("artifact.read:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.artifact.read, async (_p) => {
 		const { artifactId } = _p as { artifactId: string };
 		const artifact = s.artifacts.get(artifactId);
 		const blob = s.artifacts.readBlob(artifactId);
@@ -610,7 +639,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 
 	// --- settings ----------------------------------------------------------------------
-	dispatcher.registerHandler("settings.get:v1", async () => {
+	dispatcher.registerHandler(RPC.settings.get, async () => {
 		const companionId = await getCompanionId(s);
 		const stateData = s.onboarding.getState(companionId).stateData;
 		return {
@@ -620,7 +649,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			},
 		};
 	});
-	dispatcher.registerHandler("settings.set:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.settings.set, async (_p) => {
 		const { settings } = _p as { settings: Record<string, unknown> };
 		const companionId = await getCompanionId(s);
 		if ("relationshipMemoryEnabled" in settings) {
@@ -664,7 +693,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 
 	// --- events -----------------------------------------------------------------------
-	dispatcher.registerHandler("events.subscribe:v1", async (_p) => {
+	dispatcher.registerHandler(RPC.events.subscribe, async (_p) => {
 		const { afterSeq } = _p as { afterSeq?: number };
 		const rows = s.db
 			.prepare("SELECT seq, kind, payload FROM events WHERE seq > ? ORDER BY seq LIMIT 100")
@@ -673,7 +702,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			events: rows.map((r) => ({ seq: r.seq, kind: r.kind, payload: JSON.parse(r.payload) })),
 		};
 	});
-	dispatcher.registerHandler("snapshot.get:v1", async () => {
+	dispatcher.registerHandler(RPC.snapshot.get, async () => {
 		const companionId = await getCompanionId(s);
 		const onboarding = s.onboarding.getState(companionId);
 		const character = s.characterLoader.load(companionId);
@@ -707,26 +736,22 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			) {
 				continue;
 			}
-			try {
-				const state = JSON.parse(row.state_json) as unknown;
-				if (
-					state &&
-					typeof state === "object" &&
-					!Array.isArray(state) &&
-					"visualState" in state &&
-					typeof state.visualState === "string" &&
-					allowedSceneIds.has(row.scene) &&
-					allowedVisualStates.has(state.visualState) &&
-					typeof row.scene === "string"
-				) {
-					characterRuntimeByConversation[row.conversation_id] = {
-						sceneId: row.scene,
-						visualState: state.visualState,
-					};
-				}
-			} catch {
-				// Invalid historical state is omitted; package defaults remain visible.
+			const state = JSON.parse(row.state_json) as unknown;
+			if (
+				!state ||
+				typeof state !== "object" ||
+				Array.isArray(state) ||
+				!("visualState" in state) ||
+				typeof state.visualState !== "string" ||
+				!allowedSceneIds.has(row.scene) ||
+				!allowedVisualStates.has(state.visualState)
+			) {
+				throw new Error(`invalid persisted scene state for conversation ${row.conversation_id}`);
 			}
+			characterRuntimeByConversation[row.conversation_id] = {
+				sceneId: row.scene,
+				visualState: state.visualState,
+			};
 		}
 		const eventSeq = s.eventBus.currentSeq;
 		const activeRow = convRows[0];

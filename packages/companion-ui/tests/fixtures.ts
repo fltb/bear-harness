@@ -1,4 +1,4 @@
-import type { CompanionClient } from "@bear-harness/companion-types";
+import type { CompanionClient } from "@bear-harness/companion-client";
 import { type ProductConfig, productConfig } from "@bear-harness/product-config";
 import { vi } from "vitest";
 import type { CharacterDisplay, SettingsData } from "../src/index.js";
@@ -44,6 +44,7 @@ export const THEMED_CHARACTER: CharacterDisplay = {
 					submit_label: "Continue",
 				},
 			],
+			completion: { conversation_title: "Test conversation" },
 		},
 	},
 	scenes: [],
@@ -86,7 +87,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 
 /**
  * Minimal deterministic `CompanionClient` fixture matching the public
- * interface of `@bear-harness/companion-types`.
+ * interface of `@bear-harness/companion-client`.
  *
  * Every call resolves a success envelope with empty domain data, so the
  * store boots into the same idle shell a missing bridge used to produce.
@@ -102,14 +103,14 @@ export function createTestClient() {
 	const ok = <T>(data: T) => Promise.resolve({ ok: true as const, data });
 
 	const settingsGet = vi.fn(() => ok({ settings }));
-	const settingsSet = vi.fn(async (patch: Record<string, unknown>) => {
+	const settingsSet = vi.fn(async ({ settings: patch }: { settings: Record<string, unknown> }) => {
 		const next: Record<string, unknown> = { ...settings };
 		for (const [key, value] of Object.entries(patch)) {
 			if (value === null) delete next[key];
 			else next[key] = value;
 		}
 		settings = next as unknown as SettingsData;
-		return ok(null);
+		return ok({ settings });
 	});
 
 	const conversationList = vi.fn(() => ok({ conversations: [] }));

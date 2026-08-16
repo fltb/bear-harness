@@ -25,6 +25,7 @@ function activeClient() {
 					stacks: [
 						{
 							id: "primary-stack",
+							companionId: "test-character",
 							providerId: "e2e-rule",
 							modelId: "rule-model",
 							revision: 1,

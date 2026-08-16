@@ -1,4 +1,4 @@
-import type { HostTransport } from "@bear-harness/companion-types";
+import type { HostTransport } from "@bear-harness/companion-client";
 
 export interface WebDevBootstrap {
 	product: {
@@ -25,8 +25,8 @@ export interface WebDevBootstrap {
 
 export function createHttpTransport(token: string): HostTransport {
 	return {
-		async invoke(channel, params) {
-			const response = await fetch(`/rpc/${encodeURIComponent(channel)}`, {
+		async invoke(endpoint, params) {
+			const response = await fetch(`/rpc/${encodeURIComponent(endpoint.channel)}`, {
 				method: "POST",
 				headers: {
 					"content-type": "application/json",

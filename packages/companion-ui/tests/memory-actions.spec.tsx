@@ -73,9 +73,14 @@ describe("memory controls", () => {
 		await user.click(screen.getByRole("button", { name: productUi.memory.search }));
 
 		await waitFor(() => {
-			expect(decideCandidate).toHaveBeenCalledWith("candidate-1", "approve", undefined, "self");
-			expect(pin).toHaveBeenCalledWith("entry-1", true);
-			expect(search).toHaveBeenCalledWith("夜里", "self");
+			expect(decideCandidate).toHaveBeenCalledWith({
+				candidateId: "candidate-1",
+				decision: "approve",
+				editedText: undefined,
+				scope: "self",
+			});
+			expect(pin).toHaveBeenCalledWith({ entryId: "entry-1", pinned: true });
+			expect(search).toHaveBeenCalledWith({ query: "夜里", scope: "self" });
 		});
 	});
 
@@ -89,7 +94,7 @@ describe("memory controls", () => {
 		client.memory.search = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { entries: [currentEntry] } }),
 		);
-		client.memory.edit = vi.fn((_entryId, newText) => {
+		client.memory.edit = vi.fn(({ newText }) => {
 			currentEntry = { ...currentEntry, id: "entry-2", text: newText, normalizedText: newText };
 			return Promise.resolve({ ok: true as const, data: null });
 		});
@@ -107,7 +112,10 @@ describe("memory controls", () => {
 		await user.click(within(entries).getByRole("button", { name: productUi.memory.saveEdit }));
 
 		await waitFor(() =>
-			expect(client.memory.edit).toHaveBeenCalledWith("entry-1", "用户喜欢在清晨工作"),
+			expect(client.memory.edit).toHaveBeenCalledWith({
+				entryId: "entry-1",
+				newText: "用户喜欢在清晨工作",
+			}),
 		);
 		expect(await within(entries).findByText("用户喜欢在清晨工作")).toBeInTheDocument();
 		expect(within(entries).queryByText(entry.text)).not.toBeInTheDocument();

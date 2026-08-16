@@ -13,7 +13,11 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import { z } from "zod";
 import type { CharacterLoader } from "./character-loader.js";
+import { OnboardingStateDataSchema } from "./onboarding-schema.js";
+
+const SourceRefsSchema = z.array(z.string());
 
 export interface ContextPackBlock {
 	layer:
@@ -192,166 +196,130 @@ ${modules.join("\n")}`,
 			...new Set(query.split(/[\s，。！？；、]+/).filter((term) => term.length >= 2)),
 		].slice(0, 6);
 		if (terms.length === 0) return [];
-		try {
-			const clauses = terms.map(() => "cc.content LIKE ?").join(" OR ");
-			const rows = this.db
-				.prepare(
-					`SELECT cs.logical_name, cc.ordinal, cc.content
+		const clauses = terms.map(() => "cc.content LIKE ?").join(" OR ");
+		const rows = this.db
+			.prepare(
+				`SELECT cs.logical_name, cc.ordinal, cc.content
 				 FROM conversations c
 				 JOIN canon_sources cs ON cs.companion_id = c.companion_id
 				 JOIN canon_chunks cc ON cc.source_id = cs.id
 				 WHERE c.id = ? AND (${clauses})
 				 ORDER BY cc.source_id, cc.ordinal LIMIT 6`,
-				)
-				.all(conversationId, ...terms.map((term) => `%${term}%`)) as Array<{
-				logical_name: string;
-				ordinal: number;
-				content: string;
-			}>;
-			return rows.map((row) => `【${row.logical_name} · ${row.ordinal + 1}】\n${row.content}`);
-		} catch {
-			return [];
-		}
+			)
+			.all(conversationId, ...terms.map((term) => `%${term}%`)) as Array<{
+			logical_name: string;
+			ordinal: number;
+			content: string;
+		}>;
+		return rows.map((row) => `【${row.logical_name} · ${row.ordinal + 1}】\n${row.content}`);
 	}
 
 	private getCanonModules(conversationId: string, query: string): string[] {
 		const terms = [
 			...new Set(query.split(/[\s，。！？；、]+/).filter((term) => term.length >= 2)),
 		].slice(0, 6);
-		try {
-			const rows = this.db
-				.prepare(
-					`SELECT sm.id, sm.parent_id, sm.kind, sm.name, sm.description, sm.source_refs_json
+		const rows = this.db
+			.prepare(
+				`SELECT sm.id, sm.parent_id, sm.kind, sm.name, sm.description, sm.source_refs_json
 				 FROM story_modules sm JOIN conversations c ON c.companion_id = sm.companion_id
 				 WHERE c.id = ? ORDER BY sm.created_at`,
-				)
-				.all(conversationId) as Array<{
-				id: string;
-				parent_id: string | null;
-				kind: string;
-				name: string;
-				description: string;
-				source_refs_json: string;
-			}>;
-			const evidenceIds = new Set(
-				terms.length === 0
-					? []
-					: (
-							this.db
-								.prepare(
-									`SELECT cc.id FROM canon_chunks cc
+			)
+			.all(conversationId) as Array<{
+			id: string;
+			parent_id: string | null;
+			kind: string;
+			name: string;
+			description: string;
+			source_refs_json: string;
+		}>;
+		const evidenceIds = new Set(
+			terms.length === 0
+				? []
+				: (
+						this.db
+							.prepare(
+								`SELECT cc.id FROM canon_chunks cc
 								 JOIN canon_sources cs ON cs.id = cc.source_id
 								 JOIN conversations c ON c.companion_id = cs.companion_id
 								 WHERE c.id = ? AND (${terms.map(() => "cc.content LIKE ?").join(" OR ")})`,
-								)
-								.all(conversationId, ...terms.map((term) => `%${term}%`)) as Array<{ id: string }>
-						).map((row) => row.id),
-			);
-			const byId = new Map(rows.map((row) => [row.id, row]));
-			const selected = new Set<string>();
-			for (const row of rows) {
-				let refs: string[] = [];
-				try {
-					const parsed = JSON.parse(row.source_refs_json);
-					if (Array.isArray(parsed))
-						refs = parsed.filter((id): id is string => typeof id === "string");
-				} catch {}
-				const searchable = `${row.name} ${row.description}`;
-				if (
-					row.kind === "root" ||
-					terms.some((term) => searchable.includes(term)) ||
-					refs.some((id) => evidenceIds.has(id))
-				) {
-					selected.add(row.id);
-					let parentId = row.parent_id;
-					while (parentId && !selected.has(parentId)) {
-						selected.add(parentId);
-						parentId = byId.get(parentId)?.parent_id ?? null;
-					}
+							)
+							.all(conversationId, ...terms.map((term) => `%${term}%`)) as Array<{ id: string }>
+					).map((row) => row.id),
+		);
+		const byId = new Map(rows.map((row) => [row.id, row]));
+		const selected = new Set<string>();
+		for (const row of rows) {
+			const refs = SourceRefsSchema.parse(JSON.parse(row.source_refs_json));
+			const searchable = `${row.name} ${row.description}`;
+			if (
+				row.kind === "root" ||
+				terms.some((term) => searchable.includes(term)) ||
+				refs.some((id) => evidenceIds.has(id))
+			) {
+				selected.add(row.id);
+				let parentId = row.parent_id;
+				while (parentId && !selected.has(parentId)) {
+					selected.add(parentId);
+					parentId = byId.get(parentId)?.parent_id ?? null;
 				}
 			}
-			return rows
-				.filter((row) => selected.has(row.id))
-				.slice(0, 12)
-				.map(
-					(row) => `- [${row.kind}] ${row.name}${row.description ? `：${row.description}` : ""}`,
-				);
-		} catch {
-			return [];
 		}
+		return rows
+			.filter((row) => selected.has(row.id))
+			.slice(0, 12)
+			.map((row) => `- [${row.kind}] ${row.name}${row.description ? `：${row.description}` : ""}`);
 	}
 
 	private getStoryChanges(conversationId: string): string[] {
-		try {
-			const branch = this.db
-				.prepare(
-					"SELECT id FROM branches WHERE conversation_id = ? AND adopted = 1 ORDER BY created_at DESC LIMIT 1",
-				)
-				.get(conversationId) as { id: string } | undefined;
-			const rows = this.db
-				.prepare(
-					`SELECT sc.text, sc.scope
+		const branch = this.db
+			.prepare(
+				"SELECT id FROM branches WHERE conversation_id = ? AND adopted = 1 ORDER BY created_at DESC LIMIT 1",
+			)
+			.get(conversationId) as { id: string } | undefined;
+		const rows = this.db
+			.prepare(
+				`SELECT sc.text, sc.scope
 				 FROM story_changes sc
 				 JOIN conversations c ON c.companion_id = sc.companion_id
 				 WHERE c.id = ? AND sc.status = 'active'
 				 AND (sc.scope = 'global' OR (sc.scope = 'branch' AND sc.branch_id = ?))
 				 ORDER BY sc.created_at ASC LIMIT 40`,
-				)
-				.all(conversationId, branch?.id ?? "") as Array<{ text: string; scope: string }>;
-			return rows.map((row) => `- ${row.text}${row.scope === "branch" ? "（仅当前分支）" : ""}`);
-		} catch {
-			return [];
-		}
+			)
+			.all(conversationId, branch?.id ?? "") as Array<{ text: string; scope: string }>;
+		return rows.map((row) => `- ${row.text}${row.scope === "branch" ? "（仅当前分支）" : ""}`);
 	}
 
 	private relationshipMemoryEnabled(conversationId: string): boolean {
-		let row: { state_json: string | null } | undefined;
-		try {
-			row = this.db
-				.prepare(
-					`SELECT os.state_json
+		const row = this.db
+			.prepare(
+				`SELECT os.state_json
 				 FROM conversations c
 				 LEFT JOIN onboarding_state os ON os.companion_id = c.companion_id
 				 WHERE c.id = ?`,
-				)
-				.get(conversationId) as { state_json: string | null } | undefined;
-		} catch {
-			return false;
-		}
+			)
+			.get(conversationId) as { state_json: string | null } | undefined;
 		if (!row?.state_json) return false;
-		try {
-			const state = JSON.parse(row.state_json) as {
-				decisions?: { relationship_memory_enabled?: boolean };
-			};
-			return state.decisions?.relationship_memory_enabled === true;
-		} catch {
-			return false;
-		}
+		const state = OnboardingStateDataSchema.parse(JSON.parse(row.state_json));
+		return state.decisions.relationship_memory_enabled === true;
 	}
 
 	private getConversationHistory(conversationId: string): string[] {
-		try {
-			const branch = this.db
-				.prepare(
-					"SELECT id FROM branches WHERE conversation_id = ? AND adopted = 1 ORDER BY created_at DESC LIMIT 1",
-				)
-				.get(conversationId) as { id: string } | undefined;
-			if (!branch) return [];
-			const rows = this.db
-				.prepare(
-					`SELECT m.role, v.content
+		const branch = this.db
+			.prepare(
+				"SELECT id FROM branches WHERE conversation_id = ? AND adopted = 1 ORDER BY created_at DESC LIMIT 1",
+			)
+			.get(conversationId) as { id: string } | undefined;
+		if (!branch) return [];
+		const rows = this.db
+			.prepare(
+				`SELECT m.role, v.content
 				 FROM messages m
 				 JOIN message_versions v ON v.message_id = m.id AND v.adopted = 1
 				 WHERE m.conversation_id = ? AND m.branch_id = ?
 				 ORDER BY m.created_at DESC LIMIT 40 OFFSET 1`,
-				)
-				.all(conversationId, branch.id) as Array<{ role: string; content: string }>;
-			return rows
-				.reverse()
-				.map((row) => `${row.role === "user" ? "用户" : "角色"}：${row.content}`);
-		} catch {
-			return [];
-		}
+			)
+			.all(conversationId, branch.id) as Array<{ role: string; content: string }>;
+		return rows.reverse().map((row) => `${row.role === "user" ? "用户" : "角色"}：${row.content}`);
 	}
 
 	private getRelationshipMemory(conversationId: string): { entries: string[] } {

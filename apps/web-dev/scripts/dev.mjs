@@ -11,7 +11,6 @@ const defaultDataDir = resolve(repoRoot, ".dev-data/web-dev");
 for (const workspace of [
 	"@bear-harness/product-config",
 	"@bear-harness/protocol",
-	"@bear-harness/companion-types",
 	"@bear-harness/companion-client",
 	"@bear-harness/host-runtime",
 	"@bear-harness/companion-ui",

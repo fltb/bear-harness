@@ -25,6 +25,16 @@ test("rule provider exercises send and edited-history regeneration deterministic
 }) => {
 	await page.goto("/");
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	await rpc(page, bootstrap.token, "provider.setApiKey:v1", {
+		providerId: "e2e-rule",
+		apiKey: "e2e-rule-key",
+		sessionOnly: true,
+	});
+	await rpc(page, bootstrap.token, "voice.pin:v1", {
+		providerId: "e2e-rule",
+		modelId: "rule-model",
+		label: "E2E Rule Provider",
+	});
 	const conversation = await rpc<{ id: string }>(page, bootstrap.token, "conversation.create:v1", {
 		title: "Rule provider",
 	});
@@ -43,7 +53,7 @@ test("rule provider exercises send and edited-history regeneration deterministic
 			);
 			return snapshot.conversation?.messages?.at(-1)?.versions?.at(-1)?.content;
 		})
-		.toBe("我是 E2E Rule Provider。\n");
+		.toBe("我是 E2E Rule Provider。");
 
 	const snapshot = await rpc<ConversationSnapshot>(page, bootstrap.token, "snapshot.get:v1", {});
 	const userMessage = snapshot.conversation?.messages?.find((message) => message.role === "user");
@@ -62,5 +72,5 @@ test("rule provider exercises send and edited-history regeneration deterministic
 				.flatMap((message) => message.versions)
 				.map((version) => version.content);
 		})
-		.toContain("EDITED_OK\n");
+		.toContain("EDITED_OK");
 });

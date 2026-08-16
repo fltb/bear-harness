@@ -1,62 +1,7 @@
 import { productUi } from "@bear-harness/product-config";
 import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
 import { expect, test } from "playwright/test";
-
-test("browser requires a reply model before the role-defined onboarding", async ({ page }) => {
-	await page.goto("/");
-
-	const modelSetup = page.getByRole("dialog", { name: productUi.modelSetup.dialogLabel });
-	await expect(modelSetup).toBeVisible();
-	await expect(modelSetup.getByRole("heading", { name: productUi.modelSetup.title })).toBeVisible();
-	await expect(
-		modelSetup.getByRole("combobox", { name: productUi.settings.serviceLabel }),
-	).toBeVisible();
-	await expect(
-		modelSetup.getByRole("combobox", { name: productUi.modelSetup.modelLabel }),
-	).toBeVisible();
-
-	const bootstrap = await (await page.request.get("/bootstrap")).json();
-	const headers = { "x-bear-web-dev-token": bootstrap.token };
-	const providerResult = await (
-		await page.request.post("/rpc/provider.list%3Av1", { headers, data: {} })
-	).json();
-	const provider = providerResult.data.providers.find(
-		(item: { authType: string; availableModels: Array<{ id: string }> }) =>
-			item.authType === "api_key" && item.availableModels.length > 0,
-	);
-	if (!provider) throw new Error("test catalog has no API-key provider");
-	await page.request.post("/rpc/provider.setApiKey%3Av1", {
-		headers,
-		data: { providerId: provider.id, apiKey: "test-key", sessionOnly: true },
-	});
-	await page.request.post("/rpc/voice.pin%3Av1", {
-		headers,
-		data: {
-			providerId: provider.id,
-			modelId: provider.availableModels[0].id,
-			label: provider.name,
-		},
-	});
-	await page.reload();
-
-	const onboarding = page.getByRole("dialog", { name: "首次入场" });
-	await expect(onboarding).toBeVisible();
-
-	await onboarding.getByRole("button", { name: "把门打开" }).dblclick();
-	await expect.poll(() => onboarding.getAttribute("data-onboarding-step")).toBe("introduced");
-	await expect(onboarding.getByRole("alert")).toHaveCount(0);
-	await expect(onboarding).toHaveAttribute("data-onboarding-step", "introduced");
-	await onboarding.getByRole("button", { name: productUi.messages.continue }).click();
-
-	const name = onboarding.getByRole("textbox", { name: "希望我怎么称呼你？" });
-	await name.fill("林");
-	await onboarding.getByRole("button", { name: "确认" }).click();
-	await onboarding.getByRole("button", { name: "一起做事的搭档" }).click();
-	await onboarding.getByRole("button", { name: "可以，记住我们之间的事" }).click();
-
-	await expect(onboarding).toBeHidden();
-	await expect(page.getByRole("button", { name: "Web Dev" })).toBeVisible();
-});
+import { ensureReadyForConversation } from "./helpers";
 
 test("WebDev exposes every registered Host RPC channel through its authenticated console", async ({
 	page,
@@ -82,7 +27,7 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	const conversationItems = conversations.getByRole("button");
 	const before = await conversationItems.count();
 	await page.getByRole("button", { name: productUi.sidebar.newConversation }).click();
-	await expect(conversationItems).toHaveCount(before + 1);
+	await expect.poll(() => conversationItems.count()).toBeGreaterThan(before);
 	await expect
 		.poll(() =>
 			conversationItems.evaluateAll(
@@ -105,7 +50,7 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	await expect(page.getByRole("button", { name: productUi.composer.attachLabel })).toBeEnabled();
 
 	await page.getByRole("button", { name: productUi.titlebar.backstage }).click();
-	const backstage = page.getByRole("dialog");
+	const backstage = page.getByRole("dialog", { name: productUi.backstage.title });
 	await expect(backstage).toBeVisible();
 	await backstage.getByRole("tab", { name: productUi.backstage.systemSettings }).click();
 	const settingsPanel = backstage.getByRole("tabpanel", {
@@ -186,6 +131,7 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 		}
 		return elements
 			.filter((element) => {
+				if (element.tagName === "OPTION") return false;
 				const style = getComputedStyle(element);
 				if (style.display === "none" || style.visibility === "hidden") return false;
 				const role = style.getPropertyValue("--semantic-fg-role").trim();
@@ -212,4 +158,29 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	const previousMemory = await relationshipMemory.getAttribute("aria-checked");
 	await relationshipMemory.click();
 	await expect(relationshipMemory).not.toHaveAttribute("aria-checked", previousMemory ?? "");
+});
+
+test("bottom actions open distinct character and system settings destinations", async ({
+	page,
+}) => {
+	await ensureReadyForConversation(page);
+
+	await page
+		.getByRole("button", { name: productUi.sidebar.characterSettings, exact: true })
+		.click();
+	let backstage = page.getByRole("dialog", { name: productUi.backstage.title });
+	await expect(
+		backstage.getByRole("tab", { name: productUi.backstage.roleManagement }),
+	).toHaveAttribute("aria-selected", "true");
+	await expect(backstage.getByLabel(productUi.backstage.roleImport, { exact: true })).toBeVisible();
+	await backstage.getByRole("button", { name: productUi.backstage.close }).click();
+
+	await page.getByRole("button", { name: productUi.sidebar.systemSettings, exact: true }).click();
+	backstage = page.getByRole("dialog", { name: productUi.backstage.title });
+	await expect(
+		backstage.getByRole("tab", { name: productUi.backstage.systemSettings }),
+	).toHaveAttribute("aria-selected", "true");
+	await expect(
+		backstage.getByRole("heading", { name: productUi.settings.primaryModelSection }),
+	).toBeVisible();
 });

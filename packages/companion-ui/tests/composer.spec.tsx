@@ -41,7 +41,12 @@ describe("composer", () => {
 		await user.type(composer, "  测试消息  ");
 		await user.click(screen.getByRole("button", { name: productUi.composer.sendLabel }));
 
-		await waitFor(() => expect(messageSend).toHaveBeenCalledWith("conversation-1", "测试消息"));
+		await waitFor(() =>
+			expect(messageSend).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				text: "测试消息",
+			}),
+		);
 		expect(composer).toHaveValue("");
 	});
 
@@ -117,7 +122,7 @@ describe("composer", () => {
 		);
 		await user.click(screen.getByRole("button", { name: productUi.composer.sendLabel }));
 		await waitFor(() => expect(messageSend).toHaveBeenCalledOnce());
-		const sent = messageSend.mock.calls[0]?.[1] ?? "";
+		const sent = (messageSend.mock.calls[0]?.[0] as { text?: string } | undefined)?.text ?? "";
 		expect(sent).toContain("note-0.txt");
 		expect(sent).not.toContain("note-1.txt");
 		expect(sent).not.toContain("note-10.txt");

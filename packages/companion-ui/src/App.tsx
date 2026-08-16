@@ -1,4 +1,4 @@
-import type { CompanionClient } from "@bear-harness/companion-types";
+import type { CompanionClient } from "@bear-harness/companion-client";
 import { type ProductConfig, productLocale, productUi } from "@bear-harness/product-config";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { createEffect, createSignal, type JSX, Show } from "solid-js";
@@ -38,9 +38,9 @@ export function CompanionApp(props: { product: Readonly<ProductConfig>; client: 
 function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: CompanionClient }) {
 	const store = createCompanionStore(props.client);
 	const [backstageOpen, setBackstageOpen] = createSignal(false);
-	const [backstageTab, setBackstageTab] = createSignal<"relationship" | "settings">("relationship");
+	const [backstageTab, setBackstageTab] = createSignal<"roles" | "settings">("roles");
 	const [dismissedLanguageWarning, setDismissedLanguageWarning] = createSignal("");
-	const openBackstage = (tab: "relationship" | "settings" = "relationship") => {
+	const openBackstage = (tab: "roles" | "settings" = "roles") => {
 		setBackstageTab(tab);
 		setBackstageOpen(true);
 	};

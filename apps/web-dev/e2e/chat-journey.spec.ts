@@ -12,9 +12,7 @@ test("chat streams once and edited history regenerates once through the UI", asy
 	await expect(page.getByRole("status", { name: productUi.messages.responding })).toBeHidden();
 	await expect(page.getByText("STREAM_ONE STREAM_TWO", { exact: true })).toHaveCount(1);
 
-	const userMessage = page
-		.getByRole("article")
-		.filter({ has: page.getByText("STREAM_CHECK", { exact: true }) });
+	const userMessage = page.getByRole("article", { name: /^你 ·/ });
 	await userMessage.getByRole("button", { name: productUi.messages.edit }).click();
 	const editor = userMessage.getByRole("textbox", { name: productUi.messages.editLabel });
 	await editor.fill("规则：回复 EDITED_OK");

@@ -63,6 +63,8 @@ export interface HostRuntimeOptions {
 	productConfig: RuntimeProductConfig;
 	/** Platform encryption boundary for provider credentials. */
 	credentialVault: CredentialVault;
+	/** Development throws protocol bugs; packaged apps isolate them into a safe RPC error. */
+	protocolViolationMode?: "throw" | "isolate";
 }
 
 export class HostRuntime {
@@ -93,7 +95,7 @@ export class HostRuntime {
 		const artifactStore = new ArtifactStore(dbConnection, join(dataDir, "artifacts"));
 		const credentials = new CredentialStore(dbConnection, options.credentialVault);
 		const providers = new ProviderCatalog(credentials, join(dataDir, "companion-runtime"));
-		const characterLoader = new CharacterLoader(characterRoot);
+		const characterLoader = new CharacterLoader(characterRoot, join(dataDir, "characters"));
 		const supervisor = new CompanionSupervisor(dataDir, eventBus, providers);
 		const characterBehavior = new CharacterBehaviorService(dbConnection, eventBus, characterLoader);
 		const memory = new MemoryService(dbConnection, eventBus);
@@ -206,7 +208,18 @@ export class HostRuntime {
 			characterLoader,
 			defaultCharacterId: options.productConfig.defaultCharacterId,
 		};
-		this.dispatcher = new Dispatcher();
+		this.dispatcher = new Dispatcher({
+			responseValidation: options.protocolViolationMode ?? "throw",
+			onProtocolViolation: (error) => {
+				eventBus.publish("diagnostics.protocol_violation", {
+					channel: error.channel,
+					issues: error.issues.map((issue) => ({
+						path: issue.path.join("."),
+						message: issue.message,
+					})),
+				});
+			},
+		});
 		wireHostHandlers(this.dispatcher, this.composition);
 	}
 

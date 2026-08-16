@@ -1,7 +1,8 @@
-import type { CompanionClient } from "@bear-harness/companion-types";
+import type { CompanionClient } from "@bear-harness/companion-client";
+import { OnboardingResponse } from "@bear-harness/protocol/schema";
 import { createResource, createSignal } from "solid-js";
 import type { DomainEvent, OnboardingData } from "./ipc.js";
-import { invoke, isOnboardingData } from "./ipc.js";
+import { invoke } from "./ipc.js";
 
 const INITIAL_ONBOARDING: OnboardingData = {
 	status: "active",
@@ -18,7 +19,7 @@ export interface OnboardingStore {
 	resync(): Promise<void>;
 	submit(stepId: string, answer?: string): Promise<void>;
 	/** @internal hydrate from the boot snapshot; used by createCompanionStore. */
-	_hydrate(value: unknown): void;
+	_hydrate(value: OnboardingData | undefined): void;
 	/** @internal apply an `onboarding.*` domain event; used by createCompanionStore. */
 	_applyEvent(event: DomainEvent): void;
 }
@@ -39,11 +40,7 @@ export function createOnboardingStore(client: CompanionClient): OnboardingStore 
 		applied() ??
 		(resource.error !== undefined ? INITIAL_ONBOARDING : (resource.latest ?? INITIAL_ONBOARDING));
 
-	const apply = (value: unknown): void => {
-		if (!isOnboardingData(value)) {
-			if (applied() === undefined) void actions.refetch();
-			return;
-		}
+	const apply = (value: OnboardingData): void => {
 		const current = applied();
 		if (current !== undefined && value.eventSeq < current.eventSeq) return;
 		setApplied(value);
@@ -62,17 +59,19 @@ export function createOnboardingStore(client: CompanionClient): OnboardingStore 
 		get,
 		resync: async () => apply(await get()),
 		submit: async (stepId, answer) => {
-			const result = await invoke<unknown>(client, () => client.onboarding.submit(stepId, answer));
+			const result = await invoke(client, () => client.onboarding.submit({ stepId, answer }));
 			apply(result);
 		},
-		_hydrate: apply,
+		_hydrate: (value) => {
+			if (value !== undefined) apply(value);
+		},
 		_applyEvent: (event) => {
 			if (event.kind === "onboarding.state_changed") {
 				const payload =
 					typeof event.payload === "object" && event.payload !== null
 						? { ...event.payload, eventSeq: event.seq }
 						: event.payload;
-				apply(payload);
+				apply(OnboardingResponse.parse(payload));
 				return;
 			}
 			if (event.kind === "onboarding.reset") {

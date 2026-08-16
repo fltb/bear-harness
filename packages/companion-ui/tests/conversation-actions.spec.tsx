@@ -130,11 +130,26 @@ describe("conversation message controls", () => {
 		await user.click(screen.getByRole("button", { name: productUi.messages.branch }));
 
 		await waitFor(() => {
-			expect(switchVersion).toHaveBeenCalledWith("conversation-1", "assistant-1", "version-1");
-			expect(regenerate).toHaveBeenCalledWith("conversation-1", "assistant-1");
-			expect(edit).toHaveBeenCalledWith("conversation-1", "assistant-1", "修订后的回答", false);
-			expect(continueMessage).toHaveBeenCalledWith("conversation-1");
-			expect(branch).toHaveBeenCalledWith("conversation-1", "assistant-1");
+			expect(switchVersion).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				messageId: "assistant-1",
+				versionId: "version-1",
+			});
+			expect(regenerate).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				messageId: "assistant-1",
+			});
+			expect(edit).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				messageId: "assistant-1",
+				text: "修订后的回答",
+				isUserMessage: false,
+			});
+			expect(continueMessage).toHaveBeenCalledWith({ conversationId: "conversation-1" });
+			expect(branch).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				messageId: "assistant-1",
+			});
 		});
 	});
 });

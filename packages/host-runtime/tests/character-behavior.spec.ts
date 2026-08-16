@@ -132,4 +132,22 @@ describe("CharacterBehaviorService", () => {
 			count: 0,
 		});
 	});
+
+	it("rejects corrupt persisted character state instead of resetting it", () => {
+		const fixture = createFixture();
+		fixtures.push(fixture);
+		fixture.db
+			.prepare(
+				"INSERT INTO scene_state (id, conversation_id, scene, state_json) VALUES (?, ?, ?, ?)",
+			)
+			.run("scene-1", "conversation-1", "aurora_study", "not-json");
+
+		expect(() =>
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toThrow();
+	});
 });

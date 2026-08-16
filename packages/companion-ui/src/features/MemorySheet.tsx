@@ -61,12 +61,15 @@ export function MemoryEntryList(props: {
 
 	let requestSeq = 0;
 
-	async function reload(): Promise<void> {
+	async function reload(
+		scope: MemoryScope = props.scope,
+		query: string = props.query?.trim() ?? "",
+	): Promise<void> {
 		const seq = ++requestSeq;
 		setLoading(true);
 		setError(null);
 		try {
-			const result = await store.memory.search(props.query?.trim() ?? "", props.scope);
+			const result = await store.memory.search(query, scope);
 			if (seq !== requestSeq) return;
 			setEntries(result);
 		} catch (e) {
@@ -80,7 +83,7 @@ export function MemoryEntryList(props: {
 
 	createEffect(() => {
 		void props.refreshKey;
-		void reload();
+		void reload(props.scope, props.query?.trim() ?? "");
 	});
 
 	async function runEntryAction(
@@ -286,6 +289,7 @@ export function MemorySheet() {
 		setScope(next);
 		setQueryText("");
 		setQuery("");
+		setRefreshKey((key) => key + 1);
 	}
 
 	function submitSearch(): void {

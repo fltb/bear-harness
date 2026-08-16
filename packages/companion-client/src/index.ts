@@ -8,5 +8,5 @@
  */
 
 export type { IpcError } from "@bear-harness/protocol";
-export { createCompanionClient } from "./client.js";
+export { type CompanionClient, createCompanionClient, type HostTransport } from "./client.js";
 export { unwrap } from "./unwrap.js";

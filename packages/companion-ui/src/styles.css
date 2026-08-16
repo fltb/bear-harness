@@ -362,6 +362,24 @@ button:disabled {
 	@apply grid gap-2;
 }
 
+.role-import {
+	@apply grid gap-2 border-b border-line pb-3;
+}
+
+.button-like {
+	@apply inline-flex min-h-9 cursor-pointer items-center justify-center border border-line px-3 text-[12px];
+	color: var(--text);
+	background: var(--surface-alt);
+}
+
+.button-like input[type="file"] {
+	position: absolute;
+	inline-size: 1px;
+	block-size: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+}
+
 .role-row {
 	@apply grid grid-cols-[42px_1fr_auto] items-center gap-3 border-b border-line py-3;
 }

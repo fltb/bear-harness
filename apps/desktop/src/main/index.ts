@@ -119,6 +119,7 @@ async function initializeHost(): Promise<boolean> {
 			characterRoot: characterRoot(),
 			productConfig,
 			credentialVault: electronCredentialVault,
+			protocolViolationMode: app.isPackaged ? "isolate" : "throw",
 		});
 		wireElectronIpcHandlers(runtime.dispatcher, windowRegistry);
 		await runtime.start();

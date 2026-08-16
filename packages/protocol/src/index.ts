@@ -9,7 +9,7 @@
  * the wire contract, index.ts only mirrors its inferred types.
  */
 
-import type { Infer as Static } from "@bear-harness/schema";
+import type { z } from "@bear-harness/schema";
 import type * as schema from "./schema.js";
 
 // ---------------------------------------------------------------------------
@@ -17,7 +17,7 @@ import type * as schema from "./schema.js";
 // ---------------------------------------------------------------------------
 
 /** Localizable reason codes for wire errors. */
-export type IpcErrorKind = Static<typeof schema.IpcErrorKind>;
+export type IpcErrorKind = z.infer<typeof schema.IpcErrorKind>;
 
 /** Error body of a failed wire response. */
 export interface IpcError {
@@ -43,171 +43,193 @@ export type IpcEnvelope<T> = IpcSuccess<T> | IpcFailure;
 
 /** Type of the runtime request-schema registry (channel name → schema). */
 export type RequestSchemaRegistry = typeof schema.REQUEST_SCHEMAS;
+export type Channel = schema.Channel;
+export type AnyRpcEndpoint = schema.AnyRpcEndpoint;
+export type DeclaredRpcEndpoint = schema.DeclaredRpcEndpoint;
+export type RequestOf<E extends AnyRpcEndpoint> = schema.RequestOf<E>;
+export type ResponseOf<E extends AnyRpcEndpoint> = schema.ResponseOf<E>;
+export type EnvelopeOf<E extends AnyRpcEndpoint> = IpcEnvelope<ResponseOf<E>>;
 
 // ---------------------------------------------------------------------------
 // Event bus
 // ---------------------------------------------------------------------------
 
-export type EventSeq = Static<typeof schema.EventSeq>;
-export type DomainEvent = Static<typeof schema.DomainEvent>;
-export type EventSubscribeRequest = Static<typeof schema.EventSubscribeRequest>;
-export type EventSubscribeResponse = Static<typeof schema.EventSubscribeResponse>;
+export type EventSeq = z.infer<typeof schema.EventSeq>;
+export type DomainEvent = z.infer<typeof schema.DomainEvent>;
+export type EventSubscribeRequest = z.infer<typeof schema.EventSubscribeRequest>;
+export type EventSubscribeResponse = z.infer<typeof schema.EventSubscribeResponse>;
 
 // ---------------------------------------------------------------------------
 // Snapshot
 // ---------------------------------------------------------------------------
 
-export type SnapshotGetRequest = Static<typeof schema.SnapshotGetRequest>;
-export type SnapshotResponse = Static<typeof schema.SnapshotResponse>;
+export type SnapshotGetRequest = z.infer<typeof schema.SnapshotGetRequest>;
+export type SnapshotResponse = z.infer<typeof schema.SnapshotResponse>;
+export type ConversationSnapshot = z.infer<typeof schema.ConversationSnapshot>;
+export type MemorySnapshot = z.infer<typeof schema.MemorySnapshot>;
+export type CharacterRuntimeState = z.infer<typeof schema.CharacterRuntimeState>;
+export type CharacterRuntimeSnapshot = z.infer<typeof schema.CharacterRuntimeSnapshot>;
 
 // ---------------------------------------------------------------------------
 // Onboarding (first-meeting FSM)
 // ---------------------------------------------------------------------------
 
-export type OnboardingStatus = Static<typeof schema.OnboardingStatus>;
-export type OnboardingGetRequest = Static<typeof schema.OnboardingGetRequest>;
-export type OnboardingSubmitRequest = Static<typeof schema.OnboardingSubmitRequest>;
-export type CharacterGetRequest = Static<typeof schema.CharacterGetRequest>;
-export type CharacterSummary = Static<typeof schema.CharacterSummary>;
-export type CharacterListRequest = Static<typeof schema.CharacterListRequest>;
-export type CharacterListResponse = Static<typeof schema.CharacterListResponse>;
-export type CharacterActivateRequest = Static<typeof schema.CharacterActivateRequest>;
-export type OnboardingResponse = Static<typeof schema.OnboardingResponse>;
-export type OnboardingStateData = Static<typeof schema.OnboardingStateData>;
+export type OnboardingStatus = z.infer<typeof schema.OnboardingStatus>;
+export type OnboardingGetRequest = z.infer<typeof schema.OnboardingGetRequest>;
+export type OnboardingSubmitRequest = z.infer<typeof schema.OnboardingSubmitRequest>;
+export type CharacterGetRequest = z.infer<typeof schema.CharacterGetRequest>;
+export type CharacterSummary = z.infer<typeof schema.CharacterSummary>;
+export type CharacterListRequest = z.infer<typeof schema.CharacterListRequest>;
+export type CharacterListResponse = z.infer<typeof schema.CharacterListResponse>;
+export type CharacterResponse = z.infer<typeof schema.CharacterResponse>;
+export type CharacterDisplay = z.infer<typeof schema.CharacterDisplay>;
+export type CharacterTheme = z.infer<typeof schema.CharacterTheme>;
+export type CharacterOnboardingFlow = z.infer<typeof schema.CharacterOnboardingFlow>;
+export type CharacterActivateRequest = z.infer<typeof schema.CharacterActivateRequest>;
+export type OnboardingResponse = z.infer<typeof schema.OnboardingResponse>;
+export type OnboardingStateData = z.infer<typeof schema.OnboardingStateData>;
 
 // ---------------------------------------------------------------------------
 // Conversation
 // ---------------------------------------------------------------------------
 
-export type ConversationId = Static<typeof schema.ConversationId>;
-export type BranchId = Static<typeof schema.BranchId>;
-export type MessageId = Static<typeof schema.MessageId>;
-export type MessageVersionId = Static<typeof schema.MessageVersionId>;
-export type ConversationSummary = Static<typeof schema.ConversationSummary>;
-export type ConversationListRequest = Static<typeof schema.ConversationListRequest>;
-export type ConversationListResponse = Static<typeof schema.ConversationListResponse>;
-export type ConversationCreateRequest = Static<typeof schema.ConversationCreateRequest>;
-export type ConversationCreateResponse = Static<typeof schema.ConversationCreateResponse>;
-export type ConversationSelectRequest = Static<typeof schema.ConversationSelectRequest>;
+export type ConversationId = z.infer<typeof schema.ConversationId>;
+export type BranchId = z.infer<typeof schema.BranchId>;
+export type MessageId = z.infer<typeof schema.MessageId>;
+export type MessageVersionId = z.infer<typeof schema.MessageVersionId>;
+export type ConversationSummary = z.infer<typeof schema.ConversationSummary>;
+export type ConversationListRequest = z.infer<typeof schema.ConversationListRequest>;
+export type ConversationListResponse = z.infer<typeof schema.ConversationListResponse>;
+export type ConversationCreateRequest = z.infer<typeof schema.ConversationCreateRequest>;
+export type ConversationCreateResponse = z.infer<typeof schema.ConversationCreateResponse>;
+export type ConversationSelectRequest = z.infer<typeof schema.ConversationSelectRequest>;
 
 // ---------------------------------------------------------------------------
 // Message
 // ---------------------------------------------------------------------------
 
-export type MessageRole = Static<typeof schema.MessageRole>;
-export type MessageVersion = Static<typeof schema.MessageVersion>;
-export type Message = Static<typeof schema.Message>;
-export type MessageSendRequest = Static<typeof schema.MessageSendRequest>;
-export type MessageSendResponse = Static<typeof schema.MessageSendResponse>;
-export type MessageRegenerateRequest = Static<typeof schema.MessageRegenerateRequest>;
-export type MessageSwitchVersionRequest = Static<typeof schema.MessageSwitchVersionRequest>;
-export type MessageEditRequest = Static<typeof schema.MessageEditRequest>;
-export type MessageContinueRequest = Static<typeof schema.MessageContinueRequest>;
-export type MessageCorrectRequest = Static<typeof schema.MessageCorrectRequest>;
-export type MessageBranchRequest = Static<typeof schema.MessageBranchRequest>;
-export type MessageBranchResponse = Static<typeof schema.MessageBranchResponse>;
-export type MessageAbortRequest = Static<typeof schema.MessageAbortRequest>;
+export type MessageRole = z.infer<typeof schema.MessageRole>;
+export type MessageVersion = z.infer<typeof schema.MessageVersion>;
+export type Message = z.infer<typeof schema.Message>;
+export type MessageSendRequest = z.infer<typeof schema.MessageSendRequest>;
+export type MessageSendResponse = z.infer<typeof schema.MessageSendResponse>;
+export type MessageRegenerateRequest = z.infer<typeof schema.MessageRegenerateRequest>;
+export type MessageSwitchVersionRequest = z.infer<typeof schema.MessageSwitchVersionRequest>;
+export type MessageEditRequest = z.infer<typeof schema.MessageEditRequest>;
+export type MessageContinueRequest = z.infer<typeof schema.MessageContinueRequest>;
+export type MessageCorrectRequest = z.infer<typeof schema.MessageCorrectRequest>;
+export type MessageBranchRequest = z.infer<typeof schema.MessageBranchRequest>;
+export type MessageBranchResponse = z.infer<typeof schema.MessageBranchResponse>;
+export type MessageAbortRequest = z.infer<typeof schema.MessageAbortRequest>;
 
 // ---------------------------------------------------------------------------
 // Memory
 // ---------------------------------------------------------------------------
 
-export type MemoryScope = Static<typeof schema.MemoryScope>;
-export type MemoryCandidate = Static<typeof schema.MemoryCandidate>;
-export type MemoryEntry = Static<typeof schema.MemoryEntry>;
-export type MemoryListCandidatesRequest = Static<typeof schema.MemoryListCandidatesRequest>;
-export type MemoryListCandidatesResponse = Static<typeof schema.MemoryListCandidatesResponse>;
-export type MemoryApprovalDecision = Static<typeof schema.MemoryApprovalDecision>;
-export type MemoryDecideCandidateRequest = Static<typeof schema.MemoryDecideCandidateRequest>;
-export type MemorySearchRequest = Static<typeof schema.MemorySearchRequest>;
-export type MemorySearchResponse = Static<typeof schema.MemorySearchResponse>;
-export type MemoryListRequest = Static<typeof schema.MemoryListRequest>;
-export type MemoryPinRequest = Static<typeof schema.MemoryPinRequest>;
-export type MemoryForgetRequest = Static<typeof schema.MemoryForgetRequest>;
-export type MemoryExcludeRequest = Static<typeof schema.MemoryExcludeRequest>;
-export type MemoryEditRequest = Static<typeof schema.MemoryEditRequest>;
+export type MemoryScope = z.infer<typeof schema.MemoryScope>;
+export type MemoryCandidate = z.infer<typeof schema.MemoryCandidate>;
+export type MemoryEntry = z.infer<typeof schema.MemoryEntry>;
+export type MemoryListCandidatesRequest = z.infer<typeof schema.MemoryListCandidatesRequest>;
+export type MemoryListCandidatesResponse = z.infer<typeof schema.MemoryListCandidatesResponse>;
+export type MemoryApprovalDecision = z.infer<typeof schema.MemoryApprovalDecision>;
+export type MemoryDecideCandidateRequest = z.infer<typeof schema.MemoryDecideCandidateRequest>;
+export type MemorySearchRequest = z.infer<typeof schema.MemorySearchRequest>;
+export type MemorySearchResponse = z.infer<typeof schema.MemorySearchResponse>;
+export type MemoryListRequest = z.infer<typeof schema.MemoryListRequest>;
+export type MemoryPinRequest = z.infer<typeof schema.MemoryPinRequest>;
+export type MemoryForgetRequest = z.infer<typeof schema.MemoryForgetRequest>;
+export type MemoryExcludeRequest = z.infer<typeof schema.MemoryExcludeRequest>;
+export type MemoryEditRequest = z.infer<typeof schema.MemoryEditRequest>;
+
+export type CanonSource = z.infer<typeof schema.CanonSource>;
+export type CanonChunk = z.infer<typeof schema.CanonChunk>;
+export type CanonModuleKind = z.infer<typeof schema.CanonModuleKind>;
+export type CanonModule = z.infer<typeof schema.CanonModule>;
 
 // ---------------------------------------------------------------------------
 // Story archive
 // ---------------------------------------------------------------------------
 
-export type StoryChangeScope = Static<typeof schema.StoryChangeScope>;
-export type StoryChangeSource = Static<typeof schema.StoryChangeSource>;
-export type StoryChange = Static<typeof schema.StoryChange>;
-export type StoryListChangesRequest = Static<typeof schema.StoryListChangesRequest>;
-export type StoryListChangesResponse = Static<typeof schema.StoryListChangesResponse>;
-export type StoryApplyChangeRequest = Static<typeof schema.StoryApplyChangeRequest>;
-export type StoryApplyChangeResponse = Static<typeof schema.StoryApplyChangeResponse>;
-export type StoryRevertChangeRequest = Static<typeof schema.StoryRevertChangeRequest>;
-export type StoryResetRequest = Static<typeof schema.StoryResetRequest>;
-export type StoryResetResponse = Static<typeof schema.StoryResetResponse>;
-export type StoryChangeProposal = Static<typeof schema.StoryChangeProposal>;
-export type StoryListProposalsRequest = Static<typeof schema.StoryListProposalsRequest>;
-export type StoryListProposalsResponse = Static<typeof schema.StoryListProposalsResponse>;
-export type StoryResolveProposalRequest = Static<typeof schema.StoryResolveProposalRequest>;
+export type StoryChangeScope = z.infer<typeof schema.StoryChangeScope>;
+export type StoryChangeSource = z.infer<typeof schema.StoryChangeSource>;
+export type StoryChange = z.infer<typeof schema.StoryChange>;
+export type StoryListChangesRequest = z.infer<typeof schema.StoryListChangesRequest>;
+export type StoryListChangesResponse = z.infer<typeof schema.StoryListChangesResponse>;
+export type StoryApplyChangeRequest = z.infer<typeof schema.StoryApplyChangeRequest>;
+export type StoryApplyChangeResponse = z.infer<typeof schema.StoryApplyChangeResponse>;
+export type StoryRevertChangeRequest = z.infer<typeof schema.StoryRevertChangeRequest>;
+export type StoryResetRequest = z.infer<typeof schema.StoryResetRequest>;
+export type StoryResetResponse = z.infer<typeof schema.StoryResetResponse>;
+export type StoryChangeProposal = z.infer<typeof schema.StoryChangeProposal>;
+export type StoryListProposalsRequest = z.infer<typeof schema.StoryListProposalsRequest>;
+export type StoryListProposalsResponse = z.infer<typeof schema.StoryListProposalsResponse>;
+export type StoryResolveProposalRequest = z.infer<typeof schema.StoryResolveProposalRequest>;
 
 // ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
 
-export type ProviderInfo = Static<typeof schema.ProviderInfo>;
-export type ProviderListRequest = Static<typeof schema.ProviderListRequest>;
-export type ProviderListResponse = Static<typeof schema.ProviderListResponse>;
-export type ProviderSetApiKeyRequest = Static<typeof schema.ProviderSetApiKeyRequest>;
-export type ProviderLoginRequest = Static<typeof schema.ProviderLoginRequest>;
-export type ProviderLoginResponse = Static<typeof schema.ProviderLoginResponse>;
-export type ProviderLoginStatusRequest = Static<typeof schema.ProviderLoginStatusRequest>;
-export type ProviderLoginAnswerRequest = Static<typeof schema.ProviderLoginAnswerRequest>;
-export type ProviderLogoutRequest = Static<typeof schema.ProviderLogoutRequest>;
+export type ProviderInfo = z.infer<typeof schema.ProviderInfo>;
+export type ProviderListRequest = z.infer<typeof schema.ProviderListRequest>;
+export type ProviderListResponse = z.infer<typeof schema.ProviderListResponse>;
+export type ProviderSetApiKeyRequest = z.infer<typeof schema.ProviderSetApiKeyRequest>;
+export type ProviderLoginRequest = z.infer<typeof schema.ProviderLoginRequest>;
+export type ProviderLoginResponse = z.infer<typeof schema.ProviderLoginResponse>;
+export type ProviderLoginStatusRequest = z.infer<typeof schema.ProviderLoginStatusRequest>;
+export type ProviderLoginAnswerRequest = z.infer<typeof schema.ProviderLoginAnswerRequest>;
+export type ProviderLogoutRequest = z.infer<typeof schema.ProviderLogoutRequest>;
 
 // ---------------------------------------------------------------------------
 // Voice Stack
 // ---------------------------------------------------------------------------
 
-export type VoiceStack = Static<typeof schema.VoiceStack>;
-export type VoiceStackListRequest = Static<typeof schema.VoiceStackListRequest>;
-export type VoiceStackListResponse = Static<typeof schema.VoiceStackListResponse>;
-export type VoiceStackSwitchRequest = Static<typeof schema.VoiceStackSwitchRequest>;
-export type VoiceStackPinRequest = Static<typeof schema.VoiceStackPinRequest>;
+export type VoiceStack = z.infer<typeof schema.VoiceStack>;
+export type VoiceStackListRequest = z.infer<typeof schema.VoiceStackListRequest>;
+export type VoiceStackListResponse = z.infer<typeof schema.VoiceStackListResponse>;
+export type VoiceStackSwitchRequest = z.infer<typeof schema.VoiceStackSwitchRequest>;
+export type VoiceStackPinRequest = z.infer<typeof schema.VoiceStackPinRequest>;
 
 // ---------------------------------------------------------------------------
 // Commission
 // ---------------------------------------------------------------------------
 
-export type ActionDraft = Static<typeof schema.ActionDraft>;
-export type Commission = Static<typeof schema.Commission>;
-export type CommissionListRequest = Static<typeof schema.CommissionListRequest>;
-export type CommissionListResponse = Static<typeof schema.CommissionListResponse>;
-export type CommissionDraftRequest = Static<typeof schema.CommissionDraftRequest>;
-export type CommissionDraftResponse = Static<typeof schema.CommissionDraftResponse>;
-export type CommissionApproveRequest = Static<typeof schema.CommissionApproveRequest>;
-export type CommissionLaunchRequest = Static<typeof schema.CommissionLaunchRequest>;
-export type RunSteerRequest = Static<typeof schema.RunSteerRequest>;
-export type RunCancelRequest = Static<typeof schema.RunCancelRequest>;
-export type RunRespondPermissionRequest = Static<typeof schema.RunRespondPermissionRequest>;
+export type ActionDraft = z.infer<typeof schema.ActionDraft>;
+export type Commission = z.infer<typeof schema.Commission>;
+export type CommissionListRequest = z.infer<typeof schema.CommissionListRequest>;
+export type CommissionListResponse = z.infer<typeof schema.CommissionListResponse>;
+export type CommissionDraftRequest = z.infer<typeof schema.CommissionDraftRequest>;
+export type CommissionDraftResponse = z.infer<typeof schema.CommissionDraftResponse>;
+export type CommissionApproveRequest = z.infer<typeof schema.CommissionApproveRequest>;
+export type CommissionLaunchRequest = z.infer<typeof schema.CommissionLaunchRequest>;
+export type CommissionLaunchResponse = z.infer<typeof schema.CommissionLaunchResponse>;
+export type RunSteerRequest = z.infer<typeof schema.RunSteerRequest>;
+export type RunCancelRequest = z.infer<typeof schema.RunCancelRequest>;
+export type RunRespondPermissionRequest = z.infer<typeof schema.RunRespondPermissionRequest>;
 
 // ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
 
-export type RunStatus = Static<typeof schema.RunStatus>;
-export type Run = Static<typeof schema.Run>;
-export type RunListRequest = Static<typeof schema.RunListRequest>;
-export type RunListResponse = Static<typeof schema.RunListResponse>;
+export type RunStatus = z.infer<typeof schema.RunStatus>;
+export type Run = z.infer<typeof schema.Run>;
+export type RunListRequest = z.infer<typeof schema.RunListRequest>;
+export type RunListResponse = z.infer<typeof schema.RunListResponse>;
+export type RunResponse = z.infer<typeof schema.RunResponse>;
 
 // ---------------------------------------------------------------------------
 // Artifact
 // ---------------------------------------------------------------------------
 
-export type Artifact = Static<typeof schema.Artifact>;
-export type ArtifactListRequest = Static<typeof schema.ArtifactListRequest>;
-export type ArtifactListResponse = Static<typeof schema.ArtifactListResponse>;
+export type Artifact = z.infer<typeof schema.Artifact>;
+export type ArtifactListRequest = z.infer<typeof schema.ArtifactListRequest>;
+export type ArtifactListResponse = z.infer<typeof schema.ArtifactListResponse>;
 
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
 
-export type SettingsData = Static<typeof schema.SettingsData>;
-export type SettingsGetRequest = Static<typeof schema.SettingsGetRequest>;
-export type SettingsResponse = Static<typeof schema.SettingsResponse>;
-export type SettingsSetRequest = Static<typeof schema.SettingsSetRequest>;
+export type SettingsData = z.infer<typeof schema.SettingsData>;
+export type SettingsGetRequest = z.infer<typeof schema.SettingsGetRequest>;
+export type SettingsResponse = z.infer<typeof schema.SettingsResponse>;
+export type SettingsPatch = z.infer<typeof schema.SettingsPatch>;
+export type SettingsSetRequest = z.infer<typeof schema.SettingsSetRequest>;

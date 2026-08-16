@@ -34,9 +34,6 @@
 		"packages/protocol": {
 			"project": ["src/**/*.ts"]
 		},
-		"packages/companion-types": {
-			"project": ["src/**/*.ts"]
-		},
 		"packages/companion-client": {
 			"project": ["src/**/*.ts"]
 		},

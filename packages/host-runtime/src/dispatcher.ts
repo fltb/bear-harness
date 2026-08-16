@@ -10,7 +10,13 @@
  * `handler_not_registered`, exactly like the legacy router.
  */
 
-import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
+import {
+	type AnyRpcEndpoint,
+	CHANNEL_CONTRACTS,
+	type Channel,
+	type RequestOf,
+	type ResponseOf,
+} from "@bear-harness/protocol/schema";
 
 /** Wire error body: a fixed kind plus a localizable reason string. */
 export interface RpcError {
@@ -22,28 +28,52 @@ export interface RpcError {
 export type RpcResponse = { ok: true; data: unknown } | { ok: false; error: RpcError };
 
 /** A domain handler: validated request params in, response data out. */
+export class ProtocolResponseValidationError extends Error {
+	constructor(
+		readonly channel: Channel,
+		readonly issues: ReadonlyArray<{ path: PropertyKey[]; message: string }>,
+	) {
+		super(
+			`invalid Host response for ${channel}: ${issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`,
+		);
+		this.name = "ProtocolResponseValidationError";
+	}
+}
+
+export interface DispatcherOptions {
+	responseValidation?: "throw" | "isolate";
+	onProtocolViolation?: (error: ProtocolResponseValidationError) => void;
+}
+
 export type RpcHandler = (params: unknown) => unknown | Promise<unknown>;
 
 export class Dispatcher {
 	private readonly handlers = new Map<string, RpcHandler>();
+	private readonly responseValidation: "throw" | "isolate";
+	private readonly onProtocolViolation?: (error: ProtocolResponseValidationError) => void;
+
+	constructor(options: DispatcherOptions = {}) {
+		this.responseValidation = options.responseValidation ?? "throw";
+		this.onProtocolViolation = options.onProtocolViolation;
+	}
 
 	/** Register a handler for an RPC channel. Throws on unknown channels. */
-	registerHandler(channel: string, handler: RpcHandler): void {
-		if (!(channel in REQUEST_SCHEMAS)) {
-			throw new Error(`unknown RPC channel: ${channel}`);
-		}
-		this.handlers.set(channel, handler);
+	registerHandler<E extends AnyRpcEndpoint>(
+		endpoint: E,
+		handler: (params: RequestOf<E>) => ResponseOf<E> | Promise<ResponseOf<E>>,
+	): void {
+		this.handlers.set(endpoint.channel, handler as RpcHandler);
 	}
 
 	/** Validate `params` against the channel schema, run the handler, wrap the result. */
 	async dispatch(channel: string, params: unknown): Promise<RpcResponse> {
-		const schema = REQUEST_SCHEMAS[channel];
-		if (!schema) {
+		const contract = CHANNEL_CONTRACTS[channel as Channel];
+		if (!contract) {
 			return { ok: false, error: { kind: "unavailable", reason: "handler_not_registered" } };
 		}
 
 		// Validate the request body against the schema
-		const parsed = schema.safeParse(params);
+		const parsed = contract.request.safeParse(params);
 		if (!parsed.success) {
 			return {
 				ok: false,
@@ -59,9 +89,9 @@ export class Dispatcher {
 			return { ok: false, error: { kind: "unavailable", reason: "handler_not_registered" } };
 		}
 
+		let data: unknown;
 		try {
-			const data = await handler(parsed.data);
-			return { ok: true, data };
+			data = await handler(parsed.data);
 		} catch (e) {
 			const err = e as { kind?: string; reason?: string; message?: string };
 			return {
@@ -72,5 +102,18 @@ export class Dispatcher {
 				},
 			};
 		}
+
+		const response = contract.response.safeParse(data);
+		if (response.success) return { ok: true, data: response.data };
+		const violation = new ProtocolResponseValidationError(
+			channel as Channel,
+			response.error.issues.map((issue) => ({ path: [...issue.path], message: issue.message })),
+		);
+		this.onProtocolViolation?.(violation);
+		if (this.responseValidation === "throw") throw violation;
+		return {
+			ok: false,
+			error: { kind: "internal", reason: "response_validation_failed" },
+		};
 	}
 }

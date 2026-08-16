@@ -72,9 +72,9 @@ describe("sidebar conversation journey", () => {
 		await user.click(screen.getByRole("button", { name: productUi.sidebar.newConversation }));
 		expect(createConversation).toHaveBeenCalledOnce();
 
-		await user.click(screen.getByRole("button", { name: productUi.sidebar.relationshipArchive }));
+		await user.click(screen.getByRole("button", { name: productUi.sidebar.characterSettings }));
 		await user.click(screen.getByRole("button", { name: productUi.sidebar.systemSettings }));
-		expect(onOpenBackstage).toHaveBeenNthCalledWith(1, "relationship");
+		expect(onOpenBackstage).toHaveBeenNthCalledWith(1, "roles");
 		expect(onOpenBackstage).toHaveBeenNthCalledWith(2, "settings");
 	});
 });

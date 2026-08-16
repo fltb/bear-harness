@@ -22,9 +22,8 @@
  * voice/commission/artifact) are exposed for the backstage sheets.
  */
 
-import type { CompanionClient } from "@bear-harness/companion-types";
+import type { CompanionClient } from "@bear-harness/companion-client";
 import { productUi } from "@bear-harness/product-config";
-import { ProviderListSchema, SettingsResponseSchema, VoiceListSchema } from "@bear-harness/schema";
 import { useQueryClient } from "@tanstack/solid-query";
 import {
 	createContext,
@@ -53,36 +52,17 @@ import {
 	type CommissionDraftResult,
 	type CommissionLaunchResult,
 	type CommissionListData,
-	type ConversationCreateResult,
-	type ConversationListData,
 	type ConversationSummary,
 	type DomainEvent,
-	type EventBatch,
 	invoke,
 	isRecord,
-	isRun,
 	type MemoryCandidate,
 	type MemoryDecision,
 	type MemoryEntry,
 	type MemoryListData,
 	type MemoryScope,
-	type MemorySearchData,
 	type Message,
 	type MessageApplyScope,
-	type MessageBranchResult,
-	type MessageSendResult,
-	normalizeArtifactList,
-	normalizeCanonChunks,
-	normalizeCanonModules,
-	normalizeCanonSources,
-	normalizeCharacterList,
-	normalizeCommissionList,
-	normalizeConversationList,
-	normalizeConversationSnapshot,
-	normalizeMemoryEntries,
-	normalizeMemorySnapshot,
-	normalizeRunList,
-	normalizeStoryList,
 	type OnboardingData,
 	type ProviderInfo,
 	type ProviderListData,
@@ -98,7 +78,6 @@ import {
 	type StoryChangeProposal,
 	type StoryChangeScope,
 	type StoryListData,
-	sanitizeSnapshot,
 	type VoiceListData,
 	type VoiceStack,
 	type VoiceSwitchScope,
@@ -161,22 +140,6 @@ function parseRunPermission(payload: unknown): RunPermissionRequest | null {
 		prompt: payload.prompt,
 		options: options as RunPermissionRequest["options"],
 	};
-}
-
-function isCommissionDraftResult(value: unknown): value is CommissionDraftResult {
-	return (
-		isRecord(value) && typeof value.commissionId === "string" && typeof value.draftHash === "string"
-	);
-}
-
-function isCommissionLaunchResult(value: unknown): value is CommissionLaunchResult {
-	return (
-		isRecord(value) &&
-		typeof value.runId === "string" &&
-		typeof value.commissionId === "string" &&
-		typeof value.executorProfile === "string" &&
-		typeof value.status === "string"
-	);
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +253,7 @@ export interface CharacterApi {
 	characters(): CharacterSummary[];
 	list(): Promise<CharacterListData>;
 	activate(characterId: string): Promise<void>;
+	import(files: Array<{ path: string; base64: string }>): Promise<void>;
 }
 export interface CanonApi {
 	sources(): CanonSource[];
@@ -511,37 +475,28 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 	const [stale, setStale] = createSignal(false);
 
 	const [snapshotResource, snapshotActions] = createResource<Snapshot>(
-		() => {
-			if (!client) return { eventSeq: 0 };
-			return invoke<Snapshot>(client, () => client.snapshot.get()).then(sanitizeSnapshot);
-		},
+		() => invoke(client, () => client.snapshot.get()),
 		{ initialValue: { eventSeq: 0 } },
 	);
 
 	const onboardingStore = createOnboardingStore(client);
-	const settingsRequest = async () =>
-		SettingsResponseSchema.parse(await invoke<unknown>(client, () => client.settings.get()));
-	const providersRequest = async () =>
-		ProviderListSchema.parse(await invoke<unknown>(client, () => client.provider.list()));
-	const voiceRequest = async () =>
-		VoiceListSchema.parse(await invoke<unknown>(client, () => client.voice.list()));
+	const settingsRequest = () => invoke(client, () => client.settings.get());
+	const providersRequest = () => invoke(client, () => client.provider.list());
+	const voiceRequest = () => invoke(client, () => client.voice.list());
 	const settingsQuery = createRpcQuery({
 		client: queryClient,
 		key: queryKeys.settings,
 		request: settingsRequest,
-		schema: SettingsResponseSchema,
 	});
 	const providersQuery = createRpcQuery({
 		client: queryClient,
 		key: queryKeys.providers,
 		request: providersRequest,
-		schema: ProviderListSchema,
 	});
 	const voiceQuery = createRpcQuery({
 		client: queryClient,
 		key: queryKeys.voice,
 		request: voiceRequest,
-		schema: VoiceListSchema,
 	});
 	const settingsMutation = createRpcMutation<() => Promise<unknown>>({
 		client: queryClient,
@@ -564,74 +519,56 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 	// ---- refresh helpers (each re-fetches one domain list) ----
 
 	const refreshConversations = async (): Promise<void> => {
-		const data = await invoke<ConversationListData>(client, () => client.conversation.list());
-		const parsed = normalizeConversationList(data);
-		if (parsed) setState("conversations", parsed.conversations);
+		const { conversations } = await invoke(client, () => client.conversation.list());
+		setState("conversations", conversations);
 	};
 
 	const refreshRuns = async (): Promise<void> => {
-		const data = await invoke<RunListData>(client, () => client.run.list());
-		const parsed = normalizeRunList(data);
-		if (parsed) setState("runs", parsed.runs);
+		const { runs } = await invoke(client, () => client.run.list());
+		setState("runs", runs);
 	};
 
 	const refreshMemory = async (): Promise<void> => {
-		const data = await invoke<MemoryListData>(client, () => client.memory.listCandidates());
-		const parsed = normalizeMemorySnapshot(data);
-		if (parsed?.candidates) setState("memoryCandidates", parsed.candidates);
+		const { candidates } = await invoke(client, () => client.memory.listCandidates());
+		setState("memoryCandidates", candidates);
 	};
 
 	const refreshMemoryEntries = async (): Promise<void> => {
-		const data = await invoke<unknown>(client, () => client.memory.list());
-		const entries = normalizeMemoryEntries(data);
-		if (entries) setState("memoryEntries", entries);
+		const { entries } = await invoke(client, () => client.memory.list());
+		setState("memoryEntries", entries);
 	};
 
 	const refreshCommissions = async (): Promise<void> => {
-		const data = await invoke<CommissionListData>(client, () => client.commission.list());
-		const parsed = normalizeCommissionList(data);
-		if (parsed) setState("commissions", parsed.commissions);
+		const { commissions } = await invoke(client, () => client.commission.list());
+		setState("commissions", commissions);
 	};
 
 	const refreshArtifacts = async (): Promise<void> => {
-		const data = await invoke<ArtifactListData>(client, () => client.artifact.list());
-		const parsed = normalizeArtifactList(data);
-		if (parsed) setState("artifacts", parsed.artifacts);
+		const { artifacts } = await invoke(client, () => client.artifact.list());
+		setState("artifacts", artifacts);
 	};
 
 	const refreshStory = async (): Promise<void> => {
-		const data = await invoke<StoryListData>(client, () =>
-			client.story.listChanges(state.activeBranchId ?? undefined),
+		const { changes } = await invoke(client, () =>
+			client.story.listChanges({ branchId: state.activeBranchId ?? undefined }),
 		);
-		const parsed = normalizeStoryList(data);
-		if (parsed) setState("storyChanges", parsed.changes);
+		setState("storyChanges", changes);
 	};
 
 	const refreshStoryProposals = async (): Promise<void> => {
-		const data = await invoke<unknown>(client, () =>
-			client.story.listProposals(state.activeConversationId ?? undefined),
-		);
-		if (!isRecord(data) || !Array.isArray(data.proposals)) return;
-		const proposals = data.proposals.filter(
-			(value): value is StoryChangeProposal =>
-				isRecord(value) &&
-				typeof value.id === "string" &&
-				typeof value.conversationId === "string" &&
-				typeof value.branchId === "string" &&
-				typeof value.text === "string" &&
-				typeof value.createdAt === "string",
+		const { proposals } = await invoke(client, () =>
+			client.story.listProposals({ conversationId: state.activeConversationId ?? undefined }),
 		);
 		setState("storyProposals", proposals);
 	};
 
 	const refreshCharacters = async (): Promise<void> => {
-		const data = await invoke<CharacterListData>(client, () => client.character.list());
-		const parsed = normalizeCharacterList(data);
-		if (parsed) setState("characters", parsed.characters);
+		const { characters } = await invoke(client, () => client.character.list());
+		setState("characters", characters);
 	};
 
-	const refreshSupplementary = (): void => {
-		void Promise.allSettled([
+	const refreshSupplementary = async (): Promise<void> => {
+		await Promise.all([
 			refreshMemory(),
 			refreshMemoryEntries(),
 			refreshCommissions(),
@@ -647,7 +584,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 
 	const hydrateFromSnapshot = (snap: Snapshot): void => {
 		onboardingStore._hydrate(snap.onboarding);
-		if (snap.voice) hydrateRpcQuery(queryClient, queryKeys.voice, VoiceListSchema, snap.voice);
+		if (snap.voice) hydrateRpcQuery(queryClient, queryKeys.voice, snap.voice);
 		const conversation = snap.conversation;
 		if (conversation) {
 			if (conversation.activeConversationId !== undefined) {
@@ -673,14 +610,13 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				setState("memoryCandidates", snap.memory.candidates);
 			if (snap.memory.entries !== undefined) setState("memoryEntries", snap.memory.entries);
 		}
-		if (snap.provider)
-			hydrateRpcQuery(queryClient, queryKeys.providers, ProviderListSchema, snap.provider);
+		if (snap.provider) hydrateRpcQuery(queryClient, queryKeys.providers, snap.provider);
 		if (snap.run) setState("runs", snap.run.runs);
 		if (snap.commission) setState("commissions", snap.commission.commissions);
 		if (snap.artifact) setState("artifacts", snap.artifact.artifacts);
 		if (snap.story) setState("storyChanges", snap.story.changes);
 		if (snap.settings)
-			hydrateRpcQuery(queryClient, queryKeys.settings, SettingsResponseSchema, {
+			hydrateRpcQuery(queryClient, queryKeys.settings, {
 				settings: snap.settings,
 			});
 		if (snap.characterRuntime)
@@ -714,7 +650,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			booted = true;
 			if (client) {
 				void refreshConversations().catch((e) => setState("error", messageOf(e)));
-				refreshSupplementary();
+				void refreshSupplementary().catch((e) => setState("error", messageOf(e)));
 			}
 		}
 	});
@@ -725,9 +661,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		lastSeq,
 		stale,
 		subscribe: (afterSeq) =>
-			invoke<EventBatch>(client, () => client.events.subscribe(afterSeq)).then(
-				(batch) => batch.events,
-			),
+			invoke(client, () => client.events.subscribe({ afterSeq })).then((batch) => batch.events),
 	};
 
 	const dispatchEvent = (event: DomainEvent): void => {
@@ -910,9 +844,6 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				for (const event of batch) dispatchEvent(event);
 				afterSeq = last.seq;
 				setLastSeq(afterSeq);
-				// A successful subscription is a long-poll boundary. Re-subscribe
-				// immediately so streamed tokens are never held behind the retry delay.
-				continue;
 			}
 		})();
 	});
@@ -939,50 +870,47 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		refetch: () => {
 			void snapshotActions.refetch();
 		},
-		get: () => invoke<Snapshot>(client, () => client.snapshot.get()).then(sanitizeSnapshot),
+		get: () => invoke(client, () => client.snapshot.get()),
 	};
 
 	const memoryApi: MemoryApi = {
 		candidates: () => state.memoryCandidates,
 		entries: () => state.memoryEntries,
 		listCandidates: async () => {
-			const data = await invoke<MemoryListData>(client, () => client.memory.listCandidates());
-			const parsed = normalizeMemorySnapshot(data);
-			if (parsed?.candidates) setState("memoryCandidates", parsed.candidates);
+			const data = await invoke(client, () => client.memory.listCandidates());
+			setState("memoryCandidates", data.candidates);
 			return data;
 		},
 		decideCandidate: async (candidateId, decision, editedText, scope) => {
-			await invoke<void>(client, () =>
-				client.memory.decideCandidate(candidateId, decision, editedText, scope),
+			await invoke(client, () =>
+				client.memory.decideCandidate({ candidateId, decision, editedText, scope }),
 			);
 			debouncedRefetch(refreshMemory);
 		},
 		search: async (query, scope) => {
-			const data = await invoke<MemorySearchData>(client, () => client.memory.search(query, scope));
-			const entries = normalizeMemoryEntries(data);
-			if (entries) setState("memoryEntries", entries);
-			return entries ?? [];
+			const data = await invoke(client, () => client.memory.search({ query, scope }));
+			setState("memoryEntries", data.entries);
+			return data.entries;
 		},
 		list: async (params) => {
-			const data = await invoke<unknown>(client, () => client.memory.list(params));
-			const entries = normalizeMemoryEntries(data);
-			if (entries) setState("memoryEntries", entries);
-			return entries ?? [];
+			const data = await invoke(client, () => client.memory.list(params));
+			setState("memoryEntries", data.entries);
+			return data.entries;
 		},
 		pin: async (entryId, pinned) => {
-			await invoke<void>(client, () => client.memory.pin(entryId, pinned));
+			await invoke(client, () => client.memory.pin({ entryId, pinned }));
 			debouncedRefetch(refreshMemoryEntries);
 		},
 		forget: async (entryId) => {
-			await invoke<void>(client, () => client.memory.forget(entryId));
+			await invoke(client, () => client.memory.forget({ entryId }));
 			debouncedRefetch(refreshMemoryEntries);
 		},
 		exclude: async (entryId, excluded) => {
-			await invoke<void>(client, () => client.memory.exclude(entryId, excluded));
+			await invoke(client, () => client.memory.exclude({ entryId, excluded }));
 			debouncedRefetch(refreshMemoryEntries);
 		},
 		edit: async (entryId, newText) => {
-			await invoke<void>(client, () => client.memory.edit(entryId, newText));
+			await invoke(client, () => client.memory.edit({ entryId, newText }));
 			debouncedRefetch(refreshMemoryEntries);
 		},
 	};
@@ -998,7 +926,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		},
 		set: async (settings) => {
 			await settingsMutation.mutateAsync(() =>
-				invoke<void>(client, () => client.settings.set(settings)),
+				invoke(client, () => client.settings.set({ settings })),
 			);
 		},
 	};
@@ -1009,28 +937,27 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			queryClient.ensureQueryData({ queryKey: queryKeys.providers, queryFn: providersRequest }),
 		customUpsert: async (params) => {
 			await providerMutation.mutateAsync(() =>
-				invoke<void>(client, () => client.provider.customUpsert(params)),
+				invoke(client, () => client.provider.customUpsert(params)),
 			);
 		},
 		overrideBaseUrl: async (params) => {
 			await providerMutation.mutateAsync(() =>
-				invoke<void>(client, () => client.provider.overrideBaseUrl(params)),
+				invoke(client, () => client.provider.overrideBaseUrl(params)),
 			);
 		},
 		setApiKey: async (providerId, apiKey, sessionOnly) => {
 			await providerMutation.mutateAsync(() =>
-				invoke<void>(client, () => client.provider.setApiKey(providerId, apiKey, sessionOnly)),
+				invoke(client, () => client.provider.setApiKey({ providerId, apiKey, sessionOnly })),
 			);
 		},
 		login: (providerId) =>
-			invoke<ProviderLoginResult>(client, () => client.provider.login(providerId)),
-		loginStatus: (providerId) =>
-			invoke<ProviderLoginResult>(client, () => client.provider.loginStatus(providerId)),
+			invoke(client, () => client.provider.login({ providerId, authType: "oauth" })),
+		loginStatus: (providerId) => invoke(client, () => client.provider.loginStatus({ providerId })),
 		loginAnswer: (providerId, answer) =>
-			invoke<ProviderLoginResult>(client, () => client.provider.loginAnswer(providerId, answer)),
+			invoke(client, () => client.provider.loginAnswer({ providerId, answer })),
 		logout: async (providerId) => {
 			await providerMutation.mutateAsync(() =>
-				invoke<void>(client, () => client.provider.logout(providerId)),
+				invoke(client, () => client.provider.logout({ providerId })),
 			);
 		},
 	};
@@ -1045,12 +972,12 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		list: () => queryClient.ensureQueryData({ queryKey: queryKeys.voice, queryFn: voiceRequest }),
 		switch: async (stackId, scope) => {
 			await voiceMutation.mutateAsync(() =>
-				invoke<void>(client, () => client.voice.switch(stackId, scope)),
+				invoke(client, () => client.voice.switch({ stackId, scope, rollbackAvailable: true })),
 			);
 		},
 		pin: async (providerId, modelId, label) => {
 			await voiceMutation.mutateAsync(() =>
-				invoke<void>(client, () => client.voice.pin(providerId, modelId, label)),
+				invoke(client, () => client.voice.pin({ providerId, modelId, label })),
 			);
 		},
 	};
@@ -1058,30 +985,27 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 	const commissionApi: CommissionApi = {
 		commissions: () => state.commissions,
 		list: async () => {
-			const data = await invoke<CommissionListData>(client, () => client.commission.list());
-			const parsed = normalizeCommissionList(data);
-			if (parsed) setState("commissions", parsed.commissions);
+			const data = await invoke(client, () => client.commission.list());
+			setState("commissions", data.commissions);
 			return data;
 		},
 		draft: async (params) => {
-			const data = await invoke<unknown>(client, () => client.commission.draft(params));
-			if (!isCommissionDraftResult(data)) throw new Error("invalid commission draft response");
+			const data = await invoke(client, () => client.commission.draft(params));
 			void refreshCommissions();
 			return data;
 		},
 		approve: async (commissionId, approvedHash) => {
-			await invoke<void>(client, () => client.commission.approve(commissionId, approvedHash));
+			await invoke(client, () => client.commission.approve({ commissionId, approvedHash }));
 			void refreshCommissions();
 		},
 		reject: async (commissionId) => {
-			await invoke<void>(client, () => client.commission.reject(commissionId));
+			await invoke(client, () => client.commission.reject({ commissionId }));
 			void refreshCommissions();
 		},
 		launch: async (commissionId, executorProfile) => {
-			const data = await invoke<unknown>(client, () =>
-				client.commission.launch(commissionId, executorProfile),
+			const data = await invoke(client, () =>
+				client.commission.launch({ commissionId, executorProfile }),
 			);
-			if (!isCommissionLaunchResult(data)) throw new Error("invalid commission launch response");
 			void refreshCommissions();
 			void refreshRuns();
 			return data;
@@ -1090,18 +1014,16 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 
 	const runApi: RunApi = {
 		list: async () => {
-			const data = await invoke<RunListData>(client, () => client.run.list());
-			const parsed = normalizeRunList(data);
-			if (parsed) setState("runs", parsed.runs);
+			const data = await invoke(client, () => client.run.list());
+			setState("runs", data.runs);
 			return data;
 		},
 		pendingPermissions: () => Object.values(state.pendingRunPermissions),
 		steer: async (runId, instruction) => {
-			await invoke<void>(client, () => client.run.steer(runId, instruction));
+			await invoke(client, () => client.run.steer({ runId, instruction }));
 		},
 		cancel: async (runId) => {
-			const data = await invoke<unknown>(client, () => client.run.cancel(runId));
-			if (!isRun(data)) throw new Error("invalid run cancellation response");
+			const data = await invoke(client, () => client.run.cancel({ runId }));
 			const { [runId]: _permission, ...remaining } = state.pendingRunPermissions;
 			setState("pendingRunPermissions", remaining);
 			void refreshRuns();
@@ -1109,10 +1031,9 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			return data;
 		},
 		respondPermission: async (runId, requestId, optionId) => {
-			const data = await invoke<unknown>(client, () =>
-				client.run.respondPermission(runId, requestId, optionId),
+			const data = await invoke(client, () =>
+				client.run.respondPermission({ runId, requestId, optionId }),
 			);
-			if (!isRun(data)) throw new Error("invalid run permission response");
 			const { [runId]: _permission, ...remaining } = state.pendingRunPermissions;
 			setState("pendingRunPermissions", remaining);
 			void refreshRuns();
@@ -1124,22 +1045,12 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 	const artifactApi: ArtifactApi = {
 		artifacts: () => state.artifacts,
 		list: async () => {
-			const data = await invoke<ArtifactListData>(client, () => client.artifact.list());
-			const parsed = normalizeArtifactList(data);
-			if (parsed) setState("artifacts", parsed.artifacts);
+			const data = await invoke(client, () => client.artifact.list());
+			setState("artifacts", data.artifacts);
 			return data;
 		},
 		download: async (artifactId) => {
-			const data = await invoke<{ logicalName: string; mime: string; base64: string }>(client, () =>
-				client.artifact.read(artifactId),
-			);
-			if (
-				!isRecord(data) ||
-				typeof data.logicalName !== "string" ||
-				typeof data.mime !== "string" ||
-				typeof data.base64 !== "string"
-			)
-				throw new Error(productUi.errors.artifactUnavailable);
+			const data = await invoke(client, () => client.artifact.read({ artifactId }));
 			const bytes = Uint8Array.from(atob(data.base64), (char) => char.charCodeAt(0));
 			const url = URL.createObjectURL(new Blob([bytes], { type: data.mime }));
 			const anchor = document.createElement("a");
@@ -1157,39 +1068,41 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				(proposal) => proposal.conversationId === state.activeConversationId,
 			),
 		list: async (branchId) => {
-			const data = await invoke<StoryListData>(client, () => client.story.listChanges(branchId));
-			const parsed = normalizeStoryList(data);
-			if (parsed) setState("storyChanges", parsed.changes);
+			const data = await invoke(client, () => client.story.listChanges({ branchId }));
+			setState("storyChanges", data.changes);
 			return data;
 		},
 		apply: async (text, scope) => {
 			await invoke(client, () =>
-				client.story.applyChange(
+				client.story.applyChange({
 					text,
 					scope,
-					state.activeConversationId ?? undefined,
-					state.activeBranchId ?? undefined,
-				),
+					conversationId: state.activeConversationId ?? undefined,
+					branchId: state.activeBranchId ?? undefined,
+				}),
 			);
 			await refreshStory();
 		},
 		revert: async (changeId) => {
 			await invoke(client, () =>
-				client.story.revertChange(changeId, state.activeConversationId ?? undefined),
+				client.story.revertChange({
+					changeId,
+					conversationId: state.activeConversationId ?? undefined,
+				}),
 			);
 			await refreshStory();
 		},
 		reset: async () => {
 			await invoke(client, () =>
-				client.story.reset(
-					state.activeConversationId ?? undefined,
-					state.activeBranchId ?? undefined,
-				),
+				client.story.reset({
+					conversationId: state.activeConversationId ?? undefined,
+					branchId: state.activeBranchId ?? undefined,
+				}),
 			);
 			await refreshStory();
 		},
 		resolveProposal: async (proposalId, accept) => {
-			await invoke(client, () => client.story.resolveProposal(proposalId, accept));
+			await invoke(client, () => client.story.resolveProposal({ proposalId, accept }));
 			await Promise.all([refreshStory(), refreshStoryProposals()]);
 		},
 	};
@@ -1197,13 +1110,12 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 	const characterApi: CharacterApi = {
 		characters: () => state.characters,
 		list: async () => {
-			const data = await invoke<CharacterListData>(client, () => client.character.list());
-			const parsed = normalizeCharacterList(data);
-			if (parsed) setState("characters", parsed.characters);
+			const data = await invoke(client, () => client.character.list());
+			setState("characters", data.characters);
 			return data;
 		},
 		activate: async (characterId) => {
-			await invoke(client, () => client.character.activate(characterId));
+			await invoke(client, () => client.character.activate({ characterId }));
 			setState("activeConversationId", null);
 			setState("activeBranchId", null);
 			setState("activeMessages", []);
@@ -1213,39 +1125,41 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				Promise.resolve(snapshotActions.refetch()),
 			]);
 		},
+		import: async (files) => {
+			await invoke(client, () => client.character.import({ files }));
+			await refreshCharacters();
+		},
 	};
 
 	const canonApi: CanonApi = {
 		sources: () => state.canonSources,
 		modules: () => state.canonModules,
 		listSources: async () => {
-			const data = await invoke(client, () => client.canon.listSources());
-			const parsed = normalizeCanonSources(data);
-			if (parsed) setState("canonSources", parsed);
+			const { sources } = await invoke(client, () => client.canon.listSources());
+			setState("canonSources", sources);
 		},
 		addSource: async (logicalName, content) => {
-			await invoke(client, () => client.canon.addSource(logicalName, content));
+			await invoke(client, () => client.canon.addSource({ logicalName, content }));
 			await canonApi.listSources();
 		},
 		search: async (query) => {
-			const data = await invoke(client, () => client.canon.search(query));
-			return normalizeCanonChunks(data) ?? [];
+			const { chunks } = await invoke(client, () => client.canon.search({ query }));
+			return chunks;
 		},
 		removeSource: async (sourceId) => {
-			await invoke(client, () => client.canon.removeSource(sourceId));
+			await invoke(client, () => client.canon.removeSource({ sourceId }));
 			await canonApi.listSources();
 		},
 		listModules: async () => {
-			const data = await invoke(client, () => client.canon.listModules());
-			const parsed = normalizeCanonModules(data);
-			if (parsed) setState("canonModules", parsed);
+			const { modules } = await invoke(client, () => client.canon.listModules());
+			setState("canonModules", modules);
 		},
 		upsertModule: async (params) => {
 			await invoke(client, () => client.canon.upsertModule(params));
 			await canonApi.listModules();
 		},
 		deleteModule: async (id) => {
-			await invoke(client, () => client.canon.deleteModule(id));
+			await invoke(client, () => client.canon.deleteModule({ id }));
 			await canonApi.listModules();
 		},
 	};
@@ -1295,16 +1209,19 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			} finally {
 				setState("loading", false);
 			}
-			refreshSupplementary();
+			try {
+				await refreshSupplementary();
+			} catch (e) {
+				setState("error", messageOf(e));
+			}
 		},
 
 		selectConversation: async (id, branchId) => {
 			try {
-				const data = await invoke<unknown>(client, () => client.conversation.select(id, branchId));
-				const projection = normalizeConversationSnapshot(data);
-				setState("activeConversationId", projection?.activeConversationId ?? id);
-				setState("activeBranchId", projection?.activeBranchId ?? branchId ?? null);
-				setState("activeMessages", projection?.messages ?? []);
+				const projection = await invoke(client, () => client.conversation.select({ id, branchId }));
+				setState("activeConversationId", projection.activeConversationId);
+				setState("activeBranchId", projection.activeBranchId ?? null);
+				setState("activeMessages", projection.messages);
 				setState("error", null);
 				void refreshStoryProposals();
 			} catch (e) {
@@ -1314,9 +1231,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 
 		createConversation: async (title) => {
 			try {
-				const result = await invoke<ConversationCreateResult>(client, () =>
-					client.conversation.create(title),
-				);
+				const result = await invoke(client, () => client.conversation.create({ title }));
 				setState("activeConversationId", result.id);
 				setState("activeBranchId", null);
 				setState("activeMessages", []);
@@ -1328,12 +1243,12 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		},
 
 		renameConversation: async (id, title) => {
-			await invoke(client, () => client.conversation.rename(id, title));
+			await invoke(client, () => client.conversation.rename({ id, title }));
 			await refreshConversations();
 		},
 
 		archiveConversation: async (id) => {
-			await invoke(client, () => client.conversation.archive(id));
+			await invoke(client, () => client.conversation.archive({ id, archived: true }));
 			if (state.activeConversationId === id) {
 				setState("activeConversationId", null);
 				setState("activeBranchId", null);
@@ -1343,7 +1258,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		},
 
 		deleteConversation: async (id) => {
-			await invoke(client, () => client.conversation.delete(id));
+			await invoke(client, () => client.conversation.delete({ id }));
 			if (state.activeConversationId === id) {
 				setState("activeConversationId", null);
 				setState("activeBranchId", null);
@@ -1359,7 +1274,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			setState("assistantStreaming", true);
 			try {
 				const conversationId = requireActiveConversation();
-				await invoke<MessageSendResult>(client, () => client.message.send(conversationId, text));
+				await invoke(client, () => client.message.send({ conversationId, text }));
 				await snapshotActions.refetch();
 				setState("pendingUserText", undefined);
 				setState("error", null);
@@ -1372,7 +1287,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		regenerateMessage: async (messageId) => {
 			try {
 				const conversationId = requireActiveConversation();
-				await invoke<void>(client, () => client.message.regenerate(conversationId, messageId));
+				await invoke(client, () => client.message.regenerate({ conversationId, messageId }));
 				setState("error", null);
 			} catch (e) {
 				setState("error", messageOf(e));
@@ -1382,8 +1297,8 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		switchVersion: async (messageId, versionId) => {
 			try {
 				const conversationId = requireActiveConversation();
-				await invoke<void>(client, () =>
-					client.message.switchVersion(conversationId, messageId, versionId),
+				await invoke(client, () =>
+					client.message.switchVersion({ conversationId, messageId, versionId }),
 				);
 				setState("error", null);
 			} catch (e) {
@@ -1394,8 +1309,8 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		editMessage: async (messageId, text, isUserMessage) => {
 			try {
 				const conversationId = requireActiveConversation();
-				await invoke<void>(client, () =>
-					client.message.edit(conversationId, messageId, text, isUserMessage),
+				await invoke(client, () =>
+					client.message.edit({ conversationId, messageId, text, isUserMessage }),
 				);
 				await snapshotActions.refetch();
 				setState("error", null);
@@ -1407,7 +1322,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		continueConversation: async () => {
 			try {
 				const conversationId = requireActiveConversation();
-				await invoke<void>(client, () => client.message.continue(conversationId));
+				await invoke(client, () => client.message.continue({ conversationId }));
 				setState("error", null);
 			} catch (e) {
 				setState("error", messageOf(e));
@@ -1417,9 +1332,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		correctMessage: async (reason, applyScope) => {
 			try {
 				const conversationId = requireActiveConversation();
-				await invoke<void>(client, () =>
-					client.message.correct(conversationId, reason, applyScope),
-				);
+				await invoke(client, () => client.message.correct({ conversationId, reason, applyScope }));
 				setState("error", null);
 			} catch (e) {
 				setState("error", messageOf(e));
@@ -1429,9 +1342,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		branchMessage: async (messageId) => {
 			try {
 				const conversationId = requireActiveConversation();
-				await invoke<MessageBranchResult>(client, () =>
-					client.message.branch(conversationId, messageId),
-				);
+				await invoke(client, () => client.message.branch({ conversationId, messageId }));
 				setState("error", null);
 			} catch (e) {
 				setState("error", messageOf(e));
@@ -1441,7 +1352,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		abort: async () => {
 			try {
 				const conversationId = requireActiveConversation();
-				await invoke<void>(client, () => client.message.abort(conversationId));
+				await invoke(client, () => client.message.abort({ conversationId }));
 				setState("sending", false);
 				setState("error", null);
 			} catch (e) {

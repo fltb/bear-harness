@@ -11,6 +11,15 @@ import { EventBus } from "../src/storage/event-bus.js";
 
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 
+function onboardingState(relationshipMemoryEnabled: boolean): string {
+	return JSON.stringify({
+		schema_version: 1,
+		flow_version: 1,
+		answers: {},
+		decisions: { relationship_memory_enabled: relationshipMemoryEnabled },
+	});
+}
+
 describe("relationship memory context", () => {
 	let db: DatabaseSync;
 	let memory: MemoryService;
@@ -35,11 +44,7 @@ describe("relationship memory context", () => {
 		);
 		db.prepare(
 			"INSERT INTO onboarding_state (companion_id, state, state_json) VALUES (?, ?, ?)",
-		).run(
-			"jizhou",
-			"complete",
-			JSON.stringify({ decisions: { relationship_memory_enabled: true } }),
-		);
+		).run("jizhou", "complete", onboardingState(true));
 		const events = new EventBus(db);
 		memory = new MemoryService(db, events);
 		compiler = new ContextPackCompiler(db, new CharacterLoader(characterRoot));
@@ -56,6 +61,7 @@ describe("relationship memory context", () => {
 		memory.decideCandidate({ candidateId, decision: "approve" });
 		const entry = memory.recall({ companionId: "jizhou", query: text, enabled: true })[0];
 		if (!entry) throw new Error("approved memory was not recalled");
+		expect(entry.normalizedText).toBe(text.normalize("NFKC"));
 		return entry.id;
 	}
 
@@ -71,13 +77,13 @@ describe("relationship memory context", () => {
 		expect(relationshipContext()).toContain("用户喜欢简短回答");
 
 		db.prepare("UPDATE onboarding_state SET state_json = ? WHERE companion_id = ?").run(
-			JSON.stringify({ decisions: { relationship_memory_enabled: false } }),
+			onboardingState(false),
 			"jizhou",
 		);
 		expect(relationshipContext()).toBe("");
 
 		db.prepare("UPDATE onboarding_state SET state_json = ? WHERE companion_id = ?").run(
-			JSON.stringify({ decisions: { relationship_memory_enabled: true } }),
+			onboardingState(true),
 			"jizhou",
 		);
 		expect(relationshipContext()).toContain("用户喜欢简短回答");
@@ -109,5 +115,13 @@ describe("relationship memory context", () => {
 		expect(relationshipContext()).not.toContain("私人敏感事实");
 		memory.decideCandidate({ candidateId: pendingId, decision: "reject" });
 		expect(relationshipContext()).not.toContain("私人敏感事实");
+	});
+
+	it("rejects corrupt persisted onboarding state instead of silently disabling memory", () => {
+		db.prepare("UPDATE onboarding_state SET state_json = ? WHERE companion_id = ?").run(
+			JSON.stringify({ decisions: { relationship_memory_enabled: true } }),
+			"jizhou",
+		);
+		expect(() => compiler.compile("conversation-1")).toThrow();
 	});
 });

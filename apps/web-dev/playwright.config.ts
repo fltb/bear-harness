@@ -6,6 +6,9 @@ import { defineConfig } from "playwright/test";
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repoEnv = resolve(here, "../../.env");
 if (existsSync(repoEnv)) process.loadEnvFile(repoEnv);
+const webPort = process.env.BEAR_E2E_WEB_PORT ?? "3200";
+const hostPort = process.env.BEAR_E2E_HOST_PORT ?? "3201";
+const baseURL = `http://127.0.0.1:${webPort}`;
 
 export default defineConfig({
 	testDir: "./e2e",
@@ -16,18 +19,23 @@ export default defineConfig({
 	forbidOnly: true,
 	retries: 0,
 	use: {
-		baseURL: "http://127.0.0.1:3200",
+		baseURL,
 	},
 	webServer: {
 		command: "npm run dev --workspace @bear-harness/web-dev",
 		env: {
-			BEAR_WEB_DEV_PORT: "3200",
-			BEAR_WEB_DEV_HOST_PORT: "3201",
+			BEAR_WEB_DEV_PORT: webPort,
+			BEAR_WEB_DEV_HOST_PORT: hostPort,
 			BEAR_WEB_DEV_DATA_DIR: resolve(here, `../../test-results/web-dev-data-${process.pid}`),
 			BEAR_WEB_DEV_DEBUG: "1",
 			BEAR_E2E_RULE_PROVIDER: "1",
+			BEAR_CUSTOM_PROVIDER_ID: "",
+			BEAR_CUSTOM_PROVIDER_NAME: "",
+			BEAR_CUSTOM_BASE_URL: "",
+			BEAR_CUSTOM_MODEL_ID: "",
+			BEAR_CUSTOM_API_KEY: "",
 		},
-		url: "http://127.0.0.1:3200",
+		url: baseURL,
 		reuseExistingServer: false,
 		timeout: 30_000,
 	},

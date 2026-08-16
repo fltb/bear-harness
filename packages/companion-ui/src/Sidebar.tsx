@@ -8,7 +8,7 @@ import { type CharacterDisplay, useCompanionStore } from "./stores/companion.js"
  */
 export function Sidebar(props: {
 	character: CharacterDisplay | undefined;
-	onOpenBackstage: (tab?: "relationship" | "settings") => void;
+	onOpenBackstage: (tab: "roles" | "settings") => void;
 }) {
 	const store = useCompanionStore();
 	const [query, setQuery] = createSignal("");
@@ -172,15 +172,11 @@ export function Sidebar(props: {
 				</nav>
 				<div class="system-section">
 					<div class="section-label">{productUi.sidebar.application}</div>
-					<button
-						type="button"
-						class="system-nav"
-						onClick={() => props.onOpenBackstage("relationship")}
-					>
+					<button type="button" class="system-nav" onClick={() => props.onOpenBackstage("roles")}>
 						<span class="gear" aria-hidden="true">
 							◇
 						</span>
-						{productUi.sidebar.relationshipArchive}
+						{productUi.sidebar.characterSettings}
 					</button>
 					<button
 						type="button"

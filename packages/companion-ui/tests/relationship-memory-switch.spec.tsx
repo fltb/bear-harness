@@ -32,7 +32,7 @@ describe("relationship memory switch", () => {
 		// Mouse click toggles it on through the client mutation.
 		await user.click(toggle);
 		await waitFor(() =>
-			expect(settingsSet).toHaveBeenCalledWith({ relationshipMemoryEnabled: true }),
+			expect(settingsSet).toHaveBeenCalledWith({ settings: { relationshipMemoryEnabled: true } }),
 		);
 		await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
 
@@ -40,7 +40,9 @@ describe("relationship memory switch", () => {
 		toggle.focus();
 		await user.keyboard(" ");
 		await waitFor(() =>
-			expect(settingsSet).toHaveBeenLastCalledWith({ relationshipMemoryEnabled: false }),
+			expect(settingsSet).toHaveBeenLastCalledWith({
+				settings: { relationshipMemoryEnabled: false },
+			}),
 		);
 		await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "false"));
 	});

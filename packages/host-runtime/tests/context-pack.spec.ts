@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import { ContextPackCompiler } from "../src/companion/context-pack.js";
+import { MIGRATIONS } from "../src/storage/database.js";
 
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 const characterLoader = new CharacterLoader(characterRoot);
@@ -12,22 +13,21 @@ const characterLoader = new CharacterLoader(characterRoot);
 describe("ContextPackCompiler character package identity", () => {
 	it("injects identity_core from the active package without a product fallback", () => {
 		const db = new DatabaseSync(":memory:");
-		db.exec(`
-			CREATE TABLE companion_identity (id TEXT, package_id TEXT, name TEXT, self_canon TEXT);
-			CREATE TABLE conversations (id TEXT, companion_id TEXT);
-			CREATE TABLE self_canon_versions (companion_id TEXT, canon TEXT, version INTEGER);
-			CREATE TABLE scene_state (conversation_id TEXT, scene TEXT, state_json TEXT, updated_at TEXT);
-			CREATE TABLE relationship_memory_entries (
-				companion_id TEXT, text TEXT, status TEXT, pinned_at TEXT, updated_at TEXT
-			);
-		`);
-		db.prepare("INSERT INTO companion_identity VALUES (?, ?, ?, ?)").run(
+		for (const migration of MIGRATIONS) db.exec(migration.up);
+		db.prepare("INSERT INTO companion_packages (id, name, version, hash) VALUES (?, ?, ?, ?)").run(
 			"jizhou",
-			"jizhou",
-			"stored-name-is-not-used",
-			"stored canon",
+			"季舟",
+			"1",
+			"test",
 		);
-		db.prepare("INSERT INTO conversations VALUES (?, ?)").run("conversation-1", "jizhou");
+		db.prepare(
+			"INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES (?, ?, ?, ?)",
+		).run("jizhou", "jizhou", "stored-name-is-not-used", "stored canon");
+		db.prepare("INSERT INTO conversations (id, companion_id, title) VALUES (?, ?, ?)").run(
+			"conversation-1",
+			"jizhou",
+			"test",
+		);
 
 		const character = characterLoader.load("jizhou");
 		expect(character).not.toBeNull();

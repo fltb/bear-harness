@@ -1,4 +1,5 @@
 import type { ProductConfig } from "@bear-harness/product-config";
+import { RPC } from "@bear-harness/protocol/schema";
 import type { _electron } from "playwright";
 import { expect } from "playwright/test";
 
@@ -25,8 +26,8 @@ export async function assertProductWindow(
 ) {
 	const window = await electronApp.firstWindow();
 	await window.waitForLoadState("domcontentloaded");
-	const character = (await window.evaluate(async () => {
-		const response = (await window.bearDesktop.companion.snapshot.get()) as {
+	const character = (await window.evaluate(async (channel) => {
+		const response = (await window.bearDesktop.transport.invoke(channel, {})) as {
 			ok?: boolean;
 			data?: { character?: unknown };
 			error?: { kind?: string; reason?: string };
@@ -37,7 +38,7 @@ export async function assertProductWindow(
 			);
 		}
 		return response.data.character;
-	})) as CharacterProjection;
+	}, RPC.snapshot.get.channel)) as CharacterProjection;
 
 	await expect(window).toHaveTitle(product.productName);
 	await expect(window.getByRole("heading", { level: 1 })).toHaveText(
@@ -51,25 +52,22 @@ export async function assertProductWindow(
 	await expect(composer).toBeVisible();
 	await expect(composer).toBeDisabled();
 
-	// Preload exposes platform, diagnostics, and companion facade.
+	// Preload exposes only platform, diagnostics, and the schema-neutral transport.
 	const bridge = await window.evaluate(() => {
 		const keys = Object.keys(window.bearDesktop);
 		const diagnosticsKeys = Object.keys(window.bearDesktop.diagnostics);
-		const companionKeys = Object.keys(window.bearDesktop.companion);
+		const transportKeys = Object.keys(window.bearDesktop.transport);
 		return {
 			keys,
 			diagnosticsKeys,
-			companionKeys,
+			transportKeys,
 			platform: window.bearDesktop.platform,
 			reporterType: typeof window.bearDesktop.diagnostics.reportRendererFault,
 		};
 	});
-	expect(bridge.keys).toEqual(["platform", "diagnostics", "companion"]);
+	expect(bridge.keys).toEqual(["platform", "diagnostics", "transport"]);
 	expect(bridge.diagnosticsKeys).toEqual(["reportRendererFault"]);
-	expect(bridge.companionKeys).toContain("snapshot");
-	expect(bridge.companionKeys).toContain("conversation");
-	expect(bridge.companionKeys).toContain("message");
-	expect(bridge.companionKeys).toContain("settings");
+	expect(bridge.transportKeys).toEqual(["invoke"]);
 	expect(bridge.platform).toMatch(/^(darwin|win32|linux)$/);
 	expect(bridge.reporterType).toBe("function");
 

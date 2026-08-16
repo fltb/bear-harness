@@ -139,14 +139,12 @@ export class FirstMeetingMachine {
 		serialized: string | undefined,
 		flow: CharacterOnboardingFlow,
 	): OnboardingStateData {
-		let value: unknown = {};
-		try {
-			value = serialized ? JSON.parse(serialized) : {};
-		} catch {
-			value = {};
-		}
+		const value: unknown = serialized ? JSON.parse(serialized) : {};
 		const source = isRecord(value) ? value : {};
 		const parsedState = OnboardingStateDataSchema.safeParse(source);
+		if (!parsedState.success && source.schema_version !== undefined) {
+			throw parsedState.error;
+		}
 		const storedAnswers = parsedState.success ? parsedState.data.answers : {};
 		const legacyName = typeof source.name === "string" ? source.name : undefined;
 		const legacyRelation = typeof source.relation === "string" ? source.relation : undefined;

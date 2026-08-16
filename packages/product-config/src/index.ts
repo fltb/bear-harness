@@ -99,6 +99,7 @@ export const productUi = {
 		deleteConversationConfirm: "确定永久删除这段对话吗？已形成的记忆不会一起删除。",
 		application: "应用",
 		relationshipArchive: "关系档案",
+		characterSettings: "角色设置",
 		roleManagement: "角色管理",
 		systemSettings: "系统设置",
 	},
@@ -141,6 +142,12 @@ export const productUi = {
 		storyReset: "恢复原作",
 		roleActive: "正在相处",
 		roleSwitch: "切换角色",
+		roleImport: "导入角色包",
+		roleImportHint:
+			"选择解压后的角色包文件夹。导入后会保存在本机，并出现在角色列表中。角色包可以包含行为扩展，请只导入你信任的来源。",
+		roleImportBusy: "正在检查并导入…",
+		roleImportDone: "角色包已导入",
+		roleImportFailed: "角色包导入失败：",
 	},
 	webDev: {
 		ariaLabel: "Web Dev 调试工具",

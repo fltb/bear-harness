@@ -76,4 +76,49 @@ describe("ordinary-user backstage journey", () => {
 		await user.click(tabs.getByRole("button", { name: productUi.backstage.storyReset }));
 		expect(reset).toHaveBeenCalledOnce();
 	});
+
+	it("opens character and system settings as distinct destinations and imports a package folder", async () => {
+		const user = userEvent.setup();
+		const importPackage = vi.fn(() => Promise.resolve());
+		const store = {
+			memory: { search: vi.fn(() => Promise.resolve([])) },
+			characters: { characters: () => [], activate: vi.fn(), import: importPackage },
+			settings: { data: () => ({ relationshipMemoryEnabled: false }), get: vi.fn() },
+			provider: { list: vi.fn(() => Promise.resolve({ providers: [] })), providers: () => [] },
+			voice: { list: vi.fn(() => Promise.resolve({ stacks: [] })) },
+		} as unknown as CompanionStore;
+
+		const characterView = render(() => (
+			<DesktopProvider store={store}>
+				<Backstage open initialTab="roles" onClose={() => undefined} character={THEMED_CHARACTER} />
+			</DesktopProvider>
+		));
+		const characterDialog = await screen.findByRole("dialog", { name: productUi.backstage.title });
+		expect(
+			within(characterDialog).getByRole("tab", { name: productUi.backstage.roleManagement }),
+		).toHaveAttribute("data-selected");
+		const input = within(characterDialog).getByLabelText(productUi.backstage.roleImport);
+		const manifest = new File(["id: imported"], "character.yaml", { type: "text/yaml" });
+		Object.defineProperty(manifest, "webkitRelativePath", { value: "imported/character.yaml" });
+		await user.upload(input, manifest);
+		expect(importPackage).toHaveBeenCalledWith([
+			expect.objectContaining({ path: "imported/character.yaml", base64: expect.any(String) }),
+		]);
+		characterView.unmount();
+
+		render(() => (
+			<DesktopProvider store={store}>
+				<Backstage
+					open
+					initialTab="settings"
+					onClose={() => undefined}
+					character={THEMED_CHARACTER}
+				/>
+			</DesktopProvider>
+		));
+		const systemDialog = await screen.findByRole("dialog", { name: productUi.backstage.title });
+		expect(
+			within(systemDialog).getByRole("tab", { name: productUi.backstage.systemSettings }),
+		).toHaveAttribute("data-selected");
+	});
 });

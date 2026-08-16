@@ -27,6 +27,7 @@ const runtime = createHostRuntime({
 	characterRoot,
 	productConfig,
 	credentialVault: createWebCredentialVault(dataDir),
+	protocolViolationMode: "throw",
 });
 
 async function body(request: IncomingMessage): Promise<unknown> {
@@ -106,11 +107,23 @@ async function ruleProviderReply(
 ): Promise<void> {
 	const payload = (await body(request)) as {
 		stream?: boolean;
-		messages?: Array<{ content?: string }>;
+		messages?: Array<{ content?: unknown }>;
 	};
-	const prompt = payload.messages?.map((message) => message.content ?? "").join("\n") ?? "";
+	const readText = (value: unknown): string => {
+		if (typeof value === "string") return value;
+		if (Array.isArray(value)) return value.map(readText).join("\n");
+		if (value && typeof value === "object") {
+			const part = value as { text?: unknown; content?: unknown };
+			return readText(part.text ?? part.content);
+		}
+		return "";
+	};
+	const prompt = payload.messages?.map((message) => readText(message.content)).join("\n") ?? "";
+	const latestHostContext = [...prompt.matchAll(/<host_context>\n([\s\S]*?)<\/host_context>/g)].at(
+		-1,
+	)?.[1];
 	const relationshipContext =
-		prompt.match(/【relationship】\n([\s\S]*?)(?:\n\n【|<\/host_context>)/)?.[1] ?? "";
+		latestHostContext?.match(/【relationship】\n([\s\S]*?)(?:\n\n【|$)/)?.[1] ?? "";
 	const memoryReply = relationshipContext.includes("暗号是南星")
 		? "MEMORY_CONTEXT:我们约定暗号是南星\n"
 		: relationshipContext.includes("暗号是北辰")
@@ -118,10 +131,10 @@ async function ruleProviderReply(
 			: "MEMORY_CONTEXT:ABSENT\n";
 	const content = prompt.includes("检查记忆上下文")
 		? memoryReply
-		: prompt.includes("STREAM_CHECK")
-			? "STREAM_ONE STREAM_TWO\n"
-			: prompt.includes("EDITED_OK")
-				? "EDITED_OK\n"
+		: prompt.includes("EDITED_OK")
+			? "EDITED_OK\n"
+			: prompt.includes("STREAM_CHECK")
+				? "STREAM_ONE STREAM_TWO\n"
 				: prompt.includes("你是谁")
 					? "我是 E2E Rule Provider。\n"
 					: prompt.includes("E2E_OK")
@@ -218,12 +231,6 @@ if (ruleProviderEnabled) {
 		apiKey: "e2e-rule-key",
 	});
 	if (!custom.ok) throw new Error(`rule provider setup failed: ${custom.error.reason}`);
-	const pinned = await runtime.dispatch("voice.pin:v1", {
-		providerId: "e2e-rule",
-		modelId: "rule-model",
-		label: "E2E Rule Provider",
-	});
-	if (!pinned.ok) throw new Error(`rule provider pin failed: ${pinned.error.reason}`);
 } else if (
 	process.env.BEAR_CUSTOM_PROVIDER_ID &&
 	process.env.BEAR_CUSTOM_BASE_URL &&

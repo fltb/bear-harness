@@ -73,7 +73,7 @@ async function main() {
 	for (const workspace of [
 		"@bear-harness/product-config",
 		"@bear-harness/protocol",
-		"@bear-harness/companion-types",
+		"@bear-harness/companion-client",
 		"@bear-harness/host-runtime",
 	]) {
 		const result = spawnSync("npm", ["run", "build", "--workspace", workspace], {

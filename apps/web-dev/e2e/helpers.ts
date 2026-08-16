@@ -3,17 +3,17 @@ import { expect, type Page } from "playwright/test";
 
 export async function ensureReadyForConversation(page: Page): Promise<void> {
 	await page.goto("/");
-	const modelSetup = page.getByRole("dialog", { name: productUi.modelSetup.dialogLabel });
-	if (await modelSetup.isVisible()) {
-		await modelSetup
-			.getByRole("combobox", { name: productUi.settings.serviceLabel })
-			.selectOption("e2e-rule");
-		await modelSetup
-			.getByRole("combobox", { name: productUi.modelSetup.modelLabel })
-			.selectOption("rule-model");
-		await modelSetup.getByRole("button", { name: productUi.modelSetup.continue }).click();
-		await expect(modelSetup).toBeHidden();
-	}
+	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	const headers = { "x-bear-web-dev-token": bootstrap.token };
+	await page.request.post("/rpc/provider.setApiKey%3Av1", {
+		headers,
+		data: { providerId: "e2e-rule", apiKey: "e2e-rule-key", sessionOnly: true },
+	});
+	await page.request.post("/rpc/voice.pin%3Av1", {
+		headers,
+		data: { providerId: "e2e-rule", modelId: "rule-model", label: "E2E Rule Provider" },
+	});
+	await page.reload();
 
 	const onboarding = page.getByRole("dialog", { name: "首次入场" });
 	if (await onboarding.isVisible()) {

@@ -11,9 +11,19 @@
  * DB, and makes the package available to the rest of the Host.
  */
 
-import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { extname, isAbsolute, join, relative, resolve } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import {
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { dirname, extname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "@bear-harness/schema";
 import { parse } from "yaml";
@@ -209,14 +219,26 @@ function validateTheme(value: unknown, characterId: string): asserts value is Th
  * `BEAR_CONFIG_DIR` override applied), and every file read stays inside it.
  */
 export class CharacterLoader {
-	constructor(private readonly characterRoot: string) {}
+	constructor(
+		private readonly characterRoot: string,
+		private readonly installedRoot?: string,
+	) {
+		if (installedRoot) mkdirSync(installedRoot, { recursive: true });
+	}
+
+	private packageRoot(characterId: string): string {
+		for (const root of [this.installedRoot, this.characterRoot]) {
+			if (root && existsSync(join(root, characterId, "character.yaml"))) return root;
+		}
+		return this.characterRoot;
+	}
 
 	/**
 	 * Resolve package content without allowing it to leave that package's
 	 * directory. This guards assets, Pi skill directories, and Pi plugin paths.
 	 */
 	private characterPackagePath(characterId: string, packagePath: string): string {
-		const charactersRoot = realpathSync(resolve(this.characterRoot));
+		const charactersRoot = realpathSync(resolve(this.packageRoot(characterId)));
 		const declaredPackageDir = resolve(charactersRoot, characterId);
 		const packageRelativePath = relative(charactersRoot, declaredPackageDir);
 		if (
@@ -313,7 +335,7 @@ export class CharacterLoader {
 	 * compatibility path: a missing field/asset is a package error.
 	 */
 	load(id: string): CharacterPackage | null {
-		const path = join(this.characterRoot, id, "character.yaml");
+		const path = join(this.packageRoot(id), id, "character.yaml");
 		if (!existsSync(path)) return null;
 		const parsed = parse(readFileSync(path, "utf8")) as CharacterPackage;
 		if (parsed.id !== id) {
@@ -403,7 +425,7 @@ export class CharacterLoader {
 		pluginPaths: string[];
 		appendSystemPrompt: string;
 	} {
-		const packageDir = resolve(this.characterRoot, character.id);
+		const packageDir = resolve(this.packageRoot(character.id), character.id);
 		const skillsDir = join(packageDir, "skills");
 		const pluginsDir = join(packageDir, "plugins");
 		const skillPaths = existsSync(skillsDir)
@@ -471,9 +493,16 @@ export class CharacterLoader {
 
 	list(db: DatabaseSync, defaultCharacterId: string): CharacterSummary[] {
 		const activeId = this.getActiveCharacterId(db, defaultCharacterId);
-		return readdirSync(this.characterRoot, { withFileTypes: true })
-			.filter((entry) => entry.isDirectory())
-			.map((entry) => this.load(entry.name))
+		const ids = new Set<string>();
+		for (const root of [this.characterRoot, this.installedRoot]) {
+			if (!root || !existsSync(root)) continue;
+			for (const entry of readdirSync(root, { withFileTypes: true })) {
+				if (entry.isDirectory() && !entry.name.startsWith(".")) ids.add(entry.name);
+			}
+		}
+		return [...ids]
+			.sort()
+			.map((id) => this.load(id))
 			.filter((character): character is CharacterPackage => character !== null)
 			.map((character) => ({
 				id: character.id,
@@ -483,6 +512,68 @@ export class CharacterLoader {
 				avatarUrl: this.characterAssetDataUrl(character.id, character.visual.avatar),
 				active: character.id === activeId,
 			}));
+	}
+
+	install(files: Array<{ path: string; base64: string }>): CharacterPackage {
+		if (!this.installedRoot) throw { kind: "unavailable", reason: "character_import_unavailable" };
+		let totalBytes = 0;
+		const normalized = files.map((file) => {
+			const path = file.path.replaceAll("\\", "/").replace(/^\.\//, "");
+			if (!path || posix.isAbsolute(path) || path.split("/").includes("..")) {
+				throw { kind: "invalid_request", reason: "character_package_path_invalid" };
+			}
+			const buffer = Buffer.from(file.base64, "base64");
+			totalBytes += buffer.byteLength;
+			return { path, buffer };
+		});
+		if (totalBytes > 25 * 1024 * 1024) {
+			throw { kind: "invalid_request", reason: "character_package_too_large" };
+		}
+		const manifest =
+			normalized.find((file) => file.path === "character.yaml") ??
+			normalized.find(
+				(file) => file.path.split("/").length === 2 && file.path.endsWith("/character.yaml"),
+			);
+		if (!manifest) throw { kind: "invalid_request", reason: "character_manifest_missing" };
+		const prefix =
+			manifest.path === "character.yaml" ? "" : manifest.path.slice(0, -"character.yaml".length);
+		const document = parse(manifest.buffer.toString("utf8")) as { id?: unknown };
+		if (typeof document?.id !== "string" || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(document.id)) {
+			throw { kind: "invalid_request", reason: "character_id_invalid" };
+		}
+		const id = document.id;
+		if (this.load(id)) throw { kind: "conflict", reason: "character_package_already_exists" };
+		const stagingRoot = join(this.installedRoot, `.import-${randomUUID()}`);
+		const stagingPackage = join(stagingRoot, id);
+		mkdirSync(stagingPackage, { recursive: true });
+		try {
+			for (const file of normalized) {
+				if (prefix && !file.path.startsWith(prefix)) {
+					throw { kind: "invalid_request", reason: "character_package_multiple_roots" };
+				}
+				const localPath = prefix ? file.path.slice(prefix.length) : file.path;
+				if (!localPath) continue;
+				const target = join(stagingPackage, ...localPath.split("/"));
+				mkdirSync(dirname(target), { recursive: true });
+				writeFileSync(target, file.buffer, { mode: 0o600 });
+			}
+			const stagedLoader = new CharacterLoader(stagingRoot);
+			const character = stagedLoader.load(id);
+			if (!character) throw { kind: "invalid_request", reason: "character_manifest_missing" };
+			const destination = join(this.installedRoot, id);
+			const backup = `${destination}.backup-${randomUUID()}`;
+			if (existsSync(destination)) renameSync(destination, backup);
+			try {
+				renameSync(stagingPackage, destination);
+				rmSync(backup, { recursive: true, force: true });
+			} catch (error) {
+				if (existsSync(backup)) renameSync(backup, destination);
+				throw error;
+			}
+			return character;
+		} finally {
+			rmSync(stagingRoot, { recursive: true, force: true });
+		}
 	}
 
 	activate(db: DatabaseSync, eventBus: EventBus, character: CharacterPackage): void {
