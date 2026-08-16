@@ -25,7 +25,6 @@ import { ContextPackCompiler } from "./companion/context-pack.js";
 import { FirstMeetingMachine } from "./companion/first-meeting.js";
 import { CompanionSupervisor } from "./companion/supervisor.js";
 import { TurnPipeline } from "./companion/turn-pipeline.js";
-import { VoiceStackManager } from "./companion/voice-stack.js";
 import { type HostCompositionContext, wireHostHandlers } from "./composition.js";
 import { Dispatcher, type RpcResponse } from "./dispatcher.js";
 import { CodexAdapter } from "./executors/codex-adapter.js";
@@ -33,6 +32,7 @@ import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
 import { ExecutorRouter } from "./executors/router.js";
 import { MemoryAutomation } from "./memory/automation.js";
 import { MemoryService } from "./memory/service.js";
+import { ModelRegistry } from "./models/registry.js";
 import { ProviderCatalog } from "./providers/catalog.js";
 import { CredentialStore, type CredentialVault } from "./providers/credential-store.js";
 import { Database, MIGRATIONS } from "./storage/database.js";
@@ -91,9 +91,9 @@ export class HostRuntime {
 		db.migrate(MIGRATIONS);
 		const dbConnection = db.connection;
 
-		const eventBus = new EventBus(dbConnection);
+		const eventBus = new EventBus(db.orm);
 		const artifactStore = new ArtifactStore(dbConnection, join(dataDir, "artifacts"));
-		const credentials = new CredentialStore(dbConnection, options.credentialVault);
+		const credentials = new CredentialStore(db.orm, options.credentialVault);
 		const providers = new ProviderCatalog(credentials, join(dataDir, "companion-runtime"));
 		const characterLoader = new CharacterLoader(characterRoot, join(dataDir, "characters"));
 		const supervisor = new CompanionSupervisor(dataDir, eventBus, providers);
@@ -148,15 +148,10 @@ export class HostRuntime {
 		});
 		const onboarding = new FirstMeetingMachine(dbConnection, eventBus, characterLoader);
 		const turns = new TurnPipeline(dbConnection, supervisor, eventBus);
-		const voice = new VoiceStackManager(dbConnection, eventBus);
-		supervisor.setModelSelectionHandler((conversationId) => {
-			const row = dbConnection
-				.prepare("SELECT companion_id FROM conversations WHERE id = ?")
-				.get(conversationId) as { companion_id: string } | undefined;
-			if (!row) return undefined;
-			const stack = voice.current(row.companion_id);
-			return stack ? { providerId: stack.providerId, modelId: stack.modelId } : undefined;
-		});
+		const models = new ModelRegistry(db.orm, eventBus);
+		supervisor.setModelSelectionHandler((conversationId, requiresImages) =>
+			models.resolve(conversationId, requiresImages),
+		);
 		seedPiAcpProfile(dbConnection);
 		const executorRouter = new ExecutorRouter(dbConnection);
 		executorRouter.register("product-managed", new PiAcpAdapter(dbConnection, dataDir));
@@ -197,7 +192,7 @@ export class HostRuntime {
 			eventBus,
 			onboarding,
 			turns,
-			voice,
+			models,
 			memory,
 			commissions,
 			artifacts: artifactStore,

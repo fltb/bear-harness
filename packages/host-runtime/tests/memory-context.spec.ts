@@ -2,6 +2,7 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { drizzle } from "drizzle-orm/node-sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import { ContextPackCompiler } from "../src/companion/context-pack.js";
@@ -45,7 +46,7 @@ describe("relationship memory context", () => {
 		db.prepare(
 			"INSERT INTO onboarding_state (companion_id, state, state_json) VALUES (?, ?, ?)",
 		).run("jizhou", "complete", onboardingState(true));
-		const events = new EventBus(db);
+		const events = new EventBus(drizzle({ client: db }));
 		memory = new MemoryService(db, events);
 		compiler = new ContextPackCompiler(db, new CharacterLoader(characterRoot));
 	});

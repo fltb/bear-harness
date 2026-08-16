@@ -21,9 +21,9 @@ import type { CharacterLoader } from "./companion/character-loader.js";
 import type { FirstMeetingMachine } from "./companion/first-meeting.js";
 import type { CompanionSupervisor } from "./companion/supervisor.js";
 import type { TurnPipeline } from "./companion/turn-pipeline.js";
-import type { VoiceStackManager } from "./companion/voice-stack.js";
 import type { Dispatcher } from "./dispatcher.js";
 import type { MemoryService } from "./memory/service.js";
+import type { ModelRegistry } from "./models/registry.js";
 import type { ProviderCatalog } from "./providers/catalog.js";
 import type { EventBus } from "./storage/event-bus.js";
 import type { StoryService } from "./story/service.js";
@@ -34,7 +34,7 @@ export interface HostCompositionContext {
 	eventBus: EventBus;
 	onboarding: FirstMeetingMachine;
 	turns: TurnPipeline;
-	voice: VoiceStackManager;
+	models: ModelRegistry;
 	memory: MemoryService;
 	commissions: CommissionService;
 	artifacts: ArtifactStore;
@@ -256,8 +256,12 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 
 	// --- message ----------------------------------------------------------------
 	dispatcher.registerHandler(RPC.message.send, async (_p) => {
-		const { conversationId, text } = _p as { conversationId: string; text: string };
-		return s.turns.sendUserMessage(conversationId, text);
+		const { conversationId, text, attachments } = _p as {
+			conversationId: string;
+			text: string;
+			attachments?: Array<{ name: string; mime: string; base64: string }>;
+		};
+		return s.turns.sendUserMessage(conversationId, text, attachments);
 	});
 	dispatcher.registerHandler(RPC.message.abort, async (_p) => {
 		const { conversationId } = _p as { conversationId: string };
@@ -463,6 +467,20 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		await s.supervisor.start();
 		return {};
 	});
+	dispatcher.registerHandler(RPC.provider.importPiConfig, async (_p) => {
+		const imported = await s.providers.importPiConfig((_p as { configJson: string }).configJson);
+		const models = imported.map((model) =>
+			s.models.enable({
+				providerId: model.providerId,
+				modelId: model.modelId,
+				label: model.name,
+				supportsImages: model.supportsImages,
+			}),
+		);
+		await s.supervisor.stop();
+		await s.supervisor.start();
+		return { models };
+	});
 	dispatcher.registerHandler(RPC.provider.overrideBaseUrl, async (_p) => {
 		const input = _p as { providerId: string; baseUrl: string };
 		await s.providers.overrideProviderBaseUrl(input);
@@ -496,18 +514,18 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {};
 	});
 
-	// --- voice ------------------------------------------------------------------------
-	dispatcher.registerHandler(RPC.voice.list, async () => {
-		const companionId = await getCompanionId(s);
-		return { stacks: s.voice.list(companionId) };
+	// --- configured models ------------------------------------------------------------
+	dispatcher.registerHandler(RPC.model.list, async (_p) => {
+		const { conversationId } = _p as { conversationId?: string };
+		const selected = conversationId ? s.models.selected(conversationId) : undefined;
+		return {
+			models: s.models.list(),
+			...(selected
+				? { selected: { providerId: selected.providerId, modelId: selected.modelId } }
+				: {}),
+		};
 	});
-	dispatcher.registerHandler(RPC.voice.switch, async (_p) => {
-		const { stackId, scope } = _p as { stackId: string; scope: "next_scene" | "branch_only" };
-		const companionId = await getCompanionId(s);
-		const stack = s.voice.switchScope(companionId, stackId, scope);
-		return { stack };
-	});
-	dispatcher.registerHandler(RPC.voice.pin, async (_p) => {
+	dispatcher.registerHandler(RPC.model.enable, async (_p) => {
 		const { providerId, modelId, label } = _p as {
 			providerId: string;
 			modelId: string;
@@ -515,10 +533,30 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 		const provider = (await s.providers.listProviders()).find((item) => item.id === providerId);
 		if (!provider) throw { kind: "not_found", reason: "provider_not_found" };
-		if (!provider.availableModels.some((model) => model.id === modelId)) {
-			throw { kind: "not_found", reason: "model_not_found" };
-		}
-		return { stack: s.voice.pin(await getCompanionId(s), providerId, modelId, label) };
+		const catalogModel = provider.availableModels.find((model) => model.id === modelId);
+		if (!catalogModel) throw { kind: "not_found", reason: "model_not_found" };
+		return {
+			model: s.models.enable({
+				providerId,
+				modelId,
+				label: label ?? catalogModel.name,
+				supportsImages: catalogModel.supportsImages,
+			}),
+		};
+	});
+	dispatcher.registerHandler(RPC.model.disable, async (_p) => {
+		const { providerId, modelId } = _p as { providerId: string; modelId: string };
+		s.models.disable(providerId, modelId);
+		return {};
+	});
+	dispatcher.registerHandler(RPC.model.select, async (_p) => {
+		const { conversationId, providerId, modelId } = _p as {
+			conversationId: string;
+			providerId: string;
+			modelId: string;
+		};
+		const selected = s.models.select(conversationId, providerId, modelId);
+		return { selected: { providerId: selected.providerId, modelId: selected.modelId } };
 	});
 
 	// --- run ------------------------------------------------------------------------
@@ -645,7 +683,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {
 			settings: {
 				relationshipMemoryEnabled: stateData.decisions.relationship_memory_enabled ?? false,
-				...modelRouteSettings(s.db, companionId),
 			},
 		};
 	});
@@ -655,38 +692,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		if ("relationshipMemoryEnabled" in settings) {
 			s.onboarding.setRelationshipMemory(companionId, Boolean(settings.relationshipMemoryEnabled));
 		}
-		const currentRoutes = modelRouteSettings(s.db, companionId);
-		const textFallback = (
-			"textFallback" in settings ? settings.textFallback : currentRoutes.textFallback
-		) as { providerId: string; modelId: string } | null | undefined;
-		const multimodalFallback = (
-			"multimodalFallback" in settings
-				? settings.multimodalFallback
-				: currentRoutes.multimodalFallback
-		) as { providerId: string; modelId: string } | null | undefined;
-		if ("textFallback" in settings || "multimodalFallback" in settings) {
-			s.db
-				.prepare(
-					`INSERT INTO model_route_settings
-					 (companion_id, text_provider_id, text_model_id, multimodal_provider_id, multimodal_model_id)
-					 VALUES (?, ?, ?, ?, ?)
-					 ON CONFLICT(companion_id) DO UPDATE SET
-					 text_provider_id=excluded.text_provider_id, text_model_id=excluded.text_model_id,
-					 multimodal_provider_id=excluded.multimodal_provider_id,
-					 multimodal_model_id=excluded.multimodal_model_id, updated_at=datetime('now')`,
-				)
-				.run(
-					companionId,
-					textFallback?.providerId ?? null,
-					textFallback?.modelId ?? null,
-					multimodalFallback?.providerId ?? null,
-					multimodalFallback?.modelId ?? null,
-				);
-		}
 		const stateData = s.onboarding.getState(companionId).stateData;
 		const nextSettings = {
 			relationshipMemoryEnabled: stateData.decisions.relationship_memory_enabled ?? false,
-			...modelRouteSettings(s.db, companionId),
 		};
 		s.eventBus.publish("settings.changed", { settings: nextSettings });
 		return { settings: nextSettings };
@@ -787,41 +795,23 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				}),
 			},
 			characterRuntime: { byConversation: characterRuntimeByConversation },
+			model: {
+				models: s.models.list(),
+				...(activeRow
+					? (() => {
+							const selected = s.models.selected(activeRow.id);
+							return selected
+								? { selected: { providerId: selected.providerId, modelId: selected.modelId } }
+								: {};
+						})()
+					: {}),
+			},
 			settings: {
 				relationshipMemoryEnabled:
 					onboarding.stateData.decisions.relationship_memory_enabled ?? false,
-				...modelRouteSettings(s.db, companionId),
 			},
 		};
 	});
-}
-
-function modelRouteSettings(db: DatabaseSync, companionId: string) {
-	const row = db
-		.prepare(
-			"SELECT text_provider_id, text_model_id, multimodal_provider_id, multimodal_model_id FROM model_route_settings WHERE companion_id = ?",
-		)
-		.get(companionId) as
-		| {
-				text_provider_id: string | null;
-				text_model_id: string | null;
-				multimodal_provider_id: string | null;
-				multimodal_model_id: string | null;
-		  }
-		| undefined;
-	return {
-		...(row?.text_provider_id && row.text_model_id
-			? { textFallback: { providerId: row.text_provider_id, modelId: row.text_model_id } }
-			: {}),
-		...(row?.multimodal_provider_id && row.multimodal_model_id
-			? {
-					multimodalFallback: {
-						providerId: row.multimodal_provider_id,
-						modelId: row.multimodal_model_id,
-					},
-				}
-			: {}),
-	};
 }
 
 function conversationProjection(db: DatabaseSync, id: string, title: string, sceneTitle: string) {

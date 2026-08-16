@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { drizzle } from "drizzle-orm/node-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	type CompanionModelRuntimeSource,
@@ -50,9 +51,9 @@ describe("in-process Companion Host bridge", () => {
 		};
 		const db = new DatabaseSync(":memory:");
 		db.exec(
-			"CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL)",
+			"CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))",
 		);
-		const eventBus = new EventBus(db);
+		const eventBus = new EventBus(drizzle({ client: db }));
 		const events: Array<{ kind: string; payload: unknown }> = [];
 		eventBus.subscribe((event) => events.push(event));
 		const runtime = new CompanionSupervisor(root, eventBus, providers);
@@ -113,9 +114,9 @@ describe("in-process Companion Host bridge", () => {
 		};
 		const db = new DatabaseSync(":memory:");
 		db.exec(
-			"CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL)",
+			"CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))",
 		);
-		const runtime = new CompanionSupervisor(root, new EventBus(db), providers);
+		const runtime = new CompanionSupervisor(root, new EventBus(drizzle({ client: db })), providers);
 		runtime.configureRuntime({
 			skillPaths: [skills],
 			pluginPaths: [],

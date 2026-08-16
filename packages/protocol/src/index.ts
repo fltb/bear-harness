@@ -180,14 +180,18 @@ export type ProviderLoginAnswerRequest = z.infer<typeof schema.ProviderLoginAnsw
 export type ProviderLogoutRequest = z.infer<typeof schema.ProviderLogoutRequest>;
 
 // ---------------------------------------------------------------------------
-// Voice Stack
+// Configured models
 // ---------------------------------------------------------------------------
 
-export type VoiceStack = z.infer<typeof schema.VoiceStack>;
-export type VoiceStackListRequest = z.infer<typeof schema.VoiceStackListRequest>;
-export type VoiceStackListResponse = z.infer<typeof schema.VoiceStackListResponse>;
-export type VoiceStackSwitchRequest = z.infer<typeof schema.VoiceStackSwitchRequest>;
-export type VoiceStackPinRequest = z.infer<typeof schema.VoiceStackPinRequest>;
+export type ModelRoute = z.infer<typeof schema.ModelRoute>;
+export type ConfiguredModel = z.infer<typeof schema.ConfiguredModel>;
+export type ModelListRequest = z.infer<typeof schema.ModelListRequest>;
+export type ModelListResponse = z.infer<typeof schema.ModelListResponse>;
+export type ModelEnableRequest = z.infer<typeof schema.ModelEnableRequest>;
+export type ModelEnableResponse = z.infer<typeof schema.ModelEnableResponse>;
+export type ModelDisableRequest = z.infer<typeof schema.ModelDisableRequest>;
+export type ModelSelectRequest = z.infer<typeof schema.ModelSelectRequest>;
+export type ModelSelectResponse = z.infer<typeof schema.ModelSelectResponse>;
 
 // ---------------------------------------------------------------------------
 // Commission

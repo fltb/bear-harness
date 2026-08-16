@@ -49,8 +49,6 @@ export type {
 export { CompanionSupervisor } from "./companion/supervisor.js";
 export type { TurnResult } from "./companion/turn-pipeline.js";
 export { TurnPipeline } from "./companion/turn-pipeline.js";
-export type { AuditionResult, VoiceStackRecord } from "./companion/voice-stack.js";
-export { VoiceStackManager } from "./companion/voice-stack.js";
 export type {
 	AttributeSpec,
 	CatalogEntry,
@@ -148,6 +146,8 @@ export type {
 	MemorySourceKind,
 } from "./memory/service.js";
 export { MemoryService } from "./memory/service.js";
+export type { ModelRecord } from "./models/registry.js";
+export { ModelRegistry } from "./models/registry.js";
 export type {
 	AuthEvent,
 	AuthInteraction,

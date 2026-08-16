@@ -48,7 +48,11 @@ export class TurnPipeline {
 	}
 
 	/** Send a user message and start a companion turn. */
-	async sendUserMessage(conversationId: string, text: string): Promise<TurnResult> {
+	async sendUserMessage(
+		conversationId: string,
+		text: string,
+		attachments: Array<{ name: string; mime: string; base64: string }> = [],
+	): Promise<TurnResult> {
 		// One active turn per conversation
 		if (this.activeTurns.has(conversationId)) {
 			throw { kind: "conflict", reason: "turn_already_active" };
@@ -98,6 +102,11 @@ export class TurnPipeline {
 			type: "prompt",
 			conversationId,
 			message: text,
+			images: attachments.map((attachment) => ({
+				type: "image" as const,
+				data: attachment.base64,
+				mimeType: attachment.mime,
+			})),
 			streamingBehavior: "followUp",
 		});
 

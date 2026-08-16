@@ -345,6 +345,16 @@ export const ConversationSelectResponse = z.strictObject({
 export const MessageSendRequest = z.strictObject({
 	conversationId: ConversationId,
 	text: z.string().min(1).max(65536),
+	attachments: z
+		.array(
+			z.strictObject({
+				name: z.string().min(1).max(255),
+				mime: z.string().min(1).max(128),
+				base64: z.string().min(1).max(16_000_000),
+			}),
+		)
+		.max(10)
+		.optional(),
 });
 export const MessageSendResponse = z.strictObject({
 	messageId: MessageId,
@@ -734,35 +744,44 @@ export const ProviderLogoutRequest = z.strictObject({
 });
 
 // ---------------------------------------------------------------------------
-// Voice Stack
+// Configured models
 // ---------------------------------------------------------------------------
 
-export const VoiceStack = z.strictObject({
-	id: z.string().max(64),
-	companionId: z.string().min(1).max(64),
+export const ModelRoute = z.strictObject({
 	providerId: z.string().max(64),
 	modelId: z.string().max(128),
-	revision: z.number().int().safe().min(0).max(MAX_SAFE_INT),
+});
+export const ConfiguredModel = z.strictObject({
+	...ModelRoute.shape,
 	label: z.string().max(MAX_STRING_LENGTH),
-	active: z.boolean(),
+	supportsImages: z.boolean(),
 	createdAt: z.string().max(64),
 });
-export const VoiceStackListRequest = z.strictObject({});
-export const VoiceStackListResponse = z.strictObject({
-	stacks: z.array(VoiceStack).max(20),
+export const ProviderImportPiConfigResponse = z.strictObject({
+	models: z.array(ConfiguredModel).max(100),
 });
-export const VoiceStackSwitchRequest = z.strictObject({
-	stackId: z.string().max(64),
-	scope: z.union([z.literal("next_scene"), z.literal("branch_only")]),
-	rollbackAvailable: z.boolean(),
+export const ModelListRequest = z.strictObject({
+	conversationId: ConversationId.optional(),
 });
-export const VoiceStackPinRequest = z.strictObject({
+export const ModelListResponse = z.strictObject({
+	models: z.array(ConfiguredModel).max(100),
+	selected: ModelRoute.optional(),
+});
+export const ModelEnableRequest = z.strictObject({
 	providerId: z.string().min(1).max(64),
 	modelId: z.string().min(1).max(128),
 	label: z.string().max(MAX_STRING_LENGTH).optional(),
 });
-export const VoiceStackResponse = z.strictObject({
-	stack: VoiceStack,
+export const ModelEnableResponse = z.strictObject({
+	model: ConfiguredModel,
+});
+export const ModelDisableRequest = ModelRoute;
+export const ModelSelectRequest = z.strictObject({
+	conversationId: ConversationId,
+	...ModelRoute.shape,
+});
+export const ModelSelectResponse = z.strictObject({
+	selected: ModelRoute,
 });
 
 // ---------------------------------------------------------------------------
@@ -910,18 +929,6 @@ export const ArtifactReadResponse = z.strictObject({
 
 export const SettingsData = z.strictObject({
 	relationshipMemoryEnabled: z.boolean(),
-	textFallback: z
-		.strictObject({
-			providerId: z.string().min(1).max(64),
-			modelId: z.string().min(1).max(200),
-		})
-		.optional(),
-	multimodalFallback: z
-		.strictObject({
-			providerId: z.string().min(1).max(64),
-			modelId: z.string().min(1).max(200),
-		})
-		.optional(),
 });
 export const SettingsGetRequest = z.strictObject({});
 export const SettingsResponse = z.strictObject({
@@ -929,8 +936,6 @@ export const SettingsResponse = z.strictObject({
 });
 export const SettingsPatch = z.strictObject({
 	relationshipMemoryEnabled: z.boolean().optional(),
-	textFallback: z.union([SettingsData.shape.textFallback, z.null()]).optional(),
-	multimodalFallback: z.union([SettingsData.shape.multimodalFallback, z.null()]).optional(),
 });
 export const SettingsSetRequest = z.strictObject({
 	settings: SettingsPatch,
@@ -946,6 +951,9 @@ export const ProviderCustomUpsertRequest = z.strictObject({
 	modelId: z.string().min(1).max(200),
 	apiKey: z.string().min(1).max(8192).optional(),
 	supportsImages: z.boolean().optional(),
+});
+export const ProviderImportPiConfigRequest = z.strictObject({
+	configJson: z.string().min(2).max(262_144),
 });
 export const ProviderOverrideBaseUrlRequest = z.strictObject({
 	providerId: z
@@ -987,7 +995,7 @@ export const SnapshotResponse = z.strictObject({
 	conversation: ConversationSnapshot.optional(),
 	memory: MemorySnapshot.optional(),
 	provider: ProviderListResponse.optional(),
-	voice: VoiceStackListResponse.optional(),
+	model: ModelListResponse.optional(),
 	commission: CommissionListResponse.optional(),
 	run: RunListResponse.optional(),
 	artifact: ArtifactListResponse.optional(),
@@ -1135,6 +1143,11 @@ export const RPC = {
 	provider: {
 		list: endpoint("provider.list:v1", ProviderListRequest, ProviderListResponse),
 		customUpsert: endpoint("provider.customUpsert:v1", ProviderCustomUpsertRequest, EmptyResponse),
+		importPiConfig: endpoint(
+			"provider.importPiConfig:v1",
+			ProviderImportPiConfigRequest,
+			ProviderImportPiConfigResponse,
+		),
 		overrideBaseUrl: endpoint(
 			"provider.overrideBaseUrl:v1",
 			ProviderOverrideBaseUrlRequest,
@@ -1154,10 +1167,11 @@ export const RPC = {
 		),
 		logout: endpoint("provider.logout:v1", ProviderLogoutRequest, EmptyResponse),
 	},
-	voice: {
-		list: endpoint("voice.list:v1", VoiceStackListRequest, VoiceStackListResponse),
-		switch: endpoint("voice.switch:v1", VoiceStackSwitchRequest, VoiceStackResponse),
-		pin: endpoint("voice.pin:v1", VoiceStackPinRequest, VoiceStackResponse),
+	model: {
+		list: endpoint("model.list:v1", ModelListRequest, ModelListResponse),
+		enable: endpoint("model.enable:v1", ModelEnableRequest, ModelEnableResponse),
+		disable: endpoint("model.disable:v1", ModelDisableRequest, EmptyResponse),
+		select: endpoint("model.select:v1", ModelSelectRequest, ModelSelectResponse),
 	},
 	commission: {
 		list: endpoint("commission.list:v1", CommissionListRequest, CommissionListResponse),

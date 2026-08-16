@@ -13,7 +13,9 @@
  * never enter the renderer, run manifest, evidence, or diagnostics.
  */
 
-import type { DatabaseSync } from "node:sqlite";
+import { asc, eq } from "drizzle-orm";
+import type { AppDatabase } from "../storage/database.js";
+import { providerAccounts } from "../storage/schema.js";
 
 /**
  * Platform credential encryption boundary. The desktop app injects an
@@ -48,12 +50,12 @@ export interface ProviderCredential {
 }
 
 export class CredentialStore {
-	private db: DatabaseSync;
+	private db: AppDatabase;
 	private vault: CredentialVault;
 	private sessionKeys = new Map<string, string>();
 	private encryptionAvailable: boolean;
 
-	constructor(db: DatabaseSync, vault: CredentialVault) {
+	constructor(db: AppDatabase, vault: CredentialVault) {
 		this.db = db;
 		this.vault = vault;
 		try {
@@ -78,11 +80,7 @@ export class CredentialStore {
 			// secret only for the current run and record no plaintext blob.
 			if (credential.apiKey) this.sessionKeys.set(providerId, credential.apiKey);
 			const status: CredentialStatus = "session_only";
-			this.db
-				.prepare(
-					"INSERT INTO provider_accounts (id, provider_id, credential_blob, credential_status, updated_at) VALUES (?, ?, NULL, ?, ?) ON CONFLICT(id) DO UPDATE SET credential_blob = NULL, credential_status = ?, updated_at = ?",
-				)
-				.run(id, providerId, status, now, status, now);
+			this.upsert(id, providerId, null, status, now);
 			return status;
 		}
 
@@ -100,11 +98,7 @@ export class CredentialStore {
 				this.encryptionAvailable = false;
 				if (credential.apiKey) this.sessionKeys.set(providerId, credential.apiKey);
 				status = "session_only";
-				this.db
-					.prepare(
-						"INSERT INTO provider_accounts (id, provider_id, credential_blob, credential_status, updated_at) VALUES (?, ?, NULL, ?, ?) ON CONFLICT(id) DO UPDATE SET credential_blob = NULL, credential_status = ?, updated_at = ?",
-					)
-					.run(id, providerId, status, now, status, now);
+				this.upsert(id, providerId, null, status, now);
 				return status;
 			}
 		} else {
@@ -114,11 +108,7 @@ export class CredentialStore {
 			status = "weak_storage";
 		}
 
-		this.db
-			.prepare(
-				"INSERT INTO provider_accounts (id, provider_id, credential_blob, credential_status, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET credential_blob = ?, credential_status = ?, updated_at = ?",
-			)
-			.run(id, providerId, blob, status, now, blob, status, now);
+		this.upsert(id, providerId, blob, status, now);
 		return status;
 	}
 
@@ -136,30 +126,33 @@ export class CredentialStore {
 		}
 
 		const row = this.db
-			.prepare(
-				"SELECT credential_blob, credential_status, updated_at FROM provider_accounts WHERE id = ?",
-			)
-			.get(providerId) as
-			| { credential_blob: Buffer | null; credential_status: string; updated_at: string }
-			| undefined;
+			.select({
+				credentialBlob: providerAccounts.credentialBlob,
+				credentialStatus: providerAccounts.credentialStatus,
+				updatedAt: providerAccounts.updatedAt,
+			})
+			.from(providerAccounts)
+			.where(eq(providerAccounts.id, providerId))
+			.get();
 
 		if (!row) return null;
 
 		let credential: { apiKey?: string; oauthToken?: string; refreshToken?: string } = {};
 
-		if (row.credential_blob) {
+		if (row.credentialBlob) {
 			try {
+				const blob = Buffer.from(row.credentialBlob);
 				const plaintext =
-					(row.credential_status === "stored" || row.credential_status === "weak_storage") &&
+					(row.credentialStatus === "stored" || row.credentialStatus === "weak_storage") &&
 					this.encryptionAvailable
-						? this.vault.decryptString(row.credential_blob)
-						: row.credential_blob.toString("utf8");
+						? this.vault.decryptString(blob)
+						: blob.toString("utf8");
 				credential = JSON.parse(plaintext);
 			} catch {
 				return {
 					providerId,
 					status: "invalid",
-					updatedAt: row.updated_at,
+					updatedAt: row.updatedAt,
 				};
 			}
 		}
@@ -169,36 +162,40 @@ export class CredentialStore {
 			apiKey: credential.apiKey,
 			oauthToken: credential.oauthToken,
 			refreshToken: credential.refreshToken,
-			status: row.credential_status as CredentialStatus,
-			updatedAt: row.updated_at,
+			status: row.credentialStatus as CredentialStatus,
+			updatedAt: row.updatedAt,
 		};
 	}
 
 	/** Remove a stored credential. */
 	async remove(providerId: string): Promise<void> {
 		this.sessionKeys.delete(providerId);
-		this.db.prepare("DELETE FROM provider_accounts WHERE id = ?").run(providerId);
+		this.db.delete(providerAccounts).where(eq(providerAccounts.id, providerId)).run();
 	}
 
 	/** Get the credential status for a provider (without revealing the secret). */
 	async getStatus(providerId: string): Promise<CredentialStatus> {
 		if (this.sessionKeys.has(providerId)) return "session_only";
 		const row = this.db
-			.prepare("SELECT credential_status FROM provider_accounts WHERE id = ?")
-			.get(providerId) as { credential_status: string } | undefined;
-		return (row?.credential_status as CredentialStatus) ?? "missing";
+			.select({ status: providerAccounts.credentialStatus })
+			.from(providerAccounts)
+			.where(eq(providerAccounts.id, providerId))
+			.get();
+		return (row?.status as CredentialStatus) ?? "missing";
 	}
 
 	/** List all provider credentials (without secrets). */
 	async list(): Promise<Array<{ providerId: string; status: CredentialStatus }>> {
 		const rows = this.db
-			.prepare("SELECT id, credential_status FROM provider_accounts ORDER BY id")
-			.all() as Array<{ id: string; credential_status: string }>;
+			.select({ id: providerAccounts.id, status: providerAccounts.credentialStatus })
+			.from(providerAccounts)
+			.orderBy(asc(providerAccounts.id))
+			.all();
 		const result: Array<{ providerId: string; status: CredentialStatus }> = [];
 		for (const row of rows) {
 			result.push({
 				providerId: row.id,
-				status: (row.credential_status as CredentialStatus) ?? "missing",
+				status: row.status as CredentialStatus,
 			});
 		}
 		// Add session keys not in DB
@@ -208,5 +205,22 @@ export class CredentialStore {
 			}
 		}
 		return result;
+	}
+
+	private upsert(
+		id: string,
+		providerId: string,
+		credentialBlob: Buffer | null,
+		credentialStatus: CredentialStatus,
+		updatedAt: string,
+	): void {
+		this.db
+			.insert(providerAccounts)
+			.values({ id, providerId, credentialBlob, credentialStatus, updatedAt })
+			.onConflictDoUpdate({
+				target: providerAccounts.id,
+				set: { credentialBlob, credentialStatus, updatedAt },
+			})
+			.run();
 	}
 }

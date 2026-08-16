@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { drizzle } from "drizzle-orm/node-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AcpProcessSpec } from "../src/executors/acp-client.js";
 import { CodexAdapter } from "../src/executors/codex-adapter.js";
@@ -35,7 +36,7 @@ function fixtureSpec(cwd: string): AcpProcessSpec {
 function createDatabase(): { db: DatabaseSync; eventBus: EventBus } {
 	const db = new DatabaseSync(":memory:");
 	db.exec(`
-		CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL);
+		CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
 		CREATE TABLE run_manifests (
 			id TEXT PRIMARY KEY,
 			run_id TEXT NOT NULL,
@@ -43,7 +44,7 @@ function createDatabase(): { db: DatabaseSync; eventBus: EventBus } {
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
 	`);
-	return { db, eventBus: new EventBus(db) };
+	return { db, eventBus: new EventBus(drizzle({ client: db })) };
 }
 
 function request(cwd: string, profile: ExecutorLaunchRequest["profile"]): ExecutorLaunchRequest {

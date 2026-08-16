@@ -11,6 +11,7 @@
 	},
 	"scripts": {
 		"build": "tsc -p tsconfig.json",
+		"db:generate": "drizzle-kit generate",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
 		"test:unit": "npm --prefix ../protocol run build && vitest run",
 		"test:coverage": "npm --prefix ../protocol run build && vitest run --coverage"
@@ -23,6 +24,7 @@
 		"@earendil-works/pi-coding-agent": "0.84.1",
 		"csv-parse": "7.0.2",
 		"docx": "9.7.1",
+		"drizzle-orm": "^1.0.0-rc.4",
 		"exifr": "7.1.3",
 		"fast-xml-parser": "5.10.1",
 		"file-type": "22.0.1",
@@ -38,6 +40,7 @@
 	"devDependencies": {
 		"@types/node": "24.13.3",
 		"@vitest/coverage-v8": "4.1.10",
+		"drizzle-kit": "^1.0.0-rc.4",
 		"typescript": "7.0.2",
 		"vitest": "4.1.10"
 	}

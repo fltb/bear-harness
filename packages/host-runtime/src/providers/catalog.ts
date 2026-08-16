@@ -15,7 +15,14 @@
  * auth errors reported by pi-ai.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { CredentialStatus, CredentialStore } from "./credential-store.js";
@@ -78,6 +85,37 @@ export interface ProviderModelInfo {
 	name: string;
 	supportsImages: boolean;
 	cost: ProviderModelCost;
+}
+
+interface ProviderModelInfoWithProvider {
+	providerId: string;
+	modelId: string;
+	name: string;
+	supportsImages: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function containsKey(value: unknown, key: string): boolean {
+	if (Array.isArray(value)) return value.some((item) => containsKey(item, key));
+	if (!isRecord(value)) return false;
+	return key in value || Object.values(value).some((item) => containsKey(item, key));
+}
+
+function configuredRoutes(providers: Record<string, unknown>): Array<{
+	providerId: string;
+	modelId: string;
+}> {
+	return Object.entries(providers).flatMap(([providerId, config]) => {
+		if (!isRecord(config) || !Array.isArray(config.models)) return [];
+		return config.models.flatMap((model) =>
+			isRecord(model) && typeof model.id === "string" && model.id
+				? [{ providerId, modelId: model.id }]
+				: [],
+		);
+	});
 }
 
 /** One provider entry in the catalog listing. */
@@ -217,6 +255,69 @@ export class ProviderCatalog {
 		renameSync(temporaryPath, modelsPath);
 		this.runtime = null;
 		if (input.apiKey) await this.setApiKey(input.providerId, input.apiKey);
+	}
+
+	async importPiConfig(configJson: string): Promise<ProviderModelInfoWithProvider[]> {
+		let fragment: unknown;
+		try {
+			fragment = JSON.parse(configJson);
+		} catch {
+			throw { kind: "invalid_request", reason: "pi_model_config_invalid_json" };
+		}
+		if (!isRecord(fragment) || !isRecord(fragment.providers)) {
+			throw { kind: "invalid_request", reason: "pi_model_config_requires_providers" };
+		}
+		if (containsKey(fragment, "apiKey")) {
+			throw { kind: "invalid_request", reason: "pi_model_config_must_not_contain_api_key" };
+		}
+		const importedRoutes = configuredRoutes(fragment.providers);
+		if (importedRoutes.length === 0) {
+			throw { kind: "invalid_request", reason: "pi_model_config_requires_models" };
+		}
+
+		const modelsPath = join(this.agentDir, "models.json");
+		const temporaryPath = `${modelsPath}.tmp`;
+		const previous = existsSync(modelsPath) ? readFileSync(modelsPath, "utf8") : undefined;
+		let document: Record<string, unknown> = {};
+		if (previous) {
+			try {
+				document = JSON.parse(previous) as Record<string, unknown>;
+			} catch {
+				throw { kind: "conflict", reason: "custom_provider_config_invalid" };
+			}
+		}
+		const providers = isRecord(document.providers) ? document.providers : {};
+		mkdirSync(dirname(modelsPath), { recursive: true, mode: 0o700 });
+		writeFileSync(
+			temporaryPath,
+			`${JSON.stringify({ ...document, providers: { ...providers, ...fragment.providers } }, null, 2)}\n`,
+			{ mode: 0o600 },
+		);
+		renameSync(temporaryPath, modelsPath);
+		try {
+			const runtime = await ModelRuntime.create({
+				authPath: join(this.agentDir, "auth.json"),
+				modelsPath,
+				refreshOnCreate: false,
+			});
+			const result = importedRoutes.map((route) => {
+				const model = runtime.getModel(route.providerId, route.modelId);
+				if (!model) throw new Error(`Pi did not register ${route.providerId}/${route.modelId}`);
+				return {
+					providerId: route.providerId,
+					modelId: model.id,
+					name: model.name,
+					supportsImages: model.input.includes("image"),
+				};
+			});
+			this.runtime = null;
+			return result;
+		} catch {
+			if (previous === undefined) unlinkSync(modelsPath);
+			else writeFileSync(modelsPath, previous, { mode: 0o600 });
+			this.runtime = null;
+			throw { kind: "invalid_request", reason: "pi_model_config_rejected" };
+		}
 	}
 
 	async overrideProviderBaseUrl(input: { providerId: string; baseUrl: string }): Promise<void> {

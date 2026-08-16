@@ -74,7 +74,7 @@ function detectMemory(text: string):
 	  }
 	| undefined {
 	const normalized = text.normalize("NFKC").replace(/\s+/g, " ").trim();
-	const nickname = normalized.match(/^(?:以后)?(?:请)?叫我[“\"]?([^”\"]{1,32})[”\"]?[。！!]?$/);
+	const nickname = normalized.match(/^(?:以后)?(?:请)?叫我[“"]?([^”"]{1,32})[”"]?[。！!]?$/);
 	if (nickname?.[1]) {
 		return {
 			kind: "preference",

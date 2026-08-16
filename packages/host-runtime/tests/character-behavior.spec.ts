@@ -2,6 +2,7 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { drizzle } from "drizzle-orm/node-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { CharacterBehaviorService } from "../src/companion/character-behavior.js";
 import { CharacterLoader } from "../src/companion/character-loader.js";
@@ -17,7 +18,7 @@ function createFixture(): {
 } {
 	const db = new DatabaseSync(":memory:");
 	db.exec(`
-		CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL);
+		CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
 		CREATE TABLE companion_packages (id TEXT PRIMARY KEY);
 		CREATE TABLE companion_identity (id TEXT PRIMARY KEY, package_id TEXT NOT NULL);
 		CREATE TABLE conversations (id TEXT PRIMARY KEY, companion_id TEXT NOT NULL);
@@ -38,7 +39,7 @@ function createFixture(): {
 		"conversation-1",
 		"jizhou",
 	);
-	const eventBus = new EventBus(db);
+	const eventBus = new EventBus(drizzle({ client: db }));
 	return { db, eventBus, behavior: new CharacterBehaviorService(db, eventBus, characterLoader) };
 }
 

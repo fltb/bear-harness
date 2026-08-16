@@ -14,6 +14,13 @@ import { createHash } from "node:crypto";
 import { copyFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { drizzle } from "drizzle-orm/node-sqlite";
+
+function createAppDatabase(client: DatabaseSync) {
+	return drizzle({ client });
+}
+
+export type AppDatabase = ReturnType<typeof createAppDatabase>;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -57,6 +64,8 @@ export interface Migration {
 export class Database {
 	/** The underlying SQLite connection handed to domain services. */
 	readonly connection: DatabaseSync;
+	/** The typed application query interface. */
+	readonly orm: AppDatabase;
 
 	private readonly dbPath: string;
 	private readonly backupDir: string;
@@ -68,6 +77,7 @@ export class Database {
 		mkdirSync(this.backupDir, { recursive: true });
 
 		this.connection = new DatabaseSync(this.dbPath);
+		this.orm = createAppDatabase(this.connection);
 
 		// Pragmas
 		this.connection.exec("PRAGMA journal_mode = WAL");
@@ -403,15 +413,21 @@ export const MIGRATIONS: Migration[] = [
 				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 			);
 
-			CREATE TABLE voice_stack_versions (
-				id TEXT PRIMARY KEY,
-				companion_id TEXT NOT NULL REFERENCES companion_identity(id),
+			CREATE TABLE configured_models (
 				provider_id TEXT NOT NULL,
 				model_id TEXT NOT NULL,
-				revision INTEGER NOT NULL DEFAULT 0,
-				label TEXT NOT NULL DEFAULT '',
-				active BOOLEAN NOT NULL DEFAULT 0,
+				label TEXT NOT NULL,
+				supports_images INTEGER NOT NULL DEFAULT 0 CHECK (supports_images IN (0, 1)),
 				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+				, PRIMARY KEY (provider_id, model_id)
+			);
+
+			CREATE TABLE conversation_model_selections (
+				conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+				provider_id TEXT NOT NULL,
+				model_id TEXT NOT NULL,
+				updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+				FOREIGN KEY (provider_id, model_id) REFERENCES configured_models(provider_id, model_id) ON DELETE CASCADE
 			);
 
 			CREATE TABLE executor_profiles (
@@ -631,20 +647,6 @@ export const MIGRATIONS: Migration[] = [
 			);
 			CREATE INDEX idx_story_proposals_pending
 				ON story_change_proposals(companion_id, conversation_id, status, created_at);
-		`,
-	},
-	{
-		id: 8,
-		description: "Persistent text and multimodal model fallback routes",
-		up: `
-			CREATE TABLE model_route_settings (
-				companion_id TEXT PRIMARY KEY REFERENCES companion_identity(id),
-				text_provider_id TEXT,
-				text_model_id TEXT,
-				multimodal_provider_id TEXT,
-				multimodal_model_id TEXT,
-				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-			);
 		`,
 	},
 ];

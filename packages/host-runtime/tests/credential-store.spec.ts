@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import { DatabaseSync } from "node:sqlite";
+import { drizzle } from "drizzle-orm/node-sqlite";
 import { describe, expect, it } from "vitest";
 import { CredentialStore, type CredentialVault } from "../src/providers/credential-store.js";
 
@@ -22,6 +23,7 @@ describe("CredentialStore keychain failure", () => {
 				provider_id TEXT NOT NULL,
 				credential_blob BLOB,
 				credential_status TEXT NOT NULL,
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
 				updated_at TEXT NOT NULL
 			)
 		`);
@@ -30,7 +32,7 @@ describe("CredentialStore keychain failure", () => {
 				throw new Error("keychain unavailable");
 			},
 		});
-		const store = new CredentialStore(db, vault);
+		const store = new CredentialStore(drizzle({ client: db }), vault);
 		expect(await store.set("provider-a", { apiKey: "secret" })).toBe("session_only");
 		expect(await store.get("provider-a")).toMatchObject({
 			providerId: "provider-a",

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { drizzle } from "drizzle-orm/node-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { ArtifactStore } from "../src/artifacts/index.js";
 import { CommissionService } from "../src/commissions/service.js";
@@ -23,7 +24,7 @@ type Fixture = {
 function createFixture(controller?: ExecutorController): Fixture {
 	const db = new DatabaseSync(":memory:");
 	db.exec(`
-		CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL);
+		CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
 		CREATE TABLE commissions (
 			id TEXT PRIMARY KEY,
 			conversation_id TEXT,
@@ -81,7 +82,7 @@ function createFixture(controller?: ExecutorController): Fixture {
 		"INSERT INTO executor_profiles (id, profile_type, capability_json) VALUES (?, 'product-managed', '{}')",
 	).run("pi-worker");
 
-	const eventBus = new EventBus(db);
+	const eventBus = new EventBus(drizzle({ client: db }));
 	const router = new ExecutorRouter(db);
 	if (controller) router.register("product-managed", controller);
 	const tmp = mkdtempSync(join(tmpdir(), "bear-commission-router-"));

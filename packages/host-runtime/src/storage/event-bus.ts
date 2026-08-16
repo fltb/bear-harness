@@ -8,7 +8,9 @@
  * renderer to discard its optimistic projection and re-fetch the snapshot.
  */
 
-import type { DatabaseSync } from "node:sqlite";
+import { asc, gt, max } from "drizzle-orm";
+import type { AppDatabase } from "./database.js";
+import { events } from "./schema.js";
 
 export interface HostEvent {
 	seq: number;
@@ -19,24 +21,26 @@ export interface HostEvent {
 export type EventListener = (event: HostEvent) => void;
 
 export class EventBus {
-	private db: DatabaseSync;
+	private db: AppDatabase;
 	private listeners = new Set<EventListener>();
 	private seq = 0;
 
-	constructor(db: DatabaseSync) {
+	constructor(db: AppDatabase) {
 		this.db = db;
-		// Restore the last sequence from the DB
-		const row = db.prepare("SELECT COALESCE(MAX(seq), 0) AS s FROM events").get() as { s: number };
-		this.seq = row.s;
+		this.seq =
+			db
+				.select({ value: max(events.seq) })
+				.from(events)
+				.get()?.value ?? 0;
 	}
 
 	/** Publish an event: write to DB, then notify all listeners. */
 	publish(kind: string, payload: unknown): HostEvent {
 		this.seq += 1;
-		const json = JSON.stringify(payload ?? {});
 		this.db
-			.prepare("INSERT INTO events (seq, kind, payload) VALUES (?, ?, ?)")
-			.run(this.seq, kind, json);
+			.insert(events)
+			.values({ seq: this.seq, kind, payload: payload ?? {} })
+			.run();
 		const event: HostEvent = { seq: this.seq, kind, payload };
 		for (const listener of this.listeners) {
 			try {
@@ -55,10 +59,13 @@ export class EventBus {
 		// Catch up: replay events after the given seq
 		if (afterSeq !== undefined && afterSeq > 0) {
 			const rows = this.db
-				.prepare("SELECT seq, kind, payload FROM events WHERE seq > ? ORDER BY seq")
-				.all(afterSeq) as Array<{ seq: number; kind: string; payload: string }>;
+				.select({ seq: events.seq, kind: events.kind, payload: events.payload })
+				.from(events)
+				.where(gt(events.seq, afterSeq))
+				.orderBy(asc(events.seq))
+				.all();
 			for (const row of rows) {
-				listener({ seq: row.seq, kind: row.kind, payload: JSON.parse(row.payload) });
+				listener(row);
 			}
 		}
 

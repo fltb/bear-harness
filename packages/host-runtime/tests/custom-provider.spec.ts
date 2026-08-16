@@ -92,4 +92,54 @@ describe("custom OpenAI-compatible provider configuration", () => {
 			}),
 		).rejects.toMatchObject({ kind: "invalid_request" });
 	});
+
+	it("passes advanced Pi model configuration through and rejects embedded credentials", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-pi-model-import-"));
+		roots.push(root);
+		const catalog = new ProviderCatalog({} as CredentialStore, root);
+		const config = {
+			providers: {
+				"advanced-relay": {
+					name: "Advanced Relay",
+					baseUrl: "https://relay.example/v1",
+					api: "openai-completions",
+					authHeader: true,
+					models: [
+						{
+							id: "custom-reasoner",
+							name: "Custom Reasoner",
+							reasoning: true,
+							input: ["text", "image"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 131072,
+							maxTokens: 8192,
+							samplingParams: { temperature: 0.3 },
+						},
+					],
+				},
+			},
+		};
+
+		await expect(catalog.importPiConfig(JSON.stringify(config))).resolves.toEqual([
+			{
+				providerId: "advanced-relay",
+				modelId: "custom-reasoner",
+				name: "Custom Reasoner",
+				supportsImages: true,
+			},
+		]);
+		expect(JSON.parse(readFileSync(join(root, "models.json"), "utf8"))).toEqual(config);
+
+		const previous = readFileSync(join(root, "models.json"), "utf8");
+		await expect(
+			catalog.importPiConfig(
+				JSON.stringify({
+					providers: {
+						bad: { apiKey: "SECRET_SENTINEL", models: [{ id: "bad" }] },
+					},
+				}),
+			),
+		).rejects.toMatchObject({ reason: "pi_model_config_must_not_contain_api_key" });
+		expect(readFileSync(join(root, "models.json"), "utf8")).toBe(previous);
+	});
 });

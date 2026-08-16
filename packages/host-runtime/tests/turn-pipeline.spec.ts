@@ -34,7 +34,7 @@ describe("TurnPipeline conversation state contract", () => {
 		db.prepare(
 			"INSERT INTO branches (id, conversation_id, label, adopted) VALUES ('main', 'conversation', 'main', 1)",
 		).run();
-		events = new EventBus(db);
+		events = new EventBus(database.orm);
 		commands = [];
 		running = true;
 		const supervisor = {
@@ -65,6 +65,7 @@ describe("TurnPipeline conversation state contract", () => {
 				type: "prompt",
 				conversationId: "conversation",
 				message: "你是谁？",
+				images: [],
 				streamingBehavior: "followUp",
 			},
 		]);

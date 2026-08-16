@@ -33,7 +33,9 @@ type HostToolHandler = (
 ) => CompanionHostToolResult | Promise<CompanionHostToolResult>;
 type ModelSelectionHandler = (
 	conversationId: string,
+	requiresImages: boolean,
 ) => { providerId: string; modelId: string } | undefined;
+type PromptImages = NonNullable<NonNullable<Parameters<AgentSession["prompt"]>[1]>["images"]>;
 type ContextHandler = (conversationId: string, includeHistory: boolean, message: string) => string;
 
 /** Host provider boundary required by the in-process Pi session. */
@@ -218,8 +220,12 @@ export class CompanionSupervisor {
 		) {
 			const conversationId = command.conversationId;
 			const message = command.message;
+			const images =
+				"images" in command && Array.isArray(command.images)
+					? (command.images as PromptImages)
+					: undefined;
 			this.promptQueue = this.promptQueue
-				.then(() => this.prompt(conversationId, message))
+				.then(() => this.prompt(conversationId, message, images))
 				.catch((error: unknown) => {
 					if (this.state === "stopped") return;
 					this.eventBus.publish("companion.runtime_error", {
@@ -251,7 +257,11 @@ export class CompanionSupervisor {
 		return resolve(this.agentDir, "conversations", conversationId);
 	}
 
-	private async prompt(conversationId: string, message: string): Promise<void> {
+	private async prompt(
+		conversationId: string,
+		message: string,
+		images?: PromptImages,
+	): Promise<void> {
 		this.activeConversationId = conversationId;
 		const includeHistory = !this.sessions.has(conversationId);
 		let session: AgentSession;
@@ -276,7 +286,14 @@ export class CompanionSupervisor {
 			this.eventBus.publish("message_end", { conversationId, failed: true });
 			return;
 		}
-		if (!(await this.selectConfiguredModel(modelRuntime, session, conversationId))) {
+		if (
+			!(await this.selectConfiguredModel(
+				modelRuntime,
+				session,
+				conversationId,
+				Boolean(images?.length),
+			))
+		) {
 			this.eventBus.publish("companion.runtime_error", {
 				conversationId,
 				code: "provider_auth_required",
@@ -295,7 +312,7 @@ export class CompanionSupervisor {
 			const prompt = context
 				? `<host_context>\n${context}\n</host_context>\n\n<current_user_message>\n${message}\n</current_user_message>`
 				: message;
-			await session.prompt(prompt, { streamingBehavior: "followUp" });
+			await session.prompt(prompt, { streamingBehavior: "followUp", images });
 			const text = extractMessageText(session.agent.state.messages.at(-1));
 			this.eventBus.publish("message_end", { conversationId, text });
 		} catch (error) {
@@ -314,8 +331,9 @@ export class CompanionSupervisor {
 		modelRuntime: ModelRuntime,
 		session: AgentSession,
 		conversationId: string,
+		requiresImages: boolean,
 	): Promise<boolean> {
-		const selected = this.modelSelectionHandler?.(conversationId);
+		const selected = this.modelSelectionHandler?.(conversationId, requiresImages);
 		if (selected && modelRuntime.hasConfiguredAuth(selected.providerId)) {
 			const model = modelRuntime
 				.getModels(selected.providerId)

@@ -17,7 +17,7 @@ describe("FileOpsService user file workflow", () => {
 		root = mkdtempSync(join(tmpdir(), "bear-fsops-"));
 		database = new Database(join(root, "database"));
 		database.migrate(MIGRATIONS);
-		service = new FileOpsService(database.connection, new EventBus(database.connection));
+		service = new FileOpsService(database.connection, new EventBus(database.orm));
 	});
 
 	afterEach(() => {
