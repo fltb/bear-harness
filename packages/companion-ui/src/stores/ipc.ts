@@ -80,9 +80,9 @@ export type ProviderCredentialStatus = ProviderInfo["credentialStatus"];
 export type ProviderModel = ProviderInfo["availableModels"][number];
 export type ProviderListData = Wire.ProviderListResponse;
 export type ProviderLoginResult = Wire.ProviderLoginResponse;
-export type VoiceStack = Wire.VoiceStack;
-export type VoiceListData = Wire.VoiceStackListResponse;
-export type VoiceSwitchScope = Wire.VoiceStackSwitchRequest["scope"];
+export type ConfiguredModel = Wire.ConfiguredModel;
+export type ModelRoute = Wire.ModelRoute;
+export type ModelListData = Wire.ModelListResponse;
 export type ActionDraft = Wire.ActionDraft;
 export type Commission = Wire.Commission;
 export type CommissionStatus = Commission["status"];
@@ -113,7 +113,6 @@ export type StoryListData = Wire.StoryListChangesResponse;
 export type StoryChangeProposal = Wire.StoryChangeProposal;
 export type SettingsData = Wire.SettingsData;
 export type SettingsPatch = Wire.SettingsPatch;
-export type ModelRoute = NonNullable<SettingsData["textFallback"]>;
 
 /** Wire shape of `settings.get` — the data sits under a `settings` key. */
 export type SettingsResponseData = Wire.SettingsResponse;

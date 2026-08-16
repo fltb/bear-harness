@@ -1,5 +1,6 @@
-import { productUi } from "@bear-harness/product-config";
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { t } from "./i18n.js";
+import { ModelPresetField, ProviderSelectionField } from "./ModelSelectionFields.js";
 import type { CharacterOnboardingStep } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
 
@@ -17,41 +18,40 @@ export function FirstMeeting() {
 	const [textAnswer, setTextAnswer] = createSignal("");
 	const flow = () => store.character?.character.first_meeting;
 	const [submitting, setSubmitting] = createSignal(false);
+	const [onboardingRevision, setOnboardingRevision] = createSignal(0);
 	const [providerId, setProviderId] = createSignal("");
 	const [modelId, setModelId] = createSignal("");
 	const [apiKey, setApiKey] = createSignal("");
 	const [setupError, setSetupError] = createSignal<string | null>(null);
 	const [setupBusy, setSetupBusy] = createSignal(false);
+	const [connectedProviderId, setConnectedProviderId] = createSignal("");
 	const [oauth, setOauth] = createSignal<Awaited<ReturnType<typeof store.provider.login>> | null>(
 		null,
 	);
 	const [oauthAnswer, setOauthAnswer] = createSignal("");
+	let submittedStepId: string | null = null;
 	let disposed = false;
 	onCleanup(() => {
 		disposed = true;
 	});
 
 	onMount(() => {
-		void store.provider.list().then((data) => {
-			const first = data.providers[0];
-			if (!first) return;
-			setProviderId(first.id);
-			setModelId(first.availableModels[0]?.id ?? "");
-		});
+		void store.provider.list();
 	});
 
 	const providers = () => store.provider.providers();
 	const selectedProvider = () => providers().find((provider) => provider.id === providerId());
-	const modelRequired = () => !store.voice.loading() && !store.voice.activeStackId();
-	createEffect(() => {
-		const provider = selectedProvider();
-		if (!providerId() && provider) setProviderId(provider.id);
-	});
+	const providerConnected = () =>
+		selectedProvider()?.credentialStatus === "stored" ||
+		selectedProvider()?.credentialStatus === "session_only" ||
+		connectedProviderId() === providerId();
+	const modelRequired = () => !store.model.loading() && store.model.models().length === 0;
 	const selectProvider = (id: string) => {
 		setProviderId(id);
-		setModelId(providers().find((provider) => provider.id === id)?.availableModels[0]?.id ?? "");
+		setModelId("");
 		setOauth(null);
 		setOauthAnswer("");
+		setConnectedProviderId("");
 		setSetupError(null);
 	};
 	const pinModel = async (): Promise<void> => {
@@ -59,21 +59,22 @@ export function FirstMeeting() {
 		setSetupBusy(true);
 		setSetupError(null);
 		try {
-			await store.voice.pin(providerId(), modelId(), selectedProvider()?.name);
+			await store.model.enable(providerId(), modelId(), selectedProvider()?.name);
 		} catch (cause) {
 			setSetupError(cause instanceof Error ? cause.message : String(cause));
 		} finally {
 			setSetupBusy(false);
 		}
 	};
-	const saveKeyAndPin = async (): Promise<void> => {
+	const saveProviderKey = async (): Promise<void> => {
 		if (!apiKey().trim()) return;
 		setSetupBusy(true);
 		setSetupError(null);
 		try {
 			await store.provider.setApiKey(providerId(), apiKey().trim());
 			setApiKey("");
-			await store.voice.pin(providerId(), modelId(), selectedProvider()?.name);
+			setConnectedProviderId(providerId());
+			await store.provider.list();
 		} catch (cause) {
 			setSetupError(cause instanceof Error ? cause.message : String(cause));
 		} finally {
@@ -95,8 +96,11 @@ export function FirstMeeting() {
 			if (state.prompt?.type === "select" && state.prompt.options?.[0]) {
 				setOauthAnswer(state.prompt.options[0].id);
 			}
-			if (state.status === "completed") await pinModel();
-			if (state.status === "failed") setSetupError(state.message ?? productUi.settings.oauthFailed);
+			if (state.status === "completed") {
+				setConnectedProviderId(providerId());
+				await store.provider.list();
+			}
+			if (state.status === "failed") setSetupError(state.message ?? t("settings.oauthFailed"));
 		} catch (cause) {
 			setSetupError(cause instanceof Error ? cause.message : String(cause));
 		} finally {
@@ -116,15 +120,25 @@ export function FirstMeeting() {
 		}
 	};
 	const submit = async (stepId: string, answer?: string): Promise<void> => {
-		if (submitting()) return;
+		if (submitting() || submittedStepId === stepId) return;
+		submittedStepId = stepId;
 		setSubmitting(true);
 		try {
 			await store.submitOnboarding(stepId, answer);
+			setOnboardingRevision((revision) => revision + 1);
+		} catch (cause) {
+			submittedStepId = null;
+			throw cause;
 		} finally {
 			setSubmitting(false);
 		}
 	};
+	createEffect(() => {
+		const currentStepId = store.onboarding.currentStepId;
+		if (submittedStepId !== null && submittedStepId !== currentStepId) submittedStepId = null;
+	});
 	const currentStep = (): CharacterOnboardingStep | undefined => {
+		onboardingRevision();
 		const definition = flow();
 		const stepId = store.onboarding.currentStepId;
 		return definition?.steps.find((step) => step.id === stepId);
@@ -203,165 +217,161 @@ export function FirstMeeting() {
 					class="intro model-setup"
 					role="dialog"
 					aria-modal="true"
-					aria-label={productUi.modelSetup.dialogLabel}
+					aria-label={t("modelSetup.dialogLabel")}
 				>
 					<article class="intro-card">
-						<div class="intro-step">{productUi.modelSetup.dialogLabel}</div>
-						<h2>{productUi.modelSetup.title}</h2>
-						<p>{productUi.modelSetup.description}</p>
+						<div class="intro-step">{t("modelSetup.dialogLabel")}</div>
+						<h2>{t("modelSetup.title")}</h2>
+						<p>{t("modelSetup.description")}</p>
 						<Show
 							when={providers().length > 0}
 							fallback={
 								<p class="intro-error" role="alert">
-									{productUi.modelSetup.noProviders}
+									{t("modelSetup.noProviders")}
 								</p>
 							}
 						>
-							<label class="intro-form">
-								<span>{productUi.settings.serviceLabel}</span>
-								<select
-									aria-label={productUi.settings.serviceLabel}
-									value={providerId()}
-									onChange={(event) => selectProvider(event.currentTarget.value)}
-								>
-									<For each={providers()}>
-										{(provider) => <option value={provider.id}>{provider.name}</option>}
-									</For>
-								</select>
-							</label>
-							<label class="intro-form">
-								<span>{productUi.modelSetup.modelLabel}</span>
-								<select
-									aria-label={productUi.modelSetup.modelLabel}
-									value={modelId()}
-									onChange={(event) => setModelId(event.currentTarget.value)}
-								>
-									<For each={selectedProvider()?.availableModels ?? []}>
-										{(model) => <option value={model.id}>{model.name}</option>}
-									</For>
-								</select>
-							</label>
-							<Show
-								when={
-									selectedProvider()?.credentialStatus !== "stored" &&
-									selectedProvider()?.credentialStatus !== "session_only"
-								}
-							>
-								<Show
-									when={selectedProvider()?.authType === "api_key"}
-									fallback={
-										<div class="intro-form">
-											<button
-												type="button"
-												class="primary"
-												disabled={setupBusy() || !providerId()}
-												onClick={() => void beginOauth()}
-											>
-												{productUi.settings.loginWithBrowser}
-											</button>
-											<Show when={oauth()}>
-												{(state) => (
-													<div class="oauth-login">
-														<Show when={state().authUrl ?? state().verificationUri}>
-															{(url) => (
-																<a href={url()} target="_blank" rel="noreferrer">
-																	{productUi.settings.oauthOpen}
-																</a>
-															)}
-														</Show>
-														<Show when={state().deviceCode}>
-															<p>
-																{productUi.settings.oauthCode}:{" "}
-																<strong>{state().deviceCode}</strong>
-															</p>
-														</Show>
-														<Show when={state().message}>
-															<p>{state().message}</p>
-														</Show>
-														<Show when={state().prompt}>
-															{(prompt) => (
-																<label class="intro-form">
-																	<span>{prompt().message}</span>
-																	<Show
-																		when={prompt().type === "select"}
-																		fallback={
-																			<input
-																				type={prompt().type === "secret" ? "password" : "text"}
-																				value={oauthAnswer()}
-																				onInput={(event) =>
-																					setOauthAnswer(event.currentTarget.value)
-																				}
-																			/>
-																		}
-																	>
-																		<select
-																			value={oauthAnswer()}
-																			onChange={(event) =>
-																				setOauthAnswer(event.currentTarget.value)
-																			}
-																		>
-																			<For each={prompt().options ?? []}>
-																				{(option) => (
-																					<option value={option.id}>{option.label}</option>
-																				)}
-																			</For>
-																		</select>
+							<ProviderSelectionField
+								providers={providers()}
+								providerId={providerId()}
+								class="intro-form"
+								onProviderChange={selectProvider}
+							/>
+							<Show when={selectedProvider()}>
+								{(provider) => (
+									<>
+										<Show
+											when={
+												provider().credentialStatus !== "stored" &&
+												provider().credentialStatus !== "session_only"
+											}
+										>
+											<Show
+												when={provider().authType === "api_key"}
+												fallback={
+													<div class="intro-form">
+														<button
+															type="button"
+															class="primary"
+															data-variant="primary"
+															disabled={setupBusy() || !providerId()}
+															onClick={() => void beginOauth()}
+														>
+															{t("settings.loginWithBrowser")}
+														</button>
+														<Show when={oauth()}>
+															{(state) => (
+																<div class="oauth-login">
+																	<Show when={state().authUrl ?? state().verificationUri}>
+																		{(url) => (
+																			<a href={url()} target="_blank" rel="noreferrer">
+																				{t("settings.oauthOpen")}
+																			</a>
+																		)}
 																	</Show>
-																	<button
-																		type="button"
-																		disabled={setupBusy() || !oauthAnswer()}
-																		onClick={() => void answerOauth()}
-																	>
-																		{productUi.settings.oauthSubmit}
-																	</button>
-																</label>
+																	<Show when={state().deviceCode}>
+																		<p>
+																			{t("settings.oauthCode")}:{" "}
+																			<strong>{state().deviceCode}</strong>
+																		</p>
+																	</Show>
+																	<Show when={state().message}>
+																		<p>{state().message}</p>
+																	</Show>
+																	<Show when={state().prompt}>
+																		{(prompt) => (
+																			<label class="intro-form">
+																				<span>{prompt().message}</span>
+																				<Show
+																					when={prompt().type === "select"}
+																					fallback={
+																						<input
+																							type={
+																								prompt().type === "secret" ? "password" : "text"
+																							}
+																							value={oauthAnswer()}
+																							onInput={(event) =>
+																								setOauthAnswer(event.currentTarget.value)
+																							}
+																						/>
+																					}
+																				>
+																					<select
+																						value={oauthAnswer()}
+																						onChange={(event) =>
+																							setOauthAnswer(event.currentTarget.value)
+																						}
+																					>
+																						<For each={prompt().options ?? []}>
+																							{(option) => (
+																								<option value={option.id}>{option.label}</option>
+																							)}
+																						</For>
+																					</select>
+																				</Show>
+																				<button
+																					type="button"
+																					data-variant="secondary"
+																					disabled={setupBusy() || !oauthAnswer()}
+																					onClick={() => void answerOauth()}
+																				>
+																					{t("settings.oauthSubmit")}
+																				</button>
+																			</label>
+																		)}
+																	</Show>
+																</div>
 															)}
 														</Show>
 													</div>
-												)}
+												}
+											>
+												<div class="intro-form">
+													<label for="initial-api-key">{t("settings.apiKeyLabel")}</label>
+													<input
+														id="initial-api-key"
+														type="password"
+														autocomplete="off"
+														value={apiKey()}
+														onInput={(event) => setApiKey(event.currentTarget.value)}
+													/>
+													<button
+														type="button"
+														class="primary"
+														data-variant="primary"
+														disabled={setupBusy() || !apiKey().trim()}
+														onClick={() => void saveProviderKey()}
+													>
+														{t("settings.saveKey")}
+													</button>
+												</div>
 											</Show>
-										</div>
-									}
-								>
-									<div class="intro-form">
-										<label for="initial-api-key">{productUi.settings.apiKeyLabel}</label>
-										<input
-											id="initial-api-key"
-											type="password"
-											autocomplete="off"
-											value={apiKey()}
-											onInput={(event) => setApiKey(event.currentTarget.value)}
-										/>
-										<button
-											type="button"
-											class="primary"
-											disabled={setupBusy() || !apiKey().trim() || !modelId()}
-											onClick={() => void saveKeyAndPin()}
-										>
-											{productUi.modelSetup.continue}
-										</button>
-									</div>
-								</Show>
-							</Show>
-							<Show
-								when={
-									selectedProvider()?.credentialStatus === "stored" ||
-									selectedProvider()?.credentialStatus === "session_only"
-								}
-							>
-								<div class="intro-actions">
-									<button
-										type="button"
-										class="primary"
-										disabled={setupBusy() || !modelId()}
-										onClick={() => void pinModel()}
-									>
-										{productUi.modelSetup.continue}
-									</button>
-								</div>
+										</Show>
+										<Show when={providerConnected()}>
+											<div class="intro-actions">
+												<ModelPresetField
+													provider={provider()}
+													modelId={modelId()}
+													class="intro-form"
+													modelLabel={t("modelSetup.modelLabel")}
+													onModelChange={setModelId}
+												/>
+												<button
+													type="button"
+													class="primary"
+													data-variant="primary"
+													disabled={setupBusy() || !modelId()}
+													onClick={() => void pinModel()}
+												>
+													{t("modelSetup.continue")}
+												</button>
+											</div>
+										</Show>
+									</>
+								)}
 							</Show>
 							<Show when={setupBusy()}>
-								<p class="memory-note">{productUi.modelSetup.connecting}</p>
+								<p class="memory-note">{t("modelSetup.connecting")}</p>
 							</Show>
 							<Show when={setupError()}>
 								<p class="intro-error" role="alert">

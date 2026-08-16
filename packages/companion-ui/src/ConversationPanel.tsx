@@ -1,5 +1,5 @@
-import { productUi } from "@bear-harness/product-config";
 import { createEffect, createSignal, For, Show } from "solid-js";
+import { t } from "./i18n.js";
 import type { CharacterDisplay, Message, MessageVersion } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
 
@@ -12,11 +12,7 @@ import { useCompanionStore } from "./stores/companion.js";
  * reachable, just visually deferred.
  */
 
-const CORRECT_REASONS = productUi.messages.correctionReasons;
-
-const CORRECT_SCOPES = productUi.messages.correctionScopes;
-
-type CorrectScope = (typeof CORRECT_SCOPES)[number]["id"];
+type CorrectScope = "once" | "session" | "always";
 
 /** The adopted (or fallback latest) version of a message. */
 function adoptedVersion(message: Message): MessageVersion | undefined {
@@ -49,7 +45,7 @@ function MessageItem(props: {
 		props.message.versions.findIndex((v) => v.id === (version()?.id ?? ""));
 	const meta = () =>
 		isUser()
-			? productUi.messages.userMeta
+			? t("messages.userMeta")
 			: `${props.characterName} · ${formatTime(props.message.createdAt)}`;
 
 	const switchTo = (index: number) => {
@@ -88,21 +84,21 @@ function MessageItem(props: {
 			<Show when={editing()}>
 				<div class="msg-meta">{meta()}</div>
 				<Show when={isUser()}>
-					<p class="edit-branch-note">{productUi.messages.userEditBranchNote}</p>
+					<p class="edit-branch-note">{t("messages.userEditBranchNote")}</p>
 				</Show>
 				<textarea
 					class="edit-box"
 					rows={3}
 					value={editText()}
 					onInput={(event) => setEditText(event.currentTarget.value)}
-					aria-label={productUi.messages.editLabel}
+					aria-label={t("messages.editLabel")}
 				/>
 				<div class="msg-tools">
 					<button type="button" class="primary-tool" onClick={saveEdit}>
-						{productUi.messages.save}
+						{t("messages.save")}
 					</button>
-					<button type="button" onClick={() => setEditing(false)}>
-						{productUi.messages.cancel}
+					<button data-control="command" type="button" onClick={() => setEditing(false)}>
+						{t("messages.cancel")}
 					</button>
 				</div>
 			</Show>
@@ -113,7 +109,7 @@ function MessageItem(props: {
 					<button
 						type="button"
 						class="msg-menu-trigger"
-						aria-label={productUi.messages.operations}
+						aria-label={t("messages.operations")}
 						aria-expanded={actionsOpen()}
 						onClick={() => setActionsOpen((open) => !open)}
 					>
@@ -123,10 +119,11 @@ function MessageItem(props: {
 				<p>{content()}</p>
 
 				<Show when={props.message.versions.length > 1}>
-					<div class="version-pager" role="toolbar" aria-label={productUi.messages.versionPager}>
+					<div class="version-pager" role="toolbar" aria-label={t("messages.versionPager")}>
 						<button
+							data-control="command"
 							type="button"
-							aria-label={productUi.messages.previousVersion}
+							aria-label={t("messages.previousVersion")}
 							disabled={versionIndex() <= 0}
 							onClick={() => switchTo(versionIndex() - 1)}
 						>
@@ -136,8 +133,9 @@ function MessageItem(props: {
 							{versionIndex() + 1} / {props.message.versions.length}
 						</span>
 						<button
+							data-control="command"
 							type="button"
-							aria-label={productUi.messages.nextVersion}
+							aria-label={t("messages.nextVersion")}
 							disabled={versionIndex() >= props.message.versions.length - 1}
 							onClick={() => switchTo(versionIndex() + 1)}
 						>
@@ -153,7 +151,7 @@ function MessageItem(props: {
 						aria-label={props.correction?.reason_group_label}
 					>
 						<div class="correct-reasons">
-							<For each={CORRECT_REASONS}>
+							<For each={t("messages.correctionReasons")}>
 								{(preset) => (
 									<button
 										type="button"
@@ -170,24 +168,24 @@ function MessageItem(props: {
 						</div>
 						<input
 							type="text"
-							placeholder={productUi.messages.otherReason}
+							placeholder={t("messages.otherReason")}
 							value={customReason()}
 							onInput={(event) => {
 								setCustomReason(event.currentTarget.value);
 								setReason("");
 							}}
-							aria-label={productUi.messages.otherReason}
+							aria-label={t("messages.otherReason")}
 						/>
 						<div class="correct-scopes">
-							<For each={CORRECT_SCOPES}>
+							<For each={["once", "session", "always"] as const}>
 								{(option) => (
 									<button
 										type="button"
-										class={scope() === option.id ? "selected" : undefined}
-										onClick={() => setScope(option.id)}
-										aria-pressed={scope() === option.id}
+										class={scope() === option ? "selected" : undefined}
+										onClick={() => setScope(option)}
+										aria-pressed={scope() === option}
 									>
-										{option.label}
+										{t(`messages.correctionScopes.${option}`)}
 									</button>
 								)}
 							</For>
@@ -199,10 +197,10 @@ function MessageItem(props: {
 								disabled={!reason() && customReason().trim().length === 0}
 								onClick={submitCorrect}
 							>
-								{productUi.messages.submitCorrection}
+								{t("messages.submitCorrection")}
 							</button>
-							<button type="button" onClick={() => setCorrecting(false)}>
-								{productUi.messages.cancel}
+							<button data-control="command" type="button" onClick={() => setCorrecting(false)}>
+								{t("messages.cancel")}
 							</button>
 						</div>
 					</div>
@@ -213,18 +211,23 @@ function MessageItem(props: {
 						class="msg-tools"
 						classList={{ "is-open": actionsOpen() }}
 						role="toolbar"
-						aria-label={productUi.messages.operations}
+						aria-label={t("messages.operations")}
 					>
 						<Show when={!isUser()}>
-							<button type="button" onClick={() => void store.regenerateMessage(props.message.id)}>
-								{productUi.messages.regenerate}
+							<button
+								data-control="command"
+								type="button"
+								onClick={() => void store.regenerateMessage(props.message.id)}
+							>
+								{t("messages.regenerate")}
 							</button>
-							<button type="button" onClick={startEdit}>
-								{productUi.messages.edit}
+							<button data-control="command" type="button" onClick={startEdit}>
+								{t("messages.edit")}
 							</button>
 							<Show when={props.correction}>
 								{(copy) => (
 									<button
+										data-control="command"
 										type="button"
 										onClick={() => {
 											setReason("");
@@ -238,17 +241,25 @@ function MessageItem(props: {
 								)}
 							</Show>
 							<Show when={props.lastAssistant}>
-								<button type="button" onClick={() => void store.continueConversation()}>
-									{productUi.messages.continue}
+								<button
+									data-control="command"
+									type="button"
+									onClick={() => void store.continueConversation()}
+								>
+									{t("messages.continue")}
 								</button>
 							</Show>
-							<button type="button" onClick={() => void store.branchMessage(props.message.id)}>
-								{productUi.messages.branch}
+							<button
+								data-control="command"
+								type="button"
+								onClick={() => void store.branchMessage(props.message.id)}
+							>
+								{t("messages.branch")}
 							</button>
 						</Show>
 						<Show when={isUser()}>
-							<button type="button" onClick={startEdit}>
-								{productUi.messages.edit}
+							<button data-control="command" type="button" onClick={startEdit}>
+								{t("messages.edit")}
 							</button>
 						</Show>
 					</div>
@@ -260,7 +271,7 @@ function MessageItem(props: {
 
 function formatTime(iso: string): string {
 	const date = new Date(iso);
-	if (Number.isNaN(date.getTime())) return productUi.messages.justNow;
+	if (Number.isNaN(date.getTime())) return t("messages.justNow");
 	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
@@ -289,14 +300,14 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 		<section
 			class="thread"
 			aria-live="polite"
-			aria-label={productUi.messages.conversation}
+			aria-label={t("messages.conversation")}
 			ref={(el) => {
 				threadRef = el;
 			}}
 		>
 			<Show when={store.error !== null}>
 				<div class="thread-error" role="alert">
-					{productUi.messages.operationFailedPrefix}
+					{t("messages.operationFailedPrefix")}
 					{store.error}
 				</div>
 			</Show>
@@ -333,8 +344,8 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 				</For>
 				<Show when={store.pendingUserText}>
 					{(text) => (
-						<article class="msg user optimistic-message" aria-label={productUi.messages.userMeta}>
-							<div class="msg-meta">{productUi.messages.userMeta}</div>
+						<article class="msg user optimistic-message" aria-label={t("messages.userMeta")}>
+							<div class="msg-meta">{t("messages.userMeta")}</div>
 							<p>{text()}</p>
 						</article>
 					)}
@@ -344,11 +355,7 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 						<div class="msg-meta">{props.character?.name ?? ""}</div>
 						<p>{store.streamingAssistantText}</p>
 						<Show when={store.assistantStreaming}>
-							<span
-								class="streaming-status"
-								role="status"
-								aria-label={productUi.messages.responding}
-							/>
+							<span class="streaming-status" role="status" aria-label={t("messages.responding")} />
 						</Show>
 					</article>
 				</Show>

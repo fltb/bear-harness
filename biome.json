@@ -18,6 +18,7 @@
 			"!playwright-report",
 			"!prototypes",
 			"!config/characters/**/*.svg",
+			"!packages/product-config/src/zh-TW.generated.ts",
 			"!.git"
 		]
 	},

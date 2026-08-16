@@ -1,4 +1,4 @@
-import { productUi } from "@bear-harness/product-config";
+import { zhCN } from "@bear-harness/product-config/locales";
 import { render, screen, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -57,23 +57,23 @@ describe("ordinary-user backstage journey", () => {
 				<Backstage open onClose={() => undefined} character={THEMED_CHARACTER} />
 			</DesktopProvider>
 		));
-		const dialog = await screen.findByRole("dialog", { name: productUi.backstage.title });
+		const dialog = await screen.findByRole("dialog", { name: zhCN.backstage.title });
 		const tabs = within(dialog);
-		await user.click(tabs.getByRole("tab", { name: productUi.backstage.roleManagement }));
-		await user.click(tabs.getByRole("button", { name: productUi.backstage.roleSwitch }));
+		await user.click(tabs.getByRole("tab", { name: zhCN.backstage.roleManagement }));
+		await user.click(tabs.getByRole("button", { name: zhCN.backstage.roleSwitch }));
 		expect(activate).toHaveBeenCalledWith("other");
 
-		await user.click(tabs.getByRole("tab", { name: productUi.backstage.storyArchive }));
-		await user.click(tabs.getByRole("button", { name: productUi.backstage.storyUndo }));
+		await user.click(tabs.getByRole("tab", { name: zhCN.backstage.storyArchive }));
+		await user.click(tabs.getByRole("button", { name: zhCN.backstage.storyUndo }));
 		expect(revert).toHaveBeenCalledWith("change-1");
 		await user.type(
-			tabs.getByRole("textbox", { name: productUi.backstage.storyAddPlaceholder }),
+			tabs.getByRole("textbox", { name: zhCN.backstage.storyAddPlaceholder }),
 			"A new alternate event",
 		);
-		await user.click(tabs.getByRole("checkbox", { name: productUi.backstage.storyBranchOnly }));
-		await user.click(tabs.getByRole("button", { name: productUi.backstage.storyAdd }));
+		await user.click(tabs.getByRole("checkbox", { name: zhCN.backstage.storyBranchOnly }));
+		await user.click(tabs.getByRole("button", { name: zhCN.backstage.storyAdd }));
 		expect(apply).toHaveBeenCalledWith("A new alternate event", "branch");
-		await user.click(tabs.getByRole("button", { name: productUi.backstage.storyReset }));
+		await user.click(tabs.getByRole("button", { name: zhCN.backstage.storyReset }));
 		expect(reset).toHaveBeenCalledOnce();
 	});
 
@@ -85,7 +85,7 @@ describe("ordinary-user backstage journey", () => {
 			characters: { characters: () => [], activate: vi.fn(), import: importPackage },
 			settings: { data: () => ({ relationshipMemoryEnabled: false }), get: vi.fn() },
 			provider: { list: vi.fn(() => Promise.resolve({ providers: [] })), providers: () => [] },
-			voice: { list: vi.fn(() => Promise.resolve({ stacks: [] })) },
+			model: { list: vi.fn(() => Promise.resolve({ models: [] })), models: () => [] },
 		} as unknown as CompanionStore;
 
 		const characterView = render(() => (
@@ -93,11 +93,11 @@ describe("ordinary-user backstage journey", () => {
 				<Backstage open initialTab="roles" onClose={() => undefined} character={THEMED_CHARACTER} />
 			</DesktopProvider>
 		));
-		const characterDialog = await screen.findByRole("dialog", { name: productUi.backstage.title });
+		const characterDialog = await screen.findByRole("dialog", { name: zhCN.backstage.title });
 		expect(
-			within(characterDialog).getByRole("tab", { name: productUi.backstage.roleManagement }),
+			within(characterDialog).getByRole("tab", { name: zhCN.backstage.roleManagement }),
 		).toHaveAttribute("data-selected");
-		const input = within(characterDialog).getByLabelText(productUi.backstage.roleImport);
+		const input = within(characterDialog).getByLabelText(zhCN.backstage.roleImport);
 		const manifest = new File(["id: imported"], "character.yaml", { type: "text/yaml" });
 		Object.defineProperty(manifest, "webkitRelativePath", { value: "imported/character.yaml" });
 		await user.upload(input, manifest);
@@ -116,9 +116,9 @@ describe("ordinary-user backstage journey", () => {
 				/>
 			</DesktopProvider>
 		));
-		const systemDialog = await screen.findByRole("dialog", { name: productUi.backstage.title });
+		const systemDialog = await screen.findByRole("dialog", { name: zhCN.backstage.title });
 		expect(
-			within(systemDialog).getByRole("tab", { name: productUi.backstage.systemSettings }),
+			within(systemDialog).getByRole("tab", { name: zhCN.backstage.systemSettings }),
 		).toHaveAttribute("data-selected");
 	});
 });

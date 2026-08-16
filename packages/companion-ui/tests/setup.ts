@@ -1,10 +1,17 @@
 import { cleanup } from "@solidjs/testing-library";
-import { afterEach } from "vitest";
+import { afterEach, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
+import { setProductLocale } from "../src/i18n.js";
 
 Object.defineProperty(window, "scrollTo", { configurable: true, value: () => undefined });
+
+beforeEach(() => {
+	setProductLocale("zh-CN");
+});
 
 // globals: false — register the cleanup hook explicitly.
 afterEach(() => {
 	cleanup();
+	setProductLocale("zh-CN");
+	localStorage.clear();
 });

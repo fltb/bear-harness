@@ -1,4 +1,4 @@
-import { productUi } from "@bear-harness/product-config";
+import { zhCN } from "@bear-harness/product-config/locales";
 import { render, screen, waitFor } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -14,9 +14,7 @@ describe("idle homepage (official config, no bridge)", () => {
 		// Without a bridge, character data is absent — the shell shows the
 		// scene area and accessible controls but no character-specific copy.
 		expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
-		expect(
-			screen.getByPlaceholderText(productUi.shell.fallbackComposerPlaceholder),
-		).toBeInTheDocument();
+		expect(screen.getByPlaceholderText(zhCN.shell.fallbackComposerPlaceholder)).toBeInTheDocument();
 	});
 
 	it("loads providers and requires a reply model before the first meeting", async () => {
@@ -26,7 +24,7 @@ describe("idle homepage (official config, no bridge)", () => {
 		await waitFor(() => expect(conversationList).toHaveBeenCalled());
 		await waitFor(() => expect(providerList).toHaveBeenCalled());
 		expect(
-			await screen.findByRole("dialog", { name: productUi.modelSetup.dialogLabel }),
+			await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel }),
 		).toBeInTheDocument();
 	});
 
@@ -35,11 +33,11 @@ describe("idle homepage (official config, no bridge)", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		expect(
-			screen.getByRole("navigation", { name: productUi.sidebar.conversations }),
+			screen.getByRole("navigation", { name: zhCN.sidebar.conversations }),
 		).toBeInTheDocument();
-		expect(screen.getByRole("searchbox", { name: productUi.sidebar.search })).toBeEnabled();
-		expect(screen.getByRole("button", { name: productUi.sidebar.characterSettings })).toBeEnabled();
-		expect(screen.getByRole("button", { name: productUi.sidebar.systemSettings })).toBeEnabled();
+		expect(screen.getByRole("searchbox", { name: zhCN.sidebar.search })).toBeEnabled();
+		expect(screen.getByRole("button", { name: zhCN.sidebar.characterSettings })).toBeEnabled();
+		expect(screen.getByRole("button", { name: zhCN.sidebar.systemSettings })).toBeEnabled();
 	});
 
 	it("opens the backstage sheet from the titlebar", async () => {
@@ -47,19 +45,17 @@ describe("idle homepage (official config, no bridge)", () => {
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		const backstage = screen.getByRole("button", { name: productUi.titlebar.backstage });
+		const backstage = screen.getByRole("button", { name: zhCN.titlebar.backstage });
 		expect(backstage).toBeEnabled();
 		await user.click(backstage);
 		expect(await screen.findByRole("dialog")).toBeInTheDocument();
 		expect(
-			screen.getByRole("tab", { name: productUi.backstage.relationshipArchive }),
+			screen.getByRole("tab", { name: zhCN.backstage.relationshipArchive }),
 		).toBeInTheDocument();
-		expect(screen.getByRole("tab", { name: productUi.backstage.memory })).toBeInTheDocument();
-		expect(
-			screen.getByRole("tab", { name: productUi.backstage.systemSettings }),
-		).toBeInTheDocument();
-		await user.click(screen.getByRole("tab", { name: productUi.backstage.systemSettings }));
-		const useModel = screen.getByRole("button", { name: productUi.settings.useModel });
+		expect(screen.getByRole("tab", { name: zhCN.backstage.memory })).toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: zhCN.backstage.systemSettings })).toBeInTheDocument();
+		await user.click(screen.getByRole("tab", { name: zhCN.backstage.systemSettings }));
+		const useModel = screen.getByRole("button", { name: zhCN.settings.addModel });
 		expect(useModel).toBeInstanceOf(HTMLButtonElement);
 		expect(useModel).toBeDisabled();
 	});
@@ -85,7 +81,7 @@ describe("idle homepage (official config, no bridge)", () => {
 		expect(screen.getByPlaceholderText("Message")).toBeInTheDocument();
 		expect(warning).not.toHaveAttribute("aria-modal");
 
-		await user.click(screen.getByRole("button", { name: productUi.language.dismiss }));
+		await user.click(screen.getByRole("button", { name: zhCN.language.dismiss }));
 		expect(screen.queryByRole("status")).not.toBeInTheDocument();
 	});
 });

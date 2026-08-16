@@ -188,6 +188,7 @@ export function createTestClient() {
 		provider: {
 			list: providerList,
 			customUpsert: vi.fn(() => ok(null)),
+			importPiConfig: vi.fn(() => ok({ models: [] })),
 			overrideBaseUrl: vi.fn(() => ok(null)),
 			setApiKey: vi.fn(() => ok(null)),
 			login: vi.fn(() => ok({ providerId: "test", status: "completed" })),
@@ -195,10 +196,11 @@ export function createTestClient() {
 			loginAnswer: vi.fn(() => ok({ providerId: "test", status: "running" })),
 			logout: vi.fn(() => ok(null)),
 		},
-		voice: {
-			list: vi.fn(() => ok({ stacks: [] })),
-			pin: vi.fn(() => ok(null)),
-			switch: vi.fn(() => ok(null)),
+		model: {
+			list: vi.fn(() => ok({ models: [] })),
+			enable: vi.fn(() => ok(null)),
+			disable: vi.fn(() => ok(null)),
+			select: vi.fn(() => ok(null)),
 		},
 		commission: {
 			list: vi.fn(() => ok({ commissions: [] })),

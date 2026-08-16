@@ -21,9 +21,10 @@
 	},
 	"dependencies": {
 		"@bear-harness/companion-client": "file:../companion-client",
-		"@bear-harness/protocol": "file:../protocol",
 		"@bear-harness/product-config": "file:../product-config",
+		"@bear-harness/protocol": "file:../protocol",
 		"@kobalte/core": "0.13.13",
+		"@solid-primitives/i18n": "^2.2.1",
 		"@tanstack/solid-query": "^5.101.4",
 		"solid-js": "1.9.14"
 	},

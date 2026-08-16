@@ -1,5 +1,5 @@
-import { productUi } from "@bear-harness/product-config";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { t } from "./i18n.js";
 import { useCompanionStore } from "./stores/companion.js";
 
 /**
@@ -8,8 +8,6 @@ import { useCompanionStore } from "./stores/companion.js";
  * queue) and the "幕后" backstage button. The real OS window frame handles
  * window controls; this bar only carries scene heading and top actions.
  */
-
-const RUN_STATUS_TEXT: Record<string, string> = productUi.titlebar.runStatuses;
 
 export function Titlebar(props: { sceneTitle: string; onOpenBackstage: () => void }) {
 	const store = useCompanionStore();
@@ -64,24 +62,24 @@ export function Titlebar(props: { sceneTitle: string; onOpenBackstage: () => voi
 						onClick={() => setQueueOpen((open) => !open)}
 					>
 						<span class="pulse" aria-hidden="true" />
-						{productUi.titlebar.runningWork}
+						{t("titlebar.runningWork")}
 						<b>{activeRuns().length}</b>
 					</button>
 					<Show when={queueOpen()}>
-						<div class="queue-pop" role="menu" aria-label={productUi.titlebar.runningWork}>
-							<h3>{productUi.titlebar.runningWork}</h3>
+						<div class="queue-pop" role="menu" aria-label={t("titlebar.runningWork")}>
+							<h3>{t("titlebar.runningWork")}</h3>
 							<Show
 								when={activeRuns().length > 0}
-								fallback={<div class="empty">{productUi.titlebar.noRunningWork}</div>}
+								fallback={<div class="empty">{t("titlebar.noRunningWork")}</div>}
 							>
 								<For each={activeRuns()}>
 									{(run, index) => (
 										<div class="run">
 											<strong>
-												{productUi.titlebar.runningWorkItem} {index() + 1}
+												{t("titlebar.runningWorkItem")} {index() + 1}
 											</strong>
 											<span>
-												{RUN_STATUS_TEXT[run.status] ?? productUi.titlebar.statusUpdating}
+												{t(`titlebar.runStatuses.${run.status}`) ?? t("titlebar.statusUpdating")}
 											</span>
 										</div>
 									)}
@@ -90,8 +88,8 @@ export function Titlebar(props: { sceneTitle: string; onOpenBackstage: () => voi
 						</div>
 					</Show>
 				</div>
-				<button type="button" onClick={props.onOpenBackstage}>
-					{productUi.titlebar.backstage}
+				<button data-control="command" type="button" onClick={props.onOpenBackstage}>
+					{t("titlebar.backstage")}
 				</button>
 			</div>
 		</header>

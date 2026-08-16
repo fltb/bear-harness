@@ -1,287 +1,380 @@
-import { productUi } from "@bear-harness/product-config";
-import { render, screen, waitFor, within } from "@solidjs/testing-library";
+import { zhCN } from "@bear-harness/product-config/locales";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
 import { createTestClient, OFFICIAL_PRODUCT } from "./fixtures.js";
 
 const FREE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+const PROVIDER = {
+	id: "opencode-go",
+	name: "OpenCode Go",
+	authType: "api_key" as const,
+	credentialStatus: "stored" as const,
+	availableModels: [
+		{ id: "fast", name: "Fast", supportsImages: false, cost: FREE },
+		{ id: "vision", name: "Vision", supportsImages: true, cost: FREE },
+	],
+	unavailable: [],
+};
 
-const PROVIDERS = [
-	{
-		id: "unused-provider",
-		name: "Unused Provider",
-		authType: "api_key" as const,
-		credentialStatus: "missing" as const,
-		availableModels: [
-			{ id: "unused-model", name: "Unused Model", supportsImages: false, cost: FREE },
-		],
-		unavailable: [],
-	},
-	{
-		id: "opencode-go",
-		name: "OpenCode Go",
-		authType: "api_key" as const,
-		credentialStatus: "stored" as const,
-		availableModels: [
-			{ id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", supportsImages: false, cost: FREE },
-			{ id: "vision-model", name: "Vision Model", supportsImages: true, cost: FREE },
-		],
-		unavailable: [],
-	},
-];
+const OAUTH_PROVIDER = {
+	id: "oauth-service",
+	name: "OAuth Service",
+	authType: "oauth" as const,
+	credentialStatus: "missing" as const,
+	availableModels: [{ id: "oauth-model", name: "OAuth Model", supportsImages: false, cost: FREE }],
+	unavailable: [],
+};
 
 function configuredClient() {
 	const fixture = createTestClient();
-	const voice = {
-		stacks: [
-			{
-				id: "primary-stack",
-				companionId: "test-character",
-				providerId: "opencode-go",
-				modelId: "deepseek-v4-flash",
-				revision: 1,
-				label: "OpenCode Go",
-				active: true,
-				createdAt: "2026-01-01T00:00:00.000Z",
-			},
-		],
-	};
-	fixture.client.snapshot.get = vi.fn(async () => {
-		const base = await createTestClient().client.snapshot.get();
-		if (!base.ok) return base;
-		return { ok: true as const, data: { ...base.data, voice } };
-	});
 	fixture.client.provider.list = vi.fn(() =>
-		Promise.resolve({ ok: true as const, data: { providers: PROVIDERS } }),
+		Promise.resolve({ ok: true as const, data: { providers: [PROVIDER] } }),
 	);
-	fixture.client.voice.list = vi.fn(() =>
+	fixture.client.model.list = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
-			data: voice,
+			data: {
+				models: [
+					{
+						providerId: "opencode-go",
+						modelId: "fast",
+						label: "Fast",
+						supportsImages: false,
+						createdAt: "2026-01-01",
+					},
+				],
+			},
 		}),
 	);
 	return fixture;
 }
 
-async function openModelSettings() {
+async function openSettings() {
 	const user = userEvent.setup();
-	await user.click(screen.getByRole("button", { name: productUi.titlebar.backstage }));
+	await user.click(screen.getByRole("button", { name: zhCN.titlebar.backstage }));
 	const backstage = await screen.findByRole("dialog");
 	await user.click(
-		within(backstage).getByRole("tab", { name: productUi.backstage.systemSettings }),
+		within(backstage).getByRole("tab", {
+			name: zhCN.backstage.systemSettings,
+		}),
 	);
 	return { user, backstage };
 }
 
-describe("model settings contract", () => {
-	it("shows the connected provider source and every model returned by Host", async () => {
+describe("model pool settings", () => {
+	it("switches and persists the product UI language independently of character packages", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { backstage } = await openModelSettings();
-		expect(
-			within(backstage).getByRole("heading", { name: productUi.settings.primaryModelSection }),
-		).toBeInTheDocument();
-		expect(
-			within(backstage).getByRole("heading", { name: productUi.settings.fallbackModelSection }),
-		).toBeInTheDocument();
+		const { user, backstage } = await openSettings();
+		const language = within(backstage).getByRole("combobox", { name: zhCN.settings.language });
+		expect(language).toHaveValue("zh-CN");
 
-		await waitFor(() =>
-			expect(
-				within(backstage).getByRole("combobox", { name: productUi.settings.serviceLabel }),
-			).toHaveValue("opencode-go"),
-		);
-		expect(within(backstage).getByText(productUi.settings.connected)).toBeInTheDocument();
-		expect(within(backstage).getByLabelText(productUi.settings.apiKeyLabel)).toHaveAttribute(
-			"placeholder",
-			productUi.settings.apiKeyStoredPlaceholder,
-		);
-		expect(within(backstage).getByLabelText(productUi.settings.apiKeyLabel)).toHaveValue("");
-		const primary = within(backstage).getByRole("combobox", {
-			name: productUi.settings.modelLabel,
-		});
-		expect(within(primary).getByRole("option", { name: "DeepSeek V4 Flash" })).toBeInTheDocument();
-		expect(within(primary).getByRole("option", { name: "Vision Model" })).toBeInTheDocument();
-		expect(client.provider.list).toHaveBeenCalledTimes(1);
+		await user.selectOptions(language, "en");
+		expect(document.documentElement).toHaveAttribute("lang", "en");
+		expect(localStorage.getItem("bear-harness.product-locale")).toBe("en");
+		expect(language).toHaveAccessibleName("Interface language");
+
+		await user.selectOptions(language, "zh-TW");
+		expect(document.documentElement).toHaveAttribute("lang", "zh-TW");
+		expect(language).toHaveAccessibleName("介面語言");
+
+		await user.selectOptions(language, "zh-CN");
+		expect(document.documentElement).toHaveAttribute("lang", "zh-CN");
 	});
 
-	it("configures text and multimodal fallbacks independently", async () => {
+	it("shows configured models and provider presets without fallback controls", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { backstage } = await openModelSettings();
+		const { user, backstage } = await openSettings();
+		const remove = await waitFor(() =>
+			within(backstage).getByRole("button", {
+				name: `${zhCN.settings.removeModel} Fast`,
+			}),
+		);
+		expect(remove).toHaveAttribute("data-semantic", "danger");
+		const service = within(backstage).getByRole("combobox", {
+			name: zhCN.settings.serviceLabel,
+		});
+		expect(service).toHaveValue("");
+		expect(
+			within(backstage).getByRole("combobox", {
+				name: zhCN.settings.modelLabel,
+			}),
+		).toBeDisabled();
+		await user.selectOptions(service, "opencode-go");
+		expect(within(backstage).getByRole("option", { name: "Vision" })).toBeInTheDocument();
+		expect(within(backstage).queryByText(zhCN.settings.fallbackModelSection)).toBeNull();
+	});
 
-		const textToggle = within(backstage).getByRole("switch", {
-			name: productUi.settings.textFallbackEnable,
+	it("adds and removes models from the reusable pool", async () => {
+		const { client } = configuredClient();
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		const service = within(backstage).getByRole("combobox", {
+			name: zhCN.settings.serviceLabel,
 		});
-		const multimodalToggle = within(backstage).getByRole("switch", {
-			name: productUi.settings.multimodalFallbackEnable,
+		expect(service).toHaveValue("");
+		await user.selectOptions(service, "opencode-go");
+		await waitFor(() =>
+			expect(
+				within(backstage).getByRole("combobox", {
+					name: zhCN.settings.modelLabel,
+				}),
+			).toBeEnabled(),
+		);
+		await user.selectOptions(
+			within(backstage).getByRole("combobox", {
+				name: zhCN.settings.modelLabel,
+			}),
+			"vision",
+		);
+		await user.click(
+			within(backstage).getByRole("button", {
+				name: zhCN.settings.addModel,
+			}),
+		);
+		expect(client.model.enable).toHaveBeenCalledWith({
+			providerId: "opencode-go",
+			modelId: "vision",
+			label: "Vision",
 		});
-		expect(textToggle).toHaveAttribute("aria-checked", "false");
-		expect(multimodalToggle).toHaveAttribute("aria-checked", "false");
-		await userEvent.click(textToggle);
-		expect(
-			within(backstage).getByRole("combobox", { name: productUi.settings.textFallbackProvider }),
-		).toBeInTheDocument();
-		expect(
-			within(backstage).getByLabelText(productUi.settings.textFallbackApiKey),
-		).toBeInTheDocument();
-		expect(within(backstage).getByLabelText(productUi.settings.textFallbackApiKey)).toHaveAttribute(
-			"placeholder",
-			productUi.settings.apiKeyStoredPlaceholder,
+		await user.click(
+			within(backstage).getByRole("button", {
+				name: `${zhCN.settings.removeModel} Fast`,
+			}),
 		);
-		expect(
-			within(backstage).getByRole("combobox", { name: productUi.settings.textFallbackLabel }),
-		).toBeInTheDocument();
-		await userEvent.click(
-			within(backstage).getByRole("button", { name: productUi.settings.textFallbackCustomToggle }),
+		expect(client.model.disable).toHaveBeenCalledWith({
+			providerId: "opencode-go",
+			modelId: "fast",
+		});
+	});
+
+	it("keeps provider URL override in advanced settings", async () => {
+		const { client } = configuredClient();
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		await user.selectOptions(
+			within(backstage).getByRole("combobox", {
+				name: zhCN.settings.serviceLabel,
+			}),
+			"opencode-go",
 		);
-		const textUrl = within(backstage).getByLabelText(productUi.settings.textFallbackCustomUrl);
-		expect(textUrl).toHaveAttribute("placeholder", productUi.settings.customBaseUrlPlaceholder);
-		await userEvent.type(textUrl, "https://relay.example.com/v1");
-		await userEvent.click(
-			within(backstage).getByRole("button", { name: productUi.settings.customSave }),
+		await user.click(
+			within(backstage).getByRole("button", {
+				name: zhCN.settings.advancedToggle,
+			}),
+		);
+		await user.type(
+			within(backstage).getByPlaceholderText(zhCN.settings.customBaseUrlPlaceholder),
+			"https://relay.example/v1",
+		);
+		await user.click(
+			within(backstage).getByRole("button", {
+				name: zhCN.settings.customSave,
+			}),
 		);
 		expect(client.provider.overrideBaseUrl).toHaveBeenCalledWith({
 			providerId: "opencode-go",
-			baseUrl: "https://relay.example.com/v1",
+			baseUrl: "https://relay.example/v1",
 		});
-		await waitFor(() => expect(client.provider.list).toHaveBeenCalledTimes(2));
-		expect(
-			within(
-				within(backstage).getByRole("combobox", { name: productUi.settings.textFallbackLabel }),
-			).getByRole("option", { name: "DeepSeek V4 Flash" }),
-		).toBeInTheDocument();
-		await userEvent.click(multimodalToggle);
-		expect(
-			within(backstage).getByRole("combobox", {
-				name: productUi.settings.multimodalFallbackProvider,
-			}),
-		).toBeInTheDocument();
-		expect(
-			within(backstage).getByLabelText(productUi.settings.multimodalFallbackApiKey),
-		).toBeInTheDocument();
-		await userEvent.click(
-			within(backstage).getByRole("button", {
-				name: productUi.settings.multimodalFallbackCustomToggle,
-			}),
-		);
-		expect(
-			within(backstage).getByLabelText(productUi.settings.multimodalFallbackCustomUrl),
-		).toBeInTheDocument();
-		expect(within(backstage).queryByLabelText(productUi.settings.customModelId)).toBeNull();
-		expect(within(backstage).queryByLabelText(productUi.settings.customApiKey)).toBeNull();
-		const multimodal = within(backstage).getByRole("combobox", {
-			name: productUi.settings.multimodalFallbackLabel,
-		});
-		expect(within(multimodal).queryByRole("option", { name: "Text Model" })).toBeNull();
-		expect(within(multimodal).getByRole("option", { name: "Vision Model" })).toBeInTheDocument();
 	});
 
-	it("keeps custom URL configuration inside an explicit advanced section", async () => {
+	it("imports native Pi configuration from advanced settings without a model-owned API key", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { user, backstage } = await openModelSettings();
-
-		expect(within(backstage).queryByLabelText(productUi.settings.customBaseUrl)).toBeNull();
-		await user.click(
-			within(backstage).getByRole("button", { name: productUi.settings.advancedToggle }),
-		);
-		expect(within(backstage).getByLabelText(productUi.settings.customBaseUrl)).toHaveAttribute(
-			"placeholder",
-			productUi.settings.customBaseUrlPlaceholder,
-		);
-		expect(within(backstage).queryByLabelText(productUi.settings.customApiKey)).toBeNull();
-		await user.type(
-			within(backstage).getByLabelText(productUi.settings.customBaseUrl),
-			productUi.settings.customBaseUrlPlaceholder,
-		);
-		expect(
-			within(backstage).getByRole("button", { name: productUi.settings.customSave }),
-		).toBeEnabled();
+		const { user, backstage } = await openSettings();
+		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.advancedToggle }));
+		const configJson = JSON.stringify({
+			providers: { relay: { models: [{ id: "custom", name: "Custom" }] } },
+		});
+		fireEvent.input(within(backstage).getByRole("textbox", { name: zhCN.settings.piConfigLabel }), {
+			target: { value: configJson },
+		});
+		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.piConfigImport }));
+		expect(client.provider.importPiConfig).toHaveBeenCalledWith({ configJson });
+		expect(within(backstage).queryByLabelText(zhCN.settings.customApiKey)).not.toBeInTheDocument();
 	});
 
-	it("persists primary and fallback credentials, routes, and disable operations", async () => {
-		const { client, settingsSet } = configuredClient();
+	it("stores credentials at provider scope and preserves the canonical stored-key placeholder", async () => {
+		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { user, backstage } = await openModelSettings();
-		const view = within(backstage);
-
-		const primaryKey = view.getByLabelText(productUi.settings.apiKeyLabel);
-		await user.type(primaryKey, "primary-key");
-		await user.click(
-			view.getByRole("button", {
-				name: `${productUi.settings.saveKey} ${productUi.settings.apiKeyLabel}`,
-			}),
-		);
-		expect(client.provider.setApiKey).toHaveBeenCalledWith({
-			providerId: "opencode-go",
-			apiKey: "primary-key",
-			sessionOnly: undefined,
-		});
-		await user.click(view.getByRole("button", { name: productUi.settings.useModel }));
-		expect(client.voice.pin).toHaveBeenCalledWith({
-			providerId: "opencode-go",
-			modelId: "deepseek-v4-flash",
-			label: "OpenCode Go",
-		});
-
-		const textToggle = view.getByRole("switch", { name: productUi.settings.textFallbackEnable });
-		await user.click(textToggle);
-		await waitFor(() => expect(textToggle).toHaveAttribute("aria-checked", "true"));
-		const textKey = view.getByLabelText(productUi.settings.textFallbackApiKey);
-		await user.type(textKey, "fallback-key");
-		await user.click(
-			view.getByRole("button", {
-				name: `${productUi.settings.saveKey} ${productUi.settings.textFallbackApiKey}`,
-			}),
-		);
-		expect(client.provider.setApiKey).toHaveBeenCalledWith({
-			providerId: "opencode-go",
-			apiKey: "fallback-key",
-			sessionOnly: undefined,
-		});
+		const { user, backstage } = await openSettings();
 		await user.selectOptions(
-			view.getByRole("combobox", { name: productUi.settings.textFallbackProvider }),
-			"unused-provider",
+			within(backstage).getByRole("combobox", { name: zhCN.settings.serviceLabel }),
+			"opencode-go",
+		);
+		const keyInput = within(backstage).getByLabelText(zhCN.settings.apiKeyLabel);
+		expect(keyInput).toHaveAttribute("placeholder", zhCN.settings.apiKeyStoredPlaceholder);
+		await user.type(keyInput, "provider-secret");
+		await user.click(
+			within(backstage).getByRole("button", {
+				name: `${zhCN.settings.saveKey} ${zhCN.settings.apiKeyLabel}`,
+			}),
 		);
 		await waitFor(() =>
-			expect(settingsSet).toHaveBeenCalledWith({
-				settings: {
-					textFallback: { providerId: "unused-provider", modelId: "unused-model" },
+			expect(client.provider.setApiKey).toHaveBeenCalledWith({
+				providerId: "opencode-go",
+				apiKey: "provider-secret",
+			}),
+		);
+		expect(keyInput).toHaveValue("");
+		expect(await within(backstage).findByRole("status")).toHaveTextContent(zhCN.settings.keySaved);
+	});
+
+	it("surfaces provider action failures and restores enabled controls", async () => {
+		const { client } = configuredClient();
+		client.provider.overrideBaseUrl = vi.fn(() => Promise.reject(new Error("relay rejected")));
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		await user.selectOptions(
+			within(backstage).getByRole("combobox", { name: zhCN.settings.serviceLabel }),
+			"opencode-go",
+		);
+		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.advancedToggle }));
+		await user.type(
+			within(backstage).getByPlaceholderText(zhCN.settings.customBaseUrlPlaceholder),
+			"https://broken.example/v1",
+		);
+		const save = within(backstage).getByRole("button", { name: zhCN.settings.customSave });
+		await user.click(save);
+		expect(await within(backstage).findByRole("alert")).toHaveTextContent("relay rejected");
+		await waitFor(() => expect(save).toBeEnabled());
+	});
+
+	it("completes an OAuth provider prompt before models are added separately", async () => {
+		const { client } = configuredClient();
+		client.provider.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { providers: [OAUTH_PROVIDER] } }),
+		);
+		client.provider.login = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					providerId: "oauth-service",
+					status: "waiting_input" as const,
+					message: "Choose account",
+					prompt: {
+						id: "account",
+						type: "select" as const,
+						message: "Choose account",
+						options: [{ id: "personal", label: "Personal" }],
+					},
 				},
 			}),
 		);
-		await waitFor(() =>
-			expect(
-				view.getByRole("combobox", { name: productUi.settings.textFallbackProvider }),
-			).toHaveValue("unused-provider"),
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		await user.selectOptions(
+			within(backstage).getByRole("combobox", { name: zhCN.settings.serviceLabel }),
+			"oauth-service",
 		);
-		await user.click(textToggle);
-		await waitFor(() =>
-			expect(settingsSet).toHaveBeenCalledWith({ settings: { textFallback: null } }),
-		);
-		await waitFor(() => expect(textToggle).toHaveAttribute("aria-checked", "false"));
-
-		const multimodalToggle = view.getByRole("switch", {
-			name: productUi.settings.multimodalFallbackEnable,
-		});
-		await user.click(multimodalToggle);
-		await waitFor(() => expect(multimodalToggle).toHaveAttribute("aria-checked", "true"));
-		const multimodalKey = view.getByLabelText(productUi.settings.multimodalFallbackApiKey);
-		await user.type(multimodalKey, "vision-key");
 		await user.click(
-			view.getByRole("button", {
-				name: `${productUi.settings.saveKey} ${productUi.settings.multimodalFallbackApiKey}`,
+			within(backstage).getByRole("button", { name: zhCN.settings.loginWithBrowser }),
+		);
+		const answer = await within(backstage).findByLabelText("Choose account");
+		expect(answer).toHaveValue("personal");
+		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.oauthSubmit }));
+		expect(client.provider.loginAnswer).toHaveBeenCalledWith({
+			providerId: "oauth-service",
+			answer: "personal",
+		});
+		expect(client.model.enable).not.toHaveBeenCalled();
+	});
+
+	it("polls a running OAuth login through completion and refreshes provider state", async () => {
+		const { client } = configuredClient();
+		client.provider.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { providers: [OAUTH_PROVIDER] } }),
+		);
+		client.provider.login = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { providerId: "oauth-service", status: "running" as const },
 			}),
 		);
-		expect(client.provider.setApiKey).toHaveBeenCalledWith({
-			providerId: "opencode-go",
-			apiKey: "vision-key",
-			sessionOnly: undefined,
-		});
-		await user.click(multimodalToggle);
-		await waitFor(() =>
-			expect(settingsSet).toHaveBeenCalledWith({ settings: { multimodalFallback: null } }),
+		client.provider.loginStatus = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { providerId: "oauth-service", status: "completed" as const },
+			}),
 		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		await user.selectOptions(
+			within(backstage).getByRole("combobox", { name: zhCN.settings.serviceLabel }),
+			"oauth-service",
+		);
+		await user.click(
+			within(backstage).getByRole("button", { name: zhCN.settings.loginWithBrowser }),
+		);
+		expect(await within(backstage).findByRole("status")).toHaveTextContent(
+			zhCN.settings.oauthConnected,
+		);
+		expect(client.provider.loginStatus).toHaveBeenCalledWith({ providerId: "oauth-service" });
+		await waitFor(() => expect(client.provider.list).toHaveBeenCalled());
+	});
+
+	it("shows the OAuth provider failure message without adding a model", async () => {
+		const { client } = configuredClient();
+		client.provider.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { providers: [OAUTH_PROVIDER] } }),
+		);
+		client.provider.login = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					providerId: "oauth-service",
+					status: "failed" as const,
+					message: "authorization denied",
+				},
+			}),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		await user.selectOptions(
+			within(backstage).getByRole("combobox", { name: zhCN.settings.serviceLabel }),
+			"oauth-service",
+		);
+		await user.click(
+			within(backstage).getByRole("button", { name: zhCN.settings.loginWithBrowser }),
+		);
+		expect(await within(backstage).findByRole("alert")).toHaveTextContent("authorization denied");
+		expect(client.model.enable).not.toHaveBeenCalled();
+	});
+
+	it("marks multimodal models and prevents adding an already configured preset twice", async () => {
+		const { client } = configuredClient();
+		client.model.list = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					models: [
+						{
+							providerId: "opencode-go",
+							modelId: "vision",
+							label: "Vision",
+							supportsImages: true,
+							createdAt: "2026-01-01",
+						},
+					],
+				},
+			}),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		expect(await within(backstage).findByText(zhCN.settings.multimodal)).toBeVisible();
+		await user.selectOptions(
+			within(backstage).getByRole("combobox", { name: zhCN.settings.serviceLabel }),
+			"opencode-go",
+		);
+		await user.selectOptions(
+			within(backstage).getByRole("combobox", { name: zhCN.settings.modelLabel }),
+			"vision",
+		);
+		expect(
+			within(backstage).getByRole("button", { name: zhCN.settings.modelAvailable }),
+		).toBeDisabled();
 	});
 });

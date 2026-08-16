@@ -1,6 +1,6 @@
-import { productUi } from "@bear-harness/product-config";
 import { Tabs } from "@kobalte/core";
 import { createEffect, createSignal, For, Show } from "solid-js";
+import { t } from "../i18n.js";
 import {
 	type MemoryDecision,
 	type MemoryEntry,
@@ -20,8 +20,24 @@ import {
  * status lines.
  */
 
-export const SCOPE_LABELS: Record<MemoryScope, string> = productUi.memory.scopes;
-const KIND_LABELS: Record<string, string> = productUi.memory.kinds;
+function scopeLabel(scope: MemoryScope): string {
+	return t(`memory.scopes.${scope}`);
+}
+
+function kindLabel(kind: MemoryEntry["kind"]): string {
+	switch (kind) {
+		case "fact":
+			return t("memory.kinds.fact");
+		case "preference":
+			return t("memory.kinds.preference");
+		case "event":
+			return t("memory.kinds.event");
+		case "self_canon_summary":
+			return t("memory.kinds.self_canon_summary");
+		default:
+			return kind;
+	}
+}
 
 /** Cap search queries client-side; the wire schema allows up to 4096 chars. */
 const CLIENT_QUERY_LIMIT = 512;
@@ -109,24 +125,24 @@ export function MemoryEntryList(props: {
 		runEntryAction(
 			entry.id,
 			() => store.memory.pin(entry.id, !entry.pinned),
-			entry.pinned ? productUi.memory.unpin : productUi.memory.pin,
+			entry.pinned ? t("memory.unpin") : t("memory.pin"),
 		);
 	const forget = (entry: MemoryEntry) => () =>
-		runEntryAction(entry.id, () => store.memory.forget(entry.id), productUi.memory.forget);
+		runEntryAction(entry.id, () => store.memory.forget(entry.id), t("memory.forget"));
 	const exclude = (entry: MemoryEntry) => () =>
-		runEntryAction(entry.id, () => store.memory.exclude(entry.id, true), productUi.memory.exclude);
+		runEntryAction(entry.id, () => store.memory.exclude(entry.id, true), t("memory.exclude"));
 	const saveEdit = (entry: MemoryEntry) => async () => {
 		const text = editedEntryText().trim();
 		if (!text) return;
 		await runEntryAction(
 			entry.id,
 			() => store.memory.edit(entry.id, text),
-			productUi.memory.approvedEdited,
+			t("memory.approvedEdited"),
 		);
 		setEditingEntryId(null);
 	};
 
-	const title = () => props.title ?? productUi.memory.defaultEntriesTitle;
+	const title = () => props.title ?? t("memory.defaultEntriesTitle");
 
 	return (
 		<section class="memory-section" aria-label={title()}>
@@ -147,10 +163,10 @@ export function MemoryEntryList(props: {
 				</p>
 			</Show>
 			<Show when={loading() && entries().length === 0}>
-				<p class="empty-note">{productUi.memory.loading}</p>
+				<p class="empty-note">{t("memory.loading")}</p>
 			</Show>
 			<Show when={!loading() && !error() && entries().length === 0}>
-				<p class="empty-note">{productUi.memory.emptyEntries}</p>
+				<p class="empty-note">{t("memory.emptyEntries")}</p>
 			</Show>
 			<ul class="memory-list">
 				<For each={entries()}>
@@ -165,7 +181,7 @@ export function MemoryEntryList(props: {
 										rows={3}
 										value={editedEntryText()}
 										onInput={(event) => setEditedEntryText(event.currentTarget.value)}
-										aria-label={productUi.memory.editedContent}
+										aria-label={t("memory.editedContent")}
 									/>
 									<div class="candidate-actions">
 										<button
@@ -174,24 +190,22 @@ export function MemoryEntryList(props: {
 											disabled={busyId() === entry.id || !editedEntryText().trim()}
 											onClick={saveEdit(entry)}
 										>
-											{productUi.memory.saveEdit}
+											{t("memory.saveEdit")}
 										</button>
 										<button type="button" class="mini-btn" onClick={() => setEditingEntryId(null)}>
-											{productUi.messages.cancel}
+											{t("messages.cancel")}
 										</button>
 									</div>
 								</div>
 							</Show>
 							<div class="memory-meta">
-								<span class="memory-kind">{KIND_LABELS[entry.kind] ?? entry.kind}</span>
-								<span>
-									{entry.sourceConversationTitle || productUi.memory.fallbackConversation}
-								</span>
+								<span class="memory-kind">{kindLabel(entry.kind)}</span>
+								<span>{entry.sourceConversationTitle || t("memory.fallbackConversation")}</span>
 								<Show when={formatDate(entry.createdAt)}>
 									<span>{formatDate(entry.createdAt)}</span>
 								</Show>
 								<Show when={entry.pinned}>
-									<span class="pin-badge">{productUi.memory.pinned}</span>
+									<span class="pin-badge">{t("memory.pinned")}</span>
 								</Show>
 							</div>
 							<div class="memory-actions">
@@ -204,7 +218,7 @@ export function MemoryEntryList(props: {
 										setEditedEntryText(entry.text);
 									}}
 								>
-									{productUi.memory.edit}
+									{t("memory.edit")}
 								</button>
 								<button
 									type="button"
@@ -212,7 +226,7 @@ export function MemoryEntryList(props: {
 									disabled={busyId() === entry.id}
 									onClick={togglePin(entry)}
 								>
-									{entry.pinned ? productUi.memory.unpin : productUi.memory.pin}
+									{entry.pinned ? t("memory.unpin") : t("memory.pin")}
 								</button>
 								<button
 									type="button"
@@ -220,7 +234,7 @@ export function MemoryEntryList(props: {
 									disabled={busyId() === entry.id}
 									onClick={forget(entry)}
 								>
-									{productUi.memory.forget}
+									{t("memory.forget")}
 								</button>
 								<button
 									type="button"
@@ -228,7 +242,7 @@ export function MemoryEntryList(props: {
 									disabled={busyId() === entry.id}
 									onClick={exclude(entry)}
 								>
-									{productUi.memory.exclude}
+									{t("memory.exclude")}
 								</button>
 							</div>
 						</li>
@@ -240,9 +254,9 @@ export function MemoryEntryList(props: {
 }
 
 const SCOPE_TABS: ReadonlyArray<{ value: MemoryScope; label: string }> = [
-	{ value: "self", label: productUi.memory.scopes.self },
-	{ value: "relationship", label: productUi.memory.scopes.relationship },
-	{ value: "scene", label: productUi.memory.scopes.scene },
+	{ value: "self", label: t("memory.scopes.self") },
+	{ value: "relationship", label: t("memory.scopes.relationship") },
+	{ value: "scene", label: t("memory.scopes.scene") },
 ];
 
 /**
@@ -310,10 +324,10 @@ export function MemorySheet() {
 			await store.memory.decideCandidate(candidateId, decision, undefined, candidate?.scope);
 			setFeedback(
 				decision === "approve"
-					? productUi.memory.approved
+					? t("memory.approved")
 					: decision === "reject"
-						? productUi.memory.rejected
-						: productUi.memory.saved,
+						? t("memory.rejected")
+						: t("memory.saved"),
 			);
 			setEditingId(null);
 			setRefreshKey((key) => key + 1);
@@ -333,7 +347,7 @@ export function MemorySheet() {
 		try {
 			const candidate = pendingCandidates().find((item) => item.id === candidateId);
 			await store.memory.decideCandidate(candidateId, "approve_edited", text, candidate?.scope);
-			setFeedback(productUi.memory.approvedEdited);
+			setFeedback(t("memory.approvedEdited"));
 			setEditingId(null);
 			setRefreshKey((key) => key + 1);
 		} catch (e) {
@@ -345,14 +359,14 @@ export function MemorySheet() {
 
 	return (
 		<div class="sheet-panel">
-			<section class="candidates-section" aria-label={productUi.memory.recentCandidates}>
+			<section class="candidates-section" aria-label={t("memory.recentCandidates")}>
 				<div class="section-head">
-					<h3>{productUi.memory.recentCandidates}</h3>
+					<h3>{t("memory.recentCandidates")}</h3>
 					<Show when={!candidatesLoading() && pendingCandidates().length > 0}>
 						<span class="section-count">{pendingCandidates().length}</span>
 					</Show>
 				</div>
-				<p class="drawer-note">{productUi.memory.candidatesNote}</p>
+				<p class="drawer-note">{t("memory.candidatesNote")}</p>
 				<Show when={feedback()}>
 					<p class="status-line ok" role="status">
 						{feedback()}
@@ -364,10 +378,10 @@ export function MemorySheet() {
 					</p>
 				</Show>
 				<Show when={candidatesLoading() && pendingCandidates().length === 0}>
-					<p class="empty-note">{productUi.memory.loading}</p>
+					<p class="empty-note">{t("memory.loading")}</p>
 				</Show>
 				<Show when={!candidatesLoading() && !candidatesError() && pendingCandidates().length === 0}>
-					<p class="empty-note">{productUi.memory.noCandidates}</p>
+					<p class="empty-note">{t("memory.noCandidates")}</p>
 				</Show>
 				<ul class="candidate-list">
 					<For each={pendingCandidates()}>
@@ -378,8 +392,8 @@ export function MemorySheet() {
 									<p class="candidate-why">{candidate.why}</p>
 								</Show>
 								<div class="candidate-meta">
-									<span class="memory-kind">{KIND_LABELS[candidate.kind] ?? candidate.kind}</span>
-									<span>{SCOPE_LABELS[candidate.scope]}</span>
+									<span class="memory-kind">{kindLabel(candidate.kind)}</span>
+									<span>{scopeLabel(candidate.scope)}</span>
 									<Show when={formatDate(candidate.createdAt)}>
 										<span>{formatDate(candidate.createdAt)}</span>
 									</Show>
@@ -394,7 +408,7 @@ export function MemorySheet() {
 												disabled={busyId() === candidate.id}
 												onClick={() => decide(candidate.id, "approve")}
 											>
-												{productUi.memory.remember}
+												{t("memory.remember")}
 											</button>
 											<button
 												type="button"
@@ -405,7 +419,7 @@ export function MemorySheet() {
 													setEditedText(candidate.text);
 												}}
 											>
-												{productUi.memory.edit}
+												{t("memory.edit")}
 											</button>
 											<button
 												type="button"
@@ -413,7 +427,7 @@ export function MemorySheet() {
 												disabled={busyId() === candidate.id}
 												onClick={() => decide(candidate.id, "reject")}
 											>
-												{productUi.memory.reject}
+												{t("memory.reject")}
 											</button>
 										</div>
 									}
@@ -423,7 +437,7 @@ export function MemorySheet() {
 											rows={3}
 											value={editedText()}
 											onInput={(event) => setEditedText(event.currentTarget.value)}
-											aria-label={productUi.memory.editedContent}
+											aria-label={t("memory.editedContent")}
 										/>
 										<div class="candidate-actions">
 											<button
@@ -432,7 +446,7 @@ export function MemorySheet() {
 												disabled={busyId() === candidate.id || !editedText().trim()}
 												onClick={() => saveEdited(candidate.id)}
 											>
-												{productUi.memory.saveEdit}
+												{t("memory.saveEdit")}
 											</button>
 											<button
 												type="button"
@@ -440,7 +454,7 @@ export function MemorySheet() {
 												disabled={busyId() === candidate.id}
 												onClick={() => setEditingId(null)}
 											>
-												{productUi.messages.cancel}
+												{t("messages.cancel")}
 											</button>
 										</div>
 									</div>
@@ -455,7 +469,7 @@ export function MemorySheet() {
 				<input
 					type="search"
 					class="search-input"
-					placeholder={productUi.memory.searchPlaceholder}
+					placeholder={t("memory.searchPlaceholder")}
 					value={queryText()}
 					onInput={(event) => setQueryText(event.currentTarget.value)}
 					onKeyDown={(event) => {
@@ -464,14 +478,14 @@ export function MemorySheet() {
 							submitSearch();
 						}
 					}}
-					aria-label={productUi.memory.searchLabel}
+					aria-label={t("memory.searchLabel")}
 				/>
 				<button type="button" class="mini-btn" onClick={submitSearch}>
-					{productUi.memory.search}
+					{t("memory.search")}
 				</button>
 				<Show when={query() !== ""}>
 					<button type="button" class="mini-btn" onClick={clearSearch}>
-						{productUi.memory.clear}
+						{t("memory.clear")}
 					</button>
 				</Show>
 			</div>
@@ -480,7 +494,7 @@ export function MemorySheet() {
 				value={scope()}
 				onChange={onScopeChange}
 				class="scope-tabs"
-				aria-label={productUi.memory.scopeTabsLabel}
+				aria-label={t("memory.scopeTabsLabel")}
 			>
 				<Tabs.List class="tabs">
 					<For each={SCOPE_TABS}>

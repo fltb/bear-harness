@@ -1,6 +1,6 @@
-import { productUi } from "@bear-harness/product-config";
 import { Dialog, Tabs } from "@kobalte/core";
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, onMount, Show } from "solid-js";
+import { t } from "../i18n.js";
 import { type CharacterDisplay, useCompanionStore } from "../stores/companion.js";
 import { CanonStudio } from "./CanonStudio.js";
 import { MemoryEntryList, MemorySheet } from "./MemorySheet.js";
@@ -33,35 +33,35 @@ export function Backstage(props: {
 				<Dialog.Overlay class="backstage-overlay" />
 				<Dialog.Content class="backstage-sheet">
 					<div class="backstage-head">
-						<Dialog.Title class="backstage-title">{productUi.backstage.title}</Dialog.Title>
-						<Dialog.CloseButton class="backstage-close" aria-label={productUi.backstage.close}>
-							{productUi.backstage.close}
+						<Dialog.Title class="backstage-title">{t("backstage.title")}</Dialog.Title>
+						<Dialog.CloseButton class="backstage-close" aria-label={t("backstage.close")}>
+							{t("backstage.close")}
 						</Dialog.CloseButton>
 					</div>
 					<Tabs.Root
 						value={selectedTab()}
 						onChange={setSelectedTab}
 						class="backstage-tabs"
-						aria-label={productUi.backstage.tabsLabel}
+						aria-label={t("backstage.tabsLabel")}
 					>
 						<Tabs.List class="tabs">
 							<Tabs.Trigger value="relationship" class="tab">
-								{productUi.backstage.relationshipArchive}
+								{t("backstage.relationshipArchive")}
 							</Tabs.Trigger>
 							<Tabs.Trigger value="roles" class="tab">
-								{productUi.backstage.roleManagement}
+								{t("backstage.roleManagement")}
 							</Tabs.Trigger>
 							<Tabs.Trigger value="memory" class="tab">
-								{productUi.backstage.memory}
+								{t("backstage.memory")}
 							</Tabs.Trigger>
 							<Tabs.Trigger value="story" class="tab">
-								{productUi.backstage.storyArchive}
+								{t("backstage.storyArchive")}
 							</Tabs.Trigger>
 							<Tabs.Trigger value="settings" class="tab">
-								{productUi.backstage.systemSettings}
+								{t("backstage.systemSettings")}
 							</Tabs.Trigger>
 							<Tabs.Trigger value="studio" class="tab">
-								{productUi.backstage.packageWorkshop}
+								{t("backstage.packageWorkshop")}
 							</Tabs.Trigger>
 						</Tabs.List>
 						<Tabs.Content value="relationship" class="tab-panel">
@@ -113,10 +113,10 @@ function RoleManager() {
 				}),
 			);
 			await store.characters.import(payload);
-			setFeedback(productUi.backstage.roleImportDone);
+			setFeedback(t("backstage.roleImportDone"));
 		} catch (error) {
 			setFeedback(
-				`${productUi.backstage.roleImportFailed}${error instanceof Error ? error.message : String(error)}`,
+				`${t("backstage.roleImportFailed")}${error instanceof Error ? error.message : String(error)}`,
 			);
 		} finally {
 			setImporting(false);
@@ -125,13 +125,13 @@ function RoleManager() {
 	return (
 		<div class="sheet-panel role-list">
 			<div class="role-import">
-				<p class="drawer-note">{productUi.backstage.roleImportHint}</p>
+				<p class="drawer-note">{t("backstage.roleImportHint")}</p>
 				<label class="button-like">
-					{importing() ? productUi.backstage.roleImportBusy : productUi.backstage.roleImport}
+					{importing() ? t("backstage.roleImportBusy") : t("backstage.roleImport")}
 					<input
 						type="file"
 						multiple
-						aria-label={productUi.backstage.roleImport}
+						aria-label={t("backstage.roleImport")}
 						disabled={importing()}
 						ref={(element) => element.setAttribute("webkitdirectory", "")}
 						onChange={(event) => void importPackage(event.currentTarget.files)}
@@ -153,9 +153,10 @@ function RoleManager() {
 						</div>
 						<Show
 							when={!character.active}
-							fallback={<span class="role-active">{productUi.backstage.roleActive}</span>}
+							fallback={<span class="role-active">{t("backstage.roleActive")}</span>}
 						>
 							<button
+								data-control="command"
 								type="button"
 								disabled={busyId() !== undefined}
 								onClick={() => {
@@ -163,7 +164,7 @@ function RoleManager() {
 									void store.characters.activate(character.id).finally(() => setBusyId());
 								}}
 							>
-								{productUi.backstage.roleSwitch}
+								{t("backstage.roleSwitch")}
 							</button>
 						</Show>
 					</div>
@@ -194,10 +195,10 @@ function StoryArchive() {
 
 	return (
 		<div class="sheet-panel story-archive">
-			<p class="drawer-note">{productUi.backstage.storyOriginal}</p>
+			<p class="drawer-note">{t("backstage.storyOriginal")}</p>
 			<Show
 				when={store.story.changes().length > 0}
-				fallback={<p class="drawer-note">{productUi.backstage.storyEmpty}</p>}
+				fallback={<p class="drawer-note">{t("backstage.storyEmpty")}</p>}
 			>
 				<div class="story-change-list">
 					<For each={store.story.changes()}>
@@ -205,11 +206,12 @@ function StoryArchive() {
 							<div class="story-change">
 								<span>{change.text}</span>
 								<button
+									data-control="command"
 									type="button"
 									disabled={busy()}
 									onClick={() => void store.story.revert(change.id)}
 								>
-									{productUi.backstage.storyUndo}
+									{t("backstage.storyUndo")}
 								</button>
 							</div>
 						)}
@@ -219,8 +221,8 @@ function StoryArchive() {
 			<form class="story-add" onSubmit={add}>
 				<textarea
 					rows={3}
-					aria-label={productUi.backstage.storyAddPlaceholder}
-					placeholder={productUi.backstage.storyAddPlaceholder}
+					aria-label={t("backstage.storyAddPlaceholder")}
+					placeholder={t("backstage.storyAddPlaceholder")}
 					value={text()}
 					onInput={(event) => setText(event.currentTarget.value)}
 				/>
@@ -230,10 +232,10 @@ function StoryArchive() {
 						checked={branchOnly()}
 						onChange={(event) => setBranchOnly(event.currentTarget.checked)}
 					/>
-					{productUi.backstage.storyBranchOnly}
+					{t("backstage.storyBranchOnly")}
 				</label>
-				<button type="submit" disabled={busy() || !text().trim()}>
-					{productUi.backstage.storyAdd}
+				<button data-control="command" type="submit" disabled={busy() || !text().trim()}>
+					{t("backstage.storyAdd")}
 				</button>
 			</form>
 			<button
@@ -242,7 +244,7 @@ function StoryArchive() {
 				disabled={busy()}
 				onClick={() => void store.story.reset()}
 			>
-				{productUi.backstage.storyReset}
+				{t("backstage.storyReset")}
 			</button>
 		</div>
 	);
@@ -250,6 +252,28 @@ function StoryArchive() {
 
 /** 关系档案: locked self-canon plus the relationship-scoped memories. */
 function RelationshipArchive(props: { character: CharacterDisplay | undefined }) {
+	const store = useCompanionStore();
+	const [saving, setSaving] = createSignal(false);
+	const [feedback, setFeedback] = createSignal<string>();
+	const [error, setError] = createSignal<string>();
+	onMount(() => void store.settings.get());
+	const enabled = () => store.settings.data()?.relationshipMemoryEnabled ?? false;
+	const toggleMemory = async (): Promise<void> => {
+		setSaving(true);
+		setFeedback();
+		setError();
+		const next = !enabled();
+		try {
+			await store.settings.set({ relationshipMemoryEnabled: next });
+			setFeedback(
+				next ? t("settings.relationshipMemoryEnabled") : t("settings.relationshipMemoryDisabled"),
+			);
+		} catch {
+			setError(t("errors.generic"));
+		} finally {
+			setSaving(false);
+		}
+	};
 	return (
 		<div class="sheet-panel">
 			<Show when={props.character}>
@@ -257,7 +281,7 @@ function RelationshipArchive(props: { character: CharacterDisplay | undefined })
 					<div class="detail-card">
 						<strong>
 							{character().name}
-							{productUi.backstage.identitySuffix}
+							{t("backstage.identitySuffix")}
 						</strong>
 						<span>
 							{character().character.subtitle} · {character().character.scene_title}
@@ -265,8 +289,36 @@ function RelationshipArchive(props: { character: CharacterDisplay | undefined })
 					</div>
 				)}
 			</Show>
-			<p class="drawer-note">{productUi.backstage.identityNote}</p>
-			<MemoryEntryList scope="relationship" title={productUi.backstage.relationshipMemories} />
+			<p class="drawer-note">{t("backstage.identityNote")}</p>
+			<div class="field">
+				<div class="switch-field">
+					<div class="switch-text">
+						<span class="field-label">{t("settings.relationshipMemory")}</span>
+						<p class="field-hint">{t("settings.relationshipMemoryHint")}</p>
+					</div>
+					<button
+						type="button"
+						class="switch-control"
+						role="switch"
+						aria-label={t("settings.relationshipMemory")}
+						aria-checked={enabled()}
+						data-checked={enabled() || undefined}
+						disabled={saving() || store.settings.data() === undefined}
+						onClick={() => void toggleMemory()}
+					>
+						<span class="switch-thumb" />
+					</button>
+				</div>
+			</div>
+			<Show when={feedback()}>{(message) => <p class="status-line">{message()}</p>}</Show>
+			<Show when={error()}>
+				{(message) => (
+					<p class="status-line err" role="alert">
+						{message()}
+					</p>
+				)}
+			</Show>
+			<MemoryEntryList scope="relationship" title={t("backstage.relationshipMemories")} />
 		</div>
 	);
 }

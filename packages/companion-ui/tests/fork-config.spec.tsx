@@ -1,4 +1,4 @@
-import { productUi } from "@bear-harness/product-config";
+import { zhCN } from "@bear-harness/product-config/locales";
 import { render, screen } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
 import { CompanionApp } from "../src/index.js";
@@ -13,9 +13,7 @@ describe("idle homepage (fork config injection, no bridge)", () => {
 		// Character content comes only from the character package via the
 		// bridge — no hardcoded fork strings in product.config.
 		expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
-		expect(
-			screen.getByPlaceholderText(productUi.shell.fallbackComposerPlaceholder),
-		).toBeInTheDocument();
+		expect(screen.getByPlaceholderText(zhCN.shell.fallbackComposerPlaceholder)).toBeInTheDocument();
 	});
 
 	it("renders the fork-identity shell with accessibility landmarks", () => {
@@ -23,10 +21,10 @@ describe("idle homepage (fork config injection, no bridge)", () => {
 		render(() => <CompanionApp product={FORK_PRODUCT} client={client} />);
 
 		expect(
-			screen.getByRole("navigation", { name: productUi.sidebar.conversations }),
+			screen.getByRole("navigation", { name: zhCN.sidebar.conversations }),
 		).toBeInTheDocument();
-		expect(screen.getByRole("searchbox", { name: productUi.sidebar.search })).toBeEnabled();
-		expect(screen.getByRole("button", { name: productUi.sidebar.characterSettings })).toBeEnabled();
-		expect(screen.getByRole("button", { name: productUi.sidebar.systemSettings })).toBeEnabled();
+		expect(screen.getByRole("searchbox", { name: zhCN.sidebar.search })).toBeEnabled();
+		expect(screen.getByRole("button", { name: zhCN.sidebar.characterSettings })).toBeEnabled();
+		expect(screen.getByRole("button", { name: zhCN.sidebar.systemSettings })).toBeEnabled();
 	});
 });

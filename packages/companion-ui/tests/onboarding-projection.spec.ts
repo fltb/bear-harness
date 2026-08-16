@@ -4,6 +4,7 @@ import { createComponent, createRoot } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { createCompanionStore } from "../src/stores/companion.js";
 import type { OnboardingData } from "../src/stores/ipc.js";
+import { createOnboardingStore } from "../src/stores/onboarding.js";
 import { createTestClient } from "./fixtures.js";
 
 function onboarding(currentStepId: string, eventSeq: number): OnboardingData {
@@ -33,6 +34,72 @@ function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["cli
 }
 
 describe("onboarding projection ordering", () => {
+	it("adopts a successful submit response even after an unrelated higher snapshot sequence", async () => {
+		const { client } = createTestClient();
+		const doorClosed = onboarding("door_closed", 100);
+		const introduced = onboarding("introduced", 8);
+		let onboardingGetCount = 0;
+		client.onboarding.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: onboardingGetCount++ === 0 ? doorClosed : introduced,
+			}),
+		);
+		client.onboarding.submit = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: introduced }),
+		);
+		let dispose = () => undefined;
+		let store: ReturnType<typeof createOnboardingStore> | undefined;
+		createRoot((cleanup) => {
+			dispose = cleanup;
+			store = createOnboardingStore(client);
+		});
+		if (!store) throw new Error("onboarding store was not created");
+
+		try {
+			store._hydrate(doorClosed);
+			await store.submit("door_closed");
+			expect(store.data()).toEqual(introduced);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("ignores stale and unrelated events, projects state changes, and resets from Host", async () => {
+		const { client } = createTestClient();
+		const initial = onboarding("door_closed", 4);
+		const reset = onboarding("reset_step", 7);
+		client.onboarding.get = vi.fn(() => Promise.resolve({ ok: true as const, data: reset }));
+		let dispose = () => undefined;
+		let store: ReturnType<typeof createOnboardingStore> | undefined;
+		createRoot((cleanup) => {
+			dispose = cleanup;
+			store = createOnboardingStore(client);
+		});
+		if (!store) throw new Error("onboarding store was not created");
+
+		try {
+			store._hydrate(initial);
+			store._hydrate(undefined);
+			store._hydrate(onboarding("stale", 3));
+			expect(store.data().currentStepId).toBe("door_closed");
+
+			store._applyEvent({ kind: "conversation.updated", seq: 5, payload: {} });
+			expect(store.data().currentStepId).toBe("door_closed");
+			store._applyEvent({
+				kind: "onboarding.state_changed",
+				seq: 6,
+				payload: onboarding("introduced", 0),
+			});
+			expect(store.data().currentStepId).toBe("introduced");
+
+			store._applyEvent({ kind: "onboarding.reset", seq: 7, payload: null });
+			await waitFor(() => expect(store?.data().currentStepId).toBe("reset_step"));
+		} finally {
+			dispose();
+		}
+	});
+
 	it("keeps an accepted transition when an older snapshot arrives afterwards", async () => {
 		const { client } = createTestClient();
 		const doorClosed = onboarding("door_closed", 7);
@@ -41,7 +108,13 @@ describe("onboarding projection ordering", () => {
 			Promise.resolve({ ok: true as const, data: { eventSeq: 7, onboarding: doorClosed } }),
 		);
 		client.snapshot.get = snapshotGet;
-		client.onboarding.get = vi.fn(() => Promise.resolve({ ok: true as const, data: doorClosed }));
+		let onboardingGetCount = 0;
+		client.onboarding.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: onboardingGetCount++ === 0 ? doorClosed : introduced,
+			}),
+		);
 		client.onboarding.submit = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: introduced }),
 		);

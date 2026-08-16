@@ -1,4 +1,4 @@
-import { productUi } from "@bear-harness/product-config";
+import { zhCN } from "@bear-harness/product-config/locales";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -11,10 +11,166 @@ const COMPLETE_ONBOARDING = {
 	stateData: { schema_version: 1 as const, flow_version: 1, answers: {}, decisions: {} },
 };
 
+const TEST_MODEL = {
+	providerId: "relay",
+	modelId: "fast",
+	label: "Fast",
+	supportsImages: true,
+	createdAt: "2026-01-01",
+};
+
+function configureSelectedModel(client: ReturnType<typeof createTestClient>["client"]): void {
+	client.model.list = vi.fn(() =>
+		Promise.resolve({
+			ok: true as const,
+			data: {
+				models: [TEST_MODEL],
+				selected: { providerId: TEST_MODEL.providerId, modelId: TEST_MODEL.modelId },
+			},
+		}),
+	);
+}
+
 describe("composer", () => {
+	it("keeps a new conversation empty until the user explicitly chooses a model", async () => {
+		const { client } = createTestClient();
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					onboarding: COMPLETE_ONBOARDING,
+					conversation: { activeConversationId: "conversation-1" },
+				},
+			}),
+		);
+		client.model.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { models: [TEST_MODEL] } }),
+		);
+		client.onboarding.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		const selector = await screen.findByRole("combobox", { name: zhCN.composer.modelLabel });
+		await waitFor(() => expect(selector).toBeEnabled());
+		expect(selector).toHaveValue("");
+		expect(screen.getByRole("option", { name: zhCN.composer.chooseModel })).toBeDisabled();
+		expect(screen.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeDisabled();
+	});
+
+	it("switches the active conversation model from the composer", async () => {
+		const { client } = createTestClient();
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					onboarding: COMPLETE_ONBOARDING,
+					conversation: { activeConversationId: "conversation-1" },
+					model: {
+						models: [
+							{
+								providerId: "relay",
+								modelId: "fast",
+								label: "Fast",
+								supportsImages: false,
+								createdAt: "2026-01-01",
+							},
+							{
+								providerId: "relay",
+								modelId: "deep",
+								label: "Deep",
+								supportsImages: true,
+								createdAt: "2026-01-02",
+							},
+						],
+						selected: { providerId: "relay", modelId: "fast" },
+					},
+				},
+			}),
+		);
+		client.model.list = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					models: [
+						{
+							providerId: "relay",
+							modelId: "fast",
+							label: "Fast",
+							supportsImages: false,
+							createdAt: "2026-01-01",
+						},
+						{
+							providerId: "relay",
+							modelId: "deep",
+							label: "Deep",
+							supportsImages: true,
+							createdAt: "2026-01-02",
+						},
+					],
+					selected: { providerId: "relay", modelId: "fast" },
+				},
+			}),
+		);
+		client.onboarding.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		const selector = await screen.findByRole("combobox", { name: zhCN.composer.modelLabel });
+		await waitFor(() => expect(selector).toBeEnabled());
+		fireEvent.input(selector, { target: { value: "relay:deep" } });
+		await waitFor(() =>
+			expect(client.model.select).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				providerId: "relay",
+				modelId: "deep",
+			}),
+		);
+	});
+
+	it("sends image attachments as native multimodal input", async () => {
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		configureSelectedModel(client);
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					onboarding: COMPLETE_ONBOARDING,
+					conversation: { activeConversationId: "conversation-1" },
+				},
+			}),
+		);
+		client.onboarding.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const image = new File([new Uint8Array([1, 2, 3])], "photo.png", { type: "image/png" });
+		fireEvent.change(await screen.findByLabelText(zhCN.composer.attachTitle), {
+			target: { files: [image] },
+		});
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toHaveTextContent(
+				"1",
+			),
+		);
+		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
+		await waitFor(() =>
+			expect(client.message.send).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				text: "[图片：photo.png]",
+				attachments: [{ name: "photo.png", mime: "image/png", base64: "AQID" }],
+			}),
+		);
+	});
 	it("submits trimmed text to the active conversation and clears only after dispatch", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
+		configureSelectedModel(client);
 		const messageSend = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { messageId: "m1" } }),
 		);
@@ -35,11 +191,11 @@ describe("composer", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		const composer = await screen.findByRole("textbox", {
-			name: productUi.composer.messageInputLabel,
+			name: zhCN.composer.messageInputLabel,
 		});
 		await waitFor(() => expect(composer).toBeEnabled());
 		await user.type(composer, "  测试消息  ");
-		await user.click(screen.getByRole("button", { name: productUi.composer.sendLabel }));
+		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
 
 		await waitFor(() =>
 			expect(messageSend).toHaveBeenCalledWith({
@@ -53,6 +209,7 @@ describe("composer", () => {
 	it("keeps Shift+Enter as a newline instead of dispatching", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
+		configureSelectedModel(client);
 		const messageSend = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { messageId: "m1" } }),
 		);
@@ -73,7 +230,7 @@ describe("composer", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		const composer = await screen.findByRole("textbox", {
-			name: productUi.composer.messageInputLabel,
+			name: zhCN.composer.messageInputLabel,
 		});
 		await waitFor(() => expect(composer).toBeEnabled());
 		await user.type(composer, "第一行");
@@ -86,6 +243,7 @@ describe("composer", () => {
 	it("sends readable text materials, skips oversized files, and caps one selection at ten", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
+		configureSelectedModel(client);
 		const messageSend = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { messageId: "m1" } }),
 		);
@@ -104,7 +262,7 @@ describe("composer", () => {
 			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const picker = await screen.findByLabelText(productUi.composer.attachTitle);
+		const picker = await screen.findByLabelText(zhCN.composer.attachTitle);
 		const files = Array.from({ length: 11 }, (_, index) => {
 			const file = new File([`content-${index}`], `note-${index}.txt`, { type: "text/plain" });
 			Object.defineProperty(file, "text", {
@@ -116,11 +274,11 @@ describe("composer", () => {
 		fireEvent.change(picker, { target: { files } });
 
 		await waitFor(() =>
-			expect(
-				screen.getByRole("button", { name: productUi.composer.attachLabel }),
-			).toHaveTextContent("9"),
+			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toHaveTextContent(
+				"9",
+			),
 		);
-		await user.click(screen.getByRole("button", { name: productUi.composer.sendLabel }));
+		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
 		await waitFor(() => expect(messageSend).toHaveBeenCalledOnce());
 		const sent = (messageSend.mock.calls[0]?.[0] as { text?: string } | undefined)?.text ?? "";
 		expect(sent).toContain("note-0.txt");

@@ -1,5 +1,5 @@
 import type { CompanionClient } from "@bear-harness/companion-client";
-import { type ProductConfig, productLocale, productUi } from "@bear-harness/product-config";
+import type { ProductConfig } from "@bear-harness/product-config";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { createEffect, createSignal, type JSX, Show } from "solid-js";
 import { CharacterPresence } from "./CharacterPresence";
@@ -7,6 +7,7 @@ import { Composer } from "./Composer";
 import { ConversationPanel } from "./ConversationPanel";
 import { FirstMeeting } from "./FirstMeeting";
 import { Backstage } from "./features/Backstage.js";
+import { productLocale, t } from "./i18n.js";
 import { SceneBackdrop } from "./SceneBackdrop";
 import { Sidebar } from "./Sidebar";
 import { createCompanionStore, DesktopProvider } from "./stores/companion.js";
@@ -47,7 +48,7 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
 
 	createEffect(() => {
 		document.title = props.product.productName;
-		document.documentElement.lang = productLocale;
+		document.documentElement.lang = productLocale();
 	});
 
 	const character = () => store.character;
@@ -65,9 +66,9 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
 	const sceneTitle = () =>
 		activeConversation()?.sceneTitle ?? character()?.character.scene_title ?? "";
 	const composerPlaceholder = () =>
-		character()?.character.composer_placeholder ?? productUi.shell.fallbackComposerPlaceholder;
+		character()?.character.composer_placeholder ?? t("shell.fallbackComposerPlaceholder");
 	const preferredLanguage = () =>
-		globalThis.navigator?.languages?.[0] ?? globalThis.navigator?.language ?? productLocale;
+		globalThis.navigator?.languages?.[0] ?? globalThis.navigator?.language ?? productLocale();
 	const languageWarningKey = () => `${character()?.language ?? ""}|${preferredLanguage()}`;
 	const hasLanguageMismatch = () => {
 		const roleLanguage = character()?.language;
@@ -77,7 +78,7 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
 		);
 	};
 	const languageWarning = () =>
-		productUi.language.warningBody
+		t("language.warningBody")
 			.replace("{roleLanguage}", character()?.language ?? "")
 			.replace("{userLanguage}", preferredLanguage());
 	const themeStyle = (): JSX.CSSProperties => {
@@ -117,14 +118,15 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
 						>
 							<section class="language-warning" role="status">
 								<div>
-									<strong>{productUi.language.warningTitle}</strong>
+									<strong>{t("language.warningTitle")}</strong>
 									<p>{languageWarning()}</p>
 								</div>
 								<button
+									data-control="command"
 									type="button"
 									onClick={() => setDismissedLanguageWarning(languageWarningKey())}
 								>
-									{productUi.language.dismiss}
+									{t("language.dismiss")}
 								</button>
 							</section>
 						</Show>
@@ -140,21 +142,23 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
 								<section class="story-confirmation" aria-live="polite">
 									<div>
 										<strong>{props.product.productName}</strong>
-										<p>{productUi.composer.storyConfirmation}</p>
+										<p>{t("composer.storyConfirmation")}</p>
 										<blockquote>{proposal().text}</blockquote>
 									</div>
 									<div class="story-confirmation-actions">
 										<button
+											data-control="command"
 											type="button"
 											onClick={() => void store.story.resolveProposal(proposal().id, true)}
 										>
-											{productUi.composer.storyAccept}
+											{t("composer.storyAccept")}
 										</button>
 										<button
+											data-control="command"
 											type="button"
 											onClick={() => void store.story.resolveProposal(proposal().id, false)}
 										>
-											{productUi.composer.storyDismiss}
+											{t("composer.storyDismiss")}
 										</button>
 									</div>
 								</section>

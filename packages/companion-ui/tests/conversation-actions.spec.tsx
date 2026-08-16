@@ -1,5 +1,5 @@
-import { productUi } from "@bear-harness/product-config";
-import { render, screen, waitFor } from "@solidjs/testing-library";
+import { zhCN } from "@bear-harness/product-config/locales";
+import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
@@ -58,6 +58,7 @@ function activeConversationSnapshot() {
 
 describe("conversation message controls", () => {
 	it("requires selecting a reply model before entering the first meeting", async () => {
+		const user = userEvent.setup();
 		const { client } = createTestClient();
 		client.provider.list = vi.fn(() =>
 			Promise.resolve({
@@ -68,7 +69,7 @@ describe("conversation message controls", () => {
 							id: "test-provider",
 							name: "Test Provider",
 							authType: "api_key" as const,
-							credentialStatus: "missing" as const,
+							credentialStatus: "stored" as const,
 							availableModels: [
 								{
 									id: "test-model",
@@ -85,13 +86,23 @@ describe("conversation message controls", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		const setup = await screen.findByRole("dialog", { name: productUi.modelSetup.dialogLabel });
-		expect(setup).toHaveTextContent(productUi.modelSetup.title);
-		expect(screen.getByRole("combobox", { name: productUi.settings.serviceLabel })).toHaveValue(
-			"test-provider",
-		);
-		expect(screen.getByRole("combobox", { name: productUi.modelSetup.modelLabel })).toHaveValue(
+		const setup = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		expect(setup).toHaveTextContent(zhCN.modelSetup.title);
+		const service = await within(setup).findByRole("combobox", {
+			name: zhCN.settings.serviceLabel,
+		});
+		expect(service).toHaveValue("");
+		expect(within(setup).queryByRole("combobox", { name: zhCN.modelSetup.modelLabel })).toBeNull();
+		expect(within(setup).queryByRole("button", { name: zhCN.modelSetup.continue })).toBeNull();
+		await user.selectOptions(service, "test-provider");
+		expect(within(setup).getByRole("button", { name: zhCN.modelSetup.continue })).toBeDisabled();
+		await user.selectOptions(
+			within(setup).getByRole("combobox", { name: zhCN.modelSetup.modelLabel }),
 			"test-model",
+		);
+		expect(within(setup).getByRole("button", { name: zhCN.modelSetup.continue })).toHaveAttribute(
+			"data-variant",
+			"primary",
 		);
 	});
 
@@ -119,15 +130,15 @@ describe("conversation message controls", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		await screen.findByText("当前回答");
-		await user.click(screen.getByRole("button", { name: productUi.messages.previousVersion }));
-		await user.click(screen.getByRole("button", { name: productUi.messages.regenerate }));
-		await user.click(screen.getByRole("button", { name: productUi.messages.edit }));
-		const editor = screen.getByRole("textbox", { name: productUi.messages.editLabel });
+		await user.click(screen.getByRole("button", { name: zhCN.messages.previousVersion }));
+		await user.click(screen.getByRole("button", { name: zhCN.messages.regenerate }));
+		await user.click(screen.getByRole("button", { name: zhCN.messages.edit }));
+		const editor = screen.getByRole("textbox", { name: zhCN.messages.editLabel });
 		await user.clear(editor);
 		await user.type(editor, "修订后的回答");
-		await user.click(screen.getByRole("button", { name: productUi.messages.save }));
-		await user.click(screen.getByRole("button", { name: productUi.messages.continue }));
-		await user.click(screen.getByRole("button", { name: productUi.messages.branch }));
+		await user.click(screen.getByRole("button", { name: zhCN.messages.save }));
+		await user.click(screen.getByRole("button", { name: zhCN.messages.continue }));
+		await user.click(screen.getByRole("button", { name: zhCN.messages.branch }));
 
 		await waitFor(() => {
 			expect(switchVersion).toHaveBeenCalledWith({

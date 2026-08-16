@@ -1,5 +1,5 @@
-import { productUi } from "@bear-harness/product-config";
 import { createEffect, createSignal, For, Show } from "solid-js";
+import { t } from "../i18n.js";
 import { useCompanionStore } from "../stores/companion.js";
 import type { CanonChunk, CanonModuleKind } from "../stores/ipc.js";
 
@@ -31,9 +31,9 @@ export function CanonStudio() {
 
 	return (
 		<div class="canon-studio">
-			<p class="drawer-note">{productUi.canonStudio.note}</p>
+			<p class="drawer-note">{t("canonStudio.note")}</p>
 			<section>
-				<h3>{productUi.canonStudio.sources}</h3>
+				<h3>{t("canonStudio.sources")}</h3>
 				<form
 					onSubmit={(event) => {
 						event.preventDefault();
@@ -49,20 +49,24 @@ export function CanonStudio() {
 					}}
 				>
 					<input
-						aria-label={productUi.canonStudio.sourceName}
-						placeholder={productUi.canonStudio.sourceName}
+						aria-label={t("canonStudio.sourceName")}
+						placeholder={t("canonStudio.sourceName")}
 						value={sourceName()}
 						onInput={(event) => setSourceName(event.currentTarget.value)}
 					/>
 					<textarea
 						rows={7}
-						aria-label={productUi.canonStudio.sourceText}
-						placeholder={productUi.canonStudio.sourceText}
+						aria-label={t("canonStudio.sourceText")}
+						placeholder={t("canonStudio.sourceText")}
 						value={sourceText()}
 						onInput={(event) => setSourceText(event.currentTarget.value)}
 					/>
-					<button type="submit" disabled={busy() || !sourceName().trim() || !sourceText().trim()}>
-						{productUi.canonStudio.addSource}
+					<button
+						data-control="command"
+						type="submit"
+						disabled={busy() || !sourceName().trim() || !sourceText().trim()}
+					>
+						{t("canonStudio.addSource")}
 					</button>
 				</form>
 				<For each={store.canon.sources()}>
@@ -71,25 +75,26 @@ export function CanonStudio() {
 							<div>
 								<strong>{source.logicalName}</strong>
 								<span>
-									{source.chunkCount} {productUi.canonStudio.chunks}
+									{source.chunkCount} {t("canonStudio.chunks")}
 								</span>
 							</div>
 							<button
+								data-control="command"
 								type="button"
-								aria-label={`${productUi.canonStudio.remove} ${source.logicalName}`}
+								aria-label={`${t("canonStudio.remove")} ${source.logicalName}`}
 								onClick={() => {
-									if (window.confirm(productUi.canonStudio.removeConfirm))
+									if (window.confirm(t("canonStudio.removeConfirm")))
 										void store.canon.removeSource(source.id);
 								}}
 							>
-								{productUi.canonStudio.remove}
+								{t("canonStudio.remove")}
 							</button>
 						</div>
 					)}
 				</For>
 			</section>
 			<section>
-				<h3>{productUi.canonStudio.search}</h3>
+				<h3>{t("canonStudio.search")}</h3>
 				<form
 					class="canon-search"
 					onSubmit={(event) => {
@@ -98,11 +103,13 @@ export function CanonStudio() {
 					}}
 				>
 					<input
-						aria-label={productUi.canonStudio.search}
+						aria-label={t("canonStudio.search")}
 						value={query()}
 						onInput={(event) => setQuery(event.currentTarget.value)}
 					/>
-					<button type="submit">{productUi.canonStudio.search}</button>
+					<button data-control="command" type="submit">
+						{t("canonStudio.search")}
+					</button>
 				</form>
 				<For each={results()}>
 					{(chunk) => (
@@ -129,7 +136,7 @@ export function CanonStudio() {
 				</For>
 			</section>
 			<section>
-				<h3>{productUi.canonStudio.modules}</h3>
+				<h3>{t("canonStudio.modules")}</h3>
 				<form
 					onSubmit={(event) => {
 						event.preventDefault();
@@ -149,55 +156,53 @@ export function CanonStudio() {
 					}}
 				>
 					<select
-						aria-label={productUi.canonStudio.moduleKind}
+						aria-label={t("canonStudio.moduleKind")}
 						value={moduleKind()}
 						onChange={(event) => setModuleKind(event.currentTarget.value as CanonModuleKind)}
 					>
-						<option value="root">{productUi.canonStudio.kinds.root}</option>
-						<option value="arc">{productUi.canonStudio.kinds.arc}</option>
-						<option value="event">{productUi.canonStudio.kinds.event}</option>
-						<option value="entity">{productUi.canonStudio.kinds.entity}</option>
-						<option value="relationship">{productUi.canonStudio.kinds.relationship}</option>
-						<option value="location">{productUi.canonStudio.kinds.location}</option>
-						<option value="object">{productUi.canonStudio.kinds.object}</option>
-						<option value="behavior">{productUi.canonStudio.kinds.behavior}</option>
+						<option value="root">{t("canonStudio.kinds.root")}</option>
+						<option value="arc">{t("canonStudio.kinds.arc")}</option>
+						<option value="event">{t("canonStudio.kinds.event")}</option>
+						<option value="entity">{t("canonStudio.kinds.entity")}</option>
+						<option value="relationship">{t("canonStudio.kinds.relationship")}</option>
+						<option value="location">{t("canonStudio.kinds.location")}</option>
+						<option value="object">{t("canonStudio.kinds.object")}</option>
+						<option value="behavior">{t("canonStudio.kinds.behavior")}</option>
 					</select>
 					<select
-						aria-label={productUi.canonStudio.moduleParent}
+						aria-label={t("canonStudio.moduleParent")}
 						value={moduleParentId()}
 						onChange={(event) => setModuleParentId(event.currentTarget.value)}
 					>
-						<option value="">{productUi.canonStudio.moduleNoParent}</option>
+						<option value="">{t("canonStudio.moduleNoParent")}</option>
 						<For each={store.canon.modules().filter((module) => module.id !== editingModuleId())}>
 							{(module) => <option value={module.id}>{module.title}</option>}
 						</For>
 					</select>
 					<input
-						aria-label={productUi.canonStudio.moduleTitle}
-						placeholder={productUi.canonStudio.moduleTitle}
+						aria-label={t("canonStudio.moduleTitle")}
+						placeholder={t("canonStudio.moduleTitle")}
 						value={moduleTitle()}
 						onInput={(event) => setModuleTitle(event.currentTarget.value)}
 					/>
 					<textarea
-						aria-label={productUi.canonStudio.moduleInstructions}
+						aria-label={t("canonStudio.moduleInstructions")}
 						rows={4}
-						placeholder={productUi.canonStudio.moduleInstructions}
+						placeholder={t("canonStudio.moduleInstructions")}
 						value={moduleInstructions()}
 						onInput={(event) => setModuleInstructions(event.currentTarget.value)}
 					/>
-					<button type="submit" disabled={busy() || !moduleTitle().trim()}>
-						{editingModuleId()
-							? productUi.canonStudio.updateModule
-							: productUi.canonStudio.saveModule}
+					<button data-control="command" type="submit" disabled={busy() || !moduleTitle().trim()}>
+						{editingModuleId() ? t("canonStudio.updateModule") : t("canonStudio.saveModule")}
 					</button>
 					<Show when={editingModuleId()}>
-						<button type="button" onClick={clearModuleForm}>
-							{productUi.canonStudio.cancelEdit}
+						<button data-control="command" type="button" onClick={clearModuleForm}>
+							{t("canonStudio.cancelEdit")}
 						</button>
 					</Show>
 				</form>
 				<Show when={store.canon.modules().length === 0}>
-					<p class="drawer-note">{productUi.canonStudio.noModules}</p>
+					<p class="drawer-note">{t("canonStudio.noModules")}</p>
 				</Show>
 				<For each={store.canon.modules()}>
 					{(module) => (
@@ -205,14 +210,15 @@ export function CanonStudio() {
 							<div>
 								<strong>{module.title}</strong>
 								<span>
-									{productUi.canonStudio.kinds[module.kind]} · {module.sourceChunkIds.length}{" "}
-									{productUi.canonStudio.references}
+									{t(`canonStudio.kinds.${module.kind}`)} · {module.sourceChunkIds.length}{" "}
+									{t("canonStudio.references")}
 								</span>
 							</div>
 							<div class="canon-row-actions">
 								<button
+									data-control="command"
 									type="button"
-									aria-label={`${productUi.canonStudio.editModule} ${module.title}`}
+									aria-label={`${t("canonStudio.editModule")} ${module.title}`}
 									onClick={() => {
 										setEditingModuleId(module.id);
 										setModuleParentId(module.parentId ?? "");
@@ -222,14 +228,15 @@ export function CanonStudio() {
 										setSelectedChunks(module.sourceChunkIds);
 									}}
 								>
-									{productUi.canonStudio.editModule}
+									{t("canonStudio.editModule")}
 								</button>
 								<button
+									data-control="command"
 									type="button"
-									aria-label={`${productUi.canonStudio.remove} ${module.title}`}
+									aria-label={`${t("canonStudio.remove")} ${module.title}`}
 									onClick={() => void store.canon.deleteModule(module.id)}
 								>
-									{productUi.canonStudio.remove}
+									{t("canonStudio.remove")}
 								</button>
 							</div>
 						</div>

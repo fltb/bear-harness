@@ -1,4 +1,4 @@
-import { productUi } from "@bear-harness/product-config";
+import { zhCN } from "@bear-harness/product-config/locales";
 import { render, screen } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -80,10 +80,10 @@ describe("advanced feature journeys", () => {
 				download: vi.fn(() => Promise.resolve()),
 			} as never,
 		});
-		expect(screen.getByText(productUi.work.networkYes)).toBeVisible();
+		expect(screen.getByText(zhCN.work.networkYes)).toBeVisible();
 		expect(screen.getByText(/12 B/)).toBeVisible();
 		expect(screen.getByText(/2\.0 MB/)).toBeVisible();
-		await user.click(screen.getByRole("button", { name: productUi.work.start }));
+		await user.click(screen.getByRole("button", { name: zhCN.work.start }));
 		expect(approve).not.toHaveBeenCalled();
 		expect(launch).toHaveBeenCalledWith("commission-1", "pi-product-managed");
 	});
@@ -153,15 +153,15 @@ describe("advanced feature journeys", () => {
 			} as never,
 		});
 
-		expect(screen.getByRole("region", { name: productUi.work.title })).toBeVisible();
-		await user.click(screen.getByRole("button", { name: productUi.work.start }));
+		expect(screen.getByRole("region", { name: zhCN.work.title })).toBeVisible();
+		await user.click(screen.getByRole("button", { name: zhCN.work.start }));
 		expect(approve).toHaveBeenCalledWith("commission-1", "draft-hash");
 		expect(launch).toHaveBeenCalledWith("commission-1", "pi-product-managed");
-		await user.click(screen.getByRole("button", { name: productUi.work.allow }));
+		await user.click(screen.getByRole("button", { name: zhCN.work.allow }));
 		expect(respondPermission).toHaveBeenCalledWith("run-1", "permission-1", "allow");
-		await user.click(screen.getByRole("button", { name: productUi.work.stop }));
+		await user.click(screen.getByRole("button", { name: zhCN.work.stop }));
 		expect(cancel).toHaveBeenCalledWith("run-1");
-		await user.click(screen.getByRole("button", { name: productUi.work.download }));
+		await user.click(screen.getByRole("button", { name: zhCN.work.download }));
 		expect(download).toHaveBeenCalledWith("artifact-1");
 	});
 
@@ -192,32 +192,23 @@ describe("advanced feature journeys", () => {
 			} as never,
 		});
 
-		await user.type(
-			screen.getByRole("textbox", { name: productUi.canonStudio.sourceName }),
-			"第一卷",
-		);
-		await user.type(
-			screen.getByRole("textbox", { name: productUi.canonStudio.sourceText }),
-			"完整原文",
-		);
-		await user.click(screen.getByRole("button", { name: productUi.canonStudio.addSource }));
+		await user.type(screen.getByRole("textbox", { name: zhCN.canonStudio.sourceName }), "第一卷");
+		await user.type(screen.getByRole("textbox", { name: zhCN.canonStudio.sourceText }), "完整原文");
+		await user.click(screen.getByRole("button", { name: zhCN.canonStudio.addSource }));
 		expect(addSource).toHaveBeenCalledWith("第一卷", "完整原文");
 
-		await user.type(
-			screen.getByRole("textbox", { name: productUi.canonStudio.search }),
-			"关键事件",
-		);
-		await user.click(screen.getByRole("button", { name: productUi.canonStudio.search }));
+		await user.type(screen.getByRole("textbox", { name: zhCN.canonStudio.search }), "关键事件");
+		await user.click(screen.getByRole("button", { name: zhCN.canonStudio.search }));
 		await user.click(await screen.findByRole("checkbox", { name: /原文片段/ }));
 		await user.type(
-			screen.getByRole("textbox", { name: productUi.canonStudio.moduleTitle }),
+			screen.getByRole("textbox", { name: zhCN.canonStudio.moduleTitle }),
 			"入口回忆",
 		);
 		await user.type(
-			screen.getByRole("textbox", { name: productUi.canonStudio.moduleInstructions }),
+			screen.getByRole("textbox", { name: zhCN.canonStudio.moduleInstructions }),
 			"从原剧情开始回忆",
 		);
-		await user.click(screen.getByRole("button", { name: productUi.canonStudio.saveModule }));
+		await user.click(screen.getByRole("button", { name: zhCN.canonStudio.saveModule }));
 		expect(upsertModule).toHaveBeenCalledWith({
 			kind: "arc",
 			title: "入口回忆",
@@ -262,17 +253,13 @@ describe("advanced feature journeys", () => {
 			} as never,
 		});
 
-		await user.click(
-			screen.getByRole("button", { name: `${productUi.canonStudio.remove} 第一卷` }),
-		);
+		await user.click(screen.getByRole("button", { name: `${zhCN.canonStudio.remove} 第一卷` }));
 		expect(removeSource).toHaveBeenCalledWith("source-1");
-		await user.click(
-			screen.getByRole("button", { name: `${productUi.canonStudio.editModule} 旧事件` }),
-		);
-		const title = screen.getByRole("textbox", { name: productUi.canonStudio.moduleTitle });
+		await user.click(screen.getByRole("button", { name: `${zhCN.canonStudio.editModule} 旧事件` }));
+		const title = screen.getByRole("textbox", { name: zhCN.canonStudio.moduleTitle });
 		await user.clear(title);
 		await user.type(title, "新事件");
-		await user.click(screen.getByRole("button", { name: productUi.canonStudio.updateModule }));
+		await user.click(screen.getByRole("button", { name: zhCN.canonStudio.updateModule }));
 		expect(upsertModule).toHaveBeenCalledWith({
 			id: "module-1",
 			kind: "event",
@@ -280,9 +267,7 @@ describe("advanced feature journeys", () => {
 			instructions: "旧说明",
 			sourceChunkIds: ["chunk-1"],
 		});
-		await user.click(
-			screen.getByRole("button", { name: `${productUi.canonStudio.remove} 旧事件` }),
-		);
+		await user.click(screen.getByRole("button", { name: `${zhCN.canonStudio.remove} 旧事件` }));
 		expect(deleteModule).toHaveBeenCalledWith("module-1");
 	});
 });

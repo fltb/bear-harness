@@ -1,4 +1,4 @@
-import { productUi } from "@bear-harness/product-config";
+import { zhCN } from "@bear-harness/product-config/locales";
 import { render, screen } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -46,7 +46,7 @@ describe("sidebar conversation journey", () => {
 			</DesktopProvider>
 		));
 
-		const search = screen.getByRole("searchbox", { name: productUi.sidebar.search });
+		const search = screen.getByRole("searchbox", { name: zhCN.sidebar.search });
 		await user.keyboard("{Control>}k{/Control}");
 		expect(search).toHaveFocus();
 		await user.type(search, "alpha");
@@ -55,25 +55,25 @@ describe("sidebar conversation journey", () => {
 			"page",
 		);
 		expect(screen.queryByRole("button", { name: /Beta notes/ })).not.toBeInTheDocument();
-		expect(screen.getByRole("img", { name: productUi.sidebar.unreadMessage })).toBeVisible();
+		expect(screen.getByRole("img", { name: zhCN.sidebar.unreadMessage })).toBeVisible();
 
 		await user.click(screen.getByRole("button", { name: /Alpha project/ }));
 		expect(selectConversation).toHaveBeenCalledWith("conversation-1");
-		await user.click(screen.getByRole("button", { name: productUi.sidebar.renameConversation }));
-		const rename = screen.getByRole("textbox", { name: productUi.sidebar.renameConversation });
+		await user.click(screen.getByRole("button", { name: zhCN.sidebar.renameConversation }));
+		const rename = screen.getByRole("textbox", { name: zhCN.sidebar.renameConversation });
 		await user.clear(rename);
 		await user.type(rename, "Renamed project");
-		await user.click(screen.getByRole("button", { name: productUi.sidebar.saveConversation }));
+		await user.click(screen.getByRole("button", { name: zhCN.sidebar.saveConversation }));
 		expect(renameConversation).toHaveBeenCalledWith("conversation-1", "Renamed project");
-		await user.click(screen.getByRole("button", { name: productUi.sidebar.archiveConversation }));
+		await user.click(screen.getByRole("button", { name: zhCN.sidebar.archiveConversation }));
 		expect(archiveConversation).toHaveBeenCalledWith("conversation-1");
-		await user.click(screen.getByRole("button", { name: productUi.sidebar.deleteConversation }));
+		await user.click(screen.getByRole("button", { name: zhCN.sidebar.deleteConversation }));
 		expect(deleteConversation).toHaveBeenCalledWith("conversation-1");
-		await user.click(screen.getByRole("button", { name: productUi.sidebar.newConversation }));
+		await user.click(screen.getByRole("button", { name: zhCN.sidebar.newConversation }));
 		expect(createConversation).toHaveBeenCalledOnce();
 
-		await user.click(screen.getByRole("button", { name: productUi.sidebar.characterSettings }));
-		await user.click(screen.getByRole("button", { name: productUi.sidebar.systemSettings }));
+		await user.click(screen.getByRole("button", { name: zhCN.sidebar.characterSettings }));
+		await user.click(screen.getByRole("button", { name: zhCN.sidebar.systemSettings }));
 		expect(onOpenBackstage).toHaveBeenNthCalledWith(1, "roles");
 		expect(onOpenBackstage).toHaveBeenNthCalledWith(2, "settings");
 	});

@@ -19,11 +19,10 @@
  * store proxy, so components read `store.activeMessages` etc. directly. All
  * action methods call the client, set `error` on failure and clear it on
  * the next success. Supplementary domain APIs (memory/settings/provider/
- * voice/commission/artifact) are exposed for the backstage sheets.
+ * model/commission/artifact) are exposed for the backstage sheets.
  */
 
 import type { CompanionClient } from "@bear-harness/companion-client";
-import { productUi } from "@bear-harness/product-config";
 import { useQueryClient } from "@tanstack/solid-query";
 import {
 	createContext,
@@ -35,6 +34,7 @@ import {
 	useContext,
 } from "solid-js";
 import { createStore } from "solid-js/store";
+import { t } from "../i18n.js";
 import { IpcInvocationError } from "../lib/ipc.js";
 import {
 	type Artifact,
@@ -52,6 +52,7 @@ import {
 	type CommissionDraftResult,
 	type CommissionLaunchResult,
 	type CommissionListData,
+	type ConfiguredModel,
 	type ConversationSummary,
 	type DomainEvent,
 	invoke,
@@ -63,6 +64,7 @@ import {
 	type MemoryScope,
 	type Message,
 	type MessageApplyScope,
+	type ModelListData,
 	type OnboardingData,
 	type ProviderInfo,
 	type ProviderListData,
@@ -78,9 +80,6 @@ import {
 	type StoryChangeProposal,
 	type StoryChangeScope,
 	type StoryListData,
-	type VoiceListData,
-	type VoiceStack,
-	type VoiceSwitchScope,
 } from "./ipc.js";
 import { createOnboardingStore } from "./onboarding.js";
 import { createRpcMutation, createRpcQuery, hydrateRpcQuery, queryKeys } from "./rpc-query.js";
@@ -196,6 +195,7 @@ export interface ProviderApi {
 		apiKey?: string;
 		supportsImages?: boolean;
 	}): Promise<void>;
+	importPiConfig(configJson: string): Promise<void>;
 	overrideBaseUrl(params: { providerId: string; baseUrl: string }): Promise<void>;
 	setApiKey(providerId: string, apiKey: string, sessionOnly?: boolean): Promise<void>;
 	login(providerId: string): Promise<ProviderLoginResult>;
@@ -204,16 +204,17 @@ export interface ProviderApi {
 	logout(providerId: string): Promise<void>;
 }
 
-export interface VoiceApi {
-	data(): VoiceListData;
-	stacks(): VoiceStack[];
-	activeStackId(): string | undefined;
+export interface ModelApi {
+	data(): ModelListData;
+	models(): ConfiguredModel[];
+	selectedValue(): string;
 	loading(): boolean;
 	error(): unknown;
 	refetch(): void;
-	list(): Promise<VoiceListData>;
-	switch(stackId: string, scope: VoiceSwitchScope): Promise<void>;
-	pin(providerId: string, modelId: string, label?: string): Promise<void>;
+	list(conversationId?: string): Promise<ModelListData>;
+	enable(providerId: string, modelId: string, label?: string): Promise<void>;
+	disable(providerId: string, modelId: string): Promise<void>;
+	select(conversationId: string, providerId: string, modelId: string): Promise<void>;
 }
 
 export interface CommissionApi {
@@ -299,7 +300,10 @@ export interface CompanionStore {
 	renameConversation(id: string, title: string): Promise<void>;
 	archiveConversation(id: string): Promise<void>;
 	deleteConversation(id: string): Promise<void>;
-	sendMessage(text: string): Promise<void>;
+	sendMessage(
+		text: string,
+		attachments?: Array<{ name: string; mime: string; base64: string }>,
+	): Promise<void>;
 	regenerateMessage(messageId: string): Promise<void>;
 	switchVersion(messageId: string, versionId: string): Promise<void>;
 	editMessage(messageId: string, text: string, isUserMessage: boolean): Promise<void>;
@@ -316,7 +320,7 @@ export interface CompanionStore {
 	readonly memory: MemoryApi;
 	readonly settings: SettingsApi;
 	readonly provider: ProviderApi;
-	readonly voice: VoiceApi;
+	readonly model: ModelApi;
 	readonly commission: CommissionApi;
 	readonly run: RunApi;
 	readonly artifact: ArtifactApi;
@@ -482,7 +486,10 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 	const onboardingStore = createOnboardingStore(client);
 	const settingsRequest = () => invoke(client, () => client.settings.get());
 	const providersRequest = () => invoke(client, () => client.provider.list());
-	const voiceRequest = () => invoke(client, () => client.voice.list());
+	const modelsRequest = () =>
+		invoke(client, () =>
+			client.model.list({ conversationId: state.activeConversationId ?? undefined }),
+		);
 	const settingsQuery = createRpcQuery({
 		client: queryClient,
 		key: queryKeys.settings,
@@ -493,10 +500,11 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		key: queryKeys.providers,
 		request: providersRequest,
 	});
-	const voiceQuery = createRpcQuery({
+	const modelsQuery = createRpcQuery({
 		client: queryClient,
-		key: queryKeys.voice,
-		request: voiceRequest,
+		key: queryKeys.models,
+		request: modelsRequest,
+		enabled: false,
 	});
 	const settingsMutation = createRpcMutation<() => Promise<unknown>>({
 		client: queryClient,
@@ -508,10 +516,10 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		request: (request) => request(),
 		invalidates: [queryKeys.providers],
 	});
-	const voiceMutation = createRpcMutation<() => Promise<unknown>>({
+	const modelMutation = createRpcMutation<() => Promise<unknown>>({
 		client: queryClient,
 		request: (request) => request(),
-		invalidates: [queryKeys.voice],
+		invalidates: [queryKeys.models, queryKeys.modelPool],
 	});
 
 	let booted = false;
@@ -584,7 +592,8 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 
 	const hydrateFromSnapshot = (snap: Snapshot): void => {
 		onboardingStore._hydrate(snap.onboarding);
-		if (snap.voice) hydrateRpcQuery(queryClient, queryKeys.voice, snap.voice);
+		if (snap.model && queryClient.getQueryData(queryKeys.models) === undefined)
+			hydrateRpcQuery(queryClient, queryKeys.models, snap.model);
 		const conversation = snap.conversation;
 		if (conversation) {
 			if (conversation.activeConversationId !== undefined) {
@@ -766,8 +775,9 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			debouncedRefetch(refreshMemoryEntries);
 		} else if (kind.startsWith("provider.")) {
 			void queryClient.invalidateQueries({ queryKey: queryKeys.providers });
-		} else if (kind.startsWith("voice.")) {
-			void queryClient.invalidateQueries({ queryKey: queryKeys.voice });
+		} else if (kind.startsWith("model.")) {
+			void modelsQuery.refetch();
+			void queryClient.invalidateQueries({ queryKey: queryKeys.modelPool });
 		} else if (kind.startsWith("commission.")) {
 			debouncedRefetch(refreshCommissions);
 		} else if (kind.startsWith("run.")) {
@@ -858,7 +868,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 
 	const requireActiveConversation = (): string => {
 		const id = state.activeConversationId;
-		if (id === null) throw new Error(productUi.messages.noActiveConversationError);
+		if (id === null) throw new Error(t("messages.noActiveConversationError"));
 		return id;
 	};
 
@@ -940,6 +950,15 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				invoke(client, () => client.provider.customUpsert(params)),
 			);
 		},
+		importPiConfig: async (configJson) => {
+			await providerMutation.mutateAsync(() =>
+				invoke(client, () => client.provider.importPiConfig({ configJson })),
+			);
+			const data = await invoke(client, () =>
+				client.model.list({ conversationId: state.activeConversationId ?? undefined }),
+			);
+			hydrateRpcQuery(queryClient, queryKeys.models, data);
+		},
 		overrideBaseUrl: async (params) => {
 			await providerMutation.mutateAsync(() =>
 				invoke(client, () => client.provider.overrideBaseUrl(params)),
@@ -962,22 +981,40 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		},
 	};
 
-	const voiceApi: VoiceApi = {
-		data: () => voiceQuery.data ?? { stacks: [] },
-		stacks: () => voiceQuery.data?.stacks ?? [],
-		activeStackId: () => voiceQuery.data?.stacks.find((stack) => stack.active)?.id,
-		loading: () => voiceQuery.isPending,
-		error: () => voiceQuery.error,
-		refetch: () => void voiceQuery.refetch(),
-		list: () => queryClient.ensureQueryData({ queryKey: queryKeys.voice, queryFn: voiceRequest }),
-		switch: async (stackId, scope) => {
-			await voiceMutation.mutateAsync(() =>
-				invoke(client, () => client.voice.switch({ stackId, scope, rollbackAvailable: true })),
+	const modelApi: ModelApi = {
+		data: () => modelsQuery.data ?? { models: [] },
+		models: () => modelsQuery.data?.models ?? [],
+		selectedValue: () => {
+			const route = modelsQuery.data?.selected;
+			return route ? `${route.providerId}:${route.modelId}` : "";
+		},
+		loading: () => modelsQuery.isFetching,
+		error: () => modelsQuery.error,
+		refetch: () => void modelsQuery.refetch(),
+		list: (conversationId) =>
+			invoke(client, () => client.model.list({ conversationId })).then((data) => {
+				hydrateRpcQuery(
+					queryClient,
+					conversationId || state.activeConversationId === null
+						? queryKeys.models
+						: queryKeys.modelPool,
+					data,
+				);
+				return data;
+			}),
+		enable: async (providerId, modelId, label) => {
+			await modelMutation.mutateAsync(() =>
+				invoke(client, () => client.model.enable({ providerId, modelId, label })),
 			);
 		},
-		pin: async (providerId, modelId, label) => {
-			await voiceMutation.mutateAsync(() =>
-				invoke(client, () => client.voice.pin({ providerId, modelId, label })),
+		disable: async (providerId, modelId) => {
+			await modelMutation.mutateAsync(() =>
+				invoke(client, () => client.model.disable({ providerId, modelId })),
+			);
+		},
+		select: async (conversationId, providerId, modelId) => {
+			await modelMutation.mutateAsync(() =>
+				invoke(client, () => client.model.select({ conversationId, providerId, modelId })),
 			);
 		},
 	};
@@ -1120,6 +1157,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			setState("activeBranchId", null);
 			setState("activeMessages", []);
 			await Promise.all([
+				onboardingStore.resync(),
 				refreshCharacters(),
 				refreshConversations(),
 				Promise.resolve(snapshotActions.refetch()),
@@ -1267,14 +1305,14 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			await refreshConversations();
 		},
 
-		sendMessage: async (text) => {
+		sendMessage: async (text, attachments) => {
 			setState("pendingUserText", text);
 			setState("streamingAssistantText", "");
 			setState("committedStreamingMessageId", null);
 			setState("assistantStreaming", true);
 			try {
 				const conversationId = requireActiveConversation();
-				await invoke(client, () => client.message.send({ conversationId, text }));
+				await invoke(client, () => client.message.send({ conversationId, text, attachments }));
 				await snapshotActions.refetch();
 				setState("pendingUserText", undefined);
 				setState("error", null);
@@ -1363,6 +1401,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		submitOnboarding: async (stepId, answer) => {
 			try {
 				await onboardingStore.submit(stepId, answer);
+				await onboardingStore.resync();
 				setState("error", null);
 			} catch (error) {
 				if (isStaleOnboardingStep(error)) {
@@ -1399,8 +1438,8 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		get provider() {
 			return providerApi;
 		},
-		get voice() {
-			return voiceApi;
+		get model() {
+			return modelApi;
 		},
 		get commission() {
 			return commissionApi;

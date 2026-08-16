@@ -1,10 +1,11 @@
-import { productUi } from "@bear-harness/product-config";
+import { zhCN } from "@bear-harness/product-config/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { FirstMeeting } from "../src/FirstMeeting.js";
+import { CompanionApp } from "../src/index.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
-import { THEMED_CHARACTER } from "./fixtures.js";
+import { createTestClient, OFFICIAL_PRODUCT, THEMED_CHARACTER } from "./fixtures.js";
 
 function renderMeeting(store: Partial<CompanionStore>) {
 	return render(() => (
@@ -21,24 +22,94 @@ function baseStore(): Partial<CompanionStore> {
 		onboarding: {
 			status: "complete",
 			eventSeq: 1,
-			stateData: { schema_version: 1, flow_version: 1, answers: {}, decisions: {} },
+			stateData: {
+				schema_version: 1,
+				flow_version: 1,
+				answers: {},
+				decisions: {},
+			},
 		},
 		provider: {
 			providers: () => [],
 			list: () => Promise.resolve({ providers: [] }),
 		} as never,
-		voice: {
+		model: {
 			loading: () => false,
-			activeStackId: () => "stack-1",
+			models: () => [{ modelId: "model" }],
 		} as never,
 	};
 }
 
 describe("first meeting journeys", () => {
-	it("saves an API key and pins the selected provider model before onboarding", async () => {
+	it("projects the authoritative onboarding RPC response into the rendered app", async () => {
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		const active = {
+			status: "active" as const,
+			currentStepId: "hello",
+			eventSeq: 20,
+			stateData: {
+				schema_version: 1 as const,
+				flow_version: 1,
+				answers: {},
+				decisions: {},
+			},
+		};
+		const complete = {
+			...active,
+			status: "complete" as const,
+			currentStepId: undefined,
+			eventSeq: 21,
+		};
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 20,
+					onboarding: active,
+					character: THEMED_CHARACTER,
+					model: { models: [{ modelId: "configured" }] },
+				},
+			}),
+		);
+		client.onboarding.get = vi.fn(() => Promise.resolve({ ok: true as const, data: active }));
+		client.onboarding.submit = vi.fn(() => Promise.resolve({ ok: true as const, data: complete }));
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		const dialog = await screen.findByRole("dialog", { name: "Introduction" });
+		await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+		await waitFor(() => expect(dialog).not.toBeInTheDocument());
+	});
+
+	it("submits an onboarding step only once when its action is double-clicked", async () => {
+		const user = userEvent.setup();
+		const submitOnboarding = vi.fn(() => Promise.resolve());
+		renderMeeting({
+			...baseStore(),
+			character: THEMED_CHARACTER,
+			onboarding: {
+				status: "active",
+				currentStepId: "hello",
+				eventSeq: 1,
+				stateData: {
+					schema_version: 1,
+					flow_version: 1,
+					answers: {},
+					decisions: {},
+				},
+			},
+			submitOnboarding,
+		});
+
+		await user.dblClick(screen.getByRole("button", { name: "Continue" }));
+		expect(submitOnboarding).toHaveBeenCalledTimes(1);
+		expect(submitOnboarding).toHaveBeenCalledWith("hello", undefined);
+	});
+
+	it("connects an API-key provider before selecting and enabling one of its models", async () => {
 		const user = userEvent.setup();
 		const setApiKey = vi.fn(() => Promise.resolve());
-		const pin = vi.fn(() => Promise.resolve());
+		const enable = vi.fn(() => Promise.resolve());
 		const provider = {
 			id: "openai-relay",
 			name: "OpenAI Relay",
@@ -53,19 +124,36 @@ describe("first meeting journeys", () => {
 				list: () => Promise.resolve({ providers: [provider] }),
 				setApiKey,
 			} as never,
-			voice: { loading: () => false, activeStackId: () => undefined, pin } as never,
+			model: { loading: () => false, models: () => [], enable } as never,
 		});
 
-		const dialog = await screen.findByRole("dialog", { name: productUi.modelSetup.dialogLabel });
-		await user.type(within(dialog).getByLabelText(productUi.settings.apiKeyLabel), "secret-key");
-		await user.click(within(dialog).getByRole("button", { name: productUi.modelSetup.continue }));
+		const dialog = await screen.findByRole("dialog", {
+			name: zhCN.modelSetup.dialogLabel,
+		});
+		const service = within(dialog).getByRole("combobox", {
+			name: zhCN.settings.serviceLabel,
+		});
+		expect(service).toHaveValue("");
+		await user.selectOptions(service, "openai-relay");
+		expect(within(dialog).queryByRole("combobox", { name: zhCN.modelSetup.modelLabel })).toBeNull();
+		await user.type(within(dialog).getByLabelText(zhCN.settings.apiKeyLabel), "secret-key");
+		const connect = within(dialog).getByRole("button", {
+			name: zhCN.settings.saveKey,
+		});
+		expect(connect).toHaveAttribute("data-variant", "primary");
+		await user.click(connect);
 		expect(setApiKey).toHaveBeenCalledWith("openai-relay", "secret-key");
-		expect(pin).toHaveBeenCalledWith("openai-relay", "gpt-test", "OpenAI Relay");
+		const model = within(dialog).getByRole("combobox", {
+			name: zhCN.modelSetup.modelLabel,
+		});
+		await user.selectOptions(model, "gpt-test");
+		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
+		expect(enable).toHaveBeenCalledWith("openai-relay", "gpt-test", "OpenAI Relay");
 	});
 
 	it("shows one primary action and no key field when the provider credential is stored", async () => {
 		const user = userEvent.setup();
-		const pin = vi.fn(() => Promise.resolve());
+		const enable = vi.fn(() => Promise.resolve());
 		const provider = {
 			id: "stored-relay",
 			name: "Stored Relay",
@@ -79,15 +167,36 @@ describe("first meeting journeys", () => {
 				providers: () => [provider],
 				list: () => Promise.resolve({ providers: [provider] }),
 			} as never,
-			voice: { loading: () => false, activeStackId: () => undefined, pin } as never,
+			model: { loading: () => false, models: () => [], enable } as never,
 		});
 
-		const dialog = await screen.findByRole("dialog", { name: productUi.modelSetup.dialogLabel });
-		expect(within(dialog).queryByLabelText(productUi.settings.apiKeyLabel)).not.toBeInTheDocument();
-		const actions = within(dialog).getAllByRole("button", { name: productUi.modelSetup.continue });
-		expect(actions).toHaveLength(1);
-		await user.click(actions[0]);
-		expect(pin).toHaveBeenCalledWith("stored-relay", "stored-model", "Stored Relay");
+		const dialog = await screen.findByRole("dialog", {
+			name: zhCN.modelSetup.dialogLabel,
+		});
+		expect(within(dialog).queryByLabelText(zhCN.settings.apiKeyLabel)).not.toBeInTheDocument();
+		expect(
+			within(dialog).queryByRole("button", {
+				name: zhCN.modelSetup.continue,
+			}),
+		).toBeNull();
+		await user.selectOptions(
+			within(dialog).getByRole("combobox", {
+				name: zhCN.settings.serviceLabel,
+			}),
+			"stored-relay",
+		);
+		await user.selectOptions(
+			within(dialog).getByRole("combobox", {
+				name: zhCN.modelSetup.modelLabel,
+			}),
+			"stored-model",
+		);
+		const action = within(dialog).getByRole("button", {
+			name: zhCN.modelSetup.continue,
+		});
+		expect(action).toHaveAttribute("data-variant", "primary");
+		await user.click(action);
+		expect(enable).toHaveBeenCalledWith("stored-relay", "stored-model", "Stored Relay");
 	});
 
 	it("submits role-package text and choice steps without hardcoded story copy", async () => {
@@ -126,7 +235,12 @@ describe("first meeting journeys", () => {
 				status: "active",
 				currentStepId: "name",
 				eventSeq: 1,
-				stateData: { schema_version: 1, flow_version: 1, answers: {}, decisions: {} },
+				stateData: {
+					schema_version: 1,
+					flow_version: 1,
+					answers: {},
+					decisions: {},
+				},
 			},
 			submitOnboarding: submitText,
 		});
@@ -151,7 +265,13 @@ describe("first meeting journeys", () => {
 								kind: "choice" as const,
 								heading: "Relationship",
 								body: "Choose one",
-								choices: [{ value: "partner", label: "Partner", description: "Work together" }],
+								choices: [
+									{
+										value: "partner",
+										label: "Partner",
+										description: "Work together",
+									},
+								],
 							},
 						],
 					},
@@ -161,7 +281,12 @@ describe("first meeting journeys", () => {
 				status: "active",
 				currentStepId: "relation",
 				eventSeq: 1,
-				stateData: { schema_version: 1, flow_version: 1, answers: {}, decisions: {} },
+				stateData: {
+					schema_version: 1,
+					flow_version: 1,
+					answers: {},
+					decisions: {},
+				},
 			},
 			submitOnboarding: submitChoice,
 		});
@@ -189,13 +314,28 @@ describe("first meeting journeys", () => {
 				list: () => Promise.resolve({ providers: [provider] }),
 				login,
 			} as never,
-			voice: { loading: () => false, activeStackId: () => undefined, pin } as never,
+			model: { loading: () => false, models: () => [], enable: pin } as never,
 		});
-		const dialog = await screen.findByRole("dialog", { name: productUi.modelSetup.dialogLabel });
+		const dialog = await screen.findByRole("dialog", {
+			name: zhCN.modelSetup.dialogLabel,
+		});
+		await user.selectOptions(
+			within(dialog).getByRole("combobox", {
+				name: zhCN.settings.serviceLabel,
+			}),
+			"oauth",
+		);
 		await user.click(
-			within(dialog).getByRole("button", { name: productUi.settings.loginWithBrowser }),
+			within(dialog).getByRole("button", {
+				name: zhCN.settings.loginWithBrowser,
+			}),
 		);
 		expect(login).toHaveBeenCalledWith("oauth");
+		await user.selectOptions(
+			within(dialog).getByRole("combobox", { name: zhCN.modelSetup.modelLabel }),
+			"oauth-model",
+		);
+		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
 		await waitFor(() => expect(pin).toHaveBeenCalledWith("oauth", "oauth-model", "OAuth Provider"));
 	});
 
@@ -213,7 +353,10 @@ describe("first meeting journeys", () => {
 					options: [{ id: "account-1", label: "Account One" }],
 				},
 			})
-			.mockResolvedValueOnce({ providerId: "oauth", status: "completed" as const });
+			.mockResolvedValueOnce({
+				providerId: "oauth",
+				status: "completed" as const,
+			});
 		const loginAnswer = vi.fn(() =>
 			Promise.resolve({ providerId: "oauth", status: "running" as const }),
 		);
@@ -232,14 +375,33 @@ describe("first meeting journeys", () => {
 				login,
 				loginAnswer,
 			} as never,
-			voice: { loading: () => false, activeStackId: () => undefined, pin } as never,
+			model: { loading: () => false, models: () => [], enable: pin } as never,
 		});
-		const dialog = await screen.findByRole("dialog", { name: productUi.modelSetup.dialogLabel });
-		await user.click(
-			within(dialog).getByRole("button", { name: productUi.settings.loginWithBrowser }),
+		const dialog = await screen.findByRole("dialog", {
+			name: zhCN.modelSetup.dialogLabel,
+		});
+		await user.selectOptions(
+			within(dialog).getByRole("combobox", {
+				name: zhCN.settings.serviceLabel,
+			}),
+			"oauth",
 		);
-		await user.click(await screen.findByRole("button", { name: productUi.settings.oauthSubmit }));
+		await user.click(
+			within(dialog).getByRole("button", {
+				name: zhCN.settings.loginWithBrowser,
+			}),
+		);
+		await user.click(
+			await screen.findByRole("button", {
+				name: zhCN.settings.oauthSubmit,
+			}),
+		);
 		expect(loginAnswer).toHaveBeenCalledWith("oauth", "account-1");
+		await user.selectOptions(
+			within(dialog).getByRole("combobox", { name: zhCN.modelSetup.modelLabel }),
+			"oauth-model",
+		);
+		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
 		await waitFor(() => expect(pin).toHaveBeenCalledWith("oauth", "oauth-model", "OAuth Provider"));
 	});
 
@@ -258,13 +420,31 @@ describe("first meeting journeys", () => {
 				providers: () => [provider],
 				list: () => Promise.resolve({ providers: [provider] }),
 				login: () =>
-					Promise.resolve({ providerId: "oauth", status: "failed" as const, message: "Denied" }),
+					Promise.resolve({
+						providerId: "oauth",
+						status: "failed" as const,
+						message: "Denied",
+					}),
 			} as never,
-			voice: { loading: () => false, activeStackId: () => undefined, pin: vi.fn() } as never,
+			model: {
+				loading: () => false,
+				models: () => [],
+				enable: vi.fn(),
+			} as never,
 		});
-		const dialog = await screen.findByRole("dialog", { name: productUi.modelSetup.dialogLabel });
+		const dialog = await screen.findByRole("dialog", {
+			name: zhCN.modelSetup.dialogLabel,
+		});
+		await user.selectOptions(
+			within(dialog).getByRole("combobox", {
+				name: zhCN.settings.serviceLabel,
+			}),
+			"oauth",
+		);
 		await user.click(
-			within(dialog).getByRole("button", { name: productUi.settings.loginWithBrowser }),
+			within(dialog).getByRole("button", {
+				name: zhCN.settings.loginWithBrowser,
+			}),
 		);
 		expect(await screen.findByRole("alert")).toHaveTextContent("Denied");
 	});

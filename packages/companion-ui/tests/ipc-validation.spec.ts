@@ -3,6 +3,7 @@ import {
 	Artifact,
 	CharacterDisplay,
 	Commission,
+	ConfiguredModel,
 	ConversationSummary,
 	MemoryCandidate,
 	MemoryEntry,
@@ -13,7 +14,6 @@ import {
 	Run,
 	SettingsData,
 	StoryChange,
-	VoiceStack,
 } from "@bear-harness/protocol/schema";
 import { describe, expect, it } from "vitest";
 import { THEMED_CHARACTER } from "./fixtures.js";
@@ -34,7 +34,7 @@ const isProviderInfo = guard(ProviderInfo);
 const isRun = guard(Run);
 const isSettingsData = guard(SettingsData);
 const isStoryChange = guard(StoryChange);
-const isVoiceStack = guard(VoiceStack);
+const isConfiguredModel = guard(ConfiguredModel);
 
 const timestamp = "2026-08-16T00:00:00Z";
 const conversation = {
@@ -93,14 +93,11 @@ const provider = {
 	],
 	unavailable: [],
 };
-const voice = {
-	id: "stack-1",
-	companionId: "companion-1",
+const configuredModel = {
 	providerId: "provider-1",
 	modelId: "model-1",
-	revision: 1,
 	label: "Model",
-	active: true,
+	supportsImages: false,
 	createdAt: timestamp,
 };
 const draft = {
@@ -206,17 +203,14 @@ describe("host projection validation", () => {
 			"availableModels",
 		]);
 		expect(isProviderInfo({ ...provider, availableModels: [{ id: "model-1" }] })).toBe(false);
-		expectRequiredFields(isVoiceStack, voice, [
-			"id",
-			"companionId",
+		expectRequiredFields(isConfiguredModel, configuredModel, [
 			"providerId",
 			"modelId",
-			"revision",
 			"label",
-			"active",
+			"supportsImages",
 			"createdAt",
 		]);
-		expect(isVoiceStack({ ...voice, revision: 1.5 })).toBe(false);
+		expect(isConfiguredModel({ ...configuredModel, supportsImages: "yes" })).toBe(false);
 		expectRequiredFields(isActionDraft, draft, [
 			"id",
 			"title",
@@ -250,7 +244,7 @@ describe("host projection validation", () => {
 		expect(isStoryChange({ ...story, branchId: 3 })).toBe(false);
 	});
 
-	it("validates onboarding and fallback routes rather than accepting partial settings", () => {
+	it("validates onboarding and rejects retired model routing settings", () => {
 		const onboarding = {
 			status: "active",
 			currentStepId: "hello",
@@ -269,15 +263,10 @@ describe("host projection validation", () => {
 		expect(isOnboardingData({ ...onboarding, currentStepId: 3 })).toBe(false);
 		expect(isOnboardingData({ ...onboarding, stateData: {} })).toBe(false);
 
-		const settings = {
-			relationshipMemoryEnabled: true,
-			textFallback: { providerId: "provider-1", modelId: "model-1" },
-			multimodalFallback: { providerId: "provider-1", modelId: "vision-1" },
-		};
+		const settings = { relationshipMemoryEnabled: true };
 		expect(isSettingsData(settings)).toBe(true);
 		expect(isSettingsData({ ...settings, relationshipMemoryEnabled: "yes" })).toBe(false);
 		expect(isSettingsData({ ...settings, textFallback: { providerId: "provider-1" } })).toBe(false);
-		expect(isSettingsData({ ...settings, multimodalFallback: null })).toBe(false);
 	});
 
 	it("rejects malformed nested character-package presentation data", () => {

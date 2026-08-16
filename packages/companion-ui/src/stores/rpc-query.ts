@@ -8,7 +8,8 @@ import {
 export const queryKeys = {
 	settings: ["settings"] as const,
 	providers: ["providers"] as const,
-	voice: ["voice"] as const,
+	models: ["models", "active-conversation"] as const,
+	modelPool: ["models", "pool"] as const,
 };
 
 export function createRpcQuery<T>(input: {
@@ -16,12 +17,14 @@ export function createRpcQuery<T>(input: {
 	key: QueryKey;
 	request: () => Promise<T>;
 	initialData?: T;
+	enabled?: boolean;
 }) {
 	return createQuery(
 		() => ({
 			queryKey: input.key,
 			queryFn: input.request,
 			initialData: input.initialData,
+			enabled: input.enabled,
 		}),
 		() => input.client,
 	);

@@ -48,6 +48,10 @@ export function createOnboardingStore(client: CompanionClient): OnboardingStore 
 	};
 
 	const get = (): Promise<OnboardingData> => invoke(client, () => client.onboarding.get());
+	const replace = (value: OnboardingData): void => {
+		setApplied(value);
+		actions.mutate(value);
+	};
 
 	return {
 		data,
@@ -57,13 +61,13 @@ export function createOnboardingStore(client: CompanionClient): OnboardingStore 
 			void actions.refetch();
 		},
 		get,
-		resync: async () => apply(await get()),
+		resync: async () => replace(await get()),
 		submit: async (stepId, answer) => {
 			const result = await invoke(client, () => client.onboarding.submit({ stepId, answer }));
-			apply(result);
+			replace(result);
 		},
 		_hydrate: (value) => {
-			if (value !== undefined) apply(value);
+			if (value !== undefined && applied() === undefined) apply(value);
 		},
 		_applyEvent: (event) => {
 			if (event.kind === "onboarding.state_changed") {

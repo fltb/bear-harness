@@ -1,4 +1,4 @@
-import { productUi } from "@bear-harness/product-config";
+import { zhCN } from "@bear-harness/product-config/locales";
 import { render, screen } from "@solidjs/testing-library";
 import { waitFor } from "@testing-library/dom";
 import userEvent from "@testing-library/user-event";
@@ -7,7 +7,7 @@ import { CompanionApp } from "../src/index.js";
 import { createTestClient, OFFICIAL_PRODUCT } from "./fixtures.js";
 
 /**
- * Regression guard for the relationship-memory switch (幕后 · 系统设置):
+ * Regression guard for the relationship-memory switch (幕后 · 关系档案):
  * the `role=switch` control must stay operable — by mouse click and by
  * keyboard — and every activation must push the patch through the injected
  * client's `settings.set`, after which the UI re-reads the host's canonical
@@ -19,12 +19,12 @@ describe("relationship memory switch", () => {
 		const { client, settingsSet } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		// Open the backstage sheet, then its 系统设置 tab (default is 关系档案).
-		await user.click(await screen.findByRole("button", { name: productUi.titlebar.backstage }));
-		await user.click(await screen.findByRole("tab", { name: productUi.backstage.systemSettings }));
+		// The backstage sheet opens on the character-owned relationship archive.
+		await user.click(await screen.findByRole("button", { name: zhCN.titlebar.backstage }));
+		await user.click(await screen.findByRole("tab", { name: zhCN.backstage.relationshipArchive }));
 
 		const toggle = await screen.findByRole("switch", {
-			name: productUi.settings.relationshipMemory,
+			name: zhCN.settings.relationshipMemory,
 		});
 		// The switch stays disabled until the first settings read resolves.
 		await waitFor(() => expect(toggle).toBeEnabled());
@@ -58,15 +58,15 @@ describe("relationship memory switch", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		await user.click(await screen.findByRole("button", { name: productUi.titlebar.backstage }));
-		await user.click(await screen.findByRole("tab", { name: productUi.backstage.systemSettings }));
+		await user.click(await screen.findByRole("button", { name: zhCN.titlebar.backstage }));
+		await user.click(await screen.findByRole("tab", { name: zhCN.backstage.relationshipArchive }));
 		const toggle = await screen.findByRole("switch", {
-			name: productUi.settings.relationshipMemory,
+			name: zhCN.settings.relationshipMemory,
 		});
 		await waitFor(() => expect(toggle).toBeEnabled());
 		await user.click(toggle);
 
-		expect(await screen.findByRole("alert")).toHaveTextContent(productUi.errors.generic);
+		expect(await screen.findByRole("alert")).toHaveTextContent(zhCN.errors.generic);
 		expect(toggle).toHaveAttribute("aria-checked", "false");
 	});
 });

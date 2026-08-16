@@ -1,5 +1,5 @@
-import { productUi } from "@bear-harness/product-config";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { t } from "./i18n.js";
 import { type CharacterDisplay, useCompanionStore } from "./stores/companion.js";
 
 /**
@@ -63,8 +63,8 @@ export function Sidebar(props: {
 							searchRef = element;
 						}}
 						type="search"
-						aria-label={productUi.sidebar.search}
-						placeholder={productUi.sidebar.search}
+						aria-label={t("sidebar.search")}
+						placeholder={t("sidebar.search")}
 						value={query()}
 						onInput={(event) => setQuery(event.currentTarget.value)}
 					/>
@@ -73,20 +73,20 @@ export function Sidebar(props: {
 				<button
 					type="button"
 					class="new-conversation"
-					aria-label={productUi.sidebar.newConversation}
-					title={productUi.sidebar.newConversation}
+					aria-label={t("sidebar.newConversation")}
+					title={t("sidebar.newConversation")}
 					onClick={() => void store.createConversation()}
 				>
 					＋
 				</button>
 			</div>
 			<div class="nav-scroll">
-				<nav class="nav-list" aria-label={productUi.sidebar.conversations}>
+				<nav class="nav-list" aria-label={t("sidebar.conversations")}>
 					<Show
 						when={visibleConversations().length > 0}
 						fallback={
 							<div class="conversations-empty" role="note">
-								{productUi.sidebar.emptyConversations}
+								{t("sidebar.emptyConversations")}
 							</div>
 						}
 					>
@@ -106,11 +106,13 @@ export function Sidebar(props: {
 												}}
 											>
 												<input
-													aria-label={productUi.sidebar.renameConversation}
+													aria-label={t("sidebar.renameConversation")}
 													value={editingTitle()}
 													onInput={(event) => setEditingTitle(event.currentTarget.value)}
 												/>
-												<button type="submit">{productUi.sidebar.saveConversation}</button>
+												<button data-control="command" type="submit">
+													{t("sidebar.saveConversation")}
+												</button>
 											</form>
 										}
 									>
@@ -128,15 +130,16 @@ export function Sidebar(props: {
 												<span
 													class="unread-dot"
 													role="img"
-													aria-label={productUi.sidebar.unreadMessage}
+													aria-label={t("sidebar.unreadMessage")}
 												/>
 											</Show>
 										</button>
 										<div class="conversation-actions">
 											<button
+												data-control="command"
 												type="button"
-												title={productUi.sidebar.renameConversation}
-												aria-label={productUi.sidebar.renameConversation}
+												title={t("sidebar.renameConversation")}
+												aria-label={t("sidebar.renameConversation")}
 												onClick={() => {
 													setEditingTitle(conversation.title);
 													setEditingId(conversation.id);
@@ -145,19 +148,21 @@ export function Sidebar(props: {
 												✎
 											</button>
 											<button
+												data-control="command"
 												type="button"
-												title={productUi.sidebar.archiveConversation}
-												aria-label={productUi.sidebar.archiveConversation}
+												title={t("sidebar.archiveConversation")}
+												aria-label={t("sidebar.archiveConversation")}
 												onClick={() => void store.archiveConversation(conversation.id)}
 											>
 												⌑
 											</button>
 											<button
+												data-control="command"
 												type="button"
-												title={productUi.sidebar.deleteConversation}
-												aria-label={productUi.sidebar.deleteConversation}
+												title={t("sidebar.deleteConversation")}
+												aria-label={t("sidebar.deleteConversation")}
 												onClick={() => {
-													if (window.confirm(productUi.sidebar.deleteConversationConfirm))
+													if (window.confirm(t("sidebar.deleteConversationConfirm")))
 														void store.deleteConversation(conversation.id);
 												}}
 											>
@@ -171,12 +176,12 @@ export function Sidebar(props: {
 					</Show>
 				</nav>
 				<div class="system-section">
-					<div class="section-label">{productUi.sidebar.application}</div>
+					<div class="section-label">{t("sidebar.application")}</div>
 					<button type="button" class="system-nav" onClick={() => props.onOpenBackstage("roles")}>
 						<span class="gear" aria-hidden="true">
 							◇
 						</span>
-						{productUi.sidebar.characterSettings}
+						{t("sidebar.characterSettings")}
 					</button>
 					<button
 						type="button"
@@ -186,7 +191,7 @@ export function Sidebar(props: {
 						<span class="gear" aria-hidden="true">
 							⚙
 						</span>
-						{productUi.sidebar.systemSettings}
+						{t("sidebar.systemSettings")}
 					</button>
 				</div>
 			</div>

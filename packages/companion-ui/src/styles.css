@@ -69,6 +69,22 @@ button:disabled {
 	opacity: 0.6;
 }
 
+button[data-control="command"] {
+	min-height: 34px;
+	padding: 7px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--surface-alt);
+	color: var(--text);
+	font: inherit;
+	cursor: pointer;
+}
+
+button[data-control="command"]:hover:not(:disabled),
+button[data-control="command"]:focus-visible {
+	border-color: var(--accent);
+}
+
 .material-picker {
 	display: none;
 }
@@ -405,6 +421,20 @@ button:disabled {
 	@apply mt-6 grid gap-4 border-t border-line pt-5;
 }
 
+.settings-group-heading {
+	@apply grid gap-1 border-t pt-5;
+	border-color: var(--line);
+}
+
+.settings-group-heading:first-child {
+	@apply border-t-0 pt-0;
+}
+
+.settings-group-heading h3 {
+	@apply m-0 text-[15px] font-semibold;
+	letter-spacing: 0;
+}
+
 .model-section-title {
 	@apply m-0 text-[15px] font-semibold;
 	--semantic-fg-role: default;
@@ -480,6 +510,29 @@ button:disabled {
 .provider-status[data-connected="true"] {
 	--semantic-fg-role: accent;
 	color: var(--semantic-role-accent);
+}
+
+.model-pool-list {
+	display: grid;
+	gap: 8px;
+}
+
+.model-pool-item {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto auto;
+	align-items: center;
+	gap: 10px;
+	min-height: 40px;
+	border-bottom: 1px solid var(--line);
+	padding: 6px 0;
+}
+
+.model-pool-item button[data-semantic="danger"] {
+	--semantic-fg-role: danger;
+	border: 0;
+	padding: 6px;
+	color: var(--semantic-role-danger);
+	background: transparent;
 }
 
 .advanced-toggle {
@@ -706,6 +759,21 @@ button:disabled {
 
 .composer textarea {
 	@apply min-h-[42px] resize-none border-0 bg-transparent px-1 py-[10px] text-ink outline-0;
+}
+
+.composer-model {
+	grid-column: 1 / -1;
+	display: flex;
+}
+
+.composer-model select {
+	max-width: min(280px, 100%);
+	min-height: 32px;
+	border: 0;
+	padding: 4px 8px;
+	color: var(--ink);
+	background: transparent;
+	font-size: 12px;
 }
 
 .circle {
@@ -1235,22 +1303,31 @@ button:disabled {
 	margin-top: 17px;
 }
 
-.intro-actions .primary {
+.intro button[data-variant="primary"] {
 	min-height: 37px;
 	border: 0;
-	border-radius: 11px;
+	border-radius: 6px;
 	padding: 0 14px;
 	color: white;
 	background: #285b57;
 	font-weight: 750;
 }
 
-.intro-actions .primary:hover:not(:disabled) {
+.intro button[data-variant="primary"]:hover:not(:disabled) {
 	background: #336b66;
 }
 
-.intro-actions .primary:disabled {
+.intro button[data-variant="primary"]:disabled {
 	opacity: 0.5;
+}
+
+.intro button[data-variant="secondary"] {
+	min-height: 34px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	padding: 0 12px;
+	color: var(--text);
+	background: var(--surface-alt);
 }
 
 .intro-error {

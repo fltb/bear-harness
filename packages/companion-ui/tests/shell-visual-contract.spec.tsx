@@ -1,4 +1,4 @@
-import { productUi } from "@bear-harness/product-config";
+import { zhCN } from "@bear-harness/product-config/locales";
 import { render, screen } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -18,13 +18,11 @@ describe("shell visual and titlebar contracts", () => {
 		));
 		const queue = screen.getByRole("button", { name: /0/ });
 		await user.click(queue);
-		expect(screen.getByRole("menu", { name: productUi.titlebar.runningWork })).toHaveTextContent(
-			productUi.titlebar.noRunningWork,
+		expect(screen.getByRole("menu", { name: zhCN.titlebar.runningWork })).toHaveTextContent(
+			zhCN.titlebar.noRunningWork,
 		);
 		await user.click(queue);
-		expect(
-			screen.queryByRole("menu", { name: productUi.titlebar.runningWork }),
-		).not.toBeInTheDocument();
+		expect(screen.queryByRole("menu", { name: zhCN.titlebar.runningWork })).not.toBeInTheDocument();
 	});
 
 	it("opens the active-run menu, maps status text, closes with Escape, and opens backstage", async () => {
@@ -55,14 +53,12 @@ describe("shell visual and titlebar contracts", () => {
 		expect(screen.getByRole("heading", { name: "Scene title" })).toBeVisible();
 		const queueButton = screen.getByRole("button", { name: /1/ });
 		await user.click(queueButton);
-		expect(screen.getByRole("menu", { name: productUi.titlebar.runningWork })).toHaveTextContent(
-			productUi.titlebar.runStatuses.needs_user,
+		expect(screen.getByRole("menu", { name: zhCN.titlebar.runningWork })).toHaveTextContent(
+			zhCN.titlebar.runStatuses.needs_user,
 		);
 		await user.keyboard("{Escape}");
-		expect(
-			screen.queryByRole("menu", { name: productUi.titlebar.runningWork }),
-		).not.toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: productUi.titlebar.backstage }));
+		expect(screen.queryByRole("menu", { name: zhCN.titlebar.runningWork })).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: zhCN.titlebar.backstage }));
 		expect(onOpenBackstage).toHaveBeenCalledOnce();
 	});
 

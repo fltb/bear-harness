@@ -1,4 +1,4 @@
-import { productUi } from "@bear-harness/product-config";
+import { zhCN } from "@bear-harness/product-config/locales";
 import { render, screen, waitFor } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -15,25 +15,40 @@ const COMPLETE_ONBOARDING = {
 
 function activeClient() {
 	const fixture = createTestClient();
+	fixture.client.model.list = vi.fn(() =>
+		Promise.resolve({
+			ok: true as const,
+			data: {
+				models: [
+					{
+						providerId: "e2e-rule",
+						modelId: "rule-model",
+						label: "E2E Rule Provider",
+						supportsImages: false,
+						createdAt: "2026-01-01T00:00:00.000Z",
+					},
+				],
+				selected: { providerId: "e2e-rule", modelId: "rule-model" },
+			},
+		}),
+	);
 	fixture.client.snapshot.get = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
 			data: {
 				eventSeq: 0,
 				onboarding: COMPLETE_ONBOARDING,
-				voice: {
-					stacks: [
+				model: {
+					models: [
 						{
-							id: "primary-stack",
-							companionId: "test-character",
 							providerId: "e2e-rule",
 							modelId: "rule-model",
-							revision: 1,
 							label: "E2E Rule Provider",
-							active: true,
+							supportsImages: false,
 							createdAt: "2026-01-01T00:00:00.000Z",
 						},
 					],
+					selected: { providerId: "e2e-rule", modelId: "rule-model" },
 				},
 				conversation: {
 					activeConversationId: "conversation-1",
@@ -71,14 +86,14 @@ describe("optimistic and streaming chat", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		const composer = await screen.findByRole("textbox", {
-			name: productUi.composer.messageInputLabel,
+			name: zhCN.composer.messageInputLabel,
 		});
 		await waitFor(() => expect(composer).toBeEnabled());
 		await user.type(composer, "你是谁？");
-		await user.click(screen.getByRole("button", { name: productUi.composer.sendLabel }));
+		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
 
 		expect(screen.getByText("你是谁？")).toBeInTheDocument();
-		expect(screen.getByRole("status", { name: productUi.messages.responding })).toBeInTheDocument();
+		expect(screen.getByRole("status", { name: zhCN.messages.responding })).toBeInTheDocument();
 		resolveSend?.({ ok: true, data: { messageId: "user-message-1" } });
 	});
 
@@ -169,10 +184,10 @@ describe("optimistic and streaming chat", () => {
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		await screen.findByRole("button", { name: productUi.messages.continue });
+		await screen.findByRole("button", { name: zhCN.messages.continue });
 		await waitFor(() => expect(screen.getAllByText(STREAMED_REPLY)).toHaveLength(1));
 		expect(
-			screen.queryByRole("status", { name: productUi.messages.responding }),
+			screen.queryByRole("status", { name: zhCN.messages.responding }),
 		).not.toBeInTheDocument();
 		expect(client.snapshot.get).toHaveBeenCalled();
 	});
