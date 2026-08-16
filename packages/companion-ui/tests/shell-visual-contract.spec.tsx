@@ -67,11 +67,11 @@ describe("shell visual and titlebar contracts", () => {
 			...THEMED_CHARACTER,
 			visual: {
 				...THEMED_CHARACTER.visual,
-				presence: {
+				expressions: {
 					thinking: "data:image/png;base64,dGhpbmtpbmc=",
 					custom: "data:image/png;base64,Y3VzdG9t",
 				},
-				stateLabels: { thinking: "Thinking", custom: "Custom expression" },
+				expressionLabels: { thinking: "Thinking", custom: "Custom expression" },
 			},
 		};
 		render(() => (

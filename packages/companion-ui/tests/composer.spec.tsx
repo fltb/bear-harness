@@ -272,6 +272,52 @@ describe("composer", () => {
 			}),
 		);
 	});
+
+	it("inlines text attachments into the message without creating image input", async () => {
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		configureSelectedModel(client);
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					onboarding: COMPLETE_ONBOARDING,
+					conversation: { activeConversationId: "conversation-1" },
+				},
+			}),
+		);
+		client.onboarding.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const note = new File(["原始内容"], "note.md", { type: "text/markdown" });
+		Object.defineProperty(note, "text", { value: () => Promise.resolve("原始内容") });
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toBeEnabled(),
+		);
+		const picker = screen.getByLabelText(zhCN.composer.attachLabel, { selector: "input" });
+		if (!(picker instanceof HTMLInputElement)) throw new Error("composer file picker missing");
+		fireEvent.change(picker, { target: { files: [note] } });
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toHaveTextContent(
+				"1",
+			),
+		);
+		await user.type(
+			screen.getByRole("textbox", { name: zhCN.composer.messageInputLabel }),
+			"请阅读",
+		);
+		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
+
+		await waitFor(() =>
+			expect(client.message.send).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				text: "请阅读\n\n[材料：note.md]\n原始内容",
+				attachments: undefined,
+			}),
+		);
+	});
 	it("submits trimmed text to the active conversation and clears only after dispatch", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
@@ -387,5 +433,37 @@ describe("composer", () => {
 		expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toHaveTextContent("＋");
 		expect(screen.getByRole("button", { name: zhCN.composer.sendLabel })).toBeDisabled();
 		expect(messageSend).not.toHaveBeenCalled();
+	});
+
+	it("reports a browser file-read failure without sending a message", async () => {
+		const { client } = createTestClient();
+		configureSelectedModel(client);
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					onboarding: COMPLETE_ONBOARDING,
+					conversation: { activeConversationId: "conversation-1" },
+				},
+			}),
+		);
+		client.onboarding.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toBeEnabled(),
+		);
+		const picker = screen.getByLabelText(zhCN.composer.attachLabel, { selector: "input" });
+		if (!(picker instanceof HTMLInputElement)) throw new Error("composer file picker missing");
+		const unreadable = new File(["content"], "locked.txt", { type: "text/plain" });
+		Object.defineProperty(unreadable, "text", {
+			value: () => Promise.reject(new Error("无法读取 locked.txt")),
+		});
+		fireEvent.change(picker, { target: { files: [unreadable] } });
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("无法读取 locked.txt");
+		expect(client.message.send).not.toHaveBeenCalled();
 	});
 });

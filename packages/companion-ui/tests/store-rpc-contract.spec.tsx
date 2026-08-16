@@ -57,6 +57,19 @@ describe("store RPC contract", () => {
 		try {
 			await store.model.enable("relay", "fast", "Fast");
 			await store.model.list();
+			client.conversation.create = vi.fn(() =>
+				Promise.resolve({ ok: true as const, data: { id: "conversation-new" } }),
+			);
+			client.model.routeGet = vi.fn(({ conversationId }) =>
+				Promise.resolve({
+					ok: true as const,
+					data: {
+						conversationId,
+						selected: { providerId: "relay", modelId: "fast" },
+					},
+				}),
+			);
+			await store.createConversation("New conversation");
 			await waitFor(() =>
 				expect(store.model.data().defaults.reply).toEqual({
 					providerId: "relay",
@@ -67,10 +80,12 @@ describe("store RPC contract", () => {
 				ok: true,
 				data: {
 					eventSeq: 1,
+					conversation: { activeConversationId: "conversation-old", messages: [] },
 					model: { pool: { models: [] }, defaults: { vision: { mode: "auto" } } },
 				},
 			});
 			await waitFor(() => expect(store.snapshot.eventSeq()).toBe(1));
+			expect(store.activeConversationId).toBe("conversation-new");
 			expect(store.model.models()).toEqual([configured]);
 			expect(store.model.data().defaults.reply).toEqual({
 				providerId: "relay",
@@ -81,7 +96,7 @@ describe("store RPC contract", () => {
 		}
 	});
 
-	it("keeps the active conversation route when settings reads the unscoped model pool", async () => {
+	it("keeps scoped routes and loads the Host-applied default after creating a conversation", async () => {
 		const { client } = createTestClient();
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
@@ -110,12 +125,15 @@ describe("store RPC contract", () => {
 				},
 			}),
 		);
-		client.model.routeGet = vi.fn(() =>
+		client.model.routeGet = vi.fn(({ conversationId }) =>
 			Promise.resolve({
 				ok: true as const,
 				data: {
-					conversationId: "conversation-1",
-					selected: { providerId: "relay", modelId: "fast" },
+					conversationId,
+					selected:
+						conversationId === "conversation-2"
+							? { providerId: "e2e-rule", modelId: "rule-model" }
+							: { providerId: "relay", modelId: "fast" },
 				},
 			}),
 		);
@@ -128,7 +146,8 @@ describe("store RPC contract", () => {
 				Promise.resolve({ ok: true as const, data: { id: "conversation-2" } }),
 			);
 			await store.createConversation("New conversation");
-			expect(store.model.selectedValue()).toBe("");
+			expect(store.model.selectedValue()).toBe("e2e-rule:rule-model");
+			expect(client.model.routeGet).toHaveBeenCalledWith({ conversationId: "conversation-2" });
 		} finally {
 			dispose();
 		}
@@ -285,7 +304,7 @@ describe("store RPC contract", () => {
 			expect(client.story.applyChange).toHaveBeenCalledWith({
 				text: "AU change",
 				scope: "branch",
-				conversationId: "conversation-1",
+				conversationId: undefined,
 				branchId: undefined,
 			});
 			expect(client.canon.upsertModule).toHaveBeenCalled();
@@ -301,7 +320,22 @@ describe("store RPC contract", () => {
 	it("merges domain events and invalidates every affected projection", async () => {
 		const { client } = createTestClient();
 		client.snapshot.get = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { eventSeq: 0, conversation: { messages: [] } } }),
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					conversation: { activeConversationId: "conversation-1", messages: [] },
+				},
+			}),
+		);
+		client.model.routeGet = vi.fn(({ conversationId }) =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					conversationId,
+					selected: { providerId: "e2e-rule", modelId: "rule-model" },
+				},
+			}),
 		);
 		let subscription = 0;
 		client.events.subscribe = vi.fn(() => {
@@ -344,7 +378,10 @@ describe("store RPC contract", () => {
 		});
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
-			await waitFor(() => expect(store.activeConversationId).toBe("conversation-2"));
+			await waitFor(() => expect(store.activeConversationId).toBe("conversation-1"));
+			await waitFor(() => expect(client.conversation.list).toHaveBeenCalled());
+			expect(store.activeConversationId).toBe("conversation-1");
+			expect(client.model.routeGet).not.toHaveBeenCalledWith({ conversationId: "conversation-2" });
 			expect(store.characterRuntimeByConversation["conversation-2"]).toEqual({
 				sceneId: "room",
 				visualState: "thinking",

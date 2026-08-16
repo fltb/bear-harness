@@ -1,0 +1,17 @@
+version: 1
+language: zh-CN
+
+# 极昼是原创默认角色，目前没有外部原作正文。空 sources 是有效状态，
+# Host 必须明确返回“没有可引用原文”，不能用角色自述伪造原作证据。
+sources: []
+entities: []
+modules:
+  - id: original_root
+    kind: root
+    title: 原作资料
+    summary: 当前角色没有外部原作正文；角色自身经历由 character.yaml 与角色扮演事件维护。
+    triggers:
+      - 原作
+      - 原剧情
+      - 原文
+    bindings: []

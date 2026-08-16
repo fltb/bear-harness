@@ -70,6 +70,16 @@ export const zhTW = {
 		"identitySuffix": "是誰",
 		"identityNote": "這份自我設定隨產品版本鎖定；普通對話和現實工作都不能改寫它。",
 		"relationshipMemories": "已確認的關係記憶",
+		"roleplayStatus": "關係狀態",
+		"collections": "收藏與回放",
+		"collectionsEmpty": "還沒有解鎖的回憶、CG、音樂或影像。",
+		"collectionKinds": {
+			"cg": "CG",
+			"memory": "回憶",
+			"music": "音樂",
+			"video": "影像",
+			"achievement": "成就"
+		},
 		"storyOriginal": "原作設定保持不變。這裡記錄你們在當前故事中確認的變化。",
 		"storyEmpty": "當前故事還沒有偏離原作的變化。",
 		"storyAddPlaceholder": "寫下一條已經確定的故事變化…",
@@ -99,6 +109,7 @@ export const zhTW = {
 		"invokeHost": "呼叫真實 Host"
 	},
 	"messages": {
+		"closeMedia": "關閉",
 		"justNow": "剛剛",
 		"noActiveConversationError": "還沒有選中對話",
 		"userMeta": "你 · 剛剛",
@@ -270,6 +281,8 @@ export const zhTW = {
 		"sourceText": "貼上原文或設定資料…",
 		"addSource": "加入資料庫",
 		"chunks": "個片段",
+		"packageManaged": "角色包提供 · 只讀",
+		"sourceLanguage": "資料語言：{{language}}",
 		"remove": "移除",
 		"removeConfirm": "移除這份原作資料及其檢索片段？",
 		"search": "檢索與引用",

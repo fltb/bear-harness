@@ -331,6 +331,109 @@ function RelationshipArchive(props: { character: CharacterDisplay | undefined })
 				)}
 			</Show>
 			<MemoryEntryList scope="relationship" title={t("backstage.relationshipMemories")} />
+			<RoleplayArchive character={props.character} />
 		</div>
 	);
+}
+
+function RoleplayArchive(props: { character: CharacterDisplay | undefined }) {
+	const [t] = useTranslation(undefined, { i18n });
+	const store = useCompanionStore();
+	const visibleVariables = () =>
+		props.character?.roleplay.variables.filter((variable) => variable.display.kind !== "hidden") ??
+		[];
+	const unlocked = () => new Set(store.roleplay?.unlocked ?? []);
+	const collections = () =>
+		props.character?.roleplay.unlockables.filter((entry) => unlocked().has(entry.id)) ?? [];
+	const media = (id: string | undefined) =>
+		props.character?.roleplay.media.find((entry) => entry.id === id);
+	const displayValue = (variable: CharacterDisplay["roleplay"]["variables"][number]): string => {
+		const value = store.roleplay?.values[variable.id] ?? variable.initial;
+		if (variable.display.kind !== "level" || typeof value !== "number") return String(value);
+		return (
+			[...variable.display.levels]
+				.sort((left, right) => right.min - left.min)
+				.find((level) => value >= level.min)?.label ?? String(value)
+		);
+	};
+	return (
+		<Tabs defaultValue="status" class="roleplay-archive">
+			<Tabs.List aria-label={t("backstage.collections")} class="sub-tabs">
+				<Tabs.Trigger value="status" class="tab">
+					{t("backstage.roleplayStatus")}
+				</Tabs.Trigger>
+				<Tabs.Trigger value="collections" class="tab">
+					{t("backstage.collections")}
+				</Tabs.Trigger>
+			</Tabs.List>
+			<Tabs.Content value="status" class="tab-panel">
+				<div class="roleplay-status-list">
+					<For each={visibleVariables()}>
+						{(variable) => (
+							<div class="roleplay-status-row">
+								<span>
+									{variable.display.kind === "hidden" ? variable.id : variable.display.label}
+								</span>
+								<strong>{displayValue(variable)}</strong>
+							</div>
+						)}
+					</For>
+				</div>
+			</Tabs.Content>
+			<Tabs.Content value="collections" class="tab-panel">
+				<Show
+					when={collections().length > 0}
+					fallback={<p class="drawer-note">{t("backstage.collectionsEmpty")}</p>}
+				>
+					<div class="collection-grid">
+						<For each={collections()}>
+							{(entry) => {
+								const asset = () => media(entry.media);
+								return (
+									<article class="collection-item">
+										<Show when={asset()}>{(item) => <RoleplayMedia media={item()} />}</Show>
+										<span class="collection-kind">
+											{t(`backstage.collectionKinds.${entry.kind}`)}
+										</span>
+										<strong>{entry.label}</strong>
+										<p>{entry.description}</p>
+									</article>
+								);
+							}}
+						</For>
+					</div>
+				</Show>
+			</Tabs.Content>
+		</Tabs>
+	);
+}
+
+function RoleplayMedia(props: { media: CharacterDisplay["roleplay"]["media"][number] }) {
+	if (props.media.kind === "audio")
+		return (
+			<audio controls preload="metadata" src={props.media.url} aria-label={props.media.label}>
+				<track kind="captions" src={props.media.captionsUrl} srclang="und" default />
+			</audio>
+		);
+	if (props.media.kind === "video")
+		return (
+			<video
+				controls
+				preload="metadata"
+				poster={props.media.posterUrl}
+				src={props.media.url}
+				aria-label={props.media.label}
+			>
+				<track kind="captions" src={props.media.captionsUrl} srclang="und" default />
+			</video>
+		);
+	return <img loading="lazy" src={roleplayImageUrl(props.media)} alt={props.media.label} />;
+}
+
+function roleplayImageUrl(media: CharacterDisplay["roleplay"]["media"][number]): string {
+	return media.kind === "animation" &&
+		media.posterUrl &&
+		window.matchMedia("(prefers-reduced-motion: reduce)").matches
+		? media.posterUrl
+		: media.url;
 }

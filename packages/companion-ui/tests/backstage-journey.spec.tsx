@@ -130,4 +130,70 @@ describe("ordinary-user backstage journey", () => {
 		await user.click(within(systemDialog).getByRole("button", { name: zhCN.backstage.close }));
 		expect(closeSystemSettings).toHaveBeenCalledOnce();
 	});
+
+	it("shows package-defined relationship levels and only unlocked collection media", async () => {
+		const user = userEvent.setup();
+		const character = {
+			...THEMED_CHARACTER,
+			roleplay: {
+				variables: [
+					{
+						id: "trust",
+						type: "number" as const,
+						scope: "relationship" as const,
+						initial: 0,
+						display: {
+							kind: "level" as const,
+							label: "信任",
+							levels: [
+								{ min: 0, label: "谨慎相识" },
+								{ min: 3, label: "彼此守望" },
+							],
+						},
+					},
+				],
+				media: [
+					{
+						id: "night",
+						kind: "animation" as const,
+						label: "极光信号",
+						loop: true,
+						url: "data:image/webp;base64,UklGRg==",
+					},
+				],
+				unlockables: [
+					{
+						id: "night_memory",
+						kind: "cg" as const,
+						label: "第一夜",
+						description: "门后的信号",
+						media: "night",
+					},
+					{ id: "locked", kind: "memory" as const, label: "未解锁", description: "不可见" },
+				],
+				choice_sets: [],
+			},
+		};
+		const store = {
+			roleplay: { values: { trust: 4 }, unlocked: ["night_memory"] },
+			memory: { search: vi.fn(() => Promise.resolve([])) },
+			settings: { data: () => ({ relationshipMemoryEnabled: false }), get: vi.fn() },
+			characters: { characters: () => [], activate: vi.fn() },
+		} as unknown as CompanionStore;
+		render(() => (
+			<DesktopProvider store={store}>
+				<Backstage open onClose={() => undefined} character={character} />
+			</DesktopProvider>
+		));
+		const dialog = await screen.findByRole("dialog", { name: zhCN.backstage.title });
+		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.relationshipArchive }));
+		expect(within(dialog).getByText("彼此守望")).toBeVisible();
+		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.collections }));
+		expect(within(dialog).getByText("第一夜")).toBeVisible();
+		expect(within(dialog).queryByText("未解锁")).not.toBeInTheDocument();
+		expect(within(dialog).getByRole("img", { name: "极光信号" })).toHaveAttribute(
+			"src",
+			expect.stringMatching(/^data:image\/webp/),
+		);
+	});
 });

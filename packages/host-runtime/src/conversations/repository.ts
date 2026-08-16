@@ -58,7 +58,7 @@ export class ConversationRepository {
 			})
 			.from(conversations)
 			.where(and(eq(conversations.companionId, companionId), isNull(conversations.archivedAt)))
-			.orderBy(desc(conversations.updatedAt))
+			.orderBy(desc(conversations.updatedAt), sql`conversations.rowid desc`)
 			.limit(100)
 			.all()
 			.map((row) => ({ ...row, unread: false as const }));

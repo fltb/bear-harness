@@ -147,7 +147,13 @@ describe("in-process Companion Host bridge", () => {
 		const session = await waitForSession(runtime);
 
 		expect(session.getActiveToolNames()).toEqual(
-			expect.arrayContaining(["read", "host_get_state", "host_set_scene", "host_set_expression"]),
+			expect.arrayContaining([
+				"read",
+				"host_get_state",
+				"host_set_scene",
+				"host_set_expression",
+				"host_search_canon",
+			]),
 		);
 		expect(session.getActiveToolNames()).not.toEqual(
 			expect.arrayContaining(["bash", "edit", "write"]),
@@ -170,11 +176,20 @@ describe("in-process Companion Host bridge", () => {
 			{ sceneId: "snow_plains" },
 		]);
 		expect(toolResult).toMatchObject({ details: { ok: true } });
+		const canonTool = session.getToolDefinition("host_search_canon");
+		expect(canonTool).toBeDefined();
+		if (!canonTool) throw new Error("host_search_canon was not registered");
+		await Reflect.apply(canonTool.execute, canonTool, ["tool-call-2", { query: "旧极光站" }]);
 		expect(hostCalls).toEqual([
 			{
 				conversationId: "conversation-2",
 				tool: "host_set_scene",
 				args: { sceneId: "snow_plains" },
+			},
+			{
+				conversationId: "conversation-2",
+				tool: "host_search_canon",
+				args: { query: "旧极光站" },
 			},
 		]);
 		await runtime.stop();

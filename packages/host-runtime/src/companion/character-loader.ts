@@ -27,6 +27,11 @@ import { dirname, extname, isAbsolute, join, posix, relative, resolve } from "no
 import { z } from "@bear-harness/schema";
 import { eq, sql } from "drizzle-orm";
 import { parse } from "yaml";
+import {
+	CanonPackageManifestSchema,
+	type LoadedCanonPackage,
+	validateCanonManifest,
+} from "../canon/package-schema.js";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
 import {
@@ -39,6 +44,11 @@ import {
 	type CharacterOnboardingFlow,
 	validateCharacterOnboardingFlow,
 } from "./onboarding-schema.js";
+import {
+	type RoleplayDefinition,
+	RoleplaySchema,
+	roleplayAssetExtensions,
+} from "./roleplay-schema.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -73,22 +83,21 @@ export interface ScenePreset {
 	label: string;
 	background: string | null;
 	description: string;
+	use_when: string;
 }
 
-export interface VisualStateEntry {
+export interface CharacterExpression {
 	id: string;
 	label: string;
-}
-
-export interface VisualState {
-	required: VisualStateEntry[];
-	optional: VisualStateEntry[];
+	asset: string;
+	use_when: string;
 }
 
 export interface CharacterVisuals {
 	default_scene: string;
+	default_expression: string;
 	avatar: string;
-	presence: Record<string, string>;
+	expressions: CharacterExpression[];
 }
 
 export interface HostEventReaction {
@@ -118,10 +127,11 @@ export interface CharacterPackage {
 	identity_core: string;
 	self_canon: string;
 	scenes: ScenePreset[];
-	visual_states: VisualState;
 	visual: CharacterVisuals;
 	host: CharacterHostBehavior;
 	companion: CharacterCompanionConfiguration;
+	roleplay: RoleplayDefinition;
+	canon: LoadedCanonPackage;
 }
 
 export interface CharacterDisplay {
@@ -138,9 +148,22 @@ export interface CharacterDisplay {
 	}>;
 	visual: {
 		defaultSceneId: string;
+		defaultExpressionId: string;
 		avatarUrl: string;
-		presence: Record<string, string>;
-		stateLabels: Record<string, string>;
+		expressions: Record<string, string>;
+		expressionLabels: Record<string, string>;
+	};
+	roleplay: {
+		variables: RoleplayDefinition["variables"];
+		media: Array<
+			Omit<RoleplayDefinition["media"][number], "asset" | "poster" | "captions"> & {
+				url: string;
+				posterUrl?: string;
+				captionsUrl?: string;
+			}
+		>;
+		unlockables: RoleplayDefinition["unlockables"];
+		choice_sets: RoleplayDefinition["choice_sets"];
 	};
 }
 
@@ -157,14 +180,6 @@ export interface CharacterSummary {
 // Loader
 // ---------------------------------------------------------------------------
 
-const PRESENCE_ASSET_KEYS = [
-	"presence",
-	"listening",
-	"thinking",
-	"needs_user",
-	"result_ready",
-	"problem",
-] as const;
 const IMAGE_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
 	".avif": "image/avif",
 	".gif": "image/gif",
@@ -173,6 +188,19 @@ const IMAGE_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
 	".png": "image/png",
 	".svg": "image/svg+xml",
 	".webp": "image/webp",
+};
+const MEDIA_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+	...IMAGE_MIME_BY_EXTENSION,
+	".apng": "image/apng",
+	".flac": "audio/flac",
+	".m4a": "audio/mp4",
+	".mp3": "audio/mpeg",
+	".ogg": "audio/ogg",
+	".wav": "audio/wav",
+	".mp4": "video/mp4",
+	".ogv": "video/ogg",
+	".webm": "video/webm",
+	".vtt": "text/vtt",
 };
 
 const LanguageTagSchema = z
@@ -330,7 +358,7 @@ export class CharacterLoader {
 	 * filesystem-to-renderer asset boundary: callers receive no file path.
 	 */
 	private characterAssetDataUrl(characterId: string, assetPath: string): string {
-		const mime = IMAGE_MIME_BY_EXTENSION[extname(assetPath).toLowerCase()];
+		const mime = MEDIA_MIME_BY_EXTENSION[extname(assetPath).toLowerCase()];
 		if (!mime) {
 			throw new Error(`character package ${characterId}: unsupported image asset: ${assetPath}`);
 		}
@@ -358,27 +386,47 @@ export class CharacterLoader {
 		if (
 			!parsed.visual ||
 			typeof parsed.visual.default_scene !== "string" ||
+			typeof parsed.visual.default_expression !== "string" ||
 			typeof parsed.visual.avatar !== "string" ||
-			!parsed.visual.presence ||
-			typeof parsed.visual.presence !== "object"
+			!Array.isArray(parsed.visual.expressions) ||
+			parsed.visual.expressions.length === 0
 		) {
 			throw new Error(
-				`character package ${id}: visual.default_scene, visual.avatar and visual.presence are required`,
+				`character package ${id}: visual.default_scene, visual.default_expression, visual.avatar and visual.expressions are required`,
 			);
 		}
 		if (!parsed.scenes.some((scene) => scene.id === parsed.visual.default_scene)) {
 			throw new Error(`character package ${id}: visual.default_scene is not a declared scene`);
 		}
 		this.ensureImageAsset(id, parsed.visual.avatar);
-		for (const state of PRESENCE_ASSET_KEYS) {
-			const assetPath = parsed.visual.presence[state];
-			if (typeof assetPath !== "string") {
-				throw new Error(`character package ${id}: visual.presence.${state} is required`);
+		const expressionIds = new Set<string>();
+		for (const expression of parsed.visual.expressions) {
+			if (
+				!expression ||
+				typeof expression.id !== "string" ||
+				!/^[a-z][a-z0-9_]*$/.test(expression.id) ||
+				typeof expression.label !== "string" ||
+				typeof expression.asset !== "string" ||
+				typeof expression.use_when !== "string" ||
+				!expression.use_when.trim() ||
+				expressionIds.has(expression.id)
+			) {
+				throw new Error(`character package ${id}: invalid or duplicate visual expression`);
 			}
-			this.ensureImageAsset(id, assetPath);
+			expressionIds.add(expression.id);
+			this.ensureImageAsset(id, expression.asset);
 		}
+		if (!expressionIds.has(parsed.visual.default_expression))
+			throw new Error(`character package ${id}: visual.default_expression is not declared`);
 		for (const scene of parsed.scenes) {
-			if (!scene || typeof scene.id !== "string" || typeof scene.label !== "string") {
+			if (
+				!scene ||
+				typeof scene.id !== "string" ||
+				typeof scene.label !== "string" ||
+				typeof scene.description !== "string" ||
+				typeof scene.use_when !== "string" ||
+				!scene.use_when.trim()
+			) {
 				throw new Error(`character package ${id}: invalid scene`);
 			}
 			if (scene.background !== null) {
@@ -399,10 +447,7 @@ export class CharacterLoader {
 				`character package ${id}: host reactions and companion.pi configuration are required`,
 			);
 		}
-		const validStates = new Set([
-			...parsed.visual_states.required.map((state) => state.id),
-			...parsed.visual_states.optional.map((state) => state.id),
-		]);
+		const validStates = expressionIds;
 		const reactionEvents = new Set<string>();
 		for (const reaction of parsed.host.event_reactions) {
 			if (
@@ -410,14 +455,111 @@ export class CharacterLoader {
 				typeof reaction.event !== "string" ||
 				typeof reaction.visual_state !== "string" ||
 				reactionEvents.has(reaction.event) ||
-				!validStates.has(reaction.visual_state) ||
-				typeof parsed.visual.presence[reaction.visual_state] !== "string"
+				!validStates.has(reaction.visual_state)
 			) {
 				throw new Error(`character package ${id}: invalid or duplicate host event reaction`);
 			}
 			reactionEvents.add(reaction.event);
 		}
 		validateCharacterOnboardingFlow(parsed.character?.first_meeting, id);
+		const roleplay = RoleplaySchema.parse(parsed.roleplay);
+		const canonManifestPath = this.characterPackagePath(id, "canon/manifest.yaml");
+		const canonManifest = CanonPackageManifestSchema.parse(
+			parse(readFileSync(canonManifestPath, "utf8")),
+		);
+		validateCanonManifest(canonManifest, id);
+		if (canonManifest.language !== parsed.language)
+			throw new Error(`character package ${id}: canon language must match character language`);
+		const canonSources = canonManifest.sources.map((source) => ({
+			...source,
+			content: readFileSync(this.characterPackagePath(id, `canon/${source.path}`), "utf8"),
+		}));
+		const variableIds = new Set(roleplay.variables.map((entry) => entry.id));
+		const mediaIds = new Set(roleplay.media.map((entry) => entry.id));
+		const unlockableIds = new Set(roleplay.unlockables.map((entry) => entry.id));
+		const eventIds = new Set(roleplay.events.map((entry) => entry.id));
+		for (const variable of roleplay.variables) {
+			const actualType = typeof variable.initial;
+			if (
+				(variable.type === "number" && actualType !== "number") ||
+				(variable.type === "boolean" && actualType !== "boolean") ||
+				((variable.type === "string" || variable.type === "enum") && actualType !== "string")
+			)
+				throw new Error(
+					`character package ${id}: variable ${variable.id} initial value has the wrong type`,
+				);
+			if (
+				variable.type === "enum" &&
+				(!variable.values || !variable.values.includes(String(variable.initial)))
+			)
+				throw new Error(
+					`character package ${id}: enum variable ${variable.id} must declare and use an allowed initial value`,
+				);
+		}
+		for (const collection of [
+			roleplay.variables,
+			roleplay.media,
+			roleplay.unlockables,
+			roleplay.events,
+			roleplay.choice_sets,
+		]) {
+			if (new Set(collection.map((entry) => entry.id)).size !== collection.length) {
+				throw new Error(`character package ${id}: duplicate roleplay id`);
+			}
+		}
+		for (const media of roleplay.media) {
+			const extension = extname(media.asset).toLowerCase();
+			if (!roleplayAssetExtensions(media.kind).has(extension)) {
+				throw new Error(
+					`character package ${id}: media ${media.id} has an invalid ${media.kind} extension`,
+				);
+			}
+			this.characterPackagePath(id, media.asset);
+			if (media.poster) this.ensureImageAsset(id, media.poster);
+			if (media.captions) {
+				if (extname(media.captions).toLowerCase() !== ".vtt")
+					throw new Error(`character package ${id}: media ${media.id} captions must be WebVTT`);
+				this.characterPackagePath(id, media.captions);
+			}
+		}
+		for (const unlockable of roleplay.unlockables) {
+			if (unlockable.media && !mediaIds.has(unlockable.media))
+				throw new Error(
+					`character package ${id}: unlockable ${unlockable.id} references missing media`,
+				);
+		}
+		for (const event of roleplay.events) {
+			if (event.when)
+				validateRoleplayConditionReferences(event.when, variableIds, unlockableIds, id, event.id);
+			for (const effect of event.effects) {
+				if (
+					(effect.type === "set" || effect.type === "increment") &&
+					!variableIds.has(effect.variable)
+				)
+					throw new Error(`character package ${id}: event ${event.id} references missing variable`);
+				if (effect.type === "unlock" && !unlockableIds.has(effect.unlockable))
+					throw new Error(
+						`character package ${id}: event ${event.id} references missing unlockable`,
+					);
+				if (effect.type === "media" && !mediaIds.has(effect.media))
+					throw new Error(`character package ${id}: event ${event.id} references missing media`);
+				if (effect.type === "scene" && !parsed.scenes.some((scene) => scene.id === effect.scene))
+					throw new Error(`character package ${id}: event ${event.id} references missing scene`);
+				if (effect.type === "expression" && !validStates.has(effect.expression))
+					throw new Error(
+						`character package ${id}: event ${event.id} references missing expression`,
+					);
+			}
+		}
+		for (const set of roleplay.choice_sets) {
+			if (new Set(set.choices.map((choice) => choice.id)).size !== set.choices.length)
+				throw new Error(`character package ${id}: duplicate choice id in ${set.id}`);
+			for (const choice of set.choices)
+				if (!eventIds.has(choice.event))
+					throw new Error(`character package ${id}: choice ${choice.id} references missing event`);
+		}
+		parsed.roleplay = roleplay;
+		parsed.canon = { manifest: canonManifest, sources: canonSources };
 		return parsed;
 	}
 
@@ -452,10 +594,10 @@ export class CharacterLoader {
 
 	/** Project package presentation data into renderer-safe strings and data URLs. */
 	display(character: CharacterPackage): CharacterDisplay {
-		const stateLabels = Object.fromEntries(
-			[...character.visual_states.required, ...character.visual_states.optional].map((state) => [
-				state.id,
-				state.label.replaceAll("{name}", character.name),
+		const expressionLabels = Object.fromEntries(
+			character.visual.expressions.map((expression) => [
+				expression.id,
+				expression.label.replaceAll("{name}", character.name),
 			]),
 		);
 		return {
@@ -474,19 +616,25 @@ export class CharacterLoader {
 			})),
 			visual: {
 				defaultSceneId: character.visual.default_scene,
+				defaultExpressionId: character.visual.default_expression,
 				avatarUrl: this.characterAssetDataUrl(character.id, character.visual.avatar),
-				presence: Object.fromEntries(
-					PRESENCE_ASSET_KEYS.map((state) => {
-						const assetPath = character.visual.presence[state];
-						if (typeof assetPath !== "string") {
-							throw new Error(
-								`character package ${character.id}: missing presence asset for ${state}`,
-							);
-						}
-						return [state, this.characterAssetDataUrl(character.id, assetPath)];
+				expressions: Object.fromEntries(
+					character.visual.expressions.map((expression) => {
+						return [expression.id, this.characterAssetDataUrl(character.id, expression.asset)];
 					}),
 				),
-				stateLabels,
+				expressionLabels,
+			},
+			roleplay: {
+				variables: character.roleplay.variables,
+				media: character.roleplay.media.map(({ asset, poster, captions, ...media }) => ({
+					...media,
+					url: this.characterAssetDataUrl(character.id, asset),
+					...(poster ? { posterUrl: this.characterAssetDataUrl(character.id, poster) } : {}),
+					...(captions ? { captionsUrl: this.characterAssetDataUrl(character.id, captions) } : {}),
+				})),
+				unlockables: character.roleplay.unlockables,
+				choice_sets: character.roleplay.choice_sets,
 			},
 		};
 	}
@@ -657,4 +805,46 @@ export class CharacterLoader {
 		});
 		eventBus.publish("character.seeded", { id: character.id, name: character.name });
 	}
+}
+
+function validateRoleplayConditionReferences(
+	condition: import("./roleplay-schema.js").RoleplayCondition,
+	variables: ReadonlySet<string>,
+	unlockables: ReadonlySet<string>,
+	characterId: string,
+	eventId: string,
+): void {
+	if ("all" in condition) {
+		condition.all.forEach((part) => {
+			validateRoleplayConditionReferences(part, variables, unlockables, characterId, eventId);
+		});
+		return;
+	}
+	if ("any" in condition) {
+		condition.any.forEach((part) => {
+			validateRoleplayConditionReferences(part, variables, unlockables, characterId, eventId);
+		});
+		return;
+	}
+	if ("not" in condition) {
+		validateRoleplayConditionReferences(
+			condition.not,
+			variables,
+			unlockables,
+			characterId,
+			eventId,
+		);
+		return;
+	}
+	if ("unlocked" in condition) {
+		if (!unlockables.has(condition.unlocked))
+			throw new Error(
+				`character package ${characterId}: event ${eventId} condition references missing unlockable`,
+			);
+		return;
+	}
+	if (!variables.has(condition.variable))
+		throw new Error(
+			`character package ${characterId}: event ${eventId} condition references missing variable`,
+		);
 }

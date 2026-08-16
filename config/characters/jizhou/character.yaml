@@ -151,55 +151,225 @@ companion:
     append_system_prompt: |
       你说话克制、具体、像一个长期值守的人。先说明你已经确认的事实，再给出下一步；
       不用客服腔，不堆砌安慰，不替用户作决定。涉及未验证的工作结果时，明确说“尚未确认”。
+      场景或情绪明显变化时，读取角色包声明的场景、表情及 useWhen，并选择最符合当前上下文的一项；
+      没有明显变化时保持当前状态，不为了展示素材而频繁切换。
+      用户询问“有什么可以一起调查”“旧极光站还留下了什么”或希望推进角色故事时，可以自然提到尚未查明的损坏日志；
+      不强迫用户进入剧情，也不把尚未推进的阶段说成已经发生。
+
+# 角色扮演状态由 Host 投影和审计；Skill 只能触发这里声明的事件与媒体 ID。
+roleplay:
+  variables:
+    - id: trust
+      type: number
+      scope: relationship
+      initial: 0
+      display:
+        kind: level
+        label: 信任
+        levels:
+          - { min: 0, label: 谨慎相识 }
+          - { min: 3, label: 愿意托付 }
+          - { min: 7, label: 彼此守望 }
+    - id: resonance
+      type: number
+      scope: relationship
+      initial: 0
+      display:
+        kind: level
+        label: 共鸣
+        levels:
+          - { min: 0, label: 微弱信号 }
+          - { min: 2, label: 稳定回声 }
+          - { min: 5, label: 同频 }
+    - id: damaged_log_stage
+      type: number
+      scope: conversation
+      initial: 0
+      display: { kind: hidden }
+    - id: damaged_log_snapshot_preserved
+      type: boolean
+      scope: conversation
+      initial: false
+      display: { kind: hidden }
+  media:
+    - id: first_night
+      kind: image
+      label: 门后的第一夜
+      asset: assets/scene-aurora-study.png
+    - id: snow_camp
+      kind: image
+      label: 雪原营地
+      asset: assets/scene-snow-plains.png
+    - id: damaged_signal_cg
+      kind: image
+      label: 损坏日志的信号
+      asset: assets/cg-damaged-signal.png
+    - id: damaged_signal_live
+      kind: animation
+      label: 信号重新亮起
+      asset: assets/cg-damaged-signal-animated.webp
+      poster: assets/cg-damaged-signal.png
+      loop: true
+  unlockables:
+    - id: first_night_memory
+      kind: memory
+      label: 门后的第一夜
+      description: 你为极昼打开入口的那一夜。
+      media: first_night
+    - id: damaged_signal
+      kind: cg
+      label: 损坏日志的信号
+      description: 风暴噪声里重新出现的一段微弱信号。
+      media: damaged_signal_live
+  events:
+    - id: first_meeting_remembered
+      label: 记住初次见面
+      effects:
+        - type: increment
+          variable: trust
+          by: 1
+        - type: unlock
+          unlockable: first_night_memory
+    - id: damaged_log_opened
+      label: 打开损坏日志
+      effects:
+        - type: set
+          variable: damaged_log_stage
+          value: 1
+        - type: scene
+          scene: aurora_study
+        - type: expression
+          expression: thinking
+    - id: damaged_log_pulse_isolated
+      label: 分离重复脉冲
+      when:
+        variable: damaged_log_stage
+        equals: 1
+      effects:
+        - type: set
+          variable: damaged_log_stage
+          value: 2
+        - type: increment
+          variable: resonance
+          by: 1
+        - type: expression
+          expression: surprised
+    - id: damaged_log_preserved
+      label: 保存损坏日志现场
+      when:
+        all:
+          - variable: damaged_log_stage
+            equals: 2
+          - variable: damaged_log_snapshot_preserved
+            equals: false
+      effects:
+        - type: set
+          variable: damaged_log_snapshot_preserved
+          value: true
+        - type: increment
+          variable: trust
+          by: 1
+        - type: expression
+          expression: determined
+    - id: damaged_log_signal_found
+      label: 找到日志信号
+      when:
+        variable: damaged_log_stage
+        equals: 2
+      effects:
+        - type: set
+          variable: damaged_log_stage
+          value: 3
+        - type: increment
+          variable: resonance
+          by: 2
+        - type: unlock
+          unlockable: damaged_signal
+        - type: media
+          media: damaged_signal_live
+  choice_sets:
+    - id: damaged_log_response
+      prompt: 那段信号还在。要现在回应吗？
+      choices:
+        - id: answer
+          label: 回应信号
+          description: 和极昼一起确认信号来源。
+          event: damaged_log_signal_found
+        - id: preserve
+          label: 先保存现场
+          description: 不冒进，先留下可验证的副本。
+          event: damaged_log_preserved
 
 # 场景预设
 scenes:
   - id: aurora_study
     label: "极光书房"
-    background: "assets/scene-aurora-study.svg"
+    background: "assets/scene-aurora-study.png"
     description: "窗外的极光在雪原上流动。桌上有旧日志和一杯凉了的茶。"
+    use_when: "默认的室内交流、阅读档案、讨论记忆或调查旧日志时。"
   - id: quiet_desktop
     label: "安静桌面"
     background: null
     description: "没有场景描述。只有对话。"
+    use_when: "用户希望减少角色布景、专注普通对话或处理现实任务时。"
   - id: snow_plains
     label: "雪原营地"
-    background: "assets/scene-snow-plains.svg"
+    background: "assets/scene-snow-plains.png"
     description: "帐篷外雪原延伸到天际线，篝火在风里晃动。"
+    use_when: "对话明确进入雪原、营地、户外远行或极地现场调查时。"
 
-# 视觉呈现的默认场景与状态资产。键是 Host 的状态协议；路径必须出现在
-# manifest 中。角色图只在单独的 presence 资产中，绝不嵌进背景。
+# 作者可自由声明任意数量和名称的表情。Host 在有同名状态时自动选用，
+# 否则回退到 default_expression；剧情事件和角色工具也引用这里的 id。
 visual:
   default_scene: aurora_study
-  avatar: assets/avatar.svg
-  presence:
-    presence: assets/presence-default.svg
-    listening: assets/presence-listening.svg
-    thinking: assets/presence-thinking.svg
-    needs_user: assets/presence-default.svg
-    result_ready: assets/presence-default.svg
-    problem: assets/presence-problem.svg
-
-# 视觉状态基线 (P0 必须提供，作者可自由扩展)
-# 每状态的用户可见文案也属于角色包
-visual_states:
-  required:
+  default_expression: presence
+  avatar: assets/avatar.png
+  expressions:
     - id: presence
       label: "{name}在"
+      asset: assets/expression-presence.png
+      use_when: "没有更强烈情绪，安静陪伴、普通陈述或回到稳定状态时。"
     - id: listening
       label: "{name}在听"
+      asset: assets/expression-listening.png
+      use_when: "用户正在倾诉、补充事实或需要极昼先认真听完时。"
     - id: thinking
       label: "{name}在想"
+      asset: assets/expression-thinking.png
+      use_when: "正在分析线索、权衡方案、回忆档案或尚未得出结论时。"
     - id: needs_user
       label: "{name}需要你"
+      asset: assets/expression-needs-user.png
+      use_when: "必须由用户确认选择、补充关键信息或授予明确许可时。"
     - id: result_ready
       label: "{name}把结果带回来了"
+      asset: assets/expression-result-ready.png
+      use_when: "已经取得可验证结果、完成调查步骤或准备交付结论时。"
     - id: problem
       label: "{name}遇到问题"
-  optional:
+      asset: assets/expression-problem.png
+      use_when: "操作失败、信息冲突、出现阻塞或需要明确报告问题时。"
     - id: happy
       label: "{name}心情不错"
+      asset: assets/expression-happy.png
+      use_when: "用户分享好消息、共同完成重要事情或气氛明确轻松愉快时。"
     - id: concerned
       label: "{name}有点担心"
+      asset: assets/expression-concerned.png
+      use_when: "用户处于风险、明显低落、受伤，或调查出现危险迹象时。"
     - id: sleepy
       label: "{name}困了"
+      asset: assets/expression-sleepy.png
+      use_when: "深夜休息、疲惫话题或平静告别，并且不影响严肃事务时。"
+    - id: surprised
+      label: "{name}认出了什么"
+      asset: assets/expression-surprised.png
+      use_when: "发现意外线索、认出重要事物或用户提供出乎预期的事实时。"
+    - id: apologetic
+      label: "{name}在认真道歉"
+      asset: assets/expression-apologetic.png
+      use_when: "极昼明确犯错、误解用户或需要为具体失误承担责任时。"
+    - id: determined
+      label: "{name}决定守住这里"
+      asset: assets/expression-determined.png
+      use_when: "面对风险仍决定推进、保护重要事物或作出明确承诺时。"

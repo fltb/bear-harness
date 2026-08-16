@@ -69,6 +69,10 @@ export type ConversationSnapshot = z.infer<typeof schema.ConversationSnapshot>;
 export type MemorySnapshot = z.infer<typeof schema.MemorySnapshot>;
 export type CharacterRuntimeState = z.infer<typeof schema.CharacterRuntimeState>;
 export type CharacterRuntimeSnapshot = z.infer<typeof schema.CharacterRuntimeSnapshot>;
+export type RoleplayState = z.infer<typeof schema.RoleplayState>;
+export type RoleplayGetRequest = z.infer<typeof schema.RoleplayGetRequest>;
+export type RoleplayTriggerRequest = z.infer<typeof schema.RoleplayTriggerRequest>;
+export type RoleplayResponse = z.infer<typeof schema.RoleplayResponse>;
 
 // ---------------------------------------------------------------------------
 // Onboarding (first-meeting FSM)

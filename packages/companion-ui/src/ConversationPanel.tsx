@@ -1,5 +1,6 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
+import { Dialog } from "@kobalte/core/dialog";
 import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import type { CharacterDisplay, Message, MessageVersion } from "./stores/companion.js";
@@ -376,6 +377,89 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 					</article>
 				</Show>
 			</Show>
+			<RoleplayPresentation character={props.character} />
 		</section>
 	);
+}
+
+function RoleplayPresentation(props: { character: CharacterDisplay | undefined }) {
+	const [t] = useTranslation(undefined, { i18n });
+	const store = useCompanionStore();
+	const media = () =>
+		props.character?.roleplay.media.find((entry) => entry.id === store.activeRoleplayMediaId);
+	const choiceSet = () =>
+		props.character?.roleplay.choice_sets?.find(
+			(entry) => entry.id === store.activeRoleplayChoiceSetId,
+		);
+	return (
+		<>
+			<Show when={choiceSet()}>
+				{(set) => (
+					<section class="roleplay-choices" aria-label={set().prompt}>
+						<strong>{set().prompt}</strong>
+						<div class="roleplay-choice-list">
+							<For each={set().choices}>
+								{(choice) => (
+									<Button
+										type="button"
+										class="roleplay-choice"
+										onClick={() => void store.triggerRoleplayEvent(choice.event)}
+									>
+										<strong>{choice.label}</strong>
+										<Show when={choice.description}>
+											{(description) => <span>{description()}</span>}
+										</Show>
+									</Button>
+								)}
+							</For>
+						</div>
+					</section>
+				)}
+			</Show>
+			<Dialog
+				open={media() !== undefined}
+				onOpenChange={(open) => !open && store.dismissRoleplayMedia()}
+			>
+				<Dialog.Portal>
+					<Dialog.Overlay class="roleplay-media-overlay" />
+					<Dialog.Content class="roleplay-media-dialog">
+						<Show when={media()}>{(item) => <RoleplayConversationMedia media={item()} />}</Show>
+						<Dialog.CloseButton as={Button} class="roleplay-media-close">
+							{t("messages.closeMedia")}
+						</Dialog.CloseButton>
+					</Dialog.Content>
+				</Dialog.Portal>
+			</Dialog>
+		</>
+	);
+}
+
+function RoleplayConversationMedia(props: {
+	media: CharacterDisplay["roleplay"]["media"][number];
+}) {
+	if (props.media.kind === "audio")
+		return (
+			<audio autoplay controls src={props.media.url} aria-label={props.media.label}>
+				<track kind="captions" src={props.media.captionsUrl} srclang="und" default />
+			</audio>
+		);
+	if (props.media.kind === "video")
+		return (
+			<video
+				autoplay
+				controls
+				poster={props.media.posterUrl}
+				src={props.media.url}
+				aria-label={props.media.label}
+			>
+				<track kind="captions" src={props.media.captionsUrl} srclang="und" default />
+			</video>
+		);
+	const source =
+		props.media.kind === "animation" &&
+		props.media.posterUrl &&
+		window.matchMedia("(prefers-reduced-motion: reduce)").matches
+			? props.media.posterUrl
+			: props.media.url;
+	return <img src={source} alt={props.media.label} />;
 }

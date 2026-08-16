@@ -145,8 +145,8 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 				<Select.Label class="sr-only">{t("composer.modelLabel")}</Select.Label>
 				<Select.Trigger class="composer-model-trigger" aria-label={t("composer.modelLabel")}>
 					<Select.Value<ConfiguredModel> class="composer-model-value">
-						{(state) => {
-							const model = state.selectedOption();
+						{() => {
+							const model = selectedModel();
 							return model ? modelDisplayName(model) : undefined;
 						}}
 					</Select.Value>

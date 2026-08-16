@@ -116,4 +116,78 @@ describe("CanonHubService user workflow", () => {
 		]);
 		service.removeSource("character-a", source.id);
 	});
+
+	it("syncs package canon idempotently and retrieves Chinese aliases, routed modules, and adjacent context", () => {
+		const canon = {
+			manifest: {
+				version: 1 as const,
+				language: "zh-CN",
+				sources: [
+					{
+						id: "volume_one",
+						title: "第一卷",
+						path: "volume-one.txt",
+						kind: "original_text" as const,
+					},
+				],
+				entities: [
+					{
+						id: "aurora_station",
+						kind: "location",
+						name: "旧极光站",
+						aliases: ["旧站"],
+						description: "",
+					},
+				],
+				modules: [
+					{
+						id: "root",
+						kind: "root" as const,
+						title: "原作",
+						summary: "",
+						triggers: [],
+						bindings: [],
+					},
+					{
+						id: "storm",
+						parent: "root",
+						kind: "event" as const,
+						title: "风暴夜",
+						summary: "",
+						triggers: ["风暴"],
+						bindings: [{ source: "volume_one", headings: ["风暴夜"] }],
+					},
+				],
+			},
+			sources: [
+				{
+					id: "volume_one",
+					title: "第一卷",
+					path: "volume-one.txt",
+					kind: "original_text" as const,
+					content: `# 风暴夜\n\n旧极光站的主灯在风暴里熄灭。\n\n${"守机人逐项核对备用电源。".repeat(180)}`,
+				},
+			],
+		};
+		service.syncPackage("character-a", canon);
+		service.syncPackage("character-a", canon);
+		expect(service.listSources("character-a")).toHaveLength(1);
+		expect(service.listModules("character-a")).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ stableKey: "root", origin: "package" }),
+				expect.objectContaining({ stableKey: "storm", sourceChunkIds: expect.any(Array) }),
+			]),
+		);
+		const citations = service.retrieve("character-a", "旧站风暴发生了什么", {
+			moduleId: "storm",
+			limit: 3,
+		});
+		expect(citations[0]).toEqual(
+			expect.objectContaining({ sourceName: "第一卷", heading: "风暴夜", origin: "package" }),
+		);
+		expect(citations.some((citation) => citation.adjacent)).toBe(true);
+		expect(() =>
+			service.removeSource("character-a", service.listSources("character-a")[0]?.id ?? ""),
+		).toThrow();
+	});
 });

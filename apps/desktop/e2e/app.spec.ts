@@ -54,14 +54,15 @@ test("source build loads from file:// with official identity and isolated diagno
 
 		// The Host exposes package assets as data URLs and the renderer composes
 		// them through generic scene/presence components.
-		await expect(window.getByRole("img", { name: "极光书房" })).toHaveAttribute(
-			"src",
-			/^data:image\/svg\+xml;base64,/,
-		);
+		const sceneAsset = window.getByRole("img", { name: "极光书房" });
+		await expect(sceneAsset).toHaveAttribute("src", /^data:image\/png;base64,/);
+		await expect
+			.poll(() => sceneAsset.evaluate((image: HTMLImageElement) => image.naturalWidth))
+			.toBeGreaterThan(0);
 		const presence = window.getByRole("img", { name: "极昼在" });
 		await expect(presence).toBeVisible();
 		const presenceAsset = presence.getByTestId("presence-asset");
-		await expect(presenceAsset).toHaveAttribute("src", /^data:image\/svg\+xml;base64,/);
+		await expect(presenceAsset).toHaveAttribute("src", /^data:image\/(?:png|svg\+xml);base64,/);
 		await expect
 			.poll(() => presenceAsset.evaluate((image: HTMLImageElement) => image.naturalWidth))
 			.toBeGreaterThan(0);

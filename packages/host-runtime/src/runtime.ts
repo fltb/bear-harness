@@ -24,6 +24,7 @@ import { CharacterBehaviorService } from "./companion/character-behavior.js";
 import { CharacterLoader } from "./companion/character-loader.js";
 import { ContextPackCompiler } from "./companion/context-pack.js";
 import { FirstMeetingMachine } from "./companion/first-meeting.js";
+import { RoleplayService } from "./companion/roleplay-service.js";
 import { CompanionSupervisor } from "./companion/supervisor.js";
 import { TurnPipeline } from "./companion/turn-pipeline.js";
 import { type HostCompositionContext, wireHostHandlers } from "./composition.js";
@@ -99,12 +100,18 @@ export class HostRuntime {
 		const providers = new ProviderCatalog(credentials, join(dataDir, "companion-runtime"));
 		const characterLoader = new CharacterLoader(characterRoot, join(dataDir, "characters"));
 		const supervisor = new CompanionSupervisor(dataDir, eventBus, providers);
-		const characterBehavior = new CharacterBehaviorService(db.orm, eventBus, characterLoader);
+		const roleplay = new RoleplayService(db.orm);
+		const characterBehavior = new CharacterBehaviorService(
+			db.orm,
+			eventBus,
+			characterLoader,
+			roleplay,
+		);
 		const memory = new MemoryService(db.orm, eventBus);
 		const memoryAutomation = new MemoryAutomation(db.orm, eventBus, memory);
 		const story = new StoryService(db.orm, eventBus);
 		const canon = new CanonHubService(db.orm, artifactStore, eventBus);
-		const contextPack = new ContextPackCompiler(db.orm, characterLoader);
+		const contextPack = new ContextPackCompiler(db.orm, characterLoader, canon);
 		supervisor.setContextHandler((conversationId, includeHistory, message) =>
 			contextPack.render(
 				contextPack.compile(conversationId, {
@@ -162,6 +169,26 @@ export class HostRuntime {
 		executorRouter.register("codex", new CodexAdapter(db.orm, eventBus));
 		const commissions = new CommissionService(db.orm, eventBus, artifactStore, executorRouter);
 		supervisor.setHostToolHandler((call) => {
+			if (call.tool === "host_search_canon") {
+				const args = call.args as { query: string; moduleId?: string };
+				const conversation = db.orm
+					.select({ companionId: conversations.companionId })
+					.from(conversations)
+					.where(eq(conversations.id, call.conversationId))
+					.get();
+				if (!conversation) throw { kind: "not_found", reason: "conversation_not_found" };
+				const citations = canon.retrieve(conversation.companionId, args.query, {
+					moduleId: args.moduleId,
+					limit: 8,
+				});
+				return {
+					ok: true,
+					message: citations.length
+						? "Canon evidence retrieved."
+						: "No matching original-work evidence is installed for this character.",
+					data: { citations },
+				};
+			}
 			if (call.tool !== "host_propose_work") return characterBehavior.invoke(call);
 			const args = call.args as {
 				title: string;
@@ -200,6 +227,8 @@ export class HostRuntime {
 			supervisor,
 			providers,
 			characterLoader,
+			characterBehavior,
+			roleplay,
 			defaultCharacterId: options.productConfig.defaultCharacterId,
 		};
 		this.dispatcher = new Dispatcher({

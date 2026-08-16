@@ -759,4 +759,71 @@ export const MIGRATIONS: Migration[] = [
 				END;
 		`,
 	},
+	{
+		id: 11,
+		description: "Append-only roleplay event ledger and monotonic unlocks",
+		up: `
+			CREATE TABLE roleplay_events (
+				id TEXT PRIMARY KEY,
+				companion_id TEXT NOT NULL REFERENCES companion_identity(id),
+				conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+				branch_id TEXT REFERENCES branches(id) ON DELETE CASCADE,
+				source_message_version_id TEXT REFERENCES message_versions(id) ON DELETE CASCADE,
+				event_id TEXT NOT NULL,
+				effects_json TEXT NOT NULL,
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			CREATE INDEX idx_roleplay_events_projection
+				ON roleplay_events(companion_id, conversation_id, created_at);
+			CREATE TABLE roleplay_unlocks (
+				companion_id TEXT NOT NULL REFERENCES companion_identity(id),
+				unlockable_id TEXT NOT NULL,
+				source_event_id TEXT NOT NULL REFERENCES roleplay_events(id) ON DELETE CASCADE,
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				PRIMARY KEY (companion_id, unlockable_id)
+			);
+		`,
+	},
+	{
+		id: 12,
+		description: "Package-owned canon metadata and Chinese trigram retrieval",
+		up: `
+			ALTER TABLE canon_sources ADD COLUMN origin TEXT NOT NULL DEFAULT 'user' CHECK (origin IN ('user','package'));
+			ALTER TABLE canon_sources ADD COLUMN stable_key TEXT;
+			ALTER TABLE canon_sources ADD COLUMN language TEXT;
+			ALTER TABLE canon_sources ADD COLUMN source_kind TEXT;
+			ALTER TABLE canon_chunks ADD COLUMN heading TEXT;
+			ALTER TABLE canon_entities ADD COLUMN origin TEXT NOT NULL DEFAULT 'user' CHECK (origin IN ('user','package'));
+			ALTER TABLE canon_entities ADD COLUMN stable_key TEXT;
+			ALTER TABLE story_modules ADD COLUMN origin TEXT NOT NULL DEFAULT 'user' CHECK (origin IN ('user','package'));
+			ALTER TABLE story_modules ADD COLUMN stable_key TEXT;
+			ALTER TABLE story_modules ADD COLUMN triggers_json TEXT NOT NULL DEFAULT '[]';
+			CREATE UNIQUE INDEX idx_canon_sources_package_key ON canon_sources(companion_id, stable_key) WHERE stable_key IS NOT NULL;
+			CREATE UNIQUE INDEX idx_canon_entities_package_key ON canon_entities(companion_id, stable_key) WHERE stable_key IS NOT NULL;
+			CREATE UNIQUE INDEX idx_story_modules_package_key ON story_modules(companion_id, stable_key) WHERE stable_key IS NOT NULL;
+			CREATE TABLE canon_package_state (
+				companion_id TEXT PRIMARY KEY REFERENCES companion_identity(id) ON DELETE CASCADE,
+				manifest_hash TEXT NOT NULL,
+				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			DROP TRIGGER canon_chunks_fts_insert;
+			DROP TRIGGER canon_chunks_fts_delete;
+			DROP TRIGGER canon_chunks_fts_update;
+			DROP TABLE canon_chunks_fts;
+			CREATE VIRTUAL TABLE canon_chunks_fts USING fts5(
+				content, content='canon_chunks', content_rowid='rowid', tokenize='trigram'
+			);
+			CREATE TRIGGER canon_chunks_fts_insert AFTER INSERT ON canon_chunks BEGIN
+				INSERT INTO canon_chunks_fts(rowid, content) VALUES (new.rowid, new.content);
+			END;
+			CREATE TRIGGER canon_chunks_fts_delete AFTER DELETE ON canon_chunks BEGIN
+				INSERT INTO canon_chunks_fts(canon_chunks_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+			END;
+			CREATE TRIGGER canon_chunks_fts_update AFTER UPDATE ON canon_chunks BEGIN
+				INSERT INTO canon_chunks_fts(canon_chunks_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+				INSERT INTO canon_chunks_fts(rowid, content) VALUES (new.rowid, new.content);
+			END;
+			INSERT INTO canon_chunks_fts(canon_chunks_fts) VALUES ('rebuild');
+		`,
+	},
 ];

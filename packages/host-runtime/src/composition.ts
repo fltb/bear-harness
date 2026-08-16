@@ -16,8 +16,10 @@ import { desc, eq } from "drizzle-orm";
 import type { ArtifactStore } from "./artifacts/index.js";
 import type { CanonHubService } from "./canon/service.js";
 import type { CommissionService, RunStatus } from "./commissions/service.js";
+import type { CharacterBehaviorService } from "./companion/character-behavior.js";
 import type { CharacterLoader } from "./companion/character-loader.js";
 import type { FirstMeetingMachine } from "./companion/first-meeting.js";
+import type { RoleplayService } from "./companion/roleplay-service.js";
 import type { CompanionSupervisor } from "./companion/supervisor.js";
 import type { TurnPipeline } from "./companion/turn-pipeline.js";
 import { ConversationRepository } from "./conversations/repository.js";
@@ -45,6 +47,8 @@ export interface HostCompositionContext {
 	supervisor: CompanionSupervisor;
 	providers: ProviderCatalog;
 	characterLoader: CharacterLoader;
+	characterBehavior: CharacterBehaviorService;
+	roleplay: RoleplayService;
 	defaultCharacterId: string;
 }
 
@@ -104,6 +108,32 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		s.characterLoader.seed(s.orm, s.eventBus, character);
 		s.eventBus.publish("character.imported", { characterId: character.id });
 		return { character: s.characterLoader.display(character) };
+	});
+	dispatcher.registerHandler(RPC.roleplay.get, async (_p) => {
+		const companionId = await getCompanionId(s);
+		const character = s.characterLoader.load(companionId);
+		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
+		return {
+			state: s.roleplay.project(character, (_p as { conversationId?: string }).conversationId),
+		};
+	});
+	dispatcher.registerHandler(RPC.roleplay.trigger, async (_p) => {
+		const { conversationId, eventId, dedupeKey } = _p as {
+			conversationId: string;
+			eventId: string;
+			dedupeKey: string;
+		};
+		const state = s.characterBehavior.triggerUserRoleplayEvent({
+			eventId,
+			conversationId,
+			dedupeKey,
+		});
+		return { state };
+	});
+	dispatcher.registerHandler(RPC.roleplay.resetUnlocks, async () => {
+		s.roleplay.resetUnlocks(await getCompanionId(s));
+		s.eventBus.publish("roleplay.unlocks_reset", {});
+		return {};
 	});
 
 	// --- role-defined onboarding -----------------------------------------------
@@ -649,7 +679,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			throw { kind: "unavailable", reason: "character_package_missing" };
 		}
 		const allowedSceneIds = new Set(character.scenes.map((scene) => scene.id));
-		const allowedVisualStates = new Set(Object.keys(character.visual.presence));
+		const allowedVisualStates = new Set(
+			character.visual.expressions.map((expression) => expression.id),
+		);
 		const convRows = conversationRepository.list(companionId);
 		const conversationIds = new Set(convRows.map((row) => row.id));
 		const characterRuntimeByConversation: Record<string, { sceneId: string; visualState: string }> =
@@ -703,6 +735,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				}),
 			},
 			characterRuntime: { byConversation: characterRuntimeByConversation },
+			roleplay: s.roleplay.project(character, activeRow?.id),
 			model: {
 				pool: {
 					models: s.models.list().map((model) => ({
@@ -767,6 +800,7 @@ function ensureCharacterSeeded(s: HostCompositionContext): void {
 	const character = s.characterLoader.load(activeId);
 	if (!character) throw new Error(`character package missing: ${activeId}`);
 	s.characterLoader.seed(s.orm, s.eventBus, character);
+	s.canon.syncPackage(character.id, character.canon);
 	const active = s.orm
 		.select({ characterId: activeCharacter.characterId })
 		.from(activeCharacter)

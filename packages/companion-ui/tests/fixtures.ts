@@ -50,9 +50,16 @@ export const THEMED_CHARACTER: CharacterDisplay = {
 	scenes: [],
 	visual: {
 		defaultSceneId: "default",
+		defaultExpressionId: "default",
 		avatarUrl: "data:image/svg+xml;base64,PHN2Zy8+",
-		presence: {},
-		stateLabels: {},
+		expressions: { default: "data:image/svg+xml;base64,PHN2Zy8+" },
+		expressionLabels: { default: "Test Character" },
+	},
+	roleplay: {
+		variables: [],
+		media: [],
+		unlockables: [],
+		choice_sets: [],
 	},
 };
 
@@ -143,6 +150,11 @@ export function createTestClient() {
 			get: vi.fn(() => ok(null)),
 			list: vi.fn(() => ok({ characters: [] })),
 			activate: vi.fn(() => ok(null)),
+		},
+		roleplay: {
+			get: vi.fn(() => ok({ state: { values: {}, unlocked: [] } })),
+			trigger: vi.fn(() => ok({ state: { values: {}, unlocked: [] } })),
+			resetUnlocks: vi.fn(() => ok({})),
 		},
 		events: { subscribe: vi.fn(() => new Promise<never>(() => {})) },
 		onboarding: {

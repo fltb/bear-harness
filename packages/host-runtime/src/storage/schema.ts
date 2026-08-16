@@ -577,6 +577,12 @@ export const canonSources = sqliteTable(
 		mime: text().notNull(),
 		sha256: text().notNull(),
 		artifactId: text("artifact_id").references(() => artifacts.id),
+		origin: text({ enum: ["user", "package"] })
+			.default("user")
+			.notNull(),
+		stableKey: text("stable_key"),
+		language: text(),
+		sourceKind: text("source_kind"),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	},
 	(table) => [index("idx_canon_sources_companion").on(table.companionId, table.createdAt)],
@@ -594,6 +600,7 @@ export const canonChunks = sqliteTable(
 		startOffset: integer("start_offset").notNull(),
 		endOffset: integer("end_offset").notNull(),
 		tokenCount: integer("token_count").default(0).notNull(),
+		heading: text(),
 		embedding: blob(),
 	},
 	(table) => [index("idx_canon_chunks_source").on(table.sourceId, table.ordinal)],
@@ -608,8 +615,12 @@ export const canonEntities = sqliteTable(
 			.references(() => companionIdentity.id),
 		kind: text().notNull(),
 		name: text().notNull(),
-		aliasesJson: text("aliases_json", { mode: "json" }).default([]).notNull(),
+		aliasesJson: text("aliases_json", { mode: "json" }).$type<string[]>().default([]).notNull(),
 		description: text().default("").notNull(),
+		origin: text({ enum: ["user", "package"] })
+			.default("user")
+			.notNull(),
+		stableKey: text("stable_key"),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	},
 	(table) => [index("idx_canon_entities_companion").on(table.companionId, table.name)],
@@ -627,6 +638,14 @@ export const canonRelations = sqliteTable("canon_relations", {
 	description: text().default("").notNull(),
 	sourceChunkId: text("source_chunk_id").references(() => canonChunks.id),
 	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+});
+
+export const canonPackageState = sqliteTable("canon_package_state", {
+	companionId: text("companion_id")
+		.primaryKey()
+		.references(() => companionIdentity.id, { onDelete: "cascade" }),
+	manifestHash: text("manifest_hash").notNull(),
+	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 });
 
 export const storyModules = sqliteTable(
@@ -650,6 +669,11 @@ export const storyModules = sqliteTable(
 			.$type<string[]>()
 			.default([])
 			.notNull(),
+		origin: text({ enum: ["user", "package"] })
+			.default("user")
+			.notNull(),
+		stableKey: text("stable_key"),
+		triggersJson: text("triggers_json", { mode: "json" }).$type<string[]>().default([]).notNull(),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	},
 	(table) => [
@@ -702,4 +726,48 @@ export const storyChangeProposals = sqliteTable(
 		),
 		check("story_change_proposals_check_27", sql`status IN ('pending','accepted','dismissed')`),
 	],
+);
+
+export const roleplayEvents = sqliteTable(
+	"roleplay_events",
+	{
+		id: text().primaryKey(),
+		companionId: text("companion_id")
+			.notNull()
+			.references(() => companionIdentity.id),
+		conversationId: text("conversation_id").references(() => conversations.id, {
+			onDelete: "cascade",
+		}),
+		branchId: text("branch_id").references(() => branches.id, { onDelete: "cascade" }),
+		sourceMessageVersionId: text("source_message_version_id").references(() => messageVersions.id, {
+			onDelete: "cascade",
+		}),
+		eventId: text("event_id").notNull(),
+		effectsJson: text("effects_json", { mode: "json" })
+			.$type<Array<Record<string, unknown>>>()
+			.notNull(),
+		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+	},
+	(table) => [
+		index("idx_roleplay_events_projection").on(
+			table.companionId,
+			table.conversationId,
+			table.createdAt,
+		),
+	],
+);
+
+export const roleplayUnlocks = sqliteTable(
+	"roleplay_unlocks",
+	{
+		companionId: text("companion_id")
+			.notNull()
+			.references(() => companionIdentity.id),
+		unlockableId: text("unlockable_id").notNull(),
+		sourceEventId: text("source_event_id")
+			.notNull()
+			.references(() => roleplayEvents.id, { onDelete: "cascade" }),
+		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.companionId, table.unlockableId] })],
 );

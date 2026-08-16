@@ -289,10 +289,10 @@ describe("host projection validation", () => {
 			}),
 		).toBe(false);
 		expect(
-			isCharacterDisplay({ ...valid, visual: { ...valid.visual, presence: { idle: 4 } } }),
+			isCharacterDisplay({ ...valid, visual: { ...valid.visual, expressions: { idle: 4 } } }),
 		).toBe(false);
 		expect(
-			isCharacterDisplay({ ...valid, visual: { ...valid.visual, stateLabels: { idle: 4 } } }),
+			isCharacterDisplay({ ...valid, visual: { ...valid.visual, expressionLabels: { idle: 4 } } }),
 		).toBe(false);
 		expect(
 			isCharacterDisplay({

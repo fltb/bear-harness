@@ -446,20 +446,61 @@ export class CompanionSupervisor {
 			this.hostTool(
 				"host_get_state",
 				"Read character UI state",
-				"Read the active role's permitted scenes, expressions, and current UI state.",
+				"Read the active role's permitted scenes and expressions, including package-authored useWhen guidance, plus the current UI state. Read this before choosing a visual change.",
 				toolParameters(z.strictObject({})),
 			),
 			this.hostTool(
 				"host_set_scene",
 				"Set character scene",
-				"Change the active scene only after confirming a permitted scene ID with host_get_state.",
+				"Change the active scene only when its package-authored useWhen guidance matches the conversation. Use an ID returned by host_get_state.",
 				toolParameters(z.strictObject({ sceneId: z.string().min(1).max(64) })),
 			),
 			this.hostTool(
 				"host_set_expression",
 				"Set character expression",
-				"Change the active expression only after confirming a permitted visual state with host_get_state.",
+				"Change the active expression only when its package-authored useWhen guidance matches the conversation. Use an ID returned by host_get_state.",
 				toolParameters(z.strictObject({ visualState: z.string().min(1).max(64) })),
+			),
+			this.hostTool(
+				"host_get_roleplay_state",
+				"Read roleplay state",
+				"Read package-declared relationship, story, and unlock state.",
+				toolParameters(z.strictObject({})),
+			),
+			this.hostTool(
+				"host_trigger_roleplay_event",
+				"Trigger roleplay event",
+				"Queue a declared deterministic roleplay event. Effects commit only with the completed assistant reply.",
+				toolParameters(z.strictObject({ eventId: z.string().min(1).max(64) })),
+			),
+			this.hostTool(
+				"host_show_cg",
+				"Show CG",
+				"Present a declared CG or animated image without exposing package paths.",
+				toolParameters(z.strictObject({ mediaId: z.string().min(1).max(64) })),
+			),
+			this.hostTool(
+				"host_play_media",
+				"Play role media",
+				"Present declared image, animation, audio, or video media.",
+				toolParameters(z.strictObject({ mediaId: z.string().min(1).max(64) })),
+			),
+			this.hostTool(
+				"host_present_choices",
+				"Present choices",
+				"Present a declared choice set; free text remains available.",
+				toolParameters(z.strictObject({ choiceSetId: z.string().min(1).max(64) })),
+			),
+			this.hostTool(
+				"host_search_canon",
+				"Search original-work canon",
+				"Retrieve package-installed original-work evidence with source citations. An empty result means the package has no supporting original text; never invent it.",
+				toolParameters(
+					z.strictObject({
+						query: z.string().min(1).max(1000),
+						moduleId: z.string().min(1).max(64).optional(),
+					}),
+				),
 			),
 			this.hostTool(
 				"host_propose_work",

@@ -20,12 +20,20 @@ export function CharacterPresence(props: {
 	presence: PresenceState;
 	visualState?: string;
 }) {
-	const visualState = () =>
-		props.visualState && props.character?.visual.presence[props.visualState]
-			? props.visualState
-			: VISUAL_STATE_BY_PRESENCE[props.presence];
-	const source = () => props.character?.visual.presence[visualState()];
-	const label = () => props.character?.visual.stateLabels[visualState()];
+	const visualState = () => {
+		const visual = props.character?.visual;
+		if (!visual) return undefined;
+		const requested = props.visualState ?? VISUAL_STATE_BY_PRESENCE[props.presence];
+		return visual.expressions[requested] ? requested : visual.defaultExpressionId;
+	};
+	const source = () => {
+		const state = visualState();
+		return state ? props.character?.visual.expressions[state] : undefined;
+	};
+	const label = () => {
+		const state = visualState();
+		return state ? props.character?.visual.expressionLabels[state] : undefined;
+	};
 
 	return (
 		<Show when={source()}>

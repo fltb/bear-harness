@@ -19,16 +19,44 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	await page.goto("/");
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
 	const headers = { "x-bear-web-dev-token": bootstrap.token };
-	await page.request.post("/rpc/provider.setApiKey%3Av1", {
-		headers,
-		data: { providerId: "e2e-rule", apiKey: "e2e-rule-key", sessionOnly: true },
-	});
-	await page.request.post("/rpc/model.enable%3Av1", {
-		headers,
-		data: { providerId: "e2e-rule", modelId: "rule-model", label: "E2E Rule Provider" },
-	});
-	await page.request.post("/rpc/model.defaults.setReply%3Av1", {
-		headers,
+	const configureProvider = await (
+		await page.request.post("/rpc/provider.customUpsert%3Av1", {
+			headers,
+			data: {
+				providerId: "e2e-rule",
+				name: "E2E Rule Provider",
+				baseUrl: `http://127.0.0.1:${process.env.BEAR_E2E_HOST_PORT ?? "3201"}/e2e-openai/v1`,
+				modelId: "rule-model",
+			},
+		})
+	).json();
+	expect(configureProvider).toMatchObject({ ok: true });
+	const setKey = await (
+		await page.request.post("/rpc/provider.setApiKey%3Av1", {
+			headers,
+			data: { providerId: "e2e-rule", apiKey: "e2e-rule-key", sessionOnly: true },
+		})
+	).json();
+	expect(setKey).toMatchObject({ ok: true });
+	const enableModel = await (
+		await page.request.post("/rpc/model.enable%3Av1", {
+			headers,
+			data: { providerId: "e2e-rule", modelId: "rule-model", label: "E2E Rule Provider" },
+		})
+	).json();
+	expect(enableModel).toMatchObject({ ok: true });
+	const setDefault = await (
+		await page.request.post("/rpc/model.defaults.setReply%3Av1", {
+			headers,
+			data: { reply: { providerId: "e2e-rule", modelId: "rule-model" } },
+		})
+	).json();
+	expect(setDefault).toMatchObject({ ok: true });
+	const defaults = await (
+		await page.request.post("/rpc/model.defaults.get%3Av1", { headers, data: {} })
+	).json();
+	expect(defaults).toMatchObject({
+		ok: true,
 		data: { reply: { providerId: "e2e-rule", modelId: "rule-model" } },
 	});
 
@@ -56,6 +84,22 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	await expect(page.getByRole("dialog", { name: "首次入场" })).toBeHidden();
 
 	await page.getByRole("button", { name: zhCN.sidebar.newConversation }).click();
+	await expect
+		.poll(async () => {
+			const conversations = await (
+				await page.request.post("/rpc/conversation.list%3Av1", { headers, data: {} })
+			).json();
+			const conversationId = conversations.data?.conversations?.[0]?.id as string | undefined;
+			if (!conversationId) return undefined;
+			const route = await (
+				await page.request.post("/rpc/model.route.get%3Av1", {
+					headers,
+					data: { conversationId },
+				})
+			).json();
+			return route.data?.selected;
+		})
+		.toEqual({ providerId: "e2e-rule", modelId: "rule-model" });
 	const model = page.getByRole("button", { name: zhCN.composer.modelLabel });
 	await expect(model).toContainText("E2E Rule Provider");
 	await expect(page.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled();

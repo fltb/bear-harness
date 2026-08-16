@@ -33,6 +33,8 @@ export function CanonStudio() {
 			instructions: "",
 			sourceChunkIds: [],
 			createdAt: "",
+			origin: "user",
+			triggers: [],
 		},
 		...store.canon.modules().filter((module) => module.id !== editingModuleId()),
 	];
@@ -101,18 +103,28 @@ export function CanonStudio() {
 								<span>
 									{source.chunkCount} {t("canonStudio.chunks")}
 								</span>
+								<Show when={source.origin === "package"}>
+									<span>{t("canonStudio.packageManaged")}</span>
+								</Show>
+								<Show when={source.language}>
+									<span>
+										{t("canonStudio.sourceLanguage", { language: source.language ?? "" })}
+									</span>
+								</Show>
 							</div>
-							<Button
-								data-control="command"
-								type="button"
-								aria-label={`${t("canonStudio.remove")} ${source.logicalName}`}
-								onClick={() => {
-									if (window.confirm(t("canonStudio.removeConfirm")))
-										void store.canon.removeSource(source.id);
-								}}
-							>
-								{t("canonStudio.remove")}
-							</Button>
+							<Show when={source.origin !== "package"}>
+								<Button
+									data-control="command"
+									type="button"
+									aria-label={`${t("canonStudio.remove")} ${source.logicalName}`}
+									onClick={() => {
+										if (window.confirm(t("canonStudio.removeConfirm")))
+											void store.canon.removeSource(source.id);
+									}}
+								>
+									{t("canonStudio.remove")}
+								</Button>
+							</Show>
 						</div>
 					)}
 				</For>
@@ -264,32 +276,37 @@ export function CanonStudio() {
 									{t(`canonStudio.kinds.${module.kind}`)} · {module.sourceChunkIds.length}{" "}
 									{t("canonStudio.references")}
 								</span>
+								<Show when={module.origin === "package"}>
+									<span>{t("canonStudio.packageManaged")}</span>
+								</Show>
 							</div>
-							<div class="canon-row-actions">
-								<Button
-									data-control="command"
-									type="button"
-									aria-label={`${t("canonStudio.editModule")} ${module.title}`}
-									onClick={() => {
-										setEditingModuleId(module.id);
-										setModuleParentId(module.parentId ?? "");
-										setModuleKind(module.kind);
-										setModuleTitle(module.title);
-										setModuleInstructions(module.instructions);
-										setSelectedChunks(module.sourceChunkIds);
-									}}
-								>
-									{t("canonStudio.editModule")}
-								</Button>
-								<Button
-									data-control="command"
-									type="button"
-									aria-label={`${t("canonStudio.remove")} ${module.title}`}
-									onClick={() => void store.canon.deleteModule(module.id)}
-								>
-									{t("canonStudio.remove")}
-								</Button>
-							</div>
+							<Show when={module.origin !== "package"}>
+								<div class="canon-row-actions">
+									<Button
+										data-control="command"
+										type="button"
+										aria-label={`${t("canonStudio.editModule")} ${module.title}`}
+										onClick={() => {
+											setEditingModuleId(module.id);
+											setModuleParentId(module.parentId ?? "");
+											setModuleKind(module.kind);
+											setModuleTitle(module.title);
+											setModuleInstructions(module.instructions);
+											setSelectedChunks(module.sourceChunkIds);
+										}}
+									>
+										{t("canonStudio.editModule")}
+									</Button>
+									<Button
+										data-control="command"
+										type="button"
+										aria-label={`${t("canonStudio.remove")} ${module.title}`}
+										onClick={() => void store.canon.deleteModule(module.id)}
+									>
+										{t("canonStudio.remove")}
+									</Button>
+								</div>
+							</Show>
 						</div>
 					)}
 				</For>

@@ -71,6 +71,16 @@ export const en = {
 		identityNote:
 			"This identity is locked to the product version. Conversation and real-world work cannot rewrite it.",
 		relationshipMemories: "Confirmed relationship memories",
+		roleplayStatus: "Relationship status",
+		collections: "Collections and replay",
+		collectionsEmpty: "No memories, CG, music, or video have been unlocked yet.",
+		collectionKinds: {
+			cg: "CG",
+			memory: "Memory",
+			music: "Music",
+			video: "Video",
+			achievement: "Achievement",
+		},
 		storyOriginal:
 			"Canon remains unchanged. Confirmed changes in the current story are recorded here.",
 		storyEmpty: "The current story has no confirmed canon deviations.",
@@ -103,6 +113,7 @@ export const en = {
 		invokeHost: "Call live Host",
 	},
 	messages: {
+		closeMedia: "Close",
 		justNow: "Just now",
 		noActiveConversationError: "No conversation selected",
 		userMeta: "You · Just now",
@@ -284,6 +295,8 @@ export const en = {
 		sourceText: "Paste original text or reference material...",
 		addSource: "Add to canon library",
 		chunks: " chunks",
+		packageManaged: "Provided by role package · read-only",
+		sourceLanguage: "Source language: {{language}}",
 		remove: "Remove",
 		removeConfirm: "Remove this canon source and its indexed chunks?",
 		search: "Search and citations",

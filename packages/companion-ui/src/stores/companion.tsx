@@ -24,6 +24,7 @@
 
 import type { CompanionClient } from "@bear-harness/companion-client";
 import { i18n, useTranslation } from "@bear-harness/i18n";
+import type { RoleplayState } from "@bear-harness/protocol";
 import { useQueryClient } from "@tanstack/solid-query";
 import {
 	createContext,
@@ -298,6 +299,9 @@ export interface CompanionStore {
 	readonly presence: PresenceState;
 	readonly character: CharacterDisplay | undefined;
 	readonly characterRuntimeByConversation: Readonly<Record<string, CharacterRuntimeState>>;
+	readonly roleplay: RoleplayState | undefined;
+	readonly activeRoleplayMediaId: string | undefined;
+	readonly activeRoleplayChoiceSetId: string | undefined;
 
 	refresh(): Promise<void>;
 	selectConversation(id: string, branchId?: string): Promise<void>;
@@ -316,6 +320,8 @@ export interface CompanionStore {
 	correctMessage(reason: string, applyScope: MessageApplyScope): Promise<void>;
 	branchMessage(messageId: string): Promise<void>;
 	abort(): Promise<void>;
+	triggerRoleplayEvent(eventId: string): Promise<void>;
+	dismissRoleplayMedia(): void;
 	submitOnboarding(stepId: string, answer?: string): Promise<void>;
 
 	/** Boot snapshot + event-bus access (supplementary). */
@@ -395,6 +401,8 @@ interface CompanionState {
 	sending: boolean;
 	lastRunEvent: "adopted" | null;
 	pendingRunPermissions: Record<string, RunPermissionRequest>;
+	activeRoleplayMediaId: string | undefined;
+	activeRoleplayChoiceSetId: string | undefined;
 }
 
 function runTimestamp(run: RunInfo): number {
@@ -479,6 +487,8 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		sending: false,
 		lastRunEvent: null,
 		pendingRunPermissions: {},
+		activeRoleplayMediaId: undefined,
+		activeRoleplayChoiceSetId: undefined,
 	});
 
 	const [lastSeq, setLastSeq] = createSignal(0);
@@ -544,6 +554,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 	});
 
 	let booted = false;
+	let conversationSelectionChangedLocally = false;
 
 	// ---- refresh helpers (each re-fetches one domain list) ----
 
@@ -615,7 +626,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		onboardingStore._hydrate(snap.onboarding);
 		const conversation = snap.conversation;
 		if (conversation) {
-			if (conversation.activeConversationId !== undefined) {
+			if (conversation.activeConversationId !== undefined && !conversationSelectionChangedLocally) {
 				setState("activeConversationId", conversation.activeConversationId);
 				const conversationId = conversation.activeConversationId;
 				void refreshRpcQuery({
@@ -744,12 +755,28 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				}
 				return;
 			}
+			case "roleplay.media_presented":
+				setState("activeRoleplayMediaId", payloadString(event.payload, "mediaId"));
+				return;
+			case "roleplay.choices_presented":
+				setState("activeRoleplayChoiceSetId", payloadString(event.payload, "choiceSetId"));
+				return;
 			case "conversation.created": {
-				const id = payloadString(event.payload, "conversationId");
-				if (id) setState("activeConversationId", id);
 				debouncedRefetch(refreshConversations);
 				return;
 			}
+			case "model.selected": {
+				const conversationId = payloadString(event.payload, "conversationId");
+				if (conversationId) void refreshModelRoute(conversationId);
+				return;
+			}
+			case "model.defaults_changed":
+				void refreshModelDefaults();
+				return;
+			case "model.enabled":
+			case "model.disabled":
+				void refreshModelPool();
+				return;
 			case "conversation.branched": {
 				const branchId = payloadString(event.payload, "branchId");
 				if (branchId) setState("activeBranchId", branchId);
@@ -799,11 +826,9 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				{ cancelRefetch: false },
 			);
 		} else if (kind.startsWith("model.")) {
-			void modelsQuery.refetch({ cancelRefetch: false });
-			void queryClient.invalidateQueries(
-				{ queryKey: queryKeys.modelPool },
-				{ cancelRefetch: false },
-			);
+			void refreshModelPool();
+			void refreshModelDefaults();
+			if (state.activeConversationId) void refreshModelRoute(state.activeConversationId);
 		} else if (kind.startsWith("commission.")) {
 			debouncedRefetch(refreshCommissions);
 		} else if (kind.startsWith("run.")) {
@@ -826,6 +851,8 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			debouncedRefetch(refreshStoryProposals);
 		} else if (kind.startsWith("character.")) {
 			debouncedRefetch(refreshCharacters);
+			void snapshotActions.refetch();
+		} else if (kind.startsWith("roleplay.")) {
 			void snapshotActions.refetch();
 		} else if (kind.startsWith("settings.")) {
 			void queryClient.invalidateQueries(
@@ -1261,6 +1288,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		},
 		activate: async (characterId) => {
 			await invoke(client, () => client.character.activate({ characterId }));
+			conversationSelectionChangedLocally = true;
 			setState("activeConversationId", null);
 			setState("activeBranchId", null);
 			setState("activeMessages", []);
@@ -1365,6 +1393,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		selectConversation: async (id, branchId) => {
 			try {
 				const projection = await invoke(client, () => client.conversation.select({ id, branchId }));
+				conversationSelectionChangedLocally = true;
 				setState("activeConversationId", projection.activeConversationId);
 				setState("activeBranchId", projection.activeBranchId ?? null);
 				setState("activeMessages", projection.messages);
@@ -1378,11 +1407,12 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		createConversation: async (title) => {
 			try {
 				const result = await invoke(client, () => client.conversation.create({ title }));
+				conversationSelectionChangedLocally = true;
 				setState("activeConversationId", result.id);
 				setState("activeBranchId", null);
 				setState("activeMessages", []);
 				setState("error", null);
-				void refreshConversations().catch((e) => setState("error", messageOf(e)));
+				await Promise.all([refreshConversations(), refreshModelRoute(result.id)]);
 			} catch (e) {
 				setState("error", messageOf(e));
 			}
@@ -1396,6 +1426,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		archiveConversation: async (id) => {
 			await invoke(client, () => client.conversation.archive({ id, archived: true }));
 			if (state.activeConversationId === id) {
+				conversationSelectionChangedLocally = true;
 				setState("activeConversationId", null);
 				setState("activeBranchId", null);
 				setState("activeMessages", []);
@@ -1406,6 +1437,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		deleteConversation: async (id) => {
 			await invoke(client, () => client.conversation.delete({ id }));
 			if (state.activeConversationId === id) {
+				conversationSelectionChangedLocally = true;
 				setState("activeConversationId", null);
 				setState("activeBranchId", null);
 				setState("activeMessages", []);
@@ -1506,6 +1538,16 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			}
 		},
 
+		triggerRoleplayEvent: async (eventId) => {
+			const conversationId = requireActiveConversation();
+			await invoke(client, () =>
+				client.roleplay.trigger({ conversationId, eventId, dedupeKey: crypto.randomUUID() }),
+			);
+			setState("activeRoleplayChoiceSetId", undefined);
+			await snapshotActions.refetch();
+		},
+		dismissRoleplayMedia: () => setState("activeRoleplayMediaId", undefined),
+
 		submitOnboarding: async (stepId, answer) => {
 			try {
 				await onboardingStore.submit(stepId, answer);
@@ -1530,6 +1572,15 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		},
 		get characterRuntimeByConversation() {
 			return state.characterRuntimeByConversation;
+		},
+		get roleplay() {
+			return snapshotResource.latest?.roleplay;
+		},
+		get activeRoleplayMediaId() {
+			return state.activeRoleplayMediaId;
+		},
+		get activeRoleplayChoiceSetId() {
+			return state.activeRoleplayChoiceSetId;
 		},
 		get snapshot() {
 			return snapshotApi;

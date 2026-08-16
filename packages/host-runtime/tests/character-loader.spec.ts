@@ -25,8 +25,14 @@ describe("character package visual projection", () => {
 
 		const display = loader.display(character);
 		expect(display.language).toBe("zh-CN");
+		expect(character.canon.manifest).toEqual(
+			expect.objectContaining({ version: 1, language: "zh-CN", sources: [] }),
+		);
+		expect(character.canon.manifest.modules).toContainEqual(
+			expect.objectContaining({ id: "original_root", kind: "root", bindings: [] }),
+		);
 		expect(display.theme.color.accent).toBe("#8bd0bb");
-		expect(display.visual.avatarUrl).toMatch(/^data:image\/svg\+xml;base64,/);
+		expect(display.visual.avatarUrl).toMatch(/^data:image\/(?:png|svg\+xml);base64,/);
 		for (const state of [
 			"presence",
 			"listening",
@@ -35,12 +41,30 @@ describe("character package visual projection", () => {
 			"result_ready",
 			"problem",
 		]) {
-			expect(display.visual.presence[state]).toMatch(/^data:image\/svg\+xml;base64,/);
+			expect(display.visual.expressions[state]).toMatch(/^data:image\/(?:png|svg\+xml);base64,/);
 		}
+		expect(display.visual.defaultExpressionId).toBe("presence");
+		expect(Object.keys(display.visual.expressions)).toHaveLength(12);
+		expect(new Set(character.visual.expressions.map((expression) => expression.asset)).size).toBe(
+			12,
+		);
+		expect(display.roleplay.media).toContainEqual(
+			expect.objectContaining({
+				id: "damaged_signal_live",
+				kind: "animation",
+				url: expect.stringMatching(/^data:image\/webp;base64,/),
+			}),
+		);
 		expect(display.scenes).toContainEqual(
 			expect.objectContaining({
 				id: "aurora_study",
-				backgroundUrl: expect.stringMatching(/^data:image\/svg\+xml;base64,/),
+				backgroundUrl: expect.stringMatching(/^data:image\/png;base64,/),
+			}),
+		);
+		expect(display.scenes).toContainEqual(
+			expect.objectContaining({
+				id: "snow_plains",
+				backgroundUrl: expect.stringMatching(/^data:image\/png;base64,/),
 			}),
 		);
 		const quietDesktop = display.scenes.find((scene) => scene.id === "quiet_desktop");
@@ -50,6 +74,19 @@ describe("character package visual projection", () => {
 });
 
 describe("character package Pi resources", () => {
+	it("discovers every official Jizhou Skill and executable plugin", () => {
+		const loader = new CharacterLoader(characterRoot);
+		const character = loader.load("jizhou");
+		if (!character) throw new Error("jizhou package is required for the official build");
+		const resources = loader.piResources(character);
+		expect(resources.skillPaths).toEqual([
+			realpathSync(resolve(characterRoot, "jizhou", "skills")),
+		]);
+		expect(resources.pluginPaths).toEqual([
+			realpathSync(resolve(characterRoot, "jizhou", "plugins", "jizhou-roleplay.mjs")),
+		]);
+	});
+
 	it("discovers only role-owned Skills and plugins by package convention", () => {
 		const configRoot = mkdtempSync(join(tmpdir(), "bear-character-package-"));
 		temporaryDirectories.push(configRoot);
@@ -73,6 +110,7 @@ describe("character package Pi resources", () => {
 		const resources = loader.piResources(character);
 		expect(resources.skillPaths).toEqual([realpathSync(join(packageDir, "skills"))]);
 		expect(resources.pluginPaths).toEqual([
+			realpathSync(join(packageDir, "plugins", "jizhou-roleplay.mjs")),
 			realpathSync(join(packageDir, "plugins", "station-log", "extension.ts")),
 		]);
 	});

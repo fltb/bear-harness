@@ -119,12 +119,13 @@ export const OnboardingStateData = z.strictObject({
 	}),
 });
 export const CharacterGetRequest = z.strictObject({});
+const CharacterMediaUrl = z.string().min(1).max(20_000_000);
 export const CharacterSummary = z.strictObject({
 	id: z.string().min(1).max(64),
 	name: z.string().min(1).max(MAX_STRING_LENGTH),
 	version: z.string().min(1).max(64),
 	subtitle: z.string().max(MAX_STRING_LENGTH),
-	avatarUrl: z.string().min(1).max(2_000_000),
+	avatarUrl: CharacterMediaUrl,
 	active: z.boolean(),
 });
 export const CharacterListRequest = z.strictObject({});
@@ -231,15 +232,84 @@ export const CharacterDisplay = z.strictObject({
 				id: z.string().min(1).max(64),
 				label: z.string().max(MAX_STRING_LENGTH),
 				description: z.string().max(MAX_STRING_LENGTH),
-				backgroundUrl: z.string().max(2_000_000).optional(),
+				backgroundUrl: CharacterMediaUrl.optional(),
 			}),
 		)
 		.max(MAX_ARRAY_LENGTH),
 	visual: z.strictObject({
 		defaultSceneId: z.string().min(1).max(64),
-		avatarUrl: z.string().min(1).max(2_000_000),
-		presence: z.record(z.string().max(64), z.string().max(2_000_000)),
-		stateLabels: z.record(z.string().max(64), z.string().max(MAX_STRING_LENGTH)),
+		defaultExpressionId: z.string().min(1).max(64),
+		avatarUrl: CharacterMediaUrl,
+		expressions: z.record(z.string().max(64), CharacterMediaUrl),
+		expressionLabels: z.record(z.string().max(64), z.string().max(MAX_STRING_LENGTH)),
+	}),
+	roleplay: z.strictObject({
+		variables: z
+			.array(
+				z.strictObject({
+					id: CharacterIdentifier,
+					type: z.enum(["number", "boolean", "enum", "string"]),
+					scope: z.enum(["conversation", "relationship", "global"]),
+					initial: z.union([z.string(), z.number(), z.boolean()]),
+					display: z.union([
+						z.strictObject({ kind: z.literal("hidden") }),
+						z.strictObject({ kind: z.literal("exact"), label: CharacterCopy }),
+						z.strictObject({
+							kind: z.literal("level"),
+							label: CharacterCopy,
+							levels: z
+								.array(z.strictObject({ min: z.number(), label: CharacterCopy }))
+								.min(1)
+								.max(20),
+						}),
+					]),
+					values: z.array(z.string().min(1).max(128)).min(1).max(50).optional(),
+				}),
+			)
+			.max(100),
+		media: z
+			.array(
+				z.strictObject({
+					id: CharacterIdentifier,
+					kind: z.enum(["image", "animation", "audio", "video"]),
+					label: CharacterCopy,
+					loop: z.boolean(),
+					url: z.string().min(1).max(20_000_000),
+					posterUrl: CharacterMediaUrl.optional(),
+					captionsUrl: CharacterMediaUrl.optional(),
+				}),
+			)
+			.max(200),
+		unlockables: z
+			.array(
+				z.strictObject({
+					id: CharacterIdentifier,
+					kind: z.enum(["cg", "memory", "music", "video", "achievement"]),
+					label: CharacterCopy,
+					description: z.string().max(MAX_STRING_LENGTH),
+					media: CharacterIdentifier.optional(),
+				}),
+			)
+			.max(200),
+		choice_sets: z
+			.array(
+				z.strictObject({
+					id: CharacterIdentifier,
+					prompt: CharacterCopy,
+					choices: z
+						.array(
+							z.strictObject({
+								id: CharacterIdentifier,
+								label: CharacterCopy,
+								description: z.string().max(MAX_STRING_LENGTH).optional(),
+								event: CharacterIdentifier,
+							}),
+						)
+						.min(2)
+						.max(12),
+				}),
+			)
+			.max(100),
 	}),
 });
 export const CharacterResponse = z.strictObject({
@@ -557,6 +627,9 @@ export const CanonSource = z.strictObject({
 	sha256: z.string().min(1).max(128),
 	chunkCount: z.number().int().safe().min(0).max(MAX_SAFE_INT),
 	createdAt: z.string().max(64),
+	origin: z.enum(["user", "package"]),
+	language: z.string().max(35).nullable(),
+	sourceKind: z.string().max(64).nullable(),
 });
 export const CanonChunk = z.strictObject({
 	id: z.string().min(1).max(64),
@@ -564,6 +637,13 @@ export const CanonChunk = z.strictObject({
 	sourceName: z.string().min(1).max(255),
 	ordinal: z.number().int().safe().min(0).max(MAX_SAFE_INT),
 	content: z.string().max(4096),
+	heading: z.string().max(300).optional(),
+	startOffset: z.number().int().nonnegative(),
+	endOffset: z.number().int().nonnegative(),
+	score: z.number().finite().optional(),
+	adjacent: z.boolean().optional(),
+	language: z.string().max(35).optional(),
+	origin: z.enum(["user", "package"]),
 });
 export const CanonListSourcesRequest = z.strictObject({});
 export const CanonAddSourceRequest = z.strictObject({
@@ -594,6 +674,9 @@ export const CanonModule = z.strictObject({
 	instructions: z.string().max(16_384),
 	sourceChunkIds: z.array(z.string().min(1).max(64)).max(100),
 	createdAt: z.string().max(64),
+	origin: z.enum(["user", "package"]),
+	stableKey: z.string().max(64).optional(),
+	triggers: z.array(z.string().max(200)).max(40),
 });
 export const CanonListModulesRequest = z.strictObject({});
 export const CanonUpsertModuleRequest = z.strictObject({
@@ -1010,6 +1093,23 @@ export const CharacterRuntimeState = z.strictObject({
 export const CharacterRuntimeSnapshot = z.strictObject({
 	byConversation: z.record(ConversationId, CharacterRuntimeState),
 });
+export const RoleplayValue = z.union([
+	z.string().max(MAX_STRING_LENGTH),
+	z.number().finite(),
+	z.boolean(),
+]);
+export const RoleplayState = z.strictObject({
+	values: z.record(z.string().min(1).max(64), RoleplayValue),
+	unlocked: z.array(z.string().min(1).max(64)).max(200),
+});
+export const RoleplayGetRequest = z.strictObject({ conversationId: ConversationId.optional() });
+export const RoleplayTriggerRequest = z.strictObject({
+	conversationId: ConversationId,
+	eventId: z.string().min(1).max(64),
+	dedupeKey: z.string().min(1).max(128),
+});
+export const RoleplayResetUnlocksRequest = z.strictObject({});
+export const RoleplayResponse = z.strictObject({ state: RoleplayState });
 export const SnapshotResponse = z.strictObject({
 	eventSeq: EventSeq,
 	onboarding: OnboardingResponse.optional(),
@@ -1023,6 +1123,7 @@ export const SnapshotResponse = z.strictObject({
 	artifact: ArtifactListResponse.optional(),
 	story: StoryListChangesResponse.optional(),
 	characterRuntime: CharacterRuntimeSnapshot.optional(),
+	roleplay: RoleplayState.optional(),
 	settings: SettingsData.optional(),
 });
 
@@ -1065,6 +1166,11 @@ export const RPC = {
 		list: endpoint("character.list:v1", CharacterListRequest, CharacterListResponse),
 		activate: endpoint("character.activate:v1", CharacterActivateRequest, CharacterResponse),
 		import: endpoint("character.import:v1", CharacterImportRequest, CharacterResponse),
+	},
+	roleplay: {
+		get: endpoint("roleplay.get:v1", RoleplayGetRequest, RoleplayResponse),
+		trigger: endpoint("roleplay.trigger:v1", RoleplayTriggerRequest, RoleplayResponse),
+		resetUnlocks: endpoint("roleplay.reset-unlocks:v1", RoleplayResetUnlocksRequest, EmptyResponse),
 	},
 	events: {
 		subscribe: endpoint("events.subscribe:v1", EventSubscribeRequest, EventSubscribeResponse),
