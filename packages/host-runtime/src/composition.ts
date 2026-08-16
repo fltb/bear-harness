@@ -7,9 +7,8 @@
  * and receive no `BrowserWindow` argument: everything they need lives on the
  * instance-scoped composition context.
  *
- * The handler set mirrors the legacy `wireAllHandlers` exactly: currently
- * unwired protocol channels (e.g. `artifact.list:v1`) are deliberately not
- * registered and keep returning `handler_not_registered`.
+ * Every public RPC endpoint is registered here; the contract gate prevents
+ * protocol additions from landing without a corresponding Host handler.
  */
 
 import { CharacterRuntimeState, RPC } from "@bear-harness/protocol/schema";

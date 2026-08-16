@@ -47,7 +47,7 @@ npm run lint && npm run typecheck && npm run test:coverage && npm run build && n
 ### 本期不做、方向已定的后续阶段
 
 #### 后续
-- 角色包导出/导入入口（当前已有本地角色包、作者工坊与 schema）
+- 角色包导出入口（导入、角色管理、作者工坊与 schema 已交付）
 - MemoryCore 可选后端（§8.6）
 - 云盘连接器
 - 外部发送/分享
@@ -103,4 +103,4 @@ npm run lint && npm run typecheck && npm run test:coverage && npm run build && n
 - Pi 与用户明确授权的 Codex 在批准范围内产生可追溯 evidence ✔
 - 材料引用、安全解析、七类格式与文件效果是真实可重开的产物 ✔
 - 失败不伪装成功 ✔
-- Windows x64 离线首用状态（M0 已验证 hash；Windows E2E 需 CI runner）✔
+- Windows x64 离线资源完整性（M0 已验证 hash）✔；Windows 原生 runner E2E 尚待验证
