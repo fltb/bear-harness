@@ -23,6 +23,7 @@
  */
 
 import type { CompanionClient } from "@bear-harness/companion-client";
+import { i18n, useTranslation } from "@bear-harness/i18n";
 import { useQueryClient } from "@tanstack/solid-query";
 import {
 	createContext,
@@ -34,7 +35,6 @@ import {
 	useContext,
 } from "solid-js";
 import { createStore } from "solid-js/store";
-import { t } from "../i18n.js";
 import { IpcInvocationError } from "../lib/ipc.js";
 import {
 	type Artifact,
@@ -65,6 +65,7 @@ import {
 	type Message,
 	type MessageApplyScope,
 	type ModelListData,
+	type ModelRouteData,
 	type OnboardingData,
 	type ProviderInfo,
 	type ProviderListData,
@@ -222,6 +223,9 @@ export interface ModelApi {
 	disable(providerId: string, modelId: string): Promise<void>;
 	select(conversationId: string, providerId: string, modelId: string): Promise<void>;
 	setMultimodalFallback(providerId: string, modelId: string): Promise<void>;
+	setDefaultReply(providerId: string, modelId: string): Promise<void>;
+	clearDefaultReply(): Promise<void>;
+	setVisionAuto(): Promise<void>;
 }
 
 export interface CommissionApi {
@@ -452,6 +456,7 @@ function isStaleOnboardingStep(error: unknown): boolean {
 }
 
 export function createCompanionStore(client: CompanionClient): CompanionStore {
+	const [t] = useTranslation(undefined, { i18n });
 	const queryClient = useQueryClient();
 	const [state, setState] = createStore<CompanionState>({
 		loading: true,
@@ -493,10 +498,8 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 	const onboardingStore = createOnboardingStore(client);
 	const settingsRequest = () => invoke(client, () => client.settings.get());
 	const providersRequest = () => invoke(client, () => client.provider.list());
-	const modelsRequest = () =>
-		invoke(client, () =>
-			client.model.list({ conversationId: state.activeConversationId ?? undefined }),
-		);
+	const modelPoolRequest = () => invoke(client, () => client.model.poolGet());
+	const modelDefaultsRequest = () => invoke(client, () => client.model.defaultsGet());
 	const settingsQuery = createRpcQuery({
 		client: queryClient,
 		key: queryKeys.settings,
@@ -509,11 +512,22 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 	});
 	const modelsQuery = createRpcQuery({
 		client: queryClient,
-		key: queryKeys.models,
-		request: modelsRequest,
-		enabled: false,
+		key: queryKeys.modelPool,
+		request: modelPoolRequest,
 	});
-	const [modelRouteConversationId, setModelRouteConversationId] = createSignal<string | null>(null);
+	const defaultsQuery = createRpcQuery({
+		client: queryClient,
+		key: queryKeys.modelDefaults,
+		request: modelDefaultsRequest,
+	});
+	const [modelRouteRevision, setModelRouteRevision] = createSignal(0);
+	const currentModelRoute = (): ModelRouteData | undefined => {
+		modelRouteRevision();
+		const conversationId = state.activeConversationId;
+		return conversationId
+			? queryClient.getQueryData<ModelRouteData>(queryKeys.modelRoute(conversationId))
+			: undefined;
+	};
 	const settingsMutation = createRpcMutation<() => Promise<unknown>>({
 		client: queryClient,
 		request: (request) => request(),
@@ -528,6 +542,11 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		client: queryClient,
 		request: (request) => request(),
 		invalidates: [queryKeys.modelPool],
+	});
+	const modelDefaultsMutation = createRpcMutation<() => Promise<unknown>>({
+		client: queryClient,
+		request: (request) => request(),
+		invalidates: [queryKeys.modelDefaults],
 	});
 
 	let booted = false;
@@ -600,11 +619,15 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 
 	const hydrateFromSnapshot = (snap: Snapshot): void => {
 		onboardingStore._hydrate(snap.onboarding);
-		const snapshotConversationId =
-			snap.conversation?.activeConversationId ?? state.activeConversationId;
-		if (snap.model && queryClient.getQueryData(queryKeys.models) === undefined) {
-			hydrateRpcQuery(queryClient, queryKeys.models, snap.model);
-			setModelRouteConversationId(snapshotConversationId);
+		if (snap.model) {
+			hydrateRpcQuery(queryClient, queryKeys.modelPool, snap.model.pool);
+			hydrateRpcQuery(queryClient, queryKeys.modelDefaults, snap.model.defaults);
+			if (snap.model.route)
+				hydrateRpcQuery(
+					queryClient,
+					queryKeys.modelRoute(snap.model.route.conversationId),
+					snap.model.route,
+				);
 		}
 		const conversation = snap.conversation;
 		if (conversation) {
@@ -962,16 +985,27 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			);
 		},
 	};
-	const refreshActiveModels = async () => {
-		const conversationId = state.activeConversationId;
-		const data = await refreshRpcQuery({
+	const refreshModelPool = () =>
+		refreshRpcQuery({
 			client: queryClient,
-			key: queryKeys.models,
-			request: modelsRequest,
+			key: queryKeys.modelPool,
+			request: modelPoolRequest,
 		});
-		setModelRouteConversationId(conversationId);
-		return data;
-	};
+	const refreshModelDefaults = () =>
+		refreshRpcQuery({
+			client: queryClient,
+			key: queryKeys.modelDefaults,
+			request: modelDefaultsRequest,
+		});
+	const refreshModelRoute = (conversationId: string) =>
+		refreshRpcQuery({
+			client: queryClient,
+			key: queryKeys.modelRoute(conversationId),
+			request: () => invoke(client, () => client.model.routeGet({ conversationId })),
+		}).then((data) => {
+			setModelRouteRevision((revision) => revision + 1);
+			return data;
+		});
 
 	const providerApi: ProviderApi = {
 		providers: () => providersQuery.data?.providers ?? [],
@@ -990,7 +1024,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			await providerMutation.mutateAsync(() =>
 				invoke(client, () => client.provider.importPiConfig({ configJson })),
 			);
-			await refreshActiveModels();
+			await refreshModelPool();
 		},
 		overrideBaseUrl: async (params) => {
 			await providerMutation.mutateAsync(() =>
@@ -1015,52 +1049,96 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 	};
 
 	const modelApi: ModelApi = {
-		data: () => modelsQuery.data ?? { models: [] },
+		data: () => {
+			const models = modelsQuery.data?.models ?? [];
+			const defaults = defaultsQuery.data ?? { vision: { mode: "auto" as const } };
+			const selected = currentModelRoute()?.selected;
+			const multimodalFallback =
+				defaults.vision.mode === "manual"
+					? defaults.vision.route
+					: models.find((model) => model.supportsImages);
+			return {
+				models,
+				defaults,
+				...(selected ? { selected } : {}),
+				...(multimodalFallback
+					? {
+							multimodalFallback: {
+								providerId: multimodalFallback.providerId,
+								modelId: multimodalFallback.modelId,
+							},
+						}
+					: {}),
+			};
+		},
 		models: () => modelsQuery.data?.models ?? [],
 		selectedValue: () => {
-			if (modelRouteConversationId() !== state.activeConversationId) return "";
-			const route = modelsQuery.data?.selected;
+			const route = currentModelRoute()?.selected;
 			return route ? `${route.providerId}:${route.modelId}` : "";
 		},
-		loading: () => modelsQuery.isFetching,
-		error: () => modelsQuery.error,
-		refetch: () => void modelsQuery.refetch(),
+		loading: () => modelsQuery.isFetching || defaultsQuery.isFetching,
+		error: () => modelsQuery.error ?? defaultsQuery.error,
+		refetch: () => {
+			void refreshModelPool();
+			void refreshModelDefaults();
+			if (state.activeConversationId) void refreshModelRoute(state.activeConversationId);
+		},
 		list: (conversationId) => {
-			const projectsActiveRoute = Boolean(conversationId) || state.activeConversationId === null;
-			const key = projectsActiveRoute ? queryKeys.models : queryKeys.modelPool;
-			return refreshRpcQuery({
-				client: queryClient,
-				key,
-				request: () => invoke(client, () => client.model.list({ conversationId })),
-			}).then((data) => {
-				if (projectsActiveRoute)
-					setModelRouteConversationId(conversationId ?? state.activeConversationId);
-				return data;
-			});
+			return Promise.all([
+				refreshModelPool(),
+				refreshModelDefaults(),
+				...(conversationId ? [refreshModelRoute(conversationId)] : []),
+			]).then(() => modelApi.data());
 		},
 		enable: async (providerId, modelId, label) => {
 			await modelMutation.mutateAsync(() =>
 				invoke(client, () => client.model.enable({ providerId, modelId, label })),
 			);
-			await refreshActiveModels();
+			await Promise.all([refreshModelPool(), refreshModelDefaults()]);
 		},
 		disable: async (providerId, modelId) => {
 			await modelMutation.mutateAsync(() =>
 				invoke(client, () => client.model.disable({ providerId, modelId })),
 			);
-			await refreshActiveModels();
+			await Promise.all([refreshModelPool(), refreshModelDefaults()]);
 		},
 		select: async (conversationId, providerId, modelId) => {
-			await modelMutation.mutateAsync(() =>
-				invoke(client, () => client.model.select({ conversationId, providerId, modelId })),
+			await invoke(client, () =>
+				client.model.routeSet({
+					conversationId,
+					selected: { providerId, modelId },
+				}),
 			);
-			await refreshActiveModels();
+			await refreshModelRoute(conversationId);
 		},
 		setMultimodalFallback: async (providerId, modelId) => {
-			await modelMutation.mutateAsync(() =>
-				invoke(client, () => client.model.setMultimodalFallback({ providerId, modelId })),
+			await modelDefaultsMutation.mutateAsync(() =>
+				invoke(client, () =>
+					client.model.defaultsSetVision({
+						mode: "manual",
+						route: { providerId, modelId },
+					}),
+				),
 			);
-			await refreshActiveModels();
+			await refreshModelDefaults();
+		},
+		setDefaultReply: async (providerId, modelId) => {
+			await modelDefaultsMutation.mutateAsync(() =>
+				invoke(client, () => client.model.defaultsSetReply({ reply: { providerId, modelId } })),
+			);
+			await refreshModelDefaults();
+		},
+		clearDefaultReply: async () => {
+			await modelDefaultsMutation.mutateAsync(() =>
+				invoke(client, () => client.model.defaultsSetReply({ reply: null })),
+			);
+			await refreshModelDefaults();
+		},
+		setVisionAuto: async () => {
+			await modelDefaultsMutation.mutateAsync(() =>
+				invoke(client, () => client.model.defaultsSetVision({ mode: "auto" })),
+			);
+			await refreshModelDefaults();
 		},
 	};
 

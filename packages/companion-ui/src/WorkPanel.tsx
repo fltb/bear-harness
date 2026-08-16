@@ -1,9 +1,10 @@
+import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
 import { createSignal, For, Show } from "solid-js";
-import { t } from "./i18n.js";
 import { useCompanionStore } from "./stores/companion.js";
 
 export function WorkPanel() {
+	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const [busyId, setBusyId] = createSignal<string>();
 	const commissions = () =>

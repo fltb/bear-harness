@@ -26,5 +26,4 @@ export {
 	type RendererFault,
 	type RendererFaultReporter,
 } from "./diagnostics.js";
-export { productLocale, setProductLocale, t } from "./i18n.js";
 export * from "./stores/companion.js";

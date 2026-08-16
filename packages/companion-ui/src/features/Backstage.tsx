@@ -1,3 +1,4 @@
+import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
 import { Checkbox } from "@kobalte/core/checkbox";
 import { Dialog } from "@kobalte/core/dialog";
@@ -5,7 +6,6 @@ import { FileField } from "@kobalte/core/file-field";
 import { Tabs } from "@kobalte/core/tabs";
 import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, onMount, Show } from "solid-js";
-import { t } from "../i18n.js";
 import { type CharacterDisplay, useCompanionStore } from "../stores/companion.js";
 import { CanonStudio } from "./CanonStudio.js";
 import { MemoryEntryList, MemorySheet } from "./MemorySheet.js";
@@ -25,6 +25,7 @@ export function Backstage(props: {
 	character: CharacterDisplay | undefined;
 	initialTab?: "roles" | "settings";
 }) {
+	const [t] = useTranslation(undefined, { i18n });
 	const [selectedTab, setSelectedTab] = createSignal(props.initialTab ?? "roles");
 	createEffect(() => setSelectedTab(props.initialTab ?? "roles"));
 	return (
@@ -95,6 +96,7 @@ export function Backstage(props: {
 }
 
 function RoleManager() {
+	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const [busyId, setBusyId] = createSignal<string>();
 	const [importing, setImporting] = createSignal(false);
@@ -182,6 +184,7 @@ function RoleManager() {
 }
 
 function StoryArchive() {
+	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const [text, setText] = createSignal("");
 	const [branchOnly, setBranchOnly] = createSignal(false);
@@ -260,6 +263,7 @@ function StoryArchive() {
 
 /** 关系档案: locked self-canon plus the relationship-scoped memories. */
 function RelationshipArchive(props: { character: CharacterDisplay | undefined }) {
+	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const [saving, setSaving] = createSignal(false);
 	const [feedback, setFeedback] = createSignal<string>();

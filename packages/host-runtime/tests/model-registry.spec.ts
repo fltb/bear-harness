@@ -86,10 +86,75 @@ describe("ModelRegistry", () => {
 			supportsImages: true,
 		});
 
-		models.setMultimodalFallback("character", "relay", "vision-b");
+		models.setVisionDefault("character", {
+			mode: "manual",
+			route: { providerId: "relay", modelId: "vision-b" },
+		});
 
 		expect(models.multimodalFallback("character")?.modelId).toBe("vision-b");
-		expect(() => models.setMultimodalFallback("character", "relay", "missing")).toThrow();
+		expect(() =>
+			models.setVisionDefault("character", {
+				mode: "manual",
+				route: { providerId: "relay", modelId: "missing" },
+			}),
+		).toThrow();
+	});
+
+	it("starts without a reply default and applies a configured default only to new conversations", () => {
+		models.enable({ providerId: "relay", modelId: "text", label: "Text", supportsImages: false });
+		expect(models.defaults("character").reply).toBeUndefined();
+		expect(models.selected("conversation")).toBeUndefined();
+
+		models.setDefaultReply("character", { providerId: "relay", modelId: "text" });
+		database.connection
+			.prepare(
+				"INSERT INTO conversations (id, companion_id, title) VALUES ('new-conversation', 'character', 'New')",
+			)
+			.run();
+		models.applyDefaultToConversation("character", "new-conversation");
+
+		expect(models.selected("conversation")).toBeUndefined();
+		expect(models.selected("new-conversation")).toMatchObject({
+			providerId: "relay",
+			modelId: "text",
+		});
+	});
+
+	it("resolves automatic vision without creating or changing persisted defaults", () => {
+		models.enable({
+			providerId: "relay",
+			modelId: "vision",
+			label: "Vision",
+			supportsImages: true,
+		});
+		const before = database.connection
+			.prepare("SELECT COUNT(*) AS count FROM model_route_settings")
+			.get() as { count: number };
+
+		expect(models.multimodalFallback("character")?.modelId).toBe("vision");
+		const after = database.connection
+			.prepare("SELECT COUNT(*) AS count FROM model_route_settings")
+			.get() as { count: number };
+		expect(after.count).toBe(before.count);
+		expect(models.defaults("character").vision).toEqual({ mode: "auto" });
+	});
+
+	it("clears reply and manual vision defaults when their configured model is removed", () => {
+		models.enable({
+			providerId: "relay",
+			modelId: "vision",
+			label: "Vision",
+			supportsImages: true,
+		});
+		models.setDefaultReply("character", { providerId: "relay", modelId: "vision" });
+		models.setVisionDefault("character", {
+			mode: "manual",
+			route: { providerId: "relay", modelId: "vision" },
+		});
+
+		models.disable("relay", "vision");
+
+		expect(models.defaults("character")).toEqual({ vision: { mode: "auto" } });
 	});
 
 	it("removes a conversation selection without silently choosing another model", () => {

@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, or, sql } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
 import {
@@ -14,6 +14,11 @@ export interface ModelRecord {
 	label: string;
 	supportsImages: boolean;
 	createdAt: string;
+}
+
+export interface ModelDefaults {
+	reply?: ModelRecord;
+	vision: { mode: "auto" } | { mode: "manual"; route: ModelRecord };
 }
 
 export class ModelRegistry {
@@ -66,6 +71,21 @@ export class ModelRegistry {
 			transaction
 				.update(modelRouteSettings)
 				.set({
+					textProviderId: null,
+					textModelId: null,
+					updatedAt: sql`datetime('now')`,
+				})
+				.where(
+					and(
+						eq(modelRouteSettings.textProviderId, providerId),
+						eq(modelRouteSettings.textModelId, modelId),
+					),
+				)
+				.run();
+			transaction
+				.update(modelRouteSettings)
+				.set({
+					visionMode: "auto",
 					multimodalProviderId: null,
 					multimodalModelId: null,
 					updatedAt: sql`datetime('now')`,
@@ -85,6 +105,92 @@ export class ModelRegistry {
 				.run();
 		});
 		this.eventBus.publish("model.disabled", { providerId, modelId });
+	}
+
+	defaults(companionId: string): ModelDefaults {
+		const row = this.db
+			.select()
+			.from(modelRouteSettings)
+			.where(eq(modelRouteSettings.companionId, companionId))
+			.get();
+		const reply =
+			row?.textProviderId && row.textModelId
+				? this.get(row.textProviderId, row.textModelId)
+				: undefined;
+		const manualVision =
+			row?.visionMode === "manual" && row.multimodalProviderId && row.multimodalModelId
+				? this.get(row.multimodalProviderId, row.multimodalModelId)
+				: undefined;
+		return {
+			...(reply ? { reply } : {}),
+			vision:
+				manualVision?.supportsImages === true
+					? { mode: "manual", route: manualVision }
+					: { mode: "auto" },
+		};
+	}
+
+	setDefaultReply(
+		companionId: string,
+		route: { providerId: string; modelId: string } | null,
+	): ModelDefaults {
+		const model = route ? this.get(route.providerId, route.modelId) : undefined;
+		if (route && !model) throw { kind: "not_found", reason: "configured_model_not_found" };
+		this.db
+			.insert(modelRouteSettings)
+			.values({
+				companionId,
+				textProviderId: model?.providerId ?? null,
+				textModelId: model?.modelId ?? null,
+			})
+			.onConflictDoUpdate({
+				target: modelRouteSettings.companionId,
+				set: {
+					textProviderId: model?.providerId ?? null,
+					textModelId: model?.modelId ?? null,
+					updatedAt: sql`datetime('now')`,
+				},
+			})
+			.run();
+		this.eventBus.publish("model.defaults_changed", { kind: "reply" });
+		return this.defaults(companionId);
+	}
+
+	setVisionDefault(
+		companionId: string,
+		value: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } },
+	): ModelDefaults {
+		const model =
+			value.mode === "manual" ? this.get(value.route.providerId, value.route.modelId) : undefined;
+		if (value.mode === "manual" && !model)
+			throw { kind: "not_found", reason: "configured_model_not_found" };
+		if (model && !model.supportsImages)
+			throw { kind: "invalid_request", reason: "model_does_not_support_images" };
+		this.db
+			.insert(modelRouteSettings)
+			.values({
+				companionId,
+				visionMode: value.mode,
+				multimodalProviderId: model?.providerId ?? null,
+				multimodalModelId: model?.modelId ?? null,
+			})
+			.onConflictDoUpdate({
+				target: modelRouteSettings.companionId,
+				set: {
+					visionMode: value.mode,
+					multimodalProviderId: model?.providerId ?? null,
+					multimodalModelId: model?.modelId ?? null,
+					updatedAt: sql`datetime('now')`,
+				},
+			})
+			.run();
+		this.eventBus.publish("model.defaults_changed", { kind: "vision" });
+		return this.defaults(companionId);
+	}
+
+	applyDefaultToConversation(companionId: string, conversationId: string): ModelRecord | undefined {
+		const reply = this.defaults(companionId).reply;
+		return reply ? this.select(conversationId, reply.providerId, reply.modelId) : undefined;
 	}
 
 	select(conversationId: string, providerId: string, modelId: string): ModelRecord {
@@ -115,44 +221,9 @@ export class ModelRegistry {
 	}
 
 	multimodalFallback(companionId: string): ModelRecord | undefined {
-		const configured = this.db
-			.select({
-				providerId: modelRouteSettings.multimodalProviderId,
-				modelId: modelRouteSettings.multimodalModelId,
-			})
-			.from(modelRouteSettings)
-			.where(eq(modelRouteSettings.companionId, companionId))
-			.get();
-		if (configured?.providerId && configured.modelId) {
-			const model = this.get(configured.providerId, configured.modelId);
-			if (model?.supportsImages) return model;
-		}
-		const automatic = this.list().find((model) => model.supportsImages);
-		if (!automatic) return undefined;
-		this.setMultimodalFallback(companionId, automatic.providerId, automatic.modelId);
-		return automatic;
-	}
-
-	setMultimodalFallback(companionId: string, providerId: string, modelId: string): ModelRecord {
-		const model = this.get(providerId, modelId);
-		if (!model) throw { kind: "not_found", reason: "configured_model_not_found" };
-		if (!model.supportsImages) {
-			throw { kind: "invalid_request", reason: "model_does_not_support_images" };
-		}
-		this.db
-			.insert(modelRouteSettings)
-			.values({ companionId, multimodalProviderId: providerId, multimodalModelId: modelId })
-			.onConflictDoUpdate({
-				target: modelRouteSettings.companionId,
-				set: {
-					multimodalProviderId: providerId,
-					multimodalModelId: modelId,
-					updatedAt: sql`datetime('now')`,
-				},
-			})
-			.run();
-		this.eventBus.publish("model.multimodal_fallback_selected", { providerId, modelId });
-		return model;
+		const vision = this.defaults(companionId).vision;
+		if (vision.mode === "manual") return vision.route;
+		return this.list().find((model) => model.supportsImages);
 	}
 
 	selected(conversationId: string): ModelRecord | undefined {

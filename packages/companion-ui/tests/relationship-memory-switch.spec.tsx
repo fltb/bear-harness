@@ -1,4 +1,4 @@
-import { zhCN } from "@bear-harness/product-config/locales";
+import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen } from "@solidjs/testing-library";
 import { waitFor } from "@testing-library/dom";
 import userEvent from "@testing-library/user-event";

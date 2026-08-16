@@ -20,6 +20,11 @@ function collect(directory) {
 for (const root of sourceRoots) collect(root);
 
 const findings = [];
+const forbiddenI18nPatterns = [
+	[/@bear-harness\/product-config\/locales/, "locale catalogs belong to @bear-harness/i18n"],
+	[/@solid-primitives\/i18n/, "use the shared i18next instance"],
+	[/from\s+["']\.\.?\/[^"']*i18n(?:\.[jt]s)?["']/, "do not add a UI-local i18n facade"],
+];
 for (const path of sourceFiles) {
 	let inBlockComment = false;
 	for (const [index, line] of readFileSync(path, "utf8").split("\n").entries()) {
@@ -34,12 +39,13 @@ for (const path of sourceFiles) {
 		}
 		if (trimmed.startsWith("//") || trimmed.startsWith("*")) continue;
 		if (/[\p{Script=Han}]/u.test(line)) findings.push(`${relative(repoRoot, path)}:${index + 1}`);
+		for (const [pattern, reason] of forbiddenI18nPatterns) {
+			if (pattern.test(line)) findings.push(`${relative(repoRoot, path)}:${index + 1} ${reason}`);
+		}
 	}
 }
 
 if (findings.length > 0) {
-	process.stderr.write(
-		`UI copy must live in product configuration or a character package, not source:\n${findings.join("\n")}\n`,
-	);
+	process.stderr.write(`UI copy and locale ownership violations:\n${findings.join("\n")}\n`);
 	process.exit(1);
 }

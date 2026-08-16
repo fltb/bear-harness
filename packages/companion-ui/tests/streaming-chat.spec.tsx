@@ -1,4 +1,4 @@
-import { zhCN } from "@bear-harness/product-config/locales";
+import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -15,7 +15,7 @@ const COMPLETE_ONBOARDING = {
 
 function activeClient() {
 	const fixture = createTestClient();
-	fixture.client.model.list = vi.fn(() =>
+	fixture.client.model.poolGet = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
 			data: {
@@ -28,6 +28,14 @@ function activeClient() {
 						createdAt: "2026-01-01T00:00:00.000Z",
 					},
 				],
+			},
+		}),
+	);
+	fixture.client.model.routeGet = vi.fn(({ conversationId }) =>
+		Promise.resolve({
+			ok: true as const,
+			data: {
+				conversationId,
 				selected: { providerId: "e2e-rule", modelId: "rule-model" },
 			},
 		}),
@@ -39,16 +47,22 @@ function activeClient() {
 				eventSeq: 0,
 				onboarding: COMPLETE_ONBOARDING,
 				model: {
-					models: [
-						{
-							providerId: "e2e-rule",
-							modelId: "rule-model",
-							label: "E2E Rule Provider",
-							supportsImages: false,
-							createdAt: "2026-01-01T00:00:00.000Z",
-						},
-					],
-					selected: { providerId: "e2e-rule", modelId: "rule-model" },
+					pool: {
+						models: [
+							{
+								providerId: "e2e-rule",
+								modelId: "rule-model",
+								label: "E2E Rule Provider",
+								supportsImages: false,
+								createdAt: "2026-01-01T00:00:00.000Z",
+							},
+						],
+					},
+					defaults: { vision: { mode: "auto" } },
+					route: {
+						conversationId: "conversation-1",
+						selected: { providerId: "e2e-rule", modelId: "rule-model" },
+					},
 				},
 				conversation: {
 					activeConversationId: "conversation-1",

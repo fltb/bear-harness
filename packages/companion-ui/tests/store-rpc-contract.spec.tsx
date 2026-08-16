@@ -41,7 +41,7 @@ describe("store RPC contract", () => {
 			supportsImages: false,
 			createdAt: "2026-01-01",
 		};
-		client.model.list = vi.fn(() =>
+		client.model.poolGet = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { models: [configured] } }),
 		);
 		const { store, dispose } = createStoreWithCleanup(client);
@@ -51,7 +51,10 @@ describe("store RPC contract", () => {
 			await waitFor(() => expect(store.model.models()).toEqual([configured]));
 			resolveSnapshot?.({
 				ok: true,
-				data: { eventSeq: 1, model: { models: [] } },
+				data: {
+					eventSeq: 1,
+					model: { pool: { models: [] }, defaults: { vision: { mode: "auto" } } },
+				},
 			});
 			await waitFor(() => expect(client.snapshot.get).toHaveBeenCalled());
 			expect(store.model.models()).toEqual([configured]);
@@ -69,16 +72,22 @@ describe("store RPC contract", () => {
 					eventSeq: 1,
 					conversation: { activeConversationId: "conversation-1", messages: [] },
 					model: {
-						models: [
-							{
-								providerId: "relay",
-								modelId: "fast",
-								label: "Fast",
-								supportsImages: false,
-								createdAt: "2026-01-01",
-							},
-						],
-						selected: { providerId: "relay", modelId: "fast" },
+						pool: {
+							models: [
+								{
+									providerId: "relay",
+									modelId: "fast",
+									label: "Fast",
+									supportsImages: false,
+									createdAt: "2026-01-01",
+								},
+							],
+						},
+						defaults: { vision: { mode: "auto" } },
+						route: {
+							conversationId: "conversation-1",
+							selected: { providerId: "relay", modelId: "fast" },
+						},
 					},
 				},
 			}),
@@ -317,7 +326,7 @@ describe("store RPC contract", () => {
 				expect.objectContaining({ runId: "run-1", requestId: "permission-1" }),
 			]);
 			await waitFor(() => expect(client.provider.list).toHaveBeenCalled());
-			await waitFor(() => expect(client.model.list).toHaveBeenCalled());
+			await waitFor(() => expect(client.model.poolGet).toHaveBeenCalled());
 			await waitFor(() => expect(client.memory.listCandidates).toHaveBeenCalled());
 			await waitFor(() => expect(client.story.listChanges).toHaveBeenCalled());
 			await waitFor(() => expect(client.character.list).toHaveBeenCalled());

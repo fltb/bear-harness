@@ -1,4 +1,4 @@
-import { zhCN } from "@bear-harness/product-config/locales";
+import { zhCN } from "@bear-harness/i18n/locales";
 import { describe, expect, it } from "vitest";
 import { type IpcInvocationError, unwrap } from "../src/lib/ipc.js";
 

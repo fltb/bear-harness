@@ -8,8 +8,9 @@ import {
 export const queryKeys = {
 	settings: ["settings"] as const,
 	providers: ["providers"] as const,
-	models: ["models", "active-conversation"] as const,
 	modelPool: ["models", "pool"] as const,
+	modelDefaults: ["models", "defaults"] as const,
+	modelRoute: (conversationId: string) => ["models", "route", conversationId] as const,
 };
 
 export function createRpcQuery<T>(input: {

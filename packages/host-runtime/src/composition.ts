@@ -13,7 +13,8 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
-import { RPC } from "@bear-harness/protocol/schema";
+import { CharacterRuntimeState, RPC } from "@bear-harness/protocol/schema";
+import { desc, eq } from "drizzle-orm";
 import type { ArtifactStore } from "./artifacts/index.js";
 import type { CanonHubService } from "./canon/service.js";
 import type { CommissionService, RunStatus } from "./commissions/service.js";
@@ -21,16 +22,20 @@ import type { CharacterLoader } from "./companion/character-loader.js";
 import type { FirstMeetingMachine } from "./companion/first-meeting.js";
 import type { CompanionSupervisor } from "./companion/supervisor.js";
 import type { TurnPipeline } from "./companion/turn-pipeline.js";
+import { ConversationRepository } from "./conversations/repository.js";
 import type { Dispatcher } from "./dispatcher.js";
 import type { MemoryService } from "./memory/service.js";
 import type { ModelRegistry } from "./models/registry.js";
 import type { ProviderCatalog } from "./providers/catalog.js";
+import type { AppDatabase } from "./storage/database.js";
 import type { EventBus } from "./storage/event-bus.js";
+import { activeCharacter, companionIdentity, runs, sceneState } from "./storage/schema.js";
 import type { StoryService } from "./story/service.js";
 
 /** Domain services and runtime-owned inputs the handlers read and mutate. */
 export interface HostCompositionContext {
 	db: DatabaseSync;
+	orm: AppDatabase;
 	eventBus: EventBus;
 	onboarding: FirstMeetingMachine;
 	turns: TurnPipeline;
@@ -60,6 +65,7 @@ function oauthWire(state: Awaited<ReturnType<ProviderCatalog["startOAuth"]>>) {
 
 /** Wire all RPC handlers to domain services. Call once per dispatcher. */
 export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionContext): void {
+	const conversationRepository = new ConversationRepository(s.orm);
 	// Load and seed the active character package from the character root once.
 	ensureCharacterSeeded(s);
 
@@ -120,25 +126,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	// --- conversation ---------------------------------------------------------
 	dispatcher.registerHandler(RPC.conversation.list, async () => {
 		const companionId = await getCompanionId(s);
-		const rows = s.db
-			.prepare(
-				"SELECT id, title, scene_title, updated_at FROM conversations WHERE companion_id = ? AND archived_at IS NULL ORDER BY updated_at DESC LIMIT 100",
-			)
-			.all(companionId) as Array<{
-			id: string;
-			title: string;
-			scene_title: string;
-			updated_at: string;
-		}>;
-		return {
-			conversations: rows.map((r) => ({
-				id: r.id,
-				title: r.title,
-				sceneTitle: r.scene_title,
-				unread: false,
-				updatedAt: r.updated_at,
-			})),
-		};
+		return { conversations: conversationRepository.list(companionId) };
 	});
 	dispatcher.registerHandler(RPC.conversation.create, async (_p) => {
 		const companionId = await getCompanionId(s);
@@ -148,108 +136,44 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const character = s.characterLoader.load(companionId);
 		if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
 		const sceneTitle = character.character.scene_title;
-		s.db.exec("BEGIN IMMEDIATE");
 		try {
-			s.db
-				.prepare(
-					"INSERT INTO conversations (id, companion_id, title, scene_title) VALUES (?, ?, ?, ?)",
-				)
-				.run(id, companionId, title, sceneTitle);
-			s.db
-				.prepare(
-					"INSERT INTO branches (id, conversation_id, label, adopted) VALUES (?, ?, 'main', 1)",
-				)
-				.run(branchId, id);
-			s.db.exec("COMMIT");
+			conversationRepository.create({ id, branchId, companionId, title, sceneTitle });
 		} catch (e) {
-			s.db.exec("ROLLBACK");
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
+		s.models.applyDefaultToConversation(companionId, id);
 		s.eventBus.publish("conversation.created", { conversationId: id });
 		return { id };
 	});
 	dispatcher.registerHandler(RPC.conversation.select, async (_p) => {
 		const { id } = _p as { id: string };
 		const companionId = await getCompanionId(s);
-		const row = s.db
-			.prepare(
-				"SELECT id, title, scene_title FROM conversations WHERE id = ? AND companion_id = ? AND archived_at IS NULL",
-			)
-			.get(id, companionId) as { id: string; title: string; scene_title: string } | undefined;
-		if (!row) throw { kind: "not_found", reason: "conversation_not_found" };
+		const conversation = conversationRepository.get(id, companionId);
+		if (!conversation) throw { kind: "not_found", reason: "conversation_not_found" };
 		s.eventBus.publish("conversation.selected", { id });
-		return conversationProjection(s.db, row.id, row.title, row.scene_title);
+		return conversation;
 	});
 	dispatcher.registerHandler(RPC.conversation.rename, async (_p) => {
 		const { id, title } = _p as { id: string; title: string };
 		const companionId = await getCompanionId(s);
-		const result = s.db
-			.prepare(
-				"UPDATE conversations SET title = ?, updated_at = datetime('now') WHERE id = ? AND companion_id = ?",
-			)
-			.run(title.trim(), id, companionId);
-		if (result.changes === 0) throw { kind: "not_found", reason: "conversation_not_found" };
+		if (!conversationRepository.rename(id, companionId, title.trim()))
+			throw { kind: "not_found", reason: "conversation_not_found" };
 		s.eventBus.publish("conversation.renamed", { conversationId: id, title: title.trim() });
 		return {};
 	});
 	dispatcher.registerHandler(RPC.conversation.archive, async (_p) => {
 		const { id, archived } = _p as { id: string; archived: boolean };
 		const companionId = await getCompanionId(s);
-		const result = s.db
-			.prepare(
-				"UPDATE conversations SET archived_at = ?, updated_at = datetime('now') WHERE id = ? AND companion_id = ?",
-			)
-			.run(archived ? new Date().toISOString() : null, id, companionId);
-		if (result.changes === 0) throw { kind: "not_found", reason: "conversation_not_found" };
+		if (!conversationRepository.archive(id, companionId, archived))
+			throw { kind: "not_found", reason: "conversation_not_found" };
 		s.eventBus.publish("conversation.archived", { conversationId: id, archived });
 		return {};
 	});
 	dispatcher.registerHandler(RPC.conversation.delete, async (_p) => {
 		const { id } = _p as { id: string };
 		const companionId = await getCompanionId(s);
-		const exists = s.db
-			.prepare("SELECT id FROM conversations WHERE id = ? AND companion_id = ?")
-			.get(id, companionId);
-		if (!exists) throw { kind: "not_found", reason: "conversation_not_found" };
-		s.db.exec("BEGIN IMMEDIATE");
-		try {
-			s.db
-				.prepare("UPDATE commissions SET conversation_id = NULL WHERE conversation_id = ?")
-				.run(id);
-			s.db
-				.prepare(
-					"UPDATE relationship_memory_entries SET source_message_version_id = NULL, source_branch_id = NULL, source_conversation_id = NULL WHERE source_conversation_id = ?",
-				)
-				.run(id);
-			s.db
-				.prepare(
-					"UPDATE memory_candidates SET source_message_version_id = NULL, source_branch_id = NULL, source_conversation_id = NULL WHERE source_conversation_id = ?",
-				)
-				.run(id);
-			s.db
-				.prepare("UPDATE story_change_events SET conversation_id = NULL WHERE conversation_id = ?")
-				.run(id);
-			s.db
-				.prepare(
-					"UPDATE story_changes SET status = 'reverted', reverted_at = datetime('now'), conversation_id = NULL, branch_id = NULL WHERE conversation_id = ? OR branch_id IN (SELECT id FROM branches WHERE conversation_id = ?)",
-				)
-				.run(id, id);
-			s.db.prepare("DELETE FROM turns WHERE conversation_id = ?").run(id);
-			s.db
-				.prepare(
-					"DELETE FROM message_versions WHERE message_id IN (SELECT id FROM messages WHERE conversation_id = ?)",
-				)
-				.run(id);
-			s.db.prepare("DELETE FROM messages WHERE conversation_id = ?").run(id);
-			s.db.prepare("DELETE FROM scene_state WHERE conversation_id = ?").run(id);
-			s.db.prepare("DELETE FROM conversation_directives WHERE conversation_id = ?").run(id);
-			s.db.prepare("DELETE FROM branches WHERE conversation_id = ?").run(id);
-			s.db.prepare("DELETE FROM conversations WHERE id = ?").run(id);
-			s.db.exec("COMMIT");
-		} catch (error) {
-			s.db.exec("ROLLBACK");
-			throw error;
-		}
+		if (!conversationRepository.delete(id, companionId))
+			throw { kind: "not_found", reason: "conversation_not_found" };
 		s.eventBus.publish("conversation.deleted", { conversationId: id });
 		return {};
 	});
@@ -515,11 +439,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 
 	// --- configured models ------------------------------------------------------------
-	dispatcher.registerHandler(RPC.model.list, async (_p) => {
-		const { conversationId } = _p as { conversationId?: string };
-		const selected = conversationId ? s.models.selected(conversationId) : undefined;
-		const companionId = await getCompanionId(s);
-		const fallback = s.models.multimodalFallback(companionId);
+	dispatcher.registerHandler(RPC.model.poolGet, async () => {
 		const providerNames = new Map(
 			(await s.providers.listProviders()).map((provider) => [provider.id, provider.name]),
 		);
@@ -528,17 +448,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				...model,
 				providerName: providerNames.get(model.providerId) ?? model.providerId,
 			})),
-			...(selected
-				? { selected: { providerId: selected.providerId, modelId: selected.modelId } }
-				: {}),
-			...(fallback
-				? {
-						multimodalFallback: {
-							providerId: fallback.providerId,
-							modelId: fallback.modelId,
-						},
-					}
-				: {}),
 		};
 	});
 	dispatcher.registerHandler(RPC.model.enable, async (_p) => {
@@ -565,49 +474,52 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		s.models.disable(providerId, modelId);
 		return {};
 	});
-	dispatcher.registerHandler(RPC.model.select, async (_p) => {
-		const { conversationId, providerId, modelId } = _p as {
-			conversationId: string;
-			providerId: string;
-			modelId: string;
-		};
-		const selected = s.models.select(conversationId, providerId, modelId);
-		return { selected: { providerId: selected.providerId, modelId: selected.modelId } };
-	});
-	dispatcher.registerHandler(RPC.model.setMultimodalFallback, async (_p) => {
-		const { providerId, modelId } = _p as { providerId: string; modelId: string };
+	dispatcher.registerHandler(RPC.model.defaultsGet, async () => {
 		const companionId = await getCompanionId(s);
-		const fallback = s.models.setMultimodalFallback(companionId, providerId, modelId);
+		return modelDefaultsWire(s.models.defaults(companionId));
+	});
+	dispatcher.registerHandler(RPC.model.defaultsSetReply, async (_p) => {
+		const { reply } = _p as { reply: { providerId: string; modelId: string } | null };
+		const companionId = await getCompanionId(s);
+		return modelDefaultsWire(s.models.setDefaultReply(companionId, reply));
+	});
+	dispatcher.registerHandler(RPC.model.defaultsSetVision, async (_p) => {
+		const companionId = await getCompanionId(s);
+		return modelDefaultsWire(
+			s.models.setVisionDefault(
+				companionId,
+				_p as { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } },
+			),
+		);
+	});
+	dispatcher.registerHandler(RPC.model.routeGet, async (_p) => {
+		const { conversationId } = _p as { conversationId: string };
+		const selected = s.models.selected(conversationId);
 		return {
-			multimodalFallback: {
-				providerId: fallback.providerId,
-				modelId: fallback.modelId,
-			},
+			conversationId,
+			...(selected ? { selected: modelRouteWire(selected) } : {}),
 		};
+	});
+	dispatcher.registerHandler(RPC.model.routeSet, async (_p) => {
+		const { conversationId, selected } = _p as {
+			conversationId: string;
+			selected: { providerId: string; modelId: string };
+		};
+		const model = s.models.select(conversationId, selected.providerId, selected.modelId);
+		return { conversationId, selected: modelRouteWire(model) };
 	});
 
 	// --- run ------------------------------------------------------------------------
 	dispatcher.registerHandler(RPC.run.list, async () => {
-		const rows = s.db
-			.prepare(
-				"SELECT id, commission_id, executor_profile, status, started_at, completed_at FROM runs ORDER BY created_at DESC LIMIT 10",
-			)
-			.all() as Array<{
-			id: string;
-			commission_id: string;
-			executor_profile: string;
-			status: RunStatus;
-			started_at: string | null;
-			completed_at: string | null;
-		}>;
+		const rows = s.orm.select().from(runs).orderBy(desc(runs.createdAt)).limit(10).all();
 		return {
 			runs: rows.map((r) => ({
 				id: r.id,
-				commissionId: r.commission_id,
-				executorProfile: r.executor_profile,
-				status: r.status,
-				startedAt: r.started_at ?? undefined,
-				completedAt: r.completed_at ?? undefined,
+				commissionId: r.commissionId,
+				executorProfile: r.executorProfile,
+				status: r.status as RunStatus,
+				startedAt: r.startedAt ?? undefined,
+				completedAt: r.completedAt ?? undefined,
 			})),
 		};
 	});
@@ -730,12 +642,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	// --- events -----------------------------------------------------------------------
 	dispatcher.registerHandler(RPC.events.subscribe, async (_p) => {
 		const { afterSeq } = _p as { afterSeq?: number };
-		const rows = s.db
-			.prepare("SELECT seq, kind, payload FROM events WHERE seq > ? ORDER BY seq LIMIT 100")
-			.all(afterSeq ?? 0) as Array<{ seq: number; kind: string; payload: string }>;
-		return {
-			events: rows.map((r) => ({ seq: r.seq, kind: r.kind, payload: JSON.parse(r.payload) })),
-		};
+		return { events: s.eventBus.after(afterSeq ?? 0) };
 	});
 	dispatcher.registerHandler(RPC.snapshot.get, async () => {
 		const companionId = await getCompanionId(s);
@@ -746,51 +653,30 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		}
 		const allowedSceneIds = new Set(character.scenes.map((scene) => scene.id));
 		const allowedVisualStates = new Set(Object.keys(character.visual.presence));
-		const convRows = s.db
-			.prepare(
-				"SELECT id, title, scene_title, updated_at FROM conversations WHERE companion_id = ? AND archived_at IS NULL ORDER BY updated_at DESC LIMIT 100",
-			)
-			.all(companionId) as Array<{
-			id: string;
-			title: string;
-			scene_title: string;
-			updated_at: string;
-		}>;
+		const convRows = conversationRepository.list(companionId);
 		const conversationIds = new Set(convRows.map((row) => row.id));
 		const characterRuntimeByConversation: Record<string, { sceneId: string; visualState: string }> =
 			{};
-		const sceneRows = s.db
-			.prepare(
-				"SELECT conversation_id, scene, state_json FROM scene_state ORDER BY updated_at DESC",
-			)
-			.all() as Array<{ conversation_id: string; scene: string; state_json: string }>;
+		const sceneRows = s.orm.select().from(sceneState).orderBy(desc(sceneState.updatedAt)).all();
 		for (const row of sceneRows) {
 			if (
-				!conversationIds.has(row.conversation_id) ||
-				characterRuntimeByConversation[row.conversation_id]
+				!conversationIds.has(row.conversationId) ||
+				characterRuntimeByConversation[row.conversationId]
 			) {
 				continue;
 			}
-			const state = JSON.parse(row.state_json) as unknown;
-			if (
-				!state ||
-				typeof state !== "object" ||
-				Array.isArray(state) ||
-				!("visualState" in state) ||
-				typeof state.visualState !== "string" ||
-				!allowedSceneIds.has(row.scene) ||
-				!allowedVisualStates.has(state.visualState)
-			) {
-				throw new Error(`invalid persisted scene state for conversation ${row.conversation_id}`);
+			const state = CharacterRuntimeState.parse({ sceneId: row.scene, ...row.stateJson });
+			if (!allowedSceneIds.has(state.sceneId) || !allowedVisualStates.has(state.visualState)) {
+				throw new Error(`invalid persisted scene state for conversation ${row.conversationId}`);
 			}
-			characterRuntimeByConversation[row.conversation_id] = {
-				sceneId: row.scene,
+			characterRuntimeByConversation[row.conversationId] = {
+				sceneId: state.sceneId,
 				visualState: state.visualState,
 			};
 		}
 		const eventSeq = s.eventBus.currentSeq;
 		const activeRow = convRows[0];
-		const fallback = s.models.multimodalFallback(companionId);
+		const defaults = s.models.defaults(companionId);
 		const providerNames = new Map(
 			(await s.providers.listProviders()).map((provider) => [provider.id, provider.name]),
 		);
@@ -799,15 +685,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			onboarding: { ...onboarding, eventSeq },
 			character: s.characterLoader.display(character),
 			conversation: {
-				conversations: convRows.map((r) => ({
-					id: r.id,
-					title: r.title,
-					sceneTitle: r.scene_title,
-					unread: false,
-					updatedAt: r.updated_at,
-				})),
+				conversations: convRows,
 				...(activeRow
-					? conversationProjection(s.db, activeRow.id, activeRow.title, activeRow.scene_title)
+					? conversationRepository.project(activeRow.id, activeRow.title, activeRow.sceneTitle)
 					: {}),
 			},
 			artifact: {
@@ -820,32 +700,24 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				changes: s.story.list({
 					companionId,
 					branchId: activeRow
-						? (conversationProjection(s.db, activeRow.id, activeRow.title, activeRow.scene_title)
+						? (conversationRepository.project(activeRow.id, activeRow.title, activeRow.sceneTitle)
 								.activeBranchId as string | undefined)
 						: undefined,
 				}),
 			},
 			characterRuntime: { byConversation: characterRuntimeByConversation },
 			model: {
-				models: s.models.list().map((model) => ({
-					...model,
-					providerName: providerNames.get(model.providerId) ?? model.providerId,
-				})),
-				...(fallback
-					? {
-							multimodalFallback: {
-								providerId: fallback.providerId,
-								modelId: fallback.modelId,
-							},
-						}
-					: {}),
+				pool: {
+					models: s.models.list().map((model) => ({
+						...model,
+						providerName: providerNames.get(model.providerId) ?? model.providerId,
+					})),
+				},
+				defaults: modelDefaultsWire(defaults),
 				...(activeRow
-					? (() => {
-							const selected = s.models.selected(activeRow.id);
-							return selected
-								? { selected: { providerId: selected.providerId, modelId: selected.modelId } }
-								: {};
-						})()
+					? {
+							route: modelRouteResponse(activeRow.id, s.models.selected(activeRow.id)),
+						}
 					: {}),
 			},
 			settings: {
@@ -856,89 +728,38 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 }
 
-function conversationProjection(db: DatabaseSync, id: string, title: string, sceneTitle: string) {
-	const branch = db
-		.prepare(
-			"SELECT id FROM branches WHERE conversation_id = ? AND adopted = 1 ORDER BY created_at DESC LIMIT 1",
-		)
-		.get(id) as { id: string } | undefined;
-	const messages = db
-		.prepare(
-			`SELECT m.id, m.role, m.created_at, v.id AS version_id, v.content,
-				v.edited_by_user, v.adopted, v.created_at AS version_created_at
-			 FROM messages m
-			 JOIN message_versions v ON v.message_id = m.id
-			 WHERE m.conversation_id = ? AND (
-			   ? IS NULL
-			   OR m.branch_id = ?
-			   OR m.rowid <= COALESCE((
-			     SELECT fork.rowid
-			     FROM branches active_branch
-			     JOIN messages fork ON fork.id = active_branch.fork_message_id
-			     WHERE active_branch.id = ?
-			   ), -1)
-			 )
-			 ORDER BY m.rowid, v.rowid`,
-		)
-		.all(id, branch?.id ?? null, branch?.id ?? null, branch?.id ?? null) as Array<{
-		id: string;
-		role: "user" | "assistant" | "system";
-		created_at: string;
-		version_id: string;
-		content: string;
-		edited_by_user: number;
-		adopted: number;
-		version_created_at: string;
-	}>;
-	const grouped = new Map<
-		string,
-		{
-			id: string;
-			role: "user" | "assistant" | "system";
-			adoptedVersionId?: string;
-			versions: Array<{
-				id: string;
-				role: "user" | "assistant" | "system";
-				content: string;
-				editedByUser: boolean;
-				createdAt: string;
-				adopted: boolean;
-			}>;
-			createdAt: string;
-		}
-	>();
-	for (const row of messages) {
-		let message = grouped.get(row.id);
-		if (!message) {
-			message = { id: row.id, role: row.role, versions: [], createdAt: row.created_at };
-			grouped.set(row.id, message);
-		}
-		message.versions.push({
-			id: row.version_id,
-			role: row.role,
-			content: row.content,
-			editedByUser: Boolean(row.edited_by_user),
-			createdAt: row.version_created_at,
-			adopted: Boolean(row.adopted),
-		});
-		if (row.adopted) message.adoptedVersionId = row.version_id;
-	}
+function modelRouteWire(model: { providerId: string; modelId: string }) {
+	return { providerId: model.providerId, modelId: model.modelId };
+}
+
+function modelRouteResponse(
+	conversationId: string,
+	selected: { providerId: string; modelId: string } | undefined,
+) {
+	return { conversationId, ...(selected ? { selected: modelRouteWire(selected) } : {}) };
+}
+
+function modelDefaultsWire(defaults: {
+	reply?: { providerId: string; modelId: string };
+	vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } };
+}) {
 	return {
-		activeConversationId: id,
-		activeBranchId: branch?.id,
-		id,
-		title,
-		sceneTitle,
-		messages: [...grouped.values()],
+		...(defaults.reply ? { reply: modelRouteWire(defaults.reply) } : {}),
+		vision:
+			defaults.vision.mode === "manual"
+				? { mode: "manual" as const, route: modelRouteWire(defaults.vision.route) }
+				: { mode: "auto" as const },
 	};
 }
 
 async function getCompanionId(s: HostCompositionContext): Promise<string> {
 	const packageId = s.characterLoader.getActiveCharacterId(s.db, s.defaultCharacterId);
 	ensureCharacterSeeded(s);
-	const seeded = s.db.prepare("SELECT id FROM companion_identity WHERE id = ?").get(packageId) as
-		| { id: string }
-		| undefined;
+	const seeded = s.orm
+		.select({ id: companionIdentity.id })
+		.from(companionIdentity)
+		.where(eq(companionIdentity.id, packageId))
+		.get();
 	if (!seeded) throw { kind: "unavailable", reason: "character_package_missing" };
 	return seeded.id;
 }
@@ -949,8 +770,10 @@ function ensureCharacterSeeded(s: HostCompositionContext): void {
 	const character = s.characterLoader.load(activeId);
 	if (!character) throw new Error(`character package missing: ${activeId}`);
 	s.characterLoader.seed(s.db, s.eventBus, character);
-	const active = s.db
-		.prepare("SELECT character_id FROM active_character WHERE singleton = 1")
+	const active = s.orm
+		.select({ characterId: activeCharacter.characterId })
+		.from(activeCharacter)
+		.where(eq(activeCharacter.singleton, 1))
 		.get();
 	if (!active) s.characterLoader.activate(s.db, s.eventBus, character);
 }

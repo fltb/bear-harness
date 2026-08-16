@@ -1,4 +1,4 @@
-import { zhCN } from "@bear-harness/product-config/locales";
+import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, type Locator, type Page } from "playwright/test";
 
 export async function selectKobalteOption(
@@ -47,7 +47,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	await page.getByRole("button", { name: zhCN.sidebar.newConversation }).click();
 	const model = page.getByRole("button", { name: zhCN.composer.modelLabel });
 	await Promise.all([
-		page.waitForResponse((response) => response.url().includes("/rpc/model.select%3Av1")),
+		page.waitForResponse((response) => response.url().includes("/rpc/model.route.set%3Av1")),
 		selectKobalteOption(page, model, /^E2E Rule Provider \(/),
 	]);
 	await expect(page.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled();

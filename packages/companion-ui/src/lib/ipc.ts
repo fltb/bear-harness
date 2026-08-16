@@ -9,8 +9,8 @@
  * fallback).
  */
 
+import { i18n } from "@bear-harness/i18n";
 import type { IpcEnvelope } from "@bear-harness/protocol";
-import { t } from "../i18n.js";
 
 export interface IpcError {
 	kind: string;
@@ -36,14 +36,14 @@ export function unwrap<T>(result: IpcEnvelope<T>): T {
 function userFacingError(kind: string): string {
 	switch (kind) {
 		case "not_found":
-			return t("errors.notFound");
+			return i18n.t("errors.notFound");
 		case "conflict":
-			return t("errors.conflict");
+			return i18n.t("errors.conflict");
 		case "unavailable":
-			return t("errors.unavailable");
+			return i18n.t("errors.unavailable");
 		case "invalid_request":
-			return t("errors.invalidRequest");
+			return i18n.t("errors.invalidRequest");
 		default:
-			return t("errors.generic");
+			return i18n.t("errors.generic");
 	}
 }

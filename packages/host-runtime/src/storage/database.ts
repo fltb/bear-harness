@@ -745,4 +745,18 @@ export const MIGRATIONS: Migration[] = [
 			);
 		`,
 	},
+	{
+		id: 10,
+		description: "Explicit automatic or manual vision model default",
+		up: `
+			ALTER TABLE model_route_settings
+				ADD COLUMN vision_mode TEXT NOT NULL DEFAULT 'auto'
+				CHECK (vision_mode IN ('auto', 'manual'));
+			UPDATE model_route_settings
+				SET vision_mode = CASE
+					WHEN multimodal_provider_id IS NULL OR multimodal_model_id IS NULL THEN 'auto'
+					ELSE 'manual'
+				END;
+		`,
+	},
 ];

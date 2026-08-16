@@ -1,4 +1,4 @@
-import { zhCN } from "@bear-harness/product-config/locales";
+import { zhCN } from "@bear-harness/i18n/locales";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -22,11 +22,17 @@ const TEST_MODEL = {
 };
 
 function configureSelectedModel(client: ReturnType<typeof createTestClient>["client"]): void {
-	client.model.list = vi.fn(() =>
+	client.model.poolGet = vi.fn(() =>
+		Promise.resolve({
+			ok: true as const,
+			data: { models: [TEST_MODEL] },
+		}),
+	);
+	client.model.routeGet = vi.fn(({ conversationId }) =>
 		Promise.resolve({
 			ok: true as const,
 			data: {
-				models: [TEST_MODEL],
+				conversationId,
 				selected: { providerId: TEST_MODEL.providerId, modelId: TEST_MODEL.modelId },
 			},
 		}),
@@ -46,7 +52,7 @@ describe("composer", () => {
 				},
 			}),
 		);
-		client.model.list = vi.fn(() =>
+		client.model.poolGet = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { models: [TEST_MODEL] } }),
 		);
 		client.onboarding.get = vi.fn(() =>
@@ -72,30 +78,36 @@ describe("composer", () => {
 					onboarding: COMPLETE_ONBOARDING,
 					conversation: { activeConversationId: "conversation-1" },
 					model: {
-						models: [
-							{
-								providerId: "relay",
-								providerName: "Relay Service",
-								modelId: "fast",
-								label: "Fast",
-								supportsImages: false,
-								createdAt: "2026-01-01",
-							},
-							{
-								providerId: "relay",
-								providerName: "Relay Service",
-								modelId: "deep",
-								label: "Deep",
-								supportsImages: true,
-								createdAt: "2026-01-02",
-							},
-						],
-						selected: { providerId: "relay", modelId: "fast" },
+						pool: {
+							models: [
+								{
+									providerId: "relay",
+									providerName: "Relay Service",
+									modelId: "fast",
+									label: "Fast",
+									supportsImages: false,
+									createdAt: "2026-01-01",
+								},
+								{
+									providerId: "relay",
+									providerName: "Relay Service",
+									modelId: "deep",
+									label: "Deep",
+									supportsImages: true,
+									createdAt: "2026-01-02",
+								},
+							],
+						},
+						defaults: { vision: { mode: "auto" } },
+						route: {
+							conversationId: "conversation-1",
+							selected: { providerId: "relay", modelId: "fast" },
+						},
 					},
 				},
 			}),
 		);
-		client.model.list = vi.fn(() =>
+		client.model.poolGet = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
 				data: {
@@ -117,6 +129,14 @@ describe("composer", () => {
 							createdAt: "2026-01-02",
 						},
 					],
+				},
+			}),
+		);
+		client.model.routeGet = vi.fn(({ conversationId }) =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					conversationId,
 					selected: { providerId: "relay", modelId: "fast" },
 				},
 			}),
@@ -132,10 +152,9 @@ describe("composer", () => {
 		await waitFor(() => expect(selector).toBeEnabled());
 		await selectKobalteOption(userEvent.setup(), selector, { label: "Deep (Relay Service)" });
 		await waitFor(() =>
-			expect(client.model.select).toHaveBeenCalledWith({
+			expect(client.model.routeSet).toHaveBeenCalledWith({
 				conversationId: "conversation-1",
-				providerId: "relay",
-				modelId: "deep",
+				selected: { providerId: "relay", modelId: "deep" },
 			}),
 		);
 	});
@@ -161,9 +180,17 @@ describe("composer", () => {
 			},
 		];
 		const modelState = {
-			models,
-			selected: { providerId: "text-relay", modelId: "text" },
-			multimodalFallback: { providerId: "vision-relay", modelId: "vision" },
+			pool: { models },
+			defaults: {
+				vision: {
+					mode: "manual" as const,
+					route: { providerId: "vision-relay", modelId: "vision" },
+				},
+			},
+			route: {
+				conversationId: "conversation-1",
+				selected: { providerId: "text-relay", modelId: "text" },
+			},
 		};
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
@@ -176,7 +203,15 @@ describe("composer", () => {
 				},
 			}),
 		);
-		client.model.list = vi.fn(() => Promise.resolve({ ok: true as const, data: modelState }));
+		client.model.poolGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: modelState.pool }),
+		);
+		client.model.defaultsGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: modelState.defaults }),
+		);
+		client.model.routeGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: modelState.route }),
+		);
 		client.onboarding.get = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 		);

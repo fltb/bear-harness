@@ -36,7 +36,10 @@ test("configured live model answers a WebDev smoke message", async ({ page }) =>
 	await rpc("provider.setApiKey:v1", { providerId, apiKey, sessionOnly: true });
 	await rpc("model.enable:v1", { providerId, modelId, label: "E2E live model" });
 	const conversation = await rpc<{ id: string }>("conversation.create:v1", {});
-	await rpc("model.select:v1", { conversationId: conversation.id, providerId, modelId });
+	await rpc("model.route.set:v1", {
+		conversationId: conversation.id,
+		selected: { providerId, modelId },
+	});
 	await rpc("message.send:v1", {
 		conversationId: conversation.id,
 		text: "只回复 E2E_OK，不要添加其他内容。",

@@ -1,8 +1,8 @@
+import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
 import { Tabs } from "@kobalte/core/tabs";
 import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, Show } from "solid-js";
-import { t } from "../i18n.js";
 import {
 	type MemoryDecision,
 	type MemoryEntry,
@@ -23,19 +23,19 @@ import {
  */
 
 function scopeLabel(scope: MemoryScope): string {
-	return t(`memory.scopes.${scope}`);
+	return i18n.t(`memory.scopes.${scope}`);
 }
 
 function kindLabel(kind: MemoryEntry["kind"]): string {
 	switch (kind) {
 		case "fact":
-			return t("memory.kinds.fact");
+			return i18n.t("memory.kinds.fact");
 		case "preference":
-			return t("memory.kinds.preference");
+			return i18n.t("memory.kinds.preference");
 		case "event":
-			return t("memory.kinds.event");
+			return i18n.t("memory.kinds.event");
 		case "self_canon_summary":
-			return t("memory.kinds.self_canon_summary");
+			return i18n.t("memory.kinds.self_canon_summary");
 		default:
 			return kind;
 	}
@@ -68,6 +68,7 @@ export function MemoryEntryList(props: {
 	refreshKey?: number;
 	title?: string;
 }) {
+	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const [entries, setEntries] = createSignal<MemoryEntry[]>([]);
 	const [loading, setLoading] = createSignal(false);
@@ -257,19 +258,19 @@ export function MemoryEntryList(props: {
 	);
 }
 
-const SCOPE_TABS: ReadonlyArray<{ value: MemoryScope; label: string }> = [
-	{ value: "self", label: t("memory.scopes.self") },
-	{ value: "relationship", label: t("memory.scopes.relationship") },
-	{ value: "scene", label: t("memory.scopes.scene") },
-];
-
 /**
  * Memory page: scope filter (self / relationship / scene), search, the
  * pending-candidate inbox and the per-scope entry list. All mutations call
  * the corresponding `store.memory.*` methods.
  */
 export function MemorySheet() {
+	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
+	const scopeTabs = (): ReadonlyArray<{ value: MemoryScope; label: string }> => [
+		{ value: "self", label: t("memory.scopes.self") },
+		{ value: "relationship", label: t("memory.scopes.relationship") },
+		{ value: "scene", label: t("memory.scopes.scene") },
+	];
 	const [scope, setScope] = createSignal<MemoryScope>("self");
 	const [queryText, setQueryText] = createSignal("");
 	const [query, setQuery] = createSignal("");
@@ -302,7 +303,7 @@ export function MemorySheet() {
 	});
 
 	function onScopeChange(value: string): void {
-		const next = SCOPE_TABS.find((tab) => tab.value === value)?.value;
+		const next = scopeTabs().find((tab) => tab.value === value)?.value;
 		if (!next) return;
 		setScope(next);
 		setQueryText("");
@@ -505,7 +506,7 @@ export function MemorySheet() {
 				aria-label={t("memory.scopeTabsLabel")}
 			>
 				<Tabs.List class="tabs">
-					<For each={SCOPE_TABS}>
+					<For each={scopeTabs()}>
 						{(tab) => (
 							<Tabs.Trigger value={tab.value} class="tab">
 								{tab.label}

@@ -1,4 +1,4 @@
-import { zhCN } from "@bear-harness/product-config/locales";
+import { zhCN } from "@bear-harness/i18n/locales";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -33,7 +33,7 @@ function configuredClient() {
 	fixture.client.provider.list = vi.fn(() =>
 		Promise.resolve({ ok: true as const, data: { providers: [PROVIDER] } }),
 	);
-	fixture.client.model.list = vi.fn(() =>
+	fixture.client.model.poolGet = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
 			data: {
@@ -84,19 +84,19 @@ describe("model pool settings", () => {
 		expect(language).toHaveTextContent(zhCN.settings.localeNames["zh-CN"]);
 
 		await selectKobalteOption(user, language, "en");
-		expect(document.documentElement).toHaveAttribute("lang", "en");
+		await waitFor(() => expect(document.documentElement).toHaveAttribute("lang", "en"));
 		expect(localStorage.getItem("bear-harness.product-locale")).toBe("en");
-		expect(language).toHaveAccessibleName(/Interface language/);
+		await waitFor(() => expect(language).toHaveAccessibleName(/Interface language/));
 
 		await selectKobalteOption(user, language, "zh-TW");
-		expect(document.documentElement).toHaveAttribute("lang", "zh-TW");
-		expect(language).toHaveAccessibleName(/介面語言/);
+		await waitFor(() => expect(document.documentElement).toHaveAttribute("lang", "zh-TW"));
+		await waitFor(() => expect(language).toHaveAccessibleName(/介面語言/));
 
 		await selectKobalteOption(user, language, "zh-CN");
-		expect(document.documentElement).toHaveAttribute("lang", "zh-CN");
+		await waitFor(() => expect(document.documentElement).toHaveAttribute("lang", "zh-CN"));
 	});
 
-	it("shows configured models and provider presets without fallback controls", async () => {
+	it("shows configured models, global defaults, and provider presets", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
@@ -114,9 +114,77 @@ describe("model pool settings", () => {
 		await selectKobalteOption(user, service, "opencode-go");
 		const model = selectTrigger(backstage, zhCN.settings.modelLabel);
 		expect(model).toBeEnabled();
-		await user.click(model);
-		expect(await screen.findByRole("option", { name: "Vision" })).toBeInTheDocument();
-		expect(within(backstage).queryByText(zhCN.settings.fallbackModelSection)).toBeNull();
+		await selectKobalteOption(user, model, "vision");
+		expect(model).toHaveTextContent("Vision");
+		expect(
+			within(backstage).getByRole("button", {
+				name: new RegExp(zhCN.settings.defaultReplyModel),
+			}),
+		).toBeEnabled();
+		expect(
+			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.visionModel) }),
+		).toHaveTextContent(zhCN.settings.visionModelAuto);
+	});
+
+	it("persists reply and vision defaults through their dedicated RPCs", async () => {
+		const { client } = configuredClient();
+		client.model.poolGet = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					models: [
+						{
+							providerId: "opencode-go",
+							providerName: "OpenCode Go",
+							modelId: "fast",
+							label: "Fast",
+							supportsImages: false,
+							createdAt: "2026-01-01",
+						},
+						{
+							providerId: "opencode-go",
+							providerName: "OpenCode Go",
+							modelId: "vision",
+							label: "Vision",
+							supportsImages: true,
+							createdAt: "2026-01-02",
+						},
+					],
+				},
+			}),
+		);
+		client.model.defaultsGet = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					reply: { providerId: "opencode-go", modelId: "fast" },
+					vision: { mode: "auto" as const },
+				},
+			}),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+
+		await selectKobalteOption(
+			user,
+			within(backstage).getByRole("button", {
+				name: new RegExp(zhCN.settings.defaultReplyModel),
+			}),
+			{ label: "Vision (OpenCode Go)" },
+		);
+		expect(client.model.defaultsSetReply).toHaveBeenCalledWith({
+			reply: { providerId: "opencode-go", modelId: "vision" },
+		});
+
+		await selectKobalteOption(
+			user,
+			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.visionModel) }),
+			{ label: "Vision (OpenCode Go)" },
+		);
+		expect(client.model.defaultsSetVision).toHaveBeenCalledWith({
+			mode: "manual",
+			route: { providerId: "opencode-go", modelId: "vision" },
+		});
 	});
 
 	it("adds and removes models from the reusable pool", async () => {
@@ -352,7 +420,7 @@ describe("model pool settings", () => {
 
 	it("marks multimodal models and prevents adding an already configured preset twice", async () => {
 		const { client } = configuredClient();
-		client.model.list = vi.fn(() =>
+		client.model.poolGet = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
 				data: {
@@ -370,7 +438,9 @@ describe("model pool settings", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		expect(await within(backstage).findByText(zhCN.settings.useForImages)).toBeVisible();
+		expect(
+			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.visionModel) }),
+		).toHaveTextContent(zhCN.settings.visionModelAuto);
 		await selectKobalteOption(
 			user,
 			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),

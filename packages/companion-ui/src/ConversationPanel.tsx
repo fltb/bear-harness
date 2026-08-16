@@ -1,7 +1,7 @@
+import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
 import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, Show } from "solid-js";
-import { t } from "./i18n.js";
 import type { CharacterDisplay, Message, MessageVersion } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
 
@@ -31,6 +31,7 @@ function MessageItem(props: {
 	correction?: CharacterDisplay["character"]["correction"];
 	lastAssistant: boolean;
 }) {
+	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const [editing, setEditing] = createSignal(false);
 	const [actionsOpen, setActionsOpen] = createSignal(false);
@@ -155,7 +156,15 @@ function MessageItem(props: {
 						aria-label={props.correction?.reason_group_label}
 					>
 						<div class="correct-reasons">
-							<For each={t("messages.correctionReasons")}>
+							<For
+								each={[
+									t("messages.correctionReasons.tone"),
+									t("messages.correctionReasons.identity"),
+									t("messages.correctionReasons.history"),
+									t("messages.correctionReasons.userAction"),
+									t("messages.correctionReasons.fictionReality"),
+								]}
+							>
 								{(preset) => (
 									<Button
 										type="button"
@@ -277,11 +286,12 @@ function MessageItem(props: {
 
 function formatTime(iso: string): string {
 	const date = new Date(iso);
-	if (Number.isNaN(date.getTime())) return t("messages.justNow");
+	if (Number.isNaN(date.getTime())) return i18n.t("messages.justNow");
 	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
 export function ConversationPanel(props: { character: CharacterDisplay | undefined }) {
+	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 
 	let threadRef: HTMLElement | undefined;

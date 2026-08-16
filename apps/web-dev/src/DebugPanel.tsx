@@ -1,6 +1,6 @@
 import type { CompanionClient, HostTransport } from "@bear-harness/companion-client";
 import { unwrap } from "@bear-harness/companion-client";
-import { t } from "@bear-harness/companion-ui";
+import { i18n, useTranslation } from "@bear-harness/i18n";
 import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { Button } from "@kobalte/core/button";
 import { Select } from "@kobalte/core/select";
@@ -29,6 +29,7 @@ export function WebDevDebugPanel(props: {
 	transport: HostTransport;
 	token: string;
 }) {
+	const [t] = useTranslation(undefined, { i18n });
 	const [open, setOpen] = createSignal(false);
 	const [channels, setChannels] = createSignal<string[]>([]);
 	const [channel, setChannel] = createSignal("");

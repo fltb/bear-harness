@@ -125,7 +125,20 @@ export function createTestClient() {
 	const providerList = vi.fn(() => ok({ providers: [] }));
 
 	const client: CompanionClient = {
-		snapshot: { get: vi.fn(() => ok({ eventSeq: 0, model: { models: [DEFAULT_MODEL] } })) },
+		snapshot: {
+			get: vi.fn(() =>
+				ok({
+					eventSeq: 0,
+					model: {
+						pool: { models: [DEFAULT_MODEL] },
+						defaults: {
+							reply: { providerId: DEFAULT_MODEL.providerId, modelId: DEFAULT_MODEL.modelId },
+							vision: { mode: "auto" as const },
+						},
+					},
+				}),
+			),
+		},
 		character: {
 			get: vi.fn(() => ok(null)),
 			list: vi.fn(() => ok({ characters: [] })),
@@ -205,13 +218,21 @@ export function createTestClient() {
 			logout: vi.fn(() => ok(null)),
 		},
 		model: {
-			list: vi.fn(() => ok({ models: [DEFAULT_MODEL] })),
+			poolGet: vi.fn(() => ok({ models: [DEFAULT_MODEL] })),
 			enable: vi.fn(() => ok(null)),
 			disable: vi.fn(() => ok(null)),
-			select: vi.fn(() => ok(null)),
-			setMultimodalFallback: vi.fn(() =>
-				ok({ multimodalFallback: { providerId: "test-provider", modelId: "test-model" } }),
+			defaultsGet: vi.fn(() =>
+				ok({
+					reply: { providerId: DEFAULT_MODEL.providerId, modelId: DEFAULT_MODEL.modelId },
+					vision: { mode: "auto" as const },
+				}),
 			),
+			defaultsSetReply: vi.fn(({ reply }) =>
+				ok({ ...(reply ? { reply } : {}), vision: { mode: "auto" as const } }),
+			),
+			defaultsSetVision: vi.fn((vision) => ok({ vision })),
+			routeGet: vi.fn(({ conversationId }) => ok({ conversationId })),
+			routeSet: vi.fn(({ conversationId, selected }) => ok({ conversationId, selected })),
 		},
 		commission: {
 			list: vi.fn(() => ok({ commissions: [] })),

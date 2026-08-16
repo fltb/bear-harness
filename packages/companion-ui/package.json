@@ -16,15 +16,15 @@
 	"scripts": {
 		"build": "tsc -p tsconfig.json --noEmit",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test:unit": "npm --prefix ../product-config run build && npm --prefix ../protocol run build && npm --prefix ../companion-client run build && vitest run",
-		"test:coverage": "npm --prefix ../product-config run build && npm --prefix ../protocol run build && npm --prefix ../companion-client run build && vitest run --coverage"
+		"test:unit": "npm --prefix ../product-config run build && npm --prefix ../i18n run build && npm --prefix ../protocol run build && npm --prefix ../companion-client run build && vitest run",
+		"test:coverage": "npm --prefix ../product-config run build && npm --prefix ../i18n run build && npm --prefix ../protocol run build && npm --prefix ../companion-client run build && vitest run --coverage"
 	},
 	"dependencies": {
 		"@bear-harness/companion-client": "file:../companion-client",
+		"@bear-harness/i18n": "file:../i18n",
 		"@bear-harness/product-config": "file:../product-config",
 		"@bear-harness/protocol": "file:../protocol",
 		"@kobalte/core": "0.13.13",
-		"@solid-primitives/i18n": "^2.2.1",
 		"@tanstack/solid-query": "^5.101.4",
 		"solid-js": "1.9.14"
 	},

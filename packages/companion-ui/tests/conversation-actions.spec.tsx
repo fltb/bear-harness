@@ -1,4 +1,4 @@
-import { zhCN } from "@bear-harness/product-config/locales";
+import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -69,12 +69,22 @@ describe("conversation message controls", () => {
 					resolveSnapshot = resolve;
 				}),
 		);
+		client.model.poolGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { models: [] } }),
+		);
+		client.model.defaultsGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { vision: { mode: "auto" as const } } }),
+		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		expect(screen.queryByRole("dialog", { name: zhCN.modelSetup.dialogLabel })).toBeNull();
 		resolveSnapshot?.({
 			ok: true,
-			data: { eventSeq: 0, onboarding: COMPLETE_ONBOARDING, model: { models: [] } },
+			data: {
+				eventSeq: 0,
+				onboarding: COMPLETE_ONBOARDING,
+				model: { pool: { models: [] }, defaults: { vision: { mode: "auto" } } },
+			},
 		});
 		expect(await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel })).toBeVisible();
 	});
@@ -121,9 +131,15 @@ describe("conversation message controls", () => {
 							decisions: {},
 						},
 					},
-					model: { models: [] },
+					model: { pool: { models: [] }, defaults: { vision: { mode: "auto" } } },
 				},
 			}),
+		);
+		client.model.poolGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { models: [] } }),
+		);
+		client.model.defaultsGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { vision: { mode: "auto" as const } } }),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 

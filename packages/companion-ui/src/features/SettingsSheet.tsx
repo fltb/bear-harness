@@ -1,14 +1,15 @@
+import {
+	i18n,
+	type ProductLocale,
+	setProductLocale,
+	supportedProductLocales,
+	useLanguage,
+	useTranslation,
+} from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import {
-	type ProductLocale,
-	productLocale,
-	setProductLocale,
-	supportedProductLocales,
-	t,
-} from "../i18n.js";
 import { ModelPresetField, ProviderSelectionField } from "../ModelSelectionFields.js";
 import type { ProviderLoginResult } from "../stores/companion.js";
 import { useCompanionStore } from "../stores/companion.js";
@@ -19,6 +20,8 @@ function messageOf(value: unknown): string {
 }
 
 export function SettingsSheet() {
+	const [t] = useTranslation(undefined, { i18n });
+	const [currentLocale] = useLanguage(() => i18n);
 	const store = useCompanionStore();
 	const [saving, setSaving] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
@@ -31,8 +34,6 @@ export function SettingsSheet() {
 	const [advancedOpen, setAdvancedOpen] = createSignal(false);
 	const [customBaseUrl, setCustomBaseUrl] = createSignal("");
 	const [piConfigJson, setPiConfigJson] = createSignal("");
-	const localeOptions = () =>
-		supportedProductLocales.map((id) => ({ id, label: t(`settings.localeNames.${id}`) }));
 	let disposed = false;
 	onCleanup(() => {
 		disposed = true;
@@ -45,9 +46,27 @@ export function SettingsSheet() {
 		configured().some((model) => model.providerId === providerId() && model.modelId === modelId());
 	const modelDisplayName = (model: ConfiguredModel) =>
 		`${model.label} (${model.providerName ?? model.providerId})`;
-	const isMultimodalFallback = (providerId: string, modelId: string) => {
-		const route = store.model.data().multimodalFallback;
-		return route?.providerId === providerId && route.modelId === modelId;
+	const routeOptionId = (route: { providerId: string; modelId: string }) =>
+		`${route.providerId}\u0000${route.modelId}`;
+	const modelOptionId = (model: ConfiguredModel) => routeOptionId(model);
+	const modelByOptionId = (id: string) => configured().find((model) => modelOptionId(model) === id);
+	const defaultReplyModel = () => {
+		const route = store.model.data().defaults.reply;
+		return route
+			? configured().find(
+					(model) => model.providerId === route.providerId && model.modelId === route.modelId,
+				)
+			: undefined;
+	};
+	const visionOptions = () => [
+		"auto",
+		...configured()
+			.filter((model) => model.supportsImages)
+			.map(modelOptionId),
+	];
+	const selectedVisionOption = (): string => {
+		const vision = store.model.data().defaults.vision;
+		return vision.mode === "auto" ? "auto" : routeOptionId(vision.route);
 	};
 	const apiKeyPlaceholder = () => {
 		const status = selectedProvider()?.credentialStatus;
@@ -119,14 +138,15 @@ export function SettingsSheet() {
 			</Show>
 
 			<Select
-				options={localeOptions()}
-				value={localeOptions().find((locale) => locale.id === productLocale()) ?? null}
-				optionValue="id"
-				optionTextValue="label"
-				onChange={(locale) => locale && setProductLocale(locale.id as ProductLocale)}
+				options={[...supportedProductLocales]}
+				value={currentLocale() as ProductLocale}
+				optionTextValue={(locale) => t(`settings.localeNames.${locale}`)}
+				onChange={(locale) => locale && setProductLocale(locale)}
 				itemComponent={(itemProps) => (
 					<Select.Item item={itemProps.item} class="select-item">
-						<Select.ItemLabel>{itemProps.item.rawValue.label}</Select.ItemLabel>
+						<Select.ItemLabel>
+							{t(`settings.localeNames.${itemProps.item.rawValue}`)}
+						</Select.ItemLabel>
 					</Select.Item>
 				)}
 				class="field"
@@ -134,8 +154,11 @@ export function SettingsSheet() {
 				<Select.Label class="field-label">{t("settings.language")}</Select.Label>
 				<span class="field-hint">{t("settings.languageHint")}</span>
 				<Select.Trigger class="select-trigger" aria-label={t("settings.language")}>
-					<Select.Value<{ id: ProductLocale; label: string }> class="select-value">
-						{(state) => state.selectedOption()?.label}
+					<Select.Value<ProductLocale> class="select-value">
+						{(state) => {
+							const locale = state.selectedOption();
+							return locale ? t(`settings.localeNames.${locale}`) : "";
+						}}
 					</Select.Value>
 				</Select.Trigger>
 				<Select.Portal>
@@ -299,36 +322,104 @@ export function SettingsSheet() {
 					<h3>{t("settings.modelPool")}</h3>
 					<p class="field-hint">{t("settings.modelPoolHint")}</p>
 				</div>
+				<Select
+					class="field"
+					options={configured().map(modelOptionId)}
+					value={defaultReplyModel() ? modelOptionId(defaultReplyModel() as ConfiguredModel) : null}
+					optionTextValue={(id) => {
+						const model = modelByOptionId(id);
+						return model ? modelDisplayName(model) : id;
+					}}
+					placeholder={t("settings.noDefaultReplyModel")}
+					onChange={(id) => {
+						const model = id ? modelByOptionId(id) : undefined;
+						void run(
+							() =>
+								model
+									? store.model.setDefaultReply(model.providerId, model.modelId)
+									: store.model.clearDefaultReply(),
+							t("settings.defaultReplyUpdated"),
+						);
+					}}
+					itemComponent={(itemProps) => (
+						<Select.Item item={itemProps.item} class="select-item">
+							<Select.ItemLabel>
+								{modelDisplayName(modelByOptionId(itemProps.item.rawValue) as ConfiguredModel)}
+							</Select.ItemLabel>
+						</Select.Item>
+					)}
+				>
+					<Select.Label class="field-label">{t("settings.defaultReplyModel")}</Select.Label>
+					<p class="field-hint">{t("settings.defaultReplyModelHint")}</p>
+					<Select.Trigger class="select-trigger">
+						<Select.Value<string> class="select-value">
+							{(state) => {
+								const model = modelByOptionId(state.selectedOption());
+								return model ? modelDisplayName(model) : t("settings.noDefaultReplyModel");
+							}}
+						</Select.Value>
+					</Select.Trigger>
+					<Select.Portal>
+						<Select.Content class="select-content">
+							<Select.Listbox class="select-listbox" />
+						</Select.Content>
+					</Select.Portal>
+				</Select>
+				<Select
+					class="field"
+					options={visionOptions()}
+					value={selectedVisionOption()}
+					optionTextValue={(id) => {
+						if (id === "auto") return t("settings.visionModelAuto");
+						const model = modelByOptionId(id);
+						return model ? modelDisplayName(model) : id;
+					}}
+					onChange={(id) => {
+						const model = id && id !== "auto" ? modelByOptionId(id) : undefined;
+						void run(
+							() =>
+								model
+									? store.model.setMultimodalFallback(model.providerId, model.modelId)
+									: store.model.setVisionAuto(),
+							t("settings.imageReaderUpdated"),
+						);
+					}}
+					itemComponent={(itemProps) => (
+						<Select.Item item={itemProps.item} class="select-item">
+							<Select.ItemLabel>
+								{itemProps.item.rawValue === "auto"
+									? t("settings.visionModelAuto")
+									: modelDisplayName(modelByOptionId(itemProps.item.rawValue) as ConfiguredModel)}
+							</Select.ItemLabel>
+						</Select.Item>
+					)}
+				>
+					<Select.Label class="field-label">{t("settings.visionModel")}</Select.Label>
+					<p class="field-hint">{t("settings.visionModelHint")}</p>
+					<Select.Trigger class="select-trigger">
+						<Select.Value<string> class="select-value">
+							{(state) => {
+								const id = state.selectedOption();
+								const model = modelByOptionId(id);
+								return id === "auto"
+									? t("settings.visionModelAuto")
+									: model
+										? modelDisplayName(model)
+										: id;
+							}}
+						</Select.Value>
+					</Select.Trigger>
+					<Select.Portal>
+						<Select.Content class="select-content">
+							<Select.Listbox class="select-listbox" />
+						</Select.Content>
+					</Select.Portal>
+				</Select>
 				<div class="model-pool-list">
 					<For each={configured()}>
 						{(model) => (
 							<div class="model-pool-item">
 								<span>{modelDisplayName(model)}</span>
-								<Show when={model.supportsImages}>
-									<Show
-										when={isMultimodalFallback(model.providerId, model.modelId)}
-										fallback={
-											<Button
-												type="button"
-												class="image-reader-action"
-												disabled={saving()}
-												onClick={() =>
-													void run(
-														() =>
-															store.model.setMultimodalFallback(model.providerId, model.modelId),
-														t("settings.imageReaderUpdated"),
-													)
-												}
-											>
-												{t("settings.useForImages")}
-											</Button>
-										}
-									>
-										<span class="provider-status" data-connected="true">
-											{t("settings.multimodalAutomatic")}
-										</span>
-									</Show>
-								</Show>
 								<Button
 									type="button"
 									data-semantic="danger"

@@ -1,5 +1,5 @@
-import { messages, supportedProductLocales } from "@bear-harness/product-config/locales";
 import { describe, expect, it } from "vitest";
+import { resources, supportedProductLocales } from "../src/locales/index.js";
 
 function shape(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map(shape);
@@ -17,16 +17,17 @@ function strings(value: unknown): string[] {
 }
 
 describe("product locale catalogs", () => {
-	it("keeps all three locale catalogs structurally identical", () => {
+	it("keeps every locale structurally identical", () => {
 		expect(supportedProductLocales).toEqual(["zh-CN", "zh-TW", "en"]);
-		const baseShape = shape(messages["zh-CN"]);
-		for (const locale of supportedProductLocales)
-			expect(shape(messages[locale])).toEqual(baseShape);
+		const baseShape = shape(resources["zh-CN"]);
+		for (const locale of supportedProductLocales) {
+			expect(shape(resources[locale])).toEqual(baseShape);
+		}
 	});
 
-	it("has a complete English catalog and uses phrase-level OpenCC conversion for Taiwan", () => {
-		expect(strings(messages.en).filter((text) => /\p{Script=Han}/u.test(text))).toEqual([]);
-		expect(messages["zh-TW"].modelSetup.title).toBe("先連線一個回覆模型");
-		expect(messages["zh-TW"].settings.language).toBe("介面語言");
+	it("keeps English translated and uses phrase-level OpenCC output for Taiwan", () => {
+		expect(strings(resources.en).filter((text) => /\p{Script=Han}/u.test(text))).toEqual([]);
+		expect(resources["zh-TW"].modelSetup.title).toBe("先連線一個回覆模型");
+		expect(resources["zh-TW"].settings.language).toBe("介面語言");
 	});
 });

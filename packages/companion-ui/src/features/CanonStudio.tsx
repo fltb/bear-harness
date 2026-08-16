@@ -1,13 +1,14 @@
+import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
 import { Checkbox } from "@kobalte/core/checkbox";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, Show } from "solid-js";
-import { t } from "../i18n.js";
 import { useCompanionStore } from "../stores/companion.js";
 import type { CanonChunk, CanonModule, CanonModuleKind } from "../stores/ipc.js";
 
 export function CanonStudio() {
+	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const [sourceName, setSourceName] = createSignal("");
 	const [sourceText, setSourceText] = createSignal("");

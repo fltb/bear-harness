@@ -119,13 +119,13 @@ export const zhTW = {
 		"userEditBranchNote": "儲存後會從這裡開始一段新的對話分支，原來的後續內容不會丟失。",
 		"conversation": "對話",
 		"operationFailedPrefix": "操作沒有完成：",
-		"correctionReasons": [
-			"語氣不對",
-			"忘了自己",
-			"忘了共同經歷",
-			"替使用者行動",
-			"把虛構當現實"
-		],
+		"correctionReasons": {
+			"tone": "語氣不對",
+			"identity": "忘了自己",
+			"history": "忘了共同經歷",
+			"userAction": "替使用者行動",
+			"fictionReality": "把虛構當現實"
+		},
 		"correctionScopes": {
 			"once": "僅這次",
 			"session": "當前對話",
@@ -189,6 +189,12 @@ export const zhTW = {
 		"modelServiceHint": "選擇用於角色回覆的模型服務。金鑰只儲存在這臺裝置上。",
 		"modelPool": "可用模型",
 		"modelPoolHint": "加入多個模型後，可以在每段對話的輸入欄中隨時切換。傳送圖片時會自動使用其中支援圖片的模型。",
+		"defaultReplyModel": "新對話預設模型",
+		"defaultReplyModelHint": "只應用於之後新建的對話，不會改動已有對話。",
+		"noDefaultReplyModel": "不指定",
+		"visionModel": "圖片讀取模型",
+		"visionModelHint": "自動模式會從可用模型中選擇支援圖片的模型，並把讀取結果交給當前回覆模型。",
+		"visionModelAuto": "自動選擇",
 		"addModel": "加入可用模型",
 		"removeModel": "移除",
 		"modelAdded": "模型已加入",
@@ -198,6 +204,7 @@ export const zhTW = {
 		"multimodalAutomatic": "自動讀取圖片",
 		"useForImages": "用於自動讀取圖片",
 		"imageReaderUpdated": "圖片讀取模型已更新",
+		"defaultReplyUpdated": "新對話預設模型已更新",
 		"primaryModelSection": "主模型",
 		"fallbackModelSection": "備用模型",
 		"serviceLabel": "服務",

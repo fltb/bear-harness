@@ -1,4 +1,4 @@
-import { zhCN } from "@bear-harness/product-config/locales";
+import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
 import { selectKobalteOption } from "./helpers";
 

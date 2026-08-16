@@ -1,0 +1,32 @@
+{
+	"name": "@bear-harness/i18n",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./locales": {
+			"types": "./dist/locales/index.d.ts",
+			"import": "./dist/locales/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json && node scripts/generate-zh-tw.mjs && tsc -p tsconfig.json",
+		"generate:locales": "node scripts/generate-zh-tw.mjs",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test:unit": "vitest run"
+	},
+	"dependencies": {
+		"i18next": "26.3.6",
+		"solid-i18next": "0.0.5",
+		"solid-js": "1.9.14"
+	},
+	"devDependencies": {
+		"opencc-js": "1.4.1",
+		"typescript": "7.0.2",
+		"vitest": "4.1.10"
+	}
+}

@@ -1,5 +1,5 @@
+import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Select } from "@kobalte/core/select";
-import { t } from "./i18n.js";
 import type { ProviderInfo } from "./stores/ipc.js";
 
 export function ProviderSelectionField(props: {
@@ -8,6 +8,7 @@ export function ProviderSelectionField(props: {
 	class: string;
 	onProviderChange: (providerId: string) => void;
 }) {
+	const [t] = useTranslation(undefined, { i18n });
 	return (
 		<Select<ProviderInfo>
 			options={[...props.providers]}
@@ -49,6 +50,7 @@ export function ModelPresetField(props: {
 	disabled?: boolean;
 	onModelChange: (modelId: string) => void;
 }) {
+	const [t] = useTranslation(undefined, { i18n });
 	const models = () => props.provider?.availableModels ?? [];
 	return (
 		<Select<ProviderInfo["availableModels"][number]>

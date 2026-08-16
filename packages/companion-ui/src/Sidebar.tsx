@@ -1,7 +1,7 @@
+import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
 import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
-import { t } from "./i18n.js";
 import { type CharacterDisplay, useCompanionStore } from "./stores/companion.js";
 
 /**
@@ -12,6 +12,7 @@ export function Sidebar(props: {
 	character: CharacterDisplay | undefined;
 	onOpenBackstage: (tab: "roles" | "settings") => void;
 }) {
+	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const [query, setQuery] = createSignal("");
 	const [editingId, setEditingId] = createSignal<string>();

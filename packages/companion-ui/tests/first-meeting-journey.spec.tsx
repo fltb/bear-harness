@@ -1,4 +1,4 @@
-import { zhCN } from "@bear-harness/product-config/locales";
+import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -37,6 +37,7 @@ function baseStore(): Partial<CompanionStore> {
 		model: {
 			loading: () => false,
 			models: () => [{ modelId: "model" }],
+			data: () => ({ defaults: { reply: { providerId: "provider", modelId: "model" } } }),
 		} as never,
 	};
 }
@@ -69,7 +70,20 @@ describe("first meeting journeys", () => {
 					eventSeq: 20,
 					onboarding: active,
 					character: THEMED_CHARACTER,
-					model: { models: [{ modelId: "configured" }] },
+					model: {
+						pool: {
+							models: [
+								{
+									providerId: "configured-provider",
+									modelId: "configured",
+									label: "Configured",
+									supportsImages: false,
+									createdAt: "2026-01-01",
+								},
+							],
+						},
+						defaults: { vision: { mode: "auto" } },
+					},
 				},
 			}),
 		);
@@ -125,7 +139,13 @@ describe("first meeting journeys", () => {
 				list: () => Promise.resolve({ providers: [provider] }),
 				setApiKey,
 			} as never,
-			model: { loading: () => false, models: () => [], enable } as never,
+			model: {
+				loading: () => false,
+				models: () => [],
+				data: () => ({ defaults: {} }),
+				enable,
+				setDefaultReply: vi.fn(),
+			} as never,
 		});
 
 		const dialog = await screen.findByRole("dialog", {
@@ -171,7 +191,13 @@ describe("first meeting journeys", () => {
 				providers: () => [provider],
 				list: () => Promise.resolve({ providers: [provider] }),
 			} as never,
-			model: { loading: () => false, models: () => [], enable } as never,
+			model: {
+				loading: () => false,
+				models: () => [],
+				data: () => ({ defaults: {} }),
+				enable,
+				setDefaultReply: vi.fn(),
+			} as never,
 		});
 
 		const dialog = await screen.findByRole("dialog", {
@@ -320,7 +346,13 @@ describe("first meeting journeys", () => {
 				list: () => Promise.resolve({ providers: [provider] }),
 				login,
 			} as never,
-			model: { loading: () => false, models: () => [], enable: pin } as never,
+			model: {
+				loading: () => false,
+				models: () => [],
+				data: () => ({ defaults: {} }),
+				enable: pin,
+				setDefaultReply: vi.fn(),
+			} as never,
 		});
 		const dialog = await screen.findByRole("dialog", {
 			name: zhCN.modelSetup.dialogLabel,
@@ -383,7 +415,13 @@ describe("first meeting journeys", () => {
 				login,
 				loginAnswer,
 			} as never,
-			model: { loading: () => false, models: () => [], enable: pin } as never,
+			model: {
+				loading: () => false,
+				models: () => [],
+				data: () => ({ defaults: {} }),
+				enable: pin,
+				setDefaultReply: vi.fn(),
+			} as never,
 		});
 		const dialog = await screen.findByRole("dialog", {
 			name: zhCN.modelSetup.dialogLabel,
@@ -439,7 +477,9 @@ describe("first meeting journeys", () => {
 			model: {
 				loading: () => false,
 				models: () => [],
+				data: () => ({ defaults: {} }),
 				enable: vi.fn(),
+				setDefaultReply: vi.fn(),
 			} as never,
 		});
 		const dialog = await screen.findByRole("dialog", {

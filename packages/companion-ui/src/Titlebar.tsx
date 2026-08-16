@@ -1,6 +1,6 @@
+import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
-import { t } from "./i18n.js";
 import { useCompanionStore } from "./stores/companion.js";
 
 /**
@@ -11,6 +11,7 @@ import { useCompanionStore } from "./stores/companion.js";
  */
 
 export function Titlebar(props: { sceneTitle: string; onOpenBackstage: () => void }) {
+	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const [queueOpen, setQueueOpen] = createSignal(false);
 

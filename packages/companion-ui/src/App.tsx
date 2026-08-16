@@ -1,4 +1,5 @@
 import type { CompanionClient } from "@bear-harness/companion-client";
+import { I18nextProvider, i18n, useLanguage, useTranslation } from "@bear-harness/i18n";
 import type { ProductConfig } from "@bear-harness/product-config";
 import { Button } from "@kobalte/core/button";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
@@ -8,7 +9,6 @@ import { Composer } from "./Composer";
 import { ConversationPanel } from "./ConversationPanel";
 import { FirstMeeting } from "./FirstMeeting";
 import { Backstage } from "./features/Backstage.js";
-import { productLocale, t } from "./i18n.js";
 import { SceneBackdrop } from "./SceneBackdrop";
 import { Sidebar } from "./Sidebar";
 import { createCompanionStore, DesktopProvider } from "./stores/companion.js";
@@ -31,13 +31,17 @@ export function CompanionApp(props: { product: Readonly<ProductConfig>; client: 
 		},
 	});
 	return (
-		<QueryClientProvider client={queryClient}>
-			<CompanionRuntime product={props.product} client={props.client} />
-		</QueryClientProvider>
+		<I18nextProvider i18n={i18n}>
+			<QueryClientProvider client={queryClient}>
+				<CompanionRuntime product={props.product} client={props.client} />
+			</QueryClientProvider>
+		</I18nextProvider>
 	);
 }
 
 function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: CompanionClient }) {
+	const [t] = useTranslation(undefined, { i18n });
+	const [currentLocale] = useLanguage(() => i18n);
 	const store = createCompanionStore(props.client);
 	const [backstageOpen, setBackstageOpen] = createSignal(false);
 	const [backstageTab, setBackstageTab] = createSignal<"roles" | "settings">("roles");
@@ -49,7 +53,6 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
 
 	createEffect(() => {
 		document.title = props.product.productName;
-		document.documentElement.lang = productLocale();
 	});
 
 	const character = () => store.character;
@@ -69,7 +72,7 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
 	const composerPlaceholder = () =>
 		character()?.character.composer_placeholder ?? t("shell.fallbackComposerPlaceholder");
 	const preferredLanguage = () =>
-		globalThis.navigator?.languages?.[0] ?? globalThis.navigator?.language ?? productLocale();
+		globalThis.navigator?.languages?.[0] ?? globalThis.navigator?.language ?? currentLocale();
 	const languageWarningKey = () => `${character()?.language ?? ""}|${preferredLanguage()}`;
 	const hasLanguageMismatch = () => {
 		const roleLanguage = character()?.language;

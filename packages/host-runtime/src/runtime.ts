@@ -16,6 +16,7 @@
  */
 
 import { join } from "node:path";
+import { and, eq } from "drizzle-orm";
 import { ArtifactStore } from "./artifacts/index.js";
 import { CanonHubService } from "./canon/service.js";
 import { CommissionService } from "./commissions/service.js";
@@ -37,6 +38,7 @@ import { ProviderCatalog } from "./providers/catalog.js";
 import { CredentialStore, type CredentialVault } from "./providers/credential-store.js";
 import { Database, MIGRATIONS } from "./storage/database.js";
 import { EventBus } from "./storage/event-bus.js";
+import { conversations, messages } from "./storage/schema.js";
 import { StoryService } from "./story/service.js";
 
 /** The subset of the product configuration the host runtime consumes. */
@@ -122,27 +124,26 @@ export class HostRuntime {
 				typeof payload.text !== "string"
 			)
 				return;
-			const context = dbConnection
-				.prepare(
-					`SELECT c.companion_id, m.branch_id FROM conversations c
-					 JOIN messages m ON m.conversation_id = c.id
-					 WHERE c.id = ? AND m.id = ?`,
+			const context = db.orm
+				.select({ companionId: conversations.companionId, branchId: messages.branchId })
+				.from(conversations)
+				.innerJoin(messages, eq(messages.conversationId, conversations.id))
+				.where(
+					and(eq(conversations.id, payload.conversationId), eq(messages.id, payload.messageId)),
 				)
-				.get(payload.conversationId, payload.messageId) as
-				| { companion_id: string; branch_id: string }
-				| undefined;
+				.get();
 			if (!context) return;
 			const result = story.handleUserText({
-				companionId: context.companion_id,
+				companionId: context.companionId,
 				conversationId: payload.conversationId,
-				branchId: context.branch_id,
+				branchId: context.branchId,
 				text: payload.text,
 			});
 			if (result.action === "ambiguous") {
 				story.propose({
-					companionId: context.companion_id,
+					companionId: context.companionId,
 					conversationId: payload.conversationId,
-					branchId: context.branch_id,
+					branchId: context.branchId,
 					text: payload.text,
 				});
 			}
@@ -190,6 +191,7 @@ export class HostRuntime {
 		this.unsubscribeStoryAutomation = unsubscribeStoryAutomation;
 		this.composition = {
 			db: dbConnection,
+			orm: db.orm,
 			eventBus,
 			onboarding,
 			turns,

@@ -1,4 +1,4 @@
-import { zhCN } from "@bear-harness/product-config/locales";
+import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -20,9 +20,20 @@ describe("idle homepage (official config, no bridge)", () => {
 	it("loads providers and requires a reply model before the first meeting", async () => {
 		const { client, conversationList, providerList } = createTestClient();
 		client.snapshot.get = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { eventSeq: 0, model: { models: [] } } }),
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					model: { pool: { models: [] }, defaults: { vision: { mode: "auto" } } },
+				},
+			}),
 		);
-		client.model.list = vi.fn(() => Promise.resolve({ ok: true as const, data: { models: [] } }));
+		client.model.poolGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { models: [] } }),
+		);
+		client.model.defaultsGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { vision: { mode: "auto" as const } } }),
+		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		await waitFor(() => expect(conversationList).toHaveBeenCalled());

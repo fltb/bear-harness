@@ -82,7 +82,14 @@ export type ProviderListData = Wire.ProviderListResponse;
 export type ProviderLoginResult = Wire.ProviderLoginResponse;
 export type ConfiguredModel = Wire.ConfiguredModel;
 export type ModelRoute = Wire.ModelRoute;
-export type ModelListData = Wire.ModelListResponse;
+export type ModelPoolData = Wire.ModelPoolGetResponse;
+export type ModelDefaultsData = Wire.ModelDefaultsGetResponse;
+export type ModelRouteData = Wire.ModelRouteGetResponse;
+export type ModelListData = ModelPoolData & {
+	selected?: ModelRoute;
+	multimodalFallback?: ModelRoute;
+	defaults: ModelDefaultsData;
+};
 export type ActionDraft = Wire.ActionDraft;
 export type Commission = Wire.Commission;
 export type CommissionStatus = Commission["status"];

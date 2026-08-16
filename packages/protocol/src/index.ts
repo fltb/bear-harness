@@ -185,19 +185,22 @@ export type ProviderLogoutRequest = z.infer<typeof schema.ProviderLogoutRequest>
 
 export type ModelRoute = z.infer<typeof schema.ModelRoute>;
 export type ConfiguredModel = z.infer<typeof schema.ConfiguredModel>;
-export type ModelListRequest = z.infer<typeof schema.ModelListRequest>;
-export type ModelListResponse = z.infer<typeof schema.ModelListResponse>;
+export type ModelPoolGetRequest = z.infer<typeof schema.ModelPoolGetRequest>;
+export type ModelPoolGetResponse = z.infer<typeof schema.ModelPoolGetResponse>;
+export type ModelDefaultsGetRequest = z.infer<typeof schema.ModelDefaultsGetRequest>;
+export type ModelDefaultsGetResponse = z.infer<typeof schema.ModelDefaultsGetResponse>;
+export type ModelDefaultsSetReplyRequest = z.infer<typeof schema.ModelDefaultsSetReplyRequest>;
+export type ModelDefaultsSetReplyResponse = z.infer<typeof schema.ModelDefaultsSetReplyResponse>;
+export type ModelDefaultsSetVisionRequest = z.infer<typeof schema.ModelDefaultsSetVisionRequest>;
+export type ModelDefaultsSetVisionResponse = z.infer<typeof schema.ModelDefaultsSetVisionResponse>;
+export type ModelRouteGetRequest = z.infer<typeof schema.ModelRouteGetRequest>;
+export type ModelRouteGetResponse = z.infer<typeof schema.ModelRouteGetResponse>;
+export type ModelRouteSetRequest = z.infer<typeof schema.ModelRouteSetRequest>;
+export type ModelRouteSetResponse = z.infer<typeof schema.ModelRouteSetResponse>;
+export type VisionModelDefault = z.infer<typeof schema.VisionModelDefault>;
 export type ModelEnableRequest = z.infer<typeof schema.ModelEnableRequest>;
 export type ModelEnableResponse = z.infer<typeof schema.ModelEnableResponse>;
-export type ModelSetMultimodalFallbackRequest = z.infer<
-	typeof schema.ModelSetMultimodalFallbackRequest
->;
-export type ModelSetMultimodalFallbackResponse = z.infer<
-	typeof schema.ModelSetMultimodalFallbackResponse
->;
 export type ModelDisableRequest = z.infer<typeof schema.ModelDisableRequest>;
-export type ModelSelectRequest = z.infer<typeof schema.ModelSelectRequest>;
-export type ModelSelectResponse = z.infer<typeof schema.ModelSelectResponse>;
 
 // ---------------------------------------------------------------------------
 // Commission

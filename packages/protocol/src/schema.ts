@@ -764,13 +764,37 @@ export const ConfiguredModel = z.strictObject({
 export const ProviderImportPiConfigResponse = z.strictObject({
 	models: z.array(ConfiguredModel).max(100),
 });
-export const ModelListRequest = z.strictObject({
-	conversationId: ConversationId.optional(),
-});
-export const ModelListResponse = z.strictObject({
+export const ModelPoolGetRequest = z.strictObject({});
+export const ModelPoolGetResponse = z.strictObject({
 	models: z.array(ConfiguredModel).max(100),
+});
+export const VisionModelDefault = z.discriminatedUnion("mode", [
+	z.strictObject({ mode: z.literal("auto") }),
+	z.strictObject({ mode: z.literal("manual"), route: ModelRoute }),
+]);
+export const ModelDefaultsGetRequest = z.strictObject({});
+export const ModelDefaultsGetResponse = z.strictObject({
+	reply: ModelRoute.optional(),
+	vision: VisionModelDefault,
+});
+export const ModelDefaultsSetReplyRequest = z.strictObject({ reply: ModelRoute.nullable() });
+export const ModelDefaultsSetReplyResponse = ModelDefaultsGetResponse;
+export const ModelDefaultsSetVisionRequest = VisionModelDefault;
+export const ModelDefaultsSetVisionResponse = ModelDefaultsGetResponse;
+export const ModelRouteGetRequest = z.strictObject({ conversationId: ConversationId });
+export const ModelRouteGetResponse = z.strictObject({
+	conversationId: ConversationId,
 	selected: ModelRoute.optional(),
-	multimodalFallback: ModelRoute.optional(),
+});
+export const ModelRouteSetRequest = z.strictObject({
+	conversationId: ConversationId,
+	selected: ModelRoute,
+});
+export const ModelRouteSetResponse = ModelRouteGetResponse;
+export const ModelSnapshot = z.strictObject({
+	pool: ModelPoolGetResponse,
+	defaults: ModelDefaultsGetResponse,
+	route: ModelRouteGetResponse.optional(),
 });
 export const ModelEnableRequest = z.strictObject({
 	providerId: z.string().min(1).max(64),
@@ -781,17 +805,6 @@ export const ModelEnableResponse = z.strictObject({
 	model: ConfiguredModel,
 });
 export const ModelDisableRequest = ModelRoute;
-export const ModelSelectRequest = z.strictObject({
-	conversationId: ConversationId,
-	...ModelRoute.shape,
-});
-export const ModelSelectResponse = z.strictObject({
-	selected: ModelRoute,
-});
-export const ModelSetMultimodalFallbackRequest = ModelRoute;
-export const ModelSetMultimodalFallbackResponse = z.strictObject({
-	multimodalFallback: ModelRoute,
-});
 
 // ---------------------------------------------------------------------------
 // Commission
@@ -1004,7 +1017,7 @@ export const SnapshotResponse = z.strictObject({
 	conversation: ConversationSnapshot.optional(),
 	memory: MemorySnapshot.optional(),
 	provider: ProviderListResponse.optional(),
-	model: ModelListResponse.optional(),
+	model: ModelSnapshot.optional(),
 	commission: CommissionListResponse.optional(),
 	run: RunListResponse.optional(),
 	artifact: ArtifactListResponse.optional(),
@@ -1177,15 +1190,26 @@ export const RPC = {
 		logout: endpoint("provider.logout:v1", ProviderLogoutRequest, EmptyResponse),
 	},
 	model: {
-		list: endpoint("model.list:v1", ModelListRequest, ModelListResponse),
+		poolGet: endpoint("model.pool.get:v1", ModelPoolGetRequest, ModelPoolGetResponse),
 		enable: endpoint("model.enable:v1", ModelEnableRequest, ModelEnableResponse),
 		disable: endpoint("model.disable:v1", ModelDisableRequest, EmptyResponse),
-		select: endpoint("model.select:v1", ModelSelectRequest, ModelSelectResponse),
-		setMultimodalFallback: endpoint(
-			"model.setMultimodalFallback:v1",
-			ModelSetMultimodalFallbackRequest,
-			ModelSetMultimodalFallbackResponse,
+		defaultsGet: endpoint(
+			"model.defaults.get:v1",
+			ModelDefaultsGetRequest,
+			ModelDefaultsGetResponse,
 		),
+		defaultsSetReply: endpoint(
+			"model.defaults.setReply:v1",
+			ModelDefaultsSetReplyRequest,
+			ModelDefaultsSetReplyResponse,
+		),
+		defaultsSetVision: endpoint(
+			"model.defaults.setVision:v1",
+			ModelDefaultsSetVisionRequest,
+			ModelDefaultsSetVisionResponse,
+		),
+		routeGet: endpoint("model.route.get:v1", ModelRouteGetRequest, ModelRouteGetResponse),
+		routeSet: endpoint("model.route.set:v1", ModelRouteSetRequest, ModelRouteSetResponse),
 	},
 	commission: {
 		list: endpoint("commission.list:v1", CommissionListRequest, CommissionListResponse),

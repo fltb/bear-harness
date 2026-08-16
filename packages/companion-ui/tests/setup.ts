@@ -1,7 +1,7 @@
 import { cleanup } from "@solidjs/testing-library";
 import { afterEach, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { setProductLocale } from "../src/i18n.js";
+import { setProductLocale } from "@bear-harness/i18n";
 
 Object.defineProperty(window, "scrollTo", { configurable: true, value: () => undefined });
 

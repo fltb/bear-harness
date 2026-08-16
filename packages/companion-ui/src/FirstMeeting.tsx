@@ -1,10 +1,10 @@
+import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
 import { Dialog } from "@kobalte/core/dialog";
 import { Root as Link } from "@kobalte/core/link";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import { t } from "./i18n.js";
 import { ModelPresetField, ProviderSelectionField } from "./ModelSelectionFields.js";
 import type { CharacterOnboardingStep } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
@@ -19,6 +19,7 @@ function stepLabel(template: string, index: number, total: number): string {
  * only the selected role-defined step and answer to the Host.
  */
 export function FirstMeeting() {
+	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const [textAnswer, setTextAnswer] = createSignal("");
 	const flow = () => store.character?.character.first_meeting;
@@ -51,7 +52,7 @@ export function FirstMeeting() {
 		selectedProvider()?.credentialStatus === "session_only" ||
 		connectedProviderId() === providerId();
 	const modelRequired = () =>
-		!store.loading && !store.model.loading() && store.model.models().length === 0;
+		!store.loading && !store.model.loading() && store.model.data().defaults.reply === undefined;
 	const selectProvider = (id: string) => {
 		setProviderId(id);
 		setModelId("");
@@ -70,6 +71,7 @@ export function FirstMeeting() {
 				modelId(),
 				selectedProvider()?.availableModels.find((model) => model.id === modelId())?.name,
 			);
+			await store.model.setDefaultReply(providerId(), modelId());
 		} catch (cause) {
 			setSetupError(cause instanceof Error ? cause.message : String(cause));
 		} finally {

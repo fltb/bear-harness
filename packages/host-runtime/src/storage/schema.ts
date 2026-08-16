@@ -141,7 +141,10 @@ export const sceneState = sqliteTable("scene_state", {
 		.notNull()
 		.references(() => conversations.id),
 	scene: text().default("").notNull(),
-	stateJson: text("state_json", { mode: "json" }).default({}).notNull(),
+	stateJson: text("state_json", { mode: "json" })
+		.$type<Record<string, unknown>>()
+		.default({})
+		.notNull(),
 	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 });
 
@@ -420,6 +423,7 @@ export const modelRouteSettings = sqliteTable("model_route_settings", {
 		.references(() => companionIdentity.id),
 	textProviderId: text("text_provider_id"),
 	textModelId: text("text_model_id"),
+	visionMode: text("vision_mode").default("auto").notNull(),
 	multimodalProviderId: text("multimodal_provider_id"),
 	multimodalModelId: text("multimodal_model_id"),
 	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),

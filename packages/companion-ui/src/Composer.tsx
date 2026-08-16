@@ -1,3 +1,4 @@
+import { i18n, useTranslation } from "@bear-harness/i18n";
 import {
 	MAX_MESSAGE_ATTACHMENT_BYTES,
 	MAX_MESSAGE_ATTACHMENTS,
@@ -7,7 +8,6 @@ import { FileField } from "@kobalte/core/file-field";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, Show } from "solid-js";
-import { t } from "./i18n.js";
 import { useCompanionStore } from "./stores/companion.js";
 import type { ConfiguredModel } from "./stores/ipc.js";
 
@@ -21,6 +21,7 @@ type ComposerAttachment =
  * with the next message; binary documents use the Host material workflow.
  */
 export function Composer(props: { placeholder: string; onOpenModelSettings?: () => void }) {
+	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const [text, setText] = createSignal("");
 	const [attachments, setAttachments] = createSignal<ComposerAttachment[]>([]);

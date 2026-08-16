@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "@babel/parser";
-import { zhCN } from "../packages/product-config/src/zh-CN.ts";
+import { zhCN } from "../packages/i18n/src/locales/zh-CN.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const roots = [join(repoRoot, "apps"), join(repoRoot, "packages")];

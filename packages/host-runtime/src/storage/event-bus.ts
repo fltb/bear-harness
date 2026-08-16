@@ -78,4 +78,14 @@ export class EventBus {
 	get currentSeq(): number {
 		return this.seq;
 	}
+
+	after(afterSeq: number, limit = 100): HostEvent[] {
+		return this.db
+			.select({ seq: events.seq, kind: events.kind, payload: events.payload })
+			.from(events)
+			.where(gt(events.seq, afterSeq))
+			.orderBy(asc(events.seq))
+			.limit(limit)
+			.all();
+	}
 }

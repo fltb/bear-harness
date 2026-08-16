@@ -38,10 +38,9 @@ test("rule provider exercises send and edited-history regeneration deterministic
 	const conversation = await rpc<{ id: string }>(page, bootstrap.token, "conversation.create:v1", {
 		title: "Rule provider",
 	});
-	await rpc(page, bootstrap.token, "model.select:v1", {
+	await rpc(page, bootstrap.token, "model.route.set:v1", {
 		conversationId: conversation.id,
-		providerId: "e2e-rule",
-		modelId: "rule-model",
+		selected: { providerId: "e2e-rule", modelId: "rule-model" },
 	});
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
@@ -124,14 +123,13 @@ test("an image reader observes images while the selected text model produces the
 	const conversation = await rpc<{ id: string }>(page, bootstrap.token, "conversation.create:v1", {
 		title: "Image reader routing",
 	});
-	await rpc(page, bootstrap.token, "model.select:v1", {
+	await rpc(page, bootstrap.token, "model.route.set:v1", {
 		conversationId: conversation.id,
-		providerId: "e2e-rule",
-		modelId: "rule-text",
+		selected: { providerId: "e2e-rule", modelId: "rule-text" },
 	});
-	await rpc(page, bootstrap.token, "model.setMultimodalFallback:v1", {
-		providerId: "e2e-rule",
-		modelId: "rule-vision",
+	await rpc(page, bootstrap.token, "model.defaults.setVision:v1", {
+		mode: "manual",
+		route: { providerId: "e2e-rule", modelId: "rule-vision" },
 	});
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId: conversation.id,

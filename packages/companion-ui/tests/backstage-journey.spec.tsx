@@ -1,4 +1,4 @@
-import { zhCN } from "@bear-harness/product-config/locales";
+import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -85,7 +85,11 @@ describe("ordinary-user backstage journey", () => {
 			characters: { characters: () => [], activate: vi.fn(), import: importPackage },
 			settings: { data: () => ({ relationshipMemoryEnabled: false }), get: vi.fn() },
 			provider: { list: vi.fn(() => Promise.resolve({ providers: [] })), providers: () => [] },
-			model: { list: vi.fn(() => Promise.resolve({ models: [] })), models: () => [] },
+			model: {
+				list: vi.fn(() => Promise.resolve({ models: [] })),
+				models: () => [],
+				data: () => ({ defaults: { vision: { mode: "auto" } } }),
+			},
 		} as unknown as CompanionStore;
 
 		const characterView = render(() => (
