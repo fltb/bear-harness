@@ -1,3 +1,6 @@
+import { Button } from "@kobalte/core/button";
+import { Select } from "@kobalte/core/select";
+import { TextField } from "@kobalte/core/text-field";
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import {
 	type ProductLocale,
@@ -9,6 +12,7 @@ import {
 import { ModelPresetField, ProviderSelectionField } from "../ModelSelectionFields.js";
 import type { ProviderLoginResult } from "../stores/companion.js";
 import { useCompanionStore } from "../stores/companion.js";
+import type { ConfiguredModel } from "../stores/ipc.js";
 
 function messageOf(value: unknown): string {
 	return value instanceof Error ? value.message : String(value);
@@ -27,6 +31,8 @@ export function SettingsSheet() {
 	const [advancedOpen, setAdvancedOpen] = createSignal(false);
 	const [customBaseUrl, setCustomBaseUrl] = createSignal("");
 	const [piConfigJson, setPiConfigJson] = createSignal("");
+	const localeOptions = () =>
+		supportedProductLocales.map((id) => ({ id, label: t(`settings.localeNames.${id}`) }));
 	let disposed = false;
 	onCleanup(() => {
 		disposed = true;
@@ -37,6 +43,12 @@ export function SettingsSheet() {
 	const configured = () => store.model.models();
 	const selectedConfigured = () =>
 		configured().some((model) => model.providerId === providerId() && model.modelId === modelId());
+	const modelDisplayName = (model: ConfiguredModel) =>
+		`${model.label} (${model.providerName ?? model.providerId})`;
+	const isMultimodalFallback = (providerId: string, modelId: string) => {
+		const route = store.model.data().multimodalFallback;
+		return route?.providerId === providerId && route.modelId === modelId;
+	};
 	const apiKeyPlaceholder = () => {
 		const status = selectedProvider()?.credentialStatus;
 		return status === "stored" || status === "session_only"
@@ -106,19 +118,32 @@ export function SettingsSheet() {
 				)}
 			</Show>
 
-			<label class="field">
-				<span class="field-label">{t("settings.language")}</span>
+			<Select
+				options={localeOptions()}
+				value={localeOptions().find((locale) => locale.id === productLocale()) ?? null}
+				optionValue="id"
+				optionTextValue="label"
+				onChange={(locale) => locale && setProductLocale(locale.id as ProductLocale)}
+				itemComponent={(itemProps) => (
+					<Select.Item item={itemProps.item} class="select-item">
+						<Select.ItemLabel>{itemProps.item.rawValue.label}</Select.ItemLabel>
+					</Select.Item>
+				)}
+				class="field"
+			>
+				<Select.Label class="field-label">{t("settings.language")}</Select.Label>
 				<span class="field-hint">{t("settings.languageHint")}</span>
-				<select
-					aria-label={t("settings.language")}
-					value={productLocale()}
-					onChange={(event) => setProductLocale(event.currentTarget.value as ProductLocale)}
-				>
-					<For each={supportedProductLocales}>
-						{(value) => <option value={value}>{t(`settings.localeNames.${value}`)}</option>}
-					</For>
-				</select>
-			</label>
+				<Select.Trigger class="select-trigger" aria-label={t("settings.language")}>
+					<Select.Value<{ id: ProductLocale; label: string }> class="select-value">
+						{(state) => state.selectedOption()?.label}
+					</Select.Value>
+				</Select.Trigger>
+				<Select.Portal>
+					<Select.Content class="select-content">
+						<Select.Listbox class="select-listbox" />
+					</Select.Content>
+				</Select.Portal>
+			</Select>
 
 			<section class="model-settings">
 				<div class="settings-group-heading">
@@ -142,23 +167,23 @@ export function SettingsSheet() {
 							when={provider().authType === "api_key"}
 							fallback={
 								<div class="oauth-login">
-									<button
+									<Button
 										type="button"
 										data-variant="secondary"
 										disabled={saving() || !providerId()}
 										onClick={() => void beginOauth()}
 									>
 										{t("settings.loginWithBrowser")}
-									</button>
+									</Button>
 									<Show when={oauth()?.prompt}>
 										{(prompt) => (
-											<label class="field">
-												<span class="field-label">{prompt().message}</span>
-												<input
+											<TextField class="field">
+												<TextField.Label class="field-label">{prompt().message}</TextField.Label>
+												<TextField.Input
 													value={oauthAnswer()}
 													onInput={(event) => setOauthAnswer(event.currentTarget.value)}
 												/>
-												<button
+												<Button
 													type="button"
 													data-variant="secondary"
 													disabled={!oauthAnswer()}
@@ -170,23 +195,23 @@ export function SettingsSheet() {
 													}
 												>
 													{t("settings.oauthSubmit")}
-												</button>
-											</label>
+												</Button>
+											</TextField>
 										)}
 									</Show>
 								</div>
 							}
 						>
-							<label class="field">
-								<span class="field-label">{t("settings.apiKeyLabel")}</span>
-								<input
+							<TextField class="field">
+								<TextField.Label class="field-label">{t("settings.apiKeyLabel")}</TextField.Label>
+								<TextField.Input
 									type="password"
 									autocomplete="off"
 									placeholder={apiKeyPlaceholder()}
 									value={apiKey()}
 									onInput={(event) => setApiKey(event.currentTarget.value)}
 								/>
-								<button
+								<Button
 									type="button"
 									data-variant="secondary"
 									aria-label={`${t("settings.saveKey")} ${t("settings.apiKeyLabel")}`}
@@ -200,13 +225,13 @@ export function SettingsSheet() {
 									}
 								>
 									{t("settings.saveKey")}
-								</button>
-							</label>
+								</Button>
+							</TextField>
 						</Show>
 					)}
 				</Show>
 
-				<button
+				<Button
 					class="advanced-toggle"
 					type="button"
 					data-variant="secondary"
@@ -214,18 +239,18 @@ export function SettingsSheet() {
 					onClick={() => setAdvancedOpen((open) => !open)}
 				>
 					{t("settings.advancedToggle")}
-				</button>
+				</Button>
 				<Show when={advancedOpen()}>
 					<div class="advanced-model-settings">
-						<label class="field">
-							<span class="field-label">{t("settings.customBaseUrl")}</span>
-							<input
+						<TextField class="field">
+							<TextField.Label class="field-label">{t("settings.customBaseUrl")}</TextField.Label>
+							<TextField.Input
 								placeholder={t("settings.customBaseUrlPlaceholder")}
 								value={customBaseUrl()}
 								onInput={(event) => setCustomBaseUrl(event.currentTarget.value)}
 							/>
-						</label>
-						<button
+						</TextField>
+						<Button
 							class="primary-action use-model-button"
 							type="button"
 							data-variant="primary"
@@ -241,19 +266,19 @@ export function SettingsSheet() {
 							}
 						>
 							{t("settings.customSave")}
-						</button>
-						<label class="field">
-							<span class="field-label">{t("settings.piConfigLabel")}</span>
+						</Button>
+						<TextField class="field">
+							<TextField.Label class="field-label">{t("settings.piConfigLabel")}</TextField.Label>
 							<span class="field-hint">{t("settings.piConfigHint")}</span>
-							<textarea
+							<TextField.TextArea
 								rows={10}
 								aria-label={t("settings.piConfigLabel")}
 								placeholder={t("settings.piConfigPlaceholder")}
 								value={piConfigJson()}
 								onInput={(event) => setPiConfigJson(event.currentTarget.value)}
 							/>
-						</label>
-						<button
+						</TextField>
+						<Button
 							type="button"
 							data-variant="primary"
 							disabled={saving() || !piConfigJson().trim()}
@@ -266,7 +291,7 @@ export function SettingsSheet() {
 							}
 						>
 							{t("settings.piConfigImport")}
-						</button>
+						</Button>
 					</div>
 				</Show>
 
@@ -278,15 +303,37 @@ export function SettingsSheet() {
 					<For each={configured()}>
 						{(model) => (
 							<div class="model-pool-item">
-								<span>{model.label}</span>
+								<span>{modelDisplayName(model)}</span>
 								<Show when={model.supportsImages}>
-									<span class="provider-status">{t("settings.multimodal")}</span>
+									<Show
+										when={isMultimodalFallback(model.providerId, model.modelId)}
+										fallback={
+											<Button
+												type="button"
+												class="image-reader-action"
+												disabled={saving()}
+												onClick={() =>
+													void run(
+														() =>
+															store.model.setMultimodalFallback(model.providerId, model.modelId),
+														t("settings.imageReaderUpdated"),
+													)
+												}
+											>
+												{t("settings.useForImages")}
+											</Button>
+										}
+									>
+										<span class="provider-status" data-connected="true">
+											{t("settings.multimodalAutomatic")}
+										</span>
+									</Show>
 								</Show>
-								<button
+								<Button
 									type="button"
 									data-semantic="danger"
 									data-variant="danger"
-									aria-label={`${t("settings.removeModel")} ${model.label}`}
+									aria-label={`${t("settings.removeModel")} ${modelDisplayName(model)}`}
 									disabled={saving()}
 									onClick={() =>
 										void run(
@@ -296,7 +343,7 @@ export function SettingsSheet() {
 									}
 								>
 									{t("settings.removeModel")}
-								</button>
+								</Button>
 							</div>
 						)}
 					</For>
@@ -309,7 +356,7 @@ export function SettingsSheet() {
 					modelLabel={t("settings.modelLabel")}
 					onModelChange={setModelId}
 				/>
-				<button
+				<Button
 					class="primary-action use-model-button"
 					type="button"
 					data-variant="primary"
@@ -327,7 +374,7 @@ export function SettingsSheet() {
 					}
 				>
 					{selectedConfigured() ? t("settings.modelAvailable") : t("settings.addModel")}
-				</button>
+				</Button>
 			</section>
 		</div>
 	);

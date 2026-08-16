@@ -1,7 +1,12 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
-import { configuredModels, conversationModelSelections } from "../storage/schema.js";
+import {
+	configuredModels,
+	conversationModelSelections,
+	conversations,
+	modelRouteSettings,
+} from "../storage/schema.js";
 
 export interface ModelRecord {
 	providerId: string;
@@ -57,12 +62,28 @@ export class ModelRegistry {
 	disable(providerId: string, modelId: string): void {
 		const existing = this.get(providerId, modelId);
 		if (!existing) throw { kind: "not_found", reason: "configured_model_not_found" };
-		this.db
-			.delete(configuredModels)
-			.where(
-				and(eq(configuredModels.providerId, providerId), eq(configuredModels.modelId, modelId)),
-			)
-			.run();
+		this.db.transaction((transaction) => {
+			transaction
+				.update(modelRouteSettings)
+				.set({
+					multimodalProviderId: null,
+					multimodalModelId: null,
+					updatedAt: sql`datetime('now')`,
+				})
+				.where(
+					and(
+						eq(modelRouteSettings.multimodalProviderId, providerId),
+						eq(modelRouteSettings.multimodalModelId, modelId),
+					),
+				)
+				.run();
+			transaction
+				.delete(configuredModels)
+				.where(
+					and(eq(configuredModels.providerId, providerId), eq(configuredModels.modelId, modelId)),
+				)
+				.run();
+		});
 		this.eventBus.publish("model.disabled", { providerId, modelId });
 	}
 
@@ -85,7 +106,53 @@ export class ModelRegistry {
 		const selected = this.selected(conversationId);
 		if (!selected) return undefined;
 		if (!requiresImages || selected.supportsImages) return selected;
-		return this.list().find((model) => model.supportsImages);
+		const companion = this.db
+			.select({ id: conversations.companionId })
+			.from(conversations)
+			.where(eq(conversations.id, conversationId))
+			.get();
+		return companion ? this.multimodalFallback(companion.id) : undefined;
+	}
+
+	multimodalFallback(companionId: string): ModelRecord | undefined {
+		const configured = this.db
+			.select({
+				providerId: modelRouteSettings.multimodalProviderId,
+				modelId: modelRouteSettings.multimodalModelId,
+			})
+			.from(modelRouteSettings)
+			.where(eq(modelRouteSettings.companionId, companionId))
+			.get();
+		if (configured?.providerId && configured.modelId) {
+			const model = this.get(configured.providerId, configured.modelId);
+			if (model?.supportsImages) return model;
+		}
+		const automatic = this.list().find((model) => model.supportsImages);
+		if (!automatic) return undefined;
+		this.setMultimodalFallback(companionId, automatic.providerId, automatic.modelId);
+		return automatic;
+	}
+
+	setMultimodalFallback(companionId: string, providerId: string, modelId: string): ModelRecord {
+		const model = this.get(providerId, modelId);
+		if (!model) throw { kind: "not_found", reason: "configured_model_not_found" };
+		if (!model.supportsImages) {
+			throw { kind: "invalid_request", reason: "model_does_not_support_images" };
+		}
+		this.db
+			.insert(modelRouteSettings)
+			.values({ companionId, multimodalProviderId: providerId, multimodalModelId: modelId })
+			.onConflictDoUpdate({
+				target: modelRouteSettings.companionId,
+				set: {
+					multimodalProviderId: providerId,
+					multimodalModelId: modelId,
+					updatedAt: sql`datetime('now')`,
+				},
+			})
+			.run();
+		this.eventBus.publish("model.multimodal_fallback_selected", { providerId, modelId });
+		return model;
 	}
 
 	selected(conversationId: string): ModelRecord | undefined {

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
 import { createTestClient, OFFICIAL_PRODUCT } from "./fixtures.js";
+import { selectKobalteOption } from "./kobalte-helpers.js";
 
 const COMPLETE_ONBOARDING = {
 	status: "complete" as const,
@@ -13,6 +14,7 @@ const COMPLETE_ONBOARDING = {
 
 const TEST_MODEL = {
 	providerId: "relay",
+	providerName: "Relay Service",
 	modelId: "fast",
 	label: "Fast",
 	supportsImages: true,
@@ -52,10 +54,11 @@ describe("composer", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		const selector = await screen.findByRole("combobox", { name: zhCN.composer.modelLabel });
+		const selector = await screen.findByRole("button", {
+			name: new RegExp(zhCN.composer.modelLabel),
+		});
 		await waitFor(() => expect(selector).toBeEnabled());
-		expect(selector).toHaveValue("");
-		expect(screen.getByRole("option", { name: zhCN.composer.chooseModel })).toBeDisabled();
+		expect(selector).toHaveTextContent(zhCN.composer.chooseModel);
 		expect(screen.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeDisabled();
 	});
 
@@ -72,6 +75,7 @@ describe("composer", () => {
 						models: [
 							{
 								providerId: "relay",
+								providerName: "Relay Service",
 								modelId: "fast",
 								label: "Fast",
 								supportsImages: false,
@@ -79,6 +83,7 @@ describe("composer", () => {
 							},
 							{
 								providerId: "relay",
+								providerName: "Relay Service",
 								modelId: "deep",
 								label: "Deep",
 								supportsImages: true,
@@ -97,6 +102,7 @@ describe("composer", () => {
 					models: [
 						{
 							providerId: "relay",
+							providerName: "Relay Service",
 							modelId: "fast",
 							label: "Fast",
 							supportsImages: false,
@@ -104,6 +110,7 @@ describe("composer", () => {
 						},
 						{
 							providerId: "relay",
+							providerName: "Relay Service",
 							modelId: "deep",
 							label: "Deep",
 							supportsImages: true,
@@ -119,9 +126,11 @@ describe("composer", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		const selector = await screen.findByRole("combobox", { name: zhCN.composer.modelLabel });
+		const selector = await screen.findByRole("button", {
+			name: new RegExp(zhCN.composer.modelLabel),
+		});
 		await waitFor(() => expect(selector).toBeEnabled());
-		fireEvent.input(selector, { target: { value: "relay:deep" } });
+		await selectKobalteOption(userEvent.setup(), selector, { label: "Deep (Relay Service)" });
 		await waitFor(() =>
 			expect(client.model.select).toHaveBeenCalledWith({
 				conversationId: "conversation-1",
@@ -129,6 +138,64 @@ describe("composer", () => {
 				modelId: "deep",
 			}),
 		);
+	});
+
+	it("keeps the selected text model and identifies the configured image reader", async () => {
+		const { client } = createTestClient();
+		const models = [
+			{
+				providerId: "text-relay",
+				providerName: "Text Relay",
+				modelId: "text",
+				label: "Text Model",
+				supportsImages: false,
+				createdAt: "2026-01-01",
+			},
+			{
+				providerId: "vision-relay",
+				providerName: "Vision Relay",
+				modelId: "vision",
+				label: "Vision Model",
+				supportsImages: true,
+				createdAt: "2026-01-02",
+			},
+		];
+		const modelState = {
+			models,
+			selected: { providerId: "text-relay", modelId: "text" },
+			multimodalFallback: { providerId: "vision-relay", modelId: "vision" },
+		};
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					onboarding: COMPLETE_ONBOARDING,
+					conversation: { activeConversationId: "conversation-1" },
+					model: modelState,
+				},
+			}),
+		);
+		client.model.list = vi.fn(() => Promise.resolve({ ok: true as const, data: modelState }));
+		client.onboarding.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		const selector = await screen.findByRole("button", {
+			name: new RegExp(zhCN.composer.modelLabel),
+		});
+		await waitFor(() => expect(selector).toHaveTextContent("Text Model (Text Relay)"));
+		const picker = screen.getByLabelText(zhCN.composer.attachLabel, { selector: "input" });
+		if (!(picker instanceof HTMLInputElement)) throw new Error("composer file picker missing");
+		fireEvent.change(picker, {
+			target: { files: [new File(["image"], "photo.png", { type: "image/png" })] },
+		});
+
+		expect(await screen.findByRole("status")).toHaveTextContent(
+			"图片由 Vision Model (Vision Relay) 读取",
+		);
+		expect(selector).toHaveTextContent("Text Model (Text Relay)");
 	});
 
 	it("sends image attachments as native multimodal input", async () => {
@@ -150,9 +217,12 @@ describe("composer", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const image = new File([new Uint8Array([1, 2, 3])], "photo.png", { type: "image/png" });
-		fireEvent.change(await screen.findByLabelText(zhCN.composer.attachTitle), {
-			target: { files: [image] },
-		});
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toBeEnabled(),
+		);
+		const picker = screen.getByLabelText(zhCN.composer.attachLabel, { selector: "input" });
+		if (!(picker instanceof HTMLInputElement)) throw new Error("composer file picker missing");
+		fireEvent.change(picker, { target: { files: [image] } });
 		await waitFor(() =>
 			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toHaveTextContent(
 				"1",
@@ -240,8 +310,7 @@ describe("composer", () => {
 		expect(composer).toHaveValue("第一行\n第二行");
 	});
 
-	it("sends readable text materials, skips oversized files, and caps one selection at ten", async () => {
-		const user = userEvent.setup();
+	it("rejects a selection that exceeds the shared attachment contract", async () => {
 		const { client } = createTestClient();
 		configureSelectedModel(client);
 		const messageSend = vi.fn(() =>
@@ -262,7 +331,11 @@ describe("composer", () => {
 			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const picker = await screen.findByLabelText(zhCN.composer.attachTitle);
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toBeEnabled(),
+		);
+		const picker = screen.getByLabelText(zhCN.composer.attachLabel, { selector: "input" });
+		if (!(picker instanceof HTMLInputElement)) throw new Error("composer file picker missing");
 		const files = Array.from({ length: 11 }, (_, index) => {
 			const file = new File([`content-${index}`], `note-${index}.txt`, { type: "text/plain" });
 			Object.defineProperty(file, "text", {
@@ -273,17 +346,11 @@ describe("composer", () => {
 		Object.defineProperty(files[1], "size", { value: 11 * 1024 * 1024 });
 		fireEvent.change(picker, { target: { files } });
 
-		await waitFor(() =>
-			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toHaveTextContent(
-				"9",
-			),
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"一次最多添加 10 个文件，每个文件不超过 10 MB",
 		);
-		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
-		await waitFor(() => expect(messageSend).toHaveBeenCalledOnce());
-		const sent = (messageSend.mock.calls[0]?.[0] as { text?: string } | undefined)?.text ?? "";
-		expect(sent).toContain("note-0.txt");
-		expect(sent).not.toContain("note-1.txt");
-		expect(sent).not.toContain("note-10.txt");
-		expect(sent).toContain("content-9");
+		expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toHaveTextContent("＋");
+		expect(screen.getByRole("button", { name: zhCN.composer.sendLabel })).toBeDisabled();
+		expect(messageSend).not.toHaveBeenCalled();
 	});
 });

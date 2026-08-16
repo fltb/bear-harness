@@ -40,7 +40,9 @@ export function createRpcMutation<TVariables>(input: {
 			mutationFn: input.request,
 			onSuccess: async () => {
 				await Promise.all(
-					input.invalidates.map((queryKey) => input.client.invalidateQueries({ queryKey })),
+					input.invalidates.map((queryKey) =>
+						input.client.invalidateQueries({ queryKey }, { cancelRefetch: false }),
+					),
 				);
 			},
 		}),
@@ -50,4 +52,13 @@ export function createRpcMutation<TVariables>(input: {
 
 export function hydrateRpcQuery<T>(client: QueryClient, key: QueryKey, value: T): void {
 	client.setQueryData(key, value);
+}
+
+export async function refreshRpcQuery<T>(input: {
+	client: QueryClient;
+	key: QueryKey;
+	request: () => Promise<T>;
+}): Promise<T> {
+	await input.client.invalidateQueries({ queryKey: input.key, refetchType: "none" });
+	return input.client.fetchQuery({ queryKey: input.key, queryFn: input.request });
 }

@@ -6,6 +6,7 @@ import { FirstMeeting } from "../src/FirstMeeting.js";
 import { CompanionApp } from "../src/index.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
 import { createTestClient, OFFICIAL_PRODUCT, THEMED_CHARACTER } from "./fixtures.js";
+import { selectKobalteOption } from "./kobalte-helpers.js";
 
 function renderMeeting(store: Partial<CompanionStore>) {
 	return render(() => (
@@ -130,12 +131,15 @@ describe("first meeting journeys", () => {
 		const dialog = await screen.findByRole("dialog", {
 			name: zhCN.modelSetup.dialogLabel,
 		});
-		const service = within(dialog).getByRole("combobox", {
-			name: zhCN.settings.serviceLabel,
+		const service = within(dialog).getByRole("button", {
+			name: new RegExp(zhCN.settings.serviceLabel),
 		});
 		expect(service).toHaveValue("");
-		await user.selectOptions(service, "openai-relay");
-		expect(within(dialog).queryByRole("combobox", { name: zhCN.modelSetup.modelLabel })).toBeNull();
+		await selectKobalteOption(user, service, "openai-relay");
+		const modelBeforeConnection = within(dialog).getByRole("button", {
+			name: new RegExp(zhCN.modelSetup.modelLabel),
+		});
+		expect(modelBeforeConnection).toBeDisabled();
 		await user.type(within(dialog).getByLabelText(zhCN.settings.apiKeyLabel), "secret-key");
 		const connect = within(dialog).getByRole("button", {
 			name: zhCN.settings.saveKey,
@@ -143,12 +147,12 @@ describe("first meeting journeys", () => {
 		expect(connect).toHaveAttribute("data-variant", "primary");
 		await user.click(connect);
 		expect(setApiKey).toHaveBeenCalledWith("openai-relay", "secret-key");
-		const model = within(dialog).getByRole("combobox", {
-			name: zhCN.modelSetup.modelLabel,
+		const model = within(dialog).getByRole("button", {
+			name: new RegExp(zhCN.modelSetup.modelLabel),
 		});
-		await user.selectOptions(model, "gpt-test");
+		await selectKobalteOption(user, model, "gpt-test");
 		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
-		expect(enable).toHaveBeenCalledWith("openai-relay", "gpt-test", "OpenAI Relay");
+		expect(enable).toHaveBeenCalledWith("openai-relay", "gpt-test", "GPT Test");
 	});
 
 	it("shows one primary action and no key field when the provider credential is stored", async () => {
@@ -179,15 +183,17 @@ describe("first meeting journeys", () => {
 				name: zhCN.modelSetup.continue,
 			}),
 		).toBeNull();
-		await user.selectOptions(
-			within(dialog).getByRole("combobox", {
-				name: zhCN.settings.serviceLabel,
+		await selectKobalteOption(
+			user,
+			within(dialog).getByRole("button", {
+				name: new RegExp(zhCN.settings.serviceLabel),
 			}),
 			"stored-relay",
 		);
-		await user.selectOptions(
-			within(dialog).getByRole("combobox", {
-				name: zhCN.modelSetup.modelLabel,
+		await selectKobalteOption(
+			user,
+			within(dialog).getByRole("button", {
+				name: new RegExp(zhCN.modelSetup.modelLabel),
 			}),
 			"stored-model",
 		);
@@ -196,7 +202,7 @@ describe("first meeting journeys", () => {
 		});
 		expect(action).toHaveAttribute("data-variant", "primary");
 		await user.click(action);
-		expect(enable).toHaveBeenCalledWith("stored-relay", "stored-model", "Stored Relay");
+		expect(enable).toHaveBeenCalledWith("stored-relay", "stored-model", "Stored Model");
 	});
 
 	it("submits role-package text and choice steps without hardcoded story copy", async () => {
@@ -319,9 +325,10 @@ describe("first meeting journeys", () => {
 		const dialog = await screen.findByRole("dialog", {
 			name: zhCN.modelSetup.dialogLabel,
 		});
-		await user.selectOptions(
-			within(dialog).getByRole("combobox", {
-				name: zhCN.settings.serviceLabel,
+		await selectKobalteOption(
+			user,
+			within(dialog).getByRole("button", {
+				name: new RegExp(zhCN.settings.serviceLabel),
 			}),
 			"oauth",
 		);
@@ -331,12 +338,13 @@ describe("first meeting journeys", () => {
 			}),
 		);
 		expect(login).toHaveBeenCalledWith("oauth");
-		await user.selectOptions(
-			within(dialog).getByRole("combobox", { name: zhCN.modelSetup.modelLabel }),
+		await selectKobalteOption(
+			user,
+			within(dialog).getByRole("button", { name: new RegExp(zhCN.modelSetup.modelLabel) }),
 			"oauth-model",
 		);
 		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
-		await waitFor(() => expect(pin).toHaveBeenCalledWith("oauth", "oauth-model", "OAuth Provider"));
+		await waitFor(() => expect(pin).toHaveBeenCalledWith("oauth", "oauth-model", "OAuth Model"));
 	});
 
 	it("answers an OAuth provider prompt before pinning the model", async () => {
@@ -380,9 +388,10 @@ describe("first meeting journeys", () => {
 		const dialog = await screen.findByRole("dialog", {
 			name: zhCN.modelSetup.dialogLabel,
 		});
-		await user.selectOptions(
-			within(dialog).getByRole("combobox", {
-				name: zhCN.settings.serviceLabel,
+		await selectKobalteOption(
+			user,
+			within(dialog).getByRole("button", {
+				name: new RegExp(zhCN.settings.serviceLabel),
 			}),
 			"oauth",
 		);
@@ -397,12 +406,13 @@ describe("first meeting journeys", () => {
 			}),
 		);
 		expect(loginAnswer).toHaveBeenCalledWith("oauth", "account-1");
-		await user.selectOptions(
-			within(dialog).getByRole("combobox", { name: zhCN.modelSetup.modelLabel }),
+		await selectKobalteOption(
+			user,
+			within(dialog).getByRole("button", { name: new RegExp(zhCN.modelSetup.modelLabel) }),
 			"oauth-model",
 		);
 		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
-		await waitFor(() => expect(pin).toHaveBeenCalledWith("oauth", "oauth-model", "OAuth Provider"));
+		await waitFor(() => expect(pin).toHaveBeenCalledWith("oauth", "oauth-model", "OAuth Model"));
 	});
 
 	it("shows the provider's OAuth failure message", async () => {
@@ -435,9 +445,10 @@ describe("first meeting journeys", () => {
 		const dialog = await screen.findByRole("dialog", {
 			name: zhCN.modelSetup.dialogLabel,
 		});
-		await user.selectOptions(
-			within(dialog).getByRole("combobox", {
-				name: zhCN.settings.serviceLabel,
+		await selectKobalteOption(
+			user,
+			within(dialog).getByRole("button", {
+				name: new RegExp(zhCN.settings.serviceLabel),
 			}),
 			"oauth",
 		);

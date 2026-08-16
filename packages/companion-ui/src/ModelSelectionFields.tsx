@@ -1,4 +1,4 @@
-import { For } from "solid-js";
+import { Select } from "@kobalte/core/select";
 import { t } from "./i18n.js";
 import type { ProviderInfo } from "./stores/ipc.js";
 
@@ -9,21 +9,35 @@ export function ProviderSelectionField(props: {
 	onProviderChange: (providerId: string) => void;
 }) {
 	return (
-		<label class={props.class}>
-			<span>{t("settings.serviceLabel")}</span>
-			<select
-				aria-label={t("settings.serviceLabel")}
-				value={props.providerId}
-				onChange={(event) => props.onProviderChange(event.currentTarget.value)}
-			>
-				<option value="" disabled>
-					{t("settings.chooseService")}
-				</option>
-				<For each={props.providers}>
-					{(provider) => <option value={provider.id}>{provider.name}</option>}
-				</For>
-			</select>
-		</label>
+		<Select<ProviderInfo>
+			options={[...props.providers]}
+			value={props.providers.find((provider) => provider.id === props.providerId) ?? null}
+			optionValue="id"
+			optionTextValue="name"
+			placeholder={t("settings.chooseService")}
+			onChange={(provider) => props.onProviderChange(provider?.id ?? "")}
+			itemComponent={(itemProps) => (
+				<Select.Item item={itemProps.item} class="select-item">
+					<Select.ItemLabel>{itemProps.item.rawValue.name}</Select.ItemLabel>
+				</Select.Item>
+			)}
+			class={props.class}
+		>
+			<Select.Label class="field-label">{t("settings.serviceLabel")}</Select.Label>
+			<Select.Trigger class="select-trigger" aria-label={t("settings.serviceLabel")}>
+				<Select.Value<ProviderInfo> class="select-value">
+					{(state) => state.selectedOption()?.name}
+				</Select.Value>
+				<Select.Icon class="select-icon" aria-hidden="true">
+					v
+				</Select.Icon>
+			</Select.Trigger>
+			<Select.Portal>
+				<Select.Content class="select-content">
+					<Select.Listbox class="select-listbox" />
+				</Select.Content>
+			</Select.Portal>
+		</Select>
 	);
 }
 
@@ -35,22 +49,37 @@ export function ModelPresetField(props: {
 	disabled?: boolean;
 	onModelChange: (modelId: string) => void;
 }) {
+	const models = () => props.provider?.availableModels ?? [];
 	return (
-		<label class={props.class}>
-			<span>{props.modelLabel}</span>
-			<select
-				aria-label={props.modelLabel}
-				value={props.modelId}
-				disabled={props.disabled || !props.provider}
-				onChange={(event) => props.onModelChange(event.currentTarget.value)}
-			>
-				<option value="" disabled>
-					{t("settings.chooseModel")}
-				</option>
-				<For each={props.provider?.availableModels ?? []}>
-					{(model) => <option value={model.id}>{model.name}</option>}
-				</For>
-			</select>
-		</label>
+		<Select<ProviderInfo["availableModels"][number]>
+			options={models()}
+			value={models().find((model) => model.id === props.modelId) ?? null}
+			optionValue="id"
+			optionTextValue="name"
+			placeholder={t("settings.chooseModel")}
+			disabled={props.disabled || !props.provider}
+			onChange={(model) => props.onModelChange(model?.id ?? "")}
+			itemComponent={(itemProps) => (
+				<Select.Item item={itemProps.item} class="select-item">
+					<Select.ItemLabel>{itemProps.item.rawValue.name}</Select.ItemLabel>
+				</Select.Item>
+			)}
+			class={props.class}
+		>
+			<Select.Label class="field-label">{props.modelLabel}</Select.Label>
+			<Select.Trigger class="select-trigger" aria-label={props.modelLabel}>
+				<Select.Value<ProviderInfo["availableModels"][number]> class="select-value">
+					{(state) => state.selectedOption()?.name}
+				</Select.Value>
+				<Select.Icon class="select-icon" aria-hidden="true">
+					v
+				</Select.Icon>
+			</Select.Trigger>
+			<Select.Portal>
+				<Select.Content class="select-content">
+					<Select.Listbox class="select-listbox" />
+				</Select.Content>
+			</Select.Portal>
+		</Select>
 	);
 }

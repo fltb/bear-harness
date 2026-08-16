@@ -1,3 +1,5 @@
+import { Button } from "@kobalte/core/button";
+import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import { t } from "./i18n.js";
 import { type CharacterDisplay, useCompanionStore } from "./stores/companion.js";
@@ -56,9 +58,9 @@ export function Sidebar(props: {
 				</Show>
 			</div>
 			<div class="sidebar-tools">
-				<label class="search-trigger">
+				<TextField class="search-trigger">
 					<span aria-hidden="true">⌕</span>
-					<input
+					<TextField.Input
 						ref={(element) => {
 							searchRef = element;
 						}}
@@ -69,8 +71,8 @@ export function Sidebar(props: {
 						onInput={(event) => setQuery(event.currentTarget.value)}
 					/>
 					<kbd>⌘K</kbd>
-				</label>
-				<button
+				</TextField>
+				<Button
 					type="button"
 					class="new-conversation"
 					aria-label={t("sidebar.newConversation")}
@@ -78,7 +80,7 @@ export function Sidebar(props: {
 					onClick={() => void store.createConversation()}
 				>
 					＋
-				</button>
+				</Button>
 			</div>
 			<div class="nav-scroll">
 				<nav class="nav-list" aria-label={t("sidebar.conversations")}>
@@ -105,18 +107,20 @@ export function Sidebar(props: {
 													setEditingId();
 												}}
 											>
-												<input
-													aria-label={t("sidebar.renameConversation")}
-													value={editingTitle()}
-													onInput={(event) => setEditingTitle(event.currentTarget.value)}
-												/>
-												<button data-control="command" type="submit">
+												<TextField>
+													<TextField.Input
+														aria-label={t("sidebar.renameConversation")}
+														value={editingTitle()}
+														onInput={(event) => setEditingTitle(event.currentTarget.value)}
+													/>
+												</TextField>
+												<Button data-control="command" type="submit">
 													{t("sidebar.saveConversation")}
-												</button>
+												</Button>
 											</form>
 										}
 									>
-										<button
+										<Button
 											type="button"
 											class="nav-item"
 											aria-current={
@@ -133,9 +137,9 @@ export function Sidebar(props: {
 													aria-label={t("sidebar.unreadMessage")}
 												/>
 											</Show>
-										</button>
+										</Button>
 										<div class="conversation-actions">
-											<button
+											<Button
 												data-control="command"
 												type="button"
 												title={t("sidebar.renameConversation")}
@@ -146,8 +150,8 @@ export function Sidebar(props: {
 												}}
 											>
 												✎
-											</button>
-											<button
+											</Button>
+											<Button
 												data-control="command"
 												type="button"
 												title={t("sidebar.archiveConversation")}
@@ -155,8 +159,8 @@ export function Sidebar(props: {
 												onClick={() => void store.archiveConversation(conversation.id)}
 											>
 												⌑
-											</button>
-											<button
+											</Button>
+											<Button
 												data-control="command"
 												type="button"
 												title={t("sidebar.deleteConversation")}
@@ -167,7 +171,7 @@ export function Sidebar(props: {
 												}}
 											>
 												×
-											</button>
+											</Button>
 										</div>
 									</Show>
 								</div>
@@ -177,13 +181,13 @@ export function Sidebar(props: {
 				</nav>
 				<div class="system-section">
 					<div class="section-label">{t("sidebar.application")}</div>
-					<button type="button" class="system-nav" onClick={() => props.onOpenBackstage("roles")}>
+					<Button type="button" class="system-nav" onClick={() => props.onOpenBackstage("roles")}>
 						<span class="gear" aria-hidden="true">
 							◇
 						</span>
 						{t("sidebar.characterSettings")}
-					</button>
-					<button
+					</Button>
+					<Button
 						type="button"
 						class="system-nav"
 						onClick={() => props.onOpenBackstage("settings")}
@@ -192,7 +196,7 @@ export function Sidebar(props: {
 							⚙
 						</span>
 						{t("sidebar.systemSettings")}
-					</button>
+					</Button>
 				</div>
 			</div>
 		</aside>

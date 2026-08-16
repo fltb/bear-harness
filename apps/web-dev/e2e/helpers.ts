@@ -1,5 +1,19 @@
 import { zhCN } from "@bear-harness/product-config/locales";
-import { expect, type Page } from "playwright/test";
+import { expect, type Locator, type Page } from "playwright/test";
+
+export async function selectKobalteOption(
+	page: Page,
+	trigger: Locator,
+	optionName: string | RegExp,
+): Promise<void> {
+	await trigger.click();
+	const option = page.getByRole("option", {
+		name: optionName,
+		exact: typeof optionName === "string",
+	});
+	await expect(option).toBeVisible();
+	await option.click();
+}
 
 export async function ensureReadyForConversation(page: Page): Promise<void> {
 	await page.goto("/");
@@ -31,11 +45,10 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	}
 
 	await page.getByRole("button", { name: zhCN.sidebar.newConversation }).click();
-	const model = page.getByRole("combobox", { name: zhCN.composer.modelLabel });
-	await expect(model.getByRole("option", { name: "E2E Rule Provider" })).toBeAttached();
+	const model = page.getByRole("button", { name: zhCN.composer.modelLabel });
 	await Promise.all([
 		page.waitForResponse((response) => response.url().includes("/rpc/model.select%3Av1")),
-		model.selectOption({ label: "E2E Rule Provider" }),
+		selectKobalteOption(page, model, /^E2E Rule Provider \(/),
 	]);
 	await expect(page.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled();
 }

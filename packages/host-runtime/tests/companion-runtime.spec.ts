@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	type CompanionModelRuntimeSource,
 	CompanionSupervisor,
+	extractLatestAssistantText,
 } from "../src/companion/supervisor.js";
 import { EventBus } from "../src/storage/event-bus.js";
 
@@ -30,6 +31,16 @@ async function waitForSession(runtime: CompanionSupervisor) {
 }
 
 describe("in-process Companion Host bridge", () => {
+	it("extracts the latest assistant text even when a non-message entry follows it", () => {
+		expect(
+			extractLatestAssistantText([
+				{ role: "user", content: [{ type: "text", text: "question" }] },
+				{ role: "assistant", content: [{ type: "text", text: "observation" }] },
+				{ role: "toolResult", content: [] },
+			]),
+		).toBe("observation");
+	});
+
 	afterEach(() => {
 		for (const directory of temporaryDirectories.splice(0)) {
 			rmSync(directory, { recursive: true, force: true });

@@ -1,4 +1,9 @@
-import { Dialog, Tabs } from "@kobalte/core";
+import { Button } from "@kobalte/core/button";
+import { Checkbox } from "@kobalte/core/checkbox";
+import { Dialog } from "@kobalte/core/dialog";
+import { FileField } from "@kobalte/core/file-field";
+import { Tabs } from "@kobalte/core/tabs";
+import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, onMount, Show } from "solid-js";
 import { t } from "../i18n.js";
 import { type CharacterDisplay, useCompanionStore } from "../stores/companion.js";
@@ -23,7 +28,7 @@ export function Backstage(props: {
 	const [selectedTab, setSelectedTab] = createSignal(props.initialTab ?? "roles");
 	createEffect(() => setSelectedTab(props.initialTab ?? "roles"));
 	return (
-		<Dialog.Root
+		<Dialog
 			open={props.open}
 			onOpenChange={(isOpen) => {
 				if (!isOpen) props.onClose();
@@ -38,7 +43,7 @@ export function Backstage(props: {
 							{t("backstage.close")}
 						</Dialog.CloseButton>
 					</div>
-					<Tabs.Root
+					<Tabs
 						value={selectedTab()}
 						onChange={setSelectedTab}
 						class="backstage-tabs"
@@ -82,10 +87,10 @@ export function Backstage(props: {
 						<Tabs.Content value="studio" class="tab-panel">
 							<CanonStudio />
 						</Tabs.Content>
-					</Tabs.Root>
+					</Tabs>
 				</Dialog.Content>
 			</Dialog.Portal>
-		</Dialog.Root>
+		</Dialog>
 	);
 }
 
@@ -94,13 +99,13 @@ function RoleManager() {
 	const [busyId, setBusyId] = createSignal<string>();
 	const [importing, setImporting] = createSignal(false);
 	const [feedback, setFeedback] = createSignal<string>();
-	const importPackage = async (files: FileList | null) => {
-		if (!files?.length) return;
+	const importPackage = async (files: File[]) => {
+		if (files.length === 0) return;
 		setImporting(true);
 		setFeedback();
 		try {
 			const payload = await Promise.all(
-				[...files].map(async (file) => {
+				files.map(async (file) => {
 					const bytes = new Uint8Array(await file.arrayBuffer());
 					let binary = "";
 					for (let offset = 0; offset < bytes.length; offset += 32_768) {
@@ -126,17 +131,19 @@ function RoleManager() {
 		<div class="sheet-panel role-list">
 			<div class="role-import">
 				<p class="drawer-note">{t("backstage.roleImportHint")}</p>
-				<label class="button-like">
-					{importing() ? t("backstage.roleImportBusy") : t("backstage.roleImport")}
-					<input
-						type="file"
-						multiple
+				<FileField
+					multiple
+					disabled={importing()}
+					onFileAccept={(files) => void importPackage(files)}
+				>
+					<FileField.Trigger class="button-like" aria-label={t("backstage.roleImport")}>
+						{importing() ? t("backstage.roleImportBusy") : t("backstage.roleImport")}
+					</FileField.Trigger>
+					<FileField.HiddenInput
 						aria-label={t("backstage.roleImport")}
-						disabled={importing()}
 						ref={(element) => element.setAttribute("webkitdirectory", "")}
-						onChange={(event) => void importPackage(event.currentTarget.files)}
 					/>
-				</label>
+				</FileField>
 				<Show when={feedback()}>
 					<p role="status" class="status-line">
 						{feedback()}
@@ -155,7 +162,7 @@ function RoleManager() {
 							when={!character.active}
 							fallback={<span class="role-active">{t("backstage.roleActive")}</span>}
 						>
-							<button
+							<Button
 								data-control="command"
 								type="button"
 								disabled={busyId() !== undefined}
@@ -165,7 +172,7 @@ function RoleManager() {
 								}}
 							>
 								{t("backstage.roleSwitch")}
-							</button>
+							</Button>
 						</Show>
 					</div>
 				)}
@@ -205,47 +212,48 @@ function StoryArchive() {
 						{(change) => (
 							<div class="story-change">
 								<span>{change.text}</span>
-								<button
+								<Button
 									data-control="command"
 									type="button"
 									disabled={busy()}
 									onClick={() => void store.story.revert(change.id)}
 								>
 									{t("backstage.storyUndo")}
-								</button>
+								</Button>
 							</div>
 						)}
 					</For>
 				</div>
 			</Show>
 			<form class="story-add" onSubmit={add}>
-				<textarea
-					rows={3}
-					aria-label={t("backstage.storyAddPlaceholder")}
-					placeholder={t("backstage.storyAddPlaceholder")}
-					value={text()}
-					onInput={(event) => setText(event.currentTarget.value)}
-				/>
-				<label>
-					<input
-						type="checkbox"
-						checked={branchOnly()}
-						onChange={(event) => setBranchOnly(event.currentTarget.checked)}
+				<TextField>
+					<TextField.TextArea
+						rows={3}
+						aria-label={t("backstage.storyAddPlaceholder")}
+						placeholder={t("backstage.storyAddPlaceholder")}
+						value={text()}
+						onInput={(event) => setText(event.currentTarget.value)}
 					/>
-					{t("backstage.storyBranchOnly")}
-				</label>
-				<button data-control="command" type="submit" disabled={busy() || !text().trim()}>
+				</TextField>
+				<Checkbox checked={branchOnly()} onChange={setBranchOnly}>
+					<Checkbox.Input />
+					<Checkbox.Control>
+						<Checkbox.Indicator>✓</Checkbox.Indicator>
+					</Checkbox.Control>
+					<Checkbox.Label>{t("backstage.storyBranchOnly")}</Checkbox.Label>
+				</Checkbox>
+				<Button data-control="command" type="submit" disabled={busy() || !text().trim()}>
 					{t("backstage.storyAdd")}
-				</button>
+				</Button>
 			</form>
-			<button
+			<Button
 				type="button"
 				class="story-reset"
 				disabled={busy()}
 				onClick={() => void store.story.reset()}
 			>
 				{t("backstage.storyReset")}
-			</button>
+			</Button>
 		</div>
 	);
 }
@@ -296,7 +304,7 @@ function RelationshipArchive(props: { character: CharacterDisplay | undefined })
 						<span class="field-label">{t("settings.relationshipMemory")}</span>
 						<p class="field-hint">{t("settings.relationshipMemoryHint")}</p>
 					</div>
-					<button
+					<Button
 						type="button"
 						class="switch-control"
 						role="switch"
@@ -307,7 +315,7 @@ function RelationshipArchive(props: { character: CharacterDisplay | undefined })
 						onClick={() => void toggleMemory()}
 					>
 						<span class="switch-thumb" />
-					</button>
+					</Button>
 				</div>
 			</div>
 			<Show when={feedback()}>{(message) => <p class="status-line">{message()}</p>}</Show>

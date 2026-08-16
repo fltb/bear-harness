@@ -17,7 +17,11 @@ export const zhTW = {
 		"storyAccept": "是，記進故事",
 		"storyDismiss": "不用，只是隨口說說",
 		"materialLabel": "材料",
-		"imageLabel": "圖片"
+		"imageLabel": "圖片",
+		"imageReadBy": "圖片由 {model} 讀取",
+		"imageModelMissing": "需要新增支援圖片的模型",
+		"openModelSettings": "開啟模型設定",
+		"attachmentLimits": "一次最多新增 {count} 個檔案，每個檔案不超過 {size} MB"
 	},
 	"sidebar": {
 		"search": "搜尋",
@@ -191,6 +195,9 @@ export const zhTW = {
 		"modelRemoved": "模型已移除",
 		"modelAvailable": "已在可用模型中",
 		"multimodal": "支援圖片",
+		"multimodalAutomatic": "自動讀取圖片",
+		"useForImages": "用於自動讀取圖片",
+		"imageReaderUpdated": "圖片讀取模型已更新",
 		"primaryModelSection": "主模型",
 		"fallbackModelSection": "備用模型",
 		"serviceLabel": "服務",

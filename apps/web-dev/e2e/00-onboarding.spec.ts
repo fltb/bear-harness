@@ -1,5 +1,6 @@
 import { zhCN } from "@bear-harness/product-config/locales";
 import { expect, test } from "playwright/test";
+import { selectKobalteOption } from "./helpers";
 
 test("browser requires a reply model before the role-defined onboarding", async ({ page }) => {
 	await page.goto("/");
@@ -7,12 +8,8 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	const modelSetup = page.getByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
 	await expect(modelSetup).toBeVisible();
 	await expect(modelSetup.getByRole("heading", { name: zhCN.modelSetup.title })).toBeVisible();
-	await expect(
-		modelSetup.getByRole("combobox", { name: zhCN.settings.serviceLabel }),
-	).toBeVisible();
-	await expect(modelSetup.getByRole("combobox", { name: zhCN.modelSetup.modelLabel })).toHaveCount(
-		0,
-	);
+	await expect(modelSetup.getByRole("button", { name: zhCN.settings.serviceLabel })).toBeVisible();
+	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.modelLabel })).toBeDisabled();
 
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
 	const providerResult = await (
@@ -24,23 +21,26 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	const provider = providerResult.data.providers.find(
 		(item: {
 			id: string;
+			name: string;
 			authType: string;
 			credentialStatus: string;
-			availableModels: Array<{ id: string }>;
+			availableModels: Array<{ id: string; name: string }>;
 		}) =>
 			item.authType === "api_key" &&
 			item.credentialStatus === "missing" &&
 			item.availableModels.length > 0,
 	);
 	if (!provider) throw new Error("test catalog has no disconnected API-key provider");
-	await modelSetup
-		.getByRole("combobox", { name: zhCN.settings.serviceLabel })
-		.selectOption(provider.id);
+	await selectKobalteOption(
+		page,
+		modelSetup.getByRole("button", { name: zhCN.settings.serviceLabel }),
+		provider.name,
+	);
 	await modelSetup.getByLabel(zhCN.settings.apiKeyLabel).fill("test-provider-key");
 	await modelSetup.getByRole("button", { name: zhCN.settings.saveKey }).click();
-	const model = modelSetup.getByRole("combobox", { name: zhCN.modelSetup.modelLabel });
+	const model = modelSetup.getByRole("button", { name: zhCN.modelSetup.modelLabel });
 	await expect(model).toBeVisible();
-	await model.selectOption(provider.availableModels[0].id);
+	await selectKobalteOption(page, model, provider.availableModels[0].name);
 	await Promise.all([
 		page.waitForResponse((response) => response.url().includes("/rpc/model.enable%3Av1")),
 		modelSetup.getByRole("button", { name: zhCN.modelSetup.continue }).click(),

@@ -26,6 +26,9 @@ const MAX_PATH_LENGTH = 1024;
 const MAX_ARRAY_LENGTH = 100;
 const MAX_SAFE_INT = 9007199254740991;
 const UINT32_MAX = 4294967295;
+export const MAX_MESSAGE_ATTACHMENTS = 10;
+export const MAX_MESSAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const MAX_MESSAGE_ATTACHMENT_BASE64_LENGTH = Math.ceil(MAX_MESSAGE_ATTACHMENT_BYTES / 3) * 4;
 
 /** Localizable reason codes for wire errors. */
 export const IpcErrorKind = z.union([
@@ -350,10 +353,10 @@ export const MessageSendRequest = z.strictObject({
 			z.strictObject({
 				name: z.string().min(1).max(255),
 				mime: z.string().min(1).max(128),
-				base64: z.string().min(1).max(16_000_000),
+				base64: z.string().min(1).max(MAX_MESSAGE_ATTACHMENT_BASE64_LENGTH),
 			}),
 		)
-		.max(10)
+		.max(MAX_MESSAGE_ATTACHMENTS)
 		.optional(),
 });
 export const MessageSendResponse = z.strictObject({
@@ -754,6 +757,7 @@ export const ModelRoute = z.strictObject({
 export const ConfiguredModel = z.strictObject({
 	...ModelRoute.shape,
 	label: z.string().max(MAX_STRING_LENGTH),
+	providerName: z.string().max(MAX_STRING_LENGTH).optional(),
 	supportsImages: z.boolean(),
 	createdAt: z.string().max(64),
 });
@@ -766,6 +770,7 @@ export const ModelListRequest = z.strictObject({
 export const ModelListResponse = z.strictObject({
 	models: z.array(ConfiguredModel).max(100),
 	selected: ModelRoute.optional(),
+	multimodalFallback: ModelRoute.optional(),
 });
 export const ModelEnableRequest = z.strictObject({
 	providerId: z.string().min(1).max(64),
@@ -782,6 +787,10 @@ export const ModelSelectRequest = z.strictObject({
 });
 export const ModelSelectResponse = z.strictObject({
 	selected: ModelRoute,
+});
+export const ModelSetMultimodalFallbackRequest = ModelRoute;
+export const ModelSetMultimodalFallbackResponse = z.strictObject({
+	multimodalFallback: ModelRoute,
 });
 
 // ---------------------------------------------------------------------------
@@ -1172,6 +1181,11 @@ export const RPC = {
 		enable: endpoint("model.enable:v1", ModelEnableRequest, ModelEnableResponse),
 		disable: endpoint("model.disable:v1", ModelDisableRequest, EmptyResponse),
 		select: endpoint("model.select:v1", ModelSelectRequest, ModelSelectResponse),
+		setMultimodalFallback: endpoint(
+			"model.setMultimodalFallback:v1",
+			ModelSetMultimodalFallbackRequest,
+			ModelSetMultimodalFallbackResponse,
+		),
 	},
 	commission: {
 		list: endpoint("commission.list:v1", CommissionListRequest, CommissionListResponse),

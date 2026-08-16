@@ -289,6 +289,7 @@ export const runs = sqliteTable(
 		status: text().default("enqueued").notNull(),
 		startedAt: text("started_at"),
 		completedAt: text("completed_at"),
+		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	},
 	(table) => [
 		index("idx_runs_commission").on(table.commissionId),
@@ -412,6 +413,17 @@ export const conversationModelSelections = sqliteTable(
 			.onDelete("cascade"),
 	],
 );
+
+export const modelRouteSettings = sqliteTable("model_route_settings", {
+	companionId: text("companion_id")
+		.primaryKey()
+		.references(() => companionIdentity.id),
+	textProviderId: text("text_provider_id"),
+	textModelId: text("text_model_id"),
+	multimodalProviderId: text("multimodal_provider_id"),
+	multimodalModelId: text("multimodal_model_id"),
+	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
+});
 
 export const executorProfiles = sqliteTable(
 	"executor_profiles",

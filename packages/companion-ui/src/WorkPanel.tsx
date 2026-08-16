@@ -1,3 +1,4 @@
+import { Button } from "@kobalte/core/button";
 import { createSignal, For, Show } from "solid-js";
 import { t } from "./i18n.js";
 import { useCompanionStore } from "./stores/companion.js";
@@ -53,7 +54,7 @@ export function WorkPanel() {
 									</p>
 								</div>
 								<div class="work-actions">
-									<button
+									<Button
 										data-control="command"
 										type="button"
 										disabled={busyId() !== undefined}
@@ -69,15 +70,15 @@ export function WorkPanel() {
 										}}
 									>
 										{t("work.start")}
-									</button>
-									<button
+									</Button>
+									<Button
 										data-control="command"
 										type="button"
 										disabled={busyId() !== undefined}
 										onClick={() => void store.commission.reject(commission.id)}
 									>
 										{t("work.cancel")}
-									</button>
+									</Button>
 								</div>
 							</div>
 						</Show>
@@ -91,7 +92,7 @@ export function WorkPanel() {
 							<div class="work-actions">
 								<For each={permission.options}>
 									{(option) => (
-										<button
+										<Button
 											data-control="command"
 											type="button"
 											onClick={() =>
@@ -103,16 +104,16 @@ export function WorkPanel() {
 											}
 										>
 											{option.kind.includes("reject") ? t("work.deny") : t("work.allow")}
-										</button>
+										</Button>
 									)}
 								</For>
-								<button
+								<Button
 									data-control="command"
 									type="button"
 									onClick={() => void store.run.cancel(permission.runId)}
 								>
 									{t("work.stop")}
-								</button>
+								</Button>
 							</div>
 						</div>
 					)}
@@ -126,13 +127,13 @@ export function WorkPanel() {
 									{formatBytes(artifact.bytes)} · {t(`work.artifactStatuses.${artifact.status}`)}
 								</span>
 							</div>
-							<button
+							<Button
 								data-control="command"
 								type="button"
 								onClick={() => void store.artifact.download(artifact.id)}
 							>
 								{t("work.download")}
-							</button>
+							</Button>
 						</div>
 					)}
 				</For>

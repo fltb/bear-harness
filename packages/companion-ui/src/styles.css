@@ -85,6 +85,99 @@ button[data-control="command"]:focus-visible {
 	border-color: var(--accent);
 }
 
+button[data-variant="primary"] {
+	min-height: 40px;
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	padding: 0 16px;
+	background: var(--accent);
+	color: var(--surface);
+	font: inherit;
+	font-size: 14px;
+	font-weight: 700;
+	cursor: pointer;
+}
+
+button[data-variant="primary"]:hover:not(:disabled),
+button[data-variant="primary"]:focus-visible {
+	filter: brightness(1.08);
+}
+
+.field-label {
+	color: var(--text-muted);
+	font-size: 13px;
+}
+
+.select-trigger {
+	display: inline-flex;
+	min-width: 0;
+	min-height: 40px;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	padding: 0 12px;
+	background: var(--surface-alt);
+	color: var(--text);
+	font: inherit;
+	font-size: 14px;
+	cursor: pointer;
+}
+
+.select-trigger:focus-visible,
+.select-trigger[data-expanded] {
+	border-color: var(--accent);
+}
+
+.select-value {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.select-icon {
+	--semantic-fg-role: muted;
+	flex: none;
+	color: var(--text-muted);
+	font-size: 11px;
+}
+
+.select-content {
+	z-index: 1000;
+	min-width: var(--kb-popper-anchor-width);
+	max-width: min(420px, calc(100vw - 24px));
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+	color: var(--text);
+}
+
+.select-listbox {
+	max-height: min(360px, 50vh);
+	overflow-y: auto;
+	padding: 6px;
+	outline: none;
+}
+
+.select-item {
+	display: flex;
+	min-height: 36px;
+	align-items: center;
+	border-radius: 6px;
+	padding: 7px 10px;
+	font-size: 14px;
+	outline: none;
+	cursor: pointer;
+}
+
+.select-item[data-highlighted] {
+	background: var(--surface-alt);
+	color: var(--accent);
+}
+
 .material-picker {
 	display: none;
 }
@@ -752,28 +845,143 @@ button[data-control="command"]:focus-visible {
 }
 
 .composer {
-	@apply absolute bottom-[5%] right-[6%] z-[5] grid w-[min(610px,54%)] grid-cols-[auto_1fr_auto] gap-2 rounded-[18px] border border-[rgba(183,206,198,0.35)] p-2;
+	@apply absolute bottom-[5%] right-[6%] z-[5] grid w-[min(610px,54%)] gap-2 rounded-[18px] border border-[rgba(183,206,198,0.35)] p-2;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	grid-template-areas:
+		"input input input"
+		"routing routing routing"
+		"attach model send";
 	background: rgba(246, 243, 235, 0.98);
 	box-shadow: 0 12px 30px rgba(3, 17, 20, 0.22);
 }
 
+.composer-input {
+	grid-area: input;
+}
+
 .composer textarea {
+	width: 100%;
 	@apply min-h-[42px] resize-none border-0 bg-transparent px-1 py-[10px] text-ink outline-0;
 }
 
 .composer-model {
-	grid-column: 1 / -1;
+	grid-area: model;
 	display: flex;
+	min-width: 0;
+	align-items: center;
 }
 
-.composer-model select {
-	max-width: min(280px, 100%);
+.composer-model-trigger {
+	display: inline-flex;
+	min-width: 0;
+	max-width: 100%;
 	min-height: 32px;
+	align-items: center;
+	gap: 5px;
 	border: 0;
-	padding: 4px 8px;
+	border-radius: 8px;
+	padding: 4px 7px;
 	color: var(--ink);
 	background: transparent;
+	font: inherit;
 	font-size: 12px;
+	cursor: pointer;
+}
+
+.composer-model-trigger:hover:not(:disabled),
+.composer-model-trigger[data-expanded] {
+	background: rgba(40, 91, 87, 0.09);
+}
+
+.composer-model-trigger:focus-visible {
+	outline: 2px solid #285b57;
+	outline-offset: 1px;
+}
+
+.composer-model-trigger:disabled {
+	cursor: not-allowed;
+	opacity: 0.48;
+}
+
+.composer-model-value {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.composer-model-icon {
+	flex: none;
+	color: #667a74;
+	font-size: 12px;
+}
+
+.composer-model-content {
+	z-index: 1100;
+	width: min(340px, calc(100vw - 24px));
+	border: 1px solid rgba(16, 38, 40, 0.14);
+	border-radius: 14px;
+	padding: 6px;
+	color: #172622;
+	background: #fffefa;
+	box-shadow: 0 12px 32px rgba(3, 17, 20, 0.2);
+}
+
+.composer-model-list {
+	margin: 0;
+	padding: 0;
+	outline: 0;
+}
+
+.composer-model-item {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	min-height: 38px;
+	align-items: center;
+	gap: 12px;
+	border-radius: 9px;
+	padding: 7px 9px;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.composer-model-item[data-highlighted] {
+	background: rgba(40, 91, 87, 0.09);
+}
+
+.composer-model-check {
+	color: #285b57;
+	font-weight: 700;
+}
+
+.composer-attach {
+	grid-area: attach;
+}
+
+.composer-image-routing {
+	grid-area: routing;
+	display: flex;
+	min-height: 24px;
+	align-items: center;
+	gap: 8px;
+	padding: 0 6px;
+	color: #62736e;
+	font-size: 11px;
+}
+
+.composer-image-routing[data-state="missing"] {
+	color: #9a4038;
+}
+
+.composer-image-routing button {
+	border: 0;
+	padding: 2px;
+	color: inherit;
+	background: transparent;
+	font: inherit;
+	font-weight: 700;
+	text-decoration: underline;
+	cursor: pointer;
 }
 
 .circle {
@@ -782,6 +990,7 @@ button[data-control="command"]:focus-visible {
 }
 
 .send {
+	grid-area: send;
 	@apply grid h-[42px] w-[42px] place-items-center rounded-[13px] border-0 text-white;
 	background: #285b57;
 }
@@ -1256,6 +1465,25 @@ button[data-control="command"]:focus-visible {
 .model-setup .intro-card {
 	max-height: calc(100vh - 68px);
 	overflow-y: auto;
+}
+
+.model-setup-pickers {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: 12px;
+	margin: 17px 0;
+}
+
+.intro-picker {
+	display: grid;
+	min-width: 0;
+	gap: 7px;
+}
+
+.intro-picker .select-trigger {
+	width: 100%;
+	border-radius: 9px;
+	background: var(--surface-alt);
 }
 
 .intro-choices {

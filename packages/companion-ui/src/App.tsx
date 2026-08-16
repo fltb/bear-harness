@@ -1,5 +1,6 @@
 import type { CompanionClient } from "@bear-harness/companion-client";
 import type { ProductConfig } from "@bear-harness/product-config";
+import { Button } from "@kobalte/core/button";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { createEffect, createSignal, type JSX, Show } from "solid-js";
 import { CharacterPresence } from "./CharacterPresence";
@@ -121,13 +122,13 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
 									<strong>{t("language.warningTitle")}</strong>
 									<p>{languageWarning()}</p>
 								</div>
-								<button
+								<Button
 									data-control="command"
 									type="button"
 									onClick={() => setDismissedLanguageWarning(languageWarningKey())}
 								>
 									{t("language.dismiss")}
-								</button>
+								</Button>
 							</section>
 						</Show>
 						<SceneBackdrop scene={activeScene()} />
@@ -146,26 +147,29 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
 										<blockquote>{proposal().text}</blockquote>
 									</div>
 									<div class="story-confirmation-actions">
-										<button
+										<Button
 											data-control="command"
 											type="button"
 											onClick={() => void store.story.resolveProposal(proposal().id, true)}
 										>
 											{t("composer.storyAccept")}
-										</button>
-										<button
+										</Button>
+										<Button
 											data-control="command"
 											type="button"
 											onClick={() => void store.story.resolveProposal(proposal().id, false)}
 										>
 											{t("composer.storyDismiss")}
-										</button>
+										</Button>
 									</div>
 								</section>
 							)}
 						</Show>
 						<WorkPanel />
-						<Composer placeholder={composerPlaceholder()} />
+						<Composer
+							placeholder={composerPlaceholder()}
+							onOpenModelSettings={() => openBackstage("settings")}
+						/>
 						<FirstMeeting />
 					</main>
 				</div>

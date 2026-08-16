@@ -11,6 +11,7 @@
 		"test:e2e": "playwright test"
 	},
 	"dependencies": {
+		"@kobalte/core": "0.13.13",
 		"@bear-harness/companion-client": "file:../../packages/companion-client",
 		"@bear-harness/companion-ui": "file:../../packages/companion-ui",
 		"@bear-harness/host-runtime": "file:../../packages/host-runtime",

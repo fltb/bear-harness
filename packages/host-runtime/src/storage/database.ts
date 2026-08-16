@@ -176,12 +176,70 @@ export class Database {
 		if (migrations.length > MAX_MIGRATION_STEPS) {
 			throw new Error(`too many migrations (${migrations.length} > ${MAX_MIGRATION_STEPS})`);
 		}
+		const ordered = [...migrations].sort((left, right) => left.id - right.id);
+		for (const [index, migration] of ordered.entries()) {
+			if (index > 0 && ordered[index - 1]?.id === migration.id) {
+				throw new Error(`duplicate migration id ${migration.id}`);
+			}
+			const expectedId = index + 1;
+			if (migration.id !== expectedId) {
+				throw new Error(
+					`non-contiguous migration definitions: expected ${expectedId}, received ${migration.id}`,
+				);
+			}
+		}
 
 		const current = this.currentVersion();
-		const pending = migrations.filter((m) => m.id > current).sort((a, b) => a.id - b.id);
+		const knownIds = new Set(ordered.map((migration) => migration.id));
+		const applied = this.connection
+			.prepare("SELECT id, checksum FROM schema_migrations")
+			.all() as Array<{
+			id: number;
+			checksum: string;
+		}>;
+		for (const record of applied) {
+			const migration = ordered.find((candidate) => candidate.id === record.id);
+			if (!migration || !knownIds.has(record.id)) {
+				throw new Error(`unknown applied migration ${record.id}`);
+			}
+			const expected = this.checksum(migration.up);
+			if (record.checksum !== expected) {
+				throw new Error(
+					`migration ${record.id} checksum mismatch: was ${record.checksum}, current ${expected}`,
+				);
+			}
+		}
+		const appliedIds = new Set(applied.map((migration) => migration.id));
+		for (let id = 1; id <= current; id += 1) {
+			if (!appliedIds.has(id)) {
+				throw new Error(`migration history gap: missing applied migration ${id}`);
+			}
+		}
+		const pending = ordered.filter((migration) => migration.id > current);
 
 		for (const migration of pending) {
 			this.applyMigration(migration);
+		}
+	}
+
+	/** Refuse to start a partially compatible database. */
+	assertSchemaContract(): void {
+		const required: Readonly<Record<string, readonly string[]>> = {
+			runs: ["id", "commission_id", "executor_profile", "status", "created_at"],
+			configured_models: ["provider_id", "model_id", "label", "supports_images", "created_at"],
+			conversation_model_selections: ["conversation_id", "provider_id", "model_id", "updated_at"],
+		};
+		for (const [table, columns] of Object.entries(required)) {
+			const actual = new Set(
+				(
+					this.connection.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+				).map((column) => column.name),
+			);
+			for (const column of columns) {
+				if (!actual.has(column)) {
+					throw new Error(`incompatible database schema: missing ${table}.${column}`);
+				}
+			}
 		}
 	}
 
@@ -413,21 +471,15 @@ export const MIGRATIONS: Migration[] = [
 				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 			);
 
-			CREATE TABLE configured_models (
+			CREATE TABLE voice_stack_versions (
+				id TEXT PRIMARY KEY,
+				companion_id TEXT NOT NULL REFERENCES companion_identity(id),
 				provider_id TEXT NOT NULL,
 				model_id TEXT NOT NULL,
-				label TEXT NOT NULL,
-				supports_images INTEGER NOT NULL DEFAULT 0 CHECK (supports_images IN (0, 1)),
+				revision INTEGER NOT NULL DEFAULT 0,
+				label TEXT NOT NULL DEFAULT '',
+				active BOOLEAN NOT NULL DEFAULT 0,
 				created_at TEXT NOT NULL DEFAULT (datetime('now'))
-				, PRIMARY KEY (provider_id, model_id)
-			);
-
-			CREATE TABLE conversation_model_selections (
-				conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
-				provider_id TEXT NOT NULL,
-				model_id TEXT NOT NULL,
-				updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-				FOREIGN KEY (provider_id, model_id) REFERENCES configured_models(provider_id, model_id) ON DELETE CASCADE
 			);
 
 			CREATE TABLE executor_profiles (
@@ -647,6 +699,50 @@ export const MIGRATIONS: Migration[] = [
 			);
 			CREATE INDEX idx_story_proposals_pending
 				ON story_change_proposals(companion_id, conversation_id, status, created_at);
+		`,
+	},
+	{
+		id: 8,
+		description: "Persistent text and multimodal model fallback routes",
+		up: `
+			CREATE TABLE model_route_settings (
+				companion_id TEXT PRIMARY KEY REFERENCES companion_identity(id),
+				text_provider_id TEXT,
+				text_model_id TEXT,
+				multimodal_provider_id TEXT,
+				multimodal_model_id TEXT,
+				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+		`,
+	},
+	{
+		id: 9,
+		description: "Reusable model pool and per-conversation selection",
+		up: `
+			ALTER TABLE runs ADD COLUMN created_at TEXT NOT NULL DEFAULT '1970-01-01 00:00:00';
+			UPDATE runs SET created_at = COALESCE(started_at, completed_at, datetime('now'));
+
+			CREATE TABLE configured_models (
+				provider_id TEXT NOT NULL,
+				model_id TEXT NOT NULL,
+				label TEXT NOT NULL,
+				supports_images INTEGER NOT NULL DEFAULT 0 CHECK (supports_images IN (0, 1)),
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				PRIMARY KEY (provider_id, model_id)
+			);
+			INSERT OR IGNORE INTO configured_models (provider_id, model_id, label, created_at)
+				SELECT provider_id, model_id, MAX(label), MIN(created_at)
+				FROM voice_stack_versions
+				GROUP BY provider_id, model_id;
+
+			CREATE TABLE conversation_model_selections (
+				conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+				provider_id TEXT NOT NULL,
+				model_id TEXT NOT NULL,
+				updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+				FOREIGN KEY (provider_id, model_id)
+					REFERENCES configured_models(provider_id, model_id) ON DELETE CASCADE
+			);
 		`,
 	},
 ];

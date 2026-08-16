@@ -1,4 +1,6 @@
-import { Tabs } from "@kobalte/core";
+import { Button } from "@kobalte/core/button";
+import { Tabs } from "@kobalte/core/tabs";
+import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { t } from "../i18n.js";
 import {
@@ -177,24 +179,26 @@ export function MemoryEntryList(props: {
 								fallback={<p class="memory-text">{entry.text}</p>}
 							>
 								<div class="candidate-edit">
-									<textarea
-										rows={3}
-										value={editedEntryText()}
-										onInput={(event) => setEditedEntryText(event.currentTarget.value)}
-										aria-label={t("memory.editedContent")}
-									/>
+									<TextField>
+										<TextField.TextArea
+											rows={3}
+											value={editedEntryText()}
+											onInput={(event) => setEditedEntryText(event.currentTarget.value)}
+											aria-label={t("memory.editedContent")}
+										/>
+									</TextField>
 									<div class="candidate-actions">
-										<button
+										<Button
 											type="button"
 											class="mini-btn primary"
 											disabled={busyId() === entry.id || !editedEntryText().trim()}
 											onClick={saveEdit(entry)}
 										>
 											{t("memory.saveEdit")}
-										</button>
-										<button type="button" class="mini-btn" onClick={() => setEditingEntryId(null)}>
+										</Button>
+										<Button type="button" class="mini-btn" onClick={() => setEditingEntryId(null)}>
 											{t("messages.cancel")}
-										</button>
+										</Button>
 									</div>
 								</div>
 							</Show>
@@ -209,7 +213,7 @@ export function MemoryEntryList(props: {
 								</Show>
 							</div>
 							<div class="memory-actions">
-								<button
+								<Button
 									type="button"
 									class="mini-btn"
 									disabled={busyId() === entry.id}
@@ -219,31 +223,31 @@ export function MemoryEntryList(props: {
 									}}
 								>
 									{t("memory.edit")}
-								</button>
-								<button
+								</Button>
+								<Button
 									type="button"
 									class="mini-btn"
 									disabled={busyId() === entry.id}
 									onClick={togglePin(entry)}
 								>
 									{entry.pinned ? t("memory.unpin") : t("memory.pin")}
-								</button>
-								<button
+								</Button>
+								<Button
 									type="button"
 									class="mini-btn"
 									disabled={busyId() === entry.id}
 									onClick={forget(entry)}
 								>
 									{t("memory.forget")}
-								</button>
-								<button
+								</Button>
+								<Button
 									type="button"
 									class="mini-btn"
 									disabled={busyId() === entry.id}
 									onClick={exclude(entry)}
 								>
 									{t("memory.exclude")}
-								</button>
+								</Button>
 							</div>
 						</li>
 					)}
@@ -402,15 +406,15 @@ export function MemorySheet() {
 									when={editingId() === candidate.id}
 									fallback={
 										<div class="candidate-actions">
-											<button
+											<Button
 												type="button"
 												class="mini-btn primary"
 												disabled={busyId() === candidate.id}
 												onClick={() => decide(candidate.id, "approve")}
 											>
 												{t("memory.remember")}
-											</button>
-											<button
+											</Button>
+											<Button
 												type="button"
 												class="mini-btn"
 												disabled={busyId() === candidate.id}
@@ -420,42 +424,44 @@ export function MemorySheet() {
 												}}
 											>
 												{t("memory.edit")}
-											</button>
-											<button
+											</Button>
+											<Button
 												type="button"
 												class="mini-btn danger"
 												disabled={busyId() === candidate.id}
 												onClick={() => decide(candidate.id, "reject")}
 											>
 												{t("memory.reject")}
-											</button>
+											</Button>
 										</div>
 									}
 								>
 									<div class="candidate-edit">
-										<textarea
-											rows={3}
-											value={editedText()}
-											onInput={(event) => setEditedText(event.currentTarget.value)}
-											aria-label={t("memory.editedContent")}
-										/>
+										<TextField>
+											<TextField.TextArea
+												rows={3}
+												value={editedText()}
+												onInput={(event) => setEditedText(event.currentTarget.value)}
+												aria-label={t("memory.editedContent")}
+											/>
+										</TextField>
 										<div class="candidate-actions">
-											<button
+											<Button
 												type="button"
 												class="mini-btn primary"
 												disabled={busyId() === candidate.id || !editedText().trim()}
 												onClick={() => saveEdited(candidate.id)}
 											>
 												{t("memory.saveEdit")}
-											</button>
-											<button
+											</Button>
+											<Button
 												type="button"
 												class="mini-btn"
 												disabled={busyId() === candidate.id}
 												onClick={() => setEditingId(null)}
 											>
 												{t("messages.cancel")}
-											</button>
+											</Button>
 										</div>
 									</div>
 								</Show>
@@ -466,31 +472,33 @@ export function MemorySheet() {
 			</section>
 
 			<div class="search-row">
-				<input
-					type="search"
-					class="search-input"
-					placeholder={t("memory.searchPlaceholder")}
-					value={queryText()}
-					onInput={(event) => setQueryText(event.currentTarget.value)}
-					onKeyDown={(event) => {
-						if (event.key === "Enter") {
-							event.preventDefault();
-							submitSearch();
-						}
-					}}
-					aria-label={t("memory.searchLabel")}
-				/>
-				<button type="button" class="mini-btn" onClick={submitSearch}>
+				<TextField>
+					<TextField.Input
+						type="search"
+						class="search-input"
+						placeholder={t("memory.searchPlaceholder")}
+						value={queryText()}
+						onInput={(event) => setQueryText(event.currentTarget.value)}
+						onKeyDown={(event) => {
+							if (event.key === "Enter") {
+								event.preventDefault();
+								submitSearch();
+							}
+						}}
+						aria-label={t("memory.searchLabel")}
+					/>
+				</TextField>
+				<Button type="button" class="mini-btn" onClick={submitSearch}>
 					{t("memory.search")}
-				</button>
+				</Button>
 				<Show when={query() !== ""}>
-					<button type="button" class="mini-btn" onClick={clearSearch}>
+					<Button type="button" class="mini-btn" onClick={clearSearch}>
 						{t("memory.clear")}
-					</button>
+					</Button>
 				</Show>
 			</div>
 
-			<Tabs.Root
+			<Tabs
 				value={scope()}
 				onChange={onScopeChange}
 				class="scope-tabs"
@@ -505,7 +513,7 @@ export function MemorySheet() {
 						)}
 					</For>
 				</Tabs.List>
-			</Tabs.Root>
+			</Tabs>
 
 			<MemoryEntryList scope={scope()} query={query()} refreshKey={refreshKey()} />
 		</div>

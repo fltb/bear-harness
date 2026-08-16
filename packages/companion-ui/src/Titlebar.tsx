@@ -1,3 +1,4 @@
+import { Button } from "@kobalte/core/button";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import { t } from "./i18n.js";
 import { useCompanionStore } from "./stores/companion.js";
@@ -54,7 +55,7 @@ export function Titlebar(props: { sceneTitle: string; onOpenBackstage: () => voi
 						pillWrapRef = el;
 					}}
 				>
-					<button
+					<Button
 						type="button"
 						class="work-pill"
 						aria-expanded={queueOpen()}
@@ -64,7 +65,7 @@ export function Titlebar(props: { sceneTitle: string; onOpenBackstage: () => voi
 						<span class="pulse" aria-hidden="true" />
 						{t("titlebar.runningWork")}
 						<b>{activeRuns().length}</b>
-					</button>
+					</Button>
 					<Show when={queueOpen()}>
 						<div class="queue-pop" role="menu" aria-label={t("titlebar.runningWork")}>
 							<h3>{t("titlebar.runningWork")}</h3>
@@ -88,9 +89,9 @@ export function Titlebar(props: { sceneTitle: string; onOpenBackstage: () => voi
 						</div>
 					</Show>
 				</div>
-				<button data-control="command" type="button" onClick={props.onOpenBackstage}>
+				<Button data-control="command" type="button" onClick={props.onOpenBackstage}>
 					{t("titlebar.backstage")}
-				</button>
+				</Button>
 			</div>
 		</header>
 	);

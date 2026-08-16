@@ -1,3 +1,5 @@
+import { Button } from "@kobalte/core/button";
+import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { t } from "./i18n.js";
 import type { CharacterDisplay, Message, MessageVersion } from "./stores/companion.js";
@@ -86,27 +88,29 @@ function MessageItem(props: {
 				<Show when={isUser()}>
 					<p class="edit-branch-note">{t("messages.userEditBranchNote")}</p>
 				</Show>
-				<textarea
-					class="edit-box"
-					rows={3}
-					value={editText()}
-					onInput={(event) => setEditText(event.currentTarget.value)}
-					aria-label={t("messages.editLabel")}
-				/>
+				<TextField>
+					<TextField.TextArea
+						class="edit-box"
+						rows={3}
+						value={editText()}
+						onInput={(event) => setEditText(event.currentTarget.value)}
+						aria-label={t("messages.editLabel")}
+					/>
+				</TextField>
 				<div class="msg-tools">
-					<button type="button" class="primary-tool" onClick={saveEdit}>
+					<Button type="button" class="primary-tool" onClick={saveEdit}>
 						{t("messages.save")}
-					</button>
-					<button data-control="command" type="button" onClick={() => setEditing(false)}>
+					</Button>
+					<Button data-control="command" type="button" onClick={() => setEditing(false)}>
 						{t("messages.cancel")}
-					</button>
+					</Button>
 				</div>
 			</Show>
 
 			<Show when={!editing()}>
 				<div class="msg-heading">
 					<div class="msg-meta">{meta()}</div>
-					<button
+					<Button
 						type="button"
 						class="msg-menu-trigger"
 						aria-label={t("messages.operations")}
@@ -114,13 +118,13 @@ function MessageItem(props: {
 						onClick={() => setActionsOpen((open) => !open)}
 					>
 						···
-					</button>
+					</Button>
 				</div>
 				<p>{content()}</p>
 
 				<Show when={props.message.versions.length > 1}>
 					<div class="version-pager" role="toolbar" aria-label={t("messages.versionPager")}>
-						<button
+						<Button
 							data-control="command"
 							type="button"
 							aria-label={t("messages.previousVersion")}
@@ -128,11 +132,11 @@ function MessageItem(props: {
 							onClick={() => switchTo(versionIndex() - 1)}
 						>
 							◀
-						</button>
+						</Button>
 						<span aria-live="polite">
 							{versionIndex() + 1} / {props.message.versions.length}
 						</span>
-						<button
+						<Button
 							data-control="command"
 							type="button"
 							aria-label={t("messages.nextVersion")}
@@ -140,7 +144,7 @@ function MessageItem(props: {
 							onClick={() => switchTo(versionIndex() + 1)}
 						>
 							▶
-						</button>
+						</Button>
 					</div>
 				</Show>
 
@@ -153,7 +157,7 @@ function MessageItem(props: {
 						<div class="correct-reasons">
 							<For each={t("messages.correctionReasons")}>
 								{(preset) => (
-									<button
+									<Button
 										type="button"
 										class={reason() === preset ? "selected" : undefined}
 										onClick={() => {
@@ -162,46 +166,48 @@ function MessageItem(props: {
 										}}
 									>
 										{preset}
-									</button>
+									</Button>
 								)}
 							</For>
 						</div>
-						<input
-							type="text"
-							placeholder={t("messages.otherReason")}
-							value={customReason()}
-							onInput={(event) => {
-								setCustomReason(event.currentTarget.value);
-								setReason("");
-							}}
-							aria-label={t("messages.otherReason")}
-						/>
+						<TextField>
+							<TextField.Input
+								type="text"
+								placeholder={t("messages.otherReason")}
+								value={customReason()}
+								onInput={(event) => {
+									setCustomReason(event.currentTarget.value);
+									setReason("");
+								}}
+								aria-label={t("messages.otherReason")}
+							/>
+						</TextField>
 						<div class="correct-scopes">
 							<For each={["once", "session", "always"] as const}>
 								{(option) => (
-									<button
+									<Button
 										type="button"
 										class={scope() === option ? "selected" : undefined}
 										onClick={() => setScope(option)}
 										aria-pressed={scope() === option}
 									>
 										{t(`messages.correctionScopes.${option}`)}
-									</button>
+									</Button>
 								)}
 							</For>
 						</div>
 						<div class="msg-tools">
-							<button
+							<Button
 								type="button"
 								class="primary-tool"
 								disabled={!reason() && customReason().trim().length === 0}
 								onClick={submitCorrect}
 							>
 								{t("messages.submitCorrection")}
-							</button>
-							<button data-control="command" type="button" onClick={() => setCorrecting(false)}>
+							</Button>
+							<Button data-control="command" type="button" onClick={() => setCorrecting(false)}>
 								{t("messages.cancel")}
-							</button>
+							</Button>
 						</div>
 					</div>
 				</Show>
@@ -214,19 +220,19 @@ function MessageItem(props: {
 						aria-label={t("messages.operations")}
 					>
 						<Show when={!isUser()}>
-							<button
+							<Button
 								data-control="command"
 								type="button"
 								onClick={() => void store.regenerateMessage(props.message.id)}
 							>
 								{t("messages.regenerate")}
-							</button>
-							<button data-control="command" type="button" onClick={startEdit}>
+							</Button>
+							<Button data-control="command" type="button" onClick={startEdit}>
 								{t("messages.edit")}
-							</button>
+							</Button>
 							<Show when={props.correction}>
 								{(copy) => (
-									<button
+									<Button
 										data-control="command"
 										type="button"
 										onClick={() => {
@@ -237,30 +243,30 @@ function MessageItem(props: {
 										}}
 									>
 										{copy().trigger_label}
-									</button>
+									</Button>
 								)}
 							</Show>
 							<Show when={props.lastAssistant}>
-								<button
+								<Button
 									data-control="command"
 									type="button"
 									onClick={() => void store.continueConversation()}
 								>
 									{t("messages.continue")}
-								</button>
+								</Button>
 							</Show>
-							<button
+							<Button
 								data-control="command"
 								type="button"
 								onClick={() => void store.branchMessage(props.message.id)}
 							>
 								{t("messages.branch")}
-							</button>
+							</Button>
 						</Show>
 						<Show when={isUser()}>
-							<button data-control="command" type="button" onClick={startEdit}>
+							<Button data-control="command" type="button" onClick={startEdit}>
 								{t("messages.edit")}
-							</button>
+							</Button>
 						</Show>
 					</div>
 				</Show>

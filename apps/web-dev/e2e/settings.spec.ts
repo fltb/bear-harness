@@ -11,9 +11,11 @@ test("WebDev exposes every registered Host RPC channel through its authenticated
 
 	const panel = page.getByRole("complementary", { name: zhCN.webDev.ariaLabel });
 	const expectedChannels = Object.keys(REQUEST_SCHEMAS).sort();
-	const rpcChannel = panel.getByRole("combobox");
-	await expect(rpcChannel.getByRole("option")).toHaveCount(expectedChannels.length);
-	await expect(rpcChannel.getByRole("option")).toHaveText(expectedChannels);
+	const rpcChannel = panel.getByRole("button", { name: "Channel" });
+	await rpcChannel.click();
+	await expect(page.getByRole("option")).toHaveCount(expectedChannels.length);
+	await expect(page.getByRole("option")).toHaveText(expectedChannels);
+	await page.keyboard.press("Escape");
 	await panel.getByRole("button", { name: zhCN.webDev.invokeHost }).click();
 	await expect(panel.getByRole("status")).toContainText('"ok"');
 });
@@ -48,7 +50,9 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	await expect(conversationItems).toHaveCount(0);
 	await search.fill("");
 	await expect(page.getByRole("button", { name: zhCN.composer.attachLabel })).toBeDisabled();
-	await expect(page.getByRole("combobox", { name: zhCN.composer.modelLabel })).toHaveValue("");
+	await expect(page.getByRole("button", { name: zhCN.composer.modelLabel })).toContainText(
+		zhCN.composer.chooseModel,
+	);
 
 	await page.getByRole("button", { name: zhCN.titlebar.backstage }).click();
 	const backstage = page.getByRole("dialog", { name: zhCN.backstage.title });
@@ -60,7 +64,9 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	await expect(settingsPanel.getByText(zhCN.settings.modelPool, { exact: true })).toBeVisible();
 	await expect(settingsPanel.getByRole("button", { name: zhCN.settings.addModel })).toBeVisible();
 	await settingsPanel.getByRole("button", { name: zhCN.settings.advancedToggle }).click();
-	await expect(settingsPanel.getByRole("combobox")).not.toHaveCount(0);
+	await expect(
+		settingsPanel.getByRole("button", { name: new RegExp(`^${zhCN.settings.serviceLabel}`) }),
+	).toBeVisible();
 	// test-quality-allow locator: typography contract requires all rendered text controls
 	const typographyElements = settingsPanel.locator("label, p, button, input, select, h3");
 	const undersizedType = await typographyElements.evaluateAll((elements) =>
@@ -160,7 +166,7 @@ test("bottom actions open distinct character and system settings destinations", 
 		"aria-selected",
 		"true",
 	);
-	await expect(backstage.getByLabel(zhCN.backstage.roleImport, { exact: true })).toBeVisible();
+	await expect(backstage.getByText(zhCN.backstage.roleImport, { exact: true })).toBeVisible();
 	await backstage.getByRole("button", { name: zhCN.backstage.close }).click();
 
 	await page.getByRole("button", { name: zhCN.sidebar.systemSettings, exact: true }).click();

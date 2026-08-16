@@ -2,6 +2,9 @@ import type { CompanionClient, HostTransport } from "@bear-harness/companion-cli
 import { unwrap } from "@bear-harness/companion-client";
 import { t } from "@bear-harness/companion-ui";
 import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
+import { Button } from "@kobalte/core/button";
+import { Select } from "@kobalte/core/select";
+import { TextField } from "@kobalte/core/text-field";
 import { createSignal, For, Show } from "solid-js";
 import { loadDebugChannels } from "./http-client";
 import "./web-dev-debug.css";
@@ -35,6 +38,12 @@ export function WebDevDebugPanel(props: {
 	const [providers, setProviders] = createSignal<ProviderSummary[]>([]);
 	const [providerId, setProviderId] = createSignal("");
 	const [apiKey, setApiKey] = createSignal("");
+	const providerOptions = () =>
+		providers().map((provider) => ({
+			...provider,
+			label: `${provider.name} - ${provider.credentialStatus}`,
+		}));
+	const channelOptions = () => channels().map((id) => ({ id, label: id }));
 
 	const loadChannels = async () => {
 		try {
@@ -92,74 +101,97 @@ export function WebDevDebugPanel(props: {
 
 	return (
 		<>
-			<button type="button" class="web-dev-debug-toggle" onClick={toggle}>
+			<Button type="button" class="web-dev-debug-toggle" onClick={toggle}>
 				Web Dev
-			</button>
+			</Button>
 			<Show when={open()}>
 				<aside class="web-dev-debug-panel" aria-label={t("webDev.ariaLabel")}>
 					<header>
 						<strong>{t("webDev.title")}</strong>
-						<button type="button" onClick={toggle} aria-label={t("webDev.close")}>
+						<Button type="button" onClick={toggle} aria-label={t("webDev.close")}>
 							{t("webDev.close")}
-						</button>
+						</Button>
 					</header>
 					<p>{t("webDev.description")}</p>
 					<section>
 						<h2>{t("webDev.providerSection")}</h2>
-						<button type="button" onClick={() => void loadProviders()}>
+						<Button type="button" onClick={() => void loadProviders()}>
 							{t("webDev.loadProviders")}
-						</button>
+						</Button>
 						<Show when={providers().length > 0}>
-							<label>
-								Provider
-								<select
-									value={providerId()}
-									onChange={(event) => setProviderId(event.currentTarget.value)}
-								>
-									<For each={providers()}>
-										{(provider) => (
-											<option value={provider.id}>
-												{provider.name} · {provider.credentialStatus}
-											</option>
-										)}
-									</For>
-								</select>
-							</label>
-							<label>
-								{t("webDev.sessionApiKey")}
-								<input
+							<Select
+								options={providerOptions()}
+								value={providerOptions().find((provider) => provider.id === providerId()) ?? null}
+								optionValue="id"
+								optionTextValue="label"
+								onChange={(provider) => setProviderId(provider?.id ?? "")}
+								itemComponent={(itemProps) => (
+									<Select.Item item={itemProps.item} class="select-item">
+										<Select.ItemLabel>{itemProps.item.rawValue.label}</Select.ItemLabel>
+									</Select.Item>
+								)}
+							>
+								<Select.Label>Provider</Select.Label>
+								<Select.Trigger class="select-trigger">
+									<Select.Value class="select-value" />
+								</Select.Trigger>
+								<Select.Portal>
+									<Select.Content class="select-content">
+										<Select.Listbox class="select-listbox" />
+									</Select.Content>
+								</Select.Portal>
+							</Select>
+							<TextField>
+								<TextField.Label>{t("webDev.sessionApiKey")}</TextField.Label>
+								<TextField.Input
 									type="password"
 									value={apiKey()}
 									onInput={(event) => setApiKey(event.currentTarget.value)}
 								/>
-							</label>
-							<button
+							</TextField>
+							<Button
 								type="button"
 								disabled={!providerId() || apiKey().length === 0}
 								onClick={() => void setSessionKey()}
 							>
 								{t("webDev.saveSessionKey")}
-							</button>
+							</Button>
 						</Show>
 					</section>
 					<section>
 						<h2>{t("webDev.rpcSection")}</h2>
-						<label>
-							Channel
-							<select value={channel()} onChange={(event) => setChannel(event.currentTarget.value)}>
-								<For each={channels()}>{(entry) => <option value={entry}>{entry}</option>}</For>
-							</select>
-						</label>
-						<label>
-							{t("webDev.rpcParameters")}
-							<textarea
+						<Select
+							options={channelOptions()}
+							value={channelOptions().find((entry) => entry.id === channel()) ?? null}
+							optionValue="id"
+							optionTextValue="label"
+							onChange={(entry) => setChannel(entry?.id ?? "")}
+							itemComponent={(itemProps) => (
+								<Select.Item item={itemProps.item} class="select-item">
+									<Select.ItemLabel>{itemProps.item.rawValue.label}</Select.ItemLabel>
+								</Select.Item>
+							)}
+						>
+							<Select.Label>Channel</Select.Label>
+							<Select.Trigger class="select-trigger">
+								<Select.Value class="select-value" />
+							</Select.Trigger>
+							<Select.Portal>
+								<Select.Content class="select-content">
+									<Select.Listbox class="select-listbox" />
+								</Select.Content>
+							</Select.Portal>
+						</Select>
+						<TextField>
+							<TextField.Label>{t("webDev.rpcParameters")}</TextField.Label>
+							<TextField.TextArea
 								value={params()}
 								onInput={(event) => setParams(event.currentTarget.value)}
 							/>
-						</label>
-						<button type="button" disabled={!channel()} onClick={() => void invokeRaw()}>
+						</TextField>
+						<Button type="button" disabled={!channel()} onClick={() => void invokeRaw()}>
 							{t("webDev.invokeHost")}
-						</button>
+						</Button>
 					</section>
 					<Show when={error()}>{(message) => <p class="web-dev-debug-error">{message()}</p>}</Show>
 					<Show when={output()}>{(value) => <pre role="status">{value()}</pre>}</Show>

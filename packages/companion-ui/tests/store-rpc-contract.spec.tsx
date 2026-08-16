@@ -88,6 +88,33 @@ describe("store RPC contract", () => {
 			await waitFor(() => expect(store.model.selectedValue()).toBe("relay:fast"));
 			await store.model.list();
 			expect(store.model.selectedValue()).toBe("relay:fast");
+			client.conversation.create = vi.fn(() =>
+				Promise.resolve({ ok: true as const, data: { id: "conversation-2" } }),
+			);
+			await store.createConversation("New conversation");
+			expect(store.model.selectedValue()).toBe("");
+		} finally {
+			dispose();
+		}
+	});
+
+	it("invalidates and projects a refreshed provider list through its query key", async () => {
+		const { client } = createTestClient();
+		const provider = {
+			id: "relay",
+			name: "Relay",
+			authType: "api_key" as const,
+			credentialStatus: "stored" as const,
+			availableModels: [],
+			unavailable: [],
+		};
+		client.provider.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { providers: [provider] } }),
+		);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await store.provider.list();
+			await waitFor(() => expect(store.provider.providers()).toEqual([provider]));
 		} finally {
 			dispose();
 		}

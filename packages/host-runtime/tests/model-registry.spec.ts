@@ -69,6 +69,27 @@ describe("ModelRegistry", () => {
 			providerId: "vision-provider",
 			modelId: "vision",
 		});
+		expect(models.multimodalFallback("character")?.modelId).toBe("vision");
+	});
+
+	it("persists an explicitly selected multimodal fallback", () => {
+		models.enable({
+			providerId: "relay",
+			modelId: "vision-a",
+			label: "Vision A",
+			supportsImages: true,
+		});
+		models.enable({
+			providerId: "relay",
+			modelId: "vision-b",
+			label: "Vision B",
+			supportsImages: true,
+		});
+
+		models.setMultimodalFallback("character", "relay", "vision-b");
+
+		expect(models.multimodalFallback("character")?.modelId).toBe("vision-b");
+		expect(() => models.setMultimodalFallback("character", "relay", "missing")).toThrow();
 	});
 
 	it("removes a conversation selection without silently choosing another model", () => {

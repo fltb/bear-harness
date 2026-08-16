@@ -189,6 +189,12 @@ export type ModelListRequest = z.infer<typeof schema.ModelListRequest>;
 export type ModelListResponse = z.infer<typeof schema.ModelListResponse>;
 export type ModelEnableRequest = z.infer<typeof schema.ModelEnableRequest>;
 export type ModelEnableResponse = z.infer<typeof schema.ModelEnableResponse>;
+export type ModelSetMultimodalFallbackRequest = z.infer<
+	typeof schema.ModelSetMultimodalFallbackRequest
+>;
+export type ModelSetMultimodalFallbackResponse = z.infer<
+	typeof schema.ModelSetMultimodalFallbackResponse
+>;
 export type ModelDisableRequest = z.infer<typeof schema.ModelDisableRequest>;
 export type ModelSelectRequest = z.infer<typeof schema.ModelSelectRequest>;
 export type ModelSelectResponse = z.infer<typeof schema.ModelSelectResponse>;

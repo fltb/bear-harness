@@ -82,7 +82,13 @@ import {
 	type StoryListData,
 } from "./ipc.js";
 import { createOnboardingStore } from "./onboarding.js";
-import { createRpcMutation, createRpcQuery, hydrateRpcQuery, queryKeys } from "./rpc-query.js";
+import {
+	createRpcMutation,
+	createRpcQuery,
+	hydrateRpcQuery,
+	queryKeys,
+	refreshRpcQuery,
+} from "./rpc-query.js";
 
 export * from "./ipc.js";
 export type { OnboardingStore } from "./onboarding.js";
@@ -215,6 +221,7 @@ export interface ModelApi {
 	enable(providerId: string, modelId: string, label?: string): Promise<void>;
 	disable(providerId: string, modelId: string): Promise<void>;
 	select(conversationId: string, providerId: string, modelId: string): Promise<void>;
+	setMultimodalFallback(providerId: string, modelId: string): Promise<void>;
 }
 
 export interface CommissionApi {
@@ -506,6 +513,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		request: modelsRequest,
 		enabled: false,
 	});
+	const [modelRouteConversationId, setModelRouteConversationId] = createSignal<string | null>(null);
 	const settingsMutation = createRpcMutation<() => Promise<unknown>>({
 		client: queryClient,
 		request: (request) => request(),
@@ -519,7 +527,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 	const modelMutation = createRpcMutation<() => Promise<unknown>>({
 		client: queryClient,
 		request: (request) => request(),
-		invalidates: [queryKeys.models, queryKeys.modelPool],
+		invalidates: [queryKeys.modelPool],
 	});
 
 	let booted = false;
@@ -592,8 +600,12 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 
 	const hydrateFromSnapshot = (snap: Snapshot): void => {
 		onboardingStore._hydrate(snap.onboarding);
-		if (snap.model && queryClient.getQueryData(queryKeys.models) === undefined)
+		const snapshotConversationId =
+			snap.conversation?.activeConversationId ?? state.activeConversationId;
+		if (snap.model && queryClient.getQueryData(queryKeys.models) === undefined) {
 			hydrateRpcQuery(queryClient, queryKeys.models, snap.model);
+			setModelRouteConversationId(snapshotConversationId);
+		}
 		const conversation = snap.conversation;
 		if (conversation) {
 			if (conversation.activeConversationId !== undefined) {
@@ -774,10 +786,16 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			debouncedRefetch(refreshMemory);
 			debouncedRefetch(refreshMemoryEntries);
 		} else if (kind.startsWith("provider.")) {
-			void queryClient.invalidateQueries({ queryKey: queryKeys.providers });
+			void queryClient.invalidateQueries(
+				{ queryKey: queryKeys.providers },
+				{ cancelRefetch: false },
+			);
 		} else if (kind.startsWith("model.")) {
-			void modelsQuery.refetch();
-			void queryClient.invalidateQueries({ queryKey: queryKeys.modelPool });
+			void modelsQuery.refetch({ cancelRefetch: false });
+			void queryClient.invalidateQueries(
+				{ queryKey: queryKeys.modelPool },
+				{ cancelRefetch: false },
+			);
 		} else if (kind.startsWith("commission.")) {
 			debouncedRefetch(refreshCommissions);
 		} else if (kind.startsWith("run.")) {
@@ -802,7 +820,10 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			debouncedRefetch(refreshCharacters);
 			void snapshotActions.refetch();
 		} else if (kind.startsWith("settings.")) {
-			void queryClient.invalidateQueries({ queryKey: queryKeys.settings });
+			void queryClient.invalidateQueries(
+				{ queryKey: queryKeys.settings },
+				{ cancelRefetch: false },
+			);
 		}
 		// Other kinds (evidence.collected, codex.*, fsops.*, diagnostics.* …)
 		// are intentionally ignored: they do not invalidate projected state.
@@ -928,9 +949,10 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 	const settingsApi: SettingsApi = {
 		data: () => settingsQuery.data?.settings,
 		get: async () => {
-			const data = await queryClient.ensureQueryData({
-				queryKey: queryKeys.settings,
-				queryFn: settingsRequest,
+			const data = await refreshRpcQuery({
+				client: queryClient,
+				key: queryKeys.settings,
+				request: settingsRequest,
 			});
 			return data.settings;
 		},
@@ -940,11 +962,25 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			);
 		},
 	};
+	const refreshActiveModels = async () => {
+		const conversationId = state.activeConversationId;
+		const data = await refreshRpcQuery({
+			client: queryClient,
+			key: queryKeys.models,
+			request: modelsRequest,
+		});
+		setModelRouteConversationId(conversationId);
+		return data;
+	};
 
 	const providerApi: ProviderApi = {
 		providers: () => providersQuery.data?.providers ?? [],
 		list: () =>
-			queryClient.ensureQueryData({ queryKey: queryKeys.providers, queryFn: providersRequest }),
+			refreshRpcQuery({
+				client: queryClient,
+				key: queryKeys.providers,
+				request: providersRequest,
+			}),
 		customUpsert: async (params) => {
 			await providerMutation.mutateAsync(() =>
 				invoke(client, () => client.provider.customUpsert(params)),
@@ -954,10 +990,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			await providerMutation.mutateAsync(() =>
 				invoke(client, () => client.provider.importPiConfig({ configJson })),
 			);
-			const data = await invoke(client, () =>
-				client.model.list({ conversationId: state.activeConversationId ?? undefined }),
-			);
-			hydrateRpcQuery(queryClient, queryKeys.models, data);
+			await refreshActiveModels();
 		},
 		overrideBaseUrl: async (params) => {
 			await providerMutation.mutateAsync(() =>
@@ -985,37 +1018,49 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		data: () => modelsQuery.data ?? { models: [] },
 		models: () => modelsQuery.data?.models ?? [],
 		selectedValue: () => {
+			if (modelRouteConversationId() !== state.activeConversationId) return "";
 			const route = modelsQuery.data?.selected;
 			return route ? `${route.providerId}:${route.modelId}` : "";
 		},
 		loading: () => modelsQuery.isFetching,
 		error: () => modelsQuery.error,
 		refetch: () => void modelsQuery.refetch(),
-		list: (conversationId) =>
-			invoke(client, () => client.model.list({ conversationId })).then((data) => {
-				hydrateRpcQuery(
-					queryClient,
-					conversationId || state.activeConversationId === null
-						? queryKeys.models
-						: queryKeys.modelPool,
-					data,
-				);
+		list: (conversationId) => {
+			const projectsActiveRoute = Boolean(conversationId) || state.activeConversationId === null;
+			const key = projectsActiveRoute ? queryKeys.models : queryKeys.modelPool;
+			return refreshRpcQuery({
+				client: queryClient,
+				key,
+				request: () => invoke(client, () => client.model.list({ conversationId })),
+			}).then((data) => {
+				if (projectsActiveRoute)
+					setModelRouteConversationId(conversationId ?? state.activeConversationId);
 				return data;
-			}),
+			});
+		},
 		enable: async (providerId, modelId, label) => {
 			await modelMutation.mutateAsync(() =>
 				invoke(client, () => client.model.enable({ providerId, modelId, label })),
 			);
+			await refreshActiveModels();
 		},
 		disable: async (providerId, modelId) => {
 			await modelMutation.mutateAsync(() =>
 				invoke(client, () => client.model.disable({ providerId, modelId })),
 			);
+			await refreshActiveModels();
 		},
 		select: async (conversationId, providerId, modelId) => {
 			await modelMutation.mutateAsync(() =>
 				invoke(client, () => client.model.select({ conversationId, providerId, modelId })),
 			);
+			await refreshActiveModels();
+		},
+		setMultimodalFallback: async (providerId, modelId) => {
+			await modelMutation.mutateAsync(() =>
+				invoke(client, () => client.model.setMultimodalFallback({ providerId, modelId })),
+			);
+			await refreshActiveModels();
 		},
 	};
 

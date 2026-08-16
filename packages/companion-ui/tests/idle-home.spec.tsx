@@ -19,6 +19,10 @@ describe("idle homepage (official config, no bridge)", () => {
 
 	it("loads providers and requires a reply model before the first meeting", async () => {
 		const { client, conversationList, providerList } = createTestClient();
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { eventSeq: 0, model: { models: [] } } }),
+		);
+		client.model.list = vi.fn(() => Promise.resolve({ ok: true as const, data: { models: [] } }));
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		await waitFor(() => expect(conversationList).toHaveBeenCalled());
@@ -64,7 +68,24 @@ describe("idle homepage (official config, no bridge)", () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		client.snapshot.get = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { eventSeq: 0, character: THEMED_CHARACTER } }),
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					character: THEMED_CHARACTER,
+					model: {
+						models: [
+							{
+								providerId: "test-provider",
+								modelId: "test-model",
+								label: "Test Model",
+								supportsImages: true,
+								createdAt: "2026-01-01 00:00:00",
+							},
+						],
+					},
+				},
+			}),
 		);
 		Object.defineProperty(window.navigator, "languages", {
 			configurable: true,

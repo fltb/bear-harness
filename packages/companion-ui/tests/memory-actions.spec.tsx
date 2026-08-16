@@ -54,6 +54,17 @@ describe("memory controls", () => {
 				data: {
 					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
+					model: {
+						models: [
+							{
+								providerId: "test-provider",
+								modelId: "test-model",
+								label: "Test Model",
+								supportsImages: true,
+								createdAt: "2026-01-01 00:00:00",
+							},
+						],
+					},
 					memory: { candidates: [candidate], entries: [entry] },
 				},
 			}),

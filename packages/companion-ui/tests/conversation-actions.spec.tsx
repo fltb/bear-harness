@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
 import { createTestClient, OFFICIAL_PRODUCT } from "./fixtures.js";
+import { selectKobalteOption } from "./kobalte-helpers.js";
 
 const COMPLETE_ONBOARDING = {
 	status: "complete" as const,
@@ -57,6 +58,27 @@ function activeConversationSnapshot() {
 }
 
 describe("conversation message controls", () => {
+	it("waits for the boot snapshot before deciding that model setup is required", async () => {
+		const { client } = createTestClient();
+		let resolveSnapshot:
+			| ((value: Awaited<ReturnType<typeof client.snapshot.get>>) => void)
+			| undefined;
+		client.snapshot.get = vi.fn(
+			() =>
+				new Promise((resolve) => {
+					resolveSnapshot = resolve;
+				}),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		expect(screen.queryByRole("dialog", { name: zhCN.modelSetup.dialogLabel })).toBeNull();
+		resolveSnapshot?.({
+			ok: true,
+			data: { eventSeq: 0, onboarding: COMPLETE_ONBOARDING, model: { models: [] } },
+		});
+		expect(await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel })).toBeVisible();
+	});
+
 	it("requires selecting a reply model before entering the first meeting", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
@@ -84,20 +106,43 @@ describe("conversation message controls", () => {
 				},
 			}),
 		);
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					onboarding: {
+						status: "complete" as const,
+						eventSeq: 0,
+						stateData: {
+							schema_version: 1 as const,
+							flow_version: 1,
+							answers: {},
+							decisions: {},
+						},
+					},
+					model: { models: [] },
+				},
+			}),
+		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		const setup = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
 		expect(setup).toHaveTextContent(zhCN.modelSetup.title);
-		const service = await within(setup).findByRole("combobox", {
-			name: zhCN.settings.serviceLabel,
+		await waitFor(() => expect(client.provider.list).toHaveBeenCalled());
+		const service = await screen.findByRole("button", {
+			name: new RegExp(zhCN.settings.serviceLabel),
 		});
 		expect(service).toHaveValue("");
-		expect(within(setup).queryByRole("combobox", { name: zhCN.modelSetup.modelLabel })).toBeNull();
+		expect(
+			within(setup).getByRole("button", { name: new RegExp(zhCN.modelSetup.modelLabel) }),
+		).toBeDisabled();
 		expect(within(setup).queryByRole("button", { name: zhCN.modelSetup.continue })).toBeNull();
-		await user.selectOptions(service, "test-provider");
+		await selectKobalteOption(user, service, "test-provider");
 		expect(within(setup).getByRole("button", { name: zhCN.modelSetup.continue })).toBeDisabled();
-		await user.selectOptions(
-			within(setup).getByRole("combobox", { name: zhCN.modelSetup.modelLabel }),
+		await selectKobalteOption(
+			user,
+			within(setup).getByRole("button", { name: new RegExp(zhCN.modelSetup.modelLabel) }),
 			"test-model",
 		);
 		expect(within(setup).getByRole("button", { name: zhCN.modelSetup.continue })).toHaveAttribute(

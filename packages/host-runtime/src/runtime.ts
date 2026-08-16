@@ -89,6 +89,7 @@ export class HostRuntime {
 		// Canonical storage: one connection, migrations applied at boot.
 		const db = new Database(join(dataDir, "storage"));
 		db.migrate(MIGRATIONS);
+		db.assertSchemaContract();
 		const dbConnection = db.connection;
 
 		const eventBus = new EventBus(db.orm);

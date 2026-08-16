@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
 import { createTestClient, OFFICIAL_PRODUCT } from "./fixtures.js";
+import { selectKobalteOption } from "./kobalte-helpers.js";
 
 const FREE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const PROVIDER = {
@@ -39,6 +40,7 @@ function configuredClient() {
 				models: [
 					{
 						providerId: "opencode-go",
+						providerName: "OpenCode Go",
 						modelId: "fast",
 						label: "Fast",
 						supportsImages: false,
@@ -63,24 +65,34 @@ async function openSettings() {
 	return { user, backstage };
 }
 
+function selectTrigger(container: HTMLElement, label: string): HTMLButtonElement {
+	const trigger = within(container)
+		.getAllByRole("button")
+		.find((button) => button.getAttribute("aria-label") === label);
+	if (!(trigger instanceof HTMLButtonElement)) throw new Error(`select trigger missing: ${label}`);
+	return trigger;
+}
+
 describe("model pool settings", () => {
 	it("switches and persists the product UI language independently of character packages", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		const language = within(backstage).getByRole("combobox", { name: zhCN.settings.language });
-		expect(language).toHaveValue("zh-CN");
+		const language = within(backstage).getByRole("button", {
+			name: new RegExp(zhCN.settings.language),
+		});
+		expect(language).toHaveTextContent(zhCN.settings.localeNames["zh-CN"]);
 
-		await user.selectOptions(language, "en");
+		await selectKobalteOption(user, language, "en");
 		expect(document.documentElement).toHaveAttribute("lang", "en");
 		expect(localStorage.getItem("bear-harness.product-locale")).toBe("en");
-		expect(language).toHaveAccessibleName("Interface language");
+		expect(language).toHaveAccessibleName(/Interface language/);
 
-		await user.selectOptions(language, "zh-TW");
+		await selectKobalteOption(user, language, "zh-TW");
 		expect(document.documentElement).toHaveAttribute("lang", "zh-TW");
-		expect(language).toHaveAccessibleName("介面語言");
+		expect(language).toHaveAccessibleName(/介面語言/);
 
-		await user.selectOptions(language, "zh-CN");
+		await selectKobalteOption(user, language, "zh-CN");
 		expect(document.documentElement).toHaveAttribute("lang", "zh-CN");
 	});
 
@@ -90,21 +102,20 @@ describe("model pool settings", () => {
 		const { user, backstage } = await openSettings();
 		const remove = await waitFor(() =>
 			within(backstage).getByRole("button", {
-				name: `${zhCN.settings.removeModel} Fast`,
+				name: `${zhCN.settings.removeModel} Fast (OpenCode Go)`,
 			}),
 		);
 		expect(remove).toHaveAttribute("data-semantic", "danger");
-		const service = within(backstage).getByRole("combobox", {
-			name: zhCN.settings.serviceLabel,
+		const service = within(backstage).getByRole("button", {
+			name: new RegExp(zhCN.settings.serviceLabel),
 		});
-		expect(service).toHaveValue("");
-		expect(
-			within(backstage).getByRole("combobox", {
-				name: zhCN.settings.modelLabel,
-			}),
-		).toBeDisabled();
-		await user.selectOptions(service, "opencode-go");
-		expect(within(backstage).getByRole("option", { name: "Vision" })).toBeInTheDocument();
+		expect(service).toHaveTextContent(zhCN.settings.chooseService);
+		expect(selectTrigger(backstage, zhCN.settings.modelLabel)).toBeDisabled();
+		await selectKobalteOption(user, service, "opencode-go");
+		const model = selectTrigger(backstage, zhCN.settings.modelLabel);
+		expect(model).toBeEnabled();
+		await user.click(model);
+		expect(await screen.findByRole("option", { name: "Vision" })).toBeInTheDocument();
 		expect(within(backstage).queryByText(zhCN.settings.fallbackModelSection)).toBeNull();
 	});
 
@@ -112,24 +123,13 @@ describe("model pool settings", () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		const service = within(backstage).getByRole("combobox", {
-			name: zhCN.settings.serviceLabel,
+		const service = within(backstage).getByRole("button", {
+			name: new RegExp(zhCN.settings.serviceLabel),
 		});
-		expect(service).toHaveValue("");
-		await user.selectOptions(service, "opencode-go");
-		await waitFor(() =>
-			expect(
-				within(backstage).getByRole("combobox", {
-					name: zhCN.settings.modelLabel,
-				}),
-			).toBeEnabled(),
-		);
-		await user.selectOptions(
-			within(backstage).getByRole("combobox", {
-				name: zhCN.settings.modelLabel,
-			}),
-			"vision",
-		);
+		expect(service).toHaveTextContent(zhCN.settings.chooseService);
+		await selectKobalteOption(user, service, "opencode-go");
+		await waitFor(() => expect(selectTrigger(backstage, zhCN.settings.modelLabel)).toBeEnabled());
+		await selectKobalteOption(user, selectTrigger(backstage, zhCN.settings.modelLabel), "vision");
 		await user.click(
 			within(backstage).getByRole("button", {
 				name: zhCN.settings.addModel,
@@ -142,7 +142,7 @@ describe("model pool settings", () => {
 		});
 		await user.click(
 			within(backstage).getByRole("button", {
-				name: `${zhCN.settings.removeModel} Fast`,
+				name: `${zhCN.settings.removeModel} Fast (OpenCode Go)`,
 			}),
 		);
 		expect(client.model.disable).toHaveBeenCalledWith({
@@ -155,9 +155,10 @@ describe("model pool settings", () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		await user.selectOptions(
-			within(backstage).getByRole("combobox", {
-				name: zhCN.settings.serviceLabel,
+		await selectKobalteOption(
+			user,
+			within(backstage).getByRole("button", {
+				name: new RegExp(zhCN.settings.serviceLabel),
 			}),
 			"opencode-go",
 		);
@@ -189,7 +190,7 @@ describe("model pool settings", () => {
 		const configJson = JSON.stringify({
 			providers: { relay: { models: [{ id: "custom", name: "Custom" }] } },
 		});
-		fireEvent.input(within(backstage).getByRole("textbox", { name: zhCN.settings.piConfigLabel }), {
+		fireEvent.input(within(backstage).getByLabelText(zhCN.settings.piConfigLabel), {
 			target: { value: configJson },
 		});
 		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.piConfigImport }));
@@ -201,8 +202,9 @@ describe("model pool settings", () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		await user.selectOptions(
-			within(backstage).getByRole("combobox", { name: zhCN.settings.serviceLabel }),
+		await selectKobalteOption(
+			user,
+			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
 			"opencode-go",
 		);
 		const keyInput = within(backstage).getByLabelText(zhCN.settings.apiKeyLabel);
@@ -228,8 +230,9 @@ describe("model pool settings", () => {
 		client.provider.overrideBaseUrl = vi.fn(() => Promise.reject(new Error("relay rejected")));
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		await user.selectOptions(
-			within(backstage).getByRole("combobox", { name: zhCN.settings.serviceLabel }),
+		await selectKobalteOption(
+			user,
+			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
 			"opencode-go",
 		);
 		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.advancedToggle }));
@@ -266,8 +269,9 @@ describe("model pool settings", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		await user.selectOptions(
-			within(backstage).getByRole("combobox", { name: zhCN.settings.serviceLabel }),
+		await selectKobalteOption(
+			user,
+			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
 			"oauth-service",
 		);
 		await user.click(
@@ -302,8 +306,9 @@ describe("model pool settings", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		await user.selectOptions(
-			within(backstage).getByRole("combobox", { name: zhCN.settings.serviceLabel }),
+		await selectKobalteOption(
+			user,
+			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
 			"oauth-service",
 		);
 		await user.click(
@@ -333,8 +338,9 @@ describe("model pool settings", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		await user.selectOptions(
-			within(backstage).getByRole("combobox", { name: zhCN.settings.serviceLabel }),
+		await selectKobalteOption(
+			user,
+			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
 			"oauth-service",
 		);
 		await user.click(
@@ -364,15 +370,13 @@ describe("model pool settings", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		expect(await within(backstage).findByText(zhCN.settings.multimodal)).toBeVisible();
-		await user.selectOptions(
-			within(backstage).getByRole("combobox", { name: zhCN.settings.serviceLabel }),
+		expect(await within(backstage).findByText(zhCN.settings.useForImages)).toBeVisible();
+		await selectKobalteOption(
+			user,
+			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
 			"opencode-go",
 		);
-		await user.selectOptions(
-			within(backstage).getByRole("combobox", { name: zhCN.settings.modelLabel }),
-			"vision",
-		);
+		await selectKobalteOption(user, selectTrigger(backstage, zhCN.settings.modelLabel), "vision");
 		expect(
 			within(backstage).getByRole("button", { name: zhCN.settings.modelAvailable }),
 		).toBeDisabled();

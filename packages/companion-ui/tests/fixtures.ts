@@ -85,6 +85,14 @@ const DEFAULT_SETTINGS: SettingsData = {
 	relationshipMemoryEnabled: false,
 };
 
+const DEFAULT_MODEL = {
+	providerId: "test-provider",
+	modelId: "test-model",
+	label: "Test Model",
+	supportsImages: true,
+	createdAt: "2026-01-01 00:00:00",
+};
+
 /**
  * Minimal deterministic `CompanionClient` fixture matching the public
  * interface of `@bear-harness/companion-client`.
@@ -117,7 +125,7 @@ export function createTestClient() {
 	const providerList = vi.fn(() => ok({ providers: [] }));
 
 	const client: CompanionClient = {
-		snapshot: { get: vi.fn(() => ok({ eventSeq: 0 })) },
+		snapshot: { get: vi.fn(() => ok({ eventSeq: 0, model: { models: [DEFAULT_MODEL] } })) },
 		character: {
 			get: vi.fn(() => ok(null)),
 			list: vi.fn(() => ok({ characters: [] })),
@@ -197,10 +205,13 @@ export function createTestClient() {
 			logout: vi.fn(() => ok(null)),
 		},
 		model: {
-			list: vi.fn(() => ok({ models: [] })),
+			list: vi.fn(() => ok({ models: [DEFAULT_MODEL] })),
 			enable: vi.fn(() => ok(null)),
 			disable: vi.fn(() => ok(null)),
 			select: vi.fn(() => ok(null)),
+			setMultimodalFallback: vi.fn(() =>
+				ok({ multimodalFallback: { providerId: "test-provider", modelId: "test-model" } }),
+			),
 		},
 		commission: {
 			list: vi.fn(() => ok({ commissions: [] })),

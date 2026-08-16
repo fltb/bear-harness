@@ -518,10 +518,26 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.model.list, async (_p) => {
 		const { conversationId } = _p as { conversationId?: string };
 		const selected = conversationId ? s.models.selected(conversationId) : undefined;
+		const companionId = await getCompanionId(s);
+		const fallback = s.models.multimodalFallback(companionId);
+		const providerNames = new Map(
+			(await s.providers.listProviders()).map((provider) => [provider.id, provider.name]),
+		);
 		return {
-			models: s.models.list(),
+			models: s.models.list().map((model) => ({
+				...model,
+				providerName: providerNames.get(model.providerId) ?? model.providerId,
+			})),
 			...(selected
 				? { selected: { providerId: selected.providerId, modelId: selected.modelId } }
+				: {}),
+			...(fallback
+				? {
+						multimodalFallback: {
+							providerId: fallback.providerId,
+							modelId: fallback.modelId,
+						},
+					}
 				: {}),
 		};
 	});
@@ -557,6 +573,17 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 		const selected = s.models.select(conversationId, providerId, modelId);
 		return { selected: { providerId: selected.providerId, modelId: selected.modelId } };
+	});
+	dispatcher.registerHandler(RPC.model.setMultimodalFallback, async (_p) => {
+		const { providerId, modelId } = _p as { providerId: string; modelId: string };
+		const companionId = await getCompanionId(s);
+		const fallback = s.models.setMultimodalFallback(companionId, providerId, modelId);
+		return {
+			multimodalFallback: {
+				providerId: fallback.providerId,
+				modelId: fallback.modelId,
+			},
+		};
 	});
 
 	// --- run ------------------------------------------------------------------------
@@ -763,6 +790,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		}
 		const eventSeq = s.eventBus.currentSeq;
 		const activeRow = convRows[0];
+		const fallback = s.models.multimodalFallback(companionId);
+		const providerNames = new Map(
+			(await s.providers.listProviders()).map((provider) => [provider.id, provider.name]),
+		);
 		return {
 			eventSeq,
 			onboarding: { ...onboarding, eventSeq },
@@ -796,7 +827,18 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			},
 			characterRuntime: { byConversation: characterRuntimeByConversation },
 			model: {
-				models: s.models.list(),
+				models: s.models.list().map((model) => ({
+					...model,
+					providerName: providerNames.get(model.providerId) ?? model.providerId,
+				})),
+				...(fallback
+					? {
+							multimodalFallback: {
+								providerId: fallback.providerId,
+								modelId: fallback.modelId,
+							},
+						}
+					: {}),
 				...(activeRow
 					? (() => {
 							const selected = s.models.selected(activeRow.id);

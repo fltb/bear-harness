@@ -116,7 +116,16 @@ async function ruleProviderReply(
 		}
 		return "";
 	};
+	const containsImage = (value: unknown): boolean => {
+		if (Array.isArray(value)) return value.some(containsImage);
+		if (!value || typeof value !== "object") return false;
+		const record = value as Record<string, unknown>;
+		if (record.type === "image" || record.type === "image_url" || "image_url" in record)
+			return true;
+		return Object.values(record).some(containsImage);
+	};
 	const prompt = payload.messages?.map((message) => readText(message.content)).join("\n") ?? "";
+	const hasImage = containsImage(payload.messages);
 	const latestHostContext = [...prompt.matchAll(/<host_context>\n([\s\S]*?)<\/host_context>/g)].at(
 		-1,
 	)?.[1];
@@ -127,17 +136,22 @@ async function ruleProviderReply(
 		: relationshipContext.includes("暗号是北辰")
 			? "MEMORY_CONTEXT:我们约定暗号是北辰\n"
 			: "MEMORY_CONTEXT:ABSENT\n";
-	const content = prompt.includes("检查记忆上下文")
-		? memoryReply
-		: prompt.includes("EDITED_OK")
-			? "EDITED_OK\n"
-			: prompt.includes("STREAM_CHECK")
-				? "STREAM_ONE STREAM_TWO\n"
-				: prompt.includes("你是谁")
-					? "我是 E2E Rule Provider。\n"
-					: prompt.includes("E2E_OK")
-						? "E2E_OK\n"
-						: "RULE_OK\n";
+	const content =
+		hasImage && prompt.includes("Describe only the visible content")
+			? "VISUAL_OBSERVATION: a red square\n"
+			: prompt.includes("VISUAL_OBSERVATION: a red square")
+				? "MAIN_USED_VISUAL_OBSERVATION\n"
+				: prompt.includes("检查记忆上下文")
+					? memoryReply
+					: prompt.includes("EDITED_OK")
+						? "EDITED_OK\n"
+						: prompt.includes("STREAM_CHECK")
+							? "STREAM_ONE STREAM_TWO\n"
+							: prompt.includes("你是谁")
+								? "我是 E2E Rule Provider。\n"
+								: prompt.includes("E2E_OK")
+									? "E2E_OK\n"
+									: "RULE_OK\n";
 	const id = "chatcmpl-e2e-rule";
 	if (!payload.stream) {
 		send(response, 200, {

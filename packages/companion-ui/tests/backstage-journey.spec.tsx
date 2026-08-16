@@ -97,7 +97,9 @@ describe("ordinary-user backstage journey", () => {
 		expect(
 			within(characterDialog).getByRole("tab", { name: zhCN.backstage.roleManagement }),
 		).toHaveAttribute("data-selected");
-		const input = within(characterDialog).getByLabelText(zhCN.backstage.roleImport);
+		const input = within(characterDialog).getByLabelText(zhCN.backstage.roleImport, {
+			selector: "input",
+		});
 		const manifest = new File(["id: imported"], "character.yaml", { type: "text/yaml" });
 		Object.defineProperty(manifest, "webkitRelativePath", { value: "imported/character.yaml" });
 		await user.upload(input, manifest);
@@ -106,12 +108,13 @@ describe("ordinary-user backstage journey", () => {
 		]);
 		characterView.unmount();
 
+		const closeSystemSettings = vi.fn();
 		render(() => (
 			<DesktopProvider store={store}>
 				<Backstage
 					open
 					initialTab="settings"
-					onClose={() => undefined}
+					onClose={closeSystemSettings}
 					character={THEMED_CHARACTER}
 				/>
 			</DesktopProvider>
@@ -120,5 +123,7 @@ describe("ordinary-user backstage journey", () => {
 		expect(
 			within(systemDialog).getByRole("tab", { name: zhCN.backstage.systemSettings }),
 		).toHaveAttribute("data-selected");
+		await user.click(within(systemDialog).getByRole("button", { name: zhCN.backstage.close }));
+		expect(closeSystemSettings).toHaveBeenCalledOnce();
 	});
 });
