@@ -1,6 +1,7 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
+import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { FirstMeeting } from "../src/FirstMeeting.js";
 import { CompanionApp } from "../src/index.js";
@@ -125,6 +126,12 @@ describe("first meeting journeys", () => {
 		const user = userEvent.setup();
 		const setApiKey = vi.fn(() => Promise.resolve());
 		const enable = vi.fn(() => Promise.resolve());
+		const [defaults, setDefaults] = createSignal<{
+			reply?: { providerId: string; modelId: string };
+		}>({});
+		const setDefaultReply = vi.fn(async (providerId: string, modelId: string) => {
+			setDefaults({ reply: { providerId, modelId } });
+		});
 		const provider = {
 			id: "openai-relay",
 			name: "OpenAI Relay",
@@ -142,9 +149,9 @@ describe("first meeting journeys", () => {
 			model: {
 				loading: () => false,
 				models: () => [],
-				data: () => ({ defaults: {} }),
+				data: () => ({ defaults: defaults() }),
 				enable,
-				setDefaultReply: vi.fn(),
+				setDefaultReply,
 			} as never,
 		});
 
@@ -173,6 +180,8 @@ describe("first meeting journeys", () => {
 		await selectKobalteOption(user, model, "gpt-test");
 		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
 		expect(enable).toHaveBeenCalledWith("openai-relay", "gpt-test", "GPT Test");
+		expect(setDefaultReply).toHaveBeenCalledWith("openai-relay", "gpt-test");
+		await waitFor(() => expect(dialog).not.toBeInTheDocument());
 	});
 
 	it("shows one primary action and no key field when the provider credential is stored", async () => {
@@ -229,6 +238,98 @@ describe("first meeting journeys", () => {
 		expect(action).toHaveAttribute("data-variant", "primary");
 		await user.click(action);
 		expect(enable).toHaveBeenCalledWith("stored-relay", "stored-model", "Stored Model");
+	});
+
+	it("keeps model setup open and reports both typed and untyped model failures", async () => {
+		const user = userEvent.setup();
+		const enable = vi
+			.fn()
+			.mockRejectedValueOnce(new Error("Model unavailable"))
+			.mockRejectedValueOnce("Relay rejected model");
+		const provider = {
+			id: "stored-relay",
+			name: "Stored Relay",
+			authType: "api_key" as const,
+			credentialStatus: "stored" as const,
+			availableModels: [{ id: "stored-model", name: "Stored Model" }],
+		};
+		renderMeeting({
+			...baseStore(),
+			provider: {
+				providers: () => [provider],
+				list: () => Promise.resolve({ providers: [provider] }),
+			} as never,
+			model: {
+				loading: () => false,
+				models: () => [],
+				data: () => ({ defaults: {} }),
+				enable,
+				setDefaultReply: vi.fn(),
+			} as never,
+		});
+		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		await selectKobalteOption(
+			user,
+			within(dialog).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
+			"stored-relay",
+		);
+		await selectKobalteOption(
+			user,
+			within(dialog).getByRole("button", { name: new RegExp(zhCN.modelSetup.modelLabel) }),
+			"stored-model",
+		);
+		const connect = within(dialog).getByRole("button", { name: zhCN.modelSetup.continue });
+		await user.click(connect);
+		expect(await within(dialog).findByRole("alert")).toHaveTextContent("Model unavailable");
+		await user.click(connect);
+		expect(await within(dialog).findByRole("alert")).toHaveTextContent("Relay rejected model");
+		expect(dialog).toBeInTheDocument();
+	});
+
+	it("reports typed and untyped credential failures without exposing the key", async () => {
+		const user = userEvent.setup();
+		const setApiKey = vi
+			.fn()
+			.mockRejectedValueOnce(new Error("Credential vault unavailable"))
+			.mockRejectedValueOnce("Provider refused credential");
+		const provider = {
+			id: "relay",
+			name: "Relay",
+			authType: "api_key" as const,
+			credentialStatus: "missing" as const,
+			availableModels: [{ id: "model", name: "Model" }],
+		};
+		renderMeeting({
+			...baseStore(),
+			provider: {
+				providers: () => [provider],
+				list: () => Promise.resolve({ providers: [provider] }),
+				setApiKey,
+			} as never,
+			model: {
+				loading: () => false,
+				models: () => [],
+				data: () => ({ defaults: {} }),
+			} as never,
+		});
+		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		await selectKobalteOption(
+			user,
+			within(dialog).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
+			"relay",
+		);
+		const key = within(dialog).getByLabelText(zhCN.settings.apiKeyLabel);
+		const save = within(dialog).getByRole("button", { name: zhCN.settings.saveKey });
+		await user.type(key, "not-logged");
+		await user.click(save);
+		expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+			"Credential vault unavailable",
+		);
+		await user.click(save);
+		expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+			"Provider refused credential",
+		);
+		expect(setApiKey).toHaveBeenNthCalledWith(2, "relay", "not-logged");
 	});
 
 	it("submits role-package text and choice steps without hardcoded story copy", async () => {
@@ -455,6 +556,16 @@ describe("first meeting journeys", () => {
 
 	it("shows the provider's OAuth failure message", async () => {
 		const user = userEvent.setup();
+		const login = vi
+			.fn()
+			.mockResolvedValueOnce({
+				providerId: "oauth",
+				status: "failed" as const,
+				message: "Denied",
+			})
+			.mockResolvedValueOnce({ providerId: "oauth", status: "failed" as const })
+			.mockRejectedValueOnce(new Error("OAuth transport failed"))
+			.mockRejectedValueOnce("OAuth relay failed");
 		const provider = {
 			id: "oauth",
 			name: "OAuth Provider",
@@ -467,12 +578,7 @@ describe("first meeting journeys", () => {
 			provider: {
 				providers: () => [provider],
 				list: () => Promise.resolve({ providers: [provider] }),
-				login: () =>
-					Promise.resolve({
-						providerId: "oauth",
-						status: "failed" as const,
-						message: "Denied",
-					}),
+				login,
 			} as never,
 			model: {
 				loading: () => false,
@@ -492,11 +598,16 @@ describe("first meeting journeys", () => {
 			}),
 			"oauth",
 		);
-		await user.click(
-			within(dialog).getByRole("button", {
-				name: zhCN.settings.loginWithBrowser,
-			}),
-		);
+		const loginButton = within(dialog).getByRole("button", {
+			name: zhCN.settings.loginWithBrowser,
+		});
+		await user.click(loginButton);
 		expect(await screen.findByRole("alert")).toHaveTextContent("Denied");
+		await user.click(loginButton);
+		expect(await screen.findByRole("alert")).toHaveTextContent(zhCN.settings.oauthFailed);
+		await user.click(loginButton);
+		expect(await screen.findByRole("alert")).toHaveTextContent("OAuth transport failed");
+		await user.click(loginButton);
+		expect(await screen.findByRole("alert")).toHaveTextContent("OAuth relay failed");
 	});
 });

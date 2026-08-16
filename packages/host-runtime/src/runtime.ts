@@ -151,6 +151,9 @@ export class HostRuntime {
 		const onboarding = new FirstMeetingMachine(dbConnection, eventBus, characterLoader);
 		const turns = new TurnPipeline(dbConnection, supervisor, eventBus);
 		const models = new ModelRegistry(db.orm, eventBus);
+		onboarding.setConversationCreatedHandler((companionId, conversationId) => {
+			models.applyDefaultToConversation(companionId, conversationId);
+		});
 		supervisor.setModelSelectionHandler((conversationId, requiresImages) =>
 			models.resolve(conversationId, requiresImages),
 		);

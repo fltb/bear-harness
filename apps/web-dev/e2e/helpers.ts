@@ -27,29 +27,37 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 		headers,
 		data: { providerId: "e2e-rule", modelId: "rule-model", label: "E2E Rule Provider" },
 	});
-	await page.reload();
+	await page.request.post("/rpc/model.defaults.setReply%3Av1", {
+		headers,
+		data: { reply: { providerId: "e2e-rule", modelId: "rule-model" } },
+	});
 
-	const onboardingState = await (
+	let onboardingState = await (
 		await page.request.post("/rpc/onboarding.get%3Av1", { headers, data: {} })
 	).json();
-	const onboarding = page.getByRole("dialog", { name: "首次入场" });
-	if (onboardingState.data.status === "active") {
-		await expect(onboarding).toBeVisible();
-		await onboarding.getByRole("button", { name: "把门打开" }).click();
-		await onboarding.getByRole("button", { name: zhCN.messages.continue }).click();
-		await onboarding.getByRole("textbox", { name: "希望我怎么称呼你？" }).fill("林");
-		await onboarding.getByRole("button", { name: "确认" }).click();
-		await onboarding.getByRole("button", { name: "一起做事的搭档" }).click();
-		await onboarding.getByRole("button", { name: "可以，记住我们之间的事" }).click();
-		await expect(onboarding).toBeHidden();
+	const onboardingAnswers: Record<string, string | undefined> = {
+		door_closed: undefined,
+		introduced: undefined,
+		naming: "林",
+		relation: "partner",
+		memory_decision: "remember",
+	};
+	while (onboardingState.data.status === "active") {
+		const stepId = onboardingState.data.currentStepId as string;
+		if (!(stepId in onboardingAnswers)) throw new Error(`Unhandled onboarding step: ${stepId}`);
+		onboardingState = await (
+			await page.request.post("/rpc/onboarding.submit%3Av1", {
+				headers,
+				data: { stepId, answer: onboardingAnswers[stepId] },
+			})
+		).json();
 	}
+	await page.reload();
+	await expect(page.getByRole("dialog", { name: "首次入场" })).toBeHidden();
 
 	await page.getByRole("button", { name: zhCN.sidebar.newConversation }).click();
 	const model = page.getByRole("button", { name: zhCN.composer.modelLabel });
-	await Promise.all([
-		page.waitForResponse((response) => response.url().includes("/rpc/model.route.set%3Av1")),
-		selectKobalteOption(page, model, /^E2E Rule Provider \(/),
-	]);
+	await expect(model).toContainText("E2E Rule Provider");
 	await expect(page.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled();
 }
 

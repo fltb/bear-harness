@@ -114,9 +114,8 @@ export function validateProductConfig(config) {
 		if (typeof config.icon !== "string" || config.icon.trim() === "") {
 			fail("icon", "must be null or a non-empty repo-relative path");
 		} else {
-			// icon paths are repo-root-relative; scripts/ sits at apps/desktop/scripts,
-			// so the repository root is two levels up.
-			const repoRoot = resolve(here, "../..");
+			// icon paths are repo-root-relative; scripts/ sits at apps/desktop/scripts.
+			const repoRoot = resolve(here, "../../..");
 			const iconPath = resolve(repoRoot, config.icon);
 			if (!existsSync(iconPath)) {
 				fail("icon", `file not found at ${config.icon}`);

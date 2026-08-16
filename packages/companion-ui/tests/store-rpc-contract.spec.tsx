@@ -44,11 +44,25 @@ describe("store RPC contract", () => {
 		client.model.poolGet = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { models: [configured] } }),
 		);
+		client.model.defaultsGet = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					reply: { providerId: "relay", modelId: "fast" },
+					vision: { mode: "auto" as const },
+				},
+			}),
+		);
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await store.model.enable("relay", "fast", "Fast");
 			await store.model.list();
-			await waitFor(() => expect(store.model.models()).toEqual([configured]));
+			await waitFor(() =>
+				expect(store.model.data().defaults.reply).toEqual({
+					providerId: "relay",
+					modelId: "fast",
+				}),
+			);
 			resolveSnapshot?.({
 				ok: true,
 				data: {
@@ -56,8 +70,12 @@ describe("store RPC contract", () => {
 					model: { pool: { models: [] }, defaults: { vision: { mode: "auto" } } },
 				},
 			});
-			await waitFor(() => expect(client.snapshot.get).toHaveBeenCalled());
+			await waitFor(() => expect(store.snapshot.eventSeq()).toBe(1));
 			expect(store.model.models()).toEqual([configured]);
+			expect(store.model.data().defaults.reply).toEqual({
+				providerId: "relay",
+				modelId: "fast",
+			});
 		} finally {
 			dispose();
 		}
@@ -89,6 +107,15 @@ describe("store RPC contract", () => {
 							selected: { providerId: "relay", modelId: "fast" },
 						},
 					},
+				},
+			}),
+		);
+		client.model.routeGet = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					conversationId: "conversation-1",
+					selected: { providerId: "relay", modelId: "fast" },
 				},
 			}),
 		);

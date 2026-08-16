@@ -6,7 +6,7 @@ import { ensureReadyForConversation } from "./helpers";
 test("WebDev exposes every registered Host RPC channel through its authenticated console", async ({
 	page,
 }) => {
-	await page.goto("/");
+	await ensureReadyForConversation(page);
 	await page.getByRole("button", { name: "Web Dev" }).click();
 
 	const panel = page.getByRole("complementary", { name: zhCN.webDev.ariaLabel });
@@ -23,7 +23,7 @@ test("WebDev exposes every registered Host RPC channel through its authenticated
 test("browser drives conversation, search, materials, backstage, settings and queue", async ({
 	page,
 }) => {
-	await page.goto("/");
+	await ensureReadyForConversation(page);
 
 	const conversations = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
 	const conversationItems = conversations.getByRole("button");
@@ -49,9 +49,9 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	await search.fill("不存在的对话");
 	await expect(conversationItems).toHaveCount(0);
 	await search.fill("");
-	await expect(page.getByRole("button", { name: zhCN.composer.attachLabel })).toBeDisabled();
+	await expect(page.getByRole("button", { name: zhCN.composer.attachLabel })).toBeEnabled();
 	await expect(page.getByRole("button", { name: zhCN.composer.modelLabel })).toContainText(
-		zhCN.composer.chooseModel,
+		"E2E Rule Provider",
 	);
 
 	await page.getByRole("button", { name: zhCN.titlebar.backstage }).click();

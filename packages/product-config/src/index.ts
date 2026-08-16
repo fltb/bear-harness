@@ -36,5 +36,5 @@ export const productConfig: ProductConfig = {
 		modified: false,
 		modificationNotice: "",
 	},
-	icon: null,
+	icon: "packages/product-config/assets/icon.png",
 };

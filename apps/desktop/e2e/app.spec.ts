@@ -3,10 +3,11 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { zhCN } from "@bear-harness/i18n/locales";
 import { productConfig } from "@bear-harness/product-config";
 import { _electron as electron } from "playwright";
 import { expect, test } from "playwright/test";
-import { assertProductWindow } from "./helpers";
+import { assertProductWindow, provisionReplyModel } from "./helpers";
 
 const desktopRoot = fileURLToPath(new URL("..", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -27,6 +28,11 @@ test("source build loads from file:// with official identity and isolated diagno
 		},
 	});
 	try {
+		const setupWindow = await electronApp.firstWindow();
+		await expect(
+			setupWindow.getByRole("dialog", { name: zhCN.modelSetup.dialogLabel }),
+		).toBeVisible();
+		await provisionReplyModel(setupWindow);
 		const window = await assertProductWindow(electronApp, productConfig);
 
 		// The page must come from the built file: HTML, not the dev server.

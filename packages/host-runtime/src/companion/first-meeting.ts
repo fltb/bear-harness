@@ -47,11 +47,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * vocabulary; this class validates, persists and executes those effects.
  */
 export class FirstMeetingMachine {
+	private onConversationCreated?: (companionId: string, conversationId: string) => void;
+
 	constructor(
 		private readonly db: DatabaseSync,
 		private readonly eventBus: EventBus,
 		private readonly characterLoader: CharacterLoader,
 	) {}
+
+	setConversationCreatedHandler(
+		handler: (companionId: string, conversationId: string) => void,
+	): void {
+		this.onConversationCreated = handler;
+	}
 
 	getState(companionId: string): OnboardingStateRow {
 		const flow = this.flow(companionId);
@@ -283,7 +291,10 @@ export class FirstMeetingMachine {
 				? { status: "complete" as const, stateData }
 				: { status: "active" as const, currentStepId: nextState, stateData };
 		this.eventBus.publish("onboarding.state_changed", row);
-		if (conversation) this.eventBus.publish("conversation.created", conversation);
+		if (conversation) {
+			this.onConversationCreated?.(companionId, conversation.conversationId);
+			this.eventBus.publish("conversation.created", conversation);
+		}
 		return row;
 	}
 

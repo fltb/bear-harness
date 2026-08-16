@@ -38,7 +38,7 @@
 		"@babel/parser": "7.29.8",
 		"@biomejs/biome": "2.5.8",
 		"knip": "^6.32.2",
-		"yaml": "2.8.1"
+		"yaml": "2.9.0"
 	},
 	"allowScripts": {
 		"@google/genai@1.52.0": true,

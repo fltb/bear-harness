@@ -1,3 +1,4 @@
+import { zhCN as publicZhCN } from "@bear-harness/i18n/locales";
 import { describe, expect, it } from "vitest";
 import { resources, supportedProductLocales } from "../src/locales/index.js";
 
@@ -17,6 +18,10 @@ function strings(value: unknown): string[] {
 }
 
 describe("product locale catalogs", () => {
+	it("exports locale catalogs through the package public API", () => {
+		expect(publicZhCN.modelSetup.dialogLabel).toBe(resources["zh-CN"].modelSetup.dialogLabel);
+	});
+
 	it("keeps every locale structurally identical", () => {
 		expect(supportedProductLocales).toEqual(["zh-CN", "zh-TW", "en"]);
 		const baseShape = shape(resources["zh-CN"]);

@@ -43,8 +43,12 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	await selectKobalteOption(page, model, provider.availableModels[0].name);
 	await Promise.all([
 		page.waitForResponse((response) => response.url().includes("/rpc/model.enable%3Av1")),
+		page.waitForResponse((response) =>
+			response.url().includes("/rpc/model.defaults.setReply%3Av1"),
+		),
 		modelSetup.getByRole("button", { name: zhCN.modelSetup.continue }).click(),
 	]);
+	await expect(modelSetup).toBeHidden();
 
 	const onboarding = page.getByRole("dialog", { name: "首次入场" });
 	await expect(onboarding).toBeVisible();

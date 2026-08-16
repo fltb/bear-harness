@@ -107,6 +107,45 @@ describe("role-defined onboarding", () => {
 		await runtime.close();
 	});
 
+	it("applies the global reply default to the conversation created on completion", async () => {
+		const runtime = runtimeForTest();
+		await runtime.start();
+		const providerList = (await data(runtime, "provider.list:v1", {})) as {
+			providers: Array<{ id: string; availableModels: Array<{ id: string; name: string }> }>;
+		};
+		const provider = providerList.providers.find(
+			(candidate) => candidate.availableModels.length > 0,
+		);
+		const model = provider?.availableModels[0];
+		if (!provider || !model) throw new Error("test provider catalog has no preset model");
+		await data(runtime, "model.enable:v1", {
+			providerId: provider.id,
+			modelId: model.id,
+			label: model.name,
+		});
+		await data(runtime, "model.defaults.setReply:v1", {
+			reply: { providerId: provider.id, modelId: model.id },
+		});
+		for (const [stepId, answer] of [
+			["door_closed", undefined],
+			["introduced", undefined],
+			["naming", "林"],
+			["relation", "partner"],
+			["memory_decision", "remember"],
+		] as const) {
+			await data(runtime, "onboarding.submit:v1", { stepId, answer });
+		}
+		const list = (await data(runtime, "conversation.list:v1", {})) as {
+			conversations: Array<{ id: string }>;
+		};
+		const conversationId = list.conversations[0]?.id;
+		expect(conversationId).toBeTruthy();
+		await expect(data(runtime, "model.route.get:v1", { conversationId })).resolves.toMatchObject({
+			selected: { providerId: provider.id, modelId: model.id },
+		});
+		await runtime.close();
+	});
+
 	it("exposes only settings with a persisted Host effect", async () => {
 		const runtime = runtimeForTest();
 		await runtime.start();

@@ -22,5 +22,5 @@ export const OFFICIAL_BRAND = Object.freeze({
 		modified: false,
 		modificationNotice: "",
 	}),
-	icon: null,
+	icon: "packages/product-config/assets/icon.png",
 });

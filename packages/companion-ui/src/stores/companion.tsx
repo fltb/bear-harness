@@ -83,13 +83,7 @@ import {
 	type StoryListData,
 } from "./ipc.js";
 import { createOnboardingStore } from "./onboarding.js";
-import {
-	createRpcMutation,
-	createRpcQuery,
-	hydrateRpcQuery,
-	queryKeys,
-	refreshRpcQuery,
-} from "./rpc-query.js";
+import { createRpcMutation, createRpcQuery, queryKeys, refreshRpcQuery } from "./rpc-query.js";
 
 export * from "./ipc.js";
 export type { OnboardingStore } from "./onboarding.js";
@@ -619,20 +613,16 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 
 	const hydrateFromSnapshot = (snap: Snapshot): void => {
 		onboardingStore._hydrate(snap.onboarding);
-		if (snap.model) {
-			hydrateRpcQuery(queryClient, queryKeys.modelPool, snap.model.pool);
-			hydrateRpcQuery(queryClient, queryKeys.modelDefaults, snap.model.defaults);
-			if (snap.model.route)
-				hydrateRpcQuery(
-					queryClient,
-					queryKeys.modelRoute(snap.model.route.conversationId),
-					snap.model.route,
-				);
-		}
 		const conversation = snap.conversation;
 		if (conversation) {
 			if (conversation.activeConversationId !== undefined) {
 				setState("activeConversationId", conversation.activeConversationId);
+				const conversationId = conversation.activeConversationId;
+				void refreshRpcQuery({
+					client: queryClient,
+					key: queryKeys.modelRoute(conversationId),
+					request: () => invoke(client, () => client.model.routeGet({ conversationId })),
+				}).then(() => setModelRouteRevision((revision) => revision + 1));
 			}
 			if (conversation.activeBranchId !== undefined) {
 				setState("activeBranchId", conversation.activeBranchId);
@@ -654,15 +644,10 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				setState("memoryCandidates", snap.memory.candidates);
 			if (snap.memory.entries !== undefined) setState("memoryEntries", snap.memory.entries);
 		}
-		if (snap.provider) hydrateRpcQuery(queryClient, queryKeys.providers, snap.provider);
 		if (snap.run) setState("runs", snap.run.runs);
 		if (snap.commission) setState("commissions", snap.commission.commissions);
 		if (snap.artifact) setState("artifacts", snap.artifact.artifacts);
 		if (snap.story) setState("storyChanges", snap.story.changes);
-		if (snap.settings)
-			hydrateRpcQuery(queryClient, queryKeys.settings, {
-				settings: snap.settings,
-			});
 		if (snap.characterRuntime)
 			setState("characterRuntimeByConversation", snap.characterRuntime.byConversation);
 		setLastSeq(Math.max(lastSeq(), snap.eventSeq));
