@@ -7,6 +7,7 @@
 		"dev": "node scripts/dev.mjs",
 		"build": "node scripts/build.mjs",
 		"typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+		"test:unit": "node --test server/data-directory.spec.ts",
 		"test:e2e": "playwright test"
 	},
 	"dependencies": {

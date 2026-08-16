@@ -29,6 +29,7 @@ test("renderer faults are recorded as metadata only; crash reports process_gone"
 		cwd: desktopRoot,
 		env: {
 			...process.env,
+			HOME: tempRoot,
 			NODE_ENV: "test",
 			BEAR_E2E_SOURCE: "1",
 			BEAR_DIAGNOSTICS_ROOT: tempRoot,
@@ -37,6 +38,8 @@ test("renderer faults are recorded as metadata only; crash reports process_gone"
 	try {
 		const window = await electronApp.firstWindow();
 		await window.waitForLoadState("domcontentloaded");
+		const userData = await electronApp.evaluate(({ app }) => app.getPath("userData"));
+		expect(userData.startsWith(tempRoot)).toBe(true);
 
 		// Fail on anything except the one expected pageerror.
 		const pageErrors: string[] = [];

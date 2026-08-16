@@ -30,13 +30,18 @@ test("rule provider exercises send and edited-history regeneration deterministic
 		apiKey: "e2e-rule-key",
 		sessionOnly: true,
 	});
-	await rpc(page, bootstrap.token, "voice.pin:v1", {
+	await rpc(page, bootstrap.token, "model.enable:v1", {
 		providerId: "e2e-rule",
 		modelId: "rule-model",
 		label: "E2E Rule Provider",
 	});
 	const conversation = await rpc<{ id: string }>(page, bootstrap.token, "conversation.create:v1", {
 		title: "Rule provider",
+	});
+	await rpc(page, bootstrap.token, "model.select:v1", {
+		conversationId: conversation.id,
+		providerId: "e2e-rule",
+		modelId: "rule-model",
 	});
 
 	await rpc(page, bootstrap.token, "message.send:v1", {

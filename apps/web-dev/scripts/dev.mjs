@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const repoEnv = resolve(repoRoot, ".env");
 if (existsSync(repoEnv)) process.loadEnvFile(repoEnv);
-const defaultDataDir = resolve(repoRoot, ".dev-data/web-dev");
 for (const workspace of [
 	"@bear-harness/product-config",
 	"@bear-harness/protocol",
@@ -31,7 +30,6 @@ function run(command, args, env = {}) {
 			...process.env,
 			...env,
 			BEAR_WEB_DEV_DEBUG: process.env.BEAR_WEB_DEV_DEBUG ?? "1",
-			BEAR_WEB_DEV_DATA_DIR: process.env.BEAR_WEB_DEV_DATA_DIR ?? defaultDataDir,
 		},
 	});
 	children.push(child);

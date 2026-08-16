@@ -1,4 +1,4 @@
-import { productUi } from "@bear-harness/product-config";
+import { zhCN } from "@bear-harness/product-config/locales";
 import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
 import { expect, test } from "playwright/test";
 import { ensureReadyForConversation } from "./helpers";
@@ -9,12 +9,12 @@ test("WebDev exposes every registered Host RPC channel through its authenticated
 	await page.goto("/");
 	await page.getByRole("button", { name: "Web Dev" }).click();
 
-	const panel = page.getByRole("complementary", { name: productUi.webDev.ariaLabel });
+	const panel = page.getByRole("complementary", { name: zhCN.webDev.ariaLabel });
 	const expectedChannels = Object.keys(REQUEST_SCHEMAS).sort();
 	const rpcChannel = panel.getByRole("combobox");
 	await expect(rpcChannel.getByRole("option")).toHaveCount(expectedChannels.length);
 	await expect(rpcChannel.getByRole("option")).toHaveText(expectedChannels);
-	await panel.getByRole("button", { name: productUi.webDev.invokeHost }).click();
+	await panel.getByRole("button", { name: zhCN.webDev.invokeHost }).click();
 	await expect(panel.getByRole("status")).toContainText('"ok"');
 });
 
@@ -23,10 +23,10 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 }) => {
 	await page.goto("/");
 
-	const conversations = page.getByRole("navigation", { name: productUi.sidebar.conversations });
+	const conversations = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
 	const conversationItems = conversations.getByRole("button");
 	const before = await conversationItems.count();
-	await page.getByRole("button", { name: productUi.sidebar.newConversation }).click();
+	await page.getByRole("button", { name: zhCN.sidebar.newConversation }).click();
 	await expect.poll(() => conversationItems.count()).toBeGreaterThan(before);
 	await expect
 		.poll(() =>
@@ -36,42 +36,30 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 		)
 		.toBe(1);
 
-	const queue = page.getByRole("button", { name: `${productUi.titlebar.runningWork} 0` });
+	const queue = page.getByRole("button", { name: `${zhCN.titlebar.runningWork} 0` });
 	await queue.click();
 	await expect(queue).toHaveAttribute("aria-expanded", "true");
-	await expect(page.getByRole("menu", { name: productUi.titlebar.runningWork })).toBeVisible();
+	await expect(page.getByRole("menu", { name: zhCN.titlebar.runningWork })).toBeVisible();
 	await queue.click();
 	await expect(queue).toHaveAttribute("aria-expanded", "false");
 
-	const search = page.getByRole("searchbox", { name: productUi.sidebar.search });
+	const search = page.getByRole("searchbox", { name: zhCN.sidebar.search });
 	await search.fill("不存在的对话");
 	await expect(conversationItems).toHaveCount(0);
 	await search.fill("");
-	await expect(page.getByRole("button", { name: productUi.composer.attachLabel })).toBeEnabled();
+	await expect(page.getByRole("button", { name: zhCN.composer.attachLabel })).toBeDisabled();
+	await expect(page.getByRole("combobox", { name: zhCN.composer.modelLabel })).toHaveValue("");
 
-	await page.getByRole("button", { name: productUi.titlebar.backstage }).click();
-	const backstage = page.getByRole("dialog", { name: productUi.backstage.title });
+	await page.getByRole("button", { name: zhCN.titlebar.backstage }).click();
+	const backstage = page.getByRole("dialog", { name: zhCN.backstage.title });
 	await expect(backstage).toBeVisible();
-	await backstage.getByRole("tab", { name: productUi.backstage.systemSettings }).click();
+	await backstage.getByRole("tab", { name: zhCN.backstage.systemSettings }).click();
 	const settingsPanel = backstage.getByRole("tabpanel", {
-		name: productUi.backstage.systemSettings,
+		name: zhCN.backstage.systemSettings,
 	});
-	await expect(
-		settingsPanel.getByRole("heading", { name: productUi.settings.primaryModelSection }),
-	).toBeVisible();
-	await expect(
-		settingsPanel.getByRole("heading", { name: productUi.settings.fallbackModelSection }),
-	).toBeVisible();
-	await settingsPanel.getByRole("button", { name: productUi.settings.advancedToggle }).click();
-	const textFallback = settingsPanel.getByRole("switch", {
-		name: productUi.settings.textFallbackEnable,
-	});
-	if ((await textFallback.getAttribute("aria-checked")) === "false") await textFallback.click();
-	const multimodalFallback = settingsPanel.getByRole("switch", {
-		name: productUi.settings.multimodalFallbackEnable,
-	});
-	if ((await multimodalFallback.getAttribute("aria-checked")) === "false")
-		await multimodalFallback.click();
+	await expect(settingsPanel.getByText(zhCN.settings.modelPool, { exact: true })).toBeVisible();
+	await expect(settingsPanel.getByRole("button", { name: zhCN.settings.addModel })).toBeVisible();
+	await settingsPanel.getByRole("button", { name: zhCN.settings.advancedToggle }).click();
 	await expect(settingsPanel.getByRole("combobox")).not.toHaveCount(0);
 	// test-quality-allow locator: typography contract requires all rendered text controls
 	const typographyElements = settingsPanel.locator("label, p, button, input, select, h3");
@@ -151,8 +139,9 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 		semanticViolations,
 		"every backstage foreground must resolve through its declared semantic role",
 	).toEqual([]);
+	await backstage.getByRole("tab", { name: zhCN.backstage.relationshipArchive }).click();
 	const relationshipMemory = backstage.getByRole("switch", {
-		name: productUi.settings.relationshipMemory,
+		name: zhCN.settings.relationshipMemory,
 	});
 	await expect(relationshipMemory).toBeEnabled();
 	const previousMemory = await relationshipMemory.getAttribute("aria-checked");
@@ -165,22 +154,20 @@ test("bottom actions open distinct character and system settings destinations", 
 }) => {
 	await ensureReadyForConversation(page);
 
-	await page
-		.getByRole("button", { name: productUi.sidebar.characterSettings, exact: true })
-		.click();
-	let backstage = page.getByRole("dialog", { name: productUi.backstage.title });
-	await expect(
-		backstage.getByRole("tab", { name: productUi.backstage.roleManagement }),
-	).toHaveAttribute("aria-selected", "true");
-	await expect(backstage.getByLabel(productUi.backstage.roleImport, { exact: true })).toBeVisible();
-	await backstage.getByRole("button", { name: productUi.backstage.close }).click();
+	await page.getByRole("button", { name: zhCN.sidebar.characterSettings, exact: true }).click();
+	let backstage = page.getByRole("dialog", { name: zhCN.backstage.title });
+	await expect(backstage.getByRole("tab", { name: zhCN.backstage.roleManagement })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
+	await expect(backstage.getByLabel(zhCN.backstage.roleImport, { exact: true })).toBeVisible();
+	await backstage.getByRole("button", { name: zhCN.backstage.close }).click();
 
-	await page.getByRole("button", { name: productUi.sidebar.systemSettings, exact: true }).click();
-	backstage = page.getByRole("dialog", { name: productUi.backstage.title });
-	await expect(
-		backstage.getByRole("tab", { name: productUi.backstage.systemSettings }),
-	).toHaveAttribute("aria-selected", "true");
-	await expect(
-		backstage.getByRole("heading", { name: productUi.settings.primaryModelSection }),
-	).toBeVisible();
+	await page.getByRole("button", { name: zhCN.sidebar.systemSettings, exact: true }).click();
+	backstage = page.getByRole("dialog", { name: zhCN.backstage.title });
+	await expect(backstage.getByRole("tab", { name: zhCN.backstage.systemSettings })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
+	await expect(backstage.getByText(zhCN.settings.modelPool, { exact: true })).toBeVisible();
 });

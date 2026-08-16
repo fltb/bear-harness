@@ -1,20 +1,18 @@
 import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHostRuntime } from "@bear-harness/host-runtime";
 import { productConfig } from "@bear-harness/product-config";
 import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
 import { createWebCredentialVault } from "./credential-vault.ts";
+import { desktopDataDirectory } from "./data-directory.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
 const port = Number(process.env.BEAR_WEB_DEV_HOST_PORT ?? "3201");
-const dataDir = process.env.BEAR_WEB_DEV_DATA_DIR
-	? resolve(process.env.BEAR_WEB_DEV_DATA_DIR)
-	: defaultDataDirectory(productConfig.dataDirectoryName);
+const dataDir = desktopDataDirectory(productConfig.dataDirectoryName);
 mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 const characterRoot = resolve(repoRoot, "config/characters");
 const token = randomBytes(32).toString("hex");
@@ -195,16 +193,6 @@ async function ruleProviderReply(
 	response.end("data: [DONE]\n\n");
 }
 
-function defaultDataDirectory(name: string): string {
-	if (process.platform === "win32") {
-		return resolve(process.env.APPDATA ?? resolve(homedir(), "AppData", "Roaming"), name, "Web");
-	}
-	if (process.platform === "darwin") {
-		return resolve(homedir(), "Library", "Application Support", name, "Web");
-	}
-	return resolve(process.env.XDG_DATA_HOME ?? resolve(homedir(), ".local", "share"), name, "web");
-}
-
 await runtime.start();
 if (process.env.BEAR_PROVIDER_OVERRIDE_ID && process.env.BEAR_PROVIDER_OVERRIDE_BASE_URL) {
 	const overridden = await runtime.dispatch("provider.overrideBaseUrl:v1", {
@@ -246,12 +234,12 @@ if (ruleProviderEnabled) {
 		...(process.env.BEAR_CUSTOM_API_KEY ? { apiKey: process.env.BEAR_CUSTOM_API_KEY } : {}),
 	});
 	if (!configured.ok) throw new Error(`custom provider setup failed: ${configured.error.reason}`);
-	const pinned = await runtime.dispatch("voice.pin:v1", {
+	const enabled = await runtime.dispatch("model.enable:v1", {
 		providerId,
 		modelId,
 		label: process.env.BEAR_CUSTOM_PROVIDER_NAME ?? providerId,
 	});
-	if (!pinned.ok) throw new Error(`custom provider pin failed: ${pinned.error.reason}`);
+	if (!enabled.ok) throw new Error(`custom model setup failed: ${enabled.error.reason}`);
 }
 const server = createServer((request, response) => {
 	void requestHandler(request, response).catch((error: unknown) => {

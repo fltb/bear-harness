@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "@babel/parser";
-import { productUi } from "../packages/product-config/src/index.ts";
+import { zhCN } from "../packages/product-config/src/zh-CN.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const roots = [join(repoRoot, "apps"), join(repoRoot, "packages")];
@@ -40,7 +40,7 @@ function collectProductCopy(value) {
 	else if (value && typeof value === "object")
 		for (const item of Object.values(value)) collectProductCopy(item);
 }
-collectProductCopy(productUi);
+collectProductCopy(zhCN);
 
 const files = [];
 function collect(directory) {
@@ -92,7 +92,7 @@ for (const file of files) {
 			report(
 				file,
 				node,
-				`product-owned copy ${JSON.stringify(node.value)} is forbidden: reference productUi`,
+				`product-owned copy ${JSON.stringify(node.value)} is forbidden: reference the locale catalog`,
 			);
 		}
 		if (node?.type === "CallExpression" && node.callee?.type === "MemberExpression") {

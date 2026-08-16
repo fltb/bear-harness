@@ -1,6 +1,6 @@
 import type { CompanionClient, HostTransport } from "@bear-harness/companion-client";
 import { unwrap } from "@bear-harness/companion-client";
-import { productUi } from "@bear-harness/product-config";
+import { t } from "@bear-harness/companion-ui";
 import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { createSignal, For, Show } from "solid-js";
 import { loadDebugChannels } from "./http-client";
@@ -96,18 +96,18 @@ export function WebDevDebugPanel(props: {
 				Web Dev
 			</button>
 			<Show when={open()}>
-				<aside class="web-dev-debug-panel" aria-label={productUi.webDev.ariaLabel}>
+				<aside class="web-dev-debug-panel" aria-label={t("webDev.ariaLabel")}>
 					<header>
-						<strong>{productUi.webDev.title}</strong>
-						<button type="button" onClick={toggle} aria-label={productUi.webDev.close}>
-							{productUi.webDev.close}
+						<strong>{t("webDev.title")}</strong>
+						<button type="button" onClick={toggle} aria-label={t("webDev.close")}>
+							{t("webDev.close")}
 						</button>
 					</header>
-					<p>{productUi.webDev.description}</p>
+					<p>{t("webDev.description")}</p>
 					<section>
-						<h2>{productUi.webDev.providerSection}</h2>
+						<h2>{t("webDev.providerSection")}</h2>
 						<button type="button" onClick={() => void loadProviders()}>
-							{productUi.webDev.loadProviders}
+							{t("webDev.loadProviders")}
 						</button>
 						<Show when={providers().length > 0}>
 							<label>
@@ -126,7 +126,7 @@ export function WebDevDebugPanel(props: {
 								</select>
 							</label>
 							<label>
-								{productUi.webDev.sessionApiKey}
+								{t("webDev.sessionApiKey")}
 								<input
 									type="password"
 									value={apiKey()}
@@ -138,12 +138,12 @@ export function WebDevDebugPanel(props: {
 								disabled={!providerId() || apiKey().length === 0}
 								onClick={() => void setSessionKey()}
 							>
-								{productUi.webDev.saveSessionKey}
+								{t("webDev.saveSessionKey")}
 							</button>
 						</Show>
 					</section>
 					<section>
-						<h2>{productUi.webDev.rpcSection}</h2>
+						<h2>{t("webDev.rpcSection")}</h2>
 						<label>
 							Channel
 							<select value={channel()} onChange={(event) => setChannel(event.currentTarget.value)}>
@@ -151,14 +151,14 @@ export function WebDevDebugPanel(props: {
 							</select>
 						</label>
 						<label>
-							{productUi.webDev.rpcParameters}
+							{t("webDev.rpcParameters")}
 							<textarea
 								value={params()}
 								onInput={(event) => setParams(event.currentTarget.value)}
 							/>
 						</label>
 						<button type="button" disabled={!channel()} onClick={() => void invokeRaw()}>
-							{productUi.webDev.invokeHost}
+							{t("webDev.invokeHost")}
 						</button>
 					</section>
 					<Show when={error()}>{(message) => <p class="web-dev-debug-error">{message()}</p>}</Show>
