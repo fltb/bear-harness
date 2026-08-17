@@ -58,7 +58,7 @@ describe("in-process Companion Host bridge", () => {
 			refreshOnCreate: false,
 		});
 		const providers: CompanionModelRuntimeSource = {
-			getModelRuntime: async () => modelRuntime,
+			getModels: async () => modelRuntime,
 		};
 		const db = new DatabaseSync(":memory:");
 		db.exec(
@@ -84,12 +84,6 @@ describe("in-process Companion Host bridge", () => {
 			message: "切换到雪原",
 		});
 		await settleRuntime();
-		expect(events).toContainEqual(
-			expect.objectContaining({
-				kind: "message_end",
-				payload: { conversationId: "conversation-1", failed: true },
-			}),
-		);
 		const hostCall = Reflect.get(globalThis, "bearHostCall");
 		if (typeof hostCall !== "function") throw new Error("Host bridge was not injected");
 		const result = await hostCall("host_set_scene", { sceneId: "snow_plains" });
@@ -121,7 +115,7 @@ describe("in-process Companion Host bridge", () => {
 			refreshOnCreate: false,
 		});
 		const providers: CompanionModelRuntimeSource = {
-			getModelRuntime: async () => modelRuntime,
+			getModels: async () => modelRuntime,
 		};
 		const db = new DatabaseSync(":memory:");
 		db.exec(

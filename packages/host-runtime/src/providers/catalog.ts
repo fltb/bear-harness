@@ -194,6 +194,11 @@ export class ProviderCatalog {
 		return this.getRuntime();
 	}
 
+	/** Core runtime consumes pi-ai's Models interface directly. */
+	async getModels(): Promise<ModelRuntime> {
+		return this.getRuntime();
+	}
+
 	async upsertCustomProvider(input: {
 		providerId: string;
 		name: string;
