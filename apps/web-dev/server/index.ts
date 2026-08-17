@@ -35,13 +35,13 @@ const runtime = createHostRuntime({
 	protocolViolationMode: "throw",
 });
 
-async function body(request: IncomingMessage): Promise<unknown> {
+async function body(request: IncomingMessage, maxBytes = 64 * 1024): Promise<unknown> {
 	const chunks: Buffer[] = [];
 	let bytes = 0;
 	for await (const chunk of request) {
 		const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
 		bytes += value.length;
-		if (bytes > 64 * 1024) throw new Error("request body too large");
+		if (bytes > maxBytes) throw new Error("request body too large");
 		chunks.push(value);
 	}
 	const text = Buffer.concat(chunks).toString("utf8");
@@ -87,9 +87,15 @@ async function requestHandler(request: IncomingMessage, response: ServerResponse
 		return;
 	}
 	if (request.method === "POST" && url.pathname.startsWith("/rpc/")) {
+		const channel = decodeURIComponent(url.pathname.slice("/rpc/".length));
 		let params: unknown;
 		try {
-			params = await body(request);
+			// Package bytes are base64-encoded on the shared RPC boundary. The Host
+			// retains the authoritative decoded 25 MiB package limit.
+			params = await body(
+				request,
+				channel === "character.import:v1" ? 36 * 1024 * 1024 : undefined,
+			);
 		} catch {
 			send(response, 400, {
 				ok: false,
@@ -97,7 +103,6 @@ async function requestHandler(request: IncomingMessage, response: ServerResponse
 			});
 			return;
 		}
-		const channel = decodeURIComponent(url.pathname.slice("/rpc/".length));
 		send(response, 200, await runtime.dispatch(channel, params));
 		return;
 	}
@@ -142,18 +147,20 @@ async function ruleProviderReply(
 	const prompt = payload.messages?.map((message) => readText(message.content)).join("\n") ?? "";
 	rulePromptTrace.push(prompt);
 	const lastUserIndex = payload.messages?.findLastIndex((message) => message.role === "user") ?? -1;
-	const latestUserText = lastUserIndex >= 0 ? readText(payload.messages?.[lastUserIndex]?.content) : "";
+	const latestUserText =
+		lastUserIndex >= 0 ? readText(payload.messages?.[lastUserIndex]?.content) : "";
 	const currentTurnToolText =
 		lastUserIndex >= 0
-			? payload.messages
+			? (payload.messages
 					?.slice(lastUserIndex + 1)
 					.filter((message) => message.role === "tool")
 					.map((message) => readText(message.content))
-					.join("\n") ?? ""
+					.join("\n") ?? "")
 			: "";
 	const hasToolResult =
 		lastUserIndex >= 0 &&
-		(payload.messages?.slice(lastUserIndex + 1).some((message) => message.role === "tool") ?? false);
+		(payload.messages?.slice(lastUserIndex + 1).some((message) => message.role === "tool") ??
+			false);
 	const hasImage = containsImage(payload.messages);
 	const latestHostContext = [...prompt.matchAll(/<host_context>\n([\s\S]*?)<\/host_context>/g)].at(
 		-1,
@@ -169,37 +176,41 @@ async function ruleProviderReply(
 		? latestUserText.includes("E2E_TOOL_TRIGGER_DAMAGED_LOG")
 			? { tool: "host_trigger_roleplay_event", args: { eventId: "first_meeting_remembered" } }
 			: latestUserText.includes("E2E_TOOL_SEARCH_OTHER_CONVERSATION")
-				? { tool: "host_search_conversation_history", args: { query: "E2E_HISTORY_MARKER", limit: 2 } }
+				? {
+						tool: "host_search_conversation_history",
+						args: { query: "E2E_HISTORY_MARKER", limit: 2 },
+					}
 				: undefined
 		: undefined;
 	if (scriptedTool) ruleToolTrace.push({ prompt, ...scriptedTool });
-	const content = hasToolResult && latestUserText.includes("E2E_TOOL_TRIGGER_DAMAGED_LOG")
-		? "E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE\n"
-		: hasToolResult && latestUserText.includes("E2E_TOOL_SEARCH_OTHER_CONVERSATION")
-			? currentTurnToolText.includes("conversation_history_read_disabled")
-				? "E2E_TOOL_SEARCH_OTHER_CONVERSATION_DENIED\n"
-				: currentTurnToolText.includes("E2E_HISTORY_MARKER")
-					? "E2E_TOOL_SEARCH_OTHER_CONVERSATION_FOUND\n"
-					: "E2E_TOOL_SEARCH_OTHER_CONVERSATION_UNEXPECTED\n"
-			: hasImage && prompt.includes("Describe only the visible content")
-				? "VISUAL_OBSERVATION: a red square\n"
-				: prompt.includes("E2E_CONTEXT_T1_EDITED") && prompt.includes("E2E_CONTEXT_T2")
-					? "E2E_CONTEXT_EDITED_OK\n"
-					: prompt.includes("E2E_CONTEXT_T1_ORIGINAL") && prompt.includes("E2E_CONTEXT_T2")
-						? "E2E_CONTEXT_TWO_TURNS_OK\n"
-			: prompt.includes("VISUAL_OBSERVATION: a red square")
-				? "MAIN_USED_VISUAL_OBSERVATION\n"
-				: prompt.includes("检查记忆上下文")
-					? memoryReply
-					: prompt.includes("EDITED_OK")
-						? "EDITED_OK\n"
-						: prompt.includes("STREAM_CHECK")
-							? "STREAM_ONE STREAM_TWO\n"
-							: prompt.includes("你是谁")
-								? "我是 E2E Rule Provider。\n"
-								: prompt.includes("E2E_OK")
-									? "E2E_OK\n"
-					: "RULE_OK\n";
+	const content =
+		hasToolResult && latestUserText.includes("E2E_TOOL_TRIGGER_DAMAGED_LOG")
+			? "E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE\n"
+			: hasToolResult && latestUserText.includes("E2E_TOOL_SEARCH_OTHER_CONVERSATION")
+				? currentTurnToolText.includes("conversation_history_read_disabled")
+					? "E2E_TOOL_SEARCH_OTHER_CONVERSATION_DENIED\n"
+					: currentTurnToolText.includes("E2E_HISTORY_MARKER")
+						? "E2E_TOOL_SEARCH_OTHER_CONVERSATION_FOUND\n"
+						: "E2E_TOOL_SEARCH_OTHER_CONVERSATION_UNEXPECTED\n"
+				: hasImage && prompt.includes("Describe only the visible content")
+					? "VISUAL_OBSERVATION: a red square\n"
+					: prompt.includes("E2E_CONTEXT_T1_EDITED") && prompt.includes("E2E_CONTEXT_T2")
+						? "E2E_CONTEXT_EDITED_OK\n"
+						: prompt.includes("E2E_CONTEXT_T1_ORIGINAL") && prompt.includes("E2E_CONTEXT_T2")
+							? "E2E_CONTEXT_TWO_TURNS_OK\n"
+							: prompt.includes("VISUAL_OBSERVATION: a red square")
+								? "MAIN_USED_VISUAL_OBSERVATION\n"
+								: prompt.includes("检查记忆上下文")
+									? memoryReply
+									: prompt.includes("EDITED_OK")
+										? "EDITED_OK\n"
+										: prompt.includes("STREAM_CHECK")
+											? "STREAM_ONE STREAM_TWO\n"
+											: prompt.includes("你是谁")
+												? "我是 E2E Rule Provider。\n"
+												: prompt.includes("E2E_OK")
+													? "E2E_OK\n"
+													: "RULE_OK\n";
 	if (scriptedTool) {
 		await streamToolCall(response, payload.stream, scriptedTool.tool, scriptedTool.args);
 		return;
@@ -277,7 +288,13 @@ async function streamToolCall(
 			object: "chat.completion",
 			created: 0,
 			model: "rule-model",
-			choices: [{ index: 0, message: { role: "assistant", content: null, tool_calls: [toolCall] }, finish_reason: "tool_calls" }],
+			choices: [
+				{
+					index: 0,
+					message: { role: "assistant", content: null, tool_calls: [toolCall] },
+					finish_reason: "tool_calls",
+				},
+			],
 			usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
 		});
 		return;
@@ -293,7 +310,13 @@ async function streamToolCall(
 			object: "chat.completion.chunk",
 			created: 0,
 			model: "rule-model",
-			choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, ...toolCall }] }, finish_reason: null }],
+			choices: [
+				{
+					index: 0,
+					delta: { role: "assistant", tool_calls: [{ index: 0, ...toolCall }] },
+					finish_reason: null,
+				},
+			],
 		})}\n\n`,
 	);
 	response.write(

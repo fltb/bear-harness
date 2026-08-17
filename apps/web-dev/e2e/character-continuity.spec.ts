@@ -1,5 +1,10 @@
 import { expect, type Page, test } from "playwright/test";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ensureReadyForConversation } from "./helpers";
+
+const characterRoot = fileURLToPath(new URL("../../../config/characters/jizhou", import.meta.url));
 
 async function rpc<T>(page: Page, token: string, channel: string, data: unknown): Promise<T> {
 	const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
@@ -11,7 +16,9 @@ async function rpc<T>(page: Page, token: string, channel: string, data: unknown)
 	return envelope.data as T;
 }
 
-test("committed character facts survive new conversations and edited message history", async ({ page }) => {
+test("committed character facts survive new conversations and edited message history", async ({
+	page,
+}) => {
 	await ensureReadyForConversation(page);
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
 	const list = await rpc<{ conversations: Array<{ id: string }> }>(
@@ -33,12 +40,9 @@ test("committed character facts survive new conversations and edited message his
 		eventId: "damaged_log_pulse_isolated",
 		dedupeKey: "e2e:pulse",
 	});
-	const conversationB = await rpc<{ id: string }>(
-		page,
-		bootstrap.token,
-		"conversation.create:v1",
-		{ title: "Second context" },
-	);
+	const conversationB = await rpc<{ id: string }>(page, bootstrap.token, "conversation.create:v1", {
+		title: "Second context",
+	});
 	const state = await rpc<{ state: { values: Record<string, unknown> } }>(
 		page,
 		bootstrap.token,
@@ -51,18 +55,22 @@ test("committed character facts survive new conversations and edited message his
 		conversationId: conversationA,
 		text: "历史搜索锚点 7F-19",
 	});
-	await expect.poll(async () =>
-		rpc<{ hits: Array<{ excerpt: string }> }>(page, bootstrap.token, "conversation.search:v1", {
-			query: "7F-19",
-		}),
-	).toMatchObject({ hits: [expect.objectContaining({ excerpt: expect.stringContaining("7F-19") })] });
+	await expect
+		.poll(async () =>
+			rpc<{ hits: Array<{ excerpt: string }> }>(page, bootstrap.token, "conversation.search:v1", {
+				query: "7F-19",
+			}),
+		)
+		.toMatchObject({
+			hits: [expect.objectContaining({ excerpt: expect.stringContaining("7F-19") })],
+		});
 
 	await rpc(page, bootstrap.token, "settings.set:v1", {
 		settings: { conversationHistoryReadEnabled: true },
 	});
-	await expect(
-		rpc(page, bootstrap.token, "settings.get:v1", {}),
-	).resolves.toMatchObject({ settings: { conversationHistoryReadEnabled: true } });
+	await expect(rpc(page, bootstrap.token, "settings.get:v1", {})).resolves.toMatchObject({
+		settings: { conversationHistoryReadEnabled: true },
+	});
 });
 
 test("scripted model invokes roleplay and cross-conversation tools with exact arguments", async ({
@@ -90,31 +98,35 @@ test("scripted model invokes roleplay and cross-conversation tools with exact ar
 		conversationId: conversationA,
 		text: "E2E_HISTORY_MARKER: the first conversation is searchable.",
 	});
-	await expect.poll(async () => latestAssistant(page, bootstrap.token, conversationA)).toBe("RULE_OK");
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationA))
+		.toBe("RULE_OK");
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId: conversationB.id,
 		text: "E2E_TOOL_TRIGGER_DAMAGED_LOG",
 	});
-	await expect.poll(async () => latestAssistant(page, bootstrap.token, conversationB.id)).toBe(
-		"E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE",
-	);
-	await expect.poll(async () =>
-		rpc<{ state: { values: Record<string, unknown> } }>(
-			page,
-			bootstrap.token,
-			"roleplay.get:v1",
-			{ conversationId: conversationB.id },
-		),
-	).toMatchObject({ state: { values: { trust: 1 } } });
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationB.id))
+		.toBe("E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE");
+	await expect
+		.poll(async () =>
+			rpc<{ state: { values: Record<string, unknown> } }>(
+				page,
+				bootstrap.token,
+				"roleplay.get:v1",
+				{ conversationId: conversationB.id },
+			),
+		)
+		.toMatchObject({ state: { values: { trust: 1 } } });
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId: conversationB.id,
 		text: "E2E_TOOL_SEARCH_OTHER_CONVERSATION",
 	});
-	await expect.poll(async () => latestAssistant(page, bootstrap.token, conversationB.id)).toBe(
-		"E2E_TOOL_SEARCH_OTHER_CONVERSATION_DENIED",
-	);
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationB.id))
+		.toBe("E2E_TOOL_SEARCH_OTHER_CONVERSATION_DENIED");
 
 	await rpc(page, bootstrap.token, "settings.set:v1", {
 		settings: { conversationHistoryReadEnabled: true },
@@ -126,12 +138,12 @@ test("scripted model invokes roleplay and cross-conversation tools with exact ar
 		conversationId: conversationB.id,
 		text: "E2E_TOOL_SEARCH_OTHER_CONVERSATION_ALLOWED",
 	});
-	await expect.poll(async () => latestAssistant(page, bootstrap.token, conversationB.id)).toBe(
-		"E2E_TOOL_SEARCH_OTHER_CONVERSATION_FOUND",
-	);
-	const trace = (await (
-		await page.request.get("/debug/rule-tool-trace", { headers })
-	).json()) as { calls: Array<{ tool: string; args: Record<string, unknown> }> };
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationB.id))
+		.toBe("E2E_TOOL_SEARCH_OTHER_CONVERSATION_FOUND");
+	const trace = (await (await page.request.get("/debug/rule-tool-trace", { headers })).json()) as {
+		calls: Array<{ tool: string; args: Record<string, unknown> }>;
+	};
 	expect(trace.calls).toEqual(
 		expect.arrayContaining([
 			expect.objectContaining({
@@ -146,7 +158,9 @@ test("scripted model invokes roleplay and cross-conversation tools with exact ar
 	);
 });
 
-test("adopted multi-turn history and a manual edit change the next model context", async ({ page }) => {
+test("adopted multi-turn history and a manual edit change the next model context", async ({
+	page,
+}) => {
 	await ensureReadyForConversation(page);
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
 	const list = await rpc<{ conversations: Array<{ id: string }> }>(
@@ -162,22 +176,30 @@ test("adopted multi-turn history and a manual edit change the next model context
 		conversationId,
 		text: "E2E_CONTEXT_T1_ORIGINAL",
 	});
-	await expect.poll(async () => latestAssistant(page, bootstrap.token, conversationId)).toBe("RULE_OK");
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
+		.toBe("RULE_OK");
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId,
 		text: "E2E_CONTEXT_T2",
 	});
-	await expect.poll(async () => latestAssistant(page, bootstrap.token, conversationId)).toBe(
-		"E2E_CONTEXT_TWO_TURNS_OK",
-	);
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
+		.toBe("E2E_CONTEXT_TWO_TURNS_OK");
 
 	const selected = await rpc<{
-		messages: Array<{ id: string; role: string; versions: Array<{ content: string; adopted: boolean }> }>;
+		messages: Array<{
+			id: string;
+			role: string;
+			versions: Array<{ content: string; adopted: boolean }>;
+		}>;
 	}>(page, bootstrap.token, "conversation.select:v1", { id: conversationId });
 	const firstUser = selected.messages.find(
 		(message) =>
 			message.role === "user" &&
-			message.versions.some((version) => version.adopted && version.content === "E2E_CONTEXT_T1_ORIGINAL"),
+			message.versions.some(
+				(version) => version.adopted && version.content === "E2E_CONTEXT_T1_ORIGINAL",
+			),
 	);
 	if (!firstUser) throw new Error("missing original context message");
 	await rpc(page, bootstrap.token, "message.edit:v1", {
@@ -186,14 +208,16 @@ test("adopted multi-turn history and a manual edit change the next model context
 		text: "E2E_CONTEXT_T1_EDITED",
 		isUserMessage: true,
 	});
-	await expect.poll(async () => latestAssistant(page, bootstrap.token, conversationId)).toBe("RULE_OK");
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
+		.toBe("RULE_OK");
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId,
 		text: "E2E_CONTEXT_T2_AFTER_EDIT",
 	});
-	await expect.poll(async () => latestAssistant(page, bootstrap.token, conversationId)).toBe(
-		"E2E_CONTEXT_EDITED_OK",
-	);
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
+		.toBe("E2E_CONTEXT_EDITED_OK");
 	const promptTrace = (await (
 		await page.request.get("/debug/rule-prompt-trace", {
 			headers: { "x-bear-web-dev-token": bootstrap.token },
@@ -224,7 +248,9 @@ test("archived conversations require an explicit search opt-in and deleted messa
 		conversationId: archived.id,
 		text: "E2E_ARCHIVED_SEARCH_MARKER",
 	});
-	await expect.poll(async () => latestAssistant(page, bootstrap.token, archived.id)).toBe("RULE_OK");
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, archived.id))
+		.toBe("RULE_OK");
 	await rpc(page, bootstrap.token, "conversation.archive:v1", { id: archived.id, archived: true });
 	await expect(
 		rpc<{ hits: Array<{ conversationId: string }> }>(
@@ -268,14 +294,22 @@ test("an explicit transcript branch cannot commit roleplay facts", async ({ page
 		conversationId,
 		text: "E2E_BRANCH_SOURCE",
 	});
-	await expect.poll(async () => latestAssistant(page, bootstrap.token, conversationId)).toBe("RULE_OK");
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
+		.toBe("RULE_OK");
 	const selected = await rpc<{
-		messages: Array<{ id: string; role: string; versions: Array<{ content: string; adopted: boolean }> }>;
+		messages: Array<{
+			id: string;
+			role: string;
+			versions: Array<{ content: string; adopted: boolean }>;
+		}>;
 	}>(page, bootstrap.token, "conversation.select:v1", { id: conversationId });
 	const source = selected.messages.find(
 		(message) =>
 			message.role === "user" &&
-			message.versions.some((version) => version.adopted && version.content === "E2E_BRANCH_SOURCE"),
+			message.versions.some(
+				(version) => version.adopted && version.content === "E2E_BRANCH_SOURCE",
+			),
 	);
 	if (!source) throw new Error("missing branch source message");
 	await rpc(page, bootstrap.token, "message.branch:v1", {
@@ -296,7 +330,61 @@ test("an explicit transcript branch cannot commit roleplay facts", async ({ page
 	});
 });
 
-async function latestAssistant(page: Page, token: string, conversationId: string): Promise<string | undefined> {
+test("imported package plugins require explicit trust before they can be enabled", async ({
+	page,
+}) => {
+	await ensureReadyForConversation(page);
+	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	const files = packageFiles(characterRoot);
+	const manifest = files.find((file) => file.path.endsWith("/character.yaml"));
+	if (!manifest) throw new Error("missing character manifest");
+	manifest.base64 = Buffer.from(
+		Buffer.from(manifest.base64, "base64")
+			.toString("utf8")
+			.replace("id: jizhou", "id: e2e-plugin-trust"),
+	).toString("base64");
+
+	await expect(rpc(page, bootstrap.token, "character.import:v1", { files })).resolves.toMatchObject(
+		{
+			character: { id: "e2e-plugin-trust" },
+		},
+	);
+	await expect(
+		rpc<{ trust: { origin: string; pluginsPresent: boolean; trusted: boolean } }>(
+			page,
+			bootstrap.token,
+			"character.pluginTrustGet:v1",
+			{ characterId: "e2e-plugin-trust" },
+		),
+	).resolves.toMatchObject({
+		trust: { origin: "imported", pluginsPresent: true, trusted: false },
+	});
+	await expect(
+		rpc<{ trust: { trusted: boolean } }>(page, bootstrap.token, "character.pluginTrustConfirm:v1", {
+			characterId: "e2e-plugin-trust",
+		}),
+	).resolves.toMatchObject({ trust: { trusted: true } });
+});
+
+function packageFiles(root: string, directory = root): Array<{ path: string; base64: string }> {
+	return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+		const path = join(directory, entry.name);
+		return entry.isDirectory()
+			? packageFiles(root, path)
+			: [
+					{
+						path: `package/${relative(root, path)}`,
+						base64: readFileSync(path).toString("base64"),
+					},
+				];
+	});
+}
+
+async function latestAssistant(
+	page: Page,
+	token: string,
+	conversationId: string,
+): Promise<string | undefined> {
 	const selected = await rpc<{
 		messages: Array<{ role: string; versions: Array<{ content: string; adopted: boolean }> }>;
 	}>(page, token, "conversation.select:v1", { id: conversationId });
