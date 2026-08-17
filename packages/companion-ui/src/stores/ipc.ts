@@ -148,4 +148,6 @@ export type CharacterRuntimeState = Wire.CharacterRuntimeState;
 export type CharacterRuntimeSnapshot = Wire.CharacterRuntimeSnapshot;
 export type CharacterSummary = Wire.CharacterSummary;
 export type CharacterListData = Wire.CharacterListResponse;
+export type CharacterDraft = Wire.CharacterDraft;
+export type CharacterDraftFiles = Wire.CharacterDraft["files"];
 export type Snapshot = Wire.SnapshotResponse;

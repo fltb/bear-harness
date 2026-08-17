@@ -95,6 +95,22 @@ export const zhTW = {
 		"roleImportDone": "角色包已匯入",
 		"roleImportFailed": "角色包匯入失敗："
 	},
+	"packageWorkshop": {
+		"title": "角色包工坊",
+		"note": "草稿儲存和圖片上傳會建立不可變 revision；校驗通過後才能釋出並激活角色。",
+		"create": "建立草稿",
+		"created": "已建立草稿",
+		"revision": "版本 {revision}",
+		"manifest": "角色清單 character.yaml",
+		"save": "儲存清單",
+		"saved": "已儲存草稿版本",
+		"addImages": "新增圖片",
+		"imagesSaved": "圖片已儲存到草稿",
+		"validate": "校驗角色包",
+		"validated": "角色包校驗通過",
+		"publish": "釋出並激活",
+		"published": "角色包已釋出並激活"
+	},
 	"webDev": {
 		"ariaLabel": "Web Dev 除錯工具",
 		"title": "真實 Host 除錯",

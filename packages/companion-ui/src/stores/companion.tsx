@@ -45,6 +45,8 @@ import {
 	type CanonModuleKind,
 	type CanonSource,
 	type CharacterDisplay,
+	type CharacterDraft,
+	type CharacterDraftFiles,
 	type CharacterListData,
 	type CharacterRuntimeState,
 	type CharacterSummary,
@@ -261,6 +263,16 @@ export interface CharacterApi {
 	list(): Promise<CharacterListData>;
 	activate(characterId: string): Promise<void>;
 	import(files: Array<{ path: string; base64: string }>): Promise<void>;
+	draftCreate(params?: { basePackageId?: string; locale?: string }): Promise<CharacterDraft>;
+	draftGet(id: string): Promise<CharacterDraft>;
+	draftPatch(id: string, files: CharacterDraftFiles): Promise<CharacterDraft>;
+	draftUploadAssets(
+		id: string,
+		expectedRevision: number,
+		assets: Array<{ path: string; mime: string; base64: string }>,
+	): Promise<CharacterDraft>;
+	draftValidate(id: string, expectedRevision: number): Promise<CharacterDraft>;
+	draftPublish(id: string, expectedRevision: number): Promise<CharacterDraft>;
 }
 export interface CanonApi {
 	sources(): CanonSource[];
@@ -1302,6 +1314,46 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		import: async (files) => {
 			await invoke(client, () => client.character.import({ files }));
 			await refreshCharacters();
+		},
+		draftCreate: async (params = {}) => {
+			const { draft } = await invoke(client, () => client.character.draftCreate(params));
+			return draft;
+		},
+		draftGet: async (id) => {
+			const { draft } = await invoke(client, () => client.character.draftGet({ id }));
+			return draft;
+		},
+		draftPatch: async (id, files) => {
+			const { draft } = await invoke(client, () => client.character.draftPatch({ id, files }));
+			return draft;
+		},
+		draftUploadAssets: async (id, expectedRevision, assets) => {
+			const { draft } = await invoke(client, () =>
+				client.character.draftUploadAssets({ id, expectedRevision, assets }),
+			);
+			return draft;
+		},
+		draftValidate: async (id, expectedRevision) => {
+			const { draft } = await invoke(client, () =>
+				client.character.draftValidate({ id, expectedRevision }),
+			);
+			return draft;
+		},
+		draftPublish: async (id, expectedRevision) => {
+			const { draft } = await invoke(client, () =>
+				client.character.draftPublish({ id, expectedRevision }),
+			);
+			conversationSelectionChangedLocally = true;
+			setState("activeConversationId", null);
+			setState("activeBranchId", null);
+			setState("activeMessages", []);
+			await Promise.all([
+				onboardingStore.resync(),
+				refreshCharacters(),
+				refreshConversations(),
+				Promise.resolve(snapshotActions.refetch()),
+			]);
+			return draft;
 		},
 	};
 

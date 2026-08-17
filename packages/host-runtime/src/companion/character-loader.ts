@@ -733,6 +733,21 @@ export class CharacterLoader {
 		}
 	}
 
+	/** Validate an import-shaped package without retaining it in the installed library. */
+	validate(files: Array<{ path: string; base64: string }>): CharacterPackage {
+		if (!this.installedRoot) throw { kind: "unavailable", reason: "character_import_unavailable" };
+		const validationRoot = join(this.installedRoot, `.validate-${randomUUID()}`);
+		try {
+			const validator = new CharacterLoader(
+				join(validationRoot, "source"),
+				join(validationRoot, "installed"),
+			);
+			return validator.install(files);
+		} finally {
+			rmSync(validationRoot, { recursive: true, force: true });
+		}
+	}
+
 	activate(db: AppDatabase, eventBus: EventBus, character: CharacterPackage): void {
 		this.seed(db, eventBus, character);
 		db.insert(activeCharacter)

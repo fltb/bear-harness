@@ -17,6 +17,10 @@ import type { ArtifactStore } from "./artifacts/index.js";
 import type { CanonHubService } from "./canon/service.js";
 import type { CommissionService, RunStatus } from "./commissions/service.js";
 import type { CharacterBehaviorService } from "./companion/character-behavior.js";
+import type {
+	CharacterDraftFiles,
+	CharacterDraftService,
+} from "./companion/character-draft-service.js";
 import type { CharacterLoader } from "./companion/character-loader.js";
 import type { FirstMeetingMachine } from "./companion/first-meeting.js";
 import type { RoleplayService } from "./companion/roleplay-service.js";
@@ -48,6 +52,7 @@ export interface HostCompositionContext {
 	providers: ProviderCatalog;
 	characterLoader: CharacterLoader;
 	characterBehavior: CharacterBehaviorService;
+	drafts: CharacterDraftService;
 	roleplay: RoleplayService;
 	defaultCharacterId: string;
 }
@@ -108,6 +113,39 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		s.characterLoader.seed(s.orm, s.eventBus, character);
 		s.eventBus.publish("character.imported", { characterId: character.id });
 		return { character: s.characterLoader.display(character) };
+	});
+	dispatcher.registerHandler(RPC.character.draftCreate, async (_p) => {
+		const { basePackageId, locale } = _p as { basePackageId?: string; locale?: string };
+		return { draft: s.drafts.create({ basePackageId, locale }) };
+	});
+	dispatcher.registerHandler(RPC.character.draftGet, async (_p) => {
+		const { id } = _p as { id: string };
+		return { draft: s.drafts.get(id) };
+	});
+	dispatcher.registerHandler(RPC.character.draftPatch, async (_p) => {
+		const { id, files } = _p as { id: string; files: CharacterDraftFiles };
+		return { draft: s.drafts.applyPatch(id, files) };
+	});
+	dispatcher.registerHandler(RPC.character.draftUploadAssets, async (_p) => {
+		const { id, expectedRevision, assets } = _p as {
+			id: string;
+			expectedRevision: number;
+			assets: Array<{ path: string; mime: string; base64: string }>;
+		};
+		return { draft: s.drafts.uploadAssets(id, expectedRevision, assets) };
+	});
+	dispatcher.registerHandler(RPC.character.draftValidate, async (_p) => {
+		const { id, expectedRevision } = _p as { id: string; expectedRevision: number };
+		return { draft: s.drafts.validate(id, expectedRevision) };
+	});
+	dispatcher.registerHandler(RPC.character.draftPublish, async (_p) => {
+		const { id, expectedRevision } = _p as { id: string; expectedRevision: number };
+		const result = s.drafts.publish(id, expectedRevision);
+		s.characterLoader.activate(s.orm, s.eventBus, result.character);
+		await s.supervisor.stop();
+		s.supervisor.configureRuntime(s.characterLoader.piResources(result.character));
+		await s.supervisor.start();
+		return { draft: result.draft, character: s.characterLoader.display(result.character) };
 	});
 	dispatcher.registerHandler(RPC.roleplay.get, async (_p) => {
 		const companionId = await getCompanionId(s);
@@ -682,8 +720,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		}
 		const nextStateData = s.onboarding.getState(companionId).stateData;
 		const nextSettings = {
-			relationshipMemoryEnabled:
-				nextStateData.decisions.relationship_memory_enabled ?? false,
+			relationshipMemoryEnabled: nextStateData.decisions.relationship_memory_enabled ?? false,
 			conversationHistoryReadEnabled:
 				nextStateData.decisions.conversation_history_read_enabled ?? false,
 		};

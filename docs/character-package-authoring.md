@@ -55,6 +55,21 @@ my-character/
 - 关闭关系记忆，确认它从下一轮上下文消失但未被删除。
 - 确认每个素材、Skill 和媒体引用都被打包。
 
+## 工坊草稿与发布
+
+工坊不会直接覆写角色库中的目录。每次创建得到一个草稿和 revision `1`；保存文件会产生新的不可变 revision。编辑器提交时必须携带自己读取到的 `expectedRevision`。若其他编辑先保存过，Host 返回 `character_draft_revision_mismatch`，编辑器必须重新读取，而不能静默覆盖。
+
+工坊直接选择、预览和替换图片。图片沿用对话附件的 `path + mime + base64` 传输约定；文本编辑器只处理文本。Host 在草稿 revision 内部保留精确字节，因此预览、校验和发布使用同一份素材，不会因字符串转换损坏 PNG、WebP 等文件。
+
+推荐的工坊操作顺序：
+
+1. `character.draftCreate:v1` 创建草稿，可记录原型角色的 `basePackageId`。
+2. `character.draftPatch:v1` 保存一批文件，得到新的 `currentRevision`。
+3. `character.draftValidate:v1` 携带该 revision。Host 会在临时目录按正式导入规则完整解析，成功后状态变为 `ready_to_publish`。
+4. `character.draftPublish:v1` 再次携带同一 revision。Host 会再次校验、原子安装角色包、将草稿置为 `published`，并激活新角色。
+
+校验不写入角色库，发布才是副作用边界。发布中的同名角色包会报冲突，不能覆盖已经安装的包；请使用新的稳定 ID 和版本，而不是把不同人物伪装成一次更新。工坊 Agent 只能调用这些受限 Host 操作来形成建议或补丁，不能自行发布、读取本地文件或改写其他对话。
+
 ## 社区约定
 
 使用稳定的创作者前缀 ID，明确维护版本和改动记录，标注文字与视觉素材来源。角色包不得暗示自己能读取用户文件、账户、私密对话或执行现实工具。一个社区包应可独立审查：所有状态转移和素材引用都能从包内容直接看见。

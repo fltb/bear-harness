@@ -330,6 +330,59 @@ export const CharacterImportRequest = z.strictObject({
 		.min(1)
 		.max(500),
 });
+const CharacterDraftFile = z.strictObject({
+	encoding: z.enum(["utf8", "base64"]),
+	content: z.string().max(8_000_000),
+});
+const CharacterDraftFiles = z.record(z.string().min(1).max(512), CharacterDraftFile);
+export const CharacterDraft = z.strictObject({
+	id: z.string().min(1).max(64),
+	basePackageId: z.string().min(1).max(64).optional(),
+	status: z.enum(["draft", "validating", "ready_to_publish", "published"]),
+	locale: z.string().min(2).max(35),
+	currentRevision: z.number().int().min(1),
+	files: CharacterDraftFiles,
+});
+export const CharacterDraftCreateRequest = z.strictObject({
+	basePackageId: z.string().min(1).max(64).optional(),
+	locale: z.string().min(2).max(35).optional(),
+});
+export const CharacterDraftGetRequest = z.strictObject({ id: z.string().min(1).max(64) });
+export const CharacterDraftPatchRequest = z
+	.strictObject({ id: z.string().min(1).max(64), files: CharacterDraftFiles })
+	.superRefine(({ files }, context) => {
+		const count = Object.keys(files).length;
+		if (count < 1 || count > 100)
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "files must contain 1 to 100 entries",
+				path: ["files"],
+			});
+	});
+export const CharacterDraftResponse = z.strictObject({ draft: CharacterDraft });
+export const CharacterDraftUploadAssetsRequest = z.strictObject({
+	id: z.string().min(1).max(64),
+	expectedRevision: z.number().int().min(1),
+	assets: z
+		.array(
+			z.strictObject({
+				path: z.string().min(1).max(512),
+				mime: z.string().min(3).max(128),
+				base64: z.string().min(1).max(8_000_000),
+			}),
+		)
+		.min(1)
+		.max(100),
+});
+export const CharacterDraftValidateRequest = z.strictObject({
+	id: z.string().min(1).max(64),
+	expectedRevision: z.number().int().min(1),
+});
+export const CharacterDraftPublishRequest = CharacterDraftValidateRequest;
+export const CharacterDraftPublishResponse = z.strictObject({
+	draft: CharacterDraft,
+	character: CharacterDisplay,
+});
 export const OnboardingResponse = z.strictObject({
 	status: OnboardingStatus,
 	currentStepId: z
@@ -1186,6 +1239,32 @@ export const RPC = {
 		list: endpoint("character.list:v1", CharacterListRequest, CharacterListResponse),
 		activate: endpoint("character.activate:v1", CharacterActivateRequest, CharacterResponse),
 		import: endpoint("character.import:v1", CharacterImportRequest, CharacterResponse),
+		draftCreate: endpoint(
+			"character.draftCreate:v1",
+			CharacterDraftCreateRequest,
+			CharacterDraftResponse,
+		),
+		draftGet: endpoint("character.draftGet:v1", CharacterDraftGetRequest, CharacterDraftResponse),
+		draftPatch: endpoint(
+			"character.draftPatch:v1",
+			CharacterDraftPatchRequest,
+			CharacterDraftResponse,
+		),
+		draftUploadAssets: endpoint(
+			"character.draftUploadAssets:v1",
+			CharacterDraftUploadAssetsRequest,
+			CharacterDraftResponse,
+		),
+		draftValidate: endpoint(
+			"character.draftValidate:v1",
+			CharacterDraftValidateRequest,
+			CharacterDraftResponse,
+		),
+		draftPublish: endpoint(
+			"character.draftPublish:v1",
+			CharacterDraftPublishRequest,
+			CharacterDraftPublishResponse,
+		),
 	},
 	roleplay: {
 		get: endpoint("roleplay.get:v1", RoleplayGetRequest, RoleplayResponse),
@@ -1214,7 +1293,11 @@ export const RPC = {
 		rename: endpoint("conversation.rename:v1", ConversationRenameRequest, EmptyResponse),
 		archive: endpoint("conversation.archive:v1", ConversationArchiveRequest, EmptyResponse),
 		delete: endpoint("conversation.delete:v1", ConversationDeleteRequest, EmptyResponse),
-		search: endpoint("conversation.search:v1", ConversationSearchRequest, ConversationSearchResponse),
+		search: endpoint(
+			"conversation.search:v1",
+			ConversationSearchRequest,
+			ConversationSearchResponse,
+		),
 	},
 	message: {
 		send: endpoint("message.send:v1", MessageSendRequest, MessageSendResponse),

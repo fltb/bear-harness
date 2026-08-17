@@ -90,6 +90,17 @@ export type CharacterDisplay = z.infer<typeof schema.CharacterDisplay>;
 export type CharacterTheme = z.infer<typeof schema.CharacterTheme>;
 export type CharacterOnboardingFlow = z.infer<typeof schema.CharacterOnboardingFlow>;
 export type CharacterActivateRequest = z.infer<typeof schema.CharacterActivateRequest>;
+export type CharacterDraft = z.infer<typeof schema.CharacterDraft>;
+export type CharacterDraftCreateRequest = z.infer<typeof schema.CharacterDraftCreateRequest>;
+export type CharacterDraftGetRequest = z.infer<typeof schema.CharacterDraftGetRequest>;
+export type CharacterDraftPatchRequest = z.infer<typeof schema.CharacterDraftPatchRequest>;
+export type CharacterDraftUploadAssetsRequest = z.infer<
+	typeof schema.CharacterDraftUploadAssetsRequest
+>;
+export type CharacterDraftValidateRequest = z.infer<typeof schema.CharacterDraftValidateRequest>;
+export type CharacterDraftPublishRequest = z.infer<typeof schema.CharacterDraftPublishRequest>;
+export type CharacterDraftResponse = z.infer<typeof schema.CharacterDraftResponse>;
+export type CharacterDraftPublishResponse = z.infer<typeof schema.CharacterDraftPublishResponse>;
 export type OnboardingResponse = z.infer<typeof schema.OnboardingResponse>;
 export type OnboardingStateData = z.infer<typeof schema.OnboardingStateData>;
 

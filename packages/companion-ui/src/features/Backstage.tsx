@@ -8,6 +8,7 @@ import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, onMount, Show } from "solid-js";
 import { type CharacterDisplay, useCompanionStore } from "../stores/companion.js";
 import { CanonStudio } from "./CanonStudio.js";
+import { CharacterPackageWorkshop } from "./CharacterPackageWorkshop.js";
 import { MemoryEntryList, MemorySheet } from "./MemorySheet.js";
 import { SettingsSheet } from "./SettingsSheet.js";
 
@@ -86,6 +87,7 @@ export function Backstage(props: {
 							<SettingsSheet />
 						</Tabs.Content>
 						<Tabs.Content value="studio" class="tab-panel">
+							<CharacterPackageWorkshop />
 							<CanonStudio />
 						</Tabs.Content>
 					</Tabs>

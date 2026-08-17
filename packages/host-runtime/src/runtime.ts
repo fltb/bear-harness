@@ -21,14 +21,15 @@ import { ArtifactStore } from "./artifacts/index.js";
 import { CanonHubService } from "./canon/service.js";
 import { CommissionService } from "./commissions/service.js";
 import { CharacterBehaviorService } from "./companion/character-behavior.js";
+import { CharacterDraftService } from "./companion/character-draft-service.js";
 import { CharacterLoader } from "./companion/character-loader.js";
 import { ContextPackCompiler } from "./companion/context-pack.js";
-import { ConversationRepository } from "./conversations/repository.js";
 import { FirstMeetingMachine } from "./companion/first-meeting.js";
 import { RoleplayService } from "./companion/roleplay-service.js";
 import { CompanionSupervisor } from "./companion/supervisor.js";
 import { TurnPipeline } from "./companion/turn-pipeline.js";
 import { type HostCompositionContext, wireHostHandlers } from "./composition.js";
+import { ConversationRepository } from "./conversations/repository.js";
 import { Dispatcher, type RpcResponse } from "./dispatcher.js";
 import { CodexAdapter } from "./executors/codex-adapter.js";
 import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
@@ -102,6 +103,7 @@ export class HostRuntime {
 		const characterLoader = new CharacterLoader(characterRoot, join(dataDir, "characters"));
 		const supervisor = new CompanionSupervisor(dataDir, eventBus, providers);
 		const roleplay = new RoleplayService(db.orm);
+		const drafts = new CharacterDraftService(db.orm, characterLoader);
 		const characterBehavior = new CharacterBehaviorService(
 			db.orm,
 			eventBus,
@@ -264,6 +266,7 @@ export class HostRuntime {
 			providers,
 			characterLoader,
 			characterBehavior,
+			drafts,
 			roleplay,
 			defaultCharacterId: options.productConfig.defaultCharacterId,
 		};

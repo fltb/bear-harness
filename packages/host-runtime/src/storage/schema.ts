@@ -716,7 +716,9 @@ export const characterDraftRevisions = sqliteTable(
 			.notNull()
 			.references(() => characterDrafts.id, { onDelete: "cascade" }),
 		revision: integer().notNull(),
-		filesJson: text("files_json", { mode: "json" }).$type<Record<string, string>>().notNull(),
+		filesJson: text("files_json", { mode: "json" })
+			.$type<Record<string, { encoding: "utf8" | "base64"; content: string }>>()
+			.notNull(),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	},
 	(table) => [primaryKey({ columns: [table.draftId, table.revision] })],
