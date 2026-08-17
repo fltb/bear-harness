@@ -608,6 +608,29 @@ export const MemoryEntry = z.strictObject({
 	pinned: z.boolean(),
 	createdAt: z.string().max(64),
 });
+export const MemoryCaptureCreatedBy = z.union([
+	z.literal("user_capture"),
+	z.literal("assistant_tool"),
+]);
+export type MemoryCaptureCreatedBy = z.infer<typeof MemoryCaptureCreatedBy>;
+const MemoryBackendId = z.string().min(1).max(128);
+const PiSessionEntryId = z.string().min(1).max(128);
+export const MemoryCaptureRequest = z.strictObject({
+	conversationId: ConversationId,
+	entryId: PiSessionEntryId,
+});
+export type MemoryCaptureRequest = z.infer<typeof MemoryCaptureRequest>;
+export const MemoryCaptureResponse = z.strictObject({
+	memoryId: MemoryBackendId,
+	sourceEntryId: PiSessionEntryId,
+	createdBy: MemoryCaptureCreatedBy,
+});
+export type MemoryCaptureResponse = z.infer<typeof MemoryCaptureResponse>;
+export const MemoryInvalidateRequest = z.strictObject({
+	memoryId: MemoryBackendId,
+	replacementMemoryId: MemoryBackendId.optional(),
+});
+export type MemoryInvalidateRequest = z.infer<typeof MemoryInvalidateRequest>;
 export const MemoryListCandidatesRequest = z.strictObject({});
 export const MemoryListCandidatesResponse = z.strictObject({
 	candidates: z.array(MemoryCandidate).max(MAX_ARRAY_LENGTH),
@@ -1373,6 +1396,8 @@ export const RPC = {
 		),
 		search: endpoint("memory.search:v1", MemorySearchRequest, MemorySearchResponse),
 		list: endpoint("memory.list:v1", MemoryListRequest, MemoryListResponse),
+		capture: endpoint("memory.capture:v1", MemoryCaptureRequest, MemoryCaptureResponse),
+		invalidate: endpoint("memory.invalidate:v1", MemoryInvalidateRequest, EmptyResponse),
 		pin: endpoint("memory.pin:v1", MemoryPinRequest, EmptyResponse),
 		forget: endpoint("memory.forget:v1", MemoryForgetRequest, EmptyResponse),
 		exclude: endpoint("memory.exclude:v1", MemoryExcludeRequest, EmptyResponse),

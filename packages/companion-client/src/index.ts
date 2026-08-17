@@ -8,5 +8,11 @@
  */
 
 export type { IpcError } from "@bear-harness/protocol";
+export type {
+	MemoryCaptureCreatedBy,
+	MemoryCaptureRequest,
+	MemoryCaptureResponse,
+	MemoryInvalidateRequest,
+} from "@bear-harness/protocol/schema";
 export { type CompanionClient, createCompanionClient, type HostTransport } from "./client.js";
 export { unwrap } from "./unwrap.js";

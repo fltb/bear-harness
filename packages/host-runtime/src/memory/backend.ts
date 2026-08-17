@@ -157,8 +157,16 @@ export interface MemoryUpdateRequest extends MemoryMutationTarget {
 /** Permanently remove one backend-owned memory ID. */
 export type MemoryForgetRequest = MemoryMutationTarget;
 
-/** Mark one backend-owned memory ID as no longer eligible for recall. */
+/**
+ * Mark one backend-owned memory ID as no longer eligible for recall.
+ *
+ * When present, `replacementMemoryId` is the provider-owned `MemoryId` of
+ * the durable replacement memory. It is not a Host metadata row or Host
+ * metadata identifier; providers may use it to preserve a native revision
+ * chain. Both memory IDs belong to the request's bank scope.
+ */
 export interface MemoryInvalidateRequest extends MemoryMutationTarget {
+	readonly replacementMemoryId?: MemoryId;
 	readonly reason?: string;
 }
 
