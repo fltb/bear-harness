@@ -22,6 +22,7 @@ export interface CompanionRuntimeConfig {
 	skillPaths: string[];
 	pluginPaths: string[];
 	appendSystemPrompt: string;
+	hostTools: string[];
 }
 
 type HostToolHandler = (
@@ -49,6 +50,7 @@ export class CompanionSupervisor {
 		skillPaths: [],
 		pluginPaths: [],
 		appendSystemPrompt: "",
+		hostTools: [],
 	};
 	private hostToolHandler: HostToolHandler | null = null;
 	private modelSelectionHandler: ModelSelectionHandler | null = null;
@@ -75,6 +77,7 @@ export class CompanionSupervisor {
 			skillPaths: [...config.skillPaths],
 			pluginPaths: [...config.pluginPaths],
 			appendSystemPrompt: config.appendSystemPrompt,
+			hostTools: [...config.hostTools],
 		};
 	}
 
@@ -91,11 +94,13 @@ export class CompanionSupervisor {
 		this.contextHandler = handler;
 	}
 
+
 	/** Mark the Host runtime available; the Pi session is loaded on first turn. */
 	async start(): Promise<void> {
 		if (this.state === "running") return;
 		Object.assign(globalThis, {
-			bearHostCall: (tool: string, args: unknown) => this.callHost(tool, args),
+			bearHostCall: (tool: string, args: unknown) =>
+				this.callHost(this.activeConversationId ?? "", tool, args),
 		});
 		this.state = "running";
 		this.eventBus.publish("companion.state_changed", { state: "running" });
@@ -131,11 +136,12 @@ export class CompanionSupervisor {
 		}
 		const session = new CoreSession(
 			modelRuntime,
-			[this.skillReadTool(), ...this.hostTools(), ...pluginTools],
+			[this.skillReadTool(), ...this.hostTools(conversationId), ...pluginTools],
 			[
 				"You are the local Companion runtime. Use only injected Host tools for application state.",
 				"Use the read tool to load an applicable role Skill before following it.",
 				"When the user asks for real-world work, call host_propose_work with a precise plain-language scope; never claim the work started before user approval.",
+				"When a user asks you to remember the current moment, call host_remember. It saves the current adopted turn directly; never invent or supply source, companion, or user IDs.",
 				"Never claim a state change unless its Host tool succeeded.",
 				this.runtimeConfig.appendSystemPrompt,
 				roleSkillPrompt(skills),
@@ -173,7 +179,7 @@ export class CompanionSupervisor {
 		this.eventBus.publish("companion.state_changed", { state: "stopped" });
 	}
 
-	/** Discard a transcript when the Host changes its adopted history. */
+	/** Discard a session for a deleted conversation. */
 	invalidateConversation(conversationId: string): void {
 		const session = this.sessions.get(conversationId);
 		if (!session) return;
@@ -182,6 +188,7 @@ export class CompanionSupervisor {
 		this.sessions.delete(conversationId);
 		if (this.session === session) this.session = null;
 	}
+
 
 	/** Dispatch Host commands to the local Pi session. */
 	sendCommand(command: unknown): void {
@@ -318,6 +325,7 @@ export class CompanionSupervisor {
 		}
 	}
 
+
 	private async selectRoute(
 		modelRuntime: Models,
 		session: CoreSession,
@@ -395,57 +403,59 @@ export class CompanionSupervisor {
 		}
 	}
 
-	private hostTools() {
+	private hostTools(conversationId: string) {
 		return [
 			this.hostTool(
+				conversationId,
 				"host_get_state",
 				"Read character UI state",
 				"Read the active role's permitted scenes and expressions, including package-authored useWhen guidance, plus the current UI state. Read this before choosing a visual change.",
 				toolParameters(z.strictObject({})),
 			),
 			this.hostTool(
+				conversationId,
 				"host_set_scene",
 				"Set character scene",
 				"Change the active scene only when its package-authored useWhen guidance matches the conversation. Use an ID returned by host_get_state.",
 				toolParameters(z.strictObject({ sceneId: z.string().min(1).max(64) })),
 			),
 			this.hostTool(
+				conversationId,
 				"host_set_expression",
 				"Set character expression",
 				"Change the active expression only when its package-authored useWhen guidance matches the conversation. Use an ID returned by host_get_state.",
 				toolParameters(z.strictObject({ visualState: z.string().min(1).max(64) })),
 			),
 			this.hostTool(
+				conversationId,
 				"host_get_roleplay_state",
 				"Read roleplay state",
 				"Read package-declared relationship, story, and unlock state.",
 				toolParameters(z.strictObject({})),
 			),
 			this.hostTool(
+				conversationId,
 				"host_trigger_roleplay_event",
 				"Trigger roleplay event",
 				"Queue a declared deterministic roleplay event. Effects commit only with the completed assistant reply.",
 				toolParameters(z.strictObject({ eventId: z.string().min(1).max(64) })),
 			),
 			this.hostTool(
-				"host_show_cg",
-				"Show CG",
-				"Present a declared CG or animated image without exposing package paths.",
-				toolParameters(z.strictObject({ mediaId: z.string().min(1).max(64) })),
-			),
-			this.hostTool(
+				conversationId,
 				"host_play_media",
 				"Play role media",
 				"Present declared image, animation, audio, or video media.",
 				toolParameters(z.strictObject({ mediaId: z.string().min(1).max(64) })),
 			),
 			this.hostTool(
+				conversationId,
 				"host_present_choices",
 				"Present choices",
 				"Present a declared choice set; free text remains available.",
 				toolParameters(z.strictObject({ choiceSetId: z.string().min(1).max(64) })),
 			),
 			this.hostTool(
+				conversationId,
 				"host_search_conversation_history",
 				"Search conversation history",
 				"Search adopted messages from this character's other conversations only when the user explicitly asks to recall them.",
@@ -457,6 +467,7 @@ export class CompanionSupervisor {
 				),
 			),
 			this.hostTool(
+				conversationId,
 				"host_search_canon",
 				"Search original-work canon",
 				"Retrieve package-installed original-work evidence with source citations. An empty result means the package has no supporting original text; never invent it.",
@@ -468,6 +479,14 @@ export class CompanionSupervisor {
 				),
 			),
 			this.hostTool(
+				conversationId,
+				"host_remember",
+				"Remember this moment",
+				"Directly save the current adopted turn to relationship memory when the user explicitly asks you to remember it. The Host chooses the source and identity; do not provide IDs.",
+				toolParameters(z.strictObject({})),
+			),
+			this.hostTool(
+				conversationId,
 				"host_propose_work",
 				"Propose real-world work for user approval",
 				"Create a plain-language action proposal when the user asks for real work. This never starts work; the user must approve the exact read, write, network and tool scope in the system UI.",
@@ -482,10 +501,18 @@ export class CompanionSupervisor {
 					}),
 				),
 			),
-		];
+		].filter(
+			(tool) => this.runtimeConfig.hostTools.includes(tool.name) || tool.name === "host_remember",
+		);
 	}
 
-	private hostTool(name: string, label: string, description: string, parameters: never) {
+	private hostTool(
+		conversationId: string,
+		name: string,
+		label: string,
+		description: string,
+		parameters: never,
+	) {
 		return {
 			name,
 			label,
@@ -493,10 +520,9 @@ export class CompanionSupervisor {
 			promptSnippet: description,
 			parameters,
 			execute: async (_toolCallId: string, params: unknown) =>
-				this.toolResult(await this.callHost(name, params)),
+				this.toolResult(await this.callHost(conversationId, name, params)),
 		};
 	}
-
 	private skillReadTool() {
 		return {
 			name: "read",
@@ -517,8 +543,12 @@ export class CompanionSupervisor {
 		};
 	}
 
-	private async callHost(tool: string, args: unknown): Promise<CompanionHostToolResult> {
-		if (!this.activeConversationId) {
+	private async callHost(
+		conversationId: string,
+		tool: string,
+		args: unknown,
+	): Promise<CompanionHostToolResult> {
+		if (!conversationId) {
 			return {
 				ok: false,
 				code: "no_active_conversation",
@@ -532,7 +562,7 @@ export class CompanionSupervisor {
 				message: "Host controls are unavailable.",
 			};
 		}
-		return this.hostToolHandler({ conversationId: this.activeConversationId, tool, args });
+		return this.hostToolHandler({ conversationId, tool, args });
 	}
 
 	private readRoleSkill(params: { path: string; offset?: number; limit?: number }) {
@@ -698,5 +728,10 @@ class CoreSession {
 
 	dispose(): void {
 		if (!this.agent.state.isStreaming) this.agent.reset();
+	}
+
+	clearTranscript(): void {
+		this.agent.state.messages = [];
+		this.agent.clearAllQueues();
 	}
 }

@@ -197,6 +197,10 @@ export function createTestClient() {
 			decideCandidate: vi.fn(() => ok(null)),
 			search: vi.fn(() => ok({ entries: [] })),
 			list: vi.fn(() => ok({ entries: [] })),
+			capture: vi.fn(({ entryId }: { entryId: string }) =>
+				ok({ memoryId: `memory-${entryId}`, sourceEntryId: entryId, createdBy: "user_capture" as const }),
+			),
+			invalidate: vi.fn(() => ok({})),
 			pin: vi.fn(() => ok(null)),
 			forget: vi.fn(() => ok(null)),
 			exclude: vi.fn(() => ok(null)),

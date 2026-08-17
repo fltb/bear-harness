@@ -28,13 +28,19 @@ import { FirstMeetingMachine } from "./companion/first-meeting.js";
 import { RoleplayService } from "./companion/roleplay-service.js";
 import { CompanionSupervisor } from "./companion/supervisor.js";
 import { TurnPipeline } from "./companion/turn-pipeline.js";
-import { type HostCompositionContext, wireHostHandlers } from "./composition.js";
+import {
+	rememberConversationEntry,
+	type HostCompositionContext,
+	wireHostHandlers,
+} from "./composition.js";
 import { ConversationRepository } from "./conversations/repository.js";
 import { Dispatcher, type RpcResponse } from "./dispatcher.js";
 import { CodexAdapter } from "./executors/codex-adapter.js";
 import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
 import { ExecutorRouter } from "./executors/router.js";
 import { MemoryAutomation } from "./memory/automation.js";
+import type { MemoryBackend } from "./memory/backend.js";
+import { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import { MemoryService } from "./memory/service.js";
 import { ModelRegistry } from "./models/registry.js";
 import { ProviderCatalog } from "./providers/catalog.js";
@@ -70,6 +76,8 @@ export interface HostRuntimeOptions {
 	credentialVault: CredentialVault;
 	/** Development throws protocol bugs; packaged apps isolate them into a safe RPC error. */
 	protocolViolationMode?: "throw" | "isolate";
+	/** Stable product-local identity used to isolate the direct memory bank. */
+	memoryScope?: { readonly installationId: string; readonly userId: string };
 }
 
 export class HostRuntime {
@@ -84,6 +92,9 @@ export class HostRuntime {
 	private readonly memoryAutomation: MemoryAutomation;
 	private readonly unsubscribeStoryAutomation: () => void;
 	private readonly composition: HostCompositionContext;
+	readonly memoryRuntime: TencentDbRuntime;
+	readonly memoryBackend: MemoryBackend;
+	readonly memoryScope: { readonly installationId: string; readonly userId: string };
 	private started = false;
 	private closed = false;
 
@@ -165,6 +176,18 @@ export class HostRuntime {
 			get: (conversationId) => conversationRepository.getSession(conversationId),
 		});
 		const models = new ModelRegistry(db.orm, eventBus);
+		const memoryScope = options.memoryScope ?? {
+			installationId: "cyber-bear-installation",
+			userId: "default-user",
+		};
+		const memoryRuntime = new TencentDbRuntime({
+			dataDir,
+			providers,
+			models,
+			companionId: options.productConfig.defaultCharacterId,
+			installationId: memoryScope.installationId,
+			userId: memoryScope.userId,
+		});
 		onboarding.setConversationCreatedHandler((companionId, conversationId) => {
 			models.applyDefaultToConversation(companionId, conversationId);
 		});
@@ -176,7 +199,7 @@ export class HostRuntime {
 		executorRouter.register("product-managed", new PiAcpAdapter(db.orm, dataDir));
 		executorRouter.register("codex", new CodexAdapter(db.orm, eventBus));
 		const commissions = new CommissionService(db.orm, eventBus, artifactStore, executorRouter);
-		supervisor.setHostToolHandler((call) => {
+		supervisor.setHostToolHandler(async (call) => {
 			if (call.tool === "host_search_conversation_history") {
 				const args = call.args as { query: string; limit?: number };
 				const conversation = db.orm
@@ -232,6 +255,15 @@ export class HostRuntime {
 					data: { citations },
 				};
 			}
+			if (call.tool === "host_remember") {
+				const data = await rememberConversationEntry(
+					this.composition,
+					call.conversationId,
+					undefined,
+					"assistant_tool",
+				);
+				return { ok: true, message: "Memory saved.", data };
+			}
 			if (call.tool !== "host_propose_work") return characterBehavior.invoke(call);
 			const args = call.args as {
 				title: string;
@@ -250,6 +282,9 @@ export class HostRuntime {
 		});
 
 		this.db = db;
+		this.memoryRuntime = memoryRuntime;
+		this.memoryBackend = memoryRuntime.backend;
+		this.memoryScope = memoryScope;
 		this.providers = providers;
 		this.supervisor = supervisor;
 		this.characterBehavior = characterBehavior;
@@ -263,6 +298,8 @@ export class HostRuntime {
 			turns,
 			models,
 			memory,
+			memoryBackend: memoryRuntime.backend,
+			memoryScope,
 			commissions,
 			artifacts: artifactStore,
 			story,
@@ -304,6 +341,7 @@ export class HostRuntime {
 	async start(): Promise<void> {
 		if (this.started) return;
 		this.started = true;
+		await this.memoryRuntime.start();
 		const activeCharacterId = this.characterLoader.getActiveCharacterId(
 			this.composition.orm,
 			this.composition.defaultCharacterId,
@@ -319,6 +357,7 @@ export class HostRuntime {
 
 	/** Stop the companion runtime, dispose services, and close the database. */
 	async close(): Promise<void> {
+		await this.memoryRuntime.close();
 		if (this.closed) return;
 		this.closed = true;
 		await this.supervisor.stop();

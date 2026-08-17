@@ -55,7 +55,7 @@ describe("PiSessionStore", () => {
 		expect(reopened.buildContext().messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 	});
 
-	it("projects Pi standard messages to the user-facing linear contract without a tool role", () => {
+	it("projects Pi standard messages with stable SessionManager entry IDs", () => {
 		const root = mkdtempSync(join(tmpdir(), "bear-pi-projection-"));
 		roots.push(root);
 		const database = new Database(join(root, "host"));
@@ -100,6 +100,9 @@ describe("PiSessionStore", () => {
 			messages,
 		});
 		const session = PiSessionStore.open({ sessionDir: join(root, "sessions"), sessionFile: metadata.sessionFile, cwd: root });
+		const entryIds = session.readMessageEntries().map(({ id }) => id);
+		expect(entryIds).toHaveLength(messages.length);
+		expect(new Set(entryIds).size).toBe(entryIds.length);
 
 		expect(session.buildContext().messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
 
@@ -112,6 +115,12 @@ describe("PiSessionStore", () => {
 			role: "assistant",
 			versions: [{ role: "assistant", content: "result" }],
 		});
+		expect(projection.messages.map((message) => message.id)).toEqual(entryIds);
+		const reopenedProjection = new ConversationRepository(database.orm, {
+			sessionDir: join(root, "sessions"),
+			sessionCwd: root,
+		}).project("conversation", "Chat", "Scene");
+		expect(reopenedProjection.messages.map((message) => message.id)).toEqual(entryIds);
 		database.close();
 	});
 

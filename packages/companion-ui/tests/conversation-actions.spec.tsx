@@ -167,7 +167,7 @@ describe("conversation message controls", () => {
 		);
 	});
 
-	it("routes version, regenerate, edit, continue and branch controls through the active conversation", async () => {
+	it("routes remember, version, regenerate, edit, continue and branch controls through the active conversation", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		const switchVersion = vi.fn(() => Promise.resolve({ ok: true as const, data: null }));
@@ -177,11 +177,22 @@ describe("conversation message controls", () => {
 		const branch = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { branchId: "branch-2" } }),
 		);
+		const capture = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					memoryId: "memory-1",
+					sourceEntryId: "assistant-1",
+					createdBy: "user_capture" as const,
+				},
+			}),
+		);
 		client.message.switchVersion = switchVersion;
 		client.message.regenerate = regenerate;
 		client.message.edit = edit;
 		client.message.continue = continueMessage;
 		client.message.branch = branch;
+		client.memory.capture = capture;
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: activeConversationSnapshot() }),
 		);
@@ -191,6 +202,13 @@ describe("conversation message controls", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		await screen.findByText("当前回答");
+		const remember = screen.getByRole("button", { name: "记住这一刻" });
+		remember.focus();
+		expect(remember).toHaveFocus();
+		await user.keyboard("{Enter}");
+		const successStatus = await screen.findByRole("status");
+		expect(successStatus).toBeVisible();
+		expect(successStatus).toHaveTextContent("已记住这一刻");
 		await user.click(screen.getByRole("button", { name: zhCN.messages.previousVersion }));
 		await user.click(screen.getByRole("button", { name: zhCN.messages.regenerate }));
 		await user.click(screen.getByRole("button", { name: zhCN.messages.edit }));
@@ -216,6 +234,11 @@ describe("conversation message controls", () => {
 				messageId: "assistant-1",
 				text: "修订后的回答",
 				isUserMessage: false,
+			});
+			expect(capture).toHaveBeenCalledTimes(1);
+			expect(capture).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				entryId: "assistant-1",
 			});
 			expect(continueMessage).toHaveBeenCalledWith({ conversationId: "conversation-1" });
 			expect(branch).toHaveBeenCalledWith({

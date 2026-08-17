@@ -28,12 +28,13 @@ import type { CompanionSupervisor } from "./companion/supervisor.js";
 import type { TurnPipeline } from "./companion/turn-pipeline.js";
 import { ConversationRepository } from "./conversations/repository.js";
 import type { Dispatcher } from "./dispatcher.js";
+import type { MemoryBackend, MemoryBankScope } from "./memory/backend.js";
 import type { MemoryService } from "./memory/service.js";
 import type { ModelRegistry } from "./models/registry.js";
 import type { ProviderCatalog } from "./providers/catalog.js";
 import type { AppDatabase } from "./storage/database.js";
 import type { EventBus } from "./storage/event-bus.js";
-import { activeCharacter, companionIdentity, runs, sceneState } from "./storage/schema.js";
+import { activeCharacter, companionIdentity, conversations, runs, sceneState } from "./storage/schema.js";
 import type { StoryService } from "./story/service.js";
 
 /** Domain services and runtime-owned inputs the handlers read and mutate. */
@@ -44,6 +45,8 @@ export interface HostCompositionContext {
 	turns: TurnPipeline;
 	models: ModelRegistry;
 	memory: MemoryService;
+	memoryBackend: MemoryBackend;
+	memoryScope: Pick<MemoryBankScope, "installationId" | "userId">;
 	commissions: CommissionService;
 	artifacts: ArtifactStore;
 	story: StoryService;
@@ -355,6 +358,25 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const { conversationId, messageId } = _p as { conversationId: string; messageId: string };
 		const branchId = await s.turns.branch(conversationId, messageId);
 		return { branchId };
+	});
+	dispatcher.registerHandler(RPC.memory.capture, async (_p) => {
+		const params = _p as { conversationId: string; entryId: string };
+		return rememberConversationEntry(s, params.conversationId, params.entryId, "user_capture");
+	});
+	dispatcher.registerHandler(RPC.memory.invalidate, async (_p) => {
+		const params = _p as { memoryId: string; replacementMemoryId?: string };
+		const companionId = await getCompanionId(s);
+		const scope = {
+			...s.memoryScope,
+			companionId,
+		};
+		await s.memoryBackend.open({ scope });
+		await s.memoryBackend.invalidate({
+			scope,
+			memoryId: params.memoryId,
+			replacementMemoryId: params.replacementMemoryId,
+		});
+		return {};
 	});
 
 	// --- memory ------------------------------------------------------------------
@@ -887,6 +909,76 @@ function modelDefaultsWire(defaults: {
 				? { mode: "manual" as const, route: modelRouteWire(defaults.vision.route) }
 				: { mode: "auto" as const },
 	};
+}
+
+export type MemoryCaptureCreator = "user_capture" | "assistant_tool";
+
+/**
+ * Save one Host-selected Pi source entry through the direct memory backend.
+ * The entry ID is never trusted as a source by itself: it must belong to the
+ * Pi branch currently selected for the conversation.
+ */
+export async function rememberConversationEntry(
+	s: HostCompositionContext,
+	conversationId: string,
+	entryId: string | undefined,
+	createdBy: MemoryCaptureCreator,
+): Promise<{ memoryId: string; sourceEntryId: string; createdBy: MemoryCaptureCreator }> {
+	const companionId = await getCompanionId(s);
+	const conversation = s.orm
+		.select({ id: conversations.id, companionId: conversations.companionId })
+		.from(conversations)
+		.where(eq(conversations.id, conversationId))
+		.get();
+	if (!conversation || conversation.companionId !== companionId) {
+		throw { kind: "not_found", reason: "conversation_not_found" };
+	}
+	const session = s.conversationRepository.getSession(conversationId);
+	if (!session) throw { kind: "not_found", reason: "conversation_session_not_found" };
+	const entries = session.readMessageEntries();
+	const source = entryId ? entries.find((candidate) => candidate.id === entryId) : entries.at(-1);
+	if (!source) {
+		throw { kind: "conflict", reason: "memory_source_not_current_branch" };
+	}
+	const text = piEntryText(source.message);
+	if (!text) throw { kind: "invalid_input", reason: "memory_source_empty" };
+	const sourceEntryId = source.id;
+	const scope = { ...s.memoryScope, companionId };
+	await s.memoryBackend.open({ scope });
+	const record = await s.memoryBackend.remember({
+		scope,
+		text,
+		provenance: {
+			kind: createdBy === "user_capture" ? "explicit" : "inferred",
+			piSessionEntryIds: [sourceEntryId],
+			sourceRef: conversationId,
+		},
+		metadata: {
+			conversationId,
+			companionId,
+			sessionId: session.sessionId,
+			sourceEntryId,
+			createdBy,
+		},
+	});
+	return { memoryId: record.id, sourceEntryId, createdBy };
+}
+
+function piEntryText(message: unknown): string {
+	if (!message || typeof message !== "object" || !("content" in message)) return "";
+	const content = message.content;
+	if (typeof content === "string") return content.trim();
+	if (!Array.isArray(content)) return "";
+	return content
+		.map((part) => {
+			if (!part || typeof part !== "object" || !("type" in part) || !("text" in part)) return "";
+			const type = part.type;
+			const text = part.text;
+			return type === "text" && typeof text === "string" ? text : "";
+		})
+		.filter(Boolean)
+		.join("\n")
+		.trim();
 }
 
 async function getCompanionId(s: HostCompositionContext): Promise<string> {

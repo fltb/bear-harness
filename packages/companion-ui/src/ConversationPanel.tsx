@@ -41,6 +41,7 @@ function MessageItem(props: {
 	const [reason, setReason] = createSignal("");
 	const [customReason, setCustomReason] = createSignal("");
 	const [scope, setScope] = createSignal<CorrectScope>("once");
+	const [captureStatus, setCaptureStatus] = createSignal<"idle" | "success">("idle");
 
 	const isUser = () => props.message.role === "user";
 	const version = () => adoptedVersion(props.message);
@@ -77,6 +78,15 @@ function MessageItem(props: {
 		setReason("");
 		setCustomReason("");
 		setCorrecting(false);
+	};
+	const captureMoment = async () => {
+		setCaptureStatus("idle");
+		try {
+			await store.memory.capture(props.message.id);
+			setCaptureStatus("success");
+		} catch {
+			// The store exposes the operation failure in the thread-level alert.
+		}
 	};
 
 	return (
@@ -229,6 +239,20 @@ function MessageItem(props: {
 						role="toolbar"
 						aria-label={t("messages.operations")}
 					>
+						<Show when={isUser() || props.message.role === "assistant"}>
+							<Button
+								data-control="command"
+								type="button"
+								onClick={() => void captureMoment()}
+							>
+								记住这一刻
+							</Button>
+							<Show when={captureStatus() === "success"}>
+								<span class="status-line ok" role="status" aria-label="已记住这一刻">
+									已记住这一刻
+								</span>
+							</Show>
+						</Show>
 						<Show when={!isUser()}>
 							<Button
 								data-control="command"

@@ -147,6 +147,28 @@ describe("TencentDB memory backend", () => {
 			"cyber-bear:install-b:user-a:companion-a",
 		]);
 	});
+	it("retains Tdai activity metadata without asserting arbitrary Host metadata", async () => {
+		const core = new FakeTencentDbCore();
+		const backend = new TencentDbMemoryBackend(core);
+		await backend.open({ scope: scopeA });
+
+		const record = await backend.remember({
+			scope: scopeA,
+			text: "dated activity memory",
+			provenance,
+			metadata: {
+				activity_start_time: "2026-01-02T09:00:00.000Z",
+				activity_end_time: "2026-01-02T10:00:00.000Z",
+				hostOnlyLabel: "host-owned context",
+			} satisfies MemoryMetadata,
+		});
+
+		expect(record.metadata).toMatchObject({
+			activity_start_time: "2026-01-02T09:00:00.000Z",
+			activity_end_time: "2026-01-02T10:00:00.000Z",
+		});
+	});
+
 
 	it("delegates every direct mutation with the active namespace", async () => {
 		const core = new FakeTencentDbCore();

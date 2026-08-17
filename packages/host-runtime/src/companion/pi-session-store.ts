@@ -16,6 +16,12 @@ export type PiSessionMessage = Extract<
 	{ role: "user" | "assistant" | "toolResult" }
 >;
 
+/** The standard Pi message plus its stable SessionManager tree-entry identity. */
+export interface PiSessionMessageEntry {
+	readonly id: string;
+	readonly message: PiSessionMessage;
+}
+
 export interface PiSessionStoreOptions {
 	/** Product-owned directory in which Pi may create session JSONL files. */
 	readonly sessionDir: string;
@@ -171,13 +177,17 @@ export class PiSessionStore {
 		return this.manager.appendMessage(message);
 	}
 
-	/** Read standard message entries on the currently selected branch. */
-	readMessages(): PiSessionMessage[] {
+	/** Read standard message entries and preserve each SessionManager entry id. */
+	readMessageEntries(): PiSessionMessageEntry[] {
 		return this.manager
 			.getBranch()
 			.filter((entry): entry is Extract<SessionEntry, { type: "message" }> => entry.type === "message")
-			.map((entry) => entry.message)
-			.filter(isStandardMessage);
+			.flatMap((entry) => (isStandardMessage(entry.message) ? [{ id: entry.id, message: entry.message }] : []));
+	}
+
+	/** Read standard message entries on the currently selected branch. */
+	readMessages(): PiSessionMessage[] {
+		return this.readMessageEntries().map(({ message }) => message);
 	}
 
 	/** Move Pi's active leaf; the next append creates a new child branch. */

@@ -383,9 +383,8 @@ export class ConversationRepository {
 		session: PiSessionStore,
 	): ConversationProjection {
 		const now = new Date().toISOString();
-		const messages = session.readMessages().map((message, index) => {
+		const messages = session.readMessageEntries().map(({ id: messageId, message }) => {
 			const role: "user" | "assistant" = message.role === "user" ? "user" : "assistant";
-			const messageId = `pi-${index}`;
 			const versionId = `${messageId}-v1`;
 			const content = sessionContent(message);
 			return {

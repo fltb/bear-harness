@@ -22,7 +22,7 @@
  * model/commission/artifact) are exposed for the backstage sheets.
  */
 
-import type { CompanionClient } from "@bear-harness/companion-client";
+import type { CompanionClient, MemoryCaptureResponse } from "@bear-harness/companion-client";
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import type { RoleplayState } from "@bear-harness/protocol";
 import { useQueryClient } from "@tanstack/solid-query";
@@ -177,6 +177,7 @@ export interface MemoryApi {
 	): Promise<void>;
 	search(query: string, scope?: MemoryScope): Promise<MemoryEntry[]>;
 	list(params?: Record<string, unknown>): Promise<MemoryEntry[]>;
+	capture(entryId: string): Promise<MemoryCaptureResponse>;
 	pin(entryId: string, pinned: boolean): Promise<void>;
 	forget(entryId: string): Promise<void>;
 	exclude(entryId: string, excluded: boolean): Promise<void>;
@@ -992,6 +993,18 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			const data = await invoke(client, () => client.memory.list(params));
 			setState("memoryEntries", data.entries);
 			return data.entries;
+		},
+		capture: async (entryId) => {
+			try {
+				const conversationId = requireActiveConversation();
+				const result = await invoke(client, () => client.memory.capture({ conversationId, entryId }));
+				setState("error", null);
+				debouncedRefetch(refreshMemoryEntries);
+				return result;
+			} catch (e) {
+				setState("error", messageOf(e));
+				throw e;
+			}
 		},
 		pin: async (entryId, pinned) => {
 			await invoke(client, () => client.memory.pin({ entryId, pinned }));
