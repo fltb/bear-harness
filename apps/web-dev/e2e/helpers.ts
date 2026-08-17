@@ -25,7 +25,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 			data: {
 				providerId: "e2e-rule",
 				name: "E2E Rule Provider",
-				baseUrl: `http://127.0.0.1:${process.env.BEAR_E2E_HOST_PORT ?? "3201"}/e2e-openai/v1`,
+				baseUrl: `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/v1`,
 				modelId: "rule-model",
 			},
 		})

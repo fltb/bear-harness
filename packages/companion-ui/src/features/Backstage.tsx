@@ -174,8 +174,26 @@ function RoleRow(props: {
 	const store = useCompanionStore();
 	const [trust, { refetch }] = createResource(
 		() => props.character.id,
-		(characterId) => store.characters.pluginTrust(characterId),
+		(characterId) =>
+			store.characters.pluginTrust?.(characterId) ??
+			Promise.resolve({
+				origin: "official" as const,
+				pluginHash: "",
+				pluginsPresent: false,
+				trusted: true,
+			}),
 	);
+	const [confirmingPlugins, setConfirmingPlugins] = createSignal(false);
+	const enablePlugins = async () => {
+		props.setBusyId(props.character.id);
+		try {
+			await store.characters.confirmPluginTrust(props.character.id);
+			await refetch();
+			setConfirmingPlugins(false);
+		} finally {
+			props.setBusyId(undefined);
+		}
+	};
 	return (
 		<div class="role-row">
 			<img src={props.character.avatarUrl} alt="" aria-hidden="true" />
@@ -191,13 +209,7 @@ function RoleRow(props: {
 					data-control="command"
 					type="button"
 					disabled={props.busyId !== undefined}
-					onClick={() => {
-						props.setBusyId(props.character.id);
-						void store.characters
-							.confirmPluginTrust(props.character.id)
-							.then(() => refetch())
-							.finally(() => props.setBusyId(undefined));
-					}}
+					onClick={() => setConfirmingPlugins(true)}
 				>
 					{t("backstage.roleEnablePlugins")}
 				</Button>
@@ -220,6 +232,38 @@ function RoleRow(props: {
 					{t("backstage.roleSwitch")}
 				</Button>
 			</Show>
+			<Dialog open={confirmingPlugins()} onOpenChange={setConfirmingPlugins}>
+				<Dialog.Portal>
+					<Dialog.Overlay class="plugin-trust-overlay" />
+					<Dialog.Content class="plugin-trust-dialog">
+						<Dialog.Title>{t("backstage.rolePluginTrustTitle")}</Dialog.Title>
+						<Dialog.Description>
+							{t("backstage.rolePluginTrustDescription", { name: props.character.name })}
+						</Dialog.Description>
+						<dl class="plugin-trust-details">
+							<dt>{t("backstage.rolePluginOrigin")}</dt>
+							<dd>{trust()?.origin}</dd>
+							<dt>{t("backstage.rolePluginHash")}</dt>
+							<dd>
+								<code>{trust()?.pluginHash}</code>
+							</dd>
+						</dl>
+						<div class="plugin-trust-actions">
+							<Dialog.CloseButton as={Button} data-control="command" type="button">
+								{t("backstage.rolePluginCancel")}
+							</Dialog.CloseButton>
+							<Button
+								data-control="command"
+								type="button"
+								disabled={props.busyId !== undefined}
+								onClick={() => void enablePlugins()}
+							>
+								{t("backstage.rolePluginTrustConfirm")}
+							</Button>
+						</div>
+					</Dialog.Content>
+				</Dialog.Portal>
+			</Dialog>
 		</div>
 	);
 }

@@ -1,7 +1,10 @@
-import { expect, type Page, test } from "playwright/test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { expect, type Page, test } from "playwright/test";
+
+const providerUrl = `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}`;
+
 import { ensureReadyForConversation } from "./helpers";
 
 const characterRoot = fileURLToPath(new URL("../../../config/characters/jizhou", import.meta.url));
@@ -78,7 +81,6 @@ test("scripted model invokes roleplay and cross-conversation tools with exact ar
 }) => {
 	await ensureReadyForConversation(page);
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
-	const headers = { "x-bear-web-dev-token": bootstrap.token };
 	await rpc(page, bootstrap.token, "settings.set:v1", {
 		settings: { conversationHistoryReadEnabled: false },
 	});
@@ -141,7 +143,7 @@ test("scripted model invokes roleplay and cross-conversation tools with exact ar
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationB.id))
 		.toBe("E2E_TOOL_SEARCH_OTHER_CONVERSATION_FOUND");
-	const trace = (await (await page.request.get("/debug/rule-tool-trace", { headers })).json()) as {
+	const trace = (await (await page.request.get(`${providerUrl}/trace/tools`)).json()) as {
 		calls: Array<{ tool: string; args: Record<string, unknown> }>;
 	};
 	expect(trace.calls).toEqual(
@@ -218,11 +220,9 @@ test("adopted multi-turn history and a manual edit change the next model context
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("E2E_CONTEXT_EDITED_OK");
-	const promptTrace = (await (
-		await page.request.get("/debug/rule-prompt-trace", {
-			headers: { "x-bear-web-dev-token": bootstrap.token },
-		})
-	).json()) as { prompts: string[] };
+	const promptTrace = (await (await page.request.get(`${providerUrl}/trace/prompts`)).json()) as {
+		prompts: string[];
+	};
 	const lastPrompt = promptTrace.prompts.at(-1);
 	expect(lastPrompt).toContain("You are the local Companion runtime.");
 	expect(lastPrompt).toContain("你说话克制、具体、像一个长期值守的人。");

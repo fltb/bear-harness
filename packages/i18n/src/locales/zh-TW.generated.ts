@@ -95,7 +95,13 @@ export const zhTW = {
 		"roleImportDone": "角色包已匯入",
 		"roleImportFailed": "角色包匯入失敗：",
 		"rolePluginsDisabled": "行為外掛未啟用",
-		"roleEnablePlugins": "啟用外掛"
+		"roleEnablePlugins": "啟用外掛",
+		"rolePluginTrustTitle": "啟用角色行為外掛？",
+		"rolePluginTrustDescription": "這會允許“{name}”的角色包執行行為擴充套件。請只在確認來源和下方雜湊後繼續。",
+		"rolePluginOrigin": "角色包來源",
+		"rolePluginHash": "外掛 SHA-256",
+		"rolePluginCancel": "取消",
+		"rolePluginTrustConfirm": "確認啟用"
 	},
 	"packageWorkshop": {
 		"title": "角色包工坊",

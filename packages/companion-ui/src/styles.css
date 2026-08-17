@@ -407,6 +407,54 @@ button[data-variant="primary"]:focus-visible {
 	font-size: 12px;
 }
 
+.plugin-trust-overlay {
+	position: fixed;
+	inset: 0;
+	background: rgb(0 0 0 / 55%);
+}
+
+.plugin-trust-dialog {
+	position: fixed;
+	top: 50%;
+	left: 50%;
+	width: min(440px, calc(100vw - 32px));
+	transform: translate(-50%, -50%);
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--surface);
+	padding: 20px;
+	color: var(--text);
+}
+
+.plugin-trust-dialog h2 {
+	margin: 0 0 10px;
+	font-size: 16px;
+}
+.plugin-trust-dialog p {
+	margin: 0;
+	color: var(--text-muted);
+	font-size: 13px;
+	line-height: 1.5;
+}
+.plugin-trust-details {
+	margin: 16px 0;
+	display: grid;
+	gap: 5px;
+	font-size: 12px;
+}
+.plugin-trust-details dt {
+	color: var(--text-muted);
+}
+.plugin-trust-details dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+.plugin-trust-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
 .workshop-history {
 	border-top: 1px solid var(--line);
 	padding-top: 12px;

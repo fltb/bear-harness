@@ -99,6 +99,13 @@ export const en = {
 		roleImportFailed: "Character package import failed: ",
 		rolePluginsDisabled: "Behavior plugins are disabled",
 		roleEnablePlugins: "Enable plugins",
+		rolePluginTrustTitle: "Enable character behavior plugins?",
+		rolePluginTrustDescription:
+			"This lets {name}'s character package execute behavior extensions. Continue only after verifying the source and hash below.",
+		rolePluginOrigin: "Package origin",
+		rolePluginHash: "Plugin SHA-256",
+		rolePluginCancel: "Cancel",
+		rolePluginTrustConfirm: "Enable this package",
 	},
 	packageWorkshop: {
 		title: "Character package workshop",

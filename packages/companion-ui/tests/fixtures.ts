@@ -90,6 +90,7 @@ export const FORK_PRODUCT: Readonly<ProductConfig> = {
 
 const DEFAULT_SETTINGS: SettingsData = {
 	relationshipMemoryEnabled: false,
+	conversationHistoryReadEnabled: false,
 };
 
 const DEFAULT_MODEL = {

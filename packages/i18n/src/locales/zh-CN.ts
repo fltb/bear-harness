@@ -97,6 +97,13 @@ export const zhCN = {
 		roleImportFailed: "角色包导入失败：",
 		rolePluginsDisabled: "行为插件未启用",
 		roleEnablePlugins: "启用插件",
+		rolePluginTrustTitle: "启用角色行为插件？",
+		rolePluginTrustDescription:
+			"这会允许“{name}”的角色包执行行为扩展。请只在确认来源和下方哈希后继续。",
+		rolePluginOrigin: "角色包来源",
+		rolePluginHash: "插件 SHA-256",
+		rolePluginCancel: "取消",
+		rolePluginTrustConfirm: "确认启用",
 	},
 	packageWorkshop: {
 		title: "角色包工坊",

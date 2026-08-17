@@ -25,6 +25,12 @@ test("rule provider exercises send and edited-history regeneration deterministic
 }) => {
 	await page.goto("/");
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	await rpc(page, bootstrap.token, "provider.customUpsert:v1", {
+		providerId: "e2e-rule",
+		name: "E2E Rule Provider",
+		baseUrl: `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/v1`,
+		modelId: "rule-model",
+	});
 	await rpc(page, bootstrap.token, "provider.setApiKey:v1", {
 		providerId: "e2e-rule",
 		apiKey: "e2e-rule-key",
@@ -84,7 +90,7 @@ test("an image reader observes images while the selected text model produces the
 }) => {
 	await page.goto("/");
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
-	const baseUrl = `http://127.0.0.1:${process.env.BEAR_E2E_HOST_PORT ?? "3201"}/e2e-openai/v1`;
+	const baseUrl = `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/v1`;
 	await rpc(page, bootstrap.token, "provider.importPiConfig:v1", {
 		configJson: JSON.stringify({
 			providers: {

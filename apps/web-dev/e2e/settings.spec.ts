@@ -7,7 +7,10 @@ test("WebDev exposes every registered Host RPC channel through its authenticated
 	page,
 }) => {
 	await ensureReadyForConversation(page);
-	await page.getByRole("button", { name: "Web Dev" }).click();
+	await Promise.all([
+		page.waitForResponse((response) => response.url().includes("/debug/channels")),
+		page.getByRole("button", { name: "Web Dev" }).click(),
+	]);
 
 	const panel = page.getByRole("complementary", { name: zhCN.webDev.ariaLabel });
 	const expectedChannels = Object.keys(REQUEST_SCHEMAS).sort();

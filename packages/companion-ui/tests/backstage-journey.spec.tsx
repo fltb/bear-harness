@@ -7,6 +7,57 @@ import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js
 import { THEMED_CHARACTER } from "./fixtures.js";
 
 describe("ordinary-user backstage journey", () => {
+	it("requires an explicit hash review before enabling imported behavior plugins", async () => {
+		const user = userEvent.setup();
+		const confirmPluginTrust = vi.fn(() => Promise.resolve());
+		const pluginTrust = vi.fn(() =>
+			Promise.resolve({
+				origin: "imported" as const,
+				pluginHash: "a".repeat(64),
+				pluginsPresent: true,
+				trusted: false,
+			}),
+		);
+		const store = {
+			memory: { search: vi.fn(() => Promise.resolve([])) },
+			characters: {
+				characters: () => [
+					{
+						id: "imported-role",
+						name: "Imported Role",
+						version: "1",
+						subtitle: "Imported",
+						avatarUrl: "data:image/svg+xml;base64,PHN2Zy8+",
+						active: false,
+					},
+				],
+				activate: vi.fn(() => Promise.resolve()),
+				pluginTrust,
+				confirmPluginTrust,
+			},
+		} as unknown as CompanionStore;
+
+		render(() => (
+			<DesktopProvider store={store}>
+				<Backstage open initialTab="roles" onClose={() => undefined} character={THEMED_CHARACTER} />
+			</DesktopProvider>
+		));
+
+		const dialog = await screen.findByRole("dialog", { name: zhCN.backstage.title });
+		await user.click(
+			within(dialog).getByRole("button", { name: zhCN.backstage.roleEnablePlugins }),
+		);
+		const confirmation = await screen.findByRole("dialog", {
+			name: zhCN.backstage.rolePluginTrustTitle,
+		});
+		expect(within(confirmation).getByText("a".repeat(64))).toBeVisible();
+		expect(confirmPluginTrust).not.toHaveBeenCalled();
+		await user.click(
+			within(confirmation).getByRole("button", { name: zhCN.backstage.rolePluginTrustConfirm }),
+		);
+		expect(confirmPluginTrust).toHaveBeenCalledWith("imported-role");
+	});
+
 	it("switches roles and manages story changes through ordinary-language tabs", async () => {
 		const user = userEvent.setup();
 		const activate = vi.fn(() => Promise.resolve());

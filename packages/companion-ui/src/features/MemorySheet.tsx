@@ -1,5 +1,6 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
+import { Select } from "@kobalte/core/select";
 import { Tabs } from "@kobalte/core/tabs";
 import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, Show } from "solid-js";
@@ -266,13 +267,13 @@ export function MemoryEntryList(props: {
 export function MemorySheet() {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
-	const scopeTabs = (): ReadonlyArray<{ value: MemoryScope; label: string }> => [
+	const scopeTabs = (): Array<{ value: MemoryScope; label: string }> => [
 		{ value: "self", label: t("memory.scopes.self") },
 		{ value: "relationship", label: t("memory.scopes.relationship") },
 		{ value: "scene", label: t("memory.scopes.scene") },
 	];
 	const [scope, setScope] = createSignal<MemoryScope>("self");
-	const [candidateScope, setCandidateScope] = createSignal<MemoryScope>("relationship");
+	const [candidateScope, setCandidateScope] = createSignal<MemoryScope>("self");
 	const [queryText, setQueryText] = createSignal("");
 	const [query, setQuery] = createSignal("");
 	const [refreshKey, setRefreshKey] = createSignal(0);
@@ -371,15 +372,27 @@ export function MemorySheet() {
 					</Show>
 				</div>
 				<p class="drawer-note">{t("memory.candidatesNote")}</p>
-				<select
-					aria-label={t("memory.scopeTabsLabel")}
-					value={candidateScope()}
-					onChange={(event) => setCandidateScope(event.currentTarget.value as MemoryScope)}
+				<Select
+					options={scopeTabs()}
+					value={scopeTabs().find((tab) => tab.value === candidateScope()) ?? null}
+					optionValue="value"
+					optionTextValue="label"
+					onChange={(tab) => tab && setCandidateScope(tab.value)}
+					itemComponent={(itemProps) => (
+						<Select.Item item={itemProps.item} class="select-item">
+							<Select.ItemLabel>{itemProps.item.rawValue.label}</Select.ItemLabel>
+						</Select.Item>
+					)}
 				>
-					<For each={scopeTabs()}>
-						{(tab) => <option value={tab.value}>{tab.label}</option>}
-					</For>
-				</select>
+					<Select.Trigger class="select-trigger" aria-label={t("memory.scopeTabsLabel")}>
+						<Select.Value class="select-value" />
+					</Select.Trigger>
+					<Select.Portal>
+						<Select.Content class="select-content">
+							<Select.Listbox class="select-listbox" />
+						</Select.Content>
+					</Select.Portal>
+				</Select>
 				<Show when={feedback()}>
 					<p class="status-line ok" role="status">
 						{feedback()}

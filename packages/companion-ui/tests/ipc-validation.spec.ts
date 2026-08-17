@@ -263,7 +263,7 @@ describe("host projection validation", () => {
 		expect(isOnboardingData({ ...onboarding, currentStepId: 3 })).toBe(false);
 		expect(isOnboardingData({ ...onboarding, stateData: {} })).toBe(false);
 
-		const settings = { relationshipMemoryEnabled: true };
+		const settings = { relationshipMemoryEnabled: true, conversationHistoryReadEnabled: false };
 		expect(isSettingsData(settings)).toBe(true);
 		expect(isSettingsData({ ...settings, relationshipMemoryEnabled: "yes" })).toBe(false);
 		expect(isSettingsData({ ...settings, textFallback: { providerId: "provider-1" } })).toBe(false);

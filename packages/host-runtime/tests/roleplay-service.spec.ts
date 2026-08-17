@@ -140,7 +140,9 @@ describe("roleplay event projection", () => {
 		expect(service.project(conversationScopedCharacter, "conversation").values).toMatchObject({
 			trust: 1,
 		});
-		expect(service.project(conversationScopedCharacter, "other").values).toMatchObject({ trust: 0 });
+		expect(service.project(conversationScopedCharacter, "other").values).toMatchObject({
+			trust: 0,
+		});
 		database.close();
 	});
 

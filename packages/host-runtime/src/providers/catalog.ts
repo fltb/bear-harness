@@ -24,8 +24,8 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { Models } from "@earendil-works/pi-ai";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { CredentialStatus, CredentialStore } from "./credential-store.js";
 
 /**

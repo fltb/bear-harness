@@ -8,6 +8,7 @@ const repoEnv = resolve(here, "../../.env");
 if (existsSync(repoEnv)) process.loadEnvFile(repoEnv);
 const webPort = process.env.BEAR_E2E_WEB_PORT ?? "3200";
 const hostPort = process.env.BEAR_E2E_HOST_PORT ?? "3201";
+const providerPort = process.env.BEAR_E2E_PROVIDER_PORT ?? "3211";
 const baseURL = `http://127.0.0.1:${webPort}`;
 
 export default defineConfig({
@@ -21,22 +22,30 @@ export default defineConfig({
 	use: {
 		baseURL,
 	},
-	webServer: {
-		command: "npm run dev --workspace @bear-harness/web-dev",
-		env: {
-			BEAR_WEB_DEV_PORT: webPort,
-			BEAR_WEB_DEV_HOST_PORT: hostPort,
-			BEAR_WEB_DEV_DATA_DIR: resolve(here, `../../test-results/web-dev-data-${process.pid}`),
-			BEAR_WEB_DEV_DEBUG: "1",
-			BEAR_E2E_RULE_PROVIDER: "1",
-			BEAR_CUSTOM_PROVIDER_ID: "",
-			BEAR_CUSTOM_PROVIDER_NAME: "",
-			BEAR_CUSTOM_BASE_URL: "",
-			BEAR_CUSTOM_MODEL_ID: "",
-			BEAR_CUSTOM_API_KEY: "",
+	webServer: [
+		{
+			command: "npm run dev --workspace @bear-harness/web-dev",
+			env: {
+				BEAR_WEB_DEV_PORT: webPort,
+				BEAR_WEB_DEV_HOST_PORT: hostPort,
+				BEAR_WEB_DEV_DATA_DIR: resolve(here, `../../test-results/web-dev-data-${process.pid}`),
+				BEAR_WEB_DEV_DEBUG: "1",
+				BEAR_CUSTOM_PROVIDER_ID: "",
+				BEAR_CUSTOM_PROVIDER_NAME: "",
+				BEAR_CUSTOM_BASE_URL: "",
+				BEAR_CUSTOM_MODEL_ID: "",
+				BEAR_CUSTOM_API_KEY: "",
+			},
+			url: baseURL,
+			reuseExistingServer: false,
+			timeout: 30_000,
 		},
-		url: baseURL,
-		reuseExistingServer: false,
-		timeout: 30_000,
-	},
+		{
+			command: "node e2e/rule-provider-server.ts",
+			env: { BEAR_E2E_PROVIDER_PORT: providerPort },
+			url: `http://127.0.0.1:${providerPort}/health`,
+			reuseExistingServer: false,
+			timeout: 30_000,
+		},
+	],
 });

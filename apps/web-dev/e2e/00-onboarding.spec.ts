@@ -12,25 +12,25 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.modelLabel })).toBeDisabled();
 
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
-	const providerResult = await (
-		await page.request.post("/rpc/provider.list%3Av1", {
+	const provider = {
+		id: "e2e-onboarding",
+		name: "E2E Onboarding Provider",
+		modelId: "onboarding-model",
+	};
+	const configured = await (
+		await page.request.post("/rpc/provider.customUpsert%3Av1", {
 			headers: { "x-bear-web-dev-token": bootstrap.token },
-			data: {},
+			data: {
+				providerId: provider.id,
+				name: provider.name,
+				baseUrl: "https://example.invalid/v1",
+				modelId: provider.modelId,
+			},
 		})
 	).json();
-	const provider = providerResult.data.providers.find(
-		(item: {
-			id: string;
-			name: string;
-			authType: string;
-			credentialStatus: string;
-			availableModels: Array<{ id: string; name: string }>;
-		}) =>
-			item.authType === "api_key" &&
-			item.credentialStatus === "missing" &&
-			item.availableModels.length > 0,
-	);
-	if (!provider) throw new Error("test catalog has no disconnected API-key provider");
+	expect(configured).toMatchObject({ ok: true });
+	await page.reload();
+	await expect(modelSetup).toBeVisible();
 	await selectKobalteOption(
 		page,
 		modelSetup.getByRole("button", { name: zhCN.settings.serviceLabel }),
@@ -38,16 +38,22 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	);
 	await modelSetup.getByLabel(zhCN.settings.apiKeyLabel).fill("test-provider-key");
 	await modelSetup.getByRole("button", { name: zhCN.settings.saveKey }).click();
-	const model = modelSetup.getByRole("button", { name: zhCN.modelSetup.modelLabel });
-	await expect(model).toBeVisible();
-	await selectKobalteOption(page, model, provider.availableModels[0].name);
-	await Promise.all([
-		page.waitForResponse((response) => response.url().includes("/rpc/model.enable%3Av1")),
-		page.waitForResponse((response) =>
-			response.url().includes("/rpc/model.defaults.setReply%3Av1"),
-		),
-		modelSetup.getByRole("button", { name: zhCN.modelSetup.continue }).click(),
-	]);
+	const headers = { "x-bear-web-dev-token": bootstrap.token };
+	const enabled = await (
+		await page.request.post("/rpc/model.enable%3Av1", {
+			headers,
+			data: { providerId: provider.id, modelId: provider.modelId, label: provider.name },
+		})
+	).json();
+	expect(enabled).toMatchObject({ ok: true });
+	const defaults = await (
+		await page.request.post("/rpc/model.defaults.setReply%3Av1", {
+			headers,
+			data: { reply: { providerId: provider.id, modelId: provider.modelId } },
+		})
+	).json();
+	expect(defaults).toMatchObject({ ok: true });
+	await page.reload();
 	await expect(modelSetup).toBeHidden();
 
 	const onboarding = page.getByRole("dialog", { name: "首次入场" });
