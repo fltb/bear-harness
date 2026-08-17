@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -105,6 +105,54 @@ describe("character package import", () => {
 			restarted.dispatch("roleplay.get:v1", { conversationId: conversation.data.id }),
 		).resolves.toMatchObject({ ok: true, data: { state: { values: { trust: 1 } } } });
 		await restarted.close();
+	});
+
+	it("requires explicit trust for imported executable plugins and revokes it when they change", async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "bear-character-plugin-trust-"));
+		roots.push(dataDir);
+		const files = packageFiles(join(characterRoot, "jizhou"));
+		const manifest = files.find((file) => file.path.endsWith("/character.yaml"));
+		if (!manifest) throw new Error("test character manifest missing");
+		manifest.base64 = Buffer.from(
+			Buffer.from(manifest.base64, "base64")
+				.toString("utf8")
+				.replace("id: jizhou", "id: plugin-trust-role"),
+		).toString("base64");
+		const runtime = createHostRuntime({
+			dataDir,
+			characterRoot,
+			productConfig,
+			credentialVault: vault,
+		});
+		await runtime.start();
+		await expect(runtime.dispatch("character.pluginTrustGet:v1", {})).resolves.toMatchObject({
+			ok: true,
+			data: {
+				trust: { characterId: "jizhou", origin: "official", pluginsPresent: true, trusted: true },
+			},
+		});
+		await expect(runtime.dispatch("character.import:v1", { files })).resolves.toMatchObject({
+			ok: true,
+			data: { character: { id: "plugin-trust-role" } },
+		});
+		await expect(
+			runtime.dispatch("character.pluginTrustGet:v1", { characterId: "plugin-trust-role" }),
+		).resolves.toMatchObject({
+			ok: true,
+			data: { trust: { origin: "imported", pluginsPresent: true, trusted: false } },
+		});
+		await expect(
+			runtime.dispatch("character.pluginTrustConfirm:v1", { characterId: "plugin-trust-role" }),
+		).resolves.toMatchObject({ ok: true, data: { trust: { trusted: true } } });
+
+		appendFileSync(
+			join(dataDir, "characters", "plugin-trust-role", "plugins", "jizhou-roleplay.mjs"),
+			"\n// package update\n",
+		);
+		await expect(
+			runtime.dispatch("character.pluginTrustGet:v1", { characterId: "plugin-trust-role" }),
+		).resolves.toMatchObject({ ok: true, data: { trust: { trusted: false } } });
+		await runtime.close();
 	});
 
 	it("rejects folders without a manifest and traversal paths", async () => {

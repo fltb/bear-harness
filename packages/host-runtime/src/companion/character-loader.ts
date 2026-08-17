@@ -176,6 +176,16 @@ export interface CharacterSummary {
 	active: boolean;
 }
 
+export type CharacterPackageOrigin = "official" | "local" | "imported";
+
+export interface CharacterPluginTrust {
+	characterId: string;
+	origin: CharacterPackageOrigin;
+	pluginHash: string;
+	pluginsPresent: boolean;
+	trusted: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Loader
 // ---------------------------------------------------------------------------
@@ -266,6 +276,10 @@ export class CharacterLoader {
 			if (root && existsSync(join(root, characterId, "character.yaml"))) return root;
 		}
 		return this.characterRoot;
+	}
+
+	private packageOrigin(character: CharacterPackage): CharacterPackageOrigin {
+		return this.packageRoot(character.id) === this.characterRoot ? "official" : "imported";
 	}
 
 	/**
@@ -563,13 +577,57 @@ export class CharacterLoader {
 		return parsed;
 	}
 
-	/**
-	 * Resolve role-owned Pi resources by convention, not YAML plumbing:
-	 * `skills/…/SKILL.md` and JavaScript or TypeScript files below `plugins/` are optional,
-	 * package-private extensions of a role. Missing directories mean no role-
-	 * specific dynamic behavior.
-	 */
-	piResources(character: CharacterPackage): {
+	pluginHash(character: CharacterPackage): string {
+		const pluginsDir = join(resolve(this.packageRoot(character.id), character.id), "plugins");
+		if (!existsSync(pluginsDir)) return "";
+		const pluginRoot = this.characterPackagePath(character.id, "plugins");
+		const hash = createHash("sha256");
+		for (const path of this.collectPluginFiles(character.id, pluginRoot)) {
+			hash.update(relative(pluginRoot, path));
+			hash.update("\0");
+			hash.update(readFileSync(path));
+			hash.update("\0");
+		}
+		return hash.digest("hex");
+	}
+
+	pluginTrust(db: AppDatabase, character: CharacterPackage): CharacterPluginTrust {
+		const pluginHash = this.pluginHash(character);
+		const stored = db
+			.select({
+				origin: companionPackages.origin,
+				pluginHash: companionPackages.pluginHash,
+				pluginTrustedHash: companionPackages.pluginTrustedHash,
+			})
+			.from(companionPackages)
+			.where(eq(companionPackages.id, character.id))
+			.get();
+		const origin = stored?.origin ?? this.packageOrigin(character);
+		const trusted =
+			pluginHash.length === 0 || origin === "official" || stored?.pluginTrustedHash === pluginHash;
+		return {
+			characterId: character.id,
+			origin,
+			pluginHash,
+			pluginsPresent: pluginHash.length > 0,
+			trusted,
+		};
+	}
+
+	confirmPluginTrust(db: AppDatabase, character: CharacterPackage): CharacterPluginTrust {
+		const trust = this.pluginTrust(db, character);
+		db.update(companionPackages)
+			.set({ pluginHash: trust.pluginHash, pluginTrustedHash: trust.pluginHash })
+			.where(eq(companionPackages.id, character.id))
+			.run();
+		return { ...trust, trusted: true };
+	}
+
+	/** Resolve role-owned Skills and only explicitly trusted executable plugins. */
+	piResources(
+		character: CharacterPackage,
+		pluginsEnabled = true,
+	): {
 		skillPaths: string[];
 		pluginPaths: string[];
 		appendSystemPrompt: string;
@@ -583,12 +641,13 @@ export class CharacterLoader {
 		const pluginRoot = existsSync(pluginsDir)
 			? this.characterPackagePath(character.id, "plugins")
 			: undefined;
-		const pluginPaths = pluginRoot ? this.collectPluginFiles(character.id, pluginRoot) : [];
+		const pluginPaths =
+			pluginsEnabled && pluginRoot ? this.collectPluginFiles(character.id, pluginRoot) : [];
 		for (const path of skillPaths) this.ensureContainedTree(character.id, path);
 		return {
 			skillPaths,
 			pluginPaths,
-			appendSystemPrompt: `${character.identity_core}\n\n${character.companion.pi.append_system_prompt}`,
+			appendSystemPrompt: character.companion.pi.append_system_prompt,
 		};
 	}
 
@@ -748,8 +807,13 @@ export class CharacterLoader {
 		}
 	}
 
-	activate(db: AppDatabase, eventBus: EventBus, character: CharacterPackage): void {
-		this.seed(db, eventBus, character);
+	activate(
+		db: AppDatabase,
+		eventBus: EventBus,
+		character: CharacterPackage,
+		origin?: CharacterPackageOrigin,
+	): void {
+		this.seed(db, eventBus, character, origin);
 		db.insert(activeCharacter)
 			.values({ singleton: 1, characterId: character.id })
 			.onConflictDoUpdate({
@@ -760,15 +824,24 @@ export class CharacterLoader {
 		eventBus.publish("character.activated", { characterId: character.id });
 	}
 
-	/** Seed the database from a character package. Idempotent (checks companion_identity). */
-	seed(db: AppDatabase, eventBus: EventBus, character: CharacterPackage): void {
+	/** Seed identity once and refresh package provenance on every package load. */
+	seed(
+		db: AppDatabase,
+		eventBus: EventBus,
+		character: CharacterPackage,
+		origin: CharacterPackageOrigin = this.packageOrigin(character),
+	): void {
 		const existing = db
 			.select({ id: companionIdentity.id })
 			.from(companionIdentity)
 			.where(eq(companionIdentity.id, character.id))
 			.get();
-		if (existing) return; // already seeded
-
+		const existingPackage = db
+			.select({ origin: companionPackages.origin })
+			.from(companionPackages)
+			.where(eq(companionPackages.id, character.id))
+			.get();
+		const effectiveOrigin = existingPackage?.origin ?? origin;
 		db.transaction((transaction) => {
 			const packageHash = createHash("sha256")
 				.update(character.id)
@@ -781,6 +854,7 @@ export class CharacterLoader {
 				.update("\0")
 				.update(character.self_canon)
 				.digest("hex");
+			const pluginHash = this.pluginHash(character);
 			transaction
 				.insert(companionPackages)
 				.values({
@@ -788,12 +862,24 @@ export class CharacterLoader {
 					name: character.name,
 					version: character.version,
 					hash: packageHash,
+					origin: effectiveOrigin,
+					pluginHash,
+					pluginTrustedHash: effectiveOrigin === "official" ? pluginHash : null,
 				})
 				.onConflictDoUpdate({
 					target: companionPackages.id,
-					set: { name: character.name, version: character.version, hash: packageHash },
+					set: {
+						name: character.name,
+						version: character.version,
+						hash: packageHash,
+						origin: effectiveOrigin,
+						pluginHash,
+						pluginTrustedHash:
+							effectiveOrigin === "official" ? pluginHash : companionPackages.pluginTrustedHash,
+					},
 				})
 				.run();
+			if (existing) return;
 			// Insert the companion identity
 			transaction
 				.insert(companionIdentity)

@@ -264,6 +264,8 @@ export interface CharacterApi {
 	list(): Promise<CharacterListData>;
 	activate(characterId: string): Promise<void>;
 	import(files: Array<{ path: string; base64: string }>): Promise<void>;
+	pluginTrust(characterId?: string): Promise<{ trusted: boolean; pluginsPresent: boolean }>;
+	confirmPluginTrust(characterId: string): Promise<void>;
 	draftCreate(params?: { basePackageId?: string; locale?: string }): Promise<CharacterDraft>;
 	draftGet(id: string): Promise<CharacterDraft>;
 	draftPatch(
@@ -1325,6 +1327,15 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		import: async (files) => {
 			await invoke(client, () => client.character.import({ files }));
 			await refreshCharacters();
+		},
+		pluginTrust: async (characterId) => {
+			const { trust } = await invoke(client, () =>
+				client.character.pluginTrustGet({ characterId }),
+			);
+			return trust;
+		},
+		confirmPluginTrust: async (characterId) => {
+			await invoke(client, () => client.character.pluginTrustConfirm({ characterId }));
 		},
 		draftCreate: async (params = {}) => {
 			const { draft } = await invoke(client, () => client.character.draftCreate(params));

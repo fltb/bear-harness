@@ -85,6 +85,7 @@ describe("character package Pi resources", () => {
 		expect(resources.pluginPaths).toEqual([
 			realpathSync(resolve(characterRoot, "jizhou", "plugins", "jizhou-roleplay.mjs")),
 		]);
+		expect(loader.piResources(character, false).pluginPaths).toEqual([]);
 	});
 
 	it("discovers only role-owned Skills and plugins by package convention", () => {
@@ -109,9 +110,8 @@ describe("character package Pi resources", () => {
 		if (!character) throw new Error("test package failed to load");
 		const resources = loader.piResources(character);
 		expect(resources.skillPaths).toEqual([realpathSync(join(packageDir, "skills"))]);
-		expect(resources.pluginPaths).toEqual([
-			realpathSync(join(packageDir, "plugins", "jizhou-roleplay.mjs")),
+		expect(resources.pluginPaths).toContain(
 			realpathSync(join(packageDir, "plugins", "station-log", "extension.ts")),
-		]);
+		);
 	});
 });

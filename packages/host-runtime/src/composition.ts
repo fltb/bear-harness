@@ -95,7 +95,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		s.characterLoader.activate(s.orm, s.eventBus, character);
 		s.canon.syncPackage(character.id, character.canon);
 		await s.supervisor.stop();
-		s.supervisor.configureRuntime(s.characterLoader.piResources(character));
+		configureCharacterRuntime(s, character);
 		await s.supervisor.start();
 		return { character: s.characterLoader.display(character) };
 	});
@@ -111,10 +111,33 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				reason: error instanceof Error ? error.message : "character_package_invalid",
 			};
 		}
-		s.characterLoader.seed(s.orm, s.eventBus, character);
+		s.characterLoader.seed(s.orm, s.eventBus, character, "imported");
 		s.canon.syncPackage(character.id, character.canon);
-		s.eventBus.publish("character.imported", { characterId: character.id });
+		const trust = s.characterLoader.pluginTrust(s.orm, character);
+		s.eventBus.publish("character.imported", { characterId: character.id, trust });
 		return { character: s.characterLoader.display(character) };
+	});
+	dispatcher.registerHandler(RPC.character.pluginTrustGet, async (_p) => {
+		const requestedId = (_p as { characterId?: string }).characterId;
+		const characterId = requestedId ?? (await getCompanionId(s));
+		const character = s.characterLoader.load(characterId);
+		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
+		s.characterLoader.seed(s.orm, s.eventBus, character);
+		return { trust: s.characterLoader.pluginTrust(s.orm, character) };
+	});
+	dispatcher.registerHandler(RPC.character.pluginTrustConfirm, async (_p) => {
+		const { characterId } = _p as { characterId: string };
+		const character = s.characterLoader.load(characterId);
+		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
+		s.characterLoader.seed(s.orm, s.eventBus, character);
+		const trust = s.characterLoader.confirmPluginTrust(s.orm, character);
+		s.eventBus.publish("character.pluginsTrusted", { characterId, pluginHash: trust.pluginHash });
+		if ((await getCompanionId(s)) === characterId) {
+			await s.supervisor.stop();
+			configureCharacterRuntime(s, character);
+			await s.supervisor.start();
+		}
+		return { trust };
 	});
 	dispatcher.registerHandler(RPC.character.draftCreate, async (_p) => {
 		const { basePackageId, locale } = _p as { basePackageId?: string; locale?: string };
@@ -159,10 +182,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.character.draftPublish, async (_p) => {
 		const { id, expectedRevision } = _p as { id: string; expectedRevision: number };
 		const result = s.drafts.publish(id, expectedRevision);
-		s.characterLoader.activate(s.orm, s.eventBus, result.character);
+		s.characterLoader.activate(s.orm, s.eventBus, result.character, "local");
 		s.canon.syncPackage(result.character.id, result.character.canon);
 		await s.supervisor.stop();
-		s.supervisor.configureRuntime(s.characterLoader.piResources(result.character));
+		configureCharacterRuntime(s, result.character);
 		await s.supervisor.start();
 		return { draft: result.draft, character: s.characterLoader.display(result.character) };
 	});
@@ -890,4 +913,13 @@ function ensureCharacterSeeded(s: HostCompositionContext): void {
 		.where(eq(activeCharacter.singleton, 1))
 		.get();
 	if (!active) s.characterLoader.activate(s.orm, s.eventBus, character);
+}
+
+/** Skills are always declarative context; executable plugins require current package trust. */
+function configureCharacterRuntime(
+	s: HostCompositionContext,
+	character: Parameters<CharacterLoader["piResources"]>[0],
+): void {
+	const trust = s.characterLoader.pluginTrust(s.orm, character);
+	s.supervisor.configureRuntime(s.characterLoader.piResources(character, trust.trusted));
 }

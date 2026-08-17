@@ -303,7 +303,10 @@ export class HostRuntime {
 		);
 		const activeCharacter = this.characterLoader.load(activeCharacterId);
 		if (!activeCharacter) throw new Error(`character package missing: ${activeCharacterId}`);
-		this.supervisor.configureRuntime(this.characterLoader.piResources(activeCharacter));
+		const trust = this.characterLoader.pluginTrust(this.composition.orm, activeCharacter);
+		this.supervisor.configureRuntime(
+			this.characterLoader.piResources(activeCharacter, trust.trusted),
+		);
 		await this.supervisor.start();
 	}
 

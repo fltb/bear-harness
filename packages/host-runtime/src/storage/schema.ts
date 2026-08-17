@@ -23,6 +23,11 @@ export const companionPackages = sqliteTable("companion_packages", {
 	name: text().notNull(),
 	version: text().notNull(),
 	hash: text().notNull(),
+	origin: text({ enum: ["official", "local", "imported"] })
+		.notNull()
+		.default("official"),
+	pluginHash: text("plugin_hash").notNull().default(""),
+	pluginTrustedHash: text("plugin_trusted_hash"),
 	signedAt: text("signed_at"),
 	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 });

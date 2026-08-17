@@ -330,6 +330,20 @@ export const CharacterImportRequest = z.strictObject({
 		.min(1)
 		.max(500),
 });
+export const CharacterPluginTrust = z.strictObject({
+	characterId: z.string().min(1).max(64),
+	origin: z.enum(["official", "local", "imported"]),
+	pluginHash: z.string(),
+	pluginsPresent: z.boolean(),
+	trusted: z.boolean(),
+});
+export const CharacterPluginTrustGetRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
+});
+export const CharacterPluginTrustResponse = z.strictObject({ trust: CharacterPluginTrust });
+export const CharacterPluginTrustConfirmRequest = z.strictObject({
+	characterId: z.string().min(1).max(64),
+});
 const CharacterDraftFile = z.strictObject({
 	encoding: z.enum(["utf8", "base64"]),
 	content: z.string().max(8_000_000),
@@ -1256,6 +1270,16 @@ export const RPC = {
 		list: endpoint("character.list:v1", CharacterListRequest, CharacterListResponse),
 		activate: endpoint("character.activate:v1", CharacterActivateRequest, CharacterResponse),
 		import: endpoint("character.import:v1", CharacterImportRequest, CharacterResponse),
+		pluginTrustGet: endpoint(
+			"character.pluginTrustGet:v1",
+			CharacterPluginTrustGetRequest,
+			CharacterPluginTrustResponse,
+		),
+		pluginTrustConfirm: endpoint(
+			"character.pluginTrustConfirm:v1",
+			CharacterPluginTrustConfirmRequest,
+			CharacterPluginTrustResponse,
+		),
 		draftCreate: endpoint(
 			"character.draftCreate:v1",
 			CharacterDraftCreateRequest,

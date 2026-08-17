@@ -144,8 +144,8 @@ host:
       visual_state: presence
 
 # Companion Pi 行为层。Host 自动发现包内的 `skills/**/SKILL.md` 与
-# `plugins/**/*.{ts,js,mjs,cjs}`；目录不存在即表示该角色没有专属动态行为。
-# Host 仍校验所有工具调用。
+# `plugins/**/*.{ts,js,mjs,cjs}`；官方内置包的插件直接启用，其他来源
+# 在导入时经用户确认。Host 仍校验所有工具调用。
 companion:
   pi:
     append_system_prompt: |

@@ -848,4 +848,14 @@ export const MIGRATIONS: Migration[] = [
 			);
 		`,
 	},
+	{
+		id: 14,
+		description: "Character package plugin provenance and explicit trust",
+		up: `
+			ALTER TABLE companion_packages ADD COLUMN origin TEXT NOT NULL DEFAULT 'official'
+				CHECK (origin IN ('official','local','imported'));
+			ALTER TABLE companion_packages ADD COLUMN plugin_hash TEXT NOT NULL DEFAULT '';
+			ALTER TABLE companion_packages ADD COLUMN plugin_trusted_hash TEXT;
+		`,
+	},
 ];

@@ -50,6 +50,7 @@ export interface ContextManifestEntry {
 	layer: ContextPackBlock["layer"];
 	source: string;
 	characters: number;
+	truncated?: boolean;
 }
 
 export interface ContextPack {
@@ -153,17 +154,50 @@ ${modules.join("\n")}`,
 			}
 		}
 
-		// Token budget accounting
-		const totalChars = blocks.reduce((sum, b) => sum + b.content.length, 0);
-		const truncated = totalChars > 8000; // rough budget marker (M2 wire)
+		// Enforce a deterministic product budget. Stable identity and current state
+		// are retained; lower-priority retrieval and old transcript content lose tail
+		// content first and are marked in the manifest.
+		const budget = 16000;
+		let remaining = budget;
+		let truncated = false;
+		const prioritized = blocks
+			.map((block, index) => ({ block, index }))
+			.sort((a, b) => {
+				const priority = (layer: ContextPackBlock["layer"]) =>
+					layer === "identity" || layer === "scene" || layer === "roleplay"
+						? 0
+						: layer === "relationship" || layer === "story"
+							? 1
+							: layer === "canon"
+								? 2
+								: 3;
+				return priority(a.block.layer) - priority(b.block.layer) || a.index - b.index;
+			});
+		const allowed = new Map<ContextPackBlock, string>();
+		for (const { block } of prioritized) {
+			const content =
+				block.content.length <= remaining
+					? block.content
+					: block.content.slice(0, Math.max(0, remaining));
+			if (content.length !== block.content.length) truncated = true;
+			allowed.set(block, content);
+			remaining = Math.max(0, remaining - content.length);
+		}
+		const budgetedBlocks = blocks
+			.map((block) => ({
+				block: { ...block, content: allowed.get(block) ?? "" },
+				originalCharacters: block.content.length,
+			}))
+			.filter((entry) => entry.block.content.length > 0);
 
 		return {
-			blocks,
-			manifest: blocks.map((block, order) => ({
+			blocks: budgetedBlocks.map((entry) => entry.block),
+			manifest: budgetedBlocks.map(({ block, originalCharacters }, order) => ({
 				order,
 				layer: block.layer,
 				source: manifestSource(block.layer),
 				characters: block.content.length,
+				truncated: block.content.length !== originalCharacters,
 			})),
 			charge: {
 				turns: 0,
@@ -213,15 +247,15 @@ ${modules.join("\n")}`,
 
 	private getSelfCanon(conversationId: string): string | null {
 		const row = this.db
-			.select({ canon: selfCanonVersions.canon })
+			.select({ canon: selfCanonVersions.canon, fallbackCanon: companionIdentity.selfCanon })
 			.from(conversations)
 			.innerJoin(companionIdentity, eq(companionIdentity.id, conversations.companionId))
-			.innerJoin(selfCanonVersions, eq(selfCanonVersions.companionId, companionIdentity.id))
+			.leftJoin(selfCanonVersions, eq(selfCanonVersions.companionId, companionIdentity.id))
 			.where(eq(conversations.id, conversationId))
 			.orderBy(desc(selfCanonVersions.version))
 			.limit(1)
 			.get();
-		return row?.canon ?? null;
+		return row?.canon ?? row?.fallbackCanon ?? null;
 	}
 
 	private getSceneState(conversationId: string): string | null {
