@@ -399,6 +399,26 @@ button[data-variant="primary"]:focus-visible {
 	color: var(--text-muted);
 	font-size: 13px;
 }
+
+.workshop-history {
+	border-top: 1px solid var(--line);
+	padding-top: 12px;
+}
+
+.workshop-history h4 {
+	margin: 0 0 8px;
+	font-size: 13px;
+}
+
+.workshop-history-row {
+	display: flex;
+	min-height: 34px;
+	align-items: center;
+	justify-content: space-between;
+	border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+	color: var(--text-muted);
+	font-size: 13px;
+}
 .canon-studio form {
 	display: grid;
 	gap: 8px;

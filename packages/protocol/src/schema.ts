@@ -349,7 +349,11 @@ export const CharacterDraftCreateRequest = z.strictObject({
 });
 export const CharacterDraftGetRequest = z.strictObject({ id: z.string().min(1).max(64) });
 export const CharacterDraftPatchRequest = z
-	.strictObject({ id: z.string().min(1).max(64), files: CharacterDraftFiles })
+	.strictObject({
+		id: z.string().min(1).max(64),
+		expectedRevision: z.number().int().min(1),
+		files: CharacterDraftFiles,
+	})
 	.superRefine(({ files }, context) => {
 		const count = Object.keys(files).length;
 		if (count < 1 || count > 100)
@@ -360,6 +364,19 @@ export const CharacterDraftPatchRequest = z
 			});
 	});
 export const CharacterDraftResponse = z.strictObject({ draft: CharacterDraft });
+export const CharacterDraftRevision = z.strictObject({
+	revision: z.number().int().min(1),
+	createdAt: z.string().min(1).max(64),
+});
+export const CharacterDraftListRevisionsRequest = CharacterDraftGetRequest;
+export const CharacterDraftListRevisionsResponse = z.strictObject({
+	revisions: z.array(CharacterDraftRevision).max(10_000),
+});
+export const CharacterDraftRestoreRevisionRequest = z.strictObject({
+	id: z.string().min(1).max(64),
+	expectedRevision: z.number().int().min(1),
+	sourceRevision: z.number().int().min(1),
+});
 export const CharacterDraftUploadAssetsRequest = z.strictObject({
 	id: z.string().min(1).max(64),
 	expectedRevision: z.number().int().min(1),
@@ -1253,6 +1270,16 @@ export const RPC = {
 		draftUploadAssets: endpoint(
 			"character.draftUploadAssets:v1",
 			CharacterDraftUploadAssetsRequest,
+			CharacterDraftResponse,
+		),
+		draftListRevisions: endpoint(
+			"character.draftListRevisions:v1",
+			CharacterDraftListRevisionsRequest,
+			CharacterDraftListRevisionsResponse,
+		),
+		draftRestoreRevision: endpoint(
+			"character.draftRestoreRevision:v1",
+			CharacterDraftRestoreRevisionRequest,
 			CharacterDraftResponse,
 		),
 		draftValidate: endpoint(

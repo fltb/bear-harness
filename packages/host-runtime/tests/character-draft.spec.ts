@@ -56,6 +56,7 @@ describe("character package drafts", () => {
 
 			const firstPatch = await runtime.dispatch("character.draftPatch:v1", {
 				id: draftId,
+				expectedRevision: 1,
 				files: {
 					"character.yaml": { encoding: "utf8", content: "id: atelier-test\n" },
 					"locales/zh-CN.yaml": { encoding: "utf8", content: "name: 测试\n" },
@@ -71,6 +72,7 @@ describe("character package drafts", () => {
 
 			const secondPatch = await runtime.dispatch("character.draftPatch:v1", {
 				id: draftId,
+				expectedRevision: 2,
 				files: {
 					"character.yaml": { encoding: "utf8", content: "id: atelier-test\nversion: 2\n" },
 				},
@@ -97,6 +99,7 @@ describe("character package drafts", () => {
 			const draftId = created.data.draft.id;
 			const patched = await runtime.dispatch("character.draftPatch:v1", {
 				id: draftId,
+				expectedRevision: 1,
 				files: {
 					"character.yaml": { encoding: "utf8", content: "id: incomplete-workshop-package\n" },
 				},
@@ -161,6 +164,47 @@ describe("character package drafts", () => {
 		}
 	});
 
+	it("restores an old revision by appending a new immutable revision", async () => {
+		const runtime = await createRuntime();
+		try {
+			const created = await runtime.dispatch("character.draftCreate:v1", {});
+			const first = await runtime.dispatch("character.draftPatch:v1", {
+				id: created.data.draft.id,
+				expectedRevision: 1,
+				files: { "notes.txt": { encoding: "utf8", content: "first" } },
+			});
+			const second = await runtime.dispatch("character.draftPatch:v1", {
+				id: created.data.draft.id,
+				expectedRevision: first.data.draft.currentRevision,
+				files: { "notes.txt": { encoding: "utf8", content: "second" } },
+			});
+			await expect(
+				runtime.dispatch("character.draftRestoreRevision:v1", {
+					id: created.data.draft.id,
+					expectedRevision: second.data.draft.currentRevision,
+					sourceRevision: first.data.draft.currentRevision,
+				}),
+			).resolves.toMatchObject({
+				ok: true,
+				data: {
+					draft: {
+						status: "draft",
+						currentRevision: 4,
+						files: { "notes.txt": { encoding: "utf8", content: "first" } },
+					},
+				},
+			});
+			await expect(
+				runtime.dispatch("character.draftListRevisions:v1", { id: created.data.draft.id }),
+			).resolves.toMatchObject({
+				ok: true,
+				data: { revisions: [{ revision: 4 }, { revision: 3 }, { revision: 2 }, { revision: 1 }] },
+			});
+		} finally {
+			await runtime.close();
+		}
+	});
+
 	it("validates and publishes a binary-safe package revision, then activates that character", async () => {
 		const runtime = await createRuntime();
 		try {
@@ -177,6 +221,7 @@ describe("character package drafts", () => {
 			).toString("base64");
 			const patched = await runtime.dispatch("character.draftPatch:v1", {
 				id: created.data.draft.id,
+				expectedRevision: 1,
 				files,
 			});
 			const revision = patched.data.draft.currentRevision;

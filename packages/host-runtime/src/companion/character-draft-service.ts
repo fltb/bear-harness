@@ -49,16 +49,40 @@ export class CharacterDraftService {
 		};
 	}
 
-	applyPatch(id: string, files: CharacterDraftFiles) {
+	applyPatch(id: string, expectedRevision: number, files: CharacterDraftFiles) {
+		const current = this.assertRevision(id, expectedRevision);
+		return this.createRevision(id, { ...current.files, ...files });
+	}
+
+	restoreRevision(id: string, expectedRevision: number, sourceRevision: number) {
+		this.assertRevision(id, expectedRevision);
+		const source = this.db
+			.select({ files: characterDraftRevisions.filesJson })
+			.from(characterDraftRevisions)
+			.where(
+				and(
+					eq(characterDraftRevisions.draftId, id),
+					eq(characterDraftRevisions.revision, sourceRevision),
+				),
+			)
+			.get();
+		if (!source) throw { kind: "not_found", reason: "character_draft_revision_not_found" };
+		return this.createRevision(id, source.files);
+	}
+
+	private createRevision(id: string, files: CharacterDraftFiles) {
 		const current = this.get(id);
 		const nextRevision = current.currentRevision + 1;
-		const nextFiles = { ...current.files, ...files };
 		this.db.transaction((tx) => {
 			tx.insert(characterDraftRevisions)
-				.values({ draftId: id, revision: nextRevision, filesJson: nextFiles })
+				.values({ draftId: id, revision: nextRevision, filesJson: files })
 				.run();
 			tx.update(characterDrafts)
-				.set({ currentRevision: nextRevision, updatedAt: new Date().toISOString() })
+				.set({
+					status: "draft",
+					currentRevision: nextRevision,
+					updatedAt: new Date().toISOString(),
+				})
 				.where(eq(characterDrafts.id, id))
 				.run();
 		});
@@ -77,6 +101,7 @@ export class CharacterDraftService {
 		}
 		return this.applyPatch(
 			id,
+			expectedRevision,
 			Object.fromEntries(
 				assets.map((asset) => [asset.path, { encoding: "base64" as const, content: asset.base64 }]),
 			),
@@ -104,6 +129,7 @@ export class CharacterDraftService {
 	}
 
 	listRevisions(id: string) {
+		this.get(id);
 		return this.db
 			.select({
 				revision: characterDraftRevisions.revision,

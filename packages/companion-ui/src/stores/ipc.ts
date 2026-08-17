@@ -150,4 +150,5 @@ export type CharacterSummary = Wire.CharacterSummary;
 export type CharacterListData = Wire.CharacterListResponse;
 export type CharacterDraft = Wire.CharacterDraft;
 export type CharacterDraftFiles = Wire.CharacterDraft["files"];
+export type CharacterDraftRevision = Wire.CharacterDraftRevision;
 export type Snapshot = Wire.SnapshotResponse;

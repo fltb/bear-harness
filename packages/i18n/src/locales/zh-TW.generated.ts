@@ -109,7 +109,10 @@ export const zhTW = {
 		"validate": "校驗角色包",
 		"validated": "角色包校驗通過",
 		"publish": "釋出並激活",
-		"published": "角色包已釋出並激活"
+		"published": "角色包已釋出並激活",
+		"history": "版本歷史",
+		"restore": "恢復為新版本",
+		"restored": "已從歷史版本建立新草稿版本"
 	},
 	"webDev": {
 		"ariaLabel": "Web Dev 除錯工具",

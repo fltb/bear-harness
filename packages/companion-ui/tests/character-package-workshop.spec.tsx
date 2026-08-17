@@ -18,11 +18,14 @@ describe("character package workshop", () => {
 		const user = userEvent.setup();
 		const draftCreate = vi.fn(() => Promise.resolve(createdDraft));
 		const draftPatch = vi.fn(() => Promise.resolve({ ...createdDraft, currentRevision: 2 }));
+		const draftListRevisions = vi.fn(() =>
+			Promise.resolve([{ revision: 1, createdAt: "2026-08-17" }]),
+		);
 		render(() => (
 			<DesktopProvider
 				store={
 					{
-						characters: { draftCreate, draftPatch },
+						characters: { draftCreate, draftPatch, draftListRevisions },
 					} as unknown as CompanionStore
 				}
 			>
@@ -32,11 +35,12 @@ describe("character package workshop", () => {
 
 		await user.click(screen.getByRole("button", { name: zhCN.packageWorkshop.create }));
 		expect(draftCreate).toHaveBeenCalledWith();
+		expect(draftListRevisions).toHaveBeenCalledWith("draft-1");
 		const editor = screen.getByRole("textbox", { name: zhCN.packageWorkshop.manifest });
 		await user.clear(editor);
 		await user.type(editor, "id: workshop-ui\n");
 		await user.click(screen.getByRole("button", { name: zhCN.packageWorkshop.save }));
-		expect(draftPatch).toHaveBeenCalledWith("draft-1", {
+		expect(draftPatch).toHaveBeenCalledWith("draft-1", 1, {
 			"character.yaml": { encoding: "utf8", content: "id: workshop-ui\n" },
 		});
 	});

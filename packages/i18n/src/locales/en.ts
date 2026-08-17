@@ -113,6 +113,9 @@ export const en = {
 		validated: "Package validation passed",
 		publish: "Publish and activate",
 		published: "Package published and activated",
+		history: "Revision history",
+		restore: "Restore as new revision",
+		restored: "Created a new draft revision from history",
 	},
 	webDev: {
 		ariaLabel: "Web Dev tools",

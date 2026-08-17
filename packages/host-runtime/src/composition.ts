@@ -123,8 +123,12 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return { draft: s.drafts.get(id) };
 	});
 	dispatcher.registerHandler(RPC.character.draftPatch, async (_p) => {
-		const { id, files } = _p as { id: string; files: CharacterDraftFiles };
-		return { draft: s.drafts.applyPatch(id, files) };
+		const { id, expectedRevision, files } = _p as {
+			id: string;
+			expectedRevision: number;
+			files: CharacterDraftFiles;
+		};
+		return { draft: s.drafts.applyPatch(id, expectedRevision, files) };
 	});
 	dispatcher.registerHandler(RPC.character.draftUploadAssets, async (_p) => {
 		const { id, expectedRevision, assets } = _p as {
@@ -133,6 +137,18 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			assets: Array<{ path: string; mime: string; base64: string }>;
 		};
 		return { draft: s.drafts.uploadAssets(id, expectedRevision, assets) };
+	});
+	dispatcher.registerHandler(RPC.character.draftListRevisions, async (_p) => {
+		const { id } = _p as { id: string };
+		return { revisions: s.drafts.listRevisions(id) };
+	});
+	dispatcher.registerHandler(RPC.character.draftRestoreRevision, async (_p) => {
+		const { id, expectedRevision, sourceRevision } = _p as {
+			id: string;
+			expectedRevision: number;
+			sourceRevision: number;
+		};
+		return { draft: s.drafts.restoreRevision(id, expectedRevision, sourceRevision) };
 	});
 	dispatcher.registerHandler(RPC.character.draftValidate, async (_p) => {
 		const { id, expectedRevision } = _p as { id: string; expectedRevision: number };

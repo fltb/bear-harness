@@ -94,6 +94,16 @@ export type CharacterDraft = z.infer<typeof schema.CharacterDraft>;
 export type CharacterDraftCreateRequest = z.infer<typeof schema.CharacterDraftCreateRequest>;
 export type CharacterDraftGetRequest = z.infer<typeof schema.CharacterDraftGetRequest>;
 export type CharacterDraftPatchRequest = z.infer<typeof schema.CharacterDraftPatchRequest>;
+export type CharacterDraftRevision = z.infer<typeof schema.CharacterDraftRevision>;
+export type CharacterDraftListRevisionsRequest = z.infer<
+	typeof schema.CharacterDraftListRevisionsRequest
+>;
+export type CharacterDraftListRevisionsResponse = z.infer<
+	typeof schema.CharacterDraftListRevisionsResponse
+>;
+export type CharacterDraftRestoreRevisionRequest = z.infer<
+	typeof schema.CharacterDraftRestoreRevisionRequest
+>;
 export type CharacterDraftUploadAssetsRequest = z.infer<
 	typeof schema.CharacterDraftUploadAssetsRequest
 >;

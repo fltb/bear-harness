@@ -2,9 +2,9 @@ import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
 import { FileField } from "@kobalte/core/file-field";
 import { TextField } from "@kobalte/core/text-field";
-import { createSignal, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { useCompanionStore } from "../stores/companion.js";
-import type { CharacterDraft } from "../stores/ipc.js";
+import type { CharacterDraft, CharacterDraftRevision } from "../stores/ipc.js";
 
 const starterManifest = `id: my-character
 version: 0.1.0
@@ -21,12 +21,15 @@ export function CharacterPackageWorkshop() {
 	const [manifest, setManifest] = createSignal(starterManifest);
 	const [busy, setBusy] = createSignal(false);
 	const [feedback, setFeedback] = createSignal<string>();
+	const [history, setHistory] = createSignal<CharacterDraftRevision[]>([]);
 
 	const run = async (action: () => Promise<CharacterDraft>, message: string) => {
 		setBusy(true);
 		setFeedback();
 		try {
-			setDraft(await action());
+			const next = await action();
+			setDraft(next);
+			setHistory(await store.characters.draftListRevisions(next.id));
 			setFeedback(message);
 		} catch (error) {
 			setFeedback(error instanceof Error ? error.message : String(error));
@@ -40,7 +43,7 @@ export function CharacterPackageWorkshop() {
 		if (!current) return;
 		void run(
 			() =>
-				store.characters.draftPatch(current.id, {
+				store.characters.draftPatch(current.id, current.currentRevision, {
 					"character.yaml": { encoding: "utf8", content: manifest() },
 				}),
 			t("packageWorkshop.saved"),
@@ -144,6 +147,37 @@ export function CharacterPackageWorkshop() {
 					</Button>
 				</div>
 				<Show when={feedback()}>{(message) => <p class="drawer-note">{message()}</p>}</Show>
+				<section class="workshop-history">
+					<h4>{t("packageWorkshop.history")}</h4>
+					<For each={history()}>
+						{(entry) => (
+							<div class="workshop-history-row">
+								<span>{t("packageWorkshop.revision", { revision: entry.revision })}</span>
+								<Show when={entry.revision !== draft()?.currentRevision}>
+									<Button
+										data-control="command"
+										disabled={busy()}
+										onClick={() => {
+											const current = draft();
+											if (current)
+												void run(
+													() =>
+														store.characters.draftRestoreRevision(
+															current.id,
+															current.currentRevision,
+															entry.revision,
+														),
+													t("packageWorkshop.restored"),
+												);
+										}}
+									>
+										{t("packageWorkshop.restore")}
+									</Button>
+								</Show>
+							</div>
+						)}
+					</For>
+				</section>
 			</Show>
 		</div>
 	);

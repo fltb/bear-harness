@@ -47,6 +47,7 @@ import {
 	type CharacterDisplay,
 	type CharacterDraft,
 	type CharacterDraftFiles,
+	type CharacterDraftRevision,
 	type CharacterListData,
 	type CharacterRuntimeState,
 	type CharacterSummary,
@@ -265,11 +266,21 @@ export interface CharacterApi {
 	import(files: Array<{ path: string; base64: string }>): Promise<void>;
 	draftCreate(params?: { basePackageId?: string; locale?: string }): Promise<CharacterDraft>;
 	draftGet(id: string): Promise<CharacterDraft>;
-	draftPatch(id: string, files: CharacterDraftFiles): Promise<CharacterDraft>;
+	draftPatch(
+		id: string,
+		expectedRevision: number,
+		files: CharacterDraftFiles,
+	): Promise<CharacterDraft>;
 	draftUploadAssets(
 		id: string,
 		expectedRevision: number,
 		assets: Array<{ path: string; mime: string; base64: string }>,
+	): Promise<CharacterDraft>;
+	draftListRevisions(id: string): Promise<CharacterDraftRevision[]>;
+	draftRestoreRevision(
+		id: string,
+		expectedRevision: number,
+		sourceRevision: number,
 	): Promise<CharacterDraft>;
 	draftValidate(id: string, expectedRevision: number): Promise<CharacterDraft>;
 	draftPublish(id: string, expectedRevision: number): Promise<CharacterDraft>;
@@ -1323,13 +1334,25 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			const { draft } = await invoke(client, () => client.character.draftGet({ id }));
 			return draft;
 		},
-		draftPatch: async (id, files) => {
-			const { draft } = await invoke(client, () => client.character.draftPatch({ id, files }));
+		draftPatch: async (id, expectedRevision, files) => {
+			const { draft } = await invoke(client, () =>
+				client.character.draftPatch({ id, expectedRevision, files }),
+			);
 			return draft;
 		},
 		draftUploadAssets: async (id, expectedRevision, assets) => {
 			const { draft } = await invoke(client, () =>
 				client.character.draftUploadAssets({ id, expectedRevision, assets }),
+			);
+			return draft;
+		},
+		draftListRevisions: async (id) => {
+			const { revisions } = await invoke(client, () => client.character.draftListRevisions({ id }));
+			return revisions;
+		},
+		draftRestoreRevision: async (id, expectedRevision, sourceRevision) => {
+			const { draft } = await invoke(client, () =>
+				client.character.draftRestoreRevision({ id, expectedRevision, sourceRevision }),
 			);
 			return draft;
 		},

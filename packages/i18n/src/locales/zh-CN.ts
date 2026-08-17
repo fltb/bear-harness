@@ -111,6 +111,9 @@ export const zhCN = {
 		validated: "角色包校验通过",
 		publish: "发布并激活",
 		published: "角色包已发布并激活",
+		history: "版本历史",
+		restore: "恢复为新版本",
+		restored: "已从历史版本创建新草稿版本",
 	},
 	webDev: {
 		ariaLabel: "Web Dev 调试工具",
