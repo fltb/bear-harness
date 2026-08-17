@@ -1,11 +1,9 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { Button } from "@kobalte/core/button";
-import { Select } from "@kobalte/core/select";
 import { Tabs } from "@kobalte/core/tabs";
+import { Button } from "@kobalte/core/button";
 import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import {
-	type MemoryDecision,
 	type MemoryEntry,
 	type MemoryScope,
 	useCompanionStore,
@@ -14,17 +12,24 @@ import {
 /**
  * Memory management sheet (幕后 · 记忆).
  *
- * Data flows through the companion store: candidates come from the reactive
- * `store.memory.candidates()`, entries are loaded per scope/query via
- * `store.memory.search`, and every mutation (approve / edit / reject / pin /
- * forget / exclude) calls the corresponding `store.memory.*` method, which
- * keeps the store's lists in sync. The store normalizes hostile bridge
- * payloads at the boundary; this sheet only surfaces failures in aria-live
- * status lines.
+ * The list is backed by the companion memory records. Mutations are routed
+ * through the store so the host remains the source of truth; this component
+ * only handles loading state and the editing controls.
  */
 
-function scopeLabel(scope: MemoryScope): string {
-	return i18n.t(`memory.scopes.${scope}`);
+/** Cap search queries client-side; the wire schema allows up to 4096 chars. */
+const CLIENT_QUERY_LIMIT = 512;
+
+/** Format an ISO-ish timestamp defensively; unparseable values pass through. */
+function formatDate(value: string): string {
+	if (!value) return "";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return value;
+	return date.toLocaleDateString("zh-CN", { year: "numeric", month: "short", day: "numeric" });
+}
+
+function messageOf(value: unknown): string {
+	return value instanceof Error ? value.message : String(value);
 }
 
 function kindLabel(kind: MemoryEntry["kind"]): string {
@@ -42,30 +47,44 @@ function kindLabel(kind: MemoryEntry["kind"]): string {
 	}
 }
 
-/** Cap search queries client-side; the wire schema allows up to 4096 chars. */
-const CLIENT_QUERY_LIMIT = 512;
-
-/** Format an ISO-ish timestamp defensively; unparseable values pass through. */
-function formatDate(value: string): string {
-	if (!value) return "";
-	const date = new Date(value);
-	if (Number.isNaN(date.getTime())) return value;
-	return date.toLocaleDateString("zh-CN", { year: "numeric", month: "short", day: "numeric" });
-}
-
-function messageOf(value: unknown): string {
-	return value instanceof Error ? value.message : String(value);
-}
-
 /**
- * Entry list for one memory scope. Self-loading: searches the scope (all
- * entries when `query` is empty) and reloads after every mutation. `query`
- * must be a committed value — callers debounce via their own search box.
+ * The current wire projection predates the direct backend provenance fields.
+ * Accept both projections during the migration without making the panel
+ * depend on a second read path.
  */
+type MemoryEntryWithSource = MemoryEntry & {
+	createdBy?: string;
+	source?: string;
+	sourceKind?: string;
+	provenance?: { kind?: string };
+};
+
+function isMemoryEntryWithSource(entry: MemoryEntry): entry is MemoryEntryWithSource {
+	return (
+		"createdBy" in entry ||
+		"source" in entry ||
+		"sourceKind" in entry ||
+		"provenance" in entry
+	);
+}
+
+function sourceLabel(entry: MemoryEntry): string {
+	if (!isMemoryEntryWithSource(entry)) return i18n.t("memory.sourceAutomatic");
+	const source = entry.createdBy ?? entry.source ?? entry.sourceKind ?? entry.provenance?.kind;
+	return source === "user_capture" ||
+		source === "user_button" ||
+		source === "user_request" ||
+		source === "explicit" ||
+		source === "imported"
+		? i18n.t("memory.sourceUser")
+		: i18n.t("memory.sourceAutomatic");
+}
+
+/** Entry list for one memory scope. */
 export function MemoryEntryList(props: {
 	scope: MemoryScope;
 	query?: string;
-	/** Bump to force a reload (e.g. after a candidate was approved). */
+	/** Bump to force a reload after a mutation. */
 	refreshKey?: number;
 	title?: string;
 }) {
@@ -133,16 +152,12 @@ export function MemoryEntryList(props: {
 		);
 	const forget = (entry: MemoryEntry) => () =>
 		runEntryAction(entry.id, () => store.memory.forget(entry.id), t("memory.forget"));
-	const exclude = (entry: MemoryEntry) => () =>
-		runEntryAction(entry.id, () => store.memory.exclude(entry.id, true), t("memory.exclude"));
+	const invalidate = (entry: MemoryEntry) => () =>
+		runEntryAction(entry.id, () => store.memory.invalidate(entry.id), t("memory.invalidated"));
 	const saveEdit = (entry: MemoryEntry) => async () => {
 		const text = editedEntryText().trim();
 		if (!text) return;
-		await runEntryAction(
-			entry.id,
-			() => store.memory.edit(entry.id, text),
-			t("memory.approvedEdited"),
-		);
+		await runEntryAction(entry.id, () => store.memory.edit(entry.id, text), t("memory.revised"));
 		setEditingEntryId(null);
 	};
 
@@ -180,7 +195,7 @@ export function MemoryEntryList(props: {
 								when={editingEntryId() === entry.id}
 								fallback={<p class="memory-text">{entry.text}</p>}
 							>
-								<div class="candidate-edit">
+								<div class="memory-edit">
 									<TextField>
 										<TextField.TextArea
 											rows={3}
@@ -189,7 +204,7 @@ export function MemoryEntryList(props: {
 											aria-label={t("memory.editedContent")}
 										/>
 									</TextField>
-									<div class="candidate-actions">
+									<div class="memory-actions">
 										<Button
 											type="button"
 											class="mini-btn primary"
@@ -206,6 +221,7 @@ export function MemoryEntryList(props: {
 							</Show>
 							<div class="memory-meta">
 								<span class="memory-kind">{kindLabel(entry.kind)}</span>
+								<span class="memory-source">{sourceLabel(entry)}</span>
 								<span>{entry.sourceConversationTitle || t("memory.fallbackConversation")}</span>
 								<Show when={formatDate(entry.createdAt)}>
 									<span>{formatDate(entry.createdAt)}</span>
@@ -244,11 +260,11 @@ export function MemoryEntryList(props: {
 								</Button>
 								<Button
 									type="button"
-									class="mini-btn"
+									class="mini-btn danger"
 									disabled={busyId() === entry.id}
-									onClick={exclude(entry)}
+									onClick={invalidate(entry)}
 								>
-									{t("memory.exclude")}
+									{t("memory.invalidate")}
 								</Button>
 							</div>
 						</li>
@@ -259,50 +275,18 @@ export function MemoryEntryList(props: {
 	);
 }
 
-/**
- * Memory page: scope filter (self / relationship / scene), search, the
- * pending-candidate inbox and the per-scope entry list. All mutations call
- * the corresponding `store.memory.*` methods.
- */
+/** Memory page: search and per-scope backend memory records. */
 export function MemorySheet() {
 	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
 	const scopeTabs = (): Array<{ value: MemoryScope; label: string }> => [
 		{ value: "self", label: t("memory.scopes.self") },
 		{ value: "relationship", label: t("memory.scopes.relationship") },
 		{ value: "scene", label: t("memory.scopes.scene") },
 	];
 	const [scope, setScope] = createSignal<MemoryScope>("self");
-	const [candidateScope, setCandidateScope] = createSignal<MemoryScope>("self");
 	const [queryText, setQueryText] = createSignal("");
 	const [query, setQuery] = createSignal("");
 	const [refreshKey, setRefreshKey] = createSignal(0);
-	const [candidatesLoading, setCandidatesLoading] = createSignal(false);
-	const [candidatesError, setCandidatesError] = createSignal<string | null>(null);
-	const [editingId, setEditingId] = createSignal<string | null>(null);
-	const [editedText, setEditedText] = createSignal("");
-	const [busyId, setBusyId] = createSignal<string | null>(null);
-	const [feedback, setFeedback] = createSignal<string | null>(null);
-
-	/** Pending candidates only; the store keeps the full list reactive. */
-	const pendingCandidates = () =>
-		store.memory.candidates().filter((candidate) => candidate.status === "pending");
-
-	async function reloadCandidates(): Promise<void> {
-		setCandidatesLoading(true);
-		setCandidatesError(null);
-		try {
-			await store.memory.listCandidates();
-		} catch (e) {
-			setCandidatesError(messageOf(e));
-		} finally {
-			setCandidatesLoading(false);
-		}
-	}
-
-	createEffect(() => {
-		void reloadCandidates();
-	});
 
 	function onScopeChange(value: string): void {
 		const next = scopeTabs().find((tab) => tab.value === value)?.value;
@@ -322,177 +306,8 @@ export function MemorySheet() {
 		setQuery("");
 	}
 
-	async function decide(candidateId: string, decision: MemoryDecision): Promise<void> {
-		setBusyId(candidateId);
-		setCandidatesError(null);
-		setFeedback(null);
-		try {
-			await store.memory.decideCandidate(candidateId, decision, undefined, candidateScope());
-			setFeedback(
-				decision === "approve"
-					? t("memory.approved")
-					: decision === "reject"
-						? t("memory.rejected")
-						: t("memory.saved"),
-			);
-			setEditingId(null);
-			setRefreshKey((key) => key + 1);
-		} catch (e) {
-			setCandidatesError(messageOf(e));
-		} finally {
-			setBusyId(null);
-		}
-	}
-
-	async function saveEdited(candidateId: string): Promise<void> {
-		const text = editedText().trim();
-		if (!text) return;
-		setBusyId(candidateId);
-		setCandidatesError(null);
-		setFeedback(null);
-		try {
-			await store.memory.decideCandidate(candidateId, "approve_edited", text, candidateScope());
-			setFeedback(t("memory.approvedEdited"));
-			setEditingId(null);
-			setRefreshKey((key) => key + 1);
-		} catch (e) {
-			setCandidatesError(messageOf(e));
-		} finally {
-			setBusyId(null);
-		}
-	}
-
 	return (
 		<div class="sheet-panel">
-			<section class="candidates-section" aria-label={t("memory.recentCandidates")}>
-				<div class="section-head">
-					<h3>{t("memory.recentCandidates")}</h3>
-					<Show when={!candidatesLoading() && pendingCandidates().length > 0}>
-						<span class="section-count">{pendingCandidates().length}</span>
-					</Show>
-				</div>
-				<p class="drawer-note">{t("memory.candidatesNote")}</p>
-				<Select
-					options={scopeTabs()}
-					value={scopeTabs().find((tab) => tab.value === candidateScope()) ?? null}
-					optionValue="value"
-					optionTextValue="label"
-					onChange={(tab) => tab && setCandidateScope(tab.value)}
-					itemComponent={(itemProps) => (
-						<Select.Item item={itemProps.item} class="select-item">
-							<Select.ItemLabel>{itemProps.item.rawValue.label}</Select.ItemLabel>
-						</Select.Item>
-					)}
-				>
-					<Select.Trigger class="select-trigger" aria-label={t("memory.scopeTabsLabel")}>
-						<Select.Value class="select-value" />
-					</Select.Trigger>
-					<Select.Portal>
-						<Select.Content class="select-content">
-							<Select.Listbox class="select-listbox" />
-						</Select.Content>
-					</Select.Portal>
-				</Select>
-				<Show when={feedback()}>
-					<p class="status-line ok" role="status">
-						{feedback()}
-					</p>
-				</Show>
-				<Show when={candidatesError()}>
-					<p class="status-line err" role="alert">
-						{candidatesError()}
-					</p>
-				</Show>
-				<Show when={candidatesLoading() && pendingCandidates().length === 0}>
-					<p class="empty-note">{t("memory.loading")}</p>
-				</Show>
-				<Show when={!candidatesLoading() && !candidatesError() && pendingCandidates().length === 0}>
-					<p class="empty-note">{t("memory.noCandidates")}</p>
-				</Show>
-				<ul class="candidate-list">
-					<For each={pendingCandidates()}>
-						{(candidate) => (
-							<li class="candidate-card">
-								<p class="candidate-text">{candidate.text}</p>
-								<Show when={candidate.why}>
-									<p class="candidate-why">{candidate.why}</p>
-								</Show>
-								<div class="candidate-meta">
-									<span class="memory-kind">{kindLabel(candidate.kind)}</span>
-									<span>{scopeLabel(candidate.scope)}</span>
-									<Show when={formatDate(candidate.createdAt)}>
-										<span>{formatDate(candidate.createdAt)}</span>
-									</Show>
-								</div>
-								<Show
-									when={editingId() === candidate.id}
-									fallback={
-										<div class="candidate-actions">
-											<Button
-												type="button"
-												class="mini-btn primary"
-												disabled={busyId() === candidate.id}
-												onClick={() => decide(candidate.id, "approve")}
-											>
-												{t("memory.remember")}
-											</Button>
-											<Button
-												type="button"
-												class="mini-btn"
-												disabled={busyId() === candidate.id}
-												onClick={() => {
-													setEditingId(candidate.id);
-													setEditedText(candidate.text);
-												}}
-											>
-												{t("memory.edit")}
-											</Button>
-											<Button
-												type="button"
-												class="mini-btn danger"
-												disabled={busyId() === candidate.id}
-												onClick={() => decide(candidate.id, "reject")}
-											>
-												{t("memory.reject")}
-											</Button>
-										</div>
-									}
-								>
-									<div class="candidate-edit">
-										<TextField>
-											<TextField.TextArea
-												rows={3}
-												value={editedText()}
-												onInput={(event) => setEditedText(event.currentTarget.value)}
-												aria-label={t("memory.editedContent")}
-											/>
-										</TextField>
-										<div class="candidate-actions">
-											<Button
-												type="button"
-												class="mini-btn primary"
-												disabled={busyId() === candidate.id || !editedText().trim()}
-												onClick={() => saveEdited(candidate.id)}
-											>
-												{t("memory.saveEdit")}
-											</Button>
-											<Button
-												type="button"
-												class="mini-btn"
-												disabled={busyId() === candidate.id}
-												onClick={() => setEditingId(null)}
-											>
-												{t("messages.cancel")}
-											</Button>
-										</div>
-									</div>
-								</Show>
-							</li>
-						)}
-					</For>
-				</ul>
-			</section>
-
 			<div class="search-row">
 				<TextField>
 					<TextField.Input

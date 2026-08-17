@@ -180,6 +180,7 @@ export interface MemoryApi {
 	capture(entryId: string): Promise<MemoryCaptureResponse>;
 	pin(entryId: string, pinned: boolean): Promise<void>;
 	forget(entryId: string): Promise<void>;
+	invalidate(entryId: string, replacementEntryId?: string): Promise<void>;
 	exclude(entryId: string, excluded: boolean): Promise<void>;
 	edit(entryId: string, newText: string): Promise<void>;
 }
@@ -1012,6 +1013,15 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		},
 		forget: async (entryId) => {
 			await invoke(client, () => client.memory.forget({ entryId }));
+			debouncedRefetch(refreshMemoryEntries);
+		},
+		invalidate: async (entryId, replacementEntryId) => {
+			await invoke(client, () =>
+				client.memory.invalidate({
+					memoryId: entryId,
+					replacementMemoryId: replacementEntryId,
+				}),
+			);
 			debouncedRefetch(refreshMemoryEntries);
 		},
 		exclude: async (entryId, excluded) => {

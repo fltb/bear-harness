@@ -125,15 +125,6 @@ export class HostRuntime {
 		const memoryAutomation = new MemoryAutomation(db.orm, eventBus, memory);
 		const story = new StoryService(db.orm, eventBus);
 		const canon = new CanonHubService(db.orm, artifactStore, eventBus);
-		const contextPack = new ContextPackCompiler(db.orm, characterLoader, canon);
-		supervisor.setContextHandler((conversationId, includeHistory, message) =>
-			contextPack.render(
-				contextPack.compile(conversationId, {
-					includeConversationHistory: includeHistory,
-					canonQuery: message,
-				}),
-			),
-		);
 		const unsubscribeStoryAutomation = eventBus.subscribe((event) => {
 			if (event.kind !== "message.user_sent" || !event.payload || typeof event.payload !== "object")
 				return;
@@ -188,6 +179,19 @@ export class HostRuntime {
 			installationId: memoryScope.installationId,
 			userId: memoryScope.userId,
 		});
+		const contextPack = new ContextPackCompiler(db.orm, characterLoader, canon, {
+			backend: memoryRuntime.backend,
+			scope: memoryScope,
+		});
+		supervisor.setContextHandler(async (conversationId, includeHistory, message) =>
+			contextPack.render(
+				await contextPack.compileForTurn(conversationId, {
+					includeConversationHistory: includeHistory,
+					canonQuery: message,
+					memoryQuery: message,
+				}),
+			),
+		);
 		onboarding.setConversationCreatedHandler((companionId, conversationId) => {
 			models.applyDefaultToConversation(companionId, conversationId);
 		});

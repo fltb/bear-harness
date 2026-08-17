@@ -10,14 +10,22 @@
  *
  * The four layers are source-tagged and cannot write into each other.
  * Only adopted versions on active branches are included.
+ *
+ * Role-package constants, assets, and resources are Host-owned package
+ * storage (the package storage bucket). Selected package values may be
+ * projected into identity, canon, scene, or roleplay prompt layers, but
+ * package storage is never relationship memory and never automatic-capture,
+ * memory-panel, or long-term-backend input.
  */
 
 import { and, asc, desc, eq, or } from "drizzle-orm";
+import type { MemoryBackend, MemoryBankScope, MemoryHit } from "../memory/backend.js";
 import type { CanonHubService } from "../canon/service.js";
 import type { AppDatabase } from "../storage/database.js";
 import {
 	branches,
 	companionIdentity,
+	conversationDirectives,
 	conversations,
 	messages,
 	messageVersions,
@@ -31,6 +39,11 @@ import type { CharacterLoader } from "./character-loader.js";
 import { OnboardingStateDataSchema } from "./onboarding-schema.js";
 import { RoleplayService } from "./roleplay-service.js";
 
+/**
+ * A prompt-context block. Role-package projections and relationship memory
+ * have separate layers and sources; package assets/constants/resources are
+ * not relationship-memory records.
+ */
 export interface ContextPackBlock {
 	layer:
 		| "identity"
@@ -53,6 +66,10 @@ export interface ContextManifestEntry {
 	truncated?: boolean;
 }
 
+/**
+ * Host prompt projection. This type carries context layers only; it is not a
+ * memory ledger and does not make package storage eligible for memory writes.
+ */
 export interface ContextPack {
 	blocks: ContextPackBlock[];
 	manifest: ContextManifestEntry[];
@@ -63,31 +80,44 @@ export interface ContextPack {
 		truncated: boolean;
 	};
 }
+export interface ContextPackMemorySource {
+	readonly backend: MemoryBackend;
+	readonly scope: Pick<MemoryBankScope, "installationId" | "userId">;
+}
 
 export class ContextPackCompiler {
 	private db: AppDatabase;
 	private characterLoader: CharacterLoader;
 	private canonHub?: CanonHubService;
+	private memorySource?: ContextPackMemorySource;
 
-	constructor(db: AppDatabase, characterLoader: CharacterLoader, canonHub?: CanonHubService) {
+	constructor(
+		db: AppDatabase,
+		characterLoader: CharacterLoader,
+		canonHub?: CanonHubService,
+		memorySource?: ContextPackMemorySource,
+	) {
 		this.db = db;
 		this.characterLoader = characterLoader;
 		this.canonHub = canonHub;
+		this.memorySource = memorySource;
 	}
 
-	/** Compile the Context Pack for a given conversation. */
+	/** Compile context synchronously from already-projected sources. */
 	compile(
 		conversationId: string,
 		options?: {
 			includeRelationshipMemory?: boolean;
 			includeConversationHistory?: boolean;
 			canonQuery?: string;
+			relationshipMemoryHits?: readonly MemoryHit[];
 		},
 	): ContextPack {
 		const blocks: ContextPackBlock[] = [];
 		let relationshipEntryCount = 0;
 
-		// 1. Identity Core — short, always present
+		// 1. Identity Core — short, always present. This is package content
+		// projected to prompt context, not a relationship-memory record.
 		const identity = this.getIdentityCore(conversationId);
 		blocks.push({ layer: "identity", content: identity });
 
@@ -124,20 +154,29 @@ ${modules.join("\n")}`,
 			});
 		}
 
-		// 3. Scene State + conversation directive
+		// 3. Scene State + durable conversation directives
 		const scene = this.getSceneState(conversationId);
-		if (scene) {
-			blocks.push({ layer: "scene", content: scene });
+		const directives = this.getConversationDirectives(conversationId);
+		const sceneContext = [scene, directives].filter((value): value is string => Boolean(value)).join("\n\n");
+		if (sceneContext) {
+			blocks.push({ layer: "scene", content: sceneContext });
 		}
+		// Package-declared roleplay state is a Host projection of role-package
+		// storage; it must not become automatic memory or a memory-backend input.
 		const roleplay = this.getRoleplayState(conversationId);
 		if (roleplay) blocks.push({ layer: "roleplay", content: roleplay });
 
-		// 4. Relationship Canon (only when memory enabled)
+		// 4. Relationship Canon (only when memory enabled). This block is built
+		// only from approved Host memory rows or backend-native hits.
 		if (
 			options?.includeRelationshipMemory !== false &&
 			this.relationshipMemoryEnabled(conversationId)
 		) {
-			const relationship = this.getRelationshipMemory(conversationId);
+			const relationship = options?.relationshipMemoryHits
+				? this.getRelationshipMemoryHits(options.relationshipMemoryHits)
+				: this.memorySource
+					? { entries: [] }
+					: this.getRelationshipMemory(conversationId);
 			relationshipEntryCount = relationship.entries.length;
 			if (relationship.entries.length > 0) {
 				blocks.push({
@@ -208,6 +247,38 @@ ${modules.join("\n")}`,
 		};
 	}
 
+	/** Recall backend-native approved memories for one Pi turn. */
+	async compileForTurn(
+		conversationId: string,
+		options?: {
+			includeRelationshipMemory?: boolean;
+			includeConversationHistory?: boolean;
+			canonQuery?: string;
+			memoryQuery?: string;
+		},
+	): Promise<ContextPack> {
+		if (
+			!this.memorySource ||
+			options?.includeRelationshipMemory === false ||
+			!this.relationshipMemoryEnabled(conversationId)
+		) {
+			return this.compile(conversationId, options);
+		}
+		const companionId = this.getConversationCompanionId(conversationId);
+		if (!companionId) throw new Error(`conversation not found: ${conversationId}`);
+		const scope: MemoryBankScope = { ...this.memorySource.scope, companionId };
+		await this.memorySource.backend.open({ scope });
+		const hits = await this.memorySource.backend.recall({
+			scope,
+			query: options?.memoryQuery ?? options?.canonQuery ?? "",
+			limit: 12,
+		});
+		return this.compile(conversationId, {
+			...options,
+			relationshipMemoryHits: hits,
+		});
+	}
+
 	/** Render the context pack as a single system prompt string. */
 	render(ctx: ContextPack): string {
 		return ctx.blocks
@@ -216,6 +287,14 @@ ${modules.join("\n")}`,
 				return `${tag}\n${b.content}`;
 			})
 			.join("\n\n");
+	}
+
+	private getConversationCompanionId(conversationId: string): string | undefined {
+		return this.db
+			.select({ companionId: conversations.companionId })
+			.from(conversations)
+			.where(eq(conversations.id, conversationId))
+			.get()?.companionId;
 	}
 
 	private getIdentityCore(conversationId: string): string {
@@ -268,6 +347,43 @@ ${modules.join("\n")}`,
 			.get();
 		if (!row) return null;
 		return `当前场景：${row.scene}\n${JSON.stringify(row.stateData)}`;
+	}
+
+	private getConversationDirectives(conversationId: string): string | null {
+		const sessionDirectives = this.db
+			.select({ directive: conversationDirectives.directive })
+			.from(conversationDirectives)
+			.where(
+				and(
+					eq(conversationDirectives.conversationId, conversationId),
+					eq(conversationDirectives.scope, "session"),
+				),
+			)
+			.orderBy(asc(conversationDirectives.createdAt))
+			.all();
+		const companion = this.db
+			.select({ companionId: conversations.companionId })
+			.from(conversations)
+			.where(eq(conversations.id, conversationId))
+			.get();
+		const alwaysDirectives = companion
+			? this.db
+					.select({ directive: conversationDirectives.directive })
+					.from(conversationDirectives)
+					.innerJoin(conversations, eq(conversationDirectives.conversationId, conversations.id))
+					.where(
+						and(
+							eq(conversations.companionId, companion.companionId),
+							eq(conversationDirectives.scope, "always"),
+						),
+					)
+					.orderBy(asc(conversationDirectives.createdAt))
+					.all()
+			: [];
+		const directives = [...sessionDirectives, ...alwaysDirectives].map((row) => `- ${row.directive}`);
+		return directives.length > 0
+			? `[用户已确认的回复偏好；后续回答必须遵守]\n${directives.join("\n")}`
+			: null;
 	}
 
 	private getCanonEvidence(conversationId: string, query: string): string[] {
@@ -346,7 +462,6 @@ ${modules.join("\n")}`,
 		const state = OnboardingStateDataSchema.parse(row.stateData);
 		return state.decisions.relationship_memory_enabled === true;
 	}
-
 	private getConversationHistory(conversationId: string): string[] {
 		const branch = this.db
 			.select({ id: branches.id })
@@ -370,7 +485,12 @@ ${modules.join("\n")}`,
 			.all();
 		return rows.reverse().map((row) => `${row.role === "user" ? "用户" : "角色"}：${row.content}`);
 	}
-
+	/**
+	 * Relationship memory is the approved Host memory ledger only. Character
+	 * package constants, assets, and resources are intentionally not queried
+	 * here and cannot become relationship-memory, memory-panel, automatic
+	 * capture, or long-term memory-backend input.
+	 */
 	private getRelationshipMemory(conversationId: string): { entries: string[] } {
 		const rows = this.db
 			.select({ text: relationshipMemoryEntries.text })
@@ -387,13 +507,22 @@ ${modules.join("\n")}`,
 			.all();
 		return { entries: rows.map((r) => r.text) };
 	}
+
+	private getRelationshipMemoryHits(hits: readonly MemoryHit[]): { entries: string[] } {
+		return {
+			entries: hits
+				.map((hit) => hit.record.text)
+				.filter((text) => text.length > 0)
+				.slice(0, 12),
+		};
+	}
 }
 
 function manifestSource(layer: ContextPackBlock["layer"]): string {
 	if (layer === "identity") return "character.identity_core";
 	if (layer === "canon") return "self_canon_or_canon_hub";
 	if (layer === "story") return "story_changes";
-	if (layer === "scene") return "scene_state";
+	if (layer === "scene") return "scene_state_or_conversation_directives";
 	if (layer === "roleplay") return "roleplay_ledger";
 	if (layer === "relationship") return "approved_relationship_memory";
 	if (layer === "conversation") return "adopted_active_branch";

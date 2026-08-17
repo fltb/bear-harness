@@ -33,7 +33,11 @@ type ModelSelectionHandler = (
 	requiresImages: boolean,
 ) => { providerId: string; modelId: string } | undefined;
 type PromptImages = NonNullable<Parameters<Agent["prompt"]>[1]>;
-type ContextHandler = (conversationId: string, includeHistory: boolean, message: string) => string;
+type ContextHandler = (
+	conversationId: string,
+	includeHistory: boolean,
+	message: string,
+) => string | Promise<string>;
 
 /** Host provider boundary required by the in-process Pi session. */
 export interface CompanionModelRuntimeSource {
@@ -291,7 +295,7 @@ export class CompanionSupervisor {
 			if (text) this.eventBus.publish("message_update", { conversationId, text });
 		});
 		try {
-			const context = this.contextHandler?.(conversationId, includeHistory, message).trim();
+			const context = (await this.contextHandler?.(conversationId, includeHistory, message))?.trim();
 			let prompt = context
 				? `<host_context>\n${context}\n</host_context>\n\n<current_user_message>\n${message}\n</current_user_message>`
 				: message;

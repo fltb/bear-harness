@@ -55,6 +55,67 @@ describe("PiSessionStore", () => {
 		expect(reopened.buildContext().messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 	});
 
+	it("keeps native compaction context branch-local", () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-pi-compaction-"));
+		roots.push(root);
+		const store = PiSessionStore.create({ sessionDir: join(root, "sessions"), cwd: root });
+		const rootUser = store.appendMessage({ role: "user", content: "root", timestamp: 1 });
+		const rootAssistant = store.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "root answer" }],
+			api: "openai-completions",
+			provider: "test",
+			model: "test-model",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 2,
+		} as PiSessionMessage);
+
+		store.selectBranch(rootUser);
+		const branchUser = store.appendMessage({ role: "user", content: "branch", timestamp: 3 });
+		const branchAssistant = store.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "branch answer" }],
+			api: "openai-completions",
+			provider: "test",
+			model: "test-model",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 4,
+		} as PiSessionMessage);
+		const compactionId = store.appendCompaction("branch summary", branchUser, 12);
+
+		expect(store.buildContextEntries().map((entry) => entry.id)).toEqual([
+			compactionId,
+			branchUser,
+			branchAssistant,
+		]);
+
+		const branchContext = store.buildContext().messages;
+		expect(branchContext.map((message) => message.role)).toEqual(["compactionSummary", "user", "assistant"]);
+		expect(branchContext[0]).toMatchObject({ role: "compactionSummary", summary: "branch summary" });
+
+		store.selectBranch(rootAssistant);
+		const rootContext = store.buildContext().messages;
+		expect(rootContext.map((message) => message.role)).toEqual(["user", "assistant"]);
+		expect(rootContext[0]).toMatchObject({ role: "user", content: "root" });
+		expect(rootContext[1]).toMatchObject({ role: "assistant", content: [{ type: "text", text: "root answer" }] });
+	});
+
 	it("projects Pi standard messages with stable SessionManager entry IDs", () => {
 		const root = mkdtempSync(join(tmpdir(), "bear-pi-projection-"));
 		roots.push(root);

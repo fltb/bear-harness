@@ -191,8 +191,12 @@ export const en = {
 		pin: "Pin",
 		unpin: "Unpin",
 		forget: "Forget",
-		exclude: "Exclude",
 		pinned: "Pin",
+		invalidate: "Invalidate this memory",
+		invalidated: "Invalidated",
+		revised: "Revised memory saved",
+		sourceAutomatic: "Remembered automatically",
+		sourceUser: "Saved by you",
 		loading: "Loading...",
 		emptyEntries:
 			"Nothing is remembered yet. Confirm candidates under Recent memory suggestions to add them here.",

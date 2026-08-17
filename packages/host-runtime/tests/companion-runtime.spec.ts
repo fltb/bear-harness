@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import {
+	createModels,
+	fauxAssistantMessage,
+	fauxProvider,
+} from "@earendil-works/pi-ai";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -126,6 +131,12 @@ describe("in-process Companion Host bridge", () => {
 			skillPaths: [skills],
 			pluginPaths: [],
 			appendSystemPrompt: "IDENTITY_SENTINEL\nSTYLE_SENTINEL",
+			hostTools: [
+				"host_get_state",
+				"host_set_scene",
+				"host_set_expression",
+				"host_search_canon",
+			],
 		});
 		const hostCalls: Array<{ conversationId: string; tool: string; args: unknown }> = [];
 		runtime.setHostToolHandler((call) => {
@@ -148,6 +159,9 @@ describe("in-process Companion Host bridge", () => {
 				"host_set_expression",
 				"host_search_canon",
 			]),
+		);
+		expect(session.getActiveToolNames()).not.toEqual(
+			expect.arrayContaining(["host_play_media", "host_present_choices", "host_propose_work"]),
 		);
 		expect(session.getActiveToolNames()).not.toEqual(
 			expect.arrayContaining(["bash", "edit", "write"]),
@@ -186,6 +200,64 @@ describe("in-process Companion Host bridge", () => {
 				args: { query: "旧极光站" },
 			},
 		]);
+		await runtime.stop();
+		db.close();
+	});
+	it("awaits an async context handler before assembling the final prompt", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-in-process-async-context-"));
+		temporaryDirectories.push(root);
+		const faux = fauxProvider({
+			provider: "test-provider",
+			models: [{ id: "test-model", name: "Test model" }],
+		});
+		const models = createModels();
+		models.setProvider(faux.provider);
+		let assembledPrompt: string | undefined;
+		faux.setResponses([
+			(context) => {
+				const userMessage = context.messages.at(-1);
+				if (userMessage?.role === "user") {
+					assembledPrompt =
+						typeof userMessage.content === "string"
+							? userMessage.content
+							: userMessage.content
+									.map((part) => ("text" in part && typeof part.text === "string" ? part.text : ""))
+									.join("");
+				}
+				return fauxAssistantMessage("reply");
+			},
+		]);
+		const providers: CompanionModelRuntimeSource = {
+			getModels: async () => models,
+		};
+		const db = new DatabaseSync(":memory:");
+		db.exec(
+			"CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))",
+		);
+		const eventBus = new EventBus(drizzle({ client: db }));
+		const runtime = new CompanionSupervisor(root, eventBus, providers);
+		runtime.setContextHandler(async () => {
+			await new Promise<void>((resolve) => setTimeout(resolve, 0));
+			return "ASYNC_CONTEXT_SENTINEL";
+		});
+		await runtime.start();
+		const completed = new Promise<void>((resolve) => {
+			const unsubscribe = eventBus.subscribe((event) => {
+				if (event.kind !== "message_end") return;
+				unsubscribe();
+				resolve();
+			});
+		});
+		runtime.sendCommand({
+			type: "prompt",
+			conversationId: "conversation-async-context",
+			message: "current user message",
+		});
+		await completed;
+
+		expect(assembledPrompt).toBe(
+			"<host_context>\nASYNC_CONTEXT_SENTINEL\n</host_context>\n\n<current_user_message>\ncurrent user message\n</current_user_message>",
+		);
 		await runtime.stop();
 		db.close();
 	});

@@ -199,6 +199,28 @@ export class PiSessionStore {
 	buildContext(): SessionContext {
 		return this.manager.buildSessionContext();
 	}
+	/**
+	 * Append Pi's native compaction entry below the selected leaf.
+	 *
+	 * Summary generation is intentionally owned by Pi's compaction runtime;
+	 * this adapter only forwards the public SessionManager operation so the
+	 * resulting context remains branch-local and SessionManager-owned.
+	 */
+	appendCompaction<T = unknown>(
+		summary: string,
+		firstKeptEntryId: string,
+		tokensBefore: number,
+		details?: T,
+		fromHook?: boolean,
+		usage?: Parameters<SessionManager["appendCompaction"]>[5],
+	): string {
+		return this.manager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromHook, usage);
+	}
+
+	/** Build the selected branch's native, compaction-aware entry path. */
+	buildContextEntries(): SessionEntry[] {
+		return this.manager.buildContextEntries();
+	}
 }
 
 function absolutePath(value: string, name: string): string {
