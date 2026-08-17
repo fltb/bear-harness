@@ -158,7 +158,12 @@ export class HostRuntime {
 			}
 		});
 		const onboarding = new FirstMeetingMachine(db.orm, eventBus, characterLoader);
-		const turns = new TurnPipeline(db.orm, supervisor, eventBus);
+		const conversationRepository = new ConversationRepository(db.orm, {
+			sessionDir: join(dataDir, "sessions"),
+		});
+		const turns = new TurnPipeline(db.orm, supervisor, eventBus, {
+			get: (conversationId) => conversationRepository.getSession(conversationId),
+		});
 		const models = new ModelRegistry(db.orm, eventBus);
 		onboarding.setConversationCreatedHandler((companionId, conversationId) => {
 			models.applyDefaultToConversation(companionId, conversationId);
@@ -269,6 +274,8 @@ export class HostRuntime {
 			drafts,
 			roleplay,
 			defaultCharacterId: options.productConfig.defaultCharacterId,
+			conversationRepository,
+			piSessionDir: join(dataDir, "sessions"),
 		};
 		this.dispatcher = new Dispatcher({
 			responseValidation: options.protocolViolationMode ?? "throw",

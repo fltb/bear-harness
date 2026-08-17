@@ -55,6 +55,9 @@ export interface HostCompositionContext {
 	drafts: CharacterDraftService;
 	roleplay: RoleplayService;
 	defaultCharacterId: string;
+	/** Product-local directory for Pi conversation session files. */
+	conversationRepository: ConversationRepository;
+	piSessionDir: string;
 }
 
 function oauthWire(state: Awaited<ReturnType<ProviderCatalog["startOAuth"]>>) {
@@ -68,10 +71,8 @@ function oauthWire(state: Awaited<ReturnType<ProviderCatalog["startOAuth"]>>) {
 			: undefined,
 	};
 }
-
-/** Wire all RPC handlers to domain services. Call once per dispatcher. */
 export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionContext): void {
-	const conversationRepository = new ConversationRepository(s.orm);
+	const conversationRepository = s.conversationRepository;
 	// Load and seed the active character package from the character root once.
 	ensureCharacterSeeded(s);
 

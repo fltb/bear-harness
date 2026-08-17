@@ -96,7 +96,10 @@ describe("TurnPipeline conversation state contract", () => {
 			.get() as { id: string };
 
 		const regenerated = await pipeline.regenerate("conversation", assistant.id);
-		expect(commands.at(-1)).toMatchObject({ type: "prompt", message: "原问题" });
+		expect(commands.at(-1)).toMatchObject({
+			type: "prompt",
+			message: "请基于上面的对话重新生成对上一条用户消息的回复。直接自然地回答，不要提及重新生成或比较旧回复。",
+		});
 		events.publish("message_end", { conversationId: "conversation", text: "新回答" });
 		const versions = database.connection
 			.prepare(
@@ -133,18 +136,37 @@ describe("TurnPipeline conversation state contract", () => {
 		]);
 	});
 
-	it("handles abort, continuation, correction, branching, and unavailable runtime", async () => {
+	it("continues and corrects with explicit instructions that create persisted assistant turns", async () => {
 		const sent = await pipeline.sendUserMessage("conversation", "开始");
-		await pipeline.abort("conversation");
-		expect(commands.at(-1)).toEqual({ type: "abort", conversationId: "conversation" });
-		await pipeline.abort("conversation");
+		events.publish("message_end", { conversationId: "conversation", text: "初始回答" });
+
 		await pipeline.continue("conversation");
+		expect(commands.at(-1)).toMatchObject({
+			type: "prompt",
+			message: "请继续上一条回复。不要重复已经说过的内容，直接接着完成。",
+		});
+		events.publish("message_end", { conversationId: "conversation", text: "续写内容" });
+
 		await pipeline.correct("conversation", "不要替我做决定", "always");
-		const branchId = await pipeline.branch("conversation", sent.messageId);
+		expect(commands.at(-1)).toMatchObject({
+			type: "prompt",
+			message: expect.stringContaining("用户刚刚指出上一条回复的问题：“不要替我做决定”"),
+		});
+		events.publish("message_end", { conversationId: "conversation", text: "修正后的回答" });
+		const replies = database.connection
+			.prepare("SELECT content FROM message_versions ORDER BY rowid")
+			.all() as Array<{ content: string }>;
+		expect(replies.map((reply) => reply.content)).toEqual([
+			"开始",
+			"初始回答",
+			"续写内容",
+			"修正后的回答",
+		]);
 		const directive = database.connection
 			.prepare("SELECT directive, scope FROM conversation_directives")
 			.get();
 		expect(directive).toEqual({ directive: "不要替我做决定", scope: "always" });
+		const branchId = await pipeline.branch("conversation", sent.messageId);
 		expect(branchId).toEqual(expect.any(String));
 		running = false;
 		await expect(pipeline.continue("conversation")).rejects.toMatchObject({

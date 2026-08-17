@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
 import {
@@ -26,6 +26,7 @@ import {
 	turns,
 } from "../storage/schema.js";
 import type { CompanionSupervisor } from "./supervisor.js";
+import type { PiSessionMessage } from "./pi-session-store.js";
 
 export interface TurnResult {
 	messageId: string;
@@ -33,20 +34,40 @@ export interface TurnResult {
 	status: "completed" | "failed" | "aborted";
 }
 
+export interface TurnPipelineSessionAppender {
+	appendMessage(message: PiSessionMessage): string;
+}
+
+/** Resolves the Pi session for a conversation without exposing Host history. */
+export interface TurnPipelineSessionResolver {
+	get(conversationId: string): TurnPipelineSessionAppender | undefined;
+}
+const REGENERATE_INSTRUCTION =
+	"请基于上面的对话重新生成对上一条用户消息的回复。直接自然地回答，不要提及重新生成或比较旧回复。";
+const CONTINUE_INSTRUCTION =
+	"请继续上一条回复。不要重复已经说过的内容，直接接着完成。";
+
 export class TurnPipeline {
 	private db: AppDatabase;
 	private supervisor: CompanionSupervisor;
 	private eventBus: EventBus;
+	private readonly sessionResolver?: TurnPipelineSessionResolver;
 	private activeTurns = new Map<
 		string,
 		{ userMessageId: string; assistantMessageId?: string; assistantVersionId?: string }
-	>();
+		>();
 	private readonly unsubscribe: () => void;
 
-	constructor(db: AppDatabase, supervisor: CompanionSupervisor, eventBus: EventBus) {
+	constructor(
+		db: AppDatabase,
+		supervisor: CompanionSupervisor,
+		eventBus: EventBus,
+		sessionResolver?: TurnPipelineSessionResolver,
+	) {
 		this.db = db;
 		this.supervisor = supervisor;
 		this.eventBus = eventBus;
+		this.sessionResolver = sessionResolver;
 		this.unsubscribe = eventBus.subscribe((event) => {
 			if (event.kind === "message_end") this.commitAssistantReply(event.payload);
 		});
@@ -94,13 +115,18 @@ export class TurnPipeline {
 					.run();
 				transaction
 					.update(conversations)
-					.set({ updatedAt: sql`datetime('now')` })
+					.set({ updatedAt: new Date().toISOString() })
 					.where(eq(conversations.id, conversationId))
 					.run();
 			});
 		} catch (e) {
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
+		this.sessionResolver?.get(conversationId)?.appendMessage({
+			role: "user",
+			content: text,
+			timestamp: Date.now(),
+		});
 
 		this.activeTurns.set(conversationId, { userMessageId: messageId });
 		this.eventBus.publish("message.user_sent", { conversationId, messageId, versionId, text });
@@ -181,17 +207,10 @@ export class TurnPipeline {
 			assistantMessageId: messageId,
 			assistantVersionId: newVersionId,
 		});
-		const parentText = this.db
-			.select({ content: messageVersions.content })
-			.from(messageVersions)
-			.where(and(eq(messageVersions.messageId, userParent.id), eq(messageVersions.adopted, 1)))
-			.orderBy(desc(messageVersions.createdAt))
-			.limit(1)
-			.get();
 		this.supervisor.sendCommand({
 			type: "prompt",
 			conversationId,
-			message: parentText?.content ?? "请重新回答上一条消息。",
+			message: REGENERATE_INSTRUCTION,
 		});
 		return { messageId, versionId: newVersionId, status: "completed" };
 	}
@@ -221,7 +240,6 @@ export class TurnPipeline {
 		} catch (e) {
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
-		this.supervisor.invalidateConversation(conversationId);
 		this.eventBus.publish("message.version_switched", { conversationId, messageId, versionId });
 	}
 
@@ -294,7 +312,6 @@ export class TurnPipeline {
 			editedByUser: true,
 		});
 		if (isUserMessage) {
-			this.supervisor.invalidateConversation(conversationId);
 			this.activeTurns.set(conversationId, { userMessageId: messageId });
 			this.supervisor.sendCommand({
 				type: "prompt",
@@ -310,23 +327,44 @@ export class TurnPipeline {
 		if (!this.supervisor.isRunning) {
 			throw { kind: "unavailable", reason: "companion_unavailable" };
 		}
-		this.supervisor.sendCommand({ type: "prompt", conversationId, message: "[继续]" });
+		if (this.activeTurns.has(conversationId)) {
+			throw { kind: "conflict", reason: "turn_already_active" };
+		}
+		const userMessageId = this.latestTurnUserMessageId(conversationId);
+		if (!userMessageId) throw { kind: "not_found", reason: "previous_turn_not_found" };
+		this.activeTurns.set(conversationId, { userMessageId });
+		this.supervisor.sendCommand({
+			type: "prompt",
+			conversationId,
+			message: CONTINUE_INSTRUCTION,
+		});
 		this.eventBus.publish("message.continued", { conversationId });
 	}
 
-	/** Correct: apply a non-narrative correction at the last stable context pack. */
+	/** Correct the response with a user-visible instruction and persist the revised turn. */
 	async correct(
 		conversationId: string,
 		reason: string,
 		applyScope: "once" | "session" | "always",
 	): Promise<void> {
+		if (!this.supervisor.isRunning) {
+			throw { kind: "unavailable", reason: "companion_unavailable" };
+		}
+		if (this.activeTurns.has(conversationId)) {
+			throw { kind: "conflict", reason: "turn_already_active" };
+		}
+		const userMessageId = this.latestTurnUserMessageId(conversationId);
+		if (!userMessageId) throw { kind: "not_found", reason: "previous_turn_not_found" };
 		this.db
 			.insert(conversationDirectives)
 			.values({ id: randomUUID(), conversationId, directive: reason, scope: applyScope })
 			.run();
-		if (this.supervisor.isRunning) {
-			this.supervisor.sendCommand({ type: "prompt", conversationId, message: reason });
-		}
+		this.activeTurns.set(conversationId, { userMessageId });
+		this.supervisor.sendCommand({
+			type: "prompt",
+			conversationId,
+			message: `用户刚刚指出上一条回复的问题：“${reason}”。请据此重写回应，直接给出修正后的内容，不要提及这条校正指令。`,
+		});
 		this.eventBus.publish("message.corrected", { conversationId, reason, applyScope });
 	}
 
@@ -362,6 +400,16 @@ export class TurnPipeline {
 	hasActiveTurn(conversationId: string): boolean {
 		return this.activeTurns.has(conversationId);
 	}
+	private latestTurnUserMessageId(conversationId: string): string | undefined {
+		return this.db
+			.select({ userMessageId: turns.userMessageId })
+			.from(turns)
+			.where(and(eq(turns.conversationId, conversationId), eq(turns.status, "completed")))
+			.orderBy(desc(turns.createdAt), desc(turns.id))
+			.limit(1)
+			.get()?.userMessageId;
+	}
+
 
 	private commitAssistantReply(payload: unknown): void {
 		if (!payload || typeof payload !== "object" || !("conversationId" in payload)) return;
@@ -373,6 +421,8 @@ export class TurnPipeline {
 		const failed = "failed" in payload && payload.failed === true;
 		if (failed && !text) text = "这次回复没有完成。你可以稍后重试，或换一个模型服务。";
 		const assistantMessageId = active.assistantMessageId ?? randomUUID();
+		const piAssistant =
+			"message" in payload ? asAssistantPiMessage(payload.message) : undefined;
 		const assistantVersionId = active.assistantVersionId ?? randomUUID();
 		const branch = this.db
 			.select({ id: branches.id })
@@ -429,7 +479,7 @@ export class TurnPipeline {
 					.run();
 				transaction
 					.update(conversations)
-					.set({ updatedAt: sql`datetime('now')` })
+					.set({ updatedAt: new Date().toISOString() })
 					.where(eq(conversations.id, conversationId))
 					.run();
 			});
@@ -437,6 +487,7 @@ export class TurnPipeline {
 			this.activeTurns.delete(conversationId);
 			throw error;
 		}
+		if (piAssistant) this.sessionResolver?.get(conversationId)?.appendMessage(piAssistant);
 		this.activeTurns.delete(conversationId);
 		this.eventBus.publish("message.assistant_committed", {
 			conversationId,
@@ -445,4 +496,11 @@ export class TurnPipeline {
 			failed,
 		});
 	}
+}
+
+function asAssistantPiMessage(value: unknown): PiSessionMessage | undefined {
+	if (!value || typeof value !== "object" || !("role" in value) || value.role !== "assistant") {
+		return undefined;
+	}
+	return value as PiSessionMessage;
 }

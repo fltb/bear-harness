@@ -1,9 +1,14 @@
+import { rmSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import type { PiSessionMessage } from "../companion/pi-session-store.js";
+import { PiSessionStore } from "../companion/pi-session-store.js";
 import type { AppDatabase } from "../storage/database.js";
 import {
 	branches,
 	commissions,
 	conversationDirectives,
+	conversationSessions,
 	conversations,
 	memoryCandidates,
 	messages,
@@ -55,8 +60,68 @@ export interface ConversationSearchHit {
 	excerpt: string;
 }
 
+export interface ConversationRepositoryOptions {
+	/** Product-owned directory for Pi session files. */
+	readonly sessionDir?: string;
+	/** Working directory recorded in the Pi session header. */
+	readonly sessionCwd?: string;
+}
+
+type SessionMetadataRow = {
+	piSessionId: string;
+	sessionFilePath: string;
+	activeLeafId: string | null;
+};
+
+function sessionContent(message: PiSessionMessage): string {
+	if (typeof message.content === "string") return message.content;
+	if (!Array.isArray(message.content)) return JSON.stringify(message.content) ?? "";
+	return message.content
+		.map((part) => {
+			if (part && typeof part === "object") {
+				if ("text" in part && typeof part.text === "string") return part.text;
+				if ("thinking" in part && typeof part.thinking === "string") return part.thinking;
+			}
+			return JSON.stringify(part) ?? "";
+		})
+		.join("");
+}
+
 export class ConversationRepository {
-	constructor(private readonly db: AppDatabase) {}
+	private readonly sessionDir?: string;
+	private readonly sessionCwd?: string;
+	private readonly sessions = new Map<string, PiSessionStore>();
+
+	constructor(
+		private readonly db: AppDatabase,
+		options: ConversationRepositoryOptions = {},
+	) {
+		this.sessionDir = options.sessionDir;
+		this.sessionCwd = options.sessionCwd;
+	}
+
+	/** Return the live Pi store for a migrated conversation. */
+	getSession(conversationId: string): PiSessionStore | undefined {
+		const cached = this.sessions.get(conversationId);
+		if (cached) return cached;
+		const metadata = this.db
+			.select({
+				piSessionId: conversationSessions.piSessionId,
+				sessionFilePath: conversationSessions.sessionFilePath,
+				activeLeafId: conversationSessions.activeLeafId,
+			})
+			.from(conversationSessions)
+			.where(eq(conversationSessions.conversationId, conversationId))
+			.get() as SessionMetadataRow | undefined;
+		if (!metadata) return undefined;
+		const store = PiSessionStore.open({
+			sessionDir: this.sessionDir ?? resolve(metadata.sessionFilePath, ".."),
+			cwd: this.sessionCwd ?? this.sessionDir ?? resolve(metadata.sessionFilePath, ".."),
+			sessionFile: metadata.sessionFilePath,
+		});
+		this.sessions.set(conversationId, store);
+		return store;
+	}
 
 	list(companionId: string): ConversationSummary[] {
 		return this.db
@@ -130,21 +195,45 @@ export class ConversationRepository {
 		title: string;
 		sceneTitle: string;
 	}) {
-		this.db.transaction((transaction) => {
-			transaction
-				.insert(conversations)
-				.values({
-					id: input.id,
-					companionId: input.companionId,
-					title: input.title,
-					sceneTitle: input.sceneTitle,
+		const session = this.sessionDir
+			? PiSessionStore.create({
+					sessionDir: this.sessionDir,
+					cwd: this.sessionCwd ?? this.sessionDir,
 				})
-				.run();
-			transaction
-				.insert(branches)
-				.values({ id: input.branchId, conversationId: input.id, label: "main", adopted: 1 })
-				.run();
-		});
+			: undefined;
+		try {
+			this.db.transaction((transaction) => {
+				transaction
+					.insert(conversations)
+					.values({
+						id: input.id,
+						companionId: input.companionId,
+						title: input.title,
+						sceneTitle: input.sceneTitle,
+					})
+					.run();
+				transaction
+					.insert(branches)
+					.values({ id: input.branchId, conversationId: input.id, label: "main", adopted: 1 })
+					.run();
+				if (session) {
+					const metadata = session.metadata;
+					transaction
+						.insert(conversationSessions)
+						.values({
+							conversationId: input.id,
+							piSessionId: metadata.sessionId,
+							sessionFilePath: metadata.sessionFile,
+							activeLeafId: metadata.leafId,
+						})
+						.run();
+				}
+			});
+		} catch (error) {
+			if (session) rmSync(session.sessionFile, { force: true });
+			throw error;
+		}
+		if (session) this.sessions.set(input.id, session);
 	}
 
 	get(id: string, companionId: string): ConversationProjection | undefined {
@@ -196,6 +285,11 @@ export class ConversationRepository {
 			.where(and(eq(conversations.id, id), eq(conversations.companionId, companionId)))
 			.get();
 		if (!exists) return false;
+		const sessionMetadata = this.db
+			.select({ sessionFilePath: conversationSessions.sessionFilePath })
+			.from(conversationSessions)
+			.where(eq(conversationSessions.conversationId, id))
+			.get();
 		this.db.transaction((transaction) => {
 			const branchIds = transaction
 				.select({ id: branches.id })
@@ -256,13 +350,63 @@ export class ConversationRepository {
 				.delete(conversationDirectives)
 				.where(eq(conversationDirectives.conversationId, id))
 				.run();
+			transaction
+				.delete(conversationSessions)
+				.where(eq(conversationSessions.conversationId, id))
+				.run();
 			transaction.delete(branches).where(eq(branches.conversationId, id)).run();
 			transaction.delete(conversations).where(eq(conversations.id, id)).run();
 		});
+		this.sessions.delete(id);
+		if (sessionMetadata?.sessionFilePath) {
+			const sessionFile = resolve(sessionMetadata.sessionFilePath);
+			const root = this.sessionDir ? resolve(this.sessionDir) : undefined;
+			const relativePath = root ? relative(root, sessionFile) : "";
+			if (!root || (relativePath !== ".." && !relativePath.startsWith("..") && !isAbsolute(relativePath))) {
+				rmSync(sessionFile, { force: true });
+			}
+		}
 		return true;
 	}
 
 	project(id: string, title: string, sceneTitle: string): ConversationProjection {
+		const session = this.getSession(id);
+		if (session) return this.projectPi(id, title, sceneTitle, session);
+
+		return this.projectLegacy(id, title, sceneTitle);
+	}
+
+	private projectPi(
+		id: string,
+		title: string,
+		sceneTitle: string,
+		session: PiSessionStore,
+	): ConversationProjection {
+		const now = new Date().toISOString();
+		const messages = session.readMessages().map((message, index) => {
+			const role: "user" | "assistant" = message.role === "user" ? "user" : "assistant";
+			const messageId = `pi-${index}`;
+			const versionId = `${messageId}-v1`;
+			const content = sessionContent(message);
+			return {
+				id: messageId,
+				role,
+				adoptedVersionId: versionId,
+				versions: [{ id: versionId, role, content, editedByUser: false, createdAt: now, adopted: true }],
+				createdAt: now,
+			};
+		});
+		return {
+			activeConversationId: id,
+			...(session.leafId ? { activeBranchId: session.leafId } : {}),
+			id,
+			title,
+			sceneTitle,
+			messages,
+		};
+	}
+
+	private projectLegacy(id: string, title: string, sceneTitle: string): ConversationProjection {
 		const branch = this.db
 			.select({ id: branches.id })
 			.from(branches)
