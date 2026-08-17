@@ -18,18 +18,17 @@ import {
 } from "../storage/schema.js";
 import type { CharacterLoader, CharacterPackage } from "./character-loader.js";
 import type { RoleplayProjection, RoleplayService } from "./roleplay-service.js";
-
 export type CompanionHostToolName =
 	| "host_get_state"
 	| "host_set_scene"
 	| "host_set_expression"
 	| "host_get_roleplay_state"
 	| "host_trigger_roleplay_event"
-	| "host_show_cg"
 	| "host_play_media"
 	| "host_present_choices"
 	| "host_search_conversation_history"
 	| "host_search_canon"
+	| "host_remember"
 	| "host_propose_work";
 
 export interface CompanionHostToolCall {
@@ -133,7 +132,6 @@ export class CharacterBehaviorService {
 				return this.getRoleplayState(call.conversationId);
 			case "host_trigger_roleplay_event":
 				return this.queueRoleplayEvent(call.conversationId, stringArgument(call.args, "eventId"));
-			case "host_show_cg":
 			case "host_play_media":
 				return this.presentMedia(call.conversationId, stringArgument(call.args, "mediaId"));
 			case "host_present_choices":

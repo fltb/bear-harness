@@ -134,17 +134,33 @@ export type { MaterialKind, MaterialRef, MaterialState } from "./materials/inges
 // Materials + fsops (services only; no RPC endpoints)
 export { IngestService, sanitizeName, sniffKind } from "./materials/ingest.js";
 export type {
-	CandidateStatus,
-	MemoryCandidateProposal,
-	MemoryCandidateSummary,
-	MemoryDecision,
-	MemoryEntrySummary,
-	MemoryKind,
-	MemoryRecallParams,
-	MemoryScope,
-	MemoryServiceOptions,
-	MemorySourceKind,
-} from "./memory/service.js";
+	MemoryBackend,
+	MemoryBackendCapabilities,
+	MemoryBackendError,
+	MemoryBackendErrorCode,
+	MemoryBackendOperation,
+	MemoryBankRequest,
+	MemoryBankScope,
+	MemoryConsolidateRequest,
+	MemoryConsolidationResult,
+	MemoryDiagnostics,
+	MemoryForgetRequest,
+	MemoryHit,
+	MemoryId,
+	MemoryInvalidateRequest,
+	MemoryMetadata,
+	MemoryMetadataValue,
+	MemoryMutationTarget,
+	MemoryOpenRequest,
+	MemoryProvenance,
+	MemoryProvenanceKind,
+	MemoryRecallRequest,
+	MemoryRecord,
+	MemoryRecordStatus,
+	MemoryRememberRequest,
+	MemorySetImportanceRequest,
+	MemoryUpdateRequest,
+} from "./memory/backend.js";
 export { MemoryService } from "./memory/service.js";
 export type { ModelRecord } from "./models/registry.js";
 export { ModelRegistry } from "./models/registry.js";

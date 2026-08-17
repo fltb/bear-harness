@@ -278,6 +278,38 @@ export const memoryDecisions = sqliteTable(
 		check("memory_decisions_check_13", sql`decided_scope IN ('self','relationship','scene')`),
 	],
 );
+export const memoryPresentation = sqliteTable(
+	"memory_presentation",
+	{
+		backendMemoryId: text("backend_memory_id").notNull(),
+		installationId: text("installation_id").notNull(),
+		userId: text("user_id").notNull(),
+		companionId: text("companion_id")
+			.notNull()
+			.references(() => companionIdentity.id),
+		sourcePiEntryId: text("source_pi_entry_id"),
+		createdBy: text("created_by", {
+			enum: ["user_capture", "assistant_tool", "auto_episode", "imported"],
+		}).notNull(),
+		pinned: integer("pinned", { mode: "boolean" }).default(false).notNull(),
+		replacementMemoryId: text("replacement_memory_id"),
+		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
+	},
+	(table) => [
+		primaryKey({
+			columns: [table.backendMemoryId, table.installationId, table.userId, table.companionId],
+		}),
+		index("idx_memory_presentation_scope").on(
+			table.installationId,
+			table.userId,
+			table.companionId,
+		),
+		check("memory_presentation_check_14", sql`created_by IN ('user_capture','assistant_tool','auto_episode','imported')`),
+		check("memory_presentation_check_15", sql`pinned IN (0,1)`),
+	],
+);
+
 
 export interface CommissionDraftData {
 	conversationId: string;

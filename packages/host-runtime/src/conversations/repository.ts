@@ -67,24 +67,58 @@ export interface ConversationRepositoryOptions {
 	readonly sessionCwd?: string;
 }
 
+/** Resolves a conversation to its product-owned Pi session store. */
+export interface ConversationSessionResolver {
+	get(conversationId: string): PiSessionStore | undefined;
+}
+
 type SessionMetadataRow = {
 	piSessionId: string;
 	sessionFilePath: string;
 	activeLeafId: string | null;
 };
 
+const HOST_CONTEXT_PREFIX = "<host_context>\n";
+const HOST_CONTEXT_SEPARATOR = "\n</host_context>\n\n<current_user_message>\n";
+const CURRENT_USER_MESSAGE_SUFFIX = "\n</current_user_message>";
+
 function sessionContent(message: PiSessionMessage): string {
+	const content = sessionMessageContent(message);
+	if (message.role === "user") {
+		const projected = extractCurrentUserMessage(content);
+		if (projected !== undefined) return projected;
+	}
+	return content.trim();
+}
+
+function sessionMessageContent(message: PiSessionMessage): string {
 	if (typeof message.content === "string") return message.content;
-	if (!Array.isArray(message.content)) return JSON.stringify(message.content) ?? "";
+	if (!Array.isArray(message.content)) return "";
 	return message.content
 		.map((part) => {
-			if (part && typeof part === "object") {
-				if ("text" in part && typeof part.text === "string") return part.text;
-				if ("thinking" in part && typeof part.thinking === "string") return part.thinking;
+			if (
+				!part ||
+				typeof part !== "object" ||
+				!("type" in part) ||
+				!("text" in part) ||
+				part.type !== "text" ||
+				typeof part.text !== "string"
+			) {
+				return "";
 			}
-			return JSON.stringify(part) ?? "";
+			return part.text;
 		})
-		.join("");
+		.filter(Boolean)
+		.join("\n");
+}
+
+function extractCurrentUserMessage(content: string): string | undefined {
+	if (!content.startsWith(HOST_CONTEXT_PREFIX) || !content.endsWith(CURRENT_USER_MESSAGE_SUFFIX)) {
+		return undefined;
+	}
+	const separatorIndex = content.indexOf(HOST_CONTEXT_SEPARATOR, HOST_CONTEXT_PREFIX.length);
+	if (separatorIndex <= HOST_CONTEXT_PREFIX.length) return undefined;
+	return content.slice(separatorIndex + HOST_CONTEXT_SEPARATOR.length, -CURRENT_USER_MESSAGE_SUFFIX.length);
 }
 
 export class ConversationRepository {
@@ -121,6 +155,13 @@ export class ConversationRepository {
 		});
 		this.sessions.set(conversationId, store);
 		return store;
+	}
+
+	/** Expose the Pi session lookup without the repository's companion-scoped API. */
+	getSessionResolver(): ConversationSessionResolver {
+		return {
+			get: (conversationId) => this.getSession(conversationId),
+		};
 	}
 
 	list(companionId: string): ConversationSummary[] {
@@ -383,18 +424,21 @@ export class ConversationRepository {
 		session: PiSessionStore,
 	): ConversationProjection {
 		const now = new Date().toISOString();
-		const messages = session.readMessageEntries().map(({ id: messageId, message }) => {
-			const role: "user" | "assistant" = message.role === "user" ? "user" : "assistant";
-			const versionId = `${messageId}-v1`;
-			const content = sessionContent(message);
-			return {
-				id: messageId,
-				role,
-				adoptedVersionId: versionId,
-				versions: [{ id: versionId, role, content, editedByUser: false, createdAt: now, adopted: true }],
-				createdAt: now,
-			};
-		});
+		const messages = session
+			.readMessageEntries()
+			.filter(({ message }) => message.role !== "toolResult")
+			.map(({ id: messageId, message }) => {
+				const role: "user" | "assistant" = message.role === "user" ? "user" : "assistant";
+				const versionId = `${messageId}-v1`;
+				const content = sessionContent(message);
+				return {
+					id: messageId,
+					role,
+					adoptedVersionId: versionId,
+					versions: [{ id: versionId, role, content, editedByUser: false, createdAt: now, adopted: true }],
+					createdAt: now,
+				};
+			});
 		return {
 			activeConversationId: id,
 			...(session.leafId ? { activeBranchId: session.leafId } : {}),

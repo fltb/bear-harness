@@ -24,14 +24,11 @@ test("committed character facts survive new conversations and edited message his
 }) => {
 	await ensureReadyForConversation(page);
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
-	const list = await rpc<{ conversations: Array<{ id: string }> }>(
+	const conversationA = await createFreshConversation(
 		page,
 		bootstrap.token,
-		"conversation.list:v1",
-		{},
+		"Character facts source",
 	);
-	const conversationA = list.conversations[0]?.id;
-	if (!conversationA) throw new Error("missing initial conversation");
 
 	await rpc(page, bootstrap.token, "roleplay.trigger:v1", {
 		conversationId: conversationA,
@@ -43,14 +40,16 @@ test("committed character facts survive new conversations and edited message his
 		eventId: "damaged_log_pulse_isolated",
 		dedupeKey: "e2e:pulse",
 	});
-	const conversationB = await rpc<{ id: string }>(page, bootstrap.token, "conversation.create:v1", {
-		title: "Second context",
-	});
+	const conversationB = await createFreshConversation(
+		page,
+		bootstrap.token,
+		"Second context",
+	);
 	const state = await rpc<{ state: { values: Record<string, unknown> } }>(
 		page,
 		bootstrap.token,
 		"roleplay.get:v1",
-		{ conversationId: conversationB.id },
+		{ conversationId: conversationB },
 	);
 	expect(state.state.values).toMatchObject({ damaged_log_stage: 2, resonance: 1 });
 
@@ -84,17 +83,16 @@ test("scripted model invokes roleplay and cross-conversation tools with exact ar
 	await rpc(page, bootstrap.token, "settings.set:v1", {
 		settings: { conversationHistoryReadEnabled: false },
 	});
-	const list = await rpc<{ conversations: Array<{ id: string }> }>(
+	const conversationA = await createFreshConversation(
 		page,
 		bootstrap.token,
-		"conversation.list:v1",
-		{},
+		"Tool-call history source",
 	);
-	const conversationA = list.conversations[0]?.id;
-	if (!conversationA) throw new Error("missing first conversation");
-	const conversationB = await rpc<{ id: string }>(page, bootstrap.token, "conversation.create:v1", {
-		title: "Tool-call verification",
-	});
+	const conversationB = await createFreshConversation(
+		page,
+		bootstrap.token,
+		"Tool-call verification",
+	);
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId: conversationA,
@@ -105,11 +103,11 @@ test("scripted model invokes roleplay and cross-conversation tools with exact ar
 		.toBe("RULE_OK");
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
-		conversationId: conversationB.id,
+		conversationId: conversationB,
 		text: "E2E_TOOL_TRIGGER_DAMAGED_LOG",
 	});
 	await expect
-		.poll(async () => latestAssistant(page, bootstrap.token, conversationB.id))
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationB))
 		.toBe("E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE");
 	await expect
 		.poll(async () =>
@@ -117,17 +115,17 @@ test("scripted model invokes roleplay and cross-conversation tools with exact ar
 				page,
 				bootstrap.token,
 				"roleplay.get:v1",
-				{ conversationId: conversationB.id },
+				{ conversationId: conversationB },
 			),
 		)
 		.toMatchObject({ state: { values: { trust: 1 } } });
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
-		conversationId: conversationB.id,
+		conversationId: conversationB,
 		text: "E2E_TOOL_SEARCH_OTHER_CONVERSATION",
 	});
 	await expect
-		.poll(async () => latestAssistant(page, bootstrap.token, conversationB.id))
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationB))
 		.toBe("E2E_TOOL_SEARCH_OTHER_CONVERSATION_DENIED");
 
 	await rpc(page, bootstrap.token, "settings.set:v1", {
@@ -137,11 +135,11 @@ test("scripted model invokes roleplay and cross-conversation tools with exact ar
 		settings: { conversationHistoryReadEnabled: true },
 	});
 	await rpc(page, bootstrap.token, "message.send:v1", {
-		conversationId: conversationB.id,
+		conversationId: conversationB,
 		text: "E2E_TOOL_SEARCH_OTHER_CONVERSATION_ALLOWED",
 	});
 	await expect
-		.poll(async () => latestAssistant(page, bootstrap.token, conversationB.id))
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationB))
 		.toBe("E2E_TOOL_SEARCH_OTHER_CONVERSATION_FOUND");
 	const trace = (await (await page.request.get(`${providerUrl}/trace/tools`)).json()) as {
 		calls: Array<{ tool: string; args: Record<string, unknown> }>;
@@ -165,14 +163,11 @@ test("adopted multi-turn history and a manual edit change the next model context
 }) => {
 	await ensureReadyForConversation(page);
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
-	const list = await rpc<{ conversations: Array<{ id: string }> }>(
+	const conversationId = await createFreshConversation(
 		page,
 		bootstrap.token,
-		"conversation.list:v1",
-		{},
+		"Multi-turn context",
 	);
-	const conversationId = list.conversations[0]?.id;
-	if (!conversationId) throw new Error("missing conversation");
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId,
@@ -226,6 +221,9 @@ test("adopted multi-turn history and a manual edit change the next model context
 	const lastPrompt = promptTrace.prompts.at(-1);
 	expect(lastPrompt).toContain("You are the local Companion runtime.");
 	expect(lastPrompt).toContain("你说话克制、具体、像一个长期值守的人。");
+	expect(lastPrompt).not.toContain(
+		"You are an expert coding assistant operating inside pi, a coding agent harness.",
+	);
 	expect(lastPrompt).toContain("<host_context>");
 	expect(lastPrompt).toContain("【identity】");
 	expect(lastPrompt).toContain("【canon】");
@@ -282,14 +280,11 @@ test("archived conversations require an explicit search opt-in and deleted messa
 test("an explicit transcript branch cannot commit roleplay facts", async ({ page }) => {
 	await ensureReadyForConversation(page);
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
-	const list = await rpc<{ conversations: Array<{ id: string }> }>(
+	const conversationId = await createFreshConversation(
 		page,
 		bootstrap.token,
-		"conversation.list:v1",
-		{},
+		"Transcript branch",
 	);
-	const conversationId = list.conversations[0]?.id;
-	if (!conversationId) throw new Error("missing conversation");
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId,
 		text: "E2E_BRANCH_SOURCE",
@@ -329,6 +324,76 @@ test("an explicit transcript branch cannot commit roleplay facts", async ({ page
 		error: { kind: "conflict", reason: "roleplay_event_branch_not_canonical" },
 	});
 });
+
+test("conversation operations send explicit model instructions and persist revised replies", async ({
+	page,
+}) => {
+	await ensureReadyForConversation(page);
+	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	const conversationId = await createFreshConversation(
+		page,
+		bootstrap.token,
+		"Conversation operations",
+	);
+
+	await rpc(page, bootstrap.token, "message.send:v1", {
+		conversationId,
+		text: "E2E_OPERATION_PARENT",
+	});
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
+		.toBe("RULE_OK");
+	const selected = await rpc<{
+		messages: Array<{ id: string; role: string }>;
+	}>(page, bootstrap.token, "conversation.select:v1", { id: conversationId });
+	const assistant = selected.messages.find((message) => message.role === "assistant");
+	if (!assistant) throw new Error("missing assistant message");
+
+	await rpc(page, bootstrap.token, "message.regenerate:v1", {
+		conversationId,
+		messageId: assistant.id,
+	});
+	await expect
+		.poll(async () => (await promptTrace()).at(-1))
+		.toContain("请基于上面的对话重新生成对上一条用户消息的回复。");
+
+	await rpc(page, bootstrap.token, "message.continue:v1", { conversationId });
+	await expect
+		.poll(async () => (await promptTrace()).at(-1))
+		.toContain("请继续上一条回复。不要重复已经说过的内容，直接接着完成。");
+
+	await rpc(page, bootstrap.token, "message.correct:v1", {
+		conversationId,
+		reason: "不要替用户行动",
+		applyScope: "once",
+	});
+	await expect
+		.poll(async () => (await promptTrace()).at(-1))
+		.toContain("用户刚刚指出上一条回复的问题：“不要替用户行动”。");
+	const afterCorrection = await rpc<{
+		messages: Array<{ role: string; versions: Array<{ adopted: boolean; content: string }> }>;
+	}>(page, bootstrap.token, "conversation.select:v1", { id: conversationId });
+	expect(
+		afterCorrection.messages
+			.filter((message) => message.role === "assistant")
+			.at(-1)
+			?.versions.find((version) => version.adopted)?.content,
+	).toBe("RULE_OK");
+});
+
+async function promptTrace(): Promise<string[]> {
+	const payload: unknown = await (await fetch(`${providerUrl}/trace/prompts`)).json();
+	if (
+		!payload ||
+		typeof payload !== "object" ||
+		!("prompts" in payload) ||
+		!Array.isArray(payload.prompts) ||
+		!payload.prompts.every((prompt) => typeof prompt === "string")
+	) {
+		throw new Error("rule provider returned an invalid prompt trace");
+	}
+	return payload.prompts;
+}
 
 test("imported package plugins require explicit trust before they can be enabled", async ({
 	page,
@@ -378,6 +443,12 @@ function packageFiles(root: string, directory = root): Array<{ path: string; bas
 					},
 				];
 	});
+}
+
+async function createFreshConversation(page: Page, token: string, title: string): Promise<string> {
+	const conversation = await rpc<{ id: string }>(page, token, "conversation.create:v1", { title });
+	await rpc(page, token, "conversation.select:v1", { id: conversation.id });
+	return conversation.id;
 }
 
 async function latestAssistant(

@@ -8,6 +8,33 @@ import { productConfig } from "@bear-harness/product-config";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CredentialVault, createHostRuntime } from "../src/index.js";
 
+import { DatabaseSync } from "node:sqlite";
+import { PiSessionStore } from "../src/companion/pi-session-store.js";
+
+function sessionFileFor(dataDir: string, conversationId: string): string {
+	const db = new DatabaseSync(join(dataDir, "storage", "canon.db"), { readOnly: true });
+	try {
+		const row = db
+			.prepare("SELECT session_file_path FROM conversation_sessions WHERE conversation_id = ?")
+			.get(conversationId) as { session_file_path?: string } | undefined;
+		if (!row?.session_file_path) throw new Error("expected persisted Pi session metadata");
+		return row.session_file_path;
+	} finally {
+		db.close();
+	}
+}
+
+function appendCompletedPiTurn(dataDir: string, conversationId: string, text: string): string {
+	const session = PiSessionStore.open({
+		sessionDir: join(dataDir, "sessions"),
+		sessionFile: sessionFileFor(dataDir, conversationId),
+	});
+	session.appendUserMessage(text);
+	session.appendSyntheticAssistant(`已完成：${text}`);
+	const source = session.findMessageEntry("user", text);
+	if (!source) throw new Error("expected persisted Pi user entry");
+	return source.id;
+}
 const roots: string[] = [];
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 const vault: CredentialVault = {
@@ -74,51 +101,104 @@ describe("automatic continuity", () => {
 		await runtime.close();
 	});
 
-	it("only auto-saves ordinary memory when relationship memory is enabled", async () => {
-		const runtime = makeRuntime();
+	it("captures only explicitly selected Pi entries and keeps ordinary turns out of memory", async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-capture-"));
+		roots.push(dataDir);
+		let runtime = makeRuntimeAt(dataDir);
 		await runtime.start();
 		const conversation = (await data(runtime, "conversation.create:v1", {})) as { id: string };
-
+		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
+			settings: { relationshipMemoryEnabled: false },
+		});
 		await data(runtime, "message.send:v1", {
 			conversationId: conversation.id,
-			text: "我喜欢低亮度界面",
+			text: "关闭关系记忆时也不会保存普通消息",
 		});
-		await expect(data(runtime, "memory.list:v1", {})).resolves.toEqual({ entries: [] });
 		await data(runtime, "message.abort:v1", { conversationId: conversation.id });
+		await expect(data(runtime, "memory.list:v1", {})).resolves.toEqual({ entries: [] });
 
 		await data(runtime, "settings.set:v1", { settings: { relationshipMemoryEnabled: true } });
-		await data(runtime, "message.send:v1", {
-			conversationId: conversation.id,
-			text: "我喜欢简短回答",
+		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
+			settings: { relationshipMemoryEnabled: true },
 		});
+		const sourceEntryId = appendCompletedPiTurn(
+			dataDir,
+			conversation.id,
+			"这条普通消息不会自动成为记忆",
+		);
+		await runtime.close();
+		runtime = makeRuntimeAt(dataDir);
+		await runtime.start();
+		await expect(data(runtime, "memory.list:v1", {})).resolves.toEqual({ entries: [] });
+
+		const captured = (await data(runtime, "memory.capture:v1", {
+			conversationId: conversation.id,
+			entryId: sourceEntryId,
+		})) as { memoryId: string; sourceEntryId: string; createdBy: string };
+		expect(captured).toMatchObject({
+			memoryId: expect.any(String),
+			sourceEntryId: sourceEntryId,
+			createdBy: "user_capture",
+		});
+		// Assert the Host-facing projection: provenance is keyed by the backend ID,
+		// not read from or coupled to the provider's raw metadata payload.
 		await expect(data(runtime, "memory.list:v1", {})).resolves.toMatchObject({
-			entries: [{ kind: "preference", text: "我喜欢简短回答" }],
+			entries: [
+				{
+					id: captured.memoryId,
+					text: "这条普通消息不会自动成为记忆",
+					createdBy: "user_capture",
+					sourceEntryId: sourceEntryId,
+				},
+			],
 		});
 		await runtime.close();
 	});
 
-	it("restores the relationship-memory setting and its runtime effect after restart", async () => {
+	it("restores the relationship-memory setting and Host presentation metadata after restart", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-restart-"));
 		roots.push(dataDir);
 		const first = makeRuntimeAt(dataDir);
 		await first.start();
 		await data(first, "settings.set:v1", { settings: { relationshipMemoryEnabled: true } });
+		const conversation = (await data(first, "conversation.create:v1", {})) as { id: string };
 		await first.close();
-
+		const sourceEntryId = appendCompletedPiTurn(
+			dataDir,
+			conversation.id,
+			"我喜欢重启后仍然连续的记忆",
+		);
 		const restarted = makeRuntimeAt(dataDir);
 		await restarted.start();
 		await expect(data(restarted, "settings.get:v1", {})).resolves.toMatchObject({
 			settings: { relationshipMemoryEnabled: true },
 		});
-		const conversation = (await data(restarted, "conversation.create:v1", {})) as { id: string };
-		await data(restarted, "message.send:v1", {
+		const captured = (await data(restarted, "memory.capture:v1", {
 			conversationId: conversation.id,
-			text: "我喜欢重启后仍然连续的记忆",
-		});
-		await expect(data(restarted, "memory.list:v1", {})).resolves.toMatchObject({
-			entries: [{ text: "我喜欢重启后仍然连续的记忆" }],
+			entryId: sourceEntryId,
+		})) as { memoryId: string; sourceEntryId: string; createdBy: string };
+		expect(captured).toMatchObject({
+			memoryId: expect.any(String),
+			sourceEntryId: sourceEntryId,
+			createdBy: "user_capture",
 		});
 		await restarted.close();
+
+		const restored = makeRuntimeAt(dataDir);
+		await restored.start();
+		// The restarted Host joins its persisted presentation row to the backend
+		// record by ID; these are not assertions about provider-owned metadata.
+		await expect(data(restored, "memory.list:v1", {})).resolves.toMatchObject({
+			entries: [
+				{
+					id: captured.memoryId,
+					text: "我喜欢重启后仍然连续的记忆",
+					createdBy: "user_capture",
+					sourceEntryId: sourceEntryId,
+				},
+			],
+		});
+		await restored.close();
 	});
 
 	it("persists ambiguous story statements until the user accepts or dismisses them", async () => {
@@ -151,39 +231,55 @@ describe("automatic continuity", () => {
 		await runtime.close();
 	});
 
-	it("projects edited history and branch ancestors after reloading the conversation", async () => {
-		const runtime = makeRuntime();
+	it("projects edited content and branch ancestors after reloading the Pi conversation", async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-projection-"));
+		roots.push(dataDir);
+		let runtime = makeRuntimeAt(dataDir);
 		await runtime.start();
 		const conversation = (await data(runtime, "conversation.create:v1", {})) as { id: string };
 		const sent = (await data(runtime, "message.send:v1", {
 			conversationId: conversation.id,
 			text: "旧问题",
 		})) as { messageId: string };
-		await data(runtime, "message.abort:v1", { conversationId: conversation.id });
+		await runtime.close();
+
+		const oldPiEntryId = appendCompletedPiTurn(dataDir, conversation.id, "旧问题");
+		runtime = makeRuntimeAt(dataDir);
+		await runtime.start();
 		await data(runtime, "message.edit:v1", {
 			conversationId: conversation.id,
 			messageId: sent.messageId,
 			text: "新问题",
 			isUserMessage: true,
 		});
+		await runtime.close();
 
+		const session = PiSessionStore.open({
+			sessionDir: join(dataDir, "sessions"),
+			sessionFile: sessionFileFor(dataDir, conversation.id),
+		});
+		session.branchBefore(oldPiEntryId);
+		session.appendUserMessage("新问题");
+		session.appendSyntheticAssistant("已完成：新问题");
+
+		runtime = makeRuntimeAt(dataDir);
+		await runtime.start();
 		const edited = (await data(runtime, "conversation.select:v1", {
 			id: conversation.id,
 		})) as {
 			messages: Array<{
-				id: string;
 				versions: Array<{ content: string; adopted: boolean }>;
 			}>;
 		};
-		expect(edited.messages).toEqual([
-			expect.objectContaining({
-				id: sent.messageId,
-				versions: expect.arrayContaining([
-					expect.objectContaining({ content: "新问题", adopted: true }),
-				]),
-			}),
-		]);
-		await data(runtime, "message.abort:v1", { conversationId: conversation.id });
+		expect(edited.messages).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					versions: expect.arrayContaining([
+						expect.objectContaining({ content: "新问题", adopted: true }),
+					]),
+				}),
+			]),
+		);
 		await data(runtime, "message.branch:v1", {
 			conversationId: conversation.id,
 			messageId: sent.messageId,
@@ -192,18 +288,18 @@ describe("automatic continuity", () => {
 			id: conversation.id,
 		})) as {
 			messages: Array<{
-				id: string;
 				versions: Array<{ content: string; adopted: boolean }>;
 			}>;
 		};
-		expect(branched.messages).toEqual([
-			expect.objectContaining({
-				id: sent.messageId,
-				versions: expect.arrayContaining([
-					expect.objectContaining({ content: "新问题", adopted: true }),
-				]),
-			}),
-		]);
+		expect(branched.messages).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					versions: expect.arrayContaining([
+						expect.objectContaining({ content: "新问题", adopted: true }),
+					]),
+				}),
+			]),
+		);
 		await runtime.close();
 	});
 

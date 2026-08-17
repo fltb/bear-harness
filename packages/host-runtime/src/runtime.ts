@@ -40,6 +40,7 @@ import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
 import { ExecutorRouter } from "./executors/router.js";
 import { MemoryAutomation } from "./memory/automation.js";
 import type { MemoryBackend } from "./memory/backend.js";
+import { MemoryPresentationStore } from "./memory/presentation-store.js";
 import { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import { MemoryService } from "./memory/service.js";
 import { ModelRegistry } from "./models/registry.js";
@@ -112,7 +113,11 @@ export class HostRuntime {
 		const credentials = new CredentialStore(db.orm, options.credentialVault);
 		const providers = new ProviderCatalog(credentials, join(dataDir, "companion-runtime"));
 		const characterLoader = new CharacterLoader(characterRoot, join(dataDir, "characters"));
-		const supervisor = new CompanionSupervisor(dataDir, eventBus, providers);
+		const conversationRepository = new ConversationRepository(db.orm, {
+			sessionDir: join(dataDir, "sessions"),
+		});
+		const sessionResolver = conversationRepository.getSessionResolver();
+		const supervisor = new CompanionSupervisor(dataDir, eventBus, providers, sessionResolver);
 		const roleplay = new RoleplayService(db.orm);
 		const drafts = new CharacterDraftService(db.orm, characterLoader);
 		const characterBehavior = new CharacterBehaviorService(
@@ -123,6 +128,7 @@ export class HostRuntime {
 		);
 		const memory = new MemoryService(db.orm, eventBus);
 		const memoryAutomation = new MemoryAutomation(db.orm, eventBus, memory);
+		const memoryPresentation = new MemoryPresentationStore(db.orm);
 		const story = new StoryService(db.orm, eventBus);
 		const canon = new CanonHubService(db.orm, artifactStore, eventBus);
 		const unsubscribeStoryAutomation = eventBus.subscribe((event) => {
@@ -160,12 +166,7 @@ export class HostRuntime {
 			}
 		});
 		const onboarding = new FirstMeetingMachine(db.orm, eventBus, characterLoader);
-		const conversationRepository = new ConversationRepository(db.orm, {
-			sessionDir: join(dataDir, "sessions"),
-		});
-		const turns = new TurnPipeline(db.orm, supervisor, eventBus, {
-			get: (conversationId) => conversationRepository.getSession(conversationId),
-		});
+		const turns = new TurnPipeline(db.orm, supervisor, eventBus, sessionResolver);
 		const models = new ModelRegistry(db.orm, eventBus);
 		const memoryScope = options.memoryScope ?? {
 			installationId: "cyber-bear-installation",
@@ -303,6 +304,7 @@ export class HostRuntime {
 			models,
 			memory,
 			memoryBackend: memoryRuntime.backend,
+			memoryPresentation,
 			memoryScope,
 			commissions,
 			artifacts: artifactStore,

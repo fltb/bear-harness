@@ -62,6 +62,101 @@ describe("database schema contract", () => {
 		expect(columns.find((column) => column.name === "active_leaf_id")?.notnull).toBe(0);
 		database.close();
 	});
+	it("stores presentation metadata by backend id and complete memory scope", () => {
+		const database = new Database(root());
+		database.migrate(MIGRATIONS);
+		database.connection
+			.prepare("INSERT INTO companion_packages (id, name, version, hash) VALUES (?, ?, ?, ?)")
+			.run("package-a", "Package A", "1.0.0", "hash-a");
+		database.connection
+			.prepare(
+				"INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES (?, ?, ?, ?)",
+			)
+			.run("companion-a", "package-a", "Companion A", "canon");
+
+		const columns = database.connection
+			.prepare("PRAGMA table_info(memory_presentation)")
+			.all() as Array<{ name: string; notnull: number }>;
+		expect(columns.map((column) => column.name)).toEqual([
+			"backend_memory_id",
+			"installation_id",
+			"user_id",
+			"companion_id",
+			"source_pi_entry_id",
+			"created_by",
+			"pinned",
+			"replacement_memory_id",
+			"created_at",
+			"updated_at",
+		]);
+		expect(columns.some((column) => column.name === "text" || column.name === "content")).toBe(false);
+		expect(
+			columns
+				.filter((column) =>
+					[
+						"backend_memory_id",
+						"installation_id",
+						"user_id",
+						"companion_id",
+						"created_by",
+						"pinned",
+						"created_at",
+						"updated_at",
+					].includes(column.name),
+				)
+				.every((column) => column.notnull),
+		).toBe(true);
+
+		const insert = database.connection.prepare(`
+			INSERT INTO memory_presentation (
+				backend_memory_id, installation_id, user_id, companion_id,
+				source_pi_entry_id, created_by, pinned, replacement_memory_id
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`);
+		insert.run("memory-1", "install-a", "user-a", "companion-a", "pi-entry-1", "user_capture", 1, null);
+		insert.run("memory-1", "install-a", "user-b", "companion-a", null, "imported", 0, "memory-2");
+
+		const rows = database.connection
+			.prepare(
+				`SELECT backend_memory_id, installation_id, user_id, companion_id,
+					source_pi_entry_id, created_by, pinned, replacement_memory_id
+				 FROM memory_presentation ORDER BY user_id`,
+			)
+			.all();
+		expect(rows).toEqual([
+			{
+				backend_memory_id: "memory-1",
+				installation_id: "install-a",
+				user_id: "user-a",
+				companion_id: "companion-a",
+				source_pi_entry_id: "pi-entry-1",
+				created_by: "user_capture",
+				pinned: 1,
+				replacement_memory_id: null,
+			},
+			{
+				backend_memory_id: "memory-1",
+				installation_id: "install-a",
+				user_id: "user-b",
+				companion_id: "companion-a",
+				source_pi_entry_id: null,
+				created_by: "imported",
+				pinned: 0,
+				replacement_memory_id: "memory-2",
+			},
+		]);
+		expect(() =>
+			insert.run("memory-1", "install-a", "user-a", "companion-a", null, "imported", 0, null),
+		).toThrow();
+		expect(() =>
+			insert.run("memory-2", "install-a", "user-a", "companion-a", null, "invalid", 0, null),
+		).toThrow();
+		expect(() =>
+			insert.run("memory-3", "install-a", "user-a", "companion-a", null, "imported", 2, null),
+		).toThrow();
+		database.close();
+	});
+
 
 	it("rejects an applied migration whose definition no longer matches", () => {
 		const database = new Database(root());

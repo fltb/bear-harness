@@ -47,35 +47,8 @@ function kindLabel(kind: MemoryEntry["kind"]): string {
 	}
 }
 
-/**
- * The current wire projection predates the direct backend provenance fields.
- * Accept both projections during the migration without making the panel
- * depend on a second read path.
- */
-type MemoryEntryWithSource = MemoryEntry & {
-	createdBy?: string;
-	source?: string;
-	sourceKind?: string;
-	provenance?: { kind?: string };
-};
-
-function isMemoryEntryWithSource(entry: MemoryEntry): entry is MemoryEntryWithSource {
-	return (
-		"createdBy" in entry ||
-		"source" in entry ||
-		"sourceKind" in entry ||
-		"provenance" in entry
-	);
-}
-
 function sourceLabel(entry: MemoryEntry): string {
-	if (!isMemoryEntryWithSource(entry)) return i18n.t("memory.sourceAutomatic");
-	const source = entry.createdBy ?? entry.source ?? entry.sourceKind ?? entry.provenance?.kind;
-	return source === "user_capture" ||
-		source === "user_button" ||
-		source === "user_request" ||
-		source === "explicit" ||
-		source === "imported"
+	return entry.createdBy === "user_capture" || entry.createdBy === "imported"
 		? i18n.t("memory.sourceUser")
 		: i18n.t("memory.sourceAutomatic");
 }
@@ -222,7 +195,6 @@ export function MemoryEntryList(props: {
 							<div class="memory-meta">
 								<span class="memory-kind">{kindLabel(entry.kind)}</span>
 								<span class="memory-source">{sourceLabel(entry)}</span>
-								<span>{entry.sourceConversationTitle || t("memory.fallbackConversation")}</span>
 								<Show when={formatDate(entry.createdAt)}>
 									<span>{formatDate(entry.createdAt)}</span>
 								</Show>

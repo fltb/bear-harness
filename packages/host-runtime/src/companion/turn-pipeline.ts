@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
 import {
@@ -27,6 +27,10 @@ import {
 } from "../storage/schema.js";
 import type { CompanionSupervisor } from "./supervisor.js";
 import type { PiSessionMessage } from "./pi-session-store.js";
+const REGENERATE_INSTRUCTION =
+	"请基于上面的对话重新生成对上一条用户消息的回复。直接自然地回答，不要提及重新生成或比较旧回复。";
+const CONTINUE_INSTRUCTION = "请继续上一条回复。不要重复已经说过的内容，直接接着完成。";
+
 
 export interface TurnResult {
 	messageId: string;
@@ -36,16 +40,24 @@ export interface TurnResult {
 
 export interface TurnPipelineSessionAppender {
 	appendMessage(message: PiSessionMessage): string;
+	appendUserMessage?(text: string, timestamp?: number): string;
+	appendSyntheticAssistant?(text: string): string;
+	findMessageEntry?(
+		role: "user" | "assistant",
+		content: string,
+		options?: { branchOnly?: boolean },
+	): { id: string; message: PiSessionMessage } | undefined;
+	getMessageEntry?(entryId: string): { id: string; message: PiSessionMessage } | undefined;
+	findParentUserEntry?(entryId: string): { id: string; message: PiSessionMessage } | undefined;
+	branchBefore?(entryId: string): void;
+	selectBranch?(leafId: string): void;
+	currentLeaf?: unknown;
 }
 
 /** Resolves the Pi session for a conversation without exposing Host history. */
 export interface TurnPipelineSessionResolver {
 	get(conversationId: string): TurnPipelineSessionAppender | undefined;
 }
-const REGENERATE_INSTRUCTION =
-	"请基于上面的对话重新生成对上一条用户消息的回复。直接自然地回答，不要提及重新生成或比较旧回复。";
-const CONTINUE_INSTRUCTION =
-	"请继续上一条回复。不要重复已经说过的内容，直接接着完成。";
 
 export class TurnPipeline {
 	private db: AppDatabase;
@@ -54,8 +66,12 @@ export class TurnPipeline {
 	private readonly sessionResolver?: TurnPipelineSessionResolver;
 	private activeTurns = new Map<
 		string,
-		{ userMessageId: string; assistantMessageId?: string; assistantVersionId?: string }
-		>();
+		{
+			userMessageId: string;
+			assistantMessageId?: string;
+			assistantVersionId?: string;
+		}
+	>();
 	private readonly unsubscribe: () => void;
 
 	constructor(
@@ -122,11 +138,6 @@ export class TurnPipeline {
 		} catch (e) {
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
-		this.sessionResolver?.get(conversationId)?.appendMessage({
-			role: "user",
-			content: text,
-			timestamp: Date.now(),
-		});
 
 		this.activeTurns.set(conversationId, { userMessageId: messageId });
 		this.eventBus.publish("message.user_sent", { conversationId, messageId, versionId, text });
@@ -159,12 +170,15 @@ export class TurnPipeline {
 
 	/** Regenerate: create a sibling assistant version from the same user parent. */
 	async regenerate(conversationId: string, messageId: string): Promise<TurnResult> {
-		// Locate the user parent (the message before the assistant message)
-		const row = this.db
-			.select({ id: messages.id, role: messages.role })
-			.from(messages)
-			.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
-			.get();
+		const session = this.sessionResolver?.get(conversationId);
+		const piTarget = session?.getMessageEntry?.(messageId);
+		const row = piTarget
+			? { id: messageId, role: piTarget.message.role }
+			: this.db
+					.select({ id: messages.id, role: messages.role })
+					.from(messages)
+					.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
+					.get();
 		if (!row) throw { kind: "not_found", reason: "message_not_found" };
 
 		if (this.activeTurns.has(conversationId)) {
@@ -173,38 +187,63 @@ export class TurnPipeline {
 		if (row.role !== "assistant") {
 			throw { kind: "conflict", reason: "assistant_message_required" };
 		}
-		const parent = this.db
-			.select({ id: turns.userMessageId })
-			.from(turns)
-			.where(and(eq(turns.conversationId, conversationId), eq(turns.assistantMessageId, messageId)))
-			.orderBy(desc(turns.createdAt))
+		const targetText = piTarget ? assistantMessageText(piTarget.message) : undefined;
+		const hostAssistantId =
+			piTarget && targetText
+				? this.findHostMessageId(conversationId, "assistant", targetText) ??
+					this.ensureHostMessage(conversationId, "assistant", targetText)
+				: messageId;
+		const piParent = piTarget ? session?.findParentUserEntry?.(messageId) : undefined;
+		const parent = piTarget
+			? piParent
+				? {
+						id:
+							this.findHostMessageId(conversationId, "user", assistantMessageText(piParent.message)) ??
+							this.ensureHostMessage(conversationId, "user", assistantMessageText(piParent.message)),
+					}
+				: undefined
+			: this.db
+					.select({ id: turns.userMessageId })
+					.from(turns)
+					.where(and(eq(turns.conversationId, conversationId), eq(turns.assistantMessageId, messageId)))
+					.orderBy(desc(turns.createdAt))
+					.limit(1)
+					.get();
+		if (!parent) throw { kind: "not_found", reason: "parent_message_not_found" };
+		const assistantVersion = this.db
+			.select({ content: messageVersions.content })
+			.from(messageVersions)
+			.where(and(eq(messageVersions.messageId, hostAssistantId), eq(messageVersions.adopted, 1)))
 			.limit(1)
 			.get();
-		const userParent = parent;
-		if (!userParent) throw { kind: "not_found", reason: "parent_message_not_found" };
-
+		if (session && piTarget && session.branchBefore) session.branchBefore(piTarget.id);
+		else if (session && assistantVersion?.content !== undefined) {
+			const piAssistant =
+				session.findMessageEntry?.("assistant", assistantVersion.content, { branchOnly: true }) ??
+				session.findMessageEntry?.("assistant", assistantVersion.content);
+			if (piAssistant && session.branchBefore) session.branchBefore(piAssistant.id);
+		}
 		// Create a sibling assistant version, then actually ask the model again.
 		const newVersionId = randomUUID();
 		this.db.transaction((transaction) => {
 			transaction
 				.update(messageVersions)
 				.set({ adopted: 0 })
-				.where(eq(messageVersions.messageId, messageId))
+				.where(eq(messageVersions.messageId, hostAssistantId))
 				.run();
 			transaction
 				.insert(messageVersions)
-				.values({ id: newVersionId, messageId, content: "", editedByUser: 0, adopted: 1 })
+				.values({ id: newVersionId, messageId: hostAssistantId, content: "", editedByUser: 0, adopted: 1 })
 				.run();
 		});
-
 		this.eventBus.publish("message.regenerated", {
 			conversationId,
 			messageId,
 			versionId: newVersionId,
 		});
 		this.activeTurns.set(conversationId, {
-			userMessageId: userParent.id,
-			assistantMessageId: messageId,
+			userMessageId: parent.id,
+			assistantMessageId: hostAssistantId,
 			assistantVersionId: newVersionId,
 		});
 		this.supervisor.sendCommand({
@@ -217,12 +256,32 @@ export class TurnPipeline {
 
 	/** Switch the adopted version of a message (no model call). */
 	async switchVersion(conversationId: string, messageId: string, versionId: string): Promise<void> {
+		const session = this.sessionResolver?.get(conversationId);
+		const piTarget = session?.getMessageEntry?.(messageId);
+		if (piTarget) {
+			if (versionId !== `${messageId}-v1`) {
+				throw { kind: "not_found", reason: "version_not_found" };
+			}
+			session?.selectBranch?.(messageId);
+			this.eventBus.publish("message.version_switched", { conversationId, messageId, versionId });
+			return;
+		}
 		const exists = this.db
 			.select({ id: messageVersions.id })
 			.from(messageVersions)
 			.where(and(eq(messageVersions.id, versionId), eq(messageVersions.messageId, messageId)))
 			.get();
 		if (!exists) throw { kind: "not_found", reason: "version_not_found" };
+		const version = this.db
+			.select({ content: messageVersions.content })
+			.from(messageVersions)
+			.where(eq(messageVersions.id, versionId))
+			.get();
+		const message = this.db
+			.select({ role: messages.role })
+			.from(messages)
+			.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
+			.get();
 
 		try {
 			this.db.transaction((transaction) => {
@@ -240,6 +299,10 @@ export class TurnPipeline {
 		} catch (e) {
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
+		if (session && version?.content !== undefined && (message?.role === "user" || message?.role === "assistant")) {
+			const entry = session.findMessageEntry?.(message.role, version.content);
+			if (entry && session.selectBranch) session.selectBranch(entry.id);
+		}
 		this.eventBus.publish("message.version_switched", { conversationId, messageId, versionId });
 	}
 
@@ -256,6 +319,23 @@ export class TurnPipeline {
 		if (isUserMessage && !this.supervisor.isRunning) {
 			throw { kind: "unavailable", reason: "companion_unavailable" };
 		}
+		const session = this.sessionResolver?.get(conversationId);
+		const piSource = session?.getMessageEntry?.(messageId);
+		// The UI may report a Host SQLite message id for a migrated user row;
+		// the source entry was not rewritten in place, so resolve its current
+		// Pi entry by the adopted content when the Pi entry ids are opaque.
+		const source =
+			piSource ?? (isUserMessage
+				? this.findHostMessageEntry(conversationId, messageId, "user")
+				: this.findHostMessageEntry(conversationId, messageId, "assistant"));
+		if (!source) throw { kind: "not_found", reason: "message_not_found" };
+		if (source.message.role !== "user" && source.message.role !== "assistant") {
+			throw { kind: "not_found", reason: "message_not_found" };
+		}
+		const sourceText = assistantMessageText(source.message);
+		const hostMessageId =
+			this.findHostMessageId(conversationId, source.message.role, sourceText) ??
+			this.ensureHostMessage(conversationId, source.message.role, sourceText);
 		const newVersionId = randomUUID();
 		try {
 			this.db.transaction((transaction) => {
@@ -267,7 +347,7 @@ export class TurnPipeline {
 						.values({
 							id: branchId,
 							conversationId,
-							forkMessageId: messageId,
+							forkMessageId: hostMessageId,
 							label: "edited",
 							adopted: 1,
 						})
@@ -277,33 +357,30 @@ export class TurnPipeline {
 						.set({ adopted: 0 })
 						.where(and(eq(branches.conversationId, conversationId), ne(branches.id, branchId)))
 						.run();
-					transaction
-						.insert(messageVersions)
-						.values({ id: newVersionId, messageId, content: text, editedByUser: 1, adopted: 1 })
-						.run();
-					transaction
-						.update(messageVersions)
-						.set({ adopted: 0 })
-						.where(
-							and(eq(messageVersions.messageId, messageId), ne(messageVersions.id, newVersionId)),
-						)
-						.run();
-				} else {
-					transaction
-						.insert(messageVersions)
-						.values({ id: newVersionId, messageId, content: text, editedByUser: 1, adopted: 1 })
-						.run();
-					transaction
-						.update(messageVersions)
-						.set({ adopted: 0 })
-						.where(
-							and(eq(messageVersions.messageId, messageId), ne(messageVersions.id, newVersionId)),
-						)
-						.run();
 				}
+				transaction
+					.insert(messageVersions)
+					.values({ id: newVersionId, messageId: hostMessageId, content: text, editedByUser: 1, adopted: 1 })
+					.run();
+				transaction
+					.update(messageVersions)
+					.set({ adopted: 0 })
+					.where(
+						and(eq(messageVersions.messageId, hostMessageId), ne(messageVersions.id, newVersionId)),
+					)
+					.run();
 			});
 		} catch (e) {
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
+		}
+		if (session && piSource) {
+			if (isUserMessage) {
+				session.branchBefore?.(piSource.id);
+				session.appendUserMessage?.(text);
+			} else {
+				session.branchBefore?.(piSource.id);
+				session.appendSyntheticAssistant?.(text);
+			}
 		}
 		this.eventBus.publish("message.edited", {
 			conversationId,
@@ -312,7 +389,7 @@ export class TurnPipeline {
 			editedByUser: true,
 		});
 		if (isUserMessage) {
-			this.activeTurns.set(conversationId, { userMessageId: messageId });
+			this.activeTurns.set(conversationId, { userMessageId: hostMessageId });
 			this.supervisor.sendCommand({
 				type: "prompt",
 				conversationId,
@@ -371,6 +448,25 @@ export class TurnPipeline {
 	/** Create a narrative branch at a specified message. */
 	async branch(conversationId: string, messageId: string): Promise<string> {
 		const branchId = randomUUID();
+		const session = this.sessionResolver?.get(conversationId);
+		const piSource = session?.getMessageEntry?.(messageId);
+		const source = piSource
+			? { id: piSource.id, message: piSource.message }
+			: this.findHostMessageEntry(conversationId, messageId, "assistant");
+		if (!source) throw { kind: "not_found", reason: "message_not_found" };
+		if (piSource && source.role !== "user" && source.role !== "assistant") {
+			throw { kind: "not_found", reason: "message_not_found" };
+		}
+		const sourceText = piSource ? assistantMessageText(piSource.message) : undefined;
+		const hostMessageId =
+			piSource && sourceText
+				? this.findHostMessageId(conversationId, source.role as "user" | "assistant", sourceText) ??
+					this.ensureHostMessage(
+						conversationId,
+						source.role as "user" | "assistant",
+						sourceText,
+					)
+				: messageId;
 		try {
 			this.db.transaction((transaction) => {
 				transaction
@@ -378,7 +474,7 @@ export class TurnPipeline {
 					.values({
 						id: branchId,
 						conversationId,
-						forkMessageId: messageId,
+						forkMessageId: hostMessageId,
 						label: "branch",
 						adopted: 1,
 					})
@@ -392,6 +488,7 @@ export class TurnPipeline {
 		} catch (e) {
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
+		if (piSource && session?.selectBranch) session.selectBranch(piSource.id);
 		this.eventBus.publish("conversation.branched", { conversationId, messageId, branchId });
 		return branchId;
 	}
@@ -410,6 +507,97 @@ export class TurnPipeline {
 			.get()?.userMessageId;
 	}
 
+	/** Look up the minimal Host message row mirroring a Pi entry by role and text. */
+	private findHostMessageId(
+		conversationId: string,
+		role: "user" | "assistant",
+		content: string,
+	): string | undefined {
+		return this.db
+			.select({ id: messages.id })
+			.from(messages)
+			.innerJoin(messageVersions, eq(messageVersions.messageId, messages.id))
+			.where(
+				and(
+					eq(messages.conversationId, conversationId),
+					eq(messages.role, role),
+					eq(messageVersions.content, content),
+					eq(messageVersions.adopted, 1),
+				),
+			)
+			.orderBy(sql`messages.rowid desc`)
+			.limit(1)
+			.get()?.id;
+	}
+
+	/**
+	 * Resolve the Pi branch entry standing in for a Host SQLite message id.
+	 *
+	 * The product UI reports Host message ids while the SessionManager tree is
+	 * keyed by its own entry ids; the projection table never rewrites entries in
+	 * place. When the caller did not pass a Pi entry id, locate the current
+	 * entry whose adopted content is the given message's adopted version.
+	 */
+	private findHostMessageEntry(
+		conversationId: string,
+		messageId: string,
+		role: "user" | "assistant",
+	): { id: string; message: PiSessionMessage } | undefined {
+		const version = this.db
+			.select({ content: messageVersions.content })
+			.from(messageVersions)
+			.where(and(eq(messageVersions.messageId, messageId), eq(messageVersions.adopted, 1)))
+			.limit(1)
+			.get();
+		if (version?.content === undefined) return undefined;
+		const session = this.sessionResolver?.get(conversationId);
+		return session?.findMessageEntry?.(role, version.content);
+	}
+
+	/** Materialize a minimal Host message row so Pi entry IDs never reach SQLite identifiers. */
+	private ensureHostMessage(
+		conversationId: string,
+		role: "user" | "assistant",
+		content: string,
+	): string {
+		const matches = this.db
+			.select({ id: messages.id })
+			.from(messages)
+			.innerJoin(messageVersions, eq(messageVersions.messageId, messages.id))
+			.where(
+				and(
+					eq(messages.conversationId, conversationId),
+					eq(messages.role, role),
+					eq(messageVersions.content, content),
+				),
+			)
+			.orderBy(sql`messages.rowid desc`)
+			.limit(1)
+			.get()?.id;
+		if (matches) return matches;
+		const branch = this.db
+			.select({ id: branches.id })
+			.from(branches)
+			.where(and(eq(branches.conversationId, conversationId), eq(branches.adopted, 1)))
+			.orderBy(desc(branches.createdAt))
+			.limit(1)
+			.get();
+		const branchId = branch?.id ?? conversationId;
+		const messageId = randomUUID();
+		const versionId = randomUUID();
+		this.db.transaction((transaction) => {
+			transaction
+				.insert(messages)
+				.values({ id: messageId, conversationId, branchId, role })
+				.run();
+			transaction
+				.insert(messageVersions)
+				.values({ id: versionId, messageId, content, editedByUser: 0, adopted: 1 })
+				.run();
+		});
+		return messageId;
+	}
+
 
 	private commitAssistantReply(payload: unknown): void {
 		if (!payload || typeof payload !== "object" || !("conversationId" in payload)) return;
@@ -424,6 +612,9 @@ export class TurnPipeline {
 		const piAssistant =
 			"message" in payload ? asAssistantPiMessage(payload.message) : undefined;
 		const assistantVersionId = active.assistantVersionId ?? randomUUID();
+		const session = this.sessionResolver?.get(conversationId);
+		if (session) projectAssistantEntry(session, piAssistant, text);
+		
 		const branch = this.db
 			.select({ id: branches.id })
 			.from(branches)
@@ -487,7 +678,6 @@ export class TurnPipeline {
 			this.activeTurns.delete(conversationId);
 			throw error;
 		}
-		if (piAssistant) this.sessionResolver?.get(conversationId)?.appendMessage(piAssistant);
 		this.activeTurns.delete(conversationId);
 		this.eventBus.publish("message.assistant_committed", {
 			conversationId,
@@ -496,6 +686,53 @@ export class TurnPipeline {
 			failed,
 		});
 	}
+}
+
+function isAssistantLeaf(value: unknown, text?: string): boolean {
+	if (!value || typeof value !== "object") return false;
+	const candidate = value as { type?: unknown; message?: unknown };
+	if (candidate.type !== "message" || !isAssistantMessage(candidate.message)) return false;
+	return text === undefined || assistantMessageText(candidate.message) === text;
+}
+
+function isAssistantMessage(value: unknown): value is PiSessionMessage {
+	return Boolean(value && typeof value === "object" && "role" in value && value.role === "assistant");
+}
+
+function assistantMessageText(message: PiSessionMessage): string {
+	if (typeof message.content === "string") return message.content.trim();
+	if (!Array.isArray(message.content)) return "";
+	return message.content
+		.filter(
+			(part): part is { type: "text"; text: string } =>
+				Boolean(
+					part &&
+						typeof part === "object" &&
+						"type" in part &&
+						part.type === "text" &&
+						"text" in part &&
+						typeof part.text === "string",
+				),
+		)
+		.map((part) => part.text)
+		.join("")
+		.trim();
+}
+
+function projectAssistantEntry(
+	session: TurnPipelineSessionAppender,
+	message: PiSessionMessage | undefined,
+	text: string,
+): void {
+	if (isAssistantLeaf(session.currentLeaf, text)) return;
+	const existing = session.findMessageEntry?.("assistant", text, { branchOnly: true });
+	if (existing && !session.currentLeaf) {
+		session.selectBranch?.(existing.id);
+		return;
+	}
+	if (!message) return;
+	const entryId = session.appendMessage(message);
+	session.selectBranch?.(entryId);
 }
 
 function asAssistantPiMessage(value: unknown): PiSessionMessage | undefined {

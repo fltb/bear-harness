@@ -141,6 +141,14 @@ export class PiSessionStore {
 		return metadata;
 	}
 
+	/** The canonical public SessionManager used by the native Pi session runtime. */
+	get sessionManager(): SessionManager {
+		return this.manager;
+	}
+
+	get cwd(): string {
+		return this.manager.getCwd();
+	}
 	get sessionId(): string {
 		return this.manager.getSessionId();
 	}
@@ -176,6 +184,82 @@ export class PiSessionStore {
 	appendMessage(message: PiSessionMessage): string {
 		return this.manager.appendMessage(message);
 	}
+	/** Find the newest standard message with matching role/content. */
+	findMessageEntry(
+		role: "user" | "assistant",
+		content: string,
+		options: { branchOnly?: boolean } = {},
+	): PiSessionMessageEntry | undefined {
+		const entries = options.branchOnly ? this.manager.getBranch() : this.manager.getEntries();
+		for (let index = entries.length - 1; index >= 0; index -= 1) {
+			const entry = entries[index];
+			if (!entry || entry.type !== "message" || !isStandardMessage(entry.message)) continue;
+			if (entry.message.role !== role || sessionMessageText(entry.message) !== content) continue;
+			return { id: entry.id, message: entry.message };
+		}
+		return undefined;
+	}
+	/** Return a standard message entry by its public SessionManager entry ID. */
+	getMessageEntry(entryId: string): PiSessionMessageEntry | undefined {
+		const entry = this.manager.getEntry(entryId);
+		if (!entry || entry.type !== "message" || !isStandardMessage(entry.message)) return undefined;
+		return { id: entry.id, message: entry.message };
+	}
+
+	/** Return the nearest user message preceding a message entry on its Pi branch. */
+	findParentUserEntry(entryId: string): PiSessionMessageEntry | undefined {
+		const branch = this.manager.getBranch(entryId);
+		for (let index = branch.length - 2; index >= 0; index -= 1) {
+			const entry = branch[index];
+			if (entry?.type === "message" && isStandardMessage(entry.message) && entry.message.role === "user") {
+				return { id: entry.id, message: entry.message };
+			}
+		}
+		return undefined;
+	}
+
+
+	/**
+	 * Select the path immediately before an entry. The next append therefore
+	 * creates a sibling of that entry while SessionManager retains the tree.
+	 */
+	branchBefore(entryId: string): void {
+		const path = this.manager.getBranch(entryId);
+		if (path.length === 0 || path.at(-1)?.id !== entryId) {
+			throw new Error(`Entry ${entryId} not found`);
+		}
+		const parent = path.at(-2);
+		if (parent) this.manager.branch(parent.id);
+		else this.manager.resetLeaf();
+	}
+
+	/** Append a host-authored assistant reply as a native Pi message entry. */
+	appendSyntheticAssistant(text: string): string {
+		const message: PiSessionMessage = {
+			role: "assistant",
+			content: [{ type: "text", text }],
+			api: "openai-completions",
+			provider: "host",
+			model: "host-edit",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
+		return this.manager.appendMessage(message);
+	}
+
+	/** Append a user message through the canonical SessionManager. */
+	appendUserMessage(text: string, timestamp = Date.now()): string {
+		return this.manager.appendMessage({ role: "user", content: text, timestamp });
+	}
+
 
 	/** Read standard message entries and preserve each SessionManager entry id. */
 	readMessageEntries(): PiSessionMessageEntry[] {
@@ -233,6 +317,49 @@ function absolutePath(value: string, name: string): string {
 function requireSessionFile(path: string | undefined): string {
 	if (!path) throw new Error("Pi SessionManager did not provide a session file");
 	return path;
+}
+
+const HOST_CONTEXT_PREFIX = "<host_context>\n";
+const HOST_CONTEXT_SEPARATOR = "\n</host_context>\n\n<current_user_message>\n";
+const CURRENT_USER_MESSAGE_SUFFIX = "\n</current_user_message>";
+
+function sessionMessageText(message: PiSessionMessage): string {
+	const content = sessionMessageContent(message);
+	if (message.role === "user") {
+		const projected = extractCurrentUserMessage(content);
+		if (projected !== undefined) return projected;
+	}
+	return content.trim();
+}
+
+function sessionMessageContent(message: PiSessionMessage): string {
+	if (typeof message.content === "string") return message.content;
+	if (!Array.isArray(message.content)) return "";
+	return message.content
+		.map((part) => {
+			if (
+				!part ||
+				typeof part !== "object" ||
+				!("type" in part) ||
+				!("text" in part) ||
+				part.type !== "text" ||
+				typeof part.text !== "string"
+			) {
+				return "";
+			}
+			return part.text;
+		})
+		.filter(Boolean)
+		.join("\n");
+}
+
+function extractCurrentUserMessage(content: string): string | undefined {
+	if (!content.startsWith(HOST_CONTEXT_PREFIX) || !content.endsWith(CURRENT_USER_MESSAGE_SUFFIX)) {
+		return undefined;
+	}
+	const separatorIndex = content.indexOf(HOST_CONTEXT_SEPARATOR, HOST_CONTEXT_PREFIX.length);
+	if (separatorIndex <= HOST_CONTEXT_PREFIX.length) return undefined;
+	return content.slice(separatorIndex + HOST_CONTEXT_SEPARATOR.length, -CURRENT_USER_MESSAGE_SUFFIX.length);
 }
 
 function isStandardMessage(message: AgentMessage): message is PiSessionMessage {

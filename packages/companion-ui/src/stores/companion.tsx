@@ -61,10 +61,7 @@ import {
 	type DomainEvent,
 	invoke,
 	isRecord,
-	type MemoryCandidate,
-	type MemoryDecision,
 	type MemoryEntry,
-	type MemoryListData,
 	type MemoryScope,
 	type Message,
 	type MessageApplyScope,
@@ -166,22 +163,13 @@ export interface EventsApi {
 }
 
 export interface MemoryApi {
-	candidates(): MemoryCandidate[];
 	entries(): MemoryEntry[] | undefined;
-	listCandidates(): Promise<MemoryListData>;
-	decideCandidate(
-		candidateId: string,
-		decision: MemoryDecision,
-		editedText?: string,
-		scope?: MemoryScope,
-	): Promise<void>;
 	search(query: string, scope?: MemoryScope): Promise<MemoryEntry[]>;
 	list(params?: Record<string, unknown>): Promise<MemoryEntry[]>;
 	capture(entryId: string): Promise<MemoryCaptureResponse>;
 	pin(entryId: string, pinned: boolean): Promise<void>;
 	forget(entryId: string): Promise<void>;
 	invalidate(entryId: string, replacementEntryId?: string): Promise<void>;
-	exclude(entryId: string, excluded: boolean): Promise<void>;
 	edit(entryId: string, newText: string): Promise<void>;
 }
 
@@ -415,12 +403,10 @@ interface CompanionState {
 	activeMessages: Message[];
 	pendingUserText: string | undefined;
 	streamingAssistantText: string;
-	committedStreamingMessageId: string | null;
 	assistantStreaming: boolean;
 	runs: RunInfo[];
 	presence: PresenceState;
 	characterRuntimeByConversation: Record<string, CharacterRuntimeState>;
-	memoryCandidates: MemoryCandidate[];
 	memoryEntries: MemoryEntry[] | undefined;
 	commissions: Commission[];
 	artifacts: Artifact[];
@@ -467,6 +453,38 @@ function derivePresence(s: CompanionState): PresenceState {
 	return "idle";
 }
 
+/** True when the streamed draft is the last message of the persisted projection. */
+function snapshotAppendsStreamingDraft(messages: readonly Message[], streamingText: string): boolean {
+	const trimmedDraft = streamingText.trim();
+	if (trimmedDraft.length === 0) return false;
+	const last = messages[messages.length - 1];
+	if (!last || last.role !== "assistant") return false;
+	const lastContent = last.versions.at(-1)?.content ?? "";
+	return lastContent.trim() === trimmedDraft;
+}
+
+/**
+ * True when the last persisted assistant message supersedes the streaming draft
+ * (final text is the immutable close of the streamed text). The final text can
+ * exceed the last visible delta, so the draft is treated as committed when it
+ * is a prefix of the persisted content.
+ */
+function persistedFinalContains(
+	messages: readonly Message[],
+	pendingUserText: string | undefined,
+	streamingText: string,
+): boolean {
+	const trimmedDraft = streamingText.trim();
+	if (pendingUserText === undefined || trimmedDraft.length === 0) return false;
+	let lastAssistant: Message | undefined;
+	for (const message of messages) {
+		if (message.role === "assistant") lastAssistant = message;
+	}
+	const lastContent = lastAssistant?.versions.at(-1)?.content ?? "";
+	const trimmedFinal = lastContent.trim();
+	return trimmedFinal.length > 0 && trimmedFinal.startsWith(trimmedDraft);
+}
+
 // ---------------------------------------------------------------------------
 // Store factory
 // ---------------------------------------------------------------------------
@@ -501,13 +519,11 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		activeMessages: [],
 		pendingUserText: undefined,
 		streamingAssistantText: "",
-		committedStreamingMessageId: null,
 		assistantStreaming: false,
 		runs: [],
 		presence: "idle",
-		memoryCandidates: [],
-		characterRuntimeByConversation: {},
 		memoryEntries: undefined,
+		characterRuntimeByConversation: {},
 		commissions: [],
 		artifacts: [],
 		storyChanges: [],
@@ -600,11 +616,6 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		setState("runs", runs);
 	};
 
-	const refreshMemory = async (): Promise<void> => {
-		const { candidates } = await invoke(client, () => client.memory.listCandidates());
-		setState("memoryCandidates", candidates);
-	};
-
 	const refreshMemoryEntries = async (): Promise<void> => {
 		const { entries } = await invoke(client, () => client.memory.list());
 		setState("memoryEntries", entries);
@@ -641,7 +652,6 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 
 	const refreshSupplementary = async (): Promise<void> => {
 		await Promise.all([
-			refreshMemory(),
 			refreshMemoryEntries(),
 			refreshCommissions(),
 			refreshRuns(),
@@ -672,10 +682,20 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			}
 			if (conversation.messages !== undefined) {
 				setState("activeMessages", conversation.messages);
-				const committedId = state.committedStreamingMessageId;
-				if (committedId && conversation.messages.some((message) => message.id === committedId)) {
+				// Pi sessions project entry ids (not the legacy DB message ids the
+				// stream events carry), so the draft is reconciled by content: the
+				// persisted assistant message is the final, immutable version and
+				// supersedes the streamed text once it arrives in the snapshot.
+				const finalized =
+					snapshotAppendsStreamingDraft(conversation.messages, state.streamingAssistantText) ||
+					persistedFinalContains(
+						conversation.messages,
+						state.pendingUserText,
+						state.streamingAssistantText,
+					);
+				if (finalized && state.streamingAssistantText.length > 0) {
 					setState("streamingAssistantText", "");
-					setState("committedStreamingMessageId", null);
+					setState("assistantStreaming", false);
 				}
 			}
 			if (conversation.conversations !== undefined) {
@@ -683,8 +703,6 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 			}
 		}
 		if (snap.memory) {
-			if (snap.memory.candidates !== undefined)
-				setState("memoryCandidates", snap.memory.candidates);
 			if (snap.memory.entries !== undefined) setState("memoryEntries", snap.memory.entries);
 		}
 		if (snap.run) setState("runs", snap.run.runs);
@@ -760,12 +778,15 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				if (finalText !== undefined) setState("streamingAssistantText", finalText);
 				setState("sending", false);
 				setState("assistantStreaming", false);
+				// The final persisted projection supersedes the draft; leave it to
+				// the refetch to clear the draft once the committed message lands.
 				void snapshotActions.refetch();
 				return;
 			}
 			case "message.assistant_committed": {
-				const messageId = payloadString(event.payload, "messageId");
-				if (messageId) setState("committedStreamingMessageId", messageId);
+				// Stream events carry the legacy DB message id, while Pi sessions
+				// project entry ids; the snapshot is the reconciliation source and
+				// clears the draft by content (see hydrateFromSnapshot).
 				setState("sending", false);
 				setState("assistantStreaming", false);
 				void snapshotActions.refetch();
@@ -775,7 +796,6 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				setState("sending", false);
 				setState("assistantStreaming", false);
 				setState("streamingAssistantText", "");
-				setState("committedStreamingMessageId", null);
 				return;
 			case "character.scene_changed":
 			case "character.visual_state_changed": {
@@ -850,7 +870,6 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		} else if (kind.startsWith("onboarding.")) {
 			onboardingStore._applyEvent(event);
 		} else if (kind.startsWith("memory.")) {
-			debouncedRefetch(refreshMemory);
 			debouncedRefetch(refreshMemoryEntries);
 		} else if (kind.startsWith("provider.")) {
 			void queryClient.invalidateQueries(
@@ -972,19 +991,7 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 	};
 
 	const memoryApi: MemoryApi = {
-		candidates: () => state.memoryCandidates,
 		entries: () => state.memoryEntries,
-		listCandidates: async () => {
-			const data = await invoke(client, () => client.memory.listCandidates());
-			setState("memoryCandidates", data.candidates);
-			return data;
-		},
-		decideCandidate: async (candidateId, decision, editedText, scope) => {
-			await invoke(client, () =>
-				client.memory.decideCandidate({ candidateId, decision, editedText, scope }),
-			);
-			debouncedRefetch(refreshMemory);
-		},
 		search: async (query, scope) => {
 			const data = await invoke(client, () => client.memory.search({ query, scope }));
 			setState("memoryEntries", data.entries);
@@ -1022,10 +1029,6 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 					replacementMemoryId: replacementEntryId,
 				}),
 			);
-			debouncedRefetch(refreshMemoryEntries);
-		},
-		exclude: async (entryId, excluded) => {
-			await invoke(client, () => client.memory.exclude({ entryId, excluded }));
 			debouncedRefetch(refreshMemoryEntries);
 		},
 		edit: async (entryId, newText) => {
@@ -1562,7 +1565,6 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		sendMessage: async (text, attachments) => {
 			setState("pendingUserText", text);
 			setState("streamingAssistantText", "");
-			setState("committedStreamingMessageId", null);
 			setState("assistantStreaming", true);
 			try {
 				const conversationId = requireActiveConversation();

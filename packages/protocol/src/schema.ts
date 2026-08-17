@@ -579,34 +579,23 @@ export const MemoryScope = z.union([
 	z.literal("relationship"),
 	z.literal("scene"),
 ]);
-export const MemoryCandidate = z.strictObject({
-	id: z.string().max(64),
-	kind: z.union([
-		z.literal("fact"),
-		z.literal("preference"),
-		z.literal("event"),
-		z.literal("self_canon_summary"),
-	]),
-	scope: MemoryScope,
-	text: z.string().max(MAX_STRING_LENGTH),
-	why: z.string().max(MAX_STRING_LENGTH),
-	status: z.union([
-		z.literal("pending"),
-		z.literal("approved"),
-		z.literal("rejected"),
-		z.literal("expired"),
-	]),
-	createdAt: z.string().max(64),
-});
 export const MemoryEntry = z.strictObject({
-	id: z.string().max(64),
+	id: z.string().min(1).max(128),
 	kind: z.string().max(64),
 	scope: MemoryScope,
 	text: z.string().max(MAX_STRING_LENGTH),
-	normalizedText: z.string().max(MAX_STRING_LENGTH),
-	sourceConversationTitle: z.string().max(MAX_STRING_LENGTH),
 	pinned: z.boolean(),
 	createdAt: z.string().max(64),
+	updatedAt: z.string().max(64),
+	importance: z.number().finite(),
+	status: z.union([z.literal("active"), z.literal("invalidated")]),
+	createdBy: z.union([
+		z.literal("user_capture"),
+		z.literal("assistant_tool"),
+		z.literal("auto_episode"),
+		z.literal("imported"),
+	]),
+	sourceEntryId: z.string().min(1).max(128).optional(),
 });
 export const MemoryCaptureCreatedBy = z.union([
 	z.literal("user_capture"),
@@ -631,21 +620,6 @@ export const MemoryInvalidateRequest = z.strictObject({
 	replacementMemoryId: MemoryBackendId.optional(),
 });
 export type MemoryInvalidateRequest = z.infer<typeof MemoryInvalidateRequest>;
-export const MemoryListCandidatesRequest = z.strictObject({});
-export const MemoryListCandidatesResponse = z.strictObject({
-	candidates: z.array(MemoryCandidate).max(MAX_ARRAY_LENGTH),
-});
-export const MemoryApprovalDecision = z.union([
-	z.literal("approve"),
-	z.literal("approve_edited"),
-	z.literal("reject"),
-]);
-export const MemoryDecideCandidateRequest = z.strictObject({
-	candidateId: z.string().max(64),
-	decision: MemoryApprovalDecision,
-	editedText: z.string().max(MAX_STRING_LENGTH).optional(),
-	scope: MemoryScope.optional(),
-});
 export const MemorySearchRequest = z.strictObject({
 	query: z.string().max(MAX_STRING_LENGTH),
 	scope: MemoryScope.optional(),
@@ -660,18 +634,14 @@ export const MemoryListRequest = z.strictObject({
 	limit: z.number().int().safe().min(1).max(100).optional(),
 });
 export const MemoryPinRequest = z.strictObject({
-	entryId: z.string().max(64),
+	entryId: z.string().min(1).max(128),
 	pinned: z.boolean(),
 });
 export const MemoryForgetRequest = z.strictObject({
-	entryId: z.string().max(64),
-});
-export const MemoryExcludeRequest = z.strictObject({
-	entryId: z.string().max(64),
-	excluded: z.boolean(),
+	entryId: z.string().min(1).max(128),
 });
 export const MemoryEditRequest = z.strictObject({
-	entryId: z.string().max(64),
+	entryId: z.string().min(1).max(128),
 	newText: z.string().min(1).max(MAX_STRING_LENGTH),
 });
 
@@ -1210,7 +1180,6 @@ export const ConversationSnapshot = z.strictObject({
 	messages: z.array(Message).max(MAX_ARRAY_LENGTH).optional(),
 });
 export const MemorySnapshot = z.strictObject({
-	candidates: z.array(MemoryCandidate).max(MAX_ARRAY_LENGTH).optional(),
 	entries: z.array(MemoryEntry).max(MAX_ARRAY_LENGTH).optional(),
 });
 export const CharacterRuntimeState = z.strictObject({
@@ -1384,23 +1353,12 @@ export const RPC = {
 		abort: endpoint("message.abort:v1", MessageAbortRequest, EmptyResponse),
 	},
 	memory: {
-		listCandidates: endpoint(
-			"memory.listCandidates:v1",
-			MemoryListCandidatesRequest,
-			MemoryListCandidatesResponse,
-		),
-		decideCandidate: endpoint(
-			"memory.decideCandidate:v1",
-			MemoryDecideCandidateRequest,
-			EmptyResponse,
-		),
 		search: endpoint("memory.search:v1", MemorySearchRequest, MemorySearchResponse),
 		list: endpoint("memory.list:v1", MemoryListRequest, MemoryListResponse),
 		capture: endpoint("memory.capture:v1", MemoryCaptureRequest, MemoryCaptureResponse),
 		invalidate: endpoint("memory.invalidate:v1", MemoryInvalidateRequest, EmptyResponse),
 		pin: endpoint("memory.pin:v1", MemoryPinRequest, EmptyResponse),
 		forget: endpoint("memory.forget:v1", MemoryForgetRequest, EmptyResponse),
-		exclude: endpoint("memory.exclude:v1", MemoryExcludeRequest, EmptyResponse),
 		edit: endpoint("memory.edit:v1", MemoryEditRequest, EmptyResponse),
 	},
 	story: {

@@ -72,6 +72,7 @@ export type MemoryBackendOperation =
 	| "close"
 	| "remember"
 	| "recall"
+	| "list"
 	| "update"
 	| "forget"
 	| "invalidate"
@@ -140,6 +141,11 @@ export interface MemoryRecallRequest extends MemoryBankRequest {
 	readonly query: string;
 	readonly limit?: number;
 	readonly minScore?: number;
+}
+
+/** Direct listing request, scoped to one provider-owned memory bank. */
+export interface MemoryListRequest extends MemoryBankRequest {
+	readonly limit?: number;
 }
 
 /** A backend ID is required for every mutation. */
@@ -211,6 +217,7 @@ export interface MemoryBackend {
 
 	remember(request: MemoryRememberRequest): Promise<MemoryRecord>;
 	recall(request: MemoryRecallRequest): Promise<readonly MemoryHit[]>;
+	list(request: MemoryListRequest): Promise<readonly MemoryRecord[]>;
 	update(request: MemoryUpdateRequest): Promise<MemoryRecord>;
 	forget(request: MemoryForgetRequest): Promise<void>;
 	invalidate(request: MemoryInvalidateRequest): Promise<MemoryRecord>;

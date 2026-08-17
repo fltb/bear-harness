@@ -1,9 +1,10 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
+import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { Backstage } from "../src/features/Backstage.js";
-import { MemorySheet } from "../src/features/MemorySheet.js";
+import { Titlebar } from "../src/Titlebar.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
 import { THEMED_CHARACTER } from "./fixtures.js";
 
@@ -250,79 +251,103 @@ describe("ordinary-user backstage journey", () => {
 	});
 	it("manages direct memory records with source labels and native invalidation", async () => {
 		const user = userEvent.setup();
-		const search = vi.fn(() =>
-			Promise.resolve([
-				{
-					id: "memory-user",
-					kind: "fact",
-					scope: "self" as const,
-					text: "用户喜欢清晨散步",
-					normalizedText: "用户喜欢清晨散步",
-					sourceConversationTitle: "周末对话",
-					pinned: false,
-					createdAt: "2026-08-16T00:00:00Z",
-					createdBy: "user_capture",
-				},
-				{
-					id: "memory-auto",
-					kind: "preference",
-					scope: "self" as const,
-					text: "用户偏好简短回答",
-					normalizedText: "用户偏好简短回答",
-					sourceConversationTitle: "自动整理",
-					pinned: false,
-					createdAt: "2026-08-15T00:00:00Z",
-					provenance: { kind: "inferred" },
-				},
-			]),
-		);
-		const edit = vi.fn(() => Promise.resolve());
+		let currentEntries = [
+			{
+				id: "memory-user",
+				kind: "fact",
+				scope: "self" as const,
+				text: "用户喜欢清晨散步",
+				pinned: false,
+				createdAt: "2026-08-16T00:00:00Z",
+				updatedAt: "2026-08-16T00:00:00Z",
+				importance: 0.8,
+				status: "active",
+				createdBy: "user_capture",
+			},
+			{
+				id: "memory-auto",
+				kind: "preference",
+				scope: "self" as const,
+				text: "用户偏好简短回答",
+				pinned: false,
+				createdAt: "2026-08-15T00:00:00Z",
+				updatedAt: "2026-08-15T00:00:00Z",
+				importance: 0.6,
+				status: "active",
+				createdBy: "auto_episode",
+			},
+		];
+		const search = vi.fn(() => Promise.resolve(currentEntries));
+		const edit = vi.fn((entryId: string, newText: string) => {
+			currentEntries = currentEntries.map((entry) =>
+				entry.id === entryId ? { ...entry, text: newText } : entry,
+			);
+			return Promise.resolve();
+		});
 		const pin = vi.fn(() => Promise.resolve());
 		const forget = vi.fn(() => Promise.resolve());
 		const invalidate = vi.fn(() => Promise.resolve());
 		const store = {
+			runs: [],
+			characters: { characters: () => [] },
 			memory: { search, edit, pin, forget, invalidate },
 		} as unknown as CompanionStore;
 
+		const [backstageOpen, setBackstageOpen] = createSignal(false);
 		render(() => (
 			<DesktopProvider store={store}>
-				<MemorySheet />
+				<Titlebar sceneTitle={THEMED_CHARACTER.character.scene_title} onOpenBackstage={() => setBackstageOpen(true)} />
+				<Backstage
+					open={backstageOpen()}
+					onClose={() => setBackstageOpen(false)}
+					character={THEMED_CHARACTER}
+				/>
 			</DesktopProvider>
 		));
 
+		await user.click(screen.getByRole("button", { name: zhCN.titlebar.backstage }));
+		const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
+		await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
+
 		const region = await screen.findByRole("region", { name: zhCN.memory.defaultEntriesTitle });
+		const firstMemoryEntry = async () => {
+			const currentRegion = await screen.findByRole("region", { name: zhCN.memory.defaultEntriesTitle });
+			return within(currentRegion).getAllByRole("listitem")[0] as HTMLElement;
+		};
 		expect(within(region).getByText(zhCN.memory.sourceUser)).toBeVisible();
 		expect(within(region).getByText(zhCN.memory.sourceAutomatic)).toBeVisible();
-		expect(within(region).queryByRole("button", { name: zhCN.memory.remember })).not.toBeInTheDocument();
-		expect(within(region).queryByRole("button", { name: "排除" })).not.toBeInTheDocument();
 
 		await user.click(
-			within(within(region).getAllByRole("listitem")[0] as HTMLElement).getByRole("button", {
+			within(await firstMemoryEntry()).getByRole("button", {
 				name: zhCN.memory.edit,
 			}),
 		);
-		const editor = within(within(region).getAllByRole("listitem")[0] as HTMLElement).getByRole("textbox", {
+		const editor = within(await firstMemoryEntry()).getByRole("textbox", {
 			name: zhCN.memory.editedContent,
 		});
 		await user.clear(editor);
 		await user.type(editor, "用户喜欢傍晚散步");
 		await user.click(
-			within(within(region).getAllByRole("listitem")[0] as HTMLElement).getByRole("button", {
+			within(await firstMemoryEntry()).getByRole("button", {
 				name: zhCN.memory.saveEdit,
 			}),
 		);
+		await waitFor(async () => {
+			const refreshedRegion = await screen.findByRole("region", { name: zhCN.memory.defaultEntriesTitle });
+			expect(within(refreshedRegion).getByText("用户喜欢傍晚散步")).toBeVisible();
+		});
 		await user.click(
-			within(within(region).getAllByRole("listitem")[0] as HTMLElement).getByRole("button", {
+			within(await firstMemoryEntry()).getByRole("button", {
 				name: zhCN.memory.pin,
 			}),
 		);
 		await user.click(
-			within(within(region).getAllByRole("listitem")[0] as HTMLElement).getByRole("button", {
+			within(await firstMemoryEntry()).getByRole("button", {
 				name: zhCN.memory.forget,
 			}),
 		);
 		await user.click(
-			within(within(region).getAllByRole("listitem")[0] as HTMLElement).getByRole("button", {
+			within(await firstMemoryEntry()).getByRole("button", {
 				name: zhCN.memory.invalidate,
 			}),
 		);

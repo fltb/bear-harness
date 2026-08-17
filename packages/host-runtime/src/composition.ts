@@ -12,6 +12,11 @@
  */
 
 import { CharacterRuntimeState, RPC } from "@bear-harness/protocol/schema";
+import type {
+	MemoryEntry,
+	MemoryListResponse,
+	MemorySearchResponse,
+} from "@bear-harness/protocol";
 import { desc, eq } from "drizzle-orm";
 import type { ArtifactStore } from "./artifacts/index.js";
 import type { CanonHubService } from "./canon/service.js";
@@ -28,7 +33,11 @@ import type { CompanionSupervisor } from "./companion/supervisor.js";
 import type { TurnPipeline } from "./companion/turn-pipeline.js";
 import { ConversationRepository } from "./conversations/repository.js";
 import type { Dispatcher } from "./dispatcher.js";
-import type { MemoryBackend, MemoryBankScope } from "./memory/backend.js";
+import type { MemoryBackend, MemoryBankScope, MemoryRecord } from "./memory/backend.js";
+import type {
+	MemoryPresentationMetadata,
+	MemoryPresentationStore,
+} from "./memory/presentation-store.js";
 import type { MemoryService } from "./memory/service.js";
 import type { ModelRegistry } from "./models/registry.js";
 import type { ProviderCatalog } from "./providers/catalog.js";
@@ -46,6 +55,7 @@ export interface HostCompositionContext {
 	models: ModelRegistry;
 	memory: MemoryService;
 	memoryBackend: MemoryBackend;
+	memoryPresentation: MemoryPresentationStore;
 	memoryScope: Pick<MemoryBankScope, "installationId" | "userId">;
 	commissions: CommissionService;
 	artifacts: ArtifactStore;
@@ -365,77 +375,72 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 	dispatcher.registerHandler(RPC.memory.invalidate, async (_p) => {
 		const params = _p as { memoryId: string; replacementMemoryId?: string };
-		const companionId = await getCompanionId(s);
-		const scope = {
-			...s.memoryScope,
-			companionId,
-		};
+		const scope = await memoryBackendScope(s);
 		await s.memoryBackend.open({ scope });
 		await s.memoryBackend.invalidate({
 			scope,
 			memoryId: params.memoryId,
 			replacementMemoryId: params.replacementMemoryId,
 		});
+		s.memoryPresentation.recordReplacement(scope, params.memoryId, params.replacementMemoryId);
 		return {};
 	});
 
 	// --- memory ------------------------------------------------------------------
-	const memory = s.memory;
-	dispatcher.registerHandler(RPC.memory.listCandidates, async () => {
-		const companionId = await getCompanionId(s);
-		return { candidates: memory.listCandidates({ companionId }) };
-	});
-	dispatcher.registerHandler(RPC.memory.decideCandidate, async (_p) => {
-		const params = _p as {
-			candidateId: string;
-			decision: "approve" | "approve_edited" | "reject";
-			editedText?: string;
-			scope?: string;
-		};
-		memory.decideCandidate({
-			candidateId: params.candidateId,
-			decision: params.decision,
-			editedText: params.editedText,
-			decidedScope: params.scope as never,
+	dispatcher.registerHandler(RPC.memory.search, async (_p): Promise<MemorySearchResponse> => {
+		const { query } = _p;
+		const scope = await memoryBackendScope(s);
+		await s.memoryBackend.open({ scope });
+		const hits = await s.memoryBackend.recall({
+			scope,
+			query,
+			limit: 50,
 		});
-		return {};
-	});
-	dispatcher.registerHandler(RPC.memory.search, async (_p) => {
-		const { query, scope } = _p as { query: string; scope?: string };
-		const companionId = await getCompanionId(s);
-		return { entries: memory.recall({ companionId, query, scope: scope as never, enabled: true }) };
-	});
-	dispatcher.registerHandler(RPC.memory.list, async (_p) => {
-		const { scope, limit } = _p as { scope?: string; limit?: number };
-		const companionId = await getCompanionId(s);
+		const records = hits.map(({ record }) => record);
+		const presentations = presentationByMemoryId(s.memoryPresentation, scope, records);
 		return {
-			entries: memory.recall({
-				companionId,
-				query: "",
-				scope: scope as never,
-				enabled: true,
-				limit: limit ?? 50,
-			}),
+			entries: records.map((record) => projectMemoryEntry(record, presentations.get(record.id))),
+		};
+	});
+	dispatcher.registerHandler(RPC.memory.list, async (_p): Promise<MemoryListResponse> => {
+		const { enabled = true, limit } = _p;
+		if (!enabled) return { entries: [] };
+		const scope = await memoryBackendScope(s);
+		await s.memoryBackend.open({ scope });
+		const records = await s.memoryBackend.list({
+			scope,
+			limit: limit ?? 50,
+		});
+		const presentations = presentationByMemoryId(s.memoryPresentation, scope, records);
+		return {
+			entries: records.map((record) => projectMemoryEntry(record, presentations.get(record.id))),
 		};
 	});
 	dispatcher.registerHandler(RPC.memory.pin, async (_p) => {
 		const { entryId, pinned } = _p as { entryId: string; pinned: boolean };
-		memory.pin(entryId, pinned);
+		const scope = await memoryBackendScope(s);
+		await s.memoryBackend.open({ scope });
+		await s.memoryBackend.setImportance({
+			scope,
+			memoryId: entryId,
+			importance: pinned ? 1 : 0,
+		});
+		s.memoryPresentation.setPinned(scope, entryId, pinned);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.memory.forget, async (_p) => {
 		const { entryId } = _p as { entryId: string };
-		memory.forget(entryId);
-		return {};
-	});
-	dispatcher.registerHandler(RPC.memory.exclude, async (_p) => {
-		const { entryId, excluded } = _p as { entryId: string; excluded: boolean };
-		memory.exclude(entryId, excluded);
+		const scope = await memoryBackendScope(s);
+		await s.memoryBackend.open({ scope });
+		await s.memoryBackend.forget({ scope, memoryId: entryId });
+		s.memoryPresentation.forget(scope, entryId);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.memory.edit, async (_p) => {
 		const { entryId, newText } = _p as { entryId: string; newText: string };
-		memory.edit(entryId, newText);
+		const scope = await memoryBackendScope(s);
+		await s.memoryBackend.open({ scope });
+		await s.memoryBackend.update({ scope, memoryId: entryId, text: newText });
 		return {};
 	});
 
@@ -961,6 +966,11 @@ export async function rememberConversationEntry(
 			createdBy,
 		},
 	});
+	s.memoryPresentation.recordDirectCreation(scope, {
+		backendMemoryId: record.id,
+		sourcePiEntryId: sourceEntryId,
+		createdBy,
+	});
 	return { memoryId: record.id, sourceEntryId, createdBy };
 }
 
@@ -979,6 +989,74 @@ function piEntryText(message: unknown): string {
 		.filter(Boolean)
 		.join("\n")
 		.trim();
+}
+
+function memoryBackendScope(s: HostCompositionContext): MemoryBankScope {
+	return {
+		...s.memoryScope,
+		companionId: getActiveCompanionId(s),
+	};
+}
+
+function getActiveCompanionId(s: HostCompositionContext): string {
+	const packageId = s.characterLoader.getActiveCharacterId(s.orm, s.defaultCharacterId);
+	ensureCharacterSeeded(s);
+	const seeded = s.orm
+		.select({ id: companionIdentity.id })
+		.from(companionIdentity)
+		.where(eq(companionIdentity.id, packageId))
+		.get();
+	if (!seeded) throw { kind: "unavailable", reason: "character_package_missing" };
+	return seeded.id;
+}
+
+function presentationByMemoryId(
+	store: MemoryPresentationStore,
+	scope: MemoryBankScope,
+	records: readonly MemoryRecord[],
+): ReadonlyMap<string, MemoryPresentationMetadata> {
+	return new Map(
+		store.list(
+			scope,
+			records.map((record) => record.id),
+		).map((metadata) => [metadata.backendMemoryId, metadata]),
+	);
+}
+
+function projectMemoryEntry(
+	record: MemoryRecord,
+	presentation: MemoryPresentationMetadata | undefined,
+): MemoryEntry {
+	const metadata = record.metadata;
+	const kind = typeof metadata.kind === "string" ? metadata.kind : "fact";
+	const scope: MemoryEntry["scope"] =
+		metadata.scope === "self" || metadata.scope === "scene" ? metadata.scope : "relationship";
+	const status: MemoryEntry["status"] =
+		record.status === "invalidated" ? "invalidated" : "active";
+	const presentationSourceEntryId = presentation?.sourcePiEntryId;
+	const sourceEntryId = presentationSourceEntryId ?? metadata.sourceEntryId;
+	const presentationCreatedBy = presentation?.createdBy;
+	const createdBy: MemoryEntry["createdBy"] = presentationCreatedBy
+		? presentationCreatedBy
+		: metadata.createdBy === "user_capture" ||
+			metadata.createdBy === "assistant_tool" ||
+			metadata.createdBy === "auto_episode" ||
+			metadata.createdBy === "imported"
+			? metadata.createdBy
+			: "imported";
+	return {
+		id: record.id,
+		kind,
+		scope,
+		text: record.text,
+		pinned: record.importance >= 1,
+		createdAt: record.createdAt,
+		updatedAt: record.updatedAt,
+		importance: record.importance,
+		status,
+		createdBy: createdBy as MemoryEntry["createdBy"],
+		...(sourceEntryId ? { sourceEntryId: sourceEntryId as string } : {}),
+	};
 }
 
 async function getCompanionId(s: HostCompositionContext): Promise<string> {

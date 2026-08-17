@@ -86,6 +86,15 @@ describe("character package Pi resources", () => {
 			realpathSync(resolve(characterRoot, "jizhou", "plugins", "jizhou-roleplay.mjs")),
 		]);
 		expect(loader.piResources(character, false).pluginPaths).toEqual([]);
+		expect(resources.hostTools).toEqual(
+			expect.arrayContaining([
+				"host_set_scene",
+				"host_set_expression",
+				"host_trigger_roleplay_event",
+				"host_play_media",
+				"host_present_choices",
+			]),
+		);
 	});
 
 	it("discovers only role-owned Skills and plugins by package convention", () => {

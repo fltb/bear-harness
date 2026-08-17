@@ -13,6 +13,7 @@ import type {
 	MemoryForgetRequest,
 	MemoryHit,
 	MemoryInvalidateRequest,
+	MemoryListRequest,
 	MemoryMetadata,
 	MemoryOpenRequest,
 	MemoryRecallRequest,
@@ -47,6 +48,11 @@ export interface TencentDbCoreRecallRequest {
 	readonly minScore?: number;
 	readonly signal?: AbortSignal;
 }
+export interface TencentDbCoreListRequest {
+	readonly namespace: string;
+	readonly limit?: number;
+	readonly signal?: AbortSignal;
+}
 
 export interface TencentDbCoreUpdateRequest {
 	readonly namespace: string;
@@ -79,6 +85,7 @@ export interface TencentDbCoreImportanceRequest extends TencentDbCoreMutationReq
 export interface TencentDbMemoryCoreFacade {
 	remember(request: TencentDbCoreRememberRequest): Promise<TencentDbCoreRecord>;
 	recall(request: TencentDbCoreRecallRequest): Promise<readonly TencentDbCoreHit[]>;
+	list(request: TencentDbCoreListRequest): Promise<readonly TencentDbCoreRecord[]>;
 	update(request: TencentDbCoreUpdateRequest): Promise<TencentDbCoreRecord>;
 	forget(request: TencentDbCoreMutationRequest): Promise<void>;
 	invalidate(request: TencentDbCoreInvalidateRequest): Promise<TencentDbCoreRecord>;
@@ -100,12 +107,13 @@ type Operation =
 	| "close"
 	| "remember"
 	| "recall"
+	| "list"
 	| "update"
 	| "forget"
 	| "invalidate"
 	| "set_importance"
 	| "diagnostics";
-type DataOperation = "remember" | "recall" | "update" | "forget" | "invalidate" | "set_importance";
+type DataOperation = "remember" | "recall" | "list" | "update" | "forget" | "invalidate" | "set_importance";
 
 
 function abortIfRequested(signal: AbortSignal | undefined): void {
@@ -207,6 +215,15 @@ export class TencentDbMemoryBackend implements MemoryBackend {
 			score: hit.score,
 			rank: index + 1,
 		}));
+	}
+	async list(request: MemoryListRequest): Promise<readonly MemoryRecord[]> {
+		const namespace = this.prepare(request.scope, request.signal, "list");
+		const records = await this.core.list({
+			namespace,
+			limit: request.limit,
+			signal: request.signal,
+		});
+		return records.map((record) => this.withScope(record, request.scope));
 	}
 
 	async update(request: MemoryUpdateRequest): Promise<MemoryRecord> {

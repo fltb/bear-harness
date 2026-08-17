@@ -1,5 +1,5 @@
 import { zhCN } from "@bear-harness/i18n/locales";
-import { render, screen, waitFor } from "@solidjs/testing-library";
+import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
@@ -110,6 +110,67 @@ describe("optimistic and streaming chat", () => {
 		expect(screen.getByRole("status", { name: zhCN.messages.responding })).toBeInTheDocument();
 		resolveSend?.({ ok: true, data: { messageId: "user-message-1" } });
 	});
+	it("renders raw current_user_message text from a reopened Host-framed Pi projection and keeps capture on its Pi entry", async () => {
+		const user = userEvent.setup();
+		const { client } = activeClient();
+		const rawUserText = "请记住这条当前消息";
+		const framedPrompt = [
+			"<host_context>",
+			"只用于模型上下文的内部 Host 状态",
+			"</host_context>",
+			"",
+			"<current_user_message>",
+			rawUserText,
+			"</current_user_message>",
+		].join("\n");
+		const userEntryId = "pi:user-entry-1";
+		const userVersionId = `${userEntryId}-v1`;
+		const initialSnapshot = client.snapshot.get;
+		client.snapshot.get = vi.fn(async () => {
+			const result = await initialSnapshot();
+			if (!result.ok) return result;
+			return {
+				...result,
+				data: {
+					...result.data,
+					eventSeq: 1,
+					conversation: {
+						activeConversationId: "conversation-1",
+						conversations: [],
+						messages: [
+							{
+								id: userEntryId,
+								role: "user" as const,
+								adoptedVersionId: userVersionId,
+								createdAt: "2026-01-01T00:00:01.000Z",
+								versions: [
+									{
+										id: userVersionId,
+										role: "user" as const,
+										content: rawUserText,
+										editedByUser: false,
+										createdAt: "2026-01-01T00:00:01.000Z",
+										adopted: true,
+									},
+								],
+							},
+						],
+					},
+				},
+			};
+		});
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		await waitFor(() => expect(screen.getByText(rawUserText)).toBeInTheDocument());
+		expect(screen.queryByText(framedPrompt)).not.toBeInTheDocument();
+
+		const message = screen.getByText(rawUserText).closest("article");
+		expect(message).not.toBeNull();
+		await user.click(within(message as HTMLElement).getByRole("button", { name: zhCN.messages.operations }));
+		await user.click(within(message as HTMLElement).getByRole("button", { name: "记住这一刻" }));
+		await waitFor(() => expect(client.memory.capture).toHaveBeenCalledWith(userEntryId));
+	});
+
 
 	it("replaces the streaming block with exactly one persisted assistant message", async () => {
 		const { client } = activeClient();
@@ -204,5 +265,99 @@ describe("optimistic and streaming chat", () => {
 			screen.queryByRole("status", { name: zhCN.messages.responding }),
 		).not.toBeInTheDocument();
 		expect(client.snapshot.get).toHaveBeenCalled();
+	});
+
+	it("clears the streaming draft when the projection carries a Pi entry id, not the legacy message id", async () => {
+		const { client } = activeClient();
+		let committed = false;
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: committed ? 5 : 0,
+					onboarding: COMPLETE_ONBOARDING,
+					conversation: {
+						activeConversationId: "conversation-1",
+						conversations: [],
+						messages: !committed
+							? []
+							: [
+									{
+										id: "pi:entry-assistant-9",
+										role: "assistant" as const,
+										adoptedVersionId: "pi:entry-assistant-9-v1",
+										createdAt: "2026-01-01T00:00:01.000Z",
+										versions: [
+											{
+												id: "pi:entry-assistant-9-v1",
+												role: "assistant" as const,
+												content: STREAMED_REPLY,
+												editedByUser: false,
+												createdAt: "2026-01-01T00:00:01.000Z",
+												adopted: true,
+											},
+										],
+									},
+								],
+					},
+				},
+			}),
+		);
+		let subscription = 0;
+		client.events.subscribe = vi.fn(() => {
+			subscription += 1;
+			if (subscription === 1) {
+				return Promise.resolve({
+					ok: true as const,
+					data: {
+						events: [
+							{ seq: 1, kind: "message_start", payload: { conversationId: "conversation-1" } },
+							{
+								seq: 2,
+								kind: "message_update",
+								payload: { conversationId: "conversation-1", text: "我是" },
+							},
+						],
+					},
+				});
+			}
+			if (subscription === 2) {
+				committed = true;
+				return Promise.resolve({
+					ok: true as const,
+					data: {
+						events: [
+							{
+								seq: 3,
+								kind: "message_update",
+								payload: { conversationId: "conversation-1", text: "季舟。" },
+							},
+							{
+								seq: 4,
+								kind: "message_end",
+								payload: { conversationId: "conversation-1", text: STREAMED_REPLY },
+							},
+							{
+								seq: 5,
+								kind: "message.assistant_committed",
+								payload: {
+									conversationId: "conversation-1",
+									messageId: "assistant-message-1",
+									versionId: "assistant-version-1",
+								},
+							},
+						],
+					},
+				});
+			}
+			return new Promise<never>(() => {});
+		});
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		await screen.findByRole("button", { name: zhCN.messages.continue });
+		await waitFor(() => expect(screen.getAllByText(STREAMED_REPLY)).toHaveLength(1));
+		expect(
+			screen.queryByRole("status", { name: zhCN.messages.responding }),
+		).not.toBeInTheDocument();
 	});
 });

@@ -236,6 +236,18 @@ export class Database {
 				"created_at",
 				"updated_at",
 			],
+			memory_presentation: [
+				"backend_memory_id",
+				"installation_id",
+				"user_id",
+				"companion_id",
+				"source_pi_entry_id",
+				"created_by",
+				"pinned",
+				"replacement_memory_id",
+				"created_at",
+				"updated_at",
+			],
 		};
 		for (const [table, columns] of Object.entries(required)) {
 			const actual = new Set(
@@ -878,6 +890,28 @@ export const MIGRATIONS: Migration[] = [
 				created_at TEXT NOT NULL DEFAULT (datetime('now')),
 				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 			);
+		`,
+	},
+	{
+		id: 16,
+		description: "Host-owned presentation metadata for backend memories",
+		up: `
+			CREATE TABLE memory_presentation (
+				backend_memory_id TEXT NOT NULL,
+				installation_id TEXT NOT NULL,
+				user_id TEXT NOT NULL,
+				companion_id TEXT NOT NULL REFERENCES companion_identity(id) ON DELETE CASCADE,
+				source_pi_entry_id TEXT,
+				created_by TEXT NOT NULL
+					CHECK (created_by IN ('user_capture','assistant_tool','auto_episode','imported')),
+				pinned BOOLEAN NOT NULL DEFAULT 0 CHECK (pinned IN (0,1)),
+				replacement_memory_id TEXT,
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+				PRIMARY KEY (backend_memory_id, installation_id, user_id, companion_id)
+			);
+			CREATE INDEX idx_memory_presentation_scope
+				ON memory_presentation(installation_id, user_id, companion_id);
 		`,
 	},
 ];

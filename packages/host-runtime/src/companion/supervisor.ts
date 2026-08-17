@@ -9,12 +9,21 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { toJsonSchema, z } from "@bear-harness/schema";
-import { Agent } from "@earendil-works/pi-agent-core";
+import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
+import {
+	AgentSession,
+	DefaultResourceLoader,
+	ModelRuntime,
+	SettingsManager,
+	estimateTokens,
+	shouldCompact,
+	type CompactionSettings as PiCompactionSettings,
+} from "@earendil-works/pi-coding-agent";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import type { EventBus } from "../storage/event-bus.js";
 import type { CompanionHostToolCall, CompanionHostToolResult } from "./character-behavior.js";
+import type { PiSessionMessage, PiSessionStore } from "./pi-session-store.js";
 import { loadRolePluginTools, loadRoleSkills, roleSkillPrompt } from "./role-resources.js";
-
 export type CompanionState = "stopped" | "starting" | "running" | "unavailable";
 
 /** Validated, role-owned Pi resources discovered by the Host package loader. */
@@ -24,6 +33,21 @@ export interface CompanionRuntimeConfig {
 	appendSystemPrompt: string;
 	hostTools: string[];
 }
+
+export interface CompanionSessionResolver {
+	get(conversationId: string): PiSessionStore | undefined;
+}
+
+export interface CompanionCompactionConfig extends PiCompactionSettings {}
+
+type RequiredCompactionSettings = Required<PiCompactionSettings>;
+
+const DEFAULT_COMPACTION: RequiredCompactionSettings = {
+	enabled: true,
+	reserveTokens: 16_384,
+	keepRecentTokens: 20_000,
+};
+
 
 type HostToolHandler = (
 	call: CompanionHostToolCall,
@@ -61,16 +85,27 @@ export class CompanionSupervisor {
 	private contextHandler: ContextHandler | null = null;
 	private session: CoreSession | null = null;
 	private readonly sessions = new Map<string, CoreSession>();
+	private readonly sessionStores = new Map<string, PiSessionStore>();
 	private modelRuntime: Models | null = null;
 	private readonly initializations = new Map<string, Promise<CoreSession>>();
 	private activeConversationId: string | null = null;
 	private promptQueue: Promise<void> = Promise.resolve();
+	private readonly compactionSettings: RequiredCompactionSettings;
 
 	constructor(
 		private readonly userDataDir: string,
 		private readonly eventBus: EventBus,
 		private readonly providers: CompanionModelRuntimeSource,
-	) {}
+		private readonly sessionResolver?: CompanionSessionResolver,
+		compactionSettings?: Partial<CompanionCompactionConfig>,
+	) {
+		this.compactionSettings = {
+			enabled: compactionSettings?.enabled ?? DEFAULT_COMPACTION.enabled,
+			reserveTokens: compactionSettings?.reserveTokens ?? DEFAULT_COMPACTION.reserveTokens,
+			keepRecentTokens:
+				compactionSettings?.keepRecentTokens ?? DEFAULT_COMPACTION.keepRecentTokens,
+		};
+	}
 
 	get currentState(): CompanionState {
 		return this.state;
@@ -81,7 +116,7 @@ export class CompanionSupervisor {
 			skillPaths: [...config.skillPaths],
 			pluginPaths: [...config.pluginPaths],
 			appendSystemPrompt: config.appendSystemPrompt,
-			hostTools: [...config.hostTools],
+			hostTools: [...(config.hostTools ?? [])],
 		};
 	}
 
@@ -118,18 +153,62 @@ export class CompanionSupervisor {
 		const initialization = this.createSession(conversationId);
 		this.initializations.set(conversationId, initialization);
 		try {
-			return await initialization;
+			const session = await initialization;
+			this.sessions.set(conversationId, session);
+			this.session = session;
+			return session;
 		} finally {
 			if (this.initializations.get(conversationId) === initialization) {
 				this.initializations.delete(conversationId);
 			}
 		}
 	}
+	private sessionStoreFor(conversationId: string): PiSessionStore | undefined {
+		const cached = this.sessionStores.get(conversationId);
+		if (cached) return cached;
+		let store: PiSessionStore | undefined;
+		try {
+			store = this.sessionResolver?.get(conversationId);
+		} catch {
+			return undefined;
+		}
+		if (store) this.sessionStores.set(conversationId, store);
+		return store;
+	}
+
+
+	private async compactIfNeeded(conversationId: string, session: CoreSession): Promise<void> {
+		const store = this.sessionStoreFor(conversationId);
+		const model = session.model;
+		if (!store || !model || model.contextWindow <= 0 || !this.compactionSettings.enabled) return;
+		const context = store.buildContext();
+		const tokens = context.messages.reduce((total, message) => total + estimateTokens(message), 0);
+		if (!shouldCompact(tokens, model.contextWindow, this.compactionSettings)) return;
+		await session.compactNative();
+	}
+
+	private async compactSafely(conversationId: string, session: CoreSession): Promise<void> {
+		try {
+			await this.compactIfNeeded(conversationId, session);
+		} catch (error) {
+			this.eventBus.publish("companion.runtime_error", {
+				conversationId,
+				code: "compaction_failed",
+				message: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
+
 
 	private async createSession(conversationId: string): Promise<CoreSession> {
 		const modelRuntime = await this.providers.getModels();
+		this.modelRuntime = modelRuntime;
+		const nativeModelRuntime =
+			modelRuntime instanceof ModelRuntime ? modelRuntime : undefined;
 		const skills = loadRoleSkills(this.runtimeConfig.skillPaths);
 		let pluginTools: unknown[] = [];
+		const store = this.sessionStoreFor(conversationId);
 		try {
 			pluginTools = await loadRolePluginTools(this.runtimeConfig.pluginPaths);
 		} catch (error) {
@@ -145,24 +224,21 @@ export class CompanionSupervisor {
 				"You are the local Companion runtime. Use only injected Host tools for application state.",
 				"Use the read tool to load an applicable role Skill before following it.",
 				"When the user asks for real-world work, call host_propose_work with a precise plain-language scope; never claim the work started before user approval.",
-				"When a user asks you to remember the current moment, call host_remember. It saves the current adopted turn directly; never invent or supply source, companion, or user IDs.",
+				"When a user asks to remember the current moment, call host_remember. It saves the current adopted turn directly; never invent or supply source, companion, or user IDs.",
 				"Never claim a state change unless its Host tool succeeded.",
 				this.runtimeConfig.appendSystemPrompt,
 				roleSkillPrompt(skills),
 			]
 				.filter(Boolean)
 				.join("\n\n"),
+			store,
+			this.compactionSettings,
+			nativeModelRuntime,
 		);
-		if (this.state !== "running") {
-			session.dispose();
-			throw new Error("companion stopped while initializing");
-		}
-		this.session = session;
-		this.sessions.set(conversationId, session);
-		this.modelRuntime = modelRuntime;
 		this.eventBus.publish("companion.runtime_ready", {
+			conversationId,
 			skills: skills.map((skill) => skill.name),
-			plugins: this.runtimeConfig.pluginPaths,
+			tools: session.getActiveToolNames(),
 		});
 		return session;
 	}
@@ -180,6 +256,7 @@ export class CompanionSupervisor {
 		}
 		this.sessions.clear();
 		this.initializations.clear();
+		this.sessionStores.clear();
 		this.eventBus.publish("companion.state_changed", { state: "stopped" });
 	}
 
@@ -190,6 +267,7 @@ export class CompanionSupervisor {
 		void session.abort();
 		session.dispose();
 		this.sessions.delete(conversationId);
+		this.sessionStores.delete(conversationId);
 		if (this.session === session) this.session = null;
 	}
 
@@ -288,17 +366,21 @@ export class CompanionSupervisor {
 			this.eventBus.publish("message_end", { conversationId, failed: true });
 			return;
 		}
+		const nativeStore = this.sessionStoreFor(conversationId);
+		await this.compactSafely(conversationId, session);
+		if (nativeStore) session.reloadContext(true);
 		this.eventBus.publish("message_start", { conversationId });
 		const unsubscribe = session.subscribe((event) => {
 			if (event.type !== "message_update") return;
-			const text = extractMessageText(event.message);
+			const text = extractMessageUpdateText(event);
 			if (text) this.eventBus.publish("message_update", { conversationId, text });
 		});
 		try {
 			const context = (await this.contextHandler?.(conversationId, includeHistory, message))?.trim();
-			let prompt = context
+			const promptWithContext = context
 				? `<host_context>\n${context}\n</host_context>\n\n<current_user_message>\n${message}\n</current_user_message>`
-				: message;
+				: undefined;
+			let prompt = promptWithContext ?? message;
 			let mainImages = images;
 			if (images?.length && mainRoute) {
 				const imageRoute = this.modelSelectionHandler?.(conversationId, true);
@@ -315,8 +397,11 @@ export class CompanionSupervisor {
 				}
 			}
 			await session.prompt(prompt, mainImages);
-			const text = extractLatestAssistantText(session.agent.state.messages);
-			this.eventBus.publish("message_end", { conversationId, text });
+			const assistantMessage = latestAssistantMessage(session.agent.state.messages);
+			const text = assistantMessage
+				? extractMessageText(assistantMessage)
+				: extractLatestAssistantText(session.agent.state.messages);
+			this.eventBus.publish("message_end", { conversationId, text, message: assistantMessage });
 		} catch (error) {
 			this.eventBus.publish("companion.runtime_error", {
 				conversationId,
@@ -654,6 +739,23 @@ function extractMessageText(value: unknown): string {
 		.join("");
 }
 
+/** Message updates carry deltas; the message field is not cumulative. */
+function extractMessageUpdateText(value: unknown): string {
+	if (!value || typeof value !== "object" || !("assistantMessageEvent" in value)) return "";
+	const update = value.assistantMessageEvent;
+	if (
+		!update ||
+		typeof update !== "object" ||
+		!("type" in update) ||
+		update.type !== "text_delta" ||
+		!("delta" in update) ||
+		typeof update.delta !== "string"
+	) {
+		return "";
+	}
+	return update.delta;
+}
+
 export function extractLatestAssistantText(messages: readonly unknown[]): string {
 	for (let index = messages.length - 1; index >= 0; index -= 1) {
 		const message = messages[index];
@@ -663,6 +765,25 @@ export function extractLatestAssistantText(messages: readonly unknown[]): string
 		if (text) return text;
 	}
 	return "";
+}
+
+function latestAssistantMessage(messages: readonly unknown[]): Record<string, unknown> | undefined {
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		const message = messages[index];
+		if (
+			message &&
+			typeof message === "object" &&
+			"role" in message &&
+			message.role === "assistant"
+		) {
+			return message as Record<string, unknown>;
+		}
+	}
+	return undefined;
+}
+
+function isPersistableMessage(message: AgentMessage): message is PiSessionMessage {
+	return message.role === "user" || message.role === "assistant" || message.role === "toolResult";
 }
 
 function sameRoute(
@@ -681,20 +802,44 @@ function pathInside(root: string, candidate: string): boolean {
 		!isAbsolute(relativePath)
 	);
 }
-
 class CoreSession {
 	readonly agent: Agent;
 	private selectedModel: Model<Api> | undefined;
 	private readonly tools: Array<{ name?: unknown }>;
+	private readonly models: Models;
+	private readonly compactionSettings: RequiredCompactionSettings;
+	private readonly nativeModelRuntime?: ModelRuntime;
 
-	constructor(models: Models, tools: unknown[], systemPrompt: string) {
+	constructor(
+		models: Models,
+		tools: unknown[],
+		systemPrompt: string,
+		private readonly sessionStore?: PiSessionStore,
+		compactionSettings?: RequiredCompactionSettings,
+		nativeModelRuntime?: ModelRuntime,
+	) {
+		this.models = models;
+		this.compactionSettings = compactionSettings ?? DEFAULT_COMPACTION;
+		this.nativeModelRuntime = nativeModelRuntime;
 		this.tools = tools.filter(
 			(tool): tool is { name?: unknown } => typeof tool === "object" && tool !== null,
 		);
+		const nativeMessages = sessionStore?.buildContext().messages;
 		this.agent = new Agent({
 			streamFn: models.streamSimple.bind(models),
-			initialState: { systemPrompt, tools: tools as never },
+			initialState: {
+				systemPrompt,
+				tools: tools as never,
+				...(nativeMessages ? { messages: nativeMessages } : {}),
+			},
 		});
+	}
+
+	reloadContext(excludeTrailingUser = false): void {
+		if (!this.sessionStore) return;
+		const messages = this.sessionStore.buildContext().messages;
+		this.agent.state.messages =
+			excludeTrailingUser && messages.at(-1)?.role === "user" ? messages.slice(0, -1) : messages;
 	}
 
 	get model(): Model<Api> | undefined {
@@ -718,8 +863,78 @@ class CoreSession {
 		this.agent.state.model = model;
 	}
 
-	prompt(text: string, images?: PromptImages): Promise<void> {
-		return images ? this.agent.prompt(text, images) : this.agent.prompt(text);
+	async prompt(text: string, images?: PromptImages): Promise<void> {
+		const previousMessageCount = this.agent.state.messages.length;
+		if (images) await this.agent.prompt(text, images);
+		else await this.agent.prompt(text);
+		this.persistMessages(previousMessageCount);
+	}
+
+	private persistMessages(previousMessageCount: number): void {
+		if (!this.sessionStore) return;
+		const messages = this.agent.state.messages.slice(previousMessageCount);
+		const leaf = this.sessionStore.currentLeaf;
+		const hasPendingUser =
+			leaf?.type === "message" &&
+			leaf.message.role === "user" &&
+			messages[0]?.role === "user";
+		for (const [index, message] of messages.entries()) {
+			// An edit appends the raw user entry before dispatch. The raw Agent
+			// still receives the fully assembled prompt, so only persist its
+			// newly generated continuation when that pending entry is selected.
+			if (hasPendingUser && index === 0) continue;
+			if (isPersistableMessage(message)) this.sessionStore.appendMessage(message);
+		}
+	}
+
+	async compactNative(): Promise<void> {
+		if (!this.sessionStore || !this.selectedModel || !this.nativeModelRuntime) return;
+
+		const rawSystemPrompt = this.agent.state.systemPrompt;
+		const rawTools = this.agent.state.tools;
+		const rawBeforeToolCall = this.agent.beforeToolCall;
+		const rawAfterToolCall = this.agent.afterToolCall;
+		const rawPrepareNextTurnWithContext = this.agent.prepareNextTurnWithContext;
+		let nativeSession: AgentSession | undefined;
+		const restoreRawAgent = () => {
+			this.agent.state.systemPrompt = rawSystemPrompt;
+			this.agent.state.tools = rawTools;
+			this.agent.beforeToolCall = rawBeforeToolCall;
+			this.agent.afterToolCall = rawAfterToolCall;
+			this.agent.prepareNextTurnWithContext = rawPrepareNextTurnWithContext;
+		};
+
+		try {
+			const settingsManager = SettingsManager.inMemory(
+				{ compaction: this.compactionSettings, enableAnalytics: false, enableInstallTelemetry: false },
+				{ projectTrusted: false },
+			);
+			const resourceLoader = new DefaultResourceLoader({
+				cwd: this.sessionStore.cwd,
+				agentDir: this.sessionStore.cwd,
+				settingsManager,
+				noExtensions: true,
+				noSkills: true,
+				noPromptTemplates: true,
+				noThemes: true,
+				noContextFiles: true,
+				systemPrompt: rawSystemPrompt,
+			});
+			nativeSession = new AgentSession({
+				agent: this.agent,
+				sessionManager: this.sessionStore.sessionManager,
+				settingsManager,
+				cwd: this.sessionStore.cwd,
+				resourceLoader,
+				modelRuntime: this.nativeModelRuntime,
+			});
+			restoreRawAgent();
+			nativeSession.setAutoCompactionEnabled(false);
+			await nativeSession.compact();
+		} finally {
+			restoreRawAgent();
+			nativeSession?.dispose();
+		}
 	}
 
 	subscribe(listener: Parameters<Agent["subscribe"]>[0]): () => void {

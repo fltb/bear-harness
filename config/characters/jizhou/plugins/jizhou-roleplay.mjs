@@ -21,7 +21,7 @@ function result(value) {
 }
 
 const mediaCues = {
-	first_night: ["host_show_cg", { mediaId: "first_night" }],
+	first_night: ["host_play_media", { mediaId: "first_night" }],
 	damaged_signal: ["host_play_media", { mediaId: "damaged_signal_live" }],
 	damaged_log_choice: ["host_present_choices", { choiceSetId: "damaged_log_response" }],
 };

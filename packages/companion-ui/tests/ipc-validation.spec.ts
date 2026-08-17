@@ -5,8 +5,9 @@ import {
 	Commission,
 	ConfiguredModel,
 	ConversationSummary,
-	MemoryCandidate,
+	MemoryCaptureResponse,
 	MemoryEntry,
+	MemoryInvalidateRequest,
 	Message,
 	MessageVersion,
 	OnboardingResponse,
@@ -25,8 +26,9 @@ const isArtifact = guard(Artifact);
 const isCharacterDisplay = guard(CharacterDisplay);
 const isCommission = guard(Commission);
 const isConversationSummary = guard(ConversationSummary);
-const isMemoryCandidate = guard(MemoryCandidate);
+const isMemoryCaptureResponse = guard(MemoryCaptureResponse);
 const isMemoryEntry = guard(MemoryEntry);
+const isMemoryInvalidateRequest = guard(MemoryInvalidateRequest);
 const isMessage = guard(Message);
 const isMessageVersion = guard(MessageVersion);
 const isOnboardingData = guard(OnboardingResponse);
@@ -59,24 +61,27 @@ const message = {
 	versions: [version],
 	createdAt: timestamp,
 };
-const memoryCandidate = {
-	id: "candidate-1",
-	kind: "fact",
-	scope: "relationship",
-	text: "Memory",
-	why: "Explicit request",
-	status: "pending",
-	createdAt: timestamp,
-};
 const memoryEntry = {
 	id: "memory-1",
 	kind: "fact",
 	scope: "relationship",
 	text: "Memory",
-	normalizedText: "memory",
-	sourceConversationTitle: "Conversation",
 	pinned: false,
 	createdAt: timestamp,
+	updatedAt: timestamp,
+	importance: 0.8,
+	status: "active",
+	createdBy: "user_capture",
+	sourceEntryId: "entry-1",
+};
+const memoryCaptureResponse = {
+	memoryId: "memory-1",
+	sourceEntryId: "entry-1",
+	createdBy: "user_capture",
+};
+const memoryInvalidateRequest = {
+	memoryId: "memory-1",
+	replacementMemoryId: "replacement-1",
 };
 const provider = {
 	id: "provider-1",
@@ -176,25 +181,58 @@ describe("host projection validation", () => {
 		expectRequiredFields(isMessage, message, ["id", "role", "versions", "createdAt"]);
 		expect(isMessage({ ...message, adoptedVersionId: 3 })).toBe(false);
 		expect(isMessage({ ...message, versions: [{ ...version, content: null }] })).toBe(false);
-		expectRequiredFields(isMemoryCandidate, memoryCandidate, [
-			"id",
-			"kind",
-			"scope",
-			"text",
-			"why",
-			"status",
-			"createdAt",
-		]);
 		expectRequiredFields(isMemoryEntry, memoryEntry, [
 			"id",
 			"kind",
 			"scope",
 			"text",
-			"normalizedText",
-			"sourceConversationTitle",
 			"pinned",
 			"createdAt",
+			"updatedAt",
+			"importance",
+			"status",
+			"createdBy",
 		]);
+		expect(isMemoryEntry({ ...memoryEntry, id: "m".repeat(129) })).toBe(false);
+		expect(isMemoryEntry({ ...memoryEntry, scope: "global" })).toBe(false);
+		expect(isMemoryEntry({ ...memoryEntry, importance: Number.NaN })).toBe(false);
+		expect(isMemoryEntry({ ...memoryEntry, status: "pending" })).toBe(false);
+		expect(isMemoryEntry({ ...memoryEntry, createdBy: "system" })).toBe(false);
+		expect(isMemoryEntry({ ...memoryEntry, sourceEntryId: null })).toBe(false);
+		expect(isMemoryCaptureResponse(memoryCaptureResponse)).toBe(true);
+		expect(
+			isMemoryCaptureResponse({ ...memoryCaptureResponse, createdBy: "assistant_tool" }),
+		).toBe(true);
+		expectRequiredFields(isMemoryCaptureResponse, memoryCaptureResponse, [
+			"memoryId",
+			"sourceEntryId",
+			"createdBy",
+		]);
+		expect(isMemoryCaptureResponse({ ...memoryCaptureResponse, memoryId: "m".repeat(129) })).toBe(
+			false,
+		);
+		expect(
+			isMemoryCaptureResponse({ ...memoryCaptureResponse, sourceEntryId: "e".repeat(129) }),
+		).toBe(false);
+		expect(isMemoryCaptureResponse({ ...memoryCaptureResponse, createdBy: "system" })).toBe(false);
+		expect(isMemoryInvalidateRequest(memoryInvalidateRequest)).toBe(true);
+		expect(isMemoryInvalidateRequest({ memoryId: "memory-1" })).toBe(true);
+		expectRequiredFields(isMemoryInvalidateRequest, memoryInvalidateRequest, ["memoryId"]);
+		expect(isMemoryInvalidateRequest({ ...memoryInvalidateRequest, memoryId: "m".repeat(129) })).toBe(
+			false,
+		);
+		expect(
+			isMemoryInvalidateRequest({
+				...memoryInvalidateRequest,
+				replacementMemoryId: "r".repeat(129),
+			}),
+		).toBe(false);
+		expect(
+			isMemoryInvalidateRequest({ ...memoryInvalidateRequest, replacementMemoryId: "" }),
+		).toBe(false);
+		expect(
+			isMemoryInvalidateRequest({ ...memoryInvalidateRequest, replacementMemoryId: null }),
+		).toBe(false);
 		expectRequiredFields(isProviderInfo, provider, [
 			"id",
 			"name",

@@ -152,18 +152,17 @@ export type MessageAbortRequest = z.infer<typeof schema.MessageAbortRequest>;
 // ---------------------------------------------------------------------------
 
 export type MemoryScope = z.infer<typeof schema.MemoryScope>;
-export type MemoryCandidate = z.infer<typeof schema.MemoryCandidate>;
 export type MemoryEntry = z.infer<typeof schema.MemoryEntry>;
-export type MemoryListCandidatesRequest = z.infer<typeof schema.MemoryListCandidatesRequest>;
-export type MemoryListCandidatesResponse = z.infer<typeof schema.MemoryListCandidatesResponse>;
-export type MemoryApprovalDecision = z.infer<typeof schema.MemoryApprovalDecision>;
-export type MemoryDecideCandidateRequest = z.infer<typeof schema.MemoryDecideCandidateRequest>;
+export type MemoryCaptureCreatedBy = z.infer<typeof schema.MemoryCaptureCreatedBy>;
+export type MemoryCaptureRequest = z.infer<typeof schema.MemoryCaptureRequest>;
+export type MemoryCaptureResponse = z.infer<typeof schema.MemoryCaptureResponse>;
+export type MemoryInvalidateRequest = z.infer<typeof schema.MemoryInvalidateRequest>;
 export type MemorySearchRequest = z.infer<typeof schema.MemorySearchRequest>;
 export type MemorySearchResponse = z.infer<typeof schema.MemorySearchResponse>;
 export type MemoryListRequest = z.infer<typeof schema.MemoryListRequest>;
+export type MemoryListResponse = z.infer<typeof schema.MemoryListResponse>;
 export type MemoryPinRequest = z.infer<typeof schema.MemoryPinRequest>;
 export type MemoryForgetRequest = z.infer<typeof schema.MemoryForgetRequest>;
-export type MemoryExcludeRequest = z.infer<typeof schema.MemoryExcludeRequest>;
 export type MemoryEditRequest = z.infer<typeof schema.MemoryEditRequest>;
 
 export type CanonSource = z.infer<typeof schema.CanonSource>;

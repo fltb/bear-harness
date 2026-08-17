@@ -318,21 +318,42 @@ function formatTime(iso: string): string {
 export function ConversationPanel(props: { character: CharacterDisplay | undefined }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
+	// Wire snapshots may contain system/tool-result entries for internal
+	// bookkeeping. Keep those entries in the store, but never expose them in
+	// the user-facing thread.
+	const visibleMessages = () =>
+		store.activeMessages.filter((message) => message.role === "user" || message.role === "assistant");
+
+	// Derive conversation controls from the visible projection as well. An
+	// internal entry after an assistant reply must not hide that reply's
+	// "继续" operation or suppress draft reconciliation.
 
 	let threadRef: HTMLElement | undefined;
 
 	// Id of the last assistant message: only it gets the "继续" op.
+	const lastAssistant = () => visibleMessages().at(-1);
 	const lastAssistantId = () => {
-		for (let i = store.activeMessages.length - 1; i >= 0; i -= 1) {
-			const candidate = store.activeMessages[i];
-			if (candidate && candidate.role === "assistant") return candidate.id;
-		}
-		return null;
+		const last = lastAssistant();
+		return last && last.role === "assistant" ? last.id : null;
+	};
+
+	// Draft content that is not yet superseded by the persisted projection.
+	// Pi session entry ids differ from the ids stream events carry, so the
+	// streamed text is reconciled against the persisted final by content and
+	// hidden once the final message has landed — rendering both would show the
+	// reply twice.
+	const streamedContent = () => {
+		const draft = store.streamingAssistantText;
+		if (draft.length === 0) return "";
+		const last = lastAssistant();
+		if (!last || last.role !== "assistant") return draft;
+		const lastAdopted = last.versions.at(-1)?.content ?? "";
+		return lastAdopted.trim() === draft.trim() ? "" : draft;
 	};
 
 	createEffect(() => {
 		// Track the message count so the thread follows new messages.
-		void store.activeMessages.length;
+		void visibleMessages().length;
 		const el = threadRef;
 		if (el) el.scrollTop = el.scrollHeight;
 	});
@@ -355,7 +376,7 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 
 			<Show
 				when={
-					store.activeMessages.length > 0 ||
+					visibleMessages().length > 0 ||
 					store.pendingUserText !== undefined ||
 					store.assistantStreaming ||
 					store.streamingAssistantText.length > 0
@@ -373,7 +394,7 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 					</Show>
 				}
 			>
-				<For each={store.activeMessages}>
+				<For each={visibleMessages()}>
 					{(message) => (
 						<MessageItem
 							message={message}
@@ -391,10 +412,10 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 						</article>
 					)}
 				</Show>
-				<Show when={store.assistantStreaming || store.streamingAssistantText.length > 0}>
+				<Show when={streamedContent().length > 0 || store.assistantStreaming}>
 					<article class="msg bear-msg streaming-message" aria-label={props.character?.name ?? ""}>
 						<div class="msg-meta">{props.character?.name ?? ""}</div>
-						<p>{store.streamingAssistantText}</p>
+						<p>{streamedContent()}</p>
 						<Show when={store.assistantStreaming}>
 							<span class="streaming-status" role="status" aria-label={t("messages.responding")} />
 						</Show>

@@ -4,11 +4,16 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import {
+	estimateTokens,
+	ModelRuntime,
+	type CompactionSettings,
+} from "@earendil-works/pi-coding-agent";
 import {
 	createModels,
 	fauxAssistantMessage,
 	fauxProvider,
+	fauxToolCall,
 } from "@earendil-works/pi-ai";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,6 +22,7 @@ import {
 	CompanionSupervisor,
 	extractLatestAssistantText,
 } from "../src/companion/supervisor.js";
+import { PiSessionStore } from "../src/companion/pi-session-store.js";
 import { EventBus } from "../src/storage/event-bus.js";
 
 const temporaryDirectories: string[] = [];
@@ -175,6 +181,7 @@ describe("in-process Companion Host bridge", () => {
 		expect(session.systemPrompt).toContain("IDENTITY_SENTINEL");
 		expect(session.systemPrompt).toContain("STYLE_SENTINEL");
 		expect(session.systemPrompt).toContain("station-log");
+		expect(session.systemPrompt).toContain("Inspect the station log.");
 
 		const sceneTool = session.getToolDefinition("host_set_scene");
 		expect(sceneTool).toBeDefined();
@@ -199,6 +206,138 @@ describe("in-process Companion Host bridge", () => {
 				tool: "host_search_canon",
 				args: { query: "旧极光站" },
 			},
+		]);
+		await runtime.stop();
+		db.close();
+	});
+	it("executes native Host tools across two turns without replacing the Companion prompt", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-in-process-native-tool-"));
+		temporaryDirectories.push(root);
+		const faux = fauxProvider({
+			provider: "native-tool-provider",
+			models: [{ id: "native-tool-model", name: "Native tool model" }],
+		});
+		const models = createModels();
+		models.setProvider(faux.provider);
+		const nativeModels = models as typeof models & {
+			hasConfiguredAuth: (providerId: string) => boolean;
+		};
+		nativeModels.hasConfiguredAuth = () => true;
+		const providerContexts: string[][] = [];
+		const providerPrompts: string[] = [];
+		faux.setResponses([
+			(context) => {
+				providerPrompts.push(context.systemPrompt);
+				providerContexts.push(context.messages.map((message) => message.role));
+				return fauxAssistantMessage(
+					fauxToolCall("host_set_scene", { sceneId: "snow_plains" }, { id: "scene-call-1" }),
+					{ stopReason: "toolUse" },
+				);
+			},
+			(context) => {
+				providerPrompts.push(context.systemPrompt);
+				providerContexts.push(context.messages.map((message) => message.role));
+				return fauxAssistantMessage("FIRST_TOOL_RESULT");
+			},
+			(context) => {
+				providerPrompts.push(context.systemPrompt);
+				providerContexts.push(context.messages.map((message) => message.role));
+				return fauxAssistantMessage(
+					fauxToolCall("host_set_scene", { sceneId: "desert_moon" }, { id: "scene-call-2" }),
+					{ stopReason: "toolUse" },
+				);
+			},
+			(context) => {
+				providerPrompts.push(context.systemPrompt);
+				providerContexts.push(context.messages.map((message) => message.role));
+				return fauxAssistantMessage("SECOND_TOOL_RESULT");
+			},
+		]);
+		const store = PiSessionStore.create({ sessionDir: join(root, "sessions"), cwd: root });
+		const db = new DatabaseSync(":memory:");
+		db.exec(
+			"CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))",
+		);
+		const eventBus = new EventBus(drizzle({ client: db }));
+		const runtime = new CompanionSupervisor(
+			root,
+			eventBus,
+			{ getModels: async () => models },
+			{ get: () => store },
+		);
+		runtime.configureRuntime({
+			skillPaths: [],
+			pluginPaths: [],
+			appendSystemPrompt: "ROLE_PROMPT_SENTINEL",
+			hostTools: ["host_set_scene"],
+		});
+		const hostCalls: Array<{ conversationId: string; tool: string; args: unknown }> = [];
+		runtime.setHostToolHandler((call) => {
+			hostCalls.push(call);
+			return { ok: true, message: "RULE_OK" };
+		});
+		await runtime.start();
+		const completed = new Promise<Array<{ text?: string }>>((resolve) => {
+			const results: Array<{ text?: string }> = [];
+			const unsubscribe = eventBus.subscribe((event) => {
+				if (event.kind !== "message_end") return;
+				const payload = event.payload as { conversationId?: string; text?: string };
+				if (payload.conversationId !== "native-tool-conversation") return;
+				results.push(payload);
+				if (results.length === 2) {
+					unsubscribe();
+					resolve(results);
+				}
+			});
+		});
+		runtime.sendCommand({
+			type: "prompt",
+			conversationId: "native-tool-conversation",
+			message: "切换到雪原并告诉我结果",
+		});
+		runtime.sendCommand({
+			type: "prompt",
+			conversationId: "native-tool-conversation",
+			message: "再切换到沙漠月并告诉我结果",
+		});
+		const results = await completed;
+
+		expect(providerPrompts).toHaveLength(4);
+		for (const prompt of providerPrompts) {
+			expect(prompt).toContain("You are the local Companion runtime.");
+			expect(prompt).toContain("ROLE_PROMPT_SENTINEL");
+			expect(prompt).not.toContain(
+				"You are an expert coding assistant operating inside pi, a coding agent harness.",
+			);
+		}
+		expect(providerContexts).toEqual([
+			["user"],
+			["user", "assistant", "toolResult"],
+			["user", "assistant", "toolResult", "assistant", "user"],
+			["user", "assistant", "toolResult", "assistant", "user", "assistant", "toolResult"],
+		]);
+		expect(hostCalls).toEqual([
+			{
+				conversationId: "native-tool-conversation",
+				tool: "host_set_scene",
+				args: { sceneId: "snow_plains" },
+			},
+			{
+				conversationId: "native-tool-conversation",
+				tool: "host_set_scene",
+				args: { sceneId: "desert_moon" },
+			},
+		]);
+		expect(results.map(({ text }) => text)).toEqual(["FIRST_TOOL_RESULT", "SECOND_TOOL_RESULT"]);
+		expect(store.buildContext().messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+			"toolResult",
+			"assistant",
+			"user",
+			"assistant",
+			"toolResult",
+			"assistant",
 		]);
 		await runtime.stop();
 		db.close();
@@ -257,6 +396,99 @@ describe("in-process Companion Host bridge", () => {
 
 		expect(assembledPrompt).toBe(
 			"<host_context>\nASYNC_CONTEXT_SENTINEL\n</host_context>\n\n<current_user_message>\ncurrent user message\n</current_user_message>",
+		);
+		await runtime.stop();
+		db.close();
+	});
+	it("keeps the raw Agent role turn on the Companion prompt when faux Models skip native compaction", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-in-process-compaction-"));
+		temporaryDirectories.push(root);
+		const rootMessage = {
+			role: "user" as const,
+			content: "root context that belongs only to the root branch",
+			timestamp: 1,
+		};
+		const branchMessages = [
+			{
+				role: "user" as const,
+				content: "branch context used to cross the compaction threshold",
+				timestamp: 2,
+			},
+			{
+				role: "user" as const,
+				content: "latest branch request with enough content to cross the threshold",
+				timestamp: 3,
+			},
+		];
+		const reserveTokens = 16;
+		const compactionSettings: CompactionSettings = {
+			enabled: true,
+			reserveTokens,
+			keepRecentTokens: 8,
+		};
+		const estimatedContextTokens =
+			estimateTokens(rootMessage) +
+			branchMessages.reduce((total, message) => total + estimateTokens(message), 0);
+		const store = PiSessionStore.create({ sessionDir: join(root, "sessions"), cwd: root });
+		const rootUser = store.appendMessage(rootMessage);
+		store.selectBranch(rootUser);
+		for (const message of branchMessages) store.appendMessage(message);
+
+		const faux = fauxProvider({
+			provider: "compaction-provider",
+			models: [
+				{
+					id: "compaction-model",
+					name: "Compaction model",
+					contextWindow: estimatedContextTokens + reserveTokens - 1,
+					maxTokens: 32,
+				},
+			],
+		});
+		const providerPrompts: string[] = [];
+		const rolePrompt = "ROLE_PROMPT_SENTINEL";
+		faux.setResponses([
+			(context) => {
+				providerPrompts.push(context.systemPrompt);
+				return fauxAssistantMessage("branch reply");
+			},
+		]);
+		const models = createModels();
+		models.setProvider(faux.provider);
+		const db = new DatabaseSync(":memory:");
+		db.exec(
+			"CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))",
+		);
+		const eventBus = new EventBus(drizzle({ client: db }));
+		const runtime = new CompanionSupervisor(
+			root,
+			eventBus,
+			{ getModels: async () => models },
+			{ get: () => store },
+			compactionSettings,
+		);
+		runtime.configureRuntime({
+			skillPaths: [],
+			pluginPaths: [],
+			appendSystemPrompt: rolePrompt,
+		});
+		await runtime.start();
+		const completed = new Promise<void>((resolve) => {
+			const unsubscribe = eventBus.subscribe((event) => {
+				if (event.kind !== "message_end") return;
+				unsubscribe();
+				resolve();
+			});
+		});
+		runtime.sendCommand({ type: "prompt", conversationId: "conversation-compaction", message: "latest branch request" });
+		await completed;
+
+		expect(providerPrompts).toHaveLength(1);
+		expect(providerPrompts[0]).toContain("You are the local Companion runtime.");
+		expect(providerPrompts[0]).toContain(rolePrompt);
+		expect(providerPrompts[0]).not.toContain("context summarization assistant");
+		expect(providerPrompts[0]).not.toContain(
+			"You are an expert coding assistant operating inside pi, a coding agent harness.",
 		);
 		await runtime.stop();
 		db.close();

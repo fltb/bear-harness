@@ -132,7 +132,7 @@ export function createTestClient() {
 	const conversationList = vi.fn(() => ok({ conversations: [] }));
 	const providerList = vi.fn(() => ok({ providers: [] }));
 
-	const client: CompanionClient = {
+	const client = {
 		snapshot: {
 			get: vi.fn(() =>
 				ok({
@@ -193,8 +193,6 @@ export function createTestClient() {
 			abort: vi.fn(() => ok(null)),
 		},
 		memory: {
-			listCandidates: vi.fn(() => ok({ candidates: [] })),
-			decideCandidate: vi.fn(() => ok(null)),
 			search: vi.fn(() => ok({ entries: [] })),
 			list: vi.fn(() => ok({ entries: [] })),
 			capture: vi.fn(({ entryId }: { entryId: string }) =>
@@ -203,7 +201,6 @@ export function createTestClient() {
 			invalidate: vi.fn(() => ok({})),
 			pin: vi.fn(() => ok(null)),
 			forget: vi.fn(() => ok(null)),
-			exclude: vi.fn(() => ok(null)),
 			edit: vi.fn(() => ok(null)),
 		},
 		story: {
@@ -269,7 +266,7 @@ export function createTestClient() {
 			read: vi.fn(() => ok({ logicalName: "result.txt", mime: "text/plain", base64: "" })),
 		},
 		settings: { get: settingsGet, set: settingsSet },
-	};
+	} as CompanionClient;
 
 	return {
 		client,

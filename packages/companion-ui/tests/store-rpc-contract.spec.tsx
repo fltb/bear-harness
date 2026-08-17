@@ -219,17 +219,11 @@ describe("store RPC contract", () => {
 			await store.settings.set({
 				relationshipMemoryEnabled: true,
 			});
-			await store.memory.listCandidates();
-			await store.memory.decideCandidate(
-				"candidate-1",
-				"approve_edited",
-				"edited memory",
-				"relationship",
-			);
+			await store.memory.capture("entry-1");
 			await store.memory.search("query", "relationship");
-			await store.memory.list("relationship");
+			await store.memory.list({ scope: "relationship" });
 			await store.memory.pin("memory-1", true);
-			await store.memory.exclude("memory-1", true);
+			await store.memory.invalidate("memory-1", "memory-2");
 			await store.memory.edit("memory-1", "new memory");
 			await store.memory.forget("memory-1");
 
@@ -293,6 +287,24 @@ describe("store RPC contract", () => {
 			await store.artifact.list();
 
 			expect(client.settings.set).toHaveBeenCalled();
+			expect(client.memory.capture).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				entryId: "entry-1",
+			});
+			expect(client.memory.search).toHaveBeenCalledWith({
+				query: "query",
+				scope: "relationship",
+			});
+			expect(client.memory.list).toHaveBeenCalledWith({ scope: "relationship" });
+			expect(client.memory.pin).toHaveBeenCalledWith({
+				entryId: "memory-1",
+				pinned: true,
+			});
+			expect(client.memory.invalidate).toHaveBeenCalledWith({
+				memoryId: "memory-1",
+				replacementMemoryId: "memory-2",
+			});
+			expect(client.memory.forget).toHaveBeenCalledWith({ entryId: "memory-1" });
 			expect(client.memory.edit).toHaveBeenCalledWith({
 				entryId: "memory-1",
 				newText: "new memory",
@@ -391,7 +403,7 @@ describe("store RPC contract", () => {
 			]);
 			await waitFor(() => expect(client.provider.list).toHaveBeenCalled());
 			await waitFor(() => expect(client.model.poolGet).toHaveBeenCalled());
-			await waitFor(() => expect(client.memory.listCandidates).toHaveBeenCalled());
+			await waitFor(() => expect(client.memory.list).toHaveBeenCalled());
 			await waitFor(() => expect(client.story.listChanges).toHaveBeenCalled());
 			await waitFor(() => expect(client.character.list).toHaveBeenCalled());
 		} finally {

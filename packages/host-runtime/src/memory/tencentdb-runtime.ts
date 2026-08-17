@@ -18,6 +18,7 @@ import type {
 	TencentDbCoreHit,
 	TencentDbCoreImportanceRequest,
 	TencentDbCoreInvalidateRequest,
+	TencentDbCoreListRequest,
 	TencentDbCoreMutationRequest,
 	TencentDbCoreRecallRequest,
 	TencentDbCoreRecord,
@@ -225,6 +226,11 @@ class TdaiDirectMemoryFacade implements TencentDbMemoryCoreFacade {
 			.map(({ row, score }) => ({ record: coreFromRow(row), score }))
 			.filter(({ record, score }) => record.status === "active" && score >= (request.minScore ?? 0))
 			.slice(0, request.limit ?? 5);
+	}
+	async list(request: TencentDbCoreListRequest): Promise<readonly TencentDbCoreRecord[]> {
+		const rows = await this.requireStore().queryL1Records({ sessionKey: request.namespace });
+		const records = rows.map((row) => coreFromRow(row));
+		return request.limit === undefined ? records : records.slice(0, request.limit);
 	}
 
 	async update(request: TencentDbCoreUpdateRequest): Promise<TencentDbCoreRecord> {

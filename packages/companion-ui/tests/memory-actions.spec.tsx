@@ -5,103 +5,175 @@ import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
 import { createTestClient, OFFICIAL_PRODUCT } from "./fixtures.js";
 
-const COMPLETE_ONBOARDING = {
-	status: "complete" as const,
-	eventSeq: 0,
-	stateData: { schema_version: 1 as const, flow_version: 1, answers: {}, decisions: {} },
-};
-
-const candidate = {
-	id: "candidate-1",
-	kind: "fact" as const,
-	scope: "self" as const,
-	text: "用户喜欢在夜里工作",
-	why: "来自明确陈述",
-	status: "pending" as const,
-	createdAt: "2026-01-01T00:00:00.000Z",
-};
-
-const entry = {
-	id: "entry-1",
+const userEntry = {
+	id: "entry-user",
 	kind: "fact",
 	scope: "self" as const,
 	text: "用户喜欢在夜里工作",
-	normalizedText: "用户喜欢在夜里工作",
-	sourceConversationTitle: "测试对话",
 	pinned: false,
 	createdAt: "2026-01-01T00:00:00.000Z",
+	updatedAt: "2026-01-01T00:00:00.000Z",
+	importance: 0.8,
+	status: "active" as const,
+	createdBy: "user_capture" as const,
 };
 
+const forgottenEntry = {
+	id: "entry-forgotten",
+	kind: "preference",
+	scope: "self" as const,
+	text: "用户偏好简短回答",
+	pinned: false,
+	createdAt: "2026-01-02T00:00:00.000Z",
+	updatedAt: "2026-01-02T00:00:00.000Z",
+	importance: 0.6,
+	status: "active" as const,
+	createdBy: "auto_episode" as const,
+};
+
+const invalidatedEntry = {
+	id: "entry-invalidated",
+	kind: "event",
+	scope: "self" as const,
+	text: "用户曾在夜里散步",
+	pinned: false,
+	createdAt: "2026-01-03T00:00:00.000Z",
+	updatedAt: "2026-01-03T00:00:00.000Z",
+	importance: 0.5,
+	status: "active" as const,
+	createdBy: "auto_episode" as const,
+};
+
+const relationshipEntry = {
+	id: "entry-relationship",
+	kind: "fact",
+	scope: "relationship" as const,
+	text: "我们会一起散步",
+	pinned: false,
+	createdAt: "2026-01-04T00:00:00.000Z",
+	updatedAt: "2026-01-04T00:00:00.000Z",
+	importance: 0.7,
+	status: "active" as const,
+	createdBy: "auto_episode" as const,
+};
+
+const entry = userEntry;
+
 describe("memory controls", () => {
-	it("routes candidate approval, entry pinning and scoped search through the injected Host client", async () => {
+	it("routes direct memory controls, list, and scoped search through the injected Host client", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
-		const decideCandidate = vi.fn(() => Promise.resolve({ ok: true as const, data: null }));
-		const pin = vi.fn(() => Promise.resolve({ ok: true as const, data: null }));
-		const search = vi.fn(() => Promise.resolve({ ok: true as const, data: { entries: [entry] } }));
-		client.memory.listCandidates = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { candidates: [candidate] } }),
+		let currentEntries = [userEntry, forgottenEntry, invalidatedEntry, relationshipEntry];
+		const list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { entries: currentEntries } }),
 		);
-		client.memory.list = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { entries: [entry] } }),
-		);
-		client.memory.decideCandidate = decideCandidate;
-		client.memory.pin = pin;
-		client.memory.search = search;
-		client.snapshot.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					eventSeq: 0,
-					onboarding: COMPLETE_ONBOARDING,
-					model: {
-						models: [
-							{
-								providerId: "test-provider",
-								modelId: "test-model",
-								label: "Test Model",
-								supportsImages: true,
-								createdAt: "2026-01-01 00:00:00",
-							},
-						],
+		const search = vi.fn(
+			(request: { query: string; scope?: "self" | "relationship" | "scene" }) =>
+				Promise.resolve({
+					ok: true as const,
+					data: {
+						entries: currentEntries.filter(
+							(item) =>
+								item.scope === request.scope &&
+								(request.query === "" || item.text.includes(request.query)),
+						),
 					},
-					memory: { candidates: [candidate], entries: [entry] },
-				},
-			}),
+				}),
 		);
-		client.onboarding.get = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
-		);
+		const edit = vi.fn((request: { entryId: string; newText: string }) => {
+			currentEntries = currentEntries.map((item) =>
+				item.id === request.entryId
+					? { ...item, text: request.newText, updatedAt: "2026-01-05T00:00:00.000Z" }
+					: item,
+			);
+			return Promise.resolve({ ok: true as const, data: null });
+		});
+		const pin = vi.fn((request: { entryId: string; pinned: boolean }) => {
+			currentEntries = currentEntries.map((item) =>
+				item.id === request.entryId ? { ...item, pinned: request.pinned } : item,
+			);
+			return Promise.resolve({ ok: true as const, data: null });
+		});
+		const forget = vi.fn((request: { entryId: string }) => {
+			currentEntries = currentEntries.filter((item) => item.id !== request.entryId);
+			return Promise.resolve({ ok: true as const, data: null });
+		});
+		const invalidate = vi.fn((request: { memoryId: string; replacementMemoryId?: string }) => {
+			currentEntries = currentEntries.map((item) =>
+				item.id === request.memoryId ? { ...item, status: "invalidated" as const } : item,
+			);
+			return Promise.resolve({ ok: true as const, data: null });
+		});
+		client.memory.list = list;
+		client.memory.search = search;
+		client.memory.edit = edit;
+		client.memory.pin = pin;
+		client.memory.forget = forget;
+		client.memory.invalidate = invalidate;
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		await user.click(await screen.findByRole("button", { name: zhCN.titlebar.backstage }));
-		await user.click(screen.getByRole("tab", { name: zhCN.backstage.memory }));
-		await screen.findAllByText(candidate.text);
-		await user.click(screen.getByRole("button", { name: zhCN.memory.remember }));
-		await user.click(screen.getByRole("button", { name: zhCN.memory.pin }));
-		const query = screen.getByRole("searchbox", { name: zhCN.memory.searchLabel });
-		await user.type(query, "夜里");
-		await user.click(screen.getByRole("button", { name: zhCN.memory.search }));
-
-		await waitFor(() => {
-			expect(decideCandidate).toHaveBeenCalledWith({
-				candidateId: "candidate-1",
-				decision: "approve",
-				editedText: undefined,
-				scope: "self",
-			});
-			expect(pin).toHaveBeenCalledWith({ entryId: "entry-1", pinned: true });
-			expect(search).toHaveBeenCalledWith({ query: "夜里", scope: "self" });
+		const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
+		await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
+		const region = await within(backstage).findByRole("region", {
+			name: zhCN.memory.defaultEntriesTitle,
 		});
+		await waitFor(() => {
+			expect(list).toHaveBeenCalledWith();
+			expect(search).toHaveBeenCalledWith({ query: "", scope: "self" });
+		});
+		expect(within(region).getByText(zhCN.memory.sourceUser)).toBeVisible();
+		expect(within(region).getAllByText(zhCN.memory.sourceAutomatic)).toHaveLength(2);
+
+		const editedItem = within(region).getByText(userEntry.text).closest("li") as HTMLElement;
+		await user.click(within(editedItem).getByRole("button", { name: zhCN.memory.edit }));
+		const editor = within(editedItem).getByRole("textbox", { name: zhCN.memory.editedContent });
+		await user.clear(editor);
+		await user.type(editor, "用户喜欢在清晨工作");
+		await user.click(within(editedItem).getByRole("button", { name: zhCN.memory.saveEdit }));
+		await waitFor(() =>
+			expect(edit).toHaveBeenCalledWith({
+				entryId: "entry-user",
+				newText: "用户喜欢在清晨工作",
+			}),
+		);
+		const refreshedEditedItem = (
+			await within(backstage).findByText("用户喜欢在清晨工作")
+		).closest("li") as HTMLElement;
+		await waitFor(() =>
+			expect(within(refreshedEditedItem).getByRole("button", { name: zhCN.memory.pin })).toBeEnabled(),
+		);
+
+		await user.click(within(refreshedEditedItem).getByRole("button", { name: zhCN.memory.pin }));
+		await waitFor(() => expect(pin).toHaveBeenCalledWith({ entryId: "entry-user", pinned: true }));
+
+		const forgottenItem = within(region).getByText(forgottenEntry.text).closest("li") as HTMLElement;
+		await user.click(within(forgottenItem).getByRole("button", { name: zhCN.memory.forget }));
+		await waitFor(() => expect(forget).toHaveBeenCalledWith({ entryId: "entry-forgotten" }));
+
+		const invalidatedItem = within(region).getByText(invalidatedEntry.text).closest("li") as HTMLElement;
+		await user.click(within(invalidatedItem).getByRole("button", { name: zhCN.memory.invalidate }));
+		await waitFor(() =>
+			expect(invalidate).toHaveBeenCalledWith({
+				memoryId: "entry-invalidated",
+				replacementMemoryId: undefined,
+			}),
+		);
+
+		await user.click(within(backstage).getByRole("tab", { name: zhCN.memory.scopes.relationship }));
+		const query = within(backstage).getByRole("searchbox", { name: zhCN.memory.searchLabel });
+		await user.type(query, "一起");
+		await user.click(within(backstage).getByRole("button", { name: zhCN.memory.search }));
+		await waitFor(() =>
+			expect(search).toHaveBeenCalledWith({ query: "一起", scope: "relationship" }),
+		);
+		expect(within(region).getByText(relationshipEntry.text)).toBeVisible();
 	});
 
-	it("edits an approved entry and replaces the visible memory with the canonical result", async () => {
+	it("edits a direct entry and replaces the visible memory with the canonical result", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		let currentEntry = entry;
-		client.memory.listCandidates = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { candidates: [] } }),
-		);
 		client.memory.search = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { entries: [currentEntry] } }),
 		);
@@ -112,7 +184,8 @@ describe("memory controls", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		await user.click(await screen.findByRole("button", { name: zhCN.titlebar.backstage }));
-		await user.click(screen.getByRole("tab", { name: zhCN.backstage.memory }));
+		const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
+		await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
 		const entries = await screen.findByRole("region", {
 			name: zhCN.memory.defaultEntriesTitle,
 		});
@@ -124,11 +197,15 @@ describe("memory controls", () => {
 
 		await waitFor(() =>
 			expect(client.memory.edit).toHaveBeenCalledWith({
-				entryId: "entry-1",
+				entryId: "entry-user",
 				newText: "用户喜欢在清晨工作",
 			}),
 		);
-		expect(await within(entries).findByText("用户喜欢在清晨工作")).toBeInTheDocument();
-		expect(within(entries).queryByText(entry.text)).not.toBeInTheDocument();
+		const updatedEntries = await within(backstage).findByRole("region", {
+			name: zhCN.memory.defaultEntriesTitle,
+		});
+		const updatedItem = within(updatedEntries).getByText("用户喜欢在清晨工作").closest("li") as HTMLElement;
+		expect(updatedItem).toBeVisible();
+		expect(within(updatedEntries).queryByText(entry.text)).not.toBeInTheDocument();
 	});
 });

@@ -7,6 +7,13 @@
  * meeting text, visual states, asset manifests — every string that belongs
  * to the character lives here, never in product code.
  *
+ * Package-declared constants, asset paths/content, and Pi resources are
+ * Host-owned role-package storage (the package storage bucket). They are not
+ * relationship memory and must never be emitted as automatic memory capture,
+ * user memory-panel records, or long-term memory-backend inputs. The package
+ * snapshot below is therefore a package-storage type, distinct from Host
+ * memory records.
+ *
  * At boot the loader parses the active character's YAML, seeds the canonical
  * DB, and makes the package available to the rest of the Host.
  */
@@ -117,6 +124,15 @@ export interface CharacterCompanionConfiguration {
 	pi: CompanionPiConfiguration;
 }
 
+/**
+ * Host-owned role-package storage snapshot (the package storage bucket).
+ *
+ * The declared constants (`theme`, `character`, identity/canon text, scene and
+ * roleplay definitions), asset references, and package resources remain
+ * package data even when Host projects selected values into UI or prompt
+ * context. They are never relationship-memory entries or memory-backend
+ * input records.
+ */
 export interface CharacterPackage {
 	id: string;
 	name: string;
@@ -134,6 +150,7 @@ export interface CharacterPackage {
 	canon: LoadedCanonPackage;
 }
 
+/** Renderer-safe Host projection of role-package constants and assets, not memory data. */
 export interface CharacterDisplay {
 	id: string;
 	name: string;
@@ -283,8 +300,10 @@ export class CharacterLoader {
 	}
 
 	/**
-	 * Resolve package content without allowing it to leave that package's
-	 * directory. This guards assets, Pi skill directories, and Pi plugin paths.
+	 * Resolve Host-owned role-package content without allowing it to leave that
+	 * package's directory. This guards assets, Pi skill directories, and Pi
+	 * plugin paths. Package content resolved here remains role-package storage;
+	 * it is never a relationship-memory or memory-backend input.
 	 */
 	private characterPackagePath(characterId: string, packagePath: string): string {
 		const charactersRoot = realpathSync(resolve(this.packageRoot(characterId)));
@@ -328,7 +347,11 @@ export class CharacterLoader {
 		return resolvedPath;
 	}
 
-	/** Refuse symlinks anywhere in resources passed from a role package to Pi. */
+	/**
+	 * Refuse symlinks anywhere in role-package resources passed from the Host
+	 * to Pi. These resources remain package-owned storage and are not memory
+	 * records or automatic memory-capture input.
+	 */
 	private ensureContainedTree(characterId: string, path: string): void {
 		const stat = lstatSync(path);
 		if (stat.isSymbolicLink()) {
@@ -370,6 +393,8 @@ export class CharacterLoader {
 	/**
 	 * Convert a validated package image to a data URL. This is the only
 	 * filesystem-to-renderer asset boundary: callers receive no file path.
+	 * The resulting renderer asset is still Host-owned role-package storage,
+	 * never relationship memory or a memory-panel/backend input.
 	 */
 	private characterAssetDataUrl(characterId: string, assetPath: string): string {
 		const mime = MEDIA_MIME_BY_EXTENSION[extname(assetPath).toLowerCase()];
@@ -381,7 +406,8 @@ export class CharacterLoader {
 
 	/**
 	 * Load and validate a character package. There is deliberately no default or
-	 * compatibility path: a missing field/asset is a package error.
+	 * compatibility path: a missing field/asset is a package error. The returned
+	 * `CharacterPackage` is package storage, not a memory record.
 	 */
 	load(id: string): CharacterPackage | null {
 		const path = join(this.packageRoot(id), id, "character.yaml");
@@ -623,7 +649,12 @@ export class CharacterLoader {
 		return { ...trust, trusted: true };
 	}
 
-	/** Resolve role-owned Skills and only explicitly trusted executable plugins. */
+	/**
+	 * Resolve role-owned Skills and only explicitly trusted executable plugins.
+	 * These are Host-owned role-package resources supplied to Pi; they are not
+	 * relationship memory, automatic capture, user memory-panel records, or
+	 * long-term memory-backend inputs.
+	 */
 	piResources(
 		character: CharacterPackage,
 		pluginsEnabled = true,
@@ -631,6 +662,7 @@ export class CharacterLoader {
 		skillPaths: string[];
 		pluginPaths: string[];
 		appendSystemPrompt: string;
+		hostTools: string[];
 	} {
 		const packageDir = resolve(this.packageRoot(character.id), character.id);
 		const skillsDir = join(packageDir, "skills");
@@ -648,6 +680,22 @@ export class CharacterLoader {
 			skillPaths,
 			pluginPaths,
 			appendSystemPrompt: character.companion.pi.append_system_prompt,
+			hostTools: [
+				"host_get_state",
+				"host_set_scene",
+				"host_set_expression",
+				"host_search_conversation_history",
+				"host_propose_work",
+				...(character.roleplay.variables.length ||
+				character.roleplay.unlockables.length ||
+				character.roleplay.events.length
+					? ["host_get_roleplay_state"]
+					: []),
+				...(character.roleplay.events.length ? ["host_trigger_roleplay_event"] : []),
+				...(character.roleplay.media.length ? ["host_play_media"] : []),
+				...(character.roleplay.choice_sets.length ? ["host_present_choices"] : []),
+				...(character.canon.sources.length ? ["host_search_canon"] : []),
+			],
 		};
 	}
 

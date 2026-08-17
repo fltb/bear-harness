@@ -56,6 +56,89 @@ function activeConversationSnapshot() {
 		},
 	};
 }
+function conversationProjectionSnapshot() {
+	const snapshot = activeConversationSnapshot();
+	return {
+		...snapshot,
+		conversation: {
+			...snapshot.conversation,
+			messages: [
+				{
+					id: "user-1",
+					role: "user" as const,
+					adoptedVersionId: "user-version-1",
+					createdAt: "2026-01-01T00:00:00.000Z",
+					versions: [
+						{
+							id: "user-version-1",
+							role: "user" as const,
+							content: "用户可见消息",
+							editedByUser: false,
+							createdAt: "2026-01-01T00:00:00.000Z",
+							adopted: true,
+						},
+					],
+				},
+				{
+					id: "assistant-1",
+					role: "assistant" as const,
+					adoptedVersionId: "assistant-version-1",
+					createdAt: "2026-01-01T00:00:01.000Z",
+					versions: [
+						{
+							id: "assistant-version-1",
+							role: "assistant" as const,
+							content: "助手可见消息",
+							editedByUser: false,
+							createdAt: "2026-01-01T00:00:01.000Z",
+							adopted: true,
+						},
+					],
+				},
+				{
+					id: "internal-1",
+					role: "system" as const,
+					adoptedVersionId: "internal-version-1",
+					createdAt: "2026-01-01T00:00:02.000Z",
+					versions: [
+						{
+							id: "internal-version-1",
+							role: "system" as const,
+							content: "内部工具结果",
+							editedByUser: false,
+							createdAt: "2026-01-01T00:00:02.000Z",
+							adopted: true,
+						},
+					],
+				},
+			],
+		},
+	};
+}
+
+describe("conversation message projection", () => {
+	it("renders only user and assistant messages in the user-facing thread", async () => {
+		const { client } = createTestClient();
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: conversationProjectionSnapshot() }),
+		);
+		client.onboarding.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		const thread = await screen.findByRole("region", { name: zhCN.messages.conversation });
+		expect(await within(thread).findByText("用户可见消息")).toBeVisible();
+		expect(await within(thread).findByText("助手可见消息")).toBeVisible();
+
+		expect(within(thread).queryByText("内部工具结果")).not.toBeInTheDocument();
+		expect(
+			within(thread)
+				.getAllByRole("article")
+				.map((article) => article.getAttribute("data-message-id")),
+		).toEqual(["user-1", "assistant-1"]);
+	});
+});
 
 describe("conversation message controls", () => {
 	it("waits for the boot snapshot before deciding that model setup is required", async () => {
