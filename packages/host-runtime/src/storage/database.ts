@@ -228,6 +228,14 @@ export class Database {
 			runs: ["id", "commission_id", "executor_profile", "status", "created_at"],
 			configured_models: ["provider_id", "model_id", "label", "supports_images", "created_at"],
 			conversation_model_selections: ["conversation_id", "provider_id", "model_id", "updated_at"],
+			conversation_sessions: [
+				"conversation_id",
+				"pi_session_id",
+				"session_file_path",
+				"active_leaf_id",
+				"created_at",
+				"updated_at",
+			],
 		};
 		for (const [table, columns] of Object.entries(required)) {
 			const actual = new Set(
@@ -856,6 +864,20 @@ export const MIGRATIONS: Migration[] = [
 				CHECK (origin IN ('official','local','imported'));
 			ALTER TABLE companion_packages ADD COLUMN plugin_hash TEXT NOT NULL DEFAULT '';
 			ALTER TABLE companion_packages ADD COLUMN plugin_trusted_hash TEXT;
+		`,
+	},
+	{
+		id: 15,
+		description: "Persist Pi-managed conversation session metadata",
+		up: `
+			CREATE TABLE conversation_sessions (
+				conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+				pi_session_id TEXT NOT NULL,
+				session_file_path TEXT NOT NULL,
+				active_leaf_id TEXT,
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
 		`,
 	},
 ];

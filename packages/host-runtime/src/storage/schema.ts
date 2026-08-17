@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { sql } from "drizzle-orm";
 import {
 	type AnySQLiteColumn,
@@ -71,6 +72,17 @@ export const conversations = sqliteTable(
 		index("idx_conversations_active").on(table.companionId, table.archivedAt, table.updatedAt),
 	],
 );
+
+export const conversationSessions = sqliteTable("conversation_sessions", {
+	conversationId: text("conversation_id")
+		.primaryKey()
+		.references(() => conversations.id, { onDelete: "cascade" }),
+	piSessionId: text("pi_session_id").notNull(),
+	sessionFilePath: text("session_file_path").notNull(),
+	activeLeafId: text("active_leaf_id"),
+	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
+});
 
 export const branches = sqliteTable("branches", {
 	id: text().primaryKey(),
@@ -803,3 +815,5 @@ export const roleplayUnlocks = sqliteTable(
 	},
 	(table) => [primaryKey({ columns: [table.companionId, table.unlockableId] })],
 );
+
+

@@ -38,6 +38,31 @@ describe("database schema contract", () => {
 		database.close();
 	});
 
+	it("adds only Pi session metadata for each conversation", () => {
+		const database = new Database(root());
+		database.migrate(MIGRATIONS);
+
+		const columns = database.connection
+			.prepare("PRAGMA table_info(conversation_sessions)")
+			.all() as Array<{ name: string; notnull: number }>;
+		expect(columns.map((column) => column.name)).toEqual([
+			"conversation_id",
+			"pi_session_id",
+			"session_file_path",
+			"active_leaf_id",
+			"created_at",
+			"updated_at",
+		]);
+		const requiredFields = new Set(["pi_session_id", "session_file_path", "created_at", "updated_at"]);
+		expect(
+			columns
+				.filter((column) => requiredFields.has(column.name))
+				.every((column) => column.notnull),
+		).toBe(true);
+		expect(columns.find((column) => column.name === "active_leaf_id")?.notnull).toBe(0);
+		database.close();
+	});
+
 	it("rejects an applied migration whose definition no longer matches", () => {
 		const database = new Database(root());
 		const staleSql = "CREATE TABLE stale_example (id TEXT PRIMARY KEY)";
