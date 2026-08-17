@@ -57,9 +57,19 @@ describe("character package import", () => {
 			ok: true,
 			data: { character: { id: "imported-role" } },
 		});
-		await expect(runtime.dispatch("character.activate:v1", { characterId: "imported-role" })).resolves.toMatchObject({
+		await expect(
+			runtime.dispatch("character.activate:v1", { characterId: "imported-role" }),
+		).resolves.toMatchObject({
 			ok: true,
 			data: { character: { id: "imported-role" } },
+		});
+		await expect(runtime.dispatch("canon.listModules:v1", {})).resolves.toMatchObject({
+			ok: true,
+			data: {
+				modules: expect.arrayContaining([
+					expect.objectContaining({ stableKey: "original_root", origin: "package" }),
+				]),
+			},
 		});
 		const conversation = await runtime.dispatch("conversation.create:v1", {
 			title: "Imported role lifecycle",

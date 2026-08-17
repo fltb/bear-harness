@@ -93,6 +93,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			return { character: s.characterLoader.display(character) };
 		}
 		s.characterLoader.activate(s.orm, s.eventBus, character);
+		s.canon.syncPackage(character.id, character.canon);
 		await s.supervisor.stop();
 		s.supervisor.configureRuntime(s.characterLoader.piResources(character));
 		await s.supervisor.start();
@@ -111,6 +112,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			};
 		}
 		s.characterLoader.seed(s.orm, s.eventBus, character);
+		s.canon.syncPackage(character.id, character.canon);
 		s.eventBus.publish("character.imported", { characterId: character.id });
 		return { character: s.characterLoader.display(character) };
 	});
@@ -158,6 +160,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const { id, expectedRevision } = _p as { id: string; expectedRevision: number };
 		const result = s.drafts.publish(id, expectedRevision);
 		s.characterLoader.activate(s.orm, s.eventBus, result.character);
+		s.canon.syncPackage(result.character.id, result.character.canon);
 		await s.supervisor.stop();
 		s.supervisor.configureRuntime(s.characterLoader.piResources(result.character));
 		await s.supervisor.start();
