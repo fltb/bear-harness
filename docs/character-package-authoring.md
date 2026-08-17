@@ -1,6 +1,7 @@
 # 角色包创作指南
 
 这份指南面向社区创作者。角色包是内容格式，不是可执行代码，也不是可以绕过系统限制的提示词集合。数据、工具、权限、记忆和对话历史始终由 Host 管理。
+角色包声明的内容属于 Host 的 **role-package storage**，不是用户记忆。包内的常量、素材和资源由 Host 读取、校验、投影和隔离；作者不能把它们当作关系档案或记忆输入。
 
 ## 从最小包开始
 
@@ -29,6 +30,18 @@ my-character/
 
 当前用户消息单独附加。编辑用户消息会创建新采用分支，旧分支 transcript 不得进入下一轮请求。其他会话不会自动注入；只有用户明确要求且开启授权后，角色才能调用 `host_search_conversation_history` 检索。
 
+## 角色包存储与关系记忆边界
+
+`character.yaml` 及其包目录是 Host-owned role-package storage。以下内容都属于角色包存储：
+
+- **常量**：`theme`、`character`、`identity_core`、`self_canon`、场景、视觉、`host`、`companion` 和 `roleplay` 声明。
+- **素材**：头像、表情、场景背景，以及 `roleplay.media` 引用的媒体、海报和字幕。
+- **资源**：`canon/`、`skills/`、`plugins/` 及其包内文件。
+
+Host 可以把选定的包内容投影到指定的 `identity`、`canon`、`scene` 或 `roleplay` 上下文层，也可以把素材投影给渲染器、把 Skill/插件资源提供给 Pi；这不会改变它们的存储归属。包声明的常量、素材和资源 **不得** 写入 `relationship` 记忆、自动记忆捕获（automatic memory capture）、用户记忆面板记录（user memory panel records），也不得作为长期记忆后端输入（long-term memory backend inputs）。它们不能成为待批准的记忆候选，也不能通过记忆编辑、置顶、排除或召回入口出现。
+
+关系记忆是用户明确批准后由 Host 单独保存的共同经历、称呼和偏好。它与角色包目录、包内文件和包声明值是两个不同的数据来源；关闭关系记忆只影响关系记忆，不删除或改变角色包存储。
+
 ## 变量与剧情
 
 `roleplay.variables` 只有三种 scope：
@@ -54,6 +67,7 @@ my-character/
 - 新建第二会话：`relationship`、`character` 应连续，`conversation` 应隔离。
 - 关闭关系记忆，确认它从下一轮上下文消失但未被删除。
 - 确认每个素材、Skill 和媒体引用都被打包。
+- 确认角色包常量、素材和资源只作为包存储或指定上下文/渲染/Pi 投影，未进入自动记忆捕获、记忆面板或长期记忆后端。
 
 ## 工坊草稿与发布
 
