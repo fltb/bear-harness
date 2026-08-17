@@ -93,7 +93,9 @@ export const zhTW = {
 		"roleImportHint": "選擇解壓後的角色包資料夾。匯入後會儲存在本機，並出現在角色列表中。角色包可以包含行為擴充套件，請只匯入你信任的來源。",
 		"roleImportBusy": "正在檢查並匯入…",
 		"roleImportDone": "角色包已匯入",
-		"roleImportFailed": "角色包匯入失敗："
+		"roleImportFailed": "角色包匯入失敗：",
+		"rolePluginsDisabled": "行為外掛未啟用",
+		"roleEnablePlugins": "啟用外掛"
 	},
 	"packageWorkshop": {
 		"title": "角色包工坊",

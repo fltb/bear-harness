@@ -400,6 +400,13 @@ button[data-variant="primary"]:focus-visible {
 	font-size: 13px;
 }
 
+.role-plugin-warning {
+	display: block;
+	margin-top: 3px;
+	color: var(--amber);
+	font-size: 12px;
+}
+
 .workshop-history {
 	border-top: 1px solid var(--line);
 	padding-top: 12px;

@@ -97,6 +97,8 @@ export const en = {
 		roleImportBusy: "Validating and importing...",
 		roleImportDone: "Character package imported",
 		roleImportFailed: "Character package import failed: ",
+		rolePluginsDisabled: "Behavior plugins are disabled",
+		roleEnablePlugins: "Enable plugins",
 	},
 	packageWorkshop: {
 		title: "Character package workshop",

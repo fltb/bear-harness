@@ -95,6 +95,8 @@ export const zhCN = {
 		roleImportBusy: "正在检查并导入…",
 		roleImportDone: "角色包已导入",
 		roleImportFailed: "角色包导入失败：",
+		rolePluginsDisabled: "行为插件未启用",
+		roleEnablePlugins: "启用插件",
 	},
 	packageWorkshop: {
 		title: "角色包工坊",

@@ -5,8 +5,12 @@ import { Dialog } from "@kobalte/core/dialog";
 import { FileField } from "@kobalte/core/file-field";
 import { Tabs } from "@kobalte/core/tabs";
 import { TextField } from "@kobalte/core/text-field";
-import { createEffect, createSignal, For, onMount, Show } from "solid-js";
-import { type CharacterDisplay, useCompanionStore } from "../stores/companion.js";
+import { createEffect, createResource, createSignal, For, onMount, Show } from "solid-js";
+import {
+	type CharacterDisplay,
+	type CharacterSummary,
+	useCompanionStore,
+} from "../stores/companion.js";
 import { CanonStudio } from "./CanonStudio.js";
 import { CharacterPackageWorkshop } from "./CharacterPackageWorkshop.js";
 import { MemoryEntryList, MemorySheet } from "./MemorySheet.js";
@@ -155,32 +159,67 @@ function RoleManager() {
 				</Show>
 			</div>
 			<For each={store.characters.characters()}>
-				{(character) => (
-					<div class="role-row">
-						<img src={character.avatarUrl} alt="" aria-hidden="true" />
-						<div>
-							<strong>{character.name}</strong>
-							<span>{character.subtitle}</span>
-						</div>
-						<Show
-							when={!character.active}
-							fallback={<span class="role-active">{t("backstage.roleActive")}</span>}
-						>
-							<Button
-								data-control="command"
-								type="button"
-								disabled={busyId() !== undefined}
-								onClick={() => {
-									setBusyId(character.id);
-									void store.characters.activate(character.id).finally(() => setBusyId());
-								}}
-							>
-								{t("backstage.roleSwitch")}
-							</Button>
-						</Show>
-					</div>
-				)}
+				{(character) => <RoleRow character={character} busyId={busyId()} setBusyId={setBusyId} />}
 			</For>
+		</div>
+	);
+}
+
+function RoleRow(props: {
+	character: CharacterSummary;
+	busyId: string | undefined;
+	setBusyId: (value: string | undefined) => void;
+}) {
+	const [t] = useTranslation(undefined, { i18n });
+	const store = useCompanionStore();
+	const [trust, { refetch }] = createResource(
+		() => props.character.id,
+		(characterId) => store.characters.pluginTrust(characterId),
+	);
+	return (
+		<div class="role-row">
+			<img src={props.character.avatarUrl} alt="" aria-hidden="true" />
+			<div>
+				<strong>{props.character.name}</strong>
+				<span>{props.character.subtitle}</span>
+				<Show when={trust()?.pluginsPresent && !trust()?.trusted}>
+					<span class="role-plugin-warning">{t("backstage.rolePluginsDisabled")}</span>
+				</Show>
+			</div>
+			<Show when={trust()?.pluginsPresent && !trust()?.trusted}>
+				<Button
+					data-control="command"
+					type="button"
+					disabled={props.busyId !== undefined}
+					onClick={() => {
+						props.setBusyId(props.character.id);
+						void store.characters
+							.confirmPluginTrust(props.character.id)
+							.then(() => refetch())
+							.finally(() => props.setBusyId(undefined));
+					}}
+				>
+					{t("backstage.roleEnablePlugins")}
+				</Button>
+			</Show>
+			<Show
+				when={!props.character.active}
+				fallback={<span class="role-active">{t("backstage.roleActive")}</span>}
+			>
+				<Button
+					data-control="command"
+					type="button"
+					disabled={props.busyId !== undefined}
+					onClick={() => {
+						props.setBusyId(props.character.id);
+						void store.characters
+							.activate(props.character.id)
+							.finally(() => props.setBusyId(undefined));
+					}}
+				>
+					{t("backstage.roleSwitch")}
+				</Button>
+			</Show>
 		</div>
 	);
 }
