@@ -25,6 +25,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { Models } from "@earendil-works/pi-ai";
 import type { CredentialStatus, CredentialStore } from "./credential-store.js";
 
 /**
@@ -189,13 +190,8 @@ export class ProviderCatalog {
 		return runtime;
 	}
 
-	/** Shared in-process runtime for the Companion session after Host auth policy. */
-	async getModelRuntime(): Promise<ModelRuntime> {
-		return this.getRuntime();
-	}
-
-	/** Core runtime consumes pi-ai's Models interface directly. */
-	async getModels(): Promise<ModelRuntime> {
+	/** The Companion consumes the stable pi-ai Models interface, never AgentSession runtime APIs. */
+	async getModels(): Promise<Models> {
 		return this.getRuntime();
 	}
 
