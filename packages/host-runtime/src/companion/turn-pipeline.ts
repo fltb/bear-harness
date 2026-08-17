@@ -221,6 +221,7 @@ export class TurnPipeline {
 		} catch (e) {
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
+		this.supervisor.invalidateConversation(conversationId);
 		this.eventBus.publish("message.version_switched", { conversationId, messageId, versionId });
 	}
 
@@ -293,6 +294,7 @@ export class TurnPipeline {
 			editedByUser: true,
 		});
 		if (isUserMessage) {
+			this.supervisor.invalidateConversation(conversationId);
 			this.activeTurns.set(conversationId, { userMessageId: messageId });
 			this.supervisor.sendCommand({
 				type: "prompt",

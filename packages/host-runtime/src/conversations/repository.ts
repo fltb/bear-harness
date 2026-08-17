@@ -45,6 +45,16 @@ export interface ConversationProjection {
 	}>;
 }
 
+export interface ConversationSearchHit {
+	conversationId: string;
+	title: string;
+	updatedAt: string;
+	messageId: string;
+	versionId: string;
+	role: "user" | "assistant";
+	excerpt: string;
+}
+
 export class ConversationRepository {
 	constructor(private readonly db: AppDatabase) {}
 
@@ -62,6 +72,55 @@ export class ConversationRepository {
 			.limit(100)
 			.all()
 			.map((row) => ({ ...row, unread: false as const }));
+	}
+
+	search(
+		companionId: string,
+		query: string,
+		options: { excludeConversationId?: string; includeArchived?: boolean; limit?: number } = {},
+	): ConversationSearchHit[] {
+		const needle = query.trim();
+		if (!needle) return [];
+		const rows = this.db
+			.select({
+				conversationId: conversations.id,
+				title: conversations.title,
+				updatedAt: conversations.updatedAt,
+				messageId: messages.id,
+				versionId: messageVersions.id,
+				role: messages.role,
+				content: messageVersions.content,
+			})
+			.from(messages)
+			.innerJoin(conversations, eq(conversations.id, messages.conversationId))
+			.innerJoin(
+				messageVersions,
+				and(eq(messageVersions.messageId, messages.id), eq(messageVersions.adopted, 1)),
+			)
+			.innerJoin(branches, and(eq(branches.id, messages.branchId), eq(branches.adopted, 1)))
+			.where(
+				and(
+					eq(conversations.companionId, companionId),
+					options.excludeConversationId
+						? sql`${conversations.id} <> ${options.excludeConversationId}`
+						: undefined,
+					options.includeArchived ? undefined : isNull(conversations.archivedAt),
+					inArray(messages.role, ["user", "assistant"]),
+					sql`instr(${messageVersions.content}, ${needle}) > 0`,
+				),
+			)
+			.orderBy(desc(conversations.updatedAt))
+			.limit(options.limit ?? 6)
+			.all();
+		return rows.map((row) => ({
+			conversationId: row.conversationId,
+			title: row.title,
+			updatedAt: row.updatedAt,
+			messageId: row.messageId,
+			versionId: row.versionId,
+			role: row.role as "user" | "assistant",
+			excerpt: excerpt(row.content, needle),
+		}));
 	}
 
 	create(input: {
@@ -267,4 +326,12 @@ export class ConversationRepository {
 			messages: [...grouped.values()],
 		};
 	}
+}
+
+function excerpt(content: string, query: string): string {
+	const index = content.indexOf(query);
+	if (index < 0) return content.slice(0, 1000);
+	const start = Math.max(0, index - 160);
+	const end = Math.min(content.length, index + query.length + 160);
+	return `${start > 0 ? "..." : ""}${content.slice(start, end)}${end < content.length ? "..." : ""}`;
 }

@@ -826,4 +826,26 @@ export const MIGRATIONS: Migration[] = [
 			INSERT INTO canon_chunks_fts(canon_chunks_fts) VALUES ('rebuild');
 		`,
 	},
+	{
+		id: 13,
+		description: "Versioned character package workshop drafts",
+		up: `
+			CREATE TABLE character_drafts (
+				id TEXT PRIMARY KEY,
+				base_package_id TEXT,
+				status TEXT NOT NULL CHECK (status IN ('draft','validating','ready_to_publish','published')),
+				locale TEXT NOT NULL DEFAULT 'zh-CN',
+				current_revision INTEGER NOT NULL DEFAULT 1,
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			CREATE TABLE character_draft_revisions (
+				draft_id TEXT NOT NULL REFERENCES character_drafts(id) ON DELETE CASCADE,
+				revision INTEGER NOT NULL,
+				files_json TEXT NOT NULL,
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				PRIMARY KEY (draft_id, revision)
+			);
+		`,
+	},
 ];

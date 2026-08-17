@@ -183,12 +183,12 @@ roleplay:
           - { min: 5, label: 同频 }
     - id: damaged_log_stage
       type: number
-      scope: conversation
+      scope: character
       initial: 0
       display: { kind: hidden }
     - id: damaged_log_snapshot_preserved
       type: boolean
-      scope: conversation
+      scope: character
       initial: false
       display: { kind: hidden }
   media:

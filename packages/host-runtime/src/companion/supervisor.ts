@@ -201,6 +201,16 @@ export class CompanionSupervisor {
 		this.eventBus.publish("companion.state_changed", { state: "stopped" });
 	}
 
+	/** Discard a transcript when the Host changes its adopted history. */
+	invalidateConversation(conversationId: string): void {
+		const session = this.sessions.get(conversationId);
+		if (!session) return;
+		void session.abort();
+		session.dispose();
+		this.sessions.delete(conversationId);
+		if (this.session === session) this.session = null;
+	}
+
 	/** Dispatch Host commands to the local Pi session. */
 	sendCommand(command: unknown): void {
 		if (
@@ -490,6 +500,17 @@ export class CompanionSupervisor {
 				"Present choices",
 				"Present a declared choice set; free text remains available.",
 				toolParameters(z.strictObject({ choiceSetId: z.string().min(1).max(64) })),
+			),
+			this.hostTool(
+				"host_search_conversation_history",
+				"Search conversation history",
+				"Search adopted messages from this character's other conversations only when the user explicitly asks to recall them.",
+				toolParameters(
+					z.strictObject({
+						query: z.string().min(1).max(1000),
+						limit: z.number().int().min(1).max(8).optional(),
+					}),
+				),
 			),
 			this.hostTool(
 				"host_search_canon",

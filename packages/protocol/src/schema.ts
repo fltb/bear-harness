@@ -116,6 +116,7 @@ export const OnboardingStateData = z.strictObject({
 			.regex(/^[a-z][a-z0-9_]*$/)
 			.optional(),
 		relationship_memory_enabled: z.boolean().optional(),
+		conversation_history_read_enabled: z.boolean().optional(),
 	}),
 });
 export const CharacterGetRequest = z.strictObject({});
@@ -249,7 +250,7 @@ export const CharacterDisplay = z.strictObject({
 				z.strictObject({
 					id: CharacterIdentifier,
 					type: z.enum(["number", "boolean", "enum", "string"]),
-					scope: z.enum(["conversation", "relationship", "global"]),
+					scope: z.enum(["conversation", "relationship", "character"]),
 					initial: z.union([z.string(), z.number(), z.boolean()]),
 					display: z.union([
 						z.strictObject({ kind: z.literal("hidden") }),
@@ -381,6 +382,23 @@ export const ConversationArchiveRequest = z.strictObject({
 });
 export const ConversationDeleteRequest = z.strictObject({
 	id: ConversationId,
+});
+export const ConversationSearchRequest = z.strictObject({
+	query: z.string().min(1).max(1000),
+	includeArchived: z.boolean().optional(),
+	limit: z.number().int().min(1).max(8).optional(),
+});
+export const ConversationSearchHit = z.strictObject({
+	conversationId: ConversationId,
+	title: z.string().max(MAX_STRING_LENGTH),
+	updatedAt: z.string().max(64),
+	messageId: MessageId,
+	versionId: MessageVersionId,
+	role: z.union([z.literal("user"), z.literal("assistant")]),
+	excerpt: z.string().max(1000),
+});
+export const ConversationSearchResponse = z.strictObject({
+	hits: z.array(ConversationSearchHit).max(8),
 });
 
 // ---------------------------------------------------------------------------
@@ -1034,6 +1052,7 @@ export const ArtifactReadResponse = z.strictObject({
 
 export const SettingsData = z.strictObject({
 	relationshipMemoryEnabled: z.boolean(),
+	conversationHistoryReadEnabled: z.boolean(),
 });
 export const SettingsGetRequest = z.strictObject({});
 export const SettingsResponse = z.strictObject({
@@ -1041,6 +1060,7 @@ export const SettingsResponse = z.strictObject({
 });
 export const SettingsPatch = z.strictObject({
 	relationshipMemoryEnabled: z.boolean().optional(),
+	conversationHistoryReadEnabled: z.boolean().optional(),
 });
 export const SettingsSetRequest = z.strictObject({
 	settings: SettingsPatch,
@@ -1194,6 +1214,7 @@ export const RPC = {
 		rename: endpoint("conversation.rename:v1", ConversationRenameRequest, EmptyResponse),
 		archive: endpoint("conversation.archive:v1", ConversationArchiveRequest, EmptyResponse),
 		delete: endpoint("conversation.delete:v1", ConversationDeleteRequest, EmptyResponse),
+		search: endpoint("conversation.search:v1", ConversationSearchRequest, ConversationSearchResponse),
 	},
 	message: {
 		send: endpoint("message.send:v1", MessageSendRequest, MessageSendResponse),

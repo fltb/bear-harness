@@ -46,6 +46,23 @@ describe("ContextPackCompiler character package identity", () => {
 			character.identity_core,
 		);
 		expect(pack.blocks.find((block) => block.layer === "roleplay")?.content).toContain('"trust":0');
+		expect(pack.manifest).toEqual([
+			expect.objectContaining({
+				order: 0,
+				layer: "identity",
+				source: "character.identity_core",
+			}),
+			expect.objectContaining({
+				order: 1,
+				layer: "canon",
+				source: "self_canon_or_canon_hub",
+			}),
+			expect.objectContaining({
+				order: 2,
+				layer: "roleplay",
+				source: "roleplay_ledger",
+			}),
+		]);
 		expect(() =>
 			new ContextPackCompiler(orm, characterLoader).compile("missing-conversation"),
 		).toThrow("conversation has no companion identity");

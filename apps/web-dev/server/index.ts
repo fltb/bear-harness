@@ -19,6 +19,13 @@ const token = randomBytes(32).toString("hex");
 
 const debugEnabled = process.env.BEAR_WEB_DEV_DEBUG === "1";
 const ruleProviderEnabled = process.env.BEAR_E2E_RULE_PROVIDER === "1";
+const ruleToolTrace: Array<{
+	prompt: string;
+	tool: string;
+	args: Record<string, unknown>;
+}> = [];
+const rulePromptTrace: string[] = [];
+let ruleToolCallSequence = 0;
 
 const runtime = createHostRuntime({
 	dataDir,
@@ -71,6 +78,14 @@ async function requestHandler(request: IncomingMessage, response: ServerResponse
 		send(response, 200, { channels: Object.keys(REQUEST_SCHEMAS).sort() });
 		return;
 	}
+	if (debugEnabled && request.method === "GET" && url.pathname === "/debug/rule-tool-trace") {
+		send(response, 200, { calls: ruleToolTrace });
+		return;
+	}
+	if (debugEnabled && request.method === "GET" && url.pathname === "/debug/rule-prompt-trace") {
+		send(response, 200, { prompts: rulePromptTrace });
+		return;
+	}
 	if (request.method === "POST" && url.pathname.startsWith("/rpc/")) {
 		let params: unknown;
 		try {
@@ -105,7 +120,7 @@ async function ruleProviderReply(
 ): Promise<void> {
 	const payload = (await body(request)) as {
 		stream?: boolean;
-		messages?: Array<{ content?: unknown }>;
+		messages?: Array<{ content?: unknown; role?: string }>;
 	};
 	const readText = (value: unknown): string => {
 		if (typeof value === "string") return value;
@@ -125,6 +140,20 @@ async function ruleProviderReply(
 		return Object.values(record).some(containsImage);
 	};
 	const prompt = payload.messages?.map((message) => readText(message.content)).join("\n") ?? "";
+	rulePromptTrace.push(prompt);
+	const lastUserIndex = payload.messages?.findLastIndex((message) => message.role === "user") ?? -1;
+	const latestUserText = lastUserIndex >= 0 ? readText(payload.messages?.[lastUserIndex]?.content) : "";
+	const currentTurnToolText =
+		lastUserIndex >= 0
+			? payload.messages
+					?.slice(lastUserIndex + 1)
+					.filter((message) => message.role === "tool")
+					.map((message) => readText(message.content))
+					.join("\n") ?? ""
+			: "";
+	const hasToolResult =
+		lastUserIndex >= 0 &&
+		(payload.messages?.slice(lastUserIndex + 1).some((message) => message.role === "tool") ?? false);
 	const hasImage = containsImage(payload.messages);
 	const latestHostContext = [...prompt.matchAll(/<host_context>\n([\s\S]*?)<\/host_context>/g)].at(
 		-1,
@@ -136,9 +165,28 @@ async function ruleProviderReply(
 		: relationshipContext.includes("暗号是北辰")
 			? "MEMORY_CONTEXT:我们约定暗号是北辰\n"
 			: "MEMORY_CONTEXT:ABSENT\n";
-	const content =
-		hasImage && prompt.includes("Describe only the visible content")
-			? "VISUAL_OBSERVATION: a red square\n"
+	const scriptedTool = !hasToolResult
+		? latestUserText.includes("E2E_TOOL_TRIGGER_DAMAGED_LOG")
+			? { tool: "host_trigger_roleplay_event", args: { eventId: "first_meeting_remembered" } }
+			: latestUserText.includes("E2E_TOOL_SEARCH_OTHER_CONVERSATION")
+				? { tool: "host_search_conversation_history", args: { query: "E2E_HISTORY_MARKER", limit: 2 } }
+				: undefined
+		: undefined;
+	if (scriptedTool) ruleToolTrace.push({ prompt, ...scriptedTool });
+	const content = hasToolResult && latestUserText.includes("E2E_TOOL_TRIGGER_DAMAGED_LOG")
+		? "E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE\n"
+		: hasToolResult && latestUserText.includes("E2E_TOOL_SEARCH_OTHER_CONVERSATION")
+			? currentTurnToolText.includes("conversation_history_read_disabled")
+				? "E2E_TOOL_SEARCH_OTHER_CONVERSATION_DENIED\n"
+				: currentTurnToolText.includes("E2E_HISTORY_MARKER")
+					? "E2E_TOOL_SEARCH_OTHER_CONVERSATION_FOUND\n"
+					: "E2E_TOOL_SEARCH_OTHER_CONVERSATION_UNEXPECTED\n"
+			: hasImage && prompt.includes("Describe only the visible content")
+				? "VISUAL_OBSERVATION: a red square\n"
+				: prompt.includes("E2E_CONTEXT_T1_EDITED") && prompt.includes("E2E_CONTEXT_T2")
+					? "E2E_CONTEXT_EDITED_OK\n"
+					: prompt.includes("E2E_CONTEXT_T1_ORIGINAL") && prompt.includes("E2E_CONTEXT_T2")
+						? "E2E_CONTEXT_TWO_TURNS_OK\n"
 			: prompt.includes("VISUAL_OBSERVATION: a red square")
 				? "MAIN_USED_VISUAL_OBSERVATION\n"
 				: prompt.includes("检查记忆上下文")
@@ -151,7 +199,11 @@ async function ruleProviderReply(
 								? "我是 E2E Rule Provider。\n"
 								: prompt.includes("E2E_OK")
 									? "E2E_OK\n"
-									: "RULE_OK\n";
+					: "RULE_OK\n";
+	if (scriptedTool) {
+		await streamToolCall(response, payload.stream, scriptedTool.tool, scriptedTool.args);
+		return;
+	}
 	const id = "chatcmpl-e2e-rule";
 	if (!payload.stream) {
 		send(response, 200, {
@@ -202,6 +254,55 @@ async function ruleProviderReply(
 			created: 0,
 			model: "rule-model",
 			choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+		})}\n\n`,
+	);
+	response.end("data: [DONE]\n\n");
+}
+
+async function streamToolCall(
+	response: ServerResponse,
+	stream: boolean | undefined,
+	tool: string,
+	args: Record<string, unknown>,
+): Promise<void> {
+	const id = "chatcmpl-e2e-rule";
+	const toolCall = {
+		id: `call_${tool}_${++ruleToolCallSequence}`,
+		type: "function" as const,
+		function: { name: tool, arguments: JSON.stringify(args) },
+	};
+	if (!stream) {
+		send(response, 200, {
+			id,
+			object: "chat.completion",
+			created: 0,
+			model: "rule-model",
+			choices: [{ index: 0, message: { role: "assistant", content: null, tool_calls: [toolCall] }, finish_reason: "tool_calls" }],
+			usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+		});
+		return;
+	}
+	response.writeHead(200, {
+		"content-type": "text/event-stream; charset=utf-8",
+		"cache-control": "no-store",
+		connection: "keep-alive",
+	});
+	response.write(
+		`data: ${JSON.stringify({
+			id,
+			object: "chat.completion.chunk",
+			created: 0,
+			model: "rule-model",
+			choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, ...toolCall }] }, finish_reason: null }],
+		})}\n\n`,
+	);
+	response.write(
+		`data: ${JSON.stringify({
+			id,
+			object: "chat.completion.chunk",
+			created: 0,
+			model: "rule-model",
+			choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
 		})}\n\n`,
 	);
 	response.end("data: [DONE]\n\n");

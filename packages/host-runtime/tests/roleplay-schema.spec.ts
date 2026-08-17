@@ -52,4 +52,24 @@ describe("roleplay package schema", () => {
 		expect(roleplayAssetExtensions("animation").has(".gif")).toBe(true);
 		expect(roleplayAssetExtensions("video").has(".gif")).toBe(false);
 	});
+
+	it("rejects the removed global scope", () => {
+		expect(() =>
+			RoleplaySchema.parse({
+				variables: [
+					{
+						id: "legacy",
+						type: "boolean",
+						scope: "global",
+						initial: false,
+						display: { kind: "hidden" },
+					},
+				],
+				media: [],
+				unlockables: [],
+				events: [],
+				choice_sets: [],
+			}),
+		).toThrow();
+	});
 });

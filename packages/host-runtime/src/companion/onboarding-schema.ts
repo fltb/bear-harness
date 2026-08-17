@@ -81,6 +81,7 @@ export const OnboardingStateDataSchema = z.strictObject({
 	decisions: z.strictObject({
 		relationship_kind: Identifier.optional(),
 		relationship_memory_enabled: z.boolean().optional(),
+		conversation_history_read_enabled: z.boolean().optional(),
 	}),
 });
 

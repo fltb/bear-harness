@@ -28,6 +28,7 @@ export type CompanionHostToolName =
 	| "host_show_cg"
 	| "host_play_media"
 	| "host_present_choices"
+	| "host_search_conversation_history"
 	| "host_search_canon"
 	| "host_propose_work";
 
@@ -91,11 +92,13 @@ export class CharacterBehaviorService {
 		const character = this.characterForConversation(input.conversationId);
 		if (!character) throw { kind: "not_found", reason: "conversation_not_found" };
 		const branch = this.db
-			.select({ id: branches.id })
+			.select({ id: branches.id, label: branches.label })
 			.from(branches)
 			.where(and(eq(branches.conversationId, input.conversationId), eq(branches.adopted, 1)))
 			.get();
 		if (!branch) throw { kind: "not_found", reason: "conversation_not_found" };
+		if (branch.label !== "main")
+			throw { kind: "conflict", reason: "roleplay_event_branch_not_canonical" };
 		const state = this.roleplay.trigger({
 			character,
 			eventId: input.eventId,
@@ -181,6 +184,18 @@ export class CharacterBehaviorService {
 	): CompanionHostToolResult {
 		const character = this.characterForConversation(conversationId);
 		if (!character) return unavailableConversationResult(conversationId);
+		const branch = this.db
+			.select({ label: branches.label })
+			.from(branches)
+			.where(and(eq(branches.conversationId, conversationId), eq(branches.adopted, 1)))
+			.get();
+		if (!branch || branch.label !== "main") {
+			return {
+				ok: false,
+				code: "roleplay_event_branch_not_canonical",
+				message: "Roleplay events can only commit from the main conversation branch.",
+			};
+		}
 		if (!eventId || !character.roleplay.events.some((event) => event.id === eventId))
 			return {
 				ok: false,

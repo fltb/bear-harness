@@ -1,4 +1,4 @@
-import { and, eq, isNull, or } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import {
 	branches,
@@ -32,13 +32,7 @@ export class RoleplayService {
 			.leftJoin(messageVersions, eq(messageVersions.id, roleplayEvents.sourceMessageVersionId))
 			.leftJoin(messages, eq(messages.id, messageVersions.messageId))
 			.leftJoin(branches, eq(branches.id, roleplayEvents.branchId))
-			.where(
-				and(
-					eq(roleplayEvents.companionId, character.id),
-					or(isNull(roleplayEvents.sourceMessageVersionId), eq(messageVersions.adopted, 1)),
-					or(isNull(roleplayEvents.branchId), eq(branches.adopted, 1)),
-				),
-			)
+			.where(eq(roleplayEvents.companionId, character.id))
 			.all();
 		for (const row of rows)
 			this.applyEffects(

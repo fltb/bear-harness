@@ -193,6 +193,8 @@ export const zhCN = {
 		relationshipMemoryHint: "记住你明确确认的称呼、偏好与共同经历；不会把工作文件内容写进记忆。",
 		relationshipMemoryEnabled: "关系记忆已开启",
 		relationshipMemoryDisabled: "关系记忆已关闭",
+		conversationHistoryRead: "允许回看其他对话",
+		conversationHistoryReadHint: "只在你明确要求时，角色才会检索同一角色的历史对话片段。",
 		modelService: "模型服务",
 		modelServiceHint: "选择用于角色回复的模型服务。密钥只保存在这台设备上。",
 		modelPool: "可用模型",

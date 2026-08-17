@@ -272,6 +272,7 @@ export function MemorySheet() {
 		{ value: "scene", label: t("memory.scopes.scene") },
 	];
 	const [scope, setScope] = createSignal<MemoryScope>("self");
+	const [candidateScope, setCandidateScope] = createSignal<MemoryScope>("relationship");
 	const [queryText, setQueryText] = createSignal("");
 	const [query, setQuery] = createSignal("");
 	const [refreshKey, setRefreshKey] = createSignal(0);
@@ -325,8 +326,7 @@ export function MemorySheet() {
 		setCandidatesError(null);
 		setFeedback(null);
 		try {
-			const candidate = pendingCandidates().find((item) => item.id === candidateId);
-			await store.memory.decideCandidate(candidateId, decision, undefined, candidate?.scope);
+			await store.memory.decideCandidate(candidateId, decision, undefined, candidateScope());
 			setFeedback(
 				decision === "approve"
 					? t("memory.approved")
@@ -350,8 +350,7 @@ export function MemorySheet() {
 		setCandidatesError(null);
 		setFeedback(null);
 		try {
-			const candidate = pendingCandidates().find((item) => item.id === candidateId);
-			await store.memory.decideCandidate(candidateId, "approve_edited", text, candidate?.scope);
+			await store.memory.decideCandidate(candidateId, "approve_edited", text, candidateScope());
 			setFeedback(t("memory.approvedEdited"));
 			setEditingId(null);
 			setRefreshKey((key) => key + 1);
@@ -372,6 +371,15 @@ export function MemorySheet() {
 					</Show>
 				</div>
 				<p class="drawer-note">{t("memory.candidatesNote")}</p>
+				<select
+					aria-label={t("memory.scopeTabsLabel")}
+					value={candidateScope()}
+					onChange={(event) => setCandidateScope(event.currentTarget.value as MemoryScope)}
+				>
+					<For each={scopeTabs()}>
+						{(tab) => <option value={tab.value}>{tab.label}</option>}
+					</For>
+				</select>
 				<Show when={feedback()}>
 					<p class="status-line ok" role="status">
 						{feedback()}

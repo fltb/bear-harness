@@ -270,6 +270,7 @@ function RelationshipArchive(props: { character: CharacterDisplay | undefined })
 	const [error, setError] = createSignal<string>();
 	onMount(() => void store.settings.get());
 	const enabled = () => store.settings.data()?.relationshipMemoryEnabled ?? false;
+	const historyReadEnabled = () => store.settings.data()?.conversationHistoryReadEnabled ?? false;
 	const toggleMemory = async (): Promise<void> => {
 		setSaving(true);
 		setFeedback();
@@ -280,6 +281,18 @@ function RelationshipArchive(props: { character: CharacterDisplay | undefined })
 			setFeedback(
 				next ? t("settings.relationshipMemoryEnabled") : t("settings.relationshipMemoryDisabled"),
 			);
+		} catch {
+			setError(t("errors.generic"));
+		} finally {
+			setSaving(false);
+		}
+	};
+	const toggleHistoryRead = async (): Promise<void> => {
+		setSaving(true);
+		setFeedback();
+		setError();
+		try {
+			await store.settings.set({ conversationHistoryReadEnabled: !historyReadEnabled() });
 		} catch {
 			setError(t("errors.generic"));
 		} finally {
@@ -317,6 +330,26 @@ function RelationshipArchive(props: { character: CharacterDisplay | undefined })
 						data-checked={enabled() || undefined}
 						disabled={saving() || store.settings.data() === undefined}
 						onClick={() => void toggleMemory()}
+					>
+						<span class="switch-thumb" />
+					</Button>
+				</div>
+			</div>
+			<div class="field">
+				<div class="switch-field">
+					<div class="switch-text">
+						<span class="field-label">{t("settings.conversationHistoryRead")}</span>
+						<p class="field-hint">{t("settings.conversationHistoryReadHint")}</p>
+					</div>
+					<Button
+						type="button"
+						class="switch-control"
+						role="switch"
+						aria-label={t("settings.conversationHistoryRead")}
+						aria-checked={historyReadEnabled()}
+						data-checked={historyReadEnabled() || undefined}
+						disabled={saving() || store.settings.data() === undefined}
+						onClick={() => void toggleHistoryRead()}
 					>
 						<span class="switch-thumb" />
 					</Button>

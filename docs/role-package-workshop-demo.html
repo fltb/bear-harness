@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>角色包工坊 Demo</title>
+  <style>
+    :root { font-family: Arial, sans-serif; color: #172126; background: #eef1ee; }
+    * { box-sizing: border-box; } body { margin: 0; } button { font: inherit; cursor: pointer; }
+    header { height: 58px; padding: 0 24px; display:flex; align-items:center; justify-content:space-between; background:#fff; border-bottom:1px solid #d6ddd7; }
+    header strong { font-size:18px; } header span { color:#62716a; font-size:13px; }
+    .shell { display:grid; grid-template-columns:220px 1fr 330px; min-height:calc(100vh - 58px); }
+    nav { padding:18px 12px; border-right:1px solid #d6ddd7; background:#f8faf8; } nav h4 { margin:12px 10px 7px; color:#64716b; font-size:12px; } nav button { width:100%; border:0; background:transparent; text-align:left; padding:10px; border-radius:5px; color:#34443c; } nav button.active { background:#dbe9dd; color:#173d25; font-weight:bold; }
+    main { padding:26px; max-width:1000px; } h1 { margin:0 0 5px; font-size:25px; } .muted { color:#63716b; font-size:14px; }
+    .tabs { display:flex; gap:18px; border-bottom:1px solid #d6ddd7; margin:26px 0 20px; } .tabs button { border:0; background:none; padding:10px 2px; color:#53645b; } .tabs button.active { color:#175b32; border-bottom:2px solid #248047; font-weight:bold; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; } section { background:#fff; border:1px solid #d6ddd7; border-radius:6px; padding:16px; } section h2 { margin:0 0 12px; font-size:16px; } label { display:block; font-size:12px; color:#64716b; margin:10px 0 4px; } input, textarea, select { width:100%; border:1px solid #cbd5ce; border-radius:4px; padding:8px; background:#fff; } textarea { min-height:78px; resize:vertical; }
+    .canon { grid-column:span 2; } .source { display:flex; justify-content:space-between; padding:10px 0; border-top:1px solid #edf0ed; font-size:14px; } .tag { color:#17663a; background:#e2f0e4; padding:3px 7px; border-radius:10px; font-size:12px; }
+    aside { padding:18px; border-left:1px solid #d6ddd7; background:#fff; } aside h3 { margin:4px 0 14px; font-size:16px; } .proposal { border-left:3px solid #278248; padding:10px; background:#f5faf5; margin:10px 0; font-size:13px; } .proposal code, pre { background:#f3f5f3; border:1px solid #e0e6e0; border-radius:4px; padding:8px; display:block; white-space:pre-wrap; font-size:12px; } .actions { display:flex; gap:8px; margin-top:14px; } .primary { background:#1e7b41; color:#fff; border:0; padding:9px 12px; border-radius:4px; } .secondary { background:#fff; color:#28583a; border:1px solid #9bb8a4; padding:9px 12px; border-radius:4px; }
+    .check { display:flex; gap:8px; margin:9px 0; font-size:13px; } .ok { color:#19713c; } .pending { color:#a45b13; }
+    @media (max-width:900px) { .shell { grid-template-columns:1fr; } nav, aside { border:0; } nav { display:flex; overflow:auto; } nav h4 { display:none; } nav button { width:auto; white-space:nowrap; } .grid { grid-template-columns:1fr; } .canon { grid-column:auto; } }
+  </style>
+</head>
+<body>
+  <header><strong>角色包工坊</strong><span>草稿：北岸档案员 · revision 12 · 未发布</span></header>
+  <div class="shell">
+    <nav><h4>角色</h4><button class="active">身份与语言</button><button>视觉与场景</button><button>关系与剧情</button><h4>资料</h4><button>Canon 编译</button><button>Skills</button><button>素材</button><h4>验收</h4><button>上下文预览</button><button>测试剧本</button></nav>
+    <main>
+      <h1>北岸档案员</h1><div class="muted">Agent 协作只生成草稿变更集。发布、激活和导出始终需要你确认。</div>
+      <div class="tabs"><button>角色设定</button><button class="active">Canon 编译</button><button>上下文预览</button></div>
+      <div class="grid">
+        <section><h2>原始资料</h2><label>资料名称</label><input value="《北岸夜班记录》节选"><label>导入状态</label><div class="source"><span>42 个分段 · SHA-256 已记录</span><span class="tag">本地资料</span></div><label>许可说明</label><select><option>创作者拥有或已获授权</option></select><div class="actions"><button class="secondary">添加资料</button><button class="secondary">检索分段</button></div></section>
+        <section><h2>编译边界</h2><label>角色自传摘要</label><textarea>档案员守在北岸站，记录潮汐与来访者留下的失物。对未找到原文依据的事，只说“尚未确认”。</textarea><label>不确定事实的处理</label><select><option>标为待考，不写入原作事实</option></select></section>
+        <section class="canon"><h2>Canon 模块树</h2><div class="source"><span>根 · 北岸档案</span><span class="tag">3 个来源</span></div><div class="source"><span>&nbsp;&nbsp;篇章 · 夜班记录</span><span>8 个分段</span></div><div class="source"><span>&nbsp;&nbsp;地点 · 潮汐观测室</span><span>3 个分段</span></div><div class="source"><span>&nbsp;&nbsp;人物 · 旧值班员</span><span>2 个分段</span></div></section>
+      </div>
+    </main>
+    <aside>
+      <h3>工坊 Agent</h3><div class="muted">持续读取当前草稿、选中资料和校验结果；只提出 patch，不会直接发布。</div>
+      <div class="proposal"><strong>你</strong><br>把“潮汐观测室”编译为可检索模块，并标出没有原文依据的说法。</div>
+      <div class="proposal"><strong>建议新增模块</strong><br>“潮汐观测室”关联 3 个资料分段，并要求回答时附带 citation。</div>
+      <div class="proposal"><strong>建议角色边界</strong><br>将“旧值班员仍在北岸”标记为待考，不能写入 `self_canon`。</div>
+      <pre>+ canon.modules.tide-observatory
+ citations: [chunk_014, chunk_021, chunk_022]
+ prompt_rule: 无 citation 时回答“尚未确认”</pre>
+      <div class="actions"><button class="primary">应用 patch</button><button class="secondary">查看 diff</button></div>
+      <label>继续和 Agent 协作</label><textarea placeholder="例如：把这段资料拆成地点、人物和事件模块"></textarea><div class="actions"><button class="primary">发送</button><button class="secondary">附加当前资料</button></div>
+      <h3 style="margin-top:28px">发布前校验</h3><div class="check ok">✓ 资料来源与分段可追溯</div><div class="check ok">✓ 事件只引用已声明变量</div><div class="check pending">• 英文 locale 缺少 2 个 key</div><div class="check pending">• 尚未运行上下文测试剧本</div>
+    </aside>
+  </div>
+</body>
+</html>

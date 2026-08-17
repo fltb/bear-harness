@@ -190,6 +190,9 @@ export const en = {
 		scopeTabsLabel: "Memory scope",
 	},
 	settings: {
+		conversationHistoryRead: "Allow reading other conversations",
+		conversationHistoryReadHint:
+			"Only when you explicitly ask may the character search excerpts from its other conversations.",
 		note: "Manage interface language, model services, and models available in conversations.",
 		loading: "Loading...",
 		language: "Interface language",

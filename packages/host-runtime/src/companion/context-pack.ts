@@ -44,8 +44,17 @@ export interface ContextPackBlock {
 	content: string;
 }
 
+/** Stable audit record for every block that is eligible for a model prompt. */
+export interface ContextManifestEntry {
+	order: number;
+	layer: ContextPackBlock["layer"];
+	source: string;
+	characters: number;
+}
+
 export interface ContextPack {
 	blocks: ContextPackBlock[];
+	manifest: ContextManifestEntry[];
 	charge: {
 		turns: number;
 		messages: number;
@@ -150,6 +159,12 @@ ${modules.join("\n")}`,
 
 		return {
 			blocks,
+			manifest: blocks.map((block, order) => ({
+				order,
+				layer: block.layer,
+				source: manifestSource(block.layer),
+				characters: block.content.length,
+			})),
 			charge: {
 				turns: 0,
 				messages: 0,
@@ -338,4 +353,15 @@ ${modules.join("\n")}`,
 			.all();
 		return { entries: rows.map((r) => r.text) };
 	}
+}
+
+function manifestSource(layer: ContextPackBlock["layer"]): string {
+	if (layer === "identity") return "character.identity_core";
+	if (layer === "canon") return "self_canon_or_canon_hub";
+	if (layer === "story") return "story_changes";
+	if (layer === "scene") return "scene_state";
+	if (layer === "roleplay") return "roleplay_ledger";
+	if (layer === "relationship") return "approved_relationship_memory";
+	if (layer === "conversation") return "adopted_active_branch";
+	return "host_real_context";
 }

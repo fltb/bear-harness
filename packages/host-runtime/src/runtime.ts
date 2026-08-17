@@ -23,6 +23,7 @@ import { CommissionService } from "./commissions/service.js";
 import { CharacterBehaviorService } from "./companion/character-behavior.js";
 import { CharacterLoader } from "./companion/character-loader.js";
 import { ContextPackCompiler } from "./companion/context-pack.js";
+import { ConversationRepository } from "./conversations/repository.js";
 import { FirstMeetingMachine } from "./companion/first-meeting.js";
 import { RoleplayService } from "./companion/roleplay-service.js";
 import { CompanionSupervisor } from "./companion/supervisor.js";
@@ -169,6 +170,41 @@ export class HostRuntime {
 		executorRouter.register("codex", new CodexAdapter(db.orm, eventBus));
 		const commissions = new CommissionService(db.orm, eventBus, artifactStore, executorRouter);
 		supervisor.setHostToolHandler((call) => {
+			if (call.tool === "host_search_conversation_history") {
+				const args = call.args as { query: string; limit?: number };
+				const conversation = db.orm
+					.select({ companionId: conversations.companionId })
+					.from(conversations)
+					.where(eq(conversations.id, call.conversationId))
+					.get();
+				if (!conversation)
+					return {
+						ok: false,
+						code: "conversation_not_found",
+						message: "Conversation not found.",
+					};
+				if (
+					!onboarding.getState(conversation.companionId).stateData.decisions
+						.conversation_history_read_enabled
+				)
+					return {
+						ok: false,
+						code: "conversation_history_read_disabled",
+						message: "Cross-conversation reading is disabled.",
+					};
+				const repository = new ConversationRepository(db.orm);
+				const hits = repository.search(conversation.companionId, args.query, {
+					excludeConversationId: call.conversationId,
+					limit: args.limit,
+				});
+				return {
+					ok: true,
+					message: hits.length
+						? "Conversation history found."
+						: "No matching conversation history.",
+					data: { hits },
+				};
+			}
 			if (call.tool === "host_search_canon") {
 				const args = call.args as { query: string; moduleId?: string };
 				const conversation = db.orm

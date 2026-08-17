@@ -199,10 +199,24 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.conversation.delete, async (_p) => {
 		const { id } = _p as { id: string };
 		const companionId = await getCompanionId(s);
+		s.supervisor.invalidateConversation(id);
 		if (!conversationRepository.delete(id, companionId))
 			throw { kind: "not_found", reason: "conversation_not_found" };
 		s.eventBus.publish("conversation.deleted", { conversationId: id });
 		return {};
+	});
+	dispatcher.registerHandler(RPC.conversation.search, async (_p) => {
+		const { query, includeArchived, limit } = _p as {
+			query: string;
+			includeArchived?: boolean;
+			limit?: number;
+		};
+		return {
+			hits: conversationRepository.search(await getCompanionId(s), query, {
+				includeArchived,
+				limit,
+			}),
+		};
 	});
 
 	// --- message ----------------------------------------------------------------
@@ -649,6 +663,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {
 			settings: {
 				relationshipMemoryEnabled: stateData.decisions.relationship_memory_enabled ?? false,
+				conversationHistoryReadEnabled:
+					stateData.decisions.conversation_history_read_enabled ?? false,
 			},
 		};
 	});
@@ -658,9 +674,18 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		if ("relationshipMemoryEnabled" in settings) {
 			s.onboarding.setRelationshipMemory(companionId, Boolean(settings.relationshipMemoryEnabled));
 		}
-		const stateData = s.onboarding.getState(companionId).stateData;
+		if ("conversationHistoryReadEnabled" in settings) {
+			s.onboarding.setConversationHistoryRead(
+				companionId,
+				Boolean(settings.conversationHistoryReadEnabled),
+			);
+		}
+		const nextStateData = s.onboarding.getState(companionId).stateData;
 		const nextSettings = {
-			relationshipMemoryEnabled: stateData.decisions.relationship_memory_enabled ?? false,
+			relationshipMemoryEnabled:
+				nextStateData.decisions.relationship_memory_enabled ?? false,
+			conversationHistoryReadEnabled:
+				nextStateData.decisions.conversation_history_read_enabled ?? false,
 		};
 		s.eventBus.publish("settings.changed", { settings: nextSettings });
 		return { settings: nextSettings };
@@ -753,6 +778,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			settings: {
 				relationshipMemoryEnabled:
 					onboarding.stateData.decisions.relationship_memory_enabled ?? false,
+				conversationHistoryReadEnabled:
+					onboarding.stateData.decisions.conversation_history_read_enabled ?? false,
 			},
 		};
 	});

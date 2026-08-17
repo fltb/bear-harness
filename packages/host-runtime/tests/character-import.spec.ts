@@ -57,6 +57,21 @@ describe("character package import", () => {
 			ok: true,
 			data: { character: { id: "imported-role" } },
 		});
+		await expect(runtime.dispatch("character.activate:v1", { characterId: "imported-role" })).resolves.toMatchObject({
+			ok: true,
+			data: { character: { id: "imported-role" } },
+		});
+		const conversation = await runtime.dispatch("conversation.create:v1", {
+			title: "Imported role lifecycle",
+		});
+		if (!conversation.ok) throw new Error(conversation.error.reason);
+		await expect(
+			runtime.dispatch("roleplay.trigger:v1", {
+				conversationId: conversation.data.id,
+				eventId: "first_meeting_remembered",
+				dedupeKey: "imported-role:remembered",
+			}),
+		).resolves.toMatchObject({ ok: true, data: { state: { values: { trust: 1 } } } });
 		await runtime.close();
 
 		const restarted = createHostRuntime({
@@ -72,6 +87,13 @@ describe("character package import", () => {
 				characters: expect.arrayContaining([expect.objectContaining({ id: "imported-role" })]),
 			},
 		});
+		await expect(restarted.dispatch("character.get:v1", {})).resolves.toMatchObject({
+			ok: true,
+			data: { character: { id: "imported-role" } },
+		});
+		await expect(
+			restarted.dispatch("roleplay.get:v1", { conversationId: conversation.data.id }),
+		).resolves.toMatchObject({ ok: true, data: { state: { values: { trust: 1 } } } });
 		await restarted.close();
 	});
 

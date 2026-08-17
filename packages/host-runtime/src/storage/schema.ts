@@ -697,6 +697,31 @@ export const activeCharacter = sqliteTable(
 	(table) => [check("active_character_check_26", sql`singleton = 1`)],
 );
 
+export const characterDrafts = sqliteTable("character_drafts", {
+	id: text().primaryKey(),
+	basePackageId: text("base_package_id"),
+	status: text({ enum: ["draft", "validating", "ready_to_publish", "published"] })
+		.default("draft")
+		.notNull(),
+	locale: text().default("zh-CN").notNull(),
+	currentRevision: integer("current_revision").default(1).notNull(),
+	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
+});
+
+export const characterDraftRevisions = sqliteTable(
+	"character_draft_revisions",
+	{
+		draftId: text("draft_id")
+			.notNull()
+			.references(() => characterDrafts.id, { onDelete: "cascade" }),
+		revision: integer().notNull(),
+		filesJson: text("files_json", { mode: "json" }).$type<Record<string, string>>().notNull(),
+		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.draftId, table.revision] })],
+);
+
 export const storyChangeProposals = sqliteTable(
 	"story_change_proposals",
 	{

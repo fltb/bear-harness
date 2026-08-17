@@ -103,7 +103,48 @@ describe("roleplay event projection", () => {
 		database.close();
 	});
 
-	it("rolls ordinary state back with an unadopted message version but retains unlocks", () => {
+	it("projects character-scoped story facts into every conversation", () => {
+		const { database, character, service } = fixture();
+		service.trigger({
+			character,
+			eventId: "damaged_log_opened",
+			conversationId: "conversation",
+			branchId: "main",
+			dedupeKey: "opened",
+		});
+		database.orm.insert(conversations).values({ id: "other", companionId: character.id }).run();
+		expect(service.project(character, "other").values).toMatchObject({
+			damaged_log_stage: 1,
+		});
+		database.close();
+	});
+
+	it("keeps conversation-scoped variables isolated while relationship variables persist", () => {
+		const { database, character, service } = fixture();
+		const conversationScopedCharacter = structuredClone(character);
+		const trust = conversationScopedCharacter.roleplay.variables.find(
+			(variable) => variable.id === "trust",
+		);
+		if (!trust) throw new Error("missing trust variable");
+		trust.scope = "conversation";
+		database.orm.insert(conversations).values({ id: "other", companionId: character.id }).run();
+
+		service.trigger({
+			character: conversationScopedCharacter,
+			eventId: "first_meeting_remembered",
+			conversationId: "conversation",
+			branchId: "main",
+			dedupeKey: "conversation-only",
+		});
+
+		expect(service.project(conversationScopedCharacter, "conversation").values).toMatchObject({
+			trust: 1,
+		});
+		expect(service.project(conversationScopedCharacter, "other").values).toMatchObject({ trust: 0 });
+		database.close();
+	});
+
+	it("retains committed character and relationship state when a message version is unadopted", () => {
 		const { database, character, service } = fixture();
 		service.trigger({
 			character,
@@ -115,7 +156,7 @@ describe("roleplay event projection", () => {
 		});
 		database.orm.update(messageVersions).set({ adopted: 0 }).run();
 		expect(service.project(character, "conversation")).toMatchObject({
-			values: { trust: 0 },
+			values: { trust: 1 },
 			unlocked: ["first_night_memory"],
 		});
 		database.close();

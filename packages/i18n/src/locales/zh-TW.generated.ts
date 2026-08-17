@@ -196,6 +196,8 @@ export const zhTW = {
 		"relationshipMemoryHint": "記住你明確確認的稱呼、偏好與共同經歷；不會把工作檔案內容寫進記憶。",
 		"relationshipMemoryEnabled": "關係記憶已開啟",
 		"relationshipMemoryDisabled": "關係記憶已關閉",
+		"conversationHistoryRead": "允許回看其他對話",
+		"conversationHistoryReadHint": "只在你明確要求時，角色才會檢索同一角色的歷史對話片段。",
 		"modelService": "模型服務",
 		"modelServiceHint": "選擇用於角色回覆的模型服務。金鑰只儲存在這臺裝置上。",
 		"modelPool": "可用模型",

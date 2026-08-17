@@ -151,7 +151,11 @@ describe("role-defined onboarding", () => {
 		await runtime.start();
 
 		await expect(data(runtime, "settings.get:v1", {})).resolves.toEqual({
-			settings: { relationshipMemoryEnabled: false },
+			settings: { relationshipMemoryEnabled: false, conversationHistoryReadEnabled: false },
+		});
+		await data(runtime, "settings.set:v1", { settings: { conversationHistoryReadEnabled: true } });
+		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
+			settings: { conversationHistoryReadEnabled: true },
 		});
 		await expect(
 			runtime.dispatch("settings.set:v1", { settings: { immersionLevel: "roleplay" } }),

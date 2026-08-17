@@ -127,6 +127,15 @@ export class FirstMeetingMachine {
 		);
 	}
 
+	setConversationHistoryRead(companionId: string, enabled: boolean): OnboardingStateRow {
+		const current = this.getState(companionId);
+		const flow = this.flow(companionId);
+		return this.persistTransition(companionId, flow, current.status === "complete" ? "complete" : (current.currentStepId ?? "complete"), {
+			...current.stateData,
+			decisions: { ...current.stateData.decisions, conversation_history_read_enabled: enabled },
+		});
+	}
+
 	private flow(companionId: string): CharacterOnboardingFlow {
 		const character = this.characterLoader.load(companionId);
 		if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
@@ -186,6 +195,13 @@ export class FirstMeetingMachine {
 					decisions.relationship_memory_enabled = answer === effect.enabled_when;
 				}
 			}
+		}
+		if (
+			parsedState.success &&
+			typeof parsedState.data.decisions.conversation_history_read_enabled === "boolean"
+		) {
+			decisions.conversation_history_read_enabled =
+				parsedState.data.decisions.conversation_history_read_enabled;
 		}
 
 		return {

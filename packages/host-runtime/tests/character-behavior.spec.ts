@@ -23,7 +23,7 @@ function createFixture(): {
 		CREATE TABLE companion_packages (id TEXT PRIMARY KEY);
 		CREATE TABLE companion_identity (id TEXT PRIMARY KEY, package_id TEXT NOT NULL);
 		CREATE TABLE conversations (id TEXT PRIMARY KEY, companion_id TEXT NOT NULL);
-		CREATE TABLE branches (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, adopted INTEGER NOT NULL DEFAULT 1);
+		CREATE TABLE branches (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, label TEXT NOT NULL DEFAULT 'main', adopted INTEGER NOT NULL DEFAULT 1);
 		CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, branch_id TEXT NOT NULL, role TEXT NOT NULL);
 		CREATE TABLE message_versions (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, adopted INTEGER NOT NULL DEFAULT 1);
 		CREATE TABLE roleplay_events (id TEXT PRIMARY KEY, companion_id TEXT NOT NULL, conversation_id TEXT, branch_id TEXT, source_message_version_id TEXT, event_id TEXT NOT NULL, effects_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
@@ -307,6 +307,23 @@ describe("CharacterBehaviorService", () => {
 				args: {},
 			}),
 		).toMatchObject({ data: { values: { damaged_log_stage: 3 }, unlocked: ["damaged_signal"] } });
+	});
+
+	it("rejects roleplay ledger writes from an explicit alternate branch", () => {
+		const fixture = createFixture();
+		fixtures.push(fixture);
+		fixture.db.prepare("UPDATE branches SET label = ? WHERE id = ?").run("alternate", "main");
+
+		expect(() =>
+			fixture.behavior.triggerUserRoleplayEvent({
+				conversationId: "conversation-1",
+				eventId: "damaged_log_opened",
+				dedupeKey: "alternate-branch",
+			}),
+		).toThrow(expect.objectContaining({ reason: "roleplay_event_branch_not_canonical" }));
+		expect(fixture.db.prepare("SELECT COUNT(*) AS count FROM roleplay_events").get()).toEqual({
+			count: 0,
+		});
 	});
 
 	it("rejects unallowlisted Host tools without mutating state", () => {
