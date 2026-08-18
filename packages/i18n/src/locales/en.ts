@@ -254,6 +254,15 @@ export const en = {
 		vectorDimensions: "Vector dimensions",
 		memoryVectorLocalNote:
 			"Uses the bundled offline embedding model (768 dimensions). The first use downloads the model.",
+		localModel: "Local model",
+		localModels: {
+			embeddinggemma: "embeddinggemma-300m (768 dims, bundled default)",
+			"bge-base-zh": "BGE base zh v1.5 (768 dims)",
+			"multilingual-e5": "multilingual-e5-base (768 dims)",
+			custom: "Custom download source",
+		},
+		localCustomPath: "Explicit download source: hf:user/repo/file.gguf or a local .gguf path",
+		localCustomPathPlaceholder: "hf:user/repo/file-Q8_0.gguf or /path/to/model.gguf",
 		downloadMirrorSection: "Model download mirror",
 		downloadMirrorLabel: "Mirror endpoint (leave empty for the default source)",
 		saveNetwork: "Save network and memory settings",

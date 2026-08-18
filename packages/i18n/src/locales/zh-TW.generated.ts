@@ -246,6 +246,15 @@ export const zhTW = {
 		"vectorModel": "向量模型",
 		"vectorDimensions": "向量維度",
 		"memoryVectorLocalNote": "使用內建離線向量模型（768 維），首次使用需下載模型。",
+		"localModel": "本地模型",
+		"localModels": {
+			"embeddinggemma": "embeddinggemma-300m（768 維，內建預設）",
+			"bge-base-zh": "BGE base zh v1.5（768 維）",
+			"multilingual-e5": "multilingual-e5-base（768 維）",
+			"custom": "自定義下載源"
+		},
+		"localCustomPath": "明確下載源：hf:user/repo/file.gguf 或本地 .gguf 路徑",
+		"localCustomPathPlaceholder": "hf:user/repo/file-Q8_0.gguf 或 /path/to/model.gguf",
 		"downloadMirrorSection": "模型下載映象",
 		"downloadMirrorLabel": "映象地址（留空使用預設源）",
 		"saveNetwork": "儲存網路與記憶設定",

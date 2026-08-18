@@ -12,6 +12,24 @@ function messageOf(value: unknown): string {
 
 const PROXY_MODES = ["direct", "auto", "manual"] as const;
 const VECTOR_PROVIDERS = ["none", "remote", "local"] as const;
+/** Local bundled/downloadable embedders with their explicit GGUF download sources. */
+const LOCAL_MODELS = [
+	{
+		id: "embeddinggemma",
+		source: "hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf",
+		dimensions: 768,
+	},
+	{
+		id: "bge-base-zh",
+		source: "hf:CompendiumLabs/bge-small-zh-v1.5-gguf/bge-small-zh-v1.5-Q8_0.gguf",
+		dimensions: 768,
+	},
+	{
+		id: "multilingual-e5",
+		source: "hf:intfloat/multilingual-e5-base-gguf/multilingual-e5-base-Q8_0.gguf",
+		dimensions: 768,
+	},
+] as const;
 const VECTOR_PRESETS = [
 	{ value: "BAAI/bge-m3", key: "bge-m3", dimensions: 1024 },
 	{ value: "Qwen/Qwen3-Embedding-8B", key: "qwen3-embedding", dimensions: 1024 },
@@ -37,6 +55,8 @@ export function NetworkAndMemorySettings() {
 	const [remoteApiKey, setRemoteApiKey] = createSignal("");
 	const [remoteModel, setRemoteModel] = createSignal("");
 	const [remoteDimensions, setRemoteDimensions] = createSignal(1024);
+	const [localModel, setLocalModel] = createSignal<string>("embeddinggemma");
+	const [localCustomPath, setLocalCustomPath] = createSignal("");
 	const [mirrorEndpoint, setMirrorEndpoint] = createSignal("");
 	const [saving, setSaving] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
@@ -52,6 +72,8 @@ export function NetworkAndMemorySettings() {
 				apiKey?: string;
 				model?: string;
 				dimensions?: number;
+				localModel?: "bge-base-zh" | "embeddinggemma" | "multilingual-e5" | "custom";
+				customPath?: string;
 			};
 			modelDownloadMirror?: { endpoint?: string };
 		};
@@ -68,6 +90,8 @@ export function NetworkAndMemorySettings() {
 			if (vec.apiKey) setRemoteApiKey(vec.apiKey);
 			if (vec.model) setRemoteModel(vec.model);
 			if (vec.dimensions) setRemoteDimensions(vec.dimensions);
+			if (vec.localModel) setLocalModel(vec.localModel);
+			if (vec.customPath) setLocalCustomPath(vec.customPath);
 		}
 		const mirror = snap.modelDownloadMirror?.endpoint;
 		if (mirror) setMirrorEndpoint(mirror);
@@ -90,7 +114,12 @@ export function NetworkAndMemorySettings() {
 					apiKey: vectorProvider() === "remote" ? remoteApiKey().trim() : undefined,
 					model: vectorProvider() === "remote" ? remoteModel().trim() : undefined,
 					dimensions: vectorProvider() === "remote" ? remoteDimensions() : undefined,
-				},
+					localModel: vectorProvider() === "local" ? localModel() : undefined,
+					customPath:
+						vectorProvider() === "local" && localModel() === "custom" && localCustomPath().trim()
+							? localCustomPath().trim()
+							: undefined,
+				} as never,
 				modelDownloadMirror: {
 					endpoint: mirrorEndpoint().trim() ? mirrorEndpoint().trim() : undefined,
 				},
@@ -244,6 +273,46 @@ export function NetworkAndMemorySettings() {
 					</TextField>
 				</Show>
 				<Show when={vectorProvider() === "local"}>
+					<Select
+						options={[...LOCAL_MODELS, { id: "custom", source: "", dimensions: 768 }]}
+						optionTextValue={(model) => t(`settings.localModels.${model.id}` as never)}
+						onChange={(model) => model && setLocalModel(model.id)}
+						value={(
+							LOCAL_MODELS as ReadonlyArray<{ id: string; source: string; dimensions: number }>
+						)
+							.concat({ id: "custom", source: "", dimensions: 768 })
+							.find((model) => model.id === localModel())}
+						placeholder={t("settings.localModel")}
+						aria-label={t("settings.localModel")}
+						itemComponent={(props) => (
+							<Select.Item item={props.item} class="select-item">
+								<Select.ItemLabel>
+									{t(`settings.localModels.${(props.item.rawValue as { id: string }).id}` as never)}
+								</Select.ItemLabel>
+							</Select.Item>
+						)}
+					>
+						<Select.Trigger class="select-trigger" aria-label={t("settings.localModel")}>
+							<Select.Value<{ id: string; source: string; dimensions: number }>>
+								{(state) =>
+									state.selectedOption()
+										? t(`settings.localModels.${state.selectedOption()!.id}` as never)
+										: ""
+								}
+							</Select.Value>
+						</Select.Trigger>
+					</Select>
+					<Show when={localModel() === "custom"}>
+						<TextField class="setting-field">
+							<TextField.Label>{t("settings.localCustomPath")}</TextField.Label>
+							<TextField.Input
+								type="text"
+								placeholder={t("settings.localCustomPathPlaceholder")}
+								value={localCustomPath()}
+								onInput={(event) => setLocalCustomPath(event.currentTarget.value)}
+							/>
+						</TextField>
+					</Show>
 					<p class="drawer-note">{t("settings.memoryVectorLocalNote")}</p>
 				</Show>
 			</Show>
