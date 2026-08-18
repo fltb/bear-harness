@@ -34,7 +34,6 @@ import type {
 	MemoryPresentationMetadata,
 	MemoryPresentationStore,
 } from "./memory/presentation-store.js";
-import type { MemoryService } from "./memory/service.js";
 import type { ModelRegistry } from "./models/registry.js";
 import type { ProviderCatalog } from "./providers/catalog.js";
 import type { AppDatabase } from "./storage/database.js";
@@ -55,7 +54,6 @@ export interface HostCompositionContext {
 	onboarding: FirstMeetingMachine;
 	turns: TurnPipeline;
 	models: ModelRegistry;
-	memory: MemoryService;
 	memoryBackend: MemoryBackend;
 	memoryPresentation: MemoryPresentationStore;
 	memoryScope: Pick<MemoryBankScope, "installationId" | "userId">;

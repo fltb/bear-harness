@@ -38,10 +38,8 @@ import { Dispatcher, type RpcResponse } from "./dispatcher.js";
 import { CodexAdapter } from "./executors/codex-adapter.js";
 import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
 import { ExecutorRouter } from "./executors/router.js";
-import { MemoryAutomation } from "./memory/automation.js";
 import type { MemoryBackend } from "./memory/backend.js";
 import { MemoryPresentationStore } from "./memory/presentation-store.js";
-import { MemoryService } from "./memory/service.js";
 import { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import { ModelRegistry } from "./models/registry.js";
 import { ProviderCatalog } from "./providers/catalog.js";
@@ -90,7 +88,6 @@ export class HostRuntime {
 	private readonly supervisor: CompanionSupervisor;
 	private readonly characterBehavior: CharacterBehaviorService;
 	private readonly characterLoader: CharacterLoader;
-	private readonly memoryAutomation: MemoryAutomation;
 	private readonly unsubscribeStoryAutomation: () => void;
 	private readonly composition: HostCompositionContext;
 	readonly memoryRuntime: TencentDbRuntime;
@@ -126,8 +123,6 @@ export class HostRuntime {
 			characterLoader,
 			roleplay,
 		);
-		const memory = new MemoryService(db.orm, eventBus);
-		const memoryAutomation = new MemoryAutomation(db.orm, eventBus, memory);
 		const memoryPresentation = new MemoryPresentationStore(db.orm);
 		const story = new StoryService(db.orm, eventBus);
 		const canon = new CanonHubService(db.orm, artifactStore, eventBus);
@@ -295,7 +290,6 @@ export class HostRuntime {
 		this.supervisor = supervisor;
 		this.characterBehavior = characterBehavior;
 		this.characterLoader = characterLoader;
-		this.memoryAutomation = memoryAutomation;
 		this.unsubscribeStoryAutomation = unsubscribeStoryAutomation;
 		this.composition = {
 			orm: db.orm,
@@ -303,7 +297,6 @@ export class HostRuntime {
 			onboarding,
 			turns,
 			models,
-			memory,
 			memoryBackend: memoryRuntime.backend,
 			memoryPresentation,
 			memoryScope,
@@ -369,7 +362,6 @@ export class HostRuntime {
 		this.closed = true;
 		await this.supervisor.stop();
 		this.composition.turns.dispose();
-		this.memoryAutomation.dispose();
 		this.unsubscribeStoryAutomation();
 		this.characterBehavior.dispose();
 		this.providers.dispose();

@@ -161,7 +161,6 @@ export type {
 	MemorySetImportanceRequest,
 	MemoryUpdateRequest,
 } from "./memory/backend.js";
-export { MemoryService } from "./memory/service.js";
 export type { ModelRecord } from "./models/registry.js";
 export { ModelRegistry } from "./models/registry.js";
 export type {
