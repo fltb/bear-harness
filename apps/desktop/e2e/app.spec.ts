@@ -1,33 +1,18 @@
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { productConfig } from "@bear-harness/product-config";
-import { _electron as electron } from "playwright";
 import { expect, test } from "playwright/test";
-import { assertProductWindow, provisionReplyModel } from "./helpers";
+import { assertProductWindow, launchSourceApp, provisionReplyModel } from "./helpers";
 
-const desktopRoot = fileURLToPath(new URL("..", import.meta.url));
+const _desktopRoot = fileURLToPath(new URL("..", import.meta.url));
 const require = createRequire(import.meta.url);
-const electronExecutable = require("electron") as string;
+const _electronExecutable = require("electron") as string;
 
 test("source build loads from file:// with official identity and isolated diagnostics", async () => {
-	const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), "bear-e2e-app-")));
-	const electronApp = await electron.launch({
-		executablePath: electronExecutable,
-		args: ["dist/main/index.js"],
-		cwd: desktopRoot,
-		env: {
-			...process.env,
-			HOME: tempRoot,
-			NODE_ENV: "test",
-			BEAR_E2E_SOURCE: "1",
-			BEAR_E2E_APP_DATA: tempRoot,
-			BEAR_DIAGNOSTICS_ROOT: tempRoot,
-		},
-	});
+	const { app: electronApp, tempRoot } = await launchSourceApp({});
 	try {
 		const setupWindow = await electronApp.firstWindow();
 		await expect(

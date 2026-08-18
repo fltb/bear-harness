@@ -23,6 +23,7 @@ import {
 	registerWindowHooks,
 	type WindowRegistration,
 } from "./diagnostics/electron.js";
+import { e2eCredentialVault } from "./e2e-vault.js";
 import { electronCredentialVault } from "./electron-credential-vault.js";
 import { wireElectronIpcHandlers } from "./ipc-router.js";
 
@@ -30,6 +31,18 @@ const DEV_RENDERER_URL = "http://127.0.0.1:3100";
 const DEV_RENDERER_URL_WITH_SLASH = `${DEV_RENDERER_URL}/`;
 const isSourceE2E =
 	!app.isPackaged && process.env.NODE_ENV === "test" && process.env.BEAR_E2E_SOURCE === "1";
+
+// Unpackaged runs (dev, source e2e) never touch the real macOS login
+// keychain: Chromium would pop an authorization dialog for its own safe
+// storage (cookies, HTTP auth), blocking startup until timeout. The mock
+// keychain is Chromium's official CI/test flag for exactly this, and the GPU
+// process is another first-boot blocker that serializes fast repeated
+// launches (it hangs the app-ready handshake Playwright waits on).
+if (!app.isPackaged) {
+	app.commandLine.appendSwitch("use-mock-keychain");
+	app.commandLine.appendSwitch("disable-gpu");
+	app.disableHardwareAcceleration();
+}
 
 const electronApp: {
 	on(eventName: string, listener: (...args: unknown[]) => void): unknown;
@@ -55,6 +68,28 @@ try {
 }
 app.setPath("userData", userData);
 app.setPath("sessionData", join(userData, "Chromium"));
+
+// A second instance would share this userData directory and the same memory
+// bank namespace, racing writes (SQLite busy errors, memory last-write-wins).
+// Keep one window per user data dir: a second launch quits and focuses the
+// existing window via the second-instance event.
+// A second instance would share this userData directory and the same memory
+// bank namespace, racing writes (SQLite busy errors, memory last-write-wins).
+// Keep one window per install: a second launch quits and focuses the existing
+// window via the second-instance event. Only enforced in packaged builds — an
+// unpackaged dev/e2e run needs parallel instances (distinct BEAR_E2E_APP_DATA
+// roots) and macOS treats all unpackaged Electron apps as one identity.
+if (app.isPackaged && !app.requestSingleInstanceLock()) {
+	app.exit(0);
+} else if (app.isPackaged) {
+	app.on("second-instance", () => {
+		const window = BrowserWindow.getAllWindows()[0];
+		if (window) {
+			if (window.isMinimized()) window.restore();
+			window.focus();
+		}
+	});
+}
 
 const diagnosticsRoot =
 	isSourceE2E && process.env.BEAR_DIAGNOSTICS_ROOT && isAbsolute(process.env.BEAR_DIAGNOSTICS_ROOT)
@@ -122,7 +157,7 @@ async function initializeHost(): Promise<boolean> {
 			dataDir: userData,
 			characterRoot: characterRoot(),
 			productConfig,
-			credentialVault: electronCredentialVault,
+			credentialVault: isSourceE2E ? e2eCredentialVault : electronCredentialVault,
 			protocolViolationMode: app.isPackaged ? "isolate" : "throw",
 		});
 		wireElectronIpcHandlers(runtime.dispatcher, windowRegistry);

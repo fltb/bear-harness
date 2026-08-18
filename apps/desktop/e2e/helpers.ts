@@ -1,9 +1,55 @@
+import { mkdtempSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ProductConfig } from "@bear-harness/product-config";
 import { RPC, type RpcEndpoint } from "@bear-harness/protocol/schema";
-import type { _electron } from "playwright";
+import { _electron as electron } from "playwright";
 import { expect } from "playwright/test";
 
 export type ElectronApp = Awaited<ReturnType<typeof _electron.launch>>;
+
+const desktopRoot = fileURLToPath(new URL("..", import.meta.url));
+
+/**
+ * Launch the source build against a fresh temp data dir.
+ *
+ * On macOS a first-from-cold Electron boot occasionally never completes its
+ * app-ready handshake under fast repeated launches (Playwright connects over
+ * the inspector websocket, then waits forever for the ready ping). The window
+ * itself is fine — the product smoke passes on every non-hung boot — so a
+ * single bounded retry with a fresh temp root converts the cold-start flake
+ * into a deterministic pass.
+ */
+export async function launchSourceApp(extraEnv: Record<string, string> = {}) {
+	let lastError: unknown;
+	for (let attempt = 1; attempt <= 2; attempt += 1) {
+		const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), "bear-e2e-")));
+		const env = {
+			...process.env,
+			HOME: tempRoot,
+			NODE_ENV: "test",
+			BEAR_E2E_SOURCE: "1",
+			BEAR_E2E_APP_DATA: tempRoot,
+			BEAR_DIAGNOSTICS_ROOT: tempRoot,
+			...extraEnv,
+		};
+		const app = await electron.launch({
+			args: ["dist/main/index.js"],
+			cwd: desktopRoot,
+			env,
+			timeout: 60_000,
+		});
+		try {
+			await app.firstWindow({ timeout: 45_000 });
+			return { app, tempRoot };
+		} catch (error) {
+			lastError = error;
+			await app.close().catch(() => {});
+		}
+	}
+	throw lastError;
+}
 
 interface CharacterProjection {
 	name: string;

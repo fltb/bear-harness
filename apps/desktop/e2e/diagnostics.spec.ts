@@ -1,11 +1,8 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { _electron as electron } from "playwright";
 import { expect, test } from "playwright/test";
+import { launchSourceApp } from "./helpers";
 
-const desktopRoot = fileURLToPath(new URL("..", import.meta.url));
 const SENTINEL = "SENTINEL-对话内容-Prompt-路径-栈帧-请勿落盘";
 
 function readAllJsonl(root: string): string {
@@ -23,19 +20,7 @@ function readAllJsonl(root: string): string {
 }
 
 test("renderer faults are recorded as metadata only; crash reports process_gone", async () => {
-	const tempRoot = mkdtempSync(join(tmpdir(), "bear-e2e-diag-"));
-	const electronApp = await electron.launch({
-		args: ["dist/main/index.js"],
-		cwd: desktopRoot,
-		env: {
-			...process.env,
-			HOME: tempRoot,
-			NODE_ENV: "test",
-			BEAR_E2E_SOURCE: "1",
-			BEAR_E2E_APP_DATA: tempRoot,
-			BEAR_DIAGNOSTICS_ROOT: tempRoot,
-		},
-	});
+	const { app: electronApp, tempRoot } = await launchSourceApp({});
 	try {
 		const window = await electronApp.firstWindow();
 		await window.waitForLoadState("domcontentloaded");
