@@ -66,7 +66,11 @@ const scopeFor = (companionId: string): MemoryBankScope => ({
 const runtimes: TencentDbRuntime[] = [];
 const roots: string[] = [];
 
-function createRuntime(root: string, companionId = "role-a"): TencentDbRuntime {
+function createRuntime(
+	root: string,
+	companionId = "role-a",
+	memoryConfig?: Parameters<typeof TencentDbRuntime.prototype.constructor>[0]["memoryConfig"],
+): TencentDbRuntime {
 	const runtime = new TencentDbRuntime({
 		dataDir: root,
 		providers: fakeProviders,
@@ -75,6 +79,7 @@ function createRuntime(root: string, companionId = "role-a"): TencentDbRuntime {
 		installationId: "test-installation",
 		userId: "test-user",
 		logger,
+		memoryConfig,
 	});
 	runtimes.push(runtime);
 	return runtime;
@@ -345,5 +350,69 @@ describe("TencentDbRuntime", () => {
 			store.getCapabilities = originalGetCapabilities;
 			store.queryL1Records = originalQueryL1Records;
 		}
+	});
+
+	describe("full-power configuration and memoryConfig injection", () => {
+		function coreConfig(runtime: TencentDbRuntime) {
+			return (runtime as unknown as { core: { cfg: unknown } }).core.cfg as {
+				capture: { enabled: boolean; l0l1RetentionDays: number };
+				extraction: { enabled: boolean; enableDedup: boolean };
+				persona: { triggerEveryN: number };
+				pipeline: { everyNConversations: number; enableWarmup: boolean };
+				recall: { enabled: boolean; strategy: string; timeoutMs: number };
+				embedding: { enabled: boolean; provider: string };
+				bm25: { enabled: boolean; language: string };
+				memoryCleanup: { enabled: boolean };
+				report: { enabled: boolean };
+				offload: { enabled: boolean };
+			};
+		}
+
+		it("enables the full TdaiCore pipeline by default", () => {
+			const runtime = createRuntime(createRoot());
+			const cfg = coreConfig(runtime);
+			expect(cfg.capture.enabled).toBe(true);
+			expect(cfg.capture.l0l1RetentionDays).toBe(30);
+			expect(cfg.extraction.enabled).toBe(true);
+			expect(cfg.extraction.enableDedup).toBe(true);
+			expect(cfg.persona.triggerEveryN).toBe(50);
+			expect(cfg.pipeline.everyNConversations).toBe(5);
+			expect(cfg.pipeline.enableWarmup).toBe(true);
+			expect(cfg.recall.enabled).toBe(true);
+			expect(cfg.recall.strategy).toBe("hybrid");
+			expect(cfg.recall.timeoutMs).toBe(5000);
+			expect(cfg.embedding.enabled).toBe(true);
+			expect(cfg.bm25.enabled).toBe(true);
+			expect(cfg.bm25.language).toBe("zh");
+			expect(cfg.memoryCleanup.enabled).toBe(true);
+			expect(cfg.report.enabled).toBe(true);
+			expect(cfg.offload.enabled).toBe(true);
+		});
+
+		it("merges memoryConfig overrides onto the defaults", () => {
+			const runtime = createRuntime(createRoot(), "role-b", {
+				recall: { strategy: "keyword", timeoutMs: 1000 },
+				extraction: { enabled: false },
+				bm25: { language: "en" },
+			});
+			const cfg = coreConfig(runtime);
+			expect(cfg.recall.strategy).toBe("keyword");
+			expect(cfg.recall.timeoutMs).toBe(1000);
+			expect(cfg.extraction.enabled).toBe(false);
+			expect(cfg.bm25.language).toBe("en");
+			// untouched defaults survive the merge
+			expect(cfg.capture.enabled).toBe(true);
+			expect(cfg.pipeline.everyNConversations).toBe(5);
+		});
+
+		it("keeps vector search disabled until an embedding provider is configured", async () => {
+			const runtime = createRuntime(createRoot());
+			await runtime.start();
+			const store = runtimeStore(runtime);
+			expect(store.getCapabilities().vectorSearch).toBe(false);
+			const native = store.getCapabilities().nativeHybridSearch;
+			// hybrid recall without vectors still has the FTS/BM25 path available
+			expect(native || store.getCapabilities().ftsSearch).toBe(true);
+		});
 	});
 });

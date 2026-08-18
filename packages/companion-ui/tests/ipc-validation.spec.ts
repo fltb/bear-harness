@@ -7,7 +7,6 @@ import {
 	ConversationSummary,
 	MemoryCaptureResponse,
 	MemoryEntry,
-	MemoryInvalidateRequest,
 	Message,
 	MessageVersion,
 	OnboardingResponse,
@@ -28,7 +27,6 @@ const isCommission = guard(Commission);
 const isConversationSummary = guard(ConversationSummary);
 const isMemoryCaptureResponse = guard(MemoryCaptureResponse);
 const isMemoryEntry = guard(MemoryEntry);
-const isMemoryInvalidateRequest = guard(MemoryInvalidateRequest);
 const isMessage = guard(Message);
 const isMessageVersion = guard(MessageVersion);
 const isOnboardingData = guard(OnboardingResponse);
@@ -66,22 +64,14 @@ const memoryEntry = {
 	kind: "fact",
 	scope: "relationship",
 	text: "Memory",
-	pinned: false,
 	createdAt: timestamp,
 	updatedAt: timestamp,
 	importance: 0.8,
-	status: "active",
-	createdBy: "user_capture",
-	sourceEntryId: "entry-1",
 };
 const memoryCaptureResponse = {
 	memoryId: "memory-1",
 	sourceEntryId: "entry-1",
 	createdBy: "user_capture",
-};
-const memoryInvalidateRequest = {
-	memoryId: "memory-1",
-	replacementMemoryId: "replacement-1",
 };
 const provider = {
 	id: "provider-1",
@@ -186,19 +176,13 @@ describe("host projection validation", () => {
 			"kind",
 			"scope",
 			"text",
-			"pinned",
 			"createdAt",
 			"updatedAt",
 			"importance",
-			"status",
-			"createdBy",
 		]);
 		expect(isMemoryEntry({ ...memoryEntry, id: "m".repeat(129) })).toBe(false);
 		expect(isMemoryEntry({ ...memoryEntry, scope: "global" })).toBe(false);
 		expect(isMemoryEntry({ ...memoryEntry, importance: Number.NaN })).toBe(false);
-		expect(isMemoryEntry({ ...memoryEntry, status: "pending" })).toBe(false);
-		expect(isMemoryEntry({ ...memoryEntry, createdBy: "system" })).toBe(false);
-		expect(isMemoryEntry({ ...memoryEntry, sourceEntryId: null })).toBe(false);
 		expect(isMemoryCaptureResponse(memoryCaptureResponse)).toBe(true);
 		expect(isMemoryCaptureResponse({ ...memoryCaptureResponse, createdBy: "assistant_tool" })).toBe(
 			true,
@@ -215,24 +199,6 @@ describe("host projection validation", () => {
 			isMemoryCaptureResponse({ ...memoryCaptureResponse, sourceEntryId: "e".repeat(129) }),
 		).toBe(false);
 		expect(isMemoryCaptureResponse({ ...memoryCaptureResponse, createdBy: "system" })).toBe(false);
-		expect(isMemoryInvalidateRequest(memoryInvalidateRequest)).toBe(true);
-		expect(isMemoryInvalidateRequest({ memoryId: "memory-1" })).toBe(true);
-		expectRequiredFields(isMemoryInvalidateRequest, memoryInvalidateRequest, ["memoryId"]);
-		expect(
-			isMemoryInvalidateRequest({ ...memoryInvalidateRequest, memoryId: "m".repeat(129) }),
-		).toBe(false);
-		expect(
-			isMemoryInvalidateRequest({
-				...memoryInvalidateRequest,
-				replacementMemoryId: "r".repeat(129),
-			}),
-		).toBe(false);
-		expect(isMemoryInvalidateRequest({ ...memoryInvalidateRequest, replacementMemoryId: "" })).toBe(
-			false,
-		);
-		expect(
-			isMemoryInvalidateRequest({ ...memoryInvalidateRequest, replacementMemoryId: null }),
-		).toBe(false);
 		expectRequiredFields(isProviderInfo, provider, [
 			"id",
 			"name",

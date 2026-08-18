@@ -222,8 +222,6 @@ describe("store RPC contract", () => {
 			await store.memory.capture("entry-1");
 			await store.memory.search("query", "relationship");
 			await store.memory.list({ scope: "relationship" });
-			await store.memory.pin("memory-1", true);
-			await store.memory.invalidate("memory-1", "memory-2");
 			await store.memory.edit("memory-1", "new memory");
 			await store.memory.forget("memory-1");
 
@@ -296,14 +294,6 @@ describe("store RPC contract", () => {
 				scope: "relationship",
 			});
 			expect(client.memory.list).toHaveBeenCalledWith({ scope: "relationship" });
-			expect(client.memory.pin).toHaveBeenCalledWith({
-				entryId: "memory-1",
-				pinned: true,
-			});
-			expect(client.memory.invalidate).toHaveBeenCalledWith({
-				memoryId: "memory-1",
-				replacementMemoryId: "memory-2",
-			});
 			expect(client.memory.forget).toHaveBeenCalledWith({ entryId: "memory-1" });
 			expect(client.memory.edit).toHaveBeenCalledWith({
 				entryId: "memory-1",

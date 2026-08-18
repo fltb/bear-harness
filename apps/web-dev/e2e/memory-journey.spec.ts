@@ -184,15 +184,10 @@ test("direct memory capture, scoped context, and user management stay determinis
 	await expect.poll(() => entries.getByText(replacementText, { exact: true }).count()).toBe(1);
 	const revisedEntry = entries.getByRole("listitem").filter({ hasText: replacementText });
 	await expect(revisedEntry).toBeVisible();
-	await revisedEntry.getByRole("button", { name: zhCN.memory.invalidate }).click();
-	await expect(entries.getByRole("status")).toBeVisible();
-	await expect(entries.getByRole("status")).toHaveText(zhCN.memory.invalidated);
+	await revisedEntry.getByRole("button", { name: zhCN.memory.forget }).click();
 	await expect
 		.poll(async () => (await memoryEntries()).find((entry) => entry.text === replacementText))
-		.toMatchObject({
-			text: replacementText,
-			status: "invalidated",
-		});
+		.toBeUndefined();
 	await page
 		.getByRole("dialog", { name: zhCN.backstage.title })
 		.getByRole("button", {

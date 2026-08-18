@@ -14,8 +14,6 @@ export type {
 	MemoryCaptureResponse,
 	MemoryEditRequest,
 	MemoryForgetRequest,
-	MemoryInvalidateRequest,
-	MemoryPinRequest,
 } from "@bear-harness/protocol";
 export { type CompanionClient, createCompanionClient, type HostTransport } from "./client.js";
 export { unwrap } from "./unwrap.js";

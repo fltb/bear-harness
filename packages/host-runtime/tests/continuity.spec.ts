@@ -146,16 +146,14 @@ describe("automatic continuity", () => {
 				{
 					id: captured.memoryId,
 					text: "这条普通消息不会自动成为记忆",
-					createdBy: "user_capture",
-					sourceEntryId: sourceEntryId,
 				},
 			],
 		});
 		await runtime.close();
 	});
 
-	it("projects replacement-backed direct memories as invalidated in memory.list", async () => {
-		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-invalidation-"));
+	it("removes forgotten memories from memory.list permanently", async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-forget-"));
 		roots.push(dataDir);
 		let runtime = makeRuntimeAt(dataDir);
 		await runtime.start();
@@ -166,13 +164,9 @@ describe("automatic continuity", () => {
 		const originalSourceEntryId = appendCompletedPiTurn(
 			dataDir,
 			conversation.id,
-			"原始记忆会被替换",
+			"原始记忆会被删除",
 		);
-		const replacementSourceEntryId = appendCompletedPiTurn(
-			dataDir,
-			conversation.id,
-			"替换后的记忆",
-		);
+		const keptSourceEntryId = appendCompletedPiTurn(dataDir, conversation.id, "保留的记忆");
 		runtime = makeRuntimeAt(dataDir);
 		await runtime.start();
 
@@ -180,26 +174,23 @@ describe("automatic continuity", () => {
 			conversationId: conversation.id,
 			entryId: originalSourceEntryId,
 		})) as { memoryId: string };
-		const replacement = (await data(runtime, "memory.capture:v1", {
+		await data(runtime, "memory.capture:v1", {
 			conversationId: conversation.id,
-			entryId: replacementSourceEntryId,
-		})) as { memoryId: string };
-
-		await data(runtime, "memory.invalidate:v1", {
-			memoryId: original.memoryId,
-			replacementMemoryId: replacement.memoryId,
+			entryId: keptSourceEntryId,
 		});
 
+		await data(runtime, "memory.forget:v1", { entryId: original.memoryId });
+
 		await expect(data(runtime, "memory.list:v1", {})).resolves.toMatchObject({
-			entries: expect.arrayContaining([
-				expect.objectContaining({ id: original.memoryId, status: "invalidated" }),
-				expect.objectContaining({ id: replacement.memoryId, status: "active" }),
-			]),
+			entries: [expect.objectContaining({ text: "保留的记忆" })],
+		});
+		await expect(data(runtime, "memory.list:v1", {})).resolves.not.toMatchObject({
+			entries: expect.arrayContaining([expect.objectContaining({ id: original.memoryId })]),
 		});
 		await runtime.close();
 	});
 
-	it("restores the relationship-memory setting and Host presentation metadata after restart", async () => {
+	it("restores the relationship-memory setting and captured memories after restart", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-restart-"));
 		roots.push(dataDir);
 		const first = makeRuntimeAt(dataDir);
@@ -230,15 +221,11 @@ describe("automatic continuity", () => {
 
 		const restored = makeRuntimeAt(dataDir);
 		await restored.start();
-		// The restarted Host joins its persisted presentation row to the backend
-		// record by ID; these are not assertions about provider-owned metadata.
 		await expect(data(restored, "memory.list:v1", {})).resolves.toMatchObject({
 			entries: [
 				{
 					id: captured.memoryId,
 					text: "我喜欢重启后仍然连续的记忆",
-					createdBy: "user_capture",
-					sourceEntryId: sourceEntryId,
 				},
 			],
 		});

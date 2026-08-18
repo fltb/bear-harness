@@ -17,6 +17,7 @@ describe("TurnPipeline conversation state contract", () => {
 	let events: EventBus;
 	let commands: Array<Record<string, unknown>>;
 	let running: boolean;
+	let supervisor: CompanionSupervisor;
 	let pipeline: TurnPipeline;
 
 	beforeEach(() => {
@@ -39,7 +40,7 @@ describe("TurnPipeline conversation state contract", () => {
 		events = new EventBus(database.orm);
 		commands = [];
 		running = true;
-		const supervisor = {
+		supervisor = {
 			get isRunning() {
 				return running;
 			},
@@ -482,5 +483,56 @@ describe("TurnPipeline conversation state contract", () => {
 		await expect(
 			pipeline.regenerate("conversation", "definitely-not-a-pi-id"),
 		).rejects.toMatchObject({ kind: "not_found", reason: "message_not_found" });
+	});
+
+	describe("turn committed sink", () => {
+		it("feeds the settled turn to the memory capture sink with the user text", async () => {
+			const committed: Array<{
+				conversationId: string;
+				userText: string;
+				assistantText: string;
+			}> = [];
+			const sinkPipeline = new TurnPipeline(database.orm, supervisor, events, undefined, {
+				onTurnCommitted: (turn) => committed.push(turn),
+			});
+			try {
+				await sinkPipeline.sendUserMessage("conversation", "记住我的话");
+				events.publish("message_end", {
+					conversationId: "conversation",
+					text: "好的，我记住了。",
+				});
+				expect(committed).toHaveLength(1);
+				expect(committed[0]).toMatchObject({
+					conversationId: "conversation",
+					userText: "记住我的话",
+					assistantText: "好的，我记住了。",
+				});
+			} finally {
+				sinkPipeline.dispose();
+			}
+		});
+
+		it("never blocks the reply when the sink throws", async () => {
+			const sinkPipeline = new TurnPipeline(database.orm, supervisor, events, undefined, {
+				onTurnCommitted: () => {
+					throw new Error("memory capture exploded");
+				},
+			});
+			try {
+				await sinkPipeline.sendUserMessage("conversation", "触发异常");
+				events.publish("message_end", {
+					conversationId: "conversation",
+					text: "仍然落库",
+				});
+				const version = database.connection
+					.prepare(
+						"SELECT content FROM message_versions v JOIN messages m ON m.id = v.message_id WHERE m.role = 'assistant'",
+					)
+					.get() as { content: string };
+				expect(version.content).toBe("仍然落库");
+			} finally {
+				sinkPipeline.dispose();
+			}
+		});
 	});
 });

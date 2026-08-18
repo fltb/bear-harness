@@ -168,9 +168,7 @@ export interface MemoryApi {
 	search(query: string, scope?: MemoryScope): Promise<MemoryEntry[]>;
 	list(params?: MemoryListRequest): Promise<MemoryEntry[]>;
 	capture(entryId: string): Promise<MemoryCaptureResponse>;
-	pin(entryId: string, pinned: boolean): Promise<void>;
 	forget(entryId: string): Promise<void>;
-	invalidate(entryId: string, replacementEntryId?: string): Promise<void>;
 	edit(entryId: string, newText: string): Promise<void>;
 }
 
@@ -1074,21 +1072,8 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				throw e;
 			}
 		},
-		pin: async (entryId, pinned) => {
-			await invoke(client, () => client.memory.pin({ entryId, pinned }));
-			debouncedRefetch(refreshMemoryEntries);
-		},
 		forget: async (entryId) => {
 			await invoke(client, () => client.memory.forget({ entryId }));
-			debouncedRefetch(refreshMemoryEntries);
-		},
-		invalidate: async (entryId, replacementEntryId) => {
-			await invoke(client, () =>
-				client.memory.invalidate({
-					memoryId: entryId,
-					replacementMemoryId: replacementEntryId,
-				}),
-			);
 			debouncedRefetch(refreshMemoryEntries);
 		},
 		edit: async (entryId, newText) => {

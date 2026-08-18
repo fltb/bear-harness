@@ -59,15 +59,28 @@ export interface TurnPipelineSessionResolver {
 	get(conversationId: string): TurnPipelineSessionAppender | undefined;
 }
 
+/** Settled-turn callback fed to the TdaiCore capture pipeline. */
+export interface TurnCommittedSink {
+	onTurnCommitted?: (turn: {
+		conversationId: string;
+		userText: string;
+		assistantText: string;
+		startedAt?: number;
+	}) => void;
+}
+
 export class TurnPipeline {
 	private db: AppDatabase;
 	private supervisor: CompanionSupervisor;
 	private eventBus: EventBus;
 	private readonly sessionResolver?: TurnPipelineSessionResolver;
+	private readonly onTurnCommitted?: TurnCommittedSink["onTurnCommitted"];
 	private activeTurns = new Map<
 		string,
 		{
 			userMessageId: string;
+			userText?: string;
+			startedAt?: number;
 			assistantMessageId?: string;
 			assistantVersionId?: string;
 		}
@@ -79,11 +92,13 @@ export class TurnPipeline {
 		supervisor: CompanionSupervisor,
 		eventBus: EventBus,
 		sessionResolver?: TurnPipelineSessionResolver,
+		sink?: TurnCommittedSink,
 	) {
 		this.db = db;
 		this.supervisor = supervisor;
 		this.eventBus = eventBus;
 		this.sessionResolver = sessionResolver;
+		this.onTurnCommitted = sink?.onTurnCommitted;
 		this.unsubscribe = eventBus.subscribe((event) => {
 			if (event.kind === "message_end") this.commitAssistantReply(event.payload);
 		});
@@ -139,7 +154,11 @@ export class TurnPipeline {
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
 
-		this.activeTurns.set(conversationId, { userMessageId: messageId });
+		this.activeTurns.set(conversationId, {
+			userMessageId: messageId,
+			userText: text,
+			startedAt: Date.now(),
+		});
 		this.eventBus.publish("message.user_sent", { conversationId, messageId, versionId, text });
 
 		// Send to the Companion runtime (fire-and-forget via postMessage);
@@ -722,6 +741,12 @@ export class TurnPipeline {
 			messageId: assistantMessageId,
 			versionId: assistantVersionId,
 			failed,
+		});
+		this.onTurnCommitted?.({
+			conversationId,
+			userText: active.userText ?? "",
+			assistantText: text,
+			startedAt: active.startedAt,
 		});
 	}
 }

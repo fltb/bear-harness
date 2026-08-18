@@ -21,7 +21,6 @@
 import { and, asc, desc, eq, or } from "drizzle-orm";
 import type { CanonHubService } from "../canon/service.js";
 import type { MemoryBackend, MemoryBankScope, MemoryHit } from "../memory/backend.js";
-import type { MemoryPresentationStore } from "../memory/presentation-store.js";
 import type { AppDatabase } from "../storage/database.js";
 import {
 	branches,
@@ -53,6 +52,7 @@ export interface ContextPackBlock {
 		| "scene"
 		| "relationship"
 		| "roleplay"
+		| "persona"
 		| "conversation"
 		| "real_context";
 	content: string;
@@ -85,8 +85,11 @@ export interface ContextPack {
 export interface ContextPackMemorySource {
 	readonly backend: MemoryBackend;
 	readonly scope: Pick<MemoryBankScope, "installationId" | "userId">;
-	/** Host projection metadata used to suppress invalidated backend records. */
-	readonly presentation: MemoryPresentationStore;
+	/**
+	 * TdaiCore stable recall context (persona + scene navigation), injected as
+	 * a low-priority block when the memory switch is on.
+	 */
+	readonly systemContext?: (query: string) => Promise<string | undefined>;
 }
 
 export class ContextPackCompiler {
@@ -115,6 +118,7 @@ export class ContextPackCompiler {
 			includeConversationHistory?: boolean;
 			canonQuery?: string;
 			relationshipMemoryHits?: readonly MemoryHit[];
+			extraBlocks?: readonly ContextPackBlock[];
 		},
 	): ContextPack {
 		const blocks: ContextPackBlock[] = [];
@@ -199,6 +203,8 @@ ${modules.join("\n")}`,
 			}
 		}
 
+		if (options?.extraBlocks) blocks.push(...options.extraBlocks);
+
 		// Enforce a deterministic product budget. Stable identity and current state
 		// are retained; lower-priority retrieval and old transcript content lose tail
 		// content first and are marked in the manifest.
@@ -279,19 +285,21 @@ ${modules.join("\n")}`,
 			query: options?.memoryQuery ?? options?.canonQuery ?? "",
 			limit: 12,
 		});
-		const presentations = this.memorySource.presentation.list(
-			scope,
-			hits.map(({ record }) => record.id),
-		);
-		const invalidatedIds = new Set(
-			presentations
-				.filter((metadata) => metadata.invalidatedAt !== undefined)
-				.map((metadata) => metadata.backendMemoryId),
-		);
-		const eligibleHits = hits.filter(({ record }) => !invalidatedIds.has(record.id));
+		const extraBlocks: ContextPackBlock[] = [];
+		const systemContext = this.memorySource.systemContext;
+		if (systemContext) {
+			const content = await systemContext(options?.memoryQuery ?? options?.canonQuery ?? "");
+			if (content && content.trim().length > 0) {
+				extraBlocks.push({
+					layer: "persona",
+					content: `[记忆画像与场景导航]\n${content.trim()}`,
+				});
+			}
+		}
 		return this.compile(conversationId, {
 			...options,
-			relationshipMemoryHits: eligibleHits,
+			relationshipMemoryHits: hits,
+			extraBlocks,
 		});
 	}
 
@@ -544,5 +552,6 @@ function manifestSource(layer: ContextPackBlock["layer"]): string {
 	if (layer === "roleplay") return "roleplay_ledger";
 	if (layer === "relationship") return "approved_relationship_memory";
 	if (layer === "conversation") return "adopted_active_branch";
+	if (layer === "persona") return "tdai_persona_scene";
 	return "host_real_context";
 }

@@ -30,10 +30,6 @@ import type { TurnPipeline } from "./companion/turn-pipeline.js";
 import type { ConversationRepository } from "./conversations/repository.js";
 import type { Dispatcher } from "./dispatcher.js";
 import type { MemoryBackend, MemoryBankScope, MemoryRecord } from "./memory/backend.js";
-import type {
-	MemoryPresentationMetadata,
-	MemoryPresentationStore,
-} from "./memory/presentation-store.js";
 import type { ModelRegistry } from "./models/registry.js";
 import type { ProviderCatalog } from "./providers/catalog.js";
 import type { AppDatabase } from "./storage/database.js";
@@ -55,7 +51,6 @@ export interface HostCompositionContext {
 	turns: TurnPipeline;
 	models: ModelRegistry;
 	memoryBackend: MemoryBackend;
-	memoryPresentation: MemoryPresentationStore;
 	memoryScope: Pick<MemoryBankScope, "installationId" | "userId">;
 	commissions: CommissionService;
 	artifacts: ArtifactStore;
@@ -373,18 +368,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const params = _p as { conversationId: string; entryId: string };
 		return rememberConversationEntry(s, params.conversationId, params.entryId, "user_capture");
 	});
-	dispatcher.registerHandler(RPC.memory.invalidate, async (_p) => {
-		const params = _p as { memoryId: string; replacementMemoryId?: string };
-		const scope = await memoryBackendScope(s);
-		await s.memoryBackend.open({ scope });
-		await s.memoryBackend.invalidate({
-			scope,
-			memoryId: params.memoryId,
-			replacementMemoryId: params.replacementMemoryId,
-		});
-		s.memoryPresentation.recordReplacement(scope, params.memoryId, params.replacementMemoryId);
-		return {};
-	});
 
 	// --- memory ------------------------------------------------------------------
 	dispatcher.registerHandler(RPC.memory.search, async (_p): Promise<MemorySearchResponse> => {
@@ -396,10 +379,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			query,
 			limit: 50,
 		});
-		const records = hits.map(({ record }) => record);
-		const presentations = presentationByMemoryId(s.memoryPresentation, scope, records);
 		return {
-			entries: records.map((record) => projectMemoryEntry(record, presentations.get(record.id))),
+			entries: hits.map(({ record }) => projectMemoryEntry(record)),
 		};
 	});
 	dispatcher.registerHandler(RPC.memory.list, async (_p): Promise<MemoryListResponse> => {
@@ -411,29 +392,15 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			scope,
 			limit: limit ?? 50,
 		});
-		const presentations = presentationByMemoryId(s.memoryPresentation, scope, records);
 		return {
-			entries: records.map((record) => projectMemoryEntry(record, presentations.get(record.id))),
+			entries: records.map((record) => projectMemoryEntry(record)),
 		};
-	});
-	dispatcher.registerHandler(RPC.memory.pin, async (_p) => {
-		const { entryId, pinned } = _p as { entryId: string; pinned: boolean };
-		const scope = await memoryBackendScope(s);
-		await s.memoryBackend.open({ scope });
-		await s.memoryBackend.setImportance({
-			scope,
-			memoryId: entryId,
-			importance: pinned ? 1 : 0,
-		});
-		s.memoryPresentation.setPinned(scope, entryId, pinned);
-		return {};
 	});
 	dispatcher.registerHandler(RPC.memory.forget, async (_p) => {
 		const { entryId } = _p as { entryId: string };
 		const scope = await memoryBackendScope(s);
 		await s.memoryBackend.open({ scope });
 		await s.memoryBackend.forget({ scope, memoryId: entryId });
-		s.memoryPresentation.forget(scope, entryId);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.memory.edit, async (_p) => {
@@ -966,11 +933,6 @@ export async function rememberConversationEntry(
 			createdBy,
 		},
 	});
-	s.memoryPresentation.recordDirectCreation(scope, {
-		backendMemoryId: record.id,
-		sourcePiEntryId: sourceEntryId,
-		createdBy,
-	});
 	return { memoryId: record.id, sourceEntryId, createdBy };
 }
 
@@ -1010,52 +972,21 @@ function getActiveCompanionId(s: HostCompositionContext): string {
 	return seeded.id;
 }
 
-function presentationByMemoryId(
-	store: MemoryPresentationStore,
-	scope: MemoryBankScope,
-	records: readonly MemoryRecord[],
-): ReadonlyMap<string, MemoryPresentationMetadata> {
-	return new Map(
-		store
-			.list(
-				scope,
-				records.map((record) => record.id),
-			)
-			.map((metadata) => [metadata.backendMemoryId, metadata]),
-	);
-}
-
-function projectMemoryEntry(
-	record: MemoryRecord,
-	presentation: MemoryPresentationMetadata | undefined,
-): MemoryEntry {
+function projectMemoryEntry(record: MemoryRecord): MemoryEntry {
 	const metadata = record.metadata;
 	const kind = typeof metadata.kind === "string" ? metadata.kind : "fact";
 	const scope: MemoryEntry["scope"] =
 		metadata.scope === "self" || metadata.scope === "scene" ? metadata.scope : "relationship";
-	const status: MemoryEntry["status"] = presentation?.invalidatedAt ? "invalidated" : "active";
-	const presentationSourceEntryId = presentation?.sourcePiEntryId;
-	const sourceEntryId = presentationSourceEntryId ?? metadata.sourceEntryId;
-	const presentationCreatedBy = presentation?.createdBy;
-	const createdBy: MemoryEntry["createdBy"] = presentationCreatedBy
-		? presentationCreatedBy
-		: metadata.createdBy === "user_capture" ||
-				metadata.createdBy === "assistant_tool" ||
-				metadata.createdBy === "auto_episode" ||
-				metadata.createdBy === "imported"
-			? metadata.createdBy
-			: "imported";
+	const sourceEntryId =
+		typeof metadata.sourceEntryId === "string" ? metadata.sourceEntryId : undefined;
 	return {
 		id: record.id,
 		kind,
 		scope,
 		text: record.text,
-		pinned: record.importance >= 1,
 		createdAt: record.createdAt,
 		updatedAt: record.updatedAt,
 		importance: record.importance,
-		status,
-		createdBy: createdBy as MemoryEntry["createdBy"],
 		...(sourceEntryId ? { sourceEntryId: sourceEntryId as string } : {}),
 	};
 }

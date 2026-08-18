@@ -38,7 +38,8 @@
 		"pdf-lib": "1.17.1",
 		"pdfjs-dist": "6.2.108",
 		"xlsx": "file:../../apps/desktop/vendor/xlsx-0.20.3.tgz",
-		"yaml": "2.9.0"
+		"yaml": "2.9.0",
+		"undici": "^7.0.0"
 	},
 	"devDependencies": {
 		"@types/node": "24.13.3",

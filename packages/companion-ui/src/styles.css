@@ -1889,11 +1889,6 @@ button[data-variant="primary"]:focus-visible {
 	background: rgba(139, 208, 187, 0.12);
 }
 
-.pin-badge {
-	@apply rounded-[5px] px-[6px] py-[1px] text-[#e0b987];
-	background: rgba(207, 157, 91, 0.16);
-}
-
 .memory-actions,
 .candidate-actions {
 	@apply mt-[8px] flex flex-wrap justify-end gap-[6px];

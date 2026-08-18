@@ -177,20 +177,13 @@ export const zhTW = {
 			"scene": "場景"
 		},
 		"kinds": {
-			"fact": "事實",
+			"fact": "Fact",
 			"preference": "偏好",
 			"event": "事件",
 			"self_canon_summary": "自我設定"
 		},
-		"pin": "置頂",
-		"unpin": "取消置頂",
 		"forget": "忘記",
-		"pinned": "置頂",
-		"invalidate": "作廢此記憶",
-		"invalidated": "已作廢",
 		"revised": "已儲存修訂",
-		"sourceAutomatic": "自動記住",
-		"sourceUser": "由你儲存",
 		"loading": "正在讀取…",
 		"emptyEntries": "還沒有記住什麼。",
 		"defaultEntriesTitle": "已記住",

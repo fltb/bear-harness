@@ -9,6 +9,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type {
+	CompletedTurn,
 	IMemoryStore,
 	L1RecordRow,
 	Logger,
@@ -110,7 +111,128 @@ export interface TencentDbRuntimeOptions {
 	readonly installationId: string;
 	readonly userId: string;
 	readonly logger?: Logger;
+	/**
+	 * Partial TdaiCore configuration overrides applied on top of the default
+	 * full-power configuration (auto capture/extraction/persona/recall/offload
+	 * enabled). Product settings inject embedding provider details here.
+	 */
+	readonly memoryConfig?: DeepPartial<MemoryTdaiConfig>;
 }
+
+/** Recursive partial: every nested object's fields become optional. */
+export type DeepPartial<T> = {
+	[K in keyof T]?: T[K] extends Record<string, unknown> ? DeepPartial<T[K]> : T[K];
+};
+
+/** Merge a partial config onto defaults. Arrays and scalars are replaced, objects merged. */
+function deepMerge<T>(base: T, patch: DeepPartial<T> | undefined): T {
+	if (patch === undefined) return base;
+	const result: Record<string, unknown> = { ...(base as Record<string, unknown>) };
+	for (const [key, value] of Object.entries(patch as Record<string, unknown>)) {
+		const current = result[key];
+		if (
+			value !== null &&
+			typeof value === "object" &&
+			!Array.isArray(value) &&
+			current !== null &&
+			typeof current === "object" &&
+			!Array.isArray(current)
+		) {
+			result[key] = deepMerge(current, value as DeepPartial<typeof current>);
+		} else {
+			result[key] = value;
+		}
+	}
+	return result as T;
+}
+
+/**
+ * Default full-power TdaiCore configuration. All background capabilities are
+ * enabled: L0 capture, L1 LLM extraction with dedup, L2 scene, L3 persona,
+ * auto-recall, BM25 (zh), daily cleanup, local metrics, and context offload.
+ * Embedding is armed but provider-less by default ("none"), which TdaiCore
+ * treats as disabled — hybrid recall degrades to FTS+BM25 until a provider
+ * is configured through `memoryConfig`.
+ */
+const DEFAULT_MEMORY_CONFIG: MemoryTdaiConfig = {
+	capture: {
+		enabled: true,
+		excludeAgents: [],
+		l0l1RetentionDays: 30,
+		allowAggressiveCleanup: false,
+	},
+	extraction: { enabled: true, enableDedup: true, maxMemoriesPerSession: 20 },
+	persona: { triggerEveryN: 50, maxScenes: 20, backupCount: 3, sceneBackupCount: 10 },
+	pipeline: {
+		everyNConversations: 5,
+		enableWarmup: true,
+		l1IdleTimeoutSeconds: 600,
+		l2DelayAfterL1Seconds: 90,
+		l2MinIntervalSeconds: 900,
+		l2MaxIntervalSeconds: 3600,
+		sessionActiveWindowHours: 24,
+	},
+	recall: {
+		enabled: true,
+		maxResults: 5,
+		maxCharsPerMemory: 0,
+		maxTotalRecallChars: 0,
+		scoreThreshold: 0.3,
+		strategy: "hybrid",
+		timeoutMs: 5000,
+	},
+	embedding: {
+		enabled: true,
+		provider: "none",
+		baseUrl: "",
+		apiKey: "",
+		model: "",
+		dimensions: 0,
+		sendDimensions: true,
+		conflictRecallTopK: 5,
+		maxInputChars: 5000,
+		timeoutMs: 10000,
+		recallTimeoutMs: 2000,
+		captureTimeoutMs: 20000,
+	},
+	storeBackend: "sqlite",
+	tcvdb: {
+		url: "",
+		username: "root",
+		apiKey: "",
+		database: "",
+		alias: "",
+		embeddingModel: "",
+		timeout: 0,
+	},
+	bm25: { enabled: true, language: "zh" },
+	memoryCleanup: { enabled: true, cleanTime: "03:00" },
+	report: { enabled: true, type: "local" },
+	llm: {
+		enabled: false,
+		baseUrl: "",
+		apiKey: "",
+		model: "",
+		maxTokens: 0,
+		timeoutMs: 0,
+	},
+	offload: {
+		enabled: true,
+		mode: "local",
+		temperature: 0.2,
+		forceTriggerThreshold: 4,
+		defaultContextWindow: 200000,
+		maxPairsPerBatch: 20,
+		l2NullThreshold: 4,
+		l2TimeoutSeconds: 300,
+		mildOffloadRatio: 0.5,
+		aggressiveCompressRatio: 0.85,
+		mmdMaxTokenRatio: 0.2,
+		backendTimeoutMs: 10000,
+		offloadRetentionDays: 30,
+		logMaxSizeMb: 50,
+	},
+};
 
 function clampImportance(value: number): number {
 	if (!Number.isFinite(value)) return 0.5;
@@ -334,83 +456,7 @@ export class TencentDbRuntime {
 			models: options.models,
 			logger: options.logger,
 		});
-		const config: MemoryTdaiConfig = {
-			capture: {
-				enabled: false,
-				excludeAgents: [],
-				l0l1RetentionDays: 0,
-				allowAggressiveCleanup: false,
-			},
-			extraction: { enabled: false, enableDedup: false, maxMemoriesPerSession: 0 },
-			persona: { triggerEveryN: 0, maxScenes: 0, backupCount: 0, sceneBackupCount: 0 },
-			pipeline: {
-				everyNConversations: 0,
-				enableWarmup: false,
-				l1IdleTimeoutSeconds: 0,
-				l2DelayAfterL1Seconds: 0,
-				l2MinIntervalSeconds: 0,
-				l2MaxIntervalSeconds: 0,
-				sessionActiveWindowHours: 0,
-			},
-			recall: {
-				enabled: false,
-				maxResults: 0,
-				maxCharsPerMemory: 0,
-				maxTotalRecallChars: 0,
-				scoreThreshold: 0,
-				strategy: "keyword",
-				timeoutMs: 0,
-			},
-			embedding: {
-				enabled: false,
-				provider: "none",
-				baseUrl: "",
-				apiKey: "",
-				model: "",
-				dimensions: 0,
-				sendDimensions: false,
-				conflictRecallTopK: 0,
-				maxInputChars: 0,
-				timeoutMs: 0,
-			},
-			storeBackend: "sqlite",
-			tcvdb: {
-				url: "",
-				username: "root",
-				apiKey: "",
-				database: "",
-				alias: "",
-				embeddingModel: "",
-				timeout: 0,
-			},
-			bm25: { enabled: false, language: "en" },
-			memoryCleanup: { enabled: false, cleanTime: "03:00" },
-			report: { enabled: false, type: "local" },
-			llm: {
-				enabled: false,
-				baseUrl: "",
-				apiKey: "",
-				model: "",
-				maxTokens: 0,
-				timeoutMs: 0,
-			},
-			offload: {
-				enabled: false,
-				mode: "collect",
-				temperature: 0,
-				forceTriggerThreshold: 0,
-				defaultContextWindow: 0,
-				maxPairsPerBatch: 0,
-				l2NullThreshold: 0,
-				l2TimeoutSeconds: 0,
-				mildOffloadRatio: 0,
-				aggressiveCompressRatio: 0,
-				mmdMaxTokenRatio: 0,
-				backendTimeoutMs: 0,
-				offloadRetentionDays: 0,
-				logMaxSizeMb: 0,
-			},
-		};
+		const config = deepMerge(DEFAULT_MEMORY_CONFIG, options.memoryConfig);
 		this.core = new TdaiCore({
 			hostAdapter: adapter,
 			config,
@@ -418,6 +464,25 @@ export class TencentDbRuntime {
 		});
 		const facade = new TdaiDirectMemoryFacade(() => this.core.getVectorStore());
 		this.backend = new TencentDbMemoryBackend(facade);
+	}
+
+	/**
+	 * Feed one settled conversation turn into the TdaiCore capture pipeline
+	 * (L0 record → L1 extraction scheduling). The caller is responsible for
+	 * error handling; this is a side channel and never throws into the turn
+	 * settlement path.
+	 */
+	async captureTurn(turn: CompletedTurn): Promise<void> {
+		await this.core.handleTurnCommitted(turn);
+	}
+
+	/**
+	 * Stable recall context (persona + scene navigation) for one turn, or
+	 * undefined when TdaiCore produced none.
+	 */
+	async systemContext(query: string, sessionKey: string): Promise<string | undefined> {
+		const result = await this.core.handleBeforeRecall(query, sessionKey);
+		return result.appendSystemContext;
 	}
 
 	async start(): Promise<void> {

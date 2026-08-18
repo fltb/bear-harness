@@ -10,12 +10,9 @@ const userEntry = {
 	kind: "fact",
 	scope: "self" as const,
 	text: "用户喜欢在夜里工作",
-	pinned: false,
 	createdAt: "2026-01-01T00:00:00.000Z",
 	updatedAt: "2026-01-01T00:00:00.000Z",
 	importance: 0.8,
-	status: "active" as const,
-	createdBy: "user_capture" as const,
 };
 
 const forgottenEntry = {
@@ -23,12 +20,9 @@ const forgottenEntry = {
 	kind: "preference",
 	scope: "self" as const,
 	text: "用户偏好简短回答",
-	pinned: false,
 	createdAt: "2026-01-02T00:00:00.000Z",
 	updatedAt: "2026-01-02T00:00:00.000Z",
 	importance: 0.6,
-	status: "active" as const,
-	createdBy: "auto_episode" as const,
 };
 
 const invalidatedEntry = {
@@ -36,12 +30,9 @@ const invalidatedEntry = {
 	kind: "event",
 	scope: "self" as const,
 	text: "用户曾在夜里散步",
-	pinned: false,
 	createdAt: "2026-01-03T00:00:00.000Z",
 	updatedAt: "2026-01-03T00:00:00.000Z",
 	importance: 0.5,
-	status: "active" as const,
-	createdBy: "auto_episode" as const,
 };
 
 const relationshipEntry = {
@@ -49,12 +40,9 @@ const relationshipEntry = {
 	kind: "fact",
 	scope: "relationship" as const,
 	text: "我们会一起散步",
-	pinned: false,
 	createdAt: "2026-01-04T00:00:00.000Z",
 	updatedAt: "2026-01-04T00:00:00.000Z",
 	importance: 0.7,
-	status: "active" as const,
-	createdBy: "auto_episode" as const,
 };
 
 const entry = userEntry;
@@ -94,28 +82,14 @@ describe("memory controls", () => {
 			);
 			return Promise.resolve({ ok: true as const, data: null });
 		});
-		const pin = vi.fn((request: { entryId: string; pinned: boolean }) => {
-			currentEntries = currentEntries.map((item) =>
-				item.id === request.entryId ? { ...item, pinned: request.pinned } : item,
-			);
-			return Promise.resolve({ ok: true as const, data: null });
-		});
 		const forget = vi.fn((request: { entryId: string }) => {
 			currentEntries = currentEntries.filter((item) => item.id !== request.entryId);
-			return Promise.resolve({ ok: true as const, data: null });
-		});
-		const invalidate = vi.fn((request: { memoryId: string; replacementMemoryId?: string }) => {
-			currentEntries = currentEntries.map((item) =>
-				item.id === request.memoryId ? { ...item, status: "invalidated" as const } : item,
-			);
 			return Promise.resolve({ ok: true as const, data: null });
 		});
 		client.memory.list = list;
 		client.memory.search = search;
 		client.memory.edit = edit;
-		client.memory.pin = pin;
 		client.memory.forget = forget;
-		client.memory.invalidate = invalidate;
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
@@ -126,9 +100,7 @@ describe("memory controls", () => {
 		});
 		await waitFor(() => expect(list).toHaveBeenCalledWith({ scope: "self" }));
 		expect(search).not.toHaveBeenCalledWith({ query: "", scope: "self" });
-		expect(within(region).getByText(zhCN.memory.sourceUser)).toBeVisible();
 		expect(within(region).getByText(userEntry.text)).toBeVisible();
-		expect(within(region).getAllByText(zhCN.memory.sourceAutomatic)).toHaveLength(2);
 
 		const editedItem = within(region).getByText(userEntry.text).closest("li") as HTMLElement;
 		await user.click(within(editedItem).getByRole("button", { name: zhCN.memory.edit }));
@@ -142,34 +114,12 @@ describe("memory controls", () => {
 				newText: "用户喜欢在清晨工作",
 			}),
 		);
-		const refreshedEditedItem = (await within(backstage).findByText("用户喜欢在清晨工作")).closest(
-			"li",
-		) as HTMLElement;
-		await waitFor(() =>
-			expect(
-				within(refreshedEditedItem).getByRole("button", { name: zhCN.memory.pin }),
-			).toBeEnabled(),
-		);
-
-		await user.click(within(refreshedEditedItem).getByRole("button", { name: zhCN.memory.pin }));
-		await waitFor(() => expect(pin).toHaveBeenCalledWith({ entryId: "entry-user", pinned: true }));
 
 		const forgottenItem = within(region)
 			.getByText(forgottenEntry.text)
 			.closest("li") as HTMLElement;
 		await user.click(within(forgottenItem).getByRole("button", { name: zhCN.memory.forget }));
 		await waitFor(() => expect(forget).toHaveBeenCalledWith({ entryId: "entry-forgotten" }));
-
-		const invalidatedItem = within(region)
-			.getByText(invalidatedEntry.text)
-			.closest("li") as HTMLElement;
-		await user.click(within(invalidatedItem).getByRole("button", { name: zhCN.memory.invalidate }));
-		await waitFor(() =>
-			expect(invalidate).toHaveBeenCalledWith({
-				memoryId: "entry-invalidated",
-				replacementMemoryId: undefined,
-			}),
-		);
 
 		await user.click(within(backstage).getByRole("tab", { name: zhCN.memory.scopes.relationship }));
 		const query = within(backstage).getByRole("searchbox", { name: zhCN.memory.searchLabel });
@@ -223,60 +173,6 @@ describe("memory controls", () => {
 			.closest("li") as HTMLElement;
 		expect(updatedItem).toBeVisible();
 		expect(within(updatedEntries).queryByText(entry.text)).not.toBeInTheDocument();
-	});
-	it("shows imported and automatic source labels plus revision and invalidation feedback", async () => {
-		const user = userEvent.setup();
-		const { client } = createTestClient();
-		const importedEntry = {
-			...userEntry,
-			id: "entry-imported",
-			text: "用户导入了工作习惯",
-			createdBy: "imported" as const,
-		};
-		let currentEntry = userEntry;
-		client.memory.search = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: { entries: [currentEntry, importedEntry, forgottenEntry] },
-			}),
-		);
-		client.memory.list = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: { entries: [currentEntry, importedEntry, forgottenEntry] },
-			}),
-		);
-		client.memory.edit = vi.fn(({ newText }) => {
-			currentEntry = { ...currentEntry, text: newText };
-			return Promise.resolve({ ok: true as const, data: null });
-		});
-		client.memory.invalidate = vi.fn(() => Promise.resolve({ ok: true as const, data: null }));
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-
-		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
-		const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
-		await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
-		const region = await within(backstage).findByRole("region", {
-			name: zhCN.memory.defaultEntriesTitle,
-		});
-		expect(within(region).getAllByText(zhCN.memory.sourceUser)).toHaveLength(2);
-		expect(within(region).getByText(zhCN.memory.sourceAutomatic)).toBeVisible();
-
-		const item = within(region).getByText(userEntry.text).closest("li") as HTMLElement;
-		await user.click(within(item).getByRole("button", { name: zhCN.memory.edit }));
-		const editor = within(item).getByRole("textbox", { name: zhCN.memory.editedContent });
-		await user.clear(editor);
-		await user.type(editor, "用户喜欢在清晨工作");
-		await user.click(within(item).getByRole("button", { name: zhCN.memory.saveEdit }));
-		await waitFor(() =>
-			expect(within(region).getByRole("status")).toHaveTextContent(zhCN.memory.revised),
-		);
-
-		const revisedItem = within(region).getByText("用户喜欢在清晨工作").closest("li") as HTMLElement;
-		await user.click(within(revisedItem).getByRole("button", { name: zhCN.memory.invalidate }));
-		await waitFor(() =>
-			expect(within(region).getByRole("status")).toHaveTextContent(zhCN.memory.invalidated),
-		);
 	});
 
 	it("surfaces direct-memory mutation failures in the panel", async () => {

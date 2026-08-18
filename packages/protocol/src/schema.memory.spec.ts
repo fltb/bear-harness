@@ -5,7 +5,7 @@ import {
 	CHANNEL_CONTRACTS,
 	MemoryCaptureRequest,
 	MemoryCaptureResponse,
-	MemoryInvalidateRequest,
+	MemoryEntry,
 	REQUEST_SCHEMAS,
 	RPC,
 } from "./schema.js";
@@ -55,40 +55,28 @@ describe("direct memory capture and invalidation schemas", () => {
 		).toBe(false);
 	});
 
-	it("allows invalidation without a replacement and validates replacement IDs", () => {
-		expect(MemoryInvalidateRequest.safeParse({ memoryId: "m".repeat(128) }).success).toBe(true);
-		expect(
-			MemoryInvalidateRequest.safeParse({
-				memoryId: "memory-1",
-				replacementMemoryId: "replacement-1",
-			}).success,
-		).toBe(true);
-		expect(
-			MemoryInvalidateRequest.safeParse({
-				memoryId: "memory-1",
-				replacementMemoryId: "r".repeat(129),
-			}).success,
-		).toBe(false);
-		expect(
-			MemoryInvalidateRequest.safeParse({ memoryId: "memory-1", replacementMemoryId: "" }).success,
-		).toBe(false);
-		expect(
-			MemoryInvalidateRequest.safeParse({ memoryId: "memory-1", replacementMemoryId: null })
-				.success,
-		).toBe(false);
+	it("projects memory entries without pin or invalidation metadata", () => {
+		const entry = {
+			id: "memory-1",
+			kind: "persona",
+			scope: "relationship",
+			text: "用户喜欢清晨工作",
+			createdAt: "2026-01-01T00:00:00.000Z",
+			updatedAt: "2026-01-01T00:00:00.000Z",
+			importance: 0.7,
+		};
+		expect(MemoryEntry.safeParse(entry).success).toBe(true);
+		expect(MemoryEntry.safeParse({ ...entry, pinned: true, status: "invalidated" }).success).toBe(
+			false,
+		);
 	});
 
-	it("registers direct and legacy memory endpoints during compatibility", () => {
+	it("registers the direct memory endpoints", () => {
 		const channels = [
 			"memory.capture:v1",
-			"memory.invalidate:v1",
-			"memory.listCandidates:v1",
-			"memory.decideCandidate:v1",
 			"memory.search:v1",
 			"memory.list:v1",
-			"memory.pin:v1",
 			"memory.forget:v1",
-			"memory.exclude:v1",
 			"memory.edit:v1",
 		] as const;
 
@@ -99,6 +87,6 @@ describe("direct memory capture and invalidation schemas", () => {
 			expect(REQUEST_SCHEMAS[channel]).toBe(contract?.request);
 		}
 		expect(RPC.memory.capture.channel).toBe("memory.capture:v1");
-		expect(RPC.memory.invalidate.channel).toBe("memory.invalidate:v1");
+		expect(RPC.memory.edit.channel).toBe("memory.edit:v1");
 	});
 });

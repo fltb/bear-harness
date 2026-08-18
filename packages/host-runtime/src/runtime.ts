@@ -16,6 +16,7 @@
  */
 
 import { join } from "node:path";
+import type { MemoryTdaiConfig } from "@bear-harness/tdai-core";
 import { and, eq } from "drizzle-orm";
 import { ArtifactStore } from "./artifacts/index.js";
 import { CanonHubService } from "./canon/service.js";
@@ -39,7 +40,8 @@ import { CodexAdapter } from "./executors/codex-adapter.js";
 import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
 import { ExecutorRouter } from "./executors/router.js";
 import type { MemoryBackend } from "./memory/backend.js";
-import { MemoryPresentationStore } from "./memory/presentation-store.js";
+import { namespaceFor } from "./memory/tencentdb-backend.js";
+import type { DeepPartial } from "./memory/tencentdb-runtime.js";
 import { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import { ModelRegistry } from "./models/registry.js";
 import { ProviderCatalog } from "./providers/catalog.js";
@@ -77,6 +79,11 @@ export interface HostRuntimeOptions {
 	protocolViolationMode?: "throw" | "isolate";
 	/** Stable product-local identity used to isolate the direct memory bank. */
 	memoryScope?: { readonly installationId: string; readonly userId: string };
+	/**
+	 * Partial TdaiCore configuration injected into the memory runtime
+	 * (embedding provider details, pipeline tuning). Defaults: full power.
+	 */
+	memoryConfig?: DeepPartial<MemoryTdaiConfig>;
 }
 
 export class HostRuntime {
@@ -123,7 +130,6 @@ export class HostRuntime {
 			characterLoader,
 			roleplay,
 		);
-		const memoryPresentation = new MemoryPresentationStore(db.orm);
 		const story = new StoryService(db.orm, eventBus);
 		const canon = new CanonHubService(db.orm, artifactStore, eventBus);
 		const unsubscribeStoryAutomation = eventBus.subscribe((event) => {
@@ -161,7 +167,6 @@ export class HostRuntime {
 			}
 		});
 		const onboarding = new FirstMeetingMachine(db.orm, eventBus, characterLoader);
-		const turns = new TurnPipeline(db.orm, supervisor, eventBus, sessionResolver);
 		const models = new ModelRegistry(db.orm, eventBus);
 		const memoryScope = options.memoryScope ?? {
 			installationId: "cyber-bear-installation",
@@ -174,11 +179,47 @@ export class HostRuntime {
 			companionId: options.productConfig.defaultCharacterId,
 			installationId: memoryScope.installationId,
 			userId: memoryScope.userId,
+			memoryConfig: options.memoryConfig,
+		});
+		const turns = new TurnPipeline(db.orm, supervisor, eventBus, sessionResolver, {
+			// Feed every settled turn to the TdaiCore capture pipeline (L0 → L1
+			// extraction → L2/L3). This is a side channel: a failure here never
+			// blocks the reply that was already persisted.
+			onTurnCommitted: ({ conversationId, userText, assistantText, startedAt }) => {
+				void memoryRuntime
+					.captureTurn({
+						userText,
+						assistantText,
+						messages: [
+							{ role: "user", content: userText, timestamp: startedAt ?? Date.now() },
+							{ role: "assistant", content: assistantText, timestamp: Date.now() },
+						],
+						sessionKey: namespaceFor({
+							...memoryScope,
+							companionId: options.productConfig.defaultCharacterId,
+						}),
+						sessionId: conversationId,
+					})
+					.catch((error: unknown) => {
+						eventBus.publish("diagnostics.memory_capture_failed", {
+							message: error instanceof Error ? error.message : String(error),
+						});
+					});
+			},
 		});
 		const contextPack = new ContextPackCompiler(db.orm, characterLoader, canon, {
 			backend: memoryRuntime.backend,
 			scope: memoryScope,
-			presentation: memoryPresentation,
+			systemContext: (query) =>
+				memoryRuntime
+					.systemContext(
+						query,
+						namespaceFor({ ...memoryScope, companionId: options.productConfig.defaultCharacterId }),
+					)
+					.catch(() => {
+						// persona/scene injection is best-effort; L1 recall already succeeded
+						return undefined;
+					}),
 		});
 		supervisor.setContextHandler(async (conversationId, includeHistory, message) =>
 			contextPack.render(
@@ -298,7 +339,6 @@ export class HostRuntime {
 			turns,
 			models,
 			memoryBackend: memoryRuntime.backend,
-			memoryPresentation,
 			memoryScope,
 			commissions,
 			artifacts: artifactStore,

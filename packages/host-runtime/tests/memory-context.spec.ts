@@ -6,13 +6,12 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/node-sqlite";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import { ContextPackCompiler } from "../src/companion/context-pack.js";
 import { PiSessionStore } from "../src/companion/pi-session-store.js";
 import { rememberConversationEntry } from "../src/composition.js";
 import type { MemoryBankScope } from "../src/memory/backend.js";
-import { MemoryPresentationStore } from "../src/memory/presentation-store.js";
 import type {
 	TencentDbCoreRecord,
 	TencentDbMemoryCoreFacade,
@@ -76,6 +75,7 @@ function fakeMemoryCore(): FakeMemoryCore {
 				.filter(
 					(stored) =>
 						stored.namespace === request.namespace &&
+						stored.record.status === "active" &&
 						(queryTokens.length === 0 ||
 							queryTokens.some((token) => stored.record.text.includes(token))),
 				)
@@ -141,7 +141,6 @@ describe("relationship memory context", () => {
 	let orm: AppDatabase;
 	let compiler: ContextPackCompiler;
 	let backend: TencentDbMemoryBackend;
-	let presentation: MemoryPresentationStore;
 	let fakeCore: FakeMemoryCore;
 
 	beforeEach(() => {
@@ -178,10 +177,8 @@ describe("relationship memory context", () => {
 		orm = drizzle({ client: db });
 		fakeCore = fakeMemoryCore();
 		backend = new TencentDbMemoryBackend(fakeCore.core);
-		presentation = new MemoryPresentationStore(orm);
 		compiler = new ContextPackCompiler(orm, new CharacterLoader(characterRoot), undefined, {
 			backend,
-			presentation,
 			scope: { installationId: "install-1", userId: "user-1" },
 		});
 	});
@@ -192,11 +189,6 @@ describe("relationship memory context", () => {
 			scope,
 			text,
 			provenance: { kind: "explicit", piSessionEntryIds: ["session-entry-1"] },
-		});
-		presentation.recordDirectCreation(scope, {
-			backendMemoryId: record.id,
-			sourcePiEntryId: "session-entry-1",
-			createdBy: "user_capture",
 		});
 		return record;
 	}
@@ -265,8 +257,6 @@ describe("relationship memory context", () => {
 			reason: "superseded",
 		});
 		expect(invalidated.status).toBe("invalidated");
-		presentation.recordReplacement(scope, original.id, replacement.id);
-		expect(presentation.get(scope, original.id)?.replacementMemoryId).toBe(replacement.id);
 		const postInvalidation = await relationshipContext();
 		expect(postInvalidation).not.toContain("用户喜欢简短回答");
 		expect(postInvalidation).toContain("用户喜欢更短回答");
@@ -305,7 +295,6 @@ describe("relationship memory context", () => {
 				canon: { syncPackage: () => undefined },
 				conversationRepository: { getSession: () => session },
 				memoryBackend: backend,
-				memoryPresentation: presentation,
 				memoryScope: { installationId: "install-1", userId: "user-1" },
 			} as never;
 
@@ -350,5 +339,38 @@ describe("relationship memory context", () => {
 			"jizhou",
 		);
 		expect(() => compiler.compile("conversation-1")).toThrow();
+	});
+
+	describe("TdaiCore persona/scene context", () => {
+		function compilerWithSystemContext(
+			systemContext: (query: string) => Promise<string | undefined>,
+		): ContextPackCompiler {
+			return new ContextPackCompiler(orm, new CharacterLoader(characterRoot), undefined, {
+				backend,
+				scope: { installationId: "install-1", userId: "user-1" },
+				systemContext,
+			});
+		}
+
+		it("injects persona and scene navigation as a low-priority block", async () => {
+			const systemCompiler = compilerWithSystemContext(
+				async () => "<user-persona>\n喜欢夜景\n</user-persona>",
+			);
+			const context = await systemCompiler.compileForTurn("conversation-1", {
+				memoryQuery: "夜景",
+			});
+			const persona = context.blocks.find((block) => block.layer === "persona");
+			expect(persona).toBeDefined();
+			expect(persona?.content).toContain("喜欢夜景");
+		});
+
+		it("does not call the persona provider when memory is disabled", async () => {
+			const systemContext = vi.fn(async () => "never called");
+			const systemCompiler = compilerWithSystemContext(systemContext);
+			await systemCompiler.compileForTurn("conversation-1", {
+				includeRelationshipMemory: false,
+			});
+			expect(systemContext).not.toHaveBeenCalled();
+		});
 	});
 });

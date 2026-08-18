@@ -167,7 +167,7 @@ function validateScope(scope: MemoryBankScope, operation: Operation): void {
 	}
 }
 
-function namespaceFor(scope: MemoryBankScope): string {
+export function namespaceFor(scope: MemoryBankScope): string {
 	return `cyber-bear:${scope.installationId}:${scope.userId}:${scope.companionId}`;
 }
 

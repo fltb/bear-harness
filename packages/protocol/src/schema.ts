@@ -584,18 +584,9 @@ export const MemoryEntry = z.strictObject({
 	kind: z.string().max(64),
 	scope: MemoryScope,
 	text: z.string().max(MAX_STRING_LENGTH),
-	pinned: z.boolean(),
 	createdAt: z.string().max(64),
 	updatedAt: z.string().max(64),
 	importance: z.number().finite(),
-	status: z.union([z.literal("active"), z.literal("invalidated")]),
-	createdBy: z.union([
-		z.literal("user_capture"),
-		z.literal("assistant_tool"),
-		z.literal("auto_episode"),
-		z.literal("imported"),
-	]),
-	sourceEntryId: z.string().min(1).max(128).optional(),
 });
 export const MemoryCaptureCreatedBy = z.union([
 	z.literal("user_capture"),
@@ -615,11 +606,6 @@ export const MemoryCaptureResponse = z.strictObject({
 	createdBy: MemoryCaptureCreatedBy,
 });
 export type MemoryCaptureResponse = z.infer<typeof MemoryCaptureResponse>;
-export const MemoryInvalidateRequest = z.strictObject({
-	memoryId: MemoryBackendId,
-	replacementMemoryId: MemoryBackendId.optional(),
-});
-export type MemoryInvalidateRequest = z.infer<typeof MemoryInvalidateRequest>;
 export const MemorySearchRequest = z.strictObject({
 	query: z.string().max(MAX_STRING_LENGTH),
 	scope: MemoryScope.optional(),
@@ -632,10 +618,6 @@ export const MemoryListRequest = z.strictObject({
 	scope: MemoryScope.optional(),
 	enabled: z.boolean().optional(),
 	limit: z.number().int().safe().min(1).max(100).optional(),
-});
-export const MemoryPinRequest = z.strictObject({
-	entryId: z.string().min(1).max(128),
-	pinned: z.boolean(),
 });
 export const MemoryForgetRequest = z.strictObject({
 	entryId: z.string().min(1).max(128),
@@ -1356,8 +1338,6 @@ export const RPC = {
 		search: endpoint("memory.search:v1", MemorySearchRequest, MemorySearchResponse),
 		list: endpoint("memory.list:v1", MemoryListRequest, MemoryListResponse),
 		capture: endpoint("memory.capture:v1", MemoryCaptureRequest, MemoryCaptureResponse),
-		invalidate: endpoint("memory.invalidate:v1", MemoryInvalidateRequest, EmptyResponse),
-		pin: endpoint("memory.pin:v1", MemoryPinRequest, EmptyResponse),
 		forget: endpoint("memory.forget:v1", MemoryForgetRequest, EmptyResponse),
 		edit: endpoint("memory.edit:v1", MemoryEditRequest, EmptyResponse),
 	},

@@ -249,7 +249,7 @@ describe("ordinary-user backstage journey", () => {
 			expect.stringMatching(/^data:image\/webp/),
 		);
 	});
-	it("manages direct memory records with source labels and native invalidation", async () => {
+	it("manages direct memory records with edit and forget", async () => {
 		const user = userEvent.setup();
 		let currentEntries = [
 			{
@@ -257,24 +257,18 @@ describe("ordinary-user backstage journey", () => {
 				kind: "fact",
 				scope: "self" as const,
 				text: "用户喜欢清晨散步",
-				pinned: false,
 				createdAt: "2026-08-16T00:00:00Z",
 				updatedAt: "2026-08-16T00:00:00Z",
 				importance: 0.8,
-				status: "active",
-				createdBy: "user_capture",
 			},
 			{
 				id: "memory-auto",
 				kind: "preference",
 				scope: "self" as const,
 				text: "用户偏好简短回答",
-				pinned: false,
 				createdAt: "2026-08-15T00:00:00Z",
 				updatedAt: "2026-08-15T00:00:00Z",
 				importance: 0.6,
-				status: "active",
-				createdBy: "auto_episode",
 			},
 		];
 		const search = vi.fn(() => Promise.resolve(currentEntries));
@@ -285,13 +279,11 @@ describe("ordinary-user backstage journey", () => {
 			);
 			return Promise.resolve();
 		});
-		const pin = vi.fn(() => Promise.resolve());
 		const forget = vi.fn(() => Promise.resolve());
-		const invalidate = vi.fn(() => Promise.resolve());
 		const store = {
 			runs: [],
 			characters: { characters: () => [] },
-			memory: { list, search, edit, pin, forget, invalidate },
+			memory: { list, search, edit, forget },
 		} as unknown as CompanionStore;
 
 		const [backstageOpen, setBackstageOpen] = createSignal(false);
@@ -319,8 +311,8 @@ describe("ordinary-user backstage journey", () => {
 			});
 			return within(currentRegion).getAllByRole("listitem")[0] as HTMLElement;
 		};
-		expect(within(region).getByText(zhCN.memory.sourceUser)).toBeVisible();
-		expect(within(region).getByText(zhCN.memory.sourceAutomatic)).toBeVisible();
+		expect(within(region).getByText("用户喜欢清晨散步")).toBeVisible();
+		expect(within(region).getByText("用户偏好简短回答")).toBeVisible();
 
 		await user.click(
 			within(await firstMemoryEntry()).getByRole("button", {
@@ -345,25 +337,13 @@ describe("ordinary-user backstage journey", () => {
 		});
 		await user.click(
 			within(await firstMemoryEntry()).getByRole("button", {
-				name: zhCN.memory.pin,
-			}),
-		);
-		await user.click(
-			within(await firstMemoryEntry()).getByRole("button", {
 				name: zhCN.memory.forget,
-			}),
-		);
-		await user.click(
-			within(await firstMemoryEntry()).getByRole("button", {
-				name: zhCN.memory.invalidate,
 			}),
 		);
 
 		await waitFor(() => {
 			expect(edit).toHaveBeenCalledWith("memory-user", "用户喜欢傍晚散步");
-			expect(pin).toHaveBeenCalledWith("memory-user", true);
 			expect(forget).toHaveBeenCalledWith("memory-user");
-			expect(invalidate).toHaveBeenCalledWith("memory-user");
 		});
 	});
 });

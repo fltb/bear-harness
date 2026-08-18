@@ -43,12 +43,6 @@ function kindLabel(kind: MemoryEntry["kind"]): string {
 	}
 }
 
-function sourceLabel(entry: MemoryEntry): string {
-	return entry.createdBy === "user_capture" || entry.createdBy === "imported"
-		? i18n.t("memory.sourceUser")
-		: i18n.t("memory.sourceAutomatic");
-}
-
 /** Entry list for one memory scope. */
 export function MemoryEntryList(props: {
 	scope: MemoryScope;
@@ -117,16 +111,8 @@ export function MemoryEntryList(props: {
 		}
 	}
 
-	const togglePin = (entry: MemoryEntry) => () =>
-		runEntryAction(
-			entry.id,
-			() => store.memory.pin(entry.id, !entry.pinned),
-			entry.pinned ? t("memory.unpin") : t("memory.pin"),
-		);
 	const forget = (entry: MemoryEntry) => () =>
 		runEntryAction(entry.id, () => store.memory.forget(entry.id), t("memory.forget"));
-	const invalidate = (entry: MemoryEntry) => () =>
-		runEntryAction(entry.id, () => store.memory.invalidate(entry.id), t("memory.invalidated"));
 	const saveEdit = (entry: MemoryEntry) => async () => {
 		const text = editedEntryText().trim();
 		if (!text) return;
@@ -163,7 +149,7 @@ export function MemoryEntryList(props: {
 			<ul class="memory-list">
 				<For each={entries()}>
 					{(entry) => (
-						<li class="memory-entry" data-pinned={entry.pinned || undefined}>
+						<li class="memory-entry">
 							<Show
 								when={editingEntryId() === entry.id}
 								fallback={<p class="memory-text">{entry.text}</p>}
@@ -194,12 +180,8 @@ export function MemoryEntryList(props: {
 							</Show>
 							<div class="memory-meta">
 								<span class="memory-kind">{kindLabel(entry.kind)}</span>
-								<span class="memory-source">{sourceLabel(entry)}</span>
 								<Show when={formatDate(entry.createdAt)}>
 									<span>{formatDate(entry.createdAt)}</span>
-								</Show>
-								<Show when={entry.pinned}>
-									<span class="pin-badge">{t("memory.pinned")}</span>
 								</Show>
 							</div>
 							<div class="memory-actions">
@@ -218,25 +200,9 @@ export function MemoryEntryList(props: {
 									type="button"
 									class="mini-btn"
 									disabled={busyId() === entry.id}
-									onClick={togglePin(entry)}
-								>
-									{entry.pinned ? t("memory.unpin") : t("memory.pin")}
-								</Button>
-								<Button
-									type="button"
-									class="mini-btn"
-									disabled={busyId() === entry.id}
 									onClick={forget(entry)}
 								>
 									{t("memory.forget")}
-								</Button>
-								<Button
-									type="button"
-									class="mini-btn danger"
-									disabled={busyId() === entry.id}
-									onClick={invalidate(entry)}
-								>
-									{t("memory.invalidate")}
 								</Button>
 							</div>
 						</li>
