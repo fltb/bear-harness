@@ -100,7 +100,13 @@ export function createStoreBundle(
 			let embeddingService: EmbeddingService | undefined;
 			if (config.embedding.enabled) {
 				if (config.embedding.provider === "local") {
-					embeddingService = createEmbeddingService({ provider: "local" }, logger);
+					embeddingService = createEmbeddingService(
+						{
+							provider: "local",
+							...(config.embedding.modelPath ? { modelPath: config.embedding.modelPath } : {}),
+						},
+						logger,
+					);
 				} else if (config.embedding.baseUrl || config.embedding.apiKey) {
 					embeddingService = createEmbeddingService(
 						{

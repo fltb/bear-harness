@@ -13,9 +13,7 @@ test("direct memory capture, scoped context, and user management stay determinis
 	const replacementText = "E2E_DIRECT_MEMORY_A：我们约定暗号是南星";
 	const secondSourceText = "E2E_DIRECT_MEMORY_B：我们约定暗号是北辰";
 
-	const memoryEntries = async (): Promise<
-		Array<{ id: string; text: string }>
-	> => {
+	const memoryEntries = async (): Promise<Array<{ id: string; text: string }>> => {
 		const response = await page.request.post("/rpc/memory.list%3Av1", { headers, data: {} });
 		const payload = (await response.json()) as {
 			ok: boolean;

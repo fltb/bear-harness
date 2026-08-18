@@ -456,10 +456,16 @@ function mergeEmbeddingConfig(
 		sendDimensions: true,
 	};
 	if (service.provider === "local") {
-		// TdaiCore's local embedder currently builds its default model
-		// (embeddinggemma-300m, 768d); custom GGUF paths would require a
-		// vendored config extension and are intentionally deferred.
 		embedding.provider = "local";
+		const { localModel, customPath } = service;
+		if (localModel === "bge-base-zh") {
+			embedding.modelPath = "hf:CompendiumLabs/bge-small-zh-v1.5-gguf/bge-small-zh-v1.5-Q8_0.gguf";
+		} else if (localModel === "multilingual-e5") {
+			embedding.modelPath = "hf:intfloat/multilingual-e5-base-gguf/multilingual-e5-base-Q8_0.gguf";
+		} else if (localModel === "custom" && customPath?.trim()) {
+			embedding.modelPath = customPath.trim();
+		}
+		// embeddinggemma (default) leaves modelPath undefined → TdaiCore uses its built-in default
 	} else {
 		embedding.provider = "remote";
 		embedding.baseUrl = service.baseUrl ?? "";

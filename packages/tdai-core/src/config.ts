@@ -98,6 +98,8 @@ export interface EmbeddingConfig {
 	enabled: boolean;
 	/** Embedding provider: default "none" disables vector search; other values (e.g. "openai", "deepseek") are treated as OpenAI-compatible remote providers. */
 	provider: string;
+	/** Custom GGUF model path for the local provider ("hf:repo/file.gguf" or a local file path). Defaults to the bundled embeddinggemma-300m. */
+	modelPath?: string;
 	/** API Base URL (required for remote provider). */
 	baseUrl: string;
 	/** API Key (required for remote provider). */
