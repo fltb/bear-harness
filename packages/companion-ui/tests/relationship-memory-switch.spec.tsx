@@ -20,7 +20,7 @@ describe("relationship memory switch", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		// The backstage sheet opens on the character-owned relationship archive.
-		await user.click(await screen.findByRole("button", { name: zhCN.titlebar.backstage }));
+		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
 		await user.click(await screen.findByRole("tab", { name: zhCN.backstage.relationshipArchive }));
 
 		const toggle = await screen.findByRole("switch", {
@@ -58,7 +58,7 @@ describe("relationship memory switch", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		await user.click(await screen.findByRole("button", { name: zhCN.titlebar.backstage }));
+		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
 		await user.click(await screen.findByRole("tab", { name: zhCN.backstage.relationshipArchive }));
 		const toggle = await screen.findByRole("switch", {
 			name: zhCN.settings.relationshipMemory,

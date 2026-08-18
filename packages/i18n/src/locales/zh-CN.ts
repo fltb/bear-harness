@@ -40,10 +40,9 @@ export const zhCN = {
 		roleManagement: "角色管理",
 		systemSettings: "系统设置",
 	},
-	titlebar: {
+	threadHead: {
 		runningWork: "进行中的事",
 		noRunningWork: "现在没有后台工作",
-		backstage: "幕后",
 		runningWorkItem: "正在处理的事",
 		statusUpdating: "状态更新中",
 		runStatuses: {

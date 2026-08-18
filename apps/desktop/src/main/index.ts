@@ -42,7 +42,11 @@ function failInit(message: string): never {
 	throw new Error(message);
 }
 
-const userData = join(app.getPath("appData"), productConfig.dataDirectoryName);
+const appDataBase =
+	isSourceE2E && process.env.BEAR_E2E_APP_DATA && isAbsolute(process.env.BEAR_E2E_APP_DATA)
+		? process.env.BEAR_E2E_APP_DATA
+		: app.getPath("appData");
+const userData = join(appDataBase, productConfig.dataDirectoryName);
 try {
 	mkdirSync(userData, { recursive: true, mode: 0o700 });
 	mkdirSync(join(userData, "Chromium"), { recursive: true, mode: 0o700 });

@@ -60,7 +60,7 @@ test("direct memory capture, scoped context, and user management stay determinis
 	};
 
 	const setRelationshipMemory = async (enabled: boolean): Promise<void> => {
-		await page.getByRole("button", { name: zhCN.titlebar.backstage }).click();
+		await page.getByRole("button", { name: zhCN.sidebar.characterSettings }).click();
 		const dialog = page.getByRole("dialog", { name: zhCN.backstage.title });
 		await dialog.getByRole("tab", { name: zhCN.backstage.relationshipArchive }).click();
 		const memorySwitch = dialog.getByRole("switch", {
@@ -75,7 +75,7 @@ test("direct memory capture, scoped context, and user management stay determinis
 	};
 
 	const openRelationshipMemory = async (query: string) => {
-		await page.getByRole("button", { name: zhCN.titlebar.backstage }).click();
+		await page.getByRole("button", { name: zhCN.sidebar.characterSettings }).click();
 		const dialog = page.getByRole("dialog", { name: zhCN.backstage.title });
 		await expect(dialog).toBeVisible();
 		const memoryTab = dialog.getByRole("tab", { name: zhCN.backstage.memory });
@@ -205,7 +205,7 @@ test("direct memory capture, scoped context, and user management stay determinis
 
 	await setRelationshipMemory(false);
 	await page.reload();
-	await page.getByRole("button", { name: zhCN.titlebar.backstage }).click();
+	await page.getByRole("button", { name: zhCN.sidebar.characterSettings }).click();
 	await page
 		.getByRole("dialog", { name: zhCN.backstage.title })
 		.getByRole("tab", { name: zhCN.backstage.relationshipArchive })

@@ -40,10 +40,9 @@ export const en = {
 		roleManagement: "Character management",
 		systemSettings: "System settings",
 	},
-	titlebar: {
+	threadHead: {
 		runningWork: "Active work",
 		noRunningWork: "No background work",
-		backstage: "Backstage",
 		runningWorkItem: "Work in progress",
 		statusUpdating: "Updating status",
 		runStatuses: {

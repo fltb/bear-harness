@@ -40,10 +40,9 @@ export const zhTW = {
 		"roleManagement": "角色管理",
 		"systemSettings": "系統設定"
 	},
-	"titlebar": {
+	"threadHead": {
 		"runningWork": "進行中的事",
 		"noRunningWork": "現在沒有後臺工作",
-		"backstage": "幕後",
 		"runningWorkItem": "正在處理的事",
 		"statusUpdating": "狀態更新中",
 		"runStatuses": {

@@ -1,11 +1,11 @@
 import { zhCN } from "@bear-harness/i18n/locales";
+import { Button } from "@kobalte/core/button";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { Backstage } from "../src/features/Backstage.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
-import { Titlebar } from "../src/Titlebar.js";
 import { THEMED_CHARACTER } from "./fixtures.js";
 
 describe("ordinary-user backstage journey", () => {
@@ -297,10 +297,9 @@ describe("ordinary-user backstage journey", () => {
 		const [backstageOpen, setBackstageOpen] = createSignal(false);
 		render(() => (
 			<DesktopProvider store={store}>
-				<Titlebar
-					sceneTitle={THEMED_CHARACTER.character.scene_title}
-					onOpenBackstage={() => setBackstageOpen(true)}
-				/>
+				<Button type="button" onClick={() => setBackstageOpen(true)}>
+					{zhCN.sidebar.characterSettings}
+				</Button>
 				<Backstage
 					open={backstageOpen()}
 					onClose={() => setBackstageOpen(false)}
@@ -309,7 +308,7 @@ describe("ordinary-user backstage journey", () => {
 			</DesktopProvider>
 		));
 
-		await user.click(screen.getByRole("button", { name: zhCN.titlebar.backstage }));
+		await user.click(screen.getByRole("button", { name: zhCN.sidebar.characterSettings }));
 		const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
 		await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
 

@@ -41,10 +41,10 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 		)
 		.toBe(1);
 
-	const queue = page.getByRole("button", { name: `${zhCN.titlebar.runningWork} 0` });
+	const queue = page.getByRole("button", { name: `${zhCN.threadHead.runningWork} 0` });
 	await queue.click();
 	await expect(queue).toHaveAttribute("aria-expanded", "true");
-	await expect(page.getByRole("menu", { name: zhCN.titlebar.runningWork })).toBeVisible();
+	await expect(page.getByRole("menu", { name: zhCN.threadHead.runningWork })).toBeVisible();
 	await queue.click();
 	await expect(queue).toHaveAttribute("aria-expanded", "false");
 
@@ -57,7 +57,7 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 		"E2E Rule Provider",
 	);
 
-	await page.getByRole("button", { name: zhCN.titlebar.backstage }).click();
+	await page.getByRole("button", { name: zhCN.sidebar.systemSettings }).click();
 	const backstage = page.getByRole("dialog", { name: zhCN.backstage.title });
 	await expect(backstage).toBeVisible();
 	await backstage.getByRole("tab", { name: zhCN.backstage.systemSettings }).click();

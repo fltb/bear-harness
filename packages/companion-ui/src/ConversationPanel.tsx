@@ -5,6 +5,7 @@ import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import type { CharacterDisplay, Message, MessageVersion } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
+import { ThreadHead } from "./ThreadHead.js";
 
 /**
  * ConversationPanel: the live thread. Messages come from the store's active
@@ -318,6 +319,11 @@ function formatTime(iso: string): string {
 export function ConversationPanel(props: { character: CharacterDisplay | undefined }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
+	const sceneTitle = () =>
+		store.conversations.find((conversation) => conversation.id === store.activeConversationId)
+			?.sceneTitle ??
+		props.character?.character.scene_title ??
+		"";
 	// Wire snapshots may contain system/tool-result entries for internal
 	// bookkeeping. Keep those entries in the store, but never expose them in
 	// the user-facing thread.
@@ -361,71 +367,81 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 	});
 
 	return (
-		<section
-			class="thread"
-			aria-live="polite"
-			aria-label={t("messages.conversation")}
-			ref={(el) => {
-				threadRef = el;
-			}}
-		>
-			<Show when={store.error !== null}>
-				<div class="thread-error" role="alert">
-					{t("messages.operationFailedPrefix")}
-					{store.error}
-				</div>
-			</Show>
+		<>
+			<ThreadHead sceneTitle={sceneTitle()} />
+			<section
+				class="thread"
+				aria-live="polite"
+				aria-label={t("messages.conversation")}
+				ref={(el) => {
+					threadRef = el;
+				}}
+			>
+				<Show when={store.error !== null}>
+					<div class="thread-error" role="alert">
+						{t("messages.operationFailedPrefix")}
+						{store.error}
+					</div>
+				</Show>
 
-			<Show
-				when={
-					visibleMessages().length > 0 ||
-					store.pendingUserText !== undefined ||
-					store.assistantStreaming ||
-					store.streamingAssistantText.length > 0
-				}
-				fallback={
-					<Show when={props.character}>
-						{(character) => (
-							<div class="msg bear-msg">
-								<div class="msg-meta">
-									{character().name} · {character().character.scene_title}
+				<Show
+					when={
+						visibleMessages().length > 0 ||
+						store.pendingUserText !== undefined ||
+						store.assistantStreaming ||
+						store.streamingAssistantText.length > 0
+					}
+					fallback={
+						<Show when={props.character}>
+							{(character) => (
+								<div class="msg bear-msg">
+									<div class="msg-meta">
+										{character().name} · {character().character.scene_title}
+									</div>
+									<p>{character().character.greeting}</p>
 								</div>
-								<p>{character().character.greeting}</p>
-							</div>
+							)}
+						</Show>
+					}
+				>
+					<For each={visibleMessages()}>
+						{(message) => (
+							<MessageItem
+								message={message}
+								characterName={props.character?.name ?? ""}
+								correction={props.character?.character.correction}
+								lastAssistant={message.role === "assistant" && message.id === lastAssistantId()}
+							/>
+						)}
+					</For>
+					<Show when={store.pendingUserText}>
+						{(text) => (
+							<article class="msg user optimistic-message" aria-label={t("messages.userMeta")}>
+								<div class="msg-meta">{t("messages.userMeta")}</div>
+								<p>{text()}</p>
+							</article>
 						)}
 					</Show>
-				}
-			>
-				<For each={visibleMessages()}>
-					{(message) => (
-						<MessageItem
-							message={message}
-							characterName={props.character?.name ?? ""}
-							correction={props.character?.character.correction}
-							lastAssistant={message.role === "assistant" && message.id === lastAssistantId()}
-						/>
-					)}
-				</For>
-				<Show when={store.pendingUserText}>
-					{(text) => (
-						<article class="msg user optimistic-message" aria-label={t("messages.userMeta")}>
-							<div class="msg-meta">{t("messages.userMeta")}</div>
-							<p>{text()}</p>
+					<Show when={streamedContent().length > 0 || store.assistantStreaming}>
+						<article
+							class="msg bear-msg streaming-message"
+							aria-label={props.character?.name ?? ""}
+						>
+							<div class="msg-meta">{props.character?.name ?? ""}</div>
+							<p>{streamedContent()}</p>
+							<Show when={store.assistantStreaming}>
+								<span
+									class="streaming-status"
+									role="status"
+									aria-label={t("messages.responding")}
+								/>
+							</Show>
 						</article>
-					)}
+					</Show>
 				</Show>
-				<Show when={streamedContent().length > 0 || store.assistantStreaming}>
-					<article class="msg bear-msg streaming-message" aria-label={props.character?.name ?? ""}>
-						<div class="msg-meta">{props.character?.name ?? ""}</div>
-						<p>{streamedContent()}</p>
-						<Show when={store.assistantStreaming}>
-							<span class="streaming-status" role="status" aria-label={t("messages.responding")} />
-						</Show>
-					</article>
-				</Show>
-			</Show>
-			<RoleplayPresentation character={props.character} />
-		</section>
+				<RoleplayPresentation character={props.character} />
+			</section>
+		</>
 	);
 }
 

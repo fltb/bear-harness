@@ -29,6 +29,8 @@ describe("roleplay presentation", () => {
 		const store = {
 			activeMessages: [],
 			activeConversationId: "conversation",
+			conversations: [],
+			runs: [],
 			pendingUserText: undefined,
 			assistantStreaming: false,
 			streamingAssistantText: "",
@@ -71,6 +73,8 @@ describe("roleplay presentation", () => {
 		const store = {
 			activeMessages: [],
 			activeConversationId: "conversation",
+			conversations: [],
+			runs: [],
 			pendingUserText: undefined,
 			assistantStreaming: false,
 			streamingAssistantText: "",
@@ -133,6 +137,8 @@ describe("roleplay presentation", () => {
 		const store = {
 			activeMessages: [],
 			activeConversationId: "conversation",
+			conversations: [],
+			runs: [],
 			pendingUserText: undefined,
 			assistantStreaming: false,
 			streamingAssistantText: "",
@@ -180,6 +186,8 @@ describe("roleplay presentation", () => {
 		const store = {
 			activeMessages: [],
 			activeConversationId: "conversation",
+			conversations: [],
+			runs: [],
 			pendingUserText: undefined,
 			assistantStreaming: false,
 			streamingAssistantText: "",

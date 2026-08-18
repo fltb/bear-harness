@@ -12,7 +12,6 @@ import { Backstage } from "./features/Backstage.js";
 import { SceneBackdrop } from "./SceneBackdrop";
 import { Sidebar } from "./Sidebar";
 import { createCompanionStore, DesktopProvider } from "./stores/companion.js";
-import { Titlebar } from "./Titlebar";
 import { WorkPanel } from "./WorkPanel";
 
 /**
@@ -56,8 +55,6 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
 	});
 
 	const character = () => store.character;
-	const activeConversation = () =>
-		store.conversations.find((conversation) => conversation.id === store.activeConversationId);
 	const activeCharacterRuntime = () => {
 		const conversationId = store.activeConversationId;
 		return conversationId ? store.characterRuntimeByConversation[conversationId] : undefined;
@@ -67,8 +64,6 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
 		const sceneId = activeCharacterRuntime()?.sceneId ?? identity?.visual.defaultSceneId;
 		return identity?.scenes.find((scene) => scene.id === sceneId);
 	};
-	const sceneTitle = () =>
-		activeConversation()?.sceneTitle ?? character()?.character.scene_title ?? "";
 	const composerPlaceholder = () =>
 		character()?.character.composer_placeholder ?? t("shell.fallbackComposerPlaceholder");
 	const preferredLanguage = () =>
@@ -113,7 +108,6 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
 				role="application"
 				aria-label={props.product.productName}
 			>
-				<Titlebar sceneTitle={sceneTitle()} onOpenBackstage={() => openBackstage()} />
 				<div class="shell">
 					<Sidebar character={character()} onOpenBackstage={openBackstage} />
 					<main class="main">

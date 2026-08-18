@@ -187,7 +187,7 @@ button[data-variant="primary"]:focus-visible {
 /* ------------------------------------------------------------------ */
 
 .app {
-	@apply grid h-[calc(100vh-28px)] w-[calc(100vw-28px)] grid-rows-[52px_minmax(0,1fr)] overflow-hidden rounded-3xl border border-line bg-night-2 shadow-app;
+	@apply grid h-[calc(100vh-28px)] w-[calc(100vw-28px)] grid-rows-[minmax(0,1fr)] overflow-hidden rounded-3xl border border-line bg-night-2 shadow-app;
 	--radius-sm: 8px;
 	--radius-md: 12px;
 	--radius-lg: 16px;
@@ -197,39 +197,13 @@ button[data-variant="primary"]:focus-visible {
 	background: var(--surface);
 }
 
-.titlebar {
-	@apply grid grid-cols-[1fr_auto_1fr] items-center border-b border-line bg-[rgba(8,25,30,0.96)] px-[17px];
+.thread-head {
+	@apply absolute right-[6%] top-[16px] z-[5] flex w-[min(610px,54%)] items-center justify-between gap-3;
 }
 
-.traffic {
-	@apply flex gap-[7px];
-}
-
-.traffic i {
-	@apply h-[10px] w-[10px] rounded-full;
-	background: #b96f65;
-}
-
-.traffic i:nth-child(2) {
-	background: #c49d5d;
-}
-
-.traffic i:nth-child(3) {
-	background: #6f9e83;
-}
-
-.scene-title {
+.thread-head .scene-title {
 	@apply text-[14px] text-ice;
 	font-family: var(--font-heading);
-}
-
-.top-actions {
-	@apply flex items-center justify-end gap-2;
-}
-
-.top-actions > button {
-	@apply flex h-[36px] items-center rounded-[10px] border border-line px-[11px] text-[#b9ccc6];
-	background: rgba(132, 196, 177, 0.05);
 }
 
 /* ------------------------------------------------------------------ */
@@ -911,7 +885,7 @@ button[data-variant="primary"]:focus-visible {
 /* ------------------------------------------------------------------ */
 
 .thread {
-	@apply absolute bottom-[19%] right-[6%] top-[88px] z-[4] flex w-[min(610px,54%)] flex-col gap-[10px] overflow-y-auto px-1 pb-3;
+	@apply absolute bottom-[19%] right-[6%] top-[68px] z-[4] flex w-[min(610px,54%)] flex-col gap-[10px] overflow-y-auto px-1 pb-3;
 	scrollbar-width: thin;
 	scrollbar-color: rgba(161, 207, 194, 0.25) transparent;
 }
@@ -1385,7 +1359,7 @@ button[data-variant="primary"]:focus-visible {
 	background: var(--amber);
 }
 
-/* --- work pill + run queue (titlebar) ------------------------------ */
+/* --- work pill + run queue (thread head) --------------------------- */
 
 .work-pill-wrap {
 	position: relative;

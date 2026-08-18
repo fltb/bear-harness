@@ -24,6 +24,7 @@ test("source build loads from file:// with official identity and isolated diagno
 			HOME: tempRoot,
 			NODE_ENV: "test",
 			BEAR_E2E_SOURCE: "1",
+			BEAR_E2E_APP_DATA: tempRoot,
 			BEAR_DIAGNOSTICS_ROOT: tempRoot,
 		},
 	});

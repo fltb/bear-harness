@@ -55,12 +55,12 @@ describe("idle homepage (official config, no bridge)", () => {
 		expect(screen.getByRole("button", { name: zhCN.sidebar.systemSettings })).toBeEnabled();
 	});
 
-	it("opens the backstage sheet from the titlebar", async () => {
+	it("opens the backstage sheet from the sidebar", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		const backstage = screen.getByRole("button", { name: zhCN.titlebar.backstage });
+		const backstage = screen.getByRole("button", { name: zhCN.sidebar.characterSettings });
 		expect(backstage).toBeEnabled();
 		await user.click(backstage);
 		expect(await screen.findByRole("dialog")).toBeInTheDocument();

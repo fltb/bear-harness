@@ -32,6 +32,7 @@ test("renderer faults are recorded as metadata only; crash reports process_gone"
 			HOME: tempRoot,
 			NODE_ENV: "test",
 			BEAR_E2E_SOURCE: "1",
+			BEAR_E2E_APP_DATA: tempRoot,
 			BEAR_DIAGNOSTICS_ROOT: tempRoot,
 		},
 	});

@@ -1,33 +1,34 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { CharacterPresence } from "../src/CharacterPresence.js";
 import { SceneBackdrop } from "../src/SceneBackdrop.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
-import { Titlebar } from "../src/Titlebar.js";
+import { ThreadHead } from "../src/ThreadHead.js";
 import { THEMED_CHARACTER } from "./fixtures.js";
 
-describe("shell visual and titlebar contracts", () => {
+describe("shell visual and thread head contracts", () => {
 	it("shows an explicit empty state when no work is running", async () => {
 		const user = userEvent.setup();
 		render(() => (
 			<DesktopProvider store={{ runs: [] } as CompanionStore}>
-				<Titlebar sceneTitle="Idle" onOpenBackstage={() => undefined} />
+				<ThreadHead sceneTitle="Idle" />
 			</DesktopProvider>
 		));
 		const queue = screen.getByRole("button", { name: /0/ });
 		await user.click(queue);
-		expect(screen.getByRole("menu", { name: zhCN.titlebar.runningWork })).toHaveTextContent(
-			zhCN.titlebar.noRunningWork,
+		expect(screen.getByRole("menu", { name: zhCN.threadHead.runningWork })).toHaveTextContent(
+			zhCN.threadHead.noRunningWork,
 		);
 		await user.click(queue);
-		expect(screen.queryByRole("menu", { name: zhCN.titlebar.runningWork })).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("menu", { name: zhCN.threadHead.runningWork }),
+		).not.toBeInTheDocument();
 	});
 
-	it("opens the active-run menu, maps status text, closes with Escape, and opens backstage", async () => {
+	it("opens the active-run menu, maps status text, and closes with Escape", async () => {
 		const user = userEvent.setup();
-		const onOpenBackstage = vi.fn();
 		const store = {
 			runs: [
 				{
@@ -46,20 +47,20 @@ describe("shell visual and titlebar contracts", () => {
 		} as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
-				<Titlebar sceneTitle="Scene title" onOpenBackstage={onOpenBackstage} />
+				<ThreadHead sceneTitle="Scene title" />
 			</DesktopProvider>
 		));
 
 		expect(screen.getByRole("heading", { name: "Scene title" })).toBeVisible();
 		const queueButton = screen.getByRole("button", { name: /1/ });
 		await user.click(queueButton);
-		expect(screen.getByRole("menu", { name: zhCN.titlebar.runningWork })).toHaveTextContent(
-			zhCN.titlebar.runStatuses.needs_user,
+		expect(screen.getByRole("menu", { name: zhCN.threadHead.runningWork })).toHaveTextContent(
+			zhCN.threadHead.runStatuses.needs_user,
 		);
 		await user.keyboard("{Escape}");
-		expect(screen.queryByRole("menu", { name: zhCN.titlebar.runningWork })).not.toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: zhCN.titlebar.backstage }));
-		expect(onOpenBackstage).toHaveBeenCalledOnce();
+		expect(
+			screen.queryByRole("menu", { name: zhCN.threadHead.runningWork }),
+		).not.toBeInTheDocument();
 	});
 
 	it("renders package scene and presence assets with package-owned accessible labels", () => {

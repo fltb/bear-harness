@@ -118,7 +118,7 @@ describe("memory controls", () => {
 		client.memory.invalidate = invalidate;
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		await user.click(await screen.findByRole("button", { name: zhCN.titlebar.backstage }));
+		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
 		const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
 		await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
 		const region = await within(backstage).findByRole("region", {
@@ -197,7 +197,7 @@ describe("memory controls", () => {
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		await user.click(await screen.findByRole("button", { name: zhCN.titlebar.backstage }));
+		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
 		const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
 		await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
 		const entries = await screen.findByRole("region", {
@@ -253,7 +253,7 @@ describe("memory controls", () => {
 		client.memory.invalidate = vi.fn(() => Promise.resolve({ ok: true as const, data: null }));
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		await user.click(await screen.findByRole("button", { name: zhCN.titlebar.backstage }));
+		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
 		const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
 		await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
 		const region = await within(backstage).findByRole("region", {
@@ -291,7 +291,7 @@ describe("memory controls", () => {
 		client.memory.edit = vi.fn(() => Promise.reject(new Error("direct memory write failed")));
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		await user.click(await screen.findByRole("button", { name: zhCN.titlebar.backstage }));
+		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
 		const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
 		await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
 		const region = await within(backstage).findByRole("region", {
@@ -316,7 +316,7 @@ describe("memory controls", () => {
 		client.memory.list = vi.fn(() => Promise.resolve({ ok: true as const, data: { entries: [] } }));
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		await user.click(await screen.findByRole("button", { name: zhCN.titlebar.backstage }));
+		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
 		const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
 		await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
 		const region = await within(backstage).findByRole("region", {
