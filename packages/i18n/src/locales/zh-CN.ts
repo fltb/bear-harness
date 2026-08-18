@@ -228,6 +228,12 @@ export const zhCN = {
 		vectorProvider: "服务类型",
 		vectorProviders: { none: "关闭", remote: "远程 OpenAI 兼容", local: "内置离线模型" },
 		vectorPreset: "常用模型",
+		vectorPresetLabels: {
+			"bge-m3": "BGE-M3（1024 维）",
+			"qwen3-embedding": "Qwen3-Embedding-8B（1024 维）",
+			"tongyi-v4": "通义 text-embedding-v4（1024 维）",
+			"openai-3-small": "text-embedding-3-small（1536 维）",
+		},
 		vectorModel: "向量模型",
 		vectorDimensions: "向量维度",
 		memoryVectorLocalNote: "使用内置离线向量模型（768 维），首次使用需下载模型。",

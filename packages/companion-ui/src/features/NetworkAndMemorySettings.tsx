@@ -1,5 +1,6 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
+import { Checkbox } from "@kobalte/core/checkbox";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { createSignal, onMount, Show } from "solid-js";
@@ -12,10 +13,10 @@ function messageOf(value: unknown): string {
 const PROXY_MODES = ["direct", "auto", "manual"] as const;
 const VECTOR_PROVIDERS = ["none", "remote", "local"] as const;
 const VECTOR_PRESETS = [
-	{ value: "BAAI/bge-m3", label: "BGE-M3（1024 维）", dimensions: 1024 },
-	{ value: "Qwen/Qwen3-Embedding-8B", label: "Qwen3-Embedding-8B（1024 维）", dimensions: 1024 },
-	{ value: "text-embedding-v4", label: "通义 text-embedding-v4（1024 维）", dimensions: 1024 },
-	{ value: "text-embedding-3-small", label: "text-embedding-3-small（1536 维）", dimensions: 1536 },
+	{ value: "BAAI/bge-m3", key: "bge-m3", dimensions: 1024 },
+	{ value: "Qwen/Qwen3-Embedding-8B", key: "qwen3-embedding", dimensions: 1024 },
+	{ value: "text-embedding-v4", key: "tongyi-v4", dimensions: 1024 },
+	{ value: "text-embedding-3-small", key: "openai-3-small", dimensions: 1536 },
 ] as const;
 
 /**
@@ -80,9 +81,7 @@ export function NetworkAndMemorySettings() {
 			await store.settings.set({
 				networkProxy: {
 					mode: proxyMode(),
-					...(proxyMode() === "manual" && proxyUrl().trim()
-						? { url: proxyUrl().trim() }
-						: {}),
+					...(proxyMode() === "manual" && proxyUrl().trim() ? { url: proxyUrl().trim() } : {}),
 				},
 				memoryVectorService: {
 					enabled: vectorEnabled(),
@@ -151,14 +150,11 @@ export function NetworkAndMemorySettings() {
 
 			<h4>{t("settings.memoryVectorSection")}</h4>
 			<div class="setting-row">
-				<label class="checkbox-row">
-					<input
-						type="checkbox"
-						checked={vectorEnabled()}
-						onChange={(event) => setVectorEnabled(event.currentTarget.checked)}
-					/>
-					<span>{t("settings.memoryVectorEnabled")}</span>
-				</label>
+				<Checkbox checked={vectorEnabled()} onChange={(checked) => setVectorEnabled(checked)}>
+					<Checkbox.Input />
+					<Checkbox.Control />
+					<Checkbox.Label>{t("settings.memoryVectorEnabled")}</Checkbox.Label>
+				</Checkbox>
 			</div>
 			<Show when={vectorEnabled()}>
 				<Select
@@ -183,7 +179,7 @@ export function NetworkAndMemorySettings() {
 				<Show when={vectorProvider() === "remote"}>
 					<Select
 						options={[...VECTOR_PRESETS]}
-						optionTextValue={(preset) => preset.label}
+						optionTextValue={(preset) => t(`settings.vectorPresetLabels.${preset.key}` as never)}
 						onChange={(preset) => {
 							if (!preset) return;
 							setRemoteModel(preset.value);
@@ -193,13 +189,21 @@ export function NetworkAndMemorySettings() {
 						aria-label={t("settings.vectorPreset")}
 						itemComponent={(props) => (
 							<Select.Item item={props.item} class="select-item">
-								<Select.ItemLabel>{props.item.rawValue.label}</Select.ItemLabel>
+								<Select.ItemLabel>
+									{t(
+										`settings.vectorPresetLabels.${(props.item.rawValue as (typeof VECTOR_PRESETS)[number]).key}` as never,
+									)}
+								</Select.ItemLabel>
 							</Select.Item>
 						)}
 					>
 						<Select.Trigger class="select-trigger" aria-label={t("settings.vectorPreset")}>
-							<Select.Value<Readonly<{ value: string; label: string; dimensions: number }>>>
-								{(state) => state.selectedOption()?.label ?? ""}
+							<Select.Value<Readonly<{ value: string; key: string; dimensions: number }>>>
+								{(state) =>
+									state.selectedOption()
+										? t(`settings.vectorPresetLabels.${state.selectedOption()!.key}` as never)
+										: ""
+								}
 							</Select.Value>
 						</Select.Trigger>
 					</Select>
@@ -235,9 +239,7 @@ export function NetworkAndMemorySettings() {
 						<TextField.Input
 							type="number"
 							value={remoteDimensions()}
-							onInput={(event) =>
-								setRemoteDimensions(Number(event.currentTarget.value) || 0)
-							}
+							onInput={(event) => setRemoteDimensions(Number(event.currentTarget.value) || 0)}
 						/>
 					</TextField>
 				</Show>
@@ -258,12 +260,7 @@ export function NetworkAndMemorySettings() {
 			</TextField>
 
 			<div class="setting-actions">
-				<Button
-					type="button"
-					class="primary-tool"
-					disabled={saving()}
-					onClick={() => void save()}
-				>
+				<Button type="button" class="primary-tool" disabled={saving()} onClick={() => void save()}>
 					{t("settings.saveNetwork")}
 				</Button>
 			</div>

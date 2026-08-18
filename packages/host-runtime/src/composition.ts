@@ -32,9 +32,9 @@ import type { Dispatcher } from "./dispatcher.js";
 import type { MemoryBackend, MemoryBankScope, MemoryRecord } from "./memory/backend.js";
 import type { ModelRegistry } from "./models/registry.js";
 import type { ProviderCatalog } from "./providers/catalog.js";
+import type { AppSettingsStore } from "./storage/app-settings-store.js";
 import type { AppDatabase } from "./storage/database.js";
 import type { EventBus } from "./storage/event-bus.js";
-import type { AppSettingsStore } from "./storage/app-settings-store.js";
 import {
 	activeCharacter,
 	companionIdentity,

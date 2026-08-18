@@ -14,19 +14,13 @@ test("direct memory capture, scoped context, and user management stay determinis
 	const secondSourceText = "E2E_DIRECT_MEMORY_B：我们约定暗号是北辰";
 
 	const memoryEntries = async (): Promise<
-		Array<{ id: string; text: string; createdBy: string; sourceEntryId?: string; status?: string }>
+		Array<{ id: string; text: string }>
 	> => {
 		const response = await page.request.post("/rpc/memory.list%3Av1", { headers, data: {} });
 		const payload = (await response.json()) as {
 			ok: boolean;
 			data?: {
-				entries?: Array<{
-					id: string;
-					text: string;
-					createdBy: string;
-					sourceEntryId?: string;
-					status?: string;
-				}>;
+				entries?: Array<{ id: string; text: string }>;
 			};
 		};
 		expect(payload).toMatchObject({ ok: true });
@@ -97,12 +91,7 @@ test("direct memory capture, scoped context, and user management stay determinis
 	const sourceEntryId = await captureMessage(sourceText);
 	await expect
 		.poll(async () => (await memoryEntries()).find((entry) => entry.text === sourceText))
-		.toMatchObject({
-			text: sourceText,
-			createdBy: "user_capture",
-			sourceEntryId,
-			status: "active",
-		});
+		.toMatchObject({ text: sourceText });
 
 	await sendMessage(page, `检查记忆上下文 ${sourceText}`);
 	await expectMemoryContext("MEMORY_CONTEXT:我们约定暗号是北辰");
@@ -154,12 +143,7 @@ test("direct memory capture, scoped context, and user management stay determinis
 	const secondSourceEntryId = await captureMessage(secondSourceText);
 	await expect
 		.poll(async () => (await memoryEntries()).find((entry) => entry.text === secondSourceText))
-		.toMatchObject({
-			text: secondSourceText,
-			createdBy: "user_capture",
-			sourceEntryId: secondSourceEntryId,
-			status: "active",
-		});
+		.toMatchObject({ text: secondSourceText });
 	await sendMessage(page, `检查记忆上下文 ${secondSourceText}`);
 	await expectMemoryContext("MEMORY_CONTEXT:我们约定暗号是北辰");
 

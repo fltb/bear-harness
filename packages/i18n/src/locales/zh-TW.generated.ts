@@ -237,6 +237,12 @@ export const zhTW = {
 			"local": "內建離線模型"
 		},
 		"vectorPreset": "常用模型",
+		"vectorPresetLabels": {
+			"bge-m3": "BGE-M3（1024 維）",
+			"qwen3-embedding": "Qwen3-Embedding-8B（1024 維）",
+			"tongyi-v4": "通義 text-embedding-v4（1024 維）",
+			"openai-3-small": "text-embedding-3-small（1536 維）"
+		},
 		"vectorModel": "向量模型",
 		"vectorDimensions": "向量維度",
 		"memoryVectorLocalNote": "使用內建離線向量模型（768 維），首次使用需下載模型。",

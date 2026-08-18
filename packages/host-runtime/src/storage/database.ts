@@ -924,7 +924,8 @@ export const MIGRATIONS: Migration[] = [
 	},
 	{
 		id: 18,
-		description: "Product-level app settings (network proxy, memory vector service, download mirror)",
+		description:
+			"Product-level app settings (network proxy, memory vector service, download mirror)",
 		up: `
 			CREATE TABLE app_settings (
 				id INTEGER PRIMARY KEY CHECK (id = 1),

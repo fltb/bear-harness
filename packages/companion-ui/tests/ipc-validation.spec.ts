@@ -267,7 +267,13 @@ describe("host projection validation", () => {
 		expect(isOnboardingData({ ...onboarding, currentStepId: 3 })).toBe(false);
 		expect(isOnboardingData({ ...onboarding, stateData: {} })).toBe(false);
 
-		const settings = { relationshipMemoryEnabled: true, conversationHistoryReadEnabled: false };
+		const settings = {
+			relationshipMemoryEnabled: true,
+			conversationHistoryReadEnabled: false,
+			networkProxy: { mode: "direct" as const },
+			memoryVectorService: { enabled: false, provider: "none" as const },
+			modelDownloadMirror: {},
+		};
 		expect(isSettingsData(settings)).toBe(true);
 		expect(isSettingsData({ ...settings, relationshipMemoryEnabled: "yes" })).toBe(false);
 		expect(isSettingsData({ ...settings, textFallback: { providerId: "provider-1" } })).toBe(false);

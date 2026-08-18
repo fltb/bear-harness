@@ -244,6 +244,12 @@ export const en = {
 			local: "Bundled offline model",
 		},
 		vectorPreset: "Common models",
+		vectorPresetLabels: {
+			"bge-m3": "BGE-M3 (1024 dims)",
+			"qwen3-embedding": "Qwen3-Embedding-8B (1024 dims)",
+			"tongyi-v4": "Tongyi text-embedding-v4 (1024 dims)",
+			"openai-3-small": "text-embedding-3-small (1536 dims)",
+		},
 		vectorModel: "Embedding model",
 		vectorDimensions: "Vector dimensions",
 		memoryVectorLocalNote:
@@ -251,7 +257,8 @@ export const en = {
 		downloadMirrorSection: "Model download mirror",
 		downloadMirrorLabel: "Mirror endpoint (leave empty for the default source)",
 		saveNetwork: "Save network and memory settings",
-		saved: "Saved. Proxy applies immediately; the vector service and mirror take effect after restart.",
+		saved:
+			"Saved. Proxy applies immediately; the vector service and mirror take effect after restart.",
 		visionModel: "Image reader model",
 		visionModelHint:
 			"Automatic mode chooses an image-capable model and passes its reading to the current reply model.",
