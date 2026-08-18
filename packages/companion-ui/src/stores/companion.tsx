@@ -535,7 +535,22 @@ function isStaleOnboardingStep(error: unknown): boolean {
 	return error instanceof IpcInvocationError && error.kind === "conflict";
 }
 
+/**
+ * Stores are keyed by client so a component re-render (e.g. a locale change
+ * re-running `CompanionRuntime`) never rebuilds the store: rebuilding would
+ * drop the event subscription, snapshot cache and all in-flight state.
+ */
+const COMPANION_STORES = new WeakMap<CompanionClient, CompanionStore>();
+
 export function createCompanionStore(client: CompanionClient): CompanionStore {
+	const existing = COMPANION_STORES.get(client);
+	if (existing !== undefined) return existing;
+	const store = createCompanionStoreInner(client);
+	COMPANION_STORES.set(client, store);
+	return store;
+}
+
+function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const [t] = useTranslation(undefined, { i18n });
 	const queryClient = useQueryClient();
 	const [state, setState] = createStore<CompanionState>({
