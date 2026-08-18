@@ -92,10 +92,10 @@ function record(name, ok, checks) {
 	const d = serializeJsonLine({ type: "evt", n: 2 });
 	const bad = "{not json}\n";
 	stream.write(a.slice(0, 7));
-	stream.write(a.slice(7) + b);
+	stream.write(`${a.slice(7)}${b}`);
 	stream.write(c.slice(0, c.length - 4));
-	stream.write(c.slice(c.length - 4) + d.slice(0, 3));
-	stream.write(d.slice(3) + bad);
+	stream.write(`${c.slice(c.length - 4)}${d.slice(0, 3)}`);
+	stream.write(`${d.slice(3)}${bad}`);
 	stream.end();
 
 	await new Promise((resolve) => stream.on("end", resolve));
@@ -130,17 +130,15 @@ function record(name, ok, checks) {
 	});
 
 	let stdout = "";
-	let stderr = "";
 	const stderrChunks = [];
 	child.stdout.on("data", (c) => (stdout += c));
 	child.stderr.on("data", (c) => {
-		stderr += c;
 		stderrChunks.push(c.toString());
 	});
 
 	// Wait for any initial output, then issue get_state and expect a response.
 	await new Promise((r) => setTimeout(r, 2500));
-	child.stdin.write(JSON.stringify({ id: "spike-1", type: "get_state" }) + "\n");
+	child.stdin.write(`${JSON.stringify({ id: "spike-1", type: "get_state" })}\n`);
 	await new Promise((r) => setTimeout(r, 3000));
 	child.stdin.end();
 	// RPC mode keeps running after stdin EOF; kill the process tree explicitly.

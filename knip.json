@@ -1,6 +1,7 @@
 {
 	"$schema": "./node_modules/knip/schema.json",
 	"include": ["files", "dependencies", "devDependencies", "unlisted", "unresolved"],
+	"ignoreWorkspaces": ["packages/tdai-core"],
 	"workspaces": {
 		".": {
 			"entry": ["scripts/**/*.mjs", "prototypes/**/*.js"],

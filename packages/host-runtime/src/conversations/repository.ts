@@ -118,7 +118,10 @@ function extractCurrentUserMessage(content: string): string | undefined {
 	}
 	const separatorIndex = content.indexOf(HOST_CONTEXT_SEPARATOR, HOST_CONTEXT_PREFIX.length);
 	if (separatorIndex <= HOST_CONTEXT_PREFIX.length) return undefined;
-	return content.slice(separatorIndex + HOST_CONTEXT_SEPARATOR.length, -CURRENT_USER_MESSAGE_SUFFIX.length);
+	return content.slice(
+		separatorIndex + HOST_CONTEXT_SEPARATOR.length,
+		-CURRENT_USER_MESSAGE_SUFFIX.length,
+	);
 }
 
 export class ConversationRepository {
@@ -403,7 +406,10 @@ export class ConversationRepository {
 			const sessionFile = resolve(sessionMetadata.sessionFilePath);
 			const root = this.sessionDir ? resolve(this.sessionDir) : undefined;
 			const relativePath = root ? relative(root, sessionFile) : "";
-			if (!root || (relativePath !== ".." && !relativePath.startsWith("..") && !isAbsolute(relativePath))) {
+			if (
+				!root ||
+				(relativePath !== ".." && !relativePath.startsWith("..") && !isAbsolute(relativePath))
+			) {
 				rmSync(sessionFile, { force: true });
 			}
 		}
@@ -435,7 +441,9 @@ export class ConversationRepository {
 					id: messageId,
 					role,
 					adoptedVersionId: versionId,
-					versions: [{ id: versionId, role, content, editedByUser: false, createdAt: now, adopted: true }],
+					versions: [
+						{ id: versionId, role, content, editedByUser: false, createdAt: now, adopted: true },
+					],
 					createdAt: now,
 				};
 			});

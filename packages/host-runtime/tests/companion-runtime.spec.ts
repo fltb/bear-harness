@@ -5,24 +5,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
-	estimateTokens,
-	ModelRuntime,
-	type CompactionSettings,
-} from "@earendil-works/pi-coding-agent";
-import {
 	createModels,
 	fauxAssistantMessage,
 	fauxProvider,
 	fauxToolCall,
 } from "@earendil-works/pi-ai";
+import {
+	type CompactionSettings,
+	estimateTokens,
+	ModelRuntime,
+} from "@earendil-works/pi-coding-agent";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { PiSessionStore } from "../src/companion/pi-session-store.js";
 import {
 	type CompanionModelRuntimeSource,
 	CompanionSupervisor,
 	extractLatestAssistantText,
 } from "../src/companion/supervisor.js";
-import { PiSessionStore } from "../src/companion/pi-session-store.js";
 import { EventBus } from "../src/storage/event-bus.js";
 
 const temporaryDirectories: string[] = [];
@@ -137,12 +137,7 @@ describe("in-process Companion Host bridge", () => {
 			skillPaths: [skills],
 			pluginPaths: [],
 			appendSystemPrompt: "IDENTITY_SENTINEL\nSTYLE_SENTINEL",
-			hostTools: [
-				"host_get_state",
-				"host_set_scene",
-				"host_set_expression",
-				"host_search_canon",
-			],
+			hostTools: ["host_get_state", "host_set_scene", "host_set_expression", "host_search_canon"],
 		});
 		const hostCalls: Array<{ conversationId: string; tool: string; args: unknown }> = [];
 		runtime.setHostToolHandler((call) => {
@@ -480,7 +475,11 @@ describe("in-process Companion Host bridge", () => {
 				resolve();
 			});
 		});
-		runtime.sendCommand({ type: "prompt", conversationId: "conversation-compaction", message: "latest branch request" });
+		runtime.sendCommand({
+			type: "prompt",
+			conversationId: "conversation-compaction",
+			message: "latest branch request",
+		});
 		await completed;
 
 		expect(providerPrompts).toHaveLength(1);

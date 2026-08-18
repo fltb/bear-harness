@@ -1,17 +1,29 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { extname, join, sep } from "node:path";
 import { parse } from "@babel/parser";
 
-const files = execFileSync(
-	"rg",
-	["--files", "apps", "packages", "-g", "*.ts", "-g", "*.tsx", "-g", "*.cts"],
-	{
-		encoding: "utf8",
-	},
-)
-	.trim()
-	.split("\n")
-	.filter((file) => file && !file.includes("/dist/"));
+const sourceExtensions = new Set([".ts", ".tsx", ".cts"]);
+
+function collectTypeScriptFiles(directory) {
+	const files = [];
+	const entries = readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
+		left.name.localeCompare(right.name),
+	);
+	for (const entry of entries) {
+		if (entry.isDirectory() && (entry.name === "dist" || entry.name === "node_modules")) continue;
+		const path = join(directory, entry.name);
+		if (entry.isDirectory()) {
+			files.push(...collectTypeScriptFiles(path));
+		} else if (entry.isFile() && sourceExtensions.has(extname(entry.name))) {
+			files.push(path.split(sep).join("/"));
+		}
+	}
+	return files;
+}
+
+const files = ["apps", "packages"]
+	.flatMap(collectTypeScriptFiles)
+	.filter((file) => !file.includes("/dist/"));
 const failures = [];
 
 function visit(node, file) {

@@ -137,6 +137,7 @@ export const zhTW = {
 	},
 	"messages": {
 		"closeMedia": "關閉",
+		"rememberMoment": "記住這一刻",
 		"justNow": "剛剛",
 		"noActiveConversationError": "還沒有選中對話",
 		"userMeta": "你 · 剛剛",

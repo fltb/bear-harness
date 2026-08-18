@@ -83,26 +83,62 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	await page.reload();
 	await expect(page.getByRole("dialog", { name: "首次入场" })).toBeHidden();
 
+	const conversationsBefore = await (
+		await page.request.post("/rpc/conversation.list%3Av1", { headers, data: {} })
+	).json();
+	const previousConversationIds = new Set<string>(
+		(conversationsBefore.data?.conversations ?? [])
+			.map((conversation: { id?: unknown }) =>
+				typeof conversation.id === "string" ? conversation.id : undefined,
+			)
+			.filter((id: string | undefined): id is string => id !== undefined),
+	);
+	const conversations = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
+	const conversationItems = conversations.getByRole("button");
+	const conversationCountBefore = await conversationItems.count();
 	await page.getByRole("button", { name: zhCN.sidebar.newConversation }).click();
+	await expect.poll(() => conversationItems.count()).toBeGreaterThan(conversationCountBefore);
+	await expect
+		.poll(() =>
+			conversationItems.evaluateAll(
+				(items) => items.filter((item) => item.getAttribute("aria-current") === "page").length,
+			),
+		)
+		.toBe(1);
+	await expect(page.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled();
 	await expect
 		.poll(async () => {
 			const conversations = await (
-				await page.request.post("/rpc/conversation.list%3Av1", { headers, data: {} })
-			).json();
-			const conversationId = conversations.data?.conversations?.[0]?.id as string | undefined;
-			if (!conversationId) return undefined;
-			const route = await (
-				await page.request.post("/rpc/model.route.get%3Av1", {
+				await page.request.post("/rpc/conversation.list%3Av1", {
 					headers,
-					data: { conversationId },
+					data: {},
 				})
 			).json();
-			return route.data?.selected;
+			const listedIds = (conversations.data?.conversations ?? [])
+				.map((conversation: { id?: unknown }) =>
+					typeof conversation.id === "string" ? conversation.id : undefined,
+				)
+				.filter((id: string | undefined): id is string => id !== undefined);
+			const candidateIds = listedIds.filter((id) => !previousConversationIds.has(id));
+			for (const conversationId of candidateIds) {
+				const route = await (
+					await page.request.post("/rpc/model.route.get%3Av1", {
+						headers,
+						data: { conversationId },
+					})
+				).json();
+				if (
+					route.data?.selected?.providerId === "e2e-rule" &&
+					route.data?.selected?.modelId === "rule-model"
+				) {
+					return route.data.selected;
+				}
+			}
+			return undefined;
 		})
 		.toEqual({ providerId: "e2e-rule", modelId: "rule-model" });
 	const model = page.getByRole("button", { name: zhCN.composer.modelLabel });
 	await expect(model).toContainText("E2E Rule Provider");
-	await expect(page.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled();
 }
 
 export async function sendMessage(page: Page, text: string): Promise<void> {

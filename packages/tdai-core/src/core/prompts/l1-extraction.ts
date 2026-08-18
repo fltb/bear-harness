@@ -112,23 +112,26 @@ metadata 字段说明：
  * @param previousSceneName - The last known scene name (for continuity)
  */
 export function formatExtractionPrompt(params: {
-  newMessages: ConversationMessage[];
-  backgroundMessages?: ConversationMessage[];
-  previousSceneName?: string;
+	newMessages: ConversationMessage[];
+	backgroundMessages?: ConversationMessage[];
+	previousSceneName?: string;
 }): string {
-  const { newMessages, backgroundMessages = [], previousSceneName = "无" } = params;
+	const { newMessages, backgroundMessages = [], previousSceneName = "无" } = params;
 
-  const bgText = backgroundMessages.length > 0
-    ? backgroundMessages
-        .map((m) => `[${m.id}] [${m.role}] [${new Date(m.timestamp).toISOString()}]: ${m.content}`)
-        .join("\n\n")
-    : "无";
+	const bgText =
+		backgroundMessages.length > 0
+			? backgroundMessages
+					.map(
+						(m) => `[${m.id}] [${m.role}] [${new Date(m.timestamp).toISOString()}]: ${m.content}`,
+					)
+					.join("\n\n")
+			: "无";
 
-  const newText = newMessages
-    .map((m) => `[${m.id}] [${m.role}] [${new Date(m.timestamp).toISOString()}]: ${m.content}`)
-    .join("\n\n");
+	const newText = newMessages
+		.map((m) => `[${m.id}] [${m.role}] [${new Date(m.timestamp).toISOString()}]: ${m.content}`)
+		.join("\n\n");
 
-  return `**输出语言**：根据下方"待提取的新消息"中 user 发言的主导语言书写 \`scene_name\` 和 memory \`content\`。
+	return `**输出语言**：根据下方"待提取的新消息"中 user 发言的主导语言书写 \`scene_name\` 和 memory \`content\`。
 
 【上一个情境】：${previousSceneName}
 

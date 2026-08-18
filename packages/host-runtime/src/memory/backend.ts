@@ -224,7 +224,5 @@ export interface MemoryBackend {
 	setImportance(request: MemorySetImportanceRequest): Promise<MemoryRecord>;
 	diagnostics(signal?: AbortSignal): Promise<MemoryDiagnostics>;
 
-	readonly consolidate?: (
-		request: MemoryConsolidateRequest,
-	) => Promise<MemoryConsolidationResult>;
+	readonly consolidate?: (request: MemoryConsolidateRequest) => Promise<MemoryConsolidationResult>;
 }

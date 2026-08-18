@@ -13,7 +13,7 @@ export const FORK_PRODUCT: Readonly<ProductConfig> = {
 	productName: "North Companion",
 	appId: "io.example.north-companion",
 	dataDirectoryName: "north-companion",
-	artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
+	artifactName: "\${productName}-\${version}-\${os}-\${arch}.\${ext}",
 	executableName: "north-companion",
 	defaultCharacterId: "beixing",
 	brandLicense: {

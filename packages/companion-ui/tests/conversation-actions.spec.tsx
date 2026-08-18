@@ -250,6 +250,44 @@ describe("conversation message controls", () => {
 		);
 	});
 
+	it("shows capture success status for a stable assistant message fixture", async () => {
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		const capture = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					memoryId: "memory-1",
+					sourceEntryId: "assistant-1",
+					createdBy: "user_capture" as const,
+				},
+			}),
+		);
+		client.memory.capture = capture;
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: activeConversationSnapshot() }),
+		);
+		client.onboarding.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		await screen.findByText("当前回答");
+		await user.click(screen.getByRole("button", { name: zhCN.messages.rememberMoment }));
+
+		const successStatus = await screen.findByRole("status", {
+			name: zhCN.messages.rememberMoment,
+		});
+		expect(successStatus).toBeVisible();
+		expect(successStatus).toHaveTextContent(zhCN.messages.rememberMoment);
+		await waitFor(() =>
+			expect(capture).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				entryId: "assistant-1",
+			}),
+		);
+	});
+
 	it("routes remember, version, regenerate, edit, continue and branch controls through the active conversation", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
@@ -285,13 +323,10 @@ describe("conversation message controls", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		await screen.findByText("当前回答");
-		const remember = screen.getByRole("button", { name: "记住这一刻" });
+		const remember = screen.getByRole("button", { name: zhCN.messages.rememberMoment });
 		remember.focus();
 		expect(remember).toHaveFocus();
 		await user.keyboard("{Enter}");
-		const successStatus = await screen.findByRole("status");
-		expect(successStatus).toBeVisible();
-		expect(successStatus).toHaveTextContent("已记住这一刻");
 		await user.click(screen.getByRole("button", { name: zhCN.messages.previousVersion }));
 		await user.click(screen.getByRole("button", { name: zhCN.messages.regenerate }));
 		await user.click(screen.getByRole("button", { name: zhCN.messages.edit }));

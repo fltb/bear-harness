@@ -40,11 +40,7 @@ test("committed character facts survive new conversations and edited message his
 		eventId: "damaged_log_pulse_isolated",
 		dedupeKey: "e2e:pulse",
 	});
-	const conversationB = await createFreshConversation(
-		page,
-		bootstrap.token,
-		"Second context",
-	);
+	const conversationB = await createFreshConversation(page, bootstrap.token, "Second context");
 	const state = await rpc<{ state: { values: Record<string, unknown> } }>(
 		page,
 		bootstrap.token,
@@ -163,11 +159,7 @@ test("adopted multi-turn history and a manual edit change the next model context
 }) => {
 	await ensureReadyForConversation(page);
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
-	const conversationId = await createFreshConversation(
-		page,
-		bootstrap.token,
-		"Multi-turn context",
-	);
+	const conversationId = await createFreshConversation(page, bootstrap.token, "Multi-turn context");
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId,
@@ -280,11 +272,7 @@ test("archived conversations require an explicit search opt-in and deleted messa
 test("an explicit transcript branch cannot commit roleplay facts", async ({ page }) => {
 	await ensureReadyForConversation(page);
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
-	const conversationId = await createFreshConversation(
-		page,
-		bootstrap.token,
-		"Transcript branch",
-	);
+	const conversationId = await createFreshConversation(page, bootstrap.token, "Transcript branch");
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId,
 		text: "E2E_BRANCH_SOURCE",

@@ -75,7 +75,7 @@ export function validateProductConfig(config) {
 	}
 
 	if (typeof config.artifactName === "string") {
-		for (const macro of ["${version}", "${os}", "${arch}", "${ext}"]) {
+		for (const macro of ["\${version}", "\${os}", "\${arch}", "\${ext}"]) {
 			if (!config.artifactName.includes(macro)) {
 				fail("artifactName", `must contain ${macro}`);
 			}
@@ -86,7 +86,7 @@ export function validateProductConfig(config) {
 	if (typeof dci !== "string" || dci.trim() === "") {
 		fail("defaultCharacterId", "must be a non-empty string");
 	} else if (!KEBAB_RE.test(dci)) {
-		fail("defaultCharacterId", "must be ASCII kebab-case, got " + JSON.stringify(dci));
+		fail("defaultCharacterId", `must be ASCII kebab-case, got ${JSON.stringify(dci)}`);
 	}
 
 	const bl = config.brandLicense;

@@ -142,6 +142,7 @@ export const en = {
 	},
 	messages: {
 		closeMedia: "Close",
+		rememberMoment: "Remember this moment",
 		justNow: "Just now",
 		noActiveConversationError: "No conversation selected",
 		userMeta: "You · Just now",

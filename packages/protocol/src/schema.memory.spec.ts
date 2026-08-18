@@ -30,9 +30,9 @@ describe("direct memory capture and invalidation schemas", () => {
 				entryId: "e".repeat(129),
 			}).success,
 		).toBe(false);
-		expect(
-			MemoryCaptureRequest.safeParse({ conversationId: "", entryId: "entry-1" }).success,
-		).toBe(false);
+		expect(MemoryCaptureRequest.safeParse({ conversationId: "", entryId: "entry-1" }).success).toBe(
+			false,
+		);
 		expect(
 			MemoryCaptureRequest.safeParse({ conversationId: "conversation-1", entryId: "" }).success,
 		).toBe(false);
@@ -43,9 +43,9 @@ describe("direct memory capture and invalidation schemas", () => {
 		for (const createdBy of ["user_capture", "assistant_tool"] as const) {
 			expect(MemoryCaptureResponse.safeParse({ ...response, createdBy }).success).toBe(true);
 		}
-		expect(
-			MemoryCaptureResponse.safeParse({ ...response, createdBy: "system" }).success,
-		).toBe(false);
+		expect(MemoryCaptureResponse.safeParse({ ...response, createdBy: "system" }).success).toBe(
+			false,
+		);
 		expect(
 			MemoryCaptureResponse.safeParse({
 				...response,
@@ -56,9 +56,7 @@ describe("direct memory capture and invalidation schemas", () => {
 	});
 
 	it("allows invalidation without a replacement and validates replacement IDs", () => {
-		expect(
-			MemoryInvalidateRequest.safeParse({ memoryId: "m".repeat(128) }).success,
-		).toBe(true);
+		expect(MemoryInvalidateRequest.safeParse({ memoryId: "m".repeat(128) }).success).toBe(true);
 		expect(
 			MemoryInvalidateRequest.safeParse({
 				memoryId: "memory-1",
@@ -75,7 +73,8 @@ describe("direct memory capture and invalidation schemas", () => {
 			MemoryInvalidateRequest.safeParse({ memoryId: "memory-1", replacementMemoryId: "" }).success,
 		).toBe(false);
 		expect(
-			MemoryInvalidateRequest.safeParse({ memoryId: "memory-1", replacementMemoryId: null }).success,
+			MemoryInvalidateRequest.safeParse({ memoryId: "memory-1", replacementMemoryId: null })
+				.success,
 		).toBe(false);
 	});
 

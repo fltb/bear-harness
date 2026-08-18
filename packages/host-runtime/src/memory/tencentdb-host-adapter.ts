@@ -8,21 +8,15 @@
  */
 
 import type {
-	Api,
-	AssistantMessage,
-	Context,
-	Model,
-	Models,
-} from "@earendil-works/pi-ai";
-import type {
 	HostAdapter,
-	LLMRunParams,
 	LLMRunner,
 	LLMRunnerCreateOptions,
 	LLMRunnerFactory,
+	LLMRunParams,
 	Logger,
 	RuntimeContext,
 } from "@bear-harness/tdai-core";
+import type { Api, AssistantMessage, Context, Model, Models } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "../models/registry.js";
 import type { ProviderCatalog } from "../providers/catalog.js";
 
@@ -83,9 +77,13 @@ class CyberBearLLMRunner implements LLMRunner {
 		const runtime = await this.providers.getModels();
 		const model =
 			runtime.getModel(route.providerId, route.modelId) ??
-			(await runtime.getAvailable(route.providerId)).find((candidate) => candidate.id === route.modelId);
+			(await runtime.getAvailable(route.providerId)).find(
+				(candidate) => candidate.id === route.modelId,
+			);
 		if (!model) {
-			throw new Error(`configured memory model is unavailable: ${route.providerId}/${route.modelId}`);
+			throw new Error(
+				`configured memory model is unavailable: ${route.providerId}/${route.modelId}`,
+			);
 		}
 		return { models: runtime, model };
 	}
@@ -96,7 +94,9 @@ class CyberBearLLMRunner implements LLMRunner {
 			systemPrompt: params.systemPrompt,
 			messages: [{ role: "user", content: params.prompt, timestamp: Date.now() }],
 		};
-		this.logger.debug?.(`[cyber-bear][tdai] LLM task=${params.taskId} model=${model.provider}/${model.id}`);
+		this.logger.debug?.(
+			`[cyber-bear][tdai] LLM task=${params.taskId} model=${model.provider}/${model.id}`,
+		);
 		const completion = models.completeSimple(model, context, {
 			maxTokens: params.maxTokens,
 		});
@@ -106,7 +106,10 @@ class CyberBearLLMRunner implements LLMRunner {
 			const result = await Promise.race([
 				completion,
 				new Promise<never>((_, reject) => {
-					timeout = setTimeout(() => reject(new Error(`Tdai LLM task timed out after ${timeoutMs}ms`)), timeoutMs);
+					timeout = setTimeout(
+						() => reject(new Error(`Tdai LLM task timed out after ${timeoutMs}ms`)),
+						timeoutMs,
+					);
 				}),
 			]);
 			return assistantText(result);

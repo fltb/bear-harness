@@ -1,17 +1,23 @@
 // @vitest-environment node
 
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import { ContextPackCompiler } from "../src/companion/context-pack.js";
+import { PiSessionStore } from "../src/companion/pi-session-store.js";
+import { rememberConversationEntry } from "../src/composition.js";
+import type { MemoryBankScope } from "../src/memory/backend.js";
+import { MemoryPresentationStore } from "../src/memory/presentation-store.js";
 import type {
 	TencentDbCoreRecord,
 	TencentDbMemoryCoreFacade,
 } from "../src/memory/tencentdb-backend.js";
 import { TencentDbMemoryBackend } from "../src/memory/tencentdb-backend.js";
-import type { MemoryBankScope } from "../src/memory/backend.js";
 import type { AppDatabase } from "../src/storage/database.js";
 import { MIGRATIONS } from "../src/storage/database.js";
 
@@ -65,12 +71,13 @@ function fakeMemoryCore(): FakeMemoryCore {
 		},
 		recall: async (request) => {
 			recallNamespaces.push(request.namespace);
+			const queryTokens = request.query.match(/[\p{L}\p{N}_]+/gu)?.filter(Boolean) ?? [];
 			return [...records.values()]
 				.filter(
 					(stored) =>
 						stored.namespace === request.namespace &&
-						stored.record.status === "active" &&
-						(request.query.length === 0 || stored.record.text.includes(request.query)),
+						(queryTokens.length === 0 ||
+							queryTokens.some((token) => stored.record.text.includes(token))),
 				)
 				.slice(0, request.limit ?? 12)
 				.map((stored, index) => ({
@@ -134,6 +141,7 @@ describe("relationship memory context", () => {
 	let orm: AppDatabase;
 	let compiler: ContextPackCompiler;
 	let backend: TencentDbMemoryBackend;
+	let presentation: MemoryPresentationStore;
 	let fakeCore: FakeMemoryCore;
 
 	beforeEach(() => {
@@ -170,20 +178,27 @@ describe("relationship memory context", () => {
 		orm = drizzle({ client: db });
 		fakeCore = fakeMemoryCore();
 		backend = new TencentDbMemoryBackend(fakeCore.core);
+		presentation = new MemoryPresentationStore(orm);
 		compiler = new ContextPackCompiler(orm, new CharacterLoader(characterRoot), undefined, {
 			backend,
+			presentation,
 			scope: { installationId: "install-1", userId: "user-1" },
 		});
 	});
-
 	async function remember(text: string, companionId = "jizhou") {
 		const scope = scopeFor(companionId);
 		await backend.open({ scope });
-		return backend.remember({
+		const record = await backend.remember({
 			scope,
 			text,
 			provenance: { kind: "explicit", piSessionEntryIds: ["session-entry-1"] },
 		});
+		presentation.recordDirectCreation(scope, {
+			backendMemoryId: record.id,
+			sourcePiEntryId: "session-entry-1",
+			createdBy: "user_capture",
+		});
+		return record;
 	}
 
 	async function relationshipContext(conversationId = "conversation-1", memoryQuery = "") {
@@ -241,20 +256,84 @@ describe("relationship memory context", () => {
 		expect(await relationshipContext()).not.toContain("用户喜欢长回答");
 		expect(await relationshipContext()).toContain("用户喜欢简短回答");
 
+		const replacement = await remember("用户喜欢更短回答");
 		await backend.open({ scope });
 		const invalidated = await backend.invalidate({
 			scope,
 			memoryId: original.id,
+			replacementMemoryId: replacement.id,
 			reason: "superseded",
 		});
 		expect(invalidated.status).toBe("invalidated");
-		expect(await relationshipContext()).toBe("");
-
+		presentation.recordReplacement(scope, original.id, replacement.id);
+		expect(presentation.get(scope, original.id)?.replacementMemoryId).toBe(replacement.id);
+		const postInvalidation = await relationshipContext();
+		expect(postInvalidation).not.toContain("用户喜欢简短回答");
+		expect(postInvalidation).toContain("用户喜欢更短回答");
 		const forgotten = await remember("即将遗忘的记忆");
 		expect(await relationshipContext()).toContain("即将遗忘的记忆");
 		await backend.open({ scope });
 		await backend.forget({ scope, memoryId: forgotten.id });
-		expect(await relationshipContext()).toBe("");
+		const postForget = await relationshipContext();
+		expect(postForget).not.toContain("即将遗忘的记忆");
+		expect(postForget).toContain("用户喜欢更短回答");
+	});
+
+	it("rejects memory capture from a non-current Pi branch", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-memory-context-source-"));
+		try {
+			const session = PiSessionStore.create({
+				sessionDir: join(root, "sessions"),
+				cwd: root,
+			});
+			const nonCurrentSourceId = session.appendUserMessage("只在旧分支上的来源");
+			session.appendSyntheticAssistant("旧分支回答");
+			session.branchBefore(nonCurrentSourceId);
+			const currentSourceId = session.appendUserMessage("当前分支上的来源");
+			session.appendSyntheticAssistant("当前分支回答");
+
+			const context = {
+				orm,
+				defaultCharacterId: "jizhou",
+				characterLoader: {
+					getActiveCharacterId: () => "jizhou",
+					load: () => ({ canon: {} }),
+					seed: () => undefined,
+					activate: () => undefined,
+				},
+				eventBus: {},
+				canon: { syncPackage: () => undefined },
+				conversationRepository: { getSession: () => session },
+				memoryBackend: backend,
+				memoryPresentation: presentation,
+				memoryScope: { installationId: "install-1", userId: "user-1" },
+			} as never;
+
+			// Capture sources are branch-local: only entries on Pi's selected branch are valid.
+			expect(session.readMessageEntries().map(({ id }) => id)).toContain(currentSourceId);
+			expect(session.readMessageEntries().map(({ id }) => id)).not.toContain(nonCurrentSourceId);
+			await expect(
+				rememberConversationEntry(context, "conversation-1", nonCurrentSourceId, "user_capture"),
+			).rejects.toMatchObject({
+				kind: "conflict",
+				reason: "memory_source_not_current_branch",
+			});
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("renders a first direct capture in the next turn for the active companion", async () => {
+		await remember("E2E_DIRECT_MEMORY_A：我们约定暗号是north");
+
+		const context = await compiler.compileForTurn("conversation-1", {
+			memoryQuery: "检查记忆上下文 E2E_DIRECT_MEMORY_A：我们约定暗号是north",
+		});
+		const rendered = compiler.render(context);
+
+		expect(rendered).toContain("【relationship】");
+		expect(rendered).toContain("E2E_DIRECT_MEMORY_A：我们约定暗号是north");
+		expect(context.charge.memoryEntries).toBe(1);
 	});
 
 	it("omits the relationship block when backend recall has no results", async () => {

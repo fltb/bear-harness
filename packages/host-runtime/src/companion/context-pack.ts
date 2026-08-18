@@ -19,8 +19,9 @@
  */
 
 import { and, asc, desc, eq, or } from "drizzle-orm";
-import type { MemoryBackend, MemoryBankScope, MemoryHit } from "../memory/backend.js";
 import type { CanonHubService } from "../canon/service.js";
+import type { MemoryBackend, MemoryBankScope, MemoryHit } from "../memory/backend.js";
+import type { MemoryPresentationStore } from "../memory/presentation-store.js";
 import type { AppDatabase } from "../storage/database.js";
 import {
 	branches,
@@ -80,9 +81,12 @@ export interface ContextPack {
 		truncated: boolean;
 	};
 }
+
 export interface ContextPackMemorySource {
 	readonly backend: MemoryBackend;
 	readonly scope: Pick<MemoryBankScope, "installationId" | "userId">;
+	/** Host projection metadata used to suppress invalidated backend records. */
+	readonly presentation: MemoryPresentationStore;
 }
 
 export class ContextPackCompiler {
@@ -157,7 +161,9 @@ ${modules.join("\n")}`,
 		// 3. Scene State + durable conversation directives
 		const scene = this.getSceneState(conversationId);
 		const directives = this.getConversationDirectives(conversationId);
-		const sceneContext = [scene, directives].filter((value): value is string => Boolean(value)).join("\n\n");
+		const sceneContext = [scene, directives]
+			.filter((value): value is string => Boolean(value))
+			.join("\n\n");
 		if (sceneContext) {
 			blocks.push({ layer: "scene", content: sceneContext });
 		}
@@ -273,9 +279,19 @@ ${modules.join("\n")}`,
 			query: options?.memoryQuery ?? options?.canonQuery ?? "",
 			limit: 12,
 		});
+		const presentations = this.memorySource.presentation.list(
+			scope,
+			hits.map(({ record }) => record.id),
+		);
+		const invalidatedIds = new Set(
+			presentations
+				.filter((metadata) => metadata.invalidatedAt !== undefined)
+				.map((metadata) => metadata.backendMemoryId),
+		);
+		const eligibleHits = hits.filter(({ record }) => !invalidatedIds.has(record.id));
 		return this.compile(conversationId, {
 			...options,
-			relationshipMemoryHits: hits,
+			relationshipMemoryHits: eligibleHits,
 		});
 	}
 
@@ -380,7 +396,9 @@ ${modules.join("\n")}`,
 					.orderBy(asc(conversationDirectives.createdAt))
 					.all()
 			: [];
-		const directives = [...sessionDirectives, ...alwaysDirectives].map((row) => `- ${row.directive}`);
+		const directives = [...sessionDirectives, ...alwaysDirectives].map(
+			(row) => `- ${row.directive}`,
+		);
 		return directives.length > 0
 			? `[用户已确认的回复偏好；后续回答必须遵守]\n${directives.join("\n")}`
 			: null;

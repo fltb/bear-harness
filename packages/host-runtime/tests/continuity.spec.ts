@@ -3,13 +3,12 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
 import { afterEach, describe, expect, it } from "vitest";
-import { type CredentialVault, createHostRuntime } from "../src/index.js";
-
-import { DatabaseSync } from "node:sqlite";
 import { PiSessionStore } from "../src/companion/pi-session-store.js";
+import { type CredentialVault, createHostRuntime } from "../src/index.js";
 
 function sessionFileFor(dataDir: string, conversationId: string): string {
 	const db = new DatabaseSync(join(dataDir, "storage", "canon.db"), { readOnly: true });
@@ -151,6 +150,51 @@ describe("automatic continuity", () => {
 					sourceEntryId: sourceEntryId,
 				},
 			],
+		});
+		await runtime.close();
+	});
+
+	it("projects replacement-backed direct memories as invalidated in memory.list", async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-invalidation-"));
+		roots.push(dataDir);
+		let runtime = makeRuntimeAt(dataDir);
+		await runtime.start();
+		await data(runtime, "settings.set:v1", { settings: { relationshipMemoryEnabled: true } });
+		const conversation = (await data(runtime, "conversation.create:v1", {})) as { id: string };
+		await runtime.close();
+
+		const originalSourceEntryId = appendCompletedPiTurn(
+			dataDir,
+			conversation.id,
+			"原始记忆会被替换",
+		);
+		const replacementSourceEntryId = appendCompletedPiTurn(
+			dataDir,
+			conversation.id,
+			"替换后的记忆",
+		);
+		runtime = makeRuntimeAt(dataDir);
+		await runtime.start();
+
+		const original = (await data(runtime, "memory.capture:v1", {
+			conversationId: conversation.id,
+			entryId: originalSourceEntryId,
+		})) as { memoryId: string };
+		const replacement = (await data(runtime, "memory.capture:v1", {
+			conversationId: conversation.id,
+			entryId: replacementSourceEntryId,
+		})) as { memoryId: string };
+
+		await data(runtime, "memory.invalidate:v1", {
+			memoryId: original.memoryId,
+			replacementMemoryId: replacement.memoryId,
+		});
+
+		await expect(data(runtime, "memory.list:v1", {})).resolves.toMatchObject({
+			entries: expect.arrayContaining([
+				expect.objectContaining({ id: original.memoryId, status: "invalidated" }),
+				expect.objectContaining({ id: replacement.memoryId, status: "active" }),
+			]),
 		});
 		await runtime.close();
 	});

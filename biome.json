@@ -19,6 +19,7 @@
 			"!prototypes",
 			"!config/characters/**/*.svg",
 			"!packages/i18n/src/locales/zh-TW.generated.ts",
+			"!packages/tdai-core/src",
 			"!.git"
 		]
 	},

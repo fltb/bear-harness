@@ -8,12 +8,17 @@
 
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { TdaiCore } from "@bear-harness/tdai-core";
-import type { Logger, MemoryTdaiConfig } from "@bear-harness/tdai-core";
 import type {
-	MemoryMetadata,
-	MemoryProvenance,
-} from "../memory/backend.js";
+	IMemoryStore,
+	L1RecordRow,
+	Logger,
+	MemoryTdaiConfig,
+	MemoryRecord as TdaiMemoryRecord,
+} from "@bear-harness/tdai-core";
+import { buildFtsQuery, TdaiCore } from "@bear-harness/tdai-core";
+import type { MemoryMetadata, MemoryProvenance } from "../memory/backend.js";
+import type { ModelRegistry } from "../models/registry.js";
+import type { ProviderCatalog } from "../providers/catalog.js";
 import type {
 	TencentDbCoreHit,
 	TencentDbCoreImportanceRequest,
@@ -28,9 +33,6 @@ import type {
 } from "./tencentdb-backend.js";
 import { TencentDbMemoryBackend } from "./tencentdb-backend.js";
 import { CyberBearHostAdapter } from "./tencentdb-host-adapter.js";
-import type { ModelRegistry } from "../models/registry.js";
-import type { ProviderCatalog } from "../providers/catalog.js";
-import type { IMemoryStore, L1RecordRow, MemoryRecord as TdaiMemoryRecord } from "@bear-harness/tdai-core";
 
 type TdaiMetadata = TdaiMemoryRecord["metadata"];
 
@@ -78,6 +80,21 @@ function importedProvenance(recordId: string): MemoryProvenance {
 		piSessionEntryIds: [recordId],
 	};
 }
+const HOST_CONTEXT_PREFIX = "<host_context>\n";
+const HOST_CONTEXT_SEPARATOR = "\n</host_context>\n\n<current_user_message>\n";
+const CURRENT_USER_MESSAGE_SUFFIX = "\n</current_user_message>";
+
+function unwrapHostFraming(text: string): string {
+	if (!text.startsWith(HOST_CONTEXT_PREFIX) || !text.endsWith(CURRENT_USER_MESSAGE_SUFFIX)) {
+		return text;
+	}
+	const separatorIndex = text.indexOf(HOST_CONTEXT_SEPARATOR, HOST_CONTEXT_PREFIX.length);
+	if (separatorIndex <= HOST_CONTEXT_PREFIX.length) return text;
+	return text.slice(
+		separatorIndex + HOST_CONTEXT_SEPARATOR.length,
+		-CURRENT_USER_MESSAGE_SUFFIX.length,
+	);
+}
 
 const DIRECT_MEMORY_SESSION_ID = "direct-memory";
 
@@ -111,7 +128,7 @@ function coreRecord(
 	const timestamp = now();
 	return {
 		id: randomUUID(),
-		text: request.text,
+		text: unwrapHostFraming(request.text),
 		provenance: request.provenance,
 		importance: clampImportance(request.importance ?? 0.5),
 		status: "active",
@@ -176,7 +193,6 @@ class TdaiDirectMemoryFacade implements TencentDbMemoryCoreFacade {
 
 	async recall(request: TencentDbCoreRecallRequest): Promise<readonly TencentDbCoreHit[]> {
 		const store = this.requireStore();
-		const topK = Math.max(request.limit ?? 5, 50);
 		const capabilities = store.getCapabilities();
 		type NativeHit = {
 			readonly record_id: string;
@@ -193,14 +209,39 @@ class TdaiDirectMemoryFacade implements TencentDbMemoryCoreFacade {
 			readonly metadata_json: string;
 		};
 		let nativeHits: NativeHit[] = [];
-		try {
-			if (capabilities.nativeHybridSearch && store.searchL1Hybrid) {
+		if (capabilities.nativeHybridSearch && store.searchL1Hybrid) {
+			// Native search is global, while the Host bank is namespace-scoped.
+			// Expand the candidate window to include every persisted record before
+			// applying the namespace filter; a fixed top-K can hide a newly
+			// captured record behind older records from other banks.
+			try {
+				const totalRecords = await store.countL1();
+				const topK = Math.max(request.limit ?? 5, 50, totalRecords);
 				nativeHits = await store.searchL1Hybrid({ query: request.query, topK });
-			} else if (capabilities.ftsSearch && store.isFtsAvailable()) {
-				nativeHits = await store.searchL1Fts(request.query, topK);
+			} catch {
+				// A native provider can be temporarily unavailable.  The local FTS
+				// index remains a valid recall path when it is available.
+				nativeHits = [];
 			}
-		} catch {
-			return [];
+		}
+		// Native hybrid search may return only records from another Host bank
+		// (or no records at all).  Do not let that global result suppress the
+		// namespace-scoped FTS path for the active role.
+		if (
+			capabilities.ftsSearch &&
+			store.isFtsAvailable() &&
+			(nativeHits.length === 0 || !nativeHits.some((hit) => hit.session_key === request.namespace))
+		) {
+			try {
+				const ftsQuery = buildFtsQuery(request.query);
+				if (ftsQuery) {
+					const totalRecords = await store.countL1();
+					const topK = Math.max(request.limit ?? 5, 50, totalRecords);
+					nativeHits = await store.searchL1Fts(ftsQuery, topK);
+				}
+			} catch {
+				nativeHits = [];
+			}
 		}
 		const rows = nativeHits
 			.filter((hit) => hit.session_key === request.namespace)
@@ -238,7 +279,8 @@ class TdaiDirectMemoryFacade implements TencentDbMemoryCoreFacade {
 		const updated: TencentDbCoreRecord = {
 			...current,
 			text: request.text ?? current.text,
-			importance: request.importance === undefined ? current.importance : clampImportance(request.importance),
+			importance:
+				request.importance === undefined ? current.importance : clampImportance(request.importance),
 			metadata: request.metadata ?? current.metadata,
 			updatedAt: now(),
 		};
@@ -250,7 +292,8 @@ class TdaiDirectMemoryFacade implements TencentDbMemoryCoreFacade {
 
 	async forget(request: TencentDbCoreMutationRequest): Promise<void> {
 		await this.find(request.namespace, request.memoryId);
-		if (!(await this.requireStore().deleteL1(request.memoryId))) throw new Error("TencentDB memory delete failed");
+		if (!(await this.requireStore().deleteL1(request.memoryId)))
+			throw new Error("TencentDB memory delete failed");
 	}
 
 	async invalidate(request: TencentDbCoreInvalidateRequest): Promise<TencentDbCoreRecord> {

@@ -1,13 +1,9 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { Tabs } from "@kobalte/core/tabs";
 import { Button } from "@kobalte/core/button";
+import { Tabs } from "@kobalte/core/tabs";
 import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, Show } from "solid-js";
-import {
-	type MemoryEntry,
-	type MemoryScope,
-	useCompanionStore,
-} from "../stores/companion.js";
+import { type MemoryEntry, type MemoryScope, useCompanionStore } from "../stores/companion.js";
 
 /**
  * Memory management sheet (幕后 · 记忆).
@@ -81,7 +77,11 @@ export function MemoryEntryList(props: {
 		setLoading(true);
 		setError(null);
 		try {
-			const result = await store.memory.search(query, scope);
+			const normalizedQuery = query.trim();
+			const result =
+				normalizedQuery === ""
+					? await store.memory.list({ scope })
+					: await store.memory.search(normalizedQuery, scope);
 			if (seq !== requestSeq) return;
 			setEntries(result);
 		} catch (e) {

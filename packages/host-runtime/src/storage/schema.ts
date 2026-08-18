@@ -295,6 +295,7 @@ export const memoryPresentation = sqliteTable(
 		replacementMemoryId: text("replacement_memory_id"),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
+		invalidatedAt: text("invalidated_at"),
 	},
 	(table) => [
 		primaryKey({
@@ -305,11 +306,13 @@ export const memoryPresentation = sqliteTable(
 			table.userId,
 			table.companionId,
 		),
-		check("memory_presentation_check_14", sql`created_by IN ('user_capture','assistant_tool','auto_episode','imported')`),
+		check(
+			"memory_presentation_check_14",
+			sql`created_by IN ('user_capture','assistant_tool','auto_episode','imported')`,
+		),
 		check("memory_presentation_check_15", sql`pinned IN (0,1)`),
 	],
 );
-
 
 export interface CommissionDraftData {
 	conversationId: string;
@@ -847,5 +850,3 @@ export const roleplayUnlocks = sqliteTable(
 	},
 	(table) => [primaryKey({ columns: [table.companionId, table.unlockableId] })],
 );
-
-

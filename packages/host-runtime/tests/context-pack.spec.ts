@@ -14,8 +14,8 @@ import type { ContextPack } from "../src/companion/context-pack.js";
 import { ContextPackCompiler } from "../src/companion/context-pack.js";
 import type { MemoryHit } from "../src/memory/backend.js";
 import { MIGRATIONS } from "../src/storage/database.js";
-import { conversationDirectives, conversations } from "../src/storage/schema.js";
 import { EventBus } from "../src/storage/event-bus.js";
+import { conversationDirectives, conversations } from "../src/storage/schema.js";
 
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 /**
@@ -105,7 +105,8 @@ describe("ContextPackCompiler character package identity", () => {
 		);
 		expect(pack.blocks.find((block) => block.layer === "roleplay")?.content).toContain('"trust":0');
 		const directiveContext = pack.blocks.find((block) => block.layer === "scene")?.content ?? "";
-		orm.insert(conversations)
+		orm
+			.insert(conversations)
 			.values({ id: "conversation-2", companionId: "jizhou", title: "second" })
 			.run();
 		expect(directiveContext).toContain("保持简洁");

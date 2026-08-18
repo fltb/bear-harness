@@ -21,7 +21,7 @@ describe("validate-product-config", () => {
 		["bad appId", { ...OFFICIAL_PRODUCT, appId: "bad" }, "appId"],
 		[
 			"missing artifact macro",
-			{ ...OFFICIAL_PRODUCT, artifactName: "${productName}-${version}-${os}.${ext}" },
+			{ ...OFFICIAL_PRODUCT, artifactName: "\${productName}-\${version}-\${os}.\${ext}" },
 			"artifactName",
 		],
 		[

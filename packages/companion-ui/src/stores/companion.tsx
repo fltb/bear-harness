@@ -62,6 +62,7 @@ import {
 	invoke,
 	isRecord,
 	type MemoryEntry,
+	type MemoryListRequest,
 	type MemoryScope,
 	type Message,
 	type MessageApplyScope,
@@ -165,7 +166,7 @@ export interface EventsApi {
 export interface MemoryApi {
 	entries(): MemoryEntry[] | undefined;
 	search(query: string, scope?: MemoryScope): Promise<MemoryEntry[]>;
-	list(params?: Record<string, unknown>): Promise<MemoryEntry[]>;
+	list(params?: MemoryListRequest): Promise<MemoryEntry[]>;
 	capture(entryId: string): Promise<MemoryCaptureResponse>;
 	pin(entryId: string, pinned: boolean): Promise<void>;
 	forget(entryId: string): Promise<void>;
@@ -453,8 +454,40 @@ function derivePresence(s: CompanionState): PresenceState {
 	return "idle";
 }
 
+/** Content of the last persisted assistant message (versions may be empty). */
+function lastAssistantContent(messages: readonly Message[]): string {
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		const message = messages[index];
+		if (message?.role === "assistant") {
+			return message.versions.at(-1)?.content ?? "";
+		}
+	}
+	return "";
+}
+
+/**
+ * True when the persisted final assistant projection already matches or
+ * supersedes the given stream text (the projected final is the immutable
+ * close of the streamed text, final can exceed the last visible delta).
+ * Stream events carry legacy DB message ids while Pi sessions project entry
+ * ids, so content is the only reliable reconciliation. Used to keep a late
+ * delta emitted after the turn settled from resurrecting the status.
+ */
+function persistedProjectionSupersedesStream(
+	messages: readonly Message[],
+	streamingText: string,
+): boolean {
+	const trimmedText = streamingText.trim();
+	if (trimmedText.length === 0) return false;
+	const trimmedFinal = lastAssistantContent(messages).trim();
+	return trimmedFinal.length > 0 && trimmedFinal.startsWith(trimmedText);
+}
+
 /** True when the streamed draft is the last message of the persisted projection. */
-function snapshotAppendsStreamingDraft(messages: readonly Message[], streamingText: string): boolean {
+function snapshotAppendsStreamingDraft(
+	messages: readonly Message[],
+	streamingText: string,
+): boolean {
 	const trimmedDraft = streamingText.trim();
 	if (trimmedDraft.length === 0) return false;
 	const last = messages[messages.length - 1];
@@ -476,12 +509,7 @@ function persistedFinalContains(
 ): boolean {
 	const trimmedDraft = streamingText.trim();
 	if (pendingUserText === undefined || trimmedDraft.length === 0) return false;
-	let lastAssistant: Message | undefined;
-	for (const message of messages) {
-		if (message.role === "assistant") lastAssistant = message;
-	}
-	const lastContent = lastAssistant?.versions.at(-1)?.content ?? "";
-	const trimmedFinal = lastContent.trim();
+	const trimmedFinal = lastAssistantContent(messages).trim();
 	return trimmedFinal.length > 0 && trimmedFinal.startsWith(trimmedDraft);
 }
 
@@ -767,10 +795,25 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 				return;
 			case "message_update": {
 				const chunk = payloadString(event.payload, "text") ?? "";
+				const nextText = chunk.startsWith(state.streamingAssistantText)
+					? chunk
+					: `${state.streamingAssistantText}${chunk}`;
+				// A late delta from a settled Pi turn can arrive after the persisted
+				// final assistant projection already matched/superseded the streamed
+				// draft. Stream events carry legacy message ids while the projection
+				// carries Pi entry ids, so the content comparison is the source of
+				// truth: once the projection closes the text, do not resurrect the
+				// responding status (the refetch already settled the turn).
+				if (
+					!state.assistantStreaming &&
+					nextText.length > 0 &&
+					persistedProjectionSupersedesStream(state.activeMessages, nextText)
+				) {
+					setState("streamingAssistantText", "");
+					return;
+				}
 				setState("assistantStreaming", true);
-				setState("streamingAssistantText", (current) =>
-					chunk.startsWith(current) ? chunk : `${current}${chunk}`,
-				);
+				setState("streamingAssistantText", nextText);
 				return;
 			}
 			case "message_end": {
@@ -1005,7 +1048,9 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 		capture: async (entryId) => {
 			try {
 				const conversationId = requireActiveConversation();
-				const result = await invoke(client, () => client.memory.capture({ conversationId, entryId }));
+				const result = await invoke(client, () =>
+					client.memory.capture({ conversationId, entryId }),
+				);
 				setState("error", null);
 				debouncedRefetch(refreshMemoryEntries);
 				return result;

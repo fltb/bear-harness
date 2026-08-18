@@ -200,9 +200,9 @@ describe("host projection validation", () => {
 		expect(isMemoryEntry({ ...memoryEntry, createdBy: "system" })).toBe(false);
 		expect(isMemoryEntry({ ...memoryEntry, sourceEntryId: null })).toBe(false);
 		expect(isMemoryCaptureResponse(memoryCaptureResponse)).toBe(true);
-		expect(
-			isMemoryCaptureResponse({ ...memoryCaptureResponse, createdBy: "assistant_tool" }),
-		).toBe(true);
+		expect(isMemoryCaptureResponse({ ...memoryCaptureResponse, createdBy: "assistant_tool" })).toBe(
+			true,
+		);
 		expectRequiredFields(isMemoryCaptureResponse, memoryCaptureResponse, [
 			"memoryId",
 			"sourceEntryId",
@@ -218,18 +218,18 @@ describe("host projection validation", () => {
 		expect(isMemoryInvalidateRequest(memoryInvalidateRequest)).toBe(true);
 		expect(isMemoryInvalidateRequest({ memoryId: "memory-1" })).toBe(true);
 		expectRequiredFields(isMemoryInvalidateRequest, memoryInvalidateRequest, ["memoryId"]);
-		expect(isMemoryInvalidateRequest({ ...memoryInvalidateRequest, memoryId: "m".repeat(129) })).toBe(
-			false,
-		);
+		expect(
+			isMemoryInvalidateRequest({ ...memoryInvalidateRequest, memoryId: "m".repeat(129) }),
+		).toBe(false);
 		expect(
 			isMemoryInvalidateRequest({
 				...memoryInvalidateRequest,
 				replacementMemoryId: "r".repeat(129),
 			}),
 		).toBe(false);
-		expect(
-			isMemoryInvalidateRequest({ ...memoryInvalidateRequest, replacementMemoryId: "" }),
-		).toBe(false);
+		expect(isMemoryInvalidateRequest({ ...memoryInvalidateRequest, replacementMemoryId: "" })).toBe(
+			false,
+		);
 		expect(
 			isMemoryInvalidateRequest({ ...memoryInvalidateRequest, replacementMemoryId: null }),
 		).toBe(false);

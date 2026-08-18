@@ -1,45 +1,46 @@
 {
-  "name": "@bear-harness/tdai-core",
-  "version": "0.0.0",
-  "private": true,
-  "type": "module",
-  "description": "Host-neutral TencentDB Agent Memory core for Cyber Bear.",
-  "license": "MIT",
-  "author": "TencentDB Agent Memory Team (upstream); Cyber Bear local package",
-  "upstream": {
-    "package": "@tencentdb-agent-memory/memory-tencentdb",
-    "version": "0.3.6",
-    "source": "https://github.com/TencentCloud/TencentDB-Agent-Memory",
-    "license": "MIT"
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
-  },
-  "dependencies": {
-    "@ai-sdk/openai": "3.0.53",
-    "@node-rs/jieba": "2.0.1",
-    "@tencentdb-agent-memory/tcvdb-text": "0.1.1",
-    "ai": "6.0.164",
-    "sqlite-vec": "0.1.7-alpha.2",
-    "undici": "8.1.0"
-  },
-  "peerDependencies": {
-    "node-llama-cpp": "3.16.2"
-  },
-  "peerDependenciesMeta": {
-    "node-llama-cpp": {
-      "optional": true
-    }
-  },
-  "devDependencies": {
-    "@types/node": "24.13.3",
-    "typescript": "7.0.2"
-  }
+	"name": "@bear-harness/tdai-core",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Host-neutral TencentDB Agent Memory core for Cyber Bear.",
+	"license": "MIT",
+	"author": "TencentDB Agent Memory Team (upstream); Cyber Bear local package",
+	"upstream": {
+		"package": "@tencentdb-agent-memory/memory-tencentdb",
+		"version": "0.3.6",
+		"source": "https://github.com/TencentCloud/TencentDB-Agent-Memory",
+		"license": "MIT"
+	},
+	"sourcePolicy": "Vendored upstream source in src/ is excluded from root Biome; validate it with this package's TypeScript typecheck and upstream sync process. The optional node-llama-cpp peer is loaded dynamically only for explicit local embeddings and is off by default; Knip ignores it as a non-product dependency.",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"typecheck": "tsc -p tsconfig.json --noEmit"
+	},
+	"dependencies": {
+		"@ai-sdk/openai": "3.0.53",
+		"@node-rs/jieba": "2.0.1",
+		"@tencentdb-agent-memory/tcvdb-text": "0.1.1",
+		"ai": "6.0.164",
+		"sqlite-vec": "0.1.7-alpha.2",
+		"undici": "8.1.0"
+	},
+	"peerDependencies": {
+		"node-llama-cpp": "3.16.2"
+	},
+	"peerDependenciesMeta": {
+		"node-llama-cpp": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@types/node": "24.13.3",
+		"typescript": "7.0.2"
+	}
 }

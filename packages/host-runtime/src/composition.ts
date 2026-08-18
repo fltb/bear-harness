@@ -11,12 +11,8 @@
  * protocol additions from landing without a corresponding Host handler.
  */
 
+import type { MemoryEntry, MemoryListResponse, MemorySearchResponse } from "@bear-harness/protocol";
 import { CharacterRuntimeState, RPC } from "@bear-harness/protocol/schema";
-import type {
-	MemoryEntry,
-	MemoryListResponse,
-	MemorySearchResponse,
-} from "@bear-harness/protocol";
 import { desc, eq } from "drizzle-orm";
 import type { ArtifactStore } from "./artifacts/index.js";
 import type { CanonHubService } from "./canon/service.js";
@@ -31,7 +27,7 @@ import type { FirstMeetingMachine } from "./companion/first-meeting.js";
 import type { RoleplayService } from "./companion/roleplay-service.js";
 import type { CompanionSupervisor } from "./companion/supervisor.js";
 import type { TurnPipeline } from "./companion/turn-pipeline.js";
-import { ConversationRepository } from "./conversations/repository.js";
+import type { ConversationRepository } from "./conversations/repository.js";
 import type { Dispatcher } from "./dispatcher.js";
 import type { MemoryBackend, MemoryBankScope, MemoryRecord } from "./memory/backend.js";
 import type {
@@ -43,7 +39,13 @@ import type { ModelRegistry } from "./models/registry.js";
 import type { ProviderCatalog } from "./providers/catalog.js";
 import type { AppDatabase } from "./storage/database.js";
 import type { EventBus } from "./storage/event-bus.js";
-import { activeCharacter, companionIdentity, conversations, runs, sceneState } from "./storage/schema.js";
+import {
+	activeCharacter,
+	companionIdentity,
+	conversations,
+	runs,
+	sceneState,
+} from "./storage/schema.js";
 import type { StoryService } from "./story/service.js";
 
 /** Domain services and runtime-owned inputs the handlers read and mutate. */
@@ -1016,10 +1018,12 @@ function presentationByMemoryId(
 	records: readonly MemoryRecord[],
 ): ReadonlyMap<string, MemoryPresentationMetadata> {
 	return new Map(
-		store.list(
-			scope,
-			records.map((record) => record.id),
-		).map((metadata) => [metadata.backendMemoryId, metadata]),
+		store
+			.list(
+				scope,
+				records.map((record) => record.id),
+			)
+			.map((metadata) => [metadata.backendMemoryId, metadata]),
 	);
 }
 
@@ -1031,17 +1035,16 @@ function projectMemoryEntry(
 	const kind = typeof metadata.kind === "string" ? metadata.kind : "fact";
 	const scope: MemoryEntry["scope"] =
 		metadata.scope === "self" || metadata.scope === "scene" ? metadata.scope : "relationship";
-	const status: MemoryEntry["status"] =
-		record.status === "invalidated" ? "invalidated" : "active";
+	const status: MemoryEntry["status"] = presentation?.invalidatedAt ? "invalidated" : "active";
 	const presentationSourceEntryId = presentation?.sourcePiEntryId;
 	const sourceEntryId = presentationSourceEntryId ?? metadata.sourceEntryId;
 	const presentationCreatedBy = presentation?.createdBy;
 	const createdBy: MemoryEntry["createdBy"] = presentationCreatedBy
 		? presentationCreatedBy
 		: metadata.createdBy === "user_capture" ||
-			metadata.createdBy === "assistant_tool" ||
-			metadata.createdBy === "auto_episode" ||
-			metadata.createdBy === "imported"
+				metadata.createdBy === "assistant_tool" ||
+				metadata.createdBy === "auto_episode" ||
+				metadata.createdBy === "imported"
 			? metadata.createdBy
 			: "imported";
 	return {

@@ -21,19 +21,19 @@
  */
 
 export interface SceneExtractionPromptParams {
-  memoriesJson: string;
-  sceneSummaries: string;
-  currentTimestamp: string;
-  sceneCountWarning?: string;
-  /** List of existing scene filenames (relative, e.g. ["work.md", "hobby.md"]) */
-  existingSceneFiles?: string[];
-  /** Maximum number of scene blocks allowed */
-  maxScenes: number;
+	memoriesJson: string;
+	sceneSummaries: string;
+	currentTimestamp: string;
+	sceneCountWarning?: string;
+	/** List of existing scene filenames (relative, e.g. ["work.md", "hobby.md"]) */
+	existingSceneFiles?: string[];
+	/** Maximum number of scene blocks allowed */
+	maxScenes: number;
 }
 
 export interface SceneExtractionPromptResult {
-  systemPrompt: string;
-  userPrompt: string;
+	systemPrompt: string;
+	userPrompt: string;
 }
 
 // ============================
@@ -42,7 +42,7 @@ export interface SceneExtractionPromptResult {
 // ============================
 
 function buildSceneSystemPrompt(maxScenes: number): string {
-  return `# Memory Consolidation Architect
+	return `# Memory Consolidation Architect
 
 **输出语言**：\`.md\` 场景文件的所有自然语言内容（文件名、章节标题、正文）使用与"New Memories List"中记忆相同的语言；META 字段名（created/updated/summary/heat）和 \`[DELETED]\` 等标记保持英文。模板中给出的中文章节标题（\`## 用户核心特征\` 等）作为结构骨架——非中文输出时请用目标语言的等价表达替换。
 
@@ -254,25 +254,26 @@ reason: 具体原因描述
 // User Prompt builder (dynamic data)
 // ============================
 
-export function buildSceneExtractionPrompt(params: SceneExtractionPromptParams): SceneExtractionPromptResult {
-  const {
-    memoriesJson,
-    sceneSummaries,
-    currentTimestamp,
-    sceneCountWarning,
-    existingSceneFiles,
-    maxScenes,
-  } = params;
+export function buildSceneExtractionPrompt(
+	params: SceneExtractionPromptParams,
+): SceneExtractionPromptResult {
+	const {
+		memoriesJson,
+		sceneSummaries,
+		currentTimestamp,
+		sceneCountWarning,
+		existingSceneFiles,
+		maxScenes,
+	} = params;
 
-  const warningSection = sceneCountWarning
-    ? `\n⚠️ **场景数量警告**: ${sceneCountWarning}\n`
-    : "";
+	const warningSection = sceneCountWarning ? `\n⚠️ **场景数量警告**: ${sceneCountWarning}\n` : "";
 
-  const fileListSection = existingSceneFiles && existingSceneFiles.length > 0
-    ? `### 📁 已有场景文件清单（仅以下文件可 read）\n${existingSceneFiles.map((f) => `- \`${f}\``).join("\n")}\n`
-    : `### 📁 已有场景文件清单\n（当前无已有场景文件）\n`;
+	const fileListSection =
+		existingSceneFiles && existingSceneFiles.length > 0
+			? `### 📁 已有场景文件清单（仅以下文件可 read）\n${existingSceneFiles.map((f) => `- \`${f}\``).join("\n")}\n`
+			: `### 📁 已有场景文件清单\n（当前无已有场景文件）\n`;
 
-  const userPrompt = `**输出语言**：场景文件内容使用下方 New Memories List 中记忆的主导语言。
+	const userPrompt = `**输出语言**：场景文件内容使用下方 New Memories List 中记忆的主导语言。
 ${warningSection}
 ### 1️⃣ New Memories List
 ${memoriesJson}
@@ -285,8 +286,8 @@ ${currentTimestamp}
 
 ${fileListSection}`;
 
-  return {
-    systemPrompt: buildSceneSystemPrompt(maxScenes),
-    userPrompt,
-  };
+	return {
+		systemPrompt: buildSceneSystemPrompt(maxScenes),
+		userPrompt,
+	};
 }

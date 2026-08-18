@@ -10,7 +10,7 @@ export const OFFICIAL_BRAND = Object.freeze({
 	productName: "Cyber Bear",
 	appId: "io.github.fltb.bear-harness",
 	dataDirectoryName: "cyber-bear",
-	artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
+	artifactName: "\${productName}-\${version}-\${os}-\${arch}.\${ext}",
 	executableName: "cyber-bear",
 	defaultCharacterId: "jizhou",
 	brandLicense: Object.freeze({

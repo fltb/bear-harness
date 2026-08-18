@@ -53,11 +53,14 @@ describe("database schema contract", () => {
 			"created_at",
 			"updated_at",
 		]);
-		const requiredFields = new Set(["pi_session_id", "session_file_path", "created_at", "updated_at"]);
+		const requiredFields = new Set([
+			"pi_session_id",
+			"session_file_path",
+			"created_at",
+			"updated_at",
+		]);
 		expect(
-			columns
-				.filter((column) => requiredFields.has(column.name))
-				.every((column) => column.notnull),
+			columns.filter((column) => requiredFields.has(column.name)).every((column) => column.notnull),
 		).toBe(true);
 		expect(columns.find((column) => column.name === "active_leaf_id")?.notnull).toBe(0);
 		database.close();
@@ -88,8 +91,11 @@ describe("database schema contract", () => {
 			"replacement_memory_id",
 			"created_at",
 			"updated_at",
+			"invalidated_at",
 		]);
-		expect(columns.some((column) => column.name === "text" || column.name === "content")).toBe(false);
+		expect(columns.some((column) => column.name === "text" || column.name === "content")).toBe(
+			false,
+		);
 		expect(
 			columns
 				.filter((column) =>
@@ -110,16 +116,47 @@ describe("database schema contract", () => {
 		const insert = database.connection.prepare(`
 			INSERT INTO memory_presentation (
 				backend_memory_id, installation_id, user_id, companion_id,
-				source_pi_entry_id, created_by, pinned, replacement_memory_id
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				source_pi_entry_id, created_by, pinned, replacement_memory_id, invalidated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`);
-		insert.run("memory-1", "install-a", "user-a", "companion-a", "pi-entry-1", "user_capture", 1, null);
-		insert.run("memory-1", "install-a", "user-b", "companion-a", null, "imported", 0, "memory-2");
+		insert.run(
+			"memory-1",
+			"install-a",
+			"user-a",
+			"companion-a",
+			"pi-entry-1",
+			"user_capture",
+			1,
+			null,
+			null,
+		);
+		insert.run(
+			"memory-1",
+			"install-a",
+			"user-b",
+			"companion-a",
+			null,
+			"imported",
+			0,
+			"memory-2",
+			null,
+		);
+		insert.run(
+			"memory-2",
+			"install-a",
+			"user-c",
+			"companion-a",
+			null,
+			"assistant_tool",
+			0,
+			null,
+			"2026-08-18T12:00:00.000Z",
+		);
 
 		const rows = database.connection
 			.prepare(
 				`SELECT backend_memory_id, installation_id, user_id, companion_id,
-					source_pi_entry_id, created_by, pinned, replacement_memory_id
+					source_pi_entry_id, created_by, pinned, replacement_memory_id, invalidated_at
 				 FROM memory_presentation ORDER BY user_id`,
 			)
 			.all();
@@ -133,6 +170,7 @@ describe("database schema contract", () => {
 				created_by: "user_capture",
 				pinned: 1,
 				replacement_memory_id: null,
+				invalidated_at: null,
 			},
 			{
 				backend_memory_id: "memory-1",
@@ -143,8 +181,33 @@ describe("database schema contract", () => {
 				created_by: "imported",
 				pinned: 0,
 				replacement_memory_id: "memory-2",
+				invalidated_at: null,
+			},
+			{
+				backend_memory_id: "memory-2",
+				installation_id: "install-a",
+				user_id: "user-c",
+				companion_id: "companion-a",
+				source_pi_entry_id: null,
+				created_by: "assistant_tool",
+				pinned: 0,
+				replacement_memory_id: null,
+				invalidated_at: "2026-08-18T12:00:00.000Z",
 			},
 		]);
+		expect(() =>
+			insert.run(
+				"memory-4",
+				"install-a",
+				"user-a",
+				"companion-a",
+				null,
+				"imported",
+				0,
+				null,
+				"bad-timestamp",
+			),
+		).not.toThrow();
 		expect(() =>
 			insert.run("memory-1", "install-a", "user-a", "companion-a", null, "imported", 0, null),
 		).toThrow();
@@ -156,7 +219,6 @@ describe("database schema contract", () => {
 		).toThrow();
 		database.close();
 	});
-
 
 	it("rejects an applied migration whose definition no longer matches", () => {
 		const database = new Database(root());

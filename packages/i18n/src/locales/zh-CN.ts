@@ -139,6 +139,7 @@ export const zhCN = {
 	},
 	messages: {
 		closeMedia: "关闭",
+		rememberMoment: "记住这一刻",
 		justNow: "刚刚",
 		noActiveConversationError: "还没有选中对话",
 		userMeta: "你 · 刚刚",

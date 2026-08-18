@@ -4,8 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { Backstage } from "../src/features/Backstage.js";
-import { Titlebar } from "../src/Titlebar.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
+import { Titlebar } from "../src/Titlebar.js";
 import { THEMED_CHARACTER } from "./fixtures.js";
 
 describe("ordinary-user backstage journey", () => {
@@ -278,6 +278,7 @@ describe("ordinary-user backstage journey", () => {
 			},
 		];
 		const search = vi.fn(() => Promise.resolve(currentEntries));
+		const list = vi.fn(() => Promise.resolve(currentEntries));
 		const edit = vi.fn((entryId: string, newText: string) => {
 			currentEntries = currentEntries.map((entry) =>
 				entry.id === entryId ? { ...entry, text: newText } : entry,
@@ -290,13 +291,16 @@ describe("ordinary-user backstage journey", () => {
 		const store = {
 			runs: [],
 			characters: { characters: () => [] },
-			memory: { search, edit, pin, forget, invalidate },
+			memory: { list, search, edit, pin, forget, invalidate },
 		} as unknown as CompanionStore;
 
 		const [backstageOpen, setBackstageOpen] = createSignal(false);
 		render(() => (
 			<DesktopProvider store={store}>
-				<Titlebar sceneTitle={THEMED_CHARACTER.character.scene_title} onOpenBackstage={() => setBackstageOpen(true)} />
+				<Titlebar
+					sceneTitle={THEMED_CHARACTER.character.scene_title}
+					onOpenBackstage={() => setBackstageOpen(true)}
+				/>
 				<Backstage
 					open={backstageOpen()}
 					onClose={() => setBackstageOpen(false)}
@@ -311,7 +315,9 @@ describe("ordinary-user backstage journey", () => {
 
 		const region = await screen.findByRole("region", { name: zhCN.memory.defaultEntriesTitle });
 		const firstMemoryEntry = async () => {
-			const currentRegion = await screen.findByRole("region", { name: zhCN.memory.defaultEntriesTitle });
+			const currentRegion = await screen.findByRole("region", {
+				name: zhCN.memory.defaultEntriesTitle,
+			});
 			return within(currentRegion).getAllByRole("listitem")[0] as HTMLElement;
 		};
 		expect(within(region).getByText(zhCN.memory.sourceUser)).toBeVisible();
@@ -333,7 +339,9 @@ describe("ordinary-user backstage journey", () => {
 			}),
 		);
 		await waitFor(async () => {
-			const refreshedRegion = await screen.findByRole("region", { name: zhCN.memory.defaultEntriesTitle });
+			const refreshedRegion = await screen.findByRole("region", {
+				name: zhCN.memory.defaultEntriesTitle,
+			});
 			expect(within(refreshedRegion).getByText("用户喜欢傍晚散步")).toBeVisible();
 		});
 		await user.click(
@@ -359,5 +367,4 @@ describe("ordinary-user backstage journey", () => {
 			expect(invalidate).toHaveBeenCalledWith("memory-user");
 		});
 	});
-
 });

@@ -10,16 +10,16 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { toJsonSchema, z } from "@bear-harness/schema";
 import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import {
 	AgentSession,
 	DefaultResourceLoader,
-	ModelRuntime,
-	SettingsManager,
 	estimateTokens,
-	shouldCompact,
+	ModelRuntime,
 	type CompactionSettings as PiCompactionSettings,
+	SettingsManager,
+	shouldCompact,
 } from "@earendil-works/pi-coding-agent";
-import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import type { EventBus } from "../storage/event-bus.js";
 import type { CompanionHostToolCall, CompanionHostToolResult } from "./character-behavior.js";
 import type { PiSessionMessage, PiSessionStore } from "./pi-session-store.js";
@@ -47,7 +47,6 @@ const DEFAULT_COMPACTION: RequiredCompactionSettings = {
 	reserveTokens: 16_384,
 	keepRecentTokens: 20_000,
 };
-
 
 type HostToolHandler = (
 	call: CompanionHostToolCall,
@@ -102,8 +101,7 @@ export class CompanionSupervisor {
 		this.compactionSettings = {
 			enabled: compactionSettings?.enabled ?? DEFAULT_COMPACTION.enabled,
 			reserveTokens: compactionSettings?.reserveTokens ?? DEFAULT_COMPACTION.reserveTokens,
-			keepRecentTokens:
-				compactionSettings?.keepRecentTokens ?? DEFAULT_COMPACTION.keepRecentTokens,
+			keepRecentTokens: compactionSettings?.keepRecentTokens ?? DEFAULT_COMPACTION.keepRecentTokens,
 		};
 	}
 
@@ -132,7 +130,6 @@ export class CompanionSupervisor {
 	setContextHandler(handler: ContextHandler): void {
 		this.contextHandler = handler;
 	}
-
 
 	/** Mark the Host runtime available; the Pi session is loaded on first turn. */
 	async start(): Promise<void> {
@@ -176,7 +173,6 @@ export class CompanionSupervisor {
 		return store;
 	}
 
-
 	private async compactIfNeeded(conversationId: string, session: CoreSession): Promise<void> {
 		const store = this.sessionStoreFor(conversationId);
 		const model = session.model;
@@ -199,13 +195,10 @@ export class CompanionSupervisor {
 		}
 	}
 
-
-
 	private async createSession(conversationId: string): Promise<CoreSession> {
 		const modelRuntime = await this.providers.getModels();
 		this.modelRuntime = modelRuntime;
-		const nativeModelRuntime =
-			modelRuntime instanceof ModelRuntime ? modelRuntime : undefined;
+		const nativeModelRuntime = modelRuntime instanceof ModelRuntime ? modelRuntime : undefined;
 		const skills = loadRoleSkills(this.runtimeConfig.skillPaths);
 		let pluginTools: unknown[] = [];
 		const store = this.sessionStoreFor(conversationId);
@@ -270,7 +263,6 @@ export class CompanionSupervisor {
 		this.sessionStores.delete(conversationId);
 		if (this.session === session) this.session = null;
 	}
-
 
 	/** Dispatch Host commands to the local Pi session. */
 	sendCommand(command: unknown): void {
@@ -368,7 +360,7 @@ export class CompanionSupervisor {
 		}
 		const nativeStore = this.sessionStoreFor(conversationId);
 		await this.compactSafely(conversationId, session);
-		if (nativeStore) session.reloadContext(true);
+		if (nativeStore) session.reloadContext();
 		this.eventBus.publish("message_start", { conversationId });
 		const unsubscribe = session.subscribe((event) => {
 			if (event.type !== "message_update") return;
@@ -376,7 +368,9 @@ export class CompanionSupervisor {
 			if (text) this.eventBus.publish("message_update", { conversationId, text });
 		});
 		try {
-			const context = (await this.contextHandler?.(conversationId, includeHistory, message))?.trim();
+			const context = (
+				await this.contextHandler?.(conversationId, includeHistory, message)
+			)?.trim();
 			const promptWithContext = context
 				? `<host_context>\n${context}\n</host_context>\n\n<current_user_message>\n${message}\n</current_user_message>`
 				: undefined;
@@ -413,7 +407,6 @@ export class CompanionSupervisor {
 			unsubscribe();
 		}
 	}
-
 
 	private async selectRoute(
 		modelRuntime: Models,
@@ -739,6 +732,48 @@ function extractMessageText(value: unknown): string {
 		.join("");
 }
 
+const HOST_CONTEXT_PREFIX = "<host_context>\n";
+const HOST_CONTEXT_SEPARATOR = "\n</host_context>\n\n<current_user_message>\n";
+const CURRENT_USER_MESSAGE_SUFFIX = "\n</current_user_message>";
+
+/**
+ * Text of a message entry or pushed prompt, unwrapping the Host assembly
+ * when present. Used only to decide whether a pending user re-push is the
+ * same selection the SessionManager already holds.
+ */
+function messageComparableText(message: unknown): string {
+	if (!message || typeof message !== "object" || !("content" in message)) return "";
+	const parts = message.content;
+	const raw =
+		typeof parts === "string"
+			? parts
+			: Array.isArray(parts)
+				? parts
+						.filter((part): part is { type: "text"; text: string } =>
+							Boolean(
+								part &&
+									typeof part === "object" &&
+									"type" in part &&
+									part.type === "text" &&
+									"text" in part &&
+									typeof part.text === "string",
+							),
+						)
+						.map((part) => part.text)
+						.join("")
+				: "";
+	if (raw.startsWith(HOST_CONTEXT_PREFIX) && raw.endsWith(CURRENT_USER_MESSAGE_SUFFIX)) {
+		const separatorIndex = raw.indexOf(HOST_CONTEXT_SEPARATOR, HOST_CONTEXT_PREFIX.length);
+		if (separatorIndex > HOST_CONTEXT_PREFIX.length) {
+			return raw.slice(
+				separatorIndex + HOST_CONTEXT_SEPARATOR.length,
+				-CURRENT_USER_MESSAGE_SUFFIX.length,
+			);
+		}
+	}
+	return raw.trim();
+}
+
 /** Message updates carry deltas; the message field is not cumulative. */
 function extractMessageUpdateText(value: unknown): string {
 	if (!value || typeof value !== "object" || !("assistantMessageEvent" in value)) return "";
@@ -874,15 +909,20 @@ class CoreSession {
 		if (!this.sessionStore) return;
 		const messages = this.agent.state.messages.slice(previousMessageCount);
 		const leaf = this.sessionStore.currentLeaf;
-		const hasPendingUser =
+		// A user edit appends the raw edited entry to SessionManager before
+		// dispatch; the raw Agent then re-pushes the assembled prompt as a user
+		// message. When that re-push still matches the selected pending tail
+		// entry, the pending entry is the edited text itself and persisting the
+		// push again would duplicate it — skip it and keep the raw entry.
+		if (
 			leaf?.type === "message" &&
 			leaf.message.role === "user" &&
-			messages[0]?.role === "user";
-		for (const [index, message] of messages.entries()) {
-			// An edit appends the raw user entry before dispatch. The raw Agent
-			// still receives the fully assembled prompt, so only persist its
-			// newly generated continuation when that pending entry is selected.
-			if (hasPendingUser && index === 0) continue;
+			messages[0]?.role === "user" &&
+			messageComparableText(messages[0]) === messageComparableText(leaf.message)
+		) {
+			messages.shift();
+		}
+		for (const message of messages) {
 			if (isPersistableMessage(message)) this.sessionStore.appendMessage(message);
 		}
 	}
@@ -906,7 +946,11 @@ class CoreSession {
 
 		try {
 			const settingsManager = SettingsManager.inMemory(
-				{ compaction: this.compactionSettings, enableAnalytics: false, enableInstallTelemetry: false },
+				{
+					compaction: this.compactionSettings,
+					enableAnalytics: false,
+					enableInstallTelemetry: false,
+				},
 				{ projectTrusted: false },
 			);
 			const resourceLoader = new DefaultResourceLoader({

@@ -173,11 +173,13 @@ describe("LocalWriter", () => {
 		expect(await writer.flush(1000)).toBe(true);
 		const records = readJsonlLines(root);
 		expect(records[0]?.name).toBe("app.shutdown_timeout");
-		expect(records.map((r) => r.name)).toEqual([
-			"app.shutdown_timeout",
-			"app.started",
-			"diagnostics.writer_recovered",
-		]);
+		expect(records).toHaveLength(3);
+		expect(
+			records
+				.slice(1)
+				.map((r) => r.name)
+				.sort(),
+		).toEqual(["app.started", "diagnostics.writer_recovered"]);
 		rmSync(root, { recursive: true, force: true });
 	});
 

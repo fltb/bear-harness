@@ -1,12 +1,12 @@
 // @vitest-environment node
 
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PiSessionMessage } from "../src/companion/pi-session-store.js";
-import { ConversationRepository } from "../src/conversations/repository.js";
 import { PiSessionStore } from "../src/companion/pi-session-store.js";
+import { ConversationRepository } from "../src/conversations/repository.js";
 import { Database, MIGRATIONS } from "../src/storage/database.js";
 
 describe("PiSessionStore", () => {
@@ -27,7 +27,14 @@ describe("PiSessionStore", () => {
 			api: "openai-completions",
 			provider: "test",
 			model: "test-model",
-			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
 			stopReason: "stop",
 			timestamp: 2,
 		} as PiSessionMessage);
@@ -40,7 +47,11 @@ describe("PiSessionStore", () => {
 			timestamp: 3,
 		});
 
-		expect(store.metadata).toMatchObject({ sessionId: expect.any(String), sessionFile: expect.stringContaining(sessionDir), leafId: expect.any(String) });
+		expect(store.metadata).toMatchObject({
+			sessionId: expect.any(String),
+			sessionFile: expect.stringContaining(sessionDir),
+			leafId: expect.any(String),
+		});
 		expect(store.readMessages()).toHaveLength(3);
 		store.selectBranch(user);
 		const alternate = store.appendMessage({ role: "user", content: "alternate", timestamp: 4 });
@@ -50,9 +61,15 @@ describe("PiSessionStore", () => {
 		const reopened = PiSessionStore.open({ sessionDir, sessionFile: store.sessionFile, cwd: root });
 		expect(reopened.sessionId).toBe(store.sessionId);
 		expect(reopened.leafId).toBe(alternate);
-		expect(reopened.buildContext().messages.map((message) => message.role)).toEqual(["user", "user"]);
+		expect(reopened.buildContext().messages.map((message) => message.role)).toEqual([
+			"user",
+			"user",
+		]);
 		reopened.selectBranch(assistant);
-		expect(reopened.buildContext().messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+		expect(reopened.buildContext().messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+		]);
 	});
 
 	it("builds an edited first-user branch context from raw Pi messages only", () => {
@@ -90,8 +107,13 @@ describe("PiSessionStore", () => {
 		expect(existsSync(sessionFile)).toBe(true);
 
 		const reopenedAfterAssistant = PiSessionStore.open({ sessionDir, sessionFile, cwd: root });
-		expect(reopenedAfterAssistant.readMessageEntries().map(({ id }) => id)).toEqual([userId, assistantId]);
-		expect(reopenedAfterAssistant.findMessageEntry("user", "pending prompt")).toMatchObject({ id: userId });
+		expect(reopenedAfterAssistant.readMessageEntries().map(({ id }) => id)).toEqual([
+			userId,
+			assistantId,
+		]);
+		expect(reopenedAfterAssistant.findMessageEntry("user", "pending prompt")).toMatchObject({
+			id: userId,
+		});
 	});
 
 	it("persists user edits, synthetic assistant edits, and regenerated sibling context through SessionManager", () => {
@@ -120,7 +142,9 @@ describe("PiSessionStore", () => {
 			{ role: "user", content: "original prompt" },
 			{ role: "assistant", content: [{ type: "text", text: "regenerated response" }] },
 		]);
-		expect(reopened.buildContext().messages.map(({ role, content }) => ({ role, content }))).toEqual([
+		expect(
+			reopened.buildContext().messages.map(({ role, content }) => ({ role, content })),
+		).toEqual([
 			{ role: "user", content: "opening prompt" },
 			{ role: "assistant", content: [{ type: "text", text: "opening response" }] },
 			{ role: "user", content: "original prompt" },
@@ -134,7 +158,9 @@ describe("PiSessionStore", () => {
 			{ role: "user", content: "edited prompt" },
 			{ role: "assistant", content: [{ type: "text", text: "response to edited prompt" }] },
 		]);
-		expect(reopened.buildContext().messages.map(({ role, content }) => ({ role, content }))).toEqual([
+		expect(
+			reopened.buildContext().messages.map(({ role, content }) => ({ role, content })),
+		).toEqual([
 			{ role: "user", content: "opening prompt" },
 			{ role: "assistant", content: [{ type: "text", text: "opening response" }] },
 			{ role: "user", content: "edited prompt" },
@@ -142,7 +168,9 @@ describe("PiSessionStore", () => {
 		]);
 
 		reopened.selectBranch(regeneratedAssistant);
-		expect(reopened.buildContext().messages.map(({ role, content }) => ({ role, content }))).toEqual([
+		expect(
+			reopened.buildContext().messages.map(({ role, content }) => ({ role, content })),
+		).toEqual([
 			{ role: "user", content: "opening prompt" },
 			{ role: "assistant", content: [{ type: "text", text: "opening response" }] },
 			{ role: "user", content: "original prompt" },
@@ -150,7 +178,9 @@ describe("PiSessionStore", () => {
 		]);
 
 		reopened.selectBranch(originalAssistant);
-		expect(reopened.buildContext().messages.map(({ role, content }) => ({ role, content }))).toEqual([
+		expect(
+			reopened.buildContext().messages.map(({ role, content }) => ({ role, content })),
+		).toEqual([
 			{ role: "user", content: "opening prompt" },
 			{ role: "assistant", content: [{ type: "text", text: "opening response" }] },
 			{ role: "user", content: "original prompt" },
@@ -209,14 +239,24 @@ describe("PiSessionStore", () => {
 		]);
 
 		const branchContext = store.buildContext().messages;
-		expect(branchContext.map((message) => message.role)).toEqual(["compactionSummary", "user", "assistant"]);
-		expect(branchContext[0]).toMatchObject({ role: "compactionSummary", summary: "branch summary" });
+		expect(branchContext.map((message) => message.role)).toEqual([
+			"compactionSummary",
+			"user",
+			"assistant",
+		]);
+		expect(branchContext[0]).toMatchObject({
+			role: "compactionSummary",
+			summary: "branch summary",
+		});
 
 		store.selectBranch(rootAssistant);
 		const rootContext = store.buildContext().messages;
 		expect(rootContext.map((message) => message.role)).toEqual(["user", "assistant"]);
 		expect(rootContext[0]).toMatchObject({ role: "user", content: "root" });
-		expect(rootContext[1]).toMatchObject({ role: "assistant", content: [{ type: "text", text: "root answer" }] });
+		expect(rootContext[1]).toMatchObject({
+			role: "assistant",
+			content: [{ type: "text", text: "root answer" }],
+		});
 	});
 
 	it("projects Pi standard messages with stable SessionManager entry IDs", () => {
@@ -224,9 +264,21 @@ describe("PiSessionStore", () => {
 		roots.push(root);
 		const database = new Database(join(root, "host"));
 		database.migrate(MIGRATIONS);
-		database.connection.prepare("INSERT INTO companion_packages (id, name, version, hash) VALUES ('pkg', 'Pkg', '1', 'hash')").run();
-		database.connection.prepare("INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES ('pkg', 'pkg', 'Pkg', '')").run();
-		database.connection.prepare("INSERT INTO conversations (id, companion_id, title) VALUES ('conversation', 'pkg', 'Chat')").run();
+		database.connection
+			.prepare(
+				"INSERT INTO companion_packages (id, name, version, hash) VALUES ('pkg', 'Pkg', '1', 'hash')",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES ('pkg', 'pkg', 'Pkg', '')",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO conversations (id, companion_id, title) VALUES ('conversation', 'pkg', 'Chat')",
+			)
+			.run();
 
 		const messages: PiSessionMessage[] = [
 			{ role: "user", content: "hello", timestamp: 1 },
@@ -263,7 +315,11 @@ describe("PiSessionStore", () => {
 			cwd: root,
 			messages,
 		});
-		const session = PiSessionStore.open({ sessionDir: join(root, "sessions"), sessionFile: metadata.sessionFile, cwd: root });
+		const session = PiSessionStore.open({
+			sessionDir: join(root, "sessions"),
+			sessionFile: metadata.sessionFile,
+			cwd: root,
+		});
 		const entryIds = session.readMessageEntries().map(({ id }) => id);
 		expect(entryIds).toHaveLength(messages.length);
 		expect(new Set(entryIds).size).toBe(entryIds.length);
@@ -272,7 +328,11 @@ describe("PiSessionStore", () => {
 			.filter(({ message }) => message.role !== "toolResult")
 			.map(({ id }) => id);
 
-		expect(session.buildContext().messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
+		expect(session.buildContext().messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+			"toolResult",
+		]);
 
 		const projection = new ConversationRepository(database.orm, {
 			sessionDir: join(root, "sessions"),
@@ -297,9 +357,21 @@ describe("PiSessionStore", () => {
 		roots.push(root);
 		const database = new Database(join(root, "host"));
 		database.migrate(MIGRATIONS);
-		database.connection.prepare("INSERT INTO companion_packages (id, name, version, hash) VALUES ('pkg', 'Pkg', '1', 'hash')").run();
-		database.connection.prepare("INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES ('pkg', 'pkg', 'Pkg', '')").run();
-		database.connection.prepare("INSERT INTO conversations (id, companion_id, title) VALUES ('conversation', 'pkg', 'Chat')").run();
+		database.connection
+			.prepare(
+				"INSERT INTO companion_packages (id, name, version, hash) VALUES ('pkg', 'Pkg', '1', 'hash')",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES ('pkg', 'pkg', 'Pkg', '')",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO conversations (id, companion_id, title) VALUES ('conversation', 'pkg', 'Chat')",
+			)
+			.run();
 
 		const rawUserText = "请记住这条当前消息";
 		const framedPrompt = [
@@ -344,7 +416,10 @@ describe("PiSessionStore", () => {
 		});
 		const userEntry = reopened.findMessageEntry("user", rawUserText);
 		expect(userEntry).toMatchObject({ id: expect.any(String), message: { content: framedPrompt } });
-		expect(reopened.buildContext().messages[0]).toMatchObject({ role: "user", content: framedPrompt });
+		expect(reopened.buildContext().messages[0]).toMatchObject({
+			role: "user",
+			content: framedPrompt,
+		});
 
 		const repository = new ConversationRepository(database.orm, {
 			sessionDir: join(root, "sessions"),
@@ -372,12 +447,36 @@ describe("PiSessionStore", () => {
 		roots.push(root);
 		const database = new Database(join(root, "host"));
 		database.migrate(MIGRATIONS);
-		database.connection.prepare("INSERT INTO companion_packages (id, name, version, hash) VALUES ('pkg', 'Pkg', '1', 'hash')").run();
-		database.connection.prepare("INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES ('pkg', 'pkg', 'Pkg', '')").run();
-		database.connection.prepare("INSERT INTO conversations (id, companion_id, title) VALUES ('conversation', 'pkg', 'Chat')").run();
-		database.connection.prepare("INSERT INTO branches (id, conversation_id, label, adopted) VALUES ('main', 'conversation', 'main', 1)").run();
-		database.connection.prepare("INSERT INTO messages (id, conversation_id, branch_id, role) VALUES ('legacy-user', 'conversation', 'main', 'user')").run();
-		database.connection.prepare("INSERT INTO message_versions (id, message_id, content, adopted) VALUES ('legacy-version', 'legacy-user', 'legacy text', 1)").run();
+		database.connection
+			.prepare(
+				"INSERT INTO companion_packages (id, name, version, hash) VALUES ('pkg', 'Pkg', '1', 'hash')",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES ('pkg', 'pkg', 'Pkg', '')",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO conversations (id, companion_id, title) VALUES ('conversation', 'pkg', 'Chat')",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO branches (id, conversation_id, label, adopted) VALUES ('main', 'conversation', 'main', 1)",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES ('legacy-user', 'conversation', 'main', 'user')",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO message_versions (id, message_id, content, adopted) VALUES ('legacy-version', 'legacy-user', 'legacy text', 1)",
+			)
+			.run();
 		const messages: PiSessionMessage[] = [
 			{ role: "user", content: "legacy text", timestamp: 10 },
 			{
@@ -386,20 +485,48 @@ describe("PiSessionStore", () => {
 				api: "openai-completions",
 				provider: "test",
 				model: "test-model",
-				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
 				stopReason: "stop",
 				timestamp: 11,
 			} as PiSessionMessage,
 		];
-		const options = { db: database.orm, conversationId: "conversation", sessionDir: join(root, "sessions"), cwd: root, messages };
+		const options = {
+			db: database.orm,
+			conversationId: "conversation",
+			sessionDir: join(root, "sessions"),
+			cwd: root,
+			messages,
+		};
 		const first = PiSessionStore.migrateLegacyConversation(options);
-		const second = PiSessionStore.migrateLegacyConversation({ ...options, messages: [{ role: "user", content: "must not append", timestamp: 11 }] });
+		const second = PiSessionStore.migrateLegacyConversation({
+			...options,
+			messages: [{ role: "user", content: "must not append", timestamp: 11 }],
+		});
 		expect(second).toEqual(first);
-		const secondSession = PiSessionStore.open({ sessionDir: options.sessionDir, sessionFile: second.sessionFile, cwd: root });
+		const secondSession = PiSessionStore.open({
+			sessionDir: options.sessionDir,
+			sessionFile: second.sessionFile,
+			cwd: root,
+		});
 		expect(secondSession.metadata).toEqual(second);
 		expect(secondSession.readMessages()).toEqual(messages);
-		expect(database.connection.prepare("SELECT content FROM message_versions WHERE id = 'legacy-version'").get()).toEqual({ content: "legacy text" });
-		const reopened = PiSessionStore.open({ sessionDir: options.sessionDir, sessionFile: first.sessionFile, cwd: root });
+		expect(
+			database.connection
+				.prepare("SELECT content FROM message_versions WHERE id = 'legacy-version'")
+				.get(),
+		).toEqual({ content: "legacy text" });
+		const reopened = PiSessionStore.open({
+			sessionDir: options.sessionDir,
+			sessionFile: first.sessionFile,
+			cwd: root,
+		});
 		expect(reopened.readMessages()).toEqual(messages);
 		database.close();
 	});

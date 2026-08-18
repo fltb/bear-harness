@@ -240,16 +240,16 @@ function MessageItem(props: {
 						aria-label={t("messages.operations")}
 					>
 						<Show when={isUser() || props.message.role === "assistant"}>
-							<Button
-								data-control="command"
-								type="button"
-								onClick={() => void captureMoment()}
-							>
-								记住这一刻
+							<Button data-control="command" type="button" onClick={() => void captureMoment()}>
+								{t("messages.rememberMoment")}
 							</Button>
 							<Show when={captureStatus() === "success"}>
-								<span class="status-line ok" role="status" aria-label="已记住这一刻">
-									已记住这一刻
+								<span
+									class="status-line ok"
+									role="status"
+									aria-label={t("messages.rememberMoment")}
+								>
+									{t("messages.rememberMoment")}
 								</span>
 							</Show>
 						</Show>
@@ -322,7 +322,9 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 	// bookkeeping. Keep those entries in the store, but never expose them in
 	// the user-facing thread.
 	const visibleMessages = () =>
-		store.activeMessages.filter((message) => message.role === "user" || message.role === "assistant");
+		store.activeMessages.filter(
+			(message) => message.role === "user" || message.role === "assistant",
+		);
 
 	// Derive conversation controls from the visible projection as well. An
 	// internal entry after an assistant reply must not hide that reply's
@@ -334,7 +336,7 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 	const lastAssistant = () => visibleMessages().at(-1);
 	const lastAssistantId = () => {
 		const last = lastAssistant();
-		return last && last.role === "assistant" ? last.id : null;
+		return last?.role === "assistant" ? last.id : null;
 	};
 
 	// Draft content that is not yet superseded by the persisted projection.

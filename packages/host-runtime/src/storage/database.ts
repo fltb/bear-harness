@@ -247,6 +247,7 @@ export class Database {
 				"replacement_memory_id",
 				"created_at",
 				"updated_at",
+				"invalidated_at",
 			],
 		};
 		for (const [table, columns] of Object.entries(required)) {
@@ -912,6 +913,13 @@ export const MIGRATIONS: Migration[] = [
 			);
 			CREATE INDEX idx_memory_presentation_scope
 				ON memory_presentation(installation_id, user_id, companion_id);
+		`,
+	},
+	{
+		id: 17,
+		description: "Track invalidation state for presented memories",
+		up: `
+			ALTER TABLE memory_presentation ADD COLUMN invalidated_at TEXT;
 		`,
 	},
 ];

@@ -11,9 +11,9 @@
 // ============================
 
 export interface AgentHookContext {
-  sessionKey?: string;
-  sessionId?: string;
-  trigger?: string;
+	sessionKey?: string;
+	sessionId?: string;
+	trigger?: string;
 }
 
 type SessionKeyMatcher = (sessionKey: string) => boolean;
@@ -30,11 +30,11 @@ const SKIP_TRIGGERS = new Set(["cron", "heartbeat", "automation", "schedule"]);
  * user conversation and should not be captured or counted.
  */
 export function isNonInteractiveTrigger(trigger?: string, sessionKey?: string): boolean {
-  if (trigger && SKIP_TRIGGERS.has(trigger.toLowerCase())) return true;
-  if (sessionKey) {
-    if (/:cron:/i.test(sessionKey) || /:heartbeat:/i.test(sessionKey)) return true;
-  }
-  return false;
+	if (trigger && SKIP_TRIGGERS.has(trigger.toLowerCase())) return true;
+	if (sessionKey) {
+		if (/:cron:/i.test(sessionKey) || /:heartbeat:/i.test(sessionKey)) return true;
+	}
+	return false;
 }
 
 // ============================
@@ -46,12 +46,12 @@ export function isNonInteractiveTrigger(trigger?: string, sessionKey?: string): 
  * These are always applied regardless of user configuration.
  */
 const BUILTIN_MATCHERS: SessionKeyMatcher[] = [
-  // Scene extraction runner sessions
-  (key) => key.includes(":memory-scene-extract-"),
-  // OpenClaw subagent sessions
-  (key) => key.includes(":subagent:"),
-  // Temporary / internal utility sessions (e.g. temp:slug-generator)
-  (key) => key.startsWith("temp:"),
+	// Scene extraction runner sessions
+	(key) => key.includes(":memory-scene-extract-"),
+	// OpenClaw subagent sessions
+	(key) => key.includes(":subagent:"),
+	// Temporary / internal utility sessions (e.g. temp:slug-generator)
+	(key) => key.startsWith("temp:"),
 ];
 
 // ============================
@@ -67,9 +67,9 @@ const BUILTIN_MATCHERS: SessionKeyMatcher[] = [
  * `bench-judge-*` (matched anywhere) or more specific ones.
  */
 function globToMatcher(pattern: string): SessionKeyMatcher {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-  const re = new RegExp(escaped);
-  return (key) => re.test(key);
+	const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+	const re = new RegExp(escaped);
+	return (key) => re.test(key);
 }
 
 // ============================
@@ -81,28 +81,28 @@ function globToMatcher(pattern: string): SessionKeyMatcher {
  * `shouldSkip(sessionKey)` or `shouldSkipCtx(ctx)` at each gate.
  */
 export class SessionFilter {
-  private readonly matchers: SessionKeyMatcher[];
+	private readonly matchers: SessionKeyMatcher[];
 
-  constructor(excludeAgents: string[] = []) {
-    // Merge built-in rules + user-configured exclude patterns into one flat list
-    const userMatchers = excludeAgents
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0)
-      .map(globToMatcher);
+	constructor(excludeAgents: string[] = []) {
+		// Merge built-in rules + user-configured exclude patterns into one flat list
+		const userMatchers = excludeAgents
+			.map((p) => p.trim())
+			.filter((p) => p.length > 0)
+			.map(globToMatcher);
 
-    this.matchers = [...BUILTIN_MATCHERS, ...userMatchers];
-  }
+		this.matchers = [...BUILTIN_MATCHERS, ...userMatchers];
+	}
 
-  /** Should this sessionKey be skipped? */
-  shouldSkip(sessionKey: string): boolean {
-    return this.matchers.some((m) => m(sessionKey));
-  }
+	/** Should this sessionKey be skipped? */
+	shouldSkip(sessionKey: string): boolean {
+		return this.matchers.some((m) => m(sessionKey));
+	}
 
-  /** Should this hook context be skipped? */
-  shouldSkipCtx(ctx: AgentHookContext): boolean {
-    if (!ctx.sessionKey) return true;
-    if (ctx.sessionId?.startsWith("memory-")) return true;
-    if (isNonInteractiveTrigger(ctx.trigger, ctx.sessionKey)) return true;
-    return this.shouldSkip(ctx.sessionKey);
-  }
+	/** Should this hook context be skipped? */
+	shouldSkipCtx(ctx: AgentHookContext): boolean {
+		if (!ctx.sessionKey) return true;
+		if (ctx.sessionId?.startsWith("memory-")) return true;
+		if (isNonInteractiveTrigger(ctx.trigger, ctx.sessionKey)) return true;
+		return this.shouldSkip(ctx.sessionKey);
+	}
 }

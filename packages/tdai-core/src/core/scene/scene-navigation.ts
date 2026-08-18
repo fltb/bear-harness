@@ -19,12 +19,12 @@ const NAV_FOOTER = `📌 使用说明：
  * Build a fire-emoji string based on heat value (visual priority cue for the agent).
  */
 function heatEmoji(heat: number): string {
-  if (heat >= 1000) return " 🔥🔥🔥🔥🔥";
-  if (heat >= 500) return " 🔥🔥🔥🔥";
-  if (heat >= 200) return " 🔥🔥🔥";
-  if (heat >= 100) return " 🔥🔥";
-  if (heat >= 50) return " 🔥";
-  return "";
+	if (heat >= 1000) return " 🔥🔥🔥🔥🔥";
+	if (heat >= 500) return " 🔥🔥🔥🔥";
+	if (heat >= 200) return " 🔥🔥🔥";
+	if (heat >= 100) return " 🔥🔥";
+	if (heat >= 50) return " 🔥";
+	return "";
 }
 
 /**
@@ -36,28 +36,28 @@ function heatEmoji(heat: number): string {
  *                  call read_file directly without path concatenation.
  */
 export function generateSceneNavigation(entries: SceneIndexEntry[], dataDir?: string): string {
-  if (entries.length === 0) return "";
+	if (entries.length === 0) return "";
 
-  const sorted = [...entries].sort((a, b) => b.heat - a.heat);
+	const sorted = [...entries].sort((a, b) => b.heat - a.heat);
 
-  const blocks = sorted.map((e) => {
-    const scenePath = dataDir
-      ? path.join(dataDir, "scene_blocks", e.filename)
-      : `scene_blocks/${e.filename}`;
-    const pathLine = `### Path: ${scenePath}`;
-    const heatLine = `**热度**: ${e.heat}${heatEmoji(e.heat)}${e.updated ? ` | **更新**: ${e.updated}` : ""}`;
-    const summaryLine = `Summary: ${e.summary}`;
-    return `${pathLine}\n${heatLine}\n${summaryLine}`;
-  });
+	const blocks = sorted.map((e) => {
+		const scenePath = dataDir
+			? path.join(dataDir, "scene_blocks", e.filename)
+			: `scene_blocks/${e.filename}`;
+		const pathLine = `### Path: ${scenePath}`;
+		const heatLine = `**热度**: ${e.heat}${heatEmoji(e.heat)}${e.updated ? ` | **更新**: ${e.updated}` : ""}`;
+		const summaryLine = `Summary: ${e.summary}`;
+		return `${pathLine}\n${heatLine}\n${summaryLine}`;
+	});
 
-  return `${NAV_HEADER}\n*以下是当前场景记忆的索引，可根据需要 read_file 读取详细内容。*\n\n${blocks.join("\n\n")}\n\n${NAV_FOOTER}`;
+	return `${NAV_HEADER}\n*以下是当前场景记忆的索引，可根据需要 read_file 读取详细内容。*\n\n${blocks.join("\n\n")}\n\n${NAV_FOOTER}`;
 }
 
 /**
  * Strip the scene navigation section from persona content.
  */
 export function stripSceneNavigation(personaContent: string): string {
-  const idx = personaContent.indexOf(NAV_HEADER);
-  if (idx === -1) return personaContent;
-  return personaContent.slice(0, idx).trimEnd();
+	const idx = personaContent.indexOf(NAV_HEADER);
+	if (idx === -1) return personaContent;
+	return personaContent.slice(0, idx).trimEnd();
 }

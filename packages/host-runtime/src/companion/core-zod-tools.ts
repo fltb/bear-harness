@@ -4,7 +4,7 @@
  * the JSON Schema is model-facing metadata and execution always reparses.
  */
 
-import { toJsonSchema, z } from "@bear-harness/schema";
+import { toJsonSchema, type z } from "@bear-harness/schema";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 
 export interface ZodCoreTool<TSchema extends z.ZodType> {

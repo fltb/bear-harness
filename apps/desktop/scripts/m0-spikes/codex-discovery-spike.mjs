@@ -92,7 +92,7 @@ async function probeCandidate(name, entry) {
 			timeout: 10000,
 			windowsHide: true,
 		});
-		const raw = (out.stdout ?? "") + (out.stderr ?? "");
+		const raw = `${out.stdout ?? ""}${out.stderr ?? ""}`;
 		const m = raw.match(/(\d+\.\d+\.\d+)/);
 		rec.version = m ? m[1] : raw.trim().slice(0, 60) || null;
 		rec.versionExact = rec.version === PINNED_VERSION;
@@ -119,7 +119,7 @@ const pathEntries = (process.env.PATH ?? "")
 	.split(":")
 	.map((d) => join(d, process.platform === "win32" ? "codex.exe" : "codex"));
 for (const p of pathEntries) {
-	if (p.startsWith(homedir() + "/.nvm") || p.startsWith(homedir() + "/.fnm")) continue; // keep the walk bounded
+	if (p.startsWith(`${homedir()}/.nvm`) || p.startsWith(`${homedir()}/.fnm`)) continue; // keep the walk bounded
 	try {
 		if (statSync(p).isFile()) await addCandidate("PATH", p);
 	} catch {

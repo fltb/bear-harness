@@ -29,8 +29,8 @@ import { RoleplayService } from "./companion/roleplay-service.js";
 import { CompanionSupervisor } from "./companion/supervisor.js";
 import { TurnPipeline } from "./companion/turn-pipeline.js";
 import {
-	rememberConversationEntry,
 	type HostCompositionContext,
+	rememberConversationEntry,
 	wireHostHandlers,
 } from "./composition.js";
 import { ConversationRepository } from "./conversations/repository.js";
@@ -41,8 +41,8 @@ import { ExecutorRouter } from "./executors/router.js";
 import { MemoryAutomation } from "./memory/automation.js";
 import type { MemoryBackend } from "./memory/backend.js";
 import { MemoryPresentationStore } from "./memory/presentation-store.js";
-import { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import { MemoryService } from "./memory/service.js";
+import { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import { ModelRegistry } from "./models/registry.js";
 import { ProviderCatalog } from "./providers/catalog.js";
 import { CredentialStore, type CredentialVault } from "./providers/credential-store.js";
@@ -183,6 +183,7 @@ export class HostRuntime {
 		const contextPack = new ContextPackCompiler(db.orm, characterLoader, canon, {
 			backend: memoryRuntime.backend,
 			scope: memoryScope,
+			presentation: memoryPresentation,
 		});
 		supervisor.setContextHandler(async (conversationId, includeHistory, message) =>
 			contextPack.render(

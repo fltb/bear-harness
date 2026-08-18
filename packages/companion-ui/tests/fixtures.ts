@@ -1,5 +1,6 @@
 import type { CompanionClient } from "@bear-harness/companion-client";
 import { type ProductConfig, productConfig } from "@bear-harness/product-config";
+import type { ConversationSummary } from "@bear-harness/protocol/schema";
 import { vi } from "vitest";
 import type { CharacterDisplay, SettingsData } from "../src/index.js";
 
@@ -129,7 +130,10 @@ export function createTestClient() {
 		return ok({ settings });
 	});
 
-	const conversationList = vi.fn(() => ok({ conversations: [] }));
+	/** Conversations the fixture has created; kept in sync so an active
+	 *  conversation id always has a matching list entry. */
+	const conversations: ConversationSummary[] = [];
+	const conversationList = vi.fn(() => ok({ conversations: [...conversations] }));
 	const providerList = vi.fn(() => ok({ providers: [] }));
 
 	const client = {
@@ -176,7 +180,20 @@ export function createTestClient() {
 		},
 		conversation: {
 			list: conversationList,
-			create: vi.fn(() => ok({ id: "c1" })),
+			create: vi.fn(({ title }: { title?: string }) => {
+				// The store activates the returned id, so register it in the list
+				// the fixture serves back — an active conversation must be listed.
+				if (!conversations.some((conversation) => conversation.id === "c1")) {
+					conversations.push({
+						id: "c1",
+						title: title ?? "New conversation",
+						sceneTitle: "",
+						unread: false,
+						updatedAt: "2026-01-01T00:00:00.000Z",
+					});
+				}
+				return ok({ id: "c1" });
+			}),
 			select: vi.fn(() => ok(null)),
 			rename: vi.fn(() => ok(null)),
 			archive: vi.fn(() => ok(null)),
@@ -196,7 +213,11 @@ export function createTestClient() {
 			search: vi.fn(() => ok({ entries: [] })),
 			list: vi.fn(() => ok({ entries: [] })),
 			capture: vi.fn(({ entryId }: { entryId: string }) =>
-				ok({ memoryId: `memory-${entryId}`, sourceEntryId: entryId, createdBy: "user_capture" as const }),
+				ok({
+					memoryId: `memory-${entryId}`,
+					sourceEntryId: entryId,
+					createdBy: "user_capture" as const,
+				}),
 			),
 			invalidate: vi.fn(() => ok({})),
 			pin: vi.fn(() => ok(null)),

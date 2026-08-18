@@ -41,30 +41,30 @@ import path from "node:path";
  *   "已经规范.md"                   → "已经规范.md" (no-op)
  */
 export function normalizeSceneFilename(name: string): string {
-  if (!name) return "scene.md";
+	if (!name) return "scene.md";
 
-  // Strip directory components defensively — we only normalize the basename.
-  const base = name.replace(/^.*[\\/]/, "");
+	// Strip directory components defensively — we only normalize the basename.
+	const base = name.replace(/^.*[\\/]/, "");
 
-  // Detect & strip `.md` (case-insensitive). Always re-emit lowercase `.md`.
-  const lower = base.toLowerCase();
-  const hasMd = lower.endsWith(".md");
-  const stem = hasMd ? base.slice(0, -3) : base;
+	// Detect & strip `.md` (case-insensitive). Always re-emit lowercase `.md`.
+	const lower = base.toLowerCase();
+	const hasMd = lower.endsWith(".md");
+	const stem = hasMd ? base.slice(0, -3) : base;
 
-  const safe = stem
-    // Replace whitespace runs (incl. NBSP, full-width space) with `-`
-    .replace(/[\s\u00A0\u3000]+/g, "-")
-    // Drop quotes, brackets, and punctuation known to break shells/markdown.
-    // Keep alphanumerics, CJK ideographs, `-`, `_`, `.`.
-    .replace(/[()[\]{}<>'"`,;:!?*|/\\=&%$#@^~+]/g, "")
-    // Collapse consecutive separators.
-    .replace(/-{2,}/g, "-")
-    .replace(/_{2,}/g, "_")
-    .replace(/\.{2,}/g, ".")
-    // Trim leading / trailing separators.
-    .replace(/^[-_.]+|[-_.]+$/g, "");
+	const safe = stem
+		// Replace whitespace runs (incl. NBSP, full-width space) with `-`
+		.replace(/[\s\u00A0\u3000]+/g, "-")
+		// Drop quotes, brackets, and punctuation known to break shells/markdown.
+		// Keep alphanumerics, CJK ideographs, `-`, `_`, `.`.
+		.replace(/[()[\]{}<>'"`,;:!?*|/\\=&%$#@^~+]/g, "")
+		// Collapse consecutive separators.
+		.replace(/-{2,}/g, "-")
+		.replace(/_{2,}/g, "_")
+		.replace(/\.{2,}/g, ".")
+		// Trim leading / trailing separators.
+		.replace(/^[-_.]+|[-_.]+$/g, "");
 
-  return (safe || "scene") + ".md";
+	return (safe || "scene") + ".md";
 }
 
 /**
@@ -72,7 +72,7 @@ export function normalizeSceneFilename(name: string): string {
  * Faster than computing the normalized form when callers only need a yes/no.
  */
 export function isNormalizedSceneFilename(name: string): boolean {
-  return normalizeSceneFilename(name) === name;
+	return normalizeSceneFilename(name) === name;
 }
 
 /**
@@ -84,45 +84,45 @@ export function isNormalizedSceneFilename(name: string): boolean {
  * (e.g. the source path of an in-flight rename, when source != target).
  */
 export async function resolveUniqueScenePath(
-  dir: string,
-  desired: string,
-  excludePath?: string,
+	dir: string,
+	desired: string,
+	excludePath?: string,
 ): Promise<string> {
-  const target = path.join(dir, desired);
-  if (!(await pathExists(target)) || target === excludePath) return target;
+	const target = path.join(dir, desired);
+	if (!(await pathExists(target)) || target === excludePath) return target;
 
-  const ext = ".md";
-  const stem = desired.endsWith(ext) ? desired.slice(0, -ext.length) : desired;
+	const ext = ".md";
+	const stem = desired.endsWith(ext) ? desired.slice(0, -ext.length) : desired;
 
-  // Bound the search to keep this defensive (LLMs rarely produce hundreds of
-  // colliding names; if they do, surface the failure rather than spin).
-  for (let i = 2; i < 1000; i++) {
-    const candidate = path.join(dir, `${stem}-${i}${ext}`);
-    if (!(await pathExists(candidate)) || candidate === excludePath) {
-      return candidate;
-    }
-  }
-  throw new Error(
-    `resolveUniqueScenePath: could not find a free slot for ${desired} in ${dir} after 1000 attempts`,
-  );
+	// Bound the search to keep this defensive (LLMs rarely produce hundreds of
+	// colliding names; if they do, surface the failure rather than spin).
+	for (let i = 2; i < 1000; i++) {
+		const candidate = path.join(dir, `${stem}-${i}${ext}`);
+		if (!(await pathExists(candidate)) || candidate === excludePath) {
+			return candidate;
+		}
+	}
+	throw new Error(
+		`resolveUniqueScenePath: could not find a free slot for ${desired} in ${dir} after 1000 attempts`,
+	);
 }
 
 async function pathExists(p: string): Promise<boolean> {
-  try {
-    await fs.access(p);
-    return true;
-  } catch {
-    return false;
-  }
+	try {
+		await fs.access(p);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 export interface NormalizeRenameResult {
-  /** Number of files that were actually renamed. */
-  renamed: number;
-  /** Number of files that were already normalized (no-op). */
-  skipped: number;
-  /** Per-rename audit entries (oldName → newName). */
-  renames: Array<{ from: string; to: string }>;
+	/** Number of files that were actually renamed. */
+	renamed: number;
+	/** Number of files that were already normalized (no-op). */
+	skipped: number;
+	/** Per-rename audit entries (oldName → newName). */
+	renames: Array<{ from: string; to: string }>;
 }
 
 /**
@@ -141,55 +141,55 @@ export interface NormalizeRenameResult {
  *     do not abort the loop — index sync should still see the remaining files.
  */
 export async function normalizeSceneFilenames(
-  blocksDir: string,
-  logger?: { debug?: (m: string) => void; warn?: (m: string) => void },
+	blocksDir: string,
+	logger?: { debug?: (m: string) => void; warn?: (m: string) => void },
 ): Promise<NormalizeRenameResult> {
-  const result: NormalizeRenameResult = { renamed: 0, skipped: 0, renames: [] };
+	const result: NormalizeRenameResult = { renamed: 0, skipped: 0, renames: [] };
 
-  let entries: string[];
-  try {
-    entries = (await fs.readdir(blocksDir)).filter((f) => f.endsWith(".md"));
-  } catch {
-    return result;
-  }
+	let entries: string[];
+	try {
+		entries = (await fs.readdir(blocksDir)).filter((f) => f.endsWith(".md"));
+	} catch {
+		return result;
+	}
 
-  for (const file of entries) {
-    const normalized = normalizeSceneFilename(file);
-    if (normalized === file) {
-      result.skipped++;
-      continue;
-    }
+	for (const file of entries) {
+		const normalized = normalizeSceneFilename(file);
+		if (normalized === file) {
+			result.skipped++;
+			continue;
+		}
 
-    const from = path.join(blocksDir, file);
-    let to: string;
-    try {
-      to = await resolveUniqueScenePath(blocksDir, normalized, from);
-    } catch (err) {
-      logger?.warn?.(
-        `[filename-normalizer] could not resolve unique target for ${file}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      result.skipped++;
-      continue;
-    }
+		const from = path.join(blocksDir, file);
+		let to: string;
+		try {
+			to = await resolveUniqueScenePath(blocksDir, normalized, from);
+		} catch (err) {
+			logger?.warn?.(
+				`[filename-normalizer] could not resolve unique target for ${file}: ${err instanceof Error ? err.message : String(err)}`,
+			);
+			result.skipped++;
+			continue;
+		}
 
-    if (to === from) {
-      // Filesystem already matched (e.g. case-insensitive FS where source and
-      // target collapse to the same inode); treat as a no-op.
-      result.skipped++;
-      continue;
-    }
+		if (to === from) {
+			// Filesystem already matched (e.g. case-insensitive FS where source and
+			// target collapse to the same inode); treat as a no-op.
+			result.skipped++;
+			continue;
+		}
 
-    try {
-      await fs.rename(from, to);
-      result.renamed++;
-      result.renames.push({ from: file, to: path.basename(to) });
-      logger?.debug?.(`[filename-normalizer] renamed: ${file} → ${path.basename(to)}`);
-    } catch (err) {
-      logger?.warn?.(
-        `[filename-normalizer] rename failed (${file} → ${path.basename(to)}): ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
+		try {
+			await fs.rename(from, to);
+			result.renamed++;
+			result.renames.push({ from: file, to: path.basename(to) });
+			logger?.debug?.(`[filename-normalizer] renamed: ${file} → ${path.basename(to)}`);
+		} catch (err) {
+			logger?.warn?.(
+				`[filename-normalizer] rename failed (${file} → ${path.basename(to)}): ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
+	}
 
-  return result;
+	return result;
 }

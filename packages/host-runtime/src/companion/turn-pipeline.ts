@@ -25,12 +25,12 @@ import {
 	messageVersions,
 	turns,
 } from "../storage/schema.js";
-import type { CompanionSupervisor } from "./supervisor.js";
 import type { PiSessionMessage } from "./pi-session-store.js";
+import type { CompanionSupervisor } from "./supervisor.js";
+
 const REGENERATE_INSTRUCTION =
 	"请基于上面的对话重新生成对上一条用户消息的回复。直接自然地回答，不要提及重新生成或比较旧回复。";
 const CONTINUE_INSTRUCTION = "请继续上一条回复。不要重复已经说过的内容，直接接着完成。";
-
 
 export interface TurnResult {
 	messageId: string;
@@ -190,22 +190,32 @@ export class TurnPipeline {
 		const targetText = piTarget ? assistantMessageText(piTarget.message) : undefined;
 		const hostAssistantId =
 			piTarget && targetText
-				? this.findHostMessageId(conversationId, "assistant", targetText) ??
-					this.ensureHostMessage(conversationId, "assistant", targetText)
+				? (this.findHostMessageId(conversationId, "assistant", targetText) ??
+					this.ensureHostMessage(conversationId, "assistant", targetText))
 				: messageId;
 		const piParent = piTarget ? session?.findParentUserEntry?.(messageId) : undefined;
 		const parent = piTarget
 			? piParent
 				? {
 						id:
-							this.findHostMessageId(conversationId, "user", assistantMessageText(piParent.message)) ??
-							this.ensureHostMessage(conversationId, "user", assistantMessageText(piParent.message)),
+							this.findHostMessageId(
+								conversationId,
+								"user",
+								assistantMessageText(piParent.message),
+							) ??
+							this.ensureHostMessage(
+								conversationId,
+								"user",
+								assistantMessageText(piParent.message),
+							),
 					}
 				: undefined
 			: this.db
 					.select({ id: turns.userMessageId })
 					.from(turns)
-					.where(and(eq(turns.conversationId, conversationId), eq(turns.assistantMessageId, messageId)))
+					.where(
+						and(eq(turns.conversationId, conversationId), eq(turns.assistantMessageId, messageId)),
+					)
 					.orderBy(desc(turns.createdAt))
 					.limit(1)
 					.get();
@@ -233,7 +243,13 @@ export class TurnPipeline {
 				.run();
 			transaction
 				.insert(messageVersions)
-				.values({ id: newVersionId, messageId: hostAssistantId, content: "", editedByUser: 0, adopted: 1 })
+				.values({
+					id: newVersionId,
+					messageId: hostAssistantId,
+					content: "",
+					editedByUser: 0,
+					adopted: 1,
+				})
 				.run();
 		});
 		this.eventBus.publish("message.regenerated", {
@@ -299,7 +315,11 @@ export class TurnPipeline {
 		} catch (e) {
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
-		if (session && version?.content !== undefined && (message?.role === "user" || message?.role === "assistant")) {
+		if (
+			session &&
+			version?.content !== undefined &&
+			(message?.role === "user" || message?.role === "assistant")
+		) {
 			const entry = session.findMessageEntry?.(message.role, version.content);
 			if (entry && session.selectBranch) session.selectBranch(entry.id);
 		}
@@ -324,18 +344,28 @@ export class TurnPipeline {
 		// The UI may report a Host SQLite message id for a migrated user row;
 		// the source entry was not rewritten in place, so resolve its current
 		// Pi entry by the adopted content when the Pi entry ids are opaque.
-		const source =
-			piSource ?? (isUserMessage
-				? this.findHostMessageEntry(conversationId, messageId, "user")
-				: this.findHostMessageEntry(conversationId, messageId, "assistant"));
-		if (!source) throw { kind: "not_found", reason: "message_not_found" };
-		if (source.message.role !== "user" && source.message.role !== "assistant") {
+		const resolvedPi =
+			piSource ??
+			(session
+				? isUserMessage
+					? this.findHostMessageEntry(conversationId, messageId, "user")
+					: this.findHostMessageEntry(conversationId, messageId, "assistant")
+				: undefined);
+		const dbRole = this.db
+			.select({ role: messages.role })
+			.from(messages)
+			.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
+			.get();
+		const role = resolvedPi?.message.role ?? dbRole?.role;
+		if (!role) throw { kind: "not_found", reason: "message_not_found" };
+		if (role !== "user" && role !== "assistant")
 			throw { kind: "not_found", reason: "message_not_found" };
-		}
-		const sourceText = assistantMessageText(source.message);
+		const sourceText = resolvedPi ? assistantMessageText(resolvedPi.message) : undefined;
 		const hostMessageId =
-			this.findHostMessageId(conversationId, source.message.role, sourceText) ??
-			this.ensureHostMessage(conversationId, source.message.role, sourceText);
+			resolvedPi && sourceText
+				? (this.findHostMessageId(conversationId, role, sourceText) ??
+					this.ensureHostMessage(conversationId, role, sourceText))
+				: messageId;
 		const newVersionId = randomUUID();
 		try {
 			this.db.transaction((transaction) => {
@@ -360,7 +390,13 @@ export class TurnPipeline {
 				}
 				transaction
 					.insert(messageVersions)
-					.values({ id: newVersionId, messageId: hostMessageId, content: text, editedByUser: 1, adopted: 1 })
+					.values({
+						id: newVersionId,
+						messageId: hostMessageId,
+						content: text,
+						editedByUser: 1,
+						adopted: 1,
+					})
 					.run();
 				transaction
 					.update(messageVersions)
@@ -373,12 +409,12 @@ export class TurnPipeline {
 		} catch (e) {
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
-		if (session && piSource) {
+		if (session && resolvedPi) {
 			if (isUserMessage) {
-				session.branchBefore?.(piSource.id);
+				session.branchBefore?.(resolvedPi.id);
 				session.appendUserMessage?.(text);
 			} else {
-				session.branchBefore?.(piSource.id);
+				session.branchBefore?.(resolvedPi.id);
 				session.appendSyntheticAssistant?.(text);
 			}
 		}
@@ -450,22 +486,29 @@ export class TurnPipeline {
 		const branchId = randomUUID();
 		const session = this.sessionResolver?.get(conversationId);
 		const piSource = session?.getMessageEntry?.(messageId);
-		const source = piSource
-			? { id: piSource.id, message: piSource.message }
-			: this.findHostMessageEntry(conversationId, messageId, "assistant");
-		if (!source) throw { kind: "not_found", reason: "message_not_found" };
-		if (piSource && source.role !== "user" && source.role !== "assistant") {
+		// Resolve the Pi branch entry by adopted content when the caller passed
+		// a Host SQLite message id; without a Pi session, fall back to the
+		// legacy Host-only branch row.
+		const resolvedPi =
+			piSource ??
+			(session
+				? (this.findHostMessageEntry(conversationId, messageId, "assistant") ??
+					this.findHostMessageEntry(conversationId, messageId, "user"))
+				: undefined);
+		const dbRole = this.db
+			.select({ role: messages.role })
+			.from(messages)
+			.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
+			.get();
+		const role = resolvedPi?.message.role ?? dbRole?.role;
+		if (!role) throw { kind: "not_found", reason: "message_not_found" };
+		if (role !== "user" && role !== "assistant")
 			throw { kind: "not_found", reason: "message_not_found" };
-		}
-		const sourceText = piSource ? assistantMessageText(piSource.message) : undefined;
+		const sourceText = resolvedPi ? assistantMessageText(resolvedPi.message) : undefined;
 		const hostMessageId =
-			piSource && sourceText
-				? this.findHostMessageId(conversationId, source.role as "user" | "assistant", sourceText) ??
-					this.ensureHostMessage(
-						conversationId,
-						source.role as "user" | "assistant",
-						sourceText,
-					)
+			resolvedPi && sourceText
+				? (this.findHostMessageId(conversationId, role, sourceText) ??
+					this.ensureHostMessage(conversationId, role, sourceText))
 				: messageId;
 		try {
 			this.db.transaction((transaction) => {
@@ -488,7 +531,7 @@ export class TurnPipeline {
 		} catch (e) {
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
-		if (piSource && session?.selectBranch) session.selectBranch(piSource.id);
+		if (resolvedPi && session?.selectBranch) session.selectBranch(resolvedPi.id);
 		this.eventBus.publish("conversation.branched", { conversationId, messageId, branchId });
 		return branchId;
 	}
@@ -586,10 +629,7 @@ export class TurnPipeline {
 		const messageId = randomUUID();
 		const versionId = randomUUID();
 		this.db.transaction((transaction) => {
-			transaction
-				.insert(messages)
-				.values({ id: messageId, conversationId, branchId, role })
-				.run();
+			transaction.insert(messages).values({ id: messageId, conversationId, branchId, role }).run();
 			transaction
 				.insert(messageVersions)
 				.values({ id: versionId, messageId, content, editedByUser: 0, adopted: 1 })
@@ -597,7 +637,6 @@ export class TurnPipeline {
 		});
 		return messageId;
 	}
-
 
 	private commitAssistantReply(payload: unknown): void {
 		if (!payload || typeof payload !== "object" || !("conversationId" in payload)) return;
@@ -609,12 +648,11 @@ export class TurnPipeline {
 		const failed = "failed" in payload && payload.failed === true;
 		if (failed && !text) text = "这次回复没有完成。你可以稍后重试，或换一个模型服务。";
 		const assistantMessageId = active.assistantMessageId ?? randomUUID();
-		const piAssistant =
-			"message" in payload ? asAssistantPiMessage(payload.message) : undefined;
+		const piAssistant = "message" in payload ? asAssistantPiMessage(payload.message) : undefined;
 		const assistantVersionId = active.assistantVersionId ?? randomUUID();
 		const session = this.sessionResolver?.get(conversationId);
 		if (session) projectAssistantEntry(session, piAssistant, text);
-		
+
 		const branch = this.db
 			.select({ id: branches.id })
 			.from(branches)
@@ -696,23 +734,24 @@ function isAssistantLeaf(value: unknown, text?: string): boolean {
 }
 
 function isAssistantMessage(value: unknown): value is PiSessionMessage {
-	return Boolean(value && typeof value === "object" && "role" in value && value.role === "assistant");
+	return Boolean(
+		value && typeof value === "object" && "role" in value && value.role === "assistant",
+	);
 }
 
 function assistantMessageText(message: PiSessionMessage): string {
 	if (typeof message.content === "string") return message.content.trim();
 	if (!Array.isArray(message.content)) return "";
 	return message.content
-		.filter(
-			(part): part is { type: "text"; text: string } =>
-				Boolean(
-					part &&
-						typeof part === "object" &&
-						"type" in part &&
-						part.type === "text" &&
-						"text" in part &&
-						typeof part.text === "string",
-				),
+		.filter((part): part is { type: "text"; text: string } =>
+			Boolean(
+				part &&
+					typeof part === "object" &&
+					"type" in part &&
+					part.type === "text" &&
+					"text" in part &&
+					typeof part.text === "string",
+			),
 		)
 		.map((part) => part.text)
 		.join("")

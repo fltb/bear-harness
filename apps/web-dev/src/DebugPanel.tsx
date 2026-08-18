@@ -5,7 +5,7 @@ import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { Button } from "@kobalte/core/button";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
-import { createSignal, For, Show } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import { loadDebugChannels } from "./http-client";
 import "./web-dev-debug.css";
 

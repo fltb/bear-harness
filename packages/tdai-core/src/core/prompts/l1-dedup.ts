@@ -76,8 +76,8 @@ export const CONFLICT_DETECTION_SYSTEM_PROMPT = `你是记忆冲突检测器。�
  * Candidate search result for a single new memory.
  */
 export interface CandidateMatch {
-  newMemory: ExtractedMemory & { record_id: string };
-  candidates: MemoryRecord[];
+	newMemory: ExtractedMemory & { record_id: string };
+	candidates: MemoryRecord[];
 }
 
 /**
@@ -92,68 +92,64 @@ export interface CandidateMatch {
  * @param matches - Array of new memories with their candidate matches
  */
 export function formatBatchConflictPrompt(matches: CandidateMatch[]): string {
-  // Step 1: Build unified candidate pool (de-duplicate across all new memories)
-  const unifiedPool = new Map<string, MemoryRecord>();
-  const perMemoryCandidateIds = new Map<string, string[]>();
+	// Step 1: Build unified candidate pool (de-duplicate across all new memories)
+	const unifiedPool = new Map<string, MemoryRecord>();
+	const perMemoryCandidateIds = new Map<string, string[]>();
 
-  for (const m of matches) {
-    const candidateIds: string[] = [];
-    for (const c of m.candidates) {
-      if (!unifiedPool.has(c.id)) {
-        unifiedPool.set(c.id, c);
-      }
-      candidateIds.push(c.id);
-    }
-    perMemoryCandidateIds.set(m.newMemory.record_id, candidateIds);
-  }
+	for (const m of matches) {
+		const candidateIds: string[] = [];
+		for (const c of m.candidates) {
+			if (!unifiedPool.has(c.id)) {
+				unifiedPool.set(c.id, c);
+			}
+			candidateIds.push(c.id);
+		}
+		perMemoryCandidateIds.set(m.newMemory.record_id, candidateIds);
+	}
 
-  // Step 2: Format unified pool as JSON
-  const poolList = Array.from(unifiedPool.values()).map((c) => ({
-    record_id: c.id,
-    content: c.content,
-    type: c.type,
-    priority: c.priority,
-    scene_name: c.scene_name,
-    timestamps: c.timestamps,
-  }));
+	// Step 2: Format unified pool as JSON
+	const poolList = Array.from(unifiedPool.values()).map((c) => ({
+		record_id: c.id,
+		content: c.content,
+		type: c.type,
+		priority: c.priority,
+		scene_name: c.scene_name,
+		timestamps: c.timestamps,
+	}));
 
-  let poolSection: string;
-  if (poolList.length === 0) {
-    poolSection = "## 统一候选记忆池\n\n（空，没有已有记忆，所有新记忆直接 store）";
-  } else {
-    const poolStr = JSON.stringify(poolList, null, 2);
-    poolSection = `## 统一候选记忆池（共 ${poolList.length} 条已有记忆）\n\n${poolStr}`;
-  }
+	let poolSection: string;
+	if (poolList.length === 0) {
+		poolSection = "## 统一候选记忆池\n\n（空，没有已有记忆，所有新记忆直接 store）";
+	} else {
+		const poolStr = JSON.stringify(poolList, null, 2);
+		poolSection = `## 统一候选记忆池（共 ${poolList.length} 条已有记忆）\n\n${poolStr}`;
+	}
 
-  // Step 3: Format each new memory with its related candidate IDs
-  const memoryParts = matches.map((m, idx) => {
-    const relatedIds = perMemoryCandidateIds.get(m.newMemory.record_id) ?? [];
-    const relatedNote =
-      relatedIds.length > 0
-        ? JSON.stringify(relatedIds)
-        : "[]（无相似候选，直接 store）";
+	// Step 3: Format each new memory with its related candidate IDs
+	const memoryParts = matches.map((m, idx) => {
+		const relatedIds = perMemoryCandidateIds.get(m.newMemory.record_id) ?? [];
+		const relatedNote =
+			relatedIds.length > 0 ? JSON.stringify(relatedIds) : "[]（无相似候选，直接 store）";
 
-    const memStr = JSON.stringify(
-      {
-        record_id: m.newMemory.record_id,
-        content: m.newMemory.content,
-        type: m.newMemory.type,
-        priority: m.newMemory.priority,
-        scene_name: m.newMemory.scene_name,
-      },
-      null,
-      2,
-    );
+		const memStr = JSON.stringify(
+			{
+				record_id: m.newMemory.record_id,
+				content: m.newMemory.content,
+				type: m.newMemory.type,
+				priority: m.newMemory.priority,
+				scene_name: m.newMemory.scene_name,
+			},
+			null,
+			2,
+		);
 
-    return `### 第 ${idx + 1} 条新记忆 (record_id: ${m.newMemory.record_id})\n${memStr}\n\n【关联候选 ID】${relatedNote}`;
-  });
+		return `### 第 ${idx + 1} 条新记忆 (record_id: ${m.newMemory.record_id})\n${memStr}\n\n【关联候选 ID】${relatedNote}`;
+	});
 
-  const newMemoriesText = memoryParts.join(
-    "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n",
-  );
+	const newMemoriesText = memoryParts.join("\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
 
-  // Step 4: Assemble final prompt
-  return `**输出语言**：\`merged_content\` 使用与候选池中已有记忆相同的语言。
+	// Step 4: Assemble final prompt
+	return `**输出语言**：\`merged_content\` 使用与候选池中已有记忆相同的语言。
 
 ${poolSection}
 

@@ -4,10 +4,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { PiSessionMessage } from "../src/companion/pi-session-store.js";
+import { PiSessionStore } from "../src/companion/pi-session-store.js";
 import type { CompanionSupervisor } from "../src/companion/supervisor.js";
 import { TurnPipeline } from "../src/companion/turn-pipeline.js";
-import { PiSessionStore } from "../src/companion/pi-session-store.js";
-import type { PiSessionMessage } from "../src/companion/pi-session-store.js";
 import { Database, MIGRATIONS } from "../src/storage/database.js";
 import { EventBus } from "../src/storage/event-bus.js";
 
@@ -100,7 +100,8 @@ describe("TurnPipeline conversation state contract", () => {
 		const regenerated = await pipeline.regenerate("conversation", assistant.id);
 		expect(commands.at(-1)).toMatchObject({
 			type: "prompt",
-			message: "请基于上面的对话重新生成对上一条用户消息的回复。直接自然地回答，不要提及重新生成或比较旧回复。",
+			message:
+				"请基于上面的对话重新生成对上一条用户消息的回复。直接自然地回答，不要提及重新生成或比较旧回复。",
 		});
 		events.publish("message_end", { conversationId: "conversation", text: "新回答" });
 		const versions = database.connection
@@ -432,7 +433,10 @@ describe("TurnPipeline conversation state contract", () => {
 		const regenerated = await pipeline.regenerate("conversation", "pi-assistant-1");
 		expect(regenerated.messageId).toBe("pi-assistant-1");
 		expect(piCalls).toContain("branchBefore:pi-assistant-1");
-		expect(commands.at(-1)).toMatchObject({ type: "prompt", message: expect.stringContaining("重新生成") });
+		expect(commands.at(-1)).toMatchObject({
+			type: "prompt",
+			message: expect.stringContaining("重新生成"),
+		});
 		events.publish("message_end", {
 			conversationId: "conversation",
 			text: "新回答",

@@ -4,11 +4,11 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "@bear-harness/tdai-core";
-import type { ModelRegistry } from "../src/models/registry.js";
+import { afterEach, describe, expect, it } from "vitest";
 import type { MemoryBackend, MemoryBankScope } from "../src/memory/backend.js";
 import { TencentDbRuntime } from "../src/memory/tencentdb-runtime.js";
+import type { ModelRegistry } from "../src/models/registry.js";
 import type { ProviderCatalog } from "../src/providers/catalog.js";
-import { afterEach, describe, expect, it } from "vitest";
 
 const logger: Logger = {
 	debug: () => undefined,
@@ -145,6 +145,34 @@ describe("TencentDbRuntime", () => {
 		).resolves.toMatchObject({ id: created.id, text: "reopened local memory" });
 	});
 
+	it("round-trips a directly remembered record through list before and after restart", async () => {
+		const root = createRoot();
+		const runtime = createRuntime(root);
+		const scope = scopeFor("role-a");
+		const framedText =
+			"<host_context>\nprivate context\n</host_context>\n\n<current_user_message>\nremember this exact moment\n</current_user_message>";
+		await runtime.start();
+		await runtime.backend.open({ scope });
+
+		const created = await runtime.backend.remember({
+			scope,
+			text: framedText,
+			provenance,
+		});
+		expect(created.text).toBe("remember this exact moment");
+		await expect(runtime.backend.list({ scope })).resolves.toEqual([
+			expect.objectContaining({ id: created.id, text: created.text }),
+		]);
+
+		await runtime.close();
+		const reopened = createRuntime(root);
+		await reopened.start();
+		await reopened.backend.open({ scope });
+		await expect(reopened.backend.list({ scope })).resolves.toEqual([
+			expect.objectContaining({ id: created.id, text: created.text }),
+		]);
+	});
+
 	it("keeps role namespaces isolated in the local TencentDB store", async () => {
 		const root = createRoot();
 		const runtime = createRuntime(root);
@@ -164,6 +192,85 @@ describe("TencentDbRuntime", () => {
 		expect(roleBHits.map((hit) => hit.record.text)).toEqual(["beryl role memory"]);
 		expect(roleAHits.every((hit) => hit.record.scope.companionId === "role-a")).toBe(true);
 		expect(roleBHits.every((hit) => hit.record.scope.companionId === "role-b")).toBe(true);
+	});
+
+	it("recalls a captured Chinese record for a generic direct-memory query through native FTS", async () => {
+		const root = createRoot();
+		const runtime = createRuntime(root);
+		const scope = scopeFor("role-a");
+		await runtime.start();
+		await remember(runtime.backend, scope, "用户喜欢在清晨散步，也偏好简洁的回答");
+
+		await runtime.backend.open({ scope });
+		const hits = await runtime.backend.recall({
+			scope,
+			query: "请回忆一下用户喜欢什么样的回答",
+			limit: 10,
+		});
+
+		expect(hits.map((hit) => hit.record.text)).toEqual(["用户喜欢在清晨散步，也偏好简洁的回答"]);
+	});
+
+	it("recalls captures from different conversations in the same companion bank", async () => {
+		const root = createRoot();
+		const runtime = createRuntime(root);
+		const scope = scopeFor("role-a");
+		await runtime.start();
+		await runtime.backend.open({ scope });
+		const distractorScope = scopeFor("role-b");
+		for (let index = 0; index < 60; index += 1) {
+			await runtime.backend.open({ scope: distractorScope });
+			await runtime.backend.remember({
+				scope: distractorScope,
+				text: `E2E_DIRECT_MEMORY_B distractor ${index}：我们约定暗号是北辰`,
+				provenance: {
+					kind: "explicit",
+					piSessionEntryIds: [`distractor-${index}`],
+					sourceRef: `conversation-distractor-${index}`,
+				},
+			});
+		}
+		await runtime.backend.open({ scope });
+
+		const first = await runtime.backend.remember({
+			scope,
+			text: "E2E_DIRECT_MEMORY_A：我们约定暗号是北辰",
+			provenance: {
+				kind: "explicit",
+				piSessionEntryIds: ["entry-a"],
+				sourceRef: "conversation-a",
+			},
+		});
+		const second = await runtime.backend.remember({
+			scope,
+			text: "E2E_DIRECT_MEMORY_B：我们约定暗号是北辰",
+			provenance: {
+				kind: "explicit",
+				piSessionEntryIds: ["entry-b"],
+				sourceRef: "conversation-b",
+			},
+		});
+
+		const firstHits = await runtime.backend.recall({
+			scope,
+			query: "检查记忆上下文 E2E_DIRECT_MEMORY_A：我们约定暗号是北辰",
+			limit: 10,
+		});
+		expect(firstHits.map((hit) => hit.record.id)).toContain(first.id);
+		expect(firstHits.every((hit) => hit.record.scope.companionId === scope.companionId)).toBe(true);
+		const secondHits = await runtime.backend.recall({
+			scope,
+			query: "检查记忆上下文 E2E_DIRECT_MEMORY_B：我们约定暗号是北辰",
+			limit: 10,
+		});
+		expect(secondHits[0]?.record.id).toBe(second.id);
+		expect(secondHits.every((hit) => hit.record.scope.companionId === scope.companionId)).toBe(
+			true,
+		);
+		await expect(runtime.backend.list({ scope })).resolves.toEqual([
+			expect.objectContaining({ id: first.id }),
+			expect.objectContaining({ id: second.id }),
+		]);
 	});
 
 	it("supports direct remember, update, invalidate, and forget mutations", async () => {
@@ -204,9 +311,9 @@ describe("TencentDbRuntime", () => {
 		expect(invalidated.invalidatedAt).toEqual(expect.any(String));
 
 		await runtime.backend.forget({ scope, memoryId: created.id });
-		await expect(runtime.backend.update({ scope, memoryId: created.id, text: "gone" })).rejects.toThrow(
-			"TencentDB memory not found",
-		);
+		await expect(
+			runtime.backend.update({ scope, memoryId: created.id, text: "gone" }),
+		).rejects.toThrow("TencentDB memory not found");
 	});
 
 	it("does not scan stored text when native retrieval capabilities are unavailable", async () => {

@@ -1,20 +1,16 @@
+import { isAbsolute } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
-	SessionManager,
 	type SessionContext,
 	type SessionEntry,
+	SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import { conversationSessions } from "../storage/schema.js";
-import { eq } from "drizzle-orm";
-
-import { isAbsolute } from "node:path";
 
 /** The standard user, assistant, and tool-result messages stored by Pi. */
-export type PiSessionMessage = Extract<
-	AgentMessage,
-	{ role: "user" | "assistant" | "toolResult" }
->;
+export type PiSessionMessage = Extract<AgentMessage, { role: "user" | "assistant" | "toolResult" }>;
 
 /** The standard Pi message plus its stable SessionManager tree-entry identity. */
 export interface PiSessionMessageEntry {
@@ -211,13 +207,16 @@ export class PiSessionStore {
 		const branch = this.manager.getBranch(entryId);
 		for (let index = branch.length - 2; index >= 0; index -= 1) {
 			const entry = branch[index];
-			if (entry?.type === "message" && isStandardMessage(entry.message) && entry.message.role === "user") {
+			if (
+				entry?.type === "message" &&
+				isStandardMessage(entry.message) &&
+				entry.message.role === "user"
+			) {
 				return { id: entry.id, message: entry.message };
 			}
 		}
 		return undefined;
 	}
-
 
 	/**
 	 * Select the path immediately before an entry. The next append therefore
@@ -260,13 +259,16 @@ export class PiSessionStore {
 		return this.manager.appendMessage({ role: "user", content: text, timestamp });
 	}
 
-
 	/** Read standard message entries and preserve each SessionManager entry id. */
 	readMessageEntries(): PiSessionMessageEntry[] {
 		return this.manager
 			.getBranch()
-			.filter((entry): entry is Extract<SessionEntry, { type: "message" }> => entry.type === "message")
-			.flatMap((entry) => (isStandardMessage(entry.message) ? [{ id: entry.id, message: entry.message }] : []));
+			.filter(
+				(entry): entry is Extract<SessionEntry, { type: "message" }> => entry.type === "message",
+			)
+			.flatMap((entry) =>
+				isStandardMessage(entry.message) ? [{ id: entry.id, message: entry.message }] : [],
+			);
 	}
 
 	/** Read standard message entries on the currently selected branch. */
@@ -298,7 +300,14 @@ export class PiSessionStore {
 		fromHook?: boolean,
 		usage?: Parameters<SessionManager["appendCompaction"]>[5],
 	): string {
-		return this.manager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromHook, usage);
+		return this.manager.appendCompaction(
+			summary,
+			firstKeptEntryId,
+			tokensBefore,
+			details,
+			fromHook,
+			usage,
+		);
 	}
 
 	/** Build the selected branch's native, compaction-aware entry path. */
@@ -359,7 +368,10 @@ function extractCurrentUserMessage(content: string): string | undefined {
 	}
 	const separatorIndex = content.indexOf(HOST_CONTEXT_SEPARATOR, HOST_CONTEXT_PREFIX.length);
 	if (separatorIndex <= HOST_CONTEXT_PREFIX.length) return undefined;
-	return content.slice(separatorIndex + HOST_CONTEXT_SEPARATOR.length, -CURRENT_USER_MESSAGE_SUFFIX.length);
+	return content.slice(
+		separatorIndex + HOST_CONTEXT_SEPARATOR.length,
+		-CURRENT_USER_MESSAGE_SUFFIX.length,
+	);
 }
 
 function isStandardMessage(message: AgentMessage): message is PiSessionMessage {

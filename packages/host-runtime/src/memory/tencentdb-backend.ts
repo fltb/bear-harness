@@ -9,6 +9,7 @@
 import type {
 	MemoryBackend,
 	MemoryBackendCapabilities,
+	MemoryBankScope,
 	MemoryDiagnostics,
 	MemoryForgetRequest,
 	MemoryHit,
@@ -21,7 +22,6 @@ import type {
 	MemoryRememberRequest,
 	MemorySetImportanceRequest,
 	MemoryUpdateRequest,
-	MemoryBankScope,
 } from "./backend.js";
 
 /** Record shape used by the injected core; the host adds its bank scope. */
@@ -113,8 +113,14 @@ type Operation =
 	| "invalidate"
 	| "set_importance"
 	| "diagnostics";
-type DataOperation = "remember" | "recall" | "list" | "update" | "forget" | "invalidate" | "set_importance";
-
+type DataOperation =
+	| "remember"
+	| "recall"
+	| "list"
+	| "update"
+	| "forget"
+	| "invalidate"
+	| "set_importance";
 
 function abortIfRequested(signal: AbortSignal | undefined): void {
 	if (signal?.aborted) {
@@ -126,7 +132,11 @@ function backendError(
 	code: "closed" | "invalid_scope" | "invalid_input",
 	operation: Operation,
 	message: string,
-): Error & { readonly code: typeof code; readonly operation: Operation; readonly retryable: false } {
+): Error & {
+	readonly code: typeof code;
+	readonly operation: Operation;
+	readonly retryable: false;
+} {
 	const error = new Error(message) as Error & {
 		readonly code: typeof code;
 		readonly operation: Operation;
@@ -189,7 +199,7 @@ export class TencentDbMemoryBackend implements MemoryBackend {
 	}
 
 	async remember(request: MemoryRememberRequest): Promise<MemoryRecord> {
-		const namespace = this.prepare(request.scope, request.signal, "remember");
+		const namespace = this.openNamespace(request.scope, request.signal, "remember");
 		const record = await this.core.remember({
 			namespace,
 			text: request.text,
@@ -202,7 +212,7 @@ export class TencentDbMemoryBackend implements MemoryBackend {
 	}
 
 	async recall(request: MemoryRecallRequest): Promise<readonly MemoryHit[]> {
-		const namespace = this.prepare(request.scope, request.signal, "recall");
+		const namespace = this.openNamespace(request.scope, request.signal, "recall");
 		const hits = await this.core.recall({
 			namespace,
 			query: request.query,
@@ -217,7 +227,7 @@ export class TencentDbMemoryBackend implements MemoryBackend {
 		}));
 	}
 	async list(request: MemoryListRequest): Promise<readonly MemoryRecord[]> {
-		const namespace = this.prepare(request.scope, request.signal, "list");
+		const namespace = this.openNamespace(request.scope, request.signal, "list");
 		const records = await this.core.list({
 			namespace,
 			limit: request.limit,
@@ -227,7 +237,7 @@ export class TencentDbMemoryBackend implements MemoryBackend {
 	}
 
 	async update(request: MemoryUpdateRequest): Promise<MemoryRecord> {
-		const namespace = this.prepare(request.scope, request.signal, "update");
+		const namespace = this.openNamespace(request.scope, request.signal, "update");
 		const record = await this.core.update({
 			namespace,
 			memoryId: request.memoryId,
@@ -240,12 +250,12 @@ export class TencentDbMemoryBackend implements MemoryBackend {
 	}
 
 	async forget(request: MemoryForgetRequest): Promise<void> {
-		const namespace = this.prepare(request.scope, request.signal, "forget");
+		const namespace = this.openNamespace(request.scope, request.signal, "forget");
 		await this.core.forget({ namespace, memoryId: request.memoryId, signal: request.signal });
 	}
 
 	async invalidate(request: MemoryInvalidateRequest): Promise<MemoryRecord> {
-		const namespace = this.prepare(request.scope, request.signal, "invalidate");
+		const namespace = this.openNamespace(request.scope, request.signal, "invalidate");
 		const record = await this.core.invalidate({
 			namespace,
 			memoryId: request.memoryId,
@@ -257,7 +267,7 @@ export class TencentDbMemoryBackend implements MemoryBackend {
 	}
 
 	async setImportance(request: MemorySetImportanceRequest): Promise<MemoryRecord> {
-		const namespace = this.prepare(request.scope, request.signal, "set_importance");
+		const namespace = this.openNamespace(request.scope, request.signal, "set_importance");
 		const record = await this.core.setImportance({
 			namespace,
 			memoryId: request.memoryId,
@@ -277,7 +287,7 @@ export class TencentDbMemoryBackend implements MemoryBackend {
 		};
 	}
 
-	private prepare(
+	private openNamespace(
 		scope: MemoryBankScope,
 		signal: AbortSignal | undefined,
 		operation: DataOperation,
@@ -288,7 +298,11 @@ export class TencentDbMemoryBackend implements MemoryBackend {
 			throw backendError("closed", operation, "TencentDB memory backend is not open");
 		}
 		if (!sameScope(this.openedScope, scope)) {
-			throw backendError("invalid_scope", operation, "operation scope differs from the opened memory bank");
+			throw backendError(
+				"invalid_scope",
+				operation,
+				"operation scope differs from the opened memory bank",
+			);
 		}
 		return namespaceFor(scope);
 	}

@@ -85,6 +85,48 @@ test("rule provider exercises send and edited-history regeneration deterministic
 		.toContain("EDITED_OK");
 });
 
+test("rule provider selects the memory matching the current query marker", async ({ page }) => {
+	const providerUrl = `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/v1`;
+	const recalledMemories = [
+		"E2E_DIRECT_MEMORY_A：我们约定暗号是南星",
+		"E2E_DIRECT_MEMORY_B：我们约定暗号是北辰",
+	].join("\n");
+	const askProvider = async (queryMarker: string): Promise<string> => {
+		const response = await page.request.post(`${providerUrl}/chat/completions`, {
+			data: {
+				messages: [
+					{
+						role: "user",
+						content: [
+							"<host_context>",
+							recalledMemories,
+							"</host_context>",
+							"",
+							"<current_user_message>",
+							`检查记忆上下文 ${queryMarker}`,
+							"</current_user_message>",
+						].join("\n"),
+					},
+				],
+			},
+		});
+		expect(response).toBeOK();
+		const payload = (await response.json()) as {
+			choices?: Array<{ message?: { content?: unknown } }>;
+		};
+		const content = payload.choices?.[0]?.message?.content;
+		if (typeof content !== "string") throw new Error("rule provider returned no text content");
+		return content;
+	};
+
+	await expect(askProvider("E2E_DIRECT_MEMORY_A：我们约定暗号是南星")).resolves.toBe(
+		"MEMORY_CONTEXT:我们约定暗号是南星\n",
+	);
+	await expect(askProvider("E2E_DIRECT_MEMORY_B：我们约定暗号是北辰")).resolves.toBe(
+		"MEMORY_CONTEXT:我们约定暗号是北辰\n",
+	);
+});
+
 test("an image reader observes images while the selected text model produces the reply", async ({
 	page,
 }) => {

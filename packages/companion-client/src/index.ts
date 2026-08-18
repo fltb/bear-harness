@@ -7,14 +7,14 @@
  * This package has no Electron, DOM, Solid, or Node imports.
  */
 
-export type { IpcError } from "@bear-harness/protocol";
 export type {
+	IpcError,
 	MemoryCaptureCreatedBy,
 	MemoryCaptureRequest,
 	MemoryCaptureResponse,
-	MemoryInvalidateRequest,
 	MemoryEditRequest,
 	MemoryForgetRequest,
+	MemoryInvalidateRequest,
 	MemoryPinRequest,
 } from "@bear-harness/protocol";
 export { type CompanionClient, createCompanionClient, type HostTransport } from "./client.js";

@@ -1,14 +1,11 @@
 // @vitest-environment node
 
 import { describe, expect, it } from "vitest";
-import type {
-	MemoryBankScope,
-	MemoryMetadata,
-} from "../src/memory/backend.js";
+import type { MemoryBankScope, MemoryMetadata } from "../src/memory/backend.js";
 import {
-	TencentDbMemoryBackend,
 	type TencentDbCoreHit,
 	type TencentDbCoreRecord,
+	TencentDbMemoryBackend,
 	type TencentDbMemoryCoreFacade,
 } from "../src/memory/tencentdb-backend.js";
 
@@ -34,7 +31,9 @@ class FakeTencentDbCore implements TencentDbMemoryCoreFacade {
 	private nextId = 1;
 	private readonly records = new Map<string, Map<string, TencentDbCoreRecord>>();
 
-	remember(request: Parameters<TencentDbMemoryCoreFacade["remember"]>[0]): Promise<TencentDbCoreRecord> {
+	remember(
+		request: Parameters<TencentDbMemoryCoreFacade["remember"]>[0],
+	): Promise<TencentDbCoreRecord> {
 		this.calls.push({ method: "remember", request });
 		const record: TencentDbCoreRecord = {
 			id: `memory-${this.nextId++}`,
@@ -50,14 +49,19 @@ class FakeTencentDbCore implements TencentDbMemoryCoreFacade {
 		return Promise.resolve(record);
 	}
 
-	recall(request: Parameters<TencentDbMemoryCoreFacade["recall"]>[0]): Promise<readonly TencentDbCoreHit[]> {
+	recall(
+		request: Parameters<TencentDbMemoryCoreFacade["recall"]>[0],
+	): Promise<readonly TencentDbCoreHit[]> {
 		this.calls.push({ method: "recall", request });
-		const records = [...this.forNamespace(request.namespace).values()]
-			.filter((record) => record.status === "active" && record.text.includes(request.query));
+		const records = [...this.forNamespace(request.namespace).values()].filter(
+			(record) => record.status === "active" && record.text.includes(request.query),
+		);
 		return Promise.resolve(records.map((record, index) => ({ record, score: 1 - index / 10 })));
 	}
 
-	update(request: Parameters<TencentDbMemoryCoreFacade["update"]>[0]): Promise<TencentDbCoreRecord> {
+	update(
+		request: Parameters<TencentDbMemoryCoreFacade["update"]>[0],
+	): Promise<TencentDbCoreRecord> {
 		this.calls.push({ method: "update", request });
 		const current = this.get(request.namespace, request.memoryId);
 		const record = {
@@ -142,7 +146,9 @@ describe("TencentDB memory backend", () => {
 		expect(hits).toHaveLength(1);
 		expect(hits[0]?.record.text).toBe("B-only memory");
 		expect(hits[0]?.record.scope).toEqual(scopeB);
-		expect(core.calls.filter((call) => call.method === "remember").map((call) => call.request.namespace)).toEqual([
+		expect(
+			core.calls.filter((call) => call.method === "remember").map((call) => call.request.namespace),
+		).toEqual([
 			"cyber-bear:install-a:user-a:companion-a",
 			"cyber-bear:install-b:user-a:companion-a",
 		]);
@@ -168,7 +174,6 @@ describe("TencentDB memory backend", () => {
 			activity_end_time: "2026-01-02T10:00:00.000Z",
 		});
 	});
-
 
 	it("delegates every direct mutation with the active namespace", async () => {
 		const core = new FakeTencentDbCore();
@@ -203,7 +208,7 @@ describe("TencentDB memory backend", () => {
 		});
 		expect(core.calls[4]?.request).toMatchObject({ memoryId: created.id });
 	});
-	
+
 	it("delegates panel mutations through the direct memory contract", async () => {
 		const core = new FakeTencentDbCore();
 		const backend = new TencentDbMemoryBackend(core);
@@ -227,7 +232,9 @@ describe("TencentDB memory backend", () => {
 			"forget",
 		]);
 		expect(
-			core.calls.every((call) => call.request.namespace === "cyber-bear:install-a:user-a:companion-a"),
+			core.calls.every(
+				(call) => call.request.namespace === "cyber-bear:install-a:user-a:companion-a",
+			),
 		).toBe(true);
 		expect(core.calls[1]?.request).toMatchObject({
 			memoryId: created.id,
@@ -243,7 +250,26 @@ describe("TencentDB memory backend", () => {
 		});
 		expect(core.calls[4]?.request).toMatchObject({ memoryId: created.id });
 	});
+	it("rejects invalid scope and aborted requests before invoking core", async () => {
+		const core = new FakeTencentDbCore();
+		const backend = new TencentDbMemoryBackend(core);
+		await backend.open({ scope: scopeA });
 
+		await expect(
+			backend.remember(rememberRequest({ ...scopeA, userId: "user:ambiguous" }, "invalid scope")),
+		).rejects.toMatchObject({ code: "invalid_scope", operation: "remember" });
+		expect(core.calls).toHaveLength(0);
+
+		const controller = new AbortController();
+		controller.abort();
+		await expect(
+			backend.remember({
+				...rememberRequest(scopeA, "aborted request"),
+				signal: controller.signal,
+			}),
+		).rejects.toThrow("TencentDB memory operation aborted");
+		expect(core.calls).toHaveLength(0);
+	});
 
 	it("rejects ambiguous scope components", async () => {
 		const backend = new TencentDbMemoryBackend(new FakeTencentDbCore());
@@ -252,4 +278,3 @@ describe("TencentDB memory backend", () => {
 		).rejects.toMatchObject({ code: "invalid_scope", operation: "open" });
 	});
 });
-

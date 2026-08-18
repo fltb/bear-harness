@@ -1,6 +1,8 @@
 import { createServer } from "node:http";
 
 const port = Number(process.env.BEAR_E2E_PROVIDER_PORT ?? "3211");
+// The Web E2E harness configures this test provider with the canonical model ID "rule-model".
+// Keep the deterministic response script model-agnostic; model selection belongs to the tests.
 let toolSequence = 0;
 const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
 const prompts: string[] = [];
@@ -34,7 +36,11 @@ function reply(payload: { messages?: Array<{ role?: string; content?: unknown }>
 		[...prompt.matchAll(/<host_context>\n([\s\S]*?)<\/host_context>/g)].at(-1)?.[1] ?? "";
 	prompts.push(prompt);
 	const latestUser = [...messages].reverse().find((message) => message.role === "user");
-	const current = text(latestUser?.content);
+	const latestUserContent = text(latestUser?.content);
+	const current =
+		[
+			...latestUserContent.matchAll(/<current_user_message>\n([\s\S]*?)<\/current_user_message>/g),
+		].at(-1)?.[1] ?? latestUserContent;
 	const afterUser = latestUser ? messages.slice(messages.lastIndexOf(latestUser) + 1) : [];
 	const toolResult = afterUser.some((message) => message.role === "tool");
 	const toolText = afterUser
@@ -75,10 +81,10 @@ function reply(payload: { messages?: Array<{ role?: string; content?: unknown }>
 							? "E2E_CONTEXT_TWO_TURNS_OK\n"
 							: prompt.includes("VISUAL_OBSERVATION: a red square")
 								? "MAIN_USED_VISUAL_OBSERVATION\n"
-								: prompt.includes("检查记忆上下文")
-									? hostContext.includes("暗号是南星")
+								: current.includes("检查记忆上下文")
+									? current.includes("南星") && hostContext.includes("南星")
 										? "MEMORY_CONTEXT:我们约定暗号是南星\n"
-										: hostContext.includes("暗号是北辰")
+										: current.includes("北辰") && hostContext.includes("北辰")
 											? "MEMORY_CONTEXT:我们约定暗号是北辰\n"
 											: "MEMORY_CONTEXT:ABSENT\n"
 									: prompt.includes("EDITED_OK")

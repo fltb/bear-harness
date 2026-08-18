@@ -7,23 +7,23 @@
  */
 
 export interface PersonaPromptParams {
-  mode: "first" | "incremental";
-  currentTime: string;
-  totalProcessed: number;
-  sceneCount: number;
-  changedSceneCount: number;
-  changedScenesContent: string;
-  existingPersona?: string;
-  triggerInfo?: string;
-  /** @deprecated Kept for call-site compatibility; no longer used in prompt. */
-  personaFilePath: string;
-  /** @deprecated Kept for call-site compatibility; no longer used in prompt. */
-  checkpointPath: string;
+	mode: "first" | "incremental";
+	currentTime: string;
+	totalProcessed: number;
+	sceneCount: number;
+	changedSceneCount: number;
+	changedScenesContent: string;
+	existingPersona?: string;
+	triggerInfo?: string;
+	/** @deprecated Kept for call-site compatibility; no longer used in prompt. */
+	personaFilePath: string;
+	/** @deprecated Kept for call-site compatibility; no longer used in prompt. */
+	checkpointPath: string;
 }
 
 export interface PersonaPromptResult {
-  systemPrompt: string;
-  userPrompt: string;
+	systemPrompt: string;
+	userPrompt: string;
 }
 
 // ============================
@@ -142,35 +142,34 @@ const PERSONA_SYSTEM_PROMPT = `# 🧬 Persona Architect - Incremental Evolution 
 // ============================
 
 export function buildPersonaPrompt(params: PersonaPromptParams): PersonaPromptResult {
-  const {
-    mode,
-    currentTime,
-    totalProcessed,
-    sceneCount,
-    changedSceneCount,
-    changedScenesContent,
-    existingPersona,
-    triggerInfo,
-  } = params;
+	const {
+		mode,
+		currentTime,
+		totalProcessed,
+		sceneCount,
+		changedSceneCount,
+		changedScenesContent,
+		existingPersona,
+		triggerInfo,
+	} = params;
 
-  const modeLabel = mode === "first" ? "🆕 首次生成" : "🔄 迭代更新";
+	const modeLabel = mode === "first" ? "🆕 首次生成" : "🔄 迭代更新";
 
-  const triggerSection = triggerInfo
-    ? `\n### 触发信息\n${triggerInfo}\n`
-    : "";
+	const triggerSection = triggerInfo ? `\n### 触发信息\n${triggerInfo}\n` : "";
 
-  const existingPersonaSection = existingPersona
-    ? `\n## 📄 当前 Persona（工程已预加载）\n\n` +
-      `*以下是现有 persona.md 的完整内容（${existingPersona.length} 字符），基于此更新后请控制在2000字内：*\n\n` +
-      `\`\`\`markdown\n${existingPersona}\n\`\`\`\n\n---\n`
-    : "";
+	const existingPersonaSection = existingPersona
+		? `\n## 📄 当前 Persona（工程已预加载）\n\n` +
+			`*以下是现有 persona.md 的完整内容（${existingPersona.length} 字符），基于此更新后请控制在2000字内：*\n\n` +
+			`\`\`\`markdown\n${existingPersona}\n\`\`\`\n\n---\n`
+		: "";
 
-  const iterationGuide = mode === "incremental"
-    ? `\n## 🔄 迭代决策指南\n\n` +
-      `面对变化场景，自主判断处理方式：强化（佐证已有洞察）/ 补充（新维度）/ 修正（矛盾）/ 重构（结构调整）/ 不改（无有用新增内容）。\n`
-    : "";
+	const iterationGuide =
+		mode === "incremental"
+			? `\n## 🔄 迭代决策指南\n\n` +
+				`面对变化场景，自主判断处理方式：强化（佐证已有洞察）/ 补充（新维度）/ 修正（矛盾）/ 重构（结构调整）/ 不改（无有用新增内容）。\n`
+			: "";
 
-  const userPrompt = `**输出语言**：\`persona.md\` 使用下方变化场景内容的主导语言。
+	const userPrompt = `**输出语言**：\`persona.md\` 使用下方变化场景内容的主导语言。
 
 **⏰ 更新时间**: ${currentTime}
 **模式**: ${modeLabel}
@@ -186,8 +185,8 @@ ${changedScenesContent}
 ${existingPersonaSection}
 ${iterationGuide}`;
 
-  return {
-    systemPrompt: PERSONA_SYSTEM_PROMPT,
-    userPrompt,
-  };
+	return {
+		systemPrompt: PERSONA_SYSTEM_PROMPT,
+		userPrompt,
+	};
 }
