@@ -11,6 +11,7 @@ import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { ModelPresetField, ProviderSelectionField } from "../ModelSelectionFields.js";
+import { NetworkAndMemorySettings } from "./NetworkAndMemorySettings.js";
 import type { ProviderLoginResult } from "../stores/companion.js";
 import { useCompanionStore } from "../stores/companion.js";
 import type { ConfiguredModel } from "../stores/ipc.js";
@@ -467,6 +468,7 @@ export function SettingsSheet() {
 					{selectedConfigured() ? t("settings.modelAvailable") : t("settings.addModel")}
 				</Button>
 			</section>
+			<NetworkAndMemorySettings />
 		</div>
 	);
 }

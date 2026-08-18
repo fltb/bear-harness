@@ -34,6 +34,7 @@ import type { ModelRegistry } from "./models/registry.js";
 import type { ProviderCatalog } from "./providers/catalog.js";
 import type { AppDatabase } from "./storage/database.js";
 import type { EventBus } from "./storage/event-bus.js";
+import type { AppSettingsStore } from "./storage/app-settings-store.js";
 import {
 	activeCharacter,
 	companionIdentity,
@@ -50,6 +51,7 @@ export interface HostCompositionContext {
 	onboarding: FirstMeetingMachine;
 	turns: TurnPipeline;
 	models: ModelRegistry;
+	appSettings: AppSettingsStore;
 	memoryBackend: MemoryBackend;
 	memoryScope: Pick<MemoryBankScope, "installationId" | "userId">;
 	commissions: CommissionService;
@@ -735,11 +737,15 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.settings.get, async () => {
 		const companionId = await getCompanionId(s);
 		const stateData = s.onboarding.getState(companionId).stateData;
+		const app = s.appSettings.load();
 		return {
 			settings: {
 				relationshipMemoryEnabled: stateData.decisions.relationship_memory_enabled ?? false,
 				conversationHistoryReadEnabled:
 					stateData.decisions.conversation_history_read_enabled ?? false,
+				networkProxy: app.networkProxy,
+				memoryVectorService: app.memoryVectorService,
+				modelDownloadMirror: app.modelDownloadMirror,
 			},
 		};
 	});
@@ -755,13 +761,30 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				Boolean(settings.conversationHistoryReadEnabled),
 			);
 		}
+		let app = s.appSettings.load();
+		const changed: string[] = [];
+		if ("networkProxy" in settings) {
+			app = s.appSettings.save({ networkProxy: settings.networkProxy as never });
+			changed.push("networkProxy");
+		}
+		if ("memoryVectorService" in settings) {
+			app = s.appSettings.save({ memoryVectorService: settings.memoryVectorService as never });
+			changed.push("memoryVectorService");
+		}
+		if ("modelDownloadMirror" in settings) {
+			app = s.appSettings.save({ modelDownloadMirror: settings.modelDownloadMirror as never });
+			changed.push("modelDownloadMirror");
+		}
 		const nextStateData = s.onboarding.getState(companionId).stateData;
 		const nextSettings = {
 			relationshipMemoryEnabled: nextStateData.decisions.relationship_memory_enabled ?? false,
 			conversationHistoryReadEnabled:
 				nextStateData.decisions.conversation_history_read_enabled ?? false,
+			networkProxy: app.networkProxy,
+			memoryVectorService: app.memoryVectorService,
+			modelDownloadMirror: app.modelDownloadMirror,
 		};
-		s.eventBus.publish("settings.changed", { settings: nextSettings });
+		s.eventBus.publish("settings.changed", { settings: nextSettings, changed });
 		return { settings: nextSettings };
 	});
 
@@ -854,6 +877,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 					onboarding.stateData.decisions.relationship_memory_enabled ?? false,
 				conversationHistoryReadEnabled:
 					onboarding.stateData.decisions.conversation_history_read_enabled ?? false,
+				networkProxy: s.appSettings.load().networkProxy,
+				memoryVectorService: s.appSettings.load().memoryVectorService,
+				modelDownloadMirror: s.appSettings.load().modelDownloadMirror,
 			},
 		};
 	});

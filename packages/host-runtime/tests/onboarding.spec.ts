@@ -151,7 +151,13 @@ describe("role-defined onboarding", () => {
 		await runtime.start();
 
 		await expect(data(runtime, "settings.get:v1", {})).resolves.toEqual({
-			settings: { relationshipMemoryEnabled: false, conversationHistoryReadEnabled: false },
+			settings: {
+				relationshipMemoryEnabled: false,
+				conversationHistoryReadEnabled: false,
+				networkProxy: { mode: "direct" },
+				memoryVectorService: { enabled: false, provider: "none" },
+				modelDownloadMirror: {},
+			},
 		});
 		await data(runtime, "settings.set:v1", { settings: { conversationHistoryReadEnabled: true } });
 		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({

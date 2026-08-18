@@ -1112,6 +1112,31 @@ export const ArtifactReadResponse = z.strictObject({
 export const SettingsData = z.strictObject({
 	relationshipMemoryEnabled: z.boolean(),
 	conversationHistoryReadEnabled: z.boolean(),
+	networkProxy: z.strictObject({
+		mode: z.union([z.literal("direct"), z.literal("auto"), z.literal("manual")]),
+		url: z.string().max(2048).optional(),
+		bypass: z.array(z.string().max(512)).max(50).optional(),
+	}),
+	memoryVectorService: z.strictObject({
+		enabled: z.boolean(),
+		provider: z.union([z.literal("none"), z.literal("remote"), z.literal("local")]),
+		baseUrl: z.string().max(2048).optional(),
+		apiKey: z.string().max(8192).optional(),
+		model: z.string().max(200).optional(),
+		dimensions: z.number().int().safe().min(0).max(65536).optional(),
+		localModel: z
+			.union([
+				z.literal("bge-base-zh"),
+				z.literal("embeddinggemma"),
+				z.literal("multilingual-e5"),
+				z.literal("custom"),
+			])
+			.optional(),
+		customPath: z.string().max(4096).optional(),
+	}),
+	modelDownloadMirror: z.strictObject({
+		endpoint: z.string().max(2048).optional(),
+	}),
 });
 export const SettingsGetRequest = z.strictObject({});
 export const SettingsResponse = z.strictObject({
@@ -1120,6 +1145,9 @@ export const SettingsResponse = z.strictObject({
 export const SettingsPatch = z.strictObject({
 	relationshipMemoryEnabled: z.boolean().optional(),
 	conversationHistoryReadEnabled: z.boolean().optional(),
+	networkProxy: SettingsData.shape.networkProxy.optional(),
+	memoryVectorService: SettingsData.shape.memoryVectorService.optional(),
+	modelDownloadMirror: SettingsData.shape.modelDownloadMirror.optional(),
 });
 export const SettingsSetRequest = z.strictObject({
 	settings: SettingsPatch,

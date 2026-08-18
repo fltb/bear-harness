@@ -121,7 +121,7 @@ export interface TencentDbRuntimeOptions {
 
 /** Recursive partial: every nested object's fields become optional. */
 export type DeepPartial<T> = {
-	[K in keyof T]?: T[K] extends Record<string, unknown> ? DeepPartial<T[K]> : T[K];
+	[K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K];
 };
 
 /** Merge a partial config onto defaults. Arrays and scalars are replaced, objects merged. */

@@ -92,24 +92,29 @@ export function createStoreBundle(
 		case "sqlite":
 		default: {
 			// ── Embedding service (only when enabled) ──
+			// provider="none" with no endpoint/key stays disabled (hybrid recall
+			// degrades to FTS+BM25); provider="local" enables the offline
+			// node-llama-cpp embedder; any other provider with an endpoint or key
+			// builds a remote OpenAI-compatible service (a keyless self-hosted
+			// endpoint such as Ollama counts as a remote too).
 			let embeddingService: EmbeddingService | undefined;
-			if (
-				config.embedding.enabled &&
-				config.embedding.provider !== "local" &&
-				config.embedding.apiKey
-			) {
-				embeddingService = createEmbeddingService(
-					{
-						provider: config.embedding.provider,
-						baseUrl: config.embedding.baseUrl,
-						apiKey: config.embedding.apiKey,
-						model: config.embedding.model,
-						dimensions: config.embedding.dimensions,
-						sendDimensions: config.embedding.sendDimensions,
-						maxInputChars: config.embedding.maxInputChars,
-					},
-					logger,
-				);
+			if (config.embedding.enabled) {
+				if (config.embedding.provider === "local") {
+					embeddingService = createEmbeddingService({ provider: "local" }, logger);
+				} else if (config.embedding.baseUrl || config.embedding.apiKey) {
+					embeddingService = createEmbeddingService(
+						{
+							provider: config.embedding.provider,
+							baseUrl: config.embedding.baseUrl,
+							apiKey: config.embedding.apiKey,
+							model: config.embedding.model,
+							dimensions: config.embedding.dimensions,
+							sendDimensions: config.embedding.sendDimensions,
+							maxInputChars: config.embedding.maxInputChars,
+						},
+						logger,
+					);
+				}
 			}
 
 			// dimensions from config (0 when provider="none" → vec0 deferred)

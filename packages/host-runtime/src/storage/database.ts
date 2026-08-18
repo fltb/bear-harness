@@ -922,4 +922,18 @@ export const MIGRATIONS: Migration[] = [
 			ALTER TABLE memory_presentation ADD COLUMN invalidated_at TEXT;
 		`,
 	},
+	{
+		id: 18,
+		description: "Product-level app settings (network proxy, memory vector service, download mirror)",
+		up: `
+			CREATE TABLE app_settings (
+				id INTEGER PRIMARY KEY CHECK (id = 1),
+				network_proxy TEXT NOT NULL DEFAULT '{"mode":"direct"}',
+				memory_vector_service TEXT NOT NULL DEFAULT '{"enabled":false,"provider":"none"}',
+				model_download_mirror TEXT NOT NULL DEFAULT '{}',
+				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			INSERT INTO app_settings (id) VALUES (1);
+		`,
+	},
 ];

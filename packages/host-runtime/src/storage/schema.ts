@@ -314,6 +314,20 @@ export const memoryPresentation = sqliteTable(
 	],
 );
 
+export const appSettings = sqliteTable(
+	"app_settings",
+	{
+		id: integer("id").primaryKey(),
+		networkProxyJson: text("network_proxy").notNull().default('{"mode":"direct"}'),
+		memoryVectorServiceJson: text("memory_vector_service")
+			.notNull()
+			.default('{"enabled":false,"provider":"none"}'),
+		modelDownloadMirrorJson: text("model_download_mirror").notNull().default("{}"),
+		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
+	},
+	(table) => [check("app_settings_check_18", sql`id = 1`)],
+);
+
 export interface CommissionDraftData {
 	conversationId: string;
 	title: string;

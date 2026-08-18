@@ -16,7 +16,7 @@ export interface NetworkProxyConfig {
 
 interface Logger {
 	debug?: (message: string) => void;
-	warn: (message: string) => void;
+	warn?: (message: string) => void;
 }
 
 const DEFAULT_BYPASS = "localhost,127.0.0.1,::1";
@@ -55,7 +55,7 @@ export async function applyProxyConfig(
 ): Promise<void> {
 	if (config.mode === "direct") return;
 
-	const systemProxyResolver = options.systemProxy ?? (() => resolveSystemProxy(options.logger));
+	const systemProxyResolver = options.systemProxy ?? (() => resolveSystemProxy());
 	const resolve = options.resolve;
 
 	if (config.mode === "manual") {

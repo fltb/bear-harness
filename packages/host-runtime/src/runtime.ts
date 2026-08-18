@@ -18,6 +18,7 @@
 import { join } from "node:path";
 import type { MemoryTdaiConfig } from "@bear-harness/tdai-core";
 import { and, eq } from "drizzle-orm";
+import { applyProxyConfig, type SystemProxyResolver } from "./network/proxy-config.js";
 import { ArtifactStore } from "./artifacts/index.js";
 import { CanonHubService } from "./canon/service.js";
 import { CommissionService } from "./commissions/service.js";
@@ -47,6 +48,7 @@ import { ModelRegistry } from "./models/registry.js";
 import { ProviderCatalog } from "./providers/catalog.js";
 import { CredentialStore, type CredentialVault } from "./providers/credential-store.js";
 import { Database, MIGRATIONS } from "./storage/database.js";
+import { AppSettingsStore, type AppSettingsRecord } from "./storage/app-settings-store.js";
 import { EventBus } from "./storage/event-bus.js";
 import { conversations, messages } from "./storage/schema.js";
 import { StoryService } from "./story/service.js";
@@ -84,6 +86,13 @@ export interface HostRuntimeOptions {
 	 * (embedding provider details, pipeline tuning). Defaults: full power.
 	 */
 	memoryConfig?: DeepPartial<MemoryTdaiConfig>;
+	/**
+	 * Optional Electron host resolver for "auto" proxy mode: uses Chromium's
+	 * session.resolveProxy (PAC-aware). Pure-Node hosts omit it and fall back
+	 * to the platform/system proxy resolvers.
+	 */
+	systemProxyResolver?: SystemProxyResolver;
+	logger?: { debug?: (message: string) => void; warn?: (message: string) => void };
 }
 
 export class HostRuntime {
@@ -97,6 +106,8 @@ export class HostRuntime {
 	private readonly characterLoader: CharacterLoader;
 	private readonly unsubscribeStoryAutomation: () => void;
 	private readonly composition: HostCompositionContext;
+	private readonly systemProxyResolver?: HostRuntimeOptions["systemProxyResolver"];
+	private readonly logger?: HostRuntimeOptions["logger"];
 	readonly memoryRuntime: TencentDbRuntime;
 	readonly memoryBackend: MemoryBackend;
 	readonly memoryScope: { readonly installationId: string; readonly userId: string };
@@ -167,11 +178,17 @@ export class HostRuntime {
 			}
 		});
 		const onboarding = new FirstMeetingMachine(db.orm, eventBus, characterLoader);
+		const appSettings = new AppSettingsStore(db.orm);
 		const models = new ModelRegistry(db.orm, eventBus);
 		const memoryScope = options.memoryScope ?? {
 			installationId: "cyber-bear-installation",
 			userId: "default-user",
 		};
+		const appRecord = appSettings.load();
+		const memoryConfig = mergeEmbeddingConfig(options.memoryConfig, appRecord.memoryVectorService);
+		const mirrorEndpoint = appRecord.modelDownloadMirror.endpoint?.trim();
+		if (mirrorEndpoint) process.env.HF_ENDPOINT = mirrorEndpoint.trim();
+
 		const memoryRuntime = new TencentDbRuntime({
 			dataDir,
 			providers,
@@ -179,7 +196,7 @@ export class HostRuntime {
 			companionId: options.productConfig.defaultCharacterId,
 			installationId: memoryScope.installationId,
 			userId: memoryScope.userId,
-			memoryConfig: options.memoryConfig,
+			memoryConfig,
 		});
 		const turns = new TurnPipeline(db.orm, supervisor, eventBus, sessionResolver, {
 			// Feed every settled turn to the TdaiCore capture pipeline (L0 → L1
@@ -332,6 +349,8 @@ export class HostRuntime {
 		this.characterBehavior = characterBehavior;
 		this.characterLoader = characterLoader;
 		this.unsubscribeStoryAutomation = unsubscribeStoryAutomation;
+		this.systemProxyResolver = options.systemProxyResolver;
+		this.logger = options.logger;
 		this.composition = {
 			orm: db.orm,
 			eventBus,
@@ -340,6 +359,7 @@ export class HostRuntime {
 			models,
 			memoryBackend: memoryRuntime.backend,
 			memoryScope,
+			appSettings,
 			commissions,
 			artifacts: artifactStore,
 			story,
@@ -381,6 +401,16 @@ export class HostRuntime {
 	async start(): Promise<void> {
 		if (this.started) return;
 		this.started = true;
+		// Apply the persisted network proxy before any host network call goes out.
+		// Non-direct mode consults the platform/system proxy; Electron hosts pass
+		// a session.resolveProxy resolver via `systemProxyResolver`.
+		const proxy = this.composition.appSettings.load().networkProxy;
+		if (proxy.mode !== "direct") {
+			await applyProxyConfig(
+				{ mode: proxy.mode, url: proxy.url, bypass: proxy.bypass },
+				{ resolve: this.systemProxyResolver, logger: this.logger },
+			);
+		}
 		await this.memoryRuntime.start();
 		const activeCharacterId = this.characterLoader.getActiveCharacterId(
 			this.composition.orm,
@@ -407,6 +437,37 @@ export class HostRuntime {
 		this.providers.dispose();
 		this.db.close();
 	}
+}
+
+/**
+ * Derive the TdaiCore embedding config from the persisted memory vector
+ * service setting, layered onto any options-provided base config.
+ */
+function mergeEmbeddingConfig(
+	base: DeepPartial<MemoryTdaiConfig> | undefined,
+	service: AppSettingsRecord["memoryVectorService"],
+): DeepPartial<MemoryTdaiConfig> | undefined {
+	if (!service.enabled || service.provider === "none") {
+		return base; // provider-less default already degrades hybrid recall
+	}
+	const embedding: DeepPartial<MemoryTdaiConfig>["embedding"] = {
+		enabled: true,
+		provider: "none",
+		sendDimensions: true,
+	};
+	if (service.provider === "local") {
+		// TdaiCore's local embedder currently builds its default model
+		// (embeddinggemma-300m, 768d); custom GGUF paths would require a
+		// vendored config extension and are intentionally deferred.
+		embedding.provider = "local";
+	} else {
+		embedding.provider = "remote";
+		embedding.baseUrl = service.baseUrl ?? "";
+		embedding.apiKey = service.apiKey ?? "";
+		embedding.model = service.model ?? "";
+		embedding.dimensions = service.dimensions ?? 0;
+	}
+	return { ...base, embedding: { ...base?.embedding, ...embedding } };
 }
 
 /** Create an instance-scoped companion host runtime. */
