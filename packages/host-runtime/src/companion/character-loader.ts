@@ -128,17 +128,12 @@ export interface DialogueExample {
 	assistant: string;
 }
 
-/** Same-situation dialogue in different voice modes, for tone calibration. */
-export interface VoiceModeExample {
-	voice: string;
-	user: string;
-	assistant: string;
-}
-
 /**
  * A voice mode declares a distinct expressive style for the character.
  * The character package can declare any number of modes; the Host passes
  * the user's current selection as a per-turn injection.
+ * `example` is optional: one sample turn showing how the character speaks
+ * in this mode, used for tone calibration.
  */
 export interface VoiceMode {
 	id: string;
@@ -146,8 +141,11 @@ export interface VoiceMode {
 	description: string;
 	style_instruction: string;
 	use_when: string;
+	example?: {
+		user: string;
+		assistant: string;
+	};
 }
-
 export interface CharacterCompanionConfiguration {
 	pi: CompanionPiConfiguration;
 }
@@ -175,7 +173,6 @@ export interface CharacterPackage {
 	tool_interaction_norms?: string;
 	voice_modes?: VoiceMode[];
 	examples?: DialogueExample[];
-	voice_mode_examples?: VoiceModeExample[];
 	scenes: ScenePreset[];
 	visual: CharacterVisuals;
 	host: CharacterHostBehavior;
@@ -749,15 +746,16 @@ export class CharacterLoader {
 						.join("\n\n"),
 			);
 		}
-		if (character.voice_mode_examples?.length) {
+		const examplesByMode = character.voice_modes
+			?.filter((mode) => mode.example)
+			.map(
+				(mode) =>
+					`模式：${mode.label}\n你：${mode.example!.user}\n${speaker}：${mode.example!.assistant}`,
+			);
+		if (examplesByMode?.length) {
 			parts.push(
-				"[三档沉浸对照]\n同一句话在不同表达模式下的说法。回复时按当前模式选择对应的密度。\n" +
-					character.voice_mode_examples
-						.map(
-							(e) =>
-								`模式：${e.voice}\n你：${e.user}\n${speaker}：${e.assistant}`,
-						)
-						.join("\n\n"),
+				"[表达模式示例]\n同一句话在不同表达模式下的说法。回复时按当前模式选择对应的密度。\n" +
+					examplesByMode.join("\n\n"),
 			);
 		}
 		return parts.join("\n\n");
