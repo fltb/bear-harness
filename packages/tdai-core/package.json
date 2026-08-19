@@ -29,7 +29,7 @@
 		"@tencentdb-agent-memory/tcvdb-text": "0.1.1",
 		"ai": "6.0.164",
 		"sqlite-vec": "0.1.7-alpha.2",
-		"undici": "8.1.0"
+		"undici": "^8.10.0"
 	},
 	"peerDependencies": {
 		"node-llama-cpp": "3.16.2"

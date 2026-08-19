@@ -11,7 +11,12 @@
  * protocol additions from landing without a corresponding Host handler.
  */
 
-import type { MemoryEntry, MemoryListResponse, MemorySearchResponse } from "@bear-harness/protocol";
+import type {
+	MemoryEntry,
+	MemoryListResponse,
+	MemorySearchResponse,
+	ResponseOf,
+} from "@bear-harness/protocol";
 import { CharacterRuntimeState, RPC } from "@bear-harness/protocol/schema";
 import { desc, eq, and } from "drizzle-orm";
 import type { ArtifactStore } from "./artifacts/index.js";
@@ -32,6 +37,7 @@ import type { Dispatcher } from "./dispatcher.js";
 import type { MemoryBackend, MemoryBankScope, MemoryRecord } from "./memory/backend.js";
 import type { ModelRegistry } from "./models/registry.js";
 import type { ProviderCatalog } from "./providers/catalog.js";
+import type { AuditStore } from "./security/audit-store.js";
 import type { AppSettingsStore } from "./storage/app-settings-store.js";
 import type { AppDatabase } from "./storage/database.js";
 import type { EventBus } from "./storage/event-bus.js";
@@ -77,23 +83,7 @@ export interface HostCompositionContext {
 	/** Optional update checker (desktop only; undefined on web). */
 	updateService?: { check(): Promise<unknown> };
 	/** Optional hash-chained audit store (security layer). */
-	auditStore?: {
-		append(kind: string, action: string, detail: string): Promise<unknown>;
-		list(params: { limit?: number; afterSeq?: number }): Promise<{
-			entries: Array<{
-				id: string;
-				seq: number;
-				kind: string;
-				action: string;
-				detail: string;
-				hash: string;
-				prevHash: string;
-				createdAt: string;
-			}>;
-			oldestSeq: number;
-		}>;
-		exportLines(): Promise<{ lines: string; verified: boolean }>;
-	};
+	auditStore?: Pick<AuditStore, "append" | "list" | "exportLines">;
 }
 
 function oauthWire(state: Awaited<ReturnType<ProviderCatalog["startOAuth"]>>) {
@@ -510,7 +500,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {};
 	});
 	dispatcher.registerHandler(RPC.memory.candidatesList, async (_p) => {
-		const { status } = _p as { status?: string };
+		const { status } = _p;
 		const companionId = await getCompanionId(s);
 		const rows = s.orm
 			.select({
@@ -543,11 +533,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 	});
 	dispatcher.registerHandler(RPC.memory.candidateApprove, async (_p) => {
-		const { candidateId, editedText, decidedScope } = _p as {
-			candidateId: string;
-			editedText?: string;
-			decidedScope?: string;
-		};
+		const { candidateId, editedText, decidedScope } = _p;
 		const companionId = await getCompanionId(s);
 		const candidate = s.orm
 			.select()
@@ -598,14 +584,18 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			.run();
 		// Also write through to the recall backend so approved memories surface in
 		// context assembly (relationship layer).
-		const scope = (decidedScope as string) || candidate.suggestedScope;
-		const backendScope = scope === "self" ? "self" : scope === "scene" ? "scene" : "relationship";
+		const backendScope: MemoryBankScope = { ...s.memoryScope, companionId };
 		await s.memoryBackend.open({ scope: backendScope });
 		await s.memoryBackend.remember({
 			scope: backendScope,
 			text: finalText,
 			importance: 1.0,
-			provenance: { source: "assistant_tool", sourceRef: candidate.id },
+			provenance: {
+				kind: "inferred",
+				piSessionEntryIds: [candidate.sourceMessageVersionId ?? candidate.id],
+				sourceRef: candidate.id,
+			},
+			metadata: { memoryScope: decidedScope ?? candidate.suggestedScope },
 		});
 		return {};
 	});
@@ -1039,20 +1029,20 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.update.check, async () => {
 		if (!s.updateService) {
 			return {
-				state: "disabled",
+				state: "disabled" as const,
 				currentVersion: undefined,
 				latestVersion: undefined,
 				feedUrl: undefined,
 				error: undefined,
 			};
 		}
-		const result = (await s.updateService.check()) as Record<string, unknown>;
+		const result = (await s.updateService.check()) as ResponseOf<typeof RPC.update.check>;
 		return {
-			state: result.state as string,
-			currentVersion: result.currentVersion as string | undefined,
-			latestVersion: result.latestVersion as string | undefined,
-			feedUrl: result.feedUrl as string | undefined,
-			error: result.error as string | undefined,
+			state: result.state,
+			currentVersion: result.currentVersion,
+			latestVersion: result.latestVersion,
+			feedUrl: result.feedUrl,
+			error: result.error,
 		};
 	});
 

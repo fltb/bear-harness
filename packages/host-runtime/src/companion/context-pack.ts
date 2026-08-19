@@ -52,6 +52,10 @@ export interface ContextPackBlock {
 		| "scene"
 		| "relationship"
 		| "roleplay"
+		| "content_policy"
+		| "file_safety"
+		| "tool_norms"
+		| "style"
 		| "persona"
 		| "conversation"
 		| "real_context";
