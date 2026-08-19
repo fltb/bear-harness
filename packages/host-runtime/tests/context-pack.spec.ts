@@ -126,18 +126,38 @@ describe("ContextPackCompiler character package identity", () => {
 			}),
 			expect.objectContaining({
 				order: 1,
+				layer: "content_policy",
+				source: "character.content_policy",
+			}),
+			expect.objectContaining({
+				order: 2,
+				layer: "file_safety",
+				source: "character.file_safety",
+			}),
+			expect.objectContaining({
+				order: 3,
+				layer: "tool_norms",
+				source: "character.tool_norms",
+			}),
+			expect.objectContaining({
+				order: 4,
 				layer: "canon",
 				source: "self_canon_or_canon_hub",
 			}),
 			expect.objectContaining({
-				order: 2,
+				order: 5,
 				layer: "scene",
 				source: "scene_state_or_conversation_directives",
 			}),
 			expect.objectContaining({
-				order: 3,
+				order: 6,
 				layer: "roleplay",
 				source: "roleplay_ledger",
+			}),
+			expect.objectContaining({
+				order: 7,
+				layer: "style",
+				source: "character.voice_mode",
 			}),
 		]);
 		expect(() =>

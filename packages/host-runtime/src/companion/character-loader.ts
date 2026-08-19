@@ -120,6 +120,19 @@ export interface CompanionPiConfiguration {
 	append_system_prompt: string;
 }
 
+/**
+ * A voice mode declares a distinct expressive style for the character.
+ * The character package can declare any number of modes; the Host passes
+ * the user's current selection as a per-turn injection.
+ */
+export interface VoiceMode {
+	id: string;
+	label: string;
+	description: string;
+	style_instruction: string;
+	use_when: string;
+}
+
 export interface CharacterCompanionConfiguration {
 	pi: CompanionPiConfiguration;
 }
@@ -142,6 +155,10 @@ export interface CharacterPackage {
 	character: CharacterStrings;
 	identity_core: string;
 	self_canon: string;
+	content_policy?: string;
+	file_safety?: string;
+	tool_interaction_norms?: string;
+	voice_modes?: VoiceMode[];
 	scenes: ScenePreset[];
 	visual: CharacterVisuals;
 	host: CharacterHostBehavior;

@@ -129,6 +129,14 @@ export class ContextPackCompiler {
 		const identity = this.getIdentityCore(conversationId);
 		blocks.push({ layer: "identity", content: identity });
 
+		// Policy blocks from character package
+		const contentPolicy = this.getContentPolicy(conversationId);
+		if (contentPolicy) blocks.push({ layer: "content_policy", content: contentPolicy });
+		const fileSafety = this.getFileSafety(conversationId);
+		if (fileSafety) blocks.push({ layer: "file_safety", content: fileSafety });
+		const toolNorms = this.getToolNorms(conversationId);
+		if (toolNorms) blocks.push({ layer: "tool_norms", content: toolNorms });
+
 		// 2. Self Canon revision (current adopted)
 		const canon = this.getSelfCanon(conversationId);
 		if (canon) {
@@ -175,6 +183,10 @@ ${modules.join("\n")}`,
 		// storage; it must not become automatic memory or a memory-backend input.
 		const roleplay = this.getRoleplayState(conversationId);
 		if (roleplay) blocks.push({ layer: "roleplay", content: roleplay });
+
+		// Current voice mode style instruction from character package
+		const style = this.getStyleInstruction(conversationId);
+		if (style) blocks.push({ layer: "style", content: style });
 
 		// 4. Relationship Canon (only when memory enabled). This block is built
 		// only from approved Host memory rows or backend-native hits.
@@ -332,6 +344,58 @@ ${modules.join("\n")}`,
 		const character = this.characterLoader.load(row.packageId);
 		if (!character) throw new Error(`character package missing: ${row.packageId}`);
 		return character.identity_core;
+	}
+
+	private getCharacterPackage(conversationId: string): ReturnType<CharacterLoader["load"]> {
+		const row = this.db
+			.select({ packageId: companionIdentity.packageId })
+			.from(conversations)
+			.innerJoin(companionIdentity, eq(companionIdentity.id, conversations.companionId))
+			.where(eq(conversations.id, conversationId))
+			.get();
+		if (!row) return null;
+		return this.characterLoader.load(row.packageId) ?? null;
+	}
+
+	private getContentPolicy(conversationId: string): string | null {
+		return this.getCharacterPackage(conversationId)?.content_policy ?? null;
+	}
+
+	private getFileSafety(conversationId: string): string | null {
+		return this.getCharacterPackage(conversationId)?.file_safety ?? null;
+	}
+
+	private getToolNorms(conversationId: string): string | null {
+		return this.getCharacterPackage(conversationId)?.tool_interaction_norms ?? null;
+	}
+
+	private getStyleInstruction(conversationId: string): string | null {
+		const character = this.getCharacterPackage(conversationId);
+		if (!character?.voice_modes?.length) return null;
+		// Read the current voice mode from conversation directives (scope='session',
+		// directive starting with 'voice_mode:'). Falls back to 'default'.
+		const directive = this.db
+			.select({ directive: conversationDirectives.directive })
+			.from(conversationDirectives)
+			.where(
+				and(
+					eq(conversationDirectives.conversationId, conversationId),
+					eq(conversationDirectives.scope, "session"),
+					or(
+						eq(conversationDirectives.directive, "voice_mode:concise"),
+						eq(conversationDirectives.directive, "voice_mode:default"),
+						eq(conversationDirectives.directive, "voice_mode:narrative"),
+					),
+				),
+			)
+			.orderBy(desc(conversationDirectives.createdAt))
+			.limit(1)
+			.get();
+		const modeId = directive?.directive?.replace("voice_mode:", "") ?? "default";
+		const mode = character.voice_modes.find((vm) => vm.id === modeId);
+		if (!mode) return null;
+		return `[当前表达模式：${mode.label}]
+${mode.style_instruction}`;
 	}
 
 	private getRoleplayState(conversationId: string): string | null {
@@ -546,6 +610,10 @@ ${modules.join("\n")}`,
 
 function manifestSource(layer: ContextPackBlock["layer"]): string {
 	if (layer === "identity") return "character.identity_core";
+	if (layer === "content_policy") return "character.content_policy";
+	if (layer === "file_safety") return "character.file_safety";
+	if (layer === "tool_norms") return "character.tool_norms";
+	if (layer === "style") return "character.voice_mode";
 	if (layer === "canon") return "self_canon_or_canon_hub";
 	if (layer === "story") return "story_changes";
 	if (layer === "scene") return "scene_state_or_conversation_directives";
