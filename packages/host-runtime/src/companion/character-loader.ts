@@ -734,14 +734,17 @@ export class CharacterLoader {
 	}
 
 	private formatExamples(character: CharacterPackage): string {
+		const speaker = character.name;
 		const parts: string[] = [];
 		if (character.examples?.length) {
 			parts.push(
-				"[语气示例]\n以下对话展示极昼在不同情境下的典型说话方式，参照这些模式，不照搬台词。\n" +
+				"[语气示例]\n以下对话展示" +
+					speaker +
+					"在不同情境下的典型说话方式，参照这些模式，不照搬台词。\n" +
 					character.examples
 						.map(
 							(e) =>
-								`情景：${e.scenario}\n你：${e.user}\n极昼：${e.assistant}`,
+								`情景：${e.scenario}\n你：${e.user}\n${speaker}：${e.assistant}`,
 						)
 						.join("\n\n"),
 			);
@@ -752,7 +755,7 @@ export class CharacterLoader {
 					character.voice_mode_examples
 						.map(
 							(e) =>
-								`模式：${e.voice}\n你：${e.user}\n极昼：${e.assistant}`,
+								`模式：${e.voice}\n你：${e.user}\n${speaker}：${e.assistant}`,
 						)
 						.join("\n\n"),
 			);
