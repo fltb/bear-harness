@@ -274,7 +274,7 @@ describe("optimistic and streaming chat", () => {
 			screen.queryByRole("status", { name: zhCN.messages.responding }),
 		).not.toBeInTheDocument();
 	});
-	it("renders raw current_user_message text from a reopened Host-framed Pi projection and keeps capture on its Pi entry", async () => {
+	it("renders raw current_user_message text and gives user messages only a direct edit action", async () => {
 		const user = userEvent.setup();
 		const { client } = activeClient();
 		const rawUserText = "请记住这条当前消息";
@@ -338,18 +338,11 @@ describe("optimistic and streaming chat", () => {
 
 		const message = screen.getByText(rawUserText).closest("article");
 		expect(message).not.toBeNull();
-		await user.click(
-			within(message as HTMLElement).getByRole("button", { name: zhCN.messages.operations }),
-		);
-		await user.click(
-			within(message as HTMLElement).getByRole("button", { name: zhCN.messages.rememberMoment }),
-		);
-		await waitFor(() =>
-			expect(client.memory.capture).toHaveBeenCalledWith({
-				conversationId: "conversation-1",
-				entryId: userEntryId,
-			}),
-		);
+		const userMessage = within(message as HTMLElement);
+		expect(userMessage.queryByRole("button", { name: zhCN.messages.operations })).toBeNull();
+		expect(userMessage.queryByRole("button", { name: zhCN.messages.rememberMoment })).toBeNull();
+		await user.click(userMessage.getByRole("button", { name: zhCN.messages.edit }));
+		expect(userMessage.getByRole("textbox", { name: zhCN.messages.editLabel })).toBeVisible();
 	});
 
 	it("replaces the streaming block with exactly one persisted assistant message", async () => {

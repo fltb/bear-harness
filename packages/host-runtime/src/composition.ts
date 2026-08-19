@@ -1194,6 +1194,13 @@ function modelDefaultsWire(defaults: {
 
 export type MemoryCaptureCreator = "user_capture" | "assistant_tool";
 
+export async function proposeMemoryCandidate(
+	s: HostCompositionContext,
+	conversationId: string,
+): Promise<{ memoryId: string; sourceEntryId: string; createdBy: MemoryCaptureCreator }> {
+	return rememberConversationEntry(s, conversationId, undefined, "assistant_tool");
+}
+
 /**
  * Save one Host-selected Pi source entry through the direct memory backend.
  * The entry ID is never trusted as a source by itself: it must belong to the

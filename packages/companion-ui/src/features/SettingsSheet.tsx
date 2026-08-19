@@ -7,6 +7,7 @@ import {
 	useTranslation,
 } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
+import { Collapsible } from "@kobalte/core/collapsible";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
@@ -255,17 +256,14 @@ export function SettingsSheet() {
 					)}
 				</Show>
 
-				<Button
-					class="advanced-toggle"
-					type="button"
-					data-variant="secondary"
-					aria-expanded={advancedOpen()}
-					onClick={() => setAdvancedOpen((open) => !open)}
-				>
-					{t("settings.advancedToggle")}
-				</Button>
-				<Show when={advancedOpen()}>
-					<div class="advanced-model-settings">
+				<Collapsible open={advancedOpen()} onOpenChange={setAdvancedOpen}>
+					<Collapsible.Trigger class="advanced-toggle">
+						{t("settings.advancedToggle")}
+						<span class="advanced-chevron" aria-hidden="true">
+							⌄
+						</span>
+					</Collapsible.Trigger>
+					<Collapsible.Content class="advanced-model-settings">
 						<TextField class="field">
 							<TextField.Label class="field-label">{t("settings.customBaseUrl")}</TextField.Label>
 							<TextField.Input
@@ -316,8 +314,8 @@ export function SettingsSheet() {
 						>
 							{t("settings.piConfigImport")}
 						</Button>
-					</div>
-				</Show>
+					</Collapsible.Content>
+				</Collapsible>
 
 				<div class="settings-group-heading">
 					<h3>{t("settings.modelPool")}</h3>

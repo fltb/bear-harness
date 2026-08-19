@@ -56,12 +56,7 @@ function configuredClient() {
 async function openSettings() {
 	const user = userEvent.setup();
 	await user.click(screen.getByRole("button", { name: zhCN.sidebar.systemSettings }));
-	const backstage = await screen.findByRole("dialog");
-	await user.click(
-		within(backstage).getByRole("tab", {
-			name: zhCN.backstage.systemSettings,
-		}),
-	);
+	const backstage = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
 	return { user, backstage };
 }
 

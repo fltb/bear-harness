@@ -36,6 +36,7 @@ test("browser requires a reply model before the role-defined onboarding", async 
 		modelSetup.getByRole("button", { name: zhCN.settings.serviceLabel }),
 		provider.name,
 	);
+	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.modelLabel })).toBeEnabled();
 	await modelSetup.getByLabel(zhCN.settings.apiKeyLabel).fill("test-provider-key");
 	await modelSetup.getByRole("button", { name: zhCN.settings.saveKey }).click();
 	const headers = { "x-bear-web-dev-token": bootstrap.token };

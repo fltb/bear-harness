@@ -93,7 +93,7 @@ describe("memory controls", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
-		const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
+		const backstage = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
 		await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
 		const region = await within(backstage).findByRole("region", {
 			name: zhCN.memory.defaultEntriesTitle,
@@ -148,7 +148,7 @@ describe("memory controls", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
-		const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
+		const backstage = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
 		await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
 		const entries = await screen.findByRole("region", {
 			name: zhCN.memory.defaultEntriesTitle,
@@ -188,7 +188,7 @@ describe("memory controls", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
-		const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
+		const backstage = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
 		await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
 		const region = await within(backstage).findByRole("region", {
 			name: zhCN.memory.defaultEntriesTitle,
@@ -213,7 +213,7 @@ describe("memory controls", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
-		const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
+		const backstage = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
 		await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
 		const region = await within(backstage).findByRole("region", {
 			name: zhCN.memory.defaultEntriesTitle,

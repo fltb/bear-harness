@@ -106,6 +106,9 @@ export const zhTW = {
 	},
 	"packageWorkshop": {
 		"title": "角色包工坊",
+		"disabledNote": "內建角色包編輯器暫未開放。請按照角色包約定在外部工具中建立和校驗角色包。",
+		"toolRecommendation": "推薦使用 Visual Studio Code，並安裝 YAML 擴充套件以獲得格式檢查和編輯支援。",
+		"openGuide": "檢視角色包約定文件",
 		"note": "草稿儲存和圖片上傳會建立不可變 revision；校驗通過後才能釋出並激活角色。",
 		"create": "建立草稿",
 		"created": "已建立草稿",
@@ -139,6 +142,7 @@ export const zhTW = {
 	"messages": {
 		"closeMedia": "關閉",
 		"rememberMoment": "記住這一刻",
+		"rememberFailed": "記憶失敗，請重試",
 		"justNow": "剛剛",
 		"noActiveConversationError": "還沒有選中對話",
 		"userMeta": "你 · 剛剛",

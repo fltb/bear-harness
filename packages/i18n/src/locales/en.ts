@@ -110,6 +110,11 @@ export const en = {
 	},
 	packageWorkshop: {
 		title: "Character package workshop",
+		disabledNote:
+			"The built-in character package editor is not available. Create and validate packages in an external editor using the package specification.",
+		toolRecommendation:
+			"Visual Studio Code with a YAML extension is recommended for validation and editing support.",
+		openGuide: "Open character package guide",
 		note: "Saving drafts and uploading images creates immutable revisions. Validate before publishing and activating a character.",
 		create: "Create draft",
 		created: "Draft created",
@@ -144,6 +149,7 @@ export const en = {
 	messages: {
 		closeMedia: "Close",
 		rememberMoment: "Remember this moment",
+		rememberFailed: "Could not save memory. Try again.",
 		justNow: "Just now",
 		noActiveConversationError: "No conversation selected",
 		userMeta: "You · Just now",

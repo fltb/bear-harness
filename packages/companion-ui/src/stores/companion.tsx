@@ -25,8 +25,8 @@
 import type { CompanionClient, MemoryCaptureResponse } from "@bear-harness/companion-client";
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import type { RoleplayState } from "@bear-harness/protocol";
-import type { z } from "@bear-harness/schema";
 import type { MemoryCandidate as MemoryCandidateSchema } from "@bear-harness/protocol/schema";
+import type { z } from "@bear-harness/schema";
 import { useQueryClient } from "@tanstack/solid-query";
 import {
 	createContext,
@@ -170,6 +170,7 @@ export interface EventsApi {
 
 export interface MemoryApi {
 	entries(): MemoryEntry[] | undefined;
+	revision(): number;
 	search(query: string, scope?: MemoryScope): Promise<MemoryEntry[]>;
 	list(params?: MemoryListRequest): Promise<MemoryEntry[]>;
 	capture(entryId: string): Promise<MemoryCaptureResponse>;
@@ -204,7 +205,7 @@ export interface ProviderApi {
 		apiKey?: string;
 		supportsImages?: boolean;
 	}): Promise<void>;
-	importPiConfig(configJson: string): Promise<void>;
+	importPiConfig(configJson: string): Promise<ConfiguredModel[]>;
 	overrideBaseUrl(params: { providerId: string; baseUrl: string }): Promise<void>;
 	setApiKey(providerId: string, apiKey: string, sessionOnly?: boolean): Promise<void>;
 	login(providerId: string): Promise<ProviderLoginResult>;
@@ -633,6 +634,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		request: modelDefaultsRequest,
 	});
 	const [modelRouteRevision, setModelRouteRevision] = createSignal(0);
+	const [memoryRevision, setMemoryRevision] = createSignal(0);
 	const currentModelRoute = (): ModelRouteData | undefined => {
 		modelRouteRevision();
 		const conversationId = state.activeConversationId;
@@ -736,19 +738,23 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		onboardingStore._hydrate(snap.onboarding);
 		const conversation = snap.conversation;
 		if (conversation) {
-			if (conversation.activeConversationId !== undefined && !conversationSelectionChangedLocally) {
-				setState("activeConversationId", conversation.activeConversationId);
-				const conversationId = conversation.activeConversationId;
+			const snapshotConversationId = conversation.activeConversationId;
+			const acceptsActiveProjection =
+				!conversationSelectionChangedLocally ||
+				snapshotConversationId === state.activeConversationId;
+			if (snapshotConversationId !== undefined && acceptsActiveProjection) {
+				setState("activeConversationId", snapshotConversationId);
+				const conversationId = snapshotConversationId;
 				void refreshRpcQuery({
 					client: queryClient,
 					key: queryKeys.modelRoute(conversationId),
 					request: () => invoke(client, () => client.model.routeGet({ conversationId })),
 				}).then(() => setModelRouteRevision((revision) => revision + 1));
 			}
-			if (conversation.activeBranchId !== undefined) {
+			if (acceptsActiveProjection && conversation.activeBranchId !== undefined) {
 				setState("activeBranchId", conversation.activeBranchId);
 			}
-			if (conversation.messages !== undefined) {
+			if (acceptsActiveProjection && conversation.messages !== undefined) {
 				setState("activeMessages", conversation.messages);
 				// Pi sessions project entry ids (not the legacy DB message ids the
 				// stream events carry), so the draft is reconciled by content: the
@@ -765,6 +771,12 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 					setState("streamingAssistantText", "");
 					setState("assistantStreaming", false);
 				}
+			}
+			if (
+				conversationSelectionChangedLocally &&
+				snapshotConversationId === state.activeConversationId
+			) {
+				conversationSelectionChangedLocally = false;
 			}
 			if (conversation.conversations !== undefined) {
 				setState("conversations", conversation.conversations);
@@ -1076,6 +1088,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 
 	const memoryApi: MemoryApi = {
 		entries: () => state.memoryEntries,
+		revision: memoryRevision,
 		search: async (query, scope) => {
 			const data = await invoke(client, () => client.memory.search({ query, scope }));
 			setState("memoryEntries", data.entries);
@@ -1093,7 +1106,8 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 					client.memory.capture({ conversationId, entryId }),
 				);
 				setState("error", null);
-				debouncedRefetch(refreshMemoryEntries);
+				await refreshMemoryEntries();
+				setMemoryRevision((revision) => revision + 1);
 				return result;
 			} catch (e) {
 				setState("error", messageOf(e));
@@ -1184,10 +1198,11 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			);
 		},
 		importPiConfig: async (configJson) => {
-			await providerMutation.mutateAsync(() =>
+			const result = (await providerMutation.mutateAsync(() =>
 				invoke(client, () => client.provider.importPiConfig({ configJson })),
-			);
+			)) as { models: ConfiguredModel[] };
 			await refreshModelPool();
+			return result.models;
 		},
 		overrideBaseUrl: async (params) => {
 			await providerMutation.mutateAsync(() =>

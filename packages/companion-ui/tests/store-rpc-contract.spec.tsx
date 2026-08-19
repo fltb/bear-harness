@@ -80,12 +80,32 @@ describe("store RPC contract", () => {
 				ok: true,
 				data: {
 					eventSeq: 1,
-					conversation: { activeConversationId: "conversation-old", messages: [] },
+					conversation: {
+						activeConversationId: "conversation-old",
+						messages: [
+							{
+								id: "old-message",
+								role: "user",
+								createdAt: "2026-01-01T00:00:00.000Z",
+								versions: [
+									{
+										id: "old-version",
+										role: "user",
+										content: "stale conversation body",
+										editedByUser: false,
+										createdAt: "2026-01-01T00:00:00.000Z",
+										adopted: true,
+									},
+								],
+							},
+						],
+					},
 					model: { pool: { models: [] }, defaults: { vision: { mode: "auto" } } },
 				},
 			});
 			await waitFor(() => expect(store.snapshot.eventSeq()).toBe(1));
 			expect(store.activeConversationId).toBe("conversation-new");
+			expect(store.activeMessages).toEqual([]);
 			expect(store.model.models()).toEqual([configured]);
 			expect(store.model.data().defaults.reply).toEqual({
 				providerId: "relay",

@@ -108,6 +108,9 @@ export const zhCN = {
 	},
 	packageWorkshop: {
 		title: "角色包工坊",
+		disabledNote: "内置角色包编辑器暂未开放。请按照角色包约定在外部工具中创建和校验角色包。",
+		toolRecommendation: "推荐使用 Visual Studio Code，并安装 YAML 扩展以获得格式检查和编辑支持。",
+		openGuide: "查看角色包约定文档",
 		note: "草稿保存和图片上传会创建不可变 revision；校验通过后才能发布并激活角色。",
 		create: "创建草稿",
 		created: "已创建草稿",
@@ -141,6 +144,7 @@ export const zhCN = {
 	messages: {
 		closeMedia: "关闭",
 		rememberMoment: "记住这一刻",
+		rememberFailed: "记忆失败，请重试",
 		justNow: "刚刚",
 		noActiveConversationError: "还没有选中对话",
 		userMeta: "你 · 刚刚",

@@ -1,5 +1,5 @@
 import { zhCN } from "@bear-harness/i18n/locales";
-import { render, screen, waitFor, within } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
@@ -166,7 +166,8 @@ describe("first meeting journeys", () => {
 		const modelBeforeConnection = within(dialog).getByRole("button", {
 			name: new RegExp(zhCN.modelSetup.modelLabel),
 		});
-		expect(modelBeforeConnection).toBeDisabled();
+		expect(modelBeforeConnection).toBeEnabled();
+		await selectKobalteOption(user, modelBeforeConnection, "gpt-test");
 		await user.type(within(dialog).getByLabelText(zhCN.settings.apiKeyLabel), "secret-key");
 		const connect = within(dialog).getByRole("button", {
 			name: zhCN.settings.saveKey,
@@ -174,14 +175,73 @@ describe("first meeting journeys", () => {
 		expect(connect).toHaveAttribute("data-variant", "primary");
 		await user.click(connect);
 		expect(setApiKey).toHaveBeenCalledWith("openai-relay", "secret-key");
-		const model = within(dialog).getByRole("button", {
-			name: new RegExp(zhCN.modelSetup.modelLabel),
-		});
-		await selectKobalteOption(user, model, "gpt-test");
 		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
 		expect(enable).toHaveBeenCalledWith("openai-relay", "gpt-test", "GPT Test");
 		expect(setDefaultReply).toHaveBeenCalledWith("openai-relay", "gpt-test");
 		await waitFor(() => expect(dialog).not.toBeInTheDocument());
+	});
+
+	it("configures a relay URL and imports Pi providers from initial setup", async () => {
+		const user = userEvent.setup();
+		const overrideBaseUrl = vi.fn(() => Promise.resolve());
+		const importPiConfig = vi.fn(() =>
+			Promise.resolve([
+				{
+					providerId: "local",
+					modelId: "local-model",
+					label: "Local model",
+					supportsImages: false,
+					createdAt: "2026-01-01",
+				},
+			]),
+		);
+		const list = vi.fn(() => Promise.resolve({ providers: [] }));
+		const provider = {
+			id: "openai",
+			name: "OpenAI",
+			authType: "api_key" as const,
+			credentialStatus: "missing" as const,
+			availableModels: [{ id: "gpt-test", name: "GPT Test" }],
+		};
+		renderMeeting({
+			...baseStore(),
+			provider: {
+				providers: () => [provider],
+				list,
+				overrideBaseUrl,
+				importPiConfig,
+			} as never,
+			model: {
+				loading: () => false,
+				models: () => [],
+				data: () => ({ defaults: {} }),
+			} as never,
+		});
+
+		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		await user.click(within(dialog).getByRole("button", { name: zhCN.settings.advancedToggle }));
+		const service = dialog.querySelector<HTMLButtonElement>(
+			`button[aria-label="${zhCN.settings.serviceLabel}"]`,
+		);
+		expect(service).not.toBeNull();
+		await selectKobalteOption(user, service as HTMLButtonElement, "openai");
+		await user.type(
+			within(dialog).getByLabelText(zhCN.settings.customBaseUrl),
+			"https://relay.example/v1",
+		);
+		await user.click(within(dialog).getByRole("button", { name: zhCN.settings.customSave }));
+		expect(overrideBaseUrl).toHaveBeenCalledWith({
+			providerId: "openai",
+			baseUrl: "https://relay.example/v1",
+		});
+
+		const config = '{"providers":{"local":{"baseUrl":"http://127.0.0.1:11434/v1"}}}';
+		fireEvent.input(within(dialog).getByLabelText(zhCN.settings.piConfigLabel), {
+			target: { value: config },
+		});
+		await user.click(within(dialog).getByRole("button", { name: zhCN.settings.piConfigImport }));
+		expect(importPiConfig).toHaveBeenCalledWith(config);
+		expect(list).toHaveBeenCalledTimes(3);
 	});
 
 	it("shows one primary action and no key field when the provider credential is stored", async () => {

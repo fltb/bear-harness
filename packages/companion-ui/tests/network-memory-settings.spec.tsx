@@ -16,10 +16,7 @@ function selectTrigger(container: HTMLElement, label: string): HTMLElement {
 async function openSettings() {
 	const user = userEvent.setup();
 	await user.click(screen.getByRole("button", { name: zhCN.sidebar.systemSettings }));
-	const backstage = await screen.findByRole("dialog");
-	await user.click(
-		within(backstage).getByRole("tab", { name: zhCN.backstage.systemSettings }),
-	);
+	const backstage = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
 	return { user, backstage };
 }
 
@@ -39,9 +36,15 @@ describe("NetworkAndMemorySettings", () => {
 		const { backstage } = await openSettings();
 		await waitForSettings(backstage);
 
-		expect(within(backstage).getByRole("heading", { name: zhCN.settings.networkSection })).toBeTruthy();
-		expect(within(backstage).getByRole("heading", { name: zhCN.settings.memoryVectorSection })).toBeTruthy();
-		expect(within(backstage).getByRole("heading", { name: zhCN.settings.downloadMirrorSection })).toBeTruthy();
+		expect(
+			within(backstage).getByRole("heading", { name: zhCN.settings.networkSection }),
+		).toBeTruthy();
+		expect(
+			within(backstage).getByRole("heading", { name: zhCN.settings.memoryVectorSection }),
+		).toBeTruthy();
+		expect(
+			within(backstage).getByRole("heading", { name: zhCN.settings.downloadMirrorSection }),
+		).toBeTruthy();
 	});
 
 	it("loads proxy settings from the store on mount", async () => {
@@ -70,7 +73,9 @@ describe("NetworkAndMemorySettings", () => {
 		const { backstage, user } = await openSettings();
 		await waitForSettings(backstage);
 
-		const checkbox = within(backstage).getByRole("checkbox", { name: zhCN.settings.memoryVectorEnabled });
+		const checkbox = within(backstage).getByRole("checkbox", {
+			name: zhCN.settings.memoryVectorEnabled,
+		});
 		expect(checkbox).not.toBeChecked();
 
 		await user.click(checkbox);
@@ -117,7 +122,9 @@ describe("NetworkAndMemorySettings", () => {
 		const { backstage, user } = await openSettings();
 		await waitForSettings(backstage);
 
-		await user.click(within(backstage).getByRole("checkbox", { name: zhCN.settings.memoryVectorEnabled }));
+		await user.click(
+			within(backstage).getByRole("checkbox", { name: zhCN.settings.memoryVectorEnabled }),
+		);
 
 		const providerSelect = selectTrigger(backstage, "服务类型");
 		await user.click(providerSelect);
@@ -186,7 +193,9 @@ describe("NetworkAndMemorySettings", () => {
 		const { backstage, user } = await openSettings();
 		await waitForSettings(backstage);
 
-		const mirrorField = within(backstage).getByRole("textbox", { name: zhCN.settings.downloadMirrorLabel });
+		const mirrorField = within(backstage).getByRole("textbox", {
+			name: zhCN.settings.downloadMirrorLabel,
+		});
 		await user.clear(mirrorField);
 		await user.type(mirrorField, "https://mirror.example.com/hf");
 

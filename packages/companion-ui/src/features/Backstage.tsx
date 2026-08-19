@@ -44,57 +44,64 @@ export function Backstage(props: {
 				<Dialog.Overlay class="backstage-overlay" />
 				<Dialog.Content class="backstage-sheet">
 					<div class="backstage-head">
-						<Dialog.Title class="backstage-title">{t("backstage.title")}</Dialog.Title>
+						<Dialog.Title class="backstage-title">
+							{props.initialTab === "settings"
+								? t("sidebar.systemSettings")
+								: t("sidebar.characterSettings")}
+						</Dialog.Title>
 						<Dialog.CloseButton class="backstage-close" aria-label={t("backstage.close")}>
 							{t("backstage.close")}
 						</Dialog.CloseButton>
 					</div>
-					<Tabs
-						value={selectedTab()}
-						onChange={setSelectedTab}
-						class="backstage-tabs"
-						aria-label={t("backstage.tabsLabel")}
+					<Show
+						when={props.initialTab !== "settings"}
+						fallback={
+							<div class="standalone-settings-panel">
+								<SettingsSheet />
+							</div>
+						}
 					>
-						<Tabs.List class="tabs">
-							<Tabs.Trigger value="relationship" class="tab">
-								{t("backstage.relationshipArchive")}
-							</Tabs.Trigger>
-							<Tabs.Trigger value="roles" class="tab">
-								{t("backstage.roleManagement")}
-							</Tabs.Trigger>
-							<Tabs.Trigger value="memory" class="tab">
-								{t("backstage.memory")}
-							</Tabs.Trigger>
-							<Tabs.Trigger value="story" class="tab">
-								{t("backstage.storyArchive")}
-							</Tabs.Trigger>
-							<Tabs.Trigger value="settings" class="tab">
-								{t("backstage.systemSettings")}
-							</Tabs.Trigger>
-							<Tabs.Trigger value="studio" class="tab">
-								{t("backstage.packageWorkshop")}
-							</Tabs.Trigger>
-						</Tabs.List>
-						<Tabs.Content value="relationship" class="tab-panel">
-							<RelationshipArchive character={props.character} />
-						</Tabs.Content>
-						<Tabs.Content value="roles" class="tab-panel">
-							<RoleManager />
-						</Tabs.Content>
-						<Tabs.Content value="memory" class="tab-panel">
-							<MemorySheet />
-						</Tabs.Content>
-						<Tabs.Content value="story" class="tab-panel">
-							<StoryArchive />
-						</Tabs.Content>
-						<Tabs.Content value="settings" class="tab-panel">
-							<SettingsSheet />
-						</Tabs.Content>
-						<Tabs.Content value="studio" class="tab-panel">
-							<CharacterPackageWorkshop />
-							<CanonStudio />
-						</Tabs.Content>
-					</Tabs>
+						<Tabs
+							value={selectedTab()}
+							onChange={setSelectedTab}
+							class="backstage-tabs"
+							aria-label={t("backstage.tabsLabel")}
+						>
+							<Tabs.List class="tabs">
+								<Tabs.Trigger value="relationship" class="tab">
+									{t("backstage.relationshipArchive")}
+								</Tabs.Trigger>
+								<Tabs.Trigger value="roles" class="tab">
+									{t("backstage.roleManagement")}
+								</Tabs.Trigger>
+								<Tabs.Trigger value="memory" class="tab">
+									{t("backstage.memory")}
+								</Tabs.Trigger>
+								<Tabs.Trigger value="story" class="tab">
+									{t("backstage.storyArchive")}
+								</Tabs.Trigger>
+								<Tabs.Trigger value="studio" class="tab">
+									{t("backstage.packageWorkshop")}
+								</Tabs.Trigger>
+							</Tabs.List>
+							<Tabs.Content value="relationship" class="tab-panel">
+								<RelationshipArchive character={props.character} />
+							</Tabs.Content>
+							<Tabs.Content value="roles" class="tab-panel">
+								<RoleManager />
+							</Tabs.Content>
+							<Tabs.Content value="memory" class="tab-panel">
+								<MemorySheet />
+							</Tabs.Content>
+							<Tabs.Content value="story" class="tab-panel">
+								<StoryArchive />
+							</Tabs.Content>
+							<Tabs.Content value="studio" class="tab-panel">
+								<CharacterPackageWorkshop />
+								<CanonStudio />
+							</Tabs.Content>
+						</Tabs>
+					</Show>
 				</Dialog.Content>
 			</Dialog.Portal>
 		</Dialog>

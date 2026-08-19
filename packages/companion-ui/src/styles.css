@@ -706,10 +706,20 @@ button[data-variant="primary"]:focus-visible {
 }
 
 .advanced-toggle {
-	@apply w-full rounded-md border px-3 py-2 text-left text-[13px];
+	@apply flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-[13px];
 	min-height: 40px;
 	border-color: var(--line);
 	background: var(--surface-alt);
+}
+
+.advanced-chevron {
+	display: inline-block;
+	font-size: 16px;
+	transition: transform 160ms ease;
+}
+
+.advanced-toggle[data-expanded] .advanced-chevron {
+	transform: rotate(180deg);
 }
 
 .advanced-model-settings {
@@ -917,7 +927,7 @@ button[data-variant="primary"]:focus-visible {
 	@apply mb-[6px] mt-[2px] block text-[10px] not-italic text-[#566b66];
 }
 
-.bear-msg p {
+.msg p {
 	@apply m-0 font-serif text-[clamp(15px,1.25vw,18px)] leading-[1.6];
 }
 
@@ -1111,8 +1121,6 @@ button[data-variant="primary"]:focus-visible {
 .msg.user p {
 	margin: 0;
 	color: #d8ebe4;
-	font-size: 11px;
-	line-height: 1.6;
 }
 
 .msg p {
@@ -1121,15 +1129,17 @@ button[data-variant="primary"]:focus-visible {
 
 .streaming-status {
 	display: inline-block;
-	width: 6px;
+	width: 14px;
 	height: 14px;
-	background: var(--accent);
-	animation: streaming-caret 0.8s steps(1) infinite;
+	border: 2px solid rgba(139, 208, 187, 0.28);
+	border-top-color: var(--accent);
+	border-radius: 50%;
+	animation: streaming-spinner 0.75s linear infinite;
 }
 
-@keyframes streaming-caret {
-	50% {
-		opacity: 0.2;
+@keyframes streaming-spinner {
+	to {
+		transform: rotate(360deg);
 	}
 }
 
@@ -1174,6 +1184,37 @@ button[data-variant="primary"]:focus-visible {
 	background: transparent;
 	font-size: 13px;
 	line-height: 1;
+}
+
+.msg-inline-action {
+	display: grid;
+	width: 24px;
+	height: 24px;
+	place-items: center;
+	border: 0;
+	border-radius: 6px;
+	padding: 0;
+	color: #a9c4bc;
+	background: transparent;
+	font-size: 16px;
+	line-height: 1;
+	opacity: 0;
+	transition:
+		color 0.15s ease,
+		background 0.15s ease,
+		opacity 0.15s ease;
+}
+
+.msg:hover .msg-inline-action,
+.msg:focus-within .msg-inline-action,
+.msg-inline-action:focus-visible {
+	opacity: 1;
+}
+
+.msg-inline-action:hover,
+.msg-inline-action:focus-visible {
+	color: #ffffff;
+	background: rgba(216, 235, 228, 0.14);
 }
 
 .msg-menu-trigger:hover,
@@ -1551,6 +1592,10 @@ button[data-variant="primary"]:focus-visible {
 	margin: 17px 0;
 }
 
+.model-setup-advanced {
+	margin: 0 0 17px;
+}
+
 .intro-picker {
 	display: grid;
 	min-width: 0;
@@ -1761,6 +1806,13 @@ button[data-variant="primary"]:focus-visible {
 	@apply flex min-h-0 flex-1 flex-col px-5 pb-5;
 }
 
+.standalone-settings-panel {
+	min-height: 0;
+	flex: 1;
+	overflow-y: auto;
+	padding: 16px 20px 20px;
+}
+
 .backstage-tabs .tabs {
 	@apply mb-5 grid shrink-0 grid-cols-3 gap-2;
 }
@@ -1802,6 +1854,22 @@ button[data-variant="primary"]:focus-visible {
 	@apply m-0 text-[13px] leading-[1.6];
 	--semantic-fg-role: muted;
 	color: var(--semantic-role-muted);
+}
+
+.character-package-guide {
+	display: grid;
+	gap: 14px;
+}
+
+.character-package-guide h3 {
+	margin: 0;
+}
+
+.character-package-guide .button-like {
+	display: inline-flex;
+	width: fit-content;
+	align-items: center;
+	gap: 8px;
 }
 
 .detail-card {

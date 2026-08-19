@@ -101,6 +101,7 @@ export function MemoryEntryList(props: {
 
 	createEffect(() => {
 		void props.refreshKey;
+		void store.memory.revision();
 		void reload(props.scope, props.query?.trim() ?? "");
 	});
 

@@ -49,7 +49,7 @@ describe("ordinary-user backstage journey", () => {
 			</DesktopProvider>
 		));
 
-		const dialog = await screen.findByRole("dialog", { name: zhCN.backstage.title });
+		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
 		await user.click(
 			within(dialog).getByRole("button", { name: zhCN.backstage.roleEnablePlugins }),
 		);
@@ -118,7 +118,7 @@ describe("ordinary-user backstage journey", () => {
 				<Backstage open onClose={() => undefined} character={THEMED_CHARACTER} />
 			</DesktopProvider>
 		));
-		const dialog = await screen.findByRole("dialog", { name: zhCN.backstage.title });
+		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
 		const tabs = within(dialog);
 		await user.click(tabs.getByRole("tab", { name: zhCN.backstage.roleManagement }));
 		await user.click(tabs.getByRole("button", { name: zhCN.backstage.roleSwitch }));
@@ -162,7 +162,9 @@ describe("ordinary-user backstage journey", () => {
 				<Backstage open initialTab="roles" onClose={() => undefined} character={THEMED_CHARACTER} />
 			</DesktopProvider>
 		));
-		const characterDialog = await screen.findByRole("dialog", { name: zhCN.backstage.title });
+		const characterDialog = await screen.findByRole("dialog", {
+			name: zhCN.sidebar.characterSettings,
+		});
 		expect(
 			within(characterDialog).getByRole("tab", { name: zhCN.backstage.roleManagement }),
 		).toHaveAttribute("data-selected");
@@ -188,10 +190,8 @@ describe("ordinary-user backstage journey", () => {
 				/>
 			</DesktopProvider>
 		));
-		const systemDialog = await screen.findByRole("dialog", { name: zhCN.backstage.title });
-		expect(
-			within(systemDialog).getByRole("tab", { name: zhCN.backstage.systemSettings }),
-		).toHaveAttribute("data-selected");
+		const systemDialog = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
+		expect(within(systemDialog).queryByRole("tablist")).not.toBeInTheDocument();
 		await user.click(within(systemDialog).getByRole("button", { name: zhCN.backstage.close }));
 		expect(closeSystemSettings).toHaveBeenCalledOnce();
 	});
@@ -254,7 +254,7 @@ describe("ordinary-user backstage journey", () => {
 				<Backstage open onClose={() => undefined} character={character} />
 			</DesktopProvider>
 		));
-		const dialog = await screen.findByRole("dialog", { name: zhCN.backstage.title });
+		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
 		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.relationshipArchive }));
 		expect(within(dialog).getByText("彼此守望")).toBeVisible();
 		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.collections }));
@@ -324,7 +324,7 @@ describe("ordinary-user backstage journey", () => {
 		));
 
 		await user.click(screen.getByRole("button", { name: zhCN.sidebar.characterSettings }));
-		const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
+		const backstage = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
 		await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
 
 		const region = await screen.findByRole("region", { name: zhCN.memory.defaultEntriesTitle });

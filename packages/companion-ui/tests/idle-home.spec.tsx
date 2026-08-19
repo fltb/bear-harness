@@ -63,13 +63,23 @@ describe("idle homepage (official config, no bridge)", () => {
 		const backstage = screen.getByRole("button", { name: zhCN.sidebar.characterSettings });
 		expect(backstage).toBeEnabled();
 		await user.click(backstage);
-		expect(await screen.findByRole("dialog")).toBeInTheDocument();
+		expect(
+			await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings }),
+		).toBeInTheDocument();
 		expect(
 			screen.getByRole("tab", { name: zhCN.backstage.relationshipArchive }),
 		).toBeInTheDocument();
 		expect(screen.getByRole("tab", { name: zhCN.backstage.memory })).toBeInTheDocument();
-		expect(screen.getByRole("tab", { name: zhCN.backstage.systemSettings })).toBeInTheDocument();
-		await user.click(screen.getByRole("tab", { name: zhCN.backstage.systemSettings }));
+		await user.click(screen.getByRole("button", { name: zhCN.backstage.close }));
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("dialog", { name: zhCN.sidebar.characterSettings }),
+			).not.toBeInTheDocument(),
+		);
+		await user.click(
+			screen.getByRole("button", { name: zhCN.sidebar.systemSettings, hidden: true }),
+		);
+		await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
 		const useModel = screen.getByRole("button", { name: zhCN.settings.addModel });
 		expect(useModel).toBeInstanceOf(HTMLButtonElement);
 		expect(useModel).toBeDisabled();

@@ -42,7 +42,7 @@ function MessageItem(props: {
 	const [reason, setReason] = createSignal("");
 	const [customReason, setCustomReason] = createSignal("");
 	const [scope, setScope] = createSignal<CorrectScope>("once");
-	const [captureStatus, setCaptureStatus] = createSignal<"idle" | "success">("idle");
+	const [captureStatus, setCaptureStatus] = createSignal<"idle" | "success" | "error">("idle");
 
 	const isUser = () => props.message.role === "user";
 	const version = () => adoptedVersion(props.message);
@@ -86,7 +86,7 @@ function MessageItem(props: {
 			await store.memory.capture(props.message.id);
 			setCaptureStatus("success");
 		} catch {
-			// The store exposes the operation failure in the thread-level alert.
+			setCaptureStatus("error");
 		}
 	};
 
@@ -123,15 +123,30 @@ function MessageItem(props: {
 			<Show when={!editing()}>
 				<div class="msg-heading">
 					<div class="msg-meta">{meta()}</div>
-					<Button
-						type="button"
-						class="msg-menu-trigger"
-						aria-label={t("messages.operations")}
-						aria-expanded={actionsOpen()}
-						onClick={() => setActionsOpen((open) => !open)}
+					<Show
+						when={!isUser()}
+						fallback={
+							<Button
+								type="button"
+								class="msg-inline-action"
+								aria-label={t("messages.edit")}
+								title={t("messages.edit")}
+								onClick={startEdit}
+							>
+								✎
+							</Button>
+						}
 					>
-						···
-					</Button>
+						<Button
+							type="button"
+							class="msg-menu-trigger"
+							aria-label={t("messages.operations")}
+							aria-expanded={actionsOpen()}
+							onClick={() => setActionsOpen((open) => !open)}
+						>
+							···
+						</Button>
+					</Show>
 				</div>
 				<p>{content()}</p>
 
@@ -233,14 +248,14 @@ function MessageItem(props: {
 					</div>
 				</Show>
 
-				<Show when={!correcting()}>
+				<Show when={!correcting() && !isUser()}>
 					<div
 						class="msg-tools"
 						classList={{ "is-open": actionsOpen() }}
 						role="toolbar"
 						aria-label={t("messages.operations")}
 					>
-						<Show when={isUser() || props.message.role === "assistant"}>
+						<Show when={props.message.role === "assistant"}>
 							<Button data-control="command" type="button" onClick={() => void captureMoment()}>
 								{t("messages.rememberMoment")}
 							</Button>
@@ -251,6 +266,11 @@ function MessageItem(props: {
 									aria-label={t("messages.rememberMoment")}
 								>
 									{t("messages.rememberMoment")}
+								</span>
+							</Show>
+							<Show when={captureStatus() === "error"}>
+								<span class="status-line error" role="alert">
+									{t("messages.rememberFailed")}
 								</span>
 							</Show>
 						</Show>

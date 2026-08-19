@@ -1,5 +1,6 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
+import { Collapsible } from "@kobalte/core/collapsible";
 import { Dialog } from "@kobalte/core/dialog";
 import { Root as Link } from "@kobalte/core/link";
 import { Select } from "@kobalte/core/select";
@@ -28,8 +29,12 @@ export function FirstMeeting() {
 	const [providerId, setProviderId] = createSignal("");
 	const [modelId, setModelId] = createSignal("");
 	const [apiKey, setApiKey] = createSignal("");
+	const [advancedOpen, setAdvancedOpen] = createSignal(false);
+	const [customBaseUrl, setCustomBaseUrl] = createSignal("");
+	const [piConfigJson, setPiConfigJson] = createSignal("");
 	const [setupError, setSetupError] = createSignal<string | null>(null);
 	const [setupBusy, setSetupBusy] = createSignal(false);
+	const [modelSetupComplete, setModelSetupComplete] = createSignal(false);
 	const [connectedProviderId, setConnectedProviderId] = createSignal("");
 	const [oauth, setOauth] = createSignal<Awaited<ReturnType<typeof store.provider.login>> | null>(
 		null,
@@ -52,7 +57,10 @@ export function FirstMeeting() {
 		selectedProvider()?.credentialStatus === "session_only" ||
 		connectedProviderId() === providerId();
 	const modelRequired = () =>
-		!store.loading && !store.model.loading() && store.model.data().defaults.reply === undefined;
+		!modelSetupComplete() &&
+		!store.loading &&
+		!store.model.loading() &&
+		store.model.data().defaults.reply === undefined;
 	const selectProvider = (id: string) => {
 		setProviderId(id);
 		setModelId("");
@@ -72,6 +80,7 @@ export function FirstMeeting() {
 				selectedProvider()?.availableModels.find((model) => model.id === modelId())?.name,
 			);
 			await store.model.setDefaultReply(providerId(), modelId());
+			setModelSetupComplete(true);
 		} catch (cause) {
 			setSetupError(cause instanceof Error ? cause.message : String(cause));
 		} finally {
@@ -87,6 +96,40 @@ export function FirstMeeting() {
 			setApiKey("");
 			setConnectedProviderId(providerId());
 			await store.provider.list();
+		} catch (cause) {
+			setSetupError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setSetupBusy(false);
+		}
+	};
+	const saveProviderBaseUrl = async (): Promise<void> => {
+		if (!providerId() || !customBaseUrl().trim()) return;
+		setSetupBusy(true);
+		setSetupError(null);
+		try {
+			await store.provider.overrideBaseUrl({
+				providerId: providerId(),
+				baseUrl: customBaseUrl().trim(),
+			});
+			setCustomBaseUrl("");
+			await store.provider.list();
+		} catch (cause) {
+			setSetupError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setSetupBusy(false);
+		}
+	};
+	const importPiConfig = async (): Promise<void> => {
+		if (!piConfigJson().trim()) return;
+		setSetupBusy(true);
+		setSetupError(null);
+		try {
+			const imported = await store.provider.importPiConfig(piConfigJson().trim());
+			setPiConfigJson("");
+			await store.provider.list();
+			const providerIds = new Set(imported.map((model) => model.providerId));
+			if (providerIds.size === 1) setProviderId(imported[0]?.providerId ?? "");
+			if (imported.length === 1) setModelId(imported[0]?.modelId ?? "");
 		} catch (cause) {
 			setSetupError(cause instanceof Error ? cause.message : String(cause));
 		} finally {
@@ -253,10 +296,55 @@ export function FirstMeeting() {
 										modelId={modelId()}
 										class="intro-picker"
 										modelLabel={t("modelSetup.modelLabel")}
-										disabled={!providerConnected()}
+										disabled={!selectedProvider()}
 										onModelChange={setModelId}
 									/>
 								</div>
+								<Collapsible open={advancedOpen()} onOpenChange={setAdvancedOpen}>
+									<Collapsible.Trigger class="advanced-toggle">
+										{t("settings.advancedToggle")}
+										<span class="advanced-chevron" aria-hidden="true">
+											⌄
+										</span>
+									</Collapsible.Trigger>
+									<Collapsible.Content class="advanced-model-settings model-setup-advanced">
+										<TextField class="intro-form">
+											<TextField.Label>{t("settings.customBaseUrl")}</TextField.Label>
+											<TextField.Input
+												placeholder={t("settings.customBaseUrlPlaceholder")}
+												value={customBaseUrl()}
+												onInput={(event) => setCustomBaseUrl(event.currentTarget.value)}
+											/>
+											<Button
+												type="button"
+												data-variant="secondary"
+												disabled={setupBusy() || !providerId() || !customBaseUrl().trim()}
+												onClick={() => void saveProviderBaseUrl()}
+											>
+												{t("settings.customSave")}
+											</Button>
+										</TextField>
+										<TextField class="intro-form">
+											<TextField.Label>{t("settings.piConfigLabel")}</TextField.Label>
+											<span class="field-hint">{t("settings.piConfigHint")}</span>
+											<TextField.TextArea
+												rows={7}
+												aria-label={t("settings.piConfigLabel")}
+												placeholder={t("settings.piConfigPlaceholder")}
+												value={piConfigJson()}
+												onInput={(event) => setPiConfigJson(event.currentTarget.value)}
+											/>
+											<Button
+												type="button"
+												data-variant="secondary"
+												disabled={setupBusy() || !piConfigJson().trim()}
+												onClick={() => void importPiConfig()}
+											>
+												{t("settings.piConfigImport")}
+											</Button>
+										</TextField>
+									</Collapsible.Content>
+								</Collapsible>
 								<Show when={selectedProvider()}>
 									{(provider) => (
 										<>
