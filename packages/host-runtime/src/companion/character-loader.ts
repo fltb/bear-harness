@@ -120,6 +120,21 @@ export interface CompanionPiConfiguration {
 	append_system_prompt: string;
 }
 
+/** A seed dialogue showing how the character speaks in a situation. */
+export interface DialogueExample {
+	scenario: string;
+	voice?: string;
+	user: string;
+	assistant: string;
+}
+
+/** Same-situation dialogue in different voice modes, for tone calibration. */
+export interface VoiceModeExample {
+	voice: string;
+	user: string;
+	assistant: string;
+}
+
 /**
  * A voice mode declares a distinct expressive style for the character.
  * The character package can declare any number of modes; the Host passes
@@ -159,6 +174,8 @@ export interface CharacterPackage {
 	file_safety?: string;
 	tool_interaction_norms?: string;
 	voice_modes?: VoiceMode[];
+	examples?: DialogueExample[];
+	voice_mode_examples?: VoiceModeExample[];
 	scenes: ScenePreset[];
 	visual: CharacterVisuals;
 	host: CharacterHostBehavior;
@@ -696,7 +713,7 @@ export class CharacterLoader {
 		return {
 			skillPaths,
 			pluginPaths,
-			appendSystemPrompt: character.companion.pi.append_system_prompt,
+			appendSystemPrompt: character.companion.pi.append_system_prompt + "\n\n" + this.formatExamples(character),
 			hostTools: [
 				"host_get_state",
 				"host_set_scene",
@@ -714,6 +731,33 @@ export class CharacterLoader {
 				...(character.canon.sources.length ? ["host_search_canon"] : []),
 			],
 		};
+	}
+
+	private formatExamples(character: CharacterPackage): string {
+		const parts: string[] = [];
+		if (character.examples?.length) {
+			parts.push(
+				"[语气示例]\n以下对话展示极昼在不同情境下的典型说话方式，参照这些模式，不照搬台词。\n" +
+					character.examples
+						.map(
+							(e) =>
+								`情景：${e.scenario}\n你：${e.user}\n极昼：${e.assistant}`,
+						)
+						.join("\n\n"),
+			);
+		}
+		if (character.voice_mode_examples?.length) {
+			parts.push(
+				"[三档沉浸对照]\n同一句话在不同表达模式下的说法。回复时按当前模式选择对应的密度。\n" +
+					character.voice_mode_examples
+						.map(
+							(e) =>
+								`模式：${e.voice}\n你：${e.user}\n极昼：${e.assistant}`,
+						)
+						.join("\n\n"),
+			);
+		}
+		return parts.join("\n\n");
 	}
 
 	/** Project package presentation data into renderer-safe strings and data URLs. */
