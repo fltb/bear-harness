@@ -109,6 +109,12 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 			form?.requestSubmit();
 		}
 	};
+
+	/** True while a message is being sent or streamed; the send slot becomes Stop. */
+	const streaming = () =>
+		store.assistantStreaming ||
+		store.pendingUserText !== undefined ||
+		store.streamingAssistantText.length > 0;
 	const selectModel = async (model: ConfiguredModel | null): Promise<void> => {
 		const conversationId = store.activeConversationId;
 		if (!conversationId || !model) return;
@@ -216,19 +222,33 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 				</Show>
 			</Show>
 			<Show when={attachmentError()}>{(error) => <span role="alert">{error()}</span>}</Show>
-			<Button
-				type="submit"
-				class="send"
-				aria-label={t("composer.sendLabel")}
-				disabled={
-					store.activeConversationId === null ||
-					!modelSelected() ||
-					!imageReaderAvailable() ||
-					(text().trim().length === 0 && attachments().length === 0)
+			<Show
+				when={streaming()}
+				fallback={
+					<Button
+						type="submit"
+						class="send"
+						aria-label={t("composer.sendLabel")}
+						disabled={
+							store.activeConversationId === null ||
+							!modelSelected() ||
+							!imageReaderAvailable() ||
+							(text().trim().length === 0 && attachments().length === 0)
+						}
+					>
+						➤
+					</Button>
 				}
 			>
-				➤
-			</Button>
+				<Button
+					type="button"
+					class="send"
+					aria-label={t("composer.stopLabel")}
+					onClick={() => void store.abort()}
+				>
+					■
+				</Button>
+			</Show>
 		</form>
 	);
 }

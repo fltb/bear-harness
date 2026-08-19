@@ -31,6 +31,7 @@ import { CompanionSupervisor } from "./companion/supervisor.js";
 import { TurnPipeline } from "./companion/turn-pipeline.js";
 import {
 	type HostCompositionContext,
+	proposeMemoryCandidate,
 	rememberConversationEntry,
 	wireHostHandlers,
 } from "./composition.js";
@@ -50,7 +51,10 @@ import { CredentialStore, type CredentialVault } from "./providers/credential-st
 import { type AppSettingsRecord, AppSettingsStore } from "./storage/app-settings-store.js";
 import { Database, MIGRATIONS } from "./storage/database.js";
 import { EventBus } from "./storage/event-bus.js";
-import { conversations, messages } from "./storage/schema.js";
+import { AuditStore, wireAuditToEvents } from "./security/audit-store.js";
+import { installFsProtection, type FsProtectionHandle } from "./security/fs-protection.js";
+import { createModerationService, type ModerationService } from "./security/moderation.js";
+import { conversations, memoryCandidates, messages } from "./storage/schema.js";
 import { StoryService } from "./story/service.js";
 
 /** The subset of the product configuration the host runtime consumes. */
@@ -92,6 +96,32 @@ export interface HostRuntimeOptions {
 	 * to the platform/system proxy resolvers.
 	 */
 	systemProxyResolver?: SystemProxyResolver;
+	/**
+	 * Optional factory that renders an artifact id into a renderer-loadable
+	 * custom-scheme URL (e.g. `bear-artifact://artifact/<id>`) when the host
+	 * shell has registered a protocol handler. Absent → the `artifact.url:v1`
+	 * RPC returns an empty string (protocol unavailable).
+	 */
+	artifactProtocolUrlFactory?: (artifactId: string) => string;
+	/**
+	 * Optional app-update service supplied by the host shell (desktop). The
+	 * `update.check:v1` RPC delegates to `check()`; the resolved value must
+	 * match the protocol `UpdateCheckResponse` shape.
+	 */
+	updateService?: { check(): Promise<unknown> };
+	/**
+	 * Directories whose deletion is sentinel-warned by fs-protection (WARN +
+	 * audit entry; deletes are never blocked). Defaults to `[dataDir]` — the
+	 * host's config, database, memory, and logs all live under it.
+	 */
+	protectedRoots?: string[];
+	/**
+	 * Optional remote moderation policy service. Local moderation rules always
+	 * apply first; remote errors fail open.
+	 */
+	moderation?: { remoteEndpoint?: string; remoteApiKey?: string };
+	/** Directory for the hash-chained audit store; defaults to `<dataDir>/audit`. */
+	auditDir?: string;
 	logger?: { debug?: (message: string) => void; warn?: (message: string) => void };
 }
 
@@ -111,8 +141,18 @@ export class HostRuntime {
 	readonly memoryRuntime: TencentDbRuntime;
 	readonly memoryBackend: MemoryBackend;
 	readonly memoryScope: { readonly installationId: string; readonly userId: string };
+	/** Content-addressed artifact store (CAS + ownership rows). */
+	readonly artifacts: ArtifactStore;
+	/** Hash-chained append-only audit store (commission/run/fsop/memory/config). */
+	readonly auditStore: AuditStore;
+	/** Text moderation: deterministic local rules + optional remote policy. */
+	readonly moderation: ModerationService;
+	private readonly fsProtectedRoots: string[];
 	private started = false;
 	private closed = false;
+	private uninstallFsProtection?: FsProtectionHandle;
+	private unsubscribeAudit?: () => void;
+	private unsubscribeProxyHotReload?: () => void;
 
 	constructor(options: HostRuntimeOptions) {
 		const dataDir = options.dataDir;
@@ -315,13 +355,17 @@ export class HostRuntime {
 				};
 			}
 			if (call.tool === "host_remember") {
-				const data = await rememberConversationEntry(
+				// Assistant-suggested memories become user-visible candidates the user
+				// must approve before they enter relationship memory (plan §7.6).
+				const candidate = await proposeMemoryCandidate(
 					this.composition,
 					call.conversationId,
-					undefined,
-					"assistant_tool",
 				);
-				return { ok: true, message: "Memory saved.", data };
+				return {
+					ok: true,
+					message: "Memory suggestion created — approve or edit it in the memory panel.",
+					data: candidate,
+				};
 			}
 			if (call.tool !== "host_propose_work") return characterBehavior.invoke(call);
 			const args = call.args as {
@@ -344,6 +388,7 @@ export class HostRuntime {
 		this.memoryRuntime = memoryRuntime;
 		this.memoryBackend = memoryRuntime.backend;
 		this.memoryScope = memoryScope;
+		this.artifacts = artifactStore;
 		this.providers = providers;
 		this.supervisor = supervisor;
 		this.characterBehavior = characterBehavior;
@@ -351,6 +396,19 @@ export class HostRuntime {
 		this.unsubscribeStoryAutomation = unsubscribeStoryAutomation;
 		this.systemProxyResolver = options.systemProxyResolver;
 		this.logger = options.logger;
+		// Security primitives: hash-chained audit + deterministic moderation.
+		// fs-protection installs at `start()` so the global fs patch happens
+		// at the lifecycle boundary, not during construction.
+		this.fsProtectedRoots = options.protectedRoots ?? [dataDir];
+		this.auditStore = new AuditStore({
+			dir: options.auditDir ?? join(dataDir, "audit"),
+			logger: this.logger,
+		});
+		this.moderation = createModerationService({
+			remoteEndpoint: options.moderation?.remoteEndpoint,
+			remoteApiKey: options.moderation?.remoteApiKey,
+			logger: this.logger,
+		});
 		this.composition = {
 			orm: db.orm,
 			eventBus,
@@ -373,7 +431,12 @@ export class HostRuntime {
 			defaultCharacterId: options.productConfig.defaultCharacterId,
 			conversationRepository,
 			piSessionDir: join(dataDir, "sessions"),
+			artifactUrlFactory: options.artifactProtocolUrlFactory,
+			updateService: options.updateService,
+			auditStore: this.auditStore,
 		};
+		// Start auditing commission/run/roleplay events from construction.
+		this.unsubscribeAudit = wireAuditToEvents(this.auditStore, this.composition.eventBus);
 		this.dispatcher = new Dispatcher({
 			responseValidation: options.protocolViolationMode ?? "throw",
 			onProtocolViolation: (error) => {
@@ -411,7 +474,40 @@ export class HostRuntime {
 				{ resolve: this.systemProxyResolver, logger: this.logger },
 			);
 		}
+		// Live proxy hot-reload: settings changes re-apply the dispatcher without
+		// a restart. Remember to subscribe AFTER the composition is ready.
+		this.unsubscribeProxyHotReload = this.composition.eventBus.subscribe((event) => {
+			const payload = event.payload as { changed?: string[] } | undefined;
+			if (event.kind === "settings.changed" && payload?.changed?.includes("networkProxy")) {
+				const next = this.composition.appSettings.load().networkProxy;
+				void applyProxyConfig(
+					{ mode: next.mode, url: next.url, bypass: next.bypass },
+					{ resolve: this.systemProxyResolver, logger: this.logger },
+				);
+			}
+		});
+		// Security sentinels: fs-protection wraps the global delete APIs (WARN
+		// + audit entry on hits; deletes are never blocked), and retention runs
+		// once per boot. Audit event wiring already started in the constructor.
+		this.uninstallFsProtection = installFsProtection({
+			protectedRoots: this.fsProtectedRoots,
+			logger: this.logger,
+			onHit: (hit) => {
+				void this.auditStore.append("fsop", "delete_attempt", JSON.stringify(hit)).catch(() => {
+					// sentinel is warn-only; audit failure must not throw
+				});
+			},
+		});
+		void this.auditStore.prune().catch(() => {
+			// retention is best-effort at boot
+		});
 		await this.memoryRuntime.start();
+		// Local embedding: preload the offline model in the background so the
+		// first hybrid recall doesn't pay download + load latency synchronously.
+		const memoryVector = this.composition.appSettings.load().memoryVectorService;
+		if (memoryVector.enabled && memoryVector.provider === "local") {
+			void this.memoryRuntime.startLocalEmbeddingWarmup();
+		}
 		const activeCharacterId = this.characterLoader.getActiveCharacterId(
 			this.composition.orm,
 			this.composition.defaultCharacterId,
@@ -431,8 +527,11 @@ export class HostRuntime {
 		if (this.closed) return;
 		this.closed = true;
 		await this.supervisor.stop();
+		this.uninstallFsProtection?.uninstall();
+		this.unsubscribeAudit?.();
 		this.composition.turns.dispose();
 		this.unsubscribeStoryAutomation();
+		this.unsubscribeProxyHotReload?.();
 		this.characterBehavior.dispose();
 		this.providers.dispose();
 		this.db.close();
@@ -459,9 +558,10 @@ function mergeEmbeddingConfig(
 		embedding.provider = "local";
 		const { localModel, customPath } = service;
 		if (localModel === "bge-base-zh") {
-			embedding.modelPath = "hf:CompendiumLabs/bge-small-zh-v1.5-gguf/bge-small-zh-v1.5-Q8_0.gguf";
+			embedding.modelPath = "hf:CompendiumLabs/bge-small-zh-v1.5-gguf/bge-small-zh-v1.5-q8_0.gguf";
 		} else if (localModel === "multilingual-e5") {
-			embedding.modelPath = "hf:intfloat/multilingual-e5-base-gguf/multilingual-e5-base-Q8_0.gguf";
+			embedding.modelPath =
+				"hf:dinab/multilingual-e5-base-Q8_0-GGUF/multilingual-e5-base-q8_0.gguf";
 		} else if (localModel === "custom" && customPath?.trim()) {
 			embedding.modelPath = customPath.trim();
 		}

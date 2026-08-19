@@ -44,6 +44,19 @@ type PendingPermission = {
 	resolve: (response: acp.RequestPermissionResponse) => void;
 };
 
+/** codex-acp extension method that steers a live session (`_session/steering`). */
+const SESSION_STEERING_METHOD = "_session/steering";
+
+/** JSON-RPC code for "Method not found", returned for unregistered extension methods. */
+function isMethodNotFound(error: unknown): boolean {
+	return Boolean(
+		error &&
+			typeof error === "object" &&
+			"code" in error &&
+			(error as { code: unknown }).code === -32601,
+	);
+}
+
 /**
  * Starts an ACP server over strict stdio JSONL and completes the required
  * initialize → session/new → session/prompt lifecycle.
@@ -122,6 +135,27 @@ export class AcpRunClient {
 			sessionId,
 			prompt: [{ type: "text", text }],
 		});
+	}
+
+	/**
+	 * Deliver a steering instruction to the live agent session.
+	 *
+	 * Prefers the codex-acp `_session/steering` extension, which injects the
+	 * instruction into the running turn (or starts a new one when idle). Our
+	 * own pi worker implements the same extension. Agents that reject it as
+	 * method-not-found fall back to a plain follow-up `session/prompt` on the
+	 * same session, which enqueues a synthetic user message.
+	 */
+	async steerTurn(instruction: string): Promise<void> {
+		const connection = this.requireConnection();
+		const sessionId = this.requireSessionId();
+		const prompt: acp.ContentBlock[] = [{ type: "text", text: instruction }];
+		try {
+			await connection.agent.request(SESSION_STEERING_METHOD, { sessionId, prompt });
+		} catch (error) {
+			if (!isMethodNotFound(error)) throw error;
+			await connection.agent.request(acp.methods.agent.session.prompt, { sessionId, prompt });
+		}
 	}
 
 	async cancel(): Promise<void> {

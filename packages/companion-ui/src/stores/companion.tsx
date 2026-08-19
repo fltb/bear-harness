@@ -25,6 +25,8 @@
 import type { CompanionClient, MemoryCaptureResponse } from "@bear-harness/companion-client";
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import type { RoleplayState } from "@bear-harness/protocol";
+import type { z } from "@bear-harness/schema";
+import type { MemoryCandidate as MemoryCandidateSchema } from "@bear-harness/protocol/schema";
 import { useQueryClient } from "@tanstack/solid-query";
 import {
 	createContext,
@@ -90,6 +92,9 @@ import { createRpcMutation, createRpcQuery, queryKeys, refreshRpcQuery } from ".
 export * from "./ipc.js";
 export type { OnboardingStore } from "./onboarding.js";
 export { createOnboardingStore } from "./onboarding.js";
+/** Inferred wire shape of `memory.candidates.list` items (schema value import). */
+export type MemoryCandidate = z.infer<typeof MemoryCandidateSchema>;
+export type MemoryCandidateStatus = MemoryCandidate["status"];
 
 // ---------------------------------------------------------------------------
 // Contract types
@@ -170,6 +175,16 @@ export interface MemoryApi {
 	capture(entryId: string): Promise<MemoryCaptureResponse>;
 	forget(entryId: string): Promise<void>;
 	edit(entryId: string, newText: string): Promise<void>;
+	exclude(memoryId: string, excluded: boolean): Promise<void>;
+	/** Pending candidates awaiting user confirmation (reactive list). */
+	candidates(): MemoryCandidate[] | undefined;
+	listCandidates(status?: MemoryCandidate["status"]): Promise<MemoryCandidate[]>;
+	approveCandidate(
+		candidateId: string,
+		editedText?: string,
+		decidedScope?: MemoryScope,
+	): Promise<void>;
+	rejectCandidate(candidateId: string): Promise<void>;
 }
 
 export interface SettingsApi {
@@ -228,6 +243,8 @@ export interface RunApi {
 	list(): Promise<RunListData>;
 	pendingPermissions(): RunPermissionRequest[];
 	steer(runId: string, instruction: string): Promise<void>;
+	interrupt(runId: string): Promise<RunInfo>;
+	resume(runId: string): Promise<RunInfo>;
 	cancel(runId: string): Promise<RunInfo>;
 	respondPermission(runId: string, requestId: string, optionId: string): Promise<RunInfo>;
 }
@@ -407,6 +424,7 @@ interface CompanionState {
 	presence: PresenceState;
 	characterRuntimeByConversation: Record<string, CharacterRuntimeState>;
 	memoryEntries: MemoryEntry[] | undefined;
+	memoryCandidates: MemoryCandidate[] | undefined;
 	commissions: Commission[];
 	artifacts: Artifact[];
 	storyChanges: StoryChange[];
@@ -564,6 +582,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		runs: [],
 		presence: "idle",
 		memoryEntries: undefined,
+		memoryCandidates: undefined,
 		characterRuntimeByConversation: {},
 		commissions: [],
 		artifacts: [],
@@ -662,6 +681,13 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		setState("memoryEntries", entries);
 	};
 
+	const refreshMemoryCandidates = async (): Promise<void> => {
+		const { candidates } = await invoke(client, () =>
+			client.memory.candidatesList({ status: "pending" }),
+		);
+		setState("memoryCandidates", candidates);
+	};
+
 	const refreshCommissions = async (): Promise<void> => {
 		const { commissions } = await invoke(client, () => client.commission.list());
 		setState("commissions", commissions);
@@ -694,6 +720,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const refreshSupplementary = async (): Promise<void> => {
 		await Promise.all([
 			refreshMemoryEntries(),
+			refreshMemoryCandidates(),
 			refreshCommissions(),
 			refreshRuns(),
 			refreshArtifacts(),
@@ -927,6 +954,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			onboardingStore._applyEvent(event);
 		} else if (kind.startsWith("memory.")) {
 			debouncedRefetch(refreshMemoryEntries);
+			debouncedRefetch(refreshMemoryCandidates);
 		} else if (kind.startsWith("provider.")) {
 			void queryClient.invalidateQueries(
 				{ queryKey: queryKeys.providers },
@@ -1078,6 +1106,28 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 		edit: async (entryId, newText) => {
 			await invoke(client, () => client.memory.edit({ entryId, newText }));
+			debouncedRefetch(refreshMemoryEntries);
+		},
+		exclude: async (memoryId, excluded) => {
+			await invoke(client, () => client.memory.exclude({ memoryId, excluded }));
+			debouncedRefetch(refreshMemoryEntries);
+		},
+		candidates: () => state.memoryCandidates,
+		listCandidates: async (status) => {
+			const data = await invoke(client, () => client.memory.candidatesList({ status }));
+			setState("memoryCandidates", data.candidates);
+			return data.candidates;
+		},
+		approveCandidate: async (candidateId, editedText, decidedScope) => {
+			await invoke(client, () =>
+				client.memory.candidateApprove({ candidateId, editedText, decidedScope }),
+			);
+			debouncedRefetch(refreshMemoryCandidates);
+			debouncedRefetch(refreshMemoryEntries);
+		},
+		rejectCandidate: async (candidateId) => {
+			await invoke(client, () => client.memory.candidateReject({ candidateId }));
+			debouncedRefetch(refreshMemoryCandidates);
 			debouncedRefetch(refreshMemoryEntries);
 		},
 	};
@@ -1294,6 +1344,18 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		pendingPermissions: () => Object.values(state.pendingRunPermissions),
 		steer: async (runId, instruction) => {
 			await invoke(client, () => client.run.steer({ runId, instruction }));
+		},
+		interrupt: async (runId) => {
+			const data = await invoke(client, () => client.run.interrupt({ runId }));
+			void refreshRuns();
+			void refreshCommissions();
+			return data;
+		},
+		resume: async (runId) => {
+			const data = await invoke(client, () => client.run.resume({ runId }));
+			void refreshRuns();
+			void refreshCommissions();
+			return data;
 		},
 		cancel: async (runId) => {
 			const data = await invoke(client, () => client.run.cancel({ runId }));

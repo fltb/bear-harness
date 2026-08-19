@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type {
 	CompletedTurn,
+	EmbeddingService,
 	IMemoryStore,
 	L1RecordRow,
 	Logger,
@@ -442,6 +443,8 @@ class TdaiDirectMemoryFacade implements TencentDbMemoryCoreFacade {
 export class TencentDbRuntime {
 	readonly backend: TencentDbMemoryBackend;
 	private readonly core: TdaiCore;
+	private readonly config: MemoryTdaiConfig;
+	private readonly logger?: Logger;
 	private started = false;
 	private closed = false;
 
@@ -457,6 +460,8 @@ export class TencentDbRuntime {
 			logger: options.logger,
 		});
 		const config = deepMerge(DEFAULT_MEMORY_CONFIG, options.memoryConfig);
+		this.config = config;
+		this.logger = options.logger;
 		this.core = new TdaiCore({
 			hostAdapter: adapter,
 			config,
@@ -493,6 +498,44 @@ export class TencentDbRuntime {
 		// documented readiness gate used by its public operations.
 		await this.core.handleBeforeRecall("", "memory-runtime");
 		this.started = true;
+	}
+
+	/**
+	 * Preload the local embedding model in the background.
+	 *
+	 * TdaiCore deliberately does not call `startWarmup()` itself for local
+	 * providers (model download must happen at a host-chosen time). This method
+	 * is a no-op unless the effective embedding config uses a local provider; it
+	 * waits (bounded) for the store to finish initializing so the embedding
+	 * service exists, then kicks off the offline model download + load.
+	 *
+	 * @returns true when warmup was started on a local provider, false when the
+	 * config is not local or the service never became available.
+	 */
+	async startLocalEmbeddingWarmup(timeoutMs = 10_000): Promise<boolean> {
+		const embedding = this.config.embedding;
+		if (embedding.provider !== "local" || embedding.enabled === false) {
+			return false;
+		}
+		const service = await this.waitForEmbeddingService(timeoutMs);
+		if (!service) {
+			this.logger?.warn?.(
+				`[memory-tdai] local embedding service not ready within ${timeoutMs}ms; skipping warmup`,
+			);
+			return false;
+		}
+		service.startWarmup();
+		return true;
+	}
+
+	private async waitForEmbeddingService(timeoutMs: number): Promise<EmbeddingService | undefined> {
+		const deadline = Date.now() + timeoutMs;
+		for (;;) {
+			const service = this.core.getEmbeddingService();
+			if (service) return service;
+			if (Date.now() >= deadline) return undefined;
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
 	}
 
 	async close(signal?: AbortSignal): Promise<void> {

@@ -293,6 +293,7 @@ export const memoryPresentation = sqliteTable(
 		}).notNull(),
 		pinned: integer("pinned", { mode: "boolean" }).default(false).notNull(),
 		replacementMemoryId: text("replacement_memory_id"),
+		excludedAt: text("excluded_at"),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 		invalidatedAt: text("invalidated_at"),
@@ -550,7 +551,7 @@ export const executorProfiles = sqliteTable(
 	{
 		id: text().primaryKey(),
 		profileType: text("profile_type", {
-			enum: ["product-managed", "native-full", "codex"],
+			enum: ["product-managed", "codex"],
 		}).notNull(),
 		capabilityJson: text("capability_json", { mode: "json" })
 			.$type<Record<string, unknown>>()
@@ -561,7 +562,7 @@ export const executorProfiles = sqliteTable(
 	(table) => [
 		check(
 			"executor_profiles_check_20",
-			sql`profile_type IN ('product-managed','native-full','codex')`,
+			sql`profile_type IN ('product-managed','codex')`,
 		),
 	],
 );

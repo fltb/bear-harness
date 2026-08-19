@@ -21,12 +21,12 @@ const LOCAL_MODELS = [
 	},
 	{
 		id: "bge-base-zh",
-		source: "hf:CompendiumLabs/bge-small-zh-v1.5-gguf/bge-small-zh-v1.5-Q8_0.gguf",
+		source: "hf:CompendiumLabs/bge-small-zh-v1.5-gguf/bge-small-zh-v1.5-q8_0.gguf",
 		dimensions: 768,
 	},
 	{
 		id: "multilingual-e5",
-		source: "hf:intfloat/multilingual-e5-base-gguf/multilingual-e5-base-Q8_0.gguf",
+		source: "hf:dinab/multilingual-e5-base-Q8_0-GGUF/multilingual-e5-base-q8_0.gguf",
 		dimensions: 768,
 	},
 ] as const;
@@ -164,6 +164,11 @@ export function NetworkAndMemorySettings() {
 						{(state) => t(`settings.proxyModes.${state.selectedOption()}`)}
 					</Select.Value>
 				</Select.Trigger>
+				<Select.Portal>
+					<Select.Content class="select-content">
+						<Select.Listbox class="select-listbox" />
+					</Select.Content>
+				</Select.Portal>
 			</Select>
 			<Show when={proxyMode() === "manual"}>
 				<TextField class="setting-field">
@@ -204,6 +209,11 @@ export function NetworkAndMemorySettings() {
 							{(state) => t(`settings.vectorProviders.${state.selectedOption()}`)}
 						</Select.Value>
 					</Select.Trigger>
+					<Select.Portal>
+						<Select.Content class="select-content">
+							<Select.Listbox class="select-listbox" />
+						</Select.Content>
+					</Select.Portal>
 				</Select>
 				<Show when={vectorProvider() === "remote"}>
 					<Select
@@ -235,9 +245,14 @@ export function NetworkAndMemorySettings() {
 								}
 							</Select.Value>
 						</Select.Trigger>
-					</Select>
-					<TextField class="setting-field">
-						<TextField.Label>{t("settings.customBaseUrl")}</TextField.Label>
+						<Select.Portal>
+							<Select.Content class="select-content">
+								<Select.Listbox class="select-listbox" />
+							</Select.Content>
+						</Select.Portal>
+						</Select>
+						<TextField class="setting-field">
+							<TextField.Label>{t("settings.customBaseUrl")}</TextField.Label>
 						<TextField.Input
 							type="text"
 							placeholder="https://api.siliconflow.cn/v1"
@@ -301,8 +316,13 @@ export function NetworkAndMemorySettings() {
 								}
 							</Select.Value>
 						</Select.Trigger>
-					</Select>
-					<Show when={localModel() === "custom"}>
+						<Select.Portal>
+							<Select.Content class="select-content">
+								<Select.Listbox class="select-listbox" />
+							</Select.Content>
+						</Select.Portal>
+						</Select>
+						<Show when={localModel() === "custom"}>
 						<TextField class="setting-field">
 							<TextField.Label>{t("settings.localCustomPath")}</TextField.Label>
 							<TextField.Input

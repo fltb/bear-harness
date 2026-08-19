@@ -92,6 +92,7 @@ describe("database schema contract", () => {
 			"created_at",
 			"updated_at",
 			"invalidated_at",
+			"excluded_at",
 		]);
 		expect(columns.some((column) => column.name === "text" || column.name === "content")).toBe(
 			false,

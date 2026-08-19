@@ -595,23 +595,30 @@ export class CommissionService {
 	}
 
 	/** Interrupt an active run. Stays resumable (completed_at left null). */
-	interruptRun(runId: string): RunSummary {
+	async interruptRun(runId: string): Promise<RunSummary> {
 		const run = this.getRun(runId);
 		if (run.status !== "running" && run.status !== "needs_user") {
 			throw { kind: "conflict", reason: "run_not_interruptible" };
 		}
+		await this.executorRouter.interrupt(this.executorRun(run));
 		this.db.update(runs).set({ status: "interrupted" }).where(eq(runs.id, runId)).run();
 		this.eventBus.publish("run.interrupted", { runId });
 		return this.summarizeRun(this.getRun(runId));
 	}
 
 	/** Resume an interrupted (or user-paused) run back to running. */
-	resumeRun(runId: string): RunSummary {
+	async resumeRun(runId: string): Promise<RunSummary> {
 		const run = this.getRun(runId);
 		const resumable =
 			(run.status === "interrupted" || run.status === "needs_user") && run.completedAt === null;
 		if (!resumable) {
 			throw { kind: "conflict", reason: "run_not_resumable" };
+		}
+		// Re-prompt a paused executor turn (no permission response involved);
+		// permission-paused runs are resumed via respondToExecutorPermission,
+		// which already routed the response before calling resumeRun.
+		if (run.status === "interrupted") {
+			await this.executorRouter.resume(this.executorRun(run));
 		}
 		this.db.update(runs).set({ status: "running" }).where(eq(runs.id, runId)).run();
 		this.db

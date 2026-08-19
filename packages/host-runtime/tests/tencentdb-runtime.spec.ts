@@ -1,11 +1,14 @@
 // @vitest-environment node
 
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "@bear-harness/tdai-core";
-import { afterEach, describe, expect, it } from "vitest";
+import type { AssistantMessage, Context, ToolResultMessage } from "@earendil-works/pi-ai";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MemoryBackend, MemoryBankScope } from "../src/memory/backend.js";
+import { namespaceFor } from "../src/memory/tencentdb-backend.js";
+import { CyberBearHostAdapter } from "../src/memory/tencentdb-host-adapter.js";
 import { TencentDbRuntime } from "../src/memory/tencentdb-runtime.js";
 import type { ModelRegistry } from "../src/models/registry.js";
 import type { ProviderCatalog } from "../src/providers/catalog.js";
@@ -237,15 +240,18 @@ describe("TencentDbRuntime", () => {
 		}
 		await runtime.backend.open({ scope });
 
-		const first = await runtime.backend.remember({
-			scope,
-			text: "E2E_DIRECT_MEMORY_A：我们约定暗号是北辰",
-			provenance: {
-				kind: "explicit",
-				piSessionEntryIds: ["entry-a"],
-				sourceRef: "conversation-a",
+		const first = await runtime.backend.remember(
+			{
+				scope,
+				text: "E2E_DIRECT_MEMORY_A：我们约定暗号是北辰",
+				provenance: {
+					kind: "explicit",
+					piSessionEntryIds: ["entry-a"],
+					sourceRef: "conversation-a",
+				},
 			},
-		});
+			15_000,
+		);
 		const second = await runtime.backend.remember({
 			scope,
 			text: "E2E_DIRECT_MEMORY_B：我们约定暗号是北辰",
@@ -414,5 +420,412 @@ describe("TencentDbRuntime", () => {
 			// hybrid recall without vectors still has the FTS/BM25 path available
 			expect(native || store.getCapabilities().ftsSearch).toBe(true);
 		});
+	});
+	describe("automatic extraction pipeline", () => {
+		it("turns a settled conversation into backend memories via the L1 extractor", async () => {
+			const originalCompleteSimple = fakeModels.completeSimple;
+			let completeCalls = 0;
+			fakeModels.completeSimple = async () => {
+				completeCalls += 1;
+				return {
+					role: "assistant",
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify([
+								{
+									scene_name: "书房",
+									message_ids: [],
+									memories: [
+										{
+											content: "用户喜欢在深夜写作",
+											type: "preference",
+											priority: 0.8,
+											source_message_ids: [],
+											metadata: {},
+										},
+									],
+								},
+							]),
+						},
+					],
+				};
+			};
+			try {
+				const runtime = createRuntime(createRoot(), "role-a", {
+					pipeline: { everyNConversations: 1, enableWarmup: false, l1IdleTimeoutSeconds: 1 },
+					extraction: { enableDedup: false },
+				});
+				await runtime.start();
+				const scope = scopeFor("role-a");
+				await runtime.captureTurn({
+					userText: "我习惯深夜写东西",
+					assistantText: "好的，我记住了。",
+					messages: [
+						{ role: "user", content: "我习惯深夜写东西", timestamp: Date.now() + 1000 },
+						{ role: "assistant", content: "好的，我记住了。", timestamp: Date.now() + 2000 },
+					],
+					sessionKey: namespaceFor(scope),
+					sessionId: "conversation-1",
+				});
+
+				// The L1 runner fires on the conversation threshold (1) or the idle
+				// timeout; wait for the extracted memory to land in the backend.
+				await runtime.backend.open({ scope });
+				let records = await runtime.backend.list({ scope });
+				const deadline = Date.now() + 10_000;
+				while (records.length === 0 && Date.now() < deadline) {
+					await new Promise((resolve) => setTimeout(resolve, 200));
+					records = await runtime.backend.list({ scope });
+				}
+				expect(records.some((record) => record.text === "用户喜欢在深夜写作")).toBe(true);
+				void completeCalls;
+
+				// The extracted memory is recallable through the backend.
+				const hits = await runtime.backend.recall({ scope, query: "深夜写作", limit: 5 });
+				expect(hits.some(({ record }) => record.text === "用户喜欢在深夜写作")).toBe(true);
+			} finally {
+				// Restore shared fake so later tests are unaffected.
+				fakeModels.completeSimple = originalCompleteSimple;
+			}
+		}, 15_000);
+	});
+});
+
+// ============================
+// CyberBear tool-call loop (pi-ai runtime)
+// ============================
+
+type ToolModels = {
+	getModel: (providerId: string, modelId: string) => unknown;
+	getAvailable: (providerId: string) => Promise<unknown[]>;
+	complete: (model: unknown, context: Context) => Promise<AssistantMessage>;
+	completeSimple: (model: unknown, context: Context) => Promise<AssistantMessage>;
+};
+
+function fakeAssistant(content: unknown[], stopReason: string, text?: string) {
+	return {
+		role: "assistant",
+		content: text ? [{ type: "text", text }, ...content] : content,
+		api: "openai-completions",
+		provider: fakeModel.provider,
+		model: fakeModel.id,
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason,
+		timestamp: Date.now(),
+	};
+}
+
+function createToolRunner(models: ToolModels, workspaceDir: string) {
+	const adapter = new CyberBearHostAdapter({
+		dataDir: workspaceDir,
+		workspaceDir,
+		userId: "test-user",
+		companionId: "role-a",
+		providers: {
+			getModels: async () => models,
+		} as unknown as ProviderCatalog,
+		models: fakeModelRegistry,
+		logger,
+	});
+	return adapter.getLLMRunnerFactory().createRunner({
+		enableTools: true,
+		modelRef: `${fakeModel.provider}/${fakeModel.id}`,
+	});
+}
+
+function toolModels(complete: ToolModels["complete"], extra?: Partial<ToolModels>): ToolModels {
+	return {
+		getModel: (providerId, modelId) =>
+			providerId === fakeModel.provider && modelId === fakeModel.id ? fakeModel : undefined,
+		getAvailable: (providerId) =>
+			Promise.resolve(providerId === fakeModel.provider ? [fakeModel] : []),
+		complete,
+		completeSimple: async () => fakeAssistant([], "stop", "unused"),
+		...extra,
+	};
+}
+
+function toolResultText(results: readonly ToolResultMessage[], index: number): string {
+	const part = results[index]?.content.find((candidate) => candidate.type === "text");
+	return part && part.type === "text" ? part.text : "";
+}
+
+function jsonError(payloadText: string): string {
+	const payload = JSON.parse(payloadText) as unknown;
+	if (payload && typeof payload === "object" && "error" in payload) {
+		const error = payload.error;
+		return typeof error === "string" ? error : "";
+	}
+	return "";
+}
+
+describe("CyberBearLLMRunner tool loop", () => {
+	it("executes a sandboxed tool call and feeds the result back into the loop", async () => {
+		const root = createRoot();
+		writeFileSync(join(root, "note.txt"), "hello from the sandbox", "utf-8");
+		const observed: Context[] = [];
+		const complete = vi.fn(async (_model: unknown, context: Context) => {
+			observed.push(context);
+			if (observed.length === 1) {
+				return fakeAssistant(
+					[
+						{
+							type: "toolCall",
+							id: "call_1",
+							name: "read_file",
+							arguments: { path: "note.txt" },
+						},
+					],
+					"toolUse",
+				);
+			}
+			return fakeAssistant([], "stop", "contents read");
+		});
+		const runner = createToolRunner(toolModels(complete), root);
+
+		const result = await runner.run({
+			taskId: "test-tool-loop",
+			prompt: "Read note.txt",
+			workspaceDir: root,
+		});
+
+		expect(result).toBe("contents read");
+		expect(complete).toHaveBeenCalledTimes(2);
+		const toolResults = observed[1]?.messages.filter(
+			(message): message is ToolResultMessage => message.role === "toolResult",
+		);
+		expect(toolResults).toHaveLength(1);
+		expect(toolResults[0]).toMatchObject({
+			role: "toolResult",
+			toolCallId: "call_1",
+			toolName: "read_file",
+			isError: false,
+		});
+		expect(toolResults[0]?.content).toEqual([{ type: "text", text: "hello from the sandbox" }]);
+		// The assistant message carrying the tool call stays in the history.
+		expect(
+			observed[1]?.messages.some(
+				(message) =>
+					message.role === "assistant" && message.content.some((part) => part.type === "toolCall"),
+			),
+		).toBe(true);
+	});
+
+	it("rejects read_file and write_to_file paths that escape the workspace sandbox", async () => {
+		const root = createRoot();
+		const observed: Context[] = [];
+		const complete = vi.fn(async (_model: unknown, context: Context) => {
+			observed.push(context);
+			if (observed.length === 1) {
+				return fakeAssistant(
+					[
+						{
+							type: "toolCall",
+							id: "call_esc_read",
+							name: "read_file",
+							arguments: { path: "../../outside.txt" },
+						},
+						{
+							type: "toolCall",
+							id: "call_esc_write",
+							name: "write_to_file",
+							arguments: { path: "../escape.txt", content: "nope" },
+						},
+					],
+					"toolUse",
+				);
+			}
+			return fakeAssistant([], "stop", "done");
+		});
+		const runner = createToolRunner(toolModels(complete), root);
+
+		const result = await runner.run({
+			taskId: "test-tool-escape",
+			prompt: "Read and write outside the sandbox",
+			workspaceDir: root,
+		});
+
+		expect(result).toBe("done");
+		const toolResults = observed[1]?.messages.filter(
+			(message): message is ToolResultMessage => message.role === "toolResult",
+		);
+		expect(toolResults).toHaveLength(2);
+		expect(jsonError(toolResultText(toolResults ?? [], 0))).toContain("escapes workspace boundary");
+		expect(jsonError(toolResultText(toolResults ?? [], 1))).toContain("escapes workspace boundary");
+		// The escape attempt must not have created a file outside the sandbox.
+		expect(existsSync(join(root, "..", "escape.txt"))).toBe(false);
+	});
+
+	it("writes inside the workspace and replaces an existing substring", async () => {
+		const root = createRoot();
+		writeFileSync(join(root, "draft.txt"), "the old text", "utf-8");
+		const observed: Context[] = [];
+		type FakeToolCall = {
+			type: "toolCall";
+			id: string;
+			name: string;
+			arguments: Record<string, unknown>;
+		};
+		const callBatches: FakeToolCall[][] = [
+			[
+				{
+					type: "toolCall",
+					id: "call_write",
+					name: "write_to_file",
+					arguments: { path: "sub/new.txt", content: "first draft" },
+				},
+			],
+			[
+				{
+					type: "toolCall",
+					id: "call_replace",
+					name: "replace_in_file",
+					arguments: { path: "draft.txt", old_str: "old", new_str: "new" },
+				},
+			],
+		];
+		const complete = vi.fn(async (_model: unknown, context: Context) => {
+			observed.push(context);
+			if (observed.length <= callBatches.length) {
+				return fakeAssistant(callBatches[observed.length - 1] ?? [], "toolUse");
+			}
+			return fakeAssistant([], "stop", "all done");
+		});
+		const runner = createToolRunner(toolModels(complete), root);
+
+		const result = await runner.run({
+			taskId: "test-tool-write",
+			prompt: "Write and replace files",
+			workspaceDir: root,
+		});
+
+		expect(result).toBe("all done");
+		expect(complete).toHaveBeenCalledTimes(3);
+		expect(readFileSync(join(root, "sub", "new.txt"), "utf-8")).toBe("first draft");
+		expect(readFileSync(join(root, "draft.txt"), "utf-8")).toBe("the new text");
+		expect(observed[1]?.messages.some((m) => m.role === "toolResult" && m.isError)).toBe(false);
+	});
+
+	it("stops the loop after MAX_TOOL_ITERATIONS and returns accumulated text", async () => {
+		const root = createRoot();
+		const complete = vi.fn(async (_model: unknown) =>
+			fakeAssistant(
+				[
+					{
+						type: "toolCall",
+						id: "call_loop",
+						name: "read_file",
+						arguments: { path: "missing.txt" },
+					},
+				],
+				"toolUse",
+			),
+		);
+		const runner = createToolRunner(toolModels(complete), root);
+
+		const result = await runner.run({
+			taskId: "test-tool-limit",
+			prompt: "loop forever",
+			workspaceDir: root,
+		});
+
+		expect(complete).toHaveBeenCalledTimes(20);
+		expect(result).toBe("");
+	});
+
+	it("keeps the non-tools path on completeSimple without tools", async () => {
+		const root = createRoot();
+		const completeSimple = vi.fn(async () => fakeAssistant([], "stop", "plain text answer"));
+		const adapter = new CyberBearHostAdapter({
+			dataDir: root,
+			workspaceDir: root,
+			userId: "test-user",
+			companionId: "role-a",
+			providers: {
+				getModels: async () =>
+					toolModels(
+						async () => {
+							throw new Error("complete must not be used for text-only runs");
+						},
+						{ completeSimple },
+					),
+			} as unknown as ProviderCatalog,
+			models: fakeModelRegistry,
+			logger,
+		});
+		const runner = adapter
+			.getLLMRunnerFactory()
+			.createRunner({ modelRef: `${fakeModel.provider}/${fakeModel.id}` });
+
+		const result = await runner.run({
+			taskId: "test-text-only",
+			prompt: "Answer plainly",
+		});
+
+		expect(result).toBe("plain text answer");
+		expect(completeSimple).toHaveBeenCalledTimes(1);
+	});
+});
+
+// ============================
+// Local embedding warmup
+// ============================
+
+describe("TencentDbRuntime.startLocalEmbeddingWarmup", () => {
+	function embeddingCore(runtime: TencentDbRuntime) {
+		return (
+			runtime as unknown as {
+				core: { getEmbeddingService(): unknown };
+			}
+		).core as unknown as {
+			getEmbeddingService(): { startWarmup(): void } | undefined;
+		};
+	}
+
+	it("starts warmup on a local provider via the injected embedding service", async () => {
+		const runtime = createRuntime(createRoot(), "role-a", {
+			embedding: { provider: "local", enabled: true },
+		});
+		const startWarmup = vi.fn();
+		embeddingCore(runtime).getEmbeddingService = () => ({ startWarmup });
+
+		await expect(runtime.startLocalEmbeddingWarmup()).resolves.toBe(true);
+		expect(startWarmup).toHaveBeenCalledOnce();
+	});
+
+	it("polls until the embedding service becomes ready before warming up", async () => {
+		const runtime = createRuntime(createRoot(), "role-a", {
+			embedding: { provider: "local", enabled: true },
+		});
+		const startWarmup = vi.fn();
+		let probes = 0;
+		embeddingCore(runtime).getEmbeddingService = () => (++probes > 1 ? { startWarmup } : undefined);
+
+		await expect(runtime.startLocalEmbeddingWarmup(2_000)).resolves.toBe(true);
+		expect(startWarmup).toHaveBeenCalledOnce();
+		expect(probes).toBeGreaterThanOrEqual(2);
+	});
+
+	it("is a no-op for the default provider-less config", async () => {
+		const runtime = createRuntime(createRoot());
+
+		await expect(runtime.startLocalEmbeddingWarmup()).resolves.toBe(false);
+	});
+
+	it("returns false when the local service never becomes available", async () => {
+		const runtime = createRuntime(createRoot(), "role-a", {
+			embedding: { provider: "local", enabled: true },
+		});
+		embeddingCore(runtime).getEmbeddingService = () => undefined;
+
+		await expect(runtime.startLocalEmbeddingWarmup(150)).resolves.toBe(false);
 	});
 });

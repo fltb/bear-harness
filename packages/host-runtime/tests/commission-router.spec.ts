@@ -236,7 +236,7 @@ describe("CommissionService executor routing", () => {
 				});
 			},
 			async resume(_run, response) {
-				responses.push(response);
+				if (response) responses.push(response);
 			},
 		});
 		fixtures.push(fixture);

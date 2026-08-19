@@ -25,7 +25,7 @@ vi.mock("electron", () => ({
 	},
 }));
 
-import { wireElectronIpcHandlers } from "../src/main/ipc-router.js";
+import { PROTOCOL_AVAILABILITY_CHANNEL, wireElectronIpcHandlers } from "../src/main/ipc-router.js";
 
 const ALLOWED_URL = "file:///dist/renderer/index.html";
 const channel = Object.keys(REQUEST_SCHEMAS)[0];
@@ -50,10 +50,12 @@ beforeEach(() => {
 });
 
 describe("wireElectronIpcHandlers", () => {
-	it("registers every public protocol channel", () => {
+	it("registers every public protocol channel plus the host-shell availability channel", () => {
 		const { dispatch } = setup();
 
-		expect([...electron.handlers.keys()].sort()).toEqual(Object.keys(REQUEST_SCHEMAS).sort());
+		expect([...electron.handlers.keys()].sort()).toEqual(
+			[...Object.keys(REQUEST_SCHEMAS), PROTOCOL_AVAILABILITY_CHANNEL].sort(),
+		);
 		expect(dispatch).not.toHaveBeenCalled();
 	});
 
@@ -115,5 +117,49 @@ describe("wireElectronIpcHandlers", () => {
 			error: { kind: "unavailable", reason: "no_window" },
 		});
 		expect(dispatch).not.toHaveBeenCalled();
+	});
+
+	describe("desktop:artifactProtocol:v1", () => {
+		it("reports the protocol availability to the registered main frame", async () => {
+			electron.fromWebContents.mockReturnValue({});
+			const available = vi.fn().mockReturnValue(true);
+			const mainFrame = { url: ALLOWED_URL };
+			const dispatch = vi.fn();
+			wireElectronIpcHandlers(
+				{ dispatch } as unknown as Dispatcher,
+				new Map([[1, { allowedUrl: ALLOWED_URL }]]),
+				{ artifactProtocolAvailable: available },
+			);
+			const handler = electron.handlers.get(PROTOCOL_AVAILABILITY_CHANNEL);
+			if (!handler) throw new Error("availability channel not registered");
+
+			await expect(handler(mainFrameEvent(mainFrame), {})).resolves.toEqual({
+				ok: true,
+				data: { available: true },
+			});
+			expect(dispatch).not.toHaveBeenCalled();
+		});
+
+		it("defaults to unavailable when no callback is provided", async () => {
+			electron.fromWebContents.mockReturnValue({});
+			setup();
+			const handler = electron.handlers.get(PROTOCOL_AVAILABILITY_CHANNEL);
+			if (!handler) throw new Error("availability channel not registered");
+
+			await expect(handler(mainFrameEvent({ url: ALLOWED_URL }), {})).resolves.toEqual({
+				ok: true,
+				data: { available: false },
+			});
+		});
+
+		it("rejects a disallowed sender", async () => {
+			electron.fromWebContents.mockReturnValue(undefined);
+			const { handler } = setup();
+
+			await expect(handler(mainFrameEvent({ url: ALLOWED_URL }), {})).resolves.toEqual({
+				ok: false,
+				error: { kind: "unavailable", reason: "no_window" },
+			});
+		});
 	});
 });

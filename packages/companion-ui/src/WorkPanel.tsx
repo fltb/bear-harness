@@ -2,11 +2,24 @@ import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
 import { createSignal, For, Show } from "solid-js";
 import { useCompanionStore } from "./stores/companion.js";
+import type { RunInfo } from "./stores/ipc.js";
+
+/** Run statuses that keep a live control card in the work panel. */
+const ACTIVE_RUN_STATUSES = new Set(["enqueued", "running", "needs_user", "interrupted"]);
+
+function steerable(status: RunInfo["status"]): boolean {
+	return status === "running" || status === "needs_user";
+}
+
+function interruptible(status: RunInfo["status"]): boolean {
+	return status === "enqueued" || status === "running" || status === "needs_user";
+}
 
 export function WorkPanel() {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const [busyId, setBusyId] = createSignal<string>();
+	const [steerTexts, setSteerTexts] = createSignal<Record<string, string>>({});
 	const commissions = () =>
 		store.commission
 			.commissions()
@@ -20,13 +33,95 @@ export function WorkPanel() {
 			.artifacts()
 			.filter((artifact) => artifact.producerRunId && runIds.has(artifact.producerRunId));
 	};
+	const activeRuns = () => store.runs.filter((run) => ACTIVE_RUN_STATUSES.has(run.status));
+	const runTitle = (run: RunInfo) =>
+		commissions().find((commission) => commission.id === run.commissionId)?.draft.title ??
+		t("threadHead.runningWorkItem");
 	const visible = () =>
 		commissions().some((item) => item.status === "draft" || item.status === "approved") ||
 		store.run.pendingPermissions().length > 0 ||
-		artifacts().length > 0;
+		artifacts().length > 0 ||
+		activeRuns().length > 0;
+	const submitSteer = async (runId: string): Promise<void> => {
+		const instruction = steerTexts()[runId]?.trim();
+		if (!instruction) return;
+		setBusyId(runId);
+		try {
+			await store.run.steer(runId, instruction);
+			setSteerTexts((texts) => ({ ...texts, [runId]: "" }));
+		} finally {
+			setBusyId(undefined);
+		}
+	};
 	return (
 		<Show when={visible()}>
 			<section class="work-panel" aria-label={t("work.title")}>
+				<For each={activeRuns()}>
+					{(run) => (
+						<div class="action-proposal run-controls" data-run-status={run.status}>
+							<span class="system-label">
+								{t(`threadHead.runStatuses.${run.status}`) ?? t("threadHead.statusUpdating")}
+							</span>
+							<h3>{runTitle(run)}</h3>
+							<Show when={steerable(run.status)}>
+								<div class="steer-row">
+									<input
+										type="text"
+										class="steer-input"
+										aria-label={t("work.steerInputLabel")}
+										placeholder={t("work.steerPlaceholder")}
+										value={steerTexts()[run.id] ?? ""}
+										onInput={(event) =>
+											setSteerTexts((texts) => ({ ...texts, [run.id]: event.currentTarget.value }))
+										}
+										onKeyDown={(event) => {
+											if (event.key === "Enter") {
+												event.preventDefault();
+												void submitSteer(run.id);
+											}
+										}}
+									/>
+									<Button
+										data-control="command"
+										type="button"
+										disabled={busyId() !== undefined || !steerTexts()[run.id]?.trim()}
+										onClick={() => void submitSteer(run.id)}
+									>
+										{t("work.steer")}
+									</Button>
+								</div>
+							</Show>
+							<div class="work-actions">
+								<Show when={interruptible(run.status)}>
+									<Button
+										data-control="command"
+										type="button"
+										disabled={busyId() !== undefined}
+										onClick={() => {
+											setBusyId(run.id);
+											void store.run.interrupt(run.id).finally(() => setBusyId(undefined));
+										}}
+									>
+										{t("work.interrupt")}
+									</Button>
+								</Show>
+								<Show when={run.status === "interrupted"}>
+									<Button
+										data-control="command"
+										type="button"
+										disabled={busyId() !== undefined}
+										onClick={() => {
+											setBusyId(run.id);
+											void store.run.resume(run.id).finally(() => setBusyId(undefined));
+										}}
+									>
+										{t("work.resume")}
+									</Button>
+								</Show>
+							</div>
+						</div>
+					)}
+				</For>
 				<For each={commissions()}>
 					{(commission) => (
 						<Show when={commission.status === "draft" || commission.status === "approved"}>

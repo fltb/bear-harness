@@ -25,12 +25,32 @@ import {
 } from "./diagnostics/electron.js";
 import { e2eCredentialVault } from "./e2e-vault.js";
 import { electronCredentialVault } from "./electron-credential-vault.js";
+import {
+	ARTIFACT_SCHEME,
+	registerArtifactProtocol,
+	registerArtifactSchemePrivileges,
+} from "./artifact-protocol.js";
 import { wireElectronIpcHandlers } from "./ipc-router.js";
+import { UpdateService } from "./update-service.js";
 
 const DEV_RENDERER_URL = "http://127.0.0.1:3100";
 const DEV_RENDERER_URL_WITH_SLASH = `${DEV_RENDERER_URL}/`;
 const isSourceE2E =
 	!app.isPackaged && process.env.NODE_ENV === "test" && process.env.BEAR_E2E_SOURCE === "1";
+
+// The bear-artifact:// scheme must be privileged before app readiness.
+registerArtifactSchemePrivileges();
+
+const rendererHtmlPath = fileURLToPath(new URL("../renderer/index.html", import.meta.url));
+const loadFromHtml = app.isPackaged || isSourceE2E;
+const allowedUrl = loadFromHtml
+	? pathToFileURL(rendererHtmlPath).href
+	: DEV_RENDERER_URL_WITH_SLASH;
+
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let updateService: UpdateService | null = null;
+let updateTimer: NodeJS.Timeout | null = null;
+let artifactProtocolRegistered = false;
 
 // Unpackaged runs (dev, source e2e) never touch the real macOS login
 // keychain: Chromium would pop an authorization dialog for its own safe
@@ -124,6 +144,7 @@ function requestShutdown(exitCode: number): void {
 app.on("before-quit", (event) => {
 	if (shutdownComplete) return;
 	event.preventDefault();
+	if (updateTimer) clearInterval(updateTimer);
 	for (const span of windowSpans.splice(0)) span.end("cancelled");
 	const closeHost = hostRuntime ? hostRuntime.close() : Promise.resolve();
 	void closeHost.finally(() => {
@@ -153,14 +174,20 @@ function characterRoot(): string {
 
 async function initializeHost(): Promise<boolean> {
 	try {
+		const updater = updateService;
 		const runtime = createHostRuntime({
 			dataDir: userData,
 			characterRoot: characterRoot(),
 			productConfig,
 			credentialVault: isSourceE2E ? e2eCredentialVault : electronCredentialVault,
 			protocolViolationMode: app.isPackaged ? "isolate" : "throw",
+			artifactProtocolUrlFactory: (artifactId) =>
+				`${ARTIFACT_SCHEME}://artifact/${encodeURIComponent(artifactId)}`,
+			updateService: updater ? { check: () => updater.check() } : undefined,
 		});
-		wireElectronIpcHandlers(runtime.dispatcher, windowRegistry);
+		wireElectronIpcHandlers(runtime.dispatcher, windowRegistry, {
+			artifactProtocolAvailable: () => artifactProtocolRegistered,
+		});
 		await runtime.start();
 		hostRuntime = runtime;
 		return true;
@@ -171,11 +198,6 @@ async function initializeHost(): Promise<boolean> {
 }
 
 function createMainWindow(): void {
-	const rendererHtmlPath = fileURLToPath(new URL("../renderer/index.html", import.meta.url));
-	const loadFromHtml = app.isPackaged || isSourceE2E;
-	const allowedUrl = loadFromHtml
-		? pathToFileURL(rendererHtmlPath).href
-		: DEV_RENDERER_URL_WITH_SLASH;
 	if (!loadFromHtml && process.env.BEAR_RENDERER_URL !== DEV_RENDERER_URL) {
 		throw new Error(`BEAR_RENDERER_URL must be exactly ${DEV_RENDERER_URL} for development`);
 	}
@@ -268,7 +290,28 @@ diagnostics.runInSession(() => {
 	app
 		.whenReady()
 		.then(async () => {
+			updateService = new UpdateService({
+				feedUrl: productConfig.updateFeedUrl ?? "",
+				currentVersion: app.getVersion(),
+				stagingDir: join(userData, "updates"),
+			});
 			if (!(await initializeHost())) failInit("Failed to initialize companion host runtime");
+			const artifacts = hostRuntime?.artifacts;
+			if (!artifacts) failInit("Host runtime is unavailable");
+			registerArtifactProtocol({
+				get: (id) => artifacts.get(id),
+				readBlob: (id) => artifacts.readBlob(id),
+				allowedUrl,
+			});
+			artifactProtocolRegistered = true;
+			// Idle update checks every 6h; the renderer can also trigger on
+			// demand via the update.check:v1 RPC. No-op while the feed is empty.
+			updateTimer = setInterval(() => {
+				void updateService?.check().catch(() => {
+					// The state machine carries the error; the timer keeps running.
+				});
+			}, UPDATE_CHECK_INTERVAL_MS);
+			updateTimer.unref?.();
 			createMainWindow();
 		})
 		.catch((error: unknown) => {

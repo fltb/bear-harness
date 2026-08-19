@@ -27,6 +27,14 @@ type PiSession = {
 	cancelled: boolean;
 };
 
+/** Extension method used by the Host to steer a live ACP session. */
+const SESSION_STEERING_METHOD = "_session/steering";
+
+type SteeringParams = {
+	sessionId: string;
+	prompt: Array<{ type: string; text: string }>;
+};
+
 const authDir = requiredDirectory("BEAR_PI_AUTH_DIR");
 const sessionDir = requiredDirectory("BEAR_PI_SESSION_DIR");
 
@@ -101,6 +109,48 @@ class PiAcpAgent {
 		if (!session) return;
 		session.cancelled = true;
 		await session.agent.abort();
+	}
+
+	/**
+	 * Steer the live session: enqueue the instruction as a synthetic user
+	 * message. While the agent is streaming, `prompt(..., {streamingBehavior:
+	 * "steer"})` queues the message and it is delivered before the next LLM
+	 * call (the prompt handler's context stays valid for the turn); when idle
+	 * it starts a new turn on the same session, which keeps the full
+	 * conversation history as context and borrows this request's client
+	 * context for any tool calls.
+	 */
+	async steer(params: SteeringParams, context: acp.AgentContext): Promise<{ outcome: string }> {
+		const session = this.requireSession(params.sessionId);
+		const text = (params.prompt ?? [])
+			.filter((block) => block.type === "text")
+			.map((block) => block.text)
+			.join("\n\n");
+		if (!text) return { outcome: "failed" };
+		const streaming = session.agent.isStreaming;
+		if (streaming) {
+			await session.agent.prompt(text, { streamingBehavior: "steer" });
+		} else {
+			session.context = context;
+			try {
+				await session.agent.prompt(text, { streamingBehavior: "steer" });
+			} finally {
+				session.context = null;
+			}
+			// A brand-new turn ran to completion here; surface its final text so
+			// the Host summary captures it, mirroring the prompt handler.
+			const lastText = extractText(session.agent.state.messages.at(-1));
+			if (lastText) {
+				await context.notify(acp.methods.client.session.update, {
+					sessionId: params.sessionId,
+					update: {
+						sessionUpdate: "agent_message_chunk",
+						content: { type: "text", text: lastText },
+					},
+				});
+			}
+		}
+		return { outcome: streaming ? "injected" : "startedNewTurn" };
 	}
 
 	private async createPiSession(cwd: string, id: string): Promise<AgentSession> {
@@ -294,4 +344,9 @@ acp
 	.onRequest(acp.methods.agent.session.new, (ctx) => agent.newSession(ctx.params))
 	.onRequest(acp.methods.agent.session.prompt, (ctx) => agent.prompt(ctx.params, ctx.client))
 	.onNotification(acp.methods.agent.session.cancel, (ctx) => agent.cancel(ctx.params))
+	.onRequest(
+		SESSION_STEERING_METHOD,
+		(params: unknown) => params as SteeringParams,
+		(ctx) => agent.steer(ctx.params, ctx.client),
+	)
 	.connect(acp.ndJsonStream(input, output));

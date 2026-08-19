@@ -937,4 +937,24 @@ export const MIGRATIONS: Migration[] = [
 			INSERT INTO app_settings (id) VALUES (1);
 		`,
 	},
+	{
+		id: 19,
+		description: "Memory recall exclusion flag and executor profile CHECK rebuild",
+		up: `
+			ALTER TABLE memory_presentation ADD COLUMN excluded_at TEXT;
+
+			-- Rebuild executor_profiles without the unimplemented 'native-full' type.
+			CREATE TABLE executor_profiles_new (
+				id TEXT PRIMARY KEY,
+				profile_type TEXT NOT NULL CHECK (profile_type IN ('product-managed','codex')),
+				capability_json TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			INSERT INTO executor_profiles_new (id, profile_type, capability_json, created_at)
+				SELECT id, profile_type, capability_json, created_at FROM executor_profiles
+				WHERE profile_type != 'native-full';
+			DROP TABLE executor_profiles;
+			ALTER TABLE executor_profiles_new RENAME TO executor_profiles;
+		`,
+	},
 ];

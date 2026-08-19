@@ -18,6 +18,15 @@ export interface ProductConfig {
 	defaultCharacterId: string;
 	brandLicense: BrandLicense;
 	icon: string | null;
+	/**
+	 * Optional JSON update feed URL for the desktop auto-update service.
+	 * Empty string (the default) disables update checks entirely.
+	 * Feed format: a JSON array of `{ version, url, sha256 }` entries (newest
+	 * compatible version is picked by numeric major.minor.patch comparison) or
+	 * a single such object. `sha256: null` explicitly marks a checksum as
+	 * absent; a missing field rejects the entry at runtime.
+	 */
+	updateFeedUrl?: string;
 }
 
 export const productConfig: ProductConfig = {
@@ -37,4 +46,5 @@ export const productConfig: ProductConfig = {
 		modificationNotice: "",
 	},
 	icon: "packages/product-config/assets/icon.png",
+	updateFeedUrl: "",
 };

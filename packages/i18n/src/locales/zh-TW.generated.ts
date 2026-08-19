@@ -21,7 +21,9 @@ export const zhTW = {
 		"imageReadBy": "圖片由 {model} 讀取",
 		"imageModelMissing": "需要新增支援圖片的模型",
 		"openModelSettings": "開啟模型設定",
-		"attachmentLimits": "一次最多新增 {count} 個檔案，每個檔案不超過 {size} MB"
+		"attachmentLimits": "一次最多新增 {count} 個檔案，每個檔案不超過 {size} MB",
+		"stop": "停止",
+		"stopLabel": "停止回覆"
 	},
 	"sidebar": {
 		"search": "搜尋",
@@ -195,7 +197,18 @@ export const zhTW = {
 		"searchLabel": "搜尋記憶",
 		"search": "搜尋",
 		"clear": "清除",
-		"scopeTabsLabel": "記憶範圍"
+		"scopeTabsLabel": "記憶範圍",
+		"exclude": "從回憶中排除",
+		"included": "恢復參與回憶",
+		"excludedNote": "已排除",
+		"excludedDone": "已從回憶中排除",
+		"includedDone": "已恢復參與回憶",
+		"candidatesTitle": "待確認記憶",
+		"candidatesEmpty": "沒有待確認的記憶。",
+		"candidateApprove": "採納",
+		"candidateReject": "不採納",
+		"candidateEditedContent": "記憶內容",
+		"candidateScope": "範圍"
 	},
 	"settings": {
 		"note": "管理介面語言、模型服務和可在對話中使用的模型。",
@@ -379,6 +392,11 @@ export const zhTW = {
 		"allow": "允許這一次",
 		"deny": "不允許",
 		"stop": "停下來",
+		"steer": "指揮",
+		"steerInputLabel": "指揮指令",
+		"steerPlaceholder": "告訴正在進行的工作接下來該怎麼做…",
+		"interrupt": "中斷",
+		"resume": "繼續",
 		"download": "儲存副本",
 		"artifactStatuses": {
 			"created": "待檢查",

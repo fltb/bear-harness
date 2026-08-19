@@ -21,7 +21,11 @@ describe("ordinary-user backstage journey", () => {
 			}),
 		);
 		const store = {
-			memory: { search: vi.fn(() => Promise.resolve([])) },
+			memory: {
+				search: vi.fn(() => Promise.resolve([])),
+				candidates: () => [],
+				listCandidates: vi.fn(() => Promise.resolve([])),
+			},
 			characters: {
 				characters: () => [
 					{
@@ -67,7 +71,11 @@ describe("ordinary-user backstage journey", () => {
 		const revert = vi.fn(() => Promise.resolve());
 		const reset = vi.fn(() => Promise.resolve());
 		const store = {
-			memory: { search: vi.fn(() => Promise.resolve([])) },
+			memory: {
+				search: vi.fn(() => Promise.resolve([])),
+				candidates: () => [],
+				listCandidates: vi.fn(() => Promise.resolve([])),
+			},
 			characters: {
 				characters: () => [
 					{
@@ -134,7 +142,11 @@ describe("ordinary-user backstage journey", () => {
 		const user = userEvent.setup();
 		const importPackage = vi.fn(() => Promise.resolve());
 		const store = {
-			memory: { search: vi.fn(() => Promise.resolve([])) },
+			memory: {
+				search: vi.fn(() => Promise.resolve([])),
+				candidates: () => [],
+				listCandidates: vi.fn(() => Promise.resolve([])),
+			},
 			characters: { characters: () => [], activate: vi.fn(), import: importPackage },
 			settings: { data: () => ({ relationshipMemoryEnabled: false }), get: vi.fn() },
 			provider: { list: vi.fn(() => Promise.resolve({ providers: [] })), providers: () => [] },
@@ -229,7 +241,11 @@ describe("ordinary-user backstage journey", () => {
 		};
 		const store = {
 			roleplay: { values: { trust: 4 }, unlocked: ["night_memory"] },
-			memory: { search: vi.fn(() => Promise.resolve([])) },
+			memory: {
+				search: vi.fn(() => Promise.resolve([])),
+				candidates: () => [],
+				listCandidates: vi.fn(() => Promise.resolve([])),
+			},
 			settings: { data: () => ({ relationshipMemoryEnabled: false }), get: vi.fn() },
 			characters: { characters: () => [], activate: vi.fn() },
 		} as unknown as CompanionStore;
@@ -283,7 +299,14 @@ describe("ordinary-user backstage journey", () => {
 		const store = {
 			runs: [],
 			characters: { characters: () => [] },
-			memory: { list, search, edit, forget },
+			memory: {
+				list,
+				search,
+				edit,
+				forget,
+				candidates: () => [],
+				listCandidates: vi.fn(() => Promise.resolve([])),
+			},
 		} as unknown as CompanionStore;
 
 		const [backstageOpen, setBackstageOpen] = createSignal(false);

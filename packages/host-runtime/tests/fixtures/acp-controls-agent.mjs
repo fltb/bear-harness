@@ -1,8 +1,13 @@
 #!/usr/bin/env node
 
+// ACP agent fixture for mid-run control tests (steer / interrupt / resume).
+// The first session/prompt is held open until session/cancel; a subsequent
+// prompt (resume) finishes immediately. `_session/steering` is answered
+// directly so the Host steer path is exercised end to end.
+
 let buffer = "";
 let promptId = null;
-let permissionId = null;
+let paused = false;
 
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -22,17 +27,6 @@ function send(message) {
 
 function finish(stopReason = "end_turn") {
 	if (promptId === null) return;
-	send({
-		method: "session/update",
-		params: {
-			sessionId: "fixture-session",
-			update: {
-				sessionUpdate: "tool_call_update",
-				toolCallId: "tool-1",
-				status: stopReason === "cancelled" ? "failed" : "completed",
-			},
-		},
-	});
 	send({ id: promptId, result: { stopReason } });
 	promptId = null;
 }
@@ -44,7 +38,7 @@ function handle(message) {
 			result: {
 				protocolVersion: 1,
 				agentCapabilities: { loadSession: false },
-				agentInfo: { name: "fixture", version: "1" },
+				agentInfo: { name: "controls-fixture", version: "1" },
 			},
 		});
 		return;
@@ -54,6 +48,21 @@ function handle(message) {
 		return;
 	}
 	if (message.method === "session/prompt") {
+		if (paused) {
+			// Resume after an interrupt: the session survives, so a fresh
+			// prompt completes the run.
+			paused = false;
+			send({ id: message.id, result: { stopReason: "end_turn" } });
+			return;
+		}
+		if (promptId !== null) {
+			// A prompt is already in flight; the controls fixture only holds one.
+			send({
+				id: message.id,
+				error: { code: -32603, message: "prompt already active", data: {} },
+			});
+			return;
+		}
 		promptId = message.id;
 		send({
 			method: "session/update",
@@ -68,47 +77,15 @@ function handle(message) {
 				},
 			},
 		});
-		if (process.env.FIXTURE_PERMISSION === "1") {
-			permissionId = "agent-permission-1";
-			send({
-				id: permissionId,
-				method: "session/request_permission",
-				params: {
-					sessionId: "fixture-session",
-					toolCall: {
-						toolCallId: "tool-1",
-						title: "Write approved file",
-						kind: "edit",
-						status: "pending",
-					},
-					options: [
-						{ optionId: "allow", kind: "allow_once", name: "Allow once" },
-						{ optionId: "deny", kind: "reject_once", name: "Deny" },
-					],
-				},
-			});
-		} else {
-			finish();
-		}
+		// Hold the first prompt open: finish() only runs on session/cancel.
 		return;
 	}
-	if (message.id === permissionId) {
-		permissionId = null;
-		finish();
+	if (message.method === "_session/steering") {
+		send({ id: message.id, result: { outcome: "injected" } });
 		return;
 	}
 	if (message.method === "session/cancel") {
+		paused = true;
 		finish("cancelled");
-	}
-	if (message.method === "_session/steering") {
-		// Unregistered extension methods are rejected like the ACP SDK does.
-		send({
-			id: message.id,
-			error: {
-				code: -32601,
-				message: "Method not found",
-				data: { method: "_session/steering" },
-			},
-		});
 	}
 }

@@ -223,6 +223,10 @@ export function createTestClient() {
 			pin: vi.fn(() => ok(null)),
 			forget: vi.fn(() => ok(null)),
 			edit: vi.fn(() => ok(null)),
+			exclude: vi.fn(() => ok(null)),
+			candidatesList: vi.fn(() => ok({ candidates: [] })),
+			candidateApprove: vi.fn(() => ok(null)),
+			candidateReject: vi.fn(() => ok(null)),
 		},
 		story: {
 			listChanges: vi.fn(() => ok({ changes: [] })),
@@ -279,6 +283,8 @@ export function createTestClient() {
 		run: {
 			list: vi.fn(() => ok({ runs: [] })),
 			steer: vi.fn(() => ok(null)),
+			interrupt: vi.fn(() => ok(null)),
+			resume: vi.fn(() => ok(null)),
 			cancel: vi.fn(() => ok(null)),
 			respondPermission: vi.fn(() => ok(null)),
 		},

@@ -20,6 +20,10 @@ import type {
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_SUMMARY_CHARS = 12_000;
 
+/** Prompt used to re-prompt a paused run after an interrupt (session keeps its history). */
+const CONTINUATION_PROMPT =
+	"Continue the approved action from where you left off. Work only within the approved scope and report the result concisely when done.";
+
 type AllowedRoot = {
 	lexical: string;
 	canonical: string | null;
@@ -31,6 +35,10 @@ type ActiveRun = {
 	pendingPermissionIds: Set<string>;
 	messageParts: string[];
 	settled: boolean;
+	/** A user interrupt is in flight; the next cancelled turn must pause, not settle. */
+	interruptRequested: boolean;
+	/** The run's turn has been paused by interrupt and awaits `resume`. */
+	paused: boolean;
 };
 
 /** Host-side ACP filesystem implementation for one approved run. */
@@ -156,6 +164,8 @@ export abstract class AcpExecutorController implements ExecutorController {
 			pendingPermissionIds: new Set(),
 			messageParts: [],
 			settled: false,
+			interruptRequested: false,
+			paused: false,
 		};
 		this.activeRuns.set(request.run.runId, active);
 
@@ -175,20 +185,87 @@ export abstract class AcpExecutorController implements ExecutorController {
 		await active.client.cancel();
 	}
 
-	async resume(run: ExecutorRun, response: ExecutorPermissionResponse): Promise<void> {
+	/**
+	 * Deliver a steering instruction to the live agent turn.
+	 *
+	 * Profile behavior: both registered profiles (Pi `product-managed` worker
+	 * and Codex) speak ACP and share this implementation. The instruction is
+	 * sent as the `_session/steering` extension — the Pi worker enqueues it as
+	 * a synthetic user message into the running session (delivered before the
+	 * next LLM call), and codex-acp injects it into the live turn natively.
+	 * Agents without the extension receive a follow-up `session/prompt`, which
+	 * the Pi worker also handles as a queued follow-up. Steering is a pure
+	 * signal: no run state changes.
+	 */
+	async steer(run: ExecutorRun, instruction: string): Promise<void> {
 		const active = this.requireActive(run.runId);
-		if (!active.pendingPermissionIds.delete(response.requestId)) {
-			throw { kind: "not_found", reason: "executor_permission_not_found" };
+		if (active.settled) throw { kind: "conflict", reason: "executor_not_running" };
+		await active.client.steerTurn(instruction);
+	}
+
+	/**
+	 * Pause an active run without killing it.
+	 *
+	 * Sends the ACP `session/cancel` notification: the worker aborts the
+	 * current turn and the in-flight prompt resolves with `stopReason:
+	 * "cancelled"`, but the agent process and session stay alive so `resume`
+	 * can re-prompt on the same session. Profile behavior: the Pi worker marks
+	 * the session cancelled and aborts the turn; codex-acp cancels the active
+	 * turn the same way.
+	 */
+	async interrupt(run: ExecutorRun): Promise<void> {
+		const active = this.requireActive(run.runId);
+		if (active.settled) throw { kind: "conflict", reason: "executor_not_running" };
+		active.interruptRequested = true;
+		await active.client.cancel();
+	}
+
+	/**
+	 * Resume a paused run, or resolve a pending permission request.
+	 *
+	 * With `response`, resolves the matching ACP permission request (the
+	 * `needs_user` path). Without one, requires the run to be paused by an
+	 * interrupt and re-prompts the same session with a continuation
+	 * instruction; the worker's session history supplies the remaining
+	 * context. Profile behavior: the Pi worker continues the same agent
+	 * session with a follow-up prompt; codex-acp resumes on the same session.
+	 */
+	async resume(run: ExecutorRun, response?: ExecutorPermissionResponse): Promise<void> {
+		const active = this.requireActive(run.runId);
+		if (response) {
+			if (!active.pendingPermissionIds.delete(response.requestId)) {
+				throw { kind: "not_found", reason: "executor_permission_not_found" };
+			}
+			active.client.respondToPermission(response.requestId, response.optionId);
+			return;
 		}
-		active.client.respondToPermission(response.requestId, response.optionId);
+		if (active.settled) throw { kind: "conflict", reason: "executor_not_running" };
+		if (!active.paused) throw { kind: "conflict", reason: "executor_not_paused" };
+		active.paused = false;
+		void this.runPrompt(active, CONTINUATION_PROMPT);
 	}
 
 	protected abstract processSpec(request: ExecutorLaunchRequest): AcpProcessSpec;
 
-	private async runPrompt(active: ActiveRun): Promise<void> {
+	private async runPrompt(
+		active: ActiveRun,
+		text = executionPrompt(active.request),
+	): Promise<void> {
 		try {
-			const response = await active.client.prompt(executionPrompt(active.request));
+			const response = await active.client.prompt(text);
 			if (response.stopReason === "cancelled") {
+				if (active.interruptRequested) {
+					// The turn was paused by a user interrupt: keep the process and
+					// session alive so `resume` can re-prompt on the same session.
+					active.interruptRequested = false;
+					active.paused = true;
+					active.request.emit({
+						type: "evidence",
+						kind: "run.paused",
+						data: { runId: active.request.run.runId },
+					});
+					return;
+				}
 				this.settle(active, { type: "cancelled" });
 			} else {
 				this.settle(active, {

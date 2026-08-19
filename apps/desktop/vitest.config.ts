@@ -20,6 +20,8 @@ export default defineConfig({
 			"tests/config/**/*.spec.ts",
 			"tests/diagnostics/electron-wiring.spec.ts",
 			"tests/ipc-router.spec.ts",
+			"tests/artifact-protocol.spec.ts",
+			"tests/update-service.spec.ts",
 		],
 		coverage: {
 			provider: "v8",

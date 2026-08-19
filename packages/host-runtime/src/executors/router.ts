@@ -65,7 +65,9 @@ export interface ExecutorController {
 	launch(request: ExecutorLaunchRequest): Promise<void>;
 	cancel?(run: ExecutorRun): Promise<void>;
 	steer?(run: ExecutorRun, instruction: string): Promise<void>;
-	resume?(run: ExecutorRun, response: ExecutorPermissionResponse): Promise<void>;
+	interrupt?(run: ExecutorRun): Promise<void>;
+	/** Resolve a pending permission with `response`, or re-prompt a paused run when `response` is omitted. */
+	resume?(run: ExecutorRun, response?: ExecutorPermissionResponse): Promise<void>;
 }
 
 const PROFILE_TYPES = new Set<ExecutorProfileType>(["product-managed", "native-full", "codex"]);
@@ -115,7 +117,13 @@ export class ExecutorRouter {
 		await controller.steer(run, instruction);
 	}
 
-	async resume(run: ExecutorRun, response: ExecutorPermissionResponse): Promise<void> {
+	async interrupt(run: ExecutorRun): Promise<void> {
+		const { controller } = this.resolve(run.executorProfile);
+		if (!controller.interrupt) unavailable("executor_interrupt_unsupported");
+		await controller.interrupt(run);
+	}
+
+	async resume(run: ExecutorRun, response?: ExecutorPermissionResponse): Promise<void> {
 		const { controller } = this.resolve(run.executorProfile);
 		if (!controller.resume) unavailable("executor_resume_unsupported");
 		await controller.resume(run, response);

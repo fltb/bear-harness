@@ -208,6 +208,8 @@ describe("store RPC contract", () => {
 			status: "running" as const,
 		};
 		client.run.cancel = vi.fn(() => Promise.resolve({ ok: true as const, data: runResult }));
+		client.run.interrupt = vi.fn(() => Promise.resolve({ ok: true as const, data: runResult }));
+		client.run.resume = vi.fn(() => Promise.resolve({ ok: true as const, data: runResult }));
 		client.run.respondPermission = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: runResult }),
 		);
@@ -224,6 +226,11 @@ describe("store RPC contract", () => {
 			await store.memory.list({ scope: "relationship" });
 			await store.memory.edit("memory-1", "new memory");
 			await store.memory.forget("memory-1");
+			await store.memory.exclude("memory-1", true);
+			await store.memory.listCandidates();
+			await store.memory.listCandidates("pending");
+			await store.memory.approveCandidate("candidate-1", "edited", "scene");
+			await store.memory.rejectCandidate("candidate-1");
 
 			await store.provider.list();
 			await store.provider.customUpsert({
@@ -280,6 +287,8 @@ describe("store RPC contract", () => {
 			await store.commission.launch("commission-1", "pi-product-managed");
 			await store.run.list();
 			await store.run.steer("run-1", "continue carefully");
+			await store.run.interrupt("run-1");
+			await store.run.resume("run-1");
 			await store.run.cancel("run-1");
 			await store.run.respondPermission("run-1", "permission-1", "allow");
 			await store.artifact.list();
@@ -299,6 +308,14 @@ describe("store RPC contract", () => {
 				entryId: "memory-1",
 				newText: "new memory",
 			});
+			expect(client.memory.exclude).toHaveBeenCalledWith({ memoryId: "memory-1", excluded: true });
+			expect(client.memory.candidatesList).toHaveBeenCalledWith({ status: "pending" });
+			expect(client.memory.candidateApprove).toHaveBeenCalledWith({
+				candidateId: "candidate-1",
+				editedText: "edited",
+				decidedScope: "scene",
+			});
+			expect(client.memory.candidateReject).toHaveBeenCalledWith({ candidateId: "candidate-1" });
 			expect(client.provider.overrideBaseUrl).toHaveBeenCalledWith({
 				providerId: "relay",
 				baseUrl: "https://override.example/v1",
@@ -314,6 +331,8 @@ describe("store RPC contract", () => {
 				commissionId: "commission-1",
 				executorProfile: "pi-product-managed",
 			});
+			expect(client.run.interrupt).toHaveBeenCalledWith({ runId: "run-1" });
+			expect(client.run.resume).toHaveBeenCalledWith({ runId: "run-1" });
 		} finally {
 			dispose();
 		}

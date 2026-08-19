@@ -622,6 +622,57 @@ export const MemoryListRequest = z.strictObject({
 export const MemoryForgetRequest = z.strictObject({
 	entryId: z.string().min(1).max(128),
 });
+
+export const MemoryCandidate = z.strictObject({
+	id: z.string().min(1).max(64),
+	kind: z.union([
+		z.literal("fact"),
+		z.literal("preference"),
+		z.literal("event"),
+		z.literal("self_canon_summary"),
+	]),
+	sourceKind: z.union([
+		z.literal("user_button"),
+		z.literal("user_request"),
+		z.literal("companion_suggestion"),
+		z.literal("extractor"),
+	]),
+	normalizedText: z.string().max(MAX_STRING_LENGTH),
+	why: z.string().max(MAX_STRING_LENGTH),
+	suggestedScope: MemoryScope,
+	status: z.union([
+		z.literal("pending"),
+		z.literal("approved"),
+		z.literal("rejected"),
+		z.literal("expired"),
+	]),
+	createdAt: z.string().max(64),
+});
+export const MemoryCandidatesListRequest = z.strictObject({
+	status: z
+		.union([
+			z.literal("pending"),
+			z.literal("approved"),
+			z.literal("rejected"),
+			z.literal("expired"),
+		])
+		.optional(),
+});
+export const MemoryCandidatesListResponse = z.strictObject({
+	candidates: z.array(MemoryCandidate).max(MAX_ARRAY_LENGTH),
+});
+export const MemoryCandidateApproveRequest = z.strictObject({
+	candidateId: z.string().min(1).max(64),
+	editedText: z.string().max(MAX_STRING_LENGTH).optional(),
+	decidedScope: MemoryScope.optional(),
+});
+export const MemoryCandidateRejectRequest = z.strictObject({
+	candidateId: z.string().min(1).max(64),
+});
+export const MemoryExcludeRequest = z.strictObject({
+	memoryId: z.string().min(1).max(128),
+	excluded: z.boolean(),
+});
 export const MemoryEditRequest = z.strictObject({
 	entryId: z.string().min(1).max(128),
 	newText: z.string().min(1).max(MAX_STRING_LENGTH),
@@ -1035,6 +1086,12 @@ export const RunSteerRequest = z.strictObject({
 	runId: z.string().min(1).max(64),
 	instruction: z.string().min(1).max(MAX_STRING_LENGTH),
 });
+export const RunInterruptRequest = z.strictObject({
+	runId: z.string().min(1).max(64),
+});
+export const RunResumeRequest = z.strictObject({
+	runId: z.string().min(1).max(64),
+});
 export const RunCancelRequest = z.strictObject({
 	runId: z.string().min(1).max(64),
 });
@@ -1104,6 +1161,13 @@ export const ArtifactReadResponse = z.strictObject({
 	mime: z.string().max(128),
 	base64: z.string().max(64_000_000),
 });
+export const ArtifactUrlRequest = z.strictObject({
+	artifactId: z.string().min(1).max(64),
+});
+export const ArtifactUrlResponse = z.strictObject({
+	/** Custom-scheme URL (bear-artifact://...) when the desktop protocol handler is registered; empty string otherwise. */
+	url: z.string().max(2048),
+});
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -1151,6 +1215,66 @@ export const SettingsPatch = z.strictObject({
 });
 export const SettingsSetRequest = z.strictObject({
 	settings: SettingsPatch,
+});
+
+// ---------------------------------------------------------------------------
+// Update
+// ---------------------------------------------------------------------------
+
+export const UpdateCheckRequest = z.strictObject({});
+export const UpdateStateValue = z.union([
+	z.literal("disabled"),
+	z.literal("idle"),
+	z.literal("checking"),
+	z.literal("available"),
+	z.literal("downloading"),
+	z.literal("downloaded"),
+	z.literal("verifying"),
+	z.literal("ready"),
+	z.literal("error"),
+]);
+export const UpdateCheckResponse = z.strictObject({
+	state: UpdateStateValue,
+	currentVersion: z.string().max(64).optional(),
+	latestVersion: z.string().max(64).optional(),
+	feedUrl: z.string().max(2048).optional(),
+	error: z.string().max(512).optional(),
+});
+
+// ---------------------------------------------------------------------------
+// Audit
+// ---------------------------------------------------------------------------
+
+export const AuditEntryKind = z.union([
+	z.literal("commission"),
+	z.literal("run"),
+	z.literal("permission"),
+	z.literal("fsop"),
+	z.literal("memory"),
+	z.literal("config"),
+]);
+export const AuditEntry = z.strictObject({
+	id: z.string().min(1).max(128),
+	seq: z.number().int().safe().min(1),
+	kind: AuditEntryKind,
+	action: z.string().min(1).max(128),
+	detail: z.string().max(MAX_STRING_LENGTH),
+	hash: z.string().max(128),
+	prevHash: z.string().max(128),
+	createdAt: z.string().max(64),
+});
+export const AuditListRequest = z.strictObject({
+	limit: z.number().int().safe().min(1).max(500).optional(),
+	afterSeq: z.number().int().safe().min(0).optional(),
+});
+export const AuditListResponse = z.strictObject({
+	entries: z.array(AuditEntry).max(500),
+	oldestSeq: z.number().int().safe().min(0),
+});
+export const AuditExportRequest = z.strictObject({});
+export const AuditExportResponse = z.strictObject({
+	lines: z.string().max(32_000_000),
+	verified: z.boolean(),
 });
 export const ProviderCustomUpsertRequest = z.strictObject({
 	providerId: z
@@ -1368,6 +1492,22 @@ export const RPC = {
 		capture: endpoint("memory.capture:v1", MemoryCaptureRequest, MemoryCaptureResponse),
 		forget: endpoint("memory.forget:v1", MemoryForgetRequest, EmptyResponse),
 		edit: endpoint("memory.edit:v1", MemoryEditRequest, EmptyResponse),
+		exclude: endpoint("memory.exclude:v1", MemoryExcludeRequest, EmptyResponse),
+		candidatesList: endpoint(
+			"memory.candidates.list:v1",
+			MemoryCandidatesListRequest,
+			MemoryCandidatesListResponse,
+		),
+		candidateApprove: endpoint(
+			"memory.candidate.approve:v1",
+			MemoryCandidateApproveRequest,
+			EmptyResponse,
+		),
+		candidateReject: endpoint(
+			"memory.candidate.reject:v1",
+			MemoryCandidateRejectRequest,
+			EmptyResponse,
+		),
 	},
 	story: {
 		listChanges: endpoint(
@@ -1473,6 +1613,8 @@ export const RPC = {
 	run: {
 		list: endpoint("run.list:v1", RunListRequest, RunListResponse),
 		steer: endpoint("run.steer:v1", RunSteerRequest, EmptyResponse),
+		interrupt: endpoint("run.interrupt:v1", RunInterruptRequest, RunResponse),
+		resume: endpoint("run.resume:v1", RunResumeRequest, RunResponse),
 		cancel: endpoint("run.cancel:v1", RunCancelRequest, RunResponse),
 		respondPermission: endpoint(
 			"run.respondPermission:v1",
@@ -1483,10 +1625,18 @@ export const RPC = {
 	artifact: {
 		list: endpoint("artifact.list:v1", ArtifactListRequest, ArtifactListResponse),
 		read: endpoint("artifact.read:v1", ArtifactReadRequest, ArtifactReadResponse),
+		url: endpoint("artifact.url:v1", ArtifactUrlRequest, ArtifactUrlResponse),
 	},
 	settings: {
 		get: endpoint("settings.get:v1", SettingsGetRequest, SettingsResponse),
 		set: endpoint("settings.set:v1", SettingsSetRequest, SettingsResponse),
+	},
+	update: {
+		check: endpoint("update.check:v1", UpdateCheckRequest, UpdateCheckResponse),
+	},
+	audit: {
+		list: endpoint("audit.list:v1", AuditListRequest, AuditListResponse),
+		export: endpoint("audit.export:v1", AuditExportRequest, AuditExportResponse),
 	},
 } as const;
 export type AnyRpcEndpoint = RpcEndpoint;

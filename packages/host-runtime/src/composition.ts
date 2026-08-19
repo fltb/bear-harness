@@ -13,7 +13,7 @@
 
 import type { MemoryEntry, MemoryListResponse, MemorySearchResponse } from "@bear-harness/protocol";
 import { CharacterRuntimeState, RPC } from "@bear-harness/protocol/schema";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, and } from "drizzle-orm";
 import type { ArtifactStore } from "./artifacts/index.js";
 import type { CanonHubService } from "./canon/service.js";
 import type { CommissionService, RunStatus } from "./commissions/service.js";
@@ -39,6 +39,10 @@ import {
 	activeCharacter,
 	companionIdentity,
 	conversations,
+	memoryCandidates,
+	memoryDecisions,
+	memoryPresentation,
+	relationshipMemoryEntries,
 	runs,
 	sceneState,
 } from "./storage/schema.js";
@@ -68,6 +72,28 @@ export interface HostCompositionContext {
 	/** Product-local directory for Pi conversation session files. */
 	conversationRepository: ConversationRepository;
 	piSessionDir: string;
+	/** Bear artifact custom-scheme URL factory (desktop only; undefined on web). */
+	artifactUrlFactory?: (artifactId: string) => string;
+	/** Optional update checker (desktop only; undefined on web). */
+	updateService?: { check(): Promise<unknown> };
+	/** Optional hash-chained audit store (security layer). */
+	auditStore?: {
+		append(kind: string, action: string, detail: string): Promise<unknown>;
+		list(params: { limit?: number; afterSeq?: number }): Promise<{
+			entries: Array<{
+				id: string;
+				seq: number;
+				kind: string;
+				action: string;
+				detail: string;
+				hash: string;
+				prevHash: string;
+				createdAt: string;
+			}>;
+			oldestSeq: number;
+		}>;
+		exportLines(): Promise<{ lines: string; verified: boolean }>;
+	};
 }
 
 function oauthWire(state: Awaited<ReturnType<ProviderCatalog["startOAuth"]>>) {
@@ -412,6 +438,196 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		await s.memoryBackend.update({ scope, memoryId: entryId, text: newText });
 		return {};
 	});
+	dispatcher.registerHandler(RPC.memory.exclude, async (_p) => {
+		const { memoryId, excluded } = _p as { memoryId: string; excluded: boolean };
+		const { installationId, userId } = s.memoryScope;
+		const companionId = await getCompanionId(s);
+		if (excluded) {
+			const now = new Date().toISOString();
+			const existing = s.orm
+				.select({ backendMemoryId: memoryPresentation.backendMemoryId })
+				.from(memoryPresentation)
+				.where(
+					and(
+						eq(memoryPresentation.backendMemoryId, memoryId),
+						eq(memoryPresentation.installationId, installationId),
+						eq(memoryPresentation.userId, userId),
+						eq(memoryPresentation.companionId, companionId),
+					),
+				)
+				.get();
+			if (existing) {
+				s.orm
+					.update(memoryPresentation)
+					.set({ excludedAt: now })
+					.where(
+						and(
+							eq(memoryPresentation.backendMemoryId, memoryId),
+							eq(memoryPresentation.installationId, installationId),
+							eq(memoryPresentation.userId, userId),
+							eq(memoryPresentation.companionId, companionId),
+						),
+					)
+					.run();
+			} else {
+				s.orm
+					.insert(memoryPresentation)
+					.values({
+						backendMemoryId: memoryId,
+						installationId,
+						userId,
+						companionId,
+						sourcePiEntryId: null,
+						createdBy: "auto_episode",
+						pinned: false,
+						excludedAt: now,
+					})
+					.onConflictDoUpdate({
+						target: [
+							memoryPresentation.backendMemoryId,
+							memoryPresentation.installationId,
+							memoryPresentation.userId,
+							memoryPresentation.companionId,
+						],
+						set: { excludedAt: now },
+					})
+					.run();
+			}
+		} else {
+			s.orm
+				.update(memoryPresentation)
+				.set({ excludedAt: null })
+				.where(
+					and(
+						eq(memoryPresentation.backendMemoryId, memoryId),
+						eq(memoryPresentation.installationId, installationId),
+						eq(memoryPresentation.userId, userId),
+						eq(memoryPresentation.companionId, companionId),
+					),
+				)
+				.run();
+		}
+		return {};
+	});
+	dispatcher.registerHandler(RPC.memory.candidatesList, async (_p) => {
+		const { status } = _p as { status?: string };
+		const companionId = await getCompanionId(s);
+		const rows = s.orm
+			.select({
+				id: memoryCandidates.id,
+				kind: memoryCandidates.kind,
+				sourceKind: memoryCandidates.sourceKind,
+				normalizedText: memoryCandidates.normalizedText,
+				why: memoryCandidates.why,
+				suggestedScope: memoryCandidates.suggestedScope,
+				status: memoryCandidates.status,
+				createdAt: memoryCandidates.createdAt,
+			})
+			.from(memoryCandidates)
+			.where(
+				and(
+					eq(memoryCandidates.companionId, companionId),
+					eq(memoryCandidates.status, status ?? "pending"),
+				),
+			)
+			.orderBy(desc(memoryCandidates.createdAt))
+			.all();
+		return {
+			candidates: rows.map((row) => ({
+				...row,
+				kind: row.kind,
+				sourceKind: row.sourceKind,
+				suggestedScope: row.suggestedScope,
+				status: row.status,
+			})),
+		};
+	});
+	dispatcher.registerHandler(RPC.memory.candidateApprove, async (_p) => {
+		const { candidateId, editedText, decidedScope } = _p as {
+			candidateId: string;
+			editedText?: string;
+			decidedScope?: string;
+		};
+		const companionId = await getCompanionId(s);
+		const candidate = s.orm
+			.select()
+			.from(memoryCandidates)
+			.where(
+				and(
+					eq(memoryCandidates.id, candidateId),
+					eq(memoryCandidates.companionId, companionId),
+					eq(memoryCandidates.status, "pending"),
+				),
+			)
+			.get();
+		if (!candidate) throw { kind: "not_found", reason: "memory_candidate_not_found" };
+		const decisionId = crypto.randomUUID();
+		const now = new Date().toISOString();
+		s.orm
+			.update(memoryCandidates)
+			.set({ status: "approved", decidedAt: now })
+			.where(eq(memoryCandidates.id, candidateId))
+			.run();
+		s.orm
+			.insert(memoryDecisions)
+			.values({
+				id: decisionId,
+				candidateId,
+				decision: editedText?.trim() ? "approve_edited" : "approve",
+				editedText: editedText?.trim() || null,
+				decidedScope: decidedScope ?? candidate.suggestedScope,
+			})
+			.run();
+		const finalText = editedText?.trim() || candidate.normalizedText;
+		const entryId = crypto.randomUUID();
+		s.orm
+			.insert(relationshipMemoryEntries)
+			.values({
+				id: entryId,
+				companionId,
+				kind: candidate.kind,
+				scope: candidate.suggestedScope,
+				text: finalText,
+				normalizedText: finalText,
+				sourceMessageVersionId: candidate.sourceMessageVersionId,
+				sourceBranchId: candidate.sourceBranchId,
+				sourceConversationId: candidate.sourceConversationId,
+				sourceKind: candidate.sourceKind,
+				status: "active",
+			})
+			.run();
+		// Also write through to the recall backend so approved memories surface in
+		// context assembly (relationship layer).
+		const scope = (decidedScope as string) || candidate.suggestedScope;
+		const backendScope = scope === "self" ? "self" : scope === "scene" ? "scene" : "relationship";
+		await s.memoryBackend.open({ scope: backendScope });
+		await s.memoryBackend.remember({
+			scope: backendScope,
+			text: finalText,
+			importance: 1.0,
+			provenance: { source: "assistant_tool", sourceRef: candidate.id },
+		});
+		return {};
+	});
+	dispatcher.registerHandler(RPC.memory.candidateReject, async (_p) => {
+		const { candidateId } = _p as { candidateId: string };
+		const companionId = await getCompanionId(s);
+		const decisionId = crypto.randomUUID();
+		const now = new Date().toISOString();
+		s.orm
+			.update(memoryCandidates)
+			.set({ status: "rejected", decidedAt: now })
+			.where(
+				and(
+					eq(memoryCandidates.id, candidateId),
+					eq(memoryCandidates.companionId, companionId),
+					eq(memoryCandidates.status, "pending"),
+				),
+			)
+			.run();
+		s.orm.insert(memoryDecisions).values({ id: decisionId, candidateId, decision: "reject" }).run();
+		return {};
+	});
 
 	// --- story archive -------------------------------------------------------------
 	dispatcher.registerHandler(RPC.story.listChanges, async (_p) => {
@@ -685,6 +901,30 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		await s.commissions.steerRun(runId, instruction);
 		return {};
 	});
+	dispatcher.registerHandler(RPC.run.interrupt, async (_p) => {
+		const { runId } = _p as { runId: string };
+		const run = await s.commissions.interruptRun(runId);
+		return {
+			id: run.id,
+			commissionId: run.commissionId,
+			executorProfile: run.executorProfile,
+			status: run.status,
+			startedAt: run.startedAt ?? undefined,
+			completedAt: run.completedAt ?? undefined,
+		};
+	});
+	dispatcher.registerHandler(RPC.run.resume, async (_p) => {
+		const { runId } = _p as { runId: string };
+		const run = await s.commissions.resumeRun(runId);
+		return {
+			id: run.id,
+			commissionId: run.commissionId,
+			executorProfile: run.executorProfile,
+			status: run.status,
+			startedAt: run.startedAt ?? undefined,
+			completedAt: run.completedAt ?? undefined,
+		};
+	});
 	dispatcher.registerHandler(RPC.run.cancel, async (_p) => {
 		const { runId } = _p as { runId: string };
 		const run = await s.commissions.cancelRun(runId);
@@ -731,6 +971,13 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			mime: artifact.mime,
 			base64: blob.toString("base64"),
 		};
+	});
+	dispatcher.registerHandler(RPC.artifact.url, async (_p) => {
+		const { artifactId } = _p as { artifactId: string };
+		if (!s.artifactUrlFactory) return { url: "" };
+		const artifact = s.artifacts.get(artifactId);
+		if (!artifact) throw { kind: "not_found", reason: "artifact_not_found" };
+		return { url: s.artifactUrlFactory(artifactId) };
 	});
 
 	// --- settings ----------------------------------------------------------------------
@@ -786,6 +1033,42 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 		s.eventBus.publish("settings.changed", { settings: nextSettings, changed });
 		return { settings: nextSettings };
+	});
+
+	// --- update --------------------------------------------------------------------------
+	dispatcher.registerHandler(RPC.update.check, async () => {
+		if (!s.updateService) {
+			return {
+				state: "disabled",
+				currentVersion: undefined,
+				latestVersion: undefined,
+				feedUrl: undefined,
+				error: undefined,
+			};
+		}
+		const result = (await s.updateService.check()) as Record<string, unknown>;
+		return {
+			state: result.state as string,
+			currentVersion: result.currentVersion as string | undefined,
+			latestVersion: result.latestVersion as string | undefined,
+			feedUrl: result.feedUrl as string | undefined,
+			error: result.error as string | undefined,
+		};
+	});
+
+	// --- audit ---------------------------------------------------------------------------
+	dispatcher.registerHandler(RPC.audit.list, async (_p) => {
+		const { limit, afterSeq } = _p as { limit?: number; afterSeq?: number };
+		if (!s.auditStore) {
+			return { entries: [], oldestSeq: 0 };
+		}
+		return s.auditStore.list({ limit: limit ?? 100, afterSeq });
+	});
+	dispatcher.registerHandler(RPC.audit.export, async () => {
+		if (!s.auditStore) {
+			return { lines: "", verified: false };
+		}
+		return s.auditStore.exportLines();
 	});
 
 	// --- events -----------------------------------------------------------------------
