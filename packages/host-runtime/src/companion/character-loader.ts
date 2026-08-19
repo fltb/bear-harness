@@ -746,18 +746,6 @@ export class CharacterLoader {
 						.join("\n\n"),
 			);
 		}
-		const examplesByMode = character.voice_modes
-			?.filter((mode) => mode.example)
-			.map(
-				(mode) =>
-					`模式：${mode.label}\n你：${mode.example!.user}\n${speaker}：${mode.example!.assistant}`,
-			);
-		if (examplesByMode?.length) {
-			parts.push(
-				"[表达模式示例]\n同一句话在不同表达模式下的说法。回复时按当前模式选择对应的密度。\n" +
-					examplesByMode.join("\n\n"),
-			);
-		}
 		return parts.join("\n\n");
 	}
 

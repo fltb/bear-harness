@@ -373,7 +373,8 @@ ${modules.join("\n")}`,
 		const character = this.getCharacterPackage(conversationId);
 		if (!character?.voice_modes?.length) return null;
 		// Read the current voice mode from conversation directives (scope='session',
-		// directive starting with 'voice_mode:'). Falls back to 'default'.
+		// directive 'voice_mode:<id>'). Falls back to 'default'.
+		const modeIds = character.voice_modes.map((mode) => "voice_mode:" + mode.id);
 		const directive = this.db
 			.select({ directive: conversationDirectives.directive })
 			.from(conversationDirectives)
@@ -381,11 +382,7 @@ ${modules.join("\n")}`,
 				and(
 					eq(conversationDirectives.conversationId, conversationId),
 					eq(conversationDirectives.scope, "session"),
-					or(
-						eq(conversationDirectives.directive, "voice_mode:concise"),
-						eq(conversationDirectives.directive, "voice_mode:default"),
-						eq(conversationDirectives.directive, "voice_mode:narrative"),
-					),
+					or(...modeIds.map((id) => eq(conversationDirectives.directive, id))),
 				),
 			)
 			.orderBy(desc(conversationDirectives.createdAt))
@@ -394,8 +391,10 @@ ${modules.join("\n")}`,
 		const modeId = directive?.directive?.replace("voice_mode:", "") ?? "default";
 		const mode = character.voice_modes.find((vm) => vm.id === modeId);
 		if (!mode) return null;
-		return `[当前表达模式：${mode.label}]
-${mode.style_instruction}`;
+		const example = mode.example
+			? `\n\n[当前模式示例]\n你：${mode.example.user}\n${character.name}：${mode.example.assistant}`
+			: "";
+		return `[当前表达模式：${mode.label}]\n${mode.style_instruction}${example}`;
 	}
 
 	private getRoleplayState(conversationId: string): string | null {
