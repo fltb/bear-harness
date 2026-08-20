@@ -22,6 +22,7 @@ describe("ordinary-user backstage journey", () => {
 		);
 		const store = {
 			memory: {
+				revision: () => 0,
 				search: vi.fn(() => Promise.resolve([])),
 				candidates: () => [],
 				listCandidates: vi.fn(() => Promise.resolve([])),
@@ -73,6 +74,7 @@ describe("ordinary-user backstage journey", () => {
 		const store = {
 			memory: {
 				search: vi.fn(() => Promise.resolve([])),
+				revision: () => 0,
 				candidates: () => [],
 				listCandidates: vi.fn(() => Promise.resolve([])),
 			},
@@ -144,6 +146,7 @@ describe("ordinary-user backstage journey", () => {
 		const store = {
 			memory: {
 				search: vi.fn(() => Promise.resolve([])),
+				revision: () => 0,
 				candidates: () => [],
 				listCandidates: vi.fn(() => Promise.resolve([])),
 			},
@@ -243,6 +246,7 @@ describe("ordinary-user backstage journey", () => {
 			roleplay: { values: { trust: 4 }, unlocked: ["night_memory"] },
 			memory: {
 				search: vi.fn(() => Promise.resolve([])),
+				revision: () => 0,
 				candidates: () => [],
 				listCandidates: vi.fn(() => Promise.resolve([])),
 			},
@@ -300,6 +304,7 @@ describe("ordinary-user backstage journey", () => {
 			runs: [],
 			characters: { characters: () => [] },
 			memory: {
+				revision: () => 0,
 				list,
 				search,
 				edit,

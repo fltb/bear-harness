@@ -34,7 +34,7 @@ async function openMemoryTab(client: ReturnType<typeof createTestClient>["client
 	);
 	render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 	await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
-	const backstage = await screen.findByRole("dialog", { name: zhCN.backstage.title });
+	const backstage = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
 	await user.click(within(backstage).getByRole("tab", { name: zhCN.backstage.memory }));
 	return { user, backstage };
 }
