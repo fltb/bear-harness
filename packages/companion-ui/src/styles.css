@@ -920,6 +920,75 @@ button[data-variant="primary"]:focus-visible {
 		transform: translateY(0) scale(1);
 	}
 }
+
+.tool-trace {
+	align-self: flex-start;
+	width: min(100%, 430px);
+	border: 1px solid color-mix(in srgb, var(--line) 78%, var(--accent) 22%);
+	border-radius: 10px;
+	padding: 7px 10px;
+	color: var(--text-muted);
+	background: color-mix(in srgb, var(--surface-alt) 85%, transparent);
+	font-size: 10px;
+	line-height: 1.45;
+	animation: tool-trace-enter 180ms ease-out;
+}
+
+.tool-trace summary {
+	cursor: pointer;
+	color: var(--text);
+	font-weight: 700;
+}
+
+.tool-trace ul {
+	display: grid;
+	gap: 5px;
+	margin: 8px 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.tool-trace li {
+	display: flex;
+	gap: 7px;
+	align-items: baseline;
+}
+
+.tool-trace li::before {
+	content: "·";
+	color: var(--accent);
+}
+
+.tool-trace li[data-status="running"]::before {
+	content: "…";
+	animation: tool-trace-pulse 1s ease-in-out infinite;
+}
+
+.tool-trace li[data-status="failed"]::before {
+	content: "×";
+	color: var(--danger);
+}
+
+.tool-trace li span {
+	color: var(--text-muted);
+}
+
+@keyframes tool-trace-enter {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes tool-trace-pulse {
+	50% {
+		opacity: 0.3;
+	}
+}
 /* ------------------------------------------------------------------ */
 /* Thread + composer                                                    */
 /* ------------------------------------------------------------------ */
