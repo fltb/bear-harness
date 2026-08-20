@@ -129,6 +129,7 @@ describe("first meeting journeys", () => {
 		const [defaults, setDefaults] = createSignal<{
 			reply?: { providerId: string; modelId: string };
 		}>({});
+		const saveMemorySettings = vi.fn(() => Promise.resolve());
 		const setDefaultReply = vi.fn(async (providerId: string, modelId: string) => {
 			setDefaults({ reply: { providerId, modelId } });
 		});
@@ -152,6 +153,9 @@ describe("first meeting journeys", () => {
 				data: () => ({ defaults: defaults() }),
 				enable,
 				setDefaultReply,
+			} as never,
+			settings: {
+				set: saveMemorySettings,
 			} as never,
 		});
 
@@ -178,7 +182,19 @@ describe("first meeting journeys", () => {
 		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
 		expect(enable).toHaveBeenCalledWith("openai-relay", "gpt-test", "GPT Test");
 		expect(setDefaultReply).toHaveBeenCalledWith("openai-relay", "gpt-test");
-		await waitFor(() => expect(dialog).not.toBeInTheDocument());
+		const memorySetup = await screen.findByRole("dialog", {
+			name: zhCN.settings.memoryVectorSection,
+		});
+		expect(within(memorySetup).getByLabelText(zhCN.settings.localModel)).toBeVisible();
+		await user.click(within(memorySetup).getByRole("button", { name: zhCN.messages.continue }));
+		expect(saveMemorySettings).toHaveBeenCalledWith({
+			memoryVectorService: {
+				enabled: true,
+				provider: "local",
+				localModel: "embeddinggemma",
+			},
+		});
+		await waitFor(() => expect(memorySetup).not.toBeInTheDocument());
 	});
 
 	it("configures a relay URL and imports Pi providers from initial setup", async () => {

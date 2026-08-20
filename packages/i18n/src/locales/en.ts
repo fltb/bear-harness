@@ -346,6 +346,8 @@ export const en = {
 		continue: "Start with this model",
 		modelLabel: "Reply model",
 		connecting: "Connecting model service...",
+		memorySetupNote:
+			"Your choice saves the memory configuration. A local model downloads and starts on the next launch.",
 	},
 	language: {
 		warningTitle: "Character package language differs from the system language",

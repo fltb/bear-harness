@@ -48,6 +48,8 @@ import {
 	memoryCandidates,
 	memoryDecisions,
 	memoryPresentation,
+	messageVersions,
+	messages,
 	relationshipMemoryEntries,
 	runs,
 	sceneState,
@@ -1212,15 +1214,19 @@ export async function rememberConversationEntry(
 		throw { kind: "not_found", reason: "conversation_not_found" };
 	}
 	const session = s.conversationRepository.getSession(conversationId);
-	if (!session) throw { kind: "not_found", reason: "conversation_session_not_found" };
-	const entries = session.readMessageEntries();
-	const source = entryId ? entries.find((candidate) => candidate.id === entryId) : entries.at(-1);
-	if (!source) {
-		throw { kind: "conflict", reason: "memory_source_not_current_branch" };
+	const source = session && entryId
+		? session.readMessageEntries().find((candidate) => candidate.id === entryId)
+		: undefined;
+	const fallback = source ? undefined : legacyMessageSource(s, conversationId, entryId);
+	if (!source && !fallback) {
+		throw {
+			kind: "conflict",
+			reason: session ? "memory_source_not_current_branch" : "memory_source_not_found",
+		};
 	}
-	const text = piEntryText(source.message);
+	const text = source ? piEntryText(source.message) : fallback!.text;
 	if (!text) throw { kind: "invalid_input", reason: "memory_source_empty" };
-	const sourceEntryId = source.id;
+	const sourceEntryId = source?.id ?? fallback!.id;
 	const scope = { ...s.memoryScope, companionId };
 	await s.memoryBackend.open({ scope });
 	const record = await s.memoryBackend.remember({
@@ -1234,12 +1240,38 @@ export async function rememberConversationEntry(
 		metadata: {
 			conversationId,
 			companionId,
-			sessionId: session.sessionId,
+			...(session ? { sessionId: session.sessionId } : {}),
 			sourceEntryId,
 			createdBy,
 		},
 	});
 	return { memoryId: record.id, sourceEntryId, createdBy };
+}
+
+/**
+ * Legacy conversations predate the Pi session store. Their UI identifiers are
+ * Host message IDs, so capture their adopted version directly instead of
+ * treating an unavailable Pi session as a disconnected memory service.
+ */
+function legacyMessageSource(
+	s: HostCompositionContext,
+	conversationId: string,
+	entryId: string | undefined,
+): { id: string; text: string } | undefined {
+	if (!entryId) return undefined;
+	return s.orm
+		.select({ id: messages.id, text: messageVersions.content })
+		.from(messages)
+		.innerJoin(messageVersions, eq(messageVersions.messageId, messages.id))
+		.where(
+			and(
+				eq(messages.id, entryId),
+				eq(messages.conversationId, conversationId),
+				eq(messageVersions.adopted, 1),
+			),
+		)
+		.limit(1)
+		.get();
 }
 
 function piEntryText(message: unknown): string {

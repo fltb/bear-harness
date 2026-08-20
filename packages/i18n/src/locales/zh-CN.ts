@@ -324,6 +324,7 @@ export const zhCN = {
 		continue: "使用这个模型开始",
 		modelLabel: "回复模型",
 		connecting: "正在连接模型服务…",
+		memorySetupNote: "选择后会保存记忆系统配置；本地模型会在下次启动时下载并启用。",
 	},
 	language: {
 		warningTitle: "角色包语言与系统语言不同",

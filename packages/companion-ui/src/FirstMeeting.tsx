@@ -14,6 +14,8 @@ function stepLabel(template: string, index: number, total: number): string {
 	return template.replaceAll("{step}", String(index + 1)).replaceAll("{total}", String(total));
 }
 
+const LOCAL_EMBEDDING_MODELS = ["embeddinggemma", "bge-base-zh", "multilingual-e5"] as const;
+
 /**
  * Renders the active role package's validated onboarding definition. The UI
  * owns no step labels, prose, answer options or transition rules; it submits
@@ -35,6 +37,10 @@ export function FirstMeeting() {
 	const [setupError, setSetupError] = createSignal<string | null>(null);
 	const [setupBusy, setSetupBusy] = createSignal(false);
 	const [modelSetupComplete, setModelSetupComplete] = createSignal(false);
+	const [memorySetupComplete, setMemorySetupComplete] = createSignal(false);
+	const [embeddingProvider, setEmbeddingProvider] = createSignal<"none" | "local">("local");
+	const [localEmbeddingModel, setLocalEmbeddingModel] =
+		createSignal<(typeof LOCAL_EMBEDDING_MODELS)[number]>("embeddinggemma");
 	const [connectedProviderId, setConnectedProviderId] = createSignal("");
 	const [oauth, setOauth] = createSignal<Awaited<ReturnType<typeof store.provider.login>> | null>(
 		null,
@@ -61,6 +67,7 @@ export function FirstMeeting() {
 		!store.loading &&
 		!store.model.loading() &&
 		store.model.data().defaults.reply === undefined;
+	const memorySetupRequired = () => modelSetupComplete() && !memorySetupComplete();
 	const selectProvider = (id: string) => {
 		setProviderId(id);
 		setModelId("");
@@ -81,6 +88,28 @@ export function FirstMeeting() {
 			);
 			await store.model.setDefaultReply(providerId(), modelId());
 			setModelSetupComplete(true);
+		} catch (cause) {
+			setSetupError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setSetupBusy(false);
+		}
+	};
+
+	const saveMemorySetup = async (): Promise<void> => {
+		setSetupBusy(true);
+		setSetupError(null);
+		try {
+			await store.settings.set({
+				memoryVectorService:
+					embeddingProvider() === "local"
+						? {
+								enabled: true,
+								provider: "local",
+								localModel: localEmbeddingModel(),
+							}
+						: { enabled: false, provider: "none" },
+			} as never);
+			setMemorySetupComplete(true);
 		} catch (cause) {
 			setSetupError(cause instanceof Error ? cause.message : String(cause));
 		} finally {
@@ -504,7 +533,95 @@ export function FirstMeeting() {
 					</Dialog.Content>
 				</Dialog>
 			</Show>
-			<Show when={!modelRequired() && visible()}>
+			<Show when={memorySetupRequired()}>
+				<Dialog open={memorySetupRequired()}>
+					<Dialog.Content class="intro model-setup" aria-label={t("settings.memoryVectorSection")}>
+						<article class="intro-card">
+							<div class="intro-step">{t("settings.memoryVectorSection")}</div>
+							<h2>{t("settings.memoryVectorEnabled")}</h2>
+							<p>{t("modelSetup.memorySetupNote")}</p>
+							<p>{t("settings.memoryVectorLocalNote")}</p>
+							<div class="model-setup-pickers">
+								<Select<"none" | "local">
+									options={["local", "none"]}
+									value={embeddingProvider()}
+									optionValue={(provider) => provider}
+									optionTextValue={(provider) =>
+										t(`settings.vectorProviders.${provider}` as never)
+									}
+									onChange={(provider) => setEmbeddingProvider(provider ?? "none")}
+								>
+									<Select.Label class="field-label">{t("settings.vectorProvider")}</Select.Label>
+									<Select.Trigger class="select-trigger" aria-label={t("settings.vectorProvider")}>
+										<Select.Value<"none" | "local"> class="select-value">
+											{(state) =>
+												state.selectedOption()
+													? t(`settings.vectorProviders.${state.selectedOption()}` as never)
+													: ""
+											}
+										</Select.Value>
+										<Select.Icon class="select-icon" aria-hidden="true">
+											⌄
+										</Select.Icon>
+									</Select.Trigger>
+									<Select.Portal>
+										<Select.Content class="select-content">
+											<Select.Listbox class="select-listbox" />
+										</Select.Content>
+									</Select.Portal>
+								</Select>
+								<Show when={embeddingProvider() === "local"}>
+									<Select<(typeof LOCAL_EMBEDDING_MODELS)[number]>
+										options={[...LOCAL_EMBEDDING_MODELS]}
+										value={localEmbeddingModel()}
+										optionValue={(model) => model}
+										optionTextValue={(model) => t(`settings.localModels.${model}` as never)}
+										onChange={(model) => model && setLocalEmbeddingModel(model)}
+									>
+										<Select.Label class="field-label">{t("settings.localModel")}</Select.Label>
+										<Select.Trigger class="select-trigger" aria-label={t("settings.localModel")}>
+											<Select.Value<(typeof LOCAL_EMBEDDING_MODELS)[number]>
+												class="select-value"
+											>
+												{(state) =>
+													state.selectedOption()
+														? t(`settings.localModels.${state.selectedOption()}` as never)
+														: ""
+												}
+											</Select.Value>
+											<Select.Icon class="select-icon" aria-hidden="true">
+												⌄
+											</Select.Icon>
+										</Select.Trigger>
+										<Select.Portal>
+											<Select.Content class="select-content">
+												<Select.Listbox class="select-listbox" />
+											</Select.Content>
+										</Select.Portal>
+									</Select>
+								</Show>
+							</div>
+							<div class="intro-actions">
+								<Button
+									type="button"
+									class="primary"
+									data-variant="primary"
+									disabled={setupBusy()}
+									onClick={() => void saveMemorySetup()}
+								>
+									{t("messages.continue")}
+								</Button>
+							</div>
+							<Show when={setupError()}>
+								<p class="intro-error" role="alert">
+									{setupError()}
+								</p>
+							</Show>
+						</article>
+					</Dialog.Content>
+				</Dialog>
+			</Show>
+			<Show when={!modelRequired() && !memorySetupRequired() && visible()}>
 				<Dialog open={visible()}>
 					<Dialog.Content
 						class="intro"

@@ -152,6 +152,7 @@ export class ModelRegistry {
 				},
 			})
 			.run();
+		if (model) this.applyDefaultToUnselectedConversations(companionId, model);
 		this.eventBus.publish("model.defaults_changed", { kind: "reply" });
 		return this.defaults(companionId);
 	}
@@ -191,6 +192,18 @@ export class ModelRegistry {
 	applyDefaultToConversation(companionId: string, conversationId: string): ModelRecord | undefined {
 		const reply = this.defaults(companionId).reply;
 		return reply ? this.select(conversationId, reply.providerId, reply.modelId) : undefined;
+	}
+
+	/** Fill only missing conversation routes when a default is first configured. */
+	private applyDefaultToUnselectedConversations(companionId: string, model: ModelRecord): void {
+		const conversationIds = this.db
+			.select({ id: conversations.id })
+			.from(conversations)
+			.where(eq(conversations.companionId, companionId))
+			.all();
+		for (const { id } of conversationIds) {
+			if (!this.selected(id)) this.select(id, model.providerId, model.modelId);
+		}
 	}
 
 	select(conversationId: string, providerId: string, modelId: string): ModelRecord {

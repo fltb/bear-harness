@@ -312,6 +312,43 @@ describe("relationship memory context", () => {
 		}
 	});
 
+	it("captures an adopted legacy message when no Pi session exists", async () => {
+		db.prepare("INSERT INTO branches (id, conversation_id, label, adopted) VALUES (?, ?, ?, ?)").run(
+			"legacy-branch",
+			"conversation-1",
+			"main",
+			1,
+		);
+		db.prepare(
+			"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES (?, ?, ?, ?)",
+		).run("legacy-message", "conversation-1", "legacy-branch", "assistant");
+		db.prepare(
+			"INSERT INTO message_versions (id, message_id, content, adopted) VALUES (?, ?, ?, ?)",
+		).run("legacy-version", "legacy-message", "旧对话也应该可以被明确记住", 1);
+		const context = {
+			orm,
+			defaultCharacterId: "jizhou",
+			characterLoader: {
+				getActiveCharacterId: () => "jizhou",
+				load: () => ({ canon: {} }),
+				seed: () => undefined,
+				activate: () => undefined,
+			},
+			eventBus: {},
+			canon: { syncPackage: () => undefined },
+			conversationRepository: { getSession: () => undefined },
+			memoryBackend: backend,
+			memoryScope: { installationId: "install-1", userId: "user-1" },
+		} as never;
+
+		await expect(
+			rememberConversationEntry(context, "conversation-1", "legacy-message", "user_capture"),
+		).resolves.toMatchObject({
+			sourceEntryId: "legacy-message",
+			createdBy: "user_capture",
+		});
+	});
+
 	it("renders a first direct capture in the next turn for the active companion", async () => {
 		await remember("E2E_DIRECT_MEMORY_A：我们约定暗号是north");
 

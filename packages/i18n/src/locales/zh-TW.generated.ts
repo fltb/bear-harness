@@ -332,7 +332,8 @@ export const zhTW = {
 		"noProviders": "暫時沒有可用的模型服務，請稍後重試。",
 		"continue": "使用這個模型開始",
 		"modelLabel": "回覆模型",
-		"connecting": "正在連線模型服務…"
+		"connecting": "正在連線模型服務…",
+		"memorySetupNote": "選擇後會儲存記憶系統配置；本地模型會在下次啟動時下載並啟用。"
 	},
 	"language": {
 		"warningTitle": "角色包語言與系統語言不同",

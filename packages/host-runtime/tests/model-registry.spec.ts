@@ -100,10 +100,15 @@ describe("ModelRegistry", () => {
 		).toThrow();
 	});
 
-	it("starts without a reply default and applies a configured default only to new conversations", () => {
+	it("applies a newly configured default to unselected existing conversations only", () => {
 		models.enable({ providerId: "relay", modelId: "text", label: "Text", supportsImages: false });
-		expect(models.defaults("character").reply).toBeUndefined();
-		expect(models.selected("conversation")).toBeUndefined();
+		models.enable({ providerId: "relay", modelId: "other", label: "Other", supportsImages: false });
+		database.connection
+			.prepare(
+				"INSERT INTO conversations (id, companion_id, title) VALUES ('manual-conversation', 'character', 'Manual')",
+			)
+			.run();
+		models.select("manual-conversation", "relay", "other");
 
 		models.setDefaultReply("character", { providerId: "relay", modelId: "text" });
 		database.connection
@@ -113,7 +118,14 @@ describe("ModelRegistry", () => {
 			.run();
 		models.applyDefaultToConversation("character", "new-conversation");
 
-		expect(models.selected("conversation")).toBeUndefined();
+		expect(models.selected("conversation")).toMatchObject({
+			providerId: "relay",
+			modelId: "text",
+		});
+		expect(models.selected("manual-conversation")).toMatchObject({
+			providerId: "relay",
+			modelId: "other",
+		});
 		expect(models.selected("new-conversation")).toMatchObject({
 			providerId: "relay",
 			modelId: "text",
