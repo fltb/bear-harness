@@ -277,6 +277,7 @@ export interface CharacterApi {
 		trusted: boolean;
 		pluginsPresent: boolean;
 	}>;
+
 	confirmPluginTrust(characterId: string): Promise<void>;
 	draftCreate(params?: { basePackageId?: string; locale?: string }): Promise<CharacterDraft>;
 	draftGet(id: string): Promise<CharacterDraft>;
@@ -298,6 +299,14 @@ export interface CharacterApi {
 	): Promise<CharacterDraft>;
 	draftValidate(id: string, expectedRevision: number): Promise<CharacterDraft>;
 	draftPublish(id: string, expectedRevision: number): Promise<CharacterDraft>;
+}
+
+export interface ToolActivity {
+	id: string;
+	tool: string;
+	label: string;
+	status: "running" | "completed" | "failed";
+	message?: string;
 }
 export interface CanonApi {
 	sources(): CanonSource[];
@@ -332,6 +341,7 @@ export interface CompanionStore {
 	readonly pendingUserText: string | undefined;
 	readonly streamingAssistantText: string;
 	readonly assistantStreaming: boolean;
+	readonly toolActivities: readonly ToolActivity[];
 	readonly runs: RunInfo[];
 	readonly presence: PresenceState;
 	readonly character: CharacterDisplay | undefined;
@@ -421,6 +431,7 @@ interface CompanionState {
 	pendingUserText: string | undefined;
 	streamingAssistantText: string;
 	assistantStreaming: boolean;
+	toolActivitiesByConversation: Record<string, ToolActivity[]>;
 	runs: RunInfo[];
 	presence: PresenceState;
 	characterRuntimeByConversation: Record<string, CharacterRuntimeState>;
@@ -580,6 +591,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		pendingUserText: undefined,
 		streamingAssistantText: "",
 		assistantStreaming: false,
+		toolActivitiesByConversation: {},
 		runs: [],
 		presence: "idle",
 		memoryEntries: undefined,
@@ -837,6 +849,35 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const dispatchEvent = (event: DomainEvent): void => {
 		const kind = event.kind;
 		switch (kind) {
+			case "companion.tool_started": {
+				const conversationId = payloadString(event.payload, "conversationId");
+				const toolCallId = payloadString(event.payload, "toolCallId");
+				const tool = payloadString(event.payload, "tool");
+				const label = payloadString(event.payload, "label");
+				if (conversationId && toolCallId && tool && label) {
+					setState("toolActivitiesByConversation", conversationId, (items = []) => [
+						...items,
+						{ id: toolCallId, tool, label, status: "running" as const },
+					]);
+				}
+				return;
+			}
+			case "companion.tool_finished": {
+				const conversationId = payloadString(event.payload, "conversationId");
+				const toolCallId = payloadString(event.payload, "toolCallId");
+				if (conversationId && toolCallId) {
+					const ok = isRecord(event.payload) && event.payload.ok === true;
+					const message = payloadString(event.payload, "message");
+					setState("toolActivitiesByConversation", conversationId, (items = []) =>
+						items.map((item) =>
+							item.id === toolCallId
+								? { ...item, status: ok ? "completed" : "failed", ...(message ? { message } : {}) }
+								: item,
+						),
+					);
+				}
+				return;
+			}
 			case "message.user_sent":
 				setState("sending", true);
 				setState("lastRunEvent", null);
@@ -1604,6 +1645,10 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 		get assistantStreaming() {
 			return state.assistantStreaming;
+		},
+		get toolActivities() {
+			const conversationId = state.activeConversationId;
+			return conversationId ? state.toolActivitiesByConversation[conversationId] ?? [] : [];
 		},
 		get runs() {
 			return state.runs;

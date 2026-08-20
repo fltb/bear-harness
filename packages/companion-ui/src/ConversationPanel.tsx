@@ -442,6 +442,21 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 							</article>
 						)}
 					</Show>
+					<Show when={store.toolActivities.length > 0}>
+						<details class="tool-trace" open={store.assistantStreaming}>
+							<summary>{store.toolActivities.at(-1)?.label}</summary>
+							<ul>
+								<For each={store.toolActivities}>
+									{(activity) => (
+										<li data-status={activity.status}>
+											<strong>{activity.label}</strong>
+											<span>{activity.message}</span>
+										</li>
+									)}
+								</For>
+							</ul>
+						</details>
+					</Show>
 					<Show when={streamedContent().length > 0 || store.assistantStreaming}>
 						<article
 							class="msg bear-msg streaming-message"

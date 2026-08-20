@@ -7,10 +7,10 @@ import type { SceneDisplay } from "./stores/companion.js";
  */
 export function SceneBackdrop(props: { scene: SceneDisplay | undefined }) {
 	return (
-		<Show when={props.scene?.backgroundUrl}>
+		<Show when={props.scene?.backgroundUrl} keyed>
 			{(source) => (
 				<div class="scene-backdrop">
-					<img src={source()} alt={props.scene?.label ?? ""} draggable={false} />
+					<img src={source} alt={props.scene?.label ?? ""} draggable={false} />
 				</div>
 			)}
 		</Show>

@@ -36,10 +36,10 @@ export function CharacterPresence(props: {
 	};
 
 	return (
-		<Show when={source()}>
+		<Show when={source()} keyed>
 			{(asset) => (
 				<div class="presence-stage" data-state={visualState()} role="img" aria-label={label()}>
-					<img src={asset()} alt="" draggable={false} data-testid="presence-asset" />
+					<img src={asset} alt="" draggable={false} data-testid="presence-asset" />
 				</div>
 			)}
 		</Show>

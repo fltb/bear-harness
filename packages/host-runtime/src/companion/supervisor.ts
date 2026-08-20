@@ -601,8 +601,36 @@ export class CompanionSupervisor {
 			description,
 			promptSnippet: description,
 			parameters,
-			execute: async (_toolCallId: string, params: unknown) =>
-				this.toolResult(await this.callHost(conversationId, name, params)),
+			execute: async (toolCallId: string, params: unknown) => {
+				this.eventBus.publish("companion.tool_started", {
+					conversationId,
+					toolCallId,
+					tool: name,
+					label,
+				});
+				try {
+					const result = await this.callHost(conversationId, name, params);
+					this.eventBus.publish("companion.tool_finished", {
+						conversationId,
+						toolCallId,
+						tool: name,
+						label,
+						ok: result.ok,
+						message: result.message.slice(0, 240),
+					});
+					return this.toolResult(result);
+				} catch (error) {
+					this.eventBus.publish("companion.tool_finished", {
+						conversationId,
+						toolCallId,
+						tool: name,
+						label,
+						ok: false,
+						message: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
+					});
+					throw error;
+				}
+			},
 		};
 	}
 	private skillReadTool() {
