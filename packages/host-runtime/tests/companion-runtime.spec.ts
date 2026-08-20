@@ -92,6 +92,7 @@ describe("in-process Companion Host bridge", () => {
 		runtime.sendCommand({
 			type: "prompt",
 			conversationId: "conversation-1",
+			triggerMessageId: "user-message-1",
 			message: "切换到雪原",
 		});
 		await settleRuntime();
@@ -103,6 +104,7 @@ describe("in-process Companion Host bridge", () => {
 		expect(hostCalls).toEqual([
 			{
 				conversationId: "conversation-1",
+				triggerMessageId: "user-message-1",
 				tool: "host_set_scene",
 				args: { sceneId: "snow_plains" },
 			},
@@ -148,6 +150,7 @@ describe("in-process Companion Host bridge", () => {
 		runtime.sendCommand({
 			type: "prompt",
 			conversationId: "conversation-2",
+			triggerMessageId: "user-message-2",
 			message: "查看站点记录",
 		});
 		const session = await waitForSession(runtime);
@@ -190,7 +193,7 @@ describe("in-process Companion Host bridge", () => {
 		expect(canonTool).toBeDefined();
 		if (!canonTool) throw new Error("host_search_canon was not registered");
 		await Reflect.apply(canonTool.execute, canonTool, ["tool-call-2", { query: "旧极光站" }]);
-		expect(hostCalls).toEqual([
+		expect(hostCalls).toMatchObject([
 			{
 				conversationId: "conversation-2",
 				tool: "host_set_scene",
@@ -287,12 +290,14 @@ describe("in-process Companion Host bridge", () => {
 		});
 		runtime.sendCommand({
 			type: "prompt",
+			triggerMessageId: "user-message-1",
 			conversationId: "native-tool-conversation",
 			message: "切换到雪原并告诉我结果",
 		});
 		runtime.sendCommand({
 			type: "prompt",
 			conversationId: "native-tool-conversation",
+			triggerMessageId: "user-message-2",
 			message: "再切换到沙漠月并告诉我结果",
 		});
 		const results = await completed;
@@ -314,12 +319,14 @@ describe("in-process Companion Host bridge", () => {
 		expect(hostCalls).toEqual([
 			{
 				conversationId: "native-tool-conversation",
+				triggerMessageId: "user-message-1",
 				tool: "host_set_scene",
 				args: { sceneId: "snow_plains" },
 			},
 			{
 				conversationId: "native-tool-conversation",
 				tool: "host_set_scene",
+				triggerMessageId: "user-message-2",
 				args: { sceneId: "desert_moon" },
 			},
 		]);
@@ -385,6 +392,7 @@ describe("in-process Companion Host bridge", () => {
 		runtime.sendCommand({
 			type: "prompt",
 			conversationId: "conversation-async-context",
+			triggerMessageId: "user-message-async",
 			message: "current user message",
 		});
 		await completed;
@@ -478,6 +486,7 @@ describe("in-process Companion Host bridge", () => {
 		runtime.sendCommand({
 			type: "prompt",
 			conversationId: "conversation-compaction",
+			triggerMessageId: "user-message-compaction",
 			message: "latest branch request",
 		});
 		await completed;

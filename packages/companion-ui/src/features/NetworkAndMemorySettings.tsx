@@ -250,9 +250,9 @@ export function NetworkAndMemorySettings() {
 								<Select.Listbox class="select-listbox" />
 							</Select.Content>
 						</Select.Portal>
-						</Select>
-						<TextField class="setting-field">
-							<TextField.Label>{t("settings.customBaseUrl")}</TextField.Label>
+					</Select>
+					<TextField class="setting-field">
+						<TextField.Label>{t("settings.customBaseUrl")}</TextField.Label>
 						<TextField.Input
 							type="text"
 							placeholder="https://api.siliconflow.cn/v1"
@@ -321,8 +321,8 @@ export function NetworkAndMemorySettings() {
 								<Select.Listbox class="select-listbox" />
 							</Select.Content>
 						</Select.Portal>
-						</Select>
-						<Show when={localModel() === "custom"}>
+					</Select>
+					<Show when={localModel() === "custom"}>
 						<TextField class="setting-field">
 							<TextField.Label>{t("settings.localCustomPath")}</TextField.Label>
 							<TextField.Input

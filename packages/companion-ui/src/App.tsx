@@ -9,10 +9,16 @@ import { Composer } from "./Composer";
 import { ConversationPanel } from "./ConversationPanel";
 import { FirstMeeting } from "./FirstMeeting";
 import { Backstage } from "./features/Backstage.js";
+import { ResultSpace, ResultSpaceProvider, useResultSpace } from "./features/ResultSpace.js";
 import { SceneBackdrop } from "./SceneBackdrop";
 import { Sidebar } from "./Sidebar";
-import { createCompanionStore, DesktopProvider } from "./stores/companion.js";
-import { WorkPanel } from "./WorkPanel";
+import {
+	type CharacterDisplay,
+	createCompanionStore,
+	DesktopProvider,
+	type SceneDisplay,
+	useCompanionStore,
+} from "./stores/companion.js";
 
 /**
  * Desktop frame from Prototype 06, wired to the Companion store.
@@ -102,81 +108,124 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
 
 	return (
 		<DesktopProvider store={store}>
-			<div
-				class="app"
-				style={themeStyle()}
-				role="application"
-				aria-label={props.product.productName}
-			>
-				<div class="shell">
-					<Sidebar character={character()} onOpenBackstage={openBackstage} />
-					<main class="main">
-						<Show
-							when={hasLanguageMismatch() && dismissedLanguageWarning() !== languageWarningKey()}
-						>
-							<section class="language-warning" role="status">
-								<div>
-									<strong>{t("language.warningTitle")}</strong>
-									<p>{languageWarning()}</p>
-								</div>
-								<Button
-									data-control="command"
-									type="button"
-									onClick={() => setDismissedLanguageWarning(languageWarningKey())}
-								>
-									{t("language.dismiss")}
-								</Button>
-							</section>
-						</Show>
-						<SceneBackdrop scene={activeScene()} />
-						<CharacterPresence
-							character={character()}
-							presence={store.presence}
-							visualState={activeCharacterRuntime()?.visualState}
-						/>
-						<ConversationPanel character={character()} />
-						<Show when={store.story.proposals()[0]}>
-							{(proposal) => (
-								<section class="story-confirmation" aria-live="polite">
-									<div>
-										<strong>{props.product.productName}</strong>
-										<p>{t("composer.storyConfirmation")}</p>
-										<blockquote>{proposal().text}</blockquote>
-									</div>
-									<div class="story-confirmation-actions">
-										<Button
-											data-control="command"
-											type="button"
-											onClick={() => void store.story.resolveProposal(proposal().id, true)}
-										>
-											{t("composer.storyAccept")}
-										</Button>
-										<Button
-											data-control="command"
-											type="button"
-											onClick={() => void store.story.resolveProposal(proposal().id, false)}
-										>
-											{t("composer.storyDismiss")}
-										</Button>
-									</div>
-								</section>
-							)}
-						</Show>
-						<WorkPanel />
-						<Composer
-							placeholder={composerPlaceholder()}
-							onOpenModelSettings={() => openBackstage("settings")}
-						/>
-						<FirstMeeting />
-					</main>
-				</div>
-				<Backstage
-					open={backstageOpen()}
-					onClose={() => setBackstageOpen(false)}
+			<ResultSpaceProvider>
+				<DesktopFrame
+					product={props.product}
+					theme={themeStyle()}
 					character={character()}
-					initialTab={backstageTab()}
+					scene={activeScene()}
+					visualState={activeCharacterRuntime()?.visualState}
+					composerPlaceholder={composerPlaceholder()}
+					showLanguageWarning={
+						hasLanguageMismatch() && dismissedLanguageWarning() !== languageWarningKey()
+					}
+					languageWarning={languageWarning()}
+					onDismissLanguageWarning={() => setDismissedLanguageWarning(languageWarningKey())}
+					openBackstage={openBackstage}
+					backstageOpen={backstageOpen()}
+					backstageTab={backstageTab()}
+					onCloseBackstage={() => setBackstageOpen(false)}
 				/>
-			</div>
+			</ResultSpaceProvider>
 		</DesktopProvider>
+	);
+}
+
+/**
+ * The Prototype 06 desktop frame: sidebar + conversation stage, plus the
+ * per-conversation ResultSpace right column. `data-result-open` is the
+ * layout state that makes the character/conversation/composer column yield
+ * to the result column (see styles.css).
+ */
+function DesktopFrame(props: {
+	product: Readonly<ProductConfig>;
+	theme: JSX.CSSProperties;
+	character: CharacterDisplay | undefined;
+	scene: SceneDisplay | undefined;
+	visualState?: string;
+	composerPlaceholder: string;
+	showLanguageWarning: boolean;
+	languageWarning: string;
+	onDismissLanguageWarning: () => void;
+	openBackstage: (tab?: "roles" | "settings") => void;
+	backstageOpen: boolean;
+	backstageTab: "roles" | "settings";
+	onCloseBackstage: () => void;
+}) {
+	const [t] = useTranslation(undefined, { i18n });
+	const store = useCompanionStore();
+	const { selection } = useResultSpace();
+
+	return (
+		<div
+			class="app"
+			style={props.theme}
+			data-result-open={selection() ? "true" : undefined}
+			role="application"
+			aria-label={props.product.productName}
+		>
+			<div class="shell">
+				<Sidebar character={props.character} onOpenBackstage={props.openBackstage} />
+				<main class="main">
+					<Show when={props.showLanguageWarning}>
+						<section class="language-warning" role="status">
+							<div>
+								<strong>{t("language.warningTitle")}</strong>
+								<p>{props.languageWarning}</p>
+							</div>
+							<Button data-control="command" type="button" onClick={props.onDismissLanguageWarning}>
+								{t("language.dismiss")}
+							</Button>
+						</section>
+					</Show>
+					<SceneBackdrop scene={props.scene} />
+					<CharacterPresence
+						character={props.character}
+						presence={store.presence}
+						visualState={props.visualState}
+					/>
+					<ConversationPanel character={props.character} />
+					<Show when={store.story.proposals()[0]}>
+						{(proposal) => (
+							<section class="story-confirmation" aria-live="polite">
+								<div>
+									<strong>{props.product.productName}</strong>
+									<p>{t("composer.storyConfirmation")}</p>
+									<blockquote>{proposal().text}</blockquote>
+								</div>
+								<div class="story-confirmation-actions">
+									<Button
+										data-control="command"
+										type="button"
+										onClick={() => void store.story.resolveProposal(proposal().id, true)}
+									>
+										{t("composer.storyAccept")}
+									</Button>
+									<Button
+										data-control="command"
+										type="button"
+										onClick={() => void store.story.resolveProposal(proposal().id, false)}
+									>
+										{t("composer.storyDismiss")}
+									</Button>
+								</div>
+							</section>
+						)}
+					</Show>
+					<Composer
+						placeholder={props.composerPlaceholder}
+						onOpenModelSettings={() => props.openBackstage("settings")}
+					/>
+					<FirstMeeting />
+				</main>
+				<ResultSpace />
+			</div>
+			<Backstage
+				open={props.backstageOpen}
+				onClose={props.onCloseBackstage}
+				character={props.character}
+				initialTab={props.backstageTab}
+			/>
+		</div>
 	);
 }

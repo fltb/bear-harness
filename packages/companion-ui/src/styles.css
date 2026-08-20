@@ -1149,17 +1149,28 @@ button[data-variant="primary"]:focus-visible {
 	display: flex;
 	min-height: 24px;
 	align-items: center;
+	flex-wrap: wrap;
 	gap: 8px;
 	padding: 0 6px;
 	color: #62736e;
 	font-size: 11px;
 }
 
-.composer-image-routing[data-state="missing"] {
+.composer-image-routing[data-state="missing"],
+.composer-image-routing[data-state="error"] {
 	color: #9a4038;
 }
 
+.composer-image-routing svg {
+	flex: none;
+}
+
+.composer-image-routing span {
+	min-width: 0;
+}
+
 .composer-image-routing button {
+	flex: none;
 	border: 0;
 	padding: 2px;
 	color: inherit;
@@ -2157,16 +2168,77 @@ button[data-variant="primary"]:focus-visible {
 	background: #eef2eb;
 }
 
-.work-panel {
-	position: relative;
-	z-index: 2;
-	max-height: 34vh;
-	overflow: auto;
-	border-top: 1px solid var(--line);
-	background: rgba(7, 23, 28, 0.94);
-	padding: 12px 22px;
+.work-action-line {
 	display: grid;
 	gap: 10px;
+	align-self: flex-start;
+	width: min(100%, 430px);
+}
+
+.run-controls[data-result-open] {
+	border-left-color: var(--amber);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 35%, transparent);
+}
+
+.action-proposal.needs-user {
+	border-left-color: var(--amber);
+}
+
+.steer-row {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.steer-row .steer-input {
+	min-width: 0;
+	flex: 1;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	padding: 6px 8px;
+	color: var(--text);
+	background: rgba(255, 255, 255, 0.05);
+	font: inherit;
+	font-size: 12px;
+}
+
+.completion-card {
+	display: grid;
+	gap: 8px;
+	border: 1px solid color-mix(in srgb, var(--line) 78%, var(--accent) 22%);
+	border-radius: 10px;
+	padding: 10px 12px;
+	background: rgba(255, 255, 255, 0.045);
+}
+
+.completion-card .completion-count {
+	margin: 0;
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
+.failure-card {
+	display: grid;
+	gap: 4px;
+	border-left: 3px solid var(--danger);
+	padding: 8px 12px;
+	background: rgba(255, 255, 255, 0.035);
+}
+
+.failure-card p {
+	margin: 0;
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
+.work-actions .primary-tool {
+	font-weight: 750;
+	color: var(--accent);
+}
+
+.artifact-list {
+	display: grid;
+	gap: 2px;
 }
 
 .story-confirmation {
@@ -2363,4 +2435,155 @@ button[data-variant="primary"]:focus-visible {
 	position: absolute;
 	top: 16px;
 	right: 16px;
+}
+
+/* ------------------------------------------------------------------ */
+/* ResultSpace (Prototype 06 result-mode)                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * When a conversation's result view is open, the shell yields to a third
+ * column: the character/conversation/composer stage keeps working (left
+ * column shrinks, never frozen) while the result column takes the right
+ * side. Closed = two columns, no empty third track.
+ */
+.app[data-result-open="true"] .shell {
+	grid-template-columns: 230px minmax(0, 1fr) minmax(320px, 36vw);
+}
+
+@media (max-width: 1200px) {
+	.app[data-result-open="true"] .shell {
+		grid-template-columns: 205px minmax(0, 1fr) minmax(300px, 34vw);
+	}
+}
+
+.result-column {
+	@apply grid min-h-0 min-w-0 overflow-hidden border-l border-line;
+	grid-template-rows: minmax(0, 1fr);
+	background: var(--surface);
+}
+
+.result-space {
+	@apply grid min-h-0 min-w-0;
+	grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.result-header {
+	@apply flex items-start justify-between gap-3 border-b border-line px-4 py-3;
+}
+
+.result-heading {
+	@apply grid min-w-0 flex-1 gap-1;
+}
+
+.result-heading h2 {
+	@apply m-0 truncate text-[14px] text-ice;
+	font-family: var(--font-heading);
+}
+
+.result-source {
+	@apply m-0 truncate text-[10px];
+	color: var(--text-muted);
+}
+
+.result-actions {
+	@apply flex shrink-0 items-center gap-2;
+}
+
+.result-locate {
+	@apply inline-flex min-h-[28px] items-center gap-1.5 rounded-md border border-line px-2.5 text-[10px];
+	background: var(--surface-alt);
+}
+
+.result-close {
+	@apply grid h-[28px] w-[28px] shrink-0 place-items-center rounded-md border border-line text-[13px];
+	background: transparent;
+	color: var(--text-muted);
+}
+
+.result-close:hover:not(:disabled),
+.result-close:focus-visible {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+.result-tabs {
+	@apply flex min-h-0 shrink-0 items-end gap-1 overflow-x-auto border-b border-line px-3 pt-2;
+	scrollbar-width: thin;
+	scrollbar-color: rgba(161, 207, 194, 0.25) transparent;
+}
+
+.result-tab {
+	@apply min-w-0 max-w-[220px] truncate rounded-t-md border border-b-0 border-line px-3 py-1.5 text-[11px];
+	background: transparent;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.result-tab:hover:not(:disabled) {
+	color: var(--text);
+}
+
+.result-tab[aria-selected="true"] {
+	background: var(--surface-alt);
+	color: var(--text);
+	box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.result-body {
+	@apply min-h-0 min-w-0 overflow-y-auto p-4;
+}
+
+.result-text {
+	@apply m-0 whitespace-pre-wrap break-words text-[12px] leading-relaxed;
+	color: var(--text);
+}
+
+.result-media {
+	display: block;
+	max-width: 100%;
+	max-height: 100%;
+	object-fit: contain;
+}
+
+.result-file-page {
+	@apply grid gap-3;
+}
+
+.result-file-page dl {
+	@apply grid gap-2.5 rounded-md border border-line p-3;
+	margin: 0;
+}
+
+.result-file-page dl > div {
+	@apply grid gap-0.5;
+}
+
+.result-file-page dt {
+	color: var(--text-muted);
+	font-size: 9px;
+	font-weight: 800;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.result-file-page dd {
+	@apply m-0 text-[12px] break-all;
+	color: var(--text);
+}
+
+.result-note,
+.result-loading,
+.result-error,
+.result-unavailable {
+	@apply m-0 text-[11px];
+	color: var(--text-muted);
+}
+
+.result-error {
+	color: var(--danger);
+}
+
+.result-unavailable {
+	@apply px-4 py-4;
 }

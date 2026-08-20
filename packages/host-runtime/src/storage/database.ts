@@ -225,6 +225,14 @@ export class Database {
 	/** Refuse to start a partially compatible database. */
 	assertSchemaContract(): void {
 		const required: Readonly<Record<string, readonly string[]>> = {
+			commissions: [
+				"id",
+				"conversation_id",
+				"trigger_message_id",
+				"status",
+				"draft_json",
+				"created_at",
+			],
 			runs: ["id", "commission_id", "executor_profile", "status", "created_at"],
 			configured_models: ["provider_id", "model_id", "label", "supports_images", "created_at"],
 			conversation_model_selections: ["conversation_id", "provider_id", "model_id", "updated_at"],
@@ -955,6 +963,14 @@ export const MIGRATIONS: Migration[] = [
 				WHERE profile_type != 'native-full';
 			DROP TABLE executor_profiles;
 			ALTER TABLE executor_profiles_new RENAME TO executor_profiles;
+		`,
+	},
+	{
+		id: 20,
+		description: "Message-scoped commission trigger linkage",
+		up: `
+			ALTER TABLE commissions
+				ADD COLUMN trigger_message_id TEXT NOT NULL DEFAULT '';
 		`,
 	},
 ];

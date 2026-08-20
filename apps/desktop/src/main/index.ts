@@ -19,17 +19,17 @@ import {
 import { productConfig } from "@bear-harness/product-config";
 import { app, BrowserWindow, crashReporter, ipcMain, shell } from "electron";
 import {
+	ARTIFACT_SCHEME,
+	registerArtifactProtocol,
+	registerArtifactSchemePrivileges,
+} from "./artifact-protocol.js";
+import {
 	registerElectronDiagnostics,
 	registerWindowHooks,
 	type WindowRegistration,
 } from "./diagnostics/electron.js";
 import { e2eCredentialVault } from "./e2e-vault.js";
 import { electronCredentialVault } from "./electron-credential-vault.js";
-import {
-	ARTIFACT_SCHEME,
-	registerArtifactProtocol,
-	registerArtifactSchemePrivileges,
-} from "./artifact-protocol.js";
 import { wireElectronIpcHandlers } from "./ipc-router.js";
 import { UpdateService } from "./update-service.js";
 

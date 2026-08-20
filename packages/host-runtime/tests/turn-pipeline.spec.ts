@@ -67,6 +67,7 @@ describe("TurnPipeline conversation state contract", () => {
 			{
 				type: "prompt",
 				conversationId: "conversation",
+				triggerMessageId: sent.messageId,
 				message: "你是谁？",
 				images: [],
 				streamingBehavior: "followUp",

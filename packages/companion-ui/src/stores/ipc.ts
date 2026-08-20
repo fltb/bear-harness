@@ -117,6 +117,8 @@ export interface RunPermissionRequest {
 export type Artifact = Wire.Artifact;
 export type ArtifactStatus = Artifact["status"];
 export type ArtifactListData = Wire.ArtifactListResponse;
+export type ArtifactReadData = Wire.ArtifactReadResponse;
+export type ArtifactUrlData = Wire.ArtifactUrlResponse;
 export type StoryChangeScope = Wire.StoryChangeScope;
 export type StoryChange = Wire.StoryChange;
 export type StoryListData = Wire.StoryListChangesResponse;

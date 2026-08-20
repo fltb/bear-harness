@@ -299,6 +299,7 @@ describe("store RPC contract", () => {
 			await store.commission.list();
 			await store.commission.draft({
 				conversationId: "conversation-1",
+				triggerMessageId: "message-1",
 				title: "Work",
 				description: "Do work",
 			});

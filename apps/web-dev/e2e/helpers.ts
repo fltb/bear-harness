@@ -1,6 +1,12 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, type Locator, type Page } from "playwright/test";
 
+export async function getBootstrap(page: Page): Promise<{ token: string }> {
+	const response = await page.request.get("/bootstrap");
+	await expect(response).toBeOK();
+	return (await response.json()) as { token: string };
+}
+
 export async function selectKobalteOption(
 	page: Page,
 	trigger: Locator,
@@ -17,7 +23,7 @@ export async function selectKobalteOption(
 
 export async function ensureReadyForConversation(page: Page): Promise<void> {
 	await page.goto("/");
-	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	const bootstrap = await getBootstrap(page);
 	const headers = { "x-bear-web-dev-token": bootstrap.token };
 	const configureProvider = await (
 		await page.request.post("/rpc/provider.customUpsert%3Av1", {

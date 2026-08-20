@@ -18,6 +18,7 @@
 const MAX_TEXT_LENGTH = 10_000;
 
 /** C0 control characters except tab/newline/carriage-return, plus DEL. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional validation of forbidden C0 characters.
 const CONTROL_CHARS_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
 
 /**

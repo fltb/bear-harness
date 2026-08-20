@@ -34,6 +34,7 @@ import {
 	type CommissionDraftData,
 	commissions,
 	evidence,
+	messages,
 	runs,
 } from "../storage/schema.js";
 
@@ -72,6 +73,7 @@ export type TerminalRunStatus =
 const ACTIVE_RUN_STATUSES: readonly RunStatus[] = ["enqueued", "running", "needs_user"];
 
 export interface CommissionDraftParams {
+	triggerMessageId: string;
 	conversationId: string;
 	title: string;
 	description: string;
@@ -120,6 +122,7 @@ export interface DraftSummary {
 
 export interface CommissionSummary {
 	id: string;
+	triggerMessageId: string;
 	conversationId: string | null;
 	status: CommissionStatus;
 	draft: DraftSummary;
@@ -146,6 +149,7 @@ interface DraftPayload extends CommissionDraftData {
 type CommissionRow = {
 	id: string;
 	conversationId: string | null;
+	triggerMessageId: string;
 	status: CommissionStatus;
 	draftJson: DraftPayload;
 	approvalHash: string | null;
@@ -337,6 +341,18 @@ export class CommissionService {
 	 * (no id/timestamp), so the user can approve the exact text they saw.
 	 */
 	draft(params: CommissionDraftParams): CommissionDraftResult {
+		const trigger = this.db
+			.select({
+				id: messages.id,
+				conversationId: messages.conversationId,
+				role: messages.role,
+			})
+			.from(messages)
+			.where(eq(messages.id, params.triggerMessageId))
+			.get();
+		if (!trigger || trigger.role !== "user" || trigger.conversationId !== params.conversationId) {
+			throw { kind: "validation_failed", reason: "commission_trigger_message_invalid" };
+		}
 		const draft: DraftPayload = {
 			conversationId: params.conversationId,
 			title: params.title,
@@ -352,6 +368,7 @@ export class CommissionService {
 			.insert(commissions)
 			.values({
 				id: commissionId,
+				triggerMessageId: params.triggerMessageId,
 				conversationId: draft.conversationId,
 				status: "draft",
 				draftJson: draft,
@@ -693,34 +710,40 @@ export class CommissionService {
 			.where(params.status ? eq(commissions.status, params.status) : undefined)
 			.orderBy(desc(commissions.createdAt), desc(commissions.id))
 			.all() as CommissionRow[];
-		return rows.map((row) => {
-			const draft = this.parseDraft(row.draftJson);
-			const draftHash = row.approvalHash ?? "";
-			const commissionRuns = this.db
-				.select()
-				.from(runs)
-				.where(eq(runs.commissionId, row.id))
-				.orderBy(asc(runs.createdAt), asc(runs.id))
-				.all() as RunRow[];
-			return {
-				id: row.id,
-				conversationId: row.conversationId,
-				status: row.status,
-				draft: {
+		return rows
+			.filter(
+				(row): row is CommissionRow & { triggerMessageId: string } =>
+					typeof row.triggerMessageId === "string" && row.triggerMessageId.trim().length > 0,
+			)
+			.map((row) => {
+				const draft = this.parseDraft(row.draftJson);
+				const draftHash = row.approvalHash ?? "";
+				const commissionRuns = this.db
+					.select()
+					.from(runs)
+					.where(eq(runs.commissionId, row.id))
+					.orderBy(asc(runs.createdAt), asc(runs.id))
+					.all() as RunRow[];
+				return {
 					id: row.id,
-					title: draft.title,
-					description: draft.description,
-					reads: draft.reads,
-					writes: draft.writes,
-					networkAllowed: draft.networkAllowed,
-					toolNames: draft.toolNames,
-					hash: draftHash,
-				},
-				draftHash,
-				createdAt: row.createdAt,
-				runs: commissionRuns.map((run) => this.summarizeRun(run)),
-			};
-		});
+					triggerMessageId: row.triggerMessageId,
+					conversationId: row.conversationId,
+					status: row.status,
+					draft: {
+						id: row.id,
+						title: draft.title,
+						description: draft.description,
+						reads: draft.reads,
+						writes: draft.writes,
+						networkAllowed: draft.networkAllowed,
+						toolNames: draft.toolNames,
+						hash: draftHash,
+					},
+					draftHash,
+					createdAt: row.createdAt,
+					runs: commissionRuns.map((run) => this.summarizeRun(run)),
+				};
+			});
 	}
 
 	// -----------------------------------------------------------------------

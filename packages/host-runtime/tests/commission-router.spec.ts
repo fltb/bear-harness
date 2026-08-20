@@ -25,9 +25,11 @@ function createFixture(controller?: ExecutorController): Fixture {
 	const db = new DatabaseSync(":memory:");
 	db.exec(`
 		CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+		CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, role TEXT NOT NULL);
 		CREATE TABLE commissions (
 			id TEXT PRIMARY KEY,
 			conversation_id TEXT,
+			trigger_message_id TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL,
 			draft_json TEXT NOT NULL,
 			approval_hash TEXT,
@@ -81,6 +83,9 @@ function createFixture(controller?: ExecutorController): Fixture {
 		);
 	`);
 	db.prepare(
+		"INSERT INTO messages (id, conversation_id, role) VALUES (?, ?, 'user'), (?, ?, 'user')",
+	).run("user-message-1", "conversation-1", "user-message-2", "conversation-1");
+	db.prepare(
 		"INSERT INTO executor_profiles (id, profile_type, capability_json) VALUES (?, 'product-managed', '{}')",
 	).run("pi-worker");
 
@@ -99,6 +104,7 @@ function createFixture(controller?: ExecutorController): Fixture {
 function approvedCommission(service: CommissionService): string {
 	const { commissionId, draftHash } = service.draft({
 		conversationId: "conversation-1",
+		triggerMessageId: "user-message-1",
 		title: "Inspect the workspace",
 		description: "Read the approved files and summarize them.",
 		reads: ["/workspace"],
@@ -117,6 +123,81 @@ afterEach(() => {
 });
 
 describe("CommissionService executor routing", () => {
+	it("keeps distinct user-message triggers through persistence and list projection", () => {
+		const fixture = createFixture();
+		fixtures.push(fixture);
+		const first = fixture.service.draft({
+			conversationId: "conversation-1",
+			triggerMessageId: "user-message-1",
+			title: "First",
+			description: "First request",
+		});
+		const second = fixture.service.draft({
+			conversationId: "conversation-1",
+			triggerMessageId: "user-message-2",
+			title: "Second",
+			description: "Second request",
+		});
+		const rows = fixture.service.list();
+		expect(rows).toHaveLength(2);
+		expect(rows.find((row) => row.id === first.commissionId)).toMatchObject({
+			id: first.commissionId,
+			triggerMessageId: "user-message-1",
+		});
+		expect(rows.find((row) => row.id === second.commissionId)).toMatchObject({
+			id: second.commissionId,
+			triggerMessageId: "user-message-2",
+		});
+		expect(
+			fixture.db
+				.prepare("SELECT trigger_message_id FROM commissions WHERE id = ?")
+				.get(first.commissionId),
+		).toEqual({ trigger_message_id: "user-message-1" });
+		expect(
+			fixture.db
+				.prepare("SELECT trigger_message_id FROM commissions WHERE id = ?")
+				.get(second.commissionId),
+		).toEqual({ trigger_message_id: "user-message-2" });
+	});
+	it("preserves unlinked legacy commissions without exposing them in the strict list", () => {
+		const fixture = createFixture();
+		fixtures.push(fixture);
+		const valid = fixture.service.draft({
+			conversationId: "conversation-1",
+			triggerMessageId: "user-message-1",
+			title: "Current",
+			description: "Current request",
+		});
+		fixture.db
+			.prepare(
+				"INSERT INTO commissions (id, conversation_id, trigger_message_id, status, draft_json) VALUES (?, ?, ?, ?, ?)",
+			)
+			.run(
+				"legacy-commission",
+				"conversation-1",
+				"",
+				"completed",
+				JSON.stringify({
+					conversationId: "conversation-1",
+					title: "Legacy",
+					description: "Historical request",
+					reads: [],
+					writes: [],
+					networkAllowed: false,
+					toolNames: [],
+				}),
+			);
+
+		expect(fixture.service.list()).toMatchObject([
+			{ id: valid.commissionId, triggerMessageId: "user-message-1" },
+		]);
+		expect(
+			fixture.db
+				.prepare("SELECT trigger_message_id FROM commissions WHERE id = ?")
+				.get("legacy-commission"),
+		).toEqual({ trigger_message_id: "" });
+	});
+
 	it("dispatches only an approved run and persists controller evidence through the Host", async () => {
 		const launches: ExecutorLaunchRequest[] = [];
 		const fixture = createFixture({
@@ -181,6 +262,7 @@ describe("CommissionService executor routing", () => {
 		const { commissionId, draftHash } = fixture.service.draft({
 			conversationId: "conversation-1",
 			title: "Write report",
+			triggerMessageId: "user-message-2",
 			description: "Create the approved report.",
 			writes: [output],
 			toolNames: ["write"],

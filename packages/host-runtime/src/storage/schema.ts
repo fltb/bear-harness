@@ -344,6 +344,7 @@ export const commissions = sqliteTable(
 	{
 		id: text().primaryKey(),
 		conversationId: text("conversation_id").references(() => conversations.id),
+		triggerMessageId: text("trigger_message_id").notNull(),
 		status: text({
 			enum: [
 				"draft",
@@ -560,10 +561,7 @@ export const executorProfiles = sqliteTable(
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	},
 	(table) => [
-		check(
-			"executor_profiles_check_20",
-			sql`profile_type IN ('product-managed','codex')`,
-		),
+		check("executor_profiles_check_20", sql`profile_type IN ('product-managed','codex')`),
 	],
 );
 

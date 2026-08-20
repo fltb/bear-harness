@@ -3,12 +3,15 @@ import { render, screen } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CanonStudio } from "../src/features/CanonStudio.js";
+import { ResultSpaceProvider } from "../src/features/ResultSpace.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
-import { WorkPanel } from "../src/WorkPanel.js";
+import { WorkTimelineItem } from "../src/WorkPanel.js";
 
 function renderWithStore(ui: () => unknown, store: Partial<CompanionStore>) {
 	return render(() => (
-		<DesktopProvider store={store as CompanionStore}>{ui() as never}</DesktopProvider>
+		<DesktopProvider store={store as CompanionStore}>
+			<ResultSpaceProvider>{ui() as never}</ResultSpaceProvider>
+		</DesktopProvider>
 	));
 }
 
@@ -17,7 +20,7 @@ describe("advanced feature journeys", () => {
 		const user = userEvent.setup();
 		const approve = vi.fn(() => Promise.resolve());
 		const launch = vi.fn(() => Promise.resolve({} as never));
-		renderWithStore(() => <WorkPanel />, {
+		renderWithStore(() => <WorkTimelineItem messageId="message-1" character={undefined} />, {
 			activeConversationId: "conversation-1",
 			runs: [
 				{
@@ -37,6 +40,7 @@ describe("advanced feature journeys", () => {
 				commissions: () => [
 					{
 						id: "commission-1",
+						triggerMessageId: "message-1",
 						status: "approved",
 						createdAt: "2026-08-16T00:00:00Z",
 						draft: {
@@ -81,9 +85,9 @@ describe("advanced feature journeys", () => {
 			} as never,
 		});
 		expect(screen.getByText(zhCN.work.networkYes)).toBeVisible();
-		expect(screen.getByText(/12 B/)).toBeVisible();
-		expect(screen.getByText(/2\.0 MB/)).toBeVisible();
-		await user.click(screen.getByRole("button", { name: zhCN.work.start }));
+		expect(screen.getAllByText(/12 B/).length).toBeGreaterThan(0);
+		expect(screen.getAllByText(/2\.0 MB/).length).toBeGreaterThan(0);
+		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.start }));
 		expect(approve).not.toHaveBeenCalled();
 		expect(launch).toHaveBeenCalledWith("commission-1", "pi-product-managed");
 	});
@@ -95,7 +99,7 @@ describe("advanced feature journeys", () => {
 		const respondPermission = vi.fn(() => Promise.resolve({} as never));
 		const cancel = vi.fn(() => Promise.resolve({} as never));
 		const download = vi.fn(() => Promise.resolve());
-		renderWithStore(() => <WorkPanel />, {
+		renderWithStore(() => <WorkTimelineItem messageId="message-1" character={undefined} />, {
 			activeConversationId: "conversation-1",
 			runs: [
 				{ id: "run-1", commissionId: "commission-1", executorProfile: "pi", status: "needs_user" },
@@ -105,6 +109,7 @@ describe("advanced feature journeys", () => {
 					{
 						id: "commission-1",
 						conversationId: "conversation-1",
+						triggerMessageId: "message-1",
 						status: "draft",
 						createdAt: "2026-08-16T00:00:00Z",
 						draft: {
@@ -153,14 +158,18 @@ describe("advanced feature journeys", () => {
 			} as never,
 		});
 
-		expect(screen.getByRole("region", { name: zhCN.work.title })).toBeVisible();
-		await user.click(screen.getByRole("button", { name: zhCN.work.start }));
+		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.start }));
 		expect(approve).toHaveBeenCalledWith("commission-1", "draft-hash");
 		expect(launch).toHaveBeenCalledWith("commission-1", "pi-product-managed");
-		await user.click(screen.getByRole("button", { name: zhCN.work.allow }));
+		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.permissionAllow }));
 		expect(respondPermission).toHaveBeenCalledWith("run-1", "permission-1", "allow");
-		await user.click(screen.getByRole("button", { name: zhCN.work.stop }));
+		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.stopRun }));
 		expect(cancel).toHaveBeenCalledWith("run-1");
+		// The run's evidence row keeps the per-artifact download, reachable
+		// through the collapsed tool-trace detail of the action line.
+		const trace = screen.getByText(zhCN.work.timeline.revealDetails).closest("details");
+		expect(trace).not.toBeNull();
+		(trace as HTMLDetailsElement).open = true;
 		await user.click(screen.getByRole("button", { name: zhCN.work.download }));
 		expect(download).toHaveBeenCalledWith("artifact-1");
 	});

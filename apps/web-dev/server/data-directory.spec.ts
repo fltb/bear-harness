@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { test } from "node:test";
-import { desktopDataDirectory } from "./data-directory.ts";
+import { desktopDataDirectory, webDevDataDirectory } from "./data-directory.ts";
 
 test("normal web development uses the same platform directory as Electron userData", () => {
 	assert.equal(
@@ -39,4 +39,28 @@ test("an explicit E2E data directory remains isolated", () => {
 		desktopDataDirectory("cyber-bear", "/test-results/e2e-data", "linux", {}, "/home/user"),
 		resolve("/test-results/e2e-data"),
 	);
+	assert.equal(
+		webDevDataDirectory("cyber-bear", "/test-results/e2e-data", "linux", {}, "/home/user"),
+		resolve("/test-results/e2e-data"),
+	);
+});
+
+test("an explicitly isolated web-dev directory is scoped to the launcher process", () => {
+	const first = webDevDataDirectory(
+		"cyber-bear",
+		"/test-results/e2e-data",
+		"linux",
+		{ BEAR_WEB_DEV_DATA_SCOPE: "101" },
+		"/home/user",
+	);
+	const second = webDevDataDirectory(
+		"cyber-bear",
+		"/test-results/e2e-data",
+		"linux",
+		{ BEAR_WEB_DEV_DATA_SCOPE: "202" },
+		"/home/user",
+	);
+	assert.equal(first, resolve("/test-results/e2e-data/.process-101"));
+	assert.equal(second, resolve("/test-results/e2e-data/.process-202"));
+	assert.notEqual(first, second);
 });

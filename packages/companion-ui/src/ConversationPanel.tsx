@@ -1,11 +1,20 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
+import {
+	faChevronLeft,
+	faChevronRight,
+	faEllipsis,
+	faPen,
+} from "@fortawesome/free-solid-svg-icons";
 import { Button } from "@kobalte/core/button";
 import { Dialog } from "@kobalte/core/dialog";
 import { TextField } from "@kobalte/core/text-field";
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { RESULT_LOCATE_EVENT, type ResultLocateDetail } from "./features/ResultSpace.js";
+import { Icon } from "./Icon.js";
 import type { CharacterDisplay, Message, MessageVersion } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
 import { ThreadHead } from "./ThreadHead.js";
+import { WorkTimelineItem } from "./WorkPanel.js";
 
 /**
  * ConversationPanel: the live thread. Messages come from the store's active
@@ -133,7 +142,7 @@ function MessageItem(props: {
 								title={t("messages.edit")}
 								onClick={startEdit}
 							>
-								✎
+								<Icon icon={faPen} />
 							</Button>
 						}
 					>
@@ -141,10 +150,11 @@ function MessageItem(props: {
 							type="button"
 							class="msg-menu-trigger"
 							aria-label={t("messages.operations")}
+							title={t("messages.operations")}
 							aria-expanded={actionsOpen()}
 							onClick={() => setActionsOpen((open) => !open)}
 						>
-							···
+							<Icon icon={faEllipsis} />
 						</Button>
 					</Show>
 				</div>
@@ -156,10 +166,11 @@ function MessageItem(props: {
 							data-control="command"
 							type="button"
 							aria-label={t("messages.previousVersion")}
+							title={t("messages.previousVersion")}
 							disabled={versionIndex() <= 0}
 							onClick={() => switchTo(versionIndex() - 1)}
 						>
-							◀
+							<Icon icon={faChevronLeft} />
 						</Button>
 						<span aria-live="polite">
 							{versionIndex() + 1} / {props.message.versions.length}
@@ -168,10 +179,11 @@ function MessageItem(props: {
 							data-control="command"
 							type="button"
 							aria-label={t("messages.nextVersion")}
+							title={t("messages.nextVersion")}
 							disabled={versionIndex() >= props.message.versions.length - 1}
 							onClick={() => switchTo(versionIndex() + 1)}
 						>
-							▶
+							<Icon icon={faChevronRight} />
 						</Button>
 					</div>
 				</Show>
@@ -386,6 +398,25 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 		if (el) el.scrollTop = el.scrollHeight;
 	});
 
+	createEffect(() => {
+		// "定位到对话" (plan §5.2): scroll and focus the source message and its
+		// action line without changing the open result selection.
+		const onLocate = (event: Event) => {
+			const detail = (event as CustomEvent<ResultLocateDetail>).detail;
+			if (!detail || detail.conversationId !== store.activeConversationId) return;
+			const target = document.querySelector<HTMLElement>(`[data-message-id="${detail.messageId}"]`);
+			if (!target) return;
+			target.scrollIntoView?.({ block: "center" });
+			const message = target.closest(".msg") as HTMLElement | null;
+			if (message) {
+				message.setAttribute("tabindex", "-1");
+				message.focus({ preventScroll: true });
+			}
+		};
+		window.addEventListener(RESULT_LOCATE_EVENT, onLocate);
+		onCleanup(() => window.removeEventListener(RESULT_LOCATE_EVENT, onLocate));
+	});
+
 	return (
 		<>
 			<ThreadHead sceneTitle={sceneTitle()} />
@@ -426,12 +457,19 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 				>
 					<For each={visibleMessages()}>
 						{(message) => (
-							<MessageItem
-								message={message}
-								characterName={props.character?.name ?? ""}
-								correction={props.character?.character.correction}
-								lastAssistant={message.role === "assistant" && message.id === lastAssistantId()}
-							/>
+							<>
+								<MessageItem
+									message={message}
+									characterName={props.character?.name ?? ""}
+									correction={props.character?.character.correction}
+									lastAssistant={message.role === "assistant" && message.id === lastAssistantId()}
+								/>
+								{/* Message-scoped work action lines: only commissions whose
+								    triggerMessageId matches this message render here. */}
+								<Show when={message.role === "user"}>
+									<WorkTimelineItem messageId={message.id} character={props.character} />
+								</Show>
+							</>
 						)}
 					</For>
 					<Show when={store.pendingUserText}>

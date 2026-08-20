@@ -1,15 +1,15 @@
 // @vitest-environment node
 
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	type AuditKind,
 	AuditStore,
 	auditKindForEvent,
 	wireAuditToEvents,
-	type AuditKind,
 } from "../src/security/audit-store.js";
 
 const sha256 = (input: string) => createHash("sha256").update(input).digest("hex");
@@ -181,7 +181,7 @@ describe("AuditStore retention", () => {
 
 	it("prunes oldest segments while total bytes exceed maxTotalBytes", async () => {
 		const dir = tempDir();
-		let now = new Date();
+		const now = new Date();
 		const store = makeStore(dir, {
 			maxBytesPerSegment: 1,
 			maxTotalBytes: 700,

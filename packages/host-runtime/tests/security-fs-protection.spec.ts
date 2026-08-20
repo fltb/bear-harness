@@ -1,11 +1,10 @@
 // @vitest-environment node
 
-import fs from "node:fs";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import fs, { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { installFsProtection, type FsProtectionHit } from "../src/security/fs-protection.js";
+import { type FsProtectionHit, installFsProtection } from "../src/security/fs-protection.js";
 
 const handles: Array<{ uninstall(): void }> = [];
 

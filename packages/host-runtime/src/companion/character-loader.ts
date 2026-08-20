@@ -76,12 +76,33 @@ export interface ThemeTokens {
 	font: { body: string; heading: string };
 }
 
+export interface CharacterWorkPresentationLabels {
+	proposal: string;
+	running: string;
+	needs_user: string;
+	interrupted: string;
+	completed: string;
+	failed: string;
+	steer_placeholder: string;
+	interrupt: string;
+	resume: string;
+	approve: string;
+	reject: string;
+	artifact_open: string;
+	artifact_reveal: string;
+}
+
+export interface CharacterWorkPresentation {
+	labels: CharacterWorkPresentationLabels;
+}
+
 export interface CharacterStrings {
 	subtitle: string;
 	scene_title: string;
 	greeting: string;
 	composer_placeholder: string;
 	correction: { trigger_label: string; reason_group_label: string };
+	work_presentation?: CharacterWorkPresentation;
 	first_meeting: CharacterOnboardingFlow;
 }
 
@@ -278,6 +299,29 @@ const SafeCssValueSchema = z
 	.max(256)
 	.refine((value) => !/[;{}<>]/.test(value) && !/url\s*\(/i.test(value), "unsafe CSS value");
 
+const WorkPresentationLabelSchema = z
+	.string()
+	.min(1)
+	.max(4096)
+	.refine((value) => value.trim().length > 0, "must not be blank");
+const WorkPresentationSchema = z.strictObject({
+	labels: z.strictObject({
+		proposal: WorkPresentationLabelSchema,
+		running: WorkPresentationLabelSchema,
+		needs_user: WorkPresentationLabelSchema,
+		interrupted: WorkPresentationLabelSchema,
+		completed: WorkPresentationLabelSchema,
+		failed: WorkPresentationLabelSchema,
+		steer_placeholder: WorkPresentationLabelSchema,
+		interrupt: WorkPresentationLabelSchema,
+		resume: WorkPresentationLabelSchema,
+		approve: WorkPresentationLabelSchema,
+		reject: WorkPresentationLabelSchema,
+		artifact_open: WorkPresentationLabelSchema,
+		artifact_reveal: WorkPresentationLabelSchema,
+	}),
+});
+
 const ThemeTokensSchema = z.strictObject({
 	radius: z.strictObject({
 		sm: z.number().finite().min(0).max(40),
@@ -296,6 +340,16 @@ const ThemeTokensSchema = z.strictObject({
 	}),
 	font: z.strictObject({ body: SafeCssValueSchema, heading: SafeCssValueSchema }),
 });
+
+function validateWorkPresentation(
+	value: unknown,
+	characterId: string,
+): asserts value is CharacterWorkPresentation | undefined {
+	if (value === undefined) return;
+	if (!WorkPresentationSchema.safeParse(value).success) {
+		throw new Error(`character package ${characterId}: work presentation labels are invalid`);
+	}
+}
 
 function validateTheme(value: unknown, characterId: string): asserts value is ThemeTokens {
 	const result = ThemeTokensSchema.safeParse(value);
@@ -533,6 +587,7 @@ export class CharacterLoader {
 			reactionEvents.add(reaction.event);
 		}
 		validateCharacterOnboardingFlow(parsed.character?.first_meeting, id);
+		validateWorkPresentation(parsed.character?.work_presentation, id);
 		const roleplay = RoleplaySchema.parse(parsed.roleplay);
 		const canonManifestPath = this.characterPackagePath(id, "canon/manifest.yaml");
 		const canonManifest = CanonPackageManifestSchema.parse(
@@ -710,7 +765,8 @@ export class CharacterLoader {
 		return {
 			skillPaths,
 			pluginPaths,
-			appendSystemPrompt: character.companion.pi.append_system_prompt + "\n\n" + this.formatExamples(character),
+			appendSystemPrompt:
+				character.companion.pi.append_system_prompt + "\n\n" + this.formatExamples(character),
 			hostTools: [
 				"host_get_state",
 				"host_set_scene",
@@ -739,10 +795,7 @@ export class CharacterLoader {
 					speaker +
 					"在不同情境下的典型说话方式，参照这些模式，不照搬台词。\n" +
 					character.examples
-						.map(
-							(e) =>
-								`情景：${e.scenario}\n你：${e.user}\n${speaker}：${e.assistant}`,
-						)
+						.map((e) => `情景：${e.scenario}\n你：${e.user}\n${speaker}：${e.assistant}`)
 						.join("\n\n"),
 			);
 		}

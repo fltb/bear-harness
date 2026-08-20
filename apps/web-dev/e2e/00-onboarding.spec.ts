@@ -1,6 +1,6 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
-import { selectKobalteOption } from "./helpers";
+import { getBootstrap, selectKobalteOption } from "./helpers";
 
 test("browser requires a reply model before the role-defined onboarding", async ({ page }) => {
 	await page.goto("/");
@@ -11,7 +11,7 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	await expect(modelSetup.getByRole("button", { name: zhCN.settings.serviceLabel })).toBeVisible();
 	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.modelLabel })).toBeDisabled();
 
-	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	const bootstrap = await getBootstrap(page);
 	const provider = {
 		id: "e2e-onboarding",
 		name: "E2E Onboarding Provider",
@@ -29,7 +29,37 @@ test("browser requires a reply model before the role-defined onboarding", async 
 		})
 	).json();
 	expect(configured).toMatchObject({ ok: true });
+	type ProviderListPayload = {
+		ok: boolean;
+		data?: {
+			providers?: Array<{
+				id: string;
+				name: string;
+				availableModels: Array<{ id: string }>;
+			}>;
+		};
+	};
+	let providerList: ProviderListPayload | undefined;
+	const providerListResponse = page.waitForResponse(async (response) => {
+		if (
+			response.request().method() !== "POST" ||
+			!response.url().includes("/rpc/provider.list%3Av1")
+		) {
+			return false;
+		}
+		const candidate = (await response.json()) as ProviderListPayload;
+		const found = candidate.data?.providers?.some(
+			(item) =>
+				item.id === provider.id &&
+				item.name === provider.name &&
+				item.availableModels.some((model) => model.id === provider.modelId),
+		);
+		if (found) providerList = candidate;
+		return found === true;
+	});
 	await page.reload();
+	await providerListResponse;
+	expect(providerList).toMatchObject({ ok: true });
 	await expect(modelSetup).toBeVisible();
 	await selectKobalteOption(
 		page,

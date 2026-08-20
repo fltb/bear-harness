@@ -33,6 +33,7 @@ export type CompanionHostToolName =
 
 export interface CompanionHostToolCall {
 	conversationId: string;
+	triggerMessageId?: string;
 	tool: string;
 	args: unknown;
 }

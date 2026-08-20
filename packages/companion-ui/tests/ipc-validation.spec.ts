@@ -108,6 +108,7 @@ const draft = {
 const commission = {
 	id: "commission-1",
 	conversationId: "conversation-1",
+	triggerMessageId: "message-1",
 	draft,
 	status: "draft",
 	createdAt: timestamp,
@@ -280,8 +281,66 @@ describe("host projection validation", () => {
 	});
 
 	it("rejects malformed nested character-package presentation data", () => {
-		const valid = structuredClone(THEMED_CHARACTER);
+		const labels = {
+			proposal: "Proposal",
+			running: "Running",
+			needs_user: "Needs you",
+			interrupted: "Paused",
+			completed: "Completed",
+			failed: "Failed",
+			steer_placeholder: "Add guidance",
+			interrupt: "Interrupt",
+			resume: "Resume",
+			approve: "Approve",
+			reject: "Reject",
+			artifact_open: "Open",
+			artifact_reveal: "Show in Finder",
+		};
+		const themedCharacter = structuredClone(THEMED_CHARACTER);
+		const valid = {
+			...themedCharacter,
+			character: {
+				...themedCharacter.character,
+				work_presentation: { labels },
+			},
+		};
 		expect(isCharacterDisplay(valid)).toBe(true);
+		expect(
+			isCharacterDisplay({
+				...valid,
+				character: { ...valid.character, work_presentation: { labels } },
+			}),
+		).toBe(true);
+		expect(
+			isCharacterDisplay({
+				...valid,
+				character: {
+					...valid.character,
+					work_presentation: { labels: { ...labels, unknown: "Nope" } },
+				},
+			}),
+		).toBe(false);
+		expect(
+			isCharacterDisplay({
+				...valid,
+				character: {
+					...valid.character,
+					work_presentation: { labels: { ...labels, proposal: " " } },
+				},
+			}),
+		).toBe(false);
+		expect(
+			isCharacterDisplay({
+				...valid,
+				character: {
+					...valid.character,
+					work_presentation: {
+						labels,
+						execution: "not presentation",
+					},
+				},
+			}),
+		).toBe(false);
 		for (const field of ["id", "name", "language", "character", "theme", "visual", "scenes"]) {
 			expect(isCharacterDisplay({ ...valid, [field]: null }), field).toBe(false);
 		}

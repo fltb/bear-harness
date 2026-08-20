@@ -10,7 +10,8 @@ import { Button } from "@kobalte/core/button";
 import { Collapsible } from "@kobalte/core/collapsible";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
-import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { requestImageReaderFocus, setRequestImageReaderFocus } from "../Composer.js";
 import { ModelPresetField, ProviderSelectionField } from "../ModelSelectionFields.js";
 import type { ProviderLoginResult } from "../stores/companion.js";
 import { useCompanionStore } from "../stores/companion.js";
@@ -36,9 +37,20 @@ export function SettingsSheet() {
 	const [advancedOpen, setAdvancedOpen] = createSignal(false);
 	const [customBaseUrl, setCustomBaseUrl] = createSignal("");
 	const [piConfigJson, setPiConfigJson] = createSignal("");
+	let visionTriggerRef: HTMLButtonElement | undefined;
 	let disposed = false;
 	onCleanup(() => {
 		disposed = true;
+	});
+
+	// When the composer asked the user to configure the image reader, land the
+	// focus on the image-model selector so the request is visibly answered.
+	createEffect(() => {
+		if (requestImageReaderFocus()) {
+			setRequestImageReaderFocus(false);
+			const trigger = visionTriggerRef;
+			if (trigger) window.setTimeout(() => trigger.focus(), 0);
+		}
 	});
 
 	const providers = () => store.provider.providers();
@@ -395,7 +407,7 @@ export function SettingsSheet() {
 				>
 					<Select.Label class="field-label">{t("settings.visionModel")}</Select.Label>
 					<p class="field-hint">{t("settings.visionModelHint")}</p>
-					<Select.Trigger class="select-trigger">
+					<Select.Trigger ref={visionTriggerRef} class="select-trigger">
 						<Select.Value<string> class="select-value">
 							{(state) => {
 								const id = state.selectedOption();

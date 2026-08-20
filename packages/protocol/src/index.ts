@@ -258,6 +258,8 @@ export type RunResponse = z.infer<typeof schema.RunResponse>;
 export type Artifact = z.infer<typeof schema.Artifact>;
 export type ArtifactListRequest = z.infer<typeof schema.ArtifactListRequest>;
 export type ArtifactListResponse = z.infer<typeof schema.ArtifactListResponse>;
+export type ArtifactReadResponse = z.infer<typeof schema.ArtifactReadResponse>;
+export type ArtifactUrlResponse = z.infer<typeof schema.ArtifactUrlResponse>;
 
 // ---------------------------------------------------------------------------
 // Settings

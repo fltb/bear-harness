@@ -88,6 +88,7 @@ export class CompanionSupervisor {
 	private modelRuntime: Models | null = null;
 	private readonly initializations = new Map<string, Promise<CoreSession>>();
 	private activeConversationId: string | null = null;
+	private readonly promptMessageIds = new Map<string, string>();
 	private promptQueue: Promise<void> = Promise.resolve();
 	private readonly compactionSettings: RequiredCompactionSettings;
 
@@ -210,7 +211,9 @@ export class CompanionSupervisor {
 				message: error instanceof Error ? error.message : String(error),
 			});
 		}
-		const tracedPluginTools = pluginTools.map((tool) => this.traceExternalTool(conversationId, tool));
+		const tracedPluginTools = pluginTools.map((tool) =>
+			this.traceExternalTool(conversationId, tool),
+		);
 		const session = new CoreSession(
 			modelRuntime,
 			[
@@ -248,6 +251,7 @@ export class CompanionSupervisor {
 		await this.promptQueue.catch(() => undefined);
 		this.session = null;
 		this.modelRuntime = null;
+		this.promptMessageIds.clear();
 		this.activeConversationId = null;
 		for (const session of this.sessions.values()) {
 			session.dispose();
@@ -284,16 +288,19 @@ export class CompanionSupervisor {
 			"conversationId" in command &&
 			typeof command.conversationId === "string" &&
 			"message" in command &&
-			typeof command.message === "string"
+			typeof command.message === "string" &&
+			"triggerMessageId" in command &&
+			typeof command.triggerMessageId === "string"
 		) {
 			const conversationId = command.conversationId;
 			const message = command.message;
+			const triggerMessageId = command.triggerMessageId;
 			const images =
 				"images" in command && Array.isArray(command.images)
 					? (command.images as PromptImages)
 					: undefined;
 			this.promptQueue = this.promptQueue
-				.then(() => this.prompt(conversationId, message, images))
+				.then(() => this.prompt(conversationId, message, triggerMessageId, images))
 				.catch((error: unknown) => {
 					if (this.state === "stopped") return;
 					this.eventBus.publish("companion.runtime_error", {
@@ -328,14 +335,17 @@ export class CompanionSupervisor {
 	private async prompt(
 		conversationId: string,
 		message: string,
+		triggerMessageId: string,
 		images?: PromptImages,
 	): Promise<void> {
 		this.activeConversationId = conversationId;
+		this.promptMessageIds.set(conversationId, triggerMessageId);
 		const includeHistory = !this.sessions.has(conversationId);
 		let session: CoreSession;
 		try {
 			session = await this.initializeSession(conversationId);
 		} catch (error) {
+			this.promptMessageIds.delete(conversationId);
 			if (this.state === "stopped") return;
 			this.state = "unavailable";
 			this.eventBus.publish("companion.state_changed", {
@@ -352,6 +362,7 @@ export class CompanionSupervisor {
 				code: "companion_unavailable",
 			});
 			this.eventBus.publish("message_end", { conversationId, failed: true });
+			this.promptMessageIds.delete(conversationId);
 			return;
 		}
 		const mainRoute = this.modelSelectionHandler?.(conversationId, false);
@@ -361,6 +372,7 @@ export class CompanionSupervisor {
 				code: "provider_auth_required",
 			});
 			this.eventBus.publish("message_end", { conversationId, failed: true });
+			this.promptMessageIds.delete(conversationId);
 			return;
 		}
 		const nativeStore = this.sessionStoreFor(conversationId);
@@ -409,6 +421,7 @@ export class CompanionSupervisor {
 			});
 			this.eventBus.publish("message_end", { conversationId, failed: true });
 		} finally {
+			this.promptMessageIds.delete(conversationId);
 			unsubscribe();
 		}
 	}
@@ -631,7 +644,8 @@ export class CompanionSupervisor {
 						tool: name,
 						label,
 						ok: false,
-						message: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
+						message:
+							error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
 					});
 					throw error;
 				}
@@ -681,7 +695,8 @@ export class CompanionSupervisor {
 						tool: name,
 						label,
 						ok: false,
-						message: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
+						message:
+							error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
 					});
 					throw error;
 				}
@@ -727,7 +742,12 @@ export class CompanionSupervisor {
 				message: "Host controls are unavailable.",
 			};
 		}
-		return this.hostToolHandler({ conversationId, tool, args });
+		return this.hostToolHandler({
+			conversationId,
+			triggerMessageId: this.promptMessageIds.get(conversationId),
+			tool,
+			args,
+		});
 	}
 
 	private readRoleSkill(params: { path: string; offset?: number; limit?: number }) {

@@ -42,6 +42,7 @@ import { IpcInvocationError } from "../lib/ipc.js";
 import {
 	type Artifact,
 	type ArtifactListData,
+	type ArtifactReadData,
 	type CanonChunk,
 	type CanonModule,
 	type CanonModuleKind,
@@ -117,6 +118,12 @@ function sleep(ms: number): Promise<void> {
 
 function messageOf(value: unknown): string {
 	return value instanceof Error ? value.message : String(value);
+}
+/** Copy decoded bytes into an ArrayBuffer accepted by the DOM BlobPart type. */
+function copyToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+	const buffer = new ArrayBuffer(bytes.byteLength);
+	new Uint8Array(buffer).set(bytes);
+	return buffer;
 }
 
 function parseRunPermission(payload: unknown): RunPermissionRequest | null {
@@ -253,6 +260,14 @@ export interface RunApi {
 export interface ArtifactApi {
 	artifacts(): Artifact[];
 	list(): Promise<ArtifactListData>;
+	/** Read a single artifact's bytes as base64 (used for safe inline previews). */
+	read(artifactId: string): Promise<ArtifactReadData>;
+	/**
+	 * Request the host-issued safe artifact URL (`bear-artifact://…` when the
+	 * desktop protocol handler is registered, otherwise ""). Never build URLs
+	 * from arbitrary paths in the renderer.
+	 */
+	url(artifactId: string): Promise<string>;
 	download(artifactId: string): Promise<void>;
 }
 
@@ -1440,10 +1455,18 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			setState("artifacts", data.artifacts);
 			return data;
 		},
+		read: async (artifactId) => {
+			const data = await invoke(client, () => client.artifact.read({ artifactId }));
+			return data;
+		},
+		url: async (artifactId) => {
+			const { url } = await invoke(client, () => client.artifact.url({ artifactId }));
+			return url;
+		},
 		download: async (artifactId) => {
 			const data = await invoke(client, () => client.artifact.read({ artifactId }));
 			const bytes = Uint8Array.from(atob(data.base64), (char) => char.charCodeAt(0));
-			const url = URL.createObjectURL(new Blob([bytes], { type: data.mime }));
+			const url = URL.createObjectURL(new Blob([copyToArrayBuffer(bytes)], { type: data.mime }));
 			const anchor = document.createElement("a");
 			anchor.href = url;
 			anchor.download = data.logicalName;
@@ -1648,7 +1671,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 		get toolActivities() {
 			const conversationId = state.activeConversationId;
-			return conversationId ? state.toolActivitiesByConversation[conversationId] ?? [] : [];
+			return conversationId ? (state.toolActivitiesByConversation[conversationId] ?? []) : [];
 		},
 		get runs() {
 			return state.runs;

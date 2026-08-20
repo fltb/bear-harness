@@ -211,8 +211,8 @@ test("adopted multi-turn history and a manual edit change the next model context
 		prompts: string[];
 	};
 	const lastPrompt = promptTrace.prompts.at(-1);
-	expect(lastPrompt).toContain("You are the local Companion runtime.");
-	expect(lastPrompt).toContain("你说话克制、具体、像一个长期值守的人。");
+	expect(lastPrompt).toContain("你是极昼，旧极光站的守护核心。");
+	expect(lastPrompt).toContain("语气克制、具体，像一个长期值守的人在说话。");
 	expect(lastPrompt).not.toContain(
 		"You are an expert coding assistant operating inside pi, a coding agent harness.",
 	);

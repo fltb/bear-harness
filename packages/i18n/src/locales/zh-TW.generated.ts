@@ -20,7 +20,10 @@ export const zhTW = {
 		"imageLabel": "圖片",
 		"imageReadBy": "圖片由 {model} 讀取",
 		"imageModelMissing": "需要新增支援圖片的模型",
-		"openModelSettings": "開啟模型設定",
+		"goToImageModelSettings": "前往圖片模型設定",
+		"imageRouteFailed": "圖片傳送失敗，草稿和圖片已保留。",
+		"imageRouteRetry": "重試",
+		"removeImages": "移除圖片",
 		"attachmentLimits": "一次最多新增 {count} 個檔案，每個檔案不超過 {size} MB",
 		"stop": "停止",
 		"stopLabel": "停止回覆"
@@ -409,6 +412,51 @@ export const zhTW = {
 			"verification_failed": "檢查未通過",
 			"adopted": "已採用",
 			"saved": "已儲存"
+		},
+		"timeline": {
+			"proposal": "工作提案",
+			"start": "開始",
+			"cancel": "取消",
+			"needsYou": "需要你決定",
+			"steer": "指揮",
+			"steerPlaceholder": "告訴正在進行的工作接下來該怎麼做…",
+			"interrupt": "中斷",
+			"resume": "繼續",
+			"completed": "已完成",
+			"failed": "未完成",
+			"viewArtifacts": "檢視成果",
+			"revealDetails": "檢視執行詳情與證據",
+			"resultCount": "{count} 個成果",
+			"permissionAllow": "允許這一次",
+			"permissionDeny": "不允許",
+			"stopRun": "停下來",
+			"runStatuses": {
+				"enqueued": "準備中",
+				"running": "進行中",
+				"needs_user": "等你決定",
+				"interrupted": "已暫停",
+				"completed": "已完成",
+				"failed": "未完成",
+				"cancelled": "已取消",
+				"forced_termination": "被強制終止"
+			}
+		},
+		"result": {
+			"title": "成果",
+			"close": "關閉成果",
+			"locate": "定位到對話",
+			"sourceFrom": "來自：{summary}",
+			"unavailable": "成果已不可用",
+			"tabsLabel": "選擇成果",
+			"filePage": {
+				"title": "檔案資訊",
+				"previewUnavailable": "此檔案型別暫不支援內聯預覽",
+				"name": "名稱",
+				"mime": "型別",
+				"size": "大小",
+				"sha256": "校驗和",
+				"status": "狀態"
+			}
 		}
 	}
 } as const;

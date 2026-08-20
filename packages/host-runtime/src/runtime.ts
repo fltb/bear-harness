@@ -48,12 +48,12 @@ import { ModelRegistry } from "./models/registry.js";
 import { applyProxyConfig, type SystemProxyResolver } from "./network/proxy-config.js";
 import { ProviderCatalog } from "./providers/catalog.js";
 import { CredentialStore, type CredentialVault } from "./providers/credential-store.js";
+import { AuditStore, wireAuditToEvents } from "./security/audit-store.js";
+import { type FsProtectionHandle, installFsProtection } from "./security/fs-protection.js";
+import { createModerationService, type ModerationService } from "./security/moderation.js";
 import { type AppSettingsRecord, AppSettingsStore } from "./storage/app-settings-store.js";
 import { Database, MIGRATIONS } from "./storage/database.js";
 import { EventBus } from "./storage/event-bus.js";
-import { AuditStore, wireAuditToEvents } from "./security/audit-store.js";
-import { installFsProtection, type FsProtectionHandle } from "./security/fs-protection.js";
-import { createModerationService, type ModerationService } from "./security/moderation.js";
 import { conversations, memoryCandidates, messages } from "./storage/schema.js";
 import { StoryService } from "./story/service.js";
 
@@ -357,10 +357,7 @@ export class HostRuntime {
 			if (call.tool === "host_remember") {
 				// Assistant-suggested memories become user-visible candidates the user
 				// must approve before they enter relationship memory (plan §7.6).
-				const candidate = await proposeMemoryCandidate(
-					this.composition,
-					call.conversationId,
-				);
+				const candidate = await proposeMemoryCandidate(this.composition, call.conversationId);
 				return {
 					ok: true,
 					message: "Memory suggestion created — approve or edit it in the memory panel.",
@@ -368,6 +365,13 @@ export class HostRuntime {
 				};
 			}
 			if (call.tool !== "host_propose_work") return characterBehavior.invoke(call);
+			if (!call.triggerMessageId) {
+				return {
+					ok: false,
+					code: "trigger_message_required",
+					message: "A real user message is required to propose work.",
+				};
+			}
 			const args = call.args as {
 				title: string;
 				description: string;
@@ -376,7 +380,12 @@ export class HostRuntime {
 				networkAllowed: boolean;
 				toolNames: string[];
 			};
-			const draft = commissions.draft({ conversationId: call.conversationId, ...args });
+			const triggerMessageId = call.triggerMessageId;
+			const draft = commissions.draft({
+				conversationId: call.conversationId,
+				triggerMessageId,
+				...args,
+			});
 			return {
 				ok: true,
 				message: "Action proposal created and is waiting for user approval.",

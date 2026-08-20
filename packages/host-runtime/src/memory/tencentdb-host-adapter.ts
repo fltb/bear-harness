@@ -21,7 +21,15 @@
 
 import fsPromises from "node:fs/promises";
 import path from "node:path";
-import { Type } from "@earendil-works/pi-ai";
+import type {
+	HostAdapter,
+	LLMRunner,
+	LLMRunnerCreateOptions,
+	LLMRunnerFactory,
+	LLMRunParams,
+	Logger,
+	RuntimeContext,
+} from "@bear-harness/tdai-core";
 import type {
 	Api,
 	AssistantMessage,
@@ -33,15 +41,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import type {
-	HostAdapter,
-	LLMRunner,
-	LLMRunnerCreateOptions,
-	LLMRunnerFactory,
-	LLMRunParams,
-	Logger,
-	RuntimeContext,
-} from "@bear-harness/tdai-core";
+import { Type } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "../models/registry.js";
 import type { ProviderCatalog } from "../providers/catalog.js";
 

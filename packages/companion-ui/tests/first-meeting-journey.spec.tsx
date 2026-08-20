@@ -236,11 +236,12 @@ describe("first meeting journeys", () => {
 
 		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
 		await user.click(within(dialog).getByRole("button", { name: zhCN.settings.advancedToggle }));
-		const service = dialog.querySelector<HTMLButtonElement>(
-			`button[aria-label="${zhCN.settings.serviceLabel}"]`,
-		);
-		expect(service).not.toBeNull();
-		await selectKobalteOption(user, service as HTMLButtonElement, "openai");
+		const services = within(dialog).getAllByRole("button", {
+			name: new RegExp(zhCN.settings.serviceLabel),
+		});
+		expect(services.length).toBeGreaterThan(0);
+		const service = services[0];
+		await selectKobalteOption(user, service, "openai");
 		await user.type(
 			within(dialog).getByLabelText(zhCN.settings.customBaseUrl),
 			"https://relay.example/v1",

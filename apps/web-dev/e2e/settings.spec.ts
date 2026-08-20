@@ -57,13 +57,15 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 		"E2E Rule Provider",
 	);
 
-	await page.getByRole("button", { name: zhCN.sidebar.systemSettings }).click();
-	const backstage = page.getByRole("dialog", { name: zhCN.backstage.title });
-	await expect(backstage).toBeVisible();
-	await backstage.getByRole("tab", { name: zhCN.backstage.systemSettings }).click();
-	const settingsPanel = backstage.getByRole("tabpanel", {
-		name: zhCN.backstage.systemSettings,
+	const systemSettingsButton = page.getByRole("button", {
+		name: zhCN.sidebar.systemSettings,
+		exact: true,
 	});
+	await expect(systemSettingsButton).toBeEnabled();
+	await systemSettingsButton.click();
+	const backstage = page.getByRole("dialog", { name: zhCN.sidebar.systemSettings });
+	await expect(backstage).toBeVisible();
+	const settingsPanel = backstage;
 	await expect(settingsPanel.getByText(zhCN.settings.modelPool, { exact: true })).toBeVisible();
 	await expect(settingsPanel.getByRole("button", { name: zhCN.settings.addModel })).toBeVisible();
 	await settingsPanel.getByRole("button", { name: zhCN.settings.advancedToggle }).click();
@@ -95,7 +97,7 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	// test-quality-allow locator: semantic theme contract requires the complete rendered subtree
 	const semanticElements = backstage.locator("*, option");
 	const semanticViolations = await semanticElements.evaluateAll((elements) => {
-		const root = elements[0]?.closest(".backstage-sheet");
+		const root = elements[0]?.closest('[role="dialog"]');
 		if (!root) return [{ tag: "ROOT", role: "missing", actual: "", expected: "" }];
 		const roles = ["default", "muted", "accent", "danger", "on-action"];
 		const requiredThemeTokens = [
@@ -144,12 +146,21 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 				text: element.textContent?.trim().slice(0, 80),
 			}));
 	});
-	expect(
+	await expect(
 		semanticViolations,
 		"every backstage foreground must resolve through its declared semantic role",
 	).toEqual([]);
-	await backstage.getByRole("tab", { name: zhCN.backstage.relationshipArchive }).click();
-	const relationshipMemory = backstage.getByRole("switch", {
+	await backstage.getByRole("button", { name: zhCN.backstage.close }).click();
+	const characterSettingsButton = page.getByRole("button", {
+		name: zhCN.sidebar.characterSettings,
+		exact: true,
+	});
+	await expect(characterSettingsButton).toBeEnabled();
+	await characterSettingsButton.click();
+	const characterBackstage = page.getByRole("dialog", { name: zhCN.sidebar.characterSettings });
+	await expect(characterBackstage).toBeVisible();
+	await characterBackstage.getByRole("tab", { name: zhCN.backstage.relationshipArchive }).click();
+	const relationshipMemory = characterBackstage.getByRole("switch", {
 		name: zhCN.settings.relationshipMemory,
 	});
 	await expect(relationshipMemory).toBeEnabled();
@@ -163,8 +174,14 @@ test("bottom actions open distinct character and system settings destinations", 
 }) => {
 	await ensureReadyForConversation(page);
 
-	await page.getByRole("button", { name: zhCN.sidebar.characterSettings, exact: true }).click();
-	let backstage = page.getByRole("dialog", { name: zhCN.backstage.title });
+	const characterSettingsButton = page.getByRole("button", {
+		name: zhCN.sidebar.characterSettings,
+		exact: true,
+	});
+	await expect(characterSettingsButton).toBeEnabled();
+	await characterSettingsButton.click();
+	let backstage = page.getByRole("dialog", { name: zhCN.sidebar.characterSettings });
+	await expect(backstage).toBeVisible();
 	await expect(backstage.getByRole("tab", { name: zhCN.backstage.roleManagement })).toHaveAttribute(
 		"aria-selected",
 		"true",
@@ -172,11 +189,13 @@ test("bottom actions open distinct character and system settings destinations", 
 	await expect(backstage.getByText(zhCN.backstage.roleImport, { exact: true })).toBeVisible();
 	await backstage.getByRole("button", { name: zhCN.backstage.close }).click();
 
-	await page.getByRole("button", { name: zhCN.sidebar.systemSettings, exact: true }).click();
-	backstage = page.getByRole("dialog", { name: zhCN.backstage.title });
-	await expect(backstage.getByRole("tab", { name: zhCN.backstage.systemSettings })).toHaveAttribute(
-		"aria-selected",
-		"true",
-	);
+	const systemSettingsButton = page.getByRole("button", {
+		name: zhCN.sidebar.systemSettings,
+		exact: true,
+	});
+	await expect(systemSettingsButton).toBeEnabled();
+	await systemSettingsButton.click();
+	backstage = page.getByRole("dialog", { name: zhCN.sidebar.systemSettings });
+	await expect(backstage).toBeVisible();
 	await expect(backstage.getByText(zhCN.settings.modelPool, { exact: true })).toBeVisible();
 });

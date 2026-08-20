@@ -95,6 +95,21 @@ character:
   correction:
     trigger_label: "这不像极昼"
     reason_group_label: "这不像极昼，因为"
+  work_presentation:
+    labels:
+      proposal: "要交给下级程序的事"
+      running: "下级程序正在处理"
+      needs_user: "这一步得你决定"
+      interrupted: "工作先停在这里"
+      completed: "带回来的东西"
+      failed: "没有办成"
+      steer_placeholder: "补充一句要怎么做"
+      interrupt: "叫停"
+      resume: "继续处理"
+      approve: "交给它们"
+      reject: "这次算了"
+      artifact_open: "打开"
+      artifact_reveal: "在 Finder 中显示"
   # 第一次见面由角色包定义；Host 只执行受限的声明式 effects。
   first_meeting:
     version: 1

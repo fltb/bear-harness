@@ -313,12 +313,9 @@ describe("relationship memory context", () => {
 	});
 
 	it("captures an adopted legacy message when no Pi session exists", async () => {
-		db.prepare("INSERT INTO branches (id, conversation_id, label, adopted) VALUES (?, ?, ?, ?)").run(
-			"legacy-branch",
-			"conversation-1",
-			"main",
-			1,
-		);
+		db.prepare(
+			"INSERT INTO branches (id, conversation_id, label, adopted) VALUES (?, ?, ?, ?)",
+		).run("legacy-branch", "conversation-1", "main", 1);
 		db.prepare(
 			"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES (?, ?, ?, ?)",
 		).run("legacy-message", "conversation-1", "legacy-branch", "assistant");

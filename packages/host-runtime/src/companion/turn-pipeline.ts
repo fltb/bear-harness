@@ -167,6 +167,7 @@ export class TurnPipeline {
 		this.supervisor.sendCommand({
 			type: "prompt",
 			conversationId,
+			triggerMessageId: messageId,
 			message: text,
 			images: attachments.map((attachment) => ({
 				type: "image" as const,
@@ -283,6 +284,7 @@ export class TurnPipeline {
 		});
 		this.supervisor.sendCommand({
 			type: "prompt",
+			triggerMessageId: parent.id,
 			conversationId,
 			message: REGENERATE_INSTRUCTION,
 		});
@@ -447,6 +449,7 @@ export class TurnPipeline {
 			this.activeTurns.set(conversationId, { userMessageId: hostMessageId });
 			this.supervisor.sendCommand({
 				type: "prompt",
+				triggerMessageId: hostMessageId,
 				conversationId,
 				message: text,
 				streamingBehavior: "followUp",
@@ -467,6 +470,7 @@ export class TurnPipeline {
 		this.activeTurns.set(conversationId, { userMessageId });
 		this.supervisor.sendCommand({
 			type: "prompt",
+			triggerMessageId: userMessageId,
 			conversationId,
 			message: CONTINUE_INSTRUCTION,
 		});
@@ -494,6 +498,7 @@ export class TurnPipeline {
 		this.activeTurns.set(conversationId, { userMessageId });
 		this.supervisor.sendCommand({
 			type: "prompt",
+			triggerMessageId: userMessageId,
 			conversationId,
 			message: `用户刚刚指出上一条回复的问题：“${reason}”。请据此重写回应，直接给出修正后的内容，不要提及这条校正指令。`,
 		});

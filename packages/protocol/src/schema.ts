@@ -211,6 +211,24 @@ export const CharacterTheme = z.strictObject({
 	}),
 	font: z.strictObject({ body: z.string(), heading: z.string() }),
 });
+export const CharacterWorkPresentationLabels = z.strictObject({
+	proposal: CharacterCopy.refine((value) => value.trim().length > 0),
+	running: CharacterCopy.refine((value) => value.trim().length > 0),
+	needs_user: CharacterCopy.refine((value) => value.trim().length > 0),
+	interrupted: CharacterCopy.refine((value) => value.trim().length > 0),
+	completed: CharacterCopy.refine((value) => value.trim().length > 0),
+	failed: CharacterCopy.refine((value) => value.trim().length > 0),
+	steer_placeholder: CharacterCopy.refine((value) => value.trim().length > 0),
+	interrupt: CharacterCopy.refine((value) => value.trim().length > 0),
+	resume: CharacterCopy.refine((value) => value.trim().length > 0),
+	approve: CharacterCopy.refine((value) => value.trim().length > 0),
+	reject: CharacterCopy.refine((value) => value.trim().length > 0),
+	artifact_open: CharacterCopy.refine((value) => value.trim().length > 0),
+	artifact_reveal: CharacterCopy.refine((value) => value.trim().length > 0),
+});
+export const CharacterWorkPresentation = z.strictObject({
+	labels: CharacterWorkPresentationLabels,
+});
 export const CharacterDisplay = z.strictObject({
 	id: z.string().min(1).max(64),
 	name: CharacterCopy,
@@ -224,6 +242,7 @@ export const CharacterDisplay = z.strictObject({
 			trigger_label: z.string().max(MAX_STRING_LENGTH),
 			reason_group_label: z.string().max(MAX_STRING_LENGTH),
 		}),
+		work_presentation: CharacterWorkPresentation.optional(),
 		first_meeting: CharacterOnboardingFlow,
 	}),
 	theme: CharacterTheme,
@@ -1034,6 +1053,7 @@ export const ActionDraft = z.strictObject({
 export const Commission = z.strictObject({
 	id: z.string().max(64),
 	conversationId: ConversationId.optional(),
+	triggerMessageId: MessageId,
 	draft: ActionDraft,
 	status: z.union([
 		z.literal("draft"),
@@ -1054,6 +1074,7 @@ export const CommissionListResponse = z.strictObject({
 });
 export const CommissionDraftRequest = z.strictObject({
 	conversationId: z.string().min(1).max(64),
+	triggerMessageId: MessageId,
 	title: z.string().min(1).max(MAX_STRING_LENGTH),
 	description: z.string().min(1).max(MAX_STRING_LENGTH),
 	reads: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).max(20).optional(),

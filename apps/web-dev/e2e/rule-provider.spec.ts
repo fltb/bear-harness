@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "playwright/test";
+import { getBootstrap } from "./helpers";
 
 interface SnapshotMessage {
 	id: string;
@@ -24,7 +25,7 @@ test("rule provider exercises send and edited-history regeneration deterministic
 	page,
 }) => {
 	await page.goto("/");
-	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	const bootstrap = await getBootstrap(page);
 	await rpc(page, bootstrap.token, "provider.customUpsert:v1", {
 		providerId: "e2e-rule",
 		name: "E2E Rule Provider",
@@ -131,7 +132,7 @@ test("an image reader observes images while the selected text model produces the
 	page,
 }) => {
 	await page.goto("/");
-	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	const bootstrap = await getBootstrap(page);
 	const baseUrl = `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/v1`;
 	await rpc(page, bootstrap.token, "provider.importPiConfig:v1", {
 		configJson: JSON.stringify({

@@ -7,12 +7,12 @@ import { createHostRuntime } from "@bear-harness/host-runtime";
 import { productConfig } from "@bear-harness/product-config";
 import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
 import { createWebCredentialVault } from "./credential-vault.ts";
-import { desktopDataDirectory } from "./data-directory.ts";
+import { webDevDataDirectory } from "./data-directory.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
 const port = Number(process.env.BEAR_WEB_DEV_HOST_PORT ?? "3201");
-const dataDir = desktopDataDirectory(productConfig.dataDirectoryName);
+const dataDir = webDevDataDirectory(productConfig.dataDirectoryName);
 mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 const token = randomBytes(32).toString("hex");
 const debugEnabled = process.env.BEAR_WEB_DEV_DEBUG === "1";

@@ -1,6 +1,14 @@
 // @vitest-environment node
 
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	cpSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +33,23 @@ describe("character package visual projection", () => {
 
 		const display = loader.display(character);
 		expect(display.language).toBe("zh-CN");
+		expect(display.character.work_presentation).toEqual({
+			labels: {
+				proposal: "要交给下级程序的事",
+				running: "下级程序正在处理",
+				needs_user: "这一步得你决定",
+				interrupted: "工作先停在这里",
+				completed: "带回来的东西",
+				failed: "没有办成",
+				steer_placeholder: "补充一句要怎么做",
+				interrupt: "叫停",
+				resume: "继续处理",
+				approve: "交给它们",
+				reject: "这次算了",
+				artifact_open: "打开",
+				artifact_reveal: "在 Finder 中显示",
+			},
+		});
 		expect(character.canon.manifest).toEqual(
 			expect.objectContaining({ version: 1, language: "zh-CN", sources: [] }),
 		);
@@ -70,6 +95,59 @@ describe("character package visual projection", () => {
 		const quietDesktop = display.scenes.find((scene) => scene.id === "quiet_desktop");
 		expect(quietDesktop).toBeDefined();
 		expect(quietDesktop?.backgroundUrl).toBeUndefined();
+	});
+});
+
+describe("character package work presentation", () => {
+	it("keeps work presentation optional for packages that do not declare it", () => {
+		const configRoot = mkdtempSync(join(tmpdir(), "bear-character-package-no-work-"));
+		temporaryDirectories.push(configRoot);
+		const packageDir = join(configRoot, "jizhou");
+		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
+		const manifestPath = join(packageDir, "character.yaml");
+		const manifest = readFileSync(manifestPath, "utf8");
+		const withoutWorkPresentation = manifest.replace(
+			/  work_presentation:\n    labels:\n(?:      [^\n]+\n){13}/,
+			"",
+		);
+		expect(withoutWorkPresentation).not.toBe(manifest);
+		writeFileSync(manifestPath, withoutWorkPresentation);
+
+		const loader = new CharacterLoader(configRoot);
+		const character = loader.load("jizhou");
+		expect(character).not.toBeNull();
+		if (!character) throw new Error("test package failed to load");
+		expect(loader.display(character).character.work_presentation).toBeUndefined();
+	});
+
+	it("rejects blank and unknown work presentation labels", () => {
+		for (const [name, mutate] of [
+			[
+				"blank",
+				(manifest: string) => manifest.replace('proposal: "要交给下级程序的事"', 'proposal: " "'),
+			],
+			[
+				"unknown",
+				(manifest: string) =>
+					manifest.replace(
+						'      artifact_reveal: "在 Finder 中显示"',
+						'      artifact_reveal: "在 Finder 中显示"\n      unknown: "未知"',
+					),
+			],
+		] as const) {
+			const configRoot = mkdtempSync(join(tmpdir(), `bear-character-package-${name}-`));
+			temporaryDirectories.push(configRoot);
+			const packageDir = join(configRoot, "jizhou");
+			cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
+			const manifestPath = join(packageDir, "character.yaml");
+			const manifest = readFileSync(manifestPath, "utf8");
+			writeFileSync(manifestPath, mutate(manifest));
+
+			const loader = new CharacterLoader(configRoot);
+			expect(() => loader.load("jizhou")).toThrow(
+				/character package jizhou: work presentation labels are invalid/,
+			);
+		}
 	});
 });
 

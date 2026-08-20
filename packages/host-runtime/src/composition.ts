@@ -18,7 +18,7 @@ import type {
 	ResponseOf,
 } from "@bear-harness/protocol";
 import { CharacterRuntimeState, RPC } from "@bear-harness/protocol/schema";
-import { desc, eq, and } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { ArtifactStore } from "./artifacts/index.js";
 import type { CanonHubService } from "./canon/service.js";
 import type { CommissionService, RunStatus } from "./commissions/service.js";
@@ -48,8 +48,8 @@ import {
 	memoryCandidates,
 	memoryDecisions,
 	memoryPresentation,
-	messageVersions,
 	messages,
+	messageVersions,
 	relationshipMemoryEntries,
 	runs,
 	sceneState,
@@ -851,18 +851,23 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 	dispatcher.registerHandler(RPC.commission.list, async () => {
 		return {
-			commissions: s.commissions.list().map((commission) => ({
-				id: commission.id,
-				conversationId: commission.conversationId ?? undefined,
-				status: commission.status,
-				createdAt: commission.createdAt,
-				draft: commission.draft,
-			})),
+			commissions: s.commissions
+				.list()
+				.filter((commission) => commission.triggerMessageId.trim().length > 0)
+				.map((commission) => ({
+					id: commission.id,
+					triggerMessageId: commission.triggerMessageId,
+					conversationId: commission.conversationId ?? undefined,
+					status: commission.status,
+					createdAt: commission.createdAt,
+					draft: commission.draft,
+				})),
 		};
 	});
 	dispatcher.registerHandler(RPC.commission.draft, async (_p) => {
 		const params = _p as {
 			conversationId: string;
+			triggerMessageId: string;
 			title: string;
 			description: string;
 			reads?: string[];
@@ -1116,6 +1121,19 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 					? conversationRepository.project(activeRow.id, activeRow.title, activeRow.sceneTitle)
 					: {}),
 			},
+			commission: {
+				commissions: s.commissions
+					.list()
+					.filter((commission) => commission.triggerMessageId.trim().length > 0)
+					.map((commission) => ({
+						id: commission.id,
+						triggerMessageId: commission.triggerMessageId,
+						conversationId: commission.conversationId ?? undefined,
+						status: commission.status,
+						createdAt: commission.createdAt,
+						draft: commission.draft,
+					})),
+			},
 			artifact: {
 				artifacts: s.artifacts.list().map((artifact) => ({
 					...artifact,
@@ -1214,9 +1232,10 @@ export async function rememberConversationEntry(
 		throw { kind: "not_found", reason: "conversation_not_found" };
 	}
 	const session = s.conversationRepository.getSession(conversationId);
-	const source = session && entryId
-		? session.readMessageEntries().find((candidate) => candidate.id === entryId)
-		: undefined;
+	const source =
+		session && entryId
+			? session.readMessageEntries().find((candidate) => candidate.id === entryId)
+			: undefined;
 	const fallback = source ? undefined : legacyMessageSource(s, conversationId, entryId);
 	if (!source && !fallback) {
 		throw {

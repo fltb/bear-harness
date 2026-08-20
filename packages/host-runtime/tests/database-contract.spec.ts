@@ -29,6 +29,27 @@ describe("database schema contract", () => {
 		expect(() => database.assertSchemaContract()).not.toThrow();
 		database.close();
 	});
+	it("keeps legacy commission rows while adding an explicit unlinked trigger sentinel", () => {
+		const database = new Database(root());
+		database.migrate(MIGRATIONS.slice(0, -1));
+		database.connection
+			.prepare(
+				"INSERT INTO commissions (id, conversation_id, status, draft_json) VALUES (?, ?, ?, ?)",
+			)
+			.run("legacy-commission", null, "draft", "{}");
+		database.migrate(MIGRATIONS);
+		const column = (
+			database.connection.prepare("PRAGMA table_info(commissions)").all() as Array<{
+				name: string;
+				notnull: number;
+			}>
+		).find((entry) => entry.name === "trigger_message_id");
+		expect(column?.notnull).toBe(1);
+		expect(
+			database.connection.prepare("SELECT id, trigger_message_id FROM commissions").get(),
+		).toEqual({ id: "legacy-commission", trigger_message_id: "" });
+		database.close();
+	});
 
 	it("creates every column required by typed runtime queries", () => {
 		const database = new Database(root());

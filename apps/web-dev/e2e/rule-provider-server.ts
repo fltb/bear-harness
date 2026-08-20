@@ -1,5 +1,9 @@
 import { createServer } from "node:http";
 
+const directMemoryTexts = [
+	"E2E_DIRECT_MEMORY_A：我们约定暗号是北辰",
+	"E2E_DIRECT_MEMORY_B：我们约定暗号是北辰",
+] as const;
 const port = Number(process.env.BEAR_E2E_PROVIDER_PORT ?? "3211");
 // The Web E2E harness configures this test provider with the canonical model ID "rule-model".
 // Keep the deterministic response script model-agnostic; model selection belongs to the tests.
@@ -47,6 +51,10 @@ function reply(payload: { messages?: Array<{ role?: string; content?: unknown }>
 		.filter((message) => message.role === "tool")
 		.map((message) => text(message.content))
 		.join("\n");
+	const memoryContextCheck = current.includes("检查记忆上下文");
+	const directMemoryText = memoryContextCheck
+		? undefined
+		: directMemoryTexts.find((value) => current.includes(value));
 	if (!toolResult && current.includes("E2E_TOOL_TRIGGER_DAMAGED_LOG")) {
 		calls.push({
 			tool: "host_trigger_roleplay_event",
@@ -81,21 +89,23 @@ function reply(payload: { messages?: Array<{ role?: string; content?: unknown }>
 							? "E2E_CONTEXT_TWO_TURNS_OK\n"
 							: prompt.includes("VISUAL_OBSERVATION: a red square")
 								? "MAIN_USED_VISUAL_OBSERVATION\n"
-								: current.includes("检查记忆上下文")
-									? current.includes("南星") && hostContext.includes("南星")
-										? "MEMORY_CONTEXT:我们约定暗号是南星\n"
-										: current.includes("北辰") && hostContext.includes("北辰")
-											? "MEMORY_CONTEXT:我们约定暗号是北辰\n"
-											: "MEMORY_CONTEXT:ABSENT\n"
-									: prompt.includes("EDITED_OK")
-										? "EDITED_OK\n"
-										: prompt.includes("STREAM_CHECK")
-											? "STREAM_ONE STREAM_TWO\n"
-											: prompt.includes("你是谁")
-												? "我是 E2E Rule Provider。\n"
-												: prompt.includes("E2E_OK")
-													? "E2E_OK\n"
-													: "RULE_OK\n";
+								: directMemoryText !== undefined
+									? `${directMemoryText}\n`
+									: memoryContextCheck
+										? current.includes("南星") && hostContext.includes("南星")
+											? "MEMORY_CONTEXT:我们约定暗号是南星\n"
+											: current.includes("北辰") && hostContext.includes("北辰")
+												? "MEMORY_CONTEXT:我们约定暗号是北辰\n"
+												: "MEMORY_CONTEXT:ABSENT\n"
+										: prompt.includes("EDITED_OK")
+											? "EDITED_OK\n"
+											: prompt.includes("STREAM_CHECK")
+												? "STREAM_ONE STREAM_TWO\n"
+												: prompt.includes("你是谁")
+													? "我是 E2E Rule Provider。\n"
+													: prompt.includes("E2E_OK")
+														? "E2E_OK\n"
+														: "RULE_OK\n";
 	return { content };
 }
 

@@ -546,9 +546,7 @@ export function FirstMeeting() {
 									options={["local", "none"]}
 									value={embeddingProvider()}
 									optionValue={(provider) => provider}
-									optionTextValue={(provider) =>
-										t(`settings.vectorProviders.${provider}` as never)
-									}
+									optionTextValue={(provider) => t(`settings.vectorProviders.${provider}` as never)}
 									onChange={(provider) => setEmbeddingProvider(provider ?? "none")}
 								>
 									<Select.Label class="field-label">{t("settings.vectorProvider")}</Select.Label>
@@ -580,9 +578,7 @@ export function FirstMeeting() {
 									>
 										<Select.Label class="field-label">{t("settings.localModel")}</Select.Label>
 										<Select.Trigger class="select-trigger" aria-label={t("settings.localModel")}>
-											<Select.Value<(typeof LOCAL_EMBEDDING_MODELS)[number]>
-												class="select-value"
-											>
+											<Select.Value<(typeof LOCAL_EMBEDDING_MODELS)[number]> class="select-value">
 												{(state) =>
 													state.selectedOption()
 														? t(`settings.localModels.${state.selectedOption()}` as never)

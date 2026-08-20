@@ -1,7 +1,16 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
+import {
+	faBoxArchive,
+	faGear,
+	faMagnifyingGlass,
+	faPen,
+	faPlus,
+	faTrash,
+} from "@fortawesome/free-solid-svg-icons";
 import { Button } from "@kobalte/core/button";
 import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { Icon } from "./Icon.js";
 import { type CharacterDisplay, useCompanionStore } from "./stores/companion.js";
 
 /**
@@ -60,7 +69,7 @@ export function Sidebar(props: {
 			</div>
 			<div class="sidebar-tools">
 				<TextField class="search-trigger">
-					<span aria-hidden="true">⌕</span>
+					<Icon icon={faMagnifyingGlass} />
 					<TextField.Input
 						ref={(element) => {
 							searchRef = element;
@@ -80,7 +89,7 @@ export function Sidebar(props: {
 					title={t("sidebar.newConversation")}
 					onClick={() => void store.createConversation()}
 				>
-					＋
+					<Icon icon={faPlus} />
 				</Button>
 			</div>
 			<div class="nav-scroll">
@@ -150,7 +159,7 @@ export function Sidebar(props: {
 													setEditingId(conversation.id);
 												}}
 											>
-												✎
+												<Icon icon={faPen} />
 											</Button>
 											<Button
 												data-control="command"
@@ -159,7 +168,7 @@ export function Sidebar(props: {
 												aria-label={t("sidebar.archiveConversation")}
 												onClick={() => void store.archiveConversation(conversation.id)}
 											>
-												⌑
+												<Icon icon={faBoxArchive} />
 											</Button>
 											<Button
 												data-control="command"
@@ -171,7 +180,7 @@ export function Sidebar(props: {
 														void store.deleteConversation(conversation.id);
 												}}
 											>
-												×
+												<Icon icon={faTrash} />
 											</Button>
 										</div>
 									</Show>
@@ -184,7 +193,7 @@ export function Sidebar(props: {
 					<div class="section-label">{t("sidebar.application")}</div>
 					<Button type="button" class="system-nav" onClick={() => props.onOpenBackstage("roles")}>
 						<span class="gear" aria-hidden="true">
-							◇
+							<Icon icon={faGear} />
 						</span>
 						{t("sidebar.characterSettings")}
 					</Button>
@@ -194,7 +203,7 @@ export function Sidebar(props: {
 						onClick={() => props.onOpenBackstage("settings")}
 					>
 						<span class="gear" aria-hidden="true">
-							⚙
+							<Icon icon={faGear} />
 						</span>
 						{t("sidebar.systemSettings")}
 					</Button>
