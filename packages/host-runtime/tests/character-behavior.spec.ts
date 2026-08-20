@@ -136,32 +136,51 @@ describe("CharacterBehaviorService", () => {
 		).toEqual({ scene: "snow_plains", state_json: JSON.stringify({ visualState: "thinking" }) });
 	});
 
-	it("applies all declared effects from a trusted Host event", () => {
+	it("applies only fixed standee lifecycle reactions from Host events", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);
 
 		fixture.eventBus.publish("message.user_sent", { conversationId: "conversation-1" });
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { sceneId: "aurora_study", visualState: "listening" } });
 
-		const state = fixture.behavior.invoke({
-			conversationId: "conversation-1",
-			tool: "host_get_state",
-			args: {},
-		});
-		expect(state).toMatchObject({
-			ok: true,
-			state: { sceneId: "aurora_study", visualState: "listening" },
-		});
+		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { sceneId: "aurora_study", visualState: "result_ready" } });
+
+		fixture.eventBus.publish("message.aborted", { conversationId: "conversation-1" });
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { sceneId: "aurora_study", visualState: "presence" } });
+
 		const events = fixture.db.prepare("SELECT kind FROM events ORDER BY seq").all() as Array<{
 			kind: string;
 		}>;
 		expect(events.map((event) => event.kind)).toEqual([
 			"message.user_sent",
 			"character.visual_state_changed",
-			"character.scene_changed",
+			"message_end",
+			"character.visual_state_changed",
+			"message.aborted",
+			"character.visual_state_changed",
 		]);
 	});
 
-	it("rejects an automatic reaction that references an undeclared package ID", () => {
+	it("rejects an automatic reaction with a forbidden presentation key", () => {
 		const configRoot = mkdtempSync(join(tmpdir(), "bear-character-host-reaction-"));
 		temporaryDirectories.push(configRoot);
 		const packageDir = join(configRoot, "jizhou");
@@ -170,11 +189,31 @@ describe("CharacterBehaviorService", () => {
 		const manifest = readFileSync(manifestPath, "utf8");
 		writeFileSync(
 			manifestPath,
-			manifest.replace("      scene: aurora_study", "      scene: missing_scene"),
+			manifest.replace(
+				"      visual_state: listening",
+				"      visual_state: listening\n      scene: aurora_study",
+			),
 		);
 
 		expect(() => new CharacterLoader(configRoot).load("jizhou")).toThrow(
-			/invalid host event reaction effect/,
+			/invalid host event reaction/,
+		);
+	});
+
+	it("rejects an automatic reaction with an incorrect lifecycle mapping", () => {
+		const configRoot = mkdtempSync(join(tmpdir(), "bear-character-host-reaction-"));
+		temporaryDirectories.push(configRoot);
+		const packageDir = join(configRoot, "jizhou");
+		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
+		const manifestPath = join(packageDir, "character.yaml");
+		const manifest = readFileSync(manifestPath, "utf8");
+		writeFileSync(
+			manifestPath,
+			manifest.replace("      visual_state: listening", "      visual_state: result_ready"),
+		);
+
+		expect(() => new CharacterLoader(configRoot).load("jizhou")).toThrow(
+			/invalid host event reaction/,
 		);
 	});
 

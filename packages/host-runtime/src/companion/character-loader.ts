@@ -130,10 +130,7 @@ export interface CharacterVisuals {
 
 export interface HostEventReaction {
 	event: string;
-	visual_state?: string;
-	scene?: string;
-	media?: string;
-	choice_set?: string;
+	visual_state: string;
 }
 
 export interface CharacterHostBehavior {
@@ -283,6 +280,11 @@ const MEDIA_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
 	".ogv": "video/ogg",
 	".webm": "video/webm",
 	".vtt": "text/vtt",
+};
+const FIXED_HOST_REACTIONS: Readonly<Record<string, string>> = {
+	"message.user_sent": "listening",
+	message_end: "result_ready",
+	"message.aborted": "presence",
 };
 
 const LanguageTagSchema = z
@@ -593,36 +595,38 @@ export class CharacterLoader {
 		const mediaIds = new Set(roleplay.media.map((entry) => entry.id));
 		const unlockableIds = new Set(roleplay.unlockables.map((entry) => entry.id));
 		const eventIds = new Set(roleplay.events.map((entry) => entry.id));
-		const sceneIds = new Set(parsed.scenes.map((scene) => scene.id));
-		const choiceSetIds = new Set(roleplay.choice_sets.map((set) => set.id));
+		const expectedHostReactions = FIXED_HOST_REACTIONS;
+		const reactions = parsed.host.event_reactions;
+		const invalidReaction = () => {
+			throw new Error(`character package ${id}: invalid host event reaction`);
+		};
+		if (reactions.length !== Object.keys(expectedHostReactions).length) invalidReaction();
 		const reactionEvents = new Set<string>();
-		for (const reaction of parsed.host.event_reactions) {
-			const effectKeys = ["visual_state", "scene", "media", "choice_set"] as const;
+		for (const reaction of reactions) {
 			if (
 				!reaction ||
-				typeof reaction.event !== "string" ||
-				!reaction.event.trim() ||
-				reactionEvents.has(reaction.event) ||
-				effectKeys.every((key) => typeof reaction[key] !== "string" || !reaction[key]?.trim())
-			) {
-				throw new Error(`character package ${id}: invalid or duplicate host event reaction`);
-			}
-			for (const key of effectKeys) {
-				const value = reaction[key];
-				if (value === undefined) continue;
-				if (
-					typeof value !== "string" ||
-					!value.trim() ||
-					(key === "visual_state" && !expressionIds.has(value)) ||
-					(key === "scene" && !sceneIds.has(value)) ||
-					(key === "media" && !mediaIds.has(value)) ||
-					(key === "choice_set" && !choiceSetIds.has(value))
-				) {
-					throw new Error(`character package ${id}: invalid host event reaction effect`);
-				}
-			}
-			reactionEvents.add(reaction.event);
+				typeof reaction !== "object" ||
+				Array.isArray(reaction) ||
+				Object.keys(reaction).length !== 2 ||
+				!("event" in reaction) ||
+				!("visual_state" in reaction)
+			)
+				invalidReaction();
+			const event = reaction.event;
+			const visualState = reaction.visual_state;
+			if (
+				typeof event !== "string" ||
+				!event.trim() ||
+				typeof visualState !== "string" ||
+				!visualState.trim() ||
+				!expressionIds.has(visualState) ||
+				reactionEvents.has(event) ||
+				expectedHostReactions[event] !== visualState
+			)
+				invalidReaction();
+			reactionEvents.add(event);
 		}
+		if (reactionEvents.size !== Object.keys(expectedHostReactions).length) invalidReaction();
 		for (const variable of roleplay.variables) {
 			const actualType = typeof variable.initial;
 			if (

@@ -16,6 +16,19 @@ my-character/
 
 `identity_core` 只写稳定事实：角色是谁、知道什么、不能跨越什么边界。说话习惯写进 `style`。不要写入用户隐私、临时剧情结果、其他会话内容、密钥，或试图覆盖 Host 策略的指令。
 
+## Host 生命周期反应
+
+`host.event_reactions` 是 Host 生命周期的固定界面绑定，不是角色包自定义事件或展示编排。角色包必须声明且只能声明以下三项（顺序不影响校验）：
+
+| Event | `visual_state` |
+| --- | --- |
+| `message.user_sent` | `listening` |
+| `message_end` | `result_ready` |
+| `message.aborted` | `presence` |
+
+每项只能设置 `visual_state`。不得添加 `scene`、`media`、`choice_set` 或其他效果键，也不得添加、删除、替换事件。Host 生命周期反应只负责 standee 的视觉状态；场景切换、媒体展示和选择集展示必须由模型调用相应 Host 工具，或由已声明的 roleplay event effects 决定。
+
+
 ## 会进入上下文的内容
 
 每轮按以下顺序编译：

@@ -209,7 +209,6 @@ host:
   event_reactions:
     - event: message.user_sent
       visual_state: listening
-      scene: aurora_study
     - event: message_end
       visual_state: result_ready
     - event: message.aborted

@@ -1,5 +1,5 @@
 import { zhCN } from "@bear-harness/i18n/locales";
-import { render, screen, within } from "@solidjs/testing-library";
+import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -312,6 +312,7 @@ describe("roleplay presentation", () => {
 		);
 		expect(dismissRoleplayMedia).toHaveBeenCalledOnce();
 		expect(dismissAmbientMedia).not.toHaveBeenCalled();
+		await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 		expect(screen.getByRole("region", { name: "Ambient audio" })).toBeVisible();
 		await userEvent
 			.setup()

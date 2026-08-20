@@ -98,6 +98,112 @@ describe("character package visual projection", () => {
 	});
 });
 
+describe("character package Host lifecycle reactions", () => {
+	const expectedReactions = [
+		{ event: "message.user_sent", visual_state: "listening" },
+		{ event: "message_end", visual_state: "result_ready" },
+		{ event: "message.aborted", visual_state: "presence" },
+	];
+
+	function packageWithManifest(
+		prefix: string,
+		mutate: (manifest: string) => string,
+	): { configRoot: string; manifest: string } {
+		const configRoot = mkdtempSync(join(tmpdir(), prefix));
+		temporaryDirectories.push(configRoot);
+		const packageDir = join(configRoot, "jizhou");
+		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
+		const manifestPath = join(packageDir, "character.yaml");
+		const manifest = readFileSync(manifestPath, "utf8");
+		const mutated = mutate(manifest);
+		expect(mutated).not.toBe(manifest);
+		writeFileSync(manifestPath, mutated);
+		return { configRoot, manifest: mutated };
+	}
+
+	it("loads the official package with exactly the fixed lifecycle bindings", () => {
+		const character = new CharacterLoader(characterRoot).load("jizhou");
+		expect(character).not.toBeNull();
+		expect(character?.host.event_reactions).toEqual(expectedReactions);
+	});
+
+	it.each([
+		[
+			"missing",
+			(manifest: string) =>
+				manifest.replace("    - event: message.aborted\n      visual_state: presence\n", ""),
+		],
+		[
+			"extra",
+			(manifest: string) =>
+				manifest.replace(
+					"    - event: message.aborted\n      visual_state: presence\n",
+					"    - event: message.aborted\n      visual_state: presence\n    - event: message.custom\n      visual_state: presence\n",
+				),
+		],
+		[
+			"wrong state",
+			(manifest: string) =>
+				manifest.replace(
+					"    - event: message.user_sent\n      visual_state: listening\n",
+					"    - event: message.user_sent\n      visual_state: presence\n",
+				),
+		],
+		[
+			"forbidden scene effect",
+			(manifest: string) =>
+				manifest.replace(
+					"    - event: message.user_sent\n      visual_state: listening\n",
+					"    - event: message.user_sent\n      visual_state: listening\n      scene: aurora_study\n",
+				),
+		],
+		[
+			"forbidden media effect",
+			(manifest: string) =>
+				manifest.replace(
+					"    - event: message.user_sent\n      visual_state: listening\n",
+					"    - event: message.user_sent\n      visual_state: listening\n      media: first_night\n",
+				),
+		],
+		[
+			"forbidden choice effect",
+			(manifest: string) =>
+				manifest.replace(
+					"    - event: message.user_sent\n      visual_state: listening\n",
+					"    - event: message.user_sent\n      visual_state: listening\n      choice_set: damaged_log_response\n",
+				),
+		],
+	] as const)("rejects %s lifecycle reaction mutation", (_name, mutate) => {
+		const { configRoot } = packageWithManifest(
+			`bear-character-package-host-reaction-${_name.replace(/\s+/g, "-")}-`,
+			mutate,
+		);
+		expect(() => new CharacterLoader(configRoot).load("jizhou")).toThrow(
+			/invalid host event reaction/,
+		);
+	});
+
+	it("accepts the fixed bindings in any declaration order", () => {
+		const bindings = [
+			"    - event: message.user_sent\n      visual_state: listening\n",
+			"    - event: message_end\n      visual_state: result_ready\n",
+			"    - event: message.aborted\n      visual_state: presence\n",
+		];
+		const { configRoot } = packageWithManifest(
+			"bear-character-package-host-reaction-reordered-",
+			(manifest) =>
+				manifest.replace(bindings.join(""), [bindings[2], bindings[0], bindings[1]].join("")),
+		);
+		const character = new CharacterLoader(configRoot).load("jizhou");
+		expect(character).not.toBeNull();
+		expect(character?.host.event_reactions).toEqual([
+			expectedReactions[2],
+			expectedReactions[0],
+			expectedReactions[1],
+		]);
+	});
+});
+
 describe("character package roleplay media presentation", () => {
 	it("projects explicit presentations and defaults omitted presentation to dialog", () => {
 		const configRoot = mkdtempSync(join(tmpdir(), "bear-character-package-media-presentation-"));

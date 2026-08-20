@@ -164,14 +164,8 @@ export class CharacterBehaviorService {
 		);
 		if (!reaction) return;
 		const source = `event:${event.kind}`;
-		if (
-			reaction.visual_state &&
-			!(event.kind === "message_end" && this.modelSelectedExpression.has(conversationId))
-		)
+		if (!(event.kind === "message_end" && this.modelSelectedExpression.has(conversationId)))
 			this.setExpression(conversationId, reaction.visual_state, source);
-		if (reaction.scene) this.setScene(conversationId, reaction.scene, source);
-		if (reaction.media) this.presentMedia(conversationId, reaction.media);
-		if (reaction.choice_set) this.presentChoices(conversationId, reaction.choice_set);
 	}
 
 	private getRoleplayState(conversationId: string): CompanionHostToolResult {
