@@ -210,9 +210,14 @@ export class CompanionSupervisor {
 				message: error instanceof Error ? error.message : String(error),
 			});
 		}
+		const tracedPluginTools = pluginTools.map((tool) => this.traceExternalTool(conversationId, tool));
 		const session = new CoreSession(
 			modelRuntime,
-			[this.skillReadTool(), ...this.hostTools(conversationId), ...pluginTools],
+			[
+				this.traceExternalTool(conversationId, this.skillReadTool()),
+				...this.hostTools(conversationId),
+				...tracedPluginTools,
+			],
 			[
 				"You are the local Companion runtime. Use only injected Host tools for application state.",
 				"Use the read tool to load an applicable role Skill before following it.",
@@ -619,6 +624,56 @@ export class CompanionSupervisor {
 						message: result.message.slice(0, 240),
 					});
 					return this.toolResult(result);
+				} catch (error) {
+					this.eventBus.publish("companion.tool_finished", {
+						conversationId,
+						toolCallId,
+						tool: name,
+						label,
+						ok: false,
+						message: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
+					});
+					throw error;
+				}
+			},
+		};
+	}
+
+	/** Projects trusted package tools and skill reads into the same activity stream as Host tools. */
+	private traceExternalTool(conversationId: string, tool: unknown): unknown {
+		if (
+			typeof tool !== "object" ||
+			tool === null ||
+			!("name" in tool) ||
+			typeof tool.name !== "string" ||
+			!("execute" in tool) ||
+			typeof tool.execute !== "function"
+		) {
+			return tool;
+		}
+		const name = tool.name;
+		const execute = tool.execute;
+		const label = "label" in tool && typeof tool.label === "string" ? tool.label : name;
+		return {
+			...tool,
+			execute: async (toolCallId: string, params: unknown, signal?: AbortSignal) => {
+				this.eventBus.publish("companion.tool_started", {
+					conversationId,
+					toolCallId,
+					tool: name,
+					label,
+				});
+				try {
+					const result = await execute(toolCallId, params, signal);
+					this.eventBus.publish("companion.tool_finished", {
+						conversationId,
+						toolCallId,
+						tool: name,
+						label,
+						ok: true,
+						message: "Completed.",
+					});
+					return result;
 				} catch (error) {
 					this.eventBus.publish("companion.tool_finished", {
 						conversationId,
