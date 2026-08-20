@@ -136,7 +136,7 @@ describe("CharacterBehaviorService", () => {
 		).toEqual({ scene: "snow_plains", state_json: JSON.stringify({ visualState: "thinking" }) });
 	});
 
-	it("applies only fixed standee lifecycle reactions from Host events", () => {
+	it("applies package-declared Host lifecycle reactions", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);
 
@@ -200,8 +200,8 @@ describe("CharacterBehaviorService", () => {
 		);
 	});
 
-	it("rejects an automatic reaction with an incorrect lifecycle mapping", () => {
-		const configRoot = mkdtempSync(join(tmpdir(), "bear-character-host-reaction-"));
+	it("applies an arbitrary declared Host event to its visual state", () => {
+		const configRoot = mkdtempSync(join(tmpdir(), "bear-character-host-reaction-generic-"));
 		temporaryDirectories.push(configRoot);
 		const packageDir = join(configRoot, "jizhou");
 		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
@@ -209,12 +209,22 @@ describe("CharacterBehaviorService", () => {
 		const manifest = readFileSync(manifestPath, "utf8");
 		writeFileSync(
 			manifestPath,
-			manifest.replace("      visual_state: listening", "      visual_state: result_ready"),
+			manifest.replace(
+				"    - event: message.aborted\n      visual_state: presence\n",
+				"    - event: message.aborted\n      visual_state: presence\n    - event: workflow.review_requested\n      visual_state: thinking\n",
+			),
 		);
+		const fixture = createFixture(new CharacterLoader(configRoot));
+		fixtures.push(fixture);
 
-		expect(() => new CharacterLoader(configRoot).load("jizhou")).toThrow(
-			/invalid host event reaction/,
-		);
+		fixture.eventBus.publish("workflow.review_requested", { conversationId: "conversation-1" });
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { visualState: "thinking" } });
 	});
 
 	it("keeps undeclared and locked media or choice presentations behind Host gates", () => {

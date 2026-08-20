@@ -1,8 +1,9 @@
 /**
  * CharacterBehaviorService — the Host-side authority for UI state requested by
  * a Companion Pi session. Character packages declare valid scenes, visual
- * states, and fixed event reactions; this service validates and persists every
- * resulting mutation. Pi never receives direct database or Electron access.
+ * states, and trusted Host event-to-visual-state reactions; this service
+ * validates and persists every resulting mutation. Pi never receives direct
+ * database or Electron access.
  */
 
 import { randomUUID } from "node:crypto";

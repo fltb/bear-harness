@@ -121,36 +121,55 @@ describe("character package Host lifecycle reactions", () => {
 		return { configRoot, manifest: mutated };
 	}
 
-	it("loads the official package with exactly the fixed lifecycle bindings", () => {
+	it("loads the official package with its three Jizhou lifecycle defaults", () => {
 		const character = new CharacterLoader(characterRoot).load("jizhou");
 		expect(character).not.toBeNull();
 		expect(character?.host.event_reactions).toEqual(expectedReactions);
 	});
 
-	it.each([
-		[
-			"missing",
-			(manifest: string) =>
-				manifest.replace("    - event: message.aborted\n      visual_state: presence\n", ""),
-		],
-		[
-			"extra",
-			(manifest: string) =>
+	it("accepts arbitrary Host events bound to declared visual states", () => {
+		const { configRoot } = packageWithManifest(
+			"bear-character-package-host-reaction-generic-",
+			(manifest) =>
 				manifest.replace(
 					"    - event: message.aborted\n      visual_state: presence\n",
-					"    - event: message.aborted\n      visual_state: presence\n    - event: message.custom\n      visual_state: presence\n",
+					"    - event: message.aborted\n      visual_state: presence\n    - event: workflow.review_requested\n      visual_state: thinking\n",
 				),
-		],
+		);
+		const character = new CharacterLoader(configRoot).load("jizhou");
+		expect(character?.host.event_reactions).toEqual([
+			...expectedReactions,
+			{ event: "workflow.review_requested", visual_state: "thinking" },
+		]);
+	});
+
+	it.each([
 		[
-			"wrong state",
+			"duplicate event",
 			(manifest: string) =>
 				manifest.replace(
 					"    - event: message.user_sent\n      visual_state: listening\n",
-					"    - event: message.user_sent\n      visual_state: presence\n",
+					"    - event: message_end\n      visual_state: listening\n",
 				),
 		],
 		[
-			"forbidden scene effect",
+			"blank event",
+			(manifest: string) =>
+				manifest.replace(
+					"    - event: message.user_sent\n      visual_state: listening\n",
+					'    - event: "   "\n      visual_state: listening\n',
+				),
+		],
+		[
+			"unknown visual state",
+			(manifest: string) =>
+				manifest.replace(
+					"    - event: message.user_sent\n      visual_state: listening\n",
+					"    - event: message.user_sent\n      visual_state: unknown_state\n",
+				),
+		],
+		[
+			"extra key",
 			(manifest: string) =>
 				manifest.replace(
 					"    - event: message.user_sent\n      visual_state: listening\n",
@@ -158,7 +177,7 @@ describe("character package Host lifecycle reactions", () => {
 				),
 		],
 		[
-			"forbidden media effect",
+			"media key",
 			(manifest: string) =>
 				manifest.replace(
 					"    - event: message.user_sent\n      visual_state: listening\n",
@@ -166,7 +185,7 @@ describe("character package Host lifecycle reactions", () => {
 				),
 		],
 		[
-			"forbidden choice effect",
+			"choice key",
 			(manifest: string) =>
 				manifest.replace(
 					"    - event: message.user_sent\n      visual_state: listening\n",
@@ -183,7 +202,7 @@ describe("character package Host lifecycle reactions", () => {
 		);
 	});
 
-	it("accepts the fixed bindings in any declaration order", () => {
+	it("accepts the Jizhou defaults in any declaration order", () => {
 		const bindings = [
 			"    - event: message.user_sent\n      visual_state: listening\n",
 			"    - event: message_end\n      visual_state: result_ready\n",

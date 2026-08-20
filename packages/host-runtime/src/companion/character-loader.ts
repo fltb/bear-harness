@@ -281,11 +281,6 @@ const MEDIA_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
 	".webm": "video/webm",
 	".vtt": "text/vtt",
 };
-const FIXED_HOST_REACTIONS: Readonly<Record<string, string>> = {
-	"message.user_sent": "listening",
-	message_end: "result_ready",
-	"message.aborted": "presence",
-};
 
 const LanguageTagSchema = z
 	.string()
@@ -595,12 +590,10 @@ export class CharacterLoader {
 		const mediaIds = new Set(roleplay.media.map((entry) => entry.id));
 		const unlockableIds = new Set(roleplay.unlockables.map((entry) => entry.id));
 		const eventIds = new Set(roleplay.events.map((entry) => entry.id));
-		const expectedHostReactions = FIXED_HOST_REACTIONS;
 		const reactions = parsed.host.event_reactions;
 		const invalidReaction = () => {
 			throw new Error(`character package ${id}: invalid host event reaction`);
 		};
-		if (reactions.length !== Object.keys(expectedHostReactions).length) invalidReaction();
 		const reactionEvents = new Set<string>();
 		for (const reaction of reactions) {
 			if (
@@ -620,13 +613,11 @@ export class CharacterLoader {
 				typeof visualState !== "string" ||
 				!visualState.trim() ||
 				!expressionIds.has(visualState) ||
-				reactionEvents.has(event) ||
-				expectedHostReactions[event] !== visualState
+				reactionEvents.has(event)
 			)
 				invalidReaction();
 			reactionEvents.add(event);
 		}
-		if (reactionEvents.size !== Object.keys(expectedHostReactions).length) invalidReaction();
 		for (const variable of roleplay.variables) {
 			const actualType = typeof variable.initial;
 			if (

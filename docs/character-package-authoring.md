@@ -18,7 +18,9 @@ my-character/
 
 ## Host 生命周期反应
 
-`host.event_reactions` 是 Host 生命周期的固定界面绑定，不是角色包自定义事件或展示编排。角色包必须声明且只能声明以下三项（顺序不影响校验）：
+`host.event_reactions` 是一个通用的 Host 事件到角色视觉状态（`visual_state`）的绑定表。它不是角色包自定义事件，也不是展示编排：Host 只会在可信的 Host 事件发生时，按包中声明的映射切换 standee 的视觉状态。角色包可以将 `event_reactions` 声明为空数组，也可以声明任意数量的映射；事件名不受某组三项全局事件的白名单限制。
+
+例如，极昼包当前把常见的 Host 生命周期事件映射为：
 
 | Event | `visual_state` |
 | --- | --- |
@@ -26,7 +28,7 @@ my-character/
 | `message_end` | `result_ready` |
 | `message.aborted` | `presence` |
 
-每项只能设置 `visual_state`。不得添加 `scene`、`media`、`choice_set` 或其他效果键，也不得添加、删除、替换事件。Host 生命周期反应只负责 standee 的视觉状态；场景切换、媒体展示和选择集展示必须由模型调用相应 Host 工具，或由已声明的 roleplay event effects 决定。
+上表是极昼包的默认示例，不是所有角色包都必须复制的固定绑定。只要事件名是非空且唯一的 Host 事件，包也可以绑定其他事件（例如 Host 提供 `message.retrying` 时绑定到 `thinking`），前提是 `visual_state` 已在该角色包中声明。每项必须且只能设置 `event` 与 `visual_state`；不得添加 `scene`、`media`、`choice_set` 或其他效果键。场景切换、媒体展示和选择集展示必须由模型调用相应 Host 工具，或由已声明的 roleplay event effects 决定。
 
 
 ## 会进入上下文的内容

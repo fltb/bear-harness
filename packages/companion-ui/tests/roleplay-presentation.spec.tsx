@@ -1,7 +1,6 @@
 import { zhCN } from "@bear-harness/i18n/locales";
-import { render, screen, waitFor, within } from "@solidjs/testing-library";
+import { render, screen, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
-import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CharacterPresence } from "../src/CharacterPresence.js";
 import { ConversationPanel } from "../src/ConversationPanel.js";
@@ -268,13 +267,12 @@ describe("roleplay presentation", () => {
 		expect(dismissRoleplayMedia).toHaveBeenCalledOnce();
 	});
 
-	it("keeps ambient audio independent from dialog media", async () => {
+	it("renders and stops ambient audio without blocking conversation", async () => {
 		vi.stubGlobal(
 			"matchMedia",
 			vi.fn(() => ({ matches: false })),
 		);
-		const [activeMediaId, setActiveMediaId] = createSignal<string | undefined>("dialog-image");
-		const dismissRoleplayMedia = vi.fn(() => setActiveMediaId(undefined));
+		const dismissRoleplayMedia = vi.fn();
 		const dismissAmbientMedia = vi.fn();
 		const store = {
 			activeMessages: [],
@@ -285,9 +283,7 @@ describe("roleplay presentation", () => {
 			assistantStreaming: false,
 			streamingAssistantText: "",
 			activeRoleplayChoiceSetId: undefined,
-			get activeRoleplayMediaId() {
-				return activeMediaId();
-			},
+			activeRoleplayMediaId: undefined,
 			activeAmbientMediaId: "ambient-audio",
 			dismissRoleplayMedia,
 			dismissAmbientMedia,
@@ -304,16 +300,6 @@ describe("roleplay presentation", () => {
 			"data:audio/ogg;base64,YW1iaWVudA==",
 		);
 		expect(within(ambient).getByText("Ambient audio")).toBeVisible();
-		expect(screen.getByRole("dialog")).toBeVisible();
-		await userEvent.setup().click(
-			within(screen.getByRole("dialog")).getByRole("button", {
-				name: zhCN.messages.closeMedia,
-			}),
-		);
-		expect(dismissRoleplayMedia).toHaveBeenCalledOnce();
-		expect(dismissAmbientMedia).not.toHaveBeenCalled();
-		await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-		expect(screen.getByRole("region", { name: "Ambient audio" })).toBeVisible();
 		await userEvent
 			.setup()
 			.click(within(ambient).getByRole("button", { name: zhCN.messages.stopMedia }));

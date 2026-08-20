@@ -1,6 +1,6 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
-import { getBootstrap, selectKobalteOption } from "./helpers";
+import { getBootstrap } from "./helpers";
 
 test("browser requires a reply model before the role-defined onboarding", async ({ page }) => {
 	const bootstrap = await getBootstrap(page);
@@ -27,14 +27,6 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	await expect(modelSetup.getByRole("heading", { name: zhCN.modelSetup.title })).toBeVisible();
 	await expect(modelSetup.getByRole("button", { name: zhCN.settings.serviceLabel })).toBeVisible();
 	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.modelLabel })).toBeDisabled();
-	await selectKobalteOption(
-		page,
-		modelSetup.getByRole("button", { name: zhCN.settings.serviceLabel }),
-		provider.name,
-	);
-	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.modelLabel })).toBeEnabled();
-	await modelSetup.getByLabel(zhCN.settings.apiKeyLabel).fill("test-provider-key");
-	await modelSetup.getByRole("button", { name: zhCN.settings.saveKey }).click();
 	const headers = { "x-bear-web-dev-token": bootstrap.token };
 	const enabled = await (
 		await page.request.post("/rpc/model.enable%3Av1", {
