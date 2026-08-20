@@ -64,6 +64,41 @@ export const THEMED_CHARACTER: CharacterDisplay = {
 	},
 };
 
+/** Character projection with declared regular and ambient roleplay media. */
+export const ROLEPLAY_MEDIA_CHARACTER: CharacterDisplay = {
+	...THEMED_CHARACTER,
+	roleplay: {
+		...THEMED_CHARACTER.roleplay,
+		media: [
+			{
+				id: "dialog-image",
+				kind: "image",
+				label: "Dialog image",
+				presentation: "dialog",
+				url: "data:image/png;base64,ZGlhbG9n",
+				loop: false,
+			},
+			{
+				id: "inline-image",
+				kind: "image",
+				label: "Inline image",
+				presentation: "inline",
+				url: "data:image/png;base64,aW5saW5l",
+				loop: false,
+			},
+			{
+				id: "ambient-audio",
+				kind: "audio",
+				label: "Ambient audio",
+				presentation: "ambient",
+				url: "data:audio/ogg;base64,YW1iaWVudA==",
+				captionsUrl: "data:text/vtt;base64,V0VCVlRU",
+				loop: true,
+			},
+		],
+	},
+};
+
 /**
  * A complete fork fixture: different identity fields, data directory,
  * executable, character and brand modification declaration. The generic

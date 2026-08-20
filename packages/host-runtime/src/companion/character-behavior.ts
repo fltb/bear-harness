@@ -163,8 +163,15 @@ export class CharacterBehaviorService {
 			(candidate) => candidate.event === event.kind,
 		);
 		if (!reaction) return;
-		if (event.kind === "message_end" && this.modelSelectedExpression.has(conversationId)) return;
-		this.setExpression(conversationId, reaction.visual_state, `event:${event.kind}`);
+		const source = `event:${event.kind}`;
+		if (
+			reaction.visual_state &&
+			!(event.kind === "message_end" && this.modelSelectedExpression.has(conversationId))
+		)
+			this.setExpression(conversationId, reaction.visual_state, source);
+		if (reaction.scene) this.setScene(conversationId, reaction.scene, source);
+		if (reaction.media) this.presentMedia(conversationId, reaction.media);
+		if (reaction.choice_set) this.presentChoices(conversationId, reaction.choice_set);
 	}
 
 	private getRoleplayState(conversationId: string): CompanionHostToolResult {
@@ -310,7 +317,11 @@ export class CharacterBehaviorService {
 		};
 	}
 
-	private setScene(conversationId: string, sceneId: string | undefined): CompanionHostToolResult {
+	private setScene(
+		conversationId: string,
+		sceneId: string | undefined,
+		source = "pi_tool",
+	): CompanionHostToolResult {
 		const character = this.characterForConversation(conversationId);
 		if (!character) return unavailableConversationResult(conversationId);
 		if (!sceneId || !character.scenes.some((scene) => scene.id === sceneId)) {
@@ -329,7 +340,7 @@ export class CharacterBehaviorService {
 			characterId: character.id,
 			sceneId: state.sceneId,
 			visualState: state.visualState,
-			source: "pi_tool",
+			source,
 		});
 		return { ok: true, message: `Scene changed to ${sceneId}.`, state };
 	}

@@ -512,46 +512,97 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 						</article>
 					</Show>
 				</Show>
-				<RoleplayPresentation character={props.character} />
+				<RoleplayChoices character={props.character} />
+				<RoleplayInlineMedia character={props.character} />
 			</section>
+			<RoleplayMediaOverlays character={props.character} />
 		</>
 	);
 }
 
-function RoleplayPresentation(props: { character: CharacterDisplay | undefined }) {
-	const [t] = useTranslation(undefined, { i18n });
+function RoleplayChoices(props: { character: CharacterDisplay | undefined }) {
 	const store = useCompanionStore();
-	const media = () =>
-		props.character?.roleplay.media.find((entry) => entry.id === store.activeRoleplayMediaId);
 	const choiceSet = () =>
 		props.character?.roleplay.choice_sets?.find(
 			(entry) => entry.id === store.activeRoleplayChoiceSetId,
 		);
 	return (
+		<Show when={choiceSet()}>
+			{(set) => (
+				<section class="roleplay-choices" aria-label={set().prompt}>
+					<strong>{set().prompt}</strong>
+					<div class="roleplay-choice-list">
+						<For each={set().choices}>
+							{(choice) => (
+								<Button
+									type="button"
+									class="roleplay-choice"
+									onClick={() => void store.triggerRoleplayEvent(choice.event)}
+								>
+									<strong>{choice.label}</strong>
+									<Show when={choice.description}>
+										{(description) => <span>{description()}</span>}
+									</Show>
+								</Button>
+							)}
+						</For>
+					</div>
+				</section>
+			)}
+		</Show>
+	);
+}
+
+function RoleplayInlineMedia(props: { character: CharacterDisplay | undefined }) {
+	const [t] = useTranslation(undefined, { i18n });
+	const store = useCompanionStore();
+	const media = () => {
+		const item = props.character?.roleplay.media.find(
+			(entry) => entry.id === store.activeRoleplayMediaId,
+		);
+		return item && item.presentation === "inline" ? item : undefined;
+	};
+	return (
+		<Show when={media()}>
+			{(item) => (
+				<section class="roleplay-media-inline" aria-labelledby="roleplay-inline-media-label">
+					<header class="roleplay-media-header">
+						<h3 id="roleplay-inline-media-label">{item().label}</h3>
+						<Button
+							data-control="command"
+							type="button"
+							aria-label={t("messages.closeMedia")}
+							onClick={() => store.dismissRoleplayMedia()}
+						>
+							{t("messages.closeMedia")}
+						</Button>
+					</header>
+					<RoleplayConversationMedia media={item()} />
+				</section>
+			)}
+		</Show>
+	);
+}
+
+function RoleplayMediaOverlays(props: { character: CharacterDisplay | undefined }) {
+	const [t] = useTranslation(undefined, { i18n });
+	const store = useCompanionStore();
+	const media = () => {
+		const item = props.character?.roleplay.media.find(
+			(entry) => entry.id === store.activeRoleplayMediaId,
+		);
+		return item && item.presentation !== "inline" && item.presentation !== "ambient"
+			? item
+			: undefined;
+	};
+	const ambientMedia = () => {
+		const item = props.character?.roleplay.media.find(
+			(entry) => entry.id === store.activeAmbientMediaId,
+		);
+		return item && item.kind === "audio" && item.presentation === "ambient" ? item : undefined;
+	};
+	return (
 		<>
-			<Show when={choiceSet()}>
-				{(set) => (
-					<section class="roleplay-choices" aria-label={set().prompt}>
-						<strong>{set().prompt}</strong>
-						<div class="roleplay-choice-list">
-							<For each={set().choices}>
-								{(choice) => (
-									<Button
-										type="button"
-										class="roleplay-choice"
-										onClick={() => void store.triggerRoleplayEvent(choice.event)}
-									>
-										<strong>{choice.label}</strong>
-										<Show when={choice.description}>
-											{(description) => <span>{description()}</span>}
-										</Show>
-									</Button>
-								)}
-							</For>
-						</div>
-					</section>
-				)}
-			</Show>
 			<Dialog
 				open={media() !== undefined}
 				onOpenChange={(open) => !open && store.dismissRoleplayMedia()}
@@ -559,13 +610,42 @@ function RoleplayPresentation(props: { character: CharacterDisplay | undefined }
 				<Dialog.Portal>
 					<Dialog.Overlay class="roleplay-media-overlay" />
 					<Dialog.Content class="roleplay-media-dialog">
-						<Show when={media()}>{(item) => <RoleplayConversationMedia media={item()} />}</Show>
-						<Dialog.CloseButton as={Button} class="roleplay-media-close">
+						<Show when={media()}>
+							{(item) => (
+								<>
+									<Dialog.Title class="sr-only">{item().label}</Dialog.Title>
+									<RoleplayConversationMedia media={item()} />
+								</>
+							)}
+						</Show>
+						<Dialog.CloseButton
+							as={Button}
+							class="roleplay-media-close"
+							aria-label={t("messages.closeMedia")}
+						>
 							{t("messages.closeMedia")}
 						</Dialog.CloseButton>
 					</Dialog.Content>
 				</Dialog.Portal>
 			</Dialog>
+			<Show when={ambientMedia()}>
+				{(item) => (
+					<section class="roleplay-media-ambient" aria-labelledby="roleplay-ambient-media-label">
+						<div class="roleplay-media-ambient-heading">
+							<strong id="roleplay-ambient-media-label">{item().label}</strong>
+							<Button
+								data-control="command"
+								type="button"
+								aria-label={t("messages.stopMedia")}
+								onClick={() => store.dismissAmbientMedia()}
+							>
+								{t("messages.stopMedia")}
+							</Button>
+						</div>
+						<RoleplayConversationMedia media={item()} />
+					</section>
+				)}
+			</Show>
 		</>
 	);
 }
@@ -575,8 +655,14 @@ function RoleplayConversationMedia(props: {
 }) {
 	if (props.media.kind === "audio")
 		return (
-			<audio autoplay controls src={props.media.url} aria-label={props.media.label}>
-				<track kind="captions" src={props.media.captionsUrl} srclang="und" default />
+			<audio
+				autoplay
+				controls
+				loop={props.media.loop}
+				src={props.media.url}
+				aria-label={props.media.label}
+			>
+				<track kind="captions" src={props.media.captionsUrl ?? ""} srclang="und" default />
 			</audio>
 		);
 	if (props.media.kind === "video")
@@ -584,11 +670,12 @@ function RoleplayConversationMedia(props: {
 			<video
 				autoplay
 				controls
+				loop={props.media.loop}
 				poster={props.media.posterUrl}
 				src={props.media.url}
 				aria-label={props.media.label}
 			>
-				<track kind="captions" src={props.media.captionsUrl} srclang="und" default />
+				<track kind="captions" src={props.media.captionsUrl ?? ""} srclang="und" default />
 			</video>
 		);
 	const source =

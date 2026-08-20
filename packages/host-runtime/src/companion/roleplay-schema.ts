@@ -54,11 +54,18 @@ const RoleplayMediaSchema = z
 		kind: z.enum(["image", "animation", "audio", "video"]),
 		label: Copy,
 		asset: AssetPath,
+		presentation: z.enum(["dialog", "inline", "ambient"]).default("dialog"),
 		poster: AssetPath.optional(),
 		captions: AssetPath.optional(),
 		loop: z.boolean().default(false),
 	})
 	.superRefine((media, context) => {
+		if (media.presentation === "ambient" && media.kind !== "audio")
+			context.addIssue({
+				code: "custom",
+				path: ["presentation"],
+				message: "ambient media presentation is only valid for audio",
+			});
 		if (media.kind === "animation" && !media.poster)
 			context.addIssue({
 				code: "custom",

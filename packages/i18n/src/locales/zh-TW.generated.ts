@@ -144,6 +144,8 @@ export const zhTW = {
 	},
 	"messages": {
 		"closeMedia": "關閉",
+		"stopAmbientMedia": "停止環境媒體",
+		"stopMedia": "停止環境媒體",
 		"rememberMoment": "記住這一刻",
 		"rememberFailed": "記憶失敗，請重試",
 		"justNow": "剛剛",

@@ -1,10 +1,12 @@
+import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
+import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CharacterPresence } from "../src/CharacterPresence.js";
 import { ConversationPanel } from "../src/ConversationPanel.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
-import { THEMED_CHARACTER } from "./fixtures.js";
+import { ROLEPLAY_MEDIA_CHARACTER, THEMED_CHARACTER } from "./fixtures.js";
 
 describe("roleplay presentation", () => {
 	afterEach(() => vi.unstubAllGlobals());
@@ -64,6 +66,7 @@ describe("roleplay presentation", () => {
 						kind: "animation" as const,
 						label: "重新亮起的信号",
 						loop: true,
+						presentation: "dialog",
 						url: "data:image/webp;base64,UklGRg==",
 						posterUrl: "data:image/png;base64,iVBORw0KGgo=",
 					},
@@ -127,6 +130,7 @@ describe("roleplay presentation", () => {
 						id: "scene",
 						kind,
 						label: "场景媒体",
+						presentation: "dialog",
 						url,
 						posterUrl: "data:image/png;base64,cG9zdGVy",
 						captionsUrl: "data:text/vtt;base64,V0VCVlRU",
@@ -155,7 +159,7 @@ describe("roleplay presentation", () => {
 		const asset =
 			kind === "image"
 				? screen.getByRole("img", { name: "场景媒体" })
-				: screen.getByLabelText("场景媒体");
+				: screen.getByLabelText("场景媒体", { selector });
 		expect(asset.tagName.toLowerCase()).toBe(selector);
 		expect(asset).toHaveAttribute("src", url);
 		if (kind === "video") expect(asset).toHaveAttribute("poster", "data:image/png;base64,cG9zdGVy");
@@ -177,6 +181,7 @@ describe("roleplay presentation", () => {
 						id: "signal",
 						kind: "animation" as const,
 						label: "重新亮起的信号",
+						presentation: "dialog",
 						url: "data:image/webp;base64,YW5pbWF0aW9u",
 						posterUrl: "data:image/png;base64,cG9zdGVy",
 					},
@@ -205,6 +210,137 @@ describe("roleplay presentation", () => {
 			"src",
 			"data:image/png;base64,cG9zdGVy",
 		);
+	});
+	it.each([
+		{ kind: "image" as const, selector: "img" },
+		{ kind: "audio" as const, selector: "audio" },
+		{ kind: "video" as const, selector: "video" },
+	])("renders declared inline $kind media with a close control", async ({ kind, selector }) => {
+		const dismissRoleplayMedia = vi.fn();
+		const url = `data:${kind === "image" ? "image/png" : kind === "audio" ? "audio/ogg" : "video/webm"};base64,c2NlbmU=`;
+		const character = {
+			...THEMED_CHARACTER,
+			roleplay: {
+				...THEMED_CHARACTER.roleplay,
+				media: [
+					{
+						id: "inline",
+						kind,
+						label: "行内场景",
+						presentation: "inline" as const,
+						url,
+						loop: false,
+						captionsUrl: kind === "image" ? undefined : "data:text/vtt;base64,V0VCVlRU",
+					},
+				],
+			},
+		};
+		const store = {
+			activeMessages: [],
+			activeConversationId: "conversation",
+			conversations: [],
+			runs: [],
+			pendingUserText: undefined,
+			assistantStreaming: false,
+			streamingAssistantText: "",
+			activeRoleplayChoiceSetId: undefined,
+			activeRoleplayMediaId: "inline",
+			dismissRoleplayMedia,
+		} as unknown as CompanionStore;
+		render(() => (
+			<DesktopProvider store={store}>
+				<ConversationPanel character={character} />
+			</DesktopProvider>
+		));
+
+		const inline = screen.getByRole("region", { name: "行内场景" });
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		const asset =
+			kind === "image"
+				? within(inline).getByRole("img")
+				: within(inline).getByLabelText("行内场景");
+		expect(asset.tagName.toLowerCase()).toBe(selector);
+		expect(asset).toHaveAttribute("src", url);
+		if (kind !== "image") expect(asset.firstElementChild).toHaveAttribute("kind", "captions");
+		await userEvent
+			.setup()
+			.click(within(inline).getByRole("button", { name: zhCN.messages.closeMedia }));
+		expect(dismissRoleplayMedia).toHaveBeenCalledOnce();
+	});
+
+	it("keeps ambient audio independent from dialog media", async () => {
+		vi.stubGlobal(
+			"matchMedia",
+			vi.fn(() => ({ matches: false })),
+		);
+		const [activeMediaId, setActiveMediaId] = createSignal<string | undefined>("dialog-image");
+		const dismissRoleplayMedia = vi.fn(() => setActiveMediaId(undefined));
+		const dismissAmbientMedia = vi.fn();
+		const store = {
+			activeMessages: [],
+			activeConversationId: "conversation",
+			conversations: [],
+			runs: [],
+			pendingUserText: undefined,
+			assistantStreaming: false,
+			streamingAssistantText: "",
+			activeRoleplayChoiceSetId: undefined,
+			get activeRoleplayMediaId() {
+				return activeMediaId();
+			},
+			activeAmbientMediaId: "ambient-audio",
+			dismissRoleplayMedia,
+			dismissAmbientMedia,
+		} as unknown as CompanionStore;
+		render(() => (
+			<DesktopProvider store={store}>
+				<ConversationPanel character={ROLEPLAY_MEDIA_CHARACTER} />
+			</DesktopProvider>
+		));
+
+		const ambient = screen.getByRole("region", { name: "Ambient audio" });
+		expect(within(ambient).getByLabelText("Ambient audio")).toHaveAttribute(
+			"src",
+			"data:audio/ogg;base64,YW1iaWVudA==",
+		);
+		expect(within(ambient).getByText("Ambient audio")).toBeVisible();
+		expect(screen.getByRole("dialog")).toBeVisible();
+		await userEvent.setup().click(
+			within(screen.getByRole("dialog")).getByRole("button", {
+				name: zhCN.messages.closeMedia,
+			}),
+		);
+		expect(dismissRoleplayMedia).toHaveBeenCalledOnce();
+		expect(dismissAmbientMedia).not.toHaveBeenCalled();
+		expect(screen.getByRole("region", { name: "Ambient audio" })).toBeVisible();
+		await userEvent
+			.setup()
+			.click(within(ambient).getByRole("button", { name: zhCN.messages.stopMedia }));
+		expect(dismissAmbientMedia).toHaveBeenCalledOnce();
+	});
+
+	it("does not render a source when the active id is not declared by the character", () => {
+		const store = {
+			activeMessages: [],
+			activeConversationId: "conversation",
+			conversations: [],
+			runs: [],
+			pendingUserText: undefined,
+			assistantStreaming: false,
+			streamingAssistantText: "",
+			activeRoleplayChoiceSetId: undefined,
+			activeRoleplayMediaId: "not-declared",
+			activeAmbientMediaId: undefined,
+			dismissRoleplayMedia: vi.fn(),
+			dismissAmbientMedia: vi.fn(),
+		} as unknown as CompanionStore;
+		render(() => (
+			<DesktopProvider store={store}>
+				<ConversationPanel character={ROLEPLAY_MEDIA_CHARACTER} />
+			</DesktopProvider>
+		));
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(screen.queryByRole("region", { name: "Ambient audio" })).not.toBeInTheDocument();
 	});
 });
 

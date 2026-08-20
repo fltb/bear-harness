@@ -370,6 +370,76 @@ describe("host projection validation", () => {
 			}),
 		).toBe(false);
 
+		const media = [
+			{
+				id: "inline_image",
+				kind: "image",
+				label: "Inline image",
+				loop: false,
+				presentation: "inline",
+				url: "data:image/png;base64,aW1hZ2U=",
+			},
+			{
+				id: "ambient_audio",
+				kind: "audio",
+				label: "Ambient audio",
+				loop: true,
+				presentation: "ambient",
+				url: "data:audio/mpeg;base64,YXVkaW8=",
+				captionsUrl: "data:text/vtt;base64,V0VCVlRU",
+			},
+			{
+				id: "dialog_video",
+				kind: "video",
+				label: "Dialog video",
+				loop: false,
+				presentation: "dialog",
+				url: "data:video/mp4;base64,dmlkZW8=",
+				captionsUrl: "data:text/vtt;base64,V0VCVlRU",
+			},
+		] as const;
+		const mediaCharacter = {
+			...valid,
+			roleplay: { ...valid.roleplay, media },
+		};
+		expect(isCharacterDisplay(mediaCharacter)).toBe(true);
+		expect(
+			isCharacterDisplay({
+				...valid,
+				roleplay: {
+					...valid.roleplay,
+					media: [{ ...media[0], presentation: undefined }],
+				},
+			}),
+		).toBe(false);
+		expect(
+			isCharacterDisplay({
+				...mediaCharacter,
+				roleplay: {
+					...mediaCharacter.roleplay,
+					media: [{ ...media[0], presentation: "ambient" }],
+				},
+			}),
+		).toBe(false);
+		expect(
+			isCharacterDisplay({
+				...mediaCharacter,
+				roleplay: {
+					...mediaCharacter.roleplay,
+					media: [{ ...media[0], unknown: true }],
+				},
+			}),
+		).toBe(false);
+		expect(
+			isCharacterDisplay({
+				...mediaCharacter,
+				roleplay: {
+					...mediaCharacter.roleplay,
+					media: [{ ...media[0], presentation: "modal" }],
+				},
+			}),
+		).toBe(false);
+
 		const textStep = {
 			id: "name",
 			kind: "text",

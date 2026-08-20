@@ -2436,6 +2436,66 @@ button[data-variant="primary"]:focus-visible {
 	top: 16px;
 	right: 16px;
 }
+.roleplay-media-dialog audio {
+	width: min(560px, 100%);
+}
+
+.roleplay-media-inline {
+	display: grid;
+	gap: 10px;
+	margin: 16px auto;
+	padding: 14px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--surface-alt);
+}
+
+.roleplay-media-header,
+.roleplay-media-ambient-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.roleplay-media-header h3,
+.roleplay-media-ambient-heading strong {
+	margin: 0;
+	color: var(--text);
+	font-size: 14px;
+}
+
+.roleplay-media-inline img,
+.roleplay-media-inline video {
+	display: block;
+	max-width: 100%;
+	max-height: min(520px, 58vh);
+	margin: 0 auto;
+	object-fit: contain;
+}
+
+.roleplay-media-inline audio {
+	width: 100%;
+}
+
+.roleplay-media-ambient {
+	position: fixed;
+	right: 24px;
+	bottom: 24px;
+	z-index: 30;
+	display: grid;
+	gap: 8px;
+	width: min(360px, calc(100vw - 48px));
+	padding: 10px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--surface);
+	box-shadow: 0 12px 36px rgb(0 0 0 / 30%);
+}
+
+.roleplay-media-ambient audio {
+	width: 100%;
+}
 
 /* ------------------------------------------------------------------ */
 /* ResultSpace (Prototype 06 result-mode)                               */

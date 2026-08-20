@@ -229,6 +229,26 @@ export const CharacterWorkPresentationLabels = z.strictObject({
 export const CharacterWorkPresentation = z.strictObject({
 	labels: CharacterWorkPresentationLabels,
 });
+const CharacterRoleplayMedia = z
+	.strictObject({
+		id: CharacterIdentifier,
+		kind: z.enum(["image", "animation", "audio", "video"]),
+		label: CharacterCopy,
+		loop: z.boolean(),
+		presentation: z.enum(["dialog", "inline", "ambient"]),
+		url: z.string().min(1).max(20_000_000),
+		posterUrl: CharacterMediaUrl.optional(),
+		captionsUrl: CharacterMediaUrl.optional(),
+	})
+	.superRefine((media, context) => {
+		if (media.presentation === "ambient" && media.kind !== "audio")
+			context.addIssue({
+				code: "custom",
+				path: ["presentation"],
+				message: "ambient media presentation is only valid for audio",
+			});
+	});
+
 export const CharacterDisplay = z.strictObject({
 	id: z.string().min(1).max(64),
 	name: CharacterCopy,
@@ -287,19 +307,7 @@ export const CharacterDisplay = z.strictObject({
 				}),
 			)
 			.max(100),
-		media: z
-			.array(
-				z.strictObject({
-					id: CharacterIdentifier,
-					kind: z.enum(["image", "animation", "audio", "video"]),
-					label: CharacterCopy,
-					loop: z.boolean(),
-					url: z.string().min(1).max(20_000_000),
-					posterUrl: CharacterMediaUrl.optional(),
-					captionsUrl: CharacterMediaUrl.optional(),
-				}),
-			)
-			.max(200),
+		media: z.array(CharacterRoleplayMedia).max(200),
 		unlockables: z
 			.array(
 				z.strictObject({

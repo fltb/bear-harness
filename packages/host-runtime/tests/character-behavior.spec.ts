@@ -1,5 +1,8 @@
 // @vitest-environment node
 
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/node-sqlite";
@@ -12,7 +15,7 @@ import { EventBus } from "../src/storage/event-bus.js";
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 const characterLoader = new CharacterLoader(characterRoot);
 
-function createFixture(): {
+function createFixture(loader: CharacterLoader = characterLoader): {
 	db: DatabaseSync;
 	eventBus: EventBus;
 	behavior: CharacterBehaviorService;
@@ -64,21 +67,20 @@ function createFixture(): {
 	return {
 		db,
 		eventBus,
-		behavior: new CharacterBehaviorService(
-			orm,
-			eventBus,
-			characterLoader,
-			new RoleplayService(orm),
-		),
+		behavior: new CharacterBehaviorService(orm, eventBus, loader, new RoleplayService(orm)),
 	};
 }
 
 describe("CharacterBehaviorService", () => {
 	const fixtures: Array<{ db: DatabaseSync; behavior: CharacterBehaviorService }> = [];
+	const temporaryDirectories: string[] = [];
 	afterEach(() => {
 		for (const fixture of fixtures.splice(0)) {
 			fixture.behavior.dispose();
 			fixture.db.close();
+		}
+		for (const directory of temporaryDirectories.splice(0)) {
+			rmSync(directory, { recursive: true, force: true });
 		}
 	});
 
@@ -134,7 +136,7 @@ describe("CharacterBehaviorService", () => {
 		).toEqual({ scene: "snow_plains", state_json: JSON.stringify({ visualState: "thinking" }) });
 	});
 
-	it("applies the role's fixed reaction to a trusted Host event", () => {
+	it("applies all declared effects from a trusted Host event", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);
 
@@ -145,14 +147,63 @@ describe("CharacterBehaviorService", () => {
 			tool: "host_get_state",
 			args: {},
 		});
-		expect(state).toMatchObject({ ok: true, state: { visualState: "listening" } });
+		expect(state).toMatchObject({
+			ok: true,
+			state: { sceneId: "aurora_study", visualState: "listening" },
+		});
 		const events = fixture.db.prepare("SELECT kind FROM events ORDER BY seq").all() as Array<{
 			kind: string;
 		}>;
 		expect(events.map((event) => event.kind)).toEqual([
 			"message.user_sent",
 			"character.visual_state_changed",
+			"character.scene_changed",
 		]);
+	});
+
+	it("rejects an automatic reaction that references an undeclared package ID", () => {
+		const configRoot = mkdtempSync(join(tmpdir(), "bear-character-host-reaction-"));
+		temporaryDirectories.push(configRoot);
+		const packageDir = join(configRoot, "jizhou");
+		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
+		const manifestPath = join(packageDir, "character.yaml");
+		const manifest = readFileSync(manifestPath, "utf8");
+		writeFileSync(
+			manifestPath,
+			manifest.replace("      scene: aurora_study", "      scene: missing_scene"),
+		);
+
+		expect(() => new CharacterLoader(configRoot).load("jizhou")).toThrow(
+			/invalid host event reaction effect/,
+		);
+	});
+
+	it("keeps undeclared and locked media or choice presentations behind Host gates", () => {
+		const fixture = createFixture();
+		fixtures.push(fixture);
+
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_play_media",
+				args: { mediaId: "first_night" },
+			}),
+		).toMatchObject({ ok: false, code: "roleplay_media_locked" });
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_play_media",
+				args: { mediaId: "outside_the_package" },
+			}),
+		).toMatchObject({ ok: false, code: "invalid_roleplay_media" });
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_present_choices",
+				args: { choiceSetId: "outside_the_package" },
+			}),
+		).toMatchObject({ ok: false, code: "invalid_roleplay_choices" });
+		expect(fixture.db.prepare("SELECT COUNT(*) AS count FROM events").get()).toEqual({ count: 0 });
 	});
 
 	it("does not overwrite an expression the model selected for the current turn", () => {

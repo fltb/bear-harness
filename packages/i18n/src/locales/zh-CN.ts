@@ -146,6 +146,8 @@ export const zhCN = {
 	},
 	messages: {
 		closeMedia: "关闭",
+		stopAmbientMedia: "停止环境媒体",
+		stopMedia: "停止环境媒体",
 		rememberMoment: "记住这一刻",
 		rememberFailed: "记忆失败，请重试",
 		justNow: "刚刚",

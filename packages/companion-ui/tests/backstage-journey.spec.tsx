@@ -226,6 +226,7 @@ describe("ordinary-user backstage journey", () => {
 						kind: "animation" as const,
 						label: "极光信号",
 						loop: true,
+						presentation: "dialog",
 						url: "data:image/webp;base64,UklGRg==",
 					},
 				],

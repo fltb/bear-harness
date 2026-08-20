@@ -3,7 +3,7 @@ import { waitFor } from "@testing-library/dom";
 import { createComponent, createRoot } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { createCompanionStore } from "../src/stores/companion.js";
-import { createTestClient } from "./fixtures.js";
+import { createTestClient, ROLEPLAY_MEDIA_CHARACTER } from "./fixtures.js";
 
 function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["client"]) {
 	let dispose = () => undefined;
@@ -436,6 +436,64 @@ describe("store RPC contract", () => {
 			await waitFor(() => expect(client.memory.list).toHaveBeenCalled());
 			await waitFor(() => expect(client.story.listChanges).toHaveBeenCalled());
 			await waitFor(() => expect(client.character.list).toHaveBeenCalled());
+		} finally {
+			dispose();
+		}
+	});
+
+	it("keeps declared ambient and regular roleplay media independent", async () => {
+		const { client } = createTestClient();
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					character: ROLEPLAY_MEDIA_CHARACTER,
+				},
+			}),
+		);
+		let subscription = 0;
+		client.events.subscribe = vi.fn(() => {
+			subscription += 1;
+			if (subscription > 1) return new Promise<never>(() => undefined);
+			return Promise.resolve({
+				ok: true as const,
+				data: {
+					events: [
+						{
+							seq: 1,
+							kind: "roleplay.media_presented" as const,
+							payload: { mediaId: "dialog-image" },
+						},
+						{
+							seq: 2,
+							kind: "roleplay.media_presented" as const,
+							payload: { mediaId: "ambient-audio" },
+						},
+						{
+							seq: 3,
+							kind: "roleplay.media_presented" as const,
+							payload: { mediaId: "inline-image" },
+						},
+						{ seq: 4, kind: "roleplay.media_presented" as const, payload: { mediaId: "missing" } },
+					],
+				},
+			});
+		});
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => {
+				expect(store.events.lastSeq()).toBe(4);
+				expect(store.activeRoleplayMediaId).toBe("inline-image");
+				expect(store.activeAmbientMediaId).toBe("ambient-audio");
+			});
+
+			store.dismissAmbientMedia();
+			expect(store.activeAmbientMediaId).toBeUndefined();
+			expect(store.activeRoleplayMediaId).toBe("inline-image");
+
+			store.dismissRoleplayMedia();
+			expect(store.activeRoleplayMediaId).toBeUndefined();
 		} finally {
 			dispose();
 		}

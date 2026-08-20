@@ -98,6 +98,74 @@ describe("character package visual projection", () => {
 	});
 });
 
+describe("character package roleplay media presentation", () => {
+	it("projects explicit presentations and defaults omitted presentation to dialog", () => {
+		const configRoot = mkdtempSync(join(tmpdir(), "bear-character-package-media-presentation-"));
+		temporaryDirectories.push(configRoot);
+		const packageDir = join(configRoot, "jizhou");
+		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
+		writeFileSync(join(packageDir, "assets", "ambient-signal.mp3"), "audio");
+		writeFileSync(join(packageDir, "assets", "ambient-signal.vtt"), "WEBVTT\n");
+		const manifestPath = join(packageDir, "character.yaml");
+		const manifest = readFileSync(manifestPath, "utf8");
+		const withPresentations = manifest
+			.replace(
+				"      asset: assets/scene-aurora-study.png",
+				"      asset: assets/scene-aurora-study.png\n      presentation: inline",
+			)
+			.replace(
+				"      loop: true\n  unlockables:",
+				[
+					"      loop: true",
+					"    - id: ambient_signal",
+					"      kind: audio",
+					"      label: Ambient signal",
+					"      asset: assets/ambient-signal.mp3",
+					"      captions: assets/ambient-signal.vtt",
+					"      presentation: ambient",
+					"  unlockables:",
+				].join("\n"),
+			);
+		expect(withPresentations).not.toBe(manifest);
+		writeFileSync(manifestPath, withPresentations);
+
+		const loader = new CharacterLoader(configRoot);
+		const character = loader.load("jizhou");
+		expect(character).not.toBeNull();
+		if (!character) throw new Error("test package failed to load");
+		const media = loader.display(character).roleplay.media;
+		expect(media.find((entry) => entry.id === "first_night")).toEqual(
+			expect.objectContaining({ presentation: "inline" }),
+		);
+		expect(media.find((entry) => entry.id === "damaged_signal_live")).toEqual(
+			expect.objectContaining({ presentation: "dialog" }),
+		);
+		expect(media.find((entry) => entry.id === "ambient_signal")).toEqual(
+			expect.objectContaining({ kind: "audio", presentation: "ambient" }),
+		);
+	});
+
+	it("rejects ambient presentation for image media", () => {
+		const configRoot = mkdtempSync(
+			join(tmpdir(), "bear-character-package-invalid-media-presentation-"),
+		);
+		temporaryDirectories.push(configRoot);
+		const packageDir = join(configRoot, "jizhou");
+		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
+		const manifestPath = join(packageDir, "character.yaml");
+		const manifest = readFileSync(manifestPath, "utf8");
+		const invalidManifest = manifest.replace(
+			"      asset: assets/scene-aurora-study.png",
+			"      asset: assets/scene-aurora-study.png\n      presentation: ambient",
+		);
+		expect(invalidManifest).not.toBe(manifest);
+		writeFileSync(manifestPath, invalidManifest);
+
+		const loader = new CharacterLoader(configRoot);
+		expect(() => loader.load("jizhou")).toThrow();
+	});
+});
+
 describe("character package work presentation", () => {
 	it("keeps work presentation optional for packages that do not declare it", () => {
 		const configRoot = mkdtempSync(join(tmpdir(), "bear-character-package-no-work-"));

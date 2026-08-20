@@ -363,8 +363,8 @@ export interface CompanionStore {
 	readonly characterRuntimeByConversation: Readonly<Record<string, CharacterRuntimeState>>;
 	readonly roleplay: RoleplayState | undefined;
 	readonly activeRoleplayMediaId: string | undefined;
+	readonly activeAmbientMediaId: string | undefined;
 	readonly activeRoleplayChoiceSetId: string | undefined;
-
 	refresh(): Promise<void>;
 	selectConversation(id: string, branchId?: string): Promise<void>;
 	createConversation(title?: string): Promise<void>;
@@ -384,6 +384,7 @@ export interface CompanionStore {
 	abort(): Promise<void>;
 	triggerRoleplayEvent(eventId: string): Promise<void>;
 	dismissRoleplayMedia(): void;
+	dismissAmbientMedia(): void;
 	submitOnboarding(stepId: string, answer?: string): Promise<void>;
 
 	/** Boot snapshot + event-bus access (supplementary). */
@@ -464,6 +465,7 @@ interface CompanionState {
 	lastRunEvent: "adopted" | null;
 	pendingRunPermissions: Record<string, RunPermissionRequest>;
 	activeRoleplayMediaId: string | undefined;
+	activeAmbientMediaId: string | undefined;
 	activeRoleplayChoiceSetId: string | undefined;
 }
 
@@ -624,6 +626,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		lastRunEvent: null,
 		pendingRunPermissions: {},
 		activeRoleplayMediaId: undefined,
+		activeAmbientMediaId: undefined,
 		activeRoleplayChoiceSetId: undefined,
 	});
 
@@ -958,9 +961,17 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				}
 				return;
 			}
-			case "roleplay.media_presented":
-				setState("activeRoleplayMediaId", payloadString(event.payload, "mediaId"));
+			case "roleplay.media_presented": {
+				const mediaId = payloadString(event.payload, "mediaId");
+				const media = mediaId
+					? snapshotResource.latest?.character?.roleplay.media.find((entry) => entry.id === mediaId)
+					: undefined;
+				if (media !== undefined) {
+					if (media.presentation === "ambient") setState("activeAmbientMediaId", media.id);
+					else setState("activeRoleplayMediaId", media.id);
+				}
 				return;
+			}
 			case "roleplay.choices_presented":
 				setState("activeRoleplayChoiceSetId", payloadString(event.payload, "choiceSetId"));
 				return;
@@ -1853,7 +1864,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			await snapshotActions.refetch();
 		},
 		dismissRoleplayMedia: () => setState("activeRoleplayMediaId", undefined),
-
+		dismissAmbientMedia: () => setState("activeAmbientMediaId", undefined),
 		submitOnboarding: async (stepId, answer) => {
 			try {
 				await onboardingStore.submit(stepId, answer);
@@ -1884,6 +1895,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 		get activeRoleplayMediaId() {
 			return state.activeRoleplayMediaId;
+		},
+		get activeAmbientMediaId() {
+			return state.activeAmbientMediaId;
 		},
 		get activeRoleplayChoiceSetId() {
 			return state.activeRoleplayChoiceSetId;

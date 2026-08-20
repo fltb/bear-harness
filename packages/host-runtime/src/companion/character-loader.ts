@@ -130,7 +130,10 @@ export interface CharacterVisuals {
 
 export interface HostEventReaction {
 	event: string;
-	visual_state: string;
+	visual_state?: string;
+	scene?: string;
+	media?: string;
+	choice_set?: string;
 }
 
 export interface CharacterHostBehavior {
@@ -572,20 +575,6 @@ export class CharacterLoader {
 				`character package ${id}: host reactions and companion.pi configuration are required`,
 			);
 		}
-		const validStates = expressionIds;
-		const reactionEvents = new Set<string>();
-		for (const reaction of parsed.host.event_reactions) {
-			if (
-				!reaction ||
-				typeof reaction.event !== "string" ||
-				typeof reaction.visual_state !== "string" ||
-				reactionEvents.has(reaction.event) ||
-				!validStates.has(reaction.visual_state)
-			) {
-				throw new Error(`character package ${id}: invalid or duplicate host event reaction`);
-			}
-			reactionEvents.add(reaction.event);
-		}
 		validateCharacterOnboardingFlow(parsed.character?.first_meeting, id);
 		validateWorkPresentation(parsed.character?.work_presentation, id);
 		const roleplay = RoleplaySchema.parse(parsed.roleplay);
@@ -604,6 +593,36 @@ export class CharacterLoader {
 		const mediaIds = new Set(roleplay.media.map((entry) => entry.id));
 		const unlockableIds = new Set(roleplay.unlockables.map((entry) => entry.id));
 		const eventIds = new Set(roleplay.events.map((entry) => entry.id));
+		const sceneIds = new Set(parsed.scenes.map((scene) => scene.id));
+		const choiceSetIds = new Set(roleplay.choice_sets.map((set) => set.id));
+		const reactionEvents = new Set<string>();
+		for (const reaction of parsed.host.event_reactions) {
+			const effectKeys = ["visual_state", "scene", "media", "choice_set"] as const;
+			if (
+				!reaction ||
+				typeof reaction.event !== "string" ||
+				!reaction.event.trim() ||
+				reactionEvents.has(reaction.event) ||
+				effectKeys.every((key) => typeof reaction[key] !== "string" || !reaction[key]?.trim())
+			) {
+				throw new Error(`character package ${id}: invalid or duplicate host event reaction`);
+			}
+			for (const key of effectKeys) {
+				const value = reaction[key];
+				if (value === undefined) continue;
+				if (
+					typeof value !== "string" ||
+					!value.trim() ||
+					(key === "visual_state" && !expressionIds.has(value)) ||
+					(key === "scene" && !sceneIds.has(value)) ||
+					(key === "media" && !mediaIds.has(value)) ||
+					(key === "choice_set" && !choiceSetIds.has(value))
+				) {
+					throw new Error(`character package ${id}: invalid host event reaction effect`);
+				}
+			}
+			reactionEvents.add(reaction.event);
+		}
 		for (const variable of roleplay.variables) {
 			const actualType = typeof variable.initial;
 			if (
@@ -671,7 +690,7 @@ export class CharacterLoader {
 					throw new Error(`character package ${id}: event ${event.id} references missing media`);
 				if (effect.type === "scene" && !parsed.scenes.some((scene) => scene.id === effect.scene))
 					throw new Error(`character package ${id}: event ${event.id} references missing scene`);
-				if (effect.type === "expression" && !validStates.has(effect.expression))
+				if (effect.type === "expression" && !expressionIds.has(effect.expression))
 					throw new Error(
 						`character package ${id}: event ${event.id} references missing expression`,
 					);

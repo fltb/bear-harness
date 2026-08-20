@@ -151,6 +151,8 @@ export const en = {
 	},
 	messages: {
 		closeMedia: "Close",
+		stopAmbientMedia: "Stop ambient media",
+		stopMedia: "Stop ambient media",
 		rememberMoment: "Remember this moment",
 		rememberFailed: "Could not save memory. Try again.",
 		justNow: "Just now",

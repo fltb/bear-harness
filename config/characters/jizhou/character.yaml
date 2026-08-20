@@ -204,11 +204,12 @@ self_canon: |
   - 一段损坏日志的内容
   - 入口为何出现在这台机器上
 
-# Host 行为层——稳定事件的视觉反应。仅 Host 读取和执行；包不能声明任意权限。
+# Host 行为层——稳定事件的界面反应。仅 Host 读取和执行；包不能声明任意权限。
 host:
   event_reactions:
     - event: message.user_sent
       visual_state: listening
+      scene: aurora_study
     - event: message_end
       visual_state: result_ready
     - event: message.aborted
