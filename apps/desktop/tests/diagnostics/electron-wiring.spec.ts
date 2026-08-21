@@ -259,6 +259,7 @@ describe("registerWindowHooks", () => {
 			{ name: "preload.failed", attributes: { webContentsId: 5 } },
 		]);
 		dispose();
+		dispose();
 		expect(webContents.removeListener).toHaveBeenCalledTimes(3);
 	});
 });

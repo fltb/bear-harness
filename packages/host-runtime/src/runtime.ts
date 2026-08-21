@@ -31,6 +31,7 @@ import { CompanionSupervisor } from "./companion/supervisor.js";
 import { TurnPipeline } from "./companion/turn-pipeline.js";
 import {
 	type HostCompositionContext,
+	type HostUpdateService,
 	proposeMemoryCandidate,
 	rememberConversationEntry,
 	wireHostHandlers,
@@ -56,6 +57,42 @@ import { Database, MIGRATIONS } from "./storage/database.js";
 import { EventBus } from "./storage/event-bus.js";
 import { conversations, memoryCandidates, messages } from "./storage/schema.js";
 import { StoryService } from "./story/service.js";
+
+type HfEndpointLease = {
+	value: string;
+	previousValue?: string;
+	previousLease?: HfEndpointLease;
+	active: boolean;
+};
+let currentHfEndpointLease: HfEndpointLease | undefined;
+
+function restoreHfPrevious(lease: HfEndpointLease): string | undefined {
+	const previous = lease.previousLease;
+	if (!previous) return lease.previousValue;
+	return previous.active ? previous.value : restoreHfPrevious(previous);
+}
+
+function installHfEndpoint(value: string): HfEndpointLease {
+	const previousValue = process.env.HF_ENDPOINT;
+	const previousLease =
+		currentHfEndpointLease && previousValue === currentHfEndpointLease.value
+			? currentHfEndpointLease
+			: undefined;
+	const lease: HfEndpointLease = { value, previousValue, previousLease, active: true };
+	currentHfEndpointLease = lease;
+	process.env.HF_ENDPOINT = value;
+	return lease;
+}
+
+function releaseHfEndpoint(lease: HfEndpointLease | undefined): void {
+	if (!lease || !lease.active) return;
+	lease.active = false;
+	if (currentHfEndpointLease !== lease || process.env.HF_ENDPOINT !== lease.value) return;
+	const value = restoreHfPrevious(lease);
+	if (typeof value === "undefined") delete process.env.HF_ENDPOINT;
+	else process.env.HF_ENDPOINT = value;
+	currentHfEndpointLease = lease.previousLease;
+}
 
 /** The subset of the product configuration the host runtime consumes. */
 export interface RuntimeProductConfig {
@@ -104,11 +141,11 @@ export interface HostRuntimeOptions {
 	 */
 	artifactProtocolUrlFactory?: (artifactId: string) => string;
 	/**
-	 * Optional app-update service supplied by the host shell (desktop). The
-	 * `update.check:v1` RPC delegates to `check()`; the resolved value must
-	 * match the protocol `UpdateCheckResponse` shape.
+	 * Optional app-update lifecycle service supplied by the host shell
+	 * (desktop). `check()` stages a verified archive; `discard()` removes it;
+	 * `apply()` is an explicit typed boundary and may report unsupported.
 	 */
-	updateService?: { check(): Promise<unknown> };
+	updateService?: HostUpdateService;
 	/**
 	 * Directories whose deletion is sentinel-warned by fs-protection (WARN +
 	 * audit entry; deletes are never blocked). Defaults to `[dataDir]` — the
@@ -141,6 +178,8 @@ export class HostRuntime {
 	readonly memoryRuntime: TencentDbRuntime;
 	readonly memoryBackend: MemoryBackend;
 	readonly memoryScope: { readonly installationId: string; readonly userId: string };
+	private hfEndpointLease?: HfEndpointLease;
+	private readonly hfEndpointValue?: string;
 	/** Content-addressed artifact store (CAS + ownership rows). */
 	readonly artifacts: ArtifactStore;
 	/** Hash-chained append-only audit store (commission/run/fsop/memory/config). */
@@ -227,7 +266,10 @@ export class HostRuntime {
 		const appRecord = appSettings.load();
 		const memoryConfig = mergeEmbeddingConfig(options.memoryConfig, appRecord.memoryVectorService);
 		const mirrorEndpoint = appRecord.modelDownloadMirror.endpoint?.trim();
-		if (mirrorEndpoint) process.env.HF_ENDPOINT = mirrorEndpoint.trim();
+		if (mirrorEndpoint) {
+			this.hfEndpointValue = mirrorEndpoint;
+			this.hfEndpointLease = installHfEndpoint(mirrorEndpoint);
+		}
 
 		const memoryRuntime = new TencentDbRuntime({
 			dataDir,
@@ -243,6 +285,13 @@ export class HostRuntime {
 			// extraction → L2/L3). This is a side channel: a failure here never
 			// blocks the reply that was already persisted.
 			onTurnCommitted: ({ conversationId, userText, assistantText, startedAt }) => {
+				// The active character may change while a runtime is alive. Resolve
+				// the namespace at commit time instead of freezing the product
+				// default in the long-lived turn sink.
+				const companionId = characterLoader.getActiveCharacterId(
+					db.orm,
+					options.productConfig.defaultCharacterId,
+				);
 				void memoryRuntime
 					.captureTurn({
 						userText,
@@ -253,7 +302,7 @@ export class HostRuntime {
 						],
 						sessionKey: namespaceFor({
 							...memoryScope,
-							companionId: options.productConfig.defaultCharacterId,
+							companionId,
 						}),
 						sessionId: conversationId,
 					})
@@ -472,78 +521,110 @@ export class HostRuntime {
 	 */
 	async start(): Promise<void> {
 		if (this.started) return;
-		this.started = true;
-		// Apply the persisted network proxy before any host network call goes out.
-		// Non-direct mode consults the platform/system proxy; Electron hosts pass
-		// a session.resolveProxy resolver via `systemProxyResolver`.
-		const proxy = this.composition.appSettings.load().networkProxy;
-		if (proxy.mode !== "direct") {
-			await applyProxyConfig(
-				{ mode: proxy.mode, url: proxy.url, bypass: proxy.bypass },
-				{ resolve: this.systemProxyResolver, logger: this.logger },
-			);
+		if (this.closed) throw new Error("Host runtime is closed");
+		if (
+			this.hfEndpointValue &&
+			(!this.hfEndpointLease?.active || currentHfEndpointLease !== this.hfEndpointLease)
+		) {
+			this.hfEndpointLease = installHfEndpoint(this.hfEndpointValue);
 		}
-		// Live proxy hot-reload: settings changes re-apply the dispatcher without
-		// a restart. Remember to subscribe AFTER the composition is ready.
-		this.unsubscribeProxyHotReload = this.composition.eventBus.subscribe((event) => {
-			const payload = event.payload as { changed?: string[] } | undefined;
-			if (event.kind === "settings.changed" && payload?.changed?.includes("networkProxy")) {
-				const next = this.composition.appSettings.load().networkProxy;
-				void applyProxyConfig(
-					{ mode: next.mode, url: next.url, bypass: next.bypass },
+		try {
+			// Apply the persisted network proxy before any host network call goes out.
+			// Non-direct mode consults the platform/system proxy; Electron hosts pass
+			// a session.resolveProxy resolver via `systemProxyResolver`.
+			const proxy = this.composition.appSettings.load().networkProxy;
+			if (proxy.mode !== "direct") {
+				await applyProxyConfig(
+					{ mode: proxy.mode, url: proxy.url, bypass: proxy.bypass },
 					{ resolve: this.systemProxyResolver, logger: this.logger },
 				);
 			}
-		});
-		// Security sentinels: fs-protection wraps the global delete APIs (WARN
-		// + audit entry on hits; deletes are never blocked), and retention runs
-		// once per boot. Audit event wiring already started in the constructor.
-		this.uninstallFsProtection = installFsProtection({
-			protectedRoots: this.fsProtectedRoots,
-			logger: this.logger,
-			onHit: (hit) => {
-				void this.auditStore.append("fsop", "delete_attempt", JSON.stringify(hit)).catch(() => {
-					// sentinel is warn-only; audit failure must not throw
-				});
-			},
-		});
-		void this.auditStore.prune().catch(() => {
-			// retention is best-effort at boot
-		});
-		await this.memoryRuntime.start();
-		// Local embedding: preload the offline model in the background so the
-		// first hybrid recall doesn't pay download + load latency synchronously.
-		const memoryVector = this.composition.appSettings.load().memoryVectorService;
-		if (memoryVector.enabled && memoryVector.provider === "local") {
-			void this.memoryRuntime.startLocalEmbeddingWarmup();
+			// Live proxy hot-reload: settings changes re-apply the dispatcher without
+			// a restart. Remember to subscribe AFTER the composition is ready.
+			this.unsubscribeProxyHotReload = this.composition.eventBus.subscribe((event) => {
+				const payload = event.payload as { changed?: string[] } | undefined;
+				if (event.kind === "settings.changed" && payload?.changed?.includes("networkProxy")) {
+					const next = this.composition.appSettings.load().networkProxy;
+					void applyProxyConfig(
+						{ mode: next.mode, url: next.url, bypass: next.bypass },
+						{ resolve: this.systemProxyResolver, logger: this.logger },
+					);
+				}
+			});
+			// Security sentinels: fs-protection wraps the global delete APIs (WARN
+			// + audit entry on hits; deletes are never blocked), and retention runs
+			// once per boot. Audit event wiring already started in the constructor.
+			this.uninstallFsProtection = installFsProtection({
+				protectedRoots: this.fsProtectedRoots,
+				logger: this.logger,
+				onHit: (hit) => {
+					void this.auditStore.append("fsop", "delete_attempt", JSON.stringify(hit)).catch(() => {
+						// sentinel is warn-only; audit failure must not throw
+					});
+				},
+			});
+			void this.auditStore.prune().catch(() => {
+				// retention is best-effort at boot
+			});
+			await this.memoryRuntime.start();
+			// Local embedding: preload the offline model in the background so the
+			// first hybrid recall doesn't pay download + load latency synchronously.
+			const memoryVector = this.composition.appSettings.load().memoryVectorService;
+			if (memoryVector.enabled && memoryVector.provider === "local") {
+				void this.memoryRuntime.startLocalEmbeddingWarmup();
+			}
+			const activeCharacterId = this.characterLoader.getActiveCharacterId(
+				this.composition.orm,
+				this.composition.defaultCharacterId,
+			);
+			const activeCharacter = this.characterLoader.load(activeCharacterId);
+			if (!activeCharacter) throw new Error(`character package missing: ${activeCharacterId}`);
+			const trust = this.characterLoader.pluginTrust(this.composition.orm, activeCharacter);
+			this.supervisor.configureRuntime(
+				this.characterLoader.piResources(activeCharacter, trust.trusted),
+			);
+			await this.supervisor.start();
+			this.started = true;
+		} catch (error) {
+			if (this.supervisor.isRunning) await this.supervisor.stop().catch(() => undefined);
+			this.uninstallFsProtection?.uninstall();
+			this.uninstallFsProtection = undefined;
+			this.unsubscribeProxyHotReload?.();
+			this.unsubscribeProxyHotReload = undefined;
+			releaseHfEndpoint(this.hfEndpointLease);
+			throw error;
 		}
-		const activeCharacterId = this.characterLoader.getActiveCharacterId(
-			this.composition.orm,
-			this.composition.defaultCharacterId,
-		);
-		const activeCharacter = this.characterLoader.load(activeCharacterId);
-		if (!activeCharacter) throw new Error(`character package missing: ${activeCharacterId}`);
-		const trust = this.characterLoader.pluginTrust(this.composition.orm, activeCharacter);
-		this.supervisor.configureRuntime(
-			this.characterLoader.piResources(activeCharacter, trust.trusted),
-		);
-		await this.supervisor.start();
 	}
 
 	/** Stop the companion runtime, dispose services, and close the database. */
 	async close(): Promise<void> {
-		await this.memoryRuntime.close();
 		if (this.closed) return;
 		this.closed = true;
-		await this.supervisor.stop();
+		this.started = false;
+		let failure: unknown;
+		try {
+			await this.supervisor.stop();
+		} catch (error) {
+			failure = error;
+		}
 		this.uninstallFsProtection?.uninstall();
+		this.uninstallFsProtection = undefined;
 		this.unsubscribeAudit?.();
+		this.unsubscribeAudit = undefined;
 		this.composition.turns.dispose();
 		this.unsubscribeStoryAutomation();
 		this.unsubscribeProxyHotReload?.();
+		this.unsubscribeProxyHotReload = undefined;
 		this.characterBehavior.dispose();
 		this.providers.dispose();
+		releaseHfEndpoint(this.hfEndpointLease);
+		try {
+			await this.memoryRuntime.close();
+		} catch (error) {
+			failure ??= error;
+		}
 		this.db.close();
+		if (failure) throw failure;
 	}
 }
 

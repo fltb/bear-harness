@@ -376,7 +376,7 @@ export const en = {
 		addSource: "Add to canon library",
 		chunks: " chunks",
 		packageManaged: "Provided by role package · read-only",
-		sourceLanguage: "Source language: {{language}}",
+		sourceLanguage: "Source language: {language}",
 		remove: "Remove",
 		removeConfirm: "Remove this canon source and its indexed chunks?",
 		search: "Search and citations",

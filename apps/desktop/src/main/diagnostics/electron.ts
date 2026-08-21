@@ -60,6 +60,53 @@ export interface WindowHooksWebContents {
 	on(event: string, listener: (...args: unknown[]) => void): unknown;
 	removeListener?(event: string, listener: (...args: unknown[]) => void): unknown;
 }
+/**
+ * Shared renderer admission checks. IPC has an additional Electron ownership
+ * check (`BrowserWindow.fromWebContents`); every transport uses this exact
+ * registered main-frame identity and URL comparison.
+ */
+export function isRegisteredMainFrame(
+	event: IpcEventLike,
+	registration: Pick<WindowRegistration, "allowedUrl"> | undefined,
+): boolean {
+	return Boolean(
+		registration &&
+			event.senderFrame !== null &&
+			event.senderFrame === event.sender.mainFrame &&
+			event.senderFrame.url === registration.allowedUrl,
+	);
+}
+
+/** Electron may expose a referrer as a URL string or a URL-bearing object. */
+export function rendererReferrerUrl(referrer: unknown): string | null {
+	if (typeof referrer === "string") return referrer || null;
+	if (
+		typeof referrer === "object" &&
+		referrer !== null &&
+		"url" in referrer &&
+		typeof referrer.url === "string"
+	) {
+		return referrer.url || null;
+	}
+	return null;
+}
+
+/**
+ * Artifact requests carry the renderer identity as their referrer rather than
+ * an IPC sender event. Match the referrer to a currently registered renderer
+ * URL exactly; origin, prefix, empty, and `about:client` matches are rejected.
+ */
+export function isAllowedRendererReferrer(
+	referrer: unknown,
+	windowRegistry: ReadonlyMap<number, Pick<WindowRegistration, "allowedUrl">>,
+): boolean {
+	const referrerUrl = rendererReferrerUrl(referrer);
+	if (referrerUrl === null || referrerUrl === "about:client") return false;
+	for (const registration of windowRegistry.values()) {
+		if (referrerUrl === registration.allowedUrl) return true;
+	}
+	return false;
+}
 
 export interface ElectronDiagnosticsOptions {
 	app: AppLike;
@@ -167,12 +214,8 @@ export function registerElectronDiagnostics(options: ElectronDiagnosticsOptions)
 			reject("sender");
 			return;
 		}
-		if (event.senderFrame !== event.sender.mainFrame) {
-			reject("frame");
-			return;
-		}
-		if (event.senderFrame === null || event.senderFrame.url !== registration.allowedUrl) {
-			reject("url");
+		if (!isRegisteredMainFrame(event, registration)) {
+			reject(event.senderFrame === event.sender.mainFrame ? "url" : "frame");
 			return;
 		}
 		if (!isPlainObject(fault) || !validFaultShape(fault)) {
@@ -238,7 +281,10 @@ export function registerElectronDiagnostics(options: ElectronDiagnosticsOptions)
 		options.app.removeListener?.("child-process-gone", onChildProcessGone);
 	});
 
+	let disposed = false;
 	return () => {
+		if (disposed) return;
+		disposed = true;
 		for (const dispose of disposers) dispose();
 	};
 }
@@ -263,11 +309,13 @@ export function registerWindowHooks(
 		emitWindow("window.responsive", { webContentsId: webContents.id });
 	const onPreloadError = (): void =>
 		emitWindow("preload.failed", { webContentsId: webContents.id });
-
 	webContents.on("unresponsive", onUnresponsive);
 	webContents.on("responsive", onResponsive);
 	webContents.on("preload-error", onPreloadError);
+	let disposed = false;
 	return () => {
+		if (disposed) return;
+		disposed = true;
 		webContents.removeListener?.("unresponsive", onUnresponsive);
 		webContents.removeListener?.("responsive", onResponsive);
 		webContents.removeListener?.("preload-error", onPreloadError);

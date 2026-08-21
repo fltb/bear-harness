@@ -201,6 +201,10 @@ export class PiSessionStore {
 		if (!entry || entry.type !== "message" || !isStandardMessage(entry.message)) return undefined;
 		return { id: entry.id, message: entry.message };
 	}
+	/** Return whether an entry belongs to the currently selected Pi branch. */
+	isEntryOnCurrentBranch(entryId: string): boolean {
+		return this.manager.getBranch().some((entry) => entry.id === entryId);
+	}
 
 	/** Return the nearest user message preceding a message entry on its Pi branch. */
 	findParentUserEntry(entryId: string): PiSessionMessageEntry | undefined {

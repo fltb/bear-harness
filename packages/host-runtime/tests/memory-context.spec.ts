@@ -233,6 +233,45 @@ describe("relationship memory context", () => {
 			"cyber-bear:install-1:user-1:companion-b",
 		]);
 	});
+	it("captures through the activated companion namespace, never the default", async () => {
+		db.prepare(
+			"INSERT INTO branches (id, conversation_id, label, adopted) VALUES (?, ?, ?, ?)",
+		).run("branch-b", "conversation-b", "main", 1);
+		db.prepare(
+			"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES (?, ?, ?, ?)",
+		).run("message-b", "conversation-b", "branch-b", "assistant");
+		db.prepare(
+			"INSERT INTO message_versions (id, message_id, content, adopted) VALUES (?, ?, ?, ?)",
+		).run("version-b", "message-b", "只属于已激活角色的记忆", 1);
+		const context = {
+			orm,
+			defaultCharacterId: "jizhou",
+			characterLoader: {
+				getActiveCharacterId: () => "companion-b",
+				load: () => ({ canon: {} }),
+				seed: () => undefined,
+				activate: () => undefined,
+			},
+			eventBus: {},
+			canon: { syncPackage: () => undefined },
+			conversationRepository: { getSession: () => undefined },
+			memoryBackend: backend,
+			memoryScope: { installationId: "install-1", userId: "user-1" },
+		} as never;
+
+		await expect(
+			rememberConversationEntry(context, "conversation-b", "message-b", "user_capture"),
+		).resolves.toMatchObject({ createdBy: "user_capture" });
+		await backend.open({ scope: scopeFor("companion-b") });
+		const activatedHits = await backend.recall({
+			scope: scopeFor("companion-b"),
+			query: "已激活角色",
+		});
+		expect(activatedHits.map(({ record }) => record.text)).toContain("只属于已激活角色的记忆");
+		await expect(
+			rememberConversationEntry(context, "conversation-1", "legacy-message", "user_capture"),
+		).rejects.toMatchObject({ kind: "not_found", reason: "conversation_not_found" });
+	});
 
 	it("projects direct update, invalidation, and forgetting into later context", async () => {
 		const original = await remember("用户喜欢长回答");
@@ -306,6 +345,29 @@ describe("relationship memory context", () => {
 			).rejects.toMatchObject({
 				kind: "conflict",
 				reason: "memory_source_not_current_branch",
+			});
+			await expect(
+				rememberConversationEntry(context, "conversation-1", currentSourceId, "user_capture"),
+			).resolves.toMatchObject({
+				sourceEntryId: currentSourceId,
+				createdBy: "user_capture",
+			});
+			await expect(
+				rememberConversationEntry(context, "conversation-1", "missing-source", "user_capture"),
+			).rejects.toEqual({
+				kind: "not_found",
+				reason: "memory_source_not_found",
+			});
+			const foreignSession = PiSessionStore.create({
+				sessionDir: join(root, "foreign-sessions"),
+				cwd: root,
+			});
+			const foreignSourceId = foreignSession.appendUserMessage("另一个会话的来源");
+			await expect(
+				rememberConversationEntry(context, "conversation-1", foreignSourceId, "user_capture"),
+			).rejects.toEqual({
+				kind: "not_found",
+				reason: "memory_source_not_found",
 			});
 		} finally {
 			rmSync(root, { recursive: true, force: true });

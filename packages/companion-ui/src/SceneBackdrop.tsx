@@ -9,8 +9,13 @@ export function SceneBackdrop(props: { scene: SceneDisplay | undefined }) {
 	return (
 		<Show when={props.scene?.backgroundUrl} keyed>
 			{(source) => (
-				<div class="scene-backdrop">
-					<img src={source} alt={props.scene?.label ?? ""} draggable={false} />
+				<div
+					class="scene-backdrop"
+					data-surface-layer="scene"
+					role="img"
+					aria-label={props.scene?.label ?? ""}
+				>
+					<img src={source} alt="" aria-hidden="true" draggable={false} />
 				</div>
 			)}
 		</Show>

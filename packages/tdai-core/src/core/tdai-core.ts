@@ -28,6 +28,9 @@ import type {
 	CompletedTurn,
 	MemorySearchParams,
 	ConversationSearchParams,
+	DeferredIndexingRecord,
+	IndexingStatus,
+	ReindexResult,
 } from "./types.js";
 import type { MemoryTdaiConfig } from "../config.js";
 import type { IMemoryStore } from "./store/types.js";
@@ -124,6 +127,16 @@ export class TdaiCore {
 	 * of currently-running background tasks.
 	 */
 	private readonly bgTasks = new Set<Promise<void>>();
+	/** Failed deferred embeddings retained for idempotent retry. */
+	private readonly failedIndexing = new Map<string, DeferredIndexingRecord>();
+	private indexingStatus: IndexingStatus = {
+		state: "complete",
+		total: 0,
+		completed: 0,
+		pending: 0,
+		failed: 0,
+	};
+	private lastReindexResult?: ReindexResult;
 
 	constructor(opts: TdaiCoreOptions) {
 		this.hostAdapter = opts.hostAdapter;
@@ -236,7 +249,7 @@ export class TdaiCore {
 			this.embeddingService = undefined;
 		}
 
-		resetStores(this.dataDir);
+		await resetStores(this.dataDir);
 		this.logger.debug?.(`${TAG} TDAI Core destroyed`);
 	}
 
@@ -249,6 +262,10 @@ export class TdaiCore {
 	 * Maps to: OpenClaw `before_prompt_build` / Hermes `prefetch()`.
 	 */
 	async handleBeforeRecall(userText: string, sessionKey: string): Promise<RecallResult> {
+		// Feature gates must run before awaiting store initialization or touching
+		// any pipeline resources. Hosts may invoke this hook unconditionally.
+		if (!this.cfg.recall.enabled) return {};
+
 		await this.storeReady?.catch(() => {});
 
 		const result = await performAutoRecall({
@@ -270,6 +287,24 @@ export class TdaiCore {
 	 * Maps to: OpenClaw `agent_end` / Hermes `sync_turn()`.
 	 */
 	async handleTurnCommitted(turn: CompletedTurn): Promise<CaptureResult> {
+		// Capture is opt-in at this boundary: do not initialize stores, start the
+		// scheduler, record files, index vectors, or emit pipeline notifications.
+		if (!this.cfg.capture.enabled) {
+			return {
+				l0RecordedCount: 0,
+				schedulerNotified: false,
+				l0VectorsWritten: 0,
+				indexingStatus: {
+					state: "complete",
+					total: 0,
+					completed: 0,
+					pending: 0,
+					failed: 0,
+				},
+				filteredMessages: [],
+			};
+		}
+
 		await this.storeReady?.catch(() => {});
 		await this.ensureSchedulerStarted();
 
@@ -287,7 +322,86 @@ export class TdaiCore {
 			vectorStore: this.vectorStore,
 			embeddingService: this.embeddingService,
 			bgTaskRegistry: this.bgTasks,
+			onIndexingStatus: (status, records) => this.handleIndexingStatus(status, records),
 		});
+	}
+
+	/** Return the latest observable state of background indexing. */
+	getIndexingStatus(): IndexingStatus {
+		return {
+			...this.indexingStatus,
+			failed: this.failedIndexing.size || this.indexingStatus.failed,
+		};
+	}
+
+	/**
+	 * Retry failed deferred L0 embeddings. Updating an existing record is
+	 * idempotent, so repeated calls are safe and only retained failures retry.
+	 */
+	async retryIndexing(): Promise<IndexingStatus> {
+		await this.storeReady?.catch(() => {});
+		const records = [...this.failedIndexing.values()];
+		if (records.length === 0) return this.getIndexingStatus();
+		if (!this.vectorStore?.updateL0Embedding || !this.embeddingService) {
+			this.indexingStatus = {
+				...this.indexingStatus,
+				state: "unavailable",
+				pending: 0,
+				failed: records.length,
+				error: "Vector store or embedding service unavailable",
+			};
+			return this.getIndexingStatus();
+		}
+
+		let completed = 0;
+		let lastError: string | undefined;
+		for (const record of records) {
+			try {
+				const embedding = await this.embeddingService.embed(record.text);
+				const ok = await this.vectorStore.updateL0Embedding(record.recordId, embedding);
+				if (ok) {
+					this.failedIndexing.delete(record.recordId);
+					completed++;
+				} else {
+					lastError = `Embedding update returned false for ${record.recordId}`;
+				}
+			} catch (err) {
+				lastError = err instanceof Error ? err.message : String(err);
+			}
+		}
+		const failed = this.failedIndexing.size;
+		this.indexingStatus = {
+			state: failed > 0 ? "failed" : "complete",
+			total: Math.max(this.indexingStatus.total, completed + failed),
+			completed,
+			pending: 0,
+			failed,
+			error: lastError,
+		};
+		return this.getIndexingStatus();
+	}
+
+	/** Re-embed every stored L0/L1 record; safe to call repeatedly. */
+	async reindexAll(): Promise<ReindexResult> {
+		await this.storeReady?.catch(() => {});
+		if (!this.vectorStore || !this.embeddingService) {
+			const result: ReindexResult = {
+				l1Count: 0,
+				l0Count: 0,
+				complete: false,
+				error: "Vector store or embedding service unavailable",
+			};
+			this.lastReindexResult = result;
+			return result;
+		}
+		const result = await this.vectorStore.reindexAll((text) => this.embeddingService!.embed(text));
+		this.lastReindexResult = result;
+		return result;
+	}
+
+	/** Return the last full re-index result, if one has been requested. */
+	getLastReindexResult(): ReindexResult | undefined {
+		return this.lastReindexResult;
 	}
 
 	/**
@@ -368,6 +482,10 @@ export class TdaiCore {
 	 *                    already evicted or never produced a capture.
 	 */
 	async handleSessionEnd(sessionKey: string): Promise<void> {
+		// Session end is a capture/pipeline flush. A disabled capture feature must
+		// not turn an unconditional host callback into background work.
+		if (!this.cfg.capture.enabled) return;
+
 		if (!sessionKey) return;
 		await this.storeReady?.catch(() => {});
 		if (!this.scheduler) return;
@@ -414,6 +532,20 @@ export class TdaiCore {
 	// ============================
 	// Internal helpers
 	// ============================
+
+	private handleIndexingStatus(
+		status: IndexingStatus,
+		records: readonly DeferredIndexingRecord[],
+	): void {
+		this.indexingStatus = { ...status };
+		if (status.state === "pending") {
+			for (const record of records) this.failedIndexing.delete(record.recordId);
+		} else if (status.state === "failed") {
+			for (const record of records) this.failedIndexing.set(record.recordId, record);
+		} else if (status.state === "complete") {
+			for (const record of records) this.failedIndexing.delete(record.recordId);
+		}
+	}
 
 	private async initStores(): Promise<void> {
 		try {

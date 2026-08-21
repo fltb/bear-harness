@@ -1,5 +1,9 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { zhCN as publicZhCN } from "@bear-harness/i18n/locales";
 import { describe, expect, it } from "vitest";
+import { i18n } from "../src/index.js";
 import { resources, supportedProductLocales } from "../src/locales/index.js";
 
 function shape(value: unknown): unknown {
@@ -28,6 +32,28 @@ describe("product locale catalogs", () => {
 		for (const locale of supportedProductLocales) {
 			expect(shape(resources[locale])).toEqual(baseShape);
 		}
+	});
+
+	it("regenerates Taiwan output from the current source catalog", () => {
+		const packageRoot = fileURLToPath(new URL("..", import.meta.url));
+		const generatorPath = fileURLToPath(new URL("../scripts/generate-zh-tw.mjs", import.meta.url));
+		const generatedPath = fileURLToPath(
+			new URL("../src/locales/zh-TW.generated.ts", import.meta.url),
+		);
+
+		execFileSync(process.execPath, [generatorPath], { cwd: packageRoot });
+		const generated = readFileSync(generatedPath, "utf8");
+		expect(generated).toContain('"sourceLanguage": "資料語言：{language}"');
+		expect(generated).not.toContain("{{language}}");
+	});
+
+	it("renders source-language placeholders with configured delimiters", () => {
+		expect(i18n.getFixedT("zh-CN")("canonStudio.sourceLanguage", { language: "中文" })).toBe(
+			"资料语言：中文",
+		);
+		expect(i18n.getFixedT("zh-TW")("canonStudio.sourceLanguage", { language: "中文" })).toBe(
+			"資料語言：中文",
+		);
 	});
 
 	it("keeps English translated and uses phrase-level OpenCC output for Taiwan", () => {

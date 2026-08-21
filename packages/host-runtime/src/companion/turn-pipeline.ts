@@ -50,6 +50,8 @@ export interface TurnPipelineSessionAppender {
 	getMessageEntry?(entryId: string): { id: string; message: PiSessionMessage } | undefined;
 	findParentUserEntry?(entryId: string): { id: string; message: PiSessionMessage } | undefined;
 	branchBefore?(entryId: string): void;
+	isEntryOnCurrentBranch?(entryId: string): boolean;
+
 	selectBranch?(leafId: string): void;
 	currentLeaf?: unknown;
 }
@@ -191,7 +193,17 @@ export class TurnPipeline {
 	/** Regenerate: create a sibling assistant version from the same user parent. */
 	async regenerate(conversationId: string, messageId: string): Promise<TurnResult> {
 		const session = this.sessionResolver?.get(conversationId);
-		const piTarget = session?.getMessageEntry?.(messageId);
+		const piTarget =
+			session?.getMessageEntry?.(messageId) ??
+			(session ? this.findHostMessageEntry(conversationId, messageId, "assistant") : undefined);
+		if (
+			piTarget &&
+			session?.isEntryOnCurrentBranch &&
+			!session.isEntryOnCurrentBranch(piTarget.id)
+		) {
+			throw { kind: "conflict", reason: "message_not_current_branch" };
+		}
+
 		const row = piTarget
 			? { id: messageId, role: piTarget.message.role }
 			: this.db
@@ -210,24 +222,17 @@ export class TurnPipeline {
 		const targetText = piTarget ? assistantMessageText(piTarget.message) : undefined;
 		const hostAssistantId =
 			piTarget && targetText
-				? (this.findHostMessageId(conversationId, "assistant", targetText) ??
+				? (this.findCanonicalHostMessageId(conversationId, messageId, "assistant") ??
+					this.findHostMessageId(conversationId, "assistant", targetText) ??
 					this.ensureHostMessage(conversationId, "assistant", targetText))
 				: messageId;
-		const piParent = piTarget ? session?.findParentUserEntry?.(messageId) : undefined;
+		const piParent = piTarget ? session?.findParentUserEntry?.(piTarget.id) : undefined;
 		const parent = piTarget
 			? piParent
 				? {
 						id:
-							this.findHostMessageId(
-								conversationId,
-								"user",
-								assistantMessageText(piParent.message),
-							) ??
-							this.ensureHostMessage(
-								conversationId,
-								"user",
-								assistantMessageText(piParent.message),
-							),
+							this.findHostMessageId(conversationId, "user", piEntryText(piParent.message)) ??
+							this.ensureHostMessage(conversationId, "user", piEntryText(piParent.message)),
 					}
 				: undefined
 			: this.db
@@ -295,6 +300,14 @@ export class TurnPipeline {
 	async switchVersion(conversationId: string, messageId: string, versionId: string): Promise<void> {
 		const session = this.sessionResolver?.get(conversationId);
 		const piTarget = session?.getMessageEntry?.(messageId);
+		if (
+			piTarget &&
+			session?.isEntryOnCurrentBranch &&
+			!session.isEntryOnCurrentBranch(piTarget.id)
+		) {
+			throw { kind: "conflict", reason: "message_not_current_branch" };
+		}
+
 		if (piTarget) {
 			if (versionId !== `${messageId}-v1`) {
 				throw { kind: "not_found", reason: "version_not_found" };
@@ -362,6 +375,14 @@ export class TurnPipeline {
 		}
 		const session = this.sessionResolver?.get(conversationId);
 		const piSource = session?.getMessageEntry?.(messageId);
+		if (
+			piSource &&
+			session?.isEntryOnCurrentBranch &&
+			!session.isEntryOnCurrentBranch(piSource.id)
+		) {
+			throw { kind: "conflict", reason: "message_not_current_branch" };
+		}
+
 		// The UI may report a Host SQLite message id for a migrated user row;
 		// the source entry was not rewritten in place, so resolve its current
 		// Pi entry by the adopted content when the Pi entry ids are opaque.
@@ -381,7 +402,7 @@ export class TurnPipeline {
 		if (!role) throw { kind: "not_found", reason: "message_not_found" };
 		if (role !== "user" && role !== "assistant")
 			throw { kind: "not_found", reason: "message_not_found" };
-		const sourceText = resolvedPi ? assistantMessageText(resolvedPi.message) : undefined;
+		const sourceText = resolvedPi ? piEntryText(resolvedPi.message) : undefined;
 		const hostMessageId =
 			resolvedPi && sourceText
 				? (this.findHostMessageId(conversationId, role, sourceText) ??
@@ -510,6 +531,14 @@ export class TurnPipeline {
 		const branchId = randomUUID();
 		const session = this.sessionResolver?.get(conversationId);
 		const piSource = session?.getMessageEntry?.(messageId);
+		if (
+			piSource &&
+			session?.isEntryOnCurrentBranch &&
+			!session.isEntryOnCurrentBranch(piSource.id)
+		) {
+			throw { kind: "conflict", reason: "message_not_current_branch" };
+		}
+
 		// Resolve the Pi branch entry by adopted content when the caller passed
 		// a Host SQLite message id; without a Pi session, fall back to the
 		// legacy Host-only branch row.
@@ -528,7 +557,7 @@ export class TurnPipeline {
 		if (!role) throw { kind: "not_found", reason: "message_not_found" };
 		if (role !== "user" && role !== "assistant")
 			throw { kind: "not_found", reason: "message_not_found" };
-		const sourceText = resolvedPi ? assistantMessageText(resolvedPi.message) : undefined;
+		const sourceText = resolvedPi ? piEntryText(resolvedPi.message) : undefined;
 		const hostMessageId =
 			resolvedPi && sourceText
 				? (this.findHostMessageId(conversationId, role, sourceText) ??
@@ -574,14 +603,13 @@ export class TurnPipeline {
 			.get()?.userMessageId;
 	}
 
-	/** Look up the minimal Host message row mirroring a Pi entry by role and text. */
 	private findHostMessageId(
 		conversationId: string,
 		role: "user" | "assistant",
 		content: string,
 	): string | undefined {
-		return this.db
-			.select({ id: messages.id })
+		const candidates = this.db
+			.select({ id: messages.id, branchId: messages.branchId })
 			.from(messages)
 			.innerJoin(messageVersions, eq(messageVersions.messageId, messages.id))
 			.where(
@@ -593,8 +621,63 @@ export class TurnPipeline {
 				),
 			)
 			.orderBy(sql`messages.rowid desc`)
-			.limit(1)
+			.all();
+		for (const candidate of candidates) {
+			if (
+				this.isHostMessageVisibleOnActiveBranch(conversationId, candidate.branchId, candidate.id)
+			) {
+				return candidate.id;
+			}
+		}
+		return undefined;
+	}
+
+	private findCanonicalHostMessageId(
+		conversationId: string,
+		messageId: string,
+		role: "user" | "assistant",
+	): string | undefined {
+		return this.db
+			.select({ id: messages.id })
+			.from(messages)
+			.where(
+				and(
+					eq(messages.id, messageId),
+					eq(messages.conversationId, conversationId),
+					eq(messages.role, role),
+				),
+			)
 			.get()?.id;
+	}
+
+	private isHostMessageVisibleOnActiveBranch(
+		conversationId: string,
+		branchId: string,
+		messageId: string,
+	): boolean {
+		const active = this.db
+			.select({ id: branches.id, forkMessageId: branches.forkMessageId })
+			.from(branches)
+			.where(and(eq(branches.conversationId, conversationId), eq(branches.adopted, 1)))
+			.orderBy(desc(branches.createdAt))
+			.limit(1)
+			.get();
+		if (!active) return false;
+		if (active.id === branchId) return true;
+		if (!active.forkMessageId) return false;
+		const fork = this.db
+			.select({ rowId: sql<number>`messages.rowid` })
+			.from(messages)
+			.where(
+				and(eq(messages.id, active.forkMessageId), eq(messages.conversationId, conversationId)),
+			)
+			.get();
+		const candidate = this.db
+			.select({ rowId: sql<number>`messages.rowid` })
+			.from(messages)
+			.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
+			.get();
+		return Boolean(fork && candidate && candidate.rowId <= fork.rowId);
 	}
 
 	/**
@@ -618,7 +701,7 @@ export class TurnPipeline {
 			.get();
 		if (version?.content === undefined) return undefined;
 		const session = this.sessionResolver?.get(conversationId);
-		return session?.findMessageEntry?.(role, version.content);
+		return session?.findMessageEntry?.(role, version.content, { branchOnly: true });
 	}
 
 	/** Materialize a minimal Host message row so Pi entry IDs never reach SQLite identifiers. */
@@ -787,6 +870,51 @@ function assistantMessageText(message: PiSessionMessage): string {
 		.join("")
 		.trim();
 }
+const HOST_CONTEXT_PREFIX = "<host_context>\n";
+const HOST_CONTEXT_SEPARATOR = "\n</host_context>\n\n<current_user_message>\n";
+const CURRENT_USER_MESSAGE_SUFFIX = "\n</current_user_message>";
+
+function piEntryText(message: PiSessionMessage): string {
+	if (message.role === "assistant") return assistantMessageText(message);
+	const content =
+		typeof message.content === "string"
+			? message.content
+			: Array.isArray(message.content)
+				? message.content
+						.map((part) => {
+							if (
+								!part ||
+								typeof part !== "object" ||
+								!("type" in part) ||
+								!("text" in part) ||
+								part.type !== "text" ||
+								typeof part.text !== "string"
+							) {
+								return "";
+							}
+							return part.text;
+						})
+						.filter(Boolean)
+						.join("\n")
+				: "";
+	if (message.role === "user") {
+		const projected = extractPiCurrentUserMessage(content);
+		if (projected !== undefined) return projected;
+	}
+	return content.trim();
+}
+
+function extractPiCurrentUserMessage(content: string): string | undefined {
+	if (!content.startsWith(HOST_CONTEXT_PREFIX) || !content.endsWith(CURRENT_USER_MESSAGE_SUFFIX)) {
+		return undefined;
+	}
+	const separatorIndex = content.indexOf(HOST_CONTEXT_SEPARATOR, HOST_CONTEXT_PREFIX.length);
+	if (separatorIndex <= HOST_CONTEXT_PREFIX.length) return undefined;
+	return content.slice(
+		separatorIndex + HOST_CONTEXT_SEPARATOR.length,
+		-CURRENT_USER_MESSAGE_SUFFIX.length,
+	);
+}
 
 function projectAssistantEntry(
 	session: TurnPipelineSessionAppender,
@@ -799,9 +927,10 @@ function projectAssistantEntry(
 		session.selectBranch?.(existing.id);
 		return;
 	}
-	if (!message) return;
-	const entryId = session.appendMessage(message);
-	session.selectBranch?.(entryId);
+	const entryId = message
+		? session.appendMessage(message)
+		: session.appendSyntheticAssistant?.(text);
+	if (entryId) session.selectBranch?.(entryId);
 }
 
 function asAssistantPiMessage(value: unknown): PiSessionMessage | undefined {

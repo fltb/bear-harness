@@ -12,20 +12,23 @@
  *   replay is skipped (the event bus is idempotent by contract).
  * - Every value that crosses the client is validated by a narrow guard in
  *   `stores/ipc.ts`; malformed payloads are dropped, never projected.
- * - A missing client (the injected `CompanionClient` is absent) surfaces as
- *   `error = "unavailable"`, empty data, presence `idle`.
+ * - `createCompanionStore` requires a fully constructed `CompanionClient`; there
+ *   is no supported missing-client or degraded-client mode. Transport and RPC
+ *   failures are retained as `errorMetadata` for the initiating component,
+ *   while unrecoverable projection/stream failures populate the global `error`.
  *
  * The store is a flat object whose reactive fields are getters into a Solid
- * store proxy, so components read `store.activeMessages` etc. directly. All
- * action methods call the client, set `error` on failure and clear it on
- * the next success. Supplementary domain APIs (memory/settings/provider/
- * model/commission/artifact) are exposed for the backstage sheets.
+ * store proxy, so components read `store.activeMessages` etc. directly. Action
+ * failures retain operation metadata without choosing a presentation surface.
+ * Supplementary domain APIs (memory/settings/provider/model/commission/artifact)
+ * are exposed for the backstage sheets.
  */
 
 import type { CompanionClient, MemoryCaptureResponse } from "@bear-harness/companion-client";
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import type { RoleplayState } from "@bear-harness/protocol";
+import type { KnownDomainEvent, RoleplayState } from "@bear-harness/protocol";
 import type { MemoryCandidate as MemoryCandidateSchema } from "@bear-harness/protocol/schema";
+import { parseKnownDomainEvent } from "@bear-harness/protocol/schema";
 import type { z } from "@bear-harness/schema";
 import { useQueryClient } from "@tanstack/solid-query";
 import {
@@ -63,7 +66,6 @@ import {
 	type ConversationSummary,
 	type DomainEvent,
 	invoke,
-	isRecord,
 	type MemoryEntry,
 	type MemoryListRequest,
 	type MemoryScope,
@@ -75,7 +77,6 @@ import {
 	type ProviderInfo,
 	type ProviderListData,
 	type ProviderLoginResult,
-	payloadString,
 	type RunInfo,
 	type RunListData,
 	type RunPermissionRequest,
@@ -108,6 +109,38 @@ export type PresenceState =
 	| "needs_user"
 	| "result_ready"
 	| "problem";
+export type CompanionErrorSource = "transport" | "domain" | "projection" | "stream";
+
+/** Metadata retained by the store without deciding where an operation is shown. */
+export interface CompanionErrorMetadata {
+	message: string;
+	operation: string;
+	source: CompanionErrorSource;
+	/** Protocol error kind is retained when the Host returned an RPC failure. */
+	kind?: string;
+}
+
+function errorMetadata(operation: string, value: unknown): CompanionErrorMetadata {
+	return {
+		message: messageOf(value),
+		operation,
+		source: value instanceof IpcInvocationError ? "domain" : "transport",
+		...(value instanceof IpcInvocationError ? { kind: value.kind } : {}),
+	};
+}
+
+function projectionError(
+	operation: string,
+	value: unknown,
+	source: "projection" | "stream",
+): CompanionErrorMetadata {
+	return {
+		message: messageOf(value),
+		operation,
+		source,
+		...(value instanceof IpcInvocationError ? { kind: value.kind } : {}),
+	};
+}
 
 const POLL_INTERVAL_MS = 1000;
 const SNAPSHOT_RETRY_MS = 5000;
@@ -126,33 +159,14 @@ function copyToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 	return buffer;
 }
 
-function parseRunPermission(payload: unknown): RunPermissionRequest | null {
-	if (
-		!isRecord(payload) ||
-		typeof payload.runId !== "string" ||
-		typeof payload.requestId !== "string" ||
-		typeof payload.prompt !== "string" ||
-		!Array.isArray(payload.options)
-	) {
-		return null;
-	}
-	const options = payload.options;
-	if (
-		!options.every(
-			(option) =>
-				isRecord(option) &&
-				typeof option.optionId === "string" &&
-				typeof option.kind === "string" &&
-				typeof option.name === "string",
-		)
-	) {
-		return null;
-	}
+type RunNeedsUserPayload = Extract<KnownDomainEvent, { kind: "run.needs_user" }>["payload"];
+
+function parseRunPermission(payload: RunNeedsUserPayload): RunPermissionRequest {
 	return {
 		runId: payload.runId,
 		requestId: payload.requestId,
 		prompt: payload.prompt,
-		options: options as RunPermissionRequest["options"],
+		options: payload.options,
 	};
 }
 
@@ -348,7 +362,10 @@ export interface CanonApi {
 
 export interface CompanionStore {
 	readonly loading: boolean;
+	/** Only unrecoverable snapshot/projection/stream failures are global. */
 	readonly error: string | null;
+	/** Last transport/domain failure, retained for the initiating surface. */
+	readonly errorMetadata: CompanionErrorMetadata | null;
 	readonly onboarding: OnboardingData;
 	readonly conversations: ConversationSummary[];
 	readonly activeConversationId: string | null;
@@ -383,8 +400,8 @@ export interface CompanionStore {
 	branchMessage(messageId: string): Promise<void>;
 	abort(): Promise<void>;
 	triggerRoleplayEvent(eventId: string): Promise<void>;
-	dismissRoleplayMedia(): void;
-	dismissAmbientMedia(): void;
+	dismissRoleplayMedia(): Promise<void>;
+	dismissAmbientMedia(): Promise<void>;
 	submitOnboarding(stepId: string, answer?: string): Promise<void>;
 
 	/** Boot snapshot + event-bus access (supplementary). */
@@ -436,10 +453,10 @@ type CompanionProcessState =
 	| "unavailable"
 	| "stopped"
 	| "unknown";
-
 interface CompanionState {
 	loading: boolean;
 	error: string | null;
+	errorMetadata: CompanionErrorMetadata | null;
 	conversations: ConversationSummary[];
 	activeConversationId: string | null;
 	activeBranchId: string | null;
@@ -564,13 +581,13 @@ function persistedFinalContains(
 
 const PENDING_REFETCHES = new Map<() => void, ReturnType<typeof setTimeout>>();
 
-function debouncedRefetch(fn: () => void, ms = 250): void {
-	const existing = PENDING_REFETCHES.get(fn);
-	if (existing !== undefined) clearTimeout(existing);
+function debouncedRefetch(fn: () => void, ms = 250, key = fn): void {
+	const existing = PENDING_REFETCHES.get(key);
+	clearTimeout(existing);
 	PENDING_REFETCHES.set(
-		fn,
+		key,
 		setTimeout(() => {
-			PENDING_REFETCHES.delete(fn);
+			PENDING_REFETCHES.delete(key);
 			fn();
 		}, ms),
 	);
@@ -581,6 +598,10 @@ function isStaleOnboardingStep(error: unknown): boolean {
 }
 
 /**
+ * Build the required-client store. The renderer must inject a
+ * `CompanionClient`; callers cannot omit it to request a degraded shell.
+ * Transport and RPC errors remain observable through the store's error state.
+ *
  * Stores are keyed by client so a component re-render (e.g. a locale change
  * re-running `CompanionRuntime`) never rebuilds the store: rebuilding would
  * drop the event subscription, snapshot cache and all in-flight state.
@@ -596,11 +617,12 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 }
 
 function createCompanionStoreInner(client: CompanionClient): CompanionStore {
-	const [t] = useTranslation(undefined, { i18n });
 	const queryClient = useQueryClient();
+	const [t] = useTranslation(undefined, { i18n });
 	const [state, setState] = createStore<CompanionState>({
 		loading: true,
 		error: null,
+		errorMetadata: null,
 		conversations: [],
 		activeConversationId: null,
 		activeBranchId: null,
@@ -629,14 +651,107 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		activeAmbientMediaId: undefined,
 		activeRoleplayChoiceSetId: undefined,
 	});
+	const retainOperationError = (operation: string, value: unknown): void => {
+		setState("errorMetadata", errorMetadata(operation, value));
+	};
+	const clearOperationError = (): void => setState("errorMetadata", null);
+	const retainProjectionError = (
+		operation: string,
+		value: unknown,
+		source: "projection" | "stream",
+	): void => {
+		const metadata = projectionError(operation, value, source);
+		setState("errorMetadata", metadata);
+		setState("error", metadata.message);
+	};
 
 	const [lastSeq, setLastSeq] = createSignal(0);
 	const [stale, setStale] = createSignal(false);
+	const [memoryRevision, setMemoryRevision] = createSignal(0);
+	let memoryProjectionRevision = 0;
+	let memoryProjectionRequestRevision = 0;
+	let memoryCandidatesProjectionRevision = 0;
+	let memoryCandidatesProjectionRequestRevision = 0;
 
-	const [snapshotResource, snapshotActions] = createResource<Snapshot>(
-		() => invoke(client, () => client.snapshot.get()),
-		{ initialValue: { eventSeq: 0 } },
+	type SnapshotLoad = {
+		snapshot: Snapshot;
+		memoryRevision: number;
+		memoryRequestRevision: number;
+		memoryCandidatesRevision: number;
+		memoryCandidatesRequestRevision: number;
+	};
+	const [snapshotResource, snapshotActions] = createResource<SnapshotLoad>(
+		() => {
+			const requestedAtMemoryRevision = memoryProjectionRevision;
+			const requestedAtMemoryRequestRevision = memoryProjectionRequestRevision;
+			const requestedAtMemoryCandidatesRevision = memoryCandidatesProjectionRevision;
+			const requestedAtMemoryCandidatesRequestRevision = memoryCandidatesProjectionRequestRevision;
+			return invoke(client, () => client.snapshot.get()).then((snapshot) => ({
+				snapshot,
+				memoryRevision: requestedAtMemoryRevision,
+				memoryRequestRevision: requestedAtMemoryRequestRevision,
+				memoryCandidatesRevision: requestedAtMemoryCandidatesRevision,
+				memoryCandidatesRequestRevision: requestedAtMemoryCandidatesRequestRevision,
+			}));
+		},
+		{
+			initialValue: {
+				snapshot: { eventSeq: 0 },
+				memoryRevision: 0,
+				memoryRequestRevision: 0,
+				memoryCandidatesRevision: 0,
+				memoryCandidatesRequestRevision: 0,
+			},
+		},
 	);
+
+	// Request revisions implement latest-wins at request start. Projection
+	// revisions advance only when an authoritative value is committed, which
+	// lets a snapshot reject itself after a newer direct result commits without
+	// allowing a committed direct result to starve a debounced event refresh.
+	const markMemoryProjectionChanged = (): number => {
+		memoryProjectionRequestRevision += 1;
+		return memoryProjectionRequestRevision;
+	};
+	const markMemoryCandidatesProjectionChanged = (): number => {
+		memoryCandidatesProjectionRequestRevision += 1;
+		return memoryCandidatesProjectionRequestRevision;
+	};
+	const bumpMemoryRevision = (): void => {
+		const revision = markMemoryProjectionChanged();
+		memoryProjectionRevision += 1;
+		setMemoryRevision(revision);
+	};
+	const bumpMemoryCandidatesRevision = (): void => {
+		markMemoryCandidatesProjectionChanged();
+		memoryCandidatesProjectionRevision += 1;
+	};
+	const projectMemoryEntries = (
+		entries: MemoryEntry[],
+		requestRevision: number,
+		requestGeneration: number,
+	): void => {
+		if (
+			memoryProjectionRequestRevision !== requestRevision ||
+			memoryProjectionRevision !== requestGeneration
+		)
+			return;
+		setState("memoryEntries", entries);
+		memoryProjectionRevision += 1;
+	};
+	const projectMemoryCandidates = (
+		candidates: MemoryCandidate[],
+		requestRevision: number,
+		requestGeneration: number,
+	): void => {
+		if (
+			memoryCandidatesProjectionRequestRevision !== requestRevision ||
+			memoryCandidatesProjectionRevision !== requestGeneration
+		)
+			return;
+		setState("memoryCandidates", candidates);
+		memoryCandidatesProjectionRevision += 1;
+	};
 
 	const onboardingStore = createOnboardingStore(client);
 	const settingsRequest = () => invoke(client, () => client.settings.get());
@@ -664,7 +779,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		request: modelDefaultsRequest,
 	});
 	const [modelRouteRevision, setModelRouteRevision] = createSignal(0);
-	const [memoryRevision, setMemoryRevision] = createSignal(0);
 	const currentModelRoute = (): ModelRouteData | undefined => {
 		modelRouteRevision();
 		const conversationId = state.activeConversationId;
@@ -709,15 +823,42 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	};
 
 	const refreshMemoryEntries = async (): Promise<void> => {
+		const requestGeneration = memoryProjectionRevision;
+		const requestRevision = markMemoryProjectionChanged();
 		const { entries } = await invoke(client, () => client.memory.list());
-		setState("memoryEntries", entries);
+		projectMemoryEntries(entries, requestRevision, requestGeneration);
 	};
 
 	const refreshMemoryCandidates = async (): Promise<void> => {
+		const requestGeneration = memoryCandidatesProjectionRevision;
+		const requestRevision = markMemoryCandidatesProjectionChanged();
 		const { candidates } = await invoke(client, () =>
 			client.memory.candidatesList({ status: "pending" }),
 		);
-		setState("memoryCandidates", candidates);
+		projectMemoryCandidates(candidates, requestRevision, requestGeneration);
+	};
+	const debouncedRefreshMemoryEntries = (): void => {
+		const expectedRequestRevision = memoryProjectionRequestRevision;
+		debouncedRefetch(
+			() => {
+				if (memoryProjectionRequestRevision !== expectedRequestRevision) return;
+				void refreshMemoryEntries();
+			},
+			250,
+			refreshMemoryEntries,
+		);
+	};
+
+	const debouncedRefreshMemoryCandidates = (): void => {
+		const expectedRequestRevision = memoryCandidatesProjectionRequestRevision;
+		debouncedRefetch(
+			() => {
+				if (memoryCandidatesProjectionRequestRevision !== expectedRequestRevision) return;
+				void refreshMemoryCandidates();
+			},
+			250,
+			refreshMemoryCandidates,
+		);
 	};
 
 	const refreshCommissions = async (): Promise<void> => {
@@ -749,10 +890,29 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		setState("characters", characters);
 	};
 
-	const refreshSupplementary = async (): Promise<void> => {
+	const refreshSupplementary = async (
+		initialMemoryRevision?: number,
+		initialMemoryRequestRevision?: number,
+		initialMemoryCandidatesRevision?: number,
+		initialMemoryCandidatesRequestRevision?: number,
+	): Promise<void> => {
+		const refreshMemory =
+			initialMemoryRevision === undefined ||
+			(initialMemoryRevision === 0 &&
+				memoryProjectionRevision === initialMemoryRevision &&
+				memoryProjectionRequestRevision === initialMemoryRequestRevision)
+				? refreshMemoryEntries()
+				: Promise.resolve();
+		const refreshMemoryCandidatesRequest =
+			initialMemoryCandidatesRevision === undefined ||
+			(initialMemoryCandidatesRevision === 0 &&
+				memoryCandidatesProjectionRevision === initialMemoryCandidatesRevision &&
+				memoryCandidatesProjectionRequestRevision === initialMemoryCandidatesRequestRevision)
+				? refreshMemoryCandidates()
+				: Promise.resolve();
 		await Promise.all([
-			refreshMemoryEntries(),
-			refreshMemoryCandidates(),
+			refreshMemory,
+			refreshMemoryCandidatesRequest,
 			refreshCommissions(),
 			refreshRuns(),
 			refreshArtifacts(),
@@ -764,7 +924,11 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 
 	// ---- snapshot → domain hydration ----
 
-	const hydrateFromSnapshot = (snap: Snapshot): void => {
+	const hydrateFromSnapshot = (
+		snap: Snapshot,
+		snapshotMemoryRevision: number,
+		snapshotMemoryRequestRevision: number,
+	): void => {
 		onboardingStore._hydrate(snap.onboarding);
 		const conversation = snap.conversation;
 		if (conversation) {
@@ -813,7 +977,14 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			}
 		}
 		if (snap.memory) {
-			if (snap.memory.entries !== undefined) setState("memoryEntries", snap.memory.entries);
+			if (
+				snap.memory.entries !== undefined &&
+				memoryProjectionRevision === snapshotMemoryRevision &&
+				memoryProjectionRequestRevision === snapshotMemoryRequestRevision
+			) {
+				setState("memoryEntries", snap.memory.entries);
+				memoryProjectionRevision += 1;
+			}
 		}
 		if (snap.run) setState("runs", snap.run.runs);
 		if (snap.commission) setState("commissions", snap.commission.commissions);
@@ -825,33 +996,43 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	};
 
 	const snapshotValue = (): Snapshot | undefined =>
-		snapshotResource.error !== undefined ? undefined : snapshotResource.latest;
+		snapshotResource.error !== undefined ? undefined : snapshotResource.latest?.snapshot;
 
 	createEffect(() => {
 		const loading = snapshotResource.loading;
 		if (loading) return;
 		const failure = snapshotResource.error;
 		if (failure !== undefined) {
-			setState("error", messageOf(failure));
+			retainProjectionError("snapshot.get", failure, "projection");
 			const retry = setTimeout(() => {
 				void snapshotActions.refetch();
 			}, SNAPSHOT_RETRY_MS);
 			onCleanup(() => clearTimeout(retry));
 		} else {
-			const data = snapshotValue();
+			const data = snapshotResource.latest;
 			if (data !== undefined) {
-				setState("error", null);
-				hydrateFromSnapshot(data);
+				if (
+					state.errorMetadata?.source === "projection" ||
+					state.errorMetadata?.source === "stream"
+				) {
+					setState("errorMetadata", null);
+					setState("error", null);
+				}
+				hydrateFromSnapshot(data.snapshot, data.memoryRevision, data.memoryRequestRevision);
 			}
 		}
 		setState("loading", false);
 		setStale(false);
 		if (!booted) {
 			booted = true;
-			if (client) {
-				void refreshConversations().catch((e) => setState("error", messageOf(e)));
-				void refreshSupplementary().catch((e) => setState("error", messageOf(e)));
-			}
+			const initialSnapshot = snapshotResource.latest;
+			void refreshConversations().catch((e) => retainOperationError("boot.conversations", e));
+			void refreshSupplementary(
+				initialSnapshot?.memoryRevision,
+				initialSnapshot?.memoryRequestRevision,
+				initialSnapshot?.memoryCandidatesRevision,
+				initialSnapshot?.memoryCandidatesRequestRevision,
+			).catch((e) => retainOperationError("boot.supplementary", e));
 		}
 	});
 
@@ -865,13 +1046,11 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	};
 
 	const dispatchEvent = (event: DomainEvent): void => {
-		const kind = event.kind;
-		switch (kind) {
+		const knownEvent: KnownDomainEvent | undefined = parseKnownDomainEvent(event);
+		if (!knownEvent) return;
+		switch (knownEvent.kind) {
 			case "companion.tool_started": {
-				const conversationId = payloadString(event.payload, "conversationId");
-				const toolCallId = payloadString(event.payload, "toolCallId");
-				const tool = payloadString(event.payload, "tool");
-				const label = payloadString(event.payload, "label");
+				const { conversationId, toolCallId, tool, label } = knownEvent.payload;
 				if (conversationId && toolCallId && tool && label) {
 					setState("toolActivitiesByConversation", conversationId, (items = []) => [
 						...items,
@@ -881,11 +1060,8 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				return;
 			}
 			case "companion.tool_finished": {
-				const conversationId = payloadString(event.payload, "conversationId");
-				const toolCallId = payloadString(event.payload, "toolCallId");
+				const { conversationId, toolCallId, ok, message } = knownEvent.payload;
 				if (conversationId && toolCallId) {
-					const ok = isRecord(event.payload) && event.payload.ok === true;
-					const message = payloadString(event.payload, "message");
 					setState("toolActivitiesByConversation", conversationId, (items = []) =>
 						items.map((item) =>
 							item.id === toolCallId
@@ -905,7 +1081,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				setState("assistantStreaming", true);
 				return;
 			case "message_update": {
-				const chunk = payloadString(event.payload, "text") ?? "";
+				const chunk = knownEvent.payload.text;
 				const nextText = chunk.startsWith(state.streamingAssistantText)
 					? chunk
 					: `${state.streamingAssistantText}${chunk}`;
@@ -928,7 +1104,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				return;
 			}
 			case "message_end": {
-				const finalText = payloadString(event.payload, "text");
+				const finalText = knownEvent.payload.text;
 				if (finalText !== undefined) setState("streamingAssistantText", finalText);
 				setState("sending", false);
 				setState("assistantStreaming", false);
@@ -953,18 +1129,17 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				return;
 			case "character.scene_changed":
 			case "character.visual_state_changed": {
-				const conversationId = payloadString(event.payload, "conversationId");
-				const sceneId = payloadString(event.payload, "sceneId");
-				const visualState = payloadString(event.payload, "visualState");
+				const { conversationId, sceneId, visualState } = knownEvent.payload;
 				if (conversationId && sceneId && visualState) {
 					setState("characterRuntimeByConversation", conversationId, { sceneId, visualState });
 				}
 				return;
 			}
 			case "roleplay.media_presented": {
-				const mediaId = payloadString(event.payload, "mediaId");
+				const { conversationId, mediaId } = knownEvent.payload;
+				if (conversationId !== state.activeConversationId) return;
 				const media = mediaId
-					? snapshotResource.latest?.character?.roleplay.media.find((entry) => entry.id === mediaId)
+					? snapshotValue()?.character?.roleplay.media.find((entry) => entry.id === mediaId)
 					: undefined;
 				if (media !== undefined) {
 					if (media.presentation === "ambient") setState("activeAmbientMediaId", media.id);
@@ -972,15 +1147,22 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				}
 				return;
 			}
+			case "roleplay.media_dismissed": {
+				const { conversationId, mediaId } = knownEvent.payload;
+				if (conversationId !== state.activeConversationId) return;
+				if (state.activeAmbientMediaId === mediaId) setState("activeAmbientMediaId", undefined);
+				if (state.activeRoleplayMediaId === mediaId) setState("activeRoleplayMediaId", undefined);
+				return;
+			}
 			case "roleplay.choices_presented":
-				setState("activeRoleplayChoiceSetId", payloadString(event.payload, "choiceSetId"));
+				setState("activeRoleplayChoiceSetId", knownEvent.payload.choiceSetId);
 				return;
 			case "conversation.created": {
 				debouncedRefetch(refreshConversations);
 				return;
 			}
 			case "model.selected": {
-				const conversationId = payloadString(event.payload, "conversationId");
+				const conversationId = knownEvent.payload.conversationId;
 				if (conversationId) void refreshModelRoute(conversationId);
 				return;
 			}
@@ -992,17 +1174,17 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				void refreshModelPool();
 				return;
 			case "conversation.branched": {
-				const branchId = payloadString(event.payload, "branchId");
+				const branchId = knownEvent.payload.branchId;
 				if (branchId) setState("activeBranchId", branchId);
 				void snapshotActions.refetch();
 				return;
 			}
 			case "onboarding.state_changed":
 			case "onboarding.reset":
-				onboardingStore._applyEvent(event);
+				onboardingStore._applyEvent(knownEvent);
 				return;
 			case "companion.state_changed": {
-				const next = payloadString(event.payload, "state");
+				const next = knownEvent.payload.state;
 				setState(
 					"companionState",
 					next === "running" || next === "crashed" || next === "unavailable" || next === "stopped"
@@ -1013,10 +1195,8 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				return;
 			}
 			case "run.needs_user": {
-				const permission = parseRunPermission(event.payload);
-				if (permission) {
-					setState("pendingRunPermissions", permission.runId, permission);
-				}
+				const permission = parseRunPermission(knownEvent.payload);
+				setState("pendingRunPermissions", permission.runId, permission);
 				debouncedRefetch(refreshRuns);
 				return;
 			}
@@ -1027,26 +1207,25 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			default:
 				break;
 		}
+		const kind = knownEvent.kind;
 		if (kind.startsWith("message.") || kind.startsWith("conversation.")) {
 			void snapshotActions.refetch();
 		} else if (kind.startsWith("onboarding.")) {
-			onboardingStore._applyEvent(event);
-		} else if (kind.startsWith("memory.")) {
-			debouncedRefetch(refreshMemoryEntries);
-			debouncedRefetch(refreshMemoryCandidates);
-		} else if (kind.startsWith("provider.")) {
-			void queryClient.invalidateQueries(
-				{ queryKey: queryKeys.providers },
-				{ cancelRefetch: false },
-			);
+			onboardingStore._applyEvent(knownEvent);
 		} else if (kind.startsWith("model.")) {
 			void refreshModelPool();
 			void refreshModelDefaults();
 			if (state.activeConversationId) void refreshModelRoute(state.activeConversationId);
+		} else if (kind.startsWith("memory.")) {
+			debouncedRefreshMemoryEntries();
+			debouncedRefreshMemoryCandidates();
 		} else if (kind.startsWith("commission.")) {
 			debouncedRefetch(refreshCommissions);
 		} else if (kind.startsWith("run.")) {
-			const runId = payloadString(event.payload, "runId");
+			const runId =
+				"runId" in knownEvent.payload && typeof knownEvent.payload.runId === "string"
+					? knownEvent.payload.runId
+					: undefined;
 			if (
 				runId &&
 				(kind === "run.resumed" ||
@@ -1079,7 +1258,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	};
 
 	createEffect(() => {
-		if (!client) return;
 		const loading = snapshotResource.loading;
 		if (loading || snapshotResource.error !== undefined) return;
 		const data = snapshotValue();
@@ -1094,10 +1272,12 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				let batch: DomainEvent[];
 				try {
 					batch = await eventsApi.subscribe(afterSeq);
-				} catch {
+				} catch (error) {
 					if (cancelled) return;
-					await sleep(POLL_INTERVAL_MS);
-					continue;
+					retainProjectionError("events.subscribe", error, "stream");
+					setStale(true);
+					void snapshotActions.refetch();
+					return;
 				}
 				if (cancelled) return;
 				if (batch.length === 0) {
@@ -1105,13 +1285,10 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 					continue;
 				}
 				const first = batch[0];
-				const last = batch[batch.length - 1];
-				if (first === undefined || last === undefined) {
-					await sleep(POLL_INTERVAL_MS);
-					continue;
-				}
+				if (first === undefined) continue;
 				if (first.seq > afterSeq + 1) {
 					// Gap: the projection is untrustworthy — re-sync from the snapshot.
+					retainProjectionError("events.sequence_gap", new Error("event sequence gap"), "stream");
 					setStale(true);
 					void snapshotActions.refetch();
 					return;
@@ -1121,8 +1298,20 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 					await sleep(POLL_INTERVAL_MS);
 					continue;
 				}
-				for (const event of batch) dispatchEvent(event);
-				afterSeq = last.seq;
+				let cursor = afterSeq;
+				for (const event of batch) {
+					if (event.seq !== cursor + 1) {
+						// A malformed row may have been omitted from a replay batch.
+						// Validate every boundary so a later event cannot look contiguous.
+						retainProjectionError("events.sequence_gap", new Error("event sequence gap"), "stream");
+						setStale(true);
+						void snapshotActions.refetch();
+						return;
+					}
+					dispatchEvent(event);
+					cursor = event.seq;
+				}
+				afterSeq = cursor;
 				setLastSeq(afterSeq);
 			}
 		})();
@@ -1156,14 +1345,18 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const memoryApi: MemoryApi = {
 		entries: () => state.memoryEntries,
 		revision: memoryRevision,
-		search: async (query, scope) => {
-			const data = await invoke(client, () => client.memory.search({ query, scope }));
-			setState("memoryEntries", data.entries);
+		list: async (params) => {
+			const requestGeneration = memoryProjectionRevision;
+			const requestRevision = markMemoryProjectionChanged();
+			const data = await invoke(client, () => client.memory.list(params));
+			projectMemoryEntries(data.entries, requestRevision, requestGeneration);
 			return data.entries;
 		},
-		list: async (params) => {
-			const data = await invoke(client, () => client.memory.list(params));
-			setState("memoryEntries", data.entries);
+		search: async (query, scope) => {
+			const requestGeneration = memoryProjectionRevision;
+			const requestRevision = markMemoryProjectionChanged();
+			const data = await invoke(client, () => client.memory.search({ query, scope }));
+			projectMemoryEntries(data.entries, requestRevision, requestGeneration);
 			return data.entries;
 		},
 		capture: async (entryId) => {
@@ -1172,44 +1365,53 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				const result = await invoke(client, () =>
 					client.memory.capture({ conversationId, entryId }),
 				);
-				setState("error", null);
+				bumpMemoryRevision();
+				clearOperationError();
 				await refreshMemoryEntries();
-				setMemoryRevision((revision) => revision + 1);
 				return result;
 			} catch (e) {
-				setState("error", messageOf(e));
+				retainOperationError("memory.capture", e);
 				throw e;
 			}
 		},
 		forget: async (entryId) => {
 			await invoke(client, () => client.memory.forget({ entryId }));
-			debouncedRefetch(refreshMemoryEntries);
+			bumpMemoryRevision();
+			debouncedRefreshMemoryEntries();
 		},
 		edit: async (entryId, newText) => {
 			await invoke(client, () => client.memory.edit({ entryId, newText }));
-			debouncedRefetch(refreshMemoryEntries);
+			bumpMemoryRevision();
+			debouncedRefreshMemoryEntries();
 		},
 		exclude: async (memoryId, excluded) => {
 			await invoke(client, () => client.memory.exclude({ memoryId, excluded }));
-			debouncedRefetch(refreshMemoryEntries);
+			bumpMemoryRevision();
+			debouncedRefreshMemoryEntries();
 		},
 		candidates: () => state.memoryCandidates,
 		listCandidates: async (status) => {
+			const requestGeneration = memoryCandidatesProjectionRevision;
+			const requestRevision = markMemoryCandidatesProjectionChanged();
 			const data = await invoke(client, () => client.memory.candidatesList({ status }));
-			setState("memoryCandidates", data.candidates);
+			projectMemoryCandidates(data.candidates, requestRevision, requestGeneration);
 			return data.candidates;
 		},
 		approveCandidate: async (candidateId, editedText, decidedScope) => {
 			await invoke(client, () =>
 				client.memory.candidateApprove({ candidateId, editedText, decidedScope }),
 			);
-			debouncedRefetch(refreshMemoryCandidates);
-			debouncedRefetch(refreshMemoryEntries);
+			bumpMemoryRevision();
+			bumpMemoryCandidatesRevision();
+			debouncedRefreshMemoryCandidates();
+			debouncedRefreshMemoryEntries();
 		},
 		rejectCandidate: async (candidateId) => {
 			await invoke(client, () => client.memory.candidateReject({ candidateId }));
-			debouncedRefetch(refreshMemoryCandidates);
-			debouncedRefetch(refreshMemoryEntries);
+			bumpMemoryRevision();
+			bumpMemoryCandidatesRevision();
+			debouncedRefreshMemoryCandidates();
+			debouncedRefreshMemoryEntries();
 		},
 	};
 
@@ -1543,6 +1745,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			await invoke(client, () => client.character.activate({ characterId }));
 			conversationSelectionChangedLocally = true;
 			setState("activeConversationId", null);
+			setState("activeRoleplayMediaId", undefined);
+			setState("activeAmbientMediaId", undefined);
+			setState("activeRoleplayChoiceSetId", undefined);
 			setState("activeBranchId", null);
 			setState("activeMessages", []);
 			await Promise.all([
@@ -1651,6 +1856,38 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			await canonApi.listModules();
 		},
 	};
+	const trackApi = <T extends object>(name: string, api: T): T =>
+		new Proxy(api, {
+			get(target, property, receiver) {
+				const value = Reflect.get(target, property, receiver);
+				if (typeof value !== "function") return value;
+				return (...args: unknown[]) => {
+					try {
+						const result = value.apply(target, args);
+						if (typeof result?.then === "function") {
+							return result.catch((cause: unknown) => {
+								retainOperationError(`${name}.${String(property)}`, cause);
+								throw cause;
+							});
+						}
+						return result;
+					} catch (cause) {
+						retainOperationError(`${name}.${String(property)}`, cause);
+						throw cause;
+					}
+				};
+			},
+		});
+	const trackedMemoryApi = trackApi("memory", memoryApi);
+	const trackedSettingsApi = trackApi("settings", settingsApi);
+	const trackedProviderApi = trackApi("provider", providerApi);
+	const trackedModelApi = trackApi("model", modelApi);
+	const trackedCommissionApi = trackApi("commission", commissionApi);
+	const trackedRunApi = trackApi("run", runApi);
+	const trackedArtifactApi = trackApi("artifact", artifactApi);
+	const trackedStoryApi = trackApi("story", storyApi);
+	const trackedCharacterApi = trackApi("character", characterApi);
+	const trackedCanonApi = trackApi("canon", canonApi);
 
 	return {
 		get loading() {
@@ -1658,6 +1895,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 		get error() {
 			return state.error;
+		},
+		get errorMetadata() {
+			return state.errorMetadata;
 		},
 		get onboarding() {
 			return onboardingStore.data();
@@ -1695,16 +1935,22 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			setState("loading", true);
 			try {
 				await Promise.all([refreshConversations(), Promise.resolve(snapshotActions.refetch())]);
-				if (snapshotResource.error === undefined) setState("error", null);
+				if (
+					snapshotResource.error === undefined &&
+					(state.errorMetadata?.source === "projection" || state.errorMetadata?.source === "stream")
+				) {
+					setState("error", null);
+					setState("errorMetadata", null);
+				}
 			} catch (e) {
-				setState("error", messageOf(e));
+				retainOperationError("refresh.conversations", e);
 			} finally {
 				setState("loading", false);
 			}
 			try {
 				await refreshSupplementary();
 			} catch (e) {
-				setState("error", messageOf(e));
+				retainOperationError("refresh.supplementary", e);
 			}
 		},
 
@@ -1713,12 +1959,15 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				const projection = await invoke(client, () => client.conversation.select({ id, branchId }));
 				conversationSelectionChangedLocally = true;
 				setState("activeConversationId", projection.activeConversationId);
+				setState("activeRoleplayMediaId", undefined);
+				setState("activeAmbientMediaId", undefined);
+				setState("activeRoleplayChoiceSetId", undefined);
 				setState("activeBranchId", projection.activeBranchId ?? null);
 				setState("activeMessages", projection.messages);
-				setState("error", null);
+				clearOperationError();
 				void refreshStoryProposals();
 			} catch (e) {
-				setState("error", messageOf(e));
+				retainOperationError("conversation.select", e);
 			}
 		},
 
@@ -1727,12 +1976,15 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				const result = await invoke(client, () => client.conversation.create({ title }));
 				conversationSelectionChangedLocally = true;
 				setState("activeConversationId", result.id);
+				setState("activeRoleplayMediaId", undefined);
+				setState("activeAmbientMediaId", undefined);
+				setState("activeRoleplayChoiceSetId", undefined);
 				setState("activeBranchId", null);
 				setState("activeMessages", []);
-				setState("error", null);
+				clearOperationError();
 				await Promise.all([refreshConversations(), refreshModelRoute(result.id)]);
 			} catch (e) {
-				setState("error", messageOf(e));
+				retainOperationError("conversation.create", e);
 			}
 		},
 
@@ -1746,6 +1998,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			if (state.activeConversationId === id) {
 				conversationSelectionChangedLocally = true;
 				setState("activeConversationId", null);
+				setState("activeRoleplayMediaId", undefined);
+				setState("activeAmbientMediaId", undefined);
+				setState("activeRoleplayChoiceSetId", undefined);
 				setState("activeBranchId", null);
 				setState("activeMessages", []);
 			}
@@ -1757,6 +2012,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			if (state.activeConversationId === id) {
 				conversationSelectionChangedLocally = true;
 				setState("activeConversationId", null);
+				setState("activeRoleplayMediaId", undefined);
+				setState("activeAmbientMediaId", undefined);
+				setState("activeRoleplayChoiceSetId", undefined);
 				setState("activeBranchId", null);
 				setState("activeMessages", []);
 			}
@@ -1772,10 +2030,10 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				await invoke(client, () => client.message.send({ conversationId, text, attachments }));
 				await snapshotActions.refetch();
 				setState("pendingUserText", undefined);
-				setState("error", null);
+				clearOperationError();
 			} catch (e) {
 				setState("assistantStreaming", false);
-				setState("error", messageOf(e));
+				retainOperationError("message.send", e);
 			}
 		},
 
@@ -1783,9 +2041,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			try {
 				const conversationId = requireActiveConversation();
 				await invoke(client, () => client.message.regenerate({ conversationId, messageId }));
-				setState("error", null);
+				clearOperationError();
 			} catch (e) {
-				setState("error", messageOf(e));
+				retainOperationError("message.regenerate", e);
 			}
 		},
 
@@ -1795,9 +2053,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				await invoke(client, () =>
 					client.message.switchVersion({ conversationId, messageId, versionId }),
 				);
-				setState("error", null);
+				clearOperationError();
 			} catch (e) {
-				setState("error", messageOf(e));
+				retainOperationError("message.switchVersion", e);
 			}
 		},
 
@@ -1808,9 +2066,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 					client.message.edit({ conversationId, messageId, text, isUserMessage }),
 				);
 				await snapshotActions.refetch();
-				setState("error", null);
+				clearOperationError();
 			} catch (e) {
-				setState("error", messageOf(e));
+				retainOperationError("message.edit", e);
 			}
 		},
 
@@ -1818,9 +2076,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			try {
 				const conversationId = requireActiveConversation();
 				await invoke(client, () => client.message.continue({ conversationId }));
-				setState("error", null);
+				clearOperationError();
 			} catch (e) {
-				setState("error", messageOf(e));
+				retainOperationError("message.continue", e);
 			}
 		},
 
@@ -1828,9 +2086,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			try {
 				const conversationId = requireActiveConversation();
 				await invoke(client, () => client.message.correct({ conversationId, reason, applyScope }));
-				setState("error", null);
+				clearOperationError();
 			} catch (e) {
-				setState("error", messageOf(e));
+				retainOperationError("message.correct", e);
 			}
 		},
 
@@ -1838,9 +2096,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			try {
 				const conversationId = requireActiveConversation();
 				await invoke(client, () => client.message.branch({ conversationId, messageId }));
-				setState("error", null);
+				clearOperationError();
 			} catch (e) {
-				setState("error", messageOf(e));
+				retainOperationError("message.branch", e);
 			}
 		},
 
@@ -1849,9 +2107,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				const conversationId = requireActiveConversation();
 				await invoke(client, () => client.message.abort({ conversationId }));
 				setState("sending", false);
-				setState("error", null);
+				clearOperationError();
 			} catch (e) {
-				setState("error", messageOf(e));
+				retainOperationError("message.abort", e);
 			}
 		},
 
@@ -1863,35 +2121,62 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			setState("activeRoleplayChoiceSetId", undefined);
 			await snapshotActions.refetch();
 		},
-		dismissRoleplayMedia: () => setState("activeRoleplayMediaId", undefined),
-		dismissAmbientMedia: () => setState("activeAmbientMediaId", undefined),
+		dismissRoleplayMedia: async () => {
+			try {
+				const conversationId = requireActiveConversation();
+				const mediaId = state.activeRoleplayMediaId;
+				if (mediaId === undefined) return;
+				await invoke(client, () => client.roleplay.dismissMedia({ conversationId, mediaId }));
+				if (
+					state.activeConversationId === conversationId &&
+					state.activeRoleplayMediaId === mediaId
+				)
+					setState("activeRoleplayMediaId", undefined);
+				clearOperationError();
+			} catch (e) {
+				retainOperationError("roleplay.dismissMedia", e);
+			}
+		},
+		dismissAmbientMedia: async () => {
+			try {
+				const conversationId = requireActiveConversation();
+				const mediaId = state.activeAmbientMediaId;
+				if (mediaId === undefined) return;
+				await invoke(client, () => client.roleplay.dismissMedia({ conversationId, mediaId }));
+				if (state.activeConversationId === conversationId && state.activeAmbientMediaId === mediaId)
+					setState("activeAmbientMediaId", undefined);
+				clearOperationError();
+			} catch (e) {
+				retainOperationError("roleplay.dismissMedia", e);
+			}
+		},
 		submitOnboarding: async (stepId, answer) => {
 			try {
 				await onboardingStore.submit(stepId, answer);
 				await onboardingStore.resync();
-				setState("error", null);
+				clearOperationError();
 			} catch (error) {
 				if (isStaleOnboardingStep(error)) {
 					try {
 						await onboardingStore.resync();
-						setState("error", null);
+						clearOperationError();
 					} catch (resyncError) {
-						setState("error", messageOf(resyncError));
+						retainOperationError("onboarding.resync", resyncError);
 					}
 					return;
 				}
-				setState("error", messageOf(error));
+				retainOperationError("onboarding.submit", error);
 			}
 		},
 
 		get character() {
-			return snapshotResource.latest?.character;
+			return snapshotValue()?.character;
 		},
 		get characterRuntimeByConversation() {
 			return state.characterRuntimeByConversation;
 		},
 		get roleplay() {
-			return snapshotResource.latest?.roleplay;
+			return snapshotValue()?.roleplay;
 		},
 		get activeRoleplayMediaId() {
 			return state.activeRoleplayMediaId;
@@ -1909,34 +2194,34 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			return eventsApi;
 		},
 		get memory() {
-			return memoryApi;
+			return trackedMemoryApi;
 		},
 		get settings() {
-			return settingsApi;
+			return trackedSettingsApi;
 		},
 		get provider() {
-			return providerApi;
+			return trackedProviderApi;
 		},
 		get model() {
-			return modelApi;
+			return trackedModelApi;
 		},
 		get commission() {
-			return commissionApi;
+			return trackedCommissionApi;
 		},
 		get run() {
-			return runApi;
+			return trackedRunApi;
 		},
 		get artifact() {
-			return artifactApi;
+			return trackedArtifactApi;
 		},
 		get story() {
-			return storyApi;
+			return trackedStoryApi;
 		},
 		get characters() {
-			return characterApi;
+			return trackedCharacterApi;
 		},
 		get canon() {
-			return canonApi;
+			return trackedCanonApi;
 		},
 	};
 }

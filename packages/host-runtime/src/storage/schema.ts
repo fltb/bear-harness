@@ -269,7 +269,9 @@ export const memoryDecisions = sqliteTable(
 			.references(() => memoryCandidates.id),
 		decision: text().notNull(),
 		editedText: text("edited_text"),
-		decidedScope: text("decided_scope"),
+		decidedScope: text("decided_scope", {
+			enum: ["self", "relationship", "scene"],
+		}),
 		decidedByUser: numeric("decided_by_user", { mode: "number" }).default(1).notNull(),
 		decidedAt: text("decided_at").default(sql`datetime('now')`).notNull(),
 	},

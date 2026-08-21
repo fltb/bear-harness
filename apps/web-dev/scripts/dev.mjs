@@ -1,6 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { createServer } from "node:net";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,8 +19,14 @@ for (const workspace of [
 	});
 	if (result.status !== 0) process.exit(result.status ?? 1);
 }
-const children = [];
+const children = new Set();
+const childFatal = new WeakSet();
 let shuttingDown = false;
+const dataScope = process.env.BEAR_WEB_DEV_DATA_DIR
+	? (process.env.BEAR_WEB_DEV_DATA_SCOPE ?? String(process.pid))
+	: undefined;
+const fixedHostPort = process.env.BEAR_WEB_DEV_HOST_PORT !== undefined;
+const fixedWebPort = process.env.BEAR_WEB_DEV_PORT !== undefined;
 
 function run(command, args, env = {}) {
 	const child = spawn(command, args, {
@@ -32,17 +37,58 @@ function run(command, args, env = {}) {
 			BEAR_WEB_DEV_DEBUG: process.env.BEAR_WEB_DEV_DEBUG ?? "1",
 		},
 	});
-	children.push(child);
+	children.add(child);
 	child.once("exit", (code) => {
-		if (!shuttingDown) stop(code ?? 1);
+		children.delete(child);
+		if (!shuttingDown && childFatal.has(child)) stop(code && code !== 0 ? code : 1);
 	});
 	return child;
 }
 
+function supervise(child) {
+	childFatal.add(child);
+	if (child.exitCode !== null && !shuttingDown)
+		stop(child.exitCode && child.exitCode !== 0 ? child.exitCode : 1);
+	return child;
+}
+
+function cleanupScopedData() {
+	const base = process.env.BEAR_WEB_DEV_DATA_DIR;
+	const scope = dataScope;
+	const policy = process.env.BEAR_WEB_DEV_DATA_CLEANUP ?? "never";
+	if (!base || !scope || !["always", "success"].includes(policy)) return;
+	if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(scope)) return;
+	let passed = false;
+	const lastRunFile = process.env.BEAR_WEB_DEV_LAST_RUN_FILE;
+	if (lastRunFile && existsSync(lastRunFile)) {
+		try {
+			passed = JSON.parse(readFileSync(lastRunFile, "utf8")).status === "passed";
+		} catch {
+			passed = false;
+		}
+	}
+	if (policy === "success" && !passed) return;
+	const scoped = resolve(base, `.process-${scope}`);
+	if (dirname(scoped) !== resolve(base)) return;
+	rmSync(scoped, { recursive: true, force: true });
+}
 function stop(code) {
 	if (shuttingDown) return;
 	shuttingDown = true;
-	for (const child of children) child.kill("SIGTERM");
+	const pending = [...children];
+	for (const child of pending) child.kill("SIGTERM");
+	if (code === 0) {
+		if (pending.length === 0) {
+			cleanupScopedData();
+		} else {
+			let remaining = pending.length;
+			const afterExit = () => {
+				remaining -= 1;
+				if (remaining === 0) cleanupScopedData();
+			};
+			for (const child of pending) child.once("exit", afterExit);
+		}
+	}
 	process.exitCode = code;
 }
 
@@ -50,74 +96,126 @@ process.on("SIGINT", () => stop(0));
 process.on("SIGTERM", () => stop(0));
 
 async function start() {
-	const hostPort = await availablePort(Number(process.env.BEAR_WEB_DEV_HOST_PORT ?? "3201"));
-	const webPort = await availablePort(
-		Number(process.env.BEAR_WEB_DEV_PORT ?? "3200"),
-		new Set([hostPort]),
-	);
-	const dataScope = process.env.BEAR_WEB_DEV_DATA_DIR ? String(process.pid) : undefined;
-	const runtimeEnv = {
-		BEAR_WEB_DEV_HOST_PORT: String(hostPort),
-		BEAR_WEB_DEV_PORT: String(webPort),
-		...(dataScope ? { BEAR_WEB_DEV_DATA_SCOPE: dataScope } : {}),
-	};
-	run(process.execPath, ["server/index.ts"], runtimeEnv);
+	const baseHostPort = Number(process.env.BEAR_WEB_DEV_HOST_PORT ?? "3201");
+	const baseWebPort = Number(process.env.BEAR_WEB_DEV_PORT ?? "3200");
 	const deadline = Date.now() + 30_000;
-	if (!(await waitForJsonBootstrap(`http://127.0.0.1:${hostPort}/bootstrap`, deadline))) {
-		process.stderr.write("web-dev: timed out waiting for the loopback Host\n");
-		stop(1);
-		return;
-	}
-	run("npx", ["--no-install", "rsbuild", "dev"], runtimeEnv);
-	if (!(await waitForJsonBootstrap(`http://127.0.0.1:${webPort}/bootstrap`, deadline))) {
-		process.stderr.write("web-dev: timed out waiting for the UI proxy\n");
-		stop(1);
-		return;
-	}
-	process.stdout.write(`web-dev UI ready: http://127.0.0.1:${webPort}\n`);
+	const host = await launchWithRetry({
+		startPort: baseHostPort,
+		command: process.execPath,
+		args: ["server/index.ts"],
+		env: {
+			...(dataScope ? { BEAR_WEB_DEV_DATA_SCOPE: dataScope } : {}),
+		},
+		reserved: new Set(),
+		path: "bootstrap",
+		label: "loopback Host",
+		deadline,
+		fixedPort: fixedHostPort,
+	});
+	const web = await launchWithRetry({
+		startPort: baseWebPort,
+		command: "npx",
+		args: ["--no-install", "rsbuild", "dev"],
+		env: {
+			BEAR_WEB_DEV_HOST_PORT: String(host.port),
+			...(dataScope ? { BEAR_WEB_DEV_DATA_SCOPE: dataScope } : {}),
+		},
+		reserved: new Set([host.port]),
+		path: "bootstrap",
+		label: "UI proxy",
+		deadline,
+		fixedPort: fixedWebPort,
+	});
+	process.stdout.write(`web-dev UI ready: http://127.0.0.1:${web.port}\n`);
 }
 
-async function waitForJsonBootstrap(url, deadline) {
-	while (Date.now() < deadline) {
-		try {
-			const response = await fetch(url, { cache: "no-store" });
-			if (
-				response.ok &&
-				(response.headers.get("content-type") ?? "").includes("application/json")
-			) {
-				const payload = await response.json();
-				if (
-					payload &&
-					typeof payload === "object" &&
-					typeof payload.token === "string" &&
-					payload.product &&
-					typeof payload.product === "object"
-				) {
-					return true;
-				}
-			}
-		} catch {
-			// The target has not bound its port or has not finished proxying yet.
-		}
-		await new Promise((resolve) => setTimeout(resolve, 100));
+async function launchWithRetry({
+	startPort,
+	command,
+	args,
+	env,
+	reserved,
+	path,
+	label,
+	deadline,
+	fixedPort,
+}) {
+	if (!Number.isInteger(startPort) || startPort < 1 || startPort > 65_535) {
+		throw new Error(`invalid ${label} port: ${startPort}`);
 	}
-	return false;
-}
-
-async function availablePort(start, reserved = new Set()) {
-	for (let port = start; port < start + 20; port += 1) {
+	const maxAttempts = fixedPort ? 1 : 20;
+	for (let attempt = 0; attempt < maxAttempts && startPort + attempt <= 65_535; attempt += 1) {
+		const port = startPort + attempt;
 		if (reserved.has(port)) continue;
-		const available = await new Promise((resolveAvailable, reject) => {
-			const probe = createServer();
-			probe.once("error", (error) => {
-				if (error.code === "EADDRINUSE") resolveAvailable(false);
-				else reject(error);
-			});
-			probe.listen(port, "127.0.0.1", () => probe.close(() => resolveAvailable(true)));
-		});
-		if (available) return port;
+		const childEnv = { ...env };
+		if (label === "loopback Host") childEnv.BEAR_WEB_DEV_HOST_PORT = String(port);
+		if (label === "UI proxy") childEnv.BEAR_WEB_DEV_PORT = String(port);
+		const child = run(command, args, childEnv);
+		const result = await waitForJsonBootstrap(`http://127.0.0.1:${port}/${path}`, deadline, child);
+		if (result === "ready") return { child: supervise(child), port };
+		if (result === "timeout") {
+			child.kill("SIGTERM");
+			throw new Error(`timed out waiting for the ${label} on port ${port}`);
+		}
+		if (fixedPort) {
+			throw new Error(
+				`unable to start the ${label} on configured port ${port}; the child exited before serving /${path}`,
+			);
+		}
 	}
-	throw new Error(`no available loopback port starting at ${start}`);
+	throw new Error(
+		fixedPort
+			? `unable to start the ${label} on configured port ${startPort}`
+			: `unable to start the ${label} after bounded port retries`,
+	);
 }
 
-void start();
+async function waitForJsonBootstrap(url, deadline, child) {
+	return new Promise((resolveResult) => {
+		let settled = false;
+		const finish = (result) => {
+			if (settled) return;
+			settled = true;
+			child.removeListener("exit", onExit);
+			resolveResult(result);
+		};
+		const onExit = () => finish("exited");
+		child.once("exit", onExit);
+		const poll = async () => {
+			while (!settled && Date.now() < deadline) {
+				try {
+					const response = await fetch(url, {
+						cache: "no-store",
+						signal: AbortSignal.timeout(Math.max(1, Math.min(1_000, deadline - Date.now()))),
+					});
+					if (
+						response.ok &&
+						(response.headers.get("content-type") ?? "").includes("application/json")
+					) {
+						const payload = await response.json();
+						if (
+							payload &&
+							typeof payload === "object" &&
+							typeof payload.token === "string" &&
+							payload.product &&
+							typeof payload.product === "object"
+						) {
+							finish("ready");
+							return;
+						}
+					}
+				} catch {
+					// The target has not bound its port or has not finished proxying yet.
+				}
+				await new Promise((resume) => setImmediate(resume));
+			}
+			finish("timeout");
+		};
+		void poll();
+	});
+}
+
+void start().catch((error) => {
+	process.stderr.write(`web-dev: ${error instanceof Error ? error.message : String(error)}\n`);
+	stop(1);
+});

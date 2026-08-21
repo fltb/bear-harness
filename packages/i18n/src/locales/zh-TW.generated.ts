@@ -361,7 +361,7 @@ export const zhTW = {
 		"addSource": "加入資料庫",
 		"chunks": "個片段",
 		"packageManaged": "角色包提供 · 只讀",
-		"sourceLanguage": "資料語言：{{language}}",
+		"sourceLanguage": "資料語言：{language}",
 		"remove": "移除",
 		"removeConfirm": "移除這份原作資料及其檢索片段？",
 		"search": "檢索與引用",

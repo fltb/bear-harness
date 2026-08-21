@@ -26,6 +26,7 @@ export function Sidebar(props: {
 	const [query, setQuery] = createSignal("");
 	const [editingId, setEditingId] = createSignal<string>();
 	const [editingTitle, setEditingTitle] = createSignal("");
+	const [error, setError] = createSignal<string | null>(null);
 	let searchRef: HTMLInputElement | undefined;
 	const visibleConversations = () => {
 		const needle = query().trim().toLocaleLowerCase();
@@ -34,13 +35,40 @@ export function Sidebar(props: {
 			`${conversation.title} ${conversation.sceneTitle}`.toLocaleLowerCase().includes(needle),
 		);
 	};
+	const runAction = async (action: () => Promise<void>): Promise<void> => {
+		setError(null);
+		const before = store.errorMetadata;
+		try {
+			await action();
+			const retained = store.errorMetadata;
+			if (retained !== null && retained !== before) setError(retained.message);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : String(cause));
+		}
+	};
 
 	createEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
-			if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
-				event.preventDefault();
-				searchRef?.focus();
+			if (!event.metaKey && !event.ctrlKey) return;
+			if (event.key.toLocaleLowerCase() !== "k") return;
+			const targets = [
+				event.target instanceof Element ? event.target : null,
+				document.activeElement,
+			];
+			if (
+				targets.some(
+					(target) =>
+						target instanceof HTMLElement &&
+						(target.isContentEditable ||
+							target.closest(
+								'input, textarea, select, option, form, [contenteditable="true"], [role="dialog"], [aria-modal="true"]',
+							)),
+				)
+			) {
+				return;
 			}
+			event.preventDefault();
+			searchRef?.focus();
 		};
 		document.addEventListener("keydown", onKeyDown);
 		onCleanup(() => document.removeEventListener("keydown", onKeyDown));
@@ -87,11 +115,19 @@ export function Sidebar(props: {
 					class="new-conversation"
 					aria-label={t("sidebar.newConversation")}
 					title={t("sidebar.newConversation")}
-					onClick={() => void store.createConversation()}
+					onClick={() => void runAction(() => store.createConversation())}
 				>
 					<Icon icon={faPlus} />
 				</Button>
 			</div>
+			<Show when={error()}>
+				{(message) => (
+					<p class="status-line err" role="alert">
+						{t("messages.operationFailedPrefix")}
+						{message()}
+					</p>
+				)}
+			</Show>
 			<div class="nav-scroll">
 				<nav class="nav-list" aria-label={t("sidebar.conversations")}>
 					<Show
@@ -113,8 +149,11 @@ export function Sidebar(props: {
 												onSubmit={(event) => {
 													event.preventDefault();
 													const title = editingTitle().trim();
-													if (title) void store.renameConversation(conversation.id, title);
-													setEditingId();
+													if (title)
+														void runAction(async () => {
+															await store.renameConversation(conversation.id, title);
+															setEditingId();
+														});
 												}}
 											>
 												<TextField>
@@ -136,7 +175,9 @@ export function Sidebar(props: {
 											aria-current={
 												conversation.id === store.activeConversationId ? "page" : undefined
 											}
-											onClick={() => void store.selectConversation(conversation.id)}
+											onClick={() =>
+												void runAction(() => store.selectConversation(conversation.id))
+											}
 										>
 											<strong>{conversation.title}</strong>
 											<span>{conversation.sceneTitle}</span>
@@ -166,7 +207,9 @@ export function Sidebar(props: {
 												type="button"
 												title={t("sidebar.archiveConversation")}
 												aria-label={t("sidebar.archiveConversation")}
-												onClick={() => void store.archiveConversation(conversation.id)}
+												onClick={() =>
+													void runAction(() => store.archiveConversation(conversation.id))
+												}
 											>
 												<Icon icon={faBoxArchive} />
 											</Button>
@@ -177,7 +220,7 @@ export function Sidebar(props: {
 												aria-label={t("sidebar.deleteConversation")}
 												onClick={() => {
 													if (window.confirm(t("sidebar.deleteConversationConfirm")))
-														void store.deleteConversation(conversation.id);
+														void runAction(() => store.deleteConversation(conversation.id));
 												}}
 											>
 												<Icon icon={faTrash} />

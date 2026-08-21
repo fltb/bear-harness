@@ -10,7 +10,7 @@ import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import { executorProfiles } from "../storage/schema.js";
 
-export type ExecutorProfileType = "product-managed" | "native-full" | "codex";
+export type ExecutorProfileType = "product-managed" | "codex";
 
 export interface ExecutorProfile {
 	id: string;
@@ -70,7 +70,10 @@ export interface ExecutorController {
 	resume?(run: ExecutorRun, response?: ExecutorPermissionResponse): Promise<void>;
 }
 
-const PROFILE_TYPES = new Set<ExecutorProfileType>(["product-managed", "native-full", "codex"]);
+const PROFILE_TYPES: Record<ExecutorProfileType, true> = {
+	"product-managed": true,
+	codex: true,
+};
 
 function unavailable(reason: string): never {
 	throw { kind: "unavailable", reason };
@@ -94,6 +97,20 @@ export class ExecutorRouter {
 			throw new Error(`executor controller already registered for '${profileType}'`);
 		}
 		this.controllers.set(profileType, controller);
+	}
+
+	/**
+	 * Validate that a persisted profile exists and uses a currently supported
+	 * profile type. Controller wiring is checked separately during launch.
+	 */
+	validateProfile(profileId: string): void {
+		const row = this.db
+			.select({ profileType: executorProfiles.profileType })
+			.from(executorProfiles)
+			.where(eq(executorProfiles.id, profileId))
+			.get();
+		if (!row) unavailable("executor_profile_not_found");
+		if (!PROFILE_TYPES[row.profileType]) unavailable("executor_profile_type_invalid");
 	}
 
 	async launch(
@@ -136,7 +153,7 @@ export class ExecutorRouter {
 			.where(eq(executorProfiles.id, profileId))
 			.get();
 		if (!row) unavailable("executor_profile_not_found");
-		if (!PROFILE_TYPES.has(row.profileType)) unavailable("executor_profile_type_invalid");
+		if (!PROFILE_TYPES[row.profileType]) unavailable("executor_profile_type_invalid");
 
 		const capabilities = row.capabilityJson;
 

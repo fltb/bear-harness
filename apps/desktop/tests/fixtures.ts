@@ -15,7 +15,7 @@ export const FORK_PRODUCT: Readonly<ProductConfig> = {
 	dataDirectoryName: "north-companion",
 	artifactName: "\${productName}-\${version}-\${os}-\${arch}.\${ext}",
 	executableName: "north-companion",
-	defaultCharacterId: "beixing",
+	defaultCharacterId: "jizhou",
 	brandLicense: {
 		spdx: "CC-BY-SA-4.0",
 		workTitle: "North Companion Brand Assets",

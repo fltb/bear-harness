@@ -1,9 +1,13 @@
 /**
  * Neutral companion client for the Bear Harness host link.
  *
- * `createCompanionClient(transport)` builds a facade that exactly mirrors the
- * desktop preload's `window.bearDesktop.companion` surface over any
- * `HostTransport` implementation (Electron `ipcRenderer`, WebSocket, ...).
+ * `createCompanionClient(transport)` mirrors the shared RPC registry and
+ * validates requests and resolved response envelopes at the client boundary.
+ * RPC/domain failures resolve as `{ ok: false, error }`; failures to reach the
+ * Host reject as transport errors. Timeout, cancellation, and retry policy are
+ * owned by the supplied transport, and this package never retries calls (in
+ * particular, mutations without an idempotency contract).
+ *
  * This package has no Electron, DOM, Solid, or Node imports.
  */
 

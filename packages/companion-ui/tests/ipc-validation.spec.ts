@@ -1,6 +1,7 @@
 import {
 	ActionDraft,
 	Artifact,
+	CanonChunk,
 	CharacterDisplay,
 	Commission,
 	ConfiguredModel,
@@ -22,6 +23,7 @@ const guard = (schema: { safeParse(value: unknown): { success: boolean } }) => (
 	schema.safeParse(value).success;
 const isActionDraft = guard(ActionDraft);
 const isArtifact = guard(Artifact);
+const isCanonChunk = guard(CanonChunk);
 const isCharacterDisplay = guard(CharacterDisplay);
 const isCommission = guard(Commission);
 const isConversationSummary = guard(ConversationSummary);
@@ -61,6 +63,7 @@ const message = {
 };
 const memoryEntry = {
 	id: "memory-1",
+	sourceEntryId: "entry-1",
 	kind: "fact",
 	scope: "relationship",
 	text: "Memory",
@@ -140,6 +143,16 @@ const story = {
 	branchId: "branch-1",
 	createdAt: timestamp,
 };
+const canonChunk = {
+	id: "chunk-1",
+	sourceId: "source-1",
+	sourceName: "Source",
+	ordinal: 0,
+	content: "text",
+	startOffset: 0,
+	endOffset: 4,
+	origin: "user",
+};
 
 function expectRequiredFields(
 	guard: (value: unknown) => boolean,
@@ -182,6 +195,9 @@ describe("host projection validation", () => {
 			"importance",
 		]);
 		expect(isMemoryEntry({ ...memoryEntry, id: "m".repeat(129) })).toBe(false);
+		expect(isMemoryEntry({ ...memoryEntry, sourceEntryId: "" })).toBe(false);
+		expect(isMemoryEntry({ ...memoryEntry, sourceEntryId: 42 })).toBe(false);
+		expect(isMemoryEntry({ ...memoryEntry, sourceEntryId: "e".repeat(129) })).toBe(false);
 		expect(isMemoryEntry({ ...memoryEntry, scope: "global" })).toBe(false);
 		expect(isMemoryEntry({ ...memoryEntry, importance: Number.NaN })).toBe(false);
 		expect(isMemoryCaptureResponse(memoryCaptureResponse)).toBe(true);
@@ -486,5 +502,159 @@ describe("host projection validation", () => {
 				},
 			}),
 		).toBe(false);
+	});
+
+	it("enforces cross-field relationships on character projections", () => {
+		const base = structuredClone(THEMED_CHARACTER);
+		expect(isCharacterDisplay(base)).toBe(true);
+		expect(
+			isCharacterDisplay({
+				...base,
+				visual: { ...base.visual, defaultSceneId: "missing-scene" },
+			}),
+		).toBe(false);
+		expect(
+			isCharacterDisplay({
+				...base,
+				visual: { ...base.visual, defaultExpressionId: "missing-expression" },
+			}),
+		).toBe(false);
+		expect(
+			isCharacterDisplay({
+				...base,
+				visual: { ...base.visual, expressionLabels: { orphan: "Orphan" } },
+			}),
+		).toBe(false);
+		expect(
+			isCharacterDisplay({
+				...base,
+				roleplay: {
+					...base.roleplay,
+					media: [
+						{
+							id: "m1",
+							kind: "image",
+							label: "M1",
+							loop: false,
+							presentation: "dialog",
+							url: "data:image/png;base64,bTE=",
+						},
+					],
+					unlockables: [
+						{
+							id: "u1",
+							kind: "cg",
+							label: "U1",
+							description: "U1",
+							media: "missing-media",
+						},
+					],
+				},
+			}),
+		).toBe(false);
+		expect(
+			isCharacterDisplay({
+				...base,
+				roleplay: {
+					...base.roleplay,
+					variables: [
+						{
+							id: "trust",
+							type: "number",
+							scope: "relationship",
+							initial: "high",
+							display: { kind: "hidden" },
+						},
+					],
+				},
+			}),
+		).toBe(false);
+		expect(
+			isCharacterDisplay({
+				...base,
+				character: {
+					...base.character,
+					first_meeting: {
+						...base.character.first_meeting,
+						steps: [
+							{
+								id: "name",
+								kind: "text",
+								heading: "Name",
+								body: "Name",
+								answer_key: "name",
+								input_label: "Name",
+								input_placeholder: "Name",
+								min_length: 10,
+								max_length: 2,
+								submit_label: "Continue",
+							},
+						],
+					},
+				},
+			}),
+		).toBe(false);
+	});
+
+	it("rejects malformed message version and run timestamp relationships", () => {
+		expect(isMessage({ ...message, adoptedVersionId: "version-not-listed" })).toBe(false);
+		expect(
+			isMessage({
+				...message,
+				versions: [{ ...version, createdAt: "2025-01-01T00:00:00Z" }],
+			}),
+		).toBe(false);
+		expect(
+			isMessage({
+				...message,
+				versions: Array.from({ length: 20 }, (_, i) => ({ ...version, id: `v-${i}` })),
+				adoptedVersionId: "v-0",
+			}),
+		).toBe(true);
+		expect(
+			isMessage({
+				...message,
+				versions: Array.from({ length: 21 }, (_, i) => ({ ...version, id: `v-${i}` })),
+				adoptedVersionId: "v-0",
+			}),
+		).toBe(false);
+		expect(isRun({ ...run, startedAt: timestamp, completedAt: "2025-01-01T00:00:00Z" })).toBe(
+			false,
+		);
+		expect(isRun({ ...run, startedAt: undefined, completedAt: timestamp })).toBe(true);
+	});
+
+	it("rejects empty identifiers and unbounded records at the safe maximum", () => {
+		expect(isProviderInfo({ ...provider, id: "" })).toBe(false);
+		expect(isRun({ ...run, id: "" })).toBe(false);
+		expect(isArtifact({ ...artifact, id: "" })).toBe(false);
+		expect(isActionDraft({ ...draft, hash: "" })).toBe(false);
+		expect(isCommission({ ...commission, id: "" })).toBe(false);
+		expect(isConversationSummary({ ...conversation, id: "" })).toBe(false);
+		const manyExpressions = Object.fromEntries(
+			Array.from({ length: 99 }, (_, i) => [`expression-${i}`, "data:image/png;base64,aW1hZ2U="]),
+		);
+		const atLimit = { default: "data:image/png;base64,aW1hZ2U=", ...manyExpressions };
+		expect(
+			isCharacterDisplay({
+				...THEMED_CHARACTER,
+				visual: { ...THEMED_CHARACTER.visual, expressions: atLimit },
+			}),
+		).toBe(true);
+		expect(
+			isCharacterDisplay({
+				...THEMED_CHARACTER,
+				visual: {
+					...THEMED_CHARACTER.visual,
+					expressions: { ...atLimit, "expression-99": "data:image/png;base64,aW1hZ2U=" },
+				},
+			}),
+		).toBe(false);
+	});
+
+	it("rejects incoherent canon chunk offsets", () => {
+		expect(isCanonChunk(canonChunk)).toBe(true);
+		expect(isCanonChunk({ ...canonChunk, startOffset: 10, endOffset: 4 })).toBe(false);
+		expect(isCanonChunk({ ...canonChunk, startOffset: 4, endOffset: 10 })).toBe(true);
 	});
 });

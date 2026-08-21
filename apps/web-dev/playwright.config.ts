@@ -10,8 +10,17 @@ const webPort = process.env.BEAR_E2E_WEB_PORT ?? "3200";
 const hostPort = process.env.BEAR_E2E_HOST_PORT ?? "3201";
 const providerPort = process.env.BEAR_E2E_PROVIDER_PORT ?? "3211";
 const baseURL = `http://127.0.0.1:${webPort}`;
+const dataDirectory = resolve(here, `../../test-results/web-dev-data-${process.pid}`);
+const dataScope = String(process.pid);
+const cleanupPolicy = process.env.BEAR_WEB_DEV_DATA_CLEANUP ?? "success";
+const lastRunFile = resolve(here, "../../test-results/web-dev/.last-run.json");
+process.env.BEAR_WEB_DEV_DATA_DIR = dataDirectory;
+process.env.BEAR_WEB_DEV_DATA_SCOPE = dataScope;
+process.env.BEAR_WEB_DEV_DATA_CLEANUP = cleanupPolicy;
+process.env.BEAR_WEB_DEV_LAST_RUN_FILE = lastRunFile;
 
 export default defineConfig({
+	globalTeardown: "./e2e/helpers.ts",
 	testDir: "./e2e",
 	timeout: 30_000,
 	workers: 1,
@@ -28,7 +37,10 @@ export default defineConfig({
 			env: {
 				BEAR_WEB_DEV_PORT: webPort,
 				BEAR_WEB_DEV_HOST_PORT: hostPort,
-				BEAR_WEB_DEV_DATA_DIR: resolve(here, `../../test-results/web-dev-data-${process.pid}`),
+				BEAR_WEB_DEV_DATA_DIR: dataDirectory,
+				BEAR_WEB_DEV_DATA_SCOPE: dataScope,
+				BEAR_WEB_DEV_DATA_CLEANUP: cleanupPolicy,
+				BEAR_WEB_DEV_LAST_RUN_FILE: lastRunFile,
 				BEAR_WEB_DEV_DEBUG: "1",
 				BEAR_CUSTOM_PROVIDER_ID: "",
 				BEAR_CUSTOM_PROVIDER_NAME: "",
@@ -39,6 +51,7 @@ export default defineConfig({
 			url: baseURL,
 			reuseExistingServer: false,
 			timeout: 30_000,
+			gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
 		},
 		{
 			command: "node e2e/rule-provider-server.ts",

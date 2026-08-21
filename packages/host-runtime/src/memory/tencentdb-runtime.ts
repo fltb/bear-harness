@@ -38,32 +38,47 @@ import { CyberBearHostAdapter } from "./tencentdb-host-adapter.js";
 
 type TdaiMetadata = TdaiMemoryRecord["metadata"];
 
+/**
+ * Bound applied to a single serialized metadata value before it is stored in
+ * Tdai.  Host metadata is deliberately small (scope labels, activity stamps);
+ * this keeps one pathological value from ballooning the JSONL/SQLite payload
+ * without introducing any schema split between allowed and disallowed keys.
+ */
+const MAX_METADATA_VALUE_BYTES = 512;
+
 type TdaiEpisodicMetadata = {
 	activity_start_time?: string;
 	activity_end_time?: string;
-};
+} & Record<string, string | number | boolean | null>;
+
+function isMetadataValue(value: unknown): value is string | number | boolean | null {
+	if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+	return typeof value === "number" && Number.isFinite(value);
+}
 
 function toTdaiMetadata(value: MemoryMetadata | undefined): TdaiMetadata {
 	const result: TdaiEpisodicMetadata = {};
-	if (typeof value?.activity_start_time === "string") {
-		result.activity_start_time = value.activity_start_time;
-	}
-	if (typeof value?.activity_end_time === "string") {
-		result.activity_end_time = value.activity_end_time;
+	if (!value) return result;
+	for (const key of Object.keys(value)) {
+		const item = value[key];
+		if (!isMetadataValue(item)) continue;
+		if (typeof item === "string" && Buffer.byteLength(item, "utf8") > MAX_METADATA_VALUE_BYTES) {
+			continue;
+		}
+		result[key] = item;
 	}
 	return result;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
 function asMetadata(value: unknown): MemoryMetadata {
-	if (!isRecord(value)) return {};
-	const result: Record<string, string> = {};
-	for (const key of ["activity_start_time", "activity_end_time"]) {
-		const item = value[key];
-		if (typeof item === "string") result[key] = item;
+	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+	const result: Record<string, string | number | boolean | null> = {};
+	for (const [key, item] of Object.entries(value)) {
+		if (!isMetadataValue(item)) continue;
+		if (typeof item === "string" && Buffer.byteLength(item, "utf8") > MAX_METADATA_VALUE_BYTES) {
+			continue;
+		}
+		result[key] = item;
 	}
 	return result;
 }
@@ -148,9 +163,10 @@ function deepMerge<T>(base: T, patch: DeepPartial<T> | undefined): T {
 }
 
 /**
- * Default full-power TdaiCore configuration. All background capabilities are
+ * Default full-power TdaiCore configuration. Background capabilities are
  * enabled: L0 capture, L1 LLM extraction with dedup, L2 scene, L3 persona,
- * auto-recall, BM25 (zh), daily cleanup, local metrics, and context offload.
+ * auto-recall, BM25 (zh), daily cleanup, and context offload. Metric reporting
+ * is privacy-safe and disabled unless explicitly enabled in `memoryConfig`.
  * Embedding is armed but provider-less by default ("none"), which TdaiCore
  * treats as disabled — hybrid recall degrades to FTS+BM25 until a provider
  * is configured through `memoryConfig`.
@@ -168,7 +184,7 @@ const DEFAULT_MEMORY_CONFIG: MemoryTdaiConfig = {
 		everyNConversations: 5,
 		enableWarmup: true,
 		l1IdleTimeoutSeconds: 600,
-		l2DelayAfterL1Seconds: 90,
+		l2DelayAfterL1Seconds: 10,
 		l2MinIntervalSeconds: 900,
 		l2MaxIntervalSeconds: 3600,
 		sessionActiveWindowHours: 24,
@@ -204,11 +220,12 @@ const DEFAULT_MEMORY_CONFIG: MemoryTdaiConfig = {
 		database: "",
 		alias: "",
 		embeddingModel: "",
+		embeddingDimensions: 1024,
 		timeout: 0,
 	},
 	bm25: { enabled: true, language: "zh" },
 	memoryCleanup: { enabled: true, cleanTime: "03:00" },
-	report: { enabled: true, type: "local" },
+	report: { enabled: false, type: "local" },
 	llm: {
 		enabled: false,
 		baseUrl: "",

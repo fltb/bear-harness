@@ -1,7 +1,7 @@
 import type { CompanionClient, HostTransport } from "@bear-harness/companion-client";
 import { unwrap } from "@bear-harness/companion-client";
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
+import { CHANNEL_CONTRACTS, IpcResponse } from "@bear-harness/protocol/schema";
 import { Button } from "@kobalte/core/button";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
@@ -66,8 +66,10 @@ export function WebDevDebugPanel(props: {
 			const parsed: unknown = JSON.parse(params());
 			const endpoint = CHANNEL_CONTRACTS[channel()];
 			if (!endpoint) throw new Error("unknown RPC channel");
-			const result = await props.transport.invoke(endpoint, endpoint.request.parse(parsed));
-			setOutput(format(result));
+			const request = endpoint.request.parse(parsed);
+			const response = await props.transport.invoke(endpoint, request);
+			const validated = IpcResponse(endpoint.response).parse(response);
+			setOutput(format(validated));
 			setError(null);
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : "debug RPC failed");

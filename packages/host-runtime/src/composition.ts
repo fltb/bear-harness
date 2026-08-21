@@ -18,7 +18,7 @@ import type {
 	ResponseOf,
 } from "@bear-harness/protocol";
 import { CharacterRuntimeState, RPC } from "@bear-harness/protocol/schema";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { ArtifactStore } from "./artifacts/index.js";
 import type { CanonHubService } from "./canon/service.js";
 import type { CommissionService, RunStatus } from "./commissions/service.js";
@@ -29,6 +29,7 @@ import type {
 } from "./companion/character-draft-service.js";
 import type { CharacterLoader } from "./companion/character-loader.js";
 import type { FirstMeetingMachine } from "./companion/first-meeting.js";
+import type { PiSessionMessageEntry } from "./companion/pi-session-store.js";
 import type { RoleplayService } from "./companion/roleplay-service.js";
 import type { CompanionSupervisor } from "./companion/supervisor.js";
 import type { TurnPipeline } from "./companion/turn-pipeline.js";
@@ -43,6 +44,9 @@ import type { AppDatabase } from "./storage/database.js";
 import type { EventBus } from "./storage/event-bus.js";
 import {
 	activeCharacter,
+	artifacts,
+	branches,
+	commissions,
 	companionIdentity,
 	conversations,
 	memoryCandidates,
@@ -55,6 +59,13 @@ import {
 	sceneState,
 } from "./storage/schema.js";
 import type { StoryService } from "./story/service.js";
+
+/** Desktop-owned update lifecycle adapter used by the optional Host wiring. */
+export type HostUpdateService = {
+	check(): Promise<ResponseOf<typeof RPC.update.check>>;
+	discard(): Promise<ResponseOf<typeof RPC.update.discard>>;
+	apply(): Promise<ResponseOf<typeof RPC.update.apply>>;
+};
 
 /** Domain services and runtime-owned inputs the handlers read and mutate. */
 export interface HostCompositionContext {
@@ -82,8 +93,8 @@ export interface HostCompositionContext {
 	piSessionDir: string;
 	/** Bear artifact custom-scheme URL factory (desktop only; undefined on web). */
 	artifactUrlFactory?: (artifactId: string) => string;
-	/** Optional update checker (desktop only; undefined on web). */
-	updateService?: { check(): Promise<unknown> };
+	/** Optional update lifecycle service (desktop only; undefined on web). */
+	updateService?: HostUpdateService;
 	/** Optional hash-chained audit store (security layer). */
 	auditStore?: Pick<AuditStore, "append" | "list" | "exportLines">;
 }
@@ -239,6 +250,16 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		});
 		return { state };
 	});
+	dispatcher.registerHandler(RPC.roleplay.dismissMedia, async (_p) => {
+		const { conversationId, mediaId } = _p as { conversationId: string; mediaId: string };
+		await requireOwnedConversation(s, conversationId);
+		const character = s.characterLoader.load(await getCompanionId(s));
+		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
+		if (!character.roleplay.media.some((media) => media.id === mediaId))
+			throw { kind: "not_found", reason: "roleplay_media_not_found" };
+		s.eventBus.publish("roleplay.media_dismissed", { conversationId, mediaId });
+		return {};
+	});
 	dispatcher.registerHandler(RPC.roleplay.resetUnlocks, async () => {
 		s.roleplay.resetUnlocks(await getCompanionId(s));
 		s.eventBus.publish("roleplay.unlocks_reset", {});
@@ -300,6 +321,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.conversation.archive, async (_p) => {
 		const { id, archived } = _p as { id: string; archived: boolean };
 		const companionId = await getCompanionId(s);
+		await requireOwnedConversation(s, id);
 		if (!conversationRepository.archive(id, companionId, archived))
 			throw { kind: "not_found", reason: "conversation_not_found" };
 		s.eventBus.publish("conversation.archived", { conversationId: id, archived });
@@ -308,9 +330,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.conversation.delete, async (_p) => {
 		const { id } = _p as { id: string };
 		const companionId = await getCompanionId(s);
-		s.supervisor.invalidateConversation(id);
+		await requireOwnedConversation(s, id);
 		if (!conversationRepository.delete(id, companionId))
 			throw { kind: "not_found", reason: "conversation_not_found" };
+		s.supervisor.invalidateConversation(id);
 		s.eventBus.publish("conversation.deleted", { conversationId: id });
 		return {};
 	});
@@ -335,16 +358,19 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			text: string;
 			attachments?: Array<{ name: string; mime: string; base64: string }>;
 		};
+		await requireOwnedConversation(s, conversationId);
 		return s.turns.sendUserMessage(conversationId, text, attachments);
 	});
 	dispatcher.registerHandler(RPC.message.abort, async (_p) => {
 		const { conversationId } = _p as { conversationId: string };
+		await requireOwnedConversation(s, conversationId);
 		await s.turns.abort(conversationId);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.regenerate, async (_p) => {
 		const { conversationId, messageId } = _p as { conversationId: string; messageId: string };
-		return s.turns.regenerate(conversationId, messageId);
+		const owned = await requireOwnedMessage(s, conversationId, messageId);
+		return s.turns.regenerate(conversationId, owned.messageId);
 	});
 	dispatcher.registerHandler(RPC.message.switchVersion, async (_p) => {
 		const { conversationId, messageId, versionId } = _p as {
@@ -352,7 +378,21 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			messageId: string;
 			versionId: string;
 		};
-		await s.turns.switchVersion(conversationId, messageId, versionId);
+		const owned = await requireOwnedMessage(s, conversationId, messageId);
+		const canonicalVersionId =
+			owned.piEntry && versionId === `${messageId}-v1` ? owned.versionId : versionId;
+		const version = s.orm
+			.select({ id: messageVersions.id })
+			.from(messageVersions)
+			.where(
+				and(
+					eq(messageVersions.id, canonicalVersionId),
+					eq(messageVersions.messageId, owned.messageId),
+				),
+			)
+			.get();
+		if (!version) throw { kind: "not_found", reason: "message_version_not_found" };
+		await s.turns.switchVersion(conversationId, owned.messageId, canonicalVersionId);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.edit, async (_p) => {
@@ -362,11 +402,13 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			text: string;
 			isUserMessage: boolean;
 		};
-		await s.turns.edit(conversationId, messageId, text, isUserMessage);
+		const owned = await requireOwnedMessage(s, conversationId, messageId);
+		await s.turns.edit(conversationId, owned.messageId, text, isUserMessage);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.continue, async (_p) => {
 		const { conversationId } = _p as { conversationId: string };
+		await requireOwnedConversation(s, conversationId);
 		await s.turns.continue(conversationId);
 		return {};
 	});
@@ -376,12 +418,14 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			reason: string;
 			applyScope: "once" | "session" | "always";
 		};
+		await requireOwnedConversation(s, conversationId);
 		await s.turns.correct(conversationId, reason, applyScope);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.branch, async (_p) => {
 		const { conversationId, messageId } = _p as { conversationId: string; messageId: string };
-		const branchId = await s.turns.branch(conversationId, messageId);
+		const owned = await requireOwnedMessage(s, conversationId, messageId);
+		const branchId = await s.turns.branch(conversationId, owned.messageId);
 		return { branchId };
 	});
 	dispatcher.registerHandler(RPC.memory.capture, async (_p) => {
@@ -535,7 +579,11 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 	});
 	dispatcher.registerHandler(RPC.memory.candidateApprove, async (_p) => {
-		const { candidateId, editedText, decidedScope } = _p;
+		const { candidateId, editedText, decidedScope } = _p as {
+			candidateId: string;
+			editedText?: string;
+			decidedScope?: "self" | "relationship" | "scene";
+		};
 		const companionId = await getCompanionId(s);
 		const candidate = s.orm
 			.select()
@@ -549,46 +597,18 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			)
 			.get();
 		if (!candidate) throw { kind: "not_found", reason: "memory_candidate_not_found" };
-		const decisionId = crypto.randomUUID();
-		const now = new Date().toISOString();
-		s.orm
-			.update(memoryCandidates)
-			.set({ status: "approved", decidedAt: now })
-			.where(eq(memoryCandidates.id, candidateId))
-			.run();
-		s.orm
-			.insert(memoryDecisions)
-			.values({
-				id: decisionId,
-				candidateId,
-				decision: editedText?.trim() ? "approve_edited" : "approve",
-				editedText: editedText?.trim() || null,
-				decidedScope: decidedScope ?? candidate.suggestedScope,
-			})
-			.run();
+		const effectiveScope = decidedScope ?? candidate.suggestedScope;
 		const finalText = editedText?.trim() || candidate.normalizedText;
+		const decisionId = crypto.randomUUID();
 		const entryId = crypto.randomUUID();
-		s.orm
-			.insert(relationshipMemoryEntries)
-			.values({
-				id: entryId,
-				companionId,
-				kind: candidate.kind,
-				scope: candidate.suggestedScope,
-				text: finalText,
-				normalizedText: finalText,
-				sourceMessageVersionId: candidate.sourceMessageVersionId,
-				sourceBranchId: candidate.sourceBranchId,
-				sourceConversationId: candidate.sourceConversationId,
-				sourceKind: candidate.sourceKind,
-				status: "active",
-			})
-			.run();
-		// Also write through to the recall backend so approved memories surface in
-		// context assembly (relationship layer).
+		const now = new Date().toISOString();
 		const backendScope: MemoryBankScope = { ...s.memoryScope, companionId };
+
+		// Stage the provider record first. If the owned pending-row transition
+		// loses a race, compensate this provider write and leave Host rows
+		// untouched.
 		await s.memoryBackend.open({ scope: backendScope });
-		await s.memoryBackend.remember({
+		const backendRecord = await s.memoryBackend.remember({
 			scope: backendScope,
 			text: finalText,
 			importance: 1.0,
@@ -597,27 +617,99 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				piSessionEntryIds: [candidate.sourceMessageVersionId ?? candidate.id],
 				sourceRef: candidate.id,
 			},
-			metadata: { memoryScope: decidedScope ?? candidate.suggestedScope },
+			metadata: { scope: effectiveScope },
 		});
+
+		try {
+			// Candidate state, decision audit, and relationship projection are one
+			// database transition. A concurrent approve/reject cannot leave a
+			// decision row without exactly one corresponding pending transition.
+			s.orm.transaction((transaction) => {
+				const changed = transaction
+					.update(memoryCandidates)
+					.set({ status: "approved", decidedAt: now })
+					.where(
+						and(
+							eq(memoryCandidates.id, candidateId),
+							eq(memoryCandidates.companionId, companionId),
+							eq(memoryCandidates.status, "pending"),
+						),
+					)
+					.run().changes;
+				if (Number(changed) !== 1) {
+					throw { kind: "conflict", reason: "memory_candidate_already_decided" };
+				}
+				transaction
+					.insert(memoryDecisions)
+					.values({
+						id: decisionId,
+						candidateId,
+						decision: editedText?.trim() ? "approve_edited" : "approve",
+						editedText: editedText?.trim() || null,
+						decidedScope: effectiveScope,
+					})
+					.run();
+				transaction
+					.insert(relationshipMemoryEntries)
+					.values({
+						id: entryId,
+						companionId,
+						kind: candidate.kind,
+						scope: effectiveScope,
+						text: finalText,
+						normalizedText: finalText,
+						sourceMessageVersionId: candidate.sourceMessageVersionId,
+						sourceBranchId: candidate.sourceBranchId,
+						sourceConversationId: candidate.sourceConversationId,
+						sourceKind: candidate.sourceKind,
+						status: "active",
+					})
+					.run();
+			});
+		} catch (error) {
+			await s.memoryBackend
+				.forget({ scope: backendScope, memoryId: backendRecord.id })
+				.catch(() => undefined);
+			throw error;
+		}
 		return {};
 	});
 	dispatcher.registerHandler(RPC.memory.candidateReject, async (_p) => {
 		const { candidateId } = _p as { candidateId: string };
 		const companionId = await getCompanionId(s);
+		const candidate = s.orm
+			.select({ id: memoryCandidates.id, status: memoryCandidates.status })
+			.from(memoryCandidates)
+			.where(
+				and(eq(memoryCandidates.id, candidateId), eq(memoryCandidates.companionId, companionId)),
+			)
+			.get();
+		if (!candidate) throw { kind: "not_found", reason: "memory_candidate_not_found" };
+		if (candidate.status !== "pending") {
+			throw { kind: "conflict", reason: "memory_candidate_already_decided" };
+		}
 		const decisionId = crypto.randomUUID();
 		const now = new Date().toISOString();
-		s.orm
-			.update(memoryCandidates)
-			.set({ status: "rejected", decidedAt: now })
-			.where(
-				and(
-					eq(memoryCandidates.id, candidateId),
-					eq(memoryCandidates.companionId, companionId),
-					eq(memoryCandidates.status, "pending"),
-				),
-			)
-			.run();
-		s.orm.insert(memoryDecisions).values({ id: decisionId, candidateId, decision: "reject" }).run();
+		s.orm.transaction((transaction) => {
+			const changed = transaction
+				.update(memoryCandidates)
+				.set({ status: "rejected", decidedAt: now })
+				.where(
+					and(
+						eq(memoryCandidates.id, candidateId),
+						eq(memoryCandidates.companionId, companionId),
+						eq(memoryCandidates.status, "pending"),
+					),
+				)
+				.run().changes;
+			if (Number(changed) !== 1) {
+				throw { kind: "conflict", reason: "memory_candidate_already_decided" };
+			}
+			transaction
+				.insert(memoryDecisions)
+				.values({ id: decisionId, candidateId, decision: "reject" })
+				.run();
+		});
 		return {};
 	});
 
@@ -837,9 +929,26 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 
 	// --- run ------------------------------------------------------------------------
 	dispatcher.registerHandler(RPC.run.list, async () => {
-		const rows = s.orm.select().from(runs).orderBy(desc(runs.createdAt)).limit(10).all();
+		const companionId = await getCompanionId(s);
+		const rows = s.orm
+			.select({ run: runs })
+			.from(runs)
+			.innerJoin(commissions, eq(runs.commissionId, commissions.id))
+			.innerJoin(conversations, eq(commissions.conversationId, conversations.id))
+			.innerJoin(
+				messages,
+				and(
+					eq(messages.id, commissions.triggerMessageId),
+					eq(messages.conversationId, commissions.conversationId),
+					eq(messages.role, "user"),
+				),
+			)
+			.where(eq(conversations.companionId, companionId))
+			.orderBy(desc(runs.createdAt))
+			.limit(10)
+			.all();
 		return {
-			runs: rows.map((r) => ({
+			runs: rows.map(({ run: r }) => ({
 				id: r.id,
 				commissionId: r.commissionId,
 				executorProfile: r.executorProfile,
@@ -850,18 +959,16 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 	});
 	dispatcher.registerHandler(RPC.commission.list, async () => {
+		const companionId = await getCompanionId(s);
 		return {
-			commissions: s.commissions
-				.list()
-				.filter((commission) => commission.triggerMessageId.trim().length > 0)
-				.map((commission) => ({
-					id: commission.id,
-					triggerMessageId: commission.triggerMessageId,
-					conversationId: commission.conversationId ?? undefined,
-					status: commission.status,
-					createdAt: commission.createdAt,
-					draft: commission.draft,
-				})),
+			commissions: s.commissions.list({ companionId }).map((commission) => ({
+				id: commission.id,
+				triggerMessageId: commission.triggerMessageId,
+				conversationId: commission.conversationId ?? undefined,
+				status: commission.status,
+				createdAt: commission.createdAt,
+				draft: commission.draft,
+			})),
 		};
 	});
 	dispatcher.registerHandler(RPC.commission.draft, async (_p) => {
@@ -875,15 +982,20 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			networkAllowed?: boolean;
 			toolNames?: string[];
 		};
+		await requireOwnedConversation(s, params.conversationId);
+		await requireOwnedMessage(s, params.conversationId, params.triggerMessageId);
 		return s.commissions.draft(params);
 	});
 	dispatcher.registerHandler(RPC.commission.approve, async (_p) => {
 		const { commissionId, approvedHash } = _p as { commissionId: string; approvedHash: string };
+		await requireOwnedCommission(s, commissionId);
 		s.commissions.approve(commissionId, approvedHash);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.commission.reject, async (_p) => {
-		s.commissions.reject((_p as { commissionId: string }).commissionId);
+		const { commissionId } = _p as { commissionId: string };
+		await requireOwnedCommission(s, commissionId);
+		s.commissions.reject(commissionId);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.commission.launch, async (_p) => {
@@ -891,15 +1003,18 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			commissionId: string;
 			executorProfile: string;
 		};
+		await requireOwnedCommission(s, commissionId);
 		return s.commissions.launch({ commissionId, executorProfile });
 	});
 	dispatcher.registerHandler(RPC.run.steer, async (_p) => {
 		const { runId, instruction } = _p as { runId: string; instruction: string };
+		await requireOwnedRun(s, runId);
 		await s.commissions.steerRun(runId, instruction);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.run.interrupt, async (_p) => {
 		const { runId } = _p as { runId: string };
+		await requireOwnedRun(s, runId);
 		const run = await s.commissions.interruptRun(runId);
 		return {
 			id: run.id,
@@ -912,6 +1027,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 	dispatcher.registerHandler(RPC.run.resume, async (_p) => {
 		const { runId } = _p as { runId: string };
+		await requireOwnedRun(s, runId);
 		const run = await s.commissions.resumeRun(runId);
 		return {
 			id: run.id,
@@ -924,6 +1040,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 	dispatcher.registerHandler(RPC.run.cancel, async (_p) => {
 		const { runId } = _p as { runId: string };
+		await requireOwnedRun(s, runId);
 		const run = await s.commissions.cancelRun(runId);
 		return {
 			id: run.id,
@@ -940,6 +1057,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			requestId: string;
 			optionId: string;
 		};
+		await requireOwnedRun(s, runId);
 		const run = await s.commissions.respondToExecutorPermission(runId, requestId, optionId);
 		return {
 			id: run.id,
@@ -953,13 +1071,14 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 
 	// --- artifacts ------------------------------------------------------------------
 	dispatcher.registerHandler(RPC.artifact.list, async () => ({
-		artifacts: s.artifacts.list().map((artifact) => ({
+		artifacts: ownedArtifacts(s, await getCompanionId(s)).map((artifact) => ({
 			...artifact,
 			producerRunId: artifact.producerRunId ?? undefined,
 		})),
 	}));
 	dispatcher.registerHandler(RPC.artifact.read, async (_p) => {
 		const { artifactId } = _p as { artifactId: string };
+		await requireOwnedArtifact(s, artifactId);
 		const artifact = s.artifacts.get(artifactId);
 		const blob = s.artifacts.readBlob(artifactId);
 		if (!artifact || !blob) throw { kind: "not_found", reason: "artifact_not_found" };
@@ -971,6 +1090,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 	dispatcher.registerHandler(RPC.artifact.url, async (_p) => {
 		const { artifactId } = _p as { artifactId: string };
+		await requireOwnedArtifact(s, artifactId);
 		if (!s.artifactUrlFactory) return { url: "" };
 		const artifact = s.artifacts.get(artifactId);
 		if (!artifact) throw { kind: "not_found", reason: "artifact_not_found" };
@@ -1043,14 +1163,23 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				error: undefined,
 			};
 		}
-		const result = (await s.updateService.check()) as ResponseOf<typeof RPC.update.check>;
-		return {
-			state: result.state,
-			currentVersion: result.currentVersion,
-			latestVersion: result.latestVersion,
-			feedUrl: result.feedUrl,
-			error: result.error,
-		};
+		return s.updateService.check();
+	});
+	dispatcher.registerHandler(RPC.update.discard, async () => {
+		if (!s.updateService) {
+			return { state: "disabled" as const, discarded: false };
+		}
+		return s.updateService.discard();
+	});
+	dispatcher.registerHandler(RPC.update.apply, async () => {
+		if (!s.updateService) {
+			return {
+				state: "disabled" as const,
+				applyUnsupported: true as const,
+				error: "Update installation is not supported by this host",
+			};
+		}
+		return s.updateService.apply();
 	});
 
 	// --- audit ---------------------------------------------------------------------------
@@ -1122,20 +1251,17 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 					: {}),
 			},
 			commission: {
-				commissions: s.commissions
-					.list()
-					.filter((commission) => commission.triggerMessageId.trim().length > 0)
-					.map((commission) => ({
-						id: commission.id,
-						triggerMessageId: commission.triggerMessageId,
-						conversationId: commission.conversationId ?? undefined,
-						status: commission.status,
-						createdAt: commission.createdAt,
-						draft: commission.draft,
-					})),
+				commissions: s.commissions.list({ companionId }).map((commission) => ({
+					id: commission.id,
+					triggerMessageId: commission.triggerMessageId,
+					conversationId: commission.conversationId ?? undefined,
+					status: commission.status,
+					createdAt: commission.createdAt,
+					draft: commission.draft,
+				})),
 			},
 			artifact: {
-				artifacts: s.artifacts.list().map((artifact) => ({
+				artifacts: ownedArtifacts(s, companionId).map((artifact) => ({
 					...artifact,
 					producerRunId: artifact.producerRunId ?? undefined,
 				})),
@@ -1236,16 +1362,21 @@ export async function rememberConversationEntry(
 		session && entryId
 			? session.readMessageEntries().find((candidate) => candidate.id === entryId)
 			: undefined;
-	const fallback = source ? undefined : legacyMessageSource(s, conversationId, entryId);
-	if (!source && !fallback) {
-		throw {
-			kind: "conflict",
-			reason: session ? "memory_source_not_current_branch" : "memory_source_not_found",
-		};
+	const sessionSource = session && entryId ? session.getMessageEntry(entryId) : undefined;
+	if (!source && sessionSource) {
+		throw { kind: "conflict", reason: "memory_source_not_current_branch" };
 	}
-	const text = source ? piEntryText(source.message) : fallback!.text;
+	const fallback =
+		!session && !source ? legacyMessageSource(s, conversationId, entryId) : undefined;
+	if (!source && !fallback) {
+		throw { kind: "not_found", reason: "memory_source_not_found" };
+	}
+	const text = source ? piEntryText(source.message) : (fallback?.text ?? "");
 	if (!text) throw { kind: "invalid_input", reason: "memory_source_empty" };
-	const sourceEntryId = source?.id ?? fallback!.id;
+	const sourceEntryId = source?.id ?? fallback?.id;
+	if (sourceEntryId === undefined) {
+		throw { kind: "internal", reason: "memory_source_invariant" };
+	}
 	const scope = { ...s.memoryScope, companionId };
 	await s.memoryBackend.open({ scope });
 	const record = await s.memoryBackend.remember({
@@ -1296,18 +1427,42 @@ function legacyMessageSource(
 function piEntryText(message: unknown): string {
 	if (!message || typeof message !== "object" || !("content" in message)) return "";
 	const content = message.content;
-	if (typeof content === "string") return content.trim();
-	if (!Array.isArray(content)) return "";
-	return content
-		.map((part) => {
-			if (!part || typeof part !== "object" || !("type" in part) || !("text" in part)) return "";
-			const type = part.type;
-			const text = part.text;
-			return type === "text" && typeof text === "string" ? text : "";
-		})
-		.filter(Boolean)
-		.join("\n")
-		.trim();
+	const text =
+		typeof content === "string"
+			? content
+			: Array.isArray(content)
+				? content
+						.map((part) => {
+							if (!part || typeof part !== "object" || !("type" in part) || !("text" in part))
+								return "";
+							const type = part.type;
+							const value = part.text;
+							return type === "text" && typeof value === "string" ? value : "";
+						})
+						.filter(Boolean)
+						.join("\n")
+				: "";
+	if ("role" in message && message.role === "user") {
+		const projected = extractPiCurrentUserMessage(text);
+		if (projected !== undefined) return projected;
+	}
+	return text.trim();
+}
+
+const HOST_CONTEXT_PREFIX = "<host_context>\n";
+const HOST_CONTEXT_SEPARATOR = "\n</host_context>\n\n<current_user_message>\n";
+const CURRENT_USER_MESSAGE_SUFFIX = "\n</current_user_message>";
+
+function extractPiCurrentUserMessage(content: string): string | undefined {
+	if (!content.startsWith(HOST_CONTEXT_PREFIX) || !content.endsWith(CURRENT_USER_MESSAGE_SUFFIX)) {
+		return undefined;
+	}
+	const separatorIndex = content.indexOf(HOST_CONTEXT_SEPARATOR, HOST_CONTEXT_PREFIX.length);
+	if (separatorIndex <= HOST_CONTEXT_PREFIX.length) return undefined;
+	return content.slice(
+		separatorIndex + HOST_CONTEXT_SEPARATOR.length,
+		-CURRENT_USER_MESSAGE_SUFFIX.length,
+	);
 }
 
 function memoryBackendScope(s: HostCompositionContext): MemoryBankScope {
@@ -1329,13 +1484,248 @@ function getActiveCompanionId(s: HostCompositionContext): string {
 	return seeded.id;
 }
 
+async function requireOwnedConversation(
+	s: HostCompositionContext,
+	conversationId: string,
+): Promise<void> {
+	const companionId = await getCompanionId(s);
+	const row = s.orm
+		.select({ id: conversations.id })
+		.from(conversations)
+		.where(and(eq(conversations.id, conversationId), eq(conversations.companionId, companionId)))
+		.get();
+	if (!row) throw { kind: "not_found", reason: "conversation_not_found" };
+}
+
+async function requireOwnedRun(s: HostCompositionContext, runId: string): Promise<void> {
+	const row = s.orm
+		.select({ id: runs.id, conversationId: commissions.conversationId })
+		.from(runs)
+		.innerJoin(commissions, eq(commissions.id, runs.commissionId))
+		.where(eq(runs.id, runId))
+		.get();
+	if (!row) throw { kind: "not_found", reason: "run_not_found" };
+	if (row.conversationId) await requireOwnedConversation(s, row.conversationId);
+}
+
+async function requireOwnedArtifact(s: HostCompositionContext, artifactId: string): Promise<void> {
+	const artifact = s.artifacts.get(artifactId);
+	if (!artifact) throw { kind: "not_found", reason: "artifact_not_found" };
+	if (artifact.producerRunId) await requireOwnedRun(s, artifact.producerRunId);
+}
+
+async function requireOwnedCommission(
+	s: HostCompositionContext,
+	commissionId: string,
+): Promise<void> {
+	const row = s.orm
+		.select({ conversationId: commissions.conversationId })
+		.from(commissions)
+		.where(eq(commissions.id, commissionId))
+		.get();
+	if (!row) throw { kind: "not_found", reason: "commission_not_found" };
+	if (row.conversationId) await requireOwnedConversation(s, row.conversationId);
+}
+
+type OwnedMessage = {
+	messageId: string;
+	role: "user" | "assistant";
+	versionId: string;
+	piEntry?: PiSessionMessageEntry;
+};
+
+async function requireOwnedMessage(
+	s: HostCompositionContext,
+	conversationId: string,
+	messageId: string,
+): Promise<OwnedMessage> {
+	await requireOwnedConversation(s, conversationId);
+	const dbMessage = s.orm
+		.select({
+			id: messages.id,
+			role: messages.role,
+			branchId: messages.branchId,
+		})
+		.from(messages)
+		.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
+		.get();
+	if (dbMessage) {
+		const role = dbMessage.role as "user" | "assistant";
+		if (role !== "user" && role !== "assistant")
+			throw { kind: "not_found", reason: "message_not_found" };
+		if (!isVisibleOnActiveBranch(s, conversationId, dbMessage.branchId, messageId))
+			throw { kind: "conflict", reason: "message_not_current_branch" };
+		const version = s.orm
+			.select({ id: messageVersions.id })
+			.from(messageVersions)
+			.where(and(eq(messageVersions.messageId, messageId), eq(messageVersions.adopted, 1)))
+			.orderBy(desc(messageVersions.createdAt))
+			.limit(1)
+			.get();
+		if (!version) throw { kind: "not_found", reason: "message_not_found" };
+		return {
+			messageId: dbMessage.id,
+			role,
+			versionId: version.id,
+		};
+	}
+
+	const session = s.conversationRepository.getSession(conversationId);
+	const piEntry = session?.getMessageEntry(messageId);
+	if (!piEntry || (piEntry.message.role !== "user" && piEntry.message.role !== "assistant"))
+		throw { kind: "not_found", reason: "message_not_found" };
+	if (!session?.isEntryOnCurrentBranch(piEntry.id))
+		throw { kind: "conflict", reason: "message_not_current_branch" };
+	const piRole = piEntry.message.role as "user" | "assistant";
+	const content = piEntryText(piEntry.message);
+	if (!content) throw { kind: "not_found", reason: "message_not_found" };
+	const host = findVisibleHostMessage(s, conversationId, piRole, content);
+	if (host) {
+		return {
+			messageId: host.id,
+			role: piRole,
+			versionId: host.versionId,
+			piEntry,
+		};
+	}
+	const branch = activeConversationBranch(s, conversationId);
+	if (!branch) throw { kind: "not_found", reason: "message_not_found" };
+	const hostMessageId = crypto.randomUUID();
+	const hostVersionId = crypto.randomUUID();
+	s.orm.transaction((transaction) => {
+		transaction
+			.insert(messages)
+			.values({
+				id: hostMessageId,
+				conversationId,
+				branchId: branch.id,
+				role: piRole,
+			})
+			.run();
+		transaction
+			.insert(messageVersions)
+			.values({
+				id: hostVersionId,
+				messageId: hostMessageId,
+				content,
+				editedByUser: 0,
+				adopted: 1,
+			})
+			.run();
+	});
+	return {
+		messageId: hostMessageId,
+		role: piRole,
+		versionId: hostVersionId,
+		piEntry,
+	};
+}
+
+function activeConversationBranch(
+	s: HostCompositionContext,
+	conversationId: string,
+): { id: string; forkMessageId: string | null } | undefined {
+	return s.orm
+		.select({ id: branches.id, forkMessageId: branches.forkMessageId })
+		.from(branches)
+		.where(and(eq(branches.conversationId, conversationId), eq(branches.adopted, 1)))
+		.orderBy(desc(branches.createdAt))
+		.limit(1)
+		.get();
+}
+
+function isVisibleOnActiveBranch(
+	s: HostCompositionContext,
+	conversationId: string,
+	branchId: string,
+	messageId: string,
+): boolean {
+	const active = activeConversationBranch(s, conversationId);
+	if (!active) return false;
+	if (active.id === branchId) return true;
+	if (!active.forkMessageId) return false;
+	const fork = s.orm
+		.select({ rowId: sql<number>`messages.rowid` })
+		.from(messages)
+		.where(and(eq(messages.id, active.forkMessageId), eq(messages.conversationId, conversationId)))
+		.get();
+	const candidate = s.orm
+		.select({ rowId: sql<number>`messages.rowid` })
+		.from(messages)
+		.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
+		.get();
+	return Boolean(fork && candidate && candidate.rowId <= fork.rowId);
+}
+
+function findVisibleHostMessage(
+	s: HostCompositionContext,
+	conversationId: string,
+	role: "user" | "assistant",
+	content: string,
+): { id: string; versionId: string } | undefined {
+	const candidates = s.orm
+		.select({
+			id: messages.id,
+			branchId: messages.branchId,
+			versionId: messageVersions.id,
+		})
+		.from(messages)
+		.innerJoin(
+			messageVersions,
+			and(eq(messageVersions.messageId, messages.id), eq(messageVersions.adopted, 1)),
+		)
+		.where(
+			and(
+				eq(messages.conversationId, conversationId),
+				eq(messages.role, role),
+				eq(messageVersions.content, content),
+			),
+		)
+		.orderBy(desc(sql`messages.rowid`))
+		.all();
+	for (const candidate of candidates) {
+		if (isVisibleOnActiveBranch(s, conversationId, candidate.branchId, candidate.id)) {
+			return { id: candidate.id, versionId: candidate.versionId };
+		}
+	}
+	return undefined;
+}
+
+function ownedArtifacts(s: HostCompositionContext, companionId: string) {
+	const rows = s.orm
+		.select({ id: artifacts.id })
+		.from(artifacts)
+		.innerJoin(runs, eq(artifacts.producerRunId, runs.id))
+		.innerJoin(commissions, eq(runs.commissionId, commissions.id))
+		.innerJoin(conversations, eq(commissions.conversationId, conversations.id))
+		.innerJoin(
+			messages,
+			and(
+				eq(messages.id, commissions.triggerMessageId),
+				eq(messages.conversationId, commissions.conversationId),
+				eq(messages.role, "user"),
+			),
+		)
+		.where(eq(conversations.companionId, companionId))
+		.orderBy(desc(artifacts.createdAt))
+		.all();
+	return rows.flatMap(({ id }) => {
+		const artifact = s.artifacts.get(id);
+		return artifact ? [artifact] : [];
+	});
+}
+
 function projectMemoryEntry(record: MemoryRecord): MemoryEntry {
 	const metadata = record.metadata;
 	const kind = typeof metadata.kind === "string" ? metadata.kind : "fact";
 	const scope: MemoryEntry["scope"] =
 		metadata.scope === "self" || metadata.scope === "scene" ? metadata.scope : "relationship";
 	const sourceEntryId =
-		typeof metadata.sourceEntryId === "string" ? metadata.sourceEntryId : undefined;
+		typeof metadata.sourceEntryId === "string" &&
+		metadata.sourceEntryId.length > 0 &&
+		metadata.sourceEntryId.length <= 128
+			? metadata.sourceEntryId
+			: undefined;
 	return {
 		id: record.id,
 		kind,
@@ -1344,7 +1734,7 @@ function projectMemoryEntry(record: MemoryRecord): MemoryEntry {
 		createdAt: record.createdAt,
 		updatedAt: record.updatedAt,
 		importance: record.importance,
-		...(sourceEntryId ? { sourceEntryId: sourceEntryId as string } : {}),
+		...(sourceEntryId ? { sourceEntryId } : {}),
 	};
 }
 

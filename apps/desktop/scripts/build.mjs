@@ -27,6 +27,9 @@ function run(cmd, args, cwd = desktop) {
 }
 
 rmSync(resolve(desktop, "dist"), { recursive: true, force: true });
+// Release staging starts with a validated, deterministic attribution file.
+// Every later build step preserves this resource for electron-builder.
+run("node", ["scripts/validate-product-config.mjs"]);
 for (const workspace of [
 	"@bear-harness/product-config",
 	"@bear-harness/protocol",
@@ -36,7 +39,6 @@ for (const workspace of [
 ]) {
 	run("npm", ["run", "build", "--workspace", workspace], repoRoot);
 }
-run("node", ["scripts/validate-product-config.mjs"]);
 run("npx", ["--no-install", "tsc", "-p", "tsconfig.main.json"]);
 flattenMainEmit(desktop);
 run("npx", ["--no-install", "tsc", "-p", "tsconfig.preload.json"]);

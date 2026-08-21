@@ -691,4 +691,55 @@ describe("composer", () => {
 			/\d/,
 		);
 	});
+	it("shows one local alert when selecting a model fails", async () => {
+		const { client } = createTestClient();
+		client.model.routeSet = vi.fn(() => Promise.reject(new Error("model unavailable")));
+		renderComposerWithModels(client, {
+			pool: { models: [TEST_MODEL, VISION_MODEL] },
+			defaults: { vision: { mode: "auto" } },
+			route: {
+				conversationId: "conversation-1",
+				selected: { providerId: TEST_MODEL.providerId, modelId: TEST_MODEL.modelId },
+			},
+		});
+
+		const selector = await screen.findByRole("button", {
+			name: new RegExp(zhCN.composer.modelLabel),
+		});
+		await waitFor(() => expect(selector).toBeEnabled());
+		await selectKobalteOption(userEvent.setup(), selector, {
+			label: "Vision Model (Vision Relay)",
+		});
+
+		const alerts = await screen.findAllByRole("alert");
+		expect(alerts).toHaveLength(1);
+		expect(alerts[0]).toHaveTextContent("model unavailable");
+	});
+
+	it("keeps a failed message draft and shows one local send alert", async () => {
+		const { client } = createTestClient();
+		client.message.send = vi.fn(() => Promise.reject(new Error("send unavailable")));
+		renderComposerWithModels(client, {
+			pool: { models: [TEST_MODEL] },
+			defaults: { vision: { mode: "auto" } },
+			route: {
+				conversationId: "conversation-1",
+				selected: { providerId: TEST_MODEL.providerId, modelId: TEST_MODEL.modelId },
+			},
+		});
+
+		const user = userEvent.setup();
+		const composer = await screen.findByRole("textbox", {
+			name: zhCN.composer.messageInputLabel,
+		});
+		await waitFor(() => expect(composer).toBeEnabled());
+		await user.type(composer, "稍后再试");
+		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
+
+		const alerts = await screen.findAllByRole("alert");
+		expect(alerts).toHaveLength(1);
+		expect(alerts[0]).toHaveTextContent("send unavailable");
+		expect(composer).toHaveValue("稍后再试");
+		expect(screen.getByRole("button", { name: zhCN.composer.sendLabel })).toBeEnabled();
+	});
 });

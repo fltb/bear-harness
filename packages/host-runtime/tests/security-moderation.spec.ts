@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	createModerationService,
 	type ModerationFetch,
@@ -121,20 +121,24 @@ describe("ModerationService remote policy", () => {
 	});
 
 	it("fails open on timeout (10s default; injected short here)", async () => {
-		const service = createModerationService({
-			remoteEndpoint: "https://moderation.example/check",
-			remoteApiKey: "secret",
-			timeoutMs: 20,
-			fetchImpl: makeFetch(
-				(_url, init) =>
-					new Promise((_resolve, reject) => {
-						init.signal.addEventListener("abort", () => reject(new Error("aborted")));
-					}),
-			),
-		});
-		const started = Date.now();
-		expect(await service.checkText("hello", "chat")).toEqual({ allowed: true });
-		expect(Date.now() - started).toBeGreaterThanOrEqual(20);
+		vi.useFakeTimers();
+		try {
+			const service = createModerationService({
+				remoteEndpoint: "https://moderation.example/check",
+				remoteApiKey: "secret",
+				timeoutMs: 20,
+				fetchImpl: makeFetch((_url, init) => {
+					const { promise, reject } = Promise.withResolvers<unknown>();
+					init.signal.addEventListener("abort", () => reject(new Error("aborted")));
+					return promise;
+				}),
+			});
+			const result = service.checkText("hello", "chat");
+			await vi.advanceTimersByTimeAsync(20);
+			await expect(result).resolves.toEqual({ allowed: true });
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("honors a remote rejection and an allowance", async () => {

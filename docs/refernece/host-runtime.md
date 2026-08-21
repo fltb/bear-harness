@@ -58,18 +58,19 @@ Construction is synchronous apart from the services' later lazy/async work. Data
 
 ### `start()`
 
-`HostRuntime.start()` is idempotent only after successful start. It:
+`HostRuntime.start()` is transactional and retry-safe. It:
 
 1. Loads persisted proxy settings and applies non-direct proxy configuration before host network activity.
 2. Subscribes to `settings.changed` for live proxy re-application.
 3. Installs warn-only filesystem deletion sentinels for protected roots and schedules best-effort audit retention pruning.
 4. Starts Tdai memory, optionally warms a local embedding model, resolves the active character, checks plugin trust, configures validated Pi resources, and starts the supervisor.
+5. Marks the runtime started only after every step succeeds. A failed attempt rolls back the supervisor bridge, filesystem sentinels, proxy subscription, and owned `HF_ENDPOINT`; memory remains available for a retry and is closed by terminal `close()`.
 
-The supervisor's `start()` marks the Companion running and installs a global `bearHostCall` bridge; Pi sessions are initialized lazily on the first prompt. Character activation, plugin-trust confirmation, and draft publishing stop and restart the supervisor after updating the runtime configuration. Character import only installs/seeds the package. Provider custom-upsert, Pi-config import, and base-URL override also stop and restart the supervisor; API-key, OAuth, and logout operations do not.
+The supervisor's `start()` marks the Companion running and installs an owner-tagged global `bearHostCall` bridge; Pi sessions are initialized lazily on the first prompt. `stop()` removes or restores only the bridge owned by that supervisor, preserving a newer instance's bridge. Character activation, plugin-trust confirmation, and draft publishing stop and restart the supervisor after updating the runtime configuration. Character import only installs/seeds the package. Provider custom-upsert, Pi-config import, and base-URL override also stop and restart the supervisor; API-key, OAuth, and logout operations do not.
 
 ### `close()`
 
-`close()` closes the memory runtime, then (once) stops the supervisor, uninstalls filesystem protection, unsubscribes audit/turn/story/proxy listeners, disposes character behavior/provider resources, and closes the database. It is intended as terminal teardown: `HostRuntime` does not reset `started` for a later restart. Callers should await it before dropping the runtime.
+`close()` closes the memory runtime, then (once) stops the supervisor, uninstalls filesystem protection, unsubscribes audit/turn/story/proxy listeners, restores an owned `HF_ENDPOINT`, disposes character behavior/provider resources, and closes the database. It is terminal teardown; a failed `start()` is the supported path for retrying before `close()`.
 
 ## RPC composition and error boundary
 
@@ -143,7 +144,7 @@ There are two intentionally different presentation paths:
 
 ### Host lifecycle reactions (not model decisions)
 
-`CharacterBehaviorService` subscribes to the EventBus at construction. For package-declared `host.event_reactions`, events such as `message.user_sent`, `message_end`, abort, and assistant commit cause deterministic Host-side expression updates. The service validates the package expression, persists `scene_state`, and publishes `character.visual_state_changed`. A model-selected expression (or roleplay-event expression) marks the conversation as model-selected so the `message_end` lifecycle reaction does not overwrite it for that turn.
+`CharacterBehaviorService` subscribes to the EventBus at construction. For package-declared `host.event_reactions`, events such as `message.user_sent`, `message_end`, abort, and assistant commit cause deterministic Host-side expression updates. The service validates the package expression, persists `scene_state`, and publishes `character.visual_state_changed`. A model-selected or roleplay expression suppresses the mapped successful `message_end` reaction for the current turn only: a successful end consumes the marker and skips `result_ready` once, a failed end consumes it without applying `result_ready`, and `message.aborted` consumes it before applying the configured abort reaction. Later lifecycle events use their normal mappings.
 
 These reactions are coupled to Host lifecycle events and cannot be selected by an untrusted renderer or arbitrary model text. They are visual state only; they do not imply that a scene/media tool was called.
 
@@ -209,16 +210,15 @@ Network proxy settings are persisted and applied before non-direct host traffic.
 
 These are implementation findings, not proposed behavior:
 
-1. **`start()` is not retry-safe after a partial failure.** [`runtime.ts`](../../packages/host-runtime/src/runtime.ts), `HostRuntime.start`, sets `started = true` before proxy application, memory startup, active-character loading, and supervisor startup. If any later step throws (for example, a missing active package), a subsequent `start()` returns without retrying. The caller must close/discard the instance rather than assuming failed startup can recover.
-2. **Turn capture uses the default character namespace.** In the constructor's `onTurnCommitted` callback, `namespaceFor` is built with `companionId: options.productConfig.defaultCharacterId`, while composition memory helpers derive the active character through `getActiveCompanionId`. After character activation, a settled turn can therefore be captured under the default-character namespace rather than the active package's scope.
+1. **Resolved: `start()` is retry-safe after a partial failure.** `HostRuntime.start()` commits `started` only after all startup work succeeds and rolls back its subscriptions, filesystem sentinels, supervisor bridge, and owned process environment on failure.
+2. **Resolved: turn capture uses the current active character namespace.** The `onTurnCommitted` sink resolves `CharacterLoader.getActiveCharacterId(...)` when a turn settles, so capture follows the active companion instead of freezing the product default.
 3. **Approved memory scope is persisted inconsistently.** `RPC.memory.candidateApprove` writes `relationshipMemoryEntries.scope` from `candidate.suggestedScope` but records the backend memory metadata from `decidedScope ?? candidate.suggestedScope`. An edited user scope can disagree between SQLite relationship memory and Tdai recall metadata.
 4. **Candidate rejection does not verify ownership/existence before writing its decision.** `memory.candidateReject` updates only rows matching the active companion and pending status, but then unconditionally inserts a `memory_decisions` row for the supplied ID. A nonexistent, already-decided, or other-companion ID can produce an orphan decision rather than a not-found/conflict response.
 5. **Commission/run listing is not active-companion scoped in composition.** `commission.list` calls `s.commissions.list()` without filtering by `getCompanionId`; `run.list` selects the newest ten rows from `runs` without joining through a conversation/active companion. In a runtime containing multiple character packages, these RPCs can expose records outside the active character boundary. `snapshot.get` similarly projects all listed commissions and artifacts. The service-level approval/launch checks remain the authoritative mutation boundary, but list/read visibility is broader than other character-scoped handlers.
 6. **Executor profile contracts disagree.** [`executors/router.ts`](../../packages/host-runtime/src/executors/router.ts) accepts the profile type `native-full` in `ExecutorProfileType`/`PROFILE_TYPES`, while [`storage/schema.ts`](../../packages/host-runtime/src/storage/schema.ts) constrains `executor_profiles.profile_type` to `product-managed` or `codex`, and `HostRuntime` registers only those two controllers. `native-full` cannot currently be represented by the declared SQLite contract.
-7. **The model-selected-expression suppression is conversation-lifetime state.** `CharacterBehaviorService` clears `modelSelectedExpression` on `message.user_sent`, but marks it for model/roleplay expression changes and does not clear it on a successful `message_end`. The next lifecycle `message_end` is suppressed until another user message; this is easy to mistake for a per-turn flag when diagnosing visual reactions.
-8. **The process-global Host bridge outlives runtime teardown.** `CompanionSupervisor.start()` assigns `globalThis.bearHostCall`, while `stop()` does not remove it. After `HostRuntime.close()`, a stale global function remains callable and routes through the supervisor's now-stopped state. Embedders should not treat the global bridge as a lifetime-safe capability.
-9. **`HF_ENDPOINT` is process-global configuration.** The constructor copies the persisted model mirror endpoint into `process.env.HF_ENDPOINT` without restoring it on close. Multiple runtime instances in one process can affect each other's model downloads, and teardown does not undo the setting.
-10. **Moderation timeout coverage uses an exact wall-clock lower bound.** [`security-moderation.spec.ts`](../../packages/host-runtime/tests/security-moderation.spec.ts), `ModerationService remote policy` timeout test injects `timeoutMs: 20`, measures `Date.now()` around `checkText`, and requires elapsed time to be at least 20 ms. The root unit suite failed when elapsed time was 19 ms versus the required 20 ms. This is a scheduler-precision test reliability issue, not evidence that the moderation service failed closed; the test still observed the expected fail-open result. Use fake timers or assert abort/fail-open behavior with scheduler tolerance instead of an exact lower wall-clock bound.
+7. **Resolved: model-selected-expression suppression is current-turn state.** `CharacterBehaviorService` consumes the marker on every `message_end`; successful ends skip the mapped reaction once, failed ends clear the marker without applying `result_ready`, and aborts clear it before applying their configured reaction.
+8. **Resolved: process-global ownership is bounded to runtime lifetime.** `CompanionSupervisor` tags its bridge with a unique owner token and restores/removes only its own bridge. `HostRuntime` restores `HF_ENDPOINT` only when its owned value is still installed, while preserving newer runtime owners.
+10. **Resolved: moderation timeout coverage uses scheduler-independent behavior.** The timeout test advances Vitest fake timers and asserts the expected fail-open result instead of imposing an exact wall-clock lower bound.
 
 ## Verification commands and test strategy
 

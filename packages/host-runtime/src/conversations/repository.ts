@@ -430,30 +430,82 @@ export class ConversationRepository {
 		session: PiSessionStore,
 	): ConversationProjection {
 		const now = new Date().toISOString();
-		const messages = session
-			.readMessageEntries()
-			.filter(({ message }) => message.role !== "toolResult")
-			.map(({ id: messageId, message }) => {
-				const role: "user" | "assistant" = message.role === "user" ? "user" : "assistant";
-				const versionId = `${messageId}-v1`;
-				const content = sessionContent(message);
-				return {
-					id: messageId,
-					role,
-					adoptedVersionId: versionId,
-					versions: [
-						{ id: versionId, role, content, editedByUser: false, createdAt: now, adopted: true },
-					],
-					createdAt: now,
-				};
+		const canonicalByKey = new Map<string, ConversationProjection["messages"][number][]>();
+		const canonicalRows = this.db
+			.select({
+				id: messages.id,
+				role: messages.role,
+				createdAt: messages.createdAt,
+				versionId: messageVersions.id,
+				content: messageVersions.content,
+				editedByUser: messageVersions.editedByUser,
+				adopted: messageVersions.adopted,
+				versionCreatedAt: messageVersions.createdAt,
+			})
+			.from(messages)
+			.innerJoin(messageVersions, eq(messageVersions.messageId, messages.id))
+			.where(eq(messages.conversationId, id))
+			.orderBy(sql`messages.rowid`, sql`message_versions.rowid`)
+			.all();
+		const canonicalMessages = new Map<string, ConversationProjection["messages"][number]>();
+		for (const row of canonicalRows) {
+			if (row.role !== "user" && row.role !== "assistant" && row.role !== "system") {
+				throw new Error(`invalid persisted message role: ${row.role}`);
+			}
+			let message = canonicalMessages.get(row.id);
+			if (!message) {
+				message = { id: row.id, role: row.role, versions: [], createdAt: row.createdAt };
+				canonicalMessages.set(row.id, message);
+			}
+			message.versions.push({
+				id: row.versionId,
+				role: row.role,
+				content: row.content,
+				editedByUser: Boolean(row.editedByUser),
+				createdAt: row.versionCreatedAt,
+				adopted: Boolean(row.adopted),
 			});
+			if (row.adopted) {
+				message.adoptedVersionId = row.versionId;
+				const key = `${row.role}\u0000${row.content}`;
+				const matches = canonicalByKey.get(key) ?? [];
+				if (!matches.includes(message)) matches.push(message);
+				canonicalByKey.set(key, matches);
+			}
+		}
+		const projected: ConversationProjection["messages"] = [];
+		const seenCanonical = new Set<string>();
+		for (const { id: messageId, message } of session
+			.readMessageEntries()
+			.filter(({ message }) => message.role !== "toolResult")) {
+			const role: "user" | "assistant" = message.role === "user" ? "user" : "assistant";
+			const content = sessionContent(message);
+			const key = `${role}\u0000${content}`;
+			const canonical = canonicalByKey.get(key)?.shift();
+			if (canonical) {
+				if (seenCanonical.has(canonical.id)) continue;
+				seenCanonical.add(canonical.id);
+				projected.push(canonical);
+				continue;
+			}
+			const versionId = `${messageId}-v1`;
+			projected.push({
+				id: messageId,
+				role,
+				adoptedVersionId: versionId,
+				versions: [
+					{ id: versionId, role, content, editedByUser: false, createdAt: now, adopted: true },
+				],
+				createdAt: now,
+			});
+		}
 		return {
 			activeConversationId: id,
 			...(session.leafId ? { activeBranchId: session.leafId } : {}),
 			id,
 			title,
 			sceneTitle,
-			messages,
+			messages: projected,
 		};
 	}
 

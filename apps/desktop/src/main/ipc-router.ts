@@ -3,14 +3,14 @@
  *
  * This layer accepts calls only from a registered main frame at that window's
  * expected URL. Request validation, handler lookup, and response envelopes
- * belong to HostRuntime.dispatch.
+ * belong to HostRuntime.dispatch. Wiring replaces handlers for these owned
+ * channels and returns an idempotent disposer for the active registration.
  */
 
 import type { Dispatcher } from "@bear-harness/host-runtime";
 import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
 import { BrowserWindow, ipcMain } from "electron";
-import type { WindowRegistration } from "./diagnostics/electron.js";
-
+import { isRegisteredMainFrame, type WindowRegistration } from "./diagnostics/electron.js";
 export const PROTOCOL_AVAILABILITY_CHANNEL = "desktop:artifactProtocol:v1";
 
 interface IpcInvokeEvent {
@@ -26,30 +26,68 @@ function senderAllowed(
 	return Boolean(
 		registration &&
 			BrowserWindow.fromWebContents(event.sender as Electron.WebContents) &&
-			event.senderFrame === event.sender.mainFrame &&
-			event.senderFrame?.url === registration.allowedUrl,
+			isRegisteredMainFrame(event, registration),
 	);
+}
+
+const activeHandlers = new Map<string, symbol>();
+
+function replaceIpcHandler(
+	channel: string,
+	handler: (event: IpcInvokeEvent, params: unknown) => Promise<unknown>,
+): () => void {
+	// The protocol channels belong to this module. Removing an existing
+	// registration before handle() makes repeated startup/wiring safe even
+	// when a previous owner did not get a chance to dispose.
+	ipcMain.removeHandler(channel);
+	activeHandlers.delete(channel);
+	const token = Symbol(channel);
+	ipcMain.handle(channel, handler);
+	activeHandlers.set(channel, token);
+
+	let disposed = false;
+	return () => {
+		if (disposed) return;
+		disposed = true;
+		// A later wiring may have replaced this handler. Its disposer owns the
+		// current registration, so an old disposer must leave it untouched.
+		if (activeHandlers.get(channel) !== token) return;
+		ipcMain.removeHandler(channel);
+		activeHandlers.delete(channel);
+	};
 }
 
 export function wireElectronIpcHandlers(
 	dispatcher: Dispatcher,
 	windowRegistry: ReadonlyMap<number, Pick<WindowRegistration, "allowedUrl">>,
 	options?: { artifactProtocolAvailable?: () => boolean },
-): void {
+): () => void {
+	const disposers: Array<() => void> = [];
 	for (const channel of Object.keys(REQUEST_SCHEMAS)) {
-		ipcMain.handle(channel, async (event, params: unknown) => {
-			if (!senderAllowed(event, windowRegistry)) {
-				return { ok: false, error: { kind: "unavailable", reason: "no_window" } };
-			}
-			return dispatcher.dispatch(channel, params);
-		});
+		disposers.push(
+			replaceIpcHandler(channel, async (event, params: unknown) => {
+				if (!senderAllowed(event, windowRegistry)) {
+					return { ok: false, error: { kind: "unavailable", reason: "no_window" } };
+				}
+				return dispatcher.dispatch(channel, params);
+			}),
+		);
 	}
 	// Non-RPC host-shell channel: lets the renderer (and tests) learn whether
 	// the bear-artifact:// protocol handler is registered in this process.
-	ipcMain.handle(PROTOCOL_AVAILABILITY_CHANNEL, async (event) => {
-		if (!senderAllowed(event, windowRegistry)) {
-			return { ok: false, error: { kind: "unavailable", reason: "no_window" } };
-		}
-		return { ok: true, data: { available: options?.artifactProtocolAvailable?.() ?? false } };
-	});
+	disposers.push(
+		replaceIpcHandler(PROTOCOL_AVAILABILITY_CHANNEL, async (event) => {
+			if (!senderAllowed(event, windowRegistry)) {
+				return { ok: false, error: { kind: "unavailable", reason: "no_window" } };
+			}
+			return { ok: true, data: { available: options?.artifactProtocolAvailable?.() ?? false } };
+		}),
+	);
+
+	let disposed = false;
+	return () => {
+		if (disposed) return;
+		disposed = true;
+		for (const dispose of disposers) dispose();
+	};
 }

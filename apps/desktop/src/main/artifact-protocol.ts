@@ -11,14 +11,10 @@
  * the network service).
  *
  * The handler is a pure function (`bearArtifactHandler`) so the serving
- * logic is unit-testable without Electron. Sender validation mirrors the
- * IPC router: only the main window's own URL may load artifacts. In dev the
- * referrer is always present and its origin must match the dev server; in
- * packaged builds (file://) Chromium may omit the referrer for
- * custom-scheme fetches, so an empty referrer is accepted ONLY for
- * file:// windows — the window itself is locked to our HTML
- * (`will-navigate` is blocked, `window.open` is denied, permissions are
- * denied) and artifact ids are unguessable UUIDs.
+ * logic is unit-testable without Electron. Sender validation shares the IPC
+ * router's registered main-frame identity policy: the request referrer must
+ * equal the exact allowed URL of a currently registered window. Origin,
+ * prefix, empty, and `about:client` representations are rejected.
  *
  * Responses are locked down: Content-Type from the artifact record,
  * Content-Length, `default-src 'none'` CSP, `Cache-Control: no-store` and
@@ -26,6 +22,7 @@
  */
 
 import { protocol } from "electron";
+import { isAllowedRendererReferrer, type WindowRegistration } from "./diagnostics/electron.js";
 
 export const ARTIFACT_SCHEME = "bear-artifact";
 export const ARTIFACT_PATH_PREFIX = "artifact";
@@ -40,11 +37,11 @@ export interface ArtifactLookup {
 
 export interface ArtifactProtocolOptions extends ArtifactLookup {
 	/**
-	 * The exact main-window URL: `http://127.0.0.1:3100/` in dev, or the
-	 * packaged `file://…/renderer/index.html`. Referrers whose origin does
-	 * not match (and empty referrers for non-file windows) are rejected 403.
+	 * Current renderer registrations. A custom-protocol request has no IPC
+	 * sender event, so Electron represents its renderer identity as the
+	 * request referrer; it must match one registered window URL exactly.
 	 */
-	allowedUrl: string;
+	windowRegistry: ReadonlyMap<number, Pick<WindowRegistration, "allowedUrl">>;
 }
 
 /** Must run before `app.whenReady()` (Electron requirement). */
@@ -94,27 +91,6 @@ export function parseArtifactUrl(rawUrl: string): ArtifactUrlParse {
 	}
 }
 
-function isAllowedSender(referrer: string, allowedUrl: string): boolean {
-	let allowed: URL;
-	try {
-		allowed = new URL(allowedUrl);
-	} catch {
-		return false;
-	}
-	// Packaged/source-e2e windows load from file://. Chromium may omit the
-	// referrer on custom-scheme fetches from file: pages; the window itself
-	// is locked to our own HTML (see module doc), so an empty referrer is
-	// accepted only for file:// windows.
-	if (referrer === "") return allowed.protocol === "file:";
-	try {
-		const referrerUrl = new URL(referrer);
-		if (allowed.protocol === "file:") return referrerUrl.protocol === "file:";
-		return referrerUrl.origin === allowed.origin;
-	} catch {
-		return false;
-	}
-}
-
 function plain(status: number, body: string): Response {
 	return new Response(body, {
 		status,
@@ -128,10 +104,9 @@ function plain(status: number, body: string): Response {
  * unknown or invalid artifact ids.
  */
 export function bearArtifactHandler(options: ArtifactProtocolOptions) {
-	const { get, readBlob, allowedUrl } = options;
+	const { get, readBlob, windowRegistry } = options;
 	return async (request: Request): Promise<Response> => {
-		const referrer = typeof request.referrer === "string" ? request.referrer : "";
-		if (!isAllowedSender(referrer, allowedUrl)) {
+		if (!isAllowedRendererReferrer(request.referrer, windowRegistry)) {
 			return plain(403, "forbidden");
 		}
 		const parsed = parseArtifactUrl(request.url);

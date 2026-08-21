@@ -202,6 +202,36 @@ export interface CharacterPackage {
 	canon: LoadedCanonPackage;
 }
 
+type CharacterDisplayMediaBase = Pick<
+	RoleplayDefinition["media"][number],
+	"id" | "label" | "loop"
+> & {
+	url: string;
+};
+type CharacterDisplayMedia =
+	| (CharacterDisplayMediaBase & {
+			kind: "image";
+			presentation: "dialog" | "inline";
+			posterUrl?: string;
+	  })
+	| (CharacterDisplayMediaBase & {
+			kind: "animation";
+			presentation: "dialog" | "inline";
+			posterUrl: string;
+	  })
+	| (CharacterDisplayMediaBase & {
+			kind: "audio";
+			presentation: "dialog" | "inline" | "ambient";
+			posterUrl?: string;
+			captionsUrl: string;
+	  })
+	| (CharacterDisplayMediaBase & {
+			kind: "video";
+			presentation: "dialog" | "inline";
+			posterUrl?: string;
+			captionsUrl: string;
+	  });
+
 /** Renderer-safe Host projection of role-package constants and assets, not memory data. */
 export interface CharacterDisplay {
 	id: string;
@@ -224,13 +254,7 @@ export interface CharacterDisplay {
 	};
 	roleplay: {
 		variables: RoleplayDefinition["variables"];
-		media: Array<
-			Omit<RoleplayDefinition["media"][number], "asset" | "poster" | "captions"> & {
-				url: string;
-				posterUrl?: string;
-				captionsUrl?: string;
-			}
-		>;
+		media: CharacterDisplayMedia[];
 		unlockables: RoleplayDefinition["unlockables"];
 		choice_sets: RoleplayDefinition["choice_sets"];
 	};
@@ -648,6 +672,10 @@ export class CharacterLoader {
 			}
 		}
 		for (const media of roleplay.media) {
+			if (media.kind === "animation" && !media.poster)
+				throw new Error(`character package ${id}: animation ${media.id} requires poster`);
+			if ((media.kind === "audio" || media.kind === "video") && !media.captions)
+				throw new Error(`character package ${id}: ${media.kind} ${media.id} requires captions`);
 			const extension = extname(media.asset).toLowerCase();
 			if (!roleplayAssetExtensions(media.kind).has(extension)) {
 				throw new Error(
@@ -851,12 +879,89 @@ export class CharacterLoader {
 			},
 			roleplay: {
 				variables: character.roleplay.variables,
-				media: character.roleplay.media.map(({ asset, poster, captions, ...media }) => ({
-					...media,
-					url: this.characterAssetDataUrl(character.id, asset),
-					...(poster ? { posterUrl: this.characterAssetDataUrl(character.id, poster) } : {}),
-					...(captions ? { captionsUrl: this.characterAssetDataUrl(character.id, captions) } : {}),
-				})),
+				media: character.roleplay.media.map((media) => {
+					const url = this.characterAssetDataUrl(character.id, media.asset);
+					switch (media.kind) {
+						case "image": {
+							if (media.presentation === "ambient")
+								throw new Error(
+									`character package ${character.id}: non-audio media cannot be ambient`,
+								);
+							return {
+								id: media.id,
+								kind: "image" as const,
+								label: media.label,
+								loop: media.loop,
+								presentation: media.presentation,
+								url,
+								...(media.poster
+									? { posterUrl: this.characterAssetDataUrl(character.id, media.poster) }
+									: {}),
+							};
+						}
+						case "animation": {
+							if (!media.poster)
+								throw new Error(
+									`character package ${character.id}: animation ${media.id} requires poster`,
+								);
+							if (media.presentation === "ambient")
+								throw new Error(
+									`character package ${character.id}: non-audio media cannot be ambient`,
+								);
+							return {
+								id: media.id,
+								kind: "animation" as const,
+								label: media.label,
+								loop: media.loop,
+								presentation: media.presentation,
+								url,
+								posterUrl: this.characterAssetDataUrl(character.id, media.poster),
+							};
+						}
+						case "audio": {
+							if (!media.captions)
+								throw new Error(
+									`character package ${character.id}: audio ${media.id} requires captions`,
+								);
+							return {
+								id: media.id,
+								kind: "audio" as const,
+								label: media.label,
+								loop: media.loop,
+								presentation: media.presentation,
+								url,
+								...(media.poster
+									? { posterUrl: this.characterAssetDataUrl(character.id, media.poster) }
+									: {}),
+								captionsUrl: this.characterAssetDataUrl(character.id, media.captions),
+							};
+						}
+						case "video": {
+							if (!media.captions)
+								throw new Error(
+									`character package ${character.id}: video ${media.id} requires captions`,
+								);
+							if (media.presentation === "ambient")
+								throw new Error(
+									`character package ${character.id}: non-audio media cannot be ambient`,
+								);
+							return {
+								id: media.id,
+								kind: "video" as const,
+								label: media.label,
+								loop: media.loop,
+								presentation: media.presentation,
+								url,
+								...(media.poster
+									? { posterUrl: this.characterAssetDataUrl(character.id, media.poster) }
+									: {}),
+								captionsUrl: this.characterAssetDataUrl(character.id, media.captions),
+							};
+						}
+						default:
+							throw new Error(`character package ${character.id}: unsupported media kind`);
+					}
+				}),
 				unlockables: character.roleplay.unlockables,
 				choice_sets: character.roleplay.choice_sets,
 			},

@@ -39,6 +39,19 @@ import { pullProfilesToLocal, syncLocalProfilesToStore } from "../core/profile/p
 
 const TAG = "[memory-tdai] [pipeline-factory]";
 
+/** Resolve equivalent relative/absolute/symlinked data directories to one key. */
+function canonicalDataDir(dataDir: string): string {
+	const resolved = path.resolve(dataDir);
+	try {
+		return fs.realpathSync.native(resolved);
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") throw err;
+		// The caller may initialize a not-yet-created directory. `resolve` still
+		// gives deterministic aliases until the directory is created.
+		return resolved;
+	}
+}
+
 function supportsProfileSyncWrite(store?: IMemoryStore): boolean {
 	return !!(store?.syncProfiles || store?.deleteProfiles);
 }
@@ -120,51 +133,50 @@ export interface StoreInitResult {
 	reindexReason?: string;
 }
 
-/**
- * Cached store init promises — keyed by `pluginDataDir` so that different
- * data directories (e.g. live runtime vs. seed output) each get their own
- * store instance, while concurrent callers for the *same* directory share
- * one initialization.
- */
 const _storeInitCache = new Map<string, Promise<StoreInitResult>>();
 
 /**
- * Initialize store backend and (optionally) EmbeddingService.
- *
- * **Once-async semantics per dataDir**: the first call for a given
- * `pluginDataDir` creates the store and caches the result; subsequent
- * calls with the same dir return the cached Promise immediately.
- * Call `resetStores()` during shutdown to clear the cache.
- *
- * Supports both SQLite (sync init) and TCVDB (async init) backends.
+ * Cached store init promises keyed by canonical physical data directory.
+ * Equivalent relative, absolute, and symlink paths share one store.
  */
 export function initStores(
 	cfg: MemoryTdaiConfig,
 	pluginDataDir: string,
 	logger: PipelineLogger,
 ): Promise<StoreInitResult> {
-	const key = pluginDataDir;
-	if (!_storeInitCache.has(key)) {
-		_storeInitCache.set(key, _doInitStores(cfg, pluginDataDir, logger));
+	const canonicalDir = canonicalDataDir(pluginDataDir);
+	if (!_storeInitCache.has(canonicalDir)) {
+		_storeInitCache.set(canonicalDir, _doInitStores(cfg, canonicalDir, logger));
 	}
-	return _storeInitCache.get(key)!;
+	return _storeInitCache.get(canonicalDir)!;
 }
 
 /**
- * Reset the cached store singleton(s).
+ * Close and evict cached store singletons.
  *
- * Call this during `gateway_stop` (after closing the actual store/embedding
- * resources) so that a subsequent `register()` on hot-restart can
- * re-initialize fresh instances.
- *
- * @param pluginDataDir  If provided, only clear the cache for that dir.
- *                       If omitted, clear all cached stores.
+ * The cache entry is retained until its initialization settles and every
+ * resource has been closed. This prevents a hot restart (or an alias path)
+ * from opening a second SQLite handle over the same physical database.
  */
-export function resetStores(pluginDataDir?: string): void {
-	if (pluginDataDir) {
-		_storeInitCache.delete(pluginDataDir);
-	} else {
-		_storeInitCache.clear();
+export async function resetStores(pluginDataDir?: string): Promise<void> {
+	const keys = pluginDataDir
+		? [canonicalDataDir(pluginDataDir)]
+		: [..._storeInitCache.keys()];
+
+	for (const key of keys) {
+		const initPromise = _storeInitCache.get(key);
+		if (!initPromise) continue;
+		try {
+			const result = await initPromise;
+			result.vectorStore?.close();
+			if (result.embeddingService?.close) await result.embeddingService.close();
+		} catch {
+			// Initialization failures have no resources that need closing.
+		} finally {
+			// Only evict the exact promise we observed; a newer initialization
+			// may have replaced this entry while shutdown was awaiting it.
+			if (_storeInitCache.get(key) === initPromise) _storeInitCache.delete(key);
+		}
 	}
 }
 
@@ -191,6 +203,12 @@ async function _doInitStores(
 
 		const providerInfo = embeddingService?.getProviderInfo();
 		const initResult = await vectorStore.init(providerInfo);
+		if (embeddingService && cfg.embedding.provider === "local") {
+			// Local models are optional and may require a download. Warm them in
+			// the background; an unavailable peer is reported by the service and
+			// search/capture paths degrade to keyword-only behavior.
+			embeddingService.startWarmup();
+		}
 
 		if (vectorStore.isDegraded()) {
 			logger.warn(`${TAG} Store is in degraded mode, falling back to keyword dedup`);
@@ -767,7 +785,7 @@ export async function createPipeline(opts: PipelineFactoryOptions): Promise<Pipe
 				);
 			}
 		}
-		resetStores(pluginDataDir);
+		await resetStores(pluginDataDir);
 		logger.info(`${TAG} Pipeline destroyed`);
 	};
 

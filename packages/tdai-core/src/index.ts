@@ -7,6 +7,26 @@
 export { TdaiCore } from "./core/tdai-core.js";
 export type { TdaiCoreOptions } from "./core/tdai-core.js";
 export { buildFtsQuery } from "./core/store/sqlite.js";
+export { parseConfig } from "./config.js";
+export { VectorStore } from "./core/store/sqlite.js";
+export { TcvdbMemoryStore } from "./core/store/tcvdb.js";
+export { createStoreBundle } from "./core/store/factory.js";
+export {
+	LocalEmbeddingService,
+	OpenAIEmbeddingService,
+	NoopEmbeddingService,
+	EmbeddingNotReadyError,
+	createEmbeddingService,
+} from "./core/store/embedding.js";
+export { createPipeline, initDataDirectories, initStores, resetStores } from "./utils/pipeline-factory.js";
+export type { TcvdbMemoryStoreConfig } from "./core/store/tcvdb.js";
+export type { StoreBundle } from "./core/store/factory.js";
+export type {
+	PipelineFactoryOptions,
+	PipelineInstance,
+	PipelineLogger,
+	StoreInitResult as PipelineStoreInitResult,
+} from "./utils/pipeline-factory.js";
 
 export type {
 	CaptureConfig,
@@ -37,6 +57,10 @@ export type {
 	CaptureResult,
 	MemorySearchParams,
 	ConversationSearchParams,
+	IndexingStatus,
+	DeferredIndexingRecord,
+	IndexingStatusCallback,
+	ReindexResult,
 } from "./core/types.js";
 export type {
 	MemoryRecord,

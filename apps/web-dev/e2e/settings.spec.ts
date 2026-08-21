@@ -1,7 +1,7 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
 import { expect, test } from "playwright/test";
-import { ensureReadyForConversation } from "./helpers";
+import { ensureReadyForConversation, getBootstrap } from "./helpers";
 
 test("WebDev exposes every registered Host RPC channel through its authenticated console", async ({
 	page,
@@ -21,6 +21,62 @@ test("WebDev exposes every registered Host RPC channel through its authenticated
 	await page.keyboard.press("Escape");
 	await panel.getByRole("button", { name: zhCN.webDev.invokeHost }).click();
 	await expect(panel.getByRole("status")).toContainText('"ok"');
+});
+
+test("WebDev keeps authentication and HTTP request failure categories distinct", async ({
+	page,
+}) => {
+	const { token } = await getBootstrap(page);
+	const headers = { "x-bear-web-dev-token": token };
+
+	const unauthorized = await page.request.get("/debug/channels");
+	expect(unauthorized.status()).toBe(401);
+	expect(await unauthorized.json()).toEqual({
+		ok: false,
+		error: { kind: "unauthorized", reason: "invalid_token" },
+	});
+
+	const unknownChannel = await page.request.post("/rpc/not-registered%3Av1", {
+		headers,
+		data: {},
+	});
+	expect(unknownChannel.status()).toBe(404);
+	expect(await unknownChannel.json()).toEqual({
+		ok: false,
+		error: { kind: "unknown_channel", reason: "unknown_channel" },
+	});
+
+	const malformedJson = await page.request.post("/rpc/onboarding.get%3Av1", {
+		headers: { ...headers, "content-type": "application/json" },
+		data: Buffer.from("{", "utf8"),
+	});
+	expect(malformedJson.status()).toBe(400);
+	expect(await malformedJson.json()).toEqual({
+		ok: false,
+		error: { kind: "malformed_json", reason: "malformed_json" },
+	});
+
+	const invalidRequest = await page.request.post("/rpc/onboarding.get%3Av1", {
+		headers,
+		data: { unexpected: true },
+	});
+	// Schema rejection is a domain failure: it resolves HTTP 200 with the
+	// validated envelope, exactly like the companion client observes it.
+	expect(invalidRequest.status()).toBe(200);
+	expect(await invalidRequest.json()).toEqual({
+		ok: false,
+		error: { kind: "invalid_request", reason: "request_validation_failed" },
+	});
+
+	const oversized = await page.request.post("/rpc/onboarding.get%3Av1", {
+		headers: { ...headers, "content-type": "application/json" },
+		data: "x".repeat(64 * 1024 + 1),
+	});
+	expect(oversized.status()).toBe(413);
+	expect(await oversized.json()).toEqual({
+		ok: false,
+		error: { kind: "body_too_large", reason: "request_body_too_large" },
+	});
 });
 
 test("browser drives conversation, search, materials, backstage, settings and queue", async ({

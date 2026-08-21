@@ -45,7 +45,9 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 	const [text, setText] = createSignal("");
 	const [attachments, setAttachments] = createSignal<ComposerAttachment[]>([]);
 	const [modelError, setModelError] = createSignal<string | null>(null);
+	const [modelBusy, setModelBusy] = createSignal(false);
 	const [attachmentError, setAttachmentError] = createSignal<string | null>(null);
+	const [sendError, setSendError] = createSignal<string | null>(null);
 	const [imageRouteError, setImageRouteError] = createSignal(false);
 	const [retryingImageRoute, setRetryingImageRoute] = createSignal(false);
 	const modelSelected = () => store.model.selectedValue().length > 0;
@@ -80,8 +82,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 		const conversationId = store.activeConversationId;
 		if (conversationId) void store.model.list(conversationId);
 	});
-
-	const dispatchMessage = (options?: { retry?: boolean }): void => {
+	const dispatchMessage = async (options?: { retry?: boolean }): Promise<void> => {
 		const retry = options?.retry === true;
 		const value = text();
 		if (!value.trim() && attachments().length === 0) return;
@@ -99,16 +100,29 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 			`${value}${materials}`.trim() ||
 			images.map((image) => `[${t("composer.imageLabel")}：${image.name}]`).join("\n");
 		const hadImages = images.length > 0;
+		const before = store.errorMetadata;
+		setSendError(null);
+		setModelError(null);
 		if (!retry) {
 			setText("");
 			setAttachments([]);
 		}
-		void store.sendMessage(message, hadImages ? images : undefined).then(() => {
+		try {
+			await store.sendMessage(message, hadImages ? images : undefined);
+			const retained = store.errorMetadata;
+			if (retained !== null && retained !== before) {
+				if (hadImages && store.pendingUserText !== undefined) {
+					setText(value);
+					setAttachments(draftAttachments);
+					setImageRouteError(true);
+				} else {
+					setText(value);
+					setAttachments(draftAttachments);
+					setSendError(retained.message);
+				}
+				return;
+			}
 			setRetryingImageRoute(false);
-			// The store keeps `pendingUserText` until the host accepts the message.
-			// If it is still set after the call settles, the image route rejected the
-			// request: restore the exact draft so images and text are never silently
-			// dropped or sent alone.
 			if (hadImages && store.pendingUserText !== undefined) {
 				setText(value);
 				setAttachments(draftAttachments);
@@ -118,7 +132,12 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 			setText("");
 			setAttachments([]);
 			setImageRouteError(false);
-		});
+		} catch (cause) {
+			setText(value);
+			setAttachments(draftAttachments);
+			setSendError(cause instanceof Error ? cause.message : String(cause));
+			setRetryingImageRoute(false);
+		}
 	};
 
 	const send = (event: SubmitEvent) => {
@@ -172,16 +191,25 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 	/** True while a message is being sent or streamed; the send slot becomes Stop. */
 	const streaming = () =>
 		store.assistantStreaming ||
-		(store.pendingUserText !== undefined && !(imageRouteError() && !hasImages())) ||
+		(store.pendingUserText !== undefined &&
+			sendError() === null &&
+			!(imageRouteError() && !hasImages())) ||
 		store.streamingAssistantText.length > 0;
 	const selectModel = async (model: ConfiguredModel | null): Promise<void> => {
 		const conversationId = store.activeConversationId;
-		if (!conversationId || !model) return;
+		if (!conversationId || !model || modelBusy()) return;
 		setModelError(null);
+		setSendError(null);
+		setModelBusy(true);
+		const before = store.errorMetadata;
 		try {
 			await store.model.select(conversationId, model.providerId, model.modelId);
+			const retained = store.errorMetadata;
+			if (retained !== null && retained !== before) setModelError(retained.message);
 		} catch (cause) {
 			setModelError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setModelBusy(false);
 		}
 	};
 
@@ -195,7 +223,9 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 				placeholder={
 					store.model.models().length > 0 ? t("composer.chooseModel") : t("composer.noModel")
 				}
-				disabled={store.activeConversationId === null || store.model.models().length === 0}
+				disabled={
+					modelBusy() || store.activeConversationId === null || store.model.models().length === 0
+				}
 				onChange={(model) => void selectModel(model)}
 				itemComponent={(itemProps) => (
 					<Select.Item item={itemProps.item} class="composer-model-item">
@@ -228,6 +258,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 				</Select.Portal>
 			</Select>
 			<Show when={modelError()}>{(error) => <span role="alert">{error()}</span>}</Show>
+			<Show when={sendError()}>{(error) => <span role="alert">{error()}</span>}</Show>
 			<FileField
 				class="composer-attach"
 				disabled={!modelSelected()}

@@ -43,6 +43,8 @@ export interface TcvdbMemoryStoreConfig {
 	apiKey: string;
 	database: string;
 	embeddingModel: string;
+	/** Dense vector dimension emitted by embeddingModel and used by indexes. */
+	embeddingDimensions?: number;
 	timeout: number;
 	/** Path to CA certificate PEM file (for HTTPS connections) */
 	caPemPath?: string;
@@ -56,6 +58,17 @@ const TAG = "[memory-tdai][tcvdb]";
 const L1_COLLECTION_SUFFIX = "l1_memories";
 const L0_COLLECTION_SUFFIX = "l0_conversations";
 const PROFILES_COLLECTION_SUFFIX = "profiles";
+
+/** Known built-in model dimensions; custom models must provide their dimension explicitly. */
+const KNOWN_MODEL_DIMENSIONS: Readonly<Record<string, number>> = {
+	"bge-large-zh": 1024,
+	"bge-large-en": 1024,
+	"bge-m3": 1024,
+	"bge-base-zh": 768,
+	"bge-base-en": 768,
+	"bge-small-zh": 512,
+	"bge-small-en": 384,
+};
 
 /** Max documents per /document/query page (VectorDB API limit). */
 const QUERY_PAGE_SIZE = 100;
@@ -148,6 +161,7 @@ function extractAgentId(sessionKey: string): string {
 export class TcvdbMemoryStore implements IMemoryStore {
 	private readonly client: TcvdbClient;
 	private readonly embeddingModel: string;
+	private readonly embeddingDimensions: number;
 	private readonly logger?: StoreLogger;
 	private readonly bm25Encoder?: BM25LocalEncoder;
 	private readonly l1Collection: string;
@@ -159,6 +173,24 @@ export class TcvdbMemoryStore implements IMemoryStore {
 	private _initPromise: Promise<void> | undefined;
 
 	constructor(config: TcvdbMemoryStoreConfig) {
+		const modelName = config.embeddingModel.trim().toLowerCase();
+		const expectedDimensions = KNOWN_MODEL_DIMENSIONS[modelName];
+		const embeddingDimensions = config.embeddingDimensions ?? expectedDimensions ?? 1024;
+		if (!Number.isInteger(embeddingDimensions) || embeddingDimensions <= 0) {
+			throw new Error(
+				`${TAG} TCVDB embeddingDimensions must be a positive integer; ` +
+					`got ${String(config.embeddingDimensions)} for model "${config.embeddingModel}"`,
+			);
+		}
+		if (expectedDimensions !== undefined && expectedDimensions !== embeddingDimensions) {
+			throw new Error(
+				`${TAG} TCVDB embedding dimension mismatch for model "${config.embeddingModel}": ` +
+					`model emits ${expectedDimensions} dimensions but tcvdb.embeddingDimensions is ` +
+					`${embeddingDimensions}. Set the configured dimension to ${expectedDimensions} ` +
+					"before collection/index creation.",
+			);
+		}
+
 		this.client = new TcvdbClient(
 			{
 				url: config.url,
@@ -171,8 +203,10 @@ export class TcvdbMemoryStore implements IMemoryStore {
 			config.logger,
 		);
 		this.embeddingModel = config.embeddingModel;
+		this.embeddingDimensions = embeddingDimensions;
 		this.logger = config.logger;
 		this.bm25Encoder = config.bm25Encoder;
+
 
 		// Collection names are globally unique within a TCVDB instance,
 		// so prefix with database name to avoid cross-database collisions.
@@ -213,22 +247,26 @@ export class TcvdbMemoryStore implements IMemoryStore {
 	// Preferred: DISK_FLAT (lower memory, suitable for large-scale recall).
 	// Fallback:  HNSW (for instances whose storage engine doesn't support DISK_FLAT).
 
-	private static readonly VECTOR_INDEX_DISK_FLAT: Record<string, unknown> = {
-		fieldName: "vector",
-		fieldType: "vector",
-		indexType: "DISK_FLAT",
-		dimension: 1024,
-		metricType: "COSINE",
-	};
+	private static vectorIndexDiskFlat(dimension: number): Record<string, unknown> {
+		return {
+			fieldName: "vector",
+			fieldType: "vector",
+			indexType: "DISK_FLAT",
+			dimension,
+			metricType: "COSINE",
+		};
+	}
 
-	private static readonly VECTOR_INDEX_HNSW: Record<string, unknown> = {
-		fieldName: "vector",
-		fieldType: "vector",
-		indexType: "HNSW",
-		dimension: 1024,
-		metricType: "COSINE",
-		params: { M: 16, efConstruction: 200 },
-	};
+	private static vectorIndexHnsw(dimension: number): Record<string, unknown> {
+		return {
+			fieldName: "vector",
+			fieldType: "vector",
+			indexType: "HNSW",
+			dimension,
+			metricType: "COSINE",
+			params: { M: 16, efConstruction: 200 },
+		};
+	}
 
 	/**
 	 * Detect whether a createCollection error indicates DISK_FLAT is unsupported.
@@ -266,7 +304,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 		try {
 			await this.client.createCollection({
 				...params,
-				indexes: buildIndexes(TcvdbMemoryStore.VECTOR_INDEX_DISK_FLAT),
+				indexes: buildIndexes(TcvdbMemoryStore.vectorIndexDiskFlat(this.embeddingDimensions)),
 			});
 		} catch (err) {
 			if (TcvdbMemoryStore.isDiskFlatUnsupported(err)) {
@@ -275,7 +313,7 @@ export class TcvdbMemoryStore implements IMemoryStore {
 				);
 				await this.client.createCollection({
 					...params,
-					indexes: buildIndexes(TcvdbMemoryStore.VECTOR_INDEX_HNSW),
+					indexes: buildIndexes(TcvdbMemoryStore.vectorIndexHnsw(this.embeddingDimensions)),
 				});
 			} else {
 				throw err;

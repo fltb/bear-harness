@@ -5,22 +5,25 @@
  *
  * This is the runtime-independent replacement for the legacy Electron
  * `ipc-router`: there is no `ipcMain` and no `BrowserWindow`. A channel is
- * only valid when it exists in `REQUEST_SCHEMAS` (from
+ * valid when it exists in `CHANNEL_CONTRACTS` (from
  * `@bear-harness/protocol/schema`); an unregistered-but-known channel returns
- * `handler_not_registered`, exactly like the legacy router.
+ * `handler_not_registered`, exactly like the legacy router. `REQUEST_SCHEMAS`
+ * is intentionally request-only and is not used here because dispatch also
+ * validates handler responses.
  */
 
 import {
 	type AnyRpcEndpoint,
 	CHANNEL_CONTRACTS,
 	type Channel,
+	type IpcErrorKind,
 	type RequestOf,
 	type ResponseOf,
 } from "@bear-harness/protocol/schema";
 
-/** Wire error body: a fixed kind plus a localizable reason string. */
+/** Wire error body: a protocol kind plus a localizable reason string. */
 export interface RpcError {
-	kind: string;
+	kind: IpcErrorKind;
 	reason: string;
 }
 
@@ -28,6 +31,7 @@ export interface RpcError {
 export type RpcResponse = { ok: true; data: unknown } | { ok: false; error: RpcError };
 
 /** A domain handler: validated request params in, response data out. */
+export type RpcHandler = (params: unknown) => unknown | Promise<unknown>;
 export class ProtocolResponseValidationError extends Error {
 	constructor(
 		readonly channel: Channel,
@@ -41,11 +45,42 @@ export class ProtocolResponseValidationError extends Error {
 }
 
 export interface DispatcherOptions {
+	/**
+	 * Host-owned behavior for handler response-schema violations:
+	 * `throw` rejects dispatch with ProtocolResponseValidationError;
+	 * `isolate` returns a protocol internal-error envelope.
+	 */
 	responseValidation?: "throw" | "isolate";
 	onProtocolViolation?: (error: ProtocolResponseValidationError) => void;
 }
 
-export type RpcHandler = (params: unknown) => unknown | Promise<unknown>;
+const IPC_ERROR_KINDS: readonly IpcErrorKind[] = [
+	"invalid_request",
+	"not_found",
+	"conflict",
+	"unavailable",
+	"internal",
+];
+const MAX_ERROR_REASON_LENGTH = 4096;
+
+function normalizeHandlerError(error: unknown): RpcError {
+	const thrown =
+		typeof error === "object" && error !== null
+			? (error as { kind?: unknown; reason?: unknown; message?: unknown })
+			: undefined;
+	const rawKind = thrown?.kind;
+	const kind = IPC_ERROR_KINDS.includes(rawKind as IpcErrorKind)
+		? (rawKind as IpcErrorKind)
+		: "internal";
+	const rawReason =
+		typeof thrown?.reason === "string"
+			? thrown.reason
+			: typeof thrown?.message === "string"
+				? thrown.message
+				: "handler_failed";
+	const reason = rawReason.slice(0, MAX_ERROR_REASON_LENGTH);
+	return { kind, reason };
+}
 
 export class Dispatcher {
 	private readonly handlers = new Map<string, RpcHandler>();
@@ -57,11 +92,26 @@ export class Dispatcher {
 		this.onProtocolViolation = options.onProtocolViolation;
 	}
 
-	/** Register a handler for an RPC channel. Throws on unknown channels. */
+	/** Register a handler for a canonical RPC endpoint. */
 	registerHandler<E extends AnyRpcEndpoint>(
 		endpoint: E,
 		handler: (params: RequestOf<E>) => ResponseOf<E> | Promise<ResponseOf<E>>,
 	): void {
+		if (
+			!endpoint ||
+			typeof endpoint !== "object" ||
+			endpoint.kind !== "rpc" ||
+			typeof endpoint.channel !== "string"
+		) {
+			throw new TypeError("invalid RPC endpoint");
+		}
+		const contract = CHANNEL_CONTRACTS[endpoint.channel as Channel];
+		if (!contract) {
+			throw new Error(`unknown RPC endpoint: ${endpoint.channel}`);
+		}
+		if (this.handlers.has(endpoint.channel)) {
+			throw new Error(`duplicate RPC handler registration: ${endpoint.channel}`);
+		}
 		this.handlers.set(endpoint.channel, handler as RpcHandler);
 	}
 
@@ -92,14 +142,10 @@ export class Dispatcher {
 		let data: unknown;
 		try {
 			data = await handler(parsed.data);
-		} catch (e) {
-			const err = e as { kind?: string; reason?: string; message?: string };
+		} catch (error) {
 			return {
 				ok: false,
-				error: {
-					kind: err.kind ?? "internal",
-					reason: err.reason ?? err.message ?? "unknown error",
-				},
+				error: normalizeHandlerError(error),
 			};
 		}
 

@@ -11,17 +11,25 @@ interface InvokeEvent {
 
 type Handler = (event: InvokeEvent, params: unknown) => Promise<unknown>;
 
-const electron = vi.hoisted(() => ({
-	handlers: new Map<string, Handler>(),
-	fromWebContents: vi.fn(),
-}));
+const electron = vi.hoisted(() => {
+	const handlers = new Map<string, Handler>();
+	return {
+		handlers,
+		fromWebContents: vi.fn(),
+		removeHandler: vi.fn((channel: string) => {
+			handlers.delete(channel);
+		}),
+	};
+});
 
 vi.mock("electron", () => ({
 	BrowserWindow: { fromWebContents: electron.fromWebContents },
 	ipcMain: {
 		handle: vi.fn((channel: string, handler: Handler) => {
+			if (electron.handlers.has(channel)) throw new Error(`duplicate handler: ${channel}`);
 			electron.handlers.set(channel, handler);
 		}),
+		removeHandler: electron.removeHandler,
 	},
 }));
 
@@ -29,9 +37,13 @@ import { PROTOCOL_AVAILABILITY_CHANNEL, wireElectronIpcHandlers } from "../src/m
 
 const ALLOWED_URL = "file:///dist/renderer/index.html";
 const channel = Object.keys(REQUEST_SCHEMAS)[0];
+function setupRegistry() {
+	return new Map([[1, { allowedUrl: ALLOWED_URL }]]);
+}
+
 if (!channel) throw new Error("protocol must expose at least one request channel");
 
-function setup(registry = new Map([[1, { allowedUrl: ALLOWED_URL }]])) {
+function setup(registry = setupRegistry()) {
 	const dispatch = vi.fn().mockResolvedValue({ ok: true, data: { accepted: true } });
 	wireElectronIpcHandlers({ dispatch } as unknown as Dispatcher, registry);
 	const handler = electron.handlers.get(channel);
@@ -47,6 +59,7 @@ function mainFrameEvent(mainFrame: { url: string }): InvokeEvent {
 beforeEach(() => {
 	electron.handlers.clear();
 	electron.fromWebContents.mockReset();
+	electron.removeHandler.mockClear();
 });
 
 describe("wireElectronIpcHandlers", () => {
@@ -57,6 +70,44 @@ describe("wireElectronIpcHandlers", () => {
 			[...Object.keys(REQUEST_SCHEMAS), PROTOCOL_AVAILABILITY_CHANNEL].sort(),
 		);
 		expect(dispatch).not.toHaveBeenCalled();
+	});
+
+	it("disposes its handlers idempotently", () => {
+		const dispose = wireElectronIpcHandlers(
+			{ dispatch: vi.fn() } as unknown as Dispatcher,
+			setupRegistry(),
+		);
+		const channelCount = Object.keys(REQUEST_SCHEMAS).length + 1;
+		const registrationRemovals = electron.removeHandler.mock.calls.length;
+
+		expect(electron.handlers.size).toBe(channelCount);
+		dispose();
+		expect(electron.handlers.size).toBe(0);
+		expect(electron.removeHandler).toHaveBeenCalledTimes(registrationRemovals + channelCount);
+		dispose();
+		expect(electron.removeHandler).toHaveBeenCalledTimes(registrationRemovals + channelCount);
+	});
+
+	it("replaces an existing registration without letting the old disposer remove it", () => {
+		const firstDispose = wireElectronIpcHandlers(
+			{ dispatch: vi.fn() } as unknown as Dispatcher,
+			setupRegistry(),
+		);
+		const firstHandler = electron.handlers.get(channel);
+		if (!firstHandler) throw new Error(`handler not registered for ${channel}`);
+
+		const secondDispose = wireElectronIpcHandlers(
+			{ dispatch: vi.fn() } as unknown as Dispatcher,
+			setupRegistry(),
+		);
+		const secondHandler = electron.handlers.get(channel);
+		if (!secondHandler) throw new Error(`handler not registered for ${channel}`);
+		expect(secondHandler).not.toBe(firstHandler);
+
+		firstDispose();
+		expect(electron.handlers.get(channel)).toBe(secondHandler);
+		secondDispose();
+		expect(electron.handlers.size).toBe(0);
 	});
 
 	it("dispatches calls from the registered main frame at its allowed URL", async () => {

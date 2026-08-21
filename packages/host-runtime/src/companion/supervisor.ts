@@ -71,6 +71,24 @@ export interface CompanionModelRuntimeSource {
  * Owns one local Pi session and dispatches Host commands without a child
  * process. No built-in filesystem, shell, edit, or write tool is enabled.
  */
+const HOST_BRIDGE_OWNER = Symbol("bear-host-call-owner");
+type HostBridge = ((tool: string, args: unknown) => Promise<CompanionHostToolResult>) & {
+	[HOST_BRIDGE_OWNER]?: symbol;
+};
+type BridgeRecord = {
+	owner: symbol;
+	previous?: unknown;
+	active: boolean;
+};
+const bridgeRecords = new WeakMap<HostBridge, BridgeRecord>();
+
+function resolvePreviousBridge(value: unknown): unknown {
+	if (typeof value !== "function") return value;
+	const record = bridgeRecords.get(value as HostBridge);
+	if (!record || record.active) return value;
+	return resolvePreviousBridge(record.previous);
+}
+
 export class CompanionSupervisor {
 	private state: CompanionState = "stopped";
 	private runtimeConfig: CompanionRuntimeConfig = {
@@ -89,6 +107,8 @@ export class CompanionSupervisor {
 	private readonly initializations = new Map<string, Promise<CoreSession>>();
 	private activeConversationId: string | null = null;
 	private readonly promptMessageIds = new Map<string, string>();
+	private readonly bridgeOwner = Symbol("companion-supervisor");
+	private installedBridge: HostBridge | undefined;
 	private promptQueue: Promise<void> = Promise.resolve();
 	private readonly compactionSettings: RequiredCompactionSettings;
 
@@ -135,12 +155,37 @@ export class CompanionSupervisor {
 	/** Mark the Host runtime available; the Pi session is loaded on first turn. */
 	async start(): Promise<void> {
 		if (this.state === "running") return;
-		Object.assign(globalThis, {
-			bearHostCall: (tool: string, args: unknown) =>
-				this.callHost(this.activeConversationId ?? "", tool, args),
-		});
-		this.state = "running";
-		this.eventBus.publish("companion.state_changed", { state: "running" });
+		const hostGlobal = globalThis as typeof globalThis & { bearHostCall?: unknown };
+		const previous = hostGlobal.bearHostCall;
+		const bridge = Object.assign(
+			(tool: string, args: unknown) => this.callHost(this.activeConversationId ?? "", tool, args),
+			{ [HOST_BRIDGE_OWNER]: this.bridgeOwner },
+		) as HostBridge;
+		hostGlobal.bearHostCall = bridge;
+		this.installedBridge = bridge;
+		bridgeRecords.set(bridge, { owner: this.bridgeOwner, previous, active: true });
+		try {
+			this.state = "running";
+			this.eventBus.publish("companion.state_changed", { state: "running" });
+		} catch (error) {
+			this.releaseBridge();
+			this.state = "stopped";
+			throw error;
+		}
+	}
+
+	private releaseBridge(): void {
+		const bridge = this.installedBridge;
+		if (!bridge) return;
+		this.installedBridge = undefined;
+		const record = bridgeRecords.get(bridge);
+		if (!record || record.owner !== this.bridgeOwner) return;
+		record.active = false;
+		const hostGlobal = globalThis as typeof globalThis & { bearHostCall?: unknown };
+		if (hostGlobal.bearHostCall !== bridge) return;
+		const previous = resolvePreviousBridge(record.previous);
+		if (typeof previous === "undefined") Reflect.deleteProperty(hostGlobal, "bearHostCall");
+		else hostGlobal.bearHostCall = previous;
 	}
 
 	private async initializeSession(conversationId: string): Promise<CoreSession> {
@@ -246,20 +291,22 @@ export class CompanionSupervisor {
 
 	async stop(): Promise<void> {
 		this.state = "stopped";
-		for (const session of this.sessions.values()) await session.abort();
-		await Promise.allSettled(this.initializations.values());
-		await this.promptQueue.catch(() => undefined);
-		this.session = null;
-		this.modelRuntime = null;
-		this.promptMessageIds.clear();
-		this.activeConversationId = null;
-		for (const session of this.sessions.values()) {
-			session.dispose();
+		try {
+			await Promise.allSettled([...this.sessions.values()].map((session) => session.abort()));
+			await Promise.allSettled(this.initializations.values());
+			await this.promptQueue.catch(() => undefined);
+			this.session = null;
+			this.modelRuntime = null;
+			this.promptMessageIds.clear();
+			this.activeConversationId = null;
+			for (const session of this.sessions.values()) session.dispose();
+			this.sessions.clear();
+			this.initializations.clear();
+			this.sessionStores.clear();
+		} finally {
+			this.releaseBridge();
+			this.eventBus.publish("companion.state_changed", { state: "stopped" });
 		}
-		this.sessions.clear();
-		this.initializations.clear();
-		this.sessionStores.clear();
-		this.eventBus.publish("companion.state_changed", { state: "stopped" });
 	}
 
 	/** Discard a session for a deleted conversation. */

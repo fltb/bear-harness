@@ -1,8 +1,11 @@
+import { createCompanionClient, unwrap } from "@bear-harness/companion-client";
+import type { IpcEnvelope } from "@bear-harness/protocol";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { waitFor } from "@testing-library/dom";
 import { createComponent, createRoot } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { createCompanionStore } from "../src/stores/companion.js";
+import type { Snapshot } from "../src/stores/ipc.js";
 import { createTestClient, ROLEPLAY_MEDIA_CHARACTER } from "./fixtures.js";
 
 function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["client"]) {
@@ -23,6 +26,37 @@ function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["cli
 }
 
 describe("store RPC contract", () => {
+	it("rejects malformed success and failure envelopes before exposing values", () => {
+		expect(() => unwrap<{ value: string }>({ ok: true })).toThrow();
+		expect(() => unwrap({ ok: false, error: { kind: "internal", reason: 42 } })).toThrow();
+		expect(() =>
+			unwrap({ ok: false, error: { kind: "unsupported", reason: "bad kind" } }),
+		).toThrow();
+		expect(unwrap({ ok: true, data: { value: "safe" } })).toEqual({ value: "safe" });
+	});
+
+	it("keeps transport rejection separate from resolved RPC failure envelopes", async () => {
+		const transportError = new Error("link unavailable");
+		const transportInvoke = vi.fn(() => Promise.reject(transportError));
+		const transportClient = createCompanionClient({ invoke: transportInvoke });
+		await expect(transportClient.snapshot.get()).rejects.toBe(transportError);
+		expect(transportInvoke).toHaveBeenCalledTimes(1);
+
+		const rpcInvoke = vi.fn(() =>
+			Promise.resolve({
+				ok: false as const,
+				error: { kind: "unavailable" as const, reason: "host offline" },
+			}),
+		);
+		const rpcClient = createCompanionClient({ invoke: rpcInvoke });
+		const response = await rpcClient.snapshot.get();
+		expect(response).toEqual({
+			ok: false,
+			error: { kind: "unavailable", reason: "host offline" },
+		});
+		expect(() => unwrap(response)).toThrow("unavailable");
+		expect(rpcInvoke).toHaveBeenCalledTimes(1);
+	});
 	it("does not let a delayed boot snapshot erase a model enabled during startup", async () => {
 		const { client } = createTestClient();
 		let resolveSnapshot:
@@ -115,6 +149,171 @@ describe("store RPC contract", () => {
 			dispose();
 		}
 	});
+	it("does not let a delayed boot snapshot overwrite a scoped memory projection", async () => {
+		const { client } = createTestClient();
+		const snapshotGate = Promise.withResolvers<IpcEnvelope<Snapshot>>();
+		const scopedMemoryGate =
+			Promise.withResolvers<Awaited<ReturnType<typeof client.memory.list>>>();
+		client.snapshot.get = vi.fn(() => snapshotGate.promise);
+		const projectedEntry = {
+			id: "memory-direct",
+			kind: "fact" as const,
+			scope: "self" as const,
+			text: "direct memory result",
+			createdAt: "2026-01-01T00:00:00.000Z",
+			updatedAt: "2026-01-01T00:00:00.000Z",
+			importance: 0.9,
+		};
+		const olderEntry = { ...projectedEntry, id: "memory-older", text: "older boot snapshot" };
+		client.memory.list = vi.fn(() => scopedMemoryGate.promise);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			snapshotGate.resolve({
+				ok: true,
+				data: {
+					eventSeq: 1,
+					memory: { entries: [olderEntry] },
+				},
+			});
+
+			const scopedList = store.memory.list({ scope: "self" });
+			scopedMemoryGate.resolve({ ok: true, data: { entries: [projectedEntry] } });
+			await expect(scopedList).resolves.toEqual([projectedEntry]);
+			expect(store.memory.entries()).toEqual([projectedEntry]);
+		} finally {
+			dispose();
+		}
+	});
+	it("keeps direct memory and candidate projections when a later snapshot resolves last", async () => {
+		const { client } = createTestClient();
+		let snapshotCalls = 0;
+		const delayedSnapshot = Promise.withResolvers<IpcEnvelope<Snapshot>>();
+		client.snapshot.get = vi.fn(() => {
+			snapshotCalls += 1;
+			return snapshotCalls === 1
+				? Promise.resolve({ ok: true as const, data: { eventSeq: 0 } })
+				: delayedSnapshot.promise;
+		});
+		const directEntry = {
+			id: "memory-direct",
+			kind: "fact" as const,
+			scope: "self" as const,
+			text: "direct memory result",
+			createdAt: "2026-01-01T00:00:00.000Z",
+			updatedAt: "2026-01-01T00:00:00.000Z",
+			importance: 0.9,
+		};
+		const olderEntry = { ...directEntry, id: "memory-older", text: "older snapshot result" };
+		const directCandidate = {
+			id: "candidate-direct",
+			kind: "fact" as const,
+			sourceKind: "user_request" as const,
+			normalizedText: "direct candidate result",
+			why: "test",
+			suggestedScope: "self" as const,
+			status: "pending" as const,
+			createdAt: "2026-01-01T00:00:00.000Z",
+		};
+		const entriesGate = Promise.withResolvers<Awaited<ReturnType<typeof client.memory.list>>>();
+		const candidatesGate =
+			Promise.withResolvers<Awaited<ReturnType<typeof client.memory.candidatesList>>>();
+		let candidateCalls = 0;
+		client.memory.list = vi.fn((params) =>
+			params?.scope === "self"
+				? entriesGate.promise
+				: Promise.resolve({ ok: true as const, data: { entries: [] } }),
+		);
+		client.memory.candidatesList = vi.fn(() => {
+			candidateCalls += 1;
+			return candidateCalls === 1
+				? Promise.resolve({ ok: true as const, data: { candidates: [] } })
+				: candidatesGate.promise;
+		});
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => {
+				expect(client.memory.list).toHaveBeenCalledTimes(1);
+				expect(candidateCalls).toBe(1);
+			});
+			const directEntries = store.memory.list({ scope: "self" });
+			const directCandidates = store.memory.listCandidates("pending");
+			store.snapshot.refetch();
+			await waitFor(() => expect(snapshotCalls).toBe(2));
+
+			entriesGate.resolve({ ok: true, data: { entries: [directEntry] } });
+			candidatesGate.resolve({ ok: true, data: { candidates: [directCandidate] } });
+			await expect(directEntries).resolves.toEqual([directEntry]);
+			await expect(directCandidates).resolves.toEqual([directCandidate]);
+			expect(store.memory.entries()).toEqual([directEntry]);
+			expect(store.memory.candidates()).toEqual([directCandidate]);
+
+			delayedSnapshot.resolve({
+				ok: true,
+				data: { eventSeq: 1, memory: { entries: [olderEntry] } },
+			});
+			await waitFor(() => expect(store.snapshot.eventSeq()).toBe(1));
+			expect(store.memory.entries()).toEqual([directEntry]);
+			expect(store.memory.candidates()).toEqual([directCandidate]);
+		} finally {
+			dispose();
+		}
+	});
+	it("does not let a stale debounced mutation refresh overwrite a newer scoped memory search", async () => {
+		vi.useFakeTimers();
+		try {
+			const { client } = createTestClient();
+			const snapshotGate = Promise.withResolvers<IpcEnvelope<Snapshot>>();
+			const staleRefreshGate =
+				Promise.withResolvers<Awaited<ReturnType<typeof client.memory.list>>>();
+			const scopedSearchGate =
+				Promise.withResolvers<Awaited<ReturnType<typeof client.memory.search>>>();
+			const staleEntry = {
+				id: "memory-stale-refresh",
+				kind: "fact" as const,
+				scope: "self" as const,
+				text: "stale mutation refresh",
+				createdAt: "2026-01-01T00:00:00.000Z",
+				updatedAt: "2026-01-01T00:00:00.000Z",
+				importance: 0.2,
+			};
+			const scopedEntry = {
+				...staleEntry,
+				id: "memory-scoped-search",
+				scope: "relationship" as const,
+				text: "newer scoped search",
+				importance: 0.9,
+			};
+			client.snapshot.get = vi.fn(() => snapshotGate.promise);
+			client.memory.list = vi.fn(() => staleRefreshGate.promise);
+			client.memory.search = vi.fn(() => scopedSearchGate.promise);
+			client.memory.edit = vi.fn(() => Promise.resolve({ ok: true as const, data: null }));
+			const { store, dispose } = createStoreWithCleanup(client);
+			try {
+				await store.memory.edit("memory-stale-refresh", "updated text");
+				await vi.advanceTimersByTimeAsync(249);
+				expect(client.memory.list).not.toHaveBeenCalled();
+				await vi.advanceTimersByTimeAsync(1);
+				expect(client.memory.list).toHaveBeenCalledTimes(1);
+
+				const scopedSearch = store.memory.search("newer", "relationship");
+				scopedSearchGate.resolve({ ok: true, data: { entries: [scopedEntry] } });
+				await expect(scopedSearch).resolves.toEqual([scopedEntry]);
+				expect(store.memory.entries()).toEqual([scopedEntry]);
+
+				staleRefreshGate.resolve({ ok: true, data: { entries: [staleEntry] } });
+				await staleRefreshGate.promise;
+				await Promise.resolve();
+				await Promise.resolve();
+				expect(store.memory.entries()).toEqual([scopedEntry]);
+
+				snapshotGate.resolve({ ok: true, data: { eventSeq: 2 } });
+			} finally {
+				dispose();
+			}
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 
 	it("keeps scoped routes and loads the Host-applied default after creating a conversation", async () => {
 		const { client } = createTestClient();
@@ -190,6 +389,32 @@ describe("store RPC contract", () => {
 		try {
 			await store.provider.list();
 			await waitFor(() => expect(store.provider.providers()).toEqual([provider]));
+		} finally {
+			dispose();
+		}
+	});
+	it("constructs under a QueryClientProvider and projects scoped memory lists", async () => {
+		const { client } = createTestClient();
+		const entry = {
+			id: "memory-relationship",
+			kind: "fact",
+			scope: "relationship" as const,
+			text: "我们会一起散步",
+			createdAt: "2026-01-01T00:00:00.000Z",
+			updatedAt: "2026-01-01T00:00:00.000Z",
+			importance: 0.8,
+		};
+		client.memory.list = vi.fn((params) =>
+			Promise.resolve({
+				ok: true as const,
+				data: { entries: params?.scope === "relationship" ? [entry] : [] },
+			}),
+		);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await expect(store.memory.list({ scope: "relationship" })).resolves.toEqual([entry]);
+			expect(client.memory.list).toHaveBeenCalledWith({ scope: "relationship" });
+			expect(store.memory.entries()).toEqual([entry]);
 		} finally {
 			dispose();
 		}
@@ -386,10 +611,18 @@ describe("store RPC contract", () => {
 			const kinds = [
 				[
 					"character.scene_changed",
-					{ conversationId: "conversation-2", sceneId: "room", visualState: "thinking" },
+					{
+						conversationId: "conversation-2",
+						characterId: "character-1",
+						sceneId: "room",
+						visualState: "thinking",
+					},
 				],
 				["conversation.created", { conversationId: "conversation-2" }],
-				["conversation.branched", { branchId: "branch-2" }],
+				[
+					"conversation.branched",
+					{ conversationId: "conversation-2", messageId: "message-1", branchId: "branch-2" },
+				],
 				["companion.state_changed", { state: "running" }],
 				[
 					"run.needs_user",
@@ -400,7 +633,10 @@ describe("store RPC contract", () => {
 						options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
 					},
 				],
-				["run.result_adopted", { runId: "run-1" }],
+				[
+					"run.result_adopted",
+					{ commissionId: "commission-1", artifactId: "artifact-1", runId: "run-1" },
+				],
 				["memory.changed", {}],
 				["provider.changed", {}],
 				["model.changed", {}],
@@ -440,6 +676,134 @@ describe("store RPC contract", () => {
 			dispose();
 		}
 	});
+	it("projects payloads using each event kind's typed contract", async () => {
+		const { client } = createTestClient();
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					conversation: { activeConversationId: "conversation-1", messages: [] },
+				},
+			}),
+		);
+		let subscription = 0;
+		client.events.subscribe = vi.fn(() => {
+			subscription += 1;
+			if (subscription > 1) return new Promise<never>(() => undefined);
+			return Promise.resolve({
+				ok: true as const,
+				data: {
+					events: [
+						{
+							seq: 1,
+							kind: "companion.tool_started" as const,
+							payload: {
+								conversationId: "conversation-1",
+								toolCallId: "tool-1",
+								tool: "search",
+								label: "Search",
+							},
+						},
+						{
+							seq: 2,
+							kind: "companion.tool_finished" as const,
+							payload: {
+								conversationId: "conversation-1",
+								toolCallId: "tool-1",
+								ok: false,
+								message: "failed",
+							},
+						},
+						{
+							seq: 3,
+							kind: "message_update" as const,
+							payload: { conversationId: "conversation-1", text: "draft" },
+						},
+						{
+							seq: 4,
+							kind: "roleplay.choices_presented" as const,
+							payload: { conversationId: "conversation-1", choiceSetId: "choices-1" },
+						},
+						{
+							seq: 5,
+							kind: "character.visual_state_changed" as const,
+							payload: {
+								conversationId: "conversation-1",
+								characterId: "character-1",
+								sceneId: "room",
+								visualState: "thinking",
+							},
+						},
+					],
+				},
+			});
+		});
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.events.lastSeq()).toBe(5));
+			expect(store.toolActivities).toEqual([
+				{ id: "tool-1", tool: "search", label: "Search", status: "failed", message: "failed" },
+			]);
+			expect(store.streamingAssistantText).toBe("draft");
+			expect(store.assistantStreaming).toBe(true);
+			expect(store.activeRoleplayChoiceSetId).toBe("choices-1");
+			expect(store.characterRuntimeByConversation["conversation-1"]).toEqual({
+				sceneId: "room",
+				visualState: "thinking",
+			});
+		} finally {
+			dispose();
+		}
+	});
+
+	it("resyncs instead of applying an event after an omitted malformed row", async () => {
+		const { client } = createTestClient();
+		let snapshotCalls = 0;
+		client.snapshot.get = vi.fn(() => {
+			snapshotCalls += 1;
+			return Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: snapshotCalls === 1 ? 0 : 3,
+				},
+			});
+		});
+		let subscription = 0;
+		client.events.subscribe = vi.fn(() => {
+			subscription += 1;
+			if (subscription > 1) return new Promise<never>(() => undefined);
+			return Promise.resolve({
+				ok: true as const,
+				data: {
+					// The malformed seq=2 row was omitted. Seq=3 must not be
+					// treated as contiguous with seq=1.
+					events: [
+						{
+							seq: 1,
+							kind: "run.needs_user" as const,
+							payload: {
+								runId: "run-1",
+								requestId: "request-1",
+								prompt: "Allow?",
+								options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+							},
+						},
+						{ seq: 3, kind: "run.resumed" as const, payload: { runId: "run-1" } },
+					],
+				},
+			});
+		});
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(snapshotCalls).toBe(2));
+			expect(store.run.pendingPermissions()).toEqual([
+				expect.objectContaining({ runId: "run-1", requestId: "request-1" }),
+			]);
+		} finally {
+			dispose();
+		}
+	});
 
 	it("keeps declared ambient and regular roleplay media independent", async () => {
 		const { client } = createTestClient();
@@ -449,6 +813,7 @@ describe("store RPC contract", () => {
 				data: {
 					eventSeq: 0,
 					character: ROLEPLAY_MEDIA_CHARACTER,
+					conversation: { activeConversationId: "conversation-1" },
 				},
 			}),
 		);
@@ -463,19 +828,43 @@ describe("store RPC contract", () => {
 						{
 							seq: 1,
 							kind: "roleplay.media_presented" as const,
-							payload: { mediaId: "dialog-image" },
+							payload: { conversationId: "conversation-1", mediaId: "dialog-image" },
 						},
 						{
 							seq: 2,
 							kind: "roleplay.media_presented" as const,
-							payload: { mediaId: "ambient-audio" },
+							payload: { conversationId: "conversation-1", mediaId: "ambient-audio" },
 						},
 						{
 							seq: 3,
 							kind: "roleplay.media_presented" as const,
-							payload: { mediaId: "inline-image" },
+							payload: { conversationId: "conversation-1", mediaId: "inline-image" },
 						},
-						{ seq: 4, kind: "roleplay.media_presented" as const, payload: { mediaId: "missing" } },
+						{
+							seq: 4,
+							kind: "roleplay.media_presented" as const,
+							payload: { conversationId: "conversation-1", mediaId: "missing" },
+						},
+						{
+							seq: 5,
+							kind: "roleplay.media_dismissed" as const,
+							payload: { conversationId: "conversation-1", mediaId: "dialog-image" },
+						},
+						{
+							seq: 6,
+							kind: "roleplay.media_dismissed" as const,
+							payload: { conversationId: "conversation-1", mediaId: "ambient-audio" },
+						},
+						{
+							seq: 7,
+							kind: "roleplay.media_presented" as const,
+							payload: { conversationId: "conversation-1", mediaId: "ambient-audio" },
+						},
+						{
+							seq: 8,
+							kind: "roleplay.media_presented" as const,
+							payload: { conversationId: "conversation-1", mediaId: "missing" },
+						},
 					],
 				},
 			});
@@ -483,17 +872,29 @@ describe("store RPC contract", () => {
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => {
-				expect(store.events.lastSeq()).toBe(4);
+				expect(store.events.lastSeq()).toBe(8);
 				expect(store.activeRoleplayMediaId).toBe("inline-image");
 				expect(store.activeAmbientMediaId).toBe("ambient-audio");
 			});
 
-			store.dismissAmbientMedia();
-			expect(store.activeAmbientMediaId).toBeUndefined();
+			const dismissMedia = vi.mocked(client.roleplay.dismissMedia);
+			dismissMedia.mockResolvedValueOnce({
+				ok: false as const,
+				error: { kind: "conflict" as const, reason: "media_not_active" },
+			});
+			await store.dismissRoleplayMedia();
 			expect(store.activeRoleplayMediaId).toBe("inline-image");
+			expect(store.activeAmbientMediaId).toBe("ambient-audio");
 
-			store.dismissRoleplayMedia();
+			dismissMedia.mockResolvedValueOnce({ ok: true as const, data: {} });
+			await store.dismissRoleplayMedia();
 			expect(store.activeRoleplayMediaId).toBeUndefined();
+			expect(store.activeAmbientMediaId).toBe("ambient-audio");
+
+			dismissMedia.mockResolvedValueOnce({ ok: true as const, data: {} });
+			await store.dismissAmbientMedia();
+			expect(store.activeRoleplayMediaId).toBeUndefined();
+			expect(store.activeAmbientMediaId).toBeUndefined();
 		} finally {
 			dispose();
 		}

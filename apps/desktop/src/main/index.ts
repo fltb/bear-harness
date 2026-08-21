@@ -89,16 +89,9 @@ try {
 app.setPath("userData", userData);
 app.setPath("sessionData", join(userData, "Chromium"));
 
-// A second instance would share this userData directory and the same memory
-// bank namespace, racing writes (SQLite busy errors, memory last-write-wins).
-// Keep one window per user data dir: a second launch quits and focuses the
-// existing window via the second-instance event.
-// A second instance would share this userData directory and the same memory
-// bank namespace, racing writes (SQLite busy errors, memory last-write-wins).
-// Keep one window per install: a second launch quits and focuses the existing
-// window via the second-instance event. Only enforced in packaged builds — an
-// unpackaged dev/e2e run needs parallel instances (distinct BEAR_E2E_APP_DATA
-// roots) and macOS treats all unpackaged Electron apps as one identity.
+// Only packaged builds enforce one instance per install. Unpackaged
+// development/source-E2E runs need parallel instances with distinct data
+// roots, while macOS gives all unpackaged Electron apps one identity.
 if (app.isPackaged && !app.requestSingleInstanceLock()) {
 	app.exit(0);
 } else if (app.isPackaged) {
@@ -130,9 +123,12 @@ const diagnostics: Diagnostics = createDiagnostics({
 
 const windowRegistry = new Map<number, WindowRegistration>();
 const windowSpans: Array<{ end(status: "ok" | "error" | "cancelled"): void }> = [];
+const windowHookDisposers = new Map<number, () => void>();
 let shutdownRequested = false;
 let shutdownComplete = false;
 let hostRuntime: HostRuntime | null = null;
+let disposeElectronIpcHandlers: (() => void) | null = null;
+let disposeElectronDiagnostics: (() => void) | null = null;
 
 function requestShutdown(exitCode: number): void {
 	process.exitCode = Math.max(Number(process.exitCode ?? 0), exitCode);
@@ -143,8 +139,18 @@ function requestShutdown(exitCode: number): void {
 
 app.on("before-quit", (event) => {
 	if (shutdownComplete) return;
-	event.preventDefault();
-	if (updateTimer) clearInterval(updateTimer);
+	if (updateTimer) {
+		clearInterval(updateTimer);
+		updateTimer = null;
+	}
+	const disposeIpcHandlers = disposeElectronIpcHandlers;
+	disposeElectronIpcHandlers = null;
+	disposeIpcHandlers?.();
+	const disposeDiagnostics = disposeElectronDiagnostics;
+	disposeElectronDiagnostics = null;
+	disposeDiagnostics?.();
+	for (const dispose of windowHookDisposers.values()) dispose();
+	windowHookDisposers.clear();
 	for (const span of windowSpans.splice(0)) span.end("cancelled");
 	const closeHost = hostRuntime ? hostRuntime.close() : Promise.resolve();
 	void closeHost.finally(() => {
@@ -173,6 +179,7 @@ function characterRoot(): string {
 }
 
 async function initializeHost(): Promise<boolean> {
+	let ipcHandlersDispose: (() => void) | null = null;
 	try {
 		const updater = updateService;
 		const runtime = createHostRuntime({
@@ -183,15 +190,24 @@ async function initializeHost(): Promise<boolean> {
 			protocolViolationMode: app.isPackaged ? "isolate" : "throw",
 			artifactProtocolUrlFactory: (artifactId) =>
 				`${ARTIFACT_SCHEME}://artifact/${encodeURIComponent(artifactId)}`,
-			updateService: updater ? { check: () => updater.check() } : undefined,
+			updateService: updater
+				? {
+						check: () => updater.check(),
+						discard: () => Promise.resolve({ ...updater.discard(), discarded: true }),
+						apply: () => Promise.resolve(updater.apply()),
+					}
+				: undefined,
 		});
-		wireElectronIpcHandlers(runtime.dispatcher, windowRegistry, {
+		ipcHandlersDispose = wireElectronIpcHandlers(runtime.dispatcher, windowRegistry, {
 			artifactProtocolAvailable: () => artifactProtocolRegistered,
 		});
+		disposeElectronIpcHandlers = ipcHandlersDispose;
 		await runtime.start();
 		hostRuntime = runtime;
 		return true;
 	} catch (error) {
+		ipcHandlersDispose?.();
+		if (disposeElectronIpcHandlers === ipcHandlersDispose) disposeElectronIpcHandlers = null;
 		process.stderr.write(`storage unavailable: ${(error as Error)?.message ?? String(error)}\n`);
 		return false;
 	}
@@ -235,14 +251,17 @@ function createMainWindow(): void {
 		},
 	};
 	windowSpans.push(windowSpanHandle);
+	const disposeWindowHooks = registerWindowHooks(window.webContents, diagnostics);
+	windowHookDisposers.set(webContentsId, disposeWindowHooks);
 	window.webContents.once("destroyed", () => {
 		windowRegistry.delete(webContentsId);
+		const dispose = windowHookDisposers.get(webContentsId);
+		windowHookDisposers.delete(webContentsId);
+		dispose?.();
 		windowSpanHandle.end("cancelled");
 		const index = windowSpans.indexOf(windowSpanHandle);
 		if (index >= 0) windowSpans.splice(index, 1);
 	});
-
-	registerWindowHooks(window.webContents, diagnostics);
 	window.webContents.session.setPermissionCheckHandler(() => false);
 	window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) =>
 		callback(false),
@@ -275,7 +294,7 @@ function createMainWindow(): void {
 	else void window.loadURL(DEV_RENDERER_URL);
 }
 
-registerElectronDiagnostics({
+disposeElectronDiagnostics = registerElectronDiagnostics({
 	app: {
 		on: (event, listener) => electronApp.on(event, listener),
 	},
@@ -294,6 +313,7 @@ diagnostics.runInSession(() => {
 				feedUrl: productConfig.updateFeedUrl ?? "",
 				currentVersion: app.getVersion(),
 				stagingDir: join(userData, "updates"),
+				publisherPolicy: productConfig.updatePublisher,
 			});
 			if (!(await initializeHost())) failInit("Failed to initialize companion host runtime");
 			const artifacts = hostRuntime?.artifacts;
@@ -301,7 +321,7 @@ diagnostics.runInSession(() => {
 			registerArtifactProtocol({
 				get: (id) => artifacts.get(id),
 				readBlob: (id) => artifacts.readBlob(id),
-				allowedUrl,
+				windowRegistry,
 			});
 			artifactProtocolRegistered = true;
 			// Idle update checks every 6h; the renderer can also trigger on

@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CharacterDisplay } from "@bear-harness/protocol/schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 
@@ -32,6 +33,7 @@ describe("character package visual projection", () => {
 		if (!character) throw new Error("jizhou package is required for the official build");
 
 		const display = loader.display(character);
+		expect(CharacterDisplay.safeParse(display).success).toBe(true);
 		expect(display.language).toBe("zh-CN");
 		expect(display.character.work_presentation).toEqual({
 			labels: {
@@ -95,6 +97,27 @@ describe("character package visual projection", () => {
 		const quietDesktop = display.scenes.find((scene) => scene.id === "quiet_desktop");
 		expect(quietDesktop).toBeDefined();
 		expect(quietDesktop?.backgroundUrl).toBeUndefined();
+	});
+});
+
+describe("character package display validation", () => {
+	it("projects and parses an imported package display", () => {
+		const installedRoot = mkdtempSync(join(tmpdir(), "bear-character-display-imported-"));
+		temporaryDirectories.push(installedRoot);
+		const packageDir = join(installedRoot, "imported-role");
+		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
+		const manifestPath = join(packageDir, "character.yaml");
+		const manifest = readFileSync(manifestPath, "utf8");
+		writeFileSync(manifestPath, manifest.replace("id: jizhou", "id: imported-role"));
+
+		const loader = new CharacterLoader(characterRoot, installedRoot);
+		const character = loader.load("imported-role");
+		expect(character).not.toBeNull();
+		if (!character) throw new Error("imported test package failed to load");
+		const display = loader.display(character);
+		expect(CharacterDisplay.parse(display)).toEqual(display);
+		expect(display.roleplay.unlockables).toEqual(character.roleplay.unlockables);
+		expect(display.roleplay.choice_sets).toEqual(character.roleplay.choice_sets);
 	});
 });
 
@@ -231,6 +254,8 @@ describe("character package roleplay media presentation", () => {
 		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
 		writeFileSync(join(packageDir, "assets", "ambient-signal.mp3"), "audio");
 		writeFileSync(join(packageDir, "assets", "ambient-signal.vtt"), "WEBVTT\n");
+		writeFileSync(join(packageDir, "assets", "chapter-video.mp4"), "video");
+		writeFileSync(join(packageDir, "assets", "chapter-video.vtt"), "WEBVTT\n");
 		const manifestPath = join(packageDir, "character.yaml");
 		const manifest = readFileSync(manifestPath, "utf8");
 		const withPresentations = manifest
@@ -248,6 +273,12 @@ describe("character package roleplay media presentation", () => {
 					"      asset: assets/ambient-signal.mp3",
 					"      captions: assets/ambient-signal.vtt",
 					"      presentation: ambient",
+					"    - id: chapter_video",
+					"      kind: video",
+					"      label: Chapter video",
+					"      asset: assets/chapter-video.mp4",
+					"      captions: assets/chapter-video.vtt",
+					"      presentation: inline",
 					"  unlockables:",
 				].join("\n"),
 			);
@@ -258,7 +289,9 @@ describe("character package roleplay media presentation", () => {
 		const character = loader.load("jizhou");
 		expect(character).not.toBeNull();
 		if (!character) throw new Error("test package failed to load");
-		const media = loader.display(character).roleplay.media;
+		const display = loader.display(character);
+		expect(CharacterDisplay.parse(display)).toEqual(display);
+		const media = display.roleplay.media;
 		expect(media.find((entry) => entry.id === "first_night")).toEqual(
 			expect.objectContaining({ presentation: "inline" }),
 		);
@@ -267,6 +300,9 @@ describe("character package roleplay media presentation", () => {
 		);
 		expect(media.find((entry) => entry.id === "ambient_signal")).toEqual(
 			expect.objectContaining({ kind: "audio", presentation: "ambient" }),
+		);
+		expect(media.find((entry) => entry.id === "chapter_video")).toEqual(
+			expect.objectContaining({ kind: "video", presentation: "inline" }),
 		);
 	});
 
@@ -300,7 +336,7 @@ describe("character package work presentation", () => {
 		const manifestPath = join(packageDir, "character.yaml");
 		const manifest = readFileSync(manifestPath, "utf8");
 		const withoutWorkPresentation = manifest.replace(
-			/  work_presentation:\n    labels:\n(?:      [^\n]+\n){13}/,
+			/ {2}work_presentation:\n {4}labels:\n(?: {6}[^\n]+\n){13}/,
 			"",
 		);
 		expect(withoutWorkPresentation).not.toBe(manifest);

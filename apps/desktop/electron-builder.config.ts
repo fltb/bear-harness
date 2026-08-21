@@ -14,6 +14,7 @@
  *   environment variables.
  */
 
+import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
@@ -21,6 +22,12 @@ import type { Configuration } from "electron-builder";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..");
+const attributionPath = resolve(here, "dist/brand/BRAND-ATTRIBUTION.txt");
+if (!existsSync(attributionPath)) {
+	throw new Error(
+		"Missing generated brand attribution. Run `node scripts/validate-product-config.mjs` before electron-builder.",
+	);
+}
 // Icon paths in the shared product config are repo-root-relative.
 const icon = productConfig.icon ? resolve(repoRoot, productConfig.icon) : undefined;
 
@@ -44,7 +51,7 @@ const config: Configuration = {
 	extraResources: [
 		{ from: "../../LICENSE", to: "LICENSE" },
 		{ from: "../../BRAND-LICENSE", to: "BRAND-LICENSE" },
-		{ from: "dist/brand/BRAND-ATTRIBUTION.txt", to: "BRAND-ATTRIBUTION.txt" },
+		{ from: attributionPath, to: "BRAND-ATTRIBUTION.txt" },
 		{ from: "../../config", to: "config" },
 	],
 	mac: {

@@ -1,11 +1,18 @@
 /**
- * Generic product config validator.
+ * Product config validator (desktop packaging entry).
  *
  * Usage:
  *   node scripts/validate-product-config.mjs [configPath] [--no-write]
  *
  * - configPath defaults to the shared product-config package source.
- * - Dynamically imports the config (Node 24 executes erasable TypeScript).
+ * - Shape, identity and update-policy validation is delegated to the pure
+ *   runtime validator exported by @bear-harness/product-config, so every
+ *   consumer shares one shape contract. The official brand snapshot is the
+ *   fork-identity reference.
+ * - This script adds the repository/filesystem checks that the pure
+ *   validator deliberately does not perform: the icon must resolve inside
+ *   the repository and exist (PNG 1024x1024 or readable SVG), and the
+ *   default character package must exist under config/characters.
  * - On any failure prints `Invalid product config: <field>: <reason>` per
  *   error and exits non-zero. There is no silent fallback.
  * - Unless --no-write is given, deterministically writes
@@ -13,11 +20,15 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { OFFICIAL_BRAND } from "./official-brand.mjs";
+import {
+	OFFICIAL_BRAND,
+	validateProductConfig as validateShared,
+} from "../../../packages/product-config/src/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(here, "../../..");
 const explicitPath = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
 // Explicit paths resolve against the caller's cwd; the default is the
 // shared product-config package source.
@@ -26,153 +37,71 @@ const configPath = explicitPath
 	: resolve(here, "../../../packages/product-config/src/index.ts");
 const noWrite = process.argv.includes("--no-write");
 
-const KEBAB_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const APP_ID_RE = /^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z0-9-]+)+$/;
-const IDENTITY_FIELDS = [
-	"productName",
-	"appId",
-	"dataDirectoryName",
-	"artifactName",
-	"executableName",
-	"defaultCharacterId",
-	"icon",
-];
+/**
+ * Repository/filesystem checks layered on the pure shared validation.
+ *
+ * @returns {Array<{field: string, reason: string}>}
+ */
+function filesystemErrors(config) {
+	const errors = [];
+	const fail = (field, reason) => errors.push({ field, reason });
 
-function deepEqual(a, b) {
-	return JSON.stringify(a) === JSON.stringify(b);
+	if (config.icon !== null && config.icon !== undefined) {
+		const iconPath = resolve(repoRoot, config.icon);
+		const relativeFromRoot = relative(repoRoot, iconPath);
+		if (
+			isAbsolute(config.icon) ||
+			relativeFromRoot.startsWith("..") ||
+			isAbsolute(relativeFromRoot)
+		) {
+			fail("icon", `must be a repository-relative path, got ${JSON.stringify(config.icon)}`);
+		} else if (!existsSync(iconPath)) {
+			fail("icon", `file not found at ${config.icon}`);
+		} else if (config.icon.toLowerCase().endsWith(".png")) {
+			let bytes;
+			try {
+				bytes = readFileSync(iconPath);
+			} catch {
+				fail("icon", `unreadable PNG at ${config.icon}`);
+				bytes = null;
+			}
+			if (bytes && bytes.length < 24) {
+				fail("icon", "PNG is truncated; must be 1024x1024");
+			} else if (bytes && (bytes.readUInt32BE(16) !== 1024 || bytes.readUInt32BE(20) !== 1024)) {
+				fail("icon", "PNG must be exactly 1024x1024 pixels");
+			}
+		} else if (config.icon.toLowerCase().endsWith(".svg")) {
+			try {
+				readFileSync(iconPath);
+			} catch {
+				fail("icon", `unreadable SVG at ${config.icon}`);
+			}
+		} else {
+			fail("icon", "must reference a .png (1024x1024) or .svg file");
+		}
+	}
+
+	if (typeof config.defaultCharacterId === "string" && config.defaultCharacterId !== "") {
+		const characterManifest = resolve(
+			repoRoot,
+			"config/characters",
+			config.defaultCharacterId,
+			"character.yaml",
+		);
+		if (!existsSync(characterManifest)) {
+			fail(
+				"defaultCharacterId",
+				`character package missing: config/characters/${config.defaultCharacterId}/character.yaml`,
+			);
+		}
+	}
+
+	return errors;
 }
 
 /** @returns {Array<{field: string, reason: string}>} */
 export function validateProductConfig(config) {
-	const errors = [];
-	const fail = (field, reason) => errors.push({ field, reason });
-
-	const requiredStrings = [
-		"productName",
-		"appId",
-		"dataDirectoryName",
-		"artifactName",
-		"executableName",
-	];
-	for (const field of requiredStrings) {
-		const value = config[field];
-		if (typeof value !== "string" || value.trim() === "") {
-			fail(field, "must be a non-empty string");
-		}
-	}
-
-	if (typeof config.appId === "string" && !APP_ID_RE.test(config.appId)) {
-		fail(
-			"appId",
-			`must be reverse-domain (^[a-zA-Z][a-zA-Z0-9]*(\\.[a-zA-Z0-9-]+)+$), got ${JSON.stringify(config.appId)}`,
-		);
-	}
-	for (const field of ["dataDirectoryName", "executableName"]) {
-		const value = config[field];
-		if (typeof value === "string" && !KEBAB_RE.test(value)) {
-			fail(field, `must be ASCII kebab-case, got ${JSON.stringify(value)}`);
-		}
-	}
-
-	if (typeof config.artifactName === "string") {
-		for (const macro of ["\${version}", "\${os}", "\${arch}", "\${ext}"]) {
-			if (!config.artifactName.includes(macro)) {
-				fail("artifactName", `must contain ${macro}`);
-			}
-		}
-	}
-
-	const dci = config.defaultCharacterId;
-	if (typeof dci !== "string" || dci.trim() === "") {
-		fail("defaultCharacterId", "must be a non-empty string");
-	} else if (!KEBAB_RE.test(dci)) {
-		fail("defaultCharacterId", `must be ASCII kebab-case, got ${JSON.stringify(dci)}`);
-	}
-
-	const bl = config.brandLicense;
-	if (!bl || typeof bl !== "object" || Array.isArray(bl)) {
-		fail("brandLicense", "must be an object");
-	} else {
-		if (bl.spdx !== "CC-BY-SA-4.0") {
-			fail("brandLicense.spdx", `must be exactly "CC-BY-SA-4.0", got ${JSON.stringify(bl.spdx)}`);
-		}
-		for (const field of ["workTitle", "creator", "attribution", "sourceUrl"]) {
-			const value = bl[field];
-			if (typeof value !== "string" || value.trim() === "") {
-				fail(`brandLicense.${field}`, "must be a non-empty string");
-			}
-		}
-		if (typeof bl.modified !== "boolean") {
-			fail("brandLicense.modified", "must be a boolean");
-		}
-		if (typeof bl.modificationNotice !== "string") {
-			fail("brandLicense.modificationNotice", "must be a string");
-		}
-	}
-
-	if (config.icon !== null && config.icon !== undefined) {
-		if (typeof config.icon !== "string" || config.icon.trim() === "") {
-			fail("icon", "must be null or a non-empty repo-relative path");
-		} else {
-			// icon paths are repo-root-relative; scripts/ sits at apps/desktop/scripts.
-			const repoRoot = resolve(here, "../../..");
-			const iconPath = resolve(repoRoot, config.icon);
-			if (!existsSync(iconPath)) {
-				fail("icon", `file not found at ${config.icon}`);
-			} else if (config.icon.toLowerCase().endsWith(".png")) {
-				let bytes;
-				try {
-					bytes = readFileSync(iconPath);
-				} catch {
-					fail("icon", `unreadable PNG at ${config.icon}`);
-					bytes = null;
-				}
-				if (bytes && bytes.length < 24) {
-					fail("icon", "PNG is truncated; must be 1024x1024");
-				} else if (bytes && (bytes.readUInt32BE(16) !== 1024 || bytes.readUInt32BE(20) !== 1024)) {
-					fail("icon", "PNG must be exactly 1024x1024 pixels");
-				}
-			} else if (config.icon.toLowerCase().endsWith(".svg")) {
-				try {
-					readFileSync(iconPath);
-				} catch {
-					fail("icon", `unreadable SVG at ${config.icon}`);
-				}
-			} else {
-				fail("icon", "must reference a .png (1024x1024) or .svg file");
-			}
-		}
-	}
-
-	const identityChanged = IDENTITY_FIELDS.some(
-		(field) => !deepEqual(config[field], OFFICIAL_BRAND[field]),
-	);
-	if (identityChanged) {
-		if (config.appId === OFFICIAL_BRAND.appId) {
-			fail("appId", "must differ from the official value when any identity field changes");
-		}
-		if (config.dataDirectoryName === OFFICIAL_BRAND.dataDirectoryName) {
-			fail(
-				"dataDirectoryName",
-				"must differ from the official value when any identity field changes",
-			);
-		}
-		if (bl && typeof bl === "object") {
-			if (bl.modified !== true) {
-				fail("brandLicense.modified", "must be true when any identity field changes");
-			}
-			if (typeof bl.modificationNotice !== "string" || bl.modificationNotice.trim() === "") {
-				fail("brandLicense.modificationNotice", "must be non-empty when modified is true");
-			}
-		}
-	} else if (bl && typeof bl === "object" && bl.modified === true) {
-		fail(
-			"brandLicense.modified",
-			"must be false when all identity fields match the official values",
-		);
-	}
-
-	return errors;
+	return [...validateShared(config, OFFICIAL_BRAND), ...filesystemErrors(config)];
 }
 
 function writeAttribution(config) {

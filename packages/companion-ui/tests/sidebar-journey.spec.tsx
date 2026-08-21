@@ -77,4 +77,51 @@ describe("sidebar conversation journey", () => {
 		expect(onOpenBackstage).toHaveBeenNthCalledWith(1, "roles");
 		expect(onOpenBackstage).toHaveBeenNthCalledWith(2, "settings");
 	});
+
+	it("keeps Cmd/Ctrl+K accessible in the application landmark without hijacking editing contexts", async () => {
+		const user = userEvent.setup();
+		const store = {
+			activeConversationId: null,
+			conversations: [],
+		} as unknown as CompanionStore;
+		render(() => (
+			<DesktopProvider store={store}>
+				<div role="application" aria-label="Companion">
+					<Sidebar character={undefined} onOpenBackstage={() => undefined} />
+					<button type="button" aria-label="Application shortcut target">
+						Application
+					</button>
+					<form aria-label="editing form">
+						<input aria-label="Input" />
+						<textarea aria-label="Textarea" />
+						<select aria-label="Select">
+							<option>One</option>
+						</select>
+					</form>
+					<div role="dialog" aria-label="Dialog">
+						<button type="button">Dialog action</button>
+					</div>
+				</div>
+			</DesktopProvider>
+		));
+
+		const search = screen.getByRole("searchbox", { name: zhCN.sidebar.search });
+		const protectedControls = [
+			screen.getByRole("textbox", { name: "Input" }),
+			screen.getByRole("textbox", { name: "Textarea" }),
+			screen.getByRole("combobox", { name: "Select" }),
+			screen.getByRole("button", { name: "Dialog action" }),
+		];
+		for (const control of protectedControls) {
+			await user.click(control);
+			await user.keyboard("{Control>}k{/Control}");
+			expect(control).toHaveFocus();
+			expect(search).not.toHaveFocus();
+		}
+
+		expect(screen.getByRole("application", { name: "Companion" })).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Application shortcut target" }));
+		await user.keyboard("{Control>}k{/Control}");
+		expect(search).toHaveFocus();
+	});
 });

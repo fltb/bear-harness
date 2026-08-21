@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { test } from "node:test";
-import { desktopDataDirectory, webDevDataDirectory } from "./data-directory.ts";
+import {
+	desktopDataDirectory,
+	webDevDataDirectory,
+	webDevDataScopeDirectory,
+} from "./data-directory.ts";
 
 test("normal web development uses the same platform directory as Electron userData", () => {
 	assert.equal(
@@ -63,4 +67,15 @@ test("an explicitly isolated web-dev directory is scoped to the launcher process
 	assert.equal(first, resolve("/test-results/e2e-data/.process-101"));
 	assert.equal(second, resolve("/test-results/e2e-data/.process-202"));
 	assert.notEqual(first, second);
+});
+
+test("scoped data roots require an explicit safe launcher scope", () => {
+	assert.equal(
+		webDevDataScopeDirectory("/test-results/e2e-data", "launcher-101"),
+		resolve("/test-results/e2e-data/.process-launcher-101"),
+	);
+	assert.equal(webDevDataScopeDirectory("/test-results/e2e-data", undefined), undefined);
+	assert.equal(webDevDataScopeDirectory("/test-results/e2e-data", ""), undefined);
+	assert.equal(webDevDataScopeDirectory("/test-results/e2e-data", "../escape"), undefined);
+	assert.equal(webDevDataScopeDirectory(undefined, "101"), undefined);
 });

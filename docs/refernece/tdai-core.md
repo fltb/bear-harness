@@ -159,13 +159,14 @@ Always pass the result of `parseConfig(raw)` when constructing the facade; it su
 | `persona` | trigger every 50 new memories; max 15 scenes; 3 persona backups; 10 scene backups; optional model. |
 | `pipeline` | L1 every 5 conversations; warm-up enabled; L1 idle 600s; L2 delay 10s; L2 minimum 900s; max 3600s; inactive window 24h. |
 | `recall` | enabled; max 5 results; threshold 0.3; `hybrid`; timeout 5000ms; character budgets disabled (`0`). |
-| `embedding` | provider `none`, disabled effectively, dimensions `0`; remote providers require endpoint/key/model/dimensions and invalid configs disable embeddings without throwing. |
-| `storeBackend` | `sqlite`; `tcvdb` additionally requires URL, API key, database, and matching remote setup. |
+| `embedding` | provider `none`, disabled effectively, dimensions `0`; `local` preserves explicit offline mode (768 dimensions by default) and uses optional `node-llama-cpp`; remote providers require endpoint/key/model/dimensions and invalid configs disable embeddings without throwing. |
+| `storeBackend` | `sqlite`; `tcvdb` additionally requires URL, API key, database, embedding model, and matching `embeddingDimensions` before collection/index creation. |
 | `bm25` | enabled, Chinese (`zh`). |
+| `report` | disabled by default for privacy; set `report.enabled=true` explicitly to opt in. |
 | `llm` | standalone override disabled; OpenAI-compatible defaults are OpenAI base URL, `gpt-4o`, 4096 output tokens, 120s timeout. |
 | `offload` | disabled, local mode, 0 retention, 50 MB log cap; it is an additional context-compression configuration, not a replacement for L0–L3 memory. |
 
-For a remote embedding provider, set `embedding.provider`, `baseUrl`, `apiKey`, `model`, and `dimensions`; set `sendDimensions=false` for servers that reject the OpenAI Matryoshka field. For VectorDB, configure `storeBackend="tcvdb"` and `tcvdb` credentials/database; its collection embedding model is `tcvdb.embeddingModel`. Treat API keys and backend tokens as secrets and do not place them in logs or committed config.
+For a remote embedding provider, set `embedding.provider`, `baseUrl`, `apiKey`, `model`, and `dimensions`; set `sendDimensions=false` for servers that reject the OpenAI Matryoshka field. For local embeddings, set `embedding.provider="local"` and optionally `modelPath`/`modelCacheDir`; the optional `node-llama-cpp` peer must be installed, otherwise the service reports an actionable error and recall falls back to keyword search. For VectorDB, configure `storeBackend="tcvdb"` and credentials/database, `embeddingModel`, and its output `embeddingDimensions`. Treat API keys and backend tokens as secrets and do not place them in logs or committed config.
 
 ## Standalone/local-model operation
 
@@ -173,7 +174,7 @@ When `llm.enabled=true` for an OpenClaw host, `TdaiCore` creates a dedicated [`S
 
 The standalone runner uses the AI SDK and OpenAI-compatible chat completions. Tool-enabled runs expose `read_file`, `write_to_file`, and `replace_in_file` and cap tool-loop steps at 20. Paths are intended to be relative to `workspaceDir`, which must be the memory data directory for L2/L3 file mutations. A host implementing `LLMRunner` must preserve the timeout/error contract and must not expose tools for text-only extraction/dedup.
 
-Local embeddings are a separate optional concern from standalone LLM calls. `node-llama-cpp` is an optional peer dependency, dynamically imported, and should be installed/configured only for a deliberate offline embedding deployment. Start warmup at an application lifetime where a model download is acceptable; `createEmbeddingService` intentionally does not warm up automatically. On shutdown, await `EmbeddingService.close()` through `TdaiCore.destroy()`.
+Local embeddings are a separate optional concern from standalone LLM calls. `node-llama-cpp` is an optional peer dependency, dynamically imported only for explicit `embedding.provider="local"` configuration. The pipeline factory starts model warmup in the background; direct `createEmbeddingService` consumers should call `startWarmup()` at an application lifetime where a model download is acceptable. When the peer is unavailable, local mode remains explicit and embedding callers degrade to keyword search. On shutdown, await `EmbeddingService.close()` through `TdaiCore.destroy()`.
 
 ## Persistence and integration expectations
 
@@ -219,9 +220,6 @@ For an integration smoke test, construct a fake `HostAdapter` and `LLMRunnerFact
 
 ## Known issues / findings
 
-- **Config flags are not enforced by the facade.** `TdaiCore.handleBeforeRecall()` calls `performAutoRecall()` without checking `cfg.recall.enabled`, and `handleTurnCommitted()` calls `performAutoCapture()` without checking `cfg.capture.enabled` ([`tdai-core.ts`](../../packages/tdai-core/src/core/tdai-core.ts), [`auto-recall.ts`](../../packages/tdai-core/src/core/hooks/auto-recall.ts), [`auto-capture.ts`](../../packages/tdai-core/src/core/hooks/auto-capture.ts)). Hosts that invoke these methods unconditionally must gate disabled features themselves; changing config alone does not stop those paths.
-- **Configuration comments and resolved defaults disagree.** `PipelineConfig` comments in [`pipeline-manager.ts`](../../packages/tdai-core/src/utils/pipeline-manager.ts) describe a 60-second L1 idle timeout and 90-second L2 delay, while [`parseConfig`](../../packages/tdai-core/src/config.ts) resolves 600 seconds and 10 seconds. Treat parser output as the current behavior and update comments/upstream sync deliberately before changing timing.
-- **Report default is inconsistent.** `ReportConfig` documents reporting as enabled by default, but `parseConfig` resolves `report.enabled` to `false` when omitted ([`config.ts`](../../packages/tdai-core/src/config.ts)). Integrators should not infer reporting behavior from the interface comment.
 - **Local embedding is internally present but externally disabled by the parser.** `EmbeddingConfig` and `createEmbeddingService` support `provider="local"`, while `parseConfig` deliberately rewrites a user `provider="local"` to disabled `provider="none"` and records `configError` ([`config.ts`](../../packages/tdai-core/src/config.ts), [`embedding.ts`](../../packages/tdai-core/src/core/store/embedding.ts)). This is an integration-policy inconsistency; changing it affects optional peer installation, model downloads, and vector dimensions.
 - **Standalone path containment is not complete.** `resolveSandboxedPath` checks `resolved.startsWith(path.resolve(workspaceDir))` but does not add a path separator and does not resolve symlinks ([`llm-runner.ts`](../../packages/tdai-core/src/adapters/standalone/llm-runner.ts)). A sibling path with the workspace as a string prefix, or a symlink inside the workspace pointing out, can bypass the intended boundary. Treat tool-enabled standalone runs as trusted until this guard is hardened.
 - **Store initialization cache keys are raw directory strings.** `initStores` caches by the exact `pluginDataDir` string ([`pipeline-factory.ts`](../../packages/tdai-core/src/utils/pipeline-factory.ts)). Equivalent relative/absolute or symlinked paths can create multiple stores over the same physical data, while two facades using the same string share one store. Normalize data directories at the host boundary and close/reset deliberately.

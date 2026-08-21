@@ -17,9 +17,9 @@
 		"test:e2e": "npm run build && playwright test",
 		"test:e2e:packaged": "node scripts/resolve-packaged-binary.mjs",
 		"test:diagnostics:crash": "node scripts/crash-smoke.mjs",
-		"package:mac": "npm run build && electron-builder --config electron-builder.config.ts --mac dmg zip --universal",
-		"package:win": "npm run build && electron-builder --config electron-builder.config.ts --win nsis zip --x64",
-		"package:linux": "npm run build && electron-builder --config electron-builder.config.ts --linux AppImage deb --x64"
+		"package:mac": "node scripts/validate-product-config.mjs && npm run build && electron-builder --config electron-builder.config.ts --mac dmg zip --universal",
+		"package:win": "node scripts/validate-product-config.mjs && npm run build && electron-builder --config electron-builder.config.ts --win nsis zip --x64",
+		"package:linux": "node scripts/validate-product-config.mjs && npm run build && electron-builder --config electron-builder.config.ts --linux AppImage deb --x64"
 	},
 	"dependencies": {
 		"@bear-harness/companion-client": "file:../../packages/companion-client",

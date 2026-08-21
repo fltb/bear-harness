@@ -51,7 +51,29 @@ function MessageItem(props: {
 	const [reason, setReason] = createSignal("");
 	const [customReason, setCustomReason] = createSignal("");
 	const [scope, setScope] = createSignal<CorrectScope>("once");
-	const [captureStatus, setCaptureStatus] = createSignal<"idle" | "success" | "error">("idle");
+	const [captureStatus, setCaptureStatus] = createSignal<"idle" | "success">("idle");
+	const [actionBusy, setActionBusy] = createSignal(false);
+	const [actionError, setActionError] = createSignal<string | null>(null);
+	const runAction = async (action: () => Promise<unknown>): Promise<boolean> => {
+		setActionBusy(true);
+		setActionError(null);
+		setCaptureStatus("idle");
+		const before = store.errorMetadata;
+		try {
+			await action();
+			const retained = store.errorMetadata;
+			if (retained !== null && retained !== before) {
+				setActionError(retained.message);
+				return false;
+			}
+			return true;
+		} catch (cause) {
+			setActionError(cause instanceof Error ? cause.message : String(cause));
+			return false;
+		} finally {
+			setActionBusy(false);
+		}
+	};
 
 	const isUser = () => props.message.role === "user";
 	const version = () => adoptedVersion(props.message);
@@ -65,38 +87,39 @@ function MessageItem(props: {
 
 	const switchTo = (index: number) => {
 		const target = props.message.versions[index];
-		if (target) void store.switchVersion(props.message.id, target.id);
+		if (target) void runAction(() => store.switchVersion(props.message.id, target.id));
 	};
 
 	const startEdit = () => {
+		setActionError(null);
+		setCaptureStatus("idle");
 		setEditText(content());
 		setActionsOpen(false);
 		setEditing(true);
 	};
 
-	const saveEdit = () => {
+	const saveEdit = async (): Promise<void> => {
 		const text = editText().trim();
-		if (!text) return;
-		void store.editMessage(props.message.id, text, isUser());
-		setEditing(false);
+		if (!text || actionBusy()) return;
+		const ok = await runAction(() => store.editMessage(props.message.id, text, isUser()));
+		if (ok) setEditing(false);
 	};
 
 	const submitCorrect = () => {
 		const text = reason() || customReason().trim();
-		if (!text) return;
-		void store.correctMessage(text, scope());
-		setReason("");
-		setCustomReason("");
-		setCorrecting(false);
+		if (!text || actionBusy()) return;
+		void runAction(() => store.correctMessage(text, scope())).then((ok) => {
+			if (!ok) return;
+			setReason("");
+			setCustomReason("");
+			setCorrecting(false);
+		});
 	};
+
 	const captureMoment = async () => {
-		setCaptureStatus("idle");
-		try {
-			await store.memory.capture(props.message.id);
-			setCaptureStatus("success");
-		} catch {
-			setCaptureStatus("error");
-		}
+		if (actionBusy()) return;
+		const ok = await runAction(() => store.memory.capture(props.message.id));
+		if (ok) setCaptureStatus("success");
 	};
 
 	return (
@@ -105,6 +128,14 @@ function MessageItem(props: {
 			data-message-id={props.message.id}
 			aria-label={meta()}
 		>
+			<Show when={actionError()}>
+				{(error) => (
+					<span class="status-line error" role="alert">
+						{t("messages.operationFailedPrefix")}
+						{error()}
+					</span>
+				)}
+			</Show>
 			<Show when={editing()}>
 				<div class="msg-meta">{meta()}</div>
 				<Show when={isUser()}>
@@ -120,7 +151,7 @@ function MessageItem(props: {
 					/>
 				</TextField>
 				<div class="msg-tools">
-					<Button type="button" class="primary-tool" onClick={saveEdit}>
+					<Button type="button" class="primary-tool" disabled={actionBusy()} onClick={saveEdit}>
 						{t("messages.save")}
 					</Button>
 					<Button data-control="command" type="button" onClick={() => setEditing(false)}>
@@ -167,7 +198,7 @@ function MessageItem(props: {
 							type="button"
 							aria-label={t("messages.previousVersion")}
 							title={t("messages.previousVersion")}
-							disabled={versionIndex() <= 0}
+							disabled={actionBusy() || versionIndex() <= 0}
 							onClick={() => switchTo(versionIndex() - 1)}
 						>
 							<Icon icon={faChevronLeft} />
@@ -180,7 +211,7 @@ function MessageItem(props: {
 							type="button"
 							aria-label={t("messages.nextVersion")}
 							title={t("messages.nextVersion")}
-							disabled={versionIndex() >= props.message.versions.length - 1}
+							disabled={actionBusy() || versionIndex() >= props.message.versions.length - 1}
 							onClick={() => switchTo(versionIndex() + 1)}
 						>
 							<Icon icon={faChevronRight} />
@@ -248,7 +279,7 @@ function MessageItem(props: {
 							<Button
 								type="button"
 								class="primary-tool"
-								disabled={!reason() && customReason().trim().length === 0}
+								disabled={actionBusy() || (!reason() && customReason().trim().length === 0)}
 								onClick={submitCorrect}
 							>
 								{t("messages.submitCorrection")}
@@ -268,7 +299,12 @@ function MessageItem(props: {
 						aria-label={t("messages.operations")}
 					>
 						<Show when={props.message.role === "assistant"}>
-							<Button data-control="command" type="button" onClick={() => void captureMoment()}>
+							<Button
+								data-control="command"
+								type="button"
+								disabled={actionBusy()}
+								onClick={() => void captureMoment()}
+							>
 								{t("messages.rememberMoment")}
 							</Button>
 							<Show when={captureStatus() === "success"}>
@@ -280,21 +316,22 @@ function MessageItem(props: {
 									{t("messages.rememberMoment")}
 								</span>
 							</Show>
-							<Show when={captureStatus() === "error"}>
-								<span class="status-line error" role="alert">
-									{t("messages.rememberFailed")}
-								</span>
-							</Show>
 						</Show>
 						<Show when={!isUser()}>
 							<Button
 								data-control="command"
 								type="button"
-								onClick={() => void store.regenerateMessage(props.message.id)}
+								disabled={actionBusy()}
+								onClick={() => void runAction(() => store.regenerateMessage(props.message.id))}
 							>
 								{t("messages.regenerate")}
 							</Button>
-							<Button data-control="command" type="button" onClick={startEdit}>
+							<Button
+								data-control="command"
+								type="button"
+								disabled={actionBusy()}
+								onClick={startEdit}
+							>
 								{t("messages.edit")}
 							</Button>
 							<Show when={props.correction}>
@@ -303,6 +340,7 @@ function MessageItem(props: {
 										data-control="command"
 										type="button"
 										onClick={() => {
+											setActionError(null);
 											setReason("");
 											setCustomReason("");
 											setScope("once");
@@ -317,7 +355,8 @@ function MessageItem(props: {
 								<Button
 									data-control="command"
 									type="button"
-									onClick={() => void store.continueConversation()}
+									disabled={actionBusy()}
+									onClick={() => void runAction(() => store.continueConversation())}
 								>
 									{t("messages.continue")}
 								</Button>
@@ -325,7 +364,8 @@ function MessageItem(props: {
 							<Button
 								data-control="command"
 								type="button"
-								onClick={() => void store.branchMessage(props.message.id)}
+								disabled={actionBusy()}
+								onClick={() => void runAction(() => store.branchMessage(props.message.id))}
 							>
 								{t("messages.branch")}
 							</Button>
@@ -662,7 +702,7 @@ function RoleplayConversationMedia(props: {
 				src={props.media.url}
 				aria-label={props.media.label}
 			>
-				<track kind="captions" src={props.media.captionsUrl ?? ""} srclang="und" default />
+				<track kind="captions" src={props.media.captionsUrl} srclang="und" default />
 			</audio>
 		);
 	if (props.media.kind === "video")
@@ -675,7 +715,7 @@ function RoleplayConversationMedia(props: {
 				src={props.media.url}
 				aria-label={props.media.label}
 			>
-				<track kind="captions" src={props.media.captionsUrl ?? ""} srclang="und" default />
+				<track kind="captions" src={props.media.captionsUrl} srclang="und" default />
 			</video>
 		);
 	const source =

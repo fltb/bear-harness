@@ -2,11 +2,11 @@
  * Wire model types, guards and the client call helper.
  *
  * The injected `CompanionClient` (from `@bear-harness/companion-client`)
- * exposes one async function per IPC channel; every call resolves to the
- * raw `{ ok: true, data } | { ok: false, error: { kind, reason } }`
- * envelope. Envelope unwrapping lives in `../lib/ipc.ts` (`unwrap`, owned
- * by the component layer); `invoke` wraps it so store code gets
- * `Promise<T>` plus client-unavailable handling.
+ * exposes one async function per IPC channel. A reachable call resolves to
+ * the raw `{ ok: true, data } | { ok: false, error: { kind, reason } }`
+ * envelope; transport failures (including timeout/cancellation) reject the
+ * promise instead. Envelope unwrapping lives in `../lib/ipc.ts` (`unwrap`,
+ * owned by the component layer), and `invoke` exposes `Promise<T>` to stores.
  *
  * The model types mirror the wire contract of the host IPC schemas. They
  * are mirrored (not imported) so the package never pulls schema validation into the
@@ -25,9 +25,10 @@ import { unwrap } from "../lib/ipc.js";
 // ---------------------------------------------------------------------------
 
 /**
- * Call a client method and unwrap the IPC envelope. Rejects with a plain
- * user-facing Error when the client reports a failure,
- * or when the call itself throws (e.g. the client is missing).
+ * Call a required client method and unwrap its RPC envelope. An RPC failure
+ * resolves as an envelope and is converted to a user-facing rejection;
+ * transport failures reject directly and are preserved. There is no
+ * missing-client or degraded-client mode.
  */
 export async function invoke<T>(
 	_client: CompanionClient,

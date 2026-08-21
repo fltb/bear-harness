@@ -1,10 +1,11 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, type Locator, type Page } from "playwright/test";
+import { parseWebDevBootstrap, type WebDevBootstrap } from "../src/http-client";
 
-export async function getBootstrap(page: Page): Promise<{ token: string }> {
+export async function getBootstrap(page: Page): Promise<WebDevBootstrap> {
 	const response = await page.request.get("/bootstrap");
 	await expect(response).toBeOK();
-	return (await response.json()) as { token: string };
+	return parseWebDevBootstrap(await response.json());
 }
 
 export async function selectKobalteOption(
@@ -151,4 +152,8 @@ export async function sendMessage(page: Page, text: string): Promise<void> {
 	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
 	await composer.fill(text);
 	await page.getByRole("button", { name: zhCN.composer.sendLabel }).click();
+}
+
+export default async function globalTeardown(): Promise<void> {
+	// Scoped-data cleanup is owned by the dev supervisor after Playwright stops it.
 }

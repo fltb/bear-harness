@@ -3,11 +3,10 @@
  * injected platform vault.
  *
  * The vault abstracts the OS-backed encryption layer (Electron's safeStorage
- * in the desktop app). On macOS/Windows the vault encrypts the BLOB before
- * writing to the `provider_accounts` table. If the OS keychain is
- * unavailable, credentials remain in memory for this session; they are never
- * persisted in plaintext. Linux may explicitly use a weak-storage fallback
- * provided by the vault.
+ * in the desktop app). Credentials are persisted only when the vault reports
+ * an available encrypted backend. If the backend is unavailable or is
+ * Electron's `basic_text` backend, credentials remain in memory for this
+ * session and no credential blob is written.
  *
  * OAuth refresh tokens are managed per-provider via `modify()`; secrets
  * never enter the renderer, run manifest, evidence, or diagnostics.
@@ -21,11 +20,12 @@ import { providerAccounts } from "../storage/schema.js";
  * Platform credential encryption boundary. The desktop app injects an
  * Electron `safeStorage`-backed implementation; tests and other hosts may
  * provide an in-memory vault. `encryptString`/`decryptString` must round-trip
- * when `isEncryptionAvailable()` is true.
+ * for a vault that reports an encrypted `securityLevel`; a `session` level
+ * explicitly forbids persistence even if the backend reports availability.
  */
 export interface CredentialVault {
-	/** OS keychain on desktop, machine-local encrypted file for WebDev. */
-	readonly securityLevel?: "os" | "machine";
+	/** OS keychain, machine-local encrypted file, or session-only storage. */
+	readonly securityLevel?: "os" | "machine" | "session";
 	isEncryptionAvailable(): boolean;
 	encryptString(plaintext: string): Buffer;
 	decryptString(blob: Buffer): string;
@@ -49,10 +49,21 @@ export interface ProviderCredential {
 	updatedAt: string;
 }
 
+type CredentialPayload = {
+	apiKey?: string;
+	oauthToken?: string;
+	refreshToken?: string;
+};
+
+type SessionCredential = {
+	credential: CredentialPayload;
+	updatedAt: string;
+};
+
 export class CredentialStore {
 	private db: AppDatabase;
 	private vault: CredentialVault;
-	private sessionKeys = new Map<string, string>();
+	private sessionCredentials = new Map<string, SessionCredential>();
 	private encryptionAvailable: boolean;
 
 	constructor(db: AppDatabase, vault: CredentialVault) {
@@ -64,48 +75,37 @@ export class CredentialStore {
 			this.encryptionAvailable = false;
 		}
 	}
+
 	/** Store a credential for a provider. */
 	async set(
 		providerId: string,
-		credential: { apiKey?: string; oauthToken?: string; refreshToken?: string },
+		credential: CredentialPayload,
 		options?: { sessionOnly?: boolean },
 	): Promise<CredentialStatus> {
 		const id = providerId;
 		const now = new Date().toISOString();
+		const useSessionOnly = options?.sessionOnly === true || !this.canPersistCredentials();
 
-		const useSessionOnly =
-			options?.sessionOnly === true || (!this.encryptionAvailable && process.platform !== "linux");
+		this.sessionCredentials.delete(providerId);
 		if (useSessionOnly) {
-			// No OS keychain means no persistent macOS/Windows fallback. Keep the
-			// secret only for the current run and record no plaintext blob.
-			if (credential.apiKey) this.sessionKeys.set(providerId, credential.apiKey);
-			const status: CredentialStatus = "session_only";
-			this.upsert(id, providerId, null, status, now);
-			return status;
+			this.sessionCredentials.set(providerId, { credential: { ...credential }, updatedAt: now });
+			this.upsert(id, providerId, null, "session_only", now);
+			return "session_only";
 		}
 
 		const plaintext = JSON.stringify(credential);
 		let blob: Buffer;
 		let status: CredentialStatus;
-		if (this.encryptionAvailable) {
-			try {
-				blob = this.vault.encryptString(plaintext);
-				status = this.vault.securityLevel === "machine" ? "weak_storage" : "stored";
-			} catch {
-				// isEncryptionAvailable() can succeed while the keychain daemon is
-				// unavailable. Downgrade this process to session-only without
-				// repeatedly invoking the broken keychain.
-				this.encryptionAvailable = false;
-				if (credential.apiKey) this.sessionKeys.set(providerId, credential.apiKey);
-				status = "session_only";
-				this.upsert(id, providerId, null, status, now);
-				return status;
-			}
-		} else {
-			// Electron documents weak storage only for Linux. Keep that explicit
-			// instead of silently accepting a plaintext macOS/Windows fallback.
-			blob = Buffer.from(plaintext, "utf8");
-			status = "weak_storage";
+		try {
+			blob = this.vault.encryptString(plaintext);
+			status = this.vault.securityLevel === "machine" ? "weak_storage" : "stored";
+		} catch {
+			// Availability can be reported before the OS keychain daemon is
+			// usable. Downgrade this process to session-only and do not retry it.
+			this.encryptionAvailable = false;
+			this.sessionCredentials.set(providerId, { credential: { ...credential }, updatedAt: now });
+			this.upsert(id, providerId, null, "session_only", now);
+			return "session_only";
 		}
 
 		this.upsert(id, providerId, blob, status, now);
@@ -114,14 +114,13 @@ export class CredentialStore {
 
 	/** Retrieve a credential for a provider. */
 	async get(providerId: string): Promise<ProviderCredential | null> {
-		// Check session cache first
-		const sessionKey = this.sessionKeys.get(providerId);
-		if (sessionKey) {
+		const session = this.sessionCredentials.get(providerId);
+		if (session) {
 			return {
 				providerId,
-				apiKey: sessionKey,
+				...session.credential,
 				status: "session_only",
-				updatedAt: new Date().toISOString(),
+				updatedAt: session.updatedAt,
 			};
 		}
 
@@ -136,52 +135,70 @@ export class CredentialStore {
 			.get();
 
 		if (!row) return null;
-
-		let credential: { apiKey?: string; oauthToken?: string; refreshToken?: string } = {};
-
-		if (row.credentialBlob) {
-			try {
-				const blob = Buffer.from(row.credentialBlob);
-				const plaintext =
-					(row.credentialStatus === "stored" || row.credentialStatus === "weak_storage") &&
-					this.encryptionAvailable
-						? this.vault.decryptString(blob)
-						: blob.toString("utf8");
-				credential = JSON.parse(plaintext);
-			} catch {
-				return {
-					providerId,
-					status: "invalid",
-					updatedAt: row.updatedAt,
-				};
-			}
+		if (!row.credentialBlob) {
+			return {
+				providerId,
+				status: row.credentialStatus as CredentialStatus,
+				updatedAt: row.updatedAt,
+			};
 		}
 
-		return {
-			providerId,
-			apiKey: credential.apiKey,
-			oauthToken: credential.oauthToken,
-			refreshToken: credential.refreshToken,
-			status: row.credentialStatus as CredentialStatus,
-			updatedAt: row.updatedAt,
-		};
+		// Never interpret a persisted blob as UTF-8. A credential blob is
+		// readable only through an available encrypted vault.
+		if (
+			(row.credentialStatus !== "stored" && row.credentialStatus !== "weak_storage") ||
+			!this.canPersistCredentials()
+		) {
+			this.clearBlob(providerId, "unavailable");
+			return { providerId, status: "unavailable", updatedAt: row.updatedAt };
+		}
+
+		try {
+			const credential = JSON.parse(
+				this.vault.decryptString(Buffer.from(row.credentialBlob)),
+			) as CredentialPayload;
+			return {
+				providerId,
+				apiKey: credential.apiKey,
+				oauthToken: credential.oauthToken,
+				refreshToken: credential.refreshToken,
+				status: row.credentialStatus as CredentialStatus,
+				updatedAt: row.updatedAt,
+			};
+		} catch {
+			this.clearBlob(providerId, "invalid");
+			return {
+				providerId,
+				status: "invalid",
+				updatedAt: row.updatedAt,
+			};
+		}
 	}
 
 	/** Remove a stored credential. */
 	async remove(providerId: string): Promise<void> {
-		this.sessionKeys.delete(providerId);
+		this.sessionCredentials.delete(providerId);
 		this.db.delete(providerAccounts).where(eq(providerAccounts.id, providerId)).run();
 	}
 
 	/** Get the credential status for a provider (without revealing the secret). */
 	async getStatus(providerId: string): Promise<CredentialStatus> {
-		if (this.sessionKeys.has(providerId)) return "session_only";
+		if (this.sessionCredentials.has(providerId)) return "session_only";
 		const row = this.db
 			.select({ status: providerAccounts.credentialStatus })
 			.from(providerAccounts)
 			.where(eq(providerAccounts.id, providerId))
 			.get();
-		return (row?.status as CredentialStatus) ?? "missing";
+		const status = (row?.status as CredentialStatus) ?? "missing";
+		if (
+			row &&
+			(status === "stored" || status === "weak_storage") &&
+			!this.canPersistCredentials()
+		) {
+			this.clearBlob(providerId, "unavailable");
+			return "unavailable";
+		}
+		return status;
 	}
 
 	/** List all provider credentials (without secrets). */
@@ -193,18 +210,44 @@ export class CredentialStore {
 			.all();
 		const result: Array<{ providerId: string; status: CredentialStatus }> = [];
 		for (const row of rows) {
-			result.push({
-				providerId: row.id,
-				status: row.status as CredentialStatus,
-			});
+			const status = row.status as CredentialStatus;
+			if ((status === "stored" || status === "weak_storage") && !this.canPersistCredentials()) {
+				this.clearBlob(row.id, "unavailable");
+				result.push({ providerId: row.id, status: "unavailable" });
+				continue;
+			}
+			result.push({ providerId: row.id, status });
 		}
-		// Add session keys not in DB
-		for (const [providerId] of this.sessionKeys) {
+		for (const [providerId] of this.sessionCredentials) {
 			if (!result.some((r) => r.providerId === providerId)) {
 				result.push({ providerId, status: "session_only" });
 			}
 		}
 		return result;
+	}
+
+	private clearBlob(providerId: string, status: "unavailable" | "invalid"): void {
+		this.db
+			.update(providerAccounts)
+			.set({
+				credentialBlob: null,
+				credentialStatus: status,
+				updatedAt: new Date().toISOString(),
+			})
+			.where(eq(providerAccounts.id, providerId))
+			.run();
+	}
+
+	private canPersistCredentials(): boolean {
+		if (!this.encryptionAvailable) return false;
+		try {
+			// `session` is used by Electron's basic_text backend. Undefined is
+			// retained for compatible injected vaults whose encryption contract
+			// predates securityLevel.
+			return this.vault.securityLevel !== "session";
+		} catch {
+			return false;
+		}
 	}
 
 	private upsert(

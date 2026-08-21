@@ -14,7 +14,7 @@
 		}
 	},
 	"scripts": {
-		"build": "tsc -p tsconfig.json && node scripts/generate-zh-tw.mjs && tsc -p tsconfig.json",
+		"build": "node scripts/generate-zh-tw.mjs && tsc -p tsconfig.json",
 		"generate:locales": "node scripts/generate-zh-tw.mjs",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
 		"test:unit": "vitest run"

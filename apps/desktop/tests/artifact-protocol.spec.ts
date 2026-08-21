@@ -29,7 +29,12 @@ interface FakeArtifact {
 	blob: Buffer | null;
 }
 
-function fakeLookup(artifacts: Record<string, FakeArtifact>) {
+interface FakeLookup {
+	get(id: string): { mime: string; logicalName: string; bytes: number } | null;
+	readBlob(id: string): Buffer | null;
+}
+
+function fakeLookup(artifacts: Record<string, FakeArtifact>): FakeLookup {
 	return {
 		get: (id: string) => {
 			const artifact = artifacts[id];
@@ -43,6 +48,12 @@ function fakeLookup(artifacts: Record<string, FakeArtifact>) {
 
 function makeRequest(url: string, referrer: string): Request {
 	return new Request(url, { referrer });
+}
+function protocolOptions(lookup: FakeLookup, allowedUrl: string) {
+	return {
+		...lookup,
+		windowRegistry: new Map([[1, { allowedUrl }]]),
+	};
 }
 
 beforeEach(() => {
@@ -90,10 +101,7 @@ describe("bearArtifactHandler", () => {
 	};
 
 	it("serves a known artifact with locked-down headers", async () => {
-		const handler = bearArtifactHandler({
-			...fakeLookup({ "id-1": artifact }),
-			allowedUrl: DEV_URL,
-		});
+		const handler = bearArtifactHandler(protocolOptions(fakeLookup({ "id-1": artifact }), DEV_URL));
 		const response = await handler(makeRequest(`bear-artifact://artifact/id-1`, DEV_URL));
 
 		expect(response.status).toBe(200);
@@ -106,75 +114,82 @@ describe("bearArtifactHandler", () => {
 	});
 
 	it("404s an unknown artifact id", async () => {
-		const handler = bearArtifactHandler({
-			...fakeLookup({ "id-1": artifact }),
-			allowedUrl: DEV_URL,
-		});
+		const handler = bearArtifactHandler(protocolOptions(fakeLookup({ "id-1": artifact }), DEV_URL));
 		const response = await handler(makeRequest("bear-artifact://artifact/missing", DEV_URL));
 		expect(response.status).toBe(404);
 	});
 
 	it("404s when the record exists but the CAS blob is gone", async () => {
-		const handler = bearArtifactHandler({
-			...fakeLookup({ "id-1": { ...artifact, blob: null } }),
-			allowedUrl: DEV_URL,
-		});
+		const handler = bearArtifactHandler(
+			protocolOptions(fakeLookup({ "id-1": { ...artifact, blob: null } }), DEV_URL),
+		);
 		const response = await handler(makeRequest("bear-artifact://artifact/id-1", DEV_URL));
 		expect(response.status).toBe(404);
 	});
 
 	it("404s a malformed id", async () => {
-		const handler = bearArtifactHandler({
-			...fakeLookup({ "id-1": artifact }),
-			allowedUrl: DEV_URL,
-		});
+		const handler = bearArtifactHandler(protocolOptions(fakeLookup({ "id-1": artifact }), DEV_URL));
 		const response = await handler(makeRequest("bear-artifact://artifact/%zz", DEV_URL));
 		expect(response.status).toBe(404);
 	});
 
 	it("403s unknown scheme content", async () => {
-		const handler = bearArtifactHandler({
-			...fakeLookup({ "id-1": artifact }),
-			allowedUrl: DEV_URL,
-		});
+		const handler = bearArtifactHandler(protocolOptions(fakeLookup({ "id-1": artifact }), DEV_URL));
 		const response = await handler(makeRequest("bear-artifact://evil/leak", DEV_URL));
 		expect(response.status).toBe(403);
 	});
 
 	it("403s a sender from a different origin", async () => {
-		const handler = bearArtifactHandler({
-			...fakeLookup({ "id-1": artifact }),
-			allowedUrl: DEV_URL,
-		});
+		const handler = bearArtifactHandler(protocolOptions(fakeLookup({ "id-1": artifact }), DEV_URL));
 		const response = await handler(
 			makeRequest("bear-artifact://artifact/id-1", "https://attacker.example/"),
 		);
 		expect(response.status).toBe(403);
 	});
 
+	it("requires the exact renderer URL rather than the same origin", async () => {
+		const handler = bearArtifactHandler(protocolOptions(fakeLookup({ "id-1": artifact }), DEV_URL));
+		const response = await handler(
+			makeRequest("bear-artifact://artifact/id-1", "http://127.0.0.1:3100/elsewhere"),
+		);
+		expect(response.status).toBe(403);
+	});
+
+	it("accepts Electron's URL-bearing referrer representation", async () => {
+		const handler = bearArtifactHandler(protocolOptions(fakeLookup({ "id-1": artifact }), DEV_URL));
+		const response = await handler({
+			url: "bear-artifact://artifact/id-1",
+			referrer: { url: DEV_URL },
+		} as unknown as Request);
+		expect(response.status).toBe(200);
+	});
+
+	it("rejects a referrer after its renderer registration is removed", async () => {
+		const options = protocolOptions(fakeLookup({ "id-1": artifact }), DEV_URL);
+		const handler = bearArtifactHandler(options);
+		options.windowRegistry.clear();
+		const response = await handler(makeRequest("bear-artifact://artifact/id-1", DEV_URL));
+		expect(response.status).toBe(403);
+	});
+
 	it("403s an empty referrer for http(s) windows", async () => {
-		const handler = bearArtifactHandler({
-			...fakeLookup({ "id-1": artifact }),
-			allowedUrl: DEV_URL,
-		});
+		const handler = bearArtifactHandler(protocolOptions(fakeLookup({ "id-1": artifact }), DEV_URL));
 		const response = await handler(makeRequest("bear-artifact://artifact/id-1", ""));
 		expect(response.status).toBe(403);
 	});
 
-	it("serves file:// windows with an empty referrer (packaged fetch relaxation)", async () => {
-		const handler = bearArtifactHandler({
-			...fakeLookup({ "id-1": artifact }),
-			allowedUrl: FILE_URL,
-		});
+	it("403s an empty referrer for file:// windows", async () => {
+		const handler = bearArtifactHandler(
+			protocolOptions(fakeLookup({ "id-1": artifact }), FILE_URL),
+		);
 		const response = await handler(makeRequest("bear-artifact://artifact/id-1", ""));
-		expect(response.status).toBe(200);
+		expect(response.status).toBe(403);
 	});
 
 	it("serves file:// windows whose referrer is also file:", async () => {
-		const handler = bearArtifactHandler({
-			...fakeLookup({ "id-1": artifact }),
-			allowedUrl: FILE_URL,
-		});
+		const handler = bearArtifactHandler(
+			protocolOptions(fakeLookup({ "id-1": artifact }), FILE_URL),
+		);
 		const response = await handler(
 			makeRequest("bear-artifact://artifact/id-1", "file:///dist/renderer/index.html"),
 		);
@@ -182,10 +197,7 @@ describe("bearArtifactHandler", () => {
 	});
 
 	it("403s a file:// referrer when the window is http", async () => {
-		const handler = bearArtifactHandler({
-			...fakeLookup({ "id-1": artifact }),
-			allowedUrl: DEV_URL,
-		});
+		const handler = bearArtifactHandler(protocolOptions(fakeLookup({ "id-1": artifact }), DEV_URL));
 		const response = await handler(
 			makeRequest("bear-artifact://artifact/id-1", "file:///dist/renderer/index.html"),
 		);
@@ -215,10 +227,7 @@ describe("registration", () => {
 		electron.protocol.handle.mockImplementationOnce((_scheme, fn) => {
 			expect(fn).toBeTypeOf("function");
 		});
-		registerArtifactProtocol({
-			...fakeLookup({}),
-			allowedUrl: DEV_URL,
-		});
+		registerArtifactProtocol(protocolOptions(fakeLookup({}), DEV_URL));
 
 		expect(electron.protocol.handle).toHaveBeenCalledWith(ARTIFACT_SCHEME, expect.any(Function));
 	});

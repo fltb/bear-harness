@@ -64,7 +64,7 @@ export interface PipelineTriggerConfig {
 	enableWarmup: boolean;
 	/** L1 idle timeout: trigger L1 after this many seconds of inactivity (default: 600) */
 	l1IdleTimeoutSeconds: number;
-	/** L2 delay after L1: wait this many seconds after L1 completes before triggering L2 (default: 90) */
+	/** L2 delay after L1: wait this many seconds after L1 completes before triggering L2 (default: 10) */
 	l2DelayAfterL1Seconds: number;
 	/** L2 min interval: minimum seconds between L2 runs per session (default: 900 = 15 min) */
 	l2MinIntervalSeconds: number;
@@ -94,19 +94,25 @@ export interface RecallConfig {
 
 /** Embedding service configuration for vector search. */
 export interface EmbeddingConfig {
-	/** User-facing default is true in schema, but provider="none" still disables embedding effectively. */
+	/**
+	 * Whether embedding work is enabled. `provider="none"` always disables it;
+	 * explicit local mode remains local even when its optional runtime is unavailable,
+	 * allowing the integration to report a useful error and fall back to keyword search.
+	 */
 	enabled: boolean;
-	/** Embedding provider: default "none" disables vector search; other values (e.g. "openai", "deepseek") are treated as OpenAI-compatible remote providers. */
+	/** Embedding provider: "none", "local", or an OpenAI-compatible remote provider. */
 	provider: string;
-	/** Custom GGUF model path for the local provider ("hf:repo/file.gguf" or a local file path). Defaults to the bundled embeddinggemma-300m. */
+	/** Custom GGUF model path for the local provider. */
 	modelPath?: string;
+	/** Model cache directory for the local provider. */
+	modelCacheDir?: string;
 	/** API Base URL (required for remote provider). */
 	baseUrl: string;
 	/** API Key (required for remote provider). */
 	apiKey: string;
 	/** Model name (required for remote provider). */
 	model: string;
-	/** Vector dimensions (required for remote provider, must match model). */
+	/** Vector dimensions (required for remote provider; local defaults to 768). */
 	dimensions: number;
 	/**
 	 * Whether to send the `dimensions` field in the embeddings request body.
@@ -119,17 +125,15 @@ export interface EmbeddingConfig {
 	conflictRecallTopK: number;
 	/** Proxy URL for qclaw provider — when provider="qclaw", requests are forwarded through this local proxy */
 	proxyUrl?: string;
-	/** Max input text length in characters before truncation (default: 5000). Texts exceeding this limit are truncated with a warning. */
+	/** Max input text length in characters before truncation (default: 5000). */
 	maxInputChars: number;
 	/** Timeout per embedding API call in milliseconds (default: 10000). */
 	timeoutMs: number;
-	/** Override timeoutMs for recall-path embedding calls (user-facing, should be shorter). Falls back to timeoutMs. */
+	/** Override timeoutMs for recall-path embedding calls. */
 	recallTimeoutMs?: number;
-	/** Override timeoutMs for capture-path embedding calls (background L1 dedup, can be longer). Falls back to timeoutMs. */
+	/** Override timeoutMs for capture-path embedding calls. */
 	captureTimeoutMs?: number;
-	/** Internal-only local model cache directory, not exposed in plugin schema. */
-	modelCacheDir?: string;
-	/** If set, contains an error message about invalid remote config (embedding is disabled) */
+	/** If set, contains an error message about invalid remote config (embedding is disabled). */
 	configError?: string;
 }
 
@@ -151,8 +155,6 @@ export interface BM25Config {
 	/** Language for BM25 pre-trained params: "zh" or "en" (default: "zh") */
 	language: "zh" | "en";
 }
-
-/** Tencent Cloud VectorDB configuration. */
 export interface TcvdbConfig {
 	/** Instance URL (e.g. "http://10.0.1.1:80" or external domain) */
 	url: string;
@@ -166,7 +168,13 @@ export interface TcvdbConfig {
 	alias: string;
 	/** Built-in embedding model (default: "bge-large-zh") */
 	embeddingModel: string;
-	/** Request timeout in ms (default: 10000) */
+	/**
+	 * Expected dense vector dimensions for the selected server model.
+	 * TCVDB collection/index creation is rejected when this does not match
+	 * the known output dimensions for the model.
+	 */
+	embeddingDimensions: number;
+	/** Request timeout in ms (default 10000) */
 	timeout: number;
 	/** Path to CA certificate PEM file (for HTTPS connections) */
 	caPemPath?: string;
@@ -177,7 +185,7 @@ export type StoreBackend = "sqlite" | "tcvdb";
 
 /** Report settings — controls metric/event reporting. */
 export interface ReportConfig {
-	/** Enable reporting (default: true) */
+	/** Enable reporting (default: false; privacy-safe until explicitly enabled) */
 	enabled: boolean;
 	/** Reporter type: "local" logs structured JSON via logger (default: "local") */
 	type: string;
@@ -337,38 +345,34 @@ export function parseConfig(raw: Record<string, unknown> | undefined): MemoryTda
 
 	// --- Recall ---
 	const recallGroup = obj(c, "recall");
-
 	// --- Embedding ---
 	const embeddingGroup = obj(c, "embedding");
 	let embeddingConfigError: string | undefined;
 
-	// Embedding config: determine provider based on user input and apiKey availability
+	// Embedding config: determine provider based on user input and API key availability.
 	const embeddingApiKey = str(embeddingGroup, "apiKey") ?? "";
 	const embeddingBaseUrl = str(embeddingGroup, "baseUrl") ?? "";
 	const embeddingProviderRaw = str(embeddingGroup, "provider") ?? "none";
 	const embeddingModelRaw = str(embeddingGroup, "model") ?? "";
+	const embeddingModelPath = optStr(embeddingGroup, "modelPath");
+	const embeddingModelCacheDir = optStr(embeddingGroup, "modelCacheDir");
 	const embeddingDimensionsRaw = num(embeddingGroup, "dimensions");
 	const embeddingProxyUrl = str(embeddingGroup, "proxyUrl");
 
 	// provider="none" → embedding disabled (default for zero-config users)
-	// provider="local" → no longer exposed to users; treated as disabled at entry level
+	// provider="local" → explicit offline node-llama-cpp mode. Keep this provider
+	// in the resolved config even when the optional peer is unavailable: the
+	// service reports that failure and callers degrade to keyword search.
 	// provider="qclaw" → requires proxyUrl for local proxy forwarding
 	// Any other value → remote mode (requires apiKey, baseUrl, model, dimensions)
 	let embeddingProvider: string;
 	let embeddingEnabled = bool(embeddingGroup, "enabled") ?? true;
 
 	if (embeddingProviderRaw === "none") {
-		// Explicitly disabled (default): no embedding, no vector search
 		embeddingProvider = "none";
 		embeddingEnabled = false;
 	} else if (embeddingProviderRaw === "local") {
-		// Local embedding is not exposed to users; treat as disabled at entry level.
-		// Internal LocalEmbeddingService code is preserved but not reachable from config.
-		embeddingProvider = "none";
-		embeddingEnabled = false;
-		embeddingConfigError =
-			"Local embedding provider is not available in user config. " +
-			"Please configure a remote embedding provider (e.g. openai, deepseek). Embedding has been disabled.";
+		embeddingProvider = "local";
 	} else if (embeddingProviderRaw === "qclaw") {
 		// qclaw provider: requires proxyUrl for local proxy forwarding
 		const missingFields: string[] = [];
@@ -380,15 +384,12 @@ export function parseConfig(raw: Record<string, unknown> | undefined): MemoryTda
 			missingFields.push("dimensions");
 
 		if (missingFields.length > 0) {
-			const errorMsg =
+			embeddingConfigError =
 				`Embedding provider 'qclaw' requires 'proxyUrl', 'baseUrl', 'apiKey', 'model', and 'dimensions' to be set. ` +
 				`Missing: ${missingFields.join(", ")}. Embedding has been disabled.`;
-			embeddingConfigError = errorMsg;
 			embeddingEnabled = false;
-			embeddingProvider = embeddingProviderRaw;
-		} else {
-			embeddingProvider = embeddingProviderRaw;
 		}
+		embeddingProvider = embeddingProviderRaw;
 	} else {
 		// Remote mode — validate all required fields
 		const missingFields: string[] = [];
@@ -399,25 +400,19 @@ export function parseConfig(raw: Record<string, unknown> | undefined): MemoryTda
 			missingFields.push("dimensions");
 
 		if (missingFields.length > 0) {
-			// Configuration error: disable embedding and log detailed error
-			// This does NOT throw — the plugin continues running without vector search
-			const errorMsg =
+			embeddingConfigError =
 				`Remote embedding provider '${embeddingProviderRaw}' requires 'apiKey', 'baseUrl', 'model', and 'dimensions' to be set. ` +
 				`Missing: ${missingFields.join(", ")}. Embedding has been disabled.`;
-			// We store the error message so the caller (index.ts) can log it
-			embeddingConfigError = errorMsg;
 			embeddingEnabled = false;
-			embeddingProvider = embeddingProviderRaw; // preserve original for error context
-		} else {
-			embeddingProvider = embeddingProviderRaw;
 		}
+		embeddingProvider = embeddingProviderRaw;
 	}
 
-	// When provider="none", dimensions=0 signals VectorStore to skip vec0 table
-	// creation entirely (deferred until a real embedding provider is configured).
-	// This avoids creating vec0 tables with a placeholder dimension that would
-	// mismatch if the user later enables a different-dimensional provider.
-	const defaultDimensions = embeddingProvider === "none" ? 0 : (embeddingDimensionsRaw ?? 0);
+	// Provider-specific defaults are deliberate: none has no vector table,
+	// local embeddinggemma has 768 dimensions, and remote dimensions are
+	// always supplied by the user.
+	const defaultDimensions =
+		embeddingProvider === "none" ? 0 : embeddingProvider === "local" ? 768 : (embeddingDimensionsRaw ?? 0);
 	const defaultModel = embeddingProvider === "none" ? "" : embeddingModelRaw;
 
 	const cleanTime = normalizeCleanTime(str(captureGroup, "cleanTime")) ?? "03:00";
@@ -515,6 +510,8 @@ export function parseConfig(raw: Record<string, unknown> | undefined): MemoryTda
 			baseUrl: embeddingBaseUrl,
 			apiKey: embeddingApiKey,
 			model: str(embeddingGroup, "model") ?? defaultModel,
+			modelPath: embeddingModelPath,
+			modelCacheDir: embeddingModelCacheDir,
 			dimensions: num(embeddingGroup, "dimensions") ?? defaultDimensions,
 			sendDimensions: bool(embeddingGroup, "sendDimensions") ?? true,
 			conflictRecallTopK: num(embeddingGroup, "conflictRecallTopK") ?? 5,
@@ -523,7 +520,6 @@ export function parseConfig(raw: Record<string, unknown> | undefined): MemoryTda
 			timeoutMs: num(embeddingGroup, "timeoutMs") ?? 10_000,
 			recallTimeoutMs: num(embeddingGroup, "recallTimeoutMs") ?? undefined,
 			captureTimeoutMs: num(embeddingGroup, "captureTimeoutMs") ?? undefined,
-			modelCacheDir: optStr(embeddingGroup, "modelCacheDir"),
 			configError: embeddingConfigError,
 		},
 		storeBackend,
@@ -534,6 +530,7 @@ export function parseConfig(raw: Record<string, unknown> | undefined): MemoryTda
 			database: str(tcvdbGroup, "database") ?? "",
 			alias: str(tcvdbGroup, "alias") ?? "",
 			embeddingModel: str(tcvdbGroup, "embeddingModel") ?? "bge-large-zh",
+			embeddingDimensions: num(tcvdbGroup, "embeddingDimensions") ?? 1024,
 			timeout: num(tcvdbGroup, "timeout") ?? 10000,
 			caPemPath: str(tcvdbGroup, "caPemPath") || undefined,
 		},

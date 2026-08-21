@@ -350,7 +350,7 @@ export class LocalEmbeddingService implements EmbeddingService {
 				`${TAG} Local embedding ready (model=${this.modelPath}, dims=${LOCAL_DIMENSIONS})`,
 			);
 		} catch (err) {
-			// Clean up partially-initialized resources to prevent leaks
+			// Clean up partially-initialized resources to prevent leaks.
 			if (model?.dispose) {
 				try {
 					model.dispose();
@@ -359,6 +359,16 @@ export class LocalEmbeddingService implements EmbeddingService {
 				}
 			}
 			this.embeddingContext = null;
+			if (
+				(err as NodeJS.ErrnoException)?.code === "ERR_MODULE_NOT_FOUND" ||
+				(err instanceof Error && err.message.includes("node-llama-cpp"))
+			) {
+				throw new Error(
+					'Local embedding is enabled but the optional "node-llama-cpp" dependency is unavailable. ' +
+						"Install node-llama-cpp@3.16.2 to activate local embeddings, or choose provider=\"none\" " +
+						"or a configured remote provider. Keyword search remains available as the fallback.",
+				);
+			}
 			throw err;
 		}
 	}

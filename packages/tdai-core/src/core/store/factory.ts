@@ -58,6 +58,12 @@ export function createStoreBundle(
 					`${TAG} TCVDB backend requires tcvdb.database — please set a unique database name in your openclaw.json plugin config`,
 				);
 			}
+			if (!Number.isInteger(tcvdbCfg.embeddingDimensions) || tcvdbCfg.embeddingDimensions <= 0) {
+				throw new Error(
+					`${TAG} TCVDB backend requires tcvdb.embeddingDimensions to be a positive integer matching ` +
+						`the output dimension of tcvdb.embeddingModel (${tcvdbCfg.embeddingModel})`,
+				);
+			}
 			const database = tcvdbCfg.database;
 			const store = new TcvdbMemoryStore({
 				url: tcvdbCfg.url,
@@ -65,6 +71,7 @@ export function createStoreBundle(
 				apiKey: tcvdbCfg.apiKey,
 				database,
 				embeddingModel: tcvdbCfg.embeddingModel,
+				embeddingDimensions: tcvdbCfg.embeddingDimensions,
 				timeout: tcvdbCfg.timeout,
 				caPemPath: tcvdbCfg.caPemPath,
 				logger,
@@ -104,6 +111,9 @@ export function createStoreBundle(
 						{
 							provider: "local",
 							...(config.embedding.modelPath ? { modelPath: config.embedding.modelPath } : {}),
+							...(config.embedding.modelCacheDir
+								? { modelCacheDir: config.embedding.modelCacheDir }
+								: {}),
 						},
 						logger,
 					);

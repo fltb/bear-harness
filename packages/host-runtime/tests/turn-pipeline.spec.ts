@@ -150,6 +150,44 @@ describe("TurnPipeline conversation state contract", () => {
 		]);
 	});
 
+	it("adopts one regenerated assistant version after an edited user branch", async () => {
+		pipeline.dispose();
+		const store = PiSessionStore.create({ sessionDir: join(root, "sessions"), cwd: root });
+		store.appendUserMessage("旧问题");
+		store.appendSyntheticAssistant("旧回答");
+		pipeline = new TurnPipeline(database.orm, supervisor, events, { get: () => store });
+
+		const sent = await pipeline.sendUserMessage("conversation", "旧问题");
+		events.publish("message_end", { conversationId: "conversation", text: "旧回答" });
+		await pipeline.edit("conversation", sent.messageId, "编辑后的问题", true);
+		events.publish("message_end", { conversationId: "conversation", text: "EDITED_OK" });
+		const assistant = database.connection
+			.prepare("SELECT id FROM messages WHERE role = 'assistant' ORDER BY rowid DESC LIMIT 1")
+			.get() as { id: string };
+
+		await pipeline.regenerate("conversation", assistant.id);
+		events.publish("message_end", {
+			conversationId: "conversation",
+			text: "REGENERATED_EDITED_OK",
+		});
+
+		const versions = database.connection
+			.prepare("SELECT content, adopted FROM message_versions WHERE message_id = ? ORDER BY rowid")
+			.all(assistant.id);
+		expect(versions).toEqual([
+			{ content: "EDITED_OK", adopted: 0 },
+			{ content: "REGENERATED_EDITED_OK", adopted: 1 },
+		]);
+		expect(
+			database.connection
+				.prepare("SELECT COUNT(*) AS count FROM messages WHERE role = 'assistant'")
+				.get(),
+		).toEqual({ count: 2 });
+		expect(
+			store.readMessageEntries().filter(({ message }) => message.role === "assistant"),
+		).toHaveLength(1);
+	});
+
 	it("keeps the raw Pi context on the edited first-user branch", async () => {
 		pipeline.dispose();
 		const store = PiSessionStore.create({ sessionDir: join(root, "sessions"), cwd: root });
@@ -315,7 +353,12 @@ describe("TurnPipeline conversation state contract", () => {
 			{
 				id: "pi-user-1",
 				parentId: null,
-				message: { role: "user", content: "原问题", timestamp: 1 },
+				message: {
+					role: "user",
+					content:
+						"<host_context>\n已知背景\n</host_context>\n\n<current_user_message>\n原问题\n</current_user_message>",
+					timestamp: 1,
+				},
 			},
 			{
 				id: "pi-assistant-1",
@@ -392,6 +435,9 @@ describe("TurnPipeline conversation state contract", () => {
 				const entry = byId.get(entryId);
 				return entry ? { id: entry.id, message: entry.message } : undefined;
 			},
+			isEntryOnCurrentBranch(entryId: string) {
+				return byId.has(entryId);
+			},
 			findParentUserEntry(entryId: string) {
 				let current = byId.get(entryId);
 				while (current?.parentId) {
@@ -431,6 +477,21 @@ describe("TurnPipeline conversation state contract", () => {
 		pipeline = new TurnPipeline(database.orm, supervisor, events, {
 			get: () => session,
 		});
+		database.connection
+			.prepare(
+				"INSERT INTO branches (id, conversation_id, label, adopted) VALUES ('other', 'conversation', 'other', 0)",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES ('host-main-assistant', 'conversation', 'main', 'assistant'), ('host-other-assistant', 'conversation', 'other', 'assistant')",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO message_versions (id, message_id, content, edited_by_user, adopted) VALUES ('host-main-assistant-v1', 'host-main-assistant', '原回答', 0, 1), ('host-other-assistant-v1', 'host-other-assistant', '原回答', 0, 1)",
+			)
+			.run();
 
 		const regenerated = await pipeline.regenerate("conversation", "pi-assistant-1");
 		expect(regenerated.messageId).toBe("pi-assistant-1");
@@ -439,12 +500,30 @@ describe("TurnPipeline conversation state contract", () => {
 			type: "prompt",
 			message: expect.stringContaining("重新生成"),
 		});
+		expect(
+			database.connection
+				.prepare(
+					"SELECT v.content FROM messages m JOIN message_versions v ON v.message_id = m.id WHERE m.role = 'user' AND v.adopted = 1",
+				)
+				.all(),
+		).toEqual([{ content: "原问题" }]);
 		events.publish("message_end", {
 			conversationId: "conversation",
 			text: "新回答",
 			message: assistantMessage("新回答"),
 		});
 		expect(pipeline.hasActiveTurn("conversation")).toBe(false);
+		expect(
+			database.connection
+				.prepare(
+					"SELECT m.id, v.content, v.adopted FROM messages m JOIN message_versions v ON v.message_id = m.id WHERE m.id IN ('host-main-assistant', 'host-other-assistant') ORDER BY m.id, v.rowid",
+				)
+				.all(),
+		).toEqual([
+			{ id: "host-main-assistant", content: "原回答", adopted: 0 },
+			{ id: "host-main-assistant", content: "新回答", adopted: 1 },
+			{ id: "host-other-assistant", content: "原回答", adopted: 1 },
+		]);
 
 		await pipeline.edit("conversation", "pi-user-1", "新问题", true);
 		expect(piCalls).toContain("branchBefore:pi-user-1");

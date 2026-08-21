@@ -53,21 +53,30 @@ export function WorkProposalCard(props: { commission: Commission; labels?: WorkL
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const [busy, setBusy] = createSignal(false);
+	const [actionError, setActionError] = createSignal<string | null>(null);
+	const runAction = async (action: () => Promise<unknown>): Promise<void> => {
+		setBusy(true);
+		setActionError(null);
+		const before = store.errorMetadata;
+		try {
+			await action();
+			const retained = store.errorMetadata;
+			if (retained !== null && retained !== before) setActionError(retained.message);
+		} catch (cause) {
+			setActionError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setBusy(false);
+		}
+	};
 
-	const start = () => {
-		setBusy(true);
-		const approval =
-			props.commission.status === "draft"
-				? store.commission.approve(props.commission.id, props.commission.draft.hash)
-				: Promise.resolve();
-		void approval
-			.then(() => store.commission.launch(props.commission.id, "pi-product-managed"))
-			.finally(() => setBusy(false));
-	};
-	const reject = () => {
-		setBusy(true);
-		void store.commission.reject(props.commission.id).finally(() => setBusy(false));
-	};
+	const start = () =>
+		void runAction(async () => {
+			if (props.commission.status === "draft") {
+				await store.commission.approve(props.commission.id, props.commission.draft.hash);
+			}
+			await store.commission.launch(props.commission.id, "pi-product-managed");
+		});
+	const reject = () => void runAction(() => store.commission.reject(props.commission.id));
 
 	return (
 		<div class="action-proposal" data-commission-id={props.commission.id}>
@@ -76,6 +85,14 @@ export function WorkProposalCard(props: { commission: Commission; labels?: WorkL
 				<h3>{props.commission.draft.title}</h3>
 				<p>{props.commission.draft.description}</p>
 			</div>
+			<Show when={actionError()}>
+				{(error) => (
+					<span class="status-line error" role="alert">
+						{t("messages.operationFailedPrefix")}
+						{error()}
+					</span>
+				)}
+			</Show>
 			<div class="scope-list">
 				<Show when={props.commission.draft.reads.length > 0}>
 					<p>
@@ -110,22 +127,48 @@ export function WorkProposalCard(props: { commission: Commission; labels?: WorkL
 export function PermissionCard(props: { permission: RunPermissionRequest }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
+	const [busy, setBusy] = createSignal(false);
+	const [actionError, setActionError] = createSignal<string | null>(null);
+	const runAction = (action: () => Promise<unknown>) => {
+		setBusy(true);
+		setActionError(null);
+		const before = store.errorMetadata;
+		void Promise.resolve()
+			.then(action)
+			.then(() => {
+				const retained = store.errorMetadata;
+				if (retained !== null && retained !== before) setActionError(retained.message);
+			})
+			.catch((cause) => setActionError(cause instanceof Error ? cause.message : String(cause)))
+			.finally(() => setBusy(false));
+	};
 
 	return (
 		<div class="action-proposal needs-user" data-permission-request={props.permission.requestId}>
 			<span class="system-label">{t("work.timeline.needsYou")}</span>
 			<h3>{props.permission.prompt}</h3>
+			<Show when={actionError()}>
+				{(error) => (
+					<span class="status-line error" role="alert">
+						{t("messages.operationFailedPrefix")}
+						{error()}
+					</span>
+				)}
+			</Show>
 			<div class="work-actions">
 				<For each={props.permission.options}>
 					{(option) => (
 						<Button
 							data-control="command"
 							type="button"
+							disabled={busy()}
 							onClick={() =>
-								void store.run.respondPermission(
-									props.permission.runId,
-									props.permission.requestId,
-									option.optionId,
+								runAction(() =>
+									store.run.respondPermission(
+										props.permission.runId,
+										props.permission.requestId,
+										option.optionId,
+									),
 								)
 							}
 						>
@@ -138,7 +181,8 @@ export function PermissionCard(props: { permission: RunPermissionRequest }) {
 				<Button
 					data-control="command"
 					type="button"
-					onClick={() => void store.run.cancel(props.permission.runId)}
+					disabled={busy()}
+					onClick={() => runAction(() => store.run.cancel(props.permission.runId))}
 				>
 					{t("work.timeline.stopRun")}
 				</Button>
@@ -160,6 +204,26 @@ export function WorkRunCard(props: {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const [busy, setBusy] = createSignal(false);
+	const [actionError, setActionError] = createSignal<string | null>(null);
+	const runAction = async (action: () => Promise<unknown>): Promise<boolean> => {
+		setBusy(true);
+		setActionError(null);
+		const before = store.errorMetadata;
+		try {
+			await action();
+			const retained = store.errorMetadata;
+			if (retained !== null && retained !== before) {
+				setActionError(retained.message);
+				return false;
+			}
+			return true;
+		} catch (cause) {
+			setActionError(cause instanceof Error ? cause.message : String(cause));
+			return false;
+		} finally {
+			setBusy(false);
+		}
+	};
 	const [steerText, setSteerText] = createSignal("");
 	const resultSpace = useOptionalResultSpace();
 
@@ -192,14 +256,8 @@ export function WorkRunCard(props: {
 
 	const submitSteer = async (): Promise<void> => {
 		const instruction = steerText().trim();
-		if (!instruction) return;
-		setBusy(true);
-		try {
-			await store.run.steer(props.run.id, instruction);
-			setSteerText("");
-		} finally {
-			setBusy(false);
-		}
+		if (!instruction || busy()) return;
+		if (await runAction(() => store.run.steer(props.run.id, instruction))) setSteerText("");
 	};
 
 	const openResults = (event: MouseEvent) => {
@@ -225,6 +283,14 @@ export function WorkRunCard(props: {
 		>
 			<span class="system-label">{statusLabel()}</span>
 			<h3>{props.commission.draft.title}</h3>
+			<Show when={actionError()}>
+				{(error) => (
+					<span class="status-line error" role="alert">
+						{t("messages.operationFailedPrefix")}
+						{error()}
+					</span>
+				)}
+			</Show>
 
 			<Show when={steerable(props.run.status)}>
 				<div class="steer-row">
@@ -262,10 +328,7 @@ export function WorkRunCard(props: {
 							data-control="command"
 							type="button"
 							disabled={busy()}
-							onClick={() => {
-								setBusy(true);
-								void store.run.interrupt(props.run.id).finally(() => setBusy(false));
-							}}
+							onClick={() => void runAction(() => store.run.interrupt(props.run.id))}
 						>
 							{props.labels?.interrupt ?? t("work.timeline.interrupt")}
 						</Button>
@@ -275,10 +338,7 @@ export function WorkRunCard(props: {
 							data-control="command"
 							type="button"
 							disabled={busy()}
-							onClick={() => {
-								setBusy(true);
-								void store.run.resume(props.run.id).finally(() => setBusy(false));
-							}}
+							onClick={() => void runAction(() => store.run.resume(props.run.id))}
 						>
 							{props.labels?.resume ?? t("work.timeline.resume")}
 						</Button>

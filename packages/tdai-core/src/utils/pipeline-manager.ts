@@ -120,13 +120,13 @@ export interface PipelineConfig {
 	enableWarmup: boolean;
 
 	l1: {
-		/** Idle timeout before triggering L1 (seconds, default: 60) */
+		/** Idle timeout before triggering L1 (seconds, default: 600) */
 		idleTimeoutSeconds: number;
 	};
 
 	l2: {
 		/**
-		 * Delay after L1 completes before triggering L2 (seconds, default: 90).
+		 * Delay after L1 completes before triggering L2 (seconds, default: 10).
 		 * Allows remote L1 to finish generating records asynchronously.
 		 */
 		delayAfterL1Seconds: number;

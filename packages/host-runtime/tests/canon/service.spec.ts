@@ -14,7 +14,7 @@ describe("CanonHubService user workflow", () => {
 	let root: string;
 	let database: Database;
 	let service: CanonHubService;
-
+	let eventBus: EventBus;
 	beforeEach(() => {
 		root = mkdtempSync(join(tmpdir(), "bear-canon-"));
 		database = new Database(join(root, "database"));
@@ -33,10 +33,11 @@ describe("CanonHubService user workflow", () => {
 				{ id: "character-b", packageId: "package-b", name: "Character B", selfCanon: "B" },
 			])
 			.run();
+		eventBus = new EventBus(database.orm);
 		service = new CanonHubService(
 			database.orm,
 			new ArtifactStore(database.orm, join(root, "cas")),
-			new EventBus(database.orm),
+			eventBus,
 		);
 	});
 
@@ -171,6 +172,12 @@ describe("CanonHubService user workflow", () => {
 		};
 		service.syncPackage("character-a", canon);
 		service.syncPackage("character-a", canon);
+		expect(eventBus.after(0)).toEqual([
+			expect.objectContaining({
+				kind: "canon.package_synced",
+				payload: { companionId: "character-a", version: 1 },
+			}),
+		]);
 		expect(service.listSources("character-a")).toHaveLength(1);
 		expect(service.listModules("character-a")).toEqual(
 			expect.arrayContaining([

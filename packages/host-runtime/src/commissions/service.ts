@@ -33,6 +33,7 @@ import {
 	approvals,
 	type CommissionDraftData,
 	commissions,
+	conversations,
 	evidence,
 	messages,
 	runs,
@@ -133,6 +134,8 @@ export interface CommissionSummary {
 
 export interface CommissionListParams {
 	status?: CommissionStatus;
+	/** Restrict projections to commissions owned by this active companion. */
+	companionId?: string;
 }
 
 /** Draft fields stored in commissions.draft_json (snake_case columns below). */
@@ -451,6 +454,10 @@ export class CommissionService {
 			if (commissionRow.status !== "approved") {
 				throw { kind: "conflict", reason: "commission_not_approved" };
 			}
+			// Validate the persisted profile before inserting the run. Controller
+			// wiring is deliberately checked at hand-off so an unwired profile
+			// still gets a failed run record and remains observable for recovery.
+			this.executorRouter.validateProfile(params.executorProfile);
 
 			const id = randomUUID();
 			transaction
@@ -702,14 +709,39 @@ export class CommissionService {
 		return row?.n ?? 0;
 	}
 
-	/** List commissions (optionally by status) with their runs and draft summary. */
+	/** List commissions (optionally by status and active-companion ownership) with runs and draft summary. */
 	list(params: CommissionListParams = {}): CommissionSummary[] {
-		const rows = this.db
-			.select()
-			.from(commissions)
-			.where(params.status ? eq(commissions.status, params.status) : undefined)
-			.orderBy(desc(commissions.createdAt), desc(commissions.id))
-			.all() as CommissionRow[];
+		const statusFilter = params.status ? eq(commissions.status, params.status) : undefined;
+		const rows = params.companionId
+			? (this.db
+					.select({
+						id: commissions.id,
+						conversationId: commissions.conversationId,
+						triggerMessageId: commissions.triggerMessageId,
+						status: commissions.status,
+						draftJson: commissions.draftJson,
+						approvalHash: commissions.approvalHash,
+						createdAt: commissions.createdAt,
+					})
+					.from(commissions)
+					.innerJoin(conversations, eq(commissions.conversationId, conversations.id))
+					.innerJoin(
+						messages,
+						and(
+							eq(messages.id, commissions.triggerMessageId),
+							eq(messages.conversationId, commissions.conversationId),
+							eq(messages.role, "user"),
+						),
+					)
+					.where(and(eq(conversations.companionId, params.companionId), statusFilter))
+					.orderBy(desc(commissions.createdAt), desc(commissions.id))
+					.all() as CommissionRow[])
+			: (this.db
+					.select()
+					.from(commissions)
+					.where(statusFilter)
+					.orderBy(desc(commissions.createdAt), desc(commissions.id))
+					.all() as CommissionRow[]);
 		return rows
 			.filter(
 				(row): row is CommissionRow & { triggerMessageId: string } =>

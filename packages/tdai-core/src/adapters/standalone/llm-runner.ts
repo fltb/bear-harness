@@ -54,19 +54,75 @@ export interface StandaloneLLMConfig {
 // Sandboxed tool execution helpers
 // ============================
 
-function resolveSandboxedPath(workspaceDir: string, relativePath: string): string | null {
-	const resolved = path.resolve(workspaceDir, relativePath);
-	if (!resolved.startsWith(path.resolve(workspaceDir))) {
-		return null;
+type SandboxPathMode = "read" | "write";
+
+function isContained(root: string, candidate: string): boolean {
+	const relative = path.relative(root, candidate);
+	return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+/**
+ * Resolve a tool path against the canonical workspace. Existing files are
+ * checked by realpath; new files are checked by the realpath of each parent
+ * that is created, so symlinked directories cannot redirect writes outside.
+ */
+export async function resolveSandboxedPath(
+	workspaceDir: string,
+	inputPath: string,
+	mode: SandboxPathMode = "read",
+): Promise<string | null> {
+	if (!inputPath || typeof inputPath !== "string" || path.isAbsolute(inputPath)) return null;
+	const root = await fsPromises.realpath(workspaceDir).catch(() => null);
+	if (!root) return null;
+	const candidate = path.resolve(root, inputPath);
+	if (!isContained(root, candidate)) return null;
+
+	if (mode === "read") {
+		const resolved = await fsPromises.realpath(candidate).catch(() => null);
+		return resolved && isContained(root, resolved) ? resolved : null;
 	}
-	return resolved;
+
+	try {
+		if ((await fsPromises.lstat(candidate)).isSymbolicLink()) return null;
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code !== "ENOENT") return null;
+	}
+	const existing = await fsPromises.realpath(candidate).catch(() => null);
+	if (existing) return isContained(root, existing) ? existing : null;
+
+	const missing: string[] = [];
+	let parent = path.dirname(candidate);
+	while (parent !== root) {
+		try {
+			await fsPromises.lstat(parent);
+			break;
+		} catch {
+			missing.unshift(path.basename(parent));
+			const next = path.dirname(parent);
+			if (next === parent || !isContained(root, next)) return null;
+			parent = next;
+		}
+	}
+	const realParent = await fsPromises.realpath(parent).catch(() => null);
+	if (!realParent || !isContained(root, realParent)) return null;
+	let safeParent = realParent;
+	for (const segment of missing) {
+		safeParent = path.join(safeParent, segment);
+		await fsPromises.mkdir(safeParent).catch((err: unknown) => {
+			if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+		});
+		const canonical = await fsPromises.realpath(safeParent).catch(() => null);
+		if (!canonical || !isContained(root, canonical)) return null;
+		safeParent = canonical;
+	}
+	return path.join(safeParent, path.basename(candidate));
 }
 
 // ============================
 // Tool definitions (Vercel AI SDK `tool()` format)
 // ============================
 
-function createSandboxedTools(workspaceDir: string, logger?: Logger) {
+export function createSandboxedTools(workspaceDir: string, logger?: Logger) {
 	return {
 		read_file: tool({
 			description: "Read the contents of a file at the given relative path.",
@@ -78,7 +134,7 @@ function createSandboxedTools(workspaceDir: string, logger?: Logger) {
 				required: ["path"],
 			}),
 			execute: (async (args: { path: string }) => {
-				const resolved = resolveSandboxedPath(workspaceDir, args.path);
+				const resolved = await resolveSandboxedPath(workspaceDir, args.path, "read");
 				if (!resolved)
 					return JSON.stringify({ error: `Path "${args.path}" escapes workspace boundary.` });
 				try {
@@ -102,11 +158,10 @@ function createSandboxedTools(workspaceDir: string, logger?: Logger) {
 				required: ["path", "content"],
 			}),
 			execute: (async (args: { path: string; content: string }) => {
-				const resolved = resolveSandboxedPath(workspaceDir, args.path);
+				const resolved = await resolveSandboxedPath(workspaceDir, args.path, "write");
 				if (!resolved)
 					return JSON.stringify({ error: `Path "${args.path}" escapes workspace boundary.` });
 				try {
-					await fsPromises.mkdir(path.dirname(resolved), { recursive: true });
 					await fsPromises.writeFile(resolved, args.content, "utf-8");
 					return JSON.stringify({ success: true });
 				} catch (err) {
@@ -129,7 +184,7 @@ function createSandboxedTools(workspaceDir: string, logger?: Logger) {
 				required: ["path", "old_str", "new_str"],
 			}),
 			execute: (async (args: { path: string; old_str: string; new_str: string }) => {
-				const resolved = resolveSandboxedPath(workspaceDir, args.path);
+				const resolved = await resolveSandboxedPath(workspaceDir, args.path, "write");
 				if (!resolved)
 					return JSON.stringify({ error: `Path "${args.path}" escapes workspace boundary.` });
 				if (!args.old_str) return JSON.stringify({ error: "old_str cannot be empty." });

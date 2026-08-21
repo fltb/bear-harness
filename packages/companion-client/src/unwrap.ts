@@ -1,30 +1,26 @@
 /**
- * Wire envelope helpers.
+ * Validate and unwrap an RPC response envelope.
  *
- * Every bridge call (`window.bearDesktop.companion.*` in the desktop app, or
- * any `HostTransport.invoke` here) resolves to
- * `{ ok: true, data } | { ok: false, error: { kind, reason } }`. `unwrap`
- * validates the envelope and extracts the data payload without ever leaking
- * raw wire errors into the UI: it throws a plain Error on failure, and
- * callers decide how to surface it (toast, disabled state, presence
- * fallback).
+ * `unwrap` is intentionally endpoint-agnostic: callers supply the expected
+ * TypeScript payload type, while the shared envelope schema validates the
+ * runtime wire shape (`ok`, `data`, and the complete protocol error branch).
+ * Endpoint-specific payload validation belongs to `createCompanionClient`.
+ *
+ * A transport failure is not an RPC envelope and therefore rejects the
+ * promise before this helper runs. An RPC/domain failure is a valid resolved
+ * envelope and is converted to a user-facing `Error` here.
  */
-import type { IpcError } from "@bear-harness/protocol";
 
-/** Unwrap an IPC response envelope; throws on failure or malformed shape. */
+import { IpcResponse } from "@bear-harness/protocol/schema";
+import { z } from "@bear-harness/schema";
+
+const AnyEnvelope = IpcResponse(z.unknown());
+
+/** Unwrap an RPC response envelope; malformed envelopes throw a validation error. */
 export function unwrap<T>(result: unknown): T {
-	if (typeof result !== "object" || result === null) {
-		throw new Error("invalid IPC response");
-	}
-	const envelope = result as { ok?: unknown; data?: unknown; error?: unknown };
-	if (envelope.ok === true) {
-		return envelope.data as T;
-	}
-	const error = (
-		typeof envelope.error === "object" && envelope.error !== null ? envelope.error : {}
-	) as Partial<IpcError>;
-	const kind = typeof error.kind === "string" ? error.kind : "internal";
-	throw new Error(userFacingError(kind));
+	const envelope = AnyEnvelope.parse(result);
+	if (envelope.ok) return envelope.data as T;
+	throw new Error(userFacingError(envelope.error.kind));
 }
 
 function userFacingError(kind: string): string {

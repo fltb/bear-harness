@@ -18,6 +18,11 @@ import { recordConversation } from "../conversation/l0-recorder.js";
 import type { ConversationMessage } from "../conversation/l0-recorder.js";
 import type { IMemoryStore, L0Record } from "../store/types.js";
 import type { EmbeddingService } from "../store/embedding.js";
+import type {
+	DeferredIndexingRecord,
+	IndexingStatus,
+	IndexingStatusCallback,
+} from "../types.js";
 
 const TAG = "[memory-tdai] [capture]";
 
@@ -33,8 +38,10 @@ export interface AutoCaptureResult {
 	schedulerNotified: boolean;
 	/** Number of messages recorded to L0 */
 	l0RecordedCount: number;
-	/** Number of L0 message vectors written */
+	/** Number of L0 vectors committed synchronously before return */
 	l0VectorsWritten: number;
+	/** Current status of synchronous/deferred indexing for this capture. */
+	indexingStatus: IndexingStatus;
 	/** Filtered messages for L1 immediate use */
 	filteredMessages: ConversationMessage[];
 }
@@ -87,6 +94,8 @@ export async function performAutoCapture(params: {
 	 * pre-fix behaviour (background task may outlive its owner).
 	 */
 	bgTaskRegistry?: Set<Promise<void>>;
+	/** Receives deferred-index progress/failure and retryable record metadata. */
+	onIndexingStatus?: IndexingStatusCallback;
 }): Promise<AutoCaptureResult> {
 	const {
 		messages,
@@ -102,6 +111,7 @@ export async function performAutoCapture(params: {
 		vectorStore,
 		embeddingService,
 		bgTaskRegistry,
+		onIndexingStatus,
 	} = params;
 	const tCaptureStart = performance.now();
 
@@ -179,17 +189,35 @@ export async function performAutoCapture(params: {
 	let l0VectorsWritten = 0;
 	let l0EmbedTotalMs = 0;
 	let l0UpsertTotalMs = 0;
+	let indexingStatus: IndexingStatus = {
+		state: filteredMessages.length === 0 ? "complete" : "unavailable",
+		total: filteredMessages.length,
+		completed: 0,
+		pending: 0,
+		failed: 0,
+	};
+	const publishIndexing = (status: IndexingStatus, records: readonly DeferredIndexingRecord[]) => {
+		indexingStatus = { ...status };
+		try {
+			onIndexingStatus?.(indexingStatus, records);
+		} catch (err) {
+			logger?.warn?.(
+				`${TAG} indexing status callback failed: ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
+	};
 	logger?.debug?.(
 		`${TAG} [L0-vec-index] Check: filteredMessages=${filteredMessages.length}, ` +
 			`vectorStore=${vectorStore ? "available" : "UNAVAILABLE"}, ` +
 			`embeddingService=${embeddingService ? "available" : "UNAVAILABLE"}`,
 	);
+	let metadataIndexFailures = 0;
 
 	const supportsBgEmbed = vectorStore?.supportsDeferredEmbedding === true;
 
 	if (filteredMessages.length > 0 && vectorStore) {
 		const now = new Date().toISOString();
-		const bgRecords: Array<{ recordId: string; content: string }> = [];
+		const bgRecords: DeferredIndexingRecord[] = [];
 		logger?.debug?.(
 			`${TAG} [L0-vec-index] START indexing ${filteredMessages.length} message(s) for session ${sessionKey} ` +
 				`(mode=${supportsBgEmbed ? "async-bg" : "sync"})`,
@@ -246,18 +274,63 @@ export async function performAutoCapture(params: {
 				l0UpsertTotalMs += performance.now() - tUpsertStart;
 
 				if (upsertOk) {
-					l0VectorsWritten++;
 					if (supportsBgEmbed) {
-						bgRecords.push({ recordId: l0Record.id, content: msg.content });
+						bgRecords.push({ recordId: l0Record.id, text: msg.content });
+					} else {
+						l0VectorsWritten++;
 					}
 				} else {
+					metadataIndexFailures++;
 					logger?.warn(`${TAG} [L0-vec-index] upsertL0 returned false for message ${i}`);
 				}
 			} catch (err) {
+				metadataIndexFailures++;
 				logger?.warn?.(
 					`${TAG} [L0-vec-index] FAILED for message ${i} (non-blocking): ${err instanceof Error ? err.message : String(err)}`,
 				);
 			}
+		}
+
+		if (supportsBgEmbed) {
+			const initialFailed = metadataIndexFailures;
+			if (bgRecords.length > 0 && embeddingService) {
+				publishIndexing(
+					{
+						state: "pending",
+						total: filteredMessages.length,
+						completed: 0,
+						pending: bgRecords.length,
+						failed: initialFailed,
+					},
+					bgRecords,
+				);
+			} else {
+				publishIndexing(
+					{
+						state: initialFailed === filteredMessages.length ? "failed" : "unavailable",
+						total: filteredMessages.length,
+						completed: 0,
+						pending: 0,
+						failed: filteredMessages.length,
+						error: embeddingService ? undefined : "No embedding service configured",
+					},
+					[],
+				);
+			}
+		} else {
+			publishIndexing(
+				{
+					state:
+						metadataIndexFailures === 0 && l0VectorsWritten === filteredMessages.length
+							? "complete"
+							: "failed",
+					total: filteredMessages.length,
+					completed: l0VectorsWritten,
+					pending: 0,
+					failed: Math.max(0, filteredMessages.length - l0VectorsWritten),
+				},
+				[],
+			);
 		}
 
 		const modeLabel = supportsBgEmbed
@@ -283,8 +356,9 @@ export async function performAutoCapture(params: {
 			// shutdown indefinitely.
 			const bgPromise: Promise<void> = (async () => {
 				const tBgStart = performance.now();
+				const failed = new Map(bgSnapshot.map((record) => [record.recordId, record]));
 				try {
-					const texts = bgSnapshot.map((r) => r.content);
+					const texts = bgSnapshot.map((r) => r.text);
 					const embeddings = await bgEmbeddingService.embedBatch(texts);
 
 					let bgUpdated = 0;
@@ -294,7 +368,10 @@ export async function performAutoCapture(params: {
 								bgSnapshot[i].recordId,
 								embeddings[i],
 							);
-							if (ok) bgUpdated++;
+							if (ok) {
+								bgUpdated++;
+								failed.delete(bgSnapshot[i].recordId);
+							}
 						} catch (err) {
 							bgLogger?.warn?.(
 								`${TAG} [L0-vec-index-bg] Failed to update embedding for ${bgSnapshot[i].recordId}: ` +
@@ -303,6 +380,22 @@ export async function performAutoCapture(params: {
 						}
 					}
 					const bgMs = performance.now() - tBgStart;
+					const failedRecords = [...failed.values()];
+					const totalFailed = metadataIndexFailures + failedRecords.length;
+					publishIndexing(
+						{
+							state: totalFailed > 0 ? "failed" : "complete",
+							total: filteredMessages.length,
+							completed: bgUpdated,
+							pending: 0,
+							failed: totalFailed,
+							error:
+								totalFailed > 0
+									? `${totalFailed} L0 indexing operation(s) failed`
+									: undefined,
+						},
+						failedRecords,
+					);
 					bgLogger?.debug?.(
 						`${TAG} [L0-vec-index-bg] Background embedding complete: ${bgUpdated}/${bgSnapshot.length} vectors updated (${bgMs.toFixed(0)}ms)`,
 					);
@@ -311,6 +404,17 @@ export async function performAutoCapture(params: {
 					bgLogger?.warn?.(
 						`${TAG} [L0-vec-index-bg] Background embedding failed (${bgMs.toFixed(0)}ms, non-fatal): ` +
 							`${err instanceof Error ? err.message : String(err)}`,
+					);
+					publishIndexing(
+						{
+							state: "failed",
+							total: filteredMessages.length,
+							completed: 0,
+							pending: 0,
+							failed: metadataIndexFailures + bgSnapshot.length,
+							error: err instanceof Error ? err.message : String(err),
+						},
+						bgSnapshot,
 					);
 				}
 			})();
@@ -323,6 +427,15 @@ export async function performAutoCapture(params: {
 			}
 		}
 	} else if (filteredMessages.length > 0) {
+		indexingStatus = {
+			state: "unavailable",
+			total: filteredMessages.length,
+			completed: 0,
+			pending: 0,
+			failed: filteredMessages.length,
+			error: "Vector store unavailable",
+		};
+		publishIndexing(indexingStatus, []);
 		logger?.warn(`${TAG} [L0-vec-index] SKIPPED: vectorStore not available`);
 	}
 	const tL0VecEnd = performance.now();
@@ -351,6 +464,7 @@ export async function performAutoCapture(params: {
 			schedulerNotified: true,
 			l0RecordedCount: filteredMessages.length,
 			l0VectorsWritten,
+			indexingStatus,
 			filteredMessages,
 		};
 	}
@@ -371,6 +485,7 @@ export async function performAutoCapture(params: {
 		schedulerNotified: false,
 		l0RecordedCount: filteredMessages.length,
 		l0VectorsWritten,
+		indexingStatus,
 		filteredMessages,
 	};
 }

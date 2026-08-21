@@ -67,9 +67,9 @@ At runtime, `createCompanionClient` recursively walks the same `RPC` object, cre
 
 ## Protocol contract and validation pipeline
 
-The protocol schema is the single source of truth for channel contracts. Each endpoint has a versioned channel name ending in `:v1`, a request Zod schema, and a response Zod schema. `CHANNEL_CONTRACTS` is the flattened channel-to-endpoint map; `REQUEST_SCHEMAS` is a compatibility view containing only request schemas for transport-boundary enumeration. `@bear-harness/protocol/src/index.ts` mirrors the runtime schemas with erased type aliases:
+The protocol schema is the single source of truth for channel contracts. Each endpoint has a versioned channel name ending in `:v1`, a request Zod schema, and a response Zod schema. `RPC` is the nested canonical endpoint registry and `CHANNEL_CONTRACTS` is its flattened channel-to-endpoint map; both carry the complete endpoint metadata, including request and response schemas. `REQUEST_SCHEMAS` is a compatibility view containing only request schemas for transport-boundary enumeration and must not be used for response validation or endpoint lookup. `@bear-harness/protocol/src/index.ts` mirrors the runtime schemas with erased type aliases:
 
-- `AnyRpcEndpoint`, `DeclaredRpcEndpoint`, and `Channel` describe endpoint/channel identity.
+- `RpcRegistry` and `ChannelContractRegistry` describe the complete nested and flattened runtime registries, while `RequestSchemaRegistry` describes the request-only compatibility view.
 - `RequestOf<E>` and `ResponseOf<E>` infer the endpoint's request and response data.
 - `EnvelopeOf<E>` is `IpcEnvelope<ResponseOf<E>>`.
 - `IpcEnvelope<T>` is `{ ok: true; data: T } | { ok: false; error: IpcError }`.
@@ -100,18 +100,18 @@ sequenceDiagram
 
 There are intentionally two request-validation boundaries: the client protects the caller before transport, while the Host dispatcher protects the process boundary. A new transport must not remove either expectation, and it must not send a raw domain object around the client-side parse. The Host dispatcher still validates because transports, debug tools, tests, and non-renderer callers can bypass this client.
 
-The client response parse validates both envelope branches and the endpoint-specific data schema. A malformed response rejects before it reaches the store. The Host dispatcher also validates handler output; in `isolate` mode a response-schema violation becomes `{ ok: false, error: { kind: "internal", reason: "response_validation_failed" } }`, while its `throw` mode raises `ProtocolResponseValidationError`. WebDev creates the runtime with `protocolViolationMode: "throw"` ([`apps/web-dev/server/index.ts`](../../apps/web-dev/server/index.ts)).
+The client response parse validates both envelope branches and the endpoint-specific data schema. A malformed response rejects before it reaches the store. The Host dispatcher also validates handler output. Its `responseValidation: "throw"` mode (selected by `HostRuntime`'s `protocolViolationMode: "throw"`) raises `ProtocolResponseValidationError` after invoking `onProtocolViolation`; its `responseValidation: "isolate"` mode reports the violation through the callback and returns `{ ok: false, error: { kind: "internal", reason: "response_validation_failed" } }`. This is Host-runtime configuration, not a client or transport setting; client validation still runs after the transport resolves.
 
 ### Adding an RPC without bypassing contracts
 
 1. Define the request and response schemas in [`packages/protocol/src/schema.ts`](../../packages/protocol/src/schema.ts).
-2. Add the endpoint to the appropriate branch of `RPC` with a new `:v1` channel. `CHANNEL_CONTRACTS` and `REQUEST_SCHEMAS` are derived from this tree; do not edit either derived registry directly.
+2. Add the endpoint to the appropriate branch of `RPC` with a new `:v1` channel. `CHANNEL_CONTRACTS` and `REQUEST_SCHEMAS` are derived from this tree; do not edit either derived registry directly. `REQUEST_SCHEMAS` carries request schemas only, while `RPC`/`CHANNEL_CONTRACTS` are required for full request/response metadata.
 3. Add the corresponding inferred aliases to [`packages/protocol/src/index.ts`](../../packages/protocol/src/index.ts) if consumers need named static types.
-4. Register a typed handler with Host `Dispatcher.registerHandler(endpoint, handler)`. Registration is keyed by the endpoint channel; the current implementation stores the handler without a runtime check that the endpoint is present in `CHANNEL_CONTRACTS`, so the endpoint/schema/handler pairing must be reviewed together.
+4. Register a typed handler with Host `Dispatcher.registerHandler(endpoint, handler)`. Registration rejects an endpoint whose channel is absent from `CHANNEL_CONTRACTS` and rejects a second handler for an already-registered channel, so stale or duplicate endpoint wiring fails during setup rather than invocation.
 5. Call the new nested method through `CompanionClient`; do not construct a parallel hand-written client method or send an unvalidated channel/request pair.
 6. For UI behavior, add store action/query projection and narrow payload guards in [`packages/companion-ui`](../../packages/companion-ui), rather than projecting arbitrary transport data directly.
 
-The Electron router automatically registers every key in `REQUEST_SCHEMAS`, and the WebDev server accepts every decoded channel before delegating to the same runtime dispatcher. This automatic enumeration only works when the endpoint is present in `RPC`.
+The Electron router automatically registers every key in `REQUEST_SCHEMAS` for request-boundary enumeration, while the dispatcher resolves full request/response contracts from `CHANNEL_CONTRACTS`. The WebDev server accepts every decoded channel before delegating to that dispatcher. These derived views only contain a channel when the endpoint is present in `RPC`.
 
 ## Transport implementations
 
@@ -130,7 +130,7 @@ The preload exposes only a frozen `bearDesktop` object and frozen `transport` ob
 
 [`apps/desktop/src/main/ipc-router.ts`](../../apps/desktop/src/main/ipc-router.ts) wires the main-process side:
 
-- It loops over `Object.keys(REQUEST_SCHEMAS)` and calls `ipcMain.handle(channel, ...)` for each public protocol channel.
+- It loops over `Object.keys(REQUEST_SCHEMAS)` and calls `ipcMain.handle(channel, ...)` for each public protocol channel. This is request-schema enumeration only; response validation and endpoint metadata remain in `CHANNEL_CONTRACTS`/`RPC`.
 - It verifies that the sender has a registered window, that its `WebContents` still maps to a `BrowserWindow`, that the sender frame is the main frame, and that the frame URL equals the window's registered `allowedUrl`.
 - An unauthorized or unavailable sender receives `{ ok: false, error: { kind: "unavailable", reason: "no_window" } }` and never reaches `dispatcher.dispatch`.
 - An authorized call delegates `(channel, params)` to the Host `Dispatcher`; the dispatcher owns request validation, handler lookup, handler-error mapping, and response validation.
@@ -159,7 +159,7 @@ The protocol error kind is one of `invalid_request`, `not_found`, `conflict`, `u
 
 - unknown channel or missing handler → `unavailable / handler_not_registered`;
 - request-schema failure → `invalid_request / request_validation_failed`;
-- handler-thrown `{ kind, reason }` → that pair, with fallback to `internal` and the thrown message/reason;
+- handler-thrown `{ kind, reason }` → the allowlisted protocol kind and reason; unknown or missing kinds normalize to `internal` while preserving a bounded string reason;
 - response-schema failure in isolate mode → `internal / response_validation_failed`.
 
 At the client boundary, a non-envelope or schema-invalid response causes the endpoint method to reject with the Zod parse error. A valid failure envelope remains a value (`ok: false`) until a caller unwraps it.
@@ -182,7 +182,7 @@ Store lifecycle:
 3. An effect polls `events.subscribe(afterSeq)` at the store's interval and projects domain events. Duplicate events are skipped; sequence gaps mark the projection stale and cause a snapshot refetch.
 4. All domain actions (conversation/message, onboarding, memory, settings, provider/model, commission/run, artifact/story, character/canon) invoke nested client methods through the shared helper. Successful calls clear errors; failures set the store error/presence state.
 5. Values crossing into reactive state are checked by narrow guards in `stores/ipc.ts`; malformed payloads are dropped rather than projected.
-6. The store's source comments describe an absent client as unavailable with empty data and idle presence, but `CompanionClient` is a required parameter, the event loop invokes it unconditionally, and `derivePresence` maps `companionState === "unavailable"` to `problem`. In practice, transport failures are handled as store errors and retries rather than through a formally supported missing-client mode.
+6. `CompanionClient` is a required input; there is no supported missing-client branch. Transport failures are handled as store errors, and an unavailable host state is represented as `problem` rather than an idle missing-client state.
 
 This separation means a transport change should be invisible to UI components if it preserves `HostTransport` and envelope semantics. If a new RPC returns data that the store projects, update the protocol types and store guard/projection together; a TypeScript method appearing on `CompanionClient` alone does not make the data safe for reactive UI state.
 
@@ -235,12 +235,6 @@ A focused manual smoke should confirm that a valid endpoint reaches the Host and
 
 ## Known issues / findings
 
-- **`unwrap` is less defensive than its module comment implies.** `createCompanionClient` validates the full envelope with `IpcResponse(endpoint.response).parse`, so normal client calls are protected. The separately exported [`packages/companion-client/src/unwrap.ts`](../../packages/companion-client/src/unwrap.ts) only checks that the result is a non-null object and whether `ok === true`; it does not validate that `data` has the expected shape or that a failure has a valid protocol error object. Direct callers of this helper can receive `undefined` as a typed value for `{ ok: true }` or a generic error for malformed failures. The UI helper assumes the generated client's parsed envelope, preserves `kind`, and localizes the resulting message.
 - **Transport failures are outside the RPC envelope.** WebDev rejects HTTP statuses such as 401 with `web-dev transport failed: <status>`, while the RPC server returns domain failures as HTTP 200 envelopes. Callers must handle rejected transport promises separately from `IpcEnvelope` failures; a new transport should document the same distinction rather than wrapping every network failure as a fabricated domain error.
-- **IPC handler registration is not idempotent.** `wireElectronIpcHandlers` calls `ipcMain.handle` for every registry channel on each invocation. Electron does not permit registering the same handler twice; callers must wire this once per main-process lifecycle. The function has no duplicate-registration guard.
-- **The dispatcher registration comment overstates its guard.** `Dispatcher.registerHandler` is documented as throwing on unknown channels, but its current implementation only writes `endpoint.channel` to the handler map. The `dispatch` path does reject unknown channels, yet a typo or stale endpoint can still be registered and remain undiscovered until invocation.
-- **Handler-thrown error kinds are not normalized by `Dispatcher`.** The protocol `IpcErrorKind` schema allows five values, but the dispatcher's catch block copies any thrown `err.kind` string into the envelope. A handler that throws an unsupported kind can therefore produce an envelope the companion client rejects during `IpcResponse` parsing instead of a stable protocol failure.
-- **The store's missing-client contract is inconsistent with its implementation.** The store comments describe an absent client as unavailable with empty data and idle presence, but `CompanionClient` is required, the event loop invokes it unconditionally, and `derivePresence` maps `companionState === "unavailable"` to `problem`. Transport failures are handled as store errors and retries; there is no formally supported absent-client mode.
-- **The client has no cancellation, timeout, or retry policy.** Long-running calls and event polling inherit transport behavior. Adding retries in a transport requires care because the RPC set includes mutating operations and the protocol has no idempotency key in `HostTransport`.
-- **Protocol response validation mode is Host-runtime configuration, not client configuration.** The client rejects malformed envelopes after the fact, but only the dispatcher can report/isolate a handler's response-schema violation. WebDev explicitly uses throw mode; other Host construction paths can choose isolate mode and return an internal envelope.
-- **`REQUEST_SCHEMAS` is intentionally request-only.** Transport boundary code that needs response validation or endpoint metadata must use `CHANNEL_CONTRACTS`/`RPC`; adding a channel to a request-only map would not create a complete client or Host contract.
+- **Timeout/cancellation and retry behavior are transport-owned.** The client intentionally adds no timeout, cancellation, or retry policy; rejected transport failures pass through unchanged. A transport must not retry mutations unless an endpoint-specific idempotency contract exists.
+- **Protocol response validation mode is Host-runtime configuration, not client configuration.** `HostRuntime` maps `protocolViolationMode` to the dispatcher's explicit `responseValidation: "throw"` or `"isolate"` mode. Both modes invoke `onProtocolViolation`; throw rejects with `ProtocolResponseValidationError`, while isolate returns an `internal / response_validation_failed` envelope. The client rejects malformed envelopes only after a transport resolves.

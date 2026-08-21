@@ -1,6 +1,7 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
+import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CharacterPresence } from "../src/CharacterPresence.js";
 import { ConversationPanel } from "../src/ConversationPanel.js";
@@ -99,6 +100,57 @@ describe("roleplay presentation", () => {
 		expect(dismissRoleplayMedia).toHaveBeenCalledOnce();
 	});
 
+	it("re-presents declared media when the active presentation returns", async () => {
+		vi.stubGlobal(
+			"matchMedia",
+			vi.fn(() => ({ matches: false })),
+		);
+		const [activeMediaId, setActiveMediaId] = createSignal<string | undefined>("signal");
+		const character = {
+			...THEMED_CHARACTER,
+			roleplay: {
+				...THEMED_CHARACTER.roleplay,
+				media: [
+					{
+						id: "signal",
+						kind: "animation" as const,
+						label: "重新亮起的信号",
+						loop: true,
+						presentation: "dialog" as const,
+						url: "data:image/webp;base64,UklGRg==",
+						posterUrl: "data:image/png;base64,iVBORw0KGgo=",
+					},
+				],
+			},
+		};
+		const store = {
+			activeMessages: [],
+			activeConversationId: "conversation",
+			conversations: [],
+			runs: [],
+			pendingUserText: undefined,
+			assistantStreaming: false,
+			streamingAssistantText: "",
+			activeRoleplayChoiceSetId: undefined,
+			get activeRoleplayMediaId() {
+				return activeMediaId();
+			},
+			activeAmbientMediaId: undefined,
+			dismissRoleplayMedia: vi.fn(),
+		} as unknown as CompanionStore;
+		render(() => (
+			<DesktopProvider store={store}>
+				<ConversationPanel character={character} />
+			</DesktopProvider>
+		));
+
+		expect(await screen.findByRole("dialog")).toBeVisible();
+		setActiveMediaId(undefined);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		setActiveMediaId("signal");
+		expect(await screen.findByRole("dialog")).toBeVisible();
+	});
+
 	it.each([
 		{
 			kind: "image" as const,
@@ -120,21 +172,42 @@ describe("roleplay presentation", () => {
 			"matchMedia",
 			vi.fn(() => ({ matches: false })),
 		);
+		const media =
+			kind === "image"
+				? {
+						id: "scene",
+						kind: "image" as const,
+						label: "场景媒体",
+						presentation: "dialog" as const,
+						url,
+						loop: false,
+						posterUrl: "data:image/png;base64,cG9zdGVy",
+					}
+				: kind === "audio"
+					? {
+							id: "scene",
+							kind: "audio" as const,
+							label: "场景媒体",
+							presentation: "dialog" as const,
+							url,
+							loop: false,
+							captionsUrl: "data:text/vtt;base64,V0VCVlRU",
+						}
+					: {
+							id: "scene",
+							kind: "video" as const,
+							label: "场景媒体",
+							presentation: "dialog" as const,
+							url,
+							loop: false,
+							posterUrl: "data:image/png;base64,cG9zdGVy",
+							captionsUrl: "data:text/vtt;base64,V0VCVlRU",
+						};
 		const character = {
 			...THEMED_CHARACTER,
 			roleplay: {
 				...THEMED_CHARACTER.roleplay,
-				media: [
-					{
-						id: "scene",
-						kind,
-						label: "场景媒体",
-						presentation: "dialog",
-						url,
-						posterUrl: "data:image/png;base64,cG9zdGVy",
-						captionsUrl: "data:text/vtt;base64,V0VCVlRU",
-					},
-				],
+				media: [media],
 			},
 		};
 		const store = {
@@ -217,21 +290,40 @@ describe("roleplay presentation", () => {
 	])("renders declared inline $kind media with a close control", async ({ kind, selector }) => {
 		const dismissRoleplayMedia = vi.fn();
 		const url = `data:${kind === "image" ? "image/png" : kind === "audio" ? "audio/ogg" : "video/webm"};base64,c2NlbmU=`;
-		const character = {
-			...THEMED_CHARACTER,
-			roleplay: {
-				...THEMED_CHARACTER.roleplay,
-				media: [
-					{
+		const media =
+			kind === "image"
+				? {
 						id: "inline",
-						kind,
+						kind: "image" as const,
 						label: "行内场景",
 						presentation: "inline" as const,
 						url,
 						loop: false,
-						captionsUrl: kind === "image" ? undefined : "data:text/vtt;base64,V0VCVlRU",
-					},
-				],
+					}
+				: kind === "audio"
+					? {
+							id: "inline",
+							kind: "audio" as const,
+							label: "行内场景",
+							presentation: "inline" as const,
+							url,
+							loop: false,
+							captionsUrl: "data:text/vtt;base64,V0VCVlRU",
+						}
+					: {
+							id: "inline",
+							kind: "video" as const,
+							label: "行内场景",
+							presentation: "inline" as const,
+							url,
+							loop: false,
+							captionsUrl: "data:text/vtt;base64,V0VCVlRU",
+						};
+		const character = {
+			...THEMED_CHARACTER,
+			roleplay: {
+				...THEMED_CHARACTER.roleplay,
+				media: [media],
 			},
 		};
 		const store = {

@@ -353,7 +353,7 @@ export const zhCN = {
 		addSource: "加入资料库",
 		chunks: "个片段",
 		packageManaged: "角色包提供 · 只读",
-		sourceLanguage: "资料语言：{{language}}",
+		sourceLanguage: "资料语言：{language}",
 		remove: "移除",
 		removeConfirm: "移除这份原作资料及其检索片段？",
 		search: "检索与引用",

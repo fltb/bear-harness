@@ -20,6 +20,15 @@ test("chat streams once and edited history regenerates once through the UI", asy
 
 	await expect(page.getByText("EDITED_OK", { exact: true })).toHaveCount(1);
 	await expect(page.getByRole("status", { name: zhCN.messages.responding })).toBeHidden();
+	const assistantMessage = page.getByRole("article").filter({
+		has: page.getByText("EDITED_OK", { exact: true }),
+	});
+	await expect(assistantMessage).toHaveCount(1);
+	await assistantMessage.getByRole("button", { name: zhCN.messages.operations }).click();
+	await assistantMessage.getByRole("button", { name: zhCN.messages.regenerate }).click();
+	await expect(page.getByText("EDITED_OK", { exact: true })).toHaveCount(1);
+	await expect(page.getByRole("status", { name: zhCN.messages.responding })).toBeHidden();
+
 	await page.reload();
 	await expect(page.getByText("EDITED_OK", { exact: true })).toHaveCount(1);
 	await expect(page.getByText("规则：回复 EDITED_OK", { exact: true })).toHaveCount(1);

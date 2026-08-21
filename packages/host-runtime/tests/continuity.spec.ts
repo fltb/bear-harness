@@ -151,6 +151,135 @@ describe("automatic continuity", () => {
 		});
 		await runtime.close();
 	});
+	it("commits candidate scope consistently and rejects only one owned pending row", async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-candidates-"));
+		roots.push(dataDir);
+		let runtime = makeRuntimeAt(dataDir);
+		await runtime.start();
+		const storage = new DatabaseSync(join(dataDir, "storage", "canon.db"));
+		try {
+			storage
+				.prepare(
+					`INSERT INTO memory_candidates
+						(id, companion_id, kind, source_kind, normalized_text, why, suggested_scope)
+						VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				)
+				.run(
+					"candidate-approved",
+					productConfig.defaultCharacterId,
+					"fact",
+					"companion_suggestion",
+					"用户偏好夜景",
+					"由助手建议",
+					"self",
+				);
+			await expect(
+				data(runtime, "memory.candidate.approve:v1", {
+					candidateId: "candidate-approved",
+					decidedScope: "scene",
+				}),
+			).resolves.toEqual({});
+			expect(
+				storage
+					.prepare("SELECT status, decided_at FROM memory_candidates WHERE id = ?")
+					.get("candidate-approved"),
+			).toMatchObject({ status: "approved" });
+			expect(
+				storage
+					.prepare("SELECT decision, decided_scope FROM memory_decisions WHERE candidate_id = ?")
+					.get("candidate-approved"),
+			).toMatchObject({ decision: "approve", decided_scope: "scene" });
+			expect(
+				storage
+					.prepare(
+						"SELECT scope FROM relationship_memory_entries WHERE companion_id = ? AND text = ?",
+					)
+					.get(productConfig.defaultCharacterId, "用户偏好夜景"),
+			).toMatchObject({ scope: "scene" });
+			await expect(data(runtime, "memory.list:v1", {})).resolves.toMatchObject({
+				entries: [expect.objectContaining({ text: "用户偏好夜景", scope: "scene" })],
+			});
+
+			// The approved scope must survive a restart: memory.list projects it
+			// from metadata persisted through Tdai storage, not from the in-memory
+			// approval response.
+			await runtime.close();
+			runtime = makeRuntimeAt(dataDir);
+			await runtime.start();
+			await expect(data(runtime, "memory.list:v1", {})).resolves.toMatchObject({
+				entries: [expect.objectContaining({ text: "用户偏好夜景", scope: "scene" })],
+			});
+
+			storage
+				.prepare(
+					`INSERT INTO memory_candidates
+						(id, companion_id, kind, source_kind, normalized_text, why, suggested_scope)
+						VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				)
+				.run(
+					"candidate-rejected",
+					productConfig.defaultCharacterId,
+					"fact",
+					"companion_suggestion",
+					"不会进入记忆",
+					"由助手建议",
+					"relationship",
+				);
+			await expect(
+				data(runtime, "memory.candidate.reject:v1", { candidateId: "candidate-rejected" }),
+			).resolves.toEqual({});
+			const secondReject = await runtime.dispatch("memory.candidate.reject:v1", {
+				candidateId: "candidate-rejected",
+			});
+			expect(secondReject).toMatchObject({ ok: false, error: { kind: "conflict" } });
+			expect(
+				storage
+					.prepare("SELECT COUNT(*) AS count FROM memory_decisions WHERE candidate_id = ?")
+					.get("candidate-rejected"),
+			).toMatchObject({ count: 1 });
+
+			storage
+				.prepare("INSERT INTO companion_packages (id, name, version, hash) VALUES (?, ?, ?, ?)")
+				.run("foreign-package", "Foreign", "1", "foreign");
+			storage
+				.prepare(
+					"INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES (?, ?, ?, ?)",
+				)
+				.run("foreign-companion", "foreign-package", "Foreign", "Foreign");
+			storage
+				.prepare(
+					`INSERT INTO memory_candidates
+						(id, companion_id, kind, source_kind, normalized_text, why, suggested_scope)
+						VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				)
+				.run(
+					"candidate-foreign",
+					"foreign-companion",
+					"fact",
+					"companion_suggestion",
+					"foreign",
+					"由助手建议",
+					"self",
+				);
+			const foreignReject = await runtime.dispatch("memory.candidate.reject:v1", {
+				candidateId: "candidate-foreign",
+			});
+			expect(foreignReject).toMatchObject({ ok: false, error: { kind: "not_found" } });
+			expect(
+				storage
+					.prepare("SELECT status FROM memory_candidates WHERE id = ?")
+					.get("candidate-foreign"),
+			).toMatchObject({ status: "pending" });
+			expect(
+				storage
+					.prepare("SELECT COUNT(*) AS count FROM memory_decisions WHERE candidate_id = ?")
+					.get("candidate-foreign"),
+			).toMatchObject({ count: 0 });
+		} finally {
+			storage.close();
+			await runtime.close();
+		}
+	});
 
 	it("removes forgotten memories from memory.list permanently", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-forget-"));
@@ -331,6 +460,107 @@ describe("automatic continuity", () => {
 				}),
 			]),
 		);
+		await runtime.close();
+	});
+
+	it("persists a regenerated edited reply as the single adopted response after reopening", async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-regenerate-"));
+		roots.push(dataDir);
+		let runtime = makeRuntimeAt(dataDir);
+		await runtime.start();
+		const conversation = (await data(runtime, "conversation.create:v1", {})) as { id: string };
+		const sent = (await data(runtime, "message.send:v1", {
+			conversationId: conversation.id,
+			text: "旧问题",
+		})) as { messageId: string };
+		await runtime.close();
+
+		const oldPiEntryId = appendCompletedPiTurn(dataDir, conversation.id, "旧问题");
+		runtime = makeRuntimeAt(dataDir);
+		await runtime.start();
+		await data(runtime, "message.edit:v1", {
+			conversationId: conversation.id,
+			messageId: sent.messageId,
+			text: "编辑后的问题",
+			isUserMessage: true,
+		});
+		await runtime.close();
+
+		const session = PiSessionStore.open({
+			sessionDir: join(dataDir, "sessions"),
+			sessionFile: sessionFileFor(dataDir, conversation.id),
+		});
+		session.branchBefore(oldPiEntryId);
+		session.appendMessage({
+			role: "user",
+			content:
+				"<host_context>\n已知背景\n</host_context>\n\n<current_user_message>\n编辑后的问题\n</current_user_message>",
+			timestamp: Date.now(),
+		});
+		session.appendSyntheticAssistant("EDITED_OK");
+
+		runtime = makeRuntimeAt(dataDir);
+		await runtime.start();
+		const before = (await data(runtime, "conversation.select:v1", {
+			id: conversation.id,
+		})) as {
+			messages: Array<{
+				id: string;
+				role: string;
+				versions: Array<{ content: string }>;
+			}>;
+		};
+		const editedAssistant = before.messages.find(
+			(message) =>
+				message.role === "assistant" &&
+				message.versions.some((version) => version.content === "EDITED_OK"),
+		);
+		if (!editedAssistant) throw new Error("expected edited assistant projection");
+		await data(runtime, "message.regenerate:v1", {
+			conversationId: conversation.id,
+			messageId: editedAssistant.id,
+		});
+
+		const regeneratedSession = PiSessionStore.open({
+			sessionDir: join(dataDir, "sessions"),
+			sessionFile: sessionFileFor(dataDir, conversation.id),
+		});
+		regeneratedSession.appendSyntheticAssistant("REGENERATED_EDITED_OK");
+		const composition = Reflect.get(runtime, "composition") as {
+			eventBus: { publish(kind: string, payload: unknown): void };
+		};
+		composition.eventBus.publish("message_end", {
+			conversationId: conversation.id,
+			text: "REGENERATED_EDITED_OK",
+		});
+		await runtime.close();
+
+		runtime = makeRuntimeAt(dataDir);
+		await runtime.start();
+		const reopened = (await data(runtime, "conversation.select:v1", {
+			id: conversation.id,
+		})) as {
+			messages: Array<{
+				role: string;
+				versions: Array<{ content: string; adopted: boolean }>;
+			}>;
+		};
+		const adoptedAssistants = reopened.messages.filter(
+			(message) =>
+				message.role === "assistant" &&
+				message.versions.some((version) => version.content === "REGENERATED_EDITED_OK" && version.adopted),
+		);
+		expect(adoptedAssistants).toHaveLength(1);
+		expect(
+			adoptedAssistants[0]?.versions.some(
+				(version) => version.content === "EDITED_OK" && version.adopted === false,
+			),
+		).toBe(true);
+		expect(
+			adoptedAssistants[0]?.versions.some(
+				(version) => version.content === "REGENERATED_EDITED_OK" && version.adopted === true,
+			),
+		).toBe(true);
 		await runtime.close();
 	});
 

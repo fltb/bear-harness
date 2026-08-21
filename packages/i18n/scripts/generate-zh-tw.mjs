@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import OpenCC from "opencc-js";
-import { zhCN } from "../dist/locales/zh-CN.js";
+import { zhCN } from "../src/locales/zh-CN.ts";
 
 const convert = OpenCC.Converter({ from: "cn", to: "twp" });
 

@@ -48,7 +48,7 @@ export const THEMED_CHARACTER: CharacterDisplay = {
 			completion: { conversation_title: "Test conversation" },
 		},
 	},
-	scenes: [],
+	scenes: [{ id: "default", label: "Default", description: "Default scene" }],
 	visual: {
 		defaultSceneId: "default",
 		defaultExpressionId: "default",
@@ -127,6 +127,9 @@ export const FORK_PRODUCT: Readonly<ProductConfig> = {
 const DEFAULT_SETTINGS: SettingsData = {
 	relationshipMemoryEnabled: false,
 	conversationHistoryReadEnabled: false,
+	networkProxy: { mode: "direct" },
+	memoryVectorService: { enabled: false, provider: "none" },
+	modelDownloadMirror: {},
 };
 
 const DEFAULT_MODEL = {
@@ -195,6 +198,7 @@ export function createTestClient() {
 			get: vi.fn(() => ok({ state: { values: {}, unlocked: [] } })),
 			trigger: vi.fn(() => ok({ state: { values: {}, unlocked: [] } })),
 			resetUnlocks: vi.fn(() => ok({})),
+			dismissMedia: vi.fn(() => ok({})),
 		},
 		events: { subscribe: vi.fn(() => new Promise<never>(() => {})) },
 		onboarding: {

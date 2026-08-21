@@ -25,6 +25,7 @@ function createFixture(controller?: ExecutorController): Fixture {
 	const db = new DatabaseSync(":memory:");
 	db.exec(`
 		CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+		CREATE TABLE conversations (id TEXT PRIMARY KEY, companion_id TEXT NOT NULL);
 		CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, role TEXT NOT NULL);
 		CREATE TABLE commissions (
 			id TEXT PRIMARY KEY,
@@ -82,9 +83,22 @@ function createFixture(controller?: ExecutorController): Fixture {
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
 	`);
+	db.prepare("INSERT INTO conversations (id, companion_id) VALUES (?, ?), (?, ?)").run(
+		"conversation-1",
+		"companion-active",
+		"conversation-2",
+		"companion-other",
+	);
 	db.prepare(
-		"INSERT INTO messages (id, conversation_id, role) VALUES (?, ?, 'user'), (?, ?, 'user')",
-	).run("user-message-1", "conversation-1", "user-message-2", "conversation-1");
+		"INSERT INTO messages (id, conversation_id, role) VALUES (?, ?, 'user'), (?, ?, 'user'), (?, ?, 'user')",
+	).run(
+		"user-message-1",
+		"conversation-1",
+		"user-message-2",
+		"conversation-1",
+		"user-message-3",
+		"conversation-2",
+	);
 	db.prepare(
 		"INSERT INTO executor_profiles (id, profile_type, capability_json) VALUES (?, 'product-managed', '{}')",
 	).run("pi-worker");
@@ -196,6 +210,67 @@ describe("CommissionService executor routing", () => {
 				.prepare("SELECT trigger_message_id FROM commissions WHERE id = ?")
 				.get("legacy-commission"),
 		).toEqual({ trigger_message_id: "" });
+	});
+
+	it("scopes commission projections to the requested companion and valid trigger", () => {
+		const fixture = createFixture();
+		fixtures.push(fixture);
+		const active = fixture.service.draft({
+			conversationId: "conversation-1",
+			triggerMessageId: "user-message-1",
+			title: "Active",
+			description: "Owned by the active companion",
+		});
+		const other = fixture.service.draft({
+			conversationId: "conversation-2",
+			triggerMessageId: "user-message-3",
+			title: "Other",
+			description: "Owned by another companion",
+		});
+		fixture.db
+			.prepare(
+				"INSERT INTO commissions (id, conversation_id, trigger_message_id, status, draft_json) VALUES (?, ?, ?, ?, ?)",
+			)
+			.run(
+				"missing-trigger",
+				"conversation-1",
+				"missing-message",
+				"completed",
+				JSON.stringify({
+					conversationId: "conversation-1",
+					title: "Invalid",
+					description: "Missing trigger",
+					reads: [],
+					writes: [],
+					networkAllowed: false,
+					toolNames: [],
+				}),
+			);
+
+		const rows = fixture.service.list({ companionId: "companion-active" });
+		expect(rows.map((row) => row.id)).toEqual([active.commissionId]);
+		expect(rows.map((row) => row.id)).not.toContain(other.commissionId);
+	});
+
+	it("rejects unsupported executor profiles before inserting a run", async () => {
+		const fixture = createFixture();
+		fixtures.push(fixture);
+		fixture.db
+			.prepare(
+				"INSERT INTO executor_profiles (id, profile_type, capability_json) VALUES (?, ?, '{}')",
+			)
+			.run("native-worker", "native-full");
+
+		const commissionId = approvedCommission(fixture.service);
+		await expect(
+			fixture.service.launch({ commissionId, executorProfile: "native-worker" }),
+		).rejects.toMatchObject({ kind: "unavailable", reason: "executor_profile_type_invalid" });
+		expect(fixture.db.prepare("SELECT id FROM runs").all()).toEqual([]);
+		expect(
+			fixture.db.prepare("SELECT status FROM commissions WHERE id = ?").get(commissionId),
+		).toEqual({
+			status: "approved",
+		});
 	});
 
 	it("dispatches only an approved run and persists controller evidence through the Host", async () => {

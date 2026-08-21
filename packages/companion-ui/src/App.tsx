@@ -20,6 +20,9 @@ import {
 	useCompanionStore,
 } from "./stores/companion.js";
 
+/** The narrowest supported desktop viewport width, in CSS pixels. */
+export const SUPPORTED_DESKTOP_MIN_WIDTH = 800;
+
 /**
  * Desktop frame from Prototype 06, wired to the Companion store.
  *
@@ -158,8 +161,10 @@ function DesktopFrame(props: {
 
 	return (
 		<div
-			class="app"
+			class="app desktop-shell"
 			style={props.theme}
+			data-layout="desktop"
+			data-supported-min-width={SUPPORTED_DESKTOP_MIN_WIDTH}
 			data-result-open={selection() ? "true" : undefined}
 			role="application"
 			aria-label={props.product.productName}

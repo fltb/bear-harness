@@ -22,6 +22,7 @@ export default defineConfig({
 			"tests/ipc-router.spec.ts",
 			"tests/artifact-protocol.spec.ts",
 			"tests/update-service.spec.ts",
+			"tests/electron-credential-vault.spec.ts",
 		],
 		coverage: {
 			provider: "v8",

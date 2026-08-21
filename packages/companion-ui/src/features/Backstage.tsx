@@ -556,9 +556,9 @@ function RoleplayMedia(props: { media: CharacterDisplay["roleplay"]["media"][num
 }
 
 function roleplayImageUrl(media: CharacterDisplay["roleplay"]["media"][number]): string {
-	return media.kind === "animation" &&
-		media.posterUrl &&
-		window.matchMedia("(prefers-reduced-motion: reduce)").matches
-		? media.posterUrl
-		: media.url;
+	if (media.kind !== "animation" || !media.posterUrl) return media.url;
+	const prefersReducedMotion =
+		typeof globalThis.matchMedia === "function" &&
+		globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches;
+	return prefersReducedMotion ? media.posterUrl : media.url;
 }

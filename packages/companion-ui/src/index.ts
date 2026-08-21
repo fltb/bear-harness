@@ -19,7 +19,7 @@
  */
 
 export type { BrandLicense, ProductConfig } from "@bear-harness/product-config";
-export { CompanionApp } from "./App.js";
+export { CompanionApp, SUPPORTED_DESKTOP_MIN_WIDTH } from "./App.js";
 export {
 	installRendererFaultReporting,
 	type RendererErrorType,

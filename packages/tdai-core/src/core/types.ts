@@ -197,7 +197,10 @@ export interface CompletedTurn {
 
 /** Result from a recall (prefetch) operation. */
 export interface RecallResult {
-	/** L1 relevant memories — prepended to user prompt text (dynamic, per-turn). */
+	/**
+	 * L1 relevant memories — prepended to user prompt text (dynamic, per-turn).
+	 * An empty object is returned when recall is disabled.
+	 */
 	prependContext?: string;
 	/** Stable recall context appended to system prompt (persona, scene nav, tools guide). */
 	appendSystemContext?: string;
@@ -208,6 +211,42 @@ export interface RecallResult {
 	/** Search strategy used. */
 	recallStrategy?: string;
 }
+/**
+ * Observable state for asynchronous L0/L1 vector indexing.
+ *
+ * `pending` is deliberately distinct from `complete`: a capture that only
+ * wrote metadata has not finished indexing until its background embeddings
+ * have been committed. Failed records remain retryable.
+ */
+export interface IndexingStatus {
+	state: "complete" | "pending" | "failed" | "unavailable";
+	total: number;
+	completed: number;
+	pending: number;
+	failed: number;
+	error?: string;
+}
+
+/** Metadata needed to retry a deferred embedding without duplicating a row. */
+export interface DeferredIndexingRecord {
+	recordId: string;
+	text: string;
+}
+
+export type IndexingStatusCallback = (
+	status: IndexingStatus,
+	records: readonly DeferredIndexingRecord[],
+) => void;
+
+/** Result returned by a full or retry re-index operation. */
+export interface ReindexResult {
+	l1Count: number;
+	l0Count: number;
+	failedL1Count?: number;
+	failedL0Count?: number;
+	complete?: boolean;
+	error?: string;
+}
 
 /** Result from a capture (sync_turn) operation. */
 export interface CaptureResult {
@@ -215,8 +254,10 @@ export interface CaptureResult {
 	l0RecordedCount: number;
 	/** Whether the pipeline scheduler was notified. */
 	schedulerNotified: boolean;
-	/** Number of L0 vectors written. */
+	/** Number of L0 vectors committed synchronously before return. */
 	l0VectorsWritten: number;
+	/** Observable state of all indexing started by this capture. */
+	indexingStatus: IndexingStatus;
 	/** Filtered messages that were captured. */
 	filteredMessages: Array<{
 		role: string;

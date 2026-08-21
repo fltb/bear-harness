@@ -90,7 +90,9 @@ export function SettingsSheet() {
 	};
 
 	onMount(() => {
-		void Promise.all([store.provider.list(), store.model.list()]);
+		void Promise.all([store.provider.list(), store.model.list()]).catch((cause) => {
+			setError(messageOf(cause));
+		});
 	});
 
 	async function run(action: () => Promise<unknown>, success: string): Promise<void> {
@@ -155,7 +157,9 @@ export function SettingsSheet() {
 				options={[...supportedProductLocales]}
 				value={currentLocale() as ProductLocale}
 				optionTextValue={(locale) => t(`settings.localeNames.${locale}`)}
-				onChange={(locale) => locale && setProductLocale(locale)}
+				onChange={(locale) =>
+					locale && void run(() => setProductLocale(locale), t("settings.language"))
+				}
 				itemComponent={(itemProps) => (
 					<Select.Item item={itemProps.item} class="select-item">
 						<Select.ItemLabel>

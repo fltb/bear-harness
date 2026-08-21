@@ -1,3 +1,4 @@
+import { i18n } from "@bear-harness/i18n";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
@@ -89,6 +90,22 @@ describe("model pool settings", () => {
 
 		await selectKobalteOption(user, language, "zh-CN");
 		await waitFor(() => expect(document.documentElement).toHaveAttribute("lang", "zh-CN"));
+	});
+	it("surfaces locale switching failures without changing the canonical locale", async () => {
+		const { client } = configuredClient();
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		const language = within(backstage).getByRole("button", {
+			name: new RegExp(zhCN.settings.language),
+		});
+		const failure = new Error("translation service unavailable");
+		const changeLanguage = vi.spyOn(i18n, "changeLanguage").mockRejectedValueOnce(failure);
+
+		await selectKobalteOption(user, language, "en");
+		await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(failure.message));
+		expect(document.documentElement).toHaveAttribute("lang", "zh-CN");
+		expect(localStorage.getItem("bear-harness.product-locale")).toBe("zh-CN");
+		changeLanguage.mockRestore();
 	});
 
 	it("shows configured models, global defaults, and provider presets", async () => {

@@ -5,13 +5,13 @@ import { setProductLocale } from "@bear-harness/i18n";
 
 Object.defineProperty(window, "scrollTo", { configurable: true, value: () => undefined });
 
-beforeEach(() => {
-	setProductLocale("zh-CN");
+beforeEach(async () => {
+	await setProductLocale("zh-CN");
 });
 
 // globals: false — register the cleanup hook explicitly.
-afterEach(() => {
+afterEach(async () => {
 	cleanup();
-	setProductLocale("zh-CN");
+	await setProductLocale("zh-CN");
 	localStorage.clear();
 });

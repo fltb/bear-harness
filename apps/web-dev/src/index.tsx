@@ -13,6 +13,8 @@ const bootstrap = await loadBootstrap();
 const transport = createHttpTransport(bootstrap.token);
 const client = createCompanionClient(transport);
 
+// Renderer diagnostics are intentionally local and lossy: browser reports are
+// fire-and-forget and the Host retains no durable diagnostic state.
 installRendererFaultReporting((fault) => {
 	void fetch("/diagnostics/renderer-fault", {
 		method: "POST",

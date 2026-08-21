@@ -7,6 +7,17 @@ interface DataDirectoryEnvironment {
 	BEAR_WEB_DEV_DATA_SCOPE?: string;
 }
 
+export function webDevDataScopeDirectory(
+	override = process.env.BEAR_WEB_DEV_DATA_DIR,
+	scope = process.env.BEAR_WEB_DEV_DATA_SCOPE,
+): string | undefined {
+	const normalizedScope = scope?.trim();
+	if (!override || !normalizedScope || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(normalizedScope)) {
+		return undefined;
+	}
+	return resolve(override, `.process-${normalizedScope}`);
+}
+
 export function desktopDataDirectory(
 	name: string,
 	override = process.env.BEAR_WEB_DEV_DATA_DIR,
@@ -32,6 +43,6 @@ export function webDevDataDirectory(
 	home = homedir(),
 ): string {
 	const base = desktopDataDirectory(name, override, platform, environment, home);
-	const scope = environment.BEAR_WEB_DEV_DATA_SCOPE?.trim();
-	return override && scope ? resolve(base, `.process-${scope}`) : base;
+	const scoped = webDevDataScopeDirectory(override, environment.BEAR_WEB_DEV_DATA_SCOPE);
+	return scoped ?? base;
 }

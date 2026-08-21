@@ -56,6 +56,50 @@ function activeConversationSnapshot() {
 		},
 	};
 }
+
+function editedHistorySnapshot(userContent: string, assistantContent: string) {
+	const snapshot = activeConversationSnapshot();
+	return {
+		...snapshot,
+		conversation: {
+			...snapshot.conversation,
+			messages: [
+				{
+					id: "user-1",
+					role: "user" as const,
+					adoptedVersionId: "user-version-1",
+					createdAt: "2026-01-01T00:00:00.000Z",
+					versions: [
+						{
+							id: "user-version-1",
+							role: "user" as const,
+							content: userContent,
+							editedByUser: userContent !== "原始问题",
+							createdAt: "2026-01-01T00:00:00.000Z",
+							adopted: true,
+						},
+					],
+				},
+				{
+					id: "assistant-1",
+					role: "assistant" as const,
+					adoptedVersionId: "assistant-version-1",
+					createdAt: "2026-01-01T00:00:01.000Z",
+					versions: [
+						{
+							id: "assistant-version-1",
+							role: "assistant" as const,
+							content: assistantContent,
+							editedByUser: false,
+							createdAt: "2026-01-01T00:00:01.000Z",
+							adopted: true,
+						},
+					],
+				},
+			],
+		},
+	};
+}
 function conversationProjectionSnapshot() {
 	const snapshot = activeConversationSnapshot();
 	return {
@@ -364,5 +408,81 @@ describe("conversation message controls", () => {
 				messageId: "assistant-1",
 			});
 		});
+	});
+	it("renders one adopted result after a user edit and one regenerate", async () => {
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		let edited = false;
+		let completeEdit: (() => void) | undefined;
+		const edit = vi.fn(
+			() =>
+				new Promise<{ ok: true; data: null }>((resolve) => {
+					completeEdit = () => {
+						edited = true;
+						resolve({ ok: true, data: null });
+					};
+				}),
+		);
+		const regenerate = vi.fn(() => Promise.resolve({ ok: true as const, data: null }));
+		client.message.edit = edit;
+		client.message.regenerate = regenerate;
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: edited
+					? editedHistorySnapshot("规则：回复 EDITED_OK", "EDITED_OK")
+					: editedHistorySnapshot("原始问题", "当前回答"),
+			}),
+		);
+		client.onboarding.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		await screen.findByText("原始问题");
+		const userMessage = screen.getByRole("article", { name: zhCN.messages.userMeta });
+		await user.click(within(userMessage).getByRole("button", { name: zhCN.messages.edit }));
+		const editor = screen.getByRole("textbox", { name: zhCN.messages.editLabel });
+		await user.clear(editor);
+		await user.type(editor, "规则：回复 EDITED_OK");
+		await user.click(screen.getByRole("button", { name: zhCN.messages.save }));
+		await waitFor(() => expect(edit).toHaveBeenCalledTimes(1));
+		expect(screen.getByRole("textbox", { name: zhCN.messages.editLabel })).toBeVisible();
+		if (!completeEdit) throw new Error("edit did not start");
+		completeEdit();
+		await screen.findByText("EDITED_OK", { exact: true });
+		expect(screen.getAllByText("EDITED_OK", { exact: true })).toHaveLength(1);
+		const result = screen.getByText("EDITED_OK", { exact: true });
+		const assistantMessage = result.closest("article");
+		expect(assistantMessage).not.toBeNull();
+		const assistant = assistantMessage as HTMLElement;
+		await user.click(within(assistant).getByRole("button", { name: zhCN.messages.operations }));
+		await user.click(within(assistant).getByRole("button", { name: zhCN.messages.regenerate }));
+
+		await waitFor(() => expect(regenerate).toHaveBeenCalledTimes(1));
+		expect(screen.getAllByText("EDITED_OK", { exact: true })).toHaveLength(1);
+	});
+
+	it("keeps a recoverable message failure local to the initiating message", async () => {
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		client.message.regenerate = vi.fn(() => Promise.reject(new Error("regenerate unavailable")));
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: activeConversationSnapshot() }),
+		);
+		client.onboarding.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		await screen.findByText("当前回答");
+		await user.click(screen.getByRole("button", { name: zhCN.messages.regenerate }));
+
+		const alerts = await screen.findAllByRole("alert");
+		expect(alerts).toHaveLength(1);
+		expect(alerts[0]).toHaveTextContent("regenerate unavailable");
+		expect(screen.queryByText(zhCN.messages.operationFailedPrefix + "regenerate unavailable")).toBe(
+			alerts[0],
+		);
 	});
 });

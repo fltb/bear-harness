@@ -275,6 +275,127 @@ describe("CharacterBehaviorService", () => {
 		).toMatchObject({ state: { visualState: "apologetic" } });
 	});
 
+	it("does not carry model expression suppression into the next turn", () => {
+		const fixture = createFixture();
+		fixtures.push(fixture);
+		fixture.eventBus.publish("message.user_sent", { conversationId: "conversation-1" });
+		fixture.behavior.invoke({
+			conversationId: "conversation-1",
+			tool: "host_set_expression",
+			args: { visualState: "apologetic" },
+		});
+		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { visualState: "apologetic" } });
+
+		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { visualState: "result_ready" } });
+	});
+
+	it("clears model expression suppression on failed and aborted turns", () => {
+		const fixture = createFixture();
+		fixtures.push(fixture);
+		fixture.behavior.invoke({
+			conversationId: "conversation-1",
+			tool: "host_set_expression",
+			args: { visualState: "apologetic" },
+		});
+		fixture.eventBus.publish("message_end", {
+			conversationId: "conversation-1",
+			failed: true,
+		});
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { visualState: "apologetic" } });
+
+		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { visualState: "result_ready" } });
+
+		fixture.behavior.invoke({
+			conversationId: "conversation-1",
+			tool: "host_set_expression",
+			args: { visualState: "apologetic" },
+		});
+		fixture.eventBus.publish("message.aborted", { conversationId: "conversation-1" });
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { visualState: "presence" } });
+
+		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { visualState: "result_ready" } });
+	});
+
+	it("limits roleplay expression suppression to one lifecycle end", () => {
+		const fixture = createFixture();
+		fixtures.push(fixture);
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_trigger_roleplay_event",
+				args: { eventId: "damaged_log_opened" },
+			}),
+		).toMatchObject({ ok: true });
+		fixture.eventBus.publish("message.assistant_committed", {
+			conversationId: "conversation-1",
+			versionId: "version",
+		});
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { visualState: "thinking" } });
+
+		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { visualState: "thinking" } });
+		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { visualState: "result_ready" } });
+	});
+
 	it("commits queued roleplay effects only after the assistant version is durable", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);

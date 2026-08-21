@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { Logger } from "@bear-harness/tdai-core";
 import type { AssistantMessage, Context, ToolResultMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { MemoryBackend, MemoryBankScope } from "../src/memory/backend.js";
+import type { MemoryBackend, MemoryBankScope, MemoryMetadata } from "../src/memory/backend.js";
 import { namespaceFor } from "../src/memory/tencentdb-backend.js";
 import { CyberBearHostAdapter } from "../src/memory/tencentdb-host-adapter.js";
 import { TencentDbRuntime } from "../src/memory/tencentdb-runtime.js";
@@ -178,6 +178,56 @@ describe("TencentDbRuntime", () => {
 		await reopened.backend.open({ scope });
 		await expect(reopened.backend.list({ scope })).resolves.toEqual([
 			expect.objectContaining({ id: created.id, text: created.text }),
+		]);
+	});
+
+	it("round-trips every primitive MemoryMetadata key through the Tdai store", async () => {
+		const root = createRoot();
+		const runtime = createRuntime(root);
+		const scope = scopeFor("role-a");
+		await runtime.start();
+		await runtime.backend.open({ scope });
+
+		const metadata = {
+			scope: "scene",
+			activity_start_time: "2026-08-17T09:00:00.000Z",
+			activity_end_time: "2026-08-17T10:00:00.000Z",
+			rating: 4.5,
+			approved: true,
+			note: null,
+		} satisfies MemoryMetadata;
+
+		const created = await runtime.backend.remember({
+			scope,
+			text: "metadata round-trip memory",
+			provenance,
+			importance: 0.7,
+			metadata,
+		});
+		expect(created.metadata).toEqual(metadata);
+
+		// The Tdai store itself persists the whole payload (not only activity
+		// timestamps) in the metadata_json column.
+		const store = runtimeStore(runtime);
+		const rows = (await store.queryL1Records()) as Array<{
+			record_id: string;
+			metadata_json: string;
+		}>;
+		const stored = rows.find((row) => row.record_id === created.id);
+		expect(stored).toBeDefined();
+		expect(JSON.parse(stored!.metadata_json)).toEqual(metadata);
+
+		await expect(runtime.backend.list({ scope })).resolves.toEqual([
+			expect.objectContaining({ id: created.id, metadata }),
+		]);
+
+		// Survives a restart: the projected record keeps every primitive key.
+		await runtime.close();
+		const reopened = createRuntime(root);
+		await reopened.start();
+		await reopened.backend.open({ scope });
+		await expect(reopened.backend.list({ scope })).resolves.toEqual([
+			expect.objectContaining({ id: created.id, metadata }),
 		]);
 	});
 
@@ -364,9 +414,14 @@ describe("TencentDbRuntime", () => {
 				capture: { enabled: boolean; l0l1RetentionDays: number };
 				extraction: { enabled: boolean; enableDedup: boolean };
 				persona: { triggerEveryN: number };
-				pipeline: { everyNConversations: number; enableWarmup: boolean };
+				pipeline: {
+					everyNConversations: number;
+					enableWarmup: boolean;
+					l2DelayAfterL1Seconds: number;
+				};
 				recall: { enabled: boolean; strategy: string; timeoutMs: number };
 				embedding: { enabled: boolean; provider: string };
+				tcvdb: { embeddingDimensions: number };
 				bm25: { enabled: boolean; language: string };
 				memoryCleanup: { enabled: boolean };
 				report: { enabled: boolean };
@@ -384,14 +439,16 @@ describe("TencentDbRuntime", () => {
 			expect(cfg.persona.triggerEveryN).toBe(50);
 			expect(cfg.pipeline.everyNConversations).toBe(5);
 			expect(cfg.pipeline.enableWarmup).toBe(true);
+			expect(cfg.pipeline.l2DelayAfterL1Seconds).toBe(10);
 			expect(cfg.recall.enabled).toBe(true);
 			expect(cfg.recall.strategy).toBe("hybrid");
 			expect(cfg.recall.timeoutMs).toBe(5000);
 			expect(cfg.embedding.enabled).toBe(true);
+			expect(cfg.tcvdb.embeddingDimensions).toBe(1024);
 			expect(cfg.bm25.enabled).toBe(true);
 			expect(cfg.bm25.language).toBe("zh");
 			expect(cfg.memoryCleanup.enabled).toBe(true);
-			expect(cfg.report.enabled).toBe(true);
+			expect(cfg.report.enabled).toBe(false);
 			expect(cfg.offload.enabled).toBe(true);
 		});
 

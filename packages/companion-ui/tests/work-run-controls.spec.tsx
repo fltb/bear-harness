@@ -462,4 +462,71 @@ describe("work action lines", () => {
 		);
 		expect(messageArticle as HTMLElement).toHaveFocus();
 	});
+	it("keeps commission failures local to their proposal action line", async () => {
+		const user = userEvent.setup();
+		const reject = vi.fn(() => Promise.reject(new Error("commission unavailable")));
+		const store = workStore({
+			commission: {
+				commissions: () => [commissionOf("commission-1", "message-1", "整理资料", "draft")],
+				approve: vi.fn(() => Promise.resolve()),
+				reject,
+				launch: vi.fn(() => Promise.resolve({} as never)),
+			} as never,
+		});
+		renderTimeline(store, "message-1");
+
+		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.cancel }));
+		const alerts = await screen.findAllByRole("alert");
+		expect(alerts).toHaveLength(1);
+		expect(alerts[0]).toHaveTextContent("commission unavailable");
+	});
+
+	it("keeps run and permission failures at their initiating controls", async () => {
+		const user = userEvent.setup();
+		const steer = vi.fn(() => Promise.reject(new Error("steer unavailable")));
+		const respondPermission = vi.fn(() => Promise.reject(new Error("permission unavailable")));
+		const store = workStore({
+			runs: [runOf("run-1", "commission-1", "needs_user")],
+			commission: {
+				commissions: () => [commissionOf("commission-1", "message-1", "在线整理资料")],
+				approve: vi.fn(() => Promise.resolve()),
+				reject: vi.fn(() => Promise.resolve()),
+				launch: vi.fn(() => Promise.resolve({} as never)),
+			} as never,
+			run: {
+				pendingPermissions: () => [
+					{
+						runId: "run-1",
+						requestId: "permission-1",
+						prompt: "允许读取文件？",
+						options: [{ optionId: "allow", kind: "allow", name: "允许" }],
+					},
+				],
+				steer,
+				interrupt: vi.fn(() => Promise.resolve({} as never)),
+				resume: vi.fn(() => Promise.resolve({} as never)),
+				cancel: vi.fn(() => Promise.resolve({} as never)),
+				respondPermission,
+			} as never,
+		});
+		renderTimeline(store, "message-1");
+
+		const input = screen.getByRole("textbox", { name: zhCN.work.steerInputLabel });
+		await user.type(input, "继续");
+		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.steer }));
+		const runAlert = await screen.findByText(/steer unavailable/);
+		expect(runAlert.closest('[role="alert"]')).not.toBeNull();
+		expect(
+			within(runAlert.closest(".run-controls") as HTMLElement).getAllByRole("alert"),
+		).toHaveLength(1);
+
+		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.permissionAllow }));
+		const permissionAlert = await screen.findByText(/permission unavailable/);
+		expect(permissionAlert.closest('[role="alert"]')).not.toBeNull();
+		expect(
+			within(permissionAlert.closest("[data-permission-request]") as HTMLElement).getAllByRole(
+				"alert",
+			),
+		).toHaveLength(1);
+	});
 });

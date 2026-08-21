@@ -328,7 +328,14 @@ export interface IMemoryStore {
 	reindexAll(
 		embedFn: (text: string) => Promise<Float32Array>,
 		onProgress?: (done: number, total: number, layer: "L1" | "L0") => void,
-	): Promise<{ l1Count: number; l0Count: number }>;
+	): Promise<{
+		l1Count: number;
+		l0Count: number;
+		failedL1Count?: number;
+		failedL0Count?: number;
+		complete?: boolean;
+		error?: string;
+	}>;
 
 	// ── FTS (always sync — cached flag) ──────────────────────
 

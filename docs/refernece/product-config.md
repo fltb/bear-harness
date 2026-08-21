@@ -6,7 +6,8 @@
 ## Responsibility and boundaries
 
 `@bear-harness/product-config` is the compile-time source of release identity and
-brand metadata. Its only runtime export is `productConfig` from
+brand metadata. Its primary runtime export is `productConfig`; it also exports
+pure validation helpers from
 [`packages/product-config/src/index.ts`](../../packages/product-config/src/index.ts).
 The package is private, publishes ESM and declaration output from `dist/`, and
 has no runtime dependencies ([`package.json`](../../packages/product-config/package.json)).
@@ -52,6 +53,38 @@ are not granted. It separately states that repository code remains GPL-3.0
 under [`LICENSE`](../../LICENSE). Do not represent a fork's brand declaration
 as relicensing the code.
 
+### Update publisher policy
+
+`UpdatePublisherPolicy` authenticates a non-empty desktop update feed:
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `algorithm` | `"ed25519"` | The only supported signature algorithm. |
+| `publicKey` | `string` | PEM-encoded Ed25519 SubjectPublicKeyInfo (SPKI) public key. |
+
+`updatePublisher` is optional only while `updateFeedUrl` is empty. A
+non-empty feed URL must have this policy. The shared validator rejects unknown
+policy fields, non-Ed25519 algorithms, and malformed PEM public-key syntax; the
+update service additionally parses the key and requires its actual key type to
+be Ed25519.
+
+### Validation API
+
+The package also exports:
+
+- `ProductConfigValidationError` (`{ field, reason }`) for actionable
+  validation failures.
+- `ProductIdentityReference`, the official-identity subset used by fork
+  validation.
+- `validateProductConfig(value, official?)`, a pure shape, identity, license,
+  icon-path syntax, and update-policy validator that does not touch the
+  filesystem.
+- `assertProductConfig(value, official?)`, which throws one combined error
+  when validation fails and narrows the value to `ProductConfig`.
+
+The desktop packaging script composes this pure validator with filesystem
+checks for icon existence/dimensions and the default character manifest.
+
 ### `ProductConfig`
 
 | Field | Type | Current value | Consumer and contract |
@@ -61,14 +94,15 @@ as relicensing the code.
 | `dataDirectoryName` | `string` | `cyber-bear` | Product-specific suffix beneath Electron's app-data root. The desktop process sets `userData` to this directory and puts Chromium session data below it. Web Dev uses the same value through `webDevDataDirectory`; a fork must change it to isolate persisted state. |
 | `artifactName` | `string` | `${productName}-${version}-${os}-${arch}.${ext}` | Electron-builder artifact filename template. The validator requires `${version}`, `${os}`, `${arch}`, and `${ext}` macros. |
 | `executableName` | `string` | `cyber-bear` | Packaged binary name. The validator requires ASCII kebab-case; packaging and packaged-binary resolution use it on macOS, Windows, and Linux. |
-| `defaultCharacterId` | `string` | `jizhou` | Default character-package ID passed into Host Runtime. It seeds default companion/memory namespaces and is used when no active character has been selected. It must correspond to a shipped or otherwise available character package, although the generic validator currently checks syntax only. |
+| `defaultCharacterId` | `string` | `jizhou` | Default character-package ID passed into Host Runtime. It seeds default companion/memory namespaces and is used when no active character has been selected. The shared validator checks non-empty kebab-case; the desktop packaging validator also requires `config/characters/<id>/character.yaml`. |
 | `brandLicense` | `BrandLicense` | See above | Attribution and modification declaration for the brand work. It drives Linux maintainer metadata and generated `BRAND-ATTRIBUTION.txt`. |
-| `icon` | `string \| null` | `packages/product-config/assets/icon.png` | Repository-root-relative icon path, or `null` to omit a custom icon. Electron-builder resolves the path for macOS, Linux, and Windows. The generic validator accepts a readable `.png` (exactly 1024×1024) or readable `.svg`. |
-| `updateFeedUrl?` | `string` | empty string | Optional desktop update feed. Empty or whitespace disables update checks. A non-empty URL enables the update service; see [Updates](#updates). |
+| `icon` | `string \| null` | `packages/product-config/assets/icon.png` | Repository-root-relative icon path, or `null` to omit a custom icon. Electron-builder resolves the path for macOS, Linux, and Windows. Shared validation rejects omitted, absolute, and `..`-escaping paths; the desktop packaging validator additionally requires a readable `.png` (exactly 1024×1024) or readable `.svg`. |
+| `updateFeedUrl?` | `string` | empty string | Optional HTTPS desktop update feed. Empty string disables update checks. A non-empty URL requires `updatePublisher`; see [Updates](#updates). |
+| `updatePublisher?` | `UpdatePublisherPolicy` | omitted | Ed25519 publisher policy for a non-empty feed. The PEM SPKI public key verifies the signed feed envelope before metadata is parsed or trusted. |
 
-The type declares `icon` as required (with `null` as the no-icon value), while
-`updateFeedUrl` is optional so callers can omit it and let the desktop entrypoint
-use `""` via `productConfig.updateFeedUrl ?? ""`.
+The type declares `icon` as required (with `null` as the no-icon value).
+`updateFeedUrl` and `updatePublisher` are optional together only for the
+disabled-feed case: a non-empty feed URL requires `updatePublisher`.
 
 ## Official configuration and fork configuration
 
@@ -85,8 +119,9 @@ The upstream release check compares these fields exactly:
 - `brandLicense`
 - `icon`
 
-The official snapshot does not include `updateFeedUrl`; the feed is an
-operational release setting rather than part of the upstream brand identity.
+The official snapshot does not include `updateFeedUrl` or `updatePublisher`;
+the feed endpoint and its signing key are operational release settings rather
+than upstream brand identity.
 [`check-upstream-brand.mjs`](../../apps/desktop/scripts/check-upstream-brand.mjs)
 requires exact equality and `brandLicense.modified === false`, then reuses the
 generic validator. That gate belongs to the upstream release pipeline. A fork
@@ -147,10 +182,10 @@ flowchart LR
    and its `Chromium` child with mode `0700`, and sets Electron's `userData` and
    `sessionData` paths.
 2. On `whenReady`, it constructs `UpdateService` from
-   `productConfig.updateFeedUrl`, creates Host Runtime with the full
-   `productConfig`, and starts the runtime. A missing/unavailable data store is
-   reported as startup failure; the process does not silently substitute a
-   default product configuration.
+   `productConfig.updateFeedUrl` and `productConfig.updatePublisher`, creates Host Runtime with
+   the full `productConfig`, and starts the runtime. A missing/unavailable data store is
+   reported as startup failure; the process does not silently substitute a default product
+   configuration.
 3. Once Host Runtime and artifact protocol setup succeed, the main process
    creates a `BrowserWindow` titled with `productName`. The packaged renderer
    imports the same config and passes it to the UI. Renderer isolation remains
@@ -172,6 +207,11 @@ returns `{ product: productConfig, token, debugEnabled }` without requiring the
 bearer header so the browser can obtain its initial session. Subsequent RPC and
 debug requests require the random per-process
 `x-bear-web-dev-token` header and are bound to loopback.
+
+`loadBootstrap` parses the response through `parseWebDevBootstrap`; that
+boundary validates the shared `ProductConfig` shape and update policy before
+returning the product to the browser. It does not perform repository
+filesystem checks or official-brand comparison.
 
 `apps/web-dev/src/index.tsx` loads that bootstrap before rendering, creates the
 HTTP transport with the token, installs renderer fault reporting, and renders
@@ -204,23 +244,33 @@ For a release build, omit `--no-write` so it validates and writes
 node apps/desktop/scripts/validate-product-config.mjs
 ```
 
-The validator performs these checks:
+The shared validator performs these shape, identity, license, and update-policy
+checks:
 
 - `productName`, `appId`, `dataDirectoryName`, `artifactName`, and
   `executableName` are non-empty strings.
 - `appId` matches the reverse-domain expression
   `^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z0-9-]+)+$`.
-- `dataDirectoryName` and `executableName` are ASCII kebab-case.
+- `dataDirectoryName`, `executableName`, and `defaultCharacterId` are ASCII
+  kebab-case.
 - `artifactName` contains all four required Electron-builder macros.
-- `defaultCharacterId` is non-empty ASCII kebab-case.
-- `brandLicense` is an object with the fixed CC BY-SA 4.0 SPDX value, non-empty
-  identity strings, a boolean `modified`, and a string `modificationNotice`.
-- `icon` is `null`, or a repo-relative existing `.png`/`.svg`; PNGs must be
-  exactly 1024×1024 and readable.
+- `brandLicense` is an object with only the supported fields, the fixed
+  CC BY-SA 4.0 SPDX value, non-empty identity strings, a boolean `modified`,
+  and a string `modificationNotice`.
+- `icon` must be explicitly `null` or a non-empty repository-relative path
+  that does not escape with absolute syntax or `..`.
+- `updateFeedUrl` must be empty or a valid HTTPS URL. A non-empty value
+  requires `updatePublisher`, whose algorithm must be `ed25519` and whose
+  public key must have PEM public-key syntax. The update service rejects a key
+  whose parsed algorithm is not Ed25519.
 - When any identity field differs from the official snapshot, `appId` and
   `dataDirectoryName` must both differ, `brandLicense.modified` must be `true`,
   and the modification notice must be non-empty.
 - When no identity field differs, `brandLicense.modified` must be `false`.
+
+The desktop packaging wrapper adds filesystem checks: an icon must exist in the
+repository and be a readable `.png` (exactly 1024×1024) or readable `.svg`, and
+`config/characters/<defaultCharacterId>/character.yaml` must exist.
 
 The validator dynamically imports the selected config and exits non-zero for
 load or validation errors. It has no silent fallback. The package's own compile
@@ -248,20 +298,36 @@ not require changing application runtime code.
 
 ## Updates
 
-The official value is `updateFeedUrl: ""`, so the desktop service starts in a
-disabled state and its six-hour timer is a no-op. If a fork opts in, the feed may
-be a JSON array or one object containing `version`, `url`, and `sha256`. Versions
-are compared numerically by `major.minor.patch`; malformed or non-newer entries
-are skipped. A missing `sha256` field is rejected when staging, while explicit
-`sha256: null` intentionally skips checksum verification.
+The official value is `updateFeedUrl: ""` and `updatePublisher` is omitted, so
+the desktop service starts in a disabled state and its six-hour timer is a
+no-op. A fork that enables updates must set both an HTTPS `updateFeedUrl` and a
+matching Ed25519 `updatePublisher` policy. The private signing key belongs only
+in the publisher's protected release environment; ship only its PEM SPKI
+public key in product configuration.
 
-The service limits feed response size to 1 MiB, downloads only `http:` or
-`https:` URLs, caps an archive at 2 GiB by default, stages under
-`<userData>/updates/<version>/`, and verifies a provided 64-character SHA-256
-hash before reaching `ready`. It does **not** perform code-signature or
-notarization verification. A production fork enabling updates must add a
-codesign/notarization trust gate in its release/update design; a checksum alone
-is not equivalent to publisher authentication.
+The feed endpoint returns a JSON signed envelope:
+
+```json
+{
+  "payload": "<unpadded base64url canonical JSON>",
+  "signature": "<unpadded base64url Ed25519 signature>"
+}
+```
+
+`payload` decodes to canonical JSON feed metadata: either an array or one
+object containing `version`, `url`, and `sha256`. Canonical JSON sorts object
+keys, omits undefined values, emits no whitespace, and preserves array order.
+The signature covers those exact UTF-8 canonical payload bytes. The desktop service verifies the envelope with `updatePublisher.publicKey` before `parseFeed` evaluates or trusts feed metadata; malformed base64url, non-canonical payloads, invalid keys, and invalid signatures fail the check.
+
+Versions are compared numerically by `major.minor.patch`; malformed or
+non-newer entries are skipped. Selected entries must have a non-null,
+64-character hexadecimal `sha256`; omitted or `null` checksums are rejected.
+Downloads must use HTTPS, are staged under
+`<userData>/updates/<version>/`, and are checksum-verified before `ready`.
+The feed response is capped at 1 MiB and each archive at 2 GiB by default.
+There is still no code-signature or notarization verification after checksum
+validation. A production fork must add a codesign/notarization trust gate on
+top of signed metadata and archive checksums.
 
 ## Safe fork workflow
 
@@ -282,10 +348,12 @@ is not equivalent to publisher authentication.
    modification notice describing renamed/adapted assets. Retain the GPL code
    license and ship required notices; changing `BrandLicense` does not change
    code licensing or grant upstream trademark permission.
-5. **Choose updates deliberately.** Leave `updateFeedUrl` empty until the fork
-   has a trusted HTTPS distribution feed, complete checksums, and a signing /
-   notarization trust gate. If enabled, publish feed entries that satisfy the
-   update service contract.
+5. **Choose updates deliberately.** Leave `updateFeedUrl` empty and omit
+   `updatePublisher` until the fork has a trusted HTTPS distribution feed, an
+   Ed25519 signing key, complete archive checksums, and a signing/notarization
+   trust gate. If enabled, keep the private signing key out of the repository,
+   commit only its PEM SPKI public key in `updatePublisher`, and publish signed
+   canonical feed envelopes.
 6. **Validate and generate notices.** Run the generic validator with
    `--no-write`, fix every reported field, then run it without `--no-write` to
    generate the attribution file. Do not use the official upstream equality
@@ -303,56 +371,44 @@ No host-runtime/domain implementation changes are needed for this workflow.
   changing Electron-builder consumers.
 - Add a character package and select it with `defaultCharacterId`; Host Runtime
   already receives that value as an option.
-- Point a release at an update feed with `updateFeedUrl`, subject to the
-  security limitations above.
+- Point a release at an HTTPS update feed with a matching
+  `updatePublisher` policy, subject to the security limitations above.
 - Add future product metadata by extending `ProductConfig` and then updating
   each typed transport boundary and consumer (notably Web Dev bootstrap) before
   relying on it. Existing fields are not a general arbitrary metadata bag.
 
 ## Known issues / findings
 
-- **Runtime validation is external to the package.** `ProductConfig` is a
-  TypeScript interface plus a plain object export; importing it does not invoke
-  `validate-product-config.mjs`. A new consumer can construct or load an invalid
-  object unless its build/release process runs the validator.
-- **Character existence is not validated.** The validator checks the syntax of
-  `defaultCharacterId` but not whether the ID exists under `config/characters`.
-  Host Runtime later throws when it needs a missing character package. Fork
-  validation should therefore include a character-package existence check in CI
-  or a startup smoke test.
-- **Web Dev's static bootstrap type is stale/incomplete.** The server returns the
-  full `productConfig`, including `updateFeedUrl` when present, but
-  [`apps/web-dev/src/http-client.ts`](../../apps/web-dev/src/http-client.ts)
-  declares `WebDevBootstrap.product` only through `icon`. The current UI does
-  not use the omitted field, so this is a compile-time contract mismatch rather
-  than a current rendering failure.
-- **The generic fork identity rule does not include `brandLicense` in
-  `IDENTITY_FIELDS`.** A config that changes only brand-license identity fields
-  while leaving every listed identity field equal to the official snapshot can
-  pass generic identity-change detection with `modified: false`. The upstream
-  exact-equality gate does compare `brandLicense`, but forks should still treat
-  any brand change as modified and keep the declaration truthful.
-- **`icon` has a type/validator edge mismatch.** The TypeScript type requires
-  `string | null`, while the dynamic validator also accepts `undefined` as an
-  omitted icon. Keep fork source typed (`null` when intentionally iconless)
-  rather than relying on the looser dynamic path.
-- **Repo-relative icon paths are documented but not enforced.** The validator
-  resolves `config.icon` against the repository root and checks existence, but
-  it does not reject an absolute path (or explicitly reject traversal before
-  resolution). A fork should keep icon paths inside the repository and review
-  this boundary if configuration can ever come from an untrusted source.
-- **`updateFeedUrl` has no product-config schema validation.** The TypeScript
-  field is optional and the generic validator does not check its type or URL
-  scheme. The update service validates the feed's download URLs later, but a
-  malformed feed URL fails only when the service checks it.
+- **Import does not automatically assert validity.** The package now exports
+  pure `validateProductConfig` and throwing `assertProductConfig`, but importing
+  the plain `productConfig` constant does not call either function. The desktop
+  packaging script validates before release; any new direct consumer should
+  explicitly validate untrusted or alternate configuration values.
+- **Filesystem checks are layered outside the shared validator.** The package
+  validator deliberately avoids filesystem access, while the desktop wrapper
+  checks icon existence/dimensions and the default character manifest. A
+  consumer that calls only the shared validator can still accept a syntactically
+  valid but missing asset or character package.
+- **Web Dev validates shape but not filesystem or official identity.**
+  `parseWebDevBootstrap` now uses the shared validator, so `updatePublisher` and
+  the signed-feed policy shape are checked before the browser trusts the
+  bootstrap. It does not have the desktop wrapper's filesystem checks and does
+  not pass the official identity reference, which is appropriate for a live
+  server response but means it is not an upstream/fork release gate.
 - **Generated attribution is a packaging prerequisite.** Electron-builder
   copies `dist/brand/BRAND-ATTRIBUTION.txt`, but product-config itself does not
   generate it. Skipping the validator's write step can make an otherwise valid
   configuration produce an incomplete artifact or a packaging failure.
-- **Update transport is not publisher authentication.** The update pipeline
-  verifies a checksum only when one is supplied and explicitly permits
-  `sha256: null`; it has no code-signature/notarization check. Do not enable a
-  fork's public update feed without adding that trust boundary.
+- **Signed update metadata is not the final publisher trust boundary.** Ed25519
+  verification authenticates the feed metadata and SHA-256 verifies the
+  archive, but the update service still has no code-signature or notarization
+  check for the downloaded executable. A fork must add that platform trust
+  gate before treating `ready` as installable.
+- **The public key is a release-time trust anchor.** `updatePublisher.publicKey`
+  is shipped in the product configuration and there is no runtime key rotation
+  protocol. Rotate a publisher key by shipping a new product build/configuration
+  through the existing trusted release path; do not fetch replacement keys from
+  the update feed itself.
 - **The official icon is the only product-config asset.** Character visuals and
   other branded content are outside this package. Replacing only `icon` and
   `productName` does not replace the default character's name, scenes, or copy;

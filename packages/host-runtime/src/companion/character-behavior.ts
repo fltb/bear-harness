@@ -158,6 +158,17 @@ export class CharacterBehaviorService {
 			(event.kind === "message_end" && failedFrom(event.payload))
 		)
 			this.pendingRoleplayEvents.delete(conversationId);
+
+		// An explicit model/roleplay expression owns only the current turn. A
+		// failed end consumes that ownership without applying result_ready, while
+		// an abort consumes it before applying the configured abort reaction.
+		const suppressMessageEnd = this.modelSelectedExpression.has(conversationId);
+		if (event.kind === "message_end") {
+			this.modelSelectedExpression.delete(conversationId);
+			if (failedFrom(event.payload) || suppressMessageEnd) return;
+		}
+		if (event.kind === "message.aborted") this.modelSelectedExpression.delete(conversationId);
+
 		const character = this.characterForConversation(conversationId);
 		if (!character) return;
 		const reaction = character.host.event_reactions.find(
@@ -165,8 +176,7 @@ export class CharacterBehaviorService {
 		);
 		if (!reaction) return;
 		const source = `event:${event.kind}`;
-		if (!(event.kind === "message_end" && this.modelSelectedExpression.has(conversationId)))
-			this.setExpression(conversationId, reaction.visual_state, source);
+		this.setExpression(conversationId, reaction.visual_state, source);
 	}
 
 	private getRoleplayState(conversationId: string): CompanionHostToolResult {

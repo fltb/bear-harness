@@ -1,14 +1,64 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { zhCN } from "@bear-harness/i18n/locales";
-import { render, screen } from "@solidjs/testing-library";
+import { render, screen, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { SUPPORTED_DESKTOP_MIN_WIDTH } from "../src/App.js";
 import { CharacterPresence } from "../src/CharacterPresence.js";
 import { SceneBackdrop } from "../src/SceneBackdrop.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
 import { ThreadHead } from "../src/ThreadHead.js";
 import { THEMED_CHARACTER } from "./fixtures.js";
 
+const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+
 describe("shell visual and thread head contracts", () => {
+	it("publishes semantic surface roles and a narrow desktop fallback contract", () => {
+		expect(SUPPORTED_DESKTOP_MIN_WIDTH).toBe(800);
+		for (const token of [
+			"--surface-sidebar",
+			"--surface-panel",
+			"--surface-action",
+			"--surface-danger",
+			"--text-strong",
+			"--text-muted",
+			"--focus-ring",
+		]) {
+			expect(styles).toContain(token);
+		}
+		expect(styles).toContain("@media (max-width: 1049px)");
+		expect(styles).toContain("@media (max-width: 799px)");
+		expect(styles).toContain("grid-template-columns: 132px minmax(0, 1fr)");
+
+		render(() => (
+			<div
+				class="app desktop-shell"
+				data-layout="desktop"
+				data-supported-min-width={SUPPORTED_DESKTOP_MIN_WIDTH}
+				role="application"
+				aria-label="Companion"
+			>
+				<div class="shell">
+					<aside class="sidebar" aria-label="Conversations" />
+					<main class="main">
+						<section class="thread" aria-label="Conversation thread" />
+						<form class="composer">
+							<textarea aria-label="Message" />
+						</form>
+					</main>
+					<aside class="result-column" aria-label="Results" />
+				</div>
+			</div>
+		));
+
+		const application = screen.getByRole("application", { name: "Companion" });
+		expect(application).toHaveAttribute("data-layout", "desktop");
+		expect(application).toHaveAttribute("data-supported-min-width", "800");
+		expect(within(application).getAllByRole("complementary")).toHaveLength(2);
+		expect(within(application).getByRole("textbox", { name: "Message" })).toBeEnabled();
+	});
+
 	it("shows an explicit empty state when no work is running", async () => {
 		const user = userEvent.setup();
 		render(() => (

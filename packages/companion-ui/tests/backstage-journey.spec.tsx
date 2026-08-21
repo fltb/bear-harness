@@ -3,10 +3,14 @@ import { Button } from "@kobalte/core/button";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { createSignal } from "solid-js";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Backstage } from "../src/features/Backstage.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
 import { THEMED_CHARACTER } from "./fixtures.js";
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
 
 describe("ordinary-user backstage journey", () => {
 	it("requires an explicit hash review before enabling imported behavior plugins", async () => {
@@ -201,6 +205,7 @@ describe("ordinary-user backstage journey", () => {
 
 	it("shows package-defined relationship levels and only unlocked collection media", async () => {
 		const user = userEvent.setup();
+		vi.stubGlobal("matchMedia", undefined);
 		const character = {
 			...THEMED_CHARACTER,
 			roleplay: {
@@ -228,6 +233,7 @@ describe("ordinary-user backstage journey", () => {
 						loop: true,
 						presentation: "dialog",
 						url: "data:image/webp;base64,UklGRg==",
+						posterUrl: "data:image/png;base64,cG9zdGVy",
 					},
 				],
 				unlockables: [
@@ -261,6 +267,7 @@ describe("ordinary-user backstage journey", () => {
 		));
 		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
 		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.relationshipArchive }));
+		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.roleplayStatus }));
 		expect(within(dialog).getByText("彼此守望")).toBeVisible();
 		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.collections }));
 		expect(within(dialog).getByText("第一夜")).toBeVisible();
@@ -268,6 +275,88 @@ describe("ordinary-user backstage journey", () => {
 		expect(within(dialog).getByRole("img", { name: "极光信号" })).toHaveAttribute(
 			"src",
 			expect.stringMatching(/^data:image\/webp/),
+		);
+	});
+	it("uses an animation poster when matchMedia requests reduced motion", async () => {
+		const user = userEvent.setup();
+		vi.stubGlobal(
+			"matchMedia",
+			vi.fn(() => ({ matches: true })),
+		);
+		const character = {
+			...THEMED_CHARACTER,
+			roleplay: {
+				...THEMED_CHARACTER.roleplay,
+				media: [
+					{
+						id: "animation",
+						kind: "animation" as const,
+						label: "极光信号",
+						loop: true,
+						presentation: "dialog" as const,
+						url: "data:image/webp;base64,YW5pbWF0aW9u",
+						posterUrl: "data:image/png;base64,cG9zdGVy",
+					},
+				],
+				unlockables: [
+					{
+						id: "animation-memory",
+						kind: "cg" as const,
+						label: "第一夜",
+						description: "门后的信号",
+						media: "animation",
+					},
+				],
+			},
+		};
+		const store = {
+			roleplay: { values: {}, unlocked: ["animation-memory"] },
+			settings: {
+				data: () => ({
+					relationshipMemoryEnabled: false,
+					conversationHistoryReadEnabled: false,
+					networkProxy: { mode: "direct" as const },
+					memoryVectorService: { enabled: false, provider: "none" as const },
+					modelDownloadMirror: {},
+				}),
+				get: vi.fn(() =>
+					Promise.resolve({
+						relationshipMemoryEnabled: false,
+						conversationHistoryReadEnabled: false,
+						networkProxy: { mode: "direct" as const },
+						memoryVectorService: { enabled: false, provider: "none" as const },
+						modelDownloadMirror: {},
+					}),
+				),
+				set: vi.fn(() => Promise.resolve()),
+			},
+			memory: {
+				entries: () => [],
+				revision: () => 0,
+				search: vi.fn(() => Promise.resolve([])),
+				list: vi.fn(() => Promise.resolve([])),
+				forget: vi.fn(() => Promise.resolve()),
+				edit: vi.fn(() => Promise.resolve()),
+				exclude: vi.fn(() => Promise.resolve()),
+				candidates: () => [],
+				listCandidates: vi.fn(() => Promise.resolve([])),
+				approveCandidate: vi.fn(() => Promise.resolve()),
+				rejectCandidate: vi.fn(() => Promise.resolve()),
+			},
+			characters: { characters: () => [] },
+		} as unknown as CompanionStore;
+		render(() => (
+			<DesktopProvider store={store}>
+				<Backstage open onClose={() => undefined} character={character} />
+			</DesktopProvider>
+		));
+		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
+		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.relationshipArchive }));
+		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.roleplayStatus }));
+		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.collections }));
+		expect(within(dialog).getByRole("img", { name: "极光信号" })).toHaveAttribute(
+			"src",
+			"data:image/png;base64,cG9zdGVy",
 		);
 	});
 	it("manages direct memory records with edit and forget", async () => {

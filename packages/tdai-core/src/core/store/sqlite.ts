@@ -1903,21 +1903,36 @@ export class VectorStore implements IMemoryStore {
 	async reindexAll(
 		embedFn: (text: string) => Promise<Float32Array>,
 		onProgress?: (done: number, total: number, layer: "L1" | "L0") => void,
-	): Promise<{ l1Count: number; l0Count: number }> {
+	): Promise<{
+		l1Count: number;
+		l0Count: number;
+		failedL1Count: number;
+		failedL0Count: number;
+		complete: boolean;
+		error?: string;
+	}> {
 		if (this.degraded || !this.vecTablesReady) {
-			if (this.degraded)
-				this.logger?.warn(`${TAG} reindexAll skipped: VectorStore is in degraded mode`);
-			return { l1Count: 0, l0Count: 0 };
+			const error = this.degraded
+				? "VectorStore is in degraded mode"
+				: "Vector tables are not initialized";
+			this.logger?.warn(`${TAG} reindexAll skipped: ${error}`);
+			return {
+				l1Count: 0,
+				l0Count: 0,
+				failedL1Count: 0,
+				failedL0Count: 0,
+				complete: false,
+				error,
+			};
 		}
 
 		try {
-			// ── Re-embed L1 ──
 			const l1Rows = this.getAllL1Texts();
 			let l1Done = 0;
+			let failedL1Count = 0;
 			for (const { record_id, content, updated_time } of l1Rows) {
 				try {
 					const embedding = await embedFn(content);
-					// Wrap delete+insert in a transaction to prevent orphan vectors
 					this.db.exec("BEGIN");
 					try {
 						this.stmtDeleteVec!.run(record_id);
@@ -1927,26 +1942,26 @@ export class VectorStore implements IMemoryStore {
 						try {
 							this.db.exec("ROLLBACK");
 						} catch {
-							/* ignore */
+							/* ignore rollback errors */
 						}
 						throw txErr;
 					}
+					l1Done++;
 				} catch (err) {
+					failedL1Count++;
 					this.logger?.warn?.(
 						`${TAG} reindex L1 skip ${record_id}: ${err instanceof Error ? err.message : String(err)}`,
 					);
 				}
-				l1Done++;
-				onProgress?.(l1Done, l1Rows.length, "L1");
+				onProgress?.(l1Done + failedL1Count, l1Rows.length, "L1");
 			}
 
-			// ── Re-embed L0 ──
 			const l0Rows = this.getAllL0Texts();
 			let l0Done = 0;
+			let failedL0Count = 0;
 			for (const { record_id, message_text, recorded_at } of l0Rows) {
 				try {
 					const embedding = await embedFn(message_text);
-					// Wrap delete+insert in a transaction to prevent orphan vectors
 					this.db.exec("BEGIN");
 					try {
 						this.stmtL0DeleteVec!.run(record_id);
@@ -1956,29 +1971,37 @@ export class VectorStore implements IMemoryStore {
 						try {
 							this.db.exec("ROLLBACK");
 						} catch {
-							/* ignore */
+							/* ignore rollback errors */
 						}
 						throw txErr;
 					}
+					l0Done++;
 				} catch (err) {
+					failedL0Count++;
 					this.logger?.warn?.(
 						`${TAG} reindex L0 skip ${record_id}: ${err instanceof Error ? err.message : String(err)}`,
 					);
 				}
-				l0Done++;
-				onProgress?.(l0Done, l0Rows.length, "L0");
+				onProgress?.(l0Done + failedL0Count, l0Rows.length, "L0");
 			}
 
+			const complete = failedL1Count === 0 && failedL0Count === 0;
 			this.logger?.info(
-				`${TAG} Reindex complete: L1=${l1Done}/${l1Rows.length}, L0=${l0Done}/${l0Rows.length}`,
+				`${TAG} Reindex ${complete ? "complete" : "incomplete"}: ` +
+					`L1=${l1Done}/${l1Rows.length}, L0=${l0Done}/${l0Rows.length}`,
 			);
-
-			return { l1Count: l1Done, l0Count: l0Done };
+			return { l1Count: l1Done, l0Count: l0Done, failedL1Count, failedL0Count, complete };
 		} catch (err) {
-			this.logger?.error(
-				`${TAG} reindexAll failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
-			);
-			return { l1Count: 0, l0Count: 0 };
+			const error = err instanceof Error ? err.message : String(err);
+			this.logger?.error(`${TAG} reindexAll failed: ${error}`);
+			return {
+				l1Count: 0,
+				l0Count: 0,
+				failedL1Count: 0,
+				failedL0Count: 0,
+				complete: false,
+				error,
+			};
 		}
 	}
 
