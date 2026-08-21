@@ -11,6 +11,7 @@ import { CharacterLoader } from "../src/companion/character-loader.js";
 import { ContextPackCompiler } from "../src/companion/context-pack.js";
 import { PiSessionStore } from "../src/companion/pi-session-store.js";
 import { rememberConversationEntry } from "../src/composition.js";
+import { ConversationRepository } from "../src/conversations/repository.js";
 import type { MemoryBankScope } from "../src/memory/backend.js";
 import type {
 	TencentDbCoreRecord,
@@ -369,6 +370,137 @@ describe("relationship memory context", () => {
 				kind: "not_found",
 				reason: "memory_source_not_found",
 			});
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("maps canonical IDs by ordered Pi projection and preserves branch ownership", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-memory-context-canonical-"));
+		try {
+			const session = PiSessionStore.create({
+				sessionDir: join(root, "sessions"),
+				cwd: root,
+			});
+			const staleUser = session.appendUserMessage("重复内容");
+			session.appendSyntheticAssistant("重复回答");
+			session.branchBefore(staleUser);
+			const currentUser = session.appendUserMessage("重复内容");
+			const currentAssistant = session.appendSyntheticAssistant("重复回答");
+
+			db.prepare(
+				"INSERT INTO branches (id, conversation_id, label, adopted) VALUES (?, ?, ?, ?)",
+			).run("canonical-stale", "conversation-1", "stale", 0);
+			db.prepare(
+				"INSERT INTO branches (id, conversation_id, label, adopted) VALUES (?, ?, ?, ?)",
+			).run("canonical-current", "conversation-1", "main", 1);
+			for (const [messageId, branchId, role, text] of [
+				["canonical-stale-user", "canonical-stale", "user", "重复内容"],
+				["canonical-stale-assistant", "canonical-stale", "assistant", "重复回答"],
+				["canonical-current-user", "canonical-current", "user", "重复内容"],
+				["canonical-current-assistant", "canonical-current", "assistant", "重复回答"],
+			] as const) {
+				db.prepare(
+					"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES (?, ?, ?, ?)",
+				).run(messageId, "conversation-1", branchId, role);
+				db.prepare(
+					"INSERT INTO message_versions (id, message_id, content, adopted) VALUES (?, ?, ?, ?)",
+				).run(`${messageId}-version`, messageId, text, 1);
+			}
+			db.prepare(
+				"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES (?, ?, ?, ?)",
+			).run("canonical-current-orphan", "conversation-1", "canonical-current", "assistant");
+			db.prepare(
+				"INSERT INTO message_versions (id, message_id, content, adopted) VALUES (?, ?, ?, ?)",
+			).run(
+				"canonical-current-orphan-version",
+				"canonical-current-orphan",
+				"只存在于当前 Host 数据库",
+				1,
+			);
+			db.prepare("INSERT INTO conversations (id, companion_id, title) VALUES (?, ?, ?)").run(
+				"conversation-foreign",
+				"jizhou",
+				"Foreign",
+			);
+			db.prepare(
+				"INSERT INTO branches (id, conversation_id, label, adopted) VALUES (?, ?, ?, ?)",
+			).run("foreign-branch", "conversation-foreign", "main", 1);
+			db.prepare(
+				"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES (?, ?, ?, ?)",
+			).run("foreign-canonical-message", "conversation-foreign", "foreign-branch", "assistant");
+			db.prepare(
+				"INSERT INTO message_versions (id, message_id, content, adopted) VALUES (?, ?, ?, ?)",
+			).run("foreign-canonical-version", "foreign-canonical-message", "重复回答", 1);
+			db.prepare(
+				"INSERT INTO conversation_sessions (conversation_id, pi_session_id, session_file_path, active_leaf_id) VALUES (?, ?, ?, ?)",
+			).run("conversation-1", session.sessionId, session.sessionFile, session.leafId);
+
+			const repository = new ConversationRepository(orm, {
+				sessionDir: join(root, "sessions"),
+				sessionCwd: root,
+			});
+			const context = {
+				orm,
+				defaultCharacterId: "jizhou",
+				characterLoader: {
+					getActiveCharacterId: () => "jizhou",
+					load: () => ({ canon: {} }),
+					seed: () => undefined,
+					activate: () => undefined,
+				},
+				eventBus: {},
+				canon: { syncPackage: () => undefined },
+				conversationRepository: repository,
+				memoryBackend: backend,
+				memoryScope: { installationId: "install-1", userId: "user-1" },
+			} as never;
+
+			await expect(
+				rememberConversationEntry(
+					context,
+					"conversation-1",
+					"canonical-current-orphan",
+					"user_capture",
+				),
+			).resolves.toMatchObject({
+				sourceEntryId: "canonical-current-orphan",
+				createdBy: "user_capture",
+			});
+			await expect(
+				rememberConversationEntry(
+					context,
+					"conversation-1",
+					"canonical-current-assistant",
+					"user_capture",
+				),
+			).resolves.toMatchObject({
+				sourceEntryId: currentAssistant,
+				createdBy: "user_capture",
+			});
+			await expect(
+				rememberConversationEntry(
+					context,
+					"conversation-1",
+					"canonical-stale-assistant",
+					"user_capture",
+				),
+			).rejects.toEqual({
+				kind: "conflict",
+				reason: "memory_source_not_current_branch",
+			});
+			await expect(
+				rememberConversationEntry(
+					context,
+					"conversation-1",
+					"foreign-canonical-message",
+					"user_capture",
+				),
+			).rejects.toEqual({
+				kind: "not_found",
+				reason: "memory_source_not_found",
+			});
+			expect(currentUser).not.toBe(currentAssistant);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

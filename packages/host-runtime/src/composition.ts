@@ -1338,9 +1338,10 @@ export async function proposeMemoryCandidate(
 }
 
 /**
- * Save one Host-selected Pi source entry through the direct memory backend.
- * The entry ID is never trusted as a source by itself: it must belong to the
- * Pi branch currently selected for the conversation.
+ * Save one Host-selected message through the direct memory backend.
+ * A canonical Host message ID is resolved to its ordered current Pi
+ * projection when possible; the adopted DB row is used only as an exact-ID
+ * current-branch fallback.
  */
 export async function rememberConversationEntry(
 	s: HostCompositionContext,
@@ -1358,16 +1359,24 @@ export async function rememberConversationEntry(
 		throw { kind: "not_found", reason: "conversation_not_found" };
 	}
 	const session = s.conversationRepository.getSession(conversationId);
-	const source =
+	const directSource =
 		session && entryId
 			? session.readMessageEntries().find((candidate) => candidate.id === entryId)
 			: undefined;
+	const projectedSource =
+		session && entryId
+			? s.conversationRepository.getCurrentPiEntryForMessage?.(conversationId, entryId)
+			: undefined;
+	const source = directSource ?? projectedSource;
 	const sessionSource = session && entryId ? session.getMessageEntry(entryId) : undefined;
 	if (!source && sessionSource) {
 		throw { kind: "conflict", reason: "memory_source_not_current_branch" };
 	}
-	const fallback =
-		!session && !source ? legacyMessageSource(s, conversationId, entryId) : undefined;
+	const fallback = entryId ? legacyMessageSource(s, conversationId, entryId) : undefined;
+	const canonical = entryId ? anyLegacyMessageSource(s, conversationId, entryId) : undefined;
+	if (!source && canonical && !fallback) {
+		throw { kind: "conflict", reason: "memory_source_not_current_branch" };
+	}
 	if (!source && !fallback) {
 		throw { kind: "not_found", reason: "memory_source_not_found" };
 	}
@@ -1399,11 +1408,39 @@ export async function rememberConversationEntry(
 }
 
 /**
- * Legacy conversations predate the Pi session store. Their UI identifiers are
- * Host message IDs, so capture their adopted version directly instead of
- * treating an unavailable Pi session as a disconnected memory service.
+ * Recover an adopted Host message only when its canonical branch is current.
+ * This is the safe fallback for legacy rows and Pi projections without a
+ * matching entry; arbitrary content is never used to identify a source.
  */
 function legacyMessageSource(
+	s: HostCompositionContext,
+	conversationId: string,
+	entryId: string | undefined,
+): { id: string; text: string } | undefined {
+	if (!entryId) return undefined;
+	const row = s.orm
+		.select({
+			id: messages.id,
+			branchId: messages.branchId,
+			text: messageVersions.content,
+		})
+		.from(messages)
+		.innerJoin(messageVersions, eq(messageVersions.messageId, messages.id))
+		.where(
+			and(
+				eq(messages.id, entryId),
+				eq(messages.conversationId, conversationId),
+				eq(messageVersions.adopted, 1),
+			),
+		)
+		.orderBy(desc(messageVersions.createdAt))
+		.limit(1)
+		.get();
+	if (!row || !isVisibleOnActiveBranch(s, conversationId, row.branchId, row.id)) return undefined;
+	return { id: row.id, text: row.text };
+}
+
+function anyLegacyMessageSource(
 	s: HostCompositionContext,
 	conversationId: string,
 	entryId: string | undefined,
@@ -1420,6 +1457,7 @@ function legacyMessageSource(
 				eq(messageVersions.adopted, 1),
 			),
 		)
+		.orderBy(desc(messageVersions.createdAt))
 		.limit(1)
 		.get();
 }

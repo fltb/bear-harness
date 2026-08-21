@@ -34,6 +34,7 @@ function appendCompletedPiTurn(dataDir: string, conversationId: string, text: st
 	if (!source) throw new Error("expected persisted Pi user entry");
 	return source.id;
 }
+
 const roots: string[] = [];
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 const vault: CredentialVault = {
@@ -475,7 +476,7 @@ describe("automatic continuity", () => {
 		})) as { messageId: string };
 		await runtime.close();
 
-		const oldPiEntryId = appendCompletedPiTurn(dataDir, conversation.id, "旧问题");
+		appendCompletedPiTurn(dataDir, conversation.id, "旧问题");
 		runtime = makeRuntimeAt(dataDir);
 		await runtime.start();
 		await data(runtime, "message.edit:v1", {
@@ -484,20 +485,14 @@ describe("automatic continuity", () => {
 			text: "编辑后的问题",
 			isUserMessage: true,
 		});
+		const composition = Reflect.get(runtime, "composition") as {
+			eventBus: { publish(kind: string, payload: unknown): void };
+		};
+		composition.eventBus.publish("message_end", {
+			conversationId: conversation.id,
+			text: "EDITED_OK",
+		});
 		await runtime.close();
-
-		const session = PiSessionStore.open({
-			sessionDir: join(dataDir, "sessions"),
-			sessionFile: sessionFileFor(dataDir, conversation.id),
-		});
-		session.branchBefore(oldPiEntryId);
-		session.appendMessage({
-			role: "user",
-			content:
-				"<host_context>\n已知背景\n</host_context>\n\n<current_user_message>\n编辑后的问题\n</current_user_message>",
-			timestamp: Date.now(),
-		});
-		session.appendSyntheticAssistant("EDITED_OK");
 
 		runtime = makeRuntimeAt(dataDir);
 		await runtime.start();
@@ -521,15 +516,10 @@ describe("automatic continuity", () => {
 			messageId: editedAssistant.id,
 		});
 
-		const regeneratedSession = PiSessionStore.open({
-			sessionDir: join(dataDir, "sessions"),
-			sessionFile: sessionFileFor(dataDir, conversation.id),
-		});
-		regeneratedSession.appendSyntheticAssistant("REGENERATED_EDITED_OK");
-		const composition = Reflect.get(runtime, "composition") as {
+		const regeneratedComposition = Reflect.get(runtime, "composition") as {
 			eventBus: { publish(kind: string, payload: unknown): void };
 		};
-		composition.eventBus.publish("message_end", {
+		regeneratedComposition.eventBus.publish("message_end", {
 			conversationId: conversation.id,
 			text: "REGENERATED_EDITED_OK",
 		});
@@ -548,7 +538,9 @@ describe("automatic continuity", () => {
 		const adoptedAssistants = reopened.messages.filter(
 			(message) =>
 				message.role === "assistant" &&
-				message.versions.some((version) => version.content === "REGENERATED_EDITED_OK" && version.adopted),
+				message.versions.some(
+					(version) => version.content === "REGENERATED_EDITED_OK" && version.adopted,
+				),
 		);
 		expect(adoptedAssistants).toHaveLength(1);
 		expect(

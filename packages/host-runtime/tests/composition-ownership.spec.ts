@@ -68,6 +68,29 @@ function sessionFor(dataDir: string, conversationId: string): PiSessionStore {
 	}
 }
 
+function addCanonicalAssistant(dataDir: string, conversationId: string): string {
+	const db = new DatabaseSync(join(dataDir, "storage", "canon.db"));
+	try {
+		const branch = db
+			.prepare(
+				"SELECT id FROM branches WHERE conversation_id = ? AND adopted = 1 ORDER BY rowid DESC LIMIT 1",
+			)
+			.get(conversationId) as { id?: string } | undefined;
+		if (!branch?.id) throw new Error("missing adopted branch");
+		const messageId = `${conversationId}-assistant`;
+		const versionId = `${messageId}-v1`;
+		db.prepare(
+			"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES (?, ?, ?, 'assistant')",
+		).run(messageId, conversationId, branch.id);
+		db.prepare(
+			"INSERT INTO message_versions (id, message_id, content, adopted) VALUES (?, ?, 'projected assistant', 1)",
+		).run(versionId, messageId);
+		return messageId;
+	} finally {
+		db.close();
+	}
+}
+
 describe("Host composition enforces ownership before mutation", () => {
 	afterEach(async () => {
 		for (const runtime of runtimes.splice(0)) await runtime.close();
@@ -137,7 +160,7 @@ describe("Host composition enforces ownership before mutation", () => {
 		).resolves.toMatchObject({ ok: true });
 	});
 
-	it("accepts current Pi projections, rejects foreign entries, and conflicts on stale branches", async () => {
+	it("accepts current canonical Pi projections, rejects foreign entries, and conflicts on stale branches", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-ownership-pi-"));
 		roots.push(dataDir);
 		const seed = createHostRuntime({
@@ -155,8 +178,9 @@ describe("Host composition enforces ownership before mutation", () => {
 		const firstSession = sessionFor(dataDir, first.id);
 		const secondSession = sessionFor(dataDir, second.id);
 		firstSession.appendUserMessage("projected user");
-		const firstAssistant = firstSession.appendSyntheticAssistant("projected assistant");
+		const stalePiAssistant = firstSession.appendSyntheticAssistant("projected assistant");
 		const foreign = secondSession.appendUserMessage("foreign entry");
+		const canonicalAssistant = addCanonicalAssistant(dataDir, first.id);
 
 		const runtime = makeRuntimeAt(dataDir);
 		await runtime.start();
@@ -166,14 +190,14 @@ describe("Host composition enforces ownership before mutation", () => {
 		await expect(
 			runtime.dispatch("message.switchVersion:v1", {
 				conversationId: first.id,
-				messageId: firstAssistant,
-				versionId: `${firstAssistant}-v1`,
+				messageId: canonicalAssistant,
+				versionId: `${canonicalAssistant}-v1`,
 			}),
 		).resolves.toMatchObject({ ok: true });
 		await expect(
 			runtime.dispatch("message.edit:v1", {
 				conversationId: first.id,
-				messageId: firstAssistant,
+				messageId: canonicalAssistant,
 				text: "edited projection",
 				isUserMessage: false,
 			}),
@@ -182,9 +206,9 @@ describe("Host composition enforces ownership before mutation", () => {
 		await expect(
 			runtime.dispatch("message.branch:v1", {
 				conversationId: first.id,
-				messageId: firstAssistant,
+				messageId: stalePiAssistant,
 			}),
-		).resolves.toMatchObject({
+		).resolves.toEqual({
 			ok: false,
 			error: { kind: "conflict", reason: "message_not_current_branch" },
 		});

@@ -2,7 +2,7 @@
 
 This directory is the maintainer map for the current Bear Harness implementation. The directory spelling `docs/refernece/` is intentional and must be preserved.
 
-Start with [architecture](./architecture.md) for the cross-package dependency, transport, state, security, and release model. Then use the module references below for source-level ownership and extension details. The product interaction decisions behind message-scoped work and ResultSpace are recorded in the [role-first work interaction plan](../role-first-work-interaction-plan.md). Cross-module observations are collected in [issues and findings](./issues-and-findings.md).
+Start with [architecture](./architecture.md) for the cross-package dependency, transport, state, security, and release model. Then use the module references below for source-level ownership and extension details. The product interaction decisions behind message-scoped work and ResultSpace are recorded in the [role-first work interaction plan](../role-first-work-interaction-plan.md). Cross-module observations are collected in [issues and findings](./issues-and-findings.md); the completed F001–F075 remediation record with final gate results is in [remediation status](./remediation-status.md).
 
 ## Module ownership
 

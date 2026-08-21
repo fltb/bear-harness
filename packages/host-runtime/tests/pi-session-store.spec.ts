@@ -334,14 +334,27 @@ describe("PiSessionStore", () => {
 			"toolResult",
 		]);
 
-		const projection = new ConversationRepository(database.orm, {
+		const repository = new ConversationRepository(database.orm, {
 			sessionDir: join(root, "sessions"),
 			sessionCwd: root,
-		}).project("conversation", "Chat", "Scene");
+		});
+		const projection = repository.project("conversation", "Chat", "Scene");
 		expect(projection.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 		expect(projection.messages.at(-1)).toMatchObject({
 			role: "assistant",
 			versions: [{ role: "assistant", content: "hi" }],
+		});
+		expect(
+			repository.getCurrentPiEntryForMessage("conversation", projectedEntryIds[0]!),
+		).toMatchObject({
+			id: projectedEntryIds[0],
+			message: { role: "user", content: "hello" },
+		});
+		expect(
+			repository.getCurrentPiEntryForMessage("conversation", projectedEntryIds[1]!),
+		).toMatchObject({
+			id: projectedEntryIds[1],
+			message: { role: "assistant" },
 		});
 		expect(projection.messages.map((message) => message.id)).toEqual(projectedEntryIds);
 		const reopenedProjection = new ConversationRepository(database.orm, {
@@ -349,6 +362,98 @@ describe("PiSessionStore", () => {
 			sessionCwd: root,
 		}).project("conversation", "Chat", "Scene");
 		expect(reopenedProjection.messages.map((message) => message.id)).toEqual(projectedEntryIds);
+		database.close();
+	});
+
+	it("retains canonical Host IDs and rejects unmatched Pi entries when an adopted branch exists", () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-pi-canonical-projection-"));
+		roots.push(root);
+		const database = new Database(join(root, "host"));
+		database.migrate(MIGRATIONS);
+		database.connection
+			.prepare(
+				"INSERT INTO companion_packages (id, name, version, hash) VALUES ('pkg', 'Pkg', '1', 'hash')",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES ('pkg', 'pkg', 'Pkg', '')",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO conversations (id, companion_id, title) VALUES ('conversation', 'pkg', 'Chat')",
+			)
+			.run();
+		const metadata = PiSessionStore.migrateLegacyConversation({
+			db: database.orm,
+			conversationId: "conversation",
+			sessionDir: join(root, "sessions"),
+			cwd: root,
+			messages: [
+				{ role: "user", content: "hello", timestamp: 1 },
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "hi" }],
+					api: "openai-completions",
+					provider: "test",
+					model: "test-model",
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "stop",
+					timestamp: 2,
+				} as PiSessionMessage,
+				{ role: "user", content: "Pi-only tail", timestamp: 3 },
+			],
+		});
+		database.connection
+			.prepare(
+				"INSERT INTO branches (id, conversation_id, label, adopted) VALUES ('host-branch', 'conversation', 'main', 1)",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES ('host-user', 'conversation', 'host-branch', 'user'), ('host-assistant', 'conversation', 'host-branch', 'assistant')",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO message_versions (id, message_id, content, adopted) VALUES ('host-user-v1', 'host-user', 'hello', 1), ('host-assistant-v1', 'host-assistant', 'hi', 1)",
+			)
+			.run();
+
+		const session = PiSessionStore.open({
+			sessionDir: join(root, "sessions"),
+			sessionFile: metadata.sessionFile,
+			cwd: root,
+		});
+		const piUser = session.findMessageEntry("user", "hello");
+		const piAssistant = session.findMessageEntry("assistant", "hi");
+		const piOnly = session.findMessageEntry("user", "Pi-only tail");
+		const repository = new ConversationRepository(database.orm, {
+			sessionDir: join(root, "sessions"),
+			sessionCwd: root,
+		});
+		const projection = repository.project("conversation", "Chat", "Scene");
+		expect(projection.messages.map((message) => message.id)).toEqual([
+			"host-user",
+			"host-assistant",
+		]);
+		expect(repository.getCurrentPiEntryForMessage("conversation", "host-user")).toMatchObject({
+			id: piUser?.id,
+			message: { role: "user", content: "hello" },
+		});
+		expect(repository.getCurrentPiEntryForMessage("conversation", "host-assistant")).toMatchObject({
+			id: piAssistant?.id,
+			message: { role: "assistant" },
+		});
+		expect(repository.getCurrentPiEntryForMessage("conversation", piOnly!.id)).toBeUndefined();
 		database.close();
 	});
 
@@ -433,6 +538,10 @@ describe("PiSessionStore", () => {
 			versions: [{ role: "user", content: rawUserText }],
 		});
 		expect(projection.messages[0]?.versions[0]?.content).not.toContain("<host_context>");
+		expect(repository.getCurrentPiEntryForMessage("conversation", userEntry!.id)).toMatchObject({
+			id: userEntry!.id,
+			message: { role: "user", content: framedPrompt },
+		});
 
 		const reopenedProjection = new ConversationRepository(database.orm, {
 			sessionDir: join(root, "sessions"),

@@ -28,7 +28,7 @@ test("direct memory capture, scoped context, and user management stay determinis
 
 	const captureMessage = async (
 		expectedAssistantText: string,
-	): Promise<{ content: string; sourceEntryId: string }> => {
+	): Promise<{ content: string; memoryId: string; sourceEntryId: string }> => {
 		await sendMessage(page, expectedAssistantText);
 		await expect(page.getByRole("status", { name: zhCN.messages.responding })).toBeHidden();
 		const conversation = page.getByRole("region", { name: zhCN.messages.conversation });
@@ -38,11 +38,38 @@ test("direct memory capture, scoped context, and user management stay determinis
 		await expect(message).toHaveCount(1);
 		const sourceEntryId = await message.getAttribute("data-message-id");
 		expect(sourceEntryId).toBeTruthy();
-		await expect(message.getByText(expectedAssistantText, { exact: true })).toBeVisible();
+		const renderedContent = message.getByText(expectedAssistantText, { exact: true });
+		await expect(renderedContent).toBeVisible();
 		const content = expectedAssistantText;
 		await message.getByRole("button", { name: zhCN.messages.operations }).click();
+		const captureResponsePromise = page.waitForResponse(
+			(response) =>
+				response.request().method() === "POST" &&
+				response.url().includes("/rpc/memory.capture%3Av1"),
+		);
 		await message.getByRole("button", { name: zhCN.messages.rememberMoment }).click();
-		return { content, sourceEntryId: sourceEntryId as string };
+		const captureResponse = await captureResponsePromise;
+		expect(captureResponse.status()).toBe(200);
+		const capturePayload = (await captureResponse.json()) as {
+			ok: boolean;
+			data?: {
+				memoryId: string;
+				sourceEntryId: string;
+				createdBy: "user_capture" | "assistant_tool";
+			};
+		};
+		expect(capturePayload).toMatchObject({
+			ok: true,
+			data: {
+				memoryId: expect.any(String),
+				sourceEntryId: expect.any(String),
+				createdBy: "user_capture",
+			},
+		});
+		await expect(page.getByRole("status", { name: zhCN.messages.rememberMoment })).toBeVisible();
+		const capture = capturePayload.data;
+		if (!capture) throw new Error("memory.capture succeeded without response data");
+		return { content, memoryId: capture.memoryId, sourceEntryId: capture.sourceEntryId };
 	};
 	const expectMemoryContext = async (expected: string): Promise<void> => {
 		await expect(page.getByRole("status", { name: zhCN.messages.responding })).toBeHidden();
@@ -109,8 +136,12 @@ test("direct memory capture, scoped context, and user management stay determinis
 	const capturedSourceText = firstCapture.content;
 	const replacementText = capturedSourceText.replace("北辰", "南星");
 	await expect
-		.poll(async () => (await memoryEntries()).find((entry) => entry.text === capturedSourceText))
-		.toMatchObject({ text: capturedSourceText });
+		.poll(async () => (await memoryEntries()).find((entry) => entry.id === firstCapture.memoryId))
+		.toMatchObject({
+			id: firstCapture.memoryId,
+			text: capturedSourceText,
+			sourceEntryId: firstCapture.sourceEntryId,
+		});
 
 	await sendMessage(page, `检查记忆上下文 ${capturedSourceText}`);
 	await expectMemoryContext("MEMORY_CONTEXT:我们约定暗号是北辰");
@@ -161,8 +192,12 @@ test("direct memory capture, scoped context, and user management stay determinis
 	const secondCapture = await captureMessage(secondSourceText);
 	const capturedSecondText = secondCapture.content;
 	await expect
-		.poll(async () => (await memoryEntries()).find((entry) => entry.text === capturedSecondText))
-		.toMatchObject({ text: capturedSecondText });
+		.poll(async () => (await memoryEntries()).find((entry) => entry.id === secondCapture.memoryId))
+		.toMatchObject({
+			id: secondCapture.memoryId,
+			text: capturedSecondText,
+			sourceEntryId: secondCapture.sourceEntryId,
+		});
 	await sendMessage(page, `检查记忆上下文 ${capturedSecondText}`);
 	await expectMemoryContext("MEMORY_CONTEXT:我们约定暗号是北辰");
 
@@ -171,6 +206,7 @@ test("direct memory capture, scoped context, and user management stay determinis
 	await expect.poll(() => entries.getByText(capturedSecondText, { exact: true }).count()).toBe(1);
 	await expect(secondEntry).toBeVisible();
 	await secondEntry.getByRole("button", { name: zhCN.memory.exclude }).click();
+	await expect(secondEntry.getByText(zhCN.memory.excludedNote)).toBeVisible();
 	await expect(secondEntry.getByRole("button", { name: zhCN.memory.included })).toBeVisible();
 	await secondEntry.getByRole("button", { name: zhCN.memory.included }).click();
 	await expect(secondEntry.getByRole("button", { name: zhCN.memory.exclude })).toBeVisible();

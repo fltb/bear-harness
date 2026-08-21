@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
-import type { PiSessionMessage } from "../companion/pi-session-store.js";
+import type { PiSessionMessage, PiSessionMessageEntry } from "../companion/pi-session-store.js";
 import { PiSessionStore } from "../companion/pi-session-store.js";
 import type { AppDatabase } from "../storage/database.js";
 import {
@@ -423,14 +423,92 @@ export class ConversationRepository {
 		return this.projectLegacy(id, title, sceneTitle);
 	}
 
+	/**
+	 * Resolve a canonical Host message ID to the Pi entry that produced its
+	 * current-branch projection. Matching is deliberately performed against
+	 * the same ordered role/content projection used by `projectPi`, rather than
+	 * by content alone, so duplicate messages retain their identity.
+	 */
+	getCurrentPiEntryForMessage(
+		conversationId: string,
+		messageId: string,
+	): PiSessionMessageEntry | undefined {
+		const session = this.getSession(conversationId);
+		if (!session) return undefined;
+		return this.projectPiEntries(conversationId, session).find(
+			({ projection }) => projection.id === messageId,
+		)?.entry;
+	}
+
 	private projectPi(
 		id: string,
 		title: string,
 		sceneTitle: string,
 		session: PiSessionStore,
 	): ConversationProjection {
+		return {
+			activeConversationId: id,
+			...(session.leafId ? { activeBranchId: session.leafId } : {}),
+			id,
+			title,
+			sceneTitle,
+			messages: this.projectPiEntries(id, session).map(({ projection }) => projection),
+		};
+	}
+
+	private projectPiEntries(
+		id: string,
+		session: PiSessionStore,
+	): Array<{
+		entry: PiSessionMessageEntry;
+		projection: ConversationProjection["messages"][number];
+	}> {
 		const now = new Date().toISOString();
-		const canonicalByKey = new Map<string, ConversationProjection["messages"][number][]>();
+		const activeBranch = this.db
+			.select({ id: branches.id, forkMessageId: branches.forkMessageId })
+			.from(branches)
+			.where(and(eq(branches.conversationId, id), eq(branches.adopted, 1)))
+			.orderBy(desc(branches.createdAt))
+			.limit(1)
+			.get();
+		if (!activeBranch) return this.projectPiSessionEntries(session, now);
+		const fork = activeBranch.forkMessageId
+			? this.db
+					.select({ branchId: messages.branchId, rowId: sql<number>`messages.rowid` })
+					.from(messages)
+					.where(and(eq(messages.id, activeBranch.forkMessageId), eq(messages.conversationId, id)))
+					.get()
+			: undefined;
+		const inheritedVisibility = fork
+			? [and(eq(messages.branchId, fork.branchId), sql`messages.rowid <= ${fork.rowId}`)]
+			: [];
+		let parentBranch = fork
+			? this.db
+					.select({ id: branches.id, forkMessageId: branches.forkMessageId })
+					.from(branches)
+					.where(eq(branches.id, fork.branchId))
+					.get()
+			: undefined;
+		while (parentBranch?.forkMessageId) {
+			const parentFork = this.db
+				.select({ branchId: messages.branchId, rowId: sql<number>`messages.rowid` })
+				.from(messages)
+				.where(and(eq(messages.id, parentBranch.forkMessageId), eq(messages.conversationId, id)))
+				.get();
+			if (!parentFork) break;
+			inheritedVisibility.push(
+				and(eq(messages.branchId, parentFork.branchId), sql`messages.rowid <= ${parentFork.rowId}`),
+			);
+			parentBranch = this.db
+				.select({ id: branches.id, forkMessageId: branches.forkMessageId })
+				.from(branches)
+				.where(eq(branches.id, parentFork.branchId))
+				.get();
+		}
+		const visibility =
+			inheritedVisibility.length > 0
+				? or(eq(messages.branchId, activeBranch.id), ...inheritedVisibility)
+				: eq(messages.branchId, activeBranch.id);
 		const canonicalRows = this.db
 			.select({
 				id: messages.id,
@@ -444,9 +522,10 @@ export class ConversationRepository {
 			})
 			.from(messages)
 			.innerJoin(messageVersions, eq(messageVersions.messageId, messages.id))
-			.where(eq(messages.conversationId, id))
+			.where(and(eq(messages.conversationId, id), visibility))
 			.orderBy(sql`messages.rowid`, sql`message_versions.rowid`)
 			.all();
+		const canonicalByKey = new Map<string, ConversationProjection["messages"][number][]>();
 		const canonicalMessages = new Map<string, ConversationProjection["messages"][number]>();
 		for (const row of canonicalRows) {
 			if (row.role !== "user" && row.role !== "assistant" && row.role !== "system") {
@@ -473,40 +552,57 @@ export class ConversationRepository {
 				canonicalByKey.set(key, matches);
 			}
 		}
-		const projected: ConversationProjection["messages"] = [];
+		const projected: Array<{
+			entry: PiSessionMessageEntry;
+			projection: ConversationProjection["messages"][number];
+		}> = [];
 		const seenCanonical = new Set<string>();
-		for (const { id: messageId, message } of session
-			.readMessageEntries()
-			.filter(({ message }) => message.role !== "toolResult")) {
-			const role: "user" | "assistant" = message.role === "user" ? "user" : "assistant";
-			const content = sessionContent(message);
-			const key = `${role}\u0000${content}`;
-			const canonical = canonicalByKey.get(key)?.shift();
-			if (canonical) {
-				if (seenCanonical.has(canonical.id)) continue;
-				seenCanonical.add(canonical.id);
-				projected.push(canonical);
-				continue;
-			}
-			const versionId = `${messageId}-v1`;
-			projected.push({
-				id: messageId,
-				role,
-				adoptedVersionId: versionId,
-				versions: [
-					{ id: versionId, role, content, editedByUser: false, createdAt: now, adopted: true },
-				],
-				createdAt: now,
-			});
+		for (const entry of session.readMessageEntries()) {
+			if (entry.message.role === "toolResult") continue;
+			const role: "user" | "assistant" = entry.message.role === "user" ? "user" : "assistant";
+			const content = sessionContent(entry.message);
+			const canonical = canonicalByKey.get(`${role}\u0000${content}`)?.shift();
+			if (!canonical || seenCanonical.has(canonical.id)) continue;
+			seenCanonical.add(canonical.id);
+			projected.push({ entry, projection: canonical });
 		}
-		return {
-			activeConversationId: id,
-			...(session.leafId ? { activeBranchId: session.leafId } : {}),
-			id,
-			title,
-			sceneTitle,
-			messages: projected,
-		};
+		return projected;
+	}
+
+	private projectPiSessionEntries(
+		session: PiSessionStore,
+		now: string,
+	): Array<{
+		entry: PiSessionMessageEntry;
+		projection: ConversationProjection["messages"][number];
+	}> {
+		return session.readMessageEntries().flatMap((entry) => {
+			if (entry.message.role === "toolResult") return [];
+			const role: "user" | "assistant" = entry.message.role === "user" ? "user" : "assistant";
+			const content = sessionContent(entry.message);
+			const versionId = `${entry.id}-v1`;
+			return [
+				{
+					entry,
+					projection: {
+						id: entry.id,
+						role,
+						adoptedVersionId: versionId,
+						versions: [
+							{
+								id: versionId,
+								role,
+								content,
+								editedByUser: false,
+								createdAt: now,
+								adopted: true,
+							},
+						],
+						createdAt: now,
+					},
+				},
+			];
+		});
 	}
 
 	private projectLegacy(id: string, title: string, sceneTitle: string): ConversationProjection {

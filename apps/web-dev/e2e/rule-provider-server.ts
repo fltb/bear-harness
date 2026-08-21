@@ -97,7 +97,8 @@ function reply(payload: { messages?: Array<{ role?: string; content?: unknown }>
 											: current.includes("北辰") && hostContext.includes("北辰")
 												? "MEMORY_CONTEXT:我们约定暗号是北辰\n"
 												: "MEMORY_CONTEXT:ABSENT\n"
-										: current.includes("规则：回复 EDITED_OK") || prompt.includes("规则：回复 EDITED_OK")
+										: current.includes("规则：回复 EDITED_OK") ||
+												prompt.includes("规则：回复 EDITED_OK")
 											? "EDITED_OK\n"
 											: prompt.includes("STREAM_CHECK")
 												? "STREAM_ONE STREAM_TWO\n"

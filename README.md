@@ -163,7 +163,8 @@ The reference directory spelling is intentional: [`docs/refernece/`](docs/refern
 
 - [`Reference index`](docs/refernece/index.md) — module map and reading order.
 - [`Architecture`](docs/refernece/architecture.md) — cross-package data/control flow and boundaries.
-- [`Issues and findings`](docs/refernece/issues-and-findings.md) — implementation observations, classified separately from intended behavior.
+- [`Issues and findings`](docs/refernece/issues-and-findings.md) — implementation observations and their resolved remediation, classified separately from intended behavior.
+- [`Remediation status`](docs/refernece/remediation-status.md) — completed F001–F075 remediation record with final gate results.
 - Module references: [`companion-client`](docs/refernece/companion-client.md), [`companion-ui`](docs/refernece/companion-ui.md), [`desktop`](docs/refernece/desktop.md), [`host-runtime`](docs/refernece/host-runtime.md), [`i18n`](docs/refernece/i18n.md), [`product-config`](docs/refernece/product-config.md), [`protocol/schema`](docs/refernece/protocol-schema.md), [`tdai-core`](docs/refernece/tdai-core.md), and [`web-dev`](docs/refernece/web-dev.md).
 - [`Character package authoring`](docs/character-package-authoring.md) — package format, trust, memory ownership, and workshop workflow.
 - [`Development verification`](docs/development-verification.md) — WebDev-first checks and release-time Electron checks.
