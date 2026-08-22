@@ -28,7 +28,7 @@ function activeComposerClient() {
 			data: {
 				eventSeq: 0,
 				onboarding: COMPLETE_ONBOARDING,
-				conversation: { activeConversationId: "conversation-1" },
+				conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				model: {
 					pool: { models: [TEST_MODEL] },
 					defaults: {

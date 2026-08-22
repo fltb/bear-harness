@@ -289,6 +289,11 @@ export const en = {
 		localCustomPathPlaceholder: "hf:user/repo/file-Q8_0.gguf or /path/to/model.gguf",
 		downloadMirrorSection: "Model download mirror",
 		downloadMirrorLabel: "Mirror endpoint (leave empty for the default source)",
+		downloadAndEnableLocalModel: "Download and enable local model",
+		downloadingLocalModel: "Downloading and loading local model…",
+		localModelDownloadStatus:
+			"Downloading the selected model and loading it locally. Memory stays off until it is ready.",
+		localModelReady: "Local model downloaded, loaded, and ready.",
 		saveNetwork: "Save network and memory settings",
 		saved:
 			"Saved. Proxy applies immediately; the vector service and mirror take effect after restart.",
@@ -352,7 +357,7 @@ export const en = {
 		modelLabel: "Reply model",
 		connecting: "Connecting model service...",
 		memorySetupNote:
-			"Your choice saves the memory configuration. A local model downloads and starts on the next launch.",
+			"A local model downloads and loads during setup. Memory is enabled only after the model is ready.",
 	},
 	language: {
 		warningTitle: "Character package language differs from the system language",

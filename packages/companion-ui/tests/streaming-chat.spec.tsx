@@ -75,7 +75,7 @@ function activeClient() {
 							updatedAt: "2026-01-01T00:00:00.000Z",
 						},
 					],
-					messages: [],
+					piTimeline: { entries: [] },
 				},
 			},
 		}),
@@ -110,7 +110,7 @@ describe("optimistic and streaming chat", () => {
 		expect(screen.getByRole("status", { name: zhCN.messages.responding })).toBeInTheDocument();
 		resolveSend?.({ ok: true, data: { messageId: "user-message-1" } });
 	});
-	it("renders an empty assistant projection as an explicit failure", async () => {
+	it("renders a failed Pi tool entry", async () => {
 		const { client } = activeClient();
 		const initialSnapshot = client.snapshot.get;
 		client.snapshot.get = vi.fn(async () => {
@@ -132,34 +132,29 @@ describe("optimistic and streaming chat", () => {
 								updatedAt: "2026-01-01T00:00:00.000Z",
 							},
 						],
-						messages: [
-							{
-								id: "failed-assistant",
-								status: "failed" as const,
-								failureReason: "model unavailable",
-								role: "assistant" as const,
-								adoptedVersionId: "failed-assistant-v1",
-								createdAt: "2026-01-01T00:00:00.000Z",
-								versions: [
-									{
-										id: "failed-assistant-v1",
-										role: "assistant" as const,
-										content: "",
-										editedByUser: false,
-										createdAt: "2026-01-01T00:00:00.000Z",
-										adopted: true,
-									},
-								],
-							},
-						],
+						piTimeline: {
+							entries: [
+								{
+									id: "failed-assistant",
+									parentId: null,
+									timestamp: "2026-01-01T00:00:00.000Z",
+									kind: "message",
+									role: "tool",
+									toolName: "model unavailable",
+									toolCallId: "failed-assistant-v1",
+									status: "failed",
+								},
+							],
+						},
 					},
 				},
 			};
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const thread = await screen.findByRole("region", { name: zhCN.messages.conversation });
-		const failure = await within(thread).findByRole("alert");
+		const failure = await within(thread).findByRole("article", { name: "model unavailable failed" });
 		expect(failure).toHaveTextContent("model unavailable");
+		expect(failure).toHaveTextContent("failed");
 	});
 	it("does not render completed or aborted empty assistant turns as failures", async () => {
 		const { client } = activeClient();
@@ -183,23 +178,15 @@ describe("optimistic and streaming chat", () => {
 								updatedAt: "2026-01-01T00:00:00.000Z",
 							},
 						],
-						messages: (["completed", "aborted"] as const).map((status, index) => ({
-							id: `${status}-assistant`,
-							role: "assistant" as const,
-							status,
-							adoptedVersionId: `${status}-assistant-v1`,
-							createdAt: `2026-01-01T00:00:0${index}.000Z`,
-							versions: [
-								{
-									id: `${status}-assistant-v1`,
-									role: "assistant" as const,
-									content: "",
-									editedByUser: false,
-									createdAt: `2026-01-01T00:00:0${index}.000Z`,
-									adopted: true,
-								},
-							],
-						})),
+						piTimeline: {
+							entries: (["completed", "aborted"] as const).map((status, index) => ({
+								id: `${status}-assistant`,
+								parentId: null,
+								timestamp: `2026-01-01T00:00:0${index}.000Z`,
+								kind: "message" as const,
+								role: "assistant" as const,
+							})),
+						},
 					},
 				},
 			};
@@ -230,24 +217,16 @@ describe("optimistic and streaming chat", () => {
 								updatedAt: "2026-01-01T00:00:00.000Z",
 							},
 						],
-						messages: [
-							{
-								id: "internal-only",
-								role: "system" as const,
-								adoptedVersionId: "internal-only-v1",
-								createdAt: "2026-01-01T00:00:01.000Z",
-								versions: [
-									{
-										id: "internal-only-v1",
-										role: "system" as const,
-										content: "仅供内部使用的工具结果",
-										editedByUser: false,
-										createdAt: "2026-01-01T00:00:01.000Z",
-										adopted: true,
-									},
-								],
-							},
-						],
+						piTimeline: {
+							entries: [
+								{
+									id: "internal-only",
+									parentId: null,
+									timestamp: "2026-01-01T00:00:01.000Z",
+									kind: "custom",
+								},
+							],
+						},
 					},
 				},
 			};
@@ -277,26 +256,20 @@ describe("optimistic and streaming chat", () => {
 					conversation: {
 						activeConversationId: "conversation-1",
 						conversations: [],
-						messages: committed
-							? [
-									{
-										id: "pi:assistant-entry-contains-draft",
-										role: "assistant" as const,
-										adoptedVersionId: "pi:assistant-entry-contains-draft-v1",
-										createdAt: "2026-01-01T00:00:01.000Z",
-										versions: [
-											{
-												id: "pi:assistant-entry-contains-draft-v1",
-												role: "assistant" as const,
-												content: persistedReply,
-												editedByUser: false,
-												createdAt: "2026-01-01T00:00:01.000Z",
-												adopted: true,
-											},
-										],
-									},
-								]
-							: [],
+						piTimeline: {
+							entries: committed
+								? [
+										{
+											id: "pi:assistant-entry-contains-draft",
+											parentId: null,
+											timestamp: "2026-01-01T00:00:01.000Z",
+											kind: "message" as const,
+											role: "assistant" as const,
+											text: persistedReply,
+										},
+									]
+								: [],
+						},
 					},
 				},
 			};
@@ -373,8 +346,7 @@ describe("optimistic and streaming chat", () => {
 			screen.queryByRole("status", { name: zhCN.messages.responding }),
 		).not.toBeInTheDocument();
 	});
-	it("renders raw current_user_message text and gives user messages only a direct edit action", async () => {
-		const user = userEvent.setup();
+	it("renders raw current_user_message text from a Pi user entry", async () => {
 		const { client } = activeClient();
 		const rawUserText = "请记住这条当前消息";
 		const framedPrompt = [
@@ -387,7 +359,6 @@ describe("optimistic and streaming chat", () => {
 			"</current_user_message>",
 		].join("\n");
 		const userEntryId = "pi:user-entry-1";
-		const userVersionId = `${userEntryId}-v1`;
 		const initialSnapshot = client.snapshot.get;
 		client.snapshot.get = vi.fn(async () => {
 			const result = await initialSnapshot();
@@ -408,24 +379,18 @@ describe("optimistic and streaming chat", () => {
 								updatedAt: "2026-01-01T00:00:00.000Z",
 							},
 						],
-						messages: [
-							{
-								id: userEntryId,
-								role: "user" as const,
-								adoptedVersionId: userVersionId,
-								createdAt: "2026-01-01T00:00:01.000Z",
-								versions: [
-									{
-										id: userVersionId,
-										role: "user" as const,
-										content: rawUserText,
-										editedByUser: false,
-										createdAt: "2026-01-01T00:00:01.000Z",
-										adopted: true,
-									},
-								],
-							},
-						],
+						piTimeline: {
+							entries: [
+								{
+									id: userEntryId,
+									parentId: null,
+									timestamp: "2026-01-01T00:00:01.000Z",
+									kind: "message",
+									role: "user",
+									text: rawUserText,
+								},
+							],
+						},
 					},
 				},
 			};
@@ -435,13 +400,7 @@ describe("optimistic and streaming chat", () => {
 		await waitFor(() => expect(screen.getByText(rawUserText)).toBeInTheDocument());
 		expect(screen.queryByText(framedPrompt)).not.toBeInTheDocument();
 
-		const message = screen.getByText(rawUserText).closest("article");
-		expect(message).not.toBeNull();
-		const userMessage = within(message as HTMLElement);
-		expect(userMessage.queryByRole("button", { name: zhCN.messages.operations })).toBeNull();
-		expect(userMessage.queryByRole("button", { name: zhCN.messages.rememberMoment })).toBeNull();
-		await user.click(userMessage.getByRole("button", { name: zhCN.messages.edit }));
-		expect(userMessage.getByRole("textbox", { name: zhCN.messages.editLabel })).toBeVisible();
+		expect(screen.getByText(rawUserText).closest("article")).not.toBeNull();
 	});
 
 	it("replaces the streaming block with exactly one persisted assistant message", async () => {
@@ -456,26 +415,20 @@ describe("optimistic and streaming chat", () => {
 					conversation: {
 						activeConversationId: "conversation-1",
 						conversations: [],
-						messages: !assistantCommitted
-							? []
-							: [
-									{
-										id: "assistant-message-1",
-										role: "assistant" as const,
-										adoptedVersionId: "assistant-version-1",
-										createdAt: "2026-01-01T00:00:01.000Z",
-										versions: [
-											{
-												id: "assistant-version-1",
-												role: "assistant" as const,
-												content: STREAMED_REPLY,
-												editedByUser: false,
-												createdAt: "2026-01-01T00:00:01.000Z",
-												adopted: true,
-											},
-										],
-									},
-								],
+						piTimeline: {
+							entries: !assistantCommitted
+								? []
+								: [
+										{
+											id: "assistant-message-1",
+											parentId: null,
+											timestamp: "2026-01-01T00:00:01.000Z",
+											kind: "message" as const,
+											role: "assistant" as const,
+											text: STREAMED_REPLY,
+										},
+									],
+						},
 					},
 				},
 			});
@@ -531,7 +484,6 @@ describe("optimistic and streaming chat", () => {
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		await screen.findByRole("button", { name: zhCN.messages.continue });
 		await waitFor(() => expect(screen.getAllByText(STREAMED_REPLY)).toHaveLength(1));
 		expect(
 			screen.queryByRole("status", { name: zhCN.messages.responding }),
@@ -539,7 +491,7 @@ describe("optimistic and streaming chat", () => {
 		expect(client.snapshot.get).toHaveBeenCalled();
 	});
 
-	it("clears the streaming draft when the projection carries a Pi entry id, not the legacy message id", async () => {
+	it("clears the streaming draft when the projection carries a Pi entry id", async () => {
 		const { client } = activeClient();
 		let committed = false;
 		client.snapshot.get = vi.fn(() =>
@@ -551,26 +503,20 @@ describe("optimistic and streaming chat", () => {
 					conversation: {
 						activeConversationId: "conversation-1",
 						conversations: [],
-						messages: !committed
-							? []
-							: [
-									{
-										id: "pi:entry-assistant-9",
-										role: "assistant" as const,
-										adoptedVersionId: "pi:entry-assistant-9-v1",
-										createdAt: "2026-01-01T00:00:01.000Z",
-										versions: [
-											{
-												id: "pi:entry-assistant-9-v1",
-												role: "assistant" as const,
-												content: STREAMED_REPLY,
-												editedByUser: false,
-												createdAt: "2026-01-01T00:00:01.000Z",
-												adopted: true,
-											},
-										],
-									},
-								],
+						piTimeline: {
+							entries: !committed
+								? []
+								: [
+										{
+											id: "pi:entry-assistant-9",
+											parentId: null,
+											timestamp: "2026-01-01T00:00:01.000Z",
+											kind: "message" as const,
+											role: "assistant" as const,
+											text: STREAMED_REPLY,
+										},
+									],
+						},
 					},
 				},
 			}),
@@ -626,7 +572,6 @@ describe("optimistic and streaming chat", () => {
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		await screen.findByRole("button", { name: zhCN.messages.continue });
 		await waitFor(() => expect(screen.getAllByText(STREAMED_REPLY)).toHaveLength(1));
 		expect(
 			screen.queryByRole("status", { name: zhCN.messages.responding }),
@@ -636,7 +581,7 @@ describe("optimistic and streaming chat", () => {
 	it("keeps the responding status hidden when a late delta follows the settled Pi final", async () => {
 		// Mirrors the native Pi journey: two stream deltas close into the final
 		// text, the committed projection carries a Pi entry id while
-		// message.assistant_committed carries the legacy DB message id, and a
+		// message.assistant_committed carries the persisted turn id, and a
 		// stale delta from the settled turn can still arrive afterwards. The
 		// status must stay hidden and the final content must render exactly once.
 		const STREAM_ONE = "STREAM_ONE ";
@@ -653,26 +598,20 @@ describe("optimistic and streaming chat", () => {
 					conversation: {
 						activeConversationId: "conversation-1",
 						conversations: [],
-						messages: !committed
-							? []
-							: [
-									{
-										id: "pi:entry-assistant-late-delta",
-										role: "assistant" as const,
-										adoptedVersionId: "pi:entry-assistant-late-delta-v1",
-										createdAt: "2026-01-01T00:00:01.000Z",
-										versions: [
-											{
-												id: "pi:entry-assistant-late-delta-v1",
-												role: "assistant" as const,
-												content: STREAMED_FINAL,
-												editedByUser: false,
-												createdAt: "2026-01-01T00:00:01.000Z",
-												adopted: true,
-											},
-										],
-									},
-								],
+						piTimeline: {
+							entries: !committed
+								? []
+								: [
+										{
+											id: "pi:entry-assistant-late-delta",
+											parentId: null,
+											timestamp: "2026-01-01T00:00:01.000Z",
+											kind: "message" as const,
+											role: "assistant" as const,
+											text: STREAMED_FINAL,
+										},
+									],
+						},
 					},
 				},
 			}),
@@ -741,7 +680,6 @@ describe("optimistic and streaming chat", () => {
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		await screen.findByRole("button", { name: zhCN.messages.continue });
 		await waitFor(() => expect(screen.getAllByText(STREAMED_FINAL)).toHaveLength(1));
 		expect(
 			screen.queryByRole("status", { name: zhCN.messages.responding }),

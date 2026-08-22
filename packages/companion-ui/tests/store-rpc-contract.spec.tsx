@@ -116,30 +116,25 @@ describe("store RPC contract", () => {
 					eventSeq: 1,
 					conversation: {
 						activeConversationId: "conversation-old",
-						messages: [
-							{
-								id: "old-message",
-								role: "user",
-								createdAt: "2026-01-01T00:00:00.000Z",
-								versions: [
-									{
-										id: "old-version",
-										role: "user",
-										content: "stale conversation body",
-										editedByUser: false,
-										createdAt: "2026-01-01T00:00:00.000Z",
-										adopted: true,
-									},
-								],
-							},
-						],
+						piTimeline: {
+							entries: [
+								{
+									id: "old-message",
+									parentId: null,
+									timestamp: "2026-01-01T00:00:00.000Z",
+									kind: "message",
+									role: "user",
+									text: "stale conversation body",
+								},
+							],
+						},
 					},
 					model: { pool: { models: [] }, defaults: { vision: { mode: "auto" } } },
 				},
 			});
 			await waitFor(() => expect(store.snapshot.eventSeq()).toBe(1));
 			expect(store.activeConversationId).toBe("conversation-new");
-			expect(store.activeMessages).toEqual([]);
+			expect(store.activePiTimeline).toEqual({ entries: [] });
 			expect(store.model.models()).toEqual([configured]);
 			expect(store.model.data().defaults.reply).toEqual({
 				providerId: "relay",
@@ -322,7 +317,7 @@ describe("store RPC contract", () => {
 				ok: true as const,
 				data: {
 					eventSeq: 1,
-					conversation: { activeConversationId: "conversation-1", messages: [] },
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 					model: {
 						pool: {
 							models: [
@@ -430,7 +425,7 @@ describe("store RPC contract", () => {
 					conversation: {
 						activeConversationId: "conversation-1",
 						conversations: [],
-						messages: [],
+						piTimeline: { entries: [] },
 					},
 				},
 			}),
@@ -482,7 +477,7 @@ describe("store RPC contract", () => {
 				providerId: "relay",
 				name: "Relay",
 				baseUrl: "https://relay.example/v1",
-				modelId: "model",
+				models: [{ id: "model" }],
 				apiKey: "key",
 			});
 			await store.provider.overrideBaseUrl({
@@ -591,7 +586,7 @@ describe("store RPC contract", () => {
 				ok: true as const,
 				data: {
 					eventSeq: 0,
-					conversation: { activeConversationId: "conversation-1", messages: [] },
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
 		);
@@ -683,7 +678,7 @@ describe("store RPC contract", () => {
 				ok: true as const,
 				data: {
 					eventSeq: 0,
-					conversation: { activeConversationId: "conversation-1", messages: [] },
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
 		);
@@ -742,9 +737,6 @@ describe("store RPC contract", () => {
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => expect(store.events.lastSeq()).toBe(5));
-			expect(store.toolActivities).toEqual([
-				{ id: "tool-1", tool: "search", label: "Search", status: "failed", message: "failed" },
-			]);
 			expect(store.streamingAssistantText).toBe("draft");
 			expect(store.assistantStreaming).toBe(true);
 			expect(store.activeRoleplayChoiceSetId).toBe("choices-1");
@@ -813,7 +805,7 @@ describe("store RPC contract", () => {
 				data: {
 					eventSeq: 0,
 					character: ROLEPLAY_MEDIA_CHARACTER,
-					conversation: { activeConversationId: "conversation-1" },
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
 		);

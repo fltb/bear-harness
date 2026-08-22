@@ -117,7 +117,18 @@ function createResultStore() {
 		get activeConversationId() {
 			return activeConversationId();
 		},
-		activeMessages: [message("message-42", "把三份会议记录整理成周报")],
+		activePiTimeline: {
+			entries: [
+				{
+					id: "message-42",
+					parentId: null,
+					timestamp: "2026-08-16T00:00:00Z",
+					kind: "message",
+					role: "user",
+					text: "把三份会议记录整理成周报",
+				},
+			],
+		},
 		runs: [
 			{ id: "run-1", commissionId: "commission-1", executorProfile: "pi", status: "completed" },
 			{ id: "run-2", commissionId: "commission-2", executorProfile: "pi", status: "completed" },

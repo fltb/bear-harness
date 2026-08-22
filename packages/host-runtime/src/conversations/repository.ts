@@ -1,7 +1,8 @@
 import { rmSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
+import type { PiTimeline } from "@bear-harness/protocol/schema";
 import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
-import type { PiSessionMessage, PiSessionMessageEntry } from "../companion/pi-session-store.js";
+import type { PiSessionMessageEntry } from "../companion/pi-session-store.js";
 import { PiSessionStore } from "../companion/pi-session-store.js";
 import type { AppDatabase } from "../storage/database.js";
 import {
@@ -35,24 +36,8 @@ export interface ConversationProjection {
 	id: string;
 	title: string;
 	sceneTitle: string;
-	messages: Array<{
-		id: string;
-		role: "user" | "assistant" | "system";
-		status?: "completed" | "failed" | "aborted";
-		failureReason?: string;
-		adoptedVersionId?: string;
-		versions: Array<{
-			id: string;
-			role: "user" | "assistant" | "system";
-			content: string;
-			editedByUser: boolean;
-			createdAt: string;
-			adopted: boolean;
-		}>;
-		createdAt: string;
-	}>;
+	piTimeline: PiTimeline;
 }
-
 export interface ConversationSearchHit {
 	conversationId: string;
 	title: string;
@@ -81,51 +66,6 @@ type SessionMetadataRow = {
 	activeLeafId: string | null;
 };
 
-const HOST_CONTEXT_PREFIX = "<host_context>\n";
-const HOST_CONTEXT_SEPARATOR = "\n</host_context>\n\n<current_user_message>\n";
-const CURRENT_USER_MESSAGE_SUFFIX = "\n</current_user_message>";
-
-function sessionContent(message: PiSessionMessage): string {
-	const content = sessionMessageContent(message);
-	if (message.role === "user") {
-		const projected = extractCurrentUserMessage(content);
-		if (projected !== undefined) return projected;
-	}
-	return content.trim();
-}
-
-function sessionMessageContent(message: PiSessionMessage): string {
-	if (typeof message.content === "string") return message.content;
-	if (!Array.isArray(message.content)) return "";
-	return message.content
-		.map((part) => {
-			if (
-				!part ||
-				typeof part !== "object" ||
-				!("type" in part) ||
-				!("text" in part) ||
-				part.type !== "text" ||
-				typeof part.text !== "string"
-			) {
-				return "";
-			}
-			return part.text;
-		})
-		.filter(Boolean)
-		.join("\n");
-}
-
-function extractCurrentUserMessage(content: string): string | undefined {
-	if (!content.startsWith(HOST_CONTEXT_PREFIX) || !content.endsWith(CURRENT_USER_MESSAGE_SUFFIX)) {
-		return undefined;
-	}
-	const separatorIndex = content.indexOf(HOST_CONTEXT_SEPARATOR, HOST_CONTEXT_PREFIX.length);
-	if (separatorIndex <= HOST_CONTEXT_PREFIX.length) return undefined;
-	return content.slice(
-		separatorIndex + HOST_CONTEXT_SEPARATOR.length,
-		-CURRENT_USER_MESSAGE_SUFFIX.length,
-	);
-}
 
 export class ConversationRepository {
 	private readonly sessionDir?: string;
@@ -140,10 +80,8 @@ export class ConversationRepository {
 		this.sessionCwd = options.sessionCwd;
 	}
 
-	/** Return the live Pi store for a migrated conversation. */
-	getSession(conversationId: string): PiSessionStore | undefined {
-		const cached = this.sessions.get(conversationId);
-		if (cached) return cached;
+	/** Return the product-owned Pi store for a conversation. */
+	getSession(conversationId: string): PiSessionStore {
 		const metadata = this.db
 			.select({
 				piSessionId: conversationSessions.piSessionId,
@@ -153,14 +91,22 @@ export class ConversationRepository {
 			.from(conversationSessions)
 			.where(eq(conversationSessions.conversationId, conversationId))
 			.get() as SessionMetadataRow | undefined;
-		if (!metadata) return undefined;
-		const store = PiSessionStore.open({
-			sessionDir: this.sessionDir ?? resolve(metadata.sessionFilePath, ".."),
-			cwd: this.sessionCwd ?? this.sessionDir ?? resolve(metadata.sessionFilePath, ".."),
-			sessionFile: metadata.sessionFilePath,
-		});
-		this.sessions.set(conversationId, store);
-		return store;
+		if (!metadata) {
+			throw { kind: "conflict", reason: "conversation_pi_session_missing" };
+		}
+		const cached = this.sessions.get(conversationId);
+		if (cached) return cached;
+		try {
+			const store = PiSessionStore.open({
+				sessionDir: this.sessionDir ?? resolve(metadata.sessionFilePath, ".."),
+				cwd: this.sessionCwd ?? this.sessionDir ?? resolve(metadata.sessionFilePath, ".."),
+				sessionFile: metadata.sessionFilePath,
+			});
+			this.sessions.set(conversationId, store);
+			return store;
+		} catch {
+			throw { kind: "conflict", reason: "conversation_pi_session_invalid" };
+		}
 	}
 
 	/** Expose the Pi session lookup without the repository's companion-scoped API. */
@@ -420,89 +366,20 @@ export class ConversationRepository {
 	}
 
 	project(id: string, title: string, sceneTitle: string): ConversationProjection {
-		const session = this.getSession(id);
-		if (session) return this.projectPi(id, title, sceneTitle, session);
-
-		return this.projectLegacy(id, title, sceneTitle);
+		return this.projectPi(id, title, sceneTitle, this.getSession(id));
 	}
 
-	/**
-	 * Resolve a canonical Host message ID to the Pi entry that produced its
-	 * current-branch projection. Matching is deliberately performed against
-	 * the same ordered role/content projection used by `projectPi`, rather than
-	 * by content alone, so duplicate messages retain their identity.
-	 */
+	/** Resolve a selected-branch Pi timeline entry by its native SessionManager ID. */
 	getCurrentPiEntryForMessage(
 		conversationId: string,
 		messageId: string,
 	): PiSessionMessageEntry | undefined {
 		const session = this.getSession(conversationId);
 		if (!session) return undefined;
-		return this.projectPiEntries(conversationId, session).find(
-			({ projection }) => projection.id === messageId,
-		)?.entry;
+		if (!session.buildPiTimeline().entries.some((entry) => entry.id === messageId)) return undefined;
+		return session.getMessageEntry(messageId);
 	}
 
-	private assistantOutcomes(
-		conversationId: string,
-	): Map<string, { status: "completed" | "failed" | "aborted"; failureReason?: string }> {
-		const outcomes = new Map<
-			string,
-			{ status: "completed" | "failed" | "aborted"; failureReason?: string }
-		>();
-		const turnRows = this.db
-			.select({
-				assistantMessageId: turns.assistantMessageId,
-				status: turns.status,
-			})
-			.from(turns)
-			.where(eq(turns.conversationId, conversationId))
-			.orderBy(desc(turns.createdAt), desc(turns.id))
-			.all();
-		for (const row of turnRows) {
-			if (
-				(row.status === "completed" || row.status === "failed" || row.status === "aborted") &&
-				!outcomes.has(row.assistantMessageId)
-			) {
-				outcomes.set(row.assistantMessageId, { status: row.status });
-			}
-		}
-		const reasonByMessage = new Map<string, string>();
-		const safeReasons: Record<string, true> = {
-			companion_initialization_failed: true,
-			companion_unavailable: true,
-			provider_auth_required: true,
-			provider_request_failed: true,
-			multimodal_fallback_unavailable: true,
-			turn_dispatch_failed: true,
-		};
-		const eventRows = this.db
-			.select({ payload: events.payload })
-			.from(events)
-			.where(eq(events.kind, "message.assistant_committed"))
-			.orderBy(desc(events.seq))
-			.all();
-		for (const row of eventRows) {
-			if (!row.payload || typeof row.payload !== "object") continue;
-			const payload = row.payload as Record<string, unknown>;
-			const messageId = payload.messageId;
-			const reason = payload.reason;
-			if (
-				typeof messageId === "string" &&
-				typeof reason === "string" &&
-				safeReasons[reason] &&
-				!reasonByMessage.has(messageId)
-			) {
-				reasonByMessage.set(messageId, reason);
-			}
-		}
-		for (const [messageId, outcome] of outcomes) {
-			if (outcome.status === "failed") {
-				outcome.failureReason = reasonByMessage.get(messageId) ?? "provider_request_failed";
-			}
-		}
-		return outcomes;
-	}
 
 	private projectPi(
 		id: string,
@@ -510,266 +387,17 @@ export class ConversationRepository {
 		sceneTitle: string,
 		session: PiSessionStore,
 	): ConversationProjection {
+		const piTimeline = session.buildPiTimeline();
 		return {
 			activeConversationId: id,
 			...(session.leafId ? { activeBranchId: session.leafId } : {}),
 			id,
 			title,
 			sceneTitle,
-			messages: this.projectPiEntries(id, session).map(({ projection }) => projection),
+			piTimeline,
 		};
 	}
 
-	private projectPiEntries(
-		id: string,
-		session: PiSessionStore,
-	): Array<{
-		entry: PiSessionMessageEntry;
-		projection: ConversationProjection["messages"][number];
-	}> {
-		const now = new Date().toISOString();
-		const outcomes = this.assistantOutcomes(id);
-		const activeBranch = this.db
-			.select({ id: branches.id, forkMessageId: branches.forkMessageId })
-			.from(branches)
-			.where(and(eq(branches.conversationId, id), eq(branches.adopted, 1)))
-			.orderBy(desc(branches.createdAt))
-			.limit(1)
-			.get();
-		if (!activeBranch) return this.projectPiSessionEntries(id, session, now);
-		const fork = activeBranch.forkMessageId
-			? this.db
-					.select({ branchId: messages.branchId, rowId: sql<number>`messages.rowid` })
-					.from(messages)
-					.where(and(eq(messages.id, activeBranch.forkMessageId), eq(messages.conversationId, id)))
-					.get()
-			: undefined;
-		const inheritedVisibility = fork
-			? [and(eq(messages.branchId, fork.branchId), sql`messages.rowid <= ${fork.rowId}`)]
-			: [];
-		let parentBranch = fork
-			? this.db
-					.select({ id: branches.id, forkMessageId: branches.forkMessageId })
-					.from(branches)
-					.where(eq(branches.id, fork.branchId))
-					.get()
-			: undefined;
-		while (parentBranch?.forkMessageId) {
-			const parentFork = this.db
-				.select({ branchId: messages.branchId, rowId: sql<number>`messages.rowid` })
-				.from(messages)
-				.where(and(eq(messages.id, parentBranch.forkMessageId), eq(messages.conversationId, id)))
-				.get();
-			if (!parentFork) break;
-			inheritedVisibility.push(
-				and(eq(messages.branchId, parentFork.branchId), sql`messages.rowid <= ${parentFork.rowId}`),
-			);
-			parentBranch = this.db
-				.select({ id: branches.id, forkMessageId: branches.forkMessageId })
-				.from(branches)
-				.where(eq(branches.id, parentFork.branchId))
-				.get();
-		}
-		const visibility =
-			inheritedVisibility.length > 0
-				? or(eq(messages.branchId, activeBranch.id), ...inheritedVisibility)
-				: eq(messages.branchId, activeBranch.id);
-		const canonicalRows = this.db
-			.select({
-				id: messages.id,
-				role: messages.role,
-				createdAt: messages.createdAt,
-				versionId: messageVersions.id,
-				content: messageVersions.content,
-				editedByUser: messageVersions.editedByUser,
-				adopted: messageVersions.adopted,
-				versionCreatedAt: messageVersions.createdAt,
-			})
-			.from(messages)
-			.innerJoin(messageVersions, eq(messageVersions.messageId, messages.id))
-			.where(and(eq(messages.conversationId, id), visibility))
-			.orderBy(sql`messages.rowid`, sql`message_versions.rowid`)
-			.all();
-		const canonicalByKey = new Map<string, ConversationProjection["messages"][number][]>();
-		const canonicalMessages = new Map<string, ConversationProjection["messages"][number]>();
-		for (const row of canonicalRows) {
-			if (row.role !== "user" && row.role !== "assistant" && row.role !== "system") {
-				throw new Error(`invalid persisted message role: ${row.role}`);
-			}
-			let message = canonicalMessages.get(row.id);
-			if (!message) {
-				const outcome = row.role === "assistant" ? outcomes.get(row.id) : undefined;
-				message = {
-					id: row.id,
-					role: row.role,
-					versions: [],
-					createdAt: row.createdAt,
-					...(outcome
-						? {
-								status: outcome.status,
-								...(outcome.failureReason ? { failureReason: outcome.failureReason } : {}),
-							}
-						: {}),
-				};
-				canonicalMessages.set(row.id, message);
-			}
-			message.versions.push({
-				id: row.versionId,
-				role: row.role,
-				content: row.content,
-				editedByUser: Boolean(row.editedByUser),
-				createdAt: row.versionCreatedAt,
-				adopted: Boolean(row.adopted),
-			});
-			if (row.adopted) {
-				message.adoptedVersionId = row.versionId;
-				const key = `${row.role}\u0000${row.content}`;
-				const matches = canonicalByKey.get(key) ?? [];
-				if (!matches.includes(message)) matches.push(message);
-				canonicalByKey.set(key, matches);
-			}
-		}
-		const projected: Array<{
-			entry: PiSessionMessageEntry;
-			projection: ConversationProjection["messages"][number];
-		}> = [];
-		const seenCanonical = new Set<string>();
-		for (const entry of session.readMessageEntries()) {
-			if (entry.message.role === "toolResult") continue;
-			const role: "user" | "assistant" = entry.message.role === "user" ? "user" : "assistant";
-			const content = sessionContent(entry.message);
-			const canonical = canonicalByKey.get(`${role}\u0000${content}`)?.shift();
-			if (!canonical || seenCanonical.has(canonical.id)) continue;
-			seenCanonical.add(canonical.id);
-			projected.push({ entry, projection: canonical });
-		}
-		return projected;
-	}
-
-	private projectPiSessionEntries(
-		id: string,
-		session: PiSessionStore,
-		now: string,
-	): Array<{
-		entry: PiSessionMessageEntry;
-		projection: ConversationProjection["messages"][number];
-	}> {
-		const outcomes = this.assistantOutcomes(id);
-		return session.readMessageEntries().flatMap((entry) => {
-			if (entry.message.role === "toolResult") return [];
-			const role: "user" | "assistant" = entry.message.role === "user" ? "user" : "assistant";
-			const content = sessionContent(entry.message);
-			const versionId = `${entry.id}-v1`;
-			const outcome = role === "assistant" ? outcomes.get(entry.id) : undefined;
-			return [
-				{
-					entry,
-					projection: {
-						id: entry.id,
-						role,
-						...(outcome
-							? {
-									status: outcome.status,
-									...(outcome.failureReason
-										? { failureReason: outcome.failureReason }
-										: {}),
-								}
-							: {}),
-						adoptedVersionId: versionId,
-						versions: [
-							{
-								id: versionId,
-								role,
-								content,
-								editedByUser: false,
-								createdAt: now,
-								adopted: true,
-							},
-						],
-						createdAt: now,
-					},
-				},
-			];
-		});
-	}
-
-	private projectLegacy(id: string, title: string, sceneTitle: string): ConversationProjection {
-		const branch = this.db
-			.select({ id: branches.id })
-			.from(branches)
-			.where(and(eq(branches.conversationId, id), eq(branches.adopted, 1)))
-			.orderBy(desc(branches.createdAt))
-			.limit(1)
-			.get();
-		const activeBranchId = branch?.id;
-		const outcomes = this.assistantOutcomes(id);
-		const rows = this.db
-			.select({
-				id: messages.id,
-				role: messages.role,
-				createdAt: messages.createdAt,
-				versionId: messageVersions.id,
-				content: messageVersions.content,
-				editedByUser: messageVersions.editedByUser,
-				adopted: messageVersions.adopted,
-				versionCreatedAt: messageVersions.createdAt,
-			})
-			.from(messages)
-			.innerJoin(messageVersions, eq(messageVersions.messageId, messages.id))
-			.where(
-				and(
-					eq(messages.conversationId, id),
-					activeBranchId
-						? or(
-								eq(messages.branchId, activeBranchId),
-								sql`messages.rowid <= coalesce((select fork.rowid from branches active_branch join messages fork on fork.id = active_branch.fork_message_id where active_branch.id = ${activeBranchId}), -1)`,
-							)
-						: undefined,
-				),
-			)
-			.orderBy(sql`messages.rowid`, sql`message_versions.rowid`)
-			.all();
-		const grouped = new Map<string, ConversationProjection["messages"][number]>();
-		for (const row of rows) {
-			if (row.role !== "user" && row.role !== "assistant" && row.role !== "system") {
-				throw new Error(`invalid persisted message role: ${row.role}`);
-			}
-			let message = grouped.get(row.id);
-			if (!message) {
-				const outcome = row.role === "assistant" ? outcomes.get(row.id) : undefined;
-				message = {
-					id: row.id,
-					role: row.role,
-					versions: [],
-					createdAt: row.createdAt,
-					...(outcome
-						? {
-								status: outcome.status,
-								...(outcome.failureReason ? { failureReason: outcome.failureReason } : {}),
-							}
-						: {}),
-				};
-				grouped.set(row.id, message);
-			}
-			message.versions.push({
-				id: row.versionId,
-				role: row.role,
-				content: row.content,
-				editedByUser: Boolean(row.editedByUser),
-				createdAt: row.versionCreatedAt,
-				adopted: Boolean(row.adopted),
-			});
-			if (row.adopted) message.adoptedVersionId = row.versionId;
-		}
-		return {
-			activeConversationId: id,
-			...(activeBranchId ? { activeBranchId } : {}),
-			id,
-			title,
-			sceneTitle,
-			messages: [...grouped.values()],
-		};
-	}
 }
 
 function excerpt(content: string, query: string): string {

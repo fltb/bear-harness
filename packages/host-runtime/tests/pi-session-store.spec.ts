@@ -237,6 +237,16 @@ describe("PiSessionStore", () => {
 			branchUser,
 			branchAssistant,
 		]);
+		expect(store.buildPiTimeline()).toMatchObject({
+			activeLeafId: compactionId,
+			entries: [
+				{ id: compactionId, parentId: branchAssistant, kind: "compaction" },
+				{ id: branchUser, kind: "message", role: "user", text: "branch" },
+				{ id: branchAssistant, kind: "message", role: "assistant", text: "branch answer" },
+			],
+		});
+		expect(JSON.stringify(store.buildPiTimeline())).not.toContain("branch summary");
+
 
 		const branchContext = store.buildContext().messages;
 		expect(branchContext.map((message) => message.role)).toEqual([
@@ -250,6 +260,10 @@ describe("PiSessionStore", () => {
 		});
 
 		store.selectBranch(rootAssistant);
+		expect(store.buildPiTimeline().entries.map((entry) => entry.id)).toEqual([
+			rootUser,
+			rootAssistant,
+		]);
 		const rootContext = store.buildContext().messages;
 		expect(rootContext.map((message) => message.role)).toEqual(["user", "assistant"]);
 		expect(rootContext[0]).toMatchObject({ role: "user", content: "root" });
@@ -284,7 +298,10 @@ describe("PiSessionStore", () => {
 			{ role: "user", content: "hello", timestamp: 1 },
 			{
 				role: "assistant",
-				content: [{ type: "text", text: "hi" }],
+				content: [
+					{ type: "text", text: "hi" },
+					{ type: "toolCall", id: "call-1", name: "lookup", arguments: { secret: "do-not-project" } },
+				],
 				api: "openai-completions",
 				provider: "test",
 				model: "test-model",
@@ -308,13 +325,14 @@ describe("PiSessionStore", () => {
 				timestamp: 3,
 			},
 		];
-		const metadata = PiSessionStore.migrateLegacyConversation({
-			db: database.orm,
-			conversationId: "conversation",
-			sessionDir: join(root, "sessions"),
-			cwd: root,
-			messages,
-		});
+		const store = PiSessionStore.create({ sessionDir: join(root, "sessions"), cwd: root });
+		for (const message of messages) store.appendMessage(message);
+		const metadata = store.metadata;
+		database.connection
+			.prepare(
+				"INSERT INTO conversation_sessions (conversation_id, pi_session_id, session_file_path, active_leaf_id) VALUES (?, ?, ?, ?)",
+			)
+			.run("conversation", metadata.sessionId, metadata.sessionFile, metadata.leafId);
 		const session = PiSessionStore.open({
 			sessionDir: join(root, "sessions"),
 			sessionFile: metadata.sessionFile,
@@ -339,11 +357,37 @@ describe("PiSessionStore", () => {
 			sessionCwd: root,
 		});
 		const projection = repository.project("conversation", "Chat", "Scene");
-		expect(projection.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
-		expect(projection.messages.at(-1)).toMatchObject({
-			role: "assistant",
-			versions: [{ role: "assistant", content: "hi" }],
+		expect(projection.piTimeline).toMatchObject({
+			activeLeafId: entryIds[2],
+			entries: [
+				{
+					id: entryIds[0],
+					parentId: null,
+					kind: "message",
+					role: "user",
+					text: "hello",
+				},
+				{
+					id: entryIds[1],
+					parentId: entryIds[0],
+					kind: "message",
+					role: "assistant",
+					text: "hi",
+					toolCalls: [{ toolName: "lookup", toolCallId: "call-1" }],
+				},
+				{
+					id: entryIds[2],
+					parentId: entryIds[1],
+					kind: "message",
+					role: "tool",
+					toolName: "lookup",
+					toolCallId: "call-1",
+					status: "succeeded",
+				},
+			],
 		});
+		expect(JSON.stringify(projection.piTimeline)).not.toContain("do-not-project");
+		expect(JSON.stringify(projection.piTimeline)).not.toContain('"result"');
 		expect(
 			repository.getCurrentPiEntryForMessage("conversation", projectedEntryIds[0]!),
 		).toMatchObject({
@@ -356,16 +400,15 @@ describe("PiSessionStore", () => {
 			id: projectedEntryIds[1],
 			message: { role: "assistant" },
 		});
-		expect(projection.messages.map((message) => message.id)).toEqual(projectedEntryIds);
 		const reopenedProjection = new ConversationRepository(database.orm, {
 			sessionDir: join(root, "sessions"),
 			sessionCwd: root,
 		}).project("conversation", "Chat", "Scene");
-		expect(reopenedProjection.messages.map((message) => message.id)).toEqual(projectedEntryIds);
+		expect(reopenedProjection.piTimeline?.entries.map((entry) => entry.id)).toEqual(entryIds);
 		database.close();
 	});
 
-	it("retains canonical Host IDs and rejects unmatched Pi entries when an adopted branch exists", () => {
+	it("projects the selected Pi branch directly without canonical Host-message matching", () => {
 		const root = mkdtempSync(join(tmpdir(), "bear-pi-canonical-projection-"));
 		roots.push(root);
 		const database = new Database(join(root, "host"));
@@ -385,33 +428,32 @@ describe("PiSessionStore", () => {
 				"INSERT INTO conversations (id, companion_id, title) VALUES ('conversation', 'pkg', 'Chat')",
 			)
 			.run();
-		const metadata = PiSessionStore.migrateLegacyConversation({
-			db: database.orm,
-			conversationId: "conversation",
-			sessionDir: join(root, "sessions"),
-			cwd: root,
-			messages: [
-				{ role: "user", content: "hello", timestamp: 1 },
-				{
-					role: "assistant",
-					content: [{ type: "text", text: "hi" }],
-					api: "openai-completions",
-					provider: "test",
-					model: "test-model",
-					usage: {
-						input: 0,
-						output: 0,
-						cacheRead: 0,
-						cacheWrite: 0,
-						totalTokens: 0,
-						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-					},
-					stopReason: "stop",
-					timestamp: 2,
-				} as PiSessionMessage,
-				{ role: "user", content: "Pi-only tail", timestamp: 3 },
-			],
-		});
+		const store = PiSessionStore.create({ sessionDir: join(root, "sessions"), cwd: root });
+		store.appendMessage({ role: "user", content: "hello", timestamp: 1 });
+		store.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "hi" }],
+			api: "openai-completions",
+			provider: "test",
+			model: "test-model",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 2,
+		} as PiSessionMessage);
+		store.appendMessage({ role: "user", content: "Pi-only tail", timestamp: 3 });
+		const metadata = store.metadata;
+		database.connection
+			.prepare(
+				"INSERT INTO conversation_sessions (conversation_id, pi_session_id, session_file_path, active_leaf_id) VALUES (?, ?, ?, ?)",
+			)
+			.run("conversation", metadata.sessionId, metadata.sessionFile, metadata.leafId);
 		database.connection
 			.prepare(
 				"INSERT INTO branches (id, conversation_id, label, adopted) VALUES ('host-branch', 'conversation', 'main', 1)",
@@ -441,19 +483,17 @@ describe("PiSessionStore", () => {
 			sessionCwd: root,
 		});
 		const projection = repository.project("conversation", "Chat", "Scene");
-		expect(projection.messages.map((message) => message.id)).toEqual([
-			"host-user",
-			"host-assistant",
+		expect(projection.piTimeline?.entries.map((entry) => entry.id)).toEqual([
+			piUser?.id,
+			piAssistant?.id,
+			piOnly?.id,
 		]);
-		expect(repository.getCurrentPiEntryForMessage("conversation", "host-user")).toMatchObject({
-			id: piUser?.id,
-			message: { role: "user", content: "hello" },
+		expect(repository.getCurrentPiEntryForMessage("conversation", "host-user")).toBeUndefined();
+		expect(repository.getCurrentPiEntryForMessage("conversation", "host-assistant")).toBeUndefined();
+		expect(repository.getCurrentPiEntryForMessage("conversation", piOnly!.id)).toMatchObject({
+			id: piOnly!.id,
+			message: { role: "user", content: "Pi-only tail" },
 		});
-		expect(repository.getCurrentPiEntryForMessage("conversation", "host-assistant")).toMatchObject({
-			id: piAssistant?.id,
-			message: { role: "assistant" },
-		});
-		expect(repository.getCurrentPiEntryForMessage("conversation", piOnly!.id)).toBeUndefined();
 		database.close();
 	});
 
@@ -488,32 +528,31 @@ describe("PiSessionStore", () => {
 			rawUserText,
 			"</current_user_message>",
 		].join("\n");
-		const metadata = PiSessionStore.migrateLegacyConversation({
-			db: database.orm,
-			conversationId: "conversation",
-			sessionDir: join(root, "sessions"),
-			cwd: root,
-			messages: [
-				{ role: "user", content: framedPrompt, timestamp: 1 },
-				{
-					role: "assistant",
-					content: [{ type: "text", text: "已收到。" }],
-					api: "openai-completions",
-					provider: "test",
-					model: "test-model",
-					usage: {
-						input: 0,
-						output: 0,
-						cacheRead: 0,
-						cacheWrite: 0,
-						totalTokens: 0,
-						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-					},
-					stopReason: "stop",
-					timestamp: 2,
-				} as PiSessionMessage,
-			],
-		});
+		const store = PiSessionStore.create({ sessionDir: join(root, "sessions"), cwd: root });
+		store.appendMessage({ role: "user", content: framedPrompt, timestamp: 1 });
+		store.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "已收到。" }],
+			api: "openai-completions",
+			provider: "test",
+			model: "test-model",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 2,
+		} as PiSessionMessage);
+		const metadata = store.metadata;
+		database.connection
+			.prepare(
+				"INSERT INTO conversation_sessions (conversation_id, pi_session_id, session_file_path, active_leaf_id) VALUES (?, ?, ?, ?)",
+			)
+			.run("conversation", metadata.sessionId, metadata.sessionFile, metadata.leafId);
 		const reopened = PiSessionStore.open({
 			sessionDir: join(root, "sessions"),
 			sessionFile: metadata.sessionFile,
@@ -531,13 +570,14 @@ describe("PiSessionStore", () => {
 			sessionCwd: root,
 		});
 		const projection = repository.project("conversation", "Chat", "Scene");
-		expect(projection.messages).toHaveLength(2);
-		expect(projection.messages[0]).toMatchObject({
+		expect(projection.piTimeline?.entries[0]).toMatchObject({
 			id: userEntry?.id,
+			kind: "message",
 			role: "user",
-			versions: [{ role: "user", content: rawUserText }],
+			text: rawUserText,
 		});
-		expect(projection.messages[0]?.versions[0]?.content).not.toContain("<host_context>");
+		expect(JSON.stringify(projection.piTimeline)).not.toContain("<host_context>");
+		expect(JSON.stringify(projection.piTimeline)).not.toContain("只用于模型上下文的内部 Host 状态");
 		expect(repository.getCurrentPiEntryForMessage("conversation", userEntry!.id)).toMatchObject({
 			id: userEntry!.id,
 			message: { role: "user", content: framedPrompt },
@@ -547,96 +587,8 @@ describe("PiSessionStore", () => {
 			sessionDir: join(root, "sessions"),
 			sessionCwd: root,
 		}).project("conversation", "Chat", "Scene");
-		expect(reopenedProjection.messages[0]?.versions[0]?.content).toBe(rawUserText);
+		expect(reopenedProjection.piTimeline?.entries[0]).toMatchObject({ text: rawUserText });
 		database.close();
 	});
 
-	it("migrates one legacy history once and records metadata without copying content to SQLite", () => {
-		const root = mkdtempSync(join(tmpdir(), "bear-pi-migration-"));
-		roots.push(root);
-		const database = new Database(join(root, "host"));
-		database.migrate(MIGRATIONS);
-		database.connection
-			.prepare(
-				"INSERT INTO companion_packages (id, name, version, hash) VALUES ('pkg', 'Pkg', '1', 'hash')",
-			)
-			.run();
-		database.connection
-			.prepare(
-				"INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES ('pkg', 'pkg', 'Pkg', '')",
-			)
-			.run();
-		database.connection
-			.prepare(
-				"INSERT INTO conversations (id, companion_id, title) VALUES ('conversation', 'pkg', 'Chat')",
-			)
-			.run();
-		database.connection
-			.prepare(
-				"INSERT INTO branches (id, conversation_id, label, adopted) VALUES ('main', 'conversation', 'main', 1)",
-			)
-			.run();
-		database.connection
-			.prepare(
-				"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES ('legacy-user', 'conversation', 'main', 'user')",
-			)
-			.run();
-		database.connection
-			.prepare(
-				"INSERT INTO message_versions (id, message_id, content, adopted) VALUES ('legacy-version', 'legacy-user', 'legacy text', 1)",
-			)
-			.run();
-		const messages: PiSessionMessage[] = [
-			{ role: "user", content: "legacy text", timestamp: 10 },
-			{
-				role: "assistant",
-				content: [{ type: "text", text: "migrated response" }],
-				api: "openai-completions",
-				provider: "test",
-				model: "test-model",
-				usage: {
-					input: 0,
-					output: 0,
-					cacheRead: 0,
-					cacheWrite: 0,
-					totalTokens: 0,
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-				},
-				stopReason: "stop",
-				timestamp: 11,
-			} as PiSessionMessage,
-		];
-		const options = {
-			db: database.orm,
-			conversationId: "conversation",
-			sessionDir: join(root, "sessions"),
-			cwd: root,
-			messages,
-		};
-		const first = PiSessionStore.migrateLegacyConversation(options);
-		const second = PiSessionStore.migrateLegacyConversation({
-			...options,
-			messages: [{ role: "user", content: "must not append", timestamp: 11 }],
-		});
-		expect(second).toEqual(first);
-		const secondSession = PiSessionStore.open({
-			sessionDir: options.sessionDir,
-			sessionFile: second.sessionFile,
-			cwd: root,
-		});
-		expect(secondSession.metadata).toEqual(second);
-		expect(secondSession.readMessages()).toEqual(messages);
-		expect(
-			database.connection
-				.prepare("SELECT content FROM message_versions WHERE id = 'legacy-version'")
-				.get(),
-		).toEqual({ content: "legacy text" });
-		const reopened = PiSessionStore.open({
-			sessionDir: options.sessionDir,
-			sessionFile: first.sessionFile,
-			cwd: root,
-		});
-		expect(reopened.readMessages()).toEqual(messages);
-		database.close();
-	});
 });

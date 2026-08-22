@@ -8,8 +8,6 @@ import {
 	ConversationSummary,
 	MemoryCaptureResponse,
 	MemoryEntry,
-	Message,
-	MessageVersion,
 	OnboardingResponse,
 	ProviderInfo,
 	Run,
@@ -29,8 +27,6 @@ const isCommission = guard(Commission);
 const isConversationSummary = guard(ConversationSummary);
 const isMemoryCaptureResponse = guard(MemoryCaptureResponse);
 const isMemoryEntry = guard(MemoryEntry);
-const isMessage = guard(Message);
-const isMessageVersion = guard(MessageVersion);
 const isOnboardingData = guard(OnboardingResponse);
 const isProviderInfo = guard(ProviderInfo);
 const isRun = guard(Run);
@@ -45,22 +41,6 @@ const conversation = {
 	sceneTitle: "Scene",
 	unread: false,
 	updatedAt: timestamp,
-};
-const version = {
-	id: "version-1",
-	role: "assistant",
-	content: "Reply",
-	editedByUser: false,
-	createdAt: timestamp,
-	adopted: true,
-};
-const message = {
-	id: "message-1",
-	role: "assistant",
-	status: "completed",
-	adoptedVersionId: "version-1",
-	versions: [version],
-	createdAt: timestamp,
 };
 const memoryEntry = {
 	id: "memory-1",
@@ -175,17 +155,6 @@ describe("host projection validation", () => {
 			"unread",
 			"updatedAt",
 		]);
-		expectRequiredFields(isMessageVersion, version, [
-			"id",
-			"role",
-			"content",
-			"editedByUser",
-			"createdAt",
-			"adopted",
-		]);
-		expectRequiredFields(isMessage, message, ["id", "role", "versions", "createdAt"]);
-		expect(isMessage({ ...message, adoptedVersionId: 3 })).toBe(false);
-		expect(isMessage({ ...message, versions: [{ ...version, content: null }] })).toBe(false);
 		expectRequiredFields(isMemoryEntry, memoryEntry, [
 			"id",
 			"kind",
@@ -597,55 +566,8 @@ describe("host projection validation", () => {
 		).toBe(false);
 	});
 
-	it("validates structured message terminal status and failure metadata", () => {
-		const failedMessage = {
-			...message,
-			status: "failed",
-			failureReason: "provider_request_failed",
-		};
-		expect(isMessage(failedMessage)).toBe(true);
-		expect(isMessage({ ...message, status: "completed" })).toBe(true);
-		expect(isMessage({ ...message, status: "aborted" })).toBe(true);
 
-		expect(isMessage({ ...message, status: "running" })).toBe(false);
-		expect(isMessage({ ...message, status: null })).toBe(false);
-		expect(isMessage({ ...message, status: 3 })).toBe(false);
-		expect(isMessage({ ...failedMessage, failureReason: 3 })).toBe(false);
-		expect(isMessage({ ...failedMessage, failureReason: { code: "provider_request_failed" } })).toBe(
-			false,
-		);
-		expect(isMessage({ ...failedMessage, failureReason: "x".repeat(257) })).toBe(false);
-		expect(isMessage({ ...message, failureReason: "provider_request_failed" })).toBe(false);
-		expect(
-			isMessage({ ...message, status: "completed", failureReason: "provider_request_failed" }),
-		).toBe(false);
-		expect(
-			isMessage({ ...message, status: "aborted", failureReason: "provider_request_failed" }),
-		).toBe(false);
-	});
-
-	it("rejects malformed message version and run timestamp relationships", () => {
-		expect(isMessage({ ...message, adoptedVersionId: "version-not-listed" })).toBe(false);
-		expect(
-			isMessage({
-				...message,
-				versions: [{ ...version, createdAt: "2025-01-01T00:00:00Z" }],
-			}),
-		).toBe(false);
-		expect(
-			isMessage({
-				...message,
-				versions: Array.from({ length: 20 }, (_, i) => ({ ...version, id: `v-${i}` })),
-				adoptedVersionId: "v-0",
-			}),
-		).toBe(true);
-		expect(
-			isMessage({
-				...message,
-				versions: Array.from({ length: 21 }, (_, i) => ({ ...version, id: `v-${i}` })),
-				adoptedVersionId: "v-0",
-			}),
-		).toBe(false);
+	it("rejects malformed run timestamp relationships", () => {
 		expect(isRun({ ...run, startedAt: timestamp, completedAt: "2025-01-01T00:00:00Z" })).toBe(
 			false,
 		);

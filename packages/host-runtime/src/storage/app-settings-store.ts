@@ -16,8 +16,7 @@ export interface AppSettingsRecord {
 		apiKey?: string;
 		model?: string;
 		dimensions?: number;
-		localModel?: "bge-base-zh" | "embeddinggemma" | "multilingual-e5" | "custom";
-		customPath?: string;
+		localModel?: string;
 	};
 	modelDownloadMirror: {
 		endpoint?: string;

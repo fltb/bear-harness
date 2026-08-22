@@ -5,9 +5,7 @@ import {
 	type SessionEntry,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { eq } from "drizzle-orm";
-import type { AppDatabase } from "../storage/database.js";
-import { conversationSessions } from "../storage/schema.js";
+import type { PiTimeline, PiTimelineEntry } from "@bear-harness/protocol/schema";
 
 /** The standard user, assistant, and tool-result messages stored by Pi. */
 export type PiSessionMessage = Extract<AgentMessage, { role: "user" | "assistant" | "toolResult" }>;
@@ -27,14 +25,6 @@ export interface PiSessionStoreOptions {
 	readonly cwd?: string;
 }
 
-export interface PiSessionMigrationOptions extends Omit<PiSessionStoreOptions, "sessionFile"> {
-	/** Legacy conversation whose adopted history is being migrated. */
-	readonly conversationId: string;
-	/** Adopted legacy messages, already represented as Pi standard messages. */
-	readonly messages: readonly PiSessionMessage[];
-	/** Host metadata database; message content is never written to it. */
-	readonly db: AppDatabase;
-}
 
 export interface PiSessionMetadata {
 	readonly sessionId: string;
@@ -95,47 +85,6 @@ export class PiSessionStore {
 		return new PiSessionStore(options);
 	}
 
-	/**
-	 * Import one legacy conversation's adopted Pi messages once.
-	 *
-	 * The Host database is used only for the conversation-to-session
-	 * projection. Message content is appended to SessionManager and never
-	 * copied into SQLite. Pi intentionally defers writing a new session file
-	 * until its first assistant entry, so a user-only migrated tail remains
-	 * in the live SessionManager until that response is appended.
-	 */
-	static migrateLegacyConversation(options: PiSessionMigrationOptions): PiSessionMetadata {
-		const existing = options.db
-			.select({
-				sessionId: conversationSessions.piSessionId,
-				sessionFile: conversationSessions.sessionFilePath,
-				leafId: conversationSessions.activeLeafId,
-			})
-			.from(conversationSessions)
-			.where(eq(conversationSessions.conversationId, options.conversationId))
-			.get();
-		if (existing) {
-			return {
-				sessionId: existing.sessionId,
-				sessionFile: existing.sessionFile,
-				leafId: existing.leafId,
-			};
-		}
-
-		const store = PiSessionStore.create(options);
-		for (const message of options.messages) store.appendMessage(message);
-		const metadata = store.metadata;
-		options.db
-			.insert(conversationSessions)
-			.values({
-				conversationId: options.conversationId,
-				piSessionId: metadata.sessionId,
-				sessionFilePath: metadata.sessionFile,
-				activeLeafId: metadata.leafId,
-			})
-			.run();
-		return metadata;
-	}
 
 	/** The canonical public SessionManager used by the native Pi session runtime. */
 	get sessionManager(): SessionManager {
@@ -263,10 +212,10 @@ export class PiSessionStore {
 		return this.manager.appendMessage({ role: "user", content: text, timestamp });
 	}
 
-	/** Read standard message entries and preserve each SessionManager entry id. */
+	/** Read Pi's active, compaction-aware entry projection with stable entry IDs. */
 	readMessageEntries(): PiSessionMessageEntry[] {
 		return this.manager
-			.getBranch()
+			.buildContextEntries()
 			.filter(
 				(entry): entry is Extract<SessionEntry, { type: "message" }> => entry.type === "message",
 			)
@@ -313,6 +262,18 @@ export class PiSessionStore {
 			usage,
 		);
 	}
+	/** Project Pi's selected branch directly into the security-safe wire timeline. */
+	buildPiTimeline(): PiTimeline {
+		const entries = this.manager.buildContextEntries().flatMap((entry) => {
+			const projected = projectPiTimelineEntry(entry);
+			return projected ? [projected] : [];
+		});
+		return {
+			entries,
+			...(this.leafId ? { activeLeafId: this.leafId } : {}),
+		};
+	}
+
 
 	/** Build the selected branch's native, compaction-aware entry path. */
 	buildContextEntries(): SessionEntry[] {
@@ -370,12 +331,74 @@ function extractCurrentUserMessage(content: string): string | undefined {
 	if (!content.startsWith(HOST_CONTEXT_PREFIX) || !content.endsWith(CURRENT_USER_MESSAGE_SUFFIX)) {
 		return undefined;
 	}
+
 	const separatorIndex = content.indexOf(HOST_CONTEXT_SEPARATOR, HOST_CONTEXT_PREFIX.length);
 	if (separatorIndex <= HOST_CONTEXT_PREFIX.length) return undefined;
 	return content.slice(
 		separatorIndex + HOST_CONTEXT_SEPARATOR.length,
 		-CURRENT_USER_MESSAGE_SUFFIX.length,
 	);
+}
+function projectPiTimelineEntry(entry: SessionEntry): PiTimelineEntry | undefined {
+	const base = {
+		id: entry.id,
+		parentId: entry.parentId,
+		timestamp: entry.timestamp,
+	};
+	if (entry.type === "message") {
+		if (!isStandardMessage(entry.message)) return undefined;
+		if (entry.message.role === "user") {
+			return { ...base, kind: "message", role: "user", text: sessionMessageText(entry.message) };
+		}
+		if (entry.message.role === "toolResult") {
+			return {
+				...base,
+				kind: "message",
+				role: "tool",
+				toolName: entry.message.toolName,
+				toolCallId: entry.message.toolCallId,
+				status: entry.message.isError ? "failed" : "succeeded",
+			};
+		}
+		const toolCalls = Array.isArray(entry.message.content)
+			? entry.message.content.flatMap((part) => {
+					if (
+						!part ||
+						typeof part !== "object" ||
+						!("type" in part) ||
+						part.type !== "toolCall" ||
+						!("name" in part) ||
+						typeof part.name !== "string" ||
+						!("id" in part) ||
+						typeof part.id !== "string"
+					) {
+						return [];
+					}
+					return [{ toolName: part.name, toolCallId: part.id }];
+				})
+			: [];
+		const text = sessionMessageText(entry.message);
+		return {
+			...base,
+			kind: "message",
+			role: "assistant",
+			...(text ? { text } : {}),
+			...(toolCalls.length > 0 ? { toolCalls } : {}),
+		};
+	}
+	if (
+		entry.type === "thinking_level_change" ||
+		entry.type === "model_change" ||
+		entry.type === "compaction" ||
+		entry.type === "branch_summary" ||
+		entry.type === "custom" ||
+		entry.type === "custom_message" ||
+		entry.type === "label" ||
+		entry.type === "session_info"
+	) {
+		return { ...base, kind: entry.type };
+	}
+	return undefined;
 }
 
 function isStandardMessage(message: AgentMessage): message is PiSessionMessage {

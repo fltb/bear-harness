@@ -388,36 +388,26 @@ describe("work action lines", () => {
 
 	it("renders the action line only under its triggering user message", async () => {
 		const store = workStore({
-			activeMessages: [
-				{
-					id: "message-1",
-					role: "user",
-					versions: [
-						{
-							id: "version-1",
-							role: "user",
-							content: "把三份会议记录整理成周报",
-							editedByUser: false,
-							createdAt: "2026-08-16T00:00:00Z",
-						},
-					],
-					createdAt: "2026-08-16T00:00:00Z",
-				},
-				{
-					id: "message-2",
-					role: "assistant",
-					versions: [
-						{
-							id: "version-2",
-							role: "assistant",
-							content: "好的，我来整理。",
-							editedByUser: false,
-							createdAt: "2026-08-16T00:00:01Z",
-						},
-					],
-					createdAt: "2026-08-16T00:00:01Z",
-				},
-			],
+			activePiTimeline: {
+				entries: [
+					{
+						id: "message-1",
+						parentId: null,
+						timestamp: "2026-08-16T00:00:00Z",
+						kind: "message",
+						role: "user",
+						text: "把三份会议记录整理成周报",
+					},
+					{
+						id: "message-2",
+						parentId: "message-1",
+						timestamp: "2026-08-16T00:00:01Z",
+						kind: "message",
+						role: "assistant",
+						text: "好的，我来整理。",
+					},
+				],
+			},
 			conversations: [],
 			error: null,
 			pendingUserText: undefined,

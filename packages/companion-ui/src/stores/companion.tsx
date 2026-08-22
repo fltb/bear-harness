@@ -19,8 +19,9 @@
  *   while unrecoverable projection/stream failures populate the global `error`.
  *
  * The store is a flat object whose reactive fields are getters into a Solid
- * store proxy, so components read `store.activeMessages` etc. directly. Action
- * failures retain operation metadata without choosing a presentation surface.
+ * store proxy, so components read the active Pi timeline and transient
+ * streaming state directly. Action failures retain operation metadata without
+ * choosing a presentation surface.
  * Supplementary domain APIs (memory/settings/provider/model/commission/artifact)
  * are exposed for the backstage sheets.
  */
@@ -28,7 +29,10 @@
 import type { CompanionClient } from "@bear-harness/companion-client";
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import type { KnownDomainEvent, RoleplayState } from "@bear-harness/protocol";
-import type { MemoryCandidate as MemoryCandidateSchema } from "@bear-harness/protocol/schema";
+import type {
+	LocalEmbeddingCandidate as LocalEmbeddingCandidateSchema,
+	MemoryCandidate as MemoryCandidateSchema,
+} from "@bear-harness/protocol/schema";
 import { parseKnownDomainEvent } from "@bear-harness/protocol/schema";
 import type { z } from "@bear-harness/schema";
 import { useQueryClient } from "@tanstack/solid-query";
@@ -38,6 +42,7 @@ import {
 	createMemo,
 	createSignal,
 	onCleanup,
+	type Accessor,
 	type ParentProps,
 	useContext,
 } from "solid-js";
@@ -67,13 +72,12 @@ import {
 	type ConversationSummary,
 	type DomainEvent,
 	type MemoryCaptureResponse,
+	type MemoryListRequest,
 	type MemoryPrepareEmbeddingResponse,
 	type MemorySearchData,
 	type MemoryScope,
 	type MemoryEntry,
-	type MemoryListRequest,
-	type Message,
-	type MessageApplyScope,
+	type PiTimeline,
 	type ModelListData,
 	type ModelRouteData,
 	type OnboardingData,
@@ -101,6 +105,7 @@ export { createOnboardingStore } from "./onboarding.js";
 /** Inferred wire shape of `memory.candidates.list` items (schema value import). */
 export type MemoryCandidate = z.infer<typeof MemoryCandidateSchema>;
 export type MemoryCandidateStatus = MemoryCandidate["status"];
+export type LocalEmbeddingCandidate = z.infer<typeof LocalEmbeddingCandidateSchema>;
 
 // ---------------------------------------------------------------------------
 // Contract types
@@ -150,6 +155,19 @@ function projectionError(
 function messageOf(value: unknown): string {
 	return value instanceof Error ? value.message : String(value);
 }
+export class PiTimelineProjectionError extends Error {
+	readonly code = "missing_pi_timeline";
+
+	constructor(operation: string) {
+		super(`${operation}: conversation projection is missing a valid Pi timeline`);
+		this.name = "PiTimelineProjectionError";
+	}
+}
+
+function requirePiTimeline(timeline: PiTimeline | undefined, operation: string): PiTimeline {
+	if (timeline === undefined) throw new PiTimelineProjectionError(operation);
+	return timeline;
+}
 /** Copy decoded bytes into an ArrayBuffer accepted by the DOM BlobPart type. */
 function copyToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 	const buffer = new ArrayBuffer(bytes.byteLength);
@@ -193,7 +211,12 @@ export interface MemoryApi {
 	search(query: string, scope?: MemoryScope): Promise<MemoryEntry[]>;
 	list(params?: MemoryListRequest): Promise<MemoryEntry[]>;
 	capture(entryId: string): Promise<MemoryCaptureResponse>;
-	prepareEmbedding(): Promise<MemoryPrepareEmbeddingResponse>;
+	localEmbeddingCandidates(): LocalEmbeddingCandidate[] | undefined;
+	listLocalEmbeddingCandidates(): Promise<LocalEmbeddingCandidate[]>;
+	configureLocalEmbedding(
+		provider: "none" | "local",
+		candidateId?: string,
+	): Promise<{ ready: true }>;
 	forget(entryId: string): Promise<void>;
 	edit(entryId: string, newText: string): Promise<void>;
 	exclude(memoryId: string, excluded: boolean): Promise<void>;
@@ -221,9 +244,8 @@ export interface ProviderApi {
 		providerId: string;
 		name: string;
 		baseUrl: string;
-		modelId: string;
+		models: Array<{ id: string; name?: string; supportsImages?: boolean }>;
 		apiKey?: string;
-		supportsImages?: boolean;
 	}): Promise<void>;
 	importPiConfig(configJson: string): Promise<ConfiguredModel[]>;
 	overrideBaseUrl(params: { providerId: string; baseUrl: string }): Promise<void>;
@@ -329,13 +351,6 @@ export interface CharacterApi {
 	draftPublish(id: string, expectedRevision: number): Promise<CharacterDraft>;
 }
 
-export interface ToolActivity {
-	id: string;
-	tool: string;
-	label: string;
-	status: "running" | "completed" | "failed";
-	message?: string;
-}
 export interface CanonApi {
 	sources(): CanonSource[];
 	modules(): CanonModule[];
@@ -359,6 +374,37 @@ export interface CanonApi {
 // Flat store contract
 // ---------------------------------------------------------------------------
 
+type EmbeddingSettingsValue =
+	| SettingsData["memoryVectorService"]
+	| SettingsData["modelDownloadMirror"];
+function isModelDownloadMirror(
+	value: EmbeddingSettingsValue,
+): value is SettingsData["modelDownloadMirror"] {
+	return Object.prototype.hasOwnProperty.call(value, "endpoint");
+}
+interface RpcQueryBinding<T> {
+	readonly data: T | undefined;
+	readonly isPending: boolean;
+	readonly error: unknown;
+}
+
+interface RpcMutationBinding<T> {
+	readonly mutateAsync: (variables: T) => Promise<unknown>;
+	readonly isPending: boolean;
+	readonly error: unknown;
+	readonly isSuccess: boolean;
+}
+
+export interface EmbeddingBinding {
+	readonly settingsQuery: RpcQueryBinding<{ settings: SettingsData }>;
+	readonly catalogQuery: RpcQueryBinding<{ candidates: LocalEmbeddingCandidate[] }>;
+	readonly settingsMutation: RpcMutationBinding<EmbeddingSettingsValue>;
+	readonly localConfigureMutation: RpcMutationBinding<{
+		provider: "none" | "local";
+		candidateId?: string;
+	}>;
+}
+
 export interface CompanionStore {
 	readonly loading: boolean;
 	/** Only unrecoverable snapshot/projection/stream failures are global. */
@@ -368,11 +414,10 @@ export interface CompanionStore {
 	readonly onboarding: OnboardingData;
 	readonly conversations: ConversationSummary[];
 	readonly activeConversationId: string | null;
-	readonly activeMessages: Message[];
+	readonly activePiTimeline: PiTimeline | undefined;
 	readonly pendingUserText: string | undefined;
 	readonly streamingAssistantText: string;
 	readonly assistantStreaming: boolean;
-	readonly toolActivities: readonly ToolActivity[];
 	readonly runs: RunInfo[];
 	readonly presence: PresenceState;
 	readonly character: CharacterDisplay | undefined;
@@ -391,12 +436,6 @@ export interface CompanionStore {
 		text: string,
 		attachments?: Array<{ name: string; mime: string; base64: string }>,
 	): Promise<void>;
-	regenerateMessage(messageId: string): Promise<void>;
-	switchVersion(messageId: string, versionId: string): Promise<void>;
-	editMessage(messageId: string, text: string, isUserMessage: boolean): Promise<void>;
-	continueConversation(): Promise<void>;
-	correctMessage(reason: string, applyScope: MessageApplyScope): Promise<void>;
-	branchMessage(messageId: string): Promise<void>;
 	abort(): Promise<void>;
 	triggerRoleplayEvent(eventId: string): Promise<void>;
 	dismissRoleplayMedia(): Promise<void>;
@@ -411,12 +450,14 @@ export interface CompanionStore {
 	readonly settings: SettingsApi;
 	readonly provider: ProviderApi;
 	readonly model: ModelApi;
-	readonly commission: CommissionApi;
+	readonly embedding: EmbeddingBinding;
 	readonly run: RunApi;
 	readonly artifact: ArtifactApi;
 	readonly story: StoryApi;
 	readonly characters: CharacterApi;
 	readonly canon: CanonApi;
+	/** Commission lifecycle APIs consumed by the backstage sheets. */
+	readonly commission: CommissionApi;
 }
 
 // ---------------------------------------------------------------------------
@@ -458,10 +499,10 @@ interface CompanionState {
 	errorMetadata: CompanionErrorMetadata | null;
 	activeConversationId: string | null;
 	activeBranchId: string | null;
+	activePiTimeline: PiTimeline | undefined;
 	pendingUserText: string | undefined;
 	streamingAssistantText: string;
 	assistantStreaming: boolean;
-	toolActivitiesByConversation: Record<string, ToolActivity[]>;
 	characterRuntimeByConversation: Record<string, CharacterRuntimeState>;
 	companionState: CompanionProcessState;
 	sending: boolean;
@@ -507,63 +548,29 @@ function derivePresence(s: {
 	return "idle";
 }
 
-/** Content of the last persisted assistant message (versions may be empty). */
-function lastAssistantContent(messages: readonly Message[]): string {
-	for (let index = messages.length - 1; index >= 0; index -= 1) {
-		const message = messages[index];
-		if (message?.role === "assistant") {
-			return message.versions.at(-1)?.content ?? "";
-		}
+/** Content of the last persisted assistant entry in the active Pi timeline. */
+function lastAssistantContent(timeline: PiTimeline | undefined): string {
+	if (timeline === undefined) return "";
+	for (let index = timeline.entries.length - 1; index >= 0; index -= 1) {
+		const entry = timeline.entries[index];
+		if (entry?.kind === "message" && entry.role === "assistant") return entry.text ?? "";
 	}
 	return "";
 }
 
 /**
- * True when the persisted final assistant projection already matches or
- * supersedes the given stream text (the projected final is the immutable
- * close of the streamed text, final can exceed the last visible delta).
- * Stream events carry legacy DB message ids while Pi sessions project entry
- * ids, so content is the only reliable reconciliation. Used to keep a late
- * delta emitted after the turn settled from resurrecting the status.
+ * True when the persisted Pi assistant entry already matches or supersedes
+ * the streamed text. Content comparison reconciles stream events with native
+ * Pi entry ids without converting either representation.
  */
 function persistedProjectionSupersedesStream(
-	messages: readonly Message[],
+	timeline: PiTimeline | undefined,
 	streamingText: string,
 ): boolean {
 	const trimmedText = streamingText.trim();
 	if (trimmedText.length === 0) return false;
-	const trimmedFinal = lastAssistantContent(messages).trim();
+	const trimmedFinal = lastAssistantContent(timeline).trim();
 	return trimmedFinal.length > 0 && trimmedFinal.startsWith(trimmedText);
-}
-
-/** True when the streamed draft is the last message of the persisted projection. */
-function snapshotAppendsStreamingDraft(
-	messages: readonly Message[],
-	streamingText: string,
-): boolean {
-	const trimmedDraft = streamingText.trim();
-	if (trimmedDraft.length === 0) return false;
-	const last = messages[messages.length - 1];
-	if (!last || last.role !== "assistant") return false;
-	const lastContent = last.versions.at(-1)?.content ?? "";
-	return lastContent.trim() === trimmedDraft;
-}
-
-/**
- * True when the last persisted assistant message supersedes the streaming draft
- * (final text is the immutable close of the streamed text). The final text can
- * exceed the last visible delta, so the draft is treated as committed when it
- * is a prefix of the persisted content.
- */
-function persistedFinalContains(
-	messages: readonly Message[],
-	pendingUserText: string | undefined,
-	streamingText: string,
-): boolean {
-	const trimmedDraft = streamingText.trim();
-	if (pendingUserText === undefined || trimmedDraft.length === 0) return false;
-	const trimmedFinal = lastAssistantContent(messages).trim();
-	return trimmedFinal.length > 0 && trimmedFinal.startsWith(trimmedDraft);
 }
 
 // ---------------------------------------------------------------------------
@@ -616,10 +623,10 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		errorMetadata: null,
 		activeConversationId: null,
 		activeBranchId: null,
+		activePiTimeline: undefined,
 		pendingUserText: undefined,
 		streamingAssistantText: "",
 		assistantStreaming: false,
-		toolActivitiesByConversation: {},
 		characterRuntimeByConversation: {},
 		companionState: "unknown",
 		sending: false,
@@ -688,6 +695,13 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		key: queryKeys.memoryCandidates(),
 		request: () => memoryCandidatesRequest(),
 		enabled: false,
+	});
+	const localEmbeddingCatalogRequest = () =>
+		invoke(client, () => client.memory.localEmbeddingCatalog({}));
+	const localEmbeddingCatalogQuery = createRpcQuery({
+		client: queryClient,
+		key: queryKeys.localEmbeddingCatalog,
+		request: localEmbeddingCatalogRequest,
 	});
 	const runsRequest = () => invoke(client, () => client.run.list());
 	const runsQuery = createRpcQuery({
@@ -772,10 +786,34 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			? queryClient.getQueryData<ModelRouteData>(queryKeys.modelRoute(conversationId))
 			: undefined;
 	});
-
-	const settingsMutation = createRpcMutation<() => Promise<unknown>>({
+	const settingsPatchMutation = createRpcMutation<SettingsPatch>({
 		client: queryClient,
-		request: (request) => request(),
+		request: (settings) => invoke(client, () => client.settings.set({ settings })),
+		invalidates: [queryKeys.settings],
+	});
+	const embeddingSettingsMutation = createRpcMutation<EmbeddingSettingsValue>({
+		client: queryClient,
+		request: (value) => {
+			const settings: SettingsPatch = isModelDownloadMirror(value)
+				? { modelDownloadMirror: value }
+				: { memoryVectorService: value };
+			return invoke(client, () => client.settings.set({ settings }));
+		},
+		invalidates: [queryKeys.settings],
+	});
+	const localConfigureMutation = createRpcMutation<{
+		provider: "none" | "local";
+		candidateId?: string;
+	}>({
+		client: queryClient,
+		request: (params) =>
+			invoke(client, () =>
+				client.memory.configureLocalEmbedding(
+					params.provider === "local"
+						? { provider: params.provider, candidateId: params.candidateId }
+						: { provider: params.provider },
+				),
+			),
 		invalidates: [queryKeys.settings],
 	});
 	const providerMutation = createRpcMutation<() => Promise<unknown>>({
@@ -922,13 +960,18 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 					conversations: conversation.conversations,
 				});
 			}
-			if (
-				acceptsActiveProjection &&
-				conversation.messages !== undefined &&
-				persistedProjectionSupersedesStream(conversation.messages, state.streamingAssistantText)
-			) {
-				setState("streamingAssistantText", "");
-				setState("assistantStreaming", false);
+			if (acceptsActiveProjection && snapshotConversationId !== undefined) {
+				try {
+					const timeline = requirePiTimeline(conversation.piTimeline, "conversation.snapshot");
+					setState("activePiTimeline", timeline);
+					if (persistedProjectionSupersedesStream(timeline, state.streamingAssistantText)) {
+						setState("streamingAssistantText", "");
+						setState("assistantStreaming", false);
+					}
+				} catch (error) {
+					setState("activePiTimeline", undefined);
+					retainProjectionError("conversation.snapshot", error, "projection");
+				}
 			}
 		}
 		if (snap.memory?.entries !== undefined) {
@@ -963,16 +1006,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	};
 
 	const snapshotValue = createMemo<Snapshot | undefined>(() => snapshotQuery.data);
-	const activeMessages = createMemo<Message[]>(() => {
-		const conversation = snapshotValue()?.conversation;
-		if (
-			conversationSelectionChangedLocally &&
-			conversation?.activeConversationId !== state.activeConversationId
-		) {
-			return [];
-		}
-		return conversation?.messages ?? [];
-	});
 	const activeConversations = createMemo<ConversationSummary[]>(
 		() => conversationsQuery.data?.conversations ?? snapshotValue()?.conversation?.conversations ?? [],
 	);
@@ -1025,29 +1058,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		const knownEvent: KnownDomainEvent | undefined = parseKnownDomainEvent(event);
 		if (!knownEvent) return;
 		switch (knownEvent.kind) {
-			case "companion.tool_started": {
-				const { conversationId, toolCallId, tool, label } = knownEvent.payload;
-				if (conversationId && toolCallId && tool && label) {
-					setState("toolActivitiesByConversation", conversationId, (items = []) => [
-						...items,
-						{ id: toolCallId, tool, label, status: "running" as const },
-					]);
-				}
-				return;
-			}
-			case "companion.tool_finished": {
-				const { conversationId, toolCallId, ok, message } = knownEvent.payload;
-				if (conversationId && toolCallId) {
-					setState("toolActivitiesByConversation", conversationId, (items = []) =>
-						items.map((item) =>
-							item.id === toolCallId
-								? { ...item, status: ok ? "completed" : "failed", ...(message ? { message } : {}) }
-								: item,
-						),
-					);
-				}
-				return;
-			}
 			case "message.user_sent":
 				setState("sending", true);
 				setState("lastRunEvent", null);
@@ -1070,7 +1080,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				if (
 					!state.assistantStreaming &&
 					nextText.length > 0 &&
-					persistedProjectionSupersedesStream(activeMessages(), nextText)
+					persistedProjectionSupersedesStream(state.activePiTimeline, nextText)
 				) {
 					setState("streamingAssistantText", "");
 					return;
@@ -1087,6 +1097,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				// The final persisted projection supersedes the draft; leave it to
 				// the refetch to clear the draft once the committed message lands.
 				void refreshSnapshot();
+				void refreshActiveConversationProjection().catch((error) =>
+					retainProjectionError("conversation.refreshProjection", error, "projection"),
+				);
 				return;
 			}
 			case "message.assistant_committed": {
@@ -1096,6 +1109,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				setState("sending", false);
 				setState("assistantStreaming", false);
 				void refreshSnapshot();
+				void refreshActiveConversationProjection().catch((error) =>
+					retainProjectionError("conversation.refreshProjection", error, "projection"),
+				);
 				return;
 			}
 			case "message.aborted":
@@ -1301,14 +1317,10 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		if (id === null) throw new Error(t("messages.noActiveConversationError"));
 		return id;
 	};
-	const activeToolActivities = createMemo<readonly ToolActivity[]>(() => {
-		const conversationId = state.activeConversationId;
-		return conversationId ? (state.toolActivitiesByConversation[conversationId] ?? []) : [];
-	});
 	const setConversationProjection = (projection: {
 		activeConversationId?: string;
 		activeBranchId?: string | null;
-		messages?: Message[];
+		piTimeline?: PiTimeline;
 	}): void => {
 		const snapshotProjection = {
 			...projection,
@@ -1319,6 +1331,28 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				? { ...current, conversation: { ...current.conversation, ...snapshotProjection } }
 				: current,
 		);
+	};
+	const refreshActiveConversationProjection = async (): Promise<void> => {
+		const conversationId = state.activeConversationId;
+		if (conversationId === null) return;
+		const projection = await invoke(client, () =>
+			client.conversation.select({
+				id: conversationId,
+				...(state.activeBranchId !== null ? { branchId: state.activeBranchId } : {}),
+			}),
+		);
+		if (!projection) return;
+		if (state.activeConversationId !== conversationId) return;
+		const timeline = requirePiTimeline(projection.piTimeline, "conversation.refresh");
+		setState("activeBranchId", projection.activeBranchId ?? null);
+		setState("activePiTimeline", timeline);
+		setConversationProjection({
+			activeConversationId: projection.activeConversationId,
+			activeBranchId: projection.activeBranchId ?? null,
+			piTimeline: timeline,
+		});
+		setState("streamingAssistantText", "");
+		setState("assistantStreaming", false);
 	};
 
 	const snapshotApi: SnapshotApi = {
@@ -1348,6 +1382,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 					queryKeys.memoryCandidates(status),
 				)?.candidates;
 	});
+	const localEmbeddingCandidates = createMemo<LocalEmbeddingCandidate[] | undefined>(
+		() => localEmbeddingCatalogQuery.data?.candidates,
+	);
 	const memoryApi: MemoryApi = {
 	entries: activeMemoryEntries,
 	revision: memoryRevision,
@@ -1388,14 +1425,31 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				throw e;
 			}
 		},
-		prepareEmbedding: async () => {
+		localEmbeddingCandidates,
+		listLocalEmbeddingCandidates: async () => {
+			const data = await refreshRpcQuery({
+				client: queryClient,
+				key: queryKeys.localEmbeddingCatalog,
+				request: localEmbeddingCatalogRequest,
+			});
+			return data.candidates;
+		},
+		configureLocalEmbedding: async (provider, candidateId) => {
 			try {
-				const result = await invoke(client, () => client.memory.prepareEmbedding({}));
+				const result = (await localConfigureMutation.mutateAsync({
+					provider,
+					...(provider === "local" && candidateId ? { candidateId } : {}),
+				})) as { ready: true };
 				clearOperationError();
+				await refreshRpcQuery({
+					client: queryClient,
+					key: queryKeys.settings,
+					request: settingsRequest,
+				});
 				return result;
-			} catch (e) {
-				retainOperationError("memory.prepareEmbedding", e);
-				throw e;
+			} catch (error) {
+				retainOperationError("memory.configureLocalEmbedding", error);
+				throw error;
 			}
 		},
 		forget: async (entryId) => {
@@ -1451,9 +1505,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			return data.settings;
 		},
 		set: async (settings) => {
-			await settingsMutation.mutateAsync(() =>
-				invoke(client, () => client.settings.set({ settings })),
-			);
+			await settingsPatchMutation.mutateAsync(settings);
 		},
 	};
 	const refreshModelPool = () =>
@@ -1923,6 +1975,12 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				};
 			},
 		});
+	const embeddingBinding: EmbeddingBinding = {
+		settingsQuery,
+		catalogQuery: localEmbeddingCatalogQuery,
+		settingsMutation: embeddingSettingsMutation,
+		localConfigureMutation,
+	};
 	const trackedMemoryApi = trackApi("memory", memoryApi);
 	const trackedSettingsApi = trackApi("settings", settingsApi);
 	const trackedProviderApi = trackApi("provider", providerApi);
@@ -1953,8 +2011,8 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		get activeConversationId() {
 			return state.activeConversationId;
 		},
-		get activeMessages() {
-			return activeMessages();
+		get activePiTimeline() {
+			return state.activePiTimeline;
 		},
 		get pendingUserText() {
 			return state.pendingUserText;
@@ -1964,9 +2022,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 		get assistantStreaming() {
 			return state.assistantStreaming;
-		},
-		get toolActivities() {
-			return activeToolActivities();
 		},
 		get runs() {
 			return activeRuns();
@@ -2001,37 +2056,50 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		selectConversation: async (id, branchId) => {
 			try {
 				const projection = await invoke(client, () => client.conversation.select({ id, branchId }));
+				const timeline = requirePiTimeline(projection.piTimeline, "conversation.select");
 				conversationSelectionChangedLocally = true;
 				setState("activeConversationId", projection.activeConversationId);
 				setState("activeRoleplayMediaId", undefined);
 				setState("activeAmbientMediaId", undefined);
 				setState("activeRoleplayChoiceSetId", undefined);
 				setState("activeBranchId", projection.activeBranchId ?? null);
+				setState("activePiTimeline", timeline);
 				setConversationProjection({
 					activeConversationId: projection.activeConversationId,
 					activeBranchId: projection.activeBranchId ?? null,
-					messages: projection.messages,
+					piTimeline: timeline,
 				});
 				clearOperationError();
 				void refreshStoryProposals();
 			} catch (e) {
-				retainOperationError("conversation.select", e);
+				if (e instanceof PiTimelineProjectionError) {
+					setState("activePiTimeline", undefined);
+					setConversationProjection({ piTimeline: undefined });
+					retainProjectionError("conversation.select", e, "projection");
+				} else {
+					retainOperationError("conversation.select", e);
+				}
 			}
 		},
 
 		createConversation: async (title) => {
 			try {
 				const result = await invoke(client, () => client.conversation.create({ title }));
+				const projection = await invoke(client, () =>
+					client.conversation.select({ id: result.id }),
+				);
+				const timeline = requirePiTimeline(
+					projection.piTimeline,
+					"conversation.create.select",
+				);
 				conversationSelectionChangedLocally = true;
-				setState("activeConversationId", result.id);
-				setState("activeRoleplayMediaId", undefined);
-				setState("activeAmbientMediaId", undefined);
-				setState("activeRoleplayChoiceSetId", undefined);
-				setState("activeBranchId", null);
+				setState("activeConversationId", projection.activeConversationId);
+				setState("activeBranchId", projection.activeBranchId ?? null);
+				setState("activePiTimeline", timeline);
 				setConversationProjection({
-					activeConversationId: result.id,
-					activeBranchId: null,
-					messages: [],
+					activeConversationId: projection.activeConversationId,
+					activeBranchId: projection.activeBranchId ?? null,
+					piTimeline: timeline,
 				});
 				clearOperationError();
 				await Promise.all([refreshConversations(), refreshModelRoute(result.id)]);
@@ -2054,7 +2122,8 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				setState("activeAmbientMediaId", undefined);
 				setState("activeRoleplayChoiceSetId", undefined);
 				setState("activeBranchId", null);
-				setConversationProjection({ activeConversationId: undefined, activeBranchId: null, messages: [] });
+				setState("activePiTimeline", undefined);
+				setConversationProjection({ activeConversationId: undefined, activeBranchId: null, piTimeline: undefined });
 			}
 			await refreshConversations();
 		},
@@ -2067,8 +2136,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				setState("activeRoleplayMediaId", undefined);
 				setState("activeAmbientMediaId", undefined);
 				setState("activeRoleplayChoiceSetId", undefined);
+				setState("activePiTimeline", undefined);
 				setState("activeBranchId", null);
-				setConversationProjection({ activeConversationId: undefined, activeBranchId: null, messages: [] });
+				setConversationProjection({ activeConversationId: undefined, activeBranchId: null, piTimeline: undefined });
 			}
 			await refreshConversations();
 		},
@@ -2089,70 +2159,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			}
 		},
 
-		regenerateMessage: async (messageId) => {
-			try {
-				const conversationId = requireActiveConversation();
-				await invoke(client, () => client.message.regenerate({ conversationId, messageId }));
-				clearOperationError();
-			} catch (e) {
-				retainOperationError("message.regenerate", e);
-			}
-		},
-
-		switchVersion: async (messageId, versionId) => {
-			try {
-				const conversationId = requireActiveConversation();
-				await invoke(client, () =>
-					client.message.switchVersion({ conversationId, messageId, versionId }),
-				);
-				clearOperationError();
-			} catch (e) {
-				retainOperationError("message.switchVersion", e);
-			}
-		},
-
-		editMessage: async (messageId, text, isUserMessage) => {
-			try {
-				const conversationId = requireActiveConversation();
-				await invoke(client, () =>
-					client.message.edit({ conversationId, messageId, text, isUserMessage }),
-				);
-				await refreshSnapshot();
-				clearOperationError();
-			} catch (e) {
-				retainOperationError("message.edit", e);
-			}
-		},
-
-		continueConversation: async () => {
-			try {
-				const conversationId = requireActiveConversation();
-				await invoke(client, () => client.message.continue({ conversationId }));
-				clearOperationError();
-			} catch (e) {
-				retainOperationError("message.continue", e);
-			}
-		},
-
-		correctMessage: async (reason, applyScope) => {
-			try {
-				const conversationId = requireActiveConversation();
-				await invoke(client, () => client.message.correct({ conversationId, reason, applyScope }));
-				clearOperationError();
-			} catch (e) {
-				retainOperationError("message.correct", e);
-			}
-		},
-
-		branchMessage: async (messageId) => {
-			try {
-				const conversationId = requireActiveConversation();
-				await invoke(client, () => client.message.branch({ conversationId, messageId }));
-				clearOperationError();
-			} catch (e) {
-				retainOperationError("message.branch", e);
-			}
-		},
 
 		abort: async () => {
 			try {
@@ -2241,6 +2247,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 		get snapshot() {
 			return snapshotApi;
+		},
+		get embedding() {
+			return embeddingBinding;
 		},
 		get events() {
 			return eventsApi;

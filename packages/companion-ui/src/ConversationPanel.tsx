@@ -1,308 +1,81 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import {
-	faChevronLeft,
-	faChevronRight,
-	faEllipsis,
-	faPen,
-} from "@fortawesome/free-solid-svg-icons";
 import { Button } from "@kobalte/core/button";
 import { Dialog } from "@kobalte/core/dialog";
-import { TextField } from "@kobalte/core/text-field";
-import { createEffect, createMemo, For, onCleanup, Show } from "solid-js";
+import { createEffect, For, onCleanup, Show } from "solid-js";
 import { RESULT_LOCATE_EVENT, type ResultLocateDetail } from "./features/ResultSpace.js";
-import { Icon } from "./Icon.js";
-import type { CharacterDisplay, Message } from "./stores/companion.js";
+import type { CharacterDisplay } from "./stores/companion.js";
+import type { PiTimelineEntry } from "@bear-harness/protocol";
 import { useCompanionStore } from "./stores/companion.js";
-import {
-	createMessageWorkflow,
-	useConversationViewWorkflow,
-} from "./stores/conversation-workflows.js";
+import { useConversationViewWorkflow } from "./stores/conversation-workflows.js";
 import { ThreadHead } from "./ThreadHead.js";
-
-
 import { WorkTimelineItem } from "./WorkPanel.js";
 
-/**
- * ConversationPanel: the live thread. Messages come from the store's active
- * conversation; user and assistant messages get role-based styling. Per plan
- * §7.9, message operations (regenerate, switch version, continue, edit,
- * package-labelled correction, branch) appear only on hover or keyboard focus
- * of the message — the buttons stay in the tab order so they are keyboard
- * reachable, just visually deferred.
- */
+/** ConversationPanel renders the active Pi timeline plus transient stream state. */
 
-function MessageItem(props: {
-	message: Message;
-	characterName: string;
-	correction?: CharacterDisplay["character"]["correction"];
-	lastAssistant: boolean;
+
+function PiTimelineEntryView(props: {
+	entry: PiTimelineEntry;
+	character: CharacterDisplay | undefined;
 }) {
-	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
-	const workflow = createMessageWorkflow(
-		store,
-		() => props.message,
-		() => props.characterName,
-		() => props.correction!,
-		(key: string) => t(key as never),
-	);
+	const entry = props.entry;
+	if (entry.kind !== "message") {
+		return <div class="pi-context-separator" data-pi-entry-id={entry.id} aria-hidden="true" />;
+	}
+	if (entry.role === "tool") {
+		return (
+			<article
+				class="msg pi-tool-result"
+				data-pi-entry-id={entry.id}
+				aria-label={`${entry.toolName} ${entry.status}`}
+			>
+				<div class="msg-meta">
+					<span>{entry.toolName}</span>
+					<span class="pi-tool-call-id">{entry.toolCallId}</span>
+				</div>
+				<span class="pi-tool-status">{entry.status}</span>
+			</article>
+		);
+	}
+	const isUser = entry.role === "user";
+	const characterName = props.character?.name ?? "";
+	const toolCalls = entry.role === "assistant" ? entry.toolCalls : undefined;
 	return (
-		<article
-			data-message-id={props.message.id}
-			class={workflow.isUser() ? "msg user" : "msg bear-msg"}
-			aria-label={workflow.meta()}
-		>
-			<Show when={workflow.actionError()}>
-				{(error) => (
-					<span class="status-line error" role="alert">
-						{t("messages.operationFailedPrefix")}
-						{error()}
-					</span>
-				)}
-			</Show>
-			<Show when={workflow.editing()}>
-				<div class="msg-meta">{workflow.meta()}</div>
-				<Show when={workflow.isUser()}>
-					<p class="edit-branch-note">{t("messages.userEditBranchNote")}</p>
+		<>
+			<article
+				class={`msg pi-timeline-message ${isUser ? "user" : "bear-msg"}`}
+				data-pi-entry-id={entry.id}
+				aria-label={isUser ? "user" : characterName}
+			>
+				<div class="msg-meta">{isUser ? "You" : characterName}</div>
+				<Show when={entry.text !== undefined && entry.text.length > 0}>
+					<p>{entry.text}</p>
 				</Show>
-				<TextField>
-					<TextField.TextArea
-						class="edit-box"
-						rows={3}
-						value={workflow.editText()}
-						onInput={(event) => workflow.setEditText(event.currentTarget.value)}
-						aria-label={t("messages.editLabel")}
-					/>
-				</TextField>
-				<div class="msg-tools">
-					<Button type="button" class="primary-tool" disabled={workflow.actionBusy()} onClick={workflow.saveEdit}>
-						{t("messages.save")}
-					</Button>
-					<Button data-control="command" type="button" onClick={() => workflow.setEditing(false)}>
-						{t("messages.cancel")}
-					</Button>
-				</div>
-			</Show>
-			<Show when={!workflow.editing()}>
-				<div class="msg-heading">
-					<div class="msg-meta">{workflow.meta()}</div>
-					<Show
-						when={!workflow.isUser()}
-						fallback={
-							<Button
-								type="button"
-								class="msg-inline-action"
-								aria-label={t("messages.edit")}
-								title={t("messages.edit")}
-								onClick={workflow.startEdit}
-							>
-								<Icon icon={faPen} />
-							</Button>
-						}
-					>
-						<Button
-							type="button"
-							class="msg-menu-trigger"
-							aria-label={t("messages.operations")}
-							title={t("messages.operations")}
-							aria-expanded={workflow.actionsOpen()}
-							onClick={() => workflow.setActionsOpen(!workflow.actionsOpen())}
-						>
-							<Icon icon={faEllipsis} />
-						</Button>
-					</Show>
-				</div>
-				<Show
-					when={props.message.status === "failed"}
-					fallback={
-						<Show when={workflow.isUser() || workflow.content().trim().length > 0}>
-							<p>{workflow.content()}</p>
-						</Show>
-					}
-				>
-					<p class="status-line err message-failure" role="alert">
-						{props.message.failureReason?.trim() || t("errors.generic")}
-					</p>
+				<Show when={toolCalls && toolCalls.length > 0}>
+					<ul class="pi-tool-calls" aria-label="Tool calls">
+						<For each={toolCalls}>
+							{(call) => (
+								<li class="pi-tool-call" data-pi-tool-call-id={call.toolCallId}>
+									<span class="pi-tool-name">{call.toolName}</span>
+									<span class="pi-tool-call-id">{call.toolCallId}</span>
+								</li>
+							)}
+						</For>
+					</ul>
 				</Show>
-				<Show when={props.message.versions.length > 1}>
-					<div class="version-pager" role="toolbar" aria-label={t("messages.versionPager")}>
-						<Button
-							data-control="command"
-							type="button"
-							aria-label={t("messages.previousVersion")}
-							title={t("messages.previousVersion")}
-							disabled={workflow.actionBusy() || workflow.versionIndex() <= 0}
-							onClick={() => workflow.switchTo(workflow.versionIndex() - 1)}
-						>
-							<Icon icon={faChevronLeft} />
-						</Button>
-						<span aria-live="polite">
-							{workflow.versionIndex() + 1} / {props.message.versions.length}
-						</span>
-						<Button
-							data-control="command"
-							type="button"
-							aria-label={t("messages.nextVersion")}
-							title={t("messages.nextVersion")}
-							disabled={
-								workflow.actionBusy() || workflow.versionIndex() >= props.message.versions.length - 1
-							}
-							onClick={() => workflow.switchTo(workflow.versionIndex() + 1)}
-						>
-							<Icon icon={faChevronRight} />
-						</Button>
-					</div>
-				</Show>
-				<Show when={workflow.correcting()}>
-					<div
-						class="correct-panel"
-						role="toolbar"
-						aria-label={props.correction?.reason_group_label}
-					>
-						<div class="correct-reasons">
-							<For each={workflow.correctionReasons()}>
-								{(preset) => (
-									<Button
-										type="button"
-										class={workflow.reason() === preset ? "selected" : undefined}
-										onClick={() => {
-											workflow.setReason(workflow.reason() === preset ? "" : preset);
-											workflow.setCustomReason("");
-										}}
-									>
-										{preset}
-									</Button>
-								)}
-							</For>
-						</div>
-						<TextField>
-							<TextField.Input
-								type="text"
-								placeholder={t("messages.otherReason")}
-								value={workflow.customReason()}
-								onInput={(event) => {
-									workflow.setCustomReason(event.currentTarget.value);
-									workflow.setReason("");
-								}}
-								aria-label={t("messages.otherReason")}
-							/>
-						</TextField>
-						<div class="correct-scopes">
-							<For each={["once", "session", "always"] as const}>
-								{(option) => (
-									<Button
-										type="button"
-										class={workflow.scope() === option ? "selected" : undefined}
-										onClick={() => workflow.setScope(option)}
-										aria-pressed={workflow.scope() === option}
-									>
-										{t(`messages.correctionScopes.${option}` as never)}
-									</Button>
-								)}
-							</For>
-						</div>
-						<div class="msg-tools">
-							<Button
-								type="button"
-								class="primary-tool"
-								disabled={
-									workflow.actionBusy() ||
-									(!workflow.reason() && workflow.customReason().trim().length === 0)
-								}
-								onClick={workflow.submitCorrect}
-							>
-								{t("messages.submitCorrection")}
-							</Button>
-							<Button data-control="command" type="button" onClick={() => workflow.setCorrecting(false)}>
-								{t("messages.cancel")}
-							</Button>
-						</div>
-					</div>
-				</Show>
-				<Show when={!workflow.correcting() && !workflow.isUser()}>
-					<div
-						class="msg-tools"
-						classList={{ "is-open": workflow.actionsOpen() }}
-						role="toolbar"
-						aria-label={t("messages.operations")}
-					>
-						<Show when={props.message.role === "assistant"}>
-							<Button
-								data-control="command"
-								type="button"
-								disabled={workflow.actionBusy()}
-								onClick={() => void workflow.captureMoment()}
-							>
-								{t("messages.rememberMoment")}
-							</Button>
-							<Show when={workflow.captureStatus() === "success"}>
-								<span class="status-line ok" role="status" aria-label={t("messages.rememberMoment")}>
-									{t("messages.rememberMoment")}
-								</span>
-							</Show>
-						</Show>
-						<Show when={!workflow.isUser()}>
-							<Button
-								data-control="command"
-								type="button"
-								disabled={workflow.actionBusy()}
-								onClick={() => void workflow.runAction(() => store.regenerateMessage(props.message.id))}
-							>
-								{t("messages.regenerate")}
-							</Button>
-							<Button
-								data-control="command"
-								type="button"
-								disabled={workflow.actionBusy()}
-								onClick={workflow.startEdit}
-							>
-								{t("messages.edit")}
-							</Button>
-							<Show when={workflow.correction()}>
-								{(copy) => (
-									<Button
-										data-control="command"
-										type="button"
-										onClick={() => {
-											workflow.setActionError(null);
-											workflow.setReason("");
-											workflow.setCustomReason("");
-											workflow.setScope("once");
-											workflow.setCorrecting(true);
-										}}
-									>
-										{copy().trigger_label}
-									</Button>
-								)}
-							</Show>
-							<Show when={props.lastAssistant}>
-								<Button
-									data-control="command"
-									type="button"
-									disabled={workflow.actionBusy()}
-									onClick={() => void workflow.runAction(() => store.continueConversation())}
-								>
-									{t("messages.continue")}
-								</Button>
-							</Show>
-							<Button
-								data-control="command"
-								type="button"
-								disabled={workflow.actionBusy()}
-								onClick={() => void workflow.runAction(() => store.branchMessage(props.message.id))}
-							>
-								{t("messages.branch")}
-							</Button>
-						</Show>
-						<Show when={workflow.isUser()}>
-							<Button data-control="command" type="button" onClick={workflow.startEdit}>
-								{t("messages.edit")}
-							</Button>
-						</Show>
-					</div>
-				</Show>
-			</Show>
-		</article>
+			</article>
+			<WorkTimelineItem messageId={entry.id} character={props.character} />
+		</>
+	);
+}
+
+function PiTimelineRenderer(props: {
+	entries: readonly PiTimelineEntry[];
+	character: CharacterDisplay | undefined;
+}) {
+	return (
+		<For each={props.entries}>
+			{(entry) => <PiTimelineEntryView entry={entry} character={props.character} />}
+		</For>
 	);
 }
 
@@ -311,13 +84,12 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const view = useConversationViewWorkflow(store, () => props.character);
-	const toolActivities = createMemo(() => store.toolActivities ?? []);
-	const { sceneTitle, visibleMessages, lastAssistantId, streamedContent, hasThreadContent } = view;
+	const { sceneTitle, streamedContent, hasThreadContent } = view;
 	let threadRef: HTMLElement | undefined;
 
 	createEffect(() => {
-		// Track the message count so the thread follows new messages.
-		void visibleMessages().length;
+		// Track the active projection so the thread follows new timeline entries.
+		void store.activePiTimeline?.entries.length;
 		const el = threadRef;
 		if (el) el.scrollTop = el.scrollHeight;
 	});
@@ -328,7 +100,7 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 		const onLocate = (event: Event) => {
 			const detail = (event as CustomEvent<ResultLocateDetail>).detail;
 			if (!detail || detail.conversationId !== store.activeConversationId) return;
-			const target = document.querySelector<HTMLElement>(`[data-message-id="${detail.messageId}"]`);
+			const target = document.querySelector<HTMLElement>(`[data-pi-entry-id="${detail.messageId}"]`);
 			if (!target) return;
 			target.scrollIntoView?.({ block: "center" });
 			const message = target.closest(".msg") as HTMLElement | null;
@@ -359,38 +131,15 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 					</div>
 				</Show>
 
-				<Show
-					when={hasThreadContent()}
-					fallback={
-						<Show when={props.character}>
-							{(character) => (
-								<div class="msg bear-msg">
-									<div class="msg-meta">
-										{character().name} · {character().character.scene_title}
-									</div>
-									<p>{character().character.greeting}</p>
-								</div>
-							)}
-						</Show>
-					}
-				>
-					<For each={visibleMessages()}>
-						{(message) => (
-							<>
-								<MessageItem
-									message={message}
-									characterName={props.character?.name ?? ""}
-									correction={props.character?.character.correction}
-									lastAssistant={message.role === "assistant" && message.id === lastAssistantId()}
-								/>
-								{/* Message-scoped work action lines: only commissions whose
-								    triggerMessageId matches this message render here. */}
-								<Show when={message.role === "user"}>
-									<WorkTimelineItem messageId={message.id} character={props.character} />
-								</Show>
-							</>
+				<Show when={hasThreadContent()}>
+					<Show when={store.activePiTimeline}>
+						{(timeline) => (
+							<PiTimelineRenderer
+								entries={timeline().entries}
+								character={props.character}
+							/>
 						)}
-					</For>
+					</Show>
 					<Show when={store.pendingUserText}>
 						{(text) => (
 							<article class="msg user optimistic-message" aria-label={t("messages.userMeta")}>
@@ -398,21 +147,6 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 								<p>{text()}</p>
 							</article>
 						)}
-					</Show>
-					<Show when={toolActivities().length > 0}>
-						<details class="tool-trace" open={store.assistantStreaming}>
-							<summary>{toolActivities().at(-1)?.label}</summary>
-							<ul>
-								<For each={toolActivities()}>
-									{(activity) => (
-										<li data-status={activity.status}>
-											<strong>{activity.label}</strong>
-											<span>{activity.message}</span>
-										</li>
-									)}
-								</For>
-							</ul>
-						</details>
 					</Show>
 					<Show when={streamedContent().length > 0 || store.assistantStreaming}>
 						<article

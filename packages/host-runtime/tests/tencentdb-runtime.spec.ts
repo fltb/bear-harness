@@ -836,56 +836,6 @@ describe("CyberBearLLMRunner tool loop", () => {
 // Local embedding warmup
 // ============================
 
-describe("TencentDbRuntime.startLocalEmbeddingWarmup", () => {
-	function embeddingCore(runtime: TencentDbRuntime) {
-		return (
-			runtime as unknown as {
-				core: { getEmbeddingService(): unknown };
-			}
-		).core as unknown as {
-			getEmbeddingService(): { startWarmup(): void } | undefined;
-		};
-	}
-
-	it("starts warmup on a local provider via the injected embedding service", async () => {
-		const runtime = createRuntime(createRoot(), "role-a", {
-			embedding: { provider: "local", enabled: true },
-		});
-		const startWarmup = vi.fn();
-		embeddingCore(runtime).getEmbeddingService = () => ({ startWarmup });
-
-		await expect(runtime.startLocalEmbeddingWarmup()).resolves.toBe(true);
-		expect(startWarmup).toHaveBeenCalledOnce();
-	});
-
-	it("polls until the embedding service becomes ready before warming up", async () => {
-		const runtime = createRuntime(createRoot(), "role-a", {
-			embedding: { provider: "local", enabled: true },
-		});
-		const startWarmup = vi.fn();
-		let probes = 0;
-		embeddingCore(runtime).getEmbeddingService = () => (++probes > 1 ? { startWarmup } : undefined);
-
-		await expect(runtime.startLocalEmbeddingWarmup(2_000)).resolves.toBe(true);
-		expect(startWarmup).toHaveBeenCalledOnce();
-		expect(probes).toBeGreaterThanOrEqual(2);
-	});
-
-	it("is a no-op for the default provider-less config", async () => {
-		const runtime = createRuntime(createRoot());
-
-		await expect(runtime.startLocalEmbeddingWarmup()).resolves.toBe(false);
-	});
-
-	it("returns false when the local service never becomes available", async () => {
-		const runtime = createRuntime(createRoot(), "role-a", {
-			embedding: { provider: "local", enabled: true },
-		});
-		embeddingCore(runtime).getEmbeddingService = () => undefined;
-
-		await expect(runtime.startLocalEmbeddingWarmup(150)).resolves.toBe(false);
-	});
-});
 
 describe("TencentDbRuntime.prepareLocalEmbedding", () => {
 	function prepareEmbeddingCore(runtime: TencentDbRuntime) {

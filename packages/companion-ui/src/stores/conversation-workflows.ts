@@ -7,15 +7,11 @@ import type {
 	CompanionStore,
 	ConfiguredModel,
 	ConversationSummary,
-	Message,
-	MessageVersion,
 } from "./companion.js";
 export type ComposerAttachment =
 	| { kind: "text"; name: string; content: string }
 	| { kind: "image"; name: string; mime: string; base64: string };
 
-type Translate = (key: string) => string;
-type CorrectScope = "once" | "session" | "always";
 
 /** One-shot request consumed by the settings sheet's image-reader focus effect. */
 export const [requestImageReaderFocus, setRequestImageReaderFocus] = createSignal(false);
@@ -24,11 +20,6 @@ export function modelDisplayName(model: ConfiguredModel): string {
 	return `${model.label} (${model.providerName ?? model.providerId})`;
 }
 
-function formatMessageTime(iso: string): string {
-	const date = new Date(iso);
-	if (Number.isNaN(date.getTime())) return i18n.t("messages.justNow");
-	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
 
 interface ConversationWorkflowState {
 	composerText: string;
@@ -287,7 +278,6 @@ function createConversationWorkflow(store: CompanionStore) {
 		setSendError: (value: string | null) => setState("sendError", value),
 	};
 }
-
 export function useConversationViewWorkflow(
 	store: CompanionStore,
 	character: Accessor<CharacterDisplay | undefined>,
@@ -299,26 +289,11 @@ export function useConversationViewWorkflow(
 			character()?.character.scene_title ??
 			"",
 	);
-	const visibleMessages = createMemo(() =>
-		(store.activeMessages ?? []).filter((message) => message.role === "user" || message.role === "assistant"),
-	);
-	const lastAssistant = createMemo(() => visibleMessages().at(-1));
-	const lastAssistantId = createMemo(() => {
-		const last = lastAssistant();
-		return last?.role === "assistant" ? last.id : null;
-	});
 	const streamedAssistantText = createMemo(() => store.streamingAssistantText ?? "");
-	const streamedContent = createMemo(() => {
-		const draft = streamedAssistantText();
-		if (draft.length === 0) return "";
-		const last = lastAssistant();
-		if (!last || last.role !== "assistant") return draft;
-		const lastAdopted = last.versions.at(-1)?.content ?? "";
-		return lastAdopted.trim() === draft.trim() ? "" : draft;
-	});
+	const streamedContent = createMemo(() => streamedAssistantText());
 	const hasThreadContent = createMemo(
 		() =>
-			visibleMessages().length > 0 ||
+			(store.activePiTimeline?.entries.length ?? 0) > 0 ||
 			store.pendingUserText !== undefined ||
 			store.assistantStreaming ||
 			streamedAssistantText().length > 0,
@@ -341,141 +316,11 @@ export function useConversationViewWorkflow(
 	return {
 		...workflow,
 		sceneTitle,
-		visibleMessages,
-		lastAssistant,
-		lastAssistantId,
 		streamedContent,
 		hasThreadContent,
 		roleplayChoiceSet,
 		roleplayInlineMedia,
 		roleplayOverlayMedia,
 		roleplayAmbientMedia,
-	};
-}
-
-export function createMessageWorkflow(
-	store: CompanionStore,
-	message: Accessor<Message>,
-	characterName: Accessor<string>,
-	correction: Accessor<CharacterDisplay["character"]["correction"]>,
-	translate: Translate,
-) {
-	const [state, setState] = createStore({
-		editing: false,
-		actionsOpen: false,
-		editText: "",
-		correcting: false,
-		reason: "",
-		customReason: "",
-		scope: "once" as CorrectScope,
-		captureStatus: "idle" as "idle" | "success",
-		actionBusy: false,
-		actionError: null as string | null,
-	});
-	const isUser = createMemo(() => message().role === "user");
-	const version = createMemo<MessageVersion | undefined>(() => {
-		const current = message();
-		if (current.adoptedVersionId !== undefined) {
-			const byId = current.versions.find((candidate) => candidate.id === current.adoptedVersionId);
-			if (byId) return byId;
-		}
-		return current.versions.find((candidate) => candidate.adopted) ?? current.versions.at(-1);
-	});
-	const content = createMemo(() => version()?.content ?? "");
-	const versionIndex = createMemo(() => message().versions.findIndex((candidate) => candidate.id === (version()?.id ?? "")));
-	const meta = createMemo(() =>
-		isUser() ? translate("messages.userMeta") : `${characterName()} · ${formatMessageTime(message().createdAt)}`,
-	);
-	const correctionReasons = createMemo(() => [
-		translate("messages.correctionReasons.tone"),
-		translate("messages.correctionReasons.identity"),
-		translate("messages.correctionReasons.history"),
-		translate("messages.correctionReasons.userAction"),
-		translate("messages.correctionReasons.fictionReality"),
-	]);
-	const runAction = async (action: () => Promise<unknown>): Promise<boolean> => {
-		setState("actionBusy", true);
-		setState("actionError", null);
-		setState("captureStatus", "idle");
-		const before = store.errorMetadata;
-		try {
-			await action();
-			const retained = store.errorMetadata;
-			if (retained !== null && retained !== before) {
-				setState("actionError", retained.message);
-				return false;
-			}
-			return true;
-		} catch (cause) {
-			setState("actionError", cause instanceof Error ? cause.message : String(cause));
-			return false;
-		} finally {
-			setState("actionBusy", false);
-		}
-	};
-	const switchTo = (index: number): void => {
-		const target = message().versions[index];
-		if (target) void runAction(() => store.switchVersion(message().id, target.id));
-	};
-	const startEdit = (): void => {
-		setState("actionError", null);
-		setState("captureStatus", "idle");
-		setState("editText", content());
-		setState("actionsOpen", false);
-		setState("editing", true);
-	};
-	const saveEdit = async (): Promise<void> => {
-		const text = state.editText.trim();
-		if (!text || state.actionBusy) return;
-		const ok = await runAction(() => store.editMessage(message().id, text, isUser()));
-		if (ok) setState("editing", false);
-	};
-	const submitCorrect = (): void => {
-		const text = state.reason || state.customReason.trim();
-		if (!text || state.actionBusy) return;
-		void runAction(() => store.correctMessage(text, state.scope)).then((ok) => {
-			if (!ok) return;
-			setState("reason", "");
-			setState("customReason", "");
-			setState("correcting", false);
-		});
-	};
-	const captureMoment = async (): Promise<void> => {
-		if (state.actionBusy) return;
-		const ok = await runAction(() => store.memory.capture(message().id));
-		if (ok) setState("captureStatus", "success");
-	};
-	return {
-		isUser,
-		version,
-		content,
-		versionIndex,
-		meta,
-		correction,
-		correctionReasons,
-		editing: () => state.editing,
-		actionsOpen: () => state.actionsOpen,
-		editText: () => state.editText,
-		correcting: () => state.correcting,
-		reason: () => state.reason,
-		customReason: () => state.customReason,
-		scope: () => state.scope,
-		captureStatus: () => state.captureStatus,
-		actionBusy: () => state.actionBusy,
-		actionError: () => state.actionError,
-		setActionError: (value: string | null) => setState("actionError", value),
-		setActionsOpen: (value: boolean) => setState("actionsOpen", value),
-		setEditText: (value: string) => setState("editText", value),
-		setCorrecting: (value: boolean) => setState("correcting", value),
-		setReason: (value: string) => setState("reason", value),
-		setCustomReason: (value: string) => setState("customReason", value),
-		setScope: (value: CorrectScope) => setState("scope", value),
-		setEditing: (value: boolean) => setState("editing", value),
-		switchTo,
-		startEdit,
-		saveEdit,
-		submitCorrect,
-		captureMoment,
-		runAction,
 	};
 }

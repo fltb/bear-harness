@@ -131,6 +131,35 @@ const DEFAULT_SETTINGS: SettingsData = {
 	memoryVectorService: { enabled: false, provider: "none" },
 	modelDownloadMirror: {},
 };
+/** Minimal raw embedding binding for partial CompanionStore fixtures. */
+export function createEmbeddingBinding() {
+	return {
+		settingsQuery: {
+			data: { settings: { ...DEFAULT_SETTINGS } },
+			isPending: false,
+			error: null,
+		},
+		catalogQuery: {
+			data: {
+				candidates: [{ id: "test-embedding", name: "Test embedding", isDefault: true }],
+			},
+			isPending: false,
+			error: null,
+		},
+		settingsMutation: {
+			mutateAsync: vi.fn(async () => ({ ok: true })),
+			isPending: false,
+			error: null,
+			isSuccess: false,
+		},
+		localConfigureMutation: {
+			mutateAsync: vi.fn(async () => ({ ready: true })),
+			isPending: false,
+			error: null,
+			isSuccess: false,
+		},
+	};
+}
 
 const DEFAULT_MODEL = {
 	providerId: "test-provider",
@@ -233,7 +262,16 @@ export function createTestClient() {
 				}
 				return ok({ id: "c1" });
 			}),
-			select: vi.fn(() => ok(null)),
+			select: vi.fn(({ id }: { id: string }) => {
+				const conversation = conversations.find((item) => item.id === id);
+				return ok({
+					activeConversationId: id,
+					id,
+					title: conversation?.title ?? "New conversation",
+					sceneTitle: conversation?.sceneTitle ?? "",
+					piTimeline: { entries: [] },
+				});
+			}),
 			rename: vi.fn(() => ok(null)),
 			archive: vi.fn(() => ok(null)),
 			delete: vi.fn(() => ok(null)),
@@ -264,6 +302,10 @@ export function createTestClient() {
 			edit: vi.fn(() => ok(null)),
 			exclude: vi.fn(() => ok(null)),
 			candidatesList: vi.fn(() => ok({ candidates: [] })),
+			localEmbeddingCatalog: vi.fn(() =>
+				ok({ candidates: [{ id: "test-embedding", name: "Test embedding", isDefault: true }] }),
+			),
+			configureLocalEmbedding: vi.fn(() => ok({ ready: true })),
 			candidateApprove: vi.fn(() => ok(null)),
 			candidateReject: vi.fn(() => ok(null)),
 		},
@@ -287,7 +329,6 @@ export function createTestClient() {
 		provider: {
 			list: providerList,
 			customUpsert: vi.fn(() => ok(null)),
-			importPiConfig: vi.fn(() => ok({ models: [] })),
 			overrideBaseUrl: vi.fn(() => ok(null)),
 			setApiKey: vi.fn(() => ok(null)),
 			login: vi.fn(() => ok({ providerId: "test", status: "completed" })),

@@ -279,6 +279,10 @@ export const zhTW = {
 		"localCustomPathPlaceholder": "hf:user/repo/file-Q8_0.gguf 或 /path/to/model.gguf",
 		"downloadMirrorSection": "模型下載映象",
 		"downloadMirrorLabel": "映象地址（留空使用預設源）",
+		"downloadAndEnableLocalModel": "下載並啟用本地模型",
+		"downloadingLocalModel": "正在下載並載入本地模型…",
+		"localModelDownloadStatus": "正在下載所選模型並在本機載入。模型就緒前不會啟用記憶。",
+		"localModelReady": "本地模型已下載、載入並就緒。",
 		"saveNetwork": "儲存網路與記憶設定",
 		"saved": "已儲存：代理立即生效；向量服務與映象需重啟後生效。",
 		"visionModel": "圖片讀取模型",
@@ -338,7 +342,7 @@ export const zhTW = {
 		"continue": "使用這個模型開始",
 		"modelLabel": "回覆模型",
 		"connecting": "正在連線模型服務…",
-		"memorySetupNote": "選擇後會儲存記憶系統配置；本地模型會在下次啟動時下載並啟用。"
+		"memorySetupNote": "本地模型會在設定過程中下載並載入；僅在模型就緒後啟用記憶。"
 	},
 	"language": {
 		"warningTitle": "角色包語言與系統語言不同",

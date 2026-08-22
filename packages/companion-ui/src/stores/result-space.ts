@@ -167,14 +167,15 @@ export function createResultSpaceStore(store: CompanionStore): ResultSpaceApi {
 				.title ?? i18n.t("work.result.title")
 		);
 	});
-	const activeMessages = createMemo(() => store.activeMessages ?? []);
 	const sourceSummary = createMemo(() => {
 		const current = selection();
 		if (current === undefined) return "";
-		const message = activeMessages().find(
+		const entry = store.activePiTimeline?.entries.find(
 			(candidate) => candidate.id === current.triggerMessageId,
 		);
-		return summarize(message?.versions.at(-1)?.content ?? "");
+		return entry?.kind === "message" && entry.role !== "tool"
+			? summarize(entry.text ?? "")
+			: "";
 	});
 	const hasArtifacts = createMemo(() => runArtifacts().length > 0);
 

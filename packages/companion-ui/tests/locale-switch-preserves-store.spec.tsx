@@ -42,24 +42,19 @@ function loadedClient() {
 							updatedAt: "2026-01-01T00:00:00.000Z",
 						},
 					],
-					messages: [
-						{
-							id: "assistant-1",
-							role: "assistant" as const,
-							adoptedVersionId: "assistant-1-v1",
-							createdAt: "2026-01-01T00:00:01.000Z",
-							versions: [
-								{
-									id: "assistant-1-v1",
-									role: "assistant" as const,
-									content: "必须保留的记忆测试消息",
-									editedByUser: false,
-									createdAt: "2026-01-01T00:00:01.000Z",
-									adopted: true,
-								},
-							],
-						},
-					],
+					piTimeline: {
+						activeLeafId: "assistant-1",
+						entries: [
+							{
+								id: "assistant-1",
+								parentId: null,
+								timestamp: "2026-01-01T00:00:01.000Z",
+								kind: "message" as const,
+								role: "assistant" as const,
+								text: "必须保留的记忆测试消息",
+							},
+						],
+					},
 				},
 			},
 		}),

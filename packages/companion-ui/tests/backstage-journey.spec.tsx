@@ -6,7 +6,7 @@ import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Backstage } from "../src/features/Backstage.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
-import { THEMED_CHARACTER } from "./fixtures.js";
+import { createEmbeddingBinding, THEMED_CHARACTER } from "./fixtures.js";
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -25,6 +25,7 @@ describe("ordinary-user backstage journey", () => {
 			}),
 		);
 		const store = {
+			embedding: createEmbeddingBinding() as never,
 			memory: {
 				revision: () => 0,
 				search: vi.fn(() => Promise.resolve([])),
@@ -76,6 +77,7 @@ describe("ordinary-user backstage journey", () => {
 		const revert = vi.fn(() => Promise.resolve());
 		const reset = vi.fn(() => Promise.resolve());
 		const store = {
+			embedding: createEmbeddingBinding() as never,
 			memory: {
 				search: vi.fn(() => Promise.resolve([])),
 				revision: () => 0,
@@ -148,6 +150,7 @@ describe("ordinary-user backstage journey", () => {
 		const user = userEvent.setup();
 		const importPackage = vi.fn(() => Promise.resolve());
 		const store = {
+			embedding: createEmbeddingBinding() as never,
 			memory: {
 				search: vi.fn(() => Promise.resolve([])),
 				revision: () => 0,
@@ -250,6 +253,7 @@ describe("ordinary-user backstage journey", () => {
 			},
 		};
 		const store = {
+			embedding: createEmbeddingBinding() as never,
 			roleplay: { values: { trust: 4 }, unlocked: ["night_memory"] },
 			memory: {
 				search: vi.fn(() => Promise.resolve([])),
@@ -310,6 +314,7 @@ describe("ordinary-user backstage journey", () => {
 			},
 		};
 		const store = {
+			embedding: createEmbeddingBinding() as never,
 			roleplay: { values: {}, unlocked: ["animation-memory"] },
 			settings: {
 				data: () => ({
@@ -391,6 +396,7 @@ describe("ordinary-user backstage journey", () => {
 		});
 		const forget = vi.fn(() => Promise.resolve());
 		const store = {
+			embedding: createEmbeddingBinding() as never,
 			runs: [],
 			characters: { characters: () => [] },
 			memory: {

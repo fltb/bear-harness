@@ -29,7 +29,7 @@ describe("roleplay presentation", () => {
 			},
 		};
 		const store = {
-			activeMessages: [],
+			activePiTimeline: { entries: [] },
 			activeConversationId: "conversation",
 			conversations: [],
 			runs: [],
@@ -74,7 +74,7 @@ describe("roleplay presentation", () => {
 			},
 		};
 		const store = {
-			activeMessages: [],
+			activePiTimeline: { entries: [] },
 			activeConversationId: "conversation",
 			conversations: [],
 			runs: [],
@@ -124,7 +124,7 @@ describe("roleplay presentation", () => {
 			},
 		};
 		const store = {
-			activeMessages: [],
+			activePiTimeline: { entries: [] },
 			activeConversationId: "conversation",
 			conversations: [],
 			runs: [],
@@ -211,7 +211,7 @@ describe("roleplay presentation", () => {
 			},
 		};
 		const store = {
-			activeMessages: [],
+			activePiTimeline: { entries: [] },
 			activeConversationId: "conversation",
 			conversations: [],
 			runs: [],
@@ -261,7 +261,7 @@ describe("roleplay presentation", () => {
 			},
 		};
 		const store = {
-			activeMessages: [],
+			activePiTimeline: { entries: [] },
 			activeConversationId: "conversation",
 			conversations: [],
 			runs: [],
@@ -327,7 +327,7 @@ describe("roleplay presentation", () => {
 			},
 		};
 		const store = {
-			activeMessages: [],
+			activePiTimeline: { entries: [] },
 			activeConversationId: "conversation",
 			conversations: [],
 			runs: [],
@@ -367,7 +367,7 @@ describe("roleplay presentation", () => {
 		const dismissRoleplayMedia = vi.fn();
 		const dismissAmbientMedia = vi.fn();
 		const store = {
-			activeMessages: [],
+			activePiTimeline: { entries: [] },
 			activeConversationId: "conversation",
 			conversations: [],
 			runs: [],
@@ -400,7 +400,7 @@ describe("roleplay presentation", () => {
 
 	it("does not render a source when the active id is not declared by the character", () => {
 		const store = {
-			activeMessages: [],
+			activePiTimeline: { entries: [] },
 			activeConversationId: "conversation",
 			conversations: [],
 			runs: [],

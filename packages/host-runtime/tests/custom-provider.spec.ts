@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -42,6 +42,62 @@ describe("custom OpenAI-compatible provider configuration", () => {
 		expect(credentials.set).not.toHaveBeenCalled();
 	});
 
+	it("rejects custom upserts that target a built-in provider identity", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-builtin-provider-"));
+		roots.push(root);
+		const credentials = {
+			list: vi.fn(async () => []),
+			get: vi.fn(async () => undefined),
+			getStatus: vi.fn(async () => "missing"),
+			set: vi.fn(async () => "stored"),
+		} as unknown as CredentialStore;
+		const catalog = new ProviderCatalog(credentials, root);
+
+		await expect(
+			catalog.upsertCustomProvider({
+				providerId: "openai",
+				name: "Forged OpenAI",
+				baseUrl: "https://relay.example.com/v1",
+				models: [{ id: "forged-model" }],
+			}),
+		).rejects.toMatchObject({
+			kind: "invalid_request",
+			reason: "custom_provider_must_be_custom: openai",
+		});
+		expect(existsSync(join(root, "models.json"))).toBe(false);
+		expect(credentials.set).not.toHaveBeenCalled();
+	});
+
+	it("rejects built-in model fragments without changing existing provider configuration", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-builtin-import-"));
+		roots.push(root);
+		const modelsPath = join(root, "models.json");
+		const previous = `${JSON.stringify(
+			{ providers: { openai: { baseUrl: "https://relay.example.com/v1" } } },
+			null,
+			2,
+		)}\n`;
+		writeFileSync(modelsPath, previous, { mode: 0o600 });
+		const catalog = new ProviderCatalog({} as CredentialStore, root);
+
+		await expect(
+			catalog.importPiConfig(
+				JSON.stringify({
+					providers: {
+						openai: {
+							baseUrl: "https://relay.example.com/v1",
+							models: [{ id: "forged-model" }],
+						},
+					},
+				}),
+			),
+		).rejects.toMatchObject({
+			kind: "invalid_request",
+			reason: "pi_model_config_builtin_catalog_forbidden",
+		});
+		expect(readFileSync(modelsPath, "utf8")).toBe(previous);
+	});
+
 	it("persists endpoint/model metadata without writing the API key to models.json", async () => {
 		const root = mkdtempSync(join(tmpdir(), "bear-custom-provider-"));
 		roots.push(root);
@@ -57,9 +113,11 @@ describe("custom OpenAI-compatible provider configuration", () => {
 			providerId: "local-openai",
 			name: "Local OpenAI",
 			baseUrl: "http://127.0.0.1:11434/v1",
-			modelId: "vision-model",
+			models: [
+				{ id: "vision-model", supportsImages: true },
+				{ id: "text-model" },
+			],
 			apiKey: "SECRET_SENTINEL",
-			supportsImages: true,
 		});
 
 		const modelsPath = join(root, "models.json");
@@ -67,10 +125,15 @@ describe("custom OpenAI-compatible provider configuration", () => {
 		const raw = readFileSync(modelsPath, "utf8");
 		expect(raw).toContain("http://127.0.0.1:11434/v1");
 		expect(raw).toContain("vision-model");
-		expect(JSON.parse(raw)).toMatchObject({
-			providers: {
-				"local-openai": { models: [{ input: ["text", "image"] }] },
-			},
+		const document = JSON.parse(raw) as {
+			providers: Record<string, { models: Array<Record<string, unknown>> }>;
+		};
+		expect(document.providers["local-openai"].models.map((model) => model.id)).toEqual([
+			"vision-model",
+			"text-model",
+		]);
+		expect(document.providers["local-openai"].models[0]).toMatchObject({
+			input: ["text", "image"],
 		});
 		expect(raw).not.toContain("SECRET_SENTINEL");
 		expect(credentials.set).toHaveBeenCalledWith(
@@ -95,12 +158,11 @@ describe("custom OpenAI-compatible provider configuration", () => {
 		const password = "URL_PASSWORD_SENTINEL";
 		const querySecret = "QUERY_SECRET_SENTINEL";
 		const fragmentSecret = "FRAGMENT_SECRET_SENTINEL";
-
 		await catalog.upsertCustomProvider({
 			providerId: "private-relay",
 			name: "Private Relay",
 			baseUrl: `https://${username}:${password}@relay.example.com/v1/?api_key=${querySecret}#${fragmentSecret}`,
-			modelId: "private-model",
+			models: [{ id: "private-model" }],
 			apiKey,
 		});
 
@@ -127,7 +189,7 @@ describe("custom OpenAI-compatible provider configuration", () => {
 				providerId: "bad-provider",
 				name: "Bad Provider",
 				baseUrl: "file:///tmp/model",
-				modelId: "model",
+				models: [{ id: "model" }],
 			}),
 		).rejects.toMatchObject({ kind: "invalid_request" });
 	});

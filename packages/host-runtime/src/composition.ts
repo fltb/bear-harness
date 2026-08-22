@@ -37,10 +37,10 @@ import type { ConversationRepository } from "./conversations/repository.js";
 import type { Dispatcher } from "./dispatcher.js";
 import type { MemoryBackend, MemoryBankScope, MemoryRecord } from "./memory/backend.js";
 import type { ModelRegistry } from "./models/registry.js";
+import { findLocalEmbeddingCandidate, LOCAL_EMBEDDING_CANDIDATES } from "./memory/local-embedding.js";
 import type { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import type { ProviderCatalog } from "./providers/catalog.js";
-import type { AuditStore } from "./security/audit-store.js";
-import type { AppSettingsStore } from "./storage/app-settings-store.js";
+import type { AppSettingsRecord, AppSettingsStore } from "./storage/app-settings-store.js";
 import type { AppDatabase } from "./storage/database.js";
 import type { EventBus } from "./storage/event-bus.js";
 import {
@@ -59,6 +59,7 @@ import {
 	runs,
 	sceneState,
 } from "./storage/schema.js";
+import type { AuditStore } from "./security/audit-store.js";
 import type { StoryService } from "./story/service.js";
 
 /** Desktop-owned update lifecycle adapter used by the optional Host wiring. */
@@ -114,6 +115,23 @@ function oauthWire(state: Awaited<ReturnType<ProviderCatalog["startOAuth"]>>) {
 }
 export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionContext): void {
 	const conversationRepository = s.conversationRepository;
+	const saveMemoryVectorService = async (
+		memoryVectorService: AppSettingsRecord["memoryVectorService"],
+	): Promise<void> => {
+		const app = s.appSettings.save({ memoryVectorService });
+		const stateData = s.onboarding.getState(await getCompanionId(s)).stateData;
+		s.eventBus.publish("settings.changed", {
+			settings: {
+				relationshipMemoryEnabled: stateData.decisions.relationship_memory_enabled ?? false,
+				conversationHistoryReadEnabled:
+					stateData.decisions.conversation_history_read_enabled ?? false,
+				networkProxy: app.networkProxy,
+				memoryVectorService: app.memoryVectorService,
+				modelDownloadMirror: app.modelDownloadMirror,
+			},
+			changed: ["memoryVectorService"],
+		});
+	};
 	// Load and seed the active character package from the character root once.
 	ensureCharacterSeeded(s);
 
@@ -435,9 +453,31 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return rememberConversationEntry(s, params.conversationId, params.entryId, "user_capture");
 	});
 
-	// --- memory ------------------------------------------------------------------
-	dispatcher.registerHandler(RPC.memory.prepareEmbedding, async () => {
-		return s.memoryRuntime.prepareLocalEmbedding();
+	dispatcher.registerHandler(RPC.memory.localEmbeddingCatalog, async () => ({
+		candidates: LOCAL_EMBEDDING_CANDIDATES.map(({ id, name, isDefault }) => ({ id, name, isDefault })),
+	}));
+	dispatcher.registerHandler(RPC.memory.configureLocalEmbedding, async (_p) => {
+		const { provider, candidateId } = _p as { provider: "none" | "local"; candidateId?: string };
+		if (provider === "none") {
+			await s.memoryRuntime.disableLocalEmbedding();
+			await saveMemoryVectorService({ enabled: false, provider: "none" });
+			return { ready: true as const };
+		}
+		const candidate = candidateId ? findLocalEmbeddingCandidate(candidateId) : undefined;
+		if (!candidate) throw { kind: "invalid_request", reason: "local_embedding_candidate_not_found" };
+		try {
+			await s.memoryRuntime.configureLocalEmbedding(candidate.modelPath);
+			await saveMemoryVectorService({
+				enabled: true,
+				provider: "local",
+				localModel: candidate.id,
+			});
+			return { ready: true as const };
+		} catch (error) {
+			await s.memoryRuntime.disableLocalEmbedding().catch(() => undefined);
+			await saveMemoryVectorService({ enabled: false, provider: "none" });
+			throw error;
+		}
 	});
 	dispatcher.registerHandler(RPC.memory.search, async (_p): Promise<MemorySearchResponse> => {
 		const { query } = _p;
@@ -805,9 +845,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			providerId: string;
 			name: string;
 			baseUrl: string;
-			modelId: string;
 			apiKey?: string;
-			supportsImages?: boolean;
+			models: Array<{ id: string; name?: string; supportsImages?: boolean }>;
 		};
 		await s.providers.upsertCustomProvider(input);
 		await s.supervisor.stop();
@@ -1137,6 +1176,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			changed.push("networkProxy");
 		}
 		if ("memoryVectorService" in settings) {
+			const memoryVectorService = settings.memoryVectorService as { provider?: unknown } | undefined;
+			if (memoryVectorService?.provider === "local") {
+				throw { kind: "conflict", reason: "local_embedding_requires_transaction" };
+			}
 			app = s.appSettings.save({ memoryVectorService: settings.memoryVectorService as never });
 			changed.push("memoryVectorService");
 		}
@@ -1241,6 +1284,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		}
 		const eventSeq = s.eventBus.currentSeq;
 		const activeRow = convRows[0];
+		const activeProjection = activeRow
+			? conversationRepository.project(activeRow.id, activeRow.title, activeRow.sceneTitle)
+			: undefined;
 		const defaults = s.models.defaults(companionId);
 		const providerNames = new Map(
 			(await s.providers.listProviders()).map((provider) => [provider.id, provider.name]),
@@ -1251,9 +1297,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			character: s.characterLoader.display(character),
 			conversation: {
 				conversations: convRows,
-				...(activeRow
-					? conversationRepository.project(activeRow.id, activeRow.title, activeRow.sceneTitle)
-					: {}),
+				...(activeProjection ? { ...activeProjection } : {}),
 			},
 			commission: {
 				commissions: s.commissions.list({ companionId }).map((commission) => ({
@@ -1274,10 +1318,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			story: {
 				changes: s.story.list({
 					companionId,
-					branchId: activeRow
-						? (conversationRepository.project(activeRow.id, activeRow.title, activeRow.sceneTitle)
-								.activeBranchId as string | undefined)
-						: undefined,
+					branchId: activeProjection?.activeBranchId,
 				}),
 			},
 			characterRuntime: { byConversation: characterRuntimeByConversation },
@@ -1343,10 +1384,8 @@ export async function proposeMemoryCandidate(
 }
 
 /**
- * Save one Host-selected message through the direct memory backend.
- * A canonical Host message ID is resolved to its ordered current Pi
- * projection when possible; the adopted DB row is used only as an exact-ID
- * current-branch fallback.
+ * A source must resolve to a native Pi SessionManager entry on the
+ * conversation's active branch; Host SQLite messages are not a projection.
  */
 export async function rememberConversationEntry(
 	s: HostCompositionContext,
@@ -1377,20 +1416,12 @@ export async function rememberConversationEntry(
 	if (!source && sessionSource) {
 		throw { kind: "conflict", reason: "memory_source_not_current_branch" };
 	}
-	const fallback = entryId ? legacyMessageSource(s, conversationId, entryId) : undefined;
-	const canonical = entryId ? anyLegacyMessageSource(s, conversationId, entryId) : undefined;
-	if (!source && canonical && !fallback) {
-		throw { kind: "conflict", reason: "memory_source_not_current_branch" };
-	}
-	if (!source && !fallback) {
+	if (!source) {
 		throw { kind: "not_found", reason: "memory_source_not_found" };
 	}
-	const text = source ? piEntryText(source.message) : (fallback?.text ?? "");
+	const text = piEntryText(source.message);
 	if (!text) throw { kind: "invalid_input", reason: "memory_source_empty" };
-	const sourceEntryId = source?.id ?? fallback?.id;
-	if (sourceEntryId === undefined) {
-		throw { kind: "internal", reason: "memory_source_invariant" };
-	}
+	const sourceEntryId = source.id;
 	const scope = { ...s.memoryScope, companionId };
 	await s.memoryBackend.open({ scope });
 	const record = await s.memoryBackend.remember({
@@ -1413,60 +1444,8 @@ export async function rememberConversationEntry(
 }
 
 /**
- * Recover an adopted Host message only when its canonical branch is current.
- * This is the safe fallback for legacy rows and Pi projections without a
- * matching entry; arbitrary content is never used to identify a source.
+ * Extract text from a native Pi message for memory provenance.
  */
-function legacyMessageSource(
-	s: HostCompositionContext,
-	conversationId: string,
-	entryId: string | undefined,
-): { id: string; text: string } | undefined {
-	if (!entryId) return undefined;
-	const row = s.orm
-		.select({
-			id: messages.id,
-			branchId: messages.branchId,
-			text: messageVersions.content,
-		})
-		.from(messages)
-		.innerJoin(messageVersions, eq(messageVersions.messageId, messages.id))
-		.where(
-			and(
-				eq(messages.id, entryId),
-				eq(messages.conversationId, conversationId),
-				eq(messageVersions.adopted, 1),
-			),
-		)
-		.orderBy(desc(messageVersions.createdAt))
-		.limit(1)
-		.get();
-	if (!row || !isVisibleOnActiveBranch(s, conversationId, row.branchId, row.id)) return undefined;
-	return { id: row.id, text: row.text };
-}
-
-function anyLegacyMessageSource(
-	s: HostCompositionContext,
-	conversationId: string,
-	entryId: string | undefined,
-): { id: string; text: string } | undefined {
-	if (!entryId) return undefined;
-	return s.orm
-		.select({ id: messages.id, text: messageVersions.content })
-		.from(messages)
-		.innerJoin(messageVersions, eq(messageVersions.messageId, messages.id))
-		.where(
-			and(
-				eq(messages.id, entryId),
-				eq(messages.conversationId, conversationId),
-				eq(messageVersions.adopted, 1),
-			),
-		)
-		.orderBy(desc(messageVersions.createdAt))
-		.limit(1)
-		.get();
-}
-
 function piEntryText(message: unknown): string {
 	if (!message || typeof message !== "object" || !("content" in message)) return "";
 	const content = message.content;

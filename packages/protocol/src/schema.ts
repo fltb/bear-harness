@@ -1020,65 +1020,71 @@ export const ConversationSearchResponse = z.strictObject({
 // Message
 // ---------------------------------------------------------------------------
 
-export const MessageRole = z.union([
-	z.literal("user"),
-	z.literal("assistant"),
-	z.literal("system"),
-]);
-export const MessageVersion = z.strictObject({
-	id: MessageVersionId,
-	role: MessageRole,
-	content: z.string().max(65536),
-	editedByUser: z.boolean(),
-	createdAt: WireTimestamp,
-	adopted: z.boolean(),
+const PiSessionEntryId = z.string().min(1).max(128);
+const PiTimelineBase = {
+	id: PiSessionEntryId,
+	parentId: PiSessionEntryId.nullable(),
+	timestamp: WireTimestamp,
+} as const;
+const PiTimelineToolCall = z.strictObject({
+	toolName: z.string().min(1).max(200),
+	toolCallId: z.string().min(1).max(256),
 });
-export const Message = z
-	.strictObject({
-		id: MessageId,
-		role: MessageRole,
-		status: MessageStatus.optional(),
-		failureReason: z.string().max(256).optional(),
-		adoptedVersionId: MessageVersionId.optional(),
-		versions: z.array(MessageVersion).max(20),
-		createdAt: WireTimestamp,
-	})
-	.superRefine((message, context) => {
-		if (
-			message.adoptedVersionId !== undefined &&
-			!message.versions.some((version) => version.id === message.adoptedVersionId)
-		) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				path: ["adoptedVersionId"],
-				message: "adoptedVersionId must reference a listed version",
-			});
-		}
-		const messageTime = Date.parse(message.createdAt);
-		for (const [index, version] of message.versions.entries()) {
-			if (Date.parse(version.createdAt) < messageTime) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					path: ["versions", index, "createdAt"],
-					message: "version timestamp must not precede message timestamp",
-				});
-			}
-		}
-		if (message.status !== "failed" && message.failureReason !== undefined) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				path: ["failureReason"],
-				message: "failureReason requires failed status",
-			});
-		}
-	});
+const PiTimelineContextEntry = z.strictObject({
+	...PiTimelineBase,
+	kind: z.union([
+		z.literal("thinking_level_change"),
+		z.literal("model_change"),
+		z.literal("compaction"),
+		z.literal("branch_summary"),
+		z.literal("custom"),
+		z.literal("custom_message"),
+		z.literal("label"),
+		z.literal("session_info"),
+	]),
+});
+const PiTimelineUserMessage = z.strictObject({
+	...PiTimelineBase,
+	kind: z.literal("message"),
+	role: z.literal("user"),
+	text: z.string().max(65536),
+});
+const PiTimelineAssistantMessage = z.strictObject({
+	...PiTimelineBase,
+	kind: z.literal("message"),
+	role: z.literal("assistant"),
+	text: z.string().max(65536).optional(),
+	toolCalls: z.array(PiTimelineToolCall).max(100).optional(),
+});
+const PiTimelineToolResult = z.strictObject({
+	...PiTimelineBase,
+	kind: z.literal("message"),
+	role: z.literal("tool"),
+	toolName: z.string().min(1).max(200),
+	toolCallId: z.string().min(1).max(256),
+	status: z.union([z.literal("succeeded"), z.literal("failed")]),
+});
+/** Security-safe direct projection of one native Pi SessionManager entry. */
+export const PiTimelineEntry = z.union([
+	PiTimelineUserMessage,
+	PiTimelineAssistantMessage,
+	PiTimelineToolResult,
+	PiTimelineContextEntry,
+]);
+export type PiTimelineEntry = z.infer<typeof PiTimelineEntry>;
+export const PiTimeline = z.strictObject({
+	entries: z.array(PiTimelineEntry).max(MAX_ARRAY_LENGTH),
+	activeLeafId: PiSessionEntryId.optional(),
+});
+export type PiTimeline = z.infer<typeof PiTimeline>;
+
 export const ConversationSelectResponse = z.strictObject({
 	activeConversationId: ConversationId,
 	activeBranchId: BranchId.optional(),
 	id: ConversationId,
 	title: z.string().max(MAX_STRING_LENGTH),
 	sceneTitle: z.string().max(MAX_STRING_LENGTH),
-	messages: z.array(Message).max(MAX_ARRAY_LENGTH),
+	piTimeline: PiTimeline,
 });
 export const MessageSendRequest = z.strictObject({
 	conversationId: ConversationId,
@@ -1168,7 +1174,6 @@ export const MemoryCaptureCreatedBy = z.union([
 ]);
 export type MemoryCaptureCreatedBy = z.infer<typeof MemoryCaptureCreatedBy>;
 const MemoryBackendId = z.string().min(1).max(128);
-const PiSessionEntryId = z.string().min(1).max(128);
 export const MemoryCaptureRequest = z.strictObject({
 	conversationId: ConversationId,
 	entryId: PiSessionEntryId,
@@ -1251,9 +1256,36 @@ export const MemoryEditRequest = z.strictObject({
 	entryId: z.string().min(1).max(128),
 	newText: z.string().min(1).max(MAX_STRING_LENGTH),
 });
-export const MemoryPrepareEmbeddingRequest = z.strictObject({});
-/** Successful only after the local model is downloaded, loaded, and ready. */
-export const MemoryPrepareEmbeddingResponse = z.strictObject({
+export const LocalEmbeddingCandidate = z.strictObject({
+	id: z.string().min(1).max(200),
+	name: z.string().min(1).max(MAX_STRING_LENGTH),
+	isDefault: z.boolean(),
+});
+export const MemoryLocalEmbeddingCatalogResponse = z.strictObject({
+	candidates: z.array(LocalEmbeddingCandidate).min(1).max(20),
+});
+export const MemoryConfigureLocalEmbeddingRequest = z
+	.strictObject({
+		provider: z.union([z.literal("none"), z.literal("local")]),
+		candidateId: z.string().min(1).max(200).optional(),
+	})
+	.superRefine((value, context) => {
+		if (value.provider === "local" && !value.candidateId) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["candidateId"],
+				message: "candidateId is required for local embedding",
+			});
+		}
+		if (value.provider === "none" && value.candidateId !== undefined) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["candidateId"],
+				message: "candidateId is not valid for disabled embedding",
+			});
+		}
+	});
+export const MemoryConfigureLocalEmbeddingResponse = z.strictObject({
 	ready: z.literal(true),
 });
 
@@ -1793,14 +1825,7 @@ export const SettingsData = z.strictObject({
 		apiKey: z.string().min(1).max(8192).optional(),
 		model: z.string().min(1).max(200).optional(),
 		dimensions: z.number().int().safe().min(0).max(65536).optional(),
-		localModel: z
-			.union([
-				z.literal("bge-base-zh"),
-				z.literal("embeddinggemma"),
-				z.literal("multilingual-e5"),
-				z.literal("custom"),
-			])
-			.optional(),
+		localModel: z.string().min(1).max(200).optional(),
 		customPath: z.string().min(1).max(4096).optional(),
 	}),
 	modelDownloadMirror: z.strictObject({
@@ -1895,6 +1920,11 @@ export const AuditExportResponse = z.strictObject({
 	lines: z.string().max(32_000_000),
 	verified: z.boolean(),
 });
+const CustomProviderModel = z.strictObject({
+	id: z.string().min(1).max(200),
+	name: z.string().min(1).max(200).optional(),
+	supportsImages: z.boolean().optional(),
+});
 export const ProviderCustomUpsertRequest = z.strictObject({
 	providerId: z
 		.string()
@@ -1903,9 +1933,8 @@ export const ProviderCustomUpsertRequest = z.strictObject({
 		.regex(/^[a-z0-9][a-z0-9._-]*$/),
 	name: z.string().min(1).max(100),
 	baseUrl: z.string().min(8).max(2048),
-	modelId: z.string().min(1).max(200),
+	models: z.array(CustomProviderModel).min(1).max(1000),
 	apiKey: z.string().min(1).max(8192).optional(),
-	supportsImages: z.boolean().optional(),
 });
 export const ProviderImportPiConfigRequest = z.strictObject({
 	configJson: z.string().min(2).max(262_144),
@@ -1930,7 +1959,7 @@ export const ConversationSnapshot = z.strictObject({
 	id: ConversationId.optional(),
 	title: z.string().max(MAX_STRING_LENGTH).optional(),
 	sceneTitle: z.string().max(MAX_STRING_LENGTH).optional(),
-	messages: z.array(Message).max(MAX_ARRAY_LENGTH).optional(),
+	piTimeline: PiTimeline.optional(),
 });
 export const MemorySnapshot = z.strictObject({
 	entries: z.array(MemoryEntry).max(MAX_ARRAY_LENGTH).optional(),
@@ -2118,10 +2147,15 @@ export const RPC = {
 		forget: endpoint("memory.forget:v1", MemoryForgetRequest, EmptyResponse),
 		edit: endpoint("memory.edit:v1", MemoryEditRequest, EmptyResponse),
 		exclude: endpoint("memory.exclude:v1", MemoryExcludeRequest, EmptyResponse),
-		prepareEmbedding: endpoint(
-			"memory.prepareEmbedding:v1",
-			MemoryPrepareEmbeddingRequest,
-			MemoryPrepareEmbeddingResponse,
+		localEmbeddingCatalog: endpoint(
+			"memory.localEmbeddingCatalog:v1",
+			z.strictObject({}),
+			MemoryLocalEmbeddingCatalogResponse,
+		),
+		configureLocalEmbedding: endpoint(
+			"memory.configureLocalEmbedding:v1",
+			MemoryConfigureLocalEmbeddingRequest,
+			MemoryConfigureLocalEmbeddingResponse,
 		),
 		candidatesList: endpoint(
 			"memory.candidates.list:v1",

@@ -43,6 +43,7 @@ import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
 import { ExecutorRouter } from "./executors/router.js";
 import type { MemoryBackend } from "./memory/backend.js";
 import { namespaceFor } from "./memory/tencentdb-backend.js";
+import { findLocalEmbeddingCandidate } from "./memory/local-embedding.js";
 import type { DeepPartial } from "./memory/tencentdb-runtime.js";
 import { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import { ModelRegistry } from "./models/registry.js";
@@ -568,12 +569,6 @@ export class HostRuntime {
 				// retention is best-effort at boot
 			});
 			await this.memoryRuntime.start();
-			// Local embedding: preload the offline model in the background so the
-			// first hybrid recall doesn't pay download + load latency synchronously.
-			const memoryVector = this.composition.appSettings.load().memoryVectorService;
-			if (memoryVector.enabled && memoryVector.provider === "local") {
-				void this.memoryRuntime.startLocalEmbeddingWarmup();
-			}
 			const activeCharacterId = this.characterLoader.getActiveCharacterId(
 				this.composition.orm,
 				this.composition.defaultCharacterId,
@@ -647,16 +642,9 @@ function mergeEmbeddingConfig(
 	};
 	if (service.provider === "local") {
 		embedding.provider = "local";
-		const { localModel, customPath } = service;
-		if (localModel === "bge-base-zh") {
-			embedding.modelPath = "hf:CompendiumLabs/bge-small-zh-v1.5-gguf/bge-small-zh-v1.5-q8_0.gguf";
-		} else if (localModel === "multilingual-e5") {
-			embedding.modelPath =
-				"hf:dinab/multilingual-e5-base-Q8_0-GGUF/multilingual-e5-base-q8_0.gguf";
-		} else if (localModel === "custom" && customPath?.trim()) {
-			embedding.modelPath = customPath.trim();
-		}
-		// embeddinggemma (default) leaves modelPath undefined → TdaiCore uses its built-in default
+		embedding.modelPath = service.localModel
+			? findLocalEmbeddingCandidate(service.localModel)?.modelPath
+			: undefined;
 	} else {
 		embedding.provider = "remote";
 		embedding.baseUrl = service.baseUrl ?? "";

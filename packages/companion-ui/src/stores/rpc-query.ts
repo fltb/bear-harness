@@ -12,6 +12,7 @@ export const queryKeys = {
 	memoryProjection: (scope?: string, query?: string) =>
 		["memory", "projection", scope ?? null, query ?? null] as const,
 	memoryCandidates: (status?: string) => ["memory", "candidates", status ?? null] as const,
+	localEmbeddingCatalog: ["memory", "local-embedding-catalog"] as const,
 	runs: ["runs"] as const,
 	commissions: ["commissions"] as const,
 	artifacts: ["artifacts"] as const,

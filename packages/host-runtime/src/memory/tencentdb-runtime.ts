@@ -459,8 +459,9 @@ class TdaiDirectMemoryFacade implements TencentDbMemoryCoreFacade {
 
 export class TencentDbRuntime {
 	readonly backend: TencentDbMemoryBackend;
-	private readonly core: TdaiCore;
-	private readonly config: MemoryTdaiConfig;
+	private core: TdaiCore;
+	private config: MemoryTdaiConfig;
+	private readonly createCore: (config: MemoryTdaiConfig) => TdaiCore;
 	private readonly logger?: Logger;
 	private started = false;
 	private closed = false;
@@ -476,14 +477,15 @@ export class TencentDbRuntime {
 			models: options.models,
 			logger: options.logger,
 		});
-		const config = deepMerge(DEFAULT_MEMORY_CONFIG, options.memoryConfig);
-		this.config = config;
+		this.createCore = (config) =>
+			new TdaiCore({
+				hostAdapter: adapter,
+				config,
+				instanceId: `${options.installationId}:${options.userId}:${options.companionId}`,
+			});
+		this.config = deepMerge(DEFAULT_MEMORY_CONFIG, options.memoryConfig);
 		this.logger = options.logger;
-		this.core = new TdaiCore({
-			hostAdapter: adapter,
-			config,
-			instanceId: `${options.installationId}:${options.userId}:${options.companionId}`,
-		});
+		this.core = this.createCore(this.config);
 		const facade = new TdaiDirectMemoryFacade(() => this.core.getVectorStore());
 		this.backend = new TencentDbMemoryBackend(facade);
 	}
@@ -518,36 +520,8 @@ export class TencentDbRuntime {
 	}
 
 	/**
-	 * Preload the local embedding model in the background.
-	 *
-	 * TdaiCore deliberately does not call `startWarmup()` itself for local
-	 * providers (model download must happen at a host-chosen time). This method
-	 * is a no-op unless the effective embedding config uses a local provider; it
-	 * waits (bounded) for the store to finish initializing so the embedding
-	 * service exists, then kicks off the offline model download + load.
-	 *
-	 * @returns true when warmup was started on a local provider, false when the
-	 * config is not local or the service never became available.
-	 */
-	async startLocalEmbeddingWarmup(timeoutMs = 10_000): Promise<boolean> {
-		const embedding = this.config.embedding;
-		if (embedding.provider !== "local" || embedding.enabled === false) {
-			return false;
-		}
-		const service = await this.waitForEmbeddingService(timeoutMs);
-		if (!service) {
-			this.logger?.warn?.(
-				`[memory-tdai] local embedding service not ready within ${timeoutMs}ms; skipping warmup`,
-			);
-			return false;
-		}
-		service.startWarmup();
-		return true;
-	}
-	/**
-	 * Prepare the configured local embedding service and wait for the model to
-	 * finish downloading and loading. Unlike `startLocalEmbeddingWarmup`, this
-	 * is an awaited readiness boundary for explicit onboarding.
+	 * Prepare the configured local embedding service and wait for the selected
+	 * model to finish downloading and loading as an explicit Host-owned boundary.
 	 */
 	async prepareLocalEmbedding(timeoutMs = 120_000): Promise<{ ready: true }> {
 		if (this.closed) throw { kind: "unavailable", reason: "memory_runtime_closed" };
@@ -560,28 +534,24 @@ export class TencentDbRuntime {
 		} catch {
 			throw { kind: "unavailable", reason: "local_embedding_runtime_start_failed" };
 		}
-		const service = await this.waitForEmbeddingService(timeoutMs);
+		const service = this.core.getEmbeddingService();
 		if (!service) throw { kind: "unavailable", reason: "local_embedding_service_unavailable" };
 		if (!service.isReady()) {
 			service.startWarmup();
 			const waitForReady = (service as EmbeddingService & {
 				waitForReady?: () => Promise<void>;
 			}).waitForReady;
+			if (!waitForReady) {
+				throw { kind: "unavailable", reason: "local_embedding_readiness_unavailable" };
+			}
+			const timeout = Promise.withResolvers<void>();
+			const timer = setTimeout(timeout.resolve, timeoutMs);
 			try {
-				if (waitForReady) {
-					const timeout = Promise.withResolvers<void>();
-					setTimeout(timeout.resolve, timeoutMs);
-					await Promise.race([waitForReady(), timeout.promise]);
-				} else {
-					const deadline = Date.now() + timeoutMs;
-					while (!service.isReady() && Date.now() < deadline) {
-						const delay = Promise.withResolvers<void>();
-						setTimeout(delay.resolve, 100);
-						await delay.promise;
-					}
-				}
+				await Promise.race([waitForReady(), timeout.promise]);
 			} catch {
 				throw { kind: "unavailable", reason: "local_embedding_model_prepare_failed" };
+			} finally {
+				clearTimeout(timer);
 			}
 		}
 		if (!service.isReady()) {
@@ -589,17 +559,43 @@ export class TencentDbRuntime {
 		}
 		return { ready: true };
 	}
+	/** Switch to a Host-selected model and complete readiness before activation. */
+	async configureLocalEmbedding(modelPath?: string): Promise<{ ready: true }> {
+		return this.replaceEmbeddingConfig({ enabled: true, provider: "local", modelPath });
+	}
 
+	/** Replace the active local model with provider-less embedding. */
+	async disableLocalEmbedding(): Promise<void> {
+		await this.replaceEmbeddingConfig({ enabled: true, provider: "none", modelPath: undefined });
+	}
 
-	private async waitForEmbeddingService(timeoutMs: number): Promise<EmbeddingService | undefined> {
-		const deadline = Date.now() + timeoutMs;
-		for (;;) {
-			const service = this.core.getEmbeddingService();
-			if (service) return service;
-			if (Date.now() >= deadline) return undefined;
-			await new Promise((resolve) => setTimeout(resolve, 100));
+	private async replaceEmbeddingConfig(
+		embedding: Pick<MemoryTdaiConfig["embedding"], "enabled" | "provider"> & { modelPath?: string },
+	): Promise<{ ready: true }> {
+		if (this.closed) throw { kind: "unavailable", reason: "memory_runtime_closed" };
+		const previousCore = this.core;
+		const previousConfig = this.config;
+		const previousStarted = this.started;
+		const nextConfig = deepMerge(this.config, { embedding });
+		const nextCore = this.createCore(nextConfig);
+		this.core = nextCore;
+		this.config = nextConfig;
+		this.started = false;
+		try {
+			await this.start();
+			if (embedding.provider === "local") await this.prepareLocalEmbedding();
+			await previousCore.destroy();
+			return { ready: true };
+		} catch (error) {
+			this.core = previousCore;
+			this.config = previousConfig;
+			this.started = previousStarted;
+			await nextCore.destroy().catch(() => undefined);
+			throw error;
 		}
 	}
+
+
 
 	async close(signal?: AbortSignal): Promise<void> {
 		if (signal?.aborted) throw new Error("TencentDB memory runtime close aborted");

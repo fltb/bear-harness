@@ -392,167 +392,27 @@ describe("automatic continuity", () => {
 		await runtime.close();
 	});
 
-	it("projects edited content and branch ancestors after reloading the Pi conversation", async () => {
-		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-projection-"));
+
+
+	it("rejects conversations without Pi session metadata instead of projecting legacy messages", async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-unknown-format-"));
 		roots.push(dataDir);
-		let runtime = makeRuntimeAt(dataDir);
+		const runtime = makeRuntimeAt(dataDir);
 		await runtime.start();
 		const conversation = (await data(runtime, "conversation.create:v1", {})) as { id: string };
-		const sent = (await data(runtime, "message.send:v1", {
-			conversationId: conversation.id,
-			text: "旧问题",
-		})) as { messageId: string };
-		await runtime.close();
-
-		const oldPiEntryId = appendCompletedPiTurn(dataDir, conversation.id, "旧问题");
-		runtime = makeRuntimeAt(dataDir);
-		await runtime.start();
-		await data(runtime, "message.edit:v1", {
-			conversationId: conversation.id,
-			messageId: sent.messageId,
-			text: "新问题",
-			isUserMessage: true,
+		const storage = new DatabaseSync(join(dataDir, "storage", "canon.db"));
+		try {
+			storage
+				.prepare("DELETE FROM conversation_sessions WHERE conversation_id = ?")
+				.run(conversation.id);
+		} finally {
+			storage.close();
+		}
+		const response = await runtime.dispatch("conversation.select:v1", { id: conversation.id });
+		expect(response).toMatchObject({
+			ok: false,
+			error: { kind: "conflict" },
 		});
-		await runtime.close();
-
-		const session = PiSessionStore.open({
-			sessionDir: join(dataDir, "sessions"),
-			sessionFile: sessionFileFor(dataDir, conversation.id),
-		});
-		session.branchBefore(oldPiEntryId);
-		session.appendUserMessage("新问题");
-		session.appendSyntheticAssistant("已完成：新问题");
-
-		runtime = makeRuntimeAt(dataDir);
-		await runtime.start();
-		const edited = (await data(runtime, "conversation.select:v1", {
-			id: conversation.id,
-		})) as {
-			messages: Array<{
-				versions: Array<{ content: string; adopted: boolean }>;
-			}>;
-		};
-		expect(edited.messages).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					versions: expect.arrayContaining([
-						expect.objectContaining({ content: "新问题", adopted: true }),
-					]),
-				}),
-			]),
-		);
-		await data(runtime, "message.branch:v1", {
-			conversationId: conversation.id,
-			messageId: sent.messageId,
-		});
-		const branched = (await data(runtime, "conversation.select:v1", {
-			id: conversation.id,
-		})) as {
-			messages: Array<{
-				versions: Array<{ content: string; adopted: boolean }>;
-			}>;
-		};
-		expect(branched.messages).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					versions: expect.arrayContaining([
-						expect.objectContaining({ content: "新问题", adopted: true }),
-					]),
-				}),
-			]),
-		);
-		await runtime.close();
-	});
-
-	it("persists a regenerated edited reply as the single adopted response after reopening", async () => {
-		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-regenerate-"));
-		roots.push(dataDir);
-		let runtime = makeRuntimeAt(dataDir);
-		await runtime.start();
-		const conversation = (await data(runtime, "conversation.create:v1", {})) as { id: string };
-		const sent = (await data(runtime, "message.send:v1", {
-			conversationId: conversation.id,
-			text: "旧问题",
-		})) as { messageId: string };
-		await runtime.close();
-
-		appendCompletedPiTurn(dataDir, conversation.id, "旧问题");
-		runtime = makeRuntimeAt(dataDir);
-		await runtime.start();
-		await data(runtime, "message.edit:v1", {
-			conversationId: conversation.id,
-			messageId: sent.messageId,
-			text: "编辑后的问题",
-			isUserMessage: true,
-		});
-		const composition = Reflect.get(runtime, "composition") as {
-			eventBus: { publish(kind: string, payload: unknown): void };
-		};
-		composition.eventBus.publish("message_end", {
-			conversationId: conversation.id,
-			text: "EDITED_OK",
-		});
-		await runtime.close();
-
-		runtime = makeRuntimeAt(dataDir);
-		await runtime.start();
-		const before = (await data(runtime, "conversation.select:v1", {
-			id: conversation.id,
-		})) as {
-			messages: Array<{
-				id: string;
-				role: string;
-				versions: Array<{ content: string }>;
-			}>;
-		};
-		const editedAssistant = before.messages.find(
-			(message) =>
-				message.role === "assistant" &&
-				message.versions.some((version) => version.content === "EDITED_OK"),
-		);
-		if (!editedAssistant) throw new Error("expected edited assistant projection");
-		await data(runtime, "message.regenerate:v1", {
-			conversationId: conversation.id,
-			messageId: editedAssistant.id,
-		});
-
-		const regeneratedComposition = Reflect.get(runtime, "composition") as {
-			eventBus: { publish(kind: string, payload: unknown): void };
-		};
-		regeneratedComposition.eventBus.publish("message_end", {
-			conversationId: conversation.id,
-			text: "REGENERATED_EDITED_OK",
-		});
-		await runtime.close();
-
-		runtime = makeRuntimeAt(dataDir);
-		await runtime.start();
-		const reopened = (await data(runtime, "conversation.select:v1", {
-			id: conversation.id,
-		})) as {
-			messages: Array<{
-				role: string;
-				versions: Array<{ content: string; adopted: boolean }>;
-			}>;
-		};
-		const adoptedAssistants = reopened.messages.filter(
-			(message) =>
-				message.role === "assistant" &&
-				message.versions.some(
-					(version) => version.content === "REGENERATED_EDITED_OK" && version.adopted,
-				),
-		);
-		expect(adoptedAssistants).toHaveLength(1);
-		expect(
-			adoptedAssistants[0]?.versions.some(
-				(version) => version.content === "EDITED_OK" && version.adopted === false,
-			),
-		).toBe(true);
-		expect(
-			adoptedAssistants[0]?.versions.some(
-				(version) => version.content === "REGENERATED_EDITED_OK" && version.adopted === true,
-			),
-		).toBe(true);
 		await runtime.close();
 	});
 

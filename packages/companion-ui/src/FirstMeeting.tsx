@@ -6,6 +6,7 @@ import { Root as Link } from "@kobalte/core/link";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { For, Show } from "solid-js";
+import { EmbeddingSettings } from "./features/EmbeddingSettings.js";
 import { ModelPresetField, ProviderSelectionField } from "./ModelSelectionFields.js";
 import type { CharacterOnboardingStep } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
@@ -43,12 +44,6 @@ export function FirstMeeting() {
 		memorySetupRequired,
 		selectedProvider,
 		providerConnected,
-		embeddingProviders,
-		localEmbeddingModels,
-		embeddingProvider,
-		setEmbeddingProvider,
-		localEmbeddingModel,
-		setLocalEmbeddingModel,
 		currentStep,
 		currentStepIndex,
 		currentStepLabel,
@@ -61,7 +56,6 @@ export function FirstMeeting() {
 		selectProvider,
 		setModelId,
 		pinModel,
-		saveMemorySetup,
 		saveProviderKey,
 		saveProviderBaseUrl,
 		importPiConfig,
@@ -393,98 +387,7 @@ export function FirstMeeting() {
 							<div class="intro-step">{t("settings.memoryVectorSection")}</div>
 							<h2>{t("settings.memoryVectorEnabled")}</h2>
 							<p>{t("modelSetup.memorySetupNote")}</p>
-							<p>{t("settings.memoryVectorLocalNote")}</p>
-							<div class="model-setup-pickers">
-								<Select<"none" | "local">
-									options={embeddingProviders()}
-									value={embeddingProvider()}
-									optionValue={(provider) => provider}
-									optionTextValue={(provider) => t(`settings.vectorProviders.${provider}` as never)}
-									onChange={(provider) => setEmbeddingProvider(provider ?? "none")}
-									itemComponent={(itemProps) => (
-										<Select.Item item={itemProps.item} class="select-item">
-											<Select.ItemLabel>
-												{t(`settings.vectorProviders.${itemProps.item.rawValue}` as never)}
-											</Select.ItemLabel>
-										</Select.Item>
-									)}
-								>
-									<Select.Label class="field-label">{t("settings.vectorProvider")}</Select.Label>
-									<Select.Trigger class="select-trigger" aria-label={t("settings.vectorProvider")}>
-										<Select.Value<"none" | "local"> class="select-value">
-											{(state) =>
-												state.selectedOption()
-													? t(`settings.vectorProviders.${state.selectedOption()}` as never)
-													: ""
-											}
-										</Select.Value>
-										<Select.Icon class="select-icon" aria-hidden="true">
-											⌄
-										</Select.Icon>
-									</Select.Trigger>
-									<Select.Portal>
-										<Select.Content class="select-content">
-											<Select.Listbox class="select-listbox" />
-										</Select.Content>
-									</Select.Portal>
-								</Select>
-								<Show when={embeddingProvider() === "local"}>
-									<Select<string>
-										options={localEmbeddingModels()}
-										value={localEmbeddingModel()}
-										optionValue={(model) => model}
-										optionTextValue={(model) => t(`settings.localModels.${model}` as never)}
-										onChange={(model) =>
-											model &&
-											setLocalEmbeddingModel(
-												model as "embeddinggemma" | "bge-base-zh" | "multilingual-e5",
-											)
-										}
-										itemComponent={(itemProps) => (
-											<Select.Item item={itemProps.item} class="select-item">
-												<Select.ItemLabel>
-													{t(`settings.localModels.${itemProps.item.rawValue}` as never)}
-												</Select.ItemLabel>
-											</Select.Item>
-										)}
-									>
-										<Select.Label class="field-label">{t("settings.localModel")}</Select.Label>
-										<Select.Trigger class="select-trigger" aria-label={t("settings.localModel")}>
-											<Select.Value<string> class="select-value">
-												{(state) =>
-													state.selectedOption()
-														? t(`settings.localModels.${state.selectedOption()}` as never)
-														: ""
-												}
-											</Select.Value>
-											<Select.Icon class="select-icon" aria-hidden="true">
-												⌄
-											</Select.Icon>
-										</Select.Trigger>
-										<Select.Portal>
-											<Select.Content class="select-content">
-												<Select.Listbox class="select-listbox" />
-											</Select.Content>
-										</Select.Portal>
-									</Select>
-								</Show>
-							</div>
-							<div class="intro-actions">
-								<Button
-									type="button"
-									class="primary"
-									data-variant="primary"
-									disabled={setupBusy()}
-									onClick={() => void saveMemorySetup()}
-								>
-									{t("messages.continue")}
-								</Button>
-							</div>
-							<Show when={setupError()}>
-								<p class="intro-error" role="alert">
-									{setupError()}
-								</p>
-							</Show>
+							<EmbeddingSettings mode="onboarding" />
 						</article>
 					</Dialog.Content>
 				</Dialog>

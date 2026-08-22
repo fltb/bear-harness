@@ -1,28 +1,14 @@
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { Namespace, TFunction } from "i18next";
-import type { CharacterOnboardingStep, ConfiguredModel, ProviderLoginResult, SettingsPatch } from "./companion.js";
+import type {
+	CharacterOnboardingStep,
+	ConfiguredModel,
+	ProviderLoginResult,
+	SettingsPatch,
+} from "./companion.js";
 import type { CompanionStore } from "./companion.js";
-
-const LOCAL_EMBEDDING_MODELS = ["embeddinggemma", "bge-base-zh", "multilingual-e5"] as const;
 const VECTOR_PROVIDERS = ["none", "remote", "local"] as const;
 const PROXY_MODES = ["direct", "auto", "manual"] as const;
-const LOCAL_MODELS = [
-	{
-		id: "embeddinggemma",
-		source: "hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf",
-		dimensions: 768,
-	},
-	{
-		id: "bge-base-zh",
-		source: "hf:CompendiumLabs/bge-small-zh-v1.5-gguf/bge-small-zh-v1.5-q8_0.gguf",
-		dimensions: 768,
-	},
-	{
-		id: "multilingual-e5",
-		source: "hf:dinab/multilingual-e5-base-Q8_0-GGUF/multilingual-e5-base-q8_0.gguf",
-		dimensions: 768,
-	},
-] as const;
 const VECTOR_PRESETS = [
 	{ value: "BAAI/bge-m3", key: "bge-m3", dimensions: 1024 },
 	{ value: "Qwen/Qwen3-Embedding-8B", key: "qwen3-embedding", dimensions: 1024 },
@@ -30,10 +16,8 @@ const VECTOR_PRESETS = [
 	{ value: "text-embedding-3-small", key: "openai-3-small", dimensions: 1536 },
 ] as const;
 type Translate = TFunction<Namespace, undefined>;
-type LocalEmbeddingModel = (typeof LOCAL_EMBEDDING_MODELS)[number];
 type VectorProvider = (typeof VECTOR_PROVIDERS)[number];
 type ProxyMode = (typeof PROXY_MODES)[number];
-type EmbeddingProvider = "none" | "local";
 
 function messageOf(value: unknown): string {
 	return value instanceof Error ? value.message : String(value);
@@ -45,12 +29,7 @@ function hasMethod<T extends (...args: never[]) => unknown>(value: unknown): val
 function routeOptionId(route: { providerId: string; modelId: string }): string {
 	return `${route.providerId}\u0000${route.modelId}`;
 }
-type LocalModelId = (typeof LOCAL_MODELS)[number]["id"] | "custom";
-type LocalModelOption = {
-	id: LocalModelId;
-	source: string;
-	dimensions: number;
-};
+
 
 export function createFirstMeetingWorkflow(store: CompanionStore, t: Translate) {
 	const [textAnswer, setTextAnswer] = createSignal("");
@@ -65,10 +44,6 @@ export function createFirstMeetingWorkflow(store: CompanionStore, t: Translate) 
 	const [setupError, setSetupError] = createSignal<string | null>(null);
 	const [setupBusy, setSetupBusy] = createSignal(false);
 	const [modelSetupComplete, setModelSetupComplete] = createSignal(false);
-	const [memorySetupComplete, setMemorySetupComplete] = createSignal(false);
-	const [embeddingProvider, setEmbeddingProvider] = createSignal<"none" | "local">("local");
-	const [localEmbeddingModel, setLocalEmbeddingModel] =
-		createSignal<LocalEmbeddingModel>("embeddinggemma");
 	const [connectedProviderId, setConnectedProviderId] = createSignal("");
 	const [oauth, setOauth] = createSignal<ProviderLoginResult | null>(null);
 	const [oauthAnswer, setOauthAnswer] = createSignal("");
@@ -93,13 +68,8 @@ export function createFirstMeetingWorkflow(store: CompanionStore, t: Translate) 
 		if (!modelApiAvailable) return true;
 		return !store.model.loading() && store.model.data()?.defaults?.reply === undefined;
 	});
-	const memorySetupRequired = createMemo(() => modelSetupComplete() && !memorySetupComplete());
-	const embeddingProviders = createMemo<EmbeddingProvider[]>(() => ["local", "none"]);
-	const localEmbeddingModels = createMemo(() => [...LOCAL_EMBEDDING_MODELS]);
-	const embeddingConfig = createMemo(() =>
-		embeddingProvider() === "local"
-			? { enabled: true, provider: "local" as const, localModel: localEmbeddingModel() }
-			: { enabled: false, provider: "none" as const },
+	const memorySetupRequired = createMemo(
+		() => modelSetupComplete() && !(store.embedding?.localConfigureMutation?.isSuccess ?? false),
 	);
 	const currentStep = createMemo<CharacterOnboardingStep | undefined>(() => {
 		const definition = flow();
@@ -148,21 +118,6 @@ export function createFirstMeetingWorkflow(store: CompanionStore, t: Translate) 
 			);
 			await store.model.setDefaultReply(providerId(), modelId());
 			setModelSetupComplete(true);
-		} catch (cause) {
-			setSetupError(messageOf(cause));
-		} finally {
-			setSetupBusy(false);
-		}
-	};
-	const saveMemorySetup = async (): Promise<void> => {
-		setSetupBusy(true);
-		setSetupError(null);
-		try {
-			await store.settings.set({ memoryVectorService: embeddingConfig() } as SettingsPatch);
-			// Preparation is authoritative: completion is only recorded after Host
-			// confirms that the selected local embedding model is ready.
-			if (embeddingProvider() === "local") await store.memory.prepareEmbedding();
-			setMemorySetupComplete(true);
 		} catch (cause) {
 			setSetupError(messageOf(cause));
 		} finally {
@@ -297,15 +252,8 @@ export function createFirstMeetingWorkflow(store: CompanionStore, t: Translate) 
 		setupBusy,
 		modelRequired,
 		memorySetupRequired,
-		modelSetupComplete,
-		embeddingProviders,
-		localEmbeddingModels,
 		selectedProvider,
 		providerConnected,
-		embeddingProvider,
-		setEmbeddingProvider,
-		localEmbeddingModel,
-		setLocalEmbeddingModel,
 		currentStep,
 		currentStepIndex,
 		currentStepLabel,
@@ -319,7 +267,6 @@ export function createFirstMeetingWorkflow(store: CompanionStore, t: Translate) 
 		selectProvider,
 		setModelId,
 		pinModel,
-		saveMemorySetup,
 		saveProviderKey,
 		saveProviderBaseUrl,
 		importPiConfig,
@@ -529,77 +476,23 @@ export function createSettingsWorkflow(store: CompanionStore, t: Translate) {
 export function createNetworkMemoryWorkflow(store: CompanionStore, t: Translate) {
 	const [proxyMode, setProxyMode] = createSignal<ProxyMode>("direct");
 	const [proxyUrl, setProxyUrl] = createSignal("");
-	const [vectorEnabled, setVectorEnabled] = createSignal(false);
-	const [vectorProvider, setVectorProvider] = createSignal<VectorProvider>("none");
-	const [remoteBaseUrl, setRemoteBaseUrl] = createSignal("");
-	const [remoteApiKey, setRemoteApiKey] = createSignal("");
-	const [remoteModel, setRemoteModel] = createSignal("");
-	const [remoteDimensions, setRemoteDimensions] = createSignal(1024);
-	const [localCustomPath, setLocalCustomPath] = createSignal("");
-	const [mirrorEndpoint, setMirrorEndpoint] = createSignal("");
 	const [saving, setSaving] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
 	const [feedback, setFeedback] = createSignal<string | null>(null);
 	const [initialized, setInitialized] = createSignal(false);
-	const [localModel, setLocalModel] = createSignal<LocalModelId>("embeddinggemma");
-	const localModelOptions = createMemo<LocalModelOption[]>(() => [
-		...LOCAL_MODELS.map((model) => ({
-			id: model.id,
-			source: model.source,
-			dimensions: model.dimensions,
-		})),
-		{ id: "custom", source: "", dimensions: 768 },
-	]);
-	const vectorPresets = createMemo(() =>
-		VECTOR_PRESETS.map((preset) => ({
-			value: preset.value,
-			key: preset.key,
-			dimensions: preset.dimensions,
-		})),
-	);
-	const localModelSelection = createMemo(() => localModelOptions().find((model) => model.id === localModel()));
-	const memoryVectorConfig = createMemo(() => ({
-		enabled: vectorEnabled(),
-		provider: vectorProvider(),
-		baseUrl: vectorProvider() === "remote" ? remoteBaseUrl().trim() : undefined,
-		apiKey: vectorProvider() === "remote" ? remoteApiKey().trim() : undefined,
-		model: vectorProvider() === "remote" ? remoteModel().trim() : undefined,
-		dimensions: vectorProvider() === "remote" ? remoteDimensions() : undefined,
-		localModel: vectorProvider() === "local" ? localModel() : undefined,
-		customPath: vectorProvider() === "local" && localModel() === "custom" && localCustomPath().trim() ? localCustomPath().trim() : undefined,
-	}));
 	const settingsPatch = createMemo<SettingsPatch>(() => ({
 		networkProxy: {
 			mode: proxyMode(),
 			...(proxyMode() === "manual" && proxyUrl().trim() ? { url: proxyUrl().trim() } : {}),
 		},
-		memoryVectorService: memoryVectorConfig(),
-		modelDownloadMirror: { endpoint: mirrorEndpoint().trim() ? mirrorEndpoint().trim() : undefined },
 	}));
 	createEffect(() => {
 		const settings = store.settings;
 		if (initialized() || !settings || !hasMethod(settings.data)) return;
-		const snap = settings.data();
-		if (!snap) return;
-		const proxy = snap.networkProxy ?? { mode: "direct" as const };
-		const vector = snap.memoryVectorService ?? { enabled: false, provider: "none" as const };
-		const mirror = snap.modelDownloadMirror ?? {};
-		const mode: ProxyMode =
-			proxy.mode === "manual" || proxy.mode === "auto" || proxy.mode === "direct" ? proxy.mode : "direct";
-		const provider: VectorProvider =
-			vector.provider === "remote" || vector.provider === "local" || vector.provider === "none"
-				? vector.provider
-				: "none";
-		setProxyMode(mode);
+		const proxy = settings.data()?.networkProxy;
+		if (!proxy) return;
+		setProxyMode(proxy.mode);
 		setProxyUrl(proxy.url ?? "");
-		setVectorEnabled(vector.enabled === true);
-		setVectorProvider(provider);
-		setRemoteBaseUrl(vector.baseUrl ?? "");
-		setRemoteModel(vector.model ?? "");
-		setRemoteDimensions(vector.dimensions ?? 1024);
-		setLocalModel(vector.localModel ?? "embeddinggemma");
-		setLocalCustomPath(vector.customPath ?? "");
-		setMirrorEndpoint(mirror.endpoint ?? "");
 		setInitialized(true);
 	});
 	const save = async (): Promise<void> => {
@@ -608,7 +501,6 @@ export function createNetworkMemoryWorkflow(store: CompanionStore, t: Translate)
 		setFeedback(null);
 		try {
 			await store.settings.set(settingsPatch());
-			if (vectorProvider() === "local") await store.memory.prepareEmbedding();
 			setFeedback(t("settings.saved"));
 		} catch (cause) {
 			setError(messageOf(cause));
@@ -619,31 +511,8 @@ export function createNetworkMemoryWorkflow(store: CompanionStore, t: Translate)
 	return {
 		proxyMode,
 		proxyUrl,
-		vectorEnabled,
-		vectorProvider,
-		remoteBaseUrl,
-		remoteApiKey,
-		remoteModel,
-		remoteDimensions,
-		localModel,
-		localCustomPath,
-		mirrorEndpoint,
 		setProxyMode,
 		setProxyUrl,
-		setVectorEnabled,
-		setVectorProvider,
-		setRemoteBaseUrl,
-		setRemoteApiKey,
-		setRemoteModel,
-		setRemoteDimensions,
-		setLocalModel,
-		setLocalCustomPath,
-		setMirrorEndpoint,
-		localModelOptions,
-		localModelSelection,
-		vectorPresets,
-		memoryVectorConfig,
-		settingsPatch,
 		saving,
 		error,
 		feedback,
@@ -651,5 +520,5 @@ export function createNetworkMemoryWorkflow(store: CompanionStore, t: Translate)
 	};
 }
 
-export { LOCAL_EMBEDDING_MODELS, LOCAL_MODELS, PROXY_MODES, VECTOR_PRESETS, VECTOR_PROVIDERS };
-export type { LocalEmbeddingModel, ProxyMode, VectorProvider };
+export { PROXY_MODES, VECTOR_PRESETS, VECTOR_PROVIDERS };
+export type { ProxyMode, VectorProvider };

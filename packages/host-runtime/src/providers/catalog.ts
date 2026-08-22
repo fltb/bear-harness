@@ -25,8 +25,15 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Models } from "@earendil-works/pi-ai";
+import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { CredentialStatus, CredentialStore } from "./credential-store.js";
+
+const BUILTIN_PROVIDER_IDS = new Set<string>(getBuiltinProviders());
+
+function isBuiltinProvider(providerId: string): boolean {
+	return BUILTIN_PROVIDER_IDS.has(providerId);
+}
 
 /**
  * Product policy: provider ids the host never surfaces or accepts
@@ -118,6 +125,39 @@ function safeBaseUrl(value: unknown): string | undefined {
 		return endpoint.toString().replace(/\/$/, "");
 	} catch {
 		return undefined;
+	}
+}
+
+function parseHttpEndpoint(value: string): URL {
+	let endpoint: URL;
+	try {
+		endpoint = new URL(value);
+	} catch {
+		throw { kind: "invalid_request", reason: "custom_provider_url_invalid" };
+	}
+	if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
+		throw { kind: "invalid_request", reason: "custom_provider_url_invalid" };
+	}
+	endpoint.username = "";
+	endpoint.password = "";
+	endpoint.search = "";
+	endpoint.hash = "";
+	return endpoint;
+}
+
+function readProviderDocument(modelsPath: string): {
+	document: Record<string, unknown>;
+	providers: Record<string, unknown>;
+} {
+	if (!existsSync(modelsPath)) return { document: {}, providers: {} };
+	try {
+		const document = JSON.parse(readFileSync(modelsPath, "utf8")) as Record<string, unknown>;
+		return {
+			document,
+			providers: isRecord(document.providers) ? document.providers : {},
+		};
+	} catch {
+		throw { kind: "conflict", reason: "custom_provider_config_invalid" };
 	}
 }
 
@@ -222,52 +262,39 @@ export class ProviderCatalog {
 		providerId: string;
 		name: string;
 		baseUrl: string;
-		modelId: string;
+		models: readonly { id: string; name?: string; supportsImages?: boolean }[];
 		apiKey?: string;
-		supportsImages?: boolean;
 	}): Promise<void> {
+		assertCustomProviderId(input.providerId);
 		assertAllowedProvider(input.providerId);
-		let endpoint: URL;
-		try {
-			endpoint = new URL(input.baseUrl);
-		} catch {
-			throw { kind: "invalid_request", reason: "custom_provider_url_invalid" };
-		}
-		if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
-			throw { kind: "invalid_request", reason: "custom_provider_url_invalid" };
-		}
+		const endpoint = parseHttpEndpoint(input.baseUrl);
 		const modelsPath = join(this.agentDir, "models.json");
 		const temporaryPath = `${modelsPath}.tmp`;
-		let providers: Record<string, unknown> = {};
-		if (existsSync(modelsPath)) {
-			try {
-				const current = JSON.parse(readFileSync(modelsPath, "utf8")) as { providers?: unknown };
-				if (current.providers && typeof current.providers === "object") {
-					providers = current.providers as Record<string, unknown>;
-				}
-			} catch {
-				throw { kind: "conflict", reason: "custom_provider_config_invalid" };
-			}
-		}
+		const { document, providers } = readProviderDocument(modelsPath);
+		const current = providers[input.providerId];
+		const currentConfig =
+			current && typeof current === "object" && !Array.isArray(current)
+				? (current as Record<string, unknown>)
+				: {};
 		mkdirSync(dirname(modelsPath), { recursive: true, mode: 0o700 });
 		writeFileSync(
 			temporaryPath,
 			`${JSON.stringify(
 				{
+					...document,
 					providers: {
 						...providers,
 						[input.providerId]: {
+							...currentConfig,
 							name: input.name,
 							baseUrl: endpoint.toString().replace(/\/$/, ""),
 							api: "openai-completions",
 							authHeader: true,
-							models: [
-								{
-									id: input.modelId,
-									name: input.modelId,
-									...(input.supportsImages ? { input: ["text", "image"] } : {}),
-								},
-							],
+							models: input.models.map((model) => ({
+								id: model.id,
+								name: model.name ?? model.id,
+								...(model.supportsImages ? { input: ["text", "image"] } : {}),
+							})),
 						},
 					},
 				},
@@ -280,6 +307,7 @@ export class ProviderCatalog {
 		this.runtime = null;
 		if (input.apiKey) await this.setApiKey(input.providerId, input.apiKey);
 	}
+
 
 	async importPiConfig(configJson: string): Promise<ProviderModelInfoWithProvider[]> {
 		let fragment: unknown;
@@ -294,8 +322,23 @@ export class ProviderCatalog {
 		if (containsKey(fragment, "apiKey")) {
 			throw { kind: "invalid_request", reason: "pi_model_config_must_not_contain_api_key" };
 		}
+		for (const [providerId, config] of Object.entries(fragment.providers)) {
+			if (
+				isBuiltinProvider(providerId) &&
+				isRecord(config) &&
+				("models" in config || "modelOverrides" in config)
+			) {
+				throw {
+					kind: "invalid_request",
+					reason: "pi_model_config_builtin_catalog_forbidden",
+				};
+			}
+		}
 		const importedRoutes = configuredRoutes(fragment.providers);
-		if (importedRoutes.length === 0) {
+		if (
+			importedRoutes.length === 0 &&
+			Object.keys(fragment.providers).some((providerId) => !isBuiltinProvider(providerId))
+		) {
 			throw { kind: "invalid_request", reason: "pi_model_config_requires_models" };
 		}
 
@@ -346,29 +389,10 @@ export class ProviderCatalog {
 
 	async overrideProviderBaseUrl(input: { providerId: string; baseUrl: string }): Promise<void> {
 		assertAllowedProvider(input.providerId);
-		let endpoint: URL;
-		try {
-			endpoint = new URL(input.baseUrl);
-		} catch {
-			throw { kind: "invalid_request", reason: "custom_provider_url_invalid" };
-		}
-		if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
-			throw { kind: "invalid_request", reason: "custom_provider_url_invalid" };
-		}
+		const endpoint = parseHttpEndpoint(input.baseUrl);
 		const modelsPath = join(this.agentDir, "models.json");
 		const temporaryPath = `${modelsPath}.tmp`;
-		let document: Record<string, unknown> = {};
-		let providers: Record<string, unknown> = {};
-		if (existsSync(modelsPath)) {
-			try {
-				document = JSON.parse(readFileSync(modelsPath, "utf8")) as Record<string, unknown>;
-				if (document.providers && typeof document.providers === "object") {
-					providers = document.providers as Record<string, unknown>;
-				}
-			} catch {
-				throw { kind: "conflict", reason: "custom_provider_config_invalid" };
-			}
-		}
+		const { document, providers } = readProviderDocument(modelsPath);
 		const current = providers[input.providerId];
 		const currentConfig =
 			current && typeof current === "object" ? (current as Record<string, unknown>) : {};
@@ -569,6 +593,12 @@ export class ProviderCatalog {
 function publicOAuthSession(session: OAuthSessionInternal): OAuthSessionState {
 	const { resolvePrompt: _resolvePrompt, ...result } = session;
 	return result;
+}
+
+function assertCustomProviderId(providerId: string): void {
+	if (isBuiltinProvider(providerId)) {
+		throw { kind: "invalid_request", reason: `custom_provider_must_be_custom: ${providerId}` };
+	}
 }
 
 function assertAllowedProvider(providerId: string): void {

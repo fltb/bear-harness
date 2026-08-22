@@ -1142,6 +1142,53 @@ button[data-variant="primary"]:focus-visible {
 	@apply m-0 font-serif text-[clamp(15px,1.25vw,18px)] leading-[1.6];
 }
 
+.pi-context-separator {
+	width: 100%;
+	height: 1px;
+	background: var(--line-soft);
+}
+
+.pi-tool-result {
+	@apply self-start border;
+	border-color: var(--line-soft);
+	color: var(--text-soft);
+	background: var(--surface-subtle);
+}
+
+.pi-tool-result .msg-meta {
+	display: flex;
+	gap: 8px;
+}
+
+.pi-tool-status {
+	color: var(--text-muted);
+	font-size: 10px;
+}
+
+.pi-tool-calls {
+	display: grid;
+	gap: 4px;
+	margin: 8px 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.pi-tool-call {
+	display: flex;
+	gap: 8px;
+	align-items: baseline;
+	border-top: 1px solid var(--line-soft);
+	padding-top: 4px;
+	color: var(--text-soft);
+	font-size: 10px;
+}
+
+.pi-tool-call-id {
+	color: var(--text-muted);
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 9px;
+}
+
 .composer {
 	@apply absolute bottom-[5%] right-[6%] z-[5] grid w-[min(610px,54%)] gap-2 rounded-[18px] border p-2;
 	grid-template-columns: auto minmax(0, 1fr) auto;

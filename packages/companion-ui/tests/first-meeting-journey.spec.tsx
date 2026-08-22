@@ -17,6 +17,82 @@ function renderMeeting(store: Partial<CompanionStore>) {
 	));
 }
 
+type EmbeddingConfiguration = {
+	provider: "none" | "local";
+	candidateId?: string;
+};
+
+function createEmbeddingBinding(options: {
+	configureLocalEmbedding?: (params: EmbeddingConfiguration) => Promise<unknown>;
+} = {}) {
+	const [settings, setSettings] = createSignal<Record<string, unknown>>({
+		relationshipMemoryEnabled: false,
+		conversationHistoryReadEnabled: false,
+		networkProxy: { mode: "direct" as const },
+		memoryVectorService: {
+			enabled: true,
+			provider: "local" as const,
+			localModel: "test-embedding",
+		},
+		modelDownloadMirror: {},
+	});
+	const [localConfigureError, setLocalConfigureError] = createSignal<unknown>(null);
+	const [localConfigureSuccess, setLocalConfigureSuccess] = createSignal(false);
+	const configureLocalEmbedding =
+		options.configureLocalEmbedding ?? vi.fn(async () => ({ ready: true }));
+	const localConfigureMutation = vi.fn(async (params: EmbeddingConfiguration) => {
+		setLocalConfigureError(null);
+		try {
+			const result = await configureLocalEmbedding(params);
+			setLocalConfigureSuccess(true);
+			return result;
+		} catch (cause) {
+			setLocalConfigureError(cause);
+			throw cause;
+		}
+	});
+
+	return {
+		settingsQuery: {
+			get data() {
+				return { settings: settings() };
+			},
+			isPending: false,
+			error: null,
+		},
+		catalogQuery: {
+			data: {
+				candidates: [{ id: "test-embedding", name: "Test embedding", isDefault: true }],
+			},
+			isPending: false,
+			error: null,
+		},
+		settingsMutation: {
+			mutateAsync: vi.fn(async (value: unknown) => {
+				if (typeof value === "object" && value !== null && "endpoint" in value) {
+					setSettings((current) => ({ ...current, modelDownloadMirror: value }));
+				} else {
+					setSettings((current) => ({ ...current, memoryVectorService: value }));
+				}
+				return { ok: true };
+			}),
+			isPending: false,
+			error: null,
+			isSuccess: false,
+		},
+		localConfigureMutation: {
+			mutateAsync: localConfigureMutation,
+			isPending: false,
+			get error() {
+				return localConfigureError();
+			},
+			get isSuccess() {
+				return localConfigureSuccess();
+			},
+		},
+	};
+}
+
 function baseStore(): Partial<CompanionStore> {
 	return {
 		loading: false,
@@ -40,9 +116,7 @@ function baseStore(): Partial<CompanionStore> {
 			models: () => [{ modelId: "model" }],
 			data: () => ({ defaults: { reply: { providerId: "provider", modelId: "model" } } }),
 		} as never,
-		memory: {
-			prepareEmbedding: () => Promise.resolve({ ready: true }),
-		} as never,
+		embedding: createEmbeddingBinding() as never,
 	};
 }
 
@@ -132,8 +206,7 @@ describe("first meeting journeys", () => {
 		const [defaults, setDefaults] = createSignal<{
 			reply?: { providerId: string; modelId: string };
 		}>({});
-		const saveMemorySettings = vi.fn(() => Promise.resolve());
-		const prepareEmbedding = vi.fn(() => Promise.resolve({ ready: true }));
+		const configureLocalEmbedding = vi.fn(() => Promise.resolve({ ready: true }));
 		const setDefaultReply = vi.fn(async (providerId: string, modelId: string) => {
 			setDefaults({ reply: { providerId, modelId } });
 		});
@@ -158,12 +231,7 @@ describe("first meeting journeys", () => {
 				enable,
 				setDefaultReply,
 			} as never,
-			settings: {
-				set: saveMemorySettings,
-			} as never,
-			memory: {
-				prepareEmbedding,
-			} as never,
+			embedding: createEmbeddingBinding({ configureLocalEmbedding }) as never,
 		});
 
 		const dialog = await screen.findByRole("dialog", {
@@ -193,20 +261,20 @@ describe("first meeting journeys", () => {
 			name: zhCN.settings.memoryVectorSection,
 		});
 		expect(within(memorySetup).getByLabelText(zhCN.settings.localModel)).toBeVisible();
-		await user.click(within(memorySetup).getByRole("button", { name: zhCN.messages.continue }));
-		expect(saveMemorySettings).toHaveBeenCalledWith({
-			memoryVectorService: {
-				enabled: true,
-				provider: "local",
-				localModel: "embeddinggemma",
-			},
+		await user.click(
+			within(memorySetup).getByRole("button", {
+				name: zhCN.settings.downloadAndEnableLocalModel,
+			}),
+		);
+		expect(configureLocalEmbedding).toHaveBeenCalledWith({
+			provider: "local",
+			candidateId: "test-embedding",
 		});
-		expect(prepareEmbedding).toHaveBeenCalledTimes(1);
 		await waitFor(() => expect(memorySetup).not.toBeInTheDocument());
 	});
-	it("blocks local embedding completion until preparation succeeds", async () => {
+	it("keeps local embedding onboarding open until Host configuration succeeds", async () => {
 		const user = userEvent.setup();
-		const prepareEmbedding = vi.fn(() => Promise.reject(new Error("embedding download failed")));
+		const configureLocalEmbedding = vi.fn(() => Promise.reject(new Error("embedding download failed")));
 		const provider = {
 			id: "stored-relay",
 			name: "Stored Relay",
@@ -227,8 +295,7 @@ describe("first meeting journeys", () => {
 				enable: vi.fn(() => Promise.resolve()),
 				setDefaultReply: vi.fn(() => Promise.resolve()),
 			} as never,
-			settings: { set: vi.fn(() => Promise.resolve()) } as never,
-			memory: { prepareEmbedding } as never,
+			embedding: createEmbeddingBinding({ configureLocalEmbedding }) as never,
 		});
 		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
 		await selectKobalteOption(
@@ -245,15 +312,22 @@ describe("first meeting journeys", () => {
 		const memorySetup = await screen.findByRole("dialog", {
 			name: zhCN.settings.memoryVectorSection,
 		});
-		await user.click(within(memorySetup).getByRole("button", { name: zhCN.messages.continue }));
+		await user.click(
+			within(memorySetup).getByRole("button", {
+				name: zhCN.settings.downloadAndEnableLocalModel,
+			}),
+		);
 		expect(await within(memorySetup).findByRole("alert")).toHaveTextContent("embedding download failed");
 		expect(memorySetup).toBeInTheDocument();
-		expect(prepareEmbedding).toHaveBeenCalledTimes(1);
+		expect(configureLocalEmbedding).toHaveBeenCalledWith({
+			provider: "local",
+			candidateId: "test-embedding",
+		});
 	});
 
-	it("does not prepare an embedding when onboarding chooses none", async () => {
+	it("configures provider:none without a local candidate when onboarding chooses none", async () => {
 		const user = userEvent.setup();
-		const prepareEmbedding = vi.fn(() => Promise.resolve({ ready: true }));
+		const configureLocalEmbedding = vi.fn(() => Promise.resolve({ ready: true }));
 		const provider = {
 			id: "stored-relay",
 			name: "Stored Relay",
@@ -274,8 +348,7 @@ describe("first meeting journeys", () => {
 				enable: vi.fn(() => Promise.resolve()),
 				setDefaultReply: vi.fn(() => Promise.resolve()),
 			} as never,
-			settings: { set: vi.fn(() => Promise.resolve()) } as never,
-			memory: { prepareEmbedding } as never,
+			embedding: createEmbeddingBinding({ configureLocalEmbedding }) as never,
 		});
 		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
 		await selectKobalteOption(
@@ -296,14 +369,14 @@ describe("first meeting journeys", () => {
 			name: new RegExp(zhCN.settings.vectorProvider),
 		});
 		await selectKobalteOption(user, embeddingProvider, zhCN.settings.vectorProviders.none);
-		await user.click(within(memorySetup).getByRole("button", { name: zhCN.messages.continue }));
 		await waitFor(() => expect(memorySetup).not.toBeInTheDocument());
-		expect(prepareEmbedding).not.toHaveBeenCalled();
+		expect(configureLocalEmbedding).toHaveBeenCalledWith({
+			provider: "none",
+		});
 	});
 
 	it("configures a relay URL and imports Pi providers from initial setup", async () => {
 		const user = userEvent.setup();
-		const overrideBaseUrl = vi.fn(() => Promise.resolve());
 		const importPiConfig = vi.fn(() =>
 			Promise.resolve([
 				{
@@ -316,6 +389,7 @@ describe("first meeting journeys", () => {
 			]),
 		);
 		const list = vi.fn(() => Promise.resolve({ providers: [] }));
+		const overrideBaseUrl = vi.fn(() => Promise.resolve());
 		const provider = {
 			id: "openai",
 			name: "OpenAI",

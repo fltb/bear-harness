@@ -119,9 +119,7 @@ describe("model pool settings", () => {
 			}),
 		);
 		expect(remove).toHaveAttribute("data-semantic", "danger");
-		const service = within(backstage).getByRole("button", {
-			name: new RegExp(zhCN.settings.serviceLabel),
-		});
+		const service = within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!;
 		expect(service).toHaveTextContent(zhCN.settings.chooseService);
 		expect(selectTrigger(backstage, zhCN.settings.modelLabel)).toBeDisabled();
 		await selectKobalteOption(user, service, "opencode-go");
@@ -204,9 +202,7 @@ describe("model pool settings", () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		const service = within(backstage).getByRole("button", {
-			name: new RegExp(zhCN.settings.serviceLabel),
-		});
+		const service = within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!;
 		expect(service).toHaveTextContent(zhCN.settings.chooseService);
 		await selectKobalteOption(user, service, "opencode-go");
 		await waitFor(() => expect(selectTrigger(backstage, zhCN.settings.modelLabel)).toBeEnabled());
@@ -238,9 +234,7 @@ describe("model pool settings", () => {
 		const { user, backstage } = await openSettings();
 		await selectKobalteOption(
 			user,
-			within(backstage).getByRole("button", {
-				name: new RegExp(zhCN.settings.serviceLabel),
-			}),
+			within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!,
 			"opencode-go",
 		);
 		await user.click(
@@ -302,7 +296,7 @@ describe("model pool settings", () => {
 		const { user, backstage } = await openSettings();
 		await selectKobalteOption(
 			user,
-			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
+			within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!,
 			"opencode-go",
 		);
 		const keyInput = within(backstage).getByLabelText(zhCN.settings.apiKeyLabel);
@@ -330,7 +324,7 @@ describe("model pool settings", () => {
 		const { user, backstage } = await openSettings();
 		await selectKobalteOption(
 			user,
-			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
+			within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!,
 			"opencode-go",
 		);
 		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.advancedToggle }));
@@ -369,7 +363,7 @@ describe("model pool settings", () => {
 		const { user, backstage } = await openSettings();
 		await selectKobalteOption(
 			user,
-			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
+			within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!,
 			"oauth-service",
 		);
 		await user.click(
@@ -406,7 +400,7 @@ describe("model pool settings", () => {
 		const { user, backstage } = await openSettings();
 		await selectKobalteOption(
 			user,
-			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
+			within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!,
 			"oauth-service",
 		);
 		await user.click(
@@ -438,7 +432,7 @@ describe("model pool settings", () => {
 		const { user, backstage } = await openSettings();
 		await selectKobalteOption(
 			user,
-			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
+			within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!,
 			"oauth-service",
 		);
 		await user.click(
@@ -473,7 +467,7 @@ describe("model pool settings", () => {
 		).toHaveTextContent(zhCN.settings.visionModelAuto);
 		await selectKobalteOption(
 			user,
-			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
+			within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!,
 			"opencode-go",
 		);
 		await selectKobalteOption(user, selectTrigger(backstage, zhCN.settings.modelLabel), "vision");

@@ -56,7 +56,7 @@ function renderComposerWithModels(
 			data: {
 				eventSeq: 0,
 				onboarding: COMPLETE_ONBOARDING,
-				conversation: { activeConversationId: "conversation-1" },
+				conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				model: modelState,
 			},
 		}),
@@ -110,7 +110,7 @@ describe("composer", () => {
 				data: {
 					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1" },
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
 		);
@@ -138,7 +138,7 @@ describe("composer", () => {
 				data: {
 					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1" },
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 					model: {
 						pool: {
 							models: [
@@ -260,7 +260,7 @@ describe("composer", () => {
 				data: {
 					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1" },
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 					model: modelState,
 				},
 			}),
@@ -305,7 +305,7 @@ describe("composer", () => {
 				data: {
 					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1" },
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
 		);
@@ -345,7 +345,7 @@ describe("composer", () => {
 				data: {
 					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1" },
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
 		);
@@ -394,7 +394,7 @@ describe("composer", () => {
 				data: {
 					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1" },
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
 		);
@@ -433,7 +433,7 @@ describe("composer", () => {
 				data: {
 					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1" },
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
 		);
@@ -466,7 +466,7 @@ describe("composer", () => {
 				data: {
 					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1" },
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
 		);
@@ -508,7 +508,7 @@ describe("composer", () => {
 				data: {
 					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1" },
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
 		);

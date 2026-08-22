@@ -28,10 +28,34 @@ function waitForSettings(container: HTMLElement): Promise<void> {
 		expect(triggers.some((b) => b.getAttribute("aria-label") === "代理模式")).toBe(true);
 	});
 }
+function networkSaveButton(backstage: HTMLElement): HTMLElement {
+	const network = within(backstage).getByRole("region", { name: zhCN.settings.networkSection });
+	const button = network.querySelector<HTMLElement>(":scope > .setting-actions button");
+	if (!button) throw new Error("network save button missing");
+	return button;
+}
 
 describe("NetworkAndMemorySettings", () => {
-	it("renders proxy mode, memory vector, and download mirror sections", async () => {
+	it("renders proxy mode and embedding controls", async () => {
 		const { client } = createTestClient();
+		client.settings.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					settings: {
+						relationshipMemoryEnabled: false,
+						conversationHistoryReadEnabled: false,
+						networkProxy: { mode: "direct" as const },
+						memoryVectorService: {
+							enabled: true,
+							provider: "local" as const,
+							localModel: "test-embedding",
+						},
+						modelDownloadMirror: {},
+					},
+				},
+			}),
+		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage } = await openSettings();
 		await waitForSettings(backstage);
@@ -42,8 +66,19 @@ describe("NetworkAndMemorySettings", () => {
 		expect(
 			within(backstage).getByRole("heading", { name: zhCN.settings.memoryVectorSection }),
 		).toBeTruthy();
+		const embedding = within(backstage).getByRole("region", {
+			name: zhCN.settings.memoryVectorSection,
+		});
 		expect(
-			within(backstage).getByRole("heading", { name: zhCN.settings.downloadMirrorSection }),
+			within(embedding).getByRole("heading", { name: zhCN.settings.downloadMirrorSection }),
+		).toBeTruthy();
+		expect(
+			within(embedding).getByRole("textbox", { name: zhCN.settings.downloadMirrorLabel }),
+		).toBeTruthy();
+		expect(
+			within(embedding).getByRole("button", {
+				name: zhCN.settings.downloadAndEnableLocalModel,
+			}),
 		).toBeTruthy();
 	});
 
@@ -103,7 +138,7 @@ describe("NetworkAndMemorySettings", () => {
 		await user.clear(proxyUrlField);
 		await user.type(proxyUrlField, "http://proxy.example.com:8080");
 
-		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.saveNetwork }));
+		await user.click(networkSaveButton(backstage));
 
 		await waitFor(() =>
 			expect(settingsSet).toHaveBeenCalledWith(
@@ -116,7 +151,7 @@ describe("NetworkAndMemorySettings", () => {
 		);
 	});
 
-	it("saves memory vector service changes via settings.set", async () => {
+	it("updates embedding controls independently of the proxy save", async () => {
 		const { client, settingsSet } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings();
@@ -138,37 +173,36 @@ describe("NetworkAndMemorySettings", () => {
 		expect(localOption).toBeTruthy();
 		await user.click(localOption!);
 
-		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.saveNetwork }));
-
 		await waitFor(() =>
-			expect(settingsSet).toHaveBeenCalledWith(
-				expect.objectContaining({
-					settings: expect.objectContaining({
-						memoryVectorService: {
-							enabled: true,
-							provider: "local",
-							localModel: "embeddinggemma",
-						},
-					}),
-				}),
-			),
+			expect(client.memory.configureLocalEmbedding).toHaveBeenCalledWith({
+				provider: "local",
+				candidateId: "test-embedding",
+			}),
 		);
+		expect(
+			settingsSet.mock.calls.some(
+				([request]) =>
+					Object.prototype.hasOwnProperty.call(request.settings, "networkProxy") ||
+					(request.settings.memoryVectorService as { provider?: string } | undefined)
+						?.provider === "local",
+			),
+		).toBe(false);
 	});
 
-	it("shows feedback on successful save", async () => {
+	it("shows feedback on successful proxy save", async () => {
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings();
 		await waitForSettings(backstage);
 
-		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.saveNetwork }));
+		await user.click(networkSaveButton(backstage));
 
 		await waitFor(() => {
 			expect(within(backstage).getByRole("status")).toHaveTextContent(zhCN.settings.saved);
 		});
 	});
 
-	it("shows error on failed save", async () => {
+	it("shows error on failed proxy save", async () => {
 		const { client } = createTestClient();
 		client.settings.set = vi.fn(() =>
 			Promise.resolve({
@@ -180,35 +214,50 @@ describe("NetworkAndMemorySettings", () => {
 		const { backstage, user } = await openSettings();
 		await waitForSettings(backstage);
 
-		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.saveNetwork }));
+		await user.click(networkSaveButton(backstage));
 
 		await waitFor(() => {
 			expect(within(backstage).getByRole("alert")).toBeTruthy();
 		});
 	});
 
-	it("download mirror field is editable", async () => {
+	it("keeps the download mirror inside the embedding controls", async () => {
 		const { client, settingsSet } = createTestClient();
+		client.settings.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					settings: {
+						relationshipMemoryEnabled: false,
+						conversationHistoryReadEnabled: false,
+						networkProxy: { mode: "direct" as const },
+						memoryVectorService: {
+							enabled: true,
+							provider: "local" as const,
+							localModel: "test-embedding",
+						},
+						modelDownloadMirror: {},
+					},
+				},
+			}),
+		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings();
 		await waitForSettings(backstage);
 
-		const mirrorField = within(backstage).getByRole("textbox", {
+		const embedding = within(backstage).getByRole("region", {
+			name: zhCN.settings.memoryVectorSection,
+		});
+		const mirrorField = within(embedding).getByRole("textbox", {
 			name: zhCN.settings.downloadMirrorLabel,
 		});
 		await user.clear(mirrorField);
 		await user.type(mirrorField, "https://mirror.example.com/hf");
 
-		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.saveNetwork }));
-
 		await waitFor(() =>
-			expect(settingsSet).toHaveBeenCalledWith(
-				expect.objectContaining({
-					settings: expect.objectContaining({
-						modelDownloadMirror: { endpoint: "https://mirror.example.com/hf" },
-					}),
-				}),
-			),
+			expect(settingsSet).toHaveBeenCalledWith({
+				settings: { modelDownloadMirror: { endpoint: "https://mirror.example.com/hf" } },
+			}),
 		);
 	});
 });

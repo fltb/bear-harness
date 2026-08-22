@@ -167,6 +167,8 @@ export type ConversationCreateRequest = z.infer<typeof schema.ConversationCreate
 export type ConversationCreateResponse = z.infer<typeof schema.ConversationCreateResponse>;
 export type ConversationSelectRequest = z.infer<typeof schema.ConversationSelectRequest>;
 export type ConversationSelectResponse = z.infer<typeof schema.ConversationSelectResponse>;
+export type PiTimelineEntry = z.infer<typeof schema.PiTimelineEntry>;
+export type PiTimeline = z.infer<typeof schema.PiTimeline>;
 export type ConversationRenameRequest = z.infer<typeof schema.ConversationRenameRequest>;
 export type ConversationRenameResponse = z.infer<typeof schema.EmptyResponse>;
 export type ConversationArchiveRequest = z.infer<typeof schema.ConversationArchiveRequest>;
@@ -180,9 +182,6 @@ export type ConversationSearchResponse = z.infer<typeof schema.ConversationSearc
 // Message
 // ---------------------------------------------------------------------------
 
-export type MessageRole = z.infer<typeof schema.MessageRole>;
-export type MessageVersion = z.infer<typeof schema.MessageVersion>;
-export type Message = z.infer<typeof schema.Message>;
 export type MessageSendRequest = z.infer<typeof schema.MessageSendRequest>;
 export type MessageSendResponse = z.infer<typeof schema.MessageSendResponse>;
 export type MessageRegenerateRequest = z.infer<typeof schema.MessageRegenerateRequest>;
