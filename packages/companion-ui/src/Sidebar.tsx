@@ -9,10 +9,10 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 import { Button } from "@kobalte/core/button";
 import { TextField } from "@kobalte/core/text-field";
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, For, onCleanup, Show } from "solid-js";
 import { Icon } from "./Icon.js";
 import { type CharacterDisplay, useCompanionStore } from "./stores/companion.js";
-
+import { useConversationWorkflow } from "./stores/conversation-workflows.js";
 /**
  * Sidebar: identity, search, new-conversation, the live conversation list
  * and persistent application navigation.
@@ -23,29 +23,8 @@ export function Sidebar(props: {
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
-	const [query, setQuery] = createSignal("");
-	const [editingId, setEditingId] = createSignal<string>();
-	const [editingTitle, setEditingTitle] = createSignal("");
-	const [error, setError] = createSignal<string | null>(null);
+	const workflow = useConversationWorkflow(store);
 	let searchRef: HTMLInputElement | undefined;
-	const visibleConversations = () => {
-		const needle = query().trim().toLocaleLowerCase();
-		if (!needle) return store.conversations;
-		return store.conversations.filter((conversation) =>
-			`${conversation.title} ${conversation.sceneTitle}`.toLocaleLowerCase().includes(needle),
-		);
-	};
-	const runAction = async (action: () => Promise<void>): Promise<void> => {
-		setError(null);
-		const before = store.errorMetadata;
-		try {
-			await action();
-			const retained = store.errorMetadata;
-			if (retained !== null && retained !== before) setError(retained.message);
-		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : String(cause));
-		}
-	};
 
 	createEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -105,8 +84,8 @@ export function Sidebar(props: {
 						type="search"
 						aria-label={t("sidebar.search")}
 						placeholder={t("sidebar.search")}
-						value={query()}
-						onInput={(event) => setQuery(event.currentTarget.value)}
+						value={workflow.query()}
+						onInput={(event) => workflow.setQuery(event.currentTarget.value)}
 					/>
 					<kbd>⌘K</kbd>
 				</TextField>
@@ -115,12 +94,12 @@ export function Sidebar(props: {
 					class="new-conversation"
 					aria-label={t("sidebar.newConversation")}
 					title={t("sidebar.newConversation")}
-					onClick={() => void runAction(() => store.createConversation())}
+					onClick={() => void workflow.runSidebarAction(() => store.createConversation())}
 				>
 					<Icon icon={faPlus} />
 				</Button>
 			</div>
-			<Show when={error()}>
+			<Show when={workflow.sidebarError()}>
 				{(message) => (
 					<p class="status-line err" role="alert">
 						{t("messages.operationFailedPrefix")}
@@ -131,36 +110,31 @@ export function Sidebar(props: {
 			<div class="nav-scroll">
 				<nav class="nav-list" aria-label={t("sidebar.conversations")}>
 					<Show
-						when={visibleConversations().length > 0}
+						when={workflow.visibleConversations().length > 0}
 						fallback={
 							<div class="conversations-empty" role="note">
 								{t("sidebar.emptyConversations")}
 							</div>
 						}
 					>
-						<For each={visibleConversations()}>
+						<For each={workflow.visibleConversations()}>
 							{(conversation) => (
 								<div class="nav-item-wrap">
 									<Show
-										when={editingId() !== conversation.id}
+										when={workflow.editingId() !== conversation.id}
 										fallback={
 											<form
 												class="conversation-rename"
 												onSubmit={(event) => {
 													event.preventDefault();
-													const title = editingTitle().trim();
-													if (title)
-														void runAction(async () => {
-															await store.renameConversation(conversation.id, title);
-															setEditingId();
-														});
+													void workflow.saveRename(conversation.id);
 												}}
 											>
 												<TextField>
 													<TextField.Input
 														aria-label={t("sidebar.renameConversation")}
-														value={editingTitle()}
-														onInput={(event) => setEditingTitle(event.currentTarget.value)}
+														value={workflow.editingTitle()}
+														onInput={(event) => workflow.setEditingTitle(event.currentTarget.value)}
 													/>
 												</TextField>
 												<Button data-control="command" type="submit">
@@ -176,7 +150,7 @@ export function Sidebar(props: {
 												conversation.id === store.activeConversationId ? "page" : undefined
 											}
 											onClick={() =>
-												void runAction(() => store.selectConversation(conversation.id))
+												void workflow.runSidebarAction(() => store.selectConversation(conversation.id))
 											}
 										>
 											<strong>{conversation.title}</strong>
@@ -196,8 +170,7 @@ export function Sidebar(props: {
 												title={t("sidebar.renameConversation")}
 												aria-label={t("sidebar.renameConversation")}
 												onClick={() => {
-													setEditingTitle(conversation.title);
-													setEditingId(conversation.id);
+													workflow.beginRename(conversation);
 												}}
 											>
 												<Icon icon={faPen} />
@@ -208,7 +181,7 @@ export function Sidebar(props: {
 												title={t("sidebar.archiveConversation")}
 												aria-label={t("sidebar.archiveConversation")}
 												onClick={() =>
-													void runAction(() => store.archiveConversation(conversation.id))
+													void workflow.runSidebarAction(() => store.archiveConversation(conversation.id))
 												}
 											>
 												<Icon icon={faBoxArchive} />
@@ -220,7 +193,7 @@ export function Sidebar(props: {
 												aria-label={t("sidebar.deleteConversation")}
 												onClick={() => {
 													if (window.confirm(t("sidebar.deleteConversationConfirm")))
-														void runAction(() => store.deleteConversation(conversation.id));
+														void workflow.runSidebarAction(() => store.deleteConversation(conversation.id));
 												}}
 											>
 												<Icon icon={faTrash} />

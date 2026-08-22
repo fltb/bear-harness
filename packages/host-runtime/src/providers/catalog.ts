@@ -104,6 +104,23 @@ function containsKey(value: unknown, key: string): boolean {
 	if (!isRecord(value)) return false;
 	return key in value || Object.values(value).some((item) => containsKey(item, key));
 }
+function safeBaseUrl(value: unknown): string | undefined {
+	if (typeof value !== "string" || !value) return undefined;
+	try {
+		const endpoint = new URL(value);
+		if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") return undefined;
+		// Provider config may contain credentials in URL userinfo or query
+		// parameters. Neither is model-service metadata safe to project.
+		endpoint.username = "";
+		endpoint.password = "";
+		endpoint.search = "";
+		endpoint.hash = "";
+		return endpoint.toString().replace(/\/$/, "");
+	} catch {
+		return undefined;
+	}
+}
+
 
 function configuredRoutes(providers: Record<string, unknown>): Array<{
 	providerId: string;
@@ -125,6 +142,12 @@ export interface ProviderInfo {
 	name: string;
 	authType: "api_key" | "oauth";
 	credentialStatus: ProviderCredentialStatus;
+	/**
+	 * Effective endpoint selected by pi-ai after persisted provider
+	 * configuration is composed. This projection is deliberately credential
+	 * free: userinfo, query parameters, and fragments are removed.
+	 */
+	baseUrl?: string;
 	availableModels: ProviderModelInfo[];
 	/** This provider's id when pi-ai reported an auth error during the probe. */
 	unavailable: string[];
@@ -398,6 +421,7 @@ export class ProviderCatalog {
 					hostStatus === "stored" || hostStatus === "weak_storage"
 						? "stored"
 						: mapCredentialStatus(runtime.getProviderAuthStatus(provider.id)),
+				baseUrl: safeBaseUrl(provider.baseUrl),
 				availableModels: runtime.getModels(provider.id).map((model) => ({
 					id: model.id,
 					name: model.name,

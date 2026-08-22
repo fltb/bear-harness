@@ -32,13 +32,13 @@ test("committed character facts survive new conversations and edited message his
 
 	await rpc(page, bootstrap.token, "roleplay.trigger:v1", {
 		conversationId: conversationA,
-		eventId: "damaged_log_opened",
-		dedupeKey: "e2e:opened",
+		eventId: "continuity_opened",
+		dedupeKey: "e2e:continuity-opened",
 	});
 	await rpc(page, bootstrap.token, "roleplay.trigger:v1", {
 		conversationId: conversationA,
-		eventId: "damaged_log_pulse_isolated",
-		dedupeKey: "e2e:pulse",
+		eventId: "continuity_revealed",
+		dedupeKey: "e2e:continuity-revealed",
 	});
 	const conversationB = await createFreshConversation(page, bootstrap.token, "Second context");
 	const state = await rpc<{ state: { values: Record<string, unknown> } }>(
@@ -47,7 +47,7 @@ test("committed character facts survive new conversations and edited message his
 		"roleplay.get:v1",
 		{ conversationId: conversationB },
 	);
-	expect(state.state.values).toMatchObject({ damaged_log_stage: 2, resonance: 1 });
+	expect(state.state.values).toMatchObject({ continuity_stage: 2 });
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId: conversationA,
@@ -114,7 +114,7 @@ test("scripted model invokes roleplay and cross-conversation tools with exact ar
 				{ conversationId: conversationB },
 			),
 		)
-		.toMatchObject({ state: { values: { trust: 1 } } });
+		.toMatchObject({ state: { values: { continuity_stage: 1 } } });
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId: conversationB,
@@ -144,7 +144,7 @@ test("scripted model invokes roleplay and cross-conversation tools with exact ar
 		expect.arrayContaining([
 			expect.objectContaining({
 				tool: "host_trigger_roleplay_event",
-				args: { eventId: "first_meeting_remembered" },
+				args: { eventId: "continuity_opened" },
 			}),
 			expect.objectContaining({
 				tool: "host_search_conversation_history",
@@ -303,7 +303,7 @@ test("an explicit transcript branch cannot commit roleplay facts", async ({ page
 		headers: { "x-bear-web-dev-token": bootstrap.token },
 		data: {
 			conversationId,
-			eventId: "first_meeting_remembered",
+			eventId: "continuity_opened",
 			dedupeKey: "branch-write-must-fail",
 		},
 	});

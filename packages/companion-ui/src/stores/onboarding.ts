@@ -1,8 +1,9 @@
 import type { CompanionClient } from "@bear-harness/companion-client";
 import { OnboardingResponse } from "@bear-harness/protocol/schema";
-import { createResource, createSignal } from "solid-js";
+import { QueryClient } from "@tanstack/solid-query";
 import type { DomainEvent, OnboardingData } from "./ipc.js";
 import { invoke } from "./ipc.js";
+import { createRpcQuery, queryKeys, refreshRpcQuery } from "./rpc-query.js";
 
 const INITIAL_ONBOARDING: OnboardingData = {
 	status: "active",
@@ -25,49 +26,71 @@ export interface OnboardingStore {
 }
 
 /**
- * Reactive client wrapper for a Host-owned, role-defined onboarding flow.
- * The Host returns the next authoritative step with every submission, so the
- * renderer never guesses a transition or temporarily projects stale state.
+ * Query-backed wrapper for the Host-owned onboarding projection.
+ *
+ * Onboarding is persistent Host state, so it deliberately has no local
+ * resource/signal shadow. Snapshot hydration, direct RPC results, and domain
+ * events all commit to the same QueryClient entry.
  */
-export function createOnboardingStore(client: CompanionClient): OnboardingStore {
-	const [resource, actions] = createResource<OnboardingData>(
-		() => invoke(client, () => client.onboarding.get()),
-		{ initialValue: INITIAL_ONBOARDING },
-	);
-	const [applied, setApplied] = createSignal<OnboardingData | undefined>(undefined);
-
-	const data = (): OnboardingData =>
-		applied() ??
-		(resource.error !== undefined ? INITIAL_ONBOARDING : (resource.latest ?? INITIAL_ONBOARDING));
-
-	const apply = (value: OnboardingData): void => {
-		const current = applied();
-		if (current !== undefined && value.eventSeq < current.eventSeq) return;
-		setApplied(value);
-		actions.mutate(value);
+export function createOnboardingStore(
+	client: CompanionClient,
+	queryClient: QueryClient = new QueryClient(),
+): OnboardingStore {
+	const hostRequest = () => invoke(client, () => client.onboarding.get());
+	let projectionGeneration = 0;
+	let protectedGeneration: number | undefined;
+	const request = async (): Promise<OnboardingData> => {
+		const generation = projectionGeneration;
+		const value = await hostRequest();
+		const current = queryClient.getQueryData<OnboardingData>(queryKeys.onboarding);
+		if (
+			generation !== projectionGeneration ||
+			(protectedGeneration === generation && current !== undefined)
+		) {
+			return current ?? value;
+		}
+		return value;
 	};
+	const query = createRpcQuery({
+		client: queryClient,
+		key: queryKeys.onboarding,
+		request,
+		initialData: INITIAL_ONBOARDING,
+	});
 
-	const get = (): Promise<OnboardingData> => invoke(client, () => client.onboarding.get());
-	const replace = (value: OnboardingData): void => {
-		setApplied(value);
-		actions.mutate(value);
+	const data = (): OnboardingData => {
+		// Observe the Solid Query result so consumers rerun after cache writes, but
+		// read the cache itself so a snapshot projection is visible immediately.
+		const observedData = query.data;
+		return queryClient.getQueryData<OnboardingData>(queryKeys.onboarding) ?? observedData ?? INITIAL_ONBOARDING;
+	};
+	const commit = (value: OnboardingData, force = false): void => {
+		const current = queryClient.getQueryData<OnboardingData>(queryKeys.onboarding);
+		if (!force && current !== undefined && value.eventSeq < current.eventSeq) return;
+		projectionGeneration += 1;
+		queryClient.setQueryData(queryKeys.onboarding, value);
+		if (force) protectedGeneration = projectionGeneration;
 	};
 
 	return {
 		data,
-		loading: () => resource.loading,
-		error: () => resource.error,
+		loading: () => query.isLoading,
+		error: () => query.error,
 		refetch: () => {
-			void actions.refetch();
+			protectedGeneration = undefined;
+			void refreshRpcQuery({ client: queryClient, key: queryKeys.onboarding, request });
 		},
-		get,
-		resync: async () => replace(await get()),
+		get: hostRequest,
+		resync: async () => {
+			protectedGeneration = undefined;
+			commit(await refreshRpcQuery({ client: queryClient, key: queryKeys.onboarding, request }));
+		},
 		submit: async (stepId, answer) => {
 			const result = await invoke(client, () => client.onboarding.submit({ stepId, answer }));
-			replace(result);
+			commit(result, true);
 		},
 		_hydrate: (value) => {
-			if (value !== undefined && applied() === undefined) apply(value);
+			if (value !== undefined) commit(value);
 		},
 		_applyEvent: (event) => {
 			if (event.kind === "onboarding.state_changed") {
@@ -75,12 +98,18 @@ export function createOnboardingStore(client: CompanionClient): OnboardingStore 
 					typeof event.payload === "object" && event.payload !== null
 						? { ...event.payload, eventSeq: event.seq }
 						: event.payload;
-				apply(OnboardingResponse.parse(payload));
+				commit(OnboardingResponse.parse(payload));
 				return;
 			}
 			if (event.kind === "onboarding.reset") {
-				setApplied(undefined);
-				void actions.refetch();
+				projectionGeneration += 1;
+				void refreshRpcQuery({
+					client: queryClient,
+					key: queryKeys.onboarding,
+					request,
+				})
+					.then((value) => commit(value))
+					.catch(() => undefined);
 			}
 		},
 	};

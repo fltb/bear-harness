@@ -18,6 +18,7 @@ import { MemoryPipelineManager } from "./pipeline-manager.js";
 import type { L2Runner, L3Runner } from "./pipeline-manager.js";
 import { SessionFilter } from "./session-filter.js";
 import { extractL1Memories } from "../core/record/l1-extractor.js";
+import { queryMemoryRecords, readMemoryRecords } from "../core/record/l1-reader.js";
 import { readConversationMessagesGroupedBySessionId } from "../core/conversation/l0-recorder.js";
 import type { ConversationMessage } from "../core/conversation/l0-recorder.js";
 import { CheckpointManager } from "./checkpoint.js";
@@ -491,7 +492,6 @@ export function createL2Runner(opts: {
 		}
 
 		if (vectorStore && !vectorStore.isDegraded()) {
-			const { queryMemoryRecords } = await import("../core/record/l1-reader.js");
 			const memRecords = await queryMemoryRecords(
 				vectorStore,
 				{
@@ -522,7 +522,6 @@ export function createL2Runner(opts: {
 			logger.debug?.(
 				`${TAG} [L2] VectorStore unavailable, falling back to JSONL read (session=${sessionKey})`,
 			);
-			const { readMemoryRecords } = await import("../core/record/l1-reader.js");
 			let sessionRecords = await readMemoryRecords(sessionKey, pluginDataDir, logger);
 
 			if (cursor) {

@@ -110,6 +110,105 @@ describe("optimistic and streaming chat", () => {
 		expect(screen.getByRole("status", { name: zhCN.messages.responding })).toBeInTheDocument();
 		resolveSend?.({ ok: true, data: { messageId: "user-message-1" } });
 	});
+	it("renders an empty assistant projection as an explicit failure", async () => {
+		const { client } = activeClient();
+		const initialSnapshot = client.snapshot.get;
+		client.snapshot.get = vi.fn(async () => {
+			const result = await initialSnapshot();
+			if (!result.ok) return result;
+			return {
+				...result,
+				data: {
+					...result.data,
+					conversation: {
+						...result.data.conversation,
+						activeConversationId: "conversation-1",
+						conversations: [
+							{
+								id: "conversation-1",
+								title: "Streaming",
+								sceneTitle: "Scene",
+								unread: false,
+								updatedAt: "2026-01-01T00:00:00.000Z",
+							},
+						],
+						messages: [
+							{
+								id: "failed-assistant",
+								status: "failed" as const,
+								failureReason: "model unavailable",
+								role: "assistant" as const,
+								adoptedVersionId: "failed-assistant-v1",
+								createdAt: "2026-01-01T00:00:00.000Z",
+								versions: [
+									{
+										id: "failed-assistant-v1",
+										role: "assistant" as const,
+										content: "",
+										editedByUser: false,
+										createdAt: "2026-01-01T00:00:00.000Z",
+										adopted: true,
+									},
+								],
+							},
+						],
+					},
+				},
+			};
+		});
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const thread = await screen.findByRole("region", { name: zhCN.messages.conversation });
+		const failure = await within(thread).findByRole("alert");
+		expect(failure).toHaveTextContent("model unavailable");
+	});
+	it("does not render completed or aborted empty assistant turns as failures", async () => {
+		const { client } = activeClient();
+		const initialSnapshot = client.snapshot.get;
+		client.snapshot.get = vi.fn(async () => {
+			const result = await initialSnapshot();
+			if (!result.ok) return result;
+			return {
+				...result,
+				data: {
+					...result.data,
+					conversation: {
+						...result.data.conversation,
+						activeConversationId: "conversation-1",
+						conversations: [
+							{
+								id: "conversation-1",
+								title: "Streaming",
+								sceneTitle: "Scene",
+								unread: false,
+								updatedAt: "2026-01-01T00:00:00.000Z",
+							},
+						],
+						messages: (["completed", "aborted"] as const).map((status, index) => ({
+							id: `${status}-assistant`,
+							role: "assistant" as const,
+							status,
+							adoptedVersionId: `${status}-assistant-v1`,
+							createdAt: `2026-01-01T00:00:0${index}.000Z`,
+							versions: [
+								{
+									id: `${status}-assistant-v1`,
+									role: "assistant" as const,
+									content: "",
+									editedByUser: false,
+									createdAt: `2026-01-01T00:00:0${index}.000Z`,
+									adopted: true,
+								},
+							],
+						})),
+					},
+				},
+			};
+		});
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const thread = await screen.findByRole("region", { name: zhCN.messages.conversation });
+		await waitFor(() => expect(within(thread).getAllByRole("article")).toHaveLength(2));
+		expect(within(thread).queryByRole("alert")).not.toBeInTheDocument();
+	});
 	it("omits an internal-only persisted projection from the user-facing thread", async () => {
 		const { client } = activeClient();
 		const initialSnapshot = client.snapshot.get;

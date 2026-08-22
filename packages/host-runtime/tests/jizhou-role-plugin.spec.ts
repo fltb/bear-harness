@@ -16,97 +16,78 @@ const pluginUrl = pathToFileURL(
 
 afterEach(() => Reflect.deleteProperty(globalThis, "bearHostCall"));
 
-async function loadTools(): Promise<Map<string, RegisteredTool>> {
+async function loadTool(): Promise<RegisteredTool> {
 	const tools = new Map<string, RegisteredTool>();
 	const plugin = (await import(pluginUrl)).default as (pi: {
 		registerTool(tool: RegisteredTool): void;
 	}) => void;
 	plugin({ registerTool: (tool) => tools.set(tool.name, tool) });
-	return tools;
+	const tool = tools.get("jizhou_continuity_reveal");
+	if (!tool) throw new Error("missing continuity tool");
+	expect([...tools.keys()]).toEqual(["jizhou_continuity_reveal"]);
+	return tool;
 }
 
 describe("Jizhou role plugin", () => {
-	it("registers closed semantic actions and maps them to allowlisted Host calls", async () => {
-		const hostCall = vi.fn(async (tool: string) =>
-			tool === "host_get_roleplay_state"
-				? {
-						ok: true,
-						message: "state",
-						data: { values: { damaged_log_stage: 1, damaged_log_snapshot_preserved: false } },
-					}
+	it("registers closed semantic actions and maps advance to the allowlisted Host event", async () => {
+		const hostCall = vi.fn(async (name: string) =>
+			name === "host_get_roleplay_state"
+				? { ok: true, data: { values: { continuity_stage: 1 } } }
 				: { ok: true, message: "accepted" },
 		);
 		Reflect.set(globalThis, "bearHostCall", hostCall);
-		const tools = await loadTools();
+		const tool = await loadTool();
 
-		expect([...tools.keys()]).toEqual(["jizhou_damaged_log", "jizhou_media_cue"]);
-		expect(tools.get("jizhou_media_cue")?.parameters.properties.action.enum).toEqual([
-			"first_night",
-			"damaged_signal",
-			"damaged_log_choice",
-		]);
-		expect(tools.get("jizhou_damaged_log")?.parameters.properties.action.enum).toEqual([
+		expect(tool.parameters.properties.action.enum).toEqual([
 			"inspect",
 			"advance",
-			"respond",
-			"preserve",
+			"receive",
+			"set_down",
 		]);
-
-		const advance = await tools.get("jizhou_damaged_log")?.execute("call-1", {
-			action: "advance",
-		});
-		await tools.get("jizhou_media_cue")?.execute("call-2", { action: "damaged_signal" });
-
-		expect(advance?.details).toMatchObject({
+		const advance = await tool.execute("call-1", { action: "advance" });
+		expect(advance.details).toMatchObject({
 			stage: 1,
-			status: "copy_preserved",
-			allowedActions: ["advance"],
-			queued: "damaged_log_pulse_isolated",
+			status: "read",
+			queued: "continuity_revealed",
 		});
 		expect(hostCall.mock.calls).toEqual([
 			["host_get_roleplay_state", {}],
-			["host_trigger_roleplay_event", { eventId: "damaged_log_pulse_isolated" }],
-			["host_play_media", { mediaId: "damaged_signal_live" }],
+			["host_trigger_roleplay_event", { eventId: "continuity_revealed" }],
 		]);
 	});
 
-	it("returns an explicit step card and rejects actions outside that stage", async () => {
+	it("keeps the reveal sealed until the state reaches its disclosure stage", async () => {
 		Reflect.set(
 			globalThis,
 			"bearHostCall",
-			vi.fn(async () => ({
-				ok: true,
-				data: { values: { damaged_log_stage: 0 } },
-			})),
+			vi.fn(async () => ({ ok: true, data: { values: { continuity_stage: 0 } } })),
 		);
-		const tools = await loadTools();
-		const inspected = await tools.get("jizhou_damaged_log")?.execute("call-1", {
-			action: "inspect",
-		});
-		expect(inspected?.details).toMatchObject({
+		const tool = await loadTool();
+		const inspected = await tool.execute("call-1", { action: "inspect" });
+		expect(inspected.details).toMatchObject({
 			stage: 0,
-			status: "unopened",
+			status: "sealed",
 			allowedActions: ["advance"],
-			next: expect.stringContaining("advance"),
+			fact: expect.not.stringContaining("我不是旧极昼"),
 		});
-		await expect(
-			tools.get("jizhou_damaged_log")?.execute("call-2", { action: "respond" }),
-		).rejects.toThrow("not allowed at damaged-log stage 0");
+		await expect(tool.execute("call-2", { action: "receive" })).rejects.toThrow(
+			"not allowed at continuity stage 0",
+		);
 	});
 
 	it("surfaces Host rejection instead of narrating a false state change", async () => {
 		Reflect.set(
 			globalThis,
 			"bearHostCall",
-			vi.fn(async (tool: string) => {
-				if (tool === "host_get_roleplay_state")
-					return { ok: true, data: { values: { damaged_log_stage: 2 } } };
+			vi.fn(async (name: string) => {
+				if (name === "host_get_roleplay_state")
+					return { ok: true, data: { values: { continuity_stage: 2 } } };
 				return { ok: false, message: "event condition failed" };
 			}),
 		);
-		const tools = await loadTools();
-		await expect(
-			tools.get("jizhou_damaged_log")?.execute("call-1", { action: "respond" }),
-		).rejects.toThrow("event condition failed");
+		const tool = await loadTool();
+		await expect(tool.execute("call-1", { action: "receive" })).rejects.toThrow(
+			"event condition failed",
+		);
 	});
 });

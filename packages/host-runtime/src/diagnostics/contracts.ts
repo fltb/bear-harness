@@ -129,12 +129,23 @@ export const INPUT_REJECT_REASONS = [
 ] as const;
 export const RETENTION_DEFER_REASONS = ["active"] as const;
 export const WRITER_FAILURE_KINDS = ["write"] as const;
+export const RPC_ERROR_CATEGORIES = [
+	"unauthorized",
+	"body_too_large",
+	"malformed_json",
+	"invalid_request",
+	"unknown_channel",
+	"internal_error",
+	"rpc_error",
+] as const;
+
 export const PLATFORMS = ["darwin", "win32", "linux"] as const;
 
 /**
- * Fixed event/span catalog, indexed by name. The four completed spans are
- * app.session, diagnostics.prune, window.session and window.load; span records
- * carry level "error" when their status is "error", otherwise the base level.
+ * Fixed event/span catalog, indexed by name. The five completed spans are
+ * app.session, diagnostics.prune, window.session, window.load and rpc.request;
+ * span records carry level "error" when their status is "error", otherwise the
+ * base level.
  */
 export const DIAGNOSTIC_CATALOG: Readonly<Record<string, CatalogEntry>> = deepFreeze({
 	// ---- completed spans ----
@@ -171,6 +182,15 @@ export const DIAGNOSTIC_CATALOG: Readonly<Record<string, CatalogEntry>> = deepFr
 		level: "info",
 		origin: "main",
 		attributes: { webContentsId: int(1, Number.MAX_SAFE_INTEGER), ok: bool() },
+	},
+	"rpc.request": {
+		kind: "span",
+		level: "info",
+		origin: "main",
+		attributes: {
+			channel: str(),
+			errorCategory: { type: "string", enum: RPC_ERROR_CATEGORIES, optional: true },
+		},
 	},
 	// ---- events ----
 	"app.started": {

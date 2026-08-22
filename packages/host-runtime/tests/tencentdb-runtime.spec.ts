@@ -886,3 +886,81 @@ describe("TencentDbRuntime.startLocalEmbeddingWarmup", () => {
 		await expect(runtime.startLocalEmbeddingWarmup(150)).resolves.toBe(false);
 	});
 });
+
+describe("TencentDbRuntime.prepareLocalEmbedding", () => {
+	function prepareEmbeddingCore(runtime: TencentDbRuntime) {
+		return (
+			runtime as unknown as {
+				core: { getEmbeddingService(): unknown };
+			}
+		).core as unknown as {
+			getEmbeddingService(): {
+				isReady(): boolean;
+				startWarmup(): void;
+				waitForReady?: () => Promise<void>;
+			} | undefined;
+		};
+	}
+
+	it("waits for a configured local embedding service to become ready", async () => {
+		const runtime = createRuntime(createRoot(), "role-a", {
+			embedding: { provider: "local", enabled: true },
+		});
+		const warmupStarted = Promise.withResolvers<void>();
+		const modelLoaded = Promise.withResolvers<void>();
+		let ready = false;
+		const service = {
+			isReady: vi.fn(() => ready),
+			startWarmup: vi.fn(() => warmupStarted.resolve()),
+			waitForReady: vi.fn(async () => {
+				await modelLoaded.promise;
+				ready = true;
+			}),
+		};
+		prepareEmbeddingCore(runtime).getEmbeddingService = () => service;
+
+		const preparation = runtime.prepareLocalEmbedding(1_000);
+		await warmupStarted.promise;
+		let settled = false;
+		void preparation.then(() => {
+			settled = true;
+		});
+		await Promise.resolve();
+		expect(settled).toBe(false);
+
+		modelLoaded.resolve();
+		await expect(preparation).resolves.toEqual({ ready: true });
+		expect(service.startWarmup).toHaveBeenCalledOnce();
+		expect(service.waitForReady).toHaveBeenCalledOnce();
+	});
+
+	it("throws the structured unavailable reason when the local service is absent", async () => {
+		const runtime = createRuntime(createRoot(), "role-a", {
+			embedding: { provider: "local", enabled: true },
+		});
+		prepareEmbeddingCore(runtime).getEmbeddingService = () => undefined;
+
+		await expect(runtime.prepareLocalEmbedding(0)).rejects.toEqual({
+			kind: "unavailable",
+			reason: "local_embedding_service_unavailable",
+		});
+	});
+
+	it("throws the structured not-ready reason when model preparation times out", async () => {
+		const runtime = createRuntime(createRoot(), "role-a", {
+			embedding: { provider: "local", enabled: true },
+		});
+		const service = {
+			isReady: vi.fn(() => false),
+			startWarmup: vi.fn(),
+			waitForReady: vi.fn(() => new Promise<void>(() => undefined)),
+		};
+		prepareEmbeddingCore(runtime).getEmbeddingService = () => service;
+
+		await expect(runtime.prepareLocalEmbedding(0)).rejects.toEqual({
+			kind: "unavailable",
+			reason: "local_embedding_model_not_ready",
+		});
+		expect(service.startWarmup).toHaveBeenCalledOnce();
+	});
+});

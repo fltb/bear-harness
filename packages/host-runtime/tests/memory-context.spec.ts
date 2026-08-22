@@ -27,7 +27,7 @@ const fixedTimestamp = "2026-08-17T00:00:00.000Z";
 function onboardingState(relationshipMemoryEnabled: boolean): string {
 	return JSON.stringify({
 		schema_version: 1,
-		flow_version: 1,
+		flow_version: 2,
 		answers: {},
 		decisions: { relationship_memory_enabled: relationshipMemoryEnabled },
 	});

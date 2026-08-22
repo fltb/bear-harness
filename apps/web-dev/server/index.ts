@@ -1,9 +1,16 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHostRuntime } from "@bear-harness/host-runtime";
+import {
+	createDiagnostics,
+	createHostRuntime,
+	isErrorType,
+	parseTraceparent,
+	RENDERER_FAULT_KINDS,
+	type Diagnostics,
+} from "@bear-harness/host-runtime";
 import { assertProductConfig, OFFICIAL_BRAND, productConfig } from "@bear-harness/product-config";
 import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
 import { createWebCredentialVault } from "./credential-vault.ts";
@@ -34,6 +41,15 @@ const dataDir = webDevDataDirectory(productConfig.dataDirectoryName);
 mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 const token = randomBytes(32).toString("hex");
 const debugEnabled = process.env.BEAR_WEB_DEV_DEBUG === "1";
+const diagnostics: Diagnostics = createDiagnostics({
+	app: {
+		setAppLogsPath: () => undefined,
+		setPath: () => undefined,
+	},
+	root: join(dataDir, "diagnostics"),
+	launchId: randomUUID(),
+	packaged: false,
+});
 
 type HttpErrorKind =
 	| "unauthorized"
@@ -57,6 +73,73 @@ class HttpError extends Error {
 		this.name = "WebDevHttpError";
 	}
 }
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return (
+		typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype
+	);
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+	const own = Object.keys(value);
+	return own.length === keys.length && keys.every((key) => own.includes(key));
+}
+
+function validRendererFault(value: Record<string, unknown>): boolean {
+	for (const key of Object.keys(value)) {
+		if (key !== "kind" && key !== "errorType" && key !== "line" && key !== "column") return false;
+	}
+	if (!(RENDERER_FAULT_KINDS as readonly string[]).includes(String(value.kind))) return false;
+	if (!isErrorType(value.errorType)) return false;
+	for (const key of ["line", "column"]) {
+		if (key in value) {
+			const candidate = value[key];
+			if (
+				typeof candidate !== "number" ||
+				!Number.isSafeInteger(candidate) ||
+				candidate < 0 ||
+				candidate > 2_147_483_647
+			) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+function rendererFaultAttributes(
+	fault: Record<string, unknown>,
+): Record<string, boolean | number | string> {
+	const attributes: Record<string, boolean | number | string> = {
+		kind: String(fault.kind),
+		errorType: String(fault.errorType),
+	};
+	if (typeof fault.line === "number") attributes.line = fault.line;
+	if (typeof fault.column === "number") attributes.column = fault.column;
+	return attributes;
+}
+
+function parseRendererFault(
+	value: unknown,
+): { fault: Record<string, unknown>; traceparent?: unknown } | null {
+	if (!isPlainObject(value)) return null;
+	if (Object.hasOwn(value, "traceparent") || Object.hasOwn(value, "fault")) {
+		if (!hasExactKeys(value, ["traceparent", "fault"])) return null;
+		if (!isPlainObject(value.fault) || !validRendererFault(value.fault)) return null;
+		return { fault: value.fault, traceparent: value.traceparent };
+	}
+	if (!validRendererFault(value)) return null;
+	return { fault: value };
+}
+
+function rpcDiagnosticChannel(pathname: string): string {
+	try {
+		const channel = decodeURIComponent(pathname.slice("/rpc/".length));
+		return Object.hasOwn(REQUEST_SCHEMAS, channel) ? channel : "unknown";
+	} catch {
+		return "invalid";
+	}
+}
+
 
 const runtime = createHostRuntime({
 	dataDir,
@@ -105,12 +188,31 @@ function sendError(
 
 const server = createServer(async (request, response) => {
 	const url = new URL(request.url ?? "/", "http://127.0.0.1");
+	const isRpcRequest = request.method === "POST" && url.pathname.startsWith("/rpc/");
+	const rpcSpan = isRpcRequest
+		? diagnostics.startSpan("rpc.request", { channel: rpcDiagnosticChannel(url.pathname) })
+		: null;
+	let rpcStatus: "ok" | "error" = "ok";
+	let rpcErrorCategory: string | undefined;
+	const finishRpc = (): void => {
+		if (!rpcSpan) return;
+		rpcSpan.end(
+			rpcStatus,
+			rpcErrorCategory === undefined ? {} : { errorCategory: rpcErrorCategory },
+		);
+	};
+
 	if (request.method === "GET" && url.pathname === "/bootstrap") {
 		send(response, 200, { product: productConfig, token, debugEnabled });
 		return;
 	}
 	const suppliedToken = request.headers["x-bear-web-dev-token"];
 	if (typeof suppliedToken !== "string" || suppliedToken !== token) {
+		if (rpcSpan) {
+			rpcStatus = "error";
+			rpcErrorCategory = "unauthorized";
+			finishRpc();
+		}
 		sendError(response, 401, "unauthorized", "invalid_token");
 		return;
 	}
@@ -118,16 +220,22 @@ const server = createServer(async (request, response) => {
 		send(response, 200, { channels: Object.keys(REQUEST_SCHEMAS).sort() });
 		return;
 	}
-	if (request.method === "POST" && url.pathname.startsWith("/rpc/")) {
+	if (isRpcRequest) {
 		let channel: string;
 		try {
 			channel = decodeURIComponent(url.pathname.slice("/rpc/".length));
 		} catch {
+			rpcStatus = "error";
+			rpcErrorCategory = "invalid_request";
 			sendError(response, 400, "invalid_request", "invalid_channel");
+			finishRpc();
 			return;
 		}
 		if (!Object.hasOwn(REQUEST_SCHEMAS, channel)) {
+			rpcStatus = "error";
+			rpcErrorCategory = "unknown_channel";
 			sendError(response, 404, "unknown_channel", "unknown_channel");
+			finishRpc();
 			return;
 		}
 		try {
@@ -140,31 +248,92 @@ const server = createServer(async (request, response) => {
 			// client can distinguish an RPC failure from a transport rejection
 			// and preserve the exact error reason.
 			const result = await runtime.dispatch(channel, params);
+			if (!result.ok) {
+				rpcStatus = "error";
+				rpcErrorCategory = "rpc_error";
+			}
 			send(response, 200, result);
 		} catch (error) {
+			rpcStatus = "error";
 			if (error instanceof HttpError) {
+				rpcErrorCategory = error.kind;
 				sendError(response, error.status, error.kind, error.reason);
 			} else {
+				rpcErrorCategory = "internal_error";
 				sendError(response, 500, "internal_error", "internal_dispatch_failure");
 			}
 		}
+		finishRpc();
 		return;
 	}
 	if (request.method === "POST" && url.pathname === "/diagnostics/renderer-fault") {
 		try {
 			const body = await readBody(request);
-			process.stderr.write(`[web-dev renderer fault] ${JSON.stringify(body)}\n`);
+			const parsed = parseRendererFault(body);
+			if (!parsed) {
+				diagnostics.emit("diagnostics.input_rejected", { reason: "shape" });
+				response.writeHead(204).end();
+				return;
+			}
+			const attributes = rendererFaultAttributes(parsed.fault);
+			const remote =
+				typeof parsed.traceparent === "string"
+					? parseTraceparent(parsed.traceparent)
+					: null;
+			if (remote) {
+				diagnostics.emitRemote("renderer.fault", attributes, {
+					traceId: remote.traceId,
+					parentSpanId: remote.spanId,
+				});
+			} else {
+				diagnostics.emit("diagnostics.trace_restarted", {});
+				diagnostics.emit("renderer.fault", attributes);
+			}
 			response.writeHead(204).end();
 		} catch (error) {
 			if (error instanceof HttpError) {
+				diagnostics.emit("diagnostics.input_rejected", {
+					reason: error.kind === "body_too_large" ? "oversized" : "shape",
+				});
 				sendError(response, error.status, error.kind, error.reason);
 			} else {
+				diagnostics.emit("diagnostics.input_rejected", { reason: "shape" });
 				sendError(response, 400, "malformed_json", "malformed_json");
 			}
 		}
 		return;
 	}
 	sendError(response, 404, "unknown_route", "unknown_route");
+});
+
+let shutdownPromise: Promise<void> | null = null;
+const shutdown = (exitCode: number): Promise<void> => {
+	if (shutdownPromise) return shutdownPromise;
+	process.exitCode = Math.max(Number(process.exitCode ?? 0), exitCode);
+	shutdownPromise = (async () => {
+		try {
+			await new Promise<void>((resolve) => {
+				if (!server.listening) {
+					resolve();
+					return;
+				}
+				server.close(() => resolve());
+			});
+			await runtime.close();
+		} catch {
+			process.exitCode = 1;
+		} finally {
+			await diagnostics.shutdown();
+		}
+	})();
+	return shutdownPromise;
+};
+
+process.on("SIGINT", () => void shutdown(0));
+process.on("SIGTERM", () => void shutdown(0));
+process.on("uncaughtException", () => {
+	diagnostics.emit("main.uncaught_exception", {});
+	void shutdown(1);
 });
 
 await runtime.start();

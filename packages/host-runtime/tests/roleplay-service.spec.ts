@@ -49,7 +49,7 @@ function fixture() {
 }
 
 describe("roleplay event projection", () => {
-	it("enforces the damaged-log chapter order and projects its completed state", () => {
+	it("enforces the continuity chapter order and projects its completed state", () => {
 		const { database, character, service } = fixture();
 		const trigger = (eventId: string) =>
 			service.trigger({
@@ -60,20 +60,17 @@ describe("roleplay event projection", () => {
 				dedupeKey: `user:${eventId}`,
 			});
 
-		expect(() => trigger("damaged_log_signal_found")).toThrow();
-		trigger("damaged_log_opened");
-		trigger("damaged_log_pulse_isolated");
-		trigger("damaged_log_preserved");
-		trigger("damaged_log_signal_found");
+		expect(() => trigger("continuity_received")).toThrow();
+		trigger("continuity_opened");
+		trigger("continuity_revealed");
+		trigger("continuity_set_down");
 
 		expect(service.project(character, "conversation")).toMatchObject({
 			values: {
-				damaged_log_stage: 3,
-				damaged_log_snapshot_preserved: true,
-				trust: 1,
-				resonance: 3,
+				continuity_stage: 3,
+				continuity_response: "set_down",
 			},
-			unlocked: ["damaged_signal"],
+			unlocked: [],
 		});
 		database.close();
 	});
@@ -82,23 +79,30 @@ describe("roleplay event projection", () => {
 		const { database, character, service } = fixture();
 		service.trigger({
 			character,
-			eventId: "first_meeting_remembered",
+			eventId: "continuity_opened",
 			conversationId: "conversation",
 			branchId: "main",
-			sourceMessageVersionId: "version-a",
-			dedupeKey: "turn:event",
+			dedupeKey: "turn:opened",
 		});
 		service.trigger({
 			character,
-			eventId: "first_meeting_remembered",
+			eventId: "continuity_opened",
 			conversationId: "conversation",
 			branchId: "main",
 			sourceMessageVersionId: "version-a",
-			dedupeKey: "turn:event",
+			dedupeKey: "turn:opened",
+		});
+		service.trigger({
+			character,
+			eventId: "continuity_opened",
+			conversationId: "conversation",
+			branchId: "main",
+			sourceMessageVersionId: "version-a",
+			dedupeKey: "turn:opened",
 		});
 		expect(service.project(character, "conversation")).toMatchObject({
-			values: { trust: 1 },
-			unlocked: ["first_night_memory"],
+			values: { continuity_stage: 1, continuity_response: "unopened" },
+			unlocked: [],
 		});
 		database.close();
 	});
@@ -107,14 +111,14 @@ describe("roleplay event projection", () => {
 		const { database, character, service } = fixture();
 		service.trigger({
 			character,
-			eventId: "damaged_log_opened",
+			eventId: "continuity_opened",
 			conversationId: "conversation",
 			branchId: "main",
 			dedupeKey: "opened",
 		});
 		database.orm.insert(conversations).values({ id: "other", companionId: character.id }).run();
 		expect(service.project(character, "other").values).toMatchObject({
-			damaged_log_stage: 1,
+			continuity_stage: 1,
 		});
 		database.close();
 	});
@@ -122,26 +126,26 @@ describe("roleplay event projection", () => {
 	it("keeps conversation-scoped variables isolated while relationship variables persist", () => {
 		const { database, character, service } = fixture();
 		const conversationScopedCharacter = structuredClone(character);
-		const trust = conversationScopedCharacter.roleplay.variables.find(
-			(variable) => variable.id === "trust",
+		const continuityStage = conversationScopedCharacter.roleplay.variables.find(
+			(variable) => variable.id === "continuity_stage",
 		);
-		if (!trust) throw new Error("missing trust variable");
-		trust.scope = "conversation";
+		if (!continuityStage) throw new Error("missing continuity stage variable");
+		continuityStage.scope = "conversation";
 		database.orm.insert(conversations).values({ id: "other", companionId: character.id }).run();
 
 		service.trigger({
 			character: conversationScopedCharacter,
-			eventId: "first_meeting_remembered",
+			eventId: "continuity_opened",
 			conversationId: "conversation",
 			branchId: "main",
 			dedupeKey: "conversation-only",
 		});
 
 		expect(service.project(conversationScopedCharacter, "conversation").values).toMatchObject({
-			trust: 1,
+			continuity_stage: 1,
 		});
 		expect(service.project(conversationScopedCharacter, "other").values).toMatchObject({
-			trust: 0,
+			continuity_stage: 0,
 		});
 		database.close();
 	});
@@ -150,7 +154,23 @@ describe("roleplay event projection", () => {
 		const { database, character, service } = fixture();
 		service.trigger({
 			character,
-			eventId: "first_meeting_remembered",
+			eventId: "continuity_opened",
+			conversationId: "conversation",
+			branchId: "main",
+			sourceMessageVersionId: "version-a",
+			dedupeKey: "turn:opened",
+		});
+		service.trigger({
+			character,
+			eventId: "continuity_revealed",
+			conversationId: "conversation",
+			branchId: "main",
+			sourceMessageVersionId: "version-a",
+			dedupeKey: "turn:revealed",
+		});
+		service.trigger({
+			character,
+			eventId: "continuity_received",
 			conversationId: "conversation",
 			branchId: "main",
 			sourceMessageVersionId: "version-a",
@@ -158,8 +178,8 @@ describe("roleplay event projection", () => {
 		});
 		database.orm.update(messageVersions).set({ adopted: 0 }).run();
 		expect(service.project(character, "conversation")).toMatchObject({
-			values: { trust: 1 },
-			unlocked: ["first_night_memory"],
+			values: { continuity_stage: 3, continuity_response: "received" },
+			unlocked: ["continuity_record"],
 		});
 		database.close();
 	});

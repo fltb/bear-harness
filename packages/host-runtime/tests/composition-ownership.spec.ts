@@ -230,7 +230,7 @@ describe("Host composition enforces ownership before mutation", () => {
 		await expect(
 			runtime.dispatch("roleplay.dismissMedia:v1", {
 				conversationId: conversation.id,
-				mediaId: "damaged_signal_live",
+				mediaId: "continuity_light",
 			}),
 		).resolves.toMatchObject({ ok: true, data: {} });
 		await expect(
@@ -249,7 +249,7 @@ describe("Host composition enforces ownership before mutation", () => {
 		expect(response.events).toContainEqual(
 			expect.objectContaining({
 				kind: "roleplay.media_dismissed",
-				payload: { conversationId: conversation.id, mediaId: "damaged_signal_live" },
+				payload: { conversationId: conversation.id, mediaId: "continuity_light" },
 			}),
 		);
 		expect(response.events).not.toContainEqual(

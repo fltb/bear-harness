@@ -964,10 +964,35 @@ button[data-variant="primary"]:focus-visible {
 }
 
 .presence-stage {
-	@apply absolute bottom-[11%] left-[6%] z-[2] h-[350px] w-[245px];
+	--presence-height: clamp(250px, 38vh, 390px);
+	--presence-width: clamp(170px, 24vw, 280px);
+	--presence-max-height: 58%;
+	--presence-max-width: 34%;
+	@apply absolute bottom-[11%] left-[6%] z-[2];
+	block-size: min(var(--presence-height), var(--presence-max-height), calc(100% - 120px));
+	inline-size: min(var(--presence-width), var(--presence-max-width));
 	transition:
+		block-size 0.5s ease,
+		inline-size 0.5s ease,
 		transform 0.5s ease,
 		filter 0.5s ease;
+}
+
+.presence-stage[data-layout-mode="resting"] {
+	--presence-height: clamp(230px, 33vh, 335px);
+	--presence-width: clamp(155px, 21vw, 235px);
+}
+
+.presence-stage[data-layout-mode="expanded"] {
+	--presence-height: clamp(270px, 42vh, 410px);
+	--presence-width: clamp(185px, 27vw, 300px);
+}
+
+.presence-stage[data-layout-mode="compact"] {
+	--presence-height: clamp(155px, 25vh, 250px);
+	--presence-width: clamp(115px, 17vw, 190px);
+	--presence-max-height: 46%;
+	--presence-max-width: 29%;
 }
 
 .presence-stage img {
@@ -2798,7 +2823,7 @@ button[data-variant="primary"]:focus-visible {
 
 	.presence-stage {
 		left: 4%;
-		max-width: 38%;
+		--presence-max-width: 38%;
 	}
 }
 
@@ -2846,10 +2871,10 @@ button[data-variant="primary"]:focus-visible {
 	}
 
 	.presence-stage {
-		bottom: 10%;
-		left: 3%;
-		height: min(300px, 42%);
-		width: min(190px, 34%);
+		--presence-height: clamp(190px, 32vh, 300px);
+		--presence-width: clamp(125px, 28vw, 195px);
+		--presence-max-height: 44%;
+		--presence-max-width: 34%;
 	}
 }
 
@@ -2905,5 +2930,13 @@ button[data-variant="primary"]:focus-visible {
 	.system-nav .gear {
 		margin-inline: 0;
 		font-size: 14px;
+	}
+	.presence-stage {
+		--presence-height: clamp(155px, 28vh, 225px);
+		--presence-width: clamp(100px, 26vw, 155px);
+		--presence-max-height: 40%;
+		--presence-max-width: 31%;
+		bottom: 12%;
+		left: 3%;
 	}
 }

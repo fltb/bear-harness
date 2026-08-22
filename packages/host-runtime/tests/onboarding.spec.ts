@@ -44,27 +44,26 @@ describe("role-defined onboarding", () => {
 
 		await expect(data(runtime, "onboarding.get:v1", {})).resolves.toMatchObject({
 			status: "active",
-			currentStepId: "door_closed",
+			currentStepId: "settings_intro",
 		});
 		await expect(
-			data(runtime, "onboarding.submit:v1", { stepId: "door_closed" }),
+			data(runtime, "onboarding.submit:v1", { stepId: "settings_intro" }),
 		).resolves.toMatchObject({
 			status: "active",
-			currentStepId: "introduced",
+			currentStepId: "nickname",
 		});
-		await data(runtime, "onboarding.submit:v1", { stepId: "introduced" });
-		await data(runtime, "onboarding.submit:v1", { stepId: "naming", answer: "林" });
-		await data(runtime, "onboarding.submit:v1", { stepId: "relation", answer: "partner" });
+		await data(runtime, "onboarding.submit:v1", { stepId: "nickname", answer: "林" });
+		await data(runtime, "onboarding.submit:v1", { stepId: "relationship", answer: "collaborator" });
 		await expect(
 			data(runtime, "onboarding.submit:v1", {
-				stepId: "memory_decision",
+				stepId: "memory",
 				answer: "remember",
 			}),
 		).resolves.toMatchObject({
 			status: "complete",
 			stateData: {
-				answers: { nickname: "林", relationship: "partner", relationship_memory: "remember" },
-				decisions: { relationship_kind: "partner", relationship_memory_enabled: true },
+				answers: { nickname: "林", relationship: "collaborator", relationship_memory: "remember" },
+				decisions: { relationship_kind: "collaborator", relationship_memory_enabled: true },
 			},
 		});
 
@@ -74,12 +73,12 @@ describe("role-defined onboarding", () => {
 		await data(runtime, "settings.set:v1", { settings: { relationshipMemoryEnabled: false } });
 		await expect(data(runtime, "onboarding.get:v1", {})).resolves.toMatchObject({
 			stateData: {
-				answers: { relationship_memory: "forget" },
+				answers: { relationship_memory: "present" },
 				decisions: { relationship_memory_enabled: false },
 			},
 		});
 		await expect(data(runtime, "conversation.list:v1", {})).resolves.toMatchObject({
-			conversations: [{ title: "初次见面" }],
+			conversations: [{ title: "与极昼" }],
 		});
 		await runtime.close();
 	});
@@ -90,17 +89,17 @@ describe("role-defined onboarding", () => {
 
 		const initial = (await data(runtime, "onboarding.get:v1", {})) as { eventSeq: number };
 		const transitioned = (await data(runtime, "onboarding.submit:v1", {
-			stepId: "door_closed",
+			stepId: "settings_intro",
 		})) as { currentStepId: string; eventSeq: number };
 		const snapshot = (await data(runtime, "snapshot.get:v1", {})) as {
 			eventSeq: number;
 			onboarding: { currentStepId: string; eventSeq: number };
 		};
 
-		expect(transitioned).toMatchObject({ currentStepId: "introduced" });
+		expect(transitioned).toMatchObject({ currentStepId: "nickname" });
 		expect(transitioned.eventSeq).toBeGreaterThan(initial.eventSeq);
 		expect(snapshot.onboarding).toMatchObject({
-			currentStepId: "introduced",
+			currentStepId: "nickname",
 			eventSeq: snapshot.eventSeq,
 		});
 		expect(snapshot.eventSeq).toBeGreaterThanOrEqual(transitioned.eventSeq);
@@ -127,11 +126,10 @@ describe("role-defined onboarding", () => {
 			reply: { providerId: provider.id, modelId: model.id },
 		});
 		for (const [stepId, answer] of [
-			["door_closed", undefined],
-			["introduced", undefined],
-			["naming", "林"],
-			["relation", "partner"],
-			["memory_decision", "remember"],
+			["settings_intro", undefined],
+			["nickname", "林"],
+			["relationship", "collaborator"],
+			["memory", "remember"],
 		] as const) {
 			await data(runtime, "onboarding.submit:v1", { stepId, answer });
 		}
@@ -172,7 +170,7 @@ describe("role-defined onboarding", () => {
 		await runtime.close();
 	});
 
-	it("migrates a persisted voice gate into a completed role-defined flow", async () => {
+	it("rejects persisted onboarding state from a different role flow version", async () => {
 		const runtime = runtimeForTest();
 		const database = Reflect.get(runtime, "db") as {
 			connection: { prepare(sql: string): { run(...params: unknown[]): void } };
@@ -183,19 +181,18 @@ describe("role-defined onboarding", () => {
 			)
 			.run(
 				productConfig.defaultCharacterId,
-				"voice_ready",
-				JSON.stringify({ name: "林", relation: "partner", memoryEnabled: true }),
+				"complete",
+				JSON.stringify({
+					schema_version: 1,
+					flow_version: 1,
+					answers: { nickname: "林", relationship: "collaborator" },
+					decisions: { relationship_kind: "collaborator" },
+				}),
 			);
 
-		await expect(data(runtime, "onboarding.get:v1", {})).resolves.toMatchObject({
-			status: "complete",
-			stateData: {
-				answers: { nickname: "林", relationship: "partner", relationship_memory: "remember" },
-				decisions: { relationship_kind: "partner", relationship_memory_enabled: true },
-			},
-		});
-		await expect(data(runtime, "conversation.list:v1", {})).resolves.toMatchObject({
-			conversations: [{ title: "初次见面" }],
+		await expect(runtime.dispatch("onboarding.get:v1", {})).resolves.toMatchObject({
+			ok: false,
+			error: { kind: "internal" },
 		});
 		await runtime.close();
 	});
@@ -211,7 +208,7 @@ describe("role-defined onboarding", () => {
 			)
 			.run(
 				productConfig.defaultCharacterId,
-				"door_closed",
+				"settings_intro",
 				JSON.stringify({ schema_version: 1, decisions: {} }),
 			);
 
@@ -225,12 +222,11 @@ describe("role-defined onboarding", () => {
 	it("rejects a value outside the active role-defined choice set", async () => {
 		const runtime = runtimeForTest();
 		await runtime.start();
-		await data(runtime, "onboarding.submit:v1", { stepId: "door_closed" });
-		await data(runtime, "onboarding.submit:v1", { stepId: "introduced" });
-		await data(runtime, "onboarding.submit:v1", { stepId: "naming", answer: "林" });
+		await data(runtime, "onboarding.submit:v1", { stepId: "settings_intro" });
+		await data(runtime, "onboarding.submit:v1", { stepId: "nickname", answer: "林" });
 
 		await expect(
-			runtime.dispatch("onboarding.submit:v1", { stepId: "relation", answer: "invalid" }),
+			runtime.dispatch("onboarding.submit:v1", { stepId: "relationship", answer: "invalid" }),
 		).resolves.toEqual({
 			ok: false,
 			error: { kind: "invalid_request", reason: "onboarding_answer_invalid" },

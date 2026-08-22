@@ -5,12 +5,13 @@ import { Dialog } from "@kobalte/core/dialog";
 import { FileField } from "@kobalte/core/file-field";
 import { Tabs } from "@kobalte/core/tabs";
 import { TextField } from "@kobalte/core/text-field";
-import { createEffect, createResource, createSignal, For, onMount, Show } from "solid-js";
+import { For, Show } from "solid-js";
 import {
 	type CharacterDisplay,
 	type CharacterSummary,
 	useCompanionStore,
 } from "../stores/companion.js";
+import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
 import { CanonStudio } from "./CanonStudio.js";
 import { CharacterPackageWorkshop } from "./CharacterPackageWorkshop.js";
 import { MemoryEntryList, MemorySheet } from "./MemorySheet.js";
@@ -31,75 +32,33 @@ export function Backstage(props: {
 	initialTab?: "roles" | "settings";
 }) {
 	const [t] = useTranslation(undefined, { i18n });
-	const [selectedTab, setSelectedTab] = createSignal(props.initialTab ?? "roles");
-	createEffect(() => setSelectedTab(props.initialTab ?? "roles"));
+	const workflow = createBackstageWorkflowStore(useCompanionStore());
+	workflow.syncInitialTab(props.initialTab);
 	return (
-		<Dialog
-			open={props.open}
-			onOpenChange={(isOpen) => {
-				if (!isOpen) props.onClose();
-			}}
-		>
+		<Dialog open={props.open} onOpenChange={(isOpen) => { if (!isOpen) props.onClose(); }}>
 			<Dialog.Portal>
 				<Dialog.Overlay class="backstage-overlay" />
 				<Dialog.Content class="backstage-sheet">
 					<div class="backstage-head">
 						<Dialog.Title class="backstage-title">
-							{props.initialTab === "settings"
-								? t("sidebar.systemSettings")
-								: t("sidebar.characterSettings")}
+							{props.initialTab === "settings" ? t("sidebar.systemSettings") : t("sidebar.characterSettings")}
 						</Dialog.Title>
-						<Dialog.CloseButton class="backstage-close" aria-label={t("backstage.close")}>
-							{t("backstage.close")}
-						</Dialog.CloseButton>
+						<Dialog.CloseButton class="backstage-close" aria-label={t("backstage.close")}>{t("backstage.close")}</Dialog.CloseButton>
 					</div>
-					<Show
-						when={props.initialTab !== "settings"}
-						fallback={
-							<div class="standalone-settings-panel">
-								<SettingsSheet />
-							</div>
-						}
-					>
-						<Tabs
-							value={selectedTab()}
-							onChange={setSelectedTab}
-							class="backstage-tabs"
-							aria-label={t("backstage.tabsLabel")}
-						>
+					<Show when={props.initialTab !== "settings"} fallback={<div class="standalone-settings-panel"><SettingsSheet /></div>}>
+						<Tabs value={workflow.selectedTab()} onChange={workflow.setSelectedTab} class="backstage-tabs" aria-label={t("backstage.tabsLabel")}>
 							<Tabs.List class="tabs">
-								<Tabs.Trigger value="relationship" class="tab">
-									{t("backstage.relationshipArchive")}
-								</Tabs.Trigger>
-								<Tabs.Trigger value="roles" class="tab">
-									{t("backstage.roleManagement")}
-								</Tabs.Trigger>
-								<Tabs.Trigger value="memory" class="tab">
-									{t("backstage.memory")}
-								</Tabs.Trigger>
-								<Tabs.Trigger value="story" class="tab">
-									{t("backstage.storyArchive")}
-								</Tabs.Trigger>
-								<Tabs.Trigger value="studio" class="tab">
-									{t("backstage.packageWorkshop")}
-								</Tabs.Trigger>
+								<Tabs.Trigger value="relationship" class="tab">{t("backstage.relationshipArchive")}</Tabs.Trigger>
+								<Tabs.Trigger value="roles" class="tab">{t("backstage.roleManagement")}</Tabs.Trigger>
+								<Tabs.Trigger value="memory" class="tab">{t("backstage.memory")}</Tabs.Trigger>
+								<Tabs.Trigger value="story" class="tab">{t("backstage.storyArchive")}</Tabs.Trigger>
+								<Tabs.Trigger value="studio" class="tab">{t("backstage.packageWorkshop")}</Tabs.Trigger>
 							</Tabs.List>
-							<Tabs.Content value="relationship" class="tab-panel">
-								<RelationshipArchive character={props.character} />
-							</Tabs.Content>
-							<Tabs.Content value="roles" class="tab-panel">
-								<RoleManager />
-							</Tabs.Content>
-							<Tabs.Content value="memory" class="tab-panel">
-								<MemorySheet />
-							</Tabs.Content>
-							<Tabs.Content value="story" class="tab-panel">
-								<StoryArchive />
-							</Tabs.Content>
-							<Tabs.Content value="studio" class="tab-panel">
-								<CharacterPackageWorkshop />
-								<CanonStudio />
-							</Tabs.Content>
+							<Tabs.Content value="relationship" class="tab-panel"><Show when={workflow.selectedTab() === "relationship"}><RelationshipArchive character={props.character} /></Show></Tabs.Content>
+							<Tabs.Content value="roles" class="tab-panel"><Show when={workflow.selectedTab() === "roles"}><RoleManager /></Show></Tabs.Content>
+							<Tabs.Content value="memory" class="tab-panel"><Show when={workflow.selectedTab() === "memory"}><MemorySheet /></Show></Tabs.Content>
+							<Tabs.Content value="story" class="tab-panel"><Show when={workflow.selectedTab() === "story"}><StoryArchive /></Show></Tabs.Content>
+							<Tabs.Content value="studio" class="tab-panel"><Show when={workflow.selectedTab() === "studio"}><CharacterPackageWorkshop /><CanonStudio /></Show></Tabs.Content>
 						</Tabs>
 					</Show>
 				</Dialog.Content>
@@ -110,166 +69,47 @@ export function Backstage(props: {
 
 function RoleManager() {
 	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
-	const [busyId, setBusyId] = createSignal<string>();
-	const [importing, setImporting] = createSignal(false);
-	const [feedback, setFeedback] = createSignal<string>();
-	const importPackage = async (files: File[]) => {
-		if (files.length === 0) return;
-		setImporting(true);
-		setFeedback();
-		try {
-			const payload = await Promise.all(
-				files.map(async (file) => {
-					const bytes = new Uint8Array(await file.arrayBuffer());
-					let binary = "";
-					for (let offset = 0; offset < bytes.length; offset += 32_768) {
-						binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
-					}
-					return {
-						path: file.webkitRelativePath || file.name,
-						base64: btoa(binary),
-					};
-				}),
-			);
-			await store.characters.import(payload);
-			setFeedback(t("backstage.roleImportDone"));
-		} catch (error) {
-			setFeedback(
-				`${t("backstage.roleImportFailed")}${error instanceof Error ? error.message : String(error)}`,
-			);
-		} finally {
-			setImporting(false);
-		}
-	};
+	const workflow = createBackstageWorkflowStore(useCompanionStore());
 	return (
 		<div class="sheet-panel role-list">
 			<div class="role-import">
 				<p class="drawer-note">{t("backstage.roleImportHint")}</p>
-				<FileField
-					multiple
-					disabled={importing()}
-					onFileAccept={(files) => void importPackage(files)}
-				>
-					<FileField.Trigger class="button-like" aria-label={t("backstage.roleImport")}>
-						{importing() ? t("backstage.roleImportBusy") : t("backstage.roleImport")}
-					</FileField.Trigger>
-					<FileField.HiddenInput
-						aria-label={t("backstage.roleImport")}
-						ref={(element) => element.setAttribute("webkitdirectory", "")}
-					/>
+				<FileField multiple disabled={workflow.importing()} onFileAccept={(files) => workflow.importPackage(files, t("backstage.roleImportDone"), t("backstage.roleImportFailed"))}>
+					<FileField.Trigger class="button-like" aria-label={t("backstage.roleImport")}>{workflow.importing() ? t("backstage.roleImportBusy") : t("backstage.roleImport")}</FileField.Trigger>
+					<FileField.HiddenInput aria-label={t("backstage.roleImport")} ref={(element) => element.setAttribute("webkitdirectory", "")} />
 				</FileField>
-				<Show when={feedback()}>
-					<p role="status" class="status-line">
-						{feedback()}
-					</p>
-				</Show>
+				<Show when={workflow.roleFeedback()}><p role="status" class="status-line">{workflow.roleFeedback()}</p></Show>
 			</div>
-			<For each={store.characters.characters()}>
-				{(character) => <RoleRow character={character} busyId={busyId()} setBusyId={setBusyId} />}
-			</For>
+			<For each={workflow.characters()}>{(character) => <RoleRow character={character} />}</For>
 		</div>
 	);
 }
 
-function RoleRow(props: {
-	character: CharacterSummary;
-	busyId: string | undefined;
-	setBusyId: (value: string | undefined) => void;
-}) {
+function RoleRow(props: { character: CharacterSummary }) {
 	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
-	const [trust, { refetch }] = createResource(
-		() => props.character.id,
-		(characterId) =>
-			store.characters.pluginTrust?.(characterId) ??
-			Promise.resolve({
-				origin: "official" as const,
-				pluginHash: "",
-				pluginsPresent: false,
-				trusted: true,
-			}),
-	);
-	const [confirmingPlugins, setConfirmingPlugins] = createSignal(false);
-	const enablePlugins = async () => {
-		props.setBusyId(props.character.id);
-		try {
-			await store.characters.confirmPluginTrust(props.character.id);
-			await refetch();
-			setConfirmingPlugins(false);
-		} finally {
-			props.setBusyId(undefined);
-		}
-	};
+	const workflow = createBackstageWorkflowStore(useCompanionStore());
+	const trust = workflow.pluginTrust(props.character.id);
+	const confirming = workflow.confirmingPlugins(props.character.id);
+	const disabled = () => workflow.roleBusyId() !== undefined;
+	const blocked = () => trust()?.pluginsPresent && !trust()?.trusted;
 	return (
 		<div class="role-row">
 			<img src={props.character.avatarUrl} alt="" aria-hidden="true" />
-			<div>
-				<strong>{props.character.name}</strong>
-				<span>{props.character.subtitle}</span>
-				<Show when={trust()?.pluginsPresent && !trust()?.trusted}>
-					<span class="role-plugin-warning">{t("backstage.rolePluginsDisabled")}</span>
-				</Show>
-			</div>
-			<Show when={trust()?.pluginsPresent && !trust()?.trusted}>
-				<Button
-					data-control="command"
-					type="button"
-					disabled={props.busyId !== undefined}
-					onClick={() => setConfirmingPlugins(true)}
-				>
-					{t("backstage.roleEnablePlugins")}
-				</Button>
+			<div><strong>{props.character.name}</strong><span>{props.character.subtitle}</span><Show when={blocked()}><span class="role-plugin-warning">{t("backstage.rolePluginsDisabled")}</span></Show></div>
+			<Show when={blocked()}><Button data-control="command" type="button" disabled={disabled()} onClick={() => workflow.setConfirmingPlugins(props.character.id, true)}>{t("backstage.roleEnablePlugins")}</Button></Show>
+			<Show when={!props.character.active} fallback={<span class="role-active">{t("backstage.roleActive")}</span>}>
+				<Button data-control="command" type="button" disabled={disabled()} onClick={() => workflow.activateRole(props.character.id)}>{t("backstage.roleSwitch")}</Button>
 			</Show>
-			<Show
-				when={!props.character.active}
-				fallback={<span class="role-active">{t("backstage.roleActive")}</span>}
-			>
-				<Button
-					data-control="command"
-					type="button"
-					disabled={props.busyId !== undefined}
-					onClick={() => {
-						props.setBusyId(props.character.id);
-						void store.characters
-							.activate(props.character.id)
-							.finally(() => props.setBusyId(undefined));
-					}}
-				>
-					{t("backstage.roleSwitch")}
-				</Button>
-			</Show>
-			<Dialog open={confirmingPlugins()} onOpenChange={setConfirmingPlugins}>
-				<Dialog.Portal>
-					<Dialog.Overlay class="plugin-trust-overlay" />
-					<Dialog.Content class="plugin-trust-dialog">
-						<Dialog.Title>{t("backstage.rolePluginTrustTitle")}</Dialog.Title>
-						<Dialog.Description>
-							{t("backstage.rolePluginTrustDescription", { name: props.character.name })}
-						</Dialog.Description>
-						<dl class="plugin-trust-details">
-							<dt>{t("backstage.rolePluginOrigin")}</dt>
-							<dd>{trust()?.origin}</dd>
-							<dt>{t("backstage.rolePluginHash")}</dt>
-							<dd>
-								<code>{trust()?.pluginHash}</code>
-							</dd>
-						</dl>
-						<div class="plugin-trust-actions">
-							<Dialog.CloseButton as={Button} data-control="command" type="button">
-								{t("backstage.rolePluginCancel")}
-							</Dialog.CloseButton>
-							<Button
-								data-control="command"
-								type="button"
-								disabled={props.busyId !== undefined}
-								onClick={() => void enablePlugins()}
-							>
-								{t("backstage.rolePluginTrustConfirm")}
-							</Button>
-						</div>
-					</Dialog.Content>
-				</Dialog.Portal>
+			<Dialog open={confirming()} onOpenChange={(value) => workflow.setConfirmingPlugins(props.character.id, value)}>
+				<Dialog.Portal><Dialog.Overlay class="plugin-trust-overlay" /><Dialog.Content class="plugin-trust-dialog">
+					<Dialog.Title>{t("backstage.rolePluginTrustTitle")}</Dialog.Title>
+					<Dialog.Description>{t("backstage.rolePluginTrustDescription", { name: props.character.name })}</Dialog.Description>
+					<dl class="plugin-trust-details"><dt>{t("backstage.rolePluginOrigin")}</dt><dd>{trust()?.origin}</dd><dt>{t("backstage.rolePluginHash")}</dt><dd><code>{trust()?.pluginHash}</code></dd></dl>
+					<div class="plugin-trust-actions">
+						<Dialog.CloseButton as={Button} data-control="command" type="button">{t("backstage.rolePluginCancel")}</Dialog.CloseButton>
+						<Button data-control="command" type="button" disabled={disabled()} onClick={() => workflow.enablePlugins(props.character.id)}>{t("backstage.rolePluginTrustConfirm")}</Button>
+					</div>
+				</Dialog.Content></Dialog.Portal>
 			</Dialog>
 		</div>
 	);
@@ -277,78 +117,22 @@ function RoleRow(props: {
 
 function StoryArchive() {
 	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
-	const [text, setText] = createSignal("");
-	const [branchOnly, setBranchOnly] = createSignal(false);
-	const [busy, setBusy] = createSignal(false);
-
-	const add = async (event: SubmitEvent) => {
-		event.preventDefault();
-		const value = text().trim();
-		if (!value) return;
-		setBusy(true);
-		try {
-			await store.story.apply(value, branchOnly() ? "branch" : "global");
-			setText("");
-		} finally {
-			setBusy(false);
-		}
-	};
-
+	const workflow = createBackstageWorkflowStore(useCompanionStore());
+	const companion = useCompanionStore();
 	return (
 		<div class="sheet-panel story-archive">
 			<p class="drawer-note">{t("backstage.storyOriginal")}</p>
-			<Show
-				when={store.story.changes().length > 0}
-				fallback={<p class="drawer-note">{t("backstage.storyEmpty")}</p>}
-			>
+			<Show when={companion.story.changes().length > 0} fallback={<p class="drawer-note">{t("backstage.storyEmpty")}</p>}>
 				<div class="story-change-list">
-					<For each={store.story.changes()}>
-						{(change) => (
-							<div class="story-change">
-								<span>{change.text}</span>
-								<Button
-									data-control="command"
-									type="button"
-									disabled={busy()}
-									onClick={() => void store.story.revert(change.id)}
-								>
-									{t("backstage.storyUndo")}
-								</Button>
-							</div>
-						)}
-					</For>
+					<For each={companion.story.changes()}>{(change) => <div class="story-change"><span>{change.text}</span><Button data-control="command" type="button" disabled={workflow.storyBusy()} onClick={() => workflow.revertStory(change.id)}>{t("backstage.storyUndo")}</Button></div>}</For>
 				</div>
 			</Show>
-			<form class="story-add" onSubmit={add}>
-				<TextField>
-					<TextField.TextArea
-						rows={3}
-						aria-label={t("backstage.storyAddPlaceholder")}
-						placeholder={t("backstage.storyAddPlaceholder")}
-						value={text()}
-						onInput={(event) => setText(event.currentTarget.value)}
-					/>
-				</TextField>
-				<Checkbox checked={branchOnly()} onChange={setBranchOnly}>
-					<Checkbox.Input />
-					<Checkbox.Control>
-						<Checkbox.Indicator>✓</Checkbox.Indicator>
-					</Checkbox.Control>
-					<Checkbox.Label>{t("backstage.storyBranchOnly")}</Checkbox.Label>
-				</Checkbox>
-				<Button data-control="command" type="submit" disabled={busy() || !text().trim()}>
-					{t("backstage.storyAdd")}
-				</Button>
+			<form class="story-add" onSubmit={(event) => { event.preventDefault(); workflow.addStory(workflow.storyText(), workflow.storyBranchOnly()); }}>
+				<TextField><TextField.TextArea rows={3} aria-label={t("backstage.storyAddPlaceholder")} placeholder={t("backstage.storyAddPlaceholder")} value={workflow.storyText()} onInput={(event) => workflow.setStoryText(event.currentTarget.value)} /></TextField>
+				<Checkbox checked={workflow.storyBranchOnly()} onChange={workflow.setStoryBranchOnly}><Checkbox.Input /><Checkbox.Control><Checkbox.Indicator>✓</Checkbox.Indicator></Checkbox.Control><Checkbox.Label>{t("backstage.storyBranchOnly")}</Checkbox.Label></Checkbox>
+				<Button data-control="command" type="submit" disabled={workflow.storyBusy() || !workflow.storyText().trim()}>{t("backstage.storyAdd")}</Button>
 			</form>
-			<Button
-				type="button"
-				class="story-reset"
-				disabled={busy()}
-				onClick={() => void store.story.reset()}
-			>
-				{t("backstage.storyReset")}
-			</Button>
+			<Button type="button" class="story-reset" disabled={workflow.storyBusy()} onClick={workflow.resetStory}>{t("backstage.storyReset")}</Button>
 		</div>
 	);
 }
@@ -356,105 +140,19 @@ function StoryArchive() {
 /** 关系档案: locked self-canon plus the relationship-scoped memories. */
 function RelationshipArchive(props: { character: CharacterDisplay | undefined }) {
 	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
-	const [saving, setSaving] = createSignal(false);
-	const [feedback, setFeedback] = createSignal<string>();
-	const [error, setError] = createSignal<string>();
-	onMount(() => void store.settings.get());
-	const enabled = () => store.settings.data()?.relationshipMemoryEnabled ?? false;
-	const historyReadEnabled = () => store.settings.data()?.conversationHistoryReadEnabled ?? false;
-	const toggleMemory = async (): Promise<void> => {
-		setSaving(true);
-		setFeedback();
-		setError();
-		const next = !enabled();
-		try {
-			await store.settings.set({ relationshipMemoryEnabled: next });
-			setFeedback(
-				next ? t("settings.relationshipMemoryEnabled") : t("settings.relationshipMemoryDisabled"),
-			);
-		} catch {
-			setError(t("errors.generic"));
-		} finally {
-			setSaving(false);
-		}
-	};
-	const toggleHistoryRead = async (): Promise<void> => {
-		setSaving(true);
-		setFeedback();
-		setError();
-		try {
-			await store.settings.set({ conversationHistoryReadEnabled: !historyReadEnabled() });
-		} catch {
-			setError(t("errors.generic"));
-		} finally {
-			setSaving(false);
-		}
-	};
+	const workflow = createBackstageWorkflowStore(useCompanionStore());
 	return (
 		<div class="sheet-panel">
-			<Show when={props.character}>
-				{(character) => (
-					<div class="detail-card">
-						<strong>
-							{character().name}
-							{t("backstage.identitySuffix")}
-						</strong>
-						<span>
-							{character().character.subtitle} · {character().character.scene_title}
-						</span>
-					</div>
-				)}
-			</Show>
+			<Show when={props.character}>{(character) => <div class="detail-card"><strong>{character().name}{t("backstage.identitySuffix")}</strong><span>{character().character.subtitle} · {character().character.scene_title}</span></div>}</Show>
 			<p class="drawer-note">{t("backstage.identityNote")}</p>
-			<div class="field">
-				<div class="switch-field">
-					<div class="switch-text">
-						<span class="field-label">{t("settings.relationshipMemory")}</span>
-						<p class="field-hint">{t("settings.relationshipMemoryHint")}</p>
-					</div>
-					<Button
-						type="button"
-						class="switch-control"
-						role="switch"
-						aria-label={t("settings.relationshipMemory")}
-						aria-checked={enabled()}
-						data-checked={enabled() || undefined}
-						disabled={saving() || store.settings.data() === undefined}
-						onClick={() => void toggleMemory()}
-					>
-						<span class="switch-thumb" />
-					</Button>
-				</div>
-			</div>
-			<div class="field">
-				<div class="switch-field">
-					<div class="switch-text">
-						<span class="field-label">{t("settings.conversationHistoryRead")}</span>
-						<p class="field-hint">{t("settings.conversationHistoryReadHint")}</p>
-					</div>
-					<Button
-						type="button"
-						class="switch-control"
-						role="switch"
-						aria-label={t("settings.conversationHistoryRead")}
-						aria-checked={historyReadEnabled()}
-						data-checked={historyReadEnabled() || undefined}
-						disabled={saving() || store.settings.data() === undefined}
-						onClick={() => void toggleHistoryRead()}
-					>
-						<span class="switch-thumb" />
-					</Button>
-				</div>
-			</div>
-			<Show when={feedback()}>{(message) => <p class="status-line">{message()}</p>}</Show>
-			<Show when={error()}>
-				{(message) => (
-					<p class="status-line err" role="alert">
-						{message()}
-					</p>
-				)}
-			</Show>
+			<div class="field"><div class="switch-field"><div class="switch-text"><span class="field-label">{t("settings.relationshipMemory")}</span><p class="field-hint">{t("settings.relationshipMemoryHint")}</p></div>
+				<Button type="button" class="switch-control" role="switch" aria-label={t("settings.relationshipMemory")} aria-checked={workflow.relationshipEnabled()} data-checked={workflow.relationshipEnabled() || undefined} disabled={workflow.relationshipSaving() || !workflow.settingsAvailable()} onClick={() => workflow.toggleRelationshipMemory(t("settings.relationshipMemoryEnabled"), t("settings.relationshipMemoryDisabled"), t("errors.generic"))}><span class="switch-thumb" /></Button>
+			</div></div>
+			<div class="field"><div class="switch-field"><div class="switch-text"><span class="field-label">{t("settings.conversationHistoryRead")}</span><p class="field-hint">{t("settings.conversationHistoryReadHint")}</p></div>
+				<Button type="button" class="switch-control" role="switch" aria-label={t("settings.conversationHistoryRead")} aria-checked={workflow.historyReadEnabled()} data-checked={workflow.historyReadEnabled() || undefined} disabled={workflow.relationshipSaving() || !workflow.settingsAvailable()} onClick={() => workflow.toggleHistoryRead(t("errors.generic"))}><span class="switch-thumb" /></Button>
+			</div></div>
+			<Show when={workflow.relationshipFeedback()}>{(message) => <p class="status-line">{message()}</p>}</Show>
+			<Show when={workflow.relationshipError()}>{(message) => <p class="status-line err" role="alert">{message()}</p>}</Show>
 			<MemoryEntryList scope="relationship" title={t("backstage.relationshipMemories")} />
 			<RoleplayArchive character={props.character} />
 		</div>
@@ -463,69 +161,23 @@ function RelationshipArchive(props: { character: CharacterDisplay | undefined })
 
 function RoleplayArchive(props: { character: CharacterDisplay | undefined }) {
 	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
-	const visibleVariables = () =>
-		props.character?.roleplay.variables.filter((variable) => variable.display.kind !== "hidden") ??
-		[];
-	const unlocked = () => new Set(store.roleplay?.unlocked ?? []);
-	const collections = () =>
-		props.character?.roleplay.unlockables.filter((entry) => unlocked().has(entry.id)) ?? [];
-	const media = (id: string | undefined) =>
-		props.character?.roleplay.media.find((entry) => entry.id === id);
-	const displayValue = (variable: CharacterDisplay["roleplay"]["variables"][number]): string => {
-		const value = store.roleplay?.values[variable.id] ?? variable.initial;
-		if (variable.display.kind !== "level" || typeof value !== "number") return String(value);
-		return (
-			[...variable.display.levels]
-				.sort((left, right) => right.min - left.min)
-				.find((level) => value >= level.min)?.label ?? String(value)
-		);
-	};
+	const workflow = createBackstageWorkflowStore(useCompanionStore());
+	const state = workflow.roleplay(() => props.character);
 	return (
 		<Tabs defaultValue="status" class="roleplay-archive">
 			<Tabs.List aria-label={t("backstage.collections")} class="sub-tabs">
-				<Tabs.Trigger value="status" class="tab">
-					{t("backstage.roleplayStatus")}
-				</Tabs.Trigger>
-				<Tabs.Trigger value="collections" class="tab">
-					{t("backstage.collections")}
-				</Tabs.Trigger>
+				<Tabs.Trigger value="status" class="tab">{t("backstage.roleplayStatus")}</Tabs.Trigger>
+				<Tabs.Trigger value="collections" class="tab">{t("backstage.collections")}</Tabs.Trigger>
 			</Tabs.List>
 			<Tabs.Content value="status" class="tab-panel">
 				<div class="roleplay-status-list">
-					<For each={visibleVariables()}>
-						{(variable) => (
-							<div class="roleplay-status-row">
-								<span>
-									{variable.display.kind === "hidden" ? variable.id : variable.display.label}
-								</span>
-								<strong>{displayValue(variable)}</strong>
-							</div>
-						)}
-					</For>
+					<For each={state.visibleVariables()}>{(variable) => <div class="roleplay-status-row"><span>{variable.display.kind === "hidden" ? variable.id : variable.display.label}</span><strong>{state.displayValue(variable)()}</strong></div>}</For>
 				</div>
 			</Tabs.Content>
 			<Tabs.Content value="collections" class="tab-panel">
-				<Show
-					when={collections().length > 0}
-					fallback={<p class="drawer-note">{t("backstage.collectionsEmpty")}</p>}
-				>
+				<Show when={state.collections().length > 0} fallback={<p class="drawer-note">{t("backstage.collectionsEmpty")}</p>}>
 					<div class="collection-grid">
-						<For each={collections()}>
-							{(entry) => {
-								const asset = () => media(entry.media);
-								return (
-									<article class="collection-item">
-										<Show when={asset()}>{(item) => <RoleplayMedia media={item()} />}</Show>
-										<span class="collection-kind">
-											{t(`backstage.collectionKinds.${entry.kind}`)}
-										</span>
-										<strong>{entry.label}</strong>
-										<p>{entry.description}</p>
-									</article>
-								);
-							}}
-						</For>
+						<For each={state.collections()}>{(entry) => <article class="collection-item"><Show when={state.mediaFor(entry.media)()}>{(item) => <RoleplayMedia media={item()} />}</Show><span class="collection-kind">{t(`backstage.collectionKinds.${entry.kind}`)}</span><strong>{entry.label}</strong><p>{entry.description}</p></article>}</For>
 					</div>
 				</Show>
 			</Tabs.Content>

@@ -544,6 +544,52 @@ export class TencentDbRuntime {
 		service.startWarmup();
 		return true;
 	}
+	/**
+	 * Prepare the configured local embedding service and wait for the model to
+	 * finish downloading and loading. Unlike `startLocalEmbeddingWarmup`, this
+	 * is an awaited readiness boundary for explicit onboarding.
+	 */
+	async prepareLocalEmbedding(timeoutMs = 120_000): Promise<{ ready: true }> {
+		if (this.closed) throw { kind: "unavailable", reason: "memory_runtime_closed" };
+		const embedding = this.config.embedding;
+		if (embedding.provider !== "local" || embedding.enabled === false) {
+			throw { kind: "conflict", reason: "local_embedding_not_configured" };
+		}
+		try {
+			await this.start();
+		} catch {
+			throw { kind: "unavailable", reason: "local_embedding_runtime_start_failed" };
+		}
+		const service = await this.waitForEmbeddingService(timeoutMs);
+		if (!service) throw { kind: "unavailable", reason: "local_embedding_service_unavailable" };
+		if (!service.isReady()) {
+			service.startWarmup();
+			const waitForReady = (service as EmbeddingService & {
+				waitForReady?: () => Promise<void>;
+			}).waitForReady;
+			try {
+				if (waitForReady) {
+					const timeout = Promise.withResolvers<void>();
+					setTimeout(timeout.resolve, timeoutMs);
+					await Promise.race([waitForReady(), timeout.promise]);
+				} else {
+					const deadline = Date.now() + timeoutMs;
+					while (!service.isReady() && Date.now() < deadline) {
+						const delay = Promise.withResolvers<void>();
+						setTimeout(delay.resolve, 100);
+						await delay.promise;
+					}
+				}
+			} catch {
+				throw { kind: "unavailable", reason: "local_embedding_model_prepare_failed" };
+			}
+		}
+		if (!service.isReady()) {
+			throw { kind: "unavailable", reason: "local_embedding_model_not_ready" };
+		}
+		return { ready: true };
+	}
+
 
 	private async waitForEmbeddingService(timeoutMs: number): Promise<EmbeddingService | undefined> {
 		const deadline = Date.now() + timeoutMs;

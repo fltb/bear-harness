@@ -3,8 +3,13 @@ import { I18nextProvider, i18n, useLanguage, useTranslation } from "@bear-harnes
 import type { ProductConfig } from "@bear-harness/product-config";
 import { Button } from "@kobalte/core/button";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
-import { createEffect, createSignal, type JSX, Show } from "solid-js";
-import { CharacterPresence } from "./CharacterPresence";
+import { createEffect, createMemo, Show } from "solid-js";
+import {
+	createShellWorkflowStore,
+	ShellWorkflowProvider,
+	useShellWorkflowStore,
+} from "./stores/shell-workflows.js";
+import { CharacterPresence, type CharacterPresenceLayoutMode } from "./CharacterPresence";
 import { Composer } from "./Composer";
 import { ConversationPanel } from "./ConversationPanel";
 import { FirstMeeting } from "./FirstMeeting";
@@ -12,13 +17,7 @@ import { Backstage } from "./features/Backstage.js";
 import { ResultSpace, ResultSpaceProvider, useResultSpace } from "./features/ResultSpace.js";
 import { SceneBackdrop } from "./SceneBackdrop";
 import { Sidebar } from "./Sidebar";
-import {
-	type CharacterDisplay,
-	createCompanionStore,
-	DesktopProvider,
-	type SceneDisplay,
-	useCompanionStore,
-} from "./stores/companion.js";
+import { createCompanionStore, DesktopProvider, type PresenceState, useCompanionStore } from "./stores/companion.js";
 
 /** The narrowest supported desktop viewport width, in CSS pixels. */
 export const SUPPORTED_DESKTOP_MIN_WIDTH = 800;
@@ -51,85 +50,19 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
 	const [t] = useTranslation(undefined, { i18n });
 	const [currentLocale] = useLanguage(() => i18n);
 	const store = createCompanionStore(props.client);
-	const [backstageOpen, setBackstageOpen] = createSignal(false);
-	const [backstageTab, setBackstageTab] = createSignal<"roles" | "settings">("roles");
-	const [dismissedLanguageWarning, setDismissedLanguageWarning] = createSignal("");
-	const openBackstage = (tab: "roles" | "settings" = "roles") => {
-		setBackstageTab(tab);
-		setBackstageOpen(true);
-	};
+	const workflow = createShellWorkflowStore({ store, currentLocale, translate: t });
 
 	createEffect(() => {
 		document.title = props.product.productName;
 	});
 
-	const character = () => store.character;
-	const activeCharacterRuntime = () => {
-		const conversationId = store.activeConversationId;
-		return conversationId ? store.characterRuntimeByConversation[conversationId] : undefined;
-	};
-	const activeScene = () => {
-		const identity = character();
-		const sceneId = activeCharacterRuntime()?.sceneId ?? identity?.visual.defaultSceneId;
-		return identity?.scenes.find((scene) => scene.id === sceneId);
-	};
-	const composerPlaceholder = () =>
-		character()?.character.composer_placeholder ?? t("shell.fallbackComposerPlaceholder");
-	const preferredLanguage = () =>
-		globalThis.navigator?.languages?.[0] ?? globalThis.navigator?.language ?? currentLocale();
-	const languageWarningKey = () => `${character()?.language ?? ""}|${preferredLanguage()}`;
-	const hasLanguageMismatch = () => {
-		const roleLanguage = character()?.language;
-		if (!roleLanguage) return false;
-		return (
-			roleLanguage.split("-")[0]?.toLowerCase() !== preferredLanguage().split("-")[0]?.toLowerCase()
-		);
-	};
-	const languageWarning = () =>
-		t("language.warningBody")
-			.replace("{roleLanguage}", character()?.language ?? "")
-			.replace("{userLanguage}", preferredLanguage());
-	const themeStyle = (): JSX.CSSProperties => {
-		const theme = character()?.theme;
-		if (!theme) return {};
-		return {
-			"--surface": theme.color.surface,
-			"--surface-alt": theme.color.surface_alt,
-			"--text": theme.color.text,
-			"--text-muted": theme.color.text_muted,
-			"--accent": theme.color.accent,
-			"--line": theme.color.line,
-			"--danger": theme.color.danger,
-			"--amber": theme.color.amber,
-			"--radius-sm": `${theme.radius.sm}px`,
-			"--radius-md": `${theme.radius.md}px`,
-			"--radius-lg": `${theme.radius.lg}px`,
-			"--font-body": theme.font.body,
-			"--font-heading": theme.font.heading,
-		} as JSX.CSSProperties;
-	};
-
 	return (
 		<DesktopProvider store={store}>
-			<ResultSpaceProvider>
-				<DesktopFrame
-					product={props.product}
-					theme={themeStyle()}
-					character={character()}
-					scene={activeScene()}
-					visualState={activeCharacterRuntime()?.visualState}
-					composerPlaceholder={composerPlaceholder()}
-					showLanguageWarning={
-						hasLanguageMismatch() && dismissedLanguageWarning() !== languageWarningKey()
-					}
-					languageWarning={languageWarning()}
-					onDismissLanguageWarning={() => setDismissedLanguageWarning(languageWarningKey())}
-					openBackstage={openBackstage}
-					backstageOpen={backstageOpen()}
-					backstageTab={backstageTab()}
-					onCloseBackstage={() => setBackstageOpen(false)}
-				/>
-			</ResultSpaceProvider>
+			<ShellWorkflowProvider workflow={workflow}>
+				<ResultSpaceProvider>
+					<DesktopFrame product={props.product} />
+				</ResultSpaceProvider>
+			</ShellWorkflowProvider>
 		</DesktopProvider>
 	);
 }
@@ -140,56 +73,78 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
  * layout state that makes the character/conversation/composer column yield
  * to the result column (see styles.css).
  */
-function DesktopFrame(props: {
+type DesktopFrameProps = {
 	product: Readonly<ProductConfig>;
-	theme: JSX.CSSProperties;
-	character: CharacterDisplay | undefined;
-	scene: SceneDisplay | undefined;
-	visualState?: string;
-	composerPlaceholder: string;
-	showLanguageWarning: boolean;
-	languageWarning: string;
-	onDismissLanguageWarning: () => void;
-	openBackstage: (tab?: "roles" | "settings") => void;
-	backstageOpen: boolean;
-	backstageTab: "roles" | "settings";
-	onCloseBackstage: () => void;
-}) {
+};
+
+function deriveCharacterPresenceLayout(input: {
+	resultOpen: boolean;
+	activeConversation: boolean;
+	assistantStreaming: boolean;
+	pendingUserText: string | undefined;
+	presence: PresenceState;
+}): CharacterPresenceLayoutMode {
+	if (input.resultOpen) return "compact";
+	if (
+		input.activeConversation &&
+		(input.assistantStreaming ||
+			input.pendingUserText !== undefined ||
+			input.presence === "listening" ||
+			input.presence === "thinking")
+	) {
+		return "expanded";
+	}
+	return "resting";
+}
+
+function DesktopFrame(props: DesktopFrameProps) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
+	const workflow = useShellWorkflowStore();
 	const { selection } = useResultSpace();
+	const resultSelection = createMemo(() => selection());
+	const presenceLayout = createMemo(() =>
+		deriveCharacterPresenceLayout({
+			resultOpen: resultSelection() !== undefined,
+			activeConversation: store.activeConversationId !== null,
+			assistantStreaming: store.assistantStreaming,
+			pendingUserText: store.pendingUserText,
+			presence: store.presence,
+		}),
+	);
 
 	return (
 		<div
 			class="app desktop-shell"
-			style={props.theme}
+			style={workflow.themeStyle()}
 			data-layout="desktop"
 			data-supported-min-width={SUPPORTED_DESKTOP_MIN_WIDTH}
-			data-result-open={selection() ? "true" : undefined}
+			data-result-open={resultSelection() ? "true" : undefined}
 			role="application"
 			aria-label={props.product.productName}
 		>
 			<div class="shell">
-				<Sidebar character={props.character} onOpenBackstage={props.openBackstage} />
+				<Sidebar character={workflow.character()} onOpenBackstage={workflow.openBackstage} />
 				<main class="main">
-					<Show when={props.showLanguageWarning}>
+					<Show when={workflow.showLanguageWarning()}>
 						<section class="language-warning" role="status">
 							<div>
 								<strong>{t("language.warningTitle")}</strong>
-								<p>{props.languageWarning}</p>
+								<p>{workflow.languageWarning()}</p>
 							</div>
-							<Button data-control="command" type="button" onClick={props.onDismissLanguageWarning}>
+							<Button data-control="command" type="button" onClick={workflow.dismissLanguageWarning}>
 								{t("language.dismiss")}
 							</Button>
 						</section>
 					</Show>
-					<SceneBackdrop scene={props.scene} />
+					<SceneBackdrop scene={workflow.scene()} />
 					<CharacterPresence
-						character={props.character}
+						character={workflow.character()}
 						presence={store.presence}
-						visualState={props.visualState}
+						visualState={workflow.visualState()}
+						layout={presenceLayout()}
 					/>
-					<ConversationPanel character={props.character} />
+					<ConversationPanel character={workflow.character()} />
 					<Show when={store.story.proposals()[0]}>
 						{(proposal) => (
 							<section class="story-confirmation" aria-live="polite">
@@ -218,19 +173,20 @@ function DesktopFrame(props: {
 						)}
 					</Show>
 					<Composer
-						placeholder={props.composerPlaceholder}
-						onOpenModelSettings={() => props.openBackstage("settings")}
+						placeholder={workflow.composerPlaceholder()}
+						onOpenModelSettings={() => workflow.openBackstage("settings")}
 					/>
 					<FirstMeeting />
 				</main>
 				<ResultSpace />
 			</div>
 			<Backstage
-				open={props.backstageOpen}
-				onClose={props.onCloseBackstage}
-				character={props.character}
-				initialTab={props.backstageTab}
+				open={workflow.backstageOpen()}
+				onClose={workflow.closeBackstage}
+				character={workflow.character()}
+				initialTab={workflow.backstageTab()}
 			/>
 		</div>
 	);
 }
+

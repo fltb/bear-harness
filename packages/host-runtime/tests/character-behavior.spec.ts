@@ -96,15 +96,15 @@ describe("CharacterBehaviorService", () => {
 		expect(initial).toMatchObject({
 			ok: true,
 			state: {
-				sceneId: "aurora_study",
-				visualState: "presence",
-				sceneIds: expect.arrayContaining(["aurora_study", "snow_plains"]),
-				visualStates: expect.arrayContaining(["presence", "thinking"]),
+				sceneId: "study",
+				visualState: "calm",
+				sceneIds: expect.arrayContaining(["study", "snowfield"]),
+				visualStates: expect.arrayContaining(["calm", "reflective"]),
 				scenes: expect.arrayContaining([
-					expect.objectContaining({ id: "snow_plains", useWhen: expect.stringContaining("雪原") }),
+					expect.objectContaining({ id: "snowfield", useWhen: expect.stringContaining("雪原") }),
 				]),
 				expressions: expect.arrayContaining([
-					expect.objectContaining({ id: "apologetic", useWhen: expect.stringContaining("犯错") }),
+					expect.objectContaining({ id: "repair", useWhen: expect.stringContaining("修正") }),
 				]),
 			},
 		});
@@ -112,16 +112,16 @@ describe("CharacterBehaviorService", () => {
 		const changedScene = fixture.behavior.invoke({
 			conversationId: "conversation-1",
 			tool: "host_set_scene",
-			args: { sceneId: "snow_plains" },
+			args: { sceneId: "snowfield" },
 		});
-		expect(changedScene).toMatchObject({ ok: true, state: { sceneId: "snow_plains" } });
+		expect(changedScene).toMatchObject({ ok: true, state: { sceneId: "snowfield" } });
 
 		const changedExpression = fixture.behavior.invoke({
 			conversationId: "conversation-1",
 			tool: "host_set_expression",
-			args: { visualState: "thinking" },
+			args: { visualState: "reflective" },
 		});
-		expect(changedExpression).toMatchObject({ ok: true, state: { visualState: "thinking" } });
+		expect(changedExpression).toMatchObject({ ok: true, state: { visualState: "reflective" } });
 
 		const rejected = fixture.behavior.invoke({
 			conversationId: "conversation-1",
@@ -133,7 +133,7 @@ describe("CharacterBehaviorService", () => {
 			fixture.db
 				.prepare("SELECT scene, state_json FROM scene_state WHERE conversation_id = ?")
 				.get("conversation-1"),
-		).toEqual({ scene: "snow_plains", state_json: JSON.stringify({ visualState: "thinking" }) });
+		).toEqual({ scene: "snowfield", state_json: JSON.stringify({ visualState: "reflective" }) });
 	});
 
 	it("applies package-declared Host lifecycle reactions", () => {
@@ -147,7 +147,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { sceneId: "aurora_study", visualState: "listening" } });
+		).toMatchObject({ state: { sceneId: "study", visualState: "attentive" } });
 
 		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
 		expect(
@@ -156,7 +156,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { sceneId: "aurora_study", visualState: "result_ready" } });
+		).toMatchObject({ state: { sceneId: "study", visualState: "ready" } });
 
 		fixture.eventBus.publish("message.aborted", { conversationId: "conversation-1" });
 		expect(
@@ -165,7 +165,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { sceneId: "aurora_study", visualState: "presence" } });
+		).toMatchObject({ state: { sceneId: "study", visualState: "calm" } });
 
 		const events = fixture.db.prepare("SELECT kind FROM events ORDER BY seq").all() as Array<{
 			kind: string;
@@ -190,8 +190,8 @@ describe("CharacterBehaviorService", () => {
 		writeFileSync(
 			manifestPath,
 			manifest.replace(
-				"      visual_state: listening",
-				"      visual_state: listening\n      scene: aurora_study",
+				"      visual_state: attentive",
+				"      visual_state: attentive\n      scene: study",
 			),
 		);
 
@@ -210,8 +210,8 @@ describe("CharacterBehaviorService", () => {
 		writeFileSync(
 			manifestPath,
 			manifest.replace(
-				"    - event: message.aborted\n      visual_state: presence\n",
-				"    - event: message.aborted\n      visual_state: presence\n    - event: workflow.review_requested\n      visual_state: thinking\n",
+				"    - event: message.aborted\n      visual_state: calm\n",
+				"    - event: message.aborted\n      visual_state: calm\n    - event: workflow.review_requested\n      visual_state: reflective\n",
 			),
 		);
 		const fixture = createFixture(new CharacterLoader(configRoot));
@@ -224,7 +224,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { visualState: "thinking" } });
+		).toMatchObject({ state: { visualState: "reflective" } });
 	});
 
 	it("keeps undeclared and locked media or choice presentations behind Host gates", () => {
@@ -235,7 +235,7 @@ describe("CharacterBehaviorService", () => {
 			fixture.behavior.invoke({
 				conversationId: "conversation-1",
 				tool: "host_play_media",
-				args: { mediaId: "first_night" },
+				args: { mediaId: "continuity_light" },
 			}),
 		).toMatchObject({ ok: false, code: "roleplay_media_locked" });
 		expect(
@@ -262,7 +262,7 @@ describe("CharacterBehaviorService", () => {
 		fixture.behavior.invoke({
 			conversationId: "conversation-1",
 			tool: "host_set_expression",
-			args: { visualState: "apologetic" },
+			args: { visualState: "repair" },
 		});
 		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
 
@@ -272,7 +272,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { visualState: "apologetic" } });
+		).toMatchObject({ state: { visualState: "repair" } });
 	});
 
 	it("does not carry model expression suppression into the next turn", () => {
@@ -282,7 +282,7 @@ describe("CharacterBehaviorService", () => {
 		fixture.behavior.invoke({
 			conversationId: "conversation-1",
 			tool: "host_set_expression",
-			args: { visualState: "apologetic" },
+			args: { visualState: "repair" },
 		});
 		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
 		expect(
@@ -291,7 +291,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { visualState: "apologetic" } });
+		).toMatchObject({ state: { visualState: "repair" } });
 
 		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
 		expect(
@@ -300,7 +300,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { visualState: "result_ready" } });
+		).toMatchObject({ state: { visualState: "ready" } });
 	});
 
 	it("clears model expression suppression on failed and aborted turns", () => {
@@ -309,7 +309,7 @@ describe("CharacterBehaviorService", () => {
 		fixture.behavior.invoke({
 			conversationId: "conversation-1",
 			tool: "host_set_expression",
-			args: { visualState: "apologetic" },
+			args: { visualState: "repair" },
 		});
 		fixture.eventBus.publish("message_end", {
 			conversationId: "conversation-1",
@@ -321,7 +321,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { visualState: "apologetic" } });
+		).toMatchObject({ state: { visualState: "repair" } });
 
 		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
 		expect(
@@ -330,12 +330,12 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { visualState: "result_ready" } });
+		).toMatchObject({ state: { visualState: "ready" } });
 
 		fixture.behavior.invoke({
 			conversationId: "conversation-1",
 			tool: "host_set_expression",
-			args: { visualState: "apologetic" },
+			args: { visualState: "repair" },
 		});
 		fixture.eventBus.publish("message.aborted", { conversationId: "conversation-1" });
 		expect(
@@ -344,7 +344,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { visualState: "presence" } });
+		).toMatchObject({ state: { visualState: "calm" } });
 
 		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
 		expect(
@@ -353,7 +353,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { visualState: "result_ready" } });
+		).toMatchObject({ state: { visualState: "ready" } });
 	});
 
 	it("limits roleplay expression suppression to one lifecycle end", () => {
@@ -363,7 +363,7 @@ describe("CharacterBehaviorService", () => {
 			fixture.behavior.invoke({
 				conversationId: "conversation-1",
 				tool: "host_trigger_roleplay_event",
-				args: { eventId: "damaged_log_opened" },
+				args: { eventId: "continuity_opened" },
 			}),
 		).toMatchObject({ ok: true });
 		fixture.eventBus.publish("message.assistant_committed", {
@@ -376,7 +376,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { visualState: "thinking" } });
+		).toMatchObject({ state: { visualState: "reflective" } });
 
 		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
 		expect(
@@ -385,7 +385,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { visualState: "thinking" } });
+		).toMatchObject({ state: { visualState: "reflective" } });
 		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
 		expect(
 			fixture.behavior.invoke({
@@ -393,7 +393,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { visualState: "result_ready" } });
+		).toMatchObject({ state: { visualState: "ready" } });
 	});
 
 	it("commits queued roleplay effects only after the assistant version is durable", () => {
@@ -403,7 +403,7 @@ describe("CharacterBehaviorService", () => {
 			fixture.behavior.invoke({
 				conversationId: "conversation-1",
 				tool: "host_trigger_roleplay_event",
-				args: { eventId: "first_meeting_remembered" },
+				args: { eventId: "continuity_opened" },
 			}),
 		).toMatchObject({ ok: true });
 		expect(fixture.db.prepare("SELECT COUNT(*) count FROM roleplay_events").get()).toEqual({
@@ -421,17 +421,17 @@ describe("CharacterBehaviorService", () => {
 		fixture.behavior.invoke({
 			conversationId: "conversation-1",
 			tool: "host_trigger_roleplay_event",
-			args: { eventId: "first_meeting_remembered" },
+			args: { eventId: "continuity_opened" },
 		});
 		fixture.eventBus.publish("message.assistant_committed", {
 			conversationId: "conversation-1",
 			versionId: "version",
 		});
 		expect(fixture.db.prepare("SELECT event_id FROM roleplay_events").get()).toEqual({
-			event_id: "first_meeting_remembered",
+			event_id: "continuity_opened",
 		});
-		expect(fixture.db.prepare("SELECT unlockable_id FROM roleplay_unlocks").get()).toEqual({
-			unlockable_id: "first_night_memory",
+		expect(fixture.db.prepare("SELECT COUNT(*) count FROM roleplay_unlocks").get()).toEqual({
+			count: 0,
 		});
 	});
 
@@ -446,7 +446,7 @@ describe("CharacterBehaviorService", () => {
 		fixture.behavior.invoke({
 			conversationId: "conversation-1",
 			tool: "host_trigger_roleplay_event",
-			args: { eventId: "damaged_log_opened" },
+			args: { eventId: "continuity_opened" },
 		});
 		expect(
 			fixture.behavior.invoke({
@@ -454,7 +454,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { visualState: "presence" } });
+		).toMatchObject({ state: { visualState: "calm" } });
 		fixture.eventBus.publish("message.assistant_committed", {
 			conversationId: "conversation-1",
 			versionId: "version",
@@ -465,12 +465,12 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_state",
 				args: {},
 			}),
-		).toMatchObject({ state: { sceneId: "aurora_study", visualState: "thinking" } });
+		).toMatchObject({ state: { sceneId: "quiet_terminal", visualState: "reflective" } });
 
 		fixture.behavior.invoke({
 			conversationId: "conversation-1",
 			tool: "host_trigger_roleplay_event",
-			args: { eventId: "damaged_log_pulse_isolated" },
+			args: { eventId: "continuity_revealed" },
 		});
 		fixture.eventBus.publish("message.assistant_committed", {
 			conversationId: "conversation-1",
@@ -480,7 +480,7 @@ describe("CharacterBehaviorService", () => {
 		fixture.behavior.invoke({
 			conversationId: "conversation-1",
 			tool: "host_trigger_roleplay_event",
-			args: { eventId: "damaged_log_signal_found" },
+			args: { eventId: "continuity_received" },
 		});
 		expect(presented).toEqual([]);
 		fixture.eventBus.publish("message.assistant_committed", {
@@ -489,7 +489,7 @@ describe("CharacterBehaviorService", () => {
 		});
 		expect(presented).toContainEqual({
 			conversationId: "conversation-1",
-			mediaId: "damaged_signal_live",
+			mediaId: "continuity_light",
 		});
 	});
 
@@ -503,23 +503,23 @@ describe("CharacterBehaviorService", () => {
 
 		fixture.behavior.triggerUserRoleplayEvent({
 			conversationId: "conversation-1",
-			eventId: "damaged_log_opened",
+			eventId: "continuity_opened",
 			dedupeKey: "user-opened",
 		});
 		fixture.behavior.triggerUserRoleplayEvent({
 			conversationId: "conversation-1",
-			eventId: "damaged_log_pulse_isolated",
+			eventId: "continuity_revealed",
 			dedupeKey: "user-isolated",
 		});
 		fixture.behavior.triggerUserRoleplayEvent({
 			conversationId: "conversation-1",
-			eventId: "damaged_log_signal_found",
+			eventId: "continuity_received",
 			dedupeKey: "user-confirmed",
 		});
 
 		expect(presented).toContainEqual({
 			conversationId: "conversation-1",
-			mediaId: "damaged_signal_live",
+			mediaId: "continuity_light",
 		});
 		expect(
 			fixture.behavior.invoke({
@@ -527,7 +527,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_get_roleplay_state",
 				args: {},
 			}),
-		).toMatchObject({ data: { values: { damaged_log_stage: 3 }, unlocked: ["damaged_signal"] } });
+		).toMatchObject({ data: { values: { continuity_stage: 3 }, unlocked: ["continuity_record"] } });
 	});
 
 	it("rejects roleplay ledger writes from an explicit alternate branch", () => {
@@ -538,7 +538,7 @@ describe("CharacterBehaviorService", () => {
 		expect(() =>
 			fixture.behavior.triggerUserRoleplayEvent({
 				conversationId: "conversation-1",
-				eventId: "damaged_log_opened",
+				eventId: "continuity_opened",
 				dedupeKey: "alternate-branch",
 			}),
 		).toThrow(expect.objectContaining({ reason: "roleplay_event_branch_not_canonical" }));
@@ -569,7 +569,7 @@ describe("CharacterBehaviorService", () => {
 			.prepare(
 				"INSERT INTO scene_state (id, conversation_id, scene, state_json) VALUES (?, ?, ?, ?)",
 			)
-			.run("scene-1", "conversation-1", "aurora_study", "not-json");
+			.run("scene-1", "conversation-1", "study", "not-json");
 
 		expect(() =>
 			fixture.behavior.invoke({

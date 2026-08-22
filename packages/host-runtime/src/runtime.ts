@@ -474,6 +474,7 @@ export class HostRuntime {
 			turns,
 			models,
 			memoryBackend: memoryRuntime.backend,
+			memoryRuntime,
 			memoryScope,
 			appSettings,
 			commissions,

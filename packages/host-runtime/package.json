@@ -35,6 +35,7 @@
 		"image-dimensions": "^2.5.1",
 		"jszip": "3.10.1",
 		"mammoth": "1.12.1",
+		"node-llama-cpp": "3.16.2",
 		"pdf-lib": "1.17.1",
 		"pdfjs-dist": "6.2.108",
 		"xlsx": "file:../../apps/desktop/vendor/xlsx-0.20.3.tgz",
@@ -47,8 +48,5 @@
 		"drizzle-kit": "^1.0.0-rc.4",
 		"typescript": "7.0.2",
 		"vitest": "4.1.10"
-	},
-	"optionalDependencies": {
-		"node-llama-cpp": "3.16.2"
 	}
 }

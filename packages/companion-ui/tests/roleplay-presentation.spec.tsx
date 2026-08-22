@@ -442,4 +442,36 @@ describe("package-driven character presence", () => {
 			THEMED_CHARACTER.visual.expressions[THEMED_CHARACTER.visual.defaultExpressionId],
 		);
 	});
+	
+	it.each(["compact", "expanded"] as const)(
+		"publishes the %s display-only layout mode without changing task state",
+		(layout) => {
+			const store = {
+				activeConversationId: "conversation",
+				presence: "idle",
+				runs: [{ id: "run-1", status: "running" }],
+			} as unknown as CompanionStore;
+			const taskStateBefore = {
+				activeConversationId: store.activeConversationId,
+				presence: store.presence,
+				runs: store.runs.map((run) => ({ id: run.id, status: run.status })),
+			};
+
+			render(() => (
+				<DesktopProvider store={store}>
+					<CharacterPresence character={THEMED_CHARACTER} presence="idle" layout={layout} />
+				</DesktopProvider>
+			));
+
+			const presence = screen.getByRole("img", {
+				name: THEMED_CHARACTER.visual.expressionLabels.default,
+			});
+			expect(presence).toHaveAttribute("data-layout-mode", layout);
+			expect({
+				activeConversationId: store.activeConversationId,
+				presence: store.presence,
+				runs: store.runs.map((run) => ({ id: run.id, status: run.status })),
+			}).toEqual(taskStateBefore);
+		},
+	);
 });

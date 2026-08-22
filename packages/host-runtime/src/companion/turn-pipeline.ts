@@ -31,6 +31,15 @@ import type { CompanionSupervisor } from "./supervisor.js";
 const REGENERATE_INSTRUCTION =
 	"请基于上面的对话重新生成对上一条用户消息的回复。直接自然地回答，不要提及重新生成或比较旧回复。";
 const CONTINUE_INSTRUCTION = "请继续上一条回复。不要重复已经说过的内容，直接接着完成。";
+const DEFAULT_FAILURE_REASON = "provider_request_failed";
+const SAFE_FAILURE_REASONS: Record<string, true> = {
+	companion_initialization_failed: true,
+	companion_unavailable: true,
+	provider_auth_required: true,
+	provider_request_failed: true,
+	multimodal_fallback_unavailable: true,
+	turn_dispatch_failed: true,
+};
 
 export interface TurnResult {
 	messageId: string;
@@ -753,7 +762,15 @@ export class TurnPipeline {
 		if (!active) return;
 		let text = "text" in payload && typeof payload.text === "string" ? payload.text.trim() : "";
 		const failed = "failed" in payload && payload.failed === true;
-		if (failed && !text) text = "这次回复没有完成。你可以稍后重试，或换一个模型服务。";
+		const candidateReason =
+			"reason" in payload && typeof payload.reason === "string" ? payload.reason : undefined;
+		const failureReason =
+			candidateReason && SAFE_FAILURE_REASONS[candidateReason]
+				? candidateReason
+				: DEFAULT_FAILURE_REASON;
+		if (failed && !text) {
+			text = `回复没有完成（原因：${failureReason}）。你可以稍后重试，或换一个模型服务。`;
+		}
 		const assistantMessageId = active.assistantMessageId ?? randomUUID();
 		const piAssistant = "message" in payload ? asAssistantPiMessage(payload.message) : undefined;
 		const assistantVersionId = active.assistantVersionId ?? randomUUID();
@@ -829,6 +846,8 @@ export class TurnPipeline {
 			messageId: assistantMessageId,
 			versionId: assistantVersionId,
 			failed,
+			status: failed ? "failed" : "completed",
+			...(failed ? { reason: failureReason } : {}),
 		});
 		this.onTurnCommitted?.({
 			conversationId,

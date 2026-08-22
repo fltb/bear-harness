@@ -253,15 +253,33 @@ describe("TurnPipeline conversation state contract", () => {
 		});
 	});
 
-	it("stores a usable failure message and allows switching assistant versions without a model call", async () => {
+	it("persists a structured safe failure outcome for a provider turn", async () => {
 		await pipeline.sendUserMessage("conversation", "会失败吗");
-		events.publish("message_end", { conversationId: "conversation", failed: true });
+		events.publish("message_end", {
+			conversationId: "conversation",
+			failed: true,
+			status: "failed",
+			reason: "provider_request_failed",
+		});
 		const assistant = database.connection
 			.prepare(
 				"SELECT m.id, v.id AS versionId, v.content FROM messages m JOIN message_versions v ON v.message_id = m.id WHERE m.role = 'assistant'",
 			)
 			.get() as { id: string; versionId: string; content: string };
-		expect(assistant.content).toContain("回复没有完成");
+		expect(assistant.content).toContain("provider_request_failed");
+		expect(
+			database.connection
+				.prepare("SELECT status FROM turns WHERE assistant_message_id = ?")
+				.get(assistant.id),
+		).toEqual({ status: "failed" });
+		const committed = events
+			.after(0)
+			.find((event) => event.kind === "message.assistant_committed");
+		expect(committed?.payload).toMatchObject({
+			failed: true,
+			status: "failed",
+			reason: "provider_request_failed",
+		});
 		await pipeline.edit("conversation", assistant.id, "人工修正版", false);
 		const edited = database.connection
 			.prepare("SELECT id FROM message_versions WHERE message_id = ? AND adopted = 1")

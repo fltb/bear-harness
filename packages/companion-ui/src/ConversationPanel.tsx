@@ -8,12 +8,18 @@ import {
 import { Button } from "@kobalte/core/button";
 import { Dialog } from "@kobalte/core/dialog";
 import { TextField } from "@kobalte/core/text-field";
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, For, onCleanup, Show } from "solid-js";
 import { RESULT_LOCATE_EVENT, type ResultLocateDetail } from "./features/ResultSpace.js";
 import { Icon } from "./Icon.js";
-import type { CharacterDisplay, Message, MessageVersion } from "./stores/companion.js";
+import type { CharacterDisplay, Message } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
+import {
+	createMessageWorkflow,
+	useConversationViewWorkflow,
+} from "./stores/conversation-workflows.js";
 import { ThreadHead } from "./ThreadHead.js";
+
+
 import { WorkTimelineItem } from "./WorkPanel.js";
 
 /**
@@ -25,17 +31,6 @@ import { WorkTimelineItem } from "./WorkPanel.js";
  * reachable, just visually deferred.
  */
 
-type CorrectScope = "once" | "session" | "always";
-
-/** The adopted (or fallback latest) version of a message. */
-function adoptedVersion(message: Message): MessageVersion | undefined {
-	if (message.adoptedVersionId !== undefined) {
-		const byId = message.versions.find((version) => version.id === message.adoptedVersionId);
-		if (byId) return byId;
-	}
-	return message.versions.find((version) => version.adopted) ?? message.versions.at(-1);
-}
-
 function MessageItem(props: {
 	message: Message;
 	characterName: string;
@@ -44,91 +39,20 @@ function MessageItem(props: {
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
-	const [editing, setEditing] = createSignal(false);
-	const [actionsOpen, setActionsOpen] = createSignal(false);
-	const [editText, setEditText] = createSignal("");
-	const [correcting, setCorrecting] = createSignal(false);
-	const [reason, setReason] = createSignal("");
-	const [customReason, setCustomReason] = createSignal("");
-	const [scope, setScope] = createSignal<CorrectScope>("once");
-	const [captureStatus, setCaptureStatus] = createSignal<"idle" | "success">("idle");
-	const [actionBusy, setActionBusy] = createSignal(false);
-	const [actionError, setActionError] = createSignal<string | null>(null);
-	const runAction = async (action: () => Promise<unknown>): Promise<boolean> => {
-		setActionBusy(true);
-		setActionError(null);
-		setCaptureStatus("idle");
-		const before = store.errorMetadata;
-		try {
-			await action();
-			const retained = store.errorMetadata;
-			if (retained !== null && retained !== before) {
-				setActionError(retained.message);
-				return false;
-			}
-			return true;
-		} catch (cause) {
-			setActionError(cause instanceof Error ? cause.message : String(cause));
-			return false;
-		} finally {
-			setActionBusy(false);
-		}
-	};
-
-	const isUser = () => props.message.role === "user";
-	const version = () => adoptedVersion(props.message);
-	const content = () => version()?.content ?? "";
-	const versionIndex = () =>
-		props.message.versions.findIndex((v) => v.id === (version()?.id ?? ""));
-	const meta = () =>
-		isUser()
-			? t("messages.userMeta")
-			: `${props.characterName} · ${formatTime(props.message.createdAt)}`;
-
-	const switchTo = (index: number) => {
-		const target = props.message.versions[index];
-		if (target) void runAction(() => store.switchVersion(props.message.id, target.id));
-	};
-
-	const startEdit = () => {
-		setActionError(null);
-		setCaptureStatus("idle");
-		setEditText(content());
-		setActionsOpen(false);
-		setEditing(true);
-	};
-
-	const saveEdit = async (): Promise<void> => {
-		const text = editText().trim();
-		if (!text || actionBusy()) return;
-		const ok = await runAction(() => store.editMessage(props.message.id, text, isUser()));
-		if (ok) setEditing(false);
-	};
-
-	const submitCorrect = () => {
-		const text = reason() || customReason().trim();
-		if (!text || actionBusy()) return;
-		void runAction(() => store.correctMessage(text, scope())).then((ok) => {
-			if (!ok) return;
-			setReason("");
-			setCustomReason("");
-			setCorrecting(false);
-		});
-	};
-
-	const captureMoment = async () => {
-		if (actionBusy()) return;
-		const ok = await runAction(() => store.memory.capture(props.message.id));
-		if (ok) setCaptureStatus("success");
-	};
-
+	const workflow = createMessageWorkflow(
+		store,
+		() => props.message,
+		() => props.characterName,
+		() => props.correction!,
+		(key: string) => t(key as never),
+	);
 	return (
 		<article
-			class={isUser() ? "msg user" : "msg bear-msg"}
 			data-message-id={props.message.id}
-			aria-label={meta()}
+			class={workflow.isUser() ? "msg user" : "msg bear-msg"}
+			aria-label={workflow.meta()}
 		>
-			<Show when={actionError()}>
+			<Show when={workflow.actionError()}>
 				{(error) => (
 					<span class="status-line error" role="alert">
 						{t("messages.operationFailedPrefix")}
@@ -136,42 +60,41 @@ function MessageItem(props: {
 					</span>
 				)}
 			</Show>
-			<Show when={editing()}>
-				<div class="msg-meta">{meta()}</div>
-				<Show when={isUser()}>
+			<Show when={workflow.editing()}>
+				<div class="msg-meta">{workflow.meta()}</div>
+				<Show when={workflow.isUser()}>
 					<p class="edit-branch-note">{t("messages.userEditBranchNote")}</p>
 				</Show>
 				<TextField>
 					<TextField.TextArea
 						class="edit-box"
 						rows={3}
-						value={editText()}
-						onInput={(event) => setEditText(event.currentTarget.value)}
+						value={workflow.editText()}
+						onInput={(event) => workflow.setEditText(event.currentTarget.value)}
 						aria-label={t("messages.editLabel")}
 					/>
 				</TextField>
 				<div class="msg-tools">
-					<Button type="button" class="primary-tool" disabled={actionBusy()} onClick={saveEdit}>
+					<Button type="button" class="primary-tool" disabled={workflow.actionBusy()} onClick={workflow.saveEdit}>
 						{t("messages.save")}
 					</Button>
-					<Button data-control="command" type="button" onClick={() => setEditing(false)}>
+					<Button data-control="command" type="button" onClick={() => workflow.setEditing(false)}>
 						{t("messages.cancel")}
 					</Button>
 				</div>
 			</Show>
-
-			<Show when={!editing()}>
+			<Show when={!workflow.editing()}>
 				<div class="msg-heading">
-					<div class="msg-meta">{meta()}</div>
+					<div class="msg-meta">{workflow.meta()}</div>
 					<Show
-						when={!isUser()}
+						when={!workflow.isUser()}
 						fallback={
 							<Button
 								type="button"
 								class="msg-inline-action"
 								aria-label={t("messages.edit")}
 								title={t("messages.edit")}
-								onClick={startEdit}
+								onClick={workflow.startEdit}
 							>
 								<Icon icon={faPen} />
 							</Button>
@@ -182,15 +105,25 @@ function MessageItem(props: {
 							class="msg-menu-trigger"
 							aria-label={t("messages.operations")}
 							title={t("messages.operations")}
-							aria-expanded={actionsOpen()}
-							onClick={() => setActionsOpen((open) => !open)}
+							aria-expanded={workflow.actionsOpen()}
+							onClick={() => workflow.setActionsOpen(!workflow.actionsOpen())}
 						>
 							<Icon icon={faEllipsis} />
 						</Button>
 					</Show>
 				</div>
-				<p>{content()}</p>
-
+				<Show
+					when={props.message.status === "failed"}
+					fallback={
+						<Show when={workflow.isUser() || workflow.content().trim().length > 0}>
+							<p>{workflow.content()}</p>
+						</Show>
+					}
+				>
+					<p class="status-line err message-failure" role="alert">
+						{props.message.failureReason?.trim() || t("errors.generic")}
+					</p>
+				</Show>
 				<Show when={props.message.versions.length > 1}>
 					<div class="version-pager" role="toolbar" aria-label={t("messages.versionPager")}>
 						<Button
@@ -198,50 +131,43 @@ function MessageItem(props: {
 							type="button"
 							aria-label={t("messages.previousVersion")}
 							title={t("messages.previousVersion")}
-							disabled={actionBusy() || versionIndex() <= 0}
-							onClick={() => switchTo(versionIndex() - 1)}
+							disabled={workflow.actionBusy() || workflow.versionIndex() <= 0}
+							onClick={() => workflow.switchTo(workflow.versionIndex() - 1)}
 						>
 							<Icon icon={faChevronLeft} />
 						</Button>
 						<span aria-live="polite">
-							{versionIndex() + 1} / {props.message.versions.length}
+							{workflow.versionIndex() + 1} / {props.message.versions.length}
 						</span>
 						<Button
 							data-control="command"
 							type="button"
 							aria-label={t("messages.nextVersion")}
 							title={t("messages.nextVersion")}
-							disabled={actionBusy() || versionIndex() >= props.message.versions.length - 1}
-							onClick={() => switchTo(versionIndex() + 1)}
+							disabled={
+								workflow.actionBusy() || workflow.versionIndex() >= props.message.versions.length - 1
+							}
+							onClick={() => workflow.switchTo(workflow.versionIndex() + 1)}
 						>
 							<Icon icon={faChevronRight} />
 						</Button>
 					</div>
 				</Show>
-
-				<Show when={correcting()}>
+				<Show when={workflow.correcting()}>
 					<div
 						class="correct-panel"
 						role="toolbar"
 						aria-label={props.correction?.reason_group_label}
 					>
 						<div class="correct-reasons">
-							<For
-								each={[
-									t("messages.correctionReasons.tone"),
-									t("messages.correctionReasons.identity"),
-									t("messages.correctionReasons.history"),
-									t("messages.correctionReasons.userAction"),
-									t("messages.correctionReasons.fictionReality"),
-								]}
-							>
+							<For each={workflow.correctionReasons()}>
 								{(preset) => (
 									<Button
 										type="button"
-										class={reason() === preset ? "selected" : undefined}
+										class={workflow.reason() === preset ? "selected" : undefined}
 										onClick={() => {
-											setReason(reason() === preset ? "" : preset);
-											setCustomReason("");
+											workflow.setReason(workflow.reason() === preset ? "" : preset);
+											workflow.setCustomReason("");
 										}}
 									>
 										{preset}
@@ -253,10 +179,10 @@ function MessageItem(props: {
 							<TextField.Input
 								type="text"
 								placeholder={t("messages.otherReason")}
-								value={customReason()}
+								value={workflow.customReason()}
 								onInput={(event) => {
-									setCustomReason(event.currentTarget.value);
-									setReason("");
+									workflow.setCustomReason(event.currentTarget.value);
+									workflow.setReason("");
 								}}
 								aria-label={t("messages.otherReason")}
 							/>
@@ -266,11 +192,11 @@ function MessageItem(props: {
 								{(option) => (
 									<Button
 										type="button"
-										class={scope() === option ? "selected" : undefined}
-										onClick={() => setScope(option)}
-										aria-pressed={scope() === option}
+										class={workflow.scope() === option ? "selected" : undefined}
+										onClick={() => workflow.setScope(option)}
+										aria-pressed={workflow.scope() === option}
 									>
-										{t(`messages.correctionScopes.${option}`)}
+										{t(`messages.correctionScopes.${option}` as never)}
 									</Button>
 								)}
 							</For>
@@ -279,22 +205,24 @@ function MessageItem(props: {
 							<Button
 								type="button"
 								class="primary-tool"
-								disabled={actionBusy() || (!reason() && customReason().trim().length === 0)}
-								onClick={submitCorrect}
+								disabled={
+									workflow.actionBusy() ||
+									(!workflow.reason() && workflow.customReason().trim().length === 0)
+								}
+								onClick={workflow.submitCorrect}
 							>
 								{t("messages.submitCorrection")}
 							</Button>
-							<Button data-control="command" type="button" onClick={() => setCorrecting(false)}>
+							<Button data-control="command" type="button" onClick={() => workflow.setCorrecting(false)}>
 								{t("messages.cancel")}
 							</Button>
 						</div>
 					</div>
 				</Show>
-
-				<Show when={!correcting() && !isUser()}>
+				<Show when={!workflow.correcting() && !workflow.isUser()}>
 					<div
 						class="msg-tools"
-						classList={{ "is-open": actionsOpen() }}
+						classList={{ "is-open": workflow.actionsOpen() }}
 						role="toolbar"
 						aria-label={t("messages.operations")}
 					>
@@ -302,49 +230,45 @@ function MessageItem(props: {
 							<Button
 								data-control="command"
 								type="button"
-								disabled={actionBusy()}
-								onClick={() => void captureMoment()}
+								disabled={workflow.actionBusy()}
+								onClick={() => void workflow.captureMoment()}
 							>
 								{t("messages.rememberMoment")}
 							</Button>
-							<Show when={captureStatus() === "success"}>
-								<span
-									class="status-line ok"
-									role="status"
-									aria-label={t("messages.rememberMoment")}
-								>
+							<Show when={workflow.captureStatus() === "success"}>
+								<span class="status-line ok" role="status" aria-label={t("messages.rememberMoment")}>
 									{t("messages.rememberMoment")}
 								</span>
 							</Show>
 						</Show>
-						<Show when={!isUser()}>
+						<Show when={!workflow.isUser()}>
 							<Button
 								data-control="command"
 								type="button"
-								disabled={actionBusy()}
-								onClick={() => void runAction(() => store.regenerateMessage(props.message.id))}
+								disabled={workflow.actionBusy()}
+								onClick={() => void workflow.runAction(() => store.regenerateMessage(props.message.id))}
 							>
 								{t("messages.regenerate")}
 							</Button>
 							<Button
 								data-control="command"
 								type="button"
-								disabled={actionBusy()}
-								onClick={startEdit}
+								disabled={workflow.actionBusy()}
+								onClick={workflow.startEdit}
 							>
 								{t("messages.edit")}
 							</Button>
-							<Show when={props.correction}>
+							<Show when={workflow.correction()}>
 								{(copy) => (
 									<Button
 										data-control="command"
 										type="button"
 										onClick={() => {
-											setActionError(null);
-											setReason("");
-											setCustomReason("");
-											setScope("once");
-											setCorrecting(true);
+											workflow.setActionError(null);
+											workflow.setReason("");
+											workflow.setCustomReason("");
+											workflow.setScope("once");
+											workflow.setCorrecting(true);
 										}}
 									>
 										{copy().trigger_label}
@@ -355,8 +279,8 @@ function MessageItem(props: {
 								<Button
 									data-control="command"
 									type="button"
-									disabled={actionBusy()}
-									onClick={() => void runAction(() => store.continueConversation())}
+									disabled={workflow.actionBusy()}
+									onClick={() => void workflow.runAction(() => store.continueConversation())}
 								>
 									{t("messages.continue")}
 								</Button>
@@ -364,14 +288,14 @@ function MessageItem(props: {
 							<Button
 								data-control="command"
 								type="button"
-								disabled={actionBusy()}
-								onClick={() => void runAction(() => store.branchMessage(props.message.id))}
+								disabled={workflow.actionBusy()}
+								onClick={() => void workflow.runAction(() => store.branchMessage(props.message.id))}
 							>
 								{t("messages.branch")}
 							</Button>
 						</Show>
-						<Show when={isUser()}>
-							<Button data-control="command" type="button" onClick={startEdit}>
+						<Show when={workflow.isUser()}>
+							<Button data-control="command" type="button" onClick={workflow.startEdit}>
 								{t("messages.edit")}
 							</Button>
 						</Show>
@@ -382,54 +306,14 @@ function MessageItem(props: {
 	);
 }
 
-function formatTime(iso: string): string {
-	const date = new Date(iso);
-	if (Number.isNaN(date.getTime())) return i18n.t("messages.justNow");
-	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
 
 export function ConversationPanel(props: { character: CharacterDisplay | undefined }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
-	const sceneTitle = () =>
-		store.conversations.find((conversation) => conversation.id === store.activeConversationId)
-			?.sceneTitle ??
-		props.character?.character.scene_title ??
-		"";
-	// Wire snapshots may contain system/tool-result entries for internal
-	// bookkeeping. Keep those entries in the store, but never expose them in
-	// the user-facing thread.
-	const visibleMessages = () =>
-		store.activeMessages.filter(
-			(message) => message.role === "user" || message.role === "assistant",
-		);
-
-	// Derive conversation controls from the visible projection as well. An
-	// internal entry after an assistant reply must not hide that reply's
-	// "继续" operation or suppress draft reconciliation.
-
+	const view = useConversationViewWorkflow(store, () => props.character);
+	const toolActivities = createMemo(() => store.toolActivities ?? []);
+	const { sceneTitle, visibleMessages, lastAssistantId, streamedContent, hasThreadContent } = view;
 	let threadRef: HTMLElement | undefined;
-
-	// Id of the last assistant message: only it gets the "继续" op.
-	const lastAssistant = () => visibleMessages().at(-1);
-	const lastAssistantId = () => {
-		const last = lastAssistant();
-		return last?.role === "assistant" ? last.id : null;
-	};
-
-	// Draft content that is not yet superseded by the persisted projection.
-	// Pi session entry ids differ from the ids stream events carry, so the
-	// streamed text is reconciled against the persisted final by content and
-	// hidden once the final message has landed — rendering both would show the
-	// reply twice.
-	const streamedContent = () => {
-		const draft = store.streamingAssistantText;
-		if (draft.length === 0) return "";
-		const last = lastAssistant();
-		if (!last || last.role !== "assistant") return draft;
-		const lastAdopted = last.versions.at(-1)?.content ?? "";
-		return lastAdopted.trim() === draft.trim() ? "" : draft;
-	};
 
 	createEffect(() => {
 		// Track the message count so the thread follows new messages.
@@ -468,7 +352,7 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 					threadRef = el;
 				}}
 			>
-				<Show when={store.error !== null}>
+				<Show when={store.error != null}>
 					<div class="thread-error" role="alert">
 						{t("messages.operationFailedPrefix")}
 						{store.error}
@@ -476,12 +360,7 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 				</Show>
 
 				<Show
-					when={
-						visibleMessages().length > 0 ||
-						store.pendingUserText !== undefined ||
-						store.assistantStreaming ||
-						store.streamingAssistantText.length > 0
-					}
+					when={hasThreadContent()}
 					fallback={
 						<Show when={props.character}>
 							{(character) => (
@@ -520,11 +399,11 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 							</article>
 						)}
 					</Show>
-					<Show when={store.toolActivities.length > 0}>
+					<Show when={toolActivities().length > 0}>
 						<details class="tool-trace" open={store.assistantStreaming}>
-							<summary>{store.toolActivities.at(-1)?.label}</summary>
+							<summary>{toolActivities().at(-1)?.label}</summary>
 							<ul>
-								<For each={store.toolActivities}>
+								<For each={toolActivities()}>
 									{(activity) => (
 										<li data-status={activity.status}>
 											<strong>{activity.label}</strong>
@@ -562,10 +441,8 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 
 function RoleplayChoices(props: { character: CharacterDisplay | undefined }) {
 	const store = useCompanionStore();
-	const choiceSet = () =>
-		props.character?.roleplay.choice_sets?.find(
-			(entry) => entry.id === store.activeRoleplayChoiceSetId,
-		);
+	const view = useConversationViewWorkflow(store, () => props.character);
+	const choiceSet = view.roleplayChoiceSet;
 	return (
 		<Show when={choiceSet()}>
 			{(set) => (
@@ -596,12 +473,7 @@ function RoleplayChoices(props: { character: CharacterDisplay | undefined }) {
 function RoleplayInlineMedia(props: { character: CharacterDisplay | undefined }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
-	const media = () => {
-		const item = props.character?.roleplay.media.find(
-			(entry) => entry.id === store.activeRoleplayMediaId,
-		);
-		return item && item.presentation === "inline" ? item : undefined;
-	};
+	const media = useConversationViewWorkflow(store, () => props.character).roleplayInlineMedia;
 	return (
 		<Show when={media()}>
 			{(item) => (
@@ -627,20 +499,9 @@ function RoleplayInlineMedia(props: { character: CharacterDisplay | undefined })
 function RoleplayMediaOverlays(props: { character: CharacterDisplay | undefined }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
-	const media = () => {
-		const item = props.character?.roleplay.media.find(
-			(entry) => entry.id === store.activeRoleplayMediaId,
-		);
-		return item && item.presentation !== "inline" && item.presentation !== "ambient"
-			? item
-			: undefined;
-	};
-	const ambientMedia = () => {
-		const item = props.character?.roleplay.media.find(
-			(entry) => entry.id === store.activeAmbientMediaId,
-		);
-		return item && item.kind === "audio" && item.presentation === "ambient" ? item : undefined;
-	};
+	const view = useConversationViewWorkflow(store, () => props.character);
+	const media = view.roleplayOverlayMedia;
+	const ambientMedia = view.roleplayAmbientMedia;
 	return (
 		<>
 			<Dialog

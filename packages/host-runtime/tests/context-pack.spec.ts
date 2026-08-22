@@ -103,7 +103,9 @@ describe("ContextPackCompiler character package identity", () => {
 		expect(pack.blocks.find((block) => block.layer === "identity")?.content).toBe(
 			character.identity_core,
 		);
-		expect(pack.blocks.find((block) => block.layer === "roleplay")?.content).toContain('"trust":0');
+		expect(pack.blocks.find((block) => block.layer === "roleplay")?.content).toContain(
+			'"continuity_stage":0',
+		);
 		const directiveContext = pack.blocks.find((block) => block.layer === "scene")?.content ?? "";
 		orm
 			.insert(conversations)

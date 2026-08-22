@@ -11,6 +11,7 @@ const FREE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const PROVIDER = {
 	id: "opencode-go",
 	name: "OpenCode Go",
+	baseUrl: "https://saved.example/v1",
 	authType: "api_key" as const,
 	credentialStatus: "stored" as const,
 	availableModels: [
@@ -247,10 +248,10 @@ describe("model pool settings", () => {
 				name: zhCN.settings.advancedToggle,
 			}),
 		);
-		await user.type(
-			within(backstage).getByPlaceholderText(zhCN.settings.customBaseUrlPlaceholder),
-			"https://relay.example/v1",
-		);
+		const baseUrlInput = within(backstage).getByPlaceholderText(zhCN.settings.customBaseUrlPlaceholder);
+		expect(baseUrlInput).toHaveValue("https://saved.example/v1");
+		await user.clear(baseUrlInput);
+		await user.type(baseUrlInput, "https://relay.example/v1");
 		await user.click(
 			within(backstage).getByRole("button", {
 				name: zhCN.settings.customSave,
@@ -264,6 +265,22 @@ describe("model pool settings", () => {
 
 	it("imports native Pi configuration from advanced settings without a model-owned API key", async () => {
 		const { client } = configuredClient();
+		client.provider.importPiConfig = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					models: [
+						{
+							providerId: "relay",
+							modelId: "custom",
+							label: "Custom",
+							supportsImages: false,
+							createdAt: "2026-01-01",
+						},
+					],
+				},
+			}),
+		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
 		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.advancedToggle }));
@@ -275,6 +292,7 @@ describe("model pool settings", () => {
 		});
 		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.piConfigImport }));
 		expect(client.provider.importPiConfig).toHaveBeenCalledWith({ configJson });
+		expect(await within(backstage).findByText("Custom (relay)")).toBeVisible();
 		expect(within(backstage).queryByLabelText(zhCN.settings.customApiKey)).not.toBeInTheDocument();
 	});
 

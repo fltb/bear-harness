@@ -1,7 +1,7 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
-import { useCompanionStore } from "./stores/companion.js";
+import { createEffect, For, onCleanup, Show } from "solid-js";
+import { useShellWorkflowStore } from "./stores/shell-workflows.js";
 
 /**
  * Thread head: the current scene title and the "进行中的事" work pill
@@ -11,26 +11,21 @@ import { useCompanionStore } from "./stores/companion.js";
  */
 
 export function ThreadHead(props: { sceneTitle: string }) {
+	const workflow = useShellWorkflowStore();
+	const queueOpen = workflow.queueOpen;
+	const activeRuns = workflow.activeRuns;
 	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
-	const [queueOpen, setQueueOpen] = createSignal(false);
-
-	const activeRuns = () =>
-		store.runs.filter(
-			(run) => run.status === "enqueued" || run.status === "running" || run.status === "needs_user",
-		);
-
 	let pillWrapRef: HTMLDivElement | undefined;
 
 	createEffect(() => {
 		if (!queueOpen()) return;
 		const onKey = (event: KeyboardEvent) => {
-			if (event.key === "Escape") setQueueOpen(false);
+			if (event.key === "Escape") workflow.closeQueue();
 		};
 		const onPointerDown = (event: PointerEvent) => {
 			const target = event.target;
 			if (pillWrapRef && (!(target instanceof Node) || !pillWrapRef.contains(target))) {
-				setQueueOpen(false);
+				workflow.closeQueue();
 			}
 		};
 		document.addEventListener("keydown", onKey);
@@ -55,7 +50,7 @@ export function ThreadHead(props: { sceneTitle: string }) {
 					class="work-pill"
 					aria-expanded={queueOpen()}
 					aria-haspopup="true"
-					onClick={() => setQueueOpen((open) => !open)}
+					onClick={workflow.toggleQueue}
 				>
 					<span class="pulse" aria-hidden="true" />
 					{t("threadHead.runningWork")}

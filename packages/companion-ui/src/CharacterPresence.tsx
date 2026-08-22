@@ -1,6 +1,7 @@
 import { Show } from "solid-js";
 import type { CharacterDisplay, PresenceState } from "./stores/companion.js";
 
+export type CharacterPresenceLayoutMode = "resting" | "expanded" | "compact";
 const VISUAL_STATE_BY_PRESENCE: Record<PresenceState, string> = {
 	idle: "presence",
 	listening: "listening",
@@ -19,7 +20,9 @@ export function CharacterPresence(props: {
 	character: CharacterDisplay | undefined;
 	presence: PresenceState;
 	visualState?: string;
+	layout?: CharacterPresenceLayoutMode;
 }) {
+	const layout = () => props.layout ?? "resting";
 	const visualState = () => {
 		const visual = props.character?.visual;
 		if (!visual) return undefined;
@@ -38,7 +41,13 @@ export function CharacterPresence(props: {
 	return (
 		<Show when={source()} keyed>
 			{(asset) => (
-				<div class="presence-stage" data-state={visualState()} role="img" aria-label={label()}>
+				<div
+					class="presence-stage"
+					data-state={visualState()}
+					data-layout-mode={layout()}
+					role="img"
+					aria-label={label()}
+				>
 					<img src={asset} alt="" draggable={false} data-testid="presence-asset" />
 				</div>
 			)}

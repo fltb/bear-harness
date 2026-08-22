@@ -30,10 +30,6 @@ interface CreatedConversation {
 	title: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
 /**
  * Host-owned execution engine for a role-defined onboarding flow. The role
  * package declares presentation, valid answers and a restricted effect
@@ -159,39 +155,28 @@ export class FirstMeetingMachine {
 		serialized: unknown,
 		flow: CharacterOnboardingFlow,
 	): OnboardingStateData {
-		const value: unknown = serialized ?? {};
-		const source = isRecord(value) ? value : {};
-		const parsedState = OnboardingStateDataSchema.safeParse(source);
-		if (!parsedState.success && source.schema_version !== undefined) {
-			throw parsedState.error;
+		if (serialized === undefined) {
+			return {
+				schema_version: 1,
+				flow_version: flow.version,
+				answers: {},
+				decisions: {},
+			};
 		}
-		const storedAnswers = parsedState.success ? parsedState.data.answers : {};
-		const legacyName = typeof source.name === "string" ? source.name : undefined;
-		const legacyRelation = typeof source.relation === "string" ? source.relation : undefined;
-		const legacyMemory =
-			typeof source.memoryEnabled === "boolean" ? source.memoryEnabled : undefined;
+		const parsedState = OnboardingStateDataSchema.safeParse(serialized);
+		if (!parsedState.success) throw parsedState.error;
+		if (parsedState.data.flow_version !== flow.version) {
+			throw new Error(
+				`character onboarding state version ${parsedState.data.flow_version} does not match flow version ${flow.version}`,
+			);
+		}
+		const storedAnswers = parsedState.data.answers;
 		const answers: Record<string, string> = {};
 		const decisions: OnboardingStateData["decisions"] = {};
 
 		for (const step of flow.steps) {
 			if (step.kind === "acknowledge") continue;
 			let answer = storedAnswers[step.answer_key];
-			if (answer === undefined) {
-				if (step.effects?.some((effect) => effect.type === "identity.nickname"))
-					answer = legacyName;
-				if (step.effects?.some((effect) => effect.type === "relationship.kind"))
-					answer = legacyRelation;
-				const memoryEffect = step.effects?.find((effect) => effect.type === "relationship.memory");
-				if (
-					step.kind === "choice" &&
-					memoryEffect?.type === "relationship.memory" &&
-					legacyMemory !== undefined
-				) {
-					answer = legacyMemory
-						? memoryEffect.enabled_when
-						: step.choices.find((choice) => choice.value !== memoryEffect.enabled_when)?.value;
-				}
-			}
 			if (!this.isValidStoredAnswer(step, answer)) continue;
 			answers[step.answer_key] = answer;
 			for (const effect of step.effects ?? []) {

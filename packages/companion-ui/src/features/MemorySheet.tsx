@@ -3,13 +3,14 @@ import { Button } from "@kobalte/core/button";
 import { Select } from "@kobalte/core/select";
 import { Tabs } from "@kobalte/core/tabs";
 import { TextField } from "@kobalte/core/text-field";
-import { createEffect, createSignal, For, onMount, Show } from "solid-js";
+import { For, Show } from "solid-js";
 import {
 	type MemoryCandidate,
 	type MemoryEntry,
 	type MemoryScope,
 	useCompanionStore,
 } from "../stores/companion.js";
+import { createBackstageWorkflowStore, type MemoryEntryListSelectors } from "../stores/backstage-workflows.js";
 
 /**
  * Memory management sheet (幕后 · 记忆).
@@ -53,146 +54,54 @@ function kindLabel(kind: MemoryEntry["kind"]): string {
 export function MemoryEntryList(props: {
 	scope: MemoryScope;
 	query?: string;
-	/** Bump to force a reload after a mutation. */
 	refreshKey?: number;
 	title?: string;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
-	const [entries, setEntries] = createSignal<MemoryEntry[]>([]);
-	const [loading, setLoading] = createSignal(false);
-	const [error, setError] = createSignal<string | null>(null);
-	const [feedback, setFeedback] = createSignal<string | null>(null);
-	const [busyId, setBusyId] = createSignal<string | null>(null);
-	const [editingEntryId, setEditingEntryId] = createSignal<string | null>(null);
-	const [editedEntryText, setEditedEntryText] = createSignal("");
-	/**
-	 * Memory ids excluded from recall, tracked locally: the entry list response
-	 * does not echo the excluded flag, so the toggle is optimistic — call the
-	 * RPC, then flip this set. The host does not send the flag back in list.
-	 */
-	const [excludedIds, setExcludedIds] = createSignal<ReadonlySet<string>>(new Set());
-
-	let requestSeq = 0;
-
-	async function reload(
-		scope: MemoryScope = props.scope,
-		query: string = props.query?.trim() ?? "",
-	): Promise<void> {
-		const seq = ++requestSeq;
-		setLoading(true);
-		setError(null);
-		try {
-			const normalizedQuery = query.trim();
-			const result =
-				normalizedQuery === ""
-					? await store.memory.list({ scope })
-					: await store.memory.search(normalizedQuery, scope);
-			if (seq !== requestSeq) return;
-			setEntries(result);
-		} catch (e) {
-			if (seq !== requestSeq) return;
-			setEntries([]);
-			setError(messageOf(e));
-		} finally {
-			if (seq === requestSeq) setLoading(false);
-		}
-	}
-
-	createEffect(() => {
-		void props.refreshKey;
-		void store.memory.revision();
-		void reload(props.scope, props.query?.trim() ?? "");
-	});
-
-	async function runEntryAction(
-		entryId: string,
-		action: () => Promise<void>,
-		success: string,
-	): Promise<void> {
-		setBusyId(entryId);
-		setError(null);
-		setFeedback(null);
-		try {
-			await action();
-			setFeedback(success);
-			await reload();
-		} catch (e) {
-			setError(messageOf(e));
-		} finally {
-			setBusyId(null);
-		}
-	}
-
-	const forget = (entry: MemoryEntry) => () =>
-		runEntryAction(entry.id, () => store.memory.forget(entry.id), t("memory.forget"));
-	const toggleExclude = (entry: MemoryEntry) => async () => {
-		const next = !excludedIds().has(entry.id);
-		setBusyId(entry.id);
-		setError(null);
-		setFeedback(null);
-		try {
-			await store.memory.exclude(entry.id, next);
-			const ids = new Set(excludedIds());
-			if (next) ids.add(entry.id);
-			else ids.delete(entry.id);
-			setExcludedIds(ids);
-			setFeedback(next ? t("memory.excludedDone") : t("memory.includedDone"));
-		} catch (e) {
-			setError(messageOf(e));
-		} finally {
-			setBusyId(null);
-		}
-	};
-	const saveEdit = (entry: MemoryEntry) => async () => {
-		const text = editedEntryText().trim();
-		if (!text) return;
-		await runEntryAction(entry.id, () => store.memory.edit(entry.id, text), t("memory.revised"));
-		setEditingEntryId(null);
-	};
-
+	const companion = useCompanionStore();
+	const workflow = createBackstageWorkflowStore(companion);
+	const scope = () => props.scope;
+	const query = () => props.query?.trim() ?? "";
+	const refresh = () => props.refreshKey ?? 0;
+	const state = workflow.memoryEntryList(scope, query, refresh);
 	const title = () => props.title ?? t("memory.defaultEntriesTitle");
 
 	return (
 		<section class="memory-section" aria-label={title()}>
 			<div class="section-head">
 				<h3>{title()}</h3>
-				<Show when={!loading() && entries().length > 0}>
-					<span class="section-count">{entries().length}</span>
+				<Show when={!state.loading() && state.entries().length > 0}>
+					<span class="section-count">{state.entries().length}</span>
 				</Show>
 			</div>
-			<Show when={feedback()}>
-				<p class="status-line ok" role="status">
-					{feedback()}
-				</p>
+			<Show when={state.feedback()}>
+				<p class="status-line ok" role="status">{state.feedback()}</p>
 			</Show>
-			<Show when={error()}>
-				<p class="status-line err" role="alert">
-					{error()}
-				</p>
+			<Show when={state.error()}>
+				<p class="status-line err" role="alert">{state.error()}</p>
 			</Show>
-			<Show when={loading() && entries().length === 0}>
+			<Show when={state.loading() && state.entries().length === 0}>
 				<p class="empty-note">{t("memory.loading")}</p>
 			</Show>
-			<Show when={!loading() && !error() && entries().length === 0}>
+			<Show when={!state.loading() && !state.error() && state.entries().length === 0}>
 				<p class="empty-note">{t("memory.emptyEntries")}</p>
 			</Show>
 			<ul class="memory-list">
-				<For each={entries()}>
+				<For each={state.entries()}>
 					{(entry) => {
-						const excluded = () => excludedIds().has(entry.id);
+						const excluded = state.excluded(entry.id);
 						return (
 							<li class="memory-entry" data-excluded={excluded() ? "" : undefined}>
 								<Show
-									when={editingEntryId() === entry.id}
+									when={state.editingEntryId() === entry.id}
 									fallback={<p class="memory-text">{entry.text}</p>}
 								>
 									<div class="memory-edit">
 										<TextField>
 											<TextField.TextArea
 												rows={3}
-												value={editedEntryText()}
-												onInput={(event) => setEditedEntryText(event.currentTarget.value)}
+												value={state.editedEntryText()}
+												onInput={(event) => state.setEditedEntryText(event.currentTarget.value)}
 												aria-label={t("memory.editedContent")}
 											/>
 										</TextField>
@@ -200,16 +109,12 @@ export function MemoryEntryList(props: {
 											<Button
 												type="button"
 												class="mini-btn primary"
-												disabled={busyId() === entry.id || !editedEntryText().trim()}
-												onClick={saveEdit(entry)}
+												disabled={state.busyId() === entry.id || !state.editedEntryText().trim()}
+												onClick={() => state.saveEdit(entry, t("memory.revised"))}
 											>
 												{t("memory.saveEdit")}
 											</Button>
-											<Button
-												type="button"
-												class="mini-btn"
-												onClick={() => setEditingEntryId(null)}
-											>
+											<Button type="button" class="mini-btn" onClick={state.cancelEditing}>
 												{t("messages.cancel")}
 											</Button>
 										</div>
@@ -218,9 +123,7 @@ export function MemoryEntryList(props: {
 								<div class="memory-meta">
 									<span class="memory-kind">{kindLabel(entry.kind)}</span>
 									<Show when={excluded()}>
-										<span class="memory-kind" data-excluded>
-											{t("memory.excludedNote")}
-										</span>
+										<span class="memory-kind" data-excluded>{t("memory.excludedNote")}</span>
 									</Show>
 									<Show when={formatDate(entry.createdAt)}>
 										<span>{formatDate(entry.createdAt)}</span>
@@ -230,11 +133,8 @@ export function MemoryEntryList(props: {
 									<Button
 										type="button"
 										class="mini-btn"
-										disabled={busyId() === entry.id}
-										onClick={() => {
-											setEditingEntryId(entry.id);
-											setEditedEntryText(entry.text);
-										}}
+										disabled={state.busyId() === entry.id}
+										onClick={() => state.startEditing(entry)}
 									>
 										{t("memory.edit")}
 									</Button>
@@ -242,16 +142,16 @@ export function MemoryEntryList(props: {
 										type="button"
 										class="mini-btn"
 										aria-pressed={excluded() || undefined}
-										disabled={busyId() === entry.id}
-										onClick={toggleExclude(entry)}
+										disabled={state.busyId() === entry.id}
+										onClick={() => state.toggleExclude(entry, t("memory.includedDone"), t("memory.excludedDone"))}
 									>
 										{excluded() ? t("memory.included") : t("memory.exclude")}
 									</Button>
 									<Button
 										type="button"
 										class="mini-btn"
-										disabled={busyId() === entry.id}
-										onClick={forget(entry)}
+										disabled={state.busyId() === entry.id}
+										onClick={() => state.forget(entry, t("memory.forget"))}
 									>
 										{t("memory.forget")}
 									</Button>
@@ -268,100 +168,38 @@ export function MemoryEntryList(props: {
 /** One pending memory candidate with an editable text + scope before approval. */
 function CandidateCard(props: { candidate: MemoryCandidate }) {
 	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
-	const [editedText, setEditedText] = createSignal(props.candidate.normalizedText);
-	const [decidedScope, setDecidedScope] = createSignal<MemoryScope>(props.candidate.suggestedScope);
-	const [busy, setBusy] = createSignal(false);
-	const [error, setError] = createSignal<string | null>(null);
-	const scopeOptions = (): MemoryScope[] => ["self", "relationship", "scene"];
+	const workflow = createBackstageWorkflowStore(useCompanionStore());
+	const state = workflow.memoryCandidate(() => props.candidate);
+	const scopeOptions: MemoryScope[] = ["self", "relationship", "scene"];
 	const scopeLabel = (scope: MemoryScope) => t(`memory.scopes.${scope}`);
-
-	const approve = async (): Promise<void> => {
-		setBusy(true);
-		setError(null);
-		try {
-			const text = editedText().trim();
-			const edited = text && text !== props.candidate.normalizedText ? text : undefined;
-			await store.memory.approveCandidate(props.candidate.id, edited, decidedScope());
-		} catch (e) {
-			setError(messageOf(e));
-		} finally {
-			setBusy(false);
-		}
-	};
-
-	const reject = async (): Promise<void> => {
-		setBusy(true);
-		setError(null);
-		try {
-			await store.memory.rejectCandidate(props.candidate.id);
-		} catch (e) {
-			setError(messageOf(e));
-		} finally {
-			setBusy(false);
-		}
-	};
-
 	return (
 		<li class="candidate-card">
 			<p class="candidate-text">{props.candidate.normalizedText}</p>
 			<p class="candidate-why">{props.candidate.why}</p>
 			<div class="candidate-edit">
 				<TextField>
-					<TextField.TextArea
-						rows={2}
-						value={editedText()}
-						onInput={(event) => setEditedText(event.currentTarget.value)}
-						aria-label={t("memory.candidateEditedContent")}
-					/>
+					<TextField.TextArea rows={2} value={state.editedText()} onInput={(event) => state.setEditedText(event.currentTarget.value)} aria-label={t("memory.candidateEditedContent")} />
 				</TextField>
 				<Select<MemoryScope>
-					options={scopeOptions()}
-					value={decidedScope()}
+					options={scopeOptions}
+					value={state.decidedScope()}
 					optionValue={(scope) => scope}
 					optionTextValue={scopeLabel}
-					onChange={(scope) => {
-						if (scope) setDecidedScope(scope);
-					}}
-					itemComponent={(itemProps) => (
-						<Select.Item item={itemProps.item} class="select-item">
-							<Select.ItemLabel>{scopeLabel(itemProps.item.rawValue)}</Select.ItemLabel>
-						</Select.Item>
-					)}
+					onChange={(scope) => { if (scope) state.setDecidedScope(scope); }}
+					itemComponent={(itemProps) => <Select.Item item={itemProps.item} class="select-item"><Select.ItemLabel>{scopeLabel(itemProps.item.rawValue)}</Select.ItemLabel></Select.Item>}
 				>
 					<Select.Label class="field-label">{t("memory.candidateScope")}</Select.Label>
 					<Select.Trigger class="select-trigger" aria-label={t("memory.candidateScope")}>
-						<Select.Value<MemoryScope> class="select-value">
-							{(state) => scopeLabel(state.selectedOption())}
-						</Select.Value>
-						<Select.Icon class="select-icon" aria-hidden="true">
-							v
-						</Select.Icon>
+						<Select.Value<MemoryScope> class="select-value">{(current) => scopeLabel(current.selectedOption())}</Select.Value>
+						<Select.Icon class="select-icon" aria-hidden="true">v</Select.Icon>
 					</Select.Trigger>
-					<Select.Portal>
-						<Select.Content class="select-content">
-							<Select.Listbox class="select-listbox" />
-						</Select.Content>
-					</Select.Portal>
+					<Select.Portal><Select.Content class="select-content"><Select.Listbox class="select-listbox" /></Select.Content></Select.Portal>
 				</Select>
 			</div>
-			<Show when={error()}>
-				<p class="status-line err" role="alert">
-					{error()}
-				</p>
-			</Show>
+			<Show when={state.error()}><p class="status-line err" role="alert">{state.error()}</p></Show>
 			<div class="candidate-actions">
-				<Button
-					type="button"
-					class="mini-btn primary"
-					disabled={busy()}
-					onClick={() => void approve()}
-				>
-					{t("memory.candidateApprove")}
-				</Button>
-				<Button type="button" class="mini-btn" disabled={busy()} onClick={() => void reject()}>
-					{t("memory.candidateReject")}
-				</Button>
+				<Button type="button" class="mini-btn primary" disabled={state.busy()} onClick={state.approve}>{t("memory.candidateApprove")}</Button>
+				<Button type="button" class="mini-btn" disabled={state.busy()} onClick={state.reject}>{t("memory.candidateReject")}</Button>
 			</div>
 		</li>
 	);
@@ -370,42 +208,26 @@ function CandidateCard(props: { candidate: MemoryCandidate }) {
 /** Pending memory candidates awaiting user confirmation (待确认记忆). */
 export function MemoryCandidates() {
 	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
-	const [loading, setLoading] = createSignal(false);
-	const [error, setError] = createSignal<string | null>(null);
-
-	onMount(() => {
-		setLoading(true);
-		setError(null);
-		void store.memory
-			.listCandidates()
-			.catch((e) => setError(messageOf(e)))
-			.finally(() => setLoading(false));
-	});
-
-	const candidates = () => store.memory.candidates() ?? [];
-
+	const workflow = createBackstageWorkflowStore(useCompanionStore());
 	return (
 		<section class="memory-section" aria-label={t("memory.candidatesTitle")}>
 			<div class="section-head">
 				<h3>{t("memory.candidatesTitle")}</h3>
-				<Show when={!loading() && candidates().length > 0}>
-					<span class="section-count">{candidates().length}</span>
+				<Show when={!workflow.memoryCandidatesLoading() && workflow.memoryCandidates().length > 0}>
+					<span class="section-count">{workflow.memoryCandidates().length}</span>
 				</Show>
 			</div>
-			<Show when={error()}>
-				<p class="status-line err" role="alert">
-					{error()}
-				</p>
+			<Show when={workflow.memoryCandidatesError()}>
+				<p class="status-line err" role="alert">{workflow.memoryCandidatesError()}</p>
 			</Show>
-			<Show when={loading() && candidates().length === 0}>
+			<Show when={workflow.memoryCandidatesLoading() && workflow.memoryCandidates().length === 0}>
 				<p class="empty-note">{t("memory.loading")}</p>
 			</Show>
-			<Show when={!loading() && !error() && candidates().length === 0}>
+			<Show when={!workflow.memoryCandidatesLoading() && !workflow.memoryCandidatesError() && workflow.memoryCandidates().length === 0}>
 				<p class="empty-note">{t("memory.candidatesEmpty")}</p>
 			</Show>
 			<ul class="candidate-list">
-				<For each={candidates()}>{(candidate) => <CandidateCard candidate={candidate} />}</For>
+				<For each={workflow.memoryCandidates()}>{(candidate) => <CandidateCard candidate={candidate} />}</For>
 			</ul>
 		</section>
 	);
@@ -414,34 +236,8 @@ export function MemoryCandidates() {
 /** Memory page: search and per-scope backend memory records. */
 export function MemorySheet() {
 	const [t] = useTranslation(undefined, { i18n });
-	const scopeTabs = (): Array<{ value: MemoryScope; label: string }> => [
-		{ value: "self", label: t("memory.scopes.self") },
-		{ value: "relationship", label: t("memory.scopes.relationship") },
-		{ value: "scene", label: t("memory.scopes.scene") },
-	];
-	const [scope, setScope] = createSignal<MemoryScope>("self");
-	const [queryText, setQueryText] = createSignal("");
-	const [query, setQuery] = createSignal("");
-	const [refreshKey, setRefreshKey] = createSignal(0);
-
-	function onScopeChange(value: string): void {
-		const next = scopeTabs().find((tab) => tab.value === value)?.value;
-		if (!next) return;
-		setScope(next);
-		setQueryText("");
-		setQuery("");
-		setRefreshKey((key) => key + 1);
-	}
-
-	function submitSearch(): void {
-		setQuery(queryText().trim().slice(0, CLIENT_QUERY_LIMIT));
-	}
-
-	function clearSearch(): void {
-		setQueryText("");
-		setQuery("");
-	}
-
+	const workflow = createBackstageWorkflowStore(useCompanionStore());
+	const scopeTabs = workflow.memoryScopeTabs((scope) => t(`memory.scopes.${scope}`));
 	return (
 		<div class="sheet-panel">
 			<div class="search-row">
@@ -450,46 +246,35 @@ export function MemorySheet() {
 						type="search"
 						class="search-input"
 						placeholder={t("memory.searchPlaceholder")}
-						value={queryText()}
-						onInput={(event) => setQueryText(event.currentTarget.value)}
+						value={workflow.memoryQueryText()}
+						onInput={(event) => workflow.setMemoryQueryText(event.currentTarget.value)}
 						onKeyDown={(event) => {
 							if (event.key === "Enter") {
 								event.preventDefault();
-								submitSearch();
+								workflow.submitMemorySearch();
 							}
 						}}
 						aria-label={t("memory.searchLabel")}
 					/>
 				</TextField>
-				<Button type="button" class="mini-btn" onClick={submitSearch}>
-					{t("memory.search")}
-				</Button>
-				<Show when={query() !== ""}>
-					<Button type="button" class="mini-btn" onClick={clearSearch}>
-						{t("memory.clear")}
-					</Button>
+				<Button type="button" class="mini-btn" onClick={workflow.submitMemorySearch}>{t("memory.search")}</Button>
+				<Show when={workflow.memoryQuery() !== ""}>
+					<Button type="button" class="mini-btn" onClick={workflow.clearMemorySearch}>{t("memory.clear")}</Button>
 				</Show>
 			</div>
-
 			<Tabs
-				value={scope()}
-				onChange={onScopeChange}
+				value={workflow.memoryScope()}
+				onChange={workflow.changeMemoryScope}
 				class="scope-tabs"
 				aria-label={t("memory.scopeTabsLabel")}
 			>
 				<Tabs.List class="tabs">
 					<For each={scopeTabs()}>
-						{(tab) => (
-							<Tabs.Trigger value={tab.value} class="tab">
-								{tab.label}
-							</Tabs.Trigger>
-						)}
+						{(tab) => <Tabs.Trigger value={tab.value} class="tab">{tab.label}</Tabs.Trigger>}
 					</For>
 				</Tabs.List>
 			</Tabs>
-
-			<MemoryEntryList scope={scope()} query={query()} refreshKey={refreshKey()} />
-
+			<MemoryEntryList scope={workflow.memoryScope()} query={workflow.memoryQuery()} refreshKey={workflow.memoryRefreshKey()} />
 			<MemoryCandidates />
 		</div>
 	);

@@ -57,6 +57,7 @@ const version = {
 const message = {
 	id: "message-1",
 	role: "assistant",
+	status: "completed",
 	adoptedVersionId: "version-1",
 	versions: [version],
 	createdAt: timestamp,
@@ -86,7 +87,7 @@ const provider = {
 			id: "model-1",
 			name: "Model",
 			supportsImages: false,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, tiers: [] },
 		},
 	],
 	unavailable: [],
@@ -593,6 +594,33 @@ describe("host projection validation", () => {
 					},
 				},
 			}),
+		).toBe(false);
+	});
+
+	it("validates structured message terminal status and failure metadata", () => {
+		const failedMessage = {
+			...message,
+			status: "failed",
+			failureReason: "provider_request_failed",
+		};
+		expect(isMessage(failedMessage)).toBe(true);
+		expect(isMessage({ ...message, status: "completed" })).toBe(true);
+		expect(isMessage({ ...message, status: "aborted" })).toBe(true);
+
+		expect(isMessage({ ...message, status: "running" })).toBe(false);
+		expect(isMessage({ ...message, status: null })).toBe(false);
+		expect(isMessage({ ...message, status: 3 })).toBe(false);
+		expect(isMessage({ ...failedMessage, failureReason: 3 })).toBe(false);
+		expect(isMessage({ ...failedMessage, failureReason: { code: "provider_request_failed" } })).toBe(
+			false,
+		);
+		expect(isMessage({ ...failedMessage, failureReason: "x".repeat(257) })).toBe(false);
+		expect(isMessage({ ...message, failureReason: "provider_request_failed" })).toBe(false);
+		expect(
+			isMessage({ ...message, status: "completed", failureReason: "provider_request_failed" }),
+		).toBe(false);
+		expect(
+			isMessage({ ...message, status: "aborted", failureReason: "provider_request_failed" }),
 		).toBe(false);
 	});
 

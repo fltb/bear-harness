@@ -37,6 +37,7 @@ import type { ConversationRepository } from "./conversations/repository.js";
 import type { Dispatcher } from "./dispatcher.js";
 import type { MemoryBackend, MemoryBankScope, MemoryRecord } from "./memory/backend.js";
 import type { ModelRegistry } from "./models/registry.js";
+import type { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import type { ProviderCatalog } from "./providers/catalog.js";
 import type { AuditStore } from "./security/audit-store.js";
 import type { AppSettingsStore } from "./storage/app-settings-store.js";
@@ -76,6 +77,7 @@ export interface HostCompositionContext {
 	models: ModelRegistry;
 	appSettings: AppSettingsStore;
 	memoryBackend: MemoryBackend;
+	memoryRuntime: TencentDbRuntime;
 	memoryScope: Pick<MemoryBankScope, "installationId" | "userId">;
 	commissions: CommissionService;
 	artifacts: ArtifactStore;
@@ -434,6 +436,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 
 	// --- memory ------------------------------------------------------------------
+	dispatcher.registerHandler(RPC.memory.prepareEmbedding, async () => {
+		return s.memoryRuntime.prepareLocalEmbedding();
+	});
 	dispatcher.registerHandler(RPC.memory.search, async (_p): Promise<MemorySearchResponse> => {
 		const { query } = _p;
 		const scope = await memoryBackendScope(s);

@@ -58,9 +58,9 @@ function reply(payload: { messages?: Array<{ role?: string; content?: unknown }>
 	if (!toolResult && current.includes("E2E_TOOL_TRIGGER_DAMAGED_LOG")) {
 		calls.push({
 			tool: "host_trigger_roleplay_event",
-			args: { eventId: "first_meeting_remembered" },
+			args: { eventId: "continuity_opened" },
 		});
-		return { tool: "host_trigger_roleplay_event", args: { eventId: "first_meeting_remembered" } };
+		return { tool: "host_trigger_roleplay_event", args: { eventId: "continuity_opened" } };
 	}
 	if (!toolResult && current.includes("E2E_TOOL_SEARCH_OTHER_CONVERSATION")) {
 		calls.push({

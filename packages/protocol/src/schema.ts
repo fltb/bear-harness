@@ -37,6 +37,11 @@ const WireTimestamp = z
 export const MAX_MESSAGE_ATTACHMENTS = 10;
 export const MAX_MESSAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_MESSAGE_ATTACHMENT_BASE64_LENGTH = Math.ceil(MAX_MESSAGE_ATTACHMENT_BYTES / 3) * 4;
+export const MessageStatus = z.union([
+	z.literal("completed"),
+	z.literal("failed"),
+	z.literal("aborted"),
+]);
 
 const boundedRecord = <K extends z.ZodString, V extends Schema>(
 	key: K,
@@ -303,6 +308,8 @@ export const EventPayloadSchemas = {
 	message_end: EventPayload({
 		conversationId: EventId,
 		failed: z.boolean().optional(),
+		status: MessageStatus.optional(),
+		reason: z.string().max(256).optional(),
 		text: EventText.optional(),
 		// Host-produced Pi assistant message. Not consumed by the renderer and
 		// structurally arbitrary JSON (streaming deltas, tool use, usage
@@ -342,6 +349,9 @@ export const EventPayloadSchemas = {
 		conversationId: EventId,
 		messageId: EventId.optional(),
 		versionId: EventId,
+		failed: z.boolean().optional(),
+		status: MessageStatus.optional(),
+		reason: z.string().max(256).optional(),
 	}),
 	"codex.consented": EventPayload({
 		profileId: EventId,
@@ -1027,6 +1037,8 @@ export const Message = z
 	.strictObject({
 		id: MessageId,
 		role: MessageRole,
+		status: MessageStatus.optional(),
+		failureReason: z.string().max(256).optional(),
 		adoptedVersionId: MessageVersionId.optional(),
 		versions: z.array(MessageVersion).max(20),
 		createdAt: WireTimestamp,
@@ -1051,6 +1063,13 @@ export const Message = z
 					message: "version timestamp must not precede message timestamp",
 				});
 			}
+		}
+		if (message.status !== "failed" && message.failureReason !== undefined) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["failureReason"],
+				message: "failureReason requires failed status",
+			});
 		}
 	});
 export const ConversationSelectResponse = z.strictObject({
@@ -1231,6 +1250,11 @@ export const MemoryExcludeRequest = z.strictObject({
 export const MemoryEditRequest = z.strictObject({
 	entryId: z.string().min(1).max(128),
 	newText: z.string().min(1).max(MAX_STRING_LENGTH),
+});
+export const MemoryPrepareEmbeddingRequest = z.strictObject({});
+/** Successful only after the local model is downloaded, loaded, and ready. */
+export const MemoryPrepareEmbeddingResponse = z.strictObject({
+	ready: z.literal(true),
 });
 
 // ---------------------------------------------------------------------------
@@ -1448,6 +1472,8 @@ export const ProviderInfo = z.strictObject({
 		z.literal("invalid"),
 		z.literal("unavailable"),
 	]),
+	/** Effective provider endpoint; never contains credentials. */
+	baseUrl: z.string().max(2048).optional(),
 	availableModels: z
 		.array(
 			z.strictObject({
@@ -2092,6 +2118,11 @@ export const RPC = {
 		forget: endpoint("memory.forget:v1", MemoryForgetRequest, EmptyResponse),
 		edit: endpoint("memory.edit:v1", MemoryEditRequest, EmptyResponse),
 		exclude: endpoint("memory.exclude:v1", MemoryExcludeRequest, EmptyResponse),
+		prepareEmbedding: endpoint(
+			"memory.prepareEmbedding:v1",
+			MemoryPrepareEmbeddingRequest,
+			MemoryPrepareEmbeddingResponse,
+		),
 		candidatesList: endpoint(
 			"memory.candidates.list:v1",
 			MemoryCandidatesListRequest,

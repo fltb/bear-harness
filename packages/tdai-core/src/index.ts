@@ -19,6 +19,14 @@ export {
 	createEmbeddingService,
 } from "./core/store/embedding.js";
 export { createPipeline, initDataDirectories, initStores, resetStores } from "./utils/pipeline-factory.js";
+export { NativeCapabilities, nativeCapabilities } from "./native/capabilities.js";
+export type {
+	JiebaInstance,
+	LlamaGpuBackend,
+	LlamaModule,
+	NativeCapabilityId,
+	NativeCapabilityStatus,
+} from "./native/capabilities.js";
 export type { TcvdbMemoryStoreConfig } from "./core/store/tcvdb.js";
 export type { StoreBundle } from "./core/store/factory.js";
 export type {

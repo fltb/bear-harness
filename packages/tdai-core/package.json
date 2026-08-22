@@ -12,7 +12,7 @@
 		"source": "https://github.com/TencentCloud/TencentDB-Agent-Memory",
 		"license": "MIT"
 	},
-	"sourcePolicy": "Vendored upstream source in src/ is excluded from root Biome; validate it with this package's TypeScript typecheck and upstream sync process. The optional node-llama-cpp peer is loaded dynamically only for explicit local embeddings and is off by default; Knip ignores it as a non-product dependency.",
+	"sourcePolicy": "Vendored upstream source in src/ is excluded from root Biome; validate it with this package's TypeScript typecheck and upstream sync process. node-llama-cpp is a required production dependency but loads dynamically only for explicit local embeddings; Knip ignores it as a native runtime dependency.",
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
@@ -28,16 +28,9 @@
 		"@node-rs/jieba": "2.0.1",
 		"@tencentdb-agent-memory/tcvdb-text": "0.1.1",
 		"ai": "6.0.164",
+		"node-llama-cpp": "3.16.2",
 		"sqlite-vec": "0.1.7-alpha.2",
 		"undici": "^8.10.0"
-	},
-	"peerDependencies": {
-		"node-llama-cpp": "3.16.2"
-	},
-	"peerDependenciesMeta": {
-		"node-llama-cpp": {
-			"optional": true
-		}
 	},
 	"devDependencies": {
 		"@types/node": "24.13.3",

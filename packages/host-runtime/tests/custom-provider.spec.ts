@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderCatalog } from "../src/providers/catalog.js";
 import type { CredentialStore } from "../src/providers/credential-store.js";
+import { ProviderListResponse } from "@bear-harness/protocol/schema";
 
 const roots: string[] = [];
 
@@ -79,6 +80,44 @@ describe("custom OpenAI-compatible provider configuration", () => {
 		);
 	});
 
+	it("projects a custom provider endpoint without URL credentials or metadata secrets", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-provider-projection-"));
+		roots.push(root);
+		const credentials = {
+			list: vi.fn(async () => []),
+			get: vi.fn(async () => undefined),
+			getStatus: vi.fn(async () => "missing"),
+			set: vi.fn(async () => "stored"),
+		} as unknown as CredentialStore;
+		const catalog = new ProviderCatalog(credentials, root);
+		const apiKey = "API_KEY_SENTINEL";
+		const username = "URL_USER_SENTINEL";
+		const password = "URL_PASSWORD_SENTINEL";
+		const querySecret = "QUERY_SECRET_SENTINEL";
+		const fragmentSecret = "FRAGMENT_SECRET_SENTINEL";
+
+		await catalog.upsertCustomProvider({
+			providerId: "private-relay",
+			name: "Private Relay",
+			baseUrl: `https://${username}:${password}@relay.example.com/v1/?api_key=${querySecret}#${fragmentSecret}`,
+			modelId: "private-model",
+			apiKey,
+		});
+
+		const provider = (await catalog.listProviders()).find(
+			(candidate) => candidate.id === "private-relay",
+		);
+		expect(provider?.baseUrl).toBe("https://relay.example.com/v1");
+		expect(provider?.availableModels.map((model) => model.id)).toEqual(["private-model"]);
+		const projection = JSON.stringify(provider);
+		expect(projection).not.toContain(apiKey);
+		expect(projection).not.toContain(username);
+		expect(projection).not.toContain(password);
+		expect(projection).not.toContain(`api_key=${querySecret}`);
+		expect(projection).not.toContain(querySecret);
+		expect(projection).not.toContain(fragmentSecret);
+	});
+
 	it("rejects non-http endpoint schemes", async () => {
 		const root = mkdtempSync(join(tmpdir(), "bear-custom-provider-"));
 		roots.push(root);
@@ -141,5 +180,52 @@ describe("custom OpenAI-compatible provider configuration", () => {
 			),
 		).rejects.toMatchObject({ reason: "pi_model_config_must_not_contain_api_key" });
 		expect(readFileSync(join(root, "models.json"), "utf8")).toBe(previous);
+	});
+
+	it("projects custom models whose standard costs omit optional tiers", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-provider-cost-"));
+		roots.push(root);
+		const credentials = {
+			list: vi.fn(async () => []),
+			get: vi.fn(async () => undefined),
+			getStatus: vi.fn(async () => "missing"),
+			set: vi.fn(async () => "stored"),
+		} as unknown as CredentialStore;
+		const catalog = new ProviderCatalog(credentials, root);
+
+		await catalog.importPiConfig(
+			JSON.stringify({
+				providers: {
+					"standard-relay": {
+						name: "Standard Relay",
+						baseUrl: "https://relay.example/v1",
+						api: "openai-completions",
+						authHeader: true,
+						models: [
+							{
+								id: "standard-model",
+								name: "Standard Model",
+								input: ["text"],
+								cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
+								contextWindow: 8192,
+								maxTokens: 2048,
+							},
+						],
+					},
+				},
+			}),
+		);
+
+		const response = ProviderListResponse.parse({ providers: await catalog.listProviders() });
+		const provider = response.providers.find((candidate) => candidate.id === "standard-relay");
+		expect(provider?.availableModels).toEqual([
+			{
+				id: "standard-model",
+				name: "Standard Model",
+				supportsImages: false,
+				cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
+			},
+		]);
+		expect(provider?.availableModels[0]?.cost).not.toHaveProperty("tiers");
 	});
 });

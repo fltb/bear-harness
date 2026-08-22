@@ -40,6 +40,9 @@ function baseStore(): Partial<CompanionStore> {
 			models: () => [{ modelId: "model" }],
 			data: () => ({ defaults: { reply: { providerId: "provider", modelId: "model" } } }),
 		} as never,
+		memory: {
+			prepareEmbedding: () => Promise.resolve({ ready: true }),
+		} as never,
 	};
 }
 
@@ -130,6 +133,7 @@ describe("first meeting journeys", () => {
 			reply?: { providerId: string; modelId: string };
 		}>({});
 		const saveMemorySettings = vi.fn(() => Promise.resolve());
+		const prepareEmbedding = vi.fn(() => Promise.resolve({ ready: true }));
 		const setDefaultReply = vi.fn(async (providerId: string, modelId: string) => {
 			setDefaults({ reply: { providerId, modelId } });
 		});
@@ -156,6 +160,9 @@ describe("first meeting journeys", () => {
 			} as never,
 			settings: {
 				set: saveMemorySettings,
+			} as never,
+			memory: {
+				prepareEmbedding,
 			} as never,
 		});
 
@@ -194,7 +201,104 @@ describe("first meeting journeys", () => {
 				localModel: "embeddinggemma",
 			},
 		});
+		expect(prepareEmbedding).toHaveBeenCalledTimes(1);
 		await waitFor(() => expect(memorySetup).not.toBeInTheDocument());
+	});
+	it("blocks local embedding completion until preparation succeeds", async () => {
+		const user = userEvent.setup();
+		const prepareEmbedding = vi.fn(() => Promise.reject(new Error("embedding download failed")));
+		const provider = {
+			id: "stored-relay",
+			name: "Stored Relay",
+			authType: "api_key" as const,
+			credentialStatus: "stored" as const,
+			availableModels: [{ id: "stored-model", name: "Stored Model" }],
+		};
+		renderMeeting({
+			...baseStore(),
+			provider: {
+				providers: () => [provider],
+				list: () => Promise.resolve({ providers: [provider] }),
+			} as never,
+			model: {
+				loading: () => false,
+				models: () => [],
+				data: () => ({ defaults: {} }),
+				enable: vi.fn(() => Promise.resolve()),
+				setDefaultReply: vi.fn(() => Promise.resolve()),
+			} as never,
+			settings: { set: vi.fn(() => Promise.resolve()) } as never,
+			memory: { prepareEmbedding } as never,
+		});
+		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		await selectKobalteOption(
+			user,
+			within(dialog).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
+			"stored-relay",
+		);
+		await selectKobalteOption(
+			user,
+			within(dialog).getByRole("button", { name: new RegExp(zhCN.modelSetup.modelLabel) }),
+			"stored-model",
+		);
+		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
+		const memorySetup = await screen.findByRole("dialog", {
+			name: zhCN.settings.memoryVectorSection,
+		});
+		await user.click(within(memorySetup).getByRole("button", { name: zhCN.messages.continue }));
+		expect(await within(memorySetup).findByRole("alert")).toHaveTextContent("embedding download failed");
+		expect(memorySetup).toBeInTheDocument();
+		expect(prepareEmbedding).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not prepare an embedding when onboarding chooses none", async () => {
+		const user = userEvent.setup();
+		const prepareEmbedding = vi.fn(() => Promise.resolve({ ready: true }));
+		const provider = {
+			id: "stored-relay",
+			name: "Stored Relay",
+			authType: "api_key" as const,
+			credentialStatus: "stored" as const,
+			availableModels: [{ id: "stored-model", name: "Stored Model" }],
+		};
+		renderMeeting({
+			...baseStore(),
+			provider: {
+				providers: () => [provider],
+				list: () => Promise.resolve({ providers: [provider] }),
+			} as never,
+			model: {
+				loading: () => false,
+				models: () => [],
+				data: () => ({ defaults: {} }),
+				enable: vi.fn(() => Promise.resolve()),
+				setDefaultReply: vi.fn(() => Promise.resolve()),
+			} as never,
+			settings: { set: vi.fn(() => Promise.resolve()) } as never,
+			memory: { prepareEmbedding } as never,
+		});
+		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		await selectKobalteOption(
+			user,
+			within(dialog).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
+			"stored-relay",
+		);
+		await selectKobalteOption(
+			user,
+			within(dialog).getByRole("button", { name: new RegExp(zhCN.modelSetup.modelLabel) }),
+			"stored-model",
+		);
+		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
+		const memorySetup = await screen.findByRole("dialog", {
+			name: zhCN.settings.memoryVectorSection,
+		});
+		const embeddingProvider = within(memorySetup).getByRole("button", {
+			name: new RegExp(zhCN.settings.vectorProvider),
+		});
+		await selectKobalteOption(user, embeddingProvider, zhCN.settings.vectorProviders.none);
+		await user.click(within(memorySetup).getByRole("button", { name: zhCN.messages.continue }));
+		await waitFor(() => expect(memorySetup).not.toBeInTheDocument());
+		expect(prepareEmbedding).not.toHaveBeenCalled();
 	});
 
 	it("configures a relay URL and imports Pi providers from initial setup", async () => {

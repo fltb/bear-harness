@@ -67,7 +67,7 @@ describe("character package import", () => {
 			ok: true,
 			data: {
 				modules: expect.arrayContaining([
-					expect.objectContaining({ stableKey: "original_root", origin: "package" }),
+						expect.objectContaining({ stableKey: "station_record", origin: "package" }),
 				]),
 			},
 		});
@@ -78,10 +78,10 @@ describe("character package import", () => {
 		await expect(
 			runtime.dispatch("roleplay.trigger:v1", {
 				conversationId: conversation.data.id,
-				eventId: "first_meeting_remembered",
-				dedupeKey: "imported-role:remembered",
+				eventId: "continuity_opened",
+				dedupeKey: "imported-role:continuity-opened",
 			}),
-		).resolves.toMatchObject({ ok: true, data: { state: { values: { trust: 1 } } } });
+		).resolves.toMatchObject({ ok: true, data: { state: { values: { continuity_stage: 1 } } } });
 		await runtime.close();
 
 		const restarted = createHostRuntime({
@@ -103,7 +103,7 @@ describe("character package import", () => {
 		});
 		await expect(
 			restarted.dispatch("roleplay.get:v1", { conversationId: conversation.data.id }),
-		).resolves.toMatchObject({ ok: true, data: { state: { values: { trust: 1 } } } });
+		).resolves.toMatchObject({ ok: true, data: { state: { values: { continuity_stage: 1 } } } });
 		await restarted.close();
 	});
 

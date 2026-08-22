@@ -33,6 +33,26 @@ export interface CompanionRuntimeConfig {
 	appendSystemPrompt: string;
 	hostTools: string[];
 }
+const SAFE_FAILURE_REASONS: Record<string, true> = {
+	companion_initialization_failed: true,
+	companion_unavailable: true,
+	provider_auth_required: true,
+	provider_request_failed: true,
+	multimodal_fallback_unavailable: true,
+	turn_dispatch_failed: true,
+};
+
+function safeFailureReason(error: unknown, fallback = "provider_request_failed"): string {
+	const candidate =
+		error && typeof error === "object" && "reason" in error && typeof error.reason === "string"
+			? error.reason
+			: undefined;
+	return candidate && SAFE_FAILURE_REASONS[candidate] ? candidate : fallback;
+}
+
+function publishFailedMessage(eventBus: EventBus, conversationId: string, reason: string): void {
+	eventBus.publish("message_end", { conversationId, failed: true, status: "failed", reason });
+}
 
 export interface CompanionSessionResolver {
 	get(conversationId: string): PiSessionStore | undefined;
@@ -350,10 +370,13 @@ export class CompanionSupervisor {
 				.then(() => this.prompt(conversationId, message, triggerMessageId, images))
 				.catch((error: unknown) => {
 					if (this.state === "stopped") return;
+					const reason = safeFailureReason(error, "turn_dispatch_failed");
 					this.eventBus.publish("companion.runtime_error", {
+						conversationId,
 						code: "turn_dispatch_failed",
-						message: error instanceof Error ? error.message : String(error),
+						message: reason,
 					});
+					publishFailedMessage(this.eventBus, conversationId, reason);
 				});
 			return;
 		}
@@ -392,33 +415,38 @@ export class CompanionSupervisor {
 		try {
 			session = await this.initializeSession(conversationId);
 		} catch (error) {
+			const reason = "companion_initialization_failed";
 			this.promptMessageIds.delete(conversationId);
 			if (this.state === "stopped") return;
 			this.state = "unavailable";
 			this.eventBus.publish("companion.state_changed", {
 				state: "unavailable",
-				error: error instanceof Error ? error.message : String(error),
+				error: reason,
 			});
-			this.eventBus.publish("message_end", { conversationId, failed: true });
+			publishFailedMessage(this.eventBus, conversationId, reason);
 			return;
 		}
 		const modelRuntime = this.modelRuntime;
 		if (!modelRuntime) {
+			const reason = "companion_unavailable";
 			this.eventBus.publish("companion.runtime_error", {
 				conversationId,
-				code: "companion_unavailable",
+				code: reason,
+				message: reason,
 			});
-			this.eventBus.publish("message_end", { conversationId, failed: true });
+			publishFailedMessage(this.eventBus, conversationId, reason);
 			this.promptMessageIds.delete(conversationId);
 			return;
 		}
 		const mainRoute = this.modelSelectionHandler?.(conversationId, false);
 		if (!(await this.selectRoute(modelRuntime, session, mainRoute))) {
+			const reason = "provider_auth_required";
 			this.eventBus.publish("companion.runtime_error", {
 				conversationId,
-				code: "provider_auth_required",
+				code: reason,
+				message: reason,
 			});
-			this.eventBus.publish("message_end", { conversationId, failed: true });
+			publishFailedMessage(this.eventBus, conversationId, reason);
 			this.promptMessageIds.delete(conversationId);
 			return;
 		}
@@ -442,7 +470,7 @@ export class CompanionSupervisor {
 			let mainImages = images;
 			if (images?.length && mainRoute) {
 				const imageRoute = this.modelSelectionHandler?.(conversationId, true);
-				if (!imageRoute) throw new Error("multimodal fallback is not configured");
+				if (!imageRoute) throw new Error("multimodal_fallback_unavailable");
 				if (!sameRoute(mainRoute, imageRoute)) {
 					const observation = await this.readImages(modelRuntime, imageRoute, message, images);
 					prompt +=
@@ -461,12 +489,13 @@ export class CompanionSupervisor {
 				: extractLatestAssistantText(session.agent.state.messages);
 			this.eventBus.publish("message_end", { conversationId, text, message: assistantMessage });
 		} catch (error) {
+			const reason = safeFailureReason(error);
 			this.eventBus.publish("companion.runtime_error", {
 				conversationId,
 				code: "turn_failed",
-				message: error instanceof Error ? error.message : String(error),
+				message: reason,
 			});
-			this.eventBus.publish("message_end", { conversationId, failed: true });
+			publishFailedMessage(this.eventBus, conversationId, reason);
 		} finally {
 			this.promptMessageIds.delete(conversationId);
 			unsubscribe();

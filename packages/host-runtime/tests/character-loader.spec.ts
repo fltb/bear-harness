@@ -37,64 +37,65 @@ describe("character package visual projection", () => {
 		expect(display.language).toBe("zh-CN");
 		expect(display.character.work_presentation).toEqual({
 			labels: {
-				proposal: "要交给下级程序的事",
-				running: "下级程序正在处理",
-				needs_user: "这一步得你决定",
-				interrupted: "工作先停在这里",
-				completed: "带回来的东西",
-				failed: "没有办成",
-				steer_placeholder: "补充一句要怎么做",
-				interrupt: "叫停",
-				resume: "继续处理",
-				approve: "交给它们",
-				reject: "这次算了",
+				proposal: "值守台上的方案",
+				running: "正在处理",
+				needs_user: "交给你确认",
+				interrupted: "交接停在这里",
+				completed: "交回的结果",
+				failed: "这一步需要重做",
+				steer_placeholder: "补充处理方式",
+				interrupt: "暂停",
+				resume: "继续",
+				approve: "开始处理",
+				reject: "保留原样",
 				artifact_open: "打开",
 				artifact_reveal: "在 Finder 中显示",
 			},
 		});
 		expect(character.canon.manifest).toEqual(
-			expect.objectContaining({ version: 1, language: "zh-CN", sources: [] }),
+			expect.objectContaining({
+				version: 1,
+				language: "zh-CN",
+				sources: [expect.objectContaining({ id: "jizhou_story", path: "jizhou-story.md" })],
+			}),
 		);
 		expect(character.canon.manifest.modules).toContainEqual(
-			expect.objectContaining({ id: "original_root", kind: "root", bindings: [] }),
+			expect.objectContaining({
+				id: "station_record",
+				kind: "root",
+				bindings: [expect.objectContaining({ source: "jizhou_story" })],
+			}),
 		);
 		expect(display.theme.color.accent).toBe("#8bd0bb");
 		expect(display.visual.avatarUrl).toMatch(/^data:image\/(?:png|svg\+xml);base64,/);
-		for (const state of [
-			"presence",
-			"listening",
-			"thinking",
-			"needs_user",
-			"result_ready",
-			"problem",
-		]) {
-			expect(display.visual.expressions[state]).toMatch(/^data:image\/(?:png|svg\+xml);base64,/);
+		for (const assetUrl of Object.values(display.visual.expressions)) {
+			expect(assetUrl).toMatch(/^data:image\/(?:png|svg\+xml);base64,/);
 		}
-		expect(display.visual.defaultExpressionId).toBe("presence");
+		expect(display.visual.defaultExpressionId).toBe("calm");
 		expect(Object.keys(display.visual.expressions)).toHaveLength(12);
 		expect(new Set(character.visual.expressions.map((expression) => expression.asset)).size).toBe(
 			12,
 		);
 		expect(display.roleplay.media).toContainEqual(
 			expect.objectContaining({
-				id: "damaged_signal_live",
+				id: "continuity_light",
 				kind: "animation",
 				url: expect.stringMatching(/^data:image\/webp;base64,/),
 			}),
 		);
 		expect(display.scenes).toContainEqual(
 			expect.objectContaining({
-				id: "aurora_study",
+				id: "study",
 				backgroundUrl: expect.stringMatching(/^data:image\/png;base64,/),
 			}),
 		);
 		expect(display.scenes).toContainEqual(
 			expect.objectContaining({
-				id: "snow_plains",
+				id: "snowfield",
 				backgroundUrl: expect.stringMatching(/^data:image\/png;base64,/),
 			}),
 		);
-		const quietDesktop = display.scenes.find((scene) => scene.id === "quiet_desktop");
+		const quietDesktop = display.scenes.find((scene) => scene.id === "quiet_terminal");
 		expect(quietDesktop).toBeDefined();
 		expect(quietDesktop?.backgroundUrl).toBeUndefined();
 	});
@@ -123,9 +124,9 @@ describe("character package display validation", () => {
 
 describe("character package Host lifecycle reactions", () => {
 	const expectedReactions = [
-		{ event: "message.user_sent", visual_state: "listening" },
-		{ event: "message_end", visual_state: "result_ready" },
-		{ event: "message.aborted", visual_state: "presence" },
+		{ event: "message.user_sent", visual_state: "attentive" },
+		{ event: "message_end", visual_state: "ready" },
+		{ event: "message.aborted", visual_state: "calm" },
 	];
 
 	function packageWithManifest(
@@ -155,14 +156,14 @@ describe("character package Host lifecycle reactions", () => {
 			"bear-character-package-host-reaction-generic-",
 			(manifest) =>
 				manifest.replace(
-					"    - event: message.aborted\n      visual_state: presence\n",
-					"    - event: message.aborted\n      visual_state: presence\n    - event: workflow.review_requested\n      visual_state: thinking\n",
+					"    - event: message.aborted\n      visual_state: calm\n",
+					"    - event: message.aborted\n      visual_state: calm\n    - event: workflow.review_requested\n      visual_state: reflective\n",
 				),
 		);
 		const character = new CharacterLoader(configRoot).load("jizhou");
 		expect(character?.host.event_reactions).toEqual([
 			...expectedReactions,
-			{ event: "workflow.review_requested", visual_state: "thinking" },
+			{ event: "workflow.review_requested", visual_state: "reflective" },
 		]);
 	});
 
@@ -171,23 +172,23 @@ describe("character package Host lifecycle reactions", () => {
 			"duplicate event",
 			(manifest: string) =>
 				manifest.replace(
-					"    - event: message.user_sent\n      visual_state: listening\n",
-					"    - event: message_end\n      visual_state: listening\n",
+					"    - event: message.user_sent\n      visual_state: attentive\n",
+					"    - event: message_end\n      visual_state: attentive\n",
 				),
 		],
 		[
 			"blank event",
 			(manifest: string) =>
 				manifest.replace(
-					"    - event: message.user_sent\n      visual_state: listening\n",
-					'    - event: "   "\n      visual_state: listening\n',
+					"    - event: message.user_sent\n      visual_state: attentive\n",
+					'    - event: "   "\n      visual_state: attentive\n',
 				),
 		],
 		[
 			"unknown visual state",
 			(manifest: string) =>
 				manifest.replace(
-					"    - event: message.user_sent\n      visual_state: listening\n",
+					"    - event: message.user_sent\n      visual_state: attentive\n",
 					"    - event: message.user_sent\n      visual_state: unknown_state\n",
 				),
 		],
@@ -195,24 +196,24 @@ describe("character package Host lifecycle reactions", () => {
 			"extra key",
 			(manifest: string) =>
 				manifest.replace(
-					"    - event: message.user_sent\n      visual_state: listening\n",
-					"    - event: message.user_sent\n      visual_state: listening\n      scene: aurora_study\n",
+					"    - event: message.user_sent\n      visual_state: attentive\n",
+					"    - event: message.user_sent\n      visual_state: attentive\n      scene: study\n",
 				),
 		],
 		[
 			"media key",
 			(manifest: string) =>
 				manifest.replace(
-					"    - event: message.user_sent\n      visual_state: listening\n",
-					"    - event: message.user_sent\n      visual_state: listening\n      media: first_night\n",
+					"    - event: message.user_sent\n      visual_state: attentive\n",
+					"    - event: message.user_sent\n      visual_state: attentive\n      media: continuity_light\n",
 				),
 		],
 		[
 			"choice key",
 			(manifest: string) =>
 				manifest.replace(
-					"    - event: message.user_sent\n      visual_state: listening\n",
-					"    - event: message.user_sent\n      visual_state: listening\n      choice_set: damaged_log_response\n",
+					"    - event: message.user_sent\n      visual_state: attentive\n",
+					"    - event: message.user_sent\n      visual_state: attentive\n      choice_set: continuity_response\n",
 				),
 		],
 	] as const)("rejects %s lifecycle reaction mutation", (_name, mutate) => {
@@ -227,9 +228,9 @@ describe("character package Host lifecycle reactions", () => {
 
 	it("accepts the Jizhou defaults in any declaration order", () => {
 		const bindings = [
-			"    - event: message.user_sent\n      visual_state: listening\n",
-			"    - event: message_end\n      visual_state: result_ready\n",
-			"    - event: message.aborted\n      visual_state: presence\n",
+			"    - event: message.user_sent\n      visual_state: attentive\n",
+			"    - event: message_end\n      visual_state: ready\n",
+			"    - event: message.aborted\n      visual_state: calm\n",
 		];
 		const { configRoot } = packageWithManifest(
 			"bear-character-package-host-reaction-reordered-",
@@ -260,8 +261,8 @@ describe("character package roleplay media presentation", () => {
 		const manifest = readFileSync(manifestPath, "utf8");
 		const withPresentations = manifest
 			.replace(
-				"      asset: assets/scene-aurora-study.png",
-				"      asset: assets/scene-aurora-study.png\n      presentation: inline",
+				"      asset: assets/cg-damaged-signal-animated.webp",
+				"      asset: assets/cg-damaged-signal-animated.webp\n      presentation: inline",
 			)
 			.replace(
 				"      loop: true\n  unlockables:",
@@ -292,11 +293,8 @@ describe("character package roleplay media presentation", () => {
 		const display = loader.display(character);
 		expect(CharacterDisplay.parse(display)).toEqual(display);
 		const media = display.roleplay.media;
-		expect(media.find((entry) => entry.id === "first_night")).toEqual(
+		expect(media.find((entry) => entry.id === "continuity_light")).toEqual(
 			expect.objectContaining({ presentation: "inline" }),
-		);
-		expect(media.find((entry) => entry.id === "damaged_signal_live")).toEqual(
-			expect.objectContaining({ presentation: "dialog" }),
 		);
 		expect(media.find((entry) => entry.id === "ambient_signal")).toEqual(
 			expect.objectContaining({ kind: "audio", presentation: "ambient" }),
@@ -316,8 +314,8 @@ describe("character package roleplay media presentation", () => {
 		const manifestPath = join(packageDir, "character.yaml");
 		const manifest = readFileSync(manifestPath, "utf8");
 		const invalidManifest = manifest.replace(
-			"      asset: assets/scene-aurora-study.png",
-			"      asset: assets/scene-aurora-study.png\n      presentation: ambient",
+			"      asset: assets/cg-damaged-signal-animated.webp",
+			"      asset: assets/cg-damaged-signal-animated.webp\n      presentation: ambient",
 		);
 		expect(invalidManifest).not.toBe(manifest);
 		writeFileSync(manifestPath, invalidManifest);
@@ -353,7 +351,7 @@ describe("character package work presentation", () => {
 		for (const [name, mutate] of [
 			[
 				"blank",
-				(manifest: string) => manifest.replace('proposal: "要交给下级程序的事"', 'proposal: " "'),
+				(manifest: string) => manifest.replace('proposal: "值守台上的方案"', 'proposal: " "'),
 			],
 			[
 				"unknown",

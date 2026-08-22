@@ -13,6 +13,8 @@
  * - Throws on failure; callers decide fallback strategy.
  */
 
+import { nativeCapabilities, type LlamaModule } from "../../native/capabilities.js";
+
 // ============================
 // Types
 // ============================
@@ -162,14 +164,9 @@ function sanitizeAndNormalize(vec: number[] | Float32Array): Float32Array {
 type LocalInitState = "idle" | "initializing" | "ready" | "failed";
 
 /** Function that dynamically imports node-llama-cpp. Overridable for testing. */
-export type ImportLlamaFn = () => Promise<{
-	getLlama: (opts: { logLevel: number }) => Promise<unknown>;
-	resolveModelFile: (model: string, cacheDir?: string) => Promise<string>;
-	LlamaLogLevel: { error: number };
-}>;
+export type ImportLlamaFn = () => Promise<LlamaModule>;
 
-const defaultImportLlama: ImportLlamaFn = () =>
-	import("node-llama-cpp") as unknown as ReturnType<ImportLlamaFn>;
+const defaultImportLlama: ImportLlamaFn = () => nativeCapabilities.importLlama();
 
 export class LocalEmbeddingService implements EmbeddingService {
 	private readonly modelPath: string;
@@ -330,10 +327,18 @@ export class LocalEmbeddingService implements EmbeddingService {
 		try {
 			this.logger?.debug?.(`${TAG} Loading node-llama-cpp for local embedding...`);
 
-			// Dynamic import — node-llama-cpp is a peer dependency of OpenClaw
+			// This only accepts packaged prebuilt bindings. "auto" tries the
+			// platform accelerator (Metal/CUDA/Vulkan) before the CPU fallback.
 			const { getLlama, resolveModelFile, LlamaLogLevel } = await this.importLlama();
 
-			const llama = await getLlama({ logLevel: LlamaLogLevel.error });
+			const llama = await getLlama({
+				logLevel: LlamaLogLevel.error,
+				gpu: "auto",
+				build: "never",
+				skipDownload: true,
+				usePrebuiltBinaries: true,
+				progressLogs: false,
+			});
 			this.logger?.debug?.(`${TAG} Llama instance created`);
 
 			const resolvedPath = await resolveModelFile(this.modelPath, this.modelCacheDir || undefined);
@@ -364,9 +369,9 @@ export class LocalEmbeddingService implements EmbeddingService {
 				(err instanceof Error && err.message.includes("node-llama-cpp"))
 			) {
 				throw new Error(
-					'Local embedding is enabled but the optional "node-llama-cpp" dependency is unavailable. ' +
-						"Install node-llama-cpp@3.16.2 to activate local embeddings, or choose provider=\"none\" " +
-						"or a configured remote provider. Keyword search remains available as the fallback.",
+					'Local embedding is enabled but the bundled "node-llama-cpp" runtime could not load. ' +
+					"Check this platform's native runtime support, or choose provider=\"none\" " +
+					"or a configured remote provider. Keyword search remains available as the fallback.",
 				);
 			}
 			throw err;

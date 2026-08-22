@@ -20,9 +20,9 @@
  * - Thread-safe via WAL mode.
  */
 
-import { createRequire } from "node:module";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import type { MemoryRecord } from "../record/l1-writer.js";
+import { nativeCapabilities, type JiebaInstance } from "../../native/capabilities.js";
 import type { EmbeddingProviderInfo } from "./embedding.js";
 import type {
 	IMemoryStore,
@@ -134,13 +134,6 @@ export interface VectorStoreInitResult {
 	reason?: string;
 }
 
-// Use createRequire to load the experimental node:sqlite module
-const require = createRequire(import.meta.url);
-
-function requireNodeSqlite(): typeof import("node:sqlite") {
-	return require("node:sqlite") as typeof import("node:sqlite");
-}
-
 // ============================
 // FTS5 helpers (adapted from openclaw core hybrid.ts)
 // ============================
@@ -149,24 +142,8 @@ function requireNodeSqlite(): typeof import("node:sqlite") {
 // Lazy-loaded singleton: initialised on first call to `buildFtsQuery`.
 // If @node-rs/jieba is unavailable, falls back to Unicode-regex splitting.
 
-interface JiebaInstance {
-	cutForSearch(text: string, hmm: boolean): string[];
-}
-
-let _jieba: JiebaInstance | null | undefined; // undefined = not yet tried
-
 function getJieba(): JiebaInstance | null {
-	if (_jieba !== undefined) return _jieba;
-	try {
-		// eslint-disable-next-line @typescript-eslint/no-require-imports
-		const { Jieba } = require("@node-rs/jieba");
-		// eslint-disable-next-line @typescript-eslint/no-require-imports
-		const { dict } = require("@node-rs/jieba/dict");
-		_jieba = Jieba.withDict(dict) as JiebaInstance;
-	} catch {
-		_jieba = null; // mark as unavailable — won't retry
-	}
-	return _jieba;
+	return nativeCapabilities.getJieba();
 }
 
 /**
@@ -313,7 +290,7 @@ export function tokenizeForFts(raw: string): string {
  * @internal
  */
 export function _resetJiebaForTest(): void {
-	_jieba = undefined;
+	nativeCapabilities.setJiebaForTest(undefined);
 }
 
 /**
@@ -322,7 +299,7 @@ export function _resetJiebaForTest(): void {
  * @internal
  */
 export function _setJiebaForTest(instance: JiebaInstance | null): void {
-	_jieba = instance;
+	nativeCapabilities.setJiebaForTest(instance);
 }
 
 /**
@@ -451,7 +428,7 @@ export class VectorStore implements IMemoryStore {
 		this.logger = logger;
 
 		// Open database with extension support enabled
-		const { DatabaseSync: DbSync } = requireNodeSqlite();
+		const { DatabaseSync: DbSync } = nativeCapabilities.requireNodeSqlite();
 		this.db = new DbSync(dbPath, { allowExtension: true });
 
 		// Set busy timeout so concurrent processes retry instead of failing with SQLITE_BUSY
@@ -491,8 +468,7 @@ export class VectorStore implements IMemoryStore {
 	init(providerInfo?: EmbeddingProviderInfo): VectorStoreInitResult {
 		// Load sqlite-vec extension (same approach as root project's sqlite-vec.ts)
 		try {
-			// eslint-disable-next-line @typescript-eslint/no-require-imports
-			const sqliteVec = require("sqlite-vec");
+			const sqliteVec = nativeCapabilities.loadSqliteVec();
 			this.db.enableLoadExtension(true);
 			sqliteVec.load(this.db);
 		} catch (err) {

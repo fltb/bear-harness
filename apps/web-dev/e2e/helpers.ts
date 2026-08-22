@@ -71,11 +71,10 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 		await page.request.post("/rpc/onboarding.get%3Av1", { headers, data: {} })
 	).json();
 	const onboardingAnswers: Record<string, string | undefined> = {
-		door_closed: undefined,
-		introduced: undefined,
-		naming: "林",
-		relation: "partner",
-		memory_decision: "remember",
+		settings_intro: undefined,
+		nickname: "林",
+		relationship: "collaborator",
+		memory: "remember",
 	};
 	while (onboardingState.data.status === "active") {
 		const stepId = onboardingState.data.currentStepId as string;
@@ -88,7 +87,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 		).json();
 	}
 	await page.reload();
-	await expect(page.getByRole("dialog", { name: "首次入场" })).toBeHidden();
+	await expect(page.getByRole("dialog", { name: "开始相处" })).toBeHidden();
 
 	const conversationsBefore = await (
 		await page.request.post("/rpc/conversation.list%3Av1", { headers, data: {} })

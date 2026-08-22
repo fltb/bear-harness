@@ -6,6 +6,21 @@ import {
 } from "@tanstack/solid-query";
 
 export const queryKeys = {
+	snapshot: ["snapshot"] as const,
+	conversations: ["conversations"] as const,
+	memory: ["memory"] as const,
+	memoryProjection: (scope?: string, query?: string) =>
+		["memory", "projection", scope ?? null, query ?? null] as const,
+	memoryCandidates: (status?: string) => ["memory", "candidates", status ?? null] as const,
+	runs: ["runs"] as const,
+	commissions: ["commissions"] as const,
+	artifacts: ["artifacts"] as const,
+	storyChanges: ["story", "changes"] as const,
+	storyProposals: ["story", "proposals"] as const,
+	characters: ["characters"] as const,
+	canonSources: ["canon", "sources"] as const,
+	canonModules: ["canon", "modules"] as const,
+	onboarding: ["onboarding"] as const,
 	settings: ["settings"] as const,
 	providers: ["providers"] as const,
 	modelPool: ["models", "pool"] as const,
@@ -60,6 +75,7 @@ export async function refreshRpcQuery<T>(input: {
 	key: QueryKey;
 	request: () => Promise<T>;
 }): Promise<T> {
-	await input.client.invalidateQueries({ queryKey: input.key, refetchType: "none" });
-	return input.client.fetchQuery({ queryKey: input.key, queryFn: input.request });
+	const value = await input.request();
+	input.client.setQueryData(input.key, value);
+	return value;
 }

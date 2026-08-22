@@ -10,6 +10,7 @@ import {
 	conversationDirectives,
 	conversationSessions,
 	conversations,
+	events,
 	memoryCandidates,
 	messages,
 	messageVersions,
@@ -37,6 +38,8 @@ export interface ConversationProjection {
 	messages: Array<{
 		id: string;
 		role: "user" | "assistant" | "system";
+		status?: "completed" | "failed" | "aborted";
+		failureReason?: string;
 		adoptedVersionId?: string;
 		versions: Array<{
 			id: string;
@@ -440,6 +443,67 @@ export class ConversationRepository {
 		)?.entry;
 	}
 
+	private assistantOutcomes(
+		conversationId: string,
+	): Map<string, { status: "completed" | "failed" | "aborted"; failureReason?: string }> {
+		const outcomes = new Map<
+			string,
+			{ status: "completed" | "failed" | "aborted"; failureReason?: string }
+		>();
+		const turnRows = this.db
+			.select({
+				assistantMessageId: turns.assistantMessageId,
+				status: turns.status,
+			})
+			.from(turns)
+			.where(eq(turns.conversationId, conversationId))
+			.orderBy(desc(turns.createdAt), desc(turns.id))
+			.all();
+		for (const row of turnRows) {
+			if (
+				(row.status === "completed" || row.status === "failed" || row.status === "aborted") &&
+				!outcomes.has(row.assistantMessageId)
+			) {
+				outcomes.set(row.assistantMessageId, { status: row.status });
+			}
+		}
+		const reasonByMessage = new Map<string, string>();
+		const safeReasons: Record<string, true> = {
+			companion_initialization_failed: true,
+			companion_unavailable: true,
+			provider_auth_required: true,
+			provider_request_failed: true,
+			multimodal_fallback_unavailable: true,
+			turn_dispatch_failed: true,
+		};
+		const eventRows = this.db
+			.select({ payload: events.payload })
+			.from(events)
+			.where(eq(events.kind, "message.assistant_committed"))
+			.orderBy(desc(events.seq))
+			.all();
+		for (const row of eventRows) {
+			if (!row.payload || typeof row.payload !== "object") continue;
+			const payload = row.payload as Record<string, unknown>;
+			const messageId = payload.messageId;
+			const reason = payload.reason;
+			if (
+				typeof messageId === "string" &&
+				typeof reason === "string" &&
+				safeReasons[reason] &&
+				!reasonByMessage.has(messageId)
+			) {
+				reasonByMessage.set(messageId, reason);
+			}
+		}
+		for (const [messageId, outcome] of outcomes) {
+			if (outcome.status === "failed") {
+				outcome.failureReason = reasonByMessage.get(messageId) ?? "provider_request_failed";
+			}
+		}
+		return outcomes;
+	}
+
 	private projectPi(
 		id: string,
 		title: string,
@@ -464,6 +528,7 @@ export class ConversationRepository {
 		projection: ConversationProjection["messages"][number];
 	}> {
 		const now = new Date().toISOString();
+		const outcomes = this.assistantOutcomes(id);
 		const activeBranch = this.db
 			.select({ id: branches.id, forkMessageId: branches.forkMessageId })
 			.from(branches)
@@ -471,7 +536,7 @@ export class ConversationRepository {
 			.orderBy(desc(branches.createdAt))
 			.limit(1)
 			.get();
-		if (!activeBranch) return this.projectPiSessionEntries(session, now);
+		if (!activeBranch) return this.projectPiSessionEntries(id, session, now);
 		const fork = activeBranch.forkMessageId
 			? this.db
 					.select({ branchId: messages.branchId, rowId: sql<number>`messages.rowid` })
@@ -533,7 +598,19 @@ export class ConversationRepository {
 			}
 			let message = canonicalMessages.get(row.id);
 			if (!message) {
-				message = { id: row.id, role: row.role, versions: [], createdAt: row.createdAt };
+				const outcome = row.role === "assistant" ? outcomes.get(row.id) : undefined;
+				message = {
+					id: row.id,
+					role: row.role,
+					versions: [],
+					createdAt: row.createdAt,
+					...(outcome
+						? {
+								status: outcome.status,
+								...(outcome.failureReason ? { failureReason: outcome.failureReason } : {}),
+							}
+						: {}),
+				};
 				canonicalMessages.set(row.id, message);
 			}
 			message.versions.push({
@@ -570,23 +647,34 @@ export class ConversationRepository {
 	}
 
 	private projectPiSessionEntries(
+		id: string,
 		session: PiSessionStore,
 		now: string,
 	): Array<{
 		entry: PiSessionMessageEntry;
 		projection: ConversationProjection["messages"][number];
 	}> {
+		const outcomes = this.assistantOutcomes(id);
 		return session.readMessageEntries().flatMap((entry) => {
 			if (entry.message.role === "toolResult") return [];
 			const role: "user" | "assistant" = entry.message.role === "user" ? "user" : "assistant";
 			const content = sessionContent(entry.message);
 			const versionId = `${entry.id}-v1`;
+			const outcome = role === "assistant" ? outcomes.get(entry.id) : undefined;
 			return [
 				{
 					entry,
 					projection: {
 						id: entry.id,
 						role,
+						...(outcome
+							? {
+									status: outcome.status,
+									...(outcome.failureReason
+										? { failureReason: outcome.failureReason }
+										: {}),
+								}
+							: {}),
 						adoptedVersionId: versionId,
 						versions: [
 							{
@@ -614,6 +702,7 @@ export class ConversationRepository {
 			.limit(1)
 			.get();
 		const activeBranchId = branch?.id;
+		const outcomes = this.assistantOutcomes(id);
 		const rows = this.db
 			.select({
 				id: messages.id,
@@ -647,7 +736,19 @@ export class ConversationRepository {
 			}
 			let message = grouped.get(row.id);
 			if (!message) {
-				message = { id: row.id, role: row.role, versions: [], createdAt: row.createdAt };
+				const outcome = row.role === "assistant" ? outcomes.get(row.id) : undefined;
+				message = {
+					id: row.id,
+					role: row.role,
+					versions: [],
+					createdAt: row.createdAt,
+					...(outcome
+						? {
+								status: outcome.status,
+								...(outcome.failureReason ? { failureReason: outcome.failureReason } : {}),
+							}
+						: {}),
+				};
 				grouped.set(row.id, message);
 			}
 			message.versions.push({

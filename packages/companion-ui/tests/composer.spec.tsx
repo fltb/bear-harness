@@ -716,9 +716,13 @@ describe("composer", () => {
 		expect(alerts[0]).toHaveTextContent("model unavailable");
 	});
 
-	it("keeps a failed message draft and shows one local send alert", async () => {
+	it("keeps a failed message draft and offers an explicit retry", async () => {
 		const { client } = createTestClient();
-		client.message.send = vi.fn(() => Promise.reject(new Error("send unavailable")));
+		const messageSend = vi
+			.fn()
+			.mockRejectedValueOnce(new Error("send unavailable"))
+			.mockResolvedValueOnce({ ok: true as const, data: { messageId: "m2" } });
+		client.message.send = messageSend;
 		renderComposerWithModels(client, {
 			pool: { models: [TEST_MODEL] },
 			defaults: { vision: { mode: "auto" } },
@@ -740,6 +744,11 @@ describe("composer", () => {
 		expect(alerts).toHaveLength(1);
 		expect(alerts[0]).toHaveTextContent("send unavailable");
 		expect(composer).toHaveValue("稍后再试");
-		expect(screen.getByRole("button", { name: zhCN.composer.sendLabel })).toBeEnabled();
+		const retry = screen.getByRole("button", { name: zhCN.composer.imageRouteRetry });
+		expect(retry).toBeEnabled();
+		await user.click(retry);
+		await waitFor(() => expect(messageSend).toHaveBeenCalledTimes(2));
+		await waitFor(() => expect(composer).toHaveValue(""));
+		expect(screen.queryByText("send unavailable")).not.toBeInTheDocument();
 	});
 });

@@ -1,11 +1,18 @@
 /**
- * Compile-time shape for the optional local embedding integration.
+ * Compile-time shape for the dynamically loaded local embedding integration.
  *
  * The runtime implementation is loaded dynamically by embedding.ts, so this
- * declaration must not turn node-llama-cpp into a required package dependency.
+ * declaration keeps the native module out of the host-neutral module graph.
  */
 declare module "node-llama-cpp" {
-	export const getLlama: (options: { logLevel: number }) => Promise<unknown>;
+	export const getLlama: (options: {
+		logLevel: number;
+		gpu?: "auto" | "metal" | "cuda" | "vulkan" | false;
+		build?: "never";
+		skipDownload?: boolean;
+		usePrebuiltBinaries?: boolean;
+		progressLogs?: boolean;
+	}) => Promise<unknown>;
 	export const resolveModelFile: (model: string, cacheDir?: string) => Promise<string>;
 	export const LlamaLogLevel: { readonly error: number };
 }

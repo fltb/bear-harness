@@ -5,16 +5,11 @@ import { Dialog } from "@kobalte/core/dialog";
 import { Root as Link } from "@kobalte/core/link";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
-import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { For, Show } from "solid-js";
 import { ModelPresetField, ProviderSelectionField } from "./ModelSelectionFields.js";
 import type { CharacterOnboardingStep } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
-
-function stepLabel(template: string, index: number, total: number): string {
-	return template.replaceAll("{step}", String(index + 1)).replaceAll("{total}", String(total));
-}
-
-const LOCAL_EMBEDDING_MODELS = ["embeddinggemma", "bge-base-zh", "multilingual-e5"] as const;
+import { createFirstMeetingWorkflow } from "./stores/setup-workflows.js";
 
 /**
  * Renders the active role package's validated onboarding definition. The UI
@@ -24,211 +19,56 @@ const LOCAL_EMBEDDING_MODELS = ["embeddinggemma", "bge-base-zh", "multilingual-e
 export function FirstMeeting() {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
-	const [textAnswer, setTextAnswer] = createSignal("");
-	const flow = () => store.character?.character.first_meeting;
-	const [submitting, setSubmitting] = createSignal(false);
-	const [onboardingRevision, setOnboardingRevision] = createSignal(0);
-	const [providerId, setProviderId] = createSignal("");
-	const [modelId, setModelId] = createSignal("");
-	const [apiKey, setApiKey] = createSignal("");
-	const [advancedOpen, setAdvancedOpen] = createSignal(false);
-	const [customBaseUrl, setCustomBaseUrl] = createSignal("");
-	const [piConfigJson, setPiConfigJson] = createSignal("");
-	const [setupError, setSetupError] = createSignal<string | null>(null);
-	const [setupBusy, setSetupBusy] = createSignal(false);
-	const [modelSetupComplete, setModelSetupComplete] = createSignal(false);
-	const [memorySetupComplete, setMemorySetupComplete] = createSignal(false);
-	const [embeddingProvider, setEmbeddingProvider] = createSignal<"none" | "local">("local");
-	const [localEmbeddingModel, setLocalEmbeddingModel] =
-		createSignal<(typeof LOCAL_EMBEDDING_MODELS)[number]>("embeddinggemma");
-	const [connectedProviderId, setConnectedProviderId] = createSignal("");
-	const [oauth, setOauth] = createSignal<Awaited<ReturnType<typeof store.provider.login>> | null>(
-		null,
-	);
-	const [oauthAnswer, setOauthAnswer] = createSignal("");
-	let submittedStepId: string | null = null;
-	let disposed = false;
-	onCleanup(() => {
-		disposed = true;
-	});
-
-	onMount(() => {
-		void store.provider.list();
-	});
-
-	const providers = () => store.provider.providers();
-	const selectedProvider = () => providers().find((provider) => provider.id === providerId());
-	const providerConnected = () =>
-		selectedProvider()?.credentialStatus === "stored" ||
-		selectedProvider()?.credentialStatus === "session_only" ||
-		connectedProviderId() === providerId();
-	const modelRequired = () =>
-		!modelSetupComplete() &&
-		!store.loading &&
-		!store.model.loading() &&
-		store.model.data().defaults.reply === undefined;
-	const memorySetupRequired = () => modelSetupComplete() && !memorySetupComplete();
-	const selectProvider = (id: string) => {
-		setProviderId(id);
-		setModelId("");
-		setOauth(null);
-		setOauthAnswer("");
-		setConnectedProviderId("");
-		setSetupError(null);
-	};
-	const pinModel = async (): Promise<void> => {
-		if (!providerId() || !modelId()) return;
-		setSetupBusy(true);
-		setSetupError(null);
-		try {
-			await store.model.enable(
-				providerId(),
-				modelId(),
-				selectedProvider()?.availableModels.find((model) => model.id === modelId())?.name,
-			);
-			await store.model.setDefaultReply(providerId(), modelId());
-			setModelSetupComplete(true);
-		} catch (cause) {
-			setSetupError(cause instanceof Error ? cause.message : String(cause));
-		} finally {
-			setSetupBusy(false);
-		}
-	};
-
-	const saveMemorySetup = async (): Promise<void> => {
-		setSetupBusy(true);
-		setSetupError(null);
-		try {
-			await store.settings.set({
-				memoryVectorService:
-					embeddingProvider() === "local"
-						? {
-								enabled: true,
-								provider: "local",
-								localModel: localEmbeddingModel(),
-							}
-						: { enabled: false, provider: "none" },
-			} as never);
-			setMemorySetupComplete(true);
-		} catch (cause) {
-			setSetupError(cause instanceof Error ? cause.message : String(cause));
-		} finally {
-			setSetupBusy(false);
-		}
-	};
-	const saveProviderKey = async (): Promise<void> => {
-		if (!apiKey().trim()) return;
-		setSetupBusy(true);
-		setSetupError(null);
-		try {
-			await store.provider.setApiKey(providerId(), apiKey().trim());
-			setApiKey("");
-			setConnectedProviderId(providerId());
-			await store.provider.list();
-		} catch (cause) {
-			setSetupError(cause instanceof Error ? cause.message : String(cause));
-		} finally {
-			setSetupBusy(false);
-		}
-	};
-	const saveProviderBaseUrl = async (): Promise<void> => {
-		if (!providerId() || !customBaseUrl().trim()) return;
-		setSetupBusy(true);
-		setSetupError(null);
-		try {
-			await store.provider.overrideBaseUrl({
-				providerId: providerId(),
-				baseUrl: customBaseUrl().trim(),
-			});
-			setCustomBaseUrl("");
-			await store.provider.list();
-		} catch (cause) {
-			setSetupError(cause instanceof Error ? cause.message : String(cause));
-		} finally {
-			setSetupBusy(false);
-		}
-	};
-	const importPiConfig = async (): Promise<void> => {
-		if (!piConfigJson().trim()) return;
-		setSetupBusy(true);
-		setSetupError(null);
-		try {
-			const imported = await store.provider.importPiConfig(piConfigJson().trim());
-			setPiConfigJson("");
-			await store.provider.list();
-			const providerIds = new Set(imported.map((model) => model.providerId));
-			if (providerIds.size === 1) setProviderId(imported[0]?.providerId ?? "");
-			if (imported.length === 1) setModelId(imported[0]?.modelId ?? "");
-		} catch (cause) {
-			setSetupError(cause instanceof Error ? cause.message : String(cause));
-		} finally {
-			setSetupBusy(false);
-		}
-	};
-	const beginOauth = async (): Promise<void> => {
-		setSetupBusy(true);
-		setSetupError(null);
-		try {
-			let state = await store.provider.login(providerId());
-			setOauth(state);
-			while (!disposed && (state.status === "running" || state.status === "waiting_input")) {
-				if (state.status === "waiting_input") break;
-				await new Promise((resolve) => setTimeout(resolve, 750));
-				state = await store.provider.loginStatus(providerId());
-				setOauth(state);
-			}
-			if (state.prompt?.type === "select" && state.prompt.options?.[0]) {
-				setOauthAnswer(state.prompt.options[0].id);
-			}
-			if (state.status === "completed") {
-				setConnectedProviderId(providerId());
-				await store.provider.list();
-			}
-			if (state.status === "failed") setSetupError(state.message ?? t("settings.oauthFailed"));
-		} catch (cause) {
-			setSetupError(cause instanceof Error ? cause.message : String(cause));
-		} finally {
-			setSetupBusy(false);
-		}
-	};
-	const answerOauth = async (): Promise<void> => {
-		if (!oauthAnswer()) return;
-		setSetupBusy(true);
-		try {
-			await store.provider.loginAnswer(providerId(), oauthAnswer());
-			setOauthAnswer("");
-			await beginOauth();
-		} catch (cause) {
-			setSetupError(cause instanceof Error ? cause.message : String(cause));
-			setSetupBusy(false);
-		}
-	};
-	const submit = async (stepId: string, answer?: string): Promise<void> => {
-		if (submitting() || submittedStepId === stepId) return;
-		submittedStepId = stepId;
-		setSubmitting(true);
-		try {
-			await store.submitOnboarding(stepId, answer);
-			setOnboardingRevision((revision) => revision + 1);
-		} catch (cause) {
-			submittedStepId = null;
-			throw cause;
-		} finally {
-			setSubmitting(false);
-		}
-	};
-	createEffect(() => {
-		const currentStepId = store.onboarding.currentStepId;
-		if (submittedStepId !== null && submittedStepId !== currentStepId) submittedStepId = null;
-	});
-	const currentStep = (): CharacterOnboardingStep | undefined => {
-		onboardingRevision();
-		const definition = flow();
-		const stepId = store.onboarding.currentStepId;
-		return definition?.steps.find((step) => step.id === stepId);
-	};
-	const visible = () =>
-		store.onboarding.status === "active" && currentStep() !== undefined && !store.loading;
+	const workflow = createFirstMeetingWorkflow(store, t);
+	const {
+		textAnswer,
+		setTextAnswer,
+		submitting,
+		flow,
+		providers,
+		providerId,
+		modelId,
+		apiKey,
+		setApiKey,
+		customBaseUrl,
+		setCustomBaseUrl,
+		advancedOpen,
+		setAdvancedOpen,
+		piConfigJson,
+		setPiConfigJson,
+		importedModels,
+		setupError,
+		setupBusy,
+		modelRequired,
+		memorySetupRequired,
+		selectedProvider,
+		providerConnected,
+		embeddingProviders,
+		localEmbeddingModels,
+		embeddingProvider,
+		setEmbeddingProvider,
+		localEmbeddingModel,
+		setLocalEmbeddingModel,
+		currentStep,
+		currentStepIndex,
+		currentStepLabel,
+		visible,
+		conversationVisible,
+		onboardingError,
+		oauth,
+		oauthAnswer,
+		setOauthAnswer,
+		selectProvider,
+		setModelId,
+		pinModel,
+		saveMemorySetup,
+		saveProviderKey,
+		saveProviderBaseUrl,
+		importPiConfig,
+		beginOauth,
+		answerOauth,
+		submit,
+	} = workflow;
 
 	const renderControl = (step: CharacterOnboardingStep) => {
 		if (step.kind === "acknowledge") {
@@ -372,6 +212,19 @@ export function FirstMeeting() {
 												{t("settings.piConfigImport")}
 											</Button>
 										</TextField>
+										<Show when={importedModels().length > 0}>
+											<div class="model-pool-list" aria-label={t("settings.modelPool")}>
+												<For each={importedModels()}>
+													{(model) => (
+														<div class="model-pool-item">
+															<span>
+																{model.label} ({model.providerId}/{model.modelId})
+															</span>
+														</div>
+													)}
+												</For>
+											</div>
+										</Show>
 									</Collapsible.Content>
 								</Collapsible>
 								<Show when={selectedProvider()}>
@@ -543,11 +396,18 @@ export function FirstMeeting() {
 							<p>{t("settings.memoryVectorLocalNote")}</p>
 							<div class="model-setup-pickers">
 								<Select<"none" | "local">
-									options={["local", "none"]}
+									options={embeddingProviders()}
 									value={embeddingProvider()}
 									optionValue={(provider) => provider}
 									optionTextValue={(provider) => t(`settings.vectorProviders.${provider}` as never)}
 									onChange={(provider) => setEmbeddingProvider(provider ?? "none")}
+									itemComponent={(itemProps) => (
+										<Select.Item item={itemProps.item} class="select-item">
+											<Select.ItemLabel>
+												{t(`settings.vectorProviders.${itemProps.item.rawValue}` as never)}
+											</Select.ItemLabel>
+										</Select.Item>
+									)}
 								>
 									<Select.Label class="field-label">{t("settings.vectorProvider")}</Select.Label>
 									<Select.Trigger class="select-trigger" aria-label={t("settings.vectorProvider")}>
@@ -569,16 +429,28 @@ export function FirstMeeting() {
 									</Select.Portal>
 								</Select>
 								<Show when={embeddingProvider() === "local"}>
-									<Select<(typeof LOCAL_EMBEDDING_MODELS)[number]>
-										options={[...LOCAL_EMBEDDING_MODELS]}
+									<Select<string>
+										options={localEmbeddingModels()}
 										value={localEmbeddingModel()}
 										optionValue={(model) => model}
 										optionTextValue={(model) => t(`settings.localModels.${model}` as never)}
-										onChange={(model) => model && setLocalEmbeddingModel(model)}
+										onChange={(model) =>
+											model &&
+											setLocalEmbeddingModel(
+												model as "embeddinggemma" | "bge-base-zh" | "multilingual-e5",
+											)
+										}
+										itemComponent={(itemProps) => (
+											<Select.Item item={itemProps.item} class="select-item">
+												<Select.ItemLabel>
+													{t(`settings.localModels.${itemProps.item.rawValue}` as never)}
+												</Select.ItemLabel>
+											</Select.Item>
+										)}
 									>
 										<Select.Label class="field-label">{t("settings.localModel")}</Select.Label>
 										<Select.Trigger class="select-trigger" aria-label={t("settings.localModel")}>
-											<Select.Value<(typeof LOCAL_EMBEDDING_MODELS)[number]> class="select-value">
+											<Select.Value<string> class="select-value">
 												{(state) =>
 													state.selectedOption()
 														? t(`settings.localModels.${state.selectedOption()}` as never)
@@ -617,8 +489,8 @@ export function FirstMeeting() {
 					</Dialog.Content>
 				</Dialog>
 			</Show>
-			<Show when={!modelRequired() && !memorySetupRequired() && visible()}>
-				<Dialog open={visible()}>
+			<Show when={conversationVisible()}>
+				<Dialog open={conversationVisible()}>
 					<Dialog.Content
 						class="intro"
 						aria-label={flow()?.dialog_label ?? ""}
@@ -626,43 +498,30 @@ export function FirstMeeting() {
 					>
 						<article class="intro-card">
 							<Show when={currentStep()} keyed>
-								{(step) => {
-									const activeStep = step;
-									const definition = flow();
-									const index =
-										definition?.steps.findIndex((item) => item.id === activeStep.id) ?? -1;
-									return (
-										<>
-											<Show when={definition} keyed>
-												{(definedFlow) => (
-													<Show when={index >= 0}>
-														<div class="intro-step">
-															{stepLabel(definedFlow.step_label, index, definedFlow.steps.length)}
-														</div>
-													</Show>
-												)}
-											</Show>
-											<h2>{activeStep.heading}</h2>
-											<p>{activeStep.body}</p>
-											<Show when={activeStep.quote}>
-												<p class="intro-quote">
-													<em>{activeStep.quote}</em>
-												</p>
-											</Show>
-											<Show when={activeStep.note}>
-												<p class="memory-note">{activeStep.note}</p>
-											</Show>
-											<Show when={store.error !== null}>
-												<p class="intro-error" role="alert">
-													{definition?.error_prefix}
-													{store.error}
-												</p>
-											</Show>
-
-											{renderControl(activeStep)}
-										</>
-									);
-								}}
+								{(activeStep) => (
+									<>
+										<Show when={currentStepIndex() >= 0}>
+											<div class="intro-step">{currentStepLabel()}</div>
+										</Show>
+										<h2>{activeStep.heading}</h2>
+										<p>{activeStep.body}</p>
+										<Show when={activeStep.quote}>
+											<p class="intro-quote">
+												<em>{activeStep.quote}</em>
+											</p>
+										</Show>
+										<Show when={activeStep.note}>
+											<p class="memory-note">{activeStep.note}</p>
+										</Show>
+										<Show when={onboardingError() !== null}>
+											<p class="intro-error" role="alert">
+												{flow()?.error_prefix}
+												{onboardingError()}
+											</p>
+										</Show>
+										{renderControl(activeStep)}
+									</>
+								)}
 							</Show>
 						</article>
 					</Dialog.Content>
