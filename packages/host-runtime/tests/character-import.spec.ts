@@ -107,6 +107,7 @@ describe("character package import", () => {
 		await restarted.close();
 	});
 
+
 	it("requires explicit trust for imported executable plugins and revokes it when they change", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-character-plugin-trust-"));
 		roots.push(dataDir);

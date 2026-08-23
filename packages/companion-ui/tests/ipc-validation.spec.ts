@@ -12,7 +12,6 @@ import {
 	ProviderInfo,
 	Run,
 	SettingsData,
-	StoryChange,
 } from "@bear-harness/protocol/schema";
 import { describe, expect, it } from "vitest";
 import { THEMED_CHARACTER } from "./fixtures.js";
@@ -31,7 +30,6 @@ const isOnboardingData = guard(OnboardingResponse);
 const isProviderInfo = guard(ProviderInfo);
 const isRun = guard(Run);
 const isSettingsData = guard(SettingsData);
-const isStoryChange = guard(StoryChange);
 const isConfiguredModel = guard(ConfiguredModel);
 
 const timestamp = "2026-08-16T00:00:00Z";
@@ -60,6 +58,8 @@ const memoryCaptureResponse = {
 const provider = {
 	id: "provider-1",
 	name: "Provider",
+	source: "builtin",
+	added: true,
 	authType: "api_key",
 	credentialStatus: "stored",
 	availableModels: [
@@ -92,7 +92,7 @@ const draft = {
 const commission = {
 	id: "commission-1",
 	conversationId: "conversation-1",
-	triggerMessageId: "message-1",
+	triggerEntryId: "message-1",
 	draft,
 	status: "draft",
 	createdAt: timestamp,
@@ -113,15 +113,6 @@ const artifact = {
 	sha256: "hash",
 	status: "verified",
 	producerRunId: "run-1",
-	createdAt: timestamp,
-};
-const story = {
-	id: "change-1",
-	text: "AU change",
-	scope: "global",
-	source: "user_explicit",
-	conversationId: "conversation-1",
-	branchId: "branch-1",
 	createdAt: timestamp,
 };
 const canonChunk = {
@@ -230,9 +221,6 @@ describe("host projection validation", () => {
 		expect(isArtifact({ ...artifact, bytes: -1 })).toBe(false);
 		expect(isArtifact({ ...artifact, bytes: 1.5 })).toBe(false);
 		expect(isArtifact({ ...artifact, producerRunId: 3 })).toBe(false);
-		expectRequiredFields(isStoryChange, story, ["id", "text", "scope", "source", "createdAt"]);
-		expect(isStoryChange({ ...story, conversationId: 3 })).toBe(false);
-		expect(isStoryChange({ ...story, branchId: 3 })).toBe(false);
 	});
 
 	it("validates onboarding and rejects retired model routing settings", () => {

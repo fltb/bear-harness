@@ -33,34 +33,33 @@ import type { PiSessionMessageEntry } from "./companion/pi-session-store.js";
 import type { RoleplayService } from "./companion/roleplay-service.js";
 import type { CompanionSupervisor } from "./companion/supervisor.js";
 import type { TurnPipeline } from "./companion/turn-pipeline.js";
-import type { ConversationRepository } from "./conversations/repository.js";
+import type { ConversationProjection, ConversationRepository } from "./conversations/repository.js";
 import type { Dispatcher } from "./dispatcher.js";
 import type { MemoryBackend, MemoryBankScope, MemoryRecord } from "./memory/backend.js";
-import type { ModelRegistry } from "./models/registry.js";
-import { findLocalEmbeddingCandidate, LOCAL_EMBEDDING_CANDIDATES } from "./memory/local-embedding.js";
 import type { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
-import type { ProviderCatalog } from "./providers/catalog.js";
+import type { ModelRecord, ModelRegistry } from "./models/registry.js";
+import type { OAuthSessionState, ProviderCatalog } from "./providers/catalog.js";
+import type { AuditStore } from "./security/audit-store.js";
+import {
+	findHostLocalEmbeddingCandidate,
+	HOST_SETTINGS_CAPABILITIES,
+} from "./settings/capabilities.js";
 import type { AppSettingsRecord, AppSettingsStore } from "./storage/app-settings-store.js";
 import type { AppDatabase } from "./storage/database.js";
 import type { EventBus } from "./storage/event-bus.js";
 import {
 	activeCharacter,
 	artifacts,
-	branches,
 	commissions,
 	companionIdentity,
 	conversations,
 	memoryCandidates,
 	memoryDecisions,
 	memoryPresentation,
-	messages,
-	messageVersions,
 	relationshipMemoryEntries,
 	runs,
 	sceneState,
 } from "./storage/schema.js";
-import type { AuditStore } from "./security/audit-store.js";
-import type { StoryService } from "./story/service.js";
 
 /** Desktop-owned update lifecycle adapter used by the optional Host wiring. */
 export type HostUpdateService = {
@@ -82,7 +81,6 @@ export interface HostCompositionContext {
 	memoryScope: Pick<MemoryBankScope, "installationId" | "userId">;
 	commissions: CommissionService;
 	artifacts: ArtifactStore;
-	story: StoryService;
 	canon: CanonHubService;
 	supervisor: CompanionSupervisor;
 	providers: ProviderCatalog;
@@ -102,9 +100,10 @@ export interface HostCompositionContext {
 	auditStore?: Pick<AuditStore, "append" | "list" | "exportLines">;
 }
 
-function oauthWire(state: Awaited<ReturnType<ProviderCatalog["startOAuth"]>>) {
+function oauthWire(state: OAuthSessionState) {
 	return {
 		...state,
+		infoLinks: state.infoLinks ? state.infoLinks.map((link) => ({ ...link })) : undefined,
 		prompt: state.prompt
 			? {
 					...state.prompt,
@@ -112,6 +111,50 @@ function oauthWire(state: Awaited<ReturnType<ProviderCatalog["startOAuth"]>>) {
 				}
 			: undefined,
 	};
+}
+async function syncProviderModels(
+	providerId: string,
+	providers: ProviderCatalog,
+	models: ModelRegistry,
+	publish = true,
+): Promise<ModelRecord[]> {
+	const provider = (await providers.listProviders()).find(
+		(candidate) => candidate.id === providerId,
+	);
+	if (!provider) return [];
+	return provider.availableModels.map((model) => {
+		const input = {
+			providerId,
+			modelId: model.id,
+			label: model.name,
+			supportsImages: model.supportsImages,
+		};
+		return publish ? models.enable(input) : models.sync(input);
+	});
+}
+async function syncAllProviderModels(
+	providers: ProviderCatalog,
+	models: ModelRegistry,
+): Promise<void> {
+	const providerList = (await providers.listProviders()).filter((provider) => provider.added);
+	await Promise.all(
+		providerList.map((provider) => syncProviderModels(provider.id, providers, models, false)),
+	);
+}
+
+function readPiConfigProviderIds(configJson: string): string[] {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(configJson);
+	} catch {
+		return [];
+	}
+	if (!isRecord(parsed) || !isRecord(parsed.providers)) return [];
+	return Object.keys(parsed.providers);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionContext): void {
 	const conversationRepository = s.conversationRepository;
@@ -305,27 +348,45 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const companionId = await getCompanionId(s);
 		return { conversations: conversationRepository.list(companionId) };
 	});
+	dispatcher.registerHandler(RPC.conversation.activeGet, async () => {
+		const companionId = await getCompanionId(s);
+		const active = conversationRepository.active(companionId);
+		if (!active) return {};
+		await s.supervisor.ensureSession(active.id);
+		const conversation = conversationRepository.get(active.id, companionId);
+		return conversation ? { conversation } : {};
+	});
 	dispatcher.registerHandler(RPC.conversation.create, async (_p) => {
 		const companionId = await getCompanionId(s);
 		const id = crypto.randomUUID();
-		const branchId = crypto.randomUUID();
 		const title = (_p as { title?: string }).title ?? "新对话";
 		const character = s.characterLoader.load(companionId);
 		if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
 		const sceneTitle = character.character.scene_title;
+		let conversation: ConversationProjection;
 		try {
-			conversationRepository.create({ id, branchId, companionId, title, sceneTitle });
+			conversation = conversationRepository.createAndSelect({
+				id,
+				companionId,
+				title,
+				sceneTitle,
+			});
 		} catch (e) {
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
+		await s.supervisor.ensureSession(id);
+		conversation = conversationRepository.get(id, companionId) ?? conversation;
 		s.models.applyDefaultToConversation(companionId, id);
 		s.eventBus.publish("conversation.created", { conversationId: id });
-		return { id };
+		return conversation;
 	});
 	dispatcher.registerHandler(RPC.conversation.select, async (_p) => {
 		const { id } = _p as { id: string };
 		const companionId = await getCompanionId(s);
-		const conversation = conversationRepository.get(id, companionId);
+		if (!conversationRepository.get(id, companionId))
+			throw { kind: "not_found", reason: "conversation_not_found" };
+		await s.supervisor.ensureSession(id);
+		const conversation = conversationRepository.select(id, companionId);
 		if (!conversation) throw { kind: "not_found", reason: "conversation_not_found" };
 		s.eventBus.publish("conversation.selected", { id });
 		return conversation;
@@ -341,21 +402,22 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.conversation.archive, async (_p) => {
 		const { id, archived } = _p as { id: string; archived: boolean };
 		const companionId = await getCompanionId(s);
-		await requireOwnedConversation(s, id);
-		if (!conversationRepository.archive(id, companionId, archived))
+		if (!conversationRepository.get(id, companionId))
 			throw { kind: "not_found", reason: "conversation_not_found" };
+		if (archived) await s.supervisor.invalidateConversation(id);
+		const result = conversationRepository.archiveAndResolve(id, companionId, archived);
 		s.eventBus.publish("conversation.archived", { conversationId: id, archived });
-		return {};
+		return result.active ? { conversation: result.active } : {};
 	});
 	dispatcher.registerHandler(RPC.conversation.delete, async (_p) => {
 		const { id } = _p as { id: string };
 		const companionId = await getCompanionId(s);
-		await requireOwnedConversation(s, id);
-		if (!conversationRepository.delete(id, companionId))
+		if (!conversationRepository.get(id, companionId))
 			throw { kind: "not_found", reason: "conversation_not_found" };
-		s.supervisor.invalidateConversation(id);
+		await s.supervisor.invalidateConversation(id);
+		const result = conversationRepository.deleteAndResolve(id, companionId);
 		s.eventBus.publish("conversation.deleted", { conversationId: id });
-		return {};
+		return result.active ? { conversation: result.active } : {};
 	});
 	dispatcher.registerHandler(RPC.conversation.search, async (_p) => {
 		const { query, includeArchived, limit } = _p as {
@@ -388,42 +450,25 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.regenerate, async (_p) => {
-		const { conversationId, messageId } = _p as { conversationId: string; messageId: string };
-		const owned = await requireOwnedMessage(s, conversationId, messageId);
-		return s.turns.regenerate(conversationId, owned.messageId);
+		const { conversationId, entryId } = _p as { conversationId: string; entryId: string };
+		await requireOwnedConversation(s, conversationId);
+		await s.turns.regenerate(conversationId, entryId);
+		return {};
 	});
 	dispatcher.registerHandler(RPC.message.switchVersion, async (_p) => {
-		const { conversationId, messageId, versionId } = _p as {
-			conversationId: string;
-			messageId: string;
-			versionId: string;
-		};
-		const owned = await requireOwnedMessage(s, conversationId, messageId);
-		const canonicalVersionId =
-			owned.piEntry && versionId === `${messageId}-v1` ? owned.versionId : versionId;
-		const version = s.orm
-			.select({ id: messageVersions.id })
-			.from(messageVersions)
-			.where(
-				and(
-					eq(messageVersions.id, canonicalVersionId),
-					eq(messageVersions.messageId, owned.messageId),
-				),
-			)
-			.get();
-		if (!version) throw { kind: "not_found", reason: "message_version_not_found" };
-		await s.turns.switchVersion(conversationId, owned.messageId, canonicalVersionId);
+		const { conversationId, leafId } = _p as { conversationId: string; leafId: string };
+		await requireOwnedConversation(s, conversationId);
+		await s.turns.switchVersion(conversationId, leafId);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.edit, async (_p) => {
-		const { conversationId, messageId, text, isUserMessage } = _p as {
+		const { conversationId, entryId, text } = _p as {
 			conversationId: string;
-			messageId: string;
+			entryId: string;
 			text: string;
-			isUserMessage: boolean;
 		};
-		const owned = await requireOwnedMessage(s, conversationId, messageId);
-		await s.turns.edit(conversationId, owned.messageId, text, isUserMessage);
+		await requireOwnedConversation(s, conversationId);
+		await s.turns.edit(conversationId, entryId, text);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.continue, async (_p) => {
@@ -443,19 +488,15 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.branch, async (_p) => {
-		const { conversationId, messageId } = _p as { conversationId: string; messageId: string };
-		const owned = await requireOwnedMessage(s, conversationId, messageId);
-		const branchId = await s.turns.branch(conversationId, owned.messageId);
-		return { branchId };
+		const { conversationId, entryId } = _p as { conversationId: string; entryId: string };
+		await requireOwnedConversation(s, conversationId);
+		return s.turns.branch(conversationId, entryId);
 	});
 	dispatcher.registerHandler(RPC.memory.capture, async (_p) => {
 		const params = _p as { conversationId: string; entryId: string };
 		return rememberConversationEntry(s, params.conversationId, params.entryId, "user_capture");
 	});
 
-	dispatcher.registerHandler(RPC.memory.localEmbeddingCatalog, async () => ({
-		candidates: LOCAL_EMBEDDING_CANDIDATES.map(({ id, name, isDefault }) => ({ id, name, isDefault })),
-	}));
 	dispatcher.registerHandler(RPC.memory.configureLocalEmbedding, async (_p) => {
 		const { provider, candidateId } = _p as { provider: "none" | "local"; candidateId?: string };
 		if (provider === "none") {
@@ -463,8 +504,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			await saveMemoryVectorService({ enabled: false, provider: "none" });
 			return { ready: true as const };
 		}
-		const candidate = candidateId ? findLocalEmbeddingCandidate(candidateId) : undefined;
-		if (!candidate) throw { kind: "invalid_request", reason: "local_embedding_candidate_not_found" };
+		const candidate = candidateId ? findHostLocalEmbeddingCandidate(candidateId) : undefined;
+		if (!candidate)
+			throw { kind: "invalid_request", reason: "local_embedding_candidate_not_found" };
 		try {
 			await s.memoryRuntime.configureLocalEmbedding(candidate.modelPath);
 			await saveMemoryVectorService({
@@ -659,7 +701,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			importance: 1.0,
 			provenance: {
 				kind: "inferred",
-				piSessionEntryIds: [candidate.sourceMessageVersionId ?? candidate.id],
+				piSessionEntryIds: [candidate.sourceNativeEntryId ?? candidate.id],
 				sourceRef: candidate.id,
 			},
 			metadata: { scope: effectiveScope },
@@ -703,8 +745,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 						scope: effectiveScope,
 						text: finalText,
 						normalizedText: finalText,
-						sourceMessageVersionId: candidate.sourceMessageVersionId,
-						sourceBranchId: candidate.sourceBranchId,
+						sourcePiSessionId: candidate.sourcePiSessionId,
+						sourceNativeEntryId: candidate.sourceNativeEntryId,
 						sourceConversationId: candidate.sourceConversationId,
 						sourceKind: candidate.sourceKind,
 						status: "active",
@@ -758,54 +800,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {};
 	});
 
-	// --- story archive -------------------------------------------------------------
-	dispatcher.registerHandler(RPC.story.listChanges, async (_p) => {
-		const { branchId } = _p as { branchId?: string };
-		return { changes: s.story.list({ companionId: await getCompanionId(s), branchId }) };
-	});
-	dispatcher.registerHandler(RPC.story.applyChange, async (_p) => {
-		const params = _p as {
-			conversationId?: string;
-			branchId?: string;
-			text: string;
-			scope: "global" | "branch";
-		};
-		return {
-			change: s.story.apply({
-				...params,
-				companionId: await getCompanionId(s),
-				source: "user_confirmed",
-			}),
-		};
-	});
-	dispatcher.registerHandler(RPC.story.revertChange, async (_p) => {
-		const { changeId, conversationId } = _p as { changeId: string; conversationId?: string };
-		s.story.revert(changeId, conversationId);
-		return {};
-	});
-	dispatcher.registerHandler(RPC.story.reset, async (_p) => {
-		const { conversationId, branchId } = _p as { conversationId?: string; branchId?: string };
-		return {
-			count: s.story.reset({
-				companionId: await getCompanionId(s),
-				conversationId,
-				branchId,
-			}),
-		};
-	});
-	dispatcher.registerHandler(RPC.story.listProposals, async (_p) => {
-		const { conversationId } = _p as { conversationId?: string };
-		return {
-			proposals: s.story.listProposals({
-				companionId: await getCompanionId(s),
-				conversationId,
-			}),
-		};
-	});
-	dispatcher.registerHandler(RPC.story.resolveProposal, async (_p) => {
-		const { proposalId, accept } = _p as { proposalId: string; accept: boolean };
-		return { change: s.story.resolveProposal({ proposalId, accept }) };
-	});
 
 	// --- canon hub (advanced authoring) ---------------------------------------------
 	dispatcher.registerHandler(RPC.canon.listSources, async () => ({
@@ -849,20 +843,23 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			models: Array<{ id: string; name?: string; supportsImages?: boolean }>;
 		};
 		await s.providers.upsertCustomProvider(input);
+		await syncProviderModels(input.providerId, s.providers, s.models);
 		await s.supervisor.stop();
 		await s.supervisor.start();
 		return {};
 	});
 	dispatcher.registerHandler(RPC.provider.importPiConfig, async (_p) => {
-		const imported = await s.providers.importPiConfig((_p as { configJson: string }).configJson);
-		const models = imported.map((model) =>
-			s.models.enable({
-				providerId: model.providerId,
-				modelId: model.modelId,
-				label: model.name,
-				supportsImages: model.supportsImages,
-			}),
-		);
+		const configJson = (_p as { configJson: string }).configJson;
+		const imported = await s.providers.importPiConfig(configJson);
+		const providerIds = new Set([
+			...imported.map((model) => model.providerId),
+			...readPiConfigProviderIds(configJson),
+		]);
+		const models = (
+			await Promise.all(
+				[...providerIds].map((providerId) => syncProviderModels(providerId, s.providers, s.models)),
+			)
+		).flat();
 		await s.supervisor.stop();
 		await s.supervisor.start();
 		return { models };
@@ -881,18 +878,47 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			sessionOnly?: boolean;
 		};
 		await s.providers.setApiKey(providerId, apiKey, sessionOnly);
+		await syncProviderModels(providerId, s.providers, s.models);
+		await s.supervisor.stop();
+		await s.supervisor.start();
 		return {};
 	});
 	dispatcher.registerHandler(RPC.provider.login, async (_p) => {
 		const { providerId } = _p as { providerId: string };
 		return oauthWire(await s.providers.startOAuth(providerId));
 	});
+	dispatcher.registerHandler(RPC.provider.loginCancel, async (_p) => {
+		const { providerId } = _p as { providerId: string };
+		s.providers.cancelOAuth(providerId);
+		return {};
+	});
 	dispatcher.registerHandler(RPC.provider.loginStatus, async (_p) => {
-		return oauthWire(await s.providers.getOAuthSession((_p as { providerId: string }).providerId));
+		const providerId = (_p as { providerId: string }).providerId;
+		const state = await s.providers.getOAuthSession(providerId);
+		if (state.status === "completed") {
+			await syncProviderModels(state.providerId, s.providers, s.models);
+		}
+		return oauthWire(state);
 	});
 	dispatcher.registerHandler(RPC.provider.loginAnswer, async (_p) => {
 		const { providerId, answer } = _p as { providerId: string; answer: string };
-		return oauthWire(await s.providers.answerOAuth(providerId, answer));
+		const state = await s.providers.answerOAuth(providerId, answer);
+		if (state.status === "completed") {
+			await syncProviderModels(state.providerId, s.providers, s.models);
+		}
+		return oauthWire(state);
+	});
+	dispatcher.registerHandler(RPC.provider.remove, async (_p) => {
+		const { providerId } = _p as { providerId: string };
+		await s.providers.removeProvider(providerId);
+		for (const model of s.models
+			.list()
+			.filter((candidate) => candidate.providerId === providerId)) {
+			s.models.disable(model.providerId, model.modelId);
+		}
+		await s.supervisor.stop();
+		await s.supervisor.start();
+		return {};
 	});
 	dispatcher.registerHandler(RPC.provider.logout, async (_p) => {
 		const { providerId } = _p as { providerId: string };
@@ -902,6 +928,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 
 	// --- configured models ------------------------------------------------------------
 	dispatcher.registerHandler(RPC.model.poolGet, async () => {
+		await syncAllProviderModels(s.providers, s.models);
 		const providerNames = new Map(
 			(await s.providers.listProviders()).map((provider) => [provider.id, provider.name]),
 		);
@@ -979,14 +1006,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			.from(runs)
 			.innerJoin(commissions, eq(runs.commissionId, commissions.id))
 			.innerJoin(conversations, eq(commissions.conversationId, conversations.id))
-			.innerJoin(
-				messages,
-				and(
-					eq(messages.id, commissions.triggerMessageId),
-					eq(messages.conversationId, commissions.conversationId),
-					eq(messages.role, "user"),
-				),
-			)
 			.where(eq(conversations.companionId, companionId))
 			.orderBy(desc(runs.createdAt))
 			.limit(10)
@@ -1007,7 +1026,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {
 			commissions: s.commissions.list({ companionId }).map((commission) => ({
 				id: commission.id,
-				triggerMessageId: commission.triggerMessageId,
+				triggerEntryId: commission.triggerEntryId,
 				conversationId: commission.conversationId ?? undefined,
 				status: commission.status,
 				createdAt: commission.createdAt,
@@ -1018,7 +1037,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.commission.draft, async (_p) => {
 		const params = _p as {
 			conversationId: string;
-			triggerMessageId: string;
+			triggerEntryId: string;
 			title: string;
 			description: string;
 			reads?: string[];
@@ -1027,7 +1046,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			toolNames?: string[];
 		};
 		await requireOwnedConversation(s, params.conversationId);
-		await requireOwnedMessage(s, params.conversationId, params.triggerMessageId);
+		await requireOwnedUserEntry(s, params.conversationId, params.triggerEntryId);
 		return s.commissions.draft(params);
 	});
 	dispatcher.registerHandler(RPC.commission.approve, async (_p) => {
@@ -1142,6 +1161,25 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 
 	// --- settings ----------------------------------------------------------------------
+	dispatcher.registerHandler(RPC.settings.capabilitiesGet, async () => ({
+		networkProxyModes: HOST_SETTINGS_CAPABILITIES.networkProxyModes.map(({ id }) => ({ id })),
+		memoryVectorProviders: HOST_SETTINGS_CAPABILITIES.memoryVectorProviders.map(
+			({ id, onboarding }) => ({
+				id,
+				onboarding,
+			}),
+		),
+		memoryVectorPresets: HOST_SETTINGS_CAPABILITIES.memoryVectorPresets.map(
+			({ id, model, dimensions }) => ({
+				id,
+				model,
+				dimensions,
+			}),
+		),
+		localEmbeddingCandidates: HOST_SETTINGS_CAPABILITIES.localEmbeddingCandidates.map(
+			({ id, name, isDefault }) => ({ id, name, isDefault }),
+		),
+	}));
 	dispatcher.registerHandler(RPC.settings.get, async () => {
 		const companionId = await getCompanionId(s);
 		const stateData = s.onboarding.getState(companionId).stateData;
@@ -1176,7 +1214,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			changed.push("networkProxy");
 		}
 		if ("memoryVectorService" in settings) {
-			const memoryVectorService = settings.memoryVectorService as { provider?: unknown } | undefined;
+			const memoryVectorService = settings.memoryVectorService as
+				| { provider?: unknown }
+				| undefined;
 			if (memoryVectorService?.provider === "local") {
 				throw { kind: "conflict", reason: "local_embedding_requires_transaction" };
 			}
@@ -1283,10 +1323,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			};
 		}
 		const eventSeq = s.eventBus.currentSeq;
-		const activeRow = convRows[0];
-		const activeProjection = activeRow
-			? conversationRepository.project(activeRow.id, activeRow.title, activeRow.sceneTitle)
-			: undefined;
+		const activeProjection = conversationRepository.active(companionId);
 		const defaults = s.models.defaults(companionId);
 		const providerNames = new Map(
 			(await s.providers.listProviders()).map((provider) => [provider.id, provider.name]),
@@ -1302,7 +1339,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			commission: {
 				commissions: s.commissions.list({ companionId }).map((commission) => ({
 					id: commission.id,
-					triggerMessageId: commission.triggerMessageId,
+					triggerEntryId: commission.triggerEntryId,
 					conversationId: commission.conversationId ?? undefined,
 					status: commission.status,
 					createdAt: commission.createdAt,
@@ -1315,14 +1352,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 					producerRunId: artifact.producerRunId ?? undefined,
 				})),
 			},
-			story: {
-				changes: s.story.list({
-					companionId,
-					branchId: activeProjection?.activeBranchId,
-				}),
-			},
 			characterRuntime: { byConversation: characterRuntimeByConversation },
-			roleplay: s.roleplay.project(character, activeRow?.id),
+			roleplay: s.roleplay.project(character, activeProjection?.id),
 			model: {
 				pool: {
 					models: s.models.list().map((model) => ({
@@ -1331,9 +1362,12 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 					})),
 				},
 				defaults: modelDefaultsWire(defaults),
-				...(activeRow
+				...(activeProjection
 					? {
-							route: modelRouteResponse(activeRow.id, s.models.selected(activeRow.id)),
+							route: modelRouteResponse(
+								activeProjection.id,
+								s.models.selected(activeProjection.id),
+							),
 						}
 					: {}),
 			},
@@ -1380,7 +1414,14 @@ export async function proposeMemoryCandidate(
 	s: HostCompositionContext,
 	conversationId: string,
 ): Promise<{ memoryId: string; sourceEntryId: string; createdBy: MemoryCaptureCreator }> {
-	return rememberConversationEntry(s, conversationId, undefined, "assistant_tool");
+	// host_remember has no entry ID: resolve the most recent user message on
+	// the conversation's current native Pi branch as the suggestion source.
+	const session = s.conversationRepository.getSession(conversationId);
+	const source = session
+		? [...session.readMessageEntries()].reverse().find((entry) => entry.message.role === "user")
+		: undefined;
+	if (!source) throw { kind: "not_found", reason: "memory_source_not_found" };
+	return rememberConversationEntry(s, conversationId, source.id, "assistant_tool");
 }
 
 /**
@@ -1549,170 +1590,22 @@ async function requireOwnedCommission(
 	if (row.conversationId) await requireOwnedConversation(s, row.conversationId);
 }
 
-type OwnedMessage = {
-	messageId: string;
-	role: "user" | "assistant";
-	versionId: string;
-	piEntry?: PiSessionMessageEntry;
-};
-
-async function requireOwnedMessage(
+async function requireOwnedUserEntry(
 	s: HostCompositionContext,
 	conversationId: string,
-	messageId: string,
-): Promise<OwnedMessage> {
+	entryId: string,
+): Promise<PiSessionMessageEntry> {
 	await requireOwnedConversation(s, conversationId);
-	const dbMessage = s.orm
-		.select({
-			id: messages.id,
-			role: messages.role,
-			branchId: messages.branchId,
-		})
-		.from(messages)
-		.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
-		.get();
-	if (dbMessage) {
-		const role = dbMessage.role as "user" | "assistant";
-		if (role !== "user" && role !== "assistant")
-			throw { kind: "not_found", reason: "message_not_found" };
-		if (!isVisibleOnActiveBranch(s, conversationId, dbMessage.branchId, messageId))
-			throw { kind: "conflict", reason: "message_not_current_branch" };
-		const version = s.orm
-			.select({ id: messageVersions.id })
-			.from(messageVersions)
-			.where(and(eq(messageVersions.messageId, messageId), eq(messageVersions.adopted, 1)))
-			.orderBy(desc(messageVersions.createdAt))
-			.limit(1)
-			.get();
-		if (!version) throw { kind: "not_found", reason: "message_not_found" };
-		return {
-			messageId: dbMessage.id,
-			role,
-			versionId: version.id,
-		};
-	}
-
 	const session = s.conversationRepository.getSession(conversationId);
-	const piEntry = session?.getMessageEntry(messageId);
-	if (!piEntry || (piEntry.message.role !== "user" && piEntry.message.role !== "assistant"))
-		throw { kind: "not_found", reason: "message_not_found" };
-	if (!session?.isEntryOnCurrentBranch(piEntry.id))
+	if (!session)
+		throw { kind: "unavailable", reason: "conversation_pi_session_missing" };
+	const piEntry = session.getMessageEntry(entryId);
+	if (!piEntry || piEntry.message.role !== "user")
+		throw { kind: "not_found", reason: "message_entry_not_found" };
+	if (!session.isEntryOnCurrentBranch(piEntry.id))
 		throw { kind: "conflict", reason: "message_not_current_branch" };
-	const piRole = piEntry.message.role as "user" | "assistant";
-	const content = piEntryText(piEntry.message);
-	if (!content) throw { kind: "not_found", reason: "message_not_found" };
-	const host = findVisibleHostMessage(s, conversationId, piRole, content);
-	if (host) {
-		return {
-			messageId: host.id,
-			role: piRole,
-			versionId: host.versionId,
-			piEntry,
-		};
-	}
-	const branch = activeConversationBranch(s, conversationId);
-	if (!branch) throw { kind: "not_found", reason: "message_not_found" };
-	const hostMessageId = crypto.randomUUID();
-	const hostVersionId = crypto.randomUUID();
-	s.orm.transaction((transaction) => {
-		transaction
-			.insert(messages)
-			.values({
-				id: hostMessageId,
-				conversationId,
-				branchId: branch.id,
-				role: piRole,
-			})
-			.run();
-		transaction
-			.insert(messageVersions)
-			.values({
-				id: hostVersionId,
-				messageId: hostMessageId,
-				content,
-				editedByUser: 0,
-				adopted: 1,
-			})
-			.run();
-	});
-	return {
-		messageId: hostMessageId,
-		role: piRole,
-		versionId: hostVersionId,
-		piEntry,
-	};
+	return piEntry;
 }
-
-function activeConversationBranch(
-	s: HostCompositionContext,
-	conversationId: string,
-): { id: string; forkMessageId: string | null } | undefined {
-	return s.orm
-		.select({ id: branches.id, forkMessageId: branches.forkMessageId })
-		.from(branches)
-		.where(and(eq(branches.conversationId, conversationId), eq(branches.adopted, 1)))
-		.orderBy(desc(branches.createdAt))
-		.limit(1)
-		.get();
-}
-
-function isVisibleOnActiveBranch(
-	s: HostCompositionContext,
-	conversationId: string,
-	branchId: string,
-	messageId: string,
-): boolean {
-	const active = activeConversationBranch(s, conversationId);
-	if (!active) return false;
-	if (active.id === branchId) return true;
-	if (!active.forkMessageId) return false;
-	const fork = s.orm
-		.select({ rowId: sql<number>`messages.rowid` })
-		.from(messages)
-		.where(and(eq(messages.id, active.forkMessageId), eq(messages.conversationId, conversationId)))
-		.get();
-	const candidate = s.orm
-		.select({ rowId: sql<number>`messages.rowid` })
-		.from(messages)
-		.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
-		.get();
-	return Boolean(fork && candidate && candidate.rowId <= fork.rowId);
-}
-
-function findVisibleHostMessage(
-	s: HostCompositionContext,
-	conversationId: string,
-	role: "user" | "assistant",
-	content: string,
-): { id: string; versionId: string } | undefined {
-	const candidates = s.orm
-		.select({
-			id: messages.id,
-			branchId: messages.branchId,
-			versionId: messageVersions.id,
-		})
-		.from(messages)
-		.innerJoin(
-			messageVersions,
-			and(eq(messageVersions.messageId, messages.id), eq(messageVersions.adopted, 1)),
-		)
-		.where(
-			and(
-				eq(messages.conversationId, conversationId),
-				eq(messages.role, role),
-				eq(messageVersions.content, content),
-			),
-		)
-		.orderBy(desc(sql`messages.rowid`))
-		.all();
-	for (const candidate of candidates) {
-		if (isVisibleOnActiveBranch(s, conversationId, candidate.branchId, candidate.id)) {
-			return { id: candidate.id, versionId: candidate.versionId };
-		}
-	}
-	return undefined;
-}
-
 function ownedArtifacts(s: HostCompositionContext, companionId: string) {
 	const rows = s.orm
 		.select({ id: artifacts.id })
@@ -1720,14 +1613,6 @@ function ownedArtifacts(s: HostCompositionContext, companionId: string) {
 		.innerJoin(runs, eq(artifacts.producerRunId, runs.id))
 		.innerJoin(commissions, eq(runs.commissionId, commissions.id))
 		.innerJoin(conversations, eq(commissions.conversationId, conversations.id))
-		.innerJoin(
-			messages,
-			and(
-				eq(messages.id, commissions.triggerMessageId),
-				eq(messages.conversationId, commissions.conversationId),
-				eq(messages.role, "user"),
-			),
-		)
 		.where(eq(conversations.companionId, companionId))
 		.orderBy(desc(artifacts.createdAt))
 		.all();

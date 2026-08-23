@@ -5,8 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
-import { afterEach, describe, expect, it } from "vitest";
-import { type CredentialVault, createHostRuntime } from "../src/index.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+	HOST_SETTINGS_CAPABILITIES,
+	type CredentialVault,
+	createHostRuntime,
+} from "../src/index.js";
+import type { ConversationRepository } from "../src/conversations/repository.js";
 
 const temporaryDirectories: string[] = [];
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
@@ -77,9 +82,95 @@ describe("role-defined onboarding", () => {
 				decisions: { relationship_memory_enabled: false },
 			},
 		});
+		const conversations = (await data(runtime, "conversation.list:v1", {})) as {
+			conversations: Array<{ id: string; title: string }>;
+		};
+		expect(conversations.conversations).toHaveLength(1);
+		expect(conversations.conversations[0]).toMatchObject({ title: "与极昼" });
+		const conversationId = conversations.conversations[0]?.id;
+		expect(conversationId).toBeTruthy();
+		await expect(data(runtime, "conversation.activeGet:v1", {})).resolves.toMatchObject({
+			conversation: { id: conversationId, title: "与极昼" },
+		});
+		await expect(data(runtime, "onboarding.get:v1", {})).resolves.toMatchObject({
+			status: "complete",
+		});
+		await expect(data(runtime, "conversation.list:v1", {})).resolves.toMatchObject({
+			conversations: [{ id: conversationId }],
+		});
+		await expect(
+			data(runtime, "conversation.archive:v1", { id: conversationId, archived: true }),
+		).resolves.toBeDefined();
+		await expect(data(runtime, "conversation.list:v1", {})).resolves.toEqual({
+			conversations: [],
+		});
+		await runtime.close();
+	});
+
+	it("rolls back repository-owned onboarding completion and retries exactly once", async () => {
+		const runtime = runtimeForTest();
+		await runtime.start();
+		const composition = Reflect.get(runtime, "composition") as {
+			conversationRepository: ConversationRepository;
+		};
+		const repository = composition.conversationRepository;
+		const createAndSelect = repository.createAndSelect.bind(repository);
+		let failCallback = true;
+		repository.createAndSelect = (input) => {
+			if (!failCallback) return createAndSelect(input);
+			failCallback = false;
+			return createAndSelect({
+				...input,
+				onCommit: (transaction) => {
+					input.onCommit?.(transaction);
+					throw new Error("injected onboarding completion failure");
+				},
+			});
+		};
+
+		for (const [stepId, answer] of [
+			["settings_intro", undefined],
+			["nickname", "林"],
+			["relationship", "collaborator"],
+			["memory", "remember"],
+		] as const) {
+			if (stepId === "memory") {
+				await expect(data(runtime, "onboarding.submit:v1", { stepId, answer })).rejects.toThrow(
+					"internal",
+				);
+			} else {
+				await data(runtime, "onboarding.submit:v1", { stepId, answer });
+			}
+		}
+
+		const database = Reflect.get(runtime, "db") as {
+			connection: { prepare(sql: string): { get(): unknown } };
+		};
+		const rowCount = (table: string) => {
+			const row = database.connection.prepare(`SELECT count(*) AS count FROM ${table}`).get();
+			if (
+				typeof row !== "object" ||
+				row === null ||
+				!("count" in row) ||
+				typeof row.count !== "number"
+			) {
+				throw new Error(`unexpected count row for ${table}`);
+			}
+			return row.count;
+		};
+		expect(rowCount("conversations")).toBe(0);
+		expect(rowCount("conversation_sessions")).toBe(0);
+		expect(rowCount("active_conversations")).toBe(0);
+
+		await expect(
+			data(runtime, "onboarding.submit:v1", { stepId: "memory", answer: "remember" }),
+		).resolves.toMatchObject({ status: "complete" });
 		await expect(data(runtime, "conversation.list:v1", {})).resolves.toMatchObject({
 			conversations: [{ title: "与极昼" }],
 		});
+		expect(rowCount("conversations")).toBe(1);
+		expect(rowCount("conversation_sessions")).toBe(1);
+		expect(rowCount("active_conversations")).toBe(1);
 		await runtime.close();
 	});
 
@@ -166,6 +257,56 @@ describe("role-defined onboarding", () => {
 		).resolves.toMatchObject({
 			ok: false,
 			error: { kind: "invalid_request" },
+		});
+		await runtime.close();
+	});
+
+	it("projects and applies the Host-owned settings capability catalog", async () => {
+		const runtime = runtimeForTest();
+		await runtime.start();
+
+		await expect(data(runtime, "settings.capabilitiesGet:v1", {})).resolves.toEqual({
+			networkProxyModes: HOST_SETTINGS_CAPABILITIES.networkProxyModes.map(({ id }) => ({ id })),
+			memoryVectorProviders: HOST_SETTINGS_CAPABILITIES.memoryVectorProviders.map(
+				({ id, onboarding }) => ({ id, onboarding }),
+			),
+			memoryVectorPresets: HOST_SETTINGS_CAPABILITIES.memoryVectorPresets.map(
+				({ id, model, dimensions }) => ({ id, model, dimensions }),
+			),
+			localEmbeddingCandidates: HOST_SETTINGS_CAPABILITIES.localEmbeddingCandidates.map(
+				({ id, name, isDefault }) => ({ id, name, isDefault }),
+			),
+		});
+
+		const candidate = HOST_SETTINGS_CAPABILITIES.localEmbeddingCandidates[0];
+		expect(candidate).toBeDefined();
+		const configure = vi
+			.spyOn(runtime.memoryRuntime, "configureLocalEmbedding")
+			.mockResolvedValue(undefined);
+		await expect(
+			data(runtime, "memory.configureLocalEmbedding:v1", {
+				provider: "local",
+				candidateId: candidate?.id,
+			}),
+		).resolves.toEqual({ ready: true });
+		expect(configure).toHaveBeenCalledWith(candidate?.modelPath);
+		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
+			settings: {
+				memoryVectorService: {
+					enabled: true,
+					provider: "local",
+					localModel: candidate?.id,
+				},
+			},
+		});
+		await expect(
+			runtime.dispatch("memory.configureLocalEmbedding:v1", {
+				provider: "local",
+				candidateId: "not-in-the-host-catalog",
+			}),
+		).resolves.toMatchObject({
+			ok: false,
+			error: { kind: "invalid_request", reason: "local_embedding_candidate_not_found" },
 		});
 		await runtime.close();
 	});

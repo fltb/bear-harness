@@ -47,11 +47,12 @@ describe("ordinary-user backstage journey", () => {
 				pluginTrust,
 				confirmPluginTrust,
 			},
+			character: THEMED_CHARACTER,
 		} as unknown as CompanionStore;
 
 		render(() => (
 			<DesktopProvider store={store}>
-				<Backstage open initialTab="roles" onClose={() => undefined} character={THEMED_CHARACTER} />
+				<Backstage open initialTab="roles" onClose={() => undefined} />
 			</DesktopProvider>
 		));
 
@@ -70,81 +71,6 @@ describe("ordinary-user backstage journey", () => {
 		expect(confirmPluginTrust).toHaveBeenCalledWith("imported-role");
 	});
 
-	it("switches roles and manages story changes through ordinary-language tabs", async () => {
-		const user = userEvent.setup();
-		const activate = vi.fn(() => Promise.resolve());
-		const apply = vi.fn(() => Promise.resolve());
-		const revert = vi.fn(() => Promise.resolve());
-		const reset = vi.fn(() => Promise.resolve());
-		const store = {
-			embedding: createEmbeddingBinding() as never,
-			memory: {
-				search: vi.fn(() => Promise.resolve([])),
-				revision: () => 0,
-				candidates: () => [],
-				listCandidates: vi.fn(() => Promise.resolve([])),
-			},
-			characters: {
-				characters: () => [
-					{
-						id: "current",
-						name: "Current Role",
-						version: "1",
-						subtitle: "Active",
-						avatarUrl: "data:image/svg+xml;base64,PHN2Zy8+",
-						active: true,
-					},
-					{
-						id: "other",
-						name: "Other Role",
-						version: "1",
-						subtitle: "Available",
-						avatarUrl: "data:image/svg+xml;base64,PHN2Zy8+",
-						active: false,
-					},
-				],
-				activate,
-			},
-			story: {
-				changes: () => [
-					{
-						id: "change-1",
-						text: "The meeting happened elsewhere",
-						scope: "global",
-						source: "user_explicit",
-						createdAt: "2026-08-16T00:00:00Z",
-					},
-				],
-				apply,
-				revert,
-				reset,
-			},
-		} as unknown as CompanionStore;
-
-		render(() => (
-			<DesktopProvider store={store}>
-				<Backstage open onClose={() => undefined} character={THEMED_CHARACTER} />
-			</DesktopProvider>
-		));
-		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
-		const tabs = within(dialog);
-		await user.click(tabs.getByRole("tab", { name: zhCN.backstage.roleManagement }));
-		await user.click(tabs.getByRole("button", { name: zhCN.backstage.roleSwitch }));
-		expect(activate).toHaveBeenCalledWith("other");
-
-		await user.click(tabs.getByRole("tab", { name: zhCN.backstage.storyArchive }));
-		await user.click(tabs.getByRole("button", { name: zhCN.backstage.storyUndo }));
-		expect(revert).toHaveBeenCalledWith("change-1");
-		await user.type(
-			tabs.getByRole("textbox", { name: zhCN.backstage.storyAddPlaceholder }),
-			"A new alternate event",
-		);
-		await user.click(tabs.getByRole("checkbox", { name: zhCN.backstage.storyBranchOnly }));
-		await user.click(tabs.getByRole("button", { name: zhCN.backstage.storyAdd }));
-		expect(apply).toHaveBeenCalledWith("A new alternate event", "branch");
-		await user.click(tabs.getByRole("button", { name: zhCN.backstage.storyReset }));
-		expect(reset).toHaveBeenCalledOnce();
-	});
 
 	it("opens character and system settings as distinct destinations and imports a package folder", async () => {
 		const user = userEvent.setup();
@@ -165,11 +91,12 @@ describe("ordinary-user backstage journey", () => {
 				models: () => [],
 				data: () => ({ defaults: { vision: { mode: "auto" } } }),
 			},
+			character: THEMED_CHARACTER,
 		} as unknown as CompanionStore;
 
 		const characterView = render(() => (
 			<DesktopProvider store={store}>
-				<Backstage open initialTab="roles" onClose={() => undefined} character={THEMED_CHARACTER} />
+				<Backstage open initialTab="roles" onClose={() => undefined} />
 			</DesktopProvider>
 		));
 		const characterDialog = await screen.findByRole("dialog", {
@@ -192,12 +119,7 @@ describe("ordinary-user backstage journey", () => {
 		const closeSystemSettings = vi.fn();
 		render(() => (
 			<DesktopProvider store={store}>
-				<Backstage
-					open
-					initialTab="settings"
-					onClose={closeSystemSettings}
-					character={THEMED_CHARACTER}
-				/>
+				<Backstage open initialTab="settings" onClose={closeSystemSettings} />
 			</DesktopProvider>
 		));
 		const systemDialog = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
@@ -263,10 +185,11 @@ describe("ordinary-user backstage journey", () => {
 			},
 			settings: { data: () => ({ relationshipMemoryEnabled: false }), get: vi.fn() },
 			characters: { characters: () => [], activate: vi.fn() },
+			character,
 		} as unknown as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
-				<Backstage open onClose={() => undefined} character={character} />
+				<Backstage open onClose={() => undefined} />
 			</DesktopProvider>
 		));
 		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
@@ -349,10 +272,11 @@ describe("ordinary-user backstage journey", () => {
 				rejectCandidate: vi.fn(() => Promise.resolve()),
 			},
 			characters: { characters: () => [] },
+			character,
 		} as unknown as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
-				<Backstage open onClose={() => undefined} character={character} />
+				<Backstage open onClose={() => undefined} />
 			</DesktopProvider>
 		));
 		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
@@ -408,6 +332,7 @@ describe("ordinary-user backstage journey", () => {
 				candidates: () => [],
 				listCandidates: vi.fn(() => Promise.resolve([])),
 			},
+			character: THEMED_CHARACTER,
 		} as unknown as CompanionStore;
 
 		const [backstageOpen, setBackstageOpen] = createSignal(false);
@@ -419,7 +344,6 @@ describe("ordinary-user backstage journey", () => {
 				<Backstage
 					open={backstageOpen()}
 					onClose={() => setBackstageOpen(false)}
-					character={THEMED_CHARACTER}
 				/>
 			</DesktopProvider>
 		));

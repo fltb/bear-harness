@@ -41,6 +41,11 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 	"conversation.renamed": { conversationId: "conversation-1", title: "Renamed" },
 	"conversation.archived": { conversationId: "conversation-1", archived: true },
 	"conversation.deleted": { conversationId: "conversation-1" },
+	"pi.session.changed": {
+		conversationId: "conversation-1",
+		sessionId: "pi-session-1",
+		reason: "message",
+	},
 	"conversation.branched": {
 		conversationId: "conversation-1",
 		messageId: "message-1",
@@ -182,11 +187,6 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 		providerId: "provider-1",
 		modelId: "model-1",
 	},
-	"story.change_needs_confirmation": { proposal: {} },
-	"story.change_confirmation_dismissed": { proposalId: "proposal-1" },
-	"story.change_applied": { change: {} },
-	"story.change_reverted": { changeId: "change-1", conversationId: "conversation-1" },
-	"story.reset": { count: 0 },
 	"onboarding.state_changed": { status: "active", stateData: {} },
 	"onboarding.reset": {},
 };

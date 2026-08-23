@@ -9,8 +9,9 @@ import { drizzle } from "drizzle-orm/node-sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import { ContextPackCompiler } from "../src/companion/context-pack.js";
+import type { PiSessionMessage } from "../src/companion/pi-session-store.js";
 import { PiSessionStore } from "../src/companion/pi-session-store.js";
-import { rememberConversationEntry } from "../src/composition.js";
+import { proposeMemoryCandidate, rememberConversationEntry } from "../src/composition.js";
 import { ConversationRepository } from "../src/conversations/repository.js";
 import type { MemoryBankScope } from "../src/memory/backend.js";
 import type {
@@ -35,6 +36,27 @@ function onboardingState(relationshipMemoryEnabled: boolean): string {
 
 function scopeFor(companionId: string): MemoryBankScope {
 	return { installationId: "install-1", userId: "user-1", companionId };
+}
+
+/** Native Pi assistant message fixture appended through SessionManager. */
+function nativeAssistantMessage(text: string): PiSessionMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: "openai-completions",
+		provider: "test",
+		model: "test-model",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp: Date.now(),
+	} as PiSessionMessage;
 }
 
 interface FakeMemoryCore {
@@ -234,44 +256,126 @@ describe("relationship memory context", () => {
 			"cyber-bear:install-1:user-1:companion-b",
 		]);
 	});
-	it("captures through the activated companion namespace, never the default", async () => {
-		db.prepare(
-			"INSERT INTO branches (id, conversation_id, label, adopted) VALUES (?, ?, ?, ?)",
-		).run("branch-b", "conversation-b", "main", 1);
-		db.prepare(
-			"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES (?, ?, ?, ?)",
-		).run("message-b", "conversation-b", "branch-b", "assistant");
-		db.prepare(
-			"INSERT INTO message_versions (id, message_id, content, adopted) VALUES (?, ?, ?, ?)",
-		).run("version-b", "message-b", "只属于已激活角色的记忆", 1);
-		const context = {
-			orm,
-			defaultCharacterId: "jizhou",
-			characterLoader: {
-				getActiveCharacterId: () => "companion-b",
-				load: () => ({ canon: {} }),
-				seed: () => undefined,
-				activate: () => undefined,
-			},
-			eventBus: {},
-			canon: { syncPackage: () => undefined },
-			conversationRepository: { getSession: () => undefined },
-			memoryBackend: backend,
-			memoryScope: { installationId: "install-1", userId: "user-1" },
-		} as never;
+	it("captures through the activated companion namespace from its native Pi session", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-memory-context-activated-"));
+		try {
+			const session = PiSessionStore.create({
+				sessionDir: join(root, "sessions"),
+				cwd: root,
+			});
+			const nativeSourceId = session.appendMessage({
+				role: "user",
+				content: "只属于已激活角色的记忆",
+				timestamp: Date.now(),
+			});
+			const nativeAssistantId = session.appendMessage(nativeAssistantMessage("已激活角色回答"));
+			db.prepare(
+				"INSERT INTO conversation_sessions (conversation_id, pi_session_id, session_file_path) VALUES (?, ?, ?)",
+			).run("conversation-b", session.sessionId, session.sessionFile);
+			const context = {
+				orm,
+				defaultCharacterId: "jizhou",
+				characterLoader: {
+					getActiveCharacterId: () => "companion-b",
+					load: () => ({ canon: {} }),
+					seed: () => undefined,
+					activate: () => undefined,
+				},
+				eventBus: {},
+				canon: { syncPackage: () => undefined },
+				conversationRepository: { getSession: () => session },
+				memoryBackend: backend,
+				memoryScope: { installationId: "install-1", userId: "user-1" },
+			} as never;
 
-		await expect(
-			rememberConversationEntry(context, "conversation-b", "message-b", "user_capture"),
-		).resolves.toMatchObject({ createdBy: "user_capture" });
-		await backend.open({ scope: scopeFor("companion-b") });
-		const activatedHits = await backend.recall({
-			scope: scopeFor("companion-b"),
-			query: "已激活角色",
-		});
-		expect(activatedHits.map(({ record }) => record.text)).toContain("只属于已激活角色的记忆");
-		await expect(
-			rememberConversationEntry(context, "conversation-1", "legacy-message", "user_capture"),
-		).rejects.toMatchObject({ kind: "not_found", reason: "conversation_not_found" });
+			await expect(
+				rememberConversationEntry(context, "conversation-b", nativeSourceId, "user_capture"),
+			).resolves.toMatchObject({ sourceEntryId: nativeSourceId, createdBy: "user_capture" });
+			await backend.open({ scope: scopeFor("companion-b") });
+			const activatedHits = await backend.recall({
+				scope: scopeFor("companion-b"),
+				query: "已激活角色",
+			});
+			expect(activatedHits.map(({ record }) => record.text)).toContain(
+				"只属于已激活角色的记忆",
+			);
+			expect(nativeAssistantId).toBeTruthy();
+			await expect(
+				rememberConversationEntry(context, "conversation-b", "legacy-message", "user_capture"),
+			).rejects.toEqual({ kind: "not_found", reason: "memory_source_not_found" });
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("resolves host_remember to the most recent native user entry on the current branch", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-memory-context-remember-"));
+		try {
+			const session = PiSessionStore.create({
+				sessionDir: join(root, "sessions"),
+				cwd: root,
+			});
+			const firstUser = session.appendMessage({
+				role: "user",
+				content: "最早的用户消息",
+				timestamp: Date.now(),
+			});
+			session.appendMessage(nativeAssistantMessage("最早的回答"));
+			const latestUser = session.appendMessage({
+				role: "user",
+				content: "最新的用户消息",
+				timestamp: Date.now(),
+			});
+			session.appendMessage(nativeAssistantMessage("最新的回答"));
+			const context = {
+				orm,
+				defaultCharacterId: "jizhou",
+				characterLoader: {
+					getActiveCharacterId: () => "jizhou",
+					load: () => ({ canon: {} }),
+					seed: () => undefined,
+					activate: () => undefined,
+				},
+				eventBus: {},
+				canon: { syncPackage: () => undefined },
+				conversationRepository: { getSession: () => session },
+				memoryBackend: backend,
+				memoryScope: { installationId: "install-1", userId: "user-1" },
+			} as never;
+
+			await expect(
+				proposeMemoryCandidate(context, "conversation-1"),
+			).resolves.toMatchObject({
+				sourceEntryId: latestUser,
+				createdBy: "assistant_tool",
+			});
+			expect(latestUser).not.toBe(firstUser);
+			await backend.open({ scope: scopeFor("jizhou") });
+			const hits = await backend.recall({
+				scope: scopeFor("jizhou"),
+				query: "最新的用户消息",
+			});
+			expect(hits.map(({ record }) => record.text)).toContain("最新的用户消息");
+
+			const emptySession = PiSessionStore.create({
+				sessionDir: join(root, "empty-sessions"),
+				cwd: root,
+			});
+			await expect(
+				proposeMemoryCandidate(
+					{ ...context, conversationRepository: { getSession: () => emptySession } },
+					"conversation-1",
+				),
+			).rejects.toEqual({ kind: "not_found", reason: "memory_source_not_found" });
+			await expect(
+				proposeMemoryCandidate(
+					{ ...context, conversationRepository: { getSession: () => undefined } },
+					"conversation-1",
+				),
+			).rejects.toEqual({ kind: "not_found", reason: "memory_source_not_found" });
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("projects direct update, invalidation, and forgetting into later context", async () => {
@@ -316,11 +420,19 @@ describe("relationship memory context", () => {
 				sessionDir: join(root, "sessions"),
 				cwd: root,
 			});
-			const nonCurrentSourceId = session.appendUserMessage("只在旧分支上的来源");
-			session.appendSyntheticAssistant("旧分支回答");
+			const nonCurrentSourceId = session.appendMessage({
+				role: "user",
+				content: "只在旧分支上的来源",
+				timestamp: Date.now(),
+			});
+			session.appendMessage(nativeAssistantMessage("旧分支回答"));
 			session.branchBefore(nonCurrentSourceId);
-			const currentSourceId = session.appendUserMessage("当前分支上的来源");
-			session.appendSyntheticAssistant("当前分支回答");
+			const currentSourceId = session.appendMessage({
+				role: "user",
+				content: "当前分支上的来源",
+				timestamp: Date.now(),
+			});
+			session.appendMessage(nativeAssistantMessage("当前分支回答"));
 
 			const context = {
 				orm,
@@ -363,7 +475,11 @@ describe("relationship memory context", () => {
 				sessionDir: join(root, "foreign-sessions"),
 				cwd: root,
 			});
-			const foreignSourceId = foreignSession.appendUserMessage("另一个会话的来源");
+			const foreignSourceId = foreignSession.appendMessage({
+				role: "user",
+				content: "另一个会话的来源",
+				timestamp: Date.now(),
+			});
 			await expect(
 				rememberConversationEntry(context, "conversation-1", foreignSourceId, "user_capture"),
 			).rejects.toEqual({
@@ -375,66 +491,30 @@ describe("relationship memory context", () => {
 		}
 	});
 
-	it("maps canonical IDs by ordered Pi projection and preserves branch ownership", async () => {
+	it("accepts native current Pi entries and rejects non-native IDs", async () => {
 		const root = mkdtempSync(join(tmpdir(), "bear-memory-context-canonical-"));
 		try {
 			const session = PiSessionStore.create({
 				sessionDir: join(root, "sessions"),
 				cwd: root,
 			});
-			const staleUser = session.appendUserMessage("重复内容");
-			session.appendSyntheticAssistant("重复回答");
-			session.branchBefore(staleUser);
-			const currentUser = session.appendUserMessage("重复内容");
-			const currentAssistant = session.appendSyntheticAssistant("重复回答");
+			const staleSourceId = session.appendMessage({
+				role: "user",
+				content: "重复内容",
+				timestamp: Date.now(),
+			});
+			session.appendMessage(nativeAssistantMessage("重复回答"));
+			session.branchBefore(staleSourceId);
+			const currentSourceId = session.appendMessage({
+				role: "user",
+				content: "当前分支来源",
+				timestamp: Date.now(),
+			});
+			const currentAssistantId = session.appendMessage(nativeAssistantMessage("当前分支回答"));
 
 			db.prepare(
-				"INSERT INTO branches (id, conversation_id, label, adopted) VALUES (?, ?, ?, ?)",
-			).run("canonical-stale", "conversation-1", "stale", 0);
-			db.prepare(
-				"INSERT INTO branches (id, conversation_id, label, adopted) VALUES (?, ?, ?, ?)",
-			).run("canonical-current", "conversation-1", "main", 1);
-			for (const [messageId, branchId, role, text] of [
-				["canonical-stale-user", "canonical-stale", "user", "重复内容"],
-				["canonical-stale-assistant", "canonical-stale", "assistant", "重复回答"],
-				["canonical-current-user", "canonical-current", "user", "重复内容"],
-				["canonical-current-assistant", "canonical-current", "assistant", "重复回答"],
-			] as const) {
-				db.prepare(
-					"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES (?, ?, ?, ?)",
-				).run(messageId, "conversation-1", branchId, role);
-				db.prepare(
-					"INSERT INTO message_versions (id, message_id, content, adopted) VALUES (?, ?, ?, ?)",
-				).run(`${messageId}-version`, messageId, text, 1);
-			}
-			db.prepare(
-				"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES (?, ?, ?, ?)",
-			).run("canonical-current-orphan", "conversation-1", "canonical-current", "assistant");
-			db.prepare(
-				"INSERT INTO message_versions (id, message_id, content, adopted) VALUES (?, ?, ?, ?)",
-			).run(
-				"canonical-current-orphan-version",
-				"canonical-current-orphan",
-				"只存在于当前 Host 数据库",
-				1,
-			);
-			db.prepare("INSERT INTO conversations (id, companion_id, title) VALUES (?, ?, ?)").run(
-				"conversation-foreign",
-				"jizhou",
-				"Foreign",
-			);
-			db.prepare(
-				"INSERT INTO branches (id, conversation_id, label, adopted) VALUES (?, ?, ?, ?)",
-			).run("foreign-branch", "conversation-foreign", "main", 1);
-			db.prepare(
-				"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES (?, ?, ?, ?)",
-			).run("foreign-canonical-message", "conversation-foreign", "foreign-branch", "assistant");
-			db.prepare(
-				"INSERT INTO message_versions (id, message_id, content, adopted) VALUES (?, ?, ?, ?)",
-			).run("foreign-canonical-version", "foreign-canonical-message", "重复回答", 1);
-			db.prepare(
-				"INSERT INTO conversation_sessions (conversation_id, pi_session_id, session_file_path, active_leaf_id) VALUES (?, ?, ?, ?)",
-			).run("conversation-1", session.sessionId, session.sessionFile, session.leafId);
+				"INSERT INTO conversation_sessions (conversation_id, pi_session_id, session_file_path) VALUES (?, ?, ?)",
+			).run("conversation-1", session.sessionId, session.sessionFile);
 
 			const repository = new ConversationRepository(orm, {
 				sessionDir: join(root, "sessions"),
@@ -457,65 +537,38 @@ describe("relationship memory context", () => {
 			} as never;
 
 			await expect(
-				rememberConversationEntry(
-					context,
-					"conversation-1",
-					"canonical-current-orphan",
-					"user_capture",
-				),
+				rememberConversationEntry(context, "conversation-1", currentSourceId, "user_capture"),
 			).resolves.toMatchObject({
-				sourceEntryId: "canonical-current-orphan",
+				sourceEntryId: currentSourceId,
 				createdBy: "user_capture",
 			});
 			await expect(
-				rememberConversationEntry(
-					context,
-					"conversation-1",
-					"canonical-current-assistant",
-					"user_capture",
-				),
+				rememberConversationEntry(context, "conversation-1", currentAssistantId, "user_capture"),
 			).resolves.toMatchObject({
-				sourceEntryId: currentAssistant,
+				sourceEntryId: currentAssistantId,
 				createdBy: "user_capture",
 			});
 			await expect(
-				rememberConversationEntry(
-					context,
-					"conversation-1",
-					"canonical-stale-assistant",
-					"user_capture",
-				),
+				rememberConversationEntry(context, "conversation-1", staleSourceId, "user_capture"),
 			).rejects.toEqual({
 				kind: "conflict",
 				reason: "memory_source_not_current_branch",
 			});
-			await expect(
-				rememberConversationEntry(
-					context,
-					"conversation-1",
-					"foreign-canonical-message",
-					"user_capture",
-				),
-			).rejects.toEqual({
-				kind: "not_found",
-				reason: "memory_source_not_found",
-			});
-			expect(currentUser).not.toBe(currentAssistant);
+			for (const foreignId of ["legacy-message", "host-message-id"]) {
+				await expect(
+					rememberConversationEntry(context, "conversation-1", foreignId, "user_capture"),
+				).rejects.toEqual({
+					kind: "not_found",
+					reason: "memory_source_not_found",
+				});
+			}
+			expect(currentSourceId).not.toBe(currentAssistantId);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
 	});
 
-	it("captures an adopted legacy message when no Pi session exists", async () => {
-		db.prepare(
-			"INSERT INTO branches (id, conversation_id, label, adopted) VALUES (?, ?, ?, ?)",
-		).run("legacy-branch", "conversation-1", "main", 1);
-		db.prepare(
-			"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES (?, ?, ?, ?)",
-		).run("legacy-message", "conversation-1", "legacy-branch", "assistant");
-		db.prepare(
-			"INSERT INTO message_versions (id, message_id, content, adopted) VALUES (?, ?, ?, ?)",
-		).run("legacy-version", "legacy-message", "旧对话也应该可以被明确记住", 1);
+	it("rejects an adopted legacy message when no Pi session exists", async () => {
 		const context = {
 			orm,
 			defaultCharacterId: "jizhou",
@@ -534,9 +587,9 @@ describe("relationship memory context", () => {
 
 		await expect(
 			rememberConversationEntry(context, "conversation-1", "legacy-message", "user_capture"),
-		).resolves.toMatchObject({
-			sourceEntryId: "legacy-message",
-			createdBy: "user_capture",
+		).rejects.toEqual({
+			kind: "not_found",
+			reason: "memory_source_not_found",
 		});
 	});
 
@@ -555,7 +608,7 @@ describe("relationship memory context", () => {
 
 	it("omits the relationship block when backend recall has no results", async () => {
 		const context = await compiler.compileForTurn("conversation-1", {
-			memoryQuery: "不存在的记忆",
+			memoryQuery: "没有任何已保存的关系记忆",
 		});
 		expect(context.blocks.some((block) => block.layer === "relationship")).toBe(false);
 		expect(context.charge.memoryEntries).toBe(0);

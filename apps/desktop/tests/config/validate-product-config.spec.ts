@@ -96,6 +96,30 @@ describe("validate-product-config", () => {
 		expect(validation).toBeLessThan(compile);
 	});
 
+	it("declares all native capability modules for unpacking", () => {
+		const builderSource = readFileSync(join(desktopRoot, "electron-builder.config.ts"), "utf8");
+		for (const pattern of [
+			"node_modules/node-llama-cpp/**/*",
+			"node_modules/@node-llama-cpp/**/*",
+			"node_modules/sqlite-vec*/**/*",
+			"node_modules/@node-rs/jieba*/**/*",
+		]) {
+			expect(builderSource).toContain(pattern);
+		}
+	});
+
+	it("filters foreign llama bindings and the optional CUDA extension from release targets", () => {
+		const builderSource = readFileSync(join(desktopRoot, "electron-builder.config.ts"), "utf8");
+		for (const pattern of [
+			"linux-x64-cuda-ext",
+			"win-x64-cuda-ext",
+			"linux-arm64",
+			"win-arm64",
+		]) {
+			expect(builderSource).toContain(pattern);
+		}
+	});
+
 	it("stages deterministic attribution and preserves --no-write validation", async () => {
 		const previous = existsSync(attributionPath) ? readFileSync(attributionPath) : null;
 		try {

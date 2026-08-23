@@ -7,11 +7,10 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus, HostEvent } from "../storage/event-bus.js";
 import {
-	branches,
 	companionIdentity,
 	companionPackages,
 	conversations,
@@ -34,7 +33,7 @@ export type CompanionHostToolName =
 
 export interface CompanionHostToolCall {
 	conversationId: string;
-	triggerMessageId?: string;
+	triggerEntryId?: string;
 	tool: string;
 	args: unknown;
 }
@@ -63,20 +62,56 @@ interface StoredSceneState {
 	stateJson: unknown;
 }
 
+/**
+ * Minimal durable Pi branch projection consumed by turn lifecycle reactions.
+ * The supervisor's live PiSessionHandle satisfies this shape; tests supply a
+ * lightweight stand-in with the same entry list contract.
+ */
+export interface PiTurnBranchProjection {
+	readonly sessionId: string;
+	readonly sessionManager: { buildContextEntries(): unknown[] };
+}
+
+type ProjectedTurnEntry = {
+	id: string;
+	role: "user" | "assistant";
+	stopReason?: string;
+};
+
+function projectTurnEntries(sessionManager: PiTurnBranchProjection["sessionManager"]): ProjectedTurnEntry[] {
+	const entries: ProjectedTurnEntry[] = [];
+	for (const raw of sessionManager.buildContextEntries()) {
+		if (!isRecord(raw) || raw.type !== "message" || typeof raw.id !== "string") continue;
+		const message = raw.message;
+		if (!isRecord(message) || typeof message.role !== "string") continue;
+		if (message.role !== "user" && message.role !== "assistant") continue;
+		entries.push({
+			id: raw.id,
+			role: message.role,
+			...(typeof message.stopReason === "string"
+				? { stopReason: message.stopReason as string }
+				: {}),
+		});
+	}
+	return entries;
+}
+
 /** Host-owned, allowlisted character UI controls. */
 export class CharacterBehaviorService {
 	private readonly unsubscribe: () => void;
-	private readonly pendingRoleplayEvents = new Map<
-		string,
-		Array<{ eventId: string; dedupeKey: string }>
-	>();
+	private readonly pendingRoleplayEvents = new Map<string, Array<{ eventId: string }>>();
 	private readonly modelSelectedExpression = new Set<string>();
+	private readonly seenTurnEntries = new Map<
+		string,
+		{ userEntryId?: string; assistantEntryId?: string }
+	>();
 
 	constructor(
 		private readonly db: AppDatabase,
 		private readonly eventBus: EventBus,
 		private readonly characterLoader: CharacterLoader,
 		private readonly roleplay: RoleplayService,
+		private readonly piProjection?: (conversationId: string) => PiTurnBranchProjection | undefined,
 	) {
 		this.unsubscribe = this.eventBus.subscribe((event) => this.applyEventReaction(event));
 	}
@@ -92,19 +127,12 @@ export class CharacterBehaviorService {
 	}): RoleplayProjection {
 		const character = this.characterForConversation(input.conversationId);
 		if (!character) throw { kind: "not_found", reason: "conversation_not_found" };
-		const branch = this.db
-			.select({ id: branches.id, label: branches.label })
-			.from(branches)
-			.where(and(eq(branches.conversationId, input.conversationId), eq(branches.adopted, 1)))
-			.get();
-		if (!branch) throw { kind: "not_found", reason: "conversation_not_found" };
-		if (branch.label !== "main")
-			throw { kind: "conflict", reason: "roleplay_event_branch_not_canonical" };
+		const projection = this.piProjection?.(input.conversationId);
 		const state = this.roleplay.trigger({
 			character,
 			eventId: input.eventId,
 			conversationId: input.conversationId,
-			branchId: branch.id,
+			...(projection ? { piSessionId: projection.sessionId } : {}),
 			dedupeKey: input.dedupeKey,
 		});
 		const event = character.roleplay.events.find((candidate) => candidate.id === input.eventId);
@@ -116,6 +144,7 @@ export class CharacterBehaviorService {
 		});
 		return state;
 	}
+
 
 	/** Execute a request from the Companion utility process. */
 	invoke(call: CompanionHostToolCall): CompanionHostToolResult {
@@ -150,25 +179,10 @@ export class CharacterBehaviorService {
 	private applyEventReaction(event: HostEvent): void {
 		const conversationId = conversationIdFrom(event.payload);
 		if (!conversationId) return;
-		if (event.kind === "message.user_sent") this.modelSelectedExpression.delete(conversationId);
-		if (event.kind === "message.assistant_committed")
-			this.commitQueuedRoleplayEvents(conversationId, event.payload);
-		if (
-			event.kind === "message.aborted" ||
-			(event.kind === "message_end" && failedFrom(event.payload))
-		)
-			this.pendingRoleplayEvents.delete(conversationId);
-
-		// An explicit model/roleplay expression owns only the current turn. A
-		// failed end consumes that ownership without applying result_ready, while
-		// an abort consumes it before applying the configured abort reaction.
-		const suppressMessageEnd = this.modelSelectedExpression.has(conversationId);
-		if (event.kind === "message_end") {
-			this.modelSelectedExpression.delete(conversationId);
-			if (failedFrom(event.payload) || suppressMessageEnd) return;
+		if (event.kind === "pi.session.changed") {
+			this.applyPiSessionChanged(conversationId, event.payload);
+			return;
 		}
-		if (event.kind === "message.aborted") this.modelSelectedExpression.delete(conversationId);
-
 		const character = this.characterForConversation(conversationId);
 		if (!character) return;
 		const reaction = character.host.event_reactions.find(
@@ -177,6 +191,66 @@ export class CharacterBehaviorService {
 		if (!reaction) return;
 		const source = `event:${event.kind}`;
 		this.setExpression(conversationId, reaction.visual_state, source);
+	}
+
+	/**
+	 * Durable turn lifecycle now comes from Pi session notifications only.
+	 * Roleplay commits and expression reactions are derived from native
+	 * branch entries, never from Host transcript mirrors.
+	 */
+	private applyPiSessionChanged(conversationId: string, payload: unknown): void {
+		if (!isRecord(payload) || payload.reason !== "message") return;
+		const projection = this.piProjection?.(conversationId);
+		if (!projection) return;
+		const entries = projectTurnEntries(projection.sessionManager);
+		const lastUser = findLast(entries, (entry) => entry.role === "user");
+		const lastAssistant = findLast(entries, (entry) => entry.role === "assistant");
+		const seen = this.seenTurnEntries.get(conversationId);
+		const newUser = Boolean(lastUser && lastUser.id !== seen?.userEntryId);
+		const newAssistant = Boolean(lastAssistant && lastAssistant.id !== seen?.assistantEntryId);
+		this.seenTurnEntries.set(conversationId, {
+			...(lastUser ? { userEntryId: lastUser.id } : {}),
+			...(lastAssistant ? { assistantEntryId: lastAssistant.id } : {}),
+		});
+		if (!seen) return; // First observation seeds the baseline; no reaction.
+		if (newAssistant && lastAssistant) {
+			this.applyTurnEnd(conversationId, projection.sessionId, lastAssistant);
+			return;
+		}
+		if (newUser && lastUser) {
+			this.modelSelectedExpression.delete(conversationId);
+			this.applyReaction(conversationId, "message.user_sent");
+		}
+	}
+
+	private applyTurnEnd(
+		conversationId: string,
+		sessionId: string,
+		entry: ProjectedTurnEntry,
+	): void {
+		if (entry.stopReason === "aborted") {
+			this.pendingRoleplayEvents.delete(conversationId);
+			this.modelSelectedExpression.delete(conversationId);
+			this.applyReaction(conversationId, "message.aborted");
+			return;
+		}
+		if (entry.stopReason === "error") {
+			this.pendingRoleplayEvents.delete(conversationId);
+			return;
+		}
+		this.commitQueuedRoleplayEvents(conversationId, sessionId, entry.id);
+		const consumed = this.modelSelectedExpression.delete(conversationId);
+		if (!consumed) this.applyReaction(conversationId, "message_end");
+	}
+
+	private applyReaction(conversationId: string, eventKind: string): void {
+		const character = this.characterForConversation(conversationId);
+		if (!character) return;
+		const reaction = character.host.event_reactions.find(
+			(candidate) => candidate.event === eventKind,
+		);
+		if (!reaction) return;
+		this.setExpression(conversationId, reaction.visual_state, `event:${eventKind}`);
 	}
 
 	private getRoleplayState(conversationId: string): CompanionHostToolResult {
@@ -188,25 +262,12 @@ export class CharacterBehaviorService {
 			data: this.roleplay.project(character, conversationId),
 		};
 	}
-
 	private queueRoleplayEvent(
 		conversationId: string,
 		eventId: string | undefined,
 	): CompanionHostToolResult {
 		const character = this.characterForConversation(conversationId);
 		if (!character) return unavailableConversationResult(conversationId);
-		const branch = this.db
-			.select({ label: branches.label })
-			.from(branches)
-			.where(and(eq(branches.conversationId, conversationId), eq(branches.adopted, 1)))
-			.get();
-		if (!branch || branch.label !== "main") {
-			return {
-				ok: false,
-				code: "roleplay_event_branch_not_canonical",
-				message: "Roleplay events can only commit from the main conversation branch.",
-			};
-		}
 		if (!eventId || !character.roleplay.events.some((event) => event.id === eventId))
 			return {
 				ok: false,
@@ -214,8 +275,7 @@ export class CharacterBehaviorService {
 				message: "The event is not declared by this character package.",
 			};
 		const pending = this.pendingRoleplayEvents.get(conversationId) ?? [];
-		if (!pending.some((entry) => entry.eventId === eventId))
-			pending.push({ eventId, dedupeKey: `${conversationId}:${eventId}:${pending.length}` });
+		if (!pending.some((entry) => entry.eventId === eventId)) pending.push({ eventId });
 		this.pendingRoleplayEvents.set(conversationId, pending);
 		return {
 			ok: true,
@@ -223,25 +283,23 @@ export class CharacterBehaviorService {
 		};
 	}
 
-	private commitQueuedRoleplayEvents(conversationId: string, payload: unknown): void {
+	private commitQueuedRoleplayEvents(
+		conversationId: string,
+		sessionId: string,
+		entryId: string,
+	): void {
 		const pending = this.pendingRoleplayEvents.get(conversationId);
 		if (!pending?.length) return;
 		const character = this.characterForConversation(conversationId);
-		const versionId = objectString(payload, "versionId");
-		const branch = this.db
-			.select({ id: branches.id })
-			.from(branches)
-			.where(and(eq(branches.conversationId, conversationId), eq(branches.adopted, 1)))
-			.get();
-		if (!character || !versionId || !branch) return;
+		if (!character) return;
 		for (const entry of pending) {
 			this.roleplay.trigger({
 				character,
 				eventId: entry.eventId,
 				conversationId,
-				branchId: branch.id,
-				sourceMessageVersionId: versionId,
-				dedupeKey: `${versionId}:${entry.eventId}`,
+				piSessionId: sessionId,
+				sourceNativeEntryId: entryId,
+				dedupeKey: `${sessionId}:${entryId}:${entry.eventId}`,
 			});
 			const event = character.roleplay.events.find((candidate) => candidate.id === entry.eventId);
 			if (event) this.applyRoleplayPresentation(conversationId, event.effects);
@@ -482,19 +540,16 @@ function parseStoredState(value: unknown): Record<string, unknown> {
 	return value as Record<string, unknown>;
 }
 
-function objectString(value: unknown, key: string): string | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	const candidate = (value as Record<string, unknown>)[key];
-	return typeof candidate === "string" ? candidate : undefined;
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function failedFrom(value: unknown): boolean {
-	return Boolean(
-		value &&
-			typeof value === "object" &&
-			!Array.isArray(value) &&
-			(value as Record<string, unknown>).failed,
-	);
+function findLast<T>(entries: readonly T[], predicate: (entry: T) => boolean): T | undefined {
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
+		const entry = entries[index];
+		if (entry && predicate(entry)) return entry;
+	}
+	return undefined;
 }
 
 function unavailableConversationResult(conversationId: string): CompanionHostToolResult {

@@ -103,12 +103,13 @@ export function createOnboardingStore(
 			}
 			if (event.kind === "onboarding.reset") {
 				projectionGeneration += 1;
-				void refreshRpcQuery({
-					client: queryClient,
-					key: queryKeys.onboarding,
-					request,
-				})
-					.then((value) => commit(value))
+				const generation = projectionGeneration;
+				void client.onboarding
+					.get()
+					.then((response) => {
+						if (generation !== projectionGeneration || !response.ok) return;
+						commit(response.data);
+					})
 					.catch(() => undefined);
 			}
 		},

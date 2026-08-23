@@ -24,9 +24,8 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Models } from "@earendil-works/pi-ai";
-import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { CredentialStatus, CredentialStore } from "./credential-store.js";
 
 const BUILTIN_PROVIDER_IDS = new Set<string>(getBuiltinProviders());
@@ -180,6 +179,10 @@ function configuredRoutes(providers: Record<string, unknown>): Array<{
 export interface ProviderInfo {
 	id: string;
 	name: string;
+	/** Whether this provider comes from pi-ai's immutable builtin catalog or Pi config. */
+	source: "builtin" | "custom";
+	/** Projection of explicit credentials and/or persisted Pi provider config. */
+	added: boolean;
 	authType: "api_key" | "oauth";
 	credentialStatus: ProviderCredentialStatus;
 	/**
@@ -196,14 +199,19 @@ export interface ProviderInfo {
 /** Host-level summary of an OAuth login flow. */
 export interface OAuthLoginResult {
 	authUrl?: string;
+	instructions?: string;
 	deviceCode?: string;
 	verificationUri?: string;
+	intervalSeconds?: number;
+	expiresInSeconds?: number;
 }
 
 export interface OAuthSessionState extends OAuthLoginResult {
 	providerId: string;
 	status: "running" | "waiting_input" | "completed" | "failed";
 	message?: string;
+	/** Links from pi-ai `info` events (e.g. help/terms pages). */
+	infoLinks?: readonly { url: string; label?: string }[];
 	prompt?: {
 		type: "text" | "secret" | "select" | "manual_code";
 		message: string;
@@ -214,7 +222,10 @@ export interface OAuthSessionState extends OAuthLoginResult {
 
 interface OAuthSessionInternal extends OAuthSessionState {
 	resolvePrompt?: (answer: string) => void;
+	rejectPrompt?: (cause: Error) => void;
+	abort?: AbortController;
 }
+
 
 export class ProviderCatalog {
 	private runtime: Promise<ModelRuntime> | null = null;
@@ -253,8 +264,8 @@ export class ProviderCatalog {
 		return runtime;
 	}
 
-	/** The Companion consumes the stable pi-ai Models interface, never AgentSession runtime APIs. */
-	async getModels(): Promise<Models> {
+	/** Return the canonical pi-coding-agent runtime used by Companion sessions. */
+	async getModels(): Promise<ModelRuntime> {
 		return this.getRuntime();
 	}
 
@@ -422,6 +433,9 @@ export class ProviderCatalog {
 	/** List providers visible to the product, with models and credential status. */
 	async listProviders(): Promise<ProviderInfo[]> {
 		const runtime = await this.getRuntime();
+		const { providers: persistedProviders } = readProviderDocument(
+			join(this.agentDir, "models.json"),
+		);
 
 		// Local-only probe: populate the runtime's auth snapshot
 		// (configured/stored providers) and collect per-provider auth errors.
@@ -437,14 +451,24 @@ export class ProviderCatalog {
 		for (const provider of runtime.getProviders()) {
 			if (BLOCKED_PROVIDER_ID_PATTERN.test(provider.id)) continue;
 			const hostStatus = await this.credentialStore.getStatus(provider.id);
+			const runtimeAuthStatus = runtime.getProviderAuthStatus(provider.id);
+			const credentialStatus =
+				hostStatus === "stored" || hostStatus === "weak_storage"
+					? "stored"
+					: mapCredentialStatus(runtimeAuthStatus);
+			const hasExplicitCredential =
+				hostStatus === "stored" ||
+				hostStatus === "weak_storage" ||
+				hostStatus === "session_only" ||
+				(runtimeAuthStatus.configured && runtimeAuthStatus.source !== "environment");
+			const added = Object.hasOwn(persistedProviders, provider.id) || hasExplicitCredential;
 			providers.push({
 				id: provider.id,
 				name: provider.name,
+				source: isBuiltinProvider(provider.id) ? "builtin" : "custom",
+				added,
 				authType: provider.auth.oauth ? "oauth" : "api_key",
-				credentialStatus:
-					hostStatus === "stored" || hostStatus === "weak_storage"
-						? "stored"
-						: mapCredentialStatus(runtime.getProviderAuthStatus(provider.id)),
+				credentialStatus,
 				baseUrl: safeBaseUrl(provider.baseUrl),
 				availableModels: runtime.getModels(provider.id).map((model) => ({
 					id: model.id,
@@ -473,8 +497,45 @@ export class ProviderCatalog {
 		await this.credentialStore.set(providerId, { apiKey }, { sessionOnly });
 	}
 
+	/**
+	 * Remove every local trace of a provider while preserving the immutable
+	 * builtin catalog entry. Credentials and Pi config are independent
+	 * projections, so both are cleared before the cached Pi runtime is
+	 * invalidated.
+	 */
+	async removeProvider(providerId: string): Promise<void> {
+		assertAllowedProvider(providerId);
+		this.abortOAuthSession(providerId);
+		const runtime = await this.getRuntime();
+		const logoutOptions = { revokeAccessToken: false } as { signal?: AbortSignal };
+		try {
+			await runtime.logout(providerId, logoutOptions);
+		} catch {
+			// Local cleanup must continue even when pi-ai has no active session.
+		}
+		await this.credentialStore.remove(providerId);
+
+		const modelsPath = join(this.agentDir, "models.json");
+		if (existsSync(modelsPath)) {
+			const { document, providers } = readProviderDocument(modelsPath);
+			if (Object.hasOwn(providers, providerId)) {
+				const remainingProviders = { ...providers };
+				delete remainingProviders[providerId];
+				const temporaryPath = `${modelsPath}.tmp`;
+				mkdirSync(dirname(modelsPath), { recursive: true, mode: 0o700 });
+				writeFileSync(
+					temporaryPath,
+					`${JSON.stringify({ ...document, providers: remainingProviders }, null, 2)}\n`,
+					{ mode: 0o600 },
+				);
+				renameSync(temporaryPath, modelsPath);
+			}
+		}
+		this.runtime = null;
+	}
 	/** Local logout: clear runtime + host credentials; never revoke tokens. */
 	async logout(providerId: string): Promise<void> {
+		this.abortOAuthSession(providerId);
 		const runtime = await this.getRuntime();
 		// The 0.84 SDK logout is local-only and takes no options; the flag
 		// documents the host's intent for SDK versions that add remote
@@ -493,16 +554,23 @@ export class ProviderCatalog {
 		assertAllowedProvider(providerId);
 		const runtime = await this.getRuntime();
 		let authUrl: string | undefined;
+		let instructions: string | undefined;
 		let deviceCode: string | undefined;
 		let verificationUri: string | undefined;
+		let intervalSeconds: number | undefined;
+		let expiresInSeconds: number | undefined;
 		const capturingInteraction: AuthInteraction = {
 			signal: interaction.signal,
 			prompt: interaction.prompt,
 			notify: (event) => {
-				if (event.type === "auth_url") authUrl = event.url;
-				else if (event.type === "device_code") {
+				if (event.type === "auth_url") {
+					authUrl = event.url;
+					instructions = event.instructions;
+				} else if (event.type === "device_code") {
 					deviceCode = event.userCode;
 					verificationUri = event.verificationUri;
+					intervalSeconds = event.intervalSeconds;
+					expiresInSeconds = event.expiresInSeconds;
 				}
 				interaction.notify(event);
 			},
@@ -512,7 +580,7 @@ export class ProviderCatalog {
 		} catch (error) {
 			throw toHostError(error, providerId);
 		}
-		return { authUrl, deviceCode, verificationUri };
+		return { authUrl, instructions, deviceCode, verificationUri, intervalSeconds, expiresInSeconds };
 	}
 
 	startOAuth(providerId: string): OAuthSessionState {
@@ -522,17 +590,28 @@ export class ProviderCatalog {
 		}
 		const session: OAuthSessionInternal = { providerId, status: "running" };
 		this.oauthSessions.set(providerId, session);
+		session.abort = new AbortController();
 		void this.loginOAuth(providerId, {
+			signal: session.abort.signal,
 			notify: (event) => {
-				if (event.type === "auth_url") session.authUrl = event.url;
+				if (event.type === "auth_url") {
+					session.authUrl = event.url;
+					session.instructions = event.instructions;
+				}
 				if (event.type === "device_code") {
 					session.deviceCode = event.userCode;
 					session.verificationUri = event.verificationUri;
+					session.intervalSeconds = event.intervalSeconds;
+					session.expiresInSeconds = event.expiresInSeconds;
 				}
-				if (event.type === "info" || event.type === "progress") session.message = event.message;
+				if (event.type === "info") {
+					session.message = event.message;
+					if (event.links?.length) session.infoLinks = event.links;
+				}
+				if (event.type === "progress") session.message = event.message;
 			},
 			prompt: (prompt) =>
-				new Promise<string>((resolve) => {
+				new Promise<string>((resolve, reject) => {
 					session.status = "waiting_input";
 					session.prompt = {
 						type: prompt.type,
@@ -543,22 +622,52 @@ export class ProviderCatalog {
 						...(prompt.type === "select" ? { options: prompt.options } : {}),
 					};
 					session.resolvePrompt = resolve;
+					session.rejectPrompt = reject;
 				}),
 		})
 			.then((result) => {
 				Object.assign(session, result);
 				session.status = "completed";
+				session.message = undefined;
+				session.infoLinks = undefined;
 				session.prompt = undefined;
 				session.resolvePrompt = undefined;
+				session.rejectPrompt = undefined;
 			})
-			.catch(() => {
+			.catch((cause) => {
 				session.status = "failed";
-				session.message = "登录没有完成，请重试。";
 				session.prompt = undefined;
 				session.resolvePrompt = undefined;
+				session.rejectPrompt = undefined;
+				session.message = oauthFailureReason(cause);
 			});
 		return publicOAuthSession(session);
 	}
+
+	/** Cancel an in-flight OAuth login flow for a provider. */
+	cancelOAuth(providerId: string): void {
+		if (!this.oauthSessions.has(providerId)) {
+			throw { kind: "not_found", reason: "oauth_session_not_found" };
+		}
+		this.abortOAuthSession(providerId);
+	}
+
+	private abortOAuthSession(providerId: string): void {
+		const session = this.oauthSessions.get(providerId);
+		if (!session) return;
+		session.abort?.abort();
+		session.rejectPrompt?.(new DOMException("OAuth login cancelled", "AbortError"));
+		session.rejectPrompt = undefined;
+		session.resolvePrompt = undefined;
+		this.oauthSessions.delete(providerId);
+	}
+
+	/** Drop the cached runtime and abort every in-flight OAuth flow (window teardown). */
+	dispose(): void {
+		for (const providerId of [...this.oauthSessions.keys()]) this.abortOAuthSession(providerId);
+		this.runtime = null;
+	}
+
 
 	getOAuthSession(providerId: string): OAuthSessionState {
 		const session = this.oauthSessions.get(providerId);
@@ -573,6 +682,7 @@ export class ProviderCatalog {
 		}
 		const resolve = session.resolvePrompt;
 		session.resolvePrompt = undefined;
+		session.rejectPrompt = undefined;
 		session.prompt = undefined;
 		session.status = "running";
 		resolve(answer);
@@ -584,14 +694,15 @@ export class ProviderCatalog {
 		return this.credentialStore.getStatus(providerId);
 	}
 
-	/** Drop the cached runtime (e.g. on window teardown). */
-	dispose(): void {
-		this.runtime = null;
-	}
 }
 
 function publicOAuthSession(session: OAuthSessionInternal): OAuthSessionState {
-	const { resolvePrompt: _resolvePrompt, ...result } = session;
+	const {
+		resolvePrompt: _resolvePrompt,
+		rejectPrompt: _rejectPrompt,
+		abort: _abort,
+		...result
+	} = session;
 	return result;
 }
 
@@ -644,4 +755,20 @@ function toHostError(error: unknown, providerId: string): never {
 		throw { kind: "conflict", reason: "login_aborted" };
 	}
 	throw { kind: "internal", reason: message };
+}
+
+/**
+ * Language-neutral reason for a failed OAuth session, extracted without
+ * throwing so the session catch can record it on the session object.
+ */
+function oauthFailureReason(error: unknown): string {
+	if (typeof error === "object" && error !== null && "kind" in error && "reason" in error) {
+		const { reason } = error as { reason: unknown };
+		if (typeof reason === "string" && reason) return reason;
+	}
+	if (error instanceof Error && (error.name === "AbortError" || error.name === "DOMException")) {
+		return "login_aborted";
+	}
+	const message = error instanceof Error ? error.message : String(error);
+	return message || "login_failed";
 }

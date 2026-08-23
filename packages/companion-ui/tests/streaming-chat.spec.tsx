@@ -1,3 +1,4 @@
+import type { CompanionClient } from "@bear-harness/companion-client";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
@@ -6,12 +7,38 @@ import { CompanionApp } from "../src/index.js";
 import { createTestClient, OFFICIAL_PRODUCT } from "./fixtures.js";
 
 const STREAMED_REPLY = "我是季舟。";
+const SESSION_ID = "session-1";
 
 const COMPLETE_ONBOARDING = {
 	status: "complete" as const,
 	eventSeq: 0,
 	stateData: { schema_version: 1 as const, flow_version: 1, answers: {}, decisions: {} },
 };
+
+function mirrorSnapshotActiveGet(client: CompanionClient): void {
+	client.conversation.activeGet = vi.fn(async () => {
+		const snapshot = await client.snapshot.get();
+		if (!snapshot.ok) return snapshot;
+		const conversation = snapshot.data.conversation;
+		const activeConversationId = conversation?.activeConversationId;
+		if (activeConversationId === undefined) return { ok: true as const, data: {} };
+		return {
+			ok: true as const,
+			data: {
+				conversation: {
+					activeConversationId,
+					...(conversation.activeBranchId === undefined
+						? {}
+						: { activeBranchId: conversation.activeBranchId }),
+					id: conversation.id ?? activeConversationId,
+					title: conversation.title ?? "",
+					sceneTitle: conversation.sceneTitle ?? "",
+					piTimeline: conversation.piTimeline ?? { entries: [] },
+				},
+			},
+		};
+	});
+}
 
 function activeClient() {
 	const fixture = createTestClient();
@@ -80,23 +107,81 @@ function activeClient() {
 			},
 		}),
 	);
+	mirrorSnapshotActiveGet(fixture.client);
 	fixture.client.onboarding.get = vi.fn(() =>
 		Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 	);
 	return fixture;
 }
 
-describe("optimistic and streaming chat", () => {
-	it("shows the user message and an assistant loading block before send RPC resolves", async () => {
+/** A full active projection with the Pi native session identity. */
+function liveProjection(overrides: {
+	entries?: unknown[];
+	live?: {
+		isStreaming: boolean;
+		streamingMessage?: { text?: string; stopReason: string; errorMessage?: string };
+		errorMessage?: string;
+	};
+}) {
+	return {
+		activeConversationId: "conversation-1",
+		id: "conversation-1",
+		title: "Streaming",
+		sceneTitle: "Scene",
+		piTimeline: { entries: overrides.entries ?? [] },
+		piSessionId: SESSION_ID,
+		piLiveState: { isStreaming: false, ...overrides.live },
+	};
+}
+
+function neverSettle(): Promise<never> {
+	const { promise } = Promise.withResolvers<never>();
+	return promise;
+}
+
+function userEntry(id: string, text: string) {
+	return {
+		id,
+		parentId: null,
+		timestamp: "2026-01-01T00:00:01.000Z",
+		kind: "message" as const,
+		role: "user" as const,
+		text,
+	};
+}
+
+function assistantEntry(id: string, text: string) {
+	return {
+		id,
+		parentId: null,
+		timestamp: "2026-01-01T00:00:02.000Z",
+		kind: "message" as const,
+		role: "assistant" as const,
+		text,
+	};
+}
+
+function sessionChanged(seq: number) {
+	return {
+		seq,
+		kind: "pi.session.changed" as const,
+		payload: {
+			conversationId: "conversation-1",
+			sessionId: SESSION_ID,
+			reason: "message" as const,
+		},
+	};
+}
+
+describe("Pi-projection chat", () => {
+	it("shows no optimistic message while the Pi preflight is pending", async () => {
 		const user = userEvent.setup();
 		const { client } = activeClient();
-		let resolveSend: ((value: { ok: true; data: { messageId: string } }) => void) | undefined;
-		client.message.send = vi.fn(
-			() =>
-				new Promise((resolve) => {
-					resolveSend = resolve;
-				}),
-		);
+		const sendGate = Promise.withResolvers<{
+			ok: true;
+			data: { accepted: true; sessionId: string };
+		}>();
+		client.message.send = vi.fn(() => sendGate.promise);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		const composer = await screen.findByRole("textbox", {
@@ -106,9 +191,13 @@ describe("optimistic and streaming chat", () => {
 		await user.type(composer, "你是谁？");
 		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
 
-		expect(screen.getByText("你是谁？")).toBeInTheDocument();
-		expect(screen.getByRole("status", { name: zhCN.messages.responding })).toBeInTheDocument();
-		resolveSend?.({ ok: true, data: { messageId: "user-message-1" } });
+		// The renderer never creates a message: no user article and no
+		// responding status before the Pi preflight accepts the send.
+		const thread = screen.getByRole("region", { name: zhCN.messages.conversation });
+		expect(within(thread).queryAllByRole("article")).toHaveLength(0);
+		expect(screen.queryByRole("status", { name: zhCN.messages.responding })).not.toBeInTheDocument();
+		expect(composer).toHaveValue("你是谁？");
+		sendGate.resolve({ ok: true, data: { accepted: true, sessionId: SESSION_ID } });
 	});
 	it("renders a failed Pi tool entry", async () => {
 		const { client } = activeClient();
@@ -208,6 +297,9 @@ describe("optimistic and streaming chat", () => {
 					...result.data,
 					conversation: {
 						activeConversationId: "conversation-1",
+						id: "conversation-1",
+						title: "Internal only",
+						sceneTitle: "Scene",
 						conversations: [
 							{
 								id: "conversation-1",
@@ -234,118 +326,100 @@ describe("optimistic and streaming chat", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const thread = await screen.findByRole("region", { name: zhCN.messages.conversation });
 
-		await screen.findByText("Internal only");
+		await waitFor(() => expect(client.conversation.activeGet).toHaveBeenCalled());
 		expect(within(thread).queryByText("仅供内部使用的工具结果")).not.toBeInTheDocument();
 		expect(within(thread).queryAllByRole("article")).toHaveLength(0);
 	});
 
-	it("hides a streamed draft when persisted assistant content contains that draft", async () => {
-		const user = userEvent.setup();
+	it("renders the Pi live partial assistant then the native timeline on completion", async () => {
 		const { client } = activeClient();
-		const persistedReply = `${STREAMED_REPLY}这是持久化的最终尾声`;
-		let committed = false;
-		const initialSnapshot = client.snapshot.get;
-		client.snapshot.get = vi.fn(async () => {
-			const result = await initialSnapshot();
-			if (!result.ok) return result;
-			return {
-				...result,
-				data: {
-					...result.data,
-					eventSeq: committed ? 5 : 0,
-					conversation: {
-						activeConversationId: "conversation-1",
-						conversations: [],
-						piTimeline: {
-							entries: committed
-								? [
-										{
-											id: "pi:assistant-entry-contains-draft",
-											parentId: null,
-											timestamp: "2026-01-01T00:00:01.000Z",
-											kind: "message" as const,
-											role: "assistant" as const,
-											text: persistedReply,
-										},
-									]
-								: [],
-						},
-					},
-				},
-			};
-		});
-
-		const initialEvents = Promise.withResolvers<{
-			ok: true;
-			data: {
-				events: Array<{
-					seq: number;
-					kind: "message_start" | "message_update";
-					payload: { conversationId: string; text?: string };
-				}>;
-			};
-		}>();
+		let projection = liveProjection({});
+		client.conversation.activeGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversation: projection } }),
+		);
 		let subscription = 0;
+		const completionGate = Promise.withResolvers<void>();
 		client.events.subscribe = vi.fn(() => {
 			subscription += 1;
-			if (subscription === 1) return initialEvents.promise;
-			if (subscription === 2) {
-				committed = true;
-				return Promise.resolve({
-					ok: true as const,
-					data: {
-						events: [
-							{
-								seq: 3,
-								kind: "message_end" as const,
-								payload: { conversationId: "conversation-1", text: STREAMED_REPLY },
-							},
-							{
-								seq: 5,
-								kind: "message.assistant_committed" as const,
-								payload: { conversationId: "conversation-1" },
-							},
-						],
+			if (subscription === 1) {
+				// Pi accepted the message: the native user entry is durable and
+				// the assistant text is streaming.
+				projection = liveProjection({
+					entries: [userEntry("pi:user-1", "你是谁？")],
+					live: {
+						isStreaming: true,
+						streamingMessage: { text: "我是", stopReason: "pending" },
 					},
 				});
+				return Promise.resolve({
+					ok: true as const,
+					data: { events: [sessionChanged(1)] },
+				});
 			}
-			const pending = Promise.withResolvers<never>();
-			return pending.promise;
+			if (subscription === 2) {
+				// Hold completion until the live projection has been observed.
+				return completionGate.promise.then(() => {
+					projection = liveProjection({
+						entries: [
+							userEntry("pi:user-1", "你是谁？"),
+							assistantEntry("pi:assistant-1", STREAMED_REPLY),
+						],
+						live: { isStreaming: false },
+					});
+					return {
+						ok: true as const,
+						data: { events: [sessionChanged(2)] },
+					};
+				});
+			}
+			return neverSettle();
 		});
-		const pendingSend = Promise.withResolvers<never>();
-		client.message.send = vi.fn(() => pendingSend.promise);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		// The user entry and the partial assistant both come from the Pi
+		// projection; the renderer creates no message of its own.
+		await waitFor(() => expect(screen.getByText("你是谁？")).toBeInTheDocument());
+		expect(screen.getByText("我是")).toBeInTheDocument();
+		expect(screen.getByRole("status", { name: zhCN.messages.responding })).toBeInTheDocument();
+		completionGate.resolve();
 
-		const composer = await screen.findByRole("textbox", {
-			name: zhCN.composer.messageInputLabel,
-		});
-		await waitFor(() => expect(composer).toBeEnabled());
-		await user.type(composer, "继续说");
-		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
-		initialEvents.resolve({
-			ok: true,
-			data: {
-				events: [
-					{
-						seq: 1,
-						kind: "message_start",
-						payload: { conversationId: "conversation-1" },
-					},
-					{
-						seq: 2,
-						kind: "message_update",
-						payload: { conversationId: "conversation-1", text: STREAMED_REPLY },
-					},
-				],
-			},
-		});
-
-		await waitFor(() => expect(screen.getByText(persistedReply)).toBeInTheDocument());
-		expect(screen.queryByText(STREAMED_REPLY)).not.toBeInTheDocument();
+		// Completion: exactly one persisted assistant article, no partial, no
+		// responding status, and no duplicated user entry.
+		await waitFor(() => expect(screen.getAllByText(STREAMED_REPLY)).toHaveLength(1));
+		expect(screen.queryByText("我是")).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("status", { name: zhCN.messages.responding }),
 		).not.toBeInTheDocument();
+		const thread = screen.getByRole("region", { name: zhCN.messages.conversation });
+		expect(within(thread).getAllByRole("article")).toHaveLength(2);
+		expect(within(thread).queryByText("你是谁？")).toBeInTheDocument();
 	});
+
+	it("renders the Pi final error message from the live state", async () => {
+		const { client } = activeClient();
+		client.conversation.activeGet = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					conversation: liveProjection({
+						live: {
+							isStreaming: false,
+							streamingMessage: {
+								text: "",
+								stopReason: "error",
+								errorMessage: "provider unavailable",
+							},
+						},
+					}),
+				},
+			}),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const thread = await screen.findByRole("region", { name: zhCN.messages.conversation });
+		await waitFor(() =>
+			expect(within(thread).getByRole("alert")).toHaveTextContent("provider unavailable"),
+		);
+	});
+
 	it("renders raw current_user_message text from a Pi user entry", async () => {
 		const { client } = activeClient();
 		const rawUserText = "请记住这条当前消息";
@@ -401,308 +475,5 @@ describe("optimistic and streaming chat", () => {
 		expect(screen.queryByText(framedPrompt)).not.toBeInTheDocument();
 
 		expect(screen.getByText(rawUserText).closest("article")).not.toBeNull();
-	});
-
-	it("replaces the streaming block with exactly one persisted assistant message", async () => {
-		const { client } = activeClient();
-		let assistantCommitted = false;
-		client.snapshot.get = vi.fn(() => {
-			return Promise.resolve({
-				ok: true as const,
-				data: {
-					eventSeq: assistantCommitted ? 5 : 0,
-					onboarding: COMPLETE_ONBOARDING,
-					conversation: {
-						activeConversationId: "conversation-1",
-						conversations: [],
-						piTimeline: {
-							entries: !assistantCommitted
-								? []
-								: [
-										{
-											id: "assistant-message-1",
-											parentId: null,
-											timestamp: "2026-01-01T00:00:01.000Z",
-											kind: "message" as const,
-											role: "assistant" as const,
-											text: STREAMED_REPLY,
-										},
-									],
-						},
-					},
-				},
-			});
-		});
-		let subscription = 0;
-		client.events.subscribe = vi.fn(() => {
-			subscription += 1;
-			if (subscription === 1) {
-				return Promise.resolve({
-					ok: true as const,
-					data: {
-						events: [
-							{ seq: 1, kind: "message_start", payload: { conversationId: "conversation-1" } },
-							{
-								seq: 2,
-								kind: "message_update",
-								payload: { conversationId: "conversation-1", text: "我是" },
-							},
-						],
-					},
-				});
-			}
-			if (subscription === 2) {
-				assistantCommitted = true;
-				return Promise.resolve({
-					ok: true as const,
-					data: {
-						events: [
-							{
-								seq: 3,
-								kind: "message_update",
-								payload: { conversationId: "conversation-1", text: "季舟。" },
-							},
-							{
-								seq: 4,
-								kind: "message_end",
-								payload: { conversationId: "conversation-1", text: STREAMED_REPLY },
-							},
-							{
-								seq: 5,
-								kind: "message.assistant_committed",
-								payload: {
-									conversationId: "conversation-1",
-									messageId: "assistant-message-1",
-									versionId: "assistant-version-1",
-								},
-							},
-						],
-					},
-				});
-			}
-			return new Promise<never>(() => {});
-		});
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-
-		await waitFor(() => expect(screen.getAllByText(STREAMED_REPLY)).toHaveLength(1));
-		expect(
-			screen.queryByRole("status", { name: zhCN.messages.responding }),
-		).not.toBeInTheDocument();
-		expect(client.snapshot.get).toHaveBeenCalled();
-	});
-
-	it("clears the streaming draft when the projection carries a Pi entry id", async () => {
-		const { client } = activeClient();
-		let committed = false;
-		client.snapshot.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					eventSeq: committed ? 5 : 0,
-					onboarding: COMPLETE_ONBOARDING,
-					conversation: {
-						activeConversationId: "conversation-1",
-						conversations: [],
-						piTimeline: {
-							entries: !committed
-								? []
-								: [
-										{
-											id: "pi:entry-assistant-9",
-											parentId: null,
-											timestamp: "2026-01-01T00:00:01.000Z",
-											kind: "message" as const,
-											role: "assistant" as const,
-											text: STREAMED_REPLY,
-										},
-									],
-						},
-					},
-				},
-			}),
-		);
-		let subscription = 0;
-		client.events.subscribe = vi.fn(() => {
-			subscription += 1;
-			if (subscription === 1) {
-				return Promise.resolve({
-					ok: true as const,
-					data: {
-						events: [
-							{ seq: 1, kind: "message_start", payload: { conversationId: "conversation-1" } },
-							{
-								seq: 2,
-								kind: "message_update",
-								payload: { conversationId: "conversation-1", text: "我是" },
-							},
-						],
-					},
-				});
-			}
-			if (subscription === 2) {
-				committed = true;
-				return Promise.resolve({
-					ok: true as const,
-					data: {
-						events: [
-							{
-								seq: 3,
-								kind: "message_update",
-								payload: { conversationId: "conversation-1", text: "季舟。" },
-							},
-							{
-								seq: 4,
-								kind: "message_end",
-								payload: { conversationId: "conversation-1", text: STREAMED_REPLY },
-							},
-							{
-								seq: 5,
-								kind: "message.assistant_committed",
-								payload: {
-									conversationId: "conversation-1",
-									messageId: "assistant-message-1",
-									versionId: "assistant-version-1",
-								},
-							},
-						],
-					},
-				});
-			}
-			return new Promise<never>(() => {});
-		});
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-
-		await waitFor(() => expect(screen.getAllByText(STREAMED_REPLY)).toHaveLength(1));
-		expect(
-			screen.queryByRole("status", { name: zhCN.messages.responding }),
-		).not.toBeInTheDocument();
-	});
-
-	it("keeps the responding status hidden when a late delta follows the settled Pi final", async () => {
-		// Mirrors the native Pi journey: two stream deltas close into the final
-		// text, the committed projection carries a Pi entry id while
-		// message.assistant_committed carries the persisted turn id, and a
-		// stale delta from the settled turn can still arrive afterwards. The
-		// status must stay hidden and the final content must render exactly once.
-		const STREAM_ONE = "STREAM_ONE ";
-		const STREAM_TWO = "STREAM_TWO";
-		const STREAMED_FINAL = `${STREAM_ONE}${STREAM_TWO}`;
-		const { client } = activeClient();
-		let committed = false;
-		client.snapshot.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					eventSeq: committed ? 5 : 0,
-					onboarding: COMPLETE_ONBOARDING,
-					conversation: {
-						activeConversationId: "conversation-1",
-						conversations: [],
-						piTimeline: {
-							entries: !committed
-								? []
-								: [
-										{
-											id: "pi:entry-assistant-late-delta",
-											parentId: null,
-											timestamp: "2026-01-01T00:00:01.000Z",
-											kind: "message" as const,
-											role: "assistant" as const,
-											text: STREAMED_FINAL,
-										},
-									],
-						},
-					},
-				},
-			}),
-		);
-		const lateDelta = Promise.withResolvers<{
-			ok: true;
-			data: {
-				events: Array<{
-					seq: number;
-					kind: "message_update";
-					payload: { conversationId: string; text: string };
-				}>;
-			};
-		}>();
-		let subscription = 0;
-		client.events.subscribe = vi.fn(() => {
-			subscription += 1;
-			if (subscription === 1) {
-				return Promise.resolve({
-					ok: true as const,
-					data: {
-						events: [
-							{ seq: 1, kind: "message_start", payload: { conversationId: "conversation-1" } },
-							{
-								seq: 2,
-								kind: "message_update",
-								payload: { conversationId: "conversation-1", text: STREAM_ONE },
-							},
-						],
-					},
-				});
-			}
-			if (subscription === 2) {
-				committed = true;
-				return Promise.resolve({
-					ok: true as const,
-					data: {
-						events: [
-							{
-								seq: 3,
-								kind: "message_update",
-								payload: { conversationId: "conversation-1", text: STREAM_TWO },
-							},
-							{
-								seq: 4,
-								kind: "message_end",
-								payload: { conversationId: "conversation-1", text: STREAMED_FINAL },
-							},
-							{
-								seq: 5,
-								kind: "message.assistant_committed",
-								payload: {
-									conversationId: "conversation-1",
-									messageId: "assistant-message-1",
-									versionId: "assistant-version-1",
-								},
-							},
-						],
-					},
-				});
-			}
-			// The refetch from message_end re-enters the subscription loop; the
-			// live loop parks here so the stale delta can be delivered later.
-			if (subscription >= 3) return lateDelta.promise;
-			return new Promise<never>(() => {});
-		});
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-
-		await waitFor(() => expect(screen.getAllByText(STREAMED_FINAL)).toHaveLength(1));
-		expect(
-			screen.queryByRole("status", { name: zhCN.messages.responding }),
-		).not.toBeInTheDocument();
-
-		// The settled turn still emits one last cumulative delta in the native
-		// Pi flow; the persisted final projection supersedes it, so the status
-		// must not come back and the content must not render twice.
-		lateDelta.resolve({
-			ok: true,
-			data: {
-				events: [
-					{
-						seq: 6,
-						kind: "message_update",
-						payload: { conversationId: "conversation-1", text: STREAMED_FINAL },
-					},
-				],
-			},
-		});
-		await waitFor(() => expect(screen.getAllByText(STREAMED_FINAL)).toHaveLength(1));
-		expect(
-			screen.queryByRole("status", { name: zhCN.messages.responding }),
-		).not.toBeInTheDocument();
 	});
 });

@@ -33,7 +33,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 				providerId: "e2e-rule",
 				name: "E2E Rule Provider",
 				baseUrl: `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/v1`,
-				modelId: "rule-model",
+				models: [{ id: "rule-model" }],
 			},
 		})
 	).json();
@@ -143,14 +143,16 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 			return undefined;
 		})
 		.toEqual({ providerId: "e2e-rule", modelId: "rule-model" });
-	const model = page.getByRole("button", { name: zhCN.composer.modelLabel });
+	const model = page.locator(".composer-model-trigger");
 	await expect(model).toContainText("E2E Rule Provider");
 }
 
 export async function sendMessage(page: Page, text: string): Promise<void> {
 	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
+	const send = page.getByRole("button", { name: zhCN.composer.sendLabel });
 	await composer.fill(text);
-	await page.getByRole("button", { name: zhCN.composer.sendLabel }).click();
+	await expect(send).toBeEnabled();
+	await send.click();
 }
 
 export default async function globalTeardown(): Promise<void> {

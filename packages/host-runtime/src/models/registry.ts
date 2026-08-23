@@ -1,4 +1,4 @@
-import { and, asc, eq, or, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
 import {
@@ -36,12 +36,15 @@ export class ModelRegistry {
 			.map(toRecord);
 	}
 
-	enable(input: {
-		providerId: string;
-		modelId: string;
-		label: string;
-		supportsImages: boolean;
-	}): ModelRecord {
+	private upsert(
+		input: {
+			providerId: string;
+			modelId: string;
+			label: string;
+			supportsImages: boolean;
+		},
+		publish: boolean,
+	): ModelRecord {
 		this.db
 			.insert(configuredModels)
 			.values({
@@ -57,11 +60,32 @@ export class ModelRegistry {
 			.run();
 		const model = this.get(input.providerId, input.modelId);
 		if (!model) throw new Error("configured model was not persisted");
-		this.eventBus.publish("model.enabled", {
-			providerId: input.providerId,
-			modelId: input.modelId,
-		});
+		if (publish) {
+			this.eventBus.publish("model.enabled", {
+				providerId: input.providerId,
+				modelId: input.modelId,
+			});
+		}
 		return model;
+	}
+
+	/** Reproject an added Provider catalog without emitting a refresh-triggering event. */
+	sync(input: {
+		providerId: string;
+		modelId: string;
+		label: string;
+		supportsImages: boolean;
+	}): ModelRecord {
+		return this.upsert(input, false);
+	}
+
+	enable(input: {
+		providerId: string;
+		modelId: string;
+		label: string;
+		supportsImages: boolean;
+	}): ModelRecord {
+		return this.upsert(input, true);
 	}
 
 	disable(providerId: string, modelId: string): void {
@@ -235,8 +259,7 @@ export class ModelRegistry {
 
 	multimodalFallback(companionId: string): ModelRecord | undefined {
 		const vision = this.defaults(companionId).vision;
-		if (vision.mode === "manual") return vision.route;
-		return this.list().find((model) => model.supportsImages);
+		return vision.mode === "manual" ? vision.route : undefined;
 	}
 
 	selected(conversationId: string): ModelRecord | undefined {

@@ -3,7 +3,7 @@ import { Button } from "@kobalte/core/button";
 import { TextField } from "@kobalte/core/text-field";
 import { createMemo, For, Show } from "solid-js";
 import { useResultSpace } from "./features/ResultSpace.js";
-import { type CharacterDisplay, useCompanionStore } from "./stores/companion.js";
+import type { CharacterDisplay } from "./stores/companion.js";
 import { useShellWorkflowStore } from "./stores/shell-workflows.js";
 import type { Commission, RunInfo, RunPermissionRequest } from "./stores/ipc.js";
 
@@ -94,7 +94,7 @@ export function WorkRunCard(props: { commission: Commission; run: RunInfo; messa
 	const openResults = (event: MouseEvent) => {
 		const first = runArtifacts()[0];
 		if (!first || !resultSpace) return;
-		resultSpace.open({ conversationId: conversationId(), triggerMessageId: props.messageId, commissionId: props.commission.id, runId: props.run.id, artifactId: first.id }, event.currentTarget as HTMLButtonElement);
+		resultSpace.open({ conversationId: conversationId(), triggerEntryId: props.messageId, commissionId: props.commission.id, runId: props.run.id, artifactId: first.id }, event.currentTarget as HTMLButtonElement);
 	};
 	return (
 		<div class="action-proposal run-controls" data-run-status={props.run.status} data-result-open={isResultOpen() ? "" : undefined}>
@@ -110,9 +110,9 @@ export function WorkRunCard(props: { commission: Commission; run: RunInfo; messa
 	);
 }
 
-export function WorkTimelineItem(props: { messageId: string; character: CharacterDisplay | undefined }) {
+export function WorkTimelineItem(props: { messageId: string }) {
 	const workflow = useShellWorkflowStore();
-	const labels = createMemo(() => props.character?.character.work_presentation?.labels);
+	const labels = createMemo(() => workflow.character()?.character.work_presentation?.labels);
 	const messageCommissions = workflow.commissionsForMessage(props.messageId);
 	return <Show when={messageCommissions().length > 0}><div class="work-action-line" data-message-id={props.messageId}><For each={messageCommissions()}>{(commission) => <><Show when={commission.status === "draft" || commission.status === "approved"}><WorkProposalCard commission={commission} labels={labels()} /></Show><For each={workflow.runsForCommission(commission.id)()}>{(run) => <WorkRunCard commission={commission} run={run} messageId={props.messageId} labels={labels()} />}</For></>}</For></div></Show>;
 }

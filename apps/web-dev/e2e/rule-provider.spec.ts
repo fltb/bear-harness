@@ -1,14 +1,19 @@
 import { expect, type Page, test } from "playwright/test";
 import { getBootstrap } from "./helpers";
 
-interface SnapshotMessage {
+interface PiEntry {
 	id: string;
-	role: string;
-	versions: Array<{ content: string }>;
+	kind: string;
+	role?: string;
+	text?: string;
 }
 
-interface ConversationSnapshot {
-	conversation?: { messages?: SnapshotMessage[] };
+interface ConversationProjection {
+	conversation?: { piTimeline: { entries: PiEntry[] } };
+}
+
+async function activeProjection(page: Page, token: string): Promise<ConversationProjection> {
+	return rpc(page, token, "conversation.activeGet:v1", {});
 }
 
 async function rpc<T>(page: Page, token: string, channel: string, data: unknown): Promise<T> {
@@ -30,7 +35,7 @@ test("rule provider exercises send and edited-history regeneration deterministic
 		providerId: "e2e-rule",
 		name: "E2E Rule Provider",
 		baseUrl: `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/v1`,
-		modelId: "rule-model",
+		models: [{ id: "rule-model" }],
 	});
 	await rpc(page, bootstrap.token, "provider.setApiKey:v1", {
 		providerId: "e2e-rule",
@@ -56,32 +61,29 @@ test("rule provider exercises send and edited-history regeneration deterministic
 	});
 	await expect
 		.poll(async () => {
-			const snapshot = await rpc<ConversationSnapshot>(
-				page,
-				bootstrap.token,
-				"snapshot.get:v1",
-				{},
-			);
-			return snapshot.conversation?.messages?.at(-1)?.versions?.at(-1)?.content;
+			const projection = await activeProjection(page, bootstrap.token);
+			return projection.conversation?.piTimeline.entries
+				.filter((entry) => entry.kind === "message" && entry.role === "assistant")
+				.at(-1)?.text;
 		})
 		.toBe("我是 E2E Rule Provider。");
 
-	const snapshot = await rpc<ConversationSnapshot>(page, bootstrap.token, "snapshot.get:v1", {});
-	const userMessage = snapshot.conversation?.messages?.find((message) => message.role === "user");
-	if (!userMessage) throw new Error("rule provider snapshot has no user message");
+	const projection = await activeProjection(page, bootstrap.token);
+	const userEntry = projection.conversation?.piTimeline.entries.find(
+		(entry) => entry.kind === "message" && entry.role === "user" && entry.text === "你是谁？",
+	);
+	if (!userEntry) throw new Error("rule provider projection has no native user entry");
 	await rpc(page, bootstrap.token, "message.edit:v1", {
 		conversationId: conversation.id,
-		messageId: userMessage.id,
+		entryId: userEntry.id,
 		text: "规则：回复 EDITED_OK",
-		isUserMessage: true,
 	});
 	await expect
 		.poll(async () => {
-			const next = await rpc<ConversationSnapshot>(page, bootstrap.token, "snapshot.get:v1", {});
-			return next.conversation?.messages
-				?.filter((message) => message.role === "assistant")
-				.flatMap((message) => message.versions)
-				.map((version) => version.content);
+			const next = await activeProjection(page, bootstrap.token);
+			return next.conversation?.piTimeline.entries
+				.filter((entry) => entry.kind === "message" && entry.role === "assistant")
+				.map((entry) => entry.text);
 		})
 		.toContain("EDITED_OK");
 });
@@ -188,13 +190,10 @@ test("an image reader observes images while the selected text model produces the
 
 	await expect
 		.poll(async () => {
-			const snapshot = await rpc<ConversationSnapshot>(
-				page,
-				bootstrap.token,
-				"snapshot.get:v1",
-				{},
-			);
-			return snapshot.conversation?.messages?.at(-1)?.versions?.at(-1)?.content;
+			const projection = await activeProjection(page, bootstrap.token);
+			return projection.conversation?.piTimeline.entries
+				.filter((entry) => entry.kind === "message" && entry.role === "assistant")
+				.at(-1)?.text;
 		})
 		.toBe("MAIN_USED_VISUAL_OBSERVATION");
 });

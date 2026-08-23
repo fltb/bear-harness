@@ -80,9 +80,12 @@ describe("idle homepage (official config, no bridge)", () => {
 			screen.getByRole("button", { name: zhCN.sidebar.systemSettings, hidden: true }),
 		);
 		await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
-		const useModel = screen.getByRole("button", { name: zhCN.settings.addModel });
-		expect(useModel).toBeInstanceOf(HTMLButtonElement);
-		expect(useModel).toBeDisabled();
+		expect(
+			screen.getByRole("region", { name: zhCN.settings.providerSetupLabel }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: zhCN.settings.addModel }),
+		).not.toBeInTheDocument();
 	});
 
 	it("applies role theme tokens and warns without blocking on a language mismatch", async () => {

@@ -1,76 +1,26 @@
-/**
- * Turn pipeline — the Host-commanded conversation engine.
- *
- * User messages are written to the canonical DB first, then sent to the
- * Companion runtime. Assistant streaming writes bounded draft checkpoints;
- * after `message_end` the immutable final version is persisted. All of
- * send/abort/regenerate/continue/correct/branch/edit are Host commands that
- * can never modify approval, run, file, evidence, artifact, result, or
- * billing facts.
- *
- * Exactly one active turn per conversation. Regenerate creates a sibling
- * assistant version from the same user parent; switching versions never calls
- * the model. Only the adopted version enters later context.
- */
-
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
-import {
-	branches,
-	conversationDirectives,
-	conversations,
-	messages,
-	messageVersions,
-	turns,
-} from "../storage/schema.js";
-import type { PiSessionMessage } from "./pi-session-store.js";
-import type { CompanionSupervisor } from "./supervisor.js";
+import { conversationDirectives } from "../storage/schema.js";
+import type { CompanionSupervisor, PiSessionHandle } from "./supervisor.js";
 
-const REGENERATE_INSTRUCTION =
-	"请基于上面的对话重新生成对上一条用户消息的回复。直接自然地回答，不要提及重新生成或比较旧回复。";
-const CONTINUE_INSTRUCTION = "请继续上一条回复。不要重复已经说过的内容，直接接着完成。";
-const DEFAULT_FAILURE_REASON = "provider_request_failed";
-const SAFE_FAILURE_REASONS: Record<string, true> = {
-	companion_initialization_failed: true,
-	companion_unavailable: true,
-	provider_auth_required: true,
-	provider_request_failed: true,
-	multimodal_fallback_unavailable: true,
-	turn_dispatch_failed: true,
-};
+type PromptImages = NonNullable<Parameters<AgentSession["prompt"]>[1]>["images"];
+type NativeEntry = ReturnType<PiSessionHandle["sessionManager"]["getEntry"]>;
 
+type CommandError = { kind: string; reason: string };
+
+/** The accepted send receipt. The transcript itself is owned by Pi. */
 export interface TurnResult {
-	messageId: string;
-	versionId: string;
-	status: "completed" | "failed" | "aborted";
+	accepted: true;
+	sessionId: string;
 }
 
-export interface TurnPipelineSessionAppender {
-	appendMessage(message: PiSessionMessage): string;
-	appendUserMessage?(text: string, timestamp?: number): string;
-	appendSyntheticAssistant?(text: string): string;
-	findMessageEntry?(
-		role: "user" | "assistant",
-		content: string,
-		options?: { branchOnly?: boolean },
-	): { id: string; message: PiSessionMessage } | undefined;
-	getMessageEntry?(entryId: string): { id: string; message: PiSessionMessage } | undefined;
-	findParentUserEntry?(entryId: string): { id: string; message: PiSessionMessage } | undefined;
-	branchBefore?(entryId: string): void;
-	isEntryOnCurrentBranch?(entryId: string): boolean;
-
-	selectBranch?(leafId: string): void;
-	currentLeaf?: unknown;
-}
-
-/** Resolves the Pi session for a conversation without exposing Host history. */
-export interface TurnPipelineSessionResolver {
-	get(conversationId: string): TurnPipelineSessionAppender | undefined;
-}
-
-/** Settled-turn callback fed to the TdaiCore capture pipeline. */
+/**
+ * Kept as a source-compatible constructor option for the capture pipeline.
+ * TurnPipeline no longer invokes it: assistant/user text must be read from
+ * the native Pi projection by downstream consumers.
+ */
 export interface TurnCommittedSink {
 	onTurnCommitted?: (turn: {
 		conversationId: string;
@@ -80,881 +30,275 @@ export interface TurnCommittedSink {
 	}) => void;
 }
 
-export class TurnPipeline {
-	private db: AppDatabase;
-	private supervisor: CompanionSupervisor;
-	private eventBus: EventBus;
-	private readonly sessionResolver?: TurnPipelineSessionResolver;
-	private readonly onTurnCommitted?: TurnCommittedSink["onTurnCommitted"];
-	private activeTurns = new Map<
-		string,
-		{
-			userMessageId: string;
-			userText?: string;
-			startedAt?: number;
-			assistantMessageId?: string;
-			assistantVersionId?: string;
-		}
-	>();
-	private readonly unsubscribe: () => void;
+const CORRECT_PREFIX = "用户刚刚指出上一条回复的问题：";
+const NOTIFY_REASONS = ["message", "turn", "agent", "tool", "compaction", "queue"] as const;
+type NotifyReason = (typeof NOTIFY_REASONS)[number];
 
+function commandError(kind: string, reason: string): never {
+	throw { kind, reason } satisfies CommandError;
+}
+
+function isMessageEntry(entry: NativeEntry): entry is Extract<NonNullable<NativeEntry>, { type: "message" }> {
+	return Boolean(entry && entry.type === "message" && entry.message && typeof entry.message === "object");
+}
+
+function entryRole(entry: NativeEntry): string | undefined {
+	if (!isMessageEntry(entry)) return undefined;
+	return "role" in entry.message && typeof entry.message.role === "string" ? entry.message.role : undefined;
+}
+
+/**
+ * PiSessionCommands is the Host authorization adapter for message commands.
+ * SessionManager/AgentSession are the only transcript and branch authorities;
+ * this class deliberately has no message, version, branch, or turn writes.
+ */
+export class TurnPipeline {
+	private readonly db: AppDatabase;
+	private readonly supervisor: CompanionSupervisor;
+	private readonly eventBus: EventBus;
+	private readonly subscriptions = new Map<string, () => void>();
+	private readonly pendingNotifications = new Map<string, Set<NotifyReason>>();
+	private readonly notificationTasks = new Set<string>();
+
+	// The database is used only for durable product directives; transcript,
+	// branch, version, and turn tables are never touched by this adapter.
 	constructor(
 		db: AppDatabase,
 		supervisor: CompanionSupervisor,
 		eventBus: EventBus,
-		sessionResolver?: TurnPipelineSessionResolver,
-		sink?: TurnCommittedSink,
+		_sessionResolver?: unknown,
+		_sink?: TurnCommittedSink,
 	) {
 		this.db = db;
 		this.supervisor = supervisor;
 		this.eventBus = eventBus;
-		this.sessionResolver = sessionResolver;
-		this.onTurnCommitted = sink?.onTurnCommitted;
-		this.unsubscribe = eventBus.subscribe((event) => {
-			if (event.kind === "message_end") this.commitAssistantReply(event.payload);
-		});
 	}
 
 	dispose(): void {
-		this.unsubscribe();
+		for (const unsubscribe of this.subscriptions.values()) unsubscribe();
+		this.subscriptions.clear();
+		this.pendingNotifications.clear();
+		this.notificationTasks.clear();
 	}
 
-	/** Send a user message and start a companion turn. */
+	/** Send text through the long-lived AgentSession and return its preflight receipt. */
 	async sendUserMessage(
 		conversationId: string,
 		text: string,
 		attachments: Array<{ name: string; mime: string; base64: string }> = [],
 	): Promise<TurnResult> {
-		// One active turn per conversation
-		if (this.activeTurns.has(conversationId)) {
-			throw { kind: "conflict", reason: "turn_already_active" };
+		if (!this.supervisor.isRunning) commandError("unavailable", "companion_unavailable");
+		const session = await this.ensureSession(conversationId);
+		this.rejectIfStreaming(session);
+		if (!(await this.supervisor.selectModelForConversation(conversationId, session))) {
+			commandError("unavailable", "provider_auth_required");
 		}
-		if (!this.supervisor.isRunning) {
-			throw { kind: "unavailable", reason: "companion_unavailable" };
-		}
+		this.ensureSessionNotifications(conversationId, session);
 
-		// Write the user message transactionally FIRST
-		const messageId = randomUUID();
-		const versionId = randomUUID();
-		const branchRow = this.db
-			.select({ id: branches.id })
-			.from(branches)
-			.where(and(eq(branches.conversationId, conversationId), eq(branches.adopted, 1)))
-			.orderBy(desc(branches.createdAt))
-			.limit(1)
-			.get();
-		const branchId = branchRow?.id ?? conversationId;
-
-		try {
-			this.db.transaction((transaction) => {
-				transaction
-					.insert(messages)
-					.values({ id: messageId, conversationId, branchId, role: "user" })
-					.run();
-				transaction
-					.insert(messageVersions)
-					.values({ id: versionId, messageId, content: text, editedByUser: 0, adopted: 1 })
-					.run();
-				transaction
-					.update(conversations)
-					.set({ updatedAt: new Date().toISOString() })
-					.where(eq(conversations.id, conversationId))
-					.run();
-			});
-		} catch (e) {
-			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
-		}
-
-		this.activeTurns.set(conversationId, {
-			userMessageId: messageId,
-			userText: text,
-			startedAt: Date.now(),
-		});
-		this.eventBus.publish("message.user_sent", { conversationId, messageId, versionId, text });
-
-		// Send to the Companion runtime (fire-and-forget via postMessage);
-		// the runtime streams `message_start` / `message_update` /
-		// `message_end` events (M2 async receipt path).
-		this.supervisor.sendCommand({
-			type: "prompt",
+		const images = attachments.map((attachment) => ({
+			type: "image" as const,
+			data: attachment.base64,
+			mimeType: attachment.mime,
+		}));
+		// Host owns model/context/image injection; Pi owns every resulting
+		// native entry. The route was authenticated above, so dispatch is
+		// accepted and later Pi failures arrive through its live projection.
+		this.supervisor.promptConversation(
 			conversationId,
-			triggerMessageId: messageId,
-			message: text,
-			images: attachments.map((attachment) => ({
-				type: "image" as const,
-				data: attachment.base64,
-				mimeType: attachment.mime,
-			})),
-			streamingBehavior: "followUp",
-		});
-
-		return { messageId, versionId, status: "completed" };
+			text,
+			images.length > 0 ? (images as PromptImages) : undefined,
+		);
+		this.publishChanged(conversationId, session, "message");
+		return { accepted: true, sessionId: session.sessionId };
 	}
 
-	/** Abort the active turn for a conversation. */
+	/** Abort is idempotent and never creates a missing live session. */
 	async abort(conversationId: string): Promise<void> {
-		if (!this.activeTurns.has(conversationId)) return;
-		this.supervisor.sendCommand({ type: "abort", conversationId });
-		this.activeTurns.delete(conversationId);
-		this.eventBus.publish("message.aborted", { conversationId });
+		const session = this.liveSession(conversationId);
+		if (!session || session.isIdle) return;
+		await session.abort();
 	}
 
-	/** Regenerate: create a sibling assistant version from the same user parent. */
-	async regenerate(conversationId: string, messageId: string): Promise<TurnResult> {
-		const session = this.sessionResolver?.get(conversationId);
-		const piTarget =
-			session?.getMessageEntry?.(messageId) ??
-			(session ? this.findHostMessageEntry(conversationId, messageId, "assistant") : undefined);
-		if (
-			piTarget &&
-			session?.isEntryOnCurrentBranch &&
-			!session.isEntryOnCurrentBranch(piTarget.id)
-		) {
-			throw { kind: "conflict", reason: "message_not_current_branch" };
-		}
-
-		const row = piTarget
-			? { id: messageId, role: piTarget.message.role }
-			: this.db
-					.select({ id: messages.id, role: messages.role })
-					.from(messages)
-					.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
-					.get();
-		if (!row) throw { kind: "not_found", reason: "message_not_found" };
-
-		if (this.activeTurns.has(conversationId)) {
-			throw { kind: "conflict", reason: "turn_already_active" };
-		}
-		if (row.role !== "assistant") {
-			throw { kind: "conflict", reason: "assistant_message_required" };
-		}
-		const targetText = piTarget ? assistantMessageText(piTarget.message) : undefined;
-		const hostAssistantId =
-			piTarget && targetText
-				? (this.findCanonicalHostMessageId(conversationId, messageId, "assistant") ??
-					this.findHostMessageId(conversationId, "assistant", targetText) ??
-					this.ensureHostMessage(conversationId, "assistant", targetText))
-				: messageId;
-		const piParent = piTarget ? session?.findParentUserEntry?.(piTarget.id) : undefined;
-		const parent = piTarget
-			? piParent
-				? {
-						id:
-							this.findHostMessageId(conversationId, "user", piEntryText(piParent.message)) ??
-							this.ensureHostMessage(conversationId, "user", piEntryText(piParent.message)),
-					}
-				: undefined
-			: this.db
-					.select({ id: turns.userMessageId })
-					.from(turns)
-					.where(
-						and(eq(turns.conversationId, conversationId), eq(turns.assistantMessageId, messageId)),
-					)
-					.orderBy(desc(turns.createdAt))
-					.limit(1)
-					.get();
-		if (!parent) throw { kind: "not_found", reason: "parent_message_not_found" };
-		const assistantVersion = this.db
-			.select({ content: messageVersions.content })
-			.from(messageVersions)
-			.where(and(eq(messageVersions.messageId, hostAssistantId), eq(messageVersions.adopted, 1)))
-			.limit(1)
-			.get();
-		if (session && piTarget && session.branchBefore) session.branchBefore(piTarget.id);
-		else if (session && assistantVersion?.content !== undefined) {
-			const piAssistant =
-				session.findMessageEntry?.("assistant", assistantVersion.content, { branchOnly: true }) ??
-				session.findMessageEntry?.("assistant", assistantVersion.content);
-			if (piAssistant && session.branchBefore) session.branchBefore(piAssistant.id);
-		}
-		// Create a sibling assistant version, then actually ask the model again.
-		const newVersionId = randomUUID();
-		this.db.transaction((transaction) => {
-			transaction
-				.update(messageVersions)
-				.set({ adopted: 0 })
-				.where(eq(messageVersions.messageId, hostAssistantId))
-				.run();
-			transaction
-				.insert(messageVersions)
-				.values({
-					id: newVersionId,
-					messageId: hostAssistantId,
-					content: "",
-					editedByUser: 0,
-					adopted: 1,
-				})
-				.run();
-		});
-		this.eventBus.publish("message.regenerated", {
-			conversationId,
-			messageId,
-			versionId: newVersionId,
-		});
-		this.activeTurns.set(conversationId, {
-			userMessageId: parent.id,
-			assistantMessageId: hostAssistantId,
-			assistantVersionId: newVersionId,
-		});
-		this.supervisor.sendCommand({
-			type: "prompt",
-			triggerMessageId: parent.id,
-			conversationId,
-			message: REGENERATE_INSTRUCTION,
-		});
-		return { messageId, versionId: newVersionId, status: "completed" };
+	/** Regenerate an assistant entry by branching before its native entry. */
+	async regenerate(conversationId: string, entryId: string): Promise<void> {
+		const session = this.commandSession(conversationId);
+		this.rejectIfStreaming(session);
+		const entry = this.requireCurrentEntry(session, entryId);
+		if (entryRole(entry) !== "assistant") commandError("invalid_request", "message_regenerate_assistant_only");
+		this.branchBefore(session, entryId);
+		session.reloadFromSessionManager();
+		this.ensureSessionNotifications(conversationId, session);
+		this.publishChanged(conversationId, session, "message");
+		this.runInBackground(session.continue(), "Pi regenerate failed");
 	}
 
-	/** Switch the adopted version of a message (no model call). */
-	async switchVersion(conversationId: string, messageId: string, versionId: string): Promise<void> {
-		const session = this.sessionResolver?.get(conversationId);
-		const piTarget = session?.getMessageEntry?.(messageId);
-		if (
-			piTarget &&
-			session?.isEntryOnCurrentBranch &&
-			!session.isEntryOnCurrentBranch(piTarget.id)
-		) {
-			throw { kind: "conflict", reason: "message_not_current_branch" };
-		}
-
-		if (piTarget) {
-			if (versionId !== `${messageId}-v1`) {
-				throw { kind: "not_found", reason: "version_not_found" };
-			}
-			session?.selectBranch?.(messageId);
-			this.eventBus.publish("message.version_switched", { conversationId, messageId, versionId });
-			return;
-		}
-		const exists = this.db
-			.select({ id: messageVersions.id })
-			.from(messageVersions)
-			.where(and(eq(messageVersions.id, versionId), eq(messageVersions.messageId, messageId)))
-			.get();
-		if (!exists) throw { kind: "not_found", reason: "version_not_found" };
-		const version = this.db
-			.select({ content: messageVersions.content })
-			.from(messageVersions)
-			.where(eq(messageVersions.id, versionId))
-			.get();
-		const message = this.db
-			.select({ role: messages.role })
-			.from(messages)
-			.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
-			.get();
-
-		try {
-			this.db.transaction((transaction) => {
-				transaction
-					.update(messageVersions)
-					.set({ adopted: 0 })
-					.where(eq(messageVersions.messageId, messageId))
-					.run();
-				transaction
-					.update(messageVersions)
-					.set({ adopted: 1 })
-					.where(eq(messageVersions.id, versionId))
-					.run();
-			});
-		} catch (e) {
-			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
-		}
-		if (
-			session &&
-			version?.content !== undefined &&
-			(message?.role === "user" || message?.role === "assistant")
-		) {
-			const entry = session.findMessageEntry?.(message.role, version.content);
-			if (entry && session.selectBranch) session.selectBranch(entry.id);
-		}
-		this.eventBus.publish("message.version_switched", { conversationId, messageId, versionId });
+	/** Select a native Pi leaf; no model call is made. */
+	async switchVersion(conversationId: string, leafId: string): Promise<void> {
+		const session = this.commandSession(conversationId);
+		this.rejectIfStreaming(session);
+		this.requireEntry(session, leafId);
+		session.sessionManager.branch(leafId);
+		session.reloadFromSessionManager();
+		this.ensureSessionNotifications(conversationId, session);
+		this.publishChanged(conversationId, session, "message");
 	}
 
-	/** Edit a message (assistant → new version marked edited_by_user; user → new branch). */
-	async edit(
-		conversationId: string,
-		messageId: string,
-		text: string,
-		isUserMessage: boolean,
-	): Promise<void> {
-		if (isUserMessage && this.activeTurns.has(conversationId)) {
-			throw { kind: "conflict", reason: "turn_already_active" };
+	/** Edit is deliberately user-only and uses AgentSession.navigateTree(). */
+	async edit(conversationId: string, entryId: string, text: string, _isUserMessage = true): Promise<void> {
+		const session = this.commandSession(conversationId);
+		this.rejectIfStreaming(session);
+		const entry = this.requireCurrentEntry(session, entryId);
+		if (entryRole(entry) !== "user") commandError("invalid_request", "message_edit_user_only");
+		const result = await session.agentSession.navigateTree(entryId, { summarize: false });
+		if (result.cancelled || result.editorText === undefined) {
+			commandError("invalid_request", "message_edit_user_only");
 		}
-		if (isUserMessage && !this.supervisor.isRunning) {
-			throw { kind: "unavailable", reason: "companion_unavailable" };
-		}
-		const session = this.sessionResolver?.get(conversationId);
-		const piSource = session?.getMessageEntry?.(messageId);
-		if (
-			piSource &&
-			session?.isEntryOnCurrentBranch &&
-			!session.isEntryOnCurrentBranch(piSource.id)
-		) {
-			throw { kind: "conflict", reason: "message_not_current_branch" };
-		}
-
-		// The UI may report a Host SQLite message id for a migrated user row;
-		// the source entry was not rewritten in place, so resolve its current
-		// Pi entry by the adopted content when the Pi entry ids are opaque.
-		const resolvedPi =
-			piSource ??
-			(session
-				? isUserMessage
-					? this.findHostMessageEntry(conversationId, messageId, "user")
-					: this.findHostMessageEntry(conversationId, messageId, "assistant")
-				: undefined);
-		const dbRole = this.db
-			.select({ role: messages.role })
-			.from(messages)
-			.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
-			.get();
-		const role = resolvedPi?.message.role ?? dbRole?.role;
-		if (!role) throw { kind: "not_found", reason: "message_not_found" };
-		if (role !== "user" && role !== "assistant")
-			throw { kind: "not_found", reason: "message_not_found" };
-		const sourceText = resolvedPi ? piEntryText(resolvedPi.message) : undefined;
-		const hostMessageId =
-			resolvedPi && sourceText
-				? (this.findHostMessageId(conversationId, role, sourceText) ??
-					this.ensureHostMessage(conversationId, role, sourceText))
-				: messageId;
-		const newVersionId = randomUUID();
-		try {
-			this.db.transaction((transaction) => {
-				if (isUserMessage) {
-					// Editing a user message creates a new branch from this point
-					const branchId = randomUUID();
-					transaction
-						.insert(branches)
-						.values({
-							id: branchId,
-							conversationId,
-							forkMessageId: hostMessageId,
-							label: "edited",
-							adopted: 1,
-						})
-						.run();
-					transaction
-						.update(branches)
-						.set({ adopted: 0 })
-						.where(and(eq(branches.conversationId, conversationId), ne(branches.id, branchId)))
-						.run();
-				}
-				transaction
-					.insert(messageVersions)
-					.values({
-						id: newVersionId,
-						messageId: hostMessageId,
-						content: text,
-						editedByUser: 1,
-						adopted: 1,
-					})
-					.run();
-				transaction
-					.update(messageVersions)
-					.set({ adopted: 0 })
-					.where(
-						and(eq(messageVersions.messageId, hostMessageId), ne(messageVersions.id, newVersionId)),
-					)
-					.run();
-			});
-		} catch (e) {
-			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
-		}
-		if (session && resolvedPi) {
-			if (isUserMessage) {
-				session.branchBefore?.(resolvedPi.id);
-				session.appendUserMessage?.(text);
-			} else {
-				session.branchBefore?.(resolvedPi.id);
-				session.appendSyntheticAssistant?.(text);
-			}
-		}
-		this.eventBus.publish("message.edited", {
-			conversationId,
-			messageId,
-			versionId: newVersionId,
-			editedByUser: true,
-		});
-		if (isUserMessage) {
-			this.activeTurns.set(conversationId, { userMessageId: hostMessageId });
-			this.supervisor.sendCommand({
-				type: "prompt",
-				triggerMessageId: hostMessageId,
-				conversationId,
-				message: text,
-				streamingBehavior: "followUp",
-			});
-		}
+		// The RPC text is the authoritative edited value; navigateTree's editorText
+		// is required by the public API to establish the native user branch.
+		const editedText = text || result.editorText;
+		session.reloadFromSessionManager();
+		this.ensureSessionNotifications(conversationId, session);
+		this.publishChanged(conversationId, session, "message");
+		this.runInBackground(session.agentSession.sendUserMessage(editedText), "Pi edit failed");
 	}
 
-	/** Continue the last assistant message. */
+	/** Continue via the same Agent core; no second AgentSession is created. */
 	async continue(conversationId: string): Promise<void> {
-		if (!this.supervisor.isRunning) {
-			throw { kind: "unavailable", reason: "companion_unavailable" };
-		}
-		if (this.activeTurns.has(conversationId)) {
-			throw { kind: "conflict", reason: "turn_already_active" };
-		}
-		const userMessageId = this.latestTurnUserMessageId(conversationId);
-		if (!userMessageId) throw { kind: "not_found", reason: "previous_turn_not_found" };
-		this.activeTurns.set(conversationId, { userMessageId });
-		this.supervisor.sendCommand({
-			type: "prompt",
-			triggerMessageId: userMessageId,
-			conversationId,
-			message: CONTINUE_INSTRUCTION,
-		});
-		this.eventBus.publish("message.continued", { conversationId });
+		const session = this.commandSession(conversationId);
+		this.rejectIfStreaming(session);
+		this.ensureSessionNotifications(conversationId, session);
+		this.publishChanged(conversationId, session, "message");
+		this.runInBackground(session.continue(), "Pi continue failed");
 	}
 
-	/** Correct the response with a user-visible instruction and persist the revised turn. */
+	/** Persist a product directive, then send the correction through Pi. */
 	async correct(
 		conversationId: string,
 		reason: string,
 		applyScope: "once" | "session" | "always",
 	): Promise<void> {
-		if (!this.supervisor.isRunning) {
-			throw { kind: "unavailable", reason: "companion_unavailable" };
-		}
-		if (this.activeTurns.has(conversationId)) {
-			throw { kind: "conflict", reason: "turn_already_active" };
-		}
-		const userMessageId = this.latestTurnUserMessageId(conversationId);
-		if (!userMessageId) throw { kind: "not_found", reason: "previous_turn_not_found" };
-		this.db
-			.insert(conversationDirectives)
-			.values({ id: randomUUID(), conversationId, directive: reason, scope: applyScope })
-			.run();
-		this.activeTurns.set(conversationId, { userMessageId });
-		this.supervisor.sendCommand({
-			type: "prompt",
-			triggerMessageId: userMessageId,
+		const session = this.commandSession(conversationId);
+		this.rejectIfStreaming(session);
+		this.db.insert(conversationDirectives).values({
+			id: randomUUID(),
 			conversationId,
-			message: `用户刚刚指出上一条回复的问题：“${reason}”。请据此重写回应，直接给出修正后的内容，不要提及这条校正指令。`,
-		});
-		this.eventBus.publish("message.corrected", { conversationId, reason, applyScope });
+			directive: reason,
+			scope: applyScope,
+		}).run();
+		this.ensureSessionNotifications(conversationId, session);
+		this.publishChanged(conversationId, session, "message");
+		const instruction = `${CORRECT_PREFIX}“${reason}”。请据此重写回应，直接给出修正后的内容，不要提及这条校正指令。`;
+		this.runInBackground(session.agentSession.sendUserMessage(instruction), "Pi correction failed");
 	}
 
-	/** Create a narrative branch at a specified message. */
-	async branch(conversationId: string, messageId: string): Promise<string> {
-		const branchId = randomUUID();
-		const session = this.sessionResolver?.get(conversationId);
-		const piSource = session?.getMessageEntry?.(messageId);
-		if (
-			piSource &&
-			session?.isEntryOnCurrentBranch &&
-			!session.isEntryOnCurrentBranch(piSource.id)
-		) {
-			throw { kind: "conflict", reason: "message_not_current_branch" };
-		}
-
-		// Resolve the Pi branch entry by adopted content when the caller passed
-		// a Host SQLite message id; without a Pi session, fall back to the
-		// legacy Host-only branch row.
-		const resolvedPi =
-			piSource ??
-			(session
-				? (this.findHostMessageEntry(conversationId, messageId, "assistant") ??
-					this.findHostMessageEntry(conversationId, messageId, "user"))
-				: undefined);
-		const dbRole = this.db
-			.select({ role: messages.role })
-			.from(messages)
-			.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
-			.get();
-		const role = resolvedPi?.message.role ?? dbRole?.role;
-		if (!role) throw { kind: "not_found", reason: "message_not_found" };
-		if (role !== "user" && role !== "assistant")
-			throw { kind: "not_found", reason: "message_not_found" };
-		const sourceText = resolvedPi ? piEntryText(resolvedPi.message) : undefined;
-		const hostMessageId =
-			resolvedPi && sourceText
-				? (this.findHostMessageId(conversationId, role, sourceText) ??
-					this.ensureHostMessage(conversationId, role, sourceText))
-				: messageId;
-		try {
-			this.db.transaction((transaction) => {
-				transaction
-					.insert(branches)
-					.values({
-						id: branchId,
-						conversationId,
-						forkMessageId: hostMessageId,
-						label: "branch",
-						adopted: 1,
-					})
-					.run();
-				transaction
-					.update(branches)
-					.set({ adopted: 0 })
-					.where(and(eq(branches.conversationId, conversationId), ne(branches.id, branchId)))
-					.run();
-			});
-		} catch (e) {
-			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
-		}
-		if (resolvedPi && session?.selectBranch) session.selectBranch(resolvedPi.id);
-		this.eventBus.publish("conversation.branched", { conversationId, messageId, branchId });
-		return branchId;
+	/** Create/select a native branch and return its native leaf ID. */
+	async branch(conversationId: string, entryId: string): Promise<{ leafId: string }> {
+		const session = this.commandSession(conversationId);
+		this.rejectIfStreaming(session);
+		this.requireCurrentEntry(session, entryId);
+		session.sessionManager.branch(entryId);
+		session.reloadFromSessionManager();
+		this.ensureSessionNotifications(conversationId, session);
+		this.publishChanged(conversationId, session, "message");
+		const leafId = session.sessionManager.getLeafId();
+		if (!leafId) commandError("internal", "pi_branch_leaf_missing");
+		return { leafId };
 	}
 
-	/** True if a conversation has an active turn. */
 	hasActiveTurn(conversationId: string): boolean {
-		return this.activeTurns.has(conversationId);
-	}
-	private latestTurnUserMessageId(conversationId: string): string | undefined {
-		return this.db
-			.select({ userMessageId: turns.userMessageId })
-			.from(turns)
-			.where(and(eq(turns.conversationId, conversationId), eq(turns.status, "completed")))
-			.orderBy(desc(turns.createdAt), desc(turns.id))
-			.limit(1)
-			.get()?.userMessageId;
+		const session = this.liveSession(conversationId);
+		return Boolean(session && (session.isStreaming || session.agentSession.pendingMessageCount > 0));
 	}
 
-	private findHostMessageId(
-		conversationId: string,
-		role: "user" | "assistant",
-		content: string,
-	): string | undefined {
-		const candidates = this.db
-			.select({ id: messages.id, branchId: messages.branchId })
-			.from(messages)
-			.innerJoin(messageVersions, eq(messageVersions.messageId, messages.id))
-			.where(
-				and(
-					eq(messages.conversationId, conversationId),
-					eq(messages.role, role),
-					eq(messageVersions.content, content),
-					eq(messageVersions.adopted, 1),
-				),
-			)
-			.orderBy(sql`messages.rowid desc`)
-			.all();
-		for (const candidate of candidates) {
-			if (
-				this.isHostMessageVisibleOnActiveBranch(conversationId, candidate.branchId, candidate.id)
-			) {
-				return candidate.id;
-			}
-		}
-		return undefined;
-	}
 
-	private findCanonicalHostMessageId(
-		conversationId: string,
-		messageId: string,
-		role: "user" | "assistant",
-	): string | undefined {
-		return this.db
-			.select({ id: messages.id })
-			.from(messages)
-			.where(
-				and(
-					eq(messages.id, messageId),
-					eq(messages.conversationId, conversationId),
-					eq(messages.role, role),
-				),
-			)
-			.get()?.id;
-	}
-
-	private isHostMessageVisibleOnActiveBranch(
-		conversationId: string,
-		branchId: string,
-		messageId: string,
-	): boolean {
-		const active = this.db
-			.select({ id: branches.id, forkMessageId: branches.forkMessageId })
-			.from(branches)
-			.where(and(eq(branches.conversationId, conversationId), eq(branches.adopted, 1)))
-			.orderBy(desc(branches.createdAt))
-			.limit(1)
-			.get();
-		if (!active) return false;
-		if (active.id === branchId) return true;
-		if (!active.forkMessageId) return false;
-		const fork = this.db
-			.select({ rowId: sql<number>`messages.rowid` })
-			.from(messages)
-			.where(
-				and(eq(messages.id, active.forkMessageId), eq(messages.conversationId, conversationId)),
-			)
-			.get();
-		const candidate = this.db
-			.select({ rowId: sql<number>`messages.rowid` })
-			.from(messages)
-			.where(and(eq(messages.id, messageId), eq(messages.conversationId, conversationId)))
-			.get();
-		return Boolean(fork && candidate && candidate.rowId <= fork.rowId);
-	}
-
-	/**
-	 * Resolve the Pi branch entry standing in for a Host SQLite message id.
-	 *
-	 * The product UI reports Host message ids while the SessionManager tree is
-	 * keyed by its own entry ids; the projection table never rewrites entries in
-	 * place. When the caller did not pass a Pi entry id, locate the current
-	 * entry whose adopted content is the given message's adopted version.
-	 */
-	private findHostMessageEntry(
-		conversationId: string,
-		messageId: string,
-		role: "user" | "assistant",
-	): { id: string; message: PiSessionMessage } | undefined {
-		const version = this.db
-			.select({ content: messageVersions.content })
-			.from(messageVersions)
-			.where(and(eq(messageVersions.messageId, messageId), eq(messageVersions.adopted, 1)))
-			.limit(1)
-			.get();
-		if (version?.content === undefined) return undefined;
-		const session = this.sessionResolver?.get(conversationId);
-		return session?.findMessageEntry?.(role, version.content, { branchOnly: true });
-	}
-
-	/** Materialize a minimal Host message row so Pi entry IDs never reach SQLite identifiers. */
-	private ensureHostMessage(
-		conversationId: string,
-		role: "user" | "assistant",
-		content: string,
-	): string {
-		const matches = this.db
-			.select({ id: messages.id })
-			.from(messages)
-			.innerJoin(messageVersions, eq(messageVersions.messageId, messages.id))
-			.where(
-				and(
-					eq(messages.conversationId, conversationId),
-					eq(messages.role, role),
-					eq(messageVersions.content, content),
-				),
-			)
-			.orderBy(sql`messages.rowid desc`)
-			.limit(1)
-			.get()?.id;
-		if (matches) return matches;
-		const branch = this.db
-			.select({ id: branches.id })
-			.from(branches)
-			.where(and(eq(branches.conversationId, conversationId), eq(branches.adopted, 1)))
-			.orderBy(desc(branches.createdAt))
-			.limit(1)
-			.get();
-		const branchId = branch?.id ?? conversationId;
-		const messageId = randomUUID();
-		const versionId = randomUUID();
-		this.db.transaction((transaction) => {
-			transaction.insert(messages).values({ id: messageId, conversationId, branchId, role }).run();
-			transaction
-				.insert(messageVersions)
-				.values({ id: versionId, messageId, content, editedByUser: 0, adopted: 1 })
-				.run();
-		});
-		return messageId;
-	}
-
-	private commitAssistantReply(payload: unknown): void {
-		if (!payload || typeof payload !== "object" || !("conversationId" in payload)) return;
-		const conversationId = payload.conversationId;
-		if (typeof conversationId !== "string") return;
-		const active = this.activeTurns.get(conversationId);
-		if (!active) return;
-		let text = "text" in payload && typeof payload.text === "string" ? payload.text.trim() : "";
-		const failed = "failed" in payload && payload.failed === true;
-		const candidateReason =
-			"reason" in payload && typeof payload.reason === "string" ? payload.reason : undefined;
-		const failureReason =
-			candidateReason && SAFE_FAILURE_REASONS[candidateReason]
-				? candidateReason
-				: DEFAULT_FAILURE_REASON;
-		if (failed && !text) {
-			text = `回复没有完成（原因：${failureReason}）。你可以稍后重试，或换一个模型服务。`;
-		}
-		const assistantMessageId = active.assistantMessageId ?? randomUUID();
-		const piAssistant = "message" in payload ? asAssistantPiMessage(payload.message) : undefined;
-		const assistantVersionId = active.assistantVersionId ?? randomUUID();
-		const session = this.sessionResolver?.get(conversationId);
-		if (session) projectAssistantEntry(session, piAssistant, text);
-
-		const branch = this.db
-			.select({ id: branches.id })
-			.from(branches)
-			.where(and(eq(branches.conversationId, conversationId), eq(branches.adopted, 1)))
-			.orderBy(desc(branches.createdAt))
-			.limit(1)
-			.get();
-		if (!branch) return;
-
+	private async ensureSession(conversationId: string): Promise<PiSessionHandle> {
 		try {
-			this.db.transaction((transaction) => {
-				if (!active.assistantMessageId) {
-					transaction
-						.insert(messages)
-						.values({
-							id: assistantMessageId,
-							conversationId,
-							branchId: branch.id,
-							role: "assistant",
-						})
-						.run();
-					transaction
-						.insert(messageVersions)
-						.values({
-							id: assistantVersionId,
-							messageId: assistantMessageId,
-							content: text,
-							editedByUser: 0,
-							adopted: 1,
-						})
-						.run();
-				} else {
-					transaction
-						.update(messageVersions)
-						.set({ content: text })
-						.where(
-							and(
-								eq(messageVersions.id, assistantVersionId),
-								eq(messageVersions.messageId, assistantMessageId),
-							),
-						)
-						.run();
-				}
-				transaction
-					.insert(turns)
-					.values({
-						id: randomUUID(),
-						conversationId,
-						userMessageId: active.userMessageId,
-						assistantMessageId,
-						status: failed ? "failed" : "completed",
-					})
-					.run();
-				transaction
-					.update(conversations)
-					.set({ updatedAt: new Date().toISOString() })
-					.where(eq(conversations.id, conversationId))
-					.run();
-			});
-		} catch (error) {
-			this.activeTurns.delete(conversationId);
-			throw error;
+			return await this.supervisor.ensureSession(conversationId);
+		} catch {
+			commandError("unavailable", "conversation_pi_session_missing");
 		}
-		this.activeTurns.delete(conversationId);
-		this.eventBus.publish("message.assistant_committed", {
-			conversationId,
-			messageId: assistantMessageId,
-			versionId: assistantVersionId,
-			failed,
-			status: failed ? "failed" : "completed",
-			...(failed ? { reason: failureReason } : {}),
+	}
+
+	private liveSession(conversationId: string): PiSessionHandle | undefined {
+		return this.supervisor.getLiveSessionResolver().get(conversationId);
+	}
+
+	private commandSession(conversationId: string): PiSessionHandle {
+		const session = this.liveSession(conversationId);
+		if (!session) commandError("unavailable", "conversation_pi_session_missing");
+		return session;
+	}
+
+	private rejectIfStreaming(session: PiSessionHandle): void {
+		if (session.isStreaming || session.agentSession.pendingMessageCount > 0) {
+			commandError("conflict", "session_streaming");
+		}
+	}
+
+	private requireEntry(session: PiSessionHandle, entryId: string): NonNullable<NativeEntry> {
+		const entry = session.sessionManager.getEntry(entryId);
+		if (!entry) commandError("not_found", "message_entry_not_found");
+		return entry;
+	}
+
+	private requireCurrentEntry(session: PiSessionHandle, entryId: string): NonNullable<NativeEntry> {
+		const entry = this.requireEntry(session, entryId);
+		if (!session.sessionManager.getBranch().some((candidate) => candidate.id === entryId)) {
+			commandError("conflict", "message_not_current_branch");
+		}
+		return entry;
+	}
+
+	private branchBefore(session: PiSessionHandle, entryId: string): void {
+		const branch = session.sessionManager.getBranch(entryId);
+		if (branch.length === 0 || branch.at(-1)?.id !== entryId) {
+			commandError("conflict", "message_not_current_branch");
+		}
+		const parent = branch.at(-2);
+		if (parent) session.sessionManager.branch(parent.id);
+		else session.sessionManager.resetLeaf();
+	}
+
+	private runInBackground(task: Promise<void>, label: string): void {
+		void task.catch((error) => console.warn(label, error));
+	}
+
+	private ensureSessionNotifications(conversationId: string, session: PiSessionHandle): void {
+		if (this.subscriptions.has(conversationId)) return;
+		const unsubscribe = session.subscribe((event) => {
+			const reason = eventReason(event.type);
+			if (reason) this.scheduleChanged(conversationId, session.sessionId, reason);
 		});
-		this.onTurnCommitted?.({
-			conversationId,
-			userText: active.userText ?? "",
-			assistantText: text,
-			startedAt: active.startedAt,
+		this.subscriptions.set(conversationId, unsubscribe);
+	}
+
+	private scheduleChanged(conversationId: string, sessionId: string, reason: NotifyReason): void {
+		const pending = this.pendingNotifications.get(conversationId) ?? new Set<NotifyReason>();
+		pending.add(reason);
+		this.pendingNotifications.set(conversationId, pending);
+		if (this.notificationTasks.has(conversationId)) return;
+		this.notificationTasks.add(conversationId);
+		queueMicrotask(() => {
+			this.notificationTasks.delete(conversationId);
+			const reasons = this.pendingNotifications.get(conversationId);
+			this.pendingNotifications.delete(conversationId);
+			if (!reasons || reasons.size === 0) return;
+			const selected = NOTIFY_REASONS.find((candidate) => reasons.has(candidate)) ?? "message";
+			this.eventBus.publish("pi.session.changed", { conversationId, sessionId, reason: selected });
 		});
 	}
-}
 
-function isAssistantLeaf(value: unknown, text?: string): boolean {
-	if (!value || typeof value !== "object") return false;
-	const candidate = value as { type?: unknown; message?: unknown };
-	if (candidate.type !== "message" || !isAssistantMessage(candidate.message)) return false;
-	return text === undefined || assistantMessageText(candidate.message) === text;
-}
-
-function isAssistantMessage(value: unknown): value is PiSessionMessage {
-	return Boolean(
-		value && typeof value === "object" && "role" in value && value.role === "assistant",
-	);
-}
-
-function assistantMessageText(message: PiSessionMessage): string {
-	if (typeof message.content === "string") return message.content.trim();
-	if (!Array.isArray(message.content)) return "";
-	return message.content
-		.filter((part): part is { type: "text"; text: string } =>
-			Boolean(
-				part &&
-					typeof part === "object" &&
-					"type" in part &&
-					part.type === "text" &&
-					"text" in part &&
-					typeof part.text === "string",
-			),
-		)
-		.map((part) => part.text)
-		.join("")
-		.trim();
-}
-const HOST_CONTEXT_PREFIX = "<host_context>\n";
-const HOST_CONTEXT_SEPARATOR = "\n</host_context>\n\n<current_user_message>\n";
-const CURRENT_USER_MESSAGE_SUFFIX = "\n</current_user_message>";
-
-function piEntryText(message: PiSessionMessage): string {
-	if (message.role === "assistant") return assistantMessageText(message);
-	const content =
-		typeof message.content === "string"
-			? message.content
-			: Array.isArray(message.content)
-				? message.content
-						.map((part) => {
-							if (
-								!part ||
-								typeof part !== "object" ||
-								!("type" in part) ||
-								!("text" in part) ||
-								part.type !== "text" ||
-								typeof part.text !== "string"
-							) {
-								return "";
-							}
-							return part.text;
-						})
-						.filter(Boolean)
-						.join("\n")
-				: "";
-	if (message.role === "user") {
-		const projected = extractPiCurrentUserMessage(content);
-		if (projected !== undefined) return projected;
+	private publishChanged(conversationId: string, session: PiSessionHandle, reason: NotifyReason): void {
+		this.scheduleChanged(conversationId, session.sessionId, reason);
 	}
-	return content.trim();
 }
 
-function extractPiCurrentUserMessage(content: string): string | undefined {
-	if (!content.startsWith(HOST_CONTEXT_PREFIX) || !content.endsWith(CURRENT_USER_MESSAGE_SUFFIX)) {
-		return undefined;
-	}
-	const separatorIndex = content.indexOf(HOST_CONTEXT_SEPARATOR, HOST_CONTEXT_PREFIX.length);
-	if (separatorIndex <= HOST_CONTEXT_PREFIX.length) return undefined;
-	return content.slice(
-		separatorIndex + HOST_CONTEXT_SEPARATOR.length,
-		-CURRENT_USER_MESSAGE_SUFFIX.length,
-	);
-}
-
-function projectAssistantEntry(
-	session: TurnPipelineSessionAppender,
-	message: PiSessionMessage | undefined,
-	text: string,
-): void {
-	if (isAssistantLeaf(session.currentLeaf, text)) return;
-	const existing = session.findMessageEntry?.("assistant", text, { branchOnly: true });
-	if (existing && !session.currentLeaf) {
-		session.selectBranch?.(existing.id);
-		return;
-	}
-	const entryId = message
-		? session.appendMessage(message)
-		: session.appendSyntheticAssistant?.(text);
-	if (entryId) session.selectBranch?.(entryId);
-}
-
-function asAssistantPiMessage(value: unknown): PiSessionMessage | undefined {
-	if (!value || typeof value !== "object" || !("role" in value) || value.role !== "assistant") {
-		return undefined;
-	}
-	return value as PiSessionMessage;
+function eventReason(type: string): NotifyReason | undefined {
+	if (type === "entry_appended" || type.startsWith("message_")) return "message";
+	if (type.startsWith("turn_")) return "turn";
+	if (type.startsWith("agent_")) return "agent";
+	if (type.startsWith("tool_execution_")) return "tool";
+	if (type.startsWith("compaction_") || type.startsWith("summarization_")) return "compaction";
+	if (type === "queue_update") return "queue";
+	return undefined;
 }

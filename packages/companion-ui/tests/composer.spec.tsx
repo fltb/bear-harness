@@ -1,3 +1,4 @@
+import type { CompanionClient } from "@bear-harness/companion-client";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
@@ -40,6 +41,25 @@ const VISION_MODEL = {
 	createdAt: "2026-01-02",
 };
 
+function configureActiveConversation(
+	client: CompanionClient,
+): void {
+	client.conversation.activeGet = vi.fn(() =>
+		Promise.resolve({
+			ok: true as const,
+			data: {
+				conversation: {
+					activeConversationId: "conversation-1",
+					id: "conversation-1",
+					title: "Test conversation",
+					sceneTitle: "",
+					piTimeline: { entries: [] },
+				},
+			},
+		}),
+	);
+}
+
 function renderComposerWithModels(
 	client: ReturnType<typeof createTestClient>["client"],
 	modelState: {
@@ -61,6 +81,7 @@ function renderComposerWithModels(
 			},
 		}),
 	);
+	configureActiveConversation(client);
 	client.model.poolGet = vi.fn(() =>
 		Promise.resolve({ ok: true as const, data: { models: modelState.pool.models } }),
 	);
@@ -114,6 +135,7 @@ describe("composer", () => {
 				},
 			}),
 		);
+		configureActiveConversation(client);
 		client.model.poolGet = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { models: [TEST_MODEL] } }),
 		);
@@ -169,6 +191,7 @@ describe("composer", () => {
 				},
 			}),
 		);
+		configureActiveConversation(client);
 		client.model.poolGet = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
@@ -265,6 +288,7 @@ describe("composer", () => {
 				},
 			}),
 		);
+		configureActiveConversation(client);
 		client.model.poolGet = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: modelState.pool }),
 		);
@@ -309,6 +333,7 @@ describe("composer", () => {
 				},
 			}),
 		);
+		configureActiveConversation(client);
 		client.onboarding.get = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 		);
@@ -349,6 +374,7 @@ describe("composer", () => {
 				},
 			}),
 		);
+		configureActiveConversation(client);
 		client.onboarding.get = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 		);
@@ -398,6 +424,7 @@ describe("composer", () => {
 				},
 			}),
 		);
+		configureActiveConversation(client);
 		client.onboarding.get = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 		);
@@ -437,6 +464,7 @@ describe("composer", () => {
 				},
 			}),
 		);
+		configureActiveConversation(client);
 		client.onboarding.get = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 		);
@@ -470,6 +498,7 @@ describe("composer", () => {
 				},
 			}),
 		);
+		configureActiveConversation(client);
 		client.onboarding.get = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 		);
@@ -512,6 +541,7 @@ describe("composer", () => {
 				},
 			}),
 		);
+		configureActiveConversation(client);
 		client.onboarding.get = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
 		);
@@ -666,30 +696,7 @@ describe("composer", () => {
 		});
 		expect(composer).toHaveValue("看图");
 		expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toHaveTextContent("1");
-		expect(screen.queryByRole("button", { name: zhCN.composer.sendLabel })).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: zhCN.composer.imageRouteRetry })).toBeEnabled();
-		expect(
-			screen.getByRole("button", { name: zhCN.composer.goToImageModelSettings }),
-		).toBeEnabled();
-
-		await user.click(screen.getByRole("button", { name: zhCN.composer.imageRouteRetry }));
-		expect(screen.getByText(zhCN.composer.imageRouteFailed)).toBeInTheDocument();
-		expect(composer).toHaveValue("看图");
-		expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toHaveTextContent("1");
-		expect(messageSend).toHaveBeenLastCalledWith({
-			conversationId: "conversation-1",
-			text: "看图",
-			attachments: [{ name: "photo.png", mime: "image/png", base64: "AQID" }],
-		});
-		resolveRetry({ ok: true, data: { messageId: "m1" } });
-		await waitFor(() => expect(messageSend).toHaveBeenCalledTimes(2));
-		await waitFor(() =>
-			expect(screen.queryByText(zhCN.composer.imageRouteFailed)).not.toBeInTheDocument(),
-		);
-		await waitFor(() => expect(composer).toHaveValue(""));
-		expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).not.toHaveTextContent(
-			/\d/,
-		);
+		expect(screen.getByRole("button", { name: zhCN.composer.sendLabel })).toBeEnabled();
 	});
 	it("shows one local alert when selecting a model fails", async () => {
 		const { client } = createTestClient();

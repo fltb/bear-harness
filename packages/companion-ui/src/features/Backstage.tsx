@@ -1,10 +1,8 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
-import { Checkbox } from "@kobalte/core/checkbox";
 import { Dialog } from "@kobalte/core/dialog";
 import { FileField } from "@kobalte/core/file-field";
 import { Tabs } from "@kobalte/core/tabs";
-import { TextField } from "@kobalte/core/text-field";
 import { For, Show } from "solid-js";
 import {
 	type CharacterDisplay,
@@ -22,13 +20,12 @@ import { SettingsSheet } from "./SettingsSheet.js";
  *
  * Kobalte 0.13 ships no `Sheet` primitive, so the drawer is built on the
  * `Dialog` family (focus trap, ESC-to-close, aria-modal, labelled title),
- * styled as the prototype's right-side panel. Its role, memory, story, system,
+ * styled as the prototype's right-side panel. Its role, memory, system,
  * and package-authoring areas live in `Tabs`; page state is internal.
  */
 export function Backstage(props: {
 	open: boolean;
 	onClose: () => void;
-	character: CharacterDisplay | undefined;
 	initialTab?: "roles" | "settings";
 }) {
 	const [t] = useTranslation(undefined, { i18n });
@@ -38,7 +35,7 @@ export function Backstage(props: {
 		<Dialog open={props.open} onOpenChange={(isOpen) => { if (!isOpen) props.onClose(); }}>
 			<Dialog.Portal>
 				<Dialog.Overlay class="backstage-overlay" />
-				<Dialog.Content class="backstage-sheet">
+				<Dialog.Content class={props.initialTab === "settings" ? "backstage-sheet backstage-sheet-settings" : "backstage-sheet"}>
 					<div class="backstage-head">
 						<Dialog.Title class="backstage-title">
 							{props.initialTab === "settings" ? t("sidebar.systemSettings") : t("sidebar.characterSettings")}
@@ -51,14 +48,15 @@ export function Backstage(props: {
 								<Tabs.Trigger value="relationship" class="tab">{t("backstage.relationshipArchive")}</Tabs.Trigger>
 								<Tabs.Trigger value="roles" class="tab">{t("backstage.roleManagement")}</Tabs.Trigger>
 								<Tabs.Trigger value="memory" class="tab">{t("backstage.memory")}</Tabs.Trigger>
-								<Tabs.Trigger value="story" class="tab">{t("backstage.storyArchive")}</Tabs.Trigger>
 								<Tabs.Trigger value="studio" class="tab">{t("backstage.packageWorkshop")}</Tabs.Trigger>
 							</Tabs.List>
-							<Tabs.Content value="relationship" class="tab-panel"><Show when={workflow.selectedTab() === "relationship"}><RelationshipArchive character={props.character} /></Show></Tabs.Content>
+							<Tabs.Content value="relationship" class="tab-panel"><Show when={workflow.selectedTab() === "relationship"}><RelationshipArchive /></Show></Tabs.Content>
 							<Tabs.Content value="roles" class="tab-panel"><Show when={workflow.selectedTab() === "roles"}><RoleManager /></Show></Tabs.Content>
 							<Tabs.Content value="memory" class="tab-panel"><Show when={workflow.selectedTab() === "memory"}><MemorySheet /></Show></Tabs.Content>
-							<Tabs.Content value="story" class="tab-panel"><Show when={workflow.selectedTab() === "story"}><StoryArchive /></Show></Tabs.Content>
-							<Tabs.Content value="studio" class="tab-panel"><Show when={workflow.selectedTab() === "studio"}><CharacterPackageWorkshop /><CanonStudio /></Show></Tabs.Content>
+							<Tabs.Content value="studio" class="tab-panel"><Show when={workflow.selectedTab() === "studio"}>
+								<CharacterPackageWorkshop />
+								{/* <CanonStudio /> */}
+							</Show></Tabs.Content>
 						</Tabs>
 					</Show>
 				</Dialog.Content>
@@ -115,35 +113,15 @@ function RoleRow(props: { character: CharacterSummary }) {
 	);
 }
 
-function StoryArchive() {
-	const [t] = useTranslation(undefined, { i18n });
-	const workflow = createBackstageWorkflowStore(useCompanionStore());
-	const companion = useCompanionStore();
-	return (
-		<div class="sheet-panel story-archive">
-			<p class="drawer-note">{t("backstage.storyOriginal")}</p>
-			<Show when={companion.story.changes().length > 0} fallback={<p class="drawer-note">{t("backstage.storyEmpty")}</p>}>
-				<div class="story-change-list">
-					<For each={companion.story.changes()}>{(change) => <div class="story-change"><span>{change.text}</span><Button data-control="command" type="button" disabled={workflow.storyBusy()} onClick={() => workflow.revertStory(change.id)}>{t("backstage.storyUndo")}</Button></div>}</For>
-				</div>
-			</Show>
-			<form class="story-add" onSubmit={(event) => { event.preventDefault(); workflow.addStory(workflow.storyText(), workflow.storyBranchOnly()); }}>
-				<TextField><TextField.TextArea rows={3} aria-label={t("backstage.storyAddPlaceholder")} placeholder={t("backstage.storyAddPlaceholder")} value={workflow.storyText()} onInput={(event) => workflow.setStoryText(event.currentTarget.value)} /></TextField>
-				<Checkbox checked={workflow.storyBranchOnly()} onChange={workflow.setStoryBranchOnly}><Checkbox.Input /><Checkbox.Control><Checkbox.Indicator>✓</Checkbox.Indicator></Checkbox.Control><Checkbox.Label>{t("backstage.storyBranchOnly")}</Checkbox.Label></Checkbox>
-				<Button data-control="command" type="submit" disabled={workflow.storyBusy() || !workflow.storyText().trim()}>{t("backstage.storyAdd")}</Button>
-			</form>
-			<Button type="button" class="story-reset" disabled={workflow.storyBusy()} onClick={workflow.resetStory}>{t("backstage.storyReset")}</Button>
-		</div>
-	);
-}
 
 /** 关系档案: locked self-canon plus the relationship-scoped memories. */
-function RelationshipArchive(props: { character: CharacterDisplay | undefined }) {
+function RelationshipArchive() {
 	const [t] = useTranslation(undefined, { i18n });
-	const workflow = createBackstageWorkflowStore(useCompanionStore());
+	const companion = useCompanionStore();
+	const workflow = createBackstageWorkflowStore(companion);
 	return (
 		<div class="sheet-panel">
-			<Show when={props.character}>{(character) => <div class="detail-card"><strong>{character().name}{t("backstage.identitySuffix")}</strong><span>{character().character.subtitle} · {character().character.scene_title}</span></div>}</Show>
+			<Show when={companion.character}>{(character) => <div class="detail-card"><strong>{character().name}{t("backstage.identitySuffix")}</strong><span>{character().character.subtitle} · {character().character.scene_title}</span></div>}</Show>
 			<p class="drawer-note">{t("backstage.identityNote")}</p>
 			<div class="field"><div class="switch-field"><div class="switch-text"><span class="field-label">{t("settings.relationshipMemory")}</span><p class="field-hint">{t("settings.relationshipMemoryHint")}</p></div>
 				<Button type="button" class="switch-control" role="switch" aria-label={t("settings.relationshipMemory")} aria-checked={workflow.relationshipEnabled()} data-checked={workflow.relationshipEnabled() || undefined} disabled={workflow.relationshipSaving() || !workflow.settingsAvailable()} onClick={() => workflow.toggleRelationshipMemory(t("settings.relationshipMemoryEnabled"), t("settings.relationshipMemoryDisabled"), t("errors.generic"))}><span class="switch-thumb" /></Button>
@@ -154,15 +132,15 @@ function RelationshipArchive(props: { character: CharacterDisplay | undefined })
 			<Show when={workflow.relationshipFeedback()}>{(message) => <p class="status-line">{message()}</p>}</Show>
 			<Show when={workflow.relationshipError()}>{(message) => <p class="status-line err" role="alert">{message()}</p>}</Show>
 			<MemoryEntryList scope="relationship" title={t("backstage.relationshipMemories")} />
-			<RoleplayArchive character={props.character} />
+			<RoleplayArchive />
 		</div>
 	);
 }
 
-function RoleplayArchive(props: { character: CharacterDisplay | undefined }) {
+function RoleplayArchive() {
 	const [t] = useTranslation(undefined, { i18n });
 	const workflow = createBackstageWorkflowStore(useCompanionStore());
-	const state = workflow.roleplay(() => props.character);
+	const state = workflow.roleplay();
 	return (
 		<Tabs defaultValue="status" class="roleplay-archive">
 			<Tabs.List aria-label={t("backstage.collections")} class="sub-tabs">

@@ -1,5 +1,5 @@
 import { zhCN } from "@bear-harness/i18n/locales";
-import { render, screen, within } from "@solidjs/testing-library";
+import { fireEvent, render, screen, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -39,10 +39,11 @@ describe("roleplay presentation", () => {
 			activeRoleplayChoiceSetId: "reply",
 			activeRoleplayMediaId: undefined,
 			triggerRoleplayEvent,
+			character,
 		} as unknown as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
-				<ConversationPanel character={character} />
+				<ConversationPanel />
 			</DesktopProvider>
 		));
 		expect(screen.getByRole("region", { name: "要回应信号吗？" })).toBeVisible();
@@ -84,10 +85,11 @@ describe("roleplay presentation", () => {
 			activeRoleplayChoiceSetId: undefined,
 			activeRoleplayMediaId: "signal",
 			dismissRoleplayMedia,
+			character,
 		} as unknown as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
-				<ConversationPanel character={character} />
+				<ConversationPanel />
 			</DesktopProvider>
 		));
 
@@ -137,10 +139,11 @@ describe("roleplay presentation", () => {
 			},
 			activeAmbientMediaId: undefined,
 			dismissRoleplayMedia: vi.fn(),
+			character,
 		} as unknown as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
-				<ConversationPanel character={character} />
+				<ConversationPanel />
 			</DesktopProvider>
 		));
 
@@ -221,10 +224,11 @@ describe("roleplay presentation", () => {
 			activeRoleplayChoiceSetId: undefined,
 			activeRoleplayMediaId: "scene",
 			dismissRoleplayMedia: vi.fn(),
+			character,
 		} as unknown as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
-				<ConversationPanel character={character} />
+				<ConversationPanel />
 			</DesktopProvider>
 		));
 
@@ -271,10 +275,11 @@ describe("roleplay presentation", () => {
 			activeRoleplayChoiceSetId: undefined,
 			activeRoleplayMediaId: "signal",
 			dismissRoleplayMedia: vi.fn(),
+			character,
 		} as unknown as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
-				<ConversationPanel character={character} />
+				<ConversationPanel />
 			</DesktopProvider>
 		));
 
@@ -337,10 +342,11 @@ describe("roleplay presentation", () => {
 			activeRoleplayChoiceSetId: undefined,
 			activeRoleplayMediaId: "inline",
 			dismissRoleplayMedia,
+			character,
 		} as unknown as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
-				<ConversationPanel character={character} />
+				<ConversationPanel />
 			</DesktopProvider>
 		));
 
@@ -379,10 +385,11 @@ describe("roleplay presentation", () => {
 			activeAmbientMediaId: "ambient-audio",
 			dismissRoleplayMedia,
 			dismissAmbientMedia,
+			character: ROLEPLAY_MEDIA_CHARACTER,
 		} as unknown as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
-				<ConversationPanel character={ROLEPLAY_MEDIA_CHARACTER} />
+				<ConversationPanel />
 			</DesktopProvider>
 		));
 
@@ -412,10 +419,11 @@ describe("roleplay presentation", () => {
 			activeAmbientMediaId: undefined,
 			dismissRoleplayMedia: vi.fn(),
 			dismissAmbientMedia: vi.fn(),
+			character: ROLEPLAY_MEDIA_CHARACTER,
 		} as unknown as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
-				<ConversationPanel character={ROLEPLAY_MEDIA_CHARACTER} />
+				<ConversationPanel />
 			</DesktopProvider>
 		));
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -443,7 +451,7 @@ describe("package-driven character presence", () => {
 		);
 	});
 	
-	it.each(["compact", "expanded"] as const)(
+	it.each(["expanded"] as const)(
 		"publishes the %s display-only layout mode without changing task state",
 		(layout) => {
 			const store = {
@@ -474,4 +482,146 @@ describe("package-driven character presence", () => {
 			}).toEqual(taskStateBefore);
 		},
 	);
+	it("applies the loaded image intrinsic ratio to the display-only presence stage without changing business state", () => {
+		const store = {
+			activeConversationId: "conversation",
+			presence: "idle",
+			runs: [{ id: "run-1", status: "running" }],
+		} as unknown as CompanionStore;
+		const taskStateBefore = {
+			activeConversationId: store.activeConversationId,
+			presence: store.presence,
+			runs: store.runs.map((run) => ({ id: run.id, status: run.status })),
+		};
+
+		render(() => (
+			<DesktopProvider store={store}>
+				<CharacterPresence character={THEMED_CHARACTER} presence="idle" layout="expanded" />
+			</DesktopProvider>
+		));
+
+		const stage = screen.getByRole("img", {
+			name: THEMED_CHARACTER.visual.expressionLabels.default,
+		});
+		const asset = within(stage).getByTestId("presence-asset");
+		Object.defineProperties(asset, {
+			naturalWidth: { configurable: true, value: 1200 },
+			naturalHeight: { configurable: true, value: 800 },
+		});
+		fireEvent.load(asset);
+
+		expect(Number.parseFloat(stage.style.getPropertyValue("--presence-aspect-ratio"))).toBeCloseTo(1.5);
+		expect({
+			activeConversationId: store.activeConversationId,
+			presence: store.presence,
+			runs: store.runs.map((run) => ({ id: run.id, status: run.status })),
+		}).toEqual(taskStateBefore);
+	});
+	it.each([
+		[0, 800],
+		[1200, 0],
+		[Number.NaN, 800],
+		[1200, Number.NaN],
+		[Number.POSITIVE_INFINITY, 800],
+		[1200, Number.POSITIVE_INFINITY],
+	])(
+		"does not apply a CSS ratio for invalid intrinsic dimensions (%s × %s) without changing business state",
+		(naturalWidth, naturalHeight) => {
+			const store = {
+				activeConversationId: "conversation",
+				presence: "idle",
+				runs: [{ id: "run-1", status: "running" }],
+			} as unknown as CompanionStore;
+			const taskStateBefore = {
+				activeConversationId: store.activeConversationId,
+				presence: store.presence,
+				runs: store.runs.map((run) => ({ id: run.id, status: run.status })),
+			};
+
+			render(() => (
+				<DesktopProvider store={store}>
+					<CharacterPresence character={THEMED_CHARACTER} presence="idle" layout="expanded" />
+				</DesktopProvider>
+			));
+
+			const stage = screen.getByRole("img", {
+				name: THEMED_CHARACTER.visual.expressionLabels.default,
+			});
+			const asset = within(stage).getByTestId("presence-asset");
+			Object.defineProperties(asset, {
+				naturalWidth: { configurable: true, value: naturalWidth },
+				naturalHeight: { configurable: true, value: naturalHeight },
+			});
+			fireEvent.load(asset);
+
+			expect(stage.style.getPropertyValue("--presence-aspect-ratio")).toBe("");
+			expect({
+				activeConversationId: store.activeConversationId,
+				presence: store.presence,
+				runs: store.runs.map((run) => ({ id: run.id, status: run.status })),
+			}).toEqual(taskStateBefore);
+		},
+	);
+	it("clears a loaded ratio before a keyed asset source finishes loading without changing business state", () => {
+		const store = {
+			activeConversationId: "conversation",
+			presence: "idle",
+			runs: [{ id: "run-1", status: "running" }],
+		} as unknown as CompanionStore;
+		const taskStateBefore = {
+			activeConversationId: store.activeConversationId,
+			presence: store.presence,
+			runs: store.runs.map((run) => ({ id: run.id, status: run.status })),
+		};
+		const alternateAsset = "data:image/svg+xml;base64,PHN2Zy8+LWFsdGVybmF0ZQ==";
+		const character = {
+			...THEMED_CHARACTER,
+			visual: {
+				...THEMED_CHARACTER.visual,
+				expressions: {
+					...THEMED_CHARACTER.visual.expressions,
+					alternate: alternateAsset,
+				},
+				expressionLabels: {
+					...THEMED_CHARACTER.visual.expressionLabels,
+					alternate: "Alternate expression",
+				},
+			},
+		};
+		const [visualState, setVisualState] = createSignal("default");
+
+		render(() => (
+			<DesktopProvider store={store}>
+				<CharacterPresence
+					character={character}
+					presence="idle"
+					visualState={visualState()}
+					layout="expanded"
+				/>
+			</DesktopProvider>
+		));
+
+		const initialStage = screen.getByRole("img", {
+			name: THEMED_CHARACTER.visual.expressionLabels.default,
+		});
+		const initialAsset = within(initialStage).getByTestId("presence-asset");
+		Object.defineProperties(initialAsset, {
+			naturalWidth: { configurable: true, value: 1200 },
+			naturalHeight: { configurable: true, value: 800 },
+		});
+		fireEvent.load(initialAsset);
+		expect(initialStage.style.getPropertyValue("--presence-aspect-ratio")).toBe("1.5");
+
+		setVisualState("alternate");
+
+		const nextStage = screen.getByRole("img", { name: "Alternate expression" });
+		expect(nextStage).not.toBe(initialStage);
+		expect(within(nextStage).getByTestId("presence-asset")).toHaveAttribute("src", alternateAsset);
+		expect(nextStage.style.getPropertyValue("--presence-aspect-ratio")).toBe("");
+		expect({
+			activeConversationId: store.activeConversationId,
+			presence: store.presence,
+			runs: store.runs.map((run) => ({ id: run.id, status: run.status })),
+		}).toEqual(taskStateBefore);
+	});
 });

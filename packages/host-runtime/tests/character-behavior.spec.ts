@@ -2,77 +2,87 @@
 
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
-import { drizzle } from "drizzle-orm/node-sqlite";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type { PiSessionMessage } from "../src/companion/pi-session-store.js";
+import { PiSessionStore } from "../src/companion/pi-session-store.js";
 import { CharacterBehaviorService } from "../src/companion/character-behavior.js";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import { RoleplayService } from "../src/companion/roleplay-service.js";
+import { Database, MIGRATIONS } from "../src/storage/database.js";
 import { EventBus } from "../src/storage/event-bus.js";
+import { conversations } from "../src/storage/schema.js";
 
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
-const characterLoader = new CharacterLoader(characterRoot);
 
-function createFixture(loader: CharacterLoader = characterLoader): {
-	db: DatabaseSync;
+interface BehaviorFixture {
+	db: Database;
 	eventBus: EventBus;
 	behavior: CharacterBehaviorService;
-} {
-	const db = new DatabaseSync(":memory:");
-	db.exec(`
-		CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
-		CREATE TABLE companion_packages (id TEXT PRIMARY KEY);
-		CREATE TABLE companion_identity (id TEXT PRIMARY KEY, package_id TEXT NOT NULL);
-		CREATE TABLE conversations (id TEXT PRIMARY KEY, companion_id TEXT NOT NULL);
-		CREATE TABLE branches (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, label TEXT NOT NULL DEFAULT 'main', adopted INTEGER NOT NULL DEFAULT 1);
-		CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, branch_id TEXT NOT NULL, role TEXT NOT NULL);
-		CREATE TABLE message_versions (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, adopted INTEGER NOT NULL DEFAULT 1);
-		CREATE TABLE roleplay_events (id TEXT PRIMARY KEY, companion_id TEXT NOT NULL, conversation_id TEXT, branch_id TEXT, source_message_version_id TEXT, event_id TEXT NOT NULL, effects_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
-		CREATE TABLE roleplay_unlocks (companion_id TEXT NOT NULL, unlockable_id TEXT NOT NULL, source_event_id TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (companion_id, unlockable_id));
-		CREATE TABLE scene_state (
-			id TEXT PRIMARY KEY,
-			conversation_id TEXT NOT NULL,
-			scene TEXT NOT NULL,
-			state_json TEXT NOT NULL,
-			updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-		);
-	`);
-	db.prepare("INSERT INTO companion_packages (id) VALUES (?)").run("jizhou");
-	db.prepare("INSERT INTO companion_identity (id, package_id) VALUES (?, ?)").run(
-		"jizhou",
-		"jizhou",
-	);
-	db.prepare("INSERT INTO conversations (id, companion_id) VALUES (?, ?)").run(
-		"conversation-1",
-		"jizhou",
-	);
-	db.prepare("INSERT INTO branches (id, conversation_id) VALUES (?, ?)").run(
-		"main",
-		"conversation-1",
-	);
-	db.prepare("INSERT INTO messages (id, conversation_id, branch_id, role) VALUES (?, ?, ?, ?)").run(
-		"assistant",
-		"conversation-1",
-		"main",
-		"assistant",
-	);
-	db.prepare("INSERT INTO message_versions (id, message_id) VALUES (?, ?)").run(
-		"version",
-		"assistant",
-	);
-	const orm = drizzle({ client: db });
-	const eventBus = new EventBus(orm);
-	return {
-		db,
+	/** Native Pi session used to derive turn lifecycle projections. */
+	store: PiSessionStore;
+	/** Append a native user message and return its SessionManager entry id. */
+	appendUser: (text: string) => string;
+	/** Append a native assistant message and return its SessionManager entry id. */
+	appendAssistant: (text: string, stopReason: string) => string;
+	/** Publish pi.session.changed with reason "message" for the fixture conversation. */
+	publishChanged: () => void;
+}
+
+function createFixture(loader: CharacterLoader = new CharacterLoader(characterRoot)): BehaviorFixture {
+	const root = mkdtempSync(join(tmpdir(), "bear-character-behavior-"));
+	const database = new Database(join(root, "db"));
+	database.migrate(MIGRATIONS);
+	const eventBus = new EventBus(database.orm);
+	const character = loader.load("jizhou");
+	if (!character) throw new Error("missing default character");
+	loader.seed(database.orm, eventBus, character);
+	database.orm
+		.insert(conversations)
+		.values({ id: "conversation-1", companionId: character.id })
+		.run();
+
+	const store = PiSessionStore.create({ sessionDir: join(root, "sessions"), cwd: root });
+	const appendUser = (text: string) =>
+		store.appendMessage({ role: "user", content: text, timestamp: Date.now() });
+	const appendAssistant = (text: string, stopReason: string) =>
+		store.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text }],
+			api: "openai-completions",
+			provider: "test",
+			model: "test-model",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason,
+			timestamp: Date.now(),
+		} as PiSessionMessage);
+	const publishChanged = () =>
+		eventBus.publish("pi.session.changed", {
+			conversationId: "conversation-1",
+			sessionId: store.sessionId,
+			reason: "message",
+		});
+
+	const behavior = new CharacterBehaviorService(
+		database.orm,
 		eventBus,
-		behavior: new CharacterBehaviorService(orm, eventBus, loader, new RoleplayService(orm)),
-	};
+		loader,
+		new RoleplayService(database.orm),
+		() => ({ sessionId: store.sessionId, sessionManager: store.sessionManager }),
+	);
+	return { db: database, eventBus, behavior, store, appendUser, appendAssistant, publishChanged };
 }
 
 describe("CharacterBehaviorService", () => {
-	const fixtures: Array<{ db: DatabaseSync; behavior: CharacterBehaviorService }> = [];
+	const fixtures: BehaviorFixture[] = [];
 	const temporaryDirectories: string[] = [];
 	afterEach(() => {
 		for (const fixture of fixtures.splice(0)) {
@@ -130,35 +140,21 @@ describe("CharacterBehaviorService", () => {
 		});
 		expect(rejected).toMatchObject({ ok: false, code: "invalid_scene" });
 		expect(
-			fixture.db
+			fixture.db.connection
 				.prepare("SELECT scene, state_json FROM scene_state WHERE conversation_id = ?")
 				.get("conversation-1"),
 		).toEqual({ scene: "snowfield", state_json: JSON.stringify({ visualState: "reflective" }) });
 	});
 
-	it("applies package-declared Host lifecycle reactions", () => {
+	it("applies package-declared Host lifecycle reactions from native Pi turns", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);
+		const afterSeq = fixture.eventBus.currentSeq;
 
-		fixture.eventBus.publish("message.user_sent", { conversationId: "conversation-1" });
-		expect(
-			fixture.behavior.invoke({
-				conversationId: "conversation-1",
-				tool: "host_get_state",
-				args: {},
-			}),
-		).toMatchObject({ state: { sceneId: "study", visualState: "attentive" } });
-
-		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
-		expect(
-			fixture.behavior.invoke({
-				conversationId: "conversation-1",
-				tool: "host_get_state",
-				args: {},
-			}),
-		).toMatchObject({ state: { sceneId: "study", visualState: "ready" } });
-
-		fixture.eventBus.publish("message.aborted", { conversationId: "conversation-1" });
+		// First observation seeds the baseline; no reaction yet.
+		fixture.appendUser("hello");
+		fixture.appendAssistant("hi", "stop");
+		fixture.publishChanged();
 		expect(
 			fixture.behavior.invoke({
 				conversationId: "conversation-1",
@@ -167,15 +163,51 @@ describe("CharacterBehaviorService", () => {
 			}),
 		).toMatchObject({ state: { sceneId: "study", visualState: "calm" } });
 
-		const events = fixture.db.prepare("SELECT kind FROM events ORDER BY seq").all() as Array<{
-			kind: string;
-		}>;
-		expect(events.map((event) => event.kind)).toEqual([
-			"message.user_sent",
+		// A new native user entry drives the user_sent reaction.
+		fixture.appendUser("what now");
+		fixture.publishChanged();
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { sceneId: "study", visualState: "attentive" } });
+
+		// The completed native assistant entry drives the message_end reaction.
+		fixture.appendAssistant("here", "stop");
+		fixture.publishChanged();
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { sceneId: "study", visualState: "ready" } });
+
+		// An aborted native assistant entry drives the aborted reaction.
+		fixture.appendUser("cancel this");
+		fixture.publishChanged();
+		fixture.appendAssistant("", "aborted");
+		fixture.publishChanged();
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_get_state",
+				args: {},
+			}),
+		).toMatchObject({ state: { sceneId: "study", visualState: "calm" } });
+
+		const events = fixture.eventBus.after(afterSeq).map((event) => event.kind);
+		expect(events).toEqual([
+			"pi.session.changed",
+			"pi.session.changed",
 			"character.visual_state_changed",
-			"message_end",
+			"pi.session.changed",
 			"character.visual_state_changed",
-			"message.aborted",
+			"pi.session.changed",
+			"character.visual_state_changed",
+			"pi.session.changed",
 			"character.visual_state_changed",
 		]);
 	});
@@ -188,6 +220,7 @@ describe("CharacterBehaviorService", () => {
 		const manifestPath = join(packageDir, "character.yaml");
 		const manifest = readFileSync(manifestPath, "utf8");
 		writeFileSync(
+
 			manifestPath,
 			manifest.replace(
 				"      visual_state: attentive",
@@ -229,6 +262,7 @@ describe("CharacterBehaviorService", () => {
 
 	it("keeps undeclared and locked media or choice presentations behind Host gates", () => {
 		const fixture = createFixture();
+		const afterSeq = fixture.eventBus.currentSeq;
 		fixtures.push(fixture);
 
 		expect(
@@ -252,19 +286,25 @@ describe("CharacterBehaviorService", () => {
 				args: { choiceSetId: "outside_the_package" },
 			}),
 		).toMatchObject({ ok: false, code: "invalid_roleplay_choices" });
-		expect(fixture.db.prepare("SELECT COUNT(*) AS count FROM events").get()).toEqual({ count: 0 });
+		expect(fixture.eventBus.after(afterSeq)).toEqual([]);
 	});
 
 	it("does not overwrite an expression the model selected for the current turn", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);
-		fixture.eventBus.publish("message.user_sent", { conversationId: "conversation-1" });
+		fixture.appendUser("hello");
+		fixture.appendAssistant("hi", "stop");
+		fixture.publishChanged(); // seed baseline
+
+		fixture.appendUser("what now");
+		fixture.publishChanged();
 		fixture.behavior.invoke({
 			conversationId: "conversation-1",
 			tool: "host_set_expression",
 			args: { visualState: "repair" },
 		});
-		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
+		fixture.appendAssistant("here", "stop");
+		fixture.publishChanged();
 
 		expect(
 			fixture.behavior.invoke({
@@ -278,13 +318,19 @@ describe("CharacterBehaviorService", () => {
 	it("does not carry model expression suppression into the next turn", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);
-		fixture.eventBus.publish("message.user_sent", { conversationId: "conversation-1" });
+		fixture.appendUser("hello");
+		fixture.appendAssistant("hi", "stop");
+		fixture.publishChanged(); // seed baseline
+
+		fixture.appendUser("what now");
+		fixture.publishChanged();
 		fixture.behavior.invoke({
 			conversationId: "conversation-1",
 			tool: "host_set_expression",
 			args: { visualState: "repair" },
 		});
-		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
+		fixture.appendAssistant("here", "stop");
+		fixture.publishChanged();
 		expect(
 			fixture.behavior.invoke({
 				conversationId: "conversation-1",
@@ -293,7 +339,10 @@ describe("CharacterBehaviorService", () => {
 			}),
 		).toMatchObject({ state: { visualState: "repair" } });
 
-		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
+		fixture.appendUser("next turn");
+		fixture.publishChanged();
+		fixture.appendAssistant("next answer", "stop");
+		fixture.publishChanged();
 		expect(
 			fixture.behavior.invoke({
 				conversationId: "conversation-1",
@@ -306,15 +355,20 @@ describe("CharacterBehaviorService", () => {
 	it("clears model expression suppression on failed and aborted turns", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);
+		fixture.appendUser("hello");
+		fixture.appendAssistant("hi", "stop");
+		fixture.publishChanged(); // seed baseline
+
+		// A failed (error) native turn keeps the model expression and ends suppression.
+		fixture.appendUser("ask something");
+		fixture.publishChanged();
 		fixture.behavior.invoke({
 			conversationId: "conversation-1",
 			tool: "host_set_expression",
 			args: { visualState: "repair" },
 		});
-		fixture.eventBus.publish("message_end", {
-			conversationId: "conversation-1",
-			failed: true,
-		});
+		fixture.appendAssistant("", "error");
+		fixture.publishChanged();
 		expect(
 			fixture.behavior.invoke({
 				conversationId: "conversation-1",
@@ -323,7 +377,11 @@ describe("CharacterBehaviorService", () => {
 			}),
 		).toMatchObject({ state: { visualState: "repair" } });
 
-		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
+		// The next full turn ends with the default reaction.
+		fixture.appendUser("retry");
+		fixture.publishChanged();
+		fixture.appendAssistant("recovered", "stop");
+		fixture.publishChanged();
 		expect(
 			fixture.behavior.invoke({
 				conversationId: "conversation-1",
@@ -332,12 +390,16 @@ describe("CharacterBehaviorService", () => {
 			}),
 		).toMatchObject({ state: { visualState: "ready" } });
 
+		// An aborted native turn applies the aborted reaction and clears suppression.
 		fixture.behavior.invoke({
 			conversationId: "conversation-1",
 			tool: "host_set_expression",
 			args: { visualState: "repair" },
 		});
-		fixture.eventBus.publish("message.aborted", { conversationId: "conversation-1" });
+		fixture.appendUser("stop this");
+		fixture.publishChanged();
+		fixture.appendAssistant("", "aborted");
+		fixture.publishChanged();
 		expect(
 			fixture.behavior.invoke({
 				conversationId: "conversation-1",
@@ -346,7 +408,10 @@ describe("CharacterBehaviorService", () => {
 			}),
 		).toMatchObject({ state: { visualState: "calm" } });
 
-		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
+		fixture.appendUser("continue");
+		fixture.publishChanged();
+		fixture.appendAssistant("done", "stop");
+		fixture.publishChanged();
 		expect(
 			fixture.behavior.invoke({
 				conversationId: "conversation-1",
@@ -359,6 +424,10 @@ describe("CharacterBehaviorService", () => {
 	it("limits roleplay expression suppression to one lifecycle end", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);
+		fixture.appendUser("hello");
+		fixture.appendAssistant("hi", "stop");
+		fixture.publishChanged(); // seed baseline
+
 		expect(
 			fixture.behavior.invoke({
 				conversationId: "conversation-1",
@@ -366,10 +435,13 @@ describe("CharacterBehaviorService", () => {
 				args: { eventId: "continuity_opened" },
 			}),
 		).toMatchObject({ ok: true });
-		fixture.eventBus.publish("message.assistant_committed", {
-			conversationId: "conversation-1",
-			versionId: "version",
-		});
+
+		// The queued event commits with the completed native assistant entry and
+		// owns the presentation for this turn.
+		fixture.appendUser("what now");
+		fixture.publishChanged();
+		fixture.appendAssistant("here", "stop");
+		fixture.publishChanged();
 		expect(
 			fixture.behavior.invoke({
 				conversationId: "conversation-1",
@@ -378,15 +450,11 @@ describe("CharacterBehaviorService", () => {
 			}),
 		).toMatchObject({ state: { visualState: "reflective" } });
 
-		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
-		expect(
-			fixture.behavior.invoke({
-				conversationId: "conversation-1",
-				tool: "host_get_state",
-				args: {},
-			}),
-		).toMatchObject({ state: { visualState: "reflective" } });
-		fixture.eventBus.publish("message_end", { conversationId: "conversation-1" });
+		// The next completed turn applies the default end reaction again.
+		fixture.appendUser("next");
+		fixture.publishChanged();
+		fixture.appendAssistant("next answer", "stop");
+		fixture.publishChanged();
 		expect(
 			fixture.behavior.invoke({
 				conversationId: "conversation-1",
@@ -396,9 +464,13 @@ describe("CharacterBehaviorService", () => {
 		).toMatchObject({ state: { visualState: "ready" } });
 	});
 
-	it("commits queued roleplay effects only after the assistant version is durable", () => {
+	it("commits queued roleplay effects only after the native assistant entry is durable", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);
+		fixture.appendUser("hello");
+		fixture.appendAssistant("hi", "stop");
+		fixture.publishChanged(); // seed baseline
+
 		expect(
 			fixture.behavior.invoke({
 				conversationId: "conversation-1",
@@ -406,31 +478,37 @@ describe("CharacterBehaviorService", () => {
 				args: { eventId: "continuity_opened" },
 			}),
 		).toMatchObject({ ok: true });
-		expect(fixture.db.prepare("SELECT COUNT(*) count FROM roleplay_events").get()).toEqual({
-			count: 0,
-		});
-		fixture.eventBus.publish("message_end", { conversationId: "conversation-1", failed: true });
-		fixture.eventBus.publish("message.assistant_committed", {
-			conversationId: "conversation-1",
-			versionId: "version",
-		});
-		expect(fixture.db.prepare("SELECT COUNT(*) count FROM roleplay_events").get()).toEqual({
+		expect(fixture.db.connection.prepare("SELECT COUNT(*) count FROM roleplay_events").get()).toEqual({
 			count: 0,
 		});
 
-		fixture.behavior.invoke({
-			conversationId: "conversation-1",
-			tool: "host_trigger_roleplay_event",
-			args: { eventId: "continuity_opened" },
+		// A failed native turn drops the queue without committing.
+		fixture.appendUser("ask");
+		fixture.publishChanged();
+		fixture.appendAssistant("", "error");
+		fixture.publishChanged();
+		expect(fixture.db.connection.prepare("SELECT COUNT(*) count FROM roleplay_events").get()).toEqual({
+			count: 0,
 		});
-		fixture.eventBus.publish("message.assistant_committed", {
-			conversationId: "conversation-1",
-			versionId: "version",
-		});
-		expect(fixture.db.prepare("SELECT event_id FROM roleplay_events").get()).toEqual({
+
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_trigger_roleplay_event",
+				args: { eventId: "continuity_opened" },
+			}),
+		).toMatchObject({ ok: true });
+		const assistantId = fixture.appendAssistant("here", "stop");
+		fixture.publishChanged();
+		const row = fixture.db.connection
+			.prepare("SELECT pi_session_id, source_native_entry_id, event_id FROM roleplay_events")
+			.get() as { pi_session_id: string; source_native_entry_id: string; event_id: string };
+		expect(row).toEqual({
+			pi_session_id: fixture.store.sessionId,
+			source_native_entry_id: assistantId,
 			event_id: "continuity_opened",
 		});
-		expect(fixture.db.prepare("SELECT COUNT(*) count FROM roleplay_unlocks").get()).toEqual({
+		expect(fixture.db.connection.prepare("SELECT COUNT(*) count FROM roleplay_unlocks").get()).toEqual({
 			count: 0,
 		});
 	});
@@ -438,6 +516,9 @@ describe("CharacterBehaviorService", () => {
 	it("applies declared scene, expression and media only after a successful reply commit", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);
+		fixture.appendUser("hello");
+		fixture.appendAssistant("hi", "stop");
+		fixture.publishChanged(); // seed baseline
 		const presented: unknown[] = [];
 		fixture.eventBus.subscribe((event) => {
 			if (event.kind === "roleplay.media_presented") presented.push(event.payload);
@@ -455,10 +536,10 @@ describe("CharacterBehaviorService", () => {
 				args: {},
 			}),
 		).toMatchObject({ state: { visualState: "calm" } });
-		fixture.eventBus.publish("message.assistant_committed", {
-			conversationId: "conversation-1",
-			versionId: "version",
-		});
+		fixture.appendUser("open it");
+		fixture.publishChanged();
+		fixture.appendAssistant("opened", "stop");
+		fixture.publishChanged();
 		expect(
 			fixture.behavior.invoke({
 				conversationId: "conversation-1",
@@ -472,10 +553,10 @@ describe("CharacterBehaviorService", () => {
 			tool: "host_trigger_roleplay_event",
 			args: { eventId: "continuity_revealed" },
 		});
-		fixture.eventBus.publish("message.assistant_committed", {
-			conversationId: "conversation-1",
-			versionId: "version",
-		});
+		fixture.appendUser("reveal it");
+		fixture.publishChanged();
+		fixture.appendAssistant("revealed", "stop");
+		fixture.publishChanged();
 
 		fixture.behavior.invoke({
 			conversationId: "conversation-1",
@@ -483,10 +564,10 @@ describe("CharacterBehaviorService", () => {
 			args: { eventId: "continuity_received" },
 		});
 		expect(presented).toEqual([]);
-		fixture.eventBus.publish("message.assistant_committed", {
-			conversationId: "conversation-1",
-			versionId: "version",
-		});
+		fixture.appendUser("receive it");
+		fixture.publishChanged();
+		fixture.appendAssistant("received", "stop");
+		fixture.publishChanged();
 		expect(presented).toContainEqual({
 			conversationId: "conversation-1",
 			mediaId: "continuity_light",
@@ -530,20 +611,22 @@ describe("CharacterBehaviorService", () => {
 		).toMatchObject({ data: { values: { continuity_stage: 3 }, unlocked: ["continuity_record"] } });
 	});
 
-	it("rejects roleplay ledger writes from an explicit alternate branch", () => {
+	it("records native session provenance for user-triggered roleplay events", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);
-		fixture.db.prepare("UPDATE branches SET label = ? WHERE id = ?").run("alternate", "main");
 
-		expect(() =>
-			fixture.behavior.triggerUserRoleplayEvent({
-				conversationId: "conversation-1",
-				eventId: "continuity_opened",
-				dedupeKey: "alternate-branch",
-			}),
-		).toThrow(expect.objectContaining({ reason: "roleplay_event_branch_not_canonical" }));
-		expect(fixture.db.prepare("SELECT COUNT(*) AS count FROM roleplay_events").get()).toEqual({
-			count: 0,
+		fixture.behavior.triggerUserRoleplayEvent({
+			conversationId: "conversation-1",
+			eventId: "continuity_opened",
+			dedupeKey: "user-opened",
+		});
+		const row = fixture.db.connection
+			.prepare("SELECT pi_session_id, source_native_entry_id, event_id FROM roleplay_events")
+			.get() as { pi_session_id: string; source_native_entry_id: string; event_id: string };
+		expect(row).toEqual({
+			pi_session_id: fixture.store.sessionId,
+			source_native_entry_id: null,
+			event_id: "continuity_opened",
 		});
 	});
 
@@ -557,7 +640,7 @@ describe("CharacterBehaviorService", () => {
 			args: { command: "echo no" },
 		});
 		expect(result).toMatchObject({ ok: false, code: "host_tool_not_allowed" });
-		expect(fixture.db.prepare("SELECT COUNT(*) AS count FROM scene_state").get()).toEqual({
+		expect(fixture.db.connection.prepare("SELECT COUNT(*) AS count FROM scene_state").get()).toEqual({
 			count: 0,
 		});
 	});
@@ -565,7 +648,7 @@ describe("CharacterBehaviorService", () => {
 	it("rejects corrupt persisted character state instead of resetting it", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);
-		fixture.db
+		fixture.db.connection
 			.prepare(
 				"INSERT INTO scene_state (id, conversation_id, scene, state_json) VALUES (?, ?, ?, ?)",
 			)
@@ -580,3 +663,4 @@ describe("CharacterBehaviorService", () => {
 		).toThrow();
 	});
 });
+

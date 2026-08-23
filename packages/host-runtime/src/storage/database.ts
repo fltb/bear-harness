@@ -228,7 +228,7 @@ export class Database {
 			commissions: [
 				"id",
 				"conversation_id",
-				"trigger_message_id",
+				"trigger_entry_id",
 				"status",
 				"draft_json",
 				"created_at",
@@ -240,10 +240,15 @@ export class Database {
 				"conversation_id",
 				"pi_session_id",
 				"session_file_path",
-				"active_leaf_id",
 				"created_at",
 				"updated_at",
 			],
+			relationship_memory_entries: [
+				"source_pi_session_id",
+				"source_native_entry_id",
+			],
+			memory_candidates: ["source_pi_session_id", "source_native_entry_id"],
+			roleplay_events: ["pi_session_id", "source_native_entry_id"],
 			memory_presentation: [
 				"backend_memory_id",
 				"installation_id",
@@ -586,30 +591,8 @@ export const MIGRATIONS: Migration[] = [
 	},
 	{
 		id: 4,
-		description: "Canon Hub, story changes, and creator source graph",
+		description: "Canon Hub and creator source graph",
 		up: `
-			CREATE TABLE story_changes (
-				id TEXT PRIMARY KEY,
-				companion_id TEXT NOT NULL REFERENCES companion_identity(id),
-				conversation_id TEXT REFERENCES conversations(id),
-				branch_id TEXT REFERENCES branches(id),
-				text TEXT NOT NULL,
-				normalized_text TEXT NOT NULL,
-				scope TEXT NOT NULL CHECK (scope IN ('global','branch')),
-				source TEXT NOT NULL CHECK (source IN ('user_explicit','story_event','user_confirmed')),
-				status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','reverted')),
-				created_at TEXT NOT NULL DEFAULT (datetime('now')),
-				reverted_at TEXT
-			);
-
-			CREATE TABLE story_change_events (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				change_id TEXT REFERENCES story_changes(id),
-				action TEXT NOT NULL CHECK (action IN ('applied','reverted','reset')),
-				conversation_id TEXT REFERENCES conversations(id),
-				created_at TEXT NOT NULL DEFAULT (datetime('now'))
-			);
-
 			CREATE TABLE canon_sources (
 				id TEXT PRIMARY KEY,
 				companion_id TEXT NOT NULL REFERENCES companion_identity(id),
@@ -684,8 +667,6 @@ export const MIGRATIONS: Migration[] = [
 				created_at TEXT NOT NULL DEFAULT (datetime('now'))
 			);
 
-			CREATE INDEX idx_story_changes_companion ON story_changes(companion_id, status, created_at);
-			CREATE INDEX idx_story_changes_branch ON story_changes(branch_id, status, created_at);
 			CREATE INDEX idx_canon_sources_companion ON canon_sources(companion_id, created_at);
 			CREATE INDEX idx_canon_chunks_source ON canon_chunks(source_id, ordinal);
 			CREATE INDEX idx_canon_entities_companion ON canon_entities(companion_id, name);
@@ -714,21 +695,8 @@ export const MIGRATIONS: Migration[] = [
 	},
 	{
 		id: 7,
-		description: "Persistent story change confirmations",
-		up: `
-			CREATE TABLE story_change_proposals (
-				id TEXT PRIMARY KEY,
-				companion_id TEXT NOT NULL REFERENCES companion_identity(id),
-				conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-				branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
-				text TEXT NOT NULL,
-				status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','dismissed')),
-				created_at TEXT NOT NULL DEFAULT (datetime('now')),
-				decided_at TEXT
-			);
-			CREATE INDEX idx_story_proposals_pending
-				ON story_change_proposals(companion_id, conversation_id, status, created_at);
-		`,
+		description: "Reserved schema slot",
+		up: `SELECT 1;`,
 	},
 	{
 		id: 8,
@@ -971,6 +939,152 @@ export const MIGRATIONS: Migration[] = [
 		up: `
 			ALTER TABLE commissions
 				ADD COLUMN trigger_message_id TEXT NOT NULL DEFAULT '';
+		`,
+	},
+	{
+		id: 21,
+		description: "Persist the active conversation selection per companion",
+		up: `
+			CREATE TABLE active_conversations (
+				companion_id TEXT PRIMARY KEY REFERENCES companion_identity(id) ON DELETE CASCADE,
+				conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+		`,
+	},
+	{
+		id: 22,
+		description: "Prepare Pi-native provenance for derived conversation facts",
+		up: `
+			-- Keep the Host transcript mirrors until every consumer has moved to Pi.
+			-- These nullable columns are deliberately not foreign keys: Pi owns the
+			-- session/entry tree and may outlive this metadata database.
+			ALTER TABLE relationship_memory_entries ADD COLUMN source_pi_session_id TEXT;
+			ALTER TABLE relationship_memory_entries ADD COLUMN source_native_entry_id TEXT;
+			ALTER TABLE memory_candidates ADD COLUMN source_pi_session_id TEXT;
+			ALTER TABLE memory_candidates ADD COLUMN source_native_entry_id TEXT;
+			ALTER TABLE roleplay_events ADD COLUMN pi_session_id TEXT;
+			ALTER TABLE roleplay_events ADD COLUMN source_native_entry_id TEXT;
+		`,
+	},
+	{
+		id: 23,
+		description: "Remove Host transcript mirrors after Pi authority cutover",
+		up: `
+			CREATE TABLE relationship_memory_entries_new (
+				id TEXT PRIMARY KEY,
+				companion_id TEXT NOT NULL REFERENCES companion_identity(id),
+				kind TEXT NOT NULL CHECK (kind IN ('fact','preference','event','self_canon_summary')),
+				scope TEXT NOT NULL CHECK (scope IN ('self','relationship','scene')),
+				text TEXT NOT NULL,
+				normalized_text TEXT NOT NULL,
+				source_pi_session_id TEXT,
+				source_native_entry_id TEXT,
+				source_conversation_id TEXT REFERENCES conversations(id),
+				source_kind TEXT NOT NULL DEFAULT 'user_button' CHECK (source_kind IN ('user_button','user_request','companion_suggestion','extractor')),
+				status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','excluded','forgotten')),
+				pinned_at TEXT,
+				scene_id TEXT,
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+				forgotten_at TEXT
+			);
+			INSERT INTO relationship_memory_entries_new
+				SELECT id, companion_id, kind, scope, text, normalized_text, source_pi_session_id,
+					source_native_entry_id, source_conversation_id, source_kind, status, pinned_at,
+					scene_id, created_at, updated_at, forgotten_at
+				FROM relationship_memory_entries;
+			DROP TABLE relationship_memory_entries;
+			ALTER TABLE relationship_memory_entries_new RENAME TO relationship_memory_entries;
+			CREATE INDEX idx_memory_entries_companion ON relationship_memory_entries(companion_id);
+
+			CREATE TABLE memory_candidates_new (
+				id TEXT PRIMARY KEY,
+				companion_id TEXT NOT NULL REFERENCES companion_identity(id),
+				kind TEXT NOT NULL CHECK (kind IN ('fact','preference','event','self_canon_summary')),
+				source_pi_session_id TEXT,
+				source_native_entry_id TEXT,
+				source_conversation_id TEXT REFERENCES conversations(id),
+				source_kind TEXT NOT NULL CHECK (source_kind IN ('user_button','user_request','companion_suggestion','extractor')),
+				normalized_text TEXT NOT NULL,
+				why TEXT NOT NULL DEFAULT '',
+				suggested_scope TEXT NOT NULL CHECK (suggested_scope IN ('self','relationship','scene')),
+				status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','expired')),
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				decided_at TEXT
+			);
+			INSERT INTO memory_candidates_new
+				SELECT id, companion_id, kind, source_pi_session_id, source_native_entry_id,
+					source_conversation_id, source_kind, normalized_text, why, suggested_scope,
+					status, created_at, decided_at
+				FROM memory_candidates;
+			CREATE TABLE memory_decisions_new (
+				id TEXT PRIMARY KEY,
+				candidate_id TEXT NOT NULL REFERENCES memory_candidates_new(id),
+				decision TEXT NOT NULL CHECK (decision IN ('approve','approve_edited','reject')),
+				edited_text TEXT,
+				decided_scope TEXT CHECK (decided_scope IN ('self','relationship','scene')),
+				decided_by_user INTEGER NOT NULL DEFAULT 1,
+				decided_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			INSERT INTO memory_decisions_new
+				SELECT id, candidate_id, decision, edited_text, decided_scope, decided_by_user, decided_at
+				FROM memory_decisions;
+			DROP TABLE memory_decisions;
+			DROP TABLE memory_candidates;
+			ALTER TABLE memory_candidates_new RENAME TO memory_candidates;
+			ALTER TABLE memory_decisions_new RENAME TO memory_decisions;
+			CREATE INDEX idx_memory_candidates_companion ON memory_candidates(companion_id);
+
+			CREATE TABLE roleplay_events_new (
+				id TEXT PRIMARY KEY,
+				companion_id TEXT NOT NULL REFERENCES companion_identity(id),
+				conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+				pi_session_id TEXT,
+				source_native_entry_id TEXT,
+				event_id TEXT NOT NULL,
+				effects_json TEXT NOT NULL,
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			INSERT INTO roleplay_events_new
+				SELECT id, companion_id, conversation_id, pi_session_id, source_native_entry_id,
+					event_id, effects_json, created_at FROM roleplay_events;
+			DROP TABLE roleplay_events;
+			ALTER TABLE roleplay_events_new RENAME TO roleplay_events;
+			CREATE INDEX idx_roleplay_events_projection ON roleplay_events(companion_id, conversation_id, created_at);
+
+			CREATE TABLE conversation_sessions_new (
+				conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+				pi_session_id TEXT NOT NULL,
+				session_file_path TEXT NOT NULL,
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			INSERT INTO conversation_sessions_new
+				SELECT conversation_id, pi_session_id, session_file_path, created_at, updated_at
+				FROM conversation_sessions;
+			DROP TABLE conversation_sessions;
+			ALTER TABLE conversation_sessions_new RENAME TO conversation_sessions;
+
+			CREATE TABLE commissions_new (
+				id TEXT PRIMARY KEY,
+				conversation_id TEXT REFERENCES conversations(id),
+				trigger_entry_id TEXT NOT NULL,
+				status TEXT NOT NULL,
+				draft_json TEXT NOT NULL,
+				approval_hash TEXT,
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			INSERT INTO commissions_new
+				SELECT id, conversation_id, trigger_message_id, status, draft_json, approval_hash,
+					created_at FROM commissions;
+			DROP TABLE commissions;
+			ALTER TABLE commissions_new RENAME TO commissions;
+
+			DROP TABLE message_versions;
+			DROP TABLE turns;
+			DROP TABLE messages;
+			DROP TABLE branches;
 		`,
 	},
 ];

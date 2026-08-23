@@ -166,4 +166,66 @@ describe("onboarding projection ordering", () => {
 			dispose();
 		}
 	});
+
+	it("projects the canonical conversation created by onboarding completion", async () => {
+		const { client } = createTestClient();
+		const initial = onboarding("memory_choice", 20);
+		const complete: OnboardingData = {
+			status: "complete",
+			eventSeq: 21,
+			stateData: { schema_version: 1, flow_version: 1, answers: {}, decisions: {} },
+		};
+		const conversation = {
+			activeConversationId: "onboarding-conversation",
+			id: "onboarding-conversation",
+			title: "First meeting",
+			sceneTitle: "Arrival",
+			piTimeline: { entries: [] },
+		};
+		let completed = false;
+		client.onboarding.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: completed ? complete : initial }),
+		);
+		client.onboarding.submit = vi.fn(() => {
+			completed = true;
+			return Promise.resolve({ ok: true as const, data: complete });
+		});
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					conversations: completed
+						? [
+								{
+									id: conversation.id,
+									title: conversation.title,
+									sceneTitle: conversation.sceneTitle,
+									unread: false,
+									updatedAt: "2026-08-22T00:00:00.000Z",
+								},
+							]
+						: [],
+				},
+			}),
+		);
+		client.conversation.activeGet = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: completed ? { conversation } : {},
+			}),
+		);
+		const { store, dispose } = createStoreWithCleanup(client);
+
+		try {
+			await waitFor(() => expect(store.onboarding.currentStepId).toBe("memory_choice"));
+			await store.submitOnboarding("memory_choice", "disabled");
+			expect(store.onboarding.status).toBe("complete");
+			expect(store.activeConversationId).toBe(conversation.id);
+			expect(store.conversations).toEqual([
+				expect.objectContaining({ id: conversation.id, title: conversation.title }),
+			]);
+		} finally {
+			dispose();
+		}
+	});
 });

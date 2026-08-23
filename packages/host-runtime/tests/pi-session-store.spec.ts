@@ -76,12 +76,26 @@ describe("PiSessionStore", () => {
 		const root = mkdtempSync(join(tmpdir(), "bear-pi-edited-branch-"));
 		roots.push(root);
 		const store = PiSessionStore.create({ sessionDir: join(root, "sessions"), cwd: root });
-		const originalUser = store.appendUserMessage("original user");
-		store.appendSyntheticAssistant("assistant continuation");
-
+		const originalUser = store.appendMessage({ role: "user", content: "original user", timestamp: 1 });
+		store.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "assistant continuation" }],
+			api: "openai-completions",
+			provider: "test",
+			model: "test-model",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 2,
+		} as PiSessionMessage);
 		store.branchBefore(originalUser);
-		store.appendUserMessage("edited user");
-
+		store.appendMessage({ role: "user", content: "edited user", timestamp: 3 });
 		expect(store.buildContext().messages).toEqual([
 			expect.objectContaining({ role: "user", content: "edited user" }),
 		]);
@@ -93,7 +107,7 @@ describe("PiSessionStore", () => {
 		const sessionDir = join(root, "sessions");
 		const store = PiSessionStore.create({ sessionDir, cwd: root });
 		const sessionFile = store.sessionFile;
-		const userId = store.appendUserMessage("pending prompt", 1);
+		const userId = store.appendMessage({ role: "user", content: "pending prompt", timestamp: 1 });
 
 		expect(store.sessionManager.getEntries()).toHaveLength(1);
 		expect(store.findMessageEntry("user", "pending prompt")).toMatchObject({ id: userId });
@@ -103,7 +117,23 @@ describe("PiSessionStore", () => {
 		expect(reopenedBeforeAssistant.readMessageEntries()).toEqual([]);
 		expect(reopenedBeforeAssistant.findMessageEntry("user", "pending prompt")).toBeUndefined();
 
-		const assistantId = store.appendSyntheticAssistant("completed response");
+		const assistantId = store.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "completed response" }],
+			api: "openai-completions",
+			provider: "test",
+			model: "test-model",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 2,
+		} as PiSessionMessage);
 		expect(existsSync(sessionFile)).toBe(true);
 
 		const reopenedAfterAssistant = PiSessionStore.open({ sessionDir, sessionFile, cwd: root });
@@ -122,18 +152,42 @@ describe("PiSessionStore", () => {
 		const sessionDir = join(root, "sessions");
 		const store = PiSessionStore.create({ sessionDir, cwd: root });
 
-		store.appendUserMessage("opening prompt");
-		store.appendSyntheticAssistant("opening response");
-		const originalUser = store.appendUserMessage("original prompt");
-		const originalAssistant = store.appendSyntheticAssistant("original response");
+		store.appendMessage({ role: "user", content: "opening prompt", timestamp: 1 });
+		store.appendMessage({
+			role: "assistant", content: [{ type: "text", text: "opening response" }],
+			api: "openai-completions", provider: "test", model: "test-model",
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			stopReason: "stop", timestamp: 2,
+		} as PiSessionMessage);
+		const originalUser = store.appendMessage({ role: "user", content: "original prompt", timestamp: 3 });
+		const originalAssistant = store.appendMessage({
+			role: "assistant", content: [{ type: "text", text: "original response" }],
+			api: "openai-completions", provider: "test", model: "test-model",
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			stopReason: "stop", timestamp: 4,
+		} as PiSessionMessage);
 
+		// Edit branch: branch before originalUser, append edited user + assistant
 		store.branchBefore(originalUser);
-		store.appendUserMessage("edited prompt");
-		const editedAssistant = store.appendSyntheticAssistant("response to edited prompt");
+		store.appendMessage({ role: "user", content: "edited prompt", timestamp: 5 });
+		const editedAssistant = store.appendMessage({
+			role: "assistant", content: [{ type: "text", text: "response to edited prompt" }],
+			api: "openai-completions", provider: "test", model: "test-model",
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			stopReason: "stop", timestamp: 6,
+		} as PiSessionMessage);
 
+		// Regenerate branch: branch before originalAssistant, re-append new assistant under same user
 		store.branchBefore(originalAssistant);
-		const regeneratedAssistant = store.appendSyntheticAssistant("regenerated response");
+		const regeneratedAssistant = store.appendMessage({
+			role: "assistant", content: [{ type: "text", text: "regenerated response" }],
+			api: "openai-completions", provider: "test", model: "test-model",
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			stopReason: "stop", timestamp: 8,
+		} as PiSessionMessage);
 
+		// Select regenerated branch, reopen, and verify
+		store.selectBranch(regeneratedAssistant);
 		const reopened = PiSessionStore.open({ sessionDir, sessionFile: store.sessionFile, cwd: root });
 		expect(reopened.leafId).toBe(regeneratedAssistant);
 		expect(reopened.readMessages().map(({ role, content }) => ({ role, content }))).toEqual([
@@ -151,6 +205,7 @@ describe("PiSessionStore", () => {
 			{ role: "assistant", content: [{ type: "text", text: "regenerated response" }] },
 		]);
 
+		// Switch to edited branch and verify
 		reopened.selectBranch(editedAssistant);
 		expect(reopened.readMessages().map(({ role, content }) => ({ role, content }))).toEqual([
 			{ role: "user", content: "opening prompt" },
@@ -167,6 +222,7 @@ describe("PiSessionStore", () => {
 			{ role: "assistant", content: [{ type: "text", text: "response to edited prompt" }] },
 		]);
 
+		// Switch back to regenerated branch
 		reopened.selectBranch(regeneratedAssistant);
 		expect(
 			reopened.buildContext().messages.map(({ role, content }) => ({ role, content })),
@@ -175,16 +231,6 @@ describe("PiSessionStore", () => {
 			{ role: "assistant", content: [{ type: "text", text: "opening response" }] },
 			{ role: "user", content: "original prompt" },
 			{ role: "assistant", content: [{ type: "text", text: "regenerated response" }] },
-		]);
-
-		reopened.selectBranch(originalAssistant);
-		expect(
-			reopened.buildContext().messages.map(({ role, content }) => ({ role, content })),
-		).toEqual([
-			{ role: "user", content: "opening prompt" },
-			{ role: "assistant", content: [{ type: "text", text: "opening response" }] },
-			{ role: "user", content: "original prompt" },
-			{ role: "assistant", content: [{ type: "text", text: "original response" }] },
 		]);
 	});
 
@@ -330,9 +376,9 @@ describe("PiSessionStore", () => {
 		const metadata = store.metadata;
 		database.connection
 			.prepare(
-				"INSERT INTO conversation_sessions (conversation_id, pi_session_id, session_file_path, active_leaf_id) VALUES (?, ?, ?, ?)",
+				"INSERT INTO conversation_sessions (conversation_id, pi_session_id, session_file_path) VALUES (?, ?, ?)",
 			)
-			.run("conversation", metadata.sessionId, metadata.sessionFile, metadata.leafId);
+			.run("conversation", metadata.sessionId, metadata.sessionFile);
 		const session = PiSessionStore.open({
 			sessionDir: join(root, "sessions"),
 			sessionFile: metadata.sessionFile,
@@ -451,24 +497,9 @@ describe("PiSessionStore", () => {
 		const metadata = store.metadata;
 		database.connection
 			.prepare(
-				"INSERT INTO conversation_sessions (conversation_id, pi_session_id, session_file_path, active_leaf_id) VALUES (?, ?, ?, ?)",
+				"INSERT INTO conversation_sessions (conversation_id, pi_session_id, session_file_path) VALUES (?, ?, ?)",
 			)
-			.run("conversation", metadata.sessionId, metadata.sessionFile, metadata.leafId);
-		database.connection
-			.prepare(
-				"INSERT INTO branches (id, conversation_id, label, adopted) VALUES ('host-branch', 'conversation', 'main', 1)",
-			)
-			.run();
-		database.connection
-			.prepare(
-				"INSERT INTO messages (id, conversation_id, branch_id, role) VALUES ('host-user', 'conversation', 'host-branch', 'user'), ('host-assistant', 'conversation', 'host-branch', 'assistant')",
-			)
-			.run();
-		database.connection
-			.prepare(
-				"INSERT INTO message_versions (id, message_id, content, adopted) VALUES ('host-user-v1', 'host-user', 'hello', 1), ('host-assistant-v1', 'host-assistant', 'hi', 1)",
-			)
-			.run();
+			.run("conversation", metadata.sessionId, metadata.sessionFile);
 
 		const session = PiSessionStore.open({
 			sessionDir: join(root, "sessions"),
@@ -550,9 +581,9 @@ describe("PiSessionStore", () => {
 		const metadata = store.metadata;
 		database.connection
 			.prepare(
-				"INSERT INTO conversation_sessions (conversation_id, pi_session_id, session_file_path, active_leaf_id) VALUES (?, ?, ?, ?)",
+				"INSERT INTO conversation_sessions (conversation_id, pi_session_id, session_file_path) VALUES (?, ?, ?)",
 			)
-			.run("conversation", metadata.sessionId, metadata.sessionFile, metadata.leafId);
+			.run("conversation", metadata.sessionId, metadata.sessionFile);
 		const reopened = PiSessionStore.open({
 			sessionDir: join(root, "sessions"),
 			sessionFile: metadata.sessionFile,

@@ -14,7 +14,7 @@ describe("executor control IPC schemas", () => {
 		expect(
 			schema("commission.draft:v1").safeParse({
 				conversationId: "conversation-1",
-				triggerMessageId: "message-1",
+				triggerEntryId: "message-1",
 				title: "Inspect files",
 				description: "Read the selected directory.",
 				reads: ["/workspace"],

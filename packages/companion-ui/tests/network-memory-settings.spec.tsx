@@ -1,5 +1,5 @@
 import { zhCN } from "@bear-harness/i18n/locales";
-import { render, screen, waitFor, within } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
@@ -82,6 +82,84 @@ describe("NetworkAndMemorySettings", () => {
 		).toBeTruthy();
 	});
 
+	it("renders and applies only the capabilities returned by Host", async () => {
+		const { client, settingsSet } = createTestClient();
+		client.settings.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					settings: {
+						relationshipMemoryEnabled: false,
+						conversationHistoryReadEnabled: false,
+						networkProxy: { mode: "direct" as const },
+						memoryVectorService: {
+							enabled: true,
+							provider: "remote" as const,
+							model: "unlisted-model",
+							dimensions: 1,
+						},
+						modelDownloadMirror: {},
+					},
+				},
+			}),
+		);
+		client.settings.capabilitiesGet = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					networkProxyModes: [{ id: "manual" as const }],
+					memoryVectorProviders: [{ id: "remote" as const, onboarding: false }],
+					memoryVectorPresets: [
+						{
+							id: "bge-m3",
+							model: "host-only-embedding-model",
+							dimensions: 777,
+						},
+					],
+					localEmbeddingCandidates: [
+						{ id: "host-only-local", name: "Host-only local model", isDefault: true },
+					],
+				},
+			}),
+		);
+
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { backstage, user } = await openSettings();
+		await waitForSettings(backstage);
+
+		await user.click(selectTrigger(backstage, zhCN.settings.proxyMode));
+		await waitFor(() =>
+			expect(screen.getAllByRole("option").map((option) => option.textContent?.trim())).toEqual([
+				"manual",
+			]),
+		);
+		await user.click(screen.getByRole("option", { name: "manual" }));
+
+		await user.click(selectTrigger(backstage, zhCN.settings.vectorProvider));
+		await waitFor(() =>
+			expect(screen.getAllByRole("option").map((option) => option.textContent?.trim())).toEqual([
+				zhCN.settings.vectorProviders.remote,
+			]),
+		);
+		await user.click(screen.getByRole("option", { name: zhCN.settings.vectorProviders.remote }));
+
+		await user.click(selectTrigger(backstage, zhCN.settings.vectorPreset));
+		const preset = await screen.findByRole("option", {
+			name: zhCN.settings.vectorPresetLabels["bge-m3"],
+		});
+		fireEvent.click(preset);
+		await waitFor(() =>
+			expect(settingsSet).toHaveBeenCalledWith({
+				settings: expect.objectContaining({
+					memoryVectorService: expect.objectContaining({
+						model: "host-only-embedding-model",
+						dimensions: 777,
+					}),
+				}),
+			}),
+		);
+	});
+
 	it("loads proxy settings from the store on mount", async () => {
 		const { client } = createTestClient();
 		client.settings.get = vi.fn(() =>
@@ -116,7 +194,12 @@ describe("NetworkAndMemorySettings", () => {
 		await user.click(checkbox);
 		await waitFor(() => expect(checkbox).toBeChecked());
 
-		expect(selectTrigger(backstage, "服务类型")).toBeTruthy();
+		expect(
+			selectTrigger(
+				await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings }),
+				zhCN.settings.vectorProvider,
+			),
+		).toBeTruthy();
 	});
 
 	it("saves proxy changes via settings.set", async () => {
@@ -161,7 +244,10 @@ describe("NetworkAndMemorySettings", () => {
 			within(backstage).getByRole("checkbox", { name: zhCN.settings.memoryVectorEnabled }),
 		);
 
-		const providerSelect = selectTrigger(backstage, "服务类型");
+		const providerSelect = selectTrigger(
+			await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings }),
+			zhCN.settings.vectorProvider,
+		);
 		await user.click(providerSelect);
 		const localOption = await waitFor(
 			() =>
@@ -171,7 +257,7 @@ describe("NetworkAndMemorySettings", () => {
 			{ timeout: 3000 },
 		);
 		expect(localOption).toBeTruthy();
-		await user.click(localOption!);
+		fireEvent.click(localOption!);
 
 		await waitFor(() =>
 			expect(client.memory.configureLocalEmbedding).toHaveBeenCalledWith({
@@ -217,7 +303,7 @@ describe("NetworkAndMemorySettings", () => {
 		await user.click(networkSaveButton(backstage));
 
 		await waitFor(() => {
-			expect(within(backstage).getByRole("alert")).toBeTruthy();
+			expect(within(backstage).getAllByRole("alert").length).toBeGreaterThan(0);
 		});
 	});
 
@@ -253,11 +339,135 @@ describe("NetworkAndMemorySettings", () => {
 		});
 		await user.clear(mirrorField);
 		await user.type(mirrorField, "https://mirror.example.com/hf");
+		await user.click(
+			within(embedding).getByRole("button", {
+				name: zhCN.settings.downloadAndEnableLocalModel,
+			}),
+		);
 
 		await waitFor(() =>
 			expect(settingsSet).toHaveBeenCalledWith({
 				settings: { modelDownloadMirror: { endpoint: "https://mirror.example.com/hf" } },
 			}),
 		);
+	});
+
+	it("keeps the Host provider selected until local configuration succeeds", async () => {
+		const { client } = createTestClient();
+		let provider: "remote" | "local" = "remote";
+		const completion = Promise.withResolvers<void>();
+		client.settings.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					settings: {
+						relationshipMemoryEnabled: false,
+						conversationHistoryReadEnabled: false,
+						networkProxy: { mode: "direct" as const },
+						memoryVectorService: {
+							enabled: true,
+							provider,
+							...(provider === "local"
+								? { localModel: "test-embedding" }
+								: { model: "remote-model", dimensions: 1024 }),
+						},
+						modelDownloadMirror: {},
+					},
+				},
+			}),
+		);
+		client.memory.configureLocalEmbedding = vi.fn(async () => {
+			await completion.promise;
+			provider = "local";
+			return { ok: true as const, data: { ready: true } };
+		});
+
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { backstage, user } = await openSettings();
+		await waitForSettings(backstage);
+		const trigger = selectTrigger(backstage, zhCN.settings.vectorProvider);
+		expect(trigger).toHaveTextContent(zhCN.settings.vectorProviders.remote);
+
+		await user.click(trigger);
+		await user.click(await screen.findByRole("option", { name: zhCN.settings.vectorProviders.local }));
+		await waitFor(() => expect(client.memory.configureLocalEmbedding).toHaveBeenCalled());
+		expect(trigger).toHaveTextContent(zhCN.settings.vectorProviders.remote);
+		expect(trigger).toBeDisabled();
+
+		completion.resolve();
+		await waitFor(() => expect(trigger).toHaveTextContent(zhCN.settings.vectorProviders.local));
+	});
+
+	it("keeps the Host preset selected until settings persistence succeeds", async () => {
+		const { client } = createTestClient();
+		let model = "current-model";
+		let dimensions = 64;
+		const completion = Promise.withResolvers<void>();
+		client.settings.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					settings: {
+						relationshipMemoryEnabled: false,
+						conversationHistoryReadEnabled: false,
+						networkProxy: { mode: "direct" as const },
+						memoryVectorService: {
+							enabled: true,
+							provider: "remote" as const,
+							model,
+							dimensions,
+						},
+						modelDownloadMirror: {},
+					},
+				},
+			}),
+		);
+		client.settings.capabilitiesGet = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					networkProxyModes: [{ id: "direct" as const }],
+					memoryVectorProviders: [{ id: "remote" as const, onboarding: false }],
+					memoryVectorPresets: [
+						{ id: "bge-m3", model: "host-preset-model", dimensions: 777 },
+					],
+					localEmbeddingCandidates: [],
+				},
+			}),
+		);
+		client.settings.set = vi.fn(async () => {
+			await completion.promise;
+			model = "host-preset-model";
+			dimensions = 777;
+			return {
+				ok: true as const,
+				data: {
+					settings: {
+						networkProxy: { mode: "direct" as const },
+						memoryVectorService: {
+							enabled: true,
+							provider: "remote" as const,
+							model,
+							dimensions,
+						},
+					},
+				},
+			};
+		});
+
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { backstage, user } = await openSettings();
+		await waitForSettings(backstage);
+		const trigger = selectTrigger(backstage, zhCN.settings.vectorPreset);
+		expect(trigger).not.toHaveTextContent(zhCN.settings.vectorPresetLabels["bge-m3"]);
+
+		await user.click(trigger);
+		await user.click(await screen.findByRole("option", { name: zhCN.settings.vectorPresetLabels["bge-m3"] }));
+		await waitFor(() => expect(client.settings.set).toHaveBeenCalled());
+		expect(trigger).not.toHaveTextContent(zhCN.settings.vectorPresetLabels["bge-m3"]);
+		expect(trigger).toBeDisabled();
+
+		completion.resolve();
+		await waitFor(() => expect(trigger).toHaveTextContent(zhCN.settings.vectorPresetLabels["bge-m3"]));
 	});
 });

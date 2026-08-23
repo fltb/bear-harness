@@ -20,6 +20,7 @@ export interface IpcError {
 export class IpcInvocationError extends Error {
 	constructor(
 		readonly kind: string,
+		readonly reason: string,
 		message: string,
 	) {
 		super(message);
@@ -30,7 +31,11 @@ export class IpcInvocationError extends Error {
 /** Unwrap the envelope already validated by the generated client. */
 export function unwrap<T>(result: IpcEnvelope<T>): T {
 	if (result.ok) return result.data;
-	throw new IpcInvocationError(result.error.kind, userFacingError(result.error.kind));
+	throw new IpcInvocationError(
+		result.error.kind,
+		result.error.reason,
+		userFacingError(result.error.kind),
+	);
 }
 
 function userFacingError(kind: string): string {

@@ -1,25 +1,21 @@
 import { rmSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
-import type { PiTimeline } from "@bear-harness/protocol/schema";
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import type { PiLiveState, PiTimeline } from "@bear-harness/protocol/schema";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { PiSessionMessageEntry } from "../companion/pi-session-store.js";
 import { PiSessionStore } from "../companion/pi-session-store.js";
 import type { AppDatabase } from "../storage/database.js";
 import {
-	branches,
+	activeConversations,
 	commissions,
 	conversationDirectives,
 	conversationSessions,
 	conversations,
 	events,
 	memoryCandidates,
-	messages,
-	messageVersions,
 	relationshipMemoryEntries,
+	roleplayEvents,
 	sceneState,
-	storyChangeEvents,
-	storyChanges,
-	turns,
 } from "../storage/schema.js";
 
 export interface ConversationSummary {
@@ -32,18 +28,18 @@ export interface ConversationSummary {
 
 export interface ConversationProjection {
 	activeConversationId: string;
-	activeBranchId?: string;
 	id: string;
 	title: string;
 	sceneTitle: string;
 	piTimeline: PiTimeline;
+	piSessionId: string;
+	piLiveState: PiLiveState;
 }
 export interface ConversationSearchHit {
 	conversationId: string;
 	title: string;
 	updatedAt: string;
-	messageId: string;
-	versionId: string;
+	entryId: string;
 	role: "user" | "assistant";
 	excerpt: string;
 }
@@ -60,16 +56,27 @@ export interface ConversationSessionResolver {
 	get(conversationId: string): PiSessionStore | undefined;
 }
 
+/** Supervisor-owned live Pi session projection with no transcript write capability. */
+export interface PiSessionHandleProjection {
+	readonly sessionId: string;
+	readonly sessionManager: PiSessionStore["sessionManager"];
+	readPiLiveState(): unknown;
+}
+
+export interface LiveSessionResolver {
+	get(conversationId: string): PiSessionHandleProjection | undefined;
+}
+
 type SessionMetadataRow = {
 	piSessionId: string;
 	sessionFilePath: string;
-	activeLeafId: string | null;
 };
 
 
 export class ConversationRepository {
 	private readonly sessionDir?: string;
 	private readonly sessionCwd?: string;
+	private liveSessionResolver: LiveSessionResolver | undefined;
 	private readonly sessions = new Map<string, PiSessionStore>();
 
 	constructor(
@@ -80,13 +87,16 @@ export class ConversationRepository {
 		this.sessionCwd = options.sessionCwd;
 	}
 
+	setLiveSessionResolver(resolver: LiveSessionResolver): void {
+		this.liveSessionResolver = resolver;
+	}
+
 	/** Return the product-owned Pi store for a conversation. */
 	getSession(conversationId: string): PiSessionStore {
 		const metadata = this.db
 			.select({
 				piSessionId: conversationSessions.piSessionId,
 				sessionFilePath: conversationSessions.sessionFilePath,
-				activeLeafId: conversationSessions.activeLeafId,
 			})
 			.from(conversationSessions)
 			.where(eq(conversationSessions.conversationId, conversationId))
@@ -131,104 +141,6 @@ export class ConversationRepository {
 			.all()
 			.map((row) => ({ ...row, unread: false as const }));
 	}
-
-	search(
-		companionId: string,
-		query: string,
-		options: { excludeConversationId?: string; includeArchived?: boolean; limit?: number } = {},
-	): ConversationSearchHit[] {
-		const needle = query.trim();
-		if (!needle) return [];
-		const rows = this.db
-			.select({
-				conversationId: conversations.id,
-				title: conversations.title,
-				updatedAt: conversations.updatedAt,
-				messageId: messages.id,
-				versionId: messageVersions.id,
-				role: messages.role,
-				content: messageVersions.content,
-			})
-			.from(messages)
-			.innerJoin(conversations, eq(conversations.id, messages.conversationId))
-			.innerJoin(
-				messageVersions,
-				and(eq(messageVersions.messageId, messages.id), eq(messageVersions.adopted, 1)),
-			)
-			.innerJoin(branches, and(eq(branches.id, messages.branchId), eq(branches.adopted, 1)))
-			.where(
-				and(
-					eq(conversations.companionId, companionId),
-					options.excludeConversationId
-						? sql`${conversations.id} <> ${options.excludeConversationId}`
-						: undefined,
-					options.includeArchived ? undefined : isNull(conversations.archivedAt),
-					inArray(messages.role, ["user", "assistant"]),
-					sql`instr(${messageVersions.content}, ${needle}) > 0`,
-				),
-			)
-			.orderBy(desc(conversations.updatedAt))
-			.limit(options.limit ?? 6)
-			.all();
-		return rows.map((row) => ({
-			conversationId: row.conversationId,
-			title: row.title,
-			updatedAt: row.updatedAt,
-			messageId: row.messageId,
-			versionId: row.versionId,
-			role: row.role as "user" | "assistant",
-			excerpt: excerpt(row.content, needle),
-		}));
-	}
-
-	create(input: {
-		id: string;
-		branchId: string;
-		companionId: string;
-		title: string;
-		sceneTitle: string;
-	}) {
-		const session = this.sessionDir
-			? PiSessionStore.create({
-					sessionDir: this.sessionDir,
-					cwd: this.sessionCwd ?? this.sessionDir,
-				})
-			: undefined;
-		try {
-			this.db.transaction((transaction) => {
-				transaction
-					.insert(conversations)
-					.values({
-						id: input.id,
-						companionId: input.companionId,
-						title: input.title,
-						sceneTitle: input.sceneTitle,
-					})
-					.run();
-				transaction
-					.insert(branches)
-					.values({ id: input.branchId, conversationId: input.id, label: "main", adopted: 1 })
-					.run();
-				if (session) {
-					const metadata = session.metadata;
-					transaction
-						.insert(conversationSessions)
-						.values({
-							conversationId: input.id,
-							piSessionId: metadata.sessionId,
-							sessionFilePath: metadata.sessionFile,
-							activeLeafId: metadata.leafId,
-						})
-						.run();
-				}
-			});
-		} catch (error) {
-			if (session) rmSync(session.sessionFile, { force: true });
-			throw error;
-		}
-		if (session) this.sessions.set(input.id, session);
-	}
-
 	get(id: string, companionId: string): ConversationProjection | undefined {
 		const row = this.db
 			.select({
@@ -249,47 +161,259 @@ export class ConversationRepository {
 	}
 
 	rename(id: string, companionId: string, title: string): boolean {
-		return (
-			this.db
-				.update(conversations)
-				.set({ title, updatedAt: sql`datetime('now')` })
-				.where(and(eq(conversations.id, id), eq(conversations.companionId, companionId)))
-				.run().changes > 0
-		);
+		const result = this.db
+			.update(conversations)
+			.set({ title, updatedAt: sql`datetime('now')` })
+			.where(and(eq(conversations.id, id), eq(conversations.companionId, companionId)))
+			.run();
+		return result.changes > 0;
 	}
 
-	archive(id: string, companionId: string, archived: boolean): boolean {
-		return (
-			this.db
+	search(
+		companionId: string,
+		query: string,
+		options: { excludeConversationId?: string; includeArchived?: boolean; limit?: number } = {},
+	): ConversationSearchHit[] {
+		const needle = query.trim();
+		if (!needle) return [];
+		const limit = options.limit ?? 6;
+		const conversationRows = this.db
+			.select({
+				id: conversations.id,
+				title: conversations.title,
+				updatedAt: conversations.updatedAt,
+			})
+			.from(conversations)
+			.where(
+				and(
+					eq(conversations.companionId, companionId),
+					options.excludeConversationId
+						? sql`${conversations.id} <> ${options.excludeConversationId}`
+						: undefined,
+					options.includeArchived ? undefined : isNull(conversations.archivedAt),
+				),
+			)
+			.orderBy(desc(conversations.updatedAt), sql`conversations.rowid desc`)
+			.all();
+		const hits: ConversationSearchHit[] = [];
+		for (const conversation of conversationRows) {
+			if (hits.length >= limit) break;
+			let session: PiSessionStore;
+			try {
+				session = this.getSession(conversation.id);
+			} catch (error) {
+				console.warn(`conversation search: skipping session for ${conversation.id}`, error);
+				continue;
+			}
+			const entries = session.buildPiTimeline().entries;
+			for (const entry of [...entries].reverse()) {
+				if (
+					entry.kind !== "message" ||
+					(entry.role !== "user" && entry.role !== "assistant") ||
+					entry.text === undefined ||
+					!entry.text.includes(needle)
+				) {
+					continue;
+				}
+				hits.push({
+					conversationId: conversation.id,
+					title: conversation.title,
+					updatedAt: conversation.updatedAt,
+					entryId: entry.id,
+					role: entry.role,
+					excerpt: excerpt(entry.text, needle),
+				});
+				if (hits.length >= limit) break;
+			}
+		}
+		return hits;
+	}
+	createAndSelect(input: {
+		id: string;
+		companionId: string;
+		title: string;
+		sceneTitle: string;
+		onCommit?: (transaction: Pick<AppDatabase, "insert" | "update">) => void;
+	}): ConversationProjection {
+		if (!this.sessionDir) {
+			throw new Error("conversation session directory is required");
+		}
+		const session = this.sessionDir
+			? PiSessionStore.create({
+					sessionDir: this.sessionDir,
+					cwd: this.sessionCwd ?? this.sessionDir,
+				})
+			: undefined;
+		try {
+			this.db.transaction((transaction) => {
+				transaction
+					.insert(conversations)
+					.values({
+						id: input.id,
+						companionId: input.companionId,
+						title: input.title,
+						sceneTitle: input.sceneTitle,
+					})
+					.run();
+				if (session) {
+					const metadata = session.metadata;
+					transaction
+						.insert(conversationSessions)
+						.values({
+							conversationId: input.id,
+							piSessionId: metadata.sessionId,
+							sessionFilePath: metadata.sessionFile,
+						})
+						.run();
+				}
+				transaction
+					.insert(activeConversations)
+					.values({ companionId: input.companionId, conversationId: input.id })
+					.onConflictDoUpdate({
+						target: activeConversations.companionId,
+						set: {
+							conversationId: input.id,
+							updatedAt: sql`datetime('now')`,
+						},
+					})
+					.run();
+				input.onCommit?.(transaction);
+			});
+		} catch (error) {
+			if (session) rmSync(session.sessionFile, { force: true });
+			throw error;
+		}
+		if (session) this.sessions.set(input.id, session);
+		return this.project(input.id, input.title, input.sceneTitle);
+	}
+
+	active(companionId: string): ConversationProjection | undefined {
+		const row = this.db
+			.select({
+				id: conversations.id,
+				title: conversations.title,
+				sceneTitle: conversations.sceneTitle,
+			})
+			.from(activeConversations)
+			.innerJoin(conversations, eq(conversations.id, activeConversations.conversationId))
+			.where(and(eq(activeConversations.companionId, companionId), isNull(conversations.archivedAt)))
+			.get();
+		return row ? this.project(row.id, row.title, row.sceneTitle) : undefined;
+	}
+
+	select(id: string, companionId: string): ConversationProjection | undefined {
+		const selected = this.db.transaction((transaction) => {
+			const conversation = transaction
+				.select({ id: conversations.id })
+				.from(conversations)
+				.where(
+					and(
+						eq(conversations.id, id),
+						eq(conversations.companionId, companionId),
+						isNull(conversations.archivedAt),
+					),
+				)
+				.get();
+			if (!conversation) return undefined;
+			transaction
+				.insert(activeConversations)
+				.values({ companionId, conversationId: id })
+				.onConflictDoUpdate({
+					target: activeConversations.companionId,
+					set: { conversationId: id, updatedAt: sql`datetime('now')` },
+				})
+				.run();
+			return id;
+		});
+		return selected ? this.get(selected, companionId) : undefined;
+	}
+
+	archiveAndResolve(
+		id: string,
+		companionId: string,
+		archived: boolean,
+	): { found: boolean; active?: ConversationProjection } {
+		const result = this.db.transaction((transaction) => {
+			const conversation = transaction
+				.select({ id: conversations.id, archivedAt: conversations.archivedAt })
+				.from(conversations)
+				.where(and(eq(conversations.id, id), eq(conversations.companionId, companionId)))
+				.get();
+			if (!conversation) return { found: false as const };
+
+			const current = transaction
+				.select({ conversationId: activeConversations.conversationId })
+				.from(activeConversations)
+				.where(eq(activeConversations.companionId, companionId))
+				.get();
+			transaction
 				.update(conversations)
 				.set({
 					archivedAt: archived ? new Date().toISOString() : null,
 					updatedAt: sql`datetime('now')`,
 				})
-				.where(and(eq(conversations.id, id), eq(conversations.companionId, companionId)))
-				.run().changes > 0
-		);
+				.where(eq(conversations.id, id))
+				.run();
+
+			let activeId = current?.conversationId;
+			if (activeId === id) {
+				if (archived) {
+					activeId = transaction
+						.select({ id: conversations.id })
+						.from(conversations)
+						.where(and(eq(conversations.companionId, companionId), isNull(conversations.archivedAt)))
+						.orderBy(desc(conversations.updatedAt), sql`conversations.rowid desc`)
+						.get()?.id;
+				} else {
+					activeId = id;
+				}
+			} else if (!activeId && !archived) {
+				activeId = id;
+			}
+
+			if (activeId) {
+				transaction
+					.insert(activeConversations)
+					.values({ companionId, conversationId: activeId })
+					.onConflictDoUpdate({
+						target: activeConversations.companionId,
+						set: { conversationId: activeId, updatedAt: sql`datetime('now')` },
+					})
+					.run();
+			} else {
+				transaction
+					.delete(activeConversations)
+					.where(eq(activeConversations.companionId, companionId))
+					.run();
+			}
+			return { found: true as const, activeId };
+		});
+		if (!result.found || !result.activeId) return { found: result.found };
+		const active = this.get(result.activeId, companionId);
+		return active ? { found: true, active } : { found: true };
 	}
 
-	delete(id: string, companionId: string): boolean {
-		const exists = this.db
-			.select({ id: conversations.id })
-			.from(conversations)
-			.where(and(eq(conversations.id, id), eq(conversations.companionId, companionId)))
-			.get();
-		if (!exists) return false;
-		const sessionMetadata = this.db
-			.select({ sessionFilePath: conversationSessions.sessionFilePath })
-			.from(conversationSessions)
-			.where(eq(conversationSessions.conversationId, id))
-			.get();
-		this.db.transaction((transaction) => {
-			const branchIds = transaction
-				.select({ id: branches.id })
-				.from(branches)
-				.where(eq(branches.conversationId, id))
-				.all()
-				.map((row) => row.id);
+	deleteAndResolve(
+		id: string,
+		companionId: string,
+	): { found: boolean; active?: ConversationProjection } {
+		const result = this.db.transaction((transaction) => {
+			const conversation = transaction
+				.select({ id: conversations.id })
+				.from(conversations)
+				.where(and(eq(conversations.id, id), eq(conversations.companionId, companionId)))
+				.get();
+			if (!conversation) return { found: false as const };
+			const current = transaction
+				.select({ conversationId: activeConversations.conversationId })
+				.from(activeConversations)
+				.where(eq(activeConversations.companionId, companionId))
+				.get();
+			const sessionMetadata = transaction
+				.select({ sessionFilePath: conversationSessions.sessionFilePath })
+				.from(conversationSessions)
+				.where(eq(conversationSessions.conversationId, id))
+				.get();
 			transaction
 				.update(commissions)
 				.set({ conversationId: null })
@@ -297,47 +421,14 @@ export class ConversationRepository {
 				.run();
 			transaction
 				.update(relationshipMemoryEntries)
-				.set({ sourceMessageVersionId: null, sourceBranchId: null, sourceConversationId: null })
+				.set({ sourceConversationId: null })
 				.where(eq(relationshipMemoryEntries.sourceConversationId, id))
 				.run();
 			transaction
 				.update(memoryCandidates)
-				.set({ sourceMessageVersionId: null, sourceBranchId: null, sourceConversationId: null })
+				.set({ sourceConversationId: null })
 				.where(eq(memoryCandidates.sourceConversationId, id))
 				.run();
-			transaction
-				.update(storyChangeEvents)
-				.set({ conversationId: null })
-				.where(eq(storyChangeEvents.conversationId, id))
-				.run();
-			transaction
-				.update(storyChanges)
-				.set({
-					status: "reverted",
-					revertedAt: sql`datetime('now')`,
-					conversationId: null,
-					branchId: null,
-				})
-				.where(
-					branchIds.length > 0
-						? or(eq(storyChanges.conversationId, id), inArray(storyChanges.branchId, branchIds))
-						: eq(storyChanges.conversationId, id),
-				)
-				.run();
-			transaction.delete(turns).where(eq(turns.conversationId, id)).run();
-			const messageIds = transaction
-				.select({ id: messages.id })
-				.from(messages)
-				.where(eq(messages.conversationId, id))
-				.all()
-				.map((row) => row.id);
-			if (messageIds.length > 0) {
-				transaction
-					.delete(messageVersions)
-					.where(inArray(messageVersions.messageId, messageIds))
-					.run();
-			}
-			transaction.delete(messages).where(eq(messages.conversationId, id)).run();
 			transaction.delete(sceneState).where(eq(sceneState.conversationId, id)).run();
 			transaction
 				.delete(conversationDirectives)
@@ -347,22 +438,52 @@ export class ConversationRepository {
 				.delete(conversationSessions)
 				.where(eq(conversationSessions.conversationId, id))
 				.run();
-			transaction.delete(branches).where(eq(branches.conversationId, id)).run();
 			transaction.delete(conversations).where(eq(conversations.id, id)).run();
-		});
-		this.sessions.delete(id);
-		if (sessionMetadata?.sessionFilePath) {
-			const sessionFile = resolve(sessionMetadata.sessionFilePath);
-			const root = this.sessionDir ? resolve(this.sessionDir) : undefined;
-			const relativePath = root ? relative(root, sessionFile) : "";
-			if (
-				!root ||
-				(relativePath !== ".." && !relativePath.startsWith("..") && !isAbsolute(relativePath))
-			) {
-				rmSync(sessionFile, { force: true });
+
+			let activeId = current?.conversationId;
+			if (activeId === id) {
+				activeId = transaction
+					.select({ id: conversations.id })
+					.from(conversations)
+					.where(and(eq(conversations.companionId, companionId), isNull(conversations.archivedAt)))
+					.orderBy(desc(conversations.updatedAt), sql`conversations.rowid desc`)
+					.get()?.id;
 			}
+			if (activeId) {
+				transaction
+					.insert(activeConversations)
+					.values({ companionId, conversationId: activeId })
+					.onConflictDoUpdate({
+						target: activeConversations.companionId,
+						set: { conversationId: activeId, updatedAt: sql`datetime('now')` },
+					})
+					.run();
+			} else if (current?.conversationId === id) {
+				transaction
+					.delete(activeConversations)
+					.where(eq(activeConversations.companionId, companionId))
+					.run();
+			}
+			return { found: true as const, activeId, sessionFilePath: sessionMetadata?.sessionFilePath };
+		});
+		if (!result.found) return { found: false };
+		this.sessions.delete(id);
+		if (result.sessionFilePath) this.removeSessionFile(result.sessionFilePath);
+		if (!result.activeId) return { found: true };
+		const active = this.get(result.activeId, companionId);
+		return active ? { found: true, active } : { found: true };
+	}
+
+	private removeSessionFile(sessionFilePath: string): void {
+		const sessionFile = resolve(sessionFilePath);
+		const root = this.sessionDir ? resolve(this.sessionDir) : undefined;
+		const relativePath = root ? relative(root, sessionFile) : "";
+		if (
+			!root ||
+			(relativePath !== ".." && !relativePath.startsWith("..") && !isAbsolute(relativePath))
+		) {
+			rmSync(sessionFile, { force: true });
 		}
-		return true;
 	}
 
 	project(id: string, title: string, sceneTitle: string): ConversationProjection {
@@ -379,25 +500,86 @@ export class ConversationRepository {
 		if (!session.buildPiTimeline().entries.some((entry) => entry.id === messageId)) return undefined;
 		return session.getMessageEntry(messageId);
 	}
-
-
 	private projectPi(
 		id: string,
 		title: string,
 		sceneTitle: string,
 		session: PiSessionStore,
 	): ConversationProjection {
+		const live = this.liveSessionResolver?.get(id);
 		const piTimeline = session.buildPiTimeline();
 		return {
 			activeConversationId: id,
-			...(session.leafId ? { activeBranchId: session.leafId } : {}),
 			id,
 			title,
 			sceneTitle,
+			piSessionId: live?.sessionId ?? session.sessionId,
+			piLiveState: projectPiLiveState(live?.readPiLiveState()),
 			piTimeline,
 		};
 	}
 
+}
+
+function projectPiLiveState(value: unknown): PiLiveState {
+	if (!value || typeof value !== "object") return { isStreaming: false };
+	const state = value as {
+		isStreaming?: unknown;
+		errorMessage?: unknown;
+		streamingMessage?: unknown;
+	};
+	const streamingMessage =
+		state.streamingMessage && typeof state.streamingMessage === "object"
+			? projectPiLiveAssistantMessage(state.streamingMessage)
+			: undefined;
+	return {
+		isStreaming: state.isStreaming === true,
+		...(streamingMessage ? { streamingMessage } : {}),
+		...(typeof state.errorMessage === "string"
+			? { errorMessage: state.errorMessage.slice(0, 4096) }
+			: {}),
+	};
+}
+
+function projectPiLiveAssistantMessage(value: object): NonNullable<PiLiveState["streamingMessage"]> {
+	const message = value as {
+		content?: unknown;
+		stopReason?: unknown;
+		errorMessage?: unknown;
+	};
+	const text =
+		typeof message.content === "string"
+			? message.content
+			: Array.isArray(message.content)
+				? message.content
+						.flatMap((part) =>
+							part &&
+							typeof part === "object" &&
+							"type" in part &&
+							part.type === "text" &&
+							"text" in part &&
+							typeof part.text === "string"
+								? [part.text]
+								: [],
+						)
+						.join("")
+				: undefined;
+	const stopReason =
+		message.stopReason === "stop" ||
+		message.stopReason === "length" ||
+		message.stopReason === "toolUse" ||
+		message.stopReason === "error" ||
+		message.stopReason === "aborted" ||
+		message.stopReason === "deferred"
+			? message.stopReason
+			: "pending";
+	return {
+		...(text ? { text: text.slice(0, 65536) } : {}),
+		stopReason,
+		...(typeof message.errorMessage === "string"
+			? { errorMessage: message.errorMessage.slice(0, 4096) }
+			: {}),
+	};
 }
 
 function excerpt(content: string, query: string): string {

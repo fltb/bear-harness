@@ -313,7 +313,7 @@ Every finding below is resolved. Each entry retains its original category, evide
 - **Impact:** advertised configuration cannot activate the implementation
 - **Next action:** either expose local mode with dependency/download policy or remove it from the external contract
 - **Confidence:** `confirmed`
-- **Resolution:** resolved — `parseConfig` now keeps `provider="local"` in the resolved config as explicit offline node-llama-cpp mode; when the optional peer is unavailable the embedding service reports that failure and callers degrade to keyword search. The `configError` rewrite of local→none was removed (only qclaw missing-field validation still disables with a recorded error) (packages/tdai-core/src/config.ts). Verified by the green unit gate.
+- **Resolution:** resolved — `parseConfig` now keeps `provider="local"` in the resolved config as explicit offline node-llama-cpp mode; the runtime is bundled as a production dependency, and a native-load failure is reported while callers degrade to keyword search. The `configError` rewrite of local→none was removed (only qclaw missing-field validation still disables with a recorded error) (packages/tdai-core/src/config.ts). Verified by the green unit gate.
 
 <a id="f047"></a>
 ### F047: Clarify the tdai integration export surface

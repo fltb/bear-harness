@@ -185,32 +185,6 @@ export class PiSessionStore {
 		else this.manager.resetLeaf();
 	}
 
-	/** Append a host-authored assistant reply as a native Pi message entry. */
-	appendSyntheticAssistant(text: string): string {
-		const message: PiSessionMessage = {
-			role: "assistant",
-			content: [{ type: "text", text }],
-			api: "openai-completions",
-			provider: "host",
-			model: "host-edit",
-			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-			},
-			stopReason: "stop",
-			timestamp: Date.now(),
-		};
-		return this.manager.appendMessage(message);
-	}
-
-	/** Append a user message through the canonical SessionManager. */
-	appendUserMessage(text: string, timestamp = Date.now()): string {
-		return this.manager.appendMessage({ role: "user", content: text, timestamp });
-	}
 
 	/** Read Pi's active, compaction-aware entry projection with stable entry IDs. */
 	readMessageEntries(): PiSessionMessageEntry[] {

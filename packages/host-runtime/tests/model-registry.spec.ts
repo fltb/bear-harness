@@ -54,7 +54,24 @@ describe("ModelRegistry", () => {
 		expect(models.selected("conversation")?.modelId).toBe("vision");
 	});
 
-	it("automatically chooses a multimodal model only when the selected model cannot read images", () => {
+	it("uses the selected reply model directly for images when automatic mode is active", () => {
+		models.enable({
+			providerId: "relay",
+			modelId: "vision",
+			label: "Vision",
+			supportsImages: true,
+		});
+		models.select("conversation", "relay", "vision");
+
+		expect(models.resolve("conversation", false)?.modelId).toBe("vision");
+		expect(models.resolve("conversation", true)).toMatchObject({
+			providerId: "relay",
+			modelId: "vision",
+		});
+		expect(models.multimodalFallback("character")).toBeUndefined();
+	});
+
+	it("does not infer an image reader for a text-only reply model", () => {
 		models.enable({ providerId: "relay", modelId: "text", label: "Text", supportsImages: false });
 		models.enable({
 			providerId: "vision-provider",
@@ -65,14 +82,12 @@ describe("ModelRegistry", () => {
 		models.select("conversation", "relay", "text");
 
 		expect(models.resolve("conversation", false)?.modelId).toBe("text");
-		expect(models.resolve("conversation", true)).toMatchObject({
-			providerId: "vision-provider",
-			modelId: "vision",
-		});
-		expect(models.multimodalFallback("character")?.modelId).toBe("vision");
+		expect(models.resolve("conversation", true)).toBeUndefined();
+		expect(models.multimodalFallback("character")).toBeUndefined();
 	});
 
 	it("persists an explicitly selected multimodal fallback", () => {
+		models.enable({ providerId: "relay", modelId: "text", label: "Text", supportsImages: false });
 		models.enable({
 			providerId: "relay",
 			modelId: "vision-a",
@@ -85,13 +100,21 @@ describe("ModelRegistry", () => {
 			label: "Vision B",
 			supportsImages: true,
 		});
+		models.select("conversation", "relay", "text");
 
 		models.setVisionDefault("character", {
 			mode: "manual",
 			route: { providerId: "relay", modelId: "vision-b" },
 		});
 
+		expect(models.defaults("character")).toMatchObject({
+			vision: {
+				mode: "manual",
+				route: { providerId: "relay", modelId: "vision-b" },
+			},
+		});
 		expect(models.multimodalFallback("character")?.modelId).toBe("vision-b");
+		expect(models.resolve("conversation", true)?.modelId).toBe("vision-b");
 		expect(() =>
 			models.setVisionDefault("character", {
 				mode: "manual",
@@ -130,25 +153,6 @@ describe("ModelRegistry", () => {
 			providerId: "relay",
 			modelId: "text",
 		});
-	});
-
-	it("resolves automatic vision without creating or changing persisted defaults", () => {
-		models.enable({
-			providerId: "relay",
-			modelId: "vision",
-			label: "Vision",
-			supportsImages: true,
-		});
-		const before = database.connection
-			.prepare("SELECT COUNT(*) AS count FROM model_route_settings")
-			.get() as { count: number };
-
-		expect(models.multimodalFallback("character")?.modelId).toBe("vision");
-		const after = database.connection
-			.prepare("SELECT COUNT(*) AS count FROM model_route_settings")
-			.get() as { count: number };
-		expect(after.count).toBe(before.count);
-		expect(models.defaults("character").vision).toEqual({ mode: "auto" });
 	});
 
 	it("clears reply and manual vision defaults when their configured model is removed", () => {

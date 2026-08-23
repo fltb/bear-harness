@@ -105,7 +105,6 @@ export interface CharacterStrings {
 	work_presentation?: CharacterWorkPresentation;
 	first_meeting: CharacterOnboardingFlow;
 }
-
 export interface ScenePreset {
 	id: string;
 	label: string;
@@ -137,36 +136,18 @@ export interface CharacterHostBehavior {
 	event_reactions: HostEventReaction[];
 }
 
-export interface CompanionPiConfiguration {
-	append_system_prompt: string;
-}
-
-/** A seed dialogue showing how the character speaks in a situation. */
-export interface DialogueExample {
-	scenario: string;
-	voice?: string;
-	user: string;
-	assistant: string;
-}
-
-/**
- * A voice mode declares a distinct expressive style for the character.
- * The character package can declare any number of modes; the Host passes
- * the user's current selection as a per-turn injection.
- * `example` is optional: one sample turn showing how the character speaks
- * in this mode, used for tone calibration.
- */
 export interface VoiceMode {
 	id: string;
 	label: string;
 	description: string;
 	style_instruction: string;
 	use_when: string;
-	example?: {
-		user: string;
-		assistant: string;
-	};
+	example?: { user: string; assistant: string };
 }
+export interface CompanionPiConfiguration {
+	append_system_prompt: string;
+}
+
 export interface CharacterCompanionConfiguration {
 	pi: CompanionPiConfiguration;
 }
@@ -193,7 +174,6 @@ export interface CharacterPackage {
 	file_safety?: string;
 	tool_interaction_norms?: string;
 	voice_modes?: VoiceMode[];
-	examples?: DialogueExample[];
 	scenes: ScenePreset[];
 	visual: CharacterVisuals;
 	host: CharacterHostBehavior;
@@ -380,6 +360,20 @@ function validateTheme(value: unknown, characterId: string): asserts value is Th
 	if (!result.success)
 		throw new Error(`character package ${characterId}: theme tokens are invalid`);
 }
+function validateCharacterCard(value: unknown, characterId: string): asserts value is CharacterStrings {
+	const schema = z.strictObject({
+		subtitle: z.string(),
+		scene_title: z.string(),
+		greeting: z.string(),
+		composer_placeholder: z.string(),
+		correction: z.strictObject({ trigger_label: z.string(), reason_group_label: z.string() }),
+		work_presentation: WorkPresentationSchema.optional(),
+		first_meeting: z.unknown(),
+	});
+	if (!schema.safeParse(value).success)
+		throw new Error(`character package ${characterId}: character card is invalid`);
+}
+
 
 /**
  * Character package loader — resolves role packages from an injected
@@ -596,6 +590,7 @@ export class CharacterLoader {
 				`character package ${id}: host reactions and companion.pi configuration are required`,
 			);
 		}
+		validateCharacterCard(parsed.character, id);
 		validateCharacterOnboardingFlow(parsed.character?.first_meeting, id);
 		validateWorkPresentation(parsed.character?.work_presentation, id);
 		const roleplay = RoleplaySchema.parse(parsed.roleplay);
@@ -807,8 +802,7 @@ export class CharacterLoader {
 		return {
 			skillPaths,
 			pluginPaths,
-			appendSystemPrompt:
-				character.companion.pi.append_system_prompt + "\n\n" + this.formatExamples(character),
+			appendSystemPrompt: character.companion.pi.append_system_prompt,
 			hostTools: [
 				"host_get_state",
 				"host_set_scene",
@@ -828,21 +822,7 @@ export class CharacterLoader {
 		};
 	}
 
-	private formatExamples(character: CharacterPackage): string {
-		const speaker = character.name;
-		const parts: string[] = [];
-		if (character.examples?.length) {
-			parts.push(
-				"[语气示例]\n以下对话展示" +
-					speaker +
-					"在不同情境下的典型说话方式，参照这些模式，不照搬台词。\n" +
-					character.examples
-						.map((e) => `情景：${e.scenario}\n你：${e.user}\n${speaker}：${e.assistant}`)
-						.join("\n\n"),
-			);
-		}
-		return parts.join("\n\n");
-	}
+
 
 	/** Project package presentation data into renderer-safe strings and data URLs. */
 	display(character: CharacterPackage): CharacterDisplay {

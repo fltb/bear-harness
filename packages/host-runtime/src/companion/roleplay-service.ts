@@ -1,9 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import {
-	branches,
-	messages,
-	messageVersions,
 	roleplayEvents,
 	roleplayUnlocks,
 } from "../storage/schema.js";
@@ -26,12 +23,8 @@ export class RoleplayService {
 			.select({
 				effects: roleplayEvents.effectsJson,
 				conversationId: roleplayEvents.conversationId,
-				branchId: roleplayEvents.branchId,
 			})
 			.from(roleplayEvents)
-			.leftJoin(messageVersions, eq(messageVersions.id, roleplayEvents.sourceMessageVersionId))
-			.leftJoin(messages, eq(messages.id, messageVersions.messageId))
-			.leftJoin(branches, eq(branches.id, roleplayEvents.branchId))
 			.where(eq(roleplayEvents.companionId, character.id))
 			.all();
 		for (const row of rows)
@@ -55,8 +48,8 @@ export class RoleplayService {
 		character: CharacterPackage;
 		eventId: string;
 		conversationId?: string;
-		branchId?: string;
-		sourceMessageVersionId?: string;
+		piSessionId?: string;
+		sourceNativeEntryId?: string;
 		dedupeKey: string;
 	}): RoleplayProjection {
 		const event = input.character.roleplay.events.find(
@@ -64,6 +57,12 @@ export class RoleplayService {
 		);
 		if (!event) throw { kind: "not_found", reason: "roleplay_event_not_found" };
 		const id = input.dedupeKey;
+		const existing = this.db
+			.select({ id: roleplayEvents.id })
+			.from(roleplayEvents)
+			.where(eq(roleplayEvents.id, id))
+			.get();
+		if (existing) return this.project(input.character, input.conversationId);
 		const current = this.project(input.character, input.conversationId);
 		if (event.when && !evaluateCondition(event.when, current))
 			throw { kind: "conflict", reason: "roleplay_event_condition_failed" };
@@ -74,8 +73,8 @@ export class RoleplayService {
 					id,
 					companionId: input.character.id,
 					conversationId: input.conversationId,
-					branchId: input.branchId,
-					sourceMessageVersionId: input.sourceMessageVersionId,
+					piSessionId: input.piSessionId,
+					sourceNativeEntryId: input.sourceNativeEntryId,
 					eventId: event.id,
 					effectsJson: event.effects,
 				})

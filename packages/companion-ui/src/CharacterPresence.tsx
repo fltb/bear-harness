@@ -1,4 +1,4 @@
-import { Show } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import type { CharacterDisplay, PresenceState } from "./stores/companion.js";
 
 export type CharacterPresenceLayoutMode = "resting" | "expanded" | "compact";
@@ -23,6 +23,31 @@ export function CharacterPresence(props: {
 	layout?: CharacterPresenceLayoutMode;
 }) {
 	const layout = () => props.layout ?? "resting";
+	const [loadedAspectRatio, setLoadedAspectRatio] = createSignal<
+		{ source: string; ratio: number } | undefined
+	>();
+	const presenceStyle = (asset: string): string | undefined => {
+		const loaded = loadedAspectRatio();
+		if (!loaded || loaded.source !== asset) return undefined;
+		return String(loaded.ratio);
+	};
+	const handleAssetLoad = (asset: string, event: Event): void => {
+		const image = event.currentTarget as HTMLImageElement;
+		const { naturalWidth, naturalHeight } = image;
+		const ratio = naturalWidth / naturalHeight;
+		if (
+			!Number.isFinite(naturalWidth) ||
+			!Number.isFinite(naturalHeight) ||
+			naturalWidth <= 0 ||
+			naturalHeight <= 0 ||
+			!Number.isFinite(ratio) ||
+			ratio <= 0
+		) {
+			setLoadedAspectRatio(undefined);
+			return;
+		}
+		setLoadedAspectRatio({ source: asset, ratio });
+	};
 	const visualState = () => {
 		const visual = props.character?.visual;
 		if (!visual) return undefined;
@@ -47,8 +72,15 @@ export function CharacterPresence(props: {
 					data-layout-mode={layout()}
 					role="img"
 					aria-label={label()}
+					style={{ "--presence-aspect-ratio": presenceStyle(asset) }}
 				>
-					<img src={asset} alt="" draggable={false} data-testid="presence-asset" />
+					<img
+						src={asset}
+						alt=""
+						draggable={false}
+						data-testid="presence-asset"
+						onLoad={(event) => handleAssetLoad(asset, event)}
+					/>
 				</div>
 			)}
 		</Show>

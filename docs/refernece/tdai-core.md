@@ -159,14 +159,14 @@ Always pass the result of `parseConfig(raw)` when constructing the facade; it su
 | `persona` | trigger every 50 new memories; max 15 scenes; 3 persona backups; 10 scene backups; optional model. |
 | `pipeline` | L1 every 5 conversations; warm-up enabled; L1 idle 600s; L2 delay 10s; L2 minimum 900s; max 3600s; inactive window 24h. |
 | `recall` | enabled; max 5 results; threshold 0.3; `hybrid`; timeout 5000ms; character budgets disabled (`0`). |
-| `embedding` | provider `none`, disabled effectively, dimensions `0`; `local` preserves explicit offline mode (768 dimensions by default) and uses optional `node-llama-cpp`; remote providers require endpoint/key/model/dimensions and invalid configs disable embeddings without throwing. |
+| `embedding` | provider `none`, disabled effectively, dimensions `0`; `local` preserves explicit offline mode (768 dimensions by default) and uses the bundled `node-llama-cpp` runtime; remote providers require endpoint/key/model/dimensions and invalid configs disable embeddings without throwing. |
 | `storeBackend` | `sqlite`; `tcvdb` additionally requires URL, API key, database, embedding model, and matching `embeddingDimensions` before collection/index creation. |
 | `bm25` | enabled, Chinese (`zh`). |
 | `report` | disabled by default for privacy; set `report.enabled=true` explicitly to opt in. |
 | `llm` | standalone override disabled; OpenAI-compatible defaults are OpenAI base URL, `gpt-4o`, 4096 output tokens, 120s timeout. |
 | `offload` | disabled, local mode, 0 retention, 50 MB log cap; it is an additional context-compression configuration, not a replacement for L0–L3 memory. |
 
-For a remote embedding provider, set `embedding.provider`, `baseUrl`, `apiKey`, `model`, and `dimensions`; set `sendDimensions=false` for servers that reject the OpenAI Matryoshka field. For local embeddings, set `embedding.provider="local"` and optionally `modelPath`/`modelCacheDir`; the optional `node-llama-cpp` peer must be installed, otherwise the service reports an actionable error and recall falls back to keyword search. For VectorDB, configure `storeBackend="tcvdb"` and credentials/database, `embeddingModel`, and its output `embeddingDimensions`. Treat API keys and backend tokens as secrets and do not place them in logs or committed config.
+For a remote embedding provider, set `embedding.provider`, `baseUrl`, `apiKey`, `model`, and `dimensions`; set `sendDimensions=false` for servers that reject the OpenAI Matryoshka field. For local embeddings, set `embedding.provider="local"` and optionally `modelPath`/`modelCacheDir`; the bundled `node-llama-cpp` runtime loads on demand, and a native-load failure reports an actionable error while recall falls back to keyword search. For VectorDB, configure `storeBackend="tcvdb"` and credentials/database, `embeddingModel`, and its output `embeddingDimensions`. Treat API keys and backend tokens as secrets and do not place them in logs or committed config.
 
 ## Standalone/local-model operation
 
@@ -174,7 +174,7 @@ When `llm.enabled=true` for an OpenClaw host, `TdaiCore` creates a dedicated [`S
 
 The standalone runner uses the AI SDK and OpenAI-compatible chat completions. Tool-enabled runs expose `read_file`, `write_to_file`, and `replace_in_file` and cap tool-loop steps at 20. Paths are intended to be relative to `workspaceDir`, which must be the memory data directory for L2/L3 file mutations. A host implementing `LLMRunner` must preserve the timeout/error contract and must not expose tools for text-only extraction/dedup.
 
-Local embeddings are a separate optional concern from standalone LLM calls. `node-llama-cpp` is an optional peer dependency, dynamically imported only for explicit `embedding.provider="local"` configuration. The pipeline factory starts model warmup in the background; direct `createEmbeddingService` consumers should call `startWarmup()` at an application lifetime where a model download is acceptable. When the peer is unavailable, local mode remains explicit and embedding callers degrade to keyword search. On shutdown, await `EmbeddingService.close()` through `TdaiCore.destroy()`.
+Local embeddings are a separate user-enabled concern from standalone LLM calls. `node-llama-cpp` is a bundled production dependency, dynamically imported only for explicit `embedding.provider="local"` configuration. The pipeline factory starts model warmup in the background; direct `createEmbeddingService` consumers should call `startWarmup()` at an application lifetime where a model download is acceptable. If the native runtime cannot load, local mode remains explicit and embedding callers degrade to keyword search. On shutdown, await `EmbeddingService.close()` through `TdaiCore.destroy()`.
 
 ## Persistence and integration expectations
 

@@ -17,7 +17,7 @@ test("browser requires a reply model before the role-defined onboarding", async 
 				providerId: provider.id,
 				name: provider.name,
 				baseUrl: `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/v1`,
-				modelId: provider.modelId,
+				models: [{ id: provider.modelId }],
 			},
 		})
 	).json();
@@ -56,43 +56,14 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	const modelSetup = page.getByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
 	await expect(modelSetup).toBeVisible();
 	await expect(modelSetup.getByRole("heading", { name: zhCN.modelSetup.title })).toBeVisible();
-	await expect(modelSetup.getByRole("button", { name: zhCN.settings.serviceLabel })).toBeVisible();
-	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.modelLabel })).toBeDisabled();
-	await selectKobalteOption(
-		page,
-		modelSetup.getByRole("button", { name: zhCN.settings.serviceLabel }),
-		provider.name,
-	);
-	await selectKobalteOption(
-		page,
-		modelSetup.getByRole("button", { name: zhCN.modelSetup.modelLabel }),
-		provider.modelId,
-	);
-	await modelSetup.getByRole("button", { name: zhCN.modelSetup.continue }).click();
-	const memorySetup = page.getByRole("dialog", { name: zhCN.settings.memoryVectorSection });
-	await expect(memorySetup).toBeVisible();
-	await selectKobalteOption(
-		page,
-		memorySetup.getByRole("button", { name: zhCN.settings.vectorProvider }),
-		zhCN.settings.vectorProviders.none,
-	);
-	const [settingsSetResponse] = await Promise.all([
-		page.waitForResponse((response) => response.url().includes("/rpc/settings.set%3Av1")),
-		memorySetup.getByRole("button", { name: zhCN.messages.continue }).click(),
-	]);
-	expect(await settingsSetResponse.json()).toMatchObject({
-		ok: true,
-		data: { settings: { memoryVectorService: { enabled: false, provider: "none" } } },
-	});
-	await expect(memorySetup).toBeHidden();
-	const settingsResponse = await page.request.post("/rpc/settings.get%3Av1", {
+	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.continue })).toBeDisabled();
+	const defaultResponse = await page.request.post("/rpc/model.defaults.setReply%3Av1", {
 		headers,
-		data: {},
+		data: { reply: { providerId: provider.id, modelId: provider.modelId } },
 	});
-	expect(await settingsResponse.json()).toMatchObject({
-		ok: true,
-		data: { settings: { memoryVectorService: { enabled: false, provider: "none" } } },
-	});
+	expect(await defaultResponse.json()).toMatchObject({ ok: true });
+	await page.reload();
+	await expect(modelSetup).toBeHidden();
 
 	const onboarding = page.getByRole("dialog", { name: "开始相处" });
 	await expect(onboarding).toBeVisible();

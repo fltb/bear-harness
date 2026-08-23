@@ -23,6 +23,21 @@ describe("IPC error presentation", () => {
 			}) as IpcInvocationError,
 		);
 	});
+	it("retains the Host reason for diagnostics and initiating-surface copy", () => {
+		try {
+			unwrap({
+				ok: false,
+				error: { kind: "not_found", reason: "configured_model_not_found" },
+			});
+			throw new Error("unwrap did not reject");
+		} catch (cause) {
+			expect(cause).toMatchObject({
+				name: "IpcInvocationError",
+				kind: "not_found",
+				reason: "configured_model_not_found",
+			});
+		}
+	});
 
 	it("returns successful payloads unchanged", () => {
 		const payload = { id: "value" };

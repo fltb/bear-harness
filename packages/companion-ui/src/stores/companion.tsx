@@ -30,12 +30,11 @@ import type { CompanionClient } from "@bear-harness/companion-client";
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import type { KnownDomainEvent, RoleplayState } from "@bear-harness/protocol";
 import type {
-	LocalEmbeddingCandidate as LocalEmbeddingCandidateSchema,
 	MemoryCandidate as MemoryCandidateSchema,
 } from "@bear-harness/protocol/schema";
 import { parseKnownDomainEvent } from "@bear-harness/protocol/schema";
 import type { z } from "@bear-harness/schema";
-import { useQueryClient } from "@tanstack/solid-query";
+import { useQueryClient, createQuery } from "@tanstack/solid-query";
 import {
 	createContext,
 	createEffect,
@@ -69,6 +68,8 @@ import {
 	type CommissionLaunchResult,
 	type CommissionListData,
 	type ConfiguredModel,
+	type ConversationActiveResponse,
+	type ConversationSelectResponse,
 	type ConversationSummary,
 	type DomainEvent,
 	type MemoryCaptureResponse,
@@ -77,6 +78,7 @@ import {
 	type MemorySearchData,
 	type MemoryScope,
 	type MemoryEntry,
+	type PiLiveState,
 	type PiTimeline,
 	type ModelListData,
 	type ModelRouteData,
@@ -87,13 +89,10 @@ import {
 	type RunInfo,
 	type RunListData,
 	type RunPermissionRequest,
+	type SettingsCapabilities,
 	type SettingsData,
 	type SettingsPatch,
 	type Snapshot,
-	type StoryChange,
-	type StoryChangeProposal,
-	type StoryChangeScope,
-	type StoryListData,
 } from "./ipc.js";
 import { invoke } from "./ipc.js";
 import { createOnboardingStore } from "./onboarding.js";
@@ -105,7 +104,7 @@ export { createOnboardingStore } from "./onboarding.js";
 /** Inferred wire shape of `memory.candidates.list` items (schema value import). */
 export type MemoryCandidate = z.infer<typeof MemoryCandidateSchema>;
 export type MemoryCandidateStatus = MemoryCandidate["status"];
-export type LocalEmbeddingCandidate = z.infer<typeof LocalEmbeddingCandidateSchema>;
+export type LocalEmbeddingCandidate = SettingsCapabilities["localEmbeddingCandidates"][number];
 
 // ---------------------------------------------------------------------------
 // Contract types
@@ -211,8 +210,6 @@ export interface MemoryApi {
 	search(query: string, scope?: MemoryScope): Promise<MemoryEntry[]>;
 	list(params?: MemoryListRequest): Promise<MemoryEntry[]>;
 	capture(entryId: string): Promise<MemoryCaptureResponse>;
-	localEmbeddingCandidates(): LocalEmbeddingCandidate[] | undefined;
-	listLocalEmbeddingCandidates(): Promise<LocalEmbeddingCandidate[]>;
 	configureLocalEmbedding(
 		provider: "none" | "local",
 		candidateId?: string,
@@ -253,13 +250,14 @@ export interface ProviderApi {
 	login(providerId: string): Promise<ProviderLoginResult>;
 	loginStatus(providerId: string): Promise<ProviderLoginResult>;
 	loginAnswer(providerId: string, answer: string): Promise<ProviderLoginResult>;
+	loginCancel(providerId: string): Promise<void>;
 	logout(providerId: string): Promise<void>;
+	remove(providerId: string): Promise<void>;
 }
 
 export interface ModelApi {
 	data(): ModelListData;
 	models(): ConfiguredModel[];
-	selectedValue(): string;
 	loading(): boolean;
 	error(): unknown;
 	refetch(): void;
@@ -306,15 +304,6 @@ export interface ArtifactApi {
 	download(artifactId: string): Promise<void>;
 }
 
-export interface StoryApi {
-	changes(): StoryChange[];
-	proposals(): StoryChangeProposal[];
-	list(branchId?: string): Promise<StoryListData>;
-	apply(text: string, scope: StoryChangeScope): Promise<void>;
-	revert(changeId: string): Promise<void>;
-	reset(): Promise<void>;
-	resolveProposal(proposalId: string, accept: boolean): Promise<void>;
-}
 
 export interface CharacterApi {
 	characters(): CharacterSummary[];
@@ -397,7 +386,7 @@ interface RpcMutationBinding<T> {
 
 export interface EmbeddingBinding {
 	readonly settingsQuery: RpcQueryBinding<{ settings: SettingsData }>;
-	readonly catalogQuery: RpcQueryBinding<{ candidates: LocalEmbeddingCandidate[] }>;
+	readonly capabilitiesQuery: RpcQueryBinding<SettingsCapabilities>;
 	readonly settingsMutation: RpcMutationBinding<EmbeddingSettingsValue>;
 	readonly localConfigureMutation: RpcMutationBinding<{
 		provider: "none" | "local";
@@ -415,9 +404,7 @@ export interface CompanionStore {
 	readonly conversations: ConversationSummary[];
 	readonly activeConversationId: string | null;
 	readonly activePiTimeline: PiTimeline | undefined;
-	readonly pendingUserText: string | undefined;
-	readonly streamingAssistantText: string;
-	readonly assistantStreaming: boolean;
+	readonly activePiLiveState: PiLiveState | undefined;
 	readonly runs: RunInfo[];
 	readonly presence: PresenceState;
 	readonly character: CharacterDisplay | undefined;
@@ -427,7 +414,7 @@ export interface CompanionStore {
 	readonly activeAmbientMediaId: string | undefined;
 	readonly activeRoleplayChoiceSetId: string | undefined;
 	refresh(): Promise<void>;
-	selectConversation(id: string, branchId?: string): Promise<void>;
+	selectConversation(id: string): Promise<void>;
 	createConversation(title?: string): Promise<void>;
 	renameConversation(id: string, title: string): Promise<void>;
 	archiveConversation(id: string): Promise<void>;
@@ -453,7 +440,6 @@ export interface CompanionStore {
 	readonly embedding: EmbeddingBinding;
 	readonly run: RunApi;
 	readonly artifact: ArtifactApi;
-	readonly story: StoryApi;
 	readonly characters: CharacterApi;
 	readonly canon: CanonApi;
 	/** Commission lifecycle APIs consumed by the backstage sheets. */
@@ -497,12 +483,6 @@ interface CompanionState {
 	loading: boolean;
 	error: string | null;
 	errorMetadata: CompanionErrorMetadata | null;
-	activeConversationId: string | null;
-	activeBranchId: string | null;
-	activePiTimeline: PiTimeline | undefined;
-	pendingUserText: string | undefined;
-	streamingAssistantText: string;
-	assistantStreaming: boolean;
 	characterRuntimeByConversation: Record<string, CharacterRuntimeState>;
 	companionState: CompanionProcessState;
 	sending: boolean;
@@ -518,7 +498,6 @@ function runTimestamp(run: RunInfo): number {
 	const time = Date.parse(raw);
 	return Number.isNaN(time) ? 0 : time;
 }
-
 function latestRun(runs: readonly RunInfo[]): RunInfo | undefined {
 	let latest: RunInfo | undefined;
 	for (const run of runs) {
@@ -548,30 +527,6 @@ function derivePresence(s: {
 	return "idle";
 }
 
-/** Content of the last persisted assistant entry in the active Pi timeline. */
-function lastAssistantContent(timeline: PiTimeline | undefined): string {
-	if (timeline === undefined) return "";
-	for (let index = timeline.entries.length - 1; index >= 0; index -= 1) {
-		const entry = timeline.entries[index];
-		if (entry?.kind === "message" && entry.role === "assistant") return entry.text ?? "";
-	}
-	return "";
-}
-
-/**
- * True when the persisted Pi assistant entry already matches or supersedes
- * the streamed text. Content comparison reconciles stream events with native
- * Pi entry ids without converting either representation.
- */
-function persistedProjectionSupersedesStream(
-	timeline: PiTimeline | undefined,
-	streamingText: string,
-): boolean {
-	const trimmedText = streamingText.trim();
-	if (trimmedText.length === 0) return false;
-	const trimmedFinal = lastAssistantContent(timeline).trim();
-	return trimmedFinal.length > 0 && trimmedFinal.startsWith(trimmedText);
-}
 
 // ---------------------------------------------------------------------------
 // Store factory
@@ -616,17 +571,15 @@ export function createCompanionStore(client: CompanionClient): CompanionStore {
 
 function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const queryClient = useQueryClient();
+	// Prevent auto-refetch from overwriting authoritative mutation results.
+	// The active-get endpoint is a read-only snapshot; mutation responses are
+	// the authoritative source and are committed directly to this key.
+	queryClient.setQueryDefaults(queryKeys.activeConversation, { staleTime: Infinity });
 	const [t] = useTranslation(undefined, { i18n });
 	const [state, setState] = createStore<CompanionState>({
 		loading: true,
 		error: null,
 		errorMetadata: null,
-		activeConversationId: null,
-		activeBranchId: null,
-		activePiTimeline: undefined,
-		pendingUserText: undefined,
-		streamingAssistantText: "",
-		assistantStreaming: false,
 		characterRuntimeByConversation: {},
 		companionState: "unknown",
 		sending: false,
@@ -652,6 +605,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 
 	const [lastSeq, setLastSeq] = createSignal(0);
 	const [stale, setStale] = createSignal(false);
+	let supplementaryStarted = false;
 	const [memoryRevision, setMemoryRevision] = createSignal(0);
 	const [memoryProjectionKey, setMemoryProjectionKey] = createSignal<readonly unknown[]>(
 		queryKeys.memory,
@@ -664,7 +618,10 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const onboardingStore = createOnboardingStore(client, queryClient);
 	const snapshotRequest = async (): Promise<Snapshot> => {
 		const snapshot = await invoke(client, () => client.snapshot.get());
+		queryClient.setQueryData(queryKeys.snapshot, snapshot);
 		onboardingStore._hydrate(snapshot.onboarding);
+		hydrateFromSnapshot(snapshot, true);
+		startEventReplay(snapshot.eventSeq);
 		return snapshot;
 	};
 	const snapshotQuery = createRpcQuery({
@@ -673,6 +630,8 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		request: snapshotRequest,
 	});
 	const conversationsRequest = () => invoke(client, () => client.conversation.list());
+	const activeConversationRequest = () =>
+		invoke(client, () => client.conversation.activeGet({}));
 	const memoryKey = (params?: MemoryListRequest): readonly unknown[] =>
 		params?.scope === undefined ? queryKeys.memory : queryKeys.memoryProjection(params.scope);
 	const conversationsQuery = createRpcQuery({
@@ -680,6 +639,19 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		key: queryKeys.conversations,
 		request: conversationsRequest,
 	});
+	const activeConversationQuery = createRpcQuery<ConversationActiveResponse>({
+		client: queryClient,
+		key: queryKeys.activeConversation,
+		request: activeConversationRequest,
+	});
+	const activeProjection = (): ConversationSelectResponse | undefined => {
+		void activeConversationQuery.data;
+		return queryClient.getQueryData<ConversationActiveResponse>(queryKeys.activeConversation)
+			?.conversation;
+	};
+	const currentActiveConversationId = (): string | null =>
+		activeProjection()?.activeConversationId ?? null;
+	const activeConversationId = createMemo(currentActiveConversationId);
 	const memoryRequest = (params?: MemoryListRequest) =>
 		invoke(client, () => client.memory.list(params));
 	const memoryQuery = createRpcQuery({
@@ -695,13 +667,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		key: queryKeys.memoryCandidates(),
 		request: () => memoryCandidatesRequest(),
 		enabled: false,
-	});
-	const localEmbeddingCatalogRequest = () =>
-		invoke(client, () => client.memory.localEmbeddingCatalog({}));
-	const localEmbeddingCatalogQuery = createRpcQuery({
-		client: queryClient,
-		key: queryKeys.localEmbeddingCatalog,
-		request: localEmbeddingCatalogRequest,
 	});
 	const runsRequest = () => invoke(client, () => client.run.list());
 	const runsQuery = createRpcQuery({
@@ -720,20 +685,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		client: queryClient,
 		key: queryKeys.artifacts,
 		request: artifactsRequest,
-	});
-	const storyChangesRequest = (branchId?: string) =>
-		invoke(client, () => client.story.listChanges({ branchId }));
-	const storyChangesQuery = createRpcQuery({
-		client: queryClient,
-		key: queryKeys.storyChanges,
-		request: () => storyChangesRequest(state.activeBranchId ?? undefined),
-	});
-	const storyProposalsRequest = (conversationId?: string) =>
-		invoke(client, () => client.story.listProposals({ conversationId }));
-	const storyProposalsQuery = createRpcQuery({
-		client: queryClient,
-		key: queryKeys.storyProposals,
-		request: () => storyProposalsRequest(state.activeConversationId ?? undefined),
 	});
 	const charactersRequest = () => invoke(client, () => client.character.list());
 	const charactersQuery = createRpcQuery({
@@ -758,6 +709,13 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const providersRequest = () => invoke(client, () => client.provider.list());
 	const modelPoolRequest = () => invoke(client, () => client.model.poolGet());
 	const modelDefaultsRequest = () => invoke(client, () => client.model.defaultsGet());
+	const settingsCapabilitiesRequest = () =>
+		invoke(client, () => client.settings.capabilitiesGet({}));
+	const settingsCapabilitiesQuery = createRpcQuery<SettingsCapabilities>({
+		client: queryClient,
+		key: queryKeys.settingsCapabilities,
+		request: settingsCapabilitiesRequest,
+	});
 	const settingsQuery = createRpcQuery({
 		client: queryClient,
 		key: queryKeys.settings,
@@ -778,14 +736,23 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		key: queryKeys.modelDefaults,
 		request: modelDefaultsRequest,
 	});
-	const [modelRouteRevision, setModelRouteRevision] = createSignal(0);
-	const currentModelRoute = createMemo<ModelRouteData | undefined>(() => {
-		modelRouteRevision();
-		const conversationId = state.activeConversationId;
-		return conversationId
-			? queryClient.getQueryData<ModelRouteData>(queryKeys.modelRoute(conversationId))
-			: undefined;
-	});
+	const modelRouteQuery = createQuery<ModelRouteData | undefined>(() => ({
+		queryKey: queryKeys.modelRoute(activeConversationId() ?? ""),
+		queryFn: () =>
+			activeConversationId() === null
+				? Promise.resolve(undefined)
+				: invoke(client, () =>
+						client.model.routeGet({ conversationId: activeConversationId() as string }),
+					),
+		enabled: activeConversationId() !== null,
+	}), () => queryClient);
+	const currentModelRoute = (): ModelRouteData | undefined => {
+		void modelRouteQuery.data;
+		const conversationId = currentActiveConversationId();
+		return conversationId === null
+			? undefined
+			: queryClient.getQueryData<ModelRouteData>(queryKeys.modelRoute(conversationId));
+	};
 	const settingsPatchMutation = createRpcMutation<SettingsPatch>({
 		client: queryClient,
 		request: (settings) => invoke(client, () => client.settings.set({ settings })),
@@ -831,9 +798,27 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		request: (request) => request(),
 		invalidates: [queryKeys.modelDefaults],
 	});
+	const selectConversationMutation = createRpcMutation<{ id: string }>({
+		client: queryClient,
+		request: ({ id }) => invoke(client, () => client.conversation.select({ id })),
+		invalidates: [],
+	});
+	const createConversationMutation = createRpcMutation<{ title?: string }>({
+		client: queryClient,
+		request: ({ title }) => invoke(client, () => client.conversation.create({ title })),
+		invalidates: [],
+	});
+	const archiveConversationMutation = createRpcMutation<{ id: string }>({
+		client: queryClient,
+		request: ({ id }) => invoke(client, () => client.conversation.archive({ id, archived: true })),
+		invalidates: [],
+	});
+	const deleteConversationMutation = createRpcMutation<{ id: string }>({
+		client: queryClient,
+		request: ({ id }) => invoke(client, () => client.conversation.delete({ id })),
+		invalidates: [],
+	});
 
-	let booted = false;
-	let conversationSelectionChangedLocally = false;
 
 	// ---- refresh helpers (each re-fetches one domain list) ----
 
@@ -879,21 +864,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const refreshArtifacts = async (): Promise<void> => {
 		await refreshRpcQuery({ client: queryClient, key: queryKeys.artifacts, request: artifactsRequest });
 	};
-	const refreshStory = async (branchId?: string): Promise<void> => {
-		await refreshRpcQuery({
-			client: queryClient,
-			key: queryKeys.storyChanges,
-			request: () => storyChangesRequest(branchId ?? state.activeBranchId ?? undefined),
-		});
-	};
-	const refreshStoryProposals = async (conversationId?: string): Promise<void> => {
-		await refreshRpcQuery({
-			client: queryClient,
-			key: queryKeys.storyProposals,
-			request: () =>
-				storyProposalsRequest(conversationId ?? state.activeConversationId ?? undefined),
-		});
-	};
 	const refreshCharacters = async (): Promise<void> => {
 		await refreshRpcQuery({ client: queryClient, key: queryKeys.characters, request: charactersRequest });
 	};
@@ -918,72 +888,55 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			refreshCommissions(),
 			refreshRuns(),
 			refreshArtifacts(),
-			refreshStory(),
-			refreshStoryProposals(),
 			refreshCharacters(),
 			refreshCanonSources(),
 			refreshCanonModules(),
 		]);
+	};
+	const invalidateConversationList = (): Promise<void> =>
+		queryClient.invalidateQueries({ queryKey: queryKeys.conversations }, { cancelRefetch: false });
+	const invalidateActiveConversation = (): Promise<void> =>
+		queryClient.invalidateQueries({ queryKey: queryKeys.activeConversation }, { cancelRefetch: false });
+	const invalidateActiveConversationQueries = (): Promise<void> => {
+		const conversationId = activeConversationId();
+		const keys = conversationId === null
+			? []
+			: [
+					queryClient.invalidateQueries(
+						{ queryKey: queryKeys.modelRoute(conversationId) },
+						{ cancelRefetch: false },
+					),
+				];
+		return Promise.all([invalidateActiveConversation(), ...keys]).then(() => undefined);
+	};
+	const invalidateDerivedConversationQueries = (
+		projection: ConversationSelectResponse | undefined,
+	): Promise<void> => {
+		const conversationId = projection?.activeConversationId;
+		if (conversationId === undefined) return Promise.resolve();
+		return Promise.all([
+			queryClient.invalidateQueries(
+				{ queryKey: queryKeys.modelRoute(conversationId) },
+				{ cancelRefetch: false },
+			),
+		]).then(() => undefined);
 	};
 
 	// ---- snapshot → query-cache hydration ----
 
 	// ---- snapshot → domain hydration ----
 
-	const hydrateFromSnapshot = (snap: Snapshot): void => {
+	const hydrateFromSnapshot = (snap: Snapshot, seedQueries: boolean): void => {
 		onboardingStore._hydrate(snap.onboarding);
-		const conversation = snap.conversation;
-		if (conversation) {
-			const snapshotConversationId = conversation.activeConversationId;
-			const acceptsActiveProjection =
-				!conversationSelectionChangedLocally ||
-				snapshotConversationId === state.activeConversationId;
-			if (snapshotConversationId !== undefined && acceptsActiveProjection) {
-				setState("activeConversationId", snapshotConversationId);
-				void refreshRpcQuery({
-					client: queryClient,
-					key: queryKeys.modelRoute(snapshotConversationId),
-					request: () => invoke(client, () => client.model.routeGet({ conversationId: snapshotConversationId })),
-				}).then(() => setModelRouteRevision((revision) => revision + 1));
-			}
-			if (acceptsActiveProjection && conversation.activeBranchId !== undefined) {
-				setState("activeBranchId", conversation.activeBranchId);
-			}
-			if (
-				conversationSelectionChangedLocally &&
-				snapshotConversationId === state.activeConversationId
-			) {
-				conversationSelectionChangedLocally = false;
-			}
-			if (acceptsActiveProjection && conversation.conversations !== undefined) {
-				queryClient.setQueryData(queryKeys.conversations, {
-					conversations: conversation.conversations,
-				});
-			}
-			if (acceptsActiveProjection && snapshotConversationId !== undefined) {
-				try {
-					const timeline = requirePiTimeline(conversation.piTimeline, "conversation.snapshot");
-					setState("activePiTimeline", timeline);
-					if (persistedProjectionSupersedesStream(timeline, state.streamingAssistantText)) {
-						setState("streamingAssistantText", "");
-						setState("assistantStreaming", false);
-					}
-				} catch (error) {
-					setState("activePiTimeline", undefined);
-					retainProjectionError("conversation.snapshot", error, "projection");
-				}
-			}
-		}
-		if (snap.memory?.entries !== undefined) {
+		if (seedQueries && snap.memory?.entries !== undefined) {
 			queryClient.setQueryData(queryKeys.memory, { entries: snap.memory.entries });
 			setMemoryRevision((revision) => revision + 1);
 		}
-		if (snap.run) queryClient.setQueryData(queryKeys.runs, { runs: snap.run.runs });
-		if (snap.commission)
+		if (seedQueries && snap.run) queryClient.setQueryData(queryKeys.runs, { runs: snap.run.runs });
+		if (seedQueries && snap.commission)
 			queryClient.setQueryData(queryKeys.commissions, { commissions: snap.commission.commissions });
-		if (snap.artifact)
+		if (seedQueries && snap.artifact)
 			queryClient.setQueryData(queryKeys.artifacts, { artifacts: snap.artifact.artifacts });
-		if (snap.story) queryClient.setQueryData(queryKeys.storyChanges, { changes: snap.story.changes });
 		if (snap.characterRuntime) {
 			const incoming = snap.characterRuntime.byConversation;
 			const next = { ...state.characterRuntimeByConversation };
@@ -1002,45 +955,54 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			}
 			setState("characterRuntimeByConversation", next);
 		}
-		setLastSeq(Math.max(lastSeq(), snap.eventSeq));
 	};
-
-	const snapshotValue = createMemo<Snapshot | undefined>(() => snapshotQuery.data);
-	const activeConversations = createMemo<ConversationSummary[]>(
-		() => conversationsQuery.data?.conversations ?? snapshotValue()?.conversation?.conversations ?? [],
-	);
-	const activeRuns = createMemo<RunInfo[]>(() => runsQuery.data?.runs ?? snapshotValue()?.run?.runs ?? []);
+	const snapshotValue = (): Snapshot | undefined => {
+		void snapshotQuery.data;
+		return queryClient.getQueryData<Snapshot>(queryKeys.snapshot);
+	};
+	const activeConversations = (): ConversationSummary[] => {
+		void conversationsQuery.data;
+		return queryClient.getQueryData<{ conversations: ConversationSummary[] }>(
+			queryKeys.conversations,
+		)?.conversations ?? [];
+	};
+	const activeRuns = (): RunInfo[] => {
+		void runsQuery.data;
+		return queryClient.getQueryData<RunListData>(queryKeys.runs)?.runs ?? [];
+	};
 	const presence = createMemo<PresenceState>(() =>
 		derivePresence({
 			companionState: state.companionState,
 			runs: activeRuns(),
-			sending: state.sending,
+			sending: state.sending || (activeProjection()?.piLiveState?.isStreaming ?? false),
 			lastRunEvent: state.lastRunEvent,
 		}),
 	);
 
 	createEffect(() => {
-		if (snapshotQuery.isLoading) return;
-		const failure = snapshotQuery.error;
-		if (failure !== undefined && failure !== null) {
-			retainProjectionError("snapshot.get", failure, "projection");
-		} else {
-			const data = snapshotValue();
-			if (data !== undefined) {
-				if (
-					state.errorMetadata?.source === "projection" ||
-					state.errorMetadata?.source === "stream"
-				) {
-					setState("errorMetadata", null);
-					setState("error", null);
-				}
-				hydrateFromSnapshot(data);
+		if (!snapshotQuery.isSuccess) {
+			if (snapshotQuery.isLoading) return;
+			const failure = snapshotQuery.error;
+			if (failure !== undefined && failure !== null) {
+				retainProjectionError("snapshot.get", failure, "projection");
 			}
+			setState("loading", false);
+			setStale(false);
+			return;
+		}
+		const data = snapshotValue();
+		if (data === undefined) return;
+		if (
+			state.errorMetadata?.source === "projection" ||
+			state.errorMetadata?.source === "stream"
+		) {
+			setState("errorMetadata", null);
+			setState("error", null);
 		}
 		setState("loading", false);
 		setStale(false);
-		if (!booted) {
-			booted = true;
+		if (!supplementaryStarted) {
+			supplementaryStarted = true;
 			void refreshSupplementary().catch((e) => retainOperationError("boot.supplementary", e));
 		}
 	});
@@ -1058,67 +1020,14 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		const knownEvent: KnownDomainEvent | undefined = parseKnownDomainEvent(event);
 		if (!knownEvent) return;
 		switch (knownEvent.kind) {
-			case "message.user_sent":
-				setState("sending", true);
-				setState("lastRunEvent", null);
-				return;
-			case "message_start":
-				setState("sending", true);
-				setState("assistantStreaming", true);
-				return;
-			case "message_update": {
-				const chunk = knownEvent.payload.text;
-				const nextText = chunk.startsWith(state.streamingAssistantText)
-					? chunk
-					: `${state.streamingAssistantText}${chunk}`;
-				// A late delta from a settled Pi turn can arrive after the persisted
-				// final assistant projection already matched/superseded the streamed
-				// draft. Stream events carry legacy message ids while the projection
-				// carries Pi entry ids, so the content comparison is the source of
-				// truth: once the projection closes the text, do not resurrect the
-				// responding status (the refetch already settled the turn).
-				if (
-					!state.assistantStreaming &&
-					nextText.length > 0 &&
-					persistedProjectionSupersedesStream(state.activePiTimeline, nextText)
-				) {
-					setState("streamingAssistantText", "");
-					return;
-				}
-				setState("assistantStreaming", true);
-				setState("streamingAssistantText", nextText);
+			case "pi.session.changed": {
+				const { conversationId, sessionId } = knownEvent.payload;
+				// Scoped projection refresh only: the payload carries no message
+				// content, and a late notification for a session that is no
+				// longer current must never overwrite the active page.
+				void refreshConversationProjection(conversationId, sessionId);
 				return;
 			}
-			case "message_end": {
-				const finalText = knownEvent.payload.text;
-				if (finalText !== undefined) setState("streamingAssistantText", finalText);
-				setState("sending", false);
-				setState("assistantStreaming", false);
-				// The final persisted projection supersedes the draft; leave it to
-				// the refetch to clear the draft once the committed message lands.
-				void refreshSnapshot();
-				void refreshActiveConversationProjection().catch((error) =>
-					retainProjectionError("conversation.refreshProjection", error, "projection"),
-				);
-				return;
-			}
-			case "message.assistant_committed": {
-				// Stream events carry the legacy DB message id, while Pi sessions
-				// project entry ids; the snapshot is the reconciliation source and
-				// clears the draft by content (see hydrateFromSnapshot).
-				setState("sending", false);
-				setState("assistantStreaming", false);
-				void refreshSnapshot();
-				void refreshActiveConversationProjection().catch((error) =>
-					retainProjectionError("conversation.refreshProjection", error, "projection"),
-				);
-				return;
-			}
-			case "message.aborted":
-				setState("sending", false);
-				setState("assistantStreaming", false);
-				setState("streamingAssistantText", "");
-				return;
 			case "character.scene_changed":
 			case "character.visual_state_changed": {
 				const { conversationId, sceneId, visualState } = knownEvent.payload;
@@ -1130,7 +1039,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			}
 			case "roleplay.media_presented": {
 				const { conversationId, mediaId } = knownEvent.payload;
-				if (conversationId !== state.activeConversationId) return;
+				if (conversationId !== currentActiveConversationId()) return;
 				const media = mediaId
 					? snapshotValue()?.character?.roleplay.media.find((entry) => entry.id === mediaId)
 					: undefined;
@@ -1142,7 +1051,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			}
 			case "roleplay.media_dismissed": {
 				const { conversationId, mediaId } = knownEvent.payload;
-				if (conversationId !== state.activeConversationId) return;
+				if (conversationId !== currentActiveConversationId()) return;
 				if (state.activeAmbientMediaId === mediaId) setState("activeAmbientMediaId", undefined);
 				if (state.activeRoleplayMediaId === mediaId) setState("activeRoleplayMediaId", undefined);
 				return;
@@ -1150,10 +1059,24 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			case "roleplay.choices_presented":
 				setState("activeRoleplayChoiceSetId", knownEvent.payload.choiceSetId);
 				return;
-			case "conversation.created": {
-				debouncedRefetch(refreshConversations);
+			case "conversation.selected":
+				void invalidateActiveConversationQueries();
+				return;
+			case "conversation.created":
+				void invalidateConversationList();
+				return;
+			case "conversation.renamed": {
+				void invalidateConversationList();
+				if (knownEvent.payload.conversationId === currentActiveConversationId()) {
+					void invalidateActiveConversationQueries();
+				}
 				return;
 			}
+			case "conversation.archived":
+			case "conversation.deleted":
+				void invalidateConversationList();
+				void invalidateActiveConversationQueries();
+				return;
 			case "model.selected": {
 				const conversationId = knownEvent.payload.conversationId;
 				if (conversationId) void refreshModelRoute(conversationId);
@@ -1166,12 +1089,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			case "model.disabled":
 				void refreshModelPool();
 				return;
-			case "conversation.branched": {
-				const branchId = knownEvent.payload.branchId;
-				if (branchId) setState("activeBranchId", branchId);
-				void refreshSnapshot();
+			case "conversation.branched":
+				void invalidateActiveConversationQueries();
 				return;
-			}
 			case "onboarding.state_changed":
 			case "onboarding.reset":
 				onboardingStore._applyEvent(knownEvent);
@@ -1201,14 +1121,12 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				break;
 		}
 		const kind = knownEvent.kind;
-		if (kind.startsWith("message.") || kind.startsWith("conversation.")) {
-			void refreshSnapshot();
-		} else if (kind.startsWith("onboarding.")) {
+		if (kind.startsWith("onboarding.")) {
 			onboardingStore._applyEvent(knownEvent);
 		} else if (kind.startsWith("model.")) {
 			void refreshModelPool();
 			void refreshModelDefaults();
-			if (state.activeConversationId) void refreshModelRoute(state.activeConversationId);
+			if (activeConversationId() !== null) void refreshModelRoute(activeConversationId() as string);
 		} else if (kind.startsWith("memory.")) {
 			debouncedRefreshMemoryEntries();
 			debouncedRefreshMemoryCandidates();
@@ -1232,9 +1150,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			debouncedRefetch(refreshRuns);
 		} else if (kind.startsWith("artifact.")) {
 			debouncedRefetch(refreshArtifacts);
-		} else if (kind.startsWith("story.")) {
-			debouncedRefetch(refreshStory);
-			debouncedRefetch(refreshStoryProposals);
 		} else if (kind.startsWith("character.")) {
 			debouncedRefetch(refreshCharacters);
 			void refreshSnapshot();
@@ -1250,61 +1165,103 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		// are intentionally ignored: they do not invalidate projected state.
 	};
 
-	createEffect(() => {
-		if (
-			snapshotQuery.isLoading ||
-			(snapshotQuery.error !== undefined && snapshotQuery.error !== null)
-		)
-			return;
-		const data = snapshotValue();
-		if (data === undefined) return;
+	let eventReplayTask: Promise<void> | undefined;
+	let cancelEventReplay = (): void => {};
+	/**
+	 * Recover from a subscribe failure or sequence gap: re-read the
+	 * authoritative active projection (plan §6.1.5), resync the snapshot, and
+	 * return the new subscribe cursor.
+	 */
+	const recoverFromEventGap = async (): Promise<number> => {
+		try {
+			const response = await invoke(client, () => client.conversation.activeGet({}));
+			if (response.conversation !== undefined) {
+				requirePiTimeline(response.conversation.piTimeline, "events.gap_recovery");
+				writeActiveProjection(response.conversation);
+			}
+		} catch (error) {
+			retainProjectionError("events.gap_recovery", error, "projection");
+		}
+		try {
+			const snapshot = await snapshotRequest();
+			return snapshot.eventSeq;
+		} catch (error) {
+			retainOperationError("events.gap_snapshot", error);
+			return lastSeq();
+		}
+	};
+	/**
+	 * Re-entrant event replay. A gap or subscribe failure recovers the active
+	 * projection and restarts the subscription from the snapshot cursor; the
+	 * task slot is cleared in `finally` so a later snapshot can restart it.
+	 */
+	function startEventReplay(afterSeq: number): void {
+		if (eventReplayTask !== undefined) return;
+		setLastSeq(afterSeq);
 		let cancelled = false;
-		onCleanup(() => {
+		cancelEventReplay = () => {
 			cancelled = true;
-		});
-		void (async () => {
-			let afterSeq = data.eventSeq;
-			while (!cancelled) {
-				let batch: DomainEvent[];
-				try {
-					batch = await eventsApi.subscribe(afterSeq);
-				} catch (error) {
-					if (cancelled) return;
-					retainProjectionError("events.subscribe", error, "stream");
-					setStale(true);
-					void refreshSnapshot();
-					return;
-				}
-				if (cancelled) return;
-				if (batch.length === 0) return;
-				const first = batch[0];
-				if (first === undefined) continue;
-				if (first.seq > afterSeq + 1) {
-					// Gap: the projection is untrustworthy — re-sync from the snapshot.
-					retainProjectionError("events.sequence_gap", new Error("event sequence gap"), "stream");
-					setStale(true);
-					void refreshSnapshot();
-					return;
-				}
-				if (first.seq <= afterSeq) return;
+		};
+		eventReplayTask = (async () => {
+			try {
 				let cursor = afterSeq;
-				for (const event of batch) {
-					if (event.seq !== cursor + 1) {
-						// A malformed row may have been omitted from a replay batch.
-						// Validate every boundary so a later event cannot look contiguous.
+				while (!cancelled) {
+					let batch: DomainEvent[];
+					try {
+						batch = await eventsApi.subscribe(cursor);
+					} catch (error) {
+						if (cancelled) return;
+						retainProjectionError("events.subscribe", error, "stream");
+						setStale(true);
+						cursor = await recoverFromEventGap();
+						if (cancelled) return;
+						setLastSeq(cursor);
+						continue;
+					}
+					if (cancelled) return;
+					if (batch.length === 0) continue;
+					const first = batch[0];
+					if (first === undefined) continue;
+					if (first.seq <= cursor || first.seq > cursor + 1) {
+						// Missed rows: recover the authoritative projections and
+						// restart the subscription from the snapshot cursor.
 						retainProjectionError("events.sequence_gap", new Error("event sequence gap"), "stream");
 						setStale(true);
-						void refreshSnapshot();
-						return;
+						cursor = await recoverFromEventGap();
+						if (cancelled) return;
+						setLastSeq(cursor);
+						continue;
 					}
-					dispatchEvent(event);
-					cursor = event.seq;
+					let next = cursor;
+					let gap = false;
+					for (const event of batch) {
+						if (event.seq !== next + 1) {
+							gap = true;
+							break;
+						}
+						dispatchEvent(event);
+						next = event.seq;
+					}
+					if (gap) {
+						retainProjectionError("events.sequence_gap", new Error("event sequence gap"), "stream");
+						setStale(true);
+						cursor = await recoverFromEventGap();
+						if (cancelled) return;
+						setLastSeq(cursor);
+						continue;
+					}
+					cursor = next;
+					setLastSeq(cursor);
 				}
-				afterSeq = cursor;
-				setLastSeq(afterSeq);
+			} finally {
+				eventReplayTask = undefined;
 			}
 		})();
-	});
+		void eventReplayTask.catch((error) => {
+			retainProjectionError("events.replay", error, "stream");
+		});
+	}
+	onCleanup(() => cancelEventReplay());
 
 	// ---- presence derivation ----
 
@@ -1313,46 +1270,67 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	// ---- actions ----
 
 	const requireActiveConversation = (): string => {
-		const id = state.activeConversationId;
+		const id = activeConversationId();
 		if (id === null) throw new Error(t("messages.noActiveConversationError"));
 		return id;
 	};
-	const setConversationProjection = (projection: {
-		activeConversationId?: string;
-		activeBranchId?: string | null;
-		piTimeline?: PiTimeline;
-	}): void => {
-		const snapshotProjection = {
-			...projection,
-			activeBranchId: projection.activeBranchId ?? undefined,
-		};
-		queryClient.setQueryData<Snapshot | undefined>(queryKeys.snapshot, (current) =>
-			current
-				? { ...current, conversation: { ...current.conversation, ...snapshotProjection } }
-				: current,
-		);
+	const writeActiveProjection = (projection: ConversationSelectResponse | undefined): void => {
+		const activeResponse: ConversationActiveResponse = projection
+			? { conversation: projection }
+			: {};
+		queryClient.setQueryData(queryKeys.activeConversation, activeResponse);
+		if (projection !== undefined) {
+			queryClient.setQueryData(
+				queryKeys.conversationProjection(projection.activeConversationId, projection.piSessionId),
+				projection,
+			);
+		}
 	};
 	const refreshActiveConversationProjection = async (): Promise<void> => {
-		const conversationId = state.activeConversationId;
-		if (conversationId === null) return;
-		const projection = await invoke(client, () =>
-			client.conversation.select({
-				id: conversationId,
-				...(state.activeBranchId !== null ? { branchId: state.activeBranchId } : {}),
-			}),
-		);
-		if (!projection) return;
-		if (state.activeConversationId !== conversationId) return;
-		const timeline = requirePiTimeline(projection.piTimeline, "conversation.refresh");
-		setState("activeBranchId", projection.activeBranchId ?? null);
-		setState("activePiTimeline", timeline);
-		setConversationProjection({
-			activeConversationId: projection.activeConversationId,
-			activeBranchId: projection.activeBranchId ?? null,
-			piTimeline: timeline,
+		const response = await refreshRpcQuery({
+			client: queryClient,
+			key: queryKeys.activeConversation,
+			request: activeConversationRequest,
 		});
-		setState("streamingAssistantText", "");
-		setState("assistantStreaming", false);
+		if (response.conversation !== undefined) {
+			requirePiTimeline(response.conversation.piTimeline, "conversation.refresh");
+			writeActiveProjection(response.conversation);
+		}
+	};
+	/**
+	 * Scoped refresh for one `pi.session.changed` notification. The captured
+	 * `{conversationId, sessionId}` identity gates the shared active key: a
+	 * late notification for a session that is no longer current (switched
+	 * away, regenerated) must not overwrite the active page. The scoped cache
+	 * is only written when the response still targets the captured
+	 * conversation, and the event carries no message content.
+	 */
+	const refreshConversationProjection = async (
+		conversationId: string,
+		sessionId: string,
+	): Promise<void> => {
+		let projection: ConversationSelectResponse | undefined;
+		try {
+			const response = await invoke(client, () => client.conversation.activeGet({}));
+			projection = response.conversation;
+		} catch (error) {
+			retainProjectionError("conversation.refreshProjection", error, "projection");
+			return;
+		}
+		if (projection === undefined) return;
+		requirePiTimeline(projection.piTimeline, "conversation.refreshProjection");
+		if (projection.activeConversationId !== conversationId) return;
+		queryClient.setQueryData(
+			queryKeys.conversationProjection(conversationId, projection.piSessionId),
+			projection,
+		);
+		if (
+			projection.piSessionId !== sessionId ||
+			currentActiveConversationId() !== conversationId
+		) {
+			return;
+		}
+		writeActiveProjection(projection);
 	};
 
 	const snapshotApi: SnapshotApi = {
@@ -1382,9 +1360,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 					queryKeys.memoryCandidates(status),
 				)?.candidates;
 	});
-	const localEmbeddingCandidates = createMemo<LocalEmbeddingCandidate[] | undefined>(
-		() => localEmbeddingCatalogQuery.data?.candidates,
-	);
 	const memoryApi: MemoryApi = {
 	entries: activeMemoryEntries,
 	revision: memoryRevision,
@@ -1424,15 +1399,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				retainOperationError("memory.capture", e);
 				throw e;
 			}
-		},
-		localEmbeddingCandidates,
-		listLocalEmbeddingCandidates: async () => {
-			const data = await refreshRpcQuery({
-				client: queryClient,
-				key: queryKeys.localEmbeddingCatalog,
-				request: localEmbeddingCatalogRequest,
-			});
-			return data.candidates;
 		},
 		configureLocalEmbedding: async (provider, candidateId) => {
 			try {
@@ -1520,15 +1486,14 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			key: queryKeys.modelDefaults,
 			request: modelDefaultsRequest,
 		});
-	const refreshModelRoute = (conversationId: string) =>
-		refreshRpcQuery({
+	const refreshModelRoute = async (conversationId: string): Promise<ModelRouteData> => {
+		const route = await refreshRpcQuery({
 			client: queryClient,
 			key: queryKeys.modelRoute(conversationId),
 			request: () => invoke(client, () => client.model.routeGet({ conversationId })),
-		}).then((data) => {
-			setModelRouteRevision((revision) => revision + 1);
-			return data;
 		});
+		return route;
+	};
 
 	const providerApi: ProviderApi = {
 		providers: () => providersQuery.data?.providers ?? [],
@@ -1565,21 +1530,39 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		loginStatus: (providerId) => invoke(client, () => client.provider.loginStatus({ providerId })),
 		loginAnswer: (providerId, answer) =>
 			invoke(client, () => client.provider.loginAnswer({ providerId, answer })),
+		loginCancel: async (providerId) => {
+			await invoke(client, () => client.provider.loginCancel({ providerId }));
+		},
 		logout: async (providerId) => {
 			await providerMutation.mutateAsync(() =>
 				invoke(client, () => client.provider.logout({ providerId })),
 			);
 		},
+		remove: async (providerId) => {
+			await providerMutation.mutateAsync(() =>
+				invoke(client, () => client.provider.remove({ providerId })),
+			);
+			await Promise.all([
+				refreshRpcQuery({ client: queryClient, key: queryKeys.providers, request: providersRequest }),
+				refreshModelPool(),
+				refreshModelDefaults(),
+				...(activeConversationId() !== null ? [refreshModelRoute(activeConversationId() as string)] : []),
+			]);
+		},
 	};
 
-	const modelData = createMemo<ModelListData>(() => {
-		const models = modelsQuery.data?.models ?? [];
-		const defaults = defaultsQuery.data ?? { vision: { mode: "auto" as const } };
+	const modelData = (): ModelListData => {
+		void modelsQuery.data;
+		void defaultsQuery.data;
+		const models =
+			queryClient.getQueryData<{ models: ConfiguredModel[] }>(queryKeys.modelPool)?.models ?? [];
+		const defaults =
+			queryClient.getQueryData<NonNullable<typeof defaultsQuery.data>>(queryKeys.modelDefaults) ?? {
+				vision: { mode: "auto" as const },
+			};
 		const selected = currentModelRoute()?.selected;
 		const multimodalFallback =
-			defaults.vision.mode === "manual"
-				? defaults.vision.route
-				: models.find((model) => model.supportsImages);
+			defaults.vision.mode === "manual" ? defaults.vision.route : undefined;
 		return {
 			models,
 			defaults,
@@ -1593,21 +1576,19 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 					}
 				: {}),
 		};
-	});
-	const selectedModelValue = createMemo(() => {
-		const route = currentModelRoute()?.selected;
-		return route ? `${route.providerId}:${route.modelId}` : "";
-	});
+	};
 	const modelApi: ModelApi = {
 		data: modelData,
-		models: () => modelsQuery.data?.models ?? [],
-		selectedValue: selectedModelValue,
+		models: () => {
+			void modelsQuery.data;
+			return queryClient.getQueryData<{ models: ConfiguredModel[] }>(queryKeys.modelPool)?.models ?? [];
+		},
 		loading: () => modelsQuery.isFetching || defaultsQuery.isFetching,
 		error: () => modelsQuery.error ?? defaultsQuery.error,
 		refetch: () => {
 			void refreshModelPool();
 			void refreshModelDefaults();
-			if (state.activeConversationId) void refreshModelRoute(state.activeConversationId);
+			if (activeConversationId() !== null) void refreshModelRoute(activeConversationId() as string);
 		},
 		list: (conversationId) => {
 			return Promise.all([
@@ -1778,58 +1759,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 	};
 
-	const activeStoryChanges = createMemo<StoryChange[]>(() => storyChangesQuery.data?.changes ?? []);
-	const activeStoryProposals = createMemo<StoryChangeProposal[]>(() =>
-		(storyProposalsQuery.data?.proposals ?? []).filter(
-			(proposal) => proposal.conversationId === state.activeConversationId,
-		),
-	);
-	const storyApi: StoryApi = {
-		changes: activeStoryChanges,
-		proposals: activeStoryProposals,
-		list: async (branchId) => {
-			const data = await refreshRpcQuery({
-				client: queryClient,
-				key: queryKeys.storyChanges,
-				request: () => storyChangesRequest(branchId),
-			});
-			return data;
-		},
-		apply: async (text, scope) => {
-			await invoke(client, () =>
-				client.story.applyChange({
-					text,
-					scope,
-					conversationId: state.activeConversationId ?? undefined,
-					branchId: state.activeBranchId ?? undefined,
-				}),
-			);
-			await refreshStory();
-		},
-		revert: async (changeId) => {
-			await invoke(client, () =>
-				client.story.revertChange({
-					changeId,
-					conversationId: state.activeConversationId ?? undefined,
-				}),
-			);
-			await refreshStory();
-		},
-		reset: async () => {
-			await invoke(client, () =>
-				client.story.reset({
-					conversationId: state.activeConversationId ?? undefined,
-					branchId: state.activeBranchId ?? undefined,
-				}),
-			);
-			await refreshStory();
-		},
-		resolveProposal: async (proposalId, accept) => {
-			await invoke(client, () => client.story.resolveProposal({ proposalId, accept }));
-			await Promise.all([refreshStory(), refreshStoryProposals()]);
-		},
-	};
-
 	const activeCharacters = createMemo<CharacterSummary[]>(() => charactersQuery.data?.characters ?? []);
 	const characterApi: CharacterApi = {
 		characters: activeCharacters,
@@ -1843,16 +1772,14 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 		activate: async (characterId) => {
 			await invoke(client, () => client.character.activate({ characterId }));
-			conversationSelectionChangedLocally = true;
-			setState("activeConversationId", null);
 			setState("activeRoleplayMediaId", undefined);
 			setState("activeAmbientMediaId", undefined);
 			setState("activeRoleplayChoiceSetId", undefined);
-			setState("activeBranchId", null);
 			await Promise.all([
 				onboardingStore.resync(),
 				refreshCharacters(),
-				refreshConversations(),
+				invalidateConversationList(),
+				invalidateActiveConversationQueries(),
 				refreshSnapshot(),
 			]);
 		},
@@ -1909,13 +1836,14 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			const { draft } = await invoke(client, () =>
 				client.character.draftPublish({ id, expectedRevision }),
 			);
-			conversationSelectionChangedLocally = true;
-			setState("activeConversationId", null);
-			setState("activeBranchId", null);
+			setState("activeRoleplayMediaId", undefined);
+			setState("activeAmbientMediaId", undefined);
+			setState("activeRoleplayChoiceSetId", undefined);
 			await Promise.all([
 				onboardingStore.resync(),
 				refreshCharacters(),
-				refreshConversations(),
+				invalidateConversationList(),
+				invalidateActiveConversationQueries(),
 				refreshSnapshot(),
 			]);
 			return draft;
@@ -1977,7 +1905,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		});
 	const embeddingBinding: EmbeddingBinding = {
 		settingsQuery,
-		catalogQuery: localEmbeddingCatalogQuery,
+		capabilitiesQuery: settingsCapabilitiesQuery,
 		settingsMutation: embeddingSettingsMutation,
 		localConfigureMutation,
 	};
@@ -1988,11 +1916,10 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const trackedCommissionApi = trackApi("commission", commissionApi);
 	const trackedRunApi = trackApi("run", runApi);
 	const trackedArtifactApi = trackApi("artifact", artifactApi);
-	const trackedStoryApi = trackApi("story", storyApi);
 	const trackedCharacterApi = trackApi("character", characterApi);
 	const trackedCanonApi = trackApi("canon", canonApi);
 
-	return {
+	const store: CompanionStore = {
 		get loading() {
 			return state.loading;
 		},
@@ -2005,23 +1932,17 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		get onboarding() {
 			return onboardingStore.data();
 		},
-		get conversations() {
-			return activeConversations();
-		},
 		get activeConversationId() {
-			return state.activeConversationId;
+			return activeProjection()?.activeConversationId ?? null;
 		},
 		get activePiTimeline() {
-			return state.activePiTimeline;
+			return activeProjection()?.piTimeline;
 		},
-		get pendingUserText() {
-			return state.pendingUserText;
+		get activePiLiveState() {
+			return activeProjection()?.piLiveState;
 		},
-		get streamingAssistantText() {
-			return state.streamingAssistantText;
-		},
-		get assistantStreaming() {
-			return state.assistantStreaming;
+		get conversations() {
+			return activeConversations();
 		},
 		get runs() {
 			return activeRuns();
@@ -2033,7 +1954,11 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		refresh: async () => {
 			setState("loading", true);
 			try {
-				await Promise.all([refreshConversations(), refreshSnapshot()]);
+				await Promise.all([
+					refreshConversations(),
+					refreshSnapshot(),
+					refreshActiveConversationProjection(),
+				]);
 				if (
 					snapshotQuery.error === undefined &&
 					(state.errorMetadata?.source === "projection" || state.errorMetadata?.source === "stream")
@@ -2053,28 +1978,19 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			}
 		},
 
-		selectConversation: async (id, branchId) => {
+		selectConversation: async (id) => {
 			try {
-				const projection = await invoke(client, () => client.conversation.select({ id, branchId }));
-				const timeline = requirePiTimeline(projection.piTimeline, "conversation.select");
-				conversationSelectionChangedLocally = true;
-				setState("activeConversationId", projection.activeConversationId);
+				await queryClient.cancelQueries({ queryKey: queryKeys.activeConversation });
+				const projection = (await selectConversationMutation.mutateAsync({ id })) as ConversationSelectResponse;
+				requirePiTimeline(projection.piTimeline, "conversation.select");
+				writeActiveProjection(projection);
 				setState("activeRoleplayMediaId", undefined);
 				setState("activeAmbientMediaId", undefined);
 				setState("activeRoleplayChoiceSetId", undefined);
-				setState("activeBranchId", projection.activeBranchId ?? null);
-				setState("activePiTimeline", timeline);
-				setConversationProjection({
-					activeConversationId: projection.activeConversationId,
-					activeBranchId: projection.activeBranchId ?? null,
-					piTimeline: timeline,
-				});
 				clearOperationError();
-				void refreshStoryProposals();
+				await invalidateDerivedConversationQueries(projection);
 			} catch (e) {
 				if (e instanceof PiTimelineProjectionError) {
-					setState("activePiTimeline", undefined);
-					setConversationProjection({ piTimeline: undefined });
 					retainProjectionError("conversation.select", e, "projection");
 				} else {
 					retainOperationError("conversation.select", e);
@@ -2084,27 +2000,28 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 
 		createConversation: async (title) => {
 			try {
-				const result = await invoke(client, () => client.conversation.create({ title }));
-				const projection = await invoke(client, () =>
-					client.conversation.select({ id: result.id }),
-				);
-				const timeline = requirePiTimeline(
-					projection.piTimeline,
-					"conversation.create.select",
-				);
-				conversationSelectionChangedLocally = true;
-				setState("activeConversationId", projection.activeConversationId);
-				setState("activeBranchId", projection.activeBranchId ?? null);
-				setState("activePiTimeline", timeline);
-				setConversationProjection({
-					activeConversationId: projection.activeConversationId,
-					activeBranchId: projection.activeBranchId ?? null,
-					piTimeline: timeline,
-				});
+				await Promise.all([
+					queryClient.cancelQueries({ queryKey: queryKeys.activeConversation }),
+					queryClient.cancelQueries({ queryKey: queryKeys.conversations }),
+				]);
+				const projection = (await createConversationMutation.mutateAsync({ title })) as ConversationSelectResponse;
+				requirePiTimeline(projection.piTimeline, "conversation.create");
+				writeActiveProjection(projection);
+				setState("activeRoleplayMediaId", undefined);
+				setState("activeAmbientMediaId", undefined);
+				setState("activeRoleplayChoiceSetId", undefined);
 				clearOperationError();
-				await Promise.all([refreshConversations(), refreshModelRoute(result.id)]);
+				await Promise.all([
+					invalidateConversationList(),
+					invalidateDerivedConversationQueries(projection),
+					refreshModelRoute(projection.activeConversationId),
+				]);
 			} catch (e) {
-				retainOperationError("conversation.create", e);
+				if (e instanceof PiTimelineProjectionError) {
+					retainProjectionError("conversation.create", e, "projection");
+				} else {
+					retainOperationError("conversation.create", e);
+				}
 			}
 		},
 
@@ -2114,47 +2031,75 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 
 		archiveConversation: async (id) => {
-			await invoke(client, () => client.conversation.archive({ id, archived: true }));
-			if (state.activeConversationId === id) {
-				conversationSelectionChangedLocally = true;
-				setState("activeConversationId", null);
+			try {
+				await Promise.all([
+					queryClient.cancelQueries({ queryKey: queryKeys.activeConversation }),
+					queryClient.cancelQueries({ queryKey: queryKeys.conversations }),
+				]);
+				const response = (await archiveConversationMutation.mutateAsync({ id })) as ConversationActiveResponse;
+				if (response.conversation !== undefined) {
+					requirePiTimeline(response.conversation.piTimeline, "conversation.archive");
+				}
+				writeActiveProjection(response.conversation);
 				setState("activeRoleplayMediaId", undefined);
 				setState("activeAmbientMediaId", undefined);
 				setState("activeRoleplayChoiceSetId", undefined);
-				setState("activeBranchId", null);
-				setState("activePiTimeline", undefined);
-				setConversationProjection({ activeConversationId: undefined, activeBranchId: null, piTimeline: undefined });
+				clearOperationError();
+				await Promise.all([
+					invalidateConversationList(),
+					invalidateDerivedConversationQueries(response.conversation),
+				]);
+			} catch (e) {
+				retainOperationError("conversation.archive", e);
 			}
-			await refreshConversations();
 		},
 
 		deleteConversation: async (id) => {
-			await invoke(client, () => client.conversation.delete({ id }));
-			if (state.activeConversationId === id) {
-				conversationSelectionChangedLocally = true;
-				setState("activeConversationId", null);
+			try {
+				await Promise.all([
+					queryClient.cancelQueries({ queryKey: queryKeys.activeConversation }),
+					queryClient.cancelQueries({ queryKey: queryKeys.conversations }),
+				]);
+				const response = (await deleteConversationMutation.mutateAsync({ id })) as ConversationActiveResponse;
+				if (response.conversation !== undefined) {
+					requirePiTimeline(response.conversation.piTimeline, "conversation.delete");
+				}
+				writeActiveProjection(response.conversation);
 				setState("activeRoleplayMediaId", undefined);
 				setState("activeAmbientMediaId", undefined);
 				setState("activeRoleplayChoiceSetId", undefined);
-				setState("activePiTimeline", undefined);
-				setState("activeBranchId", null);
-				setConversationProjection({ activeConversationId: undefined, activeBranchId: null, piTimeline: undefined });
+				clearOperationError();
+				await Promise.all([
+					invalidateConversationList(),
+					invalidateDerivedConversationQueries(response.conversation),
+				]);
+			} catch (e) {
+				retainOperationError("conversation.delete", e);
 			}
-			await refreshConversations();
 		},
 
 		sendMessage: async (text, attachments) => {
-			setState("pendingUserText", text);
-			setState("streamingAssistantText", "");
-			setState("assistantStreaming", true);
+			// No optimistic transcript state: Pi accepts the command first, then
+			// the Host projection is read back under its native session identity.
 			try {
 				const conversationId = requireActiveConversation();
-				await invoke(client, () => client.message.send({ conversationId, text, attachments }));
-				await refreshSnapshot();
-				setState("pendingUserText", undefined);
+				setState("sending", true);
+				try {
+					const receipt = await invoke(client, () =>
+						client.message.send({ conversationId, text, attachments }),
+					);
+					await refreshConversationProjection(conversationId, receipt.sessionId);
+					// The initial read exposes the durable user entry even if the
+					// event stream is reconnecting. A deferred scoped read picks up
+					// a short native completion without manufacturing transcript state.
+					setTimeout(() => {
+						void refreshConversationProjection(conversationId, receipt.sessionId);
+					}, 100);
+				} finally {
+					setState("sending", false);
+				}
 				clearOperationError();
 			} catch (e) {
-				setState("assistantStreaming", false);
 				retainOperationError("message.send", e);
 			}
 		},
@@ -2186,7 +2131,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				if (mediaId === undefined) return;
 				await invoke(client, () => client.roleplay.dismissMedia({ conversationId, mediaId }));
 				if (
-					state.activeConversationId === conversationId &&
+					activeConversationId() === conversationId &&
 					state.activeRoleplayMediaId === mediaId
 				)
 					setState("activeRoleplayMediaId", undefined);
@@ -2201,7 +2146,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				const mediaId = state.activeAmbientMediaId;
 				if (mediaId === undefined) return;
 				await invoke(client, () => client.roleplay.dismissMedia({ conversationId, mediaId }));
-				if (state.activeConversationId === conversationId && state.activeAmbientMediaId === mediaId)
+				if (activeConversationId() === conversationId && state.activeAmbientMediaId === mediaId)
 					setState("activeAmbientMediaId", undefined);
 				clearOperationError();
 			} catch (e) {
@@ -2212,6 +2157,11 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			try {
 				await onboardingStore.submit(stepId, answer);
 				await onboardingStore.resync();
+				if (onboardingStore.data().status === "complete") {
+					await Promise.all([refreshConversations(), refreshActiveConversationProjection()]);
+					const conversationId = activeConversationId();
+					if (conversationId !== null) await refreshModelRoute(conversationId);
+				}
 				clearOperationError();
 			} catch (error) {
 				if (isStaleOnboardingStep(error)) {
@@ -2275,9 +2225,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		get artifact() {
 			return trackedArtifactApi;
 		},
-		get story() {
-			return trackedStoryApi;
-		},
 		get characters() {
 			return trackedCharacterApi;
 		},
@@ -2285,4 +2232,10 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			return trackedCanonApi;
 		},
 	};
+onCleanup(() => {
+	if (COMPANION_STORES.get(client) === store) {
+		COMPANION_STORES.delete(client);
+	}
+});
+return store;
 }

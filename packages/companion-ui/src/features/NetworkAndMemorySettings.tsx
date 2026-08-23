@@ -3,7 +3,7 @@ import { Button } from "@kobalte/core/button";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { Show } from "solid-js";
-import { createNetworkMemoryWorkflow, PROXY_MODES } from "../stores/setup-workflows.js";
+import { createNetworkMemoryWorkflow } from "../stores/setup-workflows.js";
 import { EmbeddingSettings } from "./EmbeddingSettings.js";
 import { useCompanionStore } from "../stores/companion.js";
 
@@ -26,6 +26,10 @@ export function NetworkAndMemorySettings() {
 		feedback,
 		save,
 	} = workflow;
+	const proxyModes = () => store.embedding.capabilitiesQuery.data?.networkProxyModes ?? [];
+	const selectedProxyMode = () =>
+		proxyModes().find((mode) => mode.id === proxyMode()) ?? null;
+	const capabilitiesReady = () => store.embedding.capabilitiesQuery.data !== undefined;
 
 	return (
 		<section class="net-settings" aria-label={t("settings.networkSection")}>
@@ -42,21 +46,26 @@ export function NetworkAndMemorySettings() {
 
 			<h4>{t("settings.networkSection")}</h4>
 			<Select
-				options={[...PROXY_MODES]}
-				value={proxyMode()}
-				optionTextValue={(mode) => t(`settings.proxyModes.${mode}`)}
-				onChange={(mode) => mode && setProxyMode(mode)}
+				options={proxyModes()}
+				value={selectedProxyMode()}
+				optionValue="id"
+				optionTextValue={(mode) => t(`settings.proxyModes.${mode.id}`)}
+				onChange={(mode) => mode && setProxyMode(mode.id)}
+				disabled={!capabilitiesReady() || proxyModes().length === 0}
 				placeholder={t("settings.proxyMode")}
 				aria-label={t("settings.proxyMode")}
 				itemComponent={(props) => (
 					<Select.Item item={props.item} class="select-item">
-						<Select.ItemLabel>{props.item.rawValue}</Select.ItemLabel>
+						<Select.ItemLabel>{props.item.rawValue.id}</Select.ItemLabel>
 					</Select.Item>
 				)}
 			>
 				<Select.Trigger class="select-trigger" aria-label={t("settings.proxyMode")}>
-					<Select.Value<"direct" | "auto" | "manual">>
-						{(state) => t(`settings.proxyModes.${state.selectedOption()}`)}
+					<Select.Value<{ id: "direct" | "auto" | "manual" }>>
+						{(state) => {
+							const mode = state.selectedOption();
+							return mode ? t(`settings.proxyModes.${mode.id}`) : "";
+						}}
 					</Select.Value>
 				</Select.Trigger>
 				<Select.Portal>
@@ -72,6 +81,7 @@ export function NetworkAndMemorySettings() {
 						type="text"
 						placeholder="http://127.0.0.1:7890"
 						value={proxyUrl()}
+						disabled={!capabilitiesReady()}
 						onInput={(event) => setProxyUrl(event.currentTarget.value)}
 					/>
 				</TextField>
@@ -82,7 +92,7 @@ export function NetworkAndMemorySettings() {
 
 
 			<div class="setting-actions">
-				<Button type="button" class="primary-tool" disabled={saving()} onClick={() => void save()}>
+				<Button type="button" class="primary-tool" disabled={saving() || !capabilitiesReady() || proxyModes().length === 0} onClick={() => void save()}>
 					{t("settings.saveNetwork")}
 				</Button>
 			</div>

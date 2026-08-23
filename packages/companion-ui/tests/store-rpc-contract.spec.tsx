@@ -5,9 +5,82 @@ import { waitFor } from "@testing-library/dom";
 import { createComponent, createRoot } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { createCompanionStore } from "../src/stores/companion.js";
-import type { Snapshot } from "../src/stores/ipc.js";
+import type { DomainEvent, Snapshot } from "../src/stores/ipc.js";
 import { createTestClient, ROLEPLAY_MEDIA_CHARACTER } from "./fixtures.js";
+type HostConversationProjection = {
+	activeConversationId: string;
+	activeBranchId?: string;
+	id: string;
+	title: string;
+	sceneTitle: string;
+	piTimeline: { entries: []; activeLeafId?: string };
+	piSessionId?: string;
+	piLiveState?: {
+		isStreaming: boolean;
+		streamingMessage?: {
+			text?: string;
+			stopReason: string;
+			errorMessage?: string;
+		};
+		errorMessage?: string;
+	};
+};
+type TestClient = Parameters<typeof createCompanionStore>[0];
+type HostConversationSummary = {
+	id: string;
+	title: string;
+	sceneTitle: string;
+	unread: boolean;
+	updatedAt: string;
+};
+function park(): Promise<never> {
+	const { promise } = Promise.withResolvers<never>();
+	return promise;
+}
 
+type HostConversationMutation = { conversation?: HostConversationProjection };
+type ConversationApiWithActiveGet = TestClient["conversation"] & {
+	activeGet: (
+		request: Record<string, never>,
+	) => Promise<IpcEnvelope<HostConversationMutation>>;
+};
+
+function conversationApi(client: TestClient): ConversationApiWithActiveGet {
+	return client.conversation as unknown as ConversationApiWithActiveGet;
+}
+
+function seedActiveConversation(
+	client: TestClient,
+	projection: HostConversationProjection | undefined,
+): void {
+	const conversation = conversationApi(client);
+	conversation.activeGet = vi.fn(() =>
+		Promise.resolve({
+			ok: true as const,
+			data: projection === undefined ? {} : { conversation: projection },
+		}),
+	);
+}
+
+function hostProjection(id: string, title = id): HostConversationProjection {
+	return {
+		activeConversationId: id,
+		id,
+		title,
+		sceneTitle: "",
+		piTimeline: { entries: [], activeLeafId: `${id}-leaf` },
+	};
+}
+
+function conversationSummary(id: string, title = id): HostConversationSummary {
+	return {
+		id,
+		title,
+		sceneTitle: "",
+		unread: false,
+		updatedAt: "2026-01-01T00:00:00.000Z",
+	};
+}
 function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["client"]) {
 	let dispose = () => undefined;
 	let store: ReturnType<typeof createCompanionStore> | undefined;
@@ -59,6 +132,7 @@ describe("store RPC contract", () => {
 	});
 	it("does not let a delayed boot snapshot erase a model enabled during startup", async () => {
 		const { client } = createTestClient();
+		seedActiveConversation(client, hostProjection("conversation-old", "Old"));
 		let resolveSnapshot:
 			| ((value: Awaited<ReturnType<typeof client.snapshot.get>>) => void)
 			| undefined;
@@ -92,7 +166,7 @@ describe("store RPC contract", () => {
 			await store.model.enable("relay", "fast", "Fast");
 			await store.model.list();
 			client.conversation.create = vi.fn(() =>
-				Promise.resolve({ ok: true as const, data: { id: "conversation-new" } }),
+				Promise.resolve({ ok: true as const, data: hostProjection("conversation-new") }),
 			);
 			client.model.routeGet = vi.fn(({ conversationId }) =>
 				Promise.resolve({
@@ -134,12 +208,299 @@ describe("store RPC contract", () => {
 			});
 			await waitFor(() => expect(store.snapshot.eventSeq()).toBe(1));
 			expect(store.activeConversationId).toBe("conversation-new");
-			expect(store.activePiTimeline).toEqual({ entries: [] });
+			expect(store.activePiTimeline).toEqual({
+				entries: [],
+				activeLeafId: "conversation-new-leaf",
+			});
 			expect(store.model.models()).toEqual([configured]);
 			expect(store.model.data().defaults.reply).toEqual({
 				providerId: "relay",
 				modelId: "fast",
 			});
+		} finally {
+			dispose();
+		}
+	});
+	it("keeps a Host-created active Pi projection over delayed pre-mutation responses", async () => {
+		const { client } = createTestClient();
+		const staleSnapshot = Promise.withResolvers<IpcEnvelope<Snapshot>>();
+		const staleList = Promise.withResolvers<
+			IpcEnvelope<{ conversations: HostConversationSummary[] }>
+		>();
+		client.snapshot.get = vi.fn(() => staleSnapshot.promise);
+		client.conversation.list = vi.fn(() => staleList.promise);
+		const conversation = conversationApi(client);
+		conversation.activeGet = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { conversation: hostProjection("conversation-before-mutation") },
+			}),
+		);
+		const created = hostProjection("conversation-created", "Created");
+		client.conversation.create = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: created } as never),
+		);
+		client.conversation.select = vi.fn(() => {
+			throw new Error("create must not issue a separate select RPC");
+		});
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(client.snapshot.get).toHaveBeenCalled());
+			const create = store.createConversation("Created");
+			await waitFor(() => expect(client.conversation.create).toHaveBeenCalledWith({ title: "Created" }));
+			await waitFor(() => expect(store.activeConversationId).toBe(created.activeConversationId));
+			staleSnapshot.resolve({
+				ok: true,
+				data: {
+					eventSeq: 7,
+					conversation: {
+						activeConversationId: "conversation-before-mutation",
+						piTimeline: { entries: [], activeLeafId: "stale-leaf" },
+					},
+				},
+			});
+			staleList.resolve({
+				ok: true,
+				data: { conversations: [conversationSummary("conversation-before-mutation")] },
+			});
+			await create;
+			expect(client.conversation.select).not.toHaveBeenCalled();
+			expect(store.activeConversationId).toBe(created.activeConversationId);
+			expect(store.activePiTimeline).toEqual(created.piTimeline);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("renders the Host-selected replacement projection when archiving the active conversation", async () => {
+		const { client } = createTestClient();
+		const first = hostProjection("conversation-first", "First");
+		const replacement = hostProjection("conversation-second", "Second");
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					conversation: {
+						activeConversationId: first.activeConversationId,
+						piTimeline: first.piTimeline,
+					},
+				},
+			}),
+		);
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					conversations: [
+						conversationSummary(first.id, first.title),
+						conversationSummary(replacement.id, replacement.title),
+					],
+				},
+			}),
+		);
+		const conversation = conversationApi(client);
+		conversation.activeGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversation: first } }),
+		);
+		client.conversation.select = vi.fn(() => {
+			throw new Error("archive must use the Host mutation projection");
+		});
+		client.conversation.archive = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversation: replacement } } as never),
+		);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activeConversationId).toBe(first.id));
+			await store.archiveConversation(first.id);
+			expect(client.conversation.archive).toHaveBeenCalledWith({ id: first.id, archived: true });
+			expect(client.conversation.select).not.toHaveBeenCalled();
+			expect(store.activeConversationId).toBe(replacement.activeConversationId);
+			expect(store.activePiTimeline).toEqual(replacement.piTimeline);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("renders no active conversation when archiving the last conversation", async () => {
+		const { client } = createTestClient();
+		const last = hostProjection("conversation-last", "Last");
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					conversation: {
+						activeConversationId: last.activeConversationId,
+						piTimeline: last.piTimeline,
+					},
+				},
+			}),
+		);
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { conversations: [conversationSummary(last.id, last.title)] },
+			}),
+		);
+		const conversation = conversationApi(client);
+		conversation.activeGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversation: last } }),
+		);
+		client.conversation.archive = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: {} } as never),
+		);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activeConversationId).toBe(last.id));
+			await store.archiveConversation(last.id);
+			expect(store.activeConversationId).toBeNull();
+			expect(store.activePiTimeline).toBeUndefined();
+		} finally {
+			dispose();
+		}
+	});
+
+	it("refetches list and Host-owned active projection for external conversation lifecycle events", async () => {
+		const { client } = createTestClient();
+		const first = hostProjection("conversation-one", "One");
+		const renamed = hostProjection("conversation-one", "Renamed");
+		const replacement = hostProjection("conversation-two", "Two");
+		const created = conversationSummary("conversation-three", "Three");
+		const firstSummary = conversationSummary(first.id, first.title);
+		const lists: HostConversationSummary[][] = [
+			[firstSummary, conversationSummary(replacement.id, replacement.title)],
+			[conversationSummary(renamed.id, renamed.title), conversationSummary(replacement.id, replacement.title)],
+			[conversationSummary(replacement.id, replacement.title)],
+			[],
+			[created],
+		];
+		let listVersion = 0;
+		const bootSnapshot = Promise.withResolvers<IpcEnvelope<Snapshot>>();
+		let activeProjection: HostConversationProjection | undefined = first;
+		client.snapshot.get = vi.fn(() => bootSnapshot.promise);
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { conversations: lists[listVersion] ?? [] },
+			}),
+		);
+		const conversation = conversationApi(client);
+		conversation.activeGet = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { conversation: activeProjection },
+			}),
+		);
+		const eventGates = [
+			Promise.withResolvers<IpcEnvelope<{ events: DomainEvent[] }>>(),
+			Promise.withResolvers<IpcEnvelope<{ events: DomainEvent[] }>>(),
+			Promise.withResolvers<IpcEnvelope<{ events: DomainEvent[] }>>(),
+			Promise.withResolvers<IpcEnvelope<{ events: DomainEvent[] }>>(),
+		];
+		const events = [
+			{
+				seq: 1,
+				kind: "conversation.renamed",
+				payload: { conversationId: first.id, title: renamed.title },
+			},
+			{
+				seq: 2,
+				kind: "conversation.archived",
+				payload: { conversationId: first.id, archived: true },
+			},
+			{
+				seq: 3,
+				kind: "conversation.deleted",
+				payload: { conversationId: replacement.id },
+			},
+			{
+				seq: 4,
+				kind: "conversation.created",
+				payload: { conversationId: created.id },
+			},
+		] as unknown as DomainEvent[];
+		client.events.subscribe = vi.fn(({ afterSeq }: { afterSeq: number }) => {
+			const gate = eventGates[afterSeq];
+			return gate?.promise ?? new Promise<never>(() => undefined);
+		});
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activeConversationId).toBe(first.id));
+			bootSnapshot.resolve({
+				ok: true,
+				data: {
+					eventSeq: 0,
+					conversation: {
+						activeConversationId: first.activeConversationId,
+						piTimeline: first.piTimeline,
+					},
+				},
+			});
+			await waitFor(() =>
+				expect(client.events.subscribe).toHaveBeenCalledWith({ afterSeq: 0 }),
+			);
+
+			const renamedListCalls = client.conversation.list.mock.calls.length;
+			const renamedActiveCalls = conversation.activeGet.mock.calls.length;
+			listVersion = 1;
+			activeProjection = renamed;
+			eventGates[0]?.resolve({ ok: true, data: { events: [events[0]!] } });
+			await waitFor(() =>
+				expect(client.conversation.list.mock.calls.length).toBeGreaterThan(renamedListCalls),
+			);
+			await waitFor(() =>
+				expect(conversation.activeGet.mock.calls.length).toBeGreaterThan(renamedActiveCalls),
+			);
+			expect(store.conversations).toEqual(lists[1]);
+
+			await waitFor(() =>
+				expect(client.events.subscribe).toHaveBeenCalledWith({ afterSeq: 1 }),
+			);
+			const archivedListCalls = client.conversation.list.mock.calls.length;
+			const archivedActiveCalls = conversation.activeGet.mock.calls.length;
+			listVersion = 2;
+			activeProjection = replacement;
+			eventGates[1]?.resolve({ ok: true, data: { events: [events[1]!] } });
+			await waitFor(() =>
+				expect(client.conversation.list.mock.calls.length).toBeGreaterThan(archivedListCalls),
+			);
+			await waitFor(() =>
+				expect(conversation.activeGet.mock.calls.length).toBeGreaterThan(archivedActiveCalls),
+			);
+			await waitFor(() => expect(store.activeConversationId).toBe(replacement.id));
+			expect(store.activePiTimeline).toEqual(replacement.piTimeline);
+
+			await waitFor(() =>
+				expect(client.events.subscribe).toHaveBeenCalledWith({ afterSeq: 2 }),
+			);
+			const deletedListCalls = client.conversation.list.mock.calls.length;
+			const deletedActiveCalls = conversation.activeGet.mock.calls.length;
+			listVersion = 3;
+			activeProjection = undefined;
+			eventGates[2]?.resolve({ ok: true, data: { events: [events[2]!] } });
+			await waitFor(() =>
+				expect(client.conversation.list.mock.calls.length).toBeGreaterThan(deletedListCalls),
+			);
+			await waitFor(() =>
+				expect(conversation.activeGet.mock.calls.length).toBeGreaterThan(deletedActiveCalls),
+			);
+			await waitFor(() => expect(store.activeConversationId).toBeNull());
+			expect(store.activePiTimeline).toBeUndefined();
+
+			await waitFor(() =>
+				expect(client.events.subscribe).toHaveBeenCalledWith({ afterSeq: 3 }),
+			);
+			const createdListCalls = client.conversation.list.mock.calls.length;
+			const createdActiveCalls = conversation.activeGet.mock.calls.length;
+			listVersion = 4;
+			eventGates[3]?.resolve({ ok: true, data: { events: [events[3]!] } });
+			await waitFor(() =>
+				expect(client.conversation.list.mock.calls.length).toBeGreaterThan(createdListCalls),
+			);
+			expect(store.conversations).toEqual(lists[4]);
+			expect(store.activeConversationId).toBeNull();
+			expect(conversation.activeGet.mock.calls.length).toBe(createdActiveCalls);
 		} finally {
 			dispose();
 		}
@@ -339,6 +700,7 @@ describe("store RPC contract", () => {
 				},
 			}),
 		);
+		seedActiveConversation(client, hostProjection("conversation-1"));
 		client.model.routeGet = vi.fn(({ conversationId }) =>
 			Promise.resolve({
 				ok: true as const,
@@ -353,14 +715,17 @@ describe("store RPC contract", () => {
 		);
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
-			await waitFor(() => expect(store.model.selectedValue()).toBe("relay:fast"));
+			await waitFor(() => expect(store.model.data().selected).toEqual({ providerId: "relay", modelId: "fast" }));
 			await store.model.list();
-			expect(store.model.selectedValue()).toBe("relay:fast");
+			expect(store.model.data().selected).toEqual({ providerId: "relay", modelId: "fast" });
 			client.conversation.create = vi.fn(() =>
-				Promise.resolve({ ok: true as const, data: { id: "conversation-2" } }),
+				Promise.resolve({
+					ok: true as const,
+					data: hostProjection("conversation-2", "New conversation"),
+				}),
 			);
 			await store.createConversation("New conversation");
-			expect(store.model.selectedValue()).toBe("e2e-rule:rule-model");
+			expect(store.model.data().selected).toEqual({ providerId: "e2e-rule", modelId: "rule-model" });
 			expect(client.model.routeGet).toHaveBeenCalledWith({ conversationId: "conversation-2" });
 		} finally {
 			dispose();
@@ -372,6 +737,8 @@ describe("store RPC contract", () => {
 		const provider = {
 			id: "relay",
 			name: "Relay",
+			source: "builtin" as const,
+			added: true,
 			authType: "api_key" as const,
 			credentialStatus: "stored" as const,
 			availableModels: [],
@@ -415,8 +782,9 @@ describe("store RPC contract", () => {
 		}
 	});
 
-	it("routes the complete settings, memory, provider, story, canon, and work surface", async () => {
+	it("routes the complete settings, memory, provider, canon, and work surface", async () => {
 		const { client } = createTestClient();
+		seedActiveConversation(client, hostProjection("conversation-1"));
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
@@ -488,6 +856,7 @@ describe("store RPC contract", () => {
 			await store.provider.login("oauth-provider");
 			await store.provider.loginStatus("oauth-provider");
 			await store.provider.loginAnswer("oauth-provider", "answer");
+			await store.provider.loginCancel("oauth-provider");
 			await store.provider.logout("oauth-provider");
 
 			await store.model.list("conversation-1");
@@ -497,11 +866,6 @@ describe("store RPC contract", () => {
 			await store.characters.list();
 			await store.characters.activate("role-2");
 
-			await store.story.list();
-			await store.story.apply("AU change", "branch");
-			await store.story.revert("change-1");
-			await store.story.reset();
-			await store.story.resolveProposal("proposal-1", true);
 
 			await store.canon.listSources();
 			await store.canon.addSource("source.txt", "source text");
@@ -519,7 +883,7 @@ describe("store RPC contract", () => {
 			await store.commission.list();
 			await store.commission.draft({
 				conversationId: "conversation-1",
-				triggerMessageId: "message-1",
+				triggerEntryId: "message-1",
 				title: "Work",
 				description: "Do work",
 			});
@@ -561,12 +925,6 @@ describe("store RPC contract", () => {
 				providerId: "relay",
 				baseUrl: "https://override.example/v1",
 			});
-			expect(client.story.applyChange).toHaveBeenCalledWith({
-				text: "AU change",
-				scope: "branch",
-				conversationId: undefined,
-				branchId: undefined,
-			});
 			expect(client.canon.upsertModule).toHaveBeenCalled();
 			expect(client.commission.launch).toHaveBeenCalledWith({
 				commissionId: "commission-1",
@@ -590,6 +948,7 @@ describe("store RPC contract", () => {
 				},
 			}),
 		);
+		seedActiveConversation(client, hostProjection("conversation-1"));
 		client.model.routeGet = vi.fn(({ conversationId }) =>
 			Promise.resolve({
 				ok: true as const,
@@ -637,7 +996,6 @@ describe("store RPC contract", () => {
 				["model.changed", {}],
 				["commission.changed", {}],
 				["artifact.created", {}],
-				["story.changed", {}],
 				["character.changed", {}],
 				["settings.changed", {}],
 				["diagnostics.updated", {}],
@@ -665,7 +1023,6 @@ describe("store RPC contract", () => {
 			await waitFor(() => expect(client.provider.list).toHaveBeenCalled());
 			await waitFor(() => expect(client.model.poolGet).toHaveBeenCalled());
 			await waitFor(() => expect(client.memory.list).toHaveBeenCalled());
-			await waitFor(() => expect(client.story.listChanges).toHaveBeenCalled());
 			await waitFor(() => expect(client.character.list).toHaveBeenCalled());
 		} finally {
 			dispose();
@@ -682,6 +1039,8 @@ describe("store RPC contract", () => {
 				},
 			}),
 		);
+		seedActiveConversation(client, hostProjection("conversation-1"));
+		const conversation = conversationApi(client);
 		let subscription = 0;
 		client.events.subscribe = vi.fn(() => {
 			subscription += 1;
@@ -712,8 +1071,12 @@ describe("store RPC contract", () => {
 						},
 						{
 							seq: 3,
-							kind: "message_update" as const,
-							payload: { conversationId: "conversation-1", text: "draft" },
+							kind: "pi.session.changed" as const,
+							payload: {
+								conversationId: "conversation-1",
+								sessionId: "session-1",
+								reason: "message",
+							},
 						},
 						{
 							seq: 4,
@@ -737,13 +1100,196 @@ describe("store RPC contract", () => {
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => expect(store.events.lastSeq()).toBe(5));
-			expect(store.streamingAssistantText).toBe("draft");
-			expect(store.assistantStreaming).toBe(true);
+			// pi.session.changed triggers a scoped projection refresh; it never
+			// carries message text into the store.
+			await waitFor(() => expect(conversation.activeGet.mock.calls.length).toBeGreaterThan(1));
 			expect(store.activeRoleplayChoiceSetId).toBe("choices-1");
 			expect(store.characterRuntimeByConversation["conversation-1"]).toEqual({
 				sceneId: "room",
 				visualState: "thinking",
 			});
+		} finally {
+			dispose();
+		}
+	});
+	it("projects the Pi live state and native session id from the active projection", async () => {
+		const { client } = createTestClient();
+		const entries = [
+			{
+				id: "pi:user-1",
+				parentId: null,
+				timestamp: "2026-01-01T00:00:00.000Z",
+				kind: "message" as const,
+				role: "user" as const,
+				text: "hello",
+			},
+		];
+		seedActiveConversation(client, {
+			...hostProjection("conversation-1"),
+			piSessionId: "session-1",
+			piLiveState: {
+				isStreaming: true,
+				streamingMessage: { text: "hi", stopReason: "pending" },
+			},
+			piTimeline: { entries: entries as never, activeLeafId: "conversation-1-leaf" },
+		});
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
+				},
+			}),
+		);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() =>
+				expect(store.activePiLiveState).toEqual({
+					isStreaming: true,
+					streamingMessage: { text: "hi", stopReason: "pending" },
+				}),
+			);
+			expect(store.activePiTimeline).toEqual({
+				entries: entries as never,
+				activeLeafId: "conversation-1-leaf",
+			});
+		} finally {
+			dispose();
+		}
+	});
+	it("keeps the current page when a late pi.session.changed targets a stale session", async () => {
+		const { client } = createTestClient();
+		const a: HostConversationProjection = {
+			...hostProjection("conversation-a", "A"),
+			piSessionId: "session-a",
+			piLiveState: {
+				isStreaming: true,
+				streamingMessage: { text: "hi", stopReason: "pending" },
+			},
+		};
+		const b: HostConversationProjection = {
+			...hostProjection("conversation-b", "B"),
+			piSessionId: "session-b",
+			piLiveState: { isStreaming: false },
+		};
+		const conversation = conversationApi(client);
+		conversation.activeGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversation: a } }),
+		);
+		client.conversation.select = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: b as never }),
+		);
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: 0,
+					conversation: { activeConversationId: "conversation-a", piTimeline: { entries: [] } },
+				},
+			}),
+		);
+		const eventGate = Promise.withResolvers<IpcEnvelope<{ events: DomainEvent[] }>>();
+		let subscription = 0;
+		client.events.subscribe = vi.fn(() => {
+			subscription += 1;
+			if (subscription === 1) return eventGate.promise;
+			return park();
+		});
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activeConversationId).toBe("conversation-a"));
+			// Switch to B; the Host mutation response owns the active projection.
+			await store.selectConversation("conversation-b");
+			await waitFor(() => expect(store.activeConversationId).toBe("conversation-b"));
+			const activeCallsAfterSelect = conversation.activeGet.mock.calls.length;
+			// A stale Pi notification for A must not read or overwrite B's active
+			// projection. It may be ignored because no scoped A projection exists.
+			eventGate.resolve({
+				ok: true,
+				data: {
+					events: [
+						{
+							seq: 1,
+							kind: "pi.session.changed" as const,
+							payload: {
+								conversationId: "conversation-a",
+								sessionId: "session-a",
+								reason: "message" as const,
+							},
+						},
+					],
+				},
+			});
+			await Promise.resolve();
+			expect(conversation.activeGet.mock.calls).toHaveLength(activeCallsAfterSelect);
+			expect(store.activeConversationId).toBe("conversation-b");
+			expect(store.activePiTimeline).toEqual(b.piTimeline);
+			expect(store.activePiLiveState?.isStreaming).toBe(false);
+		} finally {
+			dispose();
+		}
+	});
+	it("restarts the event replay with a fresh snapshot after a subscribe failure", async () => {
+		const { client } = createTestClient();
+		let snapshotCalls = 0;
+		client.snapshot.get = vi.fn(() => {
+			snapshotCalls += 1;
+			return Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: snapshotCalls === 1 ? 0 : 2,
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
+				},
+			});
+		});
+		const conversation = conversationApi(client);
+		let projection: HostConversationProjection = {
+			...hostProjection("conversation-1"),
+			piSessionId: "session-1",
+			piLiveState: { isStreaming: false },
+		};
+		conversation.activeGet = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversation: projection } }),
+		);
+		let subscription = 0;
+		client.events.subscribe = vi.fn(() => {
+			subscription += 1;
+			if (subscription === 1) return Promise.reject(new Error("link down"));
+			if (subscription === 2) {
+				projection = {
+					...projection,
+					piLiveState: {
+						isStreaming: true,
+						streamingMessage: { text: "hi", stopReason: "pending" as const },
+					},
+				};
+				return Promise.resolve({
+					ok: true as const,
+					data: {
+						events: [
+							{
+								seq: 3,
+								kind: "pi.session.changed" as const,
+								payload: {
+									conversationId: "conversation-1",
+									sessionId: "session-1",
+									reason: "message" as const,
+								},
+							},
+						],
+					},
+				});
+			}
+			return park();
+		});
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			// The failed subscription is recovered: the store re-reads the
+			// active projection, resyncs the snapshot cursor (eventSeq 2), and
+			// restarts from it; the seq-3 notification is then applied normally.
+			await waitFor(() => expect(store.activePiLiveState?.isStreaming).toBe(true));
+			expect(snapshotCalls).toBeGreaterThanOrEqual(2);
 		} finally {
 			dispose();
 		}
@@ -809,6 +1355,7 @@ describe("store RPC contract", () => {
 				},
 			}),
 		);
+		seedActiveConversation(client, hostProjection("conversation-1"));
 		let subscription = 0;
 		client.events.subscribe = vi.fn(() => {
 			subscription += 1;

@@ -20,7 +20,8 @@ describe("advanced feature journeys", () => {
 		const user = userEvent.setup();
 		const approve = vi.fn(() => Promise.resolve());
 		const launch = vi.fn(() => Promise.resolve({} as never));
-		renderWithStore(() => <WorkTimelineItem messageId="message-1" character={undefined} />, {
+		renderWithStore(() => <WorkTimelineItem messageId="message-1" />, {
+			character: undefined,
 			activeConversationId: "conversation-1",
 			runs: [
 				{
@@ -40,7 +41,7 @@ describe("advanced feature journeys", () => {
 				commissions: () => [
 					{
 						id: "commission-1",
-						triggerMessageId: "message-1",
+						triggerEntryId: "message-1",
 						status: "approved",
 						createdAt: "2026-08-16T00:00:00Z",
 						draft: {
@@ -99,7 +100,8 @@ describe("advanced feature journeys", () => {
 		const respondPermission = vi.fn(() => Promise.resolve({} as never));
 		const cancel = vi.fn(() => Promise.resolve({} as never));
 		const download = vi.fn(() => Promise.resolve());
-		renderWithStore(() => <WorkTimelineItem messageId="message-1" character={undefined} />, {
+		renderWithStore(() => <WorkTimelineItem messageId="message-1" />, {
+			character: undefined,
 			activeConversationId: "conversation-1",
 			runs: [
 				{ id: "run-1", commissionId: "commission-1", executorProfile: "pi", status: "needs_user" },
@@ -109,7 +111,7 @@ describe("advanced feature journeys", () => {
 					{
 						id: "commission-1",
 						conversationId: "conversation-1",
-						triggerMessageId: "message-1",
+						triggerEntryId: "message-1",
 						status: "draft",
 						createdAt: "2026-08-16T00:00:00Z",
 						draft: {

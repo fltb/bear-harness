@@ -51,11 +51,10 @@ function createServiceFixture(controller?: ExecutorController): Fixture {
 	const db = new DatabaseSync(":memory:");
 	db.exec(`
 		CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
-		CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, role TEXT NOT NULL);
 		CREATE TABLE commissions (
 			id TEXT PRIMARY KEY,
 			conversation_id TEXT,
-			trigger_message_id TEXT NOT NULL,
+			trigger_entry_id TEXT NOT NULL,
 			status TEXT NOT NULL,
 			draft_json TEXT NOT NULL,
 			approval_hash TEXT,
@@ -108,10 +107,6 @@ function createServiceFixture(controller?: ExecutorController): Fixture {
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
 	`);
-	db.prepare("INSERT INTO messages (id, conversation_id, role) VALUES (?, ?, 'user')").run(
-		"user-message-1",
-		"conversation-1",
-	);
 	db.prepare(
 		"INSERT INTO executor_profiles (id, profile_type, capability_json) VALUES (?, 'product-managed', '{}')",
 	).run("pi-worker");
@@ -132,7 +127,7 @@ function createServiceFixture(controller?: ExecutorController): Fixture {
 function approvedCommission(service: CommissionService): string {
 	const { commissionId, draftHash } = service.draft({
 		conversationId: "conversation-1",
-		triggerMessageId: "user-message-1",
+		triggerEntryId: "user-message-1",
 		title: "Inspect the workspace",
 		description: "Read the approved files and summarize them.",
 		reads: ["/workspace"],

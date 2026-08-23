@@ -18,6 +18,22 @@ export type {
 	MemoryCaptureResponse,
 	MemoryEditRequest,
 	MemoryForgetRequest,
+	ProviderInfo,
+	ProviderListRequest,
+	ProviderListResponse,
+	ProviderSetApiKeyRequest,
+	ProviderLoginRequest,
+	ProviderLoginResponse,
+	ProviderLoginCancelRequest,
+	ProviderLoginCancelResponse,
+	ProviderLoginStatusRequest,
+	ProviderLoginAnswerRequest,
+	ProviderLogoutRequest,
+	ProviderRemoveRequest,
+	ProviderCustomUpsertRequest,
+	ProviderImportPiConfigRequest,
+	ProviderImportPiConfigResponse,
+	ProviderOverrideBaseUrlRequest,
 } from "@bear-harness/protocol";
 export { type CompanionClient, createCompanionClient, type HostTransport } from "./client.js";
 export { unwrap } from "./unwrap.js";

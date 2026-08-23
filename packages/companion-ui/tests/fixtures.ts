@@ -1,6 +1,9 @@
 import type { CompanionClient } from "@bear-harness/companion-client";
 import { type ProductConfig, productConfig } from "@bear-harness/product-config";
-import type { ConversationSummary } from "@bear-harness/protocol/schema";
+import type {
+	ConversationSelectResponse,
+	ConversationSummary,
+} from "@bear-harness/protocol";
 import { vi } from "vitest";
 import type { CharacterDisplay, SettingsData } from "../src/index.js";
 
@@ -139,9 +142,12 @@ export function createEmbeddingBinding() {
 			isPending: false,
 			error: null,
 		},
-		catalogQuery: {
+		capabilitiesQuery: {
 			data: {
-				candidates: [{ id: "test-embedding", name: "Test embedding", isDefault: true }],
+				networkProxyModes: [{ id: "direct" }, { id: "auto" }, { id: "manual" }],
+				memoryVectorProviders: [{ id: "none", onboarding: true }, { id: "local", onboarding: true }, { id: "remote", onboarding: false }],
+				memoryVectorPresets: [],
+				localEmbeddingCandidates: [{ id: "test-embedding", name: "Test embedding", isDefault: true }],
 			},
 			isPending: false,
 			error: null,
@@ -173,8 +179,9 @@ const DEFAULT_MODEL = {
  * Minimal deterministic `CompanionClient` fixture matching the public
  * interface of `@bear-harness/companion-client`.
  *
- * Every call resolves a success envelope with empty domain data, so the
- * store boots into the same idle shell a missing bridge used to produce.
+ * Most calls resolve a success envelope with empty domain data, so the store
+ * boots into the same idle shell a missing bridge used to produce; conversation
+ * creation and selection additionally expose the Host-owned active projection.
  * `events.subscribe` parks the subscription loop on a promise that never
  * settles — tests never race polling timers and the loop dies with the
  * store's cleanup. `settings.set` mutates the backing settings so the
@@ -200,23 +207,46 @@ export function createTestClient() {
 	/** Conversations the fixture has created; kept in sync so an active
 	 *  conversation id always has a matching list entry. */
 	const conversations: ConversationSummary[] = [];
+	let activeConversation: ConversationSelectResponse | undefined;
 	const conversationList = vi.fn(() => ok({ conversations: [...conversations] }));
+	const conversationProjection = (
+		id: string,
+		title: string,
+		sceneTitle: string,
+	): ConversationSelectResponse => ({
+		activeConversationId: id,
+		id,
+		title,
+		sceneTitle,
+		piTimeline: { entries: [] },
+		piSessionId: `${id}-session`,
+		piLiveState: { isStreaming: false },
+	});
 	const providerList = vi.fn(() => ok({ providers: [] }));
 
+	const snapshotGet = vi.fn(() =>
+		ok({
+			eventSeq: 0,
+			...(activeConversation
+				? {
+						conversation: {
+							activeConversationId: activeConversation.activeConversationId,
+							piTimeline: activeConversation.piTimeline,
+						},
+					}
+				: {}),
+			model: {
+				pool: { models: [DEFAULT_MODEL] },
+				defaults: {
+					reply: { providerId: DEFAULT_MODEL.providerId, modelId: DEFAULT_MODEL.modelId },
+					vision: { mode: "auto" as const },
+				},
+			},
+		}),
+	);
 	const client = {
 		snapshot: {
-			get: vi.fn(() =>
-				ok({
-					eventSeq: 0,
-					model: {
-						pool: { models: [DEFAULT_MODEL] },
-						defaults: {
-							reply: { providerId: DEFAULT_MODEL.providerId, modelId: DEFAULT_MODEL.modelId },
-							vision: { mode: "auto" as const },
-						},
-					},
-				}),
-			),
+			get: snapshotGet,
 		},
 		character: {
 			get: vi.fn(() => ok(null)),
@@ -249,41 +279,85 @@ export function createTestClient() {
 		conversation: {
 			list: conversationList,
 			create: vi.fn(({ title }: { title?: string }) => {
-				// The store activates the returned id, so register it in the list
-				// the fixture serves back — an active conversation must be listed.
-				if (!conversations.some((conversation) => conversation.id === "c1")) {
-					conversations.push({
+				// The store activates the returned projection, so register it in the
+				// list the fixture serves back — an active conversation must be listed.
+				let summary = conversations.find((conversation) => conversation.id === "c1");
+				if (summary === undefined) {
+					summary = {
 						id: "c1",
 						title: title ?? "New conversation",
 						sceneTitle: "",
 						unread: false,
 						updatedAt: "2026-01-01T00:00:00.000Z",
-					});
+					};
+					conversations.push(summary);
+				} else if (title !== undefined) {
+					summary.title = title;
 				}
-				return ok({ id: "c1" });
+				activeConversation = conversationProjection("c1", summary.title, summary.sceneTitle);
+				return ok(activeConversation);
 			}),
 			select: vi.fn(({ id }: { id: string }) => {
-				const conversation = conversations.find((item) => item.id === id);
-				return ok({
-					activeConversationId: id,
-					id,
-					title: conversation?.title ?? "New conversation",
-					sceneTitle: conversation?.sceneTitle ?? "",
-					piTimeline: { entries: [] },
-				});
+				let conversation = conversations.find((item) => item.id === id);
+				if (conversation === undefined) {
+					conversation = {
+						id,
+						title: "New conversation",
+						sceneTitle: "",
+						unread: false,
+						updatedAt: "2026-01-01T00:00:00.000Z",
+					};
+					conversations.push(conversation);
+				}
+				activeConversation = conversationProjection(id, conversation.title, conversation.sceneTitle);
+				return ok(activeConversation);
 			}),
-			rename: vi.fn(() => ok(null)),
-			archive: vi.fn(() => ok(null)),
-			delete: vi.fn(() => ok(null)),
+			activeGet: vi.fn(() =>
+				ok(activeConversation === undefined ? {} : { conversation: activeConversation }),
+			),
+			rename: vi.fn(({ id, title }: { id: string; title: string }) => {
+				const conversation = conversations.find((item) => item.id === id);
+				if (conversation !== undefined) conversation.title = title;
+				if (activeConversation?.id === id) {
+					activeConversation = { ...activeConversation, title };
+				}
+				return ok(null);
+			}),
+			archive: vi.fn(({ id, archived }: { id: string; archived: boolean }) => {
+				if (archived) {
+					const index = conversations.findIndex((conversation) => conversation.id === id);
+					if (index >= 0) conversations.splice(index, 1);
+					if (activeConversation?.id === id) {
+						const replacement = conversations.at(-1);
+						activeConversation =
+							replacement === undefined
+								? undefined
+								: conversationProjection(replacement.id, replacement.title, replacement.sceneTitle);
+					}
+				}
+				return ok({});
+			}),
+			delete: vi.fn(({ id }: { id: string }) => {
+				const index = conversations.findIndex((conversation) => conversation.id === id);
+				if (index >= 0) conversations.splice(index, 1);
+				if (activeConversation?.id === id) {
+					const replacement = conversations.at(-1);
+					activeConversation =
+						replacement === undefined
+							? undefined
+							: conversationProjection(replacement.id, replacement.title, replacement.sceneTitle);
+				}
+				return ok({});
+			}),
 		},
 		message: {
-			send: vi.fn(() => ok({ messageId: "m1" })),
+			send: vi.fn(() => ok({ accepted: true as const, sessionId: "session-1" })),
 			regenerate: vi.fn(() => ok(null)),
 			switchVersion: vi.fn(() => ok(null)),
 			edit: vi.fn(() => ok(null)),
 			continue: vi.fn(() => ok(null)),
 			correct: vi.fn(() => ok(null)),
-			branch: vi.fn(() => ok({ branchId: "b1" })),
+			branch: vi.fn(() => ok({ leafId: "leaf-1" })),
 			abort: vi.fn(() => ok(null)),
 		},
 		memory: {
@@ -296,26 +370,15 @@ export function createTestClient() {
 					createdBy: "user_capture" as const,
 				}),
 			),
+			edit: vi.fn(() => ok(null)),
+			exclude: vi.fn(() => ok(null)),
 			invalidate: vi.fn(() => ok({})),
 			pin: vi.fn(() => ok(null)),
 			forget: vi.fn(() => ok(null)),
-			edit: vi.fn(() => ok(null)),
-			exclude: vi.fn(() => ok(null)),
-			candidatesList: vi.fn(() => ok({ candidates: [] })),
-			localEmbeddingCatalog: vi.fn(() =>
-				ok({ candidates: [{ id: "test-embedding", name: "Test embedding", isDefault: true }] }),
-			),
 			configureLocalEmbedding: vi.fn(() => ok({ ready: true })),
 			candidateApprove: vi.fn(() => ok(null)),
+			candidatesList: vi.fn(() => ok({ candidates: [] })),
 			candidateReject: vi.fn(() => ok(null)),
-		},
-		story: {
-			listChanges: vi.fn(() => ok({ changes: [] })),
-			applyChange: vi.fn(() => ok(null)),
-			revertChange: vi.fn(() => ok(null)),
-			reset: vi.fn(() => ok(null)),
-			listProposals: vi.fn(() => ok({ proposals: [] })),
-			resolveProposal: vi.fn(() => ok(null)),
 		},
 		canon: {
 			listSources: vi.fn(() => ok({ sources: [] })),
@@ -334,7 +397,9 @@ export function createTestClient() {
 			login: vi.fn(() => ok({ providerId: "test", status: "completed" })),
 			loginStatus: vi.fn(() => ok({ providerId: "test", status: "completed" })),
 			loginAnswer: vi.fn(() => ok({ providerId: "test", status: "running" })),
+			loginCancel: vi.fn(() => ok(null)),
 			logout: vi.fn(() => ok(null)),
+			remove: vi.fn(() => ok(null)),
 		},
 		model: {
 			poolGet: vi.fn(() => ok({ models: [DEFAULT_MODEL] })),
@@ -372,7 +437,22 @@ export function createTestClient() {
 			list: vi.fn(() => ok({ artifacts: [] })),
 			read: vi.fn(() => ok({ logicalName: "result.txt", mime: "text/plain", base64: "" })),
 		},
-		settings: { get: settingsGet, set: settingsSet },
+		settings: {
+			get: settingsGet,
+			set: settingsSet,
+			capabilitiesGet: vi.fn(() =>
+				ok({
+					networkProxyModes: [{ id: "direct" }, { id: "auto" }, { id: "manual" }],
+					memoryVectorProviders: [
+						{ id: "none", onboarding: true },
+						{ id: "local", onboarding: true },
+						{ id: "remote", onboarding: false },
+					],
+					memoryVectorPresets: [],
+					localEmbeddingCandidates: [{ id: "test-embedding", name: "Test embedding", isDefault: true }],
+				}),
+			),
+		},
 	} as CompanionClient;
 
 	return {

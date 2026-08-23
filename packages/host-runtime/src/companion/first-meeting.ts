@@ -1,8 +1,7 @@
-import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
-import { branches, companionIdentity, conversations, onboardingState } from "../storage/schema.js";
+import { companionIdentity, conversations, onboardingState } from "../storage/schema.js";
 import type { CharacterLoader } from "./character-loader.js";
 import type {
 	CharacterOnboardingFlow,
@@ -24,11 +23,24 @@ interface PersistedOnboardingRow {
 	stateData: unknown;
 }
 
-interface CreatedConversation {
+export interface CreatedConversation {
 	conversationId: string;
 	sceneTitle: string;
 	title: string;
 }
+export type OnboardingConversationCommit = (
+	transaction: Pick<AppDatabase, "insert" | "update">,
+) => void;
+export interface OnboardingConversationCreationInput {
+	companionId: string;
+	title: string;
+	sceneTitle: string;
+	onCommit: OnboardingConversationCommit;
+}
+
+export type OnboardingConversationFactory = (
+	input: OnboardingConversationCreationInput,
+) => CreatedConversation;
 
 /**
  * Host-owned execution engine for a role-defined onboarding flow. The role
@@ -37,12 +49,17 @@ interface CreatedConversation {
  */
 export class FirstMeetingMachine {
 	private onConversationCreated?: (companionId: string, conversationId: string) => void;
+	private conversationFactory?: OnboardingConversationFactory;
 
 	constructor(
 		private readonly db: AppDatabase,
 		private readonly eventBus: EventBus,
 		private readonly characterLoader: CharacterLoader,
 	) {}
+
+	setConversationFactory(factory: OnboardingConversationFactory): void {
+		this.conversationFactory = factory;
+	}
 
 	setConversationCreatedHandler(
 		handler: (companionId: string, conversationId: string) => void,
@@ -276,40 +293,57 @@ export class FirstMeetingMachine {
 		let conversation: CreatedConversation | undefined;
 
 		try {
-			this.db.transaction((transaction) => {
-				if (nicknameValue !== undefined) {
-					transaction
-						.update(companionIdentity)
-						.set({ nickname: nicknameValue })
-						.where(eq(companionIdentity.id, companionId))
-						.run();
+			if (nextState === "complete") {
+				const existing = this.db
+					.select({ id: conversations.id })
+					.from(conversations)
+					.where(eq(conversations.companionId, companionId))
+					.limit(1)
+					.get();
+				if (existing) {
+					this.db.transaction((transaction) => {
+						if (nicknameValue !== undefined) {
+							transaction
+								.update(companionIdentity)
+								.set({ nickname: nicknameValue })
+								.where(eq(companionIdentity.id, companionId))
+								.run();
+						}
+						this.persist(companionId, nextState, stateData, transaction);
+					});
+				} else {
+					const character = this.characterLoader.load(companionId);
+					if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
+					if (!this.conversationFactory)
+						throw new Error("onboarding conversation factory is not configured");
+					conversation = this.conversationFactory({
+						companionId,
+						title: flow.completion.conversation_title,
+						sceneTitle: character.character.scene_title,
+						onCommit: (transaction) => {
+							if (nicknameValue !== undefined) {
+								transaction
+									.update(companionIdentity)
+									.set({ nickname: nicknameValue })
+									.where(eq(companionIdentity.id, companionId))
+									.run();
+							}
+							this.persist(companionId, nextState, stateData, transaction);
+						},
+					});
 				}
-				this.persist(companionId, nextState, stateData, transaction);
-				if (nextState === "complete") {
-					const existing = transaction
-						.select({ id: conversations.id })
-						.from(conversations)
-						.where(eq(conversations.companionId, companionId))
-						.limit(1)
-						.get();
-					if (!existing) {
-						const character = this.characterLoader.load(companionId);
-						if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
-						const conversationId = randomUUID();
-						const title = flow.completion.conversation_title;
-						const sceneTitle = character.character.scene_title;
+			} else {
+				this.db.transaction((transaction) => {
+					if (nicknameValue !== undefined) {
 						transaction
-							.insert(conversations)
-							.values({ id: conversationId, companionId, title, sceneTitle })
+							.update(companionIdentity)
+							.set({ nickname: nicknameValue })
+							.where(eq(companionIdentity.id, companionId))
 							.run();
-						transaction
-							.insert(branches)
-							.values({ id: randomUUID(), conversationId, label: "main", adopted: 1 })
-							.run();
-						conversation = { conversationId, sceneTitle, title };
 					}
-				}
-			});
+					this.persist(companionId, nextState, stateData, transaction);
+				});
+			}
 		} catch (error) {
 			throw { kind: "internal", reason: error instanceof Error ? error.message : String(error) };
 		}

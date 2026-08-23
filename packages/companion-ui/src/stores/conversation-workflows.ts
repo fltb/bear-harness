@@ -1,9 +1,7 @@
 import { i18n } from "@bear-harness/i18n";
-import type { Accessor } from "solid-js";
 import { createEffect, createMemo, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import type {
-	CharacterDisplay,
 	CompanionStore,
 	ConfiguredModel,
 	ConversationSummary,
@@ -65,12 +63,14 @@ function createConversationWorkflow(store: CompanionStore) {
 
 	const modelApi = createMemo(() => (store as Partial<CompanionStore>).model);
 	const models = createMemo<ConfiguredModel[]>(() => modelApi()?.models?.() ?? []);
-	const selectedModelValue = createMemo(() => modelApi()?.selectedValue?.() ?? "");
 	const modelData = createMemo(() => modelApi()?.data?.());
-	const modelSelected = createMemo(() => selectedModelValue().length > 0);
-	const selectedModel = createMemo(
-		() => models().find((model) => `${model.providerId}:${model.modelId}` === selectedModelValue()) ?? null,
-	);
+	const selectedModel = createMemo(() => {
+		const route = modelData()?.selected;
+		return route
+			? models().find((model) => model.providerId === route.providerId && model.modelId === route.modelId) ?? null
+			: null;
+	});
+	const modelSelected = createMemo(() => selectedModel() !== null);
 	const multimodalFallback = createMemo(() => {
 		const route = modelData()?.multimodalFallback;
 		return route
@@ -79,22 +79,17 @@ function createConversationWorkflow(store: CompanionStore) {
 	});
 	const hasImages = createMemo(() => state.attachments.some((attachment) => attachment.kind === "image"));
 	const needsImageReader = createMemo(() => hasImages() && selectedModel()?.supportsImages === false);
+	const imageReaderCapable = createMemo(
+		() => selectedModel()?.supportsImages === true || Boolean(multimodalFallback()),
+	);
 	const imageReaderAvailable = createMemo(
-		() => !hasImages() || (!state.imageRouteError && (!needsImageReader() || Boolean(multimodalFallback()))),
+		() => !hasImages() || (!state.imageRouteError && imageReaderCapable()),
 	);
 	const imageReaderLabel = createMemo(() => {
 		const fallback = multimodalFallback();
 		return fallback ? i18n.t("composer.imageReadBy").replace("{model}", modelDisplayName(fallback)) : "";
 	});
-	const streamingAssistantText = createMemo(() => store.streamingAssistantText ?? "");
-	const streaming = createMemo(
-		() =>
-			store.assistantStreaming ||
-			(store.pendingUserText !== undefined &&
-				state.sendError === null &&
-				!(state.imageRouteError && !hasImages())) ||
-			streamingAssistantText().length > 0,
-	);
+	const streaming = createMemo(() => store.activePiLiveState?.isStreaming === true);
 	const visibleConversations = createMemo<ConversationSummary[]>(() => {
 		const needle = state.query.trim().toLocaleLowerCase();
 		const conversations = store.conversations ?? [];
@@ -142,7 +137,7 @@ function createConversationWorkflow(store: CompanionStore) {
 		const value = state.composerText;
 		if (!value.trim() && state.attachments.length === 0) return;
 		if (!retry && !imageReaderAvailable()) return;
-		if (retry && needsImageReader() && !multimodalFallback()) return;
+		if (retry && hasImages() && !imageReaderCapable()) return;
 		const draftAttachments = state.attachments;
 		const materials = draftAttachments
 			.filter((file): file is Extract<ComposerAttachment, { kind: "text" }> => file.kind === "text")
@@ -157,28 +152,20 @@ function createConversationWorkflow(store: CompanionStore) {
 		const before = store.errorMetadata;
 		setState("sendError", null);
 		setState("modelError", null);
-		if (!retry) {
-			setState("composerText", "");
-			setState("attachments", []);
-		}
 		try {
 			await store.sendMessage(message, hadImages ? images : undefined);
 			const retained = store.errorMetadata;
 			if (retained !== null && retained !== before) {
 				setState("composerText", value);
 				setState("attachments", draftAttachments);
-				if (hadImages && store.pendingUserText !== undefined) setState("imageRouteError", true);
-				else setState("sendError", retained.message);
+				setState("sendError", retained.message);
 				setState("retryingSend", false);
 				return;
 			}
+			// The Pi preflight accepted the message: the draft is consumed by
+			// the Pi session and the thread updates via `pi.session.changed`.
+			// Accepted drafts are never replayed as messages.
 			setState("retryingSend", false);
-			if (hadImages && store.pendingUserText !== undefined) {
-				setState("composerText", value);
-				setState("attachments", draftAttachments);
-				setState("imageRouteError", true);
-				return;
-			}
 			setState("composerText", "");
 			setState("attachments", []);
 			setState("imageRouteError", false);
@@ -190,7 +177,7 @@ function createConversationWorkflow(store: CompanionStore) {
 		}
 	};
 	const retrySend = (labels: { materialLabel: string; imageLabel: string }): void => {
-		if (state.retryingSend || (needsImageReader() && !multimodalFallback())) return;
+		if (state.retryingSend || (hasImages() && !imageReaderCapable())) return;
 		setState("retryingSend", true);
 		void dispatchMessage(labels, { retry: true });
 	};
@@ -278,45 +265,37 @@ function createConversationWorkflow(store: CompanionStore) {
 		setSendError: (value: string | null) => setState("sendError", value),
 	};
 }
-export function useConversationViewWorkflow(
-	store: CompanionStore,
-	character: Accessor<CharacterDisplay | undefined>,
-) {
+export function useConversationViewWorkflow(store: CompanionStore) {
 	const workflow = useConversationWorkflow(store);
 	const sceneTitle = createMemo(
 		() =>
 			(store.conversations ?? []).find((conversation) => conversation.id === store.activeConversationId)?.sceneTitle ??
-			character()?.character.scene_title ??
+			store.character?.character.scene_title ??
 			"",
 	);
-	const streamedAssistantText = createMemo(() => store.streamingAssistantText ?? "");
-	const streamedContent = createMemo(() => streamedAssistantText());
 	const hasThreadContent = createMemo(
 		() =>
 			(store.activePiTimeline?.entries.length ?? 0) > 0 ||
-			store.pendingUserText !== undefined ||
-			store.assistantStreaming ||
-			streamedAssistantText().length > 0,
+			store.activePiLiveState?.streamingMessage !== undefined,
 	);
 	const roleplayChoiceSet = createMemo(() =>
-		character()?.roleplay.choice_sets?.find((entry) => entry.id === store.activeRoleplayChoiceSetId),
+		store.character?.roleplay.choice_sets?.find((entry) => entry.id === store.activeRoleplayChoiceSetId),
 	);
 	const roleplayInlineMedia = createMemo(() => {
-		const item = character()?.roleplay.media.find((entry) => entry.id === store.activeRoleplayMediaId);
+		const item = store.character?.roleplay.media.find((entry) => entry.id === store.activeRoleplayMediaId);
 		return item && item.presentation === "inline" ? item : undefined;
 	});
 	const roleplayOverlayMedia = createMemo(() => {
-		const item = character()?.roleplay.media.find((entry) => entry.id === store.activeRoleplayMediaId);
+		const item = store.character?.roleplay.media.find((entry) => entry.id === store.activeRoleplayMediaId);
 		return item && item.presentation !== "inline" && item.presentation !== "ambient" ? item : undefined;
 	});
 	const roleplayAmbientMedia = createMemo(() => {
-		const item = character()?.roleplay.media.find((entry) => entry.id === store.activeAmbientMediaId);
+		const item = store.character?.roleplay.media.find((entry) => entry.id === store.activeAmbientMediaId);
 		return item && item.kind === "audio" && item.presentation === "ambient" ? item : undefined;
 	});
 	return {
 		...workflow,
 		sceneTitle,
-		streamedContent,
 		hasThreadContent,
 		roleplayChoiceSet,
 		roleplayInlineMedia,

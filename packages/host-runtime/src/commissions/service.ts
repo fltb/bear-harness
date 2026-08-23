@@ -35,7 +35,6 @@ import {
 	commissions,
 	conversations,
 	evidence,
-	messages,
 	runs,
 } from "../storage/schema.js";
 
@@ -74,7 +73,7 @@ export type TerminalRunStatus =
 const ACTIVE_RUN_STATUSES: readonly RunStatus[] = ["enqueued", "running", "needs_user"];
 
 export interface CommissionDraftParams {
-	triggerMessageId: string;
+	triggerEntryId: string;
 	conversationId: string;
 	title: string;
 	description: string;
@@ -123,7 +122,7 @@ export interface DraftSummary {
 
 export interface CommissionSummary {
 	id: string;
-	triggerMessageId: string;
+	triggerEntryId: string;
 	conversationId: string | null;
 	status: CommissionStatus;
 	draft: DraftSummary;
@@ -152,7 +151,7 @@ interface DraftPayload extends CommissionDraftData {
 type CommissionRow = {
 	id: string;
 	conversationId: string | null;
-	triggerMessageId: string;
+	triggerEntryId: string;
 	status: CommissionStatus;
 	draftJson: DraftPayload;
 	approvalHash: string | null;
@@ -344,18 +343,8 @@ export class CommissionService {
 	 * (no id/timestamp), so the user can approve the exact text they saw.
 	 */
 	draft(params: CommissionDraftParams): CommissionDraftResult {
-		const trigger = this.db
-			.select({
-				id: messages.id,
-				conversationId: messages.conversationId,
-				role: messages.role,
-			})
-			.from(messages)
-			.where(eq(messages.id, params.triggerMessageId))
-			.get();
-		if (!trigger || trigger.role !== "user" || trigger.conversationId !== params.conversationId) {
-			throw { kind: "validation_failed", reason: "commission_trigger_message_invalid" };
-		}
+		// Composition validates that this is a current native Pi user entry.
+		// Commissions retain the opaque entry ID solely to anchor presentation.
 		const draft: DraftPayload = {
 			conversationId: params.conversationId,
 			title: params.title,
@@ -371,7 +360,7 @@ export class CommissionService {
 			.insert(commissions)
 			.values({
 				id: commissionId,
-				triggerMessageId: params.triggerMessageId,
+				triggerEntryId: params.triggerEntryId,
 				conversationId: draft.conversationId,
 				status: "draft",
 				draftJson: draft,
@@ -712,40 +701,33 @@ export class CommissionService {
 	/** List commissions (optionally by status and active-companion ownership) with runs and draft summary. */
 	list(params: CommissionListParams = {}): CommissionSummary[] {
 		const statusFilter = params.status ? eq(commissions.status, params.status) : undefined;
+		const commissionColumns = {
+			id: commissions.id,
+			conversationId: commissions.conversationId,
+			triggerEntryId: commissions.triggerEntryId,
+			status: commissions.status,
+			draftJson: commissions.draftJson,
+			approvalHash: commissions.approvalHash,
+			createdAt: commissions.createdAt,
+		};
 		const rows = params.companionId
 			? (this.db
-					.select({
-						id: commissions.id,
-						conversationId: commissions.conversationId,
-						triggerMessageId: commissions.triggerMessageId,
-						status: commissions.status,
-						draftJson: commissions.draftJson,
-						approvalHash: commissions.approvalHash,
-						createdAt: commissions.createdAt,
-					})
+					.select(commissionColumns)
 					.from(commissions)
 					.innerJoin(conversations, eq(commissions.conversationId, conversations.id))
-					.innerJoin(
-						messages,
-						and(
-							eq(messages.id, commissions.triggerMessageId),
-							eq(messages.conversationId, commissions.conversationId),
-							eq(messages.role, "user"),
-						),
-					)
 					.where(and(eq(conversations.companionId, params.companionId), statusFilter))
 					.orderBy(desc(commissions.createdAt), desc(commissions.id))
 					.all() as CommissionRow[])
 			: (this.db
-					.select()
+					.select(commissionColumns)
 					.from(commissions)
 					.where(statusFilter)
 					.orderBy(desc(commissions.createdAt), desc(commissions.id))
 					.all() as CommissionRow[]);
 		return rows
 			.filter(
-				(row): row is CommissionRow & { triggerMessageId: string } =>
-					typeof row.triggerMessageId === "string" && row.triggerMessageId.trim().length > 0,
+				(row): row is CommissionRow & { triggerEntryId: string } =>
+					typeof row.triggerEntryId === "string" && row.triggerEntryId.trim().length > 0,
 			)
 			.map((row) => {
 				const draft = this.parseDraft(row.draftJson);
@@ -758,7 +740,7 @@ export class CommissionService {
 					.all() as RunRow[];
 				return {
 					id: row.id,
-					triggerMessageId: row.triggerMessageId,
+					triggerEntryId: row.triggerEntryId,
 					conversationId: row.conversationId,
 					status: row.status,
 					draft: {

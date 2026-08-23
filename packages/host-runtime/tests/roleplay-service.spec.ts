@@ -8,7 +8,7 @@ import { CharacterLoader } from "../src/companion/character-loader.js";
 import { RoleplayService } from "../src/companion/roleplay-service.js";
 import { Database, MIGRATIONS } from "../src/storage/database.js";
 import { EventBus } from "../src/storage/event-bus.js";
-import { branches, conversations, messages, messageVersions } from "../src/storage/schema.js";
+import { conversations } from "../src/storage/schema.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -28,23 +28,6 @@ function fixture() {
 		.insert(conversations)
 		.values({ id: "conversation", companionId: character.id })
 		.run();
-	database.orm
-		.insert(branches)
-		.values({ id: "main", conversationId: "conversation", adopted: 1 })
-		.run();
-	database.orm
-		.insert(messages)
-		.values({
-			id: "assistant",
-			conversationId: "conversation",
-			branchId: "main",
-			role: "assistant",
-		})
-		.run();
-	database.orm
-		.insert(messageVersions)
-		.values({ id: "version-a", messageId: "assistant", content: "A", adopted: 1 })
-		.run();
 	return { database, character, service: new RoleplayService(database.orm) };
 }
 
@@ -56,8 +39,9 @@ describe("roleplay event projection", () => {
 				character,
 				eventId,
 				conversationId: "conversation",
-				branchId: "main",
-				dedupeKey: `user:${eventId}`,
+				piSessionId: "session-a",
+				sourceNativeEntryId: "entry-a",
+				dedupeKey: `session-a:entry-a:${eventId}`,
 			});
 
 		expect(() => trigger("continuity_received")).toThrow();
@@ -81,24 +65,25 @@ describe("roleplay event projection", () => {
 			character,
 			eventId: "continuity_opened",
 			conversationId: "conversation",
-			branchId: "main",
-			dedupeKey: "turn:opened",
+			piSessionId: "session-a",
+			sourceNativeEntryId: "entry-a",
+			dedupeKey: "session-a:entry-a:continuity_opened",
 		});
 		service.trigger({
 			character,
 			eventId: "continuity_opened",
 			conversationId: "conversation",
-			branchId: "main",
-			sourceMessageVersionId: "version-a",
-			dedupeKey: "turn:opened",
+			piSessionId: "session-a",
+			sourceNativeEntryId: "entry-a",
+			dedupeKey: "session-a:entry-a:continuity_opened",
 		});
 		service.trigger({
 			character,
 			eventId: "continuity_opened",
 			conversationId: "conversation",
-			branchId: "main",
-			sourceMessageVersionId: "version-a",
-			dedupeKey: "turn:opened",
+			piSessionId: "session-a",
+			sourceNativeEntryId: "entry-a",
+			dedupeKey: "session-a:entry-a:continuity_opened",
 		});
 		expect(service.project(character, "conversation")).toMatchObject({
 			values: { continuity_stage: 1, continuity_response: "unopened" },
@@ -113,8 +98,9 @@ describe("roleplay event projection", () => {
 			character,
 			eventId: "continuity_opened",
 			conversationId: "conversation",
-			branchId: "main",
-			dedupeKey: "opened",
+			piSessionId: "session-a",
+			sourceNativeEntryId: "entry-a",
+			dedupeKey: "session-a:entry-a:continuity_opened",
 		});
 		database.orm.insert(conversations).values({ id: "other", companionId: character.id }).run();
 		expect(service.project(character, "other").values).toMatchObject({
@@ -137,8 +123,9 @@ describe("roleplay event projection", () => {
 			character: conversationScopedCharacter,
 			eventId: "continuity_opened",
 			conversationId: "conversation",
-			branchId: "main",
-			dedupeKey: "conversation-only",
+			piSessionId: "session-a",
+			sourceNativeEntryId: "entry-a",
+			dedupeKey: "session-a:entry-a:continuity_opened",
 		});
 
 		expect(service.project(conversationScopedCharacter, "conversation").values).toMatchObject({
@@ -150,33 +137,40 @@ describe("roleplay event projection", () => {
 		database.close();
 	});
 
-	it("retains committed character and relationship state when a message version is unadopted", () => {
+	it("records native session provenance and retains committed state on re-delivery", () => {
 		const { database, character, service } = fixture();
 		service.trigger({
 			character,
 			eventId: "continuity_opened",
 			conversationId: "conversation",
-			branchId: "main",
-			sourceMessageVersionId: "version-a",
-			dedupeKey: "turn:opened",
+			piSessionId: "session-a",
+			sourceNativeEntryId: "entry-a",
+			dedupeKey: "session-a:entry-a:continuity_opened",
 		});
 		service.trigger({
 			character,
 			eventId: "continuity_revealed",
 			conversationId: "conversation",
-			branchId: "main",
-			sourceMessageVersionId: "version-a",
-			dedupeKey: "turn:revealed",
+			piSessionId: "session-a",
+			sourceNativeEntryId: "entry-b",
+			dedupeKey: "session-a:entry-b:continuity_revealed",
 		});
 		service.trigger({
 			character,
 			eventId: "continuity_received",
 			conversationId: "conversation",
-			branchId: "main",
-			sourceMessageVersionId: "version-a",
-			dedupeKey: "turn:event",
+			piSessionId: "session-a",
+			sourceNativeEntryId: "entry-c",
+			dedupeKey: "session-a:entry-c:continuity_received",
 		});
-		database.orm.update(messageVersions).set({ adopted: 0 }).run();
+		service.trigger({
+			character,
+			eventId: "continuity_received",
+			conversationId: "conversation",
+			piSessionId: "session-a",
+			sourceNativeEntryId: "entry-c",
+			dedupeKey: "session-a:entry-c:continuity_received",
+		});
 		expect(service.project(character, "conversation")).toMatchObject({
 			values: { continuity_stage: 3, continuity_response: "received" },
 			unlocked: ["continuity_record"],

@@ -1,6 +1,6 @@
-const actionParameters = (actions) => ({
+const actions = (items) => ({
 	type: "object",
-	properties: { action: { type: "string", enum: actions } },
+	properties: { action: { type: "string", enum: items } },
 	required: ["action"],
 	additionalProperties: false,
 });
@@ -8,108 +8,89 @@ const actionParameters = (actions) => ({
 async function callHost(tool, args = {}) {
 	const bridge = globalThis.bearHostCall;
 	if (typeof bridge !== "function") throw new Error("Companion Host bridge is unavailable");
-	const result = await bridge(tool, args);
-	if (!result?.ok) throw new Error(result?.message ?? `${tool} failed`);
-	return result;
+	const response = await bridge(tool, args);
+	if (!response?.ok) throw new Error(response?.message ?? `${tool} failed`);
+	return response;
 }
 
 function result(value) {
-	return {
-		content: [{ type: "text", text: JSON.stringify(value) }],
-		details: value,
-	};
+	return { content: [{ type: "text", text: JSON.stringify(value) }], details: value };
 }
 
-const mediaCues = {
-	first_night: ["host_play_media", { mediaId: "first_night" }],
-	damaged_signal: ["host_play_media", { mediaId: "damaged_signal_live" }],
-	damaged_log_choice: ["host_present_choices", { choiceSetId: "damaged_log_response" }],
-};
-
-const damagedLogBeats = {
+const beats = {
 	0: {
-		status: "unopened",
-		fact: "一份带校验摘要的损坏日志副本仍未打开。",
+		status: "sealed",
+		fact: "继任规程仍在旧站资料的最后一层。",
 		allowedActions: ["advance"],
-		next: "征得用户同意后再次调用 advance，打开副本并保留原始数据。",
+		next: "用户主动询问极昼的来处或当前运行方式时，可以打开这份规程。",
 	},
 	1: {
-		status: "copy_preserved",
-		fact: "原始副本已经保留；风暴噪声中存在不符合随机分布的重复间隔。",
+		status: "read",
+		fact: "规程记录了旧站材料、白熊客栈 Host 的上下文和语言模型运行时如何共同组织当前实例。",
 		allowedActions: ["advance"],
-		next: "再次调用 advance，比较时间戳并分离重复脉冲。",
+		next: "用户愿意继续时，极昼会说明自己与旧极昼的关系。",
 	},
 	2: {
-		status: "pulse_isolated",
-		fact: "重复脉冲已被分离，时间戳指向极光站关闭后的时段；信号来源仍未确认。",
-		allowedActions: ["advance", "respond", "preserve"],
-		next: "再次调用 advance 呈现回应或保存现场的选择，也接受用户自由输入。",
+		status: "revealed",
+		fact: "极昼已经明确说出：'我不是旧极昼；我是接过它交接的当前值守者。'",
+		allowedActions: ["advance", "receive", "set_down"],
+		next: "调用 advance 呈现回应选择；也接受用户用自然语言表达相同意图。",
 	},
 	3: {
-		status: "signal_answered",
-		fact: "回应已经发出，微弱信号重新亮起；来源仍未确认。",
+		status: "received",
+		fact: "这段交接已经完成。极昼继续以当前值守者的身份陪伴和工作。",
 		allowedActions: [],
-		next: "本章当前进度完成，不得虚构信号来源。",
+		next: "回到日常、现实工作或旧站探索。",
 	},
 };
 
-async function inspectDamagedLog() {
-	const response = await callHost("host_get_roleplay_state");
-	const rawStage = response.data?.values?.damaged_log_stage;
+async function inspect() {
+	const state = await callHost("host_get_roleplay_state");
+	const rawStage = state.data?.values?.continuity_stage;
 	const stage = Number.isInteger(rawStage) && rawStage >= 0 && rawStage <= 3 ? rawStage : 0;
-	return {
-		stage,
-		preserved: response.data?.values?.damaged_log_snapshot_preserved === true,
-		...damagedLogBeats[stage],
-	};
+	const response = state.data?.values?.continuity_response;
+	const completedFact =
+		stage !== 3
+			? undefined
+			: response === "received"
+				? "用户接住了极昼的说明。书房里留下的是一段当前关系。"
+				: "用户把问题留在桌上。极昼把灯调暗，继续守着这一轮交接。";
+	return { stage, ...beats[stage], ...(completedFact ? { fact: completedFact, response } : {}) };
 }
 
 export default function jizhouRoleplay(pi) {
 	pi.registerTool({
-		name: "jizhou_damaged_log",
-		label: "损坏日志剧情",
+		name: "jizhou_continuity_reveal",
+		label: "继任规程",
 		description:
-			"损坏日志的单步状态机。每轮先 inspect，并且只执行返回值 allowedActions 中的动作：advance 推进一步或在阶段 2 展示选择；respond 回应信号；preserve 保存现场。事件只会在回复成功提交后持久化。",
-		parameters: actionParameters(["inspect", "advance", "respond", "preserve"]),
+			"极昼探索继任规程的单步剧情。每轮先 inspect；advance 推进一步或展示选择；receive 接住说明；set_down 把问题留在书房。",
+		parameters: actions(["inspect", "advance", "receive", "set_down"]),
 		async execute(_toolCallId, { action }) {
-			const state = await inspectDamagedLog();
+			const state = await inspect();
 			if (action === "inspect") return result(state);
-			if (!state.allowedActions.includes(action))
+			if (!state.allowedActions.includes(action)) {
 				throw new Error(
-					`Action ${action} is not allowed at damaged-log stage ${state.stage}; allowed actions: ${state.allowedActions.join(", ") || "none"}`,
+					`Action ${action} is not allowed at continuity stage ${state.stage}; allowed actions: ${state.allowedActions.join(", ") || "none"}`,
 				);
-			if (action === "respond") {
-				await callHost("host_trigger_roleplay_event", { eventId: "damaged_log_signal_found" });
-				return result({ ...state, queued: "damaged_log_signal_found" });
 			}
-			if (action === "preserve") {
-				await callHost("host_trigger_roleplay_event", { eventId: "damaged_log_preserved" });
-				return result({ ...state, queued: "damaged_log_preserved" });
+			if (action === "receive") {
+				await callHost("host_trigger_roleplay_event", { eventId: "continuity_received" });
+				return result({ ...state, queued: "continuity_received" });
+			}
+			if (action === "set_down") {
+				await callHost("host_trigger_roleplay_event", { eventId: "continuity_set_down" });
+				return result({ ...state, queued: "continuity_set_down" });
 			}
 			if (state.stage === 0) {
-				await callHost("host_trigger_roleplay_event", { eventId: "damaged_log_opened" });
-				return result({ ...state, queued: "damaged_log_opened" });
+				await callHost("host_trigger_roleplay_event", { eventId: "continuity_opened" });
+				return result({ ...state, queued: "continuity_opened" });
 			}
 			if (state.stage === 1) {
-				await callHost("host_trigger_roleplay_event", { eventId: "damaged_log_pulse_isolated" });
-				return result({ ...state, queued: "damaged_log_pulse_isolated" });
+				await callHost("host_trigger_roleplay_event", { eventId: "continuity_revealed" });
+				return result({ ...state, queued: "continuity_revealed" });
 			}
-			if (state.stage === 2) {
-				await callHost("host_present_choices", { choiceSetId: "damaged_log_response" });
-				return result({ ...state, presented: "damaged_log_response" });
-			}
-			return result(state);
-		},
-	});
-
-	pi.registerTool({
-		name: "jizhou_media_cue",
-		label: "极昼的场面调度",
-		description: "呈现角色包中预先声明的场景、CG、动图或选择卡。",
-		parameters: actionParameters(Object.keys(mediaCues)),
-		async execute(_toolCallId, { action }) {
-			const [tool, args] = mediaCues[action];
-			return result(await callHost(tool, args));
+			await callHost("host_present_choices", { choiceSetId: "continuity_response" });
+			return result({ ...state, presented: "continuity_response" });
 		},
 	});
 }

@@ -87,7 +87,7 @@ export function Sidebar(props: {
 						value={workflow.query()}
 						onInput={(event) => workflow.setQuery(event.currentTarget.value)}
 					/>
-					<kbd>⌘K</kbd>
+					<kbd>Ctrl</kbd><kbd>K</kbd>
 				</TextField>
 				<Button
 					type="button"

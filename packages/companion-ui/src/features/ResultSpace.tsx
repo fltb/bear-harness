@@ -4,7 +4,7 @@
  *
  * The right column is not a modal and not a global panel: it renders only
  * the artifacts produced by the currently selected `runId`, anchored to the
- * `triggerMessageId` that started the work. Closing it clears only the
+ * `triggerEntryId` that started the work. Closing it clears only the
  * active conversation's selection and never mutates work, artifacts or the
  * audit trail; per-run last-viewed artifact preference survives close and
  * is restored on reopen.

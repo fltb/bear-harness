@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
 import { afterEach, describe, expect, it } from "vitest";
+import type { PiSessionMessage } from "../src/companion/pi-session-store.js";
 import { PiSessionStore } from "../src/companion/pi-session-store.js";
 import { type CredentialVault, createHostRuntime } from "../src/index.js";
 
@@ -23,16 +24,35 @@ function sessionFileFor(dataDir: string, conversationId: string): string {
 	}
 }
 
+/** Native Pi assistant message fixture appended through SessionManager. */
+function nativeAssistantMessage(text: string): PiSessionMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: "openai-completions",
+		provider: "test",
+		model: "test-model",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp: Date.now(),
+	} as PiSessionMessage;
+}
+
 function appendCompletedPiTurn(dataDir: string, conversationId: string, text: string): string {
 	const session = PiSessionStore.open({
 		sessionDir: join(dataDir, "sessions"),
 		sessionFile: sessionFileFor(dataDir, conversationId),
 	});
-	session.appendUserMessage(text);
-	session.appendSyntheticAssistant(`已完成：${text}`);
-	const source = session.findMessageEntry("user", text);
-	if (!source) throw new Error("expected persisted Pi user entry");
-	return source.id;
+	const source = session.appendMessage({ role: "user", content: text, timestamp: Date.now() });
+	session.appendMessage(nativeAssistantMessage(`已完成：${text}`));
+	return source;
 }
 
 const roots: string[] = [];
@@ -68,39 +88,6 @@ describe("automatic continuity", () => {
 		for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 	});
 
-	it("applies explicit story changes, ignores hypotheticals, and undoes the latest change", async () => {
-		const runtime = makeRuntime();
-		await runtime.start();
-		const conversation = (await data(runtime, "conversation.create:v1", { title: "故事" })) as {
-			id: string;
-		};
-
-		await data(runtime, "message.send:v1", {
-			conversationId: conversation.id,
-			text: "故事设定：极光站今晚已经重新通电",
-		});
-		await expect(data(runtime, "story.listChanges:v1", {})).resolves.toMatchObject({
-			changes: [{ text: "极光站今晚已经重新通电" }],
-		});
-
-		await data(runtime, "message.abort:v1", { conversationId: conversation.id });
-		await data(runtime, "message.send:v1", {
-			conversationId: conversation.id,
-			text: "如果极光站重新通电会怎样？",
-		});
-		await expect(data(runtime, "story.listChanges:v1", {})).resolves.toMatchObject({
-			changes: [{ text: "极光站今晚已经重新通电" }],
-		});
-
-		await data(runtime, "message.abort:v1", { conversationId: conversation.id });
-		await data(runtime, "message.send:v1", {
-			conversationId: conversation.id,
-			text: "刚才那条不算",
-		});
-		await expect(data(runtime, "story.listChanges:v1", {})).resolves.toEqual({ changes: [] });
-		await runtime.close();
-	});
-
 	it("captures only explicitly selected Pi entries and keeps ordinary turns out of memory", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-capture-"));
 		roots.push(dataDir);
@@ -110,11 +97,6 @@ describe("automatic continuity", () => {
 		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
 			settings: { relationshipMemoryEnabled: false },
 		});
-		await data(runtime, "message.send:v1", {
-			conversationId: conversation.id,
-			text: "关闭关系记忆时也不会保存普通消息",
-		});
-		await data(runtime, "message.abort:v1", { conversationId: conversation.id });
 		await expect(data(runtime, "memory.list:v1", {})).resolves.toEqual({ entries: [] });
 
 		await data(runtime, "settings.set:v1", { settings: { relationshipMemoryEnabled: true } });
@@ -361,38 +343,6 @@ describe("automatic continuity", () => {
 		});
 		await restored.close();
 	});
-
-	it("persists ambiguous story statements until the user accepts or dismisses them", async () => {
-		const runtime = makeRuntime();
-		await runtime.start();
-		const conversation = (await data(runtime, "conversation.create:v1", {})) as { id: string };
-
-		await data(runtime, "message.send:v1", {
-			conversationId: conversation.id,
-			text: "其实极光站的旧塔已经倒了",
-		});
-		const pending = (await data(runtime, "story.listProposals:v1", {
-			conversationId: conversation.id,
-		})) as { proposals: Array<{ id: string; text: string }> };
-		expect(pending.proposals).toMatchObject([{ text: "其实极光站的旧塔已经倒了" }]);
-		const proposal = pending.proposals[0];
-		if (!proposal) throw new Error("expected story proposal");
-
-		await data(runtime, "story.resolveProposal:v1", {
-			proposalId: proposal.id,
-			accept: true,
-		});
-		await expect(
-			data(runtime, "story.listProposals:v1", { conversationId: conversation.id }),
-		).resolves.toEqual({ proposals: [] });
-		await expect(data(runtime, "story.listChanges:v1", {})).resolves.toMatchObject({
-			changes: [{ text: "其实极光站的旧塔已经倒了", source: "user_confirmed" }],
-		});
-		await data(runtime, "message.abort:v1", { conversationId: conversation.id });
-		await runtime.close();
-	});
-
-
 
 	it("rejects conversations without Pi session metadata instead of projecting legacy messages", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-unknown-format-"));

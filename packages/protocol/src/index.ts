@@ -157,24 +157,26 @@ export type OnboardingStateData = z.infer<typeof schema.OnboardingStateData>;
 // ---------------------------------------------------------------------------
 
 export type ConversationId = z.infer<typeof schema.ConversationId>;
-export type BranchId = z.infer<typeof schema.BranchId>;
-export type MessageId = z.infer<typeof schema.MessageId>;
-export type MessageVersionId = z.infer<typeof schema.MessageVersionId>;
 export type ConversationSummary = z.infer<typeof schema.ConversationSummary>;
 export type ConversationListRequest = z.infer<typeof schema.ConversationListRequest>;
 export type ConversationListResponse = z.infer<typeof schema.ConversationListResponse>;
 export type ConversationCreateRequest = z.infer<typeof schema.ConversationCreateRequest>;
 export type ConversationCreateResponse = z.infer<typeof schema.ConversationCreateResponse>;
 export type ConversationSelectRequest = z.infer<typeof schema.ConversationSelectRequest>;
+export type ConversationActiveGetRequest = z.infer<typeof schema.ConversationActiveGetRequest>;
+export type ConversationActiveResponse = z.infer<typeof schema.ConversationActiveResponse>;
 export type ConversationSelectResponse = z.infer<typeof schema.ConversationSelectResponse>;
 export type PiTimelineEntry = z.infer<typeof schema.PiTimelineEntry>;
 export type PiTimeline = z.infer<typeof schema.PiTimeline>;
+export type PiSessionId = z.infer<typeof schema.PiSessionId>;
+export type PiLiveAssistantMessage = z.infer<typeof schema.PiLiveAssistantMessage>;
+export type PiLiveState = z.infer<typeof schema.PiLiveState>;
 export type ConversationRenameRequest = z.infer<typeof schema.ConversationRenameRequest>;
 export type ConversationRenameResponse = z.infer<typeof schema.EmptyResponse>;
 export type ConversationArchiveRequest = z.infer<typeof schema.ConversationArchiveRequest>;
-export type ConversationArchiveResponse = z.infer<typeof schema.EmptyResponse>;
+export type ConversationArchiveResponse = z.infer<typeof schema.ConversationActiveResponse>;
 export type ConversationDeleteRequest = z.infer<typeof schema.ConversationDeleteRequest>;
-export type ConversationDeleteResponse = z.infer<typeof schema.EmptyResponse>;
+export type ConversationDeleteResponse = z.infer<typeof schema.ConversationActiveResponse>;
 export type ConversationSearchRequest = z.infer<typeof schema.ConversationSearchRequest>;
 export type ConversationSearchResponse = z.infer<typeof schema.ConversationSearchResponse>;
 
@@ -245,26 +247,6 @@ export type CanonChunk = z.infer<typeof schema.CanonChunk>;
 export type CanonModuleKind = z.infer<typeof schema.CanonModuleKind>;
 export type CanonModule = z.infer<typeof schema.CanonModule>;
 
-// ---------------------------------------------------------------------------
-// Story archive
-// ---------------------------------------------------------------------------
-
-export type StoryChangeScope = z.infer<typeof schema.StoryChangeScope>;
-export type StoryChangeSource = z.infer<typeof schema.StoryChangeSource>;
-export type StoryChange = z.infer<typeof schema.StoryChange>;
-export type StoryListChangesRequest = z.infer<typeof schema.StoryListChangesRequest>;
-export type StoryListChangesResponse = z.infer<typeof schema.StoryListChangesResponse>;
-export type StoryApplyChangeRequest = z.infer<typeof schema.StoryApplyChangeRequest>;
-export type StoryApplyChangeResponse = z.infer<typeof schema.StoryApplyChangeResponse>;
-export type StoryRevertChangeRequest = z.infer<typeof schema.StoryRevertChangeRequest>;
-export type StoryResetRequest = z.infer<typeof schema.StoryResetRequest>;
-export type StoryResetResponse = z.infer<typeof schema.StoryResetResponse>;
-export type StoryChangeProposal = z.infer<typeof schema.StoryChangeProposal>;
-export type StoryListProposalsRequest = z.infer<typeof schema.StoryListProposalsRequest>;
-export type StoryListProposalsResponse = z.infer<typeof schema.StoryListProposalsResponse>;
-export type StoryResolveProposalRequest = z.infer<typeof schema.StoryResolveProposalRequest>;
-export type StoryRevertChangeResponse = z.infer<typeof schema.EmptyResponse>;
-export type StoryResolveProposalResponse = z.infer<typeof schema.StoryResolveProposalResponse>;
 
 // ---------------------------------------------------------------------------
 // Provider
@@ -276,15 +258,19 @@ export type ProviderListResponse = z.infer<typeof schema.ProviderListResponse>;
 export type ProviderSetApiKeyRequest = z.infer<typeof schema.ProviderSetApiKeyRequest>;
 export type ProviderLoginRequest = z.infer<typeof schema.ProviderLoginRequest>;
 export type ProviderLoginResponse = z.infer<typeof schema.ProviderLoginResponse>;
+export type ProviderLoginCancelRequest = z.infer<typeof schema.ProviderLoginCancelRequest>;
+export type ProviderLoginCancelResponse = z.infer<typeof schema.ProviderLoginCancelResponse>;
 export type ProviderLoginStatusRequest = z.infer<typeof schema.ProviderLoginStatusRequest>;
 export type ProviderLoginAnswerRequest = z.infer<typeof schema.ProviderLoginAnswerRequest>;
 export type ProviderLogoutRequest = z.infer<typeof schema.ProviderLogoutRequest>;
-export type ProviderSetApiKeyResponse = z.infer<typeof schema.EmptyResponse>;
+export type ProviderRemoveRequest = z.infer<typeof schema.ProviderRemoveRequest>;
 export type ProviderCustomUpsertRequest = z.infer<typeof schema.ProviderCustomUpsertRequest>;
 export type ProviderCustomUpsertResponse = z.infer<typeof schema.EmptyResponse>;
 export type ProviderLoginStatusResponse = z.infer<typeof schema.ProviderLoginResponse>;
 export type ProviderLoginAnswerResponse = z.infer<typeof schema.ProviderLoginResponse>;
 export type ProviderLogoutResponse = z.infer<typeof schema.EmptyResponse>;
+export type ProviderRemoveResponse = z.infer<typeof schema.EmptyResponse>;
+export type ProviderSetApiKeyResponse = z.infer<typeof schema.EmptyResponse>;
 export type ProviderImportPiConfigRequest = z.infer<typeof schema.ProviderImportPiConfigRequest>;
 export type ProviderImportPiConfigResponse = z.infer<typeof schema.ProviderImportPiConfigResponse>;
 export type ProviderOverrideBaseUrlRequest = z.infer<typeof schema.ProviderOverrideBaseUrlRequest>;
@@ -374,6 +360,13 @@ export type SettingsPatch = z.infer<typeof schema.SettingsPatch>;
 export type SettingsSetRequest = z.infer<typeof schema.SettingsSetRequest>;
 export type SettingsGetResponse = z.infer<typeof schema.SettingsResponse>;
 export type SettingsSetResponse = z.infer<typeof schema.SettingsResponse>;
+export type SettingsCapabilities = z.infer<typeof schema.SettingsCapabilitiesGetResponse>;
+export type SettingsCapabilitiesGetRequest = z.infer<typeof schema.SettingsCapabilitiesGetRequest>;
+export type SettingsCapabilitiesGetResponse = z.infer<typeof schema.SettingsCapabilitiesGetResponse>;
+export type NetworkProxyModeCapability = z.infer<typeof schema.NetworkProxyModeCapability>;
+export type MemoryVectorProviderCapability = z.infer<typeof schema.MemoryVectorProviderCapability>;
+export type MemoryVectorPresetCapability = z.infer<typeof schema.MemoryVectorPresetCapability>;
+export type LocalEmbeddingCandidate = z.infer<typeof schema.LocalEmbeddingCandidate>;
 export type UpdateCheckRequest = z.infer<typeof schema.UpdateCheckRequest>;
 export type UpdateCheckResponse = z.infer<typeof schema.UpdateCheckResponse>;
 export type UpdateDiscardRequest = z.infer<typeof schema.UpdateDiscardRequest>;

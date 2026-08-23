@@ -30,7 +30,7 @@ test("configured live model answers a WebDev smoke message", async ({ page }) =>
 			providerId,
 			name: "E2E custom provider",
 			baseUrl: customBaseUrl,
-			modelId,
+			models: [{ id: modelId }],
 		});
 	}
 	await rpc("provider.setApiKey:v1", { providerId, apiKey, sessionOnly: true });
@@ -48,15 +48,16 @@ test("configured live model answers a WebDev smoke message", async ({ page }) =>
 	await expect
 		.poll(
 			async () => {
-				const snapshot = await rpc<{
+				const active = await rpc<{
 					conversation?: {
-						messages?: Array<{ role: string; versions: Array<{ content: string }> }>;
+						piTimeline: {
+							entries: Array<{ kind: string; role?: string; text?: string }>;
+						};
 					};
-				}>("snapshot.get:v1", {});
-				return snapshot.conversation?.messages
-					?.filter((message) => message.role === "assistant")
-					.flatMap((message) => message.versions)
-					.map((version) => version.content)
+				}>("conversation.activeGet:v1", {});
+				return active.conversation?.piTimeline.entries
+					.filter((entry) => entry.kind === "message" && entry.role === "assistant")
+					.map((entry) => entry.text ?? "")
 					.join("\n");
 			},
 			{ timeout: 60_000 },

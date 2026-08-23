@@ -23,9 +23,11 @@ describe("custom OpenAI-compatible provider configuration", () => {
 			get: vi.fn(async () => undefined),
 			getStatus: vi.fn(async () => "missing"),
 			set: vi.fn(async () => "stored"),
+			remove: vi.fn(async () => undefined),
 		} as unknown as CredentialStore;
 		const catalog = new ProviderCatalog(credentials, root);
 		const before = (await catalog.listProviders()).find((provider) => provider.id === "openai");
+		expect(before).toMatchObject({ source: "builtin", added: false });
 
 		await catalog.overrideProviderBaseUrl({
 			providerId: "openai",
@@ -39,6 +41,14 @@ describe("custom OpenAI-compatible provider configuration", () => {
 		expect(JSON.parse(readFileSync(join(root, "models.json"), "utf8"))).toEqual({
 			providers: { openai: { baseUrl: "https://relay.example.com/v1" } },
 		});
+		expect(after).toMatchObject({ source: "builtin", added: true });
+		await catalog.removeProvider("openai");
+		expect(credentials.remove).toHaveBeenCalledWith("openai");
+		expect(JSON.parse(readFileSync(join(root, "models.json"), "utf8"))).toEqual({
+			providers: {},
+		});
+		const removed = (await catalog.listProviders()).find((provider) => provider.id === "openai");
+		expect(removed).toMatchObject({ source: "builtin", added: false });
 		expect(credentials.set).not.toHaveBeenCalled();
 	});
 

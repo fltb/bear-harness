@@ -1,17 +1,23 @@
 // @vitest-environment node
 
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import type { PiSessionMessage } from "../src/companion/pi-session-store.js";
 import { ConversationRepository } from "../src/conversations/repository.js";
 
-describe("ConversationRepository ordering", () => {
+describe("ConversationRepository active conversation", () => {
 	const databases: DatabaseSync[] = [];
+	const roots: string[] = [];
 	afterEach(() => {
 		for (const database of databases.splice(0)) database.close();
+		for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 	});
 
-	it("selects the newest inserted conversation when timestamps tie", () => {
+	function setup(): { database: DatabaseSync; repository: ConversationRepository; root: string } {
 		const database = new DatabaseSync(":memory:");
 		databases.push(database);
 		database.exec(`
@@ -25,35 +31,171 @@ describe("ConversationRepository ordering", () => {
 				created_at TEXT NOT NULL DEFAULT (datetime('now')),
 				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 			);
-			CREATE TABLE branches (
-				id TEXT PRIMARY KEY,
-				conversation_id TEXT NOT NULL,
-				parent_branch_id TEXT,
-				fork_message_id TEXT,
-				label TEXT NOT NULL DEFAULT 'main',
-				adopted INTEGER NOT NULL DEFAULT 1,
-				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			CREATE TABLE conversation_sessions (
+				conversation_id TEXT PRIMARY KEY,
+				pi_session_id TEXT NOT NULL,
+				session_file_path TEXT NOT NULL,
+				active_leaf_id TEXT,
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 			);
+			CREATE TABLE active_conversations (
+				companion_id TEXT PRIMARY KEY,
+				conversation_id TEXT NOT NULL,
+				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			CREATE TABLE commissions (id TEXT PRIMARY KEY, conversation_id TEXT);
+			CREATE TABLE relationship_memory_entries (
+				id TEXT PRIMARY KEY, source_message_version_id TEXT,
+				source_branch_id TEXT, source_conversation_id TEXT
+			);
+			CREATE TABLE memory_candidates (
+				id TEXT PRIMARY KEY, source_message_version_id TEXT,
+				source_branch_id TEXT, source_conversation_id TEXT
+			);
+			CREATE TABLE scene_state (id TEXT PRIMARY KEY, conversation_id TEXT);
+			CREATE TABLE conversation_directives (id TEXT PRIMARY KEY, conversation_id TEXT);
 		`);
-		const repository = new ConversationRepository(drizzle({ client: database }));
-		repository.create({
-			id: "first",
-			branchId: "first-branch",
+		const root = mkdtempSync(join(tmpdir(), "conversation-repository-"));
+		roots.push(root);
+		return {
+			database,
+			repository: new ConversationRepository(drizzle({ client: database }), {
+				sessionDir: root,
+				 sessionCwd: root,
+			}),
+			root,
+		};
+	}
+
+	function create(repository: ConversationRepository, id: string, title = id) {
+		return repository.createAndSelect({
+			id,
 			companionId: "companion",
-			title: "First",
+			title,
 			sceneTitle: "Scene",
 		});
-		repository.create({
-			id: "second",
-			branchId: "second-branch",
-			companionId: "companion",
-			title: "Second",
-			sceneTitle: "Scene",
+	}
+
+/** Native Pi assistant message fixture appended through SessionManager. */
+function nativeAssistantMessage(text: string): PiSessionMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: "openai-completions",
+		provider: "test",
+		model: "test-model",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp: Date.now(),
+	} as PiSessionMessage;
+}
+
+	it("persists the active conversation across repository instances", () => {
+		const { database, repository, root } = setup();
+		const created = create(repository, "first");
+		const second = new ConversationRepository(drizzle({ client: database }), {
+			sessionDir: root,
+			sessionCwd: root,
 		});
 
-		expect(repository.list("companion").map((conversation) => conversation.id)).toEqual([
-			"second",
-			"first",
-		]);
+		expect(second.active("companion")?.id).toBe(created.id);
+	});
+
+	it("selects only an owned unarchived conversation", () => {
+		const { repository } = setup();
+		create(repository, "first");
+		create(repository, "second");
+
+		expect(repository.select("first", "companion")?.id).toBe("first");
+		expect(repository.active("companion")?.id).toBe("first");
+		expect(repository.select("missing", "companion")).toBeUndefined();
+		expect(repository.active("companion")?.id).toBe("first");
+	});
+
+	it("replaces an archived active conversation with the newest remaining one", () => {
+		const { repository } = setup();
+		create(repository, "first");
+		create(repository, "second");
+		repository.select("first", "companion");
+
+		const result = repository.archiveAndResolve("first", "companion", true);
+		expect(result.found).toBe(true);
+		expect(result.active?.id).toBe("second");
+		expect(repository.active("companion")?.id).toBe("second");
+	});
+
+	it("removes the active selection when archiving the last conversation", () => {
+		const { repository } = setup();
+		create(repository, "only");
+
+		const result = repository.archiveAndResolve("only", "companion", true);
+		expect(result).toEqual({ found: true });
+		expect(repository.active("companion")).toBeUndefined();
+	});
+
+	it("replaces an active conversation deleted in a lifecycle transaction", () => {
+		const { repository } = setup();
+		create(repository, "first");
+		create(repository, "second");
+		repository.select("first", "companion");
+		const session = repository.getSession("first");
+		session.appendMessage({ role: "user", content: "hello", timestamp: Date.now() });
+		session.appendMessage(nativeAssistantMessage("hi"));
+		const sessionFile = session.sessionFile;
+		expect(existsSync(sessionFile)).toBe(true);
+
+		const result = repository.deleteAndResolve("first", "companion");
+		expect(result.found).toBe(true);
+		expect(result.active?.id).toBe("second");
+		expect(repository.active("companion")?.id).toBe("second");
+		expect(existsSync(sessionFile)).toBe(false);
+		expect(() => repository.getSession("first")).toThrow(
+			expect.objectContaining({ reason: "conversation_pi_session_missing" }),
+		);
+	});
+
+	it("removes the Pi session locator and file for the deleted conversation", () => {
+		const { repository } = setup();
+		create(repository, "only");
+		const session = repository.getSession("only");
+		session.appendMessage({ role: "user", content: "hello", timestamp: Date.now() });
+		session.appendMessage(nativeAssistantMessage("hi"));
+		const sessionFile = session.sessionFile;
+		expect(existsSync(sessionFile)).toBe(true);
+
+		const result = repository.deleteAndResolve("only", "companion");
+		expect(result.found).toBe(true);
+		expect(existsSync(sessionFile)).toBe(false);
+		expect(() => repository.getSession("only")).toThrow(
+			expect.objectContaining({ reason: "conversation_pi_session_missing" }),
+		);
+	});
+
+
+	it("keeps the active conversation stable for non-active lifecycle mutations", () => {
+		const { repository } = setup();
+		create(repository, "first");
+		create(repository, "second");
+
+		expect(repository.archiveAndResolve("first", "companion", true).active?.id).toBe("second");
+		expect(repository.archiveAndResolve("first", "companion", false).active?.id).toBe("second");
+		expect(repository.deleteAndResolve("first", "companion").active?.id).toBe("second");
+	});
+
+	it("selects a restored conversation when no active selection exists", () => {
+		const { repository } = setup();
+		create(repository, "only");
+		repository.archiveAndResolve("only", "companion", true);
+
+		const result = repository.archiveAndResolve("only", "companion", false);
+		expect(result.active?.id).toBe("only");
 	});
 });

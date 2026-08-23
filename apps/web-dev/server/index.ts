@@ -360,8 +360,8 @@ if (
 		providerId,
 		name: process.env.BEAR_CUSTOM_PROVIDER_NAME ?? providerId,
 		baseUrl: process.env.BEAR_CUSTOM_BASE_URL,
-		modelId,
 		...(process.env.BEAR_CUSTOM_API_KEY ? { apiKey: process.env.BEAR_CUSTOM_API_KEY } : {}),
+		models: [{ id: modelId }],
 	});
 	if (!configured.ok) throw new Error(`custom provider setup failed: ${configured.error.reason}`);
 	const enabled = await runtime.dispatch("model.enable:v1", {

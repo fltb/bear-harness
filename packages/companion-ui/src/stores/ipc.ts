@@ -55,8 +55,11 @@ export type OnboardingStatus = Wire.OnboardingStatus;
 export type OnboardingStateData = Wire.OnboardingStateData;
 export type OnboardingData = Wire.OnboardingResponse;
 export type ConversationSummary = Wire.ConversationSummary;
+export type PiLiveState = Wire.PiLiveState;
 export type PiTimeline = Wire.PiTimeline;
 export type ConversationListData = Wire.ConversationListResponse;
+export type ConversationSelectResponse = Wire.ConversationSelectResponse;
+export type ConversationActiveResponse = Wire.ConversationActiveResponse;
 export type ConversationCreateResult = Wire.ConversationCreateResponse;
 export type CanonSource = Wire.CanonSource;
 export type CanonChunk = Wire.CanonChunk;
@@ -116,12 +119,9 @@ export type ArtifactStatus = Artifact["status"];
 export type ArtifactListData = Wire.ArtifactListResponse;
 export type ArtifactReadData = Wire.ArtifactReadResponse;
 export type ArtifactUrlData = Wire.ArtifactUrlResponse;
-export type StoryChangeScope = Wire.StoryChangeScope;
-export type StoryChange = Wire.StoryChange;
-export type StoryListData = Wire.StoryListChangesResponse;
-export type StoryChangeProposal = Wire.StoryChangeProposal;
 export type SettingsData = Wire.SettingsData;
 export type SettingsPatch = Wire.SettingsPatch;
+export type SettingsCapabilities = Wire.SettingsCapabilities;
 
 /** Wire shape of `settings.get` — the data sits under a `settings` key. */
 export type SettingsResponseData = Wire.SettingsResponse;

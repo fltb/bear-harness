@@ -185,7 +185,7 @@ export function createShellWorkflowStore(input: {
 	const commissionGroups = createMemo(() => {
 		const groups: Record<string, Commission[]> = {};
 		for (const commission of store.commission?.commissions?.() ?? []) {
-			if (commission.triggerMessageId) (groups[commission.triggerMessageId] ??= []).push(commission);
+			if (commission.triggerEntryId) (groups[commission.triggerEntryId] ??= []).push(commission);
 		}
 		return groups;
 	});

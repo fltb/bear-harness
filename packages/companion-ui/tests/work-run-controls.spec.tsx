@@ -11,6 +11,7 @@ import {
 } from "../src/features/ResultSpace.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
 import { WorkTimelineItem } from "../src/WorkPanel.js";
+import { THEMED_CHARACTER } from "./fixtures.js";
 
 /**
  * Work action lines: message-scoped rendering inside the conversation
@@ -28,14 +29,14 @@ function renderWithStore(ui: () => unknown, store: Partial<CompanionStore>) {
 
 function commissionOf(
 	id: string,
-	triggerMessageId: string,
+	triggerEntryId: string,
 	title: string,
 	status: "draft" | "approved" = "approved",
 ) {
 	return {
 		id,
 		conversationId: "conversation-1",
-		triggerMessageId,
+		triggerEntryId,
 		status,
 		createdAt: "2026-08-16T00:00:00Z",
 		draft: {
@@ -70,6 +71,7 @@ function artifactOf(id: string, runId: string, logicalName: string) {
 function workStore(overrides: Partial<CompanionStore> = {}) {
 	return {
 		activeConversationId: "conversation-1",
+		character: THEMED_CHARACTER,
 		runs: [],
 		commission: {
 			commissions: () => [],
@@ -99,7 +101,7 @@ function renderTimeline(store: Partial<CompanionStore>, messageIds: string | str
 		() => (
 			<>
 				{ids.map((id) => (
-					<WorkTimelineItem messageId={id} character={undefined} />
+					<WorkTimelineItem messageId={id} />
 				))}
 				<ResultSpaceProbe />
 			</>
@@ -134,8 +136,9 @@ const ROLE_LABELS = {
 
 function roleCharacter() {
 	return {
+		...THEMED_CHARACTER,
 		name: "极昼",
-		character: { work_presentation: { labels: ROLE_LABELS } },
+		character: { ...THEMED_CHARACTER.character, work_presentation: { labels: ROLE_LABELS } },
 	} as never;
 }
 
@@ -191,6 +194,7 @@ describe("work action lines", () => {
 
 	it("uses configured role wording for proposal titles and buttons", () => {
 		const store = workStore({
+			character: roleCharacter(),
 			commission: {
 				commissions: () => [commissionOf("commission-1", "message-1", "整理资料", "draft")],
 				approve: vi.fn(() => Promise.resolve()),
@@ -201,7 +205,7 @@ describe("work action lines", () => {
 		render(() => (
 			<DesktopProvider store={store as CompanionStore}>
 				<ResultSpaceProvider>
-					<WorkTimelineItem messageId="message-1" character={roleCharacter()} />
+					<WorkTimelineItem messageId="message-1" />
 				</ResultSpaceProvider>
 			</DesktopProvider>
 		));
@@ -370,7 +374,7 @@ describe("work action lines", () => {
 		expect(open).toHaveBeenCalledWith(
 			{
 				conversationId: "conversation-1",
-				triggerMessageId: "message-1",
+				triggerEntryId: "message-1",
 				commissionId: "commission-1",
 				runId: "run-1",
 				artifactId: "artifact-1",
@@ -379,7 +383,7 @@ describe("work action lines", () => {
 		);
 		expect(api.selection()).toEqual({
 			conversationId: "conversation-1",
-			triggerMessageId: "message-1",
+			triggerEntryId: "message-1",
 			commissionId: "commission-1",
 			runId: "run-1",
 			artifactId: "artifact-1",
@@ -410,9 +414,6 @@ describe("work action lines", () => {
 			},
 			conversations: [],
 			error: null,
-			pendingUserText: undefined,
-			assistantStreaming: false,
-			streamingAssistantText: "",
 			toolActivities: [],
 			commission: {
 				commissions: () => [commissionOf("commission-1", "message-1", "整理会议记录", "draft")],
@@ -424,7 +425,7 @@ describe("work action lines", () => {
 		render(() => (
 			<DesktopProvider store={store as CompanionStore}>
 				<ResultSpaceProvider>
-					<ConversationPanel character={undefined} />
+					<ConversationPanel />
 				</ResultSpaceProvider>
 			</DesktopProvider>
 		));
@@ -439,7 +440,7 @@ describe("work action lines", () => {
 		expect(messageArticle).not.toBeNull();
 		window.dispatchEvent(
 			new CustomEvent(RESULT_LOCATE_EVENT, {
-				detail: { conversationId: "conversation-1", messageId: "message-1" },
+				detail: { conversationId: "conversation-1", entryId: "message-1" },
 			}),
 		);
 		await waitFor(() => expect(messageArticle as HTMLElement).toHaveFocus());
@@ -447,7 +448,7 @@ describe("work action lines", () => {
 		// Locate for a foreign conversation is ignored.
 		window.dispatchEvent(
 			new CustomEvent(RESULT_LOCATE_EVENT, {
-				detail: { conversationId: "conversation-2", messageId: "message-1" },
+				detail: { conversationId: "conversation-2", entryId: "message-1" },
 			}),
 		);
 		expect(messageArticle as HTMLElement).toHaveFocus();

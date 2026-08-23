@@ -10,7 +10,7 @@ import type {
 } from "./companion.js";
 import type { CompanionStore } from "./companion.js";
 
-export type BackstageTab = "relationship" | "roles" | "memory" | "story" | "studio";
+export type BackstageTab = "relationship" | "roles" | "memory" | "studio";
 interface PluginTrust {
 	origin: "official" | "local" | "imported";
 	pluginHash: string;
@@ -152,16 +152,8 @@ export interface BackstageWorkflowStore {
 	confirmingPlugins(id: string): Accessor<boolean>;
 	setConfirmingPlugins(id: string, value: boolean): void;
 	enablePlugins(id: string): void;
-	storyText: Accessor<string>;
 	activateRole(id: string): void;
 	canon(noParentTitle: Accessor<string>, kindLabel: (kind: CanonModuleKind) => string): CanonWorkflowSelectors;
-	storyBranchOnly: Accessor<boolean>;
-	storyBusy: Accessor<boolean>;
-	setStoryText(value: string): void;
-	setStoryBranchOnly(value: boolean): void;
-	addStory(text: string, branchOnly: boolean): void;
-	revertStory(id: string): void;
-	resetStory(): void;
 	relationshipEnabled: Accessor<boolean>;
 	historyReadEnabled: Accessor<boolean>;
 	settingsAvailable: Accessor<boolean>;
@@ -170,7 +162,7 @@ export interface BackstageWorkflowStore {
 	relationshipError: Accessor<string | undefined>;
 	toggleRelationshipMemory(enabledLabel: string, disabledLabel: string, genericError: string): void;
 	toggleHistoryRead(genericError: string): void;
-	roleplay(character: Accessor<CharacterDisplay | undefined>): RoleplaySelectors;
+	roleplay(): RoleplaySelectors;
 	memoryScope: Accessor<MemoryScope>;
 	memoryQueryText: Accessor<string>;
 	memoryQuery: Accessor<string>;
@@ -215,9 +207,6 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		}
 	};
 
-	const [storyText, setStoryText] = createSignal("");
-	const [storyBranchOnly, setStoryBranchOnly] = createSignal(false);
-	const [storyBusy, setStoryBusy] = createSignal(false);
 	const [relationshipSaving, setRelationshipSaving] = createSignal(false);
 	const [relationshipFeedback, setRelationshipFeedback] = createSignal<string>();
 	const [relationshipError, setRelationshipError] = createSignal<string>();
@@ -565,14 +554,11 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		return selectors;
 	};
 
-	const roleplaySelectors = new WeakMap<object, RoleplaySelectors>();
-	const roleplay = (character: Accessor<CharacterDisplay | undefined>): RoleplaySelectors => {
-		const key = character as unknown as object;
-		const existingSelectors = roleplaySelectors.get(key); if (existingSelectors) return existingSelectors;
-		const visibleVariables = createMemo(() => character()?.roleplay.variables.filter((variable) => variable.display.kind !== "hidden") ?? []);
+	const roleplay = (): RoleplaySelectors => {
+		const visibleVariables = createMemo(() => companion.character?.roleplay.variables.filter((variable) => variable.display.kind !== "hidden") ?? []);
 		const unlocked = createMemo(() => new Set(companion.roleplay?.unlocked ?? []));
-		const collections = createMemo(() => character()?.roleplay.unlockables.filter((entry) => unlocked().has(entry.id)) ?? []);
-		const mediaById = createMemo(() => new Map((character()?.roleplay.media ?? []).map((media) => [media.id, media])));
+		const collections = createMemo(() => companion.character?.roleplay.unlockables.filter((entry) => unlocked().has(entry.id)) ?? []);
+		const mediaById = createMemo(() => new Map((companion.character?.roleplay.media ?? []).map((media) => [media.id, media])));
 		const mediaSelectors = new Map<string | undefined, Accessor<CharacterDisplay["roleplay"]["media"][number] | undefined>>();
 		const mediaFor = (id: string | undefined) => {
 			const existing = mediaSelectors.get(id); if (existing) return existing;
@@ -590,11 +576,11 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 			displaySelectors.set(variable.id, selector); return selector;
 		};
 		const selectors = { visibleVariables, collections, mediaFor, displayValue };
-		roleplaySelectors.set(key, selectors); return selectors;
+		return selectors;
 	};
 
 	const store: BackstageWorkflowStore = {
-		selectedTab, setSelectedTab: (value) => { if (value === "roles" || value === "memory" || value === "story" || value === "studio" || value === "relationship") setSelectedTabState(value); },
+		selectedTab, setSelectedTab: (value) => { if (value === "roles" || value === "memory" || value === "studio" || value === "relationship") setSelectedTabState(value); },
 		syncInitialTab: (value) => setSelectedTabState(value === "settings" ? "roles" : value ?? "roles"), roleBusyId, importing, roleFeedback,
 		importPackage: (files, done, failed) => {
 			const api = companion.characters;
@@ -637,29 +623,6 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 			void Promise.resolve().then(() => api.activate(id)).finally(() => setRoleBusyId(undefined));
 		},
 		canon: createCanonSelectors,
-		storyText, storyBranchOnly, storyBusy, setStoryText, setStoryBranchOnly,
-		addStory: (text, branchOnly) => {
-			const value = text.trim();
-			const api = companion.story;
-			if (!value || !api?.apply) return;
-			setStoryBusy(true);
-			void Promise.resolve()
-				.then(() => api.apply(value, branchOnly ? "branch" : "global"))
-				.then(() => setStoryText(""))
-				.finally(() => setStoryBusy(false));
-		},
-		revertStory: (id) => {
-			const api = companion.story;
-			if (!api?.revert) return;
-			setStoryBusy(true);
-			void Promise.resolve().then(() => api.revert(id)).finally(() => setStoryBusy(false));
-		},
-		resetStory: () => {
-			const api = companion.story;
-			if (!api?.reset) return;
-			setStoryBusy(true);
-			void Promise.resolve().then(() => api.reset()).finally(() => setStoryBusy(false));
-		},
 		relationshipEnabled, historyReadEnabled, settingsAvailable, relationshipSaving, relationshipFeedback, relationshipError,
 		toggleRelationshipMemory: (enabledLabel, disabledLabel, genericError) => {
 			const api = companion.settings;

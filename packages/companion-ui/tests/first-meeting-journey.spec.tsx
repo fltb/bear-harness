@@ -1,57 +1,96 @@
 import { zhCN } from "@bear-harness/i18n/locales";
-import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
+import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { FirstMeeting } from "../src/FirstMeeting.js";
-import { CompanionApp } from "../src/index.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
-import { createTestClient, OFFICIAL_PRODUCT, THEMED_CHARACTER } from "./fixtures.js";
+import { THEMED_CHARACTER } from "./fixtures.js";
 import { selectKobalteOption } from "./kobalte-helpers.js";
 
-function renderMeeting(store: Partial<CompanionStore>) {
-	return render(() => (
-		<DesktopProvider store={store as CompanionStore}>
-			<FirstMeeting />
-		</DesktopProvider>
-	));
-}
-
-type EmbeddingConfiguration = {
-	provider: "none" | "local";
-	candidateId?: string;
+const FREE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+const candidate = {
+	id: "openai",
+	name: "OpenAI",
+	source: "builtin" as const,
+	added: false,
+	authType: "api_key" as const,
+	credentialStatus: "missing" as const,
+	availableModels: [{ id: "reply", name: "Reply", supportsImages: false, cost: FREE }],
+	unavailable: [],
 };
+const addedProvider = {
+	id: "relay",
+	name: "Relay",
+	source: "custom" as const,
+	added: true,
+	baseUrl: "https://relay.example/v1",
+	authType: "api_key" as const,
+	credentialStatus: "stored" as const,
+	availableModels: [{ id: "reply", name: "Reply", supportsImages: false, cost: FREE }],
+	unavailable: [],
+};
+const replyModel = {
+	providerId: "relay",
+	providerName: "Relay",
+	modelId: "reply",
+	label: "Reply",
+	supportsImages: false,
+	createdAt: "2026-01-01",
+};
+const imageModel = {
+	providerId: "relay",
+	providerName: "Relay",
+	modelId: "image",
+	label: "Image Reader",
+	supportsImages: true,
+	createdAt: "2026-01-01",
+};
+type ProviderFixture = typeof candidate | typeof addedProvider;
 
-function createEmbeddingBinding(options: {
-	configureLocalEmbedding?: (params: EmbeddingConfiguration) => Promise<unknown>;
-} = {}) {
+type EmbeddingOptions = {
+	configure?: (params: { provider: "none" | "local"; candidateId?: string }) => Promise<unknown>;
+};
+type EmbeddingFixture = {
+	localConfigureMutation: {
+		mutateAsync: (params: { provider: "none" | "local"; candidateId?: string }) => Promise<unknown>;
+		readonly isSuccess: boolean;
+	};
+	settingsQuery: unknown;
+	capabilitiesQuery: unknown;
+	settingsMutation: unknown;
+};
+function embeddingBinding(options: EmbeddingOptions = {}) {
+	const configure = options.configure ?? vi.fn(async () => ({ ready: true }));
 	const [settings, setSettings] = createSignal<Record<string, unknown>>({
 		relationshipMemoryEnabled: false,
 		conversationHistoryReadEnabled: false,
-		networkProxy: { mode: "direct" as const },
-		memoryVectorService: {
-			enabled: true,
-			provider: "local" as const,
-			localModel: "test-embedding",
-		},
+		networkProxy: { mode: "direct" },
+		memoryVectorService: { enabled: true, provider: "local", localModel: "test-embedding" },
 		modelDownloadMirror: {},
 	});
-	const [localConfigureError, setLocalConfigureError] = createSignal<unknown>(null);
-	const [localConfigureSuccess, setLocalConfigureSuccess] = createSignal(false);
-	const configureLocalEmbedding =
-		options.configureLocalEmbedding ?? vi.fn(async () => ({ ready: true }));
-	const localConfigureMutation = vi.fn(async (params: EmbeddingConfiguration) => {
-		setLocalConfigureError(null);
-		try {
-			const result = await configureLocalEmbedding(params);
-			setLocalConfigureSuccess(true);
-			return result;
-		} catch (cause) {
-			setLocalConfigureError(cause);
-			throw cause;
-		}
-	});
-
+	const [error, setError] = createSignal<unknown>(null);
+	const [success, setSuccess] = createSignal(false);
+	const localConfigureMutation = {
+		mutateAsync: vi.fn(async (params: { provider: "none" | "local"; candidateId?: string }) => {
+			setError(null);
+			try {
+				const result = await configure(params);
+				setSuccess(true);
+				return result;
+			} catch (cause) {
+				setError(cause);
+				throw cause;
+			}
+		}),
+		isPending: false,
+		get error() {
+			return error();
+		},
+		get isSuccess() {
+			return success();
+		},
+	};
 	return {
 		settingsQuery: {
 			get data() {
@@ -60,809 +99,272 @@ function createEmbeddingBinding(options: {
 			isPending: false,
 			error: null,
 		},
-		catalogQuery: {
+		capabilitiesQuery: {
 			data: {
-				candidates: [{ id: "test-embedding", name: "Test embedding", isDefault: true }],
+				networkProxyModes: [{ id: "direct" }, { id: "auto" }, { id: "manual" }],
+				memoryVectorProviders: [
+					{ id: "none", onboarding: true },
+					{ id: "local", onboarding: true },
+					{ id: "remote", onboarding: false },
+				],
+				memoryVectorPresets: [],
+				localEmbeddingCandidates: [
+					{ id: "test-embedding", name: "Test embedding", isDefault: true },
+				],
 			},
 			isPending: false,
 			error: null,
 		},
 		settingsMutation: {
-			mutateAsync: vi.fn(async (value: unknown) => {
-				if (typeof value === "object" && value !== null && "endpoint" in value) {
-					setSettings((current) => ({ ...current, modelDownloadMirror: value }));
-				} else {
-					setSettings((current) => ({ ...current, memoryVectorService: value }));
-				}
+			mutateAsync: vi.fn(async (value: Record<string, unknown>) => {
+				setSettings((current) => ({ ...current, memoryVectorService: value }));
 				return { ok: true };
 			}),
 			isPending: false,
 			error: null,
 			isSuccess: false,
 		},
-		localConfigureMutation: {
-			mutateAsync: localConfigureMutation,
-			isPending: false,
-			get error() {
-				return localConfigureError();
-			},
-			get isSuccess() {
-				return localConfigureSuccess();
-			},
-		},
+		localConfigureMutation,
 	};
 }
 
-function baseStore(): Partial<CompanionStore> {
-	return {
+function renderMeeting(store: Partial<CompanionStore>) {
+	return render(() => (
+		<DesktopProvider store={store as CompanionStore}>
+			<FirstMeeting />
+		</DesktopProvider>
+	));
+}
+function first<T>(values: readonly T[]): T {
+	const value = values[0];
+	if (value === undefined) throw new Error("expected a matching element");
+	return value;
+}
+
+async function providerTile(dialog: HTMLElement, providerId: string): Promise<HTMLElement> {
+	await waitFor(() =>
+		expect(dialog.querySelector(`[data-provider-tile="${providerId}"]`)).not.toBeNull(),
+	);
+	return dialog.querySelector(`[data-provider-tile="${providerId}"]`) as HTMLElement;
+}
+
+function firstRunStore(
+	options: {
+		embedding?: EmbeddingFixture;
+		providers?: ProviderFixture[];
+		models?: Array<typeof replyModel | typeof imageModel>;
+		defaults?: Record<string, unknown>;
+	} = {},
+) {
+	const initialProviders = options.providers ?? [candidate];
+	const [providers, setProviders] = createSignal<ProviderFixture[]>(initialProviders);
+	const [models, setModels] = createSignal<Array<typeof replyModel | typeof imageModel>>(
+		options.models ?? [],
+	);
+	const [defaults, setDefaults] = createSignal<Record<string, unknown>>(options.defaults ?? {});
+	let hostProviders: ProviderFixture[] = initialProviders;
+	let publishProviderProjection = true;
+	const setApiKey = vi.fn(async () => {
+		hostProviders = [{ ...candidate, added: true, credentialStatus: "stored" as const }];
+		setModels([replyModel, imageModel]);
+	});
+	const list = vi.fn(async () => {
+		if (publishProviderProjection) setProviders(hostProviders);
+		return { providers: providers() };
+	});
+	const overrideBaseUrl = vi.fn(async () => undefined);
+	const store: Partial<CompanionStore> = {
 		loading: false,
-		error: null,
 		onboarding: {
-			status: "complete",
+			status: "active",
+			currentStepId: "hello",
 			eventSeq: 1,
-			stateData: {
-				schema_version: 1,
-				flow_version: 1,
-				answers: {},
-				decisions: {},
-			},
+			stateData: { schema_version: 1, flow_version: 1, answers: {}, decisions: {} },
 		},
+		error: null,
+		character: THEMED_CHARACTER,
 		provider: {
-			providers: () => [],
-			list: () => Promise.resolve({ providers: [] }),
+			providers,
+			list,
+			setApiKey,
+			overrideBaseUrl,
+			importPiConfig: vi.fn(async () => []),
+			customUpsert: vi.fn(async () => undefined),
+			remove: vi.fn(async () => undefined),
 		} as never,
 		model: {
-			loading: () => false,
-			models: () => [{ modelId: "model" }],
-			data: () => ({ defaults: { reply: { providerId: "provider", modelId: "model" } } }),
+			models,
+			data: () => ({ defaults: defaults() }),
+			setDefaultReply: vi.fn(async (providerId: string, modelId: string) =>
+				setDefaults((current) => ({ ...current, reply: { providerId, modelId } })),
+			),
+			setVisionAuto: vi.fn(async () =>
+				setDefaults((current) => ({ ...current, vision: { mode: "auto" } })),
+			),
+			setMultimodalFallback: vi.fn(async (providerId: string, modelId: string) =>
+				setDefaults((current) => ({
+					...current,
+					vision: { mode: "manual", route: { providerId, modelId } },
+				})),
+			),
 		} as never,
-		embedding: createEmbeddingBinding() as never,
+		embedding: (options.embedding ?? embeddingBinding()) as never,
+	};
+	return {
+		store,
+		providers,
+		models,
+		setApiKey,
+		overrideBaseUrl,
+		holdProviderList: () => {
+			publishProviderProjection = false;
+		},
+		publishProviderList: () => {
+			publishProviderProjection = true;
+			void list();
+		},
 	};
 }
 
-describe("first meeting journeys", () => {
-	it("projects the authoritative onboarding RPC response into the rendered app", async () => {
+describe("Host-backed first-run setup", () => {
+	it("shows model settings immediately after the Host reports an added provider", async () => {
 		const user = userEvent.setup();
-		const { client } = createTestClient();
-		const active = {
-			status: "active" as const,
-			currentStepId: "hello",
-			eventSeq: 20,
-			stateData: {
-				schema_version: 1 as const,
-				flow_version: 1,
-				answers: {},
-				decisions: {},
-			},
-		};
-		const complete = {
-			...active,
-			status: "complete" as const,
-			currentStepId: undefined,
-			eventSeq: 21,
-		};
-		client.snapshot.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					eventSeq: 20,
-					onboarding: active,
-					character: THEMED_CHARACTER,
-					model: {
-						pool: {
-							models: [
-								{
-									providerId: "configured-provider",
-									modelId: "configured",
-									label: "Configured",
-									supportsImages: false,
-									createdAt: "2026-01-01",
-								},
-							],
-						},
-						defaults: { vision: { mode: "auto" } },
-					},
-				},
-			}),
-		);
-		client.onboarding.get = vi.fn(() => Promise.resolve({ ok: true as const, data: active }));
-		client.onboarding.submit = vi.fn(() => Promise.resolve({ ok: true as const, data: complete }));
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-
-		const dialog = await screen.findByRole("dialog", { name: "Introduction" });
-		await user.click(within(dialog).getByRole("button", { name: "Continue" }));
-		await waitFor(() => expect(dialog).not.toBeInTheDocument());
-	});
-
-	it("submits an onboarding step only once when its action is double-clicked", async () => {
-		const user = userEvent.setup();
-		const submitOnboarding = vi.fn(() => Promise.resolve());
-		renderMeeting({
-			...baseStore(),
-			character: THEMED_CHARACTER,
-			onboarding: {
-				status: "active",
-				currentStepId: "hello",
-				eventSeq: 1,
-				stateData: {
-					schema_version: 1,
-					flow_version: 1,
-					answers: {},
-					decisions: {},
-				},
-			},
-			submitOnboarding,
-		});
-
-		await user.dblClick(screen.getByRole("button", { name: "Continue" }));
-		expect(submitOnboarding).toHaveBeenCalledTimes(1);
-		expect(submitOnboarding).toHaveBeenCalledWith("hello", undefined);
-	});
-
-	it("connects an API-key provider before selecting and enabling one of its models", async () => {
-		const user = userEvent.setup();
-		const setApiKey = vi.fn(() => Promise.resolve());
-		const enable = vi.fn(() => Promise.resolve());
-		const [defaults, setDefaults] = createSignal<{
-			reply?: { providerId: string; modelId: string };
-		}>({});
-		const configureLocalEmbedding = vi.fn(() => Promise.resolve({ ready: true }));
-		const setDefaultReply = vi.fn(async (providerId: string, modelId: string) => {
-			setDefaults({ reply: { providerId, modelId } });
-		});
-		const provider = {
-			id: "openai-relay",
-			name: "OpenAI Relay",
-			authType: "api_key" as const,
-			credentialStatus: "missing" as const,
-			availableModels: [{ id: "gpt-test", name: "GPT Test" }],
-		};
-		renderMeeting({
-			...baseStore(),
-			provider: {
-				providers: () => [provider],
-				list: () => Promise.resolve({ providers: [provider] }),
-				setApiKey,
-			} as never,
-			model: {
-				loading: () => false,
-				models: () => [],
-				data: () => ({ defaults: defaults() }),
-				enable,
-				setDefaultReply,
-			} as never,
-			embedding: createEmbeddingBinding({ configureLocalEmbedding }) as never,
-		});
-
-		const dialog = await screen.findByRole("dialog", {
-			name: zhCN.modelSetup.dialogLabel,
-		});
-		const service = within(dialog).getByRole("button", {
-			name: new RegExp(zhCN.settings.serviceLabel),
-		});
-		expect(service).toHaveValue("");
-		await selectKobalteOption(user, service, "openai-relay");
-		const modelBeforeConnection = within(dialog).getByRole("button", {
-			name: new RegExp(zhCN.modelSetup.modelLabel),
-		});
-		expect(modelBeforeConnection).toBeEnabled();
-		await selectKobalteOption(user, modelBeforeConnection, "gpt-test");
-		await user.type(within(dialog).getByLabelText(zhCN.settings.apiKeyLabel), "secret-key");
-		const connect = within(dialog).getByRole("button", {
-			name: zhCN.settings.saveKey,
-		});
-		expect(connect).toHaveAttribute("data-variant", "primary");
-		await user.click(connect);
-		expect(setApiKey).toHaveBeenCalledWith("openai-relay", "secret-key");
-		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
-		expect(enable).toHaveBeenCalledWith("openai-relay", "gpt-test", "GPT Test");
-		expect(setDefaultReply).toHaveBeenCalledWith("openai-relay", "gpt-test");
-		const memorySetup = await screen.findByRole("dialog", {
-			name: zhCN.settings.memoryVectorSection,
-		});
-		expect(within(memorySetup).getByLabelText(zhCN.settings.localModel)).toBeVisible();
-		await user.click(
-			within(memorySetup).getByRole("button", {
-				name: zhCN.settings.downloadAndEnableLocalModel,
-			}),
-		);
-		expect(configureLocalEmbedding).toHaveBeenCalledWith({
-			provider: "local",
-			candidateId: "test-embedding",
-		});
-		await waitFor(() => expect(memorySetup).not.toBeInTheDocument());
-	});
-	it("keeps local embedding onboarding open until Host configuration succeeds", async () => {
-		const user = userEvent.setup();
-		const configureLocalEmbedding = vi.fn(() => Promise.reject(new Error("embedding download failed")));
-		const provider = {
-			id: "stored-relay",
-			name: "Stored Relay",
-			authType: "api_key" as const,
-			credentialStatus: "stored" as const,
-			availableModels: [{ id: "stored-model", name: "Stored Model" }],
-		};
-		renderMeeting({
-			...baseStore(),
-			provider: {
-				providers: () => [provider],
-				list: () => Promise.resolve({ providers: [provider] }),
-			} as never,
-			model: {
-				loading: () => false,
-				models: () => [],
-				data: () => ({ defaults: {} }),
-				enable: vi.fn(() => Promise.resolve()),
-				setDefaultReply: vi.fn(() => Promise.resolve()),
-			} as never,
-			embedding: createEmbeddingBinding({ configureLocalEmbedding }) as never,
-		});
+		const setup = firstRunStore();
+		renderMeeting(setup.store);
 		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
-		await selectKobalteOption(
-			user,
-			within(dialog).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
-			"stored-relay",
-		);
-		await selectKobalteOption(
-			user,
-			within(dialog).getByRole("button", { name: new RegExp(zhCN.modelSetup.modelLabel) }),
-			"stored-model",
-		);
-		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
-		const memorySetup = await screen.findByRole("dialog", {
-			name: zhCN.settings.memoryVectorSection,
-		});
-		await user.click(
-			within(memorySetup).getByRole("button", {
-				name: zhCN.settings.downloadAndEnableLocalModel,
-			}),
-		);
-		expect(await within(memorySetup).findByRole("alert")).toHaveTextContent("embedding download failed");
-		expect(memorySetup).toBeInTheDocument();
-		expect(configureLocalEmbedding).toHaveBeenCalledWith({
-			provider: "local",
-			candidateId: "test-embedding",
-		});
-	});
-
-	it("configures provider:none without a local candidate when onboarding chooses none", async () => {
-		const user = userEvent.setup();
-		const configureLocalEmbedding = vi.fn(() => Promise.resolve({ ready: true }));
-		const provider = {
-			id: "stored-relay",
-			name: "Stored Relay",
-			authType: "api_key" as const,
-			credentialStatus: "stored" as const,
-			availableModels: [{ id: "stored-model", name: "Stored Model" }],
-		};
-		renderMeeting({
-			...baseStore(),
-			provider: {
-				providers: () => [provider],
-				list: () => Promise.resolve({ providers: [provider] }),
-			} as never,
-			model: {
-				loading: () => false,
-				models: () => [],
-				data: () => ({ defaults: {} }),
-				enable: vi.fn(() => Promise.resolve()),
-				setDefaultReply: vi.fn(() => Promise.resolve()),
-			} as never,
-			embedding: createEmbeddingBinding({ configureLocalEmbedding }) as never,
-		});
-		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
-		await selectKobalteOption(
-			user,
-			within(dialog).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
-			"stored-relay",
-		);
-		await selectKobalteOption(
-			user,
-			within(dialog).getByRole("button", { name: new RegExp(zhCN.modelSetup.modelLabel) }),
-			"stored-model",
-		);
-		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
-		const memorySetup = await screen.findByRole("dialog", {
-			name: zhCN.settings.memoryVectorSection,
-		});
-		const embeddingProvider = within(memorySetup).getByRole("button", {
-			name: new RegExp(zhCN.settings.vectorProvider),
-		});
-		await selectKobalteOption(user, embeddingProvider, zhCN.settings.vectorProviders.none);
-		await waitFor(() => expect(memorySetup).not.toBeInTheDocument());
-		expect(configureLocalEmbedding).toHaveBeenCalledWith({
-			provider: "none",
-		});
-	});
-
-	it("configures a relay URL and imports Pi providers from initial setup", async () => {
-		const user = userEvent.setup();
-		const importPiConfig = vi.fn(() =>
-			Promise.resolve([
-				{
-					providerId: "local",
-					modelId: "local-model",
-					label: "Local model",
-					supportsImages: false,
-					createdAt: "2026-01-01",
-				},
-			]),
-		);
-		const list = vi.fn(() => Promise.resolve({ providers: [] }));
-		const overrideBaseUrl = vi.fn(() => Promise.resolve());
-		const provider = {
-			id: "openai",
-			name: "OpenAI",
-			authType: "api_key" as const,
-			credentialStatus: "missing" as const,
-			availableModels: [{ id: "gpt-test", name: "GPT Test" }],
-		};
-		renderMeeting({
-			...baseStore(),
-			provider: {
-				providers: () => [provider],
-				list,
-				overrideBaseUrl,
-				importPiConfig,
-			} as never,
-			model: {
-				loading: () => false,
-				models: () => [],
-				data: () => ({ defaults: {} }),
-			} as never,
-		});
-
-		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
-		await user.click(within(dialog).getByRole("button", { name: zhCN.settings.advancedToggle }));
-		const services = within(dialog).getAllByRole("button", {
-			name: new RegExp(zhCN.settings.serviceLabel),
-		});
-		expect(services.length).toBeGreaterThan(0);
-		const service = services[0];
-		await selectKobalteOption(user, service, "openai");
+		await user.click(await providerTile(dialog, "openai"));
+		const editor = dialog.querySelector('[data-provider-editor="openai"]') as HTMLElement;
+		expect(
+			within(dialog).queryByRole("button", { name: zhCN.messages.continue }),
+		).not.toBeInTheDocument();
+		await user.type(within(editor).getByLabelText(zhCN.settings.apiKeyLabel), "secret");
 		await user.type(
-			within(dialog).getByLabelText(zhCN.settings.customBaseUrl),
+			within(editor).getByLabelText(zhCN.settings.customBaseUrl),
 			"https://relay.example/v1",
 		);
-		await user.click(within(dialog).getByRole("button", { name: zhCN.settings.customSave }));
-		expect(overrideBaseUrl).toHaveBeenCalledWith({
+		setup.holdProviderList();
+		await user.click(within(editor).getByRole("button", { name: zhCN.settings.addProvider }));
+		await waitFor(() => expect(setup.setApiKey).toHaveBeenCalledWith("openai", "secret"));
+		expect(setup.providers()[0]?.added).toBe(false);
+		expect(setup.overrideBaseUrl).toHaveBeenCalledWith({
 			providerId: "openai",
 			baseUrl: "https://relay.example/v1",
 		});
-
-		const config = '{"providers":{"local":{"baseUrl":"http://127.0.0.1:11434/v1"}}}';
-		fireEvent.input(within(dialog).getByLabelText(zhCN.settings.piConfigLabel), {
-			target: { value: config },
-		});
-		await user.click(within(dialog).getByRole("button", { name: zhCN.settings.piConfigImport }));
-		expect(importPiConfig).toHaveBeenCalledWith(config);
-		expect(list).toHaveBeenCalledTimes(3);
+		setup.publishProviderList();
+		await waitFor(() => expect(setup.providers()[0]?.added).toBe(true));
+		const model = await within(dialog).findByLabelText(zhCN.modelSetup.modelLabel);
+		const finish = within(dialog).getByRole("button", { name: zhCN.modelSetup.continue });
+		expect(finish).toBeDisabled();
+		await selectKobalteOption(user, model, { label: "Reply (Relay)" });
+		await waitFor(() =>
+			expect(setup.store.model?.setDefaultReply).toHaveBeenCalledWith("relay", "reply"),
+		);
+		expect(finish).toBeEnabled();
 	});
-
-	it("shows one primary action and no key field when the provider credential is stored", async () => {
+	it("reuses an existing Host provider and exposes its synced models without Provider setup", async () => {
 		const user = userEvent.setup();
-		const enable = vi.fn(() => Promise.resolve());
-		const provider = {
-			id: "stored-relay",
-			name: "Stored Relay",
-			authType: "api_key" as const,
-			credentialStatus: "stored" as const,
-			availableModels: [{ id: "stored-model", name: "Stored Model" }],
-		};
-		renderMeeting({
-			...baseStore(),
-			provider: {
-				providers: () => [provider],
-				list: () => Promise.resolve({ providers: [provider] }),
-			} as never,
-			model: {
-				loading: () => false,
-				models: () => [],
-				data: () => ({ defaults: {} }),
-				enable,
-				setDefaultReply: vi.fn(),
-			} as never,
-		});
-
-		const dialog = await screen.findByRole("dialog", {
-			name: zhCN.modelSetup.dialogLabel,
-		});
-		expect(within(dialog).queryByLabelText(zhCN.settings.apiKeyLabel)).not.toBeInTheDocument();
+		const setup = firstRunStore({ providers: [addedProvider], models: [replyModel, imageModel] });
+		renderMeeting(setup.store);
+		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
 		expect(
-			within(dialog).queryByRole("button", {
-				name: zhCN.modelSetup.continue,
-			}),
-		).toBeNull();
-		await selectKobalteOption(
-			user,
-			within(dialog).getByRole("button", {
-				name: new RegExp(zhCN.settings.serviceLabel),
-			}),
-			"stored-relay",
+			within(dialog).queryByRole("region", { name: zhCN.settings.providerSetupLabel }),
+		).not.toBeInTheDocument();
+		const reply = await within(dialog).findByLabelText(zhCN.modelSetup.modelLabel);
+		await selectKobalteOption(user, reply, { label: "Reply (Relay)" });
+		await waitFor(() =>
+			expect(setup.store.model?.setDefaultReply).toHaveBeenCalledWith("relay", "reply"),
 		);
-		await selectKobalteOption(
-			user,
-			within(dialog).getByRole("button", {
-				name: new RegExp(zhCN.modelSetup.modelLabel),
-			}),
-			"stored-model",
-		);
-		const action = within(dialog).getByRole("button", {
-			name: zhCN.modelSetup.continue,
-		});
-		expect(action).toHaveAttribute("data-variant", "primary");
-		await user.click(action);
-		expect(enable).toHaveBeenCalledWith("stored-relay", "stored-model", "Stored Model");
 	});
 
-	it("keeps model setup open and reports both typed and untyped model failures", async () => {
+	it("accepts the Host-backed automatic image fallback without a second confirmation", async () => {
 		const user = userEvent.setup();
-		const enable = vi
-			.fn()
-			.mockRejectedValueOnce(new Error("Model unavailable"))
-			.mockRejectedValueOnce("Relay rejected model");
-		const provider = {
-			id: "stored-relay",
-			name: "Stored Relay",
-			authType: "api_key" as const,
-			credentialStatus: "stored" as const,
-			availableModels: [{ id: "stored-model", name: "Stored Model" }],
-		};
-		renderMeeting({
-			...baseStore(),
-			provider: {
-				providers: () => [provider],
-				list: () => Promise.resolve({ providers: [provider] }),
-			} as never,
-			model: {
-				loading: () => false,
-				models: () => [],
-				data: () => ({ defaults: {} }),
-				enable,
-				setDefaultReply: vi.fn(),
-			} as never,
-		});
+		const setup = firstRunStore();
+		renderMeeting(setup.store);
 		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
-		await selectKobalteOption(
-			user,
-			within(dialog).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
-			"stored-relay",
-		);
-		await selectKobalteOption(
-			user,
-			within(dialog).getByRole("button", { name: new RegExp(zhCN.modelSetup.modelLabel) }),
-			"stored-model",
-		);
-		const connect = within(dialog).getByRole("button", { name: zhCN.modelSetup.continue });
-		await user.click(connect);
-		expect(await within(dialog).findByRole("alert")).toHaveTextContent("Model unavailable");
-		await user.click(connect);
-		expect(await within(dialog).findByRole("alert")).toHaveTextContent("Relay rejected model");
-		expect(dialog).toBeInTheDocument();
-	});
-
-	it("reports typed and untyped credential failures without exposing the key", async () => {
-		const user = userEvent.setup();
-		const setApiKey = vi
-			.fn()
-			.mockRejectedValueOnce(new Error("Credential vault unavailable"))
-			.mockRejectedValueOnce("Provider refused credential");
-		const provider = {
-			id: "relay",
-			name: "Relay",
-			authType: "api_key" as const,
-			credentialStatus: "missing" as const,
-			availableModels: [{ id: "model", name: "Model" }],
-		};
-		renderMeeting({
-			...baseStore(),
-			provider: {
-				providers: () => [provider],
-				list: () => Promise.resolve({ providers: [provider] }),
-				setApiKey,
-			} as never,
-			model: {
-				loading: () => false,
-				models: () => [],
-				data: () => ({ defaults: {} }),
-			} as never,
-		});
-		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
-		await selectKobalteOption(
-			user,
-			within(dialog).getByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) }),
-			"relay",
-		);
-		const key = within(dialog).getByLabelText(zhCN.settings.apiKeyLabel);
-		const save = within(dialog).getByRole("button", { name: zhCN.settings.saveKey });
-		await user.type(key, "not-logged");
-		await user.click(save);
-		expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-			"Credential vault unavailable",
-		);
-		await user.click(save);
-		expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-			"Provider refused credential",
-		);
-		expect(setApiKey).toHaveBeenNthCalledWith(2, "relay", "not-logged");
-	});
-
-	it("submits role-package text and choice steps without hardcoded story copy", async () => {
-		const user = userEvent.setup();
-		const submitText = vi.fn(() => Promise.resolve());
-		const textCharacter = {
-			...THEMED_CHARACTER,
-			character: {
-				...THEMED_CHARACTER.character,
-				first_meeting: {
-					version: 1,
-					step_label: "Step {step}/{total}",
-					dialog_label: "Text introduction",
-					error_prefix: "Error: ",
-					completion: { conversation_title: "Text conversation" },
-					steps: [
-						{
-							id: "name",
-							kind: "text" as const,
-							heading: "Your name",
-							body: "Tell me your name",
-							input_label: "Preferred name",
-							input_placeholder: "Name",
-							min_length: 2,
-							max_length: 12,
-							submit_label: "Confirm name",
-						},
-					],
-				},
-			},
-		};
-		const view = renderMeeting({
-			...baseStore(),
-			character: textCharacter,
-			onboarding: {
-				status: "active",
-				currentStepId: "name",
-				eventSeq: 1,
-				stateData: {
-					schema_version: 1,
-					flow_version: 1,
-					answers: {},
-					decisions: {},
-				},
-			},
-			submitOnboarding: submitText,
-		});
-		await user.type(screen.getByRole("textbox", { name: "Preferred name" }), "林舟");
-		await user.click(screen.getByRole("button", { name: "Confirm name" }));
-		expect(submitText).toHaveBeenCalledWith("name", "林舟");
-		view.unmount();
-
-		const submitChoice = vi.fn(() => Promise.resolve());
-		renderMeeting({
-			...baseStore(),
-			character: {
-				...textCharacter,
-				character: {
-					...textCharacter.character,
-					first_meeting: {
-						...textCharacter.character.first_meeting,
-						dialog_label: "Choice introduction",
-						steps: [
-							{
-								id: "relation",
-								kind: "choice" as const,
-								heading: "Relationship",
-								body: "Choose one",
-								choices: [
-									{
-										value: "partner",
-										label: "Partner",
-										description: "Work together",
-									},
-								],
-							},
-						],
-					},
-				},
-			},
-			onboarding: {
-				status: "active",
-				currentStepId: "relation",
-				eventSeq: 1,
-				stateData: {
-					schema_version: 1,
-					flow_version: 1,
-					answers: {},
-					decisions: {},
-				},
-			},
-			submitOnboarding: submitChoice,
-		});
-		await user.click(screen.getByRole("button", { name: /Partner/ }));
-		expect(submitChoice).toHaveBeenCalledWith("relation", "partner");
-	});
-
-	it("completes browser OAuth and pins the authenticated model", async () => {
-		const user = userEvent.setup();
-		const pin = vi.fn(() => Promise.resolve());
-		const login = vi.fn(() =>
-			Promise.resolve({ providerId: "oauth", status: "completed" as const }),
-		);
-		const provider = {
-			id: "oauth",
-			name: "OAuth Provider",
-			authType: "oauth" as const,
-			credentialStatus: "missing" as const,
-			availableModels: [{ id: "oauth-model", name: "OAuth Model" }],
-		};
-		renderMeeting({
-			...baseStore(),
-			provider: {
-				providers: () => [provider],
-				list: () => Promise.resolve({ providers: [provider] }),
-				login,
-			} as never,
-			model: {
-				loading: () => false,
-				models: () => [],
-				data: () => ({ defaults: {} }),
-				enable: pin,
-				setDefaultReply: vi.fn(),
-			} as never,
-		});
-		const dialog = await screen.findByRole("dialog", {
-			name: zhCN.modelSetup.dialogLabel,
-		});
-		await selectKobalteOption(
-			user,
-			within(dialog).getByRole("button", {
-				name: new RegExp(zhCN.settings.serviceLabel),
-			}),
-			"oauth",
-		);
+		await user.click(await providerTile(dialog, "openai"));
+		await user.type(first(within(dialog).getAllByLabelText(zhCN.settings.apiKeyLabel)), "secret");
 		await user.click(
-			within(dialog).getByRole("button", {
-				name: zhCN.settings.loginWithBrowser,
-			}),
+			first(within(dialog).getAllByRole("button", { name: zhCN.settings.addProvider })),
 		);
-		expect(login).toHaveBeenCalledWith("oauth");
-		await selectKobalteOption(
-			user,
-			within(dialog).getByRole("button", { name: new RegExp(zhCN.modelSetup.modelLabel) }),
-			"oauth-model",
+		const model = await within(dialog).findByLabelText(zhCN.modelSetup.modelLabel);
+		expect(
+			within(dialog).queryByRole("button", { name: zhCN.messages.continue }),
+		).not.toBeInTheDocument();
+		await selectKobalteOption(user, model, { label: "Reply (Relay)" });
+		const finish = within(dialog).getByRole("button", { name: zhCN.modelSetup.continue });
+		await waitFor(() => expect(finish).toBeEnabled());
+		await user.click(finish);
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+	});
+
+	it("supports selecting an image model and gates role onboarding on embedding success", async () => {
+		const user = userEvent.setup();
+		const configure = vi.fn(async () => ({ ready: true }));
+		const setup = firstRunStore({ embedding: embeddingBinding({ configure }) });
+		renderMeeting(setup.store);
+		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		await user.click(await providerTile(dialog, "openai"));
+		await user.type(first(within(dialog).getAllByLabelText(zhCN.settings.apiKeyLabel)), "secret");
+		await user.click(
+			first(within(dialog).getAllByRole("button", { name: zhCN.settings.addProvider })),
+		);
+		await selectKobalteOption(user, within(dialog).getByLabelText(zhCN.modelSetup.modelLabel), {
+			label: "Reply (Relay)",
+		});
+		await waitFor(() =>
+			expect(setup.store.model?.setDefaultReply).toHaveBeenCalledWith("relay", "reply"),
+		);
+		await selectKobalteOption(user, within(dialog).getByLabelText(zhCN.settings.visionModel), {
+			label: "Image Reader (Relay)",
+		});
+		await waitFor(() =>
+			expect(setup.store.model?.setMultimodalFallback).toHaveBeenCalledWith("relay", "image"),
 		);
 		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
-		await waitFor(() => expect(pin).toHaveBeenCalledWith("oauth", "oauth-model", "OAuth Model"));
+		expect(
+			screen.queryByRole("dialog", { name: THEMED_CHARACTER.character.first_meeting.dialog_label }),
+		).not.toBeInTheDocument();
+		const embedding = setup.store.embedding as {
+			localConfigureMutation: {
+				mutateAsync: (params: {
+					provider: "none" | "local";
+					candidateId?: string;
+				}) => Promise<unknown>;
+				isSuccess: boolean;
+			};
+		};
+		await embedding.localConfigureMutation.mutateAsync({
+			provider: "local",
+			candidateId: "test-embedding",
+		});
+		expect(configure).toHaveBeenCalledWith({ provider: "local", candidateId: "test-embedding" });
+		expect(embedding.localConfigureMutation.isSuccess).toBe(true);
 	});
 
-	it("answers an OAuth provider prompt before pinning the model", async () => {
+	it("selects a candidate from the Pattern 04 tiles, configures through the shared ProviderSetup, then picks reply and image readers in one model stage", async () => {
 		const user = userEvent.setup();
-		const pin = vi.fn(() => Promise.resolve());
-		const login = vi
-			.fn()
-			.mockResolvedValueOnce({
-				providerId: "oauth",
-				status: "waiting_input" as const,
-				prompt: {
-					type: "select" as const,
-					message: "Choose account",
-					options: [{ id: "account-1", label: "Account One" }],
-				},
-			})
-			.mockResolvedValueOnce({
-				providerId: "oauth",
-				status: "completed" as const,
-			});
-		const loginAnswer = vi.fn(() =>
-			Promise.resolve({ providerId: "oauth", status: "running" as const }),
-		);
-		const provider = {
-			id: "oauth",
-			name: "OAuth Provider",
-			authType: "oauth" as const,
-			credentialStatus: "missing" as const,
-			availableModels: [{ id: "oauth-model", name: "OAuth Model" }],
-		};
-		renderMeeting({
-			...baseStore(),
-			provider: {
-				providers: () => [provider],
-				list: () => Promise.resolve({ providers: [provider] }),
-				login,
-				loginAnswer,
-			} as never,
-			model: {
-				loading: () => false,
-				models: () => [],
-				data: () => ({ defaults: {} }),
-				enable: pin,
-				setDefaultReply: vi.fn(),
-			} as never,
-		});
-		const dialog = await screen.findByRole("dialog", {
-			name: zhCN.modelSetup.dialogLabel,
-		});
-		await selectKobalteOption(
-			user,
-			within(dialog).getByRole("button", {
-				name: new RegExp(zhCN.settings.serviceLabel),
-			}),
-			"oauth",
-		);
-		await user.click(
-			within(dialog).getByRole("button", {
-				name: zhCN.settings.loginWithBrowser,
-			}),
-		);
-		await user.click(
-			await screen.findByRole("button", {
-				name: zhCN.settings.oauthSubmit,
-			}),
-		);
-		expect(loginAnswer).toHaveBeenCalledWith("oauth", "account-1");
-		await selectKobalteOption(
-			user,
-			within(dialog).getByRole("button", { name: new RegExp(zhCN.modelSetup.modelLabel) }),
-			"oauth-model",
-		);
-		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
-		await waitFor(() => expect(pin).toHaveBeenCalledWith("oauth", "oauth-model", "OAuth Model"));
-	});
+		const setup = firstRunStore();
+		renderMeeting(setup.store);
+		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
 
-	it("shows the provider's OAuth failure message", async () => {
-		const user = userEvent.setup();
-		const login = vi
-			.fn()
-			.mockResolvedValueOnce({
-				providerId: "oauth",
-				status: "failed" as const,
-				message: "Denied",
-			})
-			.mockResolvedValueOnce({ providerId: "oauth", status: "failed" as const })
-			.mockRejectedValueOnce(new Error("OAuth transport failed"))
-			.mockRejectedValueOnce("OAuth relay failed");
-		const provider = {
-			id: "oauth",
-			name: "OAuth Provider",
-			authType: "oauth" as const,
-			credentialStatus: "missing" as const,
-			availableModels: [{ id: "oauth-model", name: "OAuth Model" }],
-		};
-		renderMeeting({
-			...baseStore(),
-			provider: {
-				providers: () => [provider],
-				list: () => Promise.resolve({ providers: [provider] }),
-				login,
-			} as never,
-			model: {
-				loading: () => false,
-				models: () => [],
-				data: () => ({ defaults: {} }),
-				enable: vi.fn(),
-				setDefaultReply: vi.fn(),
-			} as never,
-		});
-		const dialog = await screen.findByRole("dialog", {
-			name: zhCN.modelSetup.dialogLabel,
-		});
-		await selectKobalteOption(
-			user,
-			within(dialog).getByRole("button", {
-				name: new RegExp(zhCN.settings.serviceLabel),
-			}),
-			"oauth",
-		);
-		const loginButton = within(dialog).getByRole("button", {
-			name: zhCN.settings.loginWithBrowser,
-		});
-		await user.click(loginButton);
-		expect(await screen.findByRole("alert")).toHaveTextContent("Denied");
-		await user.click(loginButton);
-		expect(await screen.findByRole("alert")).toHaveTextContent(zhCN.settings.oauthFailed);
-		await user.click(loginButton);
-		expect(await screen.findByRole("alert")).toHaveTextContent("OAuth transport failed");
-		await user.click(loginButton);
-		expect(await screen.findByRole("alert")).toHaveTextContent("OAuth relay failed");
+		const tile = within(dialog).getByRole("button", { name: /OpenAI/ });
+		expect(tile).toHaveAttribute("data-provider-tile", "openai");
+		await user.click(tile);
+		expect(tile).toHaveAttribute("aria-pressed", "true");
+
+		const editor = dialog.querySelector('[data-provider-editor="openai"]') as HTMLElement;
+		expect(editor).not.toBeNull();
+		await user.type(within(editor).getByLabelText(zhCN.settings.apiKeyLabel), "secret");
+		await user.click(within(editor).getByRole("button", { name: zhCN.settings.addProvider }));
+		await waitFor(() => expect(setup.setApiKey).toHaveBeenCalledWith("openai", "secret"));
+		const reply = await within(dialog).findByLabelText(zhCN.modelSetup.modelLabel);
+
+		// The model stage drops the ProviderSetup surface and keeps both pickers together.
+		expect(
+			within(dialog).queryByRole("region", { name: zhCN.settings.providerSetupLabel }),
+		).not.toBeInTheDocument();
+		await selectKobalteOption(user, reply, { label: "Reply (Relay)" });
+		expect(within(dialog).getByLabelText(zhCN.settings.visionModel)).toBeInTheDocument();
+		expect(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue })).toBeEnabled();
 	});
 });

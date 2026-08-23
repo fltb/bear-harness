@@ -1,6 +1,6 @@
-# Bear Harness
+# 白熊客栈 / Bear Harness
 
-Bear Harness is a roleplay-first local Companion for Cyber Bear: a desktop application in which a character, an ongoing relationship, and clearly bounded real-world work share one Host-managed runtime. The default character is 极昼 (Jizhou). Conversation is the primary entry point; file work, research, generated documents, and other actions are explicit, reviewable work rather than a separate agent console.
+白熊客栈（Bear Harness）是一个本地 AI 角色扮演平台：角色、持续关系与边界清晰的现实工作共用一个由 Host 管理的运行时。极昼（Jizhou）是随产品交付的默认角色包，不是产品本体。对话是主要入口；文件工作、研究、文档生成和其他行动都以可见、可审阅的工作形式进行，而不是独立的代理控制台。
 
 The repository is an npm workspaces monorepo. The Electron desktop app is the production shell. WebDev is a local browser development and end-to-end harness, not a public web deployment.
 
@@ -69,7 +69,7 @@ Install dependencies from the repository root:
 npm install
 ```
 
-The Host runtime declares `node-llama-cpp` as an optional dependency, while Tdai Core declares it as an optional peer dependency. It is not required for the default embedding configuration; install and configure it only for an intentional local-embedding deployment. Native lifecycle scripts may require the npm 11 script approval policy used by your environment.
+`node-llama-cpp`, `sqlite-vec`, and `@node-rs/jieba` are installed production dependencies. Local embedding remains a user-enabled feature; when a platform accelerator or native binding cannot load, memory degrades to its existing keyword or remote-provider path. Native lifecycle scripts may require the npm 11 script approval policy used by your environment.
 
 ## Quick start
 
@@ -180,5 +180,5 @@ For every change, run the narrowest relevant build, typecheck, unit/E2E journey,
 ## Licensing
 
 - Repository code is licensed under [GNU GPL-3.0](LICENSE).
-- Cyber Bear brand assets — including the name, 极昼/Jizhou, setting, storyline, copy, and visual assets — are licensed under [CC BY-SA 4.0](BRAND-LICENSE). Attribution and modification notices are required; the CC license grants no trademark rights or implied endorsement.
+- 白熊客栈 / Bear Harness brand assets — including the name, 极昼/Jizhou, setting, storyline, copy, and visual assets — are licensed under [CC BY-SA 4.0](BRAND-LICENSE). Attribution and modification notices are required; the CC license grants no trademark rights or implied endorsement.
 - `@bear-harness/tdai-core` contains vendored upstream TencentDB Agent Memory code under its recorded [MIT license](packages/tdai-core/LICENSE). Review the relevant package and dependency notices when redistributing a build.

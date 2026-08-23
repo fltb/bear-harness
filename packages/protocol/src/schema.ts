@@ -303,6 +303,11 @@ export const EventPayloadSchemas = {
 		skills: EventStringList,
 		tools: EventStringList,
 	}),
+	"pi.session.changed": EventPayload({
+		conversationId: EventId,
+		sessionId: z.string().min(1).max(128),
+		reason: z.enum(["message", "turn", "agent", "tool", "compaction", "queue"]),
+	}),
 	message_start: EventPayload({ conversationId: EventId }),
 	message_update: EventPayload({ conversationId: EventId, text: EventText }),
 	message_end: EventPayload({
@@ -395,14 +400,6 @@ export const EventPayloadSchemas = {
 		conversationId: EventId,
 		providerId: EventId,
 		modelId: EventId,
-	}),
-	"story.change_needs_confirmation": EventPayload({ proposal: BoundedEventValue }),
-	"story.change_confirmation_dismissed": EventPayload({ proposalId: EventId }),
-	"story.change_applied": EventPayload({ change: BoundedEventValue }),
-	"story.change_reverted": EventPayload({ changeId: EventId, conversationId: EventId }),
-	"story.reset": EventPayload({
-		conversationId: EventId.optional(),
-		count: z.number().int().safe().min(0).max(MAX_SAFE_INT),
 	}),
 	"onboarding.state_changed": EventPayload({
 		status: z.enum(["active", "complete"]),
@@ -667,6 +664,7 @@ const CharacterRoleplayMedia = z.discriminatedUnion("kind", [
 		captionsUrl: CharacterMediaUrl,
 	}),
 ]);
+
 
 export const CharacterDisplay = z
 	.strictObject({
@@ -963,9 +961,6 @@ export const OnboardingResponse = z.strictObject({
 // ---------------------------------------------------------------------------
 
 export const ConversationId = z.string().min(1).max(64);
-export const BranchId = z.string().min(1).max(64);
-export const MessageId = z.string().min(1).max(64);
-export const MessageVersionId = z.string().min(1).max(64);
 export const ConversationSummary = z.strictObject({
 	id: ConversationId,
 	title: z.string().max(MAX_STRING_LENGTH),
@@ -980,13 +975,11 @@ export const ConversationListResponse = z.strictObject({
 export const ConversationCreateRequest = z.strictObject({
 	title: z.string().max(MAX_STRING_LENGTH).optional(),
 });
-export const ConversationCreateResponse = z.strictObject({
-	id: ConversationId,
-});
 export const ConversationSelectRequest = z.strictObject({
 	id: ConversationId,
-	branchId: BranchId.optional(),
 });
+export const ConversationActiveGetRequest = z.strictObject({});
+
 export const ConversationRenameRequest = z.strictObject({
 	id: ConversationId,
 	title: z.string().min(1).max(200),
@@ -1003,30 +996,19 @@ export const ConversationSearchRequest = z.strictObject({
 	includeArchived: z.boolean().optional(),
 	limit: z.number().int().min(1).max(8).optional(),
 });
-export const ConversationSearchHit = z.strictObject({
-	conversationId: ConversationId,
-	title: z.string().max(MAX_STRING_LENGTH),
-	updatedAt: WireTimestamp,
-	messageId: MessageId,
-	versionId: MessageVersionId,
-	role: z.union([z.literal("user"), z.literal("assistant")]),
-	excerpt: z.string().max(1000),
-});
-export const ConversationSearchResponse = z.strictObject({
-	hits: z.array(ConversationSearchHit).max(8),
-});
 
 // ---------------------------------------------------------------------------
 // Message
 // ---------------------------------------------------------------------------
 
-const PiSessionEntryId = z.string().min(1).max(128);
+export const PiSessionId = z.string().min(1).max(128);
+export const PiSessionEntryId = z.string().min(1).max(128);
 const PiTimelineBase = {
 	id: PiSessionEntryId,
 	parentId: PiSessionEntryId.nullable(),
 	timestamp: WireTimestamp,
 } as const;
-const PiTimelineToolCall = z.strictObject({
+export const PiTimelineToolCall = z.strictObject({
 	toolName: z.string().min(1).max(200),
 	toolCallId: z.string().min(1).max(256),
 });
@@ -1076,68 +1058,63 @@ export const PiTimeline = z.strictObject({
 	entries: z.array(PiTimelineEntry).max(MAX_ARRAY_LENGTH),
 	activeLeafId: PiSessionEntryId.optional(),
 });
-export type PiTimeline = z.infer<typeof PiTimeline>;
+export const ConversationSearchHit = z.strictObject({
+	conversationId: ConversationId,
+	title: z.string().max(MAX_STRING_LENGTH),
+	updatedAt: WireTimestamp,
+	entryId: PiSessionEntryId,
+	role: z.union([z.literal("user"), z.literal("assistant")]),
+	excerpt: z.string().max(1000),
+});
+export const ConversationSearchResponse = z.strictObject({
+	hits: z.array(ConversationSearchHit).max(8),
+});
 
+export const PiLiveAssistantMessage = z.strictObject({
+	text: z.string().max(65536).optional(),
+	toolCalls: z.array(PiTimelineToolCall).max(100).optional(),
+	stopReason: z.enum(["pending", "stop", "length", "toolUse", "error", "aborted", "deferred"]),
+	errorMessage: z.string().max(4096).optional(),
+});
+export const PiLiveState = z.strictObject({
+	isStreaming: z.boolean(),
+	streamingMessage: PiLiveAssistantMessage.optional(),
+	errorMessage: z.string().max(4096).optional(),
+});
+export type PiLiveAssistantMessage = z.infer<typeof PiLiveAssistantMessage>;
+export type PiLiveState = z.infer<typeof PiLiveState>;
+export type PiTimeline = z.infer<typeof PiTimeline>;
 export const ConversationSelectResponse = z.strictObject({
 	activeConversationId: ConversationId,
-	activeBranchId: BranchId.optional(),
 	id: ConversationId,
 	title: z.string().max(MAX_STRING_LENGTH),
 	sceneTitle: z.string().max(MAX_STRING_LENGTH),
 	piTimeline: PiTimeline,
+	piSessionId: PiSessionId,
+	piLiveState: PiLiveState,
+});
+export const ConversationCreateResponse = ConversationSelectResponse;
+export const ConversationActiveResponse = z.strictObject({
+	conversation: ConversationSelectResponse.optional(),
 });
 export const MessageSendRequest = z.strictObject({
 	conversationId: ConversationId,
 	text: z.string().min(1).max(65536),
-	attachments: z
-		.array(
-			z.strictObject({
-				name: z.string().min(1).max(255),
-				mime: z.string().min(1).max(128),
-				base64: z.string().min(1).max(MAX_MESSAGE_ATTACHMENT_BASE64_LENGTH),
-			}),
-		)
-		.max(MAX_MESSAGE_ATTACHMENTS)
-		.optional(),
+	attachments: z.array(z.strictObject({
+		name: z.string().min(1).max(255),
+		mime: z.string().min(1).max(128),
+		base64: z.string().min(1).max(MAX_MESSAGE_ATTACHMENT_BASE64_LENGTH),
+	})).max(MAX_MESSAGE_ATTACHMENTS).optional(),
 });
-export const MessageSendResponse = z.strictObject({
-	messageId: MessageId,
-	versionId: MessageVersionId,
-	status: z.union([z.literal("completed"), z.literal("failed"), z.literal("aborted")]),
-});
-export const MessageRegenerateRequest = z.strictObject({
-	conversationId: ConversationId,
-	messageId: MessageId,
-});
-export const MessageSwitchVersionRequest = z.strictObject({
-	conversationId: ConversationId,
-	messageId: MessageId,
-	versionId: MessageVersionId,
-});
-export const MessageEditRequest = z.strictObject({
-	conversationId: ConversationId,
-	messageId: MessageId,
-	text: z.string().min(1).max(65536),
-	isUserMessage: z.boolean(),
-});
-export const MessageContinueRequest = z.strictObject({
-	conversationId: ConversationId,
-});
-export const MessageCorrectRequest = z.strictObject({
-	conversationId: ConversationId,
-	reason: z.string().max(MAX_STRING_LENGTH),
-	applyScope: z.union([z.literal("once"), z.literal("session"), z.literal("always")]),
-});
-export const MessageBranchRequest = z.strictObject({
-	conversationId: ConversationId,
-	messageId: MessageId,
-});
-export const MessageBranchResponse = z.strictObject({
-	branchId: BranchId,
-});
-export const MessageAbortRequest = z.strictObject({
-	conversationId: ConversationId,
-});
+export const MessageSendResponse = z.strictObject({ accepted: z.literal(true), sessionId: PiSessionId });
+export const MessageRegenerateRequest = z.strictObject({ conversationId: ConversationId, entryId: PiSessionEntryId });
+export const MessageSwitchVersionRequest = z.strictObject({ conversationId: ConversationId, leafId: PiSessionEntryId });
+export const MessageEditRequest = z.strictObject({ conversationId: ConversationId, entryId: PiSessionEntryId, text: z.string().min(1).max(65536) });
+export const MessageContinueRequest = z.strictObject({ conversationId: ConversationId });
+export const MessageCorrectRequest = z.strictObject({ conversationId: ConversationId, reason: z.string().max(MAX_STRING_LENGTH), applyScope: z.union([z.literal("once"), z.literal("session"), z.literal("always")]) });
+export const MessageBranchRequest = z.strictObject({ conversationId: ConversationId, entryId: PiSessionEntryId });
+export const MessageBranchResponse = z.strictObject({ leafId: PiSessionEntryId });
+export const MessageAbortRequest = z.strictObject({ conversationId: ConversationId });
 
 // ---------------------------------------------------------------------------
 // Memory
@@ -1261,9 +1238,30 @@ export const LocalEmbeddingCandidate = z.strictObject({
 	name: z.string().min(1).max(MAX_STRING_LENGTH),
 	isDefault: z.boolean(),
 });
-export const MemoryLocalEmbeddingCatalogResponse = z.strictObject({
-	candidates: z.array(LocalEmbeddingCandidate).min(1).max(20),
+export const NetworkProxyModeCapability = z.strictObject({
+	id: z.union([z.literal("direct"), z.literal("auto"), z.literal("manual")]),
 });
+export const MemoryVectorProviderCapability = z.strictObject({
+	id: z.union([z.literal("none"), z.literal("remote"), z.literal("local")]),
+	onboarding: z.boolean(),
+});
+export const MemoryVectorPresetCapability = z.strictObject({
+	id: z.string().min(1).max(200),
+	model: z.string().min(1).max(200),
+	dimensions: z.number().int().safe().min(1).max(65536),
+});
+export const SettingsCapabilitiesGetResponse = z.strictObject({
+	networkProxyModes: z.array(NetworkProxyModeCapability).min(1).max(10),
+	memoryVectorProviders: z.array(MemoryVectorProviderCapability).min(1).max(10),
+	memoryVectorPresets: z.array(MemoryVectorPresetCapability).max(100),
+	localEmbeddingCandidates: z.array(LocalEmbeddingCandidate).min(1).max(20),
+});
+export const SettingsCapabilitiesGetRequest = z.strictObject({});
+export type SettingsCapabilities = z.infer<typeof SettingsCapabilitiesGetResponse>;
+export type NetworkProxyModeCapability = z.infer<typeof NetworkProxyModeCapability>;
+export type MemoryVectorProviderCapability = z.infer<typeof MemoryVectorProviderCapability>;
+export type MemoryVectorPresetCapability = z.infer<typeof MemoryVectorPresetCapability>;
+export type LocalEmbeddingCandidate = z.infer<typeof LocalEmbeddingCandidate>;
 export const MemoryConfigureLocalEmbeddingRequest = z
 	.strictObject({
 		provider: z.union([z.literal("none"), z.literal("local")]),
@@ -1288,73 +1286,6 @@ export const MemoryConfigureLocalEmbeddingRequest = z
 export const MemoryConfigureLocalEmbeddingResponse = z.strictObject({
 	ready: z.literal(true),
 });
-
-// ---------------------------------------------------------------------------
-// Story archive (natural-language changes over read-only source canon)
-// ---------------------------------------------------------------------------
-
-export const StoryChangeScope = z.union([z.literal("global"), z.literal("branch")]);
-export const StoryChangeSource = z.union([
-	z.literal("user_explicit"),
-	z.literal("story_event"),
-	z.literal("user_confirmed"),
-]);
-export const StoryChange = z.strictObject({
-	id: z.string().min(1).max(64),
-	text: z.string().min(1).max(MAX_STRING_LENGTH),
-	scope: StoryChangeScope,
-	source: StoryChangeSource,
-	conversationId: ConversationId.optional(),
-	branchId: BranchId.optional(),
-	createdAt: WireTimestamp,
-});
-export const StoryListChangesRequest = z.strictObject({
-	branchId: BranchId.optional(),
-});
-export const StoryListChangesResponse = z.strictObject({
-	changes: z.array(StoryChange).max(MAX_ARRAY_LENGTH),
-});
-export const StoryApplyChangeRequest = z.strictObject({
-	conversationId: ConversationId.optional(),
-	branchId: BranchId.optional(),
-	text: z.string().min(1).max(MAX_STRING_LENGTH),
-	scope: StoryChangeScope,
-});
-export const StoryApplyChangeResponse = z.strictObject({
-	change: StoryChange,
-});
-export const StoryRevertChangeRequest = z.strictObject({
-	changeId: z.string().min(1).max(64),
-	conversationId: ConversationId.optional(),
-});
-export const StoryResetRequest = z.strictObject({
-	conversationId: ConversationId.optional(),
-	branchId: BranchId.optional(),
-});
-export const StoryResetResponse = z.strictObject({
-	count: z.number().int().safe().min(0).max(MAX_SAFE_INT),
-});
-export const StoryChangeProposal = z.strictObject({
-	id: z.string().min(1).max(64),
-	conversationId: ConversationId,
-	branchId: BranchId,
-	text: z.string().min(1).max(MAX_STRING_LENGTH),
-	createdAt: WireTimestamp,
-});
-export const StoryListProposalsRequest = z.strictObject({
-	conversationId: ConversationId.optional(),
-});
-export const StoryListProposalsResponse = z.strictObject({
-	proposals: z.array(StoryChangeProposal).max(MAX_ARRAY_LENGTH),
-});
-export const StoryResolveProposalRequest = z.strictObject({
-	proposalId: z.string().min(1).max(64),
-	accept: z.boolean(),
-});
-export const StoryResolveProposalResponse = z.strictObject({
-	change: StoryChange.optional(),
-});
-
 // ---------------------------------------------------------------------------
 // Canon Hub (advanced package authoring)
 // ---------------------------------------------------------------------------
@@ -1494,6 +1425,8 @@ const ProviderModelCost: z.ZodType<{
 export const ProviderInfo = z.strictObject({
 	id: z.string().min(1).max(64),
 	name: z.string().max(MAX_STRING_LENGTH),
+	source: z.union([z.literal("builtin"), z.literal("custom")]),
+	added: z.boolean(),
 	authType: z.union([z.literal("api_key"), z.literal("oauth")]),
 	credentialStatus: z.union([
 		z.literal("missing"),
@@ -1541,9 +1474,21 @@ export const ProviderLoginResponse = z.strictObject({
 		z.literal("failed"),
 	]),
 	authUrl: z.string().max(2048).optional(),
+	instructions: z.string().max(MAX_STRING_LENGTH).optional(),
 	deviceCode: z.string().max(128).optional(),
 	verificationUri: z.string().max(2048).optional(),
+	intervalSeconds: z.number().int().positive().max(3600).optional(),
+	expiresInSeconds: z.number().int().positive().max(86400).optional(),
 	message: z.string().max(MAX_STRING_LENGTH).optional(),
+	infoLinks: z
+		.array(
+			z.strictObject({
+				url: z.string().max(2048),
+				label: z.string().max(MAX_STRING_LENGTH).optional(),
+			}),
+		)
+		.max(10)
+		.optional(),
 	prompt: z
 		.strictObject({
 			type: z.union([
@@ -1567,6 +1512,10 @@ export const ProviderLoginResponse = z.strictObject({
 		})
 		.optional(),
 });
+export const ProviderLoginCancelRequest = z.strictObject({
+	providerId: z.string().min(1).max(64),
+});
+export const ProviderLoginCancelResponse = EmptyResponse;
 export const ProviderLoginStatusRequest = z.strictObject({
 	providerId: z.string().min(1).max(64),
 });
@@ -1575,6 +1524,9 @@ export const ProviderLoginAnswerRequest = z.strictObject({
 	answer: z.string().max(4096),
 });
 export const ProviderLogoutRequest = z.strictObject({
+	providerId: z.string().min(1).max(64),
+});
+export const ProviderRemoveRequest = z.strictObject({
 	providerId: z.string().min(1).max(64),
 });
 
@@ -1655,7 +1607,7 @@ export const ActionDraft = z.strictObject({
 export const Commission = z.strictObject({
 	id: z.string().min(1).max(64),
 	conversationId: ConversationId.optional(),
-	triggerMessageId: MessageId,
+	triggerEntryId: PiSessionEntryId,
 	draft: ActionDraft,
 	status: z.union([
 		z.literal("draft"),
@@ -1676,7 +1628,7 @@ export const CommissionListResponse = z.strictObject({
 });
 export const CommissionDraftRequest = z.strictObject({
 	conversationId: z.string().min(1).max(64),
-	triggerMessageId: MessageId,
+	triggerEntryId: PiSessionEntryId,
 	title: z.string().min(1).max(MAX_STRING_LENGTH),
 	description: z.string().min(1).max(MAX_STRING_LENGTH),
 	reads: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).max(20).optional(),
@@ -1955,7 +1907,6 @@ export const ProviderOverrideBaseUrlRequest = z.strictObject({
 export const ConversationSnapshot = z.strictObject({
 	conversations: z.array(ConversationSummary).max(MAX_ARRAY_LENGTH).optional(),
 	activeConversationId: ConversationId.optional(),
-	activeBranchId: BranchId.optional(),
 	id: ConversationId.optional(),
 	title: z.string().max(MAX_STRING_LENGTH).optional(),
 	sceneTitle: z.string().max(MAX_STRING_LENGTH).optional(),
@@ -2004,7 +1955,6 @@ export const SnapshotResponse = z.strictObject({
 	commission: CommissionListResponse.optional(),
 	run: RunListResponse.optional(),
 	artifact: ArtifactListResponse.optional(),
-	story: StoryListChangesResponse.optional(),
 	characterRuntime: CharacterRuntimeSnapshot.optional(),
 	roleplay: RoleplayState.optional(),
 	settings: SettingsData.optional(),
@@ -2121,9 +2071,22 @@ export const RPC = {
 			ConversationSelectRequest,
 			ConversationSelectResponse,
 		),
+		activeGet: endpoint(
+			"conversation.activeGet:v1",
+			ConversationActiveGetRequest,
+			ConversationActiveResponse,
+		),
 		rename: endpoint("conversation.rename:v1", ConversationRenameRequest, EmptyResponse),
-		archive: endpoint("conversation.archive:v1", ConversationArchiveRequest, EmptyResponse),
-		delete: endpoint("conversation.delete:v1", ConversationDeleteRequest, EmptyResponse),
+		archive: endpoint(
+			"conversation.archive:v1",
+			ConversationArchiveRequest,
+			ConversationActiveResponse,
+		),
+		delete: endpoint(
+			"conversation.delete:v1",
+			ConversationDeleteRequest,
+			ConversationActiveResponse,
+		),
 		search: endpoint(
 			"conversation.search:v1",
 			ConversationSearchRequest,
@@ -2132,7 +2095,7 @@ export const RPC = {
 	},
 	message: {
 		send: endpoint("message.send:v1", MessageSendRequest, MessageSendResponse),
-		regenerate: endpoint("message.regenerate:v1", MessageRegenerateRequest, MessageSendResponse),
+		regenerate: endpoint("message.regenerate:v1", MessageRegenerateRequest, EmptyResponse),
 		switchVersion: endpoint("message.switchVersion:v1", MessageSwitchVersionRequest, EmptyResponse),
 		edit: endpoint("message.edit:v1", MessageEditRequest, EmptyResponse),
 		continue: endpoint("message.continue:v1", MessageContinueRequest, EmptyResponse),
@@ -2147,11 +2110,6 @@ export const RPC = {
 		forget: endpoint("memory.forget:v1", MemoryForgetRequest, EmptyResponse),
 		edit: endpoint("memory.edit:v1", MemoryEditRequest, EmptyResponse),
 		exclude: endpoint("memory.exclude:v1", MemoryExcludeRequest, EmptyResponse),
-		localEmbeddingCatalog: endpoint(
-			"memory.localEmbeddingCatalog:v1",
-			z.strictObject({}),
-			MemoryLocalEmbeddingCatalogResponse,
-		),
 		configureLocalEmbedding: endpoint(
 			"memory.configureLocalEmbedding:v1",
 			MemoryConfigureLocalEmbeddingRequest,
@@ -2171,30 +2129,6 @@ export const RPC = {
 			"memory.candidate.reject:v1",
 			MemoryCandidateRejectRequest,
 			EmptyResponse,
-		),
-	},
-	story: {
-		listChanges: endpoint(
-			"story.listChanges:v1",
-			StoryListChangesRequest,
-			StoryListChangesResponse,
-		),
-		applyChange: endpoint(
-			"story.applyChange:v1",
-			StoryApplyChangeRequest,
-			StoryApplyChangeResponse,
-		),
-		revertChange: endpoint("story.revertChange:v1", StoryRevertChangeRequest, EmptyResponse),
-		reset: endpoint("story.reset:v1", StoryResetRequest, StoryResetResponse),
-		listProposals: endpoint(
-			"story.listProposals:v1",
-			StoryListProposalsRequest,
-			StoryListProposalsResponse,
-		),
-		resolveProposal: endpoint(
-			"story.resolveProposal:v1",
-			StoryResolveProposalRequest,
-			StoryResolveProposalResponse,
 		),
 	},
 	canon: {
@@ -2238,12 +2172,18 @@ export const RPC = {
 			ProviderLoginStatusRequest,
 			ProviderLoginResponse,
 		),
+		loginCancel: endpoint(
+			"provider.loginCancel:v1",
+			ProviderLoginCancelRequest,
+			ProviderLoginCancelResponse,
+		),
 		loginAnswer: endpoint(
 			"provider.loginAnswer:v1",
 			ProviderLoginAnswerRequest,
 			ProviderLoginResponse,
 		),
 		logout: endpoint("provider.logout:v1", ProviderLogoutRequest, EmptyResponse),
+		remove: endpoint("provider.remove:v1", ProviderRemoveRequest, EmptyResponse),
 	},
 	model: {
 		poolGet: endpoint("model.pool.get:v1", ModelPoolGetRequest, ModelPoolGetResponse),
@@ -2294,6 +2234,11 @@ export const RPC = {
 	settings: {
 		get: endpoint("settings.get:v1", SettingsGetRequest, SettingsResponse),
 		set: endpoint("settings.set:v1", SettingsSetRequest, SettingsResponse),
+		capabilitiesGet: endpoint(
+			"settings.capabilitiesGet:v1",
+			SettingsCapabilitiesGetRequest,
+			SettingsCapabilitiesGetResponse,
+		),
 	},
 	update: {
 		check: endpoint("update.check:v1", UpdateCheckRequest, UpdateCheckResponse),

@@ -15,6 +15,7 @@
  *   close()      — stop the supervisor, dispose services, close the DB.
  */
 
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { MemoryTdaiConfig } from "@bear-harness/tdai-core";
 import { and, eq } from "drizzle-orm";
@@ -43,7 +44,7 @@ import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
 import { ExecutorRouter } from "./executors/router.js";
 import type { MemoryBackend } from "./memory/backend.js";
 import { namespaceFor } from "./memory/tencentdb-backend.js";
-import { findLocalEmbeddingCandidate } from "./memory/local-embedding.js";
+import { findHostLocalEmbeddingCandidate } from "./settings/capabilities.js";
 import type { DeepPartial } from "./memory/tencentdb-runtime.js";
 import { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import { ModelRegistry } from "./models/registry.js";
@@ -56,8 +57,7 @@ import { createModerationService, type ModerationService } from "./security/mode
 import { type AppSettingsRecord, AppSettingsStore } from "./storage/app-settings-store.js";
 import { Database, MIGRATIONS } from "./storage/database.js";
 import { EventBus } from "./storage/event-bus.js";
-import { conversations, memoryCandidates, messages } from "./storage/schema.js";
-import { StoryService } from "./story/service.js";
+import { conversations, memoryCandidates } from "./storage/schema.js";
 
 type HfEndpointLease = {
 	value: string;
@@ -172,7 +172,6 @@ export class HostRuntime {
 	private readonly supervisor: CompanionSupervisor;
 	private readonly characterBehavior: CharacterBehaviorService;
 	private readonly characterLoader: CharacterLoader;
-	private readonly unsubscribeStoryAutomation: () => void;
 	private readonly composition: HostCompositionContext;
 	private readonly systemProxyResolver?: HostRuntimeOptions["systemProxyResolver"];
 	private readonly logger?: HostRuntimeOptions["logger"];
@@ -213,6 +212,7 @@ export class HostRuntime {
 		});
 		const sessionResolver = conversationRepository.getSessionResolver();
 		const supervisor = new CompanionSupervisor(dataDir, eventBus, providers, sessionResolver);
+		conversationRepository.setLiveSessionResolver(supervisor.getLiveSessionResolver());
 		const roleplay = new RoleplayService(db.orm);
 		const drafts = new CharacterDraftService(db.orm, characterLoader);
 		const characterBehavior = new CharacterBehaviorService(
@@ -220,43 +220,9 @@ export class HostRuntime {
 			eventBus,
 			characterLoader,
 			roleplay,
+			(conversationId) => supervisor.getLiveSessionResolver().get(conversationId),
 		);
-		const story = new StoryService(db.orm, eventBus);
 		const canon = new CanonHubService(db.orm, artifactStore, eventBus);
-		const unsubscribeStoryAutomation = eventBus.subscribe((event) => {
-			if (event.kind !== "message.user_sent" || !event.payload || typeof event.payload !== "object")
-				return;
-			const payload = event.payload as Record<string, unknown>;
-			if (
-				typeof payload.conversationId !== "string" ||
-				typeof payload.messageId !== "string" ||
-				typeof payload.text !== "string"
-			)
-				return;
-			const context = db.orm
-				.select({ companionId: conversations.companionId, branchId: messages.branchId })
-				.from(conversations)
-				.innerJoin(messages, eq(messages.conversationId, conversations.id))
-				.where(
-					and(eq(conversations.id, payload.conversationId), eq(messages.id, payload.messageId)),
-				)
-				.get();
-			if (!context) return;
-			const result = story.handleUserText({
-				companionId: context.companionId,
-				conversationId: payload.conversationId,
-				branchId: context.branchId,
-				text: payload.text,
-			});
-			if (result.action === "ambiguous") {
-				story.propose({
-					companionId: context.companionId,
-					conversationId: payload.conversationId,
-					branchId: context.branchId,
-					text: payload.text,
-				});
-			}
-		});
 		const onboarding = new FirstMeetingMachine(db.orm, eventBus, characterLoader);
 		const appSettings = new AppSettingsStore(db.orm);
 		const models = new ModelRegistry(db.orm, eventBus);
@@ -281,39 +247,7 @@ export class HostRuntime {
 			userId: memoryScope.userId,
 			memoryConfig,
 		});
-		const turns = new TurnPipeline(db.orm, supervisor, eventBus, sessionResolver, {
-			// Feed every settled turn to the TdaiCore capture pipeline (L0 → L1
-			// extraction → L2/L3). This is a side channel: a failure here never
-			// blocks the reply that was already persisted.
-			onTurnCommitted: ({ conversationId, userText, assistantText, startedAt }) => {
-				// The active character may change while a runtime is alive. Resolve
-				// the namespace at commit time instead of freezing the product
-				// default in the long-lived turn sink.
-				const companionId = characterLoader.getActiveCharacterId(
-					db.orm,
-					options.productConfig.defaultCharacterId,
-				);
-				void memoryRuntime
-					.captureTurn({
-						userText,
-						assistantText,
-						messages: [
-							{ role: "user", content: userText, timestamp: startedAt ?? Date.now() },
-							{ role: "assistant", content: assistantText, timestamp: Date.now() },
-						],
-						sessionKey: namespaceFor({
-							...memoryScope,
-							companionId,
-						}),
-						sessionId: conversationId,
-					})
-					.catch((error: unknown) => {
-						eventBus.publish("diagnostics.memory_capture_failed", {
-							message: error instanceof Error ? error.message : String(error),
-						});
-					});
-			},
-		});
+		const turns = new TurnPipeline(db.orm, supervisor, eventBus);
 		const contextPack = new ContextPackCompiler(db.orm, characterLoader, canon, {
 			backend: memoryRuntime.backend,
 			scope: memoryScope,
@@ -328,15 +262,29 @@ export class HostRuntime {
 						return undefined;
 					}),
 		});
-		supervisor.setContextHandler(async (conversationId, includeHistory, message) =>
+		supervisor.setContextHandler(async (conversationId, _includeHistory, message) =>
 			contextPack.render(
 				await contextPack.compileForTurn(conversationId, {
-					includeConversationHistory: includeHistory,
 					canonQuery: message,
 					memoryQuery: message,
 				}),
 			),
 		);
+		onboarding.setConversationFactory(({ companionId, title, sceneTitle, onCommit }) => {
+			const id = randomUUID();
+			const created = conversationRepository.createAndSelect({
+				id,
+				companionId,
+				title,
+				sceneTitle,
+				onCommit,
+			});
+			return {
+				conversationId: created.id,
+				title: created.title,
+				sceneTitle: created.sceneTitle,
+			};
+		});
 		onboarding.setConversationCreatedHandler((companionId, conversationId) => {
 			models.applyDefaultToConversation(companionId, conversationId);
 		});
@@ -415,11 +363,13 @@ export class HostRuntime {
 				};
 			}
 			if (call.tool !== "host_propose_work") return characterBehavior.invoke(call);
-			if (!call.triggerMessageId) {
+			const triggerEntryId = supervisor.getLiveSessionResolver().get(call.conversationId)
+				?.currentUserEntryId;
+			if (!triggerEntryId) {
 				return {
 					ok: false,
-					code: "trigger_message_required",
-					message: "A real user message is required to propose work.",
+					code: "trigger_entry_required",
+					message: "A current native user entry is required to propose work.",
 				};
 			}
 			const args = call.args as {
@@ -430,10 +380,9 @@ export class HostRuntime {
 				networkAllowed: boolean;
 				toolNames: string[];
 			};
-			const triggerMessageId = call.triggerMessageId;
 			const draft = commissions.draft({
 				conversationId: call.conversationId,
-				triggerMessageId,
+				triggerEntryId,
 				...args,
 			});
 			return {
@@ -452,7 +401,6 @@ export class HostRuntime {
 		this.supervisor = supervisor;
 		this.characterBehavior = characterBehavior;
 		this.characterLoader = characterLoader;
-		this.unsubscribeStoryAutomation = unsubscribeStoryAutomation;
 		this.systemProxyResolver = options.systemProxyResolver;
 		this.logger = options.logger;
 		// Security primitives: hash-chained audit + deterministic moderation.
@@ -480,7 +428,6 @@ export class HostRuntime {
 			appSettings,
 			commissions,
 			artifacts: artifactStore,
-			story,
 			canon,
 			supervisor,
 			providers,
@@ -608,7 +555,6 @@ export class HostRuntime {
 		this.unsubscribeAudit?.();
 		this.unsubscribeAudit = undefined;
 		this.composition.turns.dispose();
-		this.unsubscribeStoryAutomation();
 		this.unsubscribeProxyHotReload?.();
 		this.unsubscribeProxyHotReload = undefined;
 		this.characterBehavior.dispose();
@@ -643,7 +589,7 @@ function mergeEmbeddingConfig(
 	if (service.provider === "local") {
 		embedding.provider = "local";
 		embedding.modelPath = service.localModel
-			? findLocalEmbeddingCandidate(service.localModel)?.modelPath
+			? findHostLocalEmbeddingCandidate(service.localModel)?.modelPath
 			: undefined;
 	} else {
 		embedding.provider = "remote";

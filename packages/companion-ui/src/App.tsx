@@ -17,7 +17,7 @@ import { Backstage } from "./features/Backstage.js";
 import { ResultSpace, ResultSpaceProvider, useResultSpace } from "./features/ResultSpace.js";
 import { SceneBackdrop } from "./SceneBackdrop";
 import { Sidebar } from "./Sidebar";
-import { createCompanionStore, DesktopProvider, type PresenceState, useCompanionStore } from "./stores/companion.js";
+import { createCompanionStore, DesktopProvider, useCompanionStore } from "./stores/companion.js";
 
 /** The narrowest supported desktop viewport width, in CSS pixels. */
 export const SUPPORTED_DESKTOP_MIN_WIDTH = 800;
@@ -80,20 +80,9 @@ type DesktopFrameProps = {
 function deriveCharacterPresenceLayout(input: {
 	resultOpen: boolean;
 	activeConversation: boolean;
-	assistantStreaming: boolean;
-	pendingUserText: string | undefined;
-	presence: PresenceState;
 }): CharacterPresenceLayoutMode {
 	if (input.resultOpen) return "compact";
-	if (
-		input.activeConversation &&
-		(input.assistantStreaming ||
-			input.pendingUserText !== undefined ||
-			input.presence === "listening" ||
-			input.presence === "thinking")
-	) {
-		return "expanded";
-	}
+	if (input.activeConversation) return "expanded";
 	return "resting";
 }
 
@@ -107,9 +96,6 @@ function DesktopFrame(props: DesktopFrameProps) {
 		deriveCharacterPresenceLayout({
 			resultOpen: resultSelection() !== undefined,
 			activeConversation: store.activeConversationId !== null,
-			assistantStreaming: store.assistantStreaming,
-			pendingUserText: store.pendingUserText,
-			presence: store.presence,
 		}),
 	);
 
@@ -144,34 +130,7 @@ function DesktopFrame(props: DesktopFrameProps) {
 						visualState={workflow.visualState()}
 						layout={presenceLayout()}
 					/>
-					<ConversationPanel character={workflow.character()} />
-					<Show when={store.story.proposals()[0]}>
-						{(proposal) => (
-							<section class="story-confirmation" aria-live="polite">
-								<div>
-									<strong>{props.product.productName}</strong>
-									<p>{t("composer.storyConfirmation")}</p>
-									<blockquote>{proposal().text}</blockquote>
-								</div>
-								<div class="story-confirmation-actions">
-									<Button
-										data-control="command"
-										type="button"
-										onClick={() => void store.story.resolveProposal(proposal().id, true)}
-									>
-										{t("composer.storyAccept")}
-									</Button>
-									<Button
-										data-control="command"
-										type="button"
-										onClick={() => void store.story.resolveProposal(proposal().id, false)}
-									>
-										{t("composer.storyDismiss")}
-									</Button>
-								</div>
-							</section>
-						)}
-					</Show>
+					<ConversationPanel />
 					<Composer
 						placeholder={workflow.composerPlaceholder()}
 						onOpenModelSettings={() => workflow.openBackstage("settings")}
@@ -183,7 +142,6 @@ function DesktopFrame(props: DesktopFrameProps) {
 			<Backstage
 				open={workflow.backstageOpen()}
 				onClose={workflow.closeBackstage}
-				character={workflow.character()}
 				initialTab={workflow.backstageTab()}
 			/>
 		</div>

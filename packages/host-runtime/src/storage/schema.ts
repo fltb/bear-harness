@@ -79,78 +79,19 @@ export const conversationSessions = sqliteTable("conversation_sessions", {
 		.references(() => conversations.id, { onDelete: "cascade" }),
 	piSessionId: text("pi_session_id").notNull(),
 	sessionFilePath: text("session_file_path").notNull(),
-	activeLeafId: text("active_leaf_id"),
 	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 });
-
-export const branches = sqliteTable("branches", {
-	id: text().primaryKey(),
+export const activeConversations = sqliteTable("active_conversations", {
+	companionId: text("companion_id")
+		.primaryKey()
+		.references(() => companionIdentity.id, { onDelete: "cascade" }),
 	conversationId: text("conversation_id")
 		.notNull()
-		.references(() => conversations.id),
-	parentBranchId: text("parent_branch_id").references((): AnySQLiteColumn => branches.id),
-	forkMessageId: text("fork_message_id"),
-	label: text().default("").notNull(),
-	adopted: numeric({ mode: "number" }).default(1).notNull(),
-	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+		.references(() => conversations.id, { onDelete: "cascade" }),
+	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 });
 
-export const messages = sqliteTable(
-	"messages",
-	{
-		id: text().primaryKey(),
-		conversationId: text("conversation_id")
-			.notNull()
-			.references(() => conversations.id),
-		branchId: text("branch_id")
-			.notNull()
-			.references(() => branches.id),
-		role: text().notNull(),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-	},
-	(table) => [
-		index("idx_messages_branch").on(table.branchId),
-		check("messages_check_1", sql`role IN ('user','assistant','system')`),
-	],
-);
-
-export const messageVersions = sqliteTable(
-	"message_versions",
-	{
-		id: text().primaryKey(),
-		messageId: text("message_id")
-			.notNull()
-			.references(() => messages.id),
-		content: text().notNull(),
-		editedByUser: numeric("edited_by_user", { mode: "number" }).default(0).notNull(),
-		adopted: numeric({ mode: "number" }).default(0).notNull(),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-	},
-	(table) => [index("idx_message_versions_message").on(table.messageId)],
-);
-
-export const turns = sqliteTable(
-	"turns",
-	{
-		id: text().primaryKey(),
-		conversationId: text("conversation_id")
-			.notNull()
-			.references(() => conversations.id),
-		userMessageId: text("user_message_id")
-			.notNull()
-			.references(() => messages.id),
-		assistantMessageId: text("assistant_message_id")
-			.notNull()
-			.references(() => messages.id),
-		status: text().default("pending").notNull(),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-	},
-	(table) => [
-		index("idx_turns_conversation").on(table.conversationId),
-		check("turns_check_2", sql`status IN ('pending','streaming','completed','failed','aborted')`),
-	],
-);
 
 export const sceneState = sqliteTable("scene_state", {
 	id: text().primaryKey(),
@@ -190,8 +131,9 @@ export const relationshipMemoryEntries = sqliteTable(
 		scope: text({ enum: ["self", "relationship", "scene"] }).notNull(),
 		text: text().notNull(),
 		normalizedText: text("normalized_text").notNull(),
-		sourceMessageVersionId: text("source_message_version_id").references(() => messageVersions.id),
-		sourceBranchId: text("source_branch_id").references(() => branches.id),
+		/** Pi provenance is intentionally not a foreign key: SessionManager owns native entries. */
+		sourcePiSessionId: text("source_pi_session_id"),
+		sourceNativeEntryId: text("source_native_entry_id"),
 		sourceConversationId: text("source_conversation_id").references(() => conversations.id),
 		sourceKind: text("source_kind", {
 			enum: ["user_button", "user_request", "companion_suggestion", "extractor"],
@@ -230,8 +172,9 @@ export const memoryCandidates = sqliteTable(
 			.notNull()
 			.references(() => companionIdentity.id),
 		kind: text({ enum: ["fact", "preference", "event", "self_canon_summary"] }).notNull(),
-		sourceMessageVersionId: text("source_message_version_id").references(() => messageVersions.id),
-		sourceBranchId: text("source_branch_id").references(() => branches.id),
+		/** Pi provenance is intentionally not a foreign key: SessionManager owns native entries. */
+		sourcePiSessionId: text("source_pi_session_id"),
+		sourceNativeEntryId: text("source_native_entry_id"),
 		sourceConversationId: text("source_conversation_id").references(() => conversations.id),
 		sourceKind: text("source_kind", {
 			enum: ["user_button", "user_request", "companion_suggestion", "extractor"],
@@ -346,7 +289,7 @@ export const commissions = sqliteTable(
 	{
 		id: text().primaryKey(),
 		conversationId: text("conversation_id").references(() => conversations.id),
-		triggerMessageId: text("trigger_message_id").notNull(),
+		triggerEntryId: text("trigger_entry_id").notNull(),
 		status: text({
 			enum: [
 				"draft",
@@ -590,49 +533,6 @@ export const onboardingState = sqliteTable("onboarding_state", {
 	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 });
 
-export const storyChanges = sqliteTable(
-	"story_changes",
-	{
-		id: text().primaryKey(),
-		companionId: text("companion_id")
-			.notNull()
-			.references(() => companionIdentity.id),
-		conversationId: text("conversation_id").references(() => conversations.id),
-		branchId: text("branch_id").references(() => branches.id),
-		text: text().notNull(),
-		normalizedText: text("normalized_text").notNull(),
-		scope: text({ enum: ["global", "branch"] }).notNull(),
-		source: text({ enum: ["user_explicit", "story_event", "user_confirmed"] }).notNull(),
-		status: text({ enum: ["active", "reverted"] })
-			.default("active")
-			.notNull(),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-		revertedAt: text("reverted_at"),
-	},
-	(table) => [
-		index("idx_story_changes_branch").on(table.branchId, table.status, table.createdAt),
-		index("idx_story_changes_companion").on(table.companionId, table.status, table.createdAt),
-		check("story_changes_check_21", sql`scope IN ('global','branch')`),
-		check(
-			"story_changes_check_22",
-			sql`source IN ('user_explicit','story_event','user_confirmed')`,
-		),
-		check("story_changes_check_23", sql`status IN ('active','reverted')`),
-	],
-);
-
-export const storyChangeEvents = sqliteTable(
-	"story_change_events",
-	{
-		id: integer().primaryKey({ autoIncrement: true }),
-		changeId: text("change_id").references(() => storyChanges.id),
-		action: text().notNull(),
-		conversationId: text("conversation_id").references(() => conversations.id),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-	},
-	(table) => [check("story_change_events_check_24", sql`action IN ('applied','reverted','reset')`)],
-);
-
 export const canonSources = sqliteTable(
 	"canon_sources",
 	{
@@ -791,36 +691,6 @@ export const characterDraftRevisions = sqliteTable(
 	(table) => [primaryKey({ columns: [table.draftId, table.revision] })],
 );
 
-export const storyChangeProposals = sqliteTable(
-	"story_change_proposals",
-	{
-		id: text().primaryKey(),
-		companionId: text("companion_id")
-			.notNull()
-			.references(() => companionIdentity.id),
-		conversationId: text("conversation_id")
-			.notNull()
-			.references(() => conversations.id, { onDelete: "cascade" }),
-		branchId: text("branch_id")
-			.notNull()
-			.references(() => branches.id, { onDelete: "cascade" }),
-		text: text().notNull(),
-		status: text({ enum: ["pending", "accepted", "dismissed"] })
-			.default("pending")
-			.notNull(),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-		decidedAt: text("decided_at"),
-	},
-	(table) => [
-		index("idx_story_proposals_pending").on(
-			table.companionId,
-			table.conversationId,
-			table.status,
-			table.createdAt,
-		),
-		check("story_change_proposals_check_27", sql`status IN ('pending','accepted','dismissed')`),
-	],
-);
 
 export const roleplayEvents = sqliteTable(
 	"roleplay_events",
@@ -832,10 +702,9 @@ export const roleplayEvents = sqliteTable(
 		conversationId: text("conversation_id").references(() => conversations.id, {
 			onDelete: "cascade",
 		}),
-		branchId: text("branch_id").references(() => branches.id, { onDelete: "cascade" }),
-		sourceMessageVersionId: text("source_message_version_id").references(() => messageVersions.id, {
-			onDelete: "cascade",
-		}),
+		/** Native Pi provenance supersedes branch/version identity after downstream cutover. */
+		piSessionId: text("pi_session_id"),
+		sourceNativeEntryId: text("source_native_entry_id"),
 		eventId: text("event_id").notNull(),
 		effectsJson: text("effects_json", { mode: "json" })
 			.$type<Array<Record<string, unknown>>>()

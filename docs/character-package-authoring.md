@@ -24,11 +24,11 @@ my-character/
 
 | Event | `visual_state` |
 | --- | --- |
-| `message.user_sent` | `listening` |
-| `message_end` | `result_ready` |
-| `message.aborted` | `presence` |
+| `message.user_sent` | `attentive` |
+| `message_end` | `ready` |
+| `message.aborted` | `calm` |
 
-上表是极昼包的默认示例，不是所有角色包都必须复制的固定绑定。只要事件名是非空且唯一的 Host 事件，包也可以绑定其他事件（例如 Host 提供 `message.retrying` 时绑定到 `thinking`），前提是 `visual_state` 已在该角色包中声明。每项必须且只能设置 `event` 与 `visual_state`；不得添加 `scene`、`media`、`choice_set` 或其他效果键。场景切换、媒体展示和选择集展示必须由模型调用相应 Host 工具，或由已声明的 roleplay event effects 决定。
+上表是极昼包的默认示例，不是所有角色包都必须复制的固定绑定。只要事件名是非空且唯一的 Host 事件，包也可以绑定其他事件（例如 Host 提供 `message.retrying` 时绑定到 `reflective`），前提是 `visual_state` 已在该角色包中声明。每项必须且只能设置 `event` 与 `visual_state`；不得添加 `scene`、`media`、`choice_set` 或其他效果键。场景切换、媒体展示和选择集展示必须由模型调用相应 Host 工具，或由已声明的 roleplay event effects 决定。
 
 
 ## 会进入上下文的内容
@@ -56,6 +56,10 @@ my-character/
 Host 可以把选定的包内容投影到指定的 `identity`、`canon`、`scene` 或 `roleplay` 上下文层，也可以把素材投影给渲染器、把 Skill/插件资源提供给 Pi；这不会改变它们的存储归属。包声明的常量、素材和资源 **不得** 写入 `relationship` 记忆、自动记忆捕获（automatic memory capture）、用户记忆面板记录（user memory panel records），也不得作为长期记忆后端输入（long-term memory backend inputs）。它们不能成为待批准的记忆候选，也不能通过记忆编辑、置顶、排除或召回入口出现。
 
 关系记忆是用户明确批准后由 Host 单独保存的共同经历、称呼和偏好。它与角色包目录、包内文件和包声明值是两个不同的数据来源；关闭关系记忆只影响关系记忆，不删除或改变角色包存储。
+
+## 初始设置版本
+
+`character.first_meeting` 的完成状态按角色包 `id` 存入独立的 Host storage bucket。`first_meeting.version` 是该桶的兼容性版本：Host 将它和每条 onboarding 状态一起保存。作者修改步骤 ID、答案值或 effect 语义时必须递增这个版本；已存状态的版本与当前包不一致时，Host 明确报错，不会猜测、转换或静默重置用户设置。
 
 ## 变量与剧情
 

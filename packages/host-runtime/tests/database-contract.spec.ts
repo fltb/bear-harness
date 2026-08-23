@@ -29,7 +29,7 @@ describe("database schema contract", () => {
 		expect(() => database.assertSchemaContract()).not.toThrow();
 		database.close();
 	});
-	it("keeps legacy commission rows while adding an explicit unlinked trigger sentinel", () => {
+	it("renames the commission native trigger anchor during mirror removal", () => {
 		const database = new Database(root());
 		database.migrate(MIGRATIONS.slice(0, -1));
 		database.connection
@@ -38,16 +38,9 @@ describe("database schema contract", () => {
 			)
 			.run("legacy-commission", null, "draft", "{}");
 		database.migrate(MIGRATIONS);
-		const column = (
-			database.connection.prepare("PRAGMA table_info(commissions)").all() as Array<{
-				name: string;
-				notnull: number;
-			}>
-		).find((entry) => entry.name === "trigger_message_id");
-		expect(column?.notnull).toBe(1);
 		expect(
-			database.connection.prepare("SELECT id, trigger_message_id FROM commissions").get(),
-		).toEqual({ id: "legacy-commission", trigger_message_id: "" });
+			database.connection.prepare("SELECT id, trigger_entry_id FROM commissions").get(),
+		).toEqual({ id: "legacy-commission", trigger_entry_id: "" });
 		database.close();
 	});
 
@@ -59,10 +52,9 @@ describe("database schema contract", () => {
 		database.close();
 	});
 
-	it("adds only Pi session metadata for each conversation", () => {
+	it("keeps only the Pi session locator for each conversation", () => {
 		const database = new Database(root());
 		database.migrate(MIGRATIONS);
-
 		const columns = database.connection
 			.prepare("PRAGMA table_info(conversation_sessions)")
 			.all() as Array<{ name: string; notnull: number }>;
@@ -70,20 +62,31 @@ describe("database schema contract", () => {
 			"conversation_id",
 			"pi_session_id",
 			"session_file_path",
-			"active_leaf_id",
 			"created_at",
 			"updated_at",
 		]);
-		const requiredFields = new Set([
-			"pi_session_id",
-			"session_file_path",
-			"created_at",
-			"updated_at",
-		]);
-		expect(
-			columns.filter((column) => requiredFields.has(column.name)).every((column) => column.notnull),
-		).toBe(true);
-		expect(columns.find((column) => column.name === "active_leaf_id")?.notnull).toBe(0);
+		database.close();
+	});
+
+	it("rebuilds derived provenance and removes Host transcript mirrors", () => {
+		const database = new Database(root());
+		database.migrate(MIGRATIONS);
+		for (const table of ["relationship_memory_entries", "memory_candidates", "roleplay_events"]) {
+			const columns = (
+				database.connection.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+			).map((column) => column.name);
+			expect(columns).toContain("source_native_entry_id");
+			expect(columns).not.toContain("source_message_version_id");
+			expect(columns).not.toContain("source_branch_id");
+		}
+		for (const table of ["branches", "messages", "message_versions", "turns"]) {
+			expect(
+				database.connection
+					.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+					.get(table),
+			).toBeUndefined();
+		}
+		expect(() => database.assertSchemaContract()).not.toThrow();
 		database.close();
 	});
 	it("stores presentation metadata by backend id and complete memory scope", () => {

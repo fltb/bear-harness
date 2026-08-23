@@ -122,11 +122,11 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	const backstage = page.getByRole("dialog", { name: zhCN.sidebar.systemSettings });
 	await expect(backstage).toBeVisible();
 	const settingsPanel = backstage;
-	await expect(settingsPanel.getByText(zhCN.settings.modelPool, { exact: true })).toBeVisible();
-	await expect(settingsPanel.getByRole("button", { name: zhCN.settings.addModel })).toBeVisible();
-	await settingsPanel.getByRole("button", { name: zhCN.settings.advancedToggle }).click();
 	await expect(
-		settingsPanel.getByRole("button", { name: new RegExp(`^${zhCN.settings.serviceLabel}`) }),
+		settingsPanel.getByText(zhCN.settings.systemModelSettings, { exact: true }),
+	).toBeVisible();
+	await expect(
+		settingsPanel.getByRole("region", { name: zhCN.settings.providerSetupLabel }),
 	).toBeVisible();
 	// test-quality-allow locator: typography contract requires all rendered text controls
 	const typographyElements = settingsPanel.locator("label, p, button, input, select, h3");
@@ -253,5 +253,7 @@ test("bottom actions open distinct character and system settings destinations", 
 	await systemSettingsButton.click();
 	backstage = page.getByRole("dialog", { name: zhCN.sidebar.systemSettings });
 	await expect(backstage).toBeVisible();
-	await expect(backstage.getByText(zhCN.settings.modelPool, { exact: true })).toBeVisible();
+	await expect(
+		backstage.getByText(zhCN.settings.systemModelSettings, { exact: true }),
+	).toBeVisible();
 });

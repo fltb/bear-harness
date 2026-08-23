@@ -83,11 +83,11 @@ function artifact(
 	};
 }
 
-function commission(id: string, triggerMessageId: string, title: string) {
+function commission(id: string, triggerEntryId: string, title: string) {
 	return {
 		id,
 		conversationId: "conversation-1",
-		triggerMessageId,
+		triggerEntryId,
 		status: "approved",
 		createdAt: "2026-08-16T00:00:00Z",
 		draft: {
@@ -156,7 +156,7 @@ function createResultStore() {
 
 const RUN_1_SELECTION: ResultSelection = {
 	conversationId: "conversation-1",
-	triggerMessageId: "message-42",
+	triggerEntryId: "message-42",
 	commissionId: "commission-1",
 	runId: "run-1",
 	artifactId: "artifact-a1",
@@ -329,7 +329,7 @@ describe("ResultSpace", () => {
 		// The other conversation opens its own, unrelated result.
 		await openWith(requireDefined(api, "ResultSpace API"), {
 			conversationId: "conversation-2",
-			triggerMessageId: "message-99",
+			triggerEntryId: "message-99",
 			commissionId: "commission-2",
 			runId: "run-2",
 			artifactId: "artifact-b1",
@@ -364,7 +364,7 @@ describe("ResultSpace", () => {
 			const event = firstCall[0];
 			if (!(event instanceof CustomEvent)) throw new Error("locate event was not a CustomEvent");
 			const detail = (event as CustomEvent<ResultLocateDetail>).detail;
-			expect(detail).toEqual({ conversationId: "conversation-1", messageId: "message-42" });
+			expect(detail).toEqual({ conversationId: "conversation-1", entryId: "message-42" });
 		} finally {
 			window.removeEventListener(RESULT_LOCATE_EVENT, handler);
 		}

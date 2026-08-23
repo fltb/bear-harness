@@ -5,7 +5,6 @@ import {
 } from "@bear-harness/protocol/schema";
 import {
 	faArrowUp,
-	faCheck,
 	faChevronDown,
 	faImage,
 	faPaperclip,
@@ -13,18 +12,12 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 import { Button } from "@kobalte/core/button";
 import { FileField } from "@kobalte/core/file-field";
-import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { createEffect, Show } from "solid-js";
 import { Icon } from "./Icon.js";
+import { ModelSelector } from "./features/ModelSelector.js";
 import { useCompanionStore } from "./stores/companion.js";
-import {
-	modelDisplayName,
-	setRequestImageReaderFocus,
-	useConversationWorkflow,
-} from "./stores/conversation-workflows.js";
-import type { ConfiguredModel } from "./stores/ipc.js";
-
+import { setRequestImageReaderFocus, useConversationWorkflow } from "./stores/conversation-workflows.js";
 export { requestImageReaderFocus, setRequestImageReaderFocus } from "./stores/conversation-workflows.js";
 
 /**
@@ -70,50 +63,26 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 
 	return (
 		<form class="composer" onSubmit={send}>
-			<Select<ConfiguredModel>
-				options={workflow.models()}
+			<ModelSelector
+				models={workflow.models()}
 				value={workflow.selectedModel()}
-				optionValue={(model) => `${model.providerId}:${model.modelId}`}
-				optionTextValue={(model) => modelDisplayName(model)}
-				placeholder={
-					workflow.models().length > 0 ? t("composer.chooseModel") : t("composer.noModel")
-				}
+				class="composer-model"
+				label={t("composer.modelLabel")}
+				placeholder={t("composer.chooseModel")}
+				labelClass="sr-only"
 				disabled={
 					workflow.modelBusy() ||
 					store.activeConversationId === null ||
 					workflow.models().length === 0
 				}
-				onChange={(model) => void workflow.selectModel(model)}
-				itemComponent={(itemProps) => (
-					<Select.Item item={itemProps.item} class="composer-model-item">
-						<Select.ItemLabel>{modelDisplayName(itemProps.item.rawValue)}</Select.ItemLabel>
-						<Select.ItemIndicator class="composer-model-check">
-							<Icon icon={faCheck} />
-						</Select.ItemIndicator>
-					</Select.Item>
-				)}
-				class="composer-model"
+				triggerClass="composer-model-trigger"
+				contentClass="composer-model-content"
+				listClass="composer-model-list"
+				itemClass="composer-model-item"
 				placement="top-start"
 				gutter={8}
-			>
-				<Select.Label class="sr-only">{t("composer.modelLabel")}</Select.Label>
-				<Select.Trigger class="composer-model-trigger" aria-label={t("composer.modelLabel")}>
-					<Select.Value<ConfiguredModel> class="composer-model-value">
-						{() => {
-							const model = workflow.selectedModel();
-							return model ? modelDisplayName(model) : undefined;
-						}}
-					</Select.Value>
-					<Select.Icon class="composer-model-icon" aria-hidden="true">
-						<Icon icon={faChevronDown} />
-					</Select.Icon>
-				</Select.Trigger>
-				<Select.Portal>
-					<Select.Content class="composer-model-content">
-						<Select.Listbox class="composer-model-list" />
-					</Select.Content>
-				</Select.Portal>
-			</Select>
+				onModelChange={(model) => void workflow.selectModel(model)}
+			/>
 			<Show when={workflow.modelError()}>{(error) => <span role="alert">{error()}</span>}</Show>
 			<Show when={workflow.sendError()}>
 				{(error) => (

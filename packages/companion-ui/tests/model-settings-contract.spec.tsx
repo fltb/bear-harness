@@ -1,58 +1,80 @@
-import { i18n } from "@bear-harness/i18n";
-import { zhCN } from "@bear-harness/i18n/locales";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { ModelSelector } from "../src/features/ModelSelector.js";
 import { CompanionApp } from "../src/index.js";
+import { zhCN } from "@bear-harness/i18n/locales";
 import { createTestClient, OFFICIAL_PRODUCT } from "./fixtures.js";
 import { selectKobalteOption } from "./kobalte-helpers.js";
 
 const FREE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+const CANDIDATE = {
+	id: "openai",
+	name: "OpenAI",
+	source: "builtin" as const,
+	added: false,
+	authType: "api_key" as const,
+	credentialStatus: "missing" as const,
+	availableModels: [{ id: "gpt-mini", name: "GPT Mini", supportsImages: false, cost: FREE }],
+	unavailable: [],
+};
 const PROVIDER = {
-	id: "opencode-go",
-	name: "OpenCode Go",
+	id: "relay",
+	name: "Relay",
+	source: "custom" as const,
+	added: true,
 	baseUrl: "https://saved.example/v1",
 	authType: "api_key" as const,
 	credentialStatus: "stored" as const,
-	availableModels: [
-		{ id: "fast", name: "Fast", supportsImages: false, cost: FREE },
-		{ id: "vision", name: "Vision", supportsImages: true, cost: FREE },
-	],
+	availableModels: [{ id: "fast", name: "Fast", supportsImages: false, cost: FREE }],
 	unavailable: [],
 };
-
-const OAUTH_PROVIDER = {
-	id: "oauth-service",
-	name: "OAuth Service",
+const OAUTH = {
+	id: "oauth",
+	name: "OAuth",
+	source: "builtin" as const,
+	added: true,
 	authType: "oauth" as const,
-	credentialStatus: "missing" as const,
+	credentialStatus: "stored" as const,
 	availableModels: [{ id: "oauth-model", name: "OAuth Model", supportsImages: false, cost: FREE }],
 	unavailable: [],
 };
 
 function configuredClient() {
 	const fixture = createTestClient();
-	fixture.client.provider.list = vi.fn(() =>
-		Promise.resolve({ ok: true as const, data: { providers: [PROVIDER] } }),
-	);
+	let providers = [CANDIDATE, PROVIDER, OAUTH];
+	const providerList = vi.fn(() => Promise.resolve({ ok: true as const, data: { providers } }));
+	fixture.client.provider.list = providerList;
+	fixture.client.provider.setApiKey = vi.fn(async ({ providerId }: { providerId: string; apiKey: string }) => {
+		providers = providers.map((provider) =>
+			provider.id === providerId
+				? { ...provider, added: true as const, credentialStatus: "stored" as const }
+				: provider,
+		) as typeof providers;
+		return { ok: true as const, data: null };
+	});
+	fixture.client.provider.overrideBaseUrl = vi.fn(async ({ providerId, baseUrl }: { providerId: string; baseUrl: string }) => {
+		providers = providers.map((provider) =>
+			provider.id === providerId ? { ...provider, baseUrl } : provider,
+		) as typeof providers;
+		return { ok: true as const, data: null };
+	});
+	fixture.client.provider.remove = vi.fn(async ({ providerId }: { providerId: string }) => {
+		providers = providers.filter((provider) => provider.id !== providerId);
+		return { ok: true as const, data: null };
+	});
 	fixture.client.model.poolGet = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
 			data: {
 				models: [
-					{
-						providerId: "opencode-go",
-						providerName: "OpenCode Go",
-						modelId: "fast",
-						label: "Fast",
-						supportsImages: false,
-						createdAt: "2026-01-01",
-					},
+					{ providerId: "relay", providerName: "Relay", modelId: "fast", label: "Fast", supportsImages: false, createdAt: "2026-01-01" },
+					{ providerId: "relay", providerName: "Relay", modelId: "vision", label: "Vision", supportsImages: true, createdAt: "2026-01-02" },
 				],
 			},
 		}),
 	);
-	return fixture;
+	return { ...fixture, providers: () => providers };
 }
 
 async function openSettings() {
@@ -62,417 +84,245 @@ async function openSettings() {
 	return { user, backstage };
 }
 
-function selectTrigger(container: HTMLElement, label: string): HTMLButtonElement {
-	const trigger = within(container)
-		.getAllByRole("button")
-		.find((button) => button.getAttribute("aria-label") === label);
-	if (!(trigger instanceof HTMLButtonElement)) throw new Error(`select trigger missing: ${label}`);
-	return trigger;
+function providerSetup(backstage: HTMLElement): HTMLElement {
+	return within(backstage).getByRole("region", { name: zhCN.settings.providerSetupLabel });
 }
 
-describe("model pool settings", () => {
-	it("switches and persists the product UI language independently of character packages", async () => {
+describe("breaking provider and model settings contract", () => {
+	it("shows only current reply and optional image controls, not old default or model-pool controls", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { user, backstage } = await openSettings();
-		const language = within(backstage).getByRole("button", {
-			name: new RegExp(zhCN.settings.language),
-		});
-		expect(language).toHaveTextContent(zhCN.settings.localeNames["zh-CN"]);
-
-		await selectKobalteOption(user, language, "en");
-		await waitFor(() => expect(document.documentElement).toHaveAttribute("lang", "en"));
-		expect(localStorage.getItem("bear-harness.product-locale")).toBe("en");
-		await waitFor(() => expect(language).toHaveAccessibleName(/Interface language/));
-
-		await selectKobalteOption(user, language, "zh-TW");
-		await waitFor(() => expect(document.documentElement).toHaveAttribute("lang", "zh-TW"));
-		await waitFor(() => expect(language).toHaveAccessibleName(/介面語言/));
-
-		await selectKobalteOption(user, language, "zh-CN");
-		await waitFor(() => expect(document.documentElement).toHaveAttribute("lang", "zh-CN"));
-	});
-	it("surfaces locale switching failures without changing the canonical locale", async () => {
-		const { client } = configuredClient();
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { user, backstage } = await openSettings();
-		const language = within(backstage).getByRole("button", {
-			name: new RegExp(zhCN.settings.language),
-		});
-		const failure = new Error("translation service unavailable");
-		const changeLanguage = vi.spyOn(i18n, "changeLanguage").mockRejectedValueOnce(failure);
-
-		await selectKobalteOption(user, language, "en");
-		await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(failure.message));
-		expect(document.documentElement).toHaveAttribute("lang", "zh-CN");
-		expect(localStorage.getItem("bear-harness.product-locale")).toBe("zh-CN");
-		changeLanguage.mockRestore();
+		const { backstage } = await openSettings();
+		expect(within(backstage).getByText(zhCN.settings.currentReplyModel)).toBeVisible();
+		expect(within(backstage).getByText(zhCN.settings.visionModel)).toBeVisible();
+		expect(within(backstage).queryByText("新对话默认模型")).not.toBeInTheDocument();
+		expect(within(backstage).queryByText(zhCN.settings.addModel)).not.toBeInTheDocument();
+		expect(within(backstage).queryByText(zhCN.settings.removeModel)).not.toBeInTheDocument();
 	});
 
-	it("shows configured models, global defaults, and provider presets", async () => {
+	it("keeps candidate, editor, cards, and import surfaces grouped under the wide settings manager layout", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		const remove = await waitFor(() =>
-			within(backstage).getByRole("button", {
-				name: `${zhCN.settings.removeModel} Fast (OpenCode Go)`,
-			}),
-		);
-		expect(remove).toHaveAttribute("data-semantic", "danger");
-		const service = within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!;
-		expect(service).toHaveTextContent(zhCN.settings.chooseService);
-		expect(selectTrigger(backstage, zhCN.settings.modelLabel)).toBeDisabled();
-		await selectKobalteOption(user, service, "opencode-go");
-		const model = selectTrigger(backstage, zhCN.settings.modelLabel);
-		expect(model).toBeEnabled();
-		await selectKobalteOption(user, model, "vision");
-		expect(model).toHaveTextContent("Vision");
-		expect(
-			within(backstage).getByRole("button", {
-				name: new RegExp(zhCN.settings.defaultReplyModel),
-			}),
-		).toBeEnabled();
-		expect(
-			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.visionModel) }),
-		).toHaveTextContent(zhCN.settings.visionModelAuto);
+		const setup = providerSetup(backstage);
+
+		expect(backstage).toHaveClass("backstage-sheet-settings");
+		expect(setup).toHaveClass("provider-setup-manager");
+		expect(setup.querySelector(".provider-connections")).not.toBeNull();
+		expect(setup.querySelector(".provider-editor-pane")).not.toBeNull();
+		expect(setup.querySelector(".provider-candidate-section .provider-selector")).not.toBeNull();
+		expect(setup.querySelector(".provider-card-list")).toHaveAttribute("aria-label", zhCN.settings.addedProviders);
+		expect(setup.querySelector(".provider-import-pi")).toBeInTheDocument();
+		expect(setup.querySelector(".provider-import-custom")).toBeInTheDocument();
+
+		await selectKobalteOption(user, within(setup).getByLabelText(zhCN.settings.providerLabel), "openai");
+		const editor = setup.querySelector('[data-provider-editor="openai"]');
+		expect(editor).toHaveClass("provider-setup-editor");
+		expect(editor?.closest(".provider-editor-pane")).not.toBeNull();
+		expect(editor?.closest(".provider-candidate-section")).toBeNull();
 	});
 
-	it("persists reply and vision defaults through their dedicated RPCs", async () => {
-		const { client } = configuredClient();
-		client.model.poolGet = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					models: [
-						{
-							providerId: "opencode-go",
-							providerName: "OpenCode Go",
-							modelId: "fast",
-							label: "Fast",
-							supportsImages: false,
-							createdAt: "2026-01-01",
-						},
-						{
-							providerId: "opencode-go",
-							providerName: "OpenCode Go",
-							modelId: "vision",
-							label: "Vision",
-							supportsImages: true,
-							createdAt: "2026-01-02",
-						},
-					],
-				},
-			}),
-		);
-		client.model.defaultsGet = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					reply: { providerId: "opencode-go", modelId: "fast" },
-					vision: { mode: "auto" as const },
-				},
-			}),
-		);
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { user, backstage } = await openSettings();
-
-		await selectKobalteOption(
-			user,
-			within(backstage).getByRole("button", {
-				name: new RegExp(zhCN.settings.defaultReplyModel),
-			}),
-			{ label: "Vision (OpenCode Go)" },
-		);
-		expect(client.model.defaultsSetReply).toHaveBeenCalledWith({
-			reply: { providerId: "opencode-go", modelId: "vision" },
-		});
-
-		await selectKobalteOption(
-			user,
-			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.visionModel) }),
-			{ label: "Vision (OpenCode Go)" },
-		);
-		expect(client.model.defaultsSetVision).toHaveBeenCalledWith({
-			mode: "manual",
-			route: { providerId: "opencode-go", modelId: "vision" },
-		});
-	});
-
-	it("adds and removes models from the reusable pool", async () => {
+	it("adds a builtin candidate with an API key and optional URL", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		const service = within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!;
-		expect(service).toHaveTextContent(zhCN.settings.chooseService);
-		await selectKobalteOption(user, service, "opencode-go");
-		await waitFor(() => expect(selectTrigger(backstage, zhCN.settings.modelLabel)).toBeEnabled());
-		await selectKobalteOption(user, selectTrigger(backstage, zhCN.settings.modelLabel), "vision");
-		await user.click(
-			within(backstage).getByRole("button", {
-				name: zhCN.settings.addModel,
-			}),
-		);
-		expect(client.model.enable).toHaveBeenCalledWith({
-			providerId: "opencode-go",
-			modelId: "vision",
-			label: "Vision",
-		});
-		await user.click(
-			within(backstage).getByRole("button", {
-				name: `${zhCN.settings.removeModel} Fast (OpenCode Go)`,
-			}),
-		);
-		expect(client.model.disable).toHaveBeenCalledWith({
-			providerId: "opencode-go",
-			modelId: "fast",
-		});
-	});
-
-	it("keeps provider URL override in advanced settings", async () => {
-		const { client } = configuredClient();
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { user, backstage } = await openSettings();
-		await selectKobalteOption(
-			user,
-			within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!,
-			"opencode-go",
-		);
-		await user.click(
-			within(backstage).getByRole("button", {
-				name: zhCN.settings.advancedToggle,
-			}),
-		);
-		const baseUrlInput = within(backstage).getByPlaceholderText(zhCN.settings.customBaseUrlPlaceholder);
-		expect(baseUrlInput).toHaveValue("https://saved.example/v1");
-		await user.clear(baseUrlInput);
-		await user.type(baseUrlInput, "https://relay.example/v1");
-		await user.click(
-			within(backstage).getByRole("button", {
-				name: zhCN.settings.customSave,
-			}),
-		);
-		expect(client.provider.overrideBaseUrl).toHaveBeenCalledWith({
-			providerId: "opencode-go",
-			baseUrl: "https://relay.example/v1",
-		});
-	});
-
-	it("imports native Pi configuration from advanced settings without a model-owned API key", async () => {
-		const { client } = configuredClient();
-		client.provider.importPiConfig = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					models: [
-						{
-							providerId: "relay",
-							modelId: "custom",
-							label: "Custom",
-							supportsImages: false,
-							createdAt: "2026-01-01",
-						},
-					],
-				},
-			}),
-		);
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { user, backstage } = await openSettings();
-		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.advancedToggle }));
-		const configJson = JSON.stringify({
-			providers: { relay: { models: [{ id: "custom", name: "Custom" }] } },
-		});
-		fireEvent.input(within(backstage).getByLabelText(zhCN.settings.piConfigLabel), {
-			target: { value: configJson },
-		});
-		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.piConfigImport }));
-		expect(client.provider.importPiConfig).toHaveBeenCalledWith({ configJson });
-		expect(await within(backstage).findByText("Custom (relay)")).toBeVisible();
-		expect(within(backstage).queryByLabelText(zhCN.settings.customApiKey)).not.toBeInTheDocument();
-	});
-
-	it("stores credentials at provider scope and preserves the canonical stored-key placeholder", async () => {
-		const { client } = configuredClient();
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { user, backstage } = await openSettings();
-		await selectKobalteOption(
-			user,
-			within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!,
-			"opencode-go",
-		);
-		const keyInput = within(backstage).getByLabelText(zhCN.settings.apiKeyLabel);
-		expect(keyInput).toHaveAttribute("placeholder", zhCN.settings.apiKeyStoredPlaceholder);
-		await user.type(keyInput, "provider-secret");
-		await user.click(
-			within(backstage).getByRole("button", {
-				name: `${zhCN.settings.saveKey} ${zhCN.settings.apiKeyLabel}`,
-			}),
-		);
-		await waitFor(() =>
-			expect(client.provider.setApiKey).toHaveBeenCalledWith({
-				providerId: "opencode-go",
-				apiKey: "provider-secret",
-			}),
-		);
-		expect(keyInput).toHaveValue("");
-		expect(await within(backstage).findByRole("status")).toHaveTextContent(zhCN.settings.keySaved);
-	});
-
-	it("surfaces provider action failures and restores enabled controls", async () => {
-		const { client } = configuredClient();
-		client.provider.overrideBaseUrl = vi.fn(() => Promise.reject(new Error("relay rejected")));
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { user, backstage } = await openSettings();
-		await selectKobalteOption(
-			user,
-			within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!,
-			"opencode-go",
-		);
-		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.advancedToggle }));
-		await user.type(
-			within(backstage).getByPlaceholderText(zhCN.settings.customBaseUrlPlaceholder),
-			"https://broken.example/v1",
-		);
-		const save = within(backstage).getByRole("button", { name: zhCN.settings.customSave });
-		await user.click(save);
-		expect(await within(backstage).findByRole("alert")).toHaveTextContent("relay rejected");
-		await waitFor(() => expect(save).toBeEnabled());
-	});
-
-	it("completes an OAuth provider prompt before models are added separately", async () => {
-		const { client } = configuredClient();
-		client.provider.list = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { providers: [OAUTH_PROVIDER] } }),
-		);
-		client.provider.login = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					providerId: "oauth-service",
-					status: "waiting_input" as const,
-					message: "Choose account",
-					prompt: {
-						id: "account",
-						type: "select" as const,
-						message: "Choose account",
-						options: [{ id: "personal", label: "Personal" }],
-					},
-				},
-			}),
-		);
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { user, backstage } = await openSettings();
-		await selectKobalteOption(
-			user,
-			within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!,
-			"oauth-service",
-		);
-		await user.click(
-			within(backstage).getByRole("button", { name: zhCN.settings.loginWithBrowser }),
-		);
-		const answer = await within(backstage).findByLabelText("Choose account");
-		expect(answer).toHaveValue("personal");
-		await user.click(within(backstage).getByRole("button", { name: zhCN.settings.oauthSubmit }));
-		expect(client.provider.loginAnswer).toHaveBeenCalledWith({
-			providerId: "oauth-service",
-			answer: "personal",
-		});
-		expect(client.model.enable).not.toHaveBeenCalled();
-	});
-
-	it("polls a running OAuth login through completion and refreshes provider state", async () => {
-		const { client } = configuredClient();
-		client.provider.list = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { providers: [OAUTH_PROVIDER] } }),
-		);
-		client.provider.login = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: { providerId: "oauth-service", status: "running" as const },
-			}),
-		);
-		client.provider.loginStatus = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: { providerId: "oauth-service", status: "completed" as const },
-			}),
-		);
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { user, backstage } = await openSettings();
-		await selectKobalteOption(
-			user,
-			within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!,
-			"oauth-service",
-		);
-		await user.click(
-			within(backstage).getByRole("button", { name: zhCN.settings.loginWithBrowser }),
-		);
-		expect(await within(backstage).findByRole("status")).toHaveTextContent(
-			zhCN.settings.oauthConnected,
-		);
-		expect(client.provider.loginStatus).toHaveBeenCalledWith({ providerId: "oauth-service" });
+		const setup = providerSetup(backstage);
+		await selectKobalteOption(user, within(setup).getByLabelText(zhCN.settings.providerLabel), "openai");
+		const editor = setup.querySelector('[data-provider-editor="openai"]') as HTMLElement;
+		client.provider.list.mockClear();
+		client.model.poolGet.mockClear();
+		client.model.defaultsGet.mockClear();
+		await user.type(within(editor).getByLabelText(zhCN.settings.apiKeyLabel), "candidate-secret");
+		await user.type(within(editor).getByLabelText(zhCN.settings.customBaseUrl), "https://relay.example/v1");
+		await user.click(within(editor).getByRole("button", { name: zhCN.settings.addProvider }));
+		await waitFor(() => expect(client.provider.setApiKey).toHaveBeenCalledWith({ providerId: "openai", apiKey: "candidate-secret" }));
+		expect(client.provider.overrideBaseUrl).toHaveBeenCalledWith({ providerId: "openai", baseUrl: "https://relay.example/v1" });
 		await waitFor(() => expect(client.provider.list).toHaveBeenCalled());
+		expect(client.model.poolGet).toHaveBeenCalled();
+		expect(client.model.defaultsGet).toHaveBeenCalled();
+		await waitFor(() => expect(within(setup).getAllByText(CANDIDATE.name).length).toBeGreaterThan(0));
 	});
 
-	it("shows the OAuth provider failure message without adding a model", async () => {
+	it("edits an added provider key and URL from its card", async () => {
 		const { client } = configuredClient();
-		client.provider.list = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { providers: [OAUTH_PROVIDER] } }),
-		);
-		client.provider.login = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					providerId: "oauth-service",
-					status: "failed" as const,
-					message: "authorization denied",
-				},
-			}),
-		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		await selectKobalteOption(
-			user,
-			within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!,
-			"oauth-service",
-		);
-		await user.click(
-			within(backstage).getByRole("button", { name: zhCN.settings.loginWithBrowser }),
-		);
-		expect(await within(backstage).findByRole("alert")).toHaveTextContent("authorization denied");
-		expect(client.model.enable).not.toHaveBeenCalled();
+		const setup = providerSetup(backstage);
+		const card = within(setup).getByText(PROVIDER.name).closest("article")!;
+		client.provider.list.mockClear();
+		client.model.poolGet.mockClear();
+		client.model.defaultsGet.mockClear();
+		await user.click(within(card).getByRole("button", { name: zhCN.settings.editProviderKey }));
+		const editor = setup.querySelector('[data-provider-editor="relay"]') as HTMLElement;
+		await user.type(within(editor).getByLabelText(zhCN.settings.apiKeyLabel), "replacement-secret");
+		await user.click(within(editor).getByRole("button", { name: zhCN.settings.saveKey }));
+		await waitFor(() => expect(client.provider.setApiKey).toHaveBeenCalledWith({ providerId: "relay", apiKey: "replacement-secret" }));
+		await waitFor(() => expect(client.provider.list).toHaveBeenCalled());
+		expect(client.model.poolGet).toHaveBeenCalled();
+		expect(client.model.defaultsGet).toHaveBeenCalled();
+		client.provider.list.mockClear();
+		client.model.poolGet.mockClear();
+		client.model.defaultsGet.mockClear();
+		await user.click(within(card).getByRole("button", { name: zhCN.settings.editProviderUrl }));
+		const urlEditor = setup.querySelector('[data-provider-editor="relay"]') as HTMLElement;
+		const url = within(urlEditor).getByLabelText(zhCN.settings.customBaseUrl);
+		await user.clear(url);
+		await user.type(url, "https://new.example/v1");
+		await user.click(within(urlEditor).getByRole("button", { name: zhCN.settings.customSave }));
+		expect(client.provider.overrideBaseUrl).toHaveBeenCalledWith({ providerId: "relay", baseUrl: "https://new.example/v1" });
+		await waitFor(() => expect(client.provider.list).toHaveBeenCalled());
+		expect(client.model.poolGet).not.toHaveBeenCalled();
 	});
 
-	it("marks multimodal models and prevents adding an already configured preset twice", async () => {
+	it("reauthenticates OAuth, answers an explicit select prompt, polls, and refreshes providers only after completion", async () => {
 		const { client } = configuredClient();
-		client.model.poolGet = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					models: [
-						{
-							providerId: "opencode-go",
-							modelId: "vision",
-							label: "Vision",
-							supportsImages: true,
-							createdAt: "2026-01-01",
-						},
-					],
-				},
-			}),
-		);
+		client.provider.login = vi.fn(() => Promise.resolve({ ok: true as const, data: { providerId: "oauth", status: "waiting_input" as const, prompt: { type: "select" as const, message: "Choose account", options: [{ id: "personal", label: "Personal" }] } } }));
+		client.provider.loginAnswer = vi.fn(() => Promise.resolve({ ok: true as const, data: { providerId: "oauth", status: "running" as const } }));
+		client.provider.loginStatus = vi.fn(() => Promise.resolve({ ok: true as const, data: { providerId: "oauth", status: "completed" as const } }));
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		expect(
-			within(backstage).getByRole("button", { name: new RegExp(zhCN.settings.visionModel) }),
-		).toHaveTextContent(zhCN.settings.visionModelAuto);
-		await selectKobalteOption(
-			user,
-			within(backstage).getAllByRole("button", { name: new RegExp(zhCN.settings.serviceLabel) })[0]!,
-			"opencode-go",
+		const setup = providerSetup(backstage);
+		const card = within(setup).getByText(OAUTH.name).closest("article")!;
+		client.provider.list.mockClear();
+		client.model.poolGet.mockClear();
+		client.model.defaultsGet.mockClear();
+		await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
+		const editor = setup.querySelector('[data-provider-editor="oauth"]') as HTMLElement;
+		const prompt = within(editor).getByLabelText("Choose account");
+		expect(prompt).toBeVisible();
+		// No account is pre-selected: the submit action must be explicit.
+		expect(within(editor).getByRole("button", { name: zhCN.settings.oauthSubmit })).toBeDisabled();
+		await selectKobalteOption(user, prompt, "Personal");
+		await user.click(within(editor).getByRole("button", { name: zhCN.settings.oauthSubmit }));
+		expect(client.provider.loginAnswer).toHaveBeenCalledWith({ providerId: "oauth", answer: "personal" });
+		await waitFor(() => expect(client.provider.loginStatus).toHaveBeenCalledWith({ providerId: "oauth" }), { timeout: 2000 });
+		await waitFor(() => expect(client.provider.list).toHaveBeenCalledTimes(1), { timeout: 2500 });
+		expect(client.model.poolGet).toHaveBeenCalledTimes(1);
+		expect(client.model.defaultsGet).toHaveBeenCalledTimes(1);
+		expect(within(setup).getByText(OAUTH.name)).toBeVisible();
+		expect(within(card).getAllByText(zhCN.settings.connected).length).toBeGreaterThan(0);
+	});
+
+	it("surfaces device code, verification URL, instructions, and info links from the OAuth session", async () => {
+		const { client } = configuredClient();
+		client.provider.login = vi.fn(() => Promise.resolve({
+			ok: true as const,
+			data: {
+				providerId: "oauth",
+				status: "running" as const,
+				deviceCode: "ABCD-EFGH",
+				verificationUri: "https://github.com/login/device",
+				instructions: "Open the page and enter the code.",
+				message: "Waiting for authorization…",
+				infoLinks: [{ url: "https://docs.example/oauth-help", label: "OAuth help" }],
+			},
+		}));
+		client.provider.loginStatus = vi.fn(() => Promise.resolve({ ok: true as const, data: { providerId: "oauth", status: "running" as const } }));
+		client.provider.loginCancel = vi.fn(() => Promise.resolve({ ok: true as const, data: null }));
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		const setup = providerSetup(backstage);
+		const card = within(setup).getByText(OAUTH.name).closest("article")!;
+		client.provider.list.mockClear();
+		client.model.poolGet.mockClear();
+		client.model.defaultsGet.mockClear();
+		await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
+		const editor = setup.querySelector('[data-provider-editor="oauth"]') as HTMLElement;
+		expect(within(editor).getByText("ABCD-EFGH")).toBeVisible();
+		expect(within(editor).getByRole("link", { name: zhCN.settings.oauthOpen })).toHaveAttribute("href", "https://github.com/login/device");
+		expect(within(editor).getByText("Open the page and enter the code.")).toBeVisible();
+		expect(within(editor).getByText("Waiting for authorization…")).toBeVisible();
+		expect(within(editor).getByRole("link", { name: "OAuth help" })).toHaveAttribute("href", "https://docs.example/oauth-help");
+		// A running flow must not refresh provider queries.
+		expect(client.provider.list).not.toHaveBeenCalled();
+		expect(client.model.poolGet).not.toHaveBeenCalled();
+		// Explicit cancellation stops the flow and clears the surface.
+		await user.click(within(editor).getByRole("button", { name: zhCN.settings.oauthCancel }));
+		expect(client.provider.loginCancel).toHaveBeenCalledWith({ providerId: "oauth" });
+		await waitFor(() => expect(within(editor).queryByText("ABCD-EFGH")).not.toBeInTheDocument());
+		expect(client.provider.list).not.toHaveBeenCalled();
+	});
+
+	it("reports failed OAuth sessions without refreshing provider queries", async () => {
+		const { client } = configuredClient();
+		client.provider.login = vi.fn(() => Promise.resolve({ ok: true as const, data: { providerId: "oauth", status: "running" as const } }));
+		client.provider.loginStatus = vi.fn(() => Promise.resolve({ ok: true as const, data: { providerId: "oauth", status: "failed" as const, message: "token exchange failed: invalid_grant" } }));
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		const setup = providerSetup(backstage);
+		const card = within(setup).getByText(OAUTH.name).closest("article")!;
+		client.provider.list.mockClear();
+		client.model.poolGet.mockClear();
+		client.model.defaultsGet.mockClear();
+		await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
+		await waitFor(() => expect(within(setup).getByText("token exchange failed: invalid_grant")).toBeVisible(), { timeout: 2000 });
+		expect(client.provider.list).not.toHaveBeenCalled();
+		expect(client.model.poolGet).not.toHaveBeenCalled();
+		expect(client.model.defaultsGet).not.toHaveBeenCalled();
+	});
+
+	it("removes an added provider and drops its card after the Host deletion", async () => {
+		const { client } = configuredClient();
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		const setup = providerSetup(backstage);
+		const card = within(setup).getByText(PROVIDER.name).closest("article")!;
+		client.provider.list.mockClear();
+		client.model.poolGet.mockClear();
+		client.model.defaultsGet.mockClear();
+		await user.click(within(card).getByRole("button", { name: zhCN.settings.deleteProvider }));
+		expect(client.provider.remove).toHaveBeenCalledWith({ providerId: "relay" });
+		await waitFor(() => expect(client.provider.list).toHaveBeenCalled());
+		expect(client.model.poolGet).toHaveBeenCalled();
+		expect(client.model.defaultsGet).toHaveBeenCalled();
+		await waitFor(() => expect(within(setup).queryByText(PROVIDER.name)).not.toBeInTheDocument());
+	});
+
+	it("adds custom Pi configuration and a custom provider through their explicit forms", async () => {
+		const { client } = configuredClient();
+		client.provider.importPiConfig = vi.fn(() => Promise.resolve({ ok: true as const, data: { models: [{ providerId: "pi-local", modelId: "local", label: "Local", supportsImages: false, createdAt: "2026-01-01" }] } }));
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		const setup = providerSetup(backstage);
+		const pi = within(setup).getAllByText(zhCN.settings.piConfigLabel)[0]!.closest("details")!;
+		await user.click(pi.querySelector("summary")!);
+		// Empty drafts are intentionally ignored; submit an actual Pi document.
+		fireEvent.input(within(pi).getByLabelText(zhCN.settings.piConfigLabel), { target: { value: '{"providers":{"pi-local":{"models":[{"id":"local"}]}}}' } });
+		await user.click(within(pi).getByRole("button", { name: zhCN.settings.piConfigImport }));
+		expect(client.provider.importPiConfig).toHaveBeenCalledWith({ configJson: '{"providers":{"pi-local":{"models":[{"id":"local"}]}}}' });
+		const custom = within(setup).getAllByText(zhCN.settings.customProvider).at(-1)!.closest("details")!;
+		await user.type(within(custom).getByLabelText(zhCN.settings.customProviderId), "custom-relay");
+		await user.type(within(custom).getByLabelText(zhCN.settings.customServiceName), "Custom Relay");
+		await user.type(within(custom).getByLabelText(zhCN.settings.customBaseUrl), "https://custom.example/v1");
+		await user.type(within(custom).getByLabelText(zhCN.settings.customModels), "custom-model");
+		await user.type(within(custom).getByLabelText(zhCN.settings.apiKeyLabel), "custom-secret");
+		await user.click(within(custom).getByRole("button", { name: zhCN.settings.addProvider }));
+		expect(client.provider.customUpsert).toHaveBeenCalledWith({ providerId: "custom-relay", name: "Custom Relay", baseUrl: "https://custom.example/v1", models: [{ id: "custom-model" }], apiKey: "custom-secret" });
+	});
+});
+
+describe("shared model selector contract", () => {
+	it.each([
+		["model id", "vision-id"],
+		["model name", "Vision Name"],
+		["provider", "Provider Two"],
+	])("searches a small catalog by %s and labels model with provider", async (_kind, query) => {
+		const user = userEvent.setup();
+		const models = [
+			{ providerId: "provider-one", providerName: "Provider One", modelId: "text-id", label: "Text Name", supportsImages: false, createdAt: "2026-01-01" },
+			{ providerId: "provider-two", providerName: "Provider Two", modelId: "vision-id", label: "Vision Name", supportsImages: true, createdAt: "2026-01-01" },
+		];
+		const view = render(() => <ModelSelector models={models} value={null} class="field" label="Test models" onModelChange={() => undefined} />);
+		await user.click(screen.getByLabelText("Test models"));
+		const input = screen.getByPlaceholderText(zhCN.settings.searchModels);
+		await user.type(input, query);
+		expect(input).toHaveValue(query);
+		expect(screen.getByRole("button", { name: /Test models/ })).toHaveAttribute(
+			"aria-expanded",
+			"true",
 		);
-		await selectKobalteOption(user, selectTrigger(backstage, zhCN.settings.modelLabel), "vision");
-		expect(
-			within(backstage).getByRole("button", { name: zhCN.settings.modelAvailable }),
-		).toBeDisabled();
+		await waitFor(() => expect(screen.getByText("Vision Name (Provider Two)")).toBeVisible());
+		expect(screen.getByText("Text Name (Provider One)")).not.toBeVisible();
+		view.unmount();
 	});
 });

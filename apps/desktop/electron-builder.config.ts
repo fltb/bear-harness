@@ -31,6 +31,30 @@ if (!existsSync(attributionPath)) {
 // Icon paths in the shared product config are repo-root-relative.
 const icon = productConfig.icon ? resolve(repoRoot, productConfig.icon) : undefined;
 
+// node-llama-cpp publishes platform-specific bindings for every target. npm workspaces
+// can have several of them installed at once, so each release excludes foreign
+// platforms and architectures. The CUDA "ext" packages are a large optional
+// compatibility extension; standard CUDA remains bundled for this first phase.
+const nativeBindingExcludes = {
+	mac: [
+		"!node_modules/@node-llama-cpp/linux-*/**/*",
+		"!node_modules/@node-llama-cpp/win-*/**/*",
+	],
+	win: [
+		"!node_modules/@node-llama-cpp/linux-*/**/*",
+		"!node_modules/@node-llama-cpp/mac-*/**/*",
+		"!node_modules/@node-llama-cpp/win-arm64/**/*",
+		"!node_modules/@node-llama-cpp/win-x64-cuda-ext/**/*",
+	],
+	linux: [
+		"!node_modules/@node-llama-cpp/mac-*/**/*",
+		"!node_modules/@node-llama-cpp/win-*/**/*",
+		"!node_modules/@node-llama-cpp/linux-arm64/**/*",
+		"!node_modules/@node-llama-cpp/linux-armv7l/**/*",
+		"!node_modules/@node-llama-cpp/linux-x64-cuda-ext/**/*",
+	],
+};
+
 const config: Configuration = {
 	appId: productConfig.appId,
 	productName: productConfig.productName,
@@ -41,7 +65,16 @@ const config: Configuration = {
 		output: "release",
 	},
 	asar: true,
-	asarUnpack: ["node_modules/@napi-rs/canvas*/**/*"],
+	// Native modules and dependent shared libraries cannot be loaded from ASAR.
+	// node-llama-cpp's package chooses the best shipped binding at runtime:
+	// Metal on Apple Silicon, CUDA/Vulkan where available, then CPU.
+	asarUnpack: [
+		"node_modules/@napi-rs/canvas*/**/*",
+		"node_modules/node-llama-cpp/**/*",
+		"node_modules/@node-llama-cpp/**/*",
+		"node_modules/sqlite-vec*/**/*",
+		"node_modules/@node-rs/jieba*/**/*",
+	],
 	files: ["dist/**", "!dist/.runtime-build/**"],
 	// Desktop identity: package.json metadata's desktopName is overridden to
 	// appId so Linux desktop integration matches the configured app id.
@@ -57,6 +90,7 @@ const config: Configuration = {
 	mac: {
 		identity: null,
 		icon,
+		files: nativeBindingExcludes.mac,
 	},
 	linux: {
 		category: "Utility",
@@ -68,9 +102,11 @@ const config: Configuration = {
 			},
 		},
 		icon,
+		files: nativeBindingExcludes.linux,
 	},
 	win: {
 		icon,
+		files: nativeBindingExcludes.win,
 	},
 };
 

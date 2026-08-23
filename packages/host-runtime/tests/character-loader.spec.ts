@@ -372,7 +372,7 @@ describe("character package work presentation", () => {
 
 			const loader = new CharacterLoader(configRoot);
 			expect(() => loader.load("jizhou")).toThrow(
-				/character package jizhou: work presentation labels are invalid/,
+				/character package jizhou: (work presentation labels|character card) is invalid/,
 			);
 		}
 	});

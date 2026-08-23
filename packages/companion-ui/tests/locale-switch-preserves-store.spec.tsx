@@ -20,6 +20,25 @@ const COMPLETE_ONBOARDING = {
  */
 function loadedClient() {
 	const fixture = createTestClient();
+	const activeProjection = {
+		activeConversationId: "conversation-1",
+		id: "conversation-1",
+		title: "Locale switch",
+		sceneTitle: "Scene",
+		piTimeline: {
+			activeLeafId: "assistant-1",
+			entries: [
+				{
+					id: "assistant-1",
+					parentId: null,
+					timestamp: "2026-01-01T00:00:01.000Z",
+					kind: "message" as const,
+					role: "assistant" as const,
+					text: "必须保留的记忆测试消息",
+				},
+			],
+		},
+	};
 	fixture.client.snapshot.get = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
@@ -32,7 +51,7 @@ function loadedClient() {
 					route: null,
 				},
 				conversation: {
-					activeConversationId: "conversation-1",
+					...activeProjection,
 					conversations: [
 						{
 							id: "conversation-1",
@@ -42,21 +61,14 @@ function loadedClient() {
 							updatedAt: "2026-01-01T00:00:00.000Z",
 						},
 					],
-					piTimeline: {
-						activeLeafId: "assistant-1",
-						entries: [
-							{
-								id: "assistant-1",
-								parentId: null,
-								timestamp: "2026-01-01T00:00:01.000Z",
-								kind: "message" as const,
-								role: "assistant" as const,
-								text: "必须保留的记忆测试消息",
-							},
-						],
-					},
 				},
 			},
+		}),
+	);
+	fixture.client.conversation.activeGet = vi.fn(() =>
+		Promise.resolve({
+			ok: true as const,
+			data: { conversation: activeProjection },
 		}),
 	);
 	return fixture.client;

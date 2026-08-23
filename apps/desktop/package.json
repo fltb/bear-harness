@@ -26,6 +26,7 @@
 		"@bear-harness/companion-ui": "file:../../packages/companion-ui",
 		"@bear-harness/host-runtime": "file:../../packages/host-runtime",
 		"@bear-harness/i18n": "file:../../packages/i18n",
+		"node-llama-cpp": "3.16.2",
 		"@bear-harness/product-config": "file:../../packages/product-config",
 		"@bear-harness/protocol": "file:../../packages/protocol"
 	},

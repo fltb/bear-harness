@@ -19,7 +19,7 @@ import type { Artifact } from "./ipc.js";
  */
 export interface ResultSelection {
 	conversationId: string;
-	triggerMessageId: string;
+	triggerEntryId: string;
 	commissionId: string;
 	runId: string;
 	artifactId: string;
@@ -28,7 +28,7 @@ export interface ResultSelection {
 /** Detail payload of the `RESULT_LOCATE_EVENT` the timeline listens for. */
 export interface ResultLocateDetail {
 	conversationId: string;
-	messageId: string;
+	entryId: string;
 }
 
 /** DOM event dispatched by `locate()`; the timeline scrolls/focuses the message. */
@@ -171,7 +171,7 @@ export function createResultSpaceStore(store: CompanionStore): ResultSpaceApi {
 		const current = selection();
 		if (current === undefined) return "";
 		const entry = store.activePiTimeline?.entries.find(
-			(candidate) => candidate.id === current.triggerMessageId,
+			(candidate) => candidate.id === current.triggerEntryId,
 		);
 		return entry?.kind === "message" && entry.role !== "tool"
 			? summarize(entry.text ?? "")
@@ -220,7 +220,7 @@ export function createResultSpaceStore(store: CompanionStore): ResultSpaceApi {
 			new CustomEvent<ResultLocateDetail>(RESULT_LOCATE_EVENT, {
 				detail: {
 					conversationId: current.conversationId,
-					messageId: current.triggerMessageId,
+					entryId: current.triggerEntryId,
 				},
 			}),
 		);

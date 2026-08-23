@@ -15,8 +15,8 @@ import { WorkTimelineItem } from "./WorkPanel.js";
 
 function PiTimelineEntryView(props: {
 	entry: PiTimelineEntry;
-	character: CharacterDisplay | undefined;
 }) {
+	const store = useCompanionStore();
 	const entry = props.entry;
 	if (entry.kind !== "message") {
 		return <div class="pi-context-separator" data-pi-entry-id={entry.id} aria-hidden="true" />;
@@ -37,7 +37,7 @@ function PiTimelineEntryView(props: {
 		);
 	}
 	const isUser = entry.role === "user";
-	const characterName = props.character?.name ?? "";
+	const characterName = store.character?.name ?? "";
 	const toolCalls = entry.role === "assistant" ? entry.toolCalls : undefined;
 	return (
 		<>
@@ -63,28 +63,75 @@ function PiTimelineEntryView(props: {
 					</ul>
 				</Show>
 			</article>
-			<WorkTimelineItem messageId={entry.id} character={props.character} />
+			<WorkTimelineItem messageId={entry.id} />
 		</>
 	);
 }
 
 function PiTimelineRenderer(props: {
 	entries: readonly PiTimelineEntry[];
-	character: CharacterDisplay | undefined;
 }) {
 	return (
 		<For each={props.entries}>
-			{(entry) => <PiTimelineEntryView entry={entry} character={props.character} />}
+			{(entry) => <PiTimelineEntryView entry={entry} />}
 		</For>
 	);
 }
 
 
-export function ConversationPanel(props: { character: CharacterDisplay | undefined }) {
+/**
+ * Partial assistant content from the Pi live state. Rendered until the
+ * assistant `message_end` persists a native timeline entry, at which point the
+ * projection naturally switches to the durable timeline (plan §5.2: no local
+ * dedupe, text merge, or snapshot patch). A final `error`/`aborted` message is
+ * kept visible with its Pi-provided error text.
+ */
+function PiLiveAssistantMessageView() {
+	const store = useCompanionStore();
+	const [t] = useTranslation(undefined, { i18n });
+	const characterName = store.character?.name ?? "";
+	return (
+		<Show when={store.activePiLiveState?.streamingMessage}>
+			{(live) => {
+				const message = live();
+				if (message === undefined) return null;
+				const stopReason = message.stopReason;
+				const failed = stopReason === "error" || stopReason === "aborted";
+				const errorText = message.errorMessage;
+				return (
+					<article
+						class={`msg bear-msg streaming-message${failed ? " stream-failed" : ""}`}
+						aria-label={characterName}
+					>
+						<div class="msg-meta">{characterName}</div>
+						<Show when={message.text !== undefined && message.text.length > 0}>
+							<p>{message.text}</p>
+						</Show>
+						<Show when={store.activePiLiveState?.isStreaming === true}>
+							<span
+								class="streaming-status"
+								role="status"
+								aria-label={t("messages.responding")}
+							/>
+						</Show>
+						<Show when={failed && errorText !== undefined && errorText.length > 0}>
+							<span class="stream-error" role="alert">
+								{errorText}
+							</span>
+						</Show>
+					</article>
+				);
+			}}
+		</Show>
+	);
+}
+
+
+export function ConversationPanel() {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
-	const view = useConversationViewWorkflow(store, () => props.character);
-	const { sceneTitle, streamedContent, hasThreadContent } = view;
+	const view = useConversationViewWorkflow(store);
+	const { sceneTitle, hasThreadContent } = view;
 	let threadRef: HTMLElement | undefined;
 
 	createEffect(() => {
@@ -100,7 +147,7 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 		const onLocate = (event: Event) => {
 			const detail = (event as CustomEvent<ResultLocateDetail>).detail;
 			if (!detail || detail.conversationId !== store.activeConversationId) return;
-			const target = document.querySelector<HTMLElement>(`[data-pi-entry-id="${detail.messageId}"]`);
+			const target = document.querySelector<HTMLElement>(`[data-pi-entry-id="${detail.entryId}"]`);
 			if (!target) return;
 			target.scrollIntoView?.({ block: "center" });
 			const message = target.closest(".msg") as HTMLElement | null;
@@ -136,46 +183,22 @@ export function ConversationPanel(props: { character: CharacterDisplay | undefin
 						{(timeline) => (
 							<PiTimelineRenderer
 								entries={timeline().entries}
-								character={props.character}
 							/>
 						)}
 					</Show>
-					<Show when={store.pendingUserText}>
-						{(text) => (
-							<article class="msg user optimistic-message" aria-label={t("messages.userMeta")}>
-								<div class="msg-meta">{t("messages.userMeta")}</div>
-								<p>{text()}</p>
-							</article>
-						)}
-					</Show>
-					<Show when={streamedContent().length > 0 || store.assistantStreaming}>
-						<article
-							class="msg bear-msg streaming-message"
-							aria-label={props.character?.name ?? ""}
-						>
-							<div class="msg-meta">{props.character?.name ?? ""}</div>
-							<p>{streamedContent()}</p>
-							<Show when={store.assistantStreaming}>
-								<span
-									class="streaming-status"
-									role="status"
-									aria-label={t("messages.responding")}
-								/>
-							</Show>
-						</article>
-					</Show>
+					<PiLiveAssistantMessageView />
 				</Show>
-				<RoleplayChoices character={props.character} />
-				<RoleplayInlineMedia character={props.character} />
+				<RoleplayChoices />
+				<RoleplayInlineMedia />
 			</section>
-			<RoleplayMediaOverlays character={props.character} />
+			<RoleplayMediaOverlays />
 		</>
 	);
 }
 
-function RoleplayChoices(props: { character: CharacterDisplay | undefined }) {
+function RoleplayChoices() {
 	const store = useCompanionStore();
-	const view = useConversationViewWorkflow(store, () => props.character);
+	const view = useConversationViewWorkflow(store);
 	const choiceSet = view.roleplayChoiceSet;
 	return (
 		<Show when={choiceSet()}>
@@ -204,10 +227,10 @@ function RoleplayChoices(props: { character: CharacterDisplay | undefined }) {
 	);
 }
 
-function RoleplayInlineMedia(props: { character: CharacterDisplay | undefined }) {
+function RoleplayInlineMedia() {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
-	const media = useConversationViewWorkflow(store, () => props.character).roleplayInlineMedia;
+	const media = useConversationViewWorkflow(store).roleplayInlineMedia;
 	return (
 		<Show when={media()}>
 			{(item) => (
@@ -230,10 +253,10 @@ function RoleplayInlineMedia(props: { character: CharacterDisplay | undefined })
 	);
 }
 
-function RoleplayMediaOverlays(props: { character: CharacterDisplay | undefined }) {
+function RoleplayMediaOverlays() {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
-	const view = useConversationViewWorkflow(store, () => props.character);
+	const view = useConversationViewWorkflow(store);
 	const media = view.roleplayOverlayMedia;
 	const ambientMedia = view.roleplayAmbientMedia;
 	return (
