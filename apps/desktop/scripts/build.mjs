@@ -30,6 +30,7 @@ rmSync(resolve(desktop, "dist"), { recursive: true, force: true });
 // Release staging starts with a validated, deterministic attribution file.
 // Every later build step preserves this resource for electron-builder.
 run("node", ["scripts/validate-product-config.mjs"]);
+run("node", ["scripts/stage-character-seeds.mjs"]);
 for (const workspace of [
 	"@bear-harness/product-config",
 	"@bear-harness/protocol",

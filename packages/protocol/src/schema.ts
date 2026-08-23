@@ -666,6 +666,15 @@ const CharacterRoleplayMedia = z.discriminatedUnion("kind", [
 ]);
 
 
+export const CharacterPrompt = z.strictObject({
+	description: z.string().max(65_536),
+	personality: z.string().max(65_536),
+	scenario: z.string().max(65_536),
+	system_prompt: z.string().max(65_536),
+	mes_example: z.string().max(65_536),
+});
+export type CharacterPrompt = z.infer<typeof CharacterPrompt>;
+
 export const CharacterDisplay = z
 	.strictObject({
 		id: z.string().min(1).max(64),
@@ -683,6 +692,7 @@ export const CharacterDisplay = z
 			work_presentation: CharacterWorkPresentation.optional(),
 			first_meeting: CharacterOnboardingFlow,
 		}),
+		prompt: CharacterPrompt,
 		theme: CharacterTheme,
 		scenes: z
 			.array(
@@ -848,6 +858,24 @@ export const CharacterResponse = z.strictObject({
 export const CharacterActivateRequest = z.strictObject({
 	characterId: z.string().min(1).max(64),
 });
+export const CharacterPackageGetRequest = z.strictObject({
+	characterId: z.string().min(1).max(64),
+});
+export const CharacterPackageUpdateRequest = z.strictObject({
+	characterId: z.string().min(1).max(64),
+	yaml: z.string().max(1_048_576),
+	expectedSha256: z.string().regex(/^[0-9a-f]{64}$/),
+});
+export const CharacterPackageDocument = z.strictObject({
+	characterId: z.string().min(1).max(64),
+	origin: z.enum(["official", "local", "imported"]),
+	writable: z.boolean(),
+	yaml: z.string().max(1_048_576),
+	sha256: z.string().regex(/^[0-9a-f]{64}$/),
+	character: CharacterDisplay,
+});
+export const CharacterPackageResponse = z.strictObject({ package: CharacterPackageDocument });
+
 export const CharacterImportRequest = z.strictObject({
 	files: z
 		.array(
@@ -1998,6 +2026,16 @@ export const RPC = {
 		get: endpoint("character.get:v1", CharacterGetRequest, CharacterResponse),
 		list: endpoint("character.list:v1", CharacterListRequest, CharacterListResponse),
 		activate: endpoint("character.activate:v1", CharacterActivateRequest, CharacterResponse),
+		packageGet: endpoint(
+			"character.packageGet:v1",
+			CharacterPackageGetRequest,
+			CharacterPackageResponse,
+		),
+		packageUpdate: endpoint(
+			"character.packageUpdate:v1",
+			CharacterPackageUpdateRequest,
+			CharacterPackageResponse,
+		),
 		import: endpoint("character.import:v1", CharacterImportRequest, CharacterResponse),
 		pluginTrustGet: endpoint(
 			"character.pluginTrustGet:v1",

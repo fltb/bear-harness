@@ -143,7 +143,7 @@ function rpcDiagnosticChannel(pathname: string): string {
 
 const runtime = createHostRuntime({
 	dataDir,
-	characterRoot: resolve(repoRoot, "config/characters"),
+	characterSeedRoot: resolve(repoRoot, "config/characters"),
 	productConfig,
 	credentialVault: createWebCredentialVault(dataDir),
 	protocolViolationMode: "throw",

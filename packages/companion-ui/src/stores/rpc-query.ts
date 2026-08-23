@@ -25,6 +25,7 @@ export const queryKeys = {
 	commissions: ["commissions"] as const,
 	artifacts: ["artifacts"] as const,
 	characters: ["characters"] as const,
+	characterPackage: (characterId: string) => ["character", "package", characterId] as const,
 	canonSources: ["canon", "sources"] as const,
 	canonModules: ["canon", "modules"] as const,
 	onboarding: ["onboarding"] as const,

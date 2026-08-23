@@ -62,6 +62,7 @@ import {
 	type CharacterListData,
 	type CharacterRuntimeState,
 	type CharacterSummary,
+	type CharacterPackageDocument,
 	type Commission,
 	type CommissionDraftParams,
 	type CommissionDraftResult,
@@ -318,6 +319,12 @@ export interface CharacterApi {
 	}>;
 
 	confirmPluginTrust(characterId: string): Promise<void>;
+	packageGet(characterId: string): Promise<CharacterPackageDocument>;
+	packageUpdate(
+		characterId: string,
+		yaml: string,
+		expectedSha256: string,
+	): Promise<CharacterPackageDocument>;
 	draftCreate(params?: { basePackageId?: string; locale?: string }): Promise<CharacterDraft>;
 	draftGet(id: string): Promise<CharacterDraft>;
 	draftPatch(
@@ -1792,6 +1799,18 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				client.character.pluginTrustGet({ characterId }),
 			);
 			return trust;
+		},
+		packageGet: async (characterId) => {
+			const { package: document } = await invoke(client, () =>
+				client.character.packageGet({ characterId }),
+			);
+			return document;
+		},
+		packageUpdate: async (characterId, yaml, expectedSha256) => {
+			const { package: document } = await invoke(client, () =>
+				client.character.packageUpdate({ characterId, yaml, expectedSha256 }),
+			);
+			return document;
 		},
 		confirmPluginTrust: async (characterId) => {
 			await invoke(client, () => client.character.pluginTrustConfirm({ characterId }));

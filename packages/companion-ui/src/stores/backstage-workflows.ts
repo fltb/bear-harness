@@ -177,6 +177,12 @@ export interface BackstageWorkflowStore {
 	memoryCandidatesLoading: Accessor<boolean>;
 	memoryCandidatesError: Accessor<string | null>;
 	memoryCandidate(candidate: Accessor<MemoryCandidate>): MemoryCandidateSelectors;
+	selectedPackageId: Accessor<string | undefined>;
+	selectedPackage: Accessor<import("./ipc.js").CharacterPackageDocument | undefined>;
+	selectedPackageLoading: Accessor<boolean>;
+	selectedPackageError: Accessor<string | undefined>;
+	selectPackage(id: string, confirmDiscard: () => boolean): void;
+	savePackage(yaml: string): Promise<import("./ipc.js").CharacterPackageDocument>;
 }
 
 const WORKFLOW_STORES = new WeakMap<CompanionStore, BackstageWorkflowStore>();
@@ -204,6 +210,26 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 			setTrustById((current) => ({ ...current, [id]: trust }));
 		} finally {
 			setTrustLoadingById((current) => ({ ...current, [id]: false }));
+		}
+	};
+	const [selectedPackageId, setSelectedPackageId] = createSignal<string>();
+	const [selectedPackage, setSelectedPackage] = createSignal<import("./ipc.js").CharacterPackageDocument>();
+	const [selectedPackageLoading, setSelectedPackageLoading] = createSignal(false);
+	const [selectedPackageError, setSelectedPackageError] = createSignal<string>();
+	let packageRequest = 0;
+	const loadPackage = async (id: string): Promise<void> => {
+		const request = ++packageRequest;
+		setSelectedPackageLoading(true);
+		setSelectedPackageError(undefined);
+		try {
+			const value = await companion.characters.packageGet(id);
+			if (request !== packageRequest) return;
+			setSelectedPackageId(id);
+			setSelectedPackage(value);
+		} catch (error) {
+			if (request === packageRequest) setSelectedPackageError(messageOf(error));
+		} finally {
+			if (request === packageRequest) setSelectedPackageLoading(false);
 		}
 	};
 
@@ -621,6 +647,20 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 			if (!api?.activate) return;
 			setRoleBusyId(id);
 			void Promise.resolve().then(() => api.activate(id)).finally(() => setRoleBusyId(undefined));
+		},
+		selectedPackageId,
+		selectedPackage,
+		selectedPackageLoading,
+		selectedPackageError,
+		selectPackage: (id, confirmDiscard) => {
+			if (id !== selectedPackageId() && confirmDiscard()) void loadPackage(id);
+		},
+		savePackage: async (yaml) => {
+			const current = selectedPackage();
+			if (!current) throw new Error("character_package_not_loaded");
+			const next = await companion.characters.packageUpdate(current.characterId, yaml, current.sha256);
+			setSelectedPackage(next);
+			return next;
 		},
 		canon: createCanonSelectors,
 		relationshipEnabled, historyReadEnabled, settingsAvailable, relationshipSaving, relationshipFeedback, relationshipError,

@@ -10,9 +10,8 @@ import {
 	useCompanionStore,
 } from "../stores/companion.js";
 import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
-import { CanonStudio } from "./CanonStudio.js";
-import { CharacterPackageWorkshop } from "./CharacterPackageWorkshop.js";
 import { MemoryEntryList, MemorySheet } from "./MemorySheet.js";
+import { CurrentRolePackageManager } from "./CurrentRolePackageManager.js";
 import { SettingsSheet } from "./SettingsSheet.js";
 
 /**
@@ -48,15 +47,10 @@ export function Backstage(props: {
 								<Tabs.Trigger value="relationship" class="tab">{t("backstage.relationshipArchive")}</Tabs.Trigger>
 								<Tabs.Trigger value="roles" class="tab">{t("backstage.roleManagement")}</Tabs.Trigger>
 								<Tabs.Trigger value="memory" class="tab">{t("backstage.memory")}</Tabs.Trigger>
-								<Tabs.Trigger value="studio" class="tab">{t("backstage.packageWorkshop")}</Tabs.Trigger>
 							</Tabs.List>
 							<Tabs.Content value="relationship" class="tab-panel"><Show when={workflow.selectedTab() === "relationship"}><RelationshipArchive /></Show></Tabs.Content>
 							<Tabs.Content value="roles" class="tab-panel"><Show when={workflow.selectedTab() === "roles"}><RoleManager /></Show></Tabs.Content>
 							<Tabs.Content value="memory" class="tab-panel"><Show when={workflow.selectedTab() === "memory"}><MemorySheet /></Show></Tabs.Content>
-							<Tabs.Content value="studio" class="tab-panel"><Show when={workflow.selectedTab() === "studio"}>
-								<CharacterPackageWorkshop />
-								{/* <CanonStudio /> */}
-							</Show></Tabs.Content>
 						</Tabs>
 					</Show>
 				</Dialog.Content>
@@ -79,6 +73,7 @@ function RoleManager() {
 				<Show when={workflow.roleFeedback()}><p role="status" class="status-line">{workflow.roleFeedback()}</p></Show>
 			</div>
 			<For each={workflow.characters()}>{(character) => <RoleRow character={character} />}</For>
+			<CurrentRolePackageManager characters={workflow.characters} packageGet={useCompanionStore().characters.packageGet} packageUpdate={useCompanionStore().characters.packageUpdate} pluginTrust={useCompanionStore().characters.pluginTrust} />
 		</div>
 	);
 }

@@ -440,6 +440,78 @@ button[data-variant="primary"]:focus-visible {
 	font-size: 12px;
 }
 
+.current-role-package-manager,
+.current-role-package-form {
+	display: grid;
+	gap: 14px;
+}
+
+.current-role-package-selector,
+.current-role-package-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: center;
+}
+
+.current-role-package-choice[data-selected] {
+	border-color: var(--accent);
+	background: var(--surface-success);
+}
+
+.current-role-package-summary {
+	display: flex;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--surface-subtle);
+}
+
+.current-role-package-summary strong,
+.current-role-package-summary span {
+	display: block;
+}
+
+.current-role-package-summary span,
+.current-role-package-summary dt {
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
+.current-role-package-summary dl {
+	display: grid;
+	grid-template-columns: auto auto;
+	gap: 4px 10px;
+	margin: 0;
+	font-size: 12px;
+}
+
+.current-role-package-summary dd {
+	margin: 0;
+}
+
+.current-role-package-form textarea {
+	width: 100%;
+	resize: vertical;
+}
+
+.current-role-package-actions {
+	position: sticky;
+	bottom: 0;
+	padding: 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--surface);
+}
+
+.current-role-package-actions span {
+	margin-right: auto;
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
 .plugin-trust-overlay {
 	position: fixed;
 	inset: 0;

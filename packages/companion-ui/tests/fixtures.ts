@@ -51,6 +51,13 @@ export const THEMED_CHARACTER: CharacterDisplay = {
 			completion: { conversation_title: "Test conversation" },
 		},
 	},
+	prompt: {
+		description: "Test description",
+		personality: "Test personality",
+		scenario: "Test scenario",
+		system_prompt: "Test system prompt",
+		mes_example: "",
+	},
 	scenes: [{ id: "default", label: "Default", description: "Default scene" }],
 	visual: {
 		defaultSceneId: "default",

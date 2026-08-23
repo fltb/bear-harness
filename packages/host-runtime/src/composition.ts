@@ -202,6 +202,29 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		await s.supervisor.start();
 		return { character: s.characterLoader.display(character) };
 	});
+	dispatcher.registerHandler(RPC.character.packageGet, async (_p) => {
+		const { characterId } = _p as { characterId: string };
+		return { package: s.characterLoader.readPackageDocument(characterId) };
+	});
+	dispatcher.registerHandler(RPC.character.packageUpdate, async (_p) => {
+		const params = _p as { characterId: string; yaml: string; expectedSha256: string };
+		let updated;
+		try {
+			updated = s.characterLoader.writePackageDocument(params);
+		} catch (error) {
+			if (error && typeof error === "object" && "kind" in error) throw error;
+			throw { kind: "invalid_request", reason: "character_package_invalid" };
+		}
+		const character = updated.character;
+		s.characterLoader.seed(s.orm, s.eventBus, character, "local");
+		s.canon.syncPackage(character.id, character.canon);
+		if ((await getCompanionId(s)) === character.id) {
+			await s.supervisor.stop();
+			configureCharacterRuntime(s, character);
+			await s.supervisor.start();
+		}
+		return { package: s.characterLoader.readPackageDocument(character.id) };
+	});
 	dispatcher.registerHandler(RPC.character.import, async (_p) => {
 		const { files } = _p as { files: Array<{ path: string; base64: string }> };
 		let character: ReturnType<CharacterLoader["install"]>;

@@ -48,7 +48,7 @@ describe("character package import", () => {
 		).toString("base64");
 		const runtime = createHostRuntime({
 			dataDir,
-			characterRoot,
+			characterSeedRoot: characterRoot,
 			productConfig,
 			credentialVault: vault,
 		});
@@ -86,7 +86,7 @@ describe("character package import", () => {
 
 		const restarted = createHostRuntime({
 			dataDir,
-			characterRoot,
+			characterSeedRoot: characterRoot,
 			productConfig,
 			credentialVault: vault,
 		});
@@ -121,7 +121,7 @@ describe("character package import", () => {
 		).toString("base64");
 		const runtime = createHostRuntime({
 			dataDir,
-			characterRoot,
+			characterSeedRoot: characterRoot,
 			productConfig,
 			credentialVault: vault,
 		});
@@ -129,7 +129,7 @@ describe("character package import", () => {
 		await expect(runtime.dispatch("character.pluginTrustGet:v1", {})).resolves.toMatchObject({
 			ok: true,
 			data: {
-				trust: { characterId: "jizhou", origin: "official", pluginsPresent: true, trusted: true },
+				trust: { characterId: "jizhou", origin: "local", pluginsPresent: true, trusted: false },
 			},
 		});
 		await expect(runtime.dispatch("character.import:v1", { files })).resolves.toMatchObject({
@@ -161,7 +161,7 @@ describe("character package import", () => {
 		roots.push(dataDir);
 		const runtime = createHostRuntime({
 			dataDir,
-			characterRoot,
+			characterSeedRoot: characterRoot,
 			productConfig,
 			credentialVault: vault,
 		});

@@ -168,13 +168,13 @@ process.on("uncaughtException", () => {
 	requestShutdown(1);
 });
 
-function characterRoot(): string {
+function characterSeedRoot(): string {
 	const runtime = process as NodeJS.Process & { resourcesPath?: string };
-	const shippedRoot = runtime.resourcesPath
-		? join(runtime.resourcesPath, "config", "characters")
+	const packaged = runtime.resourcesPath
+		? join(runtime.resourcesPath, "character-seeds")
 		: undefined;
-	return shippedRoot && existsSync(shippedRoot)
-		? shippedRoot
+	return packaged && existsSync(packaged)
+		? packaged
 		: resolve(process.cwd(), "../../config/characters");
 }
 
@@ -184,7 +184,7 @@ async function initializeHost(): Promise<boolean> {
 		const updater = updateService;
 		const runtime = createHostRuntime({
 			dataDir: userData,
-			characterRoot: characterRoot(),
+			characterSeedRoot: characterSeedRoot(),
 			productConfig,
 			credentialVault: isSourceE2E ? e2eCredentialVault : electronCredentialVault,
 			protocolViolationMode: app.isPackaged ? "isolate" : "throw",

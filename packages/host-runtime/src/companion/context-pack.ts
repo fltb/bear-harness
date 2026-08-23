@@ -1,19 +1,19 @@
 /**
- * Context Pack compiler — four-layer tagged context blocks.
+ * Context Pack compiler — tagged context blocks.
  *
  * Composes, per turn:
- *   1. Identity Core (short, non-compressible)
+ *   1. Package prompt layers (description, personality, scenario)
  *   2. Self Canon revision (current adopted)
  *   3. Scene State + conversation directive (short-term)
  *   4. Relationship Canon (only when memory enabled, scoped)
  * Plus any Real Context summaries projected by operational services.
  *
- * The four layers are source-tagged and cannot write into each other.
+ * The layers are source-tagged and cannot write into each other.
  * Only adopted versions on active branches are included.
  *
  * Role-package constants, assets, and resources are Host-owned package
  * storage (the package storage bucket). Selected package values may be
- * projected into identity, canon, scene, or roleplay prompt layers, but
+ * projected into prompt, canon, scene, or roleplay prompt layers, but
  * package storage is never relationship memory and never automatic-capture,
  * memory-panel, or long-term-backend input.
  */
@@ -31,7 +31,7 @@ import {
 	sceneState,
 	selfCanonVersions,
 } from "../storage/schema.js";
-import type { CharacterLoader } from "./character-loader.js";
+import type { CharacterLoader, CharacterPackage, CharacterPrompt } from "./character-loader.js";
 import { OnboardingStateDataSchema } from "./onboarding-schema.js";
 import { RoleplayService } from "./roleplay-service.js";
 
@@ -42,14 +42,13 @@ import { RoleplayService } from "./roleplay-service.js";
  */
 export interface ContextPackBlock {
 	layer:
-		| "identity"
+		| "description"
+		| "personality"
+		| "scenario"
 		| "canon"
 		| "scene"
 		| "relationship"
 		| "roleplay"
-		| "content_policy"
-		| "file_safety"
-		| "tool_norms"
 		| "style"
 		| "persona"
 		| "real_context";
@@ -119,20 +118,12 @@ export class ContextPackCompiler {
 	): ContextPack {
 		const blocks: ContextPackBlock[] = [];
 		let relationshipEntryCount = 0;
-
-		// 1. Identity Core — short, always present. This is package content
-		// projected to prompt context, not a relationship-memory record.
-		const identity = this.getIdentityCore(conversationId);
-		blocks.push({ layer: "identity", content: identity });
-
-		// Policy blocks from character package
-		const contentPolicy = this.getContentPolicy(conversationId);
-		if (contentPolicy) blocks.push({ layer: "content_policy", content: contentPolicy });
-		const fileSafety = this.getFileSafety(conversationId);
-		if (fileSafety) blocks.push({ layer: "file_safety", content: fileSafety });
-		const toolNorms = this.getToolNorms(conversationId);
-		if (toolNorms) blocks.push({ layer: "tool_norms", content: toolNorms });
-
+		// Package-authored permanent context layers. Empty layers are intentionally
+		// omitted so authors may remove any layer without a fallback.
+		const prompt = this.getCharacterPrompt(conversationId);
+		if (prompt.description) blocks.push({ layer: "description", content: prompt.description });
+		if (prompt.personality) blocks.push({ layer: "personality", content: prompt.personality });
+		if (prompt.scenario) blocks.push({ layer: "scenario", content: prompt.scenario });
 		// 2. Self Canon revision (current adopted)
 		const canon = this.getSelfCanon(conversationId);
 		if (canon) {
@@ -196,32 +187,32 @@ ${modules.join("\n")}`,
 			}
 		}
 		if (options?.extraBlocks) blocks.push(...options.extraBlocks);
-		// Enforce a deterministic product budget. Stable identity and current state
-		// are retained; lower-priority retrieval and old transcript content lose tail
-		// content first and are marked in the manifest.
+		// Preserve source order while allocating the fixed budget by layer priority.
 		const budget = 16000;
-		let remaining = budget;
-		let truncated = false;
+		const priority = (layer: ContextPackBlock["layer"]): number => {
+			if (
+				layer === "description" ||
+				layer === "personality" ||
+				layer === "scenario" ||
+				layer === "scene" ||
+				layer === "roleplay"
+			)
+				return 0;
+			if (layer === "relationship") return 1;
+			if (layer === "canon") return 2;
+			return 3;
+		};
 		const prioritized = blocks
 			.map((block, index) => ({ block, index }))
-			.sort((a, b) => {
-				const priority = (layer: ContextPackBlock["layer"]) => {
-					if (layer === "identity" || layer === "scene" || layer === "roleplay") return 0;
-					if (layer === "relationship") return 1;
-					if (layer === "canon") return 2;
-					return 3;
-				};
-				return priority(a.block.layer) - priority(b.block.layer) || a.index - b.index;
-			});
+			.sort((a, b) => priority(a.block.layer) - priority(b.block.layer) || a.index - b.index);
 		const allowed = new Map<ContextPackBlock, string>();
+		let remaining = budget;
+		let truncated = false;
 		for (const { block } of prioritized) {
-			const content =
-				block.content.length <= remaining
-					? block.content
-					: block.content.slice(0, Math.max(0, remaining));
+			const content = block.content.slice(0, remaining);
 			if (content.length !== block.content.length) truncated = true;
-			allowed.set(block, content);
-			remaining = Math.max(0, remaining - content.length);
+			if (content) allowed.set(block, content);
+			remaining -= content.length;
 		}
 		const budgetedBlocks = blocks
 			.map((block) => ({
@@ -309,7 +300,7 @@ ${modules.join("\n")}`,
 			.get()?.companionId;
 	}
 
-	private getIdentityCore(conversationId: string): string {
+	private getCharacterPrompt(conversationId: string): CharacterPrompt {
 		const row = this.db
 			.select({ packageId: companionIdentity.packageId })
 			.from(conversations)
@@ -319,10 +310,10 @@ ${modules.join("\n")}`,
 		if (!row) throw new Error(`conversation has no companion identity: ${conversationId}`);
 		const character = this.characterLoader.load(row.packageId);
 		if (!character) throw new Error(`character package missing: ${row.packageId}`);
-		return character.identity_core;
+		return character.prompt;
 	}
 
-	private getCharacterPackage(conversationId: string): ReturnType<CharacterLoader["load"]> {
+	private getCharacterPackage(conversationId: string): CharacterPackage | null {
 		const row = this.db
 			.select({ packageId: companionIdentity.packageId })
 			.from(conversations)
@@ -333,23 +324,9 @@ ${modules.join("\n")}`,
 		return this.characterLoader.load(row.packageId) ?? null;
 	}
 
-	private getContentPolicy(conversationId: string): string | null {
-		return this.getCharacterPackage(conversationId)?.content_policy ?? null;
-	}
-
-	private getFileSafety(conversationId: string): string | null {
-		return this.getCharacterPackage(conversationId)?.file_safety ?? null;
-	}
-
-	private getToolNorms(conversationId: string): string | null {
-		return this.getCharacterPackage(conversationId)?.tool_interaction_norms ?? null;
-	}
-
 	private getStyleInstruction(conversationId: string): string | null {
 		const character = this.getCharacterPackage(conversationId);
 		if (!character?.voice_modes?.length) return null;
-		// Read the current voice mode from conversation directives (scope='session',
-		// directive 'voice_mode:<id>'). Falls back to 'default'.
 		const modeIds = character.voice_modes.map((mode) => "voice_mode:" + mode.id);
 		const directive = this.db
 			.select({ directive: conversationDirectives.directive })
@@ -367,10 +344,7 @@ ${modules.join("\n")}`,
 		const modeId = directive?.directive?.replace("voice_mode:", "") ?? "default";
 		const mode = character.voice_modes.find((vm) => vm.id === modeId);
 		if (!mode) return null;
-		const example = mode.example
-			? `\n\n[当前模式示例]\n你：${mode.example.user}\n${character.name}：${mode.example.assistant}`
-			: "";
-		return `[当前表达模式：${mode.label}]\n${mode.style_instruction}${example}`;
+		return `[当前表达模式：${mode.label}]\n${mode.style_instruction}`;
 	}
 
 	private getRoleplayState(conversationId: string): string | null {
@@ -533,10 +507,9 @@ ${modules.join("\n")}`,
 }
 
 function manifestSource(layer: ContextPackBlock["layer"]): string {
-	if (layer === "identity") return "character.identity_core";
-	if (layer === "content_policy") return "character.content_policy";
-	if (layer === "file_safety") return "character.file_safety";
-	if (layer === "tool_norms") return "character.tool_norms";
+	if (layer === "description") return "character.prompt.description";
+	if (layer === "personality") return "character.prompt.personality";
+	if (layer === "scenario") return "character.prompt.scenario";
 	if (layer === "style") return "character.voice_mode";
 	if (layer === "canon") return "self_canon_or_canon_hub";
 	if (layer === "scene") return "scene_state_or_conversation_directives";

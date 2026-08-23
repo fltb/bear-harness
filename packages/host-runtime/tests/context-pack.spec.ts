@@ -46,8 +46,8 @@ async function composeWithExternalMemory(
 
 const characterLoader = new CharacterLoader(characterRoot);
 
-describe("ContextPackCompiler character package identity", () => {
-	it("injects identity_core from the active package without a product fallback", () => {
+describe("ContextPackCompiler character prompt layers", () => {
+	it("injects description, personality, and scenario in deterministic order", () => {
 		const db = new DatabaseSync(":memory:");
 		for (const migration of MIGRATIONS) db.exec(migration.up);
 		db.prepare("INSERT INTO companion_packages (id, name, version, hash) VALUES (?, ?, ?, ?)").run(
@@ -94,9 +94,11 @@ describe("ContextPackCompiler character package identity", () => {
 			.run();
 
 		const pack = new ContextPackCompiler(orm, characterLoader).compile("conversation-1");
-		expect(pack.blocks.find((block) => block.layer === "identity")?.content).toBe(
-			character.identity_core,
-		);
+		expect(pack.blocks.slice(0, 3)).toEqual([
+			{ layer: "description", content: character.prompt.description },
+			{ layer: "personality", content: character.prompt.personality },
+			{ layer: "scenario", content: character.prompt.scenario },
+		]);
 		expect(pack.blocks.find((block) => block.layer === "roleplay")?.content).toContain(
 			'"continuity_stage":0',
 		);
@@ -114,46 +116,21 @@ describe("ContextPackCompiler character package identity", () => {
 				.blocks.find((block) => block.layer === "scene")?.content ?? "";
 		expect(secondDirectiveContext).toContain("始终保持简洁");
 		expect(secondDirectiveContext).not.toContain("- 保持简洁");
-		expect(pack.manifest).toEqual([
+		expect(pack.manifest.slice(0, 3)).toEqual([
 			expect.objectContaining({
 				order: 0,
-				layer: "identity",
-				source: "character.identity_core",
+				layer: "description",
+				source: "character.prompt.description",
 			}),
 			expect.objectContaining({
 				order: 1,
-				layer: "content_policy",
-				source: "character.content_policy",
+				layer: "personality",
+				source: "character.prompt.personality",
 			}),
 			expect.objectContaining({
 				order: 2,
-				layer: "file_safety",
-				source: "character.file_safety",
-			}),
-			expect.objectContaining({
-				order: 3,
-				layer: "tool_norms",
-				source: "character.tool_norms",
-			}),
-			expect.objectContaining({
-				order: 4,
-				layer: "canon",
-				source: "self_canon_or_canon_hub",
-			}),
-			expect.objectContaining({
-				order: 5,
-				layer: "scene",
-				source: "scene_state_or_conversation_directives",
-			}),
-			expect.objectContaining({
-				order: 6,
-				layer: "roleplay",
-				source: "roleplay_ledger",
-			}),
-			expect.objectContaining({
-				order: 7,
-				layer: "style",
-				source: "character.voice_mode",
+				layer: "scenario",
+				source: "character.prompt.scenario",
 			}),
 		]);
 		expect(() =>

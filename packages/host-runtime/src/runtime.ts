@@ -109,12 +109,13 @@ export interface HostRuntimeOptions {
 	 */
 	dataDir: string;
 	/**
-	 * Character package root — a directory of `<characterId>/character.yaml`
-	 * packages. Injected, never derived from the source tree. The
-	 * `BEAR_CONFIG_DIR` environment override still wins when set (kept from
-	 * the legacy loader).
+	 * Packaged character seed directory — a directory of
+	 * `<characterId>/character.yaml` packages. Runtime copies seeds into the
+	 * local library on first boot; all subsequent load/list/import/edit operate
+	 * on the local library. Injected, never derived from the source tree. The
+	 * `BEAR_CONFIG_DIR` environment override still wins when set.
 	 */
-	characterRoot: string;
+	characterSeedRoot: string;
 	/** Product identity inputs (the fork-visible product config). */
 	productConfig: RuntimeProductConfig;
 	/** Platform encryption boundary for provider credentials. */
@@ -195,7 +196,7 @@ export class HostRuntime {
 
 	constructor(options: HostRuntimeOptions) {
 		const dataDir = options.dataDir;
-		const characterRoot = process.env.BEAR_CONFIG_DIR ?? options.characterRoot;
+		const characterSeedRoot = process.env.BEAR_CONFIG_DIR ?? options.characterSeedRoot;
 
 		// Canonical storage: one connection, migrations applied at boot.
 		const db = new Database(join(dataDir, "storage"));
@@ -206,7 +207,8 @@ export class HostRuntime {
 		const artifactStore = new ArtifactStore(db.orm, join(dataDir, "artifacts"));
 		const credentials = new CredentialStore(db.orm, options.credentialVault);
 		const providers = new ProviderCatalog(credentials, join(dataDir, "companion-runtime"));
-		const characterLoader = new CharacterLoader(characterRoot, join(dataDir, "characters"));
+		const characterLoader = new CharacterLoader(characterSeedRoot, join(dataDir, "characters"));
+		characterLoader.bootstrapLibrary(options.productConfig.defaultCharacterId);
 		const conversationRepository = new ConversationRepository(db.orm, {
 			sessionDir: join(dataDir, "sessions"),
 		});

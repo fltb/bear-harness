@@ -85,7 +85,7 @@ const config: Configuration = {
 		{ from: "../../LICENSE", to: "LICENSE" },
 		{ from: "../../BRAND-LICENSE", to: "BRAND-LICENSE" },
 		{ from: attributionPath, to: "BRAND-ATTRIBUTION.txt" },
-		{ from: "../../config", to: "config" },
+		{ from: "dist/character-seeds", to: "character-seeds" },
 	],
 	mac: {
 		identity: null,

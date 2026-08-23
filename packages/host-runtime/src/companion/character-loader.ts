@@ -20,6 +20,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import {
+	cpSync,
 	existsSync,
 	lstatSync,
 	mkdirSync,
@@ -142,14 +143,13 @@ export interface VoiceMode {
 	description: string;
 	style_instruction: string;
 	use_when: string;
-	example?: { user: string; assistant: string };
 }
-export interface CompanionPiConfiguration {
-	append_system_prompt: string;
-}
-
-export interface CharacterCompanionConfiguration {
-	pi: CompanionPiConfiguration;
+export interface CharacterPrompt {
+	description: string;
+	personality: string;
+	scenario: string;
+	system_prompt: string;
+	mes_example: string;
 }
 
 /**
@@ -168,16 +168,12 @@ export interface CharacterPackage {
 	language: string;
 	theme: ThemeTokens;
 	character: CharacterStrings;
-	identity_core: string;
+	prompt: CharacterPrompt;
 	self_canon: string;
-	content_policy?: string;
-	file_safety?: string;
-	tool_interaction_norms?: string;
 	voice_modes?: VoiceMode[];
 	scenes: ScenePreset[];
 	visual: CharacterVisuals;
 	host: CharacterHostBehavior;
-	companion: CharacterCompanionConfiguration;
 	roleplay: RoleplayDefinition;
 	canon: LoadedCanonPackage;
 }
@@ -212,12 +208,12 @@ type CharacterDisplayMedia =
 			captionsUrl: string;
 	  });
 
-/** Renderer-safe Host projection of role-package constants and assets, not memory data. */
 export interface CharacterDisplay {
 	id: string;
 	name: string;
 	language: string;
 	character: CharacterStrings;
+	prompt: CharacterPrompt;
 	theme: ThemeTokens;
 	scenes: Array<{
 		id: string;
@@ -326,6 +322,15 @@ const WorkPresentationSchema = z.strictObject({
 	}),
 });
 
+const PromptStringSchema = z.string().max(65536);
+const CharacterPromptSchema = z.strictObject({
+	description: PromptStringSchema,
+	personality: PromptStringSchema,
+	scenario: PromptStringSchema,
+	system_prompt: PromptStringSchema,
+	mes_example: PromptStringSchema,
+});
+
 const ThemeTokensSchema = z.strictObject({
 	radius: z.strictObject({
 		sm: z.number().finite().min(0).max(40),
@@ -376,30 +381,47 @@ function validateCharacterCard(value: unknown, characterId: string): asserts val
 
 
 /**
- * Character package loader — resolves role packages from an injected
- * `characterRoot` directory of `<characterId>/character.yaml` packages.
- *
- * The root is owned by the runtime (never derived from the source tree):
- * `createHostRuntime` passes `options.characterRoot` (with the
- * `BEAR_CONFIG_DIR` override applied), and every file read stays inside it.
+ * Character packages are loaded exclusively from the user-owned library.
+ * The seed root is read only during bootstrap, before any package is loaded.
  */
 export class CharacterLoader {
 	constructor(
-		private readonly characterRoot: string,
-		private readonly installedRoot?: string,
+		private readonly seedRoot: string,
+		private readonly libraryRoot: string = seedRoot,
 	) {
-		if (installedRoot) mkdirSync(installedRoot, { recursive: true });
+		mkdirSync(libraryRoot, { recursive: true });
 	}
 
-	private packageRoot(characterId: string): string {
-		for (const root of [this.installedRoot, this.characterRoot]) {
-			if (root && existsSync(join(root, characterId, "character.yaml"))) return root;
+	bootstrapLibrary(defaultCharacterId: string): void {
+		const libraryHasPackage = readdirSync(this.libraryRoot, { withFileTypes: true }).some(
+			(entry) =>
+				entry.isDirectory() &&
+				!entry.name.startsWith(".") &&
+				existsSync(join(this.libraryRoot, entry.name, "character.yaml")),
+		);
+		if (libraryHasPackage) return;
+		const source = join(this.seedRoot, defaultCharacterId);
+		if (!existsSync(join(source, "character.yaml"))) {
+			throw new Error(`default character seed missing: ${defaultCharacterId}`);
 		}
-		return this.characterRoot;
+		const stagingRoot = join(this.libraryRoot, `.${defaultCharacterId}-${randomUUID()}`);
+		const staging = join(stagingRoot, defaultCharacterId);
+		try {
+			cpSync(source, staging, { recursive: true, errorOnExist: true });
+			const character = new CharacterLoader(stagingRoot, stagingRoot).load(defaultCharacterId);
+			if (!character) throw new Error(`default character seed invalid: ${defaultCharacterId}`);
+			renameSync(staging, join(this.libraryRoot, defaultCharacterId));
+		} finally {
+			rmSync(stagingRoot, { recursive: true, force: true });
+		}
 	}
 
-	private packageOrigin(character: CharacterPackage): CharacterPackageOrigin {
-		return this.packageRoot(character.id) === this.characterRoot ? "official" : "imported";
+	private packageRoot(_characterId: string): string {
+		return this.libraryRoot;
+	}
+
+	private packageOrigin(_character: CharacterPackage): CharacterPackageOrigin {
+		return "local";
 	}
 
 	/**
@@ -579,16 +601,14 @@ export class CharacterLoader {
 				this.ensureImageAsset(id, scene.background);
 			}
 		}
-		if (
-			!parsed.host ||
-			!Array.isArray(parsed.host.event_reactions) ||
-			!parsed.companion ||
-			!parsed.companion.pi ||
-			typeof parsed.companion.pi.append_system_prompt !== "string"
-		) {
+		if (!parsed.host || !Array.isArray(parsed.host.event_reactions)) {
 			throw new Error(
-				`character package ${id}: host reactions and companion.pi configuration are required`,
+				`character package ${id}: host reactions are required`,
 			);
+		}
+		const promptResult = CharacterPromptSchema.safeParse(parsed.prompt);
+		if (!promptResult.success) {
+			throw new Error(`character package ${id}: prompt is invalid`);
 		}
 		validateCharacterCard(parsed.character, id);
 		validateCharacterOnboardingFlow(parsed.character?.first_meeting, id);
@@ -798,11 +818,26 @@ export class CharacterLoader {
 			: undefined;
 		const pluginPaths =
 			pluginsEnabled && pluginRoot ? this.collectPluginFiles(character.id, pluginRoot) : [];
-		for (const path of skillPaths) this.ensureContainedTree(character.id, path);
+		const mesExample = character.prompt.mes_example.trim();
+		const exampleBlocks = mesExample
+			.split(/^<START>\s*$/m)
+			.map((block) =>
+				block
+					.trim()
+					.replaceAll("{{char}}", character.name)
+					.replaceAll("{{user}}", "用户"),
+			)
+			.filter(Boolean);
+		const roleExamples = mesExample
+			? `<role_examples>\n${(exampleBlocks.length > 0 ? exampleBlocks : [mesExample]).join("\n\n")}\n</role_examples>`
+			: "";
+		const appendSystemPrompt = [character.prompt.system_prompt.trim(), roleExamples]
+			.filter(Boolean)
+			.join("\n\n");
 		return {
 			skillPaths,
 			pluginPaths,
-			appendSystemPrompt: character.companion.pi.append_system_prompt,
+			appendSystemPrompt,
 			hostTools: [
 				"host_get_state",
 				"host_set_scene",
@@ -837,6 +872,7 @@ export class CharacterLoader {
 			name: character.name,
 			language: character.language,
 			character: character.character,
+			prompt: character.prompt,
 			theme: character.theme,
 			scenes: character.scenes.map((scene) => ({
 				id: scene.id,
@@ -929,6 +965,7 @@ export class CharacterLoader {
 								id: media.id,
 								kind: "video" as const,
 								label: media.label,
+
 								loop: media.loop,
 								presentation: media.presentation,
 								url,
@@ -948,6 +985,59 @@ export class CharacterLoader {
 		};
 	}
 
+	readPackageDocument(characterId: string): {
+		characterId: string;
+		origin: CharacterPackageOrigin;
+		writable: boolean;
+		yaml: string;
+		sha256: string;
+		character: CharacterDisplay;
+	} {
+		const character = this.load(characterId);
+		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
+		const yaml = readFileSync(join(this.packageRoot(characterId), characterId, "character.yaml"), "utf8");
+		return { characterId, origin: this.packageOrigin(character), writable: true, yaml, sha256: createHash("sha256").update(yaml).digest("hex"), character: this.display(character) };
+	}
+
+	writePackageDocument(params: {
+		characterId: string;
+		yaml: string;
+		expectedSha256: string;
+	}): { character: CharacterPackage } {
+		const current = this.readPackageDocument(params.characterId);
+		if (current.sha256 !== params.expectedSha256)
+			throw { kind: "conflict", reason: "character_package_revision_mismatch" };
+		const parsed = parse(params.yaml);
+		if (!parsed || typeof parsed !== "object" || !("id" in parsed) || parsed.id !== params.characterId)
+			throw { kind: "invalid_request", reason: "character_id_immutable" };
+		const stagingRoot = join(this.libraryRoot, `.${params.characterId}-${randomUUID()}`);
+		const staging = join(stagingRoot, params.characterId);
+		const target = join(this.libraryRoot, params.characterId);
+		try {
+			cpSync(join(this.packageRoot(params.characterId), params.characterId), staging, {
+				recursive: true,
+				errorOnExist: true,
+			});
+			writeFileSync(join(staging, "character.yaml"), params.yaml, "utf8");
+			const character = new CharacterLoader(stagingRoot, stagingRoot).load(params.characterId);
+			if (!character) throw new Error("character_package_invalid");
+			const backup = join(this.libraryRoot, `.${params.characterId}-backup-${randomUUID()}`);
+			if (existsSync(target)) renameSync(target, backup);
+			try {
+				renameSync(staging, target);
+				rmSync(backup, { recursive: true, force: true });
+			} catch (error) {
+				if (existsSync(backup)) renameSync(backup, target);
+				throw error;
+			}
+			return { character: this.load(params.characterId)! };
+		} catch (error) {
+			rmSync(stagingRoot, { recursive: true, force: true });
+			if (error && typeof error === "object" && "kind" in error) throw error;
+			throw { kind: "invalid_request", reason: "character_package_invalid" };
+		}
+	}
+
 	getActiveCharacterId(db: AppDatabase, defaultCharacterId: string): string {
 		const row = db
 			.select({ characterId: activeCharacter.characterId })
@@ -959,15 +1049,10 @@ export class CharacterLoader {
 
 	list(db: AppDatabase, defaultCharacterId: string): CharacterSummary[] {
 		const activeId = this.getActiveCharacterId(db, defaultCharacterId);
-		const ids = new Set<string>();
-		for (const root of [this.characterRoot, this.installedRoot]) {
-			if (!root || !existsSync(root)) continue;
-			for (const entry of readdirSync(root, { withFileTypes: true })) {
-				if (entry.isDirectory() && !entry.name.startsWith(".")) ids.add(entry.name);
-			}
-		}
-		return [...ids]
-			.sort()
+		const ids = readdirSync(this.libraryRoot, { withFileTypes: true })
+			.filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+			.map((entry) => entry.name);
+		return ids
 			.map((id) => this.load(id))
 			.filter((character): character is CharacterPackage => character !== null)
 			.map((character) => ({
@@ -981,7 +1066,6 @@ export class CharacterLoader {
 	}
 
 	install(files: Array<{ path: string; base64: string }>): CharacterPackage {
-		if (!this.installedRoot) throw { kind: "unavailable", reason: "character_import_unavailable" };
 		let totalBytes = 0;
 		const normalized = files.map((file) => {
 			const path = file.path.replaceAll("\\", "/").replace(/^\.\//, "");
@@ -1009,7 +1093,7 @@ export class CharacterLoader {
 		}
 		const id = document.id;
 		if (this.load(id)) throw { kind: "conflict", reason: "character_package_already_exists" };
-		const stagingRoot = join(this.installedRoot, `.import-${randomUUID()}`);
+		const stagingRoot = join(this.libraryRoot, `.import-${randomUUID()}`);
 		const stagingPackage = join(stagingRoot, id);
 		mkdirSync(stagingPackage, { recursive: true });
 		try {
@@ -1023,10 +1107,10 @@ export class CharacterLoader {
 				mkdirSync(dirname(target), { recursive: true });
 				writeFileSync(target, file.buffer, { mode: 0o600 });
 			}
-			const stagedLoader = new CharacterLoader(stagingRoot);
+			const stagedLoader = new CharacterLoader(stagingRoot, stagingRoot);
 			const character = stagedLoader.load(id);
 			if (!character) throw { kind: "invalid_request", reason: "character_manifest_missing" };
-			const destination = join(this.installedRoot, id);
+			const destination = join(this.libraryRoot, id);
 			const backup = `${destination}.backup-${randomUUID()}`;
 			if (existsSync(destination)) renameSync(destination, backup);
 			try {
@@ -1044,8 +1128,7 @@ export class CharacterLoader {
 
 	/** Validate an import-shaped package without retaining it in the installed library. */
 	validate(files: Array<{ path: string; base64: string }>): CharacterPackage {
-		if (!this.installedRoot) throw { kind: "unavailable", reason: "character_import_unavailable" };
-		const validationRoot = join(this.installedRoot, `.validate-${randomUUID()}`);
+		const validationRoot = join(this.libraryRoot, `.validate-${randomUUID()}`);
 		try {
 			const validator = new CharacterLoader(
 				join(validationRoot, "source"),
@@ -1100,7 +1183,15 @@ export class CharacterLoader {
 				.update("\0")
 				.update(character.name)
 				.update("\0")
-				.update(character.identity_core)
+				.update(character.prompt.description)
+				.update("\0")
+				.update(character.prompt.personality)
+				.update("\0")
+				.update(character.prompt.scenario)
+				.update("\0")
+				.update(character.prompt.system_prompt)
+				.update("\0")
+				.update(character.prompt.mes_example)
 				.update("\0")
 				.update(character.self_canon)
 				.digest("hex");
