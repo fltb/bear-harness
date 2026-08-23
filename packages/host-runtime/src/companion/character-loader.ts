@@ -1030,11 +1030,14 @@ export class CharacterLoader {
 				if (existsSync(backup)) renameSync(backup, target);
 				throw error;
 			}
-			return { character: this.load(params.characterId)! };
+			const updated = this.load(params.characterId);
+			if (!updated) throw new Error("character_package_missing_after_write");
+			return { character: updated };
 		} catch (error) {
-			rmSync(stagingRoot, { recursive: true, force: true });
 			if (error && typeof error === "object" && "kind" in error) throw error;
 			throw { kind: "invalid_request", reason: "character_package_invalid" };
+		} finally {
+			rmSync(stagingRoot, { recursive: true, force: true });
 		}
 	}
 

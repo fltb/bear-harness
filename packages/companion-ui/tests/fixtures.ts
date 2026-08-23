@@ -259,6 +259,10 @@ export function createTestClient() {
 			get: vi.fn(() => ok(null)),
 			list: vi.fn(() => ok({ characters: [] })),
 			activate: vi.fn(() => ok(null)),
+			pluginTrustGet: vi.fn(() =>
+				ok({ trust: { origin: "official" as const, pluginHash: "", pluginsPresent: false, trusted: true } }),
+			),
+			pluginTrustConfirm: vi.fn(() => ok(null)),
 		},
 		roleplay: {
 			get: vi.fn(() => ok({ state: { values: {}, unlocked: [] } })),

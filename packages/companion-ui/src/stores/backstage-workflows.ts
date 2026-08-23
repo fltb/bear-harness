@@ -10,7 +10,7 @@ import type {
 } from "./companion.js";
 import type { CompanionStore } from "./companion.js";
 
-export type BackstageTab = "relationship" | "roles" | "memory" | "studio";
+export type BackstageTab = "roles" | "memory";
 interface PluginTrust {
 	origin: "official" | "local" | "imported";
 	pluginHash: string;
@@ -172,7 +172,7 @@ export interface BackstageWorkflowStore {
 	submitMemorySearch(): void;
 	clearMemorySearch(): void;
 	changeMemoryScope(value: string): void;
-	memoryEntryList(scope: Accessor<MemoryScope>, query: Accessor<string>, refresh: Accessor<number>): MemoryEntryListSelectors;
+	memoryEntryList(scope: Accessor<MemoryScope>, query: Accessor<string>, refresh: Accessor<number>, characterId?: Accessor<string | undefined>): MemoryEntryListSelectors;
 	memoryCandidates: Accessor<MemoryCandidate[]>;
 	memoryCandidatesLoading: Accessor<boolean>;
 	memoryCandidatesError: Accessor<string | null>;
@@ -232,6 +232,10 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 			if (request === packageRequest) setSelectedPackageLoading(false);
 		}
 	};
+	createEffect(() => {
+		const values = companion.characters?.characters?.() ?? [];
+		if (!selectedPackageId() && values[0]) void loadPackage(values.find((value) => value.active)?.id ?? values[0].id);
+	});
 
 	const [relationshipSaving, setRelationshipSaving] = createSignal(false);
 	const [relationshipFeedback, setRelationshipFeedback] = createSignal<string>();
@@ -408,12 +412,12 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 
 	const [memoryLists, setMemoryLists] = createSignal<Record<string, MemoryListState>>({});
 	const memoryRequestSeq = new Map<string, number>();
-	const listKey = (scope: MemoryScope, query: string): string => `${scope}\u0000${query}`;
+	const listKey = (scope: MemoryScope, query: string, characterId?: string): string => `${characterId ?? "active"}\u0000${scope}\u0000${query}`;
 	const patchMemoryList = (key: string, patch: Partial<MemoryListState>): void => {
 		setMemoryLists((current) => ({ ...current, [key]: { ...(current[key] ?? EMPTY_MEMORY_LIST), ...patch } }));
 	};
-	const reloadMemoryList = async (scope: MemoryScope, query: string): Promise<void> => {
-		const key = listKey(scope, query);
+	const reloadMemoryList = async (scope: MemoryScope, query: string, characterId?: string): Promise<void> => {
+		const key = listKey(scope, query, characterId);
 		const seq = (memoryRequestSeq.get(key) ?? 0) + 1;
 		memoryRequestSeq.set(key, seq);
 		patchMemoryList(key, { loading: true, error: null });
@@ -424,8 +428,13 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		}
 		try {
 			const entries = query === ""
-				? await api.list({ scope })
-				: await api.search(query, scope);
+				? await api.list({
+					scope,
+					...(characterId ?? companion.characters?.characters().find((character) => character.active)?.id
+						? { characterId: characterId ?? companion.characters?.characters().find((character) => character.active)?.id }
+						: {}),
+				})
+					: await api.search(query, scope, characterId);
 			if (memoryRequestSeq.get(key) !== seq) return;
 			patchMemoryList(key, { entries });
 		} catch (error) {
@@ -436,13 +445,13 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		}
 	};
 	const memoryListSelectors = new Map<string, MemoryEntryListSelectors>();
-	const memoryEntryList = (scope: Accessor<MemoryScope>, query: Accessor<string>, refresh: Accessor<number>): MemoryEntryListSelectors => {
-		const identity = `${scope.toString()}|${query.toString()}|${refresh.toString()}`;
+	const memoryEntryList = (scope: Accessor<MemoryScope>, query: Accessor<string>, refresh: Accessor<number>, characterId?: Accessor<string | undefined>): MemoryEntryListSelectors => {
+		const identity = `${scope.toString()}|${query.toString()}|${refresh.toString()}|${characterId?.toString() ?? "active"}`;
 		const existingSelectors = memoryListSelectors.get(identity);
 		if (existingSelectors) return existingSelectors;
-		const currentKey = createMemo(() => listKey(scope(), query().trim()));
+		const currentKey = createMemo(() => listKey(scope(), query().trim(), characterId?.()));
 		const currentState = createMemo(() => memoryLists()[currentKey()] ?? EMPTY_MEMORY_LIST);
-		createEffect(() => { void refresh(); void reloadMemoryList(scope(), query().trim()); });
+		createEffect(() => { void refresh(); void reloadMemoryList(scope(), query().trim(), characterId?.()); });
 		const selectors: MemoryEntryListSelectors = {
 			entries: createMemo(() => currentState().entries), loading: createMemo(() => currentState().loading),
 			excluded: (entryId) => createMemo(() => currentState().excludedIds.has(entryId)),
@@ -458,10 +467,10 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 				const key = currentKey();
 				patchMemoryList(key, { busyId: entry.id, error: null, feedback: null });
 				void Promise.resolve()
-					.then(() => api.forget(entry.id))
+					.then(() => api.forget(entry.id, characterId?.()))
 					.then(() => {
 						patchMemoryList(key, { feedback: success });
-						return reloadMemoryList(scope(), query().trim());
+						return reloadMemoryList(scope(), query().trim(), characterId?.());
 					})
 					.catch((error) => patchMemoryList(key, { error: messageOf(error) }))
 					.finally(() => patchMemoryList(key, { busyId: null }));
@@ -473,7 +482,7 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 				const next = !currentState().excludedIds.has(entry.id);
 				patchMemoryList(key, { busyId: entry.id, error: null, feedback: null });
 				void Promise.resolve()
-					.then(() => api.exclude(entry.id, next))
+					.then(() => api.exclude(entry.id, next, characterId?.()))
 					.then(() => {
 						const ids = new Set(currentState().excludedIds);
 						if (next) ids.add(entry.id); else ids.delete(entry.id);
@@ -489,8 +498,8 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 				if (!text || !api?.edit) return;
 				patchMemoryList(key, { busyId: entry.id, error: null, feedback: null });
 				void Promise.resolve()
-					.then(() => api.edit(entry.id, text))
-					.then(() => reloadMemoryList(scope(), query().trim()))
+					.then(() => api.edit(entry.id, text, characterId?.()))
+					.then(() => reloadMemoryList(scope(), query().trim(), characterId?.()))
 					.then(() => patchMemoryList(key, { feedback: success, editingEntryId: null }))
 					.catch((error) => patchMemoryList(key, { error: messageOf(error) }))
 					.finally(() => patchMemoryList(key, { busyId: null }));
@@ -606,7 +615,7 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 	};
 
 	const store: BackstageWorkflowStore = {
-		selectedTab, setSelectedTab: (value) => { if (value === "roles" || value === "memory" || value === "studio" || value === "relationship") setSelectedTabState(value); },
+		selectedTab, setSelectedTab: (value) => { if (value === "roles" || value === "memory") setSelectedTabState(value); },
 		syncInitialTab: (value) => setSelectedTabState(value === "settings" ? "roles" : value ?? "roles"), roleBusyId, importing, roleFeedback,
 		importPackage: (files, done, failed) => {
 			const api = companion.characters;

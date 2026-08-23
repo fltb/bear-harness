@@ -106,13 +106,12 @@ test("direct memory capture, scoped context, and user management stay determinis
 		await characterSettingsButton.click();
 		const dialog = page.getByRole("dialog", { name: zhCN.sidebar.characterSettings });
 		await expect(dialog).toBeVisible();
-		const relationshipTab = dialog.getByRole("tab", {
-			name: zhCN.backstage.relationshipArchive,
-		});
+		await dialog.getByRole("tab", { name: zhCN.backstage.roleManagement }).click();
+		const relationshipTab = dialog.getByRole("tab", { name: "角色记忆" });
 		await relationshipTab.click();
 		await expect(relationshipTab).toHaveAttribute("aria-selected", "true");
 		const memorySwitch = dialog.getByRole("switch", {
-			name: zhCN.settings.relationshipMemory,
+			name: "关系记忆",
 		});
 		await expect(memorySwitch).toBeVisible();
 		if ((await memorySwitch.getAttribute("aria-checked")) !== String(enabled)) {
@@ -120,29 +119,6 @@ test("direct memory capture, scoped context, and user management stay determinis
 		}
 		await expect(memorySwitch).toHaveAttribute("aria-checked", String(enabled));
 		await dialog.getByRole("button", { name: zhCN.backstage.close }).click();
-	};
-
-	const openRelationshipMemory = async (query: string) => {
-		const characterSettingsButton = page.getByRole("button", {
-			name: zhCN.sidebar.characterSettings,
-			exact: true,
-		});
-		await expect(characterSettingsButton).toBeEnabled();
-		await characterSettingsButton.click();
-		const dialog = page.getByRole("dialog", { name: zhCN.sidebar.characterSettings });
-		await expect(dialog).toBeVisible();
-		const memoryTab = dialog.getByRole("tab", { name: zhCN.backstage.memory });
-		await memoryTab.click();
-		await expect(memoryTab).toHaveAttribute("aria-selected", "true");
-		const relationshipTab = dialog.getByRole("tab", { name: zhCN.memory.scopes.relationship });
-		await relationshipTab.click();
-		await expect(relationshipTab).toHaveAttribute("aria-selected", "true");
-		const search = dialog.getByRole("searchbox", { name: zhCN.memory.searchLabel });
-		await search.fill(query);
-		await search.press("Enter");
-		const entries = dialog.getByRole("region", { name: zhCN.memory.defaultEntriesTitle });
-		await expect(entries).toBeVisible();
-		return entries;
 	};
 
 	await setRelationshipMemory(true);

@@ -208,31 +208,32 @@ export interface EventsApi {
 export interface MemoryApi {
 	entries(): MemoryEntry[] | undefined;
 	revision(): number;
-	search(query: string, scope?: MemoryScope): Promise<MemoryEntry[]>;
+	search(query: string, scope?: MemoryScope, characterId?: string): Promise<MemoryEntry[]>;
 	list(params?: MemoryListRequest): Promise<MemoryEntry[]>;
 	capture(entryId: string): Promise<MemoryCaptureResponse>;
 	configureLocalEmbedding(
 		provider: "none" | "local",
 		candidateId?: string,
 	): Promise<{ ready: true }>;
-	forget(entryId: string): Promise<void>;
-	edit(entryId: string, newText: string): Promise<void>;
-	exclude(memoryId: string, excluded: boolean): Promise<void>;
+	forget(entryId: string, characterId?: string): Promise<void>;
+	edit(entryId: string, newText: string, characterId?: string): Promise<void>;
+	exclude(memoryId: string, excluded: boolean, characterId?: string): Promise<void>;
 	/** Pending candidates awaiting user confirmation (reactive list). */
 	candidates(): MemoryCandidate[] | undefined;
-	listCandidates(status?: MemoryCandidate["status"]): Promise<MemoryCandidate[]>;
+	listCandidates(status?: MemoryCandidate["status"], characterId?: string): Promise<MemoryCandidate[]>;
 	approveCandidate(
 		candidateId: string,
 		editedText?: string,
 		decidedScope?: MemoryScope,
+		characterId?: string,
 	): Promise<void>;
-	rejectCandidate(candidateId: string): Promise<void>;
+	rejectCandidate(candidateId: string, characterId?: string): Promise<void>;
 }
 
 export interface SettingsApi {
 	data(): SettingsData | undefined;
-	get(): Promise<SettingsData>;
-	set(settings: SettingsPatch): Promise<void>;
+	get(characterId?: string): Promise<SettingsData>;
+	set(settings: SettingsPatch, characterId?: string): Promise<void>;
 }
 
 export interface ProviderApi {
@@ -311,7 +312,7 @@ export interface CharacterApi {
 	list(): Promise<CharacterListData>;
 	activate(characterId: string): Promise<void>;
 	import(files: Array<{ path: string; base64: string }>): Promise<void>;
-	pluginTrust(characterId?: string): Promise<{
+	pluginTrust(characterId: string): Promise<{
 		origin: "official" | "local" | "imported";
 		pluginHash: string;
 		trusted: boolean;
@@ -660,15 +661,21 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		activeProjection()?.activeConversationId ?? null;
 	const activeConversationId = createMemo(currentActiveConversationId);
 	const memoryRequest = (params?: MemoryListRequest) =>
-		invoke(client, () => client.memory.list(params));
+		invoke(client, () => {
+			const characterId = params?.characterId ?? activeCharacters().find((character) => character.active)?.id;
+			return client.memory.list({ ...params, ...(characterId ? { characterId } : {}) });
+		});
 	const memoryQuery = createRpcQuery({
 		client: queryClient,
 		key: queryKeys.memory,
 		request: () => memoryRequest(),
 		enabled: false,
 	});
-	const memoryCandidatesRequest = (status?: MemoryCandidate["status"]) =>
-		invoke(client, () => client.memory.candidatesList({ status }));
+	const memoryCandidatesRequest = (status?: MemoryCandidate["status"], characterId?: string) =>
+		invoke(client, () => {
+			const targetCharacterId = characterId ?? activeCharacters().find((character) => character.active)?.id;
+			return client.memory.candidatesList({ status, ...(targetCharacterId ? { characterId: targetCharacterId } : {}) });
+		});
 	const memoryCandidatesQuery = createRpcQuery({
 		client: queryClient,
 		key: queryKeys.memoryCandidates(),
@@ -1381,13 +1388,16 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		setMemoryRevision((revision) => revision + 1);
 		return data.entries;
 	},
-	search: async (query, scope) => {
-		const key = queryKeys.memoryProjection(scope, query);
+	search: async (query, scope, characterId) => {
+		const key = [...queryKeys.memoryProjection(scope, query), characterId] as const;
 		setMemoryProjectionKey(key);
 		const data = await refreshRpcQuery({
 			client: queryClient,
 			key,
-			request: () => invoke(client, () => client.memory.search({ query, scope })),
+			request: () => invoke(client, () => {
+				const targetCharacterId = characterId ?? activeCharacters().find((character) => character.active)?.id;
+				return client.memory.search({ query, scope, ...(targetCharacterId ? { characterId: targetCharacterId } : {}) });
+			}),
 		});
 		setMemoryRevision((revision) => revision + 1);
 		return data.entries;
@@ -1425,42 +1435,57 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				throw error;
 			}
 		},
-		forget: async (entryId) => {
-			await invoke(client, () => client.memory.forget({ entryId }));
+		forget: async (entryId, characterId) => {
+			await invoke(client, () => {
+				const targetCharacterId = characterId ?? activeCharacters().find((character) => character.active)?.id;
+				return client.memory.forget({ entryId, ...(targetCharacterId ? { characterId: targetCharacterId } : {}) });
+			});
 			setMemoryRevision((revision) => revision + 1);
 			debouncedRefreshMemoryEntries();
 		},
-		edit: async (entryId, newText) => {
-			await invoke(client, () => client.memory.edit({ entryId, newText }));
+		edit: async (entryId, newText, characterId) => {
+			await invoke(client, () => {
+				const targetCharacterId = characterId ?? activeCharacters().find((character) => character.active)?.id;
+				return client.memory.edit({ entryId, newText, ...(targetCharacterId ? { characterId: targetCharacterId } : {}) });
+			});
 			setMemoryRevision((revision) => revision + 1);
 			debouncedRefreshMemoryEntries();
 		},
-		exclude: async (memoryId, excluded) => {
-			await invoke(client, () => client.memory.exclude({ memoryId, excluded }));
+		exclude: async (memoryId, excluded, characterId) => {
+			await invoke(client, () => {
+				const targetCharacterId = characterId ?? activeCharacters().find((character) => character.active)?.id;
+				return client.memory.exclude({ memoryId, excluded, ...(targetCharacterId ? { characterId: targetCharacterId } : {}) });
+			});
 			setMemoryRevision((revision) => revision + 1);
 			debouncedRefreshMemoryEntries();
 		},
 		candidates: activeMemoryCandidates,
-		listCandidates: async (status) => {
+		listCandidates: async (status, characterId) => {
 			setMemoryCandidateStatus(status);
 			const data = await refreshRpcQuery({
 				client: queryClient,
-				key: queryKeys.memoryCandidates(status),
-				request: () => memoryCandidatesRequest(status),
+			key: [...queryKeys.memoryCandidates(status), characterId],
+			request: () => memoryCandidatesRequest(status, characterId),
 			});
 			setMemoryRevision((revision) => revision + 1);
 			return data.candidates;
 		},
-		approveCandidate: async (candidateId, editedText, decidedScope) => {
+		approveCandidate: async (candidateId, editedText, decidedScope, characterId) => {
 			await invoke(client, () =>
-				client.memory.candidateApprove({ candidateId, editedText, decidedScope }),
+				{
+					const targetCharacterId = characterId ?? activeCharacters().find((character) => character.active)?.id;
+					return client.memory.candidateApprove({ candidateId, editedText, decidedScope, ...(targetCharacterId ? { characterId: targetCharacterId } : {}) });
+				},
 			);
 			setMemoryRevision((revision) => revision + 1);
 			debouncedRefreshMemoryCandidates();
 			debouncedRefreshMemoryEntries();
 		},
-		rejectCandidate: async (candidateId) => {
-			await invoke(client, () => client.memory.candidateReject({ candidateId }));
+		rejectCandidate: async (candidateId, characterId) => {
+			await invoke(client, () => {
+				const targetCharacterId = characterId ?? activeCharacters().find((character) => character.active)?.id;
+				return client.memory.candidateReject({ candidateId, ...(targetCharacterId ? { characterId: targetCharacterId } : {}) });
+			});
 			setMemoryRevision((revision) => revision + 1);
 			debouncedRefreshMemoryCandidates();
 			debouncedRefreshMemoryEntries();
@@ -1469,7 +1494,11 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 
 	const settingsApi: SettingsApi = {
 		data: () => settingsQuery.data?.settings,
-		get: async () => {
+		get: async (characterId) => {
+			if (characterId) {
+				const { settings } = await invoke(client, () => client.settings.get({ characterId }));
+				return settings;
+			}
 			const data = await refreshRpcQuery({
 				client: queryClient,
 				key: queryKeys.settings,
@@ -1477,7 +1506,11 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			});
 			return data.settings;
 		},
-		set: async (settings) => {
+		set: async (settings, characterId) => {
+			if (characterId) {
+				await invoke(client, () => client.settings.set({ characterId, settings }));
+				return;
+			}
 			await settingsPatchMutation.mutateAsync(settings);
 		},
 	};

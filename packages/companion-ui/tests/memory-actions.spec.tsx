@@ -121,14 +121,8 @@ describe("memory controls", () => {
 		await user.click(within(forgottenItem).getByRole("button", { name: zhCN.memory.forget }));
 		await waitFor(() => expect(forget).toHaveBeenCalledWith({ entryId: "entry-forgotten" }));
 
-		await user.click(within(backstage).getByRole("tab", { name: zhCN.memory.scopes.relationship }));
-		const query = within(backstage).getByRole("searchbox", { name: zhCN.memory.searchLabel });
-		await user.type(query, "一起");
-		await user.click(within(backstage).getByRole("button", { name: zhCN.memory.search }));
-		await waitFor(() =>
-			expect(search).toHaveBeenCalledWith({ query: "一起", scope: "relationship" }),
-		);
-		expect(within(region).getByText(relationshipEntry.text)).toBeVisible();
+		expect(search).not.toHaveBeenCalled();
+		expect(within(region).queryByText(relationshipEntry.text)).not.toBeInTheDocument();
 	});
 
 	it("edits a direct entry and replaces the visible memory with the canonical result", async () => {

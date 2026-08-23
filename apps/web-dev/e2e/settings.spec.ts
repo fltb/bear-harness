@@ -215,9 +215,10 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	await characterSettingsButton.click();
 	const characterBackstage = page.getByRole("dialog", { name: zhCN.sidebar.characterSettings });
 	await expect(characterBackstage).toBeVisible();
-	await characterBackstage.getByRole("tab", { name: zhCN.backstage.relationshipArchive }).click();
+	await characterBackstage.getByRole("tab", { name: zhCN.backstage.roleManagement }).click();
+	await characterBackstage.getByRole("tab", { name: "角色记忆" }).click();
 	const relationshipMemory = characterBackstage.getByRole("switch", {
-		name: zhCN.settings.relationshipMemory,
+		name: "关系记忆",
 	});
 	await expect(relationshipMemory).toBeEnabled();
 	const previousMemory = await relationshipMemory.getAttribute("aria-checked");

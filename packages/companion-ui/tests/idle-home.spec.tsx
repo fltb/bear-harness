@@ -67,7 +67,7 @@ describe("idle homepage (official config, no bridge)", () => {
 			await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings }),
 		).toBeInTheDocument();
 		expect(
-			screen.getByRole("tab", { name: zhCN.backstage.relationshipArchive }),
+			screen.getByRole("tab", { name: zhCN.backstage.roleManagement }),
 		).toBeInTheDocument();
 		expect(screen.getByRole("tab", { name: zhCN.backstage.memory })).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: zhCN.backstage.close }));

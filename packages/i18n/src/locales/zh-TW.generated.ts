@@ -37,7 +37,6 @@ export const zhTW = {
 		"deleteConversation": "刪除對話",
 		"deleteConversationConfirm": "確定永久刪除這段對話嗎？已形成的記憶不會一起刪除。",
 		"application": "應用",
-		"relationshipArchive": "關係檔案",
 		"characterSettings": "角色設定",
 		"roleManagement": "角色管理",
 		"systemSettings": "系統設定"
@@ -62,7 +61,6 @@ export const zhTW = {
 		"title": "幕後",
 		"close": "關閉",
 		"tabsLabel": "幕後分欄",
-		"relationshipArchive": "關係檔案",
 		"roleManagement": "角色管理",
 		"packageWorkshop": "角色包工坊",
 		"memory": "記憶",

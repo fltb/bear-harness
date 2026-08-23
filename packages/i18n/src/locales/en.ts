@@ -37,7 +37,6 @@ export const en = {
 		deleteConversationConfirm:
 			"Permanently delete this conversation? Existing memories will be kept.",
 		application: "Application",
-		relationshipArchive: "Relationship archive",
 		characterSettings: "Character settings",
 		roleManagement: "Character management",
 		systemSettings: "System settings",
@@ -62,7 +61,6 @@ export const en = {
 		title: "Backstage",
 		close: "Close",
 		tabsLabel: "Backstage sections",
-		relationshipArchive: "Relationship archive",
 		roleManagement: "Character management",
 		packageWorkshop: "Character package workshop",
 		memory: "Memory",

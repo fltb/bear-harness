@@ -10,7 +10,7 @@ import {
 	type MemoryScope,
 	useCompanionStore,
 } from "../stores/companion.js";
-import { createBackstageWorkflowStore, type MemoryEntryListSelectors } from "../stores/backstage-workflows.js";
+import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
 
 /**
  * Memory management sheet (幕后 · 记忆).
@@ -20,19 +20,12 @@ import { createBackstageWorkflowStore, type MemoryEntryListSelectors } from "../
  * only handles loading state and the editing controls.
  */
 
-/** Cap search queries client-side; the wire schema allows up to 4096 chars. */
-const CLIENT_QUERY_LIMIT = 512;
-
 /** Format an ISO-ish timestamp defensively; unparseable values pass through. */
 function formatDate(value: string): string {
 	if (!value) return "";
 	const date = new Date(value);
 	if (Number.isNaN(date.getTime())) return value;
 	return date.toLocaleDateString("zh-CN", { year: "numeric", month: "short", day: "numeric" });
-}
-
-function messageOf(value: unknown): string {
-	return value instanceof Error ? value.message : String(value);
 }
 
 function kindLabel(kind: MemoryEntry["kind"]): string {
@@ -56,6 +49,7 @@ export function MemoryEntryList(props: {
 	query?: string;
 	refreshKey?: number;
 	title?: string;
+	characterId?: string;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const companion = useCompanionStore();
@@ -63,7 +57,8 @@ export function MemoryEntryList(props: {
 	const scope = () => props.scope;
 	const query = () => props.query?.trim() ?? "";
 	const refresh = () => props.refreshKey ?? 0;
-	const state = workflow.memoryEntryList(scope, query, refresh);
+	const characterId = () => props.characterId;
+	const state = workflow.memoryEntryList(scope, query, refresh, characterId);
 	const title = () => props.title ?? t("memory.defaultEntriesTitle");
 
 	return (
@@ -206,38 +201,45 @@ function CandidateCard(props: { candidate: MemoryCandidate }) {
 }
 
 /** Pending memory candidates awaiting user confirmation (待确认记忆). */
-export function MemoryCandidates() {
+export function MemoryCandidates(props: { scopes?: readonly MemoryScope[] } = {}) {
 	const [t] = useTranslation(undefined, { i18n });
 	const workflow = createBackstageWorkflowStore(useCompanionStore());
+	const candidates = () =>
+		workflow.memoryCandidates().filter((candidate) =>
+			(props.scopes ?? ["self", "scene"]).includes(candidate.suggestedScope),
+		);
 	return (
 		<section class="memory-section" aria-label={t("memory.candidatesTitle")}>
 			<div class="section-head">
 				<h3>{t("memory.candidatesTitle")}</h3>
-				<Show when={!workflow.memoryCandidatesLoading() && workflow.memoryCandidates().length > 0}>
-					<span class="section-count">{workflow.memoryCandidates().length}</span>
+					<Show when={!workflow.memoryCandidatesLoading() && candidates().length > 0}>
+						<span class="section-count">{candidates().length}</span>
 				</Show>
 			</div>
 			<Show when={workflow.memoryCandidatesError()}>
 				<p class="status-line err" role="alert">{workflow.memoryCandidatesError()}</p>
 			</Show>
-			<Show when={workflow.memoryCandidatesLoading() && workflow.memoryCandidates().length === 0}>
+				<Show when={workflow.memoryCandidatesLoading() && candidates().length === 0}>
 				<p class="empty-note">{t("memory.loading")}</p>
 			</Show>
-			<Show when={!workflow.memoryCandidatesLoading() && !workflow.memoryCandidatesError() && workflow.memoryCandidates().length === 0}>
+				<Show when={!workflow.memoryCandidatesLoading() && !workflow.memoryCandidatesError() && candidates().length === 0}>
 				<p class="empty-note">{t("memory.candidatesEmpty")}</p>
 			</Show>
 			<ul class="candidate-list">
-				<For each={workflow.memoryCandidates()}>{(candidate) => <CandidateCard candidate={candidate} />}</For>
+					<For each={candidates()}>{(candidate) => <CandidateCard candidate={candidate} />}</For>
 			</ul>
 		</section>
 	);
 }
 
 /** Memory page: search and per-scope backend memory records. */
-export function MemorySheet() {
+export function MemorySheet(props: { characterId?: string; scopes?: readonly MemoryScope[] } = {}) {
 	const [t] = useTranslation(undefined, { i18n });
 	const workflow = createBackstageWorkflowStore(useCompanionStore());
-	const scopeTabs = workflow.memoryScopeTabs((scope) => t(`memory.scopes.${scope}`));
+	const scopeTabs = () =>
+		workflow.memoryScopeTabs((scope) => t(`memory.scopes.${scope}`))().filter((tab) =>
+			(props.scopes ?? ["self", "scene"]).includes(tab.value),
+		);
 	return (
 		<div class="sheet-panel">
 			<div class="search-row">
@@ -274,7 +276,7 @@ export function MemorySheet() {
 					</For>
 				</Tabs.List>
 			</Tabs>
-			<MemoryEntryList scope={workflow.memoryScope()} query={workflow.memoryQuery()} refreshKey={workflow.memoryRefreshKey()} />
+			<MemoryEntryList scope={workflow.memoryScope()} query={workflow.memoryQuery()} refreshKey={workflow.memoryRefreshKey()} characterId={props.characterId} />
 			<MemoryCandidates />
 		</div>
 	);

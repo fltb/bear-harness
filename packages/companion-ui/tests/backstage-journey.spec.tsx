@@ -128,7 +128,7 @@ describe("ordinary-user backstage journey", () => {
 		expect(closeSystemSettings).toHaveBeenCalledOnce();
 	});
 
-	it("shows package-defined relationship levels and only unlocked collection media", async () => {
+	it("does not expose roleplay state in the global character settings", async () => {
 		const user = userEvent.setup();
 		vi.stubGlobal("matchMedia", undefined);
 		const character = {
@@ -193,18 +193,10 @@ describe("ordinary-user backstage journey", () => {
 			</DesktopProvider>
 		));
 		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
-		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.relationshipArchive }));
-		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.roleplayStatus }));
-		expect(within(dialog).getByText("彼此守望")).toBeVisible();
-		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.collections }));
-		expect(within(dialog).getByText("第一夜")).toBeVisible();
-		expect(within(dialog).queryByText("未解锁")).not.toBeInTheDocument();
-		expect(within(dialog).getByRole("img", { name: "极光信号" })).toHaveAttribute(
-			"src",
-			expect.stringMatching(/^data:image\/webp/),
-		);
+		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.roleManagement }));
+		expect(within(dialog).queryByRole("tab", { name: "角色包存储" })).not.toBeInTheDocument();
 	});
-	it("uses an animation poster when matchMedia requests reduced motion", async () => {
+	it("does not expose roleplay media in the global character settings", async () => {
 		const user = userEvent.setup();
 		vi.stubGlobal(
 			"matchMedia",
@@ -280,13 +272,8 @@ describe("ordinary-user backstage journey", () => {
 			</DesktopProvider>
 		));
 		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
-		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.relationshipArchive }));
-		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.roleplayStatus }));
-		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.collections }));
-		expect(within(dialog).getByRole("img", { name: "极光信号" })).toHaveAttribute(
-			"src",
-			"data:image/png;base64,cG9zdGVy",
-		);
+		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.roleManagement }));
+		expect(within(dialog).queryByRole("tab", { name: "角色包存储" })).not.toBeInTheDocument();
 	});
 	it("manages direct memory records with edit and forget", async () => {
 		const user = userEvent.setup();
@@ -390,8 +377,8 @@ describe("ordinary-user backstage journey", () => {
 		);
 
 		await waitFor(() => {
-			expect(edit).toHaveBeenCalledWith("memory-user", "用户喜欢傍晚散步");
-			expect(forget).toHaveBeenCalledWith("memory-user");
+			expect(edit).toHaveBeenCalledWith("memory-user", "用户喜欢傍晚散步", undefined);
+			expect(forget).toHaveBeenCalledWith("memory-user", undefined);
 		});
 	});
 });

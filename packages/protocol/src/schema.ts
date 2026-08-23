@@ -895,7 +895,7 @@ export const CharacterPluginTrust = z.strictObject({
 	trusted: z.boolean(),
 });
 export const CharacterPluginTrustGetRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
+	characterId: z.string().min(1).max(64),
 });
 export const CharacterPluginTrustResponse = z.strictObject({ trust: CharacterPluginTrust });
 export const CharacterPluginTrustConfirmRequest = z.strictObject({
@@ -1191,6 +1191,7 @@ export const MemoryCaptureResponse = z.strictObject({
 });
 export type MemoryCaptureResponse = z.infer<typeof MemoryCaptureResponse>;
 export const MemorySearchRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
 	query: z.string().max(MAX_STRING_LENGTH),
 	scope: MemoryScope.optional(),
 });
@@ -1199,11 +1200,13 @@ export const MemorySearchResponse = z.strictObject({
 });
 export const MemoryListResponse = MemorySearchResponse;
 export const MemoryListRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
 	scope: MemoryScope.optional(),
 	enabled: z.boolean().optional(),
 	limit: z.number().int().safe().min(1).max(100).optional(),
 });
 export const MemoryForgetRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
 	entryId: z.string().min(1).max(128),
 });
 
@@ -1233,6 +1236,7 @@ export const MemoryCandidate = z.strictObject({
 	createdAt: WireTimestamp,
 });
 export const MemoryCandidatesListRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
 	status: z
 		.union([
 			z.literal("pending"),
@@ -1246,18 +1250,22 @@ export const MemoryCandidatesListResponse = z.strictObject({
 	candidates: z.array(MemoryCandidate).max(MAX_ARRAY_LENGTH),
 });
 export const MemoryCandidateApproveRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
 	candidateId: z.string().min(1).max(64),
 	editedText: z.string().max(MAX_STRING_LENGTH).optional(),
 	decidedScope: MemoryScope.optional(),
 });
 export const MemoryCandidateRejectRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
 	candidateId: z.string().min(1).max(64),
 });
 export const MemoryExcludeRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
 	memoryId: z.string().min(1).max(128),
 	excluded: z.boolean(),
 });
 export const MemoryEditRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
 	entryId: z.string().min(1).max(128),
 	newText: z.string().min(1).max(MAX_STRING_LENGTH),
 });
@@ -1812,7 +1820,9 @@ export const SettingsData = z.strictObject({
 		endpoint: z.string().min(1).max(2048).optional(),
 	}),
 });
-export const SettingsGetRequest = z.strictObject({});
+export const SettingsGetRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
+});
 export const SettingsResponse = z.strictObject({
 	settings: SettingsData,
 });
@@ -1824,6 +1834,7 @@ export const SettingsPatch = z.strictObject({
 	modelDownloadMirror: SettingsData.shape.modelDownloadMirror.optional(),
 });
 export const SettingsSetRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
 	settings: SettingsPatch,
 });
 

@@ -208,7 +208,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 	dispatcher.registerHandler(RPC.character.packageUpdate, async (_p) => {
 		const params = _p as { characterId: string; yaml: string; expectedSha256: string };
-		let updated;
+		let updated: ReturnType<typeof s.characterLoader.writePackageDocument>;
 		try {
 			updated = s.characterLoader.writePackageDocument(params);
 		} catch (error) {
@@ -545,8 +545,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		}
 	});
 	dispatcher.registerHandler(RPC.memory.search, async (_p): Promise<MemorySearchResponse> => {
-		const { query } = _p;
-		const scope = await memoryBackendScope(s);
+		const { characterId, query } = _p as { characterId?: string; query: string };
+		const scope = memoryBackendScopeForCharacter(s, characterId);
 		await s.memoryBackend.open({ scope });
 		const hits = await s.memoryBackend.recall({
 			scope,
@@ -558,9 +558,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 	});
 	dispatcher.registerHandler(RPC.memory.list, async (_p): Promise<MemoryListResponse> => {
-		const { enabled = true, limit } = _p;
+		const { characterId, enabled = true, limit } = _p as { characterId?: string; enabled?: boolean; limit?: number };
 		if (!enabled) return { entries: [] };
-		const scope = await memoryBackendScope(s);
+		const scope = memoryBackendScopeForCharacter(s, characterId);
 		await s.memoryBackend.open({ scope });
 		const records = await s.memoryBackend.list({
 			scope,
@@ -571,23 +571,23 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 	});
 	dispatcher.registerHandler(RPC.memory.forget, async (_p) => {
-		const { entryId } = _p as { entryId: string };
-		const scope = await memoryBackendScope(s);
+		const { characterId, entryId } = _p as { characterId?: string; entryId: string };
+		const scope = memoryBackendScopeForCharacter(s, characterId);
 		await s.memoryBackend.open({ scope });
 		await s.memoryBackend.forget({ scope, memoryId: entryId });
 		return {};
 	});
 	dispatcher.registerHandler(RPC.memory.edit, async (_p) => {
-		const { entryId, newText } = _p as { entryId: string; newText: string };
-		const scope = await memoryBackendScope(s);
+		const { characterId, entryId, newText } = _p as { characterId?: string; entryId: string; newText: string };
+		const scope = memoryBackendScopeForCharacter(s, characterId);
 		await s.memoryBackend.open({ scope });
 		await s.memoryBackend.update({ scope, memoryId: entryId, text: newText });
 		return {};
 	});
 	dispatcher.registerHandler(RPC.memory.exclude, async (_p) => {
-		const { memoryId, excluded } = _p as { memoryId: string; excluded: boolean };
+		const { characterId, memoryId, excluded } = _p as { characterId?: string; memoryId: string; excluded: boolean };
 		const { installationId, userId } = s.memoryScope;
-		const companionId = await getCompanionId(s);
+		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
 		if (excluded) {
 			const now = new Date().toISOString();
 			const existing = s.orm
@@ -656,8 +656,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {};
 	});
 	dispatcher.registerHandler(RPC.memory.candidatesList, async (_p) => {
-		const { status } = _p;
-		const companionId = await getCompanionId(s);
+		const { characterId, status } = _p as { characterId?: string; status?: "pending" | "approved" | "rejected" | "expired" };
+		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
 		const rows = s.orm
 			.select({
 				id: memoryCandidates.id,
@@ -689,12 +689,13 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 	});
 	dispatcher.registerHandler(RPC.memory.candidateApprove, async (_p) => {
-		const { candidateId, editedText, decidedScope } = _p as {
+		const { characterId, candidateId, editedText, decidedScope } = _p as {
+			characterId?: string;
 			candidateId: string;
 			editedText?: string;
 			decidedScope?: "self" | "relationship" | "scene";
 		};
-		const companionId = await getCompanionId(s);
+		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
 		const candidate = s.orm
 			.select()
 			.from(memoryCandidates)
@@ -785,8 +786,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {};
 	});
 	dispatcher.registerHandler(RPC.memory.candidateReject, async (_p) => {
-		const { candidateId } = _p as { candidateId: string };
-		const companionId = await getCompanionId(s);
+		const { characterId, candidateId } = _p as { characterId?: string; candidateId: string };
+		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
 		const candidate = s.orm
 			.select({ id: memoryCandidates.id, status: memoryCandidates.status })
 			.from(memoryCandidates)
@@ -1203,8 +1204,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			({ id, name, isDefault }) => ({ id, name, isDefault }),
 		),
 	}));
-	dispatcher.registerHandler(RPC.settings.get, async () => {
-		const companionId = await getCompanionId(s);
+	dispatcher.registerHandler(RPC.settings.get, async (_p) => {
+		const { characterId } = _p as { characterId?: string };
+		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
 		const stateData = s.onboarding.getState(companionId).stateData;
 		const app = s.appSettings.load();
 		return {
@@ -1219,8 +1221,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 	});
 	dispatcher.registerHandler(RPC.settings.set, async (_p) => {
-		const { settings } = _p as { settings: Record<string, unknown> };
-		const companionId = await getCompanionId(s);
+		const { characterId, settings } = _p as { characterId?: string; settings: Record<string, unknown> };
+		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
+		if (characterId && ["networkProxy", "memoryVectorService", "modelDownloadMirror"].some((key) => key in settings))
+			throw { kind: "invalid_request", reason: "character_settings_may_only_change_relationship_options" };
 		if ("relationshipMemoryEnabled" in settings) {
 			s.onboarding.setRelationshipMemory(companionId, Boolean(settings.relationshipMemoryEnabled));
 		}
@@ -1551,11 +1555,11 @@ function extractPiCurrentUserMessage(content: string): string | undefined {
 	);
 }
 
-function memoryBackendScope(s: HostCompositionContext): MemoryBankScope {
-	return {
-		...s.memoryScope,
-		companionId: getActiveCompanionId(s),
-	};
+function memoryBackendScopeForCharacter(s: HostCompositionContext, characterId?: string): MemoryBankScope {
+	const resolvedId = characterId ?? getActiveCompanionId(s);
+	const character = s.characterLoader.load(resolvedId);
+	if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
+	return { ...s.memoryScope, companionId: resolvedId };
 }
 
 function getActiveCompanionId(s: HostCompositionContext): string {
