@@ -1,5 +1,13 @@
 import { i18n } from "@bear-harness/i18n";
-import { createContext, createMemo, createSignal, type Accessor, type JSX, type ParentProps, useContext } from "solid-js";
+import {
+	createContext,
+	createMemo,
+	createSignal,
+	type Accessor,
+	type JSX,
+	type ParentProps,
+	useContext,
+} from "solid-js";
 import type { Namespace, TFunction } from "i18next";
 import type {
 	CharacterDisplay,
@@ -72,7 +80,11 @@ const shellWorkflows = new WeakMap<CompanionStore, ShellWorkflowStore>();
  */
 
 export function ShellWorkflowProvider(props: ParentProps<{ workflow: ShellWorkflowStore }>) {
-	return <ShellWorkflowContext.Provider value={props.workflow}>{props.children}</ShellWorkflowContext.Provider>;
+	return (
+		<ShellWorkflowContext.Provider value={props.workflow}>
+			{props.children}
+		</ShellWorkflowContext.Provider>
+	);
 }
 
 export function useShellWorkflowStore(): ShellWorkflowStore {
@@ -118,16 +130,21 @@ export function createShellWorkflowStore(input: {
 	});
 	const visualState = createMemo(() => activeCharacterRuntime()?.visualState);
 	const composerPlaceholder = createMemo(
-		() => character()?.character.composer_placeholder ?? translate("shell.fallbackComposerPlaceholder"),
+		() =>
+			character()?.character.composer_placeholder ?? translate("shell.fallbackComposerPlaceholder"),
 	);
 	const preferredLanguage = createMemo(
 		() => globalThis.navigator?.languages?.[0] ?? globalThis.navigator?.language ?? currentLocale(),
 	);
-	const languageWarningKey = createMemo(() => `${character()?.language ?? ""}|${preferredLanguage()}`);
+	const languageWarningKey = createMemo(
+		() => `${character()?.language ?? ""}|${preferredLanguage()}`,
+	);
 	const hasLanguageMismatch = createMemo(() => {
 		const roleLanguage = character()?.language;
 		if (!roleLanguage) return false;
-		return roleLanguage.split("-")[0]?.toLowerCase() !== preferredLanguage().split("-")[0]?.toLowerCase();
+		return (
+			roleLanguage.split("-")[0]?.toLowerCase() !== preferredLanguage().split("-")[0]?.toLowerCase()
+		);
 	});
 	const languageWarning = createMemo(() =>
 		translate("language.warningBody")
@@ -138,14 +155,21 @@ export function createShellWorkflowStore(input: {
 		const theme = character()?.theme;
 		if (!theme) return {};
 		return {
-			"--surface": theme.color.surface,
-			"--surface-alt": theme.color.surface_alt,
-			"--text": theme.color.text,
-			"--text-muted": theme.color.text_muted,
-			"--accent": theme.color.accent,
-			"--line": theme.color.line,
-			"--danger": theme.color.danger,
-			"--amber": theme.color.amber,
+			"--sys-canvas": theme.tokens.canvas,
+			"--sys-surface": theme.tokens.surface,
+			"--sys-surface-raised": theme.tokens.surface_raised,
+			"--sys-surface-interactive": theme.tokens.surface_interactive,
+			"--sys-surface-selected": theme.tokens.surface_selected,
+			"--sys-text": theme.tokens.text,
+			"--sys-text-muted": theme.tokens.text_muted,
+			"--sys-text-on-accent": theme.tokens.text_on_accent,
+			"--sys-accent": theme.tokens.accent,
+			"--sys-accent-hover": theme.tokens.accent_hover,
+			"--sys-border": theme.tokens.border,
+			"--sys-border-focus": theme.tokens.border_focus,
+			"--sys-success": theme.tokens.success,
+			"--sys-warning": theme.tokens.warning,
+			"--sys-danger": theme.tokens.danger,
 			"--radius-sm": `${theme.radius.sm}px`,
 			"--radius-md": `${theme.radius.md}px`,
 			"--radius-lg": `${theme.radius.lg}px`,
@@ -196,7 +220,8 @@ export function createShellWorkflowStore(input: {
 	});
 	const permissionGroups = createMemo(() => {
 		const groups: Record<string, RunPermissionRequest[]> = {};
-		for (const permission of store.run?.pendingPermissions?.() ?? []) (groups[permission.runId] ??= []).push(permission);
+		for (const permission of store.run?.pendingPermissions?.() ?? [])
+			(groups[permission.runId] ??= []).push(permission);
 		return groups;
 	});
 	const artifactSelectors = new Map<string, Accessor<Artifact[]>>();
@@ -242,7 +267,13 @@ export function createShellWorkflowStore(input: {
 
 	const commissionStates = new Map<string, ReturnType<typeof actionState>>();
 	const permissionStates = new Map<string, ReturnType<typeof actionState>>();
-	const runStates = new Map<string, ReturnType<typeof actionState> & { steerText: Accessor<string>; setSteerText: (value: string) => void }>();
+	const runStates = new Map<
+		string,
+		ReturnType<typeof actionState> & {
+			steerText: Accessor<string>;
+			setSteerText: (value: string) => void;
+		}
+	>();
 	const getCommissionState = (id: string) => {
 		let state = commissionStates.get(id);
 		if (!state) {

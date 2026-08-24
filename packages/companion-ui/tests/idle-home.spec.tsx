@@ -66,9 +66,7 @@ describe("idle homepage (official config, no bridge)", () => {
 		expect(
 			await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings }),
 		).toBeInTheDocument();
-		expect(
-			screen.getByRole("tab", { name: zhCN.backstage.roleManagement }),
-		).toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: zhCN.backstage.roleManagement })).toBeInTheDocument();
 		expect(screen.getByRole("tab", { name: zhCN.backstage.memory })).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: zhCN.backstage.close }));
 		await waitFor(() =>
@@ -83,9 +81,7 @@ describe("idle homepage (official config, no bridge)", () => {
 		expect(
 			screen.getByRole("region", { name: zhCN.settings.providerSetupLabel }),
 		).toBeInTheDocument();
-		expect(
-			screen.queryByRole("button", { name: zhCN.settings.addModel }),
-		).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: zhCN.settings.addModel })).not.toBeInTheDocument();
 	});
 
 	it("applies role theme tokens and warns without blocking on a language mismatch", async () => {
@@ -122,7 +118,7 @@ describe("idle homepage (official config, no bridge)", () => {
 		expect(warning).toHaveTextContent("ja-JP");
 		expect(warning).toHaveTextContent("en-US");
 		const app = screen.getByRole("application", { name: OFFICIAL_PRODUCT.productName });
-		expect(app?.style.getPropertyValue("--accent")).toBe("#42c7a5");
+		expect(app?.style.getPropertyValue("--sys-accent")).toBe("#42c7a5");
 		expect(screen.getByPlaceholderText("Message")).toBeInTheDocument();
 		expect(warning).not.toHaveAttribute("aria-modal");
 

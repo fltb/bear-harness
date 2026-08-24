@@ -1,9 +1,6 @@
 import type { CompanionClient } from "@bear-harness/companion-client";
 import { type ProductConfig, productConfig } from "@bear-harness/product-config";
-import type {
-	ConversationSelectResponse,
-	ConversationSummary,
-} from "@bear-harness/protocol";
+import type { ConversationSelectResponse, ConversationSummary } from "@bear-harness/protocol";
 import { vi } from "vitest";
 import type { CharacterDisplay, SettingsData } from "../src/index.js";
 
@@ -16,15 +13,22 @@ export const THEMED_CHARACTER: CharacterDisplay = {
 	language: "ja-JP",
 	theme: {
 		radius: { sm: 3, md: 5, lg: 7 },
-		color: {
-			surface: "#101820",
-			surface_alt: "#18242d",
+		tokens: {
+			canvas: "#101820",
+			surface: "#18242d",
+			surface_raised: "#22313d",
+			surface_interactive: "#2b3d4a",
+			surface_selected: "#174853",
 			text: "#f3f6f5",
 			text_muted: "#a8b6b2",
+			text_on_accent: "#081c19",
 			accent: "#42c7a5",
-			line: "#395048",
+			accent_hover: "#6ee0c3",
+			border: "#395048",
+			border_focus: "#6ee0c3",
+			success: "#6ee0c3",
+			warning: "#f2c56b",
 			danger: "#ef6b73",
-			amber: "#e2b45e",
 		},
 		font: { body: "system-ui", heading: "serif" },
 	},
@@ -152,9 +156,15 @@ export function createEmbeddingBinding() {
 		capabilitiesQuery: {
 			data: {
 				networkProxyModes: [{ id: "direct" }, { id: "auto" }, { id: "manual" }],
-				memoryVectorProviders: [{ id: "none", onboarding: true }, { id: "local", onboarding: true }, { id: "remote", onboarding: false }],
+				memoryVectorProviders: [
+					{ id: "none", onboarding: true },
+					{ id: "local", onboarding: true },
+					{ id: "remote", onboarding: false },
+				],
 				memoryVectorPresets: [],
-				localEmbeddingCandidates: [{ id: "test-embedding", name: "Test embedding", isDefault: true }],
+				localEmbeddingCandidates: [
+					{ id: "test-embedding", name: "Test embedding", isDefault: true },
+				],
 			},
 			isPending: false,
 			error: null,
@@ -260,7 +270,14 @@ export function createTestClient() {
 			list: vi.fn(() => ok({ characters: [] })),
 			activate: vi.fn(() => ok(null)),
 			pluginTrustGet: vi.fn(() =>
-				ok({ trust: { origin: "official" as const, pluginHash: "", pluginsPresent: false, trusted: true } }),
+				ok({
+					trust: {
+						origin: "official" as const,
+						pluginHash: "",
+						pluginsPresent: false,
+						trusted: true,
+					},
+				}),
 			),
 			pluginTrustConfirm: vi.fn(() => ok(null)),
 		},
@@ -320,7 +337,11 @@ export function createTestClient() {
 					};
 					conversations.push(conversation);
 				}
-				activeConversation = conversationProjection(id, conversation.title, conversation.sceneTitle);
+				activeConversation = conversationProjection(
+					id,
+					conversation.title,
+					conversation.sceneTitle,
+				);
 				return ok(activeConversation);
 			}),
 			activeGet: vi.fn(() =>
@@ -460,7 +481,9 @@ export function createTestClient() {
 						{ id: "remote", onboarding: false },
 					],
 					memoryVectorPresets: [],
-					localEmbeddingCandidates: [{ id: "test-embedding", name: "Test embedding", isDefault: true }],
+					localEmbeddingCandidates: [
+						{ id: "test-embedding", name: "Test embedding", isDefault: true },
+					],
 				}),
 			),
 		},

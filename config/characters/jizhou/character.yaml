@@ -4,19 +4,11 @@ version: 3.0.0
 language: zh-CN
 
 theme:
-  radius: { sm: 8, md: 12, lg: 16 }
-  color:
+  tokens:
+    canvas: "#07171c"
     surface: "#102a31"
-    surface_alt: "#183a40"
-    text: "#e8f2ee"
-    text_muted: "#9ab2ab"
+    surface_raised: "#183a40"
     accent: "#8bd0bb"
-    line: "rgba(161,207,194,.22)"
-    danger: "#b9685f"
-    amber: "#cf9d5b"
-  font:
-    body: "'Avenir Next','PingFang SC','Microsoft YaHei',sans-serif"
-    heading: "'Songti SC','STSong',Georgia,serif"
 
 
 character:

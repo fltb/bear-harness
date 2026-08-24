@@ -66,7 +66,15 @@ describe("character package visual projection", () => {
 				bindings: [expect.objectContaining({ source: "jizhou_story" })],
 			}),
 		);
-		expect(display.theme.color.accent).toBe("#8bd0bb");
+		expect(display.theme.tokens).toEqual(
+			expect.objectContaining({
+				canvas: "#07171c",
+				surface: "#102a31",
+				surface_raised: "#183a40",
+				accent: "#8bd0bb",
+				text_on_accent: "#07171c",
+			}),
+		);
 		expect(display.visual.avatarUrl).toMatch(/^data:image\/(?:png|svg\+xml);base64,/);
 		for (const assetUrl of Object.values(display.visual.expressions)) {
 			expect(assetUrl).toMatch(/^data:image\/(?:png|svg\+xml);base64,/);
@@ -119,6 +127,40 @@ describe("character package display validation", () => {
 		expect(CharacterDisplay.parse(display)).toEqual(display);
 		expect(display.roleplay.unlockables).toEqual(character.roleplay.unlockables);
 		expect(display.roleplay.choice_sets).toEqual(character.roleplay.choice_sets);
+	});
+
+	it("supplies the Host theme when an imported package declares no theme", () => {
+		const installedRoot = mkdtempSync(join(tmpdir(), "bear-character-theme-default-"));
+		temporaryDirectories.push(installedRoot);
+		const packageDir = join(installedRoot, "default-theme-role");
+		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
+		const manifestPath = join(packageDir, "character.yaml");
+		const manifest = readFileSync(manifestPath, "utf8");
+		writeFileSync(
+			manifestPath,
+			manifest
+				.replace("id: jizhou", "id: default-theme-role")
+				.replace(/^theme:\n(?:  .*\n)+\n/m, ""),
+		);
+
+		const character = new CharacterLoader(characterRoot, installedRoot).load("default-theme-role");
+		expect(character?.theme.tokens).toEqual({
+			canvas: "#111113",
+			surface: "#18191b",
+			surface_raised: "#212225",
+			surface_interactive: "#272a2d",
+			surface_selected: "#0b3a48",
+			text: "#ecedee",
+			text_muted: "#9ba1a6",
+			text_on_accent: "#07171c",
+			accent: "#00a2c7",
+			accent_hover: "#4ccce6",
+			border: "#43484e",
+			border_focus: "#4ccce6",
+			success: "#86ead4",
+			warning: "#ffc53d",
+			danger: "#ff9592",
+		});
 	});
 });
 

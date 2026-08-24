@@ -605,20 +605,30 @@ export const CharacterOnboardingFlow = z.strictObject({
 		.max(12),
 	completion: z.strictObject({ conversation_title: CharacterCopy }),
 });
+export const SystemThemeTokens = z.strictObject({
+	canvas: z.string(),
+	surface: z.string(),
+	surface_raised: z.string(),
+	surface_interactive: z.string(),
+	surface_selected: z.string(),
+	text: z.string(),
+	text_muted: z.string(),
+	text_on_accent: z.string(),
+	accent: z.string(),
+	accent_hover: z.string(),
+	border: z.string(),
+	border_focus: z.string(),
+	success: z.string(),
+	warning: z.string(),
+	danger: z.string(),
+});
+export type SystemThemeTokens = z.infer<typeof SystemThemeTokens>;
 export const CharacterTheme = z.strictObject({
 	radius: z.strictObject({ sm: z.number(), md: z.number(), lg: z.number() }),
-	color: z.strictObject({
-		surface: z.string(),
-		surface_alt: z.string(),
-		text: z.string(),
-		text_muted: z.string(),
-		accent: z.string(),
-		line: z.string(),
-		danger: z.string(),
-		amber: z.string(),
-	}),
+	tokens: SystemThemeTokens,
 	font: z.strictObject({ body: z.string(), heading: z.string() }),
 });
+export type CharacterTheme = z.infer<typeof CharacterTheme>;
 export const CharacterWorkPresentationLabels = z.strictObject({
 	proposal: CharacterCopy.refine((value) => value.trim().length > 0),
 	running: CharacterCopy.refine((value) => value.trim().length > 0),

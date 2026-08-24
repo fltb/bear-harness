@@ -33,6 +33,7 @@ import {
 } from "node:fs";
 import { dirname, extname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { z } from "@bear-harness/schema";
+import type { CharacterTheme } from "@bear-harness/protocol/schema";
 import { eq, sql } from "drizzle-orm";
 import { parse } from "yaml";
 import {
@@ -57,25 +58,13 @@ import {
 	RoleplaySchema,
 	roleplayAssetExtensions,
 } from "./roleplay-schema.js";
+import { CharacterThemeOverridesSchema, resolveCharacterTheme } from "./theme.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export interface ThemeTokens {
-	radius: { sm: number; md: number; lg: number };
-	color: {
-		surface: string;
-		surface_alt: string;
-		text: string;
-		text_muted: string;
-		accent: string;
-		line: string;
-		danger: string;
-		amber: string;
-	};
-	font: { body: string; heading: string };
-}
+export type ThemeTokens = CharacterTheme;
 
 export interface CharacterWorkPresentationLabels {
 	proposal: string;
@@ -293,12 +282,6 @@ const LanguageTagSchema = z
 		}
 	}, "must be a valid BCP-47 language tag");
 
-const SafeCssValueSchema = z
-	.string()
-	.min(1)
-	.max(256)
-	.refine((value) => !/[;{}<>]/.test(value) && !/url\s*\(/i.test(value), "unsafe CSS value");
-
 const WorkPresentationLabelSchema = z
 	.string()
 	.min(1)
@@ -331,24 +314,7 @@ const CharacterPromptSchema = z.strictObject({
 	mes_example: PromptStringSchema,
 });
 
-const ThemeTokensSchema = z.strictObject({
-	radius: z.strictObject({
-		sm: z.number().finite().min(0).max(40),
-		md: z.number().finite().min(0).max(40),
-		lg: z.number().finite().min(0).max(40),
-	}),
-	color: z.strictObject({
-		surface: SafeCssValueSchema,
-		surface_alt: SafeCssValueSchema,
-		text: SafeCssValueSchema,
-		text_muted: SafeCssValueSchema,
-		accent: SafeCssValueSchema,
-		line: SafeCssValueSchema,
-		danger: SafeCssValueSchema,
-		amber: SafeCssValueSchema,
-	}),
-	font: z.strictObject({ body: SafeCssValueSchema, heading: SafeCssValueSchema }),
-});
+const ThemeTokensSchema = CharacterThemeOverridesSchema;
 
 function validateWorkPresentation(
 	value: unknown,
@@ -360,12 +326,22 @@ function validateWorkPresentation(
 	}
 }
 
-function validateTheme(value: unknown, characterId: string): asserts value is ThemeTokens {
+function resolveTheme(value: unknown, characterId: string): ThemeTokens {
 	const result = ThemeTokensSchema.safeParse(value);
 	if (!result.success)
 		throw new Error(`character package ${characterId}: theme tokens are invalid`);
+	try {
+		return resolveCharacterTheme(result.data);
+	} catch (error) {
+		throw new Error(
+			`character package ${characterId}: ${error instanceof Error ? error.message : "theme tokens are invalid"}`,
+		);
+	}
 }
-function validateCharacterCard(value: unknown, characterId: string): asserts value is CharacterStrings {
+function validateCharacterCard(
+	value: unknown,
+	characterId: string,
+): asserts value is CharacterStrings {
 	const schema = z.strictObject({
 		subtitle: z.string(),
 		scene_title: z.string(),
@@ -378,7 +354,6 @@ function validateCharacterCard(value: unknown, characterId: string): asserts val
 	if (!schema.safeParse(value).success)
 		throw new Error(`character package ${characterId}: character card is invalid`);
 }
-
 
 /**
  * Character packages are loaded exclusively from the user-owned library.
@@ -544,7 +519,7 @@ export class CharacterLoader {
 		if (!LanguageTagSchema.safeParse(parsed.language).success) {
 			throw new Error(`character package ${id}: language must be a BCP-47 language tag`);
 		}
-		validateTheme(parsed.theme, id);
+		parsed.theme = resolveTheme(parsed.theme, id);
 		if (!Array.isArray(parsed.scenes)) {
 			throw new Error(`character package ${id}: scenes is required array`);
 		}
@@ -602,9 +577,7 @@ export class CharacterLoader {
 			}
 		}
 		if (!parsed.host || !Array.isArray(parsed.host.event_reactions)) {
-			throw new Error(
-				`character package ${id}: host reactions are required`,
-			);
+			throw new Error(`character package ${id}: host reactions are required`);
 		}
 		const promptResult = CharacterPromptSchema.safeParse(parsed.prompt);
 		if (!promptResult.success) {
@@ -822,10 +795,7 @@ export class CharacterLoader {
 		const exampleBlocks = mesExample
 			.split(/^<START>\s*$/m)
 			.map((block) =>
-				block
-					.trim()
-					.replaceAll("{{char}}", character.name)
-					.replaceAll("{{user}}", "用户"),
+				block.trim().replaceAll("{{char}}", character.name).replaceAll("{{user}}", "用户"),
 			)
 			.filter(Boolean);
 		const roleExamples = mesExample
@@ -856,8 +826,6 @@ export class CharacterLoader {
 			],
 		};
 	}
-
-
 
 	/** Project package presentation data into renderer-safe strings and data URLs. */
 	display(character: CharacterPackage): CharacterDisplay {
@@ -995,20 +963,33 @@ export class CharacterLoader {
 	} {
 		const character = this.load(characterId);
 		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
-		const yaml = readFileSync(join(this.packageRoot(characterId), characterId, "character.yaml"), "utf8");
-		return { characterId, origin: this.packageOrigin(character), writable: true, yaml, sha256: createHash("sha256").update(yaml).digest("hex"), character: this.display(character) };
+		const yaml = readFileSync(
+			join(this.packageRoot(characterId), characterId, "character.yaml"),
+			"utf8",
+		);
+		return {
+			characterId,
+			origin: this.packageOrigin(character),
+			writable: true,
+			yaml,
+			sha256: createHash("sha256").update(yaml).digest("hex"),
+			character: this.display(character),
+		};
 	}
 
-	writePackageDocument(params: {
-		characterId: string;
-		yaml: string;
-		expectedSha256: string;
-	}): { character: CharacterPackage } {
+	writePackageDocument(params: { characterId: string; yaml: string; expectedSha256: string }): {
+		character: CharacterPackage;
+	} {
 		const current = this.readPackageDocument(params.characterId);
 		if (current.sha256 !== params.expectedSha256)
 			throw { kind: "conflict", reason: "character_package_revision_mismatch" };
 		const parsed = parse(params.yaml);
-		if (!parsed || typeof parsed !== "object" || !("id" in parsed) || parsed.id !== params.characterId)
+		if (
+			!parsed ||
+			typeof parsed !== "object" ||
+			!("id" in parsed) ||
+			parsed.id !== params.characterId
+		)
 			throw { kind: "invalid_request", reason: "character_id_immutable" };
 		const stagingRoot = join(this.libraryRoot, `.${params.characterId}-${randomUUID()}`);
 		const staging = join(stagingRoot, params.characterId);
