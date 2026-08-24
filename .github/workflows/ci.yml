@@ -1,11 +1,6 @@
 name: bear-harness-ci
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
-  release:
-    types: [published]
 
 permissions:
   contents: read
@@ -91,10 +86,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - os: macos-13
+            os-name: mac
+            arch: x64
+            package-cmd: package:mac:x64
+            exts: dmg zip
+            upload-glob: |
+              apps/desktop/release/*.dmg
+              apps/desktop/release/*.zip
           - os: macos-15
             os-name: mac
-            arch: universal
-            package-cmd: package:mac
+            arch: arm64
+            package-cmd: package:mac:arm64
             exts: dmg zip
             upload-glob: |
               apps/desktop/release/*.dmg
@@ -131,18 +134,24 @@ jobs:
         run: npm run ${{ matrix.package-cmd }}
       - name: Verify dynamic artifact names and sizes
         run: node scripts/verify-package.mjs ${{ matrix.os-name }} ${{ matrix.arch }} ${{ matrix.exts }}
-      - name: Verify macOS universal binaries
+      - name: Verify macOS target architecture
         if: matrix.os-name == 'mac'
         shell: bash
         run: |
           set -euo pipefail
           APP=$(ls -d apps/desktop/release/mac*/*.app | head -1)
           EXE="$APP/Contents/MacOS/$(node --input-type=module -e "const { productConfig } = await import('@bear-harness/product-config'); process.stdout.write(productConfig.executableName)")"
-          lipo -archs "$EXE" | grep -q arm64
-          lipo -archs "$EXE" | grep -q x86_64
           FRAMEWORK="$APP/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework"
-          lipo -archs "$FRAMEWORK" | grep -q arm64
-          lipo -archs "$FRAMEWORK" | grep -q x86_64
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            lipo -archs "$EXE" | grep -qx "arm64"
+            lipo -archs "$FRAMEWORK" | grep -qx "arm64"
+          else
+            lipo -archs "$EXE" | grep -qx "x86_64"
+            lipo -archs "$FRAMEWORK" | grep -qx "x86_64"
+          fi
+      - name: Verify native llama binding
+        shell: bash
+        run: node apps/desktop/scripts/verify-native-bindings.mjs ${{ matrix.os-name }} ${{ matrix.arch }}
       - name: Verify Windows x64 PE machine
         if: matrix.os-name == 'win'
         shell: pwsh

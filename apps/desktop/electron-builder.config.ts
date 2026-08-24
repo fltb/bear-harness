@@ -31,27 +31,26 @@ if (!existsSync(attributionPath)) {
 // Icon paths in the shared product config are repo-root-relative.
 const icon = productConfig.icon ? resolve(repoRoot, productConfig.icon) : undefined;
 
-// node-llama-cpp publishes platform-specific bindings for every target. npm workspaces
-// can have several of them installed at once, so each release excludes foreign
-// platforms and architectures. The CUDA "ext" packages are a large optional
-// compatibility extension; standard CUDA remains bundled for this first phase.
+// Native bindings are staged beneath dist/main/node_modules immediately before
+// packaging. Every artifact therefore contains exactly the binding built for
+// its runner target, never a foreign platform or architecture.
 const nativeBindingExcludes = {
 	mac: [
-		"!node_modules/@node-llama-cpp/linux-*/**/*",
-		"!node_modules/@node-llama-cpp/win-*/**/*",
+		"!dist/main/node_modules/@node-llama-cpp/linux-*/**/*",
+		"!dist/main/node_modules/@node-llama-cpp/win-*/**/*",
 	],
 	win: [
-		"!node_modules/@node-llama-cpp/linux-*/**/*",
-		"!node_modules/@node-llama-cpp/mac-*/**/*",
-		"!node_modules/@node-llama-cpp/win-arm64/**/*",
-		"!node_modules/@node-llama-cpp/win-x64-cuda-ext/**/*",
+		"!dist/main/node_modules/@node-llama-cpp/linux-*/**/*",
+		"!dist/main/node_modules/@node-llama-cpp/mac-*/**/*",
+		"!dist/main/node_modules/@node-llama-cpp/win-arm64/**/*",
+		"!dist/main/node_modules/@node-llama-cpp/win-x64-cuda-ext/**/*",
 	],
 	linux: [
-		"!node_modules/@node-llama-cpp/mac-*/**/*",
-		"!node_modules/@node-llama-cpp/win-*/**/*",
-		"!node_modules/@node-llama-cpp/linux-arm64/**/*",
-		"!node_modules/@node-llama-cpp/linux-armv7l/**/*",
-		"!node_modules/@node-llama-cpp/linux-x64-cuda-ext/**/*",
+		"!dist/main/node_modules/@node-llama-cpp/mac-*/**/*",
+		"!dist/main/node_modules/@node-llama-cpp/win-*/**/*",
+		"!dist/main/node_modules/@node-llama-cpp/linux-arm64/**/*",
+		"!dist/main/node_modules/@node-llama-cpp/linux-armv7l/**/*",
+		"!dist/main/node_modules/@node-llama-cpp/linux-x64-cuda-ext/**/*",
 	],
 };
 
@@ -66,12 +65,11 @@ const config: Configuration = {
 	},
 	asar: true,
 	// Native modules and dependent shared libraries cannot be loaded from ASAR.
-	// node-llama-cpp's package chooses the best shipped binding at runtime:
-	// Metal on Apple Silicon, CUDA/Vulkan where available, then CPU.
+	// node-llama-cpp's package chooses the staged target binding at runtime.
 	asarUnpack: [
+		"dist/main/node_modules/node-llama-cpp/**/*",
+		"dist/main/node_modules/@node-llama-cpp/**/*",
 		"node_modules/@napi-rs/canvas*/**/*",
-		"node_modules/node-llama-cpp/**/*",
-		"node_modules/@node-llama-cpp/**/*",
 		"node_modules/sqlite-vec*/**/*",
 		"node_modules/@node-rs/jieba*/**/*",
 	],

@@ -22,7 +22,7 @@ function makeRuntime(updateService?: HostUpdateService) {
 	roots.push(dataDir);
 	return createHostRuntime({
 		dataDir,
-		characterRoot,
+		characterSeedRoot: characterRoot,
 		productConfig,
 		credentialVault: vault,
 		updateService,

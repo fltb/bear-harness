@@ -71,10 +71,8 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 		await page.request.post("/rpc/onboarding.get%3Av1", { headers, data: {} })
 	).json();
 	const onboardingAnswers: Record<string, string | undefined> = {
-		settings_intro: undefined,
+		welcome: undefined,
 		nickname: "林",
-		relationship: "collaborator",
-		memory: "remember",
 	};
 	while (onboardingState.data.status === "active") {
 		const stepId = onboardingState.data.currentStepId as string;

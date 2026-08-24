@@ -611,9 +611,9 @@ export class CharacterLoader {
 			throw new Error(`character package ${id}: prompt is invalid`);
 		}
 		validateCharacterCard(parsed.character, id);
-		validateCharacterOnboardingFlow(parsed.character?.first_meeting, id);
-		validateWorkPresentation(parsed.character?.work_presentation, id);
 		const roleplay = RoleplaySchema.parse(parsed.roleplay);
+		validateCharacterOnboardingFlow(parsed.character?.first_meeting, id, roleplay);
+		validateWorkPresentation(parsed.character?.work_presentation, id);
 		const canonManifestPath = this.characterPackagePath(id, "canon/manifest.yaml");
 		const canonManifest = CanonPackageManifestSchema.parse(
 			parse(readFileSync(canonManifestPath, "utf8")),

@@ -23,7 +23,7 @@ function makeRuntime() {
 	roots.push(dataDir);
 	const runtime = createHostRuntime({
 		dataDir,
-		characterRoot,
+		characterSeedRoot: characterRoot,
 		productConfig,
 		credentialVault: vault,
 		logger: silentLogger,
@@ -35,7 +35,7 @@ function makeRuntime() {
 function makeRuntimeAt(dataDir: string) {
 	const runtime = createHostRuntime({
 		dataDir,
-		characterRoot,
+		characterSeedRoot: characterRoot,
 		productConfig,
 		credentialVault: vault,
 		logger: silentLogger,

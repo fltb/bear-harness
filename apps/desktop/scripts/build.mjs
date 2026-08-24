@@ -32,6 +32,7 @@ rmSync(resolve(desktop, "dist"), { recursive: true, force: true });
 run("node", ["scripts/validate-product-config.mjs"]);
 run("node", ["scripts/stage-character-seeds.mjs"]);
 for (const workspace of [
+	"@bear-harness/i18n",
 	"@bear-harness/product-config",
 	"@bear-harness/protocol",
 	"@bear-harness/companion-client",

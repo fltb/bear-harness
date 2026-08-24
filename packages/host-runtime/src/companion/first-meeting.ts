@@ -115,28 +115,14 @@ export class FirstMeetingMachine {
 	setRelationshipMemory(companionId: string, enabled: boolean): OnboardingStateRow {
 		const current = this.getState(companionId);
 		const flow = this.flow(companionId);
-		const step = flow.steps.find((candidate) =>
-			candidate.effects?.some((effect) => effect.type === "relationship.memory"),
-		);
-		if (!step || step.kind !== "choice") {
-			throw { kind: "unavailable", reason: "relationship_memory_not_configured" };
-		}
-		const effect = step.effects?.find((candidate) => candidate.type === "relationship.memory");
-		if (!effect || effect.type !== "relationship.memory") {
-			throw { kind: "unavailable", reason: "relationship_memory_not_configured" };
-		}
-		const value = enabled
-			? effect.enabled_when
-			: step.choices.find((choice) => choice.value !== effect.enabled_when)?.value;
-		if (!value)
-			throw new Error(`character package ${companionId}: memory choice has no disabled value`);
-
-		const stateData = this.applyAnswer(step, value, current.stateData);
 		return this.persistTransition(
 			companionId,
 			flow,
-			current.status === "complete" ? "complete" : (current.currentStepId ?? step.id),
-			stateData,
+			current.status === "complete" ? "complete" : (current.currentStepId ?? "complete"),
+			{
+				...current.stateData,
+				decisions: { ...current.stateData.decisions, relationship_memory_enabled: enabled },
+			},
 		);
 	}
 
@@ -177,7 +163,10 @@ export class FirstMeetingMachine {
 				schema_version: 1,
 				flow_version: flow.version,
 				answers: {},
-				decisions: {},
+				decisions: {
+					relationship_memory_enabled: true,
+					conversation_history_read_enabled: true,
+				},
 			};
 		}
 		const parsedState = OnboardingStateDataSchema.safeParse(serialized);
@@ -189,24 +178,35 @@ export class FirstMeetingMachine {
 		}
 		const storedAnswers = parsedState.data.answers;
 		const answers: Record<string, string> = {};
-		const decisions: OnboardingStateData["decisions"] = {};
-
+		const decisions: OnboardingStateData["decisions"] = {
+			relationship_memory_enabled: parsedState.data.decisions.relationship_memory_enabled ?? true,
+			conversation_history_read_enabled:
+				parsedState.data.decisions.conversation_history_read_enabled ?? true,
+			roleplay_initial_values: parsedState.data.decisions.roleplay_initial_values ?? {},
+		};
 		for (const step of flow.steps) {
 			if (step.kind === "acknowledge") continue;
-			let answer = storedAnswers[step.answer_key];
+			const answer = storedAnswers[step.answer_key];
 			if (!this.isValidStoredAnswer(step, answer)) continue;
 			answers[step.answer_key] = answer;
 			for (const effect of step.effects ?? []) {
-				if (effect.type === "relationship.kind") decisions.relationship_kind = answer;
-				if (effect.type === "relationship.memory") {
-					decisions.relationship_memory_enabled = answer === effect.enabled_when;
+				const value = effect.type === "identity.nickname" ? undefined : effect.values[answer];
+				if (effect.type === "setting.set" && typeof value === "boolean") {
+					decisions[effect.setting] = value;
+				}
+				if (effect.type === "roleplay.initial" && value !== undefined) {
+					decisions.roleplay_initial_values = {
+						...decisions.roleplay_initial_values,
+						[effect.variable]: value,
+					};
 				}
 			}
 		}
-		if (
-			parsedState.success &&
-			typeof parsedState.data.decisions.conversation_history_read_enabled === "boolean"
-		) {
+		if (typeof parsedState.data.decisions.relationship_memory_enabled === "boolean") {
+			decisions.relationship_memory_enabled =
+				parsedState.data.decisions.relationship_memory_enabled;
+		}
+		if (typeof parsedState.data.decisions.conversation_history_read_enabled === "boolean") {
 			decisions.conversation_history_read_enabled =
 				parsedState.data.decisions.conversation_history_read_enabled;
 		}
@@ -256,9 +256,15 @@ export class FirstMeetingMachine {
 		if (step.kind !== "acknowledge" && answer !== undefined) {
 			answers[step.answer_key] = answer;
 			for (const effect of step.effects ?? []) {
-				if (effect.type === "relationship.kind") decisions.relationship_kind = answer;
-				if (effect.type === "relationship.memory") {
-					decisions.relationship_memory_enabled = answer === effect.enabled_when;
+				const value = effect.type === "identity.nickname" ? undefined : effect.values[answer];
+				if (effect.type === "setting.set" && typeof value === "boolean") {
+					decisions[effect.setting] = value;
+				}
+				if (effect.type === "roleplay.initial" && value !== undefined) {
+					decisions.roleplay_initial_values = {
+						...decisions.roleplay_initial_values,
+						[effect.variable]: value,
+					};
 				}
 			}
 		}

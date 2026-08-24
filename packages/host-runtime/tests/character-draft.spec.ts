@@ -17,7 +17,7 @@ async function createRuntime() {
 	roots.push(root);
 	const runtime = new HostRuntime({
 		dataDir: join(root, "data"),
-		characterRoot,
+		characterSeedRoot: characterRoot,
 		productConfig: { defaultCharacterId: "jizhou" },
 	});
 	await runtime.start();

@@ -26,7 +26,8 @@
 		"test:e2e:packaged": "npm run test:e2e:packaged --workspace @bear-harness/desktop",
 		"test:diagnostics:crash": "npm run test:diagnostics:crash --workspace @bear-harness/desktop",
 		"build": "npm run build --workspace @bear-harness/desktop && npm run build --workspace @bear-harness/web-dev",
-		"package:mac": "npm run package:mac --workspace @bear-harness/desktop",
+		"package:mac:arm64": "npm run package:mac:arm64 --workspace @bear-harness/desktop",
+		"package:mac:x64": "npm run package:mac:x64 --workspace @bear-harness/desktop",
 		"package:win": "npm run package:win --workspace @bear-harness/desktop",
 		"package:linux": "npm run package:linux --workspace @bear-harness/desktop",
 		"dev:web": "npm run dev --workspace @bear-harness/web-dev",
@@ -48,6 +49,7 @@
 		"esbuild@0.25.12": true,
 		"fsevents@2.3.2": true,
 		"fsevents@2.3.3": true,
+		"node-llama-cpp@3.16.2": true,
 		"protobufjs@7.6.5": true
 	}
 }

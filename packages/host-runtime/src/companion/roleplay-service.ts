@@ -1,10 +1,8 @@
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
-import {
-	roleplayEvents,
-	roleplayUnlocks,
-} from "../storage/schema.js";
+import { onboardingState, roleplayEvents, roleplayUnlocks } from "../storage/schema.js";
 import type { CharacterPackage } from "./character-loader.js";
+import { OnboardingStateDataSchema } from "./onboarding-schema.js";
 import type { RoleplayCondition, RoleplayEffect, RoleplayValue } from "./roleplay-schema.js";
 
 export interface RoleplayProjection {
@@ -18,7 +16,21 @@ export class RoleplayService {
 	project(character: CharacterPackage, conversationId?: string): RoleplayProjection {
 		const values = Object.fromEntries(
 			character.roleplay.variables.map((variable) => [variable.id, variable.initial]),
-		);
+		) as Record<string, RoleplayValue>;
+		const onboarding = this.db
+			.select({ stateData: onboardingState.stateJson })
+			.from(onboardingState)
+			.where(eq(onboardingState.companionId, character.id))
+			.get();
+		const overrides = onboarding
+			? (OnboardingStateDataSchema.parse(onboarding.stateData).decisions.roleplay_initial_values ??
+				{})
+			: {};
+		for (const variable of character.roleplay.variables) {
+			const override = overrides[variable.id];
+			if (override !== undefined && validInitialOverride(variable, override))
+				values[variable.id] = override;
+		}
 		const rows = this.db
 			.select({
 				effects: roleplayEvents.effectsJson,
@@ -138,4 +150,14 @@ function evaluateCondition(condition: RoleplayCondition, state: RoleplayProjecti
 	if (condition.operator === "gte") return value >= condition.value;
 	if (condition.operator === "lt") return value < condition.value;
 	return value <= condition.value;
+}
+
+function validInitialOverride(
+	variable: CharacterPackage["roleplay"]["variables"][number],
+	value: RoleplayValue,
+): boolean {
+	if (variable.type === "number") return typeof value === "number";
+	if (variable.type === "boolean") return typeof value === "boolean";
+	if (variable.type === "string") return typeof value === "string";
+	return typeof value === "string" && variable.values?.includes(value) === true;
 }

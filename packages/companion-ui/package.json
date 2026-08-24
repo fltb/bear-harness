@@ -14,7 +14,9 @@
 		}
 	},
 	"scripts": {
+		"prebuild": "npm --prefix ../i18n run build",
 		"build": "tsc -p tsconfig.json --noEmit",
+		"pretypecheck": "npm --prefix ../i18n run build",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
 		"test:unit": "npm --prefix ../product-config run build && npm --prefix ../i18n run build && npm --prefix ../protocol run build && npm --prefix ../companion-client run build && vitest run",
 		"test:coverage": "npm --prefix ../product-config run build && npm --prefix ../i18n run build && npm --prefix ../protocol run build && npm --prefix ../companion-client run build && vitest run --coverage"

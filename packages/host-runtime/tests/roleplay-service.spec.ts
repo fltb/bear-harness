@@ -8,7 +8,7 @@ import { CharacterLoader } from "../src/companion/character-loader.js";
 import { RoleplayService } from "../src/companion/roleplay-service.js";
 import { Database, MIGRATIONS } from "../src/storage/database.js";
 import { EventBus } from "../src/storage/event-bus.js";
-import { conversations } from "../src/storage/schema.js";
+import { conversations, onboardingState } from "../src/storage/schema.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -55,6 +55,28 @@ describe("roleplay event projection", () => {
 				continuity_response: "set_down",
 			},
 			unlocked: [],
+		});
+		database.close();
+	});
+
+	it("uses persisted onboarding bucket overrides as the roleplay baseline", () => {
+		const { database, character, service } = fixture();
+		database.orm
+			.insert(onboardingState)
+			.values({
+				companionId: character.id,
+				state: "complete",
+				stateJson: {
+					schema_version: 1,
+					flow_version: 5,
+					answers: {},
+					decisions: { roleplay_initial_values: { continuity_response: "received" } },
+				},
+			})
+			.run();
+
+		expect(service.project(character, "conversation").values).toMatchObject({
+			continuity_response: "received",
 		});
 		database.close();
 	});

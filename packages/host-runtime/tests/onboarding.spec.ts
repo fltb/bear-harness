@@ -6,12 +6,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ConversationRepository } from "../src/conversations/repository.js";
 import {
-	HOST_SETTINGS_CAPABILITIES,
 	type CredentialVault,
 	createHostRuntime,
+	HOST_SETTINGS_CAPABILITIES,
+	type HostRuntime,
 } from "../src/index.js";
-import type { ConversationRepository } from "../src/conversations/repository.js";
 
 const temporaryDirectories: string[] = [];
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
@@ -42,48 +43,45 @@ async function data(
 	return response.data;
 }
 
+async function completeOnboarding(runtime: HostRuntime) {
+	const current = (await data(runtime, "onboarding.get:v1", {})) as {
+		status: string;
+		currentStepId?: string;
+	};
+	if (current.status === "complete") return current;
+	if (current.currentStepId === "welcome")
+		await data(runtime, "onboarding.submit:v1", { stepId: "welcome" });
+	return data(runtime, "onboarding.submit:v1", { stepId: "nickname", answer: "林" });
+}
+
 describe("role-defined onboarding", () => {
 	afterEach(async () => {
 		for (const directory of temporaryDirectories.splice(0))
 			rmSync(directory, { recursive: true, force: true });
 	});
 
-	it("validates role-defined answers, persists effects and completes without provider setup", async () => {
+	it("presents a minimal first meeting and persists the requested nickname", async () => {
 		const runtime = runtimeForTest();
 		await runtime.start();
 
 		await expect(data(runtime, "onboarding.get:v1", {})).resolves.toMatchObject({
 			status: "active",
-			currentStepId: "settings_intro",
-		});
-		await expect(
-			data(runtime, "onboarding.submit:v1", { stepId: "settings_intro" }),
-		).resolves.toMatchObject({
-			status: "active",
-			currentStepId: "nickname",
-		});
-		await data(runtime, "onboarding.submit:v1", { stepId: "nickname", answer: "林" });
-		await data(runtime, "onboarding.submit:v1", { stepId: "relationship", answer: "collaborator" });
-		await expect(
-			data(runtime, "onboarding.submit:v1", {
-				stepId: "memory",
-				answer: "remember",
-			}),
-		).resolves.toMatchObject({
-			status: "complete",
+			currentStepId: "welcome",
 			stateData: {
-				answers: { nickname: "林", relationship: "collaborator", relationship_memory: "remember" },
-				decisions: { relationship_kind: "collaborator", relationship_memory_enabled: true },
+				decisions: {
+					relationship_memory_enabled: true,
+					conversation_history_read_enabled: true,
+				},
 			},
 		});
-
-		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
-			settings: { relationshipMemoryEnabled: true },
+		await expect(completeOnboarding(runtime)).resolves.toMatchObject({
+			status: "complete",
+			stateData: { answers: { nickname: "林" } },
 		});
 		await data(runtime, "settings.set:v1", { settings: { relationshipMemoryEnabled: false } });
 		await expect(data(runtime, "onboarding.get:v1", {})).resolves.toMatchObject({
 			stateData: {
-				answers: { relationship_memory: "present" },
+				answers: { nickname: "林" },
 				decisions: { relationship_memory_enabled: false },
 			},
 		});
@@ -133,20 +131,7 @@ describe("role-defined onboarding", () => {
 			});
 		};
 
-		for (const [stepId, answer] of [
-			["settings_intro", undefined],
-			["nickname", "林"],
-			["relationship", "collaborator"],
-			["memory", "remember"],
-		] as const) {
-			if (stepId === "memory") {
-				await expect(data(runtime, "onboarding.submit:v1", { stepId, answer })).rejects.toThrow(
-					"internal",
-				);
-			} else {
-				await data(runtime, "onboarding.submit:v1", { stepId, answer });
-			}
-		}
+		await expect(completeOnboarding(runtime)).rejects.toThrow("internal");
 
 		const database = Reflect.get(runtime, "db") as {
 			connection: { prepare(sql: string): { get(): unknown } };
@@ -167,9 +152,7 @@ describe("role-defined onboarding", () => {
 		expect(rowCount("conversation_sessions")).toBe(0);
 		expect(rowCount("active_conversations")).toBe(0);
 
-		await expect(
-			data(runtime, "onboarding.submit:v1", { stepId: "memory", answer: "remember" }),
-		).resolves.toMatchObject({ status: "complete" });
+		await expect(completeOnboarding(runtime)).resolves.toMatchObject({ status: "complete" });
 		await expect(data(runtime, "conversation.list:v1", {})).resolves.toMatchObject({
 			conversations: [{ title: "与极昼" }],
 		});
@@ -184,18 +167,19 @@ describe("role-defined onboarding", () => {
 		await runtime.start();
 
 		const initial = (await data(runtime, "onboarding.get:v1", {})) as { eventSeq: number };
-		const transitioned = (await data(runtime, "onboarding.submit:v1", {
-			stepId: "settings_intro",
-		})) as { currentStepId: string; eventSeq: number };
+		const transitioned = (await completeOnboarding(runtime)) as {
+			status: string;
+			eventSeq: number;
+		};
 		const snapshot = (await data(runtime, "snapshot.get:v1", {})) as {
 			eventSeq: number;
-			onboarding: { currentStepId: string; eventSeq: number };
+			onboarding: { status: string; eventSeq: number };
 		};
 
-		expect(transitioned).toMatchObject({ currentStepId: "nickname" });
+		expect(transitioned).toMatchObject({ status: "complete" });
 		expect(transitioned.eventSeq).toBeGreaterThan(initial.eventSeq);
 		expect(snapshot.onboarding).toMatchObject({
-			currentStepId: "nickname",
+			status: "complete",
 			eventSeq: snapshot.eventSeq,
 		});
 		expect(snapshot.eventSeq).toBeGreaterThanOrEqual(transitioned.eventSeq);
@@ -205,14 +189,7 @@ describe("role-defined onboarding", () => {
 	it("keeps internal Pi session fields out of the strict boot snapshot", async () => {
 		const runtime = runtimeForTest();
 		await runtime.start();
-		for (const [stepId, answer] of [
-			["settings_intro", undefined],
-			["nickname", "林"],
-			["relationship", "collaborator"],
-			["memory", "remember"],
-		] as const) {
-			await data(runtime, "onboarding.submit:v1", { stepId, answer });
-		}
+		await completeOnboarding(runtime);
 
 		const snapshot = (await data(runtime, "snapshot.get:v1", {})) as {
 			conversation: Record<string, unknown>;
@@ -242,14 +219,7 @@ describe("role-defined onboarding", () => {
 		await data(runtime, "model.defaults.setReply:v1", {
 			reply: { providerId: provider.id, modelId: model.id },
 		});
-		for (const [stepId, answer] of [
-			["settings_intro", undefined],
-			["nickname", "林"],
-			["relationship", "collaborator"],
-			["memory", "remember"],
-		] as const) {
-			await data(runtime, "onboarding.submit:v1", { stepId, answer });
-		}
+		await completeOnboarding(runtime);
 		const list = (await data(runtime, "conversation.list:v1", {})) as {
 			conversations: Array<{ id: string }>;
 		};
@@ -267,8 +237,8 @@ describe("role-defined onboarding", () => {
 
 		await expect(data(runtime, "settings.get:v1", {})).resolves.toEqual({
 			settings: {
-				relationshipMemoryEnabled: false,
-				conversationHistoryReadEnabled: false,
+				relationshipMemoryEnabled: true,
+				conversationHistoryReadEnabled: true,
 				networkProxy: { mode: "direct" },
 				memoryVectorService: { enabled: false, provider: "none" },
 				modelDownloadMirror: {},
@@ -375,7 +345,7 @@ describe("role-defined onboarding", () => {
 			)
 			.run(
 				productConfig.defaultCharacterId,
-				"settings_intro",
+				"welcome",
 				JSON.stringify({ schema_version: 1, decisions: {} }),
 			);
 
@@ -386,17 +356,15 @@ describe("role-defined onboarding", () => {
 		await runtime.close();
 	});
 
-	it("rejects a value outside the active role-defined choice set", async () => {
+	it("rejects an answer for an information-only onboarding step", async () => {
 		const runtime = runtimeForTest();
 		await runtime.start();
-		await data(runtime, "onboarding.submit:v1", { stepId: "settings_intro" });
-		await data(runtime, "onboarding.submit:v1", { stepId: "nickname", answer: "林" });
 
 		await expect(
-			runtime.dispatch("onboarding.submit:v1", { stepId: "relationship", answer: "invalid" }),
+			runtime.dispatch("onboarding.submit:v1", { stepId: "welcome", answer: "invalid" }),
 		).resolves.toEqual({
 			ok: false,
-			error: { kind: "invalid_request", reason: "onboarding_answer_invalid" },
+			error: { kind: "invalid_request", reason: "onboarding_answer_unexpected" },
 		});
 		await runtime.close();
 	});

@@ -70,7 +70,7 @@ function makeRuntime() {
 }
 
 function makeRuntimeAt(dataDir: string) {
-	return createHostRuntime({ dataDir, characterRoot, productConfig, credentialVault: vault });
+	return createHostRuntime({ dataDir, characterSeedRoot: characterRoot, productConfig, credentialVault: vault });
 }
 
 async function data(
@@ -94,12 +94,6 @@ describe("automatic continuity", () => {
 		let runtime = makeRuntimeAt(dataDir);
 		await runtime.start();
 		const conversation = (await data(runtime, "conversation.create:v1", {})) as { id: string };
-		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
-			settings: { relationshipMemoryEnabled: false },
-		});
-		await expect(data(runtime, "memory.list:v1", {})).resolves.toEqual({ entries: [] });
-
-		await data(runtime, "settings.set:v1", { settings: { relationshipMemoryEnabled: true } });
 		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
 			settings: { relationshipMemoryEnabled: true },
 		});

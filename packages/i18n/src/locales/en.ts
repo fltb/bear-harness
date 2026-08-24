@@ -1,3 +1,6 @@
+import type { LocalizedCatalog } from "./types.js";
+import type { zhCN } from "./zh-CN.js";
+
 export const en = {
 	shell: {
 		fallbackComposerPlaceholder: "Message your companion...",
@@ -287,8 +290,8 @@ export const en = {
 			"Uses the bundled offline embedding model (768 dimensions). The first use downloads the model.",
 		localModel: "Local model",
 		localModels: {
-			embeddinggemma: "embeddinggemma-300m (768 dims, bundled default)",
-			"bge-base-zh": "BGE base zh v1.5 (768 dims)",
+			embeddinggemma: "embeddinggemma-300m (768 dims)",
+			"bge-small-zh": "BGE small zh v1.5 (768 dims, default)",
 			"multilingual-e5": "multilingual-e5-base (768 dims)",
 			custom: "Custom download source",
 		},
@@ -338,7 +341,8 @@ export const en = {
 		piConfigImport: "Import Pi configuration",
 		piConfigImported: "Pi configuration imported; provider models are now available",
 		customBaseUrl: "Custom service URL",
-		imageOptionalWarning: "An image model is optional. Continue without one if you do not need image input.",
+		imageOptionalWarning:
+			"An image model is optional. Continue without one if you do not need image input.",
 		confirmWithoutImage: "Continue without an image model",
 		customBaseUrlPlaceholder: "https://example.com/v1",
 		customModelId: "Custom model ID",
@@ -370,7 +374,8 @@ export const en = {
 		loadingModels: "Loading the provider's synced models…",
 		noModels: "No synced models yet. Finish provider setup or import Pi configuration.",
 		modelLabel: "Reply model",
-		imageOptionalWarning: "An image model is optional. Continue without one if you do not need image input.",
+		imageOptionalWarning:
+			"An image model is optional. Continue without one if you do not need image input.",
 		confirmWithoutImage: "Continue without an image model",
 		connecting: "Connecting model service...",
 		memorySetupNote:
@@ -499,4 +504,4 @@ export const en = {
 			},
 		},
 	},
-} as const;
+} as const satisfies LocalizedCatalog<typeof zhCN>;

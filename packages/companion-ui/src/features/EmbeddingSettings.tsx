@@ -3,8 +3,12 @@ import { Button } from "@kobalte/core/button";
 import { Checkbox } from "@kobalte/core/checkbox";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
-import { Show, createEffect, createSignal } from "solid-js";
-import type { LocalEmbeddingCandidate, SettingsCapabilities, SettingsData } from "../stores/companion.js";
+import { createSignal, Show } from "solid-js";
+import type {
+	LocalEmbeddingCandidate,
+	SettingsCapabilities,
+	SettingsData,
+} from "../stores/companion.js";
 import { useCompanionStore } from "../stores/companion.js";
 
 /** Shared embedding controls bound directly to the Host-backed query state. */
@@ -15,6 +19,10 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 	const onboarding = props.mode === "onboarding";
 	const [requestedPresetId, setRequestedPresetId] = createSignal<string | null>(null);
 	const [requestedProviderId, setRequestedProviderId] = createSignal<string | null>(null);
+	const [onboardingProviderId, setOnboardingProviderId] = createSignal<
+		SettingsCapabilities["memoryVectorProviders"][number]["id"] | null
+	>(null);
+	const [onboardingCandidateId, setOnboardingCandidateId] = createSignal<string | null>(null);
 	const [remoteBaseUrlDraft, setRemoteBaseUrlDraft] = createSignal<string | null>(null);
 	const [remoteModelDraft, setRemoteModelDraft] = createSignal<string | null>(null);
 	const [remoteDimensionsDraft, setRemoteDimensionsDraft] = createSignal<string | null>(null);
@@ -30,16 +38,27 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 	const presets = () => capabilities()?.memoryVectorPresets ?? [];
 	const configuringLocal = () => embedding.localConfigureMutation.isPending;
 	const savingSettings = () => embedding.settingsMutation.isPending;
-	const localSelected = () => vector()?.provider === "local";
-	const capabilitiesReady = () => capabilities() !== undefined;
 	const providerId = () =>
-		vector()?.provider as SettingsCapabilities["memoryVectorProviders"][number]["id"] | undefined;
+		(onboarding ? (onboardingProviderId() ?? vector()?.provider) : vector()?.provider) as
+			| SettingsCapabilities["memoryVectorProviders"][number]["id"]
+			| undefined;
+	const localSelected = () => providerId() === "local";
+	const capabilitiesReady = () => capabilities() !== undefined;
 	const selectedProvider = () =>
-		providerOptions().find((provider) => provider.id === providerId()) ?? null;
+		onboarding && onboardingProviderId() === null
+			? null
+			: (providerOptions().find((provider) => provider.id === providerId()) ?? null);
+	const selectedCandidate = () =>
+		candidates().find(
+			(candidate) => candidate.id === (onboarding ? onboardingCandidateId() : vector()?.localModel),
+		) ?? null;
+	const onboardingChoiceReady = () =>
+		!onboarding ||
+		onboardingProviderId() === "none" ||
+		(onboardingProviderId() === "local" && onboardingCandidateId() !== null);
 	const selectedPreset = () =>
 		presets().find(
-			(preset) =>
-				preset.model === vector()?.model && preset.dimensions === vector()?.dimensions,
+			(preset) => preset.model === vector()?.model && preset.dimensions === vector()?.dimensions,
 		) ?? null;
 	const actionLabel = () => {
 		if (configuringLocal()) return t("settings.downloadingLocalModel");
@@ -75,6 +94,11 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 			return;
 		}
 		try {
+			if (onboarding) {
+				setOnboardingProviderId(provider);
+				setOnboardingCandidateId(null);
+				return;
+			}
 			if (provider === "local") {
 				const candidate = candidates().find((item) => item.isDefault) ?? candidates()[0];
 				if (candidate) {
@@ -104,27 +128,42 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 		}
 		const current = vector();
 		if (!current || !capabilitiesReady()) return;
-		if (current.provider === "local" && candidates().some((candidate) => candidate.id === current.localModel)) {
-			await embedding.localConfigureMutation.mutateAsync({ provider: "local", candidateId: current.localModel });
+		if (onboarding) {
+			if (onboardingProviderId() === "none") {
+				await embedding.localConfigureMutation.mutateAsync({ provider: "none" });
+				return;
+			}
+			const candidate = selectedCandidate();
+			if (onboardingProviderId() === "local" && candidate) {
+				await embedding.localConfigureMutation.mutateAsync({
+					provider: "local",
+					candidateId: candidate.id,
+				});
+			}
 			return;
 		}
-		if (onboarding && providerOptions().some((provider) => provider.id === "none")) {
-			await embedding.localConfigureMutation.mutateAsync({ provider: "none" });
-			return;
-		}
-		if (!onboarding) {
-			await saveVector({
-				...current,
-				...(remoteBaseUrlDraft() !== null ? { baseUrl: remoteBaseUrlDraft()! } : {}),
-				...(remoteModelDraft() !== null ? { model: remoteModelDraft()! } : {}),
-				...(remoteDimensionsDraft() !== null
-					? { dimensions: Number(remoteDimensionsDraft()) || 0 }
-					: {}),
+		if (
+			current.provider === "local" &&
+			candidates().some((candidate) => candidate.id === current.localModel)
+		) {
+			await embedding.localConfigureMutation.mutateAsync({
+				provider: "local",
+				candidateId: current.localModel,
 			});
-			setRemoteBaseUrlDraft(null);
-			setRemoteModelDraft(null);
-			setRemoteDimensionsDraft(null);
+			return;
 		}
+		const baseUrl = remoteBaseUrlDraft();
+		const model = remoteModelDraft();
+		const dimensions = remoteDimensionsDraft();
+		await saveVector({
+			...current,
+			...(baseUrl !== null ? { baseUrl } : {}),
+			...(model !== null ? { model } : {}),
+			...(dimensions !== null ? { dimensions: Number(dimensions) || 0 } : {}),
+		});
+		setRemoteBaseUrlDraft(null);
+		setRemoteModelDraft(null);
+		setRemoteDimensionsDraft(null);
 	};
 
 	return (
@@ -136,14 +175,18 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 						const current = vector();
 						if (!capabilitiesReady() || !current || enabled === current.enabled) return;
 						if (!enabled && current.provider === "local") {
-							void embedding.localConfigureMutation.mutateAsync({ provider: "none" }).catch(() => undefined);
+							void embedding.localConfigureMutation
+								.mutateAsync({ provider: "none" })
+								.catch(() => undefined);
 							return;
 						}
 						void saveVector({ ...current, enabled }).catch(() => undefined);
 					}}
 					disabled={!capabilitiesReady() || savingSettings() || configuringLocal()}
 				>
-					<Checkbox.Input /><Checkbox.Control /><Checkbox.Label>{t("settings.memoryVectorEnabled")}</Checkbox.Label>
+					<Checkbox.Input />
+					<Checkbox.Control />
+					<Checkbox.Label>{t("settings.memoryVectorEnabled")}</Checkbox.Label>
 				</Checkbox>
 			</Show>
 			<Show when={onboarding || vector()?.enabled}>
@@ -152,41 +195,92 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 					value={selectedProvider()}
 					optionValue="id"
 					onChange={(provider) => {
-						if (!provider || provider.id === providerId() || requestedProviderId() !== null) return;
+						if (
+							!provider ||
+							(provider.id === providerId() && !(onboarding && onboardingProviderId() === null)) ||
+							requestedProviderId() !== null
+						)
+							return;
 						setRequestedProviderId(provider.id);
 						queueMicrotask(() => void changeProvider(provider.id));
 					}}
 					optionTextValue={(provider) => t(`settings.vectorProviders.${provider.id}` as never)}
-					disabled={!capabilitiesReady() || providerOptions().length === 0 || savingSettings() || configuringLocal() || requestedProviderId() !== null}
-					itemComponent={(itemProps) => <Select.Item item={itemProps.item} class="select-item"><Select.ItemLabel>{t(`settings.vectorProviders.${itemProps.item.rawValue.id}` as never)}</Select.ItemLabel></Select.Item>}
+					disabled={
+						!capabilitiesReady() ||
+						providerOptions().length === 0 ||
+						savingSettings() ||
+						configuringLocal() ||
+						requestedProviderId() !== null
+					}
+					itemComponent={(itemProps) => (
+						<Select.Item item={itemProps.item} class="select-item">
+							<Select.ItemLabel>
+								{t(`settings.vectorProviders.${itemProps.item.rawValue.id}` as never)}
+							</Select.ItemLabel>
+						</Select.Item>
+					)}
 				>
 					<Select.Label class="field-label">{t("settings.vectorProvider")}</Select.Label>
-					<Select.Trigger class="select-trigger" aria-label={t("settings.vectorProvider")}><Select.Value<SettingsCapabilities["memoryVectorProviders"][number]>>{(state) => { const provider = state.selectedOption(); return provider ? t(`settings.vectorProviders.${provider.id}` as never) : ""; }}</Select.Value></Select.Trigger>
-					<Select.Portal><Select.Content class="select-content"><Select.Listbox class="select-listbox" /></Select.Content></Select.Portal>
+					<Select.Trigger class="select-trigger" aria-label={t("settings.vectorProvider")}>
+						<Select.Value<SettingsCapabilities["memoryVectorProviders"][number]>>
+							{(state) => {
+								const provider = state.selectedOption();
+								return provider ? t(`settings.vectorProviders.${provider.id}` as never) : "";
+							}}
+						</Select.Value>
+					</Select.Trigger>
+					<Select.Portal>
+						<Select.Content class="select-content">
+							<Select.Listbox class="select-listbox" />
+						</Select.Content>
+					</Select.Portal>
 				</Select>
-				<Show when={vector()?.provider === "local"}>
+				<Show when={localSelected()}>
 					<Select<LocalEmbeddingCandidate>
 						options={candidates()}
-						value={candidates().find((candidate) => candidate.id === vector()?.localModel) ?? null}
+						value={selectedCandidate()}
 						optionValue="id"
 						optionTextValue={(candidate) => candidate.name}
 						onChange={(candidate) => {
-							if (!candidate || candidate.id === vector()?.localModel) return;
+							if (!candidate || candidate.id === selectedCandidate()?.id) return;
+							if (onboarding) {
+								setOnboardingCandidateId(candidate.id);
+								return;
+							}
 							void embedding.localConfigureMutation.mutateAsync({
 								provider: "local",
 								candidateId: candidate.id,
 							});
 						}}
-						disabled={!capabilitiesReady() || candidates().length === 0}
-						itemComponent={(itemProps) => <Select.Item item={itemProps.item} class="select-item"><Select.ItemLabel>{itemProps.item.rawValue.name}</Select.ItemLabel></Select.Item>}
+						disabled={!capabilitiesReady() || candidates().length === 0 || configuringLocal()}
+						itemComponent={(itemProps) => (
+							<Select.Item item={itemProps.item} class="select-item">
+								<Select.ItemLabel>{itemProps.item.rawValue.name}</Select.ItemLabel>
+							</Select.Item>
+						)}
 					>
 						<Select.Label class="field-label">{t("settings.localModel")}</Select.Label>
-						<Select.Trigger class="select-trigger" aria-label={t("settings.localModel")}><Select.Value<LocalEmbeddingCandidate>>{(state) => state.selectedOption()?.name ?? ""}</Select.Value></Select.Trigger>
-						<Select.Portal><Select.Content class="select-content"><Select.Listbox class="select-listbox" /></Select.Content></Select.Portal>
+						<Select.Trigger class="select-trigger" aria-label={t("settings.localModel")}>
+							<Select.Value<LocalEmbeddingCandidate>>
+								{(state) => state.selectedOption()?.name ?? ""}
+							</Select.Value>
+						</Select.Trigger>
+						<Select.Portal>
+							<Select.Content class="select-content">
+								<Select.Listbox class="select-listbox" />
+							</Select.Content>
+						</Select.Portal>
 					</Select>
 					<Show when={!onboarding}>
 						<h5>{t("settings.downloadMirrorSection")}</h5>
-						<TextField class="setting-field"><TextField.Label>{t("settings.downloadMirrorLabel")}</TextField.Label><TextField.Input type="text" value={mirrorDraft() ?? settings()?.modelDownloadMirror?.endpoint ?? ""} onInput={(event) => setMirrorDraft(event.currentTarget.value)} /></TextField>
+						<TextField class="setting-field">
+							<TextField.Label>{t("settings.downloadMirrorLabel")}</TextField.Label>
+							<TextField.Input
+								type="text"
+								value={mirrorDraft() ?? settings()?.modelDownloadMirror?.endpoint ?? ""}
+								onInput={(event) => setMirrorDraft(event.currentTarget.value)}
+							/>
+						</TextField>
 					</Show>
 				</Show>
 				<Show when={!onboarding && vector()?.provider === "remote"}>
@@ -198,7 +292,12 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 						onChange={(preset) => {
 							if (preset && requestedPresetId() === null) void selectPreset(preset);
 						}}
-						disabled={!capabilitiesReady() || presets().length === 0 || savingSettings() || requestedPresetId() !== null}
+						disabled={
+							!capabilitiesReady() ||
+							presets().length === 0 ||
+							savingSettings() ||
+							requestedPresetId() !== null
+						}
 						itemComponent={(itemProps) => (
 							<Select.Item item={itemProps.item} class="select-item">
 								<Select.ItemLabel>
@@ -207,24 +306,70 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 							</Select.Item>
 						)}
 					>
-						<Select.Label class="field-label">{t("settings.vectorPreset")}</Select.Label><Select.Trigger class="select-trigger" aria-label={t("settings.vectorPreset")}><Select.Value<SettingsCapabilities["memoryVectorPresets"][number]>>{(state) => { const preset = state.selectedOption(); return preset ? t(`settings.vectorPresetLabels.${preset.id}` as never) : ""; }}</Select.Value></Select.Trigger><Select.Portal><Select.Content class="select-content"><Select.Listbox class="select-listbox" /></Select.Content></Select.Portal>
+						<Select.Label class="field-label">{t("settings.vectorPreset")}</Select.Label>
+						<Select.Trigger class="select-trigger" aria-label={t("settings.vectorPreset")}>
+							<Select.Value<SettingsCapabilities["memoryVectorPresets"][number]>>
+								{(state) => {
+									const preset = state.selectedOption();
+									return preset ? t(`settings.vectorPresetLabels.${preset.id}` as never) : "";
+								}}
+							</Select.Value>
+						</Select.Trigger>
+						<Select.Portal>
+							<Select.Content class="select-content">
+								<Select.Listbox class="select-listbox" />
+							</Select.Content>
+						</Select.Portal>
 					</Select>
-					<TextField class="setting-field"><TextField.Label>{t("settings.customBaseUrl")}</TextField.Label><TextField.Input type="text" value={remoteBaseUrlDraft() ?? vector()?.baseUrl ?? ""} onInput={(event) => setRemoteBaseUrlDraft(event.currentTarget.value)} /></TextField>
-					<TextField class="setting-field"><TextField.Label>{t("settings.vectorModel")}</TextField.Label><TextField.Input type="text" value={remoteModelDraft() ?? vector()?.model ?? ""} onInput={(event) => setRemoteModelDraft(event.currentTarget.value)} /></TextField>
-					<TextField class="setting-field"><TextField.Label>{t("settings.vectorDimensions")}</TextField.Label><TextField.Input type="number" value={remoteDimensionsDraft() ?? String(vector()?.dimensions ?? "")} onInput={(event) => setRemoteDimensionsDraft(event.currentTarget.value)} /></TextField>
+					<TextField class="setting-field">
+						<TextField.Label>{t("settings.customBaseUrl")}</TextField.Label>
+						<TextField.Input
+							type="text"
+							value={remoteBaseUrlDraft() ?? vector()?.baseUrl ?? ""}
+							onInput={(event) => setRemoteBaseUrlDraft(event.currentTarget.value)}
+						/>
+					</TextField>
+					<TextField class="setting-field">
+						<TextField.Label>{t("settings.vectorModel")}</TextField.Label>
+						<TextField.Input
+							type="text"
+							value={remoteModelDraft() ?? vector()?.model ?? ""}
+							onInput={(event) => setRemoteModelDraft(event.currentTarget.value)}
+						/>
+					</TextField>
+					<TextField class="setting-field">
+						<TextField.Label>{t("settings.vectorDimensions")}</TextField.Label>
+						<TextField.Input
+							type="number"
+							value={remoteDimensionsDraft() ?? String(vector()?.dimensions ?? "")}
+							onInput={(event) => setRemoteDimensionsDraft(event.currentTarget.value)}
+						/>
+					</TextField>
 				</Show>
 			</Show>
 			<Show when={configuringLocal()}>
-				<p class="status-line" role="status">{t("settings.localModelDownloadStatus")}</p>
+				<p class="status-line" role="status">
+					{t("settings.localModelDownloadStatus")}
+				</p>
 			</Show>
 			<Show when={embedding.localConfigureMutation.isSuccess && localSelected()}>
-				<p class="status-line ok" role="status">{t("settings.localModelReady")}</p>
+				<p class="status-line ok" role="status">
+					{t("settings.localModelReady")}
+				</p>
 			</Show>
-			<Show when={embedding.settingsMutation.error ?? embedding.localConfigureMutation.error}>{(error) => <p class="status-line err" role="alert">{String(error())}</p>}</Show>
+			<Show when={embedding.settingsMutation.error ?? embedding.localConfigureMutation.error}>
+				{(error) => (
+					<p class="status-line err" role="alert">
+						{String(error())}
+					</p>
+				)}
+			</Show>
 			<Button
 				type="button"
 				class="primary-tool"
-				disabled={!capabilitiesReady() || savingSettings() || configuringLocal()}
+				disabled={
+					!capabilitiesReady() || savingSettings() || configuringLocal() || !onboardingChoiceReady()
+				}
 				aria-label={actionLabel()}
 				onClick={() => void saveEmbedding().catch(() => undefined)}
 			>

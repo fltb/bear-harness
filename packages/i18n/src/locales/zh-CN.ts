@@ -267,8 +267,8 @@ export const zhCN = {
 		memoryVectorLocalNote: "使用内置离线向量模型（768 维），首次使用需下载模型。",
 		localModel: "本地模型",
 		localModels: {
-			embeddinggemma: "embeddinggemma-300m（768 维，内置默认）",
-			"bge-base-zh": "BGE base zh v1.5（768 维）",
+			embeddinggemma: "embeddinggemma-300m（768 维）",
+			"bge-small-zh": "BGE small zh v1.5（768 维，默认）",
 			"multilingual-e5": "multilingual-e5-base（768 维）",
 			custom: "自定义下载源",
 		},
@@ -283,7 +283,8 @@ export const zhCN = {
 		saveNetwork: "保存网络与记忆设置",
 		saved: "已保存：代理立即生效；向量服务与镜像需重启后生效。",
 		visionModel: "图片读取模型",
-		visionModelHint: "支持图片的回复模型会直接读取图片。如果回复模型仅支持文本，请选择明确的图片读取模型。",
+		visionModelHint:
+			"支持图片的回复模型会直接读取图片。如果回复模型仅支持文本，请选择明确的图片读取模型。",
 		visionModelAuto: "使用回复模型",
 		addModel: "加入可用模型",
 		removeModel: "移除",

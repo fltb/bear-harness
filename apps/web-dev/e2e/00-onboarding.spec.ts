@@ -66,14 +66,22 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	await modelSetup.getByRole("button", { name: zhCN.modelSetup.continue }).click();
 	const embeddingSetup = page.getByRole("dialog", { name: zhCN.settings.memoryVectorSection });
 	await expect(embeddingSetup).toBeVisible();
-	await embeddingSetup.getByRole("button", { name: "继续" }).click();
+	const embeddingContinue = embeddingSetup.getByRole("button", { name: "继续" });
+	await expect(embeddingContinue).toBeDisabled();
+	await selectKobalteOption(
+		page,
+		embeddingSetup.getByLabel(zhCN.settings.vectorProvider),
+		zhCN.settings.vectorProviders.none,
+	);
+	await expect(embeddingContinue).toBeEnabled();
+	await embeddingContinue.click();
 
 	const onboarding = page.getByRole("dialog", { name: "开始相处" });
 	await expect(onboarding).toBeVisible();
 	const [submitResponse, resyncResponse] = await Promise.all([
 		page.waitForResponse((response) => response.url().includes("/rpc/onboarding.submit%3Av1")),
 		page.waitForResponse((response) => response.url().includes("/rpc/onboarding.get%3Av1")),
-		onboarding.getByRole("button", { name: "继续" }).click(),
+		onboarding.getByRole("button", { name: "让他进来" }).click(),
 	]);
 	const submitted = await submitResponse.json();
 	const resynced = await resyncResponse.json();
@@ -82,11 +90,8 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	expect(resynced.ok).toBe(true);
 	expect(resynced.data.currentStepId).toBe("nickname");
 	await expect.poll(() => onboarding.getAttribute("data-onboarding-step")).toBe("nickname");
-	await expect(onboarding.getByRole("alert")).toHaveCount(0);
-	await onboarding.getByRole("textbox", { name: "极昼怎样称呼你？" }).fill("林");
-	await onboarding.getByRole("button", { name: "确认称呼" }).click();
-	await onboarding.getByRole("button", { name: "一起做事" }).click();
-	await onboarding.getByRole("button", { name: "留下共同经历" }).click();
+	await onboarding.getByRole("textbox", { name: "你的称呼" }).fill("林");
+	await onboarding.getByRole("button", { name: "告诉他" }).click();
 
 	await expect(onboarding).toBeHidden();
 	await expect(page.getByRole("button", { name: "Web Dev" })).toBeVisible();

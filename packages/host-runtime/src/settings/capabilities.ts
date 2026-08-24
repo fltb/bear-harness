@@ -41,12 +41,17 @@ export const HOST_SETTINGS_CAPABILITIES: HostSettingsCapabilities = Object.freez
 		immutable({ id: "openai-3-small", model: "text-embedding-3-small", dimensions: 1536 }),
 	]),
 	localEmbeddingCandidates: Object.freeze([
-		immutable({ id: "embeddinggemma", name: "EmbeddingGemma", isDefault: true }),
 		immutable({
-			id: "bge-base-zh",
+			id: "embeddinggemma",
+			name: "EmbeddingGemma",
+			modelPath: "hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf",
+			isDefault: false,
+		}),
+		immutable({
+			id: "bge-small-zh",
 			name: "BGE Small Chinese",
 			modelPath: "hf:CompendiumLabs/bge-small-zh-v1.5-gguf/bge-small-zh-v1.5-q8_0.gguf",
-			isDefault: false,
+			isDefault: true,
 		}),
 		immutable({
 			id: "multilingual-e5",
@@ -60,5 +65,7 @@ export const HOST_SETTINGS_CAPABILITIES: HostSettingsCapabilities = Object.freez
 export function findHostLocalEmbeddingCandidate(
 	id: string,
 ): HostLocalEmbeddingCandidate | undefined {
-	return HOST_SETTINGS_CAPABILITIES.localEmbeddingCandidates.find((candidate) => candidate.id === id);
+	return HOST_SETTINGS_CAPABILITIES.localEmbeddingCandidates.find(
+		(candidate) => candidate.id === id,
+	);
 }

@@ -504,14 +504,16 @@ export const OnboardingStateData = z.strictObject({
 		z.string().max(MAX_STRING_LENGTH),
 	),
 	decisions: z.strictObject({
-		relationship_kind: z
-			.string()
-			.min(1)
-			.max(64)
-			.regex(/^[a-z][a-z0-9_]*$/)
-			.optional(),
 		relationship_memory_enabled: z.boolean().optional(),
 		conversation_history_read_enabled: z.boolean().optional(),
+		roleplay_initial_values: boundedRecord(
+			z
+				.string()
+				.min(1)
+				.max(64)
+				.regex(/^[a-z][a-z0-9_]*$/),
+			z.union([z.string().max(MAX_STRING_LENGTH), z.number().finite(), z.boolean()]),
+		).optional(),
 	}),
 });
 export const CharacterGetRequest = z.strictObject({});
@@ -537,8 +539,19 @@ const CharacterIdentifier = z
 	.regex(/^[a-z][a-z0-9_]*$/);
 const CharacterOnboardingEffect = z.discriminatedUnion("type", [
 	z.strictObject({ type: z.literal("identity.nickname") }),
-	z.strictObject({ type: z.literal("relationship.kind") }),
-	z.strictObject({ type: z.literal("relationship.memory"), enabled_when: CharacterIdentifier }),
+	z.strictObject({
+		type: z.literal("setting.set"),
+		setting: z.enum(["relationship_memory_enabled", "conversation_history_read_enabled"]),
+		values: boundedRecord(CharacterIdentifier, z.boolean()),
+	}),
+	z.strictObject({
+		type: z.literal("roleplay.initial"),
+		variable: CharacterIdentifier,
+		values: boundedRecord(
+			CharacterIdentifier,
+			z.union([z.string().max(MAX_STRING_LENGTH), z.number().finite(), z.boolean()]),
+		),
+	}),
 ]);
 const CharacterStepPresentation = {
 	id: CharacterIdentifier,

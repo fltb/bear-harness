@@ -1,4 +1,5 @@
 import { z } from "@bear-harness/schema";
+import type { RoleplayDefinition, RoleplayValue } from "./roleplay-schema.js";
 
 const MAX_COPY_LENGTH = 4_096;
 const Identifier = z
@@ -10,8 +11,19 @@ const Copy = z.string().min(1).max(MAX_COPY_LENGTH);
 
 const OnboardingEffectSchema = z.discriminatedUnion("type", [
 	z.strictObject({ type: z.literal("identity.nickname") }),
-	z.strictObject({ type: z.literal("relationship.kind") }),
-	z.strictObject({ type: z.literal("relationship.memory"), enabled_when: Identifier }),
+	z.strictObject({
+		type: z.literal("setting.set"),
+		setting: z.enum(["relationship_memory_enabled", "conversation_history_read_enabled"]),
+		values: z.record(Identifier, z.boolean()),
+	}),
+	z.strictObject({
+		type: z.literal("roleplay.initial"),
+		variable: Identifier,
+		values: z.record(
+			Identifier,
+			z.union([z.string().max(MAX_COPY_LENGTH), z.number().finite(), z.boolean()]),
+		),
+	}),
 ]);
 
 const StepPresentationSchema = {
@@ -79,9 +91,14 @@ export const OnboardingStateDataSchema = z.strictObject({
 	flow_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
 	answers: z.record(Identifier, z.string().max(MAX_COPY_LENGTH)),
 	decisions: z.strictObject({
-		relationship_kind: Identifier.optional(),
 		relationship_memory_enabled: z.boolean().optional(),
 		conversation_history_read_enabled: z.boolean().optional(),
+		roleplay_initial_values: z
+			.record(
+				Identifier,
+				z.union([z.string().max(MAX_COPY_LENGTH), z.number().finite(), z.boolean()]),
+			)
+			.optional(),
 	}),
 });
 
@@ -94,6 +111,7 @@ export type CharacterOnboardingEffect = z.infer<typeof OnboardingEffectSchema>;
 export function validateCharacterOnboardingFlow(
 	value: unknown,
 	characterId: string,
+	roleplay?: RoleplayDefinition,
 ): asserts value is CharacterOnboardingFlow {
 	const parsed = CharacterOnboardingFlowSchema.safeParse(value);
 	if (!parsed.success) {
@@ -103,7 +121,7 @@ export function validateCharacterOnboardingFlow(
 
 	const stepIds = new Set<string>();
 	const answerKeys = new Set<string>();
-	const effectKinds = new Set<string>();
+	const effectTargets = new Set<string>();
 	for (const step of flow.steps) {
 		if (step.id === "complete" || stepIds.has(step.id)) {
 			throw new Error(`character package ${characterId}: first_meeting step ids must be unique`);
@@ -123,37 +141,63 @@ export function validateCharacterOnboardingFlow(
 			}
 			answerKeys.add(step.answer_key);
 		}
-		if (step.kind === "choice") {
-			const values = new Set<string>();
-			for (const choice of step.choices) {
-				if (values.has(choice.value)) {
-					throw new Error(
-						`character package ${characterId}: first_meeting choice values must be unique`,
-					);
-				}
-				values.add(choice.value);
-			}
-			for (const effect of step.effects ?? []) {
-				if (effect.type === "relationship.memory" && !values.has(effect.enabled_when)) {
-					throw new Error(
-						`character package ${characterId}: first_meeting memory effect must name a choice value`,
-					);
-				}
-			}
-		}
 		for (const effect of step.effects ?? []) {
-			if (effectKinds.has(effect.type)) {
+			const target =
+				effect.type === "identity.nickname"
+					? effect.type
+					: `${effect.type}:${effect.type === "setting.set" ? effect.setting : effect.variable}`;
+			if (effectTargets.has(target)) {
 				throw new Error(`character package ${characterId}: first_meeting effects must be unique`);
 			}
 			if (effect.type === "identity.nickname" && step.kind !== "text") {
 				throw new Error(`character package ${characterId}: nickname effect requires a text step`);
 			}
-			if (effect.type !== "identity.nickname" && step.kind !== "choice") {
-				throw new Error(
-					`character package ${characterId}: relationship effects require a choice step`,
-				);
+			if (effect.type !== "identity.nickname") {
+				if (step.kind !== "choice") {
+					throw new Error(
+						`character package ${characterId}: declarative onboarding bindings require a choice step`,
+					);
+				}
+				const values = new Set(step.choices.map((choice) => choice.value));
+				for (const value of Object.keys(effect.values)) {
+					if (!values.has(value)) {
+						throw new Error(
+							`character package ${characterId}: onboarding binding references unknown choice ${value}`,
+						);
+					}
+				}
+				if (Object.keys(effect.values).length !== values.size) {
+					throw new Error(
+						`character package ${characterId}: onboarding binding must map every choice`,
+					);
+				}
 			}
-			effectKinds.add(effect.type);
+			if (effect.type === "roleplay.initial") {
+				const variable = roleplay?.variables.find((candidate) => candidate.id === effect.variable);
+				if (!variable) {
+					throw new Error(
+						`character package ${characterId}: onboarding bucket ${effect.variable} is not declared`,
+					);
+				}
+				for (const initial of Object.values(effect.values)) {
+					if (!isCompatibleRoleplayValue(variable, initial)) {
+						throw new Error(
+							`character package ${characterId}: onboarding value is invalid for bucket ${effect.variable}`,
+						);
+					}
+				}
+			}
+			effectTargets.add(target);
 		}
 	}
+}
+
+function isCompatibleRoleplayValue(
+	variable: RoleplayDefinition["variables"][number],
+	value: RoleplayValue,
+): boolean {
+	if (variable.type === "number") return typeof value === "number";
+	if (variable.type === "boolean") return typeof value === "boolean";
+	if (variable.type === "string") return typeof value === "string";
+	return typeof value === "string" && variable.values?.includes(value) === true;
 }

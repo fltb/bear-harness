@@ -232,7 +232,7 @@ describe("host projection validation", () => {
 				schema_version: 1,
 				flow_version: 1,
 				answers: {},
-				decisions: { relationship_kind: "partner", relationship_memory_enabled: true },
+				decisions: { relationship_memory_enabled: true },
 			},
 		};
 		expect(isOnboardingData(onboarding)).toBe(true);
@@ -553,7 +553,6 @@ describe("host projection validation", () => {
 			}),
 		).toBe(false);
 	});
-
 
 	it("rejects malformed run timestamp relationships", () => {
 		expect(isRun({ ...run, startedAt: timestamp, completedAt: "2025-01-01T00:00:00Z" })).toBe(
