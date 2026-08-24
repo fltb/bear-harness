@@ -40,37 +40,38 @@
 	--font-body: var(--font-sans);
 	--font-heading: var(--font-serif);
 
-	/* Arctic Console defaults; character packages may override each role. */
-	--surface-canvas: #111113;
-	--surface-sidebar: #18191b;
-	--surface-panel: #212225;
-	--surface-control: #272a2d;
-	--surface-subtle: #2e3135;
-	--surface-message: #272a2d;
-	--surface-message-user: #0b3a48;
-	--surface-action: #00a2c7;
-	--surface-success: #0b2e2a;
-	--surface-warning: #392c00;
-	--surface-danger: #3b1219;
-	--surface-overlay: rgba(17, 17, 19, 0.72);
-	--text-strong: #ecedee;
-	--text-soft: #9ba1a6;
-	--text-on-action: #07171c;
-	--text-on-message: #ecedee;
-	--text-action: #4ccce6;
-	--text-success: #86ead4;
-	--text-warning: #ffc53d;
-	--text-danger: #ff9592;
+	/* semantic roles used by shell, thread, composer, work, and result UI */
+	--surface-canvas: var(--surface);
+	--surface-sidebar: color-mix(in srgb, var(--surface) 76%, var(--surface-alt) 24%);
+	--surface-panel: var(--surface-alt);
+	--surface-control: color-mix(in srgb, var(--surface) 72%, var(--surface-alt) 28%);
+	--surface-subtle: color-mix(in srgb, var(--surface-alt) 88%, transparent);
+	--surface-message: color-mix(in srgb, var(--surface) 16%, var(--text) 84%);
+	--surface-message-user: color-mix(in srgb, var(--surface) 70%, var(--accent) 30%);
+	--surface-action: color-mix(in srgb, var(--accent) 78%, var(--text) 22%);
+	--surface-success: color-mix(in srgb, var(--accent) 12%, transparent);
+	--surface-warning: color-mix(in srgb, var(--amber) 12%, transparent);
+	--surface-danger: color-mix(in srgb, var(--danger) 12%, transparent);
+	--surface-overlay: color-mix(in srgb, var(--surface) 62%, transparent);
+	--text-strong: var(--text);
+	--text-soft: color-mix(in srgb, var(--text) 78%, var(--text-muted) 22%);
+	--text-on-action: var(--surface);
+	--text-on-message: var(--surface);
+	--text-action: var(--accent);
+	--text-success: var(--accent);
+	--text-warning: var(--amber);
+	--text-danger: var(--danger);
+	/* foreground roles stay available outside the backstage sheet too */
 	--semantic-role-default: var(--text-strong);
-	--semantic-role-muted: var(--text-soft);
+	--semantic-role-muted: var(--text-muted);
 	--semantic-role-accent: var(--text-action);
 	--semantic-role-danger: var(--text-danger);
 	--semantic-role-on-action: var(--text-on-action);
-	--line-strong: #5a6169;
-	--line-soft: #43484e;
-	--focus-ring: #4ccce6;
-	--scroll-thumb: #5a6169;
-	--shadow-color: rgba(0, 10, 13, 0.55);
+	--line-strong: color-mix(in srgb, var(--line) 82%, var(--text) 18%);
+	--line-soft: color-mix(in srgb, var(--line) 65%, transparent);
+	--focus-ring: color-mix(in srgb, var(--accent) 55%, transparent);
+	--scroll-thumb: color-mix(in srgb, var(--line) 75%, transparent);
+	--shadow-color: color-mix(in srgb, var(--surface) 55%, transparent);
 }
 
 html,

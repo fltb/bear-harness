@@ -62,20 +62,18 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
-const SEMANTIC_THEME_TOKENS = [
-	"surface", "surface_alt", "text", "text_muted", "accent", "line", "danger", "amber",
-	"surface_canvas", "surface_sidebar", "surface_panel", "surface_control", "surface_subtle",
-	"surface_message", "surface_message_user", "surface_action", "surface_success",
-	"surface_warning", "surface_danger", "surface_overlay", "text_strong", "text_soft",
-	"text_on_action", "text_on_message", "text_action", "text_success", "text_warning",
-	"text_danger", "line_strong", "line_soft", "focus_ring", "scroll_thumb", "shadow_color",
-] as const;
-type SemanticThemeToken = (typeof SEMANTIC_THEME_TOKENS)[number];
-
 export interface ThemeTokens {
 	radius: { sm: number; md: number; lg: number };
-	/** Every color is a named UI token; package values override Arctic defaults. */
-	tokens: Record<SemanticThemeToken, string>;
+	color: {
+		surface: string;
+		surface_alt: string;
+		text: string;
+		text_muted: string;
+		accent: string;
+		line: string;
+		danger: string;
+		amber: string;
+	};
 	font: { body: string; heading: string };
 }
 
@@ -333,13 +331,22 @@ const CharacterPromptSchema = z.strictObject({
 	mes_example: PromptStringSchema,
 });
 
-const SemanticThemeTokenSchema = z.enum(SEMANTIC_THEME_TOKENS);
 const ThemeTokensSchema = z.strictObject({
 	radius: z.strictObject({
-		sm: z.number().finite().min(0).max(40), md: z.number().finite().min(0).max(40),
+		sm: z.number().finite().min(0).max(40),
+		md: z.number().finite().min(0).max(40),
 		lg: z.number().finite().min(0).max(40),
 	}),
-	tokens: z.record(SemanticThemeTokenSchema, SafeCssValueSchema),
+	color: z.strictObject({
+		surface: SafeCssValueSchema,
+		surface_alt: SafeCssValueSchema,
+		text: SafeCssValueSchema,
+		text_muted: SafeCssValueSchema,
+		accent: SafeCssValueSchema,
+		line: SafeCssValueSchema,
+		danger: SafeCssValueSchema,
+		amber: SafeCssValueSchema,
+	}),
 	font: z.strictObject({ body: SafeCssValueSchema, heading: SafeCssValueSchema }),
 });
 
@@ -357,39 +364,6 @@ function validateTheme(value: unknown, characterId: string): asserts value is Th
 	const result = ThemeTokensSchema.safeParse(value);
 	if (!result.success)
 		throw new Error(`character package ${characterId}: theme tokens are invalid`);
-	const tokens = result.data.tokens;
-	for (const [foreground, background, minimum] of [
-		["text_strong", "surface_canvas", 7],
-		["text_soft", "surface_canvas", 4.5],
-		["text_on_action", "surface_action", 4.5],
-		["text_on_message", "surface_message", 4.5],
-		["text_success", "surface_success", 4.5],
-		["text_warning", "surface_warning", 4.5],
-		["text_danger", "surface_danger", 4.5],
-	] as const) {
-		if (contrastRatio(tokens[foreground], tokens[background]) < minimum) {
-			throw new Error(
-				`character package ${characterId}: ${foreground} contrast is insufficient on ${background}`,
-			);
-		}
-	}
-}
-
-function contrastRatio(foreground: string, background: string): number {
-	const luminance = (value: string) => {
-		if (!/^#[\da-f]{6}$/i.test(value)) return 0;
-		const channels = [1, 3, 5].map((offset) => Number.parseInt(value.slice(offset, offset + 2), 16) / 255);
-		const linear = channels.map((channel) =>
-			channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
-		);
-		return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
-	};
-	const foregroundLuminance = luminance(foreground);
-	const backgroundLuminance = luminance(background);
-	return (
-		(Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
-		(Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
-	);
 }
 function validateCharacterCard(value: unknown, characterId: string): asserts value is CharacterStrings {
 	const schema = z.strictObject({

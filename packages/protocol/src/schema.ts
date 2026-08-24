@@ -605,17 +605,18 @@ export const CharacterOnboardingFlow = z.strictObject({
 		.max(12),
 	completion: z.strictObject({ conversation_title: CharacterCopy }),
 });
-const SemanticThemeToken = z.enum([
-	"surface", "surface_alt", "text", "text_muted", "accent", "line", "danger", "amber",
-	"surface_canvas", "surface_sidebar", "surface_panel", "surface_control", "surface_subtle",
-	"surface_message", "surface_message_user", "surface_action", "surface_success",
-	"surface_warning", "surface_danger", "surface_overlay", "text_strong", "text_soft",
-	"text_on_action", "text_on_message", "text_action", "text_success", "text_warning",
-	"text_danger", "line_strong", "line_soft", "focus_ring", "scroll_thumb", "shadow_color",
-]);
 export const CharacterTheme = z.strictObject({
 	radius: z.strictObject({ sm: z.number(), md: z.number(), lg: z.number() }),
-	tokens: z.record(SemanticThemeToken, z.string()),
+	color: z.strictObject({
+		surface: z.string(),
+		surface_alt: z.string(),
+		text: z.string(),
+		text_muted: z.string(),
+		accent: z.string(),
+		line: z.string(),
+		danger: z.string(),
+		amber: z.string(),
+	}),
 	font: z.strictObject({ body: z.string(), heading: z.string() }),
 });
 export const CharacterWorkPresentationLabels = z.strictObject({

@@ -328,7 +328,7 @@ describe("host projection validation", () => {
 		expect(
 			isCharacterDisplay({
 				...valid,
-				theme: { ...valid.theme, tokens: { ...valid.theme.tokens, text: null } },
+				theme: { ...valid.theme, color: { ...valid.theme.color, text: null } },
 			}),
 		).toBe(false);
 		expect(

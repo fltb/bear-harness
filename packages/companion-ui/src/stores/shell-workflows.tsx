@@ -137,14 +137,15 @@ export function createShellWorkflowStore(input: {
 	const themeStyle = createMemo((): JSX.CSSProperties => {
 		const theme = character()?.theme;
 		if (!theme) return {};
-		const tokenStyle = Object.fromEntries(
-			Object.entries(theme.tokens).map(([token, value]) => [
-				`--${token.replaceAll("_", "-")}`,
-				value,
-			]),
-		);
 		return {
-			...tokenStyle,
+			"--surface": theme.color.surface,
+			"--surface-alt": theme.color.surface_alt,
+			"--text": theme.color.text,
+			"--text-muted": theme.color.text_muted,
+			"--accent": theme.color.accent,
+			"--line": theme.color.line,
+			"--danger": theme.color.danger,
+			"--amber": theme.color.amber,
 			"--radius-sm": `${theme.radius.sm}px`,
 			"--radius-md": `${theme.radius.md}px`,
 			"--radius-lg": `${theme.radius.lg}px`,

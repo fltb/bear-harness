@@ -66,7 +66,7 @@ describe("character package visual projection", () => {
 				bindings: [expect.objectContaining({ source: "jizhou_story" })],
 			}),
 		);
-		expect(display.theme.tokens.accent).toBe("#4ccce6");
+		expect(display.theme.color.accent).toBe("#8bd0bb");
 		expect(display.visual.avatarUrl).toMatch(/^data:image\/(?:png|svg\+xml);base64,/);
 		for (const assetUrl of Object.values(display.visual.expressions)) {
 			expect(assetUrl).toMatch(/^data:image\/(?:png|svg\+xml);base64,/);
@@ -149,16 +149,6 @@ describe("character package Host lifecycle reactions", () => {
 		const character = new CharacterLoader(characterRoot).load("jizhou");
 		expect(character).not.toBeNull();
 		expect(character?.host.event_reactions).toEqual(expectedReactions);
-	});
-
-	it("rejects a role token pair that fails the text contrast contract", () => {
-		const { configRoot } = packageWithManifest(
-			"bear-character-theme-contrast-",
-			(manifest) => manifest.replace('    text_strong: "#ecedee"', '    text_strong: "#151719"'),
-		);
-		expect(() => new CharacterLoader(configRoot).load("jizhou")).toThrow(
-			"text_strong contrast is insufficient on surface_canvas",
-		);
 	});
 
 	it("accepts arbitrary Host events bound to declared visual states", () => {
