@@ -564,8 +564,10 @@ export class TencentDbRuntime {
 		return this.replaceEmbeddingConfig({ enabled: true, provider: "local", modelPath });
 	}
 
-	/** Replace the active local model with provider-less embedding. */
+	/** Disable local embeddings without replacing an already provider-less core. */
 	async disableLocalEmbedding(): Promise<void> {
+		if (this.config.embedding.provider === "none" && this.config.embedding.modelPath === undefined)
+			return;
 		await this.replaceEmbeddingConfig({ enabled: true, provider: "none", modelPath: undefined });
 	}
 

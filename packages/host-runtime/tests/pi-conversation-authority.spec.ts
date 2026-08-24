@@ -141,10 +141,11 @@ function assertTranscriptTablesAbsent(database: Database): void {
 	}
 }
 
-/** Wait until the live handle is no longer streaming, then return it. */
+/** Wait for the fire-and-forget Host dispatch to begin and then settle. */
 async function settleSession(h: Harness): Promise<PiSessionHandle> {
 	const session = h.runtime.getLiveSessionResolver().get(CONVERSATION_ID);
 	if (!session) throw new Error("live session missing");
+	await new Promise<void>((resolve) => setTimeout(resolve, 0));
 	const deadline = Date.now() + 5_000;
 	while (session.isStreaming && Date.now() < deadline) {
 		await new Promise<void>((resolve) => setTimeout(resolve, 5));
@@ -230,6 +231,7 @@ describe("Pi conversation authority", () => {
 		if (!session) throw new Error("live session missing");
 
 		await h.pipeline.sendUserMessage(CONVERSATION_ID, "hello");
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 		const deadline = Date.now() + 5_000;
 		while (
 			!h.repository.get(CONVERSATION_ID, COMPANION_ID)?.piLiveState.streamingMessage?.text &&
@@ -245,22 +247,21 @@ describe("Pi conversation authority", () => {
 		const storeTimeline = PiTimeline.parse(h.store.buildPiTimeline());
 		const storeMessages = messageEntries(storeTimeline);
 		expect(storeMessages[0]).toMatchObject({ role: "user", text: "hello" });
-		// Repository projection performs the safe Pi live-state mapping.
-		const live = PiLiveState.parse(h.repository.get(CONVERSATION_ID, COMPANION_ID)?.piLiveState);
-		expect(live.isStreaming).toBe(true);
-		expect(live.streamingMessage?.stopReason).toBe("pending");
-		expect(live.streamingMessage?.text).toBeDefined();
-		expect(REPLY_TEXT.startsWith(live.streamingMessage?.text ?? "\u0000")).toBe(true);
-
+		// Repository projection performs the safe Pi live-state mapping. A fast
+		// provider may settle after the user entry becomes visible; in that case
+		// the final assistant is already native and no live fragment remains.
 		const projection = h.repository.get(CONVERSATION_ID, COMPANION_ID);
-		const projectedLive = PiLiveState.parse(projection?.piLiveState);
-		expect(projectedLive.isStreaming).toBe(true);
-		expect(projectedLive.streamingMessage?.text).toBe(live.streamingMessage?.text);
-		expect(projectedLive.streamingMessage?.stopReason).toBe("pending");
-		expect(PiTimeline.parse(projection?.piTimeline).entries.map((entry) => entry.role)).toEqual([
-			"user",
-		]);
-
+		const live = PiLiveState.parse(projection?.piLiveState);
+		const projectedTimeline = PiTimeline.parse(projection?.piTimeline);
+		if (live.isStreaming) {
+			expect(live.streamingMessage?.stopReason).toBe("pending");
+			expect(live.streamingMessage?.text).toBeDefined();
+			expect(REPLY_TEXT.startsWith(live.streamingMessage?.text ?? "\u0000")).toBe(true);
+			expect(projectedTimeline.entries.map((entry) => entry.role)).toEqual(["user"]);
+		} else {
+			expect(live).toEqual({ isStreaming: false });
+			expect(projectedTimeline.entries.map((entry) => entry.role)).toEqual(["user", "assistant"]);
+		}
 		// After the final stream: streamingMessage disappears and the native
 		// assistant entry replaces it in the timeline.
 		await settleSession(h);
