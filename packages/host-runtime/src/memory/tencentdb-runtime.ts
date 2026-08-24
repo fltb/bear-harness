@@ -538,9 +538,11 @@ export class TencentDbRuntime {
 		if (!service) throw { kind: "unavailable", reason: "local_embedding_service_unavailable" };
 		if (!service.isReady()) {
 			service.startWarmup();
-			const waitForReady = (service as EmbeddingService & {
-				waitForReady?: () => Promise<void>;
-			}).waitForReady;
+			const waitForReady = (
+				service as EmbeddingService & {
+					waitForReady?: () => Promise<void>;
+				}
+			).waitForReady;
 			if (!waitForReady) {
 				throw { kind: "unavailable", reason: "local_embedding_readiness_unavailable" };
 			}
@@ -596,8 +598,6 @@ export class TencentDbRuntime {
 			throw error;
 		}
 	}
-
-
 
 	async close(signal?: AbortSignal): Promise<void> {
 		if (signal?.aborted) throw new Error("TencentDB memory runtime close aborted");

@@ -3,13 +3,13 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PiLiveState, PiTimeline } from "@bear-harness/protocol/schema";
 import {
 	createModels,
+	type FauxProviderHandle,
 	fauxAssistantMessage,
 	fauxProvider,
-	type FauxProviderHandle,
 } from "@earendil-works/pi-ai";
-import { PiLiveState, PiTimeline } from "@bear-harness/protocol/schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { PiSessionStore } from "../src/companion/pi-session-store.js";
 import {
@@ -154,17 +154,6 @@ async function settleSession(h: Harness): Promise<PiSessionHandle> {
 	return session;
 }
 
-/** Resolve after Pi's background prompt fully settles (agent_settled). */
-function waitForSettled(session: PiSessionHandle): Promise<void> {
-	return new Promise((resolve) => {
-		const unsubscribe = session.subscribe((event) => {
-			if (event.type === "agent_settled") {
-				unsubscribe();
-				resolve();
-			}
-		});
-	});
-}
 
 function isStandardMessageEntry(
 	entry: unknown,
