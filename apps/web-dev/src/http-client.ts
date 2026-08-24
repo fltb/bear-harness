@@ -62,16 +62,26 @@ export function parseWebDevBootstrap(value: unknown): WebDevBootstrap {
 
 export function createHttpTransport(token: string): HostTransport {
 	assertToken(token);
+	let currentToken = token;
+	const refreshToken = async (): Promise<void> => {
+		currentToken = (await loadBootstrap()).token;
+	};
 	return {
 		async invoke(endpoint, params) {
-			const response = await fetch(`/rpc/${encodeURIComponent(endpoint.channel)}`, {
-				method: "POST",
-				headers: {
-					"content-type": "application/json",
-					"x-bear-web-dev-token": token,
-				},
-				body: JSON.stringify(params),
-			});
+			const request = () =>
+				fetch(`/rpc/${encodeURIComponent(endpoint.channel)}`, {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						"x-bear-web-dev-token": currentToken,
+					},
+					body: JSON.stringify(params),
+				});
+			let response = await request();
+			if (response.status === 401) {
+				await refreshToken();
+				response = await request();
+			}
 			if (!response.ok) {
 				// Only pre-dispatch HTTP failures (unauthorized, body limits,
 				// malformed JSON, unknown channel/route, internal errors) reject

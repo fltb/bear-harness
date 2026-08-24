@@ -1,0 +1,154 @@
+/* ------------------------------------------------------------------ */
+/* Supported desktop minimum and narrow-window fallback                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 800px is the supported desktop minimum exported by App.tsx. The fallback
+ * below that width keeps the desktop shell usable without forcing a mobile
+ * product: the sidebar compacts, the result column moves below the stage,
+ * and thread/composer tracks are allowed to shrink.
+ */
+@media (max-width: 1049px) {
+	.app {
+		@apply m-0 min-h-screen w-full;
+	}
+
+	.shell,
+	.app[data-result-open="true"] .shell {
+		@apply grid-cols-4;
+	}
+
+	.app:not([data-result-open="true"]) .shell {
+		@apply grid-cols-4;
+	}
+	.thread-head,
+	.thread,
+	.composer {
+		@apply right-4 w-3/5;
+	}
+
+	.presence-stage[data-layout-mode] {
+		@apply left-4 w-2/5;
+	}
+}
+
+@media (max-width: 799px) {
+	.app {
+		@apply rounded-lg;
+	}
+
+	.shell,
+	.app[data-result-open="true"] .shell {
+		@apply grid-cols-4;
+		grid-template-rows: minmax(0, 1fr) minmax(220px, 42vh);
+	}
+
+	.app[data-result-open="true"] .result-column {
+		@apply col-span-3 col-start-2 row-start-2;
+		border-top: 1px solid var(--line);
+		border-left: 0;
+	}
+
+	.app[data-result-open="true"] .main {
+		@apply col-span-3 col-start-2 row-start-1;
+	}
+
+	.sidebar {
+		@apply row-span-2 px-2;
+	}
+
+	.thread-head,
+	.thread,
+	.composer {
+		@apply right-4 w-3/4;
+	}
+
+	.thread-head {
+		@apply top-2.5;
+	}
+
+	.composer {
+		@apply bottom-3;
+	}
+
+	.presence-stage[data-layout-mode] {
+		@apply w-1/3 max-h-1/2;
+	}
+}
+
+@media (max-width: 640px) {
+	.shell,
+	.app[data-result-open="true"] .shell {
+		@apply grid-cols-4;
+	}
+
+	.sidebar {
+		@apply px-1.5;
+	}
+
+	.identity {
+		@apply justify-center px-0;
+	}
+
+	.identity strong,
+	.identity span,
+	.search-trigger input,
+	.search-trigger kbd {
+		@apply hidden;
+	}
+
+	.search-trigger {
+		@apply justify-center px-1;
+	}
+
+	.nav-item {
+		@apply overflow-hidden whitespace-nowrap px-1.5;
+	}
+
+	.nav-item span {
+		@apply hidden;
+	}
+
+	.nav-item strong {
+		@apply truncate text-xs;
+	}
+
+	.system-nav {
+		@apply justify-center px-1 text-transparent;
+	}
+
+	.system-nav .gear {
+		@apply mx-0 text-sm;
+	}
+	.presence-stage[data-layout-mode] {
+		@apply bottom-12 left-3 w-1/3 max-h-2/5;
+	}
+}
+
+@media (max-width: 640px) {
+	.provider-setup-editor .field:has(> button) {
+		@apply grid-cols-1;
+	}
+
+	.provider-setup-editor .field:has(> button) > .field-label {
+		grid-column: auto;
+	}
+
+	.provider-card-actions {
+		@apply grid grid-cols-1;
+	}
+
+	.provider-card-actions button,
+	.provider-import > button {
+		@apply w-full;
+	}
+}
+@media (max-width: 900px) {
+	.provider-setup-manager {
+		@apply grid-cols-1 gap-4;
+	}
+	.provider-editor-pane {
+		@apply border-l-0 pl-0 pt-4;
+		border-top: 1px solid var(--line);
+	}
+}

@@ -106,6 +106,8 @@ export interface EmbeddingConfig {
 	modelPath?: string;
 	/** Model cache directory for the local provider. */
 	modelCacheDir?: string;
+	/** Explicit Hugging Face-compatible model download endpoint. */
+	hfEndpoint?: string;
 	/** API Base URL (required for remote provider). */
 	baseUrl: string;
 	/** API Key (required for remote provider). */

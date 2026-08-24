@@ -1321,6 +1321,7 @@ export const MemoryEditRequest = z.strictObject({
 export const LocalEmbeddingCandidate = z.strictObject({
 	id: z.string().min(1).max(200),
 	name: z.string().min(1).max(MAX_STRING_LENGTH),
+	dimensions: z.number().int().safe().positive().max(65536),
 	isDefault: z.boolean(),
 });
 export const NetworkProxyModeCapability = z.strictObject({
@@ -1351,20 +1352,24 @@ export const MemoryConfigureLocalEmbeddingRequest = z
 	.strictObject({
 		provider: z.union([z.literal("none"), z.literal("local")]),
 		candidateId: z.string().min(1).max(200).optional(),
+		customPath: z.string().min(1).max(4096).optional(),
 	})
 	.superRefine((value, context) => {
-		if (value.provider === "local" && !value.candidateId) {
+		if (value.provider === "local" && Boolean(value.candidateId) === Boolean(value.customPath)) {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				path: ["candidateId"],
-				message: "candidateId is required for local embedding",
+				message: "exactly one of candidateId or customPath is required for local embedding",
 			});
 		}
-		if (value.provider === "none" && value.candidateId !== undefined) {
+		if (
+			value.provider === "none" &&
+			(value.candidateId !== undefined || value.customPath !== undefined)
+		) {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
 				path: ["candidateId"],
-				message: "candidateId is not valid for disabled embedding",
+				message: "model selection is not valid for disabled embedding",
 			});
 		}
 	});
@@ -1865,9 +1870,21 @@ export const SettingsData = z.strictObject({
 		localModel: z.string().min(1).max(200).optional(),
 		customPath: z.string().min(1).max(4096).optional(),
 	}),
-	modelDownloadMirror: z.strictObject({
-		endpoint: z.string().min(1).max(2048).optional(),
-	}),
+	modelDownloadSource: z.discriminatedUnion("type", [
+		z.strictObject({ type: z.literal("official") }),
+		z.strictObject({ type: z.literal("hf-mirror") }),
+		z.strictObject({
+			type: z.literal("custom"),
+			endpoint: z
+				.string()
+				.url()
+				.max(2048)
+				.refine((value) => {
+					const url = new URL(value);
+					return url.protocol === "https:" && !url.username && !url.password;
+				}, "custom model endpoint must be HTTPS and cannot contain credentials"),
+		}),
+	]),
 });
 export const SettingsGetRequest = z.strictObject({
 	characterId: z.string().min(1).max(64).optional(),
@@ -1880,7 +1897,7 @@ export const SettingsPatch = z.strictObject({
 	conversationHistoryReadEnabled: z.boolean().optional(),
 	networkProxy: SettingsData.shape.networkProxy.optional(),
 	memoryVectorService: SettingsData.shape.memoryVectorService.optional(),
-	modelDownloadMirror: SettingsData.shape.modelDownloadMirror.optional(),
+	modelDownloadSource: SettingsData.shape.modelDownloadSource.optional(),
 });
 export const SettingsSetRequest = z.strictObject({
 	characterId: z.string().min(1).max(64).optional(),

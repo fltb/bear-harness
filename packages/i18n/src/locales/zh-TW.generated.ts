@@ -281,20 +281,25 @@ export const zhTW = {
 		"localModel": "本地模型",
 		"localModels": {
 			"embeddinggemma": "embeddinggemma-300m（768 維）",
-			"bge-small-zh": "BGE small zh v1.5（768 維，預設）",
-			"multilingual-e5": "multilingual-e5-base（768 維）",
 			"custom": "自定義下載源"
 		},
 		"localCustomPath": "明確下載源：hf:user/repo/file.gguf 或本地 .gguf 路徑",
 		"localCustomPathPlaceholder": "hf:user/repo/file-Q8_0.gguf 或 /path/to/model.gguf",
 		"downloadMirrorSection": "模型下載映象",
 		"downloadMirrorLabel": "映象地址（留空使用預設源）",
+		"downloadSources": {
+			"official": "Hugging Face 官方源",
+			"hfMirror": "HF Mirror",
+			"custom": "自定義地址"
+		},
 		"downloadAndEnableLocalModel": "下載並啟用本地模型",
 		"downloadingLocalModel": "正在下載並載入本地模型…",
 		"localModelDownloadStatus": "正在下載所選模型並在本機載入。模型就緒前不會啟用記憶。",
 		"localModelReady": "本地模型已下載、載入並就緒。",
+		"localModelFailed": "本地模型下載或載入失敗",
+		"notSelected": "未選擇",
 		"saveNetwork": "儲存網路與記憶設定",
-		"saved": "已儲存：代理立即生效；向量服務與映象需重啟後生效。",
+		"saved": "已儲存。網路、向量服務和下載源設定立即生效。",
 		"visionModel": "圖片讀取模型",
 		"visionModelHint": "支援圖片的回覆模型會直接讀取圖片。如果回覆模型僅支援文本，請選擇明確的圖片讀取模型。",
 		"visionModelAuto": "使用回覆模型",

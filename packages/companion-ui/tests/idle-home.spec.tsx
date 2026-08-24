@@ -19,11 +19,17 @@ describe("idle homepage (official config, no bridge)", () => {
 
 	it("loads providers and requires a reply model before the first meeting", async () => {
 		const { client, conversationList, providerList } = createTestClient();
+		const activeOnboarding = {
+			status: "active" as const,
+			eventSeq: 0,
+			stateData: { schema_version: 1 as const, flow_version: 1, answers: {}, decisions: {} },
+		};
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
 				data: {
 					eventSeq: 0,
+					onboarding: activeOnboarding,
 					model: { pool: { models: [] }, defaults: { vision: { mode: "auto" } } },
 				},
 			}),
@@ -33,6 +39,9 @@ describe("idle homepage (official config, no bridge)", () => {
 		);
 		client.model.defaultsGet = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { vision: { mode: "auto" as const } } }),
+		);
+		client.onboarding.get = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: activeOnboarding }),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 

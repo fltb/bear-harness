@@ -34,11 +34,16 @@ export function unwrap<T>(result: IpcEnvelope<T>): T {
 	throw new IpcInvocationError(
 		result.error.kind,
 		result.error.reason,
-		userFacingError(result.error.kind),
+		userFacingError(result.error.kind, result.error.reason),
 	);
 }
 
-function userFacingError(kind: string): string {
+function userFacingError(kind: string, reason: string): string {
+	if (reason.startsWith("local_embedding_model_prepare_failed:")) {
+		return `${i18n.t("settings.localModelFailed")}: ${reason
+			.slice("local_embedding_model_prepare_failed:".length)
+			.trim()}`;
+	}
 	switch (kind) {
 		case "not_found":
 			return i18n.t("errors.notFound");

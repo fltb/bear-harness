@@ -1,0 +1,222 @@
+/* ------------------------------------------------------------------ */
+/* Thread + composer                                                    */
+/* ------------------------------------------------------------------ */
+
+.thread {
+	@apply absolute bottom-1/5 right-6 top-16 z-10 flex w-1/2 flex-col gap-2.5 overflow-y-auto px-1 pb-3;
+	scrollbar-width: thin;
+	scrollbar-color: var(--scroll-thumb) transparent;
+}
+
+.thread::-webkit-scrollbar {
+	@apply w-2;
+}
+
+.thread::-webkit-scrollbar-thumb {
+	background: var(--scroll-thumb);
+	@apply rounded-full;
+}
+
+.msg {
+	@apply max-w-5/6 rounded-2xl px-3 py-3 text-xs leading-relaxed;
+}
+
+.bear-msg {
+	@apply self-start border;
+	border-color: var(--line-strong);
+	color: var(--ink);
+	background: var(--surface-message);
+	box-shadow: 0 12px 28px var(--shadow-color);
+}
+
+.msg-meta {
+	@apply mb-1 text-xs;
+	color: var(--text-muted);
+}
+
+.bear-msg em {
+	@apply mb-1.5 mt-0.5 block text-xs not-italic;
+	color: var(--text-soft);
+}
+
+.msg p {
+	@apply m-0 font-serif text-lg leading-relaxed;
+}
+
+.pi-context-separator {
+	@apply h-px w-full;
+	background: var(--line-soft);
+}
+
+.pi-tool-result {
+	@apply self-start border;
+	border-color: var(--line-soft);
+	color: var(--text-soft);
+	background: var(--surface-subtle);
+}
+
+.pi-tool-result .msg-meta {
+	@apply flex gap-2;
+}
+
+.pi-tool-status {
+	@apply text-xs;
+	color: var(--text-muted);
+}
+
+.pi-tool-calls {
+	@apply m-0 mt-2 grid list-none gap-1 p-0;
+}
+
+.pi-tool-call {
+	@apply flex items-baseline gap-2 pt-1 text-xs;
+	border-top: 1px solid var(--line-soft);
+	color: var(--text-soft);
+}
+
+.pi-tool-call-id {
+	@apply text-xs;
+	color: var(--text-muted);
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.composer {
+	@apply absolute bottom-6 right-6 z-10 grid w-1/2 gap-2 rounded-xl border p-2;
+	@apply grid-cols-3;
+	grid-template-areas:
+		"input input input"
+		"routing routing routing"
+		"attach model send";
+	border-color: var(--line-strong);
+	background: var(--surface-message);
+	box-shadow: 0 12px 30px var(--shadow-color);
+}
+
+.composer-input {
+	grid-area: input;
+}
+
+.composer textarea {
+	@apply min-h-10 w-full resize-none border-0 bg-transparent px-1 py-2.5 outline-0;
+	color: var(--ink);
+}
+
+.composer-model {
+	grid-area: model;
+	@apply flex min-w-0 items-center;
+}
+
+.composer-model-trigger {
+	@apply inline-flex min-h-8 min-w-0 max-w-full items-center gap-1 rounded-md border-0 px-2 py-1 text-xs;
+	color: var(--ink);
+	background: transparent;
+	font: inherit;
+	@apply cursor-pointer;
+}
+
+.composer-model-trigger:hover:not(:disabled),
+.composer-model-trigger[data-expanded] {
+	background: var(--surface-success);
+}
+
+.composer-model-trigger:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
+}
+
+.composer-model-trigger:disabled {
+	@apply cursor-not-allowed opacity-50;
+}
+
+.composer-model-value {
+	@apply min-w-0 truncate;
+}
+
+.composer-model-icon {
+	@apply shrink-0 text-xs;
+	color: var(--text-muted);
+}
+
+.composer-model-content {
+	@apply z-50 w-full max-w-sm rounded-xl p-1.5;
+	border: 1px solid var(--line-strong);
+	color: var(--text-strong);
+	background: var(--surface-message);
+	box-shadow: 0 12px 32px var(--shadow-color);
+}
+
+.composer-model-list {
+	@apply m-0 p-0 outline-none;
+}
+
+.composer-model-item {
+	@apply grid min-h-10 grid-cols-2 items-center gap-3 rounded-lg px-2 py-2 text-sm cursor-pointer;
+}
+
+.composer-model-item[data-highlighted] {
+	background: var(--surface-success);
+}
+
+.composer-model-check {
+	@apply font-bold;
+	color: var(--text-action);
+}
+
+.composer-attach {
+	grid-area: attach;
+}
+
+.composer-image-routing {
+	grid-area: routing;
+	@apply flex min-h-6 flex-wrap items-center gap-2 px-1.5 text-xs;
+	color: var(--text-muted);
+}
+
+.composer-image-routing[data-state="missing"],
+.composer-image-routing[data-state="error"] {
+	color: var(--text-danger);
+}
+
+.composer-image-routing svg {
+	@apply shrink-0;
+}
+
+.composer-image-routing span {
+	@apply min-w-0;
+}
+
+.composer-image-routing button {
+	@apply shrink-0 border-0 p-0.5 font-bold cursor-pointer;
+	color: inherit;
+	background: transparent;
+	font: inherit;
+	text-decoration: underline;
+}
+
+.circle {
+	@apply grid size-10 place-items-center rounded-xl border-0;
+	color: var(--text-soft);
+	background: var(--surface-control);
+}
+
+.send {
+	grid-area: send;
+	@apply grid size-10 place-items-center rounded-xl border-0;
+	color: var(--text-on-action);
+	background: var(--surface-action);
+}
+
+/* ------------------------------------------------------------------ */
+/* Reduced motion                                                       */
+/* ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		transition: none !important;
+		animation: none !important;
+	}
+}
+
+/* ------------------------------------------------------------------ */

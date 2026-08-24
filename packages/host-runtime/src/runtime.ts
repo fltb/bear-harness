@@ -44,7 +44,6 @@ import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
 import { ExecutorRouter } from "./executors/router.js";
 import type { MemoryBackend } from "./memory/backend.js";
 import { namespaceFor } from "./memory/tencentdb-backend.js";
-import { findHostLocalEmbeddingCandidate } from "./settings/capabilities.js";
 import type { DeepPartial } from "./memory/tencentdb-runtime.js";
 import { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import { ModelRegistry } from "./models/registry.js";
@@ -54,46 +53,11 @@ import { CredentialStore, type CredentialVault } from "./providers/credential-st
 import { AuditStore, wireAuditToEvents } from "./security/audit-store.js";
 import { type FsProtectionHandle, installFsProtection } from "./security/fs-protection.js";
 import { createModerationService, type ModerationService } from "./security/moderation.js";
+import { findHostLocalEmbeddingCandidate } from "./settings/capabilities.js";
 import { type AppSettingsRecord, AppSettingsStore } from "./storage/app-settings-store.js";
 import { Database, MIGRATIONS } from "./storage/database.js";
 import { EventBus } from "./storage/event-bus.js";
 import { conversations, memoryCandidates } from "./storage/schema.js";
-
-type HfEndpointLease = {
-	value: string;
-	previousValue?: string;
-	previousLease?: HfEndpointLease;
-	active: boolean;
-};
-let currentHfEndpointLease: HfEndpointLease | undefined;
-
-function restoreHfPrevious(lease: HfEndpointLease): string | undefined {
-	const previous = lease.previousLease;
-	if (!previous) return lease.previousValue;
-	return previous.active ? previous.value : restoreHfPrevious(previous);
-}
-
-function installHfEndpoint(value: string): HfEndpointLease {
-	const previousValue = process.env.HF_ENDPOINT;
-	const previousLease =
-		currentHfEndpointLease && previousValue === currentHfEndpointLease.value
-			? currentHfEndpointLease
-			: undefined;
-	const lease: HfEndpointLease = { value, previousValue, previousLease, active: true };
-	currentHfEndpointLease = lease;
-	process.env.HF_ENDPOINT = value;
-	return lease;
-}
-
-function releaseHfEndpoint(lease: HfEndpointLease | undefined): void {
-	if (!lease || !lease.active) return;
-	lease.active = false;
-	if (currentHfEndpointLease !== lease || process.env.HF_ENDPOINT !== lease.value) return;
-	const value = restoreHfPrevious(lease);
-	if (typeof value === "undefined") delete process.env.HF_ENDPOINT;
-	else process.env.HF_ENDPOINT = value;
-	currentHfEndpointLease = lease.previousLease;
-}
 
 /** The subset of the product configuration the host runtime consumes. */
 export interface RuntimeProductConfig {
@@ -179,8 +143,6 @@ export class HostRuntime {
 	readonly memoryRuntime: TencentDbRuntime;
 	readonly memoryBackend: MemoryBackend;
 	readonly memoryScope: { readonly installationId: string; readonly userId: string };
-	private hfEndpointLease?: HfEndpointLease;
-	private readonly hfEndpointValue?: string;
 	/** Content-addressed artifact store (CAS + ownership rows). */
 	readonly artifacts: ArtifactStore;
 	/** Hash-chained append-only audit store (commission/run/fsop/memory/config). */
@@ -233,12 +195,11 @@ export class HostRuntime {
 			userId: "default-user",
 		};
 		const appRecord = appSettings.load();
-		const memoryConfig = mergeEmbeddingConfig(options.memoryConfig, appRecord.memoryVectorService);
-		const mirrorEndpoint = appRecord.modelDownloadMirror.endpoint?.trim();
-		if (mirrorEndpoint) {
-			this.hfEndpointValue = mirrorEndpoint;
-			this.hfEndpointLease = installHfEndpoint(mirrorEndpoint);
-		}
+		const memoryConfig = mergeEmbeddingConfig(
+			options.memoryConfig,
+			appRecord.memoryVectorService,
+			appRecord.modelDownloadSource,
+		);
 
 		const memoryRuntime = new TencentDbRuntime({
 			dataDir,
@@ -365,8 +326,9 @@ export class HostRuntime {
 				};
 			}
 			if (call.tool !== "host_propose_work") return characterBehavior.invoke(call);
-			const triggerEntryId = supervisor.getLiveSessionResolver().get(call.conversationId)
-				?.currentUserEntryId;
+			const triggerEntryId = supervisor
+				.getLiveSessionResolver()
+				.get(call.conversationId)?.currentUserEntryId;
 			if (!triggerEntryId) {
 				return {
 					ok: false,
@@ -473,12 +435,6 @@ export class HostRuntime {
 	async start(): Promise<void> {
 		if (this.started) return;
 		if (this.closed) throw new Error("Host runtime is closed");
-		if (
-			this.hfEndpointValue &&
-			(!this.hfEndpointLease?.active || currentHfEndpointLease !== this.hfEndpointLease)
-		) {
-			this.hfEndpointLease = installHfEndpoint(this.hfEndpointValue);
-		}
 		try {
 			// Apply the persisted network proxy before any host network call goes out.
 			// Non-direct mode consults the platform/system proxy; Electron hosts pass
@@ -536,7 +492,6 @@ export class HostRuntime {
 			this.uninstallFsProtection = undefined;
 			this.unsubscribeProxyHotReload?.();
 			this.unsubscribeProxyHotReload = undefined;
-			releaseHfEndpoint(this.hfEndpointLease);
 			throw error;
 		}
 	}
@@ -561,7 +516,6 @@ export class HostRuntime {
 		this.unsubscribeProxyHotReload = undefined;
 		this.characterBehavior.dispose();
 		this.providers.dispose();
-		releaseHfEndpoint(this.hfEndpointLease);
 		try {
 			await this.memoryRuntime.close();
 		} catch (error) {
@@ -579,6 +533,7 @@ export class HostRuntime {
 function mergeEmbeddingConfig(
 	base: DeepPartial<MemoryTdaiConfig> | undefined,
 	service: AppSettingsRecord["memoryVectorService"],
+	downloadSource: AppSettingsRecord["modelDownloadSource"],
 ): DeepPartial<MemoryTdaiConfig> | undefined {
 	if (!service.enabled || service.provider === "none") {
 		return base; // provider-less default already degrades hybrid recall
@@ -589,10 +544,18 @@ function mergeEmbeddingConfig(
 		sendDimensions: true,
 	};
 	if (service.provider === "local") {
-		embedding.provider = "local";
-		embedding.modelPath = service.localModel
-			? findHostLocalEmbeddingCandidate(service.localModel)?.modelPath
+		const candidate = service.localModel
+			? findHostLocalEmbeddingCandidate(service.localModel)
 			: undefined;
+		embedding.provider = "local";
+		embedding.dimensions = candidate?.dimensions ?? 768;
+		embedding.modelPath = candidate?.modelPath ?? service.customPath;
+		embedding.hfEndpoint =
+			downloadSource.type === "official"
+				? "https://huggingface.co"
+				: downloadSource.type === "hf-mirror"
+					? "https://hf-mirror.com"
+					: downloadSource.endpoint;
 	} else {
 		embedding.provider = "remote";
 		embedding.baseUrl = service.baseUrl ?? "";

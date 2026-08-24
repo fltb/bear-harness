@@ -67,7 +67,7 @@ function embeddingBinding(options: EmbeddingOptions = {}) {
 		conversationHistoryReadEnabled: false,
 		networkProxy: { mode: "direct" },
 		memoryVectorService: { enabled: true, provider: "local", localModel: "test-embedding" },
-		modelDownloadMirror: {},
+		modelDownloadSource: { type: "official" },
 	});
 	const [error, setError] = createSignal<unknown>(null);
 	const [success, setSuccess] = createSignal(false);
@@ -109,7 +109,7 @@ function embeddingBinding(options: EmbeddingOptions = {}) {
 				],
 				memoryVectorPresets: [],
 				localEmbeddingCandidates: [
-					{ id: "test-embedding", name: "Test embedding", isDefault: true },
+					{ id: "test-embedding", name: "Test embedding", dimensions: 768, isDefault: true },
 				],
 			},
 			isPending: false,

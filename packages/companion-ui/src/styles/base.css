@@ -1,0 +1,277 @@
+
+/**
+ * Companion semantic design tokens. Component surfaces consume these aliases
+ * instead of palette literals so character themes can safely override the
+ * core surface, text, action, and status roles.
+ */
+
+@theme {
+	--color-night: #07171c;
+	--color-night-2: #102a31;
+	--color-night-3: #183a40;
+	--color-paper: #f7f3e9;
+	--color-paper-2: #ece5d7;
+	--color-ink: #263f3d;
+	--color-muted: #6d7d78;
+	--color-ice: #e8f2ee;
+	--color-mist: #9ab2ab;
+	--color-aurora: #8bd0bb;
+	--color-green: #2e625b;
+	--color-amber: #cf9d5b;
+	--color-danger: #b9685f;
+	--color-line: rgba(161, 207, 194, 0.22);
+	--shadow-app: 0 25px 70px rgba(0, 10, 13, 0.4);
+	--font-sans: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
+	--font-serif: "Songti SC", "STSong", Georgia, serif;
+}
+
+:root {
+	/* Host semantic system tokens. The renderer overrides only these values. */
+	--sys-canvas: #111113;
+	--sys-surface: #18191b;
+	--sys-surface-raised: #212225;
+	--sys-surface-interactive: #272a2d;
+	--sys-surface-selected: #0b3a48;
+	--sys-text: #ecedee;
+	--sys-text-muted: #9ba1a6;
+	--sys-text-on-accent: #07171c;
+	--sys-accent: #00a2c7;
+	--sys-accent-hover: #4ccce6;
+	--sys-border: #43484e;
+	--sys-border-focus: #4ccce6;
+	--sys-success: #86ead4;
+	--sys-warning: #ffc53d;
+	--sys-danger: #ff9592;
+
+	/* Private compatibility aliases. Role packages cannot configure these. */
+	--surface: var(--sys-surface);
+	--surface-alt: var(--sys-surface-raised);
+	--text: var(--sys-text);
+	--text-muted: var(--sys-text-muted);
+	--accent: var(--sys-accent);
+	--line: var(--sys-border);
+	--danger: var(--sys-danger);
+	--amber: var(--sys-warning);
+	--ink: var(--sys-text);
+	--aurora: var(--sys-accent-hover);
+	--font-body: var(--font-sans);
+	--font-heading: var(--font-serif);
+
+	/* Component-private aliases derived from the semantic system. */
+	--surface-canvas: var(--sys-canvas);
+	--surface-sidebar: var(--sys-surface);
+	--surface-panel: var(--sys-surface-raised);
+	--surface-control: var(--sys-surface-interactive);
+	--surface-subtle: var(--sys-surface-interactive);
+	--surface-message: var(--sys-surface-raised);
+	--surface-message-user: var(--sys-surface-selected);
+	--surface-action: var(--sys-accent);
+	--surface-success: color-mix(in srgb, var(--sys-success) 12%, var(--sys-canvas));
+	--surface-warning: color-mix(in srgb, var(--sys-warning) 12%, var(--sys-canvas));
+	--surface-danger: color-mix(in srgb, var(--sys-danger) 12%, var(--sys-canvas));
+	--surface-overlay: color-mix(in srgb, var(--sys-canvas) 72%, transparent);
+	--text-strong: var(--sys-text);
+	--text-soft: var(--sys-text-muted);
+	--text-on-action: var(--sys-text-on-accent);
+	--text-on-message: var(--sys-text);
+	--text-action: var(--sys-accent-hover);
+	--text-success: var(--sys-success);
+	--text-warning: var(--sys-warning);
+	--text-danger: var(--sys-danger);
+	/* Foreground roles stay available outside the backstage sheet. */
+	--semantic-role-default: var(--text-strong);
+	--semantic-role-muted: var(--text-muted);
+	--semantic-role-accent: var(--text-action);
+	--semantic-role-danger: var(--text-danger);
+	--semantic-role-on-action: var(--text-on-action);
+	--line-strong: var(--sys-border-focus);
+	--line-soft: var(--sys-border);
+	--focus-ring: var(--sys-border-focus);
+	--scroll-thumb: var(--sys-border);
+	--shadow-color: color-mix(in srgb, var(--sys-canvas) 55%, transparent);
+}
+
+html,
+body {
+	@apply size-full;
+}
+
+body {
+	@apply min-h-screen overflow-x-hidden overflow-y-auto;
+	color-scheme: dark;
+	background:
+		radial-gradient(
+			circle at 82% 5%,
+			color-mix(in srgb, var(--accent) 17%, transparent),
+			transparent 28%
+		),
+		var(--surface-canvas);
+}
+
+button:focus-visible,
+textarea:focus-visible {
+	@apply outline-2 outline-offset-2;
+	outline-color: var(--focus-ring);
+}
+
+button:disabled {
+	@apply cursor-not-allowed opacity-60;
+}
+
+[role="dialog"] {
+	@apply pointer-events-auto;
+}
+
+button[data-control="command"] {
+	@apply min-h-8 rounded-md border px-3 py-2;
+	border-color: var(--line);
+	background: var(--surface-alt);
+	color: var(--text);
+	font: inherit;
+	@apply cursor-pointer;
+}
+
+button[data-control="command"]:hover:not(:disabled),
+button[data-control="command"]:focus-visible {
+	border-color: var(--accent);
+}
+
+button[data-variant="primary"] {
+	@apply min-h-10 rounded-md border border-transparent px-4 text-sm font-bold;
+	background: var(--accent);
+	color: var(--surface);
+	font: inherit;
+	@apply cursor-pointer;
+}
+
+button[data-variant="primary"]:hover:not(:disabled),
+button[data-variant="primary"]:focus-visible {
+	@apply brightness-110;
+}
+
+.field-label {
+	@apply text-sm;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+
+.field-hint {
+	@apply text-xs leading-5;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+
+.settings-stack {
+	@apply grid gap-6;
+}
+
+.settings-section {
+	@apply grid gap-4 border-t pt-5;
+	border-color: var(--line);
+}
+
+.settings-section:first-of-type {
+	@apply border-t-0 pt-0;
+}
+
+.settings-section-header h4 {
+	@apply m-0 text-sm font-semibold;
+	color: var(--semantic-role-default);
+}
+
+.settings-fields,
+.embedding-settings {
+	@apply grid gap-4;
+}
+
+.setting-field,
+.setting-select {
+	@apply grid gap-2;
+}
+
+.setting-field input,
+.setting-select .select-trigger {
+	@apply w-full;
+}
+
+.settings-choice-group {
+	@apply grid gap-2;
+}
+
+.settings-choice-options {
+	@apply flex flex-wrap gap-x-4 gap-y-2;
+}
+
+.settings-choice-option {
+	@apply inline-flex cursor-pointer items-center gap-2 text-sm;
+	color: var(--text);
+}
+
+.settings-choice-option [data-part="item-control"] {
+	@apply flex size-4 items-center justify-center rounded-full border;
+	border-color: var(--line);
+	background: var(--surface-alt);
+}
+
+.settings-choice-indicator {
+	@apply size-2 rounded-full;
+	background: var(--accent);
+}
+
+.settings-choice-option[data-disabled] {
+	@apply cursor-default opacity-50;
+}
+
+.settings-actions {
+	@apply flex justify-end pt-1;
+}
+
+.select-trigger {
+	@apply inline-flex min-w-0 min-h-10 items-center justify-between gap-2.5 rounded-md border px-3 text-sm;
+	border-color: var(--line);
+	background: var(--surface-alt);
+	color: var(--text);
+	font: inherit;
+	@apply cursor-pointer;
+}
+
+.select-trigger:focus-visible,
+.select-trigger[data-expanded] {
+	border-color: var(--accent);
+}
+
+.select-value {
+	@apply min-w-0 truncate;
+}
+
+.select-icon {
+	@apply shrink-0 text-xs;
+	--semantic-fg-role: muted;
+	color: var(--text-muted);
+}
+
+.select-content {
+	@apply z-50 min-w-full max-w-md rounded-md border shadow-xl;
+	border-color: var(--line);
+	background: var(--surface);
+	color: var(--text);
+}
+
+.select-listbox {
+	@apply max-h-80 overflow-y-auto p-2 outline-none;
+}
+
+.select-item {
+	@apply flex min-h-9 items-center rounded-md px-3 py-2 text-sm;
+	outline: none;
+	@apply cursor-pointer;
+}
+
+.select-item[data-highlighted] {
+	background: var(--surface-alt);
+	color: var(--accent);
+}
+
+.material-picker {
+	@apply hidden;
+}

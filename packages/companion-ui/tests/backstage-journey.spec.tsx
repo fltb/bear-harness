@@ -71,7 +71,6 @@ describe("ordinary-user backstage journey", () => {
 		expect(confirmPluginTrust).toHaveBeenCalledWith("imported-role");
 	});
 
-
 	it("opens character and system settings as distinct destinations and imports a package folder", async () => {
 		const user = userEvent.setup();
 		const importPackage = vi.fn(() => Promise.resolve());
@@ -237,7 +236,7 @@ describe("ordinary-user backstage journey", () => {
 					conversationHistoryReadEnabled: false,
 					networkProxy: { mode: "direct" as const },
 					memoryVectorService: { enabled: false, provider: "none" as const },
-					modelDownloadMirror: {},
+					modelDownloadSource: { type: "official" },
 				}),
 				get: vi.fn(() =>
 					Promise.resolve({
@@ -245,7 +244,7 @@ describe("ordinary-user backstage journey", () => {
 						conversationHistoryReadEnabled: false,
 						networkProxy: { mode: "direct" as const },
 						memoryVectorService: { enabled: false, provider: "none" as const },
-						modelDownloadMirror: {},
+						modelDownloadSource: { type: "official" },
 					}),
 				),
 				set: vi.fn(() => Promise.resolve()),
@@ -328,10 +327,7 @@ describe("ordinary-user backstage journey", () => {
 				<Button type="button" onClick={() => setBackstageOpen(true)}>
 					{zhCN.sidebar.characterSettings}
 				</Button>
-				<Backstage
-					open={backstageOpen()}
-					onClose={() => setBackstageOpen(false)}
-				/>
+				<Backstage open={backstageOpen()} onClose={() => setBackstageOpen(false)} />
 			</DesktopProvider>
 		));
 

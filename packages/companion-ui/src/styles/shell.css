@@ -1,0 +1,761 @@
+/* ------------------------------------------------------------------ */
+/* App frame                                                           */
+/* ------------------------------------------------------------------ */
+
+.app {
+	@apply grid min-h-screen w-full grid-rows-1 overflow-hidden rounded-xl border border-line shadow-app;
+	--radius-sm: 8px;
+	--radius-md: 12px;
+	--radius-lg: 16px;
+	--semantic-role-default: var(--text-strong);
+	--semantic-role-muted: var(--text-muted);
+	--semantic-role-accent: var(--text-action);
+	--semantic-role-danger: var(--text-danger);
+	--semantic-role-on-action: var(--text-on-action);
+	@apply m-4;
+	color: var(--text);
+	font-family: var(--font-body);
+	background: var(--surface);
+}
+
+.thread-head {
+	@apply absolute right-6 top-4 z-10 flex w-1/2 max-w-xl items-center justify-between gap-3;
+}
+
+.thread-head .scene-title {
+	@apply text-sm;
+	color: var(--text-strong);
+	font-family: var(--font-heading);
+}
+
+/* ------------------------------------------------------------------ */
+/* Sidebar                                                             */
+/* ------------------------------------------------------------------ */
+
+.shell {
+	@apply grid min-h-0 grid-cols-4;
+}
+
+.main {
+	@apply col-span-3 min-h-0 min-w-0;
+}
+
+.sidebar {
+	@apply col-span-1 flex min-h-0 flex-col border-r border-line px-3 py-4;
+	background: var(--surface-sidebar);
+}
+
+.identity {
+	@apply flex items-center gap-2 px-1 pb-4;
+}
+
+.identity strong {
+	@apply block text-sm;
+	color: var(--text-strong);
+}
+
+.identity span {
+	@apply mt-1 block text-xs;
+	color: var(--text-muted);
+}
+
+.identity-avatar {
+	@apply block size-10 shrink-0;
+}
+
+.sidebar-tools {
+	@apply flex gap-2;
+}
+
+.search-trigger {
+	@apply flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-line px-3;
+	color: var(--text-soft);
+	background: var(--surface-subtle);
+}
+
+.search-trigger kbd {
+	@apply ml-auto rounded-md border border-line px-1 py-0.5 text-xs;
+	color: var(--text-muted);
+	background: var(--surface-subtle);
+}
+
+.search-trigger input {
+	@apply min-w-0 flex-1 border-0 bg-transparent text-xs outline-none;
+	color: var(--text-strong);
+}
+
+.search-trigger input::placeholder {
+	color: var(--text-muted);
+}
+
+.new-conversation {
+	@apply grid size-8 shrink-0 place-items-center rounded-lg border border-line text-base;
+	color: var(--text-soft);
+	background: var(--surface-subtle);
+}
+
+.nav-scroll {
+	@apply mt-4 flex min-h-0 flex-1 flex-col;
+	scrollbar-width: thin;
+	scrollbar-color: var(--scroll-thumb) transparent;
+}
+
+.nav-scroll::-webkit-scrollbar {
+	@apply w-2;
+}
+
+.nav-scroll::-webkit-scrollbar-thumb {
+	background: var(--scroll-thumb);
+	@apply rounded-full;
+}
+
+.nav-scroll::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.nav-list {
+	@apply grid min-h-0 flex-1 content-start gap-1 overflow-y-auto pr-1;
+}
+
+.nav-item {
+	@apply relative grid w-full min-h-14 gap-1 rounded-xl border-0 px-3 py-2 text-left;
+	color: var(--text-strong);
+	background: transparent;
+}
+
+.nav-item:hover:not(:disabled) {
+	background: var(--surface-subtle);
+}
+
+.nav-item-wrap {
+	@apply relative;
+}
+.nav-item-wrap .nav-item {
+	@apply w-full pr-20;
+}
+.conversation-actions {
+	@apply absolute right-2 top-2 flex gap-0.5 opacity-0;
+}
+.nav-item-wrap:hover .conversation-actions,
+.conversation-actions:focus-within {
+	@apply opacity-100;
+}
+.conversation-actions button {
+	@apply size-5 border-0 p-0;
+	background: var(--surface-overlay);
+	color: var(--text-muted);
+}
+.conversation-rename {
+	@apply flex gap-1 p-2;
+}
+.conversation-rename input {
+	@apply min-w-0 flex-1;
+}
+.conversation-rename button {
+	@apply px-2 py-1;
+}
+
+.canon-studio {
+	@apply grid gap-6;
+}
+.canon-studio section {
+	@apply grid gap-2.5;
+}
+.canon-studio h3 {
+	@apply m-0 text-sm;
+}
+
+.character-package-workshop {
+	@apply mb-6 grid gap-4;
+}
+
+.character-package-workshop h3 {
+	@apply m-0;
+}
+
+.workshop-heading,
+.workshop-actions {
+	@apply flex items-center justify-between gap-2.5;
+}
+
+.workshop-actions {
+	@apply flex-wrap justify-start;
+}
+
+.workshop-revision {
+	@apply text-sm;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+
+.role-plugin-warning {
+	@apply mt-1 block text-xs;
+	color: var(--amber);
+}
+
+.current-role-package-manager,
+.current-role-package-form {
+	@apply grid gap-4;
+}
+
+.current-role-package-selector,
+.current-role-package-actions {
+	@apply flex flex-wrap items-center gap-2;
+}
+
+.current-role-package-choice[data-selected] {
+	border-color: var(--accent);
+	background: var(--surface-success);
+}
+
+.current-role-package-summary {
+	@apply flex justify-between gap-4 rounded-lg p-3;
+	border: 1px solid var(--line);
+	background: var(--surface-subtle);
+}
+
+.current-role-package-summary strong,
+.current-role-package-summary span {
+	@apply block;
+}
+
+.current-role-package-summary span,
+.current-role-package-summary dt {
+	@apply text-xs;
+	color: var(--text-muted);
+}
+
+.current-role-package-summary dl {
+	@apply m-0 grid grid-cols-2 gap-x-2.5 gap-y-1 text-xs;
+}
+
+.current-role-package-summary dd {
+	@apply m-0;
+}
+
+.current-role-package-form textarea {
+	@apply w-full resize-y;
+}
+
+.current-role-package-actions {
+	@apply sticky bottom-0 rounded-lg p-2.5;
+	border: 1px solid var(--line);
+	background: var(--surface);
+}
+
+.current-role-package-actions span {
+	@apply mr-auto text-xs;
+	color: var(--text-muted);
+}
+
+.plugin-trust-overlay {
+	@apply fixed inset-0;
+	background: var(--surface-overlay);
+}
+
+.plugin-trust-dialog {
+	@apply fixed left-1/2 top-1/2 w-4/5 max-w-md -translate-x-1/2 -translate-y-1/2 rounded-md p-5;
+	border: 1px solid var(--line);
+	background: var(--surface);
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+}
+
+.plugin-trust-dialog h2 {
+	@apply m-0 mb-2.5 text-base;
+}
+.plugin-trust-dialog p {
+	@apply m-0 text-sm leading-relaxed;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+.plugin-trust-details {
+	@apply my-4 grid gap-1 text-xs;
+}
+.plugin-trust-details dt {
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+.plugin-trust-details dd {
+	@apply m-0 break-words;
+}
+.plugin-trust-actions {
+	@apply flex justify-end gap-2;
+}
+
+.workshop-history {
+	border-top: 1px solid var(--line);
+	@apply pt-3;
+}
+
+.workshop-history h4 {
+	@apply m-0 mb-2 text-sm;
+}
+
+.workshop-history-row {
+	@apply flex min-h-8 items-center justify-between text-sm;
+	border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+.canon-studio form {
+	@apply grid gap-2;
+}
+.canon-studio input,
+.canon-studio textarea,
+.canon-studio select {
+	@apply box-border w-full;
+}
+.canon-row {
+	@apply flex items-center justify-between gap-3 py-2.5;
+	border-top: 1px solid var(--line);
+}
+.canon-row div {
+	@apply grid min-w-0 gap-1;
+}
+.canon-row span {
+	@apply text-xs;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+.canon-search {
+	@apply grid-cols-2;
+}
+.canon-result {
+	@apply grid grid-cols-2 items-start gap-2 text-xs;
+}
+.canon-result input {
+	@apply w-4;
+}
+.canon-result span {
+	@apply grid whitespace-pre-wrap gap-1;
+}
+
+.nav-item[aria-current="page"] {
+	background: var(--surface-subtle);
+}
+
+.nav-item[aria-current="page"]::before {
+	content: "";
+	@apply absolute inset-y-2.5 left-0 w-1 rounded-md;
+	background: var(--accent);
+}
+
+.nav-item strong {
+	@apply text-xs font-semibold;
+}
+
+.nav-item span {
+	@apply text-xs;
+	color: var(--text-muted);
+}
+
+.system-section {
+	@apply mt-auto grid shrink-0 gap-2 border-t pt-3;
+	border-color: var(--line-soft);
+}
+
+.section-label {
+	@apply mb-2 text-xs font-extrabold tracking-normal;
+	color: var(--text-muted);
+}
+
+.system-nav {
+	@apply flex min-h-10 w-full items-center rounded-lg border border-line px-2.5 text-left;
+	color: var(--text-soft);
+	background: var(--surface-subtle);
+}
+
+.system-nav .gear {
+	@apply mr-2;
+	color: var(--text-muted);
+}
+
+.role-list {
+	@apply grid gap-2;
+}
+
+.role-import {
+	@apply grid gap-2 border-b border-line pb-3;
+}
+
+.button-like {
+	@apply inline-flex min-h-9 cursor-pointer items-center justify-center border border-line px-3 text-xs;
+	color: var(--text);
+	background: var(--surface-alt);
+}
+
+.button-like input[type="file"] {
+	@apply sr-only;
+}
+
+.role-row {
+	@apply grid grid-cols-3 items-center gap-3 border-b border-line py-3;
+}
+
+.role-row img {
+	@apply size-10 object-contain;
+}
+.role-row strong {
+	@apply text-xs;
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+}
+
+.role-row span,
+.role-row button {
+	@apply text-xs;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+
+.model-settings {
+	@apply mt-6 grid gap-4 border-t border-line pt-5;
+}
+
+.settings-group-heading {
+	@apply grid gap-1 border-t pt-5;
+	border-color: var(--line);
+}
+
+.settings-group-heading:first-child {
+	@apply border-t-0 pt-0;
+}
+
+.settings-group-heading h3 {
+	@apply m-0 text-sm font-semibold;
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+}
+
+.model-section-title {
+	@apply m-0 text-sm font-semibold;
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+}
+
+.fallback-section-title {
+	@apply mt-2 border-t pt-5;
+	border-color: var(--line);
+}
+
+.backstage-sheet {
+	--semantic-role-default: var(--text-strong);
+	--semantic-role-muted: var(--text-muted);
+	--semantic-role-accent: var(--text-action);
+	--semantic-role-danger: var(--text-danger);
+	--semantic-role-on-action: var(--text-on-action);
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+	color-scheme: dark;
+}
+
+.backstage-sheet input,
+.backstage-sheet select,
+.backstage-sheet textarea,
+.backstage-sheet button {
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+}
+
+.backstage-sheet option {
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+	background: var(--surface);
+}
+.backstage-sheet label:not(.field-label) {
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+
+.backstage-sheet a {
+	--semantic-fg-role: accent;
+	color: var(--semantic-role-accent);
+}
+
+.model-settings select,
+.model-settings input {
+	@apply w-full rounded-md px-3 py-2 text-sm outline-none;
+	@apply min-h-10;
+	border: 1px solid var(--line);
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+	background: var(--surface-alt);
+	color-scheme: dark;
+}
+
+.model-settings button {
+	@apply text-sm;
+	color: var(--semantic-role-default);
+}
+
+.provider-setup .provider-status {
+	@apply text-xs;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+
+.provider-setup .provider-status[data-connected="true"] {
+	--semantic-fg-role: accent;
+	color: var(--semantic-role-accent);
+}
+.provider-setup {
+	@apply grid min-w-0 gap-4;
+}
+
+.provider-candidate-section {
+	@apply grid min-w-0 gap-3;
+}
+
+.provider-candidate-section > .settings-group-heading {
+	border-top: 0;
+	padding-top: 0;
+}
+
+.provider-candidate-section .settings-group-heading h4 {
+	@apply m-0 text-sm font-semibold;
+	color: var(--text-strong);
+}
+
+.provider-selector {
+	@apply grid min-w-0 gap-2;
+}
+
+.provider-selector .field,
+.provider-setup .field {
+	@apply grid min-w-0 gap-2;
+}
+
+.provider-setup .select-trigger {
+	@apply w-full;
+}
+
+.provider-setup input,
+.provider-setup textarea {
+	@apply box-border w-full min-w-0 rounded-lg px-3 py-2 text-sm leading-normal outline-none;
+	border: 1px solid var(--line);
+	color: var(--text-strong);
+	background: var(--surface-control);
+	font: inherit;
+	color-scheme: dark;
+}
+
+.provider-setup input {
+	@apply min-h-10;
+}
+
+.provider-setup textarea {
+	@apply min-h-20 resize-y;
+}
+
+.provider-setup input::placeholder,
+.provider-setup textarea::placeholder {
+	color: var(--text-muted);
+}
+
+.provider-setup input:focus-visible,
+.provider-setup textarea:focus-visible {
+	border-color: var(--accent);
+	outline: 3px solid var(--focus-ring);
+	outline-offset: 2px;
+}
+
+.provider-setup-editor {
+	@apply grid min-w-0 gap-3 rounded-lg p-4;
+	border: 1px solid var(--line);
+	background: var(--surface-subtle);
+}
+
+.provider-setup-editor .field:has(> button) {
+	@apply grid-cols-2 items-end;
+}
+
+.provider-setup-editor .field:has(> button) > .field-label {
+	grid-column: 1 / -1;
+}
+
+.provider-setup button[data-variant="secondary"],
+.provider-setup button[data-variant="danger"] {
+	@apply min-h-10 rounded-lg px-3 text-sm font-semibold cursor-pointer;
+	border: 1px solid var(--line);
+	background: var(--surface-control);
+	color: var(--text-strong);
+	font: inherit;
+}
+
+.provider-setup button[data-variant="secondary"]:hover:not(:disabled),
+.provider-setup button[data-variant="secondary"]:focus-visible {
+	border-color: var(--accent);
+	background: var(--surface-success);
+}
+
+.provider-setup button[data-variant="danger"] {
+	--semantic-fg-role: danger;
+	border-color: color-mix(in srgb, var(--danger) 40%, var(--line));
+	color: var(--text-danger);
+	background: var(--surface-danger);
+}
+
+.provider-setup button[data-variant="danger"]:hover:not(:disabled),
+.provider-setup button[data-variant="danger"]:focus-visible {
+	border-color: var(--danger);
+}
+
+.oauth-login {
+	@apply grid min-w-0 gap-2.5;
+}
+
+.oauth-login > a {
+	@apply break-words text-sm;
+	color: var(--text-action);
+}
+
+.oauth-login > p {
+	@apply m-0 text-xs leading-relaxed;
+	color: var(--text-soft);
+}
+
+.oauth-info-links {
+	@apply m-0;
+	padding-left: 1.1em;
+}
+
+.oauth-info-links a {
+	@apply break-words text-xs;
+	color: var(--text-action);
+}
+
+.provider-status {
+	@apply m-0;
+}
+
+.provider-card-list {
+	@apply grid min-w-0 gap-2.5;
+}
+
+.provider-card {
+	@apply grid min-w-0 gap-2.5 rounded-lg p-4;
+	border: 1px solid var(--line);
+	background: var(--surface-panel);
+}
+
+.provider-card-heading {
+	@apply grid min-w-0 gap-1;
+}
+
+.provider-card-heading strong {
+	@apply break-words text-sm font-bold;
+	color: var(--text-strong);
+}
+
+.provider-card-actions {
+	@apply flex flex-wrap items-center gap-2;
+}
+
+.provider-card-actions button {
+	flex: 1 1 120px;
+}
+
+.provider-card .provider-setup-editor {
+	border-color: var(--line-soft);
+	@apply p-3;
+	background: var(--surface-control);
+}
+
+.provider-import {
+	@apply grid min-w-0 gap-3 rounded-lg px-3 py-3;
+	border: 1px solid var(--line);
+	background: var(--surface-subtle);
+}
+
+.provider-import summary {
+	@apply cursor-pointer text-sm font-bold;
+	color: var(--text-strong);
+}
+
+.provider-import summary:focus-visible {
+	outline: 3px solid var(--focus-ring);
+	outline-offset: 3px;
+	@apply rounded-lg;
+}
+
+.provider-import summary::marker {
+	color: var(--text-action);
+}
+
+.provider-import[open] summary {
+	@apply mb-0.5;
+}
+
+.provider-import > button {
+	justify-self: start;
+}
+
+.provider-import .field-hint {
+	@apply m-0;
+}
+
+.provider-setup .status-line {
+	@apply m-0;
+}
+.provider-setup-manager {
+	@apply grid-cols-3 items-start gap-x-6 gap-y-5;
+}
+.provider-connections {
+	@apply grid min-w-0 gap-4;
+}
+.provider-connections .settings-group-heading h4 {
+	@apply m-0 text-sm font-semibold;
+	color: var(--text-strong);
+}
+.provider-editor-pane {
+	@apply col-span-2 grid min-w-0 content-start gap-3 pl-6;
+	border-left: 1px solid var(--line);
+}
+.provider-card[data-selected] {
+	border-color: var(--accent);
+	background: var(--surface-control);
+}
+
+.model-settings option {
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+	background: var(--surface);
+}
+
+.model-settings label.field:has(> input[type="password"]) {
+	@apply grid-cols-2;
+}
+
+.model-settings label.field:has(> input[type="password"]) > .field-label {
+	grid-column: 1 / -1;
+}
+
+.model-settings label.field:has(> input[type="password"]) > button {
+	@apply min-h-10 rounded-md px-3.5 py-2;
+	border: 1px solid var(--line);
+	background: var(--surface-alt);
+}
+
+.inline-disclosure {
+	@apply min-h-10 py-2 text-left;
+	border: 0;
+	background: transparent;
+	--semantic-fg-role: accent;
+	color: var(--semantic-role-accent);
+}
+
+.inline-custom-provider {
+	@apply grid gap-4 pt-4;
+	border-top: 1px solid var(--line);
+}
+
+.secondary-action {
+	@apply min-h-10 rounded-md px-3.5 py-2;
+	border: 1px solid var(--accent);
+	background: var(--surface-success);
+}
+
+.role-row button {
+	@apply border border-line px-3 py-2;
+}

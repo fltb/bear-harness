@@ -170,7 +170,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 					stateData.decisions.conversation_history_read_enabled ?? false,
 				networkProxy: app.networkProxy,
 				memoryVectorService: app.memoryVectorService,
-				modelDownloadMirror: app.modelDownloadMirror,
+				modelDownloadSource: app.modelDownloadSource,
 			},
 			changed: ["memoryVectorService"],
 		});
@@ -521,28 +521,43 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 
 	dispatcher.registerHandler(RPC.memory.configureLocalEmbedding, async (_p) => {
-		const { provider, candidateId } = _p as { provider: "none" | "local"; candidateId?: string };
+		const { provider, candidateId, customPath } = _p as {
+			provider: "none" | "local";
+			candidateId?: string;
+			customPath?: string;
+		};
 		if (provider === "none") {
 			await s.memoryRuntime.disableLocalEmbedding();
 			await saveMemoryVectorService({ enabled: false, provider: "none" });
 			return { ready: true as const };
 		}
 		const candidate = candidateId ? findHostLocalEmbeddingCandidate(candidateId) : undefined;
-		if (!candidate)
+		if (candidateId && !candidate)
 			throw { kind: "invalid_request", reason: "local_embedding_candidate_not_found" };
-		try {
-			await s.memoryRuntime.configureLocalEmbedding(candidate.modelPath);
-			await saveMemoryVectorService({
-				enabled: true,
-				provider: "local",
-				localModel: candidate.id,
-			});
-			return { ready: true as const };
-		} catch (error) {
-			await s.memoryRuntime.disableLocalEmbedding().catch(() => undefined);
-			await saveMemoryVectorService({ enabled: false, provider: "none" });
-			throw error;
+		const modelPath = candidate?.modelPath ?? customPath?.trim();
+		if (!modelPath) throw { kind: "invalid_request", reason: "local_embedding_model_not_selected" };
+		const source = s.appSettings.load().modelDownloadSource;
+		const hfEndpoint =
+			source.type === "official"
+				? "https://huggingface.co"
+				: source.type === "hf-mirror"
+					? "https://hf-mirror.com"
+					: source.endpoint;
+		const endpointUrl = new URL(hfEndpoint);
+		if (endpointUrl.protocol !== "https:" || endpointUrl.username || endpointUrl.password) {
+			throw { kind: "invalid_request", reason: "invalid_model_download_endpoint" };
 		}
+		await s.memoryRuntime.configureLocalEmbedding({
+			modelPath,
+			dimensions: 768,
+			hfEndpoint: endpointUrl.href.replace(/\/$/, ""),
+		});
+		await saveMemoryVectorService({
+			enabled: true,
+			provider: "local",
+			...(candidate ? { localModel: candidate.id } : { customPath: modelPath }),
+		});
+		return { ready: true as const };
 	});
 	dispatcher.registerHandler(RPC.memory.search, async (_p): Promise<MemorySearchResponse> => {
 		const { characterId, query } = _p as { characterId?: string; query: string };
@@ -1215,7 +1230,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			}),
 		),
 		localEmbeddingCandidates: HOST_SETTINGS_CAPABILITIES.localEmbeddingCandidates.map(
-			({ id, name, isDefault }) => ({ id, name, isDefault }),
+			({ id, name, dimensions, isDefault }) => ({ id, name, dimensions, isDefault }),
 		),
 	}));
 	dispatcher.registerHandler(RPC.settings.get, async (_p) => {
@@ -1230,7 +1245,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 					stateData.decisions.conversation_history_read_enabled ?? false,
 				networkProxy: app.networkProxy,
 				memoryVectorService: app.memoryVectorService,
-				modelDownloadMirror: app.modelDownloadMirror,
+				modelDownloadSource: app.modelDownloadSource,
 			},
 		};
 	});
@@ -1242,7 +1257,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
 		if (
 			characterId &&
-			["networkProxy", "memoryVectorService", "modelDownloadMirror"].some((key) => key in settings)
+			["networkProxy", "memoryVectorService", "modelDownloadSource"].some((key) => key in settings)
 		)
 			throw {
 				kind: "invalid_request",
@@ -1273,9 +1288,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			app = s.appSettings.save({ memoryVectorService: settings.memoryVectorService as never });
 			changed.push("memoryVectorService");
 		}
-		if ("modelDownloadMirror" in settings) {
-			app = s.appSettings.save({ modelDownloadMirror: settings.modelDownloadMirror as never });
-			changed.push("modelDownloadMirror");
+		if ("modelDownloadSource" in settings) {
+			app = s.appSettings.save({ modelDownloadSource: settings.modelDownloadSource as never });
+			changed.push("modelDownloadSource");
 		}
 		const nextStateData = s.onboarding.getState(companionId).stateData;
 		const nextSettings = {
@@ -1284,7 +1299,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				nextStateData.decisions.conversation_history_read_enabled ?? false,
 			networkProxy: app.networkProxy,
 			memoryVectorService: app.memoryVectorService,
-			modelDownloadMirror: app.modelDownloadMirror,
+			modelDownloadSource: app.modelDownloadSource,
 		};
 		s.eventBus.publish("settings.changed", { settings: nextSettings, changed });
 		return { settings: nextSettings };
@@ -1437,7 +1452,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 					onboarding.stateData.decisions.conversation_history_read_enabled ?? false,
 				networkProxy: s.appSettings.load().networkProxy,
 				memoryVectorService: s.appSettings.load().memoryVectorService,
-				modelDownloadMirror: s.appSettings.load().modelDownloadMirror,
+				modelDownloadSource: s.appSettings.load().modelDownloadSource,
 			},
 		};
 	});

@@ -1,0 +1,568 @@
+/* M5 additions: message ops, first meeting, work pill, bear states    */
+/* ------------------------------------------------------------------ */
+
+.sr-only {
+	@apply absolute -m-px size-px overflow-hidden whitespace-nowrap border-0 p-0;
+	clip: rect(0 0 0 0);
+}
+
+/* --- user message role (was missing from the static prototype) ------ */
+
+.msg.user {
+	@apply max-w-2/3 self-end border;
+	border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+	color: var(--text-on-message);
+	background: var(--surface-message-user);
+}
+
+.msg.user p {
+	@apply m-0;
+	color: var(--text-on-message);
+}
+
+.msg p {
+	@apply whitespace-pre-wrap;
+}
+
+.streaming-status {
+	@apply inline-block size-3.5 rounded-full;
+	border: 2px solid color-mix(in srgb, var(--accent) 28%, transparent);
+	border-top-color: var(--accent);
+	animation: streaming-spinner 0.75s linear infinite;
+}
+
+@keyframes streaming-spinner {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+/* --- message operations (§7.9: hover / keyboard focus only) -------- */
+/* --- message operations (§7.9: hover / keyboard focus only) -------- */
+
+.msg-tools {
+	@apply mt-2 flex gap-2.5 border-0 p-0 pt-1.5 text-xs opacity-0;
+	border-top: 1px solid var(--line-strong);
+	transition: opacity 0.15s ease;
+}
+
+.msg:hover .msg-tools,
+.msg:focus-within .msg-tools,
+.msg-tools.is-open {
+	@apply opacity-100;
+}
+
+.msg-heading {
+	@apply flex items-center justify-between gap-2;
+}
+
+.msg-heading .msg-meta {
+	@apply mb-1;
+}
+
+.msg-menu-trigger {
+	@apply grid h-5 w-6 place-items-center rounded-md border-0 p-0 text-sm leading-none;
+	color: var(--text-muted);
+	background: transparent;
+}
+
+.msg-inline-action {
+	@apply grid size-6 place-items-center rounded-md border-0 p-0 text-base leading-none opacity-0;
+	color: var(--text-soft);
+	background: transparent;
+	transition:
+		color 0.15s ease,
+		background 0.15s ease,
+		opacity 0.15s ease;
+}
+
+.msg:hover .msg-inline-action,
+.msg:focus-within .msg-inline-action,
+.msg-inline-action:focus-visible {
+	@apply opacity-100;
+}
+
+.msg-inline-action:hover,
+.msg-inline-action:focus-visible {
+	color: var(--text-on-message);
+	background: var(--surface-success);
+}
+
+.msg-menu-trigger:hover,
+.msg-menu-trigger:focus-visible {
+	color: var(--ink);
+	background: var(--surface-success);
+}
+
+.msg.user .msg-menu-trigger {
+	color: var(--text-soft);
+}
+
+.msg.user .msg-menu-trigger:hover,
+.msg.user .msg-menu-trigger:focus-visible {
+	color: var(--text-on-message);
+	background: var(--surface-success);
+}
+
+.edit-branch-note {
+	@apply m-0 mt-2 text-xs leading-relaxed;
+	color: var(--text-soft);
+}
+
+.msg-tools button {
+	@apply border-0 p-0 text-xs;
+	color: var(--text-muted);
+	background: none;
+}
+
+.msg-tools button:hover:not(:disabled),
+.msg-tools button:focus-visible {
+	color: var(--ink);
+}
+
+.msg-tools .primary-tool {
+	@apply font-bold;
+	color: var(--text-action);
+}
+
+.msg.user .msg-tools {
+	border-top-color: var(--line-soft);
+}
+
+.msg.user .msg-tools button {
+	color: var(--text-soft);
+}
+
+.msg.user .msg-tools button:hover:not(:disabled),
+.msg.user .msg-tools button:focus-visible {
+	color: var(--text-on-message);
+}
+
+.version-pager {
+	@apply mt-2 flex items-center gap-2;
+}
+
+.version-pager button {
+	@apply rounded-md border px-2 py-1 text-xs;
+	border-color: var(--line-strong);
+	color: var(--text-soft);
+	background: transparent;
+}
+
+.version-pager button:disabled {
+	@apply opacity-40;
+}
+
+.version-pager span {
+	@apply text-xs;
+	color: var(--text-muted);
+}
+
+.edit-box {
+	@apply min-h-18 w-full resize-y rounded-lg border px-2.5 py-2 text-xs leading-relaxed outline-0;
+	border-color: var(--line-strong);
+	color: var(--ink);
+	background: var(--surface-message);
+}
+
+.edit-box:focus-visible {
+	outline: 3px solid var(--focus-ring);
+	outline-offset: 2px;
+}
+
+.msg.user .edit-box {
+	color: var(--text-on-message);
+	background: var(--surface-message-user);
+	border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.correct-panel {
+	@apply mt-2 grid gap-2;
+	border-top: 1px solid var(--line-strong);
+	@apply pt-1.5;
+}
+
+.msg.user .correct-panel {
+	border-top-color: var(--line-soft);
+}
+
+.correct-reasons {
+	@apply flex flex-wrap gap-1;
+}
+
+.correct-reasons button,
+.correct-scopes button {
+	@apply rounded-full border px-2 py-1 text-xs;
+	border-color: var(--line-strong);
+	color: var(--text-soft);
+	background: transparent;
+}
+
+.correct-reasons button.selected,
+.correct-scopes button.selected {
+	border-color: var(--accent);
+	color: var(--text-action);
+	background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.correct-panel input {
+	@apply rounded-lg px-2.5 py-2 text-xs outline-0;
+	border: 1px solid var(--line-strong);
+	color: var(--ink);
+	background: var(--surface-message);
+}
+
+.correct-panel input:focus-visible {
+	outline: 3px solid var(--focus-ring);
+	outline-offset: 2px;
+}
+
+.correct-scopes {
+	@apply flex gap-1;
+}
+
+.thread-error {
+	@apply rounded-lg px-3 py-2 text-xs leading-relaxed;
+	border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+	color: var(--text-danger);
+	background: var(--surface-danger);
+}
+
+.composer textarea:disabled {
+	@apply cursor-not-allowed opacity-50;
+}
+
+/* --- sidebar conversation list ------------------------------------- */
+
+.conversations-empty {
+	@apply px-1.5 py-3.5 text-xs leading-relaxed;
+	color: var(--text-muted);
+}
+
+.nav-item .unread-dot {
+	@apply absolute right-2.5 top-3 size-2 rounded-full;
+	background: var(--amber);
+}
+
+/* --- work pill + run queue (thread head) --------------------------- */
+
+.work-pill-wrap {
+	@apply relative flex items-center;
+}
+
+.work-pill {
+	@apply flex h-9 items-center gap-2 rounded-lg border border-line px-3 text-xs;
+	color: var(--text-soft);
+	background: var(--surface-control);
+}
+
+.work-pill:hover {
+	background: var(--surface-subtle);
+}
+
+.work-pill b {
+	@apply font-bold;
+	color: var(--text-strong);
+}
+
+.pulse {
+	@apply size-2 rounded-full;
+	background: var(--aurora);
+	box-shadow: 0 0 0 5px var(--surface-success);
+}
+
+.queue-pop {
+	@apply absolute right-0 top-full z-50 mt-2 w-full max-w-sm rounded-2xl p-3;
+	border: 1px solid var(--line);
+	background: var(--surface-panel);
+	box-shadow: var(--shadow-app);
+}
+
+.queue-pop h3 {
+	@apply m-0 mb-2.5 text-xs;
+	color: var(--text-strong);
+}
+
+.queue-pop .run {
+	@apply grid gap-1 rounded-xl p-3;
+	background: var(--surface-success);
+}
+
+.queue-pop .run + .run {
+	@apply mt-2;
+}
+
+.queue-pop .run strong {
+	@apply text-xs;
+	color: var(--text-strong);
+}
+
+.queue-pop .run span {
+	@apply text-xs;
+	color: var(--text-muted);
+}
+
+.queue-pop .empty {
+	@apply grid place-items-center px-2 py-5 text-xs;
+	color: var(--text-muted);
+}
+
+/* --- first meeting (intro overlay from prototype 06) --------------- */
+
+.intro {
+	@apply absolute inset-0 z-40 grid place-items-center p-8;
+	background: var(--surface-overlay);
+	backdrop-filter: blur(8px);
+}
+
+.intro-card {
+	@apply w-3/4 max-w-2xl rounded-3xl p-6;
+	border: 1px solid var(--line-strong);
+	color: var(--text);
+	background: var(--surface);
+	box-shadow: var(--shadow-app);
+}
+
+.intro-step {
+	@apply text-xs font-extrabold tracking-normal;
+	color: var(--text-muted);
+}
+
+.intro-card h2 {
+	@apply mb-2 mt-2 text-2xl font-semibold;
+	font-family: var(--font-heading);
+	color: var(--text-strong);
+}
+
+.intro-card p {
+	@apply m-0 text-xs leading-relaxed;
+	color: var(--text-soft);
+}
+
+.intro-quote {
+	@apply mt-4 px-3 py-2.5;
+	border-left: 2px solid var(--aurora);
+	color: var(--text-strong);
+	background: var(--surface-success);
+}
+
+.intro-quote em {
+	@apply not-italic;
+}
+
+.intro-form {
+	@apply my-4 grid gap-2;
+}
+
+.intro-form label {
+	@apply text-xs;
+	color: var(--text-muted);
+}
+
+.intro-form input {
+	@apply rounded-lg border border-line p-3 text-xs outline-0;
+	color: var(--text);
+	background: var(--surface-alt);
+	color-scheme: dark;
+}
+
+.intro-form input:focus-visible {
+	outline: 3px solid var(--focus-ring);
+	outline-offset: 2px;
+}
+
+.intro-form select {
+	@apply rounded-lg border border-line p-3 text-xs outline-0;
+	color: var(--text);
+	background: var(--surface-alt);
+	color-scheme: dark;
+}
+
+.intro-form option {
+	color: var(--text);
+	background: var(--surface);
+}
+
+.model-setup .intro-card {
+	@apply max-h-screen overflow-y-auto;
+}
+
+.model-setup-pickers {
+	@apply my-4 grid grid-cols-2 gap-3;
+}
+
+.model-setup-advanced {
+	@apply mb-4;
+}
+
+.intro-picker {
+	@apply grid min-w-0 gap-2;
+}
+
+.intro-picker .select-trigger {
+	@apply w-full rounded-lg;
+	background: var(--surface-alt);
+}
+.intro-provider-tiles {
+	@apply mb-1 mt-4 grid grid-cols-2 gap-2;
+}
+.intro-provider-tile {
+	@apply grid min-h-14 content-start gap-0.5 rounded-xl px-3 py-2.5 text-left;
+	border: 1px solid var(--line);
+	background: var(--surface-panel);
+	color: var(--text);
+	@apply cursor-pointer;
+}
+.intro-provider-tile:hover {
+	border-color: var(--aurora);
+	background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.intro-provider-tile[data-selected] {
+	border-color: var(--aurora);
+	background: color-mix(in srgb, var(--accent) 14%, transparent);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--aurora) 40%, transparent) inset;
+}
+.intro-provider-tile:focus-visible {
+	outline: 3px solid var(--focus-ring);
+	outline-offset: 2px;
+}
+.intro-provider-tile strong {
+	@apply text-xs font-bold;
+}
+.intro-provider-tile span {
+	@apply break-words text-xs;
+	color: var(--text-muted);
+}
+
+.intro-choices {
+	@apply my-4 grid grid-cols-2 gap-2;
+}
+
+.intro-choice {
+	@apply min-h-16 rounded-xl p-2.5 text-left;
+	border: 1px solid var(--line);
+	color: var(--text-strong);
+	background: var(--surface-success);
+}
+
+.intro-choice:hover {
+	border-color: var(--aurora);
+	background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.intro-choice strong,
+.intro-choice span {
+	@apply block;
+}
+
+.intro-choice strong {
+	@apply text-xs;
+}
+
+.intro-choice span {
+	@apply mt-1 text-xs;
+	color: var(--text-muted);
+}
+
+.intro-actions {
+	@apply mt-4 flex items-center justify-end gap-2;
+}
+
+.intro button[data-variant="primary"] {
+	@apply min-h-9 rounded-md border-0 px-3.5 font-bold;
+	color: var(--text-on-action);
+	background: var(--surface-action);
+}
+
+.intro button[data-variant="primary"]:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--accent) 88%, var(--text) 12%);
+}
+
+.intro button[data-variant="primary"]:disabled {
+	@apply opacity-50;
+}
+
+.intro button[data-variant="secondary"] {
+	@apply min-h-8 rounded-md px-3;
+	border: 1px solid var(--line);
+	color: var(--text);
+	background: var(--surface-alt);
+}
+
+.intro-error {
+	@apply mt-3 px-3 py-2 text-xs leading-relaxed;
+	border-left: 3px solid var(--danger);
+	color: var(--text-danger);
+	background: var(--surface-danger);
+}
+
+.memory-note {
+	@apply mt-4 rounded-xl p-3 text-xs leading-relaxed;
+	color: var(--text-soft);
+	background: var(--surface-success);
+}
+
+/* --- generic presence states -------------------------------------- */
+
+.presence-stage[data-state="thinking"] {
+	animation: presence-pace 3.4s ease-in-out infinite;
+}
+
+.presence-stage[data-state="listening"] {
+	animation: presence-listen 2.6s ease-in-out infinite;
+}
+
+.presence-stage[data-state="result_ready"] {
+	animation: presence-result 1.6s ease-in-out;
+}
+
+.presence-stage[data-state="needs_user"] img {
+	animation: presence-amber-pulse 1.8s ease-in-out infinite;
+}
+
+.presence-stage[data-state="problem"] {
+	@apply saturate-50 sepia;
+}
+
+@keyframes presence-pace {
+	0%,
+	100% {
+		transform: translateY(0);
+	}
+	50% {
+		transform: translateY(-7px);
+	}
+}
+
+@keyframes presence-listen {
+	0%,
+	100% {
+		transform: rotate(0deg);
+	}
+	50% {
+		transform: rotate(-1.6deg);
+	}
+}
+
+@keyframes presence-result {
+	0% {
+		transform: translateY(0) scale(1);
+	}
+	30% {
+		transform: translateY(-14px) scale(1.02);
+	}
+	60%,
+	100% {
+		transform: translateY(0);
+	}
+}
+
+@keyframes presence-amber-pulse {
+	0%,
+	100% {
+		filter: drop-shadow(0 0 0 color-mix(in srgb, var(--amber) 35%, transparent));
+	}
+	50% {
+		filter: drop-shadow(0 0 14px color-mix(in srgb, var(--amber) 72%, transparent));
+	}
+}

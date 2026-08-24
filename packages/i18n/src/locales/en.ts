@@ -291,22 +291,26 @@ export const en = {
 		localModel: "Local model",
 		localModels: {
 			embeddinggemma: "embeddinggemma-300m (768 dims)",
-			"bge-small-zh": "BGE small zh v1.5 (768 dims, default)",
-			"multilingual-e5": "multilingual-e5-base (768 dims)",
 			custom: "Custom download source",
 		},
 		localCustomPath: "Explicit download source: hf:user/repo/file.gguf or a local .gguf path",
 		localCustomPathPlaceholder: "hf:user/repo/file-Q8_0.gguf or /path/to/model.gguf",
 		downloadMirrorSection: "Model download mirror",
 		downloadMirrorLabel: "Mirror endpoint (leave empty for the default source)",
+		downloadSources: {
+			official: "Hugging Face official",
+			hfMirror: "HF Mirror",
+			custom: "Custom endpoint",
+		},
 		downloadAndEnableLocalModel: "Download and enable local model",
 		downloadingLocalModel: "Downloading and loading local model…",
 		localModelDownloadStatus:
 			"Downloading the selected model and loading it locally. Memory stays off until it is ready.",
 		localModelReady: "Local model downloaded, loaded, and ready.",
+		localModelFailed: "Local model download or loading failed",
+		notSelected: "Not selected",
 		saveNetwork: "Save network and memory settings",
-		saved:
-			"Saved. Proxy applies immediately; the vector service and mirror take effect after restart.",
+		saved: "Saved. Network, vector service, and download source changes apply immediately.",
 		visionModel: "Image reader model",
 		visionModelHint:
 			"An image-capable reply model reads images directly. If the reply model is text-only, choose an explicit image reader.",

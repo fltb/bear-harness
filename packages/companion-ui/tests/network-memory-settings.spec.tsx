@@ -30,9 +30,15 @@ function waitForSettings(container: HTMLElement): Promise<void> {
 }
 function networkSaveButton(backstage: HTMLElement): HTMLElement {
 	const network = within(backstage).getByRole("region", { name: zhCN.settings.networkSection });
-	const button = network.querySelector<HTMLElement>(":scope > .setting-actions button");
+	const button = network.querySelector<HTMLElement>(".settings-actions button");
 	if (!button) throw new Error("network save button missing");
 	return button;
+}
+
+function embeddingSettings(backstage: HTMLElement): HTMLElement {
+	const embedding = backstage.querySelector<HTMLElement>(".embedding-settings");
+	if (!embedding) throw new Error("embedding settings missing");
+	return embedding;
 }
 
 describe("NetworkAndMemorySettings", () => {
@@ -51,7 +57,7 @@ describe("NetworkAndMemorySettings", () => {
 							provider: "local" as const,
 							localModel: "test-embedding",
 						},
-						modelDownloadMirror: {},
+						modelDownloadSource: { type: "official" },
 					},
 				},
 			}),
@@ -66,15 +72,13 @@ describe("NetworkAndMemorySettings", () => {
 		expect(
 			within(backstage).getByRole("heading", { name: zhCN.settings.memoryVectorSection }),
 		).toBeTruthy();
-		const embedding = within(backstage).getByRole("region", {
-			name: zhCN.settings.memoryVectorSection,
-		});
+		const embedding = embeddingSettings(backstage);
 		expect(
 			within(embedding).getByRole("heading", { name: zhCN.settings.downloadMirrorSection }),
 		).toBeTruthy();
-		expect(
-			within(embedding).getByRole("textbox", { name: zhCN.settings.downloadMirrorLabel }),
-		).toBeTruthy();
+		expect(selectTrigger(embedding, zhCN.settings.downloadMirrorLabel)).toHaveTextContent(
+			zhCN.settings.downloadSources.official,
+		);
 		expect(
 			within(embedding).getByRole("button", {
 				name: zhCN.settings.downloadAndEnableLocalModel,
@@ -98,7 +102,7 @@ describe("NetworkAndMemorySettings", () => {
 							model: "unlisted-model",
 							dimensions: 1,
 						},
-						modelDownloadMirror: {},
+						modelDownloadSource: { type: "official" },
 					},
 				},
 			}),
@@ -117,7 +121,12 @@ describe("NetworkAndMemorySettings", () => {
 						},
 					],
 					localEmbeddingCandidates: [
-						{ id: "host-only-local", name: "Host-only local model", isDefault: true },
+						{
+							id: "host-only-local",
+							name: "Host-only local model",
+							dimensions: 768,
+							isDefault: true,
+						},
 					],
 				},
 			}),
@@ -135,13 +144,11 @@ describe("NetworkAndMemorySettings", () => {
 		);
 		await user.click(screen.getByRole("option", { name: "manual" }));
 
-		await user.click(selectTrigger(backstage, zhCN.settings.vectorProvider));
-		await waitFor(() =>
-			expect(screen.getAllByRole("option").map((option) => option.textContent?.trim())).toEqual([
-				zhCN.settings.vectorProviders.remote,
-			]),
-		);
-		await user.click(screen.getByRole("option", { name: zhCN.settings.vectorProviders.remote }));
+		expect(
+			within(backstage)
+				.getAllByRole("radio")
+				.map((radio) => radio.getAttribute("value")),
+		).toEqual(["remote"]);
 
 		await user.click(selectTrigger(backstage, zhCN.settings.vectorPreset));
 		const preset = await screen.findByRole("option", {
@@ -195,10 +202,7 @@ describe("NetworkAndMemorySettings", () => {
 		await waitFor(() => expect(checkbox).toBeChecked());
 
 		expect(
-			selectTrigger(
-				await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings }),
-				zhCN.settings.vectorProvider,
-			),
+			within(backstage).getByRole("radiogroup", { name: zhCN.settings.vectorProvider }),
 		).toBeTruthy();
 	});
 
@@ -244,20 +248,14 @@ describe("NetworkAndMemorySettings", () => {
 			within(backstage).getByRole("checkbox", { name: zhCN.settings.memoryVectorEnabled }),
 		);
 
-		const providerSelect = selectTrigger(
-			await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings }),
-			zhCN.settings.vectorProvider,
+		await user.click(
+			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
 		);
-		await user.click(providerSelect);
-		const localOption = await waitFor(
-			() =>
-				[...screen.getAllByRole("option")].find(
-					(el) => el.textContent?.trim() === "local" || el.getAttribute("data-key") === "local",
-				),
-			{ timeout: 3000 },
+		await user.click(
+			within(backstage).getByRole("button", {
+				name: zhCN.settings.downloadAndEnableLocalModel,
+			}),
 		);
-		expect(localOption).toBeTruthy();
-		fireEvent.click(localOption!);
 
 		await waitFor(() =>
 			expect(client.memory.configureLocalEmbedding).toHaveBeenCalledWith({
@@ -268,9 +266,9 @@ describe("NetworkAndMemorySettings", () => {
 		expect(
 			settingsSet.mock.calls.some(
 				([request]) =>
-					Object.prototype.hasOwnProperty.call(request.settings, "networkProxy") ||
-					(request.settings.memoryVectorService as { provider?: string } | undefined)
-						?.provider === "local",
+					Object.hasOwn(request.settings, "networkProxy") ||
+					(request.settings.memoryVectorService as { provider?: string } | undefined)?.provider ===
+						"local",
 			),
 		).toBe(false);
 	});
@@ -322,7 +320,7 @@ describe("NetworkAndMemorySettings", () => {
 							provider: "local" as const,
 							localModel: "test-embedding",
 						},
-						modelDownloadMirror: {},
+						modelDownloadSource: { type: "official" },
 					},
 				},
 			}),
@@ -331,9 +329,11 @@ describe("NetworkAndMemorySettings", () => {
 		const { backstage, user } = await openSettings();
 		await waitForSettings(backstage);
 
-		const embedding = within(backstage).getByRole("region", {
-			name: zhCN.settings.memoryVectorSection,
-		});
+		const embedding = embeddingSettings(backstage);
+		await user.click(selectTrigger(embedding, zhCN.settings.downloadMirrorLabel));
+		await user.click(
+			await screen.findByRole("option", { name: zhCN.settings.downloadSources.custom }),
+		);
 		const mirrorField = within(embedding).getByRole("textbox", {
 			name: zhCN.settings.downloadMirrorLabel,
 		});
@@ -347,7 +347,9 @@ describe("NetworkAndMemorySettings", () => {
 
 		await waitFor(() =>
 			expect(settingsSet).toHaveBeenCalledWith({
-				settings: { modelDownloadMirror: { endpoint: "https://mirror.example.com/hf" } },
+				settings: {
+					modelDownloadSource: { type: "custom", endpoint: "https://mirror.example.com/hf" },
+				},
 			}),
 		);
 	});
@@ -371,7 +373,7 @@ describe("NetworkAndMemorySettings", () => {
 								? { localModel: "test-embedding" }
 								: { model: "remote-model", dimensions: 1024 }),
 						},
-						modelDownloadMirror: {},
+						modelDownloadSource: { type: "official" },
 					},
 				},
 			}),
@@ -385,17 +387,26 @@ describe("NetworkAndMemorySettings", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings();
 		await waitForSettings(backstage);
-		const trigger = selectTrigger(backstage, zhCN.settings.vectorProvider);
-		expect(trigger).toHaveTextContent(zhCN.settings.vectorProviders.remote);
+		const remoteRadio = within(backstage).getByRole("radio", {
+			name: zhCN.settings.vectorProviders.remote,
+		});
+		const localRadio = within(backstage).getByRole("radio", {
+			name: zhCN.settings.vectorProviders.local,
+		});
+		expect(remoteRadio).toBeChecked();
 
-		await user.click(trigger);
-		await user.click(await screen.findByRole("option", { name: zhCN.settings.vectorProviders.local }));
+		await user.click(localRadio);
+		await user.click(
+			within(backstage).getByRole("button", {
+				name: zhCN.settings.downloadAndEnableLocalModel,
+			}),
+		);
 		await waitFor(() => expect(client.memory.configureLocalEmbedding).toHaveBeenCalled());
-		expect(trigger).toHaveTextContent(zhCN.settings.vectorProviders.remote);
-		expect(trigger).toBeDisabled();
+		expect(localRadio).toBeChecked();
+		expect(localRadio).toBeDisabled();
 
 		completion.resolve();
-		await waitFor(() => expect(trigger).toHaveTextContent(zhCN.settings.vectorProviders.local));
+		await waitFor(() => expect(localRadio).toBeChecked());
 	});
 
 	it("keeps the Host preset selected until settings persistence succeeds", async () => {
@@ -417,7 +428,7 @@ describe("NetworkAndMemorySettings", () => {
 							model,
 							dimensions,
 						},
-						modelDownloadMirror: {},
+						modelDownloadSource: { type: "official" },
 					},
 				},
 			}),
@@ -428,9 +439,7 @@ describe("NetworkAndMemorySettings", () => {
 				data: {
 					networkProxyModes: [{ id: "direct" as const }],
 					memoryVectorProviders: [{ id: "remote" as const, onboarding: false }],
-					memoryVectorPresets: [
-						{ id: "bge-m3", model: "host-preset-model", dimensions: 777 },
-					],
+					memoryVectorPresets: [{ id: "bge-m3", model: "host-preset-model", dimensions: 777 }],
 					localEmbeddingCandidates: [],
 				},
 			}),
@@ -462,12 +471,16 @@ describe("NetworkAndMemorySettings", () => {
 		expect(trigger).not.toHaveTextContent(zhCN.settings.vectorPresetLabels["bge-m3"]);
 
 		await user.click(trigger);
-		await user.click(await screen.findByRole("option", { name: zhCN.settings.vectorPresetLabels["bge-m3"] }));
+		await user.click(
+			await screen.findByRole("option", { name: zhCN.settings.vectorPresetLabels["bge-m3"] }),
+		);
 		await waitFor(() => expect(client.settings.set).toHaveBeenCalled());
 		expect(trigger).not.toHaveTextContent(zhCN.settings.vectorPresetLabels["bge-m3"]);
 		expect(trigger).toBeDisabled();
 
 		completion.resolve();
-		await waitFor(() => expect(trigger).toHaveTextContent(zhCN.settings.vectorPresetLabels["bge-m3"]));
+		await waitFor(() =>
+			expect(trigger).toHaveTextContent(zhCN.settings.vectorPresetLabels["bge-m3"]),
+		);
 	});
 });

@@ -6,7 +6,7 @@ import type {
 } from "@bear-harness/protocol";
 
 export type HostLocalEmbeddingCandidate = LocalEmbeddingCandidate & {
-	readonly modelPath?: string;
+	readonly modelPath: string;
 };
 
 export type HostSettingsCapabilities = {
@@ -27,7 +27,7 @@ export const HOST_SETTINGS_CAPABILITIES: HostSettingsCapabilities = Object.freez
 	]),
 	memoryVectorProviders: Object.freeze([
 		immutable({ id: "none" as const, onboarding: true }),
-		immutable({ id: "remote" as const, onboarding: false }),
+		immutable({ id: "remote" as const, onboarding: true }),
 		immutable({ id: "local" as const, onboarding: true }),
 	]),
 	memoryVectorPresets: Object.freeze([
@@ -45,19 +45,8 @@ export const HOST_SETTINGS_CAPABILITIES: HostSettingsCapabilities = Object.freez
 			id: "embeddinggemma",
 			name: "EmbeddingGemma",
 			modelPath: "hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf",
-			isDefault: false,
-		}),
-		immutable({
-			id: "bge-small-zh",
-			name: "BGE Small Chinese",
-			modelPath: "hf:CompendiumLabs/bge-small-zh-v1.5-gguf/bge-small-zh-v1.5-q8_0.gguf",
+			dimensions: 768,
 			isDefault: true,
-		}),
-		immutable({
-			id: "multilingual-e5",
-			name: "Multilingual E5 Base",
-			modelPath: "hf:dinab/multilingual-e5-base-Q8_0-GGUF/multilingual-e5-base-q8_0.gguf",
-			isDefault: false,
 		}),
 	]),
 });

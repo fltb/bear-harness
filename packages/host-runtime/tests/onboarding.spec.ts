@@ -241,7 +241,7 @@ describe("role-defined onboarding", () => {
 				conversationHistoryReadEnabled: true,
 				networkProxy: { mode: "direct" },
 				memoryVectorService: { enabled: false, provider: "none" },
-				modelDownloadMirror: {},
+				modelDownloadSource: { type: "official" },
 			},
 		});
 		await data(runtime, "settings.set:v1", { settings: { conversationHistoryReadEnabled: true } });
@@ -270,7 +270,7 @@ describe("role-defined onboarding", () => {
 				({ id, model, dimensions }) => ({ id, model, dimensions }),
 			),
 			localEmbeddingCandidates: HOST_SETTINGS_CAPABILITIES.localEmbeddingCandidates.map(
-				({ id, name, isDefault }) => ({ id, name, isDefault }),
+				({ id, name, dimensions, isDefault }) => ({ id, name, dimensions, isDefault }),
 			),
 		});
 
@@ -285,7 +285,11 @@ describe("role-defined onboarding", () => {
 				candidateId: candidate?.id,
 			}),
 		).resolves.toEqual({ ready: true });
-		expect(configure).toHaveBeenCalledWith(candidate?.modelPath);
+		expect(configure).toHaveBeenCalledWith({
+			modelPath: candidate?.modelPath,
+			dimensions: 768,
+			hfEndpoint: "https://huggingface.co",
+		});
 		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
 			settings: {
 				memoryVectorService: {

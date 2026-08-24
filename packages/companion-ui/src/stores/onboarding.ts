@@ -6,7 +6,7 @@ import { invoke } from "./ipc.js";
 import { createRpcQuery, queryKeys, refreshRpcQuery } from "./rpc-query.js";
 
 const INITIAL_ONBOARDING: OnboardingData = {
-	status: "active",
+	status: "complete",
 	eventSeq: 0,
 	stateData: { schema_version: 1, flow_version: 1, answers: {}, decisions: {} },
 };
@@ -62,7 +62,11 @@ export function createOnboardingStore(
 		// Observe the Solid Query result so consumers rerun after cache writes, but
 		// read the cache itself so a snapshot projection is visible immediately.
 		const observedData = query.data;
-		return queryClient.getQueryData<OnboardingData>(queryKeys.onboarding) ?? observedData ?? INITIAL_ONBOARDING;
+		return (
+			queryClient.getQueryData<OnboardingData>(queryKeys.onboarding) ??
+			observedData ??
+			INITIAL_ONBOARDING
+		);
 	};
 	const commit = (value: OnboardingData, force = false): void => {
 		const current = queryClient.getQueryData<OnboardingData>(queryKeys.onboarding);

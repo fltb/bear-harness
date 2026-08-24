@@ -17,7 +17,7 @@ import type {
 	MemoryTdaiConfig,
 	MemoryRecord as TdaiMemoryRecord,
 } from "@bear-harness/tdai-core";
-import { buildFtsQuery, TdaiCore } from "@bear-harness/tdai-core";
+import { buildFtsQuery, createEmbeddingService, TdaiCore } from "@bear-harness/tdai-core";
 import type { MemoryMetadata, MemoryProvenance } from "../memory/backend.js";
 import type { ModelRegistry } from "../models/registry.js";
 import type { ProviderCatalog } from "../providers/catalog.js";
@@ -462,6 +462,7 @@ export class TencentDbRuntime {
 	private core: TdaiCore;
 	private config: MemoryTdaiConfig;
 	private readonly createCore: (config: MemoryTdaiConfig) => TdaiCore;
+	private embeddingServiceFactory = createEmbeddingService;
 	private readonly logger?: Logger;
 	private started = false;
 	private closed = false;
@@ -513,6 +514,7 @@ export class TencentDbRuntime {
 		if (this.closed) throw new Error("TencentDB memory runtime is closed");
 		if (this.started) return;
 		await this.core.initialize();
+		await this.core.waitForStoresReady();
 		// TdaiCore starts store initialization asynchronously; this call is the
 		// documented readiness gate used by its public operations.
 		await this.core.handleBeforeRecall("", "memory-runtime");
@@ -538,20 +540,22 @@ export class TencentDbRuntime {
 		if (!service) throw { kind: "unavailable", reason: "local_embedding_service_unavailable" };
 		if (!service.isReady()) {
 			service.startWarmup();
-			const waitForReady = (
-				service as EmbeddingService & {
-					waitForReady?: () => Promise<void>;
-				}
-			).waitForReady;
-			if (!waitForReady) {
+			const readinessService = service as EmbeddingService & {
+				waitForReady?: () => Promise<void>;
+			};
+			if (!readinessService.waitForReady) {
 				throw { kind: "unavailable", reason: "local_embedding_readiness_unavailable" };
 			}
 			const timeout = Promise.withResolvers<void>();
 			const timer = setTimeout(timeout.resolve, timeoutMs);
 			try {
-				await Promise.race([waitForReady(), timeout.promise]);
-			} catch {
-				throw { kind: "unavailable", reason: "local_embedding_model_prepare_failed" };
+				await Promise.race([readinessService.waitForReady(), timeout.promise]);
+			} catch (error) {
+				const detail = error instanceof Error ? error.message : String(error);
+				throw {
+					kind: "unavailable",
+					reason: `local_embedding_model_prepare_failed: ${detail.slice(0, 500)}`,
+				};
 			} finally {
 				clearTimeout(timer);
 			}
@@ -561,9 +565,57 @@ export class TencentDbRuntime {
 		}
 		return { ready: true };
 	}
-	/** Switch to a Host-selected model and complete readiness before activation. */
-	async configureLocalEmbedding(modelPath?: string): Promise<{ ready: true }> {
-		return this.replaceEmbeddingConfig({ enabled: true, provider: "local", modelPath });
+	/** Prepare and verify a candidate before replacing the active store configuration. */
+	async configureLocalEmbedding(options: {
+		modelPath: string;
+		dimensions: number;
+		hfEndpoint: string;
+		timeoutMs?: number;
+	}): Promise<{ ready: true }> {
+		const controller = new AbortController();
+		const timer = setTimeout(
+			() => controller.abort(new Error("local embedding preparation timed out")),
+			options.timeoutMs ?? 120_000,
+		);
+		const candidate = this.embeddingServiceFactory(
+			{
+				provider: "local",
+				modelPath: options.modelPath,
+				dimensions: options.dimensions,
+				hfEndpoint: options.hfEndpoint,
+				signal: controller.signal,
+			},
+			this.logger,
+		);
+		try {
+			candidate.startWarmup();
+			const readiness = candidate as EmbeddingService & { waitForReady?: () => Promise<void> };
+			if (!readiness.waitForReady)
+				throw { kind: "unavailable", reason: "local_embedding_readiness_unavailable" };
+			await readiness.waitForReady();
+			const probe = await candidate.embed("semantic memory readiness probe");
+			if (probe.length !== options.dimensions) {
+				throw new Error(
+					`local embedding dimension mismatch: expected ${options.dimensions}, received ${probe.length}`,
+				);
+			}
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error);
+			throw {
+				kind: "unavailable",
+				reason: `local_embedding_model_prepare_failed: ${detail.slice(0, 500)}`,
+			};
+		} finally {
+			clearTimeout(timer);
+			await candidate.close?.();
+		}
+		return this.replaceEmbeddingConfig({
+			enabled: true,
+			provider: "local",
+			dimensions: options.dimensions,
+			modelPath: options.modelPath,
+			hfEndpoint: options.hfEndpoint,
+		});
 	}
 
 	/** Disable local embeddings without replacing an already provider-less core. */
@@ -574,27 +626,23 @@ export class TencentDbRuntime {
 	}
 
 	private async replaceEmbeddingConfig(
-		embedding: Pick<MemoryTdaiConfig["embedding"], "enabled" | "provider"> & { modelPath?: string },
+		embedding: Pick<MemoryTdaiConfig["embedding"], "enabled" | "provider"> & {
+			dimensions?: number;
+			modelPath?: string;
+			hfEndpoint?: string;
+		},
 	): Promise<{ ready: true }> {
 		if (this.closed) throw { kind: "unavailable", reason: "memory_runtime_closed" };
-		const previousCore = this.core;
 		const previousConfig = this.config;
-		const previousStarted = this.started;
 		const nextConfig = deepMerge(this.config, { embedding });
-		const nextCore = this.createCore(nextConfig);
-		this.core = nextCore;
-		this.config = nextConfig;
-		this.started = false;
 		try {
-			await this.start();
+			await this.core.reconfigureEmbedding(nextConfig.embedding);
+			this.config = nextConfig;
 			if (embedding.provider === "local") await this.prepareLocalEmbedding();
-			await previousCore.destroy();
 			return { ready: true };
 		} catch (error) {
-			this.core = previousCore;
+			await this.core.reconfigureEmbedding(previousConfig.embedding).catch(() => undefined);
 			this.config = previousConfig;
-			this.started = previousStarted;
-			await nextCore.destroy().catch(() => undefined);
 			throw error;
 		}
 	}

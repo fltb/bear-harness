@@ -247,7 +247,7 @@ describe("host projection validation", () => {
 			conversationHistoryReadEnabled: false,
 			networkProxy: { mode: "direct" as const },
 			memoryVectorService: { enabled: false, provider: "none" as const },
-			modelDownloadMirror: {},
+			modelDownloadSource: { type: "official" },
 		};
 		expect(isSettingsData(settings)).toBe(true);
 		expect(isSettingsData({ ...settings, relationshipMemoryEnabled: "yes" })).toBe(false);

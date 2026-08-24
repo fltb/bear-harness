@@ -13,6 +13,15 @@ declare module "node-llama-cpp" {
 		usePrebuiltBinaries?: boolean;
 		progressLogs?: boolean;
 	}) => Promise<unknown>;
-	export const resolveModelFile: (model: string, cacheDir?: string) => Promise<string>;
+	export const resolveModelFile: (
+		model: string,
+		options?: {
+			directory?: string;
+			cli?: boolean;
+			endpoints?: { huggingFace?: string };
+			signal?: AbortSignal;
+			deleteTempFileOnCancel?: boolean;
+		},
+	) => Promise<string>;
 	export const LlamaLogLevel: { readonly error: number };
 }

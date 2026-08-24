@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
@@ -11,7 +11,14 @@ import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js
 import { ThreadHead } from "../src/ThreadHead.js";
 import { createTestClient, OFFICIAL_PRODUCT, THEMED_CHARACTER } from "./fixtures.js";
 
-const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+const stylesDirectory = resolve(process.cwd(), "src/styles");
+const styles = [
+	readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8"),
+	...readdirSync(stylesDirectory)
+		.filter((file) => file.endsWith(".css"))
+		.sort()
+		.map((file) => readFileSync(resolve(stylesDirectory, file), "utf8")),
+].join("\n");
 const PORTRAIT_MODEL = {
 	providerId: "test-provider",
 	modelId: "test-model",
@@ -23,7 +30,6 @@ function neverSettle(): Promise<never> {
 	const { promise } = Promise.withResolvers<never>();
 	return promise;
 }
-
 
 function configurePortraitClient(options: { active?: boolean; result?: boolean } = {}) {
 	const { client } = createTestClient();
@@ -144,9 +150,7 @@ function configurePortraitClient(options: { active?: boolean; result?: boolean }
 		client.commission.list = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { commissions: [commission] } }),
 		);
-		client.run.list = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { runs: [run] } }),
-		);
+		client.run.list = vi.fn(() => Promise.resolve({ ok: true as const, data: { runs: [run] } }));
 		client.artifact.list = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: { artifacts: [artifact] } }),
 		);
@@ -170,7 +174,7 @@ describe("shell visual and thread head contracts", () => {
 		}
 		expect(styles).toContain("@media (max-width: 1049px)");
 		expect(styles).toContain("@media (max-width: 799px)");
-		expect(styles).toContain("grid-template-columns: 132px minmax(0, 1fr)");
+		expect(styles).toContain("@apply grid-cols-4");
 
 		render(() => (
 			<div
@@ -400,10 +404,9 @@ describe("portrait layout contracts", () => {
 		});
 		await userEvent.setup().click(openResults);
 		await waitFor(() =>
-			expect(screen.getByRole("application", { name: OFFICIAL_PRODUCT.productName })).toHaveAttribute(
-				"data-result-open",
-				"true",
-			),
+			expect(
+				screen.getByRole("application", { name: OFFICIAL_PRODUCT.productName }),
+			).toHaveAttribute("data-result-open", "true"),
 		);
 		expect(presence).toHaveAttribute("data-layout-mode", "compact");
 	});

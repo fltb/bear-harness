@@ -27,7 +27,16 @@ export type LlamaModule = {
 		usePrebuiltBinaries: true;
 		progressLogs: false;
 	}) => Promise<unknown>;
-	resolveModelFile: (model: string, cacheDir?: string) => Promise<string>;
+	resolveModelFile: (
+		model: string,
+		options?: {
+			directory?: string;
+			cli?: boolean;
+			endpoints?: { huggingFace?: string };
+			signal?: AbortSignal;
+			deleteTempFileOnCancel?: boolean;
+		},
+	) => Promise<string>;
 	LlamaLogLevel: { readonly error: number };
 };
 

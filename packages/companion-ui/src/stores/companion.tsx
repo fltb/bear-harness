@@ -32,14 +32,14 @@ import type { KnownDomainEvent, RoleplayState } from "@bear-harness/protocol";
 import type { MemoryCandidate as MemoryCandidateSchema } from "@bear-harness/protocol/schema";
 import { parseKnownDomainEvent } from "@bear-harness/protocol/schema";
 import type { z } from "@bear-harness/schema";
-import { useQueryClient, createQuery } from "@tanstack/solid-query";
+import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import {
+	type Accessor,
 	createContext,
 	createEffect,
 	createMemo,
 	createSignal,
 	onCleanup,
-	type Accessor,
 	type ParentProps,
 	useContext,
 } from "solid-js";
@@ -58,9 +58,9 @@ import {
 	type CharacterDraftFiles,
 	type CharacterDraftRevision,
 	type CharacterListData,
+	type CharacterPackageDocument,
 	type CharacterRuntimeState,
 	type CharacterSummary,
-	type CharacterPackageDocument,
 	type Commission,
 	type CommissionDraftParams,
 	type CommissionDraftResult,
@@ -71,17 +71,18 @@ import {
 	type ConversationSelectResponse,
 	type ConversationSummary,
 	type DomainEvent,
+	invoke,
 	type MemoryCaptureResponse,
+	type MemoryEntry,
 	type MemoryListRequest,
 	type MemoryPrepareEmbeddingResponse,
-	type MemorySearchData,
 	type MemoryScope,
-	type MemoryEntry,
-	type PiLiveState,
-	type PiTimeline,
+	type MemorySearchData,
 	type ModelListData,
 	type ModelRouteData,
 	type OnboardingData,
+	type PiLiveState,
+	type PiTimeline,
 	type ProviderInfo,
 	type ProviderListData,
 	type ProviderLoginResult,
@@ -93,7 +94,6 @@ import {
 	type SettingsPatch,
 	type Snapshot,
 } from "./ipc.js";
-import { invoke } from "./ipc.js";
 import { createOnboardingStore } from "./onboarding.js";
 import { createRpcMutation, createRpcQuery, queryKeys, refreshRpcQuery } from "./rpc-query.js";
 
@@ -211,6 +211,7 @@ export interface MemoryApi {
 	configureLocalEmbedding(
 		provider: "none" | "local",
 		candidateId?: string,
+		customPath?: string,
 	): Promise<{ ready: true }>;
 	forget(entryId: string, characterId?: string): Promise<void>;
 	edit(entryId: string, newText: string, characterId?: string): Promise<void>;
@@ -372,11 +373,11 @@ export interface CanonApi {
 
 type EmbeddingSettingsValue =
 	| SettingsData["memoryVectorService"]
-	| SettingsData["modelDownloadMirror"];
-function isModelDownloadMirror(
+	| SettingsData["modelDownloadSource"];
+function isModelDownloadSource(
 	value: EmbeddingSettingsValue,
-): value is SettingsData["modelDownloadMirror"] {
-	return Object.prototype.hasOwnProperty.call(value, "endpoint");
+): value is SettingsData["modelDownloadSource"] {
+	return Object.hasOwn(value, "type");
 }
 interface RpcQueryBinding<T> {
 	readonly data: T | undefined;
@@ -616,9 +617,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const [memoryProjectionKey, setMemoryProjectionKey] = createSignal<readonly unknown[]>(
 		queryKeys.memory,
 	);
-	const [memoryCandidateStatus, setMemoryCandidateStatus] = createSignal<
-		MemoryCandidate["status"] | undefined
-	>(undefined);
+	const [memoryCandidateProjectionKey, setMemoryCandidateProjectionKey] = createSignal<
+		readonly unknown[]
+	>(queryKeys.memoryCandidates());
 	const characterRuntimeEventSeq = new Map<string, number>();
 
 	const onboardingStore = createOnboardingStore(client, queryClient);
@@ -780,8 +781,8 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const embeddingSettingsMutation = createRpcMutation<EmbeddingSettingsValue>({
 		client: queryClient,
 		request: (value) => {
-			const settings: SettingsPatch = isModelDownloadMirror(value)
-				? { modelDownloadMirror: value }
+			const settings: SettingsPatch = isModelDownloadSource(value)
+				? { modelDownloadSource: value }
 				: { memoryVectorService: value };
 			return invoke(client, () => client.settings.set({ settings }));
 		},
@@ -790,13 +791,18 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const localConfigureMutation = createRpcMutation<{
 		provider: "none" | "local";
 		candidateId?: string;
+		customPath?: string;
 	}>({
 		client: queryClient,
 		request: (params) =>
 			invoke(client, () =>
 				client.memory.configureLocalEmbedding(
 					params.provider === "local"
-						? { provider: params.provider, candidateId: params.candidateId }
+						? {
+								provider: params.provider,
+								...(params.candidateId ? { candidateId: params.candidateId } : {}),
+								...(params.customPath ? { customPath: params.customPath } : {}),
+							}
 						: { provider: params.provider },
 				),
 			),
@@ -1383,12 +1389,10 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	});
 	const activeMemoryCandidates = createMemo<MemoryCandidate[] | undefined>(() => {
 		memoryRevision();
-		const status = memoryCandidateStatus();
-		return status === undefined
+		const key = memoryCandidateProjectionKey();
+		return key === queryKeys.memoryCandidates()
 			? memoryCandidatesQuery.data?.candidates
-			: queryClient.getQueryData<{ candidates: MemoryCandidate[] }>(
-					queryKeys.memoryCandidates(status),
-				)?.candidates;
+			: queryClient.getQueryData<{ candidates: MemoryCandidate[] }>(key)?.candidates;
 	});
 	const memoryApi: MemoryApi = {
 		entries: activeMemoryEntries,
@@ -1439,11 +1443,12 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				throw e;
 			}
 		},
-		configureLocalEmbedding: async (provider, candidateId) => {
+		configureLocalEmbedding: async (provider, candidateId, customPath) => {
 			try {
 				const result = (await localConfigureMutation.mutateAsync({
 					provider,
 					...(provider === "local" && candidateId ? { candidateId } : {}),
+					...(provider === "local" && customPath ? { customPath } : {}),
 				})) as { ready: true };
 				clearOperationError();
 				await refreshRpcQuery({
@@ -1497,10 +1502,11 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 		candidates: activeMemoryCandidates,
 		listCandidates: async (status, characterId) => {
-			setMemoryCandidateStatus(status);
+			const key = [...queryKeys.memoryCandidates(status), characterId] as const;
+			setMemoryCandidateProjectionKey(key);
 			const data = await refreshRpcQuery({
 				client: queryClient,
-				key: [...queryKeys.memoryCandidates(status), characterId],
+				key,
 				request: () => memoryCandidatesRequest(status, characterId),
 			});
 			setMemoryRevision((revision) => revision + 1);

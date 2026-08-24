@@ -51,6 +51,12 @@ export interface LocalEmbeddingConfig {
 	modelPath?: string;
 	/** Model cache directory (default: node-llama-cpp default cache) */
 	modelCacheDir?: string;
+	/** Expected output dimensions; custom models are rejected if their probe differs. */
+	dimensions?: number;
+	/** Explicit Hugging Face-compatible endpoint used for this download. */
+	hfEndpoint?: string;
+	/** Cancels an in-progress model download. */
+	signal?: AbortSignal;
 }
 
 export type EmbeddingConfig = OpenAIEmbeddingConfig | LocalEmbeddingConfig;
@@ -128,7 +134,7 @@ const DEFAULT_LOCAL_MODEL =
 	"hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf";
 
 /** embeddinggemma-300m outputs 768-dimensional vectors */
-const LOCAL_DIMENSIONS = 768;
+const DEFAULT_LOCAL_DIMENSIONS = 768;
 
 /**
  * embeddinggemma-300m has a 256-token context window.
@@ -171,6 +177,9 @@ const defaultImportLlama: ImportLlamaFn = () => nativeCapabilities.importLlama()
 export class LocalEmbeddingService implements EmbeddingService {
 	private readonly modelPath: string;
 	private readonly modelCacheDir?: string;
+	private readonly dimensions: number;
+	private readonly hfEndpoint?: string;
+	private readonly signal?: AbortSignal;
 	private readonly logger?: Logger;
 	private readonly importLlama: ImportLlamaFn;
 
@@ -185,12 +194,15 @@ export class LocalEmbeddingService implements EmbeddingService {
 	constructor(config?: LocalEmbeddingConfig, logger?: Logger, importLlama?: ImportLlamaFn) {
 		this.modelPath = config?.modelPath?.trim() || DEFAULT_LOCAL_MODEL;
 		this.modelCacheDir = config?.modelCacheDir?.trim();
+		this.dimensions = config?.dimensions ?? DEFAULT_LOCAL_DIMENSIONS;
+		this.hfEndpoint = config?.hfEndpoint?.trim();
+		this.signal = config?.signal;
 		this.logger = logger;
 		this.importLlama = importLlama ?? defaultImportLlama;
 	}
 
 	getDimensions(): number {
-		return LOCAL_DIMENSIONS;
+		return this.dimensions;
 	}
 
 	getProviderInfo(): EmbeddingProviderInfo {
@@ -272,12 +284,12 @@ export class LocalEmbeddingService implements EmbeddingService {
 			} catch {
 				// best-effort cleanup
 			}
-			this.embeddingContext = null;
-			this.initPromise = null;
-			this.initState = "idle";
-			this.initError = null;
-			this.logger?.info(`${TAG} Local embedding resources released`);
 		}
+		this.embeddingContext = null;
+		this.initPromise = null;
+		this.initState = "idle";
+		this.initError = null;
+		this.logger?.info(`${TAG} Local embedding resources released`);
 	}
 
 	/**
@@ -341,7 +353,13 @@ export class LocalEmbeddingService implements EmbeddingService {
 			});
 			this.logger?.debug?.(`${TAG} Llama instance created`);
 
-			const resolvedPath = await resolveModelFile(this.modelPath, this.modelCacheDir || undefined);
+			const resolvedPath = await resolveModelFile(this.modelPath, {
+				...(this.modelCacheDir ? { directory: this.modelCacheDir } : {}),
+				...(this.hfEndpoint ? { endpoints: { huggingFace: this.hfEndpoint } } : {}),
+				...(this.signal ? { signal: this.signal } : {}),
+				cli: false,
+				deleteTempFileOnCancel: true,
+			});
 			this.logger?.debug?.(`${TAG} Model resolved: ${resolvedPath}`);
 
 			model = await (
@@ -352,7 +370,7 @@ export class LocalEmbeddingService implements EmbeddingService {
 			this.embeddingContext =
 				(await model!.createEmbeddingContext()) as typeof this.embeddingContext;
 			this.logger?.info(
-				`${TAG} Local embedding ready (model=${this.modelPath}, dims=${LOCAL_DIMENSIONS})`,
+				`${TAG} Local embedding ready (model=${this.modelPath}, dims=${this.dimensions})`,
 			);
 		} catch (err) {
 			// Clean up partially-initialized resources to prevent leaks.
@@ -385,6 +403,9 @@ export class LocalEmbeddingService implements EmbeddingService {
 	async waitForReady(): Promise<void> {
 		if (this.initPromise) {
 			await this.initPromise;
+		}
+		if (this.initState === "failed") {
+			throw this.initError ?? new Error("Local embedding model initialization failed");
 		}
 	}
 }

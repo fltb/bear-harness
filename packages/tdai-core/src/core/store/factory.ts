@@ -114,6 +114,8 @@ export function createStoreBundle(
 							...(config.embedding.modelCacheDir
 								? { modelCacheDir: config.embedding.modelCacheDir }
 								: {}),
+							dimensions: config.embedding.dimensions,
+							...(config.embedding.hfEndpoint ? { hfEndpoint: config.embedding.hfEndpoint } : {}),
 						},
 						logger,
 					);

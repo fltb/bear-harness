@@ -3,7 +3,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Logger } from "@bear-harness/tdai-core";
+import { type EmbeddingService, LocalEmbeddingService, type Logger } from "@bear-harness/tdai-core";
 import type { AssistantMessage, Context, ToolResultMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MemoryBackend, MemoryBankScope, MemoryMetadata } from "../src/memory/backend.js";
@@ -68,6 +68,46 @@ const scopeFor = (companionId: string): MemoryBankScope => ({
 
 const runtimes: TencentDbRuntime[] = [];
 const roots: string[] = [];
+
+describe("local embedding downloader", () => {
+	it("passes the selected endpoint and cancellation signal to model resolution", async () => {
+		const signal = new AbortController().signal;
+		const resolveModelFile = vi.fn(async () => "/cache/model.gguf");
+		const service = new LocalEmbeddingService(
+			{
+				provider: "local",
+				modelPath: "hf:test/model/model.gguf",
+				dimensions: 768,
+				hfEndpoint: "https://hf-mirror.com",
+				signal,
+			},
+			logger,
+			async () =>
+				({
+					getLlama: async () => ({
+						loadModel: async () => ({
+							createEmbeddingContext: async () => ({
+								getEmbeddingFor: async () => ({ vector: new Float32Array(768) }),
+							}),
+						}),
+					}),
+					resolveModelFile,
+					LlamaLogLevel: { error: 0 },
+				}) as never,
+		);
+
+		service.startWarmup();
+		await service.waitForReady();
+		expect(resolveModelFile).toHaveBeenCalledWith("hf:test/model/model.gguf", {
+			endpoints: { huggingFace: "https://hf-mirror.com" },
+			signal,
+			cli: false,
+			deleteTempFileOnCancel: true,
+		});
+		expect(service.getDimensions()).toBe(768);
+		service.close();
+	});
+});
 
 function createRuntime(
 	root: string,
@@ -836,7 +876,6 @@ describe("CyberBearLLMRunner tool loop", () => {
 // Local embedding warmup
 // ============================
 
-
 describe("TencentDbRuntime.prepareLocalEmbedding", () => {
 	function prepareEmbeddingCore(runtime: TencentDbRuntime) {
 		return (
@@ -844,11 +883,13 @@ describe("TencentDbRuntime.prepareLocalEmbedding", () => {
 				core: { getEmbeddingService(): unknown };
 			}
 		).core as unknown as {
-			getEmbeddingService(): {
-				isReady(): boolean;
-				startWarmup(): void;
-				waitForReady?: () => Promise<void>;
-			} | undefined;
+			getEmbeddingService():
+				| {
+						isReady(): boolean;
+						startWarmup(): void;
+						waitForReady?: () => Promise<void>;
+				  }
+				| undefined;
 		};
 	}
 
@@ -884,6 +925,28 @@ describe("TencentDbRuntime.prepareLocalEmbedding", () => {
 		expect(service.waitForReady).toHaveBeenCalledOnce();
 	});
 
+	it("preserves the embedding service receiver while waiting for readiness", async () => {
+		const runtime = createRuntime(createRoot(), "role-a", {
+			embedding: { provider: "local", enabled: true },
+		});
+		let ready = false;
+		let receiver: unknown;
+		const waitForReady = vi.fn(function (this: unknown) {
+			receiver = this;
+			ready = true;
+			return Promise.resolve();
+		});
+		const service = {
+			isReady: vi.fn(() => ready),
+			startWarmup: vi.fn(),
+			waitForReady,
+		};
+		prepareEmbeddingCore(runtime).getEmbeddingService = () => service;
+
+		await expect(runtime.prepareLocalEmbedding(1_000)).resolves.toEqual({ ready: true });
+		expect(receiver).toBe(service);
+	});
+
 	it("throws the structured unavailable reason when the local service is absent", async () => {
 		const runtime = createRuntime(createRoot(), "role-a", {
 			embedding: { provider: "local", enabled: true },
@@ -912,5 +975,98 @@ describe("TencentDbRuntime.prepareLocalEmbedding", () => {
 			reason: "local_embedding_model_not_ready",
 		});
 		expect(service.startWarmup).toHaveBeenCalledOnce();
+	});
+
+	it("verifies a candidate before reconfiguring the active store", async () => {
+		const runtime = createRuntime(createRoot(), "role-a");
+		const events: string[] = [];
+		const localService = {
+			isReady: vi.fn(() => true),
+			startWarmup: vi.fn(),
+			waitForReady: vi.fn(async () => undefined),
+		};
+		const core = {
+			reconfigureEmbedding: vi.fn(async () => {
+				events.push("reconfigure");
+			}),
+			getEmbeddingService: vi.fn(() => localService),
+			destroy: vi.fn(async () => undefined),
+		};
+		const internals = runtime as unknown as {
+			core: typeof core;
+			started: boolean;
+			embeddingServiceFactory: () => {
+				isReady(): boolean;
+				startWarmup(): void;
+				waitForReady(): Promise<void>;
+				embed(text: string): Promise<Float32Array>;
+				embedBatch(): Promise<Float32Array[]>;
+				getDimensions(): number;
+				getProviderInfo(): { provider: string; model: string };
+				close(): void;
+			};
+		};
+		internals.core = core;
+		internals.started = true;
+		internals.embeddingServiceFactory = () => ({
+			...localService,
+			embed: vi.fn(async () => {
+				events.push("probe");
+				return new Float32Array(768);
+			}),
+			embedBatch: vi.fn(async () => []),
+			getDimensions: () => 768,
+			getProviderInfo: () => ({ provider: "local", model: "test" }),
+			close: vi.fn(),
+		});
+
+		await expect(
+			runtime.configureLocalEmbedding({
+				modelPath: "hf:test/model.gguf",
+				dimensions: 768,
+				hfEndpoint: "https://huggingface.co",
+			}),
+		).resolves.toEqual({ ready: true });
+		expect(core.reconfigureEmbedding).toHaveBeenCalledOnce();
+		expect(core.getEmbeddingService).toHaveBeenCalledOnce();
+		expect(events).toEqual(["probe", "reconfigure"]);
+	});
+
+	it("rejects a custom model with the wrong dimensions before touching the active store", async () => {
+		const runtime = createRuntime(createRoot(), "role-a");
+		const core = {
+			reconfigureEmbedding: vi.fn(async () => undefined),
+			getEmbeddingService: vi.fn(),
+			destroy: vi.fn(async () => undefined),
+		};
+		const internals = runtime as unknown as {
+			core: typeof core;
+			started: boolean;
+			embeddingServiceFactory: () => EmbeddingService & { waitForReady(): Promise<void> };
+		};
+		internals.core = core;
+		internals.started = true;
+		internals.embeddingServiceFactory = () => ({
+			isReady: () => true,
+			startWarmup: () => undefined,
+			waitForReady: async () => undefined,
+			embed: async () => new Float32Array(512),
+			embedBatch: async () => [],
+			getDimensions: () => 768,
+			getProviderInfo: () => ({ provider: "local", model: "wrong-dimensions" }),
+			close: () => undefined,
+		});
+
+		await expect(
+			runtime.configureLocalEmbedding({
+				modelPath: "hf:test/wrong.gguf",
+				dimensions: 768,
+				hfEndpoint: "https://hf-mirror.com",
+			}),
+		).rejects.toMatchObject({
+			kind: "unavailable",
+			reason: expect.stringContaining("expected 768, received 512"),
+		});
+		expect(core.reconfigureEmbedding).not.toHaveBeenCalled();
 	});
 });

@@ -17,10 +17,12 @@ export interface AppSettingsRecord {
 		model?: string;
 		dimensions?: number;
 		localModel?: string;
+		customPath?: string;
 	};
-	modelDownloadMirror: {
-		endpoint?: string;
-	};
+	modelDownloadSource:
+		| { type: "official" }
+		| { type: "hf-mirror" }
+		| { type: "custom"; endpoint: string };
 }
 
 const SINGLETON_ID = 1;
@@ -29,7 +31,7 @@ export function defaultAppSettings(): AppSettingsRecord {
 	return {
 		networkProxy: { mode: "direct" },
 		memoryVectorService: { enabled: false, provider: "none" },
-		modelDownloadMirror: {},
+		modelDownloadSource: { type: "official" },
 	};
 }
 
@@ -40,6 +42,17 @@ function parseJson<T>(json: string, fallback: T): T {
 	} catch {
 		return fallback;
 	}
+}
+
+function parseModelDownloadSource(json: string): AppSettingsRecord["modelDownloadSource"] {
+	const parsed = parseJson<unknown>(json, null);
+	if (!parsed || typeof parsed !== "object") return { type: "official" };
+	const value = parsed as { type?: unknown; endpoint?: unknown };
+	if (value.type === "hf-mirror") return { type: "hf-mirror" };
+	if (value.type === "custom" && typeof value.endpoint === "string")
+		return { type: "custom", endpoint: value.endpoint };
+	if (typeof value.endpoint === "string") return { type: "custom", endpoint: value.endpoint };
+	return { type: "official" };
 }
 
 /** Read/write the singleton app_settings row (migration 18). */
@@ -61,7 +74,7 @@ export class AppSettingsStore {
 		return {
 			networkProxy: parseJson(row.networkProxyJson, defaults.networkProxy),
 			memoryVectorService: parseJson(row.memoryVectorServiceJson, defaults.memoryVectorService),
-			modelDownloadMirror: parseJson(row.modelDownloadMirrorJson, defaults.modelDownloadMirror),
+			modelDownloadSource: parseModelDownloadSource(row.modelDownloadMirrorJson),
 		};
 	}
 
@@ -70,14 +83,14 @@ export class AppSettingsStore {
 		const next: AppSettingsRecord = {
 			networkProxy: patch.networkProxy ?? current.networkProxy,
 			memoryVectorService: patch.memoryVectorService ?? current.memoryVectorService,
-			modelDownloadMirror: patch.modelDownloadMirror ?? current.modelDownloadMirror,
+			modelDownloadSource: patch.modelDownloadSource ?? current.modelDownloadSource,
 		};
 		this.db
 			.update(appSettings)
 			.set({
 				networkProxyJson: JSON.stringify(next.networkProxy),
 				memoryVectorServiceJson: JSON.stringify(next.memoryVectorService),
-				modelDownloadMirrorJson: JSON.stringify(next.modelDownloadMirror),
+				modelDownloadMirrorJson: JSON.stringify(next.modelDownloadSource),
 				updatedAt: new Date().toISOString(),
 			})
 			.where(eq(appSettings.id, SINGLETON_ID))

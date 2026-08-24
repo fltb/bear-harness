@@ -143,7 +143,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 	conversationHistoryReadEnabled: false,
 	networkProxy: { mode: "direct" },
 	memoryVectorService: { enabled: false, provider: "none" },
-	modelDownloadMirror: {},
+	modelDownloadSource: { type: "official" },
 };
 /** Minimal raw embedding binding for partial CompanionStore fixtures. */
 export function createEmbeddingBinding() {
@@ -163,7 +163,7 @@ export function createEmbeddingBinding() {
 				],
 				memoryVectorPresets: [],
 				localEmbeddingCandidates: [
-					{ id: "test-embedding", name: "Test embedding", isDefault: true },
+					{ id: "test-embedding", name: "Test embedding", dimensions: 768, isDefault: true },
 				],
 			},
 			isPending: false,
@@ -482,7 +482,7 @@ export function createTestClient() {
 					],
 					memoryVectorPresets: [],
 					localEmbeddingCandidates: [
-						{ id: "test-embedding", name: "Test embedding", isDefault: true },
+						{ id: "test-embedding", name: "Test embedding", dimensions: 768, isDefault: true },
 					],
 				}),
 			),

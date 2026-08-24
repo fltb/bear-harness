@@ -177,8 +177,26 @@ export class TdaiCore {
 					this.wirePipelineRunners();
 				});
 		}
+		await this.storeReady;
 
 		this.logger.debug?.(`${TAG} TDAI Core initialized`);
+	}
+
+	/** Wait until asynchronous vector-store and embedding-service setup has settled. */
+	async waitForStoresReady(): Promise<void> {
+		await this.storeReady;
+	}
+
+	/** Replace only the vector store and embedding service without resetting the pipeline Core. */
+	async reconfigureEmbedding(embedding: MemoryTdaiConfig["embedding"]): Promise<void> {
+		await this.storeReady;
+		await resetStores(this.dataDir);
+		this.vectorStore = undefined;
+		this.embeddingService = undefined;
+		this.cfg = { ...this.cfg, embedding };
+		this.storeReady = this.initStores();
+		await this.storeReady;
+		this.wirePipelineRunners();
 	}
 
 	/**

@@ -1,0 +1,514 @@
+/* ------------------------------------------------------------------ */
+/* Backstage sheet (幕后)                                                */
+/* ------------------------------------------------------------------ */
+
+.backstage-overlay {
+	@apply fixed inset-0 z-40;
+	background: var(--surface-overlay);
+	backdrop-filter: blur(6px);
+}
+
+.backstage-sheet {
+	@apply fixed bottom-4 right-4 top-4 z-40 flex w-full max-w-xl flex-col overflow-hidden rounded-lg border shadow-app;
+	border-color: var(--line-strong);
+	background: var(--surface-panel);
+	@apply outline-none;
+}
+.backstage-sheet-settings {
+	@apply max-w-6xl;
+}
+
+.backstage-head {
+	@apply flex shrink-0 items-center justify-between gap-3 px-5 pb-1 pt-5;
+}
+.backstage-title {
+	@apply m-0 font-serif text-lg;
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+}
+
+.backstage-close {
+	@apply rounded-md border-0 px-2 py-1;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+	background: transparent;
+}
+
+.backstage-close:hover {
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+	background: var(--surface-success);
+}
+.backstage-tabs {
+	@apply flex min-h-0 flex-1 flex-col px-5 pb-5;
+}
+
+.standalone-settings-panel {
+	@apply min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4;
+}
+
+.backstage-tabs .tabs {
+	@apply mb-5 grid shrink-0 grid-cols-3 gap-2;
+}
+
+.tab {
+	@apply min-h-10 rounded-md border border-line px-3 py-2 text-xs font-medium;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+	background: transparent;
+}
+
+.tab[data-selected] {
+	--semantic-fg-role: on-action;
+	color: var(--semantic-role-on-action);
+	background: var(--surface-action);
+}
+
+.tab-panel {
+	@apply min-h-0 flex-1 overflow-y-auto pr-1;
+	scrollbar-width: thin;
+	scrollbar-color: var(--scroll-thumb) transparent;
+}
+
+.tab-panel::-webkit-scrollbar {
+	@apply w-2;
+}
+
+.tab-panel::-webkit-scrollbar-thumb {
+	background: var(--scroll-thumb);
+	@apply rounded-full;
+}
+
+.sheet-panel {
+	@apply grid gap-5;
+}
+
+.drawer-note {
+	@apply m-0 text-sm leading-relaxed;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+
+.character-package-guide {
+	@apply grid gap-4;
+}
+
+.character-package-guide h3 {
+	@apply m-0;
+}
+
+.character-package-guide .button-like {
+	@apply inline-flex w-fit items-center gap-2;
+}
+
+.detail-card {
+	@apply rounded-lg border border-line p-3;
+	background: var(--surface-success);
+}
+
+.detail-card strong {
+	@apply block text-xs;
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+}
+
+.detail-card span {
+	@apply mt-1 block text-xs leading-relaxed;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+
+.section-head {
+	@apply flex items-baseline justify-between gap-2;
+}
+
+.section-head h3 {
+	@apply m-0 text-xs font-extrabold tracking-normal;
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+}
+
+.section-count {
+	@apply rounded-full px-2 py-0.5 text-xs;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+	background: var(--surface-success);
+}
+
+.empty-note {
+	@apply m-0 rounded-md border border-dashed border-line p-3 text-xs leading-relaxed;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+
+.status-line {
+	@apply m-0 rounded-md border px-3 py-2 text-xs;
+}
+
+.status-line.ok {
+	@apply border;
+	border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+	--semantic-fg-role: accent;
+	color: var(--semantic-role-accent);
+	background: var(--surface-success);
+}
+
+.status-line.err {
+	@apply border;
+	border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+	--semantic-fg-role: danger;
+	color: var(--semantic-role-danger);
+	background: var(--surface-danger);
+}
+
+.memory-list,
+.candidate-list {
+	@apply m-0 grid list-none gap-2 p-0;
+}
+
+.memory-entry,
+.candidate-card {
+	@apply rounded-xl border border-line p-3;
+	background: var(--surface-success);
+}
+
+.memory-entry[data-pinned] {
+	@apply border;
+	border-color: color-mix(in srgb, var(--amber) 35%, transparent);
+	background: var(--surface-warning);
+}
+
+.memory-text,
+.candidate-text {
+	@apply m-0 text-xs leading-relaxed;
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+}
+
+.candidate-why {
+	@apply m-0 mt-1 text-xs leading-relaxed;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+
+.memory-meta,
+.candidate-meta {
+	@apply mt-2 flex flex-wrap items-center gap-1.5 text-xs;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+
+.memory-kind {
+	@apply rounded-md px-1.5 py-0.5;
+	--semantic-fg-role: accent;
+	color: var(--semantic-role-accent);
+	background: var(--surface-success);
+}
+
+.memory-actions,
+.candidate-actions {
+	@apply mt-2 flex flex-wrap justify-end gap-1.5;
+}
+
+.mini-btn {
+	@apply min-h-7 rounded-lg border border-line px-2 text-xs;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+	background: var(--surface-subtle);
+}
+
+.mini-btn:hover:not(:disabled) {
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+	background: var(--surface-success);
+}
+
+.mini-btn.primary {
+	@apply border-0;
+	--semantic-fg-role: on-action;
+	color: var(--semantic-role-on-action);
+	background: var(--surface-action);
+}
+
+.mini-btn.danger {
+	@apply border;
+	border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+	--semantic-fg-role: danger;
+	color: var(--semantic-role-danger);
+	background: var(--surface-danger);
+}
+
+.mini-btn:disabled {
+	@apply cursor-not-allowed opacity-60;
+}
+
+.candidate-edit {
+	@apply mt-2 grid gap-1.5;
+}
+
+.candidate-edit textarea {
+	@apply min-h-14;
+}
+
+.candidate-edit textarea,
+.search-input {
+	@apply w-full resize-y rounded-lg border border-line px-2.5 py-2 text-xs outline-none;
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+	background: var(--surface-subtle);
+}
+
+.search-row {
+	@apply flex items-center gap-1.5;
+}
+
+.search-input {
+	@apply min-w-0 flex-1;
+}
+
+.search-input::placeholder {
+	color: var(--text-muted);
+}
+
+/* ------------------------------------------------------------------ */
+.switch-field {
+	@apply flex items-center justify-between gap-4 rounded-md border border-line p-4;
+	background: var(--surface-success);
+}
+
+.switch-text {
+	@apply min-w-0;
+}
+
+.switch-control {
+	@apply relative h-7 w-11 shrink-0 rounded-full border border-line p-0;
+	background: var(--surface-subtle);
+}
+
+.switch-control[data-checked] {
+	background: var(--surface-action);
+}
+
+.switch-thumb {
+	@apply absolute left-1 top-1 size-5 rounded-full;
+	background: var(--text-muted);
+}
+
+.switch-control[data-checked] .switch-thumb {
+	@apply translate-x-4;
+	background: var(--text-on-action);
+}
+
+.work-action-line {
+	@apply grid w-full max-w-md self-start gap-2.5;
+}
+
+.run-controls[data-result-open] {
+	border-left-color: var(--amber);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 35%, transparent);
+}
+
+.action-proposal.needs-user {
+	border-left-color: var(--amber);
+}
+
+.steer-row {
+	@apply flex items-center gap-2;
+}
+
+.steer-row .steer-input {
+	@apply min-w-0 flex-1 rounded-md px-2 py-1.5 text-xs;
+	border: 1px solid var(--line);
+	color: var(--text);
+	background: var(--surface-subtle);
+	font: inherit;
+}
+
+.completion-card {
+	@apply grid gap-2 rounded-lg px-3 py-2.5;
+	border: 1px solid color-mix(in srgb, var(--line) 78%, var(--accent) 22%);
+	background: var(--surface-success);
+}
+
+.completion-card .completion-count {
+	@apply m-0 text-xs;
+	color: var(--text-muted);
+}
+
+.failure-card {
+	@apply grid gap-1 px-3 py-2;
+	border-left: 3px solid var(--danger);
+	background: var(--surface-danger);
+}
+
+.failure-card p {
+	@apply m-0 text-xs;
+	color: var(--text-muted);
+}
+
+.work-actions .primary-tool {
+	@apply font-bold;
+	color: var(--accent);
+}
+
+.artifact-list {
+	@apply grid gap-0.5;
+}
+
+.action-proposal {
+	@apply grid gap-2.5 px-3 py-2.5;
+	border-left: 3px solid var(--accent);
+	background: var(--surface-success);
+}
+
+.action-proposal h3 {
+	@apply m-0 mt-0.5 text-sm;
+}
+
+.action-proposal p {
+	@apply my-1 text-sm;
+}
+.system-label {
+	@apply text-xs font-bold;
+	color: var(--accent);
+}
+.scope-list {
+	color: var(--text-muted);
+}
+.scope-list strong {
+	color: var(--text);
+	@apply mr-1;
+}
+.work-actions {
+	@apply flex flex-wrap gap-2;
+}
+.artifact-row {
+	@apply flex items-center justify-between gap-3 py-2;
+}
+.artifact-row div {
+	@apply grid gap-0.5;
+}
+.artifact-row span {
+	@apply text-xs;
+	color: var(--text-muted);
+}
+
+.canon-row-actions {
+	@apply flex gap-2;
+}
+.roleplay-archive {
+	@apply mt-5 grid gap-4;
+}
+
+.sub-tabs,
+.roleplay-status-list {
+	@apply flex gap-2;
+}
+
+.roleplay-status-list {
+	@apply flex-col;
+}
+
+.roleplay-status-row {
+	@apply flex min-h-11 items-center justify-between px-3 py-2;
+	border-bottom: 1px solid var(--line);
+}
+
+.collection-grid {
+	@apply grid grid-cols-3 gap-3;
+}
+
+.collection-item {
+	@apply grid min-w-0 gap-1.5;
+}
+
+.collection-item img,
+.collection-item video {
+	@apply block w-full rounded-lg object-cover;
+	aspect-ratio: 16 / 10;
+}
+
+.collection-item audio {
+	@apply w-full;
+}
+
+.collection-item p,
+.collection-item strong {
+	@apply m-0;
+}
+
+.collection-kind {
+	@apply text-sm;
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+
+.roleplay-choices {
+	@apply mx-auto my-3 grid w-full max-w-2xl gap-2.5;
+}
+.roleplay-media-overlay {
+	@apply fixed inset-0 z-50;
+	background: var(--surface-overlay);
+}
+
+.roleplay-choice {
+	@apply grid min-h-16 gap-1 px-3 py-2.5 text-left;
+}
+
+.roleplay-choice span {
+	--semantic-fg-role: muted;
+	color: var(--semantic-role-muted);
+}
+
+.roleplay-media-dialog {
+	@apply fixed inset-0 z-50 grid place-items-center p-4;
+}
+
+.roleplay-media-dialog img,
+.roleplay-media-dialog video {
+	@apply max-h-screen max-w-full object-contain;
+}
+
+.roleplay-media-close {
+	@apply absolute right-4 top-4;
+}
+.roleplay-media-dialog audio {
+	@apply w-full max-w-xl;
+}
+
+.roleplay-media-inline {
+	@apply mx-auto my-4 grid gap-2.5 rounded-lg p-4;
+	border: 1px solid var(--line);
+	background: var(--surface-alt);
+}
+
+.roleplay-media-header,
+.roleplay-media-ambient-heading {
+	@apply flex items-center justify-between gap-3;
+}
+
+.roleplay-media-header h3,
+.roleplay-media-ambient-heading strong {
+	@apply m-0 text-sm;
+	color: var(--text);
+}
+
+.roleplay-media-inline img,
+.roleplay-media-inline video {
+	@apply mx-auto block max-h-screen max-w-full object-contain;
+}
+
+.roleplay-media-inline audio {
+	@apply w-full;
+}
+
+.roleplay-media-ambient {
+	@apply fixed bottom-6 right-6 z-30 grid w-full max-w-sm gap-2 rounded-lg px-3 py-2.5;
+	border: 1px solid var(--line);
+	background: var(--surface);
+	box-shadow: 0 12px 36px var(--shadow-color);
+}
+
+.roleplay-media-ambient audio {
+	@apply w-full;
+}
