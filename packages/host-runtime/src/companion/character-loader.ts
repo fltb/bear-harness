@@ -357,6 +357,39 @@ function validateTheme(value: unknown, characterId: string): asserts value is Th
 	const result = ThemeTokensSchema.safeParse(value);
 	if (!result.success)
 		throw new Error(`character package ${characterId}: theme tokens are invalid`);
+	const tokens = result.data.tokens;
+	for (const [foreground, background, minimum] of [
+		["text_strong", "surface_canvas", 7],
+		["text_soft", "surface_canvas", 4.5],
+		["text_on_action", "surface_action", 4.5],
+		["text_on_message", "surface_message", 4.5],
+		["text_success", "surface_success", 4.5],
+		["text_warning", "surface_warning", 4.5],
+		["text_danger", "surface_danger", 4.5],
+	] as const) {
+		if (contrastRatio(tokens[foreground], tokens[background]) < minimum) {
+			throw new Error(
+				`character package ${characterId}: ${foreground} contrast is insufficient on ${background}`,
+			);
+		}
+	}
+}
+
+function contrastRatio(foreground: string, background: string): number {
+	const luminance = (value: string) => {
+		if (!/^#[\da-f]{6}$/i.test(value)) return 0;
+		const channels = [1, 3, 5].map((offset) => Number.parseInt(value.slice(offset, offset + 2), 16) / 255);
+		const linear = channels.map((channel) =>
+			channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
+		);
+		return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+	};
+	const foregroundLuminance = luminance(foreground);
+	const backgroundLuminance = luminance(background);
+	return (
+		(Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
+		(Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
+	);
 }
 function validateCharacterCard(value: unknown, characterId: string): asserts value is CharacterStrings {
 	const schema = z.strictObject({

@@ -151,6 +151,16 @@ describe("character package Host lifecycle reactions", () => {
 		expect(character?.host.event_reactions).toEqual(expectedReactions);
 	});
 
+	it("rejects a role token pair that fails the text contrast contract", () => {
+		const { configRoot } = packageWithManifest(
+			"bear-character-theme-contrast-",
+			(manifest) => manifest.replace('    text_strong: "#ecedee"', '    text_strong: "#151719"'),
+		);
+		expect(() => new CharacterLoader(configRoot).load("jizhou")).toThrow(
+			"text_strong contrast is insufficient on surface_canvas",
+		);
+	});
+
 	it("accepts arbitrary Host events bound to declared visual states", () => {
 		const { configRoot } = packageWithManifest(
 			"bear-character-package-host-reaction-generic-",
