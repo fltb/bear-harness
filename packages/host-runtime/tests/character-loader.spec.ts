@@ -66,7 +66,7 @@ describe("character package visual projection", () => {
 				bindings: [expect.objectContaining({ source: "jizhou_story" })],
 			}),
 		);
-		expect(display.theme.color.accent).toBe("#8bd0bb");
+		expect(display.theme.tokens.accent).toBe("#4ccce6");
 		expect(display.visual.avatarUrl).toMatch(/^data:image\/(?:png|svg\+xml);base64,/);
 		for (const assetUrl of Object.values(display.visual.expressions)) {
 			expect(assetUrl).toMatch(/^data:image\/(?:png|svg\+xml);base64,/);

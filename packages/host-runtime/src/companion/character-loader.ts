@@ -62,18 +62,20 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
+const SEMANTIC_THEME_TOKENS = [
+	"surface", "surface_alt", "text", "text_muted", "accent", "line", "danger", "amber",
+	"surface_canvas", "surface_sidebar", "surface_panel", "surface_control", "surface_subtle",
+	"surface_message", "surface_message_user", "surface_action", "surface_success",
+	"surface_warning", "surface_danger", "surface_overlay", "text_strong", "text_soft",
+	"text_on_action", "text_on_message", "text_action", "text_success", "text_warning",
+	"text_danger", "line_strong", "line_soft", "focus_ring", "scroll_thumb", "shadow_color",
+] as const;
+type SemanticThemeToken = (typeof SEMANTIC_THEME_TOKENS)[number];
+
 export interface ThemeTokens {
 	radius: { sm: number; md: number; lg: number };
-	color: {
-		surface: string;
-		surface_alt: string;
-		text: string;
-		text_muted: string;
-		accent: string;
-		line: string;
-		danger: string;
-		amber: string;
-	};
+	/** Every color is a named UI token; package values override Arctic defaults. */
+	tokens: Record<SemanticThemeToken, string>;
 	font: { body: string; heading: string };
 }
 
@@ -331,22 +333,13 @@ const CharacterPromptSchema = z.strictObject({
 	mes_example: PromptStringSchema,
 });
 
+const SemanticThemeTokenSchema = z.enum(SEMANTIC_THEME_TOKENS);
 const ThemeTokensSchema = z.strictObject({
 	radius: z.strictObject({
-		sm: z.number().finite().min(0).max(40),
-		md: z.number().finite().min(0).max(40),
+		sm: z.number().finite().min(0).max(40), md: z.number().finite().min(0).max(40),
 		lg: z.number().finite().min(0).max(40),
 	}),
-	color: z.strictObject({
-		surface: SafeCssValueSchema,
-		surface_alt: SafeCssValueSchema,
-		text: SafeCssValueSchema,
-		text_muted: SafeCssValueSchema,
-		accent: SafeCssValueSchema,
-		line: SafeCssValueSchema,
-		danger: SafeCssValueSchema,
-		amber: SafeCssValueSchema,
-	}),
+	tokens: z.record(SemanticThemeTokenSchema, SafeCssValueSchema),
 	font: z.strictObject({ body: SafeCssValueSchema, heading: SafeCssValueSchema }),
 });
 
