@@ -29,9 +29,7 @@
 import type { CompanionClient } from "@bear-harness/companion-client";
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import type { KnownDomainEvent, RoleplayState } from "@bear-harness/protocol";
-import type {
-	MemoryCandidate as MemoryCandidateSchema,
-} from "@bear-harness/protocol/schema";
+import type { MemoryCandidate as MemoryCandidateSchema } from "@bear-harness/protocol/schema";
 import { parseKnownDomainEvent } from "@bear-harness/protocol/schema";
 import type { z } from "@bear-harness/schema";
 import { useQueryClient, createQuery } from "@tanstack/solid-query";
@@ -151,7 +149,6 @@ function projectionError(
 	};
 }
 
-
 function messageOf(value: unknown): string {
 	return value instanceof Error ? value.message : String(value);
 }
@@ -220,7 +217,10 @@ export interface MemoryApi {
 	exclude(memoryId: string, excluded: boolean, characterId?: string): Promise<void>;
 	/** Pending candidates awaiting user confirmation (reactive list). */
 	candidates(): MemoryCandidate[] | undefined;
-	listCandidates(status?: MemoryCandidate["status"], characterId?: string): Promise<MemoryCandidate[]>;
+	listCandidates(
+		status?: MemoryCandidate["status"],
+		characterId?: string,
+	): Promise<MemoryCandidate[]>;
 	approveCandidate(
 		candidateId: string,
 		editedText?: string,
@@ -305,7 +305,6 @@ export interface ArtifactApi {
 	url(artifactId: string): Promise<string>;
 	download(artifactId: string): Promise<void>;
 }
-
 
 export interface CharacterApi {
 	characters(): CharacterSummary[];
@@ -535,7 +534,6 @@ function derivePresence(s: {
 	return "idle";
 }
 
-
 // ---------------------------------------------------------------------------
 // Store factory
 // ---------------------------------------------------------------------------
@@ -638,8 +636,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		request: snapshotRequest,
 	});
 	const conversationsRequest = () => invoke(client, () => client.conversation.list());
-	const activeConversationRequest = () =>
-		invoke(client, () => client.conversation.activeGet({}));
+	const activeConversationRequest = () => invoke(client, () => client.conversation.activeGet({}));
 	const memoryKey = (params?: MemoryListRequest): readonly unknown[] =>
 		params?.scope === undefined ? queryKeys.memory : queryKeys.memoryProjection(params.scope);
 	const conversationsQuery = createRpcQuery({
@@ -662,7 +659,8 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const activeConversationId = createMemo(currentActiveConversationId);
 	const memoryRequest = (params?: MemoryListRequest) =>
 		invoke(client, () => {
-			const characterId = params?.characterId ?? activeCharacters().find((character) => character.active)?.id;
+			const characterId =
+				params?.characterId ?? activeCharacters().find((character) => character.active)?.id;
 			return client.memory.list({ ...params, ...(characterId ? { characterId } : {}) });
 		});
 	const memoryQuery = createRpcQuery({
@@ -673,8 +671,12 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	});
 	const memoryCandidatesRequest = (status?: MemoryCandidate["status"], characterId?: string) =>
 		invoke(client, () => {
-			const targetCharacterId = characterId ?? activeCharacters().find((character) => character.active)?.id;
-			return client.memory.candidatesList({ status, ...(targetCharacterId ? { characterId: targetCharacterId } : {}) });
+			const targetCharacterId =
+				characterId ?? activeCharacters().find((character) => character.active)?.id;
+			return client.memory.candidatesList({
+				status,
+				...(targetCharacterId ? { characterId: targetCharacterId } : {}),
+			});
 		});
 	const memoryCandidatesQuery = createRpcQuery({
 		client: queryClient,
@@ -750,16 +752,19 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		key: queryKeys.modelDefaults,
 		request: modelDefaultsRequest,
 	});
-	const modelRouteQuery = createQuery<ModelRouteData | undefined>(() => ({
-		queryKey: queryKeys.modelRoute(activeConversationId() ?? ""),
-		queryFn: () =>
-			activeConversationId() === null
-				? Promise.resolve(undefined)
-				: invoke(client, () =>
-						client.model.routeGet({ conversationId: activeConversationId() as string }),
-					),
-		enabled: activeConversationId() !== null,
-	}), () => queryClient);
+	const modelRouteQuery = createQuery<ModelRouteData | undefined>(
+		() => ({
+			queryKey: queryKeys.modelRoute(activeConversationId() ?? ""),
+			queryFn: () =>
+				activeConversationId() === null
+					? Promise.resolve(undefined)
+					: invoke(client, () =>
+							client.model.routeGet({ conversationId: activeConversationId() as string }),
+						),
+			enabled: activeConversationId() !== null,
+		}),
+		() => queryClient,
+	);
 	const currentModelRoute = (): ModelRouteData | undefined => {
 		void modelRouteQuery.data;
 		const conversationId = currentActiveConversationId();
@@ -833,7 +838,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		invalidates: [],
 	});
 
-
 	// ---- refresh helpers (each re-fetches one domain list) ----
 
 	const refreshSnapshot = () =>
@@ -856,9 +860,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		});
 		setMemoryRevision((revision) => revision + 1);
 	};
-	const refreshMemoryCandidates = async (
-		status?: MemoryCandidate["status"],
-	): Promise<void> => {
+	const refreshMemoryCandidates = async (status?: MemoryCandidate["status"]): Promise<void> => {
 		await refreshRpcQuery({
 			client: queryClient,
 			key: queryKeys.memoryCandidates(status),
@@ -873,13 +875,25 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		debouncedRefetch(() => void refreshMemoryCandidates(), 250, refreshMemoryCandidates);
 	};
 	const refreshCommissions = async (): Promise<void> => {
-		await refreshRpcQuery({ client: queryClient, key: queryKeys.commissions, request: commissionsRequest });
+		await refreshRpcQuery({
+			client: queryClient,
+			key: queryKeys.commissions,
+			request: commissionsRequest,
+		});
 	};
 	const refreshArtifacts = async (): Promise<void> => {
-		await refreshRpcQuery({ client: queryClient, key: queryKeys.artifacts, request: artifactsRequest });
+		await refreshRpcQuery({
+			client: queryClient,
+			key: queryKeys.artifacts,
+			request: artifactsRequest,
+		});
 	};
 	const refreshCharacters = async (): Promise<void> => {
-		await refreshRpcQuery({ client: queryClient, key: queryKeys.characters, request: charactersRequest });
+		await refreshRpcQuery({
+			client: queryClient,
+			key: queryKeys.characters,
+			request: charactersRequest,
+		});
 	};
 	const refreshCanonSources = async (): Promise<void> => {
 		await refreshRpcQuery({
@@ -910,17 +924,21 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const invalidateConversationList = (): Promise<void> =>
 		queryClient.invalidateQueries({ queryKey: queryKeys.conversations }, { cancelRefetch: false });
 	const invalidateActiveConversation = (): Promise<void> =>
-		queryClient.invalidateQueries({ queryKey: queryKeys.activeConversation }, { cancelRefetch: false });
+		queryClient.invalidateQueries(
+			{ queryKey: queryKeys.activeConversation },
+			{ cancelRefetch: false },
+		);
 	const invalidateActiveConversationQueries = (): Promise<void> => {
 		const conversationId = activeConversationId();
-		const keys = conversationId === null
-			? []
-			: [
-					queryClient.invalidateQueries(
-						{ queryKey: queryKeys.modelRoute(conversationId) },
-						{ cancelRefetch: false },
-					),
-				];
+		const keys =
+			conversationId === null
+				? []
+				: [
+						queryClient.invalidateQueries(
+							{ queryKey: queryKeys.modelRoute(conversationId) },
+							{ cancelRefetch: false },
+						),
+					];
 		return Promise.all([invalidateActiveConversation(), ...keys]).then(() => undefined);
 	};
 	const invalidateDerivedConversationQueries = (
@@ -976,9 +994,10 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	};
 	const activeConversations = (): ConversationSummary[] => {
 		void conversationsQuery.data;
-		return queryClient.getQueryData<{ conversations: ConversationSummary[] }>(
-			queryKeys.conversations,
-		)?.conversations ?? [];
+		return (
+			queryClient.getQueryData<{ conversations: ConversationSummary[] }>(queryKeys.conversations)
+				?.conversations ?? []
+		);
 	};
 	const activeRuns = (): RunInfo[] => {
 		void runsQuery.data;
@@ -1006,10 +1025,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		}
 		const data = snapshotValue();
 		if (data === undefined) return;
-		if (
-			state.errorMetadata?.source === "projection" ||
-			state.errorMetadata?.source === "stream"
-		) {
+		if (state.errorMetadata?.source === "projection" || state.errorMetadata?.source === "stream") {
 			setState("errorMetadata", null);
 			setState("error", null);
 		}
@@ -1233,7 +1249,10 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 						continue;
 					}
 					if (cancelled) return;
-					if (batch.length === 0) continue;
+					if (batch.length === 0) {
+						await new Promise<void>((resolve) => setTimeout(resolve, 100));
+						continue;
+					}
 					const first = batch[0];
 					if (first === undefined) continue;
 					if (first.seq <= cursor || first.seq > cursor + 1) {
@@ -1338,10 +1357,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			queryKeys.conversationProjection(conversationId, projection.piSessionId),
 			projection,
 		);
-		if (
-			projection.piSessionId !== sessionId ||
-			currentActiveConversationId() !== conversationId
-		) {
+		if (projection.piSessionId !== sessionId || currentActiveConversationId() !== conversationId) {
 			return;
 		}
 		writeActiveProjection(projection);
@@ -1375,33 +1391,39 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				)?.candidates;
 	});
 	const memoryApi: MemoryApi = {
-	entries: activeMemoryEntries,
-	revision: memoryRevision,
-	list: async (params) => {
-		const key = memoryKey(params);
-		setMemoryProjectionKey(key);
-		const data = await refreshRpcQuery({
-			client: queryClient,
-			key,
-			request: () => memoryRequest(params),
-		});
-		setMemoryRevision((revision) => revision + 1);
-		return data.entries;
-	},
-	search: async (query, scope, characterId) => {
-		const key = [...queryKeys.memoryProjection(scope, query), characterId] as const;
-		setMemoryProjectionKey(key);
-		const data = await refreshRpcQuery({
-			client: queryClient,
-			key,
-			request: () => invoke(client, () => {
-				const targetCharacterId = characterId ?? activeCharacters().find((character) => character.active)?.id;
-				return client.memory.search({ query, scope, ...(targetCharacterId ? { characterId: targetCharacterId } : {}) });
-			}),
-		});
-		setMemoryRevision((revision) => revision + 1);
-		return data.entries;
-	},
+		entries: activeMemoryEntries,
+		revision: memoryRevision,
+		list: async (params) => {
+			const key = memoryKey(params);
+			setMemoryProjectionKey(key);
+			const data = await refreshRpcQuery({
+				client: queryClient,
+				key,
+				request: () => memoryRequest(params),
+			});
+			setMemoryRevision((revision) => revision + 1);
+			return data.entries;
+		},
+		search: async (query, scope, characterId) => {
+			const key = [...queryKeys.memoryProjection(scope, query), characterId] as const;
+			setMemoryProjectionKey(key);
+			const data = await refreshRpcQuery({
+				client: queryClient,
+				key,
+				request: () =>
+					invoke(client, () => {
+						const targetCharacterId =
+							characterId ?? activeCharacters().find((character) => character.active)?.id;
+						return client.memory.search({
+							query,
+							scope,
+							...(targetCharacterId ? { characterId: targetCharacterId } : {}),
+						});
+					}),
+			});
+			setMemoryRevision((revision) => revision + 1);
+			return data.entries;
+		},
 		capture: async (entryId) => {
 			try {
 				const conversationId = requireActiveConversation();
@@ -1437,24 +1459,38 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 		forget: async (entryId, characterId) => {
 			await invoke(client, () => {
-				const targetCharacterId = characterId ?? activeCharacters().find((character) => character.active)?.id;
-				return client.memory.forget({ entryId, ...(targetCharacterId ? { characterId: targetCharacterId } : {}) });
+				const targetCharacterId =
+					characterId ?? activeCharacters().find((character) => character.active)?.id;
+				return client.memory.forget({
+					entryId,
+					...(targetCharacterId ? { characterId: targetCharacterId } : {}),
+				});
 			});
 			setMemoryRevision((revision) => revision + 1);
 			debouncedRefreshMemoryEntries();
 		},
 		edit: async (entryId, newText, characterId) => {
 			await invoke(client, () => {
-				const targetCharacterId = characterId ?? activeCharacters().find((character) => character.active)?.id;
-				return client.memory.edit({ entryId, newText, ...(targetCharacterId ? { characterId: targetCharacterId } : {}) });
+				const targetCharacterId =
+					characterId ?? activeCharacters().find((character) => character.active)?.id;
+				return client.memory.edit({
+					entryId,
+					newText,
+					...(targetCharacterId ? { characterId: targetCharacterId } : {}),
+				});
 			});
 			setMemoryRevision((revision) => revision + 1);
 			debouncedRefreshMemoryEntries();
 		},
 		exclude: async (memoryId, excluded, characterId) => {
 			await invoke(client, () => {
-				const targetCharacterId = characterId ?? activeCharacters().find((character) => character.active)?.id;
-				return client.memory.exclude({ memoryId, excluded, ...(targetCharacterId ? { characterId: targetCharacterId } : {}) });
+				const targetCharacterId =
+					characterId ?? activeCharacters().find((character) => character.active)?.id;
+				return client.memory.exclude({
+					memoryId,
+					excluded,
+					...(targetCharacterId ? { characterId: targetCharacterId } : {}),
+				});
 			});
 			setMemoryRevision((revision) => revision + 1);
 			debouncedRefreshMemoryEntries();
@@ -1464,27 +1500,35 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			setMemoryCandidateStatus(status);
 			const data = await refreshRpcQuery({
 				client: queryClient,
-			key: [...queryKeys.memoryCandidates(status), characterId],
-			request: () => memoryCandidatesRequest(status, characterId),
+				key: [...queryKeys.memoryCandidates(status), characterId],
+				request: () => memoryCandidatesRequest(status, characterId),
 			});
 			setMemoryRevision((revision) => revision + 1);
 			return data.candidates;
 		},
 		approveCandidate: async (candidateId, editedText, decidedScope, characterId) => {
-			await invoke(client, () =>
-				{
-					const targetCharacterId = characterId ?? activeCharacters().find((character) => character.active)?.id;
-					return client.memory.candidateApprove({ candidateId, editedText, decidedScope, ...(targetCharacterId ? { characterId: targetCharacterId } : {}) });
-				},
-			);
+			await invoke(client, () => {
+				const targetCharacterId =
+					characterId ?? activeCharacters().find((character) => character.active)?.id;
+				return client.memory.candidateApprove({
+					candidateId,
+					editedText,
+					decidedScope,
+					...(targetCharacterId ? { characterId: targetCharacterId } : {}),
+				});
+			});
 			setMemoryRevision((revision) => revision + 1);
 			debouncedRefreshMemoryCandidates();
 			debouncedRefreshMemoryEntries();
 		},
 		rejectCandidate: async (candidateId, characterId) => {
 			await invoke(client, () => {
-				const targetCharacterId = characterId ?? activeCharacters().find((character) => character.active)?.id;
-				return client.memory.candidateReject({ candidateId, ...(targetCharacterId ? { characterId: targetCharacterId } : {}) });
+				const targetCharacterId =
+					characterId ?? activeCharacters().find((character) => character.active)?.id;
+				return client.memory.candidateReject({
+					candidateId,
+					...(targetCharacterId ? { characterId: targetCharacterId } : {}),
+				});
 			});
 			setMemoryRevision((revision) => revision + 1);
 			debouncedRefreshMemoryCandidates();
@@ -1583,10 +1627,16 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				invoke(client, () => client.provider.remove({ providerId })),
 			);
 			await Promise.all([
-				refreshRpcQuery({ client: queryClient, key: queryKeys.providers, request: providersRequest }),
+				refreshRpcQuery({
+					client: queryClient,
+					key: queryKeys.providers,
+					request: providersRequest,
+				}),
 				refreshModelPool(),
 				refreshModelDefaults(),
-				...(activeConversationId() !== null ? [refreshModelRoute(activeConversationId() as string)] : []),
+				...(activeConversationId() !== null
+					? [refreshModelRoute(activeConversationId() as string)]
+					: []),
 			]);
 		},
 	};
@@ -1596,10 +1646,11 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		void defaultsQuery.data;
 		const models =
 			queryClient.getQueryData<{ models: ConfiguredModel[] }>(queryKeys.modelPool)?.models ?? [];
-		const defaults =
-			queryClient.getQueryData<NonNullable<typeof defaultsQuery.data>>(queryKeys.modelDefaults) ?? {
-				vision: { mode: "auto" as const },
-			};
+		const defaults = queryClient.getQueryData<NonNullable<typeof defaultsQuery.data>>(
+			queryKeys.modelDefaults,
+		) ?? {
+			vision: { mode: "auto" as const },
+		};
 		const selected = currentModelRoute()?.selected;
 		const multimodalFallback =
 			defaults.vision.mode === "manual" ? defaults.vision.route : undefined;
@@ -1621,7 +1672,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		data: modelData,
 		models: () => {
 			void modelsQuery.data;
-			return queryClient.getQueryData<{ models: ConfiguredModel[] }>(queryKeys.modelPool)?.models ?? [];
+			return (
+				queryClient.getQueryData<{ models: ConfiguredModel[] }>(queryKeys.modelPool)?.models ?? []
+			);
 		},
 		loading: () => modelsQuery.isFetching || defaultsQuery.isFetching,
 		error: () => modelsQuery.error ?? defaultsQuery.error,
@@ -1689,7 +1742,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 	};
 
-	const activeCommissions = createMemo<Commission[]>(() => commissionsQuery.data?.commissions ?? []);
+	const activeCommissions = createMemo<Commission[]>(
+		() => commissionsQuery.data?.commissions ?? [],
+	);
 	const commissionApi: CommissionApi = {
 		commissions: activeCommissions,
 		list: async () => {
@@ -1799,7 +1854,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 	};
 
-	const activeCharacters = createMemo<CharacterSummary[]>(() => charactersQuery.data?.characters ?? []);
+	const activeCharacters = createMemo<CharacterSummary[]>(
+		() => charactersQuery.data?.characters ?? [],
+	);
 	const characterApi: CharacterApi = {
 		characters: activeCharacters,
 		list: async () => {
@@ -2033,7 +2090,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		selectConversation: async (id) => {
 			try {
 				await queryClient.cancelQueries({ queryKey: queryKeys.activeConversation });
-				const projection = (await selectConversationMutation.mutateAsync({ id })) as ConversationSelectResponse;
+				const projection = (await selectConversationMutation.mutateAsync({
+					id,
+				})) as ConversationSelectResponse;
 				requirePiTimeline(projection.piTimeline, "conversation.select");
 				writeActiveProjection(projection);
 				setState("activeRoleplayMediaId", undefined);
@@ -2056,7 +2115,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 					queryClient.cancelQueries({ queryKey: queryKeys.activeConversation }),
 					queryClient.cancelQueries({ queryKey: queryKeys.conversations }),
 				]);
-				const projection = (await createConversationMutation.mutateAsync({ title })) as ConversationSelectResponse;
+				const projection = (await createConversationMutation.mutateAsync({
+					title,
+				})) as ConversationSelectResponse;
 				requirePiTimeline(projection.piTimeline, "conversation.create");
 				writeActiveProjection(projection);
 				setState("activeRoleplayMediaId", undefined);
@@ -2088,7 +2149,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 					queryClient.cancelQueries({ queryKey: queryKeys.activeConversation }),
 					queryClient.cancelQueries({ queryKey: queryKeys.conversations }),
 				]);
-				const response = (await archiveConversationMutation.mutateAsync({ id })) as ConversationActiveResponse;
+				const response = (await archiveConversationMutation.mutateAsync({
+					id,
+				})) as ConversationActiveResponse;
 				if (response.conversation !== undefined) {
 					requirePiTimeline(response.conversation.piTimeline, "conversation.archive");
 				}
@@ -2112,7 +2175,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 					queryClient.cancelQueries({ queryKey: queryKeys.activeConversation }),
 					queryClient.cancelQueries({ queryKey: queryKeys.conversations }),
 				]);
-				const response = (await deleteConversationMutation.mutateAsync({ id })) as ConversationActiveResponse;
+				const response = (await deleteConversationMutation.mutateAsync({
+					id,
+				})) as ConversationActiveResponse;
 				if (response.conversation !== undefined) {
 					requirePiTimeline(response.conversation.piTimeline, "conversation.delete");
 				}
@@ -2156,7 +2221,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			}
 		},
 
-
 		abort: async () => {
 			try {
 				const conversationId = requireActiveConversation();
@@ -2182,10 +2246,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				const mediaId = state.activeRoleplayMediaId;
 				if (mediaId === undefined) return;
 				await invoke(client, () => client.roleplay.dismissMedia({ conversationId, mediaId }));
-				if (
-					activeConversationId() === conversationId &&
-					state.activeRoleplayMediaId === mediaId
-				)
+				if (activeConversationId() === conversationId && state.activeRoleplayMediaId === mediaId)
 					setState("activeRoleplayMediaId", undefined);
 				clearOperationError();
 			} catch (e) {
@@ -2284,10 +2345,10 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			return trackedCanonApi;
 		},
 	};
-onCleanup(() => {
-	if (COMPANION_STORES.get(client) === store) {
-		COMPANION_STORES.delete(client);
-	}
-});
-return store;
+	onCleanup(() => {
+		if (COMPANION_STORES.get(client) === store) {
+			COMPANION_STORES.delete(client);
+		}
+	});
+	return store;
 }

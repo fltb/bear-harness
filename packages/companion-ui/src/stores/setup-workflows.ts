@@ -37,12 +37,8 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 	let submittedStepId: string | null = null;
 
 	const flow = createMemo(() => store.character?.character.first_meeting);
-	const modelApiAvailable = hasMethod(store.model?.loading) && hasMethod(store.model?.data);
 	const configuredModels = createMemo(() =>
 		hasMethod(store.model?.models) ? store.model.models() : [],
-	);
-	const modelLoading = createMemo(() =>
-		hasMethod(store.model?.loading) ? store.model.loading() : false,
 	);
 	const modelDefaults = createMemo(() =>
 		hasMethod(store.model?.data) ? store.model.data()?.defaults : undefined,
@@ -61,10 +57,7 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 			: null;
 	});
 	const modelRequired = createMemo(
-		() =>
-			!modelStepAdvanced() &&
-			!store.loading &&
-			(!modelApiAvailable || modelLoading() || modelDefaults()?.reply === undefined),
+		() => store.onboarding.status === "active" && !modelStepAdvanced() && !store.loading,
 	);
 	const modelError = createMemo(() => {
 		const error = hasMethod(store.model?.error) ? store.model.error() : null;

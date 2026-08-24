@@ -140,6 +140,39 @@ function rpcDiagnosticChannel(pathname: string): string {
 	}
 }
 
+function diagnosticErrorType(
+	error: unknown,
+):
+	| (typeof RENDERER_FAULT_KINDS)[number]
+	| "Error"
+	| "TypeError"
+	| "RangeError"
+	| "ReferenceError"
+	| "SyntaxError"
+	| "AggregateError"
+	| "DOMException"
+	| "non-error"
+	| "unknown" {
+	if (!(error instanceof Error)) return "non-error";
+	return [
+		"Error",
+		"TypeError",
+		"RangeError",
+		"ReferenceError",
+		"SyntaxError",
+		"AggregateError",
+		"DOMException",
+	].includes(error.name)
+		? (error.name as
+				| "Error"
+				| "TypeError"
+				| "RangeError"
+				| "ReferenceError"
+				| "SyntaxError"
+				| "AggregateError"
+				| "DOMException")
+		: "unknown";
+}
 
 const runtime = createHostRuntime({
 	dataDir,
@@ -169,10 +202,11 @@ async function readBody(request: IncomingMessage, maxBytes = 64 * 1024): Promise
 	}
 }
 
-function send(response: ServerResponse, status: number, payload?: unknown): void {
+function send(response: ServerResponse, status: number, payload?: unknown, traceId?: string): void {
 	response.writeHead(status, {
 		"content-type": "application/json; charset=utf-8",
 		"cache-control": "no-store",
+		...(traceId ? { "x-bear-trace-id": traceId } : {}),
 	});
 	response.end(payload === undefined ? undefined : JSON.stringify(payload));
 }
@@ -182,8 +216,9 @@ function sendError(
 	status: number,
 	kind: HttpErrorKind,
 	reason: string,
+	traceId?: string,
 ): void {
-	send(response, status, { ok: false, error: { kind, reason } });
+	send(response, status, { ok: false, error: { kind, reason } }, traceId);
 }
 
 const server = createServer(async (request, response) => {
@@ -192,6 +227,7 @@ const server = createServer(async (request, response) => {
 	const rpcSpan = isRpcRequest
 		? diagnostics.startSpan("rpc.request", { channel: rpcDiagnosticChannel(url.pathname) })
 		: null;
+	const rpcTraceId = rpcSpan?.context.traceId;
 	let rpcStatus: "ok" | "error" = "ok";
 	let rpcErrorCategory: string | undefined;
 	const finishRpc = (): void => {
@@ -252,15 +288,33 @@ const server = createServer(async (request, response) => {
 				rpcStatus = "error";
 				rpcErrorCategory = "rpc_error";
 			}
-			send(response, 200, result);
+			send(response, 200, result, rpcTraceId);
 		} catch (error) {
 			rpcStatus = "error";
 			if (error instanceof HttpError) {
 				rpcErrorCategory = error.kind;
-				sendError(response, error.status, error.kind, error.reason);
+				sendError(response, error.status, error.kind, error.reason, rpcTraceId);
 			} else {
 				rpcErrorCategory = "internal_error";
-				sendError(response, 500, "internal_error", "internal_dispatch_failure");
+				diagnostics.emitRemote(
+					"webdev.rpc_dispatch_failure",
+					{
+						channel: channel ?? rpcDiagnosticChannel(url.pathname),
+						phase: "dispatch",
+						errorType: diagnosticErrorType(error),
+					},
+					{
+						traceId: rpcTraceId ?? randomUUID().replaceAll("-", "").slice(0, 32),
+						parentSpanId: rpcSpan?.context.spanId,
+					},
+				);
+				if (debugEnabled)
+					console.error("[web-dev rpc failure]", {
+						traceId: rpcTraceId,
+						channel,
+						error,
+					});
+				sendError(response, 500, "internal_error", "internal_dispatch_failure", rpcTraceId);
 			}
 		}
 		finishRpc();
@@ -277,9 +331,7 @@ const server = createServer(async (request, response) => {
 			}
 			const attributes = rendererFaultAttributes(parsed.fault);
 			const remote =
-				typeof parsed.traceparent === "string"
-					? parseTraceparent(parsed.traceparent)
-					: null;
+				typeof parsed.traceparent === "string" ? parseTraceparent(parsed.traceparent) : null;
 			if (remote) {
 				diagnostics.emitRemote("renderer.fault", attributes, {
 					traceId: remote.traceId,

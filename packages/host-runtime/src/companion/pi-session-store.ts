@@ -25,7 +25,6 @@ export interface PiSessionStoreOptions {
 	readonly cwd?: string;
 }
 
-
 export interface PiSessionMetadata {
 	readonly sessionId: string;
 	readonly sessionFile: string;
@@ -84,7 +83,6 @@ export class PiSessionStore {
 	static open(options: PiSessionStoreOptions & { sessionFile: string }): PiSessionStore {
 		return new PiSessionStore(options);
 	}
-
 
 	/** The canonical public SessionManager used by the native Pi session runtime. */
 	get sessionManager(): SessionManager {
@@ -185,7 +183,6 @@ export class PiSessionStore {
 		else this.manager.resetLeaf();
 	}
 
-
 	/** Read Pi's active, compaction-aware entry projection with stable entry IDs. */
 	readMessageEntries(): PiSessionMessageEntry[] {
 		return this.manager
@@ -247,7 +244,6 @@ export class PiSessionStore {
 			...(this.leafId ? { activeLeafId: this.leafId } : {}),
 		};
 	}
-
 
 	/** Build the selected branch's native, compaction-aware entry path. */
 	buildContextEntries(): SessionEntry[] {
@@ -352,12 +348,24 @@ function projectPiTimelineEntry(entry: SessionEntry): PiTimelineEntry | undefine
 				})
 			: [];
 		const text = sessionMessageText(entry.message);
+		const stopReason = entry.message.stopReason;
 		return {
 			...base,
 			kind: "message",
 			role: "assistant",
 			...(text ? { text } : {}),
 			...(toolCalls.length > 0 ? { toolCalls } : {}),
+			...(stopReason === "stop" ||
+			stopReason === "length" ||
+			stopReason === "toolUse" ||
+			stopReason === "error" ||
+			stopReason === "aborted" ||
+			stopReason === "deferred"
+				? { stopReason }
+				: {}),
+			...(typeof entry.message.errorMessage === "string"
+				? { errorMessage: entry.message.errorMessage.slice(0, 4096) }
+				: {}),
 		};
 	}
 	if (

@@ -24,7 +24,12 @@ const vault: CredentialVault = {
 function runtimeForTest() {
 	const dataDir = mkdtempSync(join(tmpdir(), "bear-onboarding-"));
 	temporaryDirectories.push(dataDir);
-	return createHostRuntime({ dataDir, characterRoot, productConfig, credentialVault: vault });
+	return createHostRuntime({
+		dataDir,
+		characterSeedRoot: characterRoot,
+		productConfig,
+		credentialVault: vault,
+	});
 }
 
 async function data(
@@ -194,6 +199,27 @@ describe("role-defined onboarding", () => {
 			eventSeq: snapshot.eventSeq,
 		});
 		expect(snapshot.eventSeq).toBeGreaterThanOrEqual(transitioned.eventSeq);
+		await runtime.close();
+	});
+
+	it("keeps internal Pi session fields out of the strict boot snapshot", async () => {
+		const runtime = runtimeForTest();
+		await runtime.start();
+		for (const [stepId, answer] of [
+			["settings_intro", undefined],
+			["nickname", "林"],
+			["relationship", "collaborator"],
+			["memory", "remember"],
+		] as const) {
+			await data(runtime, "onboarding.submit:v1", { stepId, answer });
+		}
+
+		const snapshot = (await data(runtime, "snapshot.get:v1", {})) as {
+			conversation: Record<string, unknown>;
+		};
+		expect(snapshot.conversation).toMatchObject({ activeConversationId: expect.any(String) });
+		expect(snapshot.conversation).not.toHaveProperty("piSessionId");
+		expect(snapshot.conversation).not.toHaveProperty("piLiveState");
 		await runtime.close();
 	});
 

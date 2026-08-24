@@ -665,7 +665,6 @@ const CharacterRoleplayMedia = z.discriminatedUnion("kind", [
 	}),
 ]);
 
-
 export const CharacterPrompt = z.strictObject({
 	description: z.string().max(65_536),
 	personality: z.string().max(65_536),
@@ -1065,6 +1064,8 @@ const PiTimelineAssistantMessage = z.strictObject({
 	role: z.literal("assistant"),
 	text: z.string().max(65536).optional(),
 	toolCalls: z.array(PiTimelineToolCall).max(100).optional(),
+	stopReason: z.enum(["stop", "length", "toolUse", "error", "aborted", "deferred"]).optional(),
+	errorMessage: z.string().max(4096).optional(),
 });
 const PiTimelineToolResult = z.strictObject({
 	...PiTimelineBase,
@@ -1128,19 +1129,44 @@ export const ConversationActiveResponse = z.strictObject({
 export const MessageSendRequest = z.strictObject({
 	conversationId: ConversationId,
 	text: z.string().min(1).max(65536),
-	attachments: z.array(z.strictObject({
-		name: z.string().min(1).max(255),
-		mime: z.string().min(1).max(128),
-		base64: z.string().min(1).max(MAX_MESSAGE_ATTACHMENT_BASE64_LENGTH),
-	})).max(MAX_MESSAGE_ATTACHMENTS).optional(),
+	attachments: z
+		.array(
+			z.strictObject({
+				name: z.string().min(1).max(255),
+				mime: z.string().min(1).max(128),
+				base64: z.string().min(1).max(MAX_MESSAGE_ATTACHMENT_BASE64_LENGTH),
+			}),
+		)
+		.max(MAX_MESSAGE_ATTACHMENTS)
+		.optional(),
 });
-export const MessageSendResponse = z.strictObject({ accepted: z.literal(true), sessionId: PiSessionId });
-export const MessageRegenerateRequest = z.strictObject({ conversationId: ConversationId, entryId: PiSessionEntryId });
-export const MessageSwitchVersionRequest = z.strictObject({ conversationId: ConversationId, leafId: PiSessionEntryId });
-export const MessageEditRequest = z.strictObject({ conversationId: ConversationId, entryId: PiSessionEntryId, text: z.string().min(1).max(65536) });
+export const MessageSendResponse = z.strictObject({
+	accepted: z.literal(true),
+	sessionId: PiSessionId,
+});
+export const MessageRegenerateRequest = z.strictObject({
+	conversationId: ConversationId,
+	entryId: PiSessionEntryId,
+});
+export const MessageSwitchVersionRequest = z.strictObject({
+	conversationId: ConversationId,
+	leafId: PiSessionEntryId,
+});
+export const MessageEditRequest = z.strictObject({
+	conversationId: ConversationId,
+	entryId: PiSessionEntryId,
+	text: z.string().min(1).max(65536),
+});
 export const MessageContinueRequest = z.strictObject({ conversationId: ConversationId });
-export const MessageCorrectRequest = z.strictObject({ conversationId: ConversationId, reason: z.string().max(MAX_STRING_LENGTH), applyScope: z.union([z.literal("once"), z.literal("session"), z.literal("always")]) });
-export const MessageBranchRequest = z.strictObject({ conversationId: ConversationId, entryId: PiSessionEntryId });
+export const MessageCorrectRequest = z.strictObject({
+	conversationId: ConversationId,
+	reason: z.string().max(MAX_STRING_LENGTH),
+	applyScope: z.union([z.literal("once"), z.literal("session"), z.literal("always")]),
+});
+export const MessageBranchRequest = z.strictObject({
+	conversationId: ConversationId,
+	entryId: PiSessionEntryId,
+});
 export const MessageBranchResponse = z.strictObject({ leafId: PiSessionEntryId });
 export const MessageAbortRequest = z.strictObject({ conversationId: ConversationId });
 

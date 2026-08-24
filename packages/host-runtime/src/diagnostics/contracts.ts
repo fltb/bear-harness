@@ -192,6 +192,16 @@ export const DIAGNOSTIC_CATALOG: Readonly<Record<string, CatalogEntry>> = deepFr
 			errorCategory: { type: "string", enum: RPC_ERROR_CATEGORIES, optional: true },
 		},
 	},
+	"webdev.rpc_dispatch_failure": {
+		kind: "event",
+		level: "error",
+		origin: "main",
+		attributes: {
+			channel: str(),
+			phase: strEnum(["body", "dispatch", "response"] as const),
+			errorType: strEnum(RENDERER_ERROR_TYPES),
+		},
+	},
 	// ---- events ----
 	"app.started": {
 		kind: "event",

@@ -1,15 +1,10 @@
 import { i18n } from "@bear-harness/i18n";
 import { createEffect, createMemo, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
-import type {
-	CompanionStore,
-	ConfiguredModel,
-	ConversationSummary,
-} from "./companion.js";
+import type { CompanionStore, ConfiguredModel, ConversationSummary } from "./companion.js";
 export type ComposerAttachment =
 	| { kind: "text"; name: string; content: string }
 	| { kind: "image"; name: string; mime: string; base64: string };
-
 
 /** One-shot request consumed by the settings sheet's image-reader focus effect. */
 export const [requestImageReaderFocus, setRequestImageReaderFocus] = createSignal(false);
@@ -17,7 +12,6 @@ export const [requestImageReaderFocus, setRequestImageReaderFocus] = createSigna
 export function modelDisplayName(model: ConfiguredModel): string {
 	return `${model.label} (${model.providerName ?? model.providerId})`;
 }
-
 
 interface ConversationWorkflowState {
 	composerText: string;
@@ -67,18 +61,26 @@ function createConversationWorkflow(store: CompanionStore) {
 	const selectedModel = createMemo(() => {
 		const route = modelData()?.selected;
 		return route
-			? models().find((model) => model.providerId === route.providerId && model.modelId === route.modelId) ?? null
+			? (models().find(
+					(model) => model.providerId === route.providerId && model.modelId === route.modelId,
+				) ?? null)
 			: null;
 	});
 	const modelSelected = createMemo(() => selectedModel() !== null);
 	const multimodalFallback = createMemo(() => {
 		const route = modelData()?.multimodalFallback;
 		return route
-			? models().find((model) => model.providerId === route.providerId && model.modelId === route.modelId)
+			? models().find(
+					(model) => model.providerId === route.providerId && model.modelId === route.modelId,
+				)
 			: undefined;
 	});
-	const hasImages = createMemo(() => state.attachments.some((attachment) => attachment.kind === "image"));
-	const needsImageReader = createMemo(() => hasImages() && selectedModel()?.supportsImages === false);
+	const hasImages = createMemo(() =>
+		state.attachments.some((attachment) => attachment.kind === "image"),
+	);
+	const needsImageReader = createMemo(
+		() => hasImages() && selectedModel()?.supportsImages === false,
+	);
 	const imageReaderCapable = createMemo(
 		() => selectedModel()?.supportsImages === true || Boolean(multimodalFallback()),
 	);
@@ -87,7 +89,9 @@ function createConversationWorkflow(store: CompanionStore) {
 	);
 	const imageReaderLabel = createMemo(() => {
 		const fallback = multimodalFallback();
-		return fallback ? i18n.t("composer.imageReadBy").replace("{model}", modelDisplayName(fallback)) : "";
+		return fallback
+			? i18n.t("composer.imageReadBy").replace("{model}", modelDisplayName(fallback))
+			: "";
 	});
 	const streaming = createMemo(() => store.activePiLiveState?.isStreaming === true);
 	const visibleConversations = createMemo<ConversationSummary[]>(() => {
@@ -104,7 +108,9 @@ function createConversationWorkflow(store: CompanionStore) {
 	};
 
 	const removeImages = (): void => {
-		setState("attachments", (current) => current.filter((attachment) => attachment.kind !== "image"));
+		setState("attachments", (current) =>
+			current.filter((attachment) => attachment.kind !== "image"),
+		);
 	};
 	const chooseFiles = async (files: File[]): Promise<void> => {
 		const loaded: ComposerAttachment[] = [];
@@ -147,7 +153,8 @@ function createConversationWorkflow(store: CompanionStore) {
 			.filter((file) => file.kind === "image")
 			.map((file) => ({ name: file.name, mime: file.mime, base64: file.base64 }));
 		const message =
-			`${value}${materials}`.trim() || images.map((image) => `[${labels.imageLabel}：${image.name}]`).join("\n");
+			`${value}${materials}`.trim() ||
+			images.map((image) => `[${labels.imageLabel}：${image.name}]`).join("\n");
 		const hadImages = images.length > 0;
 		const before = store.errorMetadata;
 		setState("sendError", null);
@@ -184,13 +191,17 @@ function createConversationWorkflow(store: CompanionStore) {
 	const selectModel = async (model: ConfiguredModel | null): Promise<void> => {
 		const conversationId = store.activeConversationId;
 		const api = modelApi();
-		if (!conversationId || !model || state.modelBusy || !api?.select) return;
+		if (!conversationId || !model || state.modelBusy || !api?.select || !api.setDefaultReply)
+			return;
 		setState("modelError", null);
 		setState("sendError", null);
 		setState("modelBusy", true);
 		const before = store.errorMetadata;
 		try {
-			await api.select(conversationId, model.providerId, model.modelId);
+			await Promise.all([
+				api.select(conversationId, model.providerId, model.modelId),
+				api.setDefaultReply(model.providerId, model.modelId),
+			]);
 			const retained = store.errorMetadata;
 			if (retained !== null && retained !== before) setState("modelError", retained.message);
 		} catch (cause) {
@@ -269,7 +280,9 @@ export function useConversationViewWorkflow(store: CompanionStore) {
 	const workflow = useConversationWorkflow(store);
 	const sceneTitle = createMemo(
 		() =>
-			(store.conversations ?? []).find((conversation) => conversation.id === store.activeConversationId)?.sceneTitle ??
+			(store.conversations ?? []).find(
+				(conversation) => conversation.id === store.activeConversationId,
+			)?.sceneTitle ??
 			store.character?.character.scene_title ??
 			"",
 	);
@@ -279,18 +292,28 @@ export function useConversationViewWorkflow(store: CompanionStore) {
 			store.activePiLiveState?.streamingMessage !== undefined,
 	);
 	const roleplayChoiceSet = createMemo(() =>
-		store.character?.roleplay.choice_sets?.find((entry) => entry.id === store.activeRoleplayChoiceSetId),
+		store.character?.roleplay.choice_sets?.find(
+			(entry) => entry.id === store.activeRoleplayChoiceSetId,
+		),
 	);
 	const roleplayInlineMedia = createMemo(() => {
-		const item = store.character?.roleplay.media.find((entry) => entry.id === store.activeRoleplayMediaId);
+		const item = store.character?.roleplay.media.find(
+			(entry) => entry.id === store.activeRoleplayMediaId,
+		);
 		return item && item.presentation === "inline" ? item : undefined;
 	});
 	const roleplayOverlayMedia = createMemo(() => {
-		const item = store.character?.roleplay.media.find((entry) => entry.id === store.activeRoleplayMediaId);
-		return item && item.presentation !== "inline" && item.presentation !== "ambient" ? item : undefined;
+		const item = store.character?.roleplay.media.find(
+			(entry) => entry.id === store.activeRoleplayMediaId,
+		);
+		return item && item.presentation !== "inline" && item.presentation !== "ambient"
+			? item
+			: undefined;
 	});
 	const roleplayAmbientMedia = createMemo(() => {
-		const item = store.character?.roleplay.media.find((entry) => entry.id === store.activeAmbientMediaId);
+		const item = store.character?.roleplay.media.find(
+			(entry) => entry.id === store.activeAmbientMediaId,
+		);
 		return item && item.kind === "audio" && item.presentation === "ambient" ? item : undefined;
 	});
 	return {

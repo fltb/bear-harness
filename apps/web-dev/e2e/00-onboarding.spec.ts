@@ -47,9 +47,7 @@ test("browser requires a reply model before the role-defined onboarding", async 
 		expect.objectContaining({
 			id: provider.id,
 			name: provider.name,
-			availableModels: expect.arrayContaining([
-				expect.objectContaining({ id: provider.modelId }),
-			]),
+			availableModels: expect.arrayContaining([expect.objectContaining({ id: provider.modelId })]),
 		}),
 	);
 	await page.goto("/");
@@ -63,7 +61,12 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	});
 	expect(await defaultResponse.json()).toMatchObject({ ok: true });
 	await page.reload();
-	await expect(modelSetup).toBeHidden();
+	await expect(modelSetup).toBeVisible();
+	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.continue })).toBeEnabled();
+	await modelSetup.getByRole("button", { name: zhCN.modelSetup.continue }).click();
+	const embeddingSetup = page.getByRole("dialog", { name: zhCN.settings.memoryVectorSection });
+	await expect(embeddingSetup).toBeVisible();
+	await embeddingSetup.getByRole("button", { name: "继续" }).click();
 
 	const onboarding = page.getByRole("dialog", { name: "开始相处" });
 	await expect(onboarding).toBeVisible();

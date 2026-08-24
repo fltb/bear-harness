@@ -558,7 +558,11 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 	});
 	dispatcher.registerHandler(RPC.memory.list, async (_p): Promise<MemoryListResponse> => {
-		const { characterId, enabled = true, limit } = _p as { characterId?: string; enabled?: boolean; limit?: number };
+		const {
+			characterId,
+			enabled = true,
+			limit,
+		} = _p as { characterId?: string; enabled?: boolean; limit?: number };
 		if (!enabled) return { entries: [] };
 		const scope = memoryBackendScopeForCharacter(s, characterId);
 		await s.memoryBackend.open({ scope });
@@ -578,14 +582,22 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {};
 	});
 	dispatcher.registerHandler(RPC.memory.edit, async (_p) => {
-		const { characterId, entryId, newText } = _p as { characterId?: string; entryId: string; newText: string };
+		const { characterId, entryId, newText } = _p as {
+			characterId?: string;
+			entryId: string;
+			newText: string;
+		};
 		const scope = memoryBackendScopeForCharacter(s, characterId);
 		await s.memoryBackend.open({ scope });
 		await s.memoryBackend.update({ scope, memoryId: entryId, text: newText });
 		return {};
 	});
 	dispatcher.registerHandler(RPC.memory.exclude, async (_p) => {
-		const { characterId, memoryId, excluded } = _p as { characterId?: string; memoryId: string; excluded: boolean };
+		const { characterId, memoryId, excluded } = _p as {
+			characterId?: string;
+			memoryId: string;
+			excluded: boolean;
+		};
 		const { installationId, userId } = s.memoryScope;
 		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
 		if (excluded) {
@@ -656,7 +668,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {};
 	});
 	dispatcher.registerHandler(RPC.memory.candidatesList, async (_p) => {
-		const { characterId, status } = _p as { characterId?: string; status?: "pending" | "approved" | "rejected" | "expired" };
+		const { characterId, status } = _p as {
+			characterId?: string;
+			status?: "pending" | "approved" | "rejected" | "expired";
+		};
 		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
 		const rows = s.orm
 			.select({
@@ -823,7 +838,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		});
 		return {};
 	});
-
 
 	// --- canon hub (advanced authoring) ---------------------------------------------
 	dispatcher.registerHandler(RPC.canon.listSources, async () => ({
@@ -1221,10 +1235,19 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 	});
 	dispatcher.registerHandler(RPC.settings.set, async (_p) => {
-		const { characterId, settings } = _p as { characterId?: string; settings: Record<string, unknown> };
+		const { characterId, settings } = _p as {
+			characterId?: string;
+			settings: Record<string, unknown>;
+		};
 		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
-		if (characterId && ["networkProxy", "memoryVectorService", "modelDownloadMirror"].some((key) => key in settings))
-			throw { kind: "invalid_request", reason: "character_settings_may_only_change_relationship_options" };
+		if (
+			characterId &&
+			["networkProxy", "memoryVectorService", "modelDownloadMirror"].some((key) => key in settings)
+		)
+			throw {
+				kind: "invalid_request",
+				reason: "character_settings_may_only_change_relationship_options",
+			};
 		if ("relationshipMemoryEnabled" in settings) {
 			s.onboarding.setRelationshipMemory(companionId, Boolean(settings.relationshipMemoryEnabled));
 		}
@@ -1351,6 +1374,15 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		}
 		const eventSeq = s.eventBus.currentSeq;
 		const activeProjection = conversationRepository.active(companionId);
+		const activeConversationSnapshot = activeProjection
+			? {
+					activeConversationId: activeProjection.activeConversationId,
+					id: activeProjection.id,
+					title: activeProjection.title,
+					sceneTitle: activeProjection.sceneTitle,
+					piTimeline: activeProjection.piTimeline,
+				}
+			: undefined;
 		const defaults = s.models.defaults(companionId);
 		const providerNames = new Map(
 			(await s.providers.listProviders()).map((provider) => [provider.id, provider.name]),
@@ -1361,7 +1393,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			character: s.characterLoader.display(character),
 			conversation: {
 				conversations: convRows,
-				...(activeProjection ? { ...activeProjection } : {}),
+				...(activeConversationSnapshot ?? {}),
 			},
 			commission: {
 				commissions: s.commissions.list({ companionId }).map((commission) => ({
@@ -1555,7 +1587,10 @@ function extractPiCurrentUserMessage(content: string): string | undefined {
 	);
 }
 
-function memoryBackendScopeForCharacter(s: HostCompositionContext, characterId?: string): MemoryBankScope {
+function memoryBackendScopeForCharacter(
+	s: HostCompositionContext,
+	characterId?: string,
+): MemoryBankScope {
 	const resolvedId = characterId ?? getActiveCompanionId(s);
 	const character = s.characterLoader.load(resolvedId);
 	if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
@@ -1624,8 +1659,7 @@ async function requireOwnedUserEntry(
 ): Promise<PiSessionMessageEntry> {
 	await requireOwnedConversation(s, conversationId);
 	const session = s.conversationRepository.getSession(conversationId);
-	if (!session)
-		throw { kind: "unavailable", reason: "conversation_pi_session_missing" };
+	if (!session) throw { kind: "unavailable", reason: "conversation_pi_session_missing" };
 	const piEntry = session.getMessageEntry(entryId);
 	if (!piEntry || piEntry.message.role !== "user")
 		throw { kind: "not_found", reason: "message_entry_not_found" };

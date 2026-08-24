@@ -195,7 +195,9 @@ describe("Pi-projection chat", () => {
 		// responding status before the Pi preflight accepts the send.
 		const thread = screen.getByRole("region", { name: zhCN.messages.conversation });
 		expect(within(thread).queryAllByRole("article")).toHaveLength(0);
-		expect(screen.queryByRole("status", { name: zhCN.messages.responding })).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("status", { name: zhCN.messages.responding }),
+		).not.toBeInTheDocument();
 		expect(composer).toHaveValue("你是谁？");
 		sendGate.resolve({ ok: true, data: { accepted: true, sessionId: SESSION_ID } });
 	});
@@ -241,10 +243,46 @@ describe("Pi-projection chat", () => {
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const thread = await screen.findByRole("region", { name: zhCN.messages.conversation });
-		const failure = await within(thread).findByRole("article", { name: "model unavailable failed" });
+		const failure = await within(thread).findByRole("article", {
+			name: "model unavailable failed",
+		});
 		expect(failure).toHaveTextContent("model unavailable");
 		expect(failure).toHaveTextContent("failed");
 	});
+	it("renders a persisted assistant provider failure after streaming settles", async () => {
+		const { client } = activeClient();
+		const initialSnapshot = client.snapshot.get;
+		client.snapshot.get = vi.fn(async () => {
+			const result = await initialSnapshot();
+			if (!result.ok) return result;
+			return {
+				...result,
+				data: {
+					...result.data,
+					conversation: {
+						...result.data.conversation,
+						piTimeline: {
+							entries: [
+								{
+									id: "provider-failure",
+									parentId: null,
+									timestamp: "2026-01-01T00:00:00.000Z",
+									kind: "message",
+									role: "assistant",
+									stopReason: "error",
+									errorMessage: "Model is unavailable",
+								},
+							],
+						},
+					},
+				},
+			};
+		});
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const thread = await screen.findByRole("region", { name: zhCN.messages.conversation });
+		expect(await within(thread).findByRole("alert")).toHaveTextContent("Model is unavailable");
+	});
+
 	it("does not render completed or aborted empty assistant turns as failures", async () => {
 		const { client } = activeClient();
 		const initialSnapshot = client.snapshot.get;

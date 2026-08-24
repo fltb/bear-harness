@@ -57,7 +57,6 @@ interface Harness {
 	faux: FauxProviderHandle;
 }
 
-
 const roots: string[] = [];
 const databases: Database[] = [];
 const pipelines: TurnPipeline[] = [];
@@ -112,7 +111,12 @@ async function setupHarness(options: { tokensPerSecond?: number } = {}): Promise
 	});
 	const store = repository.getSession(CONVERSATION_ID);
 	const providers: CompanionModelRuntimeSource = { getModels: async () => models };
-	const runtime = new CompanionSupervisor(root, eventBus, providers, repository.getSessionResolver());
+	const runtime = new CompanionSupervisor(
+		root,
+		eventBus,
+		providers,
+		repository.getSessionResolver(),
+	);
 	runtimes.push(runtime);
 	repository.setLiveSessionResolver(runtime.getLiveSessionResolver());
 	await runtime.start();
@@ -283,6 +287,7 @@ describe("Pi conversation authority", () => {
 		expect(messages.map((entry) => entry.role)).toEqual(["user", "assistant"]);
 		expect(messages[1]?.text).toBeUndefined();
 		expect(messages[1]?.toolCalls).toBeUndefined();
+		expect(messages[1]).toMatchObject({ stopReason: "error", errorMessage: "PROVIDER_BROKE" });
 
 		const live = PiLiveState.parse(
 			h.runtime.getLiveSessionResolver().get(CONVERSATION_ID)?.readPiLiveState(),
@@ -389,9 +394,9 @@ describe("Pi conversation authority", () => {
 
 		// The persisted event stream contains no transcript-bearing event kinds.
 		const kinds = (
-			h.database.connection
-				.prepare("SELECT kind FROM events ORDER BY seq")
-				.all() as Array<{ kind: string }>
+			h.database.connection.prepare("SELECT kind FROM events ORDER BY seq").all() as Array<{
+				kind: string;
+			}>
 		).map((row) => row.kind);
 		expect(kinds).not.toContain("message.user_sent");
 		expect(kinds).not.toContain("message_start");

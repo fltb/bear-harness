@@ -12,10 +12,7 @@ import { WorkTimelineItem } from "./WorkPanel.js";
 
 /** ConversationPanel renders the active Pi timeline plus transient stream state. */
 
-
-function PiTimelineEntryView(props: {
-	entry: PiTimelineEntry;
-}) {
+function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 	const store = useCompanionStore();
 	const entry = props.entry;
 	if (entry.kind !== "message") {
@@ -38,11 +35,13 @@ function PiTimelineEntryView(props: {
 	}
 	const isUser = entry.role === "user";
 	const characterName = store.character?.name ?? "";
-	const toolCalls = entry.role === "assistant" ? entry.toolCalls : undefined;
+	const assistant = entry.role === "assistant" ? entry : undefined;
+	const toolCalls = assistant?.toolCalls;
+	const failed = assistant?.stopReason === "error" || assistant?.stopReason === "aborted";
 	return (
 		<>
 			<article
-				class={`msg pi-timeline-message ${isUser ? "user" : "bear-msg"}`}
+				class={`msg pi-timeline-message ${isUser ? "user" : "bear-msg"}${failed ? " stream-failed" : ""}`}
 				data-pi-entry-id={entry.id}
 				aria-label={isUser ? "user" : characterName}
 			>
@@ -62,22 +61,24 @@ function PiTimelineEntryView(props: {
 						</For>
 					</ul>
 				</Show>
+				<Show
+					when={
+						failed && assistant?.errorMessage !== undefined && assistant.errorMessage.length > 0
+					}
+				>
+					<span class="stream-error" role="alert">
+						{assistant?.errorMessage}
+					</span>
+				</Show>
 			</article>
 			<WorkTimelineItem messageId={entry.id} />
 		</>
 	);
 }
 
-function PiTimelineRenderer(props: {
-	entries: readonly PiTimelineEntry[];
-}) {
-	return (
-		<For each={props.entries}>
-			{(entry) => <PiTimelineEntryView entry={entry} />}
-		</For>
-	);
+function PiTimelineRenderer(props: { entries: readonly PiTimelineEntry[] }) {
+	return <For each={props.entries}>{(entry) => <PiTimelineEntryView entry={entry} />}</For>;
 }
-
 
 /**
  * Partial assistant content from the Pi live state. Rendered until the
@@ -108,11 +109,7 @@ function PiLiveAssistantMessageView() {
 							<p>{message.text}</p>
 						</Show>
 						<Show when={store.activePiLiveState?.isStreaming === true}>
-							<span
-								class="streaming-status"
-								role="status"
-								aria-label={t("messages.responding")}
-							/>
+							<span class="streaming-status" role="status" aria-label={t("messages.responding")} />
 						</Show>
 						<Show when={failed && errorText !== undefined && errorText.length > 0}>
 							<span class="stream-error" role="alert">
@@ -125,7 +122,6 @@ function PiLiveAssistantMessageView() {
 		</Show>
 	);
 }
-
 
 export function ConversationPanel() {
 	const [t] = useTranslation(undefined, { i18n });
@@ -180,11 +176,7 @@ export function ConversationPanel() {
 
 				<Show when={hasThreadContent()}>
 					<Show when={store.activePiTimeline}>
-						{(timeline) => (
-							<PiTimelineRenderer
-								entries={timeline().entries}
-							/>
-						)}
+						{(timeline) => <PiTimelineRenderer entries={timeline().entries} />}
 					</Show>
 					<PiLiveAssistantMessageView />
 				</Show>

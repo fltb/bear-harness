@@ -16,8 +16,9 @@ export class WebDevHttpError extends Error {
 	constructor(
 		readonly operation: WebDevHttpErrorOperation,
 		readonly status: number,
+		readonly traceId?: string,
 	) {
-		super(`web-dev ${operation} failed: ${status}`);
+		super(`web-dev ${operation} failed: ${status}${traceId ? ` (trace ${traceId})` : ""}`);
 		this.name = "WebDevHttpError";
 	}
 }
@@ -77,7 +78,11 @@ export function createHttpTransport(token: string): HostTransport {
 				// the transport. Domain/RPC failures resolve as HTTP 200 with
 				// the original `{ ok: false, error }` envelope, so they must not
 				// be converted into a transport rejection here.
-				throw new WebDevHttpError("transport", response.status);
+				throw new WebDevHttpError(
+					"transport",
+					response.status,
+					response.headers.get("x-bear-trace-id") ?? undefined,
+				);
 			}
 			// Keep protocol-envelope validation at companion-client's boundary.
 			// Network and JSON parsing rejections intentionally pass through.

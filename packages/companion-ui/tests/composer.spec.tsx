@@ -41,9 +41,7 @@ const VISION_MODEL = {
 	createdAt: "2026-01-02",
 };
 
-function configureActiveConversation(
-	client: CompanionClient,
-): void {
+function configureActiveConversation(client: CompanionClient): void {
 	client.conversation.activeGet = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
@@ -242,6 +240,9 @@ describe("composer", () => {
 				selected: { providerId: "relay", modelId: "deep" },
 			}),
 		);
+		expect(client.model.defaultsSetReply).toHaveBeenCalledWith({
+			reply: { providerId: "relay", modelId: "deep" },
+		});
 	});
 
 	it("keeps the selected text model and identifies the configured image reader", async () => {
