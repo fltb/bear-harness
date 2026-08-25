@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { ArtifactStore } from "../artifacts/index.js";
 import type { AppDatabase } from "../storage/database.js";
@@ -56,6 +57,7 @@ const MAX_CHUNK_CHARS = 1600;
 
 export interface CanonEmbeddingService {
 	isReady(): boolean;
+	getDimensions(): number;
 	embed(text: string): Promise<Float32Array>;
 }
 
@@ -65,6 +67,7 @@ export class CanonHubService {
 		private readonly artifacts: ArtifactStore,
 		private readonly eventBus: EventBus,
 		private readonly embeddingService?: () => CanonEmbeddingService | undefined,
+		private readonly connection?: DatabaseSync,
 	) {}
 
 	addSource(companionId: string, logicalName: string, content: string): CanonSourceRecord {
@@ -210,6 +213,16 @@ export class CanonHubService {
 		}
 		const aliases = this.matchAliases(companionId, query);
 		const routedChunkIds = this.routedChunkIds(companionId, query, aliases, options.moduleId);
+		if (!this.ensureVectorIndex(queryEmbedding.length)) {
+			return this.finalizeHybrid(lexical, limit, options.includeAdjacent);
+		}
+		const vectorRows = this.connection!.prepare(
+			`SELECT chunk_id, distance FROM canon_chunk_vectors
+				 WHERE embedding MATCH ? AND k = ? ORDER BY distance`,
+		).all(Buffer.from(queryEmbedding.buffer), Math.max(limit * 6, 48)) as Array<{
+			chunk_id: string;
+			distance: number;
+		}>;
 		const candidates = this.db
 			.select({
 				id: canonChunks.id,
@@ -220,22 +233,26 @@ export class CanonHubService {
 				heading: canonChunks.heading,
 				startOffset: canonChunks.startOffset,
 				endOffset: canonChunks.endOffset,
-				embedding: canonChunks.embedding,
 				language: canonSources.language,
 				origin: canonSources.origin,
 			})
 			.from(canonChunks)
 			.innerJoin(canonSources, eq(canonSources.id, canonChunks.sourceId))
+			.where(eq(canonSources.companionId, companionId))
 			.all();
-		const vector = candidates
-			.filter((row) => row.embedding && (routedChunkIds.size === 0 || routedChunkIds.has(row.id)))
-			.map((row) => ({
-				row: toChunkRecord(row),
-				score: cosineSimilarity(queryEmbedding, decodeEmbedding(row.embedding!)),
+		const candidateById = new Map(candidates.map((row) => [row.id, toChunkRecord(row)]));
+		const vector = vectorRows
+			.map(({ chunk_id, distance }) => ({
+				row: candidateById.get(chunk_id),
+				score: 1 - distance,
 			}))
-			.filter((candidate) => Number.isFinite(candidate.score) && candidate.score > 0)
-			.sort((left, right) => right.score - left.score)
-			.slice(0, Math.max(limit * 3, 12));
+			.filter(
+				(candidate): candidate is { row: CanonChunkRecord; score: number } =>
+					candidate.row !== undefined &&
+					Number.isFinite(candidate.score) &&
+					candidate.score > 0 &&
+					(routedChunkIds.size === 0 || routedChunkIds.has(candidate.row.id)),
+			);
 		const fused = new Map<string, { row: CanonChunkRecord; score: number }>();
 		for (const [rank, row] of lexical.entries())
 			fused.set(row.id, { row, score: 1 / (60 + rank + 1) });
@@ -576,26 +593,73 @@ export class CanonHubService {
 	async indexPending(companionId: string): Promise<void> {
 		const service = this.embeddingService?.();
 		if (!service?.isReady()) return;
+		if (!this.ensureVectorIndex(service.getDimensions())) return;
 		const rows = this.db
-			.select({ id: canonChunks.id, content: canonChunks.content })
+			.select({
+				id: canonChunks.id,
+				content: canonChunks.content,
+				embedding: canonChunks.embedding,
+			})
 			.from(canonChunks)
 			.innerJoin(canonSources, eq(canonSources.id, canonChunks.sourceId))
-			.where(and(eq(canonSources.companionId, companionId), sql`${canonChunks.embedding} IS NULL`))
+			.where(eq(canonSources.companionId, companionId))
 			.all();
 		for (const row of rows) {
 			try {
-				const embedding = await service.embed(row.content);
+				const embedding = row.embedding
+					? decodeEmbedding(row.embedding)
+					: await service.embed(row.content);
 				if (embedding.length === 0) continue;
-				this.db
-					.update(canonChunks)
-					.set({ embedding: encodeEmbedding(embedding) })
-					.where(eq(canonChunks.id, row.id))
-					.run();
+				if (!this.ensureVectorIndex(embedding.length)) return;
+				this.connection!.prepare("DELETE FROM canon_chunk_vectors WHERE chunk_id = ?").run(row.id);
+				this.connection!.prepare(
+					"INSERT INTO canon_chunk_vectors (chunk_id, embedding) VALUES (?, ?)",
+				).run(row.id, Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength));
+				if (!row.embedding) {
+					this.db
+						.update(canonChunks)
+						.set({ embedding: encodeEmbedding(embedding) })
+						.where(eq(canonChunks.id, row.id))
+						.run();
+				}
 			} catch {
 				// Providers are optional; retry the remaining unindexed chunks on the
 				// next source sync or retrieval rather than failing authoring flows.
 				return;
 			}
+		}
+	}
+
+	private ensureVectorIndex(dimensions: number): boolean {
+		if (!this.connection || dimensions <= 0) return false;
+		try {
+			this.connection.exec(
+				"CREATE TABLE IF NOT EXISTS canon_vector_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+			);
+			const row = this.connection
+				.prepare("SELECT value FROM canon_vector_meta WHERE key = 'dimensions'")
+				.get() as { value: string } | undefined;
+			if (row && Number(row.value) !== dimensions) {
+				this.connection.exec("DROP TABLE IF EXISTS canon_chunk_vectors");
+				this.connection
+					.prepare("UPDATE canon_vector_meta SET value = ? WHERE key = 'dimensions'")
+					.run(String(dimensions));
+				this.db.update(canonChunks).set({ embedding: null }).run();
+			}
+			this.connection.exec(
+				`CREATE VIRTUAL TABLE IF NOT EXISTS canon_chunk_vectors USING vec0(
+					chunk_id TEXT PRIMARY KEY,
+					embedding float[${dimensions}] distance_metric=cosine
+				)`,
+			);
+			this.connection
+				.prepare(
+					"INSERT INTO canon_vector_meta (key, value) VALUES ('dimensions', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+				)
+				.run(String(dimensions));
+			return true;
+		} catch {
+			return false;
 		}
 	}
 
@@ -783,8 +847,7 @@ function encodeEmbedding(vector: Float32Array): Buffer {
 	return Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
 }
 
-function decodeEmbedding(blob: unknown): Float32Array {
-	if (!(blob instanceof Uint8Array)) return new Float32Array();
+function decodeEmbedding(blob: Uint8Array): Float32Array {
 	if (blob.byteLength === 0 || blob.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0)
 		return new Float32Array();
 	return new Float32Array(
@@ -792,19 +855,4 @@ function decodeEmbedding(blob: unknown): Float32Array {
 		blob.byteOffset,
 		blob.byteLength / Float32Array.BYTES_PER_ELEMENT,
 	);
-}
-
-function cosineSimilarity(left: Float32Array, right: Float32Array): number {
-	if (left.length === 0 || left.length !== right.length) return Number.NaN;
-	let dot = 0;
-	let leftNorm = 0;
-	let rightNorm = 0;
-	for (let index = 0; index < left.length; index++) {
-		const leftValue = left[index]!;
-		const rightValue = right[index]!;
-		dot += leftValue * rightValue;
-		leftNorm += leftValue * leftValue;
-		rightNorm += rightValue * rightValue;
-	}
-	return leftNorm && rightNorm ? dot / Math.sqrt(leftNorm * rightNorm) : Number.NaN;
 }

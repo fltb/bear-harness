@@ -15,6 +15,7 @@ import { copyFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { drizzle } from "drizzle-orm/node-sqlite";
+import * as sqliteVec from "sqlite-vec";
 
 function createAppDatabase(client: DatabaseSync) {
 	return drizzle({ client });
@@ -76,8 +77,16 @@ export class Database {
 		mkdirSync(databaseDir, { recursive: true });
 		mkdirSync(this.backupDir, { recursive: true });
 
-		this.connection = new DatabaseSync(this.dbPath);
+		this.connection = new DatabaseSync(this.dbPath, { allowExtension: true });
 		this.orm = createAppDatabase(this.connection);
+		try {
+			this.connection.enableLoadExtension(true);
+			sqliteVec.load(this.connection);
+			this.connection.enableLoadExtension(false);
+		} catch {
+			// Canon's lexical index remains available when the optional native
+			// extension cannot load on a platform.
+		}
 
 		// Pragmas
 		this.connection.exec("PRAGMA journal_mode = WAL");
@@ -1091,6 +1100,16 @@ export const MIGRATIONS: Migration[] = [
 			UPDATE app_settings
 			SET network_proxy = '{"mode":"auto"}'
 			WHERE network_proxy = '{"mode":"direct"}';
+		`,
+	},
+	{
+		id: 25,
+		description: "Persist Canon sqlite-vec index metadata",
+		up: `
+			CREATE TABLE canon_vector_meta (
+				key TEXT PRIMARY KEY,
+				value TEXT NOT NULL
+			);
 		`,
 	},
 ];

@@ -40,9 +40,10 @@
 		"node-llama-cpp": "3.16.2",
 		"pdf-lib": "1.17.1",
 		"pdfjs-dist": "6.2.108",
+		"sqlite-vec": "^0.1.7-alpha.2",
+		"undici": "^7.0.0",
 		"xlsx": "file:../../apps/desktop/vendor/xlsx-0.20.3.tgz",
-		"yaml": "2.9.0",
-		"undici": "^7.0.0"
+		"yaml": "2.9.0"
 	},
 	"devDependencies": {
 		"@types/node": "24.13.3",

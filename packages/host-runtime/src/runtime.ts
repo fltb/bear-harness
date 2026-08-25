@@ -209,8 +209,12 @@ export class HostRuntime {
 			userId: memoryScope.userId,
 			memoryConfig,
 		});
-		const canon = new CanonHubService(db.orm, artifactStore, eventBus, () =>
-			memoryRuntime.getEmbeddingService(),
+		const canon = new CanonHubService(
+			db.orm,
+			artifactStore,
+			eventBus,
+			() => memoryRuntime.getEmbeddingService(),
+			db.connection,
 		);
 		const turns = new TurnPipeline(db.orm, supervisor, eventBus);
 		const contextPack = new ContextPackCompiler(db.orm, characterLoader, canon, {

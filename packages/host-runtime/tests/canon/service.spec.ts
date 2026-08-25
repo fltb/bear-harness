@@ -71,11 +71,13 @@ describe("CanonHubService user workflow", () => {
 			eventBus,
 			() => ({
 				isReady: () => true,
+				getDimensions: () => 2,
 				embed: async (text: string) =>
 					new Float32Array(
 						/lunar|moon/i.test(text) ? [1, 0] : /harbor|sea/i.test(text) ? [0, 1] : [0, 0],
 					),
 			}),
+			database.connection,
 		);
 		vectorService.addSource(
 			"character-a",
@@ -88,11 +90,39 @@ describe("CanonHubService user workflow", () => {
 				"SELECT length(embedding) AS embeddingLength FROM canon_chunks",
 			),
 		).toEqual([{ embeddingLength: 8 }]);
+		expect(
+			database.connection.prepare("SELECT chunk_id FROM canon_chunk_vectors").all() as Array<{
+				chunk_id: string;
+			}>,
+		).toHaveLength(1);
+		expect(
+			database.connection
+				.prepare("SELECT value FROM canon_vector_meta WHERE key = 'dimensions'")
+				.get() as { value: string },
+		).toEqual({ value: "2" });
 
 		expect(vectorService.search("character-a", "lunar")).toEqual([]);
 		await expect(vectorService.searchHybrid("character-a", "lunar")).resolves.toEqual([
 			expect.objectContaining({ content: expect.stringContaining("moon rises") }),
 		]);
+
+		const reconfiguredService = new CanonHubService(
+			database.orm,
+			new ArtifactStore(database.orm, join(root, "reconfigured-cas")),
+			eventBus,
+			() => ({
+				isReady: () => true,
+				getDimensions: () => 3,
+				embed: async () => new Float32Array([1, 0, 0]),
+			}),
+			database.connection,
+		);
+		await reconfiguredService.indexPending("character-a");
+		expect(
+			database.connection
+				.prepare("SELECT value FROM canon_vector_meta WHERE key = 'dimensions'")
+				.get() as { value: string },
+		).toEqual({ value: "3" });
 	});
 
 	it("manages a sourced hierarchy and rejects invalid references and cycles", () => {
