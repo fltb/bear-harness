@@ -11,7 +11,7 @@ import type { Dispatcher } from "@bear-harness/host-runtime";
 import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
 import { BrowserWindow, ipcMain } from "electron";
 import { isRegisteredMainFrame, type WindowRegistration } from "./diagnostics/electron.js";
-import { type DesktopResourceHost, pickResources } from "./resource-dialog.js";
+import { type DesktopResourceHost, pickResources, relocateResource } from "./resource-dialog.js";
 export const PROTOCOL_AVAILABILITY_CHANNEL = "desktop:artifactProtocol:v1";
 export const RESOURCE_DROPPED_CHANNEL = "desktop:resourceDropped:v1";
 
@@ -95,6 +95,34 @@ export function wireElectronIpcHandlers(
 						return { ok: false, error: { kind: "internal", reason: "resource_pick_failed" } };
 					}
 				}
+				if (options?.resourceHost && channel === "resource.relocate:v1") {
+					const parsed = REQUEST_SCHEMAS[channel]?.safeParse(params);
+					if (!parsed?.success)
+						return {
+							ok: false,
+							error: { kind: "invalid_request", reason: "request_validation_failed" },
+						};
+					const owner = BrowserWindow.fromWebContents(event.sender as Electron.WebContents);
+					if (!owner) return { ok: false, error: { kind: "unavailable", reason: "no_window" } };
+					try {
+						return {
+							ok: true,
+							data: await relocateResource(
+								owner,
+								options.resourceHost,
+								(parsed.data as { resourceId: string }).resourceId,
+							),
+						};
+					} catch (error) {
+						return {
+							ok: false,
+							error: {
+								kind: "internal",
+								reason: error instanceof Error ? error.message : "resource_relocate_failed",
+							},
+						};
+					}
+				}
 				return dispatcher.dispatch(channel, params);
 			}),
 		);
@@ -131,7 +159,7 @@ export function wireElectronIpcHandlers(
 					return {
 						ok: true,
 						data: {
-								resources: resourceHost.grantResourcePaths(input.paths, {
+							resources: resourceHost.grantResourcePaths(input.paths, {
 								conversationId: input.conversationId,
 								access: "read-write",
 							}),

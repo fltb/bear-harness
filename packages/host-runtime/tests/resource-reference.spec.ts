@@ -1,13 +1,13 @@
 // @vitest-environment node
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CredentialVault } from "../src/providers/credential-store.js";
-import { ResourceReferenceService } from "../src/resources/reference-service.js";
 import { ResourceContentService } from "../src/resources/content-service.js";
 import { ResourceMutationService } from "../src/resources/mutation-service.js";
+import { ResourceReferenceService } from "../src/resources/reference-service.js";
 import { Database, MIGRATIONS } from "../src/storage/database.js";
 
 const roots: string[] = [];
@@ -38,13 +38,33 @@ describe("ResourceReferenceService", () => {
 		const { root, database, service } = setup();
 		const path = join(root, "report.txt");
 		writeFileSync(path, "first");
-		const view = service.grant(path);
+		const view = service.grant(path, { securityBookmark: "private-bookmark" });
 		expect(view).toMatchObject({ kind: "file", displayName: "report.txt", state: "available" });
 		expect(view).not.toHaveProperty("locator");
 		const stored = database.connection
 			.prepare("SELECT encrypted_locator_json FROM resource_refs WHERE id = ?")
 			.get(view.id) as { encrypted_locator_json: Uint8Array };
 		expect(Buffer.from(stored.encrypted_locator_json).toString("utf8")).not.toContain(path);
+		expect(Buffer.from(stored.encrypted_locator_json).toString("utf8")).not.toContain(
+			"private-bookmark",
+		);
+		database.close();
+	});
+
+	it("relocates the same resource and preserves its prior revision", () => {
+		const { root, database, service } = setup();
+		const original = join(root, "original.txt");
+		const relocated = join(root, "relocated.txt");
+		writeFileSync(original, "stable identity");
+		const view = service.grant(original);
+		renameSync(original, relocated);
+		expect(service.relocate(view.id, relocated)).toMatchObject({ id: view.id, state: "available" });
+		expect(service.resolve(view.id).locator.canonicalPath).toBe(relocated);
+		expect(
+			database.connection
+				.prepare("SELECT count(*) AS count FROM resource_revisions WHERE resource_id = ?")
+				.get(view.id),
+		).toEqual({ count: 1 });
 		database.close();
 	});
 
@@ -77,6 +97,9 @@ describe("ResourceReferenceService", () => {
 		expect(content.listDirectory(directory.id).entries.map((entry) => entry.name)).toEqual([
 			"README.md",
 		]);
+		const search = content.search(directory.id, "hello resource");
+		expect(search.hits.map((entry) => entry.name)).toEqual(["README.md"]);
+		expect(search.revision).toMatchObject({ resourceId: directory.id, entryCount: 1 });
 		expect(database.connection.prepare("SELECT reader FROM resource_reads").get()).toEqual({
 			reader: "companion",
 		});

@@ -175,6 +175,13 @@ export const ResourceSearchRequest = z.strictObject({
 export const ResourceSearchResponse = z.strictObject({
 	hits: z.array(ResourceDirectoryEntry).max(20),
 	truncated: z.boolean(),
+	revision: z.strictObject({
+		resourceId: z.string().min(1).max(64),
+		generatedAt: z.string().datetime(),
+		rootRevision: z.string().regex(/^[a-f0-9]{64}$/),
+		entryCount: z.number().int().safe().min(0),
+		truncated: z.boolean(),
+	}),
 });
 
 // ---------------------------------------------------------------------------

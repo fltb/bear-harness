@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync, readdirSync, statSync, type Stats } from "node:fs";
+import { readdirSync, readFileSync, type Stats, statSync } from "node:fs";
 import { extname, relative, resolve, sep } from "node:path";
 import { codecRegistry } from "../materials/codec.js";
 import { sniffKind } from "../materials/ingest.js";
@@ -31,8 +31,20 @@ export interface DirectoryEntry {
 	bytes?: number;
 	mtimeMs: number;
 }
+export interface DirectoryIndexRevision {
+	resourceId: string;
+	generatedAt: string;
+	rootRevision: string;
+	entryCount: number;
+	truncated: boolean;
+}
+type IndexedEntry = DirectoryEntry & { searchableText: string };
 
 export class ResourceContentService {
+	private readonly directoryIndexes = new Map<
+		string,
+		{ revision: DirectoryIndexRevision; entries: IndexedEntry[] }
+	>();
 	constructor(
 		private readonly db: AppDatabase,
 		private readonly references: ResourceReferenceService,
@@ -131,14 +143,61 @@ export class ResourceContentService {
 	}
 
 	search(resourceId: string, query: string, limit = 20) {
-		const listing = this.listDirectory(resourceId, ".", 5, 1000);
+		// Refresh before every use so a cached index can never override current
+		// filesystem identity and metadata checks.
+		const indexed = this.buildDirectoryIndex(resourceId);
 		const needle = query.toLocaleLowerCase();
 		return {
-			hits: listing.entries
-				.filter((entry) => entry.name.toLocaleLowerCase().includes(needle))
-				.slice(0, limit),
+			hits: indexed.entries
+				.filter((entry) => entry.searchableText.includes(needle))
+				.slice(0, limit)
+				.map(({ searchableText: _, ...entry }) => entry),
+			truncated: indexed.revision.truncated,
+			revision: indexed.revision,
+		};
+	}
+
+	buildDirectoryIndex(resourceId: string): {
+		revision: DirectoryIndexRevision;
+		entries: IndexedEntry[];
+	} {
+		const resource = this.references.resolve(resourceId);
+		if (resource.kind !== "directory")
+			throw Object.assign(new Error("resource_is_not_directory"), { kind: "invalid_request" });
+		const listing = this.listDirectory(resourceId, ".", 5, 5000);
+		const entries = listing.entries.map((entry) => {
+			let content = "";
+			if (
+				entry.kind === "file" &&
+				(entry.bytes ?? 0) <= 256 * 1024 &&
+				/\.(?:txt|md|json|csv|ts|tsx|js|jsx|css|html|ya?ml)$/i.test(entry.name)
+			) {
+				const path = resolve(resource.locator.canonicalPath, entry.relativePath);
+				try {
+					content = readFileSync(path, "utf8").slice(0, 100_000);
+				} catch {
+					content = "";
+				}
+			}
+			return { ...entry, searchableText: `${entry.relativePath}\n${content}`.toLocaleLowerCase() };
+		});
+		const rootRevision = createHash("sha256")
+			.update(
+				entries
+					.map((entry) => `${entry.relativePath}:${entry.mtimeMs}:${entry.bytes ?? 0}`)
+					.join("\n"),
+			)
+			.digest("hex");
+		const revision: DirectoryIndexRevision = {
+			resourceId,
+			generatedAt: new Date().toISOString(),
+			rootRevision,
+			entryCount: entries.length,
 			truncated: listing.truncated,
 		};
+		const index = { revision, entries };
+		this.directoryIndexes.set(resourceId, index);
+		return index;
 	}
 
 	private record(

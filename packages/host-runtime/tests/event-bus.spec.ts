@@ -91,6 +91,16 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 		artifactId: "artifact-1",
 		runId: "run-1",
 	},
+	"run.resource_changed": {
+		runId: "run-1",
+		resourceId: "resource-1",
+		operation: "modified",
+	},
+	"run.output_decided": {
+		outputId: "output-1",
+		runId: "run-1",
+		decision: "accepted",
+	},
 	"companion.tool_started": {
 		conversationId: "conversation-1",
 		toolCallId: "tool-call-1",

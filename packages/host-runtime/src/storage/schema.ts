@@ -138,6 +138,16 @@ export const resourceReads = sqliteTable("resource_reads", {
 	readAt: text("read_at").notNull(),
 });
 
+export const resourceRevisions = sqliteTable("resource_revisions", {
+	id: text().primaryKey(),
+	resourceId: text("resource_id")
+		.notNull()
+		.references(() => resourceRefs.id),
+	identityJson: text("identity_json").notNull(),
+	baselineJson: text("baseline_json").notNull(),
+	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+});
+
 export const sceneState = sqliteTable("scene_state", {
 	id: text().primaryKey(),
 	conversationId: text("conversation_id")

@@ -525,12 +525,25 @@ export class HostRuntime {
 	/** Main-process-only bridge. Paths enter here and never cross the wire contract. */
 	grantResourcePaths(
 		paths: readonly string[],
-		options: { conversationId: string; access: "read" | "read-write" },
+		options: {
+			conversationId: string;
+			access: "read" | "read-write";
+			securityBookmarks?: readonly string[];
+		},
 	) {
-		const views = this.composition.resources.grantPaths(paths, { access: options.access });
+		const views = paths.map((path, index) =>
+			this.composition.resources.grant(path, {
+				access: options.access,
+				securityBookmark: options.securityBookmarks?.[index],
+			}),
+		);
 		for (const view of views)
 			this.composition.resources.attachToConversation(view.id, options.conversationId);
 		return views;
+	}
+
+	relocateResourcePath(resourceId: string, path: string, securityBookmark?: string) {
+		return this.composition.resources.relocate(resourceId, path, securityBookmark);
 	}
 
 	/**

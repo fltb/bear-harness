@@ -4,7 +4,7 @@ import { basename, isAbsolute } from "node:path";
 import { and, eq, isNull } from "drizzle-orm";
 import type { CredentialVault } from "../providers/credential-store.js";
 import type { AppDatabase } from "../storage/database.js";
-import { conversationResourceRefs, resourceRefs } from "../storage/schema.js";
+import { conversationResourceRefs, resourceRefs, resourceRevisions } from "../storage/schema.js";
 import type {
 	FileIdentity,
 	ResourceAccess,
@@ -36,7 +36,15 @@ function hashFile(path: string): string {
 
 function identity(path: string): FileIdentity {
 	const stat = lstatSync(path, { bigint: true });
+	if (process.platform === "win32")
+		return { realpathAtGrant: path, volumeId: String(stat.dev), fileId: String(stat.ino) };
 	return { realpathAtGrant: path, deviceId: String(stat.dev), inode: String(stat.ino) };
+}
+
+function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
+	if (left.fileId || right.fileId)
+		return left.fileId === right.fileId && left.volumeId === right.volumeId;
+	return left.deviceId === right.deviceId && left.inode === right.inode;
 }
 
 export class ResourceReferenceService {
@@ -54,7 +62,11 @@ export class ResourceReferenceService {
 
 	grant(
 		path: string,
-		options: { access?: ResourceAccess; persistence?: ResourcePersistence } = {},
+		options: {
+			access?: ResourceAccess;
+			persistence?: ResourcePersistence;
+			securityBookmark?: string;
+		} = {},
 	): ResourceRefView {
 		if (!isAbsolute(path))
 			throw Object.assign(new Error("resource_path_must_be_absolute"), { kind: "invalid_request" });
@@ -78,7 +90,11 @@ export class ResourceReferenceService {
 				: {}),
 		};
 		const locator = this.vault.encryptString(
-			JSON.stringify({ platform: process.platform, canonicalPath }),
+			JSON.stringify({
+				platform: process.platform,
+				canonicalPath,
+				securityBookmark: options.securityBookmark,
+			}),
 		);
 		this.db
 			.insert(resourceRefs)
@@ -199,11 +215,7 @@ export class ResourceReferenceService {
 			};
 		}
 		const currentIdentity = identity(canonicalPath);
-		if (
-			currentIdentity.deviceId !== oldIdentity.deviceId ||
-			currentIdentity.inode !== oldIdentity.inode
-		)
-			state = "replaced";
+		if (!sameIdentity(currentIdentity, oldIdentity)) state = "replaced";
 		else if (canonicalPath !== oldIdentity.realpathAtGrant) state = "moved";
 		else if (stat.size !== baseline.size || stat.mtimeMs !== baseline.mtimeMs) state = "changed";
 		if (
@@ -232,6 +244,62 @@ export class ResourceReferenceService {
 
 	resolveView(resourceId: string): ResourceRefView {
 		this.resolve(resourceId);
+		return this.view(this.requireRow(resourceId));
+	}
+
+	relocate(resourceId: string, path: string, securityBookmark?: string): ResourceRefView {
+		if (!isAbsolute(path))
+			throw Object.assign(new Error("resource_path_must_be_absolute"), { kind: "invalid_request" });
+		const row = this.requireRow(resourceId);
+		const canonicalPath = realpathSync(path);
+		const stat = lstatSync(canonicalPath);
+		if (
+			(row.kind === "file") !== stat.isFile() ||
+			(row.kind === "directory") !== stat.isDirectory()
+		)
+			throw Object.assign(new Error("resource_kind_mismatch"), { kind: "conflict" });
+		const oldIdentity = JSON.parse(row.identityJson) as FileIdentity;
+		const oldBaseline = JSON.parse(row.baselineJson) as ResourceRef["baseline"];
+		const nextIdentity = identity(canonicalPath);
+		const nextHash =
+			row.kind === "file" && stat.size <= IMMEDIATE_HASH_LIMIT
+				? hashFile(canonicalPath)
+				: undefined;
+		const matches =
+			sameIdentity(oldIdentity, nextIdentity) ||
+			Boolean(oldBaseline.sha256 && nextHash === oldBaseline.sha256);
+		if (!matches)
+			throw Object.assign(new Error("resource_relocation_mismatch"), { kind: "conflict" });
+		const nextBaseline = {
+			exists: true,
+			size: stat.size,
+			mtimeMs: stat.mtimeMs,
+			...(nextHash ? { sha256: nextHash } : {}),
+		};
+		this.db.transaction((transaction) => {
+			transaction
+				.insert(resourceRevisions)
+				.values({
+					id: randomUUID(),
+					resourceId,
+					identityJson: row.identityJson,
+					baselineJson: row.baselineJson,
+				})
+				.run();
+			transaction
+				.update(resourceRefs)
+				.set({
+					encryptedLocatorJson: this.vault.encryptString(
+						JSON.stringify({ platform: process.platform, canonicalPath, securityBookmark }),
+					),
+					identityJson: JSON.stringify(nextIdentity),
+					baselineJson: JSON.stringify(nextBaseline),
+					state: "available",
+					lastResolvedAt: new Date().toISOString(),
+				})
+				.where(eq(resourceRefs.id, resourceId))
+				.run();
+		});
 		return this.view(this.requireRow(resourceId));
 	}
 
