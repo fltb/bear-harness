@@ -200,6 +200,7 @@ async function initializeHost(): Promise<boolean> {
 		});
 		ipcHandlersDispose = wireElectronIpcHandlers(runtime.dispatcher, windowRegistry, {
 			artifactProtocolAvailable: () => artifactProtocolRegistered,
+			resourceHost: runtime,
 		});
 		disposeElectronIpcHandlers = ipcHandlersDispose;
 		await runtime.start();

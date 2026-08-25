@@ -16,6 +16,12 @@ declare global {
 			transport: Readonly<{
 				invoke(channel: string, request: unknown): Promise<unknown>;
 			}>;
+			resources: Readonly<{
+				pickFiles(conversationId: string): Promise<unknown>;
+				pickDirectory(conversationId: string): Promise<unknown>;
+				attachDropped(conversationId: string, files: readonly File[]): Promise<unknown>;
+				detach(conversationId: string, resourceId: string): Promise<unknown>;
+			}>;
 		}>;
 	}
 }

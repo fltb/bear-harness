@@ -84,6 +84,53 @@ export const IpcResponse = <T extends Schema>(data: T) =>
 	]);
 export const EmptyResponse = z.strictObject({});
 
+// Host-owned local resource references. Wire views deliberately never contain paths.
+export const ResourceKind = z.union([z.literal("file"), z.literal("directory")]);
+export const ResourceAccess = z.union([z.literal("read"), z.literal("read-write")]);
+export const ResourcePersistence = z.union([z.literal("conversation"), z.literal("persistent")]);
+export const ResourceState = z.union([
+	z.literal("available"),
+	z.literal("changed"),
+	z.literal("moved"),
+	z.literal("missing"),
+	z.literal("replaced"),
+	z.literal("permission_lost"),
+]);
+export const ResourceRefView = z.strictObject({
+	id: z.string().min(1).max(64),
+	kind: ResourceKind,
+	displayName: z.string().min(1).max(512),
+	access: ResourceAccess,
+	persistence: ResourcePersistence,
+	state: ResourceState,
+	summary: z
+		.strictObject({
+			mime: z.string().max(255).optional(),
+			bytes: z.number().int().safe().min(0).optional(),
+			fileCount: z.number().int().safe().min(0).optional(),
+		})
+		.optional(),
+});
+export const ResourceIdRequest = z.strictObject({ resourceId: z.string().min(1).max(64) });
+export const ConversationResourceRequest = z.strictObject({
+	conversationId: z.string().min(1).max(64),
+	resourceId: z.string().min(1).max(64),
+});
+export const ResourcePickRequest = z.strictObject({
+	conversationId: z.string().min(1).max(64),
+	access: ResourceAccess.optional(),
+});
+export const ResourcePickResponse = z.strictObject({
+	resources: z.array(ResourceRefView).max(100),
+});
+export const ResourceAttachDroppedRequest = z.strictObject({
+	conversationId: z.string().min(1).max(64),
+	dropToken: z.string().min(1).max(256),
+});
+export const ResourceListRequest = z.strictObject({ conversationId: z.string().min(1).max(64) });
+export const ResourceListResponse = ResourcePickResponse;
+export const ResourceResolveStateResponse = z.strictObject({ resource: ResourceRefView });
+
 // ---------------------------------------------------------------------------
 // Event bus
 // ---------------------------------------------------------------------------
@@ -2328,6 +2375,29 @@ export const RPC = {
 		approve: endpoint("commission.approve:v1", CommissionApproveRequest, EmptyResponse),
 		reject: endpoint("commission.reject:v1", CommissionRejectRequest, EmptyResponse),
 		launch: endpoint("commission.launch:v1", CommissionLaunchRequest, CommissionLaunchResponse),
+	},
+	resource: {
+		pickFiles: endpoint("resource.pickFiles:v1", ResourcePickRequest, ResourcePickResponse),
+		pickDirectory: endpoint("resource.pickDirectory:v1", ResourcePickRequest, ResourcePickResponse),
+		attachDropped: endpoint(
+			"resource.attachDropped:v1",
+			ResourceAttachDroppedRequest,
+			ResourcePickResponse,
+		),
+		list: endpoint("resource.list:v1", ResourceListRequest, ResourceListResponse),
+		resolveState: endpoint(
+			"resource.resolveState:v1",
+			ResourceIdRequest,
+			ResourceResolveStateResponse,
+		),
+		detach: endpoint("resource.detach:v1", ConversationResourceRequest, EmptyResponse),
+		revoke: endpoint("resource.revoke:v1", ResourceIdRequest, EmptyResponse),
+		makePersistent: endpoint(
+			"resource.makePersistent:v1",
+			ResourceIdRequest,
+			ResourceResolveStateResponse,
+		),
+		relocate: endpoint("resource.relocate:v1", ResourceIdRequest, ResourceResolveStateResponse),
 	},
 	run: {
 		list: endpoint("run.list:v1", RunListRequest, RunListResponse),

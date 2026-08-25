@@ -92,6 +92,37 @@ export const activeConversations = sqliteTable("active_conversations", {
 	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 });
 
+export const resourceRefs = sqliteTable("resource_refs", {
+	id: text().primaryKey(),
+	kind: text({ enum: ["file", "directory"] }).notNull(),
+	displayName: text("display_name").notNull(),
+	access: text({ enum: ["read", "read-write"] }).notNull(),
+	persistence: text({ enum: ["conversation", "persistent"] }).notNull(),
+	encryptedLocatorJson: blob("encrypted_locator_json", { mode: "buffer" }).notNull(),
+	identityJson: text("identity_json").notNull(),
+	baselineJson: text("baseline_json").notNull(),
+	state: text({
+		enum: ["available", "changed", "moved", "missing", "replaced", "permission_lost"],
+	}).notNull(),
+	grantedAt: text("granted_at").notNull(),
+	lastResolvedAt: text("last_resolved_at"),
+	revokedAt: text("revoked_at"),
+});
+
+export const conversationResourceRefs = sqliteTable(
+	"conversation_resource_refs",
+	{
+		conversationId: text("conversation_id")
+			.notNull()
+			.references(() => conversations.id, { onDelete: "cascade" }),
+		resourceId: text("resource_id")
+			.notNull()
+			.references(() => resourceRefs.id, { onDelete: "cascade" }),
+		attachedAt: text("attached_at").default(sql`datetime('now')`).notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.conversationId, table.resourceId] })],
+);
+
 export const sceneState = sqliteTable("scene_state", {
 	id: text().primaryKey(),
 	conversationId: text("conversation_id")

@@ -39,6 +39,7 @@ import type { MemoryBackend, MemoryBankScope, MemoryRecord } from "./memory/back
 import type { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import type { ModelRecord, ModelRegistry } from "./models/registry.js";
 import type { OAuthSessionState, ProviderCatalog } from "./providers/catalog.js";
+import type { ResourceReferenceService } from "./resources/reference-service.js";
 import type { AuditStore } from "./security/audit-store.js";
 import {
 	findHostLocalEmbeddingCandidate,
@@ -88,6 +89,7 @@ export interface HostCompositionContext {
 	characterBehavior: CharacterBehaviorService;
 	drafts: CharacterDraftService;
 	roleplay: RoleplayService;
+	resources: ResourceReferenceService;
 	defaultCharacterId: string;
 	/** Product-local directory for Pi conversation session files. */
 	conversationRepository: ConversationRepository;
@@ -177,6 +179,33 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	};
 	// Load and seed the active character package from the character root once.
 	ensureCharacterSeeded(s);
+	dispatcher.registerHandler(RPC.resource.list, ({ conversationId }) => ({
+		resources: s.resources.listForConversation(conversationId),
+	}));
+	dispatcher.registerHandler(RPC.resource.resolveState, ({ resourceId }) => ({
+		resource: s.resources.resolveView(resourceId),
+	}));
+	dispatcher.registerHandler(RPC.resource.detach, ({ resourceId, conversationId }) => {
+		s.resources.detachFromConversation(resourceId, conversationId);
+		return {};
+	});
+	dispatcher.registerHandler(RPC.resource.revoke, ({ resourceId }) => {
+		s.resources.revoke(resourceId);
+		return {};
+	});
+	dispatcher.registerHandler(RPC.resource.makePersistent, ({ resourceId }) => ({
+		resource: s.resources.makePersistent(resourceId),
+	}));
+	for (const endpoint of [
+		RPC.resource.pickFiles,
+		RPC.resource.pickDirectory,
+		RPC.resource.attachDropped,
+		RPC.resource.relocate,
+	]) {
+		dispatcher.registerHandler(endpoint, async () => {
+			throw Object.assign(new Error("desktop_resource_bridge_required"), { kind: "unavailable" });
+		});
+	}
 
 	// --- character package -----------------------------------------------------
 	dispatcher.registerHandler(RPC.character.get, async () => {

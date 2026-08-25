@@ -1,10 +1,30 @@
 import { i18n } from "@bear-harness/i18n";
+import type { ResourceRefView } from "@bear-harness/protocol";
 import { createEffect, createMemo, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import type { CompanionStore, ConfiguredModel, ConversationSummary } from "./companion.js";
 export type ComposerAttachment =
 	| { kind: "text"; name: string; content: string }
-	| { kind: "image"; name: string; mime: string; base64: string };
+	| { kind: "image"; name: string; mime: string; base64: string }
+	| { kind: "resource"; resource: ResourceRefView };
+
+type ResourceBridge = {
+	pickFiles(id: string): Promise<unknown>;
+	pickDirectory(id: string): Promise<unknown>;
+	attachDropped(id: string, files: readonly File[]): Promise<unknown>;
+	detach(conversationId: string, resourceId: string): Promise<unknown>;
+};
+function bridge(): ResourceBridge | undefined {
+	return (globalThis as typeof globalThis & { bearDesktop?: { resources?: ResourceBridge } })
+		.bearDesktop?.resources;
+}
+function resourceViews(value: unknown): ResourceRefView[] {
+	if (typeof value !== "object" || value === null || (value as { ok?: unknown }).ok !== true)
+		throw new Error("resource_reference_failed");
+	const resources = (value as { data?: { resources?: unknown } }).data?.resources;
+	if (!Array.isArray(resources)) throw new Error("resource_reference_failed");
+	return resources as ResourceRefView[];
+}
 
 /** One-shot request consumed by the settings sheet's image-reader focus effect. */
 export const [requestImageReaderFocus, setRequestImageReaderFocus] = createSignal(false);
@@ -135,12 +155,49 @@ function createConversationWorkflow(store: CompanionStore) {
 			setState("attachmentError", cause instanceof Error ? cause.message : String(cause));
 		}
 	};
+	const addResources = async (kind: "file" | "directory"): Promise<void> => {
+		const id = store.activeConversationId;
+		const api = bridge();
+		if (!id || !api) return;
+		try {
+			const views = resourceViews(
+				kind === "file" ? await api.pickFiles(id) : await api.pickDirectory(id),
+			);
+			setState("attachments", (current) => [
+				...current,
+				...views.map((resource) => ({ kind: "resource" as const, resource })),
+			]);
+		} catch (cause) {
+			setState("attachmentError", cause instanceof Error ? cause.message : String(cause));
+		}
+	};
+	const attachDropped = async (files: readonly File[]): Promise<void> => {
+		const id = store.activeConversationId;
+		const api = bridge();
+		if (!id || !api || files.length === 0) return;
+		try {
+			const views = resourceViews(await api.attachDropped(id, files));
+			setState("attachments", (current) => [
+				...current,
+				...views.map((resource) => ({ kind: "resource" as const, resource })),
+			]);
+		} catch (cause) {
+			setState("attachmentError", cause instanceof Error ? cause.message : String(cause));
+		}
+	};
+	const removeAttachment = (index: number): void => {
+		const attachment = state.attachments[index];
+		const conversationId = store.activeConversationId;
+		if (attachment?.kind === "resource" && conversationId)
+			void bridge()?.detach(conversationId, attachment.resource.id);
+		setState("attachments", (current) => current.filter((_, candidate) => candidate !== index));
+	};
 	const dispatchMessage = async (
 		labels: { materialLabel: string; imageLabel: string },
-		options?: { retry?: boolean },
+		options?: { retry?: boolean; textOverride?: string },
 	): Promise<void> => {
 		const retry = options?.retry === true;
-		const value = state.composerText;
+		const value = options?.textOverride ?? state.composerText;
 		if (!value.trim() && state.attachments.length === 0) return;
 		if (!retry && !imageReaderAvailable()) return;
 		if (retry && hasImages() && !imageReaderCapable()) return;
@@ -152,8 +209,14 @@ function createConversationWorkflow(store: CompanionStore) {
 		const images = draftAttachments
 			.filter((file) => file.kind === "image")
 			.map((file) => ({ name: file.name, mime: file.mime, base64: file.base64 }));
+		const references = draftAttachments
+			.filter((item) => item.kind === "resource")
+			.map(
+				(item) => `\n\n[本机引用：${item.resource.displayName} · resource_id=${item.resource.id}]`,
+			)
+			.join("");
 		const message =
-			`${value}${materials}`.trim() ||
+			`${value}${materials}${references}`.trim() ||
 			images.map((image) => `[${labels.imageLabel}：${image.name}]`).join("\n");
 		const hadImages = images.length > 0;
 		const before = store.errorMetadata;
@@ -266,6 +329,9 @@ function createConversationWorkflow(store: CompanionStore) {
 		visibleConversations,
 		removeImages,
 		loadFiles,
+		addResources,
+		attachDropped,
+		removeAttachment,
 		dispatchMessage,
 		retrySend,
 		selectModel,

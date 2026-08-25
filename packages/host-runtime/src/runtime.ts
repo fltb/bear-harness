@@ -50,6 +50,7 @@ import { ModelRegistry } from "./models/registry.js";
 import { applyProxyConfig, type SystemProxyResolver } from "./network/proxy-config.js";
 import { ProviderCatalog } from "./providers/catalog.js";
 import { CredentialStore, type CredentialVault } from "./providers/credential-store.js";
+import { ResourceReferenceService } from "./resources/reference-service.js";
 import { AuditStore, wireAuditToEvents } from "./security/audit-store.js";
 import { type FsProtectionHandle, installFsProtection } from "./security/fs-protection.js";
 import { createModerationService, type ModerationService } from "./security/moderation.js";
@@ -168,6 +169,7 @@ export class HostRuntime {
 		const eventBus = new EventBus(db.orm);
 		const artifactStore = new ArtifactStore(db.orm, join(dataDir, "artifacts"));
 		const credentials = new CredentialStore(db.orm, options.credentialVault);
+		const resources = new ResourceReferenceService(db.orm, options.credentialVault);
 		const providers = new ProviderCatalog(credentials, join(dataDir, "companion-runtime"));
 		const characterLoader = new CharacterLoader(characterSeedRoot, join(dataDir, "characters"));
 		characterLoader.bootstrapLibrary(options.productConfig.defaultCharacterId);
@@ -405,6 +407,7 @@ export class HostRuntime {
 			characterBehavior,
 			drafts,
 			roleplay,
+			resources,
 			defaultCharacterId: options.productConfig.defaultCharacterId,
 			conversationRepository,
 			piSessionDir: join(dataDir, "sessions"),
@@ -432,6 +435,17 @@ export class HostRuntime {
 	/** Dispatch a protocol channel; validates and returns the shared envelope. */
 	dispatch(channel: string, params: unknown): Promise<RpcResponse> {
 		return this.dispatcher.dispatch(channel, params);
+	}
+
+	/** Main-process-only bridge. Paths enter here and never cross the wire contract. */
+	grantResourcePaths(
+		paths: readonly string[],
+		options: { conversationId: string; access: "read" | "read-write" },
+	) {
+		const views = this.composition.resources.grantPaths(paths, { access: options.access });
+		for (const view of views)
+			this.composition.resources.attachToConversation(view.id, options.conversationId);
+		return views;
 	}
 
 	/**

@@ -6,6 +6,12 @@ export const zhCN = {
 	composer: {
 		attachLabel: "添加材料",
 		attachTitle: "添加文本、Markdown、数据或代码材料",
+		addFile: "添加文件",
+		addFolder: "添加文件夹",
+		localReference: "本机引用",
+		readOnly: "只读",
+		readWrite: "读写",
+		notRead: "尚未读取",
 		attachedCount: "份材料",
 		messageInputLabel: "发送消息",
 		modelLabel: "回复模型",

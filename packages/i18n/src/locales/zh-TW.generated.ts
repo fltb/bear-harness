@@ -9,6 +9,12 @@ export const zhTW = {
 	"composer": {
 		"attachLabel": "新增材料",
 		"attachTitle": "新增文本、Markdown、資料或程式碼材料",
+		"addFile": "新增檔案",
+		"addFolder": "新增資料夾",
+		"localReference": "本機引用",
+		"readOnly": "只讀",
+		"readWrite": "讀寫",
+		"notRead": "尚未讀取",
 		"attachedCount": "份材料",
 		"messageInputLabel": "傳送訊息",
 		"modelLabel": "回覆模型",

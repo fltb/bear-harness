@@ -31,7 +31,7 @@ describe("database schema contract", () => {
 	});
 	it("renames the commission native trigger anchor during mirror removal", () => {
 		const database = new Database(root());
-		database.migrate(MIGRATIONS.slice(0, -1));
+		database.migrate(MIGRATIONS.slice(0, 22));
 		database.connection
 			.prepare(
 				"INSERT INTO commissions (id, conversation_id, status, draft_json) VALUES (?, ?, ?, ?)",

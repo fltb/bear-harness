@@ -39,6 +39,25 @@ export type IpcEnvelope<T> = IpcSuccess<T> | IpcFailure;
 
 /** Empty payload used by command-style RPC responses. */
 export type EmptyResponse = z.infer<typeof schema.EmptyResponse>;
+export type ResourceKind = z.infer<typeof schema.ResourceKind>;
+export type ResourceAccess = z.infer<typeof schema.ResourceAccess>;
+export type ResourcePersistence = z.infer<typeof schema.ResourcePersistence>;
+export type ResourceState = z.infer<typeof schema.ResourceState>;
+export type ResourceRefView = z.infer<typeof schema.ResourceRefView>;
+export type ResourceIdRequest = z.infer<typeof schema.ResourceIdRequest>;
+export type ConversationResourceRequest = z.infer<typeof schema.ConversationResourceRequest>;
+export type ResourcePickRequest = z.infer<typeof schema.ResourcePickRequest>;
+export type ResourcePickResponse = z.infer<typeof schema.ResourcePickResponse>;
+export type ResourceAttachDroppedRequest = z.infer<typeof schema.ResourceAttachDroppedRequest>;
+export type ResourceListRequest = z.infer<typeof schema.ResourceListRequest>;
+export type ResourceListResponse = z.infer<typeof schema.ResourceListResponse>;
+export type ResourceResolveStateResponse = z.infer<typeof schema.ResourceResolveStateResponse>;
+export type MemoryConfigureLocalEmbeddingRequest = z.infer<
+	typeof schema.MemoryConfigureLocalEmbeddingRequest
+>;
+export type MemoryConfigureLocalEmbeddingResponse = z.infer<
+	typeof schema.MemoryConfigureLocalEmbeddingResponse
+>;
 
 // ---------------------------------------------------------------------------
 // Channel registry
@@ -252,7 +271,6 @@ export type CanonChunk = z.infer<typeof schema.CanonChunk>;
 export type CanonModuleKind = z.infer<typeof schema.CanonModuleKind>;
 export type CanonModule = z.infer<typeof schema.CanonModule>;
 
-
 // ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
@@ -367,7 +385,9 @@ export type SettingsGetResponse = z.infer<typeof schema.SettingsResponse>;
 export type SettingsSetResponse = z.infer<typeof schema.SettingsResponse>;
 export type SettingsCapabilities = z.infer<typeof schema.SettingsCapabilitiesGetResponse>;
 export type SettingsCapabilitiesGetRequest = z.infer<typeof schema.SettingsCapabilitiesGetRequest>;
-export type SettingsCapabilitiesGetResponse = z.infer<typeof schema.SettingsCapabilitiesGetResponse>;
+export type SettingsCapabilitiesGetResponse = z.infer<
+	typeof schema.SettingsCapabilitiesGetResponse
+>;
 export type NetworkProxyModeCapability = z.infer<typeof schema.NetworkProxyModeCapability>;
 export type MemoryVectorProviderCapability = z.infer<typeof schema.MemoryVectorProviderCapability>;
 export type MemoryVectorPresetCapability = z.infer<typeof schema.MemoryVectorPresetCapability>;

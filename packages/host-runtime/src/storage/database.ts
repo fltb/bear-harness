@@ -234,6 +234,16 @@ export class Database {
 	/** Refuse to start a partially compatible database. */
 	assertSchemaContract(): void {
 		const required: Readonly<Record<string, readonly string[]>> = {
+			resource_refs: [
+				"id",
+				"kind",
+				"encrypted_locator_json",
+				"identity_json",
+				"baseline_json",
+				"state",
+				"revoked_at",
+			],
+			conversation_resource_refs: ["conversation_id", "resource_id", "attached_at"],
 			commissions: [
 				"id",
 				"conversation_id",
@@ -1110,6 +1120,80 @@ export const MIGRATIONS: Migration[] = [
 				key TEXT PRIMARY KEY,
 				value TEXT NOT NULL
 			);
+		`,
+	},
+	{
+		id: 26,
+		description: "Host-owned local resource references",
+		up: `
+			CREATE TABLE resource_refs (
+				id TEXT PRIMARY KEY,
+				kind TEXT NOT NULL CHECK (kind IN ('file','directory')),
+				display_name TEXT NOT NULL,
+				access TEXT NOT NULL CHECK (access IN ('read','read-write')),
+				persistence TEXT NOT NULL CHECK (persistence IN ('conversation','persistent')),
+				encrypted_locator_json BLOB NOT NULL,
+				identity_json TEXT NOT NULL,
+				baseline_json TEXT NOT NULL,
+				state TEXT NOT NULL CHECK (state IN ('available','changed','moved','missing','replaced','permission_lost')),
+				granted_at TEXT NOT NULL,
+				last_resolved_at TEXT,
+				revoked_at TEXT
+			);
+			CREATE TABLE conversation_resource_refs (
+				conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+				resource_id TEXT NOT NULL REFERENCES resource_refs(id) ON DELETE CASCADE,
+				attached_at TEXT NOT NULL DEFAULT (datetime('now')),
+				PRIMARY KEY (conversation_id, resource_id)
+			);
+			CREATE TABLE resource_grants (
+				id TEXT PRIMARY KEY,
+				resource_id TEXT NOT NULL REFERENCES resource_refs(id),
+				operations_json TEXT NOT NULL,
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				revoked_at TEXT
+			);
+			CREATE TABLE resource_reads (
+				id TEXT PRIMARY KEY,
+				resource_id TEXT NOT NULL REFERENCES resource_refs(id),
+				conversation_id TEXT REFERENCES conversations(id),
+				run_id TEXT REFERENCES runs(id),
+				reader TEXT NOT NULL,
+				content_sha256 TEXT NOT NULL,
+				size INTEGER NOT NULL,
+				mtime_ms REAL NOT NULL,
+				extracted_artifact_id TEXT REFERENCES artifacts(id),
+				read_at TEXT NOT NULL
+			);
+			CREATE TABLE resource_revisions (
+				id TEXT PRIMARY KEY,
+				resource_id TEXT NOT NULL REFERENCES resource_refs(id),
+				identity_json TEXT NOT NULL,
+				baseline_json TEXT NOT NULL,
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			CREATE TABLE commission_resource_grants (
+				commission_id TEXT NOT NULL REFERENCES commissions(id),
+				resource_id TEXT NOT NULL REFERENCES resource_refs(id),
+				grant_json TEXT NOT NULL,
+				PRIMARY KEY (commission_id, resource_id)
+			);
+			CREATE TABLE run_resource_changes (
+				id TEXT PRIMARY KEY,
+				run_id TEXT NOT NULL REFERENCES runs(id),
+				resource_id TEXT REFERENCES resource_refs(id),
+				parent_resource_id TEXT REFERENCES resource_refs(id),
+				relative_path TEXT,
+				operation TEXT NOT NULL,
+				before_sha256 TEXT,
+				after_sha256 TEXT,
+				before_size INTEGER,
+				after_size INTEGER,
+				detected_at TEXT NOT NULL
+			);
+			CREATE INDEX idx_conversation_resources ON conversation_resource_refs(conversation_id, attached_at);
+			CREATE INDEX idx_resource_reads_resource ON resource_reads(resource_id, read_at);
+			CREATE INDEX idx_run_resource_changes_run ON run_resource_changes(run_id, detected_at);
 		`,
 	},
 ];

@@ -8,6 +8,12 @@ export const en = {
 	composer: {
 		attachLabel: "Add material",
 		attachTitle: "Add text, Markdown, data, or code",
+		addFile: "Add file",
+		addFolder: "Add folder",
+		localReference: "Local reference",
+		readOnly: "Read only",
+		readWrite: "Read/write",
+		notRead: "Not read",
 		attachedCount: " materials",
 		messageInputLabel: "Send message",
 		modelLabel: "Reply model",

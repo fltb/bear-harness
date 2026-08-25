@@ -1,5 +1,6 @@
 /** Minimal sandbox preload. Runtime contract parsing lives in the renderer client bundle. */
 import { contextBridge, ipcRenderer } from "electron";
+import { resourceBridge } from "./resource-bridge.cjs";
 
 type ErrorType =
 	| "Error"
@@ -78,6 +79,7 @@ contextBridge.exposeInMainWorld(
 	Object.freeze({
 		platform: process.platform,
 		diagnostics: Object.freeze({ reportRendererFault }),
+		resources: resourceBridge,
 		transport: Object.freeze({
 			invoke: (channel: string, request: unknown) => ipcRenderer.invoke(channel, request),
 		}),

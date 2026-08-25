@@ -17,8 +17,14 @@ import { createEffect, Show } from "solid-js";
 import { Icon } from "./Icon.js";
 import { ModelSelector } from "./features/ModelSelector.js";
 import { useCompanionStore } from "./stores/companion.js";
-import { setRequestImageReaderFocus, useConversationWorkflow } from "./stores/conversation-workflows.js";
-export { requestImageReaderFocus, setRequestImageReaderFocus } from "./stores/conversation-workflows.js";
+import {
+	setRequestImageReaderFocus,
+	useConversationWorkflow,
+} from "./stores/conversation-workflows.js";
+export {
+	requestImageReaderFocus,
+	setRequestImageReaderFocus,
+} from "./stores/conversation-workflows.js";
 
 /**
  * Composer: live input wired to `message.send`. Enter sends, Shift+Enter
@@ -29,6 +35,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const workflow = useConversationWorkflow(store);
+	let liveComposerText = workflow.composerText();
 	createEffect(() => {
 		const conversationId = store.activeConversationId;
 		if (conversationId) workflow.refreshModels(conversationId);
@@ -43,7 +50,9 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 			.replace("{size}", String(MAX_MESSAGE_ATTACHMENT_BYTES / 1024 / 1024));
 	const send = (event: SubmitEvent) => {
 		event.preventDefault();
-		void workflow.dispatchMessage(labels());
+		const text = liveComposerText;
+		if (text !== undefined) workflow.setComposerText(text);
+		void workflow.dispatchMessage(labels(), { textOverride: text });
 	};
 	const retrySend = (event: MouseEvent) => {
 		event.preventDefault();
@@ -62,7 +71,16 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 	};
 
 	return (
-		<form class="composer" onSubmit={send}>
+		<form
+			class="composer"
+			onSubmit={send}
+			onDragOver={(event) => event.preventDefault()}
+			onDrop={(event) => {
+				event.preventDefault();
+				const files = event.dataTransfer?.files;
+				if (files) void workflow.attachDropped([...files]);
+			}}
+		>
 			<ModelSelector
 				models={workflow.models()}
 				value={workflow.selectedModel()}
@@ -94,13 +112,33 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 					</div>
 				)}
 			</Show>
-			<FileField
-				class="composer-attach"
+			<Button
+				type="button"
+				class="circle composer-attach"
 				disabled={!workflow.modelSelected()}
+				aria-label={t("composer.attachLabel")}
+				title={t("composer.addFile")}
+				onClick={() => void workflow.addResources("file")}
+			>
+				<Show when={workflow.attachments().length > 0} fallback={<Icon icon={faPaperclip} />}>
+					{workflow.attachments().length}
+				</Show>
+			</Button>
+			<Button
+				type="button"
+				class="circle"
+				disabled={!workflow.modelSelected()}
+				aria-label={t("composer.addFolder")}
+				title={t("composer.addFolder")}
+				onClick={() => void workflow.addResources("directory")}
+			>
+				📁
+			</Button>
+			<FileField
+				class="sr-only"
 				multiple
 				maxFiles={MAX_MESSAGE_ATTACHMENTS}
 				maxFileSize={MAX_MESSAGE_ATTACHMENT_BYTES}
-				accept="image/*,text/*,.md,.markdown,.json,.csv,.yaml,.yml,.toml,.xml,.js,.ts,.tsx,.jsx,.py,.rs,.go,.java,.c,.cpp,.h,.sql"
 				onFileChange={({ acceptedFiles, rejectedFiles }) => {
 					if (rejectedFiles.length > 0) {
 						workflow.setAttachmentError(attachmentLimitMessage());
@@ -109,24 +147,41 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 					void workflow.loadFiles(acceptedFiles);
 				}}
 			>
-				<FileField.HiddenInput class="material-picker" aria-label={t("composer.attachLabel")} />
-				<FileField.Trigger
-					class="circle"
-					aria-label={t("composer.attachLabel")}
-					title={t("composer.attachTitle")}
-				>
-					<Show when={workflow.attachments().length > 0} fallback={<Icon icon={faPaperclip} />}>
-						{workflow.attachments().length}
-					</Show>
-				</FileField.Trigger>
+				<FileField.HiddenInput aria-label={t("composer.attachLabel")} />
 			</FileField>
+			<Show when={workflow.attachments().some((item) => item.kind === "resource")}>
+				<div class="composer-resource-list">
+					{workflow.attachments().map((item, index) =>
+						item.kind === "resource" ? (
+							<div class="composer-resource-card">
+								<span>
+									{item.resource.kind === "directory" ? "📁" : "📄"} {item.resource.displayName}
+								</span>
+								<small>
+									{t("composer.localReference")} ·{" "}
+									{item.resource.access === "read"
+										? t("composer.readOnly")
+										: t("composer.readWrite")}{" "}
+									· {t("composer.notRead")}
+								</small>
+								<Button type="button" onClick={() => workflow.removeAttachment(index)}>
+									×
+								</Button>
+							</div>
+						) : null,
+					)}
+				</div>
+			</Show>
 			<TextField class="composer-input">
 				<TextField.TextArea
 					rows={1}
 					placeholder={props.placeholder}
 					aria-label={t("composer.messageInputLabel")}
 					value={workflow.composerText()}
-					onInput={(event) => workflow.setComposerText(event.currentTarget.value)}
+					onInput={(event) => {
+						liveComposerText = event.currentTarget.value;
+						workflow.setComposerText(liveComposerText);
+					}}
 					onKeyDown={handleKeyDown}
 					disabled={store.activeConversationId === null || !workflow.modelSelected()}
 				/>
@@ -166,7 +221,9 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 					</div>
 				</Show>
 			</Show>
-			<Show when={workflow.attachmentError()}>{(error) => <span role="alert">{error()}</span>}</Show>
+			<Show when={workflow.attachmentError()}>
+				{(error) => <span role="alert">{error()}</span>}
+			</Show>
 			<Show
 				when={workflow.streaming()}
 				fallback={
