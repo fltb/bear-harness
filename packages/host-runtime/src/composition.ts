@@ -863,7 +863,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return { source: s.canon.addSource(await getCompanionId(s), logicalName, content) };
 	});
 	dispatcher.registerHandler(RPC.canon.search, async (_p) => ({
-		chunks: s.canon.search(await getCompanionId(s), (_p as { query: string }).query),
+		chunks: await s.canon.searchHybrid(await getCompanionId(s), (_p as { query: string }).query),
 	}));
 	dispatcher.registerHandler(RPC.canon.removeSource, async (_p) => {
 		s.canon.removeSource(await getCompanionId(s), (_p as { sourceId: string }).sourceId);

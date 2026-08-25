@@ -54,11 +54,17 @@ export interface StoryModuleRecord {
 
 const MAX_CHUNK_CHARS = 1600;
 
+export interface CanonEmbeddingService {
+	isReady(): boolean;
+	embed(text: string): Promise<Float32Array>;
+}
+
 export class CanonHubService {
 	constructor(
 		private readonly db: AppDatabase,
 		private readonly artifacts: ArtifactStore,
 		private readonly eventBus: EventBus,
+		private readonly embeddingService?: () => CanonEmbeddingService | undefined,
 	) {}
 
 	addSource(companionId: string, logicalName: string, content: string): CanonSourceRecord {
@@ -100,6 +106,7 @@ export class CanonHubService {
 		this.eventBus.publish("canon.source_added", { companionId, sourceId: id, logicalName });
 		const source = this.getSource(id);
 		if (!source) throw { kind: "internal", reason: "canon_source_not_persisted" };
+		void this.indexPending(companionId);
 		return source;
 	}
 
@@ -177,6 +184,77 @@ export class CanonHubService {
 		return this.expandAdjacent(ranked, limit);
 	}
 
+	/**
+	 * Retrieves canonical evidence with reciprocal-rank fusion of FTS and cosine
+	 * similarity. A missing or unavailable embedding provider deliberately leaves
+	 * the established lexical path untouched.
+	 */
+	async retrieveHybrid(
+		companionId: string,
+		query: string,
+		options: { limit?: number; moduleId?: string; includeAdjacent?: boolean } = {},
+	): Promise<CanonChunkRecord[]> {
+		const limit = Math.min(options.limit ?? 8, 30);
+		const lexical = this.retrieve(companionId, query, {
+			...options,
+			limit: Math.max(limit * 3, 12),
+			includeAdjacent: false,
+		});
+		const service = this.embeddingService?.();
+		if (!service?.isReady()) return this.finalizeHybrid(lexical, limit, options.includeAdjacent);
+		let queryEmbedding: Float32Array;
+		try {
+			queryEmbedding = await service.embed(query.trim());
+		} catch {
+			return this.finalizeHybrid(lexical, limit, options.includeAdjacent);
+		}
+		const aliases = this.matchAliases(companionId, query);
+		const routedChunkIds = this.routedChunkIds(companionId, query, aliases, options.moduleId);
+		const candidates = this.db
+			.select({
+				id: canonChunks.id,
+				sourceId: canonChunks.sourceId,
+				sourceName: canonSources.logicalName,
+				ordinal: canonChunks.ordinal,
+				content: canonChunks.content,
+				heading: canonChunks.heading,
+				startOffset: canonChunks.startOffset,
+				endOffset: canonChunks.endOffset,
+				embedding: canonChunks.embedding,
+				language: canonSources.language,
+				origin: canonSources.origin,
+			})
+			.from(canonChunks)
+			.innerJoin(canonSources, eq(canonSources.id, canonChunks.sourceId))
+			.all();
+		const vector = candidates
+			.filter((row) => row.embedding && (routedChunkIds.size === 0 || routedChunkIds.has(row.id)))
+			.map((row) => ({
+				row: toChunkRecord(row),
+				score: cosineSimilarity(queryEmbedding, decodeEmbedding(row.embedding!)),
+			}))
+			.filter((candidate) => Number.isFinite(candidate.score) && candidate.score > 0)
+			.sort((left, right) => right.score - left.score)
+			.slice(0, Math.max(limit * 3, 12));
+		const fused = new Map<string, { row: CanonChunkRecord; score: number }>();
+		for (const [rank, row] of lexical.entries())
+			fused.set(row.id, { row, score: 1 / (60 + rank + 1) });
+		for (const [rank, hit] of vector.entries()) {
+			const current = fused.get(hit.row.id);
+			const score = (current?.score ?? 0) + 1 / (60 + rank + 1);
+			fused.set(hit.row.id, { row: { ...hit.row, score: hit.score }, score });
+		}
+		return this.finalizeHybrid(
+			[...fused.values()].sort((left, right) => right.score - left.score).map((hit) => hit.row),
+			limit,
+			options.includeAdjacent,
+		);
+	}
+
+	async searchHybrid(companionId: string, query: string, limit = 12): Promise<CanonChunkRecord[]> {
+		return this.retrieveHybrid(companionId, query, { limit, includeAdjacent: false });
+	}
+
 	syncPackage(companionId: string, canon: LoadedCanonPackage): void {
 		const manifestHash = createHash("sha256")
 			.update(JSON.stringify(canon.manifest))
@@ -188,7 +266,10 @@ export class CanonHubService {
 			.from(canonPackageState)
 			.where(eq(canonPackageState.companionId, companionId))
 			.get();
-		if (state?.hash === manifestHash) return;
+		if (state?.hash === manifestHash) {
+			void this.indexPending(companionId);
+			return;
+		}
 		this.db.transaction((transaction) => {
 			transaction
 				.delete(storyModules)
@@ -313,6 +394,7 @@ export class CanonHubService {
 				.run();
 		});
 		this.eventBus.publish("canon.package_synced", { companionId, version: canon.manifest.version });
+		void this.indexPending(companionId);
 	}
 
 	removeSource(companionId: string, sourceId: string): void {
@@ -490,6 +572,42 @@ export class CanonHubService {
 		);
 	}
 
+	/** Embed unindexed chunks after a source/package transaction commits. */
+	async indexPending(companionId: string): Promise<void> {
+		const service = this.embeddingService?.();
+		if (!service?.isReady()) return;
+		const rows = this.db
+			.select({ id: canonChunks.id, content: canonChunks.content })
+			.from(canonChunks)
+			.innerJoin(canonSources, eq(canonSources.id, canonChunks.sourceId))
+			.where(and(eq(canonSources.companionId, companionId), sql`${canonChunks.embedding} IS NULL`))
+			.all();
+		for (const row of rows) {
+			try {
+				const embedding = await service.embed(row.content);
+				if (embedding.length === 0) continue;
+				this.db
+					.update(canonChunks)
+					.set({ embedding: encodeEmbedding(embedding) })
+					.where(eq(canonChunks.id, row.id))
+					.run();
+			} catch {
+				// Providers are optional; retry the remaining unindexed chunks on the
+				// next source sync or retrieval rather than failing authoring flows.
+				return;
+			}
+		}
+	}
+
+	private finalizeHybrid(
+		ranked: CanonChunkRecord[],
+		limit: number,
+		includeAdjacent: boolean | undefined,
+	): CanonChunkRecord[] {
+		const selected = ranked.slice(0, limit);
+		return includeAdjacent === false ? selected : this.expandAdjacent(selected, limit);
+	}
+
 	private matchAliases(companionId: string, query: string): string[] {
 		return this.db
 			.select({ name: canonEntities.name, aliases: canonEntities.aliasesJson })
@@ -659,4 +777,34 @@ function toChunkRecord(row: {
 
 function estimateTokens(text: string): number {
 	return Math.ceil(text.length / 3);
+}
+
+function encodeEmbedding(vector: Float32Array): Buffer {
+	return Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
+}
+
+function decodeEmbedding(blob: unknown): Float32Array {
+	if (!(blob instanceof Uint8Array)) return new Float32Array();
+	if (blob.byteLength === 0 || blob.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0)
+		return new Float32Array();
+	return new Float32Array(
+		blob.buffer,
+		blob.byteOffset,
+		blob.byteLength / Float32Array.BYTES_PER_ELEMENT,
+	);
+}
+
+function cosineSimilarity(left: Float32Array, right: Float32Array): number {
+	if (left.length === 0 || left.length !== right.length) return Number.NaN;
+	let dot = 0;
+	let leftNorm = 0;
+	let rightNorm = 0;
+	for (let index = 0; index < left.length; index++) {
+		const leftValue = left[index]!;
+		const rightValue = right[index]!;
+		dot += leftValue * rightValue;
+		leftNorm += leftValue * leftValue;
+		rightNorm += rightValue * rightValue;
+	}
+	return leftNorm && rightNorm ? dot / Math.sqrt(leftNorm * rightNorm) : Number.NaN;
 }

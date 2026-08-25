@@ -567,7 +567,7 @@ export const canonChunks = sqliteTable(
 		endOffset: integer("end_offset").notNull(),
 		tokenCount: integer("token_count").default(0).notNull(),
 		heading: text(),
-		embedding: blob(),
+		embedding: blob({ mode: "buffer" }),
 	},
 	(table) => [index("idx_canon_chunks_source").on(table.sourceId, table.ordinal)],
 );

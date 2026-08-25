@@ -186,7 +186,6 @@ export class HostRuntime {
 			roleplay,
 			(conversationId) => supervisor.getLiveSessionResolver().get(conversationId),
 		);
-		const canon = new CanonHubService(db.orm, artifactStore, eventBus);
 		const onboarding = new FirstMeetingMachine(db.orm, eventBus, characterLoader);
 		const appSettings = new AppSettingsStore(db.orm);
 		const models = new ModelRegistry(db.orm, eventBus);
@@ -210,6 +209,9 @@ export class HostRuntime {
 			userId: memoryScope.userId,
 			memoryConfig,
 		});
+		const canon = new CanonHubService(db.orm, artifactStore, eventBus, () =>
+			memoryRuntime.getEmbeddingService(),
+		);
 		const turns = new TurnPipeline(db.orm, supervisor, eventBus);
 		const contextPack = new ContextPackCompiler(db.orm, characterLoader, canon, {
 			backend: memoryRuntime.backend,
@@ -303,7 +305,7 @@ export class HostRuntime {
 					.where(eq(conversations.id, call.conversationId))
 					.get();
 				if (!conversation) throw { kind: "not_found", reason: "conversation_not_found" };
-				const citations = canon.retrieve(conversation.companionId, args.query, {
+				const citations = await canon.retrieveHybrid(conversation.companionId, args.query, {
 					moduleId: args.moduleId,
 					limit: 8,
 				});
@@ -472,6 +474,12 @@ export class HostRuntime {
 				// retention is best-effort at boot
 			});
 			await this.memoryRuntime.start();
+			await this.composition.canon.indexPending(
+				this.characterLoader.getActiveCharacterId(
+					this.composition.orm,
+					this.composition.defaultCharacterId,
+				),
+			);
 			const activeCharacterId = this.characterLoader.getActiveCharacterId(
 				this.composition.orm,
 				this.composition.defaultCharacterId,

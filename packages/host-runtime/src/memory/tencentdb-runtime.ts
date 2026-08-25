@@ -510,6 +510,12 @@ export class TencentDbRuntime {
 		return result.appendSystemContext;
 	}
 
+	/** Shared, Host-owned embedding provider for non-memory semantic indexes. */
+	getEmbeddingService(): EmbeddingService | undefined {
+		if (!this.started || this.closed) return undefined;
+		return this.core.getEmbeddingService();
+	}
+
 	async start(): Promise<void> {
 		if (this.closed) throw new Error("TencentDB memory runtime is closed");
 		if (this.started) return;

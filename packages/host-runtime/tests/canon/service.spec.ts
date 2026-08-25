@@ -64,6 +64,37 @@ describe("CanonHubService user workflow", () => {
 		expect(service.search("character-a", "observatory midnight")).toEqual([]);
 	});
 
+	it("persists embeddings and retrieves semantic matches when lexical search misses", async () => {
+		const vectorService = new CanonHubService(
+			database.orm,
+			new ArtifactStore(database.orm, join(root, "vector-cas")),
+			eventBus,
+			() => ({
+				isReady: () => true,
+				embed: async (text: string) =>
+					new Float32Array(
+						/lunar|moon/i.test(text) ? [1, 0] : /harbor|sea/i.test(text) ? [0, 1] : [0, 0],
+					),
+			}),
+		);
+		vectorService.addSource(
+			"character-a",
+			"semantic.txt",
+			"The moon rises above the observatory.\n\nThe harbor bell marks dawn.",
+		);
+		await vectorService.indexPending("character-a");
+		expect(
+			database.orm.all<{ embeddingLength: number }>(
+				"SELECT length(embedding) AS embeddingLength FROM canon_chunks",
+			),
+		).toEqual([{ embeddingLength: 8 }]);
+
+		expect(vectorService.search("character-a", "lunar")).toEqual([]);
+		await expect(vectorService.searchHybrid("character-a", "lunar")).resolves.toEqual([
+			expect.objectContaining({ content: expect.stringContaining("moon rises") }),
+		]);
+	});
+
 	it("manages a sourced hierarchy and rejects invalid references and cycles", () => {
 		const source = service.addSource("character-a", "canon.txt", "The harbor bell marks dawn.");
 		const chunk = service.search("character-a", "harbor bell")[0];
