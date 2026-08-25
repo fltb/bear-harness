@@ -243,10 +243,7 @@ export class Database {
 				"created_at",
 				"updated_at",
 			],
-			relationship_memory_entries: [
-				"source_pi_session_id",
-				"source_native_entry_id",
-			],
+			relationship_memory_entries: ["source_pi_session_id", "source_native_entry_id"],
 			memory_candidates: ["source_pi_session_id", "source_native_entry_id"],
 			roleplay_events: ["pi_session_id", "source_native_entry_id"],
 			memory_presentation: [
@@ -905,7 +902,7 @@ export const MIGRATIONS: Migration[] = [
 		up: `
 			CREATE TABLE app_settings (
 				id INTEGER PRIMARY KEY CHECK (id = 1),
-				network_proxy TEXT NOT NULL DEFAULT '{"mode":"direct"}',
+				network_proxy TEXT NOT NULL DEFAULT '{"mode":"auto"}',
 				memory_vector_service TEXT NOT NULL DEFAULT '{"enabled":false,"provider":"none"}',
 				model_download_mirror TEXT NOT NULL DEFAULT '{}',
 				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -1085,6 +1082,15 @@ export const MIGRATIONS: Migration[] = [
 			DROP TABLE turns;
 			DROP TABLE messages;
 			DROP TABLE branches;
+		`,
+	},
+	{
+		id: 24,
+		description: "Use the system proxy for existing default network settings",
+		up: `
+			UPDATE app_settings
+			SET network_proxy = '{"mode":"auto"}'
+			WHERE network_proxy = '{"mode":"direct"}';
 		`,
 	},
 ];

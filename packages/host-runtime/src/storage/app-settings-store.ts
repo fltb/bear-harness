@@ -29,7 +29,7 @@ const SINGLETON_ID = 1;
 
 export function defaultAppSettings(): AppSettingsRecord {
 	return {
-		networkProxy: { mode: "direct" },
+		networkProxy: { mode: "auto" },
 		memoryVectorService: { enabled: false, provider: "none" },
 		modelDownloadSource: { type: "official" },
 	};

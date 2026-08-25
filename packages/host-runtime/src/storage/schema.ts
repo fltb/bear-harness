@@ -92,7 +92,6 @@ export const activeConversations = sqliteTable("active_conversations", {
 	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 });
 
-
 export const sceneState = sqliteTable("scene_state", {
 	id: text().primaryKey(),
 	conversationId: text("conversation_id")
@@ -264,7 +263,7 @@ export const appSettings = sqliteTable(
 	"app_settings",
 	{
 		id: integer("id").primaryKey(),
-		networkProxyJson: text("network_proxy").notNull().default('{"mode":"direct"}'),
+		networkProxyJson: text("network_proxy").notNull().default('{"mode":"auto"}'),
 		memoryVectorServiceJson: text("memory_vector_service")
 			.notNull()
 			.default('{"enabled":false,"provider":"none"}'),
@@ -690,7 +689,6 @@ export const characterDraftRevisions = sqliteTable(
 	},
 	(table) => [primaryKey({ columns: [table.draftId, table.revision] })],
 );
-
 
 export const roleplayEvents = sqliteTable(
 	"roleplay_events",
