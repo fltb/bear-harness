@@ -335,6 +335,9 @@ export type ModelDisableResponse = z.infer<typeof schema.EmptyResponse>;
 // ---------------------------------------------------------------------------
 
 export type ActionDraft = z.infer<typeof schema.ActionDraft>;
+export type ResourceOperation = z.infer<typeof schema.ResourceOperation>;
+export type CommissionResourceGrant = z.infer<typeof schema.CommissionResourceGrant>;
+export type OutputGrant = z.infer<typeof schema.OutputGrant>;
 export type Commission = z.infer<typeof schema.Commission>;
 export type CommissionListRequest = z.infer<typeof schema.CommissionListRequest>;
 export type CommissionListResponse = z.infer<typeof schema.CommissionListResponse>;

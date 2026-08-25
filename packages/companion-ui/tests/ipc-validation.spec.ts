@@ -83,10 +83,11 @@ const draft = {
 	id: "draft-1",
 	title: "Work",
 	description: "Description",
-	reads: ["input.txt"],
-	writes: ["output.txt"],
-	networkAllowed: false,
+	resourceGrants: [{ resourceId: "res-1", operations: ["read"] }],
+	outputGrants: [],
+	networkPolicy: { allowed: false },
 	toolNames: ["read"],
+	acceptanceCriteria: [],
 	hash: "hash",
 };
 const commission = {
@@ -197,13 +198,16 @@ describe("host projection validation", () => {
 			"id",
 			"title",
 			"description",
-			"reads",
-			"writes",
-			"networkAllowed",
+			"resourceGrants",
+			"outputGrants",
+			"networkPolicy",
 			"toolNames",
+			"acceptanceCriteria",
 			"hash",
 		]);
-		expect(isActionDraft({ ...draft, reads: [3] })).toBe(false);
+		expect(
+			isActionDraft({ ...draft, resourceGrants: [{ resourceId: 3, operations: ["read"] }] }),
+		).toBe(false);
 		expectRequiredFields(isCommission, commission, ["id", "draft", "status", "createdAt"]);
 		expect(isCommission({ ...commission, conversationId: 3 })).toBe(false);
 		expectRequiredFields(isRun, run, ["id", "commissionId", "executorProfile", "status"]);

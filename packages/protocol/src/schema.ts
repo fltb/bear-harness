@@ -1777,14 +1777,39 @@ export const ModelDisableRequest = ModelRoute;
 // Commission
 // ---------------------------------------------------------------------------
 
+export const ResourceOperation = z.union([
+	z.literal("list"),
+	z.literal("read"),
+	z.literal("create-child"),
+	z.literal("modify"),
+	z.literal("rename"),
+	z.literal("move"),
+	z.literal("delete"),
+]);
+export const CommissionResourceGrant = z.strictObject({
+	resourceId: z.string().min(1).max(64),
+	operations: z.array(ResourceOperation).min(1).max(7),
+	relativeScopes: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).max(50).optional(),
+	baselineRevision: z.string().min(1).max(128).optional(),
+});
+export const OutputGrant = z.strictObject({
+	parentResourceId: z.string().min(1).max(64),
+	relativePath: z.string().min(1).max(MAX_PATH_LENGTH).optional(),
+	mode: z.union([z.literal("create-new"), z.literal("modify-existing")]),
+});
+export const CommissionNetworkPolicy = z.strictObject({
+	allowed: z.boolean(),
+	uploadResourceIds: z.array(z.string().min(1).max(64)).max(20).optional(),
+});
 export const ActionDraft = z.strictObject({
 	id: z.string().min(1).max(64),
 	title: z.string().max(MAX_STRING_LENGTH),
 	description: z.string().max(MAX_STRING_LENGTH),
-	reads: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).max(20),
-	writes: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).max(20),
-	networkAllowed: z.boolean(),
+	resourceGrants: z.array(CommissionResourceGrant).max(20),
+	outputGrants: z.array(OutputGrant).max(20),
+	networkPolicy: CommissionNetworkPolicy,
 	toolNames: z.array(z.string().min(1).max(64)).max(20),
+	acceptanceCriteria: z.array(z.string().min(1).max(MAX_STRING_LENGTH)).max(20),
 	hash: z.string().min(1).max(128),
 });
 export const Commission = z.strictObject({
@@ -1814,10 +1839,11 @@ export const CommissionDraftRequest = z.strictObject({
 	triggerEntryId: PiSessionEntryId,
 	title: z.string().min(1).max(MAX_STRING_LENGTH),
 	description: z.string().min(1).max(MAX_STRING_LENGTH),
-	reads: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).max(20).optional(),
-	writes: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).max(20).optional(),
-	networkAllowed: z.boolean().optional(),
+	resourceGrants: z.array(CommissionResourceGrant).max(20).optional(),
+	outputGrants: z.array(OutputGrant).max(20).optional(),
+	networkPolicy: CommissionNetworkPolicy.optional(),
 	toolNames: z.array(z.string().min(1).max(64)).max(20).optional(),
+	acceptanceCriteria: z.array(z.string().min(1).max(MAX_STRING_LENGTH)).max(20).optional(),
 });
 export const CommissionDraftResponse = z.strictObject({
 	commissionId: z.string().min(1).max(64),

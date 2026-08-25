@@ -89,7 +89,8 @@ export class PiAcpAdapter extends AcpExecutorController {
 }
 
 function workspaceFor(request: ExecutorLaunchRequest): string {
-	const root = request.commission.reads[0] ?? request.commission.writes[0];
+	const root =
+		request.commission.resources[0]?.resolvedPath ?? request.commission.outputs[0]?.resolvedPath;
 	if (!root) throw { kind: "validation_failed", reason: "executor_workspace_not_declared" };
 	const absolute = resolve(root);
 	try {

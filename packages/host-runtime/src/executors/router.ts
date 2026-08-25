@@ -7,6 +7,7 @@
  */
 
 import { eq } from "drizzle-orm";
+import type { OutputGrant, ResolvedResourceGrant } from "../resources/types.js";
 import type { AppDatabase } from "../storage/database.js";
 import { executorProfiles } from "../storage/schema.js";
 
@@ -28,10 +29,11 @@ export interface ExecutorCommission {
 	id: string;
 	title: string;
 	description: string;
-	reads: string[];
-	writes: string[];
-	networkAllowed: boolean;
+	resources: ResolvedResourceGrant[];
+	outputs: Array<OutputGrant & { resolvedPath: string }>;
+	networkPolicy: { allowed: boolean; uploadResourceIds?: string[] };
 	toolNames: string[];
+	acceptanceCriteria: string[];
 }
 
 export type ExecutorEvent =

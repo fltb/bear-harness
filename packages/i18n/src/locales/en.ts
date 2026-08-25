@@ -450,6 +450,8 @@ export const en = {
 		network: "Network:",
 		networkYes: "Network required",
 		networkNo: "No network access",
+		externalAppWarning:
+			"Pi Worker is a complete external application. Once approved, it directly accesses the local resources listed above.",
 		start: "Start",
 		cancel: "Cancel",
 		needsYou: "Needs your decision",

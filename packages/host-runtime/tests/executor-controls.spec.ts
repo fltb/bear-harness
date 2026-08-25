@@ -393,10 +393,19 @@ describe("AcpExecutorController mid-run controls", () => {
 				id: "commission-1",
 				title: "Inspect",
 				description: "Inspect the approved root.",
-				reads: [cwd],
-				writes: [],
-				networkAllowed: false,
+				resources: [
+					{
+						resourceId: "res-1",
+						resolvedPath: cwd,
+						kind: "directory",
+						operations: ["list", "read"],
+						identityAtLaunch: { realpathAtGrant: cwd },
+					},
+				],
+				outputs: [],
+				networkPolicy: { allowed: false },
 				toolNames: ["read"],
+				acceptanceCriteria: [],
 			},
 			profile: { id: "pi-worker", type: "product-managed", capabilities: {} },
 			emit: (event) => {

@@ -17,7 +17,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
-import { basename, extname, join } from "node:path";
+import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
 import type { ArtifactStore } from "../artifacts/index.js";
 import type {
@@ -27,14 +27,22 @@ import type {
 	ExecutorRouter,
 	ExecutorRun,
 } from "../executors/router.js";
+import type { ResourceReferenceService } from "../resources/reference-service.js";
+import type {
+	CommissionResourceGrant,
+	OutputGrant,
+	ResolvedResourceGrant,
+} from "../resources/types.js";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
 import {
 	approvals,
 	type CommissionDraftData,
+	commissionResourceGrants,
 	commissions,
 	conversations,
 	evidence,
+	runResourceChanges,
 	runs,
 } from "../storage/schema.js";
 
@@ -77,10 +85,11 @@ export interface CommissionDraftParams {
 	conversationId: string;
 	title: string;
 	description: string;
-	reads?: string[];
-	writes?: string[];
-	networkAllowed?: boolean;
+	resourceGrants?: CommissionResourceGrant[];
+	outputGrants?: OutputGrant[];
+	networkPolicy?: { allowed: boolean; uploadResourceIds?: string[] };
 	toolNames?: string[];
+	acceptanceCriteria?: string[];
 }
 
 export interface CommissionDraftResult {
@@ -113,10 +122,11 @@ export interface DraftSummary {
 	id: string;
 	title: string;
 	description: string;
-	reads: string[];
-	writes: string[];
-	networkAllowed: boolean;
+	resourceGrants: CommissionResourceGrant[];
+	outputGrants: OutputGrant[];
+	networkPolicy: { allowed: boolean; uploadResourceIds?: string[] };
 	toolNames: string[];
+	acceptanceCriteria: string[];
 	hash: string;
 }
 
@@ -142,10 +152,11 @@ interface DraftPayload extends CommissionDraftData {
 	conversationId: string;
 	title: string;
 	description: string;
-	reads: string[];
-	writes: string[];
-	networkAllowed: boolean;
+	resourceGrants: CommissionResourceGrant[];
+	outputGrants: OutputGrant[];
+	networkPolicy: { allowed: boolean; uploadResourceIds?: string[] };
 	toolNames: string[];
+	acceptanceCriteria: string[];
 }
 
 type CommissionRow = {
@@ -167,23 +178,37 @@ type RunRow = {
 	completedAt: string | null;
 };
 
+type FileSnapshot = {
+	resourceId?: string;
+	parentResourceId?: string;
+	relativePath?: string;
+	path: string;
+	exists: boolean;
+	size?: number;
+	sha256?: string;
+};
+
 /** Row shape for `SELECT COUNT(*) AS n` queries. */
 export class CommissionService {
 	private db: AppDatabase;
 	private eventBus: EventBus;
 	private artifactStore: ArtifactStore;
 	private executorRouter: ExecutorRouter;
+	private resources?: ResourceReferenceService;
+	private readonly launchSnapshots = new Map<string, FileSnapshot[]>();
 
 	constructor(
 		db: AppDatabase,
 		eventBus: EventBus,
 		artifactStore: ArtifactStore,
 		executorRouter: ExecutorRouter,
+		resources?: ResourceReferenceService,
 	) {
 		this.db = db;
 		this.eventBus = eventBus;
 		this.artifactStore = artifactStore;
 		this.executorRouter = executorRouter;
+		this.resources = resources;
 	}
 
 	/** Fetch a commission row, throwing not_found when missing. */
@@ -204,7 +229,14 @@ export class CommissionService {
 
 	/** Parse stored draft JSON with defensive defaults for legacy rows. */
 	private parseDraft(draft: DraftPayload): DraftPayload {
-		return draft;
+		return {
+			...draft,
+			resourceGrants: draft.resourceGrants ?? [],
+			outputGrants: draft.outputGrants ?? [],
+			networkPolicy: draft.networkPolicy ?? { allowed: false },
+			toolNames: draft.toolNames ?? [],
+			acceptanceCriteria: draft.acceptanceCriteria ?? [],
+		};
 	}
 
 	/** Map a run row to its public summary shape. */
@@ -233,6 +265,70 @@ export class CommissionService {
 		const evidenceId = randomUUID();
 		this.db.insert(evidence).values({ id: evidenceId, runId, kind, data }).run();
 		this.eventBus.publish("evidence.collected", { runId, evidenceId, kind });
+	}
+
+	private snapshotFile(
+		path: string,
+		ids: Pick<FileSnapshot, "resourceId" | "parentResourceId" | "relativePath">,
+	): FileSnapshot {
+		try {
+			const stat = lstatSync(path);
+			if (stat.isSymbolicLink()) return { ...ids, path, exists: false };
+			if (stat.isDirectory()) return { ...ids, path, exists: true, sha256: directoryDigest(path) };
+			if (!stat.isFile()) return { ...ids, path, exists: false };
+			return {
+				...ids,
+				path,
+				exists: true,
+				size: stat.size,
+				sha256: createHash("sha256").update(readFileSync(path)).digest("hex"),
+			};
+		} catch {
+			return { ...ids, path, exists: false };
+		}
+	}
+
+	private recordRunChanges(runId: string): void {
+		const before = this.launchSnapshots.get(runId) ?? [];
+		this.launchSnapshots.delete(runId);
+		for (const previous of before) {
+			const current = this.snapshotFile(previous.path, previous);
+			if (
+				previous.exists === current.exists &&
+				previous.sha256 === current.sha256 &&
+				previous.size === current.size
+			)
+				continue;
+			const operation =
+				!previous.exists && current.exists
+					? "created"
+					: previous.exists && !current.exists
+						? "deleted"
+						: "modified";
+			this.db
+				.insert(runResourceChanges)
+				.values({
+					id: randomUUID(),
+					runId,
+					resourceId: previous.resourceId,
+					parentResourceId: previous.parentResourceId,
+					relativePath: previous.relativePath,
+					operation,
+					beforeSha256: previous.sha256,
+					afterSha256: current.sha256,
+					beforeSize: previous.size,
+					afterSize: current.size,
+					detectedAt: new Date().toISOString(),
+				})
+				.run();
+			this.eventBus.publish("run.resource_changed", {
+				runId,
+				resourceId: previous.resourceId,
+				parentResourceId: previous.parentResourceId,
+				relativePath: previous.relativePath,
+				operation,
+			});
+		}
 	}
 
 	/**
@@ -331,7 +427,17 @@ export class CommissionService {
 				});
 			}
 		};
-		for (const path of draft.writes) visit(path);
+		if (!this.resources) return;
+		for (const output of draft.outputGrants) {
+			try {
+				const parent = this.resources.resolve(output.parentResourceId);
+				visit(resolveOutputPath(parent.locator.canonicalPath, output.relativePath));
+			} catch {
+				this.recordExecutorEvidence(runId, "artifact.collection_failed", {
+					resourceId: output.parentResourceId,
+				});
+			}
+		}
 	}
 
 	// -----------------------------------------------------------------------
@@ -349,24 +455,37 @@ export class CommissionService {
 			conversationId: params.conversationId,
 			title: params.title,
 			description: params.description,
-			reads: params.reads ?? [],
-			writes: params.writes ?? [],
-			networkAllowed: params.networkAllowed ?? false,
+			resourceGrants: params.resourceGrants ?? [],
+			outputGrants: params.outputGrants ?? [],
+			networkPolicy: params.networkPolicy ?? { allowed: false },
 			toolNames: params.toolNames ?? [],
+			acceptanceCriteria: params.acceptanceCriteria ?? [],
 		};
 		const draftHash = createHash("sha256").update(JSON.stringify(draft), "utf8").digest("hex");
 		const commissionId = randomUUID();
-		this.db
-			.insert(commissions)
-			.values({
-				id: commissionId,
-				triggerEntryId: params.triggerEntryId,
-				conversationId: draft.conversationId,
-				status: "draft",
-				draftJson: draft,
-				approvalHash: draftHash,
-			})
-			.run();
+		this.db.transaction((transaction) => {
+			transaction
+				.insert(commissions)
+				.values({
+					id: commissionId,
+					triggerEntryId: params.triggerEntryId,
+					conversationId: draft.conversationId,
+					status: "draft",
+					draftJson: draft,
+					approvalHash: draftHash,
+				})
+				.run();
+			for (const grant of draft.resourceGrants) {
+				transaction
+					.insert(commissionResourceGrants)
+					.values({
+						commissionId,
+						resourceId: grant.resourceId,
+						grantJson: grant,
+					})
+					.run();
+			}
+		});
 		this.eventBus.publish("commission.drafted", { commissionId, draftHash });
 		return { commissionId, draftHash };
 	}
@@ -424,6 +543,44 @@ export class CommissionService {
 	 * the launcher error to the caller.
 	 */
 	async launch(params: CommissionLaunchParams): Promise<CommissionLaunchResult> {
+		const approvedCommission = this.getCommission(params.commissionId);
+		const approvedDraft = this.parseDraft(approvedCommission.draftJson);
+		if (
+			!this.resources &&
+			(approvedDraft.resourceGrants.length > 0 || approvedDraft.outputGrants.length > 0)
+		)
+			throw { kind: "unavailable", reason: "resource_service_not_wired" };
+		const resolvedResources: ResolvedResourceGrant[] = approvedDraft.resourceGrants.map((grant) => {
+			const resource = this.resources?.resolve(grant.resourceId);
+			if (
+				!resource ||
+				resource.state === "missing" ||
+				resource.state === "permission_lost" ||
+				resource.state === "replaced"
+			)
+				throw { kind: "conflict", reason: `resource_${resource?.state ?? "unavailable"}` };
+			if (
+				grant.operations.some((operation) => !["list", "read"].includes(operation)) &&
+				resource.access !== "read-write"
+			)
+				throw { kind: "forbidden", reason: "resource_write_not_granted" };
+			return {
+				...grant,
+				resolvedPath: resource.locator.canonicalPath,
+				kind: resource.kind,
+				identityAtLaunch: resource.identity,
+				sha256AtLaunch: resource.baseline.sha256,
+			};
+		});
+		const resolvedOutputs = approvedDraft.outputGrants.map((grant) => {
+			const parent = this.resources?.resolve(grant.parentResourceId);
+			if (!parent || parent.kind !== "directory" || parent.access !== "read-write")
+				throw { kind: "forbidden", reason: "output_parent_not_writable" };
+			return {
+				...grant,
+				resolvedPath: resolveOutputPath(parent.locator.canonicalPath, grant.relativePath),
+			};
+		});
 		const launch = this.db.transaction((transaction) => {
 			const activeRow = transaction
 				.select({ n: count() })
@@ -474,13 +631,25 @@ export class CommissionService {
 				id: params.commissionId,
 				title: draft.title,
 				description: draft.description,
-				reads: draft.reads,
-				writes: draft.writes,
-				networkAllowed: draft.networkAllowed,
+				resources: resolvedResources,
+				outputs: resolvedOutputs,
+				networkPolicy: draft.networkPolicy,
 				toolNames: draft.toolNames,
+				acceptanceCriteria: draft.acceptanceCriteria,
 			};
 			return { run, commission };
 		});
+		this.launchSnapshots.set(launch.run.runId, [
+			...resolvedResources.map((grant) =>
+				this.snapshotFile(grant.resolvedPath, { resourceId: grant.resourceId }),
+			),
+			...resolvedOutputs.map((grant) =>
+				this.snapshotFile(grant.resolvedPath, {
+					parentResourceId: grant.parentResourceId,
+					relativePath: grant.relativePath,
+				}),
+			),
+		]);
 
 		this.eventBus.publish("run.enqueued", {
 			runId: launch.run.runId,
@@ -548,6 +717,7 @@ export class CommissionService {
 		if (run.completedAt !== null) {
 			throw { kind: "conflict", reason: "run_already_terminated" };
 		}
+		this.recordRunChanges(runId);
 		this.db
 			.update(runs)
 			.set({ status: terminalStatus, completedAt: new Date().toISOString() })
@@ -674,6 +844,7 @@ export class CommissionService {
 			throw { kind: "conflict", reason: "run_not_cancellable" };
 		}
 		await this.executorRouter.cancel(this.executorRun(run));
+		this.recordRunChanges(runId);
 		this.db
 			.update(runs)
 			.set({ status: "cancelled", completedAt: new Date().toISOString() })
@@ -747,10 +918,11 @@ export class CommissionService {
 						id: row.id,
 						title: draft.title,
 						description: draft.description,
-						reads: draft.reads,
-						writes: draft.writes,
-						networkAllowed: draft.networkAllowed,
+						resourceGrants: draft.resourceGrants,
+						outputGrants: draft.outputGrants,
+						networkPolicy: draft.networkPolicy,
 						toolNames: draft.toolNames,
+						acceptanceCriteria: draft.acceptanceCriteria,
 						hash: draftHash,
 					},
 					draftHash,
@@ -804,4 +976,35 @@ function mimeForPath(path: string): string {
 		default:
 			return "application/octet-stream";
 	}
+}
+
+function resolveOutputPath(root: string, relativePath?: string): string {
+	if (!relativePath) return root;
+	if (isAbsolute(relativePath))
+		throw { kind: "validation_failed", reason: "output_path_must_be_relative" };
+	const target = resolve(root, relativePath);
+	const relation = relative(root, target);
+	if (relation === ".." || relation.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`))
+		throw { kind: "validation_failed", reason: "output_path_escape" };
+	return target;
+}
+
+function directoryDigest(root: string): string {
+	const hash = createHash("sha256");
+	let entries = 0;
+	const visit = (directory: string, prefix: string): void => {
+		if (entries >= 10_000) return;
+		for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
+			a.name.localeCompare(b.name),
+		)) {
+			if (entries++ >= 10_000 || entry.isSymbolicLink()) continue;
+			const relativeName = prefix ? `${prefix}/${entry.name}` : entry.name;
+			const path = join(directory, entry.name);
+			const stat = lstatSync(path);
+			hash.update(`${relativeName}\0${stat.size}\0${stat.mtimeMs}\0`);
+			if (entry.isDirectory()) visit(path, relativeName);
+		}
+	};
+	visit(root, "");
+	return hash.digest("hex");
 }

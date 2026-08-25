@@ -7,7 +7,7 @@
  */
 
 import { readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
 import { type AcpPermissionRequest, type AcpProcessSpec, AcpRunClient } from "./acp-client.js";
 import type {
@@ -71,7 +71,12 @@ export class ApprovedFileAccess {
 			.split(/\r?\n/)
 			.slice(line - 1, line - 1 + Math.min(limit, 2000))
 			.join("\n");
-		this.record("acp.file_read", { path: target, bytes, line, limit: Math.min(limit, 2000) });
+		this.record("acp.file_read", {
+			name: basename(target),
+			bytes,
+			line,
+			limit: Math.min(limit, 2000),
+		});
 		return { content: sliced };
 	}
 
@@ -82,7 +87,7 @@ export class ApprovedFileAccess {
 		const target = this.resolveWritable(request.path);
 		writeFileSync(target, request.content, "utf8");
 		this.record("acp.file_write", {
-			path: target,
+			name: basename(target),
 			bytes: Buffer.byteLength(request.content, "utf8"),
 		});
 		return {};
@@ -146,9 +151,22 @@ export abstract class AcpExecutorController implements ExecutorController {
 		}
 
 		let active: ActiveRun;
+		const reads = request.commission.resources
+			.filter((grant) =>
+				grant.operations.some((operation) => operation === "read" || operation === "list"),
+			)
+			.map((grant) => grant.resolvedPath);
+		const writes = [
+			...request.commission.resources
+				.filter((grant) =>
+					grant.operations.some((operation) => operation !== "read" && operation !== "list"),
+				)
+				.map((grant) => grant.resolvedPath),
+			...request.commission.outputs.map((grant) => grant.resolvedPath),
+		];
 		const files = new ApprovedFileAccess({
-			reads: request.commission.reads,
-			writes: request.commission.writes,
+			reads,
+			writes,
 			record: (kind, data) => request.emit({ type: "evidence", kind, data }),
 		});
 		const client = new AcpRunClient(this.processSpec(request), {
@@ -370,10 +388,11 @@ export abstract class AcpExecutorController implements ExecutorController {
 
 function executionPrompt(request: ExecutorLaunchRequest): string {
 	const scope = [
-		`Reads: ${request.commission.reads.join(", ") || "none"}.`,
-		`Writes: ${request.commission.writes.join(", ") || "none"}.`,
+		`Approved resources: ${request.commission.resources.map((grant) => `${grant.resolvedPath} (${grant.operations.join(",")})`).join("; ") || "none"}.`,
+		`Approved outputs: ${request.commission.outputs.map((grant) => grant.resolvedPath).join(", ") || "none"}.`,
 		`Allowed tools: ${request.commission.toolNames.join(", ") || "read/write only"}.`,
-		`Network access: ${request.commission.networkAllowed ? "allowed" : "not allowed"}.`,
+		`Network access: ${request.commission.networkPolicy.allowed ? "allowed" : "not allowed"}.`,
+		`Acceptance criteria: ${request.commission.acceptanceCriteria.join("; ") || "none"}.`,
 	].join("\n");
 	return `Complete this user-approved action.\n\nTitle: ${request.commission.title}\nDescription: ${request.commission.description}\n\n${scope}\n\nWork only within this scope. Report the result concisely.`;
 }

@@ -50,8 +50,8 @@ import { ModelRegistry } from "./models/registry.js";
 import { applyProxyConfig, type SystemProxyResolver } from "./network/proxy-config.js";
 import { ProviderCatalog } from "./providers/catalog.js";
 import { CredentialStore, type CredentialVault } from "./providers/credential-store.js";
-import { ResourceReferenceService } from "./resources/reference-service.js";
 import { ResourceContentService } from "./resources/content-service.js";
+import { ResourceReferenceService } from "./resources/reference-service.js";
 import { AuditStore, wireAuditToEvents } from "./security/audit-store.js";
 import { type FsProtectionHandle, installFsProtection } from "./security/fs-protection.js";
 import { createModerationService, type ModerationService } from "./security/moderation.js";
@@ -268,7 +268,13 @@ export class HostRuntime {
 		const executorRouter = new ExecutorRouter(db.orm);
 		executorRouter.register("product-managed", new PiAcpAdapter(db.orm, dataDir));
 		executorRouter.register("codex", new CodexAdapter(db.orm, eventBus));
-		const commissions = new CommissionService(db.orm, eventBus, artifactStore, executorRouter);
+		const commissions = new CommissionService(
+			db.orm,
+			eventBus,
+			artifactStore,
+			executorRouter,
+			resources,
+		);
 		supervisor.setHostToolHandler(async (call) => {
 			if (call.tool.startsWith("resource_")) {
 				const args = call.args as {
@@ -409,11 +415,24 @@ export class HostRuntime {
 			const args = call.args as {
 				title: string;
 				description: string;
-				reads: string[];
-				writes: string[];
-				networkAllowed: boolean;
+				resourceGrants: import("./resources/types.js").CommissionResourceGrant[];
+				outputGrants: import("./resources/types.js").OutputGrant[];
+				networkPolicy: { allowed: boolean; uploadResourceIds?: string[] };
 				toolNames: string[];
+				acceptanceCriteria: string[];
 			};
+			const attached = new Set(
+				resources.listForConversation(call.conversationId).map((resource) => resource.id),
+			);
+			if (
+				args.resourceGrants.some((grant) => !attached.has(grant.resourceId)) ||
+				args.outputGrants.some((grant) => !attached.has(grant.parentResourceId))
+			)
+				return {
+					ok: false,
+					code: "resource_not_attached",
+					message: "Every proposed resource must be attached to this conversation.",
+				};
 			const draft = commissions.draft({
 				conversationId: call.conversationId,
 				triggerEntryId,

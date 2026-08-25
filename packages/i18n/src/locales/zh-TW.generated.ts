@@ -432,6 +432,7 @@ export const zhTW = {
 		"network": "聯網：",
 		"networkYes": "需要聯網",
 		"networkNo": "不會聯網",
+		"externalAppWarning": "Pi Worker 是完整外部軟體。批准後，它會直接訪問以上本機資源。",
 		"start": "開始處理",
 		"cancel": "取消",
 		"needsYou": "需要你決定",

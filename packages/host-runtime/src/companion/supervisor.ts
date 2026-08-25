@@ -14,7 +14,7 @@ import {
 	AgentSession,
 	DefaultResourceLoader,
 	estimateTokens,
-	ModelRuntime,
+	type ModelRuntime,
 	type CompactionSettings as PiCompactionSettings,
 	SettingsManager,
 	shouldCompact,
@@ -781,15 +781,52 @@ export class CompanionSupervisor {
 				conversationId,
 				"host_propose_work",
 				"Propose real-world work for user approval",
-				"Create a plain-language action proposal when the user asks for real work. This never starts work; the user must approve the exact read, write, network and tool scope in the system UI.",
+				"Create a plain-language action proposal using only resource IDs already attached to this conversation. This never starts work; the user must approve the exact resource, output, network and tool scope in the system UI.",
 				toolParameters(
 					z.strictObject({
 						title: z.string().min(1).max(200),
 						description: z.string().min(1).max(4000),
-						reads: z.array(z.string().min(1).max(1024)).max(20).default([]),
-						writes: z.array(z.string().min(1).max(1024)).max(20).default([]),
-						networkAllowed: z.boolean().default(false),
+						resourceGrants: z
+							.array(
+								z.strictObject({
+									resourceId: z.string().min(1).max(64),
+									operations: z
+										.array(
+											z.enum([
+												"list",
+												"read",
+												"create-child",
+												"modify",
+												"rename",
+												"move",
+												"delete",
+											]),
+										)
+										.min(1)
+										.max(7),
+									relativeScopes: z.array(z.string().min(1).max(1024)).max(50).optional(),
+								}),
+							)
+							.max(20)
+							.default([]),
+						outputGrants: z
+							.array(
+								z.strictObject({
+									parentResourceId: z.string().min(1).max(64),
+									relativePath: z.string().min(1).max(1024).optional(),
+									mode: z.enum(["create-new", "modify-existing"]),
+								}),
+							)
+							.max(20)
+							.default([]),
+						networkPolicy: z
+							.strictObject({
+								allowed: z.boolean(),
+								uploadResourceIds: z.array(z.string().min(1).max(64)).max(20).optional(),
+							})
+							.default({ allowed: false }),
 						toolNames: z.array(z.string().min(1).max(64)).max(20).default([]),
+						acceptanceCriteria: z.array(z.string().min(1).max(1000)).max(20).default([]),
 					}),
 				),
 			),

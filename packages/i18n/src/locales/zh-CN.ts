@@ -421,6 +421,7 @@ export const zhCN = {
 		network: "联网：",
 		networkYes: "需要联网",
 		networkNo: "不会联网",
+		externalAppWarning: "Pi Worker 是完整外部软件。批准后，它会直接访问以上本机资源。",
 		start: "开始处理",
 		cancel: "取消",
 		needsYou: "需要你决定",

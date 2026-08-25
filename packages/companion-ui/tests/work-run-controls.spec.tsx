@@ -42,10 +42,11 @@ function commissionOf(
 		draft: {
 			title,
 			description: `描述：${title}`,
-			reads: [],
-			writes: [],
-			networkAllowed: false,
+			resourceGrants: [],
+			outputGrants: [],
+			networkPolicy: { allowed: false },
 			toolNames: [],
+			acceptanceCriteria: [],
 			hash: "hash",
 		},
 	};

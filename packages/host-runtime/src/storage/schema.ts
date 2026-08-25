@@ -323,10 +323,11 @@ export interface CommissionDraftData {
 	conversationId: string;
 	title: string;
 	description: string;
-	reads: string[];
-	writes: string[];
-	networkAllowed: boolean;
+	resourceGrants: import("../resources/types.js").CommissionResourceGrant[];
+	outputGrants: import("../resources/types.js").OutputGrant[];
+	networkPolicy: { allowed: boolean; uploadResourceIds?: string[] };
 	toolNames: string[];
+	acceptanceCriteria: string[];
 }
 
 export const commissions = sqliteTable(
@@ -407,6 +408,38 @@ export const runs = sqliteTable(
 		),
 	],
 );
+
+export const commissionResourceGrants = sqliteTable(
+	"commission_resource_grants",
+	{
+		commissionId: text("commission_id")
+			.notNull()
+			.references(() => commissions.id),
+		resourceId: text("resource_id")
+			.notNull()
+			.references(() => resourceRefs.id),
+		grantJson: text("grant_json", { mode: "json" })
+			.$type<import("../resources/types.js").CommissionResourceGrant>()
+			.notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.commissionId, table.resourceId] })],
+);
+
+export const runResourceChanges = sqliteTable("run_resource_changes", {
+	id: text().primaryKey(),
+	runId: text("run_id")
+		.notNull()
+		.references(() => runs.id),
+	resourceId: text("resource_id").references(() => resourceRefs.id),
+	parentResourceId: text("parent_resource_id").references(() => resourceRefs.id),
+	relativePath: text("relative_path"),
+	operation: text({ enum: ["created", "modified", "renamed", "moved", "deleted"] }).notNull(),
+	beforeSha256: text("before_sha256"),
+	afterSha256: text("after_sha256"),
+	beforeSize: integer("before_size"),
+	afterSize: integer("after_size"),
+	detectedAt: text("detected_at").notNull(),
+});
 
 export const runManifests = sqliteTable("run_manifests", {
 	id: text().primaryKey(),

@@ -13,12 +13,22 @@ import {
 	type ExecutorLaunchRequest,
 	ExecutorRouter,
 } from "../src/executors/router.js";
+import type { CredentialVault } from "../src/providers/credential-store.js";
+import { ResourceReferenceService } from "../src/resources/reference-service.js";
 import { EventBus } from "../src/storage/event-bus.js";
 
 type Fixture = {
 	db: DatabaseSync;
 	service: CommissionService;
+	resources: ResourceReferenceService;
 	tmp: string;
+};
+
+const vault: CredentialVault = {
+	securityLevel: "os",
+	isEncryptionAvailable: () => true,
+	encryptString: (value) => Buffer.from(value, "utf8"),
+	decryptString: (value) => Buffer.from(value).toString("utf8"),
 };
 
 function createFixture(controller?: ExecutorController): Fixture {
@@ -75,6 +85,21 @@ function createFixture(controller?: ExecutorController): Fixture {
 			run_id TEXT NOT NULL,
 			adopted_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
+		CREATE TABLE resource_refs (
+			id TEXT PRIMARY KEY, kind TEXT NOT NULL, display_name TEXT NOT NULL, access TEXT NOT NULL,
+			persistence TEXT NOT NULL, encrypted_locator_json BLOB NOT NULL, identity_json TEXT NOT NULL,
+			baseline_json TEXT NOT NULL, state TEXT NOT NULL, granted_at TEXT NOT NULL,
+			last_resolved_at TEXT, revoked_at TEXT
+		);
+		CREATE TABLE commission_resource_grants (
+			commission_id TEXT NOT NULL, resource_id TEXT NOT NULL, grant_json TEXT NOT NULL,
+			PRIMARY KEY (commission_id, resource_id)
+		);
+		CREATE TABLE run_resource_changes (
+			id TEXT PRIMARY KEY, run_id TEXT NOT NULL, resource_id TEXT, parent_resource_id TEXT,
+			relative_path TEXT, operation TEXT NOT NULL, before_sha256 TEXT, after_sha256 TEXT,
+			before_size INTEGER, after_size INTEGER, detected_at TEXT NOT NULL
+		);
 		CREATE TABLE executor_profiles (
 			id TEXT PRIMARY KEY,
 			profile_type TEXT NOT NULL,
@@ -97,9 +122,11 @@ function createFixture(controller?: ExecutorController): Fixture {
 	const router = new ExecutorRouter(orm);
 	if (controller) router.register("product-managed", controller);
 	const tmp = mkdtempSync(join(tmpdir(), "bear-commission-router-"));
+	const resources = new ResourceReferenceService(orm, vault);
 	return {
 		db,
-		service: new CommissionService(orm, eventBus, new ArtifactStore(orm, tmp), router),
+		service: new CommissionService(orm, eventBus, new ArtifactStore(orm, tmp), router, resources),
+		resources,
 		tmp,
 	};
 }
@@ -110,7 +137,8 @@ function approvedCommission(service: CommissionService): string {
 		triggerEntryId: "user-message-1",
 		title: "Inspect the workspace",
 		description: "Read the approved files and summarize them.",
-		reads: ["/workspace"],
+		resourceGrants: [],
+		outputGrants: [],
 		toolNames: ["read"],
 	});
 	service.approve(commissionId, draftHash);
@@ -126,6 +154,37 @@ afterEach(() => {
 });
 
 describe("CommissionService executor routing", () => {
+	it("resolves approved resource IDs only at launch and records verified file changes", async () => {
+		let approvedPath = "";
+		const fixture = createFixture({
+			async launch(request) {
+				approvedPath = request.commission.resources[0]?.resolvedPath ?? "";
+				writeFileSync(approvedPath, "after", "utf8");
+				request.emit({ type: "started" });
+				request.emit({ type: "completed" });
+			},
+		});
+		fixtures.push(fixture);
+		const path = join(fixture.tmp, "approved.txt");
+		writeFileSync(path, "before", "utf8");
+		const resource = fixture.resources.grant(path, { access: "read-write" });
+		const { commissionId, draftHash } = fixture.service.draft({
+			conversationId: "conversation-1",
+			triggerEntryId: "user-message-resource",
+			title: "Modify approved resource",
+			description: "Update only the approved file.",
+			resourceGrants: [{ resourceId: resource.id, operations: ["read", "modify"] }],
+			acceptanceCriteria: ["File contains after"],
+		});
+		expect(JSON.stringify(fixture.service.list()[0]?.draft)).not.toContain(path);
+		fixture.service.approve(commissionId, draftHash);
+		await fixture.service.launch({ commissionId, executorProfile: "pi-worker" });
+		expect(approvedPath).toBe(path);
+		expect(
+			fixture.db.prepare("SELECT operation, resource_id FROM run_resource_changes").get(),
+		).toEqual({ operation: "modified", resource_id: resource.id });
+	});
+
 	it("keeps distinct user-message triggers through persistence and list projection", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);
@@ -262,7 +321,8 @@ describe("CommissionService executor routing", () => {
 		expect(launches).toHaveLength(1);
 		expect(launches[0]?.commission).toMatchObject({
 			id: commissionId,
-			reads: ["/workspace"],
+			resources: [],
+			outputs: [],
 			toolNames: ["read"],
 		});
 		expect(
@@ -293,7 +353,7 @@ describe("CommissionService executor routing", () => {
 		]);
 	});
 
-	it("collects ordinary files from approved write paths as verified run artifacts", async () => {
+	it("does not copy direct worker writes into the artifact store by default", async () => {
 		let output = "";
 		const fixture = createFixture({
 			async launch(request) {
@@ -309,19 +369,15 @@ describe("CommissionService executor routing", () => {
 			title: "Write report",
 			triggerEntryId: "user-message-2",
 			description: "Create the approved report.",
-			writes: [output],
+			resourceGrants: [],
+			outputGrants: [],
 			toolNames: ["write"],
 		});
 		fixture.service.approve(commissionId, draftHash);
 		const result = await fixture.service.launch({ commissionId, executorProfile: "pi-worker" });
 
-		expect(
-			fixture.db.prepare("SELECT logical_name, status, producer_run_id FROM artifacts").get(),
-		).toEqual({
-			logical_name: "report.md",
-			status: "verified",
-			producer_run_id: result.runId,
-		});
+		expect(result.status).toBe("completed");
+		expect(fixture.db.prepare("SELECT id FROM artifacts").get()).toBeUndefined();
 	});
 
 	it("sends steering and cancellation to the launched profile before changing Host state", async () => {

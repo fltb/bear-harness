@@ -17,8 +17,11 @@ describe("executor control IPC schemas", () => {
 				triggerEntryId: "message-1",
 				title: "Inspect files",
 				description: "Read the selected directory.",
-				reads: ["/workspace"],
+				resourceGrants: [{ resourceId: "res-1", operations: ["read"] }],
+				outputGrants: [],
+				networkPolicy: { allowed: false },
 				toolNames: ["read"],
+				acceptanceCriteria: ["Return a summary"],
 			}).success,
 		).toBe(true);
 		expect(

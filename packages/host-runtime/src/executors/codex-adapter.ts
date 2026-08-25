@@ -414,7 +414,8 @@ function codexCapability(value: Record<string, unknown>): CodexProfileCapability
 }
 
 function workspaceFor(request: ExecutorLaunchRequest): string {
-	const root = request.commission.reads[0] ?? request.commission.writes[0];
+	const root =
+		request.commission.resources[0]?.resolvedPath ?? request.commission.outputs[0]?.resolvedPath;
 	if (!root) fail("validation_failed", "executor_workspace_not_declared");
 	const absolute = resolve(root);
 	try {

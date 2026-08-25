@@ -1,6 +1,35 @@
 export type ResourceKind = "file" | "directory";
 export type ResourceAccess = "read" | "read-write";
 export type ResourcePersistence = "conversation" | "persistent";
+
+export type ResourceOperation =
+	| "list"
+	| "read"
+	| "create-child"
+	| "modify"
+	| "rename"
+	| "move"
+	| "delete";
+
+export interface CommissionResourceGrant {
+	resourceId: string;
+	operations: ResourceOperation[];
+	relativeScopes?: string[];
+	baselineRevision?: string;
+}
+
+export interface OutputGrant {
+	parentResourceId: string;
+	relativePath?: string;
+	mode: "create-new" | "modify-existing";
+}
+
+export interface ResolvedResourceGrant extends CommissionResourceGrant {
+	resolvedPath: string;
+	kind: ResourceKind;
+	identityAtLaunch: FileIdentity;
+	sha256AtLaunch?: string;
+}
 export type ResourceState =
 	| "available"
 	| "changed"

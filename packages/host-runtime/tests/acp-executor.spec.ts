@@ -35,7 +35,7 @@ function fixtureSpec(cwd: string, permission = false): AcpProcessSpec {
 
 class FixtureController extends AcpExecutorController {
 	protected processSpec(request: ExecutorLaunchRequest): AcpProcessSpec {
-		return fixtureSpec(request.commission.reads[0] ?? process.cwd());
+		return fixtureSpec(request.commission.resources[0]?.resolvedPath ?? process.cwd());
 	}
 }
 
@@ -73,10 +73,19 @@ describe("ACP commission transport", () => {
 				id: "commission-1",
 				title: "Inspect",
 				description: "Inspect the approved root.",
-				reads: [cwd],
-				writes: [],
-				networkAllowed: false,
+				resources: [
+					{
+						resourceId: "res-1",
+						resolvedPath: cwd,
+						kind: "directory",
+						operations: ["list", "read"],
+						identityAtLaunch: { realpathAtGrant: cwd },
+					},
+				],
+				outputs: [],
+				networkPolicy: { allowed: false },
 				toolNames: ["read"],
+				acceptanceCriteria: [],
 			},
 			profile: { id: "pi-worker", type: "product-managed", capabilities: {} },
 			emit: (event) => {
