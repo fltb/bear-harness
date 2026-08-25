@@ -10,11 +10,13 @@
 		}
 	},
 	"scripts": {
+		"prebuild": "npm --prefix ../tdai-core run build && npm --prefix ../protocol run build",
 		"build": "tsc -p tsconfig.json",
 		"db:generate": "drizzle-kit generate",
+		"pretypecheck": "npm --prefix ../tdai-core run build && npm --prefix ../protocol run build",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test:unit": "npm --prefix ../protocol run build && vitest run",
-		"test:coverage": "npm --prefix ../protocol run build && vitest run --coverage"
+		"test:unit": "npm --prefix ../tdai-core run build && npm --prefix ../protocol run build && vitest run",
+		"test:coverage": "npm --prefix ../tdai-core run build && npm --prefix ../protocol run build && vitest run --coverage"
 	},
 	"dependencies": {
 		"@agentclientprotocol/codex-acp": "^1.2.0",
