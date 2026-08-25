@@ -440,12 +440,10 @@ export class HostRuntime {
 			// Non-direct mode consults the platform/system proxy; Electron hosts pass
 			// a session.resolveProxy resolver via `systemProxyResolver`.
 			const proxy = this.composition.appSettings.load().networkProxy;
-			if (proxy.mode !== "direct") {
-				await applyProxyConfig(
-					{ mode: proxy.mode, url: proxy.url, bypass: proxy.bypass },
-					{ resolve: this.systemProxyResolver, logger: this.logger },
-				);
-			}
+			await applyProxyConfig(
+				{ mode: proxy.mode, url: proxy.url, bypass: proxy.bypass },
+				{ resolve: this.systemProxyResolver, logger: this.logger },
+			);
 			// Live proxy hot-reload: settings changes re-apply the dispatcher without
 			// a restart. Remember to subscribe AFTER the composition is ready.
 			this.unsubscribeProxyHotReload = this.composition.eventBus.subscribe((event) => {

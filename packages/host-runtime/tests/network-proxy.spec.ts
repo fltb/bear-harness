@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { execFile } from "node:child_process";
-import { EnvHttpProxyAgent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
+import { Agent, EnvHttpProxyAgent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyProxyConfig } from "../src/network/proxy-config.js";
 
@@ -90,9 +90,11 @@ describe("platform system proxy resolvers", () => {
 });
 
 describe("proxy injection", () => {
-	it("leaves the dispatcher untouched in direct mode", async () => {
+	it("restores a direct dispatcher when the proxy is disabled", async () => {
+		await applyProxyConfig({ mode: "manual", url: "http://127.0.0.1:7890" });
 		await applyProxyConfig({ mode: "direct" });
-		expect(getGlobalDispatcher()).toBe(originalDispatcher);
+		expect(getGlobalDispatcher()).toBeInstanceOf(Agent);
+		expect(getGlobalDispatcher()).not.toBeInstanceOf(EnvHttpProxyAgent);
 	});
 
 	it("injects an EnvHttpProxyAgent for manual mode", async () => {

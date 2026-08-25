@@ -1,4 +1,4 @@
-import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
+import { Agent, EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import type { SystemProxy } from "./system-proxy.js";
 import { resolveSystemProxy } from "./system-proxy.js";
 
@@ -53,7 +53,10 @@ export async function applyProxyConfig(
 		logger?: Logger;
 	} = {},
 ): Promise<void> {
-	if (config.mode === "direct") return;
+	if (config.mode === "direct") {
+		setGlobalDispatcher(new Agent());
+		return;
+	}
 
 	const systemProxyResolver = options.systemProxy ?? (() => resolveSystemProxy());
 	const resolve = options.resolve;
