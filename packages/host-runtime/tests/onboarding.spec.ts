@@ -239,7 +239,7 @@ describe("role-defined onboarding", () => {
 			settings: {
 				relationshipMemoryEnabled: true,
 				conversationHistoryReadEnabled: true,
-				networkProxy: { mode: "direct" },
+				networkProxy: { mode: "auto" },
 				memoryVectorService: { enabled: false, provider: "none" },
 				modelDownloadSource: { type: "official" },
 			},

@@ -51,6 +51,7 @@ import { applyProxyConfig, type SystemProxyResolver } from "./network/proxy-conf
 import { ProviderCatalog } from "./providers/catalog.js";
 import { CredentialStore, type CredentialVault } from "./providers/credential-store.js";
 import { ResourceReferenceService } from "./resources/reference-service.js";
+import { ResourceContentService } from "./resources/content-service.js";
 import { AuditStore, wireAuditToEvents } from "./security/audit-store.js";
 import { type FsProtectionHandle, installFsProtection } from "./security/fs-protection.js";
 import { createModerationService, type ModerationService } from "./security/moderation.js";
@@ -170,6 +171,7 @@ export class HostRuntime {
 		const artifactStore = new ArtifactStore(db.orm, join(dataDir, "artifacts"));
 		const credentials = new CredentialStore(db.orm, options.credentialVault);
 		const resources = new ResourceReferenceService(db.orm, options.credentialVault);
+		const resourceContent = new ResourceContentService(db.orm, resources);
 		const providers = new ProviderCatalog(credentials, join(dataDir, "companion-runtime"));
 		const characterLoader = new CharacterLoader(characterSeedRoot, join(dataDir, "characters"));
 		characterLoader.bootstrapLibrary(options.productConfig.defaultCharacterId);
@@ -268,6 +270,66 @@ export class HostRuntime {
 		executorRouter.register("codex", new CodexAdapter(db.orm, eventBus));
 		const commissions = new CommissionService(db.orm, eventBus, artifactStore, executorRouter);
 		supervisor.setHostToolHandler(async (call) => {
+			if (call.tool.startsWith("resource_")) {
+				const args = call.args as {
+					resourceId: string;
+					relativePath?: string;
+					depth?: number;
+					query?: string;
+				};
+				if (
+					!resources
+						.listForConversation(call.conversationId)
+						.some((item) => item.id === args.resourceId)
+				)
+					return {
+						ok: false,
+						code: "resource_not_attached",
+						message: "Resource is not attached to this conversation.",
+					};
+				if (call.tool === "resource_stat")
+					return {
+						ok: true,
+						message: "Resource inspected.",
+						data: resourceContent.stat(args.resourceId),
+					};
+				if (call.tool === "resource_list")
+					return {
+						ok: true,
+						message: "Folder listed.",
+						data: resourceContent.listDirectory(args.resourceId, args.relativePath, args.depth),
+					};
+				if (call.tool === "resource_read_text")
+					return {
+						ok: true,
+						message: "Resource read. Content may be sent to the active model provider.",
+						data: resourceContent.readText(args.resourceId, {
+							reader: "companion",
+							conversationId: call.conversationId,
+						}),
+					};
+				if (call.tool === "resource_extract_document")
+					return {
+						ok: true,
+						message: "Document extracted. Content may be sent to the active model provider.",
+						data: await resourceContent.extractDocument(args.resourceId, {
+							reader: "companion",
+							conversationId: call.conversationId,
+						}),
+					};
+				if (call.tool === "resource_search")
+					return {
+						ok: true,
+						message: "Folder searched.",
+						data: resourceContent.search(args.resourceId, args.query ?? ""),
+					};
+				if (call.tool === "resource_preview")
+					return {
+						ok: true,
+						message: "Resource previewed.",
+						data: resourceContent.stat(args.resourceId),
+					};
+			}
 			if (call.tool === "host_search_conversation_history") {
 				const args = call.args as { query: string; limit?: number };
 				const conversation = db.orm
@@ -408,6 +470,7 @@ export class HostRuntime {
 			drafts,
 			roleplay,
 			resources,
+			resourceContent,
 			defaultCharacterId: options.productConfig.defaultCharacterId,
 			conversationRepository,
 			piSessionDir: join(dataDir, "sessions"),

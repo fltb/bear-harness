@@ -1,11 +1,12 @@
 // @vitest-environment node
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CredentialVault } from "../src/providers/credential-store.js";
 import { ResourceReferenceService } from "../src/resources/reference-service.js";
+import { ResourceContentService } from "../src/resources/content-service.js";
 import { Database, MIGRATIONS } from "../src/storage/database.js";
 
 const roots: string[] = [];
@@ -59,6 +60,25 @@ describe("ResourceReferenceService", () => {
 			.prepare("SELECT length(encrypted_locator_json) AS bytes FROM resource_refs WHERE id = ?")
 			.get(view.id) as { bytes: number };
 		expect(stored.bytes).toBe(0);
+		database.close();
+	});
+
+	it("performs bounded reads, records evidence, and skips ignored directory entries", () => {
+		const { root, database, service } = setup();
+		const folder = join(root, "project");
+		mkdirSync(join(folder, "node_modules"), { recursive: true });
+		writeFileSync(join(folder, "README.md"), "hello resource");
+		writeFileSync(join(folder, "node_modules", "hidden.js"), "hidden");
+		const file = service.grant(join(folder, "README.md"));
+		const directory = service.grant(folder, { access: "read-write" });
+		const content = new ResourceContentService(database.orm, service);
+		expect(content.readText(file.id, { reader: "companion" }).text).toBe("hello resource");
+		expect(content.listDirectory(directory.id).entries.map((entry) => entry.name)).toEqual([
+			"README.md",
+		]);
+		expect(database.connection.prepare("SELECT reader FROM resource_reads").get()).toEqual({
+			reader: "companion",
+		});
 		database.close();
 	});
 });

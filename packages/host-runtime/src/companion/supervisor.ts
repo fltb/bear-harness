@@ -53,7 +53,6 @@ export interface CompanionSessionResolver {
 	get(conversationId: string): PiSessionStore | undefined;
 }
 
-
 export interface CompanionCompactionConfig extends PiCompactionSettings {}
 
 type RequiredCompactionSettings = Required<PiCompactionSettings>;
@@ -306,10 +305,7 @@ export class CompanionSupervisor {
 		];
 		const toolDefinitions = Object.fromEntries(
 			tools.flatMap((tool) =>
-				typeof tool === "object" &&
-				tool !== null &&
-				"name" in tool &&
-				typeof tool.name === "string"
+				typeof tool === "object" && tool !== null && "name" in tool && typeof tool.name === "string"
 					? [[tool.name, tool as AgentTool]]
 					: [],
 			),
@@ -384,7 +380,13 @@ export class CompanionSupervisor {
 			});
 		};
 		session.subscribe((event) => {
-			if (event.type === "message_start" || event.type === "message_update" || event.type === "message_end" || event.type === "entry_appended") notify("message");
+			if (
+				event.type === "message_start" ||
+				event.type === "message_update" ||
+				event.type === "message_end" ||
+				event.type === "entry_appended"
+			)
+				notify("message");
 			else if (event.type.startsWith("turn_")) notify("turn");
 			else if (event.type.startsWith("tool_execution_")) notify("tool");
 			else if (event.type.startsWith("compaction_")) notify("compaction");
@@ -467,7 +469,6 @@ export class CompanionSupervisor {
 			command: command.type,
 		});
 	}
-
 
 	get isRunning(): boolean {
 		return this.state === "running";
@@ -586,7 +587,6 @@ export class CompanionSupervisor {
 		}
 		return false;
 	}
-
 
 	private async readImages(
 		modelRuntime: ModelRuntime,
@@ -723,6 +723,59 @@ export class CompanionSupervisor {
 				"Remember this moment",
 				"Directly save the current adopted turn to relationship memory when the user explicitly asks you to remember it. The Host chooses the source and identity; do not provide IDs.",
 				toolParameters(z.strictObject({})),
+			),
+			this.hostTool(
+				conversationId,
+				"resource_stat",
+				"Inspect local resource",
+				"Inspect a user-added local resource without revealing its path.",
+				toolParameters(z.strictObject({ resourceId: z.string().min(1).max(64) })),
+			),
+			this.hostTool(
+				conversationId,
+				"resource_list",
+				"List local folder",
+				"List a bounded local folder without following symlinks.",
+				toolParameters(
+					z.strictObject({
+						resourceId: z.string().min(1).max(64),
+						relativePath: z.string().max(1024).default("."),
+						depth: z.number().int().min(1).max(5).default(1),
+					}),
+				),
+			),
+			this.hostTool(
+				conversationId,
+				"resource_read_text",
+				"Read local text resource",
+				"Read bounded text from a resource added to this conversation.",
+				toolParameters(z.strictObject({ resourceId: z.string().min(1).max(64) })),
+			),
+			this.hostTool(
+				conversationId,
+				"resource_extract_document",
+				"Extract local document",
+				"Extract bounded text from a user-added document.",
+				toolParameters(z.strictObject({ resourceId: z.string().min(1).max(64) })),
+			),
+			this.hostTool(
+				conversationId,
+				"resource_search",
+				"Search local folder",
+				"Search names in a bounded user-added folder.",
+				toolParameters(
+					z.strictObject({
+						resourceId: z.string().min(1).max(64),
+						query: z.string().min(1).max(1000),
+					}),
+				),
+			),
+			this.hostTool(
+				conversationId,
+				"resource_preview",
+				"Preview local resource",
+				"Return safe metadata for a user-added resource without exposing its path.",
+				toolParameters(z.strictObject({ resourceId: z.string().min(1).max(64) })),
 			),
 			this.hostTool(
 				conversationId,
@@ -969,7 +1022,6 @@ function extractMessageText(value: unknown): string {
 		.join("");
 }
 
-
 export function extractLatestAssistantText(messages: readonly unknown[]): string {
 	for (let index = messages.length - 1; index >= 0; index -= 1) {
 		const message = messages[index];
@@ -980,7 +1032,6 @@ export function extractLatestAssistantText(messages: readonly unknown[]): string
 	}
 	return "";
 }
-
 
 function sameRoute(
 	left: { providerId: string; modelId: string },

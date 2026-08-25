@@ -40,6 +40,7 @@ import type { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import type { ModelRecord, ModelRegistry } from "./models/registry.js";
 import type { OAuthSessionState, ProviderCatalog } from "./providers/catalog.js";
 import type { ResourceReferenceService } from "./resources/reference-service.js";
+import type { ResourceContentService } from "./resources/content-service.js";
 import type { AuditStore } from "./security/audit-store.js";
 import {
 	findHostLocalEmbeddingCandidate,
@@ -90,6 +91,7 @@ export interface HostCompositionContext {
 	drafts: CharacterDraftService;
 	roleplay: RoleplayService;
 	resources: ResourceReferenceService;
+	resourceContent: ResourceContentService;
 	defaultCharacterId: string;
 	/** Product-local directory for Pi conversation session files. */
 	conversationRepository: ConversationRepository;
@@ -196,6 +198,20 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.resource.makePersistent, ({ resourceId }) => ({
 		resource: s.resources.makePersistent(resourceId),
 	}));
+	dispatcher.registerHandler(RPC.resource.read, ({ resourceId, conversationId }) =>
+		s.resourceContent.readText(resourceId, { reader: "companion", conversationId }),
+	);
+	dispatcher.registerHandler(RPC.resource.extract, ({ resourceId, conversationId }) =>
+		s.resourceContent.extractDocument(resourceId, { reader: "companion", conversationId }),
+	);
+	dispatcher.registerHandler(
+		RPC.resource.listDirectory,
+		({ resourceId, relativePath, depth, limit, showIgnored }) =>
+			s.resourceContent.listDirectory(resourceId, relativePath, depth, limit, showIgnored),
+	);
+	dispatcher.registerHandler(RPC.resource.search, ({ resourceId, query, limit }) =>
+		s.resourceContent.search(resourceId, query, limit),
+	);
 	for (const endpoint of [
 		RPC.resource.pickFiles,
 		RPC.resource.pickDirectory,

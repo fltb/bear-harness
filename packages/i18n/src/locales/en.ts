@@ -14,6 +14,7 @@ export const en = {
 		readOnly: "Read only",
 		readWrite: "Read/write",
 		notRead: "Not read",
+		modelDisclosure: "Content will be sent to the active model provider when read",
 		attachedCount: " materials",
 		messageInputLabel: "Send message",
 		modelLabel: "Reply model",

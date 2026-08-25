@@ -28,6 +28,12 @@ export type CompanionHostToolName =
 	| "host_present_choices"
 	| "host_search_conversation_history"
 	| "host_search_canon"
+	| "resource_stat"
+	| "resource_list"
+	| "resource_read_text"
+	| "resource_extract_document"
+	| "resource_search"
+	| "resource_preview"
 	| "host_remember"
 	| "host_propose_work";
 
@@ -78,7 +84,9 @@ type ProjectedTurnEntry = {
 	stopReason?: string;
 };
 
-function projectTurnEntries(sessionManager: PiTurnBranchProjection["sessionManager"]): ProjectedTurnEntry[] {
+function projectTurnEntries(
+	sessionManager: PiTurnBranchProjection["sessionManager"],
+): ProjectedTurnEntry[] {
 	const entries: ProjectedTurnEntry[] = [];
 	for (const raw of sessionManager.buildContextEntries()) {
 		if (!isRecord(raw) || raw.type !== "message" || typeof raw.id !== "string") continue;
@@ -144,7 +152,6 @@ export class CharacterBehaviorService {
 		});
 		return state;
 	}
-
 
 	/** Execute a request from the Companion utility process. */
 	invoke(call: CompanionHostToolCall): CompanionHostToolResult {
@@ -223,11 +230,7 @@ export class CharacterBehaviorService {
 		}
 	}
 
-	private applyTurnEnd(
-		conversationId: string,
-		sessionId: string,
-		entry: ProjectedTurnEntry,
-	): void {
+	private applyTurnEnd(conversationId: string, sessionId: string, entry: ProjectedTurnEntry): void {
 		if (entry.stopReason === "aborted") {
 			this.pendingRoleplayEvents.delete(conversationId);
 			this.modelSelectedExpression.delete(conversationId);

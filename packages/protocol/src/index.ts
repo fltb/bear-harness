@@ -52,6 +52,13 @@ export type ResourceAttachDroppedRequest = z.infer<typeof schema.ResourceAttachD
 export type ResourceListRequest = z.infer<typeof schema.ResourceListRequest>;
 export type ResourceListResponse = z.infer<typeof schema.ResourceListResponse>;
 export type ResourceResolveStateResponse = z.infer<typeof schema.ResourceResolveStateResponse>;
+export type ResourceReadRequest = z.infer<typeof schema.ResourceReadRequest>;
+export type ResourceReadResponse = z.infer<typeof schema.ResourceReadResponse>;
+export type ResourceExtractResponse = z.infer<typeof schema.ResourceExtractResponse>;
+export type ResourceListDirectoryRequest = z.infer<typeof schema.ResourceListDirectoryRequest>;
+export type ResourceListDirectoryResponse = z.infer<typeof schema.ResourceListDirectoryResponse>;
+export type ResourceSearchRequest = z.infer<typeof schema.ResourceSearchRequest>;
+export type ResourceSearchResponse = z.infer<typeof schema.ResourceSearchResponse>;
 export type MemoryConfigureLocalEmbeddingRequest = z.infer<
 	typeof schema.MemoryConfigureLocalEmbeddingRequest
 >;

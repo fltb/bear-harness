@@ -814,6 +814,12 @@ export class CharacterLoader {
 				"host_set_expression",
 				"host_search_conversation_history",
 				"host_propose_work",
+				"resource_stat",
+				"resource_list",
+				"resource_read_text",
+				"resource_extract_document",
+				"resource_search",
+				"resource_preview",
 				...(character.roleplay.variables.length ||
 				character.roleplay.unlockables.length ||
 				character.roleplay.events.length

@@ -12,6 +12,7 @@ export const zhCN = {
 		readOnly: "只读",
 		readWrite: "读写",
 		notRead: "尚未读取",
+		modelDisclosure: "读取内容时将发送给当前模型提供方",
 		attachedCount: "份材料",
 		messageInputLabel: "发送消息",
 		modelLabel: "回复模型",

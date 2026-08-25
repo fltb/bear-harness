@@ -161,11 +161,18 @@ export type {
 	MemorySetImportanceRequest,
 	MemoryUpdateRequest,
 } from "./memory/backend.js";
-export type { HostLocalEmbeddingCandidate, HostSettingsCapabilities } from "./settings/capabilities.js";
-export { findHostLocalEmbeddingCandidate, HOST_SETTINGS_CAPABILITIES } from "./settings/capabilities.js";
+export type {
+	HostLocalEmbeddingCandidate,
+	HostSettingsCapabilities,
+} from "./settings/capabilities.js";
+export {
+	findHostLocalEmbeddingCandidate,
+	HOST_SETTINGS_CAPABILITIES,
+} from "./settings/capabilities.js";
 export type { ModelRecord } from "./models/registry.js";
 export { ModelRegistry } from "./models/registry.js";
 export { ResourceReferenceService } from "./resources/reference-service.js";
+export { ResourceContentService } from "./resources/content-service.js";
 export type {
 	FileIdentity,
 	ResourceAccess,

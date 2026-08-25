@@ -1,14 +1,20 @@
 import { ipcRenderer, webUtils } from "electron";
+import { RPC } from "@bear-harness/protocol/schema";
+
+const RESOURCE_DROPPED_CHANNEL = ["desktop", "resourceDropped", "v1"].join(":");
 
 export const resourceBridge = Object.freeze({
 	pickFiles: (conversationId: string) =>
-		ipcRenderer.invoke("resource.pickFiles:v1", { conversationId, access: "read" }),
+		ipcRenderer.invoke(RPC.resource.pickFiles.channel, { conversationId, access: "read" }),
 	pickDirectory: (conversationId: string) =>
-		ipcRenderer.invoke("resource.pickDirectory:v1", { conversationId, access: "read-write" }),
+		ipcRenderer.invoke(RPC.resource.pickDirectory.channel, {
+			conversationId,
+			access: "read-write",
+		}),
 	attachDropped: (conversationId: string, files: readonly File[]) => {
 		const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean);
-		return ipcRenderer.invoke("desktop:resourceDropped:v1", { conversationId, paths });
+		return ipcRenderer.invoke(RESOURCE_DROPPED_CHANNEL, { conversationId, paths });
 	},
 	detach: (conversationId: string, resourceId: string) =>
-		ipcRenderer.invoke("resource.detach:v1", { conversationId, resourceId }),
+		ipcRenderer.invoke(RPC.resource.detach.channel, { conversationId, resourceId }),
 });

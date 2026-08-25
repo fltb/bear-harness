@@ -130,6 +130,52 @@ export const ResourceAttachDroppedRequest = z.strictObject({
 export const ResourceListRequest = z.strictObject({ conversationId: z.string().min(1).max(64) });
 export const ResourceListResponse = ResourcePickResponse;
 export const ResourceResolveStateResponse = z.strictObject({ resource: ResourceRefView });
+export const ResourceReadRequest = z.strictObject({
+	resourceId: z.string().min(1).max(64),
+	conversationId: z.string().min(1).max(64).optional(),
+});
+export const ResourceReadResponse = z.strictObject({
+	text: z.string().max(200000),
+	bytes: z.number().int().safe().min(0),
+	sha256: z.string().length(64),
+	truncated: z.boolean(),
+});
+export const ResourceExtractResponse = z.strictObject({
+	text: z.string().max(200000),
+	metadata: boundedRecord(
+		z.string().min(1).max(128),
+		z.union([z.string().max(MAX_STRING_LENGTH), z.number(), z.boolean(), z.null()]),
+	),
+	truncated: z.boolean(),
+	mime: z.string().max(255),
+});
+export const ResourceListDirectoryRequest = z.strictObject({
+	resourceId: z.string().min(1).max(64),
+	relativePath: z.string().max(1024).default("."),
+	depth: z.number().int().min(1).max(5).default(1),
+	limit: z.number().int().min(1).max(200).default(200),
+	showIgnored: z.boolean().default(false),
+});
+export const ResourceDirectoryEntry = z.strictObject({
+	relativePath: z.string().max(1024),
+	name: z.string().max(512),
+	kind: ResourceKind,
+	bytes: z.number().int().safe().min(0).optional(),
+	mtimeMs: z.number().nonnegative(),
+});
+export const ResourceListDirectoryResponse = z.strictObject({
+	entries: z.array(ResourceDirectoryEntry).max(200),
+	truncated: z.boolean(),
+});
+export const ResourceSearchRequest = z.strictObject({
+	resourceId: z.string().min(1).max(64),
+	query: z.string().min(1).max(1000),
+	limit: z.number().int().min(1).max(20).default(20),
+});
+export const ResourceSearchResponse = z.strictObject({
+	hits: z.array(ResourceDirectoryEntry).max(20),
+	truncated: z.boolean(),
+});
 
 // ---------------------------------------------------------------------------
 // Event bus
@@ -2398,6 +2444,14 @@ export const RPC = {
 			ResourceResolveStateResponse,
 		),
 		relocate: endpoint("resource.relocate:v1", ResourceIdRequest, ResourceResolveStateResponse),
+		read: endpoint("resource.read:v1", ResourceReadRequest, ResourceReadResponse),
+		extract: endpoint("resource.extract:v1", ResourceReadRequest, ResourceExtractResponse),
+		listDirectory: endpoint(
+			"resource.listDirectory:v1",
+			ResourceListDirectoryRequest,
+			ResourceListDirectoryResponse,
+		),
+		search: endpoint("resource.search:v1", ResourceSearchRequest, ResourceSearchResponse),
 	},
 	run: {
 		list: endpoint("run.list:v1", RunListRequest, RunListResponse),

@@ -29,7 +29,7 @@ describe("network proxy defaults", () => {
 		const root = mkdtempSync(join(tmpdir(), "bear-proxy-migration-"));
 		roots.push(root);
 		const database = new Database(root);
-		database.migrate(MIGRATIONS.slice(0, -1));
+		database.migrate(MIGRATIONS.slice(0, 23));
 		database.connection
 			.prepare("UPDATE app_settings SET network_proxy = ? WHERE id = 1")
 			.run('{"mode":"direct"}');

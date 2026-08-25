@@ -123,6 +123,21 @@ export const conversationResourceRefs = sqliteTable(
 	(table) => [primaryKey({ columns: [table.conversationId, table.resourceId] })],
 );
 
+export const resourceReads = sqliteTable("resource_reads", {
+	id: text().primaryKey(),
+	resourceId: text("resource_id")
+		.notNull()
+		.references(() => resourceRefs.id),
+	conversationId: text("conversation_id").references(() => conversations.id),
+	runId: text("run_id"),
+	reader: text().notNull(),
+	contentSha256: text("content_sha256").notNull(),
+	size: integer().notNull(),
+	mtimeMs: integer("mtime_ms").notNull(),
+	extractedArtifactId: text("extracted_artifact_id"),
+	readAt: text("read_at").notNull(),
+});
+
 export const sceneState = sqliteTable("scene_state", {
 	id: text().primaryKey(),
 	conversationId: text("conversation_id")

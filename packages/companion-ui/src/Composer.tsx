@@ -164,6 +164,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 										: t("composer.readWrite")}{" "}
 									· {t("composer.notRead")}
 								</small>
+								<small>{t("composer.modelDisclosure")}</small>
 								<Button type="button" onClick={() => workflow.removeAttachment(index)}>
 									×
 								</Button>

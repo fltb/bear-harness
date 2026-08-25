@@ -15,6 +15,7 @@ export const zhTW = {
 		"readOnly": "只讀",
 		"readWrite": "讀寫",
 		"notRead": "尚未讀取",
+		"modelDisclosure": "讀取內容時將傳送給當前模型提供方",
 		"attachedCount": "份材料",
 		"messageInputLabel": "傳送訊息",
 		"modelLabel": "回覆模型",
