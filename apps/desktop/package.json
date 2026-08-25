@@ -19,7 +19,7 @@
 		"test:diagnostics:crash": "node scripts/crash-smoke.mjs",
 		"package:mac:arm64": "node scripts/validate-product-config.mjs && npm run build && node scripts/stage-native-bindings.mjs darwin arm64 && electron-builder --config electron-builder.config.ts --mac dmg zip --arm64",
 		"package:mac:x64": "node scripts/validate-product-config.mjs && npm run build && node scripts/stage-native-bindings.mjs darwin x64 && electron-builder --config electron-builder.config.ts --mac dmg zip --x64",
-		"package:win": "node scripts/validate-product-config.mjs && npm run build && node scripts/stage-native-bindings.mjs win32 x64 && electron-builder --config electron-builder.config.ts --win nsis zip --x64",
+		"package:win": "node scripts/validate-product-config.mjs && node scripts/stage-git-runtime.mjs && npm run build && node scripts/stage-native-bindings.mjs win32 x64 && electron-builder --config electron-builder.config.ts --win nsis zip --x64",
 		"package:linux": "node scripts/validate-product-config.mjs && npm run build && node scripts/stage-native-bindings.mjs linux x64 && electron-builder --config electron-builder.config.ts --linux AppImage deb --x64"
 	},
 	"dependencies": {

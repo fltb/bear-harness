@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zhCN } from "@bear-harness/i18n/locales";
@@ -36,6 +36,20 @@ test("packaged app shows the configured product", async () => {
 		const userData = await electronApp.evaluate(({ app }) => app.getPath("userData"));
 		expect(userData.startsWith(tempRoot)).toBe(true);
 		expect(userData.endsWith(productConfig.dataDirectoryName)).toBe(true);
+		if (process.platform === "win32") {
+			const resourcesPath = await electronApp.evaluate(({ app }) => process.resourcesPath);
+			expect(
+				existsSync(join(resourcesPath, "runtime", "git-win-x64", "usr", "bin", "bash.exe")),
+			).toBe(true);
+			expect(existsSync(join(resourcesPath, "runtime", "git-win-x64", "cmd", "git.exe"))).toBe(
+				true,
+			);
+			expect(
+				existsSync(
+					join(resourcesPath, "ThirdPartyNotices", "Git-for-Windows", "component-manifest.json"),
+				),
+			).toBe(true);
+		}
 	} finally {
 		await electronApp.close();
 		rmSync(tempRoot, { recursive: true, force: true });

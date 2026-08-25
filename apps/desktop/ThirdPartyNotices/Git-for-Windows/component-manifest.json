@@ -1,0 +1,11 @@
+{
+	"name": "Git for Windows PortableGit",
+	"version": "2.51.0.windows.1",
+	"architecture": "x86_64",
+	"requiredFiles": [
+		"usr/bin/bash.exe",
+		"cmd/git.exe"
+	],
+	"license": "GPL-2.0-only AND bundled-component-licenses",
+	"source": "https://github.com/git-for-windows/git/releases/tag/v2.51.0.windows.1"
+}

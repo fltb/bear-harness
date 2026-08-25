@@ -6,8 +6,8 @@
  * only through ACP filesystem requests guarded by the commission envelope.
  */
 
-import { randomUUID } from "node:crypto";
-import { statSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppDatabase } from "../storage/database.js";
@@ -18,10 +18,15 @@ import type { ExecutorLaunchRequest } from "./router.js";
 
 export interface PiRunManifest {
 	executor: "pi-acp";
+	distribution: "bundled";
+	trustMode: "external-app";
+	filesystemMode: "direct-os";
+	terminalMode: "full-shell";
 	profileId: string;
 	runId: string;
 	commissionId: string;
 	workerPath: string;
+	workerSha256: string;
 	authDir: string;
 	launchedAt: string;
 }
@@ -34,7 +39,13 @@ export function seedPiAcpProfile(db: AppDatabase): void {
 		.values({
 			id: PI_ACP_PROFILE_ID,
 			profileType: "product-managed",
-			capabilityJson: { transport: "acp", worker: "pi" },
+			capabilityJson: {
+				distribution: "bundled",
+				transport: "acp-stdio",
+				trustMode: "external-app",
+				filesystemMode: "direct-os",
+				terminalMode: "full-shell",
+			},
 		})
 		.onConflictDoNothing()
 		.run();
@@ -53,11 +64,16 @@ export class PiAcpAdapter extends AcpExecutorController {
 	override async launch(request: ExecutorLaunchRequest): Promise<void> {
 		const manifest: PiRunManifest = {
 			executor: "pi-acp",
+			distribution: "bundled",
+			trustMode: "external-app",
+			filesystemMode: "direct-os",
+			terminalMode: "full-shell",
 			profileId: request.profile.id,
 			runId: request.run.runId,
 			commissionId: request.commission.id,
 			workerPath: this.workerPath,
-			authDir: resolve(this.userDataDir, "companion-runtime"),
+			workerSha256: createHash("sha256").update(readFileSync(this.workerPath)).digest("hex"),
+			authDir: resolve(this.userDataDir, "executor-config", "pi"),
 			launchedAt: new Date().toISOString(),
 		};
 		this.db
@@ -69,8 +85,20 @@ export class PiAcpAdapter extends AcpExecutorController {
 
 	protected processSpec(request: ExecutorLaunchRequest): AcpProcessSpec {
 		const cwd = workspaceFor(request);
-		const authDir = resolve(this.userDataDir, "companion-runtime");
+		const authDir = resolve(this.userDataDir, "executor-config", "pi");
 		const sessionDir = resolve(this.userDataDir, "executor-runs", "pi");
+		const runtimeRoot = bundledRuntimeRoot();
+		const bashPath =
+			process.platform === "win32"
+				? resolve(runtimeRoot, "usr", "bin", "bash.exe")
+				: process.env.BEAR_BASH_PATH;
+		const gitPath =
+			process.platform === "win32" ? resolve(runtimeRoot, "cmd", "git.exe") : undefined;
+		if (
+			process.platform === "win32" &&
+			(!bashPath || !existsSync(bashPath) || !gitPath || !existsSync(gitPath))
+		)
+			throw { kind: "unavailable", reason: "bundled_git_runtime_missing" };
 		return {
 			command: process.execPath,
 			args: [this.workerPath],
@@ -83,9 +111,18 @@ export class PiAcpAdapter extends AcpExecutorController {
 				ELECTRON_RUN_AS_NODE: "1",
 				BEAR_PI_AUTH_DIR: authDir,
 				BEAR_PI_SESSION_DIR: sessionDir,
+				BEAR_BASH_PATH: bashPath,
+				BEAR_GIT_PATH: gitPath,
+				BEAR_RUNTIME_ROOT: runtimeRoot,
 			},
 		};
 	}
+}
+
+function bundledRuntimeRoot(): string {
+	const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+	if (resourcesPath) return resolve(resourcesPath, "runtime", "git-win-x64");
+	return resolve(process.cwd(), "resources", "runtime", "git-win-x64");
 }
 
 function workspaceFor(request: ExecutorLaunchRequest): string {

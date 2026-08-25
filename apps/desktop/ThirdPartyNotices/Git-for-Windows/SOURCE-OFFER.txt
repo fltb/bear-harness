@@ -1,0 +1,3 @@
+Corresponding source for the pinned Git for Windows distribution is available from the Git for Windows project and its component upstreams. Official distributors of Bear must retain the exact source archives or a valid written source offer for the distributed binary version for the period required by the applicable licenses.
+
+Release engineering must verify this file and the component manifest before publishing a Windows artifact.

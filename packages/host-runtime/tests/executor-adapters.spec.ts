@@ -98,7 +98,15 @@ describe("ACP executor adapters", () => {
 				}
 			).manifest_json,
 		) as Record<string, unknown>;
-		expect(manifest).toMatchObject({ executor: "pi-acp", workerPath: fixturePath });
+		expect(manifest).toMatchObject({
+			executor: "pi-acp",
+			distribution: "bundled",
+			trustMode: "external-app",
+			filesystemMode: "direct-os",
+			terminalMode: "full-shell",
+			workerPath: fixturePath,
+		});
+		expect(manifest.workerSha256).toMatch(/^[a-f0-9]{64}$/);
 		expect(JSON.stringify(manifest)).not.toContain("apiKey");
 		db.close();
 	});

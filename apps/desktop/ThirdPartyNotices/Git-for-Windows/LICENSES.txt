@@ -1,0 +1,3 @@
+Git for Windows is distributed under the GNU General Public License version 2, with bundled components under their respective licenses.
+
+Official release packaging must replace or augment this notice with the license files shipped by the exact pinned PortableGit distribution. See https://gitforwindows.org/ for the upstream project and corresponding source information.

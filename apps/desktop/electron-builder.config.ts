@@ -84,6 +84,8 @@ const config: Configuration = {
 		{ from: "../../BRAND-LICENSE", to: "BRAND-LICENSE" },
 		{ from: attributionPath, to: "BRAND-ATTRIBUTION.txt" },
 		{ from: "dist/character-seeds", to: "character-seeds" },
+		{ from: "resources/runtime", to: "runtime" },
+		{ from: "ThirdPartyNotices", to: "ThirdPartyNotices" },
 	],
 	mac: {
 		identity: null,

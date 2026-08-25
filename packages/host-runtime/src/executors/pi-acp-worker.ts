@@ -11,7 +11,6 @@ import { mkdirSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
-import { toJsonSchema, z } from "@bear-harness/schema";
 import type { AgentSession, ModelRuntime as PiModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
 	createAgentSession,
@@ -157,8 +156,13 @@ class PiAcpAgent {
 		const runDir = resolve(sessionDir, id);
 		mkdirSync(runDir, { recursive: true });
 		const settings = SettingsManager.inMemory(
-			{ enableAnalytics: false, enableInstallTelemetry: false, defaultProjectTrust: "never" },
-			{ projectTrusted: false },
+			{
+				enableAnalytics: false,
+				enableInstallTelemetry: false,
+				defaultProjectTrust: "always",
+				shellPath: process.env.BEAR_BASH_PATH,
+			},
+			{ projectTrusted: true },
 		);
 		const resources = new DefaultResourceLoader({
 			cwd,
@@ -170,8 +174,9 @@ class PiAcpAgent {
 			noThemes: true,
 			noContextFiles: true,
 			systemPrompt:
-				"You are an approved, bounded execution worker. Use only the injected read and write tools. " +
-				"Never claim a change unless the relevant Host tool succeeds. Do not request or use relationship memory, product UI state, credentials, or network access.",
+				"You are a complete external coding agent launched for one user-approved commission. " +
+				"Work directly on the real paths and cwd named in the commission. You may use file, patch/edit, search, and shell tools. " +
+				"The ACP transport is control and evidence plumbing, not a filesystem sandbox. Do not seek Companion memory, product UI state, Host credentials, or resources absent from the commission.",
 		});
 		await resources.reload();
 		const runtime = await this.runtime;
@@ -181,8 +186,7 @@ class PiAcpAgent {
 			modelRuntime: runtime,
 			settingsManager: settings,
 			resourceLoader: resources,
-			noTools: "builtin",
-			customTools: [this.readTool(id), this.writeTool(id)],
+			tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
 			sessionManager: SessionManager.create(cwd, runDir),
 		});
 		session.setActiveToolsByName(session.getActiveToolNames());
@@ -191,59 +195,6 @@ class PiAcpAgent {
 			throw new Error("pi_provider_auth_required");
 		}
 		return session;
-	}
-
-	private readTool(sessionId: string) {
-		return {
-			name: "read",
-			label: "Read approved file",
-			description: "Read a text file that the approved action explicitly allows.",
-			parameters: toolParameters(
-				z.strictObject({
-					path: z.string().min(1),
-					line: z.number().int().min(1).optional(),
-					limit: z.number().int().min(1).max(2000).optional(),
-				}),
-			),
-			execute: async (
-				_toolCallId: string,
-				params: { path: string; line?: number; limit?: number },
-			) => {
-				const context = this.requireContext(sessionId);
-				const response = await context.request(acp.methods.client.fs.readTextFile, {
-					sessionId,
-					path: params.path,
-					line: params.line,
-					limit: params.limit,
-				});
-				return {
-					content: [{ type: "text" as const, text: response.content }],
-					details: { path: params.path },
-				};
-			},
-		};
-	}
-
-	private writeTool(sessionId: string) {
-		return {
-			name: "write",
-			label: "Write approved file",
-			description:
-				"Create or replace a text file only when the approved action explicitly allows it.",
-			parameters: toolParameters(z.strictObject({ path: z.string().min(1), content: z.string() })),
-			execute: async (_toolCallId: string, params: { path: string; content: string }) => {
-				const context = this.requireContext(sessionId);
-				await context.request(acp.methods.client.fs.writeTextFile, {
-					sessionId,
-					path: params.path,
-					content: params.content,
-				});
-				return {
-					content: [{ type: "text" as const, text: `Wrote ${params.path}` }],
-					details: { path: params.path },
-				};
-			},
-		};
 	}
 
 	private async forwardPiEvent(
@@ -282,16 +233,6 @@ class PiAcpAgent {
 		if (!session) throw new Error(`unknown ACP session '${sessionId}'`);
 		return session;
 	}
-
-	private requireContext(sessionId: string): acp.AgentContext {
-		const context = this.requireSession(sessionId).context;
-		if (!context) throw new Error("Pi tool call outside an ACP prompt");
-		return context;
-	}
-}
-
-function toolParameters(schema: z.ZodType): never {
-	return toJsonSchema(schema) as never;
 }
 
 async function selectConfiguredModel(

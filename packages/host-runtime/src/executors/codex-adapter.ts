@@ -67,6 +67,10 @@ export interface CodexProfileCapability extends CodexConsentRequest {
 /** The manifest recorded in `run_manifests.manifest_json` at launch. */
 export interface CodexRunManifest {
 	executor: "codex";
+	distribution: "user-installed";
+	trustMode: "external-app";
+	filesystemMode: "direct-os";
+	terminalMode: "agent-managed";
 	profileId: string;
 	runId: string;
 	commissionId: string;
@@ -320,6 +324,10 @@ export class CodexAdapter extends AcpExecutorController {
 
 		const manifest: CodexRunManifest = {
 			executor: "codex",
+			distribution: "user-installed",
+			trustMode: "external-app",
+			filesystemMode: "direct-os",
+			terminalMode: "agent-managed",
 			profileId: request.profile.id,
 			runId: request.run.runId,
 			commissionId: request.commission.id,

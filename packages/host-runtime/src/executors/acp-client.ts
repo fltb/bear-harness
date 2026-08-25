@@ -90,6 +90,11 @@ export class AcpRunClient {
 		});
 		this.process = process;
 		let processError: Error | null = null;
+		let stderr = "";
+		process.stderr.setEncoding("utf8");
+		process.stderr.on("data", (chunk: string) => {
+			stderr = (stderr + chunk).slice(-8_000);
+		});
 		process.once("error", (error) => {
 			processError = error;
 		});
@@ -124,7 +129,8 @@ export class AcpRunClient {
 			this.sessionId = session.sessionId;
 		} catch (error) {
 			await this.stop();
-			throw error;
+			const message = error instanceof Error ? error.message : String(error);
+			throw new Error(stderr.trim() ? `${message}: ${stderr.trim()}` : message, { cause: error });
 		}
 	}
 

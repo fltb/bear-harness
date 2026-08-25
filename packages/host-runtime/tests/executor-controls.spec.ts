@@ -481,5 +481,7 @@ describe("Pi worker steering extension", () => {
 		expect(source).toContain(".onRequest(\n\t\tSESSION_STEERING_METHOD,");
 		expect(source).toContain("async steer(params: SteeringParams");
 		expect(source).toContain('streamingBehavior: "steer"');
+		expect(source).toContain('tools: ["read", "bash", "edit", "write", "grep", "find", "ls"]');
+		expect(source).not.toContain('noTools: "builtin"');
 	});
 });
