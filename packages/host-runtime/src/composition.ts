@@ -41,6 +41,7 @@ import type { ModelRecord, ModelRegistry } from "./models/registry.js";
 import type { OAuthSessionState, ProviderCatalog } from "./providers/catalog.js";
 import type { ResourceReferenceService } from "./resources/reference-service.js";
 import type { ResourceContentService } from "./resources/content-service.js";
+import type { ResourceMutationService } from "./resources/mutation-service.js";
 import type { AuditStore } from "./security/audit-store.js";
 import {
 	findHostLocalEmbeddingCandidate,
@@ -59,6 +60,7 @@ import {
 	memoryDecisions,
 	memoryPresentation,
 	relationshipMemoryEntries,
+	runOutputs,
 	runs,
 	sceneState,
 } from "./storage/schema.js";
@@ -92,6 +94,7 @@ export interface HostCompositionContext {
 	roleplay: RoleplayService;
 	resources: ResourceReferenceService;
 	resourceContent: ResourceContentService;
+	resourceMutations: ResourceMutationService;
 	defaultCharacterId: string;
 	/** Product-local directory for Pi conversation session files. */
 	conversationRepository: ConversationRepository;
@@ -1116,8 +1119,43 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				status: r.status as RunStatus,
 				startedAt: r.startedAt ?? undefined,
 				completedAt: r.completedAt ?? undefined,
+				outputs: s.commissions.listOutputs(r.id),
 			})),
 		};
+	});
+	dispatcher.registerHandler(RPC.run.outputList, async (_p) => {
+		const { runId } = _p as { runId?: string };
+		const companionId = await getCompanionId(s);
+		const ownedRunIds = new Set(
+			s.orm
+				.select({ id: runs.id })
+				.from(runs)
+				.innerJoin(commissions, eq(runs.commissionId, commissions.id))
+				.innerJoin(conversations, eq(commissions.conversationId, conversations.id))
+				.where(
+					and(eq(conversations.companionId, companionId), runId ? eq(runs.id, runId) : undefined),
+				)
+				.all()
+				.map((row) => row.id),
+		);
+		return {
+			outputs: s.commissions.listOutputs(runId).filter((output) => ownedRunIds.has(output.runId)),
+		};
+	});
+	dispatcher.registerHandler(RPC.run.outputDecide, async (_p) => {
+		const { outputId, decision } = _p as { outputId: string; decision: "accepted" | "rejected" };
+		const companionId = await getCompanionId(s);
+		const owned = s.orm
+			.select({ id: runOutputs.id })
+			.from(runOutputs)
+			.innerJoin(runs, eq(runOutputs.runId, runs.id))
+			.innerJoin(commissions, eq(runs.commissionId, commissions.id))
+			.innerJoin(conversations, eq(commissions.conversationId, conversations.id))
+			.where(and(eq(runOutputs.id, outputId), eq(conversations.companionId, companionId)))
+			.get();
+		if (!owned) throw { kind: "not_found", reason: "run_output_not_found" };
+		s.commissions.decideOutput(outputId, decision);
+		return {};
 	});
 	dispatcher.registerHandler(RPC.commission.list, async () => {
 		const companionId = await getCompanionId(s);
@@ -1184,6 +1222,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			status: run.status,
 			startedAt: run.startedAt ?? undefined,
 			completedAt: run.completedAt ?? undefined,
+			outputs: s.commissions.listOutputs(run.id),
 		};
 	});
 	dispatcher.registerHandler(RPC.run.resume, async (_p) => {
@@ -1197,6 +1236,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			status: run.status,
 			startedAt: run.startedAt ?? undefined,
 			completedAt: run.completedAt ?? undefined,
+			outputs: s.commissions.listOutputs(run.id),
 		};
 	});
 	dispatcher.registerHandler(RPC.run.cancel, async (_p) => {
@@ -1210,6 +1250,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			status: run.status,
 			startedAt: run.startedAt ?? undefined,
 			completedAt: run.completedAt ?? undefined,
+			outputs: s.commissions.listOutputs(run.id),
 		};
 	});
 	dispatcher.registerHandler(RPC.run.respondPermission, async (_p) => {
@@ -1227,6 +1268,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			status: run.status,
 			startedAt: run.startedAt ?? undefined,
 			completedAt: run.completedAt ?? undefined,
+			outputs: s.commissions.listOutputs(run.id),
 		};
 	});
 

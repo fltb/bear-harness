@@ -441,6 +441,22 @@ export const runResourceChanges = sqliteTable("run_resource_changes", {
 	detectedAt: text("detected_at").notNull(),
 });
 
+export const runOutputs = sqliteTable("run_outputs", {
+	id: text().primaryKey(),
+	runId: text("run_id")
+		.notNull()
+		.references(() => runs.id),
+	resourceId: text("resource_id").references(() => resourceRefs.id),
+	parentResourceId: text("parent_resource_id").references(() => resourceRefs.id),
+	relativePath: text("relative_path"),
+	operation: text({ enum: ["created", "modified"] }).notNull(),
+	beforeSha256: text("before_sha256"),
+	afterSha256: text("after_sha256").notNull(),
+	evidenceArtifactId: text("evidence_artifact_id").references(() => artifacts.id),
+	adoptionState: text("adoption_state", { enum: ["returned", "accepted", "rejected"] }).notNull(),
+	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+});
+
 export const runManifests = sqliteTable("run_manifests", {
 	id: text().primaryKey(),
 	runId: text("run_id")

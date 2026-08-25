@@ -368,6 +368,18 @@ export const EventPayloadSchemas = {
 		artifactId: EventId,
 		runId: EventId,
 	}),
+	"run.resource_changed": EventPayload({
+		runId: EventId,
+		resourceId: EventId.optional(),
+		parentResourceId: EventId.optional(),
+		relativePath: EventText.optional(),
+		operation: EventText,
+	}),
+	"run.output_decided": EventPayload({
+		outputId: EventId,
+		runId: EventId,
+		decision: EventText,
+	}),
 	"companion.tool_started": EventPayload({
 		conversationId: EventId,
 		toolCallId: EventId,
@@ -1899,6 +1911,18 @@ export const RunStatus = z.union([
 	z.literal("interrupted"),
 	z.literal("forced_termination"),
 ]);
+export const RunOutput = z.strictObject({
+	id: z.string().min(1).max(64),
+	runId: z.string().min(1).max(64),
+	resourceId: z.string().min(1).max(64).optional(),
+	parentResourceId: z.string().min(1).max(64).optional(),
+	relativePath: z.string().max(MAX_PATH_LENGTH).optional(),
+	operation: z.union([z.literal("created"), z.literal("modified")]),
+	beforeSha256: z.string().min(1).max(128).optional(),
+	afterSha256: z.string().min(1).max(128),
+	evidenceArtifactId: z.string().min(1).max(64).optional(),
+	adoptionState: z.union([z.literal("returned"), z.literal("accepted"), z.literal("rejected")]),
+});
 export const Run = z
 	.strictObject({
 		id: z.string().min(1).max(64),
@@ -1907,6 +1931,7 @@ export const Run = z
 		status: RunStatus,
 		startedAt: WireTimestamp.optional(),
 		completedAt: WireTimestamp.optional(),
+		outputs: z.array(RunOutput).max(MAX_ARRAY_LENGTH).default([]),
 	})
 	.superRefine((run, context) => {
 		if (
@@ -1926,6 +1951,14 @@ export const RunListResponse = z.strictObject({
 	runs: z.array(Run).max(10),
 });
 export const RunResponse = Run;
+export const RunOutputListRequest = z.strictObject({ runId: z.string().min(1).max(64).optional() });
+export const RunOutputListResponse = z.strictObject({
+	outputs: z.array(RunOutput).max(MAX_ARRAY_LENGTH),
+});
+export const RunOutputDecideRequest = z.strictObject({
+	outputId: z.string().min(1).max(64),
+	decision: z.union([z.literal("accepted"), z.literal("rejected")]),
+});
 
 // ---------------------------------------------------------------------------
 // Artifact
@@ -2490,6 +2523,8 @@ export const RPC = {
 			RunRespondPermissionRequest,
 			RunResponse,
 		),
+		outputList: endpoint("run.outputList:v1", RunOutputListRequest, RunOutputListResponse),
+		outputDecide: endpoint("run.outputDecide:v1", RunOutputDecideRequest, EmptyResponse),
 	},
 	artifact: {
 		list: endpoint("artifact.list:v1", ArtifactListRequest, ArtifactListResponse),

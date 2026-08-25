@@ -51,6 +51,7 @@ import { applyProxyConfig, type SystemProxyResolver } from "./network/proxy-conf
 import { ProviderCatalog } from "./providers/catalog.js";
 import { CredentialStore, type CredentialVault } from "./providers/credential-store.js";
 import { ResourceContentService } from "./resources/content-service.js";
+import { ResourceMutationService } from "./resources/mutation-service.js";
 import { ResourceReferenceService } from "./resources/reference-service.js";
 import { AuditStore, wireAuditToEvents } from "./security/audit-store.js";
 import { type FsProtectionHandle, installFsProtection } from "./security/fs-protection.js";
@@ -172,6 +173,7 @@ export class HostRuntime {
 		const credentials = new CredentialStore(db.orm, options.credentialVault);
 		const resources = new ResourceReferenceService(db.orm, options.credentialVault);
 		const resourceContent = new ResourceContentService(db.orm, resources);
+		const resourceMutations = new ResourceMutationService(db.orm, resources);
 		const providers = new ProviderCatalog(credentials, join(dataDir, "companion-runtime"));
 		const characterLoader = new CharacterLoader(characterSeedRoot, join(dataDir, "characters"));
 		characterLoader.bootstrapLibrary(options.productConfig.defaultCharacterId);
@@ -490,6 +492,7 @@ export class HostRuntime {
 			roleplay,
 			resources,
 			resourceContent,
+			resourceMutations,
 			defaultCharacterId: options.productConfig.defaultCharacterId,
 			conversationRepository,
 			piSessionDir: join(dataDir, "sessions"),

@@ -100,6 +100,12 @@ function createFixture(controller?: ExecutorController): Fixture {
 			relative_path TEXT, operation TEXT NOT NULL, before_sha256 TEXT, after_sha256 TEXT,
 			before_size INTEGER, after_size INTEGER, detected_at TEXT NOT NULL
 		);
+		CREATE TABLE run_outputs (
+			id TEXT PRIMARY KEY, run_id TEXT NOT NULL, resource_id TEXT, parent_resource_id TEXT,
+			relative_path TEXT, operation TEXT NOT NULL, before_sha256 TEXT, after_sha256 TEXT NOT NULL,
+			evidence_artifact_id TEXT, adoption_state TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		);
 		CREATE TABLE executor_profiles (
 			id TEXT PRIMARY KEY,
 			profile_type TEXT NOT NULL,
@@ -183,6 +189,18 @@ describe("CommissionService executor routing", () => {
 		expect(
 			fixture.db.prepare("SELECT operation, resource_id FROM run_resource_changes").get(),
 		).toEqual({ operation: "modified", resource_id: resource.id });
+		expect(fixture.service.listOutputs()).toMatchObject([
+			{
+				runId: expect.any(String),
+				resourceId: resource.id,
+				operation: "modified",
+				adoptionState: "returned",
+			},
+		]);
+		const output = fixture.service.listOutputs()[0];
+		if (!output) throw new Error("expected run output");
+		fixture.service.decideOutput(output.id, "accepted");
+		expect(fixture.service.listOutputs()[0]?.adoptionState).toBe("accepted");
 	});
 
 	it("keeps distinct user-message triggers through persistence and list projection", () => {

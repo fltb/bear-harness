@@ -173,6 +173,7 @@ export type { ModelRecord } from "./models/registry.js";
 export { ModelRegistry } from "./models/registry.js";
 export { ResourceReferenceService } from "./resources/reference-service.js";
 export { ResourceContentService } from "./resources/content-service.js";
+export { ResourceMutationService } from "./resources/mutation-service.js";
 export type {
 	FileIdentity,
 	ResourceAccess,

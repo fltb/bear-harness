@@ -1,12 +1,13 @@
 // @vitest-environment node
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CredentialVault } from "../src/providers/credential-store.js";
 import { ResourceReferenceService } from "../src/resources/reference-service.js";
 import { ResourceContentService } from "../src/resources/content-service.js";
+import { ResourceMutationService } from "../src/resources/mutation-service.js";
 import { Database, MIGRATIONS } from "../src/storage/database.js";
 
 const roots: string[] = [];
@@ -79,6 +80,21 @@ describe("ResourceReferenceService", () => {
 		expect(database.connection.prepare("SELECT reader FROM resource_reads").get()).toEqual({
 			reader: "companion",
 		});
+		database.close();
+	});
+
+	it("performs atomic resource mutations with baseline conflicts and undo", () => {
+		const { root, database, service } = setup();
+		const path = join(root, "editable.txt");
+		writeFileSync(path, "before");
+		const view = service.grant(path, { access: "read-write" });
+		const baseline = service.resolve(view.id).baseline;
+		const mutations = new ResourceMutationService(database.orm, service);
+		const journalId = mutations.modify(view.id, Buffer.from("after"), baseline);
+		expect(readFileSync(path, "utf8")).toBe("after");
+		expect(() => mutations.modify(view.id, Buffer.from("again"), baseline)).toThrow();
+		mutations.undo(journalId);
+		expect(readFileSync(path, "utf8")).toBe("before");
 		database.close();
 	});
 });

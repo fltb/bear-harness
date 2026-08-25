@@ -158,6 +158,7 @@ export function WorkRunCard(props: {
 	const actionState = workflow.runActionState(props.run.id);
 	const resultSpace = useOptionalResultSpace();
 	const runArtifacts = workflow.artifactsForRun(props.run.id);
+	const runOutputs = () => props.run.outputs ?? [];
 	const runPermissions = workflow.permissionsForRun(props.run.id);
 	const conversationId = createMemo(
 		() => props.commission.conversationId ?? workflow.host.activeConversationId ?? "",
@@ -285,6 +286,43 @@ export function WorkRunCard(props: {
 			<For each={runPermissions()}>
 				{(permission) => <PermissionCard permission={permission} />}
 			</For>
+			<Show when={props.run.status === "completed" && runOutputs().length > 0}>
+				<div class="completion-card">
+					<span class="system-label">{t("work.outputs.title")}</span>
+					<div class="artifact-list">
+						<For each={runOutputs()}>
+							{(output) => (
+								<div class="artifact-row">
+									<div>
+										<strong>
+											{output.relativePath ?? output.resourceId ?? output.parentResourceId}
+										</strong>
+										<span>{t(`work.outputs.${output.adoptionState}`)}</span>
+									</div>
+									<Show when={output.adoptionState === "returned"}>
+										<div class="work-actions">
+											<Button
+												data-control="command"
+												type="button"
+												onClick={() => void workflow.host.run.decideOutput(output.id, "accepted")}
+											>
+												{t("work.outputs.accept")}
+											</Button>
+											<Button
+												data-control="command"
+												type="button"
+												onClick={() => void workflow.host.run.decideOutput(output.id, "rejected")}
+											>
+												{t("work.outputs.reject")}
+											</Button>
+										</div>
+									</Show>
+								</div>
+							)}
+						</For>
+					</div>
+				</div>
+			</Show>
 			<Show when={props.run.status === "completed" && runArtifacts().length > 0}>
 				<div class="completion-card">
 					<span class="system-label">

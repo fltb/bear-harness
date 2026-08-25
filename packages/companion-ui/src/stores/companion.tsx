@@ -291,6 +291,7 @@ export interface RunApi {
 	resume(runId: string): Promise<RunInfo>;
 	cancel(runId: string): Promise<RunInfo>;
 	respondPermission(runId: string, requestId: string, optionId: string): Promise<RunInfo>;
+	decideOutput(outputId: string, decision: "accepted" | "rejected"): Promise<void>;
 }
 
 export interface ArtifactApi {
@@ -1826,6 +1827,10 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			void refreshRuns();
 			void refreshCommissions();
 			return data;
+		},
+		decideOutput: async (outputId, decision) => {
+			await invoke(client, () => client.run.outputDecide({ outputId, decision }));
+			void refreshRuns();
 		},
 	};
 

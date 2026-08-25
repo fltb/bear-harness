@@ -1196,4 +1196,24 @@ export const MIGRATIONS: Migration[] = [
 			CREATE INDEX idx_run_resource_changes_run ON run_resource_changes(run_id, detected_at);
 		`,
 	},
+	{
+		id: 27,
+		description: "Verified external run outputs",
+		up: `
+			CREATE TABLE run_outputs (
+				id TEXT PRIMARY KEY,
+				run_id TEXT NOT NULL REFERENCES runs(id),
+				resource_id TEXT REFERENCES resource_refs(id),
+				parent_resource_id TEXT REFERENCES resource_refs(id),
+				relative_path TEXT,
+				operation TEXT NOT NULL CHECK (operation IN ('created','modified')),
+				before_sha256 TEXT,
+				after_sha256 TEXT NOT NULL,
+				evidence_artifact_id TEXT REFERENCES artifacts(id),
+				adoption_state TEXT NOT NULL CHECK (adoption_state IN ('returned','accepted','rejected')),
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			CREATE INDEX idx_run_outputs_run ON run_outputs(run_id, created_at);
+		`,
+	},
 ];

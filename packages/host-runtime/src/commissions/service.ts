@@ -42,6 +42,7 @@ import {
 	commissions,
 	conversations,
 	evidence,
+	runOutputs,
 	runResourceChanges,
 	runs,
 } from "../storage/schema.js";
@@ -116,6 +117,19 @@ export interface RunSummary {
 	status: RunStatus;
 	startedAt: string | null;
 	completedAt: string | null;
+}
+
+export interface RunOutput {
+	id: string;
+	runId: string;
+	resourceId?: string;
+	parentResourceId?: string;
+	relativePath?: string;
+	operation: "created" | "modified";
+	beforeSha256?: string;
+	afterSha256: string;
+	evidenceArtifactId?: string;
+	adoptionState: "returned" | "accepted" | "rejected";
 }
 
 export interface DraftSummary {
@@ -321,6 +335,22 @@ export class CommissionService {
 					detectedAt: new Date().toISOString(),
 				})
 				.run();
+			if ((operation === "created" || operation === "modified") && current.sha256) {
+				this.db
+					.insert(runOutputs)
+					.values({
+						id: randomUUID(),
+						runId,
+						resourceId: previous.resourceId,
+						parentResourceId: previous.parentResourceId,
+						relativePath: previous.relativePath,
+						operation,
+						beforeSha256: previous.sha256,
+						afterSha256: current.sha256,
+						adoptionState: "returned",
+					})
+					.run();
+			}
 			this.eventBus.publish("run.resource_changed", {
 				runId,
 				resourceId: previous.resourceId,
@@ -373,7 +403,6 @@ export class CommissionService {
 				}
 				if (event.summary)
 					this.recordExecutorEvidence(runId, "executor.summary", { text: event.summary });
-				this.collectRunArtifacts(runId, this.getCommission(run.commissionId));
 				this.completeRun(runId, "completed");
 				return;
 			case "failed":
@@ -951,6 +980,40 @@ export class CommissionService {
 		}
 		this.artifactStore.markAdopted(artifactId, runId);
 		this.eventBus.publish("run.result_adopted", { commissionId, artifactId, runId });
+	}
+
+	listOutputs(runId?: string): RunOutput[] {
+		return this.db
+			.select()
+			.from(runOutputs)
+			.where(runId ? eq(runOutputs.runId, runId) : undefined)
+			.orderBy(desc(runOutputs.createdAt))
+			.all()
+			.map((output) => ({
+				id: output.id,
+				runId: output.runId,
+				resourceId: output.resourceId ?? undefined,
+				parentResourceId: output.parentResourceId ?? undefined,
+				relativePath: output.relativePath ?? undefined,
+				operation: output.operation,
+				beforeSha256: output.beforeSha256 ?? undefined,
+				afterSha256: output.afterSha256,
+				evidenceArtifactId: output.evidenceArtifactId ?? undefined,
+				adoptionState: output.adoptionState,
+			}));
+	}
+
+	decideOutput(outputId: string, decision: "accepted" | "rejected"): void {
+		const output = this.db.select().from(runOutputs).where(eq(runOutputs.id, outputId)).get();
+		if (!output) throw { kind: "not_found", reason: "run_output_not_found" };
+		if (output.adoptionState !== "returned")
+			throw { kind: "conflict", reason: "run_output_already_decided" };
+		this.db
+			.update(runOutputs)
+			.set({ adoptionState: decision })
+			.where(eq(runOutputs.id, outputId))
+			.run();
+		this.eventBus.publish("run.output_decided", { outputId, runId: output.runId, decision });
 	}
 }
 
