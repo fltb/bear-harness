@@ -3,7 +3,11 @@
 import { DatabaseSync } from "node:sqlite";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import { describe, expect, it, vi } from "vitest";
-import { CredentialStore, type CredentialVault } from "../src/providers/credential-store.js";
+import {
+	CredentialStore,
+	type CredentialVault,
+	EncryptedPiCredentialStore,
+} from "../src/providers/credential-store.js";
 
 const BLOB_PREFIX = "vault-v1:";
 
@@ -227,6 +231,77 @@ describe("CredentialStore security policy", () => {
 			status: "session_only",
 		});
 		expect((await restarted.get("provider-session"))?.apiKey).toBeUndefined();
+		db.close();
+	});
+
+	it("persists opaque Pi OAuth credentials through the encrypted vault", async () => {
+		const db = createDb();
+		const vault = makeVault();
+		const first = new EncryptedPiCredentialStore(
+			new CredentialStore(drizzle({ client: db }), vault),
+		);
+		const credential = {
+			type: "oauth" as const,
+			access: "oauth-access-secret",
+			refresh: "oauth-refresh-secret",
+			expires: Date.now() + 60_000,
+		};
+		await first.modify("openai-codex", async () => credential);
+		const row = storedBlob(db, "openai-codex");
+		expect(row.credential_status).toBe("stored");
+		expect(row.credential_blob?.toString("utf8")).not.toContain("oauth-access-secret");
+		expect(row.credential_blob?.toString("utf8")).not.toContain("oauth-refresh-secret");
+
+		const restarted = new EncryptedPiCredentialStore(
+			new CredentialStore(drizzle({ client: db }), vault),
+		);
+		await expect(restarted.read("openai-codex")).resolves.toEqual(credential);
+		await expect(restarted.list()).resolves.toEqual([
+			{ providerId: "openai-codex", type: "oauth" },
+		]);
+		db.close();
+	});
+
+	it("serializes Pi credential refresh mutations per provider", async () => {
+		const db = createDb();
+		const adapter = new EncryptedPiCredentialStore(
+			new CredentialStore(drizzle({ client: db }), makeVault()),
+		);
+		let releaseFirst!: () => void;
+		const firstGate = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+		let firstStarted = false;
+		let secondStarted = false;
+		const first = adapter.modify("openai-codex", async () => {
+			firstStarted = true;
+			await firstGate;
+			return {
+				type: "oauth",
+				access: "access-1",
+				refresh: "refresh-1",
+				expires: Date.now() + 60_000,
+			};
+		});
+		await vi.waitFor(() => expect(firstStarted).toBe(true));
+		const second = adapter.modify("openai-codex", async (current) => {
+			secondStarted = true;
+			expect(current).toMatchObject({ access: "access-1", refresh: "refresh-1" });
+			return {
+				type: "oauth",
+				access: "access-2",
+				refresh: "refresh-2",
+				expires: Date.now() + 120_000,
+			};
+		});
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		expect(secondStarted).toBe(false);
+		releaseFirst();
+		await Promise.all([first, second]);
+		await expect(adapter.read("openai-codex")).resolves.toMatchObject({
+			access: "access-2",
+			refresh: "refresh-2",
+		});
 		db.close();
 	});
 });

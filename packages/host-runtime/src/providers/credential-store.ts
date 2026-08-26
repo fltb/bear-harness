@@ -12,6 +12,12 @@
  * never enter the renderer, run manifest, evidence, or diagnostics.
  */
 
+import type {
+	AuthOperationOptions,
+	Credential as PiCredential,
+	CredentialInfo as PiCredentialInfo,
+	CredentialStore as PiCredentialStore,
+} from "@earendil-works/pi-ai";
 import { asc, eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import { providerAccounts } from "../storage/schema.js";
@@ -43,16 +49,14 @@ export type CredentialStatus =
 export interface ProviderCredential {
 	providerId: string;
 	apiKey?: string;
-	oauthToken?: string;
-	refreshToken?: string;
+	piCredential?: PiCredential;
 	status: CredentialStatus;
 	updatedAt: string;
 }
 
 type CredentialPayload = {
 	apiKey?: string;
-	oauthToken?: string;
-	refreshToken?: string;
+	piCredential?: PiCredential;
 };
 
 type SessionCredential = {
@@ -153,8 +157,7 @@ export class CredentialStore {
 			return {
 				providerId,
 				apiKey: credential.apiKey,
-				oauthToken: credential.oauthToken,
-				refreshToken: credential.refreshToken,
+				piCredential: credential.piCredential,
 				status: row.credentialStatus as CredentialStatus,
 				updatedAt: row.updatedAt,
 			};
@@ -242,5 +245,95 @@ export class CredentialStore {
 				set: { credentialBlob, credentialStatus, updatedAt },
 			})
 			.run();
+	}
+}
+
+/**
+ * Pi's credential persistence contract backed by the Host's encrypted vault.
+ * Pi credentials remain opaque so provider-specific OAuth metadata survives
+ * login and refresh without Host-owned token parsing.
+ */
+export class EncryptedPiCredentialStore implements PiCredentialStore {
+	private readonly queues = new Map<string, Promise<void>>();
+	private readonly sessionOnly = new Set<string>();
+
+	constructor(private readonly store: CredentialStore) {}
+
+	setSessionOnly(providerId: string, enabled: boolean): void {
+		if (enabled) this.sessionOnly.add(providerId);
+		else this.sessionOnly.delete(providerId);
+	}
+
+	async read(
+		providerId: string,
+		options?: AuthOperationOptions,
+	): Promise<PiCredential | undefined> {
+		options?.signal?.throwIfAborted();
+		const stored = await this.store.get(providerId);
+		options?.signal?.throwIfAborted();
+		if (!stored || stored.status === "invalid" || stored.status === "unavailable") return undefined;
+		if (stored.piCredential) return stored.piCredential;
+		return stored.apiKey ? { type: "api_key", key: stored.apiKey } : undefined;
+	}
+
+	async list(options?: AuthOperationOptions): Promise<readonly PiCredentialInfo[]> {
+		options?.signal?.throwIfAborted();
+		const accounts = await this.store.list();
+		const credentials: PiCredentialInfo[] = [];
+		for (const account of accounts) {
+			const credential = await this.read(account.providerId, options);
+			if (credential) credentials.push({ providerId: account.providerId, type: credential.type });
+		}
+		return credentials;
+	}
+
+	modify(
+		providerId: string,
+		fn: (current: PiCredential | undefined) => Promise<PiCredential | undefined>,
+		options?: AuthOperationOptions,
+	): Promise<PiCredential | undefined> {
+		return this.exclusive(providerId, options, async () => {
+			const next = await fn(await this.read(providerId, options));
+			options?.signal?.throwIfAborted();
+			if (!next) {
+				await this.store.remove(providerId);
+				return undefined;
+			}
+			await this.store.set(
+				providerId,
+				{ piCredential: next },
+				{ sessionOnly: this.sessionOnly.has(providerId) },
+			);
+			return next;
+		});
+	}
+
+	delete(providerId: string, options?: AuthOperationOptions): Promise<void> {
+		return this.exclusive(providerId, options, async () => {
+			await this.store.remove(providerId);
+		});
+	}
+
+	private async exclusive<T>(
+		providerId: string,
+		options: AuthOperationOptions | undefined,
+		operation: () => Promise<T>,
+	): Promise<T> {
+		options?.signal?.throwIfAborted();
+		const previous = this.queues.get(providerId) ?? Promise.resolve();
+		let release!: () => void;
+		const current = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const tail = previous.then(() => current);
+		this.queues.set(providerId, tail);
+		await previous;
+		try {
+			options?.signal?.throwIfAborted();
+			return await operation();
+		} finally {
+			release();
+			if (this.queues.get(providerId) === tail) this.queues.delete(providerId);
+		}
 	}
 }

@@ -1652,12 +1652,19 @@ const ProviderModelCost: z.ZodType<{
 			.optional(),
 	}),
 );
+const ProviderAuthMethod = z.strictObject({
+	type: z.union([z.literal("api_key"), z.literal("oauth")]),
+	name: z.string().min(1).max(MAX_STRING_LENGTH),
+	loginLabel: z.string().min(1).max(MAX_STRING_LENGTH).optional(),
+	isSubscription: z.boolean().optional(),
+});
+
 export const ProviderInfo = z.strictObject({
 	id: z.string().min(1).max(64),
 	name: z.string().max(MAX_STRING_LENGTH),
 	source: z.union([z.literal("builtin"), z.literal("custom")]),
 	added: z.boolean(),
-	authType: z.union([z.literal("api_key"), z.literal("oauth")]),
+	authMethods: z.array(ProviderAuthMethod).min(1).max(2),
 	credentialStatus: z.union([
 		z.literal("missing"),
 		z.literal("session_only"),

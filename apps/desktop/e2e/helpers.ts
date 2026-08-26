@@ -121,7 +121,9 @@ export async function invokeRpc<Endpoint extends RpcEndpoint>(
 export async function provisionReplyModel(window: Page) {
 	const { providers } = await invokeRpc(window, RPC.provider.list, {});
 	const provider = providers.find(
-		(candidate) => candidate.authType === "api_key" && candidate.availableModels.length > 0,
+		(candidate) =>
+			candidate.authMethods.some((method) => method.type === "api_key") &&
+			candidate.availableModels.length > 0,
 	);
 	if (!provider) throw new Error("desktop E2E requires an API-key provider with a preset model");
 	const model = provider.availableModels[0];

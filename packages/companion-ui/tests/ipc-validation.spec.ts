@@ -54,7 +54,7 @@ const provider = {
 	name: "Provider",
 	source: "builtin",
 	added: true,
-	authType: "api_key",
+	authMethods: [{ type: "api_key", name: "Provider API key" }],
 	credentialStatus: "stored",
 	availableModels: [
 		{
@@ -148,7 +148,7 @@ describe("host projection validation", () => {
 		expectRequiredFields(isProviderInfo, provider, [
 			"id",
 			"name",
-			"authType",
+			"authMethods",
 			"credentialStatus",
 			"availableModels",
 		]);

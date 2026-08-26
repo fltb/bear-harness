@@ -220,6 +220,32 @@ describe("ProviderCatalog OAuth contract", () => {
 			expect.objectContaining({ kind: "not_found", reason: "oauth_session_not_found" }),
 		);
 	});
+
+	it("honors provider-owned prompt cancellation while the login continues", async () => {
+		const catalog = makeCatalog();
+		const promptAbort = new AbortController();
+		runtime.login = vi.fn(async (_providerId, _type, interaction) => {
+			await expect(
+				interaction.prompt({
+					type: "manual_code",
+					message: "Paste the authorization code",
+					signal: promptAbort.signal,
+				}),
+			).rejects.toMatchObject({ name: "AbortError" });
+			return oauthCredential();
+		});
+		catalog.startOAuth("openai-codex");
+		await vi.waitFor(() => {
+			expect(catalog.getOAuthSession("openai-codex").status).toBe("waiting_input");
+		});
+		promptAbort.abort();
+		await vi.waitFor(() => {
+			expect(catalog.getOAuthSession("openai-codex")).toMatchObject({
+				status: "completed",
+				prompt: undefined,
+			});
+		});
+	});
 	it("records the real failure reason on a failed session", async () => {
 		const catalog = makeCatalog();
 		runtime.login = vi.fn(async () => {

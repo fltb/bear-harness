@@ -739,7 +739,7 @@ describe("store RPC contract", () => {
 			name: "Relay",
 			source: "builtin" as const,
 			added: true,
-			authType: "api_key" as const,
+			authMethods: [{ type: "api_key" as const, name: "Relay API key" }],
 			credentialStatus: "stored" as const,
 			availableModels: [],
 			unavailable: [],

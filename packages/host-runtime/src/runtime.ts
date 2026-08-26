@@ -370,10 +370,14 @@ export class HostRuntime {
 				const route = models.resolve(conversationId, false);
 				if (!route) return undefined;
 				const credential = await credentials.get(route.providerId);
+				const apiKey =
+					credential?.piCredential?.type === "api_key"
+						? credential.piCredential.key
+						: credential?.apiKey;
 				return {
 					providerId: route.providerId,
 					modelId: route.modelId,
-					...(credential?.apiKey ? { apiKey: credential.apiKey } : {}),
+					...(apiKey ? { apiKey } : {}),
 				};
 			},
 			reconcileTerminalRun,

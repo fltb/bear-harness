@@ -13,7 +13,7 @@ const CANDIDATE = {
 	name: "OpenAI",
 	source: "builtin" as const,
 	added: false,
-	authType: "api_key" as const,
+	authMethods: [{ type: "api_key" as const, name: "OpenAI API key" }],
 	credentialStatus: "missing" as const,
 	availableModels: [{ id: "gpt-mini", name: "GPT Mini", supportsImages: false, cost: FREE }],
 	unavailable: [],
@@ -24,7 +24,7 @@ const PROVIDER = {
 	source: "custom" as const,
 	added: true,
 	baseUrl: "https://saved.example/v1",
-	authType: "api_key" as const,
+	authMethods: [{ type: "api_key" as const, name: "Relay API key" }],
 	credentialStatus: "stored" as const,
 	availableModels: [{ id: "fast", name: "Fast", supportsImages: false, cost: FREE }],
 	unavailable: [],
@@ -34,7 +34,10 @@ const OAUTH = {
 	name: "OAuth",
 	source: "builtin" as const,
 	added: true,
-	authType: "oauth" as const,
+	authMethods: [
+		{ type: "api_key" as const, name: "OAuth provider API key" },
+		{ type: "oauth" as const, name: "OAuth subscription" },
+	],
 	credentialStatus: "stored" as const,
 	availableModels: [{ id: "oauth-model", name: "OAuth Model", supportsImages: false, cost: FREE }],
 	unavailable: [],
@@ -276,6 +279,7 @@ describe("breaking provider and model settings contract", () => {
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
 		const card = within(setup).getByText(OAUTH.name).closest("article")!;
+		expect(within(card).getByRole("button", { name: zhCN.settings.editProviderKey })).toBeVisible();
 		client.provider.list.mockClear();
 		client.model.poolGet.mockClear();
 		client.model.defaultsGet.mockClear();
@@ -300,6 +304,63 @@ describe("breaking provider and model settings contract", () => {
 		expect(client.model.defaultsGet).toHaveBeenCalledTimes(1);
 		expect(within(setup).getByText(OAUTH.name)).toBeVisible();
 		expect(within(card).getAllByText(zhCN.settings.connected).length).toBeGreaterThan(0);
+	});
+
+	it("keeps polling a manual-code fallback until the browser callback completes", async () => {
+		const { client } = configuredClient();
+		client.provider.login = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { providerId: "oauth", status: "running" as const },
+			}),
+		);
+		client.provider.loginStatus = vi
+			.fn()
+			.mockResolvedValueOnce({
+				ok: true as const,
+				data: {
+					providerId: "oauth",
+					status: "waiting_input" as const,
+					authUrl: "https://auth.example/authorize",
+					prompt: {
+						type: "manual_code" as const,
+						message: "Paste the callback URL",
+					},
+				},
+			})
+			.mockResolvedValueOnce({
+				ok: true as const,
+				data: { providerId: "oauth", status: "completed" as const },
+			});
+		Object.defineProperty(window, "bearDesktop", {
+			configurable: true,
+			value: {},
+		});
+		const open = vi.spyOn(window, "open").mockReturnValue(null);
+		try {
+			render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+			const { user, backstage } = await openSettings();
+			const setup = providerSetup(backstage);
+			const card = within(setup).getByText(OAUTH.name).closest("article")!;
+			client.provider.list.mockClear();
+			await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
+			await waitFor(
+				() =>
+					expect(open).toHaveBeenCalledWith(
+						"https://auth.example/authorize",
+						"_blank",
+						"noopener,noreferrer",
+					),
+				{ timeout: 2000 },
+			);
+			await waitFor(() => expect(client.provider.list).toHaveBeenCalledTimes(1), {
+				timeout: 3000,
+			});
+			expect(client.provider.loginStatus).toHaveBeenCalledTimes(2);
+		} finally {
+			open.mockRestore();
+			Reflect.deleteProperty(window, "bearDesktop");
+		}
 	});
 
 	it("surfaces device code, verification URL, instructions, and info links from the OAuth session", async () => {

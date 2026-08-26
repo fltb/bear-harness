@@ -15,8 +15,9 @@
  * auth errors reported by pi-ai.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Credential as PiCredential } from "@earendil-works/pi-ai";
 import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
@@ -24,7 +25,11 @@ import {
 	recoverDurableFileTransaction,
 	replaceDurableFile,
 } from "../storage/durable-file-transaction.js";
-import type { CredentialStatus, CredentialStore } from "./credential-store.js";
+import {
+	type CredentialStatus,
+	type CredentialStore,
+	EncryptedPiCredentialStore,
+} from "./credential-store.js";
 
 const BUILTIN_PROVIDER_IDS = new Set<string>(getBuiltinProviders());
 
@@ -101,6 +106,20 @@ interface ProviderModelInfoWithProvider {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPiCredential(value: unknown): value is PiCredential {
+	if (!isRecord(value)) return false;
+	if (value.type === "api_key") {
+		return value.key === undefined || typeof value.key === "string";
+	}
+	return (
+		value.type === "oauth" &&
+		typeof value.access === "string" &&
+		typeof value.refresh === "string" &&
+		typeof value.expires === "number" &&
+		Number.isFinite(value.expires)
+	);
 }
 
 const SECRET_KEY_PARTS = [
@@ -234,6 +253,10 @@ function configuredRoutes(providers: Record<string, unknown>): Array<{
 	});
 }
 
+export type ProviderAuthMethod =
+	| { type: "api_key"; name: string }
+	| { type: "oauth"; name: string; loginLabel?: string; isSubscription?: boolean };
+
 /** One provider entry in the catalog listing. */
 export interface ProviderInfo {
 	id: string;
@@ -242,7 +265,7 @@ export interface ProviderInfo {
 	source: "builtin" | "custom";
 	/** Projection of explicit credentials and/or persisted Pi provider config. */
 	added: boolean;
-	authType: "api_key" | "oauth";
+	authMethods: ProviderAuthMethod[];
 	credentialStatus: ProviderCredentialStatus;
 	/**
 	 * Effective endpoint selected by pi-ai after persisted provider
@@ -285,14 +308,55 @@ interface OAuthSessionInternal extends OAuthSessionState {
 	abort?: AbortController;
 }
 
+function waitForOAuthPrompt(session: OAuthSessionInternal, prompt: AuthPrompt): Promise<string> {
+	return new Promise<string>((resolve, reject) => {
+		let settled = false;
+		const clear = (): void => {
+			if (session.resolvePrompt !== resolvePrompt) return;
+			session.prompt = undefined;
+			session.resolvePrompt = undefined;
+			session.rejectPrompt = undefined;
+		};
+		const settle = (result: { answer: string } | { cause: Error }): void => {
+			if (settled) return;
+			settled = true;
+			prompt.signal?.removeEventListener("abort", abortPrompt);
+			clear();
+			if ("answer" in result) resolve(result.answer);
+			else reject(result.cause);
+		};
+		const resolvePrompt = (answer: string): void => settle({ answer });
+		const rejectPrompt = (cause: Error): void => settle({ cause });
+		const abortPrompt = (): void => {
+			if (session.status === "waiting_input") session.status = "running";
+			rejectPrompt(new DOMException("OAuth prompt cancelled", "AbortError"));
+		};
+
+		session.status = "waiting_input";
+		session.prompt = {
+			type: prompt.type,
+			message: prompt.message,
+			...("placeholder" in prompt && prompt.placeholder ? { placeholder: prompt.placeholder } : {}),
+			...(prompt.type === "select" ? { options: prompt.options } : {}),
+		};
+		session.resolvePrompt = resolvePrompt;
+		session.rejectPrompt = rejectPrompt;
+		if (prompt.signal?.aborted) abortPrompt();
+		else prompt.signal?.addEventListener("abort", abortPrompt, { once: true });
+	});
+}
+
 export class ProviderCatalog {
 	private runtime: Promise<ModelRuntime> | null = null;
 	private oauthSessions = new Map<string, OAuthSessionInternal>();
+	private readonly piCredentials: EncryptedPiCredentialStore;
 
 	constructor(
 		private readonly credentialStore: CredentialStore,
 		private readonly agentDir: string,
-	) {}
+	) {
+		this.piCredentials = new EncryptedPiCredentialStore(credentialStore);
+	}
 	private modelsRecovery: Promise<void> | null = null;
 
 	private async ensureModelsRecovered(): Promise<void> {
@@ -326,13 +390,49 @@ export class ProviderCatalog {
 		if (existsSync(modelsPath)) await this.validateModelsCandidate(modelsPath);
 	}
 
+	private async migrateLegacyPiCredentials(): Promise<void> {
+		const authPath = join(this.agentDir, "auth.json");
+		if (!existsSync(authPath)) return;
+		let document: unknown;
+		try {
+			document = JSON.parse(readFileSync(authPath, "utf8"));
+		} catch {
+			throw { kind: "conflict", reason: "pi_auth_migration_invalid" };
+		}
+		if (!isRecord(document)) {
+			throw { kind: "conflict", reason: "pi_auth_migration_invalid" };
+		}
+		const credentials = Object.entries(document);
+		for (const [, credential] of credentials) {
+			if (!isPiCredential(credential)) {
+				throw { kind: "conflict", reason: "pi_auth_migration_invalid" };
+			}
+		}
+		for (const [providerId, credential] of credentials as Array<[string, PiCredential]>) {
+			await this.piCredentials.modify(providerId, async (current) => current ?? credential);
+		}
+		const persisted = await Promise.all(
+			credentials.map(async ([providerId]) => {
+				const status = await this.credentialStore.getStatus(providerId);
+				return status === "stored" || status === "weak_storage";
+			}),
+		);
+		if (persisted.every(Boolean)) {
+			try {
+				unlinkSync(authPath);
+			} catch {
+				// The encrypted copy is authoritative; a read-only legacy file is harmless.
+			}
+		}
+	}
+
 	private async validateModelsCandidate(
 		candidatePath: string,
 		requiredRoutes: readonly { providerId: string; modelId: string }[] = [],
 	): Promise<ProviderModelInfoWithProvider[]> {
 		const { providers } = readProviderDocument(candidatePath);
 		const runtime = await ModelRuntime.create({
-			authPath: join(this.agentDir, "auth.json"),
+			credentials: this.piCredentials,
 			modelsPath: candidatePath,
 			refreshOnCreate: false,
 		});
@@ -391,19 +491,12 @@ export class ProviderCatalog {
 
 	private async createRuntime(): Promise<ModelRuntime> {
 		await this.ensureModelsRecovered();
-		const runtime = await ModelRuntime.create({
-			authPath: join(this.agentDir, "auth.json"),
+		await this.migrateLegacyPiCredentials();
+		return ModelRuntime.create({
+			credentials: this.piCredentials,
 			modelsPath: join(this.agentDir, "models.json"),
 			refreshOnCreate: false,
 		});
-		for (const account of await this.credentialStore.list()) {
-			if (account.status === "invalid" || account.status === "unavailable") continue;
-			const credential = await this.credentialStore.get(account.providerId);
-			if (!credential?.apiKey || BLOCKED_PROVIDER_ID_PATTERN.test(account.providerId)) continue;
-			if (!runtime.getProvider(account.providerId)) continue;
-			await runtime.setRuntimeApiKey(account.providerId, credential.apiKey);
-		}
-		return runtime;
 	}
 
 	/** Return the canonical pi-coding-agent runtime used by Companion sessions. */
@@ -562,7 +655,25 @@ export class ProviderCatalog {
 				name: provider.name,
 				source: isBuiltinProvider(provider.id) ? "builtin" : "custom",
 				added,
-				authType: provider.auth.oauth ? "oauth" : "api_key",
+				authMethods: [
+					...(provider.auth.apiKey
+						? [{ type: "api_key" as const, name: provider.auth.apiKey.name }]
+						: []),
+					...(provider.auth.oauth
+						? [
+								{
+									type: "oauth" as const,
+									name: provider.auth.oauth.name,
+									...(provider.auth.oauth.loginLabel
+										? { loginLabel: provider.auth.oauth.loginLabel }
+										: {}),
+									...(provider.auth.oauth.isSubscription !== undefined
+										? { isSubscription: provider.auth.oauth.isSubscription }
+										: {}),
+								},
+							]
+						: []),
+				],
 				credentialStatus,
 				baseUrl: safeBaseUrl(provider.baseUrl),
 				availableModels: runtime.getModels(provider.id).map((model) => ({
@@ -577,19 +688,25 @@ export class ProviderCatalog {
 		return providers;
 	}
 
-	/** Persist an API key in the runtime and the host credential store. */
+	/** Persist an API key in Pi's runtime and encrypted credential backend. */
 	async setApiKey(providerId: string, apiKey: string, sessionOnly?: boolean): Promise<void> {
 		assertAllowedProvider(providerId);
 		const runtime = await this.getRuntime();
 		if (!runtime.getProvider(providerId)) {
 			throw { kind: "not_found", reason: `provider_not_found: ${providerId}` };
 		}
+		this.piCredentials.setSessionOnly(providerId, sessionOnly === true);
 		try {
 			await runtime.setRuntimeApiKey(providerId, apiKey);
+			await this.piCredentials.modify(providerId, async () => ({
+				type: "api_key",
+				key: apiKey,
+			}));
 		} catch (error) {
 			throw toHostError(error, providerId);
+		} finally {
+			this.piCredentials.setSessionOnly(providerId, false);
 		}
-		await this.credentialStore.set(providerId, { apiKey }, { sessionOnly });
 	}
 
 	/**
@@ -608,7 +725,7 @@ export class ProviderCatalog {
 		} catch {
 			// Local cleanup must continue even when pi-ai has no active session.
 		}
-		await this.credentialStore.remove(providerId);
+		await this.piCredentials.delete(providerId);
 
 		const modelsPath = join(this.agentDir, "models.json");
 		if (existsSync(modelsPath)) {
@@ -634,7 +751,7 @@ export class ProviderCatalog {
 		} catch {
 			// Best-effort: host credentials are still removed below.
 		}
-		await this.credentialStore.remove(providerId);
+		await this.piCredentials.delete(providerId);
 	}
 
 	/** Run a provider's OAuth flow, surfacing the auth URL / device code. */
@@ -705,20 +822,7 @@ export class ProviderCatalog {
 				}
 				if (event.type === "progress") session.message = event.message;
 			},
-			prompt: (prompt) =>
-				new Promise<string>((resolve, reject) => {
-					session.status = "waiting_input";
-					session.prompt = {
-						type: prompt.type,
-						message: prompt.message,
-						...("placeholder" in prompt && prompt.placeholder
-							? { placeholder: prompt.placeholder }
-							: {}),
-						...(prompt.type === "select" ? { options: prompt.options } : {}),
-					};
-					session.resolvePrompt = resolve;
-					session.rejectPrompt = reject;
-				}),
+			prompt: (prompt) => waitForOAuthPrompt(session, prompt),
 		})
 			.then((result) => {
 				Object.assign(session, result);
