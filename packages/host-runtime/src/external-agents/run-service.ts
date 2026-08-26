@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, lstatSync, mkdirSync, readdirSync, rmSync, type Stats } from "node:fs";
+import { join, resolve } from "node:path";
 import { and, count, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import type {
 	ConversationAttachmentService,
@@ -17,6 +17,8 @@ import type { EventBus } from "../storage/event-bus.js";
 import { conversations, evidence, runs } from "../storage/schema.js";
 
 export const MAX_ACTIVE_RUNS = 2;
+const MAX_RUN_CLEANUP_ENTRIES = 10_000;
+const MAX_RUN_CLEANUP_DEPTH = 64;
 export type RunStatus =
 	| "enqueued"
 	| "running"
@@ -69,10 +71,24 @@ export interface TerminalReconcileResult {
 	resultReported: boolean;
 	memoryCaptured: boolean;
 }
+export interface ReconciliationAttemptOptions {
+	signal?: AbortSignal;
+	timeoutMs?: number;
+}
+
+interface ReconciliationAttempt {
+	controller: AbortController;
+	promise: Promise<void>;
+}
+
+const DEFAULT_RECONCILIATION_TIMEOUT_MS = 15_000;
 
 /** Direct external-agent ownership/FSM boundary. There is no proposal or approval phase. */
 export class ExternalAgentRunService {
-	private readonly reconciliationTasks = new Map<string, Promise<void>>();
+	private readonly reconciliationTasks = new Map<string, ReconciliationAttempt>();
+	private readonly detachedTasks = new Set<Promise<void>>();
+	private closePromise: Promise<void> | undefined;
+	private closed = false;
 	constructor(
 		private readonly db: AppDatabase,
 		private readonly eventBus: EventBus,
@@ -85,7 +101,9 @@ export class ExternalAgentRunService {
 		) => Promise<{ providerId: string; modelId: string; apiKey?: string } | undefined>,
 		private readonly onTerminal?: (
 			result: TerminalRunResult,
+			signal: AbortSignal,
 		) => TerminalReconcileResult | Promise<TerminalReconcileResult>,
+		private readonly reconciliationTimeoutMs = DEFAULT_RECONCILIATION_TIMEOUT_MS,
 	) {
 		mkdirSync(runRoot, { recursive: true });
 	}
@@ -171,10 +189,28 @@ export class ExternalAgentRunService {
 					instruction: executionInstruction(instruction, prepared.inputs, prepared.outputDirectory),
 					workspace: prepared.workspace,
 					outputDirectory: prepared.outputDirectory,
+					readOnlyPaths: prepared.inputs.map((input) => input.path),
 					...(modelRoute ? { modelRoute } : {}),
 				},
 				(event) => {
-					void this.handleExecutorEvent(runId, event, prepared.outputDirectory, pathReplacements);
+					if (this.closed) return;
+					const task = this.handleExecutorEvent(
+						runId,
+						event,
+						prepared.outputDirectory,
+						pathReplacements,
+					).catch((error) => {
+						if (this.closed) return;
+						try {
+							this.recordEvidence(runId, "executor.event_failed", {
+								reason: reconciliationError(error),
+							});
+						} catch {
+							// Executor callbacks are detached; diagnostics failure
+							// must not become an unhandled rejection.
+						}
+					});
+					this.trackDetached(task);
 				},
 			);
 		} catch (error) {
@@ -261,7 +297,7 @@ export class ExternalAgentRunService {
 			.run();
 		this.eventBus.publish("run.completed", { runId, status });
 		const result = summarize(this.getRun(runId));
-		await this.reconcileRun(runId, outputs);
+		void this.reconcileRun(runId, outputs);
 		return result;
 	}
 
@@ -271,26 +307,48 @@ export class ExternalAgentRunService {
 		return row;
 	}
 
-	private async reconcileRun(
+	private reconcileRun(
 		runId: string,
 		capturedOutputs?: ConversationAttachmentSummary[],
+		options: ReconciliationAttemptOptions = {},
 	): Promise<void> {
+		if (this.closed) return Promise.resolve();
 		const pending = this.reconciliationTasks.get(runId);
-		if (pending) return pending;
+		if (pending) return pending.promise;
+		const controller = new AbortController();
+		const abort = () => controller.abort();
+		options.signal?.addEventListener("abort", abort, { once: true });
+		if (options.signal?.aborted) controller.abort();
+		const timeoutMs = options.timeoutMs ?? this.reconciliationTimeoutMs;
 		const task = (async () => {
-			const row = this.getRun(runId);
-			if (!row.completedAt || (row.resultReportedAt && row.memoryCapturedAt) || !this.onTerminal) {
-				return;
-			}
-			const needsResultReport = !row.resultReportedAt;
-			const needsMemoryCapture = !row.memoryCapturedAt;
 			try {
-				const outcome = await this.onTerminal({
-					run: summarize(row),
-					outputs: capturedOutputs ?? this.attachments.generatedForRun(row.conversationId, row.id),
-					needsResultReport,
-					needsMemoryCapture,
-				});
+				const row = this.getRun(runId);
+				if (
+					!row.completedAt ||
+					(row.resultReportedAt && row.memoryCapturedAt) ||
+					!this.onTerminal
+				) {
+					return;
+				}
+				const needsResultReport = !row.resultReportedAt;
+				const needsMemoryCapture = !row.memoryCapturedAt;
+				const outcome = await waitForReconciliationAttempt(
+					Promise.resolve(
+						this.onTerminal(
+							{
+								run: summarize(row),
+								outputs:
+									capturedOutputs ?? this.attachments.generatedForRun(row.conversationId, row.id),
+								needsResultReport,
+								needsMemoryCapture,
+							},
+							controller.signal,
+						),
+					),
+					controller.signal,
+					timeoutMs,
+				);
+				if (controller.signal.aborted || this.closed) return;
 				const update: {
 					resultReportedAt?: string;
 					memoryCapturedAt?: string;
@@ -301,22 +359,34 @@ export class ExternalAgentRunService {
 				if (Object.keys(update).length > 0) {
 					this.db.update(runs).set(update).where(eq(runs.id, runId)).run();
 				}
-			} catch {
-				// Delivery and memory are reconciled on activation/startup. A role
-				// provider failure must never rewrite the settled executor result.
+			} catch (error) {
+				// Null reconciliation timestamps are the durable pending state. Keep
+				// a bounded failure record without rewriting the settled raw result.
+				if (!this.closed && !controller.signal.aborted) {
+					try {
+						this.recordEvidence(runId, "run.reconciliation_pending", {
+							reason: reconciliationError(error),
+						});
+					} catch {
+						// The null timestamps remain the durable retry signal even
+						// when diagnostics persistence itself is unavailable.
+					}
+				}
 			}
-		})();
-		this.reconciliationTasks.set(runId, task);
-		try {
-			await task;
-		} finally {
-			if (this.reconciliationTasks.get(runId) === task) {
-				this.reconciliationTasks.delete(runId);
-			}
-		}
+		})().finally(() => {
+			options.signal?.removeEventListener("abort", abort);
+			const current = this.reconciliationTasks.get(runId);
+			if (current?.promise === task) this.reconciliationTasks.delete(runId);
+		});
+		this.reconciliationTasks.set(runId, { controller, promise: task });
+		return task;
 	}
 
-	async reconcilePending(conversationId?: string): Promise<number> {
+	async reconcilePending(
+		conversationId?: string,
+		options: ReconciliationAttemptOptions = {},
+	): Promise<number> {
+		if (this.closed || options.signal?.aborted) return 0;
 		const pending = this.db
 			.select({ id: runs.id })
 			.from(runs)
@@ -335,7 +405,7 @@ export class ExternalAgentRunService {
 				),
 			)
 			.all();
-		await Promise.all(pending.map(({ id }) => this.reconcileRun(id)));
+		await Promise.all(pending.map(({ id }) => this.reconcileRun(id, undefined, options)));
 		return pending.length;
 	}
 	private executorRun(row: RunRow): ExecutorRun {
@@ -428,6 +498,38 @@ export class ExternalAgentRunService {
 			: this.db.select().from(runs).orderBy(desc(runs.createdAt)).limit(10).all();
 		return rows.map(summarize);
 	}
+	private trackDetached(task: Promise<void>): void {
+		let trackedTask: Promise<void>;
+		trackedTask = task.finally(() => {
+			this.detachedTasks.delete(trackedTask);
+		});
+		this.detachedTasks.add(trackedTask);
+	}
+
+	close(): Promise<void> {
+		if (this.closePromise) return this.closePromise;
+		this.closed = true;
+		this.closePromise = this.drainDetachedTasks();
+		return this.closePromise;
+	}
+
+	private async drainDetachedTasks(): Promise<void> {
+		const attempts = [...this.reconciliationTasks.values()];
+		for (const attempt of attempts) attempt.controller.abort();
+		await Promise.allSettled([
+			...attempts.map((attempt) => attempt.promise),
+			...this.detachedTasks,
+		]);
+		this.reconciliationTasks.clear();
+		this.detachedTasks.clear();
+		const active = this.db
+			.select({ n: count() })
+			.from(runs)
+			.where(inArray(runs.status, ACTIVE))
+			.get();
+		if (Number(active?.n ?? 0) === 0) removeExternalAgentRunRoot(this.runRoot);
+	}
+
 	markOrphansInterrupted(): number {
 		const result = this.db
 			.update(runs)
@@ -438,8 +540,75 @@ export class ExternalAgentRunService {
 			})
 			.where(and(inArray(runs.status, ORPHANABLE), isNull(runs.completedAt)))
 			.run();
+		removeExternalAgentRunRoot(this.runRoot);
 		return Number(result.changes);
 	}
+}
+
+/**
+ * Host-only teardown for ephemeral external-agent state. The walk is bounded
+ * and uses lstat for every entry so links are unlinked, never traversed.
+ */
+export function removeExternalAgentRunRoot(runRoot: string): void {
+	const root = resolve(runRoot);
+	const pending: Array<{ path: string; depth: number }> = [{ path: root, depth: 0 }];
+	let visited = 0;
+	while (pending.length > 0) {
+		const current = pending.pop()!;
+		visited += 1;
+		if (visited > MAX_RUN_CLEANUP_ENTRIES || current.depth > MAX_RUN_CLEANUP_DEPTH) {
+			throw new Error("external_agent_run_cleanup_limit_exceeded");
+		}
+		let stat: Stats;
+		try {
+			stat = lstatSync(current.path);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+			throw error;
+		}
+		if (stat.isSymbolicLink()) continue;
+		if (stat.isDirectory()) {
+			chmodSync(current.path, stat.mode | 0o700);
+			for (const entry of readdirSync(current.path, { withFileTypes: true })) {
+				pending.push({ path: join(current.path, entry.name), depth: current.depth + 1 });
+			}
+		} else {
+			chmodSync(current.path, stat.mode | 0o600);
+		}
+	}
+	rmSync(root, { recursive: true, force: true });
+}
+
+async function waitForReconciliationAttempt<T>(
+	work: Promise<T>,
+	signal: AbortSignal,
+	timeoutMs: number,
+): Promise<T> {
+	if (signal.aborted) throw new Error("external_agent_reconciliation_cancelled");
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let abort: (() => void) | undefined;
+	const interrupted = new Promise<never>((_resolve, reject) => {
+		abort = () => reject(new Error("external_agent_reconciliation_cancelled"));
+		signal.addEventListener("abort", abort, { once: true });
+		timer = setTimeout(
+			() => reject(new Error("external_agent_reconciliation_timeout")),
+			Math.max(1, timeoutMs),
+		);
+	});
+	try {
+		return await Promise.race([work, interrupted]);
+	} finally {
+		clearTimeout(timer);
+		if (abort) signal.removeEventListener("abort", abort);
+	}
+}
+
+function reconciliationError(error: unknown): string {
+	if (error instanceof Error) return error.message.slice(0, 1_024);
+	if (typeof error === "object" && error !== null && "reason" in error) {
+		return String(error.reason).slice(0, 1_024);
+	}
+	return String(error).slice(0, 1_024);
 }
 
 export function externalAgentResultMessage(
@@ -523,16 +692,13 @@ function summarize(row: RunRow): RunSummary {
 }
 function executionInstruction(
 	instruction: string,
-	inputs: Array<{ name: string; path: string; source: "live" | "snapshot" }>,
+	inputs: Array<{ name: string; path: string; source: "snapshot" }>,
 	outputDirectory: string,
 ): string {
 	const described = inputs
-		.map(
-			(input) =>
-				`- ${input.name}: ${input.path} (${input.source === "live" ? "live source; edits affect the source" : "immutable snapshot copy"})`,
-		)
+		.map((input) => `- ${input.name}: ${input.path} (immutable snapshot copy)`)
 		.join("\n");
-	return `${instruction}\n\nInputs:\n${described}\n\nWrite chat deliverables beneath ${outputDirectory}. Snapshot-copy edits must be copied there to be returned. This is not a sandbox; native filesystem and terminal behavior apply.`;
+	return `${instruction}\n\nInputs:\n${described}\n\nWrite chat deliverables beneath ${outputDirectory}. Snapshot-copy edits must be copied there to be returned.`;
 }
 function sanitizeText(value: string, paths: string[]): string {
 	let text = stripControlSequences(value);

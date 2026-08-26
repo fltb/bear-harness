@@ -1,6 +1,16 @@
 // @vitest-environment node
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -23,6 +33,7 @@ import { type ExecutorLaunchRequest, ExecutorRouter } from "../src/executors/rou
 import {
 	ExternalAgentRunService,
 	externalAgentResultMessage,
+	removeExternalAgentRunRoot,
 	type TerminalRunResult,
 } from "../src/external-agents/run-service.js";
 import { Database, MIGRATIONS } from "../src/storage/database.js";
@@ -35,13 +46,18 @@ const roots: string[] = [];
 const databases: Database[] = [];
 const pipelines: TurnPipeline[] = [];
 const supervisors: CompanionSupervisor[] = [];
+const services: ExternalAgentRunService[] = [];
 
 afterEach(async () => {
+	for (const service of services.splice(0)) await service.close();
 	for (const pipeline of pipelines.splice(0)) pipeline.dispose();
 	for (const supervisor of supervisors.splice(0)) await supervisor.stop();
 	await new Promise<void>((resolve) => setTimeout(resolve, 0));
 	for (const database of databases.splice(0)) database.close();
-	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+	for (const root of roots.splice(0)) {
+		removeExternalAgentRunRoot(join(root, "runs"));
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
 function createDatabase(): {
@@ -154,6 +170,7 @@ describe("direct external-agent runs", () => {
 			() => ({ providerId: "provider", modelId: "model" }),
 			terminal,
 		);
+		services.push(service);
 
 		const delegated = await service.delegate({
 			conversationId: CONVERSATION_ID,
@@ -165,6 +182,11 @@ describe("direct external-agent runs", () => {
 		expect(launchAgent).toHaveBeenCalledOnce();
 		expect(launch?.profile).toMatchObject({ id: "pi-default", type: "pi" });
 		expect(launch?.task.modelRoute).toEqual({ providerId: "provider", modelId: "model" });
+		if (process.platform !== "win32") {
+			const snapshotDirectory = launch!.task.readOnlyPaths![0]!;
+			expect(statSync(snapshotDirectory).mode & 0o777).toBe(0o500);
+			expect(statSync(join(snapshotDirectory, "input.txt")).mode & 0o777).toBe(0o400);
+		}
 		writeFileSync(join(launch!.task.outputDirectory, "answer.txt"), "captured output");
 		launch!.emit({ type: "completed", summary: "Finished safely" });
 		await waitForTerminal(service, delegated.runId);
@@ -185,6 +207,82 @@ describe("direct external-agent runs", () => {
 		expect(terminal).toHaveBeenCalledTimes(2);
 		await service.reconcilePending(CONVERSATION_ID);
 		expect(terminal).toHaveBeenCalledTimes(2);
+		await service.close();
+		expect(existsSync(join(root, "runs"))).toBe(false);
+	});
+
+	it("keeps raw terminal results visible while a hung follow-up remains durably retryable", async () => {
+		const { root, database } = createDatabase();
+		const eventBus = new EventBus(database.orm);
+		const attachments = new ConversationAttachmentService(
+			database.orm,
+			new ArtifactStore(database.orm, join(root, "artifacts")),
+		);
+		const input = attachments.createSnapshot({
+			conversationId: CONVERSATION_ID,
+			kind: "file",
+			name: "input.txt",
+			files: [{ relativePath: "input.txt", mime: "text/plain", buffer: Buffer.from("input") }],
+		});
+		seedPiAcpProfile(database.orm);
+		const router = new ExecutorRouter(database.orm);
+		let launch: ExecutorLaunchRequest | undefined;
+		router.register("pi", {
+			launch: async (request) => {
+				launch = request;
+				request.emit({ type: "started" });
+			},
+		});
+		const never = new Promise<never>(() => undefined);
+		const terminal = vi.fn(() => never);
+		const service = new ExternalAgentRunService(
+			database.orm,
+			eventBus,
+			router,
+			attachments,
+			join(root, "runs"),
+			async () => "pi-default",
+			() => ({ providerId: "provider", modelId: "model" }),
+			terminal,
+			20,
+		);
+		services.push(service);
+		const delegated = await service.delegate({
+			conversationId: CONVERSATION_ID,
+			triggerEntryId: "native-user-entry",
+			agent: "pi",
+			attachmentIds: [input.id],
+			instruction: "Finish without waiting for role follow-up",
+		});
+		launch!.emit({ type: "completed", summary: "Raw executor result" });
+		await waitForTerminal(service, delegated.runId);
+		expect(service.list().find((run) => run.id === delegated.runId)).toMatchObject({
+			status: "completed",
+			summary: "Raw executor result",
+		});
+		await new Promise<void>((resolve) => setTimeout(resolve, 50));
+		expect(
+			database.connection
+				.prepare(
+					"SELECT result_reported_at AS resultReportedAt, memory_captured_at AS memoryCapturedAt FROM runs WHERE id = ?",
+				)
+				.get(delegated.runId),
+		).toEqual({ resultReportedAt: null, memoryCapturedAt: null });
+		expect(
+			database.connection
+				.prepare(
+					"SELECT COUNT(*) AS count FROM evidence WHERE run_id = ? AND kind = 'run.reconciliation_pending'",
+				)
+				.get(delegated.runId),
+		).toEqual({ count: 1 });
+
+		const firstRetry = service.reconcilePending(CONVERSATION_ID);
+		const duplicateRetry = service.reconcilePending(CONVERSATION_ID);
+		await Promise.resolve();
+		expect(terminal).toHaveBeenCalledTimes(2);
+		await expect(service.close()).resolves.toBeUndefined();
+		await expect(Promise.all([firstRetry, duplicateRetry])).resolves.toEqual([1, 1]);
+		expect(terminal).toHaveBeenCalledTimes(2);
 	});
 
 	it("delivers one hidden role follow-up and binds generated outputs to its native assistant entry", async () => {
@@ -195,12 +293,16 @@ describe("direct external-agent runs", () => {
 			"run-1",
 			"External agent completed with one generated attachment.",
 		);
+		const hungProvider = vi
+			.spyOn(h.supervisor, "selectModelForConversation")
+			.mockImplementation(() => new Promise<never>(() => undefined));
 		const second = await h.pipeline.deliverExternalAgentResult(
 			CONVERSATION_ID,
 			"run-1",
 			"This duplicate must not be appended.",
 		);
 		expect(second).toEqual(first);
+		expect(hungProvider).not.toHaveBeenCalled();
 		const notifications = h.session.sessionManager
 			.getEntries()
 			.filter(
@@ -262,12 +364,40 @@ describe("direct external-agent runs", () => {
 			() => ({ providerId: "provider", modelId: "model" }),
 			terminal,
 		);
+		services.push(service);
 		expect(service.markOrphansInterrupted()).toBe(4);
 		await service.reconcilePending();
 		expect(launchAgent).not.toHaveBeenCalled();
 		expect(service.list().filter((run) => run.status === "interrupted")).toHaveLength(4);
 		expect(terminal).toHaveBeenCalledTimes(4);
 	});
+
+	it.skipIf(process.platform === "win32")(
+		"restores Host-owned run permissions without following symlinks",
+		() => {
+			const root = mkdtempSync(join(tmpdir(), "bear-external-run-cleanup-"));
+			roots.push(root);
+			const runRoot = join(root, "runs");
+			const snapshot = join(runRoot, "run-1", "snapshot-0", "nested");
+			const outside = join(root, "outside");
+			mkdirSync(snapshot, { recursive: true });
+			mkdirSync(outside);
+			const snapshotFile = join(snapshot, "input.txt");
+			const outsideFile = join(outside, "preserved.txt");
+			writeFileSync(snapshotFile, "immutable input");
+			writeFileSync(outsideFile, "outside run root");
+			symlinkSync(outside, join(snapshot, "escape"));
+			chmodSync(snapshotFile, 0o400);
+			chmodSync(snapshot, 0o500);
+			chmodSync(outsideFile, 0o400);
+
+			removeExternalAgentRunRoot(runRoot);
+
+			expect(existsSync(runRoot)).toBe(false);
+			expect(readFileSync(outsideFile, "utf8")).toBe("outside run root");
+			expect(statSync(outsideFile).mode & 0o777).toBe(0o400);
+		},
+	);
 
 	it("bounds and sanitizes the Tencent memory/result payload without paths or terminal control logs", () => {
 		const content = externalAgentResultMessage({

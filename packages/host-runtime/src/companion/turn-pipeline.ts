@@ -3,6 +3,11 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
 import { conversationDirectives } from "../storage/schema.js";
+import {
+	type PendingTurnImage,
+	type PendingTurnRecord,
+	PendingTurnStore,
+} from "./pending-turn-store.js";
 import type { CompanionSupervisor, PiSessionHandle } from "./supervisor.js";
 
 type PromptImages = NonNullable<Parameters<AgentSession["prompt"]>[1]>["images"];
@@ -17,9 +22,24 @@ export interface TurnResult {
 	entryId: string;
 }
 
+export interface PendingTurnSendOptions {
+	attachmentIds?: readonly string[];
+	attachmentSendNonce?: string;
+	onAccepted?: (turnId: string) => void;
+}
+
+export interface TurnPipelineOptions {
+	pendingTurns?: PendingTurnStore;
+	finishAttachmentSend?: (conversationId: string, nonce: string, nativeUserEntryId: string) => void;
+}
+
 export interface ExternalAgentFollowUp {
 	entryId: string;
 	text: string;
+}
+export interface TurnReconciliationOptions {
+	signal?: AbortSignal;
+	timeoutMs?: number;
 }
 
 /**
@@ -39,6 +59,7 @@ export interface TurnCommittedSink {
 const CORRECT_PREFIX = "用户刚刚指出上一条回复的问题：";
 const NOTIFY_REASONS = ["message", "turn", "agent", "tool", "compaction", "queue"] as const;
 type NotifyReason = (typeof NOTIFY_REASONS)[number];
+const DEFAULT_RECONCILIATION_TIMEOUT_MS = 15_000;
 
 function commandError(kind: string, reason: string): never {
 	throw { kind, reason } satisfies CommandError;
@@ -71,6 +92,10 @@ export class TurnPipeline {
 	private readonly subscriptions = new Map<string, () => void>();
 	private readonly pendingNotifications = new Map<string, Set<NotifyReason>>();
 	private readonly notificationTasks = new Set<string>();
+	private readonly pendingTurns: PendingTurnStore;
+	private readonly finishAttachmentSend?: TurnPipelineOptions["finishAttachmentSend"];
+	private readonly reconciliationTasks = new Map<string, Promise<void>>();
+	private disposed = false;
 
 	// The database is used only for durable product directives; transcript,
 	// branch, version, and turn tables are never touched by this adapter.
@@ -78,26 +103,34 @@ export class TurnPipeline {
 		db: AppDatabase,
 		supervisor: CompanionSupervisor,
 		eventBus: EventBus,
-		_sessionResolver?: unknown,
-		_sink?: TurnCommittedSink,
+		options: TurnPipelineOptions = {},
 	) {
 		this.db = db;
 		this.supervisor = supervisor;
 		this.eventBus = eventBus;
+		this.pendingTurns = options.pendingTurns ?? new PendingTurnStore(db);
+		this.finishAttachmentSend = options.finishAttachmentSend;
 	}
 
 	dispose(): void {
+		this.disposed = true;
 		for (const unsubscribe of this.subscriptions.values()) unsubscribe();
 		this.subscriptions.clear();
 		this.pendingNotifications.clear();
 		this.notificationTasks.clear();
+		this.reconciliationTasks.clear();
 	}
 
 	/** Send through Pi and acknowledge only after its native user entry exists. */
 	async sendUserMessage(
 		conversationId: string,
 		text: string,
-		currentMessageImages: Array<{ data: Buffer; mimeType: string }> = [],
+		currentMessageImages: Array<{
+			attachmentId: string;
+			data: Buffer;
+			mimeType: string;
+		}> = [],
+		options: PendingTurnSendOptions = {},
 	): Promise<TurnResult> {
 		if (!this.supervisor.isRunning) commandError("unavailable", "companion_unavailable");
 		const session = await this.ensureSession(conversationId);
@@ -106,45 +139,103 @@ export class TurnPipeline {
 			commandError("unavailable", "provider_auth_required");
 		}
 		this.ensureSessionNotifications(conversationId, session);
-		const images = currentMessageImages.map((image) => ({
-			type: "image" as const,
-			data: image.data.toString("base64"),
+		const images: PendingTurnImage[] = currentMessageImages.map((image) => ({
+			attachmentId: image.attachmentId,
+			data: Buffer.from(image.data),
 			mimeType: image.mimeType,
 		}));
-		const entryId = await new Promise<string>((resolve, reject) => {
-			const timer = setTimeout(() => {
-				unsubscribe();
-				reject({ kind: "unavailable", reason: "native_user_entry_timeout" });
-			}, 10_000);
-			const unsubscribe = session.subscribe((event) => {
-				if (event.type !== "message_end" || event.message.role !== "user") return;
-				// Pi persists native message entries immediately after emitting
-				// message_end. Resolve in the next microtask so the SessionManager
-				// leaf is the durable user entry, not transient stream state.
-				queueMicrotask(() => {
-					const nativeEntryId = session.sessionManager.getLeafId();
-					if (
-						!nativeEntryId ||
-						entryRole(session.sessionManager.getEntry(nativeEntryId)) !== "user"
-					) {
-						clearTimeout(timer);
-						unsubscribe();
-						reject({ kind: "internal", reason: "native_user_entry_missing" });
-						return;
-					}
-					clearTimeout(timer);
-					unsubscribe();
-					resolve(nativeEntryId);
-				});
-			});
-			this.supervisor.promptConversation(
-				conversationId,
-				text,
-				images.length > 0 ? (images as PromptImages) : undefined,
-			);
+		const turn = this.pendingTurns.createAccepted({
+			id: randomUUID(),
+			conversationId,
+			framedText: text,
+			images,
+			attachmentIds: options.attachmentIds ?? [],
+			attachmentSendNonce: options.attachmentSendNonce,
 		});
-		this.publishChanged(conversationId, session, "message");
-		return { accepted: true, sessionId: session.sessionId, entryId };
+		options.onAccepted?.(turn.id);
+
+		try {
+			const dispatched = await this.dispatchPendingTurn(session, turn);
+			this.publishChanged(conversationId, session, "message");
+			return { accepted: true, sessionId: session.sessionId, entryId: dispatched.entryId };
+		} catch (error) {
+			this.recordPendingError(turn, error);
+			throw error;
+		}
+	}
+
+	/**
+	 * Reconcile the durable Host outbox after Pi is locally ready. Failures are
+	 * retained on the pending record so startup stays available and a later
+	 * restart can retry.
+	 */
+	async reconcilePendingTurns(options: TurnReconciliationOptions = {}): Promise<void> {
+		const attempt = {
+			signal: options.signal,
+			timeoutMs: options.timeoutMs ?? DEFAULT_RECONCILIATION_TIMEOUT_MS,
+		};
+		for (const pending of this.pendingTurns.listIncomplete()) {
+			if (this.disposed || attempt.signal?.aborted) return;
+			try {
+				const session = await waitForTurnReconciliation(
+					this.supervisor.ensureSession(pending.conversationId),
+					attempt,
+				);
+				this.ensureSessionNotifications(pending.conversationId, session);
+				let current = this.reconcileNativeTurn(session, pending);
+				if (current.state === "completed") continue;
+				this.rejectIfStreaming(session);
+				if (
+					!(await waitForTurnReconciliation(
+						this.supervisor.selectModelForConversation(pending.conversationId, session),
+						attempt,
+					))
+				) {
+					throw new Error("provider_auth_required");
+				}
+
+				if (current.state === "accepted" || current.state === "dispatched") {
+					const dispatched = await this.dispatchPendingTurn(session, current, attempt);
+					current = this.pendingTurns.get(current.conversationId, current.id) ?? current;
+					if (dispatched.prompted) {
+						const assistant = waitForNativeAssistant(session, dispatched.entryId);
+						try {
+							await waitForTurnReconciliation(assistant.promise, attempt);
+						} finally {
+							assistant.cancel();
+						}
+						this.reconcileNativeTurn(session, current);
+						continue;
+					}
+				}
+
+				current = this.reconcileNativeTurn(session, current);
+				if (current.state !== "user_persisted" || !current.piEntryId) continue;
+				if (findNativeAssistant(session, current.piEntryId)) {
+					this.reconcileNativeTurn(session, current);
+					continue;
+				}
+				const nativeUser = session.sessionManager.getEntry(current.piEntryId);
+				if (entryRole(nativeUser) !== "user") {
+					throw new Error("pending_turn_native_user_missing");
+				}
+				session.sessionManager.branch(current.piEntryId);
+				session.reloadFromSessionManager();
+				const assistant = waitForNativeAssistant(session, current.piEntryId);
+				try {
+					await waitForTurnReconciliation(session.continue(), attempt);
+					await waitForTurnReconciliation(assistant.promise, attempt);
+				} finally {
+					assistant.cancel();
+				}
+				current = this.reconcileNativeTurn(session, current);
+				if (current.state !== "completed") {
+					throw new Error("pending_turn_native_assistant_missing");
+				}
+			} catch (error) {
+				if (!this.disposed) this.recordPendingError(pending, error);
+			}
+		}
 	}
 
 	/** Abort is idempotent and never creates a missing live session. */
@@ -268,32 +359,48 @@ export class TurnPipeline {
 		conversationId: string,
 		runId: string,
 		content: string,
+		options: TurnReconciliationOptions = {},
 	): Promise<ExternalAgentFollowUp> {
 		if (!this.supervisor.isRunning) commandError("unavailable", "companion_unavailable");
-		const session = await this.ensureSession(conversationId);
-		if (!(await this.supervisor.selectModelForConversation(conversationId, session))) {
+		const attempt = {
+			signal: options.signal,
+			timeoutMs: options.timeoutMs ?? DEFAULT_RECONCILIATION_TIMEOUT_MS,
+		};
+		const session = await waitForTurnReconciliation(
+			this.supervisor.ensureSession(conversationId),
+			attempt,
+		);
+		const existing = externalAgentFollowUp(session, runId);
+		if (existing) return existing;
+		if (
+			!(await waitForTurnReconciliation(
+				this.supervisor.selectModelForConversation(conversationId, session),
+				attempt,
+			))
+		) {
 			commandError("unavailable", "provider_auth_required");
 		}
 		this.ensureSessionNotifications(conversationId, session);
 
-		const existing = externalAgentFollowUp(session, runId);
-		if (existing) return existing;
 		const hasNotification = session.sessionManager
 			.getEntries()
 			.some((entry) => isExternalAgentNotification(entry, runId));
 		const completion = waitForExternalAgentFollowUp(session, runId);
 		try {
 			if (hasNotification) {
-				await session.continue();
+				await waitForTurnReconciliation(session.continue(), attempt);
 			} else {
-				await session.agentSession.sendCustomMessage(
-					{
-						customType: "host_external_agent_result",
-						content,
-						display: false,
-						details: { runId },
-					},
-					{ triggerTurn: true, deliverAs: "followUp" },
+				await waitForTurnReconciliation(
+					session.agentSession.sendCustomMessage(
+						{
+							customType: "host_external_agent_result",
+							content,
+							display: false,
+							details: { runId },
+						},
+						{ triggerTurn: true, deliverAs: "followUp" },
+					),
+					attempt,
 				);
 			}
 			const settled = externalAgentFollowUp(session, runId);
@@ -301,11 +408,168 @@ export class TurnPipeline {
 				completion.cancel();
 				return settled;
 			}
-			return await completion.promise;
+			return await waitForTurnReconciliation(completion.promise, attempt);
 		} catch (error) {
 			completion.cancel();
 			throw error;
 		}
+	}
+
+	private async dispatchPendingTurn(
+		session: PiSessionHandle,
+		pending: PendingTurnRecord,
+		reconciliation?: TurnReconciliationOptions,
+	): Promise<{ entryId: string; prompted: boolean }> {
+		let current = this.reconcileNativeTurn(session, pending);
+		if (current.piEntryId) return { entryId: current.piEntryId, prompted: false };
+
+		let marker = findPendingTurnMarker(session, current.id);
+		if (!marker) {
+			await waitForTurnReconciliation(
+				session.agentSession.sendCustomMessage(
+					{
+						customType: "host_pending_turn",
+						content: "",
+						display: false,
+						details: { turnId: current.id },
+					},
+					{ triggerTurn: false },
+				),
+				reconciliation,
+			);
+			marker = findPendingTurnMarker(session, current.id);
+			if (!marker) throw new Error("pending_turn_native_marker_missing");
+		}
+		if (current.state === "accepted") {
+			current = this.pendingTurns.transition({
+				id: current.id,
+				conversationId: current.conversationId,
+				to: "dispatched",
+			});
+		}
+
+		const existingUser = findNativeUser(session, current, marker);
+		if (existingUser) {
+			current = this.persistNativeUser(current, existingUser.id);
+			return { entryId: existingUser.id, prompted: false };
+		}
+
+		const completion = waitForNativeUser(session, current.id);
+		try {
+			const images = current.images.map((image) => ({
+				type: "image" as const,
+				data: image.data.toString("base64"),
+				mimeType: image.mimeType,
+			}));
+			this.supervisor.promptConversation(
+				current.conversationId,
+				current.framedText,
+				images.length > 0 ? (images as PromptImages) : undefined,
+			);
+			const entryId = await waitForTurnReconciliation(completion.promise, reconciliation);
+			this.persistNativeUser(current, entryId);
+			this.queueNativeReconciliation(current.conversationId, session);
+			return { entryId, prompted: true };
+		} finally {
+			completion.cancel();
+		}
+	}
+
+	private persistNativeUser(pending: PendingTurnRecord, entryId: string): PendingTurnRecord {
+		let current = this.pendingTurns.get(pending.conversationId, pending.id) ?? pending;
+		if (current.state === "accepted") {
+			current = this.pendingTurns.transition({
+				id: current.id,
+				conversationId: current.conversationId,
+				to: "dispatched",
+			});
+		}
+		if (current.state === "dispatched") {
+			current = this.pendingTurns.transition({
+				id: current.id,
+				conversationId: current.conversationId,
+				to: "user_persisted",
+				piEntryId: entryId,
+			});
+		}
+		if (current.piEntryId !== entryId) throw new Error("pending_turn_native_user_conflict");
+		this.finishAttachmentBinding(current);
+		return current;
+	}
+
+	private reconcileNativeTurn(
+		session: PiSessionHandle,
+		pending: PendingTurnRecord,
+	): PendingTurnRecord {
+		let current = this.pendingTurns.get(pending.conversationId, pending.id) ?? pending;
+		const marker = findPendingTurnMarker(session, current.id);
+		if (current.state === "accepted" && marker) {
+			current = this.pendingTurns.transition({
+				id: current.id,
+				conversationId: current.conversationId,
+				to: "dispatched",
+			});
+		}
+		const user = findNativeUser(session, current, marker);
+		if (user && (current.state === "accepted" || current.state === "dispatched")) {
+			current = this.persistNativeUser(current, user.id);
+		} else if (current.piEntryId) {
+			this.finishAttachmentBinding(current);
+		}
+		if (
+			current.state === "user_persisted" &&
+			current.piEntryId &&
+			findNativeAssistant(session, current.piEntryId)
+		) {
+			current = this.pendingTurns.transition({
+				id: current.id,
+				conversationId: current.conversationId,
+				to: "completed",
+			});
+		}
+		return current;
+	}
+
+	private finishAttachmentBinding(pending: PendingTurnRecord): void {
+		if (!pending.attachmentSendNonce || !pending.piEntryId || !this.finishAttachmentSend) return;
+		this.finishAttachmentSend(
+			pending.conversationId,
+			pending.attachmentSendNonce,
+			pending.piEntryId,
+		);
+	}
+
+	private queueNativeReconciliation(conversationId: string, session: PiSessionHandle): void {
+		const previous = this.reconciliationTasks.get(conversationId) ?? Promise.resolve();
+		const task = previous
+			.catch(() => undefined)
+			.then(() => {
+				for (const pending of this.pendingTurns.listIncomplete(conversationId)) {
+					try {
+						this.reconcileNativeTurn(session, pending);
+					} catch (error) {
+						this.recordPendingError(pending, error);
+					}
+				}
+			})
+			.finally(() => {
+				if (this.reconciliationTasks.get(conversationId) === task) {
+					this.reconciliationTasks.delete(conversationId);
+				}
+			});
+		this.reconciliationTasks.set(conversationId, task);
+	}
+
+	private recordPendingError(pending: PendingTurnRecord, error: unknown): void {
+		const current = this.pendingTurns.get(pending.conversationId, pending.id);
+		if (!current || current.state === "completed") return;
+		const message =
+			error instanceof Error
+				? error.message
+				: typeof error === "object" && error !== null && "reason" in error
+					? String(error.reason)
+					: String(error);
+		this.pendingTurns.recordError(current.conversationId, current.id, message.slice(0, 1_024));
 	}
 
 	private async ensureSession(conversationId: string): Promise<PiSessionHandle> {
@@ -365,6 +629,9 @@ export class TurnPipeline {
 		const unsubscribe = session.subscribe((event) => {
 			const reason = eventReason(event.type);
 			if (reason) this.scheduleChanged(conversationId, session.sessionId, reason);
+			if (event.type === "message_end" || event.type === "entry_appended") {
+				queueMicrotask(() => this.queueNativeReconciliation(conversationId, session));
+			}
 		});
 		this.subscriptions.set(conversationId, unsubscribe);
 	}
@@ -392,6 +659,164 @@ export class TurnPipeline {
 	): void {
 		this.scheduleChanged(conversationId, session.sessionId, reason);
 	}
+}
+
+async function waitForTurnReconciliation<T>(
+	work: Promise<T>,
+	options?: TurnReconciliationOptions,
+): Promise<T> {
+	if (!options) return work;
+	if (options.signal?.aborted) throw new Error("turn_reconciliation_cancelled");
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let abort: (() => void) | undefined;
+	const interrupted = new Promise<never>((_resolve, reject) => {
+		abort = () => reject(new Error("turn_reconciliation_cancelled"));
+		options.signal?.addEventListener("abort", abort, { once: true });
+		timer = setTimeout(
+			() => reject(new Error("turn_reconciliation_timeout")),
+			Math.max(1, options.timeoutMs ?? DEFAULT_RECONCILIATION_TIMEOUT_MS),
+		);
+	});
+	try {
+		return await Promise.race([work, interrupted]);
+	} finally {
+		clearTimeout(timer);
+		if (abort) options.signal?.removeEventListener("abort", abort);
+	}
+}
+
+function findPendingTurnMarker(
+	session: PiSessionHandle,
+	turnId: string,
+): NonNullable<NativeEntry> | undefined {
+	return session.sessionManager.getEntries().find((entry) => {
+		if (!entry || entry.type !== "custom_message" || entry.customType !== "host_pending_turn") {
+			return false;
+		}
+		const details = entry.details;
+		return Boolean(
+			details && typeof details === "object" && "turnId" in details && details.turnId === turnId,
+		);
+	});
+}
+
+function findNativeUser(
+	session: PiSessionHandle,
+	pending: PendingTurnRecord,
+	marker = findPendingTurnMarker(session, pending.id),
+): NonNullable<NativeEntry> | undefined {
+	if (pending.piEntryId) {
+		const mapped = session.sessionManager.getEntry(pending.piEntryId);
+		if (mapped && entryRole(mapped) === "user") return mapped;
+	}
+	if (!marker) return undefined;
+	return session.sessionManager
+		.getEntries()
+		.find((entry) => entryRole(entry) === "user" && descendsFrom(session, entry, marker.id));
+}
+
+function findNativeAssistant(
+	session: PiSessionHandle,
+	nativeUserEntryId: string,
+): NonNullable<NativeEntry> | undefined {
+	return session.sessionManager
+		.getEntries()
+		.find(
+			(entry) =>
+				entryRole(entry) === "assistant" && descendsFrom(session, entry, nativeUserEntryId),
+		);
+}
+
+function descendsFrom(session: PiSessionHandle, entry: NativeEntry, ancestorId: string): boolean {
+	let parentId = entry?.parentId ?? null;
+	while (parentId) {
+		if (parentId === ancestorId) return true;
+		parentId = session.sessionManager.getEntry(parentId)?.parentId ?? null;
+	}
+	return false;
+}
+
+function waitForNativeUser(
+	session: PiSessionHandle,
+	turnId: string,
+): { promise: Promise<string>; cancel(): void } {
+	const pending = Promise.withResolvers<string>();
+	let active = true;
+	const timer = setTimeout(() => {
+		if (!active) return;
+		active = false;
+		unsubscribe();
+		pending.reject({ kind: "unavailable", reason: "native_user_entry_timeout" });
+	}, 10_000);
+	const unsubscribe = session.subscribe((event) => {
+		if (!active || event.type !== "message_end" || event.message.role !== "user") return;
+		queueMicrotask(() => {
+			const marker = findPendingTurnMarker(session, turnId);
+			if (!active || !marker) return;
+			const entry = session.sessionManager
+				.getEntries()
+				.find(
+					(candidate) =>
+						entryRole(candidate) === "user" && descendsFrom(session, candidate, marker.id),
+				);
+			if (!entry) return;
+			active = false;
+			clearTimeout(timer);
+			unsubscribe();
+			pending.resolve(entry.id);
+		});
+	});
+	return {
+		promise: pending.promise,
+		cancel: () => {
+			if (!active) return;
+			active = false;
+			clearTimeout(timer);
+			unsubscribe();
+		},
+	};
+}
+
+function waitForNativeAssistant(
+	session: PiSessionHandle,
+	nativeUserEntryId: string,
+): { promise: Promise<void>; cancel(): void } {
+	if (findNativeAssistant(session, nativeUserEntryId)) {
+		return { promise: Promise.resolve(), cancel: () => undefined };
+	}
+	const pending = Promise.withResolvers<void>();
+	let active = true;
+	const timer = setTimeout(() => {
+		if (!active) return;
+		active = false;
+		unsubscribe();
+		pending.reject(new Error("native_assistant_entry_timeout"));
+	}, 60_000);
+	const unsubscribe = session.subscribe((event) => {
+		if (!active || event.type !== "message_end" || event.message.role !== "assistant") return;
+		queueMicrotask(() => {
+			if (!active || !findNativeAssistant(session, nativeUserEntryId)) return;
+			active = false;
+			clearTimeout(timer);
+			unsubscribe();
+			pending.resolve();
+		});
+	});
+	if (findNativeAssistant(session, nativeUserEntryId)) {
+		active = false;
+		clearTimeout(timer);
+		unsubscribe();
+		pending.resolve();
+	}
+	return {
+		promise: pending.promise,
+		cancel: () => {
+			if (!active) return;
+			active = false;
+			clearTimeout(timer);
+			unsubscribe();
+		},
+	};
 }
 
 function eventReason(type: string): NotifyReason | undefined {

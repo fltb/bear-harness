@@ -1,3 +1,4 @@
+import { existsSync, writeFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { PiTimeline, PiTimelineEntry } from "@bear-harness/protocol/schema";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -39,11 +40,9 @@ export interface PiSessionMetadata {
  * supplies the product-owned storage location and projects the small surface
  * needed by the Host.
  *
- * Persistence follows Pi's append-only contract: a user entry may remain an
- * active runtime-only tail until an assistant entry is appended. Callers
- * reopening the session before assistant completion must recover that tail
- * from the Host's pending-turn state; this wrapper does not write a parallel
- * session file.
+ * The session header is materialized before Companion starts using the store,
+ * so every native entry appended afterward is durable even when the active
+ * tail contains only a user message.
  */
 export class PiSessionStore {
 	private readonly manager: SessionManager;
@@ -63,23 +62,12 @@ export class PiSessionStore {
 		}
 	}
 
-	/**
-	 * Create a new persistent session in the supplied product data directory.
-	 *
-	 * Pi keeps a user-only active tail in the live SessionManager until an
-	 * assistant entry is appended; recover it from Host pending-turn state if
-	 * the session is reopened before assistant completion.
-	 */
+	/** Create a persistent session that must be materialized before its first append. */
 	static create(options: Omit<PiSessionStoreOptions, "sessionFile">): PiSessionStore {
 		return new PiSessionStore(options);
 	}
 
-	/**
-	 * Open an existing materialized session file, or initialize that explicit
-	 * file if new. A user-only tail that has not yet been followed by an
-	 * assistant entry is not recoverable from this reopen and belongs in the
-	 * Host's pending-turn state.
-	 */
+	/** Open an existing materialized session file, or initialize its explicit path. */
 	static open(options: PiSessionStoreOptions & { sessionFile: string }): PiSessionStore {
 		return new PiSessionStore(options);
 	}
@@ -117,13 +105,25 @@ export class PiSessionStore {
 	}
 
 	/**
-	 * Append one standard Pi message below the current leaf.
+	 * Materialize Pi's session header before the first native entry is appended.
 	 *
-	 * Pi's SessionManager only materializes the append-only persistent session
-	 * after an assistant entry is appended. A user-only active tail therefore
-	 * remains runtime-only; callers must recover it through the Host's
-	 * pending-turn state until assistant completion.
+	 * SessionManager otherwise defers creating a new session file until the
+	 * first assistant message. Reopening during a user-only tail would then
+	 * lose both the native user entry and its stable entry id.
 	 */
+	materialize(): void {
+		const sessionFile = this.sessionFile;
+		if (existsSync(sessionFile)) return;
+		if (this.manager.getEntries().length > 0) {
+			throw new Error("Pi session must be materialized before its first entry");
+		}
+		const header = this.manager.getHeader();
+		if (!header) throw new Error("Pi session header is missing");
+		writeFileSync(sessionFile, `${JSON.stringify(header)}\n`, { flag: "wx", mode: 0o600 });
+		this.manager.setSessionFile(sessionFile);
+	}
+
+	/** Append one durable standard Pi message below the current leaf. */
 	appendMessage(message: PiSessionMessage): string {
 		return this.manager.appendMessage(message);
 	}
@@ -367,6 +367,9 @@ function projectPiTimelineEntry(entry: SessionEntry): PiTimelineEntry | undefine
 				? { errorMessage: entry.message.errorMessage.slice(0, 4096) }
 				: {}),
 		};
+	}
+	if (entry.type === "custom_message" && entry.customType === "host_pending_turn") {
+		return undefined;
 	}
 	if (
 		entry.type === "thinking_level_change" ||

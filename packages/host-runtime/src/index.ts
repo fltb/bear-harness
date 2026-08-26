@@ -28,6 +28,23 @@ export type {
 	OnboardingStateData,
 } from "./companion/onboarding-schema.js";
 export type {
+	CreateAcceptedPendingTurn,
+	ListPendingTurns,
+	PendingTurnImage,
+	PendingTurnRecord,
+	PendingTurnState,
+	TransitionPendingTurn,
+} from "./companion/pending-turn-store.js";
+export {
+	MAX_PENDING_TURN_ATTACHMENTS,
+	MAX_PENDING_TURN_ERROR_BYTES,
+	MAX_PENDING_TURN_IMAGE_BYTES,
+	MAX_PENDING_TURN_IMAGE_BYTES_TOTAL,
+	MAX_PENDING_TURN_IMAGES,
+	MAX_PENDING_TURN_TEXT_BYTES,
+	PendingTurnStore,
+} from "./companion/pending-turn-store.js";
+export type {
 	CompanionModelRuntimeSource,
 	CompanionRuntimeConfig,
 	CompanionState,
@@ -194,7 +211,23 @@ export {
 	findHostLocalEmbeddingCandidate,
 	HOST_SETTINGS_CAPABILITIES,
 } from "./settings/capabilities.js";
-// Storage
 export { Database } from "./storage/database.js";
+// Storage
+export type {
+	DurableCopyStatus,
+	DurableFileRecoveryOptions,
+	DurableFileRecoveryResult,
+	DurableFileTransactionErrorCode,
+	DurableFileTransactionMarker,
+	DurableFileTransactionOptions,
+	DurableFileTransactionState,
+} from "./storage/durable-file-transaction.js";
+export {
+	DURABLE_FILE_TRANSACTION_VERSION,
+	DurableFileTransactionError,
+	durableFileTransactionMarkerPath,
+	recoverDurableFileTransaction,
+	replaceDurableFile,
+} from "./storage/durable-file-transaction.js";
 export type { EventListener, HostEvent } from "./storage/event-bus.js";
 export { EventBus } from "./storage/event-bus.js";

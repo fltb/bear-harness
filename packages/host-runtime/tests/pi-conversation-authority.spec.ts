@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,7 @@ import {
 	fauxProvider,
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { PendingTurnStore } from "../src/companion/pending-turn-store.js";
 import { PiSessionStore } from "../src/companion/pi-session-store.js";
 import {
 	type CompanionModelRuntimeSource,
@@ -54,6 +56,8 @@ interface Harness {
 	store: PiSessionStore;
 	runtime: CompanionSupervisor;
 	pipeline: TurnPipeline;
+	pendingTurns: PendingTurnStore;
+	attachmentBinding: { writes: number };
 	faux: FauxProviderHandle;
 }
 
@@ -120,7 +124,19 @@ async function setupHarness(options: { tokensPerSecond?: number } = {}): Promise
 	runtimes.push(runtime);
 	repository.setLiveSessionResolver(runtime.getLiveSessionResolver());
 	await runtime.start();
-	const pipeline = new TurnPipeline(database.orm, runtime, eventBus);
+	const pendingTurns = new PendingTurnStore(database.orm);
+	const attachmentBinding = { writes: 0 };
+	const pipeline = new TurnPipeline(database.orm, runtime, eventBus, {
+		pendingTurns,
+		finishAttachmentSend: (conversationId, nonce, nativeUserEntryId) => {
+			const result = database.connection
+				.prepare(
+					"UPDATE conversation_attachments SET origin_entry_id = ?, send_nonce = NULL WHERE conversation_id = ? AND send_nonce = ?",
+				)
+				.run(nativeUserEntryId, conversationId, nonce);
+			attachmentBinding.writes += Number(result.changes);
+		},
+	});
 	pipelines.push(pipeline);
 
 	// TurnPipeline.prompt() runs Pi without the supervisor route selection, so
@@ -128,7 +144,18 @@ async function setupHarness(options: { tokensPerSecond?: number } = {}): Promise
 	// would have populated.
 	const session = await runtime.ensureSession(CONVERSATION_ID);
 	session.agent.state.model = faux.models[0];
-	return { root, database, eventBus, repository, store, runtime, pipeline, faux };
+	return {
+		root,
+		database,
+		eventBus,
+		repository,
+		store,
+		runtime,
+		pipeline,
+		pendingTurns,
+		attachmentBinding,
+		faux,
+	};
 }
 
 function assertTranscriptTablesAbsent(database: Database): void {
@@ -225,12 +252,28 @@ describe("Pi conversation authority", () => {
 			},
 		]);
 
-		await h.pipeline.sendUserMessage(CONVERSATION_ID, "inspect this", [
+		const attachmentId = randomUUID();
+		const sendNonce = randomUUID();
+		h.database.connection
+			.prepare(
+				"INSERT INTO conversation_attachments (id, conversation_id, send_nonce, kind, name, total_bytes, file_count) VALUES (?, ?, ?, 'file', 'image.png', 4, 1)",
+			)
+			.run(attachmentId, CONVERSATION_ID, sendNonce);
+		await h.pipeline.sendUserMessage(
+			CONVERSATION_ID,
+			"inspect this",
+			[
+				{
+					attachmentId,
+					data: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+					mimeType: "image/png",
+				},
+			],
 			{
-				data: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
-				mimeType: "image/png",
+				attachmentIds: [attachmentId],
+				attachmentSendNonce: sendNonce,
 			},
-		]);
+		);
 		await settleSession(h);
 
 		expect(userContent).toEqual([
@@ -382,6 +425,162 @@ describe("Pi conversation authority", () => {
 		expect(entries[1]?.text).toBe(REPLY_TEXT);
 
 		await h.runtime.stop();
+	});
+
+	it("reopens an accepted outbox turn, replays stored content and images once, binds once, and never replays it after completion", async () => {
+		const h = await setupHarness();
+		const turnId = randomUUID();
+		const attachmentId = randomUUID();
+		const sendNonce = randomUUID();
+		h.database.connection
+			.prepare(
+				"INSERT INTO conversation_attachments (id, conversation_id, send_nonce, kind, name, total_bytes, file_count) VALUES (?, ?, ?, 'file', 'image.png', 4, 1)",
+			)
+			.run(attachmentId, CONVERSATION_ID, sendNonce);
+		h.pendingTurns.createAccepted({
+			id: turnId,
+			conversationId: CONVERSATION_ID,
+			framedText: "recover this accepted turn",
+			images: [
+				{
+					attachmentId,
+					mimeType: "image/png",
+					data: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+				},
+			],
+			attachmentIds: [attachmentId],
+			attachmentSendNonce: sendNonce,
+		});
+		let replayedUserContent: unknown;
+		h.faux.setResponses([
+			(context) => {
+				replayedUserContent = context.messages.find((message) => message.role === "user")?.content;
+				return fauxAssistantMessage(REPLY_TEXT);
+			},
+		]);
+
+		h.pipeline.dispose();
+		const reopened = new TurnPipeline(h.database.orm, h.runtime, h.eventBus, {
+			pendingTurns: h.pendingTurns,
+			finishAttachmentSend: (conversationId, nonce, nativeUserEntryId) => {
+				const result = h.database.connection
+					.prepare(
+						"UPDATE conversation_attachments SET origin_entry_id = ?, send_nonce = NULL WHERE conversation_id = ? AND send_nonce = ?",
+					)
+					.run(nativeUserEntryId, conversationId, nonce);
+				h.attachmentBinding.writes += Number(result.changes);
+			},
+		});
+		pipelines.push(reopened);
+		await reopened.reconcilePendingTurns();
+		await settleSession(h);
+
+		expect(replayedUserContent).toEqual([
+			{ type: "text", text: "recover this accepted turn" },
+			{ type: "image", data: "iVBORw==", mimeType: "image/png" },
+		]);
+		const firstTimeline = messageEntries(PiTimeline.parse(h.store.buildPiTimeline()));
+		expect(firstTimeline.map((entry) => entry.role)).toEqual(["user", "assistant"]);
+		expect(firstTimeline[0]?.text).toBe("recover this accepted turn");
+		expect(h.pendingTurns.get(CONVERSATION_ID, turnId)?.state).toBe("completed");
+		expect(h.attachmentBinding.writes).toBe(1);
+		expect(
+			h.database.connection
+				.prepare(
+					"SELECT origin_entry_id AS originEntryId, send_nonce AS sendNonce FROM conversation_attachments WHERE id = ?",
+				)
+				.get(attachmentId),
+		).toEqual({
+			originEntryId: firstTimeline[0]?.id,
+			sendNonce: null,
+		});
+
+		await reopened.reconcilePendingTurns();
+		expect(messageEntries(PiTimeline.parse(h.store.buildPiTimeline()))).toEqual(firstTimeline);
+		expect(h.attachmentBinding.writes).toBe(1);
+	});
+
+	it("resumes a durable native user receipt after reopen instead of duplicating the user turn", async () => {
+		const h = await setupHarness();
+		const turnId = randomUUID();
+		h.pendingTurns.createAccepted({
+			id: turnId,
+			conversationId: CONVERSATION_ID,
+			framedText: "native user survived",
+		});
+		const session = await h.runtime.ensureSession(CONVERSATION_ID);
+		await session.agentSession.sendCustomMessage(
+			{
+				customType: "host_pending_turn",
+				content: "",
+				display: false,
+				details: { turnId },
+			},
+			{ triggerTurn: false },
+		);
+		const nativeUserEntryId = session.sessionManager.appendMessage({
+			role: "user",
+			content: "native user survived",
+			timestamp: Date.now(),
+		});
+		h.faux.setResponses([fauxAssistantMessage(REPLY_TEXT)]);
+
+		h.pipeline.dispose();
+		const reopened = new TurnPipeline(h.database.orm, h.runtime, h.eventBus, {
+			pendingTurns: h.pendingTurns,
+		});
+		pipelines.push(reopened);
+		await reopened.reconcilePendingTurns();
+
+		const nativeMarker = h.store.sessionManager
+			.getEntries()
+			.find(
+				(entry) =>
+					entry.type === "custom_message" &&
+					entry.customType === "host_pending_turn" &&
+					(entry.details as { turnId?: unknown } | undefined)?.turnId === turnId,
+			);
+		expect(nativeMarker).toMatchObject({
+			type: "custom_message",
+			customType: "host_pending_turn",
+			details: { turnId },
+		});
+
+		const timeline = PiTimeline.parse(h.store.buildPiTimeline());
+		expect(timeline.entries.some((entry) => entry.id === nativeMarker?.id)).toBe(false);
+		expect(timeline.entries.map((entry) => entry.kind)).toEqual(["message", "message"]);
+		const entries = messageEntries(timeline);
+		expect(entries.map((entry) => entry.role)).toEqual(["user", "assistant"]);
+		expect(entries.filter((entry) => entry.role === "user")).toHaveLength(1);
+		expect(entries[0]?.id).toBe(nativeUserEntryId);
+		expect(h.pendingTurns.get(CONVERSATION_ID, turnId)).toMatchObject({
+			state: "completed",
+			piEntryId: nativeUserEntryId,
+		});
+	});
+
+	it("retains a failed replay as pending with a recoverable error", async () => {
+		const h = await setupHarness();
+		const turnId = randomUUID();
+		h.pendingTurns.createAccepted({
+			id: turnId,
+			conversationId: CONVERSATION_ID,
+			framedText: "retry after failure",
+		});
+		const originalPrompt = h.runtime.promptConversation.bind(h.runtime);
+		h.runtime.promptConversation = () => {
+			throw new Error("replay dispatch failed");
+		};
+
+		await h.pipeline.reconcilePendingTurns();
+		h.runtime.promptConversation = originalPrompt;
+
+		expect(h.pendingTurns.get(CONVERSATION_ID, turnId)).toMatchObject({
+			state: "dispatched",
+			piEntryId: null,
+			lastError: "replay dispatch failed",
+		});
+		expect(messageEntries(PiTimeline.parse(h.store.buildPiTimeline()))).toHaveLength(0);
 	});
 
 	it("publishes only session-change notifications whose payloads carry no transcript text", async () => {

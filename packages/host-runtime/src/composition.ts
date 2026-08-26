@@ -566,6 +566,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 		await requireOwnedConversation(s, conversationId);
 		const nonce = s.attachments.beginSend(conversationId, attachmentIds);
+		let durablyAccepted = false;
 		try {
 			const selectedAttachments = new Map(
 				s.attachments
@@ -583,16 +584,21 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				const metadata = s.attachments.resolveFile(conversationId, attachmentId);
 				if (!metadata.mime.toLowerCase().startsWith("image/")) return [];
 				const file = s.attachments.readFile(conversationId, attachmentId);
-				return [{ data: file.buffer, mimeType: metadata.mime }];
+				return [{ attachmentId, data: file.buffer, mimeType: metadata.mime }];
 			});
 			const framed = nonce
 				? `<host_context>\nConversation attachment references for this message (use Host attachment tools; these are not paths):\n${attachmentNames.join("\n")}\nSend nonce: ${nonce}\n</host_context>\n\n<current_user_message>\n${text}\n</current_user_message>`
 				: text;
-			const receipt = await s.turns.sendUserMessage(conversationId, framed, currentMessageImages);
-			if (nonce) s.attachments.finishSend(conversationId, nonce, receipt.entryId);
+			const receipt = await s.turns.sendUserMessage(conversationId, framed, currentMessageImages, {
+				attachmentIds,
+				attachmentSendNonce: nonce,
+				onAccepted: () => {
+					durablyAccepted = true;
+				},
+			});
 			return receipt;
 		} catch (error) {
-			if (nonce) s.attachments.abortSend(conversationId, nonce);
+			if (nonce && !durablyAccepted) s.attachments.abortSend(conversationId, nonce);
 			throw error;
 		}
 	});

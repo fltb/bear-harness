@@ -1,10 +1,14 @@
 import {
+	chmodSync,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	readlinkSync,
 	rmSync,
+	statSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -14,11 +18,29 @@ import { DatabaseSync } from "node:sqlite";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { ArtifactStore } from "../src/artifacts/index.js";
-import { ConversationAttachmentService } from "../src/conversation-attachments/service.js";
+import {
+	ConversationAttachmentService,
+	type PreparedRunInputs,
+} from "../src/conversation-attachments/service.js";
 
 const roots: string[] = [];
+function makeTreeRemovable(path: string): void {
+	if (!existsSync(path)) return;
+	const stat = lstatSync(path);
+	if (stat.isSymbolicLink()) return;
+	if (!stat.isDirectory()) {
+		chmodSync(path, 0o600);
+		return;
+	}
+	chmodSync(path, 0o700);
+	for (const child of readdirSync(path)) makeTreeRemovable(join(path, child));
+}
+
 afterEach(() => {
-	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+	for (const root of roots.splice(0)) {
+		makeTreeRemovable(root);
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
 function fixture() {
@@ -98,6 +120,38 @@ describe("ConversationAttachmentService upload sessions", () => {
 				attachmentId: attachment.id,
 			}),
 		).toEqual({ mode: "semantic", content: "hello" });
+		db.close();
+	});
+
+	it("finishes a pending send idempotently without rebinding its native user entry", async () => {
+		const { db, service } = fixture();
+		const uploadId = service.startUpload({
+			conversationId: "conversation-1",
+			kind: "file",
+			name: "note.txt",
+			entries: [{ entryKind: "file", relativePath: "note.txt", bytes: 5, mime: "text/plain" }],
+		});
+		service.appendChunk({
+			conversationId: "conversation-1",
+			uploadId,
+			fileIndex: 0,
+			offset: 0,
+			base64: Buffer.from("hello").toString("base64"),
+		});
+		const attachment = await service.completeUpload("conversation-1", uploadId);
+		const nonce = service.beginSend("conversation-1", [attachment.id]);
+		expect(nonce).toBeDefined();
+		if (!nonce) throw new Error("send nonce missing");
+
+		service.finishSend("conversation-1", nonce, "native-user-entry");
+		service.finishSend("conversation-1", nonce, "different-entry");
+
+		expect(service.list("conversation-1", attachment.id)).toEqual([
+			expect.objectContaining({
+				id: attachment.id,
+				originEntryId: "native-user-entry",
+			}),
+		]);
 		db.close();
 	});
 
@@ -323,6 +377,92 @@ describe("ConversationAttachmentService path imports", () => {
 		);
 		expect(readlinkSync(join(materialized!, "links", "note-link"))).toBe("../note.txt");
 		expect(readFileSync(join(materialized!, "links", "note-link"), "utf8")).toBe("hello");
+		db.close();
+	});
+
+	it("only prepares read-only snapshots while keeping outputs writable across restarts", async () => {
+		const { db, orm, root, service, artifactStore, uploadRoot } = fixture();
+		const sourceFolder = join(root, "selected-folder");
+		const sourceFile = join(root, "selected-file.txt");
+		mkdirSync(sourceFolder);
+		writeFileSync(join(sourceFolder, "workspace.txt"), "captured workspace");
+		writeFileSync(sourceFile, "captured file");
+
+		const [folderAttachment, fileAttachment] = await service.importPaths("conversation-1", [
+			sourceFolder,
+			sourceFile,
+		]);
+		writeFileSync(join(sourceFolder, "workspace.txt"), "changed live workspace");
+		writeFileSync(sourceFile, "changed live file");
+
+		const assertPrepared = (prepared: PreparedRunInputs, runDirectory: string) => {
+			expect(prepared.inputs.map(({ attachmentId, source }) => ({ attachmentId, source }))).toEqual(
+				[
+					{ attachmentId: folderAttachment!.id, source: "snapshot" },
+					{ attachmentId: fileAttachment!.id, source: "snapshot" },
+				],
+			);
+			expect(prepared.inputs.map((input) => input.path)).not.toContain(sourceFolder);
+			expect(prepared.inputs.map((input) => input.path)).not.toContain(sourceFile);
+			expect(prepared.inputs.every((input) => input.path.startsWith(runDirectory))).toBe(true);
+			const folderInput = prepared.inputs.find(
+				(input) => input.attachmentId === folderAttachment!.id,
+			)!;
+			const fileInput = prepared.inputs.find((input) => input.attachmentId === fileAttachment!.id)!;
+			expect(prepared.workspace).toBe(folderInput.path);
+			expect(prepared.workspace).not.toBe(sourceFolder);
+			expect(readFileSync(join(prepared.workspace, "workspace.txt"), "utf8")).toBe(
+				"captured workspace",
+			);
+			expect(readFileSync(join(fileInput.path, "selected-file.txt"), "utf8")).toBe("captured file");
+			expect(statSync(prepared.workspace).mode & 0o222).toBe(0);
+			expect(statSync(join(prepared.workspace, "workspace.txt")).mode & 0o222).toBe(0);
+			expect(statSync(fileInput.path).mode & 0o222).toBe(0);
+			expect(statSync(join(fileInput.path, "selected-file.txt")).mode & 0o222).toBe(0);
+			expect(() =>
+				writeFileSync(join(prepared.workspace, "workspace.txt"), "workspace mutation"),
+			).toThrow();
+			expect(() =>
+				writeFileSync(join(prepared.workspace, "created-through-workspace.txt"), "mutation"),
+			).toThrow();
+			expect(readFileSync(join(sourceFolder, "workspace.txt"), "utf8")).toBe(
+				"changed live workspace",
+			);
+			expect(prepared.outputDirectory).not.toBe(prepared.workspace);
+			expect(statSync(prepared.outputDirectory).mode & 0o200).toBe(0o200);
+			writeFileSync(join(prepared.outputDirectory, "result.txt"), "writable output");
+			expect(readFileSync(join(prepared.outputDirectory, "result.txt"), "utf8")).toBe(
+				"writable output",
+			);
+		};
+
+		const firstRunDirectory = join(root, "run-before-restart");
+		const first = service.prepareRunInputs({
+			conversationId: "conversation-1",
+			attachmentIds: [folderAttachment!.id, fileAttachment!.id],
+			workspaceAttachmentId: folderAttachment!.id,
+			runDirectory: firstRunDirectory,
+		});
+		assertPrepared(first, firstRunDirectory);
+
+		const recovered = new ConversationAttachmentService(orm, artifactStore, uploadRoot);
+		const restartedRunDirectory = join(root, "run-after-restart");
+		const afterRestart = recovered.prepareRunInputs({
+			conversationId: "conversation-1",
+			attachmentIds: [folderAttachment!.id, fileAttachment!.id],
+			workspaceAttachmentId: folderAttachment!.id,
+			runDirectory: restartedRunDirectory,
+		});
+		assertPrepared(afterRestart, restartedRunDirectory);
+		expect(
+			afterRestart.inputs.map(({ attachmentId, name, source }) => ({
+				attachmentId,
+				name,
+				source,
+			})),
+		).toEqual(
+			first.inputs.map(({ attachmentId, name, source }) => ({ attachmentId, name, source })),
+		);
 		db.close();
 	});
 

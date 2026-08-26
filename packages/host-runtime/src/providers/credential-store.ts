@@ -61,19 +61,13 @@ type SessionCredential = {
 };
 
 export class CredentialStore {
-	private db: AppDatabase;
-	private vault: CredentialVault;
+	private readonly db: AppDatabase;
+	private readonly vault: CredentialVault;
 	private sessionCredentials = new Map<string, SessionCredential>();
-	private encryptionAvailable: boolean;
 
 	constructor(db: AppDatabase, vault: CredentialVault) {
 		this.db = db;
 		this.vault = vault;
-		try {
-			this.encryptionAvailable = vault.isEncryptionAvailable();
-		} catch {
-			this.encryptionAvailable = false;
-		}
 	}
 
 	/** Store a credential for a provider. */
@@ -101,8 +95,7 @@ export class CredentialStore {
 			status = this.vault.securityLevel === "machine" ? "weak_storage" : "stored";
 		} catch {
 			// Availability can be reported before the OS keychain daemon is
-			// usable. Downgrade this process to session-only and do not retry it.
-			this.encryptionAvailable = false;
+			// usable. Keep the replacement in this process as session-only.
 			this.sessionCredentials.set(providerId, { credential: { ...credential }, updatedAt: now });
 			this.upsert(id, providerId, null, "session_only", now);
 			return "session_only";
@@ -144,12 +137,12 @@ export class CredentialStore {
 		}
 
 		// Never interpret a persisted blob as UTF-8. A credential blob is
-		// readable only through an available encrypted vault.
+		// readable only through an available encrypted vault. Availability is
+		// derived for this read and never persisted over the stored status.
 		if (
 			(row.credentialStatus !== "stored" && row.credentialStatus !== "weak_storage") ||
 			!this.canPersistCredentials()
 		) {
-			this.clearBlob(providerId, "unavailable");
 			return { providerId, status: "unavailable", updatedAt: row.updatedAt };
 		}
 
@@ -166,7 +159,6 @@ export class CredentialStore {
 				updatedAt: row.updatedAt,
 			};
 		} catch {
-			this.clearBlob(providerId, "invalid");
 			return {
 				providerId,
 				status: "invalid",
@@ -195,7 +187,6 @@ export class CredentialStore {
 			(status === "stored" || status === "weak_storage") &&
 			!this.canPersistCredentials()
 		) {
-			this.clearBlob(providerId, "unavailable");
 			return "unavailable";
 		}
 		return status;
@@ -212,7 +203,6 @@ export class CredentialStore {
 		for (const row of rows) {
 			const status = row.status as CredentialStatus;
 			if ((status === "stored" || status === "weak_storage") && !this.canPersistCredentials()) {
-				this.clearBlob(row.id, "unavailable");
 				result.push({ providerId: row.id, status: "unavailable" });
 				continue;
 			}
@@ -226,25 +216,12 @@ export class CredentialStore {
 		return result;
 	}
 
-	private clearBlob(providerId: string, status: "unavailable" | "invalid"): void {
-		this.db
-			.update(providerAccounts)
-			.set({
-				credentialBlob: null,
-				credentialStatus: status,
-				updatedAt: new Date().toISOString(),
-			})
-			.where(eq(providerAccounts.id, providerId))
-			.run();
-	}
-
 	private canPersistCredentials(): boolean {
-		if (!this.encryptionAvailable) return false;
 		try {
 			// `session` is used by Electron's basic_text backend. Undefined is
 			// retained for compatible injected vaults whose encryption contract
 			// predates securityLevel.
-			return this.vault.securityLevel !== "session";
+			return this.vault.isEncryptionAvailable() && this.vault.securityLevel !== "session";
 		} catch {
 			return false;
 		}

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+	chmodSync,
 	closeSync,
 	constants,
 	fstatSync,
@@ -19,7 +20,11 @@ import {
 } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { and, asc, eq, inArray, isNull, lt, ne } from "drizzle-orm";
-import type { ArtifactRecord, ArtifactStore } from "../artifacts/index.js";
+import {
+	ArtifactCorruptedError,
+	type ArtifactRecord,
+	type ArtifactStore,
+} from "../artifacts/index.js";
 import { codecRegistry } from "../materials/codec.js";
 import { IngestService } from "../materials/ingest.js";
 import type { AppDatabase } from "../storage/database.js";
@@ -50,6 +55,16 @@ export interface ConversationAttachmentSummary {
 	fileCount: number;
 	originEntryId?: string;
 }
+export interface PreparedRunInputs {
+	workspace: string;
+	outputDirectory: string;
+	inputs: Array<{
+		attachmentId: string;
+		name: string;
+		path: string;
+		source: "snapshot";
+	}>;
+}
 
 type UploadEntry = {
 	entryKind: "file" | "directory";
@@ -76,10 +91,6 @@ type StoredImportEntry =
 
 /** Immutable, conversation-owned CAS snapshot authority. */
 export class ConversationAttachmentService {
-	private readonly sourceGrants = new Map<
-		string,
-		{ canonicalPath: string; kind: "file" | "folder" }
-	>();
 	private readonly uploads = new Map<string, UploadManifest>();
 	private readonly uploadRoot: string;
 	private readonly cursorSecret = randomUUID();
@@ -370,6 +381,7 @@ export class ConversationAttachmentService {
 					maxBytes: Math.min(maxFileBytes, maxRootBytes - totalBytes),
 				});
 			} catch (error) {
+				if (error instanceof ArtifactCorruptedError) throw error;
 				if (error instanceof Error && error.message === "artifact_source_too_large") {
 					throw { kind: "validation_failed", reason: "attachment_root_too_large" };
 				}
@@ -574,7 +586,7 @@ export class ConversationAttachmentService {
 		};
 	}
 
-	/** Trusted-main import: snapshot first, then retain the real path only in memory. */
+	/** Trusted-main import: copy the selected path into conversation-owned snapshot storage. */
 	async importPaths(
 		conversationId: string,
 		paths: string[],
@@ -612,7 +624,6 @@ export class ConversationAttachmentService {
 				name: basename(canonicalPath),
 				entries,
 			});
-			this.sourceGrants.set(attachment.id, { canonicalPath, kind });
 			result.push(attachment);
 		}
 		return result;
@@ -672,16 +683,7 @@ export class ConversationAttachmentService {
 		attachmentIds: string[];
 		workspaceAttachmentId?: string;
 		runDirectory: string;
-	}): {
-		workspace: string;
-		outputDirectory: string;
-		inputs: Array<{
-			attachmentId: string;
-			name: string;
-			path: string;
-			source: "live" | "snapshot";
-		}>;
-	} {
+	}): PreparedRunInputs {
 		if (
 			params.attachmentIds.length === 0 ||
 			params.attachmentIds.length > MAX_ROOTS ||
@@ -722,15 +724,12 @@ export class ConversationAttachmentService {
 				)[0]!,
 			]),
 		);
-		const inputs = attachments.map((attachment) => {
-			const grant = this.validGrant(attachment.id, attachment.kind);
-			return {
-				attachmentId: attachment.id,
-				name: attachment.name,
-				path: grant ?? materialized.get(attachment.id)!,
-				source: grant ? ("live" as const) : ("snapshot" as const),
-			};
-		});
+		const inputs = attachments.map((attachment) => ({
+			attachmentId: attachment.id,
+			name: attachment.name,
+			path: materialized.get(attachment.id)!,
+			source: "snapshot" as const,
+		}));
 		const workspaceInput =
 			(params.workspaceAttachmentId
 				? inputs.find((input) => input.attachmentId === params.workspaceAttachmentId)
@@ -743,7 +742,8 @@ export class ConversationAttachmentService {
 			? attachments.find((attachment) => attachment.id === workspaceInput.attachmentId)?.kind
 			: undefined;
 		const outputDirectory = join(params.runDirectory, "outputs");
-		mkdirSync(outputDirectory, { recursive: true });
+		mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
+		chmodSync(outputDirectory, 0o700);
 		return {
 			workspace: workspaceInput
 				? workspaceKind === "file"
@@ -829,24 +829,6 @@ export class ConversationAttachmentService {
 			.run();
 	}
 
-	private validGrant(attachmentId: string, kind: AttachmentKind): string | undefined {
-		if (kind === "generated") return undefined;
-		const grant = this.sourceGrants.get(attachmentId);
-		if (!grant || grant.kind !== kind) return undefined;
-		try {
-			const stat = lstatSync(grant.canonicalPath);
-			if (
-				stat.isSymbolicLink() ||
-				(kind === "file" ? !stat.isFile() : !stat.isDirectory()) ||
-				realpathSync(grant.canonicalPath) !== grant.canonicalPath
-			) {
-				return undefined;
-			}
-			return grant.canonicalPath;
-		} catch {
-			return undefined;
-		}
-	}
 	assertSendable(conversationId: string, attachmentIds: string[]): void {
 		if (attachmentIds.length > MAX_ROOTS || new Set(attachmentIds).size !== attachmentIds.length) {
 			throw { kind: "validation_failed", reason: "attachment_root_count_invalid" };
@@ -1068,10 +1050,7 @@ export class ConversationAttachmentService {
 			};
 		}
 
-		if (
-			!params.relativePath &&
-			(attachment.kind === "folder" || (attachment.kind === "generated" && files.length !== 1))
-		) {
+		if (!params.relativePath && (attachment.kind === "folder" || attachment.kind === "generated")) {
 			const cursorArgs = `folder:${params.conversationId}:${params.attachmentId}`;
 			const start = params.cursor ? this.decodeCursor(params.cursor, cursorArgs) : 0;
 			const page = files.slice(start, start + MAX_FOLDER_PAGE);
@@ -1250,10 +1229,18 @@ export class ConversationAttachmentService {
 					mkdirSync(dirname(target), { recursive: true });
 					symlinkSync(entry.linkTarget, target);
 				}
-			} catch {
+			} catch (error) {
+				if (error instanceof ArtifactCorruptedError) throw error;
 				throw { kind: "conflict", reason: "attachment_materialization_failed" };
 			}
 			roots.push(root);
+		}
+		if (roots.length > 0) {
+			try {
+				makeTreeReadOnly(destination);
+			} catch {
+				throw { kind: "conflict", reason: "attachment_materialization_failed" };
+			}
 		}
 		return roots;
 	}
@@ -1271,6 +1258,17 @@ export class ConversationAttachmentService {
 			.run();
 		if (result.changes !== 1) throw { kind: "conflict", reason: "attachment_not_discardable" };
 	}
+}
+
+function makeTreeReadOnly(path: string): void {
+	const stat = lstatSync(path);
+	if (stat.isSymbolicLink()) return;
+	if (!stat.isDirectory()) {
+		chmodSync(path, 0o400);
+		return;
+	}
+	for (const child of readdirSync(path)) makeTreeReadOnly(join(path, child));
+	chmodSync(path, 0o500);
 }
 
 function validateUploadEntries(kind: "file" | "folder", rawEntries: UploadEntry[]): UploadEntry[] {

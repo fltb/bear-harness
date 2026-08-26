@@ -252,8 +252,8 @@ describe("relationship memory context", () => {
 		expect(companionBText).toContain("只属于乙的记忆");
 		expect(companionBText).not.toContain("只属于季舟的记忆");
 		expect(fakeCore.recallNamespaces).toEqual([
-			"cyber-bear:install-1:user-1:jizhou",
-			"cyber-bear:install-1:user-1:companion-b",
+			"memory:v1:install-1:user-1:jizhou",
+			"memory:v1:install-1:user-1:companion-b",
 		]);
 	});
 	it("captures through the activated companion namespace from its native Pi session", async () => {

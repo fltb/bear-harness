@@ -152,7 +152,9 @@ describe("Host composition enforces ownership before mutation", () => {
 		expect(send.mock.calls[0]?.[1]).toContain("describe the image");
 		expect(send.mock.calls[0]?.[1]).toContain(`${imageId}: pixel.png`);
 		expect(send.mock.calls[0]?.[1]).toContain(`${textId}: notes.txt`);
-		expect(send.mock.calls[0]?.[2]).toEqual([{ data: imageBytes, mimeType: "image/png" }]);
+		expect(send.mock.calls[0]?.[2]).toEqual([
+			{ attachmentId: imageId, data: imageBytes, mimeType: "image/png" },
+		]);
 	});
 
 	it("rejects run and attachment operations for unknown ownership", async () => {

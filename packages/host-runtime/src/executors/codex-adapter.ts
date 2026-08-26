@@ -10,10 +10,13 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
+	chmodSync,
+	copyFileSync,
 	createReadStream,
 	lstatSync,
 	readlinkSync,
 	realpathSync,
+	rmSync,
 	type Stats,
 	statSync,
 } from "node:fs";
@@ -27,7 +30,7 @@ import type { EventBus } from "../storage/event-bus.js";
 import { executorProfiles, runManifests } from "../storage/schema.js";
 import type { AcpProcessSpec } from "./acp-client.js";
 import { AcpExecutorController } from "./acp-executor.js";
-import { externalAgentEnvironment, workspaceFor } from "./environment.js";
+import { ensurePrivateDirectory, isolatedRunEnvironment, workspaceFor } from "./environment.js";
 import type { ExecutorLaunchRequest } from "./router.js";
 
 /** The only user-consented Codex CLI version the harness will run (pinned). */
@@ -336,17 +339,25 @@ export class CodexAdapter extends AcpExecutorController {
 
 	protected processSpec(request: ExecutorLaunchRequest): AcpProcessSpec {
 		const capability = codexCapability(request.profile.capabilities);
+		const cwd = workspaceFor(request);
+		const runRoot = dirname(resolve(request.task.outputDirectory));
+		const codexHome = materializeCodexHomeSnapshot(
+			capability.codexHome,
+			resolve(runRoot, "home", ".codex"),
+		);
+		const env = isolatedRunEnvironment(runRoot, {
+			ELECTRON_RUN_AS_NODE: "1",
+			NO_BROWSER: "1",
+			BEAR_OUTPUT_DIR: request.task.outputDirectory,
+			CODEX_PATH: capability.canonicalPath,
+			CODEX_HOME: codexHome,
+		});
 		return {
 			command: process.execPath,
 			args: [this.adapterPath],
-			cwd: workspaceFor(request),
-			env: externalAgentEnvironment({
-				ELECTRON_RUN_AS_NODE: "1",
-				NO_BROWSER: "1",
-				BEAR_OUTPUT_DIR: request.task.outputDirectory,
-				CODEX_PATH: capability.canonicalPath,
-				CODEX_HOME: capability.codexHome,
-			}),
+			cwd,
+			readOnlyPaths: request.task.readOnlyPaths,
+			env,
 		};
 	}
 
@@ -384,6 +395,41 @@ export class CodexAdapter extends AcpExecutorController {
 		}
 		return { available: false, reason: "no_codex_found" };
 	}
+}
+
+const CODEX_HOME_SNAPSHOT_FILES = ["auth.json", "config.toml"] as const;
+
+/**
+ * Copy only the consented credentials and configuration needed to launch.
+ * Codex writes sessions and other runtime state into this per-run snapshot,
+ * never into the canonical user-owned home.
+ */
+function materializeCodexHomeSnapshot(sourceHome: string, snapshotHome: string): string {
+	const source = resolve(sourceHome);
+	const snapshot = resolve(snapshotHome);
+	if (source === snapshot) {
+		fail("profile_invalid", "canonical Codex home cannot be the per-run snapshot");
+	}
+	rmSync(snapshot, { recursive: true, force: true });
+	ensurePrivateDirectory(snapshot);
+
+	for (const fileName of CODEX_HOME_SNAPSHOT_FILES) {
+		const sourceFile = join(source, fileName);
+		let sourceStat: Stats;
+		try {
+			sourceStat = lstatSync(sourceFile);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+			fail("profile_invalid", `cannot read Codex home ${fileName}`);
+		}
+		if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) {
+			fail("profile_invalid", `Codex home ${fileName} must be a regular file`);
+		}
+		const snapshotFile = join(snapshot, fileName);
+		copyFileSync(sourceFile, snapshotFile);
+		if (process.platform !== "win32") chmodSync(snapshotFile, sourceStat.mode & 0o777);
+	}
+	return realpathSync(snapshot);
 }
 
 function codexCapability(value: Record<string, unknown>): CodexProfileCapability {

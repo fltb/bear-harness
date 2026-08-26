@@ -290,6 +290,7 @@ export class CompanionSupervisor {
 		let pluginTools: unknown[] = [];
 		const store = this.sessionStoreFor(conversationId);
 		if (!store) throw new Error("conversation_pi_session_missing");
+		store.materialize();
 		try {
 			pluginTools = await loadRolePluginTools(this.runtimeConfig.pluginPaths);
 		} catch (error) {

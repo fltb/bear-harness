@@ -151,30 +151,67 @@ describe("CredentialStore security policy", () => {
 		db.close();
 	});
 
-	it("clears a legacy blob instead of reading it when encryption is unavailable", async () => {
+	it("keeps persisted credentials intact across temporary vault and decrypt failures", async () => {
 		const db = createDb();
-		db.prepare(
-			"INSERT INTO provider_accounts (id, provider_id, credential_blob, credential_status, updated_at) VALUES (?, ?, ?, ?, ?)",
-		).run(
-			"legacy",
-			"legacy",
-			Buffer.from(JSON.stringify({ apiKey: "legacy-secret" })),
-			"weak_storage",
-			"now",
-		);
-		const store = new CredentialStore(
-			drizzle({ client: db }),
-			makeVault({ isEncryptionAvailable: () => false, securityLevel: "session" }),
-		);
+		let available = true;
+		let decryptFails = false;
+		const vault = makeVault({
+			isEncryptionAvailable: () => available,
+			decryptString: (blob) => {
+				if (decryptFails) throw new Error("vault decrypt failed");
+				return Buffer.from(blob.toString("utf8").slice(BLOB_PREFIX.length), "base64").toString(
+					"utf8",
+				);
+			},
+		});
+		const store = new CredentialStore(drizzle({ client: db }), vault);
 
-		expect(await store.get("legacy")).toMatchObject({
-			providerId: "legacy",
+		expect(await store.set("provider-os", { apiKey: "original-secret" })).toBe("stored");
+		const persisted = storedBlob(db, "provider-os");
+		const originalBlob = Buffer.from(persisted.credential_blob!);
+		expect(persisted.credential_status).toBe("stored");
+
+		available = false;
+		expect(await store.list()).toEqual([{ providerId: "provider-os", status: "unavailable" }]);
+		expect(await store.getStatus("provider-os")).toBe("unavailable");
+		const unavailableCredential = await store.get("provider-os");
+		expect(unavailableCredential).toMatchObject({
+			providerId: "provider-os",
 			status: "unavailable",
 		});
-		expect(storedBlob(db, "legacy")).toEqual({
-			credential_blob: null,
-			credential_status: "unavailable",
+		expect(unavailableCredential).not.toHaveProperty("apiKey");
+		const unavailablePersisted = storedBlob(db, "provider-os");
+		expect(unavailablePersisted.credential_status).toBe("stored");
+		expect(Buffer.from(unavailablePersisted.credential_blob!)).toEqual(originalBlob);
+
+		available = true;
+		decryptFails = true;
+		expect(await store.list()).toEqual([{ providerId: "provider-os", status: "stored" }]);
+		expect(await store.getStatus("provider-os")).toBe("stored");
+		const invalidCredential = await store.get("provider-os");
+		expect(invalidCredential).toMatchObject({
+			providerId: "provider-os",
+			status: "invalid",
 		});
+		expect(invalidCredential).not.toHaveProperty("apiKey");
+		const decryptFailedPersisted = storedBlob(db, "provider-os");
+		expect(decryptFailedPersisted.credential_status).toBe("stored");
+		expect(Buffer.from(decryptFailedPersisted.credential_blob!)).toEqual(originalBlob);
+
+		decryptFails = false;
+		expect(await store.get("provider-os")).toMatchObject({
+			providerId: "provider-os",
+			status: "stored",
+			apiKey: "original-secret",
+		});
+
+		await store.remove("provider-os");
+		expect(await store.get("provider-os")).toBeNull();
+		expect(await store.getStatus("provider-os")).toBe("missing");
+		expect(await store.list()).toEqual([]);
+		expect(
+			db.prepare("SELECT id FROM provider_accounts WHERE id = ?").get("provider-os"),
+		).toBeUndefined();
 		db.close();
 	});
 

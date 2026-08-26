@@ -8,12 +8,10 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
+import { applyProcessConfinement, type ConfinableProcessSpec } from "./confinement.js";
 
-export interface AcpProcessSpec {
-	command: string;
+export interface AcpProcessSpec extends ConfinableProcessSpec {
 	args: string[];
-	cwd: string;
-	env: NodeJS.ProcessEnv;
 }
 
 export interface AcpPermissionRequest {
@@ -82,7 +80,8 @@ export class AcpRunClient {
 	async start(): Promise<void> {
 		if (this.connection) throw new Error("ACP run client already started");
 
-		const process = spawn(this.spec.command, this.spec.args, {
+		const confined = applyProcessConfinement(this.spec);
+		const process = spawn(confined.command, confined.args, {
 			cwd: this.spec.cwd,
 			env: this.spec.env,
 			stdio: ["pipe", "pipe", "pipe"],

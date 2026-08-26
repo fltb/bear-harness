@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +9,10 @@ import { type AcpProcessSpec, AcpRunClient } from "../src/executors/acp-client.j
 import { AcpExecutorController } from "../src/executors/acp-executor.js";
 import type { ExecutorLaunchRequest } from "../src/executors/router.js";
 
-const fixturePath = fileURLToPath(new URL("./fixtures/acp-agent.mjs", import.meta.url));
+const fixturePath = realpathSync.native(
+	fileURLToPath(new URL("./fixtures/acp-agent.mjs", import.meta.url)),
+);
+const executablePath = realpathSync.native(process.execPath);
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
@@ -18,18 +21,22 @@ afterEach(() => {
 	}
 });
 
-function createTemp(): string {
-	const directory = mkdtempSync(join(tmpdir(), "bear-acp-"));
+function createTemp(purpose: "workspace" | "home"): string {
+	const directory = mkdtempSync(join(realpathSync.native(tmpdir()), `bear-acp-${purpose}-`));
 	temporaryDirectories.push(directory);
 	return directory;
 }
 
 function fixtureSpec(cwd: string, permission = false): AcpProcessSpec {
 	return {
-		command: process.execPath,
+		command: executablePath,
 		args: [fixturePath],
-		cwd,
-		env: { PATH: process.env.PATH, FIXTURE_PERMISSION: permission ? "1" : "0" },
+		cwd: realpathSync.native(cwd),
+		env: {
+			PATH: process.env.PATH,
+			HOME: createTemp("home"),
+			FIXTURE_PERMISSION: permission ? "1" : "0",
+		},
 	};
 }
 
@@ -41,7 +48,7 @@ class FixtureController extends AcpExecutorController {
 
 describe("ACP external-agent transport", () => {
 	it("performs initialize, session creation, prompt, and a user-resolved permission request", async () => {
-		const cwd = createTemp();
+		const cwd = createTemp("workspace");
 		const permission = Promise.withResolvers<{ requestId: string; optionId: string }>();
 		const updates: string[] = [];
 		const client = new AcpRunClient(fixtureSpec(cwd, true), {
@@ -63,7 +70,7 @@ describe("ACP external-agent transport", () => {
 	});
 
 	it("converts ACP updates into Host lifecycle and evidence events", async () => {
-		const cwd = createTemp();
+		const cwd = createTemp("workspace");
 		const events: Array<{ type: string; [key: string]: unknown }> = [];
 		const completed = Promise.withResolvers<void>();
 		const controller = new FixtureController();

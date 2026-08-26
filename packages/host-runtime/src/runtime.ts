@@ -62,7 +62,7 @@ import { type FsProtectionHandle, installFsProtection } from "./security/fs-prot
 import { createModerationService, type ModerationService } from "./security/moderation.js";
 import { findHostLocalEmbeddingCandidate } from "./settings/capabilities.js";
 import { type AppSettingsRecord, AppSettingsStore } from "./storage/app-settings-store.js";
-import { Database, MIGRATIONS } from "./storage/database.js";
+import { Database, loadInstallationId, MIGRATIONS } from "./storage/database.js";
 import { EventBus } from "./storage/event-bus.js";
 import { conversations, memoryCandidates } from "./storage/schema.js";
 
@@ -100,6 +100,9 @@ export interface HostRuntimeOptions {
 	 * (embedding provider details, pipeline tuning). Defaults: full power.
 	 */
 	memoryConfig?: DeepPartial<MemoryTdaiConfig>;
+	/** Maximum duration of one startup reconciliation attempt before it remains pending. */
+	backgroundAttemptTimeoutMs?: number;
+
 	/**
 	 * Optional Electron host resolver for "auto" proxy mode: uses Chromium's
 	 * session.resolveProxy (PAC-aware). Pure-Node hosts omit it and fall back
@@ -110,6 +113,8 @@ export interface HostRuntimeOptions {
 	conversationAttachmentUrlFactory?: (request: ConversationAttachmentUrlFactoryRequest) => string;
 	/** Optional verified packaged Git runtime supplied by a desktop shell. */
 	bundledGit?: { shellPath: string; pathEntries: string[] };
+	/** Optional absolute Pi ACP worker entrypoint supplied by an embedding host. */
+	piWorkerPath?: string;
 	/**
 	 * Optional app-update lifecycle service supplied by the host shell
 	 * (desktop). `check()` stages a verified archive; `discard()` removes it;
@@ -131,6 +136,12 @@ export interface HostRuntimeOptions {
 	auditDir?: string;
 	logger?: { debug?: (message: string) => void; warn?: (message: string) => void };
 }
+interface BackgroundAttempt {
+	controller: AbortController;
+	settled: Promise<void>;
+}
+
+const DEFAULT_BACKGROUND_ATTEMPT_TIMEOUT_MS = 15_000;
 
 export class HostRuntime {
 	/** RPC dispatcher: validates against the shared protocol schemas. */
@@ -144,6 +155,7 @@ export class HostRuntime {
 	private readonly composition: HostCompositionContext;
 	private readonly systemProxyResolver?: HostRuntimeOptions["systemProxyResolver"];
 	private readonly logger?: HostRuntimeOptions["logger"];
+	private readonly backgroundAttemptTimeoutMs: number;
 	readonly memoryRuntime: TencentDbRuntime;
 	readonly memoryBackend: MemoryBackend;
 	readonly memoryScope: { readonly installationId: string; readonly userId: string };
@@ -155,6 +167,7 @@ export class HostRuntime {
 	/** Text moderation: deterministic local rules + optional remote policy. */
 	readonly moderation: ModerationService;
 	private readonly fsProtectedRoots: string[];
+	private readonly backgroundAttempts = new Set<BackgroundAttempt>();
 	private started = false;
 	private closed = false;
 	private uninstallFsProtection?: FsProtectionHandle;
@@ -163,6 +176,8 @@ export class HostRuntime {
 	private unsubscribeRunResultDrain?: () => void;
 
 	constructor(options: HostRuntimeOptions) {
+		this.backgroundAttemptTimeoutMs =
+			options.backgroundAttemptTimeoutMs ?? DEFAULT_BACKGROUND_ATTEMPT_TIMEOUT_MS;
 		const dataDir = options.dataDir;
 		const characterSeedRoot = process.env.BEAR_CONFIG_DIR ?? options.characterSeedRoot;
 
@@ -173,6 +188,11 @@ export class HostRuntime {
 
 		const eventBus = new EventBus(db.orm);
 		const artifactStore = new ArtifactStore(db.orm, join(dataDir, "artifacts"));
+		const attachments = new ConversationAttachmentService(
+			db.orm,
+			artifactStore,
+			join(dataDir, "attachment-uploads"),
+		);
 		const credentials = new CredentialStore(db.orm, options.credentialVault);
 		const providers = new ProviderCatalog(credentials, join(dataDir, "companion-runtime"));
 		const characterLoader = new CharacterLoader(characterSeedRoot, join(dataDir, "characters"));
@@ -196,7 +216,7 @@ export class HostRuntime {
 		const appSettings = new AppSettingsStore(db.orm);
 		const models = new ModelRegistry(db.orm, eventBus);
 		const memoryScope = options.memoryScope ?? {
-			installationId: "cyber-bear-installation",
+			installationId: loadInstallationId(db.orm),
 			userId: "default-user",
 		};
 		const appRecord = appSettings.load();
@@ -222,7 +242,10 @@ export class HostRuntime {
 			() => memoryRuntime.getEmbeddingService(),
 			db,
 		);
-		const turns = new TurnPipeline(db.orm, supervisor, eventBus);
+		const turns = new TurnPipeline(db.orm, supervisor, eventBus, {
+			finishAttachmentSend: (conversationId, nonce, nativeUserEntryId) =>
+				attachments.finishSend(conversationId, nonce, nativeUserEntryId),
+		});
 		const contextPack = new ContextPackCompiler(db.orm, characterLoader, canon, {
 			backend: memoryRuntime.backend,
 			scope: memoryScope,
@@ -268,20 +291,16 @@ export class HostRuntime {
 		);
 		seedPiAcpProfile(db.orm);
 		const executorRouter = new ExecutorRouter(db.orm);
-		executorRouter.register("pi", new PiAcpAdapter(db.orm, dataDir, undefined, options.bundledGit));
+		executorRouter.register(
+			"pi",
+			new PiAcpAdapter(db.orm, dataDir, options.piWorkerPath, options.bundledGit),
+		);
 		const codex = new CodexAdapter(db.orm, eventBus);
 		executorRouter.register("codex", codex);
-		const attachments = new ConversationAttachmentService(
-			db.orm,
-			artifactStore,
-			join(dataDir, "attachment-uploads"),
-		);
-		const reconcileTerminalRun = async ({
-			run,
-			outputs,
-			needsResultReport,
-			needsMemoryCapture,
-		}: TerminalRunResult) => {
+		const reconcileTerminalRun = async (
+			{ run, outputs, needsResultReport, needsMemoryCapture }: TerminalRunResult,
+			signal: AbortSignal,
+		) => {
 			const owner = db.orm
 				.select({ companionId: conversations.companionId })
 				.from(conversations)
@@ -292,7 +311,10 @@ export class HostRuntime {
 			}
 
 			const content = externalAgentResultMessage({ run, outputs });
-			const followUp = await turns.deliverExternalAgentResult(run.conversationId, run.id, content);
+			const followUp = await turns.deliverExternalAgentResult(run.conversationId, run.id, content, {
+				signal,
+				timeoutMs: this.backgroundAttemptTimeoutMs,
+			});
 			attachments.bindGenerated(
 				run.conversationId,
 				outputs.map((output) => output.id),
@@ -305,16 +327,19 @@ export class HostRuntime {
 					const timestamp = Date.now();
 					const userText = sanitizeExternalAgentMemoryText(content, 6_000);
 					const assistantText = sanitizeExternalAgentMemoryText(followUp.text, 4_000);
-					await memoryRuntime.captureTurn({
-						userText,
-						assistantText,
-						messages: [
-							{ role: "user", content: userText, timestamp },
-							{ role: "assistant", content: assistantText, timestamp: timestamp + 1 },
-						],
-						sessionKey: namespaceFor({ ...memoryScope, companionId: owner.companionId }),
-						sessionId: run.conversationId,
-					});
+					await waitForRuntimeAbort(
+						memoryRuntime.captureTurn({
+							userText,
+							assistantText,
+							messages: [
+								{ role: "user", content: userText, timestamp },
+								{ role: "assistant", content: assistantText, timestamp: timestamp + 1 },
+							],
+							sessionKey: namespaceFor({ ...memoryScope, companionId: owner.companionId }),
+							sessionId: run.conversationId,
+						}),
+						signal,
+					);
 					memoryCaptured = true;
 				} catch {
 					// Memory is a retryable side channel; native result delivery and
@@ -356,8 +381,13 @@ export class HostRuntime {
 		this.unsubscribeRunResultDrain = eventBus.subscribe((event) => {
 			if (event.kind !== "conversation.selected") return;
 			const payload = event.payload as { id?: unknown };
-			if (typeof payload.id !== "string") return;
-			void externalAgentRuns.reconcilePending(payload.id);
+			if (typeof payload.id !== "string" || !this.started) return;
+			this.scheduleBackground("external-agent activation reconciliation", (signal) =>
+				externalAgentRuns.reconcilePending(payload.id as string, {
+					signal,
+					timeoutMs: this.backgroundAttemptTimeoutMs,
+				}),
+			);
 		});
 		supervisor.setHostToolHandler(async (call) => {
 			if (call.tool === "host_search_conversation_history") {
@@ -574,29 +604,19 @@ export class HostRuntime {
 		if (this.closed) throw new Error("Host runtime is closed");
 		this.composition.externalAgentRuns.markOrphansInterrupted();
 		try {
-			// Apply the persisted network proxy before any host network call goes out.
-			// Non-direct mode consults the platform/system proxy; Electron hosts pass
-			// a session.resolveProxy resolver via `systemProxyResolver`.
-			const proxy = this.composition.appSettings.load().networkProxy;
-			await applyProxyConfig(
-				{ mode: proxy.mode, url: proxy.url, bypass: proxy.bypass },
-				{ resolve: this.systemProxyResolver, logger: this.logger },
+			const activeCharacterId = this.characterLoader.getActiveCharacterId(
+				this.composition.orm,
+				this.composition.defaultCharacterId,
 			);
-			// Live proxy hot-reload: settings changes re-apply the dispatcher without
-			// a restart. Remember to subscribe AFTER the composition is ready.
-			this.unsubscribeProxyHotReload = this.composition.eventBus.subscribe((event) => {
-				const payload = event.payload as { changed?: string[] } | undefined;
-				if (event.kind === "settings.changed" && payload?.changed?.includes("networkProxy")) {
-					const next = this.composition.appSettings.load().networkProxy;
-					void applyProxyConfig(
-						{ mode: next.mode, url: next.url, bypass: next.bypass },
-						{ resolve: this.systemProxyResolver, logger: this.logger },
-					);
-				}
-			});
-			// Security sentinels: fs-protection wraps the global delete APIs (WARN
-			// + audit entry on hits; deletes are never blocked), and retention runs
-			// once per boot. Audit event wiring already started in the constructor.
+			const activeCharacter = this.characterLoader.load(activeCharacterId);
+			if (!activeCharacter) throw new Error(`character package missing: ${activeCharacterId}`);
+			const trust = this.characterLoader.pluginTrust(this.composition.orm, activeCharacter);
+			this.supervisor.configureRuntime(
+				this.characterLoader.piResources(activeCharacter, trust.trusted),
+			);
+
+			// Security sentinels are local lifecycle state and must be installed
+			// before the Host becomes available.
 			this.uninstallFsProtection = installFsProtection({
 				protectedRoots: this.fsProtectedRoots,
 				logger: this.logger,
@@ -610,26 +630,49 @@ export class HostRuntime {
 				// retention is best-effort at boot
 			});
 			await this.memoryRuntime.start();
-			await this.composition.canon.indexPending(
-				this.characterLoader.getActiveCharacterId(
-					this.composition.orm,
-					this.composition.defaultCharacterId,
+			await this.supervisor.start();
+			this.started = true;
+
+			// Every provider/model/network-dependent attempt starts only after the
+			// local Host and RPC surface are usable. Each wrapper is bounded,
+			// cancellation-aware, and rejection-contained.
+			const proxy = this.composition.appSettings.load().networkProxy;
+			this.scheduleBackground("network proxy reconciliation", () =>
+				applyProxyConfig(
+					{ mode: proxy.mode, url: proxy.url, bypass: proxy.bypass },
+					{ resolve: this.systemProxyResolver, logger: this.logger },
 				),
 			);
-			const activeCharacterId = this.characterLoader.getActiveCharacterId(
-				this.composition.orm,
-				this.composition.defaultCharacterId,
+			this.unsubscribeProxyHotReload = this.composition.eventBus.subscribe((event) => {
+				const payload = event.payload as { changed?: string[] } | undefined;
+				if (event.kind !== "settings.changed" || !payload?.changed?.includes("networkProxy")) {
+					return;
+				}
+				const next = this.composition.appSettings.load().networkProxy;
+				this.scheduleBackground("network proxy hot reload", () =>
+					applyProxyConfig(
+						{ mode: next.mode, url: next.url, bypass: next.bypass },
+						{ resolve: this.systemProxyResolver, logger: this.logger },
+					),
+				);
+			});
+			this.scheduleBackground("Canon embedding reconciliation", (signal) =>
+				waitForRuntimeAbort(this.composition.canon.indexPending(activeCharacterId), signal),
 			);
-			const activeCharacter = this.characterLoader.load(activeCharacterId);
-			if (!activeCharacter) throw new Error(`character package missing: ${activeCharacterId}`);
-			const trust = this.characterLoader.pluginTrust(this.composition.orm, activeCharacter);
-			this.supervisor.configureRuntime(
-				this.characterLoader.piResources(activeCharacter, trust.trusted),
+			this.scheduleBackground("pending turn reconciliation", (signal) =>
+				this.composition.turns.reconcilePendingTurns({
+					signal,
+					timeoutMs: this.backgroundAttemptTimeoutMs,
+				}),
 			);
-			await this.supervisor.start();
-			await this.composition.externalAgentRuns.reconcilePending();
-			this.started = true;
+			this.scheduleBackground("external-agent result reconciliation", (signal) =>
+				this.composition.externalAgentRuns.reconcilePending(undefined, {
+					signal,
+					timeoutMs: this.backgroundAttemptTimeoutMs,
+				}),
+			);
 		} catch (error) {
+			this.started = false;
 			if (this.supervisor.isRunning) await this.supervisor.stop().catch(() => undefined);
 			this.uninstallFsProtection?.uninstall();
 			this.uninstallFsProtection = undefined;
@@ -639,11 +682,51 @@ export class HostRuntime {
 		}
 	}
 
+	private scheduleBackground(
+		label: string,
+		run: (signal: AbortSignal) => void | Promise<unknown>,
+	): void {
+		if (this.closed) return;
+		const controller = new AbortController();
+		const work = Promise.resolve().then(() => run(controller.signal));
+		// Promise.race observes `work`; this additional terminal catch also keeps
+		// a late rejection handled after cancellation won the race.
+		void work.catch(() => undefined);
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const cancelled = new Promise<void>((resolve) => {
+			controller.signal.addEventListener("abort", () => resolve(), { once: true });
+			timer = setTimeout(() => controller.abort(), this.backgroundAttemptTimeoutMs);
+		});
+		const attempt = {} as BackgroundAttempt;
+		attempt.controller = controller;
+		attempt.settled = Promise.race([work.then(() => undefined), cancelled])
+			.catch((error) => {
+				const detail = error instanceof Error ? error.message : String(error);
+				this.logger?.warn?.(`${label} failed: ${detail.slice(0, 1_024)}`);
+			})
+			.finally(() => {
+				clearTimeout(timer);
+				this.backgroundAttempts.delete(attempt);
+			});
+		this.backgroundAttempts.add(attempt);
+	}
+
 	/** Stop the companion runtime, dispose services, and close the database. */
 	async close(): Promise<void> {
 		if (this.closed) return;
 		this.closed = true;
 		this.started = false;
+		this.unsubscribeProxyHotReload?.();
+		this.unsubscribeProxyHotReload = undefined;
+		this.unsubscribeRunResultDrain?.();
+		this.unsubscribeRunResultDrain = undefined;
+		const attempts = [...this.backgroundAttempts];
+		for (const attempt of attempts) attempt.controller.abort();
+		await Promise.allSettled(attempts.map((attempt) => attempt.settled));
+		this.backgroundAttempts.clear();
+		await this.composition.externalAgentRuns.close();
+		this.composition.turns.dispose();
+
 		let failure: unknown;
 		try {
 			await this.supervisor.stop();
@@ -654,11 +737,6 @@ export class HostRuntime {
 		this.uninstallFsProtection = undefined;
 		this.unsubscribeAudit?.();
 		this.unsubscribeAudit = undefined;
-		this.composition.turns.dispose();
-		this.unsubscribeProxyHotReload?.();
-		this.unsubscribeProxyHotReload = undefined;
-		this.unsubscribeRunResultDrain?.();
-		this.unsubscribeRunResultDrain = undefined;
 		this.characterBehavior.dispose();
 		this.providers.dispose();
 		try {
@@ -668,6 +746,20 @@ export class HostRuntime {
 		}
 		this.db.close();
 		if (failure) throw failure;
+	}
+}
+
+async function waitForRuntimeAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+	if (signal.aborted) throw new Error("runtime_background_attempt_cancelled");
+	let abort: (() => void) | undefined;
+	const cancelled = new Promise<never>((_resolve, reject) => {
+		abort = () => reject(new Error("runtime_background_attempt_cancelled"));
+		signal.addEventListener("abort", abort, { once: true });
+	});
+	try {
+		return await Promise.race([work, cancelled]);
+	} finally {
+		if (abort) signal.removeEventListener("abort", abort);
 	}
 }
 

@@ -6,13 +6,14 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppDatabase } from "../storage/database.js";
 import { executorProfiles, runManifests } from "../storage/schema.js";
 import type { AcpProcessSpec } from "./acp-client.js";
 import { AcpExecutorController } from "./acp-executor.js";
-import { externalAgentEnvironment, workspaceFor } from "./environment.js";
+import { ensurePrivateDirectory, isolatedRunEnvironment, workspaceFor } from "./environment.js";
 import type { ExecutorLaunchRequest } from "./router.js";
 
 export interface PiRunManifest {
@@ -55,7 +56,7 @@ export class PiAcpAdapter extends AcpExecutorController {
 			profileId: request.profile.id,
 			runId: request.run.runId,
 			triggerEntryId: request.run.triggerEntryId,
-			workerPath: this.workerPath,
+			workerPath: realpathSync.native(this.workerPath),
 			launchedAt: new Date().toISOString(),
 		};
 		this.db
@@ -67,13 +68,15 @@ export class PiAcpAdapter extends AcpExecutorController {
 
 	protected processSpec(request: ExecutorLaunchRequest): AcpProcessSpec {
 		const cwd = workspaceFor(request);
-		const authDir = resolve(this.userDataDir, "companion-runtime");
-		const sessionDir = resolve(this.userDataDir, "external-agent-runs", "pi");
+		const runRoot = dirname(resolve(request.task.outputDirectory));
+		const authDir = ensurePrivateDirectory(resolve(this.userDataDir, "companion-runtime"));
+		const sessionDir = ensurePrivateDirectory(resolve(runRoot, "pi-session"));
 		return {
-			command: process.execPath,
-			args: [this.workerPath],
+			command: realpathSync.native(process.execPath),
+			args: [realpathSync.native(this.workerPath)],
 			cwd,
-			env: externalAgentEnvironment({
+			readOnlyPaths: request.task.readOnlyPaths,
+			env: isolatedRunEnvironment(runRoot, {
 				ELECTRON_RUN_AS_NODE: "1",
 				BEAR_PI_AUTH_DIR: authDir,
 				BEAR_PI_SESSION_DIR: sessionDir,

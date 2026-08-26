@@ -29,6 +29,8 @@ export interface ExecutorTask {
 	instruction: string;
 	workspace: string;
 	outputDirectory: string;
+	/** Immutable Host-materialized input snapshots readable by the agent. */
+	readOnlyPaths?: string[];
 	modelRoute?: { providerId: string; modelId: string; apiKey?: string };
 }
 
