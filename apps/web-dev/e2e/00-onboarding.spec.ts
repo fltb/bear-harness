@@ -1,6 +1,6 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
-import { getBootstrap, selectKobalteOption } from "./helpers";
+import { getBootstrap } from "./helpers";
 
 test("browser requires a reply model before the role-defined onboarding", async ({ page }) => {
 	const bootstrap = await getBootstrap(page);
@@ -68,11 +68,12 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	await expect(embeddingSetup).toBeVisible();
 	const embeddingContinue = embeddingSetup.getByRole("button", { name: zhCN.messages.continue });
 	await expect(embeddingContinue).toBeDisabled();
-	await selectKobalteOption(
-		page,
-		embeddingSetup.getByLabel(zhCN.settings.vectorProvider),
-		zhCN.settings.vectorProviders.none,
-	);
+	const noneRadio = embeddingSetup.getByRole("radio", {
+		name: zhCN.settings.vectorProviders.none,
+		exact: true,
+	});
+	await embeddingSetup.getByText(zhCN.settings.vectorProviders.none, { exact: true }).click();
+	await expect(noneRadio).toBeChecked();
 	await expect(embeddingContinue).toBeEnabled();
 	await embeddingContinue.click();
 

@@ -60,12 +60,8 @@ function scriptedReply(
 		calls.push({ tool, args });
 		return { tool, args };
 	};
-	const roleMarker = current.includes("E2E_DESKTOP_LIVE_RUN")
-		? "live"
-		: current.includes("E2E_DESKTOP_FALLBACK_RUN")
-			? "fallback"
-			: undefined;
-	if (roleMarker) {
+	const snapshotRun = current.includes("E2E_DESKTOP_SNAPSHOT_RUN");
+	if (snapshotRun) {
 		if (!tools.includes("host_list_attachments")) return choose("host_list_attachments", {});
 		const [attachmentId] = attachmentIds(messages);
 		if (!attachmentId) return { content: "E2E_DESKTOP_FIXTURE_MISSING_ATTACHMENT_ID\n" };
@@ -73,42 +69,28 @@ function scriptedReply(
 			return choose("host_read_attachment", { attachmentId, query: "desktop source marker" });
 		}
 		if (!tools.includes("host_delegate_agent")) {
-			const marker =
-				roleMarker === "live" ? "E2E_DESKTOP_EXTERNAL_LIVE" : "E2E_DESKTOP_EXTERNAL_FALLBACK";
 			return choose("host_delegate_agent", {
 				agent: "pi",
 				attachmentIds: [attachmentId],
 				workspaceAttachmentId: attachmentId,
-				instruction: `${marker}: modify the selected workspace and write the requested report beneath BEAR_OUTPUT_DIR.`,
+				instruction:
+					"E2E_DESKTOP_EXTERNAL_SNAPSHOT: verify the immutable selected-folder snapshot and write the report beneath BEAR_OUTPUT_DIR.",
 			});
 		}
-		return { content: `E2E_DESKTOP_${roleMarker.toUpperCase()}_STARTED\n` };
+		return { content: "E2E_DESKTOP_SNAPSHOT_STARTED\n" };
 	}
 
 	if (
-		current.includes("E2E_DESKTOP_EXTERNAL_LIVE") ||
-		prompt.includes("E2E_DESKTOP_EXTERNAL_LIVE")
+		current.includes("E2E_DESKTOP_EXTERNAL_SNAPSHOT") ||
+		prompt.includes("E2E_DESKTOP_EXTERNAL_SNAPSHOT")
 	) {
 		if (!tools.includes("bash")) {
 			return choose("bash", {
 				command:
-					"printf 'modified through live source grant\\n' > ./live-result.txt && mkdir -p \"$BEAR_OUTPUT_DIR\" && printf 'live source run complete\\n' > \"$BEAR_OUTPUT_DIR/live-report.txt\"",
+					'set -eu; [ -x /bin/pwd ] || exit 40; [ -x /bin/cat ] || exit 44; case "$PWD" in /*) ;; *) exit 41 ;; esac; case "$HOME" in /*) ;; *) exit 45 ;; esac; case "$BEAR_OUTPUT_DIR" in /*) ;; *) exit 42 ;; esac; workspace_canonical=$(/bin/pwd -P); home_canonical=$(cd -- "$HOME" && /bin/pwd -P); output_canonical=$(cd -- "$BEAR_OUTPUT_DIR" && /bin/pwd -P); [ "$workspace_canonical" = "$PWD" ]; [ "$home_canonical" = "$HOME" ]; [ "$output_canonical" = "$BEAR_OUTPUT_DIR" ]; [ "$workspace_canonical" != "$output_canonical" ]; [ "$home_canonical" != "$output_canonical" ]; [ -f ./source.txt ]; [ -f ./nested/preserved.txt ]; denial_exit=0; printf \'confinement escape\\n\' > ./confinement-escape.txt 2>/dev/null || denial_exit=$?; [ "$denial_exit" -ne 0 ] || exit 43; { printf \'generated from immutable desktop snapshot\\nworkspace=%s\\noutput=%s\\nworkspace_write_denied=true\\n\' "$workspace_canonical" "$output_canonical"; /bin/cat ./source.txt ./nested/preserved.txt; } > "$BEAR_OUTPUT_DIR/snapshot-report.txt"',
 			});
 		}
-		return { content: "Modified the live workspace and created live-report.txt.\n" };
-	}
-
-	if (
-		current.includes("E2E_DESKTOP_EXTERNAL_FALLBACK") ||
-		prompt.includes("E2E_DESKTOP_EXTERNAL_FALLBACK")
-	) {
-		if (!tools.includes("bash")) {
-			return choose("bash", {
-				command:
-					"printf 'modified only in immutable fallback\\n' > ./snapshot-result.txt && mkdir -p \"$BEAR_OUTPUT_DIR\" && printf 'immutable snapshot fallback complete\\n' > \"$BEAR_OUTPUT_DIR/fallback-report.txt\"",
-			});
-		}
-		return { content: "Used the immutable snapshot fallback and created fallback-report.txt.\n" };
+		return { content: "Verified the immutable snapshot and created snapshot-report.txt.\n" };
 	}
 
 	return { content: "DESKTOP_ATTACHMENT_RULE_OK\n" };

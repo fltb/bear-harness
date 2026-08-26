@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "playwright/test";
@@ -13,6 +13,9 @@ const providerPort = process.env.BEAR_E2E_PROVIDER_PORT ?? "3211";
 const baseURL = `http://127.0.0.1:${webPort}`;
 const dataScope = `${process.pid}-${randomUUID()}`;
 const dataDirectory = resolve(here, `../../test-results/web-dev-data-${dataScope}`);
+const piWorkerPath = realpathSync.native(
+	fileURLToPath(new URL("./e2e/attachment-agent-executor-fixture.mjs", import.meta.url)),
+);
 const cleanupPolicy = process.env.BEAR_WEB_DEV_DATA_CLEANUP ?? "success";
 const lastRunFile = resolve(here, "../../test-results/web-dev/.last-run.json");
 process.env.BEAR_WEB_DEV_DATA_DIR = dataDirectory;
@@ -42,6 +45,7 @@ export default defineConfig({
 				BEAR_WEB_DEV_DATA_SCOPE: dataScope,
 				BEAR_WEB_DEV_DATA_CLEANUP: cleanupPolicy,
 				BEAR_WEB_DEV_LAST_RUN_FILE: lastRunFile,
+				BEAR_WEB_DEV_PI_WORKER_PATH: piWorkerPath,
 				BEAR_WEB_DEV_DEBUG: "1",
 				BEAR_CUSTOM_PROVIDER_ID: "",
 				BEAR_CUSTOM_PROVIDER_NAME: "",

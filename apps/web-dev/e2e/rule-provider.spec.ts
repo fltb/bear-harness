@@ -182,10 +182,45 @@ test("an image reader observes images while the selected text model produces the
 		mode: "manual",
 		route: { providerId: "e2e-rule", modelId: "rule-vision" },
 	});
+	const imageBase64 = "AQID";
+	const started = await rpc<{ uploadId: string }>(
+		page,
+		bootstrap.token,
+		"conversationAttachment.startUpload:v1",
+		{
+			conversationId: conversation.id,
+			kind: "file",
+			name: "square.png",
+			entries: [
+				{
+					entryKind: "file",
+					relativePath: "square.png",
+					mime: "image/png",
+					bytes: 3,
+				},
+			],
+		},
+	);
+	await rpc(page, bootstrap.token, "conversationAttachment.appendChunk:v1", {
+		conversationId: conversation.id,
+		uploadId: started.uploadId,
+		fileIndex: 0,
+		offset: 0,
+		base64: imageBase64,
+	});
+	const completed = await rpc<{ attachment: { id: string } }>(
+		page,
+		bootstrap.token,
+		"conversationAttachment.completeUpload:v1",
+		{
+			conversationId: conversation.id,
+			uploadId: started.uploadId,
+		},
+	);
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId: conversation.id,
 		text: "What is in this image?",
-		attachments: [{ name: "square.png", mime: "image/png", base64: "AQID" }],
+		attachmentIds: [completed.attachment.id],
 	});
 
 	await expect

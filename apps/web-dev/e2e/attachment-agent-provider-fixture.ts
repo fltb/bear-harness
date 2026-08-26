@@ -65,7 +65,6 @@ export function attachmentAgentReply(
 	record: (name: string, args: Record<string, unknown>) => void,
 ): FixtureReply | undefined {
 	const current = currentUserMessage(messages);
-	const prompt = messages.map((message) => text(message.content)).join("\n");
 	const calls = calledTools(messages);
 
 	if (current.includes("E2E_WEB_ATTACHMENT_AGENT_JOURNEY")) {
@@ -102,7 +101,7 @@ export function attachmentAgentReply(
 		return { content: "E2E_WEB_ATTACHMENT_AGENT_STARTED\n" };
 	}
 
-	if (current.includes("E2E_WEB_EXTERNAL_RUN") || prompt.includes("E2E_WEB_EXTERNAL_RUN")) {
+	if (current.includes("E2E_WEB_EXTERNAL_RUN")) {
 		if (!calls.includes("bash")) {
 			return tool(
 				"bash",

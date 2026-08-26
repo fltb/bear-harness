@@ -104,7 +104,22 @@ test("file and folder attachments survive delegation, reload, download, and rema
 	const trace = (await (await page.request.get(`${providerOrigin}/trace/tools`)).json()) as {
 		calls: Array<{ tool: string; args: Record<string, unknown> }>;
 	};
-	expect(terminalStatus, JSON.stringify(trace.calls)).toBe("completed");
+	const promptTrace = (await (
+		await page.request.get(`${providerOrigin}/trace/prompts`)
+	).json()) as {
+		prompts: string[];
+	};
+	const externalResultPrompt = promptTrace.prompts.findLast((prompt) =>
+		prompt.includes("An external agent run has finished."),
+	);
+	expect(
+		terminalStatus,
+		JSON.stringify({
+			calls: trace.calls,
+			externalResultPrompt:
+				externalResultPrompt?.slice(-6_000) ?? "missing external-agent result prompt",
+		}),
+	).toBe("completed");
 	const calls = trace.calls.filter((call) => call.tool.startsWith("host_")).slice(-4);
 	expect(calls.map((call) => call.tool)).toEqual([
 		"host_list_attachments",

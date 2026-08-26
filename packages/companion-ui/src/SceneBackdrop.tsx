@@ -15,7 +15,7 @@ export function SceneBackdrop(props: { scene: SceneDisplay | undefined }) {
 					role="img"
 					aria-label={props.scene?.label ?? ""}
 				>
-					<img src={source} alt="" aria-hidden="true" draggable={false} />
+					<img src={source} alt="" aria-hidden="true" draggable={false} data-testid="scene-asset" />
 				</div>
 			)}
 		</Show>

@@ -6,7 +6,7 @@
  * the injected, transport-neutral @bear-harness/host-runtime instance.
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -17,13 +17,18 @@ import {
 	type HostRuntime,
 } from "@bear-harness/host-runtime";
 import { productConfig } from "@bear-harness/product-config";
-import { app, BrowserWindow, crashReporter, ipcMain, shell } from "electron";
+import { app, BrowserWindow, crashReporter, dialog, ipcMain, shell } from "electron";
 import { registerConversationAttachmentBridge } from "./conversation-attachment-bridge.js";
 import {
 	ConversationAttachmentProtocol,
 	registerConversationAttachmentProtocol,
 	registerConversationAttachmentSchemePrivileges,
 } from "./conversation-attachment-protocol.js";
+import {
+	type DataRootMigrationResult,
+	LEGACY_DATA_DIRECTORY_NAME,
+	resolveDataRoot,
+} from "./data-root-migration.js";
 import {
 	registerElectronDiagnostics,
 	registerWindowHooks,
@@ -32,12 +37,28 @@ import {
 import { e2eCredentialVault } from "./e2e-vault.js";
 import { electronCredentialVault } from "./electron-credential-vault.js";
 import { wireElectronIpcHandlers } from "./ipc-router.js";
+import {
+	type NativeRecoveryInterface,
+	RecoveryController,
+	type RecoveryDestinationRequest,
+	type RecoveryPrompt,
+} from "./recovery-controller.js";
+import {
+	type RecoveryIncident,
+	RecoveryStateStore,
+	recoveryStateRootForAppData,
+} from "./recovery-state.js";
 import { UpdateService } from "./update-service.js";
 
 const DEV_RENDERER_URL = "http://127.0.0.1:3100";
 const DEV_RENDERER_URL_WITH_SLASH = `${DEV_RENDERER_URL}/`;
 const isSourceE2E =
 	!app.isPackaged && process.env.NODE_ENV === "test" && process.env.BEAR_E2E_SOURCE === "1";
+const migrateLegacyDataRoot =
+	!isSourceE2E ||
+	(process.env.BEAR_E2E_MIGRATE_LEGACY === "1" &&
+		typeof process.env.BEAR_E2E_APP_DATA === "string" &&
+		isAbsolute(process.env.BEAR_E2E_APP_DATA));
 
 // Custom schemes must be privileged before app readiness.
 registerConversationAttachmentSchemePrivileges();
@@ -68,26 +89,43 @@ const electronApp: {
 	on(eventName: string, listener: (...args: unknown[]) => void): unknown;
 } = app;
 
-function failInit(message: string): never {
-	process.stderr.write(`${message}\n`);
-	process.exitCode = 1;
-	app.exit(1);
-	throw new Error(message);
-}
-
 const appDataBase =
 	isSourceE2E && process.env.BEAR_E2E_APP_DATA && isAbsolute(process.env.BEAR_E2E_APP_DATA)
 		? process.env.BEAR_E2E_APP_DATA
 		: app.getPath("appData");
-const userData = join(appDataBase, productConfig.dataDirectoryName);
+const canonicalDataRoot = join(appDataBase, productConfig.dataDirectoryName);
+const legacyDataRoot = join(appDataBase, LEGACY_DATA_DIRECTORY_NAME);
+const recoveryRoot = recoveryStateRootForAppData(appDataBase);
+let recoveryStore: RecoveryStateStore | null = null;
+let dataRoot: DataRootMigrationResult | null = null;
+let bootstrapFailureReason: string | null = null;
+
 try {
-	mkdirSync(userData, { recursive: true, mode: 0o700 });
-	mkdirSync(join(userData, "Chromium"), { recursive: true, mode: 0o700 });
+	recoveryStore = new RecoveryStateStore(recoveryRoot, {
+		productDataRoots: [canonicalDataRoot, legacyDataRoot],
+	});
+	dataRoot = resolveDataRoot({
+		appDataRoot: appDataBase,
+		canonicalDirectoryName: productConfig.dataDirectoryName,
+		migrateLegacy: migrateLegacyDataRoot,
+		recoveryStore,
+	});
+	if (dataRoot.status === "recovery_required") bootstrapFailureReason = dataRoot.message;
 } catch {
-	failInit("Failed to initialize application data directory");
+	bootstrapFailureReason = "Failed to resolve the application data directory safely";
 }
-app.setPath("userData", userData);
-app.setPath("sessionData", join(userData, "Chromium"));
+
+const defaultElectronUserData = app.getPath("userData");
+let userData =
+	dataRoot?.status === "ready" ? dataRoot.root : join(recoveryRoot, "recovery-electron-profile");
+try {
+	mkdirSync(join(userData, "Chromium"), { recursive: true, mode: 0o700 });
+	app.setPath("userData", userData);
+	app.setPath("sessionData", join(userData, "Chromium"));
+} catch {
+	userData = defaultElectronUserData;
+	bootstrapFailureReason ??= "Failed to initialize the application data directory safely";
+}
 
 // Only packaged builds enforce one instance per install. Unpackaged
 // development/source-E2E runs need parallel instances with distinct data
@@ -145,6 +183,117 @@ function requestShutdown(exitCode: number): void {
 	app.quit();
 }
 
+const RECOVERY_BUTTONS = [
+	"Retry",
+	"Restore verified backup",
+	"Export current data",
+	"Open data location",
+	"Open backup location",
+	"Safe reset",
+	"Exit",
+] as const;
+const RECOVERY_BUTTON_ACTIONS = [
+	"retry",
+	"restore_backup",
+	"export_data",
+	"open_data_location",
+	"open_backup_location",
+	"safe_reset",
+	"exit",
+] as const;
+
+function nativeRecoveryInterface(): NativeRecoveryInterface {
+	return {
+		chooseAction: async (prompt: RecoveryPrompt) => {
+			const result = await dialog.showMessageBox({
+				type: "warning",
+				title: `${productConfig.productName} Recovery`,
+				message: "Application recovery is required",
+				detail: prompt.reason,
+				buttons: [...RECOVERY_BUTTONS],
+				defaultId: 0,
+				cancelId: RECOVERY_BUTTONS.length - 1,
+				noLink: true,
+			});
+			return RECOVERY_BUTTON_ACTIONS[result.response] ?? "exit";
+		},
+		chooseDestination: async (request: RecoveryDestinationRequest) => {
+			const result = await dialog.showSaveDialog({
+				title:
+					request.purpose === "safe_reset"
+						? "Create recovery export before safe reset"
+						: "Export current application data",
+				defaultPath: join(app.getPath("documents"), request.suggestedName),
+				buttonLabel: "Create recovery export",
+				properties: ["createDirectory", "showOverwriteConfirmation"],
+			});
+			return result.canceled ? null : (result.filePath ?? null);
+		},
+		openPath: async (path) => {
+			const error = await shell.openPath(path);
+			if (error) throw new Error("The selected recovery location could not be opened");
+		},
+		exit: () => {
+			// The recovery loop owns shutdown so cancellation and Exit converge.
+		},
+	};
+}
+
+function recoveryDataRoot(): string {
+	if (dataRoot?.status === "ready") return dataRoot.root;
+	if (dataRoot?.status === "recovery_required") {
+		if (existsSync(dataRoot.canonicalRoot)) return dataRoot.canonicalRoot;
+		if (existsSync(dataRoot.legacyRoot)) return dataRoot.legacyRoot;
+		if (existsSync(dataRoot.stagingRoot)) return dataRoot.stagingRoot;
+		return dataRoot.canonicalRoot;
+	}
+	return canonicalDataRoot;
+}
+
+function firstPendingIncident(): RecoveryIncident | undefined {
+	if (dataRoot?.status === "recovery_required" && dataRoot.incident?.status === "ok") {
+		return dataRoot.incident.record;
+	}
+	if (!recoveryStore) return undefined;
+	try {
+		return recoveryStore.list().records.find((record) => record.status === "pending");
+	} catch {
+		return undefined;
+	}
+}
+
+async function runRecoveryInterface(
+	reason: string,
+	retry: () => boolean | Promise<boolean>,
+): Promise<void> {
+	const incident = firstPendingIncident();
+	const recovery = new RecoveryController({
+		reason,
+		dataRoot: recoveryDataRoot(),
+		resetTarget: canonicalDataRoot,
+		...(incident && recoveryStore ? { incident, stateStore: recoveryStore } : {}),
+		native: nativeRecoveryInterface(),
+		retry,
+	});
+	for (;;) {
+		const result = await recovery.present();
+		if (result.status === "failed") {
+			await dialog.showMessageBox({
+				type: "error",
+				title: `${productConfig.productName} Recovery`,
+				message: "Recovery action was not completed",
+				detail: result.message,
+				buttons: ["Return to recovery"],
+			});
+			continue;
+		}
+		if (result.status === "succeeded" && !result.restartRequired) continue;
+		if (result.status === "succeeded") app.relaunch();
+		requestShutdown(result.status === "succeeded" ? 0 : 1);
+		return;
+	}
+}
+
 app.on("before-quit", (event) => {
 	if (shutdownComplete) return;
 	if (updateTimer) {
@@ -200,6 +349,16 @@ function bundledGitRuntime(): { shellPath: string; pathEntries: string[] } | und
 		: undefined;
 }
 
+function sourceE2EPiWorkerPath(): string | undefined {
+	if (!isSourceE2E) return undefined;
+	const configured = process.env.BEAR_E2E_PI_WORKER_PATH;
+	if (!configured) return undefined;
+	if (!isAbsolute(configured)) throw new Error("BEAR_E2E_PI_WORKER_PATH must be absolute");
+	const canonical = realpathSync.native(configured);
+	if (canonical !== configured) throw new Error("BEAR_E2E_PI_WORKER_PATH must be canonical");
+	return canonical;
+}
+
 async function initializeHost(): Promise<boolean> {
 	let ipcHandlersDispose: (() => void) | null = null;
 	try {
@@ -219,6 +378,7 @@ async function initializeHost(): Promise<boolean> {
 					}
 				: undefined,
 			bundledGit: bundledGitRuntime(),
+			piWorkerPath: sourceE2EPiWorkerPath(),
 		});
 		const disposeRouter = wireElectronIpcHandlers(runtime.dispatcher, windowRegistry, {
 			attachmentProtocol,
@@ -323,7 +483,10 @@ function createMainWindow(): void {
 			requestShutdown(1);
 		},
 	);
-	window.once("ready-to-show", () => window.show());
+	window.once("ready-to-show", () => {
+		if (process.env.BEAR_E2E_SOURCE === "1") window.showInactive();
+		else window.show();
+	});
 	if (loadFromHtml) void window.loadFile(rendererHtmlPath);
 	else void window.loadURL(DEV_RENDERER_URL);
 }
@@ -343,14 +506,39 @@ diagnostics.runInSession(() => {
 	app
 		.whenReady()
 		.then(async () => {
+			if (bootstrapFailureReason) {
+				await runRecoveryInterface(bootstrapFailureReason, () => {
+					if (!recoveryStore) return false;
+					try {
+						const retried = resolveDataRoot({
+							appDataRoot: appDataBase,
+							canonicalDirectoryName: productConfig.dataDirectoryName,
+							migrateLegacy: migrateLegacyDataRoot,
+							recoveryStore,
+						});
+						if (retried.status !== "ready") return false;
+						dataRoot = retried;
+						bootstrapFailureReason = null;
+						return true;
+					} catch {
+						return false;
+					}
+				});
+				return;
+			}
 			updateService = new UpdateService({
 				feedUrl: productConfig.updateFeedUrl ?? "",
 				currentVersion: app.getVersion(),
 				stagingDir: join(userData, "updates"),
 				publisherPolicy: productConfig.updatePublisher,
 			});
-			if (!(await initializeHost())) failInit("Failed to initialize companion host runtime");
-			if (!hostRuntime) failInit("Host runtime is unavailable");
+			if (!(await initializeHost()) || !hostRuntime) {
+				await runRecoveryInterface(
+					"Failed to initialize the local companion host runtime safely",
+					initializeHost,
+				);
+				return;
+			}
 			registerConversationAttachmentProtocol(attachmentProtocol);
 			// Idle update checks every 6h; the renderer can also trigger on
 			// demand via the update.check:v1 RPC. No-op while the feed is empty.
@@ -362,8 +550,20 @@ diagnostics.runInSession(() => {
 			updateTimer.unref?.();
 			createMainWindow();
 		})
-		.catch((error: unknown) => {
-			failInit(error instanceof Error ? error.message : String(error));
+		.catch(async (error: unknown) => {
+			try {
+				await runRecoveryInterface(
+					error instanceof Error ? error.message : "Desktop initialization failed safely",
+					() => false,
+				);
+			} catch (recoveryError) {
+				process.stderr.write(
+					`native recovery interface unavailable: ${
+						recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
+					}\n`,
+				);
+				requestShutdown(1);
+			}
 		});
 
 	app.on("activate", () => {

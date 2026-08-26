@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	createDiagnostics,
@@ -41,6 +41,13 @@ const dataDir = webDevDataDirectory(productConfig.dataDirectoryName);
 mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 const token = randomBytes(32).toString("hex");
 const debugEnabled = process.env.BEAR_WEB_DEV_DEBUG === "1";
+const configuredPiWorkerPath = process.env.BEAR_WEB_DEV_PI_WORKER_PATH;
+if (configuredPiWorkerPath && !isAbsolute(configuredPiWorkerPath)) {
+	throw new Error("BEAR_WEB_DEV_PI_WORKER_PATH must be absolute");
+}
+const piWorkerPath = configuredPiWorkerPath
+	? realpathSync.native(configuredPiWorkerPath)
+	: undefined;
 const diagnostics: Diagnostics = createDiagnostics({
 	app: {
 		setAppLogsPath: () => undefined,
@@ -189,6 +196,7 @@ const runtime = createHostRuntime({
 	productConfig,
 	credentialVault: createWebCredentialVault(dataDir),
 	protocolViolationMode: "throw",
+	...(piWorkerPath ? { piWorkerPath } : {}),
 	conversationAttachmentUrlFactory: (request) => {
 		const capability = randomUUID();
 		attachmentCapabilities.set(capability, {
