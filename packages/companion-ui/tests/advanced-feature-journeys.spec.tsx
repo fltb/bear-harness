@@ -6,6 +6,9 @@ import { CanonStudio } from "../src/features/CanonStudio.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
 
 function renderWithStore(ui: () => unknown, store: Partial<CompanionStore>) {
+	store.characters = {
+		observePackage: () => ({ data: () => undefined, loading: () => false, error: () => null }),
+	} as never;
 	return render(() => (
 		<DesktopProvider store={store as CompanionStore}>{ui() as never}</DesktopProvider>
 	));
@@ -15,17 +18,16 @@ describe("advanced feature journeys", () => {
 	it("adds canon source, searches original text, and creates a referenced module", async () => {
 		const user = userEvent.setup();
 		const addSource = vi.fn(() => Promise.resolve());
-		const search = vi.fn(() =>
-			Promise.resolve([
-				{
-					id: "chunk-1",
-					sourceId: "source-1",
-					sourceName: "第一卷",
-					ordinal: 0,
-					content: "原文片段",
-				},
-			]),
-		);
+		const chunks = [
+			{
+				id: "chunk-1",
+				sourceId: "source-1",
+				sourceName: "第一卷",
+				ordinal: 0,
+				content: "原文片段",
+			},
+		];
+		const search = vi.fn(() => Promise.resolve(chunks));
 		const upsertModule = vi.fn(() => Promise.resolve());
 		renderWithStore(() => <CanonStudio />, {
 			canon: {
@@ -35,6 +37,7 @@ describe("advanced feature journeys", () => {
 				listModules: vi.fn(() => Promise.resolve()),
 				addSource,
 				search,
+				searchResults: () => chunks,
 				upsertModule,
 			} as never,
 		});

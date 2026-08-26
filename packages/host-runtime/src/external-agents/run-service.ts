@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync, readdirSync, rmSync, type Stats } from "node:fs";
 import { join, resolve } from "node:path";
-import { and, count, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { EventPayloadSchemas } from "@bear-harness/protocol/schema";
+import { and, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type {
 	ConversationAttachmentService,
 	ConversationAttachmentSummary,
@@ -14,7 +15,7 @@ import type {
 } from "../executors/router.js";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
-import { conversations, evidence, runs } from "../storage/schema.js";
+import { conversations, events, evidence, runs } from "../storage/schema.js";
 
 export const MAX_ACTIVE_RUNS = 2;
 const MAX_RUN_CLEANUP_ENTRIES = 10_000;
@@ -484,6 +485,26 @@ export class ExternalAgentRunService {
 		await this.executorRouter.cancel(this.executorRun(run));
 		return this.terminate(runId, "cancelled", null, []);
 	}
+	pendingPermissions(companionId: string) {
+		return this.list(companionId)
+			.filter((run) => run.status === "needs_user")
+			.flatMap((run) => {
+				const row = this.db
+					.select({ payload: events.payload })
+					.from(events)
+					.where(
+						and(
+							eq(events.kind, "run.needs_user"),
+							sql`json_extract(${events.payload}, '$.runId') = ${run.id}`,
+						),
+					)
+					.orderBy(desc(events.seq))
+					.limit(1)
+					.get();
+				return row ? [EventPayloadSchemas["run.needs_user"].parse(row.payload)] : [];
+			});
+	}
+
 	list(companionId?: string): RunSummary[] {
 		const rows = companionId
 			? this.db

@@ -26,4 +26,6 @@ export {
 	type RendererFault,
 	type RendererFaultReporter,
 } from "./diagnostics.js";
+export { markSelectPortalTopLayer } from "./lib/select-portal.js";
+export { createStableSnapshot } from "./lib/stable-snapshot.js";
 export * from "./stores/companion.js";

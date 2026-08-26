@@ -1,6 +1,7 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
+import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import {
 	AttachmentPreviewProvider,
@@ -38,9 +39,22 @@ function renderPreview(
 	attachment: typeof textAttachment | typeof folderAttachment,
 	attachments: Pick<CompanionStore["attachments"], "read" | "url">,
 ) {
+	const [reads, setReads] = createSignal<
+		Record<string, Awaited<ReturnType<typeof attachments.read>>>
+	>({});
 	const store = {
 		activeConversationId: "conversation-1",
-		attachments,
+		attachments: {
+			...attachments,
+			list: async () => [attachment],
+			data: () => attachment,
+			readData: (params: Parameters<typeof attachments.read>[0]) => reads()[JSON.stringify(params)],
+			read: async (params: Parameters<typeof attachments.read>[0]) => {
+				const result = await attachments.read(params);
+				setReads((previous) => ({ ...previous, [JSON.stringify(params)]: result }));
+				return result;
+			},
+		},
 	} as unknown as CompanionStore;
 	return render(() => (
 		<DesktopProvider store={store}>

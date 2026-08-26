@@ -1,4 +1,5 @@
-import { type Accessor, createEffect, createMemo, createSignal } from "solid-js";
+import { type Accessor, createMemo, createSignal } from "solid-js";
+import { createStableSnapshot } from "../lib/stable-snapshot.js";
 import type {
 	CanonChunk,
 	CanonModuleKind,
@@ -41,24 +42,18 @@ function messageOf(value: unknown): string {
 }
 
 interface MemoryListState {
-	entries: MemoryEntry[];
-	loading: boolean;
 	error: string | null;
 	feedback: string | null;
 	busyId: string | null;
 	editingEntryId: string | null;
 	editedEntryText: string;
-	excludedIds: ReadonlySet<string>;
 }
 const EMPTY_MEMORY_LIST: MemoryListState = {
-	entries: [],
-	loading: false,
 	error: null,
 	feedback: null,
 	busyId: null,
 	editingEntryId: null,
 	editedEntryText: "",
-	excludedIds: new Set(),
 };
 
 interface CandidateState {
@@ -207,65 +202,24 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 	const [roleBusyId, setRoleBusyId] = createSignal<string>();
 	const [importing, setImporting] = createSignal(false);
 	const [roleFeedback, setRoleFeedback] = createSignal<string>();
-	const [trustById, setTrustById] = createSignal<Record<string, PluginTrust>>({});
-	const [trustLoadingById, setTrustLoadingById] = createSignal<Record<string, boolean>>({});
 	const [confirmingById, setConfirmingById] = createSignal<Record<string, boolean>>({});
-	const trustRequests = new Set<string>();
-	const loadTrust = async (id: string, force = false): Promise<void> => {
-		if (!force && trustRequests.has(id)) return;
-		trustRequests.add(id);
-		setTrustLoadingById((current) => ({ ...current, [id]: true }));
-		try {
-			const trust = companion.characters?.pluginTrust
-				? await companion.characters.pluginTrust(id)
-				: DEFAULT_PLUGIN_TRUST;
-			setTrustById((current) => ({ ...current, [id]: trust }));
-		} finally {
-			setTrustLoadingById((current) => ({ ...current, [id]: false }));
-		}
-	};
-	const [selectedPackageId, setSelectedPackageId] = createSignal<string>();
-	const [selectedPackage, setSelectedPackage] =
-		createSignal<import("./ipc.js").CharacterPackageDocument>();
-	const [selectedPackageLoading, setSelectedPackageLoading] = createSignal(false);
-	const [selectedPackageError, setSelectedPackageError] = createSignal<string>();
-	let packageRequest = 0;
-	const loadPackage = async (id: string): Promise<void> => {
-		const request = ++packageRequest;
-		setSelectedPackageLoading(true);
-		setSelectedPackageError(undefined);
-		try {
-			const value = await companion.characters.packageGet(id);
-			if (request !== packageRequest) return;
-			setSelectedPackageId(id);
-			setSelectedPackage(value);
-		} catch (error) {
-			if (request === packageRequest) setSelectedPackageError(messageOf(error));
-		} finally {
-			if (request === packageRequest) setSelectedPackageLoading(false);
-		}
-	};
-	createEffect(() => {
-		const values = companion.characters?.characters?.() ?? [];
-		if (!selectedPackageId() && values[0])
-			void loadPackage(values.find((value) => value.active)?.id ?? values[0].id);
-	});
+	const [chosenPackageId, setSelectedPackageId] = createSignal<string>();
+	const selectedPackageId = createMemo(
+		() =>
+			chosenPackageId() ??
+			companion.characters?.characters?.().find((item) => item.active)?.id ??
+			companion.characters?.characters?.()[0]?.id,
+	);
+	const packageQuery = companion.characters.observePackage(selectedPackageId);
+	const selectedPackage = () => packageQuery.data()?.package;
+	const selectedPackageLoading = packageQuery.loading;
+	const selectedPackageError = () =>
+		packageQuery.error() ? messageOf(packageQuery.error()) : undefined;
 
 	const [relationshipSaving, setRelationshipSaving] = createSignal(false);
 	const [relationshipFeedback, setRelationshipFeedback] = createSignal<string>();
 	const [relationshipError, setRelationshipError] = createSignal<string>();
-	let settingsRequested = false;
-	const settingsData = createMemo(() => {
-		const api = companion.settings;
-		const data = api?.data?.();
-		if (data === undefined && !settingsRequested && api?.get) {
-			settingsRequested = true;
-			void Promise.resolve()
-				.then(() => api.get())
-				.catch((error) => setRelationshipError(messageOf(error)));
-		}
-		return data;
-	});
+	const settingsData = createMemo(() => companion.settings?.data?.());
 	const relationshipEnabled = createMemo(() => settingsData()?.relationshipMemoryEnabled ?? false);
 	const historyReadEnabled = createMemo(
 		() => settingsData()?.conversationHistoryReadEnabled ?? false,
@@ -275,7 +229,9 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 	const [canonSourceName, setCanonSourceName] = createSignal("");
 	const [canonSourceText, setCanonSourceText] = createSignal("");
 	const [canonQuery, setCanonQuery] = createSignal("");
-	const [canonResults, setCanonResults] = createSignal<CanonChunk[]>([]);
+	const [submittedCanonQuery, setSubmittedCanonQuery] = createSignal("");
+	const canonResults = () =>
+		submittedCanonQuery() ? companion.canon.searchResults(submittedCanonQuery()) : [];
 	const [canonModuleTitle, setCanonModuleTitle] = createSignal("");
 	const [canonModuleInstructions, setCanonModuleInstructions] = createSignal("");
 	const [canonModuleKind, setCanonModuleKind] = createSignal<CanonModuleKind>("arc");
@@ -304,7 +260,7 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		const existingSelectors = canonSelectors.get(noParentTitle.toString());
 		if (existingSelectors) return existingSelectors;
 		const moduleKinds = createMemo(() => CANON_KINDS.map((id) => ({ id, label: kindLabel(id) })));
-		const parentModules = createMemo(() => [
+		const parentModules = createStableSnapshot(() => [
 			{
 				id: "",
 				kind: "root" as const,
@@ -368,8 +324,8 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 				const seq = ++canonSearchSeq;
 				void Promise.resolve()
 					.then(() => api.search(query))
-					.then((result) => {
-						if (seq === canonSearchSeq) setCanonResults(result);
+					.then(() => {
+						if (seq === canonSearchSeq) setSubmittedCanonQuery(query);
 					});
 			},
 			toggleChunk: (chunkId, checked) =>
@@ -456,7 +412,6 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 	};
 
 	const [memoryLists, setMemoryLists] = createSignal<Record<string, MemoryListState>>({});
-	const memoryRequestSeq = new Map<string, number>();
 	const listKey = (scope: MemoryScope, query: string, characterId?: string): string =>
 		`${characterId ?? "active"}\u0000${scope}\u0000${query}`;
 	const patchMemoryList = (key: string, patch: Partial<MemoryListState>): void => {
@@ -470,38 +425,10 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		query: string,
 		characterId?: string,
 	): Promise<void> => {
-		const key = listKey(scope, query, characterId);
-		const seq = (memoryRequestSeq.get(key) ?? 0) + 1;
-		memoryRequestSeq.set(key, seq);
-		patchMemoryList(key, { loading: true, error: null });
-		const api = companion.memory;
-		if (!api || (query === "" ? !api.list : !api.search)) {
-			patchMemoryList(key, { entries: [], loading: false });
-			return;
-		}
-		try {
-			const entries =
-				query === ""
-					? await api.list({
-							scope,
-							...((characterId ??
-							companion.characters?.characters().find((character) => character.active)?.id)
-								? {
-										characterId:
-											characterId ??
-											companion.characters?.characters().find((character) => character.active)?.id,
-									}
-								: {}),
-						})
-					: await api.search(query, scope, characterId);
-			if (memoryRequestSeq.get(key) !== seq) return;
-			patchMemoryList(key, { entries });
-		} catch (error) {
-			if (memoryRequestSeq.get(key) !== seq) return;
-			patchMemoryList(key, { entries: [], error: messageOf(error) });
-		} finally {
-			if (memoryRequestSeq.get(key) === seq) patchMemoryList(key, { loading: false });
-		}
+		const id =
+			characterId ?? companion.characters?.characters().find((character) => character.active)?.id;
+		if (query) await companion.memory.search(query, scope, id);
+		else await companion.memory.list({ scope, ...(id ? { characterId: id } : {}) });
 	};
 	const memoryListSelectors = new Map<string, MemoryEntryListSelectors>();
 	const memoryEntryList = (
@@ -514,21 +441,31 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		const existingSelectors = memoryListSelectors.get(identity);
 		if (existingSelectors) return existingSelectors;
 		const currentKey = createMemo(() => listKey(scope(), query().trim(), characterId?.()));
-		const currentState = createMemo(() => memoryLists()[currentKey()] ?? EMPTY_MEMORY_LIST);
-		createEffect(() => {
-			void refresh();
-			void reloadMemoryList(scope(), query().trim(), characterId?.());
+		const currentState = createMemo(() => {
+			const local = memoryLists()[currentKey()] ?? EMPTY_MEMORY_LIST;
+			const remote = companion.memory.listState(scope(), query().trim(), characterId?.());
+			return { ...local, ...remote, error: local.error ?? remote.error };
 		});
+		const projection = companion.memory.observeList(scope, query, characterId);
+
+		const excludedIds = createMemo(
+			() =>
+				new Set(
+					(projection.data()?.entries ?? [])
+						.filter((entry) => entry.excluded)
+						.map((entry) => entry.id),
+				),
+		);
 		const selectors: MemoryEntryListSelectors = {
-			entries: createMemo(() => currentState().entries),
-			loading: createMemo(() => currentState().loading),
-			excluded: (entryId) => createMemo(() => currentState().excludedIds.has(entryId)),
+			entries: createMemo(() => projection.data()?.entries ?? []),
+			loading: projection.loading,
+			excluded: (entryId) => createMemo(() => excludedIds().has(entryId)),
 			error: createMemo(() => currentState().error),
 			feedback: createMemo(() => currentState().feedback),
 			busyId: createMemo(() => currentState().busyId),
 			editingEntryId: createMemo(() => currentState().editingEntryId),
 			editedEntryText: createMemo(() => currentState().editedEntryText),
-			excludedIds: createMemo(() => currentState().excludedIds),
+			excludedIds,
 			setEditedEntryText: (value) => patchMemoryList(currentKey(), { editedEntryText: value }),
 			startEditing: (entry) =>
 				patchMemoryList(currentKey(), { editingEntryId: entry.id, editedEntryText: entry.text }),
@@ -551,15 +488,13 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 				const api = companion.memory;
 				if (!api?.exclude) return;
 				const key = currentKey();
-				const next = !currentState().excludedIds.has(entry.id);
+				const next = !excludedIds().has(entry.id);
 				patchMemoryList(key, { busyId: entry.id, error: null, feedback: null });
 				void Promise.resolve()
 					.then(() => api.exclude(entry.id, next, characterId?.()))
 					.then(() => {
-						const ids = new Set(currentState().excludedIds);
-						if (next) ids.add(entry.id);
-						else ids.delete(entry.id);
-						patchMemoryList(key, { excludedIds: ids, feedback: next ? excluded : included });
+						patchMemoryList(key, { feedback: next ? excluded : included });
+						return reloadMemoryList(scope(), query().trim(), characterId?.());
 					})
 					.catch((error) => patchMemoryList(key, { error: messageOf(error) }))
 					.finally(() => patchMemoryList(key, { busyId: null }));
@@ -583,48 +518,10 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 	};
 
 	const [candidateValues, setCandidateValues] = createSignal<Record<string, CandidateState>>({});
-	const [memoryCandidatesState, setMemoryCandidatesState] = createSignal<MemoryCandidate[]>([]);
-	const [memoryCandidatesLoadingState, setMemoryCandidatesLoadingState] = createSignal(false);
-	const [memoryCandidatesErrorState, setMemoryCandidatesErrorState] = createSignal<string | null>(
-		null,
-	);
-	let candidatesRequestSeq = 0;
-	let candidatesRequested = false;
-	const loadCandidates = async (): Promise<void> => {
-		const seq = ++candidatesRequestSeq;
-		setMemoryCandidatesLoadingState(true);
-		setMemoryCandidatesErrorState(null);
-		const api = companion.memory;
-		if (!api?.listCandidates) {
-			setMemoryCandidatesLoadingState(false);
-			return;
-		}
-		try {
-			const candidates = await api.listCandidates();
-			if (seq === candidatesRequestSeq) setMemoryCandidatesState(candidates);
-		} catch (error) {
-			if (seq === candidatesRequestSeq) setMemoryCandidatesErrorState(messageOf(error));
-		} finally {
-			if (seq === candidatesRequestSeq) setMemoryCandidatesLoadingState(false);
-		}
-	};
-	const ensureCandidatesLoaded = (): void => {
-		if (candidatesRequested) return;
-		candidatesRequested = true;
-		void loadCandidates();
-	};
-	const memoryCandidates = createMemo(() => {
-		ensureCandidatesLoaded();
-		return memoryCandidatesState();
-	});
-	const memoryCandidatesLoading = createMemo(() => {
-		ensureCandidatesLoaded();
-		return memoryCandidatesLoadingState();
-	});
-	const memoryCandidatesError = createMemo(() => {
-		ensureCandidatesLoaded();
-		return memoryCandidatesErrorState();
-	});
+	const memoryCandidates = () => companion.memory.candidateState().candidates;
+	const memoryCandidatesLoading = () => companion.memory.candidateState().loading;
+	const memoryCandidatesError = () => companion.memory.candidateState().error;
+
 	const candidateSelectors = new Map<string, MemoryCandidateSelectors>();
 	const memoryCandidate = (candidate: Accessor<MemoryCandidate>): MemoryCandidateSelectors => {
 		const id = candidate().id;
@@ -757,13 +654,13 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 				.catch((error) => setRoleFeedback(`${failed}${messageOf(error)}`))
 				.finally(() => setImporting(false));
 		},
-		characters: createMemo(() => {
-			const values = companion.characters?.characters?.() ?? [];
-			for (const character of values) void loadTrust(character.id);
-			return values;
-		}),
-		pluginTrust: (id) => createMemo(() => trustById()[id]),
-		pluginTrustLoading: (id) => createMemo(() => trustLoadingById()[id] ?? false),
+		characters: createMemo(() => companion.characters?.characters?.() ?? []),
+		pluginTrust: (id) => {
+			const query = companion.characters.observeTrust(() => id);
+			return () => query.data()?.trust;
+		},
+		pluginTrustLoading: (id) => () => companion.characters.pluginTrustData(id) === undefined,
+
 		confirmingPlugins: (id) => createMemo(() => confirmingById()[id] ?? false),
 		setConfirmingPlugins: (id, value) =>
 			setConfirmingById((current) => ({ ...current, [id]: value })),
@@ -773,7 +670,7 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 			setRoleBusyId(id);
 			void Promise.resolve()
 				.then(() => api.confirmPluginTrust(id))
-				.then(() => loadTrust(id, true))
+				.then(() => api.pluginTrust(id))
 				.then(() => setConfirmingById((current) => ({ ...current, [id]: false })))
 				.finally(() => setRoleBusyId(undefined));
 		},
@@ -790,7 +687,7 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		selectedPackageLoading,
 		selectedPackageError,
 		selectPackage: (id, confirmDiscard) => {
-			if (id !== selectedPackageId() && confirmDiscard()) void loadPackage(id);
+			if (id !== selectedPackageId() && confirmDiscard()) setSelectedPackageId(id);
 		},
 		savePackage: async (yaml) => {
 			const current = selectedPackage();
@@ -800,7 +697,6 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 				yaml,
 				current.sha256,
 			);
-			setSelectedPackage(next);
 			return next;
 		},
 		canon: createCanonSelectors,

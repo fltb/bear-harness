@@ -49,6 +49,7 @@ const characterLoader = new CharacterLoader(characterRoot);
 describe("ContextPackCompiler character prompt layers", () => {
 	it("injects description, personality, and scenario in deterministic order", () => {
 		const db = new DatabaseSync(":memory:");
+		db.function("bear_sync_changed", () => null);
 		for (const migration of MIGRATIONS) db.exec(migration.up);
 		db.prepare("INSERT INTO companion_packages (id, name, version, hash) VALUES (?, ?, ?, ?)").run(
 			"jizhou",
@@ -141,6 +142,7 @@ describe("ContextPackCompiler character prompt layers", () => {
 
 	it("composes externally retrieved memory before rendering the context blocks", async () => {
 		const db = new DatabaseSync(":memory:");
+		db.function("bear_sync_changed", () => null);
 		try {
 			for (const migration of MIGRATIONS) db.exec(migration.up);
 			db.prepare(

@@ -114,6 +114,46 @@ export class Database {
 	/** The typed application query interface. */
 	readonly orm: AppDatabase;
 
+	private readonly syncListeners = new Set<(revision: number, tables: string[]) => void>();
+	private syncNotificationQueued = false;
+	private syncClosed = false;
+	private deliveredSyncRevision = 0;
+
+	/** Durable watermark; SQLite rolls it back together with the business write. */
+	syncRevision(): number {
+		return Number(
+			this.connection.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'sync_changes'").get()
+				?.seq ?? 0,
+		);
+	}
+
+	subscribeSync(listener: (revision: number, tables: string[]) => void): () => void {
+		this.syncListeners.add(listener);
+		return () => this.syncListeners.delete(listener);
+	}
+
+	private scheduleSyncNotification(): void {
+		if (this.syncNotificationQueued || this.syncClosed) return;
+		this.syncNotificationQueued = true;
+		queueMicrotask(() => {
+			this.syncNotificationQueued = false;
+			if (this.syncClosed) return;
+			// SQL triggers run inside the caller's transaction. Delivery runs only
+			// after the synchronous transaction has committed or rolled back.
+			if (this.connection.isTransaction) return;
+			const revision = this.syncRevision();
+			if (revision <= this.deliveredSyncRevision) return;
+			const tables = this.connection
+				.prepare("SELECT DISTINCT source FROM sync_changes WHERE revision > ? AND revision <= ?")
+				.all(this.deliveredSyncRevision, revision)
+				.map((row) => String(row.source));
+			this.deliveredSyncRevision = revision;
+			// Retain a bounded diagnostic tail; sqlite_sequence preserves the watermark.
+			this.connection.prepare("DELETE FROM sync_changes WHERE revision <= ?").run(revision - 10000);
+			for (const listener of this.syncListeners) listener(revision, tables);
+		});
+	}
+
 	private readonly dbPath: string;
 	private readonly backupDir: string;
 	private readonly upgradeMarkerPath: string;
@@ -126,6 +166,10 @@ export class Database {
 		mkdirSync(this.backupDir, { recursive: true });
 
 		this.connection = new DatabaseSync(this.dbPath, { allowExtension: true });
+		this.connection.function("bear_sync_changed", () => {
+			this.scheduleSyncNotification();
+			return 0;
+		});
 		this.orm = createAppDatabase(this.connection);
 		try {
 			this.connection.enableLoadExtension(true);
@@ -154,6 +198,8 @@ export class Database {
 
 	/** Close the connection. Idempotent per instance. */
 	close(): void {
+		this.syncClosed = true;
+		this.syncListeners.clear();
 		this.connection.close();
 	}
 	ensureCanonVectorIndex(dimensions: number): { ready: boolean; reset: boolean } {
@@ -1547,5 +1593,261 @@ export const MIGRATIONS: Migration[] = [
 			CREATE UNIQUE INDEX pending_turns_conversation_entry
 				ON pending_turns(conversation_id, pi_entry_id);
 		`,
+	},
+	{
+		id: 29,
+		description: "Record every canonical state change in a transactional synchronization journal",
+		up: `CREATE TABLE sync_changes (
+			revision INTEGER PRIMARY KEY AUTOINCREMENT,
+			source TEXT NOT NULL
+		);
+CREATE TRIGGER sync_companion_packages_insert AFTER INSERT ON "companion_packages" BEGIN
+INSERT INTO sync_changes(source) VALUES ('companion_packages'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_companion_packages_update AFTER UPDATE ON "companion_packages" BEGIN
+INSERT INTO sync_changes(source) VALUES ('companion_packages'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_companion_packages_delete AFTER DELETE ON "companion_packages" BEGIN
+INSERT INTO sync_changes(source) VALUES ('companion_packages'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_companion_identity_insert AFTER INSERT ON "companion_identity" BEGIN
+INSERT INTO sync_changes(source) VALUES ('companion_identity'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_companion_identity_update AFTER UPDATE ON "companion_identity" BEGIN
+INSERT INTO sync_changes(source) VALUES ('companion_identity'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_companion_identity_delete AFTER DELETE ON "companion_identity" BEGIN
+INSERT INTO sync_changes(source) VALUES ('companion_identity'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_self_canon_versions_insert AFTER INSERT ON "self_canon_versions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('self_canon_versions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_self_canon_versions_update AFTER UPDATE ON "self_canon_versions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('self_canon_versions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_self_canon_versions_delete AFTER DELETE ON "self_canon_versions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('self_canon_versions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversations_insert AFTER INSERT ON "conversations" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversations'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversations_update AFTER UPDATE ON "conversations" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversations'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversations_delete AFTER DELETE ON "conversations" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversations'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversation_sessions_insert AFTER INSERT ON "conversation_sessions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversation_sessions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversation_sessions_update AFTER UPDATE ON "conversation_sessions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversation_sessions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversation_sessions_delete AFTER DELETE ON "conversation_sessions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversation_sessions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_active_conversations_insert AFTER INSERT ON "active_conversations" BEGIN
+INSERT INTO sync_changes(source) VALUES ('active_conversations'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_active_conversations_update AFTER UPDATE ON "active_conversations" BEGIN
+INSERT INTO sync_changes(source) VALUES ('active_conversations'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_active_conversations_delete AFTER DELETE ON "active_conversations" BEGIN
+INSERT INTO sync_changes(source) VALUES ('active_conversations'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_scene_state_insert AFTER INSERT ON "scene_state" BEGIN
+INSERT INTO sync_changes(source) VALUES ('scene_state'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_scene_state_update AFTER UPDATE ON "scene_state" BEGIN
+INSERT INTO sync_changes(source) VALUES ('scene_state'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_scene_state_delete AFTER DELETE ON "scene_state" BEGIN
+INSERT INTO sync_changes(source) VALUES ('scene_state'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversation_directives_insert AFTER INSERT ON "conversation_directives" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversation_directives'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversation_directives_update AFTER UPDATE ON "conversation_directives" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversation_directives'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversation_directives_delete AFTER DELETE ON "conversation_directives" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversation_directives'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_relationship_memory_entries_insert AFTER INSERT ON "relationship_memory_entries" BEGIN
+INSERT INTO sync_changes(source) VALUES ('relationship_memory_entries'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_relationship_memory_entries_update AFTER UPDATE ON "relationship_memory_entries" BEGIN
+INSERT INTO sync_changes(source) VALUES ('relationship_memory_entries'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_relationship_memory_entries_delete AFTER DELETE ON "relationship_memory_entries" BEGIN
+INSERT INTO sync_changes(source) VALUES ('relationship_memory_entries'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_memory_candidates_insert AFTER INSERT ON "memory_candidates" BEGIN
+INSERT INTO sync_changes(source) VALUES ('memory_candidates'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_memory_candidates_update AFTER UPDATE ON "memory_candidates" BEGIN
+INSERT INTO sync_changes(source) VALUES ('memory_candidates'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_memory_candidates_delete AFTER DELETE ON "memory_candidates" BEGIN
+INSERT INTO sync_changes(source) VALUES ('memory_candidates'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_memory_decisions_insert AFTER INSERT ON "memory_decisions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('memory_decisions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_memory_decisions_update AFTER UPDATE ON "memory_decisions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('memory_decisions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_memory_decisions_delete AFTER DELETE ON "memory_decisions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('memory_decisions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_memory_presentation_insert AFTER INSERT ON "memory_presentation" BEGIN
+INSERT INTO sync_changes(source) VALUES ('memory_presentation'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_memory_presentation_update AFTER UPDATE ON "memory_presentation" BEGIN
+INSERT INTO sync_changes(source) VALUES ('memory_presentation'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_memory_presentation_delete AFTER DELETE ON "memory_presentation" BEGIN
+INSERT INTO sync_changes(source) VALUES ('memory_presentation'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_app_settings_insert AFTER INSERT ON "app_settings" BEGIN
+INSERT INTO sync_changes(source) VALUES ('app_settings'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_app_settings_update AFTER UPDATE ON "app_settings" BEGIN
+INSERT INTO sync_changes(source) VALUES ('app_settings'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_app_settings_delete AFTER DELETE ON "app_settings" BEGIN
+INSERT INTO sync_changes(source) VALUES ('app_settings'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_runs_insert AFTER INSERT ON "runs" BEGIN
+INSERT INTO sync_changes(source) VALUES ('runs'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_runs_update AFTER UPDATE ON "runs" BEGIN
+INSERT INTO sync_changes(source) VALUES ('runs'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_runs_delete AFTER DELETE ON "runs" BEGIN
+INSERT INTO sync_changes(source) VALUES ('runs'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_run_manifests_insert AFTER INSERT ON "run_manifests" BEGIN
+INSERT INTO sync_changes(source) VALUES ('run_manifests'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_run_manifests_update AFTER UPDATE ON "run_manifests" BEGIN
+INSERT INTO sync_changes(source) VALUES ('run_manifests'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_run_manifests_delete AFTER DELETE ON "run_manifests" BEGIN
+INSERT INTO sync_changes(source) VALUES ('run_manifests'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_evidence_insert AFTER INSERT ON "evidence" BEGIN
+INSERT INTO sync_changes(source) VALUES ('evidence'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_evidence_update AFTER UPDATE ON "evidence" BEGIN
+INSERT INTO sync_changes(source) VALUES ('evidence'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_evidence_delete AFTER DELETE ON "evidence" BEGIN
+INSERT INTO sync_changes(source) VALUES ('evidence'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_artifacts_insert AFTER INSERT ON "artifacts" BEGIN
+INSERT INTO sync_changes(source) VALUES ('artifacts'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_artifacts_update AFTER UPDATE ON "artifacts" BEGIN
+INSERT INTO sync_changes(source) VALUES ('artifacts'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_artifacts_delete AFTER DELETE ON "artifacts" BEGIN
+INSERT INTO sync_changes(source) VALUES ('artifacts'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversation_attachments_insert AFTER INSERT ON "conversation_attachments" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversation_attachments'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversation_attachments_update AFTER UPDATE ON "conversation_attachments" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversation_attachments'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversation_attachments_delete AFTER DELETE ON "conversation_attachments" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversation_attachments'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversation_attachment_files_insert AFTER INSERT ON "conversation_attachment_files" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversation_attachment_files'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversation_attachment_files_update AFTER UPDATE ON "conversation_attachment_files" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversation_attachment_files'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversation_attachment_files_delete AFTER DELETE ON "conversation_attachment_files" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversation_attachment_files'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_pending_turns_insert AFTER INSERT ON "pending_turns" BEGIN
+INSERT INTO sync_changes(source) VALUES ('pending_turns'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_pending_turns_update AFTER UPDATE ON "pending_turns" BEGIN
+INSERT INTO sync_changes(source) VALUES ('pending_turns'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_pending_turns_delete AFTER DELETE ON "pending_turns" BEGIN
+INSERT INTO sync_changes(source) VALUES ('pending_turns'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_artifact_adoptions_insert AFTER INSERT ON "artifact_adoptions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('artifact_adoptions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_artifact_adoptions_update AFTER UPDATE ON "artifact_adoptions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('artifact_adoptions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_artifact_adoptions_delete AFTER DELETE ON "artifact_adoptions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('artifact_adoptions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_provider_accounts_insert AFTER INSERT ON "provider_accounts" BEGIN
+INSERT INTO sync_changes(source) VALUES ('provider_accounts'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_provider_accounts_update AFTER UPDATE ON "provider_accounts" BEGIN
+INSERT INTO sync_changes(source) VALUES ('provider_accounts'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_provider_accounts_delete AFTER DELETE ON "provider_accounts" BEGIN
+INSERT INTO sync_changes(source) VALUES ('provider_accounts'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_configured_models_insert AFTER INSERT ON "configured_models" BEGIN
+INSERT INTO sync_changes(source) VALUES ('configured_models'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_configured_models_update AFTER UPDATE ON "configured_models" BEGIN
+INSERT INTO sync_changes(source) VALUES ('configured_models'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_configured_models_delete AFTER DELETE ON "configured_models" BEGIN
+INSERT INTO sync_changes(source) VALUES ('configured_models'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversation_model_selections_insert AFTER INSERT ON "conversation_model_selections" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversation_model_selections'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversation_model_selections_update AFTER UPDATE ON "conversation_model_selections" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversation_model_selections'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_conversation_model_selections_delete AFTER DELETE ON "conversation_model_selections" BEGIN
+INSERT INTO sync_changes(source) VALUES ('conversation_model_selections'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_model_route_settings_insert AFTER INSERT ON "model_route_settings" BEGIN
+INSERT INTO sync_changes(source) VALUES ('model_route_settings'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_model_route_settings_update AFTER UPDATE ON "model_route_settings" BEGIN
+INSERT INTO sync_changes(source) VALUES ('model_route_settings'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_model_route_settings_delete AFTER DELETE ON "model_route_settings" BEGIN
+INSERT INTO sync_changes(source) VALUES ('model_route_settings'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_executor_profiles_insert AFTER INSERT ON "executor_profiles" BEGIN
+INSERT INTO sync_changes(source) VALUES ('executor_profiles'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_executor_profiles_update AFTER UPDATE ON "executor_profiles" BEGIN
+INSERT INTO sync_changes(source) VALUES ('executor_profiles'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_executor_profiles_delete AFTER DELETE ON "executor_profiles" BEGIN
+INSERT INTO sync_changes(source) VALUES ('executor_profiles'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_runtime_assets_insert AFTER INSERT ON "runtime_assets" BEGIN
+INSERT INTO sync_changes(source) VALUES ('runtime_assets'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_runtime_assets_update AFTER UPDATE ON "runtime_assets" BEGIN
+INSERT INTO sync_changes(source) VALUES ('runtime_assets'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_runtime_assets_delete AFTER DELETE ON "runtime_assets" BEGIN
+INSERT INTO sync_changes(source) VALUES ('runtime_assets'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_user_decisions_insert AFTER INSERT ON "user_decisions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('user_decisions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_user_decisions_update AFTER UPDATE ON "user_decisions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('user_decisions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_user_decisions_delete AFTER DELETE ON "user_decisions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('user_decisions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_onboarding_state_insert AFTER INSERT ON "onboarding_state" BEGIN
+INSERT INTO sync_changes(source) VALUES ('onboarding_state'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_onboarding_state_update AFTER UPDATE ON "onboarding_state" BEGIN
+INSERT INTO sync_changes(source) VALUES ('onboarding_state'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_onboarding_state_delete AFTER DELETE ON "onboarding_state" BEGIN
+INSERT INTO sync_changes(source) VALUES ('onboarding_state'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_canon_sources_insert AFTER INSERT ON "canon_sources" BEGIN
+INSERT INTO sync_changes(source) VALUES ('canon_sources'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_canon_sources_update AFTER UPDATE ON "canon_sources" BEGIN
+INSERT INTO sync_changes(source) VALUES ('canon_sources'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_canon_sources_delete AFTER DELETE ON "canon_sources" BEGIN
+INSERT INTO sync_changes(source) VALUES ('canon_sources'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_canon_chunks_insert AFTER INSERT ON "canon_chunks" BEGIN
+INSERT INTO sync_changes(source) VALUES ('canon_chunks'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_canon_chunks_update AFTER UPDATE ON "canon_chunks" BEGIN
+INSERT INTO sync_changes(source) VALUES ('canon_chunks'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_canon_chunks_delete AFTER DELETE ON "canon_chunks" BEGIN
+INSERT INTO sync_changes(source) VALUES ('canon_chunks'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_canon_entities_insert AFTER INSERT ON "canon_entities" BEGIN
+INSERT INTO sync_changes(source) VALUES ('canon_entities'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_canon_entities_update AFTER UPDATE ON "canon_entities" BEGIN
+INSERT INTO sync_changes(source) VALUES ('canon_entities'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_canon_entities_delete AFTER DELETE ON "canon_entities" BEGIN
+INSERT INTO sync_changes(source) VALUES ('canon_entities'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_canon_relations_insert AFTER INSERT ON "canon_relations" BEGIN
+INSERT INTO sync_changes(source) VALUES ('canon_relations'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_canon_relations_update AFTER UPDATE ON "canon_relations" BEGIN
+INSERT INTO sync_changes(source) VALUES ('canon_relations'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_canon_relations_delete AFTER DELETE ON "canon_relations" BEGIN
+INSERT INTO sync_changes(source) VALUES ('canon_relations'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_canon_package_state_insert AFTER INSERT ON "canon_package_state" BEGIN
+INSERT INTO sync_changes(source) VALUES ('canon_package_state'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_canon_package_state_update AFTER UPDATE ON "canon_package_state" BEGIN
+INSERT INTO sync_changes(source) VALUES ('canon_package_state'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_canon_package_state_delete AFTER DELETE ON "canon_package_state" BEGIN
+INSERT INTO sync_changes(source) VALUES ('canon_package_state'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_story_modules_insert AFTER INSERT ON "story_modules" BEGIN
+INSERT INTO sync_changes(source) VALUES ('story_modules'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_story_modules_update AFTER UPDATE ON "story_modules" BEGIN
+INSERT INTO sync_changes(source) VALUES ('story_modules'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_story_modules_delete AFTER DELETE ON "story_modules" BEGIN
+INSERT INTO sync_changes(source) VALUES ('story_modules'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_active_character_insert AFTER INSERT ON "active_character" BEGIN
+INSERT INTO sync_changes(source) VALUES ('active_character'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_active_character_update AFTER UPDATE ON "active_character" BEGIN
+INSERT INTO sync_changes(source) VALUES ('active_character'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_active_character_delete AFTER DELETE ON "active_character" BEGIN
+INSERT INTO sync_changes(source) VALUES ('active_character'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_character_drafts_insert AFTER INSERT ON "character_drafts" BEGIN
+INSERT INTO sync_changes(source) VALUES ('character_drafts'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_character_drafts_update AFTER UPDATE ON "character_drafts" BEGIN
+INSERT INTO sync_changes(source) VALUES ('character_drafts'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_character_drafts_delete AFTER DELETE ON "character_drafts" BEGIN
+INSERT INTO sync_changes(source) VALUES ('character_drafts'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_character_draft_revisions_insert AFTER INSERT ON "character_draft_revisions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('character_draft_revisions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_character_draft_revisions_update AFTER UPDATE ON "character_draft_revisions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('character_draft_revisions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_character_draft_revisions_delete AFTER DELETE ON "character_draft_revisions" BEGIN
+INSERT INTO sync_changes(source) VALUES ('character_draft_revisions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_roleplay_events_insert AFTER INSERT ON "roleplay_events" BEGIN
+INSERT INTO sync_changes(source) VALUES ('roleplay_events'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_roleplay_events_update AFTER UPDATE ON "roleplay_events" BEGIN
+INSERT INTO sync_changes(source) VALUES ('roleplay_events'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_roleplay_events_delete AFTER DELETE ON "roleplay_events" BEGIN
+INSERT INTO sync_changes(source) VALUES ('roleplay_events'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_roleplay_unlocks_insert AFTER INSERT ON "roleplay_unlocks" BEGIN
+INSERT INTO sync_changes(source) VALUES ('roleplay_unlocks'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_roleplay_unlocks_update AFTER UPDATE ON "roleplay_unlocks" BEGIN
+INSERT INTO sync_changes(source) VALUES ('roleplay_unlocks'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_roleplay_unlocks_delete AFTER DELETE ON "roleplay_unlocks" BEGIN
+INSERT INTO sync_changes(source) VALUES ('roleplay_unlocks'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_voice_stack_versions_insert AFTER INSERT ON voice_stack_versions BEGIN
+INSERT INTO sync_changes(source) VALUES ('voice_stack_versions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_voice_stack_versions_update AFTER UPDATE ON voice_stack_versions BEGIN
+INSERT INTO sync_changes(source) VALUES ('voice_stack_versions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_voice_stack_versions_delete AFTER DELETE ON voice_stack_versions BEGIN
+INSERT INTO sync_changes(source) VALUES ('voice_stack_versions'); SELECT bear_sync_changed(); END;
+CREATE TRIGGER sync_events_insert AFTER INSERT ON events WHEN NEW.kind != 'sync.invalidated' BEGIN
+INSERT INTO sync_changes(source) VALUES ('event:' || NEW.kind); SELECT bear_sync_changed(); END;`,
 	},
 ];

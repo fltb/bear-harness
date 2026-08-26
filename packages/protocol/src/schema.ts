@@ -67,12 +67,19 @@ export const IpcErrorKind = z.union([
 ]);
 export type IpcErrorKind = z.infer<typeof IpcErrorKind>;
 
+export const SyncRevision = z.strictObject({
+	epoch: z.string().min(1).max(128),
+	revision: z.number().int().safe().nonnegative(),
+});
+export type SyncRevision = z.infer<typeof SyncRevision>;
+
 /** Every IPC response body is either data or an error with this shape. */
 export const IpcResponse = <T extends Schema>(data: T) =>
 	z.union([
 		z.strictObject({
 			ok: z.literal(true),
 			data,
+			sync: SyncRevision.optional(),
 		}),
 		z.strictObject({
 			ok: z.literal(false),
@@ -178,7 +185,31 @@ const EventStringList = z.array(EventText).max(MAX_ARRAY_LENGTH);
  * branch in `DomainEvent`; known kinds always validate the fields consumers
  * read before they are persisted or projected.
  */
+export const EmbeddingDownloadState = z.strictObject({
+	status: z.enum([
+		"idle",
+		"preparing",
+		"downloading",
+		"validating",
+		"activating",
+		"completed",
+		"cancelled",
+		"failed",
+	]),
+	downloadedBytes: z.number().nonnegative(),
+	totalBytes: z.number().nonnegative().optional(),
+});
+export type EmbeddingDownloadState = z.infer<typeof EmbeddingDownloadState>;
+
 export const EventPayloadSchemas = {
+	"sync.invalidated": z.strictObject({
+		sync: SyncRevision,
+		sources: z.array(z.string().min(1).max(160)).max(256),
+	}),
+	"conversationAttachment.upload_changed": z.strictObject({ conversationId: EventId }),
+	"provider.login_changed": z.strictObject({ providerId: EventId }),
+	"memory.embedding_download_changed": EmbeddingDownloadState,
+	"memory.records_changed": z.strictObject({}),
 	"character.imported": EventPayload({ characterId: EventId, trust: BoundedEventValue }),
 	"character.pluginsTrusted": EventPayload({ characterId: EventId, pluginHash: EventText }),
 	"character.activated": EventPayload({ characterId: EventId }),
@@ -204,6 +235,7 @@ export const EventPayloadSchemas = {
 	"roleplay.media_presented": EventPayload({ conversationId: EventId, mediaId: EventId }),
 	"roleplay.media_dismissed": EventPayload({ conversationId: EventId, mediaId: EventId }),
 	"roleplay.choices_presented": EventPayload({ conversationId: EventId, choiceSetId: EventId }),
+	"roleplay.choices_dismissed": EventPayload({ conversationId: EventId }),
 	"conversation.created": EventPayload({
 		conversationId: EventId,
 		sceneTitle: EventText.optional(),
@@ -1194,6 +1226,23 @@ export const MessageSendResponse = z.strictObject({
 	entryId: PiSessionEntryId,
 });
 
+export const ConversationAttachmentUploadsRequest = z.strictObject({
+	conversationId: ConversationId,
+});
+export const ConversationAttachmentUploadsResponse = z.strictObject({
+	uploads: z
+		.array(
+			z.strictObject({
+				uploadId: z.string().min(1).max(64),
+				name: z.string().max(255),
+				kind: z.enum(["file", "folder"]),
+				receivedBytes: z.number().int().safe().nonnegative(),
+				totalBytes: z.number().int().safe().nonnegative(),
+				fileCount: z.number().int().safe().nonnegative(),
+			}),
+		)
+		.max(MAX_ARRAY_LENGTH),
+});
 export const ConversationAttachmentListRequest = z.strictObject({
 	conversationId: ConversationId,
 	attachmentId: z.string().min(1).max(64).optional(),
@@ -1368,6 +1417,7 @@ export const MemoryEntry = z
 		createdAt: WireTimestamp,
 		updatedAt: WireTimestamp,
 		importance: z.number().finite(),
+		excluded: z.boolean().optional(),
 	})
 	.superRefine((entry, context) => {
 		if (Date.parse(entry.updatedAt) < Date.parse(entry.createdAt)) {
@@ -1571,15 +1621,20 @@ export const CanonChunk = z
 			});
 		}
 	});
-export const CanonListSourcesRequest = z.strictObject({});
+export const CanonListSourcesRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
+});
 export const CanonAddSourceRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
 	logicalName: z.string().min(1).max(255),
 	content: z.string().min(1).max(1_048_576),
 });
 export const CanonSearchRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
 	query: z.string().min(1).max(1000),
 });
 export const CanonRemoveSourceRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
 	sourceId: z.string().min(1).max(64),
 });
 export const CanonModuleKind = z.union([
@@ -1604,8 +1659,11 @@ export const CanonModule = z.strictObject({
 	stableKey: z.string().max(64).optional(),
 	triggers: z.array(z.string().max(200)).max(40),
 });
-export const CanonListModulesRequest = z.strictObject({});
+export const CanonListModulesRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
+});
 export const CanonUpsertModuleRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
 	id: z.string().min(1).max(64).optional(),
 	parentId: z.string().min(1).max(64).optional(),
 	kind: CanonModuleKind,
@@ -1614,6 +1672,7 @@ export const CanonUpsertModuleRequest = z.strictObject({
 	sourceChunkIds: z.array(z.string().min(1).max(64)).max(100),
 });
 export const CanonDeleteModuleRequest = z.strictObject({
+	characterId: z.string().min(1).max(64).optional(),
 	id: z.string().min(1).max(64),
 });
 export const CanonListSourcesResponse = z.strictObject({
@@ -1721,6 +1780,7 @@ export const ProviderLoginRequest = z.strictObject({
 export const ProviderLoginResponse = z.strictObject({
 	providerId: z.string().min(1).max(64),
 	status: z.union([
+		z.literal("idle"),
 		z.literal("running"),
 		z.literal("waiting_input"),
 		z.literal("completed"),
@@ -2164,6 +2224,23 @@ export const SnapshotResponse = z.strictObject({
 	model: ModelSnapshot.optional(),
 	run: RunListResponse.optional(),
 	characterRuntime: CharacterRuntimeSnapshot.optional(),
+	presentation: z
+		.strictObject({
+			companionState: z.enum([
+				"unknown",
+				"starting",
+				"running",
+				"crashed",
+				"unavailable",
+				"stopped",
+			]),
+			permissions: z.array(EventPayloadSchemas["run.needs_user"]).max(10),
+			conversationId: ConversationId.optional(),
+			mediaId: z.string().max(64).optional(),
+			ambientMediaId: z.string().max(64).optional(),
+			choiceSetId: z.string().max(64).optional(),
+		})
+		.optional(),
 	roleplay: RoleplayState.optional(),
 	settings: SettingsData.optional(),
 });
@@ -2178,6 +2255,7 @@ export interface RpcEndpoint<
 	Response extends Schema = Schema,
 > {
 	readonly kind: "rpc";
+	readonly operation: "query" | "mutation";
 	readonly channel: ChannelName;
 	readonly request: Request;
 	readonly response: Response;
@@ -2190,8 +2268,10 @@ const endpoint = <
 	channel: ChannelName,
 	request: Request,
 	response: Response,
+	operation: "query" | "mutation",
 ): RpcEndpoint<ChannelName, Request, Response> => ({
 	kind: "rpc",
+	operation,
 	channel,
 	request,
 	response,
@@ -2200,195 +2280,292 @@ const endpoint = <
 /** The sole runtime and type-level source of truth for every Host RPC channel. */
 export const RPC = {
 	snapshot: {
-		get: endpoint("snapshot.get:v1", SnapshotGetRequest, SnapshotResponse),
+		get: endpoint("snapshot.get:v1", SnapshotGetRequest, SnapshotResponse, "query"),
 	},
 	character: {
-		get: endpoint("character.get:v1", CharacterGetRequest, CharacterResponse),
-		list: endpoint("character.list:v1", CharacterListRequest, CharacterListResponse),
-		activate: endpoint("character.activate:v1", CharacterActivateRequest, CharacterResponse),
+		get: endpoint("character.get:v1", CharacterGetRequest, CharacterResponse, "query"),
+		list: endpoint("character.list:v1", CharacterListRequest, CharacterListResponse, "query"),
+		activate: endpoint(
+			"character.activate:v1",
+			CharacterActivateRequest,
+			CharacterResponse,
+			"mutation",
+		),
 		packageGet: endpoint(
 			"character.packageGet:v1",
 			CharacterPackageGetRequest,
 			CharacterPackageResponse,
+			"query",
 		),
 		packageUpdate: endpoint(
 			"character.packageUpdate:v1",
 			CharacterPackageUpdateRequest,
 			CharacterPackageResponse,
+			"mutation",
 		),
-		import: endpoint("character.import:v1", CharacterImportRequest, CharacterResponse),
+		import: endpoint("character.import:v1", CharacterImportRequest, CharacterResponse, "mutation"),
 		pluginTrustGet: endpoint(
 			"character.pluginTrustGet:v1",
 			CharacterPluginTrustGetRequest,
 			CharacterPluginTrustResponse,
+			"query",
 		),
 		pluginTrustConfirm: endpoint(
 			"character.pluginTrustConfirm:v1",
 			CharacterPluginTrustConfirmRequest,
 			CharacterPluginTrustResponse,
+			"mutation",
 		),
 		draftCreate: endpoint(
 			"character.draftCreate:v1",
 			CharacterDraftCreateRequest,
 			CharacterDraftResponse,
+			"mutation",
 		),
-		draftGet: endpoint("character.draftGet:v1", CharacterDraftGetRequest, CharacterDraftResponse),
+		draftGet: endpoint(
+			"character.draftGet:v1",
+			CharacterDraftGetRequest,
+			CharacterDraftResponse,
+			"query",
+		),
 		draftPatch: endpoint(
 			"character.draftPatch:v1",
 			CharacterDraftPatchRequest,
 			CharacterDraftResponse,
+			"mutation",
 		),
 		draftUploadAssets: endpoint(
 			"character.draftUploadAssets:v1",
 			CharacterDraftUploadAssetsRequest,
 			CharacterDraftResponse,
+			"mutation",
 		),
 		draftListRevisions: endpoint(
 			"character.draftListRevisions:v1",
 			CharacterDraftListRevisionsRequest,
 			CharacterDraftListRevisionsResponse,
+			"query",
 		),
 		draftRestoreRevision: endpoint(
 			"character.draftRestoreRevision:v1",
 			CharacterDraftRestoreRevisionRequest,
 			CharacterDraftResponse,
+			"mutation",
 		),
 		draftValidate: endpoint(
 			"character.draftValidate:v1",
 			CharacterDraftValidateRequest,
 			CharacterDraftResponse,
+			"mutation",
 		),
 		draftPublish: endpoint(
 			"character.draftPublish:v1",
 			CharacterDraftPublishRequest,
 			CharacterDraftPublishResponse,
+			"mutation",
 		),
 	},
 	roleplay: {
-		get: endpoint("roleplay.get:v1", RoleplayGetRequest, RoleplayResponse),
-		trigger: endpoint("roleplay.trigger:v1", RoleplayTriggerRequest, RoleplayResponse),
-		dismissMedia: endpoint("roleplay.dismissMedia:v1", RoleplayDismissMediaRequest, EmptyResponse),
-		resetUnlocks: endpoint("roleplay.reset-unlocks:v1", RoleplayResetUnlocksRequest, EmptyResponse),
+		get: endpoint("roleplay.get:v1", RoleplayGetRequest, RoleplayResponse, "query"),
+		trigger: endpoint("roleplay.trigger:v1", RoleplayTriggerRequest, RoleplayResponse, "mutation"),
+		dismissMedia: endpoint(
+			"roleplay.dismissMedia:v1",
+			RoleplayDismissMediaRequest,
+			EmptyResponse,
+			"mutation",
+		),
+		resetUnlocks: endpoint(
+			"roleplay.reset-unlocks:v1",
+			RoleplayResetUnlocksRequest,
+			EmptyResponse,
+			"mutation",
+		),
 	},
 	events: {
-		subscribe: endpoint("events.subscribe:v1", EventSubscribeRequest, EventSubscribeResponse),
+		subscribe: endpoint(
+			"events.subscribe:v1",
+			EventSubscribeRequest,
+			EventSubscribeResponse,
+			"query",
+		),
 	},
 	onboarding: {
-		get: endpoint("onboarding.get:v1", OnboardingGetRequest, OnboardingResponse),
-		submit: endpoint("onboarding.submit:v1", OnboardingSubmitRequest, OnboardingResponse),
+		get: endpoint("onboarding.get:v1", OnboardingGetRequest, OnboardingResponse, "query"),
+		submit: endpoint(
+			"onboarding.submit:v1",
+			OnboardingSubmitRequest,
+			OnboardingResponse,
+			"mutation",
+		),
 	},
 	conversation: {
-		list: endpoint("conversation.list:v1", ConversationListRequest, ConversationListResponse),
+		list: endpoint(
+			"conversation.list:v1",
+			ConversationListRequest,
+			ConversationListResponse,
+			"query",
+		),
 		create: endpoint(
 			"conversation.create:v1",
 			ConversationCreateRequest,
 			ConversationCreateResponse,
+			"mutation",
 		),
 		select: endpoint(
 			"conversation.select:v1",
 			ConversationSelectRequest,
 			ConversationSelectResponse,
+			"mutation",
 		),
 		activeGet: endpoint(
 			"conversation.activeGet:v1",
 			ConversationActiveGetRequest,
 			ConversationActiveResponse,
+			"query",
 		),
-		rename: endpoint("conversation.rename:v1", ConversationRenameRequest, EmptyResponse),
+		rename: endpoint(
+			"conversation.rename:v1",
+			ConversationRenameRequest,
+			EmptyResponse,
+			"mutation",
+		),
 		archive: endpoint(
 			"conversation.archive:v1",
 			ConversationArchiveRequest,
 			ConversationActiveResponse,
+			"mutation",
 		),
 		delete: endpoint(
 			"conversation.delete:v1",
 			ConversationDeleteRequest,
 			ConversationActiveResponse,
+			"mutation",
 		),
 		search: endpoint(
 			"conversation.search:v1",
 			ConversationSearchRequest,
 			ConversationSearchResponse,
+			"query",
 		),
 	},
 	conversationAttachment: {
+		uploads: endpoint(
+			"conversationAttachment.uploads:v1",
+			ConversationAttachmentUploadsRequest,
+			ConversationAttachmentUploadsResponse,
+			"query",
+		),
 		list: endpoint(
 			"conversationAttachment.list:v1",
 			ConversationAttachmentListRequest,
 			ConversationAttachmentListResponse,
+			"query",
 		),
 		discard: endpoint(
 			"conversationAttachment.discard:v1",
 			ConversationAttachmentDiscardRequest,
 			EmptyResponse,
+			"mutation",
 		),
 		read: endpoint(
 			"conversationAttachment.read:v1",
 			ConversationAttachmentReadRequest,
 			ConversationAttachmentReadResponse,
+			"query",
 		),
 		url: endpoint(
 			"conversationAttachment.url:v1",
 			ConversationAttachmentUrlRequest,
 			ConversationAttachmentUrlResponse,
+			"query",
 		),
 		startUpload: endpoint(
 			"conversationAttachment.startUpload:v1",
 			ConversationAttachmentStartUploadRequest,
 			ConversationAttachmentStartUploadResponse,
+			"mutation",
 		),
 		cancelUpload: endpoint(
 			"conversationAttachment.cancelUpload:v1",
 			ConversationAttachmentCancelUploadRequest,
 			EmptyResponse,
+			"mutation",
 		),
 		appendChunk: endpoint(
 			"conversationAttachment.appendChunk:v1",
 			ConversationAttachmentAppendChunkRequest,
 			EmptyResponse,
+			"mutation",
 		),
 		completeUpload: endpoint(
 			"conversationAttachment.completeUpload:v1",
 			ConversationAttachmentCompleteUploadRequest,
 			ConversationAttachmentCompleteUploadResponse,
+			"mutation",
 		),
 	},
 	message: {
-		send: endpoint("message.send:v1", MessageSendRequest, MessageSendResponse),
-		regenerate: endpoint("message.regenerate:v1", MessageRegenerateRequest, EmptyResponse),
-		switchVersion: endpoint("message.switchVersion:v1", MessageSwitchVersionRequest, EmptyResponse),
-		edit: endpoint("message.edit:v1", MessageEditRequest, EmptyResponse),
-		continue: endpoint("message.continue:v1", MessageContinueRequest, EmptyResponse),
-		correct: endpoint("message.correct:v1", MessageCorrectRequest, EmptyResponse),
-		branch: endpoint("message.branch:v1", MessageBranchRequest, MessageBranchResponse),
-		abort: endpoint("message.abort:v1", MessageAbortRequest, EmptyResponse),
+		send: endpoint("message.send:v1", MessageSendRequest, MessageSendResponse, "mutation"),
+		regenerate: endpoint(
+			"message.regenerate:v1",
+			MessageRegenerateRequest,
+			EmptyResponse,
+			"mutation",
+		),
+		switchVersion: endpoint(
+			"message.switchVersion:v1",
+			MessageSwitchVersionRequest,
+			EmptyResponse,
+			"mutation",
+		),
+		edit: endpoint("message.edit:v1", MessageEditRequest, EmptyResponse, "mutation"),
+		continue: endpoint("message.continue:v1", MessageContinueRequest, EmptyResponse, "mutation"),
+		correct: endpoint("message.correct:v1", MessageCorrectRequest, EmptyResponse, "mutation"),
+		branch: endpoint("message.branch:v1", MessageBranchRequest, MessageBranchResponse, "mutation"),
+		abort: endpoint("message.abort:v1", MessageAbortRequest, EmptyResponse, "mutation"),
 	},
 	memory: {
-		search: endpoint("memory.search:v1", MemorySearchRequest, MemorySearchResponse),
-		list: endpoint("memory.list:v1", MemoryListRequest, MemoryListResponse),
-		capture: endpoint("memory.capture:v1", MemoryCaptureRequest, MemoryCaptureResponse),
-		forget: endpoint("memory.forget:v1", MemoryForgetRequest, EmptyResponse),
-		edit: endpoint("memory.edit:v1", MemoryEditRequest, EmptyResponse),
-		exclude: endpoint("memory.exclude:v1", MemoryExcludeRequest, EmptyResponse),
+		search: endpoint("memory.search:v1", MemorySearchRequest, MemorySearchResponse, "query"),
+		list: endpoint("memory.list:v1", MemoryListRequest, MemoryListResponse, "query"),
+		capture: endpoint("memory.capture:v1", MemoryCaptureRequest, MemoryCaptureResponse, "mutation"),
+		forget: endpoint("memory.forget:v1", MemoryForgetRequest, EmptyResponse, "mutation"),
+		edit: endpoint("memory.edit:v1", MemoryEditRequest, EmptyResponse, "mutation"),
+		exclude: endpoint("memory.exclude:v1", MemoryExcludeRequest, EmptyResponse, "mutation"),
+		localEmbeddingDownloadStatus: endpoint(
+			"memory.localEmbeddingDownloadStatus:v1",
+			z.strictObject({}),
+			EmbeddingDownloadState,
+			"query",
+		),
+		cancelLocalEmbeddingDownload: endpoint(
+			"memory.cancelLocalEmbeddingDownload:v1",
+			z.strictObject({}),
+			EmptyResponse,
+			"mutation",
+		),
 		configureLocalEmbedding: endpoint(
 			"memory.configureLocalEmbedding:v1",
 			MemoryConfigureLocalEmbeddingRequest,
 			MemoryConfigureLocalEmbeddingResponse,
+			"mutation",
 		),
 		candidatesList: endpoint(
 			"memory.candidates.list:v1",
 			MemoryCandidatesListRequest,
 			MemoryCandidatesListResponse,
+			"query",
 		),
 		candidateApprove: endpoint(
 			"memory.candidate.approve:v1",
 			MemoryCandidateApproveRequest,
 			EmptyResponse,
+			"mutation",
 		),
 		candidateReject: endpoint(
 			"memory.candidate.reject:v1",
 			MemoryCandidateRejectRequest,
 			EmptyResponse,
+			"mutation",
 		),
 	},
 	canon: {
@@ -2396,123 +2573,169 @@ export const RPC = {
 			"canon.listSources:v1",
 			CanonListSourcesRequest,
 			CanonListSourcesResponse,
+			"query",
 		),
-		addSource: endpoint("canon.addSource:v1", CanonAddSourceRequest, CanonAddSourceResponse),
-		search: endpoint("canon.search:v1", CanonSearchRequest, CanonSearchResponse),
-		removeSource: endpoint("canon.removeSource:v1", CanonRemoveSourceRequest, EmptyResponse),
+		addSource: endpoint(
+			"canon.addSource:v1",
+			CanonAddSourceRequest,
+			CanonAddSourceResponse,
+			"mutation",
+		),
+		search: endpoint("canon.search:v1", CanonSearchRequest, CanonSearchResponse, "query"),
+		removeSource: endpoint(
+			"canon.removeSource:v1",
+			CanonRemoveSourceRequest,
+			EmptyResponse,
+			"mutation",
+		),
 		listModules: endpoint(
 			"canon.listModules:v1",
 			CanonListModulesRequest,
 			CanonListModulesResponse,
+			"query",
 		),
 		upsertModule: endpoint(
 			"canon.upsertModule:v1",
 			CanonUpsertModuleRequest,
 			CanonUpsertModuleResponse,
+			"mutation",
 		),
-		deleteModule: endpoint("canon.deleteModule:v1", CanonDeleteModuleRequest, EmptyResponse),
+		deleteModule: endpoint(
+			"canon.deleteModule:v1",
+			CanonDeleteModuleRequest,
+			EmptyResponse,
+			"mutation",
+		),
 	},
 	provider: {
-		list: endpoint("provider.list:v1", ProviderListRequest, ProviderListResponse),
-		customUpsert: endpoint("provider.customUpsert:v1", ProviderCustomUpsertRequest, EmptyResponse),
+		list: endpoint("provider.list:v1", ProviderListRequest, ProviderListResponse, "query"),
+		customUpsert: endpoint(
+			"provider.customUpsert:v1",
+			ProviderCustomUpsertRequest,
+			EmptyResponse,
+			"mutation",
+		),
 		importPiConfig: endpoint(
 			"provider.importPiConfig:v1",
 			ProviderImportPiConfigRequest,
 			ProviderImportPiConfigResponse,
+			"mutation",
 		),
 		overrideBaseUrl: endpoint(
 			"provider.overrideBaseUrl:v1",
 			ProviderOverrideBaseUrlRequest,
 			EmptyResponse,
+			"mutation",
 		),
-		setApiKey: endpoint("provider.setApiKey:v1", ProviderSetApiKeyRequest, EmptyResponse),
-		login: endpoint("provider.login:v1", ProviderLoginRequest, ProviderLoginResponse),
+		setApiKey: endpoint(
+			"provider.setApiKey:v1",
+			ProviderSetApiKeyRequest,
+			EmptyResponse,
+			"mutation",
+		),
+		login: endpoint("provider.login:v1", ProviderLoginRequest, ProviderLoginResponse, "mutation"),
 		loginStatus: endpoint(
 			"provider.loginStatus:v1",
 			ProviderLoginStatusRequest,
 			ProviderLoginResponse,
+			"query",
 		),
 		loginCancel: endpoint(
 			"provider.loginCancel:v1",
 			ProviderLoginCancelRequest,
 			ProviderLoginCancelResponse,
+			"mutation",
 		),
 		loginAnswer: endpoint(
 			"provider.loginAnswer:v1",
 			ProviderLoginAnswerRequest,
 			ProviderLoginResponse,
+			"mutation",
 		),
-		logout: endpoint("provider.logout:v1", ProviderLogoutRequest, EmptyResponse),
-		remove: endpoint("provider.remove:v1", ProviderRemoveRequest, EmptyResponse),
+		logout: endpoint("provider.logout:v1", ProviderLogoutRequest, EmptyResponse, "mutation"),
+		remove: endpoint("provider.remove:v1", ProviderRemoveRequest, EmptyResponse, "mutation"),
 	},
 	model: {
-		poolGet: endpoint("model.pool.get:v1", ModelPoolGetRequest, ModelPoolGetResponse),
-		enable: endpoint("model.enable:v1", ModelEnableRequest, ModelEnableResponse),
-		disable: endpoint("model.disable:v1", ModelDisableRequest, EmptyResponse),
+		poolGet: endpoint("model.pool.get:v1", ModelPoolGetRequest, ModelPoolGetResponse, "query"),
+		enable: endpoint("model.enable:v1", ModelEnableRequest, ModelEnableResponse, "mutation"),
+		disable: endpoint("model.disable:v1", ModelDisableRequest, EmptyResponse, "mutation"),
 		defaultsGet: endpoint(
 			"model.defaults.get:v1",
 			ModelDefaultsGetRequest,
 			ModelDefaultsGetResponse,
+			"query",
 		),
 		defaultsSetReply: endpoint(
 			"model.defaults.setReply:v1",
 			ModelDefaultsSetReplyRequest,
 			ModelDefaultsSetReplyResponse,
+			"mutation",
 		),
 		defaultsSetVision: endpoint(
 			"model.defaults.setVision:v1",
 			ModelDefaultsSetVisionRequest,
 			ModelDefaultsSetVisionResponse,
+			"mutation",
 		),
-		routeGet: endpoint("model.route.get:v1", ModelRouteGetRequest, ModelRouteGetResponse),
-		routeSet: endpoint("model.route.set:v1", ModelRouteSetRequest, ModelRouteSetResponse),
+		routeGet: endpoint("model.route.get:v1", ModelRouteGetRequest, ModelRouteGetResponse, "query"),
+		routeSet: endpoint(
+			"model.route.set:v1",
+			ModelRouteSetRequest,
+			ModelRouteSetResponse,
+			"mutation",
+		),
 	},
 	externalAgent: {
 		discoverCodex: endpoint(
 			"externalAgent.discoverCodex:v1",
 			ExternalAgentDiscoverCodexRequest,
 			ExternalAgentDiscoverCodexResponse,
+			"query",
 		),
 		connectCodex: endpoint(
 			"externalAgent.connectCodex:v1",
 			ExternalAgentConnectCodexRequest,
 			ExternalAgentConnectCodexResponse,
+			"mutation",
 		),
 		status: endpoint(
 			"externalAgent.status:v1",
 			ExternalAgentStatusRequest,
 			ExternalAgentStatusResponse,
+			"query",
 		),
 	},
 	run: {
-		list: endpoint("run.list:v1", RunListRequest, RunListResponse),
-		steer: endpoint("run.steer:v1", RunSteerRequest, EmptyResponse),
-		interrupt: endpoint("run.interrupt:v1", RunInterruptRequest, RunResponse),
-		resume: endpoint("run.resume:v1", RunResumeRequest, RunResponse),
-		cancel: endpoint("run.cancel:v1", RunCancelRequest, RunResponse),
+		list: endpoint("run.list:v1", RunListRequest, RunListResponse, "query"),
+		steer: endpoint("run.steer:v1", RunSteerRequest, EmptyResponse, "mutation"),
+		interrupt: endpoint("run.interrupt:v1", RunInterruptRequest, RunResponse, "mutation"),
+		resume: endpoint("run.resume:v1", RunResumeRequest, RunResponse, "mutation"),
+		cancel: endpoint("run.cancel:v1", RunCancelRequest, RunResponse, "mutation"),
 		respondPermission: endpoint(
 			"run.respondPermission:v1",
 			RunRespondPermissionRequest,
 			RunResponse,
+			"mutation",
 		),
 	},
 	settings: {
-		get: endpoint("settings.get:v1", SettingsGetRequest, SettingsResponse),
-		set: endpoint("settings.set:v1", SettingsSetRequest, SettingsResponse),
+		get: endpoint("settings.get:v1", SettingsGetRequest, SettingsResponse, "query"),
+		set: endpoint("settings.set:v1", SettingsSetRequest, SettingsResponse, "mutation"),
 		capabilitiesGet: endpoint(
 			"settings.capabilitiesGet:v1",
 			SettingsCapabilitiesGetRequest,
 			SettingsCapabilitiesGetResponse,
+			"query",
 		),
 	},
 	update: {
-		check: endpoint("update.check:v1", UpdateCheckRequest, UpdateCheckResponse),
-		discard: endpoint("update.discard:v1", UpdateDiscardRequest, UpdateDiscardResponse),
-		apply: endpoint("update.apply:v1", UpdateApplyRequest, UpdateApplyResponse),
+		check: endpoint("update.check:v1", UpdateCheckRequest, UpdateCheckResponse, "mutation"),
+		discard: endpoint("update.discard:v1", UpdateDiscardRequest, UpdateDiscardResponse, "mutation"),
+		apply: endpoint("update.apply:v1", UpdateApplyRequest, UpdateApplyResponse, "mutation"),
 	},
 	audit: {
-		list: endpoint("audit.list:v1", AuditListRequest, AuditListResponse),
-		export: endpoint("audit.export:v1", AuditExportRequest, AuditExportResponse),
+		list: endpoint("audit.list:v1", AuditListRequest, AuditListResponse, "query"),
+		export: endpoint("audit.export:v1", AuditExportRequest, AuditExportResponse, "query"),
 	},
 } as const;
 export type AnyRpcEndpoint = RpcEndpoint;

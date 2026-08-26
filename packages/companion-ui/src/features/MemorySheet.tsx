@@ -4,6 +4,7 @@ import { Select } from "@kobalte/core/select";
 import { Tabs } from "@kobalte/core/tabs";
 import { TextField } from "@kobalte/core/text-field";
 import { For, Show } from "solid-js";
+import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
 import {
 	type MemoryCandidate,
@@ -211,7 +212,7 @@ function CandidateCard(props: { candidate: MemoryCandidate }) {
 							v
 						</Select.Icon>
 					</Select.Trigger>
-					<Select.Portal>
+					<Select.Portal ref={markSelectPortalTopLayer}>
 						<Select.Content class="select-content">
 							<Select.Listbox class="select-listbox" />
 						</Select.Content>
@@ -243,36 +244,32 @@ function CandidateCard(props: { candidate: MemoryCandidate }) {
 /** Pending memory candidates awaiting user confirmation (待确认记忆). */
 export function MemoryCandidates(props: { scopes?: readonly MemoryScope[] } = {}) {
 	const [t] = useTranslation(undefined, { i18n });
-	const workflow = createBackstageWorkflowStore(useCompanionStore());
+	const companion = useCompanionStore();
+	const workflow = createBackstageWorkflowStore(companion);
+	const projection = companion.memory.observeCandidates(
+		() => companion.characters.characters().find((character) => character.active)?.id,
+	);
 	const candidates = () =>
-		workflow
-			.memoryCandidates()
-			.filter((candidate) =>
-				(props.scopes ?? ["self", "scene"]).includes(candidate.suggestedScope),
-			);
+		(projection.data()?.candidates ?? []).filter((candidate) =>
+			(props.scopes ?? ["self", "scene"]).includes(candidate.suggestedScope),
+		);
 	return (
 		<section class="memory-section" aria-label={t("memory.candidatesTitle")}>
 			<div class="section-head">
 				<h3>{t("memory.candidatesTitle")}</h3>
-				<Show when={!workflow.memoryCandidatesLoading() && candidates().length > 0}>
+				<Show when={!projection.loading() && candidates().length > 0}>
 					<span class="section-count">{candidates().length}</span>
 				</Show>
 			</div>
-			<Show when={workflow.memoryCandidatesError()}>
+			<Show when={projection.error() ? String(projection.error()) : undefined}>
 				<p class="status-line err" role="alert">
-					{workflow.memoryCandidatesError()}
+					{projection.error() ? String(projection.error()) : undefined}
 				</p>
 			</Show>
-			<Show when={workflow.memoryCandidatesLoading() && candidates().length === 0}>
+			<Show when={projection.loading() && candidates().length === 0}>
 				<p class="empty-note">{t("memory.loading")}</p>
 			</Show>
-			<Show
-				when={
-					!workflow.memoryCandidatesLoading() &&
-					!workflow.memoryCandidatesError() &&
-					candidates().length === 0
-				}
-			>
+			<Show when={!projection.loading() && !projection.error() && candidates().length === 0}>
 				<p class="empty-note">{t("memory.candidatesEmpty")}</p>
 			</Show>
 			<ul class="candidate-list">

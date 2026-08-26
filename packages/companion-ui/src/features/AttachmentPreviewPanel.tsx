@@ -157,9 +157,38 @@ const AttachmentPreviewContext = createContext<AttachmentPreviewApi>();
 export function AttachmentPreviewProvider(props: ParentProps) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
-	const [selection, setSelection] = createSignal<Selection>();
-	const [preview, setPreview] = createSignal<PreviewState>({});
-	const [rootFiles, setRootFiles] = createSignal<PreviewEntry[]>();
+	const [identity, setIdentity] = createSignal<{
+		conversationId: string;
+		attachmentId: string;
+		relativePath?: string;
+	}>();
+	const rootFiles = () => {
+		const current = identity();
+		return current
+			? store.attachments.readData({
+					conversationId: current.conversationId,
+					attachmentId: current.attachmentId,
+					mode: "semantic",
+				})?.files
+			: undefined;
+	};
+	const preview = (): PreviewState => {
+		const current = identity();
+		return current ? (store.attachments.readData({ ...current, mode: "semantic" }) ?? {}) : {};
+	};
+	const selection = createMemo<Selection | undefined>(() => {
+		const current = identity();
+		if (!current || current.conversationId !== store.activeConversationId) return;
+		const attachment = store.attachments.data(current.conversationId, current.attachmentId);
+		if (!attachment) return;
+		const entry = rootFiles()?.find((file) => file.relativePath === current.relativePath);
+		return {
+			conversationId: current.conversationId,
+			attachment,
+			relativePath: current.relativePath,
+			entry,
+		};
+	});
 	const [previewUrl, setPreviewUrl] = createSignal<string>();
 	const [loading, setLoading] = createSignal(false);
 	const [downloading, setDownloading] = createSignal(false);
@@ -173,9 +202,7 @@ export function AttachmentPreviewProvider(props: ParentProps) {
 	const close = (): void => {
 		requestId += 1;
 		clearPreviewUrl();
-		setSelection(undefined);
-		setPreview({});
-		setRootFiles(undefined);
+		setIdentity(undefined);
 		setActionError(undefined);
 		setLoading(false);
 		setDownloading(false);
@@ -197,21 +224,22 @@ export function AttachmentPreviewProvider(props: ParentProps) {
 			...(entry ? { entry } : {}),
 		};
 		clearPreviewUrl();
-		setSelection(nextSelection);
-		setPreview({});
+		setIdentity({
+			conversationId,
+			attachmentId: attachment.id,
+			...(relativePath ? { relativePath } : {}),
+		});
 		setActionError(undefined);
 		setDownloading(false);
-		if (!relativePath) setRootFiles(undefined);
 
 		const needsTree = attachment.kind === "folder" && !relativePath;
 		const kind = needsTree ? "unknown" : previewKind(nextSelection);
-		if (kind === "unknown" && !needsTree) {
-			setLoading(false);
-			return;
-		}
 
 		setLoading(true);
 		try {
+			await store.attachments.list(conversationId, attachment.id);
+			if (currentRequest !== requestId) return;
+			if (kind === "unknown" && !needsTree) return;
 			if (kind === "image" || kind === "audio" || kind === "video" || kind === "pdf") {
 				const url = await store.attachments.url({
 					conversationId,
@@ -225,15 +253,13 @@ export function AttachmentPreviewProvider(props: ParentProps) {
 				}
 				setPreviewUrl(url);
 			} else {
-				const result = await store.attachments.read({
+				await store.attachments.read({
 					conversationId,
 					attachmentId: attachment.id,
 					...(relativePath ? { relativePath } : {}),
 					mode: "semantic",
 				});
 				if (currentRequest !== requestId) return;
-				setPreview(result);
-				if (result.files) setRootFiles(result.files);
 			}
 		} catch {
 			if (currentRequest !== requestId) return;

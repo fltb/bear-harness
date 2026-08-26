@@ -64,6 +64,8 @@ const TAG = "[memory-tdai] [core]";
 // ============================
 
 export interface TdaiCoreOptions {
+	/** Notify the Host after capture/extraction changes, including uncertain failures. */
+	onRecordsChanged?: () => void;
 	/** Host adapter providing runtime context, logger, and LLM runner factory. */
 	hostAdapter: HostAdapter;
 	/** Parsed TDAI memory configuration. */
@@ -138,7 +140,9 @@ export class TdaiCore {
 	};
 	private lastReindexResult?: ReindexResult;
 
+	private readonly onRecordsChanged?: () => void;
 	constructor(opts: TdaiCoreOptions) {
+		this.onRecordsChanged = opts.onRecordsChanged;
 		this.hostAdapter = opts.hostAdapter;
 		this.cfg = opts.config;
 		this.logger = opts.hostAdapter.getLogger();
@@ -341,7 +345,7 @@ export class TdaiCore {
 			embeddingService: this.embeddingService,
 			bgTaskRegistry: this.bgTasks,
 			onIndexingStatus: (status, records) => this.handleIndexingStatus(status, records),
-		});
+		}).finally(() => this.onRecordsChanged?.());
 	}
 
 	/** Return the latest observable state of background indexing. */
@@ -563,6 +567,7 @@ export class TdaiCore {
 		} else if (status.state === "complete") {
 			for (const record of records) this.failedIndexing.delete(record.recordId);
 		}
+		this.onRecordsChanged?.();
 	}
 
 	private async initStores(): Promise<void> {
@@ -620,18 +625,23 @@ export class TdaiCore {
 			: undefined;
 
 		// L1 runner
-		this.scheduler.setL1Runner(
-			createL1Runner({
-				pluginDataDir: this.dataDir,
-				cfg: this.cfg,
-				openclawConfig,
-				vectorStore: this.vectorStore,
-				embeddingService: this.embeddingService,
-				logger: this.logger,
-				getInstanceId: () => this.instanceId,
-				llmRunner: l1LlmRunner,
-			}),
-		);
+		const l1Runner = createL1Runner({
+			pluginDataDir: this.dataDir,
+			cfg: this.cfg,
+			openclawConfig,
+			vectorStore: this.vectorStore,
+			embeddingService: this.embeddingService,
+			logger: this.logger,
+			getInstanceId: () => this.instanceId,
+			llmRunner: l1LlmRunner,
+		});
+		this.scheduler.setL1Runner(async (...args) => {
+			try {
+				return await l1Runner(...args);
+			} finally {
+				this.onRecordsChanged?.();
+			}
+		});
 
 		// Persister
 		this.scheduler.setPersister(createPersister(this.dataDir, this.logger));
@@ -647,7 +657,7 @@ export class TdaiCore {
 				instanceId: this.instanceId,
 				llmRunner: l2l3LlmRunner,
 			});
-			return l2Runner(sessionKey, cursor);
+			return l2Runner(sessionKey, cursor).finally(() => this.onRecordsChanged?.());
 		});
 
 		// L3 runner
@@ -661,7 +671,7 @@ export class TdaiCore {
 				instanceId: this.instanceId,
 				llmRunner: l2l3LlmRunner,
 			});
-			await l3Runner();
+			await l3Runner().finally(() => this.onRecordsChanged?.());
 		});
 
 		this.logger.debug?.(`${TAG} Pipeline runners wired`);

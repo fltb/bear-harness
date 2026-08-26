@@ -78,7 +78,17 @@ const roots: string[] = [];
 describe("local embedding downloader", () => {
 	it("passes the selected endpoint and cancellation signal to model resolution", async () => {
 		const signal = new AbortController().signal;
-		const resolveModelFile = vi.fn(async () => "/cache/model.gguf");
+		const onDownloadProgress = vi.fn();
+		const onDownloadComplete = vi.fn();
+		const resolveModelFile = vi.fn(
+			async (
+				_model: string,
+				options: { onProgress?: (progress: { downloadedSize: number; totalSize: number }) => void },
+			) => {
+				options.onProgress?.({ downloadedSize: 128, totalSize: 256 });
+				return "/cache/model.gguf";
+			},
+		);
 		const service = new LocalEmbeddingService(
 			{
 				provider: "local",
@@ -86,6 +96,8 @@ describe("local embedding downloader", () => {
 				dimensions: 768,
 				hfEndpoint: "https://hf-mirror.com",
 				signal,
+				onDownloadProgress,
+				onDownloadComplete,
 			},
 			logger,
 			async () =>
@@ -107,9 +119,12 @@ describe("local embedding downloader", () => {
 		expect(resolveModelFile).toHaveBeenCalledWith("hf:test/model/model.gguf", {
 			endpoints: { huggingFace: "https://hf-mirror.com" },
 			signal,
+			onProgress: onDownloadProgress,
 			cli: false,
 			deleteTempFileOnCancel: true,
 		});
+		expect(onDownloadProgress).toHaveBeenCalledWith({ downloadedSize: 128, totalSize: 256 });
+		expect(onDownloadComplete).toHaveBeenCalledOnce();
 		expect(service.getDimensions()).toBe(768);
 		service.close();
 	});
@@ -119,8 +134,10 @@ function createRuntime(
 	root: string,
 	companionId = "role-a",
 	memoryConfig?: Parameters<typeof TencentDbRuntime.prototype.constructor>[0]["memoryConfig"],
+	onRecordsChanged?: () => void,
 ): TencentDbRuntime {
 	const runtime = new TencentDbRuntime({
+		onRecordsChanged,
 		dataDir: root,
 		providers: fakeProviders,
 		models: fakeModelRegistry,
@@ -679,10 +696,16 @@ describe("TencentDbRuntime", () => {
 				};
 			};
 			try {
-				const runtime = createRuntime(createRoot(), "role-a", {
-					pipeline: { everyNConversations: 1, enableWarmup: false, l1IdleTimeoutSeconds: 1 },
-					extraction: { enableDedup: false },
-				});
+				const changed = vi.fn();
+				const runtime = createRuntime(
+					createRoot(),
+					"role-a",
+					{
+						pipeline: { everyNConversations: 1, enableWarmup: false, l1IdleTimeoutSeconds: 1 },
+						extraction: { enableDedup: false },
+					},
+					changed,
+				);
 				await runtime.start();
 				const scope = scopeFor("role-a");
 				await runtime.captureTurn({
@@ -706,6 +729,7 @@ describe("TencentDbRuntime", () => {
 					records = await runtime.backend.list({ scope });
 				}
 				expect(records.some((record) => record.text === "用户喜欢在深夜写作")).toBe(true);
+				await vi.waitFor(() => expect(changed.mock.calls.length).toBeGreaterThanOrEqual(2));
 				void completeCalls;
 
 				// The extracted memory is recallable through the backend.
@@ -1160,6 +1184,41 @@ describe("TencentDbRuntime.prepareLocalEmbedding", () => {
 		expect(core.reconfigureEmbedding).toHaveBeenCalledOnce();
 		expect(core.getEmbeddingService).toHaveBeenCalledOnce();
 		expect(events).toEqual(["probe", "reconfigure"]);
+	});
+
+	it("does not activate a candidate when cancellation arrives during validation", async () => {
+		const runtime = createRuntime(createRoot(), "role-a");
+		const abort = new AbortController();
+		const core = { reconfigureEmbedding: vi.fn(), destroy: vi.fn() };
+		const close = vi.fn();
+		const internals = runtime as unknown as {
+			core: typeof core;
+			embeddingServiceFactory: () => EmbeddingService & { waitForReady(): Promise<void> };
+		};
+		internals.core = core;
+		internals.embeddingServiceFactory = () => ({
+			isReady: () => true,
+			startWarmup: () => undefined,
+			waitForReady: async () => undefined,
+			embed: async () => {
+				abort.abort();
+				return new Float32Array(768);
+			},
+			embedBatch: async () => [],
+			getDimensions: () => 768,
+			getProviderInfo: () => ({ provider: "local", model: "test" }),
+			close,
+		});
+		await expect(
+			runtime.configureLocalEmbedding({
+				modelPath: "hf:test/model.gguf",
+				dimensions: 768,
+				hfEndpoint: "https://huggingface.co",
+				signal: abort.signal,
+			}),
+		).rejects.toMatchObject({ kind: "unavailable" });
+		expect(core.reconfigureEmbedding).not.toHaveBeenCalled();
+		expect(close).toHaveBeenCalledOnce();
 	});
 
 	it("rejects a custom model with the wrong dimensions before touching the active store", async () => {

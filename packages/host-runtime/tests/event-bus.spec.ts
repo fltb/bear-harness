@@ -11,6 +11,11 @@ import { EventBus } from "../src/storage/event-bus.js";
 const roots: string[] = [];
 
 const representativePayloads: Record<KnownEventKind, unknown> = {
+	"sync.invalidated": { sync: { epoch: "test-host", revision: 1 }, sources: ["conversations"] },
+	"conversationAttachment.upload_changed": { conversationId: "conversation-1" },
+	"provider.login_changed": { providerId: "openai-codex" },
+	"memory.records_changed": {},
+	"memory.embedding_download_changed": { status: "downloading", downloadedBytes: 512 },
 	"character.imported": { characterId: "character-1", trust: {} },
 	"character.pluginsTrusted": { characterId: "character-1", pluginHash: "hash" },
 	"character.activated": { characterId: "character-1" },
@@ -31,6 +36,7 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 	"roleplay.state_changed": { conversationId: "conversation-1", state: {} },
 	"roleplay.media_presented": { conversationId: "conversation-1", mediaId: "media-1" },
 	"roleplay.media_dismissed": { conversationId: "conversation-1", mediaId: "media-1" },
+	"roleplay.choices_dismissed": { conversationId: "conversation-1" },
 	"roleplay.choices_presented": { conversationId: "conversation-1", choiceSetId: "choices-1" },
 	"conversation.created": {
 		conversationId: "conversation-1",
@@ -193,6 +199,26 @@ afterEach(() => {
 });
 
 describe("event bus domain contract", () => {
+	it("delivers nested publications in sequence order to every subscriber", () => {
+		const database = openDatabase();
+		try {
+			const bus = new EventBus(database.orm);
+			const early: number[] = [];
+			const renderer: number[] = [];
+			bus.subscribe((event) => {
+				early.push(event.seq);
+				if (event.kind === "test.parent") bus.publish("test.child", {});
+			});
+			bus.subscribe((event) => renderer.push(event.seq));
+			bus.publish("test.parent", {});
+			expect(early).toEqual([1, 2]);
+			expect(renderer).toEqual([1, 2]);
+			expect(bus.after(0).map((event) => event.seq)).toEqual(renderer);
+		} finally {
+			database.close();
+		}
+	});
+
 	it("accepts representative payloads for every registered event kind", () => {
 		const database = openDatabase();
 		const bus = new EventBus(database.orm);

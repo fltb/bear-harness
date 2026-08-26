@@ -365,7 +365,18 @@ describe("direct external-agent runs", () => {
 			terminal,
 		);
 		services.push(service);
+		eventBus.publish("run.needs_user", {
+			runId: "orphan-needs_user",
+			requestId: "request",
+			prompt: "Allow?",
+			options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+		});
+		expect(service.pendingPermissions(COMPANION_ID)).toEqual([
+			expect.objectContaining({ runId: "orphan-needs_user", requestId: "request" }),
+		]);
+		expect(service.pendingPermissions("other-character")).toEqual([]);
 		expect(service.markOrphansInterrupted()).toBe(4);
+		expect(service.pendingPermissions(COMPANION_ID)).toEqual([]);
 		await service.reconcilePending();
 		expect(launchAgent).not.toHaveBeenCalled();
 		expect(service.list().filter((run) => run.status === "interrupted")).toHaveLength(4);

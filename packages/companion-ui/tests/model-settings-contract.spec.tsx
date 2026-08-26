@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ModelSelector } from "../src/features/ModelSelector.js";
 import { CompanionApp } from "../src/index.js";
-import { createTestClient, OFFICIAL_PRODUCT } from "./fixtures.js";
+import { createTestClient, OFFICIAL_PRODUCT, pushHostEvent } from "./fixtures.js";
 import { selectKobalteOption } from "./kobalte-helpers.js";
 
 const FREE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -247,7 +247,7 @@ describe("breaking provider and model settings contract", () => {
 		expect(client.model.poolGet).not.toHaveBeenCalled();
 	});
 
-	it("reauthenticates OAuth, answers an explicit select prompt, polls, and refreshes providers only after completion", async () => {
+	it("reauthenticates OAuth, answers an explicit select prompt, receives push, and refreshes providers only after completion", async () => {
 		const { client } = configuredClient();
 		client.provider.login = vi.fn(() =>
 			Promise.resolve({
@@ -275,6 +275,11 @@ describe("breaking provider and model settings contract", () => {
 				data: { providerId: "oauth", status: "completed" as const },
 			}),
 		);
+		// The status endpoint, not the command receipt, owns the visible session.
+		vi.mocked(client.provider.loginStatus).mockResolvedValueOnce(
+			await client.provider.login({ providerId: "oauth", authType: "oauth" }),
+		);
+		vi.mocked(client.provider.login).mockClear();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
@@ -287,14 +292,15 @@ describe("breaking provider and model settings contract", () => {
 		const editor = providerEditorForAction(setup, "oauth", zhCN.settings.oauthSubmit);
 		const prompt = within(editor).getByLabelText("Choose account");
 		expect(prompt).toBeVisible();
-		// No account is pre-selected: the submit action must be explicit.
-		expect(within(editor).getByRole("button", { name: zhCN.settings.oauthSubmit })).toBeDisabled();
+		// Pi's first option is the default; submission remains explicit.
+		expect(within(editor).getByRole("button", { name: zhCN.settings.oauthSubmit })).toBeEnabled();
 		await selectKobalteOption(user, prompt, "Personal");
 		await user.click(within(editor).getByRole("button", { name: zhCN.settings.oauthSubmit }));
 		expect(client.provider.loginAnswer).toHaveBeenCalledWith({
 			providerId: "oauth",
 			answer: "personal",
 		});
+		pushHostEvent(client, "provider.login_changed", { providerId: "oauth" });
 		await waitFor(
 			() => expect(client.provider.loginStatus).toHaveBeenCalledWith({ providerId: "oauth" }),
 			{ timeout: 2000 },
@@ -306,7 +312,94 @@ describe("breaking provider and model settings contract", () => {
 		expect(within(card).getAllByText(zhCN.settings.connected).length).toBeGreaterThan(0);
 	});
 
-	it("keeps polling a manual-code fallback until the browser callback completes", async () => {
+	it("keeps the OAuth method menu open and preserves selection across equal pushed snapshots", async () => {
+		const { client } = configuredClient();
+		let revision = 0;
+		const state = () => ({
+			message: `Host status ${++revision}`,
+			providerId: "oauth",
+			status: "waiting_input" as const,
+			prompt: {
+				type: "select" as const,
+				message: "Select OpenAI Codex login method:",
+				options: [
+					{ id: "browser", label: "Browser login (default)" },
+					{ id: "device_code", label: "Device code login (headless)" },
+				],
+			},
+		});
+		client.provider.login = vi.fn().mockImplementation(async () => ({ ok: true, data: state() }));
+		client.provider.loginStatus = vi
+			.fn()
+			.mockImplementation(async () => ({ ok: true, data: state() }));
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		const setup = providerSetup(backstage);
+		const card = within(setup).getByText(OAUTH.name).closest("article")!;
+		await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
+		const editor = providerEditorForAction(setup, "oauth", zhCN.settings.oauthSubmit);
+		const trigger = within(editor).getByLabelText("Select OpenAI Codex login method:");
+		expect(trigger).toHaveTextContent("Browser login (default)");
+		expect(client.provider.loginStatus).toHaveBeenCalledTimes(1);
+		await user.click(trigger);
+		expect(await screen.findByRole("listbox")).toBeVisible();
+		pushHostEvent(client, "provider.login_changed", { providerId: "oauth" });
+		await waitFor(() => expect(client.provider.loginStatus).toHaveBeenCalledTimes(2));
+		expect(trigger).toHaveAttribute("aria-expanded", "true");
+
+		expect(await screen.findByRole("listbox")).toBeVisible();
+		await user.click(screen.getByRole("option", { name: "Device code login (headless)" }));
+		pushHostEvent(client, "provider.login_changed", { providerId: "oauth" });
+		await waitFor(() => expect(client.provider.loginStatus).toHaveBeenCalledTimes(3));
+		expect(trigger).toHaveTextContent("Device code login (headless)");
+	});
+
+	it("discards a late OAuth status response after switching providers and cancels the old flow", async () => {
+		const { client } = configuredClient();
+		client.provider.login = vi
+			.fn()
+			.mockResolvedValue({ ok: true, data: { providerId: "oauth", status: "running" } });
+		let finishPoll!: (value: unknown) => void;
+		client.provider.loginStatus = vi.fn().mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					finishPoll = resolve;
+				}),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		const setup = providerSetup(backstage);
+		const oauthCard = within(setup).getByText(OAUTH.name).closest("article")!;
+		await user.click(within(oauthCard).getByRole("button", { name: zhCN.settings.reauthProvider }));
+		pushHostEvent(client, "provider.login_changed", { providerId: "oauth" });
+		await waitFor(() => expect(client.provider.loginStatus).toHaveBeenCalled(), { timeout: 2000 });
+		const relayCard = within(setup).getByText(PROVIDER.name).closest("article")!;
+		await user.click(
+			within(relayCard).getByRole("button", { name: zhCN.settings.editProviderKey }),
+		);
+		expect(client.provider.loginCancel).toHaveBeenCalledWith({ providerId: "oauth" });
+		finishPoll({
+			ok: true,
+			data: {
+				providerId: "oauth",
+				status: "waiting_input",
+				authUrl: "https://auth.example/stale",
+				prompt: { type: "manual_code", message: "Stale callback" },
+			},
+		});
+		await user.click(
+			within(oauthCard).getByRole("button", { name: zhCN.settings.editProviderKey }),
+		);
+		expect(
+			within(setup).queryByRole("button", { name: zhCN.settings.oauthOpen }),
+		).not.toBeInTheDocument();
+		expect(within(setup).queryByText("Stale callback")).not.toBeInTheDocument();
+		expect(
+			within(setup).getByRole("button", { name: zhCN.settings.loginWithBrowser }),
+		).toBeVisible();
+	});
+
+	it("updates a manual-code fallback from Host push until the browser callback completes", async () => {
 		const { client } = configuredClient();
 		client.provider.login = vi.fn(() =>
 			Promise.resolve({
@@ -328,7 +421,7 @@ describe("breaking provider and model settings contract", () => {
 					},
 				},
 			})
-			.mockResolvedValueOnce({
+			.mockResolvedValue({
 				ok: true as const,
 				data: { providerId: "oauth", status: "completed" as const },
 			});
@@ -344,15 +437,15 @@ describe("breaking provider and model settings contract", () => {
 			const card = within(setup).getByText(OAUTH.name).closest("article")!;
 			client.provider.list.mockClear();
 			await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
-			await waitFor(
-				() =>
-					expect(open).toHaveBeenCalledWith(
-						"https://auth.example/authorize",
-						"_blank",
-						"noopener,noreferrer",
-					),
-				{ timeout: 2000 },
+			const authorize = await within(setup).findByRole("button", { name: zhCN.settings.oauthOpen });
+			expect(open).not.toHaveBeenCalled();
+			await user.click(authorize);
+			expect(open).toHaveBeenCalledWith(
+				"https://auth.example/authorize",
+				"_blank",
+				"noopener,noreferrer",
 			);
+			pushHostEvent(client, "provider.login_changed", { providerId: "oauth" });
 			await waitFor(() => expect(client.provider.list).toHaveBeenCalledTimes(1), {
 				timeout: 3000,
 			});
@@ -385,6 +478,10 @@ describe("breaking provider and model settings contract", () => {
 				data: { providerId: "oauth", status: "running" as const },
 			}),
 		);
+		vi.mocked(client.provider.loginStatus).mockResolvedValue(
+			await client.provider.login({ providerId: "oauth", authType: "oauth" }),
+		);
+		vi.mocked(client.provider.login).mockClear();
 		client.provider.loginCancel = vi.fn(() => Promise.resolve({ ok: true as const, data: null }));
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
@@ -396,10 +493,14 @@ describe("breaking provider and model settings contract", () => {
 		await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
 		const editor = providerEditorForAction(setup, "oauth", zhCN.settings.oauthCancel);
 		expect(within(editor).getByText("ABCD-EFGH")).toBeVisible();
-		expect(within(editor).getByRole("link", { name: zhCN.settings.oauthOpen })).toHaveAttribute(
-			"href",
+		const open = vi.spyOn(window, "open").mockReturnValue(null);
+		await user.click(within(editor).getByRole("button", { name: zhCN.settings.oauthOpen }));
+		expect(open).toHaveBeenCalledWith(
 			"https://github.com/login/device",
+			"_blank",
+			"noopener,noreferrer",
 		);
+		open.mockRestore();
 		expect(within(editor).getByText("Open the page and enter the code.")).toBeVisible();
 		expect(within(editor).getByText("Waiting for authorization…")).toBeVisible();
 		expect(within(editor).getByRole("link", { name: "OAuth help" })).toHaveAttribute(
@@ -410,6 +511,10 @@ describe("breaking provider and model settings contract", () => {
 		expect(client.provider.list).not.toHaveBeenCalled();
 		expect(client.model.poolGet).not.toHaveBeenCalled();
 		// Explicit cancellation stops the flow and clears the surface.
+		vi.mocked(client.provider.loginStatus).mockResolvedValue({
+			ok: true,
+			data: { providerId: "oauth", status: "idle" },
+		});
 		await user.click(within(editor).getByRole("button", { name: zhCN.settings.oauthCancel }));
 		expect(client.provider.loginCancel).toHaveBeenCalledWith({ providerId: "oauth" });
 		await waitFor(() => expect(within(editor).queryByText("ABCD-EFGH")).not.toBeInTheDocument());
@@ -431,6 +536,7 @@ describe("breaking provider and model settings contract", () => {
 					providerId: "oauth",
 					status: "failed" as const,
 					message: "token exchange failed: invalid_grant",
+					authUrl: "https://auth.example/expired",
 				},
 			}),
 		);
@@ -442,6 +548,7 @@ describe("breaking provider and model settings contract", () => {
 		client.model.poolGet.mockClear();
 		client.model.defaultsGet.mockClear();
 		await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
+		pushHostEvent(client, "provider.login_changed", { providerId: "oauth" });
 		await waitFor(
 			() => expect(within(setup).getByText("token exchange failed: invalid_grant")).toBeVisible(),
 			{ timeout: 2000 },
@@ -449,6 +556,12 @@ describe("breaking provider and model settings contract", () => {
 		expect(client.provider.list).not.toHaveBeenCalled();
 		expect(client.model.poolGet).not.toHaveBeenCalled();
 		expect(client.model.defaultsGet).not.toHaveBeenCalled();
+		const editor = providerEditorForAction(setup, "oauth", zhCN.settings.reauthProvider);
+		expect(
+			within(editor).queryByRole("button", { name: zhCN.settings.oauthOpen }),
+		).not.toBeInTheDocument();
+		await user.click(within(editor).getByRole("button", { name: zhCN.settings.reauthProvider }));
+		expect(client.provider.login).toHaveBeenCalledTimes(2);
 	});
 
 	it("removes an added provider and drops its card after the Host deletion", async () => {

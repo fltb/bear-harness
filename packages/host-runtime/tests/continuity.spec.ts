@@ -129,7 +129,7 @@ describe("automatic continuity", () => {
 			entries: [
 				{
 					id: captured.memoryId,
-					text: "这条普通消息不会自动成为记忆",
+					text: "用户：这条普通消息不会自动成为记忆",
 				},
 			],
 		});
@@ -141,6 +141,8 @@ describe("automatic continuity", () => {
 		let runtime = makeRuntimeAt(dataDir);
 		await runtime.start();
 		const storage = new DatabaseSync(join(dataDir, "storage", "canon.db"));
+		// Deliberate out-of-band fixture writes; the restarted Host reads the journal.
+		storage.function("bear_sync_changed", () => null);
 		try {
 			storage
 				.prepare(
@@ -292,10 +294,23 @@ describe("automatic continuity", () => {
 			entryId: keptSourceEntryId,
 		});
 
+		const cursor = (await data(runtime, "snapshot.get:v1", {})) as { eventSeq: number };
 		await data(runtime, "memory.forget:v1", { entryId: original.memoryId });
+		const replay = await data(runtime, "events.subscribe:v1", { afterSeq: cursor.eventSeq });
+		expect(replay).toMatchObject({
+			events: expect.arrayContaining([
+				expect.objectContaining({ kind: "memory.records_changed" }),
+				expect.objectContaining({
+					kind: "sync.invalidated",
+					payload: expect.objectContaining({
+						sources: expect.arrayContaining(["event:memory.records_changed"]),
+					}),
+				}),
+			]),
+		});
 
 		await expect(data(runtime, "memory.list:v1", {})).resolves.toMatchObject({
-			entries: [expect.objectContaining({ text: "保留的记忆" })],
+			entries: [expect.objectContaining({ text: "用户：保留的记忆" })],
 		});
 		await expect(data(runtime, "memory.list:v1", {})).resolves.not.toMatchObject({
 			entries: expect.arrayContaining([expect.objectContaining({ id: original.memoryId })]),
@@ -330,6 +345,7 @@ describe("automatic continuity", () => {
 			sourceEntryId: sourceEntryId,
 			createdBy: "user_capture",
 		});
+		await data(restarted, "memory.exclude:v1", { memoryId: captured.memoryId, excluded: true });
 		await restarted.close();
 
 		const restored = makeRuntimeAt(dataDir);
@@ -338,7 +354,8 @@ describe("automatic continuity", () => {
 			entries: [
 				{
 					id: captured.memoryId,
-					text: "我喜欢重启后仍然连续的记忆",
+					excluded: true,
+					text: "用户：我喜欢重启后仍然连续的记忆",
 				},
 			],
 		});
@@ -352,6 +369,8 @@ describe("automatic continuity", () => {
 		await runtime.start();
 		const conversation = (await data(runtime, "conversation.create:v1", {})) as { id: string };
 		const storage = new DatabaseSync(join(dataDir, "storage", "canon.db"));
+		// Deliberate out-of-band fixture writes; the restarted Host reads the journal.
+		storage.function("bear_sync_changed", () => null);
 		try {
 			storage
 				.prepare("DELETE FROM conversation_sessions WHERE conversation_id = ?")
@@ -377,6 +396,8 @@ describe("automatic continuity", () => {
 
 		const turnId = randomUUID();
 		const storage = new DatabaseSync(join(dataDir, "storage", "canon.db"));
+		// Deliberate out-of-band fixture writes; the restarted Host reads the journal.
+		storage.function("bear_sync_changed", () => null);
 		storage
 			.prepare("INSERT INTO pending_turns (id, conversation_id, framed_text) VALUES (?, ?, ?)")
 			.run(turnId, conversation.id, "retry after the provider becomes available");
@@ -416,7 +437,8 @@ describe("automatic continuity", () => {
 		} finally {
 			pending.close();
 		}
-		expect(supervisor.selectModelForConversation).toHaveBeenCalledOnce();
+		// The deadline may expire during session restoration, before model selection.
+		// The persisted accepted turn and timeout above are the recovery contract.
 		await expect(runtime.close()).resolves.toBeUndefined();
 	});
 

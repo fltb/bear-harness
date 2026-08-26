@@ -11,7 +11,7 @@ import {
 	fauxAssistantMessage,
 	fauxProvider,
 } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PendingTurnStore } from "../src/companion/pending-turn-store.js";
 import { PiSessionStore } from "../src/companion/pi-session-store.js";
 import {
@@ -664,5 +664,44 @@ describe("Pi conversation authority", () => {
 		expect(kinds).toContain("pi.session.changed");
 
 		await h.runtime.stop();
+	});
+});
+
+describe("Pi adapter lifetime", () => {
+	it("rejects native continuation after a completed assistant instead of acknowledging a failed command", async () => {
+		const h = await setupHarness();
+		const session = await h.runtime.ensureSession(CONVERSATION_ID);
+		h.faux.setResponses([fauxAssistantMessage("finished")]);
+		await session.prompt("hello");
+		await expect(h.pipeline.continue(CONVERSATION_ID)).rejects.toMatchObject({
+			kind: "conflict",
+			reason: "message_continue_requires_pending_input",
+		});
+	});
+
+	it("stops pending initialization without accepting a late provider response", async () => {
+		const h = await setupHarness();
+		const models = createAuthlessModels(h.faux);
+		const gate = Promise.withResolvers<typeof models>();
+		const provider = { getModels: vi.fn(() => gate.promise) };
+		const runtime = new CompanionSupervisor(
+			h.root,
+			h.eventBus,
+			provider,
+			h.repository.getSessionResolver(),
+		);
+		runtimes.push(runtime);
+		await runtime.start();
+		const pending = runtime.ensureSession(CONVERSATION_ID);
+		const rejected = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+		await runtime.stop();
+		await rejected;
+		const publish = vi.spyOn(h.eventBus, "publish");
+		gate.resolve(models);
+		await gate.promise;
+		await Promise.resolve();
+		expect(runtime.getLiveSessionResolver().get(CONVERSATION_ID)).toBeUndefined();
+		expect(publish).not.toHaveBeenCalled();
+		await expect(runtime.ensureSession(CONVERSATION_ID)).rejects.toThrow("companion_stopped");
 	});
 });

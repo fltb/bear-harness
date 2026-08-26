@@ -9,7 +9,7 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 import { Button } from "@kobalte/core/button";
 import { TextField } from "@kobalte/core/text-field";
-import { createEffect, For, onCleanup, Show } from "solid-js";
+import { For, onCleanup, onMount, Show } from "solid-js";
 import { Icon } from "./Icon.js";
 import { type CharacterDisplay, useCompanionStore } from "./stores/companion.js";
 import { useConversationWorkflow } from "./stores/conversation-workflows.js";
@@ -26,7 +26,7 @@ export function Sidebar(props: {
 	const workflow = useConversationWorkflow(store);
 	let searchRef: HTMLInputElement | undefined;
 
-	createEffect(() => {
+	onMount(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (!event.metaKey && !event.ctrlKey) return;
 			if (event.key.toLocaleLowerCase() !== "k") return;

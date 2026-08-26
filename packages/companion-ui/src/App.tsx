@@ -3,13 +3,14 @@ import { I18nextProvider, i18n, useLanguage, useTranslation } from "@bear-harnes
 import type { ProductConfig } from "@bear-harness/product-config";
 import { Button } from "@kobalte/core/button";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
-import { createEffect, createMemo, Show } from "solid-js";
+import { createMemo, type JSX, Show } from "solid-js";
 import { CharacterPresence, type CharacterPresenceLayoutMode } from "./CharacterPresence";
 import { Composer } from "./Composer";
 import { ConversationPanel } from "./ConversationPanel";
 import { FirstMeeting } from "./FirstMeeting";
 import { AttachmentPreviewProvider } from "./features/AttachmentPreviewPanel.js";
 import { Backstage } from "./features/Backstage.js";
+import { syncDocumentTitle } from "./lib/dom-effects.js";
 import { SceneBackdrop } from "./SceneBackdrop";
 import { Sidebar } from "./Sidebar";
 import { createCompanionStore, DesktopProvider, useCompanionStore } from "./stores/companion.js";
@@ -30,7 +31,11 @@ export const SUPPORTED_DESKTOP_MIN_WIDTH = 800;
  * composes the layout and holds the backstage sheet's open state. The
  * `client` is the injected `CompanionClient` the store is bound to.
  */
-export function CompanionApp(props: { product: Readonly<ProductConfig>; client: CompanionClient }) {
+export function CompanionApp(props: {
+	product: Readonly<ProductConfig>;
+	client: CompanionClient;
+	children?: JSX.Element;
+}) {
 	const queryClient = new QueryClient({
 		defaultOptions: {
 			queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: false },
@@ -40,26 +45,25 @@ export function CompanionApp(props: { product: Readonly<ProductConfig>; client: 
 	return (
 		<I18nextProvider i18n={i18n}>
 			<QueryClientProvider client={queryClient}>
-				<CompanionRuntime client={props.client} />
+				<CompanionRuntime client={props.client}>{props.children}</CompanionRuntime>
 			</QueryClientProvider>
 		</I18nextProvider>
 	);
 }
 
-function CompanionRuntime(props: { client: CompanionClient }) {
+function CompanionRuntime(props: { client: CompanionClient; children?: JSX.Element }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const [currentLocale] = useLanguage(() => i18n);
 	const store = createCompanionStore(props.client);
 	const workflow = createShellWorkflowStore({ store, currentLocale, translate: t });
 
-	createEffect(() => {
-		document.title = t("shell.productName");
-	});
+	syncDocumentTitle(() => t("shell.productName"));
 
 	return (
 		<DesktopProvider store={store}>
 			<ShellWorkflowProvider workflow={workflow}>
 				<DesktopFrame />
+				{props.children}
 			</ShellWorkflowProvider>
 		</DesktopProvider>
 	);

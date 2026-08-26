@@ -205,6 +205,10 @@ describe("ConversationAttachmentService disk-backed upload sessions", () => {
 		expect(readFileSync(part, "utf8")).toBe("he");
 
 		const recovered = new ConversationAttachmentService(orm, artifactStore, uploadRoot);
+		expect(recovered.listUploads("conversation-1")).toEqual([
+			{ uploadId, name: "note.txt", kind: "file", receivedBytes: 2, totalBytes: 5, fileCount: 1 },
+		]);
+		expect(recovered.listUploads("other-conversation")).toEqual([]);
 		recovered.appendChunk({
 			conversationId: "conversation-1",
 			uploadId,
@@ -213,6 +217,7 @@ describe("ConversationAttachmentService disk-backed upload sessions", () => {
 			base64: Buffer.from("llo").toString("base64"),
 		});
 		const attachment = await recovered.completeUpload("conversation-1", uploadId);
+		expect(recovered.listUploads("conversation-1")).toEqual([]);
 		expect(existsSync(join(uploadRoot, uploadId))).toBe(false);
 		expect(
 			recovered.semanticRead({

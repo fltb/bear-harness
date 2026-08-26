@@ -3,6 +3,13 @@ import { expect, test } from "playwright/test";
 import { getBootstrap } from "./helpers";
 
 test("browser requires a reply model before the role-defined onboarding", async ({ page }) => {
+	let eventRequests = 0;
+	page.on("request", (request) => {
+		if (request.url().includes("/rpc/events.subscribe%3Av1")) {
+			eventRequests++;
+			expect(request.headers().accept).toBe("application/x-ndjson");
+		}
+	});
 	const bootstrap = await getBootstrap(page);
 	const headers = { "x-bear-web-dev-token": bootstrap.token };
 	const provider = {
@@ -60,6 +67,9 @@ test("browser requires a reply model before the role-defined onboarding", async 
 		data: { reply: { providerId: provider.id, modelId: provider.modelId } },
 	});
 	expect(await defaultResponse.json()).toMatchObject({ ok: true });
+	// An out-of-page RPC mutation must update this UI through Host push, without reload.
+	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.continue })).toBeEnabled();
+	expect(eventRequests).toBe(1);
 	await page.reload();
 	await expect(modelSetup).toBeVisible();
 	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.continue })).toBeEnabled();
@@ -96,4 +106,5 @@ test("browser requires a reply model before the role-defined onboarding", async 
 
 	await expect(onboarding).toBeHidden();
 	await expect(page.getByRole("button", { name: "Web Dev" })).toBeVisible();
+	expect(eventRequests).toBe(2); // one persistent connection per page load, including the explicit reload
 });

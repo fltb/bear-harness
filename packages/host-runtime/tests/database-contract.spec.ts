@@ -63,6 +63,66 @@ afterEach(() => {
 });
 
 describe("database schema contract", () => {
+	it("covers every application table with transactional change triggers", () => {
+		const database = new Database(root());
+		database.migrate(MIGRATIONS);
+		const excluded = new Set([
+			"schema_migrations",
+			"installation_identity",
+			"events",
+			"sync_changes",
+		]);
+		const tables = database.connection
+			.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+			.all();
+		const triggers = database.connection
+			.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+			.all()
+			.map((row) => row.name);
+		for (const table of tables) {
+			const name = String(table.name);
+			// SQLite FTS/vector tables are derived indexes, never authoritative records.
+			if (excluded.has(name) || name.includes("fts") || name.includes("vec")) continue;
+			for (const operation of ["insert", "update", "delete"]) {
+				expect(triggers, `${name} ${operation} must invalidate synchronized readers`).toContain(
+					`sync_${name}_${operation}`,
+				);
+			}
+		}
+		expect(triggers).toContain("sync_events_insert");
+		database.close();
+	});
+
+	it("journals state writes atomically and only notifies committed revisions", async () => {
+		const database = new Database(root());
+		database.migrate(MIGRATIONS);
+		const delivered: Array<{ revision: number; sources: string[] }> = [];
+		database.subscribeSync((revision, sources) => delivered.push({ revision, sources }));
+		try {
+			database.connection.exec("BEGIN");
+			database.connection
+				.prepare("INSERT INTO user_decisions(id,kind) VALUES (?,?)")
+				.run("rollback", "test");
+			expect(delivered).toEqual([]);
+			database.connection.exec("ROLLBACK");
+			await Promise.resolve();
+			expect(database.syncRevision()).toBe(0);
+			expect(delivered).toEqual([]);
+			database.connection.exec("BEGIN");
+			database.connection
+				.prepare("INSERT INTO user_decisions(id,kind) VALUES (?,?)")
+				.run("commit", "test");
+			database.connection.exec("COMMIT");
+			await Promise.resolve();
+			expect(delivered).toEqual([{ revision: 1, sources: ["user_decisions"] }]);
+			expect(database.connection.prepare("SELECT id FROM user_decisions").all()).toEqual([
+				{ id: "commit" },
+			]);
+		} finally {
+			database.close();
+		}
+	});
+
 	it("automatically applies a valid pending migration", () => {
 		const database = new Database(root());
 		database.migrate(MIGRATIONS.slice(0, -1));

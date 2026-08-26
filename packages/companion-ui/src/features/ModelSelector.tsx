@@ -2,6 +2,8 @@ import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { createMemo, createSignal, Show } from "solid-js";
+import { markSelectPortalTopLayer } from "../lib/select-portal.js";
+import { createStableSnapshot } from "../lib/stable-snapshot.js";
 import type { ConfiguredModel } from "../stores/ipc.js";
 
 export function modelRouteKey(model: Pick<ConfiguredModel, "providerId" | "modelId">): string {
@@ -42,7 +44,7 @@ export function ModelSelector(props: {
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const [query, setQuery] = createSignal("");
-	const options = createMemo<ModelSelectOption[]>(() => [
+	const options = createStableSnapshot<ModelSelectOption[]>(() => [
 		...(props.includeAuto ? [{ kind: "auto" as const }] : []),
 		...props.models,
 	]);
@@ -57,8 +59,14 @@ export function ModelSelector(props: {
 			.includes(needle);
 	};
 	const selectedOption = createMemo<ModelSelectOption | null>(() => {
-		if (props.includeAuto && !props.value) return { kind: "auto" };
-		return props.value;
+		const selected = props.value;
+		return (
+			options().find((option) =>
+				isAutoModelOption(option)
+					? props.includeAuto && !selected
+					: selected && modelRouteKey(option) === modelRouteKey(selected),
+			) ?? null
+		);
 	});
 	const optionLabel = (option: ModelSelectOption): string =>
 		isAutoModelOption(option) ? (props.autoLabel ?? "") : configuredModelLabel(option);
@@ -103,7 +111,7 @@ export function ModelSelector(props: {
 					v
 				</Select.Icon>
 			</Select.Trigger>
-			<Select.Portal>
+			<Select.Portal ref={markSelectPortalTopLayer}>
 				<Select.Content class={props.contentClass ?? "select-content"}>
 					<Show when={props.searchable ?? true}>
 						<TextField class="model-search-field">

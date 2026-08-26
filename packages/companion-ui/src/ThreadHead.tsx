@@ -1,6 +1,6 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
-import { createEffect, For, onCleanup, Show } from "solid-js";
+import { For, onCleanup, onMount, Show } from "solid-js";
 import { useShellWorkflowStore } from "./stores/shell-workflows.js";
 
 /**
@@ -17,12 +17,13 @@ export function ThreadHead(props: { sceneTitle: string }) {
 	const [t] = useTranslation(undefined, { i18n });
 	let pillWrapRef: HTMLDivElement | undefined;
 
-	createEffect(() => {
-		if (!queueOpen()) return;
+	onMount(() => {
 		const onKey = (event: KeyboardEvent) => {
+			if (!queueOpen()) return;
 			if (event.key === "Escape") workflow.closeQueue();
 		};
 		const onPointerDown = (event: PointerEvent) => {
+			if (!queueOpen()) return;
 			const target = event.target;
 			if (pillWrapRef && (!(target instanceof Node) || !pillWrapRef.contains(target))) {
 				workflow.closeQueue();

@@ -67,7 +67,20 @@ export class FirstMeetingMachine {
 		this.onConversationCreated = handler;
 	}
 
+	/** Reads never normalize persisted rows or trigger lifecycle transitions. */
 	getState(companionId: string): OnboardingStateRow {
+		const flow = this.flow(companionId);
+		const persisted = this.readPersisted(companionId);
+		const stateData = this.normalizeStateData(persisted?.stateData, flow);
+		if (persisted?.state === "complete" || persisted?.state === "voice_ready")
+			return { status: "complete", stateData };
+		const step = flow.steps.find((step) => step.id === persisted?.state) ?? flow.steps[0];
+		if (!step) throw new Error(`character package ${companionId}: first_meeting has no steps`);
+		return { status: "active", currentStepId: step.id, stateData };
+	}
+
+	/** Called only during initialization or an explicit command. */
+	initialize(companionId: string): OnboardingStateRow {
 		const flow = this.flow(companionId);
 		const persisted = this.readPersisted(companionId);
 		const stateData = this.normalizeStateData(persisted?.stateData, flow);
@@ -97,7 +110,7 @@ export class FirstMeetingMachine {
 	}
 
 	submit(companionId: string, stepId: string, answer: unknown): OnboardingStateRow {
-		const current = this.getState(companionId);
+		const current = this.initialize(companionId);
 		if (current.status !== "active" || current.currentStepId !== stepId) {
 			throw { kind: "conflict", reason: "stale_onboarding_step" };
 		}
@@ -113,7 +126,7 @@ export class FirstMeetingMachine {
 	}
 
 	setRelationshipMemory(companionId: string, enabled: boolean): OnboardingStateRow {
-		const current = this.getState(companionId);
+		const current = this.initialize(companionId);
 		const flow = this.flow(companionId);
 		return this.persistTransition(
 			companionId,
@@ -127,7 +140,7 @@ export class FirstMeetingMachine {
 	}
 
 	setConversationHistoryRead(companionId: string, enabled: boolean): OnboardingStateRow {
-		const current = this.getState(companionId);
+		const current = this.initialize(companionId);
 		const flow = this.flow(companionId);
 		return this.persistTransition(
 			companionId,
@@ -166,6 +179,7 @@ export class FirstMeetingMachine {
 				decisions: {
 					relationship_memory_enabled: true,
 					conversation_history_read_enabled: true,
+					roleplay_initial_values: {},
 				},
 			};
 		}

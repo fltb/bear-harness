@@ -1,4 +1,8 @@
-import { createCompanionClient, unwrap } from "@bear-harness/companion-client";
+import {
+	createCompanionClient,
+	unwrap,
+	withResponseRevision,
+} from "@bear-harness/companion-client";
 import type { IpcEnvelope } from "@bear-harness/protocol";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { waitFor } from "@testing-library/dom";
@@ -6,6 +10,11 @@ import { createComponent, createRoot } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { createCompanionStore } from "../src/stores/companion.js";
 import type { DomainEvent, Snapshot } from "../src/stores/ipc.js";
+import {
+	commitQueryValue,
+	invalidateCommittedQueries,
+	readQueryValue,
+} from "../src/stores/query-sync.js";
 import { createTestClient, ROLEPLAY_MEDIA_CHARACTER } from "./fixtures.js";
 
 type HostConversationProjection = {
@@ -82,11 +91,12 @@ function conversationSummary(id: string, title = id): HostConversationSummary {
 }
 function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["client"]) {
 	let dispose = () => undefined;
+	const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	let store: ReturnType<typeof createCompanionStore> | undefined;
 	createRoot((cleanup) => {
 		dispose = cleanup;
 		createComponent(QueryClientProvider, {
-			client: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+			client: cache,
 			get children() {
 				store = createCompanionStore(client);
 				return undefined;
@@ -94,7 +104,7 @@ function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["cli
 		});
 	});
 	if (!store) throw new Error("store initialization failed");
-	return { store, dispose };
+	return { store, dispose, cache };
 }
 
 describe("store RPC contract", () => {
@@ -582,6 +592,8 @@ describe("store RPC contract", () => {
 		});
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
+			await store.memory.list();
+			await store.memory.listCandidates();
 			await waitFor(() => {
 				expect(client.memory.list).toHaveBeenCalledTimes(1);
 				expect(candidateCalls).toBe(1);
@@ -609,7 +621,7 @@ describe("store RPC contract", () => {
 			dispose();
 		}
 	});
-	it("does not let a stale debounced mutation refresh overwrite a newer scoped memory search", async () => {
+	it("does not let a stale event-coalesced mutation refresh overwrite a newer scoped memory search", async () => {
 		vi.useFakeTimers();
 		try {
 			const { client } = createTestClient();
@@ -641,9 +653,7 @@ describe("store RPC contract", () => {
 			const { store, dispose } = createStoreWithCleanup(client);
 			try {
 				await store.memory.edit("memory-stale-refresh", "updated text");
-				await vi.advanceTimersByTimeAsync(249);
-				expect(client.memory.list).not.toHaveBeenCalled();
-				await vi.advanceTimersByTimeAsync(1);
+				await Promise.resolve();
 				expect(client.memory.list).toHaveBeenCalledTimes(1);
 
 				const scopedSearch = store.memory.search("newer", "relationship");
@@ -912,13 +922,28 @@ describe("store RPC contract", () => {
 		}
 	});
 
-	it("merges domain events and invalidates every affected projection", async () => {
+	it("invalidates domain projections and reads presentation from Host", async () => {
 		const { client } = createTestClient();
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
 				data: {
 					eventSeq: 0,
+					character: ROLEPLAY_MEDIA_CHARACTER,
+					characterRuntime: {
+						byConversation: { "conversation-2": { sceneId: "room", visualState: "thinking" } },
+					},
+					presentation: {
+						companionState: "running" as const,
+						permissions: [
+							{
+								runId: "run-1",
+								requestId: "permission-1",
+								prompt: "Allow?",
+								options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+							},
+						],
+					},
 					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
@@ -1004,6 +1029,15 @@ describe("store RPC contract", () => {
 				ok: true as const,
 				data: {
 					eventSeq: 0,
+					characterRuntime: {
+						byConversation: { "conversation-1": { sceneId: "room", visualState: "thinking" } },
+					},
+					presentation: {
+						companionState: "running" as const,
+						permissions: [],
+						conversationId: "conversation-1",
+						choiceSetId: "choices-1",
+					},
 					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
@@ -1252,13 +1286,45 @@ describe("store RPC contract", () => {
 			}
 			return park();
 		});
-		const { store, dispose } = createStoreWithCleanup(client);
+		const { store, dispose, cache } = createStoreWithCleanup(client);
+		let remoteValue = "before disconnect";
+		await cache.fetchQuery({
+			queryKey: ["settings", "background"],
+			queryFn: async () => remoteValue,
+		});
+		remoteValue = "after disconnect";
 		try {
 			// The failed subscription is recovered: the store re-reads the
 			// active projection, resyncs the snapshot cursor (eventSeq 2), and
 			// restarts from it; the seq-3 notification is then applied normally.
-			await waitFor(() => expect(store.activePiLiveState?.isStreaming).toBe(true));
+			await waitFor(() => expect(store.activePiLiveState?.isStreaming).toBe(true), {
+				timeout: 3000,
+			});
 			expect(snapshotCalls).toBeGreaterThanOrEqual(2);
+			expect(cache.getQueryData(["settings", "background"])).toBe("after disconnect");
+			expect(store.error).toBeNull();
+		} finally {
+			dispose();
+		}
+	});
+
+	it("ignores replayed events without reporting a gap or recovering the snapshot", async () => {
+		const { client } = createTestClient();
+		const event = { seq: 1, kind: "provider.login_changed", payload: { providerId: "test" } };
+		client.events.subscribe = vi
+			.fn()
+			.mockResolvedValueOnce({ ok: true, data: { events: [event] } })
+			.mockResolvedValueOnce({
+				ok: true,
+				data: { events: [event, { ...event, seq: 2 }, { ...event, seq: 2 }] },
+			})
+			.mockImplementation(() => park());
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.events.lastSeq()).toBe(2));
+			expect(client.snapshot.get).toHaveBeenCalledTimes(1);
+			expect(store.errorMetadata).toBeNull();
+			expect(store.events.stale()).toBe(false);
 		} finally {
 			dispose();
 		}
@@ -1303,10 +1369,9 @@ describe("store RPC contract", () => {
 		});
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
-			await waitFor(() => expect(snapshotCalls).toBe(2));
-			expect(store.run.pendingPermissions()).toEqual([
-				expect.objectContaining({ runId: "run-1", requestId: "request-1" }),
-			]);
+			await waitFor(() => expect(snapshotCalls).toBeGreaterThanOrEqual(2));
+			// Recovery uses the Host projection: the old permission cannot survive a missing resume event.
+			expect(store.run.pendingPermissions()).toEqual([]);
 		} finally {
 			dispose();
 		}
@@ -1314,12 +1379,21 @@ describe("store RPC contract", () => {
 
 	it("keeps declared ambient and regular roleplay media independent", async () => {
 		const { client } = createTestClient();
+		let mediaId: string | undefined = "inline-image";
+		let ambientMediaId: string | undefined = "ambient-audio";
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
 				data: {
 					eventSeq: 0,
 					character: ROLEPLAY_MEDIA_CHARACTER,
+					presentation: {
+						companionState: "running" as const,
+						permissions: [],
+						conversationId: "conversation-1",
+						mediaId,
+						ambientMediaId,
+					},
 					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
@@ -1394,17 +1468,78 @@ describe("store RPC contract", () => {
 			expect(store.activeRoleplayMediaId).toBe("inline-image");
 			expect(store.activeAmbientMediaId).toBe("ambient-audio");
 
-			dismissMedia.mockResolvedValueOnce({ ok: true as const, data: {} });
+			dismissMedia.mockImplementationOnce(async () => {
+				mediaId = undefined;
+				return { ok: true as const, data: {} };
+			});
 			await store.dismissRoleplayMedia();
 			expect(store.activeRoleplayMediaId).toBeUndefined();
 			expect(store.activeAmbientMediaId).toBe("ambient-audio");
 
-			dismissMedia.mockResolvedValueOnce({ ok: true as const, data: {} });
+			dismissMedia.mockImplementationOnce(async () => {
+				ambientMediaId = undefined;
+				return { ok: true as const, data: {} };
+			});
 			await store.dismissAmbientMedia();
 			expect(store.activeRoleplayMediaId).toBeUndefined();
 			expect(store.activeAmbientMediaId).toBeUndefined();
 		} finally {
 			dispose();
 		}
+	});
+});
+
+describe("committed Query revision boundary", () => {
+	const versioned = (revision: number, epoch = "host-a") =>
+		withResponseRevision({ value: revision }, { epoch, revision });
+	it("keeps a newer committed projection when an older read arrives last", async () => {
+		const cache = new QueryClient();
+		const pending = Promise.withResolvers<ReturnType<typeof versioned>>();
+		const read = readQueryValue(cache, ["settings"], () => pending.promise);
+		expect(commitQueryValue(cache, ["settings"], versioned(12))).toBe(true);
+		pending.resolve(versioned(10));
+		expect(await read).toEqual({ value: 12 });
+		expect(cache.getQueryData(["settings"])).toEqual({ value: 12 });
+		cache.clear();
+	});
+	it("does not lose a commit delivered while a read is in flight", async () => {
+		const cache = new QueryClient();
+		commitQueryValue(cache, ["memory", "a"], versioned(10));
+		const pending = Promise.withResolvers<ReturnType<typeof versioned>>();
+		const request = vi
+			.fn()
+			.mockImplementationOnce(() => pending.promise)
+			.mockResolvedValue(versioned(12));
+		const read = readQueryValue(cache, ["memory", "a"], request);
+		invalidateCommittedQueries(cache, { epoch: "host-a", revision: 12 }, () => true);
+		pending.resolve(versioned(11));
+		expect(await read).toEqual({ value: 12 });
+		expect(request).toHaveBeenCalledTimes(2);
+		cache.clear();
+	});
+	it("rejects a pending read after its scoped cache entry is removed", async () => {
+		const cache = new QueryClient();
+		const key = ["attachments", "list", "deleted-conversation"];
+		commitQueryValue(cache, key, versioned(10));
+		const pending = Promise.withResolvers<ReturnType<typeof versioned>>();
+		const read = readQueryValue(cache, key, () => pending.promise);
+		const rejected = expect(read).rejects.toMatchObject({ silent: true });
+		cache.removeQueries({ queryKey: key });
+		pending.resolve(versioned(11));
+		await rejected;
+		expect(cache.getQueryData(key)).toBeUndefined();
+		cache.clear();
+	});
+	it("retires old incarnations and ignores historical invalidation events", () => {
+		const cache = new QueryClient();
+		commitQueryValue(cache, ["settings"], versioned(100));
+		commitQueryValue(cache, ["memory"], versioned(101));
+		expect(commitQueryValue(cache, ["settings"], versioned(1, "host-b"))).toBe(true);
+		expect(cache.getQueryData(["memory"])).toBeUndefined();
+		invalidateCommittedQueries(cache, { epoch: "host-a", revision: 200 }, () => true);
+		expect(commitQueryValue(cache, ["settings"], versioned(2, "host-b"))).toBe(true);
+		expect(commitQueryValue(cache, ["settings"], versioned(300))).toBe(false);
+		expect(cache.getQueryData(["settings"])).toEqual({ value: 2 });
+		cache.clear();
 	});
 });

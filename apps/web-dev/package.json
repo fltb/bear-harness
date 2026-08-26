@@ -17,7 +17,8 @@
 		"@bear-harness/host-runtime": "file:../../packages/host-runtime",
 		"@bear-harness/i18n": "file:../../packages/i18n",
 		"@bear-harness/product-config": "file:../../packages/product-config",
-		"@bear-harness/protocol": "file:../../packages/protocol"
+		"@bear-harness/protocol": "file:../../packages/protocol",
+		"@tanstack/solid-query": "5.101.4"
 	},
 	"devDependencies": {
 		"@rsbuild/core": "2.1.11",

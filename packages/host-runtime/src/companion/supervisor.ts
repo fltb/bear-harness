@@ -3,7 +3,7 @@
  *
  * The renderer remains Electron-sandboxed. Pi runs alongside the Host because
  * role plugins are first-party package code, not an untrusted sandbox target;
- * Host-owned tools remain the sole application-state authority.
+ * Host manages access and synchronization; Pi remains the native conversation authority.
  */
 
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -19,6 +19,7 @@ import {
 	SettingsManager,
 	shouldCompact,
 } from "@earendil-works/pi-coding-agent";
+import { awaitSource } from "../await-source.js";
 import type { EventBus } from "../storage/event-bus.js";
 import type { CompanionHostToolCall, CompanionHostToolResult } from "./character-behavior.js";
 import { PiSessionStore } from "./pi-session-store.js";
@@ -119,6 +120,7 @@ export class CompanionSupervisor {
 	private readonly sessionStores = new Map<string, PiSessionStore>();
 	private modelRuntime: ModelRuntime | null = null;
 	private readonly initializations = new Map<string, Promise<PiSessionHandle>>();
+	private readonly sessionLifetimes = new Map<string, AbortController>();
 	private activeConversationId: string | null = null;
 	private readonly bridgeOwner = Symbol("companion-supervisor");
 	private installedBridge: HostBridge | undefined;
@@ -201,16 +203,25 @@ export class CompanionSupervisor {
 	}
 
 	public async ensureSession(conversationId: string): Promise<PiSessionHandle> {
+		if (this.state === "stopped") throw new Error("companion_stopped");
 		const existing = this.sessions.get(conversationId);
 		if (existing) return existing;
 		const pending = this.initializations.get(conversationId);
 		if (pending) return pending;
-		const initialization = this.createSession(conversationId);
-		this.initializations.set(conversationId, initialization);
-		try {
-			const session = await initialization;
+		const lifetime = new AbortController();
+		this.sessionLifetimes.set(conversationId, lifetime);
+		const work = this.createSession(conversationId, lifetime.signal).then((session) => {
+			if (lifetime.signal.aborted) {
+				session.dispose();
+				lifetime.signal.throwIfAborted();
+			}
 			this.sessions.set(conversationId, session);
 			return session;
+		});
+		const initialization = awaitSource(work, lifetime.signal);
+		this.initializations.set(conversationId, initialization);
+		try {
+			return await initialization;
 		} finally {
 			if (this.initializations.get(conversationId) === initialization) {
 				this.initializations.delete(conversationId);
@@ -283,8 +294,12 @@ export class CompanionSupervisor {
 		}
 	}
 
-	private async createSession(conversationId: string): Promise<PiSessionHandle> {
+	private async createSession(
+		conversationId: string,
+		signal: AbortSignal,
+	): Promise<PiSessionHandle> {
 		const modelRuntime = await this.providers.getModels();
+		signal.throwIfAborted();
 		this.modelRuntime = modelRuntime;
 		const skills = loadRoleSkills(this.runtimeConfig.skillPaths);
 		let pluginTools: unknown[] = [];
@@ -294,11 +309,13 @@ export class CompanionSupervisor {
 		try {
 			pluginTools = await loadRolePluginTools(this.runtimeConfig.pluginPaths);
 		} catch (error) {
+			signal.throwIfAborted();
 			this.eventBus.publish("companion.runtime_error", {
 				code: "role_plugin_load_failed",
 				message: error instanceof Error ? error.message : String(error),
 			});
 		}
+		signal.throwIfAborted();
 		const tools = [
 			this.traceExternalTool(conversationId, this.skillReadTool()),
 			...this.hostTools(conversationId),
@@ -342,6 +359,7 @@ export class CompanionSupervisor {
 			systemPrompt,
 		});
 		await resourceLoader.reload();
+		signal.throwIfAborted();
 		const agent = new Agent({
 			streamFn: modelRuntime.streamSimple.bind(modelRuntime),
 			initialState: {
@@ -373,6 +391,7 @@ export class CompanionSupervisor {
 			notificationScheduled = true;
 			queueMicrotask(() => {
 				notificationScheduled = false;
+				if (signal.aborted) return;
 				this.eventBus.publish("pi.session.changed", {
 					conversationId,
 					sessionId: session.sessionId,
@@ -399,9 +418,13 @@ export class CompanionSupervisor {
 
 	async stop(): Promise<void> {
 		this.state = "stopped";
+		for (const lifetime of this.sessionLifetimes.values()) lifetime.abort();
+		this.sessionLifetimes.clear();
 		try {
 			await Promise.allSettled([...this.sessions.values()].map((session) => session.abort()));
-			await Promise.allSettled(this.initializations.values());
+			// Detached initializations may be waiting on an unavailable provider.
+			// Their aborted lifetime prevents late state writes or publication.
+			for (const pending of this.initializations.values()) void pending.catch(() => undefined);
 			this.modelRuntime = null;
 			this.activeConversationId = null;
 			for (const session of this.sessions.values()) session.dispose();
@@ -416,6 +439,9 @@ export class CompanionSupervisor {
 
 	/** Abort and dispose a conversation's Pi session before its locator is removed. */
 	async invalidateConversation(conversationId: string): Promise<void> {
+		this.sessionLifetimes.get(conversationId)?.abort();
+		this.sessionLifetimes.delete(conversationId);
+		this.initializations.delete(conversationId);
 		const session = this.sessions.get(conversationId);
 		if (!session) return;
 		await session.abort();

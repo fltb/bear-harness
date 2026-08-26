@@ -3,8 +3,9 @@ import type { ConversationAttachmentSummary, PiTimelineEntry } from "@bear-harne
 import { Button } from "@kobalte/core/button";
 import { Dialog } from "@kobalte/core/dialog";
 import { TextField } from "@kobalte/core/text-field";
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { useAttachmentPreview } from "./features/AttachmentPreviewPanel.js";
+import { followTimelineScroll } from "./lib/dom-effects.js";
 import type { CharacterDisplay } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
 import { useConversationViewWorkflow } from "./stores/conversation-workflows.js";
@@ -267,12 +268,10 @@ export function ConversationPanel() {
 	const { sceneTitle, hasThreadContent } = view;
 	let threadRef: HTMLElement | undefined;
 
-	createEffect(() => {
-		// Track the active projection so the thread follows new timeline entries.
-		void store.activePiTimeline?.entries.length;
-		const el = threadRef;
-		if (el) el.scrollTop = el.scrollHeight;
-	});
+	followTimelineScroll(
+		() => threadRef,
+		() => store.activePiTimeline?.entries.length ?? 0,
+	);
 
 	return (
 		<>

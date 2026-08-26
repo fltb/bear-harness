@@ -20,6 +20,7 @@ declare module "node-llama-cpp" {
 			cli?: boolean;
 			endpoints?: { huggingFace?: string };
 			signal?: AbortSignal;
+			onProgress?: (progress: { downloadedSize: number; totalSize: number }) => void;
 			deleteTempFileOnCancel?: boolean;
 		},
 	) => Promise<string>;

@@ -381,6 +381,7 @@ async function initializeHost(): Promise<boolean> {
 			piWorkerPath: sourceE2EPiWorkerPath(),
 		});
 		const disposeRouter = wireElectronIpcHandlers(runtime.dispatcher, windowRegistry, {
+			subscribeEvents: (listener, afterSeq) => runtime.subscribeEvents(listener, afterSeq),
 			attachmentProtocol,
 		});
 		const disposeAttachmentBridge = registerConversationAttachmentBridge(

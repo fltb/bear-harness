@@ -302,6 +302,10 @@ export class TurnPipeline {
 	async continue(conversationId: string): Promise<void> {
 		const session = this.commandSession(conversationId);
 		this.rejectIfStreaming(session);
+		const last = session.state.messages.at(-1);
+		if (!last || last.role === "assistant") {
+			commandError("conflict", "message_continue_requires_pending_input");
+		}
 		this.ensureSessionNotifications(conversationId, session);
 		this.publishChanged(conversationId, session, "message");
 		this.runInBackground(session.continue(), "Pi continue failed");

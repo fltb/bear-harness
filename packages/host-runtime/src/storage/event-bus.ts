@@ -53,6 +53,8 @@ export class EventBus {
 	private db: AppDatabase;
 	private listeners = new Set<EventListener>();
 	private seq = 0;
+	private notifying = false;
+	private readonly notifications: Array<{ event: HostEvent; listeners: EventListener[] }> = [];
 
 	constructor(db: AppDatabase) {
 		this.db = db;
@@ -69,16 +71,33 @@ export class EventBus {
 		const candidate = { seq: this.seq + 1, kind, payload: safePayload };
 		const parsed = DomainEvent.safeParse(candidate);
 		if (!parsed.success) throw new TypeError(`invalid domain event ${kind}`);
-		this.seq = parsed.data.seq;
 		this.db
 			.insert(events)
-			.values({ seq: this.seq, kind: parsed.data.kind, payload: parsed.data.payload })
+			.values({ seq: parsed.data.seq, kind: parsed.data.kind, payload: parsed.data.payload })
 			.run();
-		for (const listener of this.listeners) {
+		this.seq = parsed.data.seq;
+		// A listener may synchronously publish another event (e.g. a character
+		// expression reacting to a Pi message). Finish delivering this event to
+		// every subscriber before delivering any of its derived events.
+		this.notifications.push({ event: parsed.data, listeners: [...this.listeners] });
+		if (!this.notifying) {
+			this.notifying = true;
 			try {
-				listener(parsed.data);
-			} catch {
-				/* listener error — swallow */
+				for (let index = 0; index < this.notifications.length; index++) {
+					const notification = this.notifications[index];
+					if (!notification) continue;
+					for (const listener of notification.listeners) {
+						if (!this.listeners.has(listener)) continue;
+						try {
+							listener(notification.event);
+						} catch {
+							/* isolate subscriber failures */
+						}
+					}
+				}
+			} finally {
+				this.notifications.length = 0;
+				this.notifying = false;
 			}
 		}
 		return parsed.data;

@@ -1,7 +1,11 @@
 // @vitest-environment node
 
-import { describe, expect, it } from "vitest";
-import type { MemoryBankScope, MemoryMetadata } from "../src/memory/backend.js";
+import { describe, expect, it, vi } from "vitest";
+import {
+	type MemoryBankScope,
+	type MemoryMetadata,
+	withMemoryNotifications,
+} from "../src/memory/backend.js";
 import {
 	legacyNamespaceFor,
 	namespaceFor,
@@ -125,6 +129,12 @@ class FakeTencentDbCore implements TencentDbMemoryCoreFacade {
 		const record = { ...current, importance: request.importance };
 		this.forNamespace(request.namespace).set(record.id, record);
 		return Promise.resolve(record);
+	}
+
+	list(request: { namespace: string; limit?: number }): Promise<readonly TencentDbCoreRecord[]> {
+		return Promise.resolve(
+			[...this.forNamespace(request.namespace).values()].slice(0, request.limit),
+		);
 	}
 
 	seed(namespace: string, record: TencentDbCoreRecord): void {
@@ -331,5 +341,79 @@ describe("TencentDB memory backend", () => {
 		await expect(
 			backend.open({ scope: { ...scopeA, userId: "user:ambiguous" } }),
 		).rejects.toMatchObject({ code: "invalid_scope", operation: "open" });
+	});
+});
+
+describe("Host memory acceptance boundary", () => {
+	it("keeps scope selection and operations in one queue through notification", async () => {
+		const backend = new TencentDbMemoryBackend(new FakeTencentDbCore());
+		await backend.open({ scope: scopeA });
+		await backend.open({ scope: scopeB });
+		const gate = Promise.withResolvers<void>();
+		const original = backend.remember.bind(backend);
+		const write = vi.spyOn(backend, "remember").mockImplementation(async (request) => {
+			await gate.promise;
+			return original(request);
+		});
+		const notify = vi.fn();
+		const read = vi.spyOn(backend, "list");
+		const managed = withMemoryNotifications(backend, notify);
+		const pendingWrite = managed.remember(rememberRequest(scopeA, "new memory"));
+		await vi.waitFor(() => expect(write).toHaveBeenCalledOnce());
+		const pendingRead = managed.list({ scope: scopeA }).then((records) => {
+			expect(notify).toHaveBeenCalledOnce();
+			return records;
+		});
+		const otherBank = managed.list({ scope: scopeB });
+		expect(read).not.toHaveBeenCalled();
+		gate.resolve();
+		await pendingWrite;
+		await expect(pendingRead).resolves.toMatchObject([{ text: "new memory" }]);
+		await expect(otherBank).resolves.toEqual([]);
+		await managed.close();
+	});
+
+	it("reconciles uncertain writes without retrying their side effect", async () => {
+		const backend = new TencentDbMemoryBackend(new FakeTencentDbCore());
+		await backend.open({ scope: scopeA });
+		const original = backend.remember.bind(backend);
+		const write = vi.spyOn(backend, "remember").mockImplementation(async (request) => {
+			await original(request);
+			throw new Error("reply lost after commit");
+		});
+		const notify = vi.fn();
+		const managed = withMemoryNotifications(backend, notify);
+		await expect(managed.remember(rememberRequest(scopeA, "committed"))).rejects.toThrow(
+			"reply lost",
+		);
+		expect(notify).toHaveBeenCalledOnce();
+		await expect(managed.list({ scope: scopeA })).resolves.toMatchObject([{ text: "committed" }]);
+		expect(write).toHaveBeenCalledOnce();
+		await managed.close();
+	});
+
+	it("retires pending reads and suppresses late write notifications on Host close", async () => {
+		const backend = new TencentDbMemoryBackend(new FakeTencentDbCore());
+		const gate = Promise.withResolvers<void>();
+		const write = vi.spyOn(backend, "forget").mockImplementation(() => gate.promise);
+		const read = vi.spyOn(backend, "list");
+		const notify = vi.fn();
+		const lifetime = new AbortController();
+		const managed = withMemoryNotifications(backend, notify, lifetime.signal);
+		const pendingWrite = managed.forget({ scope: scopeA, memoryId: "remote" });
+		await vi.waitFor(() => expect(write).toHaveBeenCalledOnce());
+		const pendingRead = managed.list({ scope: scopeA });
+		const checks = [
+			expect(pendingWrite).rejects.toMatchObject({ name: "AbortError" }),
+			expect(pendingRead).rejects.toMatchObject({ name: "AbortError" }),
+		];
+		lifetime.abort();
+		await Promise.all(checks);
+		gate.resolve();
+		await gate.promise;
+		await Promise.resolve();
+		expect(notify).not.toHaveBeenCalled();
+		expect(read).not.toHaveBeenCalled();
+		await managed.close();
 	});
 });

@@ -122,6 +122,7 @@ function sourceSessionId(provenance: MemoryProvenance): string {
 }
 
 export interface TencentDbRuntimeOptions {
+	readonly onRecordsChanged?: () => void;
 	readonly dataDir: string;
 	readonly providers: ProviderCatalog;
 	readonly models: ModelRegistry;
@@ -776,12 +777,17 @@ export class TencentDbRuntime {
 			models: options.models,
 			logger: options.logger,
 		});
-		this.createCore = (config) =>
-			new TdaiCore({
+		this.createCore = (config) => {
+			const core = new TdaiCore({
+				onRecordsChanged: () => {
+					if (!this.closed && this.core === core) options.onRecordsChanged?.();
+				},
 				hostAdapter: adapter,
 				config,
 				instanceId: `${options.installationId}:${options.userId}:${options.companionId}`,
 			});
+			return core;
+		};
 		this.config = deepMerge(DEFAULT_MEMORY_CONFIG, options.memoryConfig);
 		this.logger = options.logger;
 		this.core = this.createCore(this.config);
@@ -879,30 +885,41 @@ export class TencentDbRuntime {
 		modelPath: string;
 		dimensions: number;
 		hfEndpoint: string;
+		signal?: AbortSignal;
+		onProgress?: (progress: { downloadedSize: number; totalSize: number }) => void;
+		onPhase?: (phase: "validating" | "activating") => void;
 		timeoutMs?: number;
 	}): Promise<{ ready: true }> {
 		const controller = new AbortController();
 		const timer = setTimeout(
 			() => controller.abort(new Error("local embedding preparation timed out")),
-			options.timeoutMs ?? 120_000,
+			options.timeoutMs ?? 30 * 60_000,
 		);
+		const signal = options.signal
+			? AbortSignal.any([controller.signal, options.signal])
+			: controller.signal;
 		const candidate = this.embeddingServiceFactory(
 			{
 				provider: "local",
 				modelPath: options.modelPath,
 				dimensions: options.dimensions,
 				hfEndpoint: options.hfEndpoint,
-				signal: controller.signal,
+				signal,
+				onDownloadProgress: options.onProgress,
+				onDownloadComplete: () => options.onPhase?.("validating"),
 			},
 			this.logger,
 		);
 		try {
+			signal.throwIfAborted();
 			candidate.startWarmup();
 			const readiness = candidate as EmbeddingService & { waitForReady?: () => Promise<void> };
 			if (!readiness.waitForReady)
 				throw { kind: "unavailable", reason: "local_embedding_readiness_unavailable" };
 			await readiness.waitForReady();
+			signal.throwIfAborted();
 			const probe = await candidate.embed("semantic memory readiness probe");
+			signal.throwIfAborted();
 			if (probe.length !== options.dimensions) {
 				throw new Error(
 					`local embedding dimension mismatch: expected ${options.dimensions}, received ${probe.length}`,
@@ -918,6 +935,8 @@ export class TencentDbRuntime {
 			clearTimeout(timer);
 			await candidate.close?.();
 		}
+		signal.throwIfAborted();
+		options.onPhase?.("activating");
 		return this.replaceEmbeddingConfig({
 			enabled: true,
 			provider: "local",

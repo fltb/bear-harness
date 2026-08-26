@@ -324,12 +324,18 @@ test("conversation operations send explicit model instructions and persist revis
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("RULE_OK");
 
-	await rpc(page, bootstrap.token, "message.continue:v1", { conversationId });
+	await expect(
+		rpc(page, bootstrap.token, "message.continue:v1", { conversationId }),
+	).rejects.toThrow("message_continue_requires_pending_input");
+	const regenerated = (await projection(page, bootstrap.token, conversationId))
+		.filter((entry) => entry.kind === "message" && entry.role === "assistant")
+		.at(-1);
+	if (!regenerated) throw new Error("missing regenerated assistant entry");
 
 	await rpc(page, bootstrap.token, "message.correct:v1", {
 		conversationId,
-		reason: "不要替用户行动",
-		applyScope: "once",
+		entryId: regenerated.id,
+		presetId: "user_agency",
 	});
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))

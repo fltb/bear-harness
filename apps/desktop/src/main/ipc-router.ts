@@ -1,3 +1,4 @@
+import type { DomainEvent } from "@bear-harness/protocol";
 /**
  * Electron RPC transport for the transport-neutral Host runtime.
  *
@@ -8,7 +9,7 @@
  */
 
 import type { Dispatcher } from "@bear-harness/host-runtime";
-import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
+import { EventSubscribeRequest, REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
 import { BrowserWindow, ipcMain } from "electron";
 import { isRegisteredMainFrame, type WindowRegistration } from "./diagnostics/electron.js";
 
@@ -63,7 +64,10 @@ interface RendererDispatchContext {
 export function wireElectronIpcHandlers(
 	dispatcher: Dispatcher,
 	windowRegistry: ReadonlyMap<number, Pick<WindowRegistration, "allowedUrl">>,
-	options?: { attachmentProtocol?: RendererDispatchContext },
+	options?: {
+		attachmentProtocol?: RendererDispatchContext;
+		subscribeEvents?: (listener: (event: DomainEvent) => void, afterSeq: number) => () => void;
+	},
 ): () => void {
 	const disposers: Array<() => void> = [];
 	for (const channel of Object.keys(REQUEST_SCHEMAS)) {
@@ -78,6 +82,55 @@ export function wireElectronIpcHandlers(
 					: dispatch();
 			}),
 		);
+	}
+
+	const subscriptions = new Map<string, () => void>();
+	if (options?.subscribeEvents) {
+		const subscribe = options.subscribeEvents;
+		disposers.push(
+			replaceIpcHandler("events:listen:v1", async (event, params) => {
+				if (!senderAllowed(event, windowRegistry)) throw new Error("untrusted_event_subscriber");
+				const input = params as { id?: unknown; afterSeq?: unknown };
+				if (typeof input?.id !== "string" || !/^[a-z0-9-]{1,64}$/i.test(input.id))
+					throw new Error("invalid_subscription_id");
+				const { afterSeq = 0 } = EventSubscribeRequest.parse({ afterSeq: input.afterSeq });
+				const id = input.id;
+				const key = `${event.sender.id}:${id}`;
+				subscriptions.get(key)?.();
+				const sender = event.sender as Electron.WebContents;
+				let stop: (() => void) | undefined;
+				const cleanup = () => {
+					stop?.();
+					subscriptions.delete(key);
+					sender.removeListener("destroyed", cleanup);
+					sender.removeListener("did-start-navigation", cleanup);
+				};
+				sender.once("destroyed", cleanup);
+				sender.once("did-start-navigation", cleanup);
+				try {
+					stop = subscribe((domainEvent) => {
+						if (!sender.isDestroyed() && senderAllowed(event, windowRegistry))
+							sender.send("events:push:v1", { id, batch: { events: [domainEvent] } });
+					}, afterSeq);
+					subscriptions.set(key, cleanup);
+				} catch (error) {
+					cleanup();
+					throw error;
+				}
+				return {};
+			}),
+		);
+		disposers.push(
+			replaceIpcHandler("events:unlisten:v1", async (event, params) => {
+				if (!senderAllowed(event, windowRegistry)) throw new Error("untrusted_event_subscriber");
+				const id = (params as { id?: unknown })?.id;
+				if (typeof id === "string") subscriptions.get(`${event.sender.id}:${id}`)?.();
+				return {};
+			}),
+		);
+		disposers.push(() => {
+			for (const stop of subscriptions.values()) stop();
+		});
 	}
 
 	let disposed = false;
