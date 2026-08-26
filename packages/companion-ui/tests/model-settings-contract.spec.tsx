@@ -1,9 +1,9 @@
+import { zhCN } from "@bear-harness/i18n/locales";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ModelSelector } from "../src/features/ModelSelector.js";
 import { CompanionApp } from "../src/index.js";
-import { zhCN } from "@bear-harness/i18n/locales";
 import { createTestClient, OFFICIAL_PRODUCT } from "./fixtures.js";
 import { selectKobalteOption } from "./kobalte-helpers.js";
 
@@ -45,20 +45,24 @@ function configuredClient() {
 	let providers = [CANDIDATE, PROVIDER, OAUTH];
 	const providerList = vi.fn(() => Promise.resolve({ ok: true as const, data: { providers } }));
 	fixture.client.provider.list = providerList;
-	fixture.client.provider.setApiKey = vi.fn(async ({ providerId }: { providerId: string; apiKey: string }) => {
-		providers = providers.map((provider) =>
-			provider.id === providerId
-				? { ...provider, added: true as const, credentialStatus: "stored" as const }
-				: provider,
-		) as typeof providers;
-		return { ok: true as const, data: null };
-	});
-	fixture.client.provider.overrideBaseUrl = vi.fn(async ({ providerId, baseUrl }: { providerId: string; baseUrl: string }) => {
-		providers = providers.map((provider) =>
-			provider.id === providerId ? { ...provider, baseUrl } : provider,
-		) as typeof providers;
-		return { ok: true as const, data: null };
-	});
+	fixture.client.provider.setApiKey = vi.fn(
+		async ({ providerId }: { providerId: string; apiKey: string }) => {
+			providers = providers.map((provider) =>
+				provider.id === providerId
+					? { ...provider, added: true as const, credentialStatus: "stored" as const }
+					: provider,
+			) as typeof providers;
+			return { ok: true as const, data: null };
+		},
+	);
+	fixture.client.provider.overrideBaseUrl = vi.fn(
+		async ({ providerId, baseUrl }: { providerId: string; baseUrl: string }) => {
+			providers = providers.map((provider) =>
+				provider.id === providerId ? { ...provider, baseUrl } : provider,
+			) as typeof providers;
+			return { ok: true as const, data: null };
+		},
+	);
 	fixture.client.provider.remove = vi.fn(async ({ providerId }: { providerId: string }) => {
 		providers = providers.filter((provider) => provider.id !== providerId);
 		return { ok: true as const, data: null };
@@ -68,8 +72,22 @@ function configuredClient() {
 			ok: true as const,
 			data: {
 				models: [
-					{ providerId: "relay", providerName: "Relay", modelId: "fast", label: "Fast", supportsImages: false, createdAt: "2026-01-01" },
-					{ providerId: "relay", providerName: "Relay", modelId: "vision", label: "Vision", supportsImages: true, createdAt: "2026-01-02" },
+					{
+						providerId: "relay",
+						providerName: "Relay",
+						modelId: "fast",
+						label: "Fast",
+						supportsImages: false,
+						createdAt: "2026-01-01",
+					},
+					{
+						providerId: "relay",
+						providerName: "Relay",
+						modelId: "vision",
+						label: "Vision",
+						supportsImages: true,
+						createdAt: "2026-01-02",
+					},
 				],
 			},
 		}),
@@ -87,6 +105,27 @@ async function openSettings() {
 function providerSetup(backstage: HTMLElement): HTMLElement {
 	return within(backstage).getByRole("region", { name: zhCN.settings.providerSetupLabel });
 }
+function detailsSummary(container: HTMLElement, label: string): HTMLElement {
+	const summary = within(container)
+		.getAllByText(label)
+		.find((candidate) => candidate.tagName === "SUMMARY");
+	if (!summary) throw new Error(`details summary missing: ${label}`);
+	return summary;
+}
+
+function providerEditorForAction(
+	setup: HTMLElement,
+	providerId: string,
+	actionName: string,
+): HTMLElement {
+	const action = within(setup)
+		.getAllByRole("button", { name: actionName })
+		.find((candidate) => candidate.closest(`[data-provider-editor="${providerId}"]`));
+	if (!action) throw new Error(`provider action missing: ${providerId} ${actionName}`);
+	const editor = action.closest(`[data-provider-editor="${providerId}"]`);
+	expect(editor).toHaveAttribute("data-provider-editor", providerId);
+	return editor as HTMLElement;
+}
 
 describe("breaking provider and model settings contract", () => {
 	it("shows only current reply and optional image controls, not old default or model-pool controls", async () => {
@@ -100,26 +139,32 @@ describe("breaking provider and model settings contract", () => {
 		expect(within(backstage).queryByText(zhCN.settings.removeModel)).not.toBeInTheDocument();
 	});
 
-	it("keeps candidate, editor, cards, and import surfaces grouped under the wide settings manager layout", async () => {
+	it("exposes candidate selection, added providers, imports, and the selected editor", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
+		const candidateHeading = within(setup).getByRole("heading", {
+			name: zhCN.settings.addProvider,
+		});
+		const providerSelect = within(setup).getByLabelText(zhCN.settings.providerLabel);
+		const addedProviders = within(setup).getByRole("region", {
+			name: zhCN.settings.addedProviders,
+		});
 
-		expect(backstage).toHaveClass("backstage-sheet-settings");
-		expect(setup).toHaveClass("provider-setup-manager");
-		expect(setup.querySelector(".provider-connections")).not.toBeNull();
-		expect(setup.querySelector(".provider-editor-pane")).not.toBeNull();
-		expect(setup.querySelector(".provider-candidate-section .provider-selector")).not.toBeNull();
-		expect(setup.querySelector(".provider-card-list")).toHaveAttribute("aria-label", zhCN.settings.addedProviders);
-		expect(setup.querySelector(".provider-import-pi")).toBeInTheDocument();
-		expect(setup.querySelector(".provider-import-custom")).toBeInTheDocument();
+		expect(candidateHeading).toBeVisible();
+		expect(providerSelect).toBeVisible();
+		expect(within(addedProviders).getByText(PROVIDER.name)).toBeVisible();
+		expect(detailsSummary(setup, zhCN.settings.piConfigLabel)).toBeVisible();
+		expect(detailsSummary(setup, zhCN.settings.customProvider)).toBeVisible();
 
-		await selectKobalteOption(user, within(setup).getByLabelText(zhCN.settings.providerLabel), "openai");
-		const editor = setup.querySelector('[data-provider-editor="openai"]');
-		expect(editor).toHaveClass("provider-setup-editor");
-		expect(editor?.closest(".provider-editor-pane")).not.toBeNull();
-		expect(editor?.closest(".provider-candidate-section")).toBeNull();
+		await selectKobalteOption(user, providerSelect, "openai");
+		const editor = providerEditorForAction(setup, "openai", zhCN.settings.addProvider);
+		expect(within(editor).getByLabelText(zhCN.settings.apiKeyLabel)).toBeVisible();
+		expect(within(editor).getByLabelText(zhCN.settings.customBaseUrl)).toBeVisible();
+		expect(
+			within(addedProviders).queryByLabelText(zhCN.settings.apiKeyLabel),
+		).not.toBeInTheDocument();
 	});
 
 	it("adds a builtin candidate with an API key and optional URL", async () => {
@@ -127,20 +172,37 @@ describe("breaking provider and model settings contract", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
-		await selectKobalteOption(user, within(setup).getByLabelText(zhCN.settings.providerLabel), "openai");
-		const editor = setup.querySelector('[data-provider-editor="openai"]') as HTMLElement;
+		await selectKobalteOption(
+			user,
+			within(setup).getByLabelText(zhCN.settings.providerLabel),
+			"openai",
+		);
+		const editor = providerEditorForAction(setup, "openai", zhCN.settings.addProvider);
 		client.provider.list.mockClear();
 		client.model.poolGet.mockClear();
 		client.model.defaultsGet.mockClear();
 		await user.type(within(editor).getByLabelText(zhCN.settings.apiKeyLabel), "candidate-secret");
-		await user.type(within(editor).getByLabelText(zhCN.settings.customBaseUrl), "https://relay.example/v1");
+		await user.type(
+			within(editor).getByLabelText(zhCN.settings.customBaseUrl),
+			"https://relay.example/v1",
+		);
 		await user.click(within(editor).getByRole("button", { name: zhCN.settings.addProvider }));
-		await waitFor(() => expect(client.provider.setApiKey).toHaveBeenCalledWith({ providerId: "openai", apiKey: "candidate-secret" }));
-		expect(client.provider.overrideBaseUrl).toHaveBeenCalledWith({ providerId: "openai", baseUrl: "https://relay.example/v1" });
+		await waitFor(() =>
+			expect(client.provider.setApiKey).toHaveBeenCalledWith({
+				providerId: "openai",
+				apiKey: "candidate-secret",
+			}),
+		);
+		expect(client.provider.overrideBaseUrl).toHaveBeenCalledWith({
+			providerId: "openai",
+			baseUrl: "https://relay.example/v1",
+		});
 		await waitFor(() => expect(client.provider.list).toHaveBeenCalled());
 		expect(client.model.poolGet).toHaveBeenCalled();
 		expect(client.model.defaultsGet).toHaveBeenCalled();
-		await waitFor(() => expect(within(setup).getAllByText(CANDIDATE.name).length).toBeGreaterThan(0));
+		await waitFor(() =>
+			expect(within(setup).getAllByText(CANDIDATE.name).length).toBeGreaterThan(0),
+		);
 	});
 
 	it("edits an added provider key and URL from its card", async () => {
@@ -153,10 +215,15 @@ describe("breaking provider and model settings contract", () => {
 		client.model.poolGet.mockClear();
 		client.model.defaultsGet.mockClear();
 		await user.click(within(card).getByRole("button", { name: zhCN.settings.editProviderKey }));
-		const editor = setup.querySelector('[data-provider-editor="relay"]') as HTMLElement;
+		const editor = providerEditorForAction(setup, "relay", zhCN.settings.saveKey);
 		await user.type(within(editor).getByLabelText(zhCN.settings.apiKeyLabel), "replacement-secret");
 		await user.click(within(editor).getByRole("button", { name: zhCN.settings.saveKey }));
-		await waitFor(() => expect(client.provider.setApiKey).toHaveBeenCalledWith({ providerId: "relay", apiKey: "replacement-secret" }));
+		await waitFor(() =>
+			expect(client.provider.setApiKey).toHaveBeenCalledWith({
+				providerId: "relay",
+				apiKey: "replacement-secret",
+			}),
+		);
 		await waitFor(() => expect(client.provider.list).toHaveBeenCalled());
 		expect(client.model.poolGet).toHaveBeenCalled();
 		expect(client.model.defaultsGet).toHaveBeenCalled();
@@ -164,21 +231,47 @@ describe("breaking provider and model settings contract", () => {
 		client.model.poolGet.mockClear();
 		client.model.defaultsGet.mockClear();
 		await user.click(within(card).getByRole("button", { name: zhCN.settings.editProviderUrl }));
-		const urlEditor = setup.querySelector('[data-provider-editor="relay"]') as HTMLElement;
+		const urlEditor = providerEditorForAction(setup, "relay", zhCN.settings.customSave);
 		const url = within(urlEditor).getByLabelText(zhCN.settings.customBaseUrl);
 		await user.clear(url);
 		await user.type(url, "https://new.example/v1");
 		await user.click(within(urlEditor).getByRole("button", { name: zhCN.settings.customSave }));
-		expect(client.provider.overrideBaseUrl).toHaveBeenCalledWith({ providerId: "relay", baseUrl: "https://new.example/v1" });
+		expect(client.provider.overrideBaseUrl).toHaveBeenCalledWith({
+			providerId: "relay",
+			baseUrl: "https://new.example/v1",
+		});
 		await waitFor(() => expect(client.provider.list).toHaveBeenCalled());
 		expect(client.model.poolGet).not.toHaveBeenCalled();
 	});
 
 	it("reauthenticates OAuth, answers an explicit select prompt, polls, and refreshes providers only after completion", async () => {
 		const { client } = configuredClient();
-		client.provider.login = vi.fn(() => Promise.resolve({ ok: true as const, data: { providerId: "oauth", status: "waiting_input" as const, prompt: { type: "select" as const, message: "Choose account", options: [{ id: "personal", label: "Personal" }] } } }));
-		client.provider.loginAnswer = vi.fn(() => Promise.resolve({ ok: true as const, data: { providerId: "oauth", status: "running" as const } }));
-		client.provider.loginStatus = vi.fn(() => Promise.resolve({ ok: true as const, data: { providerId: "oauth", status: "completed" as const } }));
+		client.provider.login = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					providerId: "oauth",
+					status: "waiting_input" as const,
+					prompt: {
+						type: "select" as const,
+						message: "Choose account",
+						options: [{ id: "personal", label: "Personal" }],
+					},
+				},
+			}),
+		);
+		client.provider.loginAnswer = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { providerId: "oauth", status: "running" as const },
+			}),
+		);
+		client.provider.loginStatus = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { providerId: "oauth", status: "completed" as const },
+			}),
+		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
@@ -187,15 +280,21 @@ describe("breaking provider and model settings contract", () => {
 		client.model.poolGet.mockClear();
 		client.model.defaultsGet.mockClear();
 		await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
-		const editor = setup.querySelector('[data-provider-editor="oauth"]') as HTMLElement;
+		const editor = providerEditorForAction(setup, "oauth", zhCN.settings.oauthSubmit);
 		const prompt = within(editor).getByLabelText("Choose account");
 		expect(prompt).toBeVisible();
 		// No account is pre-selected: the submit action must be explicit.
 		expect(within(editor).getByRole("button", { name: zhCN.settings.oauthSubmit })).toBeDisabled();
 		await selectKobalteOption(user, prompt, "Personal");
 		await user.click(within(editor).getByRole("button", { name: zhCN.settings.oauthSubmit }));
-		expect(client.provider.loginAnswer).toHaveBeenCalledWith({ providerId: "oauth", answer: "personal" });
-		await waitFor(() => expect(client.provider.loginStatus).toHaveBeenCalledWith({ providerId: "oauth" }), { timeout: 2000 });
+		expect(client.provider.loginAnswer).toHaveBeenCalledWith({
+			providerId: "oauth",
+			answer: "personal",
+		});
+		await waitFor(
+			() => expect(client.provider.loginStatus).toHaveBeenCalledWith({ providerId: "oauth" }),
+			{ timeout: 2000 },
+		);
 		await waitFor(() => expect(client.provider.list).toHaveBeenCalledTimes(1), { timeout: 2500 });
 		expect(client.model.poolGet).toHaveBeenCalledTimes(1);
 		expect(client.model.defaultsGet).toHaveBeenCalledTimes(1);
@@ -205,19 +304,26 @@ describe("breaking provider and model settings contract", () => {
 
 	it("surfaces device code, verification URL, instructions, and info links from the OAuth session", async () => {
 		const { client } = configuredClient();
-		client.provider.login = vi.fn(() => Promise.resolve({
-			ok: true as const,
-			data: {
-				providerId: "oauth",
-				status: "running" as const,
-				deviceCode: "ABCD-EFGH",
-				verificationUri: "https://github.com/login/device",
-				instructions: "Open the page and enter the code.",
-				message: "Waiting for authorization…",
-				infoLinks: [{ url: "https://docs.example/oauth-help", label: "OAuth help" }],
-			},
-		}));
-		client.provider.loginStatus = vi.fn(() => Promise.resolve({ ok: true as const, data: { providerId: "oauth", status: "running" as const } }));
+		client.provider.login = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					providerId: "oauth",
+					status: "running" as const,
+					deviceCode: "ABCD-EFGH",
+					verificationUri: "https://github.com/login/device",
+					instructions: "Open the page and enter the code.",
+					message: "Waiting for authorization…",
+					infoLinks: [{ url: "https://docs.example/oauth-help", label: "OAuth help" }],
+				},
+			}),
+		);
+		client.provider.loginStatus = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { providerId: "oauth", status: "running" as const },
+			}),
+		);
 		client.provider.loginCancel = vi.fn(() => Promise.resolve({ ok: true as const, data: null }));
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
@@ -227,12 +333,18 @@ describe("breaking provider and model settings contract", () => {
 		client.model.poolGet.mockClear();
 		client.model.defaultsGet.mockClear();
 		await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
-		const editor = setup.querySelector('[data-provider-editor="oauth"]') as HTMLElement;
+		const editor = providerEditorForAction(setup, "oauth", zhCN.settings.oauthCancel);
 		expect(within(editor).getByText("ABCD-EFGH")).toBeVisible();
-		expect(within(editor).getByRole("link", { name: zhCN.settings.oauthOpen })).toHaveAttribute("href", "https://github.com/login/device");
+		expect(within(editor).getByRole("link", { name: zhCN.settings.oauthOpen })).toHaveAttribute(
+			"href",
+			"https://github.com/login/device",
+		);
 		expect(within(editor).getByText("Open the page and enter the code.")).toBeVisible();
 		expect(within(editor).getByText("Waiting for authorization…")).toBeVisible();
-		expect(within(editor).getByRole("link", { name: "OAuth help" })).toHaveAttribute("href", "https://docs.example/oauth-help");
+		expect(within(editor).getByRole("link", { name: "OAuth help" })).toHaveAttribute(
+			"href",
+			"https://docs.example/oauth-help",
+		);
 		// A running flow must not refresh provider queries.
 		expect(client.provider.list).not.toHaveBeenCalled();
 		expect(client.model.poolGet).not.toHaveBeenCalled();
@@ -245,8 +357,22 @@ describe("breaking provider and model settings contract", () => {
 
 	it("reports failed OAuth sessions without refreshing provider queries", async () => {
 		const { client } = configuredClient();
-		client.provider.login = vi.fn(() => Promise.resolve({ ok: true as const, data: { providerId: "oauth", status: "running" as const } }));
-		client.provider.loginStatus = vi.fn(() => Promise.resolve({ ok: true as const, data: { providerId: "oauth", status: "failed" as const, message: "token exchange failed: invalid_grant" } }));
+		client.provider.login = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { providerId: "oauth", status: "running" as const },
+			}),
+		);
+		client.provider.loginStatus = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					providerId: "oauth",
+					status: "failed" as const,
+					message: "token exchange failed: invalid_grant",
+				},
+			}),
+		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
@@ -255,7 +381,10 @@ describe("breaking provider and model settings contract", () => {
 		client.model.poolGet.mockClear();
 		client.model.defaultsGet.mockClear();
 		await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
-		await waitFor(() => expect(within(setup).getByText("token exchange failed: invalid_grant")).toBeVisible(), { timeout: 2000 });
+		await waitFor(
+			() => expect(within(setup).getByText("token exchange failed: invalid_grant")).toBeVisible(),
+			{ timeout: 2000 },
+		);
 		expect(client.provider.list).not.toHaveBeenCalled();
 		expect(client.model.poolGet).not.toHaveBeenCalled();
 		expect(client.model.defaultsGet).not.toHaveBeenCalled();
@@ -280,24 +409,55 @@ describe("breaking provider and model settings contract", () => {
 
 	it("adds custom Pi configuration and a custom provider through their explicit forms", async () => {
 		const { client } = configuredClient();
-		client.provider.importPiConfig = vi.fn(() => Promise.resolve({ ok: true as const, data: { models: [{ providerId: "pi-local", modelId: "local", label: "Local", supportsImages: false, createdAt: "2026-01-01" }] } }));
+		client.provider.importPiConfig = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					models: [
+						{
+							providerId: "pi-local",
+							modelId: "local",
+							label: "Local",
+							supportsImages: false,
+							createdAt: "2026-01-01",
+						},
+					],
+				},
+			}),
+		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
-		const pi = within(setup).getAllByText(zhCN.settings.piConfigLabel)[0]!.closest("details")!;
-		await user.click(pi.querySelector("summary")!);
+		await user.click(detailsSummary(setup, zhCN.settings.piConfigLabel));
 		// Empty drafts are intentionally ignored; submit an actual Pi document.
-		fireEvent.input(within(pi).getByLabelText(zhCN.settings.piConfigLabel), { target: { value: '{"providers":{"pi-local":{"models":[{"id":"local"}]}}}' } });
-		await user.click(within(pi).getByRole("button", { name: zhCN.settings.piConfigImport }));
-		expect(client.provider.importPiConfig).toHaveBeenCalledWith({ configJson: '{"providers":{"pi-local":{"models":[{"id":"local"}]}}}' });
-		const custom = within(setup).getAllByText(zhCN.settings.customProvider).at(-1)!.closest("details")!;
-		await user.type(within(custom).getByLabelText(zhCN.settings.customProviderId), "custom-relay");
-		await user.type(within(custom).getByLabelText(zhCN.settings.customServiceName), "Custom Relay");
-		await user.type(within(custom).getByLabelText(zhCN.settings.customBaseUrl), "https://custom.example/v1");
-		await user.type(within(custom).getByLabelText(zhCN.settings.customModels), "custom-model");
-		await user.type(within(custom).getByLabelText(zhCN.settings.apiKeyLabel), "custom-secret");
-		await user.click(within(custom).getByRole("button", { name: zhCN.settings.addProvider }));
-		expect(client.provider.customUpsert).toHaveBeenCalledWith({ providerId: "custom-relay", name: "Custom Relay", baseUrl: "https://custom.example/v1", models: [{ id: "custom-model" }], apiKey: "custom-secret" });
+		fireEvent.input(within(setup).getByLabelText(zhCN.settings.piConfigLabel), {
+			target: { value: '{"providers":{"pi-local":{"models":[{"id":"local"}]}}}' },
+		});
+		await user.click(within(setup).getByRole("button", { name: zhCN.settings.piConfigImport }));
+		expect(client.provider.importPiConfig).toHaveBeenCalledWith({
+			configJson: '{"providers":{"pi-local":{"models":[{"id":"local"}]}}}',
+		});
+		await user.click(detailsSummary(setup, zhCN.settings.customProvider));
+		await user.type(within(setup).getByLabelText(zhCN.settings.customProviderId), "custom-relay");
+		await user.type(within(setup).getByLabelText(zhCN.settings.customServiceName), "Custom Relay");
+		await user.type(
+			within(setup).getByLabelText(zhCN.settings.customBaseUrl),
+			"https://custom.example/v1",
+		);
+		await user.type(within(setup).getByLabelText(zhCN.settings.customModels), "custom-model");
+		await user.type(within(setup).getByLabelText(zhCN.settings.apiKeyLabel), "custom-secret");
+		const customEditor = within(setup)
+			.getByLabelText(zhCN.settings.customProviderId)
+			.closest("details");
+		if (!customEditor) throw new Error("custom provider editor missing");
+		await user.click(within(customEditor).getByRole("button", { name: zhCN.settings.addProvider }));
+		expect(client.provider.customUpsert).toHaveBeenCalledWith({
+			providerId: "custom-relay",
+			name: "Custom Relay",
+			baseUrl: "https://custom.example/v1",
+			models: [{ id: "custom-model" }],
+			apiKey: "custom-secret",
+		});
 	});
 });
 
@@ -309,10 +469,32 @@ describe("shared model selector contract", () => {
 	])("searches a small catalog by %s and labels model with provider", async (_kind, query) => {
 		const user = userEvent.setup();
 		const models = [
-			{ providerId: "provider-one", providerName: "Provider One", modelId: "text-id", label: "Text Name", supportsImages: false, createdAt: "2026-01-01" },
-			{ providerId: "provider-two", providerName: "Provider Two", modelId: "vision-id", label: "Vision Name", supportsImages: true, createdAt: "2026-01-01" },
+			{
+				providerId: "provider-one",
+				providerName: "Provider One",
+				modelId: "text-id",
+				label: "Text Name",
+				supportsImages: false,
+				createdAt: "2026-01-01",
+			},
+			{
+				providerId: "provider-two",
+				providerName: "Provider Two",
+				modelId: "vision-id",
+				label: "Vision Name",
+				supportsImages: true,
+				createdAt: "2026-01-01",
+			},
 		];
-		const view = render(() => <ModelSelector models={models} value={null} class="field" label="Test models" onModelChange={() => undefined} />);
+		const view = render(() => (
+			<ModelSelector
+				models={models}
+				value={null}
+				class="field"
+				label="Test models"
+				onModelChange={() => undefined}
+			/>
+		));
 		await user.click(screen.getByLabelText("Test models"));
 		const input = screen.getByPlaceholderText(zhCN.settings.searchModels);
 		await user.type(input, query);

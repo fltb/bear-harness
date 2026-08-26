@@ -93,13 +93,6 @@ export type ModelListData = ModelPoolData & {
 	multimodalFallback?: ModelRoute;
 	defaults: ModelDefaultsData;
 };
-export type ActionDraft = Wire.ActionDraft;
-export type Commission = Wire.Commission;
-export type CommissionStatus = Commission["status"];
-export type CommissionListData = Wire.CommissionListResponse;
-export type CommissionDraftParams = Wire.CommissionDraftRequest;
-export type CommissionDraftResult = Wire.CommissionDraftResponse;
-export type CommissionLaunchResult = Wire.CommissionLaunchResponse;
 export type RunStatus = Wire.RunStatus;
 export type RunInfo = Wire.Run;
 export type RunListData = Wire.RunListResponse;
@@ -114,11 +107,6 @@ export interface RunPermissionRequest {
 	prompt: string;
 	options: RunPermissionOption[];
 }
-export type Artifact = Wire.Artifact;
-export type ArtifactStatus = Artifact["status"];
-export type ArtifactListData = Wire.ArtifactListResponse;
-export type ArtifactReadData = Wire.ArtifactReadResponse;
-export type ArtifactUrlData = Wire.ArtifactUrlResponse;
 export type SettingsData = Wire.SettingsData;
 export type SettingsPatch = Wire.SettingsPatch;
 export type SettingsCapabilities = Wire.SettingsCapabilities;

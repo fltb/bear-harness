@@ -43,6 +43,13 @@ if (!data.on || typeof data.on !== "object") {
 	process.stderr.write("Invalid workflow: top-level `on` must be a mapping\n");
 	process.exit(1);
 }
+const triggers = Object.keys(data.on);
+if (triggers.length !== 1 || triggers[0] !== "workflow_dispatch") {
+	process.stderr.write(
+		`Invalid workflow: top-level \`on\` must contain exactly \`workflow_dispatch\`; found ${triggers.join(", ") || "(none)"}\n`,
+	);
+	process.exit(1);
+}
 if (!data.jobs || typeof data.jobs !== "object" || Object.keys(data.jobs).length === 0) {
 	process.stderr.write("Invalid workflow: top-level `jobs` must be a non-empty mapping\n");
 	process.exit(1);

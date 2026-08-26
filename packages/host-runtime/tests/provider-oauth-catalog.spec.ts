@@ -1,16 +1,13 @@
 // @vitest-environment node
 
-import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ProviderCatalog, type AuthInteraction } from "../src/providers/catalog.js";
-import {
-	CredentialStore,
-	type CredentialVault,
-} from "../src/providers/credential-store.js";
+import { type AuthInteraction, ProviderCatalog } from "../src/providers/catalog.js";
+import { CredentialStore, type CredentialVault } from "../src/providers/credential-store.js";
 
 type RuntimeLogin = (
 	providerId: string,
@@ -198,7 +195,6 @@ describe("ProviderCatalog OAuth contract", () => {
 			expect.objectContaining({ kind: "not_found", reason: "oauth_session_not_found" }),
 		);
 	});
-
 
 	it("rejects a pending interaction prompt when the flow is cancelled", async () => {
 		const catalog = makeCatalog();

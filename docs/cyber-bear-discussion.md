@@ -2,7 +2,7 @@
 
 > **非权威记录。** 本文包含已废弃、推测或被后续用户决定覆盖的内容，不得作为产品、实现或测试依据。
 >
-> 唯一权威计划：[`bear-harness-plan.md`](./bear-harness-plan.md)。
+> 当前实现以 [`refernece/architecture.md`](./refernece/architecture.md) 及 [`refernece/index.md`](./refernece/index.md) 所链接的模块参考为准；下文仅保留为已被取代的历史讨论。
 
 ## 1. 状态, 目的与范围
 

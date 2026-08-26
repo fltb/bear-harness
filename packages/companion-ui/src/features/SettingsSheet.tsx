@@ -6,8 +6,8 @@ import {
 	useLanguage,
 	useTranslation,
 } from "@bear-harness/i18n";
-import { Show, createSignal } from "solid-js";
 import { Select } from "@kobalte/core/select";
+import { createSignal, Show } from "solid-js";
 import { ConversationModelSettings } from "./ConversationModelSettings.js";
 import { NetworkAndMemorySettings } from "./NetworkAndMemorySettings.js";
 import { SystemModelSettings } from "./SystemModelSettings.js";
@@ -34,7 +34,11 @@ export function SettingsSheet() {
 		<div class="sheet-panel">
 			<p class="drawer-note">{t("settings.note")}</p>
 			<Show when={error()}>
-				{(message) => <p class="status-line err" role="alert">{message()}</p>}
+				{(message) => (
+					<p class="status-line err" role="alert">
+						{message()}
+					</p>
+				)}
 			</Show>
 
 			<Select
@@ -75,4 +79,3 @@ export function SettingsSheet() {
 		</div>
 	);
 }
-

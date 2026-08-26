@@ -2,239 +2,328 @@
 
 ## Responsibility and authority
 
-`@bear-harness/host-runtime` is the instance-scoped host for a Companion character. It owns the canonical SQLite state, the RPC boundary used by renderers, the in-process Pi Companion session, provider/model selection, roleplay and character presentation state, memory integration, commission execution, artifacts, and event/audit projections. The package is private and is published to consumers through the package-root export in [`package.json`](../../packages/host-runtime/package.json).
+`@bear-harness/host-runtime` is the instance-scoped Host for one active Companion character. It owns canonical SQLite state, native Pi conversation sessions, shared RPC dispatch, provider/model routing, roleplay and presentation state, Tdai memory integration, immutable conversation attachments, direct external-agent runs, EventBus projections, audit, and moderation. The package has no Electron, browser, or app-shell imports; platform capabilities are injected.
 
 Authority is deliberately split:
 
-- **Host code is authoritative for application state.** `Dispatcher` validates protocol requests and responses; `composition.ts` maps RPC endpoints to domain services; the Companion can only call the allowlisted Host tools installed by the supervisor. The supervisor does not enable built-in filesystem, shell, edit, or write tools ([`supervisor.ts`](../../packages/host-runtime/src/companion/supervisor.ts)).
-- **The character package is authoritative for declarations.** `CharacterLoader` supplies valid scenes, expressions, roleplay events, media, choice sets, skills, and plugin trust. The host rejects scene, expression, roleplay-event, media, or choice IDs not declared by that package.
-- **The model is authoritative only for model output and explicit model tool requests.** A model may request an allowlisted scene/expression/media/choice/tool action, but the Host validates and persists the resulting state or rejects it.
-- **The user is authoritative at explicit approval boundaries.** Work proposals become commissions and cannot launch until the exact draft hash is approved. Assistant-suggested memory becomes a candidate requiring a user decision; direct user capture goes to the memory backend.
-- **Executors are workers, not state authorities.** `CommissionService` accepts executor events, validates them against the run state machine, then persists evidence/status and publishes events.
+- **Host code owns application state and policy.** `Dispatcher` validates protocol requests and responses, and `composition.ts` maps endpoints to services. The conversational Companion receives only explicitly installed Host tools; built-in filesystem, shell, edit, and write tools are not installed in its session.
+- **Character packages own declarations.** `CharacterLoader` supplies valid scenes, expressions, onboarding, roleplay events/media/choices, skills, canon, assets, and plugin trust declarations. Host rejects undeclared IDs.
+- **Models own only generated content and explicit tool requests.** Host validates every requested state transition and side effect.
+- **Users own source selection, memory decisions, and external-agent choice.** A selected source becomes an immutable conversation attachment. A Desktop source grant is ephemeral and gives an agent unsandboxed access only when that selected source is used for work. Codex must be explicitly discovered and connected; otherwise delegated work uses the first-party Pi ACP profile.
+- **`ConversationAttachmentService` owns attachment identity and bytes.** IDs are conversation-scoped and immutable. Renderers, role tools, and executor controllers cannot claim ownership or address internal byte records directly.
+- **`ExternalAgentRunService` owns run state.** Executor controllers report events; the service validates the FSM, persists evidence/status, captures generated outputs, and publishes events.
 
 ## Public entrypoints and exports
 
 The package root [`src/index.ts`](../../packages/host-runtime/src/index.ts) exports:
 
 - `HostRuntime`, `createHostRuntime`, `HostRuntimeOptions`, and `RuntimeProductConfig` for construction and lifecycle.
-- `Dispatcher`, `RpcError`, `RpcHandler`, and `RpcResponse` for protocol dispatch.
-- Character and Companion services/types (`CharacterLoader`, `CharacterBehaviorService`, `CompanionSupervisor`, `FirstMeetingMachine`, and `TurnPipeline`), plus their exported character, host-tool, onboarding, runtime-state, and turn contracts. `RoleplayService` itself is an internal composition dependency rather than a package-root export.
-- `CommissionService`, `ArtifactStore`, `FileOpsService`, materials/codec services, and executor adapters/router.
-- `MemoryBackend` contracts, `ModelRegistry`, `ProviderCatalog`, and the credential boundary (`CredentialStore`, `CredentialVault`).
-- Diagnostics/trace contracts and factories, including `createDiagnostics`.
-- `Database`, `EventBus`, `HostEvent`, and event listener types.
+- `Dispatcher`, `RpcError`, `RpcHandler`, and `RpcResponse` for validated shared-protocol dispatch.
+- Character and Companion services/types including `CharacterLoader`, `CharacterBehaviorService`, `CompanionSupervisor`, `FirstMeetingMachine`, and `TurnPipeline`.
+- `ConversationAttachmentService`, `AttachmentKind`, `ConversationAttachmentSummary`, and `ConversationAttachmentUrlFactoryRequest` for Host/shell attachment integration.
+- `ExternalAgentRunService`, `RunSummary`, direct-run contracts, `ExecutorRouter`, `AcpRunClient`, `AcpExecutorController`, `PiAcpAdapter`, `CodexAdapter`, and their profile/manifest/controller contracts.
+- `MemoryBackend` contracts, `ModelRegistry`, `ProviderCatalog`, and the `CredentialStore`/`CredentialVault` boundary.
+- Diagnostics/trace contracts and factories, `Database`, `EventBus`, `HostEvent`, and listener types.
+- Materials, codec, and filesystem-operation services as direct Host-side APIs; they are not renderer RPC groups.
 
-The export map exposes only built `dist/index.js`/`dist/index.d.ts`; source files are not package-root API. Services that are exported but are not wired to RPC (for example materials and file operations) are direct host-side extension APIs, not renderer channels.
+Attachment files use an internal `ArtifactStore` only for content-addressed bytes and provenance beneath `ConversationAttachmentService` ownership. It is not a renderer domain, role-tool identifier space, or external-agent result API.
+
+The package export map points consumers to built `dist/index.js` and `dist/index.d.ts`; source paths are not package-root API.
 
 ## Construction and dependency composition
 
-`new HostRuntime(options)` and `createHostRuntime(options)` are equivalent (`createHostRuntime` simply calls the constructor). Required options are:
+`new HostRuntime(options)` and `createHostRuntime(options)` are equivalent. Required options are:
 
-- `dataDir`: root for `storage`, `artifacts`, `companion-runtime`, and session files.
-- `characterRoot`: injected directory containing `<characterId>/character.yaml` packages.
-- `productConfig.defaultCharacterId`.
+- `dataDir`: root for SQLite, immutable bytes, installed characters, provider runtime data, native sessions, direct runs, uploads, and audit data;
+- `characterSeedRoot`: injected seed/library directory containing character packages;
+- `productConfig.defaultCharacterId`;
 - `credentialVault`: platform encryption boundary passed to `CredentialStore`.
 
-Optional options are `protocolViolationMode` (`throw` or `isolate`), `memoryScope`, partial Tdai configuration, Electron/system proxy resolution, an artifact custom-scheme URL factory, a desktop update service, protected deletion roots, remote moderation settings, audit directory, and logger. `BEAR_CONFIG_DIR`, when set, overrides the injected `characterRoot` for compatibility with the legacy loader.
+Optional options are `protocolViolationMode`, installation/user `memoryScope`, partial Tdai configuration, a platform proxy resolver, `conversationAttachmentUrlFactory`, verified `bundledGit`, a shell update service, protected deletion roots, remote moderation settings, an audit directory, and logger. `BEAR_CONFIG_DIR` can override `characterSeedRoot` for the existing compatibility path.
 
-Construction does the following in [`runtime.ts`](../../packages/host-runtime/src/runtime.ts):
+Construction in [`runtime.ts`](../../packages/host-runtime/src/runtime.ts) performs these steps:
 
-1. Opens one `Database` at `<dataDir>/storage`, applies `MIGRATIONS`, and asserts the schema contract before creating dependent services.
-2. Creates the `EventBus`, content-addressed `ArtifactStore`, credential-backed `ProviderCatalog`, `CharacterLoader`, `ConversationRepository`, `CompanionSupervisor`, roleplay/draft/behavior services, story/canon services, onboarding/settings/model services, and the Tdai-backed memory runtime.
-3. Builds `TurnPipeline` and registers an `onTurnCommitted` side channel. Capture failures publish `diagnostics.memory_capture_failed` and do not block an already-persisted reply.
-4. Builds `ContextPackCompiler`, which combines package/canon context, memory backend recall, and best-effort system context; the supervisor uses it before prompting Pi.
-5. Seeds the Pi ACP profile, registers the `product-managed` (`PiAcpAdapter`) and `codex` (`CodexAdapter`) executor controllers, and constructs `CommissionService` over the executor router.
-6. Installs the supervisor Host-tool handler. History/canon/memory/work proposals are handled in `HostRuntime`/composition; character UI and roleplay tools are delegated to `CharacterBehaviorService`.
-7. Constructs hash-chained `AuditStore` and deterministic-plus-optional-remote `ModerationService`, then starts event-to-audit wiring immediately. Filesystem deletion protection is intentionally deferred to `start()`.
-8. Creates `Dispatcher` with request/response validation policy and a protocol-violation callback that publishes `diagnostics.protocol_violation`, then calls `wireHostHandlers` to register all RPC handlers.
+1. Open one `Database` at `<dataDir>/storage`, apply `MIGRATIONS`, and assert the schema contract.
+2. Create `EventBus`, the attachment byte/provenance backend, `CredentialStore`, `ProviderCatalog`, `CharacterLoader`, `ConversationRepository`, `CompanionSupervisor`, roleplay/draft/behavior services, story/canon, onboarding/settings/model services, and the Tdai-backed memory runtime.
+3. Build `TurnPipeline` with a committed-turn memory side channel. Capture failures publish diagnostics and do not undo an already-settled reply.
+4. Build `ContextPackCompiler` for package/canon context, memory recall, and best-effort system context; inject it into the supervisor.
+5. Seed the `pi-default` profile, register `PiAcpAdapter` under profile type `pi` and `CodexAdapter` under `codex`, then create `ConversationAttachmentService` and `ExternalAgentRunService`.
+6. Install the supervisor Host-tool handler. History/canon/memory requests are handled by Host services; character/roleplay requests are delegated to `CharacterBehaviorService`; attachment/work requests use list, read, and delegate handlers.
+7. Create `AuditStore` and deterministic-plus-optional-remote `ModerationService`, subscribe audit to EventBus, and create the `Dispatcher` with a protocol-violation diagnostic callback.
+8. Assemble `HostCompositionContext` and call `wireHostHandlers` to register shared RPC handlers.
 
-The composition object in [`composition.ts`](../../packages/host-runtime/src/composition.ts) is the explicit dependency seam. It contains the ORM, event bus, onboarding, turn pipeline, models/settings, memory scope/backend, commission/artifact/story/canon services, supervisor/provider/character services, draft and roleplay services, default character ID, conversation session directory, and optional artifact URL/update/audit integrations.
+`HostCompositionContext` is the explicit internal composition seam. Its current domain services include ORM/EventBus, onboarding, turns, models/settings, memory, direct runs and external-agent discovery, attachments, canon, supervisor/providers/character services, draft/roleplay services, conversation repository, and optional attachment URL/update/audit integrations.
 
 ## Lifecycle
 
 ### Construction
 
-Construction is synchronous apart from the services' later lazy/async work. Database migrations and schema assertion happen during construction. Character seeding is triggered by `wireHostHandlers`, so a missing default/active package can fail construction while handlers are being registered.
+Construction is synchronous apart from later service work. Database migration/schema assertion, character-library bootstrap, Pi profile seeding, handler registration, and audit subscription happen before the constructor returns. Native Pi sessions and executor processes are not launched during construction.
 
 ### `start()`
 
-`HostRuntime.start()` is transactional and retry-safe. It:
+`HostRuntime.start()` is idempotent after success and retry-safe after failure. It:
 
-1. Loads persisted proxy settings and applies non-direct proxy configuration before host network activity.
-2. Subscribes to `settings.changed` for live proxy re-application.
-3. Installs warn-only filesystem deletion sentinels for protected roots and schedules best-effort audit retention pruning.
-4. Starts Tdai memory, optionally warms a local embedding model, resolves the active character, checks plugin trust, configures validated Pi resources, and starts the supervisor.
-5. Marks the runtime started only after every step succeeds. A failed attempt rolls back the supervisor bridge, filesystem sentinels, proxy subscription, and owned `HF_ENDPOINT`; memory remains available for a retry and is closed by terminal `close()`.
+1. Marks nonterminal runs left by a previous process as interrupted.
+2. Loads persisted proxy settings and applies non-direct proxy configuration before Host network activity.
+3. Subscribes to `settings.changed` for live proxy reapplication.
+4. Installs warn-only deletion sentinels for protected roots and starts best-effort audit retention pruning.
+5. Starts Tdai memory and indexes pending canon work.
+6. Resolves the active character, validates plugin trust, configures the supervisor's Pi resources, and starts the conversational supervisor.
+7. Reconciles settled direct runs whose user-visible result delivery or best-effort memory capture was not recorded.
+8. Sets `started` only after every required step succeeds.
 
-The supervisor's `start()` marks the Companion running and installs an owner-tagged global `bearHostCall` bridge; Pi sessions are initialized lazily on the first prompt. `stop()` removes or restores only the bridge owned by that supervisor, preserving a newer instance's bridge. Character activation, plugin-trust confirmation, and draft publishing stop and restart the supervisor after updating the runtime configuration. Character import only installs/seeds the package. Provider custom-upsert, Pi-config import, and base-URL override also stop and restart the supervisor; API-key, OAuth, and logout operations do not.
+If startup fails, Host stops any started supervisor, removes filesystem sentinels, unsubscribes proxy hot reload, and leaves the instance available for another `start()` attempt. The memory runtime is closed only by terminal `close()`.
+
+`CompanionSupervisor.start()` installs an owner-tagged process-global `bearHostCall` bridge and marks the Companion running. Native conversation sessions remain lazy until first use. Character activation, trust changes, draft publication, and provider changes that alter runtime configuration restart the supervisor; credential-only operations do not require every configuration restart.
 
 ### `close()`
 
-`close()` closes the memory runtime, then (once) stops the supervisor, uninstalls filesystem protection, unsubscribes audit/turn/story/proxy listeners, restores an owned `HF_ENDPOINT`, disposes character behavior/provider resources, and closes the database. It is terminal teardown; a failed `start()` is the supported path for retrying before `close()`.
+`close()` is idempotent terminal teardown. It marks the runtime closed, stops the supervisor, removes filesystem protection, unsubscribes audit/turn/proxy/direct-run reconciliation listeners, disposes character behavior and provider resources, closes Tdai memory, and closes SQLite. A supervisor or memory close error is preserved until cleanup finishes and is then rethrown.
+
+Direct ACP child ownership belongs to executor controllers. Runtime startup converts orphaned active rows into a durable interrupted terminal state before accepting new work; terminal result reconciliation never rewrites that settled executor outcome.
 
 ## RPC composition and error boundary
 
-`wireHostHandlers(dispatcher, context)` registers the protocol endpoint groups in the following owning areas:
+`wireHostHandlers(dispatcher, context)` registers these current endpoint groups:
 
 | RPC area | Owning service/handler |
 | --- | --- |
 | `character.*` | `CharacterLoader`, `CharacterDraftService`, canon sync, supervisor restart, plugin trust |
-| `roleplay.*` | `RoleplayService` and `CharacterBehaviorService` |
+| `roleplay.*` | `RoleplayService`, `CharacterBehaviorService` |
 | `onboarding.*` | `FirstMeetingMachine` |
-| `conversation.*`, `message.*` | `ConversationRepository`, `TurnPipeline` |
-| `memory.*` | `MemoryBackend`, SQLite candidate/decision/presentation tables, capture helpers |
+| `conversation.*`, `message.*` | `ConversationRepository`, `TurnPipeline`, attachment send binding |
+| `conversationAttachment.*` | `ConversationAttachmentService`, optional renderer capability factory |
+| `memory.*` | scoped `MemoryBackend`, candidate/decision/presentation tables, capture helpers |
 | `story.*`, `canon.*` | `StoryService`, `CanonHubService` |
-| `provider.*` | `ProviderCatalog` and credential store |
+| `provider.*` | `ProviderCatalog`, `CredentialStore` |
 | `model.*` | `ModelRegistry` |
-| `commission.*`, `run.*` | `CommissionService` and `ExecutorRouter` |
-| `artifact.*` | `ArtifactStore` and optional renderer URL factory |
-| `settings.*` | `AppSettingsStore`, onboarding decisions, event bus |
-| `update.check` | optional host-shell update service |
+| `externalAgent.*` | Codex discovery, verified connection, Pi/Codex availability |
+| `run.*` | `ExternalAgentRunService` list and control operations |
+| `settings.*` | `AppSettingsStore`, onboarding decisions, settings capabilities, EventBus |
+| `update.*` | optional shell update service |
 | `audit.*` | optional `AuditStore` read/export |
-| `events.subscribe`, `snapshot.get` | `EventBus` and composed services |
+| `events.subscribe`, `snapshot.get` | `EventBus` and composed service projections |
 
-The dispatcher first looks up the shared protocol contract, rejects unknown or unregistered channels as `handler_not_registered`, validates request bodies as `invalid_request/request_validation_failed`, invokes the handler, and validates response data. Domain exceptions are converted to `{ ok: false, error: { kind, reason } }`. Response schema violations either throw (development/default) or return `internal/response_validation_failed` (`isolate` mode), while always invoking the diagnostic callback.
+The dispatcher looks up the shared contract, rejects unknown or unregistered channels as `handler_not_registered`, validates request bodies, invokes the handler, and validates response data. Domain exceptions become `{ ok: false, error: { kind, reason } }`. A response-schema violation throws in development mode or becomes `internal/response_validation_failed` in isolation mode; both paths invoke the diagnostic callback.
 
-The composition handlers also apply ownership checks. Most character-scoped operations resolve the active companion from the singleton `active_character` row and seed it if necessary. Conversation operations require the active companion ID. History search requires onboarding's `conversation_history_read_enabled` decision and excludes the current conversation. Memory capture verifies conversation ownership and, for Pi entries, resolves the entry from the current session rather than trusting an arbitrary entry ID.
+Composition handlers add authority checks that schemas cannot provide. Character-scoped operations resolve the active companion. Conversation and attachment operations require conversation ownership. Run controls require a run joined through a conversation owned by the active companion. Memory capture resolves current native session entries instead of trusting arbitrary entry IDs. Attachment URL creation first resolves the requested conversation-owned file and its recorded MIME/size.
 
-## Conversation and turn pipeline
+There is deliberately no renderer RPC that starts arbitrary work. The conversational role starts a run through the allowlisted `host_delegate_agent` tool, which supplies the current conversation and native trigger entry from Host session state. Renderer-facing `run.*` endpoints list or control those Host-created runs.
 
-The persisted conversation projection is intentionally separate from Pi session storage:
+## Conversation and native turn pipeline
 
-- `conversations` belongs to a companion and stores title/scene/archive timestamps.
-- `conversation_sessions` maps a conversation to a Pi session ID/file and active leaf.
-- `branches` tracks adopted/forked narrative branches.
-- `messages` is a minimal Host projection with `user`, `assistant`, or `system` role.
-- `message_versions` stores content and adopted/user-edited state.
-- `turns` links user and assistant messages and constrains status to `pending`, `streaming`, `completed`, `failed`, or `aborted`.
-- `scene_state` and `conversation_directives` hold presentation and correction context.
+The persisted Host projection is separate from native Pi session storage:
 
-A normal `message.send` path is:
+- `conversations` belongs to a companion and stores title/scene/archive timestamps;
+- `conversation_sessions` maps a conversation to a native Pi session ID/file and active leaf;
+- `branches` tracks adopted/forked narrative branches;
+- message/version and `turns` rows support Host lifecycle and compatibility projections;
+- `scene_state` and `conversation_directives` hold presentation/correction context;
+- `ConversationRepository` builds the authoritative UI timeline from native session entries and annotates bound user/assistant entries with attachment summaries.
+
+A normal send is:
 
 ```mermaid
 sequenceDiagram
     participant Renderer
     participant Dispatcher
+    participant Attach as ConversationAttachmentService
     participant Turns as TurnPipeline
-    participant DB as SQLite/EventBus
     participant Supervisor as CompanionSupervisor
-    participant Pi as Pi session
+    participant Pi as Native Pi session
+    participant DB as SQLite/EventBus
     participant Memory as Tdai memory
 
-    Renderer->>Dispatcher: message.send:v1
-    Dispatcher->>Turns: validate, persist user message/version
-    Turns->>DB: message.user_sent
-    Turns->>Supervisor: queued prompt + attachments
+    Renderer->>Dispatcher: message.send:v1 with attachmentIds
+    Dispatcher->>Attach: assert sendable + beginSend nonce
+    Dispatcher->>Turns: send text/framed references/current images
+    Turns->>Supervisor: queued prompt
     Supervisor->>Pi: compile Host context, select route, prompt
     Pi-->>Supervisor: message_start/update/end
-    Supervisor->>DB: message_end
-    Turns->>DB: assistant version + completed/failed turn
+    Turns->>DB: turn projection + committed events
+    Dispatcher->>Attach: finishSend(origin entry ID)
     Turns->>Memory: captureTurn side channel
 ```
 
-`TurnPipeline` enforces one active turn per conversation and requires a running supervisor. It transactionally writes the user message/version before sending the prompt and returns an asynchronous receipt. `CompanionSupervisor` serializes prompts, initializes one session per conversation, chooses the configured model, compacts when needed, compiles context, and streams updates. If an image route differs from the main route, it uses a multimodal model to produce an explicitly untrusted image observation and removes the image from the main prompt.
+`message.send` accepts text, attachment IDs, or both. `ConversationAttachmentService.beginSend` atomically reserves unbound user-selected roots. The Host frames IDs/names as Host context rather than filesystem paths and passes image bytes only for selected single-image roots. A successful native send binds the reserved roots to its returned user entry ID; an exception calls `abortSend` so the draft attachments can be retried.
 
-On `message_end`, the pipeline projects the latest assistant text into the Host message/version tables, inserts a completed or failed turn, updates the conversation, publishes `message.assistant_committed`, and invokes the Tdai capture sink. Abort, regenerate, version switch, edit, continue, correction, and branch operations are explicit pipeline transitions; user edits create a new branch, while assistant edits create an adopted user-edited version.
+`TurnPipeline` enforces one active turn per conversation and requires a running supervisor. `CompanionSupervisor` serializes prompts, initializes one session per conversation, compacts when needed, compiles context, selects the model, and streams native updates. If image observation uses a different route, observations are explicitly untrusted and the main reply route remains unchanged.
+
+Abort, regenerate, version switch, edit, continue, correction, and branch operations are explicit Host transitions. Committed-turn memory capture is a side channel and cannot invalidate a persisted reply.
+
+## Conversation attachment flow
+
+`ConversationAttachmentService` is an immutable, conversation-owned snapshot authority. Attachment roots have kind `file`, `folder`, or `generated`; file entries carry normalized relative path, MIME/material classification, bytes, SHA-256, and optional extracted text/error. Directory and symlink entries are represented explicitly, while unsafe symlink traversal is never used to read outside a root.
+
+### Ingestion
+
+Desktop trusted-main import calls `importPaths(conversationId, paths)`. It checks absolute selected paths, rejects selected symlinks/unsupported roots, verifies canonical identity, snapshots bytes, and then records the canonical source path only in an in-memory grant. That path is never stored in SQLite or returned through shared RPC.
+
+Browser/WebDev ingestion uses a bounded manifest and resumable Host upload staging:
+
+1. `conversationAttachment.startUpload` validates root kind/name and entries and returns an upload ID.
+2. `appendChunk` writes bounded base64 chunks at the exact expected offset.
+3. `completeUpload` verifies all staged files and creates the immutable snapshot.
+4. `cancelUpload` removes staged state.
+
+Uploads and Desktop imports converge on the same `conversation_attachments` and `conversation_attachment_files` ownership model.
+
+### Reads and renderer presentation
+
+`conversationAttachment.list` returns metadata only after conversation ownership checks. `conversationAttachment.read` is discriminated by mode:
+
+- `semantic` lists entries, reads/paginates extracted text, or searches excerpts without exposing a local path;
+- `bytes` returns a bounded base64 slice with MIME, relative path, next offset, and EOF.
+
+`conversationAttachment.url` is optional shell integration. It resolves a real attachment file and asks `conversationAttachmentUrlFactory` for an operation-scoped renderer capability. If no factory is installed, the Host returns `attachment_url_unavailable`; callers use semantic/byte reads instead.
+
+Desktop's factory mints `bear-attachment://cap/<preview|download>/<opaque token>`. Capabilities expire after five minutes, are scoped to the invoking renderer main frame and operation, validate its exact referrer, and are revoked when that renderer closes. Preview MIME types are allowlisted. Responses use `no-store`, `default-src 'none'`, `nosniff`, recorded MIME, actual content length, and safe content disposition.
+
+### Message ownership
+
+New user-selected roots are drafts until `message.send` binds them to the returned native user entry with a send nonce. Generated attachments are created only from terminal run output capture and later bound to the native assistant follow-up entry. `discard` removes a conversation-owned attachment record and leaves internal content-addressed garbage collection to retention/reference rules.
+
+The work-facing conversational role has exactly three Host tools:
+
+- `host_list_attachments`;
+- `host_read_attachment`;
+- `host_delegate_agent`.
+
+The first two never expose paths. The third requires at least one selected attachment ID and an instruction; the current native user entry supplies durable trigger ownership.
+
+## Direct external-agent execution
+
+### Launch boundary
+
+`ExternalAgentRunService.delegate` is a direct launch boundary with no intermediate proposal state. It validates a nonempty bounded instruction, one to ten unique attachment IDs owned by the conversation, an optional workspace attachment drawn from those inputs, companion ownership, the active-run limit, and a trusted executor profile. It then prepares inputs, inserts the canonical `runs` row as `enqueued`, publishes `run.enqueued`, and asks `ExecutorRouter` to launch.
+
+```text
+conversationId + triggerEntryId
+  + agent (pi | codex)
+  + attachmentIds[]
+  + optional workspaceAttachmentId
+  + instruction
+    -> runId (enqueued or running)
+```
+
+The return means launch/enqueue succeeded; it is not a completion result.
+
+### Pi and Codex composition
+
+`pi-default` is seeded during construction and resolves to `PiAcpAdapter`. Every run launches a dedicated ACP child and independent Pi session with native local tools. It does not reuse or mutate the conversational Companion session. The selected conversation model route and credential are injected into the child environment immediately before launch and are not written to the run manifest. On Windows, Desktop injects verified bundled PortableGit shell/PATH entries; packaged Pi does not depend on ambient Git discovery.
+
+Codex is optional. `externalAgent.discoverCodex` returns local candidates and their path/version/hash status. `externalAgent.connectCodex` records explicit consent only for a supplied canonical path, supported version, digest, and Codex home. `externalAgent.status` always reports `pi-default` available and reports Codex availability separately. `host_delegate_agent` uses Codex only when the role explicitly requests it and the verified profile is connected.
+
+### Live source and snapshot inputs
+
+Input preparation always materializes each immutable attachment snapshot into the run directory. For a user-selected file/folder, a still-valid in-memory Desktop grant can replace that materialized input with the canonical live path. Grants disappear on Host restart and fail closed when type/canonical identity no longer matches; the immutable snapshot remains the fallback.
+
+A live grant is intentionally unsandboxed. The external agent can change the selected source, and Bear Harness provides no rollback. Generated attachments cannot be selected as a live workspace. If no workspace ID is specified, preparation chooses the first selected folder when available; otherwise the run directory is the workspace.
+
+### Run state, control, and terminal output
+
+Current statuses are `enqueued`, `running`, `needs_user`, `completed`, `failed`, `cancelled`, `interrupted`, and `forced_termination`. Executor events are workers' reports, not database authority:
+
+- `started` advances `enqueued` to `running`;
+- `evidence` is sanitized and persisted by the service;
+- `needs_user` creates a permission request owned by that run;
+- `completed`, `failed`, and `cancelled` settle through the service;
+- `run.steer`, `interrupt`, `resume`, `cancel`, and `respondPermission` enforce active-companion/run ownership before reaching the controller.
+
+Executor paths and process errors are sanitized before evidence, summaries, or events are persisted. On completion, Host snapshots the dedicated output directory with file/count/byte limits and no output symlinks. A nonempty output set becomes one immutable `generated` conversation attachment associated with the run. Output snapshot failure turns the run into a safe failed terminal result.
+
+Terminal reconciliation is idempotent. For the active conversation, Host sends a hidden `host_external_agent_result` custom message keyed by `runId` to the native conversational Pi session. The role produces the user-visible assistant follow-up; Host binds generated attachments to that assistant entry. `result_reported_at` and `memory_captured_at` track the two retryable side effects separately. Startup and `conversation.selected` retry missing side effects without changing the terminal run status or duplicating the hidden notification.
 
 ## Character, roleplay, and presentation authority
 
-Character package install/activation/publish is handled by `CharacterLoader` and draft services. The active package is persisted through `active_character`; package identity/canon and trust metadata are represented by `companion_packages` and `companion_identity`. Activation and plugin trust confirmation restart the supervisor with `piResources(character, trust.trusted)`. Skills remain declarative context; executable plugins require current package trust.
+Character install/bootstrap/activation/publish is handled by `CharacterLoader` and draft services. The active package is persisted separately from its seed/library files. Activation and plugin-trust changes restart the supervisor with package-derived Pi resources. Skills are declarative context; executable plugins require current package trust.
 
-There are two intentionally different presentation paths:
+### Host lifecycle reactions
 
-### Host lifecycle reactions (not model decisions)
+`CharacterBehaviorService` subscribes to EventBus during construction. Package-declared host-event reactions map user-send, message-end, abort, and assistant-commit lifecycle to deterministic expression state. The service validates the package expression, persists scene state, and publishes `character.visual_state_changed`.
 
-`CharacterBehaviorService` subscribes to the EventBus at construction. For package-declared `host.event_reactions`, events such as `message.user_sent`, `message_end`, abort, and assistant commit cause deterministic Host-side expression updates. The service validates the package expression, persists `scene_state`, and publishes `character.visual_state_changed`. A model-selected or roleplay expression suppresses the mapped successful `message_end` reaction for the current turn only: a successful end consumes the marker and skips `result_ready` once, a failed end consumes it without applying `result_ready`, and `message.aborted` consumes it before applying the configured abort reaction. Later lifecycle events use their normal mappings.
-
-These reactions are coupled to Host lifecycle events and cannot be selected by an untrusted renderer or arbitrary model text. They are visual state only; they do not imply that a scene/media tool was called.
+A model-selected or roleplay expression suppresses the mapped successful message-end reaction for the current turn only. These reactions are visual state and do not imply that a scene/media tool was called.
 
 ### Model-decided scene/media/choice tools
 
-The supervisor injects allowlisted `host_get_state`, `host_set_scene`, `host_set_expression`, `host_get_roleplay_state`, `host_trigger_roleplay_event`, `host_play_media`, and `host_present_choices` tools. A model may call them explicitly. The Host validates scene/expression IDs against the active package; media and choice IDs against roleplay declarations; locked media against the roleplay projection; and persists/publishes the resulting state/event. `host_play_media` presents declared media but does not itself change `scene_state`. `host_trigger_roleplay_event` queues an event and commits its declared effects only with the completed assistant reply; direct `roleplay.trigger:v1` is a user-driven canonical-branch operation and applies immediately.
-
-Roleplay persistence uses `roleplay_events` (event ID, branch/conversation/source version, effects) and `roleplay_unlocks` (companion/unlockable primary key). User roleplay triggers are restricted to the adopted `main` branch. The model cannot directly write these tables or invent package declarations.
-
-## Commission, run, permission, and artifact flow
-
-A model's `host_propose_work` call requires a real trigger user message. The handler creates a draft through `CommissionService`; it does not launch work. The commission table records the draft JSON, trigger, status, and approval hash. Approval stores the exact hash in `approvals`; only the approved draft can launch a run. `CommissionService` enforces the run FSM and active-run limit, and publishes transitions after canonical DB writes.
-
-The RPC flow is:
-
-1. `commission.draft` or model `host_propose_work` validates the trigger message and hashes canonical draft fields (`reads`, `writes`, `networkAllowed`, `toolNames`, title, description).
-2. `commission.approve` requires the exact displayed hash; `reject` moves an eligible draft to a terminal rejection/cancel path.
-3. `commission.launch` creates/enqueues a run for an executor profile. `ExecutorRouter` resolves the persisted profile row, checks its profile type, and associates it with trusted registered controller code.
-4. Executor events (`started`, evidence, `needs_user`, completed, failed, cancelled) are accepted by `CommissionService`, which validates state, persists evidence/run state, and emits events. Permission requests become `needs_user` and are answered with `run.respondPermission`; steering, interrupt, resume, and cancel are separate run controls.
-5. On completion, declared write paths are scanned with file/symlink/size/count limits; valid files enter the content-addressed `ArtifactStore`, are hash/MIME/size checked, marked verified, and linked to the run. `artifact.list/read/url` expose metadata, base64 content, or a renderer custom-scheme URL after Host-side lookup. The artifact URL factory is absent on web-like hosts, so `artifact.url` returns an empty URL rather than fabricating one.
-
-Schema tables `commissions`, `approvals`, `runs`, `run_manifests`, `evidence`, `artifacts`, and `artifact_adoptions` make this boundary inspectable and preserve relationships through foreign keys. The executor never directly changes Host status or evidence.
+The supervisor installs allowlisted state/scene/expression/roleplay/media/choice tools. Host validates scene/expression IDs against the active package, media/choice IDs against roleplay declarations, locked media against roleplay state, and commit timing for event effects. User-driven roleplay RPC is a canonical-branch operation and applies under its own immediate rules. Models cannot write roleplay tables or invent declarations.
 
 ## Memory and Tdai integration
 
-`HostRuntime` creates `TencentDbRuntime` using the configured default character, installation/user memory scope, provider/model services, and merged embedding configuration. Persisted `app_settings.memory_vector_service` overrides/extends the injected Tdai config:
+`HostRuntime` creates `TencentDbRuntime` with installation/user scope, the active companion namespace, provider/model services, and merged embedding configuration. Persisted memory-vector settings override or extend injected Tdai configuration for disabled, local, or remote providers.
 
-- disabled/`none` leaves the base configuration unchanged;
-- local selects built-in model paths for `bge-base-zh`/`multilingual-e5`, accepts a trimmed custom path, or lets Tdai choose its default;
-- remote supplies base URL, API key, model, and dimensions.
+`ContextPackCompiler` uses relationship recall and best-effort system context when preparing a conversational turn. `onTurnCommitted` sends user/assistant text and session metadata to `captureTurn`; errors are diagnostic-only. Memory RPC search/list/forget/edit operate on the scoped backend.
 
-`ContextPackCompiler` uses the memory backend for turn context and best-effort system context. `onTurnCommitted` sends user/assistant text plus session metadata to `captureTurn`; errors are diagnostic-only. RPC search/list/forget/edit operate against the scoped backend. Memory scope includes installation, user, and active companion IDs.
+Explicit user capture resolves a current native Pi branch entry, with the Host version projection as a compatibility fallback, and writes provenance. Assistant `host_remember` creates a pending SQLite candidate instead of silently writing relationship memory. User acceptance writes the relationship entry and backend record; rejection records the decision. Presentation overlays support pin, exclude, replacement, and invalidation state without changing package files.
 
-Explicit user capture (`memory.capture`) resolves a current Pi branch entry, with a legacy adopted Host version fallback, then writes provenance (`explicit` for user capture, `inferred` for assistant tool) and metadata to the backend. Assistant `host_remember` creates a pending SQLite candidate instead of silently creating relationship memory. Approve/reject writes `memory_decisions`; approval writes `relationship_memory_entries` and also the backend. `memory_presentation` supplies per-installation/user/companion pin/exclude/replacement overlays for backend records.
+A terminal external-agent result uses the same memory pipeline only after the conversational role has produced its follow-up. That capture is best-effort and separately reconciled; failure never rewrites run completion or attachment ownership.
 
 ## Providers and model routing
 
-`ProviderCatalog` is the host wrapper around pi-ai's `ModelRuntime`. It lazily creates the runtime under `<dataDir>/companion-runtime`, loads encrypted credentials through `CredentialStore`, applies provider filtering, and exposes provider listing, API-key/session credentials, custom providers/base URLs, and OAuth interactions. Provider configuration changes restart the supervisor in the composition handlers.
+`ProviderCatalog` wraps pi-ai's model runtime. It lazily creates provider runtime data under `<dataDir>/companion-runtime`, loads encrypted credentials through `CredentialStore`, applies provider filtering, and exposes provider listing, API-key/session credentials, custom providers/base URLs, and OAuth interactions. Relevant provider configuration changes restart the conversational supervisor.
 
-`ModelRegistry` persists enabled models in `configured_models`, model defaults per companion in `model_route_settings`, and per-conversation selections in `conversation_model_selections`. `model.enable` verifies the provider catalog's model and records image capability; manual vision routes require an image-capable model. The supervisor asks the registry for the route separately for text and image-required prompts, then selects an available pi-ai model. A route may fall back to an already selected/first available model if the configured route is unavailable.
+`ModelRegistry` persists enabled models, default reply/vision routes per companion, and per-conversation selections. Enabling verifies the provider catalog model and records image capability. The supervisor resolves text and image-required routes separately. Direct Pi ACP launch resolves the conversation's text route and injects the selected provider/model and optional API key only into that child process.
 
 ## Persistence, events, snapshot, audit, and security
 
-The schema in [`storage/schema.ts`](../../packages/host-runtime/src/storage/schema.ts) is the persistence map for the host. In addition to conversation/turn, character, memory, commission, executor, artifact, provider/model, story/canon, onboarding, and roleplay tables, `schema_migrations` records applied migration checksums and `app_settings` is a singleton row.
+### Storage map
 
-`EventBus` writes each event to `events` before notifying listeners, maintains a monotonically increasing sequence, supports `afterSeq` replay, and is the source for `events.subscribe:v1`. `snapshot.get:v1` composes the active character, onboarding, conversations, roleplay, character runtime state, commissions, artifacts, story changes, model pool/routes, settings, and current event sequence. Persisted scene state is parsed and checked against the active package's allowed scene/expression IDs before it enters the snapshot.
+`storage/schema.ts` and `storage/database.ts` define and migrate canonical SQLite state. Current execution/attachment ownership is represented by:
 
-Audit wiring appends commission/run/permission/fs-operation/memory/config events to a hash-chained JSONL store. `audit.list` and `audit.export` expose entries/chain verification. `start()` installs warn-only protected-root deletion sentinels and prunes audit segments best-effort. Moderation is created with local rules plus an optional remote policy; remote moderation failures are configured to fail open. Provider credentials remain behind the injected `CredentialVault`; API keys are not taken from ambient environment in `ProviderCatalog`.
+- `runs`: conversation, native trigger entry, profile, instruction, input attachment IDs, optional workspace attachment, status, terminal summary, and reconciliation timestamps;
+- `run_manifests`: controller launch provenance without model credentials;
+- `evidence`: sanitized executor evidence linked to a run;
+- `conversation_attachments`: conversation owner, native origin entry/send nonce, kind, display name, aggregate bytes/count;
+- `conversation_attachment_files`: normalized entries and immutable byte/provenance references, MIME, digest, extraction text/error;
+- `events`: monotonic committed projection feed.
 
-Network proxy settings are persisted and applied before non-direct host traffic. A `systemProxyResolver` can supply Electron PAC-aware resolution; settings changes hot-reload the proxy. `update.check:v1` delegates to the optional host-shell update service and returns a disabled response when absent. No package-global update download/install authority is implemented here.
+The database also contains conversation/session/turn projection, character/onboarding/roleplay/story/canon, provider/model/settings, and relationship-memory decision/presentation tables. Native Pi session files remain under `<dataDir>/sessions`; direct run materialization/output is under `<dataDir>/external-agent-runs`; resumable uploads use `<dataDir>/attachment-uploads`; installed character library data, provider runtime state, immutable bytes, and audit segments have separate directories.
+
+### Events and snapshot
+
+`EventBus.publish` inserts an event before notifying listeners, maintains a monotonically increasing sequence, and supports `afterSeq` replay for `events.subscribe:v1`. `snapshot.get:v1` composes active character/onboarding, conversation list and active native timeline, direct runs scoped to the active companion, character runtime, roleplay, model pool/default/route, settings, and current sequence. Persisted scene state is checked against active package declarations before projection.
+
+Attachment summaries are not a separate global result projection. `ConversationRepository` attaches them to the native user or assistant timeline entry identified by `originEntryId`. Draft attachments are queried through the attachment endpoints; generated outputs appear on the assistant entry created by terminal reconciliation.
+
+### Audit, moderation, credentials, and filesystem sentinels
+
+`AuditStore` appends hash-chained JSONL records with segment rotation and best-effort retention. Automatic EventBus wiring currently records `run.*`, `evidence.collected`, and `roleplay.*`; protected-root deletion sentinel hits append `fsop/delete_attempt`. `audit.list` returns bounded records, while `audit.export` returns JSONL and chain verification. Audit append failures do not interrupt EventBus delivery or canonical transactions.
+
+`ModerationService` applies deterministic local rules and can consult an optional remote policy endpoint; remote failures fail open. Provider secrets remain behind the injected `CredentialVault`. Pi child credentials are process-only, Codex connection identity is version/hash verified, and sanitized run evidence does not preserve source/run paths.
+
+`start()` installs warn-only protected-root deletion sentinels. They log/audit attempts but do not provide a filesystem sandbox. The stronger external-agent boundary is explicit attachment selection plus the distinction between immutable snapshot inputs and ephemeral unsandboxed live-source grants.
+
+Network proxy settings are persisted and applied before non-direct Host traffic. A shell can inject PAC-aware resolution. Update endpoints delegate to the optional shell adapter; Host Runtime does not create a second download/install authority.
 
 ## Extension seams
 
-- Implement `CredentialVault` to bind provider credentials to the platform secure-storage boundary.
-- Supply `systemProxyResolver`, `artifactProtocolUrlFactory`, `updateService`, audit logger, moderation endpoint, or custom `memoryConfig` at construction.
-- Add executor controller implementations through `ExecutorRouter.register`; persisted profile rows remain the profile authority.
-- Provide a `CompanionModelRuntimeSource`/provider catalog implementation compatible with pi-ai's `Models` interface.
-- Add character package scenes, expressions, skills, roleplay events/media/choice sets, canon, and trusted plugins through the character/package services rather than bypassing Host tables.
-- Use `HostCompositionContext` and `wireHostHandlers` to add a protocol endpoint only when the shared protocol contract and response validation are also updated.
-- Subscribe to EventBus or implement `EventListener` for projections; use sequence replay and snapshots rather than assuming listeners never miss events.
+- Implement `CredentialVault` for platform secure storage.
+- Supply `systemProxyResolver`, `conversationAttachmentUrlFactory`, verified `bundledGit`, `updateService`, audit logger, remote moderation, or `memoryConfig` in `HostRuntimeOptions`.
+- Add a trusted executor profile/controller through `ExecutorRouter`, but retain `ExternalAgentRunService` as the sole run-state and terminal-output authority.
+- Extend source ingestion, semantic extraction, byte reads, or generated capture in `ConversationAttachmentService`; preserve immutable conversation ownership and keep internal CAS/provenance below it.
+- Add character scenes, expressions, skills, roleplay declarations, canon, or trusted plugins through character/package services rather than direct table writes.
+- Add shared RPC only through the protocol registry and `wireHostHandlers`, including request/response validation and ownership checks.
+- Add conversational work capabilities only through the supervisor allowlist and Host tool handler. Never expose local paths, byte-store IDs, or executor-controller methods to the role.
+- Consume EventBus using sequence replay plus snapshot recovery.
 
-## Known issues / findings
+## Verification commands and strategy
 
-These are implementation findings, not proposed behavior:
-
-1. **Resolved: `start()` is retry-safe after a partial failure.** `HostRuntime.start()` commits `started` only after all startup work succeeds and rolls back its subscriptions, filesystem sentinels, supervisor bridge, and owned process environment on failure.
-2. **Resolved: turn capture uses the current active character namespace.** The `onTurnCommitted` sink resolves `CharacterLoader.getActiveCharacterId(...)` when a turn settles, so capture follows the active companion instead of freezing the product default.
-3. **Approved memory scope is persisted inconsistently.** `RPC.memory.candidateApprove` writes `relationshipMemoryEntries.scope` from `candidate.suggestedScope` but records the backend memory metadata from `decidedScope ?? candidate.suggestedScope`. An edited user scope can disagree between SQLite relationship memory and Tdai recall metadata.
-4. **Candidate rejection does not verify ownership/existence before writing its decision.** `memory.candidateReject` updates only rows matching the active companion and pending status, but then unconditionally inserts a `memory_decisions` row for the supplied ID. A nonexistent, already-decided, or other-companion ID can produce an orphan decision rather than a not-found/conflict response.
-5. **Commission/run listing is not active-companion scoped in composition.** `commission.list` calls `s.commissions.list()` without filtering by `getCompanionId`; `run.list` selects the newest ten rows from `runs` without joining through a conversation/active companion. In a runtime containing multiple character packages, these RPCs can expose records outside the active character boundary. `snapshot.get` similarly projects all listed commissions and artifacts. The service-level approval/launch checks remain the authoritative mutation boundary, but list/read visibility is broader than other character-scoped handlers.
-6. **Executor profile contracts disagree.** [`executors/router.ts`](../../packages/host-runtime/src/executors/router.ts) accepts the profile type `native-full` in `ExecutorProfileType`/`PROFILE_TYPES`, while [`storage/schema.ts`](../../packages/host-runtime/src/storage/schema.ts) constrains `executor_profiles.profile_type` to `product-managed` or `codex`, and `HostRuntime` registers only those two controllers. `native-full` cannot currently be represented by the declared SQLite contract.
-7. **Resolved: model-selected-expression suppression is current-turn state.** `CharacterBehaviorService` consumes the marker on every `message_end`; successful ends skip the mapped reaction once, failed ends clear the marker without applying `result_ready`, and aborts clear it before applying their configured reaction.
-8. **Resolved: process-global ownership is bounded to runtime lifetime.** `CompanionSupervisor` tags its bridge with a unique owner token and restores/removes only its own bridge. `HostRuntime` restores `HF_ENDPOINT` only when its owned value is still installed, while preserving newer runtime owners.
-10. **Resolved: moderation timeout coverage uses scheduler-independent behavior.** The timeout test advances Vitest fake timers and asserts the expected fail-open result instead of imposing an exact wall-clock lower bound.
-
-## Verification commands and test strategy
-
-The package manifest provides these commands (run from the repository root):
+The package manifest exposes these focused commands from the repository root:
 
 ```sh
 npm --prefix packages/host-runtime run typecheck
-npm --prefix packages/host-runtime run build
 npm --prefix packages/host-runtime run test:unit
 npm --prefix packages/host-runtime run test:coverage
-```
-
-`test:unit` and `test:coverage` first build `packages/protocol`, then invoke Vitest. The existing tests are organized around the observable boundaries this module owns: dispatcher and database contracts, conversation/turn/companion runtime, character loader/behavior/onboarding/roleplay/continuity, memory context and TencentDB backends, provider credentials/custom providers/model registry, executor controls/adapters/IPC schemas, commissions, artifact and filesystem security, moderation/network proxy, and diagnostics/audit/trace. Focused checks for a change should exercise the RPC envelope plus the persisted event/snapshot transition; executor changes should additionally exercise permission and terminal FSM states; character changes should cover package allowlists and the distinction between event reactions and model tools.
-
-`db:generate` is available as a schema migration-generation command, not a substitute for runtime verification:
-
-```sh
 npm --prefix packages/host-runtime run db:generate
 ```
+
+`pretypecheck`, `test:unit`, and `test:coverage` build Tdai Core and Protocol prerequisites before Host checks. Behavioral verification should target the changed authority boundary:
+
+- attachment changes: import/upload validation, immutable ownership, send nonce binding, semantic/byte reads, capability lookup, live-grant fallback, and output capture;
+- direct-run changes: independent ACP process/session, profile selection, FSM/permission controls, sanitized evidence, terminal reconciliation, and generated assistant attachments;
+- conversation changes: native timeline IDs, asynchronous send receipt, attachment annotation, streaming/abort/branch transitions, and memory side-channel isolation;
+- shell integration: browser upload/send/read E2E and Desktop picker/send/five-minute capability E2E;
+- Windows packaged execution: staged PortableGit digest/inventory/license verification and executable smoke before relying on injected Pi shell paths.
+
+Schema generation creates migration artifacts; it is not evidence that runtime migration, ownership, or end-to-end flows work.

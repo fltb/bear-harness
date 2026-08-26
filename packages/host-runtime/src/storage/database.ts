@@ -22,6 +22,17 @@ function createAppDatabase(client: DatabaseSync) {
 }
 
 export type AppDatabase = ReturnType<typeof createAppDatabase>;
+export interface CanonVectorIndex {
+	ensureCanonVectorIndex(dimensions: number): { ready: boolean; reset: boolean };
+	searchCanonVectors(
+		embedding: Float32Array,
+		limit: number,
+	): Array<{
+		chunkId: string;
+		distance: number;
+	}>;
+	upsertCanonVector(chunkId: string, embedding: Float32Array): void;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -42,6 +53,7 @@ export interface Migration {
 	readonly id: number;
 	readonly description: string;
 	readonly up: string;
+	readonly rebuildsForeignKeys?: true;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +120,57 @@ export class Database {
 	close(): void {
 		this.connection.close();
 	}
+	ensureCanonVectorIndex(dimensions: number): { ready: boolean; reset: boolean } {
+		if (!Number.isSafeInteger(dimensions) || dimensions <= 0) return { ready: false, reset: false };
+		try {
+			this.connection.exec(
+				"CREATE TABLE IF NOT EXISTS canon_vector_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+			);
+			const row = this.connection
+				.prepare("SELECT value FROM canon_vector_meta WHERE key = 'dimensions'")
+				.get() as { value: string } | undefined;
+			const reset = Boolean(row && Number(row.value) !== dimensions);
+			if (reset) this.connection.exec("DROP TABLE IF EXISTS canon_chunk_vectors");
+			this.connection.exec(
+				`CREATE VIRTUAL TABLE IF NOT EXISTS canon_chunk_vectors USING vec0(
+					chunk_id TEXT PRIMARY KEY,
+					embedding float[${dimensions}] distance_metric=cosine
+				)`,
+			);
+			this.connection
+				.prepare(
+					"INSERT INTO canon_vector_meta (key, value) VALUES ('dimensions', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+				)
+				.run(String(dimensions));
+			return { ready: true, reset };
+		} catch {
+			return { ready: false, reset: false };
+		}
+	}
+
+	searchCanonVectors(
+		embedding: Float32Array,
+		limit: number,
+	): Array<{ chunkId: string; distance: number }> {
+		return (
+			this.connection
+				.prepare(
+					`SELECT chunk_id, distance FROM canon_chunk_vectors
+					 WHERE embedding MATCH ? AND k = ? ORDER BY distance`,
+				)
+				.all(
+					Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength),
+					limit,
+				) as Array<{ chunk_id: string; distance: number }>
+		).map((row) => ({ chunkId: row.chunk_id, distance: row.distance }));
+	}
+
+	upsertCanonVector(chunkId: string, embedding: Float32Array): void {
+		this.connection.prepare("DELETE FROM canon_chunk_vectors WHERE chunk_id = ?").run(chunkId);
+		this.connection
+			.prepare("INSERT INTO canon_chunk_vectors (chunk_id, embedding) VALUES (?, ?)")
+			.run(chunkId, Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength));
+	}
 
 	/** Get the current user_version (highest applied migration id). */
 	currentVersion(): number {
@@ -162,20 +225,32 @@ export class Database {
 		// Backup before applying
 		const backupPath = this.backupSchema();
 
-		// Apply in a transaction
+		// Table-rebuild migrations temporarily suspend enforcement before the
+		// transaction, rebuild every referenced identity in-place, then run
+		// SQLite's full FK check before commit and restore enforcement.
+		const rebuildsForeignKeys = migration.rebuildsForeignKeys === true;
+		if (rebuildsForeignKeys) this.connection.exec("PRAGMA foreign_keys = OFF");
 		this.connection.exec("BEGIN IMMEDIATE");
 		try {
 			this.connection.exec(migration.up);
+			if (
+				rebuildsForeignKeys &&
+				this.connection.prepare("PRAGMA foreign_key_check").all().length > 0
+			) {
+				throw new Error("foreign key check failed after table rebuild");
+			}
 			this.connection
 				.prepare("INSERT INTO schema_migrations (id, checksum) VALUES (?, ?)")
 				.run(migration.id, chk);
 			this.connection.exec("COMMIT");
 		} catch (e) {
 			this.connection.exec("ROLLBACK");
+			if (rebuildsForeignKeys) this.connection.exec("PRAGMA foreign_keys = ON");
 			throw new Error(
 				`migration ${migration.id} failed: ${(e as Error)?.message ?? String(e)}; backup at ${backupPath}`,
 			);
 		}
+		if (rebuildsForeignKeys) this.connection.exec("PRAGMA foreign_keys = ON");
 
 		this.pruneBackups();
 	}
@@ -234,15 +309,37 @@ export class Database {
 	/** Refuse to start a partially compatible database. */
 	assertSchemaContract(): void {
 		const required: Readonly<Record<string, readonly string[]>> = {
-			commissions: [
+			runs: [
 				"id",
 				"conversation_id",
 				"trigger_entry_id",
+				"executor_profile",
+				"title",
+				"instruction",
+				"input_attachment_ids",
+				"workspace_attachment_id",
 				"status",
-				"draft_json",
 				"created_at",
 			],
-			runs: ["id", "commission_id", "executor_profile", "status", "created_at"],
+			conversation_attachments: [
+				"id",
+				"conversation_id",
+				"origin_entry_id",
+				"send_nonce",
+				"kind",
+				"name",
+				"total_bytes",
+				"file_count",
+				"created_at",
+			],
+			conversation_attachment_files: [
+				"id",
+				"attachment_id",
+				"entry_kind",
+				"relative_path",
+				"artifact_id",
+				"sha256",
+			],
 			configured_models: ["provider_id", "model_id", "label", "supports_images", "created_at"],
 			conversation_model_selections: ["conversation_id", "provider_id", "model_id", "updated_at"],
 			conversation_sessions: [
@@ -1110,6 +1207,121 @@ export const MIGRATIONS: Migration[] = [
 				key TEXT PRIMARY KEY,
 				value TEXT NOT NULL
 			);
+		`,
+	},
+	{
+		id: 26,
+		description: "Direct external-agent runs and immutable conversation attachments",
+		rebuildsForeignKeys: true,
+		up: `
+			CREATE TABLE conversation_attachments (
+				id TEXT PRIMARY KEY,
+				conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+				origin_entry_id TEXT,
+				send_nonce TEXT,
+				kind TEXT NOT NULL CHECK (kind IN ('file','folder','generated')),
+				name TEXT NOT NULL,
+				total_bytes INTEGER NOT NULL CHECK (total_bytes >= 0),
+				file_count INTEGER NOT NULL CHECK (file_count >= 0),
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			CREATE INDEX idx_attachments_conversation_created ON conversation_attachments(conversation_id, created_at);
+			CREATE INDEX idx_attachments_conversation_entry ON conversation_attachments(conversation_id, origin_entry_id);
+			CREATE INDEX idx_attachments_conversation_nonce ON conversation_attachments(conversation_id, send_nonce);
+			CREATE TABLE conversation_attachment_files (
+				id TEXT PRIMARY KEY,
+				attachment_id TEXT NOT NULL REFERENCES conversation_attachments(id) ON DELETE CASCADE,
+				entry_kind TEXT NOT NULL CHECK (entry_kind IN ('file','directory','symlink')),
+				relative_path TEXT NOT NULL,
+				artifact_id TEXT REFERENCES artifacts(id),
+				link_target TEXT,
+				mime TEXT,
+				material_kind TEXT,
+				bytes INTEGER,
+				sha256 TEXT,
+				extracted_text TEXT,
+				extraction_error TEXT,
+				UNIQUE(attachment_id, relative_path),
+				CHECK (
+					(entry_kind = 'file' AND artifact_id IS NOT NULL AND mime IS NOT NULL AND bytes IS NOT NULL AND bytes >= 0 AND sha256 IS NOT NULL AND link_target IS NULL)
+					OR (entry_kind = 'directory' AND artifact_id IS NULL AND link_target IS NULL AND mime IS NULL AND bytes IS NULL AND sha256 IS NULL)
+					OR (entry_kind = 'symlink' AND artifact_id IS NULL AND link_target IS NOT NULL AND length(link_target) <= 4096 AND mime IS NULL AND bytes IS NULL AND sha256 IS NULL)
+				)
+			);
+			CREATE INDEX idx_attachment_files_attachment ON conversation_attachment_files(attachment_id);
+
+			INSERT INTO conversation_attachments
+				(id, conversation_id, kind, name, total_bytes, file_count, created_at)
+			SELECT 'legacy-output-' || r.id, c.conversation_id, 'generated',
+				'Generated output', COALESCE(SUM(a.bytes), 0), COUNT(a.id), MIN(a.created_at)
+			FROM runs r
+			JOIN commissions c ON c.id = r.commission_id
+			JOIN artifacts a ON a.producer_run_id = r.id
+			WHERE c.conversation_id IS NOT NULL
+			GROUP BY r.id, c.conversation_id;
+			INSERT INTO conversation_attachment_files
+				(id, attachment_id, entry_kind, relative_path, artifact_id, mime, bytes, sha256)
+			SELECT 'legacy-output-file-' || a.id, 'legacy-output-' || a.producer_run_id, 'file',
+				a.id || '-' || replace(a.logical_name, '/', '_'), a.id, a.mime, a.bytes, a.sha256
+			FROM artifacts a
+			WHERE EXISTS (
+				SELECT 1 FROM conversation_attachments ca
+				WHERE ca.id = 'legacy-output-' || a.producer_run_id
+			);
+
+			PRAGMA defer_foreign_keys = ON;
+			CREATE TABLE runs_new (
+				id TEXT PRIMARY KEY,
+				conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+				trigger_entry_id TEXT NOT NULL,
+				executor_profile TEXT NOT NULL,
+				title TEXT NOT NULL,
+				instruction TEXT NOT NULL,
+				input_attachment_ids TEXT NOT NULL DEFAULT '[]',
+				workspace_attachment_id TEXT REFERENCES conversation_attachments(id) ON DELETE SET NULL,
+				status TEXT NOT NULL DEFAULT 'enqueued' CHECK (status IN ('enqueued','running','needs_user','completed','failed','cancelled','interrupted','forced_termination')),
+				summary TEXT,
+				memory_captured_at TEXT,
+				result_reported_at TEXT,
+				started_at TEXT,
+				completed_at TEXT,
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			INSERT INTO runs_new (
+				id, conversation_id, trigger_entry_id, executor_profile, title, instruction,
+				status, started_at, completed_at, created_at
+			)
+			SELECT r.id, c.conversation_id, c.trigger_entry_id, r.executor_profile,
+				COALESCE(json_extract(c.draft_json, '$.title'), 'External agent task'),
+				COALESCE(json_extract(c.draft_json, '$.description'), ''),
+				r.status, r.started_at, r.completed_at, r.created_at
+			FROM runs r
+			JOIN commissions c ON c.id = r.commission_id
+			WHERE c.conversation_id IS NOT NULL;
+			DROP INDEX idx_runs_commission;
+			DROP TABLE runs;
+			ALTER TABLE runs_new RENAME TO runs;
+			CREATE INDEX idx_runs_conversation_trigger ON runs(conversation_id, trigger_entry_id);
+			DROP TABLE approvals;
+			DROP TABLE commissions;
+
+			CREATE TABLE executor_profiles_new (
+				id TEXT PRIMARY KEY,
+				profile_type TEXT NOT NULL CHECK (profile_type IN ('pi','codex')),
+				capability_json TEXT NOT NULL DEFAULT '{}',
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			INSERT INTO executor_profiles_new (id, profile_type, capability_json, created_at)
+				SELECT CASE WHEN id = 'pi-product-managed' THEN 'pi-default' ELSE id END,
+					CASE WHEN profile_type = 'product-managed' THEN 'pi' ELSE profile_type END,
+					capability_json, created_at
+				FROM executor_profiles;
+			INSERT OR IGNORE INTO executor_profiles_new (id, profile_type, capability_json)
+				VALUES ('pi-default', 'pi', '{}');
+			UPDATE runs SET executor_profile = 'pi-default'
+				WHERE executor_profile = 'pi-product-managed';
+			DROP TABLE executor_profiles;
+			ALTER TABLE executor_profiles_new RENAME TO executor_profiles;
 		`,
 	},
 ];

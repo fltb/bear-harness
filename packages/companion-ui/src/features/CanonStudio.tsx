@@ -4,8 +4,8 @@ import { Checkbox } from "@kobalte/core/checkbox";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { For, Show } from "solid-js";
-import { useCompanionStore } from "../stores/companion.js";
 import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
+import { useCompanionStore } from "../stores/companion.js";
 
 export function CanonStudio() {
 	const [t] = useTranslation(undefined, { i18n });
@@ -75,7 +75,8 @@ export function CanonStudio() {
 									type="button"
 									aria-label={`${t("canonStudio.remove")} ${source.logicalName}`}
 									onClick={() => {
-										if (window.confirm(t("canonStudio.removeConfirm"))) state.removeSource(source.id);
+										if (window.confirm(t("canonStudio.removeConfirm")))
+											state.removeSource(source.id);
 									}}
 								>
 									{t("canonStudio.remove")}
@@ -159,7 +160,9 @@ export function CanonStudio() {
 					</Select>
 					<Select
 						options={state.parentModules()}
-						value={state.parentModules().find((module) => module.id === state.moduleParentId()) ?? null}
+						value={
+							state.parentModules().find((module) => module.id === state.moduleParentId()) ?? null
+						}
 						optionValue="id"
 						optionTextValue="title"
 						onChange={(module) => state.setModuleParentId(module?.id ?? "")}

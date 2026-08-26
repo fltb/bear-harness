@@ -21,7 +21,6 @@ import type { MemoryTdaiConfig } from "@bear-harness/tdai-core";
 import { and, eq } from "drizzle-orm";
 import { ArtifactStore } from "./artifacts/index.js";
 import { CanonHubService } from "./canon/service.js";
-import { CommissionService } from "./commissions/service.js";
 import { CharacterBehaviorService } from "./companion/character-behavior.js";
 import { CharacterDraftService } from "./companion/character-draft-service.js";
 import { CharacterLoader } from "./companion/character-loader.js";
@@ -31,17 +30,25 @@ import { RoleplayService } from "./companion/roleplay-service.js";
 import { CompanionSupervisor } from "./companion/supervisor.js";
 import { TurnPipeline } from "./companion/turn-pipeline.js";
 import {
+	type ConversationAttachmentUrlFactoryRequest,
 	type HostCompositionContext,
 	type HostUpdateService,
 	proposeMemoryCandidate,
 	rememberConversationEntry,
 	wireHostHandlers,
 } from "./composition.js";
+import { ConversationAttachmentService } from "./conversation-attachments/service.js";
 import { ConversationRepository } from "./conversations/repository.js";
 import { Dispatcher, type RpcResponse } from "./dispatcher.js";
 import { CodexAdapter } from "./executors/codex-adapter.js";
 import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
 import { ExecutorRouter } from "./executors/router.js";
+import {
+	ExternalAgentRunService,
+	externalAgentResultMessage,
+	sanitizeExternalAgentMemoryText,
+	type TerminalRunResult,
+} from "./external-agents/run-service.js";
 import type { MemoryBackend } from "./memory/backend.js";
 import { namespaceFor } from "./memory/tencentdb-backend.js";
 import type { DeepPartial } from "./memory/tencentdb-runtime.js";
@@ -99,13 +106,10 @@ export interface HostRuntimeOptions {
 	 * to the platform/system proxy resolvers.
 	 */
 	systemProxyResolver?: SystemProxyResolver;
-	/**
-	 * Optional factory that renders an artifact id into a renderer-loadable
-	 * custom-scheme URL (e.g. `bear-artifact://artifact/<id>`) when the host
-	 * shell has registered a protocol handler. Absent → the `artifact.url:v1`
-	 * RPC returns an empty string (protocol unavailable).
-	 */
-	artifactProtocolUrlFactory?: (artifactId: string) => string;
+	/** Optional desktop factory for short-lived renderer-bound attachment URLs. */
+	conversationAttachmentUrlFactory?: (request: ConversationAttachmentUrlFactoryRequest) => string;
+	/** Optional verified packaged Git runtime supplied by a desktop shell. */
+	bundledGit?: { shellPath: string; pathEntries: string[] };
 	/**
 	 * Optional app-update lifecycle service supplied by the host shell
 	 * (desktop). `check()` stages a verified archive; `discard()` removes it;
@@ -145,7 +149,8 @@ export class HostRuntime {
 	readonly memoryScope: { readonly installationId: string; readonly userId: string };
 	/** Content-addressed artifact store (CAS + ownership rows). */
 	readonly artifacts: ArtifactStore;
-	/** Hash-chained append-only audit store (commission/run/fsop/memory/config). */
+	readonly attachments: ConversationAttachmentService;
+	/** Hash-chained append-only audit store (run/fsop/memory/config). */
 	readonly auditStore: AuditStore;
 	/** Text moderation: deterministic local rules + optional remote policy. */
 	readonly moderation: ModerationService;
@@ -155,6 +160,7 @@ export class HostRuntime {
 	private uninstallFsProtection?: FsProtectionHandle;
 	private unsubscribeAudit?: () => void;
 	private unsubscribeProxyHotReload?: () => void;
+	private unsubscribeRunResultDrain?: () => void;
 
 	constructor(options: HostRuntimeOptions) {
 		const dataDir = options.dataDir;
@@ -214,7 +220,7 @@ export class HostRuntime {
 			artifactStore,
 			eventBus,
 			() => memoryRuntime.getEmbeddingService(),
-			db.connection,
+			db,
 		);
 		const turns = new TurnPipeline(db.orm, supervisor, eventBus);
 		const contextPack = new ContextPackCompiler(db.orm, characterLoader, canon, {
@@ -262,9 +268,97 @@ export class HostRuntime {
 		);
 		seedPiAcpProfile(db.orm);
 		const executorRouter = new ExecutorRouter(db.orm);
-		executorRouter.register("product-managed", new PiAcpAdapter(db.orm, dataDir));
-		executorRouter.register("codex", new CodexAdapter(db.orm, eventBus));
-		const commissions = new CommissionService(db.orm, eventBus, artifactStore, executorRouter);
+		executorRouter.register("pi", new PiAcpAdapter(db.orm, dataDir, undefined, options.bundledGit));
+		const codex = new CodexAdapter(db.orm, eventBus);
+		executorRouter.register("codex", codex);
+		const attachments = new ConversationAttachmentService(
+			db.orm,
+			artifactStore,
+			join(dataDir, "attachment-uploads"),
+		);
+		const reconcileTerminalRun = async ({
+			run,
+			outputs,
+			needsResultReport,
+			needsMemoryCapture,
+		}: TerminalRunResult) => {
+			const owner = db.orm
+				.select({ companionId: conversations.companionId })
+				.from(conversations)
+				.where(eq(conversations.id, run.conversationId))
+				.get();
+			if (!owner || conversationRepository.active(owner.companionId)?.id !== run.conversationId) {
+				return { resultReported: false, memoryCaptured: false };
+			}
+
+			const content = externalAgentResultMessage({ run, outputs });
+			const followUp = await turns.deliverExternalAgentResult(run.conversationId, run.id, content);
+			attachments.bindGenerated(
+				run.conversationId,
+				outputs.map((output) => output.id),
+				followUp.entryId,
+			);
+
+			let memoryCaptured = false;
+			if (needsMemoryCapture) {
+				try {
+					const timestamp = Date.now();
+					const userText = sanitizeExternalAgentMemoryText(content, 6_000);
+					const assistantText = sanitizeExternalAgentMemoryText(followUp.text, 4_000);
+					await memoryRuntime.captureTurn({
+						userText,
+						assistantText,
+						messages: [
+							{ role: "user", content: userText, timestamp },
+							{ role: "assistant", content: assistantText, timestamp: timestamp + 1 },
+						],
+						sessionKey: namespaceFor({ ...memoryScope, companionId: owner.companionId }),
+						sessionId: run.conversationId,
+					});
+					memoryCaptured = true;
+				} catch {
+					// Memory is a retryable side channel; native result delivery and
+					// generated attachment binding have already committed.
+				}
+			}
+			return {
+				resultReported: needsResultReport,
+				memoryCaptured,
+			};
+		};
+
+		const externalAgentRuns = new ExternalAgentRunService(
+			db.orm,
+			eventBus,
+			executorRouter,
+			attachments,
+			join(dataDir, "external-agent-runs"),
+			async (agent) => {
+				if (agent === "pi") return "pi-default";
+				const status = await codex.status();
+				if (!status.available) {
+					throw { kind: "unavailable", reason: "codex_not_configured" };
+				}
+				return status.profileId;
+			},
+			async (conversationId) => {
+				const route = models.resolve(conversationId, false);
+				if (!route) return undefined;
+				const credential = await credentials.get(route.providerId);
+				return {
+					providerId: route.providerId,
+					modelId: route.modelId,
+					...(credential?.apiKey ? { apiKey: credential.apiKey } : {}),
+				};
+			},
+			reconcileTerminalRun,
+		);
+		this.unsubscribeRunResultDrain = eventBus.subscribe((event) => {
+			if (event.kind !== "conversation.selected") return;
+			const payload = event.payload as { id?: unknown };
+			if (typeof payload.id !== "string") return;
+			void externalAgentRuns.reconcilePending(payload.id);
+		});
 		supervisor.setHostToolHandler(async (call) => {
 			if (call.tool === "host_search_conversation_history") {
 				const args = call.args as { query: string; limit?: number };
@@ -331,35 +425,69 @@ export class HostRuntime {
 					data: candidate,
 				};
 			}
-			if (call.tool !== "host_propose_work") return characterBehavior.invoke(call);
-			const triggerEntryId = supervisor
-				.getLiveSessionResolver()
-				.get(call.conversationId)?.currentUserEntryId;
-			if (!triggerEntryId) {
+			if (call.tool === "host_list_attachments") {
 				return {
-					ok: false,
-					code: "trigger_entry_required",
-					message: "A current native user entry is required to propose work.",
+					ok: true,
+					message: "Conversation attachments listed.",
+					data: { attachments: attachments.list(call.conversationId) },
 				};
 			}
-			const args = call.args as {
-				title: string;
-				description: string;
-				reads: string[];
-				writes: string[];
-				networkAllowed: boolean;
-				toolNames: string[];
-			};
-			const draft = commissions.draft({
-				conversationId: call.conversationId,
-				triggerEntryId,
-				...args,
-			});
-			return {
-				ok: true,
-				message: "Action proposal created and is waiting for user approval.",
-				data: draft,
-			};
+			if (call.tool === "host_read_attachment") {
+				const args = call.args as {
+					attachmentId: string;
+					relativePath?: string;
+					query?: string;
+					cursor?: string;
+				};
+				return {
+					ok: true,
+					message: "Conversation attachment read.",
+					data: attachments.readForRole({
+						conversationId: call.conversationId,
+						...args,
+					}),
+				};
+			}
+			if (call.tool === "host_delegate_agent") {
+				const triggerEntryId = supervisor
+					.getLiveSessionResolver()
+					.get(call.conversationId)?.currentUserEntryId;
+				if (!triggerEntryId) {
+					return {
+						ok: false,
+						code: "trigger_entry_required",
+						message: "A current user entry is required.",
+					};
+				}
+				const args = call.args as {
+					agent: "pi" | "codex";
+					attachmentIds: string[];
+					workspaceAttachmentId?: string;
+					instruction: string;
+				};
+				try {
+					const run = await externalAgentRuns.delegate({
+						conversationId: call.conversationId,
+						triggerEntryId,
+						...args,
+					});
+					return {
+						ok: true,
+						message: "External agent started.",
+						data: run,
+					};
+				} catch (error) {
+					const code =
+						error &&
+						typeof error === "object" &&
+						"reason" in error &&
+						typeof error.reason === "string"
+							? error.reason
+							: "external_agent_launch_failed";
+					return { ok: false, code, message: code };
+				}
+			}
+			return characterBehavior.invoke(call);
 		});
 
 		this.db = db;
@@ -367,6 +495,7 @@ export class HostRuntime {
 		this.memoryBackend = memoryRuntime.backend;
 		this.memoryScope = memoryScope;
 		this.artifacts = artifactStore;
+		this.attachments = attachments;
 		this.providers = providers;
 		this.supervisor = supervisor;
 		this.characterBehavior = characterBehavior;
@@ -396,8 +525,10 @@ export class HostRuntime {
 			memoryRuntime,
 			memoryScope,
 			appSettings,
-			commissions,
+			externalAgentRuns,
+			externalAgents: codex,
 			artifacts: artifactStore,
+			attachments,
 			canon,
 			supervisor,
 			providers,
@@ -408,11 +539,11 @@ export class HostRuntime {
 			defaultCharacterId: options.productConfig.defaultCharacterId,
 			conversationRepository,
 			piSessionDir: join(dataDir, "sessions"),
-			artifactUrlFactory: options.artifactProtocolUrlFactory,
+			attachmentUrlFactory: options.conversationAttachmentUrlFactory,
 			updateService: options.updateService,
 			auditStore: this.auditStore,
 		};
-		// Start auditing commission/run/roleplay events from construction.
+		// Start auditing run/roleplay events from construction.
 		this.unsubscribeAudit = wireAuditToEvents(this.auditStore, this.composition.eventBus);
 		this.dispatcher = new Dispatcher({
 			responseValidation: options.protocolViolationMode ?? "throw",
@@ -441,6 +572,7 @@ export class HostRuntime {
 	async start(): Promise<void> {
 		if (this.started) return;
 		if (this.closed) throw new Error("Host runtime is closed");
+		this.composition.externalAgentRuns.markOrphansInterrupted();
 		try {
 			// Apply the persisted network proxy before any host network call goes out.
 			// Non-direct mode consults the platform/system proxy; Electron hosts pass
@@ -495,6 +627,7 @@ export class HostRuntime {
 				this.characterLoader.piResources(activeCharacter, trust.trusted),
 			);
 			await this.supervisor.start();
+			await this.composition.externalAgentRuns.reconcilePending();
 			this.started = true;
 		} catch (error) {
 			if (this.supervisor.isRunning) await this.supervisor.stop().catch(() => undefined);
@@ -524,6 +657,8 @@ export class HostRuntime {
 		this.composition.turns.dispose();
 		this.unsubscribeProxyHotReload?.();
 		this.unsubscribeProxyHotReload = undefined;
+		this.unsubscribeRunResultDrain?.();
+		this.unsubscribeRunResultDrain = undefined;
 		this.characterBehavior.dispose();
 		this.providers.dispose();
 		try {

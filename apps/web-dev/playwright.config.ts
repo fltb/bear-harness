@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,8 +11,8 @@ const webPort = process.env.BEAR_E2E_WEB_PORT ?? "3200";
 const hostPort = process.env.BEAR_E2E_HOST_PORT ?? "3201";
 const providerPort = process.env.BEAR_E2E_PROVIDER_PORT ?? "3211";
 const baseURL = `http://127.0.0.1:${webPort}`;
-const dataDirectory = resolve(here, `../../test-results/web-dev-data-${process.pid}`);
-const dataScope = String(process.pid);
+const dataScope = `${process.pid}-${randomUUID()}`;
+const dataDirectory = resolve(here, `../../test-results/web-dev-data-${dataScope}`);
 const cleanupPolicy = process.env.BEAR_WEB_DEV_DATA_CLEANUP ?? "success";
 const lastRunFile = resolve(here, "../../test-results/web-dev/.last-run.json");
 process.env.BEAR_WEB_DEV_DATA_DIR = dataDirectory;

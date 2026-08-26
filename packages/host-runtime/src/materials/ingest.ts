@@ -64,6 +64,15 @@ export interface MaterialRef {
 	state: MaterialState;
 }
 
+/** Admission result without persistence; safe to reuse before codec extraction. */
+export interface MaterialInspection {
+	kind: MaterialKind;
+	logicalName: string;
+	bytes: number;
+	mime: string;
+	state: MaterialState;
+}
+
 /** jszip's public ZipObject hides the central-directory sizes it keeps on `_data`. */
 interface ZipObjectWithInternalData {
 	_data?: unknown;
@@ -511,79 +520,86 @@ export class IngestService {
 	 * rejected input; failures are typed `MaterialRef`s with
 	 * `state: "failed"` (or `"cancelled"` when `signal` aborts).
 	 */
-	async ingest(params: {
+	async inspectBuffer(params: {
 		buffer: Buffer;
 		logicalName: string;
 		signal?: AbortSignal;
-	}): Promise<MaterialRef> {
+	}): Promise<MaterialInspection> {
 		const { buffer, signal } = params;
 		const logicalName = sanitizeName(params.logicalName);
 		const extension = extname(logicalName).replace(/^\./, "").toLowerCase();
+		const result = (
+			kind: MaterialKind,
+			mime: string,
+			state: MaterialState,
+		): MaterialInspection => ({
+			kind,
+			logicalName,
+			bytes: buffer.byteLength,
+			mime,
+			state,
+		});
 
 		const magic = await sniffMagic(buffer);
 		const mime = sniffMime(magic, extension, buffer);
 		const kind = sniffKind(mime, extension);
 
-		if (isAborted(signal)) return this.failed("unknown", logicalName, buffer, mime, "cancelled");
+		if (isAborted(signal)) return result("unknown", mime, "cancelled");
+		if (isMalicious(magic, extension)) return result("malicious", mime, "failed");
+		if (isEncrypted(buffer, magic, extension)) return result("encrypted", mime, "failed");
+		if (buffer.byteLength > BUDGET_LIMITS[kind]) return result("too_large", mime, "failed");
+		if (isAborted(signal)) return result(kind, mime, "cancelled");
 
-		// Extension and magic disagree — a masqueraded payload.
-		if (isMalicious(magic, extension)) {
-			return this.failed("malicious", logicalName, buffer, mime, "failed");
-		}
-
-		// Encrypted containers cannot be read by any codec.
-		if (isEncrypted(buffer, magic, extension)) {
-			return this.failed("encrypted", logicalName, buffer, mime, "failed");
-		}
-
-		// Per-kind size budget.
-		if (buffer.byteLength > BUDGET_LIMITS[kind]) {
-			return this.failed("too_large", logicalName, buffer, mime, "failed");
-		}
-		if (isAborted(signal)) return this.failed(kind, logicalName, buffer, mime, "cancelled");
-
-		// PDF page budget.
 		if (kind === "pdf") {
 			const pages = await countPdfPages(buffer);
-			if (pages.kind === "encrypted") {
-				return this.failed("encrypted", logicalName, buffer, mime, "failed");
-			}
-			if (pages.kind === "unreadable") {
-				return this.failed(kind, logicalName, buffer, mime, "failed");
-			}
-			if (pages.pages > PDF_MAX_PAGES) {
-				return this.failed("too_large", logicalName, buffer, mime, "failed");
-			}
+			if (pages.kind === "encrypted") return result("encrypted", mime, "failed");
+			if (pages.kind === "unreadable") return result(kind, mime, "failed");
+			if (pages.pages > PDF_MAX_PAGES) return result("too_large", mime, "failed");
 		}
 
-		// Container bomb gate for zip-based office formats.
 		if (kind === "xlsx" || kind === "docx" || kind === "pptx") {
 			const zip = await checkZipContainer(buffer);
 			if (!zip.ok) {
-				return this.failed(
-					zip.reason === "zip_bomb" ? "zip_bomb" : kind,
-					logicalName,
-					buffer,
-					mime,
-					"failed",
-				);
+				return result(zip.reason === "zip_bomb" ? "zip_bomb" : kind, mime, "failed");
 			}
 		}
 
-		// Everything else is not ingestible.
-		if (SUPPORTED_KINDS[kind] !== true) {
-			return this.failed("unsupported", logicalName, buffer, mime, "failed");
-		}
-		if (isAborted(signal)) return this.failed(kind, logicalName, buffer, mime, "cancelled");
+		if (SUPPORTED_KINDS[kind] !== true) return result("unsupported", mime, "failed");
+		if (isAborted(signal)) return result(kind, mime, "cancelled");
+		return result(kind, mime, "ready");
+	}
 
-		const record = this.artifactStore.create({ logicalName, buffer, mime });
+	/**
+	 * Ingest a material buffer: admit it once, then persist only accepted
+	 * content. Rejected content never enters CAS.
+	 */
+	async ingest(params: {
+		buffer: Buffer;
+		logicalName: string;
+		signal?: AbortSignal;
+	}): Promise<MaterialRef> {
+		const inspection = await this.inspectBuffer(params);
+		if (inspection.state !== "ready") {
+			return this.failed(
+				inspection.kind,
+				inspection.logicalName,
+				params.buffer,
+				inspection.mime,
+				inspection.state,
+			);
+		}
+		const record = this.artifactStore.create({
+			logicalName: inspection.logicalName,
+			buffer: params.buffer,
+			mime: inspection.mime,
+		});
 		return {
 			id: record.id,
-			kind,
-			logicalName,
-			bytes: buffer.byteLength,
+			kind: inspection.kind,
+			logicalName: inspection.logicalName,
+			bytes: inspection.bytes,
 			sha256: record.sha256,
-			mime,
+			mime: inspection.mime,
 			state: "ready",
 		};
 	}

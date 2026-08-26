@@ -193,7 +193,9 @@ describe("ordinary-user backstage journey", () => {
 		));
 		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
 		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.roleManagement }));
-		expect(within(dialog).queryByRole("tab", { name: "角色包存储" })).not.toBeInTheDocument();
+		expect(
+			within(dialog).queryByRole("tab", { name: zhCN.currentRolePackage.storageTab }),
+		).not.toBeInTheDocument();
 	});
 	it("does not expose roleplay media in the global character settings", async () => {
 		const user = userEvent.setup();
@@ -272,7 +274,9 @@ describe("ordinary-user backstage journey", () => {
 		));
 		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
 		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.roleManagement }));
-		expect(within(dialog).queryByRole("tab", { name: "角色包存储" })).not.toBeInTheDocument();
+		expect(
+			within(dialog).queryByRole("tab", { name: zhCN.currentRolePackage.storageTab }),
+		).not.toBeInTheDocument();
 	});
 	it("manages direct memory records with edit and forget", async () => {
 		const user = userEvent.setup();

@@ -44,7 +44,17 @@ describe("ConversationRepository active conversation", () => {
 				conversation_id TEXT NOT NULL,
 				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 			);
-			CREATE TABLE commissions (id TEXT PRIMARY KEY, conversation_id TEXT);
+			CREATE TABLE conversation_attachments (
+				id TEXT PRIMARY KEY,
+				conversation_id TEXT NOT NULL,
+				origin_entry_id TEXT,
+				send_nonce TEXT,
+				kind TEXT NOT NULL,
+				name TEXT NOT NULL,
+				total_bytes INTEGER NOT NULL,
+				file_count INTEGER NOT NULL,
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
 			CREATE TABLE relationship_memory_entries (
 				id TEXT PRIMARY KEY, source_message_version_id TEXT,
 				source_branch_id TEXT, source_conversation_id TEXT
@@ -62,7 +72,7 @@ describe("ConversationRepository active conversation", () => {
 			database,
 			repository: new ConversationRepository(drizzle({ client: database }), {
 				sessionDir: root,
-				 sessionCwd: root,
+				sessionCwd: root,
 			}),
 			root,
 		};
@@ -77,26 +87,26 @@ describe("ConversationRepository active conversation", () => {
 		});
 	}
 
-/** Native Pi assistant message fixture appended through SessionManager. */
-function nativeAssistantMessage(text: string): PiSessionMessage {
-	return {
-		role: "assistant",
-		content: [{ type: "text", text }],
-		api: "openai-completions",
-		provider: "test",
-		model: "test-model",
-		usage: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		},
-		stopReason: "stop",
-		timestamp: Date.now(),
-	} as PiSessionMessage;
-}
+	/** Native Pi assistant message fixture appended through SessionManager. */
+	function nativeAssistantMessage(text: string): PiSessionMessage {
+		return {
+			role: "assistant",
+			content: [{ type: "text", text }],
+			api: "openai-completions",
+			provider: "test",
+			model: "test-model",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		} as PiSessionMessage;
+	}
 
 	it("persists the active conversation across repository instances", () => {
 		const { database, repository, root } = setup();
@@ -179,7 +189,6 @@ function nativeAssistantMessage(text: string): PiSessionMessage {
 		);
 	});
 
-
 	it("keeps the active conversation stable for non-active lifecycle mutations", () => {
 		const { repository } = setup();
 		create(repository, "first");
@@ -188,6 +197,40 @@ function nativeAssistantMessage(text: string): PiSessionMessage {
 		expect(repository.archiveAndResolve("first", "companion", true).active?.id).toBe("second");
 		expect(repository.archiveAndResolve("first", "companion", false).active?.id).toBe("second");
 		expect(repository.deleteAndResolve("first", "companion").active?.id).toBe("second");
+	});
+
+	it("projects durable attachment summaries on their native Pi entry", () => {
+		const { database, repository } = setup();
+		create(repository, "only");
+		const session = repository.getSession("only");
+		const entryId = session.appendMessage({
+			role: "user",
+			content: "Read this",
+			timestamp: Date.now(),
+		});
+		database
+			.prepare(
+				`INSERT INTO conversation_attachments
+				(id, conversation_id, origin_entry_id, kind, name, total_bytes, file_count)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			)
+			.run("attachment-1", "only", entryId, "file", "notes.txt", 5, 1);
+
+		const projected = repository.get("only", "companion");
+		const entry = projected?.piTimeline.entries.find((candidate) => candidate.id === entryId);
+		expect(entry).toMatchObject({
+			kind: "message",
+			attachments: [
+				{
+					id: "attachment-1",
+					name: "notes.txt",
+					kind: "file",
+					bytes: 5,
+					fileCount: 1,
+					originEntryId: entryId,
+				},
+			],
+		});
 	});
 
 	it("selects a restored conversation when no active selection exists", () => {

@@ -1,5 +1,5 @@
 /** Minimal sandbox preload. Runtime contract parsing lives in the renderer client bundle. */
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 type ErrorType =
 	| "Error"
@@ -73,13 +73,40 @@ function reportRendererFault(input: unknown): void {
 		ipcRenderer.send("diagnostics:renderer-fault:v1", { traceparent, fault: input });
 }
 
+const ATTACHMENT_CHANNEL_PREFIX = "desktop:attachment";
+async function invokeAttachment(channel: string, request: object): Promise<unknown[]> {
+	const response: unknown = await ipcRenderer.invoke(channel, request);
+	if (!isPlainObject(response) || response.ok !== true || !isPlainObject(response.data))
+		throw new Error("attachment_import_failed");
+	const attachments = response.data.attachments;
+	if (!Array.isArray(attachments)) throw new Error("attachment_import_failed");
+	return attachments;
+}
+
+const attachments = Object.freeze({
+	pickFiles: (conversationId: string) =>
+		invokeAttachment("desktop:attachmentPickFiles:v1", { conversationId }),
+	pickFolder: (conversationId: string) =>
+		invokeAttachment("desktop:attachmentPickFolder:v1", { conversationId }),
+	importDroppedFiles: (conversationId: string, files: File[]) => {
+		const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean);
+		if (paths.length === 0) return Promise.resolve([]);
+		return invokeAttachment("desktop:attachmentImportDrop:v1", { conversationId, paths });
+	},
+});
+
 contextBridge.exposeInMainWorld(
 	"bearDesktop",
 	Object.freeze({
 		platform: process.platform,
 		diagnostics: Object.freeze({ reportRendererFault }),
+		attachments,
 		transport: Object.freeze({
-			invoke: (channel: string, request: unknown) => ipcRenderer.invoke(channel, request),
+			invoke: (channel: string, request: unknown) => {
+				if (channel.startsWith(ATTACHMENT_CHANNEL_PREFIX))
+					return Promise.reject(new Error("attachment_channel_requires_trusted_preload"));
+				return ipcRenderer.invoke(channel, request);
+			},
 		}),
 	}),
 );

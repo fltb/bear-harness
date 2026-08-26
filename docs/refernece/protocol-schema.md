@@ -34,11 +34,11 @@ It has no application/domain contracts. Its only runtime dependency is `zod` 4.4
 
 ## Runtime and public exports
 
-`@bear-harness/protocol` exports declarations from `dist/index.d.ts` and an import target of `dist/index.js`; `@bear-harness/protocol/schema` exports the corresponding `dist/schema.d.ts` and `dist/schema.js`. The root index is intended to erase to an empty runtime module because all of its imports and exports are type-only. Runtime users must not expect `RPC`, schema factories, or `z` from the package root.
+`@bear-harness/protocol` exports declarations from `dist/index.d.ts` and an import target of `dist/index.js`; `@bear-harness/protocol/schema` exports `dist/schema.d.ts` and `dist/schema.js`. The root index erases to an empty runtime module because its imports and exports are type-only. Runtime validators, `RPC`, `CHANNEL_CONTRACTS`, and `REQUEST_SCHEMAS` come from the `/schema` subpath.
 
-The protocol facade exports selected inferred aliases for the shared envelopes, RPC helper types, events, snapshots, onboarding/character, conversation/message, memory/canon/story, provider/model, commission/run, artifact, and settings domains. It does not mirror every runtime schema; the missing aliases are called out in the findings below. It also exports `RequestSchemaRegistry`, `Channel`, `AnyRpcEndpoint`, `DeclaredRpcEndpoint`, `RequestOf`, `ResponseOf`, and `EnvelopeOf`.
+The type facade mirrors the shared envelopes and RPC helpers plus the current onboarding/character, conversation/message/conversation-attachment, memory/canon, provider/model, external-agent/run, settings, update, and audit domains. It also exports `RequestSchemaRegistry`, `Channel`, `AnyRpcEndpoint`, `DeclaredRpcEndpoint`, `RequestOf`, `ResponseOf`, and `EnvelopeOf`.
 
-`IpcError` is the one notable manually written facade interface (`kind` plus `reason`); it mirrors the fields in `IpcResponse` but is not itself declared as `z.infer`. Keep it synchronized if the error body changes.
+`IpcError` is the one notable manually written facade interface (`kind` plus `reason`); it mirrors the failure body in `IpcResponse`.
 
 ## RPC endpoint registry
 
@@ -61,23 +61,27 @@ An endpoint is created by the local `endpoint(channel, request, response)` helpe
 
 ### Current endpoint inventory
 
-The request and response names below are the actual schemas wired into `RPC`.
+The current top-level groups and client leaf names are:
 
-| Group | Endpoints |
+| Group | Client leaves |
 | --- | --- |
-| Snapshot/events | `snapshot.get` (`SnapshotGetRequest` → `SnapshotResponse`); `events.subscribe` (`EventSubscribeRequest` → `EventSubscribeResponse`) |
-| Character | `character.get` (`CharacterGetRequest` → `CharacterResponse`); `character.list` (`CharacterListRequest` → `CharacterListResponse`); `character.activate` (`CharacterActivateRequest` → `CharacterResponse`); `character.import` (`CharacterImportRequest` → `CharacterResponse`); `character.pluginTrustGet` (`CharacterPluginTrustGetRequest` → `CharacterPluginTrustResponse`); `character.pluginTrustConfirm` (`CharacterPluginTrustConfirmRequest` → `CharacterPluginTrustResponse`); `character.draftCreate` (`CharacterDraftCreateRequest` → `CharacterDraftResponse`); `character.draftGet` (`CharacterDraftGetRequest` → `CharacterDraftResponse`); `character.draftPatch` (`CharacterDraftPatchRequest` → `CharacterDraftResponse`); `character.draftUploadAssets` (`CharacterDraftUploadAssetsRequest` → `CharacterDraftResponse`); `character.draftListRevisions` (`CharacterDraftListRevisionsRequest` → `CharacterDraftListRevisionsResponse`); `character.draftRestoreRevision` (`CharacterDraftRestoreRevisionRequest` → `CharacterDraftResponse`); `character.draftValidate` (`CharacterDraftValidateRequest` → `CharacterDraftResponse`); `character.draftPublish` (`CharacterDraftPublishRequest` → `CharacterDraftPublishResponse`) |
-| Roleplay/onboarding | `roleplay.get` (`RoleplayGetRequest` → `RoleplayResponse`); `roleplay.trigger` (`RoleplayTriggerRequest` → `RoleplayResponse`); `roleplay.reset-unlocks` (`RoleplayResetUnlocksRequest` → `EmptyResponse`); `onboarding.get` (`OnboardingGetRequest` → `OnboardingResponse`); `onboarding.submit` (`OnboardingSubmitRequest` → `OnboardingResponse`) |
-| Conversation | `conversation.list` (`ConversationListRequest` → `ConversationListResponse`); `conversation.create` (`ConversationCreateRequest` → `ConversationCreateResponse`); `conversation.select` (`ConversationSelectRequest` → `ConversationSelectResponse`); `conversation.rename` (`ConversationRenameRequest` → `EmptyResponse`); `conversation.archive` (`ConversationArchiveRequest` → `EmptyResponse`); `conversation.delete` (`ConversationDeleteRequest` → `EmptyResponse`); `conversation.search` (`ConversationSearchRequest` → `ConversationSearchResponse`) |
-| Message | `message.send` (`MessageSendRequest` → `MessageSendResponse`); `message.regenerate` (`MessageRegenerateRequest` → `MessageSendResponse`); `message.switchVersion` (`MessageSwitchVersionRequest` → `EmptyResponse`); `message.edit` (`MessageEditRequest` → `EmptyResponse`); `message.continue` (`MessageContinueRequest` → `EmptyResponse`); `message.correct` (`MessageCorrectRequest` → `EmptyResponse`); `message.branch` (`MessageBranchRequest` → `MessageBranchResponse`); `message.abort` (`MessageAbortRequest` → `EmptyResponse`) |
-| Memory | `memory.search` (`MemorySearchRequest` → `MemorySearchResponse`); `memory.list` (`MemoryListRequest` → `MemoryListResponse`); `memory.capture` (`MemoryCaptureRequest` → `MemoryCaptureResponse`); `memory.forget` (`MemoryForgetRequest` → `EmptyResponse`); `memory.edit` (`MemoryEditRequest` → `EmptyResponse`); `memory.exclude` (`MemoryExcludeRequest` → `EmptyResponse`); `memory.candidates.list` (`MemoryCandidatesListRequest` → `MemoryCandidatesListResponse`); `memory.candidate.approve` (`MemoryCandidateApproveRequest` → `EmptyResponse`); `memory.candidate.reject` (`MemoryCandidateRejectRequest` → `EmptyResponse`) |
-| Story/canon | `story.listChanges:v1` (`StoryListChangesRequest` → `StoryListChangesResponse`); `story.applyChange:v1` (`StoryApplyChangeRequest` → `StoryApplyChangeResponse`); `story.revertChange:v1` (`StoryRevertChangeRequest` → `EmptyResponse`); `story.reset:v1` (`StoryResetRequest` → `StoryResetResponse`); `story.listProposals:v1` (`StoryListProposalsRequest` → `StoryListProposalsResponse`); `story.resolveProposal:v1` (`StoryResolveProposalRequest` → `StoryResolveProposalResponse`). Canon provides `canon.listSources:v1` (`CanonListSourcesRequest` → `CanonListSourcesResponse`), `canon.addSource:v1` (`CanonAddSourceRequest` → `CanonAddSourceResponse`), `canon.search:v1` (`CanonSearchRequest` → `CanonSearchResponse`), `canon.removeSource:v1` (`CanonRemoveSourceRequest` → `EmptyResponse`), `canon.listModules:v1` (`CanonListModulesRequest` → `CanonListModulesResponse`), `canon.upsertModule:v1` (`CanonUpsertModuleRequest` → `CanonUpsertModuleResponse`), and `canon.deleteModule:v1` (`CanonDeleteModuleRequest` → `EmptyResponse`). |
-| Provider | `provider.list:v1` (`ProviderListRequest` → `ProviderListResponse`); `provider.customUpsert:v1` (`ProviderCustomUpsertRequest` → `EmptyResponse`); `provider.importPiConfig:v1` (`ProviderImportPiConfigRequest` → `ProviderImportPiConfigResponse`); `provider.overrideBaseUrl:v1` (`ProviderOverrideBaseUrlRequest` → `EmptyResponse`); `provider.setApiKey:v1` (`ProviderSetApiKeyRequest` → `EmptyResponse`); `provider.login:v1` (`ProviderLoginRequest` → `ProviderLoginResponse`); `provider.loginStatus:v1` (`ProviderLoginStatusRequest` → `ProviderLoginResponse`); `provider.loginAnswer:v1` (`ProviderLoginAnswerRequest` → `ProviderLoginResponse`); `provider.logout:v1` (`ProviderLogoutRequest` → `EmptyResponse`) |
-| Model | `model.pool.get:v1` (`ModelPoolGetRequest` → `ModelPoolGetResponse`); `model.enable:v1` (`ModelEnableRequest` → `ModelEnableResponse`); `model.disable:v1` (`ModelDisableRequest` → `EmptyResponse`); `model.defaults.get:v1` (`ModelDefaultsGetRequest` → `ModelDefaultsGetResponse`); `model.defaults.setReply:v1` (`ModelDefaultsSetReplyRequest` → `ModelDefaultsSetReplyResponse`); `model.defaults.setVision:v1` (`ModelDefaultsSetVisionRequest` → `ModelDefaultsSetVisionResponse`); `model.route.get:v1` (`ModelRouteGetRequest` → `ModelRouteGetResponse`); `model.route.set:v1` (`ModelRouteSetRequest` → `ModelRouteSetResponse`) |
-| Commission/run | `commission.list:v1` (`CommissionListRequest` → `CommissionListResponse`); `commission.draft:v1` (`CommissionDraftRequest` → `CommissionDraftResponse`); `commission.approve:v1` (`CommissionApproveRequest` → `EmptyResponse`); `commission.reject:v1` (`CommissionRejectRequest` → `EmptyResponse`); `commission.launch:v1` (`CommissionLaunchRequest` → `CommissionLaunchResponse`); `run.list:v1` (`RunListRequest` → `RunListResponse`); `run.steer:v1` (`RunSteerRequest` → `EmptyResponse`); `run.interrupt:v1` (`RunInterruptRequest` → `RunResponse`); `run.resume:v1` (`RunResumeRequest` → `RunResponse`); `run.cancel:v1` (`RunCancelRequest` → `RunResponse`); `run.respondPermission:v1` (`RunRespondPermissionRequest` → `RunResponse`) |
-| Artifact/settings/update/audit | `artifact.list:v1` (`ArtifactListRequest` → `ArtifactListResponse`); `artifact.read:v1` (`ArtifactReadRequest` → `ArtifactReadResponse`); `artifact.url:v1` (`ArtifactUrlRequest` → `ArtifactUrlResponse`); `settings.get:v1`/`settings.set:v1` (`SettingsGetRequest`/`SettingsSetRequest` → `SettingsResponse`); `update.check:v1` (`UpdateCheckRequest` → `UpdateCheckResponse`); `audit.list:v1` (`AuditListRequest` → `AuditListResponse`); `audit.export:v1` (`AuditExportRequest` → `AuditExportResponse`) |
+| `snapshot` | `get` → `snapshot.get:v1` |
+| `character` | `get`, `list`, `activate`, `packageGet`, `packageUpdate`, `import`, `pluginTrustGet`, `pluginTrustConfirm`, `draftCreate`, `draftGet`, `draftPatch`, `draftUploadAssets`, `draftListRevisions`, `draftRestoreRevision`, `draftValidate`, `draftPublish` |
+| `roleplay` | `get`, `trigger`, `dismissMedia`, `resetUnlocks` |
+| `events` / `onboarding` | `events.subscribe`; `onboarding.get`, `onboarding.submit` |
+| `conversation` | `list`, `create`, `select`, `activeGet`, `rename`, `archive`, `delete`, `search` |
+| `conversationAttachment` | `list` → `conversationAttachment.list:v1`; `discard` → `conversationAttachment.discard:v1`; `read` → `conversationAttachment.read:v1`; `url` → `conversationAttachment.url:v1`; `startUpload`, `cancelUpload`, `appendChunk`, `completeUpload` use the same exact camel-cased channel segment |
+| `message` | `send`, `regenerate`, `switchVersion`, `edit`, `continue`, `correct`, `branch`, `abort` |
+| `memory` | `search`, `list`, `capture`, `forget`, `edit`, `exclude`, `configureLocalEmbedding`, `candidatesList`, `candidateApprove`, `candidateReject` |
+| `canon` | `listSources`, `addSource`, `search`, `removeSource`, `listModules`, `upsertModule`, `deleteModule` |
+| `provider` | `list`, `customUpsert`, `importPiConfig`, `overrideBaseUrl`, `setApiKey`, `login`, `loginStatus`, `loginCancel`, `loginAnswer`, `logout`, `remove` |
+| `model` | `poolGet`, `enable`, `disable`, `defaultsGet`, `defaultsSetReply`, `defaultsSetVision`, `routeGet`, `routeSet` |
+| `externalAgent` | `discoverCodex` → `externalAgent.discoverCodex:v1`; `connectCodex` → `externalAgent.connectCodex:v1`; `status` → `externalAgent.status:v1` |
+| `run` | `list` → `run.list:v1`; `steer`, `interrupt`, `resume`, `cancel`, `respondPermission` use the same exact leaf segment |
+| `settings` | `get`, `set`, `capabilitiesGet` |
+| `update` / `audit` | `update.check`, `update.discard`, `update.apply`; `audit.list`, `audit.export` |
 
-Every channel literal in the registry ends in `:v1`; the exact spelling, including camel-cased segments such as `pluginTrustGet`, `respondPermission`, and `setReply`, is part of the wire contract.
+Client leaf names are not a general channel-construction rule: for example, `roleplay.resetUnlocks` maps to `roleplay.reset-unlocks:v1`, and nested memory/model channels use dotted segments. The exact channel literals in `RPC` are authoritative. There is no proposal/approval or renderer-file registry.
 
 ### Safely adding or changing an RPC
 
@@ -102,11 +106,11 @@ Every channel literal in the registry ends in `:v1`; the exact spelling, includi
 
 ## Events and snapshots
 
-`EventSeq` is a non-negative safe integer through `Number.MAX_SAFE_INTEGER`. `DomainEvent` contains `seq`, a `kind` string capped at 128 characters, and a bounded JSON `payload` (`BoundedEventValue`). Known event kinds are validated against the `EventPayloadSchemas` registry at publish and renderer-consumption time (`parseKnownDomainEvent`); unknown forward-compatible kinds are accepted only as bounded opaque events. The source comment defines the lifecycle boundary: an event is published after the Host commits the state change. `events.subscribe` accepts an optional `afterSeq` cursor and returns at most 100 events.
+`EventSeq` is a non-negative safe integer through `Number.MAX_SAFE_INTEGER`. `DomainEvent` contains `seq`, a bounded `kind`, and bounded JSON `payload`. Known event kinds are validated against `EventPayloadSchemas` at publish and renderer-consumption time; unknown forward-compatible kinds remain bounded opaque events. An event is published after the Host commits the state change. `events.subscribe` accepts an optional `afterSeq` and returns at most 100 events.
 
-`snapshot.get` accepts `{}`. `SnapshotResponse` carries a required `eventSeq` and optional projections for onboarding, character, conversation, memory, provider, model, commission, run, artifact, story, character runtime, roleplay, and settings. Optional sections allow a boot response to omit unavailable or irrelevant projections. The individual projections are bounded: for example, conversation messages use the same `Message` shape as conversation selection, model uses `ModelSnapshot`, and character runtime maps conversation IDs to `{ sceneId, visualState }`.
+`snapshot.get` accepts `{}`. `SnapshotResponse` carries required `eventSeq` and optional onboarding, character, conversation, memory, provider, model, run, character-runtime, roleplay, and settings projections. Conversation attachment summaries are carried by native Pi timeline message entries rather than by a separate snapshot projection.
 
-The snapshot cursor and event sequence are the ordering primitives exposed by this package; consumers should retain the returned `eventSeq` when coordinating subsequent event reads. Cross-field references inside a snapshot (for example `adoptedVersionId` pointing at a listed version, or `defaultSceneId` pointing at a listed scene) are validated by the `Message` and `CharacterDisplay` refinements.
+The snapshot cursor and event sequence are the ordering primitives. Consumers retain `eventSeq`, ignore duplicate events, and refetch authoritative projections after a sequence gap.
 
 ## CharacterDisplay and character authoring
 
@@ -125,13 +129,24 @@ Character authoring also has import, plugin trust, and revisioned draft contract
 
 ## Domain contracts
 
-### Conversation, message, memory, story, and canon
+### Conversation, message, attachments, memory, and canon
 
-Conversation and branch/message IDs are non-empty strings capped at 64 characters. Conversation lists cap at 100 entries; search accepts a query up to 1000 characters and returns at most 8 hits. Messages allow up to 20 versions and 65,536 characters per content/text field. Sends allow at most 10 attachments, with each attachment’s base64 bounded using the exported 10 MiB attachment-byte-derived limit.
+Conversation IDs are non-empty bounded strings. The active conversation response is the direct native Pi projection: `piSessionId`, a bounded `PiTimeline`, `PiLiveState`, and conversation metadata. Timeline user and assistant entries may carry up to ten `ConversationAttachmentSummary` values.
 
-Memory entries expose scope (`self`, `relationship`, or `scene`), bounded text and timestamps, and finite importance. Direct capture requires a conversation ID and Pi session entry ID; capture responses identify the backend memory and creator (`user_capture` or `assistant_tool`). Search/list, forget, edit, exclusion, and candidate approval/rejection are separate contracts. Candidate statuses and source kinds are closed unions.
+Attachments are immutable, conversation-scoped roots with kind `file`, `folder`, or `generated`, a bounded display name, byte count, file count, and optional originating Pi entry. `MessageSendRequest` sends `attachmentIds`, not bytes or renderer paths; text may be empty only when at least one ID is present. A Host send nonce makes each unbound draft single-use, and accepted attachments are bound to the persisted user entry.
 
-Story changes distinguish global/branch scope and explicit/event/confirmed sources. Proposals are conversation/branch-scoped and resolve to an optional change. Canon sources/chunks and modules support source ingestion, bounded search, hierarchical modules, and package/user origins; source content is capped at 1 MiB and module instructions at 16 KiB.
+`ConversationAttachmentReadRequest` is a strict union:
+
+- semantic mode: `{ mode: "semantic", conversationId, attachmentId, relativePath?, query?, cursor? }`; `relativePath` and `query` are mutually exclusive;
+- byte mode: `{ mode: "bytes", conversationId, attachmentId, relativePath?, offset, length }`; `length` is 1–1,048,576 bytes.
+
+The response is the matching union. Semantic reads return bounded folder entries, extracted `content`, search `hits`, an error code, and/or an opaque `nextCursor`. Byte reads return `{ mode: "bytes", relativePath, mime, base64, nextOffset, eof }`. Callers must discriminate on `mode`; adding byte fields to a semantic request or semantic fields to a byte request is rejected. `conversationAttachment.url` separately requests an operation-scoped `preview` or `download` capability.
+
+Chunked upload uses `startUpload` → one or more `appendChunk` calls → `completeUpload`, with `cancelUpload` for an abandoned session. The Host persists immutable CAS snapshots; desktop trusted imports may additionally retain an in-memory live-source grant for delegation, but that grant is not a wire field and disappears on restart.
+
+Memory entries expose scope (`self`, `relationship`, or `scene`), bounded text and timestamps, and finite importance. Direct capture requires a conversation ID and Pi session entry ID; search/list, forget, edit, exclusion, local embedding setup, and candidate approval/rejection are separate contracts.
+
+Canon sources/chunks and modules support bounded ingestion, search, hierarchical modules, and package/user origins.
 
 ### Provider and configured model
 
@@ -139,38 +154,41 @@ Story changes distinguish global/branch scope and explicit/event/confirmed sourc
 
 `ModelRoute` pairs provider/model IDs. Configured models add labels, provider name, image capability, and creation time. Defaults distinguish an optional reply route from vision `auto` or `manual` mode; conversation routes can be absent or selected. `ModelSnapshot` combines pool, defaults, and an optional conversation route. Enabling requires non-empty IDs, while the base `ModelRoute` validator used by disable only applies maximum lengths.
 
-### Commission and run
+### External agents and runs
 
-`ActionDraft` describes a proposed operation with title/description, bounded read/write paths, network permission, tool names, and a hash. `Commission` tracks the trigger message, optional conversation, draft, and status from `draft` through approval/queue/run/needs-user/completed/failed/cancelled. Drafting accepts the action details; approval requires the commission ID and approved hash; launching requires an executor profile and returns run/commission/profile/status identifiers.
+There is no proposal or approval RPC. The role starts work directly through its Host `host_delegate_agent` tool with an agent (`pi` or `codex`), one to ten attachment IDs, an optional workspace attachment ID, and a bounded instruction. This tool calls `ExternalAgentRunService`; it is not a renderer-launch endpoint.
 
-`Run` tracks commission, executor, status, and optional start/completion timestamps. Status includes `enqueued`, `running`, `needs_user`, `completed`, `failed`, `cancelled`, `interrupted`, and `forced_termination`. Steer/interrupt/resume/cancel/permission requests are run-ID based; steering is a bounded non-empty instruction and permission responses carry request and option IDs. Run lists are capped at 10.
+Pi is always available as profile `pi-default` and each delegation launches an independent native Pi ACP worker/session rather than reusing the conversational companion session. Codex is used only when explicitly selected and connected. `externalAgent.discoverCodex` reports candidate path, canonical path, version, SHA-256, and `usable | version_mismatch | not_found | rejected`; the current usable pin is `0.147.0`. `connectCodex` requires an exactly matching discovered canonical path/version/hash plus non-empty `codexHome` and returns `{ profileId, version, hash }`. `status` always reports Pi and returns either the connected Codex profile/version/hash or `no_codex_found`/`version_mismatch`. The Host re-verifies the pinned Codex version and binary hash at every launch.
 
-### Artifact and settings
+`Run` contains conversation ID, trigger Pi entry ID, executor profile, title, status, and optional timestamps. Status is `enqueued`, `running`, `needs_user`, `completed`, `failed`, `cancelled`, `interrupted`, or `forced_termination`. The renderer-facing run RPCs only list and control an already-created run: steer, interrupt, resume, cancel, or answer a permission request. Run lists are capped at ten.
 
-Artifacts expose logical name, MIME, byte count (safe integer through uint32 max), hash, lifecycle status, optional producer run, and creation time. Listing is bounded at 100; reading returns bounded base64 (64,000,000 characters); URL generation returns a bounded string and may be empty when the desktop custom-scheme handler is unavailable.
+Selected desktop paths can remain ephemeral live inputs while the process is alive; other inputs are materialized from immutable snapshots. Runs are deliberately unsandboxed, so edits to a live source affect the user's source and have no Bear rollback. Files written under the assigned output directory are captured as immutable generated conversation attachments when the run completes.
 
-Settings contain relationship/conversation-history flags, proxy mode (`direct`, `auto`, `manual`) with optional URL/bypass list, vector-memory service configuration (`none`, `remote`, `local`, optional model/dimensions/local model/path/API key), and an optional model-download mirror endpoint. `settings.set` takes a patch object whose fields are optional but whose nested objects use the full strict nested shapes.
+### Settings
+
+Settings contain relationship/conversation-history flags, proxy mode (`direct`, `auto`, `manual`) with optional URL/bypass list, vector-memory service configuration (`none`, `remote`, `local`, optional model/dimensions/local model/path/API key), and a model-download source. `settings.set` takes a patch whose nested values use the strict full nested shapes. `settings.capabilitiesGet` reports Host capabilities used by setup UI.
 
 ## Bounds, strictness, and security limits
 
-The schema establishes a defensive baseline at the wire boundary:
+The schema establishes a defensive wire boundary:
 
-- Most objects are `z.strictObject`, so unknown keys are rejected rather than silently accepted.
-- Shared limits include 4096-character strings, 1024-character paths, arrays of 100, safe integers, and explicit attachment/file/artifact payload limits. Individual domains tighten these limits.
-- IDs, enums, status values, and discriminated unions constrain the accepted vocabulary where the contract needs it.
-- Cross-field invariants are enforced in the schema: `Message.adoptedVersionId` must reference a listed version when present, and a version's `createdAt` must not precede its message's; `MemoryEntry.updatedAt` must not precede `createdAt`; `Run.completedAt` must not precede `startedAt`; `CanonChunk.endOffset` must not precede `startOffset`; `CharacterDisplay.visual.defaultSceneId`/`defaultExpressionId` must reference listed scenes/expressions, `expressionLabels` keys must reference listed expressions, unlockable `media` must reference listed media, roleplay variable `initial` must match the declared `type` (and belong to `values` for `enum`), level minimums must be strictly increasing, and text-step `min_length` must not exceed `max_length`.
-- Timestamp fields are validated as parseable timestamps (`WireTimestamp`, bounded to 64 characters); they remain opaque strings on the wire.
-- Response identifiers, status, profile, and hash fields are non-empty: provider/model/commission/run/artifact IDs, `ActionDraft.hash`, `draftHash`, `pluginHash`, artifact `sha256`, and audit hashes reject empty strings where an empty value is not a meaningful wire value. Empty proxy/vector URLs are likewise rejected; only explicitly optional fields such as `ArtifactUrlResponse.url` (empty when the desktop custom-scheme handler is unavailable) or audit `prevHash` (genesis entry) may be empty.
-- `z.record` fields (onboarding answers, visual expressions/labels, draft files, character-runtime projections, roleplay values) are capped at 100 entries via the shared `boundedRecord` helper; arrays keep their existing explicit caps.
-- Base64, provider credentials, proxy/vector URLs, and other sensitive or large values are accepted only within explicit size limits, but the schema does not encrypt, redact, authorize, or persist them.
+- Most objects are `z.strictObject`; unknown keys are rejected.
+- Shared limits cover strings, paths, arrays, safe integers, upload chunks, attachment roots, semantic text, and byte-read ranges. Individual domains tighten these limits.
+- IDs, enums, status values, and discriminated unions constrain vocabulary.
+- Cross-field refinements enforce timeline/message, memory timestamp, run timestamp, canon offset, onboarding, and character-display invariants.
+- Timestamp fields are parseable bounded strings and remain opaque on the wire.
+- Provider/model/run/attachment/profile IDs and hash fields reject empty values where emptiness is not meaningful.
+- Bounded records cap onboarding answers, visual records, draft files, character-runtime projections, and roleplay values.
+- Base64, credentials, proxy/vector URLs, and other sensitive values are shape-limited, but the schema itself does not encrypt, authorize, or persist them.
 
 ### Schema shape bounds versus Host security ownership
 
-Validation is necessary but not sufficient for security. The protocol schema is deliberately a *shape* boundary only:
+Validation is necessary but not sufficient:
 
-- Path strings are length-bounded but are not checked for traversal or allowed roots; URL-like strings are length-bounded but are not parsed or restricted by scheme; `DomainEvent` payloads are validated as bounded JSON by the event contract registry; plugin trust fields are descriptive data, not an authorization decision.
-- The **Host composition layer** (`packages/host-runtime/src/composition.ts`) owns identity and policy checks that the schema cannot express. Before any mutation, handlers verify companion ownership of referenced conversation/message/run/commission/artifact IDs (`requireOwnedConversation`, `requireOwnedMessage`, `requireOwnedRun`, `requireOwnedCommission`, `requireOwnedArtifact`) and reject foreign or unknown references with `not_found`. Filesystem/network ownership and URL scheme/host policy remain in Host handlers and storage boundaries; schema validation never replaces them.
-- Breaking changes require a new versioned channel: the `check-rpc-contracts` gate statically detects duplicate or unversioned endpoint channels, and the `:v1` template type protects the registry at compile time.
+- Path and URL strings are bounded shapes, not filesystem or capability authorization.
+- The Host composition layer verifies companion ownership of conversation, message, run, and conversation-attachment IDs before access. The attachment service resolves relative paths only within immutable attachment records and owns sendability, cursor, upload, and byte-range rules.
+- The desktop main process, not the protocol schema, owns trusted picker/drop path import and `bear-attachment` capability authorization.
+- Breaking changes require a versioned channel; the contract gate detects duplicate or unversioned channels.
 
 ## Build, declaration, and compatibility workflow
 
@@ -189,15 +207,11 @@ npm run typecheck --workspace @bear-harness/protocol
 
 The build commands verify emitted JavaScript/declarations; the typecheck commands verify the source contract without emission. This reference intentionally does not prescribe a project-wide gate or formatter. When changing a boundary, also exercise the relevant runtime `safeParse` path or package consumer, especially for strict-object rejection, discriminated unions, and the registry lookup.
 
-## Known issues / findings
+## Current findings
 
-These are concrete observations from the current source, not planned behavior:
-
-1. **The type facade mirrors the runtime registry.** `packages/protocol/src/index.ts` re-exports inferred aliases for every registered endpoint's request/response payload and domain type; `check-rpc-contracts.mjs` verifies each facade `z.infer` target resolves against `schema.ts` and that every endpoint channel is versioned and unique. A type-only consumer can name every registered endpoint type through `@bear-harness/protocol`; runtime validation remains on the `@bear-harness/protocol/schema` subpath.
-2. **The envelope is not attached to endpoint entries.** `RPC.*.response` is the payload validator, while `IpcResponse` is a separate factory. A transport implementation that assumes the registry response validator accepts `{ok,data}` will validate the wrong shape. Conversely, `EnvelopeOf<E>` is only a TypeScript convenience and does not create a runtime envelope validator.
-3. **Event payloads are validated through a known-event contract registry.** `DomainEvent` carries a bounded JSON payload (`BoundedEventValue`), and a known-event registry (`EventPayloadSchemas`) validates the payload of each known kind at publish and renderer-consumption time; unknown forward-compatible kinds are accepted only as bounded opaque events. Opaque payloads remain bounded but untyped by design.
-4. **Cross-field relationships are enforced in the schema.** `Message.adoptedVersionId`, character visual defaults/expression labels/unlockable media/variable initial/level minimums, onboarding text-step lengths, run/memory/canon timestamp and offset coherence, and record entry caps are validated by `superRefine` refinements. Handlers still enforce ownership and policy for referenced IDs (see schema-vs-Host ownership above).
-5. **Response identifiers and hashes are non-empty.** Provider/model/commission/run/artifact IDs, `ActionDraft.hash`, `draftHash`, `pluginHash`, artifact `sha256`, and audit hashes reject empty strings in the base response schemas; requests already required non-empty IDs.
-6. **Sensitive and URL-like fields are shape-only.** Settings and provider schemas permit bounded API keys, proxy/vector URLs, custom base URLs, and import JSON. There is no URL scheme/host policy, secret redaction, or authorization check in this package. The error comment prohibits leaking secrets, but the schema itself cannot enforce that policy; Host handlers own path/network/credential policy.
-7. **Records are bounded.** `z.record` fields (onboarding answers, visual expressions/labels, draft files, character-runtime projections, roleplay values) are capped at 100 entries through the shared `boundedRecord` helper; theme strings remain unbounded but are package-authored display values, not wire-critical inputs.
-8. **Versioning is enforced by a gate.** The `${string}:v1` endpoint constraint and channel strings communicate a version, and `check-rpc-contracts.mjs` detects duplicate or unversioned endpoint channels. There is still no migration or negotiation layer: a breaking change must be represented by a new channel/contract and coordinated consumers.
+1. **Endpoint entries carry payload validators, not envelopes.** `RPC.*.response` validates success data; `IpcResponse` creates the runtime envelope validator and `EnvelopeOf<E>` is only a TypeScript convenience.
+2. **Attachment reads are intentionally mode-strict.** Semantic extraction/search and exact byte ranges share one endpoint but are disjoint request/response unions. UI/store helpers verify the returned mode before exposing it.
+3. **Direct execution has no launch RPC.** The conversational role owns `host_list_attachments`, `host_read_attachment`, and `host_delegate_agent`; the public external-agent endpoints configure Codex and the run endpoints control existing runs.
+4. **Generated files are attachments.** The wire never exposes internal CAS/provenance records as a renderer domain. `ArtifactStore` remains a Host-internal content store used beneath conversation attachments.
+5. **Sensitive and URL-like fields are shape-only.** Host handlers own path, credential, network, and desktop capability policy.
+6. **Versioning is enforced.** Every endpoint channel is a unique `:v1` literal; there is no migration or negotiation layer.

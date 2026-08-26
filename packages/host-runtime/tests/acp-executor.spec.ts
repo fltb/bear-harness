@@ -1,12 +1,12 @@
 // @vitest-environment node
 
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { type AcpProcessSpec, AcpRunClient } from "../src/executors/acp-client.js";
-import { AcpExecutorController, ApprovedFileAccess } from "../src/executors/acp-executor.js";
+import { AcpExecutorController } from "../src/executors/acp-executor.js";
 import type { ExecutorLaunchRequest } from "../src/executors/router.js";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/acp-agent.mjs", import.meta.url));
@@ -35,11 +35,11 @@ function fixtureSpec(cwd: string, permission = false): AcpProcessSpec {
 
 class FixtureController extends AcpExecutorController {
 	protected processSpec(request: ExecutorLaunchRequest): AcpProcessSpec {
-		return fixtureSpec(request.commission.reads[0] ?? process.cwd());
+		return fixtureSpec(request.task.workspace);
 	}
 }
 
-describe("ACP commission transport", () => {
+describe("ACP external-agent transport", () => {
 	it("performs initialize, session creation, prompt, and a user-resolved permission request", async () => {
 		const cwd = createTemp();
 		const permission = Promise.withResolvers<{ requestId: string; optionId: string }>();
@@ -68,17 +68,9 @@ describe("ACP commission transport", () => {
 		const completed = Promise.withResolvers<void>();
 		const controller = new FixtureController();
 		const request: ExecutorLaunchRequest = {
-			run: { runId: "run-1", commissionId: "commission-1", executorProfile: "pi-worker" },
-			commission: {
-				id: "commission-1",
-				title: "Inspect",
-				description: "Inspect the approved root.",
-				reads: [cwd],
-				writes: [],
-				networkAllowed: false,
-				toolNames: ["read"],
-			},
-			profile: { id: "pi-worker", type: "product-managed", capabilities: {} },
+			run: { runId: "run-1", triggerEntryId: "entry-1", executorProfile: "pi-worker" },
+			task: { instruction: "Inspect the workspace.", workspace: cwd },
+			profile: { id: "pi-worker", type: "pi", capabilities: {} },
 			emit: (event) => {
 				events.push(event);
 				if (event.type === "completed") completed.resolve();
@@ -95,37 +87,5 @@ describe("ACP commission transport", () => {
 				{ type: "completed", summary: undefined },
 			]),
 		);
-	});
-
-	it("allows only declared files and rejects a symlink that escapes them", async () => {
-		const root = createTemp();
-		const outside = createTemp();
-		const allowed = join(root, "allowed.txt");
-		const escaped = join(outside, "secret.txt");
-		writeFileSync(allowed, "one\ntwo\nthree\n");
-		writeFileSync(escaped, "outside");
-		symlinkSync(escaped, join(root, "escape.txt"));
-		const evidence: Array<{ kind: string; data: Record<string, unknown> }> = [];
-		const files = new ApprovedFileAccess({
-			reads: [root],
-			writes: [root],
-			record: (kind, data) => evidence.push({ kind, data }),
-		});
-
-		await expect(
-			files.readTextFile({ sessionId: "session", path: allowed, line: 2, limit: 1 }),
-		).resolves.toEqual({ content: "two" });
-		await expect(
-			files.readTextFile({ sessionId: "session", path: join(root, "escape.txt") }),
-		).rejects.toThrow("approved_path_symlink_escape");
-		await files.writeTextFile({
-			sessionId: "session",
-			path: join(root, "output.txt"),
-			content: "done",
-		});
-
-		expect(readFileSync(join(root, "output.txt"), "utf8")).toBe("done");
-		expect(evidence.map((entry) => entry.kind)).toEqual(["acp.file_read", "acp.file_write"]);
-		expect(dirname(allowed)).toBe(root);
 	});
 });

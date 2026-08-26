@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createCompanionStore } from "../src/stores/companion.js";
 import type { DomainEvent, Snapshot } from "../src/stores/ipc.js";
 import { createTestClient, ROLEPLAY_MEDIA_CHARACTER } from "./fixtures.js";
+
 type HostConversationProjection = {
 	activeConversationId: string;
 	activeBranchId?: string;
@@ -40,9 +41,7 @@ function park(): Promise<never> {
 
 type HostConversationMutation = { conversation?: HostConversationProjection };
 type ConversationApiWithActiveGet = TestClient["conversation"] & {
-	activeGet: (
-		request: Record<string, never>,
-	) => Promise<IpcEnvelope<HostConversationMutation>>;
+	activeGet: (request: Record<string, never>) => Promise<IpcEnvelope<HostConversationMutation>>;
 };
 
 function conversationApi(client: TestClient): ConversationApiWithActiveGet {
@@ -224,9 +223,8 @@ describe("store RPC contract", () => {
 	it("keeps a Host-created active Pi projection over delayed pre-mutation responses", async () => {
 		const { client } = createTestClient();
 		const staleSnapshot = Promise.withResolvers<IpcEnvelope<Snapshot>>();
-		const staleList = Promise.withResolvers<
-			IpcEnvelope<{ conversations: HostConversationSummary[] }>
-		>();
+		const staleList =
+			Promise.withResolvers<IpcEnvelope<{ conversations: HostConversationSummary[] }>>();
 		client.snapshot.get = vi.fn(() => staleSnapshot.promise);
 		client.conversation.list = vi.fn(() => staleList.promise);
 		const conversation = conversationApi(client);
@@ -247,7 +245,9 @@ describe("store RPC contract", () => {
 		try {
 			await waitFor(() => expect(client.snapshot.get).toHaveBeenCalled());
 			const create = store.createConversation("Created");
-			await waitFor(() => expect(client.conversation.create).toHaveBeenCalledWith({ title: "Created" }));
+			await waitFor(() =>
+				expect(client.conversation.create).toHaveBeenCalledWith({ title: "Created" }),
+			);
 			await waitFor(() => expect(store.activeConversationId).toBe(created.activeConversationId));
 			staleSnapshot.resolve({
 				ok: true,
@@ -370,7 +370,10 @@ describe("store RPC contract", () => {
 		const firstSummary = conversationSummary(first.id, first.title);
 		const lists: HostConversationSummary[][] = [
 			[firstSummary, conversationSummary(replacement.id, replacement.title)],
-			[conversationSummary(renamed.id, renamed.title), conversationSummary(replacement.id, replacement.title)],
+			[
+				conversationSummary(renamed.id, renamed.title),
+				conversationSummary(replacement.id, replacement.title),
+			],
 			[conversationSummary(replacement.id, replacement.title)],
 			[],
 			[created],
@@ -437,9 +440,7 @@ describe("store RPC contract", () => {
 					},
 				},
 			});
-			await waitFor(() =>
-				expect(client.events.subscribe).toHaveBeenCalledWith({ afterSeq: 0 }),
-			);
+			await waitFor(() => expect(client.events.subscribe).toHaveBeenCalledWith({ afterSeq: 0 }));
 
 			const renamedListCalls = client.conversation.list.mock.calls.length;
 			const renamedActiveCalls = conversation.activeGet.mock.calls.length;
@@ -454,9 +455,7 @@ describe("store RPC contract", () => {
 			);
 			expect(store.conversations).toEqual(lists[1]);
 
-			await waitFor(() =>
-				expect(client.events.subscribe).toHaveBeenCalledWith({ afterSeq: 1 }),
-			);
+			await waitFor(() => expect(client.events.subscribe).toHaveBeenCalledWith({ afterSeq: 1 }));
 			const archivedListCalls = client.conversation.list.mock.calls.length;
 			const archivedActiveCalls = conversation.activeGet.mock.calls.length;
 			listVersion = 2;
@@ -471,9 +470,7 @@ describe("store RPC contract", () => {
 			await waitFor(() => expect(store.activeConversationId).toBe(replacement.id));
 			expect(store.activePiTimeline).toEqual(replacement.piTimeline);
 
-			await waitFor(() =>
-				expect(client.events.subscribe).toHaveBeenCalledWith({ afterSeq: 2 }),
-			);
+			await waitFor(() => expect(client.events.subscribe).toHaveBeenCalledWith({ afterSeq: 2 }));
 			const deletedListCalls = client.conversation.list.mock.calls.length;
 			const deletedActiveCalls = conversation.activeGet.mock.calls.length;
 			listVersion = 3;
@@ -488,9 +485,7 @@ describe("store RPC contract", () => {
 			await waitFor(() => expect(store.activeConversationId).toBeNull());
 			expect(store.activePiTimeline).toBeUndefined();
 
-			await waitFor(() =>
-				expect(client.events.subscribe).toHaveBeenCalledWith({ afterSeq: 3 }),
-			);
+			await waitFor(() => expect(client.events.subscribe).toHaveBeenCalledWith({ afterSeq: 3 }));
 			const createdListCalls = client.conversation.list.mock.calls.length;
 			const createdActiveCalls = conversation.activeGet.mock.calls.length;
 			listVersion = 4;
@@ -715,7 +710,9 @@ describe("store RPC contract", () => {
 		);
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
-			await waitFor(() => expect(store.model.data().selected).toEqual({ providerId: "relay", modelId: "fast" }));
+			await waitFor(() =>
+				expect(store.model.data().selected).toEqual({ providerId: "relay", modelId: "fast" }),
+			);
 			await store.model.list();
 			expect(store.model.data().selected).toEqual({ providerId: "relay", modelId: "fast" });
 			client.conversation.create = vi.fn(() =>
@@ -725,7 +722,10 @@ describe("store RPC contract", () => {
 				}),
 			);
 			await store.createConversation("New conversation");
-			expect(store.model.data().selected).toEqual({ providerId: "e2e-rule", modelId: "rule-model" });
+			expect(store.model.data().selected).toEqual({
+				providerId: "e2e-rule",
+				modelId: "rule-model",
+			});
 			expect(client.model.routeGet).toHaveBeenCalledWith({ conversationId: "conversation-2" });
 		} finally {
 			dispose();
@@ -798,21 +798,12 @@ describe("store RPC contract", () => {
 				},
 			}),
 		);
-		client.commission.launch = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					runId: "run-1",
-					commissionId: "commission-1",
-					executorProfile: "pi-product-managed",
-					status: "running" as const,
-				},
-			}),
-		);
 		const runResult = {
 			id: "run-1",
-			commissionId: "commission-1",
-			executorProfile: "pi-product-managed",
+			conversationId: "conversation-1",
+			triggerEntryId: "entry-1",
+			executorProfile: "pi-default",
+			title: "Direct run",
 			status: "running" as const,
 		};
 		client.run.cancel = vi.fn(() => Promise.resolve({ ok: true as const, data: runResult }));
@@ -866,7 +857,6 @@ describe("store RPC contract", () => {
 			await store.characters.list();
 			await store.characters.activate("role-2");
 
-
 			await store.canon.listSources();
 			await store.canon.addSource("source.txt", "source text");
 			await store.canon.search("canon query");
@@ -880,23 +870,12 @@ describe("store RPC contract", () => {
 			});
 			await store.canon.deleteModule("module-1");
 
-			await store.commission.list();
-			await store.commission.draft({
-				conversationId: "conversation-1",
-				triggerEntryId: "message-1",
-				title: "Work",
-				description: "Do work",
-			});
-			await store.commission.approve("commission-1", "hash");
-			await store.commission.reject("commission-1");
-			await store.commission.launch("commission-1", "pi-product-managed");
 			await store.run.list();
 			await store.run.steer("run-1", "continue carefully");
 			await store.run.interrupt("run-1");
 			await store.run.resume("run-1");
 			await store.run.cancel("run-1");
 			await store.run.respondPermission("run-1", "permission-1", "allow");
-			await store.artifact.list();
 
 			expect(client.settings.set).toHaveBeenCalled();
 			expect(client.memory.capture).toHaveBeenCalledWith({
@@ -926,10 +905,6 @@ describe("store RPC contract", () => {
 				baseUrl: "https://override.example/v1",
 			});
 			expect(client.canon.upsertModule).toHaveBeenCalled();
-			expect(client.commission.launch).toHaveBeenCalledWith({
-				commissionId: "commission-1",
-				executorProfile: "pi-product-managed",
-			});
 			expect(client.run.interrupt).toHaveBeenCalledWith({ runId: "run-1" });
 			expect(client.run.resume).toHaveBeenCalledWith({ runId: "run-1" });
 		} finally {
@@ -987,15 +962,9 @@ describe("store RPC contract", () => {
 						options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
 					},
 				],
-				[
-					"run.result_adopted",
-					{ commissionId: "commission-1", artifactId: "artifact-1", runId: "run-1" },
-				],
 				["memory.changed", {}],
 				["provider.changed", {}],
 				["model.changed", {}],
-				["commission.changed", {}],
-				["artifact.created", {}],
 				["character.changed", {}],
 				["settings.changed", {}],
 				["diagnostics.updated", {}],

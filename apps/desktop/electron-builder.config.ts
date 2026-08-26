@@ -54,6 +54,25 @@ const nativeBindingExcludes = {
 	],
 };
 
+export function extraResourcesFor(platform: NodeJS.Platform = process.platform) {
+	return [
+		{ from: "../../LICENSE", to: "LICENSE" },
+		{ from: "../../BRAND-LICENSE", to: "BRAND-LICENSE" },
+		{ from: attributionPath, to: "BRAND-ATTRIBUTION.txt" },
+		{ from: "dist/character-seeds", to: "character-seeds" },
+		...(platform === "win32"
+			? [
+					{ from: "dist/.windows-runtime/git", to: "git" },
+					{ from: "dist/.windows-runtime/manifest.json", to: "git-runtime-manifest.json" },
+					{
+						from: "dist/.windows-runtime/notices",
+						to: "third-party/git-for-windows",
+					},
+				]
+			: []),
+	];
+}
+
 const config: Configuration = {
 	appId: productConfig.appId,
 	productName: productConfig.productName,
@@ -73,18 +92,13 @@ const config: Configuration = {
 		"node_modules/sqlite-vec*/**/*",
 		"node_modules/@node-rs/jieba*/**/*",
 	],
-	files: ["dist/**", "!dist/.runtime-build/**"],
+	files: ["dist/**", "!dist/.runtime-build/**", "!dist/.windows-runtime/**"],
 	// Desktop identity: package.json metadata's desktopName is overridden to
 	// appId so Linux desktop integration matches the configured app id.
 	extraMetadata: {
 		desktopName: productConfig.appId,
 	},
-	extraResources: [
-		{ from: "../../LICENSE", to: "LICENSE" },
-		{ from: "../../BRAND-LICENSE", to: "BRAND-LICENSE" },
-		{ from: attributionPath, to: "BRAND-ATTRIBUTION.txt" },
-		{ from: "dist/character-seeds", to: "character-seeds" },
-	],
+	extraResources: extraResourcesFor(),
 	mac: {
 		identity: null,
 		icon,

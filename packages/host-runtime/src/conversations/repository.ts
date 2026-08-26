@@ -7,7 +7,7 @@ import { PiSessionStore } from "../companion/pi-session-store.js";
 import type { AppDatabase } from "../storage/database.js";
 import {
 	activeConversations,
-	commissions,
+	conversationAttachments,
 	conversationDirectives,
 	conversationSessions,
 	conversations,
@@ -71,7 +71,6 @@ type SessionMetadataRow = {
 	piSessionId: string;
 	sessionFilePath: string;
 };
-
 
 export class ConversationRepository {
 	private readonly sessionDir?: string;
@@ -296,7 +295,9 @@ export class ConversationRepository {
 			})
 			.from(activeConversations)
 			.innerJoin(conversations, eq(conversations.id, activeConversations.conversationId))
-			.where(and(eq(activeConversations.companionId, companionId), isNull(conversations.archivedAt)))
+			.where(
+				and(eq(activeConversations.companionId, companionId), isNull(conversations.archivedAt)),
+			)
 			.get();
 		return row ? this.project(row.id, row.title, row.sceneTitle) : undefined;
 	}
@@ -361,7 +362,9 @@ export class ConversationRepository {
 					activeId = transaction
 						.select({ id: conversations.id })
 						.from(conversations)
-						.where(and(eq(conversations.companionId, companionId), isNull(conversations.archivedAt)))
+						.where(
+							and(eq(conversations.companionId, companionId), isNull(conversations.archivedAt)),
+						)
 						.orderBy(desc(conversations.updatedAt), sql`conversations.rowid desc`)
 						.get()?.id;
 				} else {
@@ -414,11 +417,6 @@ export class ConversationRepository {
 				.from(conversationSessions)
 				.where(eq(conversationSessions.conversationId, id))
 				.get();
-			transaction
-				.update(commissions)
-				.set({ conversationId: null })
-				.where(eq(commissions.conversationId, id))
-				.run();
 			transaction
 				.update(relationshipMemoryEntries)
 				.set({ sourceConversationId: null })
@@ -497,7 +495,8 @@ export class ConversationRepository {
 	): PiSessionMessageEntry | undefined {
 		const session = this.getSession(conversationId);
 		if (!session) return undefined;
-		if (!session.buildPiTimeline().entries.some((entry) => entry.id === messageId)) return undefined;
+		if (!session.buildPiTimeline().entries.some((entry) => entry.id === messageId))
+			return undefined;
 		return session.getMessageEntry(messageId);
 	}
 	private projectPi(
@@ -507,7 +506,43 @@ export class ConversationRepository {
 		session: PiSessionStore,
 	): ConversationProjection {
 		const live = this.liveSessionResolver?.get(id);
-		const piTimeline = session.buildPiTimeline();
+		const nativeTimeline = session.buildPiTimeline();
+		const groupedAttachments = new Map<
+			string,
+			Array<{
+				id: string;
+				name: string;
+				kind: "file" | "folder" | "generated";
+				bytes: number;
+				fileCount: number;
+				originEntryId: string;
+			}>
+		>();
+		for (const attachment of this.db
+			.select()
+			.from(conversationAttachments)
+			.where(eq(conversationAttachments.conversationId, id))
+			.all()) {
+			if (!attachment.originEntryId) continue;
+			const current = groupedAttachments.get(attachment.originEntryId) ?? [];
+			current.push({
+				id: attachment.id,
+				name: attachment.name,
+				kind: attachment.kind,
+				bytes: attachment.totalBytes,
+				fileCount: attachment.fileCount,
+				originEntryId: attachment.originEntryId,
+			});
+			groupedAttachments.set(attachment.originEntryId, current);
+		}
+		const piTimeline: PiTimeline = {
+			...nativeTimeline,
+			entries: nativeTimeline.entries.map((entry) =>
+				entry.kind === "message" && (entry.role === "user" || entry.role === "assistant")
+					? { ...entry, attachments: groupedAttachments.get(entry.id) ?? [] }
+					: entry,
+			),
+		};
 		return {
 			activeConversationId: id,
 			id,
@@ -518,7 +553,6 @@ export class ConversationRepository {
 			piTimeline,
 		};
 	}
-
 }
 
 function projectPiLiveState(value: unknown): PiLiveState {
@@ -541,7 +575,9 @@ function projectPiLiveState(value: unknown): PiLiveState {
 	};
 }
 
-function projectPiLiveAssistantMessage(value: object): NonNullable<PiLiveState["streamingMessage"]> {
+function projectPiLiveAssistantMessage(
+	value: object,
+): NonNullable<PiLiveState["streamingMessage"]> {
 	const message = value as {
 		content?: unknown;
 		stopReason?: unknown;

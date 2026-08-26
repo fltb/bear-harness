@@ -3,9 +3,9 @@ import { Button } from "@kobalte/core/button";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { Show } from "solid-js";
+import { useCompanionStore } from "../stores/companion.js";
 import { createNetworkMemoryWorkflow } from "../stores/setup-workflows.js";
 import { EmbeddingSettings } from "./EmbeddingSettings.js";
-import { useCompanionStore } from "../stores/companion.js";
 
 /**
  * Product network / memory-vector / download-mirror settings. These are

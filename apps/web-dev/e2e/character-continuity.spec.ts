@@ -192,9 +192,7 @@ test("adopted multi-turn history and a manual edit change the next model context
 
 	const firstUser = (await projection(page, bootstrap.token, conversationId)).find(
 		(entry) =>
-			entry.kind === "message" &&
-			entry.role === "user" &&
-			entry.text === "E2E_CONTEXT_T1_ORIGINAL",
+			entry.kind === "message" && entry.role === "user" && entry.text === "E2E_CONTEXT_T1_ORIGINAL",
 	);
 	if (!firstUser) throw new Error("missing original native context entry");
 	await rpc(page, bootstrap.token, "message.edit:v1", {

@@ -32,7 +32,7 @@ import type { EventBus } from "../storage/event-bus.js";
 // Captured before any fs-protection install can wrap delete APIs.
 const unlinkFile = fsp.unlink;
 
-export const AUDIT_KINDS = ["commission", "run", "permission", "fsop", "memory", "config"] as const;
+export const AUDIT_KINDS = ["run", "permission", "fsop", "memory", "config"] as const;
 export type AuditKind = (typeof AUDIT_KINDS)[number];
 
 export interface AuditRecord {
@@ -376,7 +376,6 @@ export class AuditStore {
 // ---------------------------------------------------------------------------
 
 const EVENT_PREFIX_MAPPING: ReadonlyArray<{ prefix: string; kind: AuditKind }> = [
-	{ prefix: "commission.", kind: "commission" },
 	{ prefix: "run.", kind: "run" },
 	{ prefix: "roleplay.", kind: "memory" },
 ];
@@ -391,12 +390,9 @@ export function auditKindForEvent(eventKind: string): AuditKind | null {
 }
 
 /**
- * Subscribe an audit store to the host event bus. Mapping:
- * `commission.*` → { kind: "commission" }, `run.*` → { kind: "run" },
- * `evidence.collected` → { kind: "run" }, `roleplay.*` → { kind: "memory" }
- * (companion state is persisted companion/memory-adjacent state). Action is
- * the event kind without its domain prefix; detail is the JSON payload.
- * Audit failures never throw into the event bus.
+ * Subscribe an audit store to the host event bus. Run/evidence events map to
+ * `run`; roleplay state maps to `memory`. Audit failures never throw into the
+ * event bus.
  */
 export function wireAuditToEvents(
 	audit: Pick<AuditStore, "append">,

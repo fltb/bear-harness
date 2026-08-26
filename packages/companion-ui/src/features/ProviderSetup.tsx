@@ -3,9 +3,9 @@ import { Button } from "@kobalte/core/button";
 import { Root as Link } from "@kobalte/core/link";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import type { ProviderInfo, ProviderLoginResult } from "../stores/ipc.js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { useCompanionStore } from "../stores/companion.js";
+import type { ProviderInfo, ProviderLoginResult } from "../stores/ipc.js";
 
 type PresentationProps = {
 	class?: string;
@@ -18,7 +18,9 @@ type PresentationProps = {
 };
 
 function credentialed(provider: ProviderInfo): boolean {
-	return ["stored", "session_only", "weak_storage", "refreshing"].includes(provider.credentialStatus);
+	return ["stored", "session_only", "weak_storage", "refreshing"].includes(
+		provider.credentialStatus,
+	);
 }
 
 /**
@@ -29,8 +31,11 @@ function credentialed(provider: ProviderInfo): boolean {
 export function ProviderSetup(props: PresentationProps) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
-	const managerLayout = props.layout === "manager" || props.class?.split(/\s+/u).includes("system-provider-setup") === true;
-	const onboardingLayout = props.class?.split(/\s+/u).includes("first-meeting-provider-setup") === true;
+	const managerLayout =
+		props.layout === "manager" ||
+		props.class?.split(/\s+/u).includes("system-provider-setup") === true;
+	const onboardingLayout =
+		props.class?.split(/\s+/u).includes("first-meeting-provider-setup") === true;
 	const [expandedProvider, setExpandedProvider] = createSignal("");
 	const [providerId, setProviderId] = createSignal("");
 	const [apiKey, setApiKey] = createSignal("");
@@ -57,9 +62,13 @@ export function ProviderSetup(props: PresentationProps) {
 	});
 
 	const providerItems = createMemo(() => store.provider.providers());
-	const candidates = createMemo(() => providerItems().filter((provider) => provider.source === "builtin" && !provider.added));
+	const candidates = createMemo(() =>
+		providerItems().filter((provider) => provider.source === "builtin" && !provider.added),
+	);
 	const added = createMemo(() => providerItems().filter((provider) => provider.added));
-	const selected = createMemo(() => providerItems().find((provider) => provider.id === providerId()));
+	const selected = createMemo(() =>
+		providerItems().find((provider) => provider.id === providerId()),
+	);
 
 	const refresh = async (): Promise<void> => {
 		await Promise.all([store.provider.list(), store.model.list()]);
@@ -130,7 +139,10 @@ export function ProviderSetup(props: PresentationProps) {
 			await store.provider.setApiKey(providerId(), apiKey().trim());
 			setApiKey("");
 			if (customBaseUrl().trim()) {
-				await store.provider.overrideBaseUrl({ providerId: providerId(), baseUrl: customBaseUrl().trim() });
+				await store.provider.overrideBaseUrl({
+					providerId: providerId(),
+					baseUrl: customBaseUrl().trim(),
+				});
 			}
 			await refresh();
 		});
@@ -222,7 +234,8 @@ export function ProviderSetup(props: PresentationProps) {
 			.map((id) => id.trim())
 			.filter(Boolean)
 			.map((id) => ({ id }));
-		if (!customId().trim() || !customName().trim() || !customUrl().trim() || modelRows.length === 0) return;
+		if (!customId().trim() || !customName().trim() || !customUrl().trim() || modelRows.length === 0)
+			return;
 		setCustomBusy(true);
 		setCustomError(null);
 		try {
@@ -248,49 +261,166 @@ export function ProviderSetup(props: PresentationProps) {
 
 	const renderProviderEditor = (provider: ProviderInfo, isNew: boolean) => (
 		<div class="provider-setup-editor" data-provider-editor={provider.id}>
-			<Show when={provider.authType === "api_key"} fallback={
-				<div class="oauth-login">
-					<Show when={oauth()} fallback={
-						<Button type="button" data-variant="secondary" disabled={busy()} onClick={() => void beginOauth(provider.id)}>{t("settings.loginWithBrowser")}</Button>
-					}>
-						{(state) => <div class="oauth-login" aria-live="polite">
-							<Show when={state().authUrl ?? state().verificationUri}>{(url) => <Link href={url()} target="_blank" rel="noreferrer">{t("settings.oauthOpen")}</Link>}</Show>
-							<Show when={state().deviceCode}><p>{t("settings.oauthCode")}: <strong>{state().deviceCode}</strong></p></Show>
-							<Show when={state().instructions}><p class="field-hint">{state().instructions}</p></Show>
-							<Show when={state().message && state().status !== "failed"}><p>{state().message}</p></Show>
-							<Show when={state().infoLinks?.length}>
-								<ul class="oauth-info-links">
-									<For each={state().infoLinks}>{(link) => (
-										<li><Link href={link.url} target="_blank" rel="noreferrer">{link.label ?? link.url}</Link></li>
-									)}</For>
-								</ul>
-							</Show>
-							<Show when={state().prompt}>{(prompt) => <TextField class="field">
-								<TextField.Label class="field-label">{prompt().message}</TextField.Label>
-								<Show when={prompt().type === "select"} fallback={<TextField.Input type={prompt().type === "secret" ? "password" : "text"} placeholder={prompt().placeholder} value={oauthAnswer()} onInput={(event) => setOauthAnswer(event.currentTarget.value)} />}>
-									<Select options={prompt().options ?? []} value={prompt().options?.find((option) => option.id === oauthAnswer()) ?? null} optionValue="id" optionTextValue="label" onChange={(option) => setOauthAnswer(option?.id ?? "")} itemComponent={(itemProps) => <Select.Item item={itemProps.item} class="select-item"><Select.ItemLabel>{itemProps.item.rawValue.label}</Select.ItemLabel></Select.Item>}>
-										<Select.Trigger class="select-trigger" aria-label={prompt().message}><Select.Value class="select-value" /></Select.Trigger><Select.Portal><Select.Content class="select-content"><Select.Listbox class="select-listbox" /></Select.Content></Select.Portal>
-									</Select>
-								</Show>
-								<Button type="button" data-variant="secondary" disabled={busy() || !oauthAnswer()} onClick={() => void answerOauth()}>{t("settings.oauthSubmit")}</Button>
-							</TextField>}</Show>
-							<Show when={state().status === "running" || state().status === "waiting_input"}><Button type="button" data-variant="secondary" onClick={() => void cancelOauth()}>{t("settings.oauthCancel")}</Button></Show>
-						</div>}
-					</Show>
-				</div>
-			}>
+			<Show
+				when={provider.authType === "api_key"}
+				fallback={
+					<div class="oauth-login">
+						<Show
+							when={oauth()}
+							fallback={
+								<Button
+									type="button"
+									data-variant="secondary"
+									disabled={busy()}
+									onClick={() => void beginOauth(provider.id)}
+								>
+									{t("settings.loginWithBrowser")}
+								</Button>
+							}
+						>
+							{(state) => (
+								<div class="oauth-login" aria-live="polite">
+									<Show when={state().authUrl ?? state().verificationUri}>
+										{(url) => (
+											<Link href={url()} target="_blank" rel="noreferrer">
+												{t("settings.oauthOpen")}
+											</Link>
+										)}
+									</Show>
+									<Show when={state().deviceCode}>
+										<p>
+											{t("settings.oauthCode")}: <strong>{state().deviceCode}</strong>
+										</p>
+									</Show>
+									<Show when={state().instructions}>
+										<p class="field-hint">{state().instructions}</p>
+									</Show>
+									<Show when={state().message && state().status !== "failed"}>
+										<p>{state().message}</p>
+									</Show>
+									<Show when={state().infoLinks?.length}>
+										<ul class="oauth-info-links">
+											<For each={state().infoLinks}>
+												{(link) => (
+													<li>
+														<Link href={link.url} target="_blank" rel="noreferrer">
+															{link.label ?? link.url}
+														</Link>
+													</li>
+												)}
+											</For>
+										</ul>
+									</Show>
+									<Show when={state().prompt}>
+										{(prompt) => (
+											<TextField class="field">
+												<TextField.Label class="field-label">{prompt().message}</TextField.Label>
+												<Show
+													when={prompt().type === "select"}
+													fallback={
+														<TextField.Input
+															type={prompt().type === "secret" ? "password" : "text"}
+															placeholder={prompt().placeholder}
+															value={oauthAnswer()}
+															onInput={(event) => setOauthAnswer(event.currentTarget.value)}
+														/>
+													}
+												>
+													<Select
+														options={prompt().options ?? []}
+														value={
+															prompt().options?.find((option) => option.id === oauthAnswer()) ??
+															null
+														}
+														optionValue="id"
+														optionTextValue="label"
+														onChange={(option) => setOauthAnswer(option?.id ?? "")}
+														itemComponent={(itemProps) => (
+															<Select.Item item={itemProps.item} class="select-item">
+																<Select.ItemLabel>{itemProps.item.rawValue.label}</Select.ItemLabel>
+															</Select.Item>
+														)}
+													>
+														<Select.Trigger class="select-trigger" aria-label={prompt().message}>
+															<Select.Value class="select-value" />
+														</Select.Trigger>
+														<Select.Portal>
+															<Select.Content class="select-content">
+																<Select.Listbox class="select-listbox" />
+															</Select.Content>
+														</Select.Portal>
+													</Select>
+												</Show>
+												<Button
+													type="button"
+													data-variant="secondary"
+													disabled={busy() || !oauthAnswer()}
+													onClick={() => void answerOauth()}
+												>
+													{t("settings.oauthSubmit")}
+												</Button>
+											</TextField>
+										)}
+									</Show>
+									<Show when={state().status === "running" || state().status === "waiting_input"}>
+										<Button
+											type="button"
+											data-variant="secondary"
+											onClick={() => void cancelOauth()}
+										>
+											{t("settings.oauthCancel")}
+										</Button>
+									</Show>
+								</div>
+							)}
+						</Show>
+					</div>
+				}
+			>
 				<TextField class="field">
 					<TextField.Label class="field-label">{t("settings.apiKeyLabel")}</TextField.Label>
-					<TextField.Input type="password" autocomplete="off" placeholder={credentialed(provider) ? t("settings.apiKeyStoredPlaceholder") : undefined} value={apiKey()} onInput={(event) => setApiKey(event.currentTarget.value)} />
-					<Button type="button" data-variant={isNew ? "primary" : "secondary"} disabled={busy() || !apiKey().trim()} onClick={() => void (isNew ? addProvider() : saveApiKey())}>{isNew ? t("settings.addProvider") : t("settings.saveKey")}</Button>
+					<TextField.Input
+						type="password"
+						autocomplete="off"
+						placeholder={credentialed(provider) ? t("settings.apiKeyStoredPlaceholder") : undefined}
+						value={apiKey()}
+						onInput={(event) => setApiKey(event.currentTarget.value)}
+					/>
+					<Button
+						type="button"
+						data-variant={isNew ? "primary" : "secondary"}
+						disabled={busy() || !apiKey().trim()}
+						onClick={() => void (isNew ? addProvider() : saveApiKey())}
+					>
+						{isNew ? t("settings.addProvider") : t("settings.saveKey")}
+					</Button>
 				</TextField>
 			</Show>
-			<Show when={provider.authType === "api_key"}><TextField class="field">
-				<TextField.Label class="field-label">{t("settings.customBaseUrl")}</TextField.Label>
-				<TextField.Input value={customBaseUrl()} placeholder={t("settings.customBaseUrlPlaceholder")} onInput={(event) => setCustomBaseUrl(event.currentTarget.value)} />
-				<Show when={!isNew}><Button type="button" data-variant="secondary" disabled={busy() || !customBaseUrl().trim()} onClick={() => void saveBaseUrl()}>{t("settings.customSave")}</Button></Show>
-			</TextField></Show>
-			<Show when={credentialed(provider)}><p class="provider-status" data-connected="true">{t("settings.connected")}</p></Show>
+			<Show when={provider.authType === "api_key"}>
+				<TextField class="field">
+					<TextField.Label class="field-label">{t("settings.customBaseUrl")}</TextField.Label>
+					<TextField.Input
+						value={customBaseUrl()}
+						placeholder={t("settings.customBaseUrlPlaceholder")}
+						onInput={(event) => setCustomBaseUrl(event.currentTarget.value)}
+					/>
+					<Show when={!isNew}>
+						<Button
+							type="button"
+							data-variant="secondary"
+							disabled={busy() || !customBaseUrl().trim()}
+							onClick={() => void saveBaseUrl()}
+						>
+							{t("settings.customSave")}
+						</Button>
+					</Show>
+				</TextField>
+			</Show>
+			<Show when={credentialed(provider)}>
+				<p class="provider-status" data-connected="true">
+					{t("settings.connected")}
+				</p>
+			</Show>
 		</div>
 	);
 	const renderCandidateSection = (embeddedEditor: boolean) => (
@@ -299,15 +429,28 @@ export function ProviderSetup(props: PresentationProps) {
 				<h4>{t("settings.addProvider")}</h4>
 				<p class="field-hint">{t("settings.addProviderHint")}</p>
 			</div>
-			<Show when={error()}>{(message) => <p class="status-line err" role="alert">{message()}</p>}</Show>
-			<Show when={candidates().length > 0} fallback={<p class="field-hint">{t("settings.noProviderCandidates")}</p>}>
+			<Show when={error()}>
+				{(message) => (
+					<p class="status-line err" role="alert">
+						{message()}
+					</p>
+				)}
+			</Show>
+			<Show
+				when={candidates().length > 0}
+				fallback={<p class="field-hint">{t("settings.noProviderCandidates")}</p>}
+			>
 				<Show
 					when={onboardingLayout}
 					fallback={
 						<div class="provider-selector">
 							<Select<ProviderInfo>
 								options={candidates()}
-								value={selected() && candidates().some((item) => item.id === selected()?.id) ? selected() : null}
+								value={
+									selected() && candidates().some((item) => item.id === selected()?.id)
+										? selected()
+										: null
+								}
 								optionValue="id"
 								optionTextValue="name"
 								placeholder={t("settings.chooseProvider")}
@@ -323,17 +466,23 @@ export function ProviderSetup(props: PresentationProps) {
 								<Select.Label class="field-label">{t("settings.providerLabel")}</Select.Label>
 								<Select.Trigger class="select-trigger" aria-label={t("settings.providerLabel")}>
 									<Select.Value<ProviderInfo> class="select-value" />
-									<Select.Icon class="select-icon" aria-hidden="true">v</Select.Icon>
+									<Select.Icon class="select-icon" aria-hidden="true">
+										v
+									</Select.Icon>
 								</Select.Trigger>
-								<Select.Portal><Select.Content class="select-content"><Select.Listbox class="select-listbox" /></Select.Content></Select.Portal>
+								<Select.Portal>
+									<Select.Content class="select-content">
+										<Select.Listbox class="select-listbox" />
+									</Select.Content>
+								</Select.Portal>
 							</Select>
 						</div>
 					}
 				>
-					<div class="intro-provider-tiles" aria-label={t("settings.providerLabel")}>
+					<section class="intro-provider-tiles" aria-label={t("settings.providerLabel")}>
 						<For each={candidates()}>
 							{(provider) => (
-								<button
+								<Button
 									type="button"
 									class="intro-provider-tile"
 									data-provider-tile={provider.id}
@@ -344,10 +493,10 @@ export function ProviderSetup(props: PresentationProps) {
 								>
 									<strong>{provider.name}</strong>
 									<span>{provider.id}</span>
-								</button>
+								</Button>
 							)}
 						</For>
-					</div>
+					</section>
 				</Show>
 			</Show>
 			<Show when={embeddedEditor && selected() && !selected()!.added}>
@@ -359,20 +508,74 @@ export function ProviderSetup(props: PresentationProps) {
 	const renderProviderCards = (inlineEditors: boolean) => (
 		<For each={added()}>
 			{(provider) => (
-				<article class="provider-card" data-selected={!inlineEditors && expandedProvider() === provider.id ? "" : undefined}>
-					<div class="provider-card-heading"><strong>{provider.name}</strong><span class="field-hint">{provider.source === "custom" ? t("settings.customProvider") : t("settings.builtinProvider")}</span></div>
-					<Show when={credentialed(provider)}><span class="provider-status" data-connected="true">{t("settings.connected")}</span></Show>
+				<article
+					class="provider-card"
+					data-selected={!inlineEditors && expandedProvider() === provider.id ? "" : undefined}
+				>
+					<div class="provider-card-heading">
+						<strong>{provider.name}</strong>
+						<span class="field-hint">
+							{provider.source === "custom"
+								? t("settings.customProvider")
+								: t("settings.builtinProvider")}
+						</span>
+					</div>
+					<Show when={credentialed(provider)}>
+						<span class="provider-status" data-connected="true">
+							{t("settings.connected")}
+						</span>
+					</Show>
 					<div class="provider-card-actions">
 						<Show when={provider.authType === "api_key"}>
-							<Button type="button" data-variant="secondary" disabled={busy()} onClick={() => { selectProvider(provider.id); setExpandedProvider(provider.id); }}>{t("settings.editProviderKey")}</Button>
-							<Button type="button" data-variant="secondary" disabled={busy()} onClick={() => { selectProvider(provider.id); setExpandedProvider(provider.id); }}>{t("settings.editProviderUrl")}</Button>
+							<Button
+								type="button"
+								data-variant="secondary"
+								disabled={busy()}
+								onClick={() => {
+									selectProvider(provider.id);
+									setExpandedProvider(provider.id);
+								}}
+							>
+								{t("settings.editProviderKey")}
+							</Button>
+							<Button
+								type="button"
+								data-variant="secondary"
+								disabled={busy()}
+								onClick={() => {
+									selectProvider(provider.id);
+									setExpandedProvider(provider.id);
+								}}
+							>
+								{t("settings.editProviderUrl")}
+							</Button>
 						</Show>
 						<Show when={provider.authType === "oauth"}>
-							<Button type="button" data-variant="secondary" disabled={busy()} onClick={() => { selectProvider(provider.id); setExpandedProvider(provider.id); void beginOauth(provider.id); }}>{t("settings.reauthProvider")}</Button>
+							<Button
+								type="button"
+								data-variant="secondary"
+								disabled={busy()}
+								onClick={() => {
+									selectProvider(provider.id);
+									setExpandedProvider(provider.id);
+									void beginOauth(provider.id);
+								}}
+							>
+								{t("settings.reauthProvider")}
+							</Button>
 						</Show>
-						<Button type="button" data-variant="danger" disabled={busy()} onClick={() => void removeProvider(provider)}>{t("settings.deleteProvider")}</Button>
+						<Button
+							type="button"
+							data-variant="danger"
+							disabled={busy()}
+							onClick={() => void removeProvider(provider)}
+						>
+							{t("settings.deleteProvider")}
+						</Button>
 					</div>
-					<Show when={inlineEditors && expandedProvider() === provider.id}>{renderProviderEditor(provider, false)}</Show>
+					<Show when={inlineEditors && expandedProvider() === provider.id}>
+						{renderProviderEditor(provider, false)}
+					</Show>
 				</article>
 			)}
 		</For>
@@ -380,43 +583,124 @@ export function ProviderSetup(props: PresentationProps) {
 
 	const renderImports = () => (
 		<>
-			<details open={piOpen()} onToggle={(event) => setPiOpen(event.currentTarget.open)} class="provider-import provider-import-pi">
+			<details
+				open={piOpen()}
+				onToggle={(event) => setPiOpen(event.currentTarget.open)}
+				class="provider-import provider-import-pi"
+			>
 				<summary>{t("settings.piConfigLabel")}</summary>
-				<TextField class="field"><TextField.Label class="field-label">{t("settings.piConfigLabel")}</TextField.Label><span class="field-hint">{t("settings.piConfigHint")}</span><TextField.TextArea rows={7} value={piConfigJson()} aria-label={t("settings.piConfigLabel")} placeholder={t("settings.piConfigPlaceholder")} onInput={(event) => setPiConfigJson(event.currentTarget.value)} /></TextField>
-				<Button type="button" data-variant="secondary" disabled={busy() || !piConfigJson().trim()} onClick={() => void importPiConfig()}>{t("settings.piConfigImport")}</Button>
+				<TextField class="field">
+					<TextField.Label class="field-label">{t("settings.piConfigLabel")}</TextField.Label>
+					<span class="field-hint">{t("settings.piConfigHint")}</span>
+					<TextField.TextArea
+						rows={7}
+						value={piConfigJson()}
+						aria-label={t("settings.piConfigLabel")}
+						placeholder={t("settings.piConfigPlaceholder")}
+						onInput={(event) => setPiConfigJson(event.currentTarget.value)}
+					/>
+				</TextField>
+				<Button
+					type="button"
+					data-variant="secondary"
+					disabled={busy() || !piConfigJson().trim()}
+					onClick={() => void importPiConfig()}
+				>
+					{t("settings.piConfigImport")}
+				</Button>
 			</details>
 			<details class="provider-import provider-import-custom">
 				<summary>{t("settings.customProvider")}</summary>
-				<TextField class="field"><TextField.Label class="field-label">{t("settings.customProviderId")}</TextField.Label><TextField.Input value={customId()} onInput={(event) => setCustomId(event.currentTarget.value)} /></TextField>
-				<TextField class="field"><TextField.Label class="field-label">{t("settings.customServiceName")}</TextField.Label><TextField.Input value={customName()} onInput={(event) => setCustomName(event.currentTarget.value)} /></TextField>
-				<TextField class="field"><TextField.Label class="field-label">{t("settings.customBaseUrl")}</TextField.Label><TextField.Input value={customUrl()} placeholder={t("settings.customBaseUrlPlaceholder")} onInput={(event) => setCustomUrl(event.currentTarget.value)} /></TextField>
-				<TextField class="field"><TextField.Label class="field-label">{t("settings.customModels")}</TextField.Label><TextField.TextArea rows={4} value={customModels()} placeholder={t("settings.customModelsPlaceholder")} onInput={(event) => setCustomModels(event.currentTarget.value)} /></TextField>
-				<TextField class="field"><TextField.Label class="field-label">{t("settings.apiKeyLabel")}</TextField.Label><TextField.Input type="password" autocomplete="off" value={customKey()} onInput={(event) => setCustomKey(event.currentTarget.value)} /></TextField>
-				<Button type="button" data-variant="secondary" disabled={customBusy() || !customId().trim() || !customName().trim() || !customUrl().trim() || !customModels().trim()} onClick={() => void submitCustom()}>{t("settings.addProvider")}</Button>
-				<Show when={customError()}>{(message) => <p class="status-line err" role="alert">{message()}</p>}</Show>
+				<TextField class="field">
+					<TextField.Label class="field-label">{t("settings.customProviderId")}</TextField.Label>
+					<TextField.Input
+						value={customId()}
+						onInput={(event) => setCustomId(event.currentTarget.value)}
+					/>
+				</TextField>
+				<TextField class="field">
+					<TextField.Label class="field-label">{t("settings.customServiceName")}</TextField.Label>
+					<TextField.Input
+						value={customName()}
+						onInput={(event) => setCustomName(event.currentTarget.value)}
+					/>
+				</TextField>
+				<TextField class="field">
+					<TextField.Label class="field-label">{t("settings.customBaseUrl")}</TextField.Label>
+					<TextField.Input
+						value={customUrl()}
+						placeholder={t("settings.customBaseUrlPlaceholder")}
+						onInput={(event) => setCustomUrl(event.currentTarget.value)}
+					/>
+				</TextField>
+				<TextField class="field">
+					<TextField.Label class="field-label">{t("settings.customModels")}</TextField.Label>
+					<TextField.TextArea
+						rows={4}
+						value={customModels()}
+						placeholder={t("settings.customModelsPlaceholder")}
+						onInput={(event) => setCustomModels(event.currentTarget.value)}
+					/>
+				</TextField>
+				<TextField class="field">
+					<TextField.Label class="field-label">{t("settings.apiKeyLabel")}</TextField.Label>
+					<TextField.Input
+						type="password"
+						autocomplete="off"
+						value={customKey()}
+						onInput={(event) => setCustomKey(event.currentTarget.value)}
+					/>
+				</TextField>
+				<Button
+					type="button"
+					data-variant="secondary"
+					disabled={
+						customBusy() ||
+						!customId().trim() ||
+						!customName().trim() ||
+						!customUrl().trim() ||
+						!customModels().trim()
+					}
+					onClick={() => void submitCustom()}
+				>
+					{t("settings.addProvider")}
+				</Button>
+				<Show when={customError()}>
+					{(message) => (
+						<p class="status-line err" role="alert">
+							{message()}
+						</p>
+					)}
+				</Show>
 			</details>
 		</>
 	);
 
 	return (
-		<section class={`provider-setup ${managerLayout ? "provider-setup-manager" : ""} ${props.class ?? ""}`} aria-label={t("settings.providerSetupLabel")}>
-			<Show when={managerLayout} fallback={
-				<>
-					{renderCandidateSection(true)}
-					<div class="provider-card-list" aria-label={t("settings.addedProviders")}>
-						{renderProviderCards(true)}
-					</div>
-					{renderImports()}
-				</>
-			}>
+		<section
+			class={`provider-setup ${managerLayout ? "provider-setup-manager" : ""} ${props.class ?? ""}`}
+			aria-label={t("settings.providerSetupLabel")}
+		>
+			<Show
+				when={managerLayout}
+				fallback={
+					<>
+						{renderCandidateSection(true)}
+						<section class="provider-card-list" aria-label={t("settings.addedProviders")}>
+							{renderProviderCards(true)}
+						</section>
+						{renderImports()}
+					</>
+				}
+			>
 				<div class="provider-connections">
 					{renderCandidateSection(false)}
 					<div class="settings-group-heading">
 						<h4>{t("settings.addedProviders")}</h4>
 					</div>
-					<div class="provider-card-list" aria-label={t("settings.addedProviders")}>
+					<section class="provider-card-list" aria-label={t("settings.addedProviders")}>
 						{renderProviderCards(false)}
-					</div>
+					</section>
 				</div>
 				<div class="provider-editor-pane">
 					<Show when={selected() && !selected()!.added}>

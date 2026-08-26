@@ -5,20 +5,14 @@
 /*
  * 800px is the supported desktop minimum exported by App.tsx. The fallback
  * below that width keeps the desktop shell usable without forcing a mobile
- * product: the sidebar compacts, the result column moves below the stage,
- * and thread/composer tracks are allowed to shrink.
+ * product: the sidebar compacts and thread/composer tracks can shrink.
  */
 @media (max-width: 1049px) {
 	.app {
 		@apply m-0 min-h-screen w-full;
 	}
 
-	.shell,
-	.app[data-result-open="true"] .shell {
-		@apply grid-cols-4;
-	}
-
-	.app:not([data-result-open="true"]) .shell {
+	.shell {
 		@apply grid-cols-4;
 	}
 	.thread-head,
@@ -37,24 +31,13 @@
 		@apply rounded-lg;
 	}
 
-	.shell,
-	.app[data-result-open="true"] .shell {
+	.shell {
 		@apply grid-cols-4;
-		grid-template-rows: minmax(0, 1fr) minmax(220px, 42vh);
-	}
-
-	.app[data-result-open="true"] .result-column {
-		@apply col-span-3 col-start-2 row-start-2;
-		border-top: 1px solid var(--line);
-		border-left: 0;
-	}
-
-	.app[data-result-open="true"] .main {
-		@apply col-span-3 col-start-2 row-start-1;
+		grid-template-rows: minmax(0, 1fr);
 	}
 
 	.sidebar {
-		@apply row-span-2 px-2;
+		@apply px-2;
 	}
 
 	.thread-head,
@@ -77,8 +60,7 @@
 }
 
 @media (max-width: 640px) {
-	.shell,
-	.app[data-result-open="true"] .shell {
+	.shell {
 		@apply grid-cols-4;
 	}
 

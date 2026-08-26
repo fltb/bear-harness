@@ -1,68 +1,206 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import {
-	MAX_MESSAGE_ATTACHMENT_BYTES,
-	MAX_MESSAGE_ATTACHMENTS,
-} from "@bear-harness/protocol/schema";
-import {
-	faArrowUp,
-	faChevronDown,
-	faImage,
-	faPaperclip,
-	faStop,
-} from "@fortawesome/free-solid-svg-icons";
+import { faArrowUp, faPaperclip, faStop } from "@fortawesome/free-solid-svg-icons";
 import { Button } from "@kobalte/core/button";
 import { FileField } from "@kobalte/core/file-field";
 import { TextField } from "@kobalte/core/text-field";
-import { createEffect, Show } from "solid-js";
-import { Icon } from "./Icon.js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 import { ModelSelector } from "./features/ModelSelector.js";
+import { Icon } from "./Icon.js";
 import { useCompanionStore } from "./stores/companion.js";
-import { setRequestImageReaderFocus, useConversationWorkflow } from "./stores/conversation-workflows.js";
-export { requestImageReaderFocus, setRequestImageReaderFocus } from "./stores/conversation-workflows.js";
+import { useConversationWorkflow } from "./stores/conversation-workflows.js";
 
-/**
- * Composer: live input wired to `message.send`. Enter sends, Shift+Enter
- * inserts a newline. Small text-based materials are read locally and sent
- * with the next message; binary documents use the Host material workflow.
- */
+type Summary = {
+	id: string;
+	name: string;
+	kind: "file" | "folder" | "generated";
+	bytes: number;
+	fileCount: number;
+};
+type DesktopAttachments = {
+	pickFiles(id: string): Promise<Summary[]>;
+	pickFolder(id: string): Promise<Summary[]>;
+	importDroppedFiles(id: string, files: File[]): Promise<Summary[]>;
+};
+const desktopAttachments = () =>
+	(globalThis as typeof globalThis & { bearDesktop?: { attachments?: DesktopAttachments } })
+		.bearDesktop?.attachments;
+
+type DroppedHandle = {
+	kind: "file" | "directory";
+	name: string;
+	getFile?: () => Promise<File>;
+	values?: () => AsyncIterable<DroppedHandle>;
+};
+type WebkitEntry = {
+	isFile: boolean;
+	isDirectory: boolean;
+	name: string;
+	file?: (success: (file: File) => void, failure: (error: DOMException) => void) => void;
+	createReader?: () => {
+		readEntries(
+			success: (entries: WebkitEntry[]) => void,
+			failure: (error: DOMException) => void,
+		): void;
+	};
+};
+
+async function enumerateHandle(
+	handle: DroppedHandle,
+	prefix = "",
+): Promise<Array<{ file: File; relativePath: string }>> {
+	if (handle.kind === "file" && handle.getFile) {
+		const file = await handle.getFile();
+		return [{ file, relativePath: `${prefix}${file.name}` }];
+	}
+	const files: Array<{ file: File; relativePath: string }> = [];
+	if (handle.kind === "directory" && handle.values) {
+		for await (const child of handle.values()) {
+			files.push(
+				...(await enumerateHandle(
+					child,
+					`${prefix}${child.kind === "directory" ? `${child.name}/` : ""}`,
+				)),
+			);
+		}
+	}
+	return files;
+}
+
+function webkitFile(entry: WebkitEntry): Promise<File> {
+	// WebKit's callback-only FileSystemEntry API requires an executor bridge.
+	return new Promise((resolve, reject) => entry.file?.(resolve, reject));
+}
+
+async function enumerateWebkitEntry(
+	entry: WebkitEntry,
+	prefix = "",
+): Promise<Array<{ file: File; relativePath: string }>> {
+	if (entry.isFile) {
+		const file = await webkitFile(entry);
+		return [{ file, relativePath: `${prefix}${file.name}` }];
+	}
+	const reader = entry.createReader?.();
+	if (!entry.isDirectory || !reader) return [];
+	const children: WebkitEntry[] = [];
+	for (;;) {
+		// WebKit exposes directory pages only through callbacks.
+		const page = await new Promise<WebkitEntry[]>((resolve, reject) =>
+			reader.readEntries(resolve, reject),
+		);
+		if (page.length === 0) break;
+		children.push(...page);
+	}
+	const files: Array<{ file: File; relativePath: string }> = [];
+	for (const child of children) {
+		files.push(
+			...(await enumerateWebkitEntry(
+				child,
+				`${prefix}${child.isDirectory ? `${child.name}/` : ""}`,
+			)),
+		);
+	}
+	return files;
+}
+
+export function folderFiles(
+	files: readonly File[],
+): Array<{ name: string; files: Array<{ file: File; relativePath: string }> }> {
+	const roots = new Map<string, Array<{ file: File; relativePath: string }>>();
+	for (const file of files) {
+		const path = (
+			(file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
+		).replaceAll("\\", "/");
+		const [root, ...parts] = path.split("/");
+		if (!root) continue;
+		const group = roots.get(root) ?? [];
+		group.push({ file, relativePath: parts.join("/") || file.name });
+		roots.set(root, group);
+	}
+	return [...roots].map(([name, grouped]) => ({ name, files: grouped }));
+}
+
 export function Composer(props: { placeholder: string; onOpenModelSettings?: () => void }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const workflow = useConversationWorkflow(store);
+	const [menuOpen, setMenuOpen] = createSignal(false);
+	const [dragging, setDragging] = createSignal(false);
+	let fileInput: HTMLInputElement | undefined;
+	let folderInput: HTMLInputElement | undefined;
 	createEffect(() => {
-		const conversationId = store.activeConversationId;
-		if (conversationId) workflow.refreshModels(conversationId);
+		const id = store.activeConversationId;
+		if (id) workflow.refreshModels(id);
 	});
-	const labels = () => ({
-		materialLabel: t("composer.materialLabel"),
-		imageLabel: t("composer.imageLabel"),
-	});
-	const attachmentLimitMessage = () =>
-		t("composer.attachmentLimits")
-			.replace("{count}", String(MAX_MESSAGE_ATTACHMENTS))
-			.replace("{size}", String(MAX_MESSAGE_ATTACHMENT_BYTES / 1024 / 1024));
-	const send = (event: SubmitEvent) => {
-		event.preventDefault();
-		void workflow.dispatchMessage(labels());
+	const pick = async (folder: boolean) => {
+		setMenuOpen(false);
+		const id = store.activeConversationId;
+		const bridge = desktopAttachments();
+		if (id && bridge)
+			workflow.addCompletedAttachments(
+				folder ? await bridge.pickFolder(id) : await bridge.pickFiles(id),
+			);
+		else (folder ? folderInput : fileInput)?.click();
 	};
-	const retrySend = (event: MouseEvent) => {
+	const drop = async (event: DragEvent) => {
 		event.preventDefault();
-		workflow.retrySend(labels());
-	};
-	const handleKeyDown = (event: KeyboardEvent) => {
-		if (event.key === "Enter" && !event.shiftKey) {
-			event.preventDefault();
-			const form = (event.currentTarget as HTMLTextAreaElement | null)?.form;
-			form?.requestSubmit();
+		setDragging(false);
+		const id = store.activeConversationId;
+		const transfer = event.dataTransfer;
+		if (!id || !transfer) return;
+		try {
+			const bridge = desktopAttachments();
+			if (bridge) {
+				workflow.addCompletedAttachments(await bridge.importDroppedFiles(id, [...transfer.files]));
+				return;
+			}
+			const regularFiles: File[] = [];
+			let enumerated = false;
+			for (const item of [...transfer.items]) {
+				const extended = item as DataTransferItem & {
+					getAsFileSystemHandle?: () => Promise<DroppedHandle | null>;
+					webkitGetAsEntry?: () => WebkitEntry | null;
+				};
+				const handle = await extended.getAsFileSystemHandle?.();
+				if (handle) {
+					enumerated = true;
+					if (handle.kind === "directory") {
+						await workflow.loadFolderFiles(handle.name, await enumerateHandle(handle));
+					} else if (handle.getFile) {
+						regularFiles.push(await handle.getFile());
+					}
+					continue;
+				}
+				const entry = extended.webkitGetAsEntry?.();
+				if (!entry) continue;
+				enumerated = true;
+				if (entry.isDirectory) {
+					await workflow.loadFolderFiles(entry.name, await enumerateWebkitEntry(entry));
+				} else if (entry.isFile) {
+					regularFiles.push(await webkitFile(entry));
+				}
+			}
+			if (regularFiles.length > 0) await workflow.loadFiles(regularFiles);
+			else if (!enumerated) await workflow.loadFiles([...transfer.files]);
+		} catch (error) {
+			workflow.setAttachmentError(error instanceof Error ? error.message : String(error));
 		}
 	};
-	const requestModelSettings = () => {
-		setRequestImageReaderFocus(true);
-		props.onOpenModelSettings?.();
-	};
-
 	return (
-		<form class="composer" onSubmit={send}>
+		<form
+			class="composer"
+			data-drag-active={dragging() ? "true" : undefined}
+			onSubmit={(event) => {
+				event.preventDefault();
+				void workflow.dispatchMessage();
+			}}
+			onDragEnter={(event) => {
+				event.preventDefault();
+				setDragging(true);
+			}}
+			onDragOver={(event) => event.preventDefault()}
+			onDragLeave={() => setDragging(false)}
+			onDrop={(event) => void drop(event)}
+		>
 			<ModelSelector
 				models={workflow.models()}
 				value={workflow.selectedModel()}
@@ -71,9 +209,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 				placeholder={t("composer.chooseModel")}
 				labelClass="sr-only"
 				disabled={
-					workflow.modelBusy() ||
-					store.activeConversationId === null ||
-					workflow.models().length === 0
+					workflow.modelBusy() || !store.activeConversationId || workflow.models().length === 0
 				}
 				triggerClass="composer-model-trigger"
 				contentClass="composer-model-content"
@@ -83,43 +219,52 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 				gutter={8}
 				onModelChange={(model) => void workflow.selectModel(model)}
 			/>
-			<Show when={workflow.modelError()}>{(error) => <span role="alert">{error()}</span>}</Show>
-			<Show when={workflow.sendError()}>
-				{(error) => (
-					<div class="status-line err composer-send-error" role="alert">
-						<span>{error()}</span>
-						<Button type="button" disabled={workflow.retryingSend()} onClick={retrySend}>
-							{t("composer.imageRouteRetry")}
-						</Button>
-					</div>
-				)}
-			</Show>
-			<FileField
-				class="composer-attach"
-				disabled={!workflow.modelSelected()}
-				multiple
-				maxFiles={MAX_MESSAGE_ATTACHMENTS}
-				maxFileSize={MAX_MESSAGE_ATTACHMENT_BYTES}
-				accept="image/*,text/*,.md,.markdown,.json,.csv,.yaml,.yml,.toml,.xml,.js,.ts,.tsx,.jsx,.py,.rs,.go,.java,.c,.cpp,.h,.sql"
-				onFileChange={({ acceptedFiles, rejectedFiles }) => {
-					if (rejectedFiles.length > 0) {
-						workflow.setAttachmentError(attachmentLimitMessage());
-						return;
-					}
-					void workflow.loadFiles(acceptedFiles);
-				}}
-			>
-				<FileField.HiddenInput class="material-picker" aria-label={t("composer.attachLabel")} />
-				<FileField.Trigger
+			<FileField multiple>
+				<FileField.HiddenInput
+					ref={fileInput}
+					class="material-picker"
+					aria-label={t("composer.uploadFile")}
+					onChange={(event) => {
+						void workflow.loadFiles([...(event.currentTarget.files ?? [])]);
+						event.currentTarget.value = "";
+					}}
+				/>
+			</FileField>
+			<FileField multiple>
+				<FileField.HiddenInput
+					ref={(element) => {
+						folderInput = element;
+						element.setAttribute("webkitdirectory", "");
+					}}
+					class="material-picker"
+					aria-label={t("composer.uploadFolder")}
+					onChange={(event) => {
+						for (const root of folderFiles([...(event.currentTarget.files ?? [])]))
+							void workflow.loadFolderFiles(root.name, root.files);
+						event.currentTarget.value = "";
+					}}
+				/>
+			</FileField>
+			<div class="composer-attach-menu">
+				<Button
+					type="button"
 					class="circle"
 					aria-label={t("composer.attachLabel")}
-					title={t("composer.attachTitle")}
+					onClick={() => setMenuOpen((open) => !open)}
 				>
-					<Show when={workflow.attachments().length > 0} fallback={<Icon icon={faPaperclip} />}>
-						{workflow.attachments().length}
-					</Show>
-				</FileField.Trigger>
-			</FileField>
+					<Icon icon={faPaperclip} />
+				</Button>
+				<Show when={menuOpen()}>
+					<div class="composer-attach-options" role="menu">
+						<Button type="button" role="menuitem" onClick={() => void pick(false)}>
+							{t("composer.uploadFile")}
+						</Button>
+						<Button type="button" role="menuitem" onClick={() => void pick(true)}>
+							{t("composer.uploadFolder")}
+						</Button>
+					</div>
+				</Show>
+			</div>
 			<TextField class="composer-input">
 				<TextField.TextArea
 					rows={1}
@@ -127,46 +272,48 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 					aria-label={t("composer.messageInputLabel")}
 					value={workflow.composerText()}
 					onInput={(event) => workflow.setComposerText(event.currentTarget.value)}
-					onKeyDown={handleKeyDown}
-					disabled={store.activeConversationId === null || !workflow.modelSelected()}
+					onKeyDown={(event) => {
+						if (event.key === "Enter" && !event.shiftKey) {
+							event.preventDefault();
+							event.currentTarget.form?.requestSubmit();
+						}
+					}}
+					disabled={!store.activeConversationId || !workflow.modelSelected()}
 				/>
 			</TextField>
-			<Show when={workflow.hasImages() && workflow.imageRouteError()}>
-				<div class="composer-image-routing" data-state="error" role="alert">
-					<Icon icon={faImage} />
-					<span>{t("composer.imageRouteFailed")}</span>
-					<Button type="button" disabled={workflow.retryingSend()} onClick={retrySend}>
-						{t("composer.imageRouteRetry")}
-					</Button>
-					<Button type="button" onClick={requestModelSettings}>
-						{t("composer.goToImageModelSettings")}
-					</Button>
-					<Button type="button" onClick={workflow.removeImages}>
-						{t("composer.removeImages")}
-					</Button>
-				</div>
+			<Show when={workflow.attachments().length}>
+				<ul class="composer-attachment-tray" aria-label={t("attachments.listLabel")}>
+					<For each={workflow.attachments()}>
+						{(item) => (
+							<li class="composer-attachment-draft" data-upload-state={item.uploadState}>
+								<strong>{item.name}</strong>
+								<span>
+									{item.uploadState === "uploading"
+										? `${Math.round(item.progress * 100)}%`
+										: item.uploadState}
+								</span>
+								<Show when={item.uploadState === "error" || item.uploadState === "cancelled"}>
+									<Button type="button" onClick={() => workflow.retryAttachment(item.draftId)}>
+										Retry
+									</Button>
+								</Show>
+								<Button
+									type="button"
+									aria-label={`Remove ${item.name}`}
+									onClick={() => void workflow.removeAttachment(item.draftId)}
+								>
+									×
+								</Button>
+							</li>
+						)}
+					</For>
+				</ul>
 			</Show>
-			<Show when={workflow.needsImageReader() && !workflow.imageRouteError()}>
-				<Show when={!workflow.multimodalFallback()}>
-					<div class="composer-image-routing" data-state="missing">
-						<Icon icon={faImage} />
-						<span>{t("composer.imageModelMissing")}</span>
-						<Button type="button" onClick={requestModelSettings}>
-							{t("composer.goToImageModelSettings")}
-						</Button>
-						<Button type="button" onClick={workflow.removeImages}>
-							{t("composer.removeImages")}
-						</Button>
-					</div>
-				</Show>
-				<Show when={Boolean(workflow.multimodalFallback())}>
-					<div class="composer-image-routing" role="status">
-						<Icon icon={faImage} />
-						<span>{workflow.imageReaderLabel()}</span>
-					</div>
-				</Show>
+			<Show when={workflow.modelError()}>{(error) => <span role="alert">{error()}</span>}</Show>
+			<Show when={workflow.sendError()}>{(error) => <span role="alert">{error()}</span>}</Show>
+			<Show when={workflow.attachmentError()}>
+				{(error) => <span role="alert">{error()}</span>}
 			</Show>
-			<Show when={workflow.attachmentError()}>{(error) => <span role="alert">{error()}</span>}</Show>
 			<Show
 				when={workflow.streaming()}
 				fallback={
@@ -174,12 +321,11 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 						type="submit"
 						class="send"
 						aria-label={t("composer.sendLabel")}
-						title={t("composer.sendLabel")}
 						disabled={
-							store.activeConversationId === null ||
+							!store.activeConversationId ||
 							!workflow.modelSelected() ||
-							!workflow.imageReaderAvailable() ||
-							(workflow.composerText().trim().length === 0 && workflow.attachments().length === 0)
+							workflow.attachments().some((item) => item.uploadState !== "complete") ||
+							(!workflow.composerText().trim() && !workflow.attachments().length)
 						}
 					>
 						<Icon icon={faArrowUp} />
@@ -190,7 +336,6 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 					type="button"
 					class="send"
 					aria-label={t("composer.stopLabel")}
-					title={t("composer.stopLabel")}
 					onClick={() => void store.abort()}
 				>
 					<Icon icon={faStop} />

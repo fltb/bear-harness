@@ -4,10 +4,10 @@ import { Dialog } from "@kobalte/core/dialog";
 import { FileField } from "@kobalte/core/file-field";
 import { Tabs } from "@kobalte/core/tabs";
 import { For, Show } from "solid-js";
-import { type CharacterSummary, useCompanionStore } from "../stores/companion.js";
 import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
-import { MemorySheet } from "./MemorySheet.js";
+import { type CharacterSummary, useCompanionStore } from "../stores/companion.js";
 import { CurrentRolePackageManager } from "./CurrentRolePackageManager.js";
+import { MemorySheet } from "./MemorySheet.js";
 import { SettingsSheet } from "./SettingsSheet.js";
 
 /**

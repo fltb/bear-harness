@@ -4,20 +4,20 @@ import type { ProductConfig } from "@bear-harness/product-config";
 import { Button } from "@kobalte/core/button";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { createEffect, createMemo, Show } from "solid-js";
+import { CharacterPresence, type CharacterPresenceLayoutMode } from "./CharacterPresence";
+import { Composer } from "./Composer";
+import { ConversationPanel } from "./ConversationPanel";
+import { FirstMeeting } from "./FirstMeeting";
+import { AttachmentPreviewProvider } from "./features/AttachmentPreviewPanel.js";
+import { Backstage } from "./features/Backstage.js";
+import { SceneBackdrop } from "./SceneBackdrop";
+import { Sidebar } from "./Sidebar";
+import { createCompanionStore, DesktopProvider, useCompanionStore } from "./stores/companion.js";
 import {
 	createShellWorkflowStore,
 	ShellWorkflowProvider,
 	useShellWorkflowStore,
 } from "./stores/shell-workflows.js";
-import { CharacterPresence, type CharacterPresenceLayoutMode } from "./CharacterPresence";
-import { Composer } from "./Composer";
-import { ConversationPanel } from "./ConversationPanel";
-import { FirstMeeting } from "./FirstMeeting";
-import { Backstage } from "./features/Backstage.js";
-import { ResultSpace, ResultSpaceProvider, useResultSpace } from "./features/ResultSpace.js";
-import { SceneBackdrop } from "./SceneBackdrop";
-import { Sidebar } from "./Sidebar";
-import { createCompanionStore, DesktopProvider, useCompanionStore } from "./stores/companion.js";
 
 /** The narrowest supported desktop viewport width, in CSS pixels. */
 export const SUPPORTED_DESKTOP_MIN_WIDTH = 800;
@@ -59,44 +59,23 @@ function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: Com
 	return (
 		<DesktopProvider store={store}>
 			<ShellWorkflowProvider workflow={workflow}>
-				<ResultSpaceProvider>
-					<DesktopFrame product={props.product} />
-				</ResultSpaceProvider>
+				<DesktopFrame product={props.product} />
 			</ShellWorkflowProvider>
 		</DesktopProvider>
 	);
 }
 
-/**
- * The Prototype 06 desktop frame: sidebar + conversation stage, plus the
- * per-conversation ResultSpace right column. `data-result-open` is the
- * layout state that makes the character/conversation/composer column yield
- * to the result column (see styles.css).
- */
+/** The desktop frame: sidebar plus the conversation stage. */
 type DesktopFrameProps = {
 	product: Readonly<ProductConfig>;
 };
-
-function deriveCharacterPresenceLayout(input: {
-	resultOpen: boolean;
-	activeConversation: boolean;
-}): CharacterPresenceLayoutMode {
-	if (input.resultOpen) return "compact";
-	if (input.activeConversation) return "expanded";
-	return "resting";
-}
 
 function DesktopFrame(props: DesktopFrameProps) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const workflow = useShellWorkflowStore();
-	const { selection } = useResultSpace();
-	const resultSelection = createMemo(() => selection());
-	const presenceLayout = createMemo(() =>
-		deriveCharacterPresenceLayout({
-			resultOpen: resultSelection() !== undefined,
-			activeConversation: store.activeConversationId !== null,
-		}),
+	const presenceLayout = createMemo<CharacterPresenceLayoutMode>(() =>
+		store.activeConversationId !== null ? "expanded" : "resting",
 	);
 
 	return (
@@ -105,39 +84,43 @@ function DesktopFrame(props: DesktopFrameProps) {
 			style={workflow.themeStyle()}
 			data-layout="desktop"
 			data-supported-min-width={SUPPORTED_DESKTOP_MIN_WIDTH}
-			data-result-open={resultSelection() ? "true" : undefined}
 			role="application"
 			aria-label={props.product.productName}
 		>
 			<div class="shell">
-				<Sidebar character={workflow.character()} onOpenBackstage={workflow.openBackstage} />
-				<main class="main">
-					<Show when={workflow.showLanguageWarning()}>
-						<section class="language-warning" role="status">
-							<div>
-								<strong>{t("language.warningTitle")}</strong>
-								<p>{workflow.languageWarning()}</p>
-							</div>
-							<Button data-control="command" type="button" onClick={workflow.dismissLanguageWarning}>
-								{t("language.dismiss")}
-							</Button>
-						</section>
-					</Show>
-					<SceneBackdrop scene={workflow.scene()} />
-					<CharacterPresence
-						character={workflow.character()}
-						presence={store.presence}
-						visualState={workflow.visualState()}
-						layout={presenceLayout()}
-					/>
-					<ConversationPanel />
-					<Composer
-						placeholder={workflow.composerPlaceholder()}
-						onOpenModelSettings={() => workflow.openBackstage("settings")}
-					/>
-					<FirstMeeting />
-				</main>
-				<ResultSpace />
+				<AttachmentPreviewProvider>
+					<Sidebar character={workflow.character()} onOpenBackstage={workflow.openBackstage} />
+					<main class="main">
+						<Show when={workflow.showLanguageWarning()}>
+							<section class="language-warning" role="status">
+								<div>
+									<strong>{t("language.warningTitle")}</strong>
+									<p>{workflow.languageWarning()}</p>
+								</div>
+								<Button
+									data-control="command"
+									type="button"
+									onClick={workflow.dismissLanguageWarning}
+								>
+									{t("language.dismiss")}
+								</Button>
+							</section>
+						</Show>
+						<SceneBackdrop scene={workflow.scene()} />
+						<CharacterPresence
+							character={workflow.character()}
+							presence={store.presence}
+							visualState={workflow.visualState()}
+							layout={presenceLayout()}
+						/>
+						<ConversationPanel />
+						<Composer
+							placeholder={workflow.composerPlaceholder()}
+							onOpenModelSettings={() => workflow.openBackstage("settings")}
+						/>
+						<FirstMeeting />
+					</main>
+				</AttachmentPreviewProvider>
 			</div>
 			<Backstage
 				open={workflow.backstageOpen()}
@@ -147,4 +130,3 @@ function DesktopFrame(props: DesktopFrameProps) {
 		</div>
 	);
 }
-

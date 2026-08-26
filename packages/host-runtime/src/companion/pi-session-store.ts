@@ -1,11 +1,11 @@
 import { isAbsolute } from "node:path";
+import type { PiTimeline, PiTimelineEntry } from "@bear-harness/protocol/schema";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type SessionContext,
 	type SessionEntry,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import type { PiTimeline, PiTimelineEntry } from "@bear-harness/protocol/schema";
 
 /** The standard user, assistant, and tool-result messages stored by Pi. */
 export type PiSessionMessage = Extract<AgentMessage, { role: "user" | "assistant" | "toolResult" }>;

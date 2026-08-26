@@ -1,16 +1,52 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
+import type { ConversationAttachmentSummary, PiTimelineEntry } from "@bear-harness/protocol";
 import { Button } from "@kobalte/core/button";
 import { Dialog } from "@kobalte/core/dialog";
-import { createEffect, For, onCleanup, Show } from "solid-js";
-import { RESULT_LOCATE_EVENT, type ResultLocateDetail } from "./features/ResultSpace.js";
+import { createEffect, For, Show } from "solid-js";
+import { useAttachmentPreview } from "./features/AttachmentPreviewPanel.js";
 import type { CharacterDisplay } from "./stores/companion.js";
-import type { PiTimelineEntry } from "@bear-harness/protocol";
 import { useCompanionStore } from "./stores/companion.js";
 import { useConversationViewWorkflow } from "./stores/conversation-workflows.js";
 import { ThreadHead } from "./ThreadHead.js";
 import { WorkTimelineItem } from "./WorkPanel.js";
 
 /** ConversationPanel renders the active Pi timeline plus transient stream state. */
+
+function TimelineAttachmentRows(props: { attachments?: ConversationAttachmentSummary[] }) {
+	const [t] = useTranslation(undefined, { i18n });
+	const preview = useAttachmentPreview();
+	return (
+		<Show when={(props.attachments?.length ?? 0) > 0}>
+			<ul class="timeline-attachments" aria-label={t("attachments.listLabel")}>
+				<For each={props.attachments}>
+					{(attachment) => (
+						<li
+							class="timeline-attachment-row"
+							data-attachment-id={attachment.id}
+							data-attachment-kind={attachment.kind}
+						>
+							<Button type="button" onClick={() => void preview?.open(attachment)}>
+								<strong>{attachment.name}</strong>
+							</Button>
+							<span>
+								{t(`attachments.kinds.${attachment.kind}`)}
+								{" · "}
+								{t(
+									attachment.fileCount === 1
+										? "attachments.singleFile"
+										: "attachments.multipleFiles",
+									{ count: attachment.fileCount },
+								)}
+								{" · "}
+								{t("attachments.byteCount", { count: attachment.bytes })}
+							</span>
+						</li>
+					)}
+				</For>
+			</ul>
+		</Show>
+	);
+}
 
 function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 	const store = useCompanionStore();
@@ -49,6 +85,7 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 				<Show when={entry.text !== undefined && entry.text.length > 0}>
 					<p>{entry.text}</p>
 				</Show>
+				<TimelineAttachmentRows attachments={entry.attachments} />
 				<Show when={toolCalls && toolCalls.length > 0}>
 					<ul class="pi-tool-calls" aria-label="Tool calls">
 						<For each={toolCalls}>
@@ -135,25 +172,6 @@ export function ConversationPanel() {
 		void store.activePiTimeline?.entries.length;
 		const el = threadRef;
 		if (el) el.scrollTop = el.scrollHeight;
-	});
-
-	createEffect(() => {
-		// "定位到对话" (plan §5.2): scroll and focus the source message and its
-		// action line without changing the open result selection.
-		const onLocate = (event: Event) => {
-			const detail = (event as CustomEvent<ResultLocateDetail>).detail;
-			if (!detail || detail.conversationId !== store.activeConversationId) return;
-			const target = document.querySelector<HTMLElement>(`[data-pi-entry-id="${detail.entryId}"]`);
-			if (!target) return;
-			target.scrollIntoView?.({ block: "center" });
-			const message = target.closest(".msg") as HTMLElement | null;
-			if (message) {
-				message.setAttribute("tabindex", "-1");
-				message.focus({ preventScroll: true });
-			}
-		};
-		window.addEventListener(RESULT_LOCATE_EVENT, onLocate);
-		onCleanup(() => window.removeEventListener(RESULT_LOCATE_EVENT, onLocate));
 	});
 
 	return (

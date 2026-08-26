@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { TurnPipeline } from "../src/companion/turn-pipeline.js";
 import { type CredentialVault, createHostRuntime, type HostRuntime } from "../src/index.js";
 
 const roots: string[] = [];
@@ -49,7 +50,6 @@ async function data(runtime: HostRuntime, channel: string, params: unknown): Pro
 	if (!response.ok) throw new Error(response.error.reason);
 	return response.data;
 }
-
 
 describe("Host composition enforces ownership before mutation", () => {
 	afterEach(async () => {
@@ -95,7 +95,67 @@ describe("Host composition enforces ownership before mutation", () => {
 		);
 	});
 
-	it("rejects run, commission and artifact operations for unknown IDs", async () => {
+	it("resolves uploaded image attachment bytes for Pi while leaving non-images as references", async () => {
+		const runtime = makeRuntime();
+		await runtime.start();
+		const conversation = (await data(runtime, "conversation.create:v1", {})) as { id: string };
+		const upload = async (name: string, mime: string, buffer: Buffer): Promise<string> => {
+			const started = (await data(runtime, "conversationAttachment.startUpload:v1", {
+				conversationId: conversation.id,
+				kind: "file",
+				name,
+				entries: [
+					{
+						entryKind: "file",
+						relativePath: name,
+						mime,
+						bytes: buffer.byteLength,
+					},
+				],
+			})) as { uploadId: string };
+			await data(runtime, "conversationAttachment.appendChunk:v1", {
+				conversationId: conversation.id,
+				uploadId: started.uploadId,
+				fileIndex: 0,
+				offset: 0,
+				base64: buffer.toString("base64"),
+			});
+			const completed = (await data(runtime, "conversationAttachment.completeUpload:v1", {
+				conversationId: conversation.id,
+				uploadId: started.uploadId,
+			})) as { attachment: { id: string } };
+			return completed.attachment.id;
+		};
+		const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+		const imageId = await upload("pixel.png", "image/png", imageBytes);
+		const textId = await upload("notes.txt", "text/plain", Buffer.from("reference only"));
+		// HostRuntime intentionally keeps composition private; this test observes the in-process handler seam.
+		const runtimeInternals = runtime as unknown as { composition: { turns: TurnPipeline } };
+		const send = vi.spyOn(runtimeInternals.composition.turns, "sendUserMessage").mockResolvedValue({
+			accepted: true,
+			sessionId: "session-1",
+			entryId: "entry-1",
+		});
+
+		await expect(
+			runtime.dispatch("message.send:v1", {
+				conversationId: conversation.id,
+				text: "describe the image",
+				attachmentIds: [imageId, textId],
+			}),
+		).resolves.toMatchObject({
+			ok: true,
+			data: { accepted: true, sessionId: "session-1", entryId: "entry-1" },
+		});
+		expect(send).toHaveBeenCalledOnce();
+		expect(send.mock.calls[0]?.[0]).toBe(conversation.id);
+		expect(send.mock.calls[0]?.[1]).toContain("describe the image");
+		expect(send.mock.calls[0]?.[1]).toContain(`${imageId}: pixel.png`);
+		expect(send.mock.calls[0]?.[1]).toContain(`${textId}: notes.txt`);
+		expect(send.mock.calls[0]?.[2]).toEqual([{ data: imageBytes, mimeType: "image/png" }]);
+	});
+
+	it("rejects run and attachment operations for unknown ownership", async () => {
 		const runtime = makeRuntime();
 		await runtime.start();
 
@@ -106,13 +166,11 @@ describe("Host composition enforces ownership before mutation", () => {
 			runtime.dispatch("run.steer:v1", { runId: "missing-run", instruction: "stop" }),
 		).resolves.toMatchObject({ ok: false, error: { kind: "not_found" } });
 		await expect(
-			runtime.dispatch("commission.reject:v1", { commissionId: "missing-commission" }),
-		).resolves.toMatchObject({ ok: false, error: { kind: "not_found" } });
-		await expect(
-			runtime.dispatch("artifact.read:v1", { artifactId: "missing-artifact" }),
-		).resolves.toMatchObject({ ok: false, error: { kind: "not_found" } });
-		await expect(
-			runtime.dispatch("artifact.url:v1", { artifactId: "missing-artifact" }),
+			runtime.dispatch("conversationAttachment.read:v1", {
+				mode: "semantic",
+				conversationId: "missing-conversation",
+				attachmentId: "missing-attachment",
+			}),
 		).resolves.toMatchObject({ ok: false, error: { kind: "not_found" } });
 	});
 });

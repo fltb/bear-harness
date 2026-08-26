@@ -21,7 +21,6 @@ import { CharacterRuntimeState, RPC } from "@bear-harness/protocol/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { ArtifactStore } from "./artifacts/index.js";
 import type { CanonHubService } from "./canon/service.js";
-import type { CommissionService, RunStatus } from "./commissions/service.js";
 import type { CharacterBehaviorService } from "./companion/character-behavior.js";
 import type {
 	CharacterDraftFiles,
@@ -33,8 +32,10 @@ import type { PiSessionMessageEntry } from "./companion/pi-session-store.js";
 import type { RoleplayService } from "./companion/roleplay-service.js";
 import type { CompanionSupervisor } from "./companion/supervisor.js";
 import type { TurnPipeline } from "./companion/turn-pipeline.js";
+import type { ConversationAttachmentService } from "./conversation-attachments/service.js";
 import type { ConversationProjection, ConversationRepository } from "./conversations/repository.js";
 import type { Dispatcher } from "./dispatcher.js";
+import type { ExternalAgentRunService, RunSummary } from "./external-agents/run-service.js";
 import type { MemoryBackend, MemoryBankScope, MemoryRecord } from "./memory/backend.js";
 import type { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import type { ModelRecord, ModelRegistry } from "./models/registry.js";
@@ -50,7 +51,6 @@ import type { EventBus } from "./storage/event-bus.js";
 import {
 	activeCharacter,
 	artifacts,
-	commissions,
 	companionIdentity,
 	conversations,
 	memoryCandidates,
@@ -68,6 +68,16 @@ export type HostUpdateService = {
 	apply(): Promise<ResponseOf<typeof RPC.update.apply>>;
 };
 
+export interface ConversationAttachmentUrlFactoryRequest {
+	conversationId: string;
+	attachmentId: string;
+	relativePath: string;
+	operation: "preview" | "download";
+	mime: string;
+	name: string;
+	bytes: number;
+}
+
 /** Domain services and runtime-owned inputs the handlers read and mutate. */
 export interface HostCompositionContext {
 	orm: AppDatabase;
@@ -79,8 +89,31 @@ export interface HostCompositionContext {
 	memoryBackend: MemoryBackend;
 	memoryRuntime: TencentDbRuntime;
 	memoryScope: Pick<MemoryBankScope, "installationId" | "userId">;
-	commissions: CommissionService;
+	externalAgentRuns: ExternalAgentRunService;
+	externalAgents: {
+		discover(): Promise<
+			Array<{
+				candidatePath: string;
+				canonicalPath: string | null;
+				version: string | null;
+				sha256: string | null;
+				status: "usable" | "version_mismatch" | "not_found" | "rejected";
+			}>
+		>;
+		consent(params: {
+			canonicalPath: string;
+			version: string;
+			sha256: string;
+			codexHome: string;
+		}): Promise<{ profileId: string; version: string; sha256: string }>;
+		status(): Promise<
+			| { available: true; profileId: string; version: string; hash: string }
+			| { available: false; reason: "no_codex_found" }
+			| { available: false; reason: "version_mismatch"; found: string }
+		>;
+	};
 	artifacts: ArtifactStore;
+	attachments: ConversationAttachmentService;
 	canon: CanonHubService;
 	supervisor: CompanionSupervisor;
 	providers: ProviderCatalog;
@@ -92,8 +125,8 @@ export interface HostCompositionContext {
 	/** Product-local directory for Pi conversation session files. */
 	conversationRepository: ConversationRepository;
 	piSessionDir: string;
-	/** Bear artifact custom-scheme URL factory (desktop only; undefined on web). */
-	artifactUrlFactory?: (artifactId: string) => string;
+	/** Renderer-bound conversation attachment capability factory (desktop only). */
+	attachmentUrlFactory?: (request: ConversationAttachmentUrlFactoryRequest) => string;
 	/** Optional update lifecycle service (desktop only; undefined on web). */
 	updateService?: HostUpdateService;
 	/** Optional hash-chained audit store (security layer). */
@@ -448,23 +481,120 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			includeArchived?: boolean;
 			limit?: number;
 		};
+		const companionId = await getCompanionId(s);
 		return {
-			hits: conversationRepository.search(await getCompanionId(s), query, {
+			hits: conversationRepository.search(companionId, query, {
 				includeArchived,
 				limit,
 			}),
 		};
 	});
 
-	// --- message ----------------------------------------------------------------
-	dispatcher.registerHandler(RPC.message.send, async (_p) => {
-		const { conversationId, text, attachments } = _p as {
+	// --- conversation attachments ------------------------------------------------
+	dispatcher.registerHandler(RPC.conversationAttachment.list, async (_p) => {
+		const { conversationId, attachmentId } = _p as {
 			conversationId: string;
-			text: string;
-			attachments?: Array<{ name: string; mime: string; base64: string }>;
+			attachmentId?: string;
 		};
 		await requireOwnedConversation(s, conversationId);
-		return s.turns.sendUserMessage(conversationId, text, attachments);
+		return { attachments: s.attachments.list(conversationId, attachmentId) };
+	});
+	dispatcher.registerHandler(RPC.conversationAttachment.discard, async (_p) => {
+		const { conversationId, attachmentId } = _p as { conversationId: string; attachmentId: string };
+		await requireOwnedConversation(s, conversationId);
+		s.attachments.discard(conversationId, attachmentId);
+		return {};
+	});
+	dispatcher.registerHandler(RPC.conversationAttachment.read, async (_p) => {
+		await requireOwnedConversation(s, _p.conversationId);
+		return _p.mode === "bytes" ? s.attachments.readBytes(_p) : s.attachments.semanticRead(_p);
+	});
+	dispatcher.registerHandler(RPC.conversationAttachment.url, async (_p) => {
+		const { conversationId, attachmentId, relativePath, operation } = _p;
+		await requireOwnedConversation(s, conversationId);
+		if (!s.attachmentUrlFactory) {
+			throw { kind: "unavailable", reason: "attachment_url_unavailable" };
+		}
+		const file = s.attachments.resolveFile(conversationId, attachmentId, relativePath);
+		return {
+			url: s.attachmentUrlFactory({
+				conversationId,
+				attachmentId,
+				relativePath: file.relativePath,
+				operation,
+				mime: file.mime,
+				name: file.name,
+				bytes: file.bytes,
+			}),
+		};
+	});
+	dispatcher.registerHandler(RPC.conversationAttachment.startUpload, async (_p) => {
+		const { conversationId, kind, name, entries } = _p;
+		await requireOwnedConversation(s, conversationId);
+		return {
+			uploadId: s.attachments.startUpload({ conversationId, kind, name, entries }),
+		};
+	});
+	dispatcher.registerHandler(RPC.conversationAttachment.cancelUpload, async (_p) => {
+		const { conversationId, uploadId } = _p;
+		await requireOwnedConversation(s, conversationId);
+		s.attachments.cancelUpload(conversationId, uploadId);
+		return {};
+	});
+	dispatcher.registerHandler(RPC.conversationAttachment.appendChunk, async (_p) => {
+		const { conversationId, uploadId, fileIndex, offset, base64 } = _p;
+		await requireOwnedConversation(s, conversationId);
+		s.attachments.appendChunk({ conversationId, uploadId, fileIndex, offset, base64 });
+		return {};
+	});
+	dispatcher.registerHandler(RPC.conversationAttachment.completeUpload, async (_p) => {
+		const { conversationId, uploadId } = _p;
+		await requireOwnedConversation(s, conversationId);
+		return { attachment: await s.attachments.completeUpload(conversationId, uploadId) };
+	});
+
+	// --- message ----------------------------------------------------------------
+	dispatcher.registerHandler(RPC.message.send, async (_p) => {
+		const {
+			conversationId,
+			text,
+			attachmentIds = [],
+		} = _p as {
+			conversationId: string;
+			text: string;
+			attachmentIds?: string[];
+		};
+		await requireOwnedConversation(s, conversationId);
+		const nonce = s.attachments.beginSend(conversationId, attachmentIds);
+		try {
+			const selectedAttachments = new Map(
+				s.attachments
+					.list(conversationId, undefined, true)
+					.filter((attachment) => attachmentIds.includes(attachment.id))
+					.map((attachment) => [attachment.id, attachment]),
+			);
+			const attachmentNames = attachmentIds.map((attachmentId) => {
+				const attachment = selectedAttachments.get(attachmentId);
+				return `${attachmentId}: ${attachment?.name ?? attachmentId}`;
+			});
+			const currentMessageImages = attachmentIds.flatMap((attachmentId) => {
+				const attachment = selectedAttachments.get(attachmentId);
+				if (attachment?.kind !== "file" || attachment.fileCount !== 1) return [];
+				const metadata = s.attachments.resolveFile(conversationId, attachmentId);
+				if (!metadata.mime.toLowerCase().startsWith("image/")) return [];
+				const file = s.attachments.readFile(conversationId, attachmentId);
+				return [{ data: file.buffer, mimeType: metadata.mime }];
+			});
+			const framed = nonce
+				? `<host_context>\nConversation attachment references for this message (use Host attachment tools; these are not paths):\n${attachmentNames.join("\n")}\nSend nonce: ${nonce}\n</host_context>\n\n<current_user_message>\n${text}\n</current_user_message>`
+				: text;
+			const receipt = await s.turns.sendUserMessage(conversationId, framed, currentMessageImages);
+			if (nonce) s.attachments.finishSend(conversationId, nonce, receipt.entryId);
+			return receipt;
+		} catch (error) {
+			if (nonce) s.attachments.abortSend(conversationId, nonce);
+			throw error;
+		}
 	});
 	dispatcher.registerHandler(RPC.message.abort, async (_p) => {
 		const { conversationId } = _p as { conversationId: string };
@@ -1051,121 +1181,46 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return { conversationId, selected: modelRouteWire(model) };
 	});
 
-	// --- run ------------------------------------------------------------------------
+	// --- external agents and direct runs -----------------------------------------
+	dispatcher.registerHandler(RPC.externalAgent.discoverCodex, async () => ({
+		candidates: await s.externalAgents.discover(),
+	}));
+	dispatcher.registerHandler(RPC.externalAgent.connectCodex, async (_p) => {
+		const connected = await s.externalAgents.consent(_p);
+		return {
+			profileId: connected.profileId,
+			version: connected.version,
+			hash: connected.sha256,
+		};
+	});
+	dispatcher.registerHandler(RPC.externalAgent.status, async () => ({
+		pi: { available: true as const, profileId: "pi-default" as const },
+		codex: await s.externalAgents.status(),
+	}));
 	dispatcher.registerHandler(RPC.run.list, async () => {
 		const companionId = await getCompanionId(s);
-		const rows = s.orm
-			.select({ run: runs })
-			.from(runs)
-			.innerJoin(commissions, eq(runs.commissionId, commissions.id))
-			.innerJoin(conversations, eq(commissions.conversationId, conversations.id))
-			.where(eq(conversations.companionId, companionId))
-			.orderBy(desc(runs.createdAt))
-			.limit(10)
-			.all();
-		return {
-			runs: rows.map(({ run: r }) => ({
-				id: r.id,
-				commissionId: r.commissionId,
-				executorProfile: r.executorProfile,
-				status: r.status as RunStatus,
-				startedAt: r.startedAt ?? undefined,
-				completedAt: r.completedAt ?? undefined,
-			})),
-		};
-	});
-	dispatcher.registerHandler(RPC.commission.list, async () => {
-		const companionId = await getCompanionId(s);
-		return {
-			commissions: s.commissions.list({ companionId }).map((commission) => ({
-				id: commission.id,
-				triggerEntryId: commission.triggerEntryId,
-				conversationId: commission.conversationId ?? undefined,
-				status: commission.status,
-				createdAt: commission.createdAt,
-				draft: commission.draft,
-			})),
-		};
-	});
-	dispatcher.registerHandler(RPC.commission.draft, async (_p) => {
-		const params = _p as {
-			conversationId: string;
-			triggerEntryId: string;
-			title: string;
-			description: string;
-			reads?: string[];
-			writes?: string[];
-			networkAllowed?: boolean;
-			toolNames?: string[];
-		};
-		await requireOwnedConversation(s, params.conversationId);
-		await requireOwnedUserEntry(s, params.conversationId, params.triggerEntryId);
-		return s.commissions.draft(params);
-	});
-	dispatcher.registerHandler(RPC.commission.approve, async (_p) => {
-		const { commissionId, approvedHash } = _p as { commissionId: string; approvedHash: string };
-		await requireOwnedCommission(s, commissionId);
-		s.commissions.approve(commissionId, approvedHash);
-		return {};
-	});
-	dispatcher.registerHandler(RPC.commission.reject, async (_p) => {
-		const { commissionId } = _p as { commissionId: string };
-		await requireOwnedCommission(s, commissionId);
-		s.commissions.reject(commissionId);
-		return {};
-	});
-	dispatcher.registerHandler(RPC.commission.launch, async (_p) => {
-		const { commissionId, executorProfile } = _p as {
-			commissionId: string;
-			executorProfile: string;
-		};
-		await requireOwnedCommission(s, commissionId);
-		return s.commissions.launch({ commissionId, executorProfile });
+		return { runs: s.externalAgentRuns.list(companionId).map(runWire) };
 	});
 	dispatcher.registerHandler(RPC.run.steer, async (_p) => {
 		const { runId, instruction } = _p as { runId: string; instruction: string };
 		await requireOwnedRun(s, runId);
-		await s.commissions.steerRun(runId, instruction);
+		await s.externalAgentRuns.steerRun(runId, instruction);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.run.interrupt, async (_p) => {
 		const { runId } = _p as { runId: string };
 		await requireOwnedRun(s, runId);
-		const run = await s.commissions.interruptRun(runId);
-		return {
-			id: run.id,
-			commissionId: run.commissionId,
-			executorProfile: run.executorProfile,
-			status: run.status,
-			startedAt: run.startedAt ?? undefined,
-			completedAt: run.completedAt ?? undefined,
-		};
+		return runWire(await s.externalAgentRuns.interruptRun(runId));
 	});
 	dispatcher.registerHandler(RPC.run.resume, async (_p) => {
 		const { runId } = _p as { runId: string };
 		await requireOwnedRun(s, runId);
-		const run = await s.commissions.resumeRun(runId);
-		return {
-			id: run.id,
-			commissionId: run.commissionId,
-			executorProfile: run.executorProfile,
-			status: run.status,
-			startedAt: run.startedAt ?? undefined,
-			completedAt: run.completedAt ?? undefined,
-		};
+		return runWire(await s.externalAgentRuns.resumeRun(runId));
 	});
 	dispatcher.registerHandler(RPC.run.cancel, async (_p) => {
 		const { runId } = _p as { runId: string };
 		await requireOwnedRun(s, runId);
-		const run = await s.commissions.cancelRun(runId);
-		return {
-			id: run.id,
-			commissionId: run.commissionId,
-			executorProfile: run.executorProfile,
-			status: run.status,
-			startedAt: run.startedAt ?? undefined,
-			completedAt: run.completedAt ?? undefined,
-		};
+		return runWire(await s.externalAgentRuns.cancelRun(runId));
 	});
 	dispatcher.registerHandler(RPC.run.respondPermission, async (_p) => {
 		const { runId, requestId, optionId } = _p as {
@@ -1174,43 +1229,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			optionId: string;
 		};
 		await requireOwnedRun(s, runId);
-		const run = await s.commissions.respondToExecutorPermission(runId, requestId, optionId);
-		return {
-			id: run.id,
-			commissionId: run.commissionId,
-			executorProfile: run.executorProfile,
-			status: run.status,
-			startedAt: run.startedAt ?? undefined,
-			completedAt: run.completedAt ?? undefined,
-		};
-	});
-
-	// --- artifacts ------------------------------------------------------------------
-	dispatcher.registerHandler(RPC.artifact.list, async () => ({
-		artifacts: ownedArtifacts(s, await getCompanionId(s)).map((artifact) => ({
-			...artifact,
-			producerRunId: artifact.producerRunId ?? undefined,
-		})),
-	}));
-	dispatcher.registerHandler(RPC.artifact.read, async (_p) => {
-		const { artifactId } = _p as { artifactId: string };
-		await requireOwnedArtifact(s, artifactId);
-		const artifact = s.artifacts.get(artifactId);
-		const blob = s.artifacts.readBlob(artifactId);
-		if (!artifact || !blob) throw { kind: "not_found", reason: "artifact_not_found" };
-		return {
-			logicalName: artifact.logicalName,
-			mime: artifact.mime,
-			base64: blob.toString("base64"),
-		};
-	});
-	dispatcher.registerHandler(RPC.artifact.url, async (_p) => {
-		const { artifactId } = _p as { artifactId: string };
-		await requireOwnedArtifact(s, artifactId);
-		if (!s.artifactUrlFactory) return { url: "" };
-		const artifact = s.artifacts.get(artifactId);
-		if (!artifact) throw { kind: "not_found", reason: "artifact_not_found" };
-		return { url: s.artifactUrlFactory(artifactId) };
+		return runWire(
+			await s.externalAgentRuns.respondToExecutorPermission(runId, requestId, optionId),
+		);
 	});
 
 	// --- settings ----------------------------------------------------------------------
@@ -1410,21 +1431,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				conversations: convRows,
 				...(activeConversationSnapshot ?? {}),
 			},
-			commission: {
-				commissions: s.commissions.list({ companionId }).map((commission) => ({
-					id: commission.id,
-					triggerEntryId: commission.triggerEntryId,
-					conversationId: commission.conversationId ?? undefined,
-					status: commission.status,
-					createdAt: commission.createdAt,
-					draft: commission.draft,
-				})),
-			},
-			artifact: {
-				artifacts: ownedArtifacts(s, companionId).map((artifact) => ({
-					...artifact,
-					producerRunId: artifact.producerRunId ?? undefined,
-				})),
+			run: {
+				runs: s.externalAgentRuns.list(companionId).map(runWire),
 			},
 			characterRuntime: { byConversation: characterRuntimeByConversation },
 			roleplay: s.roleplay.project(character, activeProjection?.id),
@@ -1639,32 +1647,12 @@ async function requireOwnedConversation(
 
 async function requireOwnedRun(s: HostCompositionContext, runId: string): Promise<void> {
 	const row = s.orm
-		.select({ id: runs.id, conversationId: commissions.conversationId })
+		.select({ conversationId: runs.conversationId })
 		.from(runs)
-		.innerJoin(commissions, eq(commissions.id, runs.commissionId))
 		.where(eq(runs.id, runId))
 		.get();
 	if (!row) throw { kind: "not_found", reason: "run_not_found" };
-	if (row.conversationId) await requireOwnedConversation(s, row.conversationId);
-}
-
-async function requireOwnedArtifact(s: HostCompositionContext, artifactId: string): Promise<void> {
-	const artifact = s.artifacts.get(artifactId);
-	if (!artifact) throw { kind: "not_found", reason: "artifact_not_found" };
-	if (artifact.producerRunId) await requireOwnedRun(s, artifact.producerRunId);
-}
-
-async function requireOwnedCommission(
-	s: HostCompositionContext,
-	commissionId: string,
-): Promise<void> {
-	const row = s.orm
-		.select({ conversationId: commissions.conversationId })
-		.from(commissions)
-		.where(eq(commissions.id, commissionId))
-		.get();
-	if (!row) throw { kind: "not_found", reason: "commission_not_found" };
-	if (row.conversationId) await requireOwnedConversation(s, row.conversationId);
+	await requireOwnedConversation(s, row.conversationId);
 }
 
 async function requireOwnedUserEntry(
@@ -1682,20 +1670,18 @@ async function requireOwnedUserEntry(
 		throw { kind: "conflict", reason: "message_not_current_branch" };
 	return piEntry;
 }
-function ownedArtifacts(s: HostCompositionContext, companionId: string) {
-	const rows = s.orm
-		.select({ id: artifacts.id })
-		.from(artifacts)
-		.innerJoin(runs, eq(artifacts.producerRunId, runs.id))
-		.innerJoin(commissions, eq(runs.commissionId, commissions.id))
-		.innerJoin(conversations, eq(commissions.conversationId, conversations.id))
-		.where(eq(conversations.companionId, companionId))
-		.orderBy(desc(artifacts.createdAt))
-		.all();
-	return rows.flatMap(({ id }) => {
-		const artifact = s.artifacts.get(id);
-		return artifact ? [artifact] : [];
-	});
+
+function runWire(run: RunSummary) {
+	return {
+		id: run.id,
+		conversationId: run.conversationId,
+		triggerEntryId: run.triggerEntryId,
+		executorProfile: run.executorProfile,
+		title: run.title,
+		status: run.status,
+		startedAt: run.startedAt ?? undefined,
+		completedAt: run.completedAt ?? undefined,
+	};
 }
 
 function projectMemoryEntry(record: MemoryRecord): MemoryEntry {

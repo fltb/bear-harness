@@ -1,51 +1,50 @@
 /**
- * Pi ACP executor profile.
+ * Dedicated standalone Pi ACP external agent.
  *
- * The conversational Companion is never reused for commissions. Each approved
- * run starts the dedicated `pi-acp-worker` ACP agent, which can reach the Host
- * only through ACP filesystem requests guarded by the commission envelope.
+ * This never reuses the conversational Companion session. Each run receives
+ * its own Pi session and uses Pi's native local tools in a real workspace.
  */
 
 import { randomUUID } from "node:crypto";
-import { statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppDatabase } from "../storage/database.js";
 import { executorProfiles, runManifests } from "../storage/schema.js";
 import type { AcpProcessSpec } from "./acp-client.js";
 import { AcpExecutorController } from "./acp-executor.js";
+import { externalAgentEnvironment, workspaceFor } from "./environment.js";
 import type { ExecutorLaunchRequest } from "./router.js";
 
 export interface PiRunManifest {
 	executor: "pi-acp";
 	profileId: string;
 	runId: string;
-	commissionId: string;
+	triggerEntryId: string;
 	workerPath: string;
-	authDir: string;
 	launchedAt: string;
 }
 
-/** Default first-party ACP profile, seeded once with no secret capability data. */
-export const PI_ACP_PROFILE_ID = "pi-product-managed";
+/** Default first-party Pi external-agent profile. */
+export const PI_ACP_PROFILE_ID = "pi-default";
 
 export function seedPiAcpProfile(db: AppDatabase): void {
 	db.insert(executorProfiles)
 		.values({
 			id: PI_ACP_PROFILE_ID,
-			profileType: "product-managed",
+			profileType: "pi",
 			capabilityJson: { transport: "acp", worker: "pi" },
 		})
 		.onConflictDoNothing()
 		.run();
 }
 
-/** Host-managed Pi worker for `product-managed` executor profiles. */
+/** Packaged Pi external agent. */
 export class PiAcpAdapter extends AcpExecutorController {
 	constructor(
 		private readonly db: AppDatabase,
 		private readonly userDataDir: string,
 		private readonly workerPath = fileURLToPath(new URL("./pi-acp-worker.js", import.meta.url)),
+		private readonly bundledGit?: { shellPath: string; pathEntries: string[] },
 	) {
 		super();
 	}
@@ -55,9 +54,8 @@ export class PiAcpAdapter extends AcpExecutorController {
 			executor: "pi-acp",
 			profileId: request.profile.id,
 			runId: request.run.runId,
-			commissionId: request.commission.id,
+			triggerEntryId: request.run.triggerEntryId,
 			workerPath: this.workerPath,
-			authDir: resolve(this.userDataDir, "companion-runtime"),
 			launchedAt: new Date().toISOString(),
 		};
 		this.db
@@ -70,31 +68,48 @@ export class PiAcpAdapter extends AcpExecutorController {
 	protected processSpec(request: ExecutorLaunchRequest): AcpProcessSpec {
 		const cwd = workspaceFor(request);
 		const authDir = resolve(this.userDataDir, "companion-runtime");
-		const sessionDir = resolve(this.userDataDir, "executor-runs", "pi");
+		const sessionDir = resolve(this.userDataDir, "external-agent-runs", "pi");
 		return {
 			command: process.execPath,
 			args: [this.workerPath],
 			cwd,
-			env: {
-				PATH: process.env.PATH,
-				HOME: process.env.HOME,
-				LANG: process.env.LANG,
-				LC_ALL: process.env.LC_ALL,
+			env: externalAgentEnvironment({
 				ELECTRON_RUN_AS_NODE: "1",
 				BEAR_PI_AUTH_DIR: authDir,
 				BEAR_PI_SESSION_DIR: sessionDir,
-			},
+				BEAR_OUTPUT_DIR: request.task.outputDirectory,
+				...(request.task.modelRoute
+					? piModelEnvironment(
+							request.task.modelRoute.providerId,
+							request.task.modelRoute.modelId,
+							request.task.modelRoute.apiKey,
+						)
+					: {}),
+				...(this.bundledGit
+					? {
+							BEAR_PI_SHELL_PATH: this.bundledGit.shellPath,
+							PATH: [...this.bundledGit.pathEntries, process.env.PATH]
+								.filter(Boolean)
+								.join(process.platform === "win32" ? ";" : ":"),
+						}
+					: {}),
+			}),
 		};
 	}
 }
 
-function workspaceFor(request: ExecutorLaunchRequest): string {
-	const root = request.commission.reads[0] ?? request.commission.writes[0];
-	if (!root) throw { kind: "validation_failed", reason: "executor_workspace_not_declared" };
-	const absolute = resolve(root);
-	try {
-		return statSync(absolute).isDirectory() ? absolute : dirname(absolute);
-	} catch {
-		throw { kind: "validation_failed", reason: "executor_workspace_not_found" };
-	}
+/**
+ * Model route values are injected by the run service immediately before
+ * launch. They remain process-only, never a run manifest or database field.
+ */
+export function piModelEnvironment(
+	providerId: string,
+	modelId: string,
+	apiKey?: string,
+): NodeJS.ProcessEnv {
+	return {
+		BEAR_PI_PROVIDER_ID: providerId,
+		BEAR_PI_MODEL_ID: modelId,
+		...(apiKey ? { BEAR_PI_API_KEY: apiKey } : {}),
+	};
 }

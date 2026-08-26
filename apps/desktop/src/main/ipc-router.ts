@@ -11,7 +11,6 @@ import type { Dispatcher } from "@bear-harness/host-runtime";
 import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
 import { BrowserWindow, ipcMain } from "electron";
 import { isRegisteredMainFrame, type WindowRegistration } from "./diagnostics/electron.js";
-export const PROTOCOL_AVAILABILITY_CHANNEL = "desktop:artifactProtocol:v1";
 
 interface IpcInvokeEvent {
 	sender: { id: number; mainFrame: { url: string } };
@@ -57,10 +56,14 @@ function replaceIpcHandler(
 	};
 }
 
+interface RendererDispatchContext {
+	runForRenderer(rendererWebContentsId: number, callback: () => unknown): unknown;
+}
+
 export function wireElectronIpcHandlers(
 	dispatcher: Dispatcher,
 	windowRegistry: ReadonlyMap<number, Pick<WindowRegistration, "allowedUrl">>,
-	options?: { artifactProtocolAvailable?: () => boolean },
+	options?: { attachmentProtocol?: RendererDispatchContext },
 ): () => void {
 	const disposers: Array<() => void> = [];
 	for (const channel of Object.keys(REQUEST_SCHEMAS)) {
@@ -69,20 +72,13 @@ export function wireElectronIpcHandlers(
 				if (!senderAllowed(event, windowRegistry)) {
 					return { ok: false, error: { kind: "unavailable", reason: "no_window" } };
 				}
-				return dispatcher.dispatch(channel, params);
+				const dispatch = () => dispatcher.dispatch(channel, params);
+				return options?.attachmentProtocol
+					? options.attachmentProtocol.runForRenderer(event.sender.id, dispatch)
+					: dispatch();
 			}),
 		);
 	}
-	// Non-RPC host-shell channel: lets the renderer (and tests) learn whether
-	// the bear-artifact:// protocol handler is registered in this process.
-	disposers.push(
-		replaceIpcHandler(PROTOCOL_AVAILABILITY_CHANNEL, async (event) => {
-			if (!senderAllowed(event, windowRegistry)) {
-				return { ok: false, error: { kind: "unavailable", reason: "no_window" } };
-			}
-			return { ok: true, data: { available: options?.artifactProtocolAvailable?.() ?? false } };
-		}),
-	);
 
 	let disposed = false;
 	return () => {

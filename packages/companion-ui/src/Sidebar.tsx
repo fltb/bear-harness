@@ -87,7 +87,8 @@ export function Sidebar(props: {
 						value={workflow.query()}
 						onInput={(event) => workflow.setQuery(event.currentTarget.value)}
 					/>
-					<kbd>Ctrl</kbd><kbd>K</kbd>
+					<kbd>Ctrl</kbd>
+					<kbd>K</kbd>
 				</TextField>
 				<Button
 					type="button"
@@ -150,7 +151,9 @@ export function Sidebar(props: {
 												conversation.id === store.activeConversationId ? "page" : undefined
 											}
 											onClick={() =>
-												void workflow.runSidebarAction(() => store.selectConversation(conversation.id))
+												void workflow.runSidebarAction(() =>
+													store.selectConversation(conversation.id),
+												)
 											}
 										>
 											<strong>{conversation.title}</strong>
@@ -181,7 +184,9 @@ export function Sidebar(props: {
 												title={t("sidebar.archiveConversation")}
 												aria-label={t("sidebar.archiveConversation")}
 												onClick={() =>
-													void workflow.runSidebarAction(() => store.archiveConversation(conversation.id))
+													void workflow.runSidebarAction(() =>
+														store.archiveConversation(conversation.id),
+													)
 												}
 											>
 												<Icon icon={faBoxArchive} />
@@ -193,7 +198,9 @@ export function Sidebar(props: {
 												aria-label={t("sidebar.deleteConversation")}
 												onClick={() => {
 													if (window.confirm(t("sidebar.deleteConversationConfirm")))
-														void workflow.runSidebarAction(() => store.deleteConversation(conversation.id));
+														void workflow.runSidebarAction(() =>
+															store.deleteConversation(conversation.id),
+														);
 												}}
 											>
 												<Icon icon={faTrash} />

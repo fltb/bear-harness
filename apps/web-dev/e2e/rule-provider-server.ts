@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { attachmentAgentReply } from "./attachment-agent-provider-fixture.ts";
 
 const directMemoryTexts = [
 	"E2E_DIRECT_MEMORY_A：我们约定暗号是北辰",
@@ -33,7 +34,13 @@ function image(value: unknown): boolean {
 	);
 }
 
-function reply(payload: { messages?: Array<{ role?: string; content?: unknown }> }) {
+function reply(payload: {
+	messages?: Array<{
+		role?: string;
+		content?: unknown;
+		tool_calls?: Array<{ function?: { name?: string } }>;
+	}>;
+}) {
 	const messages = payload.messages ?? [];
 	const prompt = messages.map((message) => text(message.content)).join("\n");
 	const hostContext =
@@ -51,6 +58,10 @@ function reply(payload: { messages?: Array<{ role?: string; content?: unknown }>
 		.filter((message) => message.role === "tool")
 		.map((message) => text(message.content))
 		.join("\n");
+	const attachmentFixture = attachmentAgentReply(messages, (tool, args) => {
+		calls.push({ tool, args });
+	});
+	if (attachmentFixture) return attachmentFixture;
 	const memoryContextCheck = current.includes("检查记忆上下文");
 	const directMemoryText = memoryContextCheck
 		? undefined

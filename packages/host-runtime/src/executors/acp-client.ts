@@ -1,9 +1,8 @@
 /**
- * ACP stdio client for one commission run.
+ * ACP stdio client for one direct external-agent run.
  *
  * The client owns process transport and protocol sequencing only. Executors
- * translate ACP updates into domain evidence; CommissionService remains the
- * only writer of run state.
+ * emit events; ExternalAgentRunService remains the only writer of run state.
  */
 
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";

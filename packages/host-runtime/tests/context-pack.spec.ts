@@ -227,5 +227,4 @@ describe("ContextPackCompiler character prompt layers", () => {
 			db.close();
 		}
 	});
-
 });

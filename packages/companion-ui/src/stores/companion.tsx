@@ -22,8 +22,7 @@
  * store proxy, so components read the active Pi timeline and transient
  * streaming state directly. Action failures retain operation metadata without
  * choosing a presentation surface.
- * Supplementary domain APIs (memory/settings/provider/model/commission/artifact)
- * are exposed for the backstage sheets.
+ * Supplementary domain APIs are exposed for backstage settings and authoring.
  */
 
 import type { CompanionClient } from "@bear-harness/companion-client";
@@ -46,9 +45,6 @@ import {
 import { createStore } from "solid-js/store";
 import { IpcInvocationError } from "../lib/ipc.js";
 import {
-	type Artifact,
-	type ArtifactListData,
-	type ArtifactReadData,
 	type CanonChunk,
 	type CanonModule,
 	type CanonModuleKind,
@@ -61,11 +57,6 @@ import {
 	type CharacterPackageDocument,
 	type CharacterRuntimeState,
 	type CharacterSummary,
-	type Commission,
-	type CommissionDraftParams,
-	type CommissionDraftResult,
-	type CommissionLaunchResult,
-	type CommissionListData,
 	type ConfiguredModel,
 	type ConversationActiveResponse,
 	type ConversationSelectResponse,
@@ -164,12 +155,6 @@ export class PiTimelineProjectionError extends Error {
 function requirePiTimeline(timeline: PiTimeline | undefined, operation: string): PiTimeline {
 	if (timeline === undefined) throw new PiTimelineProjectionError(operation);
 	return timeline;
-}
-/** Copy decoded bytes into an ArrayBuffer accepted by the DOM BlobPart type. */
-function copyToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-	const buffer = new ArrayBuffer(bytes.byteLength);
-	new Uint8Array(buffer).set(bytes);
-	return buffer;
 }
 
 type RunNeedsUserPayload = Extract<KnownDomainEvent, { kind: "run.needs_user" }>["payload"];
@@ -274,15 +259,6 @@ export interface ModelApi {
 	setVisionAuto(): Promise<void>;
 }
 
-export interface CommissionApi {
-	commissions(): Commission[];
-	list(): Promise<CommissionListData>;
-	draft(params: CommissionDraftParams): Promise<CommissionDraftResult>;
-	approve(commissionId: string, approvedHash: string): Promise<void>;
-	reject(commissionId: string): Promise<void>;
-	launch(commissionId: string, executorProfile: string): Promise<CommissionLaunchResult>;
-}
-
 export interface RunApi {
 	list(): Promise<RunListData>;
 	pendingPermissions(): RunPermissionRequest[];
@@ -293,18 +269,79 @@ export interface RunApi {
 	respondPermission(runId: string, requestId: string, optionId: string): Promise<RunInfo>;
 }
 
-export interface ArtifactApi {
-	artifacts(): Artifact[];
-	list(): Promise<ArtifactListData>;
-	/** Read a single artifact's bytes as base64 (used for safe inline previews). */
-	read(artifactId: string): Promise<ArtifactReadData>;
-	/**
-	 * Request the host-issued safe artifact URL (`bear-artifact://…` when the
-	 * desktop protocol handler is registered, otherwise ""). Never build URLs
-	 * from arbitrary paths in the renderer.
-	 */
-	url(artifactId: string): Promise<string>;
-	download(artifactId: string): Promise<void>;
+export interface AttachmentApi {
+	startUpload(params: {
+		conversationId: string;
+		kind: "file" | "folder";
+		name: string;
+		entries: Array<{
+			entryKind: "file" | "directory";
+			relativePath: string;
+			mime?: string;
+			bytes?: number;
+		}>;
+	}): Promise<{ uploadId: string }>;
+	appendChunk(params: {
+		conversationId: string;
+		uploadId: string;
+		fileIndex: number;
+		offset: number;
+		base64: string;
+	}): Promise<void>;
+	completeUpload(params: { conversationId: string; uploadId: string }): Promise<{
+		attachment: {
+			id: string;
+			name: string;
+			kind: "file" | "folder" | "generated";
+			bytes: number;
+			fileCount: number;
+		};
+	}>;
+	cancelUpload(params: { conversationId: string; uploadId: string }): Promise<void>;
+	discard(conversationId: string, attachmentId: string): Promise<void>;
+	read(params: {
+		mode: "semantic";
+		conversationId: string;
+		attachmentId: string;
+		relativePath?: string;
+		query?: string;
+		cursor?: string;
+	}): Promise<{
+		mode: "semantic";
+		files?: Array<{
+			relativePath: string;
+			entryKind: "file" | "directory" | "symlink";
+			mime?: string;
+			bytes?: number;
+			readable: boolean;
+			error?: string;
+		}>;
+		content?: string;
+		hits?: Array<{ relativePath: string; excerpt: string }>;
+		error?: string;
+		nextCursor?: string;
+	}>;
+	readBytes(params: {
+		mode: "bytes";
+		conversationId: string;
+		attachmentId: string;
+		relativePath?: string;
+		offset: number;
+		length: number;
+	}): Promise<{
+		mode: "bytes";
+		relativePath: string;
+		mime: string;
+		base64: string;
+		nextOffset: number;
+		eof: boolean;
+	}>;
+	url(params: {
+		conversationId: string;
+		attachmentId: string;
+		relativePath?: string;
+		operation: "preview" | "download";
+	}): Promise<string>;
 }
 
 export interface CharacterApi {
@@ -427,10 +464,7 @@ export interface CompanionStore {
 	renameConversation(id: string, title: string): Promise<void>;
 	archiveConversation(id: string): Promise<void>;
 	deleteConversation(id: string): Promise<void>;
-	sendMessage(
-		text: string,
-		attachments?: Array<{ name: string; mime: string; base64: string }>,
-	): Promise<void>;
+	sendMessage(text: string, attachmentIds?: string[]): Promise<void>;
 	abort(): Promise<void>;
 	triggerRoleplayEvent(eventId: string): Promise<void>;
 	dismissRoleplayMedia(): Promise<void>;
@@ -446,12 +480,10 @@ export interface CompanionStore {
 	readonly provider: ProviderApi;
 	readonly model: ModelApi;
 	readonly embedding: EmbeddingBinding;
+	readonly attachments: AttachmentApi;
 	readonly run: RunApi;
-	readonly artifact: ArtifactApi;
 	readonly characters: CharacterApi;
 	readonly canon: CanonApi;
-	/** Commission lifecycle APIs consumed by the backstage sheets. */
-	readonly commission: CommissionApi;
 }
 
 // ---------------------------------------------------------------------------
@@ -494,7 +526,6 @@ interface CompanionState {
 	characterRuntimeByConversation: Record<string, CharacterRuntimeState>;
 	companionState: CompanionProcessState;
 	sending: boolean;
-	lastRunEvent: "adopted" | null;
 	pendingRunPermissions: Record<string, RunPermissionRequest>;
 	activeRoleplayMediaId: string | undefined;
 	activeAmbientMediaId: string | undefined;
@@ -518,7 +549,6 @@ function derivePresence(s: {
 	companionState: CompanionProcessState;
 	runs: readonly RunInfo[];
 	sending: boolean;
-	lastRunEvent: "adopted" | null;
 }): PresenceState {
 	if (s.companionState === "crashed" || s.companionState === "unavailable") return "problem";
 	const active = s.runs.filter(
@@ -529,7 +559,7 @@ function derivePresence(s: {
 	if (s.sending) return "listening";
 	const latest = latestRun(s.runs);
 	if (latest !== undefined) {
-		if (latest.status === "completed" || s.lastRunEvent === "adopted") return "result_ready";
+		if (latest.status === "completed") return "result_ready";
 		if (latest.status === "failed" || latest.status === "forced_termination") return "problem";
 	}
 	return "idle";
@@ -590,7 +620,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		characterRuntimeByConversation: {},
 		companionState: "unknown",
 		sending: false,
-		lastRunEvent: null,
 		pendingRunPermissions: {},
 		activeRoleplayMediaId: undefined,
 		activeAmbientMediaId: undefined,
@@ -690,18 +719,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		client: queryClient,
 		key: queryKeys.runs,
 		request: runsRequest,
-	});
-	const commissionsRequest = () => invoke(client, () => client.commission.list());
-	const commissionsQuery = createRpcQuery({
-		client: queryClient,
-		key: queryKeys.commissions,
-		request: commissionsRequest,
-	});
-	const artifactsRequest = () => invoke(client, () => client.artifact.list());
-	const artifactsQuery = createRpcQuery({
-		client: queryClient,
-		key: queryKeys.artifacts,
-		request: artifactsRequest,
 	});
 	const charactersRequest = () => invoke(client, () => client.character.list());
 	const charactersQuery = createRpcQuery({
@@ -880,20 +897,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const debouncedRefreshMemoryCandidates = (): void => {
 		debouncedRefetch(() => void refreshMemoryCandidates(), 250, refreshMemoryCandidates);
 	};
-	const refreshCommissions = async (): Promise<void> => {
-		await refreshRpcQuery({
-			client: queryClient,
-			key: queryKeys.commissions,
-			request: commissionsRequest,
-		});
-	};
-	const refreshArtifacts = async (): Promise<void> => {
-		await refreshRpcQuery({
-			client: queryClient,
-			key: queryKeys.artifacts,
-			request: artifactsRequest,
-		});
-	};
 	const refreshCharacters = async (): Promise<void> => {
 		await refreshRpcQuery({
 			client: queryClient,
@@ -919,9 +922,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		await Promise.all([
 			refreshMemoryEntries(),
 			refreshMemoryCandidates(),
-			refreshCommissions(),
 			refreshRuns(),
-			refreshArtifacts(),
 			refreshCharacters(),
 			refreshCanonSources(),
 			refreshCanonModules(),
@@ -971,10 +972,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			setMemoryRevision((revision) => revision + 1);
 		}
 		if (seedQueries && snap.run) queryClient.setQueryData(queryKeys.runs, { runs: snap.run.runs });
-		if (seedQueries && snap.commission)
-			queryClient.setQueryData(queryKeys.commissions, { commissions: snap.commission.commissions });
-		if (seedQueries && snap.artifact)
-			queryClient.setQueryData(queryKeys.artifacts, { artifacts: snap.artifact.artifacts });
 		if (snap.characterRuntime) {
 			const incoming = snap.characterRuntime.byConversation;
 			const next = { ...state.characterRuntimeByConversation };
@@ -1014,7 +1011,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			companionState: state.companionState,
 			runs: activeRuns(),
 			sending: state.sending || (activeProjection()?.piLiveState?.isStreaming ?? false),
-			lastRunEvent: state.lastRunEvent,
 		}),
 	);
 
@@ -1149,10 +1145,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				debouncedRefetch(refreshRuns);
 				return;
 			}
-			case "run.result_adopted":
-				setState("lastRunEvent", "adopted");
-				debouncedRefetch(refreshRuns);
-				return;
 			default:
 				break;
 		}
@@ -1166,8 +1158,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		} else if (kind.startsWith("memory.")) {
 			debouncedRefreshMemoryEntries();
 			debouncedRefreshMemoryCandidates();
-		} else if (kind.startsWith("commission.")) {
-			debouncedRefetch(refreshCommissions);
 		} else if (kind.startsWith("run.")) {
 			const runId =
 				"runId" in knownEvent.payload && typeof knownEvent.payload.runId === "string"
@@ -1184,8 +1174,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				setState("pendingRunPermissions", remaining);
 			}
 			debouncedRefetch(refreshRuns);
-		} else if (kind.startsWith("artifact.")) {
-			debouncedRefetch(refreshArtifacts);
 		} else if (kind.startsWith("character.")) {
 			debouncedRefetch(refreshCharacters);
 			void refreshSnapshot();
@@ -1748,42 +1736,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 	};
 
-	const activeCommissions = createMemo<Commission[]>(
-		() => commissionsQuery.data?.commissions ?? [],
-	);
-	const commissionApi: CommissionApi = {
-		commissions: activeCommissions,
-		list: async () => {
-			const data = await refreshRpcQuery({
-				client: queryClient,
-				key: queryKeys.commissions,
-				request: commissionsRequest,
-			});
-			return data;
-		},
-		draft: async (params) => {
-			const data = await invoke(client, () => client.commission.draft(params));
-			void refreshCommissions();
-			return data;
-		},
-		approve: async (commissionId, approvedHash) => {
-			await invoke(client, () => client.commission.approve({ commissionId, approvedHash }));
-			void refreshCommissions();
-		},
-		reject: async (commissionId) => {
-			await invoke(client, () => client.commission.reject({ commissionId }));
-			void refreshCommissions();
-		},
-		launch: async (commissionId, executorProfile) => {
-			const data = await invoke(client, () =>
-				client.commission.launch({ commissionId, executorProfile }),
-			);
-			void refreshCommissions();
-			void refreshRuns();
-			return data;
-		},
-	};
-
 	const runApi: RunApi = {
 		list: async () => {
 			const data = await refreshRpcQuery({
@@ -1800,13 +1752,11 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		interrupt: async (runId) => {
 			const data = await invoke(client, () => client.run.interrupt({ runId }));
 			void refreshRuns();
-			void refreshCommissions();
 			return data;
 		},
 		resume: async (runId) => {
 			const data = await invoke(client, () => client.run.resume({ runId }));
 			void refreshRuns();
-			void refreshCommissions();
 			return data;
 		},
 		cancel: async (runId) => {
@@ -1814,7 +1764,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			const { [runId]: _permission, ...remaining } = state.pendingRunPermissions;
 			setState("pendingRunPermissions", remaining);
 			void refreshRuns();
-			void refreshCommissions();
 			return data;
 		},
 		respondPermission: async (runId, requestId, optionId) => {
@@ -1824,40 +1773,38 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			const { [runId]: _permission, ...remaining } = state.pendingRunPermissions;
 			setState("pendingRunPermissions", remaining);
 			void refreshRuns();
-			void refreshCommissions();
 			return data;
 		},
 	};
 
-	const activeArtifacts = createMemo<Artifact[]>(() => artifactsQuery.data?.artifacts ?? []);
-	const artifactApi: ArtifactApi = {
-		artifacts: activeArtifacts,
-		list: async () => {
-			const data = await refreshRpcQuery({
-				client: queryClient,
-				key: queryKeys.artifacts,
-				request: artifactsRequest,
-			});
-			return data;
+	const attachmentApi: AttachmentApi = {
+		startUpload: async (params) =>
+			invoke(client, () => client.conversationAttachment.startUpload(params)),
+		appendChunk: async (params) => {
+			await invoke(client, () => client.conversationAttachment.appendChunk(params));
 		},
-		read: async (artifactId) => {
-			const data = await invoke(client, () => client.artifact.read({ artifactId }));
-			return data;
+		completeUpload: async (params) =>
+			invoke(client, () => client.conversationAttachment.completeUpload(params)),
+		cancelUpload: async (params) => {
+			await invoke(client, () => client.conversationAttachment.cancelUpload(params));
 		},
-		url: async (artifactId) => {
-			const { url } = await invoke(client, () => client.artifact.url({ artifactId }));
-			return url;
+		discard: async (conversationId, attachmentId) => {
+			await invoke(client, () =>
+				client.conversationAttachment.discard({ conversationId, attachmentId }),
+			);
 		},
-		download: async (artifactId) => {
-			const data = await invoke(client, () => client.artifact.read({ artifactId }));
-			const bytes = Uint8Array.from(atob(data.base64), (char) => char.charCodeAt(0));
-			const url = URL.createObjectURL(new Blob([copyToArrayBuffer(bytes)], { type: data.mime }));
-			const anchor = document.createElement("a");
-			anchor.href = url;
-			anchor.download = data.logicalName;
-			anchor.click();
-			setTimeout(() => URL.revokeObjectURL(url), 1000);
+		read: async (params) => {
+			const response = await invoke(client, () => client.conversationAttachment.read(params));
+			if (response.mode !== "semantic") throw new Error("unexpected_attachment_read_mode");
+			return response;
 		},
+		readBytes: async (params) => {
+			const response = await invoke(client, () => client.conversationAttachment.read(params));
+			if (response.mode !== "bytes") throw new Error("unexpected_attachment_read_mode");
+			return response;
+		},
+		url: async (params) =>
+			(await invoke(client, () => client.conversationAttachment.url(params))).url,
 	};
 
 	const activeCharacters = createMemo<CharacterSummary[]>(
@@ -2028,9 +1975,8 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const trackedSettingsApi = trackApi("settings", settingsApi);
 	const trackedProviderApi = trackApi("provider", providerApi);
 	const trackedModelApi = trackApi("model", modelApi);
-	const trackedCommissionApi = trackApi("commission", commissionApi);
 	const trackedRunApi = trackApi("run", runApi);
-	const trackedArtifactApi = trackApi("artifact", artifactApi);
+	const trackedAttachmentApi = trackApi("conversationAttachment", attachmentApi);
 	const trackedCharacterApi = trackApi("character", characterApi);
 	const trackedCanonApi = trackApi("canon", canonApi);
 
@@ -2200,8 +2146,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				retainOperationError("conversation.delete", e);
 			}
 		},
-
-		sendMessage: async (text, attachments) => {
+		sendMessage: async (text, attachmentIds) => {
 			// No optimistic transcript state: Pi accepts the command first, then
 			// the Host projection is read back under its native session identity.
 			try {
@@ -2209,7 +2154,11 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				setState("sending", true);
 				try {
 					const receipt = await invoke(client, () =>
-						client.message.send({ conversationId, text, attachments }),
+						client.message.send({
+							conversationId,
+							text,
+							...(attachmentIds?.length ? { attachmentIds } : {}),
+						}),
 					);
 					await refreshConversationProjection(conversationId, receipt.sessionId);
 					// The initial read exposes the durable user entry even if the
@@ -2335,14 +2284,11 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		get model() {
 			return trackedModelApi;
 		},
-		get commission() {
-			return trackedCommissionApi;
-		},
 		get run() {
 			return trackedRunApi;
 		},
-		get artifact() {
-			return trackedArtifactApi;
+		get attachments() {
+			return trackedAttachmentApi;
 		},
 		get characters() {
 			return trackedCharacterApi;

@@ -3,10 +3,10 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ProviderListResponse } from "@bear-harness/protocol/schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderCatalog } from "../src/providers/catalog.js";
 import type { CredentialStore } from "../src/providers/credential-store.js";
-import { ProviderListResponse } from "@bear-harness/protocol/schema";
 
 const roots: string[] = [];
 
@@ -123,10 +123,7 @@ describe("custom OpenAI-compatible provider configuration", () => {
 			providerId: "local-openai",
 			name: "Local OpenAI",
 			baseUrl: "http://127.0.0.1:11434/v1",
-			models: [
-				{ id: "vision-model", supportsImages: true },
-				{ id: "text-model" },
-			],
+			models: [{ id: "vision-model", supportsImages: true }, { id: "text-model" }],
 			apiKey: "SECRET_SENTINEL",
 		});
 

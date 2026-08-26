@@ -1,5 +1,5 @@
-import { z } from "@bear-harness/schema";
 import type { CharacterTheme, SystemThemeTokens } from "@bear-harness/protocol/schema";
+import { z } from "@bear-harness/schema";
 
 export const SYSTEM_THEME_TOKEN_NAMES = [
 	"canvas",

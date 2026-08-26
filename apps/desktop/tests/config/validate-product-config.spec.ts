@@ -31,7 +31,7 @@ describe("validate-product-config", () => {
 		["bad appId", { ...OFFICIAL_PRODUCT, appId: "bad" }, "appId"],
 		[
 			"missing artifact macro",
-			{ ...OFFICIAL_PRODUCT, artifactName: "\${productName}-\${version}-\${os}.\${ext}" },
+			{ ...OFFICIAL_PRODUCT, artifactName: "${productName}-${version}-${os}.${ext}" },
 			"artifactName",
 		],
 		[
@@ -78,7 +78,7 @@ describe("validate-product-config", () => {
 		const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
 			scripts: Record<string, string>;
 		};
-		for (const name of ["package:mac", "package:win", "package:linux"]) {
+		for (const name of ["package:mac:arm64", "package:mac:x64", "package:win", "package:linux"]) {
 			const command = packageJson.scripts[name];
 			const validation = command.indexOf("node scripts/validate-product-config.mjs");
 			const build = command.indexOf("npm run build");
@@ -110,12 +110,7 @@ describe("validate-product-config", () => {
 
 	it("filters foreign llama bindings and the optional CUDA extension from release targets", () => {
 		const builderSource = readFileSync(join(desktopRoot, "electron-builder.config.ts"), "utf8");
-		for (const pattern of [
-			"linux-x64-cuda-ext",
-			"win-x64-cuda-ext",
-			"linux-arm64",
-			"win-arm64",
-		]) {
+		for (const pattern of ["linux-x64-cuda-ext", "win-x64-cuda-ext", "linux-arm64", "win-arm64"]) {
 			expect(builderSource).toContain(pattern);
 		}
 	});

@@ -24,8 +24,8 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { CredentialStatus, CredentialStore } from "./credential-store.js";
 
 const BUILTIN_PROVIDER_IDS = new Set<string>(getBuiltinProviders());
@@ -160,7 +160,6 @@ function readProviderDocument(modelsPath: string): {
 	}
 }
 
-
 function configuredRoutes(providers: Record<string, unknown>): Array<{
 	providerId: string;
 	modelId: string;
@@ -225,7 +224,6 @@ interface OAuthSessionInternal extends OAuthSessionState {
 	rejectPrompt?: (cause: Error) => void;
 	abort?: AbortController;
 }
-
 
 export class ProviderCatalog {
 	private runtime: Promise<ModelRuntime> | null = null;
@@ -318,7 +316,6 @@ export class ProviderCatalog {
 		this.runtime = null;
 		if (input.apiKey) await this.setApiKey(input.providerId, input.apiKey);
 	}
-
 
 	async importPiConfig(configJson: string): Promise<ProviderModelInfoWithProvider[]> {
 		let fragment: unknown;
@@ -580,7 +577,14 @@ export class ProviderCatalog {
 		} catch (error) {
 			throw toHostError(error, providerId);
 		}
-		return { authUrl, instructions, deviceCode, verificationUri, intervalSeconds, expiresInSeconds };
+		return {
+			authUrl,
+			instructions,
+			deviceCode,
+			verificationUri,
+			intervalSeconds,
+			expiresInSeconds,
+		};
 	}
 
 	startOAuth(providerId: string): OAuthSessionState {
@@ -668,7 +672,6 @@ export class ProviderCatalog {
 		this.runtime = null;
 	}
 
-
 	getOAuthSession(providerId: string): OAuthSessionState {
 		const session = this.oauthSessions.get(providerId);
 		if (!session) throw { kind: "not_found", reason: "oauth_session_not_found" };
@@ -693,7 +696,6 @@ export class ProviderCatalog {
 	async authStatus(providerId: string): Promise<CredentialStatus> {
 		return this.credentialStore.getStatus(providerId);
 	}
-
 }
 
 function publicOAuthSession(session: OAuthSessionInternal): OAuthSessionState {

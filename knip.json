@@ -17,7 +17,8 @@
 				"electron-builder.config.ts",
 				"playwright*.config.ts"
 			],
-			"project": ["src/**/*.{ts,cts,tsx}", "e2e/**/*.ts", "scripts/**/*.mjs", "*.config.ts"]
+			"project": ["src/**/*.{ts,cts,tsx}", "e2e/**/*.ts", "scripts/**/*.mjs", "*.config.ts"],
+			"ignoreDependencies": ["node-llama-cpp"]
 		},
 		"apps/web-dev": {
 			"entry": ["server/index.ts", "e2e/**/*.ts", "scripts/**/*.mjs", "*.config.ts"],

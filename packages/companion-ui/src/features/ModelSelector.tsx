@@ -1,7 +1,7 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
-import { Show, createMemo, createSignal } from "solid-js";
+import { createMemo, createSignal, Show } from "solid-js";
 import type { ConfiguredModel } from "../stores/ipc.js";
 
 export function modelRouteKey(model: Pick<ConfiguredModel, "providerId" | "modelId">): string {
@@ -71,7 +71,9 @@ export function ModelSelector(props: {
 			optionTextValue={optionLabel}
 			placeholder={props.placeholder ?? t("settings.chooseModel")}
 			disabled={props.disabled}
-			onChange={(option) => props.onModelChange(option && !isAutoModelOption(option) ? option : null)}
+			onChange={(option) =>
+				props.onModelChange(option && !isAutoModelOption(option) ? option : null)
+			}
 			itemComponent={(itemProps) => (
 				<Select.Item
 					item={itemProps.item}
@@ -86,7 +88,11 @@ export function ModelSelector(props: {
 			gutter={props.gutter}
 		>
 			<Select.Label class={props.labelClass ?? "field-label"}>{props.label}</Select.Label>
-			<Select.Trigger ref={props.triggerRef} class={props.triggerClass ?? "select-trigger"} aria-label={props.label}>
+			<Select.Trigger
+				ref={props.triggerRef}
+				class={props.triggerClass ?? "select-trigger"}
+				aria-label={props.label}
+			>
 				<Select.Value<ModelSelectOption> class="select-value">
 					{(state) => {
 						const option = state.selectedOption();
@@ -120,4 +126,3 @@ export function ModelSelector(props: {
 		</Select>
 	);
 }
-

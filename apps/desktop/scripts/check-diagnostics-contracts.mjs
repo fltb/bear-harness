@@ -32,6 +32,8 @@ const EXPECTED_NAMES = [
 	"diagnostics.prune",
 	"window.session",
 	"window.load",
+	"rpc.request",
+	"webdev.rpc_dispatch_failure",
 	"app.started",
 	"app.previous_exit_unclean",
 	"app.shutdown_timeout",
@@ -49,7 +51,13 @@ const EXPECTED_NAMES = [
 	"main.uncaught_exception",
 ];
 
-const SPAN_NAMES = ["app.session", "diagnostics.prune", "window.session", "window.load"];
+const SPAN_NAMES = [
+	"app.session",
+	"diagnostics.prune",
+	"window.session",
+	"window.load",
+	"rpc.request",
+];
 const KINDS = ["event", "span"];
 const LEVELS = ["info", "warn", "error", "fatal"];
 const ORIGINS = ["main", "renderer", "electron"];

@@ -1,17 +1,32 @@
-import { i18n } from "@bear-harness/i18n";
-import { createEffect, createMemo, createSignal } from "solid-js";
+import { createMemo } from "solid-js";
 import { createStore } from "solid-js/store";
 import type { CompanionStore, ConfiguredModel, ConversationSummary } from "./companion.js";
-export type ComposerAttachment =
-	| { kind: "text"; name: string; content: string }
-	| { kind: "image"; name: string; mime: string; base64: string };
-
-/** One-shot request consumed by the settings sheet's image-reader focus effect. */
-export const [requestImageReaderFocus, setRequestImageReaderFocus] = createSignal(false);
-
-export function modelDisplayName(model: ConfiguredModel): string {
-	return `${model.label} (${model.providerName ?? model.providerId})`;
+export interface AttachmentUploadRoot {
+	kind: "file" | "folder";
+	name: string;
+	entries: Array<{
+		entryKind: "file" | "directory";
+		relativePath: string;
+		file?: File;
+		mime?: string;
+		bytes?: number;
+	}>;
 }
+
+export type ComposerAttachment = {
+	kind: "attachment";
+	draftId: string;
+	id?: string;
+	name: string;
+	attachmentKind: "file" | "folder" | "generated";
+	bytes: number;
+	fileCount: number;
+	uploadState: "uploading" | "complete" | "error" | "cancelled";
+	progress: number;
+	error?: string;
+	uploadId?: string;
+	source?: AttachmentUploadRoot;
+};
 
 interface ConversationWorkflowState {
 	composerText: string;
@@ -20,8 +35,6 @@ interface ConversationWorkflowState {
 	modelBusy: boolean;
 	attachmentError: string | null;
 	sendError: string | null;
-	imageRouteError: boolean;
-	retryingSend: boolean;
 	query: string;
 	editingId: string | undefined;
 	editingTitle: string;
@@ -47,8 +60,6 @@ function createConversationWorkflow(store: CompanionStore) {
 		modelBusy: false,
 		attachmentError: null,
 		sendError: null,
-		imageRouteError: false,
-		retryingSend: false,
 		query: "",
 		editingId: undefined,
 		editingTitle: "",
@@ -67,32 +78,6 @@ function createConversationWorkflow(store: CompanionStore) {
 			: null;
 	});
 	const modelSelected = createMemo(() => selectedModel() !== null);
-	const multimodalFallback = createMemo(() => {
-		const route = modelData()?.multimodalFallback;
-		return route
-			? models().find(
-					(model) => model.providerId === route.providerId && model.modelId === route.modelId,
-				)
-			: undefined;
-	});
-	const hasImages = createMemo(() =>
-		state.attachments.some((attachment) => attachment.kind === "image"),
-	);
-	const needsImageReader = createMemo(
-		() => hasImages() && selectedModel()?.supportsImages === false,
-	);
-	const imageReaderCapable = createMemo(
-		() => selectedModel()?.supportsImages === true || Boolean(multimodalFallback()),
-	);
-	const imageReaderAvailable = createMemo(
-		() => !hasImages() || (!state.imageRouteError && imageReaderCapable()),
-	);
-	const imageReaderLabel = createMemo(() => {
-		const fallback = multimodalFallback();
-		return fallback
-			? i18n.t("composer.imageReadBy").replace("{model}", modelDisplayName(fallback))
-			: "";
-	});
 	const streaming = createMemo(() => store.activePiLiveState?.isStreaming === true);
 	const visibleConversations = createMemo<ConversationSummary[]>(() => {
 		const needle = state.query.trim().toLocaleLowerCase();
@@ -107,86 +92,245 @@ function createConversationWorkflow(store: CompanionStore) {
 		if (api?.list) void api.list(conversationId);
 	};
 
-	const removeImages = (): void => {
-		setState("attachments", (current) =>
-			current.filter((attachment) => attachment.kind !== "image"),
-		);
+	const binaryBase64 = (bytes: Uint8Array): string => {
+		let binary = "";
+		for (let start = 0; start < bytes.byteLength; start += 32_768)
+			binary += String.fromCharCode(...bytes.subarray(start, start + 32_768));
+		return btoa(binary);
 	};
-	const chooseFiles = async (files: File[]): Promise<void> => {
-		const loaded: ComposerAttachment[] = [];
-		for (const file of files) {
-			if (file.type.startsWith("image/")) {
-				const bytes = new Uint8Array(await file.arrayBuffer());
-				let binary = "";
-				for (const byte of bytes) binary += String.fromCharCode(byte);
-				loaded.push({ kind: "image", name: file.name, mime: file.type, base64: btoa(binary) });
-			} else {
-				loaded.push({ kind: "text", name: file.name, content: await file.text() });
+	const uploadRoot = async (
+		draftId: string,
+		root: AttachmentUploadRoot,
+		conversationId: string,
+	): Promise<void> => {
+		const files = root.entries.flatMap((entry, fileIndex) =>
+			entry.entryKind === "file" && entry.file !== undefined ? [{ entry, fileIndex }] : [],
+		);
+		const totalBytes = files.reduce((total, item) => total + item.entry.file!.size, 0);
+		let uploadedBytes = 0;
+		setState("attachments", (draft) => draft.draftId === draftId, {
+			uploadState: "uploading",
+			progress: 0,
+			error: undefined,
+		});
+		const { uploadId } = await store.attachments.startUpload({
+			conversationId,
+			kind: root.kind,
+			name: root.name,
+			entries: root.entries.map(({ entryKind, relativePath, mime, bytes }) => ({
+				entryKind,
+				relativePath,
+				...(mime ? { mime } : {}),
+				...(bytes !== undefined ? { bytes } : {}),
+			})),
+		});
+		setState("attachments", (drafts) =>
+			drafts.map((draft) => (draft.draftId === draftId ? { ...draft, uploadId } : draft)),
+		);
+		try {
+			for (const { entry, fileIndex } of files) {
+				const file = entry.file!;
+				for (let offset = 0; offset < file.size; offset += 1024 * 1024) {
+					const current = state.attachments.find((draft) => draft.draftId === draftId);
+					if (!current || current.uploadState === "cancelled") {
+						await store.attachments
+							.cancelUpload({ conversationId, uploadId })
+							.catch(() => undefined);
+						return;
+					}
+					const chunk = new Uint8Array(
+						await file.slice(offset, offset + 1024 * 1024).arrayBuffer(),
+					);
+					await store.attachments.appendChunk({
+						conversationId,
+						uploadId,
+						fileIndex,
+						offset,
+						base64: binaryBase64(chunk),
+					});
+					uploadedBytes += chunk.byteLength;
+					setState("attachments", (drafts) =>
+						drafts.map((draft) =>
+							draft.draftId === draftId
+								? { ...draft, progress: totalBytes === 0 ? 1 : uploadedBytes / totalBytes }
+								: draft,
+						),
+					);
+				}
 			}
+			const { attachment } = await store.attachments.completeUpload({ conversationId, uploadId });
+			setState("attachments", (draft) => draft.draftId === draftId, {
+				id: attachment.id,
+				name: attachment.name,
+				attachmentKind: attachment.kind,
+				bytes: attachment.bytes,
+				fileCount: attachment.fileCount,
+				uploadState: "complete",
+				progress: 1,
+				uploadId: undefined,
+			});
+		} catch (cause) {
+			await store.attachments.cancelUpload({ conversationId, uploadId }).catch(() => undefined);
+			setState("attachments", (draft) => draft.draftId === draftId, {
+				uploadState: "error",
+				error: cause instanceof Error ? cause.message : String(cause),
+				uploadId: undefined,
+			});
 		}
-		setState("imageRouteError", false);
-		setState("attachments", loaded);
+	};
+	const uploadRoots = async (roots: AttachmentUploadRoot[]): Promise<void> => {
+		const conversationId = store.activeConversationId;
+		if (!conversationId) throw new Error("conversation_not_selected");
+		setState("attachmentError", null);
+		for (const root of roots) {
+			const draftId = crypto.randomUUID();
+			setState("attachments", (drafts) => [
+				...drafts,
+				{
+					kind: "attachment",
+					draftId,
+					name: root.name,
+					attachmentKind: root.kind,
+					bytes: root.entries.reduce((total, entry) => total + (entry.bytes ?? 0), 0),
+					fileCount: root.entries.filter((entry) => entry.entryKind === "file").length,
+					uploadState: "uploading",
+					progress: 0,
+					source: root,
+				},
+			]);
+			void uploadRoot(draftId, root, conversationId);
+		}
 	};
 	const loadFiles = async (files: File[]): Promise<void> => {
-		setState("attachmentError", null);
-		try {
-			await chooseFiles(files);
-		} catch (cause) {
-			setState("attachmentError", cause instanceof Error ? cause.message : String(cause));
-		}
+		await uploadRoots(
+			files.map((file) => ({
+				kind: "file",
+				name: file.name,
+				entries: [
+					{
+						entryKind: "file",
+						relativePath: file.name,
+						file,
+						mime: file.type || "application/octet-stream",
+						bytes: file.size,
+					},
+				],
+			})),
+		);
 	};
-	const dispatchMessage = async (
-		labels: { materialLabel: string; imageLabel: string },
-		options?: { retry?: boolean },
-	): Promise<void> => {
-		const retry = options?.retry === true;
+	const loadFolderFiles = async (
+		name: string,
+		files: Array<{ file: File; relativePath: string }>,
+	): Promise<void> =>
+		uploadRoots([
+			{
+				kind: "folder",
+				name,
+				entries: files.map(({ file, relativePath }) => ({
+					entryKind: "file" as const,
+					relativePath,
+					file,
+					mime: file.type || "application/octet-stream",
+					bytes: file.size,
+				})),
+			},
+		]);
+	const addCompletedAttachments = (
+		attachments: Array<{
+			id: string;
+			name: string;
+			kind: "file" | "folder" | "generated";
+			bytes: number;
+			fileCount: number;
+		}>,
+	): void => {
+		setState("attachments", (drafts) => [
+			...drafts,
+			...attachments.map((attachment) => ({
+				kind: "attachment" as const,
+				draftId: crypto.randomUUID(),
+				id: attachment.id,
+				name: attachment.name,
+				attachmentKind: attachment.kind,
+				bytes: attachment.bytes,
+				fileCount: attachment.fileCount,
+				uploadState: "complete" as const,
+				progress: 1,
+			})),
+		]);
+	};
+	const cancelAttachment = async (draftId: string): Promise<void> => {
+		const conversationId = store.activeConversationId;
+		const draft = state.attachments.find((candidate) => candidate.draftId === draftId);
+		if (!conversationId || draft?.uploadState !== "uploading") return;
+		setState("attachments", (drafts) =>
+			drafts.map((candidate) =>
+				candidate.draftId === draftId ? { ...candidate, uploadState: "cancelled" } : candidate,
+			),
+		);
+		if (draft.uploadId)
+			await store.attachments
+				.cancelUpload({ conversationId, uploadId: draft.uploadId })
+				.catch(() => undefined);
+	};
+	const retryAttachment = (draftId: string): void => {
+		const conversationId = store.activeConversationId;
+		const draft = state.attachments.find((candidate) => candidate.draftId === draftId);
+		if (
+			!conversationId ||
+			!draft?.source ||
+			(draft.uploadState !== "error" && draft.uploadState !== "cancelled")
+		)
+			return;
+		void uploadRoot(draftId, draft.source, conversationId);
+	};
+	const removeAttachment = async (draftId: string): Promise<void> => {
+		const conversationId = store.activeConversationId;
+		const draft = state.attachments.find((candidate) => candidate.draftId === draftId);
+		if (!draft) return;
+		if (draft.uploadState === "uploading") {
+			await cancelAttachment(draftId);
+		} else if (conversationId && draft.uploadState === "complete" && draft.id) {
+			try {
+				await store.attachments.discard(conversationId, draft.id);
+			} catch (cause) {
+				setState("attachmentError", cause instanceof Error ? cause.message : String(cause));
+				return;
+			}
+		}
+		setState("attachments", (drafts) =>
+			drafts.filter((candidate) => candidate.draftId !== draftId),
+		);
+	};
+	const dispatchMessage = async (): Promise<void> => {
 		const value = state.composerText;
 		if (!value.trim() && state.attachments.length === 0) return;
-		if (!retry && !imageReaderAvailable()) return;
-		if (retry && hasImages() && !imageReaderCapable()) return;
 		const draftAttachments = state.attachments;
-		const materials = draftAttachments
-			.filter((file): file is Extract<ComposerAttachment, { kind: "text" }> => file.kind === "text")
-			.map((file) => `\n\n[${labels.materialLabel}：${file.name}]\n${file.content}`)
-			.join("");
-		const images = draftAttachments
-			.filter((file) => file.kind === "image")
-			.map((file) => ({ name: file.name, mime: file.mime, base64: file.base64 }));
-		const message =
-			`${value}${materials}`.trim() ||
-			images.map((image) => `[${labels.imageLabel}：${image.name}]`).join("\n");
-		const hadImages = images.length > 0;
+		if (draftAttachments.some((file) => file.uploadState !== "complete")) return;
+		const attachmentIds = draftAttachments.flatMap((file) => (file.id ? [file.id] : []));
+		const message = value.trim();
 		const before = store.errorMetadata;
 		setState("sendError", null);
 		setState("modelError", null);
 		try {
-			await store.sendMessage(message, hadImages ? images : undefined);
+			await store.sendMessage(message, attachmentIds);
 			const retained = store.errorMetadata;
 			if (retained !== null && retained !== before) {
 				setState("composerText", value);
 				setState("attachments", draftAttachments);
 				setState("sendError", retained.message);
-				setState("retryingSend", false);
 				return;
 			}
 			// The Pi preflight accepted the message: the draft is consumed by
 			// the Pi session and the thread updates via `pi.session.changed`.
 			// Accepted drafts are never replayed as messages.
-			setState("retryingSend", false);
 			setState("composerText", "");
 			setState("attachments", []);
-			setState("imageRouteError", false);
 		} catch (cause) {
 			setState("composerText", value);
 			setState("attachments", draftAttachments);
 			setState("sendError", cause instanceof Error ? cause.message : String(cause));
-			setState("retryingSend", false);
 		}
-	};
-	const retrySend = (labels: { materialLabel: string; imageLabel: string }): void => {
-		if (state.retryingSend || (hasImages() && !imageReaderCapable())) return;
-		setState("retryingSend", true);
-		void dispatchMessage(labels, { retry: true });
 	};
 	const selectModel = async (model: ConfiguredModel | null): Promise<void> => {
 		const conversationId = store.activeConversationId;
@@ -245,8 +389,6 @@ function createConversationWorkflow(store: CompanionStore) {
 		modelBusy: () => state.modelBusy,
 		attachmentError: () => state.attachmentError,
 		sendError: () => state.sendError,
-		imageRouteError: () => state.imageRouteError,
-		retryingSend: () => state.retryingSend,
 		query: () => state.query,
 		setQuery: (value: string) => setState("query", value),
 		editingId: () => state.editingId,
@@ -257,22 +399,20 @@ function createConversationWorkflow(store: CompanionStore) {
 		models,
 		modelSelected,
 		selectedModel,
-		multimodalFallback,
-		hasImages,
-		needsImageReader,
-		imageReaderAvailable,
-		imageReaderLabel,
 		streaming,
 		visibleConversations,
-		removeImages,
 		loadFiles,
+		loadFolderFiles,
+		uploadRoots,
+		addCompletedAttachments,
+		cancelAttachment,
+		retryAttachment,
+		removeAttachment,
 		dispatchMessage,
-		retrySend,
 		selectModel,
 		runSidebarAction,
 		beginRename,
 		saveRename,
-		setImageRouteError: (value: boolean) => setState("imageRouteError", value),
 		setSendError: (value: string | null) => setState("sendError", value),
 	};
 }

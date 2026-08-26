@@ -12,9 +12,10 @@ The repository is an npm workspaces monorepo. The Electron desktop app is the pr
 - Provides user-controlled relationship memory, scoped memory search/capture/edit/forget/exclude, and assistant memory candidates that require a user decision.
 - Provides story and canon archives, including source ingestion and search, and exposes revision-aware character-package draft APIs; the in-app package workshop is currently disabled.
 - Configures providers and models, including explicit image-model routing when a reply model cannot read images.
-- Turns approved work proposals into tracked runs with permission requests, steering, interruption/resumption, cancellation, and content-addressed artifacts. Results are linked to the triggering message and can be previewed in the right-hand ResultSpace.
+- Attaches immutable conversation-scoped files, folders, and generated outputs to messages. `message.send` carries attachment IDs, and delegated outputs return as generated attachments.
 - Provides event/snapshot projections, audit records, diagnostics, and platform-specific credential boundaries.
 - Integrates the host-neutral Tdai memory core: L0 capture, L1 extraction, L2 scene processing, L3 persona processing, and keyword/vector/hybrid recall when configured.
+- Delegates through direct `ExternalAgentRunService` runs: each run launches an independent native ACP Pi agent by default, or an explicitly connected Codex agent. Role-facing work tools are limited to listing and reading attachments and delegating a run.
 
 The product deliberately keeps character-package declarations, relationship memory, conversation state, and real-world work facts as separate ownership boundaries. Character copy comes from the package; product interface copy comes from the i18n catalogs; Host state and protocol validation remain authoritative.
 
@@ -27,17 +28,17 @@ WebDev browser + Node Host ┘                         │
                                                      ▼
                                            Host Runtime + SQLite/EventBus
                                              │       │        │
-                                   character packages  │   commissions/artifacts
+                                   character packages  │   attachments/direct runs
                                              │       │
                                          Tdai memory  │  providers/models/credentials
                                                      ▼
                                               companion-ui (SolidJS)
 ```
 
-- **Host Runtime** owns canonical persistence, RPC dispatch, character validation, conversation turns, providers/models, memory integration, work execution, artifacts, events, and audit projections.
+- **Host Runtime** owns canonical persistence, RPC dispatch, character validation, conversation turns, providers/models, memory integration, attachment metadata, direct external-agent runs, events, and audit projections. Its internal `ArtifactStore` is only a content-addressed storage and provenance layer.
 - **Protocol and schema** define versioned RPC channels and strict request/response/domain validators. `companion-client` derives a typed client from that registry and leaves transport concerns to Electron IPC or WebDev HTTP.
-- **Companion UI** is a transport-independent SolidJS renderer. It receives `ProductConfig` and a client; it does not read host files or create its own authority.
-- **Desktop** supplies Electron isolation, preload IPC, credential encryption, diagnostics, the artifact scheme, and packaging.
+- **Companion UI** is a transport-independent SolidJS renderer. It receives `ProductConfig` and a client; it does not read host files or create its own authority. Attachment previews request semantic or byte content through typed Host APIs.
+- **Desktop** supplies Electron isolation, preload IPC, credential encryption, diagnostics, five-minute `bear-attachment` capability URLs, verified Windows PortableGit packaging, and native packaging.
 - **WebDev** starts the same Host contract in Node and proxies a browser renderer over loopback with a per-process bearer token. Its boundary is intended for local development and E2E only.
 
 ## Workspace map
@@ -47,12 +48,12 @@ WebDev browser + Node Host ┘                         │
 | `@bear-harness/schema` | Shared Zod namespace, schema constraint/inference helpers, and JSON Schema conversion. | [`schema`](docs/refernece/protocol-schema.md#shared-schema-package) |
 | `@bear-harness/protocol` | Runtime RPC registry, versioned channels, domain validators, envelopes, events, snapshots, and type facade. | [`protocol`](docs/refernece/protocol-schema.md) |
 | `@bear-harness/companion-client` | Transport-neutral typed client that validates requests and response envelopes. | [`companion-client`](docs/refernece/companion-client.md) |
-| `@bear-harness/companion-ui` | SolidJS application shell, store, conversation UI, settings, onboarding, work timeline, and ResultSpace. | [`companion-ui`](docs/refernece/companion-ui.md) |
-| `@bear-harness/host-runtime` | Instance-scoped Host: SQLite state, RPC handlers, character/roleplay, turns, providers, memory, work, artifacts, events, and audit. | [`host-runtime`](docs/refernece/host-runtime.md) |
+| `@bear-harness/companion-ui` | SolidJS application shell, store, conversation UI, settings, onboarding, attachment chips/previews, direct-run presentation, and roleplay presentation. | [`companion-ui`](docs/refernece/companion-ui.md) |
+| `@bear-harness/host-runtime` | Instance-scoped Host: SQLite state, RPC handlers, character/roleplay, turns, providers, memory, immutable attachments, direct external-agent runs, events, and audit. | [`host-runtime`](docs/refernece/host-runtime.md) |
 | `@bear-harness/tdai-core` | Host-neutral, vendored TencentDB Agent Memory integration and L0–L3 pipeline/recall contracts. | [`tdai-core`](docs/refernece/tdai-core.md) |
 | `@bear-harness/product-config` | Compile-time product identity, branding, default character, data directory, packaging, and brand-license metadata. | [`product-config`](docs/refernece/product-config.md) |
 | `@bear-harness/i18n` | Product interface locales (`zh-CN`, `zh-TW`, and `en`); character-package copy remains package-owned. | [`i18n`](docs/refernece/i18n.md) |
-| `@bear-harness/desktop` | Electron production shell and native packaging targets. | [`desktop`](docs/refernece/desktop.md) |
+| `@bear-harness/desktop` | Electron production shell, capability-scoped attachment serving, bundled runtime support, and native packaging targets. | [`desktop`](docs/refernece/desktop.md) |
 | `@bear-harness/web-dev` | Browser renderer plus loopback Node Host for local development and Playwright E2E. | [`web-dev`](docs/refernece/web-dev.md) |
 
 ## Prerequisites
@@ -89,7 +90,7 @@ For isolated local data, set `BEAR_WEB_DEV_DATA_DIR` before starting WebDev. The
 npm run dev --workspace @bear-harness/desktop
 ```
 
-This starts the Electron shell with the renderer development server on the loopback development URL. The desktop shell is the production path and adds context isolation, sandboxing, disabled Node integration, preload IPC admission checks, platform credential handling, diagnostics, and artifact URL handling.
+This starts the Electron shell with the renderer development server on the loopback development URL. The desktop shell is the production path and adds context isolation, sandboxing, disabled Node integration, preload IPC admission checks, platform credential handling, diagnostics, five-minute attachment-preview capabilities, and packaged runtime support. Windows packages use a verified bundled PortableGit distribution.
 
 ### Character package entrypoint
 
@@ -149,12 +150,13 @@ These root commands invoke the corresponding Desktop workspace scripts and write
 
 ## Trust and security principles
 
-- **Host authority:** renderers, character packages, models, and executors do not become state authorities. Host handlers validate protocol input/output and own persistence.
-- **Explicit approval:** work proposals show read/write/network scope and require approval of the exact draft hash before launch. Executors report evidence and status; they do not directly mutate Host state.
+- **Host authority:** renderers, character packages, models, and external agents do not become state authorities. Host handlers validate protocol input/output and own persistence.
+- **Immutable attachment boundary:** files, folders, and generated outputs become immutable, conversation-scoped attachments. Messages and runs carry attachment IDs rather than renderer filesystem paths; the internal `ArtifactStore` remains a content-addressed storage/provenance implementation detail.
+- **Direct, isolated delegation:** a run launches an independent native ACP Pi agent by default, or an explicitly connected Codex agent. Live source grants are ephemeral and intentionally unsandboxed; immutable snapshots are the fallback when live access is unavailable or inappropriate. Generated outputs return through the attachment boundary.
 - **Memory consent and separation:** direct user capture is distinct from assistant-suggested candidates, which require a user decision. Package constants/assets/resources are not relationship memory or automatic long-term-memory input.
-- **Renderer isolation:** Desktop uses `contextIsolation`, sandboxing, no Node integration, strict window/frame/URL admission, and a narrow frozen preload bridge. Artifact previews use Host-issued URLs or Host-returned bytes rather than arbitrary filesystem paths.
+- **Renderer isolation:** Desktop uses `contextIsolation`, sandboxing, no Node integration, strict window/frame/URL admission, and a narrow frozen preload bridge. Previews use semantic/byte reads or five-minute Host-issued `bear-attachment` capabilities, never arbitrary filesystem paths.
 - **Local-only WebDev:** loopback plus possession of the bootstrap token is a development boundary, not user authentication. The WebDev server has no account auth, TLS, rate limiting, or public-deployment model.
-- **Credentials and updates:** credentials cross an injected vault boundary and are not exposed as renderer-readable secrets. Desktop update staging supports optional SHA-256 checks but does not provide code-signature or notarization verification; production distribution must add a publisher trust gate.
+- **Credentials, packaged tools, and updates:** credentials cross an injected vault boundary and are not exposed as renderer-readable secrets. Windows packages verify the bundled PortableGit payload. Desktop update staging supports optional SHA-256 checks but does not provide code-signature or notarization verification; production distribution must add a publisher trust gate.
 - **Defense in depth:** schemas bound sizes and vocabularies, but handlers still own path traversal, URL policy, authorization, secret redaction, and filesystem-root checks.
 
 ## Documentation
@@ -168,8 +170,8 @@ The reference directory spelling is intentional: [`docs/refernece/`](docs/refern
 - Module references: [`companion-client`](docs/refernece/companion-client.md), [`companion-ui`](docs/refernece/companion-ui.md), [`desktop`](docs/refernece/desktop.md), [`host-runtime`](docs/refernece/host-runtime.md), [`i18n`](docs/refernece/i18n.md), [`product-config`](docs/refernece/product-config.md), [`protocol/schema`](docs/refernece/protocol-schema.md), [`tdai-core`](docs/refernece/tdai-core.md), and [`web-dev`](docs/refernece/web-dev.md).
 - [`Character package authoring`](docs/character-package-authoring.md) — package format, trust, memory ownership, and workshop workflow.
 - [`Development verification`](docs/development-verification.md) — WebDev-first checks and release-time Electron checks.
-- [`Role-first work interaction plan`](docs/role-first-work-interaction-plan.md) — user-facing work timeline and result principles.
-- [`Bear Harness plan`](docs/bear-harness-plan.md) and [`roadmap`](docs/roadmap.md) — product direction and planned scope.
+- [`Current attachment and execution references`](docs/refernece/index.md) — follow the protocol/schema, Host runtime, Companion UI, and Desktop ownership links for message attachments, direct runs, previews, and native packaging.
+- [`Roadmap`](docs/roadmap.md) — dated product history and planned scope; current implementation contracts remain in the reference directory.
 
 ## Contributing
 

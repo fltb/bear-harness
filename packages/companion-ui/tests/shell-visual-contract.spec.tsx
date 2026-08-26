@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
@@ -31,7 +31,7 @@ function neverSettle(): Promise<never> {
 	return promise;
 }
 
-function configurePortraitClient(options: { active?: boolean; result?: boolean } = {}) {
+function configurePortraitClient(options: { active?: boolean } = {}) {
 	const { client } = createTestClient();
 	const active = options.active !== false;
 	const conversationId = "conversation-1";
@@ -41,39 +41,6 @@ function configurePortraitClient(options: { active?: boolean; result?: boolean }
 		sceneTitle: "",
 		unread: false,
 		updatedAt: "2026-01-01T00:00:00.000Z",
-	};
-	const commission = {
-		id: "commission-1",
-		conversationId,
-		triggerEntryId: "message-1",
-		draft: {
-			id: "draft-1",
-			title: "Portrait result",
-			description: "A portrait result",
-			reads: [],
-			writes: [],
-			networkAllowed: false,
-			toolNames: [],
-			hash: "draft-hash",
-		},
-		status: "completed" as const,
-		createdAt: "2026-01-01T00:00:00.000Z",
-	};
-	const run = {
-		id: "run-1",
-		commissionId: commission.id,
-		executorProfile: "pi",
-		status: "completed" as const,
-	};
-	const artifact = {
-		id: "artifact-1",
-		logicalName: "result.txt",
-		mime: "text/plain",
-		bytes: 1,
-		sha256: "artifact-sha",
-		status: "verified" as const,
-		producerRunId: run.id,
-		createdAt: "2026-01-01T00:00:00.000Z",
 	};
 	const piTimeline = {
 		entries: [
@@ -114,13 +81,6 @@ function configurePortraitClient(options: { active?: boolean; result?: boolean }
 					},
 				}
 			: {}),
-		...(options.result
-			? {
-					commission: { commissions: [commission] },
-					run: { runs: [run] },
-					artifact: { artifacts: [artifact] },
-				}
-			: {}),
 	};
 	client.snapshot.get = vi.fn(() =>
 		Promise.resolve({ ok: true as const, data: snapshot as never }),
@@ -146,15 +106,6 @@ function configurePortraitClient(options: { active?: boolean; result?: boolean }
 			},
 		}),
 	);
-	if (options.result) {
-		client.commission.list = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { commissions: [commission] } }),
-		);
-		client.run.list = vi.fn(() => Promise.resolve({ ok: true as const, data: { runs: [run] } }));
-		client.artifact.list = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { artifacts: [artifact] } }),
-		);
-	}
 	return { client };
 }
 
@@ -192,7 +143,6 @@ describe("shell visual and thread head contracts", () => {
 							<textarea aria-label="Message" />
 						</form>
 					</main>
-					<aside class="result-column" aria-label="Results" />
 				</div>
 			</div>
 		));
@@ -200,7 +150,7 @@ describe("shell visual and thread head contracts", () => {
 		const application = screen.getByRole("application", { name: "Companion" });
 		expect(application).toHaveAttribute("data-layout", "desktop");
 		expect(application).toHaveAttribute("data-supported-min-width", "800");
-		expect(within(application).getAllByRole("complementary")).toHaveLength(2);
+		expect(within(application).getAllByRole("complementary")).toHaveLength(1);
 		expect(within(application).getByRole("textbox", { name: "Message" })).toBeEnabled();
 	});
 
@@ -228,14 +178,18 @@ describe("shell visual and thread head contracts", () => {
 			runs: [
 				{
 					id: "run-1",
-					commissionId: "commission-1",
-					executorProfile: "pi",
+					conversationId: "conversation-1",
+					triggerEntryId: "entry-1",
+					executorProfile: "pi-default",
+					title: "Active run",
 					status: "needs_user",
 				},
 				{
 					id: "run-2",
-					commissionId: "commission-2",
-					executorProfile: "pi",
+					conversationId: "conversation-1",
+					triggerEntryId: "entry-2",
+					executorProfile: "pi-default",
+					title: "Completed run",
 					status: "completed",
 				},
 			],
@@ -391,23 +345,4 @@ describe("portrait layout contracts", () => {
 			await waitFor(() => expect(presence).toHaveAttribute("data-layout-mode", "expanded"));
 		},
 	);
-
-	it("compacts only when ResultSpace is opened for the active conversation", async () => {
-		const { client } = configurePortraitClient({ result: true });
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-
-		const presence = await screen.findByRole("img", {
-			name: THEMED_CHARACTER.visual.expressionLabels.default,
-		});
-		const openResults = await screen.findByRole("button", {
-			name: zhCN.work.timeline.viewArtifacts,
-		});
-		await userEvent.setup().click(openResults);
-		await waitFor(() =>
-			expect(
-				screen.getByRole("application", { name: OFFICIAL_PRODUCT.productName }),
-			).toHaveAttribute("data-result-open", "true"),
-		);
-		expect(presence).toHaveAttribute("data-layout-mode", "compact");
-	});
 });

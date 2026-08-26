@@ -383,7 +383,9 @@ export function createTestClient() {
 			}),
 		},
 		message: {
-			send: vi.fn(() => ok({ accepted: true as const, sessionId: "session-1" })),
+			send: vi.fn(() =>
+				ok({ accepted: true as const, sessionId: "session-1", entryId: "entry-1" }),
+			),
 			regenerate: vi.fn(() => ok(null)),
 			switchVersion: vi.fn(() => ok(null)),
 			edit: vi.fn(() => ok(null)),
@@ -450,12 +452,25 @@ export function createTestClient() {
 			routeGet: vi.fn(({ conversationId }) => ok({ conversationId })),
 			routeSet: vi.fn(({ conversationId, selected }) => ok({ conversationId, selected })),
 		},
-		commission: {
-			list: vi.fn(() => ok({ commissions: [] })),
-			draft: vi.fn(() => ok({ commissionId: "c1", draftHash: "h" })),
-			approve: vi.fn(() => ok(null)),
-			reject: vi.fn(() => ok(null)),
-			launch: vi.fn(() => ok({ commissionId: "c1", draftHash: "h" })),
+		conversationAttachment: {
+			list: vi.fn(() => ok({ attachments: [] })),
+			startUpload: vi.fn(() => ok({ uploadId: "upload-1" })),
+			appendChunk: vi.fn(() => ok(null)),
+			completeUpload: vi.fn(() =>
+				ok({
+					attachment: {
+						id: "attachment-1",
+						name: "note.txt",
+						kind: "file" as const,
+						bytes: 3,
+						fileCount: 1,
+					},
+				}),
+			),
+			cancelUpload: vi.fn(() => ok(null)),
+			discard: vi.fn(() => ok(null)),
+			read: vi.fn(() => ok({ content: "" })),
+			url: vi.fn(() => ok({ url: "" })),
 		},
 		run: {
 			list: vi.fn(() => ok({ runs: [] })),
@@ -465,9 +480,15 @@ export function createTestClient() {
 			cancel: vi.fn(() => ok(null)),
 			respondPermission: vi.fn(() => ok(null)),
 		},
-		artifact: {
-			list: vi.fn(() => ok({ artifacts: [] })),
-			read: vi.fn(() => ok({ logicalName: "result.txt", mime: "text/plain", base64: "" })),
+		externalAgent: {
+			discoverCodex: vi.fn(() => ok({ candidates: [] })),
+			connectCodex: vi.fn(() => ok({ profileId: "codex-1", version: "1.0.0", hash: "hash" })),
+			status: vi.fn(() =>
+				ok({
+					pi: { available: true as const, profileId: "pi-default" as const },
+					codex: { available: false as const },
+				}),
+			),
 		},
 		settings: {
 			get: settingsGet,

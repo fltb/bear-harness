@@ -1,14 +1,14 @@
 import { i18n } from "@bear-harness/i18n";
+import type { Namespace, TFunction } from "i18next";
 import {
+	type Accessor,
 	createContext,
 	createMemo,
 	createSignal,
-	type Accessor,
 	type JSX,
 	type ParentProps,
 	useContext,
 } from "solid-js";
-import type { Namespace, TFunction } from "i18next";
 import type {
 	CharacterDisplay,
 	CharacterRuntimeState,
@@ -16,7 +16,7 @@ import type {
 	SceneDisplay,
 } from "./companion.js";
 import { useCompanionStore } from "./companion.js";
-import type { Artifact, Commission, RunInfo, RunPermissionRequest } from "./ipc.js";
+import type { RunInfo, RunPermissionRequest } from "./ipc.js";
 
 export type BackstageTab = "roles" | "settings";
 
@@ -54,17 +54,11 @@ export interface ShellWorkflowStore {
 	toggleQueue(): void;
 	closeQueue(): void;
 	readonly activeRuns: Accessor<RunInfo[]>;
-	readonly artifactGroups: Accessor<Readonly<Record<string, Artifact[]>>>;
-	readonly commissionGroups: Accessor<Readonly<Record<string, Commission[]>>>;
 	readonly runGroups: Accessor<Readonly<Record<string, RunInfo[]>>>;
-	artifactsForRun(runId: string): Accessor<Artifact[]>;
 	permissionsForRun(runId: string): Accessor<RunPermissionRequest[]>;
-	commissionsForMessage(messageId: string): Accessor<Commission[]>;
-	runsForCommission(commissionId: string): Accessor<RunInfo[]>;
-	commissionAction(id: string): WorkflowActionState;
+	runsForMessage(messageId: string): Accessor<RunInfo[]>;
 	permissionAction(id: string): WorkflowActionState;
 	runActionState(id: string): RunWorkflowState;
-	runCommissionAction(id: string, action: () => Promise<unknown>): Promise<void>;
 	runPermissionAction(id: string, action: () => Promise<unknown>): void;
 	runRunAction(id: string, action: () => Promise<unknown>): Promise<boolean>;
 }
@@ -199,73 +193,46 @@ export function createShellWorkflowStore(input: {
 			(run) => run.status === "enqueued" || run.status === "running" || run.status === "needs_user",
 		),
 	);
-	const artifactGroups = createMemo(() => {
-		const groups: Record<string, Artifact[]> = {};
-		for (const artifact of store.artifact?.artifacts?.() ?? []) {
-			if (artifact.producerRunId) (groups[artifact.producerRunId] ??= []).push(artifact);
-		}
-		return groups;
-	});
-	const commissionGroups = createMemo(() => {
-		const groups: Record<string, Commission[]> = {};
-		for (const commission of store.commission?.commissions?.() ?? []) {
-			if (commission.triggerEntryId) (groups[commission.triggerEntryId] ??= []).push(commission);
-		}
-		return groups;
-	});
 	const runGroups = createMemo(() => {
 		const groups: Record<string, RunInfo[]> = {};
-		for (const run of store.runs ?? []) (groups[run.commissionId] ??= []).push(run);
+		for (const run of store.runs ?? []) {
+			const group = groups[run.triggerEntryId] ?? [];
+			group.push(run);
+			groups[run.triggerEntryId] = group;
+		}
 		return groups;
 	});
 	const permissionGroups = createMemo(() => {
 		const groups: Record<string, RunPermissionRequest[]> = {};
-		for (const permission of store.run?.pendingPermissions?.() ?? [])
-			(groups[permission.runId] ??= []).push(permission);
+		for (const permission of store.run?.pendingPermissions?.() ?? []) {
+			const group = groups[permission.runId] ?? [];
+			group.push(permission);
+			groups[permission.runId] = group;
+		}
 		return groups;
 	});
-	const artifactSelectors = new Map<string, Accessor<Artifact[]>>();
 	const permissionSelectors = new Map<string, Accessor<RunPermissionRequest[]>>();
-	const commissionSelectors = new Map<string, Accessor<Commission[]>>();
 	const runSelectors = new Map<string, Accessor<RunInfo[]>>();
-	const artifactsForRun = (runId: string) => {
-		let artifactsForRun = artifactSelectors.get(runId);
-		if (!artifactsForRun) {
-			artifactsForRun = createMemo(() => artifactGroups()[runId] ?? []);
-			artifactSelectors.set(runId, artifactsForRun);
-		}
-		return artifactsForRun;
-	};
 	const permissionsForRun = (runId: string) => {
-		let permissionsForRun = permissionSelectors.get(runId);
-		if (!permissionsForRun) {
-			permissionsForRun = createMemo(() => permissionGroups()[runId] ?? []);
-			permissionSelectors.set(runId, permissionsForRun);
+		let selector = permissionSelectors.get(runId);
+		if (!selector) {
+			selector = createMemo(() => permissionGroups()[runId] ?? []);
+			permissionSelectors.set(runId, selector);
 		}
-		return permissionsForRun;
+		return selector;
 	};
-	const commissionsForMessage = (messageId: string) => {
-		let commissionsForMessage = commissionSelectors.get(messageId);
-		if (!commissionsForMessage) {
-			commissionsForMessage = createMemo(() =>
-				(commissionGroups()[messageId] ?? []).filter(
-					(item) => !item.conversationId || item.conversationId === store.activeConversationId,
+	const runsForMessage = (messageId: string) => {
+		let selector = runSelectors.get(messageId);
+		if (!selector) {
+			selector = createMemo(() =>
+				(runGroups()[messageId] ?? []).filter(
+					(run) => run.conversationId === store.activeConversationId,
 				),
 			);
-			commissionSelectors.set(messageId, commissionsForMessage);
+			runSelectors.set(messageId, selector);
 		}
-		return commissionsForMessage;
+		return selector;
 	};
-	const runsForCommission = (commissionId: string) => {
-		let runsForCommission = runSelectors.get(commissionId);
-		if (!runsForCommission) {
-			runsForCommission = createMemo(() => runGroups()[commissionId] ?? []);
-			runSelectors.set(commissionId, runsForCommission);
-		}
-		return runsForCommission;
-	};
-
-	const commissionStates = new Map<string, ReturnType<typeof actionState>>();
 	const permissionStates = new Map<string, ReturnType<typeof actionState>>();
 	const runStates = new Map<
 		string,
@@ -274,14 +241,6 @@ export function createShellWorkflowStore(input: {
 			setSteerText: (value: string) => void;
 		}
 	>();
-	const getCommissionState = (id: string) => {
-		let state = commissionStates.get(id);
-		if (!state) {
-			state = actionState();
-			commissionStates.set(id, state);
-		}
-		return state;
-	};
 	const getPermissionState = (id: string) => {
 		let state = permissionStates.get(id);
 		if (!state) {
@@ -300,21 +259,7 @@ export function createShellWorkflowStore(input: {
 		}
 		return state;
 	};
-	const runCommissionAction = async (id: string, action: () => Promise<unknown>) => {
-		const state = getCommissionState(id);
-		state.setBusy(true);
-		state.setError(null);
-		const before = store.errorMetadata;
-		try {
-			await action();
-			const retained = store.errorMetadata;
-			if (retained !== null && retained !== before) state.setError(retained.message);
-		} catch (cause) {
-			state.setError(messageOf(cause));
-		} finally {
-			state.setBusy(false);
-		}
-	};
+
 	const runPermissionAction = (id: string, action: () => Promise<unknown>) => {
 		const state = getPermissionState(id);
 		state.setBusy(true);
@@ -372,17 +317,11 @@ export function createShellWorkflowStore(input: {
 		toggleQueue,
 		closeQueue,
 		activeRuns,
-		artifactGroups,
-		commissionGroups,
 		runGroups,
-		artifactsForRun,
 		permissionsForRun,
-		commissionsForMessage,
-		runsForCommission,
-		commissionAction: getCommissionState,
+		runsForMessage,
 		permissionAction: getPermissionState,
 		runActionState: getRunState,
-		runCommissionAction,
 		runPermissionAction,
 		runRunAction,
 	};

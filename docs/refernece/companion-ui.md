@@ -12,62 +12,44 @@ The public component contract is:
 <CompanionApp product={productConfig} client={companionClient} />
 ```
 
-`CompanionClient` is type-only at this boundary. The client is the preload facade with one promise-returning method per IPC channel. Calls are envelope-unwrapped by `invoke` in [`src/stores/ipc.ts`](../../packages/companion-ui/src/stores/ipc.ts). The store keeps defensive runtime guards and treats an absent/missing bridge as unavailable data rather than allowing malformed data into the presentation projection.
+`CompanionClient` is type-only at this boundary. It is the generated nested RPC facade around the environment's transport, not the Electron preload object itself. Store calls are envelope-unwrapped by `invoke` in [`src/stores/ipc.ts`](../../packages/companion-ui/src/stores/ipc.ts) and guarded before projection. A client is required; only the desktop-native attachment helper is optional, with browser upload fallback.
 
 ## Runtime composition and ownership
 
-`CompanionApp` creates one TanStack Solid Query client with these defaults:
+`CompanionApp` creates one TanStack Solid Query client with a 30-second stale time, no window-focus refetch, and no automatic query or mutation retry. It installs i18n and query providers, then binds one companion store to the injected client.
 
-- query stale time: 30 seconds;
-- no refetch on window focus;
-- queries and mutations do not retry automatically.
+`DesktopProvider` supplies the store. `DesktopFrame` renders:
 
-It installs `I18nextProvider`, then `QueryClientProvider`, and renders the private `CompanionRuntime`. Runtime creates/reuses the store, owns only the Backstage open/tab signals and the dismissible language-warning key, and derives character, active scene, composer placeholder, language mismatch, and CSS theme properties. It sets `document.title` from `product.productName`.
+1. `Sidebar`;
+2. the conversation stage (`SceneBackdrop`, `CharacterPresence`, native Pi `ConversationPanel`, `Composer`, and `FirstMeeting`);
+3. `AttachmentPreviewProvider`, whose optional preview aside is part of the shell;
+4. the controlled `Backstage` dialog.
 
-`DesktopProvider` supplies the store to the component tree. `ResultSpaceProvider` supplies the per-conversation result-column context. `DesktopFrame` composes the shell in this order:
+There is no independent results context or run-output registry. User files, folders, and external-agent outputs all use the same conversation-attachment presentation path.
 
-1. `Sidebar` (identity, conversation search/list, conversation actions, Backstage entry points).
-2. Main stage: optional language warning, `SceneBackdrop`, `CharacterPresence`, `ConversationPanel`, story proposal confirmation, `Composer`, and `FirstMeeting`.
-3. `ResultSpace` (conditionally visible right column).
-4. `Backstage` (a controlled dialog/drawer).
+Ownership is split deliberately:
 
-The app root has `role="application"`, labels itself with the product name, and exposes the result-column state as `data-result-open`. CSS changes the shell from two columns to three when that attribute is true. `ConversationPanel` and `Composer` do not own conversation identity; they read it from the store.
+- **Store/query state:** snapshot cursor, conversation list, authoritative active Pi timeline/live state, runs and pending permissions, memory, settings/provider/model queries, onboarding, character runtime, and roleplay presentation IDs.
+- **Conversation workflow state:** composer text, selected model workflow, upload drafts/progress/retry/cancel/error state, and sidebar edit/search state.
+- **Preview state:** the selected attachment/path, semantic content/tree, short-lived capability URL, and local loading/download errors.
+- **Host truth:** conversations and Pi sessions, attachment ownership and immutable bytes, model/provider configuration, external-agent runs, memory, character/canon records, and event ordering.
 
-Solid ownership is intentionally split:
-
-- **Store-owned reactive state:** boot/supplementary snapshots, active conversation and messages, optimistic pending text, streaming text/status, tool activity, run/presence, onboarding projection, character runtime, roleplay presentation IDs, and domain lists.
-- **Store-retained error metadata:** `errorMetadata` keeps the operation name, transport/domain source, protocol kind (when present), and safe message. It is diagnostic state, not a request to render a global alert.
-- **Query-owned cache:** settings, provider list, model pool/defaults, and per-conversation model routes. The store exposes these through flat `settings`, `provider`, and `model` APIs.
-- **Component-local state:** text fields, edit/correction dialogs, loading/busy flags, selected tabs, temporary errors/feedback, attachment drafts, and focus-return references. The initiating component catches its operation and renders its local alert exactly once.
-- **Global thread error:** `store.error` is reserved for unrecoverable snapshot/projection or event-stream failures. Conversation and supplementary operation failures do not populate it, preventing a duplicate thread alert beside an action-local alert.
-- **Host-owned truth:** conversation history, model/provider configuration, onboarding transition rules, memory, commission/run/artifact/story/character/canon records, and event sequencing.
-
-`createCompanionStore` is keyed by `CompanionClient` in a `WeakMap`. A re-run of `CompanionRuntime` caused by locale changes therefore reuses the same store and does not lose event subscriptions, cache, or in-flight state. A different client gets an isolated store.
+`createCompanionStore` is keyed by `CompanionClient` in a `WeakMap`. Locale-driven re-renders reuse the store and do not duplicate subscriptions or lose in-flight state.
 
 ## Snapshot, query, and event projection
 
-The store starts a Solid `createResource` for `client.snapshot.get()`. The snapshot's `eventSeq` seeds the event cursor and hydrates:
+The store starts with `snapshot.get`; its `eventSeq` seeds replay, onboarding hydrates immediately, and snapshot memory/run/character-runtime projections seed their query or reactive state. Conversation list and `conversation.activeGet` are authoritative supplementary queries. The active response is a native Pi projection containing `piSessionId`, `piTimeline`, and `piLiveState`.
 
-- onboarding state;
-- active conversation ID/branch/messages and conversation summaries;
-- memory entries, runs, commissions, artifacts, story changes;
-- character runtime-by-conversation.
+The cleanup-bound event loop calls `events.subscribe(afterSeq)`. Duplicate events are skipped. A gap triggers `conversation.activeGet` plus snapshot recovery before replay continues.
 
-After the snapshot succeeds, a cleanup-bound asynchronous loop calls `events.subscribe(afterSeq)`. It polls again after an empty batch or subscription failure. A sequence gap marks the projection stale and refetches the snapshot. Duplicate/replayed batches are skipped; accepted events advance the cursor. Snapshot failure is shown through the store error and retried after five seconds. Supplementary lists are fetched on first boot and via per-domain refresh helpers.
+Projection is intentionally narrow:
 
-`dispatchEvent` performs a narrow projection rather than forwarding every event to the UI:
+- `pi.session.changed` carries no message body; it refreshes only the matching conversation/session projection and cannot overwrite a newly selected conversation.
+- conversation/model/onboarding/memory/run/character/roleplay/settings events refresh their authoritative query or bounded local projection;
+- `run.needs_user` retains the permission request by run ID; terminal/resume events clear resolved permission state and refresh runs;
+- evidence, Codex, filesystem, and diagnostics events do not map to renderer fields and are ignored.
 
-- `message.user_sent`, `message_start`, `message_update`, `message_end`, `message.assistant_committed`, and `message.aborted` drive sending/streaming flags and snapshot reconciliation.
-- Tool-start/finish events update conversation-scoped tool activities.
-- Character scene/visual events update `characterRuntimeByConversation`; roleplay media/choice events update active presentation IDs.
-- Conversation/model/onboarding/run/memory/provider/commission/artifact/story/character/settings events refetch or invalidate their corresponding domain.
-- Evidence, codex, filesystem, and diagnostics events are intentionally ignored because they do not invalidate a projected UI field.
-
-Stream IDs and persisted Pi-entry IDs differ. The store therefore reconciles streamed assistant text by content: a persisted final whose text starts with the stream (or exactly equals it) clears the draft and prevents a late delta from resurrecting “responding”. `ConversationPanel` independently hides a streamed draft when the last visible assistant version has the same trimmed content, preventing duplicate rendering.
-
-`derivePresence` is store-owned. `crashed`/`unavailable` companion state becomes `problem`; any active `needs_user` run becomes `needs_user`; other active runs become `thinking`; sending with no active run becomes `listening`; completed/adopted latest runs become `result_ready`; failed/forced runs become `problem`; otherwise the state is `idle`. `CharacterPresence` maps that state to a package expression ID, falling back to the package default expression when the requested expression is absent.
-
-`createRpcQuery`/`createRpcMutation` in [`src/stores/rpc-query.ts`](../../packages/companion-ui/src/stores/rpc-query.ts) centralize query keys and invalidation. Mutation success invalidates its configured keys; `refreshRpcQuery` invalidates without refetching and then fetches. All cross-client payloads are passed through `invoke` and the guards in `stores/ipc.ts` before projection.
+Presence derives from companion state, active runs, and native Pi streaming: unavailable/crashed or failed runs become `problem`; `needs_user` is explicit; other active runs become `thinking`; streaming/sending becomes `listening`; otherwise the UI is idle.
 
 ## Onboarding and first meeting
 
@@ -82,105 +64,59 @@ Before package onboarding can appear, `FirstMeeting` gates two setup dialogs:
 
 The role-defined dialog is only shown once required setup is complete, the store is not loading, and the Host reports an active current step. Errors are rendered as alerts; setup controls use local busy state.
 
-## Conversation, composer, and model/image routing
+## Conversation, composer, attachments, and model routing
 
-### Conversation projection and message operations
+### Native Pi conversation projection
 
-`ConversationPanel` filters wire messages to user and assistant roles, retaining system/tool-result entries in the store but never exposing them in the user-facing thread. It scrolls to the bottom when visible message count changes. It renders a greeting when there is no visible history, and separately renders optimistic pending user text, tool traces, and an assistant streaming draft/status.
+`ConversationPanel` renders `activePiTimeline.entries` directly. User and assistant message entries render their native text and attachment summaries; tool entries render tool name, call ID, and success/failure; context entries render a separator. `PiLiveState.streamingMessage` is the only transient assistant projection and is replaced naturally when `pi.session.changed` refreshes the durable timeline. The UI does not rebuild message versions or merge local transcript copies.
 
-Each `MessageItem` adopts the message's explicit `adoptedVersionId`, otherwise an adopted version, otherwise the last version. User messages expose edit; assistant messages expose a deferred action toolbar that remains keyboard reachable. Operations map directly to store methods:
+Each timeline attachment row shows its name, kind, file count, and byte count. Activating it opens the shared attachment preview panel. A `WorkTimelineItem` below its trigger entry shows any direct external-agent runs associated with that Pi entry.
 
-| UI operation | Store/client path |
-| --- | --- |
-| Edit and save | `editMessage(id, text, isUser)` → `message.edit` |
-| Previous/next version | `switchVersion(messageId, versionId)` → `message.switchVersion` |
-| Regenerate | `regenerateMessage(id)` → `message.regenerate` |
-| Continue (last assistant only) | `continueConversation()` → `message.continue` |
-| Branch | `branchMessage(id)` → `message.branch` |
-| Correct with reason/scope | `correctMessage(reason, once\|session\|always)` → `message.correct` |
-| Remember assistant moment | `memory.capture(messageId)` → `memory.capture` |
-| Stop an in-flight turn | `abort()` → `message.abort` |
+### Composer and upload lifecycle
 
-Editing trims and rejects an empty value locally. Correction requires a preset or non-empty custom reason. Capture reports success/error locally. Store conversation/message actions require an active conversation and place failures in the shared `store.error`; the panel displays that error as an alert.
+Composer owns unsent text and attachment drafts. Enter submits; Shift+Enter inserts a newline. A send is allowed when a conversation/model exists, every attachment upload is complete, and either trimmed text or at least one attachment is present.
 
-The panel listens for `bear-result:locate`. ResultSpace emits that event with conversation/message IDs; the panel ignores events for another conversation, scrolls the source message into view, gives it a temporary `tabindex=-1`, and focuses it without changing the result selection.
+The attachment menu supports files and folders. In desktop builds it prefers the trusted preload bridge:
 
-### Composer
+- `pickFiles(conversationId)` opens an owned native multi-file picker;
+- `pickFolder(conversationId)` opens an owned directory picker;
+- dropped `File` objects are handed to `importDroppedFiles`, where preload converts them to native paths with Electron `webUtils`.
 
-`Composer` owns the unsent text and attachment draft. Enter submits; Shift+Enter remains a newline. The selected reply model is loaded per active conversation through `store.model.list(conversationId)` and selected with `store.model.select`. The input and file picker remain disabled until a conversation and configured model are selected.
+WebDev/fallback flows enumerate browser files or directory handles and use `conversationAttachment.startUpload`, 1 MiB-bounded `appendChunk` calls, and `completeUpload`. Upload drafts expose progress, cancel, retry, and remove. Removing a completed unsent draft calls `conversationAttachment.discard`.
 
-Files are constrained by shared protocol constants (`MAX_MESSAGE_ATTACHMENTS`, `MAX_MESSAGE_ATTACHMENT_BYTES`) and accepted as image or text/material extensions. Text files are read locally and inlined into the message with a localized material label. Images are base64 encoded and passed as native attachment objects to `store.sendMessage`; the renderer does not create a separate image message.
-
-Image routing is explicit and keeps the selected reply model unchanged:
-
-- If attachments contain images and the selected model does not support images, the composer looks for `store.model.data().multimodalFallback`.
-- With no fallback, send is disabled and a settings shortcut requests focus on the vision selector (`requestImageReaderFocus`) before opening Backstage settings.
-- With a fallback, the composer announces which model reads the images.
-- If the Host rejects image routing, the exact text and attachments are restored, an alert offers retry/settings/remove-images, and the draft remains blocked until one of those paths is chosen.
-
-The store sets `pendingUserText` before `message.send`; Composer uses that retained value to distinguish a rejected image route from a successful dispatch. The send slot changes to Stop while sending, streaming text is present, or a pending message remains.
+`dispatchMessage` sends only `attachmentIds` through `message.send`; it never inlines file bytes or local paths. Accepted drafts clear only after Host/Pi preflight succeeds. Failed sends restore the exact text and attachment draft.
 
 ### Model/provider settings
 
-Settings and model route state are split as follows:
+Model data is split into pool, defaults, and a conversation route. Composer selection updates the active route and default reply model. `SettingsSheet` manages provider credentials/login, custom providers/base URLs, enabled models, reply/vision defaults, proxy/vector-memory/download-source settings, and Host capabilities. Credentials remain password inputs and are not projected back as plaintext.
 
-- global settings use query key `settings` and `settings.get/set`;
-- providers use `providers` and `provider.*` calls;
-- enabled model pool uses `models/pool`;
-- global reply/vision defaults use `models/defaults`;
-- selected route is keyed by `models/route/<conversationId>`.
+## Direct-run timeline and attachment preview
 
-`SettingsSheet` loads provider and model data on mount, supports product locale selection, API-key credentials, OAuth polling/prompts, custom base URL, Pi-config import, model pool enable/disable, default reply selection, and vision mode (`auto` or an explicitly configured image-capable route). Store mutations invalidate/refetch the relevant query. The composer’s one-shot focus request lands on the vision selector after settings opens.
+### Run controls
 
-`NetworkAndMemorySettings` is mounted inside settings and persists proxy, vector-memory, and download-mirror settings through `settings.set`; its source notes that vector service/mirror changes require restart while proxy changes apply live. Relationship-memory and conversation-history-read switches in Backstage also use `settings.get/set`.
+For each Pi message entry, `WorkTimelineItem` filters runs by exact `triggerEntryId`. There is no renderer proposal, approval, rejection, or launch step. The conversational role starts an independent agent through its Host delegation tool; the renderer receives run events and `run.list` projections.
 
-## Message-scoped work timeline and ResultSpace
+`WorkRunCard` shows title and status and provides only controls valid for an existing run: steer while `running`/`needs_user`, interrupt active work, resume an interrupted run, cancel from a permission card, and answer executor permission options. Busy/error state is local to the card. Character packages may override completed/failed labels.
 
-### Timeline projection
+Completed external-agent files re-enter the conversation as ordinary generated attachment summaries on a native Pi timeline entry.
 
-For each visible user message, `ConversationPanel` renders `WorkTimelineItem(messageId, character)`. The component filters commissions by exact `triggerMessageId` and by active conversation (unless the commission has no conversation ID). Unrelated messages render no work line.
+### Attachment preview panel
 
-A draft/approved commission renders `WorkProposalCard`: approve (for drafts, with the draft hash) then launch with the fixed executor profile `pi-product-managed`, or reject. A run card filters artifacts by `producerRunId`, pending permissions by run ID, and exposes:
+`AttachmentPreviewProvider` owns one optional shell aside. A selection is `{ conversationId, attachment, relativePath?, entry? }`; switching or closing invalidates stale loads and clears the prior URL/state.
 
-- steering while running or waiting for user;
-- interrupt for enqueued/running/needs-user and resume for interrupted;
-- permission options or run cancellation;
-- completed artifact count, per-artifact download, and “view artifacts”;
-- failure status and collapsible artifact/tool detail.
+- A folder root performs a semantic read and renders the bounded entry list. Selecting a file carries its exact relative path.
+- Text-like files use semantic reads and render extracted content in a `<pre>` text node.
+- Image, audio, video, and PDF previews request `conversationAttachment.url({ operation: "preview" })`.
+- Unknown types show name, MIME, and byte metadata rather than executing content.
+- Download requests a separate `operation: "download"` URL and clicks a temporary anchor.
 
-All controls call `store.commission.*`, `store.run.*`, or `store.artifact.download`. Busy state is local to each card. Character packages may override timeline labels through `character.work_presentation.labels`.
+The store exposes semantic `attachments.read` and byte `attachments.readBytes` as separate helpers over the strict `conversationAttachment.read` union. Each asserts the response discriminator. The current preview panel uses semantic reads or desktop preview/download capabilities; it does not construct URLs from paths or read the internal CAS.
 
-### Dual-column ResultSpace
+## Backstage, settings, memory, and role management
 
-`ResultSpaceProvider` stores an entry per conversation and a last-viewed artifact ID per run. A result selection requires conversation, trigger message, commission, run, and artifact IDs. Opening a result uses the run’s last-viewed artifact when available; closing restores focus to the opener. Escape closes the active conversation’s result view. Selecting an artifact updates the active selection and remembers the tab for the run.
+`Backstage` is a controlled Kobalte `Dialog` styled as a right-side sheet. Standalone system settings render `SettingsSheet`; character settings expose only role management and memory tabs.
 
-The `ResultSpace` column derives its artifact list from the selected run, its title from the selected commission, and its source summary from the trigger message. It uses Kobalte `Tabs` for one artifact per tab. The `ArtifactPreview` MIME router supports text, Markdown, image, audio, video, and a metadata/download page for other types:
-
-- text/Markdown bytes are read through `artifact.read`, UTF-8 decoded, and rendered in `<pre>` text nodes (not injected as HTML);
-- media first requests a Host-issued safe URL via `artifact.url`; if empty, it reads host bytes and creates a temporary Blob URL;
-- object URLs are revoked on cleanup;
-- renderer URLs are never built from arbitrary filesystem paths;
-- media has controls and generated caption tracks; unknown file types expose name, MIME, size, SHA-256, status, and download.
-
-The result column is a per-conversation layout state rather than a global modal. `data-result-open` makes the main shell yield width to a 320px/36vw (or 300px/34vw at narrower desktop width) right column. `locate()` bridges back to the source timeline without closing the result view.
-
-## Backstage, settings, memory, story, and canon
-
-`Backstage` is a controlled Kobalte `Dialog` styled as a right-side sheet because Kobalte has no Sheet primitive. It provides overlay, modal semantics, focus trapping, Escape close, labelled title, and internal `Tabs`. Runtime controls open state and initial destination (`roles` or standalone `settings`); Backstage synchronizes its internal selected tab when the initial tab changes.
-
-Character-side tabs are:
-
-- **Relationship archive:** package identity, relationship-memory and history-read switches, relationship-scoped memory list, and roleplay status/collections.
-- **Role management:** directory/file import to `characters.import`, role listing, activation, and plugin trust review/confirmation before imported behavior is enabled.
-- **Memory:** direct scoped records and pending candidates.
-- **Story archive:** global or branch-only story changes, revert, and reset; story proposals are also surfaced in the main stage for accept/dismiss.
-- **Package workshop / Canon Studio:** character draft authoring and canon source/module management.
-
-Memory lists call `memory.list` for an empty query and `memory.search` for a non-empty query, cap UI search input at 512 characters, and guard against stale responses with a request sequence. Edit, forget, and exclude route through store memory methods. Exclude is locally optimistic because the list response does not echo the excluded flag; failures leave the toggle unchanged and show an alert. Pending candidates can be edited/approved with a scope or rejected; store mutations refetch candidates and entries.
-
-Canon Studio loads sources/modules on mount. It adds/removes named sources, searches source chunks, and upserts/deletes typed modules (`root`, `arc`, `event`, `entity`, `relationship`, `location`, `object`, `behavior`) with optional parent and selected source chunks. The store refreshes the corresponding list after every mutation.
-
-Character package authoring is not implemented in the renderer yet: [`CharacterPackageWorkshop.tsx`](../../packages/companion-ui/src/features/CharacterPackageWorkshop.tsx) presents a disabled-editor notice and links to the external authoring guide. The store does expose a revision-aware draft API (`draftCreate/Get/Patch`, asset upload, revision list/restore, validate, publish) for callers that implement authoring. Draft publish and character activation clear active conversation projection, resync onboarding, refresh characters/conversations, and refetch the snapshot. Canon and package UI therefore remain Host-backed rather than maintaining independent durable copies.
+Role management imports package directories, lists/activates roles, reviews plugin trust, and mounts `CurrentRolePackageManager` for the active package document, character-scoped settings, and memory-candidate actions. Memory supports scoped search/list/edit/forget/exclude plus pending candidate approval/rejection. These surfaces call Host-backed store APIs and keep action feedback local.
 
 ## Character scene, presence, and roleplay media
 
@@ -198,38 +134,28 @@ Audio/video use autoplay plus controls, loop metadata, URLs and optional caption
 
 ## Accessibility, i18n, and visual conventions
 
-Kobalte primitives are used for Button, Dialog, Tabs, Select, TextField, FileField, Checkbox, Collapsible, and Link. This supplies keyboard interaction and accessible relationships for the complex controls. The code additionally uses:
+Kobalte primitives provide keyboard and ARIA behavior for buttons, dialogs, tabs, selectors, text fields, file fields, checkboxes, and collapsibles. The shell uses `role="application"`; the thread is live; upload, run, setup, and preview failures use local alerts; native Pi tool/run/attachment rows expose stable data attributes for focus and testing.
 
-- `aria-label`/`aria-labelledby` on shell, thread, dialogs, media, fields, and result tabs;
-- `aria-live` for conversation, streaming and story-confirmation updates;
-- `role="alert"` for operation/setup failures and `role="status"` for successful/ongoing feedback;
-- `aria-current` for the active conversation, `aria-expanded` for message menus, `aria-pressed` for correction scopes/exclude controls, and visible focus return when closing ResultSpace;
-- the Sidebar `⌘/Ctrl+K` search shortcut is available in the `role="application"` shell and ordinary desktop shell, but ignores editable controls, forms, selects, dialogs, and contenteditable regions; Escape remains owned by the active dialog/result primitive;
-- reduced-motion handling for global CSS animations and animation media.
+The attachment preview is a labelled `aside`; its folder entries are buttons, media receives a localized accessible label, PDF uses a labelled object fallback, and closing removes the panel selection. Arbitrary user audio/video has no fabricated caption content.
 
-All user-facing strings in the reviewed components come from `@bear-harness/i18n` via `useTranslation`/`i18n`; role package copy is rendered from validated character data. Product locale selection uses `setProductLocale`, persists to local storage in the i18n package, and updates the document language. Runtime compares the character language with the browser’s preferred language and shows a dismissible, non-blocking warning.
-
-`styles.css` imports Tailwind v4 and defines semantic surface, panel, control, message, action, status, text, line, focus, shadow, and typography tokens. The character theme overrides the base `surface`, `surface_alt`, `text`, `text_muted`, `accent`, `line`, `danger`, `amber`, radii, and fonts through CSS custom properties on `.app`; derived semantic roles therefore inherit character ownership rather than introducing a second palette. Shared command/primary/select styles use these variables, and `:focus-visible` outlines are defined for buttons and textareas. `SUPPORTED_DESKTOP_MIN_WIDTH` is exported from `src/App.tsx` and the package entry as the supported 800px desktop minimum. Windows from 800–1049px compact the shell and resize the result column; below 800px the result column moves beneath the stage and the sidebar compacts further. Thread and composer tracks stay shrinkable and the document never uses a hard width clip. CSS also owns scene/presence animation, thin scrollbars, result-column sizing, work states, and reduced-motion suppression.
+All user-facing strings use `@bear-harness/i18n` or validated character-package copy. Character themes override semantic CSS variables. `SUPPORTED_DESKTOP_MIN_WIDTH` is 800 CSS pixels; narrower supported desktop layouts compact the shell while the attachment preview remains a shell column.
 
 ## Error and security boundaries
 
-- `invoke` unwraps the IPC envelope and converts failed calls/bridge exceptions to renderer errors while preserving the transport-versus-domain distinction.
-- `stores/ipc.ts` narrow guards reject malformed Host payloads; the store does not project rejected data.
-- Snapshot failure, projection failure, and event-stream failure are retained as global thread errors and retried/resynced; sequence gaps discard the optimistic event projection.
-- Action failures retain `store.errorMetadata` (operation, source, protocol kind, and safe message) but are rendered by the initiating component only. `Sidebar` and settings sheets own their local `role="alert"`; action failures are never copied into the global thread alert.
-- Credentials are entered in password fields with autocomplete disabled and are passed only to provider APIs; UI displays a stored/session-only placeholder instead of the key.
-- Artifact previews use Host-issued safe URLs or Host-returned bytes, never arbitrary renderer paths or constructed file URLs. Downloads create a short-lived Blob URL and revoke it.
-- Character and package assets are Host-provided URLs/data; the renderer does not read package files directly. Imported package bytes are explicitly encoded and sent through `characters.import`.
-- Media and text are rendered as DOM content; artifact Markdown is not HTML-rendered.
+- `invoke` unwraps validated envelopes while preserving domain versus transport failures; cross-client payload guards reject malformed projections.
+- Snapshot/event gaps recover from authoritative Host state. Initiating components own operation alerts; only unrecoverable projection/stream failures populate the thread error.
+- Renderer code sends attachment IDs, relative paths within an attachment, upload chunks, or strict read parameters—never arbitrary native source paths through ordinary RPC.
+- Native picker/drop paths cross only the trusted Electron preload/main bridge and are snapshotted before summaries return to the renderer.
+- Text is rendered as DOM text. Media/PDF and downloads use Host-minted operation-scoped capabilities—`bear-attachment` on desktop and a relative bearer route in WebDev—not `file:` URLs or internal CAS identifiers.
+- Semantic and byte reads remain distinct all the way through the store; callers cannot accidentally reinterpret extracted text as exact bytes.
 
-## Known issues / findings
+## Current findings
 
-These are current implementation findings, not proposed behavior:
-
-1. **Source summary does not use the same version-adoption rule as message display.** `MessageItem` uses `adoptedVersion`, but `ResultSpace` derives its trigger-message summary from `message.versions.at(-1)`. If a user adopts an older version, the result header can describe a different version than the visible message. See [`ConversationPanel.tsx`](../../packages/companion-ui/src/ConversationPanel.tsx) and [`features/ResultSpace.tsx`](../../packages/companion-ui/src/features/ResultSpace.tsx).
-2. **Ambient roleplay audio is presentation-state-only.** Dismissing ambient media clears the renderer’s active ID; there is no corresponding Host stop RPC in the store. Re-rendering from a later snapshot/event can present the same ambient item again if the Host continues to report it.
-3. **The optional ResultSpace helper masks all context errors.** `WorkPanel` catches any error from `useResultSpace`, not only the expected missing-provider error. This helps isolated rendering but can hide an unrelated provider/runtime defect from maintainers.
-4. **Some media caption fallbacks are synthetic or empty.** Artifact audio/video generates a full-duration VTT track whose text is the logical filename. Roleplay audio/video passes `captionsUrl ?? ""` in the conversation renderer, while archive media passes the possibly undefined URL directly. This is accessible markup, but it is not equivalent to real captions and may produce a request for an empty track URL.
+1. **The active thread is native Pi state.** `conversation.activeGet` and `pi.session.changed` own durable timeline refresh; the renderer does not maintain a parallel message-version model.
+2. **All visible files are attachments.** User file/folder snapshots and generated run outputs share the timeline row and preview panel.
+3. **Desktop path access is privileged.** The optional preload bridge improves native picker/drop behavior; browser builds fall back to chunked uploads without exposing filesystem paths.
+4. **Preview capabilities are operation-specific.** Preview and download request separate URLs; unsupported preview MIME types fail rather than being rendered under a permissive fallback.
+5. **Run UI controls existing work only.** Delegation happens through the role's Host tool, so the renderer has no launch or approval state to race with the run FSM.
 
 ## Verification commands
 
@@ -244,4 +170,4 @@ npm --prefix packages/companion-ui run test:coverage
 
 `build` and `typecheck` both run TypeScript with `--noEmit`. The unit/coverage scripts first build the local `product-config`, `i18n`, `protocol`, and `companion-client` packages, then run Vitest. [`vitest.config.ts`](../../packages/companion-ui/vitest.config.ts) uses jsdom, `vite-plugin-solid`, `tests/setup.ts`, and `tests/**/*.spec.{ts,tsx}`; coverage is V8 under `coverage/ui` with 80% statement/function/line and 70% branch thresholds (excluding declaration files and `NetworkAndMemorySettings.tsx`).
 
-The test suite covers the main contracts described above, including boot/idle shell and accessibility landmarks, onboarding authority/order and first-meeting setup, composer model/image routing and abort, message projection/operations, store/client RPC contracts, event/IPC validation, memory actions/candidates, model/provider settings, network/vector settings, Backstage role/story/memory journeys, work-run controls, ResultSpace/artifact preview, roleplay presentation, locale-switch store stability, and renderer diagnostics. Focused files are listed under [`packages/companion-ui/tests`](../../packages/companion-ui/tests).
+Focused tests under [`packages/companion-ui/tests`](../../packages/companion-ui/tests) cover the native Pi timeline/live projection, attachment composer uploads and ID-only send, attachment preview, store/client/event guards, run controls, onboarding, memory, model/provider settings, role management, roleplay, locale stability, accessibility, and renderer diagnostics.

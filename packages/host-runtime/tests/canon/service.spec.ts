@@ -77,7 +77,7 @@ describe("CanonHubService user workflow", () => {
 						/lunar|moon/i.test(text) ? [1, 0] : /harbor|sea/i.test(text) ? [0, 1] : [0, 0],
 					),
 			}),
-			database.connection,
+			database,
 		);
 		vectorService.addSource(
 			"character-a",
@@ -115,7 +115,7 @@ describe("CanonHubService user workflow", () => {
 				getDimensions: () => 3,
 				embed: async () => new Float32Array([1, 0, 0]),
 			}),
-			database.connection,
+			database,
 		);
 		await reconfiguredService.indexPending("character-a");
 		expect(

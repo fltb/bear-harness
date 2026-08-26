@@ -27,6 +27,7 @@ import type { EventBus } from "../storage/event-bus.js";
 import { executorProfiles, runManifests } from "../storage/schema.js";
 import type { AcpProcessSpec } from "./acp-client.js";
 import { AcpExecutorController } from "./acp-executor.js";
+import { externalAgentEnvironment, workspaceFor } from "./environment.js";
 import type { ExecutorLaunchRequest } from "./router.js";
 
 /** The only user-consented Codex CLI version the harness will run (pinned). */
@@ -69,11 +70,9 @@ export interface CodexRunManifest {
 	executor: "codex";
 	profileId: string;
 	runId: string;
-	commissionId: string;
+	triggerEntryId: string;
 	version: string;
 	sha256: string;
-	canonicalPath: string;
-	codexHome: string;
 	launchedAt: string;
 }
 
@@ -304,7 +303,7 @@ export class CodexAdapter extends AcpExecutorController {
 	/**
 	 * Re-verify the user-consented Codex binary, record a secret-free manifest,
 	 * then start its maintained ACP adapter. Completion and evidence are
-	 * delivered to CommissionService through AcpExecutorController.
+	 * delivered through the shared external-agent controller.
 	 */
 	override async launch(request: ExecutorLaunchRequest): Promise<void> {
 		const capability = codexCapability(request.profile.capabilities);
@@ -322,11 +321,9 @@ export class CodexAdapter extends AcpExecutorController {
 			executor: "codex",
 			profileId: request.profile.id,
 			runId: request.run.runId,
-			commissionId: request.commission.id,
+			triggerEntryId: request.run.triggerEntryId,
 			version: capability.version,
 			sha256: capability.sha256,
-			canonicalPath: capability.canonicalPath,
-			codexHome: capability.codexHome,
 			launchedAt: new Date().toISOString(),
 		};
 		this.db
@@ -343,16 +340,13 @@ export class CodexAdapter extends AcpExecutorController {
 			command: process.execPath,
 			args: [this.adapterPath],
 			cwd: workspaceFor(request),
-			env: {
-				PATH: process.env.PATH,
-				HOME: process.env.HOME,
-				LANG: process.env.LANG,
-				LC_ALL: process.env.LC_ALL,
+			env: externalAgentEnvironment({
 				ELECTRON_RUN_AS_NODE: "1",
 				NO_BROWSER: "1",
+				BEAR_OUTPUT_DIR: request.task.outputDirectory,
 				CODEX_PATH: capability.canonicalPath,
 				CODEX_HOME: capability.codexHome,
-			},
+			}),
 		};
 	}
 
@@ -411,15 +405,4 @@ function codexCapability(value: Record<string, unknown>): CodexProfileCapability
 		codexHome: value.codexHome,
 		consentedAt: value.consentedAt,
 	};
-}
-
-function workspaceFor(request: ExecutorLaunchRequest): string {
-	const root = request.commission.reads[0] ?? request.commission.writes[0];
-	if (!root) fail("validation_failed", "executor_workspace_not_declared");
-	const absolute = resolve(root);
-	try {
-		return statSync(absolute).isDirectory() ? absolute : dirname(absolute);
-	} catch {
-		fail("validation_failed", "executor_workspace_not_found");
-	}
 }

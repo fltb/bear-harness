@@ -2,13 +2,13 @@
 
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import type { PiSessionMessage } from "../src/companion/pi-session-store.js";
-import { PiSessionStore } from "../src/companion/pi-session-store.js";
 import { CharacterBehaviorService } from "../src/companion/character-behavior.js";
 import { CharacterLoader } from "../src/companion/character-loader.js";
+import type { PiSessionMessage } from "../src/companion/pi-session-store.js";
+import { PiSessionStore } from "../src/companion/pi-session-store.js";
 import { RoleplayService } from "../src/companion/roleplay-service.js";
 import { Database, MIGRATIONS } from "../src/storage/database.js";
 import { EventBus } from "../src/storage/event-bus.js";
@@ -30,7 +30,9 @@ interface BehaviorFixture {
 	publishChanged: () => void;
 }
 
-function createFixture(loader: CharacterLoader = new CharacterLoader(characterRoot)): BehaviorFixture {
+function createFixture(
+	loader: CharacterLoader = new CharacterLoader(characterRoot),
+): BehaviorFixture {
 	const root = mkdtempSync(join(tmpdir(), "bear-character-behavior-"));
 	const database = new Database(join(root, "db"));
 	database.migrate(MIGRATIONS);
@@ -220,7 +222,6 @@ describe("CharacterBehaviorService", () => {
 		const manifestPath = join(packageDir, "character.yaml");
 		const manifest = readFileSync(manifestPath, "utf8");
 		writeFileSync(
-
 			manifestPath,
 			manifest.replace(
 				"      visual_state: attentive",
@@ -478,7 +479,9 @@ describe("CharacterBehaviorService", () => {
 				args: { eventId: "continuity_opened" },
 			}),
 		).toMatchObject({ ok: true });
-		expect(fixture.db.connection.prepare("SELECT COUNT(*) count FROM roleplay_events").get()).toEqual({
+		expect(
+			fixture.db.connection.prepare("SELECT COUNT(*) count FROM roleplay_events").get(),
+		).toEqual({
 			count: 0,
 		});
 
@@ -487,7 +490,9 @@ describe("CharacterBehaviorService", () => {
 		fixture.publishChanged();
 		fixture.appendAssistant("", "error");
 		fixture.publishChanged();
-		expect(fixture.db.connection.prepare("SELECT COUNT(*) count FROM roleplay_events").get()).toEqual({
+		expect(
+			fixture.db.connection.prepare("SELECT COUNT(*) count FROM roleplay_events").get(),
+		).toEqual({
 			count: 0,
 		});
 
@@ -508,7 +513,9 @@ describe("CharacterBehaviorService", () => {
 			source_native_entry_id: assistantId,
 			event_id: "continuity_opened",
 		});
-		expect(fixture.db.connection.prepare("SELECT COUNT(*) count FROM roleplay_unlocks").get()).toEqual({
+		expect(
+			fixture.db.connection.prepare("SELECT COUNT(*) count FROM roleplay_unlocks").get(),
+		).toEqual({
 			count: 0,
 		});
 	});
@@ -640,7 +647,9 @@ describe("CharacterBehaviorService", () => {
 			args: { command: "echo no" },
 		});
 		expect(result).toMatchObject({ ok: false, code: "host_tool_not_allowed" });
-		expect(fixture.db.connection.prepare("SELECT COUNT(*) AS count FROM scene_state").get()).toEqual({
+		expect(
+			fixture.db.connection.prepare("SELECT COUNT(*) AS count FROM scene_state").get(),
+		).toEqual({
 			count: 0,
 		});
 	});
@@ -663,4 +672,3 @@ describe("CharacterBehaviorService", () => {
 		).toThrow();
 	});
 });
-

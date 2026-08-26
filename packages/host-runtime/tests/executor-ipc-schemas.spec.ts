@@ -10,36 +10,27 @@ function schema(channel: string) {
 }
 
 describe("executor control IPC schemas", () => {
-	it("accepts the approval-to-launch path and rejects unrecognized fields", () => {
+	it("accepts strict external-agent setup and rejects unrecognized fields", () => {
+		expect(schema("externalAgent.discoverCodex:v1").safeParse({}).success).toBe(true);
+		expect(schema("externalAgent.status:v1").safeParse({}).success).toBe(true);
 		expect(
-			schema("commission.draft:v1").safeParse({
-				conversationId: "conversation-1",
-				triggerEntryId: "message-1",
-				title: "Inspect files",
-				description: "Read the selected directory.",
-				reads: ["/workspace"],
-				toolNames: ["read"],
+			schema("externalAgent.connectCodex:v1").safeParse({
+				canonicalPath: "/usr/local/bin/codex",
+				version: "0.147.0",
+				sha256: "a".repeat(64),
+				codexHome: "/home/user/.codex",
 			}).success,
 		).toBe(true);
 		expect(
-			schema("commission.approve:v1").safeParse({
-				commissionId: "commission-1",
-				approvedHash: "a".repeat(64),
-			}).success,
-		).toBe(true);
-		expect(
-			schema("commission.launch:v1").safeParse({
-				commissionId: "commission-1",
-				executorProfile: "pi-product-managed",
-			}).success,
-		).toBe(true);
-		expect(
-			schema("commission.launch:v1").safeParse({
-				commissionId: "commission-1",
-				executorProfile: "pi-product-managed",
-				bypassApproval: true,
+			schema("externalAgent.connectCodex:v1").safeParse({
+				canonicalPath: "/usr/local/bin/codex",
+				version: "0.147.0",
+				sha256: "a".repeat(64),
+				codexHome: "/home/user/.codex",
+				bypassConsent: true,
 			}).success,
 		).toBe(false);
+		expect(REQUEST_SCHEMAS["commission.launch:v1"]).toBeUndefined();
 	});
 
 	it("requires a concrete pending-permission request and option to resume a run", () => {

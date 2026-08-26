@@ -53,7 +53,7 @@ describe("AuditStore hash chain", () => {
 	it("appends records with a verified hash chain and 0o600 segments", async () => {
 		const dir = tempDir();
 		const store = makeStore(dir);
-		await store.append("commission", "drafted", '{"commissionId":"c1"}');
+		await store.append("permission", "requested", '{"runId":"r1"}');
 		await store.append("run", "started", '{"runId":"r1"}');
 		await store.append("memory", "state_changed", '{"conversationId":"v1"}');
 
@@ -96,8 +96,8 @@ describe("AuditStore hash chain", () => {
 	it("export verifies the chain; tampering any line breaks it", async () => {
 		const dir = tempDir();
 		const store = makeStore(dir);
-		await store.append("commission", "drafted", "a");
-		await store.append("commission", "approved", "b");
+		await store.append("run", "started", "a");
+		await store.append("permission", "granted", "b");
 		await store.append("run", "completed", "c");
 
 		const clean = await store.exportLines();
@@ -226,11 +226,6 @@ describe("wireAuditToEvents", () => {
 		const unsubscribe = wireAuditToEvents(store, eventBus);
 		expect(typeof unsubscribe).toBe("function");
 
-		listener!({ kind: "commission.drafted", payload: { commissionId: "c1" } });
-		listener!({
-			kind: "commission.status_changed",
-			payload: { commissionId: "c1", status: "queued" },
-		});
 		listener!({ kind: "run.started", payload: { runId: "r1" } });
 		listener!({ kind: "run.interrupted", payload: { runId: "r1" } });
 		listener!({
@@ -249,13 +244,11 @@ describe("wireAuditToEvents", () => {
 			["run", "collected"],
 			["run", "interrupted"],
 			["run", "started"],
-			["commission", "status_changed"],
-			["commission", "drafted"],
 		]);
 	});
 
 	it("auditKindForEvent covers the documented mapping", () => {
-		expect(auditKindForEvent("commission.approved")).toBe("commission");
+		expect(auditKindForEvent("commission.approved")).toBeNull();
 		expect(auditKindForEvent("run.completed")).toBe("run");
 		expect(auditKindForEvent("evidence.collected")).toBe("run");
 		expect(auditKindForEvent("roleplay.unlocks_reset")).toBe("memory");

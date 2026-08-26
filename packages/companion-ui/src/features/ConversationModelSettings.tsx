@@ -1,32 +1,22 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { createEffect, Show } from "solid-js";
-import { ModelSelector, modelRouteKey } from "./ModelSelector.js";
-import { requestImageReaderFocus, setRequestImageReaderFocus } from "../stores/conversation-workflows.js";
+import { Show } from "solid-js";
 import { useCompanionStore } from "../stores/companion.js";
 import { createConversationModelSettingsWorkflow } from "../stores/setup-workflows.js";
+import { ModelSelector, modelRouteKey } from "./ModelSelector.js";
 
 /** Conversation-scoped reply and image-reader model controls. */
 export function ConversationModelSettings() {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const workflow = createConversationModelSettingsWorkflow(store, t);
-	let visionTriggerRef: HTMLButtonElement | undefined;
-
-	createEffect(() => {
-		if (requestImageReaderFocus()) {
-			setRequestImageReaderFocus(false);
-			const trigger = visionTriggerRef;
-			if (trigger) window.setTimeout(() => trigger.focus(), 0);
-		}
-	});
 
 	const currentModel = () => {
 		const id = workflow.selectedCurrentReplyOption();
-		return id ? workflow.modelByOptionId(id) ?? null : null;
+		return id ? (workflow.modelByOptionId(id) ?? null) : null;
 	};
 	const visionModel = () => {
 		const id = workflow.selectedVisionOption();
-		return id === "reply" ? null : workflow.modelByOptionId(id) ?? null;
+		return id === "reply" ? null : (workflow.modelByOptionId(id) ?? null);
 	};
 
 	return (
@@ -67,7 +57,6 @@ export function ConversationModelSettings() {
 				<p class="field-hint">{t("settings.noActiveConversationModel")}</p>
 			</Show>
 
-
 			<ModelSelector
 				models={workflow.configured().filter((model) => model.supportsImages)}
 				value={visionModel()}
@@ -75,7 +64,6 @@ export function ConversationModelSettings() {
 				label={t("settings.visionModel")}
 				autoLabel={t("settings.visionModelAuto")}
 				includeAuto
-				triggerRef={(element) => (visionTriggerRef = element)}
 				disabled={workflow.saving()}
 				onModelChange={(model) => {
 					const id = model ? modelRouteKey(model) : "reply";

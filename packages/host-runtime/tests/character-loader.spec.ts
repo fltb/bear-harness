@@ -140,7 +140,7 @@ describe("character package display validation", () => {
 			manifestPath,
 			manifest
 				.replace("id: jizhou", "id: default-theme-role")
-				.replace(/^theme:\n(?:  .*\n)+\n/m, ""),
+				.replace(/^theme:\n(?: {2}.*\n)+\n/m, ""),
 		);
 
 		const character = new CharacterLoader(characterRoot, installedRoot).load("default-theme-role");

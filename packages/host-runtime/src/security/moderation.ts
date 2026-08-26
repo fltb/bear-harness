@@ -48,17 +48,15 @@ export interface ModerationResult {
 }
 
 /** Minimal fetch surface used for the remote moderation call (injectable). */
-export interface ModerationFetch {
-	(
-		url: string,
-		init: {
-			method: string;
-			headers: Record<string, string>;
-			body: string;
-			signal: AbortSignal;
-		},
-	): Promise<{ ok: boolean; json(): Promise<unknown> }>;
-}
+export type ModerationFetch = (
+	url: string,
+	init: {
+		method: string;
+		headers: Record<string, string>;
+		body: string;
+		signal: AbortSignal;
+	},
+) => Promise<{ ok: boolean; json(): Promise<unknown> }>;
 
 export interface ModerationOptions {
 	/** Optional remote moderation endpoint (full URL). POSTed `{ text, scene }`. */

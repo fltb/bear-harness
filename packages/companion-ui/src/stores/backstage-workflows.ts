@@ -1,14 +1,14 @@
-import { createEffect, createMemo, createSignal, type Accessor } from "solid-js";
+import { type Accessor, createEffect, createMemo, createSignal } from "solid-js";
 import type {
 	CanonChunk,
 	CanonModuleKind,
 	CharacterDisplay,
 	CharacterSummary,
+	CompanionStore,
 	MemoryCandidate,
 	MemoryEntry,
 	MemoryScope,
 } from "./companion.js";
-import type { CompanionStore } from "./companion.js";
 
 export type BackstageTab = "roles" | "memory";
 interface PluginTrust {
@@ -134,7 +134,9 @@ export interface CanonWorkflowSelectors {
 export interface RoleplaySelectors {
 	visibleVariables: Accessor<CharacterDisplay["roleplay"]["variables"]>;
 	collections: Accessor<CharacterDisplay["roleplay"]["unlockables"]>;
-	mediaFor(id: string | undefined): Accessor<CharacterDisplay["roleplay"]["media"][number] | undefined>;
+	mediaFor(
+		id: string | undefined,
+	): Accessor<CharacterDisplay["roleplay"]["media"][number] | undefined>;
 	displayValue(variable: CharacterDisplay["roleplay"]["variables"][number]): Accessor<string>;
 }
 
@@ -153,7 +155,10 @@ export interface BackstageWorkflowStore {
 	setConfirmingPlugins(id: string, value: boolean): void;
 	enablePlugins(id: string): void;
 	activateRole(id: string): void;
-	canon(noParentTitle: Accessor<string>, kindLabel: (kind: CanonModuleKind) => string): CanonWorkflowSelectors;
+	canon(
+		noParentTitle: Accessor<string>,
+		kindLabel: (kind: CanonModuleKind) => string,
+	): CanonWorkflowSelectors;
 	relationshipEnabled: Accessor<boolean>;
 	historyReadEnabled: Accessor<boolean>;
 	settingsAvailable: Accessor<boolean>;
@@ -167,12 +172,19 @@ export interface BackstageWorkflowStore {
 	memoryQueryText: Accessor<string>;
 	memoryQuery: Accessor<string>;
 	memoryRefreshKey: Accessor<number>;
-	memoryScopeTabs(label: (scope: MemoryScope) => string): Accessor<Array<{ value: MemoryScope; label: string }>>;
+	memoryScopeTabs(
+		label: (scope: MemoryScope) => string,
+	): Accessor<Array<{ value: MemoryScope; label: string }>>;
 	setMemoryQueryText(value: string): void;
 	submitMemorySearch(): void;
 	clearMemorySearch(): void;
 	changeMemoryScope(value: string): void;
-	memoryEntryList(scope: Accessor<MemoryScope>, query: Accessor<string>, refresh: Accessor<number>, characterId?: Accessor<string | undefined>): MemoryEntryListSelectors;
+	memoryEntryList(
+		scope: Accessor<MemoryScope>,
+		query: Accessor<string>,
+		refresh: Accessor<number>,
+		characterId?: Accessor<string | undefined>,
+	): MemoryEntryListSelectors;
 	memoryCandidates: Accessor<MemoryCandidate[]>;
 	memoryCandidatesLoading: Accessor<boolean>;
 	memoryCandidatesError: Accessor<string | null>;
@@ -213,7 +225,8 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		}
 	};
 	const [selectedPackageId, setSelectedPackageId] = createSignal<string>();
-	const [selectedPackage, setSelectedPackage] = createSignal<import("./ipc.js").CharacterPackageDocument>();
+	const [selectedPackage, setSelectedPackage] =
+		createSignal<import("./ipc.js").CharacterPackageDocument>();
 	const [selectedPackageLoading, setSelectedPackageLoading] = createSignal(false);
 	const [selectedPackageError, setSelectedPackageError] = createSignal<string>();
 	let packageRequest = 0;
@@ -234,7 +247,8 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 	};
 	createEffect(() => {
 		const values = companion.characters?.characters?.() ?? [];
-		if (!selectedPackageId() && values[0]) void loadPackage(values.find((value) => value.active)?.id ?? values[0].id);
+		if (!selectedPackageId() && values[0])
+			void loadPackage(values.find((value) => value.active)?.id ?? values[0].id);
 	});
 
 	const [relationshipSaving, setRelationshipSaving] = createSignal(false);
@@ -253,7 +267,9 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		return data;
 	});
 	const relationshipEnabled = createMemo(() => settingsData()?.relationshipMemoryEnabled ?? false);
-	const historyReadEnabled = createMemo(() => settingsData()?.conversationHistoryReadEnabled ?? false);
+	const historyReadEnabled = createMemo(
+		() => settingsData()?.conversationHistoryReadEnabled ?? false,
+	);
 	const settingsAvailable = createMemo(() => settingsData() !== undefined);
 
 	const [canonSourceName, setCanonSourceName] = createSignal("");
@@ -280,7 +296,10 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		if (requests.length > 0) void Promise.all(requests).catch(() => undefined);
 	};
 	const canonSelectors = new Map<string, CanonWorkflowSelectors>();
-	const createCanonSelectors = (noParentTitle: Accessor<string>, kindLabel: (kind: CanonModuleKind) => string): CanonWorkflowSelectors => {
+	const createCanonSelectors = (
+		noParentTitle: Accessor<string>,
+		kindLabel: (kind: CanonModuleKind) => string,
+	): CanonWorkflowSelectors => {
 		ensureCanonLoaded();
 		const existingSelectors = canonSelectors.get(noParentTitle.toString());
 		if (existingSelectors) return existingSelectors;
@@ -296,7 +315,9 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 				origin: "user" as const,
 				triggers: [],
 			},
-			...(companion.canon?.modules?.() ?? []).filter((module) => module.id !== canonEditingModuleId()),
+			...(companion.canon?.modules?.() ?? []).filter(
+				(module) => module.id !== canonEditingModuleId(),
+			),
 		]);
 		const selectors: CanonWorkflowSelectors = {
 			moduleKinds,
@@ -351,36 +372,52 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 						if (seq === canonSearchSeq) setCanonResults(result);
 					});
 			},
-			toggleChunk: (chunkId, checked) => setCanonSelectedChunks((current) =>
-				checked ? (current.includes(chunkId) ? current : [...current, chunkId]) : current.filter((id) => id !== chunkId),
-			),
+			toggleChunk: (chunkId, checked) =>
+				setCanonSelectedChunks((current) =>
+					checked
+						? current.includes(chunkId)
+							? current
+							: [...current, chunkId]
+						: current.filter((id) => id !== chunkId),
+				),
 			saveModule: () => {
 				const title = canonModuleTitle().trim();
 				const api = companion.canon;
 				if (!title || !api?.upsertModule) return;
 				setCanonBusy(true);
 				void Promise.resolve()
-					.then(() => api.upsertModule({
-						...(canonEditingModuleId() ? { id: canonEditingModuleId() } : {}),
-						...(canonModuleParentId() ? { parentId: canonModuleParentId() } : {}),
-						kind: canonModuleKind(), title, instructions: canonModuleInstructions().trim(),
-						sourceChunkIds: canonSelectedChunks(),
-					}))
+					.then(() =>
+						api.upsertModule({
+							...(canonEditingModuleId() ? { id: canonEditingModuleId() } : {}),
+							...(canonModuleParentId() ? { parentId: canonModuleParentId() } : {}),
+							kind: canonModuleKind(),
+							title,
+							instructions: canonModuleInstructions().trim(),
+							sourceChunkIds: canonSelectedChunks(),
+						}),
+					)
 					.then(() => selectors.clearModuleForm())
 					.finally(() => setCanonBusy(false));
 			},
 			editModule: (module) => {
-				setCanonEditingModuleId(module.id); setCanonModuleParentId(module.parentId ?? "");
-				setCanonModuleKind(module.kind); setCanonModuleTitle(module.title);
-				setCanonModuleInstructions(module.instructions); setCanonSelectedChunks(module.sourceChunkIds);
+				setCanonEditingModuleId(module.id);
+				setCanonModuleParentId(module.parentId ?? "");
+				setCanonModuleKind(module.kind);
+				setCanonModuleTitle(module.title);
+				setCanonModuleInstructions(module.instructions);
+				setCanonSelectedChunks(module.sourceChunkIds);
 			},
 			deleteModule: (moduleId) => {
 				const api = companion.canon;
 				if (api?.deleteModule) void Promise.resolve().then(() => api.deleteModule(moduleId));
 			},
 			clearModuleForm: () => {
-				setCanonModuleTitle(""); setCanonModuleInstructions(""); setCanonModuleKind("arc");
-				setCanonModuleParentId(""); setCanonEditingModuleId(undefined); setCanonSelectedChunks([]);
+				setCanonModuleTitle("");
+				setCanonModuleInstructions("");
+				setCanonModuleKind("arc");
+				setCanonModuleParentId("");
+				setCanonEditingModuleId(undefined);
+				setCanonSelectedChunks([]);
 			},
 		};
 		canonSelectors.set(noParentTitle.toString(), selectors);
@@ -396,27 +433,43 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		const key = label.toString();
 		const existingSelector = memoryScopeTabs.get(key);
 		if (existingSelector) return existingSelector;
-		const selector = createMemo(() => MEMORY_SCOPES.map((value) => ({ value, label: label(value) })));
+		const selector = createMemo(() =>
+			MEMORY_SCOPES.map((value) => ({ value, label: label(value) })),
+		);
 		memoryScopeTabs.set(key, selector);
 		return selector;
 	};
 	const changeMemoryScope = (value: string): void => {
 		const next = MEMORY_SCOPES.find((candidate) => candidate === value);
 		if (!next) return;
-		setMemoryScope(next); setMemoryQueryText(""); setMemoryQuery(""); setMemoryRefreshKey((key) => key + 1);
+		setMemoryScope(next);
+		setMemoryQueryText("");
+		setMemoryQuery("");
+		setMemoryRefreshKey((key) => key + 1);
 	};
 	const submitMemorySearch = (): void => {
 		setMemoryQuery(memoryQueryText().trim().slice(0, CLIENT_QUERY_LIMIT));
 	};
-	const clearMemorySearch = (): void => { setMemoryQueryText(""); setMemoryQuery(""); };
+	const clearMemorySearch = (): void => {
+		setMemoryQueryText("");
+		setMemoryQuery("");
+	};
 
 	const [memoryLists, setMemoryLists] = createSignal<Record<string, MemoryListState>>({});
 	const memoryRequestSeq = new Map<string, number>();
-	const listKey = (scope: MemoryScope, query: string, characterId?: string): string => `${characterId ?? "active"}\u0000${scope}\u0000${query}`;
+	const listKey = (scope: MemoryScope, query: string, characterId?: string): string =>
+		`${characterId ?? "active"}\u0000${scope}\u0000${query}`;
 	const patchMemoryList = (key: string, patch: Partial<MemoryListState>): void => {
-		setMemoryLists((current) => ({ ...current, [key]: { ...(current[key] ?? EMPTY_MEMORY_LIST), ...patch } }));
+		setMemoryLists((current) => ({
+			...current,
+			[key]: { ...(current[key] ?? EMPTY_MEMORY_LIST), ...patch },
+		}));
 	};
-	const reloadMemoryList = async (scope: MemoryScope, query: string, characterId?: string): Promise<void> => {
+	const reloadMemoryList = async (
+		scope: MemoryScope,
+		query: string,
+		characterId?: string,
+	): Promise<void> => {
 		const key = listKey(scope, query, characterId);
 		const seq = (memoryRequestSeq.get(key) ?? 0) + 1;
 		memoryRequestSeq.set(key, seq);
@@ -427,13 +480,19 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 			return;
 		}
 		try {
-			const entries = query === ""
-				? await api.list({
-					scope,
-					...(characterId ?? companion.characters?.characters().find((character) => character.active)?.id
-						? { characterId: characterId ?? companion.characters?.characters().find((character) => character.active)?.id }
-						: {}),
-				})
+			const entries =
+				query === ""
+					? await api.list({
+							scope,
+							...((characterId ??
+							companion.characters?.characters().find((character) => character.active)?.id)
+								? {
+										characterId:
+											characterId ??
+											companion.characters?.characters().find((character) => character.active)?.id,
+									}
+								: {}),
+						})
 					: await api.search(query, scope, characterId);
 			if (memoryRequestSeq.get(key) !== seq) return;
 			patchMemoryList(key, { entries });
@@ -445,21 +504,34 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		}
 	};
 	const memoryListSelectors = new Map<string, MemoryEntryListSelectors>();
-	const memoryEntryList = (scope: Accessor<MemoryScope>, query: Accessor<string>, refresh: Accessor<number>, characterId?: Accessor<string | undefined>): MemoryEntryListSelectors => {
+	const memoryEntryList = (
+		scope: Accessor<MemoryScope>,
+		query: Accessor<string>,
+		refresh: Accessor<number>,
+		characterId?: Accessor<string | undefined>,
+	): MemoryEntryListSelectors => {
 		const identity = `${scope.toString()}|${query.toString()}|${refresh.toString()}|${characterId?.toString() ?? "active"}`;
 		const existingSelectors = memoryListSelectors.get(identity);
 		if (existingSelectors) return existingSelectors;
 		const currentKey = createMemo(() => listKey(scope(), query().trim(), characterId?.()));
 		const currentState = createMemo(() => memoryLists()[currentKey()] ?? EMPTY_MEMORY_LIST);
-		createEffect(() => { void refresh(); void reloadMemoryList(scope(), query().trim(), characterId?.()); });
+		createEffect(() => {
+			void refresh();
+			void reloadMemoryList(scope(), query().trim(), characterId?.());
+		});
 		const selectors: MemoryEntryListSelectors = {
-			entries: createMemo(() => currentState().entries), loading: createMemo(() => currentState().loading),
+			entries: createMemo(() => currentState().entries),
+			loading: createMemo(() => currentState().loading),
 			excluded: (entryId) => createMemo(() => currentState().excludedIds.has(entryId)),
-			error: createMemo(() => currentState().error), feedback: createMemo(() => currentState().feedback),
-			busyId: createMemo(() => currentState().busyId), editingEntryId: createMemo(() => currentState().editingEntryId),
-			editedEntryText: createMemo(() => currentState().editedEntryText), excludedIds: createMemo(() => currentState().excludedIds),
+			error: createMemo(() => currentState().error),
+			feedback: createMemo(() => currentState().feedback),
+			busyId: createMemo(() => currentState().busyId),
+			editingEntryId: createMemo(() => currentState().editingEntryId),
+			editedEntryText: createMemo(() => currentState().editedEntryText),
+			excludedIds: createMemo(() => currentState().excludedIds),
 			setEditedEntryText: (value) => patchMemoryList(currentKey(), { editedEntryText: value }),
-			startEditing: (entry) => patchMemoryList(currentKey(), { editingEntryId: entry.id, editedEntryText: entry.text }),
+			startEditing: (entry) =>
+				patchMemoryList(currentKey(), { editingEntryId: entry.id, editedEntryText: entry.text }),
 			cancelEditing: () => patchMemoryList(currentKey(), { editingEntryId: null }),
 			forget: (entry, success) => {
 				const api = companion.memory;
@@ -485,7 +557,8 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 					.then(() => api.exclude(entry.id, next, characterId?.()))
 					.then(() => {
 						const ids = new Set(currentState().excludedIds);
-						if (next) ids.add(entry.id); else ids.delete(entry.id);
+						if (next) ids.add(entry.id);
+						else ids.delete(entry.id);
 						patchMemoryList(key, { excludedIds: ids, feedback: next ? excluded : included });
 					})
 					.catch((error) => patchMemoryList(key, { error: messageOf(error) }))
@@ -512,7 +585,9 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 	const [candidateValues, setCandidateValues] = createSignal<Record<string, CandidateState>>({});
 	const [memoryCandidatesState, setMemoryCandidatesState] = createSignal<MemoryCandidate[]>([]);
 	const [memoryCandidatesLoadingState, setMemoryCandidatesLoadingState] = createSignal(false);
-	const [memoryCandidatesErrorState, setMemoryCandidatesErrorState] = createSignal<string | null>(null);
+	const [memoryCandidatesErrorState, setMemoryCandidatesErrorState] = createSignal<string | null>(
+		null,
+	);
 	let candidatesRequestSeq = 0;
 	let candidatesRequested = false;
 	const loadCandidates = async (): Promise<void> => {
@@ -555,21 +630,39 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		const id = candidate().id;
 		const existingSelector = candidateSelectors.get(id);
 		if (existingSelector) return existingSelector;
-		const state = createMemo(() => candidateValues()[id] ?? { editedText: candidate().normalizedText, decidedScope: candidate().suggestedScope, busy: false, error: null });
-		const ensureState = (): CandidateState => candidateValues()[id] ?? { editedText: candidate().normalizedText, decidedScope: candidate().suggestedScope, busy: false, error: null };
+		const state = createMemo(
+			() =>
+				candidateValues()[id] ?? {
+					editedText: candidate().normalizedText,
+					decidedScope: candidate().suggestedScope,
+					busy: false,
+					error: null,
+				},
+		);
+		const ensureState = (): CandidateState =>
+			candidateValues()[id] ?? {
+				editedText: candidate().normalizedText,
+				decidedScope: candidate().suggestedScope,
+				busy: false,
+				error: null,
+			};
 		const update = (patch: Partial<CandidateState>): void => {
 			setCandidateValues((current) => ({ ...current, [id]: { ...ensureState(), ...patch } }));
 		};
 		const selectors: MemoryCandidateSelectors = {
-			editedText: createMemo(() => state().editedText), decidedScope: createMemo(() => state().decidedScope),
-			busy: createMemo(() => state().busy), error: createMemo(() => state().error),
+			editedText: createMemo(() => state().editedText),
+			decidedScope: createMemo(() => state().decidedScope),
+			busy: createMemo(() => state().busy),
+			error: createMemo(() => state().error),
 			setEditedText: (value) => update({ editedText: value }),
 			setDecidedScope: (value) => update({ decidedScope: value }),
 			approve: () => {
 				const api = companion.memory;
 				if (!api?.approveCandidate) return;
-				const current = ensureState(); update({ busy: true, error: null });
-				const text = current.editedText.trim(); const edited = text && text !== candidate().normalizedText ? text : undefined;
+				const current = ensureState();
+				update({ busy: true, error: null });
+				const text = current.editedText.trim();
+				const edited = text && text !== candidate().normalizedText ? text : undefined;
 				void Promise.resolve()
 					.then(() => api.approveCandidate(id, edited, current.decidedScope))
 					.catch((error) => update({ error: messageOf(error) }))
@@ -590,43 +683,75 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 	};
 
 	const roleplay = (): RoleplaySelectors => {
-		const visibleVariables = createMemo(() => companion.character?.roleplay.variables.filter((variable) => variable.display.kind !== "hidden") ?? []);
+		const visibleVariables = createMemo(
+			() =>
+				companion.character?.roleplay.variables.filter(
+					(variable) => variable.display.kind !== "hidden",
+				) ?? [],
+		);
 		const unlocked = createMemo(() => new Set(companion.roleplay?.unlocked ?? []));
-		const collections = createMemo(() => companion.character?.roleplay.unlockables.filter((entry) => unlocked().has(entry.id)) ?? []);
-		const mediaById = createMemo(() => new Map((companion.character?.roleplay.media ?? []).map((media) => [media.id, media])));
-		const mediaSelectors = new Map<string | undefined, Accessor<CharacterDisplay["roleplay"]["media"][number] | undefined>>();
+		const collections = createMemo(
+			() =>
+				companion.character?.roleplay.unlockables.filter((entry) => unlocked().has(entry.id)) ?? [],
+		);
+		const mediaById = createMemo(
+			() => new Map((companion.character?.roleplay.media ?? []).map((media) => [media.id, media])),
+		);
+		const mediaSelectors = new Map<
+			string | undefined,
+			Accessor<CharacterDisplay["roleplay"]["media"][number] | undefined>
+		>();
 		const mediaFor = (id: string | undefined) => {
-			const existing = mediaSelectors.get(id); if (existing) return existing;
+			const existing = mediaSelectors.get(id);
+			if (existing) return existing;
 			const selector = createMemo(() => (id === undefined ? undefined : mediaById().get(id)));
-			mediaSelectors.set(id, selector); return selector;
+			mediaSelectors.set(id, selector);
+			return selector;
 		};
 		const displaySelectors = new Map<string, Accessor<string>>();
 		const displayValue = (variable: CharacterDisplay["roleplay"]["variables"][number]) => {
-			const existing = displaySelectors.get(variable.id); if (existing) return existing;
+			const existing = displaySelectors.get(variable.id);
+			if (existing) return existing;
 			const selector = createMemo(() => {
 				const value = companion.roleplay?.values[variable.id] ?? variable.initial;
 				if (variable.display.kind !== "level" || typeof value !== "number") return String(value);
-				return [...variable.display.levels].sort((left, right) => right.min - left.min).find((level) => value >= level.min)?.label ?? String(value);
+				return (
+					[...variable.display.levels]
+						.sort((left, right) => right.min - left.min)
+						.find((level) => value >= level.min)?.label ?? String(value)
+				);
 			});
-			displaySelectors.set(variable.id, selector); return selector;
+			displaySelectors.set(variable.id, selector);
+			return selector;
 		};
 		const selectors = { visibleVariables, collections, mediaFor, displayValue };
 		return selectors;
 	};
 
 	const store: BackstageWorkflowStore = {
-		selectedTab, setSelectedTab: (value) => { if (value === "roles" || value === "memory") setSelectedTabState(value); },
-		syncInitialTab: (value) => setSelectedTabState(value === "settings" ? "roles" : value ?? "roles"), roleBusyId, importing, roleFeedback,
+		selectedTab,
+		setSelectedTab: (value) => {
+			if (value === "roles" || value === "memory") setSelectedTabState(value);
+		},
+		syncInitialTab: (value) =>
+			setSelectedTabState(value === "settings" ? "roles" : (value ?? "roles")),
+		roleBusyId,
+		importing,
+		roleFeedback,
 		importPackage: (files, done, failed) => {
 			const api = companion.characters;
 			if (files.length === 0 || !api?.import) return;
-			setImporting(true); setRoleFeedback(undefined);
-			void Promise.all(files.map(async (file) => {
-				const bytes = new Uint8Array(await file.arrayBuffer());
-				let binary = "";
-				for (let offset = 0; offset < bytes.length; offset += 32_768) binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
-				return { path: file.webkitRelativePath || file.name, base64: btoa(binary) };
-			}))
+			setImporting(true);
+			setRoleFeedback(undefined);
+			void Promise.all(
+				files.map(async (file) => {
+					const bytes = new Uint8Array(await file.arrayBuffer());
+					let binary = "";
+					for (let offset = 0; offset < bytes.length; offset += 32_768)
+						binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
+					return { path: file.webkitRelativePath || file.name, base64: btoa(binary) };
+				}),
+			)
 				.then((payload) => api.import(payload))
 				.then(() => setRoleFeedback(done))
 				.catch((error) => setRoleFeedback(`${failed}${messageOf(error)}`))
@@ -640,7 +765,8 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		pluginTrust: (id) => createMemo(() => trustById()[id]),
 		pluginTrustLoading: (id) => createMemo(() => trustLoadingById()[id] ?? false),
 		confirmingPlugins: (id) => createMemo(() => confirmingById()[id] ?? false),
-		setConfirmingPlugins: (id, value) => setConfirmingById((current) => ({ ...current, [id]: value })),
+		setConfirmingPlugins: (id, value) =>
+			setConfirmingById((current) => ({ ...current, [id]: value })),
 		enablePlugins: (id) => {
 			const api = companion.characters;
 			if (!api?.confirmPluginTrust) return;
@@ -655,7 +781,9 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 			const api = companion.characters;
 			if (!api?.activate) return;
 			setRoleBusyId(id);
-			void Promise.resolve().then(() => api.activate(id)).finally(() => setRoleBusyId(undefined));
+			void Promise.resolve()
+				.then(() => api.activate(id))
+				.finally(() => setRoleBusyId(undefined));
 		},
 		selectedPackageId,
 		selectedPackage,
@@ -667,16 +795,27 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		savePackage: async (yaml) => {
 			const current = selectedPackage();
 			if (!current) throw new Error("character_package_not_loaded");
-			const next = await companion.characters.packageUpdate(current.characterId, yaml, current.sha256);
+			const next = await companion.characters.packageUpdate(
+				current.characterId,
+				yaml,
+				current.sha256,
+			);
 			setSelectedPackage(next);
 			return next;
 		},
 		canon: createCanonSelectors,
-		relationshipEnabled, historyReadEnabled, settingsAvailable, relationshipSaving, relationshipFeedback, relationshipError,
+		relationshipEnabled,
+		historyReadEnabled,
+		settingsAvailable,
+		relationshipSaving,
+		relationshipFeedback,
+		relationshipError,
 		toggleRelationshipMemory: (enabledLabel, disabledLabel, genericError) => {
 			const api = companion.settings;
 			if (!api?.set) return;
-			setRelationshipSaving(true); setRelationshipFeedback(undefined); setRelationshipError(undefined);
+			setRelationshipSaving(true);
+			setRelationshipFeedback(undefined);
+			setRelationshipError(undefined);
 			const next = !relationshipEnabled();
 			void Promise.resolve()
 				.then(() => api.set({ relationshipMemoryEnabled: next }))
@@ -687,14 +826,29 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		toggleHistoryRead: (genericError) => {
 			const api = companion.settings;
 			if (!api?.set) return;
-			setRelationshipSaving(true); setRelationshipFeedback(undefined); setRelationshipError(undefined);
+			setRelationshipSaving(true);
+			setRelationshipFeedback(undefined);
+			setRelationshipError(undefined);
 			void Promise.resolve()
 				.then(() => api.set({ conversationHistoryReadEnabled: !historyReadEnabled() }))
 				.catch(() => setRelationshipError(genericError))
 				.finally(() => setRelationshipSaving(false));
 		},
-		roleplay, memoryScope, memoryQueryText, memoryQuery, memoryRefreshKey, memoryScopeTabs: memoryScopeTabSelector,
-		setMemoryQueryText, submitMemorySearch, clearMemorySearch, changeMemoryScope, memoryEntryList, memoryCandidates, memoryCandidatesLoading, memoryCandidatesError, memoryCandidate,
+		roleplay,
+		memoryScope,
+		memoryQueryText,
+		memoryQuery,
+		memoryRefreshKey,
+		memoryScopeTabs: memoryScopeTabSelector,
+		setMemoryQueryText,
+		submitMemorySearch,
+		clearMemorySearch,
+		changeMemoryScope,
+		memoryEntryList,
+		memoryCandidates,
+		memoryCandidatesLoading,
+		memoryCandidatesError,
+		memoryCandidate,
 	};
 	WORKFLOW_STORES.set(companion, store);
 	return store;

@@ -206,6 +206,150 @@
 	background: var(--surface-action);
 }
 
+.timeline-attachments {
+	@apply m-0 mt-2 grid list-none gap-1 p-0;
+}
+
+.timeline-attachment-row {
+	@apply flex flex-wrap items-baseline gap-x-2 gap-y-1 border-t pt-2 text-xs;
+	border-color: var(--line-soft);
+	color: var(--text-soft);
+}
+
+.timeline-attachment-row button {
+	@apply min-w-0 border-0 bg-transparent p-0 text-left cursor-pointer;
+	color: var(--text-action);
+	font: inherit;
+}
+
+.timeline-attachment-row strong {
+	@apply break-all;
+}
+
+.timeline-attachment-row > span {
+	color: var(--text-muted);
+}
+
+.shell:has(> .attachment-preview-column) .main {
+	@apply col-span-2;
+}
+
+.attachment-preview-column {
+	@apply col-span-1 grid min-h-0 min-w-0 gap-3 overflow-hidden border-l p-4;
+	grid-template-rows: auto minmax(0, 1fr) auto;
+	border-color: var(--line);
+	background: var(--surface-panel);
+}
+
+.attachment-preview-column header {
+	@apply flex min-w-0 items-center justify-between gap-3;
+}
+
+.attachment-preview-column header strong {
+	@apply min-w-0 truncate;
+}
+
+.attachment-preview-column header button,
+.attachment-preview-column > button {
+	@apply shrink-0 rounded-md border px-3 py-2 text-xs cursor-pointer;
+	border-color: var(--line-soft);
+	color: var(--text-strong);
+	background: var(--surface-control);
+	font: inherit;
+}
+
+.attachment-preview-column > button {
+	@apply w-full;
+	color: var(--text-on-action);
+	background: var(--surface-action);
+}
+
+.attachment-preview-body {
+	@apply grid min-h-0 content-start gap-3 overflow-auto;
+}
+
+.attachment-preview-status,
+.attachment-preview-error {
+	@apply m-0 text-sm leading-relaxed;
+	color: var(--text-soft);
+}
+
+.attachment-preview-error {
+	color: var(--text-danger);
+}
+
+.attachment-preview-text {
+	@apply m-0 min-h-0 overflow-auto whitespace-pre-wrap break-words rounded-lg border p-3 text-sm leading-relaxed;
+	border-color: var(--line-soft);
+	color: var(--text-strong);
+	background: var(--surface-control);
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.attachment-preview-media {
+	@apply grid min-h-0 place-items-center overflow-hidden rounded-lg border p-2;
+	border-color: var(--line-soft);
+	background: var(--surface-canvas);
+}
+
+.attachment-preview-media img,
+.attachment-preview-media video {
+	@apply block max-h-full max-w-full object-contain;
+}
+
+.attachment-preview-media audio,
+.attachment-preview-media object {
+	@apply w-full;
+}
+
+.attachment-preview-media object {
+	@apply min-h-96;
+}
+
+.attachment-preview-files {
+	@apply m-0 grid list-none content-start gap-1 p-0;
+}
+
+.attachment-preview-files button {
+	@apply grid w-full gap-1 rounded-md border px-3 py-2 text-left text-sm cursor-pointer;
+	border-color: var(--line-soft);
+	color: var(--text-strong);
+	background: var(--surface-control);
+	font: inherit;
+}
+
+.attachment-preview-files button[aria-current="true"] {
+	border-color: var(--line-strong);
+	background: var(--surface-success);
+}
+
+.attachment-preview-files button span {
+	@apply break-all;
+}
+
+.attachment-preview-files button small {
+	color: var(--text-muted);
+}
+
+.attachment-preview-metadata {
+	@apply m-0 grid gap-2 rounded-lg border p-3 text-sm;
+	border-color: var(--line-soft);
+	background: var(--surface-control);
+}
+
+.attachment-preview-metadata div {
+	@apply grid grid-cols-3 gap-3;
+}
+
+.attachment-preview-metadata dt {
+	color: var(--text-muted);
+}
+
+.attachment-preview-metadata dd {
+	@apply col-span-2 m-0 break-all;
+	color: var(--text-strong);
+}
+
 /* ------------------------------------------------------------------ */
 /* Reduced motion                                                       */
 /* ------------------------------------------------------------------ */

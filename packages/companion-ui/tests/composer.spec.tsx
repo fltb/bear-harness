@@ -245,167 +245,176 @@ describe("composer", () => {
 		});
 	});
 
-	it("keeps the selected text model and identifies the configured image reader", async () => {
+	it("uploads a file in chunks and sends only its attachment ID", async () => {
+		const user = userEvent.setup();
 		const { client } = createTestClient();
-		const models = [
-			{
-				providerId: "text-relay",
-				providerName: "Text Relay",
-				modelId: "text",
-				label: "Text Model",
-				supportsImages: false,
-				createdAt: "2026-01-01",
-			},
-			{
-				providerId: "vision-relay",
-				providerName: "Vision Relay",
-				modelId: "vision",
-				label: "Vision Model",
-				supportsImages: true,
-				createdAt: "2026-01-02",
-			},
-		];
-		const modelState = {
-			pool: { models },
-			defaults: {
-				vision: {
-					mode: "manual" as const,
-					route: { providerId: "vision-relay", modelId: "vision" },
-				},
-			},
+		configureSelectedModel(client);
+		renderComposerWithModels(client, {
+			pool: { models: [TEST_MODEL] },
+			defaults: { vision: { mode: "auto" } },
 			route: {
 				conversationId: "conversation-1",
-				selected: { providerId: "text-relay", modelId: "text" },
+				selected: { providerId: TEST_MODEL.providerId, modelId: TEST_MODEL.modelId },
 			},
-		};
-		client.snapshot.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					eventSeq: 0,
-					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
-					model: modelState,
-				},
-			}),
-		);
-		configureActiveConversation(client);
-		client.model.poolGet = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: modelState.pool }),
-		);
-		client.model.defaultsGet = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: modelState.defaults }),
-		);
-		client.model.routeGet = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: modelState.route }),
-		);
-		client.onboarding.get = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
-		);
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-
-		const selector = await screen.findByRole("button", {
-			name: new RegExp(zhCN.composer.modelLabel),
 		});
-		await waitFor(() => expect(selector).toHaveTextContent("Text Model (Text Relay)"));
-		const picker = screen.getByLabelText(zhCN.composer.attachLabel, { selector: "input" });
-		if (!(picker instanceof HTMLInputElement)) throw new Error("composer file picker missing");
+
+		await waitFor(() =>
+			expect(screen.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled(),
+		);
+		const picker = screen.getByLabelText(zhCN.composer.uploadFile);
 		fireEvent.change(picker, {
-			target: { files: [new File(["image"], "photo.png", { type: "image/png" })] },
+			target: { files: [new File(["abc"], "note.txt", { type: "text/plain" })] },
+		});
+		await waitFor(() =>
+			expect(client.conversationAttachment.completeUpload).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				uploadId: "upload-1",
+			}),
+		);
+		expect(client.conversationAttachment.appendChunk).toHaveBeenCalledWith({
+			conversationId: "conversation-1",
+			uploadId: "upload-1",
+			fileIndex: 0,
+			offset: 0,
+			base64: "YWJj",
 		});
 
-		expect(await screen.findByRole("status")).toHaveTextContent(
-			"图片由 Vision Model (Vision Relay) 读取",
-		);
-		expect(selector).toHaveTextContent("Text Model (Text Relay)");
-	});
-
-	it("sends image attachments as native multimodal input", async () => {
-		const user = userEvent.setup();
-		const { client } = createTestClient();
-		configureSelectedModel(client);
-		client.snapshot.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					eventSeq: 0,
-					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
-				},
-			}),
-		);
-		configureActiveConversation(client);
-		client.onboarding.get = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
-		);
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const image = new File([new Uint8Array([1, 2, 3])], "photo.png", { type: "image/png" });
-		await waitFor(() =>
-			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toBeEnabled(),
-		);
-		const picker = screen.getByLabelText(zhCN.composer.attachLabel, { selector: "input" });
-		if (!(picker instanceof HTMLInputElement)) throw new Error("composer file picker missing");
-		fireEvent.change(picker, { target: { files: [image] } });
-		await waitFor(() =>
-			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toHaveTextContent(
-				"1",
-			),
-		);
-		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
-		await waitFor(() =>
-			expect(client.message.send).toHaveBeenCalledWith({
-				conversationId: "conversation-1",
-				text: "[图片：photo.png]",
-				attachments: [{ name: "photo.png", mime: "image/png", base64: "AQID" }],
-			}),
-		);
-	});
-
-	it("inlines text attachments into the message without creating image input", async () => {
-		const user = userEvent.setup();
-		const { client } = createTestClient();
-		configureSelectedModel(client);
-		client.snapshot.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					eventSeq: 0,
-					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
-				},
-			}),
-		);
-		configureActiveConversation(client);
-		client.onboarding.get = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
-		);
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const note = new File(["原始内容"], "note.md", { type: "text/markdown" });
-		Object.defineProperty(note, "text", { value: () => Promise.resolve("原始内容") });
-		await waitFor(() =>
-			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toBeEnabled(),
-		);
-		const picker = screen.getByLabelText(zhCN.composer.attachLabel, { selector: "input" });
-		if (!(picker instanceof HTMLInputElement)) throw new Error("composer file picker missing");
-		fireEvent.change(picker, { target: { files: [note] } });
-		await waitFor(() =>
-			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toHaveTextContent(
-				"1",
-			),
-		);
 		await user.type(
 			screen.getByRole("textbox", { name: zhCN.composer.messageInputLabel }),
 			"请阅读",
 		);
 		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
-
 		await waitFor(() =>
 			expect(client.message.send).toHaveBeenCalledWith({
 				conversationId: "conversation-1",
-				text: "请阅读\n\n[材料：note.md]\n原始内容",
-				attachments: undefined,
+				text: "请阅读",
+				attachmentIds: ["attachment-1"],
 			}),
 		);
+	});
+	it("uploads an image through attachment transport and sends only its attachment ID", async () => {
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		configureSelectedModel(client);
+		renderComposerWithModels(client, {
+			pool: { models: [TEST_MODEL] },
+			defaults: { vision: { mode: "auto" } },
+			route: {
+				conversationId: "conversation-1",
+				selected: { providerId: TEST_MODEL.providerId, modelId: TEST_MODEL.modelId },
+			},
+		});
+		await waitFor(() =>
+			expect(screen.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled(),
+		);
+
+		fireEvent.change(screen.getByLabelText(zhCN.composer.uploadFile), {
+			target: { files: [new File(["png-bytes"], "pixel.png", { type: "image/png" })] },
+		});
+		await waitFor(() =>
+			expect(client.conversationAttachment.completeUpload).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				uploadId: "upload-1",
+			}),
+		);
+		expect(client.conversationAttachment.startUpload).toHaveBeenCalledWith({
+			conversationId: "conversation-1",
+			kind: "file",
+			name: "pixel.png",
+			entries: [
+				{
+					entryKind: "file",
+					relativePath: "pixel.png",
+					mime: "image/png",
+					bytes: 9,
+				},
+			],
+		});
+
+		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
+		await waitFor(() =>
+			expect(client.message.send).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				text: "",
+				attachmentIds: ["attachment-1"],
+			}),
+		);
+		expect(client.message.send.mock.calls[0]?.[0]).not.toHaveProperty("attachments");
+	});
+	it("retries a failed image upload and discards the completed attachment", async () => {
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		client.conversationAttachment.appendChunk = vi
+			.fn()
+			.mockRejectedValueOnce(new Error("upload failed"))
+			.mockResolvedValue({ ok: true as const, data: null });
+		configureSelectedModel(client);
+		renderComposerWithModels(client, {
+			pool: { models: [TEST_MODEL] },
+			defaults: { vision: { mode: "auto" } },
+			route: {
+				conversationId: "conversation-1",
+				selected: { providerId: TEST_MODEL.providerId, modelId: TEST_MODEL.modelId },
+			},
+		});
+		await waitFor(() =>
+			expect(screen.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled(),
+		);
+
+		fireEvent.change(screen.getByLabelText(zhCN.composer.uploadFile), {
+			target: { files: [new File(["image"], "retry.png", { type: "image/png" })] },
+		});
+		await user.click(await screen.findByRole("button", { name: "Retry" }));
+		await waitFor(() => expect(client.conversationAttachment.completeUpload).toHaveBeenCalled());
+		expect(client.conversationAttachment.startUpload).toHaveBeenCalledTimes(2);
+
+		await user.click(screen.getByRole("button", { name: "Remove note.txt" }));
+		await waitFor(() =>
+			expect(client.conversationAttachment.discard).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				attachmentId: "attachment-1",
+			}),
+		);
+	});
+
+	it("cancels an in-progress image upload when its draft is removed", async () => {
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		const pendingChunk: {
+			resolve?: (value: { ok: true; data: null }) => void;
+		} = {};
+		client.conversationAttachment.appendChunk = vi.fn(
+			() =>
+				new Promise<{ ok: true; data: null }>((resolve) => {
+					pendingChunk.resolve = resolve;
+				}),
+		);
+		configureSelectedModel(client);
+		renderComposerWithModels(client, {
+			pool: { models: [TEST_MODEL] },
+			defaults: { vision: { mode: "auto" } },
+			route: {
+				conversationId: "conversation-1",
+				selected: { providerId: TEST_MODEL.providerId, modelId: TEST_MODEL.modelId },
+			},
+		});
+		await waitFor(() =>
+			expect(screen.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled(),
+		);
+
+		fireEvent.change(screen.getByLabelText(zhCN.composer.uploadFile), {
+			target: { files: [new File(["image"], "cancel.png", { type: "image/png" })] },
+		});
+		await waitFor(() => expect(client.conversationAttachment.appendChunk).toHaveBeenCalled());
+		await user.click(screen.getByRole("button", { name: "Remove cancel.png" }));
+		await waitFor(() =>
+			expect(client.conversationAttachment.cancelUpload).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				uploadId: "upload-1",
+			}),
+		);
+		expect(screen.queryByText("cancel.png")).not.toBeInTheDocument();
+		pendingChunk.resolve?.({ ok: true, data: null });
 	});
 	it("submits trimmed text to the active conversation and clears only after dispatch", async () => {
 		const user = userEvent.setup();
@@ -482,223 +491,6 @@ describe("composer", () => {
 		expect(composer).toHaveValue("第一行\n第二行");
 	});
 
-	it("rejects a selection that exceeds the shared attachment contract", async () => {
-		const { client } = createTestClient();
-		configureSelectedModel(client);
-		const messageSend = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { messageId: "m1" } }),
-		);
-		client.message.send = messageSend;
-		client.snapshot.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					eventSeq: 0,
-					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
-				},
-			}),
-		);
-		configureActiveConversation(client);
-		client.onboarding.get = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
-		);
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		await waitFor(() =>
-			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toBeEnabled(),
-		);
-		const picker = screen.getByLabelText(zhCN.composer.attachLabel, { selector: "input" });
-		if (!(picker instanceof HTMLInputElement)) throw new Error("composer file picker missing");
-		const files = Array.from({ length: 11 }, (_, index) => {
-			const file = new File([`content-${index}`], `note-${index}.txt`, { type: "text/plain" });
-			Object.defineProperty(file, "text", {
-				value: () => Promise.resolve(`content-${index}`),
-			});
-			return file;
-		});
-		Object.defineProperty(files[1], "size", { value: 11 * 1024 * 1024 });
-		fireEvent.change(picker, { target: { files } });
-
-		expect(await screen.findByRole("alert")).toHaveTextContent(
-			"一次最多添加 10 个文件，每个文件不超过 10 MB",
-		);
-		const attachmentButton = screen.getByRole("button", { name: zhCN.composer.attachLabel });
-		expect(attachmentButton).toBeEnabled();
-		expect(attachmentButton).not.toHaveTextContent(/\d/);
-		expect(screen.getByRole("button", { name: zhCN.composer.sendLabel })).toBeDisabled();
-		expect(messageSend).not.toHaveBeenCalled();
-	});
-
-	it("reports a browser file-read failure without sending a message", async () => {
-		const { client } = createTestClient();
-		configureSelectedModel(client);
-		client.snapshot.get = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					eventSeq: 0,
-					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
-				},
-			}),
-		);
-		configureActiveConversation(client);
-		client.onboarding.get = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: COMPLETE_ONBOARDING }),
-		);
-		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		await waitFor(() =>
-			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toBeEnabled(),
-		);
-		const picker = screen.getByLabelText(zhCN.composer.attachLabel, { selector: "input" });
-		if (!(picker instanceof HTMLInputElement)) throw new Error("composer file picker missing");
-		const unreadable = new File(["content"], "locked.txt", { type: "text/plain" });
-		Object.defineProperty(unreadable, "text", {
-			value: () => Promise.reject(new Error("无法读取 locked.txt")),
-		});
-		fireEvent.change(picker, { target: { files: [unreadable] } });
-
-		expect(await screen.findByRole("alert")).toHaveTextContent("无法读取 locked.txt");
-		expect(client.message.send).not.toHaveBeenCalled();
-	});
-
-	it("blocks sending with a settings shortcut when no image reader is configured", async () => {
-		const user = userEvent.setup();
-		const { client } = createTestClient();
-		renderComposerWithModels(client, {
-			pool: { models: [TEXT_MODEL] },
-			defaults: { vision: { mode: "auto" } },
-			route: {
-				conversationId: "conversation-1",
-				selected: { providerId: TEXT_MODEL.providerId, modelId: TEXT_MODEL.modelId },
-			},
-		});
-
-		const selector = await screen.findByRole("button", {
-			name: new RegExp(zhCN.composer.modelLabel),
-		});
-		await waitFor(() => expect(selector).toHaveTextContent("Text Model (Text Relay)"));
-		await waitFor(() =>
-			expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toBeEnabled(),
-		);
-		const picker = screen.getByLabelText(zhCN.composer.attachLabel, { selector: "input" });
-		if (!(picker instanceof HTMLInputElement)) throw new Error("composer file picker missing");
-		fireEvent.change(picker, {
-			target: {
-				files: [new File([new Uint8Array([1, 2, 3])], "photo.png", { type: "image/png" })],
-			},
-		});
-
-		expect(await screen.findByText(zhCN.composer.imageModelMissing)).toBeVisible();
-		expect(
-			screen.getByRole("button", { name: zhCN.composer.goToImageModelSettings }),
-		).toBeEnabled();
-		expect(screen.getByRole("button", { name: zhCN.composer.removeImages })).toBeEnabled();
-		expect(screen.getByRole("button", { name: zhCN.composer.sendLabel })).toBeDisabled();
-
-		await user.click(screen.getByRole("button", { name: zhCN.composer.goToImageModelSettings }));
-		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
-		await waitFor(() =>
-			expect(
-				within(dialog).getByRole("button", { name: new RegExp(zhCN.settings.visionModel) }),
-			).toHaveFocus(),
-		);
-	});
-
-	it("recovers by removing images when no image reader is configured", async () => {
-		const user = userEvent.setup();
-		const { client } = createTestClient();
-		renderComposerWithModels(client, {
-			pool: { models: [TEXT_MODEL] },
-			defaults: { vision: { mode: "auto" } },
-			route: {
-				conversationId: "conversation-1",
-				selected: { providerId: TEXT_MODEL.providerId, modelId: TEXT_MODEL.modelId },
-			},
-		});
-
-		const composer = await screen.findByRole("textbox", {
-			name: zhCN.composer.messageInputLabel,
-		});
-		await waitFor(() => expect(composer).toBeEnabled());
-		await user.type(composer, "看图");
-		const picker = screen.getByLabelText(zhCN.composer.attachLabel, { selector: "input" });
-		if (!(picker instanceof HTMLInputElement)) throw new Error("composer file picker missing");
-		fireEvent.change(picker, {
-			target: {
-				files: [new File([new Uint8Array([1, 2, 3])], "photo.png", { type: "image/png" })],
-			},
-		});
-		await waitFor(() =>
-			expect(screen.getByText(zhCN.composer.imageModelMissing)).toBeInTheDocument(),
-		);
-		expect(screen.getByRole("button", { name: zhCN.composer.sendLabel })).toBeDisabled();
-
-		await user.click(screen.getByRole("button", { name: zhCN.composer.removeImages }));
-		expect(screen.queryByText(zhCN.composer.imageModelMissing)).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).not.toHaveTextContent(
-			/\d/,
-		);
-		expect(screen.getByRole("button", { name: zhCN.composer.sendLabel })).toBeEnabled();
-		expect(composer).toHaveValue("看图");
-	});
-
-	it("keeps the draft and images when the image route rejects the request", async () => {
-		const user = userEvent.setup();
-		const { client } = createTestClient();
-		let resolveRetry!: (result: { ok: true; data: { messageId: string } }) => void;
-		const retryResult = new Promise<{ ok: true; data: { messageId: string } }>((resolve) => {
-			resolveRetry = resolve;
-		});
-		const messageSend = vi
-			.fn()
-			.mockRejectedValueOnce(new Error("image route unavailable"))
-			.mockReturnValueOnce(retryResult);
-		client.message.send = messageSend;
-		renderComposerWithModels(client, {
-			pool: { models: [TEXT_MODEL, VISION_MODEL] },
-			defaults: {
-				vision: {
-					mode: "manual",
-					route: { providerId: VISION_MODEL.providerId, modelId: VISION_MODEL.modelId },
-				},
-			},
-			route: {
-				conversationId: "conversation-1",
-				selected: { providerId: TEXT_MODEL.providerId, modelId: TEXT_MODEL.modelId },
-			},
-		});
-
-		const composer = await screen.findByRole("textbox", {
-			name: zhCN.composer.messageInputLabel,
-		});
-		await waitFor(() => expect(composer).toBeEnabled());
-		await user.type(composer, "看图");
-		const picker = screen.getByLabelText(zhCN.composer.attachLabel, { selector: "input" });
-		if (!(picker instanceof HTMLInputElement)) throw new Error("composer file picker missing");
-		fireEvent.change(picker, {
-			target: {
-				files: [new File([new Uint8Array([1, 2, 3])], "photo.png", { type: "image/png" })],
-			},
-		});
-		await waitFor(() =>
-			expect(screen.getByRole("status")).toHaveTextContent(
-				"图片由 Vision Model (Vision Relay) 读取",
-			),
-		);
-
-		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
-
-		expect(messageSend).toHaveBeenCalledTimes(1);
-		expect(messageSend).toHaveBeenLastCalledWith({
-			conversationId: "conversation-1",
-			text: "看图",
-			attachments: [{ name: "photo.png", mime: "image/png", base64: "AQID" }],
-		});
-		expect(composer).toHaveValue("看图");
-		expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toHaveTextContent("1");
-		expect(screen.getByRole("button", { name: zhCN.composer.sendLabel })).toBeEnabled();
-	});
 	it("shows one local alert when selecting a model fails", async () => {
 		const { client } = createTestClient();
 		client.model.routeSet = vi.fn(() => Promise.reject(new Error("model unavailable")));
@@ -724,12 +516,15 @@ describe("composer", () => {
 		expect(alerts[0]).toHaveTextContent("model unavailable");
 	});
 
-	it("keeps a failed message draft and offers an explicit retry", async () => {
+	it("keeps a failed message draft and allows an explicit resubmit", async () => {
 		const { client } = createTestClient();
 		const messageSend = vi
 			.fn()
 			.mockRejectedValueOnce(new Error("send unavailable"))
-			.mockResolvedValueOnce({ ok: true as const, data: { messageId: "m2" } });
+			.mockResolvedValueOnce({
+				ok: true as const,
+				data: { accepted: true as const, sessionId: "session-1", entryId: "entry-1" },
+			});
 		client.message.send = messageSend;
 		renderComposerWithModels(client, {
 			pool: { models: [TEST_MODEL] },
@@ -752,7 +547,7 @@ describe("composer", () => {
 		expect(alerts).toHaveLength(1);
 		expect(alerts[0]).toHaveTextContent("send unavailable");
 		expect(composer).toHaveValue("稍后再试");
-		const retry = screen.getByRole("button", { name: zhCN.composer.imageRouteRetry });
+		const retry = screen.getByRole("button", { name: zhCN.composer.sendLabel });
 		expect(retry).toBeEnabled();
 		await user.click(retry);
 		await waitFor(() => expect(messageSend).toHaveBeenCalledTimes(2));

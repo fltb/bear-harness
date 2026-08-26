@@ -29,7 +29,7 @@ The package export is the `.` entry, with declaration output at `dist/index.d.ts
 - `CompanionClient` (type): a recursive mapped type derived from `typeof RPC`.
 - `createCompanionClient(transport)`: the runtime client factory.
 - `unwrap(result)`: a generic envelope helper.
-- Selected protocol types: `IpcError`, `MemoryCaptureCreatedBy`, `MemoryCaptureRequest`, `MemoryCaptureResponse`, `MemoryEditRequest`, and `MemoryForgetRequest`.
+- Selected protocol types for IPC errors, memory capture/edit/forget, and provider list/custom-provider/login/logout/remove flows. Conversation-attachment and external-agent types remain available from `@bear-harness/protocol` rather than being re-exported here.
 
 The complete wire model remains in `@bear-harness/protocol`. The companion-client entry does not re-export the protocol's `RPC` value or every protocol type; import runtime endpoint definitions from `@bear-harness/protocol/schema` and type-only request/response models from `@bear-harness/protocol` when implementing a transport or Host handler.
 
@@ -61,7 +61,12 @@ type RpcMethod<E extends AnyRpcEndpoint> =
 
 Consequently, an endpoint whose request schema is an empty strict object can be called with no argument or `{}`; an endpoint with required request fields requires its request argument. Every method resolves to `IpcEnvelope<ResponseOf<E>>`, not directly to response data. The UI layer normally calls `unwrap` around the method.
 
-The endpoint groups currently come from `RPC` in [`packages/protocol/src/schema.ts`](../../packages/protocol/src/schema.ts): `snapshot`, `character`, `roleplay`, `events`, `onboarding`, `conversation`, `message`, `memory`, `story`, `canon`, `provider`, `model`, `commission`, `run`, `artifact`, `settings`, `update`, and `audit`. The exact method and channel list is owned by that `RPC` value; do not duplicate it in a transport.
+The endpoint groups currently come from `RPC`: `snapshot`, `character`, `roleplay`, `events`, `onboarding`, `conversation`, `conversationAttachment`, `message`, `memory`, `canon`, `provider`, `model`, `externalAgent`, `run`, `settings`, `update`, and `audit`. The exact methods and channels are derived from that value; transports must not duplicate them.
+
+Two current contracts deserve special attention:
+
+- `conversationAttachment.read` is a strict semantic/byte union. The request discriminator selects either extraction/search/paging fields or exact `{ offset, length }` byte-range fields, and the response carries the same `mode`. The client validates the union but does not choose a branch for the caller.
+- `externalAgent.discoverCodex`, `connectCodex`, and `status` configure an explicitly connected Codex binary. Run RPCs only list or control existing direct runs. Launch is deliberately absent from the renderer client: the conversational role delegates through its Host tool, using independent native Pi by default or Codex only when explicitly requested.
 
 At runtime, `createCompanionClient` recursively walks the same `RPC` object, creates one function per endpoint, recursively creates nested groups, and freezes every node with `Object.freeze`. The walk recognizes an endpoint by `kind === "rpc"`. This means the facade follows additions/removals in the protocol tree mechanically, without a second client method registry.
 
@@ -117,7 +122,7 @@ The Electron router automatically registers every key in `REQUEST_SCHEMAS` for r
 
 ### Electron IPC adapter
 
-The production desktop renderer creates the client in [`apps/desktop/src/renderer/index.tsx`](../../apps/desktop/src/renderer/index.tsx). Its `HostTransport` delegates the endpoint channel and parsed request to the sandbox preload bridge:
+The production desktop renderer creates the client in [`apps/desktop/src/renderer/index.tsx`](../../apps/desktop/src/renderer/index.tsx):
 
 ```ts
 const client = createCompanionClient({
@@ -126,17 +131,13 @@ const client = createCompanionClient({
 });
 ```
 
-The preload exposes only a frozen `bearDesktop` object and frozen `transport` object. `transport.invoke` calls `ipcRenderer.invoke(channel, request)`; runtime contract parsing intentionally stays in the renderer client bundle ([`apps/desktop/src/preload/index.cts`](../../apps/desktop/src/preload/index.cts)).
+The preload exposes a frozen `bearDesktop` object with `platform`, diagnostics, a generic `transport`, and a separate trusted `attachments` bridge. `transport.invoke` forwards ordinary protocol channels to `ipcRenderer.invoke`. It rejects desktop attachment bridge channel prefixes so untrusted renderer code cannot route arbitrary path-bearing requests through the generic transport.
 
-[`apps/desktop/src/main/ipc-router.ts`](../../apps/desktop/src/main/ipc-router.ts) wires the main-process side:
+[`apps/desktop/src/main/ipc-router.ts`](../../apps/desktop/src/main/ipc-router.ts) derives ordinary handlers from `REQUEST_SCHEMAS`, admits only the registered main frame at its exact allowed URL, and delegates to the Host dispatcher. During an admitted dispatch it establishes the renderer identity used when `conversationAttachment.url` mints a short-lived capability.
 
-- It loops over `Object.keys(REQUEST_SCHEMAS)` and calls `ipcMain.handle(channel, ...)` for each public protocol channel. This is request-schema enumeration only; response validation and endpoint metadata remain in `CHANNEL_CONTRACTS`/`RPC`.
-- It verifies that the sender has a registered window, that its `WebContents` still maps to a `BrowserWindow`, that the sender frame is the main frame, and that the frame URL equals the window's registered `allowedUrl`.
-- An unauthorized or unavailable sender receives `{ ok: false, error: { kind: "unavailable", reason: "no_window" } }` and never reaches `dispatcher.dispatch`.
-- An authorized call delegates `(channel, params)` to the Host `Dispatcher`; the dispatcher owns request validation, handler lookup, handler-error mapping, and response validation.
-- It also exposes `desktop:artifactProtocol:v1`, a host-shell availability check that is not an endpoint in `RPC` and therefore is not part of `CompanionClient`.
+Native file/folder selection and dropped-file path recovery are intentionally outside `CompanionClient`. The preload's `attachments.pickFiles`, `pickFolder`, and `importDroppedFiles` methods call three separately validated desktop channels. Main rechecks the registered frame and owning `BrowserWindow`; picker paths come from Electron's native dialog, and dropped paths come only from preload `webUtils.getPathForFile`. The Host imports those trusted paths into immutable conversation attachments before returning summaries.
 
-The router's sender check is the security boundary for renderer-to-main RPC routing. A new IPC handler should not be added outside the registry unless it is intentionally a non-RPC host-shell channel with its own validation and authorization review.
+This split is deliberate: ordinary RPC requests stay transport-neutral and path-free, while native path authority remains in preload/main.
 
 ### WebDev HTTP adapter
 
@@ -147,11 +148,11 @@ WebDev uses the same client factory and a different transport in [`apps/web-dev/
 - `x-bear-web-dev-token: <bootstrap token>`
 - JSON-encoded parsed request body
 
-The server in [`apps/web-dev/server/index.ts`](../../apps/web-dev/server/index.ts) binds to loopback, creates a per-process random token, serves that token from `GET /bootstrap`, requires the token for all non-bootstrap routes, decodes the channel, reads a bounded JSON body (with a larger limit for `character.import:v1`), and delegates to `runtime.dispatch(channel, params)`. RPC responses—including domain failures—are JSON envelopes with HTTP 200. Invalid JSON/body parsing is converted to HTTP 400 with an `invalid_request` envelope. Authentication failures are HTTP 401 and are therefore rejected by the HTTP transport before the client response-envelope parser runs.
+The loopback server creates a per-process bootstrap token and requires it for RPC and diagnostics routes. It reads bounded JSON (with the larger character-import exception), dispatches through HostRuntime, and returns domain envelopes with HTTP 200; malformed bodies and authentication failures reject at HTTP transport level. `conversationAttachment.url` may return a five-minute relative `/attachment/<random-capability>` URL. That bearer route is intentionally outside `HostTransport`: it re-resolves immutable attachment bytes, enforces the minted preview/download operation and preview MIME policy, and sends no-store/nosniff/CSP headers.
 
 WebDev's renderer follows the same composition as Electron: `loadBootstrap()` obtains the product config/token, `createHttpTransport(bootstrap.token)` creates the transport, and `createCompanionClient(transport)` supplies `CompanionApp` ([`apps/web-dev/src/index.tsx`](../../apps/web-dev/src/index.tsx)). The WebDev debug panel uses the same transport and endpoint registry, explicitly parses a selected endpoint's request schema before invoking it ([`apps/web-dev/src/DebugPanel.tsx`](../../apps/web-dev/src/DebugPanel.tsx)).
 
-The two adapters must remain semantically equivalent at the client boundary: invoke a versioned endpoint, return the complete envelope, and let `createCompanionClient` parse the response. Their security mechanisms differ (Electron sender/window validation versus WebDev loopback plus token), but neither should move business validation into an adapter-specific implementation.
+The adapters remain equivalent at the client boundary: invoke a versioned endpoint, return the complete envelope, and let `createCompanionClient` parse it. Environment-specific attachment URL delivery and native path import remain outside that generic transport contract.
 
 ## Error envelope and caller behavior
 
@@ -173,18 +174,18 @@ The UI's [`invoke`](../../packages/companion-ui/src/stores/ipc.ts) helper awaits
 
 ## Integration with companion-ui
 
-`CompanionApp` takes `{ product, client }`, creates a `CompanionStore` once per client identity, and provides that store through `DesktopProvider` ([`packages/companion-ui/src/App.tsx`](../../packages/companion-ui/src/App.tsx) and [`packages/companion-ui/src/stores/companion.tsx`](../../packages/companion-ui/src/stores/companion.tsx)). The store is the reactive facade consumed by panels and sheets; the client remains the only Host call dependency.
+`CompanionApp` receives `{ product, client }`, creates one `CompanionStore` per client identity, and supplies it through `DesktopProvider`. The client remains the store's only ordinary Host RPC dependency; the Composer detects the optional desktop attachment bridge separately for trusted native picker/drop import.
 
 Store lifecycle:
 
-1. `createCompanionStore(client)` uses a `WeakMap` keyed by the client object. Re-running the component due to locale changes does not create a second store, duplicate event loop, or lose in-flight state.
-2. A `snapshot.get` resource bootstraps the domains and initializes the event sequence cursor.
-3. An effect polls `events.subscribe(afterSeq)` at the store's interval and projects domain events. Duplicate events are skipped; sequence gaps mark the projection stale and cause a snapshot refetch.
-4. All domain actions (conversation/message, onboarding, memory, settings, provider/model, commission/run, artifact/story, character/canon) invoke nested client methods through the shared helper. Successful calls clear errors; failures set the store error/presence state.
-5. Values crossing into reactive state are checked by narrow guards in `stores/ipc.ts`; malformed payloads are dropped rather than projected.
-6. `CompanionClient` is a required input; there is no supported missing-client branch. Transport failures are handled as store errors, and an unavailable host state is represented as `problem` rather than an idle missing-client state.
+1. `snapshot.get` bootstraps current projections and seeds the event cursor.
+2. `conversation.activeGet` supplies the authoritative native Pi timeline/live state.
+3. `events.subscribe(afterSeq)` projects known events; duplicates are skipped and sequence gaps trigger authoritative refetch.
+4. Conversation/message, conversation-attachment, onboarding, memory, settings, provider/model, run, character, and canon actions call nested client methods through the shared envelope helper.
+5. Attachment store methods expose semantic `read` and byte `readBytes` separately and assert the returned discriminator, even though both invoke `conversationAttachment.read`.
+6. Runtime guards reject malformed cross-client values before reactive projection.
 
-This separation means a transport change should be invisible to UI components if it preserves `HostTransport` and envelope semantics. If a new RPC returns data that the store projects, update the protocol types and store guard/projection together; a TypeScript method appearing on `CompanionClient` alone does not make the data safe for reactive UI state.
+The renderer sends only attachment IDs with `message.send`. Accepted file, folder, and generated attachment summaries live on native Pi timeline entries; the UI has no separate renderer-file registry.
 
 ## Configuration and lifecycle
 

@@ -1,9 +1,6 @@
 import {
-	ActionDraft,
-	Artifact,
 	CanonChunk,
 	CharacterDisplay,
-	Commission,
 	ConfiguredModel,
 	ConversationSummary,
 	MemoryCaptureResponse,
@@ -18,11 +15,8 @@ import { THEMED_CHARACTER } from "./fixtures.js";
 
 const guard = (schema: { safeParse(value: unknown): { success: boolean } }) => (value: unknown) =>
 	schema.safeParse(value).success;
-const isActionDraft = guard(ActionDraft);
-const isArtifact = guard(Artifact);
 const isCanonChunk = guard(CanonChunk);
 const isCharacterDisplay = guard(CharacterDisplay);
-const isCommission = guard(Commission);
 const isConversationSummary = guard(ConversationSummary);
 const isMemoryCaptureResponse = guard(MemoryCaptureResponse);
 const isMemoryEntry = guard(MemoryEntry);
@@ -79,41 +73,15 @@ const configuredModel = {
 	supportsImages: false,
 	createdAt: timestamp,
 };
-const draft = {
-	id: "draft-1",
-	title: "Work",
-	description: "Description",
-	reads: ["input.txt"],
-	writes: ["output.txt"],
-	networkAllowed: false,
-	toolNames: ["read"],
-	hash: "hash",
-};
-const commission = {
-	id: "commission-1",
-	conversationId: "conversation-1",
-	triggerEntryId: "message-1",
-	draft,
-	status: "draft",
-	createdAt: timestamp,
-};
 const run = {
 	id: "run-1",
-	commissionId: "commission-1",
-	executorProfile: "pi",
+	conversationId: "conversation-1",
+	triggerEntryId: "entry-1",
+	executorProfile: "pi-default",
+	title: "Direct run",
 	status: "running",
 	startedAt: timestamp,
 	completedAt: timestamp,
-};
-const artifact = {
-	id: "artifact-1",
-	logicalName: "result.md",
-	mime: "text/markdown",
-	bytes: 10,
-	sha256: "hash",
-	status: "verified",
-	producerRunId: "run-1",
-	createdAt: timestamp,
 };
 const canonChunk = {
 	id: "chunk-1",
@@ -193,34 +161,16 @@ describe("host projection validation", () => {
 			"createdAt",
 		]);
 		expect(isConfiguredModel({ ...configuredModel, supportsImages: "yes" })).toBe(false);
-		expectRequiredFields(isActionDraft, draft, [
+		expectRequiredFields(isRun, run, [
 			"id",
+			"conversationId",
+			"triggerEntryId",
+			"executorProfile",
 			"title",
-			"description",
-			"reads",
-			"writes",
-			"networkAllowed",
-			"toolNames",
-			"hash",
+			"status",
 		]);
-		expect(isActionDraft({ ...draft, reads: [3] })).toBe(false);
-		expectRequiredFields(isCommission, commission, ["id", "draft", "status", "createdAt"]);
-		expect(isCommission({ ...commission, conversationId: 3 })).toBe(false);
-		expectRequiredFields(isRun, run, ["id", "commissionId", "executorProfile", "status"]);
 		expect(isRun({ ...run, startedAt: 3 })).toBe(false);
 		expect(isRun({ ...run, completedAt: 3 })).toBe(false);
-		expectRequiredFields(isArtifact, artifact, [
-			"id",
-			"logicalName",
-			"mime",
-			"bytes",
-			"sha256",
-			"status",
-			"createdAt",
-		]);
-		expect(isArtifact({ ...artifact, bytes: -1 })).toBe(false);
-		expect(isArtifact({ ...artifact, bytes: 1.5 })).toBe(false);
-		expect(isArtifact({ ...artifact, producerRunId: 3 })).toBe(false);
 	});
 
 	it("validates onboarding and rejects retired model routing settings", () => {
@@ -564,9 +514,6 @@ describe("host projection validation", () => {
 	it("rejects empty identifiers and unbounded records at the safe maximum", () => {
 		expect(isProviderInfo({ ...provider, id: "" })).toBe(false);
 		expect(isRun({ ...run, id: "" })).toBe(false);
-		expect(isArtifact({ ...artifact, id: "" })).toBe(false);
-		expect(isActionDraft({ ...draft, hash: "" })).toBe(false);
-		expect(isCommission({ ...commission, id: "" })).toBe(false);
 		expect(isConversationSummary({ ...conversation, id: "" })).toBe(false);
 		const manyExpressions = Object.fromEntries(
 			Array.from({ length: 99 }, (_, i) => [`expression-${i}`, "data:image/png;base64,aW1hZ2U="]),

@@ -14,6 +14,12 @@ type CommandError = { kind: string; reason: string };
 export interface TurnResult {
 	accepted: true;
 	sessionId: string;
+	entryId: string;
+}
+
+export interface ExternalAgentFollowUp {
+	entryId: string;
+	text: string;
 }
 
 /**
@@ -38,13 +44,19 @@ function commandError(kind: string, reason: string): never {
 	throw { kind, reason } satisfies CommandError;
 }
 
-function isMessageEntry(entry: NativeEntry): entry is Extract<NonNullable<NativeEntry>, { type: "message" }> {
-	return Boolean(entry && entry.type === "message" && entry.message && typeof entry.message === "object");
+function isMessageEntry(
+	entry: NativeEntry,
+): entry is Extract<NonNullable<NativeEntry>, { type: "message" }> {
+	return Boolean(
+		entry && entry.type === "message" && entry.message && typeof entry.message === "object",
+	);
 }
 
 function entryRole(entry: NativeEntry): string | undefined {
 	if (!isMessageEntry(entry)) return undefined;
-	return "role" in entry.message && typeof entry.message.role === "string" ? entry.message.role : undefined;
+	return "role" in entry.message && typeof entry.message.role === "string"
+		? entry.message.role
+		: undefined;
 }
 
 /**
@@ -81,11 +93,11 @@ export class TurnPipeline {
 		this.notificationTasks.clear();
 	}
 
-	/** Send text through the long-lived AgentSession and return its preflight receipt. */
+	/** Send through Pi and acknowledge only after its native user entry exists. */
 	async sendUserMessage(
 		conversationId: string,
 		text: string,
-		attachments: Array<{ name: string; mime: string; base64: string }> = [],
+		currentMessageImages: Array<{ data: Buffer; mimeType: string }> = [],
 	): Promise<TurnResult> {
 		if (!this.supervisor.isRunning) commandError("unavailable", "companion_unavailable");
 		const session = await this.ensureSession(conversationId);
@@ -94,22 +106,45 @@ export class TurnPipeline {
 			commandError("unavailable", "provider_auth_required");
 		}
 		this.ensureSessionNotifications(conversationId, session);
-
-		const images = attachments.map((attachment) => ({
+		const images = currentMessageImages.map((image) => ({
 			type: "image" as const,
-			data: attachment.base64,
-			mimeType: attachment.mime,
+			data: image.data.toString("base64"),
+			mimeType: image.mimeType,
 		}));
-		// Host owns model/context/image injection; Pi owns every resulting
-		// native entry. The route was authenticated above, so dispatch is
-		// accepted and later Pi failures arrive through its live projection.
-		this.supervisor.promptConversation(
-			conversationId,
-			text,
-			images.length > 0 ? (images as PromptImages) : undefined,
-		);
+		const entryId = await new Promise<string>((resolve, reject) => {
+			const timer = setTimeout(() => {
+				unsubscribe();
+				reject({ kind: "unavailable", reason: "native_user_entry_timeout" });
+			}, 10_000);
+			const unsubscribe = session.subscribe((event) => {
+				if (event.type !== "message_end" || event.message.role !== "user") return;
+				// Pi persists native message entries immediately after emitting
+				// message_end. Resolve in the next microtask so the SessionManager
+				// leaf is the durable user entry, not transient stream state.
+				queueMicrotask(() => {
+					const nativeEntryId = session.sessionManager.getLeafId();
+					if (
+						!nativeEntryId ||
+						entryRole(session.sessionManager.getEntry(nativeEntryId)) !== "user"
+					) {
+						clearTimeout(timer);
+						unsubscribe();
+						reject({ kind: "internal", reason: "native_user_entry_missing" });
+						return;
+					}
+					clearTimeout(timer);
+					unsubscribe();
+					resolve(nativeEntryId);
+				});
+			});
+			this.supervisor.promptConversation(
+				conversationId,
+				text,
+				images.length > 0 ? (images as PromptImages) : undefined,
+			);
+		});
 		this.publishChanged(conversationId, session, "message");
-		return { accepted: true, sessionId: session.sessionId };
+		return { accepted: true, sessionId: session.sessionId, entryId };
 	}
 
 	/** Abort is idempotent and never creates a missing live session. */
@@ -124,7 +159,8 @@ export class TurnPipeline {
 		const session = this.commandSession(conversationId);
 		this.rejectIfStreaming(session);
 		const entry = this.requireCurrentEntry(session, entryId);
-		if (entryRole(entry) !== "assistant") commandError("invalid_request", "message_regenerate_assistant_only");
+		if (entryRole(entry) !== "assistant")
+			commandError("invalid_request", "message_regenerate_assistant_only");
 		this.branchBefore(session, entryId);
 		session.reloadFromSessionManager();
 		this.ensureSessionNotifications(conversationId, session);
@@ -144,7 +180,12 @@ export class TurnPipeline {
 	}
 
 	/** Edit is deliberately user-only and uses AgentSession.navigateTree(). */
-	async edit(conversationId: string, entryId: string, text: string, _isUserMessage = true): Promise<void> {
+	async edit(
+		conversationId: string,
+		entryId: string,
+		text: string,
+		_isUserMessage = true,
+	): Promise<void> {
 		const session = this.commandSession(conversationId);
 		this.rejectIfStreaming(session);
 		const entry = this.requireCurrentEntry(session, entryId);
@@ -179,12 +220,15 @@ export class TurnPipeline {
 	): Promise<void> {
 		const session = this.commandSession(conversationId);
 		this.rejectIfStreaming(session);
-		this.db.insert(conversationDirectives).values({
-			id: randomUUID(),
-			conversationId,
-			directive: reason,
-			scope: applyScope,
-		}).run();
+		this.db
+			.insert(conversationDirectives)
+			.values({
+				id: randomUUID(),
+				conversationId,
+				directive: reason,
+				scope: applyScope,
+			})
+			.run();
 		this.ensureSessionNotifications(conversationId, session);
 		this.publishChanged(conversationId, session, "message");
 		const instruction = `${CORRECT_PREFIX}“${reason}”。请据此重写回应，直接给出修正后的内容，不要提及这条校正指令。`;
@@ -207,9 +251,62 @@ export class TurnPipeline {
 
 	hasActiveTurn(conversationId: string): boolean {
 		const session = this.liveSession(conversationId);
-		return Boolean(session && (session.isStreaming || session.agentSession.pendingMessageCount > 0));
+		return Boolean(
+			session && (session.isStreaming || session.agentSession.pendingMessageCount > 0),
+		);
 	}
 
+	/**
+	 * Deliver one hidden, Host-owned external-agent result to the active role
+	 * session and return the native assistant entry produced for it.
+	 *
+	 * The run id in custom-message details is the durable idempotency key. A
+	 * restart after Pi persisted the custom message therefore continues that
+	 * turn instead of appending a second result notification.
+	 */
+	async deliverExternalAgentResult(
+		conversationId: string,
+		runId: string,
+		content: string,
+	): Promise<ExternalAgentFollowUp> {
+		if (!this.supervisor.isRunning) commandError("unavailable", "companion_unavailable");
+		const session = await this.ensureSession(conversationId);
+		if (!(await this.supervisor.selectModelForConversation(conversationId, session))) {
+			commandError("unavailable", "provider_auth_required");
+		}
+		this.ensureSessionNotifications(conversationId, session);
+
+		const existing = externalAgentFollowUp(session, runId);
+		if (existing) return existing;
+		const hasNotification = session.sessionManager
+			.getEntries()
+			.some((entry) => isExternalAgentNotification(entry, runId));
+		const completion = waitForExternalAgentFollowUp(session, runId);
+		try {
+			if (hasNotification) {
+				await session.continue();
+			} else {
+				await session.agentSession.sendCustomMessage(
+					{
+						customType: "host_external_agent_result",
+						content,
+						display: false,
+						details: { runId },
+					},
+					{ triggerTurn: true, deliverAs: "followUp" },
+				);
+			}
+			const settled = externalAgentFollowUp(session, runId);
+			if (settled) {
+				completion.cancel();
+				return settled;
+			}
+			return await completion.promise;
+		} catch (error) {
+			completion.cancel();
+			throw error;
+		}
+	}
 
 	private async ensureSession(conversationId: string): Promise<PiSessionHandle> {
 		try {
@@ -288,7 +385,11 @@ export class TurnPipeline {
 		});
 	}
 
-	private publishChanged(conversationId: string, session: PiSessionHandle, reason: NotifyReason): void {
+	private publishChanged(
+		conversationId: string,
+		session: PiSessionHandle,
+		reason: NotifyReason,
+	): void {
 		this.scheduleChanged(conversationId, session.sessionId, reason);
 	}
 }
@@ -301,4 +402,87 @@ function eventReason(type: string): NotifyReason | undefined {
 	if (type.startsWith("compaction_") || type.startsWith("summarization_")) return "compaction";
 	if (type === "queue_update") return "queue";
 	return undefined;
+}
+
+function isExternalAgentNotification(entry: NativeEntry, runId: string): boolean {
+	if (
+		!entry ||
+		entry.type !== "custom_message" ||
+		entry.customType !== "host_external_agent_result"
+	) {
+		return false;
+	}
+	const details = entry.details;
+	return Boolean(
+		details && typeof details === "object" && "runId" in details && details.runId === runId,
+	);
+}
+
+function externalAgentFollowUp(
+	session: PiSessionHandle,
+	runId: string,
+): ExternalAgentFollowUp | undefined {
+	const entries = session.sessionManager.getEntries();
+	const notificationIds = new Set(
+		entries.filter((entry) => isExternalAgentNotification(entry, runId)).map((entry) => entry.id),
+	);
+	if (notificationIds.size === 0) return undefined;
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
+		const entry = entries[index];
+		if (!entry) continue;
+		if (entryRole(entry) !== "assistant") continue;
+		let parentId = entry.parentId;
+		while (parentId) {
+			if (notificationIds.has(parentId)) {
+				return { entryId: entry.id, text: nativeMessageText(entry) };
+			}
+			parentId = session.sessionManager.getEntry(parentId)?.parentId ?? null;
+		}
+	}
+	return undefined;
+}
+
+function nativeMessageText(entry: NativeEntry): string {
+	if (!isMessageEntry(entry)) return "";
+	const content = "content" in entry.message ? entry.message.content : undefined;
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.flatMap((part) =>
+			part &&
+			typeof part === "object" &&
+			"type" in part &&
+			part.type === "text" &&
+			"text" in part &&
+			typeof part.text === "string"
+				? [part.text]
+				: [],
+		)
+		.join("\n");
+}
+
+function waitForExternalAgentFollowUp(
+	session: PiSessionHandle,
+	runId: string,
+): { promise: Promise<ExternalAgentFollowUp>; cancel(): void } {
+	const pending = Promise.withResolvers<ExternalAgentFollowUp>();
+	let active = true;
+	const unsubscribe = session.subscribe((event) => {
+		if (!active || event.type !== "message_end" || event.message.role !== "assistant") return;
+		queueMicrotask(() => {
+			const result = externalAgentFollowUp(session, runId);
+			if (!active || !result) return;
+			active = false;
+			unsubscribe();
+			pending.resolve(result);
+		});
+	});
+	return {
+		promise: pending.promise,
+		cancel: () => {
+			if (!active) return;
+			active = false;
+			unsubscribe();
+		},
+	};
 }

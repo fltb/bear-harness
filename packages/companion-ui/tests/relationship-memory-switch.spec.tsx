@@ -16,24 +16,36 @@ import { createTestClient, OFFICIAL_PRODUCT, THEMED_CHARACTER } from "./fixtures
 describe("relationship memory switch", () => {
 	const configureSelectedPackage = (client: ReturnType<typeof createTestClient>["client"]) => {
 		client.character.list = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { characters: [{
-				id: THEMED_CHARACTER.id,
-				name: THEMED_CHARACTER.name,
-				version: "1",
-				subtitle: THEMED_CHARACTER.character.subtitle,
-				avatarUrl: THEMED_CHARACTER.visual.avatarUrl,
-				active: true,
-			}] } }),
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					characters: [
+						{
+							id: THEMED_CHARACTER.id,
+							name: THEMED_CHARACTER.name,
+							version: "1",
+							subtitle: THEMED_CHARACTER.character.subtitle,
+							avatarUrl: THEMED_CHARACTER.visual.avatarUrl,
+							active: true,
+						},
+					],
+				},
+			}),
 		);
 		client.character.packageGet = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { package: {
-				characterId: THEMED_CHARACTER.id,
-				origin: "local" as const,
-				writable: true,
-				yaml: "prompt:\n  description: Test description\n  personality: Test personality\n  scenario: Test scenario\n  system_prompt: Test system prompt\n  mes_example: ''\nroleplay: {}\n",
-				sha256: "a".repeat(64),
-				character: THEMED_CHARACTER,
-			} } }),
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					package: {
+						characterId: THEMED_CHARACTER.id,
+						origin: "local" as const,
+						writable: true,
+						yaml: "prompt:\n  description: Test description\n  personality: Test personality\n  scenario: Test scenario\n  system_prompt: Test system prompt\n  mes_example: ''\nroleplay: {}\n",
+						sha256: "a".repeat(64),
+						character: THEMED_CHARACTER,
+					},
+				},
+			}),
 		);
 	};
 
@@ -43,11 +55,11 @@ describe("relationship memory switch", () => {
 		configureSelectedPackage(client);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		await user.click(await screen.findByRole("button", { name: "角色设置" }));
-		await user.click(await screen.findByRole("tab", { name: "角色记忆" }));
+		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
+		await user.click(await screen.findByRole("tab", { name: zhCN.currentRolePackage.memoryTab }));
 
 		const toggle = await screen.findByRole("switch", {
-			name: "关系记忆",
+			name: zhCN.currentRolePackage.relationshipMemory,
 		});
 		// The switch stays disabled until the first settings read resolves.
 		await waitFor(() => expect(toggle).toBeEnabled());
@@ -86,10 +98,10 @@ describe("relationship memory switch", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		await user.click(await screen.findByRole("button", { name: "角色设置" }));
-		await user.click(await screen.findByRole("tab", { name: "角色记忆" }));
+		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
+		await user.click(await screen.findByRole("tab", { name: zhCN.currentRolePackage.memoryTab }));
 		const toggle = await screen.findByRole("switch", {
-			name: "关系记忆",
+			name: zhCN.currentRolePackage.relationshipMemory,
 		});
 		await waitFor(() => expect(toggle).toBeEnabled());
 		await user.click(toggle);

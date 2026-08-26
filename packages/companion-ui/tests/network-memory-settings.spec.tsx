@@ -30,15 +30,11 @@ function waitForSettings(container: HTMLElement): Promise<void> {
 }
 function networkSaveButton(backstage: HTMLElement): HTMLElement {
 	const network = within(backstage).getByRole("region", { name: zhCN.settings.networkSection });
-	const button = network.querySelector<HTMLElement>(".settings-actions button");
-	if (!button) throw new Error("network save button missing");
-	return button;
+	return within(network).getByRole("button", { name: zhCN.settings.saveNetwork });
 }
 
 function embeddingSettings(backstage: HTMLElement): HTMLElement {
-	const embedding = backstage.querySelector<HTMLElement>(".embedding-settings");
-	if (!embedding) throw new Error("embedding settings missing");
-	return embedding;
+	return within(backstage).getByRole("region", { name: zhCN.settings.memoryVectorSection });
 }
 
 describe("NetworkAndMemorySettings", () => {

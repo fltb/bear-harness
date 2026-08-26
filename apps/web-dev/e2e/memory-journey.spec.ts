@@ -37,7 +37,11 @@ test("direct memory capture, scoped context, and user management stay determinis
 					data: {},
 				});
 				const payload = (await response.json()) as {
-					data?: { conversation?: { piTimeline: { entries: Array<{ kind: string; role?: string; text?: string }> } } };
+					data?: {
+						conversation?: {
+							piTimeline: { entries: Array<{ kind: string; role?: string; text?: string }> };
+						};
+					};
 				};
 				return payload.data?.conversation?.piTimeline.entries.some(
 					(entry) =>
@@ -67,7 +71,8 @@ test("direct memory capture, scoped context, and user management stay determinis
 		const source = conversation?.piTimeline.entries
 			.filter((entry) => entry.kind === "message" && entry.role === "assistant")
 			.findLast((entry) => entry.text === expectedAssistantText);
-		if (!conversation || !source) throw new Error("missing native assistant entry for memory capture");
+		if (!conversation || !source)
+			throw new Error("missing native assistant entry for memory capture");
 		const captureResponse = await page.request.post("/rpc/memory.capture%3Av1", {
 			headers,
 			data: { conversationId: conversation.id, entryId: source.id },
@@ -91,7 +96,11 @@ test("direct memory capture, scoped context, and user management stay determinis
 		});
 		const capture = capturePayload.data;
 		if (!capture) throw new Error("memory.capture succeeded without response data");
-		return { content: expectedAssistantText, memoryId: capture.memoryId, sourceEntryId: capture.sourceEntryId };
+		return {
+			content: expectedAssistantText,
+			memoryId: capture.memoryId,
+			sourceEntryId: capture.sourceEntryId,
+		};
 	};
 	const expectMemoryContext = async (expected: string): Promise<void> => {
 		await expect(page.getByText(expected, { exact: true })).toBeVisible();
@@ -107,11 +116,13 @@ test("direct memory capture, scoped context, and user management stay determinis
 		const dialog = page.getByRole("dialog", { name: zhCN.sidebar.characterSettings });
 		await expect(dialog).toBeVisible();
 		await dialog.getByRole("tab", { name: zhCN.backstage.roleManagement }).click();
-		const relationshipTab = dialog.getByRole("tab", { name: "角色记忆" });
+		const relationshipTab = dialog.getByRole("tab", {
+			name: zhCN.currentRolePackage.memoryTab,
+		});
 		await relationshipTab.click();
 		await expect(relationshipTab).toHaveAttribute("aria-selected", "true");
 		const memorySwitch = dialog.getByRole("switch", {
-			name: "关系记忆",
+			name: zhCN.currentRolePackage.relationshipMemory,
 		});
 		await expect(memorySwitch).toBeVisible();
 		if ((await memorySwitch.getAttribute("aria-checked")) !== String(enabled)) {

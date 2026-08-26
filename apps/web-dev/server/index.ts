@@ -6,10 +6,10 @@ import { fileURLToPath } from "node:url";
 import {
 	createDiagnostics,
 	createHostRuntime,
+	type Diagnostics,
 	isErrorType,
 	parseTraceparent,
 	RENDERER_FAULT_KINDS,
-	type Diagnostics,
 } from "@bear-harness/host-runtime";
 import { assertProductConfig, OFFICIAL_BRAND, productConfig } from "@bear-harness/product-config";
 import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
@@ -174,12 +174,32 @@ function diagnosticErrorType(
 		: "unknown";
 }
 
+type WebAttachmentCapability = {
+	conversationId: string;
+	attachmentId: string;
+	relativePath: string;
+	operation: "preview" | "download";
+	expiresAt: number;
+};
+const attachmentCapabilities = new Map<string, WebAttachmentCapability>();
+
 const runtime = createHostRuntime({
 	dataDir,
 	characterSeedRoot: resolve(repoRoot, "config/characters"),
 	productConfig,
 	credentialVault: createWebCredentialVault(dataDir),
 	protocolViolationMode: "throw",
+	conversationAttachmentUrlFactory: (request) => {
+		const capability = randomUUID();
+		attachmentCapabilities.set(capability, {
+			conversationId: request.conversationId,
+			attachmentId: request.attachmentId,
+			relativePath: request.relativePath,
+			operation: request.operation,
+			expiresAt: Date.now() + 5 * 60 * 1000,
+		});
+		return `/attachment/${capability}`;
+	},
 });
 
 async function readBody(request: IncomingMessage, maxBytes = 64 * 1024): Promise<unknown> {
@@ -240,6 +260,63 @@ const server = createServer(async (request, response) => {
 
 	if (request.method === "GET" && url.pathname === "/bootstrap") {
 		send(response, 200, { product: productConfig, token, debugEnabled });
+		return;
+	}
+	if (request.method === "GET" && url.pathname.startsWith("/attachment/")) {
+		const capability = url.pathname.slice("/attachment/".length);
+		const grant = attachmentCapabilities.get(capability);
+		if (!grant || grant.expiresAt < Date.now()) {
+			attachmentCapabilities.delete(capability);
+			response.writeHead(404).end("not found");
+			return;
+		}
+		try {
+			const file = runtime.attachments.readFile(
+				grant.conversationId,
+				grant.attachmentId,
+				grant.relativePath,
+			);
+			const previewAllowed =
+				grant.operation === "preview" &&
+				/^(image\/(?:png|jpeg|gif|webp)|audio\/|video\/|application\/pdf$)/i.test(file.mime);
+			if (grant.operation === "preview" && !previewAllowed) {
+				response
+					.writeHead(415, {
+						"Cache-Control": "no-store",
+						"X-Content-Type-Options": "nosniff",
+						"Content-Security-Policy": "default-src 'none'",
+					})
+					.end("preview unavailable");
+				return;
+			}
+			const safeName = [...file.name]
+				.map((character) => {
+					const code = character.codePointAt(0) ?? 0;
+					return code <= 0x1f ||
+						code === 0x7f ||
+						character === '"' ||
+						character === "\\" ||
+						character === "/"
+						? "_"
+						: character;
+				})
+				.join("");
+			response.writeHead(200, {
+				"Content-Type": file.mime,
+				"Content-Length": String(file.buffer.byteLength),
+				"Cache-Control": "no-store",
+				"X-Content-Type-Options": "nosniff",
+				"Content-Security-Policy": "default-src 'none'",
+				...(grant.operation === "download"
+					? {
+							"Content-Disposition": `attachment; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(safeName)}`,
+						}
+					: {}),
+			});
+			response.end(file.buffer);
+		} catch {
+			response.writeHead(404).end("not found");
+		}
 		return;
 	}
 	const suppliedToken = request.headers["x-bear-web-dev-token"];

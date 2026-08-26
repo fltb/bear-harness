@@ -1,8 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { ArtifactStore } from "../artifacts/index.js";
-import type { AppDatabase } from "../storage/database.js";
+import type { AppDatabase, CanonVectorIndex } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
 import {
 	canonChunks,
@@ -67,7 +66,7 @@ export class CanonHubService {
 		private readonly artifacts: ArtifactStore,
 		private readonly eventBus: EventBus,
 		private readonly embeddingService?: () => CanonEmbeddingService | undefined,
-		private readonly connection?: DatabaseSync,
+		private readonly vectors?: CanonVectorIndex,
 	) {}
 
 	addSource(companionId: string, logicalName: string, content: string): CanonSourceRecord {
@@ -216,13 +215,7 @@ export class CanonHubService {
 		if (!this.ensureVectorIndex(queryEmbedding.length)) {
 			return this.finalizeHybrid(lexical, limit, options.includeAdjacent);
 		}
-		const vectorRows = this.connection!.prepare(
-			`SELECT chunk_id, distance FROM canon_chunk_vectors
-				 WHERE embedding MATCH ? AND k = ? ORDER BY distance`,
-		).all(Buffer.from(queryEmbedding.buffer), Math.max(limit * 6, 48)) as Array<{
-			chunk_id: string;
-			distance: number;
-		}>;
+		const vectorRows = this.vectors!.searchCanonVectors(queryEmbedding, Math.max(limit * 6, 48));
 		const candidates = this.db
 			.select({
 				id: canonChunks.id,
@@ -242,8 +235,8 @@ export class CanonHubService {
 			.all();
 		const candidateById = new Map(candidates.map((row) => [row.id, toChunkRecord(row)]));
 		const vector = vectorRows
-			.map(({ chunk_id, distance }) => ({
-				row: candidateById.get(chunk_id),
+			.map(({ chunkId, distance }) => ({
+				row: candidateById.get(chunkId),
 				score: 1 - distance,
 			}))
 			.filter(
@@ -611,10 +604,7 @@ export class CanonHubService {
 					: await service.embed(row.content);
 				if (embedding.length === 0) continue;
 				if (!this.ensureVectorIndex(embedding.length)) return;
-				this.connection!.prepare("DELETE FROM canon_chunk_vectors WHERE chunk_id = ?").run(row.id);
-				this.connection!.prepare(
-					"INSERT INTO canon_chunk_vectors (chunk_id, embedding) VALUES (?, ?)",
-				).run(row.id, Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength));
+				this.vectors!.upsertCanonVector(row.id, embedding);
 				if (!row.embedding) {
 					this.db
 						.update(canonChunks)
@@ -631,36 +621,10 @@ export class CanonHubService {
 	}
 
 	private ensureVectorIndex(dimensions: number): boolean {
-		if (!this.connection || dimensions <= 0) return false;
-		try {
-			this.connection.exec(
-				"CREATE TABLE IF NOT EXISTS canon_vector_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
-			);
-			const row = this.connection
-				.prepare("SELECT value FROM canon_vector_meta WHERE key = 'dimensions'")
-				.get() as { value: string } | undefined;
-			if (row && Number(row.value) !== dimensions) {
-				this.connection.exec("DROP TABLE IF EXISTS canon_chunk_vectors");
-				this.connection
-					.prepare("UPDATE canon_vector_meta SET value = ? WHERE key = 'dimensions'")
-					.run(String(dimensions));
-				this.db.update(canonChunks).set({ embedding: null }).run();
-			}
-			this.connection.exec(
-				`CREATE VIRTUAL TABLE IF NOT EXISTS canon_chunk_vectors USING vec0(
-					chunk_id TEXT PRIMARY KEY,
-					embedding float[${dimensions}] distance_metric=cosine
-				)`,
-			);
-			this.connection
-				.prepare(
-					"INSERT INTO canon_vector_meta (key, value) VALUES ('dimensions', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-				)
-				.run(String(dimensions));
-			return true;
-		} catch {
-			return false;
-		}
+		if (!this.vectors || dimensions <= 0) return false;
+		const index = this.vectors.ensureCanonVectorIndex(dimensions);
+		if (index.reset) this.db.update(canonChunks).set({ embedding: null }).run();
+		return index.ready;
 	}
 
 	private finalizeHybrid(

@@ -141,11 +141,11 @@ function first<T>(values: readonly T[]): T {
 	return value;
 }
 
-async function providerTile(dialog: HTMLElement, providerId: string): Promise<HTMLElement> {
-	await waitFor(() =>
-		expect(dialog.querySelector(`[data-provider-tile="${providerId}"]`)).not.toBeNull(),
-	);
-	return dialog.querySelector(`[data-provider-tile="${providerId}"]`) as HTMLElement;
+async function providerTile(
+	dialog: HTMLElement,
+	provider: Pick<ProviderFixture, "id" | "name">,
+): Promise<HTMLElement> {
+	return within(dialog).findByRole("button", { name: new RegExp(provider.name) });
 }
 
 function firstRunStore(
@@ -232,18 +232,24 @@ describe("Host-backed first-run setup", () => {
 		const setup = firstRunStore();
 		renderMeeting(setup.store);
 		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
-		await user.click(await providerTile(dialog, "openai"));
-		const editor = dialog.querySelector('[data-provider-editor="openai"]') as HTMLElement;
+		await user.click(await providerTile(dialog, candidate));
+		const apiKeyInput = first(within(dialog).getAllByLabelText(zhCN.settings.apiKeyLabel));
 		expect(
 			within(dialog).queryByRole("button", { name: zhCN.messages.continue }),
 		).not.toBeInTheDocument();
-		await user.type(within(editor).getByLabelText(zhCN.settings.apiKeyLabel), "secret");
+		await user.type(apiKeyInput, "secret");
 		await user.type(
-			within(editor).getByLabelText(zhCN.settings.customBaseUrl),
+			first(within(dialog).getAllByLabelText(zhCN.settings.customBaseUrl)),
 			"https://relay.example/v1",
 		);
 		setup.holdProviderList();
-		await user.click(within(editor).getByRole("button", { name: zhCN.settings.addProvider }));
+		await user.click(
+			first(
+				within(dialog)
+					.getAllByRole("button", { name: zhCN.settings.addProvider })
+					.filter((button) => !button.hasAttribute("disabled")),
+			),
+		);
 		await waitFor(() => expect(setup.setApiKey).toHaveBeenCalledWith("openai", "secret"));
 		expect(setup.providers()[0]?.added).toBe(false);
 		expect(setup.overrideBaseUrl).toHaveBeenCalledWith({
@@ -281,7 +287,7 @@ describe("Host-backed first-run setup", () => {
 		const setup = firstRunStore();
 		renderMeeting(setup.store);
 		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
-		await user.click(await providerTile(dialog, "openai"));
+		await user.click(await providerTile(dialog, candidate));
 		await user.type(first(within(dialog).getAllByLabelText(zhCN.settings.apiKeyLabel)), "secret");
 		await user.click(
 			first(within(dialog).getAllByRole("button", { name: zhCN.settings.addProvider })),
@@ -303,7 +309,7 @@ describe("Host-backed first-run setup", () => {
 		const setup = firstRunStore({ embedding: embeddingBinding({ configure }) });
 		renderMeeting(setup.store);
 		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
-		await user.click(await providerTile(dialog, "openai"));
+		await user.click(await providerTile(dialog, candidate));
 		await user.type(first(within(dialog).getAllByLabelText(zhCN.settings.apiKeyLabel)), "secret");
 		await user.click(
 			first(within(dialog).getAllByRole("button", { name: zhCN.settings.addProvider })),
@@ -352,10 +358,15 @@ describe("Host-backed first-run setup", () => {
 		await user.click(tile);
 		expect(tile).toHaveAttribute("aria-pressed", "true");
 
-		const editor = dialog.querySelector('[data-provider-editor="openai"]') as HTMLElement;
-		expect(editor).not.toBeNull();
-		await user.type(within(editor).getByLabelText(zhCN.settings.apiKeyLabel), "secret");
-		await user.click(within(editor).getByRole("button", { name: zhCN.settings.addProvider }));
+		const apiKeyInput = first(within(dialog).getAllByLabelText(zhCN.settings.apiKeyLabel));
+		expect(apiKeyInput).toBeVisible();
+		await user.type(apiKeyInput, "secret");
+		const addProvider = first(
+			within(dialog)
+				.getAllByRole("button", { name: zhCN.settings.addProvider })
+				.filter((button) => !button.hasAttribute("disabled")),
+		);
+		await user.click(addProvider);
 		await waitFor(() => expect(setup.setApiKey).toHaveBeenCalledWith("openai", "secret"));
 		const reply = await within(dialog).findByLabelText(zhCN.modelSetup.modelLabel);
 

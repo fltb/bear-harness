@@ -1,13 +1,10 @@
 /**
- * Shared ACP executor controller and Host-owned filesystem boundary.
+ * Shared ACP controller for independent external-agent runs.
  *
- * ACP workers may ask for files, but only this client performs I/O. Every
- * worker update becomes bounded Host evidence; raw tool inputs and outputs are
- * deliberately not persisted because they can contain user material or keys.
+ * The transport owns lifecycle, permission forwarding, and bounded evidence.
+ * External agents use their own native filesystem and terminal tools; Bear
+ * deliberately advertises no Host filesystem or terminal callbacks.
  */
-
-import { readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type * as acp from "@agentclientprotocol/sdk";
 import { type AcpPermissionRequest, type AcpProcessSpec, AcpRunClient } from "./acp-client.js";
 import type {
@@ -17,17 +14,11 @@ import type {
 	ExecutorRun,
 } from "./router.js";
 
-const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_SUMMARY_CHARS = 12_000;
 
 /** Prompt used to re-prompt a paused run after an interrupt (session keeps its history). */
 const CONTINUATION_PROMPT =
-	"Continue the approved action from where you left off. Work only within the approved scope and report the result concisely when done.";
-
-type AllowedRoot = {
-	lexical: string;
-	canonical: string | null;
-};
+	"Continue the requested work from where you left off and report the result concisely when done.";
 
 type ActiveRun = {
 	request: ExecutorLaunchRequest;
@@ -42,95 +33,6 @@ type ActiveRun = {
 };
 
 /** Host-side ACP filesystem implementation for one approved run. */
-export class ApprovedFileAccess {
-	private readonly readRoots: AllowedRoot[];
-	private readonly writeRoots: AllowedRoot[];
-	private readonly record: (kind: string, data: Record<string, unknown>) => void;
-
-	constructor(params: {
-		reads: string[];
-		writes: string[];
-		record(kind: string, data: Record<string, unknown>): void;
-	}) {
-		this.readRoots = params.reads.map((path) => toAllowedRoot(path, "read"));
-		this.writeRoots = params.writes.map((path) => toAllowedRoot(path, "write"));
-		this.record = params.record;
-	}
-
-	async readTextFile(request: acp.ReadTextFileRequest): Promise<acp.ReadTextFileResponse> {
-		const target = this.resolveReadable(request.path);
-		const bytes = statSync(target).size;
-		if (bytes > MAX_FILE_BYTES) throw new Error("approved_file_too_large");
-		const content = readFileSync(target, "utf8");
-		const line = request.line ?? 1;
-		const limit = request.limit ?? 2000;
-		if (!Number.isSafeInteger(line) || line < 1 || !Number.isSafeInteger(limit) || limit < 1) {
-			throw new Error("invalid_file_range");
-		}
-		const sliced = content
-			.split(/\r?\n/)
-			.slice(line - 1, line - 1 + Math.min(limit, 2000))
-			.join("\n");
-		this.record("acp.file_read", { path: target, bytes, line, limit: Math.min(limit, 2000) });
-		return { content: sliced };
-	}
-
-	async writeTextFile(request: acp.WriteTextFileRequest): Promise<acp.WriteTextFileResponse> {
-		if (Buffer.byteLength(request.content, "utf8") > MAX_FILE_BYTES) {
-			throw new Error("approved_file_too_large");
-		}
-		const target = this.resolveWritable(request.path);
-		writeFileSync(target, request.content, "utf8");
-		this.record("acp.file_write", {
-			path: target,
-			bytes: Buffer.byteLength(request.content, "utf8"),
-		});
-		return {};
-	}
-
-	private resolveReadable(path: string): string {
-		const target = this.assertLexicallyAllowed(path, this.readRoots, "read");
-		let canonical: string;
-		try {
-			canonical = realpathSync(target);
-			if (!statSync(canonical).isFile()) throw new Error("approved_path_not_file");
-		} catch (error) {
-			if (error instanceof Error && error.message === "approved_path_not_file") throw error;
-			throw new Error("approved_file_not_found");
-		}
-		if (!this.readRoots.some((root) => root.canonical && isInside(root.canonical, canonical))) {
-			throw new Error("approved_path_symlink_escape");
-		}
-		return canonical;
-	}
-
-	private resolveWritable(path: string): string {
-		const target = this.assertLexicallyAllowed(path, this.writeRoots, "write");
-		const parent = nearestExistingParent(target);
-		const canonicalParent = realpathSync(parent);
-		const permitted = this.writeRoots.some((root) => {
-			if (root.canonical && isInside(root.canonical, canonicalParent)) return true;
-			return (
-				root.lexical === target && isInside(realpathSync(dirname(root.lexical)), canonicalParent)
-			);
-		});
-		if (!permitted) throw new Error("approved_path_symlink_escape");
-		return target;
-	}
-
-	private assertLexicallyAllowed(
-		path: string,
-		roots: AllowedRoot[],
-		access: "read" | "write",
-	): string {
-		if (!isAbsolute(path)) throw new Error("ACP file paths must be absolute");
-		const target = resolve(path);
-		if (!roots.some((root) => isInside(root.lexical, target))) {
-			throw new Error(`approved_${access}_path_denied`);
-		}
-		return target;
-	}
-}
 
 /**
  * Base implementation for one ACP agent process per run. Subclasses only
@@ -146,17 +48,10 @@ export abstract class AcpExecutorController implements ExecutorController {
 		}
 
 		let active: ActiveRun;
-		const files = new ApprovedFileAccess({
-			reads: request.commission.reads,
-			writes: request.commission.writes,
-			record: (kind, data) => request.emit({ type: "evidence", kind, data }),
-		});
 		const client = new AcpRunClient(this.processSpec(request), {
 			onSessionUpdate: (notification) => this.handleSessionUpdate(active, notification),
 			onPermissionRequest: (permission) => this.handlePermissionRequest(active, permission),
 			onExit: (result) => this.handleProcessExit(active, result),
-			readTextFile: (params) => files.readTextFile(params),
-			writeTextFile: (params) => files.writeTextFile(params),
 		});
 		active = {
 			request,
@@ -188,14 +83,10 @@ export abstract class AcpExecutorController implements ExecutorController {
 	/**
 	 * Deliver a steering instruction to the live agent turn.
 	 *
-	 * Profile behavior: both registered profiles (Pi `product-managed` worker
-	 * and Codex) speak ACP and share this implementation. The instruction is
-	 * sent as the `_session/steering` extension — the Pi worker enqueues it as
-	 * a synthetic user message into the running session (delivered before the
-	 * next LLM call), and codex-acp injects it into the live turn natively.
-	 * Agents without the extension receive a follow-up `session/prompt`, which
-	 * the Pi worker also handles as a queued follow-up. Steering is a pure
-	 * signal: no run state changes.
+	 * Profile behavior: both registered profiles speak ACP and share this
+	 * implementation. The instruction is sent as the `_session/steering`
+	 * extension when supported, otherwise as a follow-up ACP prompt. Steering
+	 * is a pure signal: no run state changes.
 	 */
 	async steer(run: ExecutorRun, instruction: string): Promise<void> {
 		const active = this.requireActive(run.runId);
@@ -369,46 +260,11 @@ export abstract class AcpExecutorController implements ExecutorController {
 }
 
 function executionPrompt(request: ExecutorLaunchRequest): string {
-	const scope = [
-		`Reads: ${request.commission.reads.join(", ") || "none"}.`,
-		`Writes: ${request.commission.writes.join(", ") || "none"}.`,
-		`Allowed tools: ${request.commission.toolNames.join(", ") || "read/write only"}.`,
-		`Network access: ${request.commission.networkAllowed ? "allowed" : "not allowed"}.`,
-	].join("\n");
-	return `Complete this user-approved action.\n\nTitle: ${request.commission.title}\nDescription: ${request.commission.description}\n\n${scope}\n\nWork only within this scope. Report the result concisely.`;
-}
-
-function toAllowedRoot(path: string, access: "read" | "write"): AllowedRoot {
-	if (!isAbsolute(path))
-		throw { kind: "validation_failed", reason: `executor_${access}_root_not_absolute` };
-	const lexical = resolve(path);
-	let canonical: string | null = null;
-	try {
-		canonical = realpathSync(lexical);
-	} catch {
-		// A declared write target may not exist yet. The write path guard also
-		// checks the nearest canonical parent before creating it.
-	}
-	return { lexical, canonical };
-}
-
-function nearestExistingParent(path: string): string {
-	let current = dirname(path);
-	for (;;) {
-		try {
-			if (statSync(current).isDirectory()) return current;
-		} catch {
-			// Continue toward the filesystem root.
-		}
-		const parent = dirname(current);
-		if (parent === current) throw new Error("approved_parent_not_found");
-		current = parent;
-	}
-}
-
-function isInside(root: string, candidate: string): boolean {
-	const path = relative(root, candidate);
-	return path === "" || (!path.startsWith("..") && !isAbsolute(path));
+	return (
+		`${request.task.instruction}\n\nYou are an independent external agent. Use your native tools and policy. ` +
+		`The supplied workspace and inputs are real local paths; Bear provides no sandbox or rollback. ` +
+		`Write chat deliverables only beneath BEAR_OUTPUT_DIR and report the result concisely.`
+	);
 }
 
 function appendCapped(parts: string[], value: string): void {

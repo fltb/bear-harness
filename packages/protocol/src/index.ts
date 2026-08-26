@@ -172,6 +172,50 @@ export type ConversationActiveGetRequest = z.infer<typeof schema.ConversationAct
 export type ConversationActiveResponse = z.infer<typeof schema.ConversationActiveResponse>;
 export type ConversationSelectResponse = z.infer<typeof schema.ConversationSelectResponse>;
 export type PiTimelineEntry = z.infer<typeof schema.PiTimelineEntry>;
+export type ConversationAttachmentKind = z.infer<typeof schema.ConversationAttachmentKind>;
+export type ConversationAttachmentSummary = z.infer<typeof schema.ConversationAttachmentSummary>;
+export type ConversationAttachmentEntryKind = z.infer<
+	typeof schema.ConversationAttachmentEntryKind
+>;
+export type ConversationAttachmentListRequest = z.infer<
+	typeof schema.ConversationAttachmentListRequest
+>;
+export type ConversationAttachmentListResponse = z.infer<
+	typeof schema.ConversationAttachmentListResponse
+>;
+export type ConversationAttachmentDiscardRequest = z.infer<
+	typeof schema.ConversationAttachmentDiscardRequest
+>;
+export type ConversationAttachmentReadRequest = z.infer<
+	typeof schema.ConversationAttachmentReadRequest
+>;
+export type ConversationAttachmentReadResponse = z.infer<
+	typeof schema.ConversationAttachmentReadResponse
+>;
+export type ConversationAttachmentUrlRequest = z.infer<
+	typeof schema.ConversationAttachmentUrlRequest
+>;
+export type ConversationAttachmentUrlResponse = z.infer<
+	typeof schema.ConversationAttachmentUrlResponse
+>;
+export type ConversationAttachmentStartUploadRequest = z.infer<
+	typeof schema.ConversationAttachmentStartUploadRequest
+>;
+export type ConversationAttachmentStartUploadResponse = z.infer<
+	typeof schema.ConversationAttachmentStartUploadResponse
+>;
+export type ConversationAttachmentAppendChunkRequest = z.infer<
+	typeof schema.ConversationAttachmentAppendChunkRequest
+>;
+export type ConversationAttachmentCompleteUploadRequest = z.infer<
+	typeof schema.ConversationAttachmentCompleteUploadRequest
+>;
+export type ConversationAttachmentCompleteUploadResponse = z.infer<
+	typeof schema.ConversationAttachmentCompleteUploadResponse
+>;
+export type ConversationAttachmentCancelUploadRequest = z.infer<
+	typeof schema.ConversationAttachmentCancelUploadRequest
+>;
 export type PiTimeline = z.infer<typeof schema.PiTimeline>;
 export type PiSessionId = z.infer<typeof schema.PiSessionId>;
 export type PiLiveAssistantMessage = z.infer<typeof schema.PiLiveAssistantMessage>;
@@ -231,6 +275,12 @@ export type MemoryCandidateApproveRequest = z.infer<typeof schema.MemoryCandidat
 export type MemoryCandidateApproveResponse = z.infer<typeof schema.EmptyResponse>;
 export type MemoryCandidateRejectRequest = z.infer<typeof schema.MemoryCandidateRejectRequest>;
 export type MemoryCandidateRejectResponse = z.infer<typeof schema.EmptyResponse>;
+export type MemoryConfigureLocalEmbeddingRequest = z.infer<
+	typeof schema.MemoryConfigureLocalEmbeddingRequest
+>;
+export type MemoryConfigureLocalEmbeddingResponse = z.infer<
+	typeof schema.MemoryConfigureLocalEmbeddingResponse
+>;
 
 export type CanonListSourcesRequest = z.infer<typeof schema.CanonListSourcesRequest>;
 export type CanonListSourcesResponse = z.infer<typeof schema.CanonListSourcesResponse>;
@@ -251,7 +301,6 @@ export type CanonSource = z.infer<typeof schema.CanonSource>;
 export type CanonChunk = z.infer<typeof schema.CanonChunk>;
 export type CanonModuleKind = z.infer<typeof schema.CanonModuleKind>;
 export type CanonModule = z.infer<typeof schema.CanonModule>;
-
 
 // ---------------------------------------------------------------------------
 // Provider
@@ -306,21 +355,24 @@ export type ModelDisableRequest = z.infer<typeof schema.ModelDisableRequest>;
 export type ModelDisableResponse = z.infer<typeof schema.EmptyResponse>;
 
 // ---------------------------------------------------------------------------
-// Commission
+// External agents
 // ---------------------------------------------------------------------------
 
-export type ActionDraft = z.infer<typeof schema.ActionDraft>;
-export type Commission = z.infer<typeof schema.Commission>;
-export type CommissionListRequest = z.infer<typeof schema.CommissionListRequest>;
-export type CommissionListResponse = z.infer<typeof schema.CommissionListResponse>;
-export type CommissionDraftRequest = z.infer<typeof schema.CommissionDraftRequest>;
-export type CommissionDraftResponse = z.infer<typeof schema.CommissionDraftResponse>;
-export type CommissionApproveRequest = z.infer<typeof schema.CommissionApproveRequest>;
-export type CommissionLaunchRequest = z.infer<typeof schema.CommissionLaunchRequest>;
-export type CommissionLaunchResponse = z.infer<typeof schema.CommissionLaunchResponse>;
-export type CommissionApproveResponse = z.infer<typeof schema.EmptyResponse>;
-export type CommissionRejectRequest = z.infer<typeof schema.CommissionRejectRequest>;
-export type CommissionRejectResponse = z.infer<typeof schema.EmptyResponse>;
+export type ExternalAgentCandidate = z.infer<typeof schema.ExternalAgentCandidate>;
+export type ExternalAgentDiscoverCodexRequest = z.infer<
+	typeof schema.ExternalAgentDiscoverCodexRequest
+>;
+export type ExternalAgentDiscoverCodexResponse = z.infer<
+	typeof schema.ExternalAgentDiscoverCodexResponse
+>;
+export type ExternalAgentConnectCodexRequest = z.infer<
+	typeof schema.ExternalAgentConnectCodexRequest
+>;
+export type ExternalAgentConnectCodexResponse = z.infer<
+	typeof schema.ExternalAgentConnectCodexResponse
+>;
+export type ExternalAgentStatusRequest = z.infer<typeof schema.ExternalAgentStatusRequest>;
+export type ExternalAgentStatusResponse = z.infer<typeof schema.ExternalAgentStatusResponse>;
 export type RunSteerRequest = z.infer<typeof schema.RunSteerRequest>;
 export type RunCancelRequest = z.infer<typeof schema.RunCancelRequest>;
 export type RunRespondPermissionRequest = z.infer<typeof schema.RunRespondPermissionRequest>;
@@ -341,18 +393,6 @@ export type Run = z.infer<typeof schema.Run>;
 export type RunListRequest = z.infer<typeof schema.RunListRequest>;
 export type RunListResponse = z.infer<typeof schema.RunListResponse>;
 export type RunResponse = z.infer<typeof schema.RunResponse>;
-export type ArtifactListResponse = z.infer<typeof schema.ArtifactListResponse>;
-export type ArtifactReadRequest = z.infer<typeof schema.ArtifactReadRequest>;
-export type ArtifactReadResponse = z.infer<typeof schema.ArtifactReadResponse>;
-export type ArtifactUrlRequest = z.infer<typeof schema.ArtifactUrlRequest>;
-export type ArtifactUrlResponse = z.infer<typeof schema.ArtifactUrlResponse>;
-
-// ---------------------------------------------------------------------------
-// Artifact
-// ---------------------------------------------------------------------------
-
-export type Artifact = z.infer<typeof schema.Artifact>;
-export type ArtifactListRequest = z.infer<typeof schema.ArtifactListRequest>;
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -367,7 +407,9 @@ export type SettingsGetResponse = z.infer<typeof schema.SettingsResponse>;
 export type SettingsSetResponse = z.infer<typeof schema.SettingsResponse>;
 export type SettingsCapabilities = z.infer<typeof schema.SettingsCapabilitiesGetResponse>;
 export type SettingsCapabilitiesGetRequest = z.infer<typeof schema.SettingsCapabilitiesGetRequest>;
-export type SettingsCapabilitiesGetResponse = z.infer<typeof schema.SettingsCapabilitiesGetResponse>;
+export type SettingsCapabilitiesGetResponse = z.infer<
+	typeof schema.SettingsCapabilitiesGetResponse
+>;
 export type NetworkProxyModeCapability = z.infer<typeof schema.NetworkProxyModeCapability>;
 export type MemoryVectorProviderCapability = z.infer<typeof schema.MemoryVectorProviderCapability>;
 export type MemoryVectorPresetCapability = z.infer<typeof schema.MemoryVectorPresetCapability>;

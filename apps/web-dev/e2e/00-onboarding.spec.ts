@@ -66,7 +66,7 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	await modelSetup.getByRole("button", { name: zhCN.modelSetup.continue }).click();
 	const embeddingSetup = page.getByRole("dialog", { name: zhCN.settings.memoryVectorSection });
 	await expect(embeddingSetup).toBeVisible();
-	const embeddingContinue = embeddingSetup.getByRole("button", { name: "继续" });
+	const embeddingContinue = embeddingSetup.getByRole("button", { name: zhCN.messages.continue });
 	await expect(embeddingContinue).toBeDisabled();
 	await selectKobalteOption(
 		page,

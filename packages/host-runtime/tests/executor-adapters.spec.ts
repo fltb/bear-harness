@@ -10,7 +10,7 @@ import { drizzle } from "drizzle-orm/node-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AcpProcessSpec } from "../src/executors/acp-client.js";
 import { CodexAdapter } from "../src/executors/codex-adapter.js";
-import { PiAcpAdapter } from "../src/executors/pi-adapter.js";
+import { PiAcpAdapter, piModelEnvironment } from "../src/executors/pi-adapter.js";
 import type { ExecutorLaunchRequest } from "../src/executors/router.js";
 import { EventBus } from "../src/storage/event-bus.js";
 
@@ -49,16 +49,8 @@ function createDatabase(): { db: DatabaseSync; eventBus: EventBus } {
 
 function request(cwd: string, profile: ExecutorLaunchRequest["profile"]): ExecutorLaunchRequest {
 	return {
-		run: { runId: "run-1", commissionId: "commission-1", executorProfile: profile.id },
-		commission: {
-			id: "commission-1",
-			title: "Read directory",
-			description: "Inspect the approved directory.",
-			reads: [cwd],
-			writes: [],
-			networkAllowed: false,
-			toolNames: ["read"],
-		},
+		run: { runId: "run-1", triggerEntryId: "entry-1", executorProfile: profile.id },
+		task: { instruction: "Inspect the workspace.", workspace: cwd },
 		profile,
 		emit: () => undefined,
 	};
@@ -71,10 +63,15 @@ describe("ACP executor adapters", () => {
 		const adapter = new PiAcpAdapter(drizzle({ client: db }), cwd, fixturePath);
 		const completed = Promise.withResolvers<void>();
 		const run = request(cwd, {
-			id: "pi-product-managed",
-			type: "product-managed",
+			id: "pi-default",
+			type: "pi",
 			capabilities: {},
 		});
+		run.task.modelRoute = {
+			providerId: "provider-a",
+			modelId: "model-a",
+			apiKey: "process-only-secret",
+		};
 		run.emit = (event) => {
 			if (event.type === "completed") completed.resolve();
 		};
@@ -92,6 +89,14 @@ describe("ACP executor adapters", () => {
 		expect(manifest).toMatchObject({ executor: "pi-acp", workerPath: fixturePath });
 		expect(JSON.stringify(manifest)).not.toContain("apiKey");
 		db.close();
+	});
+
+	it("passes the selected Pi route and credential only through the worker environment", () => {
+		expect(piModelEnvironment("provider-a", "model-a", "secret-a")).toEqual({
+			BEAR_PI_PROVIDER_ID: "provider-a",
+			BEAR_PI_MODEL_ID: "model-a",
+			BEAR_PI_API_KEY: "secret-a",
+		});
 	});
 
 	it("routes a re-verified consented Codex profile through ACP", async () => {
@@ -134,12 +139,6 @@ describe("ACP executor adapters", () => {
 					}
 				).manifest_json,
 			),
-		).toMatchObject({ executor: "codex", canonicalPath: binary, sha256: hash });
-		expect(
-			(db.prepare("SELECT kind FROM events").all() as Array<{ kind: string }>).map(
-				(event) => event.kind,
-			),
-		).toContain("codex.launched");
-		db.close();
+		).toMatchObject({ executor: "codex", triggerEntryId: "entry-1", sha256: hash });
 	});
 });

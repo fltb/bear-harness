@@ -240,14 +240,10 @@ export const EventPayloadSchemas = {
 	"canon.module_saved": EventPayload({ companionId: EventId, moduleId: EventId }),
 	"canon.module_removed": EventPayload({ companionId: EventId, moduleId: EventId }),
 	"evidence.collected": EventPayload({ runId: EventId, evidenceId: EventId, kind: EventText }),
-	"artifact.created": EventPayload({ artifactId: EventId, runId: EventId }),
-	"commission.drafted": EventPayload({ commissionId: EventId, draftHash: EventText }),
-	"commission.approved": EventPayload({ commissionId: EventId, draftHash: EventText }),
-	"commission.rejected": EventPayload({ commissionId: EventId }),
-	"commission.status_changed": EventPayload({ commissionId: EventId, status: EventText }),
 	"run.enqueued": EventPayload({
 		runId: EventId,
-		commissionId: EventId,
+		conversationId: EventId,
+		triggerEntryId: EventId,
 		executorProfile: EventText,
 	}),
 	"run.started": EventPayload({ runId: EventId }),
@@ -270,11 +266,6 @@ export const EventPayloadSchemas = {
 	"run.interrupted": EventPayload({ runId: EventId }),
 	"run.resumed": EventPayload({ runId: EventId }),
 	"run.cancelled": EventPayload({ runId: EventId }),
-	"run.result_adopted": EventPayload({
-		commissionId: EventId,
-		artifactId: EventId,
-		runId: EventId,
-	}),
 	"companion.tool_started": EventPayload({
 		conversationId: EventId,
 		toolCallId: EventId,
@@ -370,11 +361,9 @@ export const EventPayloadSchemas = {
 		executor: EventText,
 		profileId: EventId,
 		runId: EventId,
-		commissionId: EventId,
+		triggerEntryId: EventId,
 		version: EventText,
 		sha256: EventText,
-		canonicalPath: EventText,
-		codexHome: EventText,
 		launchedAt: EventText,
 	}),
 	"fsops.plan_created": EventPayload({
@@ -1053,6 +1042,24 @@ export const ConversationSearchRequest = z.strictObject({
 
 export const PiSessionId = z.string().min(1).max(128);
 export const PiSessionEntryId = z.string().min(1).max(128);
+export const ConversationAttachmentKind = z.union([
+	z.literal("file"),
+	z.literal("folder"),
+	z.literal("generated"),
+]);
+export const ConversationAttachmentSummary = z.strictObject({
+	id: z.string().min(1).max(64),
+	name: z.string().min(1).max(255),
+	kind: ConversationAttachmentKind,
+	bytes: z.number().int().safe().min(0),
+	fileCount: z.number().int().safe().min(0),
+	originEntryId: PiSessionEntryId.optional(),
+});
+export const ConversationAttachmentEntryKind = z.union([
+	z.literal("file"),
+	z.literal("directory"),
+	z.literal("symlink"),
+]);
 const PiTimelineBase = {
 	id: PiSessionEntryId,
 	parentId: PiSessionEntryId.nullable(),
@@ -1080,6 +1087,7 @@ const PiTimelineUserMessage = z.strictObject({
 	kind: z.literal("message"),
 	role: z.literal("user"),
 	text: z.string().max(65536),
+	attachments: z.array(ConversationAttachmentSummary).max(MAX_MESSAGE_ATTACHMENTS).optional(),
 });
 const PiTimelineAssistantMessage = z.strictObject({
 	...PiTimelineBase,
@@ -1089,6 +1097,7 @@ const PiTimelineAssistantMessage = z.strictObject({
 	toolCalls: z.array(PiTimelineToolCall).max(100).optional(),
 	stopReason: z.enum(["stop", "length", "toolUse", "error", "aborted", "deferred"]).optional(),
 	errorMessage: z.string().max(4096).optional(),
+	attachments: z.array(ConversationAttachmentSummary).max(MAX_MESSAGE_ATTACHMENTS).optional(),
 });
 const PiTimelineToolResult = z.strictObject({
 	...PiTimelineBase,
@@ -1149,23 +1158,154 @@ export const ConversationCreateResponse = ConversationSelectResponse;
 export const ConversationActiveResponse = z.strictObject({
 	conversation: ConversationSelectResponse.optional(),
 });
-export const MessageSendRequest = z.strictObject({
-	conversationId: ConversationId,
-	text: z.string().min(1).max(65536),
-	attachments: z
-		.array(
-			z.strictObject({
-				name: z.string().min(1).max(255),
-				mime: z.string().min(1).max(128),
-				base64: z.string().min(1).max(MAX_MESSAGE_ATTACHMENT_BASE64_LENGTH),
-			}),
-		)
-		.max(MAX_MESSAGE_ATTACHMENTS)
-		.optional(),
-});
+export const MessageSendRequest = z
+	.strictObject({
+		conversationId: ConversationId,
+		text: z.string().max(65536),
+		attachmentIds: z.array(z.string().min(1).max(64)).max(MAX_MESSAGE_ATTACHMENTS).optional(),
+	})
+	.superRefine((request, context) => {
+		if (request.text.length === 0 && (request.attachmentIds?.length ?? 0) === 0) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["text"],
+				message: "text or at least one attachment is required",
+			});
+		}
+	});
 export const MessageSendResponse = z.strictObject({
 	accepted: z.literal(true),
 	sessionId: PiSessionId,
+	entryId: PiSessionEntryId,
+});
+
+export const ConversationAttachmentListRequest = z.strictObject({
+	conversationId: ConversationId,
+	attachmentId: z.string().min(1).max(64).optional(),
+});
+export const ConversationAttachmentListResponse = z.strictObject({
+	attachments: z.array(ConversationAttachmentSummary).max(MAX_ARRAY_LENGTH),
+});
+export const ConversationAttachmentDiscardRequest = z.strictObject({
+	conversationId: ConversationId,
+	attachmentId: z.string().min(1).max(64),
+});
+const ConversationAttachmentFileView = z.strictObject({
+	relativePath: z.string().min(1).max(1024),
+	entryKind: ConversationAttachmentEntryKind,
+	mime: z.string().min(1).max(255).optional(),
+	bytes: z.number().int().safe().min(0).optional(),
+	readable: z.boolean(),
+	error: z.string().max(256).optional(),
+});
+const ConversationAttachmentSearchHit = z.strictObject({
+	relativePath: z.string().min(1).max(1024),
+	excerpt: z.string().max(1024),
+});
+const ConversationAttachmentSemanticReadRequest = z
+	.strictObject({
+		mode: z.literal("semantic"),
+		conversationId: ConversationId,
+		attachmentId: z.string().min(1).max(64),
+		relativePath: z.string().min(1).max(1024).optional(),
+		query: z.string().min(1).max(1024).optional(),
+		cursor: z.string().min(1).max(4096).optional(),
+	})
+	.superRefine((request, context) => {
+		if (request.relativePath && request.query) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["query"],
+				message: "query cannot be combined with relativePath",
+			});
+		}
+	});
+const ConversationAttachmentByteReadRequest = z.strictObject({
+	mode: z.literal("bytes"),
+	conversationId: ConversationId,
+	attachmentId: z.string().min(1).max(64),
+	relativePath: z.string().min(1).max(1024).optional(),
+	offset: z.number().int().safe().min(0),
+	length: z
+		.number()
+		.int()
+		.safe()
+		.min(1)
+		.max(1024 * 1024),
+});
+export const ConversationAttachmentReadRequest = z.union([
+	ConversationAttachmentSemanticReadRequest,
+	ConversationAttachmentByteReadRequest,
+]);
+export const ConversationAttachmentReadResponse = z.union([
+	z.strictObject({
+		mode: z.literal("semantic"),
+		files: z.array(ConversationAttachmentFileView).max(200).optional(),
+		content: z.string().max(65_536).optional(),
+		hits: z.array(ConversationAttachmentSearchHit).max(50).optional(),
+		error: z.string().max(256).optional(),
+		nextCursor: z.string().min(1).max(4096).optional(),
+	}),
+	z.strictObject({
+		mode: z.literal("bytes"),
+		relativePath: z.string().min(1).max(1024),
+		mime: z.string().min(1).max(255),
+		base64: z.string().max(1_398_104),
+		nextOffset: z.number().int().safe().min(0),
+		eof: z.boolean(),
+	}),
+]);
+
+export const ConversationAttachmentUrlRequest = z.strictObject({
+	conversationId: ConversationId,
+	attachmentId: z.string().min(1).max(64),
+	relativePath: z.string().min(1).max(1024).optional(),
+	operation: z.union([z.literal("preview"), z.literal("download")]),
+});
+export const ConversationAttachmentUrlResponse = z.strictObject({
+	url: z.string().min(1).max(4096),
+});
+export const ConversationAttachmentUploadEntry = z.strictObject({
+	entryKind: z.union([z.literal("file"), z.literal("directory")]),
+	relativePath: z.string().min(1).max(1024),
+	mime: z.string().min(1).max(255).optional(),
+	bytes: z
+		.number()
+		.int()
+		.safe()
+		.min(0)
+		.max(200 * 1024 * 1024)
+		.optional(),
+});
+export const ConversationAttachmentStartUploadRequest = z.strictObject({
+	conversationId: ConversationId,
+	kind: z.union([z.literal("file"), z.literal("folder")]),
+	name: z.string().min(1).max(255),
+	entries: z.array(ConversationAttachmentUploadEntry).min(1).max(20_000),
+});
+export const ConversationAttachmentStartUploadResponse = z.strictObject({
+	uploadId: z.string().min(1).max(64),
+});
+export const ConversationAttachmentCancelUploadRequest = z.strictObject({
+	conversationId: ConversationId,
+	uploadId: z.string().min(1).max(64),
+});
+export const ConversationAttachmentAppendChunkRequest = z.strictObject({
+	conversationId: ConversationId,
+	uploadId: z.string().min(1).max(64),
+	fileIndex: z.number().int().min(0).max(20_000),
+	offset: z.number().int().safe().min(0),
+	base64: z
+		.string()
+		.min(1)
+		.max(Math.ceil((1024 * 1024) / 3) * 4),
+});
+export const ConversationAttachmentCompleteUploadRequest = z.strictObject({
+	conversationId: ConversationId,
+	uploadId: z.string().min(1).max(64),
+});
+export const ConversationAttachmentCompleteUploadResponse = z.strictObject({
+	attachment: ConversationAttachmentSummary,
 });
 export const MessageRegenerateRequest = z.strictObject({
 	conversationId: ConversationId,
@@ -1681,71 +1821,52 @@ export const ModelEnableResponse = z.strictObject({
 export const ModelDisableRequest = ModelRoute;
 
 // ---------------------------------------------------------------------------
-// Commission
+// External agents
 // ---------------------------------------------------------------------------
 
-export const ActionDraft = z.strictObject({
-	id: z.string().min(1).max(64),
-	title: z.string().max(MAX_STRING_LENGTH),
-	description: z.string().max(MAX_STRING_LENGTH),
-	reads: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).max(20),
-	writes: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).max(20),
-	networkAllowed: z.boolean(),
-	toolNames: z.array(z.string().min(1).max(64)).max(20),
-	hash: z.string().min(1).max(128),
-});
-export const Commission = z.strictObject({
-	id: z.string().min(1).max(64),
-	conversationId: ConversationId.optional(),
-	triggerEntryId: PiSessionEntryId,
-	draft: ActionDraft,
+export const ExternalAgentCandidate = z.strictObject({
+	candidatePath: z.string().min(1).max(MAX_PATH_LENGTH),
+	canonicalPath: z.string().min(1).max(MAX_PATH_LENGTH).nullable(),
+	version: z.string().min(1).max(64).nullable(),
+	sha256: z.string().length(64).nullable(),
 	status: z.union([
-		z.literal("draft"),
-		z.literal("awaiting_approval"),
-		z.literal("approved"),
-		z.literal("queued"),
-		z.literal("running"),
-		z.literal("needs_user"),
-		z.literal("completed"),
-		z.literal("failed"),
-		z.literal("cancelled"),
+		z.literal("usable"),
+		z.literal("version_mismatch"),
+		z.literal("not_found"),
+		z.literal("rejected"),
 	]),
-	createdAt: WireTimestamp,
 });
-export const CommissionListRequest = z.strictObject({});
-export const CommissionListResponse = z.strictObject({
-	commissions: z.array(Commission).max(MAX_ARRAY_LENGTH),
+export const ExternalAgentDiscoverCodexRequest = z.strictObject({});
+export const ExternalAgentDiscoverCodexResponse = z.strictObject({
+	candidates: z.array(ExternalAgentCandidate).max(100),
 });
-export const CommissionDraftRequest = z.strictObject({
-	conversationId: z.string().min(1).max(64),
-	triggerEntryId: PiSessionEntryId,
-	title: z.string().min(1).max(MAX_STRING_LENGTH),
-	description: z.string().min(1).max(MAX_STRING_LENGTH),
-	reads: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).max(20).optional(),
-	writes: z.array(z.string().min(1).max(MAX_PATH_LENGTH)).max(20).optional(),
-	networkAllowed: z.boolean().optional(),
-	toolNames: z.array(z.string().min(1).max(64)).max(20).optional(),
+export const ExternalAgentConnectCodexRequest = z.strictObject({
+	canonicalPath: z.string().min(1).max(MAX_PATH_LENGTH),
+	version: z.string().min(1).max(64),
+	sha256: z.string().length(64),
+	codexHome: z.string().min(1).max(MAX_PATH_LENGTH),
 });
-export const CommissionDraftResponse = z.strictObject({
-	commissionId: z.string().min(1).max(64),
-	draftHash: z.string().min(1).max(128),
+export const ExternalAgentConnectCodexResponse = z.strictObject({
+	profileId: z.string().min(1).max(64),
+	version: z.string().min(1).max(64),
+	hash: z.string().length(64),
 });
-export const CommissionApproveRequest = z.strictObject({
-	commissionId: z.string().min(1).max(64),
-	approvedHash: z.string().min(1).max(128),
-});
-export const CommissionRejectRequest = z.strictObject({
-	commissionId: z.string().min(1).max(64),
-});
-export const CommissionLaunchRequest = z.strictObject({
-	commissionId: z.string().min(1).max(64),
-	executorProfile: z.string().min(1).max(64),
-});
-export const CommissionLaunchResponse = z.strictObject({
-	runId: z.string().min(1).max(64),
-	commissionId: z.string().min(1).max(64),
-	executorProfile: z.string().min(1).max(64),
-	status: z.string().min(1).max(64),
+export const ExternalAgentStatusRequest = z.strictObject({});
+export const ExternalAgentStatusResponse = z.strictObject({
+	pi: z.strictObject({ available: z.literal(true), profileId: z.literal("pi-default") }),
+	codex: z.discriminatedUnion("available", [
+		z.strictObject({
+			available: z.literal(true),
+			profileId: z.string().min(1).max(64),
+			version: z.string().min(1).max(64),
+			hash: z.string().length(64),
+		}),
+		z.strictObject({
+			available: z.literal(false),
+			reason: z.union([z.literal("no_codex_found"), z.literal("version_mismatch")]),
+			found: z.string().min(1).max(64).optional(),
+		}),
+	]),
 });
 export const RunSteerRequest = z.strictObject({
 	runId: z.string().min(1).max(64),
@@ -1783,8 +1904,10 @@ export const RunStatus = z.union([
 export const Run = z
 	.strictObject({
 		id: z.string().min(1).max(64),
-		commissionId: z.string().min(1).max(64),
+		conversationId: ConversationId,
+		triggerEntryId: PiSessionEntryId,
 		executorProfile: z.string().min(1).max(64),
+		title: z.string().min(1).max(80),
 		status: RunStatus,
 		startedAt: WireTimestamp.optional(),
 		completedAt: WireTimestamp.optional(),
@@ -1807,46 +1930,6 @@ export const RunListResponse = z.strictObject({
 	runs: z.array(Run).max(10),
 });
 export const RunResponse = Run;
-
-// ---------------------------------------------------------------------------
-// Artifact
-// ---------------------------------------------------------------------------
-
-export const Artifact = z.strictObject({
-	id: z.string().min(1).max(64),
-	logicalName: z.string().min(1).max(MAX_STRING_LENGTH),
-	mime: z.string().min(1).max(128),
-	bytes: z.number().int().safe().min(0).max(UINT32_MAX),
-	sha256: z.string().min(1).max(128),
-	status: z.union([
-		z.literal("created"),
-		z.literal("verified"),
-		z.literal("verification_failed"),
-		z.literal("adopted"),
-		z.literal("saved"),
-	]),
-	producerRunId: z.string().min(1).max(64).optional(),
-	createdAt: WireTimestamp,
-});
-export const ArtifactListRequest = z.strictObject({});
-export const ArtifactReadRequest = z.strictObject({
-	artifactId: z.string().min(1).max(64),
-});
-export const ArtifactListResponse = z.strictObject({
-	artifacts: z.array(Artifact).max(MAX_ARRAY_LENGTH),
-});
-export const ArtifactReadResponse = z.strictObject({
-	logicalName: z.string().max(MAX_STRING_LENGTH),
-	mime: z.string().max(128),
-	base64: z.string().max(64_000_000),
-});
-export const ArtifactUrlRequest = z.strictObject({
-	artifactId: z.string().min(1).max(64),
-});
-export const ArtifactUrlResponse = z.strictObject({
-	/** Custom-scheme URL (bear-artifact://...) when the desktop protocol handler is registered; empty string otherwise. */
-	url: z.string().max(2048),
-});
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -1947,7 +2030,6 @@ export const UpdateApplyResponse = z.strictObject({
 // ---------------------------------------------------------------------------
 
 export const AuditEntryKind = z.union([
-	z.literal("commission"),
 	z.literal("run"),
 	z.literal("permission"),
 	z.literal("fsop"),
@@ -2057,9 +2139,7 @@ export const SnapshotResponse = z.strictObject({
 	memory: MemorySnapshot.optional(),
 	provider: ProviderListResponse.optional(),
 	model: ModelSnapshot.optional(),
-	commission: CommissionListResponse.optional(),
 	run: RunListResponse.optional(),
-	artifact: ArtifactListResponse.optional(),
 	characterRuntime: CharacterRuntimeSnapshot.optional(),
 	roleplay: RoleplayState.optional(),
 	settings: SettingsData.optional(),
@@ -2208,6 +2288,48 @@ export const RPC = {
 			ConversationSearchResponse,
 		),
 	},
+	conversationAttachment: {
+		list: endpoint(
+			"conversationAttachment.list:v1",
+			ConversationAttachmentListRequest,
+			ConversationAttachmentListResponse,
+		),
+		discard: endpoint(
+			"conversationAttachment.discard:v1",
+			ConversationAttachmentDiscardRequest,
+			EmptyResponse,
+		),
+		read: endpoint(
+			"conversationAttachment.read:v1",
+			ConversationAttachmentReadRequest,
+			ConversationAttachmentReadResponse,
+		),
+		url: endpoint(
+			"conversationAttachment.url:v1",
+			ConversationAttachmentUrlRequest,
+			ConversationAttachmentUrlResponse,
+		),
+		startUpload: endpoint(
+			"conversationAttachment.startUpload:v1",
+			ConversationAttachmentStartUploadRequest,
+			ConversationAttachmentStartUploadResponse,
+		),
+		cancelUpload: endpoint(
+			"conversationAttachment.cancelUpload:v1",
+			ConversationAttachmentCancelUploadRequest,
+			EmptyResponse,
+		),
+		appendChunk: endpoint(
+			"conversationAttachment.appendChunk:v1",
+			ConversationAttachmentAppendChunkRequest,
+			EmptyResponse,
+		),
+		completeUpload: endpoint(
+			"conversationAttachment.completeUpload:v1",
+			ConversationAttachmentCompleteUploadRequest,
+			ConversationAttachmentCompleteUploadResponse,
+		),
+	},
 	message: {
 		send: endpoint("message.send:v1", MessageSendRequest, MessageSendResponse),
 		regenerate: endpoint("message.regenerate:v1", MessageRegenerateRequest, EmptyResponse),
@@ -2322,12 +2444,22 @@ export const RPC = {
 		routeGet: endpoint("model.route.get:v1", ModelRouteGetRequest, ModelRouteGetResponse),
 		routeSet: endpoint("model.route.set:v1", ModelRouteSetRequest, ModelRouteSetResponse),
 	},
-	commission: {
-		list: endpoint("commission.list:v1", CommissionListRequest, CommissionListResponse),
-		draft: endpoint("commission.draft:v1", CommissionDraftRequest, CommissionDraftResponse),
-		approve: endpoint("commission.approve:v1", CommissionApproveRequest, EmptyResponse),
-		reject: endpoint("commission.reject:v1", CommissionRejectRequest, EmptyResponse),
-		launch: endpoint("commission.launch:v1", CommissionLaunchRequest, CommissionLaunchResponse),
+	externalAgent: {
+		discoverCodex: endpoint(
+			"externalAgent.discoverCodex:v1",
+			ExternalAgentDiscoverCodexRequest,
+			ExternalAgentDiscoverCodexResponse,
+		),
+		connectCodex: endpoint(
+			"externalAgent.connectCodex:v1",
+			ExternalAgentConnectCodexRequest,
+			ExternalAgentConnectCodexResponse,
+		),
+		status: endpoint(
+			"externalAgent.status:v1",
+			ExternalAgentStatusRequest,
+			ExternalAgentStatusResponse,
+		),
 	},
 	run: {
 		list: endpoint("run.list:v1", RunListRequest, RunListResponse),
@@ -2340,11 +2472,6 @@ export const RPC = {
 			RunRespondPermissionRequest,
 			RunResponse,
 		),
-	},
-	artifact: {
-		list: endpoint("artifact.list:v1", ArtifactListRequest, ArtifactListResponse),
-		read: endpoint("artifact.read:v1", ArtifactReadRequest, ArtifactReadResponse),
-		url: endpoint("artifact.url:v1", ArtifactUrlRequest, ArtifactUrlResponse),
 	},
 	settings: {
 		get: endpoint("settings.get:v1", SettingsGetRequest, SettingsResponse),

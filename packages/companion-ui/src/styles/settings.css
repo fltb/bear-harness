@@ -303,11 +303,6 @@
 	@apply grid w-full max-w-md self-start gap-2.5;
 }
 
-.run-controls[data-result-open] {
-	border-left-color: var(--amber);
-	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 35%, transparent);
-}
-
 .action-proposal.needs-user {
 	border-left-color: var(--amber);
 }

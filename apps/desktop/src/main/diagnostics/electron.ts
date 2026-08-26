@@ -91,23 +91,6 @@ export function rendererReferrerUrl(referrer: unknown): string | null {
 	return null;
 }
 
-/**
- * Artifact requests carry the renderer identity as their referrer rather than
- * an IPC sender event. Match the referrer to a currently registered renderer
- * URL exactly; origin, prefix, empty, and `about:client` matches are rejected.
- */
-export function isAllowedRendererReferrer(
-	referrer: unknown,
-	windowRegistry: ReadonlyMap<number, Pick<WindowRegistration, "allowedUrl">>,
-): boolean {
-	const referrerUrl = rendererReferrerUrl(referrer);
-	if (referrerUrl === null || referrerUrl === "about:client") return false;
-	for (const registration of windowRegistry.values()) {
-		if (referrerUrl === registration.allowedUrl) return true;
-	}
-	return false;
-}
-
 export interface ElectronDiagnosticsOptions {
 	app: AppLike;
 	ipcMain: IpcMainLike;

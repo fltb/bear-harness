@@ -20,7 +20,12 @@ export interface CodecResult {
 	error?: string;
 }
 
-export type CodecParser = (buffer: Buffer) => Promise<CodecResult>;
+export interface CodecParseOptions {
+	/** Extracted-text ceiling; omitted retains the preview-oriented defaults. */
+	maxCharacters?: number;
+}
+
+export type CodecParser = (buffer: Buffer, options?: CodecParseOptions) => Promise<CodecResult>;
 
 export type CodecGenerator = (params: Record<string, unknown>) => Promise<Buffer>;
 
@@ -54,17 +59,23 @@ function stripBom(buffer: Buffer): Buffer {
 	return buffer;
 }
 
+function capText(text: string, options?: CodecParseOptions): string {
+	return options?.maxCharacters === undefined
+		? text
+		: text.slice(0, Math.max(0, options.maxCharacters));
+}
+
 // ---------------------------------------------------------------------------
 // Built-in parsers
 // ---------------------------------------------------------------------------
 
 /** Plain text / Markdown: identity, with BOM removal. */
-async function parseText(buffer: Buffer): Promise<CodecResult> {
-	return { text: stripBom(buffer).toString("utf8") };
+async function parseText(buffer: Buffer, options?: CodecParseOptions): Promise<CodecResult> {
+	return { text: capText(stripBom(buffer).toString("utf8"), options) };
 }
 
 /** CSV preview: object rows, first 200 records for display. */
-async function parseCsv(buffer: Buffer): Promise<CodecResult> {
+async function parseCsv(buffer: Buffer, options?: CodecParseOptions): Promise<CodecResult> {
 	try {
 		const { parse } = await import("csv-parse/sync");
 		// `bom: true` is kept for spec parity, but the BOM is stripped here first:
@@ -75,51 +86,64 @@ async function parseCsv(buffer: Buffer): Promise<CodecResult> {
 			bom: true,
 			delimiter_auto: true,
 			relaxQuotes: true,
-			to: 1000,
-		});
-		return { text: JSON.stringify(rows.slice(0, 200), null, 2) };
+			...(options?.maxCharacters === undefined ? { to: 1000 } : {}),
+		}) as unknown[];
+		const selected = options?.maxCharacters === undefined ? rows.slice(0, 200) : rows;
+		return { text: capText(JSON.stringify(selected, null, 2), options) };
 	} catch (e) {
 		return { text: "", error: String(e) };
 	}
 }
 
 /** XLSX preview: first sheet as header-less rows, first 200 for display. */
-async function parseXlsx(buffer: Buffer): Promise<CodecResult> {
+async function parseXlsx(buffer: Buffer, options?: CodecParseOptions): Promise<CodecResult> {
 	try {
 		const XLSX = await import("xlsx");
 		const workbook = XLSX.read(buffer, { type: "buffer" });
-		const name = workbook.SheetNames[0];
-		const sheet = name !== undefined ? workbook.Sheets[name] : undefined;
-		if (sheet === undefined) {
-			return { text: "" };
+		if (options?.maxCharacters === undefined) {
+			const name = workbook.SheetNames[0];
+			const sheet = name !== undefined ? workbook.Sheets[name] : undefined;
+			if (sheet === undefined) return { text: "" };
+			const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
+			return { text: JSON.stringify(rows.slice(0, 200)) };
 		}
-		const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
-		return { text: JSON.stringify(rows.slice(0, 200)) };
+		const sheets: Array<{ name: string; rows: unknown[][] }> = [];
+		for (const name of workbook.SheetNames) {
+			const sheet = workbook.Sheets[name];
+			if (sheet === undefined) continue;
+			sheets.push({
+				name,
+				rows: XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" }),
+			});
+		}
+		return { text: capText(JSON.stringify(sheets), options) };
 	} catch (e) {
 		return { text: "", error: String(e) };
 	}
 }
 
 /** DOCX preview via mammoth raw text extraction. */
-async function parseDocx(buffer: Buffer): Promise<CodecResult> {
+async function parseDocx(buffer: Buffer, options?: CodecParseOptions): Promise<CodecResult> {
 	try {
 		const { default: mammoth } = await import("mammoth");
 		const result = await mammoth.extractRawText({ buffer });
-		return { text: result.value };
+		return { text: capText(result.value, options) };
 	} catch (e) {
 		return { text: "", error: String(e) };
 	}
 }
 
 /** PDF preview: extracted text from the first 20 pages. */
-async function parsePdf(buffer: Buffer): Promise<CodecResult> {
+async function parsePdf(buffer: Buffer, options?: CodecParseOptions): Promise<CodecResult> {
 	try {
 		const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
 		const task = getDocument({ data: new Uint8Array(buffer) });
 		const pdf = await task.promise;
 		try {
-			const pageCount = Math.min(pdf.numPages, 20);
+			const pageCount =
+				options?.maxCharacters === undefined ? Math.min(pdf.numPages, 20) : pdf.numPages;
 			const parts: string[] = [];
+			let characters = 0;
 			for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
 				const page = await pdf.getPage(pageNumber);
 				const content = await page.getTextContent();
@@ -128,8 +152,12 @@ async function parsePdf(buffer: Buffer): Promise<CodecResult> {
 					.map((item) => item.str)
 					.join(" ");
 				parts.push(line);
+				characters += line.length + 1;
+				if (options?.maxCharacters !== undefined && characters >= options.maxCharacters) {
+					break;
+				}
 			}
-			return { text: parts.join("\n") };
+			return { text: capText(parts.join("\n"), options) };
 		} finally {
 			await pdf.loadingTask.destroy().catch(() => undefined);
 		}
@@ -167,22 +195,37 @@ function collectSlideTexts(node: unknown, out: string[]): void {
 }
 
 /** PPTX preview: text of the first slide (`ppt/slides/slide1.xml`). */
-async function parsePptx(buffer: Buffer): Promise<CodecResult> {
+async function parsePptx(buffer: Buffer, options?: CodecParseOptions): Promise<CodecResult> {
 	try {
 		const [{ default: JSZip }, { XMLParser }] = await Promise.all([
 			import("jszip"),
 			import("fast-xml-parser"),
 		]);
 		const zip = await JSZip.loadAsync(buffer);
-		const slideFile = zip.file("ppt/slides/slide1.xml") ?? zip.file("slide1.xml");
-		if (slideFile === null) {
-			return { text: "" };
-		}
-		const slideXml = await slideFile.async("string");
-		const parsed = new XMLParser().parse(slideXml);
+		const slideFiles =
+			options?.maxCharacters === undefined
+				? [zip.file("ppt/slides/slide1.xml") ?? zip.file("slide1.xml")].filter(
+						(file) => file !== null,
+					)
+				: Object.values(zip.files)
+						.filter((file) => !file.dir && /^ppt\/slides\/slide\d+\.xml$/u.test(file.name))
+						.sort((left, right) => left.name.localeCompare(right.name, "en", { numeric: true }));
 		const texts: string[] = [];
-		collectSlideTexts(parsed, texts);
-		return { text: texts.join(" ") };
+		let characters = 0;
+		const parser = new XMLParser();
+		for (const slideFile of slideFiles) {
+			if (!slideFile) continue;
+			const parsed = parser.parse(await slideFile.async("string"));
+			const slideTexts: string[] = [];
+			collectSlideTexts(parsed, slideTexts);
+			const slideText = slideTexts.join(" ");
+			texts.push(slideText);
+			characters += slideText.length + 1;
+			if (options?.maxCharacters !== undefined && characters >= options.maxCharacters) {
+				break;
+			}
+		}
+		return { text: capText(texts.join("\n"), options) };
 	} catch (e) {
 		return { text: "", error: String(e) };
 	}

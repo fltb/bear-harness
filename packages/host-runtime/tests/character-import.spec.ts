@@ -51,32 +51,38 @@ describe("character package import", () => {
 			"极昼正在白熊客栈的极光书房值守。",
 			"极昼正在新的值守室等待交接。",
 		);
-		await expect(runtime.dispatch("character.packageUpdate:v1", {
-			characterId: "jizhou",
-			yaml,
-			expectedSha256: initial.data.package.sha256,
-		})).resolves.toMatchObject({
+		await expect(
+			runtime.dispatch("character.packageUpdate:v1", {
+				characterId: "jizhou",
+				yaml,
+				expectedSha256: initial.data.package.sha256,
+			}),
+		).resolves.toMatchObject({
 			ok: true,
-		data: {
-			package: {
-				character: {
-					prompt: { scenario: expect.stringContaining("极昼正在新的值守室等待交接。") },
+			data: {
+				package: {
+					character: {
+						prompt: { scenario: expect.stringContaining("极昼正在新的值守室等待交接。") },
+					},
 				},
 			},
-		},
 		});
-		await expect(runtime.dispatch("character.packageUpdate:v1", {
-			characterId: "jizhou",
-			yaml,
-			expectedSha256: initial.data.package.sha256,
-		})).resolves.toMatchObject({ ok: false, error: { kind: "conflict" } });
+		await expect(
+			runtime.dispatch("character.packageUpdate:v1", {
+				characterId: "jizhou",
+				yaml,
+				expectedSha256: initial.data.package.sha256,
+			}),
+		).resolves.toMatchObject({ ok: false, error: { kind: "conflict" } });
 		const refreshed = await runtime.dispatch("character.packageGet:v1", { characterId: "jizhou" });
 		if (!refreshed.ok) throw new Error(refreshed.error.reason);
-		await expect(runtime.dispatch("character.packageUpdate:v1", {
-			characterId: "jizhou",
-			yaml: yaml.replace("id: jizhou", "id: another-role"),
-			expectedSha256: refreshed.data.package.sha256,
-		})).resolves.toMatchObject({ ok: false, error: { reason: "character_id_immutable" } });
+		await expect(
+			runtime.dispatch("character.packageUpdate:v1", {
+				characterId: "jizhou",
+				yaml: yaml.replace("id: jizhou", "id: another-role"),
+				expectedSha256: refreshed.data.package.sha256,
+			}),
+		).resolves.toMatchObject({ ok: false, error: { reason: "character_id_immutable" } });
 		await runtime.close();
 	});
 
@@ -112,7 +118,7 @@ describe("character package import", () => {
 			ok: true,
 			data: {
 				modules: expect.arrayContaining([
-						expect.objectContaining({ stableKey: "station_record", origin: "package" }),
+					expect.objectContaining({ stableKey: "station_record", origin: "package" }),
 				]),
 			},
 		});
@@ -151,7 +157,6 @@ describe("character package import", () => {
 		).resolves.toMatchObject({ ok: true, data: { state: { values: { continuity_stage: 1 } } } });
 		await restarted.close();
 	});
-
 
 	it("requires explicit trust for imported executable plugins and revokes it when they change", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-character-plugin-trust-"));

@@ -1,10 +1,10 @@
-import { type Accessor } from "solid-js";
 import {
 	createMutation,
 	createQuery,
 	type QueryClient,
 	type QueryKey,
 } from "@tanstack/solid-query";
+import type { Accessor } from "solid-js";
 
 const inFlightRefreshes = new WeakMap<QueryClient, Map<string, Promise<unknown>>>();
 
@@ -22,8 +22,6 @@ export const queryKeys = {
 	memoryCandidates: (status?: string) => ["memory", "candidates", status ?? null] as const,
 	settingsCapabilities: ["settings", "capabilities"] as const,
 	runs: ["runs"] as const,
-	commissions: ["commissions"] as const,
-	artifacts: ["artifacts"] as const,
 	characters: ["characters"] as const,
 	characterPackage: (characterId: string) => ["character", "package", characterId] as const,
 	canonSources: ["canon", "sources"] as const,
@@ -45,8 +43,7 @@ export function createRpcQuery<T>(input: {
 }) {
 	return createQuery(
 		() => ({
-			queryKey:
-				typeof input.key === "function" ? (input.key as Accessor<QueryKey>)() : input.key,
+			queryKey: typeof input.key === "function" ? (input.key as Accessor<QueryKey>)() : input.key,
 			queryFn: input.request,
 			initialData: input.initialData,
 			enabled:
@@ -72,9 +69,7 @@ export function createRpcMutation<TVariables, TResult = unknown>(input: {
 			onSuccess: async (result, variables) => {
 				await input.onSuccess?.(result, variables);
 				await Promise.all(
-					input.invalidates.map((queryKey) =>
-						input.client.invalidateQueries({ queryKey }),
-					),
+					input.invalidates.map((queryKey) => input.client.invalidateQueries({ queryKey })),
 				);
 			},
 		}),

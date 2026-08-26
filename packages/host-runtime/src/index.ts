@@ -11,20 +11,6 @@
 export type { ArtifactRecord } from "./artifacts/index.js";
 export { ArtifactStore } from "./artifacts/index.js";
 export type {
-	CommissionDraftParams,
-	CommissionDraftResult,
-	CommissionLaunchParams,
-	CommissionLaunchResult,
-	CommissionListParams,
-	CommissionStatus,
-	CommissionSummary,
-	DraftSummary,
-	RunStatus,
-	RunSummary,
-	TerminalRunStatus,
-} from "./commissions/service.js";
-export { CommissionService } from "./commissions/service.js";
-export type {
 	CharacterRuntimeState,
 	CompanionHostToolCall,
 	CompanionHostToolName,
@@ -49,6 +35,12 @@ export type {
 export { CompanionSupervisor } from "./companion/supervisor.js";
 export type { TurnResult } from "./companion/turn-pipeline.js";
 export { TurnPipeline } from "./companion/turn-pipeline.js";
+export type { ConversationAttachmentUrlFactoryRequest } from "./composition.js";
+export type {
+	AttachmentKind,
+	ConversationAttachmentSummary,
+} from "./conversation-attachments/service.js";
+export { ConversationAttachmentService } from "./conversation-attachments/service.js";
 export type {
 	AttributeSpec,
 	CatalogEntry,
@@ -95,7 +87,7 @@ export type {
 	AcpProcessSpec,
 } from "./executors/acp-client.js";
 export { AcpRunClient } from "./executors/acp-client.js";
-export { AcpExecutorController, ApprovedFileAccess } from "./executors/acp-executor.js";
+export { AcpExecutorController } from "./executors/acp-executor.js";
 export type {
 	CodexCandidate,
 	CodexCandidateStatus,
@@ -108,7 +100,6 @@ export { CodexAdapter } from "./executors/codex-adapter.js";
 export type { PiRunManifest } from "./executors/pi-adapter.js";
 export { PI_ACP_PROFILE_ID, PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
 export type {
-	ExecutorCommission,
 	ExecutorController,
 	ExecutorEvent,
 	ExecutorLaunchRequest,
@@ -117,9 +108,19 @@ export type {
 	ExecutorProfile,
 	ExecutorProfileType,
 	ExecutorRun,
+	ExecutorTask,
 } from "./executors/router.js";
 // Executors
 export { ExecutorRouter } from "./executors/router.js";
+export type {
+	DelegateParams,
+	DelegateResult,
+	RunStatus,
+	RunSummary,
+	TerminalRunResult,
+	TerminalRunStatus,
+} from "./external-agents/run-service.js";
+export { ExternalAgentRunService, MAX_ACTIVE_RUNS } from "./external-agents/run-service.js";
 export type {
 	FsopJournal,
 	FsopJournalStatus,
@@ -161,8 +162,6 @@ export type {
 	MemorySetImportanceRequest,
 	MemoryUpdateRequest,
 } from "./memory/backend.js";
-export type { HostLocalEmbeddingCandidate, HostSettingsCapabilities } from "./settings/capabilities.js";
-export { findHostLocalEmbeddingCandidate, HOST_SETTINGS_CAPABILITIES } from "./settings/capabilities.js";
 export type { ModelRecord } from "./models/registry.js";
 export { ModelRegistry } from "./models/registry.js";
 export type {
@@ -187,6 +186,14 @@ export { CredentialStore } from "./providers/credential-store.js";
 export type { HostRuntimeOptions, RuntimeProductConfig } from "./runtime.js";
 // Runtime + lifecycle + dispatch
 export { createHostRuntime, HostRuntime } from "./runtime.js";
+export type {
+	HostLocalEmbeddingCandidate,
+	HostSettingsCapabilities,
+} from "./settings/capabilities.js";
+export {
+	findHostLocalEmbeddingCandidate,
+	HOST_SETTINGS_CAPABILITIES,
+} from "./settings/capabilities.js";
 // Storage
 export { Database } from "./storage/database.js";
 export type { EventListener, HostEvent } from "./storage/event-bus.js";

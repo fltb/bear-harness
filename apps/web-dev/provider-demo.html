@@ -1,3 +1,4 @@
+<!-- biome-ignore-all lint: standalone stateful design prototype; headings are populated at runtime and callbacks install DOM handlers -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -23,6 +24,7 @@
 </div><footer class="pd-footer"><span>Provider Lab · candidate showcase</span><span>Exact IDs matter: <code>openai</code> ≠ <code>openai-codex</code></span></footer>
 </main>
 <script>
+// biome-ignore-all lint/suspicious/useIterableCallbackReturn: prototype callbacks install handlers or assign DOM state
 (() => {
   const providers = [
     {id:'openai',name:'OpenAI',kind:'API key',description:'标准 OpenAI API，适合通用对话与工具调用。',url:'https://api.openai.com/v1',models:['gpt-4.1','gpt-4.1-mini','gpt-4o'],accent:'sky'},

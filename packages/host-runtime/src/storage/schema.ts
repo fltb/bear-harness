@@ -11,6 +11,7 @@ import {
 	primaryKey,
 	sqliteTable,
 	text,
+	unique,
 } from "drizzle-orm/sqlite-core";
 
 export const schemaMigrations = sqliteTable("schema_migrations", {
@@ -273,68 +274,27 @@ export const appSettings = sqliteTable(
 	(table) => [check("app_settings_check_18", sql`id = 1`)],
 );
 
-export interface CommissionDraftData {
-	conversationId: string;
-	title: string;
-	description: string;
-	reads: string[];
-	writes: string[];
-	networkAllowed: boolean;
-	toolNames: string[];
-}
-
-export const commissions = sqliteTable(
-	"commissions",
-	{
-		id: text().primaryKey(),
-		conversationId: text("conversation_id").references(() => conversations.id),
-		triggerEntryId: text("trigger_entry_id").notNull(),
-		status: text({
-			enum: [
-				"draft",
-				"awaiting_approval",
-				"approved",
-				"queued",
-				"running",
-				"needs_user",
-				"completed",
-				"failed",
-				"cancelled",
-			],
-		})
-			.default("draft")
-			.notNull(),
-		draftJson: text("draft_json", { mode: "json" }).$type<CommissionDraftData>().notNull(),
-		approvalHash: text("approval_hash"),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-	},
-	(table) => [
-		check(
-			"commissions_check_14",
-			sql`status IN ('draft','awaiting_approval','approved','queued','running','needs_user','completed','failed','cancelled')`,
-		),
-	],
-);
-
-export const approvals = sqliteTable("approvals", {
-	id: text().primaryKey(),
-	commissionId: text("commission_id")
-		.notNull()
-		.references(() => commissions.id),
-	draftHash: text("draft_hash").notNull(),
-	approvedBy: text("approved_by").default("user").notNull(),
-	expiresAt: text("expires_at"),
-	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-});
-
 export const runs = sqliteTable(
 	"runs",
 	{
 		id: text().primaryKey(),
-		commissionId: text("commission_id")
+		conversationId: text("conversation_id")
 			.notNull()
-			.references(() => commissions.id),
+			.references(() => conversations.id, { onDelete: "cascade" }),
+		triggerEntryId: text("trigger_entry_id").notNull(),
 		executorProfile: text("executor_profile").notNull(),
+		title: text().notNull(),
+		instruction: text().notNull(),
+		inputAttachmentIds: text("input_attachment_ids", { mode: "json" })
+			.$type<string[]>()
+			.default([])
+			.notNull(),
+		workspaceAttachmentId: text("workspace_attachment_id").references(
+			() => conversationAttachments.id,
+			{
+				onDelete: "set null",
+			},
+		),
 		status: text({
 			enum: [
 				"enqueued",
@@ -349,12 +309,15 @@ export const runs = sqliteTable(
 		})
 			.default("enqueued")
 			.notNull(),
+		summary: text(),
+		memoryCapturedAt: text("memory_captured_at"),
+		resultReportedAt: text("result_reported_at"),
 		startedAt: text("started_at"),
 		completedAt: text("completed_at"),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	},
 	(table) => [
-		index("idx_runs_commission").on(table.commissionId),
+		index("idx_runs_conversation_trigger").on(table.conversationId, table.triggerEntryId),
 		check(
 			"runs_check_15",
 			sql`status IN ('enqueued','running','needs_user','completed','failed','cancelled','interrupted','forced_termination')`,
@@ -411,6 +374,54 @@ export const artifacts = sqliteTable(
 			"artifacts_check_16",
 			sql`status IN ('created','verified','verification_failed','adopted','saved')`,
 		),
+	],
+);
+
+export const conversationAttachments = sqliteTable(
+	"conversation_attachments",
+	{
+		id: text().primaryKey(),
+		conversationId: text("conversation_id")
+			.notNull()
+			.references(() => conversations.id, { onDelete: "cascade" }),
+		originEntryId: text("origin_entry_id"),
+		sendNonce: text("send_nonce"),
+		kind: text({ enum: ["file", "folder", "generated"] }).notNull(),
+		name: text().notNull(),
+		totalBytes: integer("total_bytes").notNull(),
+		fileCount: integer("file_count").notNull(),
+		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+	},
+	(table) => [
+		index("idx_attachments_conversation_created").on(table.conversationId, table.createdAt),
+		index("idx_attachments_conversation_entry").on(table.conversationId, table.originEntryId),
+		index("idx_attachments_conversation_nonce").on(table.conversationId, table.sendNonce),
+		check("conversation_attachments_kind", sql`kind IN ('file','folder','generated')`),
+	],
+);
+
+export const conversationAttachmentFiles = sqliteTable(
+	"conversation_attachment_files",
+	{
+		id: text().primaryKey(),
+		attachmentId: text("attachment_id")
+			.notNull()
+			.references(() => conversationAttachments.id, { onDelete: "cascade" }),
+		entryKind: text("entry_kind", { enum: ["file", "directory", "symlink"] }).notNull(),
+		relativePath: text("relative_path").notNull(),
+		artifactId: text("artifact_id").references(() => artifacts.id),
+		linkTarget: text("link_target"),
+		mime: text(),
+		materialKind: text("material_kind"),
+		bytes: integer(),
+		sha256: text(),
+		extractedText: text("extracted_text"),
+		extractionError: text("extraction_error"),
+	},
+	(table) => [
+		index("idx_attachment_files_attachment").on(table.attachmentId),
+		unique("conversation_attachment_files_relative").on(table.attachmentId, table.relativePath),
+		check("conversation_attachment_files_kind", sql`entry_kind IN ('file','directory','symlink')`),
 	],
 );
 
@@ -496,7 +507,7 @@ export const executorProfiles = sqliteTable(
 	{
 		id: text().primaryKey(),
 		profileType: text("profile_type", {
-			enum: ["product-managed", "codex"],
+			enum: ["pi", "codex"],
 		}).notNull(),
 		capabilityJson: text("capability_json", { mode: "json" })
 			.$type<Record<string, unknown>>()
@@ -504,9 +515,7 @@ export const executorProfiles = sqliteTable(
 			.notNull(),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	},
-	(table) => [
-		check("executor_profiles_check_20", sql`profile_type IN ('product-managed','codex')`),
-	],
+	(table) => [check("executor_profiles_check_20", sql`profile_type IN ('pi','codex')`)],
 );
 
 export const runtimeAssets = sqliteTable("runtime_assets", {

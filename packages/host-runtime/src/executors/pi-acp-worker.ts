@@ -1,17 +1,15 @@
 #!/usr/bin/env node
 /**
- * Dedicated ACP agent for approved Pi commission runs.
+ * Dedicated ACP agent for a standalone Pi external-agent run.
  *
- * This is intentionally separate from the conversational Companion session.
- * It receives only ACP prompts and can access files only through the Host ACP
- * client methods; it never receives Companion conversation or memory state.
+ * It is intentionally separate from the conversational Companion session and
+ * starts a normal Pi coding session in the Host-provided real workspace.
  */
 
 import { mkdirSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
-import { toJsonSchema, z } from "@bear-harness/schema";
 import type { AgentSession, ModelRuntime as PiModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
 	createAgentSession,
@@ -156,24 +154,26 @@ class PiAcpAgent {
 	private async createPiSession(cwd: string, id: string): Promise<AgentSession> {
 		const runDir = resolve(sessionDir, id);
 		mkdirSync(runDir, { recursive: true });
+		const shellPath = process.env.BEAR_PI_SHELL_PATH;
 		const settings = SettingsManager.inMemory(
-			{ enableAnalytics: false, enableInstallTelemetry: false, defaultProjectTrust: "never" },
-			{ projectTrusted: false },
+			{
+				enableAnalytics: false,
+				enableInstallTelemetry: false,
+				...(shellPath ? { shellPath } : {}),
+			},
+			{ projectTrusted: true },
 		);
 		const resources = new DefaultResourceLoader({
 			cwd,
 			agentDir: runDir,
 			settingsManager: settings,
-			noExtensions: true,
-			noSkills: true,
-			noPromptTemplates: true,
-			noThemes: true,
-			noContextFiles: true,
-			systemPrompt:
-				"You are an approved, bounded execution worker. Use only the injected read and write tools. " +
-				"Never claim a change unless the relevant Host tool succeeds. Do not request or use relationship memory, product UI state, credentials, or network access.",
 		});
 		await resources.reload();
+		settings.applyOverrides({
+			enableAnalytics: false,
+			enableInstallTelemetry: false,
+			...(shellPath ? { shellPath } : {}),
+		});
 		const runtime = await this.runtime;
 		const { session } = await createAgentSession({
 			cwd,
@@ -181,69 +181,13 @@ class PiAcpAgent {
 			modelRuntime: runtime,
 			settingsManager: settings,
 			resourceLoader: resources,
-			noTools: "builtin",
-			customTools: [this.readTool(id), this.writeTool(id)],
 			sessionManager: SessionManager.create(cwd, runDir),
 		});
-		session.setActiveToolsByName(session.getActiveToolNames());
-		if (!session.model && !(await selectConfiguredModel(runtime, session))) {
+		if (!(await selectConfiguredModel(runtime, session))) {
 			session.dispose();
-			throw new Error("pi_provider_auth_required");
+			throw new Error("pi_model_unavailable");
 		}
 		return session;
-	}
-
-	private readTool(sessionId: string) {
-		return {
-			name: "read",
-			label: "Read approved file",
-			description: "Read a text file that the approved action explicitly allows.",
-			parameters: toolParameters(
-				z.strictObject({
-					path: z.string().min(1),
-					line: z.number().int().min(1).optional(),
-					limit: z.number().int().min(1).max(2000).optional(),
-				}),
-			),
-			execute: async (
-				_toolCallId: string,
-				params: { path: string; line?: number; limit?: number },
-			) => {
-				const context = this.requireContext(sessionId);
-				const response = await context.request(acp.methods.client.fs.readTextFile, {
-					sessionId,
-					path: params.path,
-					line: params.line,
-					limit: params.limit,
-				});
-				return {
-					content: [{ type: "text" as const, text: response.content }],
-					details: { path: params.path },
-				};
-			},
-		};
-	}
-
-	private writeTool(sessionId: string) {
-		return {
-			name: "write",
-			label: "Write approved file",
-			description:
-				"Create or replace a text file only when the approved action explicitly allows it.",
-			parameters: toolParameters(z.strictObject({ path: z.string().min(1), content: z.string() })),
-			execute: async (_toolCallId: string, params: { path: string; content: string }) => {
-				const context = this.requireContext(sessionId);
-				await context.request(acp.methods.client.fs.writeTextFile, {
-					sessionId,
-					path: params.path,
-					content: params.content,
-				});
-				return {
-					content: [{ type: "text" as const, text: `Wrote ${params.path}` }],
-					details: { path: params.path },
-				};
-			},
-		};
 	}
 
 	private async forwardPiEvent(
@@ -282,30 +226,22 @@ class PiAcpAgent {
 		if (!session) throw new Error(`unknown ACP session '${sessionId}'`);
 		return session;
 	}
-
-	private requireContext(sessionId: string): acp.AgentContext {
-		const context = this.requireSession(sessionId).context;
-		if (!context) throw new Error("Pi tool call outside an ACP prompt");
-		return context;
-	}
-}
-
-function toolParameters(schema: z.ZodType): never {
-	return toJsonSchema(schema) as never;
 }
 
 async function selectConfiguredModel(
 	runtime: PiModelRuntime,
 	session: AgentSession,
 ): Promise<boolean> {
-	for (const provider of runtime.getProviders()) {
-		if (!runtime.hasConfiguredAuth(provider.id)) continue;
-		const model = runtime.getModels(provider.id)[0];
-		if (!model) continue;
-		await session.setModel(model);
-		return true;
-	}
-	return false;
+	const providerId = process.env.BEAR_PI_PROVIDER_ID;
+	const modelId = process.env.BEAR_PI_MODEL_ID;
+	if (!providerId || !modelId) return false;
+	const apiKey = process.env.BEAR_PI_API_KEY;
+	if (apiKey) await runtime.setRuntimeApiKey(providerId, apiKey);
+	if (!runtime.hasConfiguredAuth(providerId)) return false;
+	const model = runtime.getModels(providerId).find((candidate) => candidate.id === modelId);
+	if (!model) return false;
+	await session.setModel(model);
+	return true;
 }
 
 function extractText(value: unknown): string {

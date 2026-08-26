@@ -1,16 +1,16 @@
 /**
- * ExecutorRouter — profile-aware dispatch for approved commission runs.
+ * ExecutorRouter — profile-aware dispatch for independent external-agent runs.
  *
- * A controller is an implementation detail of an executor profile type. It
- * never mutates Host state directly: all lifecycle and evidence changes are
- * returned as events to CommissionService, which owns the run FSM.
+ * The persisted profile selects a trusted controller. Controllers receive a
+ * concrete task and never mutate Host state directly: lifecycle and evidence
+ * are returned as events to the owning run service.
  */
 
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import { executorProfiles } from "../storage/schema.js";
 
-export type ExecutorProfileType = "product-managed" | "codex";
+export type ExecutorProfileType = "pi" | "codex";
 
 export interface ExecutorProfile {
 	id: string;
@@ -20,18 +20,16 @@ export interface ExecutorProfile {
 
 export interface ExecutorRun {
 	runId: string;
-	commissionId: string;
+	triggerEntryId: string;
 	executorProfile: string;
 }
 
-export interface ExecutorCommission {
-	id: string;
-	title: string;
-	description: string;
-	reads: string[];
-	writes: string[];
-	networkAllowed: boolean;
-	toolNames: string[];
+/** Host-resolved launch material. Paths are ephemeral and never persisted. */
+export interface ExecutorTask {
+	instruction: string;
+	workspace: string;
+	outputDirectory: string;
+	modelRoute?: { providerId: string; modelId: string; apiKey?: string };
 }
 
 export type ExecutorEvent =
@@ -44,7 +42,7 @@ export type ExecutorEvent =
 
 export interface ExecutorLaunchRequest {
 	run: ExecutorRun;
-	commission: ExecutorCommission;
+	task: ExecutorTask;
 	profile: ExecutorProfile;
 	emit(event: ExecutorEvent): void;
 }
@@ -71,7 +69,7 @@ export interface ExecutorController {
 }
 
 const PROFILE_TYPES: Record<ExecutorProfileType, true> = {
-	"product-managed": true,
+	pi: true,
 	codex: true,
 };
 
@@ -115,11 +113,11 @@ export class ExecutorRouter {
 
 	async launch(
 		run: ExecutorRun,
-		commission: ExecutorCommission,
+		task: ExecutorTask,
 		emit: ExecutorLaunchRequest["emit"],
 	): Promise<void> {
 		const { profile, controller } = this.resolve(run.executorProfile);
-		await controller.launch({ run, commission, profile, emit });
+		await controller.launch({ run, task, profile, emit });
 	}
 
 	async cancel(run: ExecutorRun): Promise<void> {

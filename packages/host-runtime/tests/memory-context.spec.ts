@@ -296,9 +296,7 @@ describe("relationship memory context", () => {
 				scope: scopeFor("companion-b"),
 				query: "已激活角色",
 			});
-			expect(activatedHits.map(({ record }) => record.text)).toContain(
-				"只属于已激活角色的记忆",
-			);
+			expect(activatedHits.map(({ record }) => record.text)).toContain("只属于已激活角色的记忆");
 			expect(nativeAssistantId).toBeTruthy();
 			await expect(
 				rememberConversationEntry(context, "conversation-b", "legacy-message", "user_capture"),
@@ -343,9 +341,7 @@ describe("relationship memory context", () => {
 				memoryScope: { installationId: "install-1", userId: "user-1" },
 			} as never;
 
-			await expect(
-				proposeMemoryCandidate(context, "conversation-1"),
-			).resolves.toMatchObject({
+			await expect(proposeMemoryCandidate(context, "conversation-1")).resolves.toMatchObject({
 				sourceEntryId: latestUser,
 				createdBy: "assistant_tool",
 			});

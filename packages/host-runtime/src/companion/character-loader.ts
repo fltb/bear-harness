@@ -32,8 +32,8 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, extname, isAbsolute, join, posix, relative, resolve } from "node:path";
-import { z } from "@bear-harness/schema";
 import type { CharacterTheme } from "@bear-harness/protocol/schema";
+import { z } from "@bear-harness/schema";
 import { eq, sql } from "drizzle-orm";
 import { parse } from "yaml";
 import {
@@ -813,7 +813,9 @@ export class CharacterLoader {
 				"host_set_scene",
 				"host_set_expression",
 				"host_search_conversation_history",
-				"host_propose_work",
+				"host_list_attachments",
+				"host_read_attachment",
+				"host_delegate_agent",
 				...(character.roleplay.variables.length ||
 				character.roleplay.unlockables.length ||
 				character.roleplay.events.length

@@ -76,7 +76,11 @@ describe("PiSessionStore", () => {
 		const root = mkdtempSync(join(tmpdir(), "bear-pi-edited-branch-"));
 		roots.push(root);
 		const store = PiSessionStore.create({ sessionDir: join(root, "sessions"), cwd: root });
-		const originalUser = store.appendMessage({ role: "user", content: "original user", timestamp: 1 });
+		const originalUser = store.appendMessage({
+			role: "user",
+			content: "original user",
+			timestamp: 1,
+		});
 		store.appendMessage({
 			role: "assistant",
 			content: [{ type: "text", text: "assistant continuation" }],
@@ -154,36 +158,84 @@ describe("PiSessionStore", () => {
 
 		store.appendMessage({ role: "user", content: "opening prompt", timestamp: 1 });
 		store.appendMessage({
-			role: "assistant", content: [{ type: "text", text: "opening response" }],
-			api: "openai-completions", provider: "test", model: "test-model",
-			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-			stopReason: "stop", timestamp: 2,
+			role: "assistant",
+			content: [{ type: "text", text: "opening response" }],
+			api: "openai-completions",
+			provider: "test",
+			model: "test-model",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 2,
 		} as PiSessionMessage);
-		const originalUser = store.appendMessage({ role: "user", content: "original prompt", timestamp: 3 });
+		const originalUser = store.appendMessage({
+			role: "user",
+			content: "original prompt",
+			timestamp: 3,
+		});
 		const originalAssistant = store.appendMessage({
-			role: "assistant", content: [{ type: "text", text: "original response" }],
-			api: "openai-completions", provider: "test", model: "test-model",
-			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-			stopReason: "stop", timestamp: 4,
+			role: "assistant",
+			content: [{ type: "text", text: "original response" }],
+			api: "openai-completions",
+			provider: "test",
+			model: "test-model",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 4,
 		} as PiSessionMessage);
 
 		// Edit branch: branch before originalUser, append edited user + assistant
 		store.branchBefore(originalUser);
 		store.appendMessage({ role: "user", content: "edited prompt", timestamp: 5 });
 		const editedAssistant = store.appendMessage({
-			role: "assistant", content: [{ type: "text", text: "response to edited prompt" }],
-			api: "openai-completions", provider: "test", model: "test-model",
-			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-			stopReason: "stop", timestamp: 6,
+			role: "assistant",
+			content: [{ type: "text", text: "response to edited prompt" }],
+			api: "openai-completions",
+			provider: "test",
+			model: "test-model",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 6,
 		} as PiSessionMessage);
 
 		// Regenerate branch: branch before originalAssistant, re-append new assistant under same user
 		store.branchBefore(originalAssistant);
 		const regeneratedAssistant = store.appendMessage({
-			role: "assistant", content: [{ type: "text", text: "regenerated response" }],
-			api: "openai-completions", provider: "test", model: "test-model",
-			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-			stopReason: "stop", timestamp: 8,
+			role: "assistant",
+			content: [{ type: "text", text: "regenerated response" }],
+			api: "openai-completions",
+			provider: "test",
+			model: "test-model",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 8,
 		} as PiSessionMessage);
 
 		// Select regenerated branch, reopen, and verify
@@ -293,7 +345,6 @@ describe("PiSessionStore", () => {
 		});
 		expect(JSON.stringify(store.buildPiTimeline())).not.toContain("branch summary");
 
-
 		const branchContext = store.buildContext().messages;
 		expect(branchContext.map((message) => message.role)).toEqual([
 			"compactionSummary",
@@ -346,7 +397,12 @@ describe("PiSessionStore", () => {
 				role: "assistant",
 				content: [
 					{ type: "text", text: "hi" },
-					{ type: "toolCall", id: "call-1", name: "lookup", arguments: { secret: "do-not-project" } },
+					{
+						type: "toolCall",
+						id: "call-1",
+						name: "lookup",
+						arguments: { secret: "do-not-project" },
+					},
 				],
 				api: "openai-completions",
 				provider: "test",
@@ -520,7 +576,9 @@ describe("PiSessionStore", () => {
 			piOnly?.id,
 		]);
 		expect(repository.getCurrentPiEntryForMessage("conversation", "host-user")).toBeUndefined();
-		expect(repository.getCurrentPiEntryForMessage("conversation", "host-assistant")).toBeUndefined();
+		expect(
+			repository.getCurrentPiEntryForMessage("conversation", "host-assistant"),
+		).toBeUndefined();
 		expect(repository.getCurrentPiEntryForMessage("conversation", piOnly!.id)).toMatchObject({
 			id: piOnly!.id,
 			message: { role: "user", content: "Pi-only tail" },
@@ -621,5 +679,4 @@ describe("PiSessionStore", () => {
 		expect(reopenedProjection.piTimeline?.entries[0]).toMatchObject({ text: rawUserText });
 		database.close();
 	});
-
 });

@@ -29,18 +29,52 @@ describe("database schema contract", () => {
 		expect(() => database.assertSchemaContract()).not.toThrow();
 		database.close();
 	});
-	it("renames the commission native trigger anchor during mirror removal", () => {
+	it("preserves legacy run provenance while removing approval tables", () => {
 		const database = new Database(root());
-		database.migrate(MIGRATIONS.slice(0, -1));
-		database.connection
-			.prepare(
-				"INSERT INTO commissions (id, conversation_id, status, draft_json) VALUES (?, ?, ?, ?)",
-			)
-			.run("legacy-commission", null, "draft", "{}");
+		database.migrate(MIGRATIONS.filter((migration) => migration.id <= 25));
+		database.connection.exec(`
+			INSERT INTO companion_packages (id, name, version, hash)
+				VALUES ('package-a', 'Package A', '1.0.0', 'hash-a');
+			INSERT INTO companion_identity (id, package_id, name, self_canon)
+				VALUES ('companion-a', 'package-a', 'Companion A', 'canon');
+			INSERT INTO conversations (id, companion_id, title)
+				VALUES ('conversation-a', 'companion-a', 'Conversation A');
+			INSERT INTO executor_profiles (id, profile_type)
+				VALUES ('pi-product-managed', 'product-managed');
+			INSERT INTO commissions (id, conversation_id, trigger_entry_id, status, draft_json)
+				VALUES ('commission-a', 'conversation-a', 'entry-a', 'completed',
+					'{"title":"Legacy task","description":"Legacy instruction"}');
+			INSERT INTO runs (id, commission_id, executor_profile, status, completed_at)
+				VALUES ('run-a', 'commission-a', 'pi-product-managed', 'completed', datetime('now'));
+			INSERT INTO evidence (id, run_id, kind, data)
+				VALUES ('evidence-a', 'run-a', 'result', '{}');
+		`);
 		database.migrate(MIGRATIONS);
 		expect(
-			database.connection.prepare("SELECT id, trigger_entry_id FROM commissions").get(),
-		).toEqual({ id: "legacy-commission", trigger_entry_id: "" });
+			database.connection
+				.prepare(
+					"SELECT id, conversation_id, trigger_entry_id, executor_profile, title, instruction FROM runs",
+				)
+				.get(),
+		).toEqual({
+			id: "run-a",
+			conversation_id: "conversation-a",
+			trigger_entry_id: "entry-a",
+			executor_profile: "pi-default",
+			title: "Legacy task",
+			instruction: "Legacy instruction",
+		});
+		expect(database.connection.prepare("SELECT id, run_id FROM evidence").get()).toEqual({
+			id: "evidence-a",
+			run_id: "run-a",
+		});
+		for (const table of ["commissions", "approvals"]) {
+			expect(
+				database.connection
+					.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+					.get(table),
+			).toBeUndefined();
+		}
 		database.close();
 	});
 

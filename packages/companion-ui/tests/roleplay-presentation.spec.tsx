@@ -450,7 +450,7 @@ describe("package-driven character presence", () => {
 			THEMED_CHARACTER.visual.expressions[THEMED_CHARACTER.visual.defaultExpressionId],
 		);
 	});
-	
+
 	it.each(["expanded"] as const)(
 		"publishes the %s display-only layout mode without changing task state",
 		(layout) => {
@@ -510,7 +510,9 @@ describe("package-driven character presence", () => {
 		});
 		fireEvent.load(asset);
 
-		expect(Number.parseFloat(stage.style.getPropertyValue("--presence-aspect-ratio"))).toBeCloseTo(1.5);
+		expect(Number.parseFloat(stage.style.getPropertyValue("--presence-aspect-ratio"))).toBeCloseTo(
+			1.5,
+		);
 		expect({
 			activeConversationId: store.activeConversationId,
 			presence: store.presence,

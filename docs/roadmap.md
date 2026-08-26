@@ -3,17 +3,20 @@
 > 永久维护的路线图，记录已确认的范围、完成记录和明确的后续阶段边界。
 > 阶段边界变化必须先改本文件再实施。
 
-## 当前交付范围（V1）
+## 当前交付状态
 
-核心 Companion 与真实工作闭环，包含 M0–M5 六个里程碑及其完成后的可用性收口。详见 `docs/bear-harness-plan.md`。
+### 2026-08-25 — Attachment 与 Direct Agent clean cutover
 
-### 2026-08-15 — V1 可用性收口
-
+- 对话中的文件、文件夹和生成结果统一为不可变、会话域内的 attachment；`message.send` 只携带 attachment ID，外部 Agent 输出也以 generated attachment 回到对话。
+- `ExternalAgentRunService` 直接启动彼此独立的原生 ACP Agent：默认使用 Pi，仅在用户显式连接时使用 Codex；当前流程不再经过 Commission、审批式 launch 或独立结果空间。
+- 本地源目录优先以临时、非沙箱 live grant 提供给 Agent；无法保持 live 访问时才使用不可变 snapshot fallback。
+- 角色侧工具收敛为 attachment `list` / `read` 与 `delegate`；Renderer 预览通过语义读取或字节读取，并使用五分钟有效的 `bear-attachment` capability。
+- 内部 `ArtifactStore` 仅保留 CAS 与 provenance 职责，不再作为 Renderer 文件 API 或产品层结果模型。
+- Windows x64 的手动 `workflow_dispatch` 打包门禁已验证原生 bindings、PE 架构、随包 PortableGit runtime 与可执行文件，并完成 packaged-app smoke。
 - WebDev 与桌面共用同一 HostRuntime、持久化数据库与角色包；WebDev 使用机器本地 AES-GCM 凭据 vault。
 - 角色对话连续性、自动记忆、敏感记忆确认、故事档案与持久化的 AU 模糊变更确认均已接通。
 - Canon Hub 已交付：原作资料分段、检索、可引用层级剧情模块和按话题激活的 Context Pack 路径。
 - 普通用户使用角色管理、关系记忆与故事档案；高级制作使用角色包工坊，不向前者泄露 module、scope 或原始 prompt。
-- 角色可提出现实工作草案；用户确认读写/联网范围后才执行，获准写入文件会登记为可下载成果。
 - 会话支持新建、搜索、重命名、归档和删除；删除会保留已形成记忆但解除原会话引用。
 - API key 与 OAuth 模型服务均有设置页路径；已保存 API key 会在重启后重新载入运行时。
 
@@ -27,7 +30,7 @@
 |--------|------|------|
 | node:sqlite 在 packaged app 中通过 | ✓ | 打包 mac universal 中 DatabaseSync WAL 写入/读取/integrity_check 通过（Electron 43.4.0 / Node 24.18.1） |
 | sandbox preload + contextIsolation | ✓ | 现有 packaged e2e 断言 bridge shape `{platform, diagnostics}`，sandbox:true |
-| bear-artifact 自定义协议注册+fetch 回环 | ✓ | `protocol.handle` + `net.fetch` 200 往返 |
+| `bear-artifact` 自定义协议注册+fetch 回环（历史 spike，已由 `bear-attachment` capability 取代） | ✓ | 当时完成 `protocol.handle` + `net.fetch` 200 往返；不代表当前 Renderer API |
 | Companion utility 从 asar 加载 SDK 0.84.1 | ✓ | 隔离 agentDir 创建会话、analytics/installTelemetry 全零、无凭据 env 泄漏 |
 | 真实 OAuth `auth_url` 桥接 | ✓ | pi-ai `ModelRuntime.login` 发出 Anthropic OAuth URL（PKCE + loopback） |
 | 真实流式 turn + abort | ✓ | opencode-go/deepseek-v4-flash，80 message_update delta，89 事件，abort 正常终止，analytics 零 |
@@ -64,10 +67,10 @@ npm run lint && npm run typecheck && npm run test:coverage && npm run build && n
 #### 实验性扩展
 - 受限自动化层（capability-mapped）
 - 高风险代码层（sandboxed iframe/utility origin）
-#### 2026-08-14 — M1 Host 基础：schema、storage、artifact、事件与安全 IPC
-- `packages/protocol/src/schema.ts`：统一 Zod 4 的 :v1 IPC 合约
-- src/main/storage/database.ts + event-bus.ts + artifacts/index.ts
-- IPC router + preload companion facade + global.d.ts + e2e bridge 断言
+#### 2026-08-14 — M1 Host 基础：schema、storage、artifact、事件与安全 IPC（历史里程碑）
+- `packages/protocol/src/schema.ts`：当时统一 Zod 4 的 :v1 IPC 合约
+- 当时落地 `src/main/storage/database.ts`、`event-bus.ts` 与内部 `artifacts/index.ts`；当前 ArtifactStore 仅承担 CAS/provenance
+- 当时接入 IPC router、preload companion facade、global.d.ts 与 e2e bridge 断言
 - 角色包架构决定：YAML 元数据、semantic tokens
 - 提交：`91ab913`
 
@@ -78,9 +81,9 @@ npm run lint && npm run typecheck && npm run test:coverage && npm run build && n
 - 真实 Provider 流式 turn + abort 已通过（opencode-go/deepseek-v4-flash，telemetry 零）
 - 提交：`823bcce`
 
-#### 2026-08-14 — M3 Commission、Executor 与 operational truth
-- CommissionService（draft/approve/launch/needs_user/steer/interrupt/resume/cancel/adopt）
-- PiRpcAdapter、CodexAdapter（pinned 0.147.0，version_mismatch 显式禁用）
+#### 2026-08-14 — M3 Commission、Executor 与 operational truth（历史里程碑，当前已废止）
+- 当时交付 CommissionService 的 draft/approve/launch/needs_user/steer/interrupt/resume/cancel/adopt 流程；当前已由 `ExternalAgentRunService` 直接启动独立原生 ACP Agent 取代。
+- 当时交付 PiRpcAdapter 与 CodexAdapter；当前默认直接启动 Pi，仅使用用户显式连接的 Codex。
 - 提交：`6ca62b6`
 
 #### 2026-08-14 — M4 材料、研究、Office 与文件效果
@@ -100,7 +103,7 @@ npm run lint && npm run typecheck && npm run test:coverage && npm run build && n
 - 自然语言记忆请求经 permission/admission ✔
 - 真实 Provider 回复可恢复（M0 已验证）✔
 - Roleplay 操作不能改变现实事实 ✔
-- Pi 与用户明确授权的 Codex 在批准范围内产生可追溯 evidence ✔
-- 材料引用、安全解析、七类格式与文件效果是真实可重开的产物 ✔
+- Direct Agent 使用默认 Pi 或用户显式连接的 Codex，并通过 attachment/source grant 产生可追溯输入与输出 ✔
+- 材料引用、安全解析、七类格式与文件效果以不可变 attachment 交付，生成结果可重新打开 ✔
 - 失败不伪装成功 ✔
-- Windows x64 离线资源完整性（M0 已验证 hash）✔；Windows 原生 runner E2E 尚待验证
+- Windows x64 手动 `workflow_dispatch` 已完成 package、PE/native binding、PortableGit runtime/可执行文件及 packaged-app smoke 验证 ✔

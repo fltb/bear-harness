@@ -18,11 +18,12 @@ import {
 } from "@bear-harness/host-runtime";
 import { productConfig } from "@bear-harness/product-config";
 import { app, BrowserWindow, crashReporter, ipcMain, shell } from "electron";
+import { registerConversationAttachmentBridge } from "./conversation-attachment-bridge.js";
 import {
-	ARTIFACT_SCHEME,
-	registerArtifactProtocol,
-	registerArtifactSchemePrivileges,
-} from "./artifact-protocol.js";
+	ConversationAttachmentProtocol,
+	registerConversationAttachmentProtocol,
+	registerConversationAttachmentSchemePrivileges,
+} from "./conversation-attachment-protocol.js";
 import {
 	registerElectronDiagnostics,
 	registerWindowHooks,
@@ -38,8 +39,8 @@ const DEV_RENDERER_URL_WITH_SLASH = `${DEV_RENDERER_URL}/`;
 const isSourceE2E =
 	!app.isPackaged && process.env.NODE_ENV === "test" && process.env.BEAR_E2E_SOURCE === "1";
 
-// The bear-artifact:// scheme must be privileged before app readiness.
-registerArtifactSchemePrivileges();
+// Custom schemes must be privileged before app readiness.
+registerConversationAttachmentSchemePrivileges();
 
 const rendererHtmlPath = fileURLToPath(new URL("../renderer/index.html", import.meta.url));
 const loadFromHtml = app.isPackaged || isSourceE2E;
@@ -50,7 +51,6 @@ const allowedUrl = loadFromHtml
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 let updateService: UpdateService | null = null;
 let updateTimer: NodeJS.Timeout | null = null;
-let artifactProtocolRegistered = false;
 
 // Unpackaged runs (dev, source e2e) never touch the real macOS login
 // keychain: Chromium would pop an authorization dialog for its own safe
@@ -127,6 +127,14 @@ const windowHookDisposers = new Map<number, () => void>();
 let shutdownRequested = false;
 let shutdownComplete = false;
 let hostRuntime: HostRuntime | null = null;
+const attachmentProtocol = new ConversationAttachmentProtocol({
+	windowRegistry,
+	readFile: (conversationId, attachmentId, relativePath) => {
+		const attachments = hostRuntime?.attachments;
+		if (!attachments) throw { kind: "unavailable", reason: "attachment_service_unavailable" };
+		return attachments.readFile(conversationId, attachmentId, relativePath);
+	},
+});
 let disposeElectronIpcHandlers: (() => void) | null = null;
 let disposeElectronDiagnostics: (() => void) | null = null;
 
@@ -178,6 +186,20 @@ function characterSeedRoot(): string {
 		: resolve(process.cwd(), "../../config/characters");
 }
 
+function bundledGitRuntime(): { shellPath: string; pathEntries: string[] } | undefined {
+	if (!app.isPackaged || !process.resourcesPath) return undefined;
+	const gitRoot = join(process.resourcesPath, "git");
+	const shellPath = join(gitRoot, "usr", "bin", "bash.exe");
+	const pathEntries = [
+		join(gitRoot, "cmd"),
+		join(gitRoot, "mingw64", "bin"),
+		join(gitRoot, "usr", "bin"),
+	];
+	return existsSync(shellPath) && pathEntries.every(existsSync)
+		? { shellPath, pathEntries }
+		: undefined;
+}
+
 async function initializeHost(): Promise<boolean> {
 	let ipcHandlersDispose: (() => void) | null = null;
 	try {
@@ -188,8 +210,7 @@ async function initializeHost(): Promise<boolean> {
 			productConfig,
 			credentialVault: isSourceE2E ? e2eCredentialVault : electronCredentialVault,
 			protocolViolationMode: app.isPackaged ? "isolate" : "throw",
-			artifactProtocolUrlFactory: (artifactId) =>
-				`${ARTIFACT_SCHEME}://artifact/${encodeURIComponent(artifactId)}`,
+			conversationAttachmentUrlFactory: (request) => attachmentProtocol.mint(request),
 			updateService: updater
 				? {
 						check: () => updater.check(),
@@ -197,10 +218,22 @@ async function initializeHost(): Promise<boolean> {
 						apply: () => Promise.resolve(updater.apply()),
 					}
 				: undefined,
+			bundledGit: bundledGitRuntime(),
 		});
-		ipcHandlersDispose = wireElectronIpcHandlers(runtime.dispatcher, windowRegistry, {
-			artifactProtocolAvailable: () => artifactProtocolRegistered,
+		const disposeRouter = wireElectronIpcHandlers(runtime.dispatcher, windowRegistry, {
+			attachmentProtocol,
 		});
+		const disposeAttachmentBridge = registerConversationAttachmentBridge(
+			{
+				importPaths: (conversationId, paths) =>
+					runtime.attachments.importPaths(conversationId, paths),
+			},
+			windowRegistry,
+		);
+		ipcHandlersDispose = () => {
+			disposeAttachmentBridge();
+			disposeRouter();
+		};
 		disposeElectronIpcHandlers = ipcHandlersDispose;
 		await runtime.start();
 		hostRuntime = runtime;
@@ -254,6 +287,7 @@ function createMainWindow(): void {
 	const disposeWindowHooks = registerWindowHooks(window.webContents, diagnostics);
 	windowHookDisposers.set(webContentsId, disposeWindowHooks);
 	window.webContents.once("destroyed", () => {
+		attachmentProtocol.revokeRenderer(webContentsId);
 		windowRegistry.delete(webContentsId);
 		const dispose = windowHookDisposers.get(webContentsId);
 		windowHookDisposers.delete(webContentsId);
@@ -316,14 +350,8 @@ diagnostics.runInSession(() => {
 				publisherPolicy: productConfig.updatePublisher,
 			});
 			if (!(await initializeHost())) failInit("Failed to initialize companion host runtime");
-			const artifacts = hostRuntime?.artifacts;
-			if (!artifacts) failInit("Host runtime is unavailable");
-			registerArtifactProtocol({
-				get: (id) => artifacts.get(id),
-				readBlob: (id) => artifacts.readBlob(id),
-				windowRegistry,
-			});
-			artifactProtocolRegistered = true;
+			if (!hostRuntime) failInit("Host runtime is unavailable");
+			registerConversationAttachmentProtocol(attachmentProtocol);
 			// Idle update checks every 6h; the renderer can also trigger on
 			// demand via the update.check:v1 RPC. No-op while the feed is empty.
 			updateTimer = setInterval(() => {

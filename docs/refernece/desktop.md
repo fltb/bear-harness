@@ -1,6 +1,6 @@
 # Desktop module reference
 
-This module is the Electron shell for the SolidJS companion UI. The main process owns Chromium lifecycle, the injected HostRuntime, native diagnostics, credential encryption, IPC admission, and the artifact URL scheme. The renderer receives only a narrow preload bridge and uses the transport-neutral companion client. The package is private and its production entry is `dist/main/index.js` ([`apps/desktop/package.json`](../../apps/desktop/package.json)).
+This module is the Electron shell for the SolidJS companion UI. Main owns Chromium lifecycle, the injected HostRuntime, native diagnostics, credential encryption, IPC admission, trusted attachment picker/drop import, and short-lived attachment capabilities. The renderer receives a narrow frozen preload bridge and uses the transport-neutral companion client for ordinary RPC. The package is private and its production entry is `dist/main/index.js` ([`apps/desktop/package.json`](../../apps/desktop/package.json)).
 
 ## Module map and process topology
 
@@ -10,64 +10,54 @@ flowchart LR
     Entry[src/main/index.ts]
     Runtime[HostRuntime]
     IPC[src/main/ipc-router.ts]
-    Artifact[src/main/artifact-protocol.ts]
-    Updates[src/main/update-service.ts]
+    Bridge[conversation-attachment-bridge.ts]
+    Capability[conversation-attachment-protocol.ts]
+    Updates[update-service.ts]
     Diag[diagnostics/electron.ts]
     Vault[electron-credential-vault.ts]
   end
-  subgraph Renderer[Renderer process]
-    HTML[renderer/index.html]
-    UI[renderer/index.tsx + companion-ui]
+  subgraph Renderer[Sandboxed renderer]
+    UI[renderer + companion-ui]
     Preload[preload/index.cts]
   end
   Entry --> Runtime
   Entry --> IPC
-  Entry --> Artifact
-  Entry --> Updates
-  Entry --> Diag
-  Entry --> Vault
-  Entry --> Preload
-  Preload --> UI
-  UI -->|contextBridge transport.invoke| IPC
-  Runtime -->|artifact lookup/read| Artifact
-  Runtime -->|update.check:v1| Updates
-  Runtime -->|credential boundary| Vault
+  Entry --> Bridge
+  Entry --> Capability
+  Preload -->|transport.invoke| IPC
+  Preload -->|trusted picker/drop methods| Bridge
+  IPC -->|renderer-scoped dispatch context| Runtime
+  Runtime -->|mint/read immutable attachment| Capability
+  Runtime --> Updates
+  Runtime --> Vault
 ```
 
-The preload is compiled as CommonJS (`dist/preload/index.cjs`), while main uses NodeNext ESM output and renderer uses Rsbuild. The renderer does not import Electron or Node APIs: it calls `window.bearDesktop.transport.invoke`, and reports normalized faults through `window.bearDesktop.diagnostics.reportRendererFault` ([`src/preload/index.cts`](../../apps/desktop/src/preload/index.cts), [`src/renderer/index.tsx`](../../apps/desktop/src/renderer/index.tsx)).
+The preload is CommonJS (`dist/preload/index.cjs`); main is NodeNext ESM; the renderer is bundled by Rsbuild. Renderer UI does not import Electron or Node. Ordinary RPC goes through `window.bearDesktop.transport.invoke`; native attachment selection/drop goes through `window.bearDesktop.attachments`; normalized faults go through diagnostics.
 
 ## Startup and shutdown
 
 ### Startup sequence
 
-`src/main/index.ts` executes important setup at module load, before `app.whenReady()`:
+At module load, before `app.whenReady()`, main registers `bear-attachment` as a privileged secure, Fetch-capable, streaming custom scheme. It then determines the packaged/source-E2E file renderer versus the fixed `http://127.0.0.1:3100/` development origin, configures unpackaged mock-keychain/GPU switches, establishes product-scoped `userData`/`sessionData`, acquires the packaged single-instance lock, and starts diagnostics.
 
-1. Register `bear-artifact` scheme privileges. Electron requires this before readiness ([`src/main/artifact-protocol.ts`](../../apps/desktop/src/main/artifact-protocol.ts)).
-2. Decide whether the renderer is loaded from packaged/source-E2E HTML or the development server. Packaged and source-E2E runs use `src/renderer/index.html` as emitted under `dist/renderer`; normal unpackaged development uses `http://127.0.0.1:3100/`. Source E2E is enabled only when `NODE_ENV=test` and `BEAR_E2E_SOURCE=1`.
-3. For every unpackaged run, append Chromium `use-mock-keychain` and `disable-gpu`, and disable hardware acceleration. This avoids development/test keychain prompts and first-launch GPU startup problems; it is not applied to packaged builds.
-4. Derive the product data directory from Electron's `appData` and `productConfig.dataDirectoryName`. Source E2E may override the base with an absolute `BEAR_E2E_APP_DATA`. Create the directory and its `Chromium` session directory with mode `0700`, then set Electron's `userData` and `sessionData` paths.
-5. Packaged builds request a single-instance lock. A second packaged launch exits and the `second-instance` handler restores/focuses the existing window. Unpackaged instances intentionally do not use the lock so parallel development/E2E roots are possible.
-6. Construct diagnostics with a per-launch UUID and a root at `<userData>/diagnostics`, or an absolute `BEAR_DIAGNOSTICS_ROOT` for source E2E. The diagnostics reporter is adapted to Electron's `crashReporter`.
-7. Register process-level shutdown and fault handlers, then register Electron diagnostics IPC/process listeners.
-8. Inside `diagnostics.runInSession`, wait for Electron readiness. Create `UpdateService` from `productConfig.updateFeedUrl`, the optional `productConfig.updatePublisher` policy, app version, and `<userData>/updates`; initialize and start HostRuntime; register the artifact protocol against the runtime's artifact store; start the six-hour update timer; and create the main window. A renderer can also request an update check through the HostRuntime RPC.
+After readiness, main creates the update service and HostRuntime, registers ordinary protocol IPC plus the trusted picker/drop bridge, starts HostRuntime, stores the running runtime, registers the attachment capability handler, starts the six-hour update timer, and only then creates the main window. A renderer therefore cannot call a partially initialized Host.
 
-Host initialization is deliberately before window creation, so the renderer cannot issue RPCs against a partially initialized host. `initializeHost` wires IPC before `runtime.start()`, but stores the runtime in the module variable only after `start()` succeeds. Startup failures print an error, set `exitCode=1`, and call `app.exit(1)` through `failInit`.
+Shutdown disposes ordinary IPC, attachment bridge handlers, diagnostics handlers, and window hooks before closing HostRuntime and diagnostics. Renderer destruction revokes that renderer's attachment capabilities.
 
 ### HostRuntime construction
 
-`initializeHost` calls `createHostRuntime` with:
+`initializeHost` supplies:
 
-- `dataDir`: the product-scoped `userData` directory;
-- `characterRoot`: packaged `process.resourcesPath/config/characters` when present, otherwise `../../config/characters` from the current working directory. HostRuntime still gives `BEAR_CONFIG_DIR` precedence internally;
-- `productConfig`, including the default character id;
-- `electronCredentialVault` in normal/packaged runs, or the deterministic AES-GCM `e2eCredentialVault` only for source E2E;
-- `protocolViolationMode: "isolate"` in packaged builds and `"throw"` otherwise;
-- an artifact URL factory producing `bear-artifact://artifact/<URL-encoded-id>`;
-- an update service adapter whose `check()` delegates to the desktop `UpdateService`.
+- product-scoped `dataDir` and packaged `character-seeds`;
+- the OS credential vault, or the deterministic source-E2E-only vault;
+- `protocolViolationMode: "isolate"` for packaged builds and `"throw"` otherwise;
+- `conversationAttachmentUrlFactory`, which mints a renderer-scoped `bear-attachment` capability inside admitted IPC dispatch;
+- update check/discard/apply adapters;
+- on packaged Windows, the verified bundled Git shell descriptor.
 
-The runtime constructor creates/migrates the canonical database at `<dataDir>/storage`, the artifact CAS at `<dataDir>/artifacts`, provider runtime state at `<dataDir>/companion-runtime`, character/session state, and the audit store at `<dataDir>/audit` by default. It builds a dispatcher, registers host handlers, and validates requests/responses against the shared protocol. `start()` resolves the active character/configuration and starts the companion supervisor; `close()` is the lifecycle counterpart ([`packages/host-runtime/src/runtime.ts`](../../packages/host-runtime/src/runtime.ts)).
+HostRuntime creates its canonical database, internal `ArtifactStore` CAS/provenance directory, provider/session state, attachment service, audit store, and executor router. `ArtifactStore` is not a renderer API: conversation attachments own all user-visible file identity and access.
 
-The desktop shell injects platform capabilities rather than putting Electron imports in HostRuntime. To add a desktop capability, prefer an injected option/adapter and a protocol endpoint over importing Electron into shared runtime code.
+External-agent execution is direct. The runtime seeds `pi-default` and starts each Pi delegation as a separate native ACP worker/session with its selected model route. A connected Codex binary is an explicit alternative and is re-verified by version and SHA-256 at launch. The desktop injects PortableGit only into packaged Windows Pi worker environment (`BEAR_PI_SHELL_PATH` plus Git directories at the start of `PATH`).
 
 ### Shutdown sequence
 
@@ -88,21 +78,20 @@ The main frame is admitted only at the exact `allowedUrl`: the development URL w
 
 The renderer's CSP is injected by Rsbuild. Development allows only local WebSocket/HTTP connections to port 3100 in `connect-src`; production allows same-origin connections. Scripts are same-origin, fonts are same-origin, and images are same-origin or `data:`. Assets use relative paths in production so the HTML works from `file://` ([`apps/desktop/rsbuild.config.ts`](../../apps/desktop/rsbuild.config.ts)).
 
-Preload exposes a frozen object containing only `platform`, diagnostics reporting, and a generic `transport.invoke(channel, request)`. `reportRendererFault` validates an exact fault shape (`kind`, `errorType`, optional bounded integer line/column) before sending it over the one-way diagnostics channel. The generic transport is intentionally not an unrestricted Node bridge: main-process sender and frame checks, shared request schemas, handler lookup, and response envelopes remain authoritative.
+Preload exposes a frozen object containing `platform`, diagnostics reporting, generic `transport.invoke`, and a frozen attachment bridge. The generic transport rejects desktop attachment-channel prefixes; it cannot be used to smuggle native paths. `reportRendererFault` validates an exact bounded shape before sending it over the one-way diagnostics channel.
 
 ## IPC routing and validation
 
-`wireElectronIpcHandlers` iterates `Object.keys(REQUEST_SCHEMAS)` and registers one `ipcMain.handle` per protocol channel. Each handler:
+`wireElectronIpcHandlers` derives one main-process handler per `REQUEST_SCHEMAS` channel. Every invocation requires a live owning `BrowserWindow`, the registered main frame, and exact allowed URL before delegating raw params to `Dispatcher`. Admitted dispatch runs inside `attachmentProtocol.runForRenderer(webContentsId, ...)`, which binds later `conversationAttachment.url` minting to that renderer.
 
-1. checks that the sender webContents still corresponds to a `BrowserWindow`;
-2. requires the sender to be the registered main frame, not a child frame;
-3. requires the sender frame URL to equal that window's registered `allowedUrl`;
-4. returns `{ ok: false, error: { kind: "unavailable", reason: "no_window" } }` on admission failure;
-5. otherwise delegates the raw params to `dispatcher.dispatch(channel, params)`.
+The separate native channels `desktop:attachmentPickFiles:v1`, `desktop:attachmentPickFolder:v1`, and `desktop:attachmentImportDrop:v1` are not protocol RPCs. They have their own strict plain-object validation and the same window/frame admission:
 
-The dispatcher performs shared request validation, handler lookup, and response envelope/response validation. In development, protocol violations throw; packaged runtime uses isolation to turn protocol defects into safe RPC errors while publishing a protocol-violation diagnostic. The separate `desktop:artifactProtocol:v1` channel has no request payload and uses the same sender admission checks; it returns whether the protocol handler has been registered in this process ([`src/main/ipc-router.ts`](../../apps/desktop/src/main/ipc-router.ts)).
+- picker handlers invoke `dialog.showOpenDialog` with the owning window;
+- preload converts dropped `File` objects to native paths with `webUtils.getPathForFile`;
+- main accepts at most ten bounded absolute paths and calls `runtime.attachments.importPaths`;
+- the attachment service validates/canonicalizes paths, snapshots them into immutable CAS-backed attachments, then retains only an in-memory live-source grant.
 
-The renderer wraps this generic bridge in `createCompanionClient`, which maps typed protocol endpoints to channel strings. This keeps the renderer independent of Electron while making the protocol package the contract source ([`src/renderer/index.tsx`](../../apps/desktop/src/renderer/index.tsx), [`packages/protocol/src/schema.ts`](../../packages/protocol/src/schema.ts)).
+The generic preload transport refuses these channel prefixes. Web content therefore cannot supply arbitrary source paths through `CompanionClient`.
 
 ## Credential vault
 
@@ -116,17 +105,23 @@ HostRuntime passes the vault to `CredentialStore`. Provider credentials are seri
 
 Source E2E substitutes a fixed key derived from the literal `bear-harness-source-e2e-only` and AES-256-GCM. That path exists to avoid macOS Keychain prompts in throwaway test data roots and must never be selected for a packaged build ([`apps/desktop/src/main/e2e-vault.ts`](../../apps/desktop/src/main/e2e-vault.ts)).
 
-## Artifact protocol
+## Conversation attachment capabilities
 
-The renderer obtains artifact metadata through `artifact.list:v1`, asks HostRuntime for `artifact.url:v1`, and receives either an empty string when the protocol is unavailable or a `bear-artifact://artifact/<id>` URL. It never reads the CAS directly. Main startup registers scheme privileges before readiness and registers the handler after HostRuntime has started and exposed its artifact store.
+`conversationAttachment.url:v1` requests either `preview` or `download` for one conversation-owned attachment file. The Host resolves ownership and MIME first; desktop then mints `bear-attachment://cap/<operation>/<random-token>` within the admitted renderer's async dispatch context.
 
-The custom scheme is deliberately non-standard (`standard: false`), secure, Fetch API capable, and streaming. `parseArtifactUrl` accepts only the exact `bear-artifact://artifact/<single-id>` shape. The handler first validates the request referrer against the allowed renderer URL, then returns:
+Capabilities:
 
-- `403 forbidden` for an untrusted sender or unknown scheme content/path shape;
-- `404 not found` for an invalid artifact ID, unknown ID, or missing CAS blob;
-- `200` with the artifact bytes for a known record/blob.
+- expire after five minutes;
+- are bound to the minting renderer webContents ID and exact registered referrer URL;
+- encode no conversation, attachment, filesystem, or CAS identifier;
+- are revoked when that renderer is destroyed;
+- require the URL operation to match the minted operation.
 
-Successful responses use the recorded MIME type (falling back to `application/octet-stream`), actual byte length, `default-src 'none'`, `Cache-Control: no-store`, and `X-Content-Type-Options: nosniff`. The protocol does not turn an artifact into a navigable page ([`src/main/artifact-protocol.ts`](../../apps/desktop/src/main/artifact-protocol.ts)).
+Preview minting is allowlisted to PDF, plain text, and AVIF/GIF/JPEG/PNG/WebP. Download accepts other MIME types but responds with a sanitized RFC 5987 attachment filename. The handler re-resolves the exact conversation/attachment/relative path at use time and rejects changed paths or unsupported preview MIME.
+
+Malformed URLs and sender/operation mismatches return locked `403`; missing, expired, or unreadable capabilities return `404`. Success returns exact bytes and MIME with `Content-Disposition`, `Content-Length`, `Cache-Control: no-store`, `Content-Security-Policy: default-src 'none'`, and `X-Content-Type-Options: nosniff`.
+
+Semantic text/tree/search and exact byte ranges remain available through `conversationAttachment.read:v1`; the capability is only the media/PDF/download delivery path.
 
 ## Diagnostics and crash handling
 
@@ -160,7 +155,7 @@ The renderer can trigger `update.check:v1`, `update.discard:v1`, or `update.appl
 
 `npm run dev --workspace @bear-harness/desktop` runs the development launcher. It first builds the product-config, protocol, companion-client, and host-runtime workspaces, validates product config, then starts main and preload TypeScript watch builds plus Rsbuild dev on `127.0.0.1:3100`. TypeScript emits main files under `dist/main/src/main`; a 250 ms mirror loop flattens that tree so Electron can launch `dist/main/index.js`. The launcher waits up to 30 seconds for main/preload outputs and the TCP port, starts Electron with `BEAR_RENDERER_URL=http://127.0.0.1:3100`, and tears down all children on signals or child failure ([`apps/desktop/scripts/dev.mjs`](../../apps/desktop/scripts/dev.mjs)).
 
-The main process rejects any development renderer URL other than the exact loopback URL. Do not point `BEAR_RENDERER_URL` at an arbitrary host; doing so violates the IPC/artifact admission model.
+The main process rejects any development renderer URL other than the exact loopback URL. Pointing `BEAR_RENDERER_URL` elsewhere violates both ordinary IPC admission and attachment-capability renderer binding.
 
 ### Production build
 
@@ -168,36 +163,36 @@ The main process rejects any development renderer URL other than the exact loopb
 
 ### Packaging and release artifacts
 
-The package scripts run `build` and then Electron Builder:
+Electron Builder emits:
 
-- `npm run package:mac --workspace @bear-harness/desktop`: DMG and ZIP, universal macOS target;
-- `npm run package:win --workspace @bear-harness/desktop`: NSIS and ZIP, x64 target;
-- `npm run package:linux --workspace @bear-harness/desktop`: AppImage and deb, x64 target.
+- `package:mac:arm64` and `package:mac:x64`: DMG and ZIP;
+- `package:win`: NSIS and ZIP, x64;
+- `package:linux`: AppImage and deb, x64.
 
-Electron Builder writes to `apps/desktop/release`, uses the product-config app id/name/executable/artifact naming, enables ASAR, includes only `dist/**` (excluding `dist/.runtime-build/**`), and unpacks the canvas, llama.cpp, sqlite-vec, and jieba native modules. It adds the project licenses, generated brand attribution, and config directory as extra resources. The macOS configuration is intentionally unsigned (`identity: null`); there is no `afterSign` or notarization hook. Fork release CI must inject its own standard Electron Builder signing credentials. Linux desktop metadata synchronizes the app id and product name ([`apps/desktop/electron-builder.config.ts`](../../apps/desktop/electron-builder.config.ts)). See [`native-capabilities.md`](../native-capabilities.md) for the platform matrix and fallback contract.
+Artifacts use product-config identity, ASAR, staged platform-native bindings, generated brand attribution, licenses, and packaged character seeds.
 
-`test:e2e:packaged` resolves the platform-specific unpacked binary under `release` using product-config's executable name, rejects missing/empty binaries, and launches Playwright with `BEAR_PACKAGED_BINARY`. Crash diagnostics can be checked independently with `test:diagnostics:crash` after the host-runtime Crashpad module is built ([`apps/desktop/scripts/resolve-packaged-binary.mjs`](../../apps/desktop/scripts/resolve-packaged-binary.mjs), [`apps/desktop/scripts/crash-smoke.mjs`](../../apps/desktop/scripts/crash-smoke.mjs)).
+After the clean desktop build, Windows packaging runs `stage-windows-runtime.mjs` before native-binding staging and Electron Builder. The script downloads the pinned Git for Windows PortableGit `v2.55.0.windows.5` x64 release asset, verifies SHA-256 `5aa8a20f6e9abb2c755f0e73c91c687701a46b309ad84a0ca6509380fa4ae290`, extracts it, inventories every runtime file, and stages Git/GPL/component notices plus source pointers. Builder includes it under `resources/git` with `git-runtime-manifest.json`; `.windows-runtime` itself is excluded from ASAR.
+
+`verify-windows-runtime.mjs` runs on Windows against unpacked package resources. It checks the pinned manifest/inventory/notices, verifies `bash.exe` and `git.exe` are PE x64, executes both version probes, and launches the packaged Electron executable as Node for a real Pi `createBashTool` smoke. The smoke requires the bundled shell descriptor, verifies bundled Git leads `PATH`, writes through Bash in a temporary workspace, and observes `git version 2.55.0.windows.5`.
+
+`test:e2e:packaged` resolves and launches an already-produced unpacked platform binary. Crash diagnostics have a separate smoke command.
 
 ## Extension and maintenance points
 
-- **New renderer capability:** add a shared protocol endpoint/schema and HostRuntime handler; the desktop IPC router automatically registers channels present in `REQUEST_SCHEMAS`. Keep the renderer-facing call behind companion-client rather than exposing new Electron APIs.
-- **New native capability:** inject it through `HostRuntimeOptions` or add a narrowly scoped main-process adapter. Preserve sender/frame/URL checks in both RPC and non-RPC channels.
-- **Credential behavior:** modify the `CredentialVault` adapter or CredentialStore policy, never persist plaintext credentials from the renderer. Keep source-E2E vault selection gated by `isSourceE2E`.
-- **Artifact serving:** update scheme privileges, URL parsing, sender checks, and response headers together. Scheme privileges must remain registered before readiness; handler registration must wait until the runtime artifact store exists.
-- **Diagnostics:** extend allowlists and validation in `diagnostics/electron.ts`; do not forward renderer error messages, preload paths, URLs, or arbitrary child-process fields.
-- **Updates:** change the product config feed URL and feed contract deliberately. A non-empty `updateFeedUrl` requires a matching `updatePublisher` Ed25519 public key; the feed must be a signed envelope whose payload is the canonical JSON metadata and whose signature verifies against that key. A `ready` archive is only staged; an installer/apply layer must be added before calling this an automatic updater.
-- **Packaging identity/resources:** use `productConfig` as the single release identity source and update extra-resource or ASAR rules when adding packaged files.
+- Add ordinary renderer capabilities through strict shared protocol endpoints and Host handlers; keep native path access in the separately admitted preload/main bridge.
+- Update attachment scheme privilege registration, renderer dispatch scoping, capability minting, MIME policy, token revocation, and response headers together.
+- Keep internal CAS/provenance behind `ConversationAttachmentService`; renderer-visible outputs must be generated attachments.
+- Change executor behavior in Host adapters. Pi remains independent native ACP by default; Codex remains explicit, connected, pinned, and launch-verified.
+- Any PortableGit version change must update stage and verifier pins, archive digest, inventory/notices, packaged resource wiring, and the real packaged Pi/Bash/Git smoke together.
+- Modify credentials through `CredentialVault`/CredentialStore, diagnostics through validated allowlists, and updates through the signed-feed/staging policy.
 
-## Known issues / findings
+## Current findings
 
-1. **Official packages and staged updates are not code-signed.** Electron Builder explicitly sets macOS `identity: null`, and `UpdateService` performs publisher-authenticated feed verification and mandatory SHA-256 archive checks but no code signature or notarization verification. Treat `ready` as “authenticated feed metadata + digest-checked archive,” not trusted-to-install ([`electron-builder.config.ts`](../../apps/desktop/electron-builder.config.ts), [`src/main/update-service.ts`](../../apps/desktop/src/main/update-service.ts)).
-2. **Feed metadata is now publisher-authenticated, but archive bytes are still trust-on-download.** Every entry requires a `sha256` checksum (a missing field or `sha256: null` rejects the entry), verified against the signed, HTTPS-fetched metadata. An attacker who compromises the HTTPS channel alone cannot redirect the client to a different archive without invalidating the signature, but a full code-signing/notarization trust gate remains the stronger boundary ([`src/main/update-service.ts`](../../apps/desktop/src/main/update-service.ts), [`packages/product-config/src/index.ts`](../../packages/product-config/src/index.ts)).
-3. **Update transport is HTTPS-only for archives and feeds.** `stage()` rejects non-HTTPS download URLs, and the product-config validator rejects non-HTTPS `updateFeedUrl` values. The service still trusts the feed server's TLS identity, which publisher authentication bounds but does not replace ([`src/main/update-service.ts`](../../apps/desktop/src/main/update-service.ts)).
-4. **Linux plaintext credential fallback removed.** Electron's `basic_text` safeStorage backend and unavailable safeStorage now report session-only security; CredentialStore keeps provider secrets in memory and writes no credential blob. `weak_storage` is reserved for actual machine-local encrypted vaults such as WebDev's AES-GCM vault. Strong OS-backed storage reports `stored`, and session-only credentials do not restore after restart ([`electron-credential-vault.ts`](../../apps/desktop/src/main/electron-credential-vault.ts), [`packages/host-runtime/src/providers/credential-store.ts`](../../packages/host-runtime/src/providers/credential-store.ts)).
-5. **Artifact referrer checking is less exact for packaged file pages than IPC checking.** IPC requires the frame URL to equal the registered `file://…/renderer/index.html`, while the artifact handler accepts any `file:` referrer when the configured allowed URL is a file URL (and accepts an empty referrer for file URLs). Navigation and window creation are locked down, and artifact IDs are opaque, but this is a defense-in-depth asymmetry to revisit if the renderer gains additional local navigation paths ([`src/main/ipc-router.ts`](../../apps/desktop/src/main/ipc-router.ts), [`src/main/artifact-protocol.ts`](../../apps/desktop/src/main/artifact-protocol.ts)).
-6. **Update staging lifecycle is explicit but installation remains unsupported.** Verified archives are atomically finalized, stale and superseded data is retained only until deterministic cleanup, and `update.discard:v1` removes staged data. `update.apply:v1` reports `applyUnsupported: true`; `ready` never implies installation ([`src/main/update-service.ts`](../../apps/desktop/src/main/update-service.ts), [`packages/protocol/src/schema.ts`](../../packages/protocol/src/schema.ts)).
-7. **Window-hook disposal is not retained by the main window owner.** `registerWindowHooks` returns a disposer, but `createMainWindow` calls it without retaining or invoking the disposer on webContents destruction. Electron will tear down the object, yet explicit disposal would make the lifecycle contract clearer and avoid retaining listeners during unusual teardown paths ([`src/main/index.ts`](../../apps/desktop/src/main/index.ts), [`src/main/diagnostics/electron.ts`](../../apps/desktop/src/main/diagnostics/electron.ts)).
-8. **The single-instance comments contain two overlapping descriptions.** The behavior is packaged-only, but adjacent comments describe both “one window per user data dir” and “one window per install.” Maintainers changing development/E2E identity behavior should rely on the actual `app.isPackaged` guard and `BEAR_E2E_APP_DATA` handling, not the duplicated prose ([`src/main/index.ts`](../../apps/desktop/src/main/index.ts)).
+1. **Attachment URLs are capabilities, not identifiers.** Tokens are random, renderer-bound, operation-bound, revocable, and five-minute limited; no local path or CAS key appears in the URL.
+2. **Native source grants are ephemeral.** Desktop picker/drop imports snapshot first. The canonical live path stays only in Host memory and disappears on restart; delegation falls back to the immutable snapshot when the grant is absent or invalid.
+3. **Direct agents are unsandboxed.** An independent Pi or explicitly connected Codex uses native filesystem/terminal behavior. A selected live workspace can be modified without Bear rollback; outputs written under the assigned output directory are snapshotted back as generated attachments.
+4. **Packaged Windows Pi has a verified shell runtime.** PortableGit staging is digest-pinned and license/inventory tracked, while the Windows verifier exercises Bash and Git from the unpacked application.
+5. **The update service stages but does not install.** Signed metadata and SHA-256 protect staged archives; `update.apply:v1` still reports `applyUnsupported`.
 
 ## Verification commands
 
@@ -209,7 +204,8 @@ npm run build --workspace @bear-harness/desktop
 npm run test:e2e --workspace @bear-harness/desktop
 npm run test:e2e:packaged --workspace @bear-harness/desktop
 npm run test:diagnostics:crash --workspace @bear-harness/desktop
-npm run package:mac --workspace @bear-harness/desktop
+npm run package:mac:arm64 --workspace @bear-harness/desktop
+npm run package:mac:x64 --workspace @bear-harness/desktop
 npm run package:win --workspace @bear-harness/desktop
 npm run package:linux --workspace @bear-harness/desktop
 ```

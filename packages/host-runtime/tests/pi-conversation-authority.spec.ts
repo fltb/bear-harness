@@ -78,7 +78,7 @@ async function setupHarness(options: { tokensPerSecond?: number } = {}): Promise
 	roots.push(root);
 	const faux = fauxProvider({
 		provider: "pi-authority",
-		models: [{ id: "pi-authority-model", name: "Pi authority model" }],
+		models: [{ id: "pi-authority-model", name: "Pi authority model", input: ["text", "image"] }],
 		...options,
 	});
 	const models = createAuthlessModels(faux);
@@ -154,7 +154,6 @@ async function settleSession(h: Harness): Promise<PiSessionHandle> {
 	return session;
 }
 
-
 function isStandardMessageEntry(
 	entry: unknown,
 ): entry is { id: string; message: { role: string; content?: unknown } } {
@@ -178,7 +177,11 @@ describe("Pi conversation authority", () => {
 		assertTranscriptTablesAbsent(h.database);
 
 		const receipt = await h.pipeline.sendUserMessage(CONVERSATION_ID, "hello");
-		expect(receipt).toEqual({ accepted: true, sessionId: h.store.sessionId });
+		expect(receipt).toEqual({
+			accepted: true,
+			sessionId: h.store.sessionId,
+			entryId: expect.stringMatching(/^[0-9a-f]{8}$/),
+		});
 
 		await settleSession(h);
 		const projection = h.repository.get(CONVERSATION_ID, COMPANION_ID);
@@ -211,6 +214,29 @@ describe("Pi conversation authority", () => {
 		assertTranscriptTablesAbsent(h.database);
 
 		await h.runtime.stop();
+	});
+	it("passes Host-resolved current-message image bytes to Pi as image content", async () => {
+		const h = await setupHarness();
+		let userContent: unknown;
+		h.faux.setResponses([
+			(context) => {
+				userContent = context.messages.find((message) => message.role === "user")?.content;
+				return fauxAssistantMessage(REPLY_TEXT);
+			},
+		]);
+
+		await h.pipeline.sendUserMessage(CONVERSATION_ID, "inspect this", [
+			{
+				data: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+				mimeType: "image/png",
+			},
+		]);
+		await settleSession(h);
+
+		expect(userContent).toEqual([
+			{ type: "text", text: "inspect this" },
+			{ type: "image", data: "iVBORw==", mimeType: "image/png" },
+		]);
 	});
 
 	it("exposes the partial assistant through piLiveState.streamingMessage while the user entry is already durable", async () => {

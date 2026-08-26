@@ -14,7 +14,7 @@ import {
 	AgentSession,
 	DefaultResourceLoader,
 	estimateTokens,
-	ModelRuntime,
+	type ModelRuntime,
 	type CompactionSettings as PiCompactionSettings,
 	SettingsManager,
 	shouldCompact,
@@ -52,7 +52,6 @@ function safeFailureReason(error: unknown, fallback = "provider_request_failed")
 export interface CompanionSessionResolver {
 	get(conversationId: string): PiSessionStore | undefined;
 }
-
 
 export interface CompanionCompactionConfig extends PiCompactionSettings {}
 
@@ -306,10 +305,7 @@ export class CompanionSupervisor {
 		];
 		const toolDefinitions = Object.fromEntries(
 			tools.flatMap((tool) =>
-				typeof tool === "object" &&
-				tool !== null &&
-				"name" in tool &&
-				typeof tool.name === "string"
+				typeof tool === "object" && tool !== null && "name" in tool && typeof tool.name === "string"
 					? [[tool.name, tool as AgentTool]]
 					: [],
 			),
@@ -317,7 +313,7 @@ export class CompanionSupervisor {
 		const systemPrompt = [
 			"You are the local Companion runtime. Use only injected Host tools for application state.",
 			"Use the read tool to load an applicable role Skill before following it.",
-			"When the user asks for real-world work, call host_propose_work with a precise plain-language scope; never claim the work started before user approval.",
+			"Inspect conversation attachments with Host tools before delegating. Delegate only work needing a full agent; use Pi unless the user explicitly asks for Codex. A returned run ID means started, never completed.",
 			"When a user asks to remember the current moment, call host_remember. It saves the current adopted turn directly; never invent or supply source, companion, or user IDs.",
 			"Never claim a state change unless its Host tool succeeded.",
 			this.runtimeConfig.appendSystemPrompt,
@@ -384,7 +380,13 @@ export class CompanionSupervisor {
 			});
 		};
 		session.subscribe((event) => {
-			if (event.type === "message_start" || event.type === "message_update" || event.type === "message_end" || event.type === "entry_appended") notify("message");
+			if (
+				event.type === "message_start" ||
+				event.type === "message_update" ||
+				event.type === "message_end" ||
+				event.type === "entry_appended"
+			)
+				notify("message");
 			else if (event.type.startsWith("turn_")) notify("turn");
 			else if (event.type.startsWith("tool_execution_")) notify("tool");
 			else if (event.type.startsWith("compaction_")) notify("compaction");
@@ -468,7 +470,6 @@ export class CompanionSupervisor {
 		});
 	}
 
-
 	get isRunning(): boolean {
 		return this.state === "running";
 	}
@@ -533,8 +534,11 @@ export class CompanionSupervisor {
 			let injectedContext = context ? `<host_context>\n${context}\n</host_context>` : "";
 			if (images?.length) {
 				const imageRoute = this.modelSelectionHandler?.(conversationId, true);
-				if (!imageRoute) throw new Error("multimodal_fallback_unavailable");
-				if (!mainRoute || !sameRoute(mainRoute, imageRoute)) {
+				if (!imageRoute) {
+					if (!session.state.model?.input.includes("image")) {
+						throw new Error("multimodal_fallback_unavailable");
+					}
+				} else if (!mainRoute || !sameRoute(mainRoute, imageRoute)) {
 					const observation = await this.readImages(modelRuntime, imageRoute, message, images);
 					injectedContext +=
 						"\n\n<untrusted_image_observation>\n" +
@@ -586,7 +590,6 @@ export class CompanionSupervisor {
 		}
 		return false;
 	}
-
 
 	private async readImages(
 		modelRuntime: ModelRuntime,
@@ -726,17 +729,40 @@ export class CompanionSupervisor {
 			),
 			this.hostTool(
 				conversationId,
-				"host_propose_work",
-				"Propose real-world work for user approval",
-				"Create a plain-language action proposal when the user asks for real work. This never starts work; the user must approve the exact read, write, network and tool scope in the system UI.",
+				"host_list_attachments",
+				"List conversation attachments",
+				"List files and folders attached to this conversation.",
+				toolParameters(z.strictObject({})),
+			),
+			this.hostTool(
+				conversationId,
+				"host_read_attachment",
+				"Read conversation attachment",
+				"Read, search, or page through a selected conversation attachment. Never provide local paths.",
+				toolParameters(
+					z
+						.strictObject({
+							attachmentId: z.string().min(1).max(64),
+							relativePath: z.string().min(1).max(1024).optional(),
+							query: z.string().min(1).max(1024).optional(),
+							cursor: z.string().min(1).max(4096).optional(),
+						})
+						.refine((args) => !(args.relativePath && args.query), {
+							message: "query cannot be combined with relativePath",
+						}),
+				),
+			),
+			this.hostTool(
+				conversationId,
+				"host_delegate_agent",
+				"Delegate to an external agent",
+				"Start an independent Pi or explicitly requested Codex agent for selected attachments. It may modify a selected live source and Bear provides no sandbox or rollback.",
 				toolParameters(
 					z.strictObject({
-						title: z.string().min(1).max(200),
-						description: z.string().min(1).max(4000),
-						reads: z.array(z.string().min(1).max(1024)).max(20).default([]),
-						writes: z.array(z.string().min(1).max(1024)).max(20).default([]),
-						networkAllowed: z.boolean().default(false),
-						toolNames: z.array(z.string().min(1).max(64)).max(20).default([]),
+						agent: z.union([z.literal("pi"), z.literal("codex")]),
+						attachmentIds: z.array(z.string().min(1).max(64)).min(1).max(10),
+						workspaceAttachmentId: z.string().min(1).max(64).optional(),
+						instruction: z.string().min(1).max(12_000),
 					}),
 				),
 			),
@@ -969,7 +995,6 @@ function extractMessageText(value: unknown): string {
 		.join("");
 }
 
-
 export function extractLatestAssistantText(messages: readonly unknown[]): string {
 	for (let index = messages.length - 1; index >= 0; index -= 1) {
 		const message = messages[index];
@@ -980,7 +1005,6 @@ export function extractLatestAssistantText(messages: readonly unknown[]): string
 	}
 	return "";
 }
-
 
 function sameRoute(
 	left: { providerId: string; modelId: string },

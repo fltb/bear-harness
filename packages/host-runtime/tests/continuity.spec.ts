@@ -70,7 +70,12 @@ function makeRuntime() {
 }
 
 function makeRuntimeAt(dataDir: string) {
-	return createHostRuntime({ dataDir, characterSeedRoot: characterRoot, productConfig, credentialVault: vault });
+	return createHostRuntime({
+		dataDir,
+		characterSeedRoot: characterRoot,
+		productConfig,
+		credentialVault: vault,
+	});
 }
 
 async function data(
