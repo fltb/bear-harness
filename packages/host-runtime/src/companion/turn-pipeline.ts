@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
-import { conversationDirectives } from "../storage/schema.js";
 import {
 	type PendingTurnImage,
 	type PendingTurnRecord,
@@ -31,6 +30,12 @@ export interface PendingTurnSendOptions {
 export interface TurnPipelineOptions {
 	pendingTurns?: PendingTurnStore;
 	finishAttachmentSend?: (conversationId: string, nonce: string, nativeUserEntryId: string) => void;
+	onCorrectedTurn?: (turn: {
+		conversationId: string;
+		userText: string;
+		assistantText: string;
+		correction: string;
+	}) => Promise<void>;
 }
 
 export interface ExternalAgentFollowUp {
@@ -56,7 +61,6 @@ export interface TurnCommittedSink {
 	}) => void;
 }
 
-const CORRECT_PREFIX = "用户刚刚指出上一条回复的问题：";
 const NOTIFY_REASONS = ["message", "turn", "agent", "tool", "compaction", "queue"] as const;
 type NotifyReason = (typeof NOTIFY_REASONS)[number];
 const DEFAULT_RECONCILIATION_TIMEOUT_MS = 15_000;
@@ -86,7 +90,6 @@ function entryRole(entry: NativeEntry): string | undefined {
  * this class deliberately has no message, version, branch, or turn writes.
  */
 export class TurnPipeline {
-	private readonly db: AppDatabase;
 	private readonly supervisor: CompanionSupervisor;
 	private readonly eventBus: EventBus;
 	private readonly subscriptions = new Map<string, () => void>();
@@ -94,22 +97,23 @@ export class TurnPipeline {
 	private readonly notificationTasks = new Set<string>();
 	private readonly pendingTurns: PendingTurnStore;
 	private readonly finishAttachmentSend?: TurnPipelineOptions["finishAttachmentSend"];
+	private readonly onCorrectedTurn?: TurnPipelineOptions["onCorrectedTurn"];
 	private readonly reconciliationTasks = new Map<string, Promise<void>>();
 	private disposed = false;
 
 	// The database is used only for durable product directives; transcript,
 	// branch, version, and turn tables are never touched by this adapter.
 	constructor(
-		db: AppDatabase,
+		_db: AppDatabase,
 		supervisor: CompanionSupervisor,
 		eventBus: EventBus,
 		options: TurnPipelineOptions = {},
 	) {
-		this.db = db;
 		this.supervisor = supervisor;
 		this.eventBus = eventBus;
-		this.pendingTurns = options.pendingTurns ?? new PendingTurnStore(db);
+		this.pendingTurns = options.pendingTurns ?? new PendingTurnStore(_db);
 		this.finishAttachmentSend = options.finishAttachmentSend;
+		this.onCorrectedTurn = options.onCorrectedTurn;
 	}
 
 	dispose(): void {
@@ -303,27 +307,57 @@ export class TurnPipeline {
 		this.runInBackground(session.continue(), "Pi continue failed");
 	}
 
-	/** Persist a product directive, then send the correction through Pi. */
-	async correct(
-		conversationId: string,
-		reason: string,
-		applyScope: "once" | "session" | "always",
-	): Promise<void> {
+	/** Replace one assistant answer using a role-package-owned hidden correction prompt. */
+	async correct(conversationId: string, entryId: string, instruction: string): Promise<void> {
 		const session = this.commandSession(conversationId);
 		this.rejectIfStreaming(session);
-		this.db
-			.insert(conversationDirectives)
-			.values({
-				id: randomUUID(),
-				conversationId,
-				directive: reason,
-				scope: applyScope,
-			})
-			.run();
+		const rejected = this.requireCurrentEntry(session, entryId);
+		if (entryRole(rejected) !== "assistant")
+			commandError("invalid_request", "message_correct_assistant_only");
+		const parentUser = session.sessionManager
+			.getBranch(entryId)
+			.slice(0, -1)
+			.reverse()
+			.find((entry) => entryRole(entry) === "user");
+		if (!parentUser) commandError("conflict", "message_correct_user_context_missing");
+		this.branchBefore(session, entryId);
+		session.sessionManager.appendCustomMessageEntry("bear_correction", instruction, false, {
+			rejectedEntryId: entryId,
+		});
+		session.reloadFromSessionManager();
 		this.ensureSessionNotifications(conversationId, session);
 		this.publishChanged(conversationId, session, "message");
-		const instruction = `${CORRECT_PREFIX}“${reason}”。请据此重写回应，直接给出修正后的内容，不要提及这条校正指令。`;
-		this.runInBackground(session.agentSession.sendUserMessage(instruction), "Pi correction failed");
+		const correctionEntryId = session.sessionManager.getLeafId();
+		if (!correctionEntryId) commandError("internal", "correction_entry_missing");
+		const corrected = waitForNativeAssistant(session, correctionEntryId);
+		this.runInBackground(
+			(async () => {
+				try {
+					await session.continue();
+					await corrected.promise;
+				} catch (error) {
+					session.sessionManager.branch(entryId);
+					session.reloadFromSessionManager();
+					this.publishChanged(conversationId, session, "message");
+					throw error;
+				} finally {
+					corrected.cancel();
+				}
+				const assistant = findNativeAssistant(session, correctionEntryId);
+				if (!assistant || !this.onCorrectedTurn) return;
+				try {
+					await this.onCorrectedTurn({
+						conversationId,
+						userText: nativeMessageText(parentUser),
+						assistantText: nativeMessageText(assistant),
+						correction: instruction,
+					});
+				} catch (error) {
+					console.warn("Automatic memory capture after correction failed", error);
+				}
+			})(),
+			"Pi correction failed",
+		);
 	}
 
 	/** Create/select a native branch and return its native leaf ID. */

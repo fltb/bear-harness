@@ -699,6 +699,19 @@ export const CharacterDisplay = z
 			correction: z.strictObject({
 				trigger_label: z.string().max(MAX_STRING_LENGTH),
 				reason_group_label: z.string().max(MAX_STRING_LENGTH),
+				presets: z
+					.array(
+						z.strictObject({
+							id: z.string().min(1).max(64),
+							label: z.string().max(MAX_STRING_LENGTH),
+							prompt: z.string().min(1).max(65_536),
+						}),
+					)
+					.min(1)
+					.max(20),
+				custom_label: z.string().max(MAX_STRING_LENGTH),
+				custom_placeholder: z.string().max(MAX_STRING_LENGTH),
+				custom_prompt_template: z.string().min(1).max(65_536),
 			}),
 			work_presentation: CharacterWorkPresentation.optional(),
 			first_meeting: CharacterOnboardingFlow,
@@ -1013,6 +1026,8 @@ export const ConversationListResponse = z.strictObject({
 });
 export const ConversationCreateRequest = z.strictObject({
 	title: z.string().max(MAX_STRING_LENGTH).optional(),
+	sourceConversationId: ConversationId.optional(),
+	sourceEntryId: z.string().min(1).max(128).optional(),
 });
 export const ConversationSelectRequest = z.strictObject({
 	id: ConversationId,
@@ -1323,8 +1338,9 @@ export const MessageEditRequest = z.strictObject({
 export const MessageContinueRequest = z.strictObject({ conversationId: ConversationId });
 export const MessageCorrectRequest = z.strictObject({
 	conversationId: ConversationId,
-	reason: z.string().max(MAX_STRING_LENGTH),
-	applyScope: z.union([z.literal("once"), z.literal("session"), z.literal("always")]),
+	entryId: PiSessionEntryId,
+	presetId: z.string().min(1).max(64),
+	detail: z.string().max(MAX_STRING_LENGTH).optional(),
 });
 export const MessageBranchRequest = z.strictObject({
 	conversationId: ConversationId,

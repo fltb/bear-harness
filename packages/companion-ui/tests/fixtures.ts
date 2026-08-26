@@ -37,7 +37,14 @@ export const THEMED_CHARACTER: CharacterDisplay = {
 		scene_title: "Test scene",
 		greeting: "Hello",
 		composer_placeholder: "Message",
-		correction: { trigger_label: "Correct", reason_group_label: "Reason" },
+		correction: {
+			trigger_label: "Correct",
+			reason_group_label: "Reason",
+			presets: [{ id: "voice", label: "Voice", prompt: "Rewrite in character." }],
+			custom_label: "Other",
+			custom_placeholder: "What was wrong?",
+			custom_prompt_template: "Rewrite: {{detail}}",
+		},
 		first_meeting: {
 			version: 1,
 			step_label: "Step",

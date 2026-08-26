@@ -77,7 +77,17 @@ afterEach(async () => {
 });
 
 /** Build the full Host composition with one empty conversation and a live session. */
-async function setupHarness(options: { tokensPerSecond?: number } = {}): Promise<Harness> {
+async function setupHarness(
+	options: {
+		tokensPerSecond?: number;
+		onCorrectedTurn?: (turn: {
+			conversationId: string;
+			userText: string;
+			assistantText: string;
+			correction: string;
+		}) => Promise<void>;
+	} = {},
+): Promise<Harness> {
 	const root = mkdtempSync(join(tmpdir(), "bear-pi-authority-"));
 	roots.push(root);
 	const faux = fauxProvider({
@@ -128,6 +138,7 @@ async function setupHarness(options: { tokensPerSecond?: number } = {}): Promise
 	const attachmentBinding = { writes: 0 };
 	const pipeline = new TurnPipeline(database.orm, runtime, eventBus, {
 		pendingTurns,
+		...(options.onCorrectedTurn ? { onCorrectedTurn: options.onCorrectedTurn } : {}),
 		finishAttachmentSend: (conversationId, nonce, nativeUserEntryId) => {
 			const result = database.connection
 				.prepare(
@@ -425,6 +436,38 @@ describe("Pi conversation authority", () => {
 		expect(entries[1]?.text).toBe(REPLY_TEXT);
 
 		await h.runtime.stop();
+	});
+
+	it("replaces a rejected assistant answer with a hidden role-package correction", async () => {
+		const captures: Array<{ userText: string; assistantText: string; correction: string }> = [];
+		const h = await setupHarness({
+			onCorrectedTurn: async ({ userText, assistantText, correction }) => {
+				captures.push({ userText, assistantText, correction });
+			},
+		});
+		h.faux.setResponses([
+			fauxAssistantMessage("wrong answer"),
+			fauxAssistantMessage("corrected answer"),
+		]);
+		await h.pipeline.sendUserMessage(CONVERSATION_ID, "hello");
+		await settleSession(h);
+		const rejected = messageEntries(PiTimeline.parse(h.store.buildPiTimeline())).at(-1);
+		if (!rejected) throw new Error("no rejected assistant entry");
+
+		await h.pipeline.correct(CONVERSATION_ID, rejected.id, "Stay in character.");
+		await settleSession(h);
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+		const visible = messageEntries(PiTimeline.parse(h.store.buildPiTimeline()));
+		expect(visible.map((entry) => entry.text)).toEqual(["hello", "corrected answer"]);
+		expect(JSON.stringify(h.store.buildPiTimeline())).not.toContain("Stay in character");
+		expect(captures).toEqual([
+			{
+				userText: "hello",
+				assistantText: "corrected answer",
+				correction: "Stay in character.",
+			},
+		]);
 	});
 
 	it("reopens an accepted outbox turn, replays stored content and images once, binds once, and never replays it after completion", async () => {

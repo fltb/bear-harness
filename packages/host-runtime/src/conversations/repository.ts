@@ -232,17 +232,20 @@ export class ConversationRepository {
 		companionId: string;
 		title: string;
 		sceneTitle: string;
+		session?: PiSessionStore;
 		onCommit?: (transaction: Pick<AppDatabase, "insert" | "update">) => void;
 	}): ConversationProjection {
 		if (!this.sessionDir) {
 			throw new Error("conversation session directory is required");
 		}
-		const session = this.sessionDir
-			? PiSessionStore.create({
-					sessionDir: this.sessionDir,
-					cwd: this.sessionCwd ?? this.sessionDir,
-				})
-			: undefined;
+		const session =
+			input.session ??
+			(this.sessionDir
+				? PiSessionStore.create({
+						sessionDir: this.sessionDir,
+						cwd: this.sessionCwd ?? this.sessionDir,
+					})
+				: undefined);
 		try {
 			this.db.transaction((transaction) => {
 				transaction

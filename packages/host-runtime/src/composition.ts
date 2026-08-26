@@ -11,6 +11,8 @@
  * protocol additions from landing without a corresponding Host handler.
  */
 
+import { resolve } from "node:path";
+
 import type {
 	MemoryEntry,
 	MemoryListResponse,
@@ -18,7 +20,7 @@ import type {
 	ResponseOf,
 } from "@bear-harness/protocol";
 import { CharacterRuntimeState, RPC } from "@bear-harness/protocol/schema";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { ArtifactStore } from "./artifacts/index.js";
 import type { CanonHubService } from "./canon/service.js";
 import type { CharacterBehaviorService } from "./companion/character-behavior.js";
@@ -28,7 +30,7 @@ import type {
 } from "./companion/character-draft-service.js";
 import type { CharacterLoader } from "./companion/character-loader.js";
 import type { FirstMeetingMachine } from "./companion/first-meeting.js";
-import type { PiSessionMessageEntry } from "./companion/pi-session-store.js";
+import { type PiSessionMessageEntry, PiSessionStore } from "./companion/pi-session-store.js";
 import type { RoleplayService } from "./companion/roleplay-service.js";
 import type { CompanionSupervisor } from "./companion/supervisor.js";
 import type { TurnPipeline } from "./companion/turn-pipeline.js";
@@ -50,7 +52,6 @@ import type { AppDatabase } from "./storage/database.js";
 import type { EventBus } from "./storage/event-bus.js";
 import {
 	activeCharacter,
-	artifacts,
 	companionIdentity,
 	conversations,
 	memoryCandidates,
@@ -415,17 +416,44 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.conversation.create, async (_p) => {
 		const companionId = await getCompanionId(s);
 		const id = crypto.randomUUID();
-		const title = (_p as { title?: string }).title ?? "新对话";
+		const {
+			title: requestedTitle,
+			sourceConversationId,
+			sourceEntryId,
+		} = _p as {
+			title?: string;
+			sourceConversationId?: string;
+			sourceEntryId?: string;
+		};
+		if ((sourceConversationId === undefined) !== (sourceEntryId === undefined)) {
+			throw { kind: "invalid_request", reason: "conversation_fork_source_incomplete" };
+		}
+		const title = requestedTitle ?? "新对话";
 		const character = s.characterLoader.load(companionId);
 		if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
 		const sceneTitle = character.character.scene_title;
 		let conversation: ConversationProjection;
 		try {
+			let forkedSession: PiSessionStore | undefined;
+			if (sourceConversationId && sourceEntryId) {
+				await requireOwnedConversation(s, sourceConversationId);
+				const source = conversationRepository.getSession(sourceConversationId);
+				if (!source.isEntryOnCurrentBranch(sourceEntryId)) {
+					throw { kind: "conflict", reason: "conversation_fork_source_not_current_branch" };
+				}
+				forkedSession = PiSessionStore.forkAt({
+					sessionDir: resolve(source.sessionFile, ".."),
+					cwd: source.cwd,
+					sessionFile: source.sessionFile,
+					entryId: sourceEntryId,
+				});
+			}
 			conversation = conversationRepository.createAndSelect({
 				id,
 				companionId,
 				title,
 				sceneTitle,
+				...(forkedSession ? { session: forkedSession } : {}),
 			});
 		} catch (e) {
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
@@ -637,13 +665,29 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.correct, async (_p) => {
-		const { conversationId, reason, applyScope } = _p as {
+		const { conversationId, entryId, presetId, detail } = _p as {
 			conversationId: string;
-			reason: string;
-			applyScope: "once" | "session" | "always";
+			entryId: string;
+			presetId: string;
+			detail?: string;
 		};
 		await requireOwnedConversation(s, conversationId);
-		await s.turns.correct(conversationId, reason, applyScope);
+		const companionId = await getCompanionId(s);
+		const character = s.characterLoader.load(companionId);
+		if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
+		const correction = character.character.correction;
+		let instruction: string;
+		if (presetId === "custom") {
+			if (!detail?.trim()) throw { kind: "invalid_request", reason: "correction_detail_required" };
+			instruction = correction.custom_prompt_template.replaceAll("{{detail}}", detail.trim());
+		} else {
+			const preset = correction.presets.find((candidate) => candidate.id === presetId);
+			if (!preset) throw { kind: "invalid_request", reason: "correction_preset_not_found" };
+			instruction = detail?.trim()
+				? `${preset.prompt}\n\n用户补充：${detail.trim()}`
+				: preset.prompt;
+		}
+		await s.turns.correct(conversationId, entryId, instruction);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.branch, async (_p) => {
@@ -1548,9 +1592,23 @@ export async function rememberConversationEntry(
 	if (!source) {
 		throw { kind: "not_found", reason: "memory_source_not_found" };
 	}
-	const text = piEntryText(source.message);
+	const momentEntries =
+		createdBy === "user_capture" && source.message.role === "assistant"
+			? [session?.findParentUserEntry(source.id), source].filter(
+					(candidate): candidate is PiSessionMessageEntry => candidate !== undefined,
+				)
+			: [source];
+	const text = momentEntries
+		.map((entry) => {
+			const content = piEntryText(entry.message);
+			if (!content) return "";
+			return `${entry.message.role === "user" ? "用户" : "角色"}：${content}`;
+		})
+		.filter(Boolean)
+		.join("\n");
 	if (!text) throw { kind: "invalid_input", reason: "memory_source_empty" };
 	const sourceEntryId = source.id;
+	const sourceEntryIds = momentEntries.map((entry) => entry.id) as [string, ...string[]];
 	const scope = { ...s.memoryScope, companionId };
 	await s.memoryBackend.open({ scope });
 	const record = await s.memoryBackend.remember({
@@ -1558,7 +1616,7 @@ export async function rememberConversationEntry(
 		text,
 		provenance: {
 			kind: createdBy === "user_capture" ? "explicit" : "inferred",
-			piSessionEntryIds: [sourceEntryId],
+			piSessionEntryIds: sourceEntryIds,
 			sourceRef: conversationId,
 		},
 		metadata: {
@@ -1659,22 +1717,6 @@ async function requireOwnedRun(s: HostCompositionContext, runId: string): Promis
 		.get();
 	if (!row) throw { kind: "not_found", reason: "run_not_found" };
 	await requireOwnedConversation(s, row.conversationId);
-}
-
-async function requireOwnedUserEntry(
-	s: HostCompositionContext,
-	conversationId: string,
-	entryId: string,
-): Promise<PiSessionMessageEntry> {
-	await requireOwnedConversation(s, conversationId);
-	const session = s.conversationRepository.getSession(conversationId);
-	if (!session) throw { kind: "unavailable", reason: "conversation_pi_session_missing" };
-	const piEntry = session.getMessageEntry(entryId);
-	if (!piEntry || piEntry.message.role !== "user")
-		throw { kind: "not_found", reason: "message_entry_not_found" };
-	if (!session.isEntryOnCurrentBranch(piEntry.id))
-		throw { kind: "conflict", reason: "message_not_current_branch" };
-	return piEntry;
 }
 
 function runWire(run: RunSummary) {

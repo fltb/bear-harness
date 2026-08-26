@@ -227,8 +227,8 @@ export const zhTW = {
 		"regenerate": "重新生成",
 		"edit": "編輯",
 		"continue": "繼續",
-		"branch": "從這裡另開一段",
-		"userEditBranchNote": "儲存後會從這裡開始一段新的對話分支，原來的後續內容不會丟失。",
+		"branch": "從這裡開始新對話",
+		"userEditBranchNote": "儲存後會從這句話重新生成後續內容；原來的內容仍可恢復。",
 		"conversation": "對話",
 		"operationFailedPrefix": "操作沒有完成：",
 		"correctionReasons": {

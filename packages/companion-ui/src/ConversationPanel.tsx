@@ -2,7 +2,8 @@ import { i18n, useTranslation } from "@bear-harness/i18n";
 import type { ConversationAttachmentSummary, PiTimelineEntry } from "@bear-harness/protocol";
 import { Button } from "@kobalte/core/button";
 import { Dialog } from "@kobalte/core/dialog";
-import { createEffect, For, Show } from "solid-js";
+import { TextField } from "@kobalte/core/text-field";
+import { createEffect, createSignal, For, Show } from "solid-js";
 import { useAttachmentPreview } from "./features/AttachmentPreviewPanel.js";
 import type { CharacterDisplay } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
@@ -50,6 +51,11 @@ function TimelineAttachmentRows(props: { attachments?: ConversationAttachmentSum
 
 function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 	const store = useCompanionStore();
+	const [t] = useTranslation(undefined, { i18n });
+	const [editing, setEditing] = createSignal(false);
+	const [editText, setEditText] = createSignal("");
+	const [correcting, setCorrecting] = createSignal(false);
+	const [correctionDetail, setCorrectionDetail] = createSignal("");
 	const entry = props.entry;
 	if (entry.kind !== "message") {
 		return <div class="pi-context-separator" data-pi-entry-id={entry.id} aria-hidden="true" />;
@@ -107,6 +113,100 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 						{assistant?.errorMessage}
 					</span>
 				</Show>
+				<Show when={editing() && isUser}>
+					<div class="message-inline-editor">
+						<TextField>
+							<TextField.TextArea
+								value={editText()}
+								onInput={(event) => setEditText(event.currentTarget.value)}
+								aria-label={t("messages.editLabel")}
+							/>
+						</TextField>
+						<p class="edit-branch-note">{t("messages.userEditBranchNote")}</p>
+						<Button
+							type="button"
+							disabled={!editText().trim()}
+							onClick={() => {
+								void store.editMessage(entry.id, editText().trim());
+								setEditing(false);
+							}}
+						>
+							{t("messages.save")}
+						</Button>
+						<Button type="button" onClick={() => setEditing(false)}>
+							{t("messages.cancel")}
+						</Button>
+					</div>
+				</Show>
+				<Show when={correcting() && !isUser}>
+					<div class="message-correction-panel">
+						<strong>{store.character?.character.correction.reason_group_label}</strong>
+						<div class="message-correction-presets">
+							<For each={store.character?.character.correction.presets ?? []}>
+								{(preset) => (
+									<Button
+										type="button"
+										onClick={() => {
+											void store.correctMessage(entry.id, preset.id, correctionDetail());
+											setCorrecting(false);
+										}}
+									>
+										{preset.label}
+									</Button>
+								)}
+							</For>
+						</div>
+						<TextField>
+							<TextField.TextArea
+								value={correctionDetail()}
+								onInput={(event) => setCorrectionDetail(event.currentTarget.value)}
+								placeholder={store.character?.character.correction.custom_placeholder}
+								aria-label={store.character?.character.correction.custom_label}
+							/>
+						</TextField>
+						<Button
+							type="button"
+							disabled={!correctionDetail().trim()}
+							onClick={() => {
+								void store.correctMessage(entry.id, "custom", correctionDetail());
+								setCorrecting(false);
+							}}
+						>
+							{store.character?.character.correction.custom_label}
+						</Button>
+						<Button type="button" onClick={() => setCorrecting(false)}>
+							{t("messages.cancel")}
+						</Button>
+					</div>
+				</Show>
+				<fieldset class="message-operations">
+					<legend>{t("messages.operations")}</legend>
+					<Show when={isUser}>
+						<Button
+							type="button"
+							onClick={() => {
+								setEditText(entry.text ?? "");
+								setEditing(true);
+							}}
+						>
+							{t("messages.edit")}
+						</Button>
+					</Show>
+					<Show when={!isUser}>
+						<Button type="button" onClick={() => void store.regenerateMessage(entry.id)}>
+							{t("messages.regenerate")}
+						</Button>
+						<Button type="button" onClick={() => setCorrecting(true)}>
+							{store.character?.character.correction.trigger_label}
+						</Button>
+					</Show>
+					<Button type="button" onClick={() => void store.memory.capture(entry.id)}>
+						{t("messages.rememberMoment")}
+					</Button>
+					<Button type="button" onClick={() => void store.createConversationFromEntry(entry.id)}>
+						{t("messages.branch")}
+					</Button>
+				</fieldset>
 			</article>
 			<WorkTimelineItem messageId={entry.id} />
 		</>

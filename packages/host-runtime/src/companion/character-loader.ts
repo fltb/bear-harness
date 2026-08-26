@@ -95,7 +95,14 @@ export interface CharacterStrings {
 	scene_title: string;
 	greeting: string;
 	composer_placeholder: string;
-	correction: { trigger_label: string; reason_group_label: string };
+	correction: {
+		trigger_label: string;
+		reason_group_label: string;
+		presets: Array<{ id: string; label: string; prompt: string }>;
+		custom_label: string;
+		custom_placeholder: string;
+		custom_prompt_template: string;
+	};
 	work_presentation?: CharacterWorkPresentation;
 	first_meeting: CharacterOnboardingFlow;
 }
@@ -351,7 +358,18 @@ function validateCharacterCard(
 		scene_title: z.string(),
 		greeting: z.string(),
 		composer_placeholder: z.string(),
-		correction: z.strictObject({ trigger_label: z.string(), reason_group_label: z.string() }),
+		correction: z.strictObject({
+			trigger_label: z.string(),
+			reason_group_label: z.string(),
+			presets: z
+				.array(
+					z.strictObject({ id: z.string().min(1), label: z.string(), prompt: z.string().min(1) }),
+				)
+				.min(1),
+			custom_label: z.string(),
+			custom_placeholder: z.string(),
+			custom_prompt_template: z.string().min(1),
+		}),
 		work_presentation: WorkPresentationSchema.optional(),
 		first_meeting: z.unknown(),
 	});

@@ -226,8 +226,8 @@ export const zhCN = {
 		regenerate: "重新生成",
 		edit: "编辑",
 		continue: "继续",
-		branch: "从这里另开一段",
-		userEditBranchNote: "保存后会从这里开始一段新的对话分支，原来的后续内容不会丢失。",
+		branch: "从这里开始新对话",
+		userEditBranchNote: "保存后会从这句话重新生成后续内容；原来的内容仍可恢复。",
 		conversation: "对话",
 		operationFailedPrefix: "操作没有完成：",
 		correctionReasons: {

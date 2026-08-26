@@ -105,6 +105,46 @@ describe("PiSessionStore", () => {
 		]);
 	});
 
+	it("forks a new independent Pi session at a selected native entry", () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-pi-fork-"));
+		roots.push(root);
+		const sessionDir = join(root, "sessions");
+		const source = PiSessionStore.create({ sessionDir, cwd: root });
+		const user = source.appendMessage({ role: "user", content: "shared context", timestamp: 1 });
+		const assistant = source.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "fork here" }],
+			api: "openai-completions",
+			provider: "test",
+			model: "test-model",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 2,
+		} as PiSessionMessage);
+		source.appendMessage({ role: "user", content: "source-only tail", timestamp: 3 });
+
+		const forked = PiSessionStore.forkAt({
+			sessionDir,
+			cwd: root,
+			sessionFile: source.sessionFile,
+			entryId: assistant,
+		});
+		expect(forked.sessionId).not.toBe(source.sessionId);
+		expect(forked.sessionFile).not.toBe(source.sessionFile);
+		expect(forked.readMessages().map((message) => message.role)).toEqual(["user", "assistant"]);
+		forked.appendMessage({ role: "user", content: "fork-only tail", timestamp: 4 });
+		expect(source.readMessageEntries().map((entry) => entry.id)).toContain(user);
+		expect(source.readMessages().at(-1)).toMatchObject({ content: "source-only tail" });
+		expect(forked.readMessages().at(-1)).toMatchObject({ content: "fork-only tail" });
+	});
+
 	it("keeps a user-only active tail runtime-only until an assistant entry is appended", () => {
 		const root = mkdtempSync(join(tmpdir(), "bear-pi-pending-tail-"));
 		roots.push(root);

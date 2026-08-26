@@ -245,6 +245,22 @@ export class HostRuntime {
 		const turns = new TurnPipeline(db.orm, supervisor, eventBus, {
 			finishAttachmentSend: (conversationId, nonce, nativeUserEntryId) =>
 				attachments.finishSend(conversationId, nonce, nativeUserEntryId),
+			onCorrectedTurn: async ({ conversationId, userText, assistantText, correction }) => {
+				const correctedUserContext = `${userText}\n\n[用户纠正要求]\n${correction}`;
+				await memoryRuntime.captureTurn({
+					userText: correctedUserContext,
+					assistantText,
+					messages: [
+						{ role: "user", content: correctedUserContext, timestamp: Date.now() },
+						{ role: "assistant", content: assistantText, timestamp: Date.now() + 1 },
+					],
+					sessionKey: namespaceFor({
+						...memoryScope,
+						companionId: options.productConfig.defaultCharacterId,
+					}),
+					sessionId: conversationId,
+				});
+			},
 		});
 		const contextPack = new ContextPackCompiler(db.orm, characterLoader, canon, {
 			backend: memoryRuntime.backend,

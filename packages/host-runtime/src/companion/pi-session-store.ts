@@ -72,6 +72,22 @@ export class PiSessionStore {
 		return new PiSessionStore(options);
 	}
 
+	/** Fork a new persistent Pi session containing the source path through one entry. */
+	static forkAt(
+		options: PiSessionStoreOptions & { sessionFile: string; entryId: string },
+	): PiSessionStore {
+		const source = new PiSessionStore(options);
+		if (!source.manager.getBranch(options.entryId).some((entry) => entry.id === options.entryId)) {
+			throw new Error(`Entry ${options.entryId} not found`);
+		}
+		const forkedFile = source.manager.createBranchedSession(options.entryId);
+		return new PiSessionStore({
+			sessionDir: options.sessionDir,
+			cwd: options.cwd,
+			sessionFile: forkedFile,
+		});
+	}
+
 	/** The canonical public SessionManager used by the native Pi session runtime. */
 	get sessionManager(): SessionManager {
 		return this.manager;

@@ -461,10 +461,14 @@ export interface CompanionStore {
 	refresh(): Promise<void>;
 	selectConversation(id: string): Promise<void>;
 	createConversation(title?: string): Promise<void>;
+	createConversationFromEntry(entryId: string): Promise<void>;
 	renameConversation(id: string, title: string): Promise<void>;
 	archiveConversation(id: string): Promise<void>;
 	deleteConversation(id: string): Promise<void>;
 	sendMessage(text: string, attachmentIds?: string[]): Promise<void>;
+	regenerateMessage(entryId: string): Promise<void>;
+	editMessage(entryId: string, text: string): Promise<void>;
+	correctMessage(entryId: string, presetId: string, detail?: string): Promise<void>;
 	abort(): Promise<void>;
 	triggerRoleplayEvent(eventId: string): Promise<void>;
 	dismissRoleplayMedia(): Promise<void>;
@@ -2089,6 +2093,24 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				}
 			}
 		},
+		createConversationFromEntry: async (entryId) => {
+			try {
+				const sourceConversationId = requireActiveConversation();
+				const projection = (await invoke(client, () =>
+					client.conversation.create({ sourceConversationId, sourceEntryId: entryId }),
+				)) as ConversationSelectResponse;
+				requirePiTimeline(projection.piTimeline, "conversation.createFromEntry");
+				writeActiveProjection(projection);
+				clearOperationError();
+				await Promise.all([
+					invalidateConversationList(),
+					invalidateDerivedConversationQueries(projection),
+					refreshModelRoute(projection.activeConversationId),
+				]);
+			} catch (e) {
+				retainOperationError("conversation.createFromEntry", e);
+			}
+		},
 
 		renameConversation: async (id, title) => {
 			await invoke(client, () => client.conversation.rename({ id, title }));
@@ -2173,6 +2195,49 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				clearOperationError();
 			} catch (e) {
 				retainOperationError("message.send", e);
+			}
+		},
+
+		regenerateMessage: async (entryId) => {
+			try {
+				const conversationId = requireActiveConversation();
+				const sessionId = activeProjection()?.piSessionId;
+				await invoke(client, () => client.message.regenerate({ conversationId, entryId }));
+				if (sessionId) await refreshConversationProjection(conversationId, sessionId);
+				clearOperationError();
+			} catch (e) {
+				retainOperationError("message.regenerate", e);
+			}
+		},
+
+		editMessage: async (entryId, text) => {
+			try {
+				const conversationId = requireActiveConversation();
+				const sessionId = activeProjection()?.piSessionId;
+				await invoke(client, () => client.message.edit({ conversationId, entryId, text }));
+				if (sessionId) await refreshConversationProjection(conversationId, sessionId);
+				clearOperationError();
+			} catch (e) {
+				retainOperationError("message.edit", e);
+			}
+		},
+
+		correctMessage: async (entryId, presetId, detail) => {
+			try {
+				const conversationId = requireActiveConversation();
+				const sessionId = activeProjection()?.piSessionId;
+				await invoke(client, () =>
+					client.message.correct({
+						conversationId,
+						entryId,
+						presetId,
+						...(detail?.trim() ? { detail: detail.trim() } : {}),
+					}),
+				);
+				if (sessionId) await refreshConversationProjection(conversationId, sessionId);
+				clearOperationError();
+			} catch (e) {
+				retainOperationError("message.correct", e);
 			}
 		},
 

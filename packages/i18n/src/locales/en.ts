@@ -233,9 +233,9 @@ export const en = {
 		regenerate: "Regenerate",
 		edit: "Edit",
 		continue: "Continue",
-		branch: "Branch from here",
+		branch: "Start a new conversation here",
 		userEditBranchNote:
-			"Saving starts a new branch here. Existing later messages will not be lost.",
+			"Saving regenerates the conversation from this message. The previous version can still be restored.",
 		conversation: "Conversations",
 		operationFailedPrefix: "Operation failed: ",
 		correctionReasons: {
