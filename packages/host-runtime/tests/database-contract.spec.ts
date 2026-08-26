@@ -1,11 +1,20 @@
 // @vitest-environment node
 
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { Database, MIGRATIONS } from "../src/storage/database.js";
+import type { CredentialVault } from "../src/providers/credential-store.js";
+import { HostRuntime } from "../src/runtime.js";
+import {
+	Database,
+	loadInstallationId,
+	MIGRATIONS,
+	type Migration,
+} from "../src/storage/database.js";
 
 const roots: string[] = [];
 
@@ -13,6 +22,40 @@ function root(): string {
 	const value = mkdtempSync(join(tmpdir(), "bear-database-contract-"));
 	roots.push(value);
 	return value;
+}
+
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
+const vault: CredentialVault = {
+	securityLevel: "session",
+	isEncryptionAvailable: () => false,
+	encryptString: (value) => Buffer.from(value),
+	decryptString: (value) => value.toString("utf8"),
+};
+
+const BASE_MIGRATION = {
+	id: 1,
+	description: "create durable rows",
+	up: "CREATE TABLE durable_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)",
+} satisfies Migration;
+
+const SECOND_MIGRATION = {
+	id: 2,
+	description: "add first upgraded table",
+	up: "CREATE TABLE upgraded_first (id INTEGER PRIMARY KEY)",
+} satisfies Migration;
+
+const THIRD_MIGRATION = {
+	id: 3,
+	description: "add second upgraded table",
+	up: "CREATE TABLE upgraded_second (id INTEGER PRIMARY KEY)",
+} satisfies Migration;
+
+function backupPaths(databaseDir: string): string[] {
+	return readdirSync(join(databaseDir, "schema-backups"))
+		.filter((file) => file.startsWith("canon-") && file.endsWith(".db"))
+		.map((file) => join(databaseDir, "schema-backups", file))
+		.sort();
 }
 
 afterEach(() => {
@@ -28,6 +71,93 @@ describe("database schema contract", () => {
 		expect(database.currentVersion()).toBe(MIGRATIONS.at(-1)?.id);
 		expect(() => database.assertSchemaContract()).not.toThrow();
 		database.close();
+	});
+
+	it("creates one UUID identity and preserves it when the database is reopened", () => {
+		const databaseDir = root();
+		const database = new Database(databaseDir);
+		database.migrate(MIGRATIONS);
+
+		const installationId = loadInstallationId(database.orm);
+		expect(installationId).toMatch(UUID_V4);
+		expect(
+			database.connection.prepare("SELECT COUNT(*) AS count FROM installation_identity").get(),
+		).toEqual({ count: 1 });
+		expect(() =>
+			database.connection
+				.prepare("INSERT INTO installation_identity (id, installation_id) VALUES (?, ?)")
+				.run(2, "11111111-1111-4111-8111-111111111111"),
+		).toThrow();
+		database.close();
+
+		const reopened = new Database(databaseDir);
+		reopened.migrate(MIGRATIONS);
+		expect(loadInstallationId(reopened.orm)).toBe(installationId);
+		expect(
+			reopened.connection.prepare("SELECT COUNT(*) AS count FROM installation_identity").get(),
+		).toEqual({ count: 1 });
+		reopened.close();
+	});
+
+	it("populates an existing database with one installation identity exactly once", () => {
+		const database = new Database(root());
+		const migrationsThrough26 = MIGRATIONS.filter((migration) => migration.id <= 26);
+		const migrationsThrough27 = MIGRATIONS.filter((migration) => migration.id <= 27);
+		database.migrate(migrationsThrough26);
+		expect(database.currentVersion()).toBe(26);
+		expect(
+			database.connection
+				.prepare(
+					"SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'installation_identity'",
+				)
+				.get(),
+		).toBeUndefined();
+
+		database.migrate(migrationsThrough27);
+		expect(database.currentVersion()).toBe(27);
+		const installationId = loadInstallationId(database.orm);
+		expect(installationId).toMatch(UUID_V4);
+		expect(
+			database.connection.prepare("SELECT COUNT(*) AS count FROM installation_identity").get(),
+		).toEqual({ count: 1 });
+		database.migrate(migrationsThrough27);
+		expect(loadInstallationId(database.orm)).toBe(installationId);
+		expect(
+			database.connection.prepare("SELECT COUNT(*) AS count FROM installation_identity").get(),
+		).toEqual({ count: 1 });
+		database.close();
+	});
+
+	it("uses the stored installation identity for the default runtime memory scope", async () => {
+		const dataDir = join(root(), "data");
+		const runtime = new HostRuntime({
+			dataDir,
+			characterSeedRoot: characterRoot,
+			productConfig: { defaultCharacterId: "jizhou" },
+			credentialVault: vault,
+		});
+		const installationId = runtime.memoryScope.installationId;
+		expect(installationId).toMatch(UUID_V4);
+		expect(runtime.memoryScope.userId).toBe("default-user");
+		await runtime.close();
+
+		const database = new Database(join(dataDir, "storage"));
+		database.migrate(MIGRATIONS);
+		expect(loadInstallationId(database.orm)).toBe(installationId);
+		database.close();
+	});
+
+	it("preserves an explicitly injected runtime memory scope", async () => {
+		const memoryScope = { installationId: "custom-installation", userId: "custom-user" };
+		const runtime = new HostRuntime({
+			dataDir: join(root(), "data"),
+			characterSeedRoot: characterRoot,
+			productConfig: { defaultCharacterId: "jizhou" },
+			credentialVault: vault,
+			memoryScope,
+		});
+		expect(runtime.memoryScope).toEqual(memoryScope);
+		await runtime.close();
 	});
 	it("preserves legacy run provenance while removing approval tables", () => {
 		const database = new Database(root());
@@ -333,6 +463,130 @@ describe("database schema contract", () => {
 		expect(() => database.assertSchemaContract()).toThrow(
 			/incompatible database schema.*configured_models\.created_at/,
 		);
+		database.close();
+	});
+
+	it("creates one verified backup for a multi-migration upgrade", () => {
+		const databaseDir = root();
+		const database = new Database(databaseDir);
+		database.migrate([BASE_MIGRATION]);
+		const backupsBeforeUpgrade = backupPaths(databaseDir);
+
+		database.migrate([BASE_MIGRATION, SECOND_MIGRATION, THIRD_MIGRATION]);
+
+		const newBackups = backupPaths(databaseDir).filter(
+			(backupPath) => !backupsBeforeUpgrade.includes(backupPath),
+		);
+		expect(newBackups).toHaveLength(1);
+		expect(database.currentVersion()).toBe(3);
+		expect(
+			database.connection
+				.prepare(
+					"SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'upgraded_%' ORDER BY name",
+				)
+				.all(),
+		).toEqual([{ name: "upgraded_first" }, { name: "upgraded_second" }]);
+		expect(existsSync(join(databaseDir, "schema-upgrade.json"))).toBe(false);
+		database.close();
+	});
+
+	it("does not back up a database with no pending migrations", () => {
+		const databaseDir = root();
+		const database = new Database(databaseDir);
+		database.migrate([BASE_MIGRATION]);
+		const existingBackups = backupPaths(databaseDir);
+
+		database.migrate([BASE_MIGRATION]);
+
+		expect(backupPaths(databaseDir)).toEqual(existingBackups);
+		expect(existsSync(join(databaseDir, "schema-upgrade.json"))).toBe(false);
+		database.close();
+	});
+
+	it("includes committed WAL rows in the pre-upgrade backup", () => {
+		const databaseDir = root();
+		const database = new Database(databaseDir);
+		database.migrate([BASE_MIGRATION]);
+		database.connection.exec("PRAGMA wal_autocheckpoint = 0");
+		database.connection
+			.prepare("INSERT INTO durable_rows (id, value) VALUES (?, ?)")
+			.run(1, "committed in WAL");
+		const walPath = join(databaseDir, "canon.db-wal");
+		expect(existsSync(walPath)).toBe(true);
+		expect(statSync(walPath).size).toBeGreaterThan(0);
+		const backupsBeforeUpgrade = backupPaths(databaseDir);
+
+		database.migrate([BASE_MIGRATION, SECOND_MIGRATION]);
+
+		const [backupPath] = backupPaths(databaseDir).filter(
+			(candidate) => !backupsBeforeUpgrade.includes(candidate),
+		);
+		expect(backupPath).toBeDefined();
+		const backup = new DatabaseSync(backupPath as string, { readOnly: true });
+		try {
+			expect(backup.prepare("SELECT id, value FROM durable_rows").all()).toEqual([
+				{ id: 1, value: "committed in WAL" },
+			]);
+			expect(backup.prepare("PRAGMA integrity_check").all()).toEqual([{ integrity_check: "ok" }]);
+			expect(backup.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+		} finally {
+			backup.close();
+		}
+		database.close();
+	});
+
+	it("leaves a readable verified backup and recovery marker after migration failure", () => {
+		const databaseDir = root();
+		const database = new Database(databaseDir);
+		database.migrate([BASE_MIGRATION]);
+		database.connection
+			.prepare("INSERT INTO durable_rows (id, value) VALUES (?, ?)")
+			.run(1, "recover me");
+		const backupsBeforeUpgrade = backupPaths(databaseDir);
+		const failingMigration = {
+			id: 2,
+			description: "fail after changing the schema",
+			up: "CREATE TABLE should_roll_back (id INTEGER PRIMARY KEY); INSERT INTO missing_table VALUES (1)",
+		} satisfies Migration;
+
+		expect(() => database.migrate([BASE_MIGRATION, failingMigration])).toThrow(
+			/verified backup.*recovery marker/,
+		);
+
+		const newBackups = backupPaths(databaseDir).filter(
+			(backupPath) => !backupsBeforeUpgrade.includes(backupPath),
+		);
+		expect(newBackups).toHaveLength(1);
+		const marker = JSON.parse(readFileSync(join(databaseDir, "schema-upgrade.json"), "utf8")) as {
+			sourceVersion: number;
+			targetVersion: number;
+			backupPath: string;
+			state: string;
+		};
+		expect(marker).toEqual({
+			sourceVersion: 1,
+			targetVersion: 2,
+			backupPath: newBackups[0],
+			state: "pending",
+		});
+		const backup = new DatabaseSync(marker.backupPath, { readOnly: true });
+		try {
+			expect(backup.prepare("SELECT id, value FROM durable_rows").all()).toEqual([
+				{ id: 1, value: "recover me" },
+			]);
+			expect(backup.prepare("PRAGMA integrity_check").all()).toEqual([{ integrity_check: "ok" }]);
+			expect(backup.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+		} finally {
+			backup.close();
+		}
+		expect(database.currentVersion()).toBe(1);
+		expect(
+			database.connection
+				.prepare(
+					"SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'should_roll_back'",
+				)
+				.get(),
+		).toBeUndefined();
 		database.close();
 	});
 });

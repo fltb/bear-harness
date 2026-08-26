@@ -15,17 +15,15 @@
  * auth errors reported by pi-ai.
  */
 
-import {
-	existsSync,
-	mkdirSync,
-	readFileSync,
-	renameSync,
-	unlinkSync,
-	writeFileSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import {
+	DurableFileTransactionError,
+	recoverDurableFileTransaction,
+	replaceDurableFile,
+} from "../storage/durable-file-transaction.js";
 import type { CredentialStatus, CredentialStore } from "./credential-store.js";
 
 const BUILTIN_PROVIDER_IDS = new Set<string>(getBuiltinProviders());
@@ -105,10 +103,38 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function containsKey(value: unknown, key: string): boolean {
-	if (Array.isArray(value)) return value.some((item) => containsKey(item, key));
+const SECRET_KEY_PARTS = [
+	"apikey",
+	"accesstoken",
+	"refreshtoken",
+	"authorization",
+	"password",
+	"clientsecret",
+] as const;
+const EXACT_SECRET_KEYS = [
+	"token",
+	"secret",
+	"credential",
+	"auth",
+	"bearer",
+	"cookie",
+	"privatekey",
+] as const;
+
+function isCredentialKey(key: string): boolean {
+	const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+	return (
+		SECRET_KEY_PARTS.some((part) => normalized.includes(part)) ||
+		EXACT_SECRET_KEYS.some((secretKey) => normalized === secretKey)
+	);
+}
+
+function containsCredential(value: unknown): boolean {
+	if (Array.isArray(value)) return value.some(containsCredential);
 	if (!isRecord(value)) return false;
-	return key in value || Object.values(value).some((item) => containsKey(item, key));
+	return Object.entries(value).some(
+		([key, item]) => isCredentialKey(key) || containsCredential(item),
+	);
 }
 function safeBaseUrl(value: unknown): string | undefined {
 	if (typeof value !== "string" || !value) return undefined;
@@ -150,13 +176,47 @@ function readProviderDocument(modelsPath: string): {
 } {
 	if (!existsSync(modelsPath)) return { document: {}, providers: {} };
 	try {
-		const document = JSON.parse(readFileSync(modelsPath, "utf8")) as Record<string, unknown>;
-		return {
-			document,
-			providers: isRecord(document.providers) ? document.providers : {},
-		};
+		const document = JSON.parse(readFileSync(modelsPath, "utf8")) as unknown;
+		if (!isRecord(document)) throw new Error("models document must be an object");
+		if ("providers" in document && !isRecord(document.providers)) {
+			throw new Error("providers must be an object");
+		}
+		if (containsCredential(document)) throw new Error("models document contains credentials");
+		const providers = isRecord(document.providers) ? document.providers : {};
+		for (const [providerId, config] of Object.entries(providers)) {
+			if (!providerId || !isRecord(config)) throw new Error("provider config must be an object");
+			if ("baseUrl" in config) validatePersistedBaseUrl(config.baseUrl);
+			if ("models" in config) {
+				if (!Array.isArray(config.models) || config.models.length === 0) {
+					throw new Error("provider models must be a non-empty array");
+				}
+				const ids = new Set<string>();
+				for (const model of config.models) {
+					if (!isRecord(model) || typeof model.id !== "string" || !model.id || ids.has(model.id)) {
+						throw new Error("provider model ids must be non-empty and unique");
+					}
+					ids.add(model.id);
+				}
+			}
+		}
+		return { document, providers };
 	} catch {
 		throw { kind: "conflict", reason: "custom_provider_config_invalid" };
+	}
+}
+
+function validatePersistedBaseUrl(value: unknown): void {
+	if (typeof value !== "string") throw new Error("provider baseUrl must be a string");
+	const endpoint = new URL(value);
+	if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
+		throw new Error("provider baseUrl must use HTTP");
+	}
+	if (endpoint.username || endpoint.password)
+		throw new Error("provider baseUrl contains credentials");
+	for (const key of endpoint.searchParams.keys()) {
+		if (isCredentialKey(key) || key.toLowerCase().replace(/[^a-z0-9]/g, "") === "key") {
+			throw new Error("provider baseUrl contains credentials");
+		}
 	}
 }
 
@@ -233,6 +293,89 @@ export class ProviderCatalog {
 		private readonly credentialStore: CredentialStore,
 		private readonly agentDir: string,
 	) {}
+	private modelsRecovery: Promise<void> | null = null;
+
+	private async ensureModelsRecovered(): Promise<void> {
+		if (!this.modelsRecovery) {
+			this.modelsRecovery = this.recoverModelsFile().catch((error) => {
+				this.modelsRecovery = null;
+				throw error;
+			});
+		}
+		await this.modelsRecovery;
+	}
+
+	private async recoverModelsFile(): Promise<void> {
+		mkdirSync(this.agentDir, { recursive: true, mode: 0o700 });
+		const modelsPath = join(this.agentDir, "models.json");
+		const result = await recoverDurableFileTransaction({
+			root: this.agentDir,
+			target: modelsPath,
+			verify: async (candidatePath) => {
+				await this.validateModelsCandidate(candidatePath);
+				return true;
+			},
+		});
+		if (result.status === "recovery-required") {
+			throw {
+				kind: "conflict",
+				reason: "recovery_required",
+				details: result,
+			};
+		}
+		if (existsSync(modelsPath)) await this.validateModelsCandidate(modelsPath);
+	}
+
+	private async validateModelsCandidate(
+		candidatePath: string,
+		requiredRoutes: readonly { providerId: string; modelId: string }[] = [],
+	): Promise<ProviderModelInfoWithProvider[]> {
+		const { providers } = readProviderDocument(candidatePath);
+		const runtime = await ModelRuntime.create({
+			authPath: join(this.agentDir, "auth.json"),
+			modelsPath: candidatePath,
+			refreshOnCreate: false,
+		});
+		const configured = configuredRoutes(providers);
+		const projected = new Map<string, ProviderModelInfoWithProvider>();
+		for (const route of configured) {
+			const model = runtime.getModel(route.providerId, route.modelId);
+			if (!model) throw new Error(`Pi did not register ${route.providerId}/${route.modelId}`);
+			projected.set(`${route.providerId}\0${route.modelId}`, {
+				providerId: route.providerId,
+				modelId: model.id,
+				name: model.name,
+				supportsImages: model.input.includes("image"),
+			});
+		}
+		return requiredRoutes.map((route) => {
+			const model = projected.get(`${route.providerId}\0${route.modelId}`);
+			if (!model) throw new Error(`Pi did not register ${route.providerId}/${route.modelId}`);
+			return model;
+		});
+	}
+
+	private async replaceModelsDocument(
+		document: Record<string, unknown>,
+		requiredRoutes: readonly { providerId: string; modelId: string }[] = [],
+	): Promise<ProviderModelInfoWithProvider[]> {
+		await this.ensureModelsRecovered();
+		const modelsPath = join(this.agentDir, "models.json");
+		const serialized = `${JSON.stringify(document, null, 2)}\n`;
+		let activatedModels: ProviderModelInfoWithProvider[] | undefined;
+		await replaceDurableFile({
+			root: this.agentDir,
+			target: modelsPath,
+			stage: (stagingPath) => writeFileSync(stagingPath, serialized, { mode: 0o600 }),
+			verify: async (candidatePath) => {
+				const models = await this.validateModelsCandidate(candidatePath, requiredRoutes);
+				if (candidatePath === modelsPath) activatedModels = models;
+				return true;
+			},
+		});
+		this.runtime = null;
+		return activatedModels ?? [];
+	}
 
 	/** Lazily create (and cache) the pi-ai runtime; never refresh on create. */
 	private async getRuntime(): Promise<ModelRuntime> {
@@ -247,6 +390,7 @@ export class ProviderCatalog {
 	}
 
 	private async createRuntime(): Promise<ModelRuntime> {
+		await this.ensureModelsRecovered();
 		const runtime = await ModelRuntime.create({
 			authPath: join(this.agentDir, "auth.json"),
 			modelsPath: join(this.agentDir, "models.json"),
@@ -278,41 +422,31 @@ export class ProviderCatalog {
 		assertAllowedProvider(input.providerId);
 		const endpoint = parseHttpEndpoint(input.baseUrl);
 		const modelsPath = join(this.agentDir, "models.json");
-		const temporaryPath = `${modelsPath}.tmp`;
+		await this.ensureModelsRecovered();
 		const { document, providers } = readProviderDocument(modelsPath);
 		const current = providers[input.providerId];
 		const currentConfig =
 			current && typeof current === "object" && !Array.isArray(current)
 				? (current as Record<string, unknown>)
 				: {};
-		mkdirSync(dirname(modelsPath), { recursive: true, mode: 0o700 });
-		writeFileSync(
-			temporaryPath,
-			`${JSON.stringify(
-				{
-					...document,
-					providers: {
-						...providers,
-						[input.providerId]: {
-							...currentConfig,
-							name: input.name,
-							baseUrl: endpoint.toString().replace(/\/$/, ""),
-							api: "openai-completions",
-							authHeader: true,
-							models: input.models.map((model) => ({
-								id: model.id,
-								name: model.name ?? model.id,
-								...(model.supportsImages ? { input: ["text", "image"] } : {}),
-							})),
-						},
-					},
+		await this.replaceModelsDocument({
+			...document,
+			providers: {
+				...providers,
+				[input.providerId]: {
+					...currentConfig,
+					name: input.name,
+					baseUrl: endpoint.toString().replace(/\/$/, ""),
+					api: "openai-completions",
+					authHeader: true,
+					models: input.models.map((model) => ({
+						id: model.id,
+						name: model.name ?? model.id,
+						...(model.supportsImages ? { input: ["text", "image"] } : {}),
+					})),
 				},
-				null,
-				2,
-			)}\n`,
-			{ mode: 0o600 },
-		);
-		renameSync(temporaryPath, modelsPath);
+			},
+		});
 		this.runtime = null;
 		if (input.apiKey) await this.setApiKey(input.providerId, input.apiKey);
 	}
@@ -327,7 +461,7 @@ export class ProviderCatalog {
 		if (!isRecord(fragment) || !isRecord(fragment.providers)) {
 			throw { kind: "invalid_request", reason: "pi_model_config_requires_providers" };
 		}
-		if (containsKey(fragment, "apiKey")) {
+		if (containsCredential(fragment)) {
 			throw { kind: "invalid_request", reason: "pi_model_config_must_not_contain_api_key" };
 		}
 		for (const [providerId, config] of Object.entries(fragment.providers)) {
@@ -350,48 +484,20 @@ export class ProviderCatalog {
 			throw { kind: "invalid_request", reason: "pi_model_config_requires_models" };
 		}
 
+		await this.ensureModelsRecovered();
 		const modelsPath = join(this.agentDir, "models.json");
-		const temporaryPath = `${modelsPath}.tmp`;
-		const previous = existsSync(modelsPath) ? readFileSync(modelsPath, "utf8") : undefined;
-		let document: Record<string, unknown> = {};
-		if (previous) {
-			try {
-				document = JSON.parse(previous) as Record<string, unknown>;
-			} catch {
-				throw { kind: "conflict", reason: "custom_provider_config_invalid" };
-			}
-		}
-		const providers = isRecord(document.providers) ? document.providers : {};
-		mkdirSync(dirname(modelsPath), { recursive: true, mode: 0o700 });
-		writeFileSync(
-			temporaryPath,
-			`${JSON.stringify({ ...document, providers: { ...providers, ...fragment.providers } }, null, 2)}\n`,
-			{ mode: 0o600 },
-		);
-		renameSync(temporaryPath, modelsPath);
+		const { document, providers } = readProviderDocument(modelsPath);
 		try {
-			const runtime = await ModelRuntime.create({
-				authPath: join(this.agentDir, "auth.json"),
-				modelsPath,
-				refreshOnCreate: false,
-			});
-			const result = importedRoutes.map((route) => {
-				const model = runtime.getModel(route.providerId, route.modelId);
-				if (!model) throw new Error(`Pi did not register ${route.providerId}/${route.modelId}`);
-				return {
-					providerId: route.providerId,
-					modelId: model.id,
-					name: model.name,
-					supportsImages: model.input.includes("image"),
-				};
-			});
+			return await this.replaceModelsDocument(
+				{ ...document, providers: { ...providers, ...fragment.providers } },
+				importedRoutes,
+			);
+		} catch (error) {
 			this.runtime = null;
-			return result;
-		} catch {
-			if (previous === undefined) unlinkSync(modelsPath);
-			else writeFileSync(modelsPath, previous, { mode: 0o600 });
-			this.runtime = null;
-			throw { kind: "invalid_request", reason: "pi_model_config_rejected" };
+			if (error instanceof DurableFileTransactionError && error.code === "verification-failed") {
+				throw { kind: "invalid_request", reason: "pi_model_config_rejected" };
+			}
+			throw error;
 		}
 	}
 
@@ -399,31 +505,23 @@ export class ProviderCatalog {
 		assertAllowedProvider(input.providerId);
 		const endpoint = parseHttpEndpoint(input.baseUrl);
 		const modelsPath = join(this.agentDir, "models.json");
-		const temporaryPath = `${modelsPath}.tmp`;
+		await this.ensureModelsRecovered();
 		const { document, providers } = readProviderDocument(modelsPath);
 		const current = providers[input.providerId];
 		const currentConfig =
-			current && typeof current === "object" ? (current as Record<string, unknown>) : {};
-		mkdirSync(dirname(modelsPath), { recursive: true, mode: 0o700 });
-		writeFileSync(
-			temporaryPath,
-			`${JSON.stringify(
-				{
-					...document,
-					providers: {
-						...providers,
-						[input.providerId]: {
-							...currentConfig,
-							baseUrl: endpoint.toString().replace(/\/$/, ""),
-						},
-					},
+			current && typeof current === "object" && !Array.isArray(current)
+				? (current as Record<string, unknown>)
+				: {};
+		await this.replaceModelsDocument({
+			...document,
+			providers: {
+				...providers,
+				[input.providerId]: {
+					...currentConfig,
+					baseUrl: endpoint.toString().replace(/\/$/, ""),
 				},
-				null,
-				2,
-			)}\n`,
-			{ mode: 0o600 },
-		);
-		renameSync(temporaryPath, modelsPath);
+			},
+		});
 		this.runtime = null;
 	}
 
@@ -518,14 +616,7 @@ export class ProviderCatalog {
 			if (Object.hasOwn(providers, providerId)) {
 				const remainingProviders = { ...providers };
 				delete remainingProviders[providerId];
-				const temporaryPath = `${modelsPath}.tmp`;
-				mkdirSync(dirname(modelsPath), { recursive: true, mode: 0o700 });
-				writeFileSync(
-					temporaryPath,
-					`${JSON.stringify({ ...document, providers: remainingProviders }, null, 2)}\n`,
-					{ mode: 0o600 },
-				);
-				renameSync(temporaryPath, modelsPath);
+				await this.replaceModelsDocument({ ...document, providers: remainingProviders });
 			}
 		}
 		this.runtime = null;

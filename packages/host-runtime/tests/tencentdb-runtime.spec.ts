@@ -3,12 +3,18 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type EmbeddingService, LocalEmbeddingService, type Logger } from "@bear-harness/tdai-core";
+import {
+	type EmbeddingService,
+	type L1RecordRow,
+	LocalEmbeddingService,
+	type Logger,
+	type MemoryRecord as TdaiMemoryRecord,
+} from "@bear-harness/tdai-core";
 import type { AssistantMessage, Context, ToolResultMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MemoryBackend, MemoryBankScope, MemoryMetadata } from "../src/memory/backend.js";
-import { namespaceFor } from "../src/memory/tencentdb-backend.js";
-import { CyberBearHostAdapter } from "../src/memory/tencentdb-host-adapter.js";
+import { legacyNamespaceFor, namespaceFor } from "../src/memory/tencentdb-backend.js";
+import { BearHarnessHostAdapter } from "../src/memory/tencentdb-host-adapter.js";
 import { TencentDbRuntime } from "../src/memory/tencentdb-runtime.js";
 import type { ModelRegistry } from "../src/models/registry.js";
 import type { ProviderCatalog } from "../src/providers/catalog.js";
@@ -146,7 +152,8 @@ type RuntimeStoreForTest = {
 		nativeHybridSearch: boolean;
 		sparseVectors: boolean;
 	};
-	queryL1Records: (...args: never[]) => unknown;
+	queryL1Records: (filter?: { sessionKey?: string }) => L1RecordRow[] | Promise<L1RecordRow[]>;
+	upsertL1: (record: TdaiMemoryRecord) => boolean | Promise<boolean>;
 };
 
 function runtimeStore(runtime: TencentDbRuntime): RuntimeStoreForTest {
@@ -156,12 +163,135 @@ function runtimeStore(runtime: TencentDbRuntime): RuntimeStoreForTest {
 	return store as RuntimeStoreForTest;
 }
 
+function storedMemory(
+	id: string,
+	namespace: string,
+	text: string,
+	metadata: Record<string, string | number | boolean | null> = {},
+): TdaiMemoryRecord {
+	return {
+		id,
+		content: text,
+		type: "persona",
+		priority: 83,
+		scene_name: namespace,
+		source_message_ids: ["source-entry-a", "source-entry-b"],
+		metadata,
+		timestamps: ["2026-08-01T01:02:03.000Z", "2026-08-02T04:05:06.000Z"],
+		createdAt: "2026-08-01T01:02:03.000Z",
+		updatedAt: "2026-08-02T04:05:06.000Z",
+		sessionKey: namespace,
+		sessionId: "source-session",
+	};
+}
+
 afterEach(async () => {
 	for (const runtime of runtimes.splice(0).reverse()) await runtime.close();
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 describe("TencentDbRuntime", () => {
+	it("migrates an old-only bank once while preserving persisted identity and metadata", async () => {
+		const root = createRoot();
+		const runtime = createRuntime(root);
+		const scope = scopeFor("role-a");
+		await runtime.start();
+		const store = runtimeStore(runtime);
+		const legacyNamespace = legacyNamespaceFor(scope);
+		const canonicalNamespace = namespaceFor(scope);
+		const metadata = {
+			provenance: "explicit:source-entry-a,source-entry-b",
+			invalidation: "replacement-memory",
+			presentation_parent: "memory-parent",
+		};
+		await store.upsertL1(storedMemory("legacy-memory", legacyNamespace, "legacy memory", metadata));
+
+		await runtime.backend.open({ scope });
+
+		const canonicalRows = await store.queryL1Records({ sessionKey: canonicalNamespace });
+		expect(canonicalRows).toHaveLength(1);
+		expect(canonicalRows[0]).toMatchObject({
+			record_id: "legacy-memory",
+			content: "legacy memory",
+			priority: 83,
+			session_key: canonicalNamespace,
+			session_id: "source-session",
+			created_time: "2026-08-01T01:02:03.000Z",
+			updated_time: "2026-08-02T04:05:06.000Z",
+		});
+		expect(JSON.parse(canonicalRows[0]!.metadata_json)).toEqual(metadata);
+		expect(await store.queryL1Records({ sessionKey: legacyNamespace })).toEqual([]);
+		await expect(runtime.backend.list({ scope })).resolves.toEqual([
+			expect.objectContaining({
+				id: "legacy-memory",
+				text: "legacy memory",
+				importance: 0.83,
+				metadata,
+				createdAt: "2026-08-01T01:02:03.000Z",
+				updatedAt: "2026-08-02T04:05:06.000Z",
+			}),
+		]);
+
+		await runtime.backend.close();
+		const originalQuery = store.queryL1Records.bind(store);
+		let legacyReads = 0;
+		store.queryL1Records = (filter) => {
+			if (filter?.sessionKey === legacyNamespace) legacyReads += 1;
+			return originalQuery(filter);
+		};
+		await runtime.backend.open({ scope });
+		await runtime.backend.list({ scope });
+		expect(legacyReads).toBe(0);
+	});
+
+	it("merges mixed old and canonical banks idempotently without duplicates", async () => {
+		const root = createRoot();
+		const runtime = createRuntime(root);
+		const scope = scopeFor("role-a");
+		await runtime.start();
+		const store = runtimeStore(runtime);
+		await store.upsertL1(
+			storedMemory("legacy-only", legacyNamespaceFor(scope), "legacy-only memory"),
+		);
+		await store.upsertL1(
+			storedMemory("canonical-only", namespaceFor(scope), "canonical-only memory"),
+		);
+
+		await runtime.backend.open({ scope });
+		await runtime.backend.close();
+		await runtime.backend.open({ scope });
+
+		const rows = await store.queryL1Records({ sessionKey: namespaceFor(scope) });
+		expect(rows.map((row) => row.record_id).sort()).toEqual(["canonical-only", "legacy-only"]);
+	});
+
+	it("retries a journaled partial copy after a migration write failure", async () => {
+		const root = createRoot();
+		const runtime = createRuntime(root);
+		const scope = scopeFor("role-a");
+		await runtime.start();
+		const store = runtimeStore(runtime);
+		await store.upsertL1(storedMemory("legacy-a", legacyNamespaceFor(scope), "legacy A"));
+		await store.upsertL1(storedMemory("legacy-b", legacyNamespaceFor(scope), "legacy B"));
+		const originalUpsert = store.upsertL1.bind(store);
+		let migrationWrites = 0;
+		store.upsertL1 = (record) => {
+			migrationWrites += 1;
+			if (migrationWrites === 2) return false;
+			return originalUpsert(record);
+		};
+
+		await expect(runtime.backend.open({ scope })).rejects.toMatchObject({
+			code: "recovery_required",
+		});
+		store.upsertL1 = originalUpsert;
+		await runtime.backend.open({ scope });
+
+		const rows = await store.queryL1Records({ sessionKey: namespaceFor(scope) });
+		expect(rows.map((row) => row.record_id).sort()).toEqual(["legacy-a", "legacy-b"]);
+		expect(await store.queryL1Records({ sessionKey: legacyNamespaceFor(scope) })).toEqual([]);
+	});
+
 	it("starts and closes an idempotent local lifecycle under the product data directory", async () => {
 		const root = createRoot();
 		const runtime = createRuntime(root);
@@ -590,7 +720,7 @@ describe("TencentDbRuntime", () => {
 });
 
 // ============================
-// CyberBear tool-call loop (pi-ai runtime)
+// BearHarness tool-call loop (pi-ai runtime)
 // ============================
 
 type ToolModels = {
@@ -621,7 +751,7 @@ function fakeAssistant(content: unknown[], stopReason: string, text?: string) {
 }
 
 function createToolRunner(models: ToolModels, workspaceDir: string) {
-	const adapter = new CyberBearHostAdapter({
+	const adapter = new BearHarnessHostAdapter({
 		dataDir: workspaceDir,
 		workspaceDir,
 		userId: "test-user",
@@ -664,7 +794,7 @@ function jsonError(payloadText: string): string {
 	return "";
 }
 
-describe("CyberBearLLMRunner tool loop", () => {
+describe("BearHarnessLLMRunner tool loop", () => {
 	it("executes a sandboxed tool call and feeds the result back into the loop", async () => {
 		const root = createRoot();
 		writeFileSync(join(root, "note.txt"), "hello from the sandbox", "utf-8");
@@ -841,7 +971,7 @@ describe("CyberBearLLMRunner tool loop", () => {
 	it("keeps the non-tools path on completeSimple without tools", async () => {
 		const root = createRoot();
 		const completeSimple = vi.fn(async () => fakeAssistant([], "stop", "plain text answer"));
-		const adapter = new CyberBearHostAdapter({
+		const adapter = new BearHarnessHostAdapter({
 			dataDir: root,
 			workspaceDir: root,
 			userId: "test-user",

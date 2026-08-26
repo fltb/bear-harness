@@ -1,15 +1,20 @@
 // Model pool reads reproject added Provider catalogs into configured_models.
 // @vitest-environment node
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type HostCompositionContext, wireHostHandlers } from "../src/composition.js";
 import { Dispatcher } from "../src/dispatcher.js";
 import { type CredentialVault, createHostRuntime, type HostRuntime } from "../src/index.js";
+import {
+	DURABLE_FILE_TRANSACTION_VERSION,
+	type DurableFileTransactionMarker,
+	durableFileTransactionMarkerPath,
+} from "../src/storage/durable-file-transaction.js";
 
 const roots: string[] = [];
 const runtimes: HostRuntime[] = [];
@@ -21,9 +26,7 @@ const vault: CredentialVault = {
 	decryptString: (value) => value.toString("utf8"),
 };
 
-function makeRuntime(): HostRuntime {
-	const dataDir = mkdtempSync(join(tmpdir(), "bear-provider-sync-"));
-	roots.push(dataDir);
+function makeRuntimeAt(dataDir: string): HostRuntime {
 	const runtime = createHostRuntime({
 		dataDir,
 		characterSeedRoot: characterRoot,
@@ -35,10 +38,36 @@ function makeRuntime(): HostRuntime {
 	return runtime;
 }
 
+function makeRuntime(): HostRuntime {
+	const dataDir = mkdtempSync(join(tmpdir(), "bear-provider-sync-"));
+	roots.push(dataDir);
+	return makeRuntimeAt(dataDir);
+}
+
 async function data(runtime: HostRuntime, channel: string, params: unknown): Promise<unknown> {
 	const response = await runtime.dispatch(channel, params);
 	if (!response.ok) throw new Error(response.error.reason);
 	return response.data;
+}
+
+function removeRuntime(runtime: HostRuntime): void {
+	const index = runtimes.indexOf(runtime);
+	if (index >= 0) runtimes.splice(index, 1);
+}
+
+function restartMarker(dataDir: string): DurableFileTransactionMarker {
+	const target = join(dataDir, "companion-runtime", "models.json");
+	const parent = dirname(target);
+	const base = basename(target);
+	const transactionId = "30000000-0000-4000-8000-000000000003";
+	return {
+		version: DURABLE_FILE_TRANSACTION_VERSION,
+		transactionId,
+		target,
+		staging: join(parent, `.${base}.staging-${transactionId}`),
+		backup: join(parent, `.${base}.backup-${transactionId}`),
+		state: "staged",
+	};
 }
 
 describe("provider catalog model synchronization", () => {
@@ -113,6 +142,53 @@ describe("provider catalog model synchronization", () => {
 		);
 	});
 
+	it("restarts through a stale models transaction and exposes only the complete new catalog", async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "bear-provider-restart-"));
+		roots.push(dataDir);
+		const first = makeRuntimeAt(dataDir);
+		await first.start();
+		await data(first, "provider.customUpsert:v1", {
+			providerId: "restart-relay",
+			name: "Restart Relay",
+			baseUrl: "https://relay.example/v1",
+			models: [{ id: "old-model" }],
+		});
+		await first.close();
+		removeRuntime(first);
+
+		const marker = restartMarker(dataDir);
+		const nextDocument = {
+			providers: {
+				"restart-relay": {
+					name: "Restart Relay",
+					baseUrl: "https://relay.example/v1",
+					api: "openai-completions",
+					authHeader: true,
+					models: [{ id: "new-model", name: "New Model" }],
+				},
+			},
+		};
+		writeFileSync(marker.staging, `${JSON.stringify(nextDocument, null, 2)}\n`, { mode: 0o600 });
+		writeFileSync(
+			durableFileTransactionMarkerPath(dirname(marker.target), marker.target),
+			JSON.stringify(marker),
+		);
+
+		const restarted = makeRuntimeAt(dataDir);
+		await restarted.start();
+		const listed = (await data(restarted, "provider.list:v1", {})) as {
+			providers: Array<{ id: string; availableModels: Array<{ id: string }> }>;
+		};
+
+		expect(
+			listed.providers.find((provider) => provider.id === "restart-relay")?.availableModels,
+		).toMatchObject([{ id: "new-model" }]);
+		expect(JSON.parse(readFileSync(marker.target, "utf8"))).toEqual(nextDocument);
+		expect(existsSync(marker.staging)).toBe(false);
+		expect(
+			existsSync(durableFileTransactionMarkerPath(dirname(marker.target), marker.target)),
+		).toBe(false);
+	});
 	it("imports all catalog models when a provider fragment has no explicit model routes", async () => {
 		const runtime = makeRuntime();
 		await runtime.start();

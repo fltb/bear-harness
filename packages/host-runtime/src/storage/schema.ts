@@ -20,6 +20,32 @@ export const schemaMigrations = sqliteTable("schema_migrations", {
 	appliedAt: text("applied_at").default(sql`datetime('now')`).notNull(),
 });
 
+export const installationIdentity = sqliteTable(
+	"installation_identity",
+	{
+		id: integer().primaryKey().default(1),
+		installationId: text("installation_id").notNull().unique(),
+		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+	},
+	(table) => [
+		check("installation_identity_singleton", sql`${table.id} = 1`),
+		check(
+			"installation_identity_uuid",
+			sql`
+				length(${table.installationId}) = 36
+				AND substr(${table.installationId}, 9, 1) = '-'
+				AND substr(${table.installationId}, 14, 1) = '-'
+				AND substr(${table.installationId}, 19, 1) = '-'
+				AND substr(${table.installationId}, 24, 1) = '-'
+				AND substr(${table.installationId}, 15, 1) = '4'
+				AND substr(${table.installationId}, 20, 1) GLOB '[89ab]'
+				AND lower(${table.installationId}) = ${table.installationId}
+				AND replace(${table.installationId}, '-', '') NOT GLOB '*[^0-9a-f]*'
+			`,
+		),
+	],
+);
+
 export const companionPackages = sqliteTable("companion_packages", {
 	id: text().primaryKey(),
 	name: text().notNull(),
@@ -422,6 +448,84 @@ export const conversationAttachmentFiles = sqliteTable(
 		index("idx_attachment_files_attachment").on(table.attachmentId),
 		unique("conversation_attachment_files_relative").on(table.attachmentId, table.relativePath),
 		check("conversation_attachment_files_kind", sql`entry_kind IN ('file','directory','symlink')`),
+	],
+);
+
+export const pendingTurns = sqliteTable(
+	"pending_turns",
+	{
+		id: text().primaryKey(),
+		conversationId: text("conversation_id")
+			.notNull()
+			.references(() => conversations.id, { onDelete: "cascade" }),
+		framedText: text("framed_text").notNull(),
+		imagesJson: text("images_json").default("[]").notNull(),
+		attachmentIdsJson: text("attachment_ids_json").default("[]").notNull(),
+		attachmentSendNonce: text("attachment_send_nonce"),
+		state: text({
+			enum: ["accepted", "dispatched", "user_persisted", "completed"],
+		})
+			.default("accepted")
+			.notNull(),
+		piEntryId: text("pi_entry_id"),
+		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
+		completedAt: text("completed_at"),
+		lastError: text("last_error"),
+	},
+	(table) => [
+		index("idx_pending_turns_conversation_state").on(
+			table.conversationId,
+			table.state,
+			table.createdAt,
+		),
+		unique("pending_turns_conversation_entry").on(table.conversationId, table.piEntryId),
+		check(
+			"pending_turns_id_uuid",
+			sql`length(id) = 36
+				AND substr(id, 9, 1) = '-'
+				AND substr(id, 14, 1) = '-'
+				AND substr(id, 19, 1) = '-'
+				AND substr(id, 24, 1) = '-'
+				AND substr(id, 15, 1) = '4'
+				AND substr(id, 20, 1) GLOB '[89ab]'
+				AND lower(id) = id
+				AND replace(id, '-', '') NOT GLOB '*[^0-9a-f]*'`,
+		),
+		check("pending_turns_framed_text", sql`length(framed_text) <= 262144`),
+		check(
+			"pending_turns_images_json",
+			sql`length(images_json) <= 139811200
+				AND json_valid(images_json)
+				AND json_type(images_json) = 'array'
+				AND json_array_length(images_json) <= 10`,
+		),
+		check(
+			"pending_turns_attachment_ids_json",
+			sql`length(attachment_ids_json) <= 681
+				AND json_valid(attachment_ids_json)
+				AND json_type(attachment_ids_json) = 'array'
+				AND json_array_length(attachment_ids_json) <= 10`,
+		),
+		check(
+			"pending_turns_attachment_nonce",
+			sql`(json_array_length(attachment_ids_json) = 0 AND attachment_send_nonce IS NULL)
+				OR (json_array_length(attachment_ids_json) > 0 AND attachment_send_nonce IS NOT NULL)`,
+		),
+		check(
+			"pending_turns_state",
+			sql`state IN ('accepted','dispatched','user_persisted','completed')`,
+		),
+		check(
+			"pending_turns_entry_state",
+			sql`(state IN ('accepted','dispatched') AND pi_entry_id IS NULL)
+				OR (state IN ('user_persisted','completed') AND pi_entry_id IS NOT NULL)`,
+		),
+		check(
+			"pending_turns_completion",
+			sql`(state = 'completed' AND completed_at IS NOT NULL)
+				OR (state <> 'completed' AND completed_at IS NULL)`,
+		),
 	],
 );
 

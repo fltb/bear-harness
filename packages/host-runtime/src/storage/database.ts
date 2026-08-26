@@ -5,23 +5,49 @@
  * worker_threads. WAL mode, foreign_keys, defensive mode, busy_timeout.
  *
  * Migrations are integer-ordered, checksummed, and recorded in an
- * append-only `schema_migrations` table. Before each migration the DB is
- * backed up (last 2 schema backups retained). Migration failure → storage
- * unavailable (no auto-rebuild). Recovery is copy-as-new only.
+ * append-only `schema_migrations` table. Each upgrade batch gets one verified,
+ * SQLite-consistent pre-upgrade backup and a durable recovery marker.
+ * Migration failure → storage unavailable (no auto-rebuild). Recovery is
+ * copy-as-new only.
  */
 
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import {
+	closeSync,
+	existsSync,
+	fsyncSync,
+	mkdirSync,
+	openSync,
+	readdirSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import * as sqliteVec from "sqlite-vec";
+import { installationIdentity } from "./schema.js";
 
 function createAppDatabase(client: DatabaseSync) {
 	return drizzle({ client });
 }
 
 export type AppDatabase = ReturnType<typeof createAppDatabase>;
+
+const INSTALLATION_IDENTITY_SINGLETON_ID = 1;
+
+/** Load the durable identity created by the installation identity migration. */
+export function loadInstallationId(db: AppDatabase): string {
+	const row = db
+		.select({ installationId: installationIdentity.installationId })
+		.from(installationIdentity)
+		.where(eq(installationIdentity.id, INSTALLATION_IDENTITY_SINGLETON_ID))
+		.get();
+	if (!row) throw new Error("installation identity is missing");
+	return row.installationId;
+}
 export interface CanonVectorIndex {
 	ensureCanonVectorIndex(dimensions: number): { ready: boolean; reset: boolean };
 	searchCanonVectors(
@@ -40,7 +66,7 @@ export interface CanonVectorIndex {
 
 /** Max migrations to apply in one boot (safety gate). */
 const MAX_MIGRATION_STEPS = 50;
-/** Keep this many schema backups (the most recent 2). */
+/** Retain at least the current and preceding verified schema backups. */
 const RETAIN_BACKUPS = 2;
 /** Query latency threshold for logging. */
 const SLOW_QUERY_MS = 16;
@@ -56,6 +82,13 @@ export interface Migration {
 	readonly rebuildsForeignKeys?: true;
 }
 
+interface UpgradeMarker {
+	readonly sourceVersion: number;
+	readonly targetVersion: number;
+	readonly backupPath: string;
+	readonly state: "pending";
+}
+
 // ---------------------------------------------------------------------------
 // Database
 // ---------------------------------------------------------------------------
@@ -66,9 +99,10 @@ export interface Migration {
  * worker_threads. WAL mode, foreign_keys, defensive mode, busy_timeout.
  *
  * Migrations are integer-ordered, checksummed, and recorded in an
- * append-only `schema_migrations` table. Before each migration the DB is
- * backed up (last 2 schema backups retained). Migration failure → storage
- * unavailable (no auto-rebuild). Recovery is copy-as-new only.
+ * append-only `schema_migrations` table. Each upgrade batch gets one verified,
+ * SQLite-consistent pre-upgrade backup and a durable recovery marker.
+ * Migration failure → storage unavailable (no auto-rebuild). Recovery is
+ * copy-as-new only.
  *
  * Unlike the legacy desktop singleton, this class owns its connection and
  * paths: each HostRuntime creates its own instance and closes it on
@@ -82,10 +116,12 @@ export class Database {
 
 	private readonly dbPath: string;
 	private readonly backupDir: string;
+	private readonly upgradeMarkerPath: string;
 
 	constructor(databaseDir: string) {
 		this.dbPath = join(databaseDir, "canon.db");
 		this.backupDir = join(databaseDir, "schema-backups");
+		this.upgradeMarkerPath = join(databaseDir, "schema-upgrade.json");
 		mkdirSync(databaseDir, { recursive: true });
 		mkdirSync(this.backupDir, { recursive: true });
 
@@ -185,23 +221,99 @@ export class Database {
 		return createHash("sha256").update(sql, "utf8").digest("hex");
 	}
 
-	/** Create a backup of the current database (schema + data) before migration. */
-	private backupSchema(): string {
-		const timestamp = Date.now().toString(36);
-		const backupPath = join(this.backupDir, `canon-${timestamp}.db`);
-		copyFileSync(this.dbPath, backupPath);
+	/** Return verified backup files in newest-first filename order. */
+	private backupPaths(): string[] {
+		return readdirSync(this.backupDir)
+			.filter((file) => file.startsWith("canon-") && file.endsWith(".db"))
+			.map((file) => join(this.backupDir, file))
+			.sort()
+			.reverse();
+	}
+
+	/** Create and verify a SQLite-consistent backup of all committed data. */
+	private backupSchema(sourceVersion: number, targetVersion: number): string {
+		const timestamp = Date.now().toString().padStart(13, "0");
+		let suffix = 0;
+		let backupPath: string;
+		do {
+			const collisionSuffix = suffix === 0 ? "" : `-${suffix}`;
+			backupPath = join(
+				this.backupDir,
+				`canon-${timestamp}-v${sourceVersion}-to-v${targetVersion}${collisionSuffix}.db`,
+			);
+			suffix += 1;
+		} while (existsSync(backupPath));
+
+		const quotedPath = backupPath.replaceAll("'", "''");
+		this.connection.exec(`VACUUM INTO '${quotedPath}'`);
+		try {
+			this.validateDatabase(new DatabaseSync(backupPath, { readOnly: true }), "pre-upgrade backup");
+			this.syncDirectory(this.backupDir);
+		} catch (error) {
+			rmSync(backupPath, { force: true });
+			throw error;
+		}
 		return backupPath;
 	}
 
-	/** Prune old backups, keeping only the most recent RETAIN_BACKUPS. */
-	private pruneBackups(): void {
-		const files = readdirSync(this.backupDir)
-			.filter((f) => f.startsWith("canon-") && f.endsWith(".db"))
-			.map((f) => join(this.backupDir, f))
-			.sort()
-			.reverse();
-		for (const old of files.slice(RETAIN_BACKUPS)) {
-			rmSync(old);
+	/** Validate integrity and referential consistency, closing non-primary connections. */
+	private validateDatabase(database: DatabaseSync, label: string): void {
+		const closeAfterCheck = database !== this.connection;
+		try {
+			const integrityRows = database.prepare("PRAGMA integrity_check").all() as Array<
+				Record<string, unknown>
+			>;
+			const integrityErrors = integrityRows
+				.map((row) => Object.values(row)[0])
+				.filter((result) => result !== "ok");
+			if (integrityRows.length !== 1 || integrityErrors.length > 0) {
+				throw new Error(`${label} integrity check failed: ${JSON.stringify(integrityRows)}`);
+			}
+			const foreignKeyErrors = database.prepare("PRAGMA foreign_key_check").all();
+			if (foreignKeyErrors.length > 0) {
+				throw new Error(`${label} foreign key check failed: ${JSON.stringify(foreignKeyErrors)}`);
+			}
+		} finally {
+			if (closeAfterCheck) database.close();
+		}
+	}
+
+	/** Atomically persist the recovery marker before the first schema change. */
+	private writeUpgradeMarker(marker: UpgradeMarker): void {
+		const temporaryPath = `${this.upgradeMarkerPath}.tmp-${process.pid}`;
+		writeFileSync(temporaryPath, `${JSON.stringify(marker, null, 2)}\n`, {
+			encoding: "utf8",
+			flush: true,
+		});
+		renameSync(temporaryPath, this.upgradeMarkerPath);
+		this.syncDirectory(dirname(this.upgradeMarkerPath));
+	}
+
+	/** Remove the recovery marker durably after the upgraded database is verified. */
+	private clearUpgradeMarker(): void {
+		rmSync(this.upgradeMarkerPath, { force: true });
+		this.syncDirectory(dirname(this.upgradeMarkerPath));
+	}
+
+	private syncDirectory(directoryPath: string): void {
+		let descriptor: number | undefined;
+		try {
+			descriptor = openSync(directoryPath, "r");
+			fsyncSync(descriptor);
+		} catch (error) {
+			if (process.platform !== "win32") throw error;
+		} finally {
+			if (descriptor !== undefined) closeSync(descriptor);
+		}
+	}
+
+	/** Prune old backups without removing either recovery-relevant snapshot. */
+	private pruneBackups(protectedPaths: ReadonlySet<string>): void {
+		const files = this.backupPaths();
+		const retained = new Set(files.slice(0, RETAIN_BACKUPS));
+		for (const protectedPath of protectedPaths) retained.add(protectedPath);
+		for (const old of files) {
+			if (!retained.has(old)) rmSync(old);
 		}
 	}
 
@@ -221,9 +333,6 @@ export class Database {
 			}
 			return; // already applied, same checksum — idempotent
 		}
-
-		// Backup before applying
-		const backupPath = this.backupSchema();
 
 		// Table-rebuild migrations temporarily suspend enforcement before the
 		// transaction, rebuild every referenced identity in-place, then run
@@ -246,13 +355,9 @@ export class Database {
 		} catch (e) {
 			this.connection.exec("ROLLBACK");
 			if (rebuildsForeignKeys) this.connection.exec("PRAGMA foreign_keys = ON");
-			throw new Error(
-				`migration ${migration.id} failed: ${(e as Error)?.message ?? String(e)}; backup at ${backupPath}`,
-			);
+			throw new Error(`migration ${migration.id} failed: ${(e as Error)?.message ?? String(e)}`);
 		}
 		if (rebuildsForeignKeys) this.connection.exec("PRAGMA foreign_keys = ON");
-
-		this.pruneBackups();
 	}
 
 	/** Run all pending migrations in order. */
@@ -300,15 +405,42 @@ export class Database {
 			}
 		}
 		const pending = ordered.filter((migration) => migration.id > current);
+		if (pending.length === 0) return;
 
-		for (const migration of pending) {
-			this.applyMigration(migration);
+		const targetVersion = pending.at(-1)?.id;
+		if (targetVersion === undefined) return;
+		const lastKnownGoodBackup = this.backupPaths()[0];
+		const backupPath = this.backupSchema(current, targetVersion);
+		this.writeUpgradeMarker({
+			sourceVersion: current,
+			targetVersion,
+			backupPath,
+			state: "pending",
+		});
+
+		try {
+			for (const migration of pending) {
+				this.applyMigration(migration);
+			}
+			this.validateDatabase(this.connection, "upgraded database");
+		} catch (error) {
+			throw new Error(
+				`database upgrade from ${current} to ${targetVersion} failed: ${
+					(error as Error)?.message ?? String(error)
+				}; verified backup at ${backupPath}; recovery marker at ${this.upgradeMarkerPath}`,
+			);
 		}
+
+		this.clearUpgradeMarker();
+		this.pruneBackups(
+			new Set(lastKnownGoodBackup ? [backupPath, lastKnownGoodBackup] : [backupPath]),
+		);
 	}
 
 	/** Refuse to start a partially compatible database. */
 	assertSchemaContract(): void {
 		const required: Readonly<Record<string, readonly string[]>> = {
+			installation_identity: ["id", "installation_id", "created_at"],
 			runs: [
 				"id",
 				"conversation_id",
@@ -1322,6 +1454,98 @@ export const MIGRATIONS: Migration[] = [
 				WHERE executor_profile = 'pi-product-managed';
 			DROP TABLE executor_profiles;
 			ALTER TABLE executor_profiles_new RENAME TO executor_profiles;
+		`,
+	},
+	{
+		id: 27,
+		description: "Create the durable singleton installation identity",
+		up: `
+			CREATE TABLE installation_identity (
+				id INTEGER PRIMARY KEY NOT NULL DEFAULT 1 CHECK (id = 1),
+				installation_id TEXT NOT NULL UNIQUE CHECK (
+					length(installation_id) = 36
+					AND substr(installation_id, 9, 1) = '-'
+					AND substr(installation_id, 14, 1) = '-'
+					AND substr(installation_id, 19, 1) = '-'
+					AND substr(installation_id, 24, 1) = '-'
+					AND substr(installation_id, 15, 1) = '4'
+					AND substr(installation_id, 20, 1) GLOB '[89ab]'
+					AND lower(installation_id) = installation_id
+					AND replace(installation_id, '-', '') NOT GLOB '*[^0-9a-f]*'
+				),
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			INSERT INTO installation_identity (id, installation_id)
+			VALUES (
+				1,
+				lower(
+					hex(randomblob(4)) || '-' ||
+					hex(randomblob(2)) || '-4' ||
+					substr(hex(randomblob(2)), 2) || '-' ||
+					substr('89ab', (random() & 3) + 1, 1) ||
+					substr(hex(randomblob(2)), 2) || '-' ||
+					hex(randomblob(6))
+				)
+			);
+		`,
+	},
+	{
+		id: 28,
+		description: "Create the durable pending-turn outbox",
+		rebuildsForeignKeys: true,
+		up: `
+			CREATE TABLE pending_turns (
+				id TEXT PRIMARY KEY CHECK (
+					length(id) = 36
+					AND substr(id, 9, 1) = '-'
+					AND substr(id, 14, 1) = '-'
+					AND substr(id, 19, 1) = '-'
+					AND substr(id, 24, 1) = '-'
+					AND substr(id, 15, 1) = '4'
+					AND substr(id, 20, 1) GLOB '[89ab]'
+					AND lower(id) = id
+					AND replace(id, '-', '') NOT GLOB '*[^0-9a-f]*'
+				),
+				conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+				framed_text TEXT NOT NULL CHECK (length(framed_text) <= 262144),
+				images_json TEXT NOT NULL DEFAULT '[]' CHECK (
+					length(images_json) <= 139811200
+					AND json_valid(images_json)
+					AND json_type(images_json) = 'array'
+					AND json_array_length(images_json) <= 10
+				),
+				attachment_ids_json TEXT NOT NULL DEFAULT '[]' CHECK (
+					length(attachment_ids_json) <= 681
+					AND json_valid(attachment_ids_json)
+					AND json_type(attachment_ids_json) = 'array'
+					AND json_array_length(attachment_ids_json) <= 10
+				),
+				attachment_send_nonce TEXT,
+				state TEXT NOT NULL DEFAULT 'accepted' CHECK (
+					state IN ('accepted','dispatched','user_persisted','completed')
+				),
+				pi_entry_id TEXT,
+				created_at TEXT NOT NULL DEFAULT (datetime('now')),
+				updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+				completed_at TEXT,
+				last_error TEXT,
+				CHECK (
+					(json_array_length(attachment_ids_json) = 0 AND attachment_send_nonce IS NULL)
+					OR (json_array_length(attachment_ids_json) > 0 AND attachment_send_nonce IS NOT NULL)
+				),
+				CHECK (
+					(state IN ('accepted','dispatched') AND pi_entry_id IS NULL)
+					OR (state IN ('user_persisted','completed') AND pi_entry_id IS NOT NULL)
+				),
+				CHECK (
+					(state = 'completed' AND completed_at IS NOT NULL)
+					OR (state <> 'completed' AND completed_at IS NULL)
+				)
+			);
+			CREATE INDEX idx_pending_turns_conversation_state
+				ON pending_turns(conversation_id, state, created_at);
+			CREATE UNIQUE INDEX pending_turns_conversation_entry
+				ON pending_turns(conversation_id, pi_entry_id);
 		`,
 	},
 ];

@@ -1,12 +1,26 @@
 // @vitest-environment node
 
-import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+	appendFileSync,
+	cpSync,
+	existsSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CredentialVault, createHostRuntime } from "../src/index.js";
+import {
+	DURABLE_FILE_TRANSACTION_VERSION,
+	type DurableFileTransactionMarker,
+	durableFileTransactionMarkerPath,
+} from "../src/storage/durable-file-transaction.js";
 
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 const roots: string[] = [];
@@ -28,6 +42,37 @@ function packageFiles(root: string, directory = root): Array<{ path: string; bas
 					},
 				];
 	});
+}
+
+function persistImportedRecoveryCopy(
+	libraryRoot: string,
+	characterId: string,
+	state: DurableFileTransactionMarker["state"],
+): DurableFileTransactionMarker {
+	const transactionId =
+		characterId === "recovered-before-activation"
+			? "30000000-0000-4000-8000-000000000001"
+			: "30000000-0000-4000-8000-000000000002";
+	const marker: DurableFileTransactionMarker = {
+		version: DURABLE_FILE_TRANSACTION_VERSION,
+		transactionId,
+		target: join(libraryRoot, characterId),
+		staging: join(libraryRoot, `.${characterId}.staging-${transactionId}`),
+		backup: join(libraryRoot, `.${characterId}.backup-${transactionId}`),
+		state,
+	};
+	const destination = state === "old-target-moved" ? marker.staging : marker.target;
+	cpSync(join(characterRoot, "jizhou"), destination, { recursive: true });
+	const manifestPath = join(destination, "character.yaml");
+	writeFileSync(
+		manifestPath,
+		readFileSync(manifestPath, "utf8").replace("id: jizhou", `id: ${characterId}`),
+	);
+	writeFileSync(
+		durableFileTransactionMarkerPath(libraryRoot, marker.target),
+		`${JSON.stringify(marker)}\n`,
+	);
+	return marker;
 }
 
 describe("character package import", () => {
@@ -221,5 +266,46 @@ describe("character package import", () => {
 			}),
 		).resolves.toMatchObject({ ok: false, error: { reason: "character_package_path_invalid" } });
 		await runtime.close();
+	});
+	it("recovers imported packages interrupted before and after activation on restart", async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "bear-character-import-recovery-"));
+		roots.push(dataDir);
+		const initial = createHostRuntime({
+			dataDir,
+			characterSeedRoot: characterRoot,
+			productConfig,
+			credentialVault: vault,
+		});
+		await initial.start();
+		await initial.close();
+		const libraryRoot = join(dataDir, "characters");
+		const markers = [
+			persistImportedRecoveryCopy(libraryRoot, "recovered-before-activation", "old-target-moved"),
+			persistImportedRecoveryCopy(libraryRoot, "recovered-after-activation", "activated"),
+		];
+
+		const restarted = createHostRuntime({
+			dataDir,
+			characterSeedRoot: characterRoot,
+			productConfig,
+			credentialVault: vault,
+		});
+		await restarted.start();
+		await expect(restarted.dispatch("character.list:v1", {})).resolves.toMatchObject({
+			ok: true,
+			data: {
+				characters: expect.arrayContaining([
+					expect.objectContaining({ id: "recovered-before-activation" }),
+					expect.objectContaining({ id: "recovered-after-activation" }),
+				]),
+			},
+		});
+		for (const marker of markers) {
+			expect(existsSync(marker.target)).toBe(true);
+			expect(existsSync(marker.staging)).toBe(false);
+			expect(existsSync(marker.backup)).toBe(false);
+			expect(existsSync(durableFileTransactionMarkerPath(libraryRoot, marker.target))).toBe(false);
+		}
+		await restarted.close();
 	});
 });

@@ -1,12 +1,13 @@
 // @vitest-environment node
 
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PiSessionMessage } from "../src/companion/pi-session-store.js";
 import { PiSessionStore } from "../src/companion/pi-session-store.js";
 import { type CredentialVault, createHostRuntime } from "../src/index.js";
@@ -69,12 +70,13 @@ function makeRuntime() {
 	return makeRuntimeAt(dataDir);
 }
 
-function makeRuntimeAt(dataDir: string) {
+function makeRuntimeAt(dataDir: string, backgroundAttemptTimeoutMs?: number) {
 	return createHostRuntime({
 		dataDir,
 		characterSeedRoot: characterRoot,
 		productConfig,
 		credentialVault: vault,
+		...(backgroundAttemptTimeoutMs ? { backgroundAttemptTimeoutMs } : {}),
 	});
 }
 
@@ -363,6 +365,59 @@ describe("automatic continuity", () => {
 			error: { kind: "conflict" },
 		});
 		await runtime.close();
+	});
+
+	it("starts locally while provider and reconciliation work hangs, then closes cleanly", async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-nonblocking-start-"));
+		roots.push(dataDir);
+		const initial = makeRuntimeAt(dataDir);
+		await initial.start();
+		const conversation = (await data(initial, "conversation.create:v1", {})) as { id: string };
+		await initial.close();
+
+		const turnId = randomUUID();
+		const storage = new DatabaseSync(join(dataDir, "storage", "canon.db"));
+		storage
+			.prepare("INSERT INTO pending_turns (id, conversation_id, framed_text) VALUES (?, ?, ?)")
+			.run(turnId, conversation.id, "retry after the provider becomes available");
+		storage.close();
+
+		const runtime = makeRuntimeAt(dataDir, 20);
+		const never = new Promise<never>(() => undefined);
+		const composition = Reflect.get(runtime, "composition") as {
+			canon: { indexPending: () => Promise<void> };
+			externalAgentRuns: { reconcilePending: () => Promise<number> };
+		};
+		const supervisor = Reflect.get(runtime, "supervisor") as {
+			selectModelForConversation: () => Promise<boolean>;
+		};
+		composition.canon.indexPending = vi.fn(() => never);
+		composition.externalAgentRuns.reconcilePending = vi.fn(() => never);
+		supervisor.selectModelForConversation = vi.fn(() => never);
+
+		await expect(runtime.start()).resolves.toBeUndefined();
+		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
+			settings: { relationshipMemoryEnabled: true },
+		});
+		await new Promise<void>((resolve) => setTimeout(resolve, 50));
+		const pending = new DatabaseSync(join(dataDir, "storage", "canon.db"), { readOnly: true });
+		try {
+			expect(
+				pending
+					.prepare(
+						"SELECT state, pi_entry_id AS piEntryId, last_error AS lastError FROM pending_turns WHERE id = ?",
+					)
+					.get(turnId),
+			).toMatchObject({
+				state: "accepted",
+				piEntryId: null,
+				lastError: expect.stringMatching(/^turn_reconciliation_(?:timeout|cancelled)$/),
+			});
+		} finally {
+			pending.close();
+		}
+		expect(supervisor.selectModelForConversation).toHaveBeenCalledOnce();
+		await expect(runtime.close()).resolves.toBeUndefined();
 	});
 
 	it("stores searchable canon sources and enforces a valid module hierarchy", async () => {

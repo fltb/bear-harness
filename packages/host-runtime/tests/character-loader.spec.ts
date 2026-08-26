@@ -2,10 +2,13 @@
 
 import {
 	cpSync,
+	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	realpathSync,
+	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -15,6 +18,11 @@ import { fileURLToPath } from "node:url";
 import { CharacterDisplay } from "@bear-harness/protocol/schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
+import {
+	DURABLE_FILE_TRANSACTION_VERSION,
+	type DurableFileTransactionMarker,
+	durableFileTransactionMarkerPath,
+} from "../src/storage/durable-file-transaction.js";
 
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 const temporaryDirectories: string[] = [];
@@ -24,6 +32,40 @@ afterEach(() => {
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
+
+const characterTransactionId = "20000000-0000-4000-8000-000000000001";
+
+function characterTransaction(
+	libraryRoot: string,
+	characterId: string,
+	state: DurableFileTransactionMarker["state"],
+): DurableFileTransactionMarker {
+	return {
+		version: DURABLE_FILE_TRANSACTION_VERSION,
+		transactionId: characterTransactionId,
+		target: join(libraryRoot, characterId),
+		staging: join(libraryRoot, `.${characterId}.staging-${characterTransactionId}`),
+		backup: join(libraryRoot, `.${characterId}.backup-${characterTransactionId}`),
+		state,
+	};
+}
+
+function persistCharacterTransaction(
+	libraryRoot: string,
+	marker: DurableFileTransactionMarker,
+): void {
+	writeFileSync(
+		durableFileTransactionMarkerPath(libraryRoot, marker.target),
+		`${JSON.stringify(marker)}\n`,
+	);
+}
+
+function copyCharacterPackage(destination: string, characterId: string, label: string): void {
+	cpSync(join(characterRoot, "jizhou"), destination, { recursive: true });
+	const manifestPath = join(destination, "character.yaml");
+	const manifest = readFileSync(manifestPath, "utf8").replace("id: jizhou", `id: ${characterId}`);
+	writeFileSync(manifestPath, `${manifest}\n# transaction-copy: ${label}\n`, "utf8");
+}
 
 describe("character package visual projection", () => {
 	it("projects declared SVG assets as renderer-safe data URLs", () => {
@@ -469,5 +511,98 @@ describe("character package Pi resources", () => {
 		expect(resources.pluginPaths).toContain(
 			realpathSync(join(packageDir, "plugins", "station-log", "extension.ts")),
 		);
+	});
+});
+
+describe("character package durable replacement", () => {
+	it("rejects an invalid staged edit without disturbing the old package", () => {
+		const libraryRoot = mkdtempSync(join(tmpdir(), "bear-character-transaction-reject-"));
+		temporaryDirectories.push(libraryRoot);
+		copyCharacterPackage(join(libraryRoot, "jizhou"), "jizhou", "old");
+		const loader = new CharacterLoader(characterRoot, libraryRoot);
+		const initial = loader.readPackageDocument("jizhou");
+		const invalidYaml = initial.yaml.replace("language: zh-CN", "language: not_a_language");
+
+		expect(() =>
+			loader.writePackageDocument({
+				characterId: "jizhou",
+				yaml: invalidYaml,
+				expectedSha256: initial.sha256,
+			}),
+		).toThrow();
+
+		expect(loader.readPackageDocument("jizhou").yaml).toBe(initial.yaml);
+		expect(readdirSync(libraryRoot).filter((name) => name.startsWith(".jizhou"))).toEqual([]);
+	});
+
+	it.each([
+		{ label: "edit after moving the target", characterId: "jizhou", state: "old-target-moved" },
+		{ label: "edit after activation", characterId: "jizhou", state: "activated" },
+		{
+			label: "import after moving the target",
+			characterId: "imported-recovery",
+			state: "old-target-moved",
+		},
+		{ label: "import after activation", characterId: "imported-recovery", state: "activated" },
+	] as const)(
+		"recovers a valid $label crash as the complete new package",
+		({ characterId, state }) => {
+			const libraryRoot = mkdtempSync(join(tmpdir(), "bear-character-transaction-recover-"));
+			temporaryDirectories.push(libraryRoot);
+			const marker = characterTransaction(libraryRoot, characterId, state);
+			if (characterId === "jizhou") {
+				copyCharacterPackage(marker.target, characterId, "old");
+			}
+			if (state === "old-target-moved") {
+				if (characterId === "jizhou") renameSync(marker.target, marker.backup);
+				copyCharacterPackage(marker.staging, characterId, "new");
+			} else {
+				if (characterId === "jizhou") renameSync(marker.target, marker.backup);
+				copyCharacterPackage(marker.target, characterId, "new");
+			}
+			persistCharacterTransaction(libraryRoot, marker);
+
+			const loader = new CharacterLoader(characterRoot, libraryRoot);
+			loader.bootstrapLibrary("jizhou");
+
+			expect(loader.load(characterId)?.id).toBe(characterId);
+			expect(readFileSync(join(marker.target, "character.yaml"), "utf8")).toContain(
+				"# transaction-copy: new",
+			);
+			expect(existsSync(marker.staging)).toBe(false);
+			expect(existsSync(marker.backup)).toBe(false);
+			expect(existsSync(durableFileTransactionMarkerPath(libraryRoot, marker.target))).toBe(false);
+		},
+	);
+
+	it("surfaces ambiguous recovery and preserves every package copy", () => {
+		const libraryRoot = mkdtempSync(join(tmpdir(), "bear-character-transaction-ambiguous-"));
+		temporaryDirectories.push(libraryRoot);
+		const marker = characterTransaction(libraryRoot, "jizhou", "old-target-moved");
+		copyCharacterPackage(marker.target, "jizhou", "target");
+		copyCharacterPackage(marker.staging, "jizhou", "staging");
+		copyCharacterPackage(marker.backup, "jizhou", "backup");
+		persistCharacterTransaction(libraryRoot, marker);
+
+		expect(() =>
+			new CharacterLoader(characterRoot, libraryRoot).bootstrapLibrary("jizhou"),
+		).toThrow(
+			expect.objectContaining({
+				kind: "conflict",
+				reason: "recovery_required",
+				details: expect.objectContaining({ characterId: "jizhou" }),
+			}),
+		);
+
+		for (const [path, label] of [
+			[marker.target, "target"],
+			[marker.staging, "staging"],
+			[marker.backup, "backup"],
+		] as const) {
+			expect(readFileSync(join(path, "character.yaml"), "utf8")).toContain(
+				`# transaction-copy: ${label}`,
+			);
+		}
+		expect(existsSync(durableFileTransactionMarkerPath(libraryRoot, marker.target))).toBe(true);
 	});
 });

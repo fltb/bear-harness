@@ -27,11 +27,10 @@ import {
 	readdirSync,
 	readFileSync,
 	realpathSync,
-	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { dirname, extname, isAbsolute, join, posix, relative, resolve } from "node:path";
+import { dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import type { CharacterTheme } from "@bear-harness/protocol/schema";
 import { z } from "@bear-harness/schema";
 import { eq, sql } from "drizzle-orm";
@@ -42,6 +41,11 @@ import {
 	validateCanonManifest,
 } from "../canon/package-schema.js";
 import type { AppDatabase } from "../storage/database.js";
+import {
+	type DurableFileRecoveryResult,
+	recoverDurableFileTransactionSync,
+	replaceDurableFileSync,
+} from "../storage/durable-file-transaction.js";
 import type { EventBus } from "../storage/event-bus.js";
 import {
 	activeCharacter,
@@ -363,11 +367,14 @@ export class CharacterLoader {
 	constructor(
 		private readonly seedRoot: string,
 		private readonly libraryRoot: string = seedRoot,
+		private readonly packageOverride?: Readonly<{ id: string; directory: string }>,
 	) {
 		mkdirSync(libraryRoot, { recursive: true });
+		if (!packageOverride) this.recoverPackageTransactions();
 	}
 
 	bootstrapLibrary(defaultCharacterId: string): void {
+		this.recoverPackageTransactions();
 		const libraryHasPackage = readdirSync(this.libraryRoot, { withFileTypes: true }).some(
 			(entry) =>
 				entry.isDirectory() &&
@@ -379,20 +386,74 @@ export class CharacterLoader {
 		if (!existsSync(join(source, "character.yaml"))) {
 			throw new Error(`default character seed missing: ${defaultCharacterId}`);
 		}
-		const stagingRoot = join(this.libraryRoot, `.${defaultCharacterId}-${randomUUID()}`);
-		const staging = join(stagingRoot, defaultCharacterId);
-		try {
-			cpSync(source, staging, { recursive: true, errorOnExist: true });
-			const character = new CharacterLoader(stagingRoot, stagingRoot).load(defaultCharacterId);
-			if (!character) throw new Error(`default character seed invalid: ${defaultCharacterId}`);
-			renameSync(staging, join(this.libraryRoot, defaultCharacterId));
-		} finally {
-			rmSync(stagingRoot, { recursive: true, force: true });
+		replaceDurableFileSync({
+			root: this.libraryRoot,
+			target: join(this.libraryRoot, defaultCharacterId),
+			stage: (staging) => cpSync(source, staging, { recursive: true, errorOnExist: true }),
+			verify: (candidate) => this.verifyPackageDirectory(defaultCharacterId, candidate),
+		});
+	}
+
+	private recoverPackageTransactions(): void {
+		const markerPattern = /^\.([a-z0-9][a-z0-9-]{0,63})\.durable-transaction\.json$/;
+		const markers = readdirSync(this.libraryRoot, { withFileTypes: true })
+			.filter((entry) => markerPattern.test(entry.name))
+			.map((entry) => {
+				const match = markerPattern.exec(entry.name);
+				if (!match?.[1]) throw new Error(`invalid character transaction marker: ${entry.name}`);
+				return { characterId: match[1], name: entry.name };
+			})
+			.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+		for (const { characterId } of markers) {
+			let result: DurableFileRecoveryResult;
+			try {
+				result = recoverDurableFileTransactionSync({
+					root: this.libraryRoot,
+					target: join(this.libraryRoot, characterId),
+					verify: (candidate) => this.verifyPackageDirectory(characterId, candidate),
+				});
+			} catch (error) {
+				throw {
+					kind: "conflict",
+					reason: "recovery_required",
+					details: {
+						characterId,
+						transaction: {
+							status: "recovery-required",
+							reason:
+								error instanceof Error
+									? error.message
+									: "character package transaction cannot be recovered",
+						},
+					},
+				};
+			}
+			if (result.status === "recovery-required") {
+				throw {
+					kind: "conflict",
+					reason: "recovery_required",
+					details: { characterId, transaction: result },
+				};
+			}
 		}
 	}
 
-	private packageRoot(_characterId: string): string {
-		return this.libraryRoot;
+	private verifyPackageDirectory(characterId: string, directory: string): boolean {
+		try {
+			const verifier = new CharacterLoader(dirname(directory), dirname(directory), {
+				id: characterId,
+				directory,
+			});
+			return verifier.load(characterId) !== null;
+		} catch {
+			return false;
+		}
+	}
+
+	private packageDirectory(characterId: string): string {
+		return this.packageOverride?.id === characterId
+			? this.packageOverride.directory
+			: join(this.libraryRoot, characterId);
 	}
 
 	private packageOrigin(_character: CharacterPackage): CharacterPackageOrigin {
@@ -406,26 +467,31 @@ export class CharacterLoader {
 	 * it is never a relationship-memory or memory-backend input.
 	 */
 	private characterPackagePath(characterId: string, packagePath: string): string {
-		const charactersRoot = realpathSync(resolve(this.packageRoot(characterId)));
-		const declaredPackageDir = resolve(charactersRoot, characterId);
-		const packageRelativePath = relative(charactersRoot, declaredPackageDir);
+		const charactersRoot = realpathSync(resolve(this.libraryRoot));
+		const declaredPackageDir = resolve(this.packageDirectory(characterId));
+		if (!characterId) {
+			throw new Error(`character package path escapes config root: ${characterId}`);
+		}
+		if (lstatSync(declaredPackageDir).isSymbolicLink()) {
+			throw new Error(`character package ${characterId}: package symlinks are not allowed`);
+		}
+		const packageDir = realpathSync(declaredPackageDir);
+		const packageRelativePath = relative(charactersRoot, packageDir);
 		if (
-			!characterId ||
 			packageRelativePath.length === 0 ||
 			packageRelativePath === ".." ||
-			packageRelativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) ||
+			packageRelativePath.startsWith(`..${sep}`) ||
 			isAbsolute(packageRelativePath)
 		) {
 			throw new Error(`character package path escapes config root: ${characterId}`);
 		}
-		const packageDir = realpathSync(declaredPackageDir);
 		const declaredPath = resolve(packageDir, packagePath);
 		const declaredRelativePath = relative(packageDir, declaredPath);
 		if (
 			!packagePath ||
 			declaredRelativePath.length === 0 ||
 			declaredRelativePath === ".." ||
-			declaredRelativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) ||
+			declaredRelativePath.startsWith(`..${sep}`) ||
 			isAbsolute(declaredRelativePath)
 		) {
 			throw new Error(`character package ${characterId}: path escapes package: ${packagePath}`);
@@ -433,11 +499,20 @@ export class CharacterLoader {
 		if (!existsSync(declaredPath)) {
 			throw new Error(`character package ${characterId}: package content missing: ${packagePath}`);
 		}
+		let currentPath = packageDir;
+		for (const part of declaredRelativePath.split(sep)) {
+			currentPath = join(currentPath, part);
+			if (lstatSync(currentPath).isSymbolicLink()) {
+				throw new Error(
+					`character package ${characterId}: package content symlinks are not allowed`,
+				);
+			}
+		}
 		const resolvedPath = realpathSync(declaredPath);
 		const resolvedRelativePath = relative(packageDir, resolvedPath);
 		if (
 			resolvedRelativePath === ".." ||
-			resolvedRelativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) ||
+			resolvedRelativePath.startsWith(`..${sep}`) ||
 			isAbsolute(resolvedRelativePath)
 		) {
 			throw new Error(
@@ -510,7 +585,7 @@ export class CharacterLoader {
 	 * `CharacterPackage` is package storage, not a memory record.
 	 */
 	load(id: string): CharacterPackage | null {
-		const path = join(this.packageRoot(id), id, "character.yaml");
+		const path = join(this.packageDirectory(id), "character.yaml");
 		if (!existsSync(path)) return null;
 		const parsed = parse(readFileSync(path, "utf8")) as CharacterPackage;
 		if (parsed.id !== id) {
@@ -720,7 +795,7 @@ export class CharacterLoader {
 	}
 
 	pluginHash(character: CharacterPackage): string {
-		const pluginsDir = join(resolve(this.packageRoot(character.id), character.id), "plugins");
+		const pluginsDir = join(resolve(this.packageDirectory(character.id)), "plugins");
 		if (!existsSync(pluginsDir)) return "";
 		const pluginRoot = this.characterPackagePath(character.id, "plugins");
 		const hash = createHash("sha256");
@@ -780,7 +855,7 @@ export class CharacterLoader {
 		appendSystemPrompt: string;
 		hostTools: string[];
 	} {
-		const packageDir = resolve(this.packageRoot(character.id), character.id);
+		const packageDir = resolve(this.packageDirectory(character.id));
 		const skillsDir = join(packageDir, "skills");
 		const pluginsDir = join(packageDir, "plugins");
 		const skillPaths = existsSync(skillsDir)
@@ -965,10 +1040,7 @@ export class CharacterLoader {
 	} {
 		const character = this.load(characterId);
 		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
-		const yaml = readFileSync(
-			join(this.packageRoot(characterId), characterId, "character.yaml"),
-			"utf8",
-		);
+		const yaml = readFileSync(join(this.packageDirectory(characterId), "character.yaml"), "utf8");
 		return {
 			characterId,
 			origin: this.packageOrigin(character),
@@ -993,34 +1065,26 @@ export class CharacterLoader {
 			parsed.id !== params.characterId
 		)
 			throw { kind: "invalid_request", reason: "character_id_immutable" };
-		const stagingRoot = join(this.libraryRoot, `.${params.characterId}-${randomUUID()}`);
-		const staging = join(stagingRoot, params.characterId);
 		const target = join(this.libraryRoot, params.characterId);
 		try {
-			cpSync(join(this.packageRoot(params.characterId), params.characterId), staging, {
-				recursive: true,
-				errorOnExist: true,
+			replaceDurableFileSync({
+				root: this.libraryRoot,
+				target,
+				stage: (staging) => {
+					cpSync(this.packageDirectory(params.characterId), staging, {
+						recursive: true,
+						errorOnExist: true,
+					});
+					writeFileSync(join(staging, "character.yaml"), params.yaml, "utf8");
+				},
+				verify: (candidate) => this.verifyPackageDirectory(params.characterId, candidate),
 			});
-			writeFileSync(join(staging, "character.yaml"), params.yaml, "utf8");
-			const character = new CharacterLoader(stagingRoot, stagingRoot).load(params.characterId);
-			if (!character) throw new Error("character_package_invalid");
-			const backup = join(this.libraryRoot, `.${params.characterId}-backup-${randomUUID()}`);
-			if (existsSync(target)) renameSync(target, backup);
-			try {
-				renameSync(staging, target);
-				rmSync(backup, { recursive: true, force: true });
-			} catch (error) {
-				if (existsSync(backup)) renameSync(backup, target);
-				throw error;
-			}
 			const updated = this.load(params.characterId);
 			if (!updated) throw new Error("character_package_missing_after_write");
 			return { character: updated };
 		} catch (error) {
 			if (error && typeof error === "object" && "kind" in error) throw error;
 			throw { kind: "invalid_request", reason: "character_package_invalid" };
-		} finally {
-			rmSync(stagingRoot, { recursive: true, force: true });
 		}
 	}
 
@@ -1079,37 +1143,28 @@ export class CharacterLoader {
 		}
 		const id = document.id;
 		if (this.load(id)) throw { kind: "conflict", reason: "character_package_already_exists" };
-		const stagingRoot = join(this.libraryRoot, `.import-${randomUUID()}`);
-		const stagingPackage = join(stagingRoot, id);
-		mkdirSync(stagingPackage, { recursive: true });
-		try {
-			for (const file of normalized) {
-				if (prefix && !file.path.startsWith(prefix)) {
-					throw { kind: "invalid_request", reason: "character_package_multiple_roots" };
+		const destination = join(this.libraryRoot, id);
+		replaceDurableFileSync({
+			root: this.libraryRoot,
+			target: destination,
+			stage: (stagingPackage) => {
+				mkdirSync(stagingPackage, { recursive: true });
+				for (const file of normalized) {
+					if (prefix && !file.path.startsWith(prefix)) {
+						throw { kind: "invalid_request", reason: "character_package_multiple_roots" };
+					}
+					const localPath = prefix ? file.path.slice(prefix.length) : file.path;
+					if (!localPath) continue;
+					const target = join(stagingPackage, ...localPath.split("/"));
+					mkdirSync(dirname(target), { recursive: true });
+					writeFileSync(target, file.buffer, { mode: 0o600 });
 				}
-				const localPath = prefix ? file.path.slice(prefix.length) : file.path;
-				if (!localPath) continue;
-				const target = join(stagingPackage, ...localPath.split("/"));
-				mkdirSync(dirname(target), { recursive: true });
-				writeFileSync(target, file.buffer, { mode: 0o600 });
-			}
-			const stagedLoader = new CharacterLoader(stagingRoot, stagingRoot);
-			const character = stagedLoader.load(id);
-			if (!character) throw { kind: "invalid_request", reason: "character_manifest_missing" };
-			const destination = join(this.libraryRoot, id);
-			const backup = `${destination}.backup-${randomUUID()}`;
-			if (existsSync(destination)) renameSync(destination, backup);
-			try {
-				renameSync(stagingPackage, destination);
-				rmSync(backup, { recursive: true, force: true });
-			} catch (error) {
-				if (existsSync(backup)) renameSync(backup, destination);
-				throw error;
-			}
-			return character;
-		} finally {
-			rmSync(stagingRoot, { recursive: true, force: true });
-		}
+			},
+			verify: (candidate) => this.verifyPackageDirectory(id, candidate),
+		});
+		const character = this.load(id);
+		if (!character) throw { kind: "invalid_request", reason: "character_manifest_missing" };
+		return character;
 	}
 
 	/** Validate an import-shaped package without retaining it in the installed library. */

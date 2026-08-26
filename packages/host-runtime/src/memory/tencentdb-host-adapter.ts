@@ -1,5 +1,5 @@
 /**
- * Cyber Bear host adapter for the vendored, host-neutral TdaiCore.
+ * Bear Harness host adapter for the vendored, host-neutral TdaiCore.
  *
  * This adapter deliberately has no plugin registration surface. It maps the
  * product's ProviderCatalog and ModelRegistry into the runner contract used by
@@ -45,7 +45,7 @@ import { Type } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "../models/registry.js";
 import type { ProviderCatalog } from "../providers/catalog.js";
 
-export interface CyberBearHostAdapterOptions {
+export interface BearHarnessHostAdapterOptions {
 	readonly dataDir: string;
 	readonly workspaceDir?: string;
 	readonly userId: string;
@@ -57,7 +57,7 @@ export interface CyberBearHostAdapterOptions {
 	readonly logger?: Logger;
 }
 
-const TAG = "[cyber-bear][tdai]";
+const TAG = "[bear-harness][tdai]";
 
 // Max iterations in the tool-call loop to prevent infinite loops
 const MAX_TOOL_ITERATIONS = 20;
@@ -209,7 +209,7 @@ function toolResultMessage(toolCall: ToolCall, text: string, isError: boolean): 
 	};
 }
 
-class CyberBearLLMRunner implements LLMRunner {
+class BearHarnessLLMRunner implements LLMRunner {
 	constructor(
 		private readonly providers: ProviderCatalog,
 		private readonly models: ModelRegistry,
@@ -317,7 +317,7 @@ class CyberBearLLMRunner implements LLMRunner {
 	}
 }
 
-class CyberBearLLMRunnerFactory implements LLMRunnerFactory {
+class BearHarnessLLMRunnerFactory implements LLMRunnerFactory {
 	constructor(
 		private readonly providers: ProviderCatalog,
 		private readonly models: ModelRegistry,
@@ -327,7 +327,7 @@ class CyberBearLLMRunnerFactory implements LLMRunnerFactory {
 	) {}
 
 	createRunner(options?: LLMRunnerCreateOptions): LLMRunner {
-		return new CyberBearLLMRunner(
+		return new BearHarnessLLMRunner(
 			this.providers,
 			this.models,
 			this.companionId,
@@ -339,13 +339,13 @@ class CyberBearLLMRunnerFactory implements LLMRunnerFactory {
 	}
 }
 
-export class CyberBearHostAdapter implements HostAdapter {
+export class BearHarnessHostAdapter implements HostAdapter {
 	readonly hostType = "standalone" as const;
 	private readonly context: RuntimeContext;
 	private readonly logger: Logger;
 	private readonly runnerFactory: LLMRunnerFactory;
 
-	constructor(options: CyberBearHostAdapterOptions) {
+	constructor(options: BearHarnessHostAdapterOptions) {
 		this.logger = options.logger ?? defaultLogger();
 		this.context = {
 			userId: options.userId,
@@ -357,7 +357,7 @@ export class CyberBearHostAdapter implements HostAdapter {
 			workspaceDir: options.workspaceDir ?? options.dataDir,
 			dataDir: options.dataDir,
 		};
-		this.runnerFactory = new CyberBearLLMRunnerFactory(
+		this.runnerFactory = new BearHarnessLLMRunnerFactory(
 			options.providers,
 			options.models,
 			options.companionId,

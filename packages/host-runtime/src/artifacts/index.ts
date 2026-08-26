@@ -17,17 +17,16 @@ import { createHash, randomUUID } from "node:crypto";
 import {
 	closeSync,
 	constants,
-	existsSync,
 	fstatSync,
 	fsyncSync,
 	lstatSync,
 	mkdirSync,
 	openSync,
 	readdirSync,
-	readFileSync,
 	readSync,
 	renameSync,
 	rmSync,
+	type Stats,
 	writeSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -45,13 +44,54 @@ export interface ArtifactRecord {
 	createdAt: string;
 }
 
-export class ArtifactStore {
-	private db: AppDatabase;
-	private casDir: string;
+export class ArtifactCorruptedError extends Error {
+	readonly kind = "internal" as const;
+	readonly reason = "artifact_corrupted" as const;
 
-	constructor(db: AppDatabase, casDir: string) {
-		this.db = db;
-		this.casDir = casDir;
+	constructor() {
+		super("artifact_corrupted");
+		this.name = "ArtifactCorruptedError";
+	}
+}
+
+export interface ArtifactStoreHooks {
+	syncDirectory?(directory: string): void;
+}
+
+interface OpenCasFile {
+	fd: number;
+	version: string;
+	size: number;
+}
+
+const HASH_CHUNK_BYTES = 1024 * 1024;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+function syncDirectory(directory: string): void {
+	let fd: number | undefined;
+	try {
+		fd = openSync(directory, "r");
+		fsyncSync(fd);
+	} catch (error) {
+		if (process.platform !== "win32") throw error;
+		const code = (error as NodeJS.ErrnoException).code;
+		if (!["EINVAL", "EPERM", "EISDIR", "ENOTSUP"].includes(code ?? "")) throw error;
+	} finally {
+		if (fd !== undefined) closeSync(fd);
+	}
+}
+
+export class ArtifactStore {
+	private readonly verifiedVersions = new Map<string, string>();
+	private readonly hashChunk = Buffer.allocUnsafe(HASH_CHUNK_BYTES);
+	private readonly syncDirectoryHook: (directory: string) => void;
+
+	constructor(
+		private readonly db: AppDatabase,
+		private readonly casDir: string,
+		hooks: ArtifactStoreHooks = {},
+	) {
+		this.syncDirectoryHook = hooks.syncDirectory ?? syncDirectory;
 		mkdirSync(casDir, { recursive: true });
 	}
 
@@ -70,24 +110,27 @@ export class ArtifactStore {
 		const sha256 = createHash("sha256").update(params.buffer).digest("hex");
 		const bytes = params.buffer.byteLength;
 
-		// Write to CAS: temp file → fsync → atomic rename
+		// Write to CAS: temp file → fsync → atomic rename → parent fsync.
 		const casPath = join(this.casDir, sha256);
-		if (!existsSync(casPath)) {
+		if (!this.verifyExistingCas(casPath, bytes, sha256)) {
 			const tmp = join(this.casDir, `.tmp-${id}`);
 			const fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+			let closed = false;
 			try {
 				let written = 0;
 				while (written < params.buffer.byteLength) {
 					written += writeSync(fd, params.buffer, written, params.buffer.byteLength - written);
 				}
 				fsyncSync(fd);
+				closeSync(fd);
+				closed = true;
+				renameSync(tmp, casPath);
+				this.syncDirectoryHook(this.casDir);
 			} catch (error) {
+				if (!closed) closeSync(fd);
 				rmSync(tmp, { force: true });
 				throw error;
-			} finally {
-				closeSync(fd);
 			}
-			renameSync(tmp, casPath);
 		}
 
 		const mime = params.mime;
@@ -116,8 +159,22 @@ export class ArtifactStore {
 		};
 	}
 
-	/** Mark an artifact as verified (re-opened, hash/MIME/structure all pass). */
+	/** Mark an artifact verified only after reopening and hashing its CAS bytes. */
 	markVerified(id: string): void {
+		const record = this.get(id);
+		if (!record) throw new Error("artifact_not_found");
+		try {
+			const opened = this.openArtifact(record);
+			try {
+				const version = this.verifyOpenCas(opened, record.bytes, record.sha256);
+				this.verifiedVersions.set(record.sha256, version);
+			} finally {
+				closeSync(opened.fd);
+			}
+		} catch (error) {
+			if (error instanceof ArtifactCorruptedError) this.markVerificationFailed(id);
+			throw error;
+		}
 		this.db.update(artifacts).set({ status: "verified" }).where(eq(artifacts.id, id)).run();
 	}
 
@@ -170,7 +227,7 @@ export class ArtifactStore {
 
 			tempFd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
 			const hash = createHash("sha256");
-			const chunk = Buffer.allocUnsafe(1024 * 1024);
+			const chunk = this.hashChunk;
 			let bytes = 0;
 			for (;;) {
 				const read = readSync(sourceFd, chunk, 0, chunk.byteLength, null);
@@ -201,8 +258,12 @@ export class ArtifactStore {
 
 			const sha256 = hash.digest("hex");
 			const casPath = join(this.casDir, sha256);
-			if (existsSync(casPath)) rmSync(temp, { force: true });
-			else renameSync(temp, casPath);
+			if (this.verifyExistingCas(casPath, bytes, sha256)) {
+				rmSync(temp, { force: true });
+			} else {
+				renameSync(temp, casPath);
+				this.syncDirectoryHook(this.casDir);
+			}
 			this.db
 				.insert(artifacts)
 				.values({
@@ -234,8 +295,10 @@ export class ArtifactStore {
 		}
 	}
 
-	/** Mark verification failed. */
+	/** Mark verification failed without deleting the only CAS copy. */
 	markVerificationFailed(id: string): void {
+		const record = this.get(id);
+		if (record) this.verifiedVersions.delete(record.sha256);
 		this.db
 			.update(artifacts)
 			.set({ status: "verification_failed" })
@@ -275,13 +338,36 @@ export class ArtifactStore {
 		};
 	}
 
-	/** Read the CAS blob for an artifact. Returns null if not found. */
+	/** Read the CAS blob for an artifact. A missing DB row returns null; bad CAS bytes throw. */
 	readBlob(id: string): Buffer | null {
 		const record = this.get(id);
 		if (!record) return null;
-		const casPath = join(this.casDir, record.sha256);
-		if (!existsSync(casPath)) return null;
-		return readFileSync(casPath);
+		try {
+			const opened = this.openArtifact(record);
+			try {
+				if (opened.size !== record.bytes) throw new ArtifactCorruptedError();
+				const buffer = Buffer.allocUnsafe(record.bytes);
+				let read = 0;
+				while (read < buffer.byteLength) {
+					const count = readSync(opened.fd, buffer, read, buffer.byteLength - read, read);
+					if (count === 0) throw new ArtifactCorruptedError();
+					read += count;
+				}
+				const finalVersion = this.fileVersion(opened.fd);
+				if (
+					finalVersion !== opened.version ||
+					createHash("sha256").update(buffer).digest("hex") !== record.sha256
+				) {
+					throw new ArtifactCorruptedError();
+				}
+				this.verifiedVersions.set(record.sha256, finalVersion);
+				return buffer;
+			} finally {
+				closeSync(opened.fd);
+			}
+		} catch (error) {
+			this.projectCorruption(record, error);
+		}
 	}
 
 	/** Read a bounded range without loading the complete blob into memory. */
@@ -295,46 +381,156 @@ export class ArtifactStore {
 			offset < 0 ||
 			!Number.isSafeInteger(length) ||
 			length < 1 ||
-			length > 1024 * 1024
+			length > HASH_CHUNK_BYTES
 		) {
 			throw new Error("artifact_range_invalid");
 		}
 		const record = this.get(id);
 		if (!record) return null;
-		const casPath = join(this.casDir, record.sha256);
-		let fd: number;
 		try {
-			fd = openSync(casPath, constants.O_RDONLY);
-		} catch {
-			return null;
-		}
-		try {
-			const stat = fstatSync(fd);
-			if (!stat.isFile() || stat.size !== record.bytes) return null;
-			const size = Math.min(length, Math.max(0, stat.size - offset));
-			const buffer = Buffer.allocUnsafe(size);
-			let read = 0;
-			while (read < size) {
-				const count = readSync(fd, buffer, read, size - read, offset + read);
-				if (count === 0) break;
-				read += count;
+			const opened = this.openArtifact(record);
+			try {
+				if (opened.size !== record.bytes) throw new ArtifactCorruptedError();
+				if (this.verifiedVersions.get(record.sha256) !== opened.version) {
+					const version = this.verifyOpenCas(opened, record.bytes, record.sha256);
+					this.verifiedVersions.set(record.sha256, version);
+				}
+				const size = Math.min(length, Math.max(0, record.bytes - offset));
+				const buffer = Buffer.allocUnsafe(size);
+				let read = 0;
+				while (read < size) {
+					const count = readSync(opened.fd, buffer, read, size - read, offset + read);
+					if (count === 0) throw new ArtifactCorruptedError();
+					read += count;
+				}
+				if (this.fileVersion(opened.fd) !== opened.version) throw new ArtifactCorruptedError();
+				const nextOffset = offset + read;
+				return { buffer, nextOffset, eof: nextOffset >= record.bytes };
+			} finally {
+				closeSync(opened.fd);
 			}
-			const nextOffset = offset + read;
-			return {
-				buffer: read === size ? buffer : buffer.subarray(0, read),
-				nextOffset,
-				eof: nextOffset >= stat.size,
-			};
-		} finally {
-			closeSync(fd);
+		} catch (error) {
+			this.projectCorruption(record, error);
 		}
 	}
 
 	/** Read a CAS blob by SHA-256 hash directly. */
 	readBlobByHash(sha256: string): Buffer | null {
-		const casPath = join(this.casDir, sha256);
-		if (!existsSync(casPath)) return null;
-		return readFileSync(casPath);
+		if (!SHA256_PATTERN.test(sha256)) return null;
+		const opened = this.openCasFileIfPresent(join(this.casDir, sha256));
+		if (!opened) return null;
+		try {
+			const buffer = Buffer.allocUnsafe(opened.size);
+			let read = 0;
+			while (read < buffer.byteLength) {
+				const count = readSync(opened.fd, buffer, read, buffer.byteLength - read, read);
+				if (count === 0) throw new ArtifactCorruptedError();
+				read += count;
+			}
+			if (
+				this.fileVersion(opened.fd) !== opened.version ||
+				createHash("sha256").update(buffer).digest("hex") !== sha256
+			) {
+				throw new ArtifactCorruptedError();
+			}
+			return buffer;
+		} finally {
+			closeSync(opened.fd);
+		}
+	}
+
+	private openArtifact(record: ArtifactRecord): OpenCasFile {
+		if (
+			!SHA256_PATTERN.test(record.sha256) ||
+			!Number.isSafeInteger(record.bytes) ||
+			record.bytes < 0
+		) {
+			throw new ArtifactCorruptedError();
+		}
+		return this.openCasFile(join(this.casDir, record.sha256));
+	}
+
+	private verifyExistingCas(path: string, bytes: number, sha256: string): boolean {
+		const opened = this.openCasFileIfPresent(path);
+		if (!opened) return false;
+		try {
+			this.verifyOpenCas(opened, bytes, sha256);
+			return true;
+		} finally {
+			closeSync(opened.fd);
+		}
+	}
+
+	private openCasFile(path: string): OpenCasFile {
+		const opened = this.openCasFileIfPresent(path);
+		if (!opened) throw new ArtifactCorruptedError();
+		return opened;
+	}
+
+	private openCasFileIfPresent(path: string): OpenCasFile | null {
+		let initial: Stats;
+		try {
+			initial = lstatSync(path);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+			throw error;
+		}
+		if (initial.isSymbolicLink() || !initial.isFile()) throw new ArtifactCorruptedError();
+		const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
+		let fd: number;
+		try {
+			fd = openSync(path, constants.O_RDONLY | noFollow);
+		} catch {
+			throw new ArtifactCorruptedError();
+		}
+		try {
+			const current = fstatSync(fd);
+			if (!current.isFile() || current.dev !== initial.dev || current.ino !== initial.ino) {
+				throw new ArtifactCorruptedError();
+			}
+			return {
+				fd,
+				size: current.size,
+				version: this.fileVersion(fd),
+			};
+		} catch (error) {
+			closeSync(fd);
+			throw error;
+		}
+	}
+
+	private verifyOpenCas(opened: OpenCasFile, bytes: number, sha256: string): string {
+		if (opened.size !== bytes) throw new ArtifactCorruptedError();
+		const hash = createHash("sha256");
+		let offset = 0;
+		while (offset < bytes) {
+			const read = readSync(
+				opened.fd,
+				this.hashChunk,
+				0,
+				Math.min(this.hashChunk.byteLength, bytes - offset),
+				offset,
+			);
+			if (read === 0) throw new ArtifactCorruptedError();
+			hash.update(this.hashChunk.subarray(0, read));
+			offset += read;
+		}
+		const finalVersion = this.fileVersion(opened.fd);
+		if (offset !== bytes || finalVersion !== opened.version || hash.digest("hex") !== sha256) {
+			throw new ArtifactCorruptedError();
+		}
+		return finalVersion;
+	}
+
+	private fileVersion(fd: number): string {
+		const stat = fstatSync(fd, { bigint: true });
+		if (!stat.isFile()) throw new ArtifactCorruptedError();
+		return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+	}
+
+	private projectCorruption(record: ArtifactRecord, error: unknown): never {
+		if (error instanceof ArtifactCorruptedError) this.markVerificationFailed(record.id);
+		throw error;
 	}
 
 	/** List all artifacts (optionally filtered by run). */

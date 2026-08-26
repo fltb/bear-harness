@@ -1,5 +1,5 @@
 /**
- * Cyber Bear's provider-neutral boundary for the local TencentDB memory core.
+ * Bear Harness's provider-neutral boundary for the local TencentDB memory core.
  *
  * The core is deliberately injected. This file knows only the small CRUD
  * facade needed by the host memory contract; it does not construct a core,
@@ -30,6 +30,12 @@ export type TencentDbCoreRecord = Omit<MemoryRecord, "scope">;
 export interface TencentDbCoreHit {
 	readonly record: TencentDbCoreRecord;
 	readonly score: number;
+}
+
+export interface TencentDbCoreNamespaceMigrationRequest {
+	readonly legacyNamespace: string;
+	readonly canonicalNamespace: string;
+	readonly signal?: AbortSignal;
 }
 
 export interface TencentDbCoreRememberRequest {
@@ -83,6 +89,7 @@ export interface TencentDbCoreImportanceRequest extends TencentDbCoreMutationReq
  * implementation and deterministic test doubles can both satisfy this shape.
  */
 export interface TencentDbMemoryCoreFacade {
+	migrateNamespace?(request: TencentDbCoreNamespaceMigrationRequest): Promise<void>;
 	remember(request: TencentDbCoreRememberRequest): Promise<TencentDbCoreRecord>;
 	recall(request: TencentDbCoreRecallRequest): Promise<readonly TencentDbCoreHit[]>;
 	list(request: TencentDbCoreListRequest): Promise<readonly TencentDbCoreRecord[]>;
@@ -167,8 +174,17 @@ function validateScope(scope: MemoryBankScope, operation: Operation): void {
 	}
 }
 
+const LEGACY_NAMESPACE_PREFIX = "cyber-bear";
+
+export function legacyNamespaceFor(
+	scope: MemoryBankScope,
+	legacyInstallationId = scope.installationId,
+): string {
+	return `${LEGACY_NAMESPACE_PREFIX}:${legacyInstallationId}:${scope.userId}:${scope.companionId}`;
+}
+
 export function namespaceFor(scope: MemoryBankScope): string {
-	return `cyber-bear:${scope.installationId}:${scope.userId}:${scope.companionId}`;
+	return `memory:v1:${scope.installationId}:${scope.userId}:${scope.companionId}`;
 }
 
 function sameScope(left: MemoryBankScope, right: MemoryBankScope): boolean {
@@ -184,12 +200,32 @@ export class TencentDbMemoryBackend implements MemoryBackend {
 	readonly capabilities = CAPABILITIES;
 
 	private openedScope?: MemoryBankScope;
+	private readonly legacyInstallationId?: string;
 
-	constructor(private readonly core: TencentDbMemoryCoreFacade) {}
+	constructor(
+		private readonly core: TencentDbMemoryCoreFacade,
+		options: { readonly legacyInstallationId?: string } = {},
+	) {
+		this.legacyInstallationId = options.legacyInstallationId;
+	}
 
 	async open(request: MemoryOpenRequest): Promise<void> {
 		abortIfRequested(request.signal);
 		validateScope(request.scope, "open");
+		const legacyInstallationId = this.legacyInstallationId ?? request.scope.installationId;
+		if (!legacyInstallationId.trim() || legacyInstallationId.includes(":")) {
+			throw backendError(
+				"invalid_scope",
+				"open",
+				"legacy installationId must be non-empty and must not contain ':'",
+			);
+		}
+		await this.core.migrateNamespace?.({
+			legacyNamespace: legacyNamespaceFor(request.scope, legacyInstallationId),
+			canonicalNamespace: namespaceFor(request.scope),
+			signal: request.signal,
+		});
+		abortIfRequested(request.signal);
 		this.openedScope = { ...request.scope };
 	}
 
