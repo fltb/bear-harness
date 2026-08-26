@@ -63,17 +63,17 @@ export type ProductIdentityReference = Pick<
  * one source of truth without importing the live config for constants.
  */
 export const OFFICIAL_BRAND: Readonly<ProductIdentityReference> = Object.freeze({
-	productName: "Cyber Bear",
+	productName: "Bear Harness",
 	appId: "io.github.fltb.bear-harness",
-	dataDirectoryName: "cyber-bear",
+	dataDirectoryName: "bear-harness",
 	artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
-	executableName: "cyber-bear",
+	executableName: "bear-harness",
 	defaultCharacterId: "jizhou",
 	brandLicense: Object.freeze({
 		spdx: "CC-BY-SA-4.0",
-		workTitle: "Cyber Bear Brand Assets",
+		workTitle: "Bear Harness Brand Assets",
 		creator: "fltb",
-		attribution: "fltb — Cyber Bear Brand Assets",
+		attribution: "fltb — 白熊客栈 / Bear Harness Brand Assets",
 		sourceUrl: "https://github.com/fltb/bear-harness",
 		modified: false,
 		modificationNotice: "",
@@ -278,17 +278,17 @@ export function assertProductConfig(
 }
 
 export const productConfig: ProductConfig = {
-	productName: "Cyber Bear",
+	productName: "Bear Harness",
 	appId: "io.github.fltb.bear-harness",
-	dataDirectoryName: "cyber-bear",
+	dataDirectoryName: "bear-harness",
 	artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
-	executableName: "cyber-bear",
+	executableName: "bear-harness",
 	defaultCharacterId: "jizhou",
 	brandLicense: {
 		spdx: "CC-BY-SA-4.0",
-		workTitle: "Cyber Bear Brand Assets",
+		workTitle: "Bear Harness Brand Assets",
 		creator: "fltb",
-		attribution: "fltb — Cyber Bear Brand Assets",
+		attribution: "fltb — 白熊客栈 / Bear Harness Brand Assets",
 		sourceUrl: "https://github.com/fltb/bear-harness",
 		modified: false,
 		modificationNotice: "",

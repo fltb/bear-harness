@@ -4,6 +4,7 @@ import type { zhCN } from "./zh-CN.js";
 
 export const zhTW = {
 	"shell": {
+		"productName": "白熊客棧",
 		"fallbackComposerPlaceholder": "說點什麼…"
 	},
 	"composer": {

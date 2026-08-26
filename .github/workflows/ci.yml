@@ -193,6 +193,6 @@ jobs:
           fi
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: cyber-bear-${{ matrix.os-name }}-${{ matrix.arch }}
+          name: bear-harness-${{ matrix.os-name }}-${{ matrix.arch }}
           path: ${{ matrix.upload-glob }}
           if-no-files-found: error

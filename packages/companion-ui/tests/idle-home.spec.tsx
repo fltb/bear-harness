@@ -1,4 +1,5 @@
-import { zhCN } from "@bear-harness/i18n/locales";
+import { setProductLocale } from "@bear-harness/i18n";
+import { en, zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -6,15 +7,21 @@ import { CompanionApp } from "../src/index.js";
 import { createTestClient, OFFICIAL_PRODUCT, THEMED_CHARACTER } from "./fixtures.js";
 
 describe("idle homepage (official config, no bridge)", () => {
-	it("renders app title and the shell frame", () => {
+	it("renders the localized app identity and shell frame", async () => {
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		expect(document.title).toBe("Cyber Bear");
+		expect(document.title).toBe(zhCN.shell.productName);
+		expect(screen.getByRole("application", { name: zhCN.shell.productName })).toBeInTheDocument();
 		// Without a bridge, character data is absent — the shell shows the
 		// scene area and accessible controls but no character-specific copy.
 		expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
 		expect(screen.getByPlaceholderText(zhCN.shell.fallbackComposerPlaceholder)).toBeInTheDocument();
+
+		await setProductLocale("en");
+
+		await waitFor(() => expect(document.title).toBe(en.shell.productName));
+		expect(screen.getByRole("application", { name: en.shell.productName })).toBeInTheDocument();
 	});
 
 	it("loads providers and requires a reply model before the first meeting", async () => {
@@ -126,7 +133,7 @@ describe("idle homepage (official config, no bridge)", () => {
 		const warning = await screen.findByRole("status");
 		expect(warning).toHaveTextContent("ja-JP");
 		expect(warning).toHaveTextContent("en-US");
-		const app = screen.getByRole("application", { name: OFFICIAL_PRODUCT.productName });
+		const app = screen.getByRole("application", { name: zhCN.shell.productName });
 		expect(app?.style.getPropertyValue("--sys-accent")).toBe("#42c7a5");
 		expect(screen.getByPlaceholderText("Message")).toBeInTheDocument();
 		expect(warning).not.toHaveAttribute("aria-modal");

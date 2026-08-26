@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
-  <title id="title">Cyber Bear 极光书房概念图</title>
+  <title id="title">白熊客栈极光书房概念图</title>
   <desc id="desc">一间安静的极地书房，北极熊机魂陪伴用户，桌面上是文件、行动确认和可直接使用的结果。</desc>
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#112f3c"/><stop offset=".45" stop-color="#1c4f55"/><stop offset="1" stop-color="#102631"/></linearGradient>
@@ -87,7 +87,7 @@
   </g>
 
   <g transform="translate(94 92)">
-    <text fill="#dcece5" font-family="system-ui,sans-serif" font-weight="750" font-size="28">CYBER BEAR · 极光书房</text>
+    <text fill="#dcece5" font-family="system-ui,sans-serif" font-weight="750" font-size="28">BEAR HARNESS · 白熊客栈</text>
     <text y="34" fill="#abc9c0" font-family="system-ui,sans-serif" font-size="15" letter-spacing="2">A QUIET LOCAL WORK COMPANION</text>
   </g>
 </svg>

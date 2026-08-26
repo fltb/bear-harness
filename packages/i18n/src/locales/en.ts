@@ -3,6 +3,7 @@ import type { zhCN } from "./zh-CN.js";
 
 export const en = {
 	shell: {
+		productName: "Bear Harness",
 		fallbackComposerPlaceholder: "Message your companion...",
 	},
 	composer: {

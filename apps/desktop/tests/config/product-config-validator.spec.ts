@@ -11,6 +11,38 @@ import { FORK_PRODUCT, OFFICIAL_PRODUCT } from "../fixtures";
  * wrapper's job and are covered by validate-product-config.spec.ts).
  */
 describe("product-config validator (shared pure contract)", () => {
+	it("pins the exact Bear Harness official identity and attribution", () => {
+		expect(OFFICIAL_PRODUCT).toEqual({
+			productName: "Bear Harness",
+			appId: "io.github.fltb.bear-harness",
+			dataDirectoryName: "bear-harness",
+			artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
+			executableName: "bear-harness",
+			defaultCharacterId: "jizhou",
+			brandLicense: {
+				spdx: "CC-BY-SA-4.0",
+				workTitle: "Bear Harness Brand Assets",
+				creator: "fltb",
+				attribution: "fltb — 白熊客栈 / Bear Harness Brand Assets",
+				sourceUrl: "https://github.com/fltb/bear-harness",
+				modified: false,
+				modificationNotice: "",
+			},
+			icon: "packages/product-config/assets/icon.png",
+			updateFeedUrl: "",
+		});
+		expect(OFFICIAL_BRAND).toEqual({
+			productName: "Bear Harness",
+			appId: "io.github.fltb.bear-harness",
+			dataDirectoryName: "bear-harness",
+			artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
+			executableName: "bear-harness",
+			defaultCharacterId: "jizhou",
+			brandLicense: OFFICIAL_PRODUCT.brandLicense,
+			icon: "packages/product-config/assets/icon.png",
+		});
+	});
+
 	it("accepts the official config against the official reference", () => {
 		expect(validateProductConfig(OFFICIAL_PRODUCT, OFFICIAL_BRAND)).toEqual([]);
 	});

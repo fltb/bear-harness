@@ -1,6 +1,6 @@
 /**
  * Package artifact gate: reads the dynamic release identity from the shared
- * product-config package (never hardcoding Cyber Bear), expands the artifactName
+ * product-config package (never hardcoding Bear Harness), expands the artifactName
  * macro template for the requested os/arch/extensions, and verifies each
  * artifact exists with non-zero size under apps/desktop/release. Prints a
  * JSON manifest (paths + sizes) that CI uses for uploads and arch proofs.

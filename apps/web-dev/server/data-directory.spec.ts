@@ -9,56 +9,56 @@ import {
 
 test("normal web development uses the same platform directory as Electron userData", () => {
 	assert.equal(
-		desktopDataDirectory("cyber-bear", undefined, "linux", {}, "/home/user"),
-		resolve("/home/user/.config/cyber-bear"),
+		desktopDataDirectory("bear-harness", undefined, "linux", {}, "/home/user"),
+		resolve("/home/user/.config/bear-harness"),
 	);
 	assert.equal(
 		desktopDataDirectory(
-			"cyber-bear",
+			"bear-harness",
 			undefined,
 			"linux",
 			{ XDG_CONFIG_HOME: "/xdg/config" },
 			"/home/user",
 		),
-		resolve("/xdg/config/cyber-bear"),
+		resolve("/xdg/config/bear-harness"),
 	);
 	assert.equal(
-		desktopDataDirectory("cyber-bear", undefined, "darwin", {}, "/Users/user"),
-		resolve("/Users/user/Library/Application Support/cyber-bear"),
+		desktopDataDirectory("bear-harness", undefined, "darwin", {}, "/Users/user"),
+		resolve("/Users/user/Library/Application Support/bear-harness"),
 	);
 	assert.equal(
 		desktopDataDirectory(
-			"cyber-bear",
+			"bear-harness",
 			undefined,
 			"win32",
 			{ APPDATA: "/Users/user/AppData/Roaming" },
 			"/Users/user",
 		),
-		resolve("/Users/user/AppData/Roaming/cyber-bear"),
+		resolve("/Users/user/AppData/Roaming/bear-harness"),
 	);
 });
 
 test("an explicit E2E data directory remains isolated", () => {
 	assert.equal(
-		desktopDataDirectory("cyber-bear", "/test-results/e2e-data", "linux", {}, "/home/user"),
+		desktopDataDirectory("bear-harness", "/test-results/e2e-data", "linux", {}, "/home/user"),
 		resolve("/test-results/e2e-data"),
 	);
 	assert.equal(
-		webDevDataDirectory("cyber-bear", "/test-results/e2e-data", "linux", {}, "/home/user"),
+		webDevDataDirectory("bear-harness", "/test-results/e2e-data", "linux", {}, "/home/user"),
 		resolve("/test-results/e2e-data"),
 	);
 });
 
 test("an explicitly isolated web-dev directory is scoped to the launcher process", () => {
 	const first = webDevDataDirectory(
-		"cyber-bear",
+		"bear-harness",
 		"/test-results/e2e-data",
 		"linux",
 		{ BEAR_WEB_DEV_DATA_SCOPE: "101" },
 		"/home/user",
 	);
 	const second = webDevDataDirectory(
-		"cyber-bear",
+		"bear-harness",
 		"/test-results/e2e-data",
 		"linux",
 		{ BEAR_WEB_DEV_DATA_SCOPE: "202" },

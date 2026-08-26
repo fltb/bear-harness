@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
-  <title id="title">Cyber Bear 门后的第一夜概念图</title>
+  <title id="title">白熊客栈 门后的第一夜概念图</title>
   <desc id="desc">用户第一次打开极光书房的门，已有过去的机魂北极熊极昼从旧极光站的风雪中跨入新居所。</desc>
   <defs>
     <linearGradient id="room" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#172a31"/><stop offset=".52" stop-color="#213b3e"/><stop offset="1" stop-color="#15252d"/></linearGradient>
@@ -23,7 +23,7 @@
 
   <g transform="translate(88 95)">
     <text fill="#dcebe6" font-family="system-ui,sans-serif" font-size="25" font-weight="750">门后的第一夜</text>
-    <text y="31" fill="#8fb5ad" font-family="system-ui,sans-serif" font-size="13" letter-spacing="2.7">THE THRESHOLD ROOM · CYBER BEAR</text>
+    <text y="31" fill="#8fb5ad" font-family="system-ui,sans-serif" font-size="13" letter-spacing="2.7">THE THRESHOLD ROOM · BEAR HARNESS</text>
   </g>
 
   <g filter="url(#shadow)">

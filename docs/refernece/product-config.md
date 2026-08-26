@@ -39,9 +39,9 @@ logic.
 | Field | Type | Current value | Meaning |
 | --- | --- | --- | --- |
 | `spdx` | `"CC-BY-SA-4.0"` | `CC-BY-SA-4.0` | The only SPDX value accepted by the repository validator. |
-| `workTitle` | `string` | `Cyber Bear Brand Assets` | Name of the licensed brand work. |
+| `workTitle` | `string` | `Bear Harness Brand Assets` | Name of the licensed brand work. |
 | `creator` | `string` | `fltb` | Creator/maintainer attribution; also used as the Linux package maintainer. |
-| `attribution` | `string` | `fltb — Cyber Bear Brand Assets` | Human-readable attribution emitted into the build attribution file. |
+| `attribution` | `string` | `fltb — 白熊客栈 / Bear Harness Brand Assets` | Human-readable attribution emitted into the build attribution file. |
 | `sourceUrl` | `string` | `https://github.com/fltb/bear-harness` | Upstream/source location printed in attribution. |
 | `modified` | `boolean` | `false` | Whether the brand work has been changed for this product. |
 | `modificationNotice` | `string` | empty | Required to be non-empty when `modified` is `true`; empty is the official unmodified value. |
@@ -89,11 +89,11 @@ checks for icon existence/dimensions and the default character manifest.
 
 | Field | Type | Current value | Consumer and contract |
 | --- | --- | --- | --- |
-| `productName` | `string` | `Cyber Bear` | Human-facing name. Electron uses it as the native window title; the UI uses it for `document.title`, the application `aria-label`, and the story confirmation heading. Electron-builder also uses it for package metadata and the Linux desktop entry name. |
+| `productName` | `string` | `Bear Harness` | Human-facing name. Electron uses it as the native window title; the UI uses it for `document.title`, the application `aria-label`, and the story confirmation heading. Electron-builder also uses it for package metadata and the Linux desktop entry name. |
 | `appId` | `string` | `io.github.fltb.bear-harness` | Installation/application identity. Electron-builder maps it to `appId` and Linux `desktopName`; this must change for a fork to avoid identity collisions. The validator requires a reverse-domain form. |
-| `dataDirectoryName` | `string` | `cyber-bear` | Product-specific suffix beneath Electron's app-data root. The desktop process sets `userData` to this directory and puts Chromium session data below it. Web Dev uses the same value through `webDevDataDirectory`; a fork must change it to isolate persisted state. |
+| `dataDirectoryName` | `string` | `bear-harness` | Product-specific suffix beneath Electron's app-data root. The desktop process sets `userData` to this directory and puts Chromium session data below it. Web Dev uses the same value through `webDevDataDirectory`; a fork must change it to isolate persisted state. |
 | `artifactName` | `string` | `${productName}-${version}-${os}-${arch}.${ext}` | Electron-builder artifact filename template. The validator requires `${version}`, `${os}`, `${arch}`, and `${ext}` macros. |
-| `executableName` | `string` | `cyber-bear` | Packaged binary name. The validator requires ASCII kebab-case; packaging and packaged-binary resolution use it on macOS, Windows, and Linux. |
+| `executableName` | `string` | `bear-harness` | Packaged binary name. The validator requires ASCII kebab-case; packaging and packaged-binary resolution use it on macOS, Windows, and Linux. |
 | `defaultCharacterId` | `string` | `jizhou` | Default character-package ID passed into Host Runtime. It seeds default companion/memory namespaces and is used when no active character has been selected. The shared validator checks non-empty kebab-case; the desktop packaging validator also requires `config/characters/<id>/character.yaml`. |
 | `brandLicense` | `BrandLicense` | See above | Attribution and modification declaration for the brand work. It drives Linux maintainer metadata and generated `BRAND-ATTRIBUTION.txt`. |
 | `icon` | `string \| null` | `packages/product-config/assets/icon.png` | Repository-root-relative icon path, or `null` to omit a custom icon. Electron-builder resolves the path for macOS, Linux, and Windows. Shared validation rejects omitted, absolute, and `..`-escaping paths; the desktop packaging validator additionally requires a readable `.png` (exactly 1024×1024) or readable `.svg`. |

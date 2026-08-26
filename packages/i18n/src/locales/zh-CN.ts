@@ -1,6 +1,7 @@
 /** Simplified Chinese application messages. Character-package copy remains separate. */
 export const zhCN = {
 	shell: {
+		productName: "白熊客栈",
 		fallbackComposerPlaceholder: "说点什么…",
 	},
 	composer: {

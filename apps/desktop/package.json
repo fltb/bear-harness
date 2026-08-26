@@ -4,7 +4,7 @@
 	"private": true,
 	"type": "module",
 	"main": "dist/main/index.js",
-	"description": "Cyber Bear desktop app — SolidJS renderer on an Electron shell.",
+	"description": "Bear Harness desktop app — SolidJS renderer on an Electron shell.",
 	"homepage": "https://github.com/fltb/bear-harness",
 	"author": "fltb",
 	"scripts": {

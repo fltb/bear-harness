@@ -18,7 +18,7 @@ describe("check-upstream-brand", () => {
 	});
 
 	it("fails when the release identity changes while reusing the official dataDirectoryName", () => {
-		const config = { ...OFFICIAL_PRODUCT, appId: "io.example.cyber-bear-2" };
+		const config = { ...OFFICIAL_PRODUCT, appId: "io.example.bear-harness-2" };
 		expect(checkUpstreamBrand(config)).toBe("appId");
 	});
 

@@ -5,11 +5,12 @@ import { CompanionApp } from "../src/index.js";
 import { createTestClient, FORK_PRODUCT } from "./fixtures.js";
 
 describe("idle homepage (fork config injection, no bridge)", () => {
-	it("renders the fork app title and shell frame", () => {
+	it("renders the locale-owned app title with the fork shell frame", () => {
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={FORK_PRODUCT} client={client} />);
 
-		expect(document.title).toBe("North Companion");
+		expect(document.title).toBe(zhCN.shell.productName);
+		expect(screen.getByRole("application", { name: zhCN.shell.productName })).toBeInTheDocument();
 		// Character content comes only from the character package via the
 		// bridge — no hardcoded fork strings in product.config.
 		expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();

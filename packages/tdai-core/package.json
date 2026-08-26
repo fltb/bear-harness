@@ -3,9 +3,9 @@
 	"version": "0.0.0",
 	"private": true,
 	"type": "module",
-	"description": "Host-neutral TencentDB Agent Memory core for Cyber Bear.",
+	"description": "Host-neutral TencentDB Agent Memory core for Bear Harness.",
 	"license": "MIT",
-	"author": "TencentDB Agent Memory Team (upstream); Cyber Bear local package",
+	"author": "TencentDB Agent Memory Team (upstream); Bear Harness local package",
 	"upstream": {
 		"package": "@tencentdb-agent-memory/memory-tencentdb",
 		"version": "0.3.6",

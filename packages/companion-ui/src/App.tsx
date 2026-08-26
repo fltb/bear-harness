@@ -40,37 +40,32 @@ export function CompanionApp(props: { product: Readonly<ProductConfig>; client: 
 	return (
 		<I18nextProvider i18n={i18n}>
 			<QueryClientProvider client={queryClient}>
-				<CompanionRuntime product={props.product} client={props.client} />
+				<CompanionRuntime client={props.client} />
 			</QueryClientProvider>
 		</I18nextProvider>
 	);
 }
 
-function CompanionRuntime(props: { product: Readonly<ProductConfig>; client: CompanionClient }) {
+function CompanionRuntime(props: { client: CompanionClient }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const [currentLocale] = useLanguage(() => i18n);
 	const store = createCompanionStore(props.client);
 	const workflow = createShellWorkflowStore({ store, currentLocale, translate: t });
 
 	createEffect(() => {
-		document.title = props.product.productName;
+		document.title = t("shell.productName");
 	});
 
 	return (
 		<DesktopProvider store={store}>
 			<ShellWorkflowProvider workflow={workflow}>
-				<DesktopFrame product={props.product} />
+				<DesktopFrame />
 			</ShellWorkflowProvider>
 		</DesktopProvider>
 	);
 }
 
-/** The desktop frame: sidebar plus the conversation stage. */
-type DesktopFrameProps = {
-	product: Readonly<ProductConfig>;
-};
-
-function DesktopFrame(props: DesktopFrameProps) {
+function DesktopFrame() {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const workflow = useShellWorkflowStore();
@@ -85,7 +80,7 @@ function DesktopFrame(props: DesktopFrameProps) {
 			data-layout="desktop"
 			data-supported-min-width={SUPPORTED_DESKTOP_MIN_WIDTH}
 			role="application"
-			aria-label={props.product.productName}
+			aria-label={t("shell.productName")}
 		>
 			<div class="shell">
 				<AttachmentPreviewProvider>

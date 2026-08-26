@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
-  <title id="title">Cyber Bear Roleplay-first 高保真设计图</title>
+  <title id="title">Bear Harness Roleplay-first 高保真设计图</title>
   <desc id="desc">极光书房成为主场景，极昼与用户持续相处；现实工作以独立系统行动卡短暂拉开幕布。</desc>
   <defs>
     <linearGradient id="page" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#cadbd5"/><stop offset=".48" stop-color="#e7e6de"/><stop offset="1" stop-color="#d8c7b4"/></linearGradient>
@@ -19,7 +19,7 @@
     <rect x="42" y="38" width="1516" height="57" rx="29" fill="#eceee8"/>
     <path d="M42 72v23h1516V72" fill="#eceee8"/>
     <circle cx="72" cy="66" r="7" fill="#d9957c"/><circle cx="95" cy="66" r="7" fill="#dfba70"/><circle cx="118" cy="66" r="7" fill="#7eac8b"/>
-    <text x="147" y="71" fill="#34504e" font-family="system-ui,sans-serif" font-size="13" font-weight="750">Cyber Bear</text>
+    <text x="147" y="71" fill="#34504e" font-family="system-ui,sans-serif" font-size="13" font-weight="750">Bear Harness</text>
     <text x="758" y="71" fill="#304a48" font-family="Georgia,'Songti SC',serif" font-size="14" text-anchor="middle">极光书房 · 第一夜</text>
     <circle cx="1348" cy="66" r="5" fill="#73a698"/><text x="1360" y="71" fill="#6f817c" font-family="system-ui,sans-serif" font-size="11">极昼的声音稳定</text>
     <rect x="1462" y="50" width="72" height="32" rx="10" fill="#dfe8e2"/><text x="1498" y="71" fill="#41625d" font-family="system-ui,sans-serif" font-size="11" text-anchor="middle">幕后</text>
