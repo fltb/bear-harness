@@ -30,10 +30,18 @@ export default defineConfig({
 	workers: 1,
 	reporter: [["list"]],
 	outputDir: resolve(here, "../../test-results/web-dev"),
+	snapshotPathTemplate: "{testDir}/{testFilePath}-snapshots/{arg}{ext}",
 	forbidOnly: true,
 	retries: 0,
+	expect: {
+		toHaveScreenshot: {
+			animations: "disabled",
+			maxDiffPixelRatio: 0.01,
+		},
+	},
 	use: {
 		baseURL,
+		colorScheme: "dark",
 	},
 	webServer: [
 		{

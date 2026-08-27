@@ -18,6 +18,13 @@
 	@apply max-w-6xl;
 }
 
+.first-meeting-provider-setup,
+.system-provider-setup,
+.conversation-model-settings,
+.current-role-package-tabs {
+	@apply min-w-0;
+}
+
 .backstage-head {
 	@apply flex shrink-0 items-center justify-between gap-3 px-5 pb-1 pt-5;
 }
@@ -48,7 +55,7 @@
 }
 
 .backstage-tabs .tabs {
-	@apply mb-5 grid shrink-0 grid-cols-3 gap-2;
+	@apply mb-5 grid shrink-0 grid-cols-2 gap-2;
 }
 
 .tab {
@@ -159,6 +166,34 @@
 	--semantic-fg-role: danger;
 	color: var(--semantic-role-danger);
 	background: var(--surface-danger);
+}
+
+.role-active {
+	@apply rounded-full px-2 py-1 text-xs;
+	color: var(--text-success);
+	background: var(--surface-success);
+}
+
+.memory-section,
+.memory-edit,
+.download-progress {
+	@apply grid gap-3;
+}
+
+.download-progress progress {
+	@apply w-full;
+}
+
+.scope-tabs {
+	@apply flex flex-wrap gap-2;
+}
+
+.model-search-field {
+	@apply block;
+}
+
+.model-search-input {
+	@apply w-full;
 }
 
 .memory-list,
@@ -440,6 +475,10 @@
 
 .roleplay-choices {
 	@apply mx-auto my-3 grid w-full max-w-2xl gap-2.5;
+}
+
+.roleplay-choice-list {
+	@apply grid gap-2;
 }
 .roleplay-media-overlay {
 	@apply fixed inset-0 z-50;

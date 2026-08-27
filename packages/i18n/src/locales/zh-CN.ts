@@ -75,6 +75,13 @@ export const zhCN = {
 		readOnly: "不可写",
 		revision: "修订",
 		packageTab: "角色包本体",
+		promptFields: {
+			description: "角色简介",
+			personality: "性格",
+			scenario: "情境",
+			system_prompt: "角色规则",
+			mes_example: "对话示例",
+		},
 		storageTab: "角色包存储",
 		memoryTab: "角色记忆",
 		pluginTrust: "插件信任",
@@ -369,7 +376,8 @@ export const zhCN = {
 		localModelReady: "本地模型已下载、加载并就绪。",
 		localModelFailed: "本地模型下载或加载失败",
 		notSelected: "未选择",
-		saveNetwork: "保存网络与记忆设置",
+		saveNetwork: "保存网络设置",
+		saveEmbedding: "保存记忆向量设置",
 		saved: "已保存。网络、向量服务和下载源设置立即生效。",
 		visionModel: "图片读取模型",
 		visionModelHint:

@@ -36,6 +36,7 @@ const forbiddenProperties = new Set([
 
 const violations = targets.flatMap((target) =>
 	(() => {
+		const isLayoutTemplate = target.endsWith("/styles/layout.css");
 		let keyframeDepth = 0;
 		return readFileSync(target, "utf8")
 			.split("\n")
@@ -49,7 +50,11 @@ const violations = targets.flatMap((target) =>
 				const match = line.match(/^\s*([a-z-]+):/);
 				const linePrefix = `${target}:${index + 1}:`;
 				const violations = [];
-				if (match && forbiddenProperties.has(match[1])) {
+				if (
+					match &&
+					forbiddenProperties.has(match[1]) &&
+					!(isLayoutTemplate && match[1] === "grid-template-columns")
+				) {
 					violations.push(`${linePrefix} use Tailwind @apply instead of '${match[1]}'`);
 				}
 				if (/\b[a-z-]+-?\[[^\]]*\d+(?:\.\d+)?px[^\]]*\]/.test(line)) {

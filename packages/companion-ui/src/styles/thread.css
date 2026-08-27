@@ -3,7 +3,7 @@
 /* ------------------------------------------------------------------ */
 
 .thread {
-	@apply absolute bottom-1/5 right-6 top-16 z-10 flex w-1/2 flex-col gap-2.5 overflow-y-auto px-1 pb-3;
+	@apply flex min-h-0 min-w-0 flex-col gap-2.5 overflow-y-auto px-1 pb-3;
 	scrollbar-width: thin;
 	scrollbar-color: var(--scroll-thumb) transparent;
 }
@@ -75,8 +75,29 @@
 	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+.pi-timeline-message,
+.streaming-message {
+	@apply min-w-0;
+}
+
+.pi-tool-name {
+	@apply min-w-0 flex-1 truncate;
+}
+
+.stream-error {
+	@apply mt-2 block rounded-md px-2 py-1 text-xs;
+	color: var(--text-danger);
+	background: var(--surface-danger);
+}
+
+.message-inline-editor,
+.message-correction-panel,
+.message-correction-presets {
+	@apply mt-2 grid gap-2;
+}
+
 .composer {
-	@apply absolute bottom-6 right-6 z-10 grid w-1/2 gap-2 rounded-xl border p-2;
+	@apply grid min-w-0 gap-2 rounded-xl border p-2;
 	@apply grid-cols-3;
 	grid-template-areas:
 		"input input input"
@@ -157,8 +178,49 @@
 	color: var(--text-action);
 }
 
-.composer-attach {
+.composer-attach-menu {
 	grid-area: attach;
+	@apply relative;
+}
+
+.composer-attach-options {
+	@apply absolute bottom-full left-0 z-40 mb-2 grid min-w-40 overflow-hidden rounded-lg border p-1 shadow-app;
+	border-color: var(--line-strong);
+	background: var(--surface-panel);
+}
+
+.composer-attach-options button {
+	@apply min-h-9 rounded-md border-0 px-3 text-left text-xs cursor-pointer;
+	color: var(--text-strong);
+	background: transparent;
+}
+
+.composer-attach-options button:hover,
+.composer-attach-options button:focus-visible {
+	background: var(--surface-success);
+}
+
+.composer-attachment-tray,
+.composer > [role="alert"] {
+	grid-column: 1 / -1;
+}
+
+.composer-attachment-tray {
+	@apply m-0 grid max-h-32 list-none gap-1 overflow-y-auto p-0;
+}
+
+.composer-attachment-draft {
+	@apply flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-xs;
+	background: var(--surface-control);
+}
+
+.composer-attachment-draft strong {
+	@apply min-w-0 flex-1 truncate;
+}
+
+.composer-attachment-draft button {
+	@apply shrink-0 border-0 bg-transparent p-1 text-xs cursor-pointer;
+	color: var(--text-action);
 }
 
 .composer-image-routing {
@@ -344,18 +406,3 @@
 	@apply col-span-2 m-0 break-all;
 	color: var(--text-strong);
 }
-
-/* ------------------------------------------------------------------ */
-/* Reduced motion                                                       */
-/* ------------------------------------------------------------------ */
-
-@media (prefers-reduced-motion: reduce) {
-	*,
-	*::before,
-	*::after {
-		transition: none !important;
-		animation: none !important;
-	}
-}
-
-/* ------------------------------------------------------------------ */

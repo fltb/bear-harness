@@ -1,0 +1,18 @@
+{
+	"styleSheets": [
+		"packages/companion-ui/src/styles.css",
+		"packages/companion-ui/src/styles/base.css",
+		"packages/companion-ui/src/styles/interaction.css",
+		"packages/companion-ui/src/styles/layout.css",
+		"packages/companion-ui/src/styles/settings.css",
+		"packages/companion-ui/src/styles/shell.css",
+		"packages/companion-ui/src/styles/thread.css",
+		"packages/companion-ui/src/styles/visuals.css"
+	],
+	"layoutStyleSheet": "packages/companion-ui/src/styles/layout.css",
+	"tokenStyleSheet": "packages/companion-ui/src/styles/base.css",
+	"inlineStyleAllowlist": [
+		"packages/companion-ui/src/App.tsx:workflow.themeStyle()",
+		"packages/companion-ui/src/CharacterPresence.tsx:presenceStyle(asset)"
+	]
+}

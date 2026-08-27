@@ -22,6 +22,7 @@ import { useConversationWorkflow } from "./stores/conversation-workflows.js";
 export function Sidebar(props: {
 	character: CharacterDisplay | undefined;
 	onOpenBackstage: (tab: "roles" | "settings") => void;
+	onNavigate?: () => void;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
@@ -109,7 +110,10 @@ export function Sidebar(props: {
 					class="new-conversation"
 					aria-label={t("sidebar.newConversation")}
 					title={t("sidebar.newConversation")}
-					onClick={() => void workflow.runSidebarAction(() => store.createConversation())}
+					onClick={() => {
+						props.onNavigate?.();
+						void workflow.runSidebarAction(() => store.createConversation());
+					}}
 				>
 					<Icon icon={faPlus} />
 				</Button>
@@ -214,11 +218,12 @@ export function Sidebar(props: {
 												aria-current={
 													conversation.id === store.activeConversationId ? "page" : undefined
 												}
-												onClick={() =>
+												onClick={() => {
+													props.onNavigate?.();
 													void workflow.runSidebarAction(() =>
 														store.selectConversation(conversation.id),
-													)
-												}
+													);
+												}}
 											>
 												<strong>{conversation.title}</strong>
 												<span>{conversation.sceneTitle}</span>
@@ -276,7 +281,14 @@ export function Sidebar(props: {
 				</nav>
 				<div class="system-section">
 					<div class="section-label">{t("sidebar.application")}</div>
-					<Button type="button" class="system-nav" onClick={() => props.onOpenBackstage("roles")}>
+					<Button
+						type="button"
+						class="system-nav"
+						onClick={() => {
+							props.onNavigate?.();
+							props.onOpenBackstage("roles");
+						}}
+					>
 						<span class="gear" aria-hidden="true">
 							<Icon icon={faGear} />
 						</span>
@@ -285,7 +297,10 @@ export function Sidebar(props: {
 					<Button
 						type="button"
 						class="system-nav"
-						onClick={() => props.onOpenBackstage("settings")}
+						onClick={() => {
+							props.onNavigate?.();
+							props.onOpenBackstage("settings");
+						}}
 					>
 						<span class="gear" aria-hidden="true">
 							<Icon icon={faGear} />

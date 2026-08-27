@@ -18,11 +18,8 @@ export function DownloadProgress(props: {
 	return (
 		<div class="download-progress" aria-busy="true">
 			<p role="status">{props.label}</p>
-			<Show
-				when={percentage() !== undefined}
-				fallback={<progress class="w-full" aria-label={props.label} />}
-			>
-				<progress class="w-full" aria-label={props.label} max={100} value={percentage() ?? 0} />
+			<Show when={percentage() !== undefined} fallback={<progress aria-label={props.label} />}>
+				<progress aria-label={props.label} max={100} value={percentage() ?? 0} />
 			</Show>
 			<p>
 				{bytes(props.downloadedBytes)}

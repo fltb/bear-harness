@@ -126,7 +126,7 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 			return t("settings.localModelEnabled");
 		}
 		if (localSelected()) return t("settings.downloadAndEnableLocalModel");
-		return onboarding ? t("messages.continue") : t("settings.saveNetwork");
+		return onboarding ? t("messages.continue") : t("settings.saveEmbedding");
 	};
 	const saveVector = (value: SettingsData["memoryVectorService"]): Promise<unknown> =>
 		embedding.settingsMutation.mutateAsync(value);

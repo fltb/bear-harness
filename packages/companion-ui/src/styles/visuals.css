@@ -40,25 +40,12 @@
 }
 
 .presence-stage {
-	@apply absolute bottom-12 left-12 z-0 w-1/3 max-h-3/5;
 	aspect-ratio: var(--presence-aspect-ratio, 2 / 3);
 	transition:
 		block-size 0.5s ease,
 		inline-size 0.5s ease,
 		transform 0.5s ease,
 		filter 0.5s ease;
-}
-
-.presence-stage[data-layout-mode="resting"] {
-	@apply w-1/4;
-}
-
-.presence-stage[data-layout-mode="expanded"] {
-	@apply w-2/5;
-}
-
-.presence-stage[data-layout-mode="compact"] {
-	@apply w-1/4 max-h-1/2;
 }
 
 .presence-stage img {

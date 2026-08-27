@@ -91,12 +91,13 @@
 }
 
 html,
-body {
+body,
+#root {
 	@apply size-full;
 }
 
 body {
-	@apply min-h-screen overflow-x-hidden overflow-y-auto;
+	@apply min-h-screen overflow-hidden;
 	color-scheme: dark;
 	background:
 		radial-gradient(
@@ -111,6 +112,10 @@ button:focus-visible,
 textarea:focus-visible {
 	@apply outline-2 outline-offset-2;
 	outline-color: var(--focus-ring);
+}
+
+button {
+	@apply cursor-pointer;
 }
 
 button:disabled {

@@ -78,6 +78,13 @@ export const zhTW = {
 		"readOnly": "不可寫",
 		"revision": "修訂",
 		"packageTab": "角色包本體",
+		"promptFields": {
+			"description": "角色簡介",
+			"personality": "性格",
+			"scenario": "情境",
+			"system_prompt": "角色規則",
+			"mes_example": "對話示例"
+		},
 		"storageTab": "角色包儲存",
 		"memoryTab": "角色記憶",
 		"pluginTrust": "外掛信任",
@@ -382,7 +389,8 @@ export const zhTW = {
 		"localModelReady": "本地模型已下載、載入並就緒。",
 		"localModelFailed": "本地模型下載或載入失敗",
 		"notSelected": "未選擇",
-		"saveNetwork": "儲存網路與記憶設定",
+		"saveNetwork": "儲存網路設定",
+		"saveEmbedding": "儲存記憶向量設定",
 		"saved": "已儲存。網路、向量服務和下載源設定立即生效。",
 		"visionModel": "圖片讀取模型",
 		"visionModelHint": "支援圖片的回覆模型會直接讀取圖片。如果回覆模型僅支援文本，請選擇明確的圖片讀取模型。",

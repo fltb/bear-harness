@@ -38,17 +38,19 @@
 }
 
 /* --- message operations (§7.9: hover / keyboard focus only) -------- */
-/* --- message operations (§7.9: hover / keyboard focus only) -------- */
 
-.msg-tools {
-	@apply mt-2 flex gap-2.5 border-0 p-0 pt-1.5 text-xs opacity-0;
-	border-top: 1px solid var(--line-strong);
+.message-operations {
+	@apply m-0 mt-2 flex flex-wrap gap-1.5 border-0 p-0 text-xs opacity-0;
 	transition: opacity 0.15s ease;
 }
 
-.msg:hover .msg-tools,
-.msg:focus-within .msg-tools,
-.msg-tools.is-open {
+.message-operations legend {
+	@apply sr-only;
+}
+
+.msg:hover .message-operations,
+.msg:focus-within .message-operations,
+.message-operations.is-open {
 	@apply opacity-100;
 }
 
@@ -109,32 +111,29 @@
 	color: var(--text-soft);
 }
 
-.msg-tools button {
-	@apply border-0 p-0 text-xs;
+.message-operations button {
+	@apply min-h-7 rounded-md border-0 px-2 py-1 text-xs cursor-pointer;
 	color: var(--text-muted);
-	background: none;
+	background: var(--surface-control);
 }
 
-.msg-tools button:hover:not(:disabled),
-.msg-tools button:focus-visible {
+.message-operations button:hover:not(:disabled),
+.message-operations button:focus-visible {
 	color: var(--ink);
+	background: var(--surface-success);
 }
 
-.msg-tools .primary-tool {
+.message-operations .primary-tool {
 	@apply font-bold;
 	color: var(--text-action);
 }
 
-.msg.user .msg-tools {
-	border-top-color: var(--line-soft);
-}
-
-.msg.user .msg-tools button {
+.msg.user .message-operations button {
 	color: var(--text-soft);
 }
 
-.msg.user .msg-tools button:hover:not(:disabled),
-.msg.user .msg-tools button:focus-visible {
+.msg.user .message-operations button:hover:not(:disabled),
+.msg.user .message-operations button:focus-visible {
 	color: var(--text-on-message);
 }
 
@@ -180,6 +179,10 @@
 	@apply mt-2 grid gap-2;
 	border-top: 1px solid var(--line-strong);
 	@apply pt-1.5;
+}
+
+.run-controls {
+	@apply min-w-0;
 }
 
 .msg.user .correct-panel {

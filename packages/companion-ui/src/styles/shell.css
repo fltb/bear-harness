@@ -3,7 +3,6 @@
 /* ------------------------------------------------------------------ */
 
 .app {
-	@apply grid min-h-screen w-full grid-rows-1 overflow-hidden rounded-xl border border-line shadow-app;
 	--radius-sm: 8px;
 	--radius-md: 12px;
 	--radius-lg: 16px;
@@ -12,14 +11,13 @@
 	--semantic-role-accent: var(--text-action);
 	--semantic-role-danger: var(--text-danger);
 	--semantic-role-on-action: var(--text-on-action);
-	@apply m-4;
 	color: var(--text);
 	font-family: var(--font-body);
 	background: var(--surface);
 }
 
 .thread-head {
-	@apply absolute right-6 top-4 z-10 flex w-1/2 max-w-xl items-center justify-between gap-3;
+	@apply flex items-center justify-between gap-3;
 }
 
 .thread-head .scene-title {
@@ -32,16 +30,8 @@
 /* Sidebar                                                             */
 /* ------------------------------------------------------------------ */
 
-.shell {
-	@apply grid min-h-0 grid-cols-4;
-}
-
-.main {
-	@apply col-span-3 min-h-0 min-w-0;
-}
-
 .sidebar {
-	@apply col-span-1 flex min-h-0 flex-col border-r border-line px-3 py-4;
+	@apply flex min-h-0 flex-col border-r border-line px-3 py-4;
 	background: var(--surface-sidebar);
 }
 
@@ -720,6 +710,11 @@
 	@apply grid min-w-0 gap-3 rounded-lg px-3 py-3;
 	border: 1px solid var(--line);
 	background: var(--surface-subtle);
+}
+
+.provider-import-pi,
+.provider-import-custom {
+	@apply min-w-0;
 }
 
 .provider-import summary {

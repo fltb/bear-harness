@@ -77,6 +77,13 @@ export const en = {
 		readOnly: "Read-only",
 		revision: "Revision",
 		packageTab: "Role package",
+		promptFields: {
+			description: "Role description",
+			personality: "Personality",
+			scenario: "Scenario",
+			system_prompt: "Role rules",
+			mes_example: "Conversation examples",
+		},
 		storageTab: "Role storage",
 		memoryTab: "Role memory",
 		pluginTrust: "Plugin trust",
@@ -393,7 +400,8 @@ export const en = {
 		localModelReady: "Local model downloaded, loaded, and ready.",
 		localModelFailed: "Local model download or loading failed",
 		notSelected: "Not selected",
-		saveNetwork: "Save network and memory settings",
+		saveNetwork: "Save network settings",
+		saveEmbedding: "Save memory vector settings",
 		saved: "Saved. Network, vector service, and download source changes apply immediately.",
 		visionModel: "Image reader model",
 		visionModelHint:

@@ -4,7 +4,13 @@ import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { CompanionApp, SUPPORTED_DESKTOP_MIN_WIDTH } from "../src/App.js";
+import {
+	CANONICAL_LAYOUT_VIEWPORTS,
+	CompanionApp,
+	FULLSCREEN_LAYOUT_MIN_WIDTH,
+	layoutModeForWidth,
+	MOBILE_LAYOUT_MAX_WIDTH,
+} from "../src/App.js";
 import { CharacterPresence } from "../src/CharacterPresence.js";
 import { SceneBackdrop } from "../src/SceneBackdrop.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
@@ -110,8 +116,17 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 }
 
 describe("shell visual and thread head contracts", () => {
-	it("publishes semantic surface roles and a narrow desktop fallback contract", () => {
-		expect(SUPPORTED_DESKTOP_MIN_WIDTH).toBe(800);
+	it("publishes semantic surface roles and the three layout templates", () => {
+		expect(CANONICAL_LAYOUT_VIEWPORTS).toEqual({
+			mobile: { width: 390, height: 844 },
+			window: { width: 1280, height: 800 },
+			fullscreen: { width: 1920, height: 1080 },
+		});
+		expect(layoutModeForWidth(390)).toBe("mobile");
+		expect(layoutModeForWidth(MOBILE_LAYOUT_MAX_WIDTH)).toBe("mobile");
+		expect(layoutModeForWidth(MOBILE_LAYOUT_MAX_WIDTH + 1)).toBe("window");
+		expect(layoutModeForWidth(FULLSCREEN_LAYOUT_MIN_WIDTH - 1)).toBe("window");
+		expect(layoutModeForWidth(FULLSCREEN_LAYOUT_MIN_WIDTH)).toBe("fullscreen");
 		for (const token of [
 			"--surface-sidebar",
 			"--surface-panel",
@@ -123,18 +138,12 @@ describe("shell visual and thread head contracts", () => {
 		]) {
 			expect(styles).toContain(token);
 		}
-		expect(styles).toContain("@media (max-width: 1049px)");
-		expect(styles).toContain("@media (max-width: 799px)");
-		expect(styles).toContain("@apply grid-cols-4");
+		expect(styles).toContain('.app[data-layout="mobile"]');
+		expect(styles).toContain('.app[data-layout="window"]');
+		expect(styles).toContain('.app[data-layout="fullscreen"]');
 
 		render(() => (
-			<div
-				class="app desktop-shell"
-				data-layout="desktop"
-				data-supported-min-width={SUPPORTED_DESKTOP_MIN_WIDTH}
-				role="application"
-				aria-label="Companion"
-			>
+			<div class="app" data-layout="window" role="application" aria-label="Companion">
 				<div class="shell">
 					<aside class="sidebar" aria-label="Conversations" />
 					<main class="main">
@@ -148,8 +157,7 @@ describe("shell visual and thread head contracts", () => {
 		));
 
 		const application = screen.getByRole("application", { name: "Companion" });
-		expect(application).toHaveAttribute("data-layout", "desktop");
-		expect(application).toHaveAttribute("data-supported-min-width", "800");
+		expect(application).toHaveAttribute("data-layout", "window");
 		expect(within(application).getAllByRole("complementary")).toHaveLength(1);
 		expect(within(application).getByRole("textbox", { name: "Message" })).toBeEnabled();
 	});

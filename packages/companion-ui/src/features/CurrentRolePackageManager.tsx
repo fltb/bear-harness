@@ -242,7 +242,9 @@ export function CurrentRolePackageManager(props: {
 									<For each={PROMPT_FIELDS}>
 										{(field) => (
 											<TextField class="field">
-												<TextField.Label class="field-label">prompt.{field}</TextField.Label>
+												<TextField.Label class="field-label">
+													{t(`currentRolePackage.promptFields.${field}`)}
+												</TextField.Label>
 												<TextField.TextArea
 													rows={field === "mes_example" ? 7 : 4}
 													disabled={!current().writable}
