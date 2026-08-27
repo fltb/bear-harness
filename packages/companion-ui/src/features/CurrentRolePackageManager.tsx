@@ -210,20 +210,23 @@ export function CurrentRolePackageManager(props: {
 								<strong>{current().character.name}</strong>
 								<span>{current().character.character.subtitle}</span>
 							</div>
-							<dl>
-								<dt>{t("currentRolePackage.source")}</dt>
-								<dd>{current().origin}</dd>
-								<dt>{t("currentRolePackage.writeAccess")}</dt>
-								<dd>
-									{current().writable
-										? t("currentRolePackage.writable")
-										: t("currentRolePackage.readOnly")}
-								</dd>
-								<dt>{t("currentRolePackage.revision")}</dt>
-								<dd>
-									<code>{current().sha256.slice(0, 12)}</code>
-								</dd>
-							</dl>
+							<details class="role-package-metadata">
+								<summary>{t("currentRolePackage.advancedDetails")}</summary>
+								<dl>
+									<dt>{t("currentRolePackage.source")}</dt>
+									<dd>{current().origin}</dd>
+									<dt>{t("currentRolePackage.writeAccess")}</dt>
+									<dd>
+										{current().writable
+											? t("currentRolePackage.writable")
+											: t("currentRolePackage.readOnly")}
+									</dd>
+									<dt>{t("currentRolePackage.revision")}</dt>
+									<dd>
+										<code>{current().sha256.slice(0, 12)}</code>
+									</dd>
+								</dl>
+							</details>
 						</header>
 						<Tabs defaultValue="package" class="current-role-package-tabs">
 							<Tabs.List class="sub-tabs">

@@ -56,6 +56,7 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 	const [editing, setEditing] = createSignal(false);
 	const [editText, setEditText] = createSignal("");
 	const [correcting, setCorrecting] = createSignal(false);
+	const [operationsOpen, setOperationsOpen] = createSignal(false);
 	const [correctionDetail, setCorrectionDetail] = createSignal("");
 	const [captureState, setCaptureState] = createSignal<"idle" | "saving" | "saved" | "error">(
 		"idle",
@@ -95,7 +96,18 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 				data-pi-entry-id={entry.id}
 				aria-label={isUser ? "user" : characterName}
 			>
-				<div class="msg-meta">{isUser ? "You" : characterName}</div>
+				<div class="msg-heading">
+					<div class="msg-meta">{isUser ? "You" : characterName}</div>
+					<Button
+						type="button"
+						class="msg-menu-trigger"
+						aria-label={t("messages.operations")}
+						aria-expanded={operationsOpen()}
+						onClick={() => setOperationsOpen((open) => !open)}
+					>
+						<span aria-hidden="true">•••</span>
+					</Button>
+				</div>
 				<Show when={entry.text !== undefined && entry.text.length > 0}>
 					<p>{entry.text}</p>
 				</Show>
@@ -183,7 +195,7 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 						</Button>
 					</div>
 				</Show>
-				<fieldset class="message-operations">
+				<fieldset class="message-operations" classList={{ "is-open": operationsOpen() }}>
 					<legend>{t("messages.operations")}</legend>
 					<Show when={isUser}>
 						<Button

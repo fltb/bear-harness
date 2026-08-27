@@ -36,9 +36,10 @@ export function Backstage(props: {
 			<Dialog.Portal>
 				<Dialog.Overlay class="backstage-overlay" />
 				<Dialog.Content
+					onOpenAutoFocus={(event) => event.preventDefault()}
 					class={
 						props.initialTab === "settings"
-							? "backstage-sheet backstage-sheet-settings"
+							? "backstage-sheet backstage-sheet-settings settings-dialog"
 							: "backstage-sheet"
 					}
 				>

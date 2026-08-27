@@ -142,11 +142,16 @@ function first<T>(values: readonly T[]): T {
 	return value;
 }
 
-async function providerTile(
+async function selectProvider(
+	user: ReturnType<typeof userEvent.setup>,
 	dialog: HTMLElement,
 	provider: Pick<ProviderFixture, "id" | "name">,
-): Promise<HTMLElement> {
-	return within(dialog).findByRole("button", { name: new RegExp(provider.name) });
+): Promise<void> {
+	await selectKobalteOption(
+		user,
+		within(dialog).getByLabelText(zhCN.settings.providerLabel),
+		provider.name,
+	);
 }
 
 function firstRunStore(
@@ -233,7 +238,7 @@ describe("Host-backed first-run setup", () => {
 		const setup = firstRunStore();
 		renderMeeting(setup.store);
 		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
-		await user.click(await providerTile(dialog, candidate));
+		await selectProvider(user, dialog, candidate);
 		const apiKeyInput = first(within(dialog).getAllByLabelText(zhCN.settings.apiKeyLabel));
 		expect(
 			within(dialog).queryByRole("button", { name: zhCN.messages.continue }),
@@ -288,7 +293,7 @@ describe("Host-backed first-run setup", () => {
 		const setup = firstRunStore();
 		renderMeeting(setup.store);
 		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
-		await user.click(await providerTile(dialog, candidate));
+		await selectProvider(user, dialog, candidate);
 		await user.type(first(within(dialog).getAllByLabelText(zhCN.settings.apiKeyLabel)), "secret");
 		await user.click(
 			first(within(dialog).getAllByRole("button", { name: zhCN.settings.addProvider })),
@@ -310,7 +315,7 @@ describe("Host-backed first-run setup", () => {
 		const setup = firstRunStore({ embedding: embeddingBinding({ configure }) });
 		renderMeeting(setup.store);
 		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
-		await user.click(await providerTile(dialog, candidate));
+		await selectProvider(user, dialog, candidate);
 		await user.type(first(within(dialog).getAllByLabelText(zhCN.settings.apiKeyLabel)), "secret");
 		await user.click(
 			first(within(dialog).getAllByRole("button", { name: zhCN.settings.addProvider })),
@@ -348,16 +353,14 @@ describe("Host-backed first-run setup", () => {
 		expect(embedding.localConfigureMutation.isSuccess).toBe(true);
 	});
 
-	it("selects a candidate from the Pattern 04 tiles, configures through the shared ProviderSetup, then picks reply and image readers in one model stage", async () => {
+	it("selects a provider progressively, configures it, then picks reply and image readers in one model stage", async () => {
 		const user = userEvent.setup();
 		const setup = firstRunStore();
 		renderMeeting(setup.store);
 		const dialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
 
-		const tile = within(dialog).getByRole("button", { name: /OpenAI/ });
-		expect(tile).toHaveAttribute("data-provider-tile", "openai");
-		await user.click(tile);
-		expect(tile).toHaveAttribute("aria-pressed", "true");
+		await selectProvider(user, dialog, candidate);
+		expect(within(dialog).getByLabelText(zhCN.settings.providerLabel)).toHaveTextContent("OpenAI");
 
 		const apiKeyInput = first(within(dialog).getAllByLabelText(zhCN.settings.apiKeyLabel));
 		expect(apiKeyInput).toBeVisible();

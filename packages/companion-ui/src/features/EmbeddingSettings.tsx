@@ -263,22 +263,30 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 
 	const renderAction = () => (
 		<div class="settings-actions">
-			<Button
-				type="button"
-				data-variant="primary"
-				disabled={
-					!capabilitiesReady() ||
-					savingSettings() ||
-					configuringLocal() ||
-					(localSelected() && download().status === "completed") ||
-					!onboardingChoiceReady() ||
-					!remoteChoiceReady()
+			<Show
+				when={localSelected() && download().status === "completed"}
+				fallback={
+					<Button
+						type="button"
+						data-variant="primary"
+						disabled={
+							!capabilitiesReady() ||
+							savingSettings() ||
+							configuringLocal() ||
+							!onboardingChoiceReady() ||
+							!remoteChoiceReady()
+						}
+						aria-label={actionLabel()}
+						onClick={() => void saveEmbedding().catch(() => undefined)}
+					>
+						{actionLabel()}
+					</Button>
 				}
-				aria-label={actionLabel()}
-				onClick={() => void saveEmbedding().catch(() => undefined)}
 			>
-				{actionLabel()}
-			</Button>
+				<p class="status-line ok" role="status">
+					{t("settings.localModelReady")}
+				</p>
+			</Show>
 		</div>
 	);
 
@@ -449,6 +457,7 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 					<Select
 						options={presets()}
 						value={selectedPreset()}
+						placeholder={t("settings.notSelected")}
 						optionValue="id"
 						optionTextValue={(preset) => t(`settings.vectorPresetLabels.${preset.id}` as never)}
 						onChange={(preset) => {
@@ -521,11 +530,6 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 			</Show>
 			<Show when={downloadError()}>
 				<p role="alert">{downloadError()}</p>
-			</Show>
-			<Show when={embedding.localConfigureMutation.isSuccess && localSelected()}>
-				<p class="status-line ok" role="status">
-					{t("settings.localModelReady")}
-				</p>
 			</Show>
 			<Show when={download().status === "cancelled"}>
 				<p role="status">{t("settings.downloadCancelled")}</p>

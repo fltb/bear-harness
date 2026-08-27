@@ -16,6 +16,7 @@ describe("sidebar conversation journey", () => {
 		const restoreConversation = vi.fn(() => Promise.resolve());
 		const deleteConversation = vi.fn(() => Promise.resolve());
 		const onOpenBackstage = vi.fn();
+		const onNavigate = vi.fn();
 		const store = {
 			activeConversationId: "conversation-1",
 			conversations: [
@@ -52,9 +53,19 @@ describe("sidebar conversation journey", () => {
 		} as unknown as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
-				<Sidebar character={THEMED_CHARACTER} onOpenBackstage={onOpenBackstage} />
+				<Sidebar
+					character={THEMED_CHARACTER}
+					onOpenBackstage={onOpenBackstage}
+					onNavigate={onNavigate}
+				/>
 			</DesktopProvider>
 		));
+		await user.click(
+			screen.getByRole("button", {
+				name: `${zhCN.backstage.close} ${zhCN.sidebar.conversations}`,
+			}),
+		);
+		expect(onNavigate).toHaveBeenCalledOnce();
 
 		const search = screen.getByRole("searchbox", { name: zhCN.sidebar.search });
 		await user.keyboard("{Control>}k{/Control}");
@@ -108,6 +119,7 @@ describe("sidebar conversation journey", () => {
 		);
 		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.newConversation }));
 		expect(createConversation).toHaveBeenCalledOnce();
+		expect(onNavigate).toHaveBeenCalledTimes(3);
 
 		await user.click(screen.getByRole("button", { name: zhCN.sidebar.characterSettings }));
 		await user.click(screen.getByRole("button", { name: zhCN.sidebar.systemSettings }));

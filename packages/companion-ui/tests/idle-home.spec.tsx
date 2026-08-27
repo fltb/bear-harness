@@ -1,10 +1,11 @@
 import { setProductLocale } from "@bear-harness/i18n";
 import { en, zhCN } from "@bear-harness/i18n/locales";
-import { render, screen, waitFor } from "@solidjs/testing-library";
+import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
 import { createTestClient, OFFICIAL_PRODUCT, THEMED_CHARACTER } from "./fixtures.js";
+import { selectKobalteOption } from "./kobalte-helpers.js";
 
 describe("idle homepage (official config, no bridge)", () => {
 	it("renders the localized app identity and shell frame", async () => {
@@ -93,11 +94,32 @@ describe("idle homepage (official config, no bridge)", () => {
 		await user.click(
 			screen.getByRole("button", { name: zhCN.sidebar.systemSettings, hidden: true }),
 		);
-		await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
+		const settings = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
+		await user.click(
+			within(settings).getByRole("button", { name: zhCN.settings.systemModelSettings }),
+		);
 		expect(
 			screen.getByRole("region", { name: zhCN.settings.providerSetupLabel }),
 		).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: zhCN.settings.addModel })).not.toBeInTheDocument();
+	});
+
+	it("switches the interface language from the settings workbench", async () => {
+		await setProductLocale("zh-CN");
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		await user.click(screen.getByRole("button", { name: zhCN.sidebar.systemSettings }));
+		const settings = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
+		await user.click(within(settings).getByRole("button", { name: zhCN.settings.language }));
+		const languageSettings = within(settings).getByRole("region", {
+			name: zhCN.settings.language,
+		});
+		await selectKobalteOption(user, within(languageSettings).getByRole("button"), "en");
+
+		await waitFor(() => expect(document.title).toBe(en.shell.productName));
+		await setProductLocale("zh-CN");
 	});
 
 	it("applies role theme tokens and warns without blocking on a language mismatch", async () => {

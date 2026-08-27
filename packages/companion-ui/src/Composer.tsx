@@ -1,5 +1,11 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { faArrowUp, faPaperclip, faStop } from "@fortawesome/free-solid-svg-icons";
+import {
+	faArrowUp,
+	faFile,
+	faFolderOpen,
+	faPaperclip,
+	faStop,
+} from "@fortawesome/free-solid-svg-icons";
 import { Button } from "@kobalte/core/button";
 import { FileField } from "@kobalte/core/file-field";
 import { TextField } from "@kobalte/core/text-field";
@@ -270,9 +276,11 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 				<Show when={menuOpen()}>
 					<div class="composer-attach-options" role="menu">
 						<Button type="button" role="menuitem" onClick={() => void pick(false)}>
+							<Icon icon={faFile} />
 							{t("composer.uploadFile")}
 						</Button>
 						<Button type="button" role="menuitem" onClick={() => void pick(true)}>
+							<Icon icon={faFolderOpen} />
 							{t("composer.uploadFolder")}
 						</Button>
 					</div>

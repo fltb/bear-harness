@@ -17,6 +17,11 @@ async function openSettings() {
 	const user = userEvent.setup();
 	await user.click(screen.getByRole("button", { name: zhCN.sidebar.systemSettings }));
 	const backstage = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
+	await user.click(
+		within(backstage).getByRole("button", {
+			name: `${zhCN.settings.networkSection} / ${zhCN.settings.memoryVectorSection}`,
+		}),
+	);
 	return { user, backstage };
 }
 
@@ -120,10 +125,9 @@ describe("NetworkAndMemorySettings", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage } = await openSettings();
 		await waitForSettings(backstage);
-		const action = within(embeddingSettings(backstage)).getByRole("button", {
-			name: zhCN.settings.localModelEnabled,
-		});
-		expect(action).toBeDisabled();
+		expect(within(embeddingSettings(backstage)).getByRole("status")).toHaveTextContent(
+			zhCN.settings.localModelReady,
+		);
 		expect(
 			within(embeddingSettings(backstage)).queryByRole("button", {
 				name: zhCN.settings.downloadAndEnableLocalModel,

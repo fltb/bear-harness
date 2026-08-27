@@ -109,9 +109,14 @@ body {
 }
 
 button:focus-visible,
-textarea:focus-visible {
+textarea:focus-visible,
+input:focus-visible {
 	@apply outline-2 outline-offset-2;
 	outline-color: var(--focus-ring);
+}
+
+[data-kb-top-layer] {
+	@apply relative z-70;
 }
 
 button {
@@ -188,14 +193,39 @@ button[data-variant="primary"]:focus-visible {
 	@apply grid gap-4;
 }
 
+.embedding-settings > [role="group"] .select-trigger {
+	@apply w-full;
+}
+
 .setting-field,
 .setting-select {
 	@apply grid gap-2;
 }
 
 .setting-field input,
+.setting-field textarea,
 .setting-select .select-trigger {
-	@apply w-full;
+	@apply box-border min-h-10 w-full rounded-md border px-3 py-2 text-sm outline-none;
+	border-color: var(--line);
+	background: var(--surface-alt);
+	color: var(--text);
+	font: inherit;
+	color-scheme: dark;
+}
+
+.setting-field input:hover:not(:disabled),
+.setting-field textarea:hover:not(:disabled) {
+	border-color: var(--line-strong);
+}
+
+.setting-field input:focus-visible,
+.setting-field textarea:focus-visible {
+	border-color: var(--accent);
+}
+
+.setting-field input::placeholder,
+.setting-field textarea::placeholder {
+	color: var(--text-muted);
 }
 
 .settings-choice-group {
@@ -215,7 +245,7 @@ button[data-variant="primary"]:focus-visible {
 
 .settings-choice-option:hover:not([data-disabled]),
 .settings-choice-option:focus-within {
-	border-color: var(--accent);
+	border-color: var(--line-strong);
 }
 
 .settings-choice-option[data-checked] {
@@ -246,9 +276,13 @@ button[data-variant="primary"]:focus-visible {
 }
 
 .settings-checkbox:hover:not([data-disabled]),
-.settings-checkbox:focus-within,
+.settings-checkbox:focus-within {
+	border-color: var(--line-strong);
+}
+
 .settings-checkbox[data-checked] {
 	border-color: var(--accent);
+	background: color-mix(in srgb, var(--accent) 8%, var(--surface-alt));
 }
 
 .settings-checkbox-control {
@@ -292,7 +326,7 @@ button[data-variant="primary"]:focus-visible {
 }
 
 .select-content {
-	@apply z-50 min-w-full max-w-md rounded-md border shadow-xl;
+	@apply z-70 min-w-full max-w-md rounded-md border shadow-xl;
 	border-color: var(--line);
 	background: var(--surface);
 	color: var(--text);
@@ -310,7 +344,21 @@ button[data-variant="primary"]:focus-visible {
 
 .select-item[data-highlighted] {
 	background: var(--surface-alt);
-	color: var(--accent);
+	color: var(--text-strong);
+}
+
+.model-option-label {
+	@apply grid min-w-0 flex-1 gap-0.5;
+}
+
+.model-option-name,
+.model-option-provider {
+	@apply min-w-0 truncate;
+}
+
+.model-option-provider {
+	@apply text-xs;
+	color: var(--text-muted);
 }
 
 .material-picker {

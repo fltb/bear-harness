@@ -36,6 +36,7 @@ test("canonical layouts and management surfaces stay usable", async ({ page }) =
 			await expect
 				.poll(async () => (await navigation.boundingBox())?.x ?? -999)
 				.toBeGreaterThanOrEqual(-1);
+			await expect(navigation.getByText("Ctrl", { exact: true })).toBeHidden();
 		}
 
 		await page.getByRole("button", { name: zhCN.sidebar.systemSettings }).click();
@@ -47,9 +48,28 @@ test("canonical layouts and management surfaces stay usable", async ({ page }) =
 		expect(dialogBox?.y).toBeGreaterThanOrEqual(0);
 		expect((dialogBox?.x ?? 0) + (dialogBox?.width ?? 0)).toBeLessThanOrEqual(viewport.width);
 		expect((dialogBox?.y ?? 0) + (dialogBox?.height ?? 0)).toBeLessThanOrEqual(viewport.height);
-		if (viewport.mode === "mobile") {
-			await expect(dialog).toHaveScreenshot("system-settings-mobile.png");
-		}
+		await expect(
+			dialog.getByRole("navigation", { name: zhCN.sidebar.systemSettings }),
+		).toBeVisible();
+		await expect(dialog).toHaveScreenshot(`system-settings-${viewport.mode}.png`);
+
+		await dialog
+			.getByRole("button", {
+				name: `${zhCN.settings.networkSection} / ${zhCN.settings.memoryVectorSection}`,
+			})
+			.click();
+		const proxyTrigger = dialog.getByRole("button", { name: zhCN.settings.proxyMode });
+		await proxyTrigger.click();
+		const proxyOptions = page.getByRole("listbox", { name: zhCN.settings.proxyMode });
+		await expect(proxyOptions).toBeVisible();
+		const optionsBox = await proxyOptions.boundingBox();
+		expect(optionsBox).not.toBeNull();
+		expect(optionsBox?.x).toBeGreaterThanOrEqual(0);
+		expect(optionsBox?.y).toBeGreaterThanOrEqual(0);
+		expect((optionsBox?.x ?? 0) + (optionsBox?.width ?? 0)).toBeLessThanOrEqual(viewport.width);
+		expect((optionsBox?.y ?? 0) + (optionsBox?.height ?? 0)).toBeLessThanOrEqual(viewport.height);
+		await page.keyboard.press("Escape");
+		await expect(dialog).toHaveScreenshot(`network-memory-settings-${viewport.mode}.png`);
 		await dialog.getByRole("button", { name: zhCN.backstage.close }).click();
 		await expect(dialog).toBeHidden();
 	}

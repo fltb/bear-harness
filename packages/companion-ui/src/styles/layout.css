@@ -64,7 +64,7 @@
 		"stage header" 56px
 		"stage thread" minmax(0, 1fr)
 		"stage composer" auto
-		/ minmax(300px, 1fr) clamp(500px, 48cqw, 620px);
+		/ minmax(300px, 1fr) clamp(520px, 48cqw, 640px);
 }
 
 .app[data-layout="window"] .presence-stage {
@@ -81,7 +81,7 @@
 		"stage header" 64px
 		"stage thread" minmax(0, 1fr)
 		"stage composer" auto
-		/ minmax(560px, 1fr) minmax(640px, 720px);
+		/ minmax(560px, 1fr) minmax(620px, 680px);
 }
 
 .app[data-layout="fullscreen"] .thread-head {
@@ -97,7 +97,7 @@
 }
 
 .app[data-layout="fullscreen"] .presence-stage {
-	@apply mb-10 max-h-3/4 w-4/5;
+	@apply mb-10 max-h-2/3 w-3/5;
 }
 
 /* Mobile template: phone, tablet portrait, and narrow desktop windows. */
@@ -161,8 +161,26 @@
 	max-inline-size: 92%;
 }
 
-.app[data-layout="mobile"] .message-operations {
-	@apply opacity-100;
+.app[data-layout="mobile"] .message-operations:not(.is-open) {
+	@apply hidden;
+}
+
+.app[data-layout="mobile"] .message-operations.is-open {
+	@apply grid grid-cols-1 opacity-100;
+}
+
+.app[data-layout="mobile"] .msg-menu-trigger {
+	@apply grid;
+}
+
+.app[data-layout="mobile"] .search-trigger kbd {
+	@apply hidden;
+}
+
+.app[data-layout="mobile"] .mobile-navigation-close {
+	@apply absolute right-3 top-3 z-10 grid size-9 place-items-center rounded-md border-0;
+	color: var(--text-muted);
+	background: var(--surface-control);
 }
 
 /* Attachment preview is a responsive management surface, not a new column
@@ -192,6 +210,44 @@
 
 html[data-app-layout="mobile"] .backstage-sheet {
 	@apply inset-0 size-full rounded-none border-0;
+}
+
+html[data-app-layout="mobile"] .intro {
+	@apply p-4;
+}
+
+html[data-app-layout="mobile"] .intro-card {
+	@apply w-full max-w-lg rounded-2xl p-5;
+}
+
+html[data-app-layout="mobile"] .settings-workbench {
+	@apply grid-cols-1 gap-4;
+	grid-template-rows: auto minmax(0, 1fr);
+}
+
+html[data-app-layout="mobile"] .language-warning {
+	@apply left-3 right-3 top-14 z-40 w-auto max-w-none translate-x-0;
+}
+
+html[data-app-layout="mobile"] .settings-navigation {
+	@apply col-span-1 gap-3 border-b border-r-0 pb-3 pr-0;
+	border-color: var(--line);
+}
+
+html[data-app-layout="mobile"] .settings-navigation .drawer-note {
+	@apply hidden;
+}
+
+html[data-app-layout="mobile"] .settings-navigation-list {
+	@apply flex snap-x gap-1 overflow-x-auto pb-1;
+}
+
+html[data-app-layout="mobile"] .settings-navigation-list button {
+	@apply shrink-0 snap-start whitespace-nowrap;
+}
+
+html[data-app-layout="mobile"] .settings-page {
+	@apply col-span-1 overflow-y-auto pr-0;
 }
 
 html[data-app-layout="mobile"] .provider-setup-manager {

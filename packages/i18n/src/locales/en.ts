@@ -76,6 +76,7 @@ export const en = {
 		writable: "Writable",
 		readOnly: "Read-only",
 		revision: "Revision",
+		advancedDetails: "Advanced details",
 		packageTab: "Role package",
 		promptFields: {
 			description: "Role description",
@@ -217,7 +218,7 @@ export const en = {
 		close: "Close",
 		description:
 			"All calls use this session's loopback Host. Electron-only capabilities are not invoked.",
-		providerSection: "Pi configuration",
+		providerSection: "Compatible configuration",
 		loadProviders: "Load model configuration",
 		sessionApiKey: "API key (current Web Dev process only)",
 		saveSessionKey: "Save for this run",
@@ -309,7 +310,7 @@ export const en = {
 	settings: {
 		systemModelSettings: "System model settings",
 		systemModelSettingsHint:
-			"Manage Pi providers, connection settings, custom configuration, and models available in conversations.",
+			"Manage model services, connection methods, and models available in conversations.",
 		providerSetupLabel: "Provider setup",
 		addProvider: "Add provider",
 		addProviderHint: "Add one provider at a time. Built-in catalogs cannot be changed.",
@@ -317,7 +318,7 @@ export const en = {
 		chooseProvider: "Choose a provider",
 		providerLabel: "Provider",
 		addedProviders: "Added providers",
-		customProvider: "Custom Pi provider",
+		customProvider: "Custom service",
 		builtinProvider: "Built-in provider",
 		providerSelectedForEditing: "Provider selected. Edit its credentials or URL above.",
 		editProviderKey: "Edit key",
@@ -430,12 +431,12 @@ export const en = {
 		customServiceName: "Service name",
 		noFallback: "None",
 		advancedToggle: "Advanced model settings",
-		piConfigLabel: "Pi model configuration",
+		piConfigLabel: "Advanced model configuration",
 		piConfigHint:
-			"Paste the providers fragment from Pi models.json. Save API keys separately under model services.",
+			"Import a compatible providers configuration fragment. Save API keys separately under model services.",
 		piConfigPlaceholder: '{\n  "providers": {\n    "my-provider": { ... }\n  }\n}',
-		piConfigImport: "Import Pi configuration",
-		piConfigImported: "Pi configuration imported; provider models are now available",
+		piConfigImport: "Import advanced configuration",
+		piConfigImported: "Configuration imported; provider models are now available",
 		customBaseUrl: "Custom service URL",
 		imageOptionalWarning:
 			"An image model is optional. Continue without one if you do not need image input.",
@@ -476,7 +477,8 @@ export const en = {
 		authenticateBeforeModels: "Connect this provider before choosing its models.",
 		chooseProviderFirst: "Choose a provider to continue.",
 		loadingModels: "Loading the provider's synced models…",
-		noModels: "No synced models yet. Finish provider setup or import Pi configuration.",
+		noModels:
+			"No synced models yet. Finish model service setup or import a compatible configuration.",
 		modelLabel: "Reply model",
 		imageOptionalWarning:
 			"An image model is optional. Continue without one if you do not need image input.",

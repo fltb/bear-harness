@@ -120,7 +120,7 @@ export function ProviderSetup(props: PresentationProps) {
 	);
 
 	const refresh = async (): Promise<void> => {
-		await Promise.all([store.provider.list(), store.model.list()]);
+		await Promise.all([store.provider.list(), store.model?.list?.() ?? Promise.resolve()]);
 	};
 	onMount(() => {
 		void refresh().catch((cause) => {
@@ -497,7 +497,6 @@ export function ProviderSetup(props: PresentationProps) {
 		<div class="provider-candidate-section">
 			<div class="settings-group-heading">
 				<h4>{t("settings.addProvider")}</h4>
-				<p class="field-hint">{t("settings.addProviderHint")}</p>
 			</div>
 			<Show when={error()}>
 				{(message) => (
@@ -535,7 +534,9 @@ export function ProviderSetup(props: PresentationProps) {
 							>
 								<Select.Label class="field-label">{t("settings.providerLabel")}</Select.Label>
 								<Select.Trigger class="select-trigger" aria-label={t("settings.providerLabel")}>
-									<Select.Value<ProviderInfo> class="select-value" />
+									<Select.Value<ProviderInfo> class="select-value">
+										{(state) => state.selectedOption()?.name ?? ""}
+									</Select.Value>
 									<Select.Icon class="select-icon" aria-hidden="true">
 										v
 									</Select.Icon>
@@ -549,24 +550,37 @@ export function ProviderSetup(props: PresentationProps) {
 						</div>
 					}
 				>
-					<section class="intro-provider-tiles" aria-label={t("settings.providerLabel")}>
-						<For each={candidates()}>
-							{(provider) => (
-								<Button
-									type="button"
-									class="intro-provider-tile"
-									data-provider-tile={provider.id}
-									data-selected={providerId() === provider.id ? "" : undefined}
-									aria-pressed={providerId() === provider.id}
-									disabled={busy()}
-									onClick={() => selectProvider(provider.id)}
-								>
-									<strong>{provider.name}</strong>
-									<span>{provider.id}</span>
-								</Button>
+					<div class="provider-selector onboarding-provider-selector">
+						<Select<ProviderInfo>
+							options={candidates()}
+							value={selected() ?? null}
+							optionValue="id"
+							optionTextValue="name"
+							placeholder={t("settings.chooseProvider")}
+							onChange={(provider) => selectProvider(provider?.id ?? "")}
+							disabled={busy()}
+							itemComponent={(itemProps) => (
+								<Select.Item item={itemProps.item} class="select-item">
+									<Select.ItemLabel>{itemProps.item.rawValue.name}</Select.ItemLabel>
+								</Select.Item>
 							)}
-						</For>
-					</section>
+						>
+							<Select.Label class="field-label">{t("settings.providerLabel")}</Select.Label>
+							<Select.Trigger class="select-trigger" aria-label={t("settings.providerLabel")}>
+								<Select.Value<ProviderInfo> class="select-value">
+									{(state) => state.selectedOption()?.name ?? ""}
+								</Select.Value>
+								<Select.Icon class="select-icon" aria-hidden="true">
+									v
+								</Select.Icon>
+							</Select.Trigger>
+							<Select.Portal ref={markSelectPortalTopLayer}>
+								<Select.Content class="select-content">
+									<Select.Listbox class="select-listbox" />
+								</Select.Content>
+							</Select.Portal>
+						</Select>
+					</div>
 				</Show>
 			</Show>
 			<Show when={embeddedEditor && selected() && !selected()!.added}>

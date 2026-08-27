@@ -125,6 +125,9 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	await expect(
 		settingsPanel.getByText(zhCN.settings.systemModelSettings, { exact: true }),
 	).toBeVisible();
+	await settingsPanel
+		.getByRole("button", { name: zhCN.settings.systemModelSettings, exact: true })
+		.click();
 	await expect(
 		settingsPanel.getByRole("region", { name: zhCN.settings.providerSetupLabel }),
 	).toBeVisible();

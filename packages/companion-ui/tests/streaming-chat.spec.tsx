@@ -499,6 +499,12 @@ describe("Pi-projection chat", () => {
 			}),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const operations = await screen.findByRole("button", { name: zhCN.messages.operations });
+		expect(operations).toHaveAttribute("aria-expanded", "false");
+		await user.click(operations);
+		expect(operations).toHaveAttribute("aria-expanded", "true");
+		await user.click(operations);
+		expect(operations).toHaveAttribute("aria-expanded", "false");
 		const action = await screen.findByRole("button", { name: zhCN.messages.rememberMoment });
 		await user.click(action);
 		await waitFor(() =>

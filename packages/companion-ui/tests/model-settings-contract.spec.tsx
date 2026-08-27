@@ -102,6 +102,9 @@ async function openSettings() {
 	const user = userEvent.setup();
 	await user.click(screen.getByRole("button", { name: zhCN.sidebar.systemSettings }));
 	const backstage = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
+	await user.click(
+		within(backstage).getByRole("button", { name: zhCN.settings.systemModelSettings }),
+	);
 	return { user, backstage };
 }
 
@@ -134,7 +137,10 @@ describe("breaking provider and model settings contract", () => {
 	it("shows only current reply and optional image controls, not old default or model-pool controls", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { backstage } = await openSettings();
+		const { user, backstage } = await openSettings();
+		await user.click(
+			within(backstage).getByRole("button", { name: zhCN.settings.conversationModelSettings }),
+		);
 		expect(within(backstage).getByText(zhCN.settings.currentReplyModel)).toBeVisible();
 		expect(within(backstage).getByText(zhCN.settings.visionModel)).toBeVisible();
 		expect(within(backstage).queryByText("新对话默认模型")).not.toBeInTheDocument();

@@ -88,7 +88,9 @@ export function ModelSelector(props: {
 					class={props.itemClass ?? "select-item"}
 					hidden={!optionMatches(itemProps.item.rawValue)}
 				>
-					<Select.ItemLabel>{optionLabel(itemProps.item.rawValue)}</Select.ItemLabel>
+					<Select.ItemLabel class="model-option-label">
+						{optionLabel(itemProps.item.rawValue)}
+					</Select.ItemLabel>
 				</Select.Item>
 			)}
 			class={props.class}

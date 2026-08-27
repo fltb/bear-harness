@@ -69,6 +69,10 @@
 	background: var(--surface-subtle);
 }
 
+.mobile-navigation-close {
+	@apply hidden;
+}
+
 .search-trigger input {
 	@apply min-w-0 flex-1 border-0 bg-transparent text-xs outline-none;
 	color: var(--text-strong);
@@ -223,7 +227,7 @@
 }
 
 .current-role-package-summary {
-	@apply flex justify-between gap-4 rounded-lg p-3;
+	@apply grid gap-3 rounded-lg p-4;
 	border: 1px solid var(--line);
 	background: var(--surface-subtle);
 }
@@ -239,8 +243,19 @@
 	color: var(--text-muted);
 }
 
-.current-role-package-summary dl {
+.role-package-metadata {
+	@apply border-t pt-3;
+	border-color: var(--line);
+}
+
+.role-package-metadata summary {
+	@apply cursor-pointer text-xs font-semibold;
+	color: var(--text-muted);
+}
+
+.role-package-metadata dl {
 	@apply m-0 grid grid-cols-2 gap-x-2.5 gap-y-1 text-xs;
+	@apply mt-3;
 }
 
 .current-role-package-summary dd {
@@ -434,7 +449,7 @@
 }
 
 .role-row {
-	@apply grid grid-cols-3 items-center gap-3 border-b border-line py-3;
+	@apply flex items-center gap-3 border-b border-line py-3;
 }
 
 .role-row img {
@@ -444,6 +459,14 @@
 	@apply text-xs;
 	--semantic-fg-role: default;
 	color: var(--semantic-role-default);
+}
+
+.role-row > div {
+	@apply min-w-0 flex-1;
+}
+
+.role-row .role-active {
+	@apply shrink-0;
 }
 
 .role-row span,

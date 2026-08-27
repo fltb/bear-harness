@@ -63,7 +63,7 @@
 }
 
 .msg-menu-trigger {
-	@apply grid h-5 w-6 place-items-center rounded-md border-0 p-0 text-sm leading-none;
+	@apply hidden h-6 w-8 place-items-center rounded-md border-0 p-0 text-xs leading-none;
 	color: var(--text-muted);
 	background: transparent;
 }
@@ -275,7 +275,7 @@
 }
 
 .queue-pop {
-	@apply absolute right-0 top-full z-50 mt-2 w-full max-w-sm rounded-2xl p-3;
+	@apply absolute right-0 top-full z-70 mt-2 w-72 rounded-xl p-3;
 	border: 1px solid var(--line);
 	background: var(--surface-panel);
 	box-shadow: var(--shadow-app);
@@ -387,7 +387,7 @@
 }
 
 .model-setup .intro-card {
-	@apply max-h-screen overflow-y-auto;
+	@apply max-h-full overflow-y-auto;
 }
 
 .model-setup-pickers {
@@ -408,6 +408,15 @@
 }
 .intro-provider-tiles {
 	@apply mb-1 mt-4 grid grid-cols-2 gap-2;
+}
+
+.onboarding-provider-selector {
+	@apply mt-4;
+}
+
+.first-meeting-provider-setup .provider-setup-editor,
+.first-meeting-provider-setup .provider-import {
+	@apply mt-3;
 }
 .intro-provider-tile {
 	@apply grid min-h-14 content-start gap-0.5 rounded-xl px-3 py-2.5 text-left;

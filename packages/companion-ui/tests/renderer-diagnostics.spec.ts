@@ -63,4 +63,27 @@ describe("renderer fault reporting", () => {
 			window.dispatchEvent(new ErrorEvent("error", { error: new Error("x") }));
 		}).not.toThrow();
 	});
+
+	it("classifies DOM exceptions and errors without a string name", () => {
+		const report = vi.fn();
+		installRendererFaultReporting(report);
+
+		window.dispatchEvent(new ErrorEvent("error", { error: new DOMException("blocked") }));
+		expect(report).toHaveBeenCalledWith({
+			kind: "error",
+			errorType: "DOMException",
+			line: 0,
+			column: 0,
+		});
+
+		const unnamed = new Error("unnamed");
+		Object.defineProperty(unnamed, "name", { value: 7 });
+		window.dispatchEvent(new ErrorEvent("error", { error: unnamed }));
+		expect(report).toHaveBeenCalledWith({
+			kind: "error",
+			errorType: "unknown",
+			line: 0,
+			column: 0,
+		});
+	});
 });

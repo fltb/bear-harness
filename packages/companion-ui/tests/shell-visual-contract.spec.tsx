@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { zhCN } from "@bear-harness/i18n/locales";
+import type { IconDefinition } from "@fortawesome/free-solid-svg-icons";
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -12,6 +13,7 @@ import {
 	MOBILE_LAYOUT_MAX_WIDTH,
 } from "../src/App.js";
 import { CharacterPresence } from "../src/CharacterPresence.js";
+import { Icon } from "../src/Icon.js";
 import { SceneBackdrop } from "../src/SceneBackdrop.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
 import { ThreadHead } from "../src/ThreadHead.js";
@@ -249,6 +251,35 @@ describe("shell visual and thread head contracts", () => {
 
 		render(() => <CharacterPresence character={character} presence="idle" visualState="custom" />);
 		expect(screen.getByRole("img", { name: "Custom expression" })).toBeVisible();
+	});
+
+	it("keeps unlabeled scenes decorative and renders layered icon definitions", () => {
+		render(() => (
+			<>
+				<SceneBackdrop
+					scene={
+						{
+							id: "decorative-room",
+							backgroundUrl: "data:image/png;base64,cm9vbQ==",
+						} as never
+					}
+				/>
+				<span role="img" aria-label="Layered test icon">
+					<Icon
+						icon={
+							{
+								icon: [16, 16, [], "layered-test", ["M0 0h8v8H0z", "M8 8h8v8H8z"]],
+							} as IconDefinition
+						}
+					/>
+				</span>
+			</>
+		));
+		const scene = screen.getByRole("img", { name: "" });
+		expect(scene).toHaveAttribute("aria-label", "");
+		expect(
+			screen.getByRole("img", { name: "Layered test icon" }).firstElementChild?.childElementCount,
+		).toBe(2);
 	});
 });
 

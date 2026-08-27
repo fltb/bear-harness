@@ -7,6 +7,7 @@ import {
 	faPen,
 	faPlus,
 	faTrash,
+	faXmark,
 } from "@fortawesome/free-solid-svg-icons";
 import { Button } from "@kobalte/core/button";
 import { Dialog } from "@kobalte/core/dialog";
@@ -70,6 +71,14 @@ export function Sidebar(props: {
 
 	return (
 		<aside class="sidebar">
+			<Button
+				type="button"
+				class="mobile-navigation-close"
+				aria-label={`${t("backstage.close")} ${t("sidebar.conversations")}`}
+				onClick={() => props.onNavigate?.()}
+			>
+				<Icon icon={faXmark} />
+			</Button>
 			<div class="identity">
 				<Show when={props.character}>
 					{(character) => (
