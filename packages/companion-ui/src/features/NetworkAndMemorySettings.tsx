@@ -3,6 +3,8 @@ import { Button } from "@kobalte/core/button";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { Show } from "solid-js";
+import { markSelectPortalTopLayer } from "../lib/select-portal.js";
+import { createStableSnapshot } from "../lib/stable-snapshot.js";
 import { useCompanionStore } from "../stores/companion.js";
 import { createNetworkMemoryWorkflow } from "../stores/setup-workflows.js";
 import { EmbeddingSettings } from "./EmbeddingSettings.js";
@@ -18,7 +20,9 @@ export function NetworkAndMemorySettings() {
 	const workflow = createNetworkMemoryWorkflow(store, t);
 	const { proxyMode, proxyUrl, setProxyMode, setProxyUrl, saving, error, feedback, save } =
 		workflow;
-	const proxyModes = () => store.embedding.capabilitiesQuery.data?.networkProxyModes ?? [];
+	const proxyModes = createStableSnapshot(
+		() => store.embedding.capabilitiesQuery.data?.networkProxyModes ?? [],
+	);
 	const selectedProxyMode = () => proxyModes().find((mode) => mode.id === proxyMode()) ?? null;
 	const capabilitiesReady = () => store.embedding.capabilitiesQuery.data !== undefined;
 
@@ -52,7 +56,9 @@ export function NetworkAndMemorySettings() {
 						aria-label={t("settings.proxyMode")}
 						itemComponent={(props) => (
 							<Select.Item item={props.item} class="select-item">
-								<Select.ItemLabel>{props.item.rawValue.id}</Select.ItemLabel>
+								<Select.ItemLabel>
+									{t(`settings.proxyModes.${props.item.rawValue.id}`)}
+								</Select.ItemLabel>
 							</Select.Item>
 						)}
 					>
@@ -64,7 +70,7 @@ export function NetworkAndMemorySettings() {
 								}}
 							</Select.Value>
 						</Select.Trigger>
-						<Select.Portal>
+						<Select.Portal ref={markSelectPortalTopLayer}>
 							<Select.Content class="select-content">
 								<Select.Listbox class="select-listbox" />
 							</Select.Content>
@@ -86,7 +92,7 @@ export function NetworkAndMemorySettings() {
 				<div class="settings-actions">
 					<Button
 						type="button"
-						class="primary-tool"
+						data-variant="primary"
 						disabled={saving() || !capabilitiesReady() || proxyModes().length === 0}
 						onClick={() => void save()}
 					>

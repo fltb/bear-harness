@@ -3,16 +3,15 @@ import { Button } from "@kobalte/core/button";
 import { Root as Link } from "@kobalte/core/link";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { markSelectPortalTopLayer } from "../lib/select-portal.js";
+import { createStableSnapshot } from "../lib/stable-snapshot.js";
 import { useCompanionStore } from "../stores/companion.js";
 import type { ProviderInfo, ProviderLoginResult } from "../stores/ipc.js";
 
 type PresentationProps = {
 	class?: string;
-	/** Outer selection (onboarding Pattern 04 tiles) drives this shared surface. */
-	focusedProviderId?: string;
-	/** Notify the outer stage about internal selection changes so its tiles stay in sync. */
-	onProviderFocus?: (providerId: string) => void;
+
 	/** "stack" = single-column onboarding surface; "manager" = Pattern 01 two-column settings. */
 	layout?: "stack" | "manager";
 };
@@ -59,11 +58,29 @@ export function ProviderSetup(props: PresentationProps) {
 	const [apiKey, setApiKey] = createSignal("");
 	const [customBaseUrl, setCustomBaseUrl] = createSignal("");
 	const [piConfigJson, setPiConfigJson] = createSignal("");
-	const [oauth, setOauth] = createSignal<ProviderLoginResult | null>(null);
 	const [oauthProviderId, setOauthProviderId] = createSignal("");
-	const [oauthAnswer, setOauthAnswer] = createSignal("");
+	const oauth = () => {
+		const state = oauthProviderId() ? store.provider.loginState(oauthProviderId()) : undefined;
+		return state?.status === "idle" ? null : (state ?? null);
+	};
+	const oauthPrompt = createStableSnapshot(() => oauth()?.prompt);
+	const [answerDraft, setAnswerDraft] = createSignal<{ prompt: unknown; value: string }>();
+	const oauthAnswer = () => {
+		const prompt = oauthPrompt();
+		const draft = answerDraft();
+		return draft && draft.prompt === prompt
+			? draft.value
+			: prompt?.type === "select"
+				? (prompt.options?.[0]?.id ?? "")
+				: "";
+	};
+	const setOauthAnswer = (value: string) => setAnswerDraft({ prompt: oauthPrompt(), value });
+
 	const [busy, setBusy] = createSignal(false);
-	const [error, setError] = createSignal<string | null>(null);
+	const [actionError, setError] = createSignal<string | null>(null);
+	const error = () =>
+		actionError() ??
+		(oauth()?.status === "failed" ? (oauth()?.message ?? t("settings.oauthFailed")) : null);
 	const [customName, setCustomName] = createSignal("");
 	const [customId, setCustomId] = createSignal("");
 	const [customUrl, setCustomUrl] = createSignal("");
@@ -73,27 +90,27 @@ export function ProviderSetup(props: PresentationProps) {
 	const [customError, setCustomError] = createSignal<string | null>(null);
 	const [piOpen, setPiOpen] = createSignal(false);
 	let disposed = false;
-	let lastFocusedProvider = "";
+	let oauthGeneration = 0;
+	let oauthCleanup = Promise.resolve();
+
+	const abandonOauth = (): void => {
+		oauthGeneration++;
+		const state = oauth();
+		const id = oauthProviderId();
+		if (id && (!state || state.status === "running" || state.status === "waiting_input")) {
+			oauthCleanup = oauthCleanup
+				.then(() => store.provider.loginCancel(id))
+				.then(() => undefined)
+				.catch(() => undefined);
+		}
+	};
 
 	onCleanup(() => {
 		disposed = true;
+		abandonOauth();
 	});
 
-	let openedOauthUrl = "";
-	createEffect(() => {
-		const url = safeHttpsUrl(oauth()?.authUrl);
-		if (
-			!url ||
-			openedOauthUrl === url ||
-			!("bearDesktop" in (window as Window & { bearDesktop?: unknown }))
-		)
-			return;
-		openedOauthUrl = url;
-		const popup = window.open(url, "_blank", "noopener,noreferrer");
-		if (popup) popup.opener = null;
-	});
-
-	const providerItems = createMemo(() => store.provider.providers());
+	const providerItems = createStableSnapshot(() => store.provider.providers());
 	const candidates = createMemo(() =>
 		providerItems().filter((provider) => provider.source === "builtin" && !provider.added),
 	);
@@ -112,26 +129,15 @@ export function ProviderSetup(props: PresentationProps) {
 	});
 
 	const selectProvider = (id: string): void => {
+		abandonOauth();
 		const provider = providerItems().find((item) => item.id === id);
 		setProviderId(id);
 		setCustomBaseUrl(provider?.baseUrl ?? "");
-		setOauth(null);
 		setOauthProviderId("");
 		setOauthAnswer("");
 		setError(null);
 		if (managerLayout) setExpandedProvider("");
-		props.onProviderFocus?.(id);
 	};
-
-	// Outer tile stage drives the shared editor; only react when the focused id actually changes
-	// so manual dropdown picks are never clobbered by a re-run.
-	createEffect(() => {
-		const focused = props.focusedProviderId;
-		if (focused && focused !== lastFocusedProvider) {
-			lastFocusedProvider = focused;
-			selectProvider(focused);
-		}
-	});
 
 	const run = async (action: () => Promise<void>): Promise<void> => {
 		if (busy() || disposed) return;
@@ -201,7 +207,6 @@ export function ProviderSetup(props: PresentationProps) {
 			await store.provider.remove(provider.id);
 			if (providerId() === provider.id) {
 				setProviderId("");
-				setOauth(null);
 				setOauthProviderId("");
 				setOauthAnswer("");
 			}
@@ -209,62 +214,44 @@ export function ProviderSetup(props: PresentationProps) {
 		});
 	};
 
-	let oauthCancelled = false;
-	const pollOauth = async (flowProviderId: string, initial: ProviderLoginResult): Promise<void> => {
-		oauthCancelled = false;
-		let state = initial;
-		if (disposed) return;
-		setOauth(state);
-		while (
-			!disposed &&
-			!oauthCancelled &&
-			(state.status === "running" || state.status === "waiting_input")
-		) {
-			await new Promise<void>((resolve) => setTimeout(resolve, 750));
-			if (disposed || oauthCancelled) return;
-			try {
-				state = await store.provider.loginStatus(flowProviderId);
-			} catch (cause) {
-				// Cancellation deletes the host session; a racing poll is not an error.
-				if (disposed || oauthCancelled) return;
-				if (!disposed) setError(cause instanceof Error ? cause.message : String(cause));
-				return;
-			}
-			if (disposed || oauthCancelled) return;
-			setOauth(state);
-		}
-		if (disposed || oauthCancelled) return;
-		if (state.status === "completed") await refresh();
-		if (state.status === "failed") setError(state.message ?? t("settings.oauthFailed"));
-	};
+	let statusRequest = 0;
 
 	const beginOauth = async (flowProviderId: string): Promise<void> => {
-		if (!flowProviderId) return;
+		if (!flowProviderId || busy() || disposed) return;
+		const generation = ++oauthGeneration;
+		setOauthAnswer("");
 		setOauthProviderId(flowProviderId);
+		await oauthCleanup;
+		if (disposed || generation !== oauthGeneration) return;
+		const request = ++statusRequest;
 		const initial = await runOauthRequest(() => store.provider.login(flowProviderId));
-		if (initial) await pollOauth(flowProviderId, initial);
+		if (initial && !disposed && generation === oauthGeneration && request === statusRequest) {
+			if (initial.status === "completed") await refresh();
+		}
 	};
 
 	const answerOauth = async (): Promise<void> => {
+		const generation = oauthGeneration;
 		const answer = oauthAnswer();
 		const flowProviderId = oauthProviderId() || providerId();
 		if (!flowProviderId || !answer) return;
 		setOauthAnswer("");
+		const request = ++statusRequest;
 		const state = await runOauthRequest(() => store.provider.loginAnswer(flowProviderId, answer));
-		if (state && !disposed && !oauthCancelled) setOauth(state);
+		if (state && !disposed && generation === oauthGeneration && request === statusRequest)
+			if (state.status === "completed") await refresh();
 	};
 
 	const cancelOauth = async (): Promise<void> => {
 		const flowProviderId = oauthProviderId() || providerId();
 		if (!flowProviderId || disposed) return;
-		oauthCancelled = true;
+		const generation = ++oauthGeneration;
 		try {
 			await store.provider.loginCancel(flowProviderId);
 		} catch (cause) {
 			if (!disposed) setError(cause instanceof Error ? cause.message : String(cause));
 		}
-		if (disposed) return;
-		setOauth(null);
+		if (disposed || generation !== oauthGeneration) return;
 		setOauthProviderId("");
 		setOauthAnswer("");
 	};
@@ -314,7 +301,7 @@ export function ProviderSetup(props: PresentationProps) {
 			<Show when={supportsAuth(provider, "oauth")}>
 				<div class="oauth-login">
 					<Show
-						when={oauth()}
+						when={oauthProviderId() === provider.id ? oauth() : null}
 						fallback={
 							<Button
 								type="button"
@@ -322,25 +309,48 @@ export function ProviderSetup(props: PresentationProps) {
 								disabled={busy()}
 								onClick={() => void beginOauth(provider.id)}
 							>
-								{t("settings.loginWithBrowser")}
+								{oauthMethod(provider)?.loginLabel ?? t("settings.loginWithBrowser")}
 							</Button>
 						}
 					>
 						{(state) => (
 							<div class="oauth-login" aria-live="polite">
-								<Show when={safeHttpsUrl(state().authUrl ?? state().verificationUri)}>
+								<Show
+									when={
+										(state().status === "running" || state().status === "waiting_input") &&
+										safeHttpsUrl(state().authUrl ?? state().verificationUri)
+									}
+								>
 									{(url) => (
-										<Link href={url()} target="_blank" rel="noreferrer">
+										<Button
+											type="button"
+											onClick={() => window.open(url(), "_blank", "noopener,noreferrer")}
+										>
 											{t("settings.oauthOpen")}
-										</Link>
+										</Button>
 									)}
+								</Show>
+								<Show when={state().status === "running" && !state().message}>
+									<p>{t("settings.oauthWaiting")}</p>
+								</Show>
+								<Show when={state().status === "completed"}>
+									<p>{t("settings.oauthConnected")}</p>
+								</Show>
+								<Show when={state().status === "failed"}>
+									<Button
+										type="button"
+										disabled={busy()}
+										onClick={() => void beginOauth(provider.id)}
+									>
+										{t("settings.reauthProvider")}
+									</Button>
 								</Show>
 								<Show when={state().deviceCode}>
 									<p>
 										{t("settings.oauthCode")}: <strong>{state().deviceCode}</strong>
 									</p>
 								</Show>
-								<Show when={state().instructions}>
+								<Show when={state().instructions && provider.id !== "openai-codex"}>
 									<p class="field-hint">{state().instructions}</p>
 								</Show>
 								<Show when={state().message && state().status !== "failed"}>
@@ -359,10 +369,19 @@ export function ProviderSetup(props: PresentationProps) {
 										</For>
 									</ul>
 								</Show>
-								<Show when={state().prompt}>
+								<Show when={oauthPrompt()}>
 									{(prompt) => (
 										<TextField class="field">
-											<TextField.Label class="field-label">{prompt().message}</TextField.Label>
+											<TextField.Label class="field-label">
+												{provider.id === "openai-codex" && prompt().type === "manual_code"
+													? t("settings.oauthCallbackLabel")
+													: prompt().message}
+											</TextField.Label>
+											<Show
+												when={provider.id === "openai-codex" && prompt().type === "manual_code"}
+											>
+												<p class="field-hint">{t("settings.oauthManualHint")}</p>
+											</Show>
 											<Show
 												when={prompt().type === "select"}
 												fallback={
@@ -375,13 +394,16 @@ export function ProviderSetup(props: PresentationProps) {
 												}
 											>
 												<Select
+													disallowEmptySelection
 													options={prompt().options ?? []}
 													value={
 														prompt().options?.find((option) => option.id === oauthAnswer()) ?? null
 													}
 													optionValue="id"
 													optionTextValue="label"
-													onChange={(option) => setOauthAnswer(option?.id ?? "")}
+													onChange={(option) => {
+														if (option) setOauthAnswer(option.id);
+													}}
 													itemComponent={(itemProps) => (
 														<Select.Item item={itemProps.item} class="select-item">
 															<Select.ItemLabel>{itemProps.item.rawValue.label}</Select.ItemLabel>
@@ -389,9 +411,14 @@ export function ProviderSetup(props: PresentationProps) {
 													)}
 												>
 													<Select.Trigger class="select-trigger" aria-label={prompt().message}>
-														<Select.Value class="select-value" />
+														<Select.Value class="select-value">
+															{
+																prompt().options?.find((option) => option.id === oauthAnswer())
+																	?.label
+															}
+														</Select.Value>
 													</Select.Trigger>
-													<Select.Portal>
+													<Select.Portal ref={markSelectPortalTopLayer}>
 														<Select.Content class="select-content">
 															<Select.Listbox class="select-listbox" />
 														</Select.Content>
@@ -513,7 +540,7 @@ export function ProviderSetup(props: PresentationProps) {
 										v
 									</Select.Icon>
 								</Select.Trigger>
-								<Select.Portal>
+								<Select.Portal ref={markSelectPortalTopLayer}>
 									<Select.Content class="select-content">
 										<Select.Listbox class="select-listbox" />
 									</Select.Content>

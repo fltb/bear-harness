@@ -19,6 +19,7 @@ import {
 	type IpcErrorKind,
 	type RequestOf,
 	type ResponseOf,
+	type SyncRevision,
 } from "@bear-harness/protocol/schema";
 
 /** Wire error body: a protocol kind plus a localizable reason string. */
@@ -28,7 +29,9 @@ export interface RpcError {
 }
 
 /** The shared response envelope — every dispatch returns exactly this shape. */
-export type RpcResponse = { ok: true; data: unknown } | { ok: false; error: RpcError };
+export type RpcResponse =
+	| { ok: true; data: unknown; sync?: SyncRevision }
+	| { ok: false; error: RpcError };
 
 /** A domain handler: validated request params in, response data out. */
 export type RpcHandler = (params: unknown) => unknown | Promise<unknown>;
@@ -45,6 +48,7 @@ export class ProtocolResponseValidationError extends Error {
 }
 
 export interface DispatcherOptions {
+	syncRevision?: () => SyncRevision;
 	/**
 	 * Host-owned behavior for handler response-schema violations:
 	 * `throw` rejects dispatch with ProtocolResponseValidationError;
@@ -83,11 +87,13 @@ function normalizeHandlerError(error: unknown): RpcError {
 }
 
 export class Dispatcher {
+	private readonly syncRevision?: () => SyncRevision;
 	private readonly handlers = new Map<string, RpcHandler>();
 	private readonly responseValidation: "throw" | "isolate";
 	private readonly onProtocolViolation?: (error: ProtocolResponseValidationError) => void;
 
 	constructor(options: DispatcherOptions = {}) {
+		this.syncRevision = options.syncRevision;
 		this.responseValidation = options.responseValidation ?? "throw";
 		this.onProtocolViolation = options.onProtocolViolation;
 	}
@@ -140,8 +146,24 @@ export class Dispatcher {
 		}
 
 		let data: unknown;
+		let sync: SyncRevision | undefined;
 		try {
-			data = await handler(parsed.data);
+			for (let attempt = 0; ; attempt++) {
+				const before = this.syncRevision?.();
+				const result = handler(parsed.data);
+				data = result instanceof Promise ? await result : result;
+				sync = this.syncRevision?.();
+				if (
+					contract.operation !== "query" ||
+					!before ||
+					!sync ||
+					(before.epoch === sync.epoch && before.revision === sync.revision)
+				)
+					break;
+				// A query spanning a commit cannot claim a single revision. Never
+				// retry mutations, and never publish a mixed-version read as success.
+				if (attempt >= 2) throw { kind: "conflict", reason: "sync_read_changed" };
+			}
 		} catch (error) {
 			return {
 				ok: false,
@@ -150,7 +172,7 @@ export class Dispatcher {
 		}
 
 		const response = contract.response.safeParse(data);
-		if (response.success) return { ok: true, data: response.data };
+		if (response.success) return { ok: true, data: response.data, ...(sync ? { sync } : {}) };
 		const violation = new ProtocolResponseValidationError(
 			channel as Channel,
 			response.error.issues.map((issue) => ({ path: [...issue.path], message: issue.message })),

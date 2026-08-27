@@ -12,7 +12,7 @@ import {
 	RENDERER_FAULT_KINDS,
 } from "@bear-harness/host-runtime";
 import { assertProductConfig, OFFICIAL_BRAND, productConfig } from "@bear-harness/product-config";
-import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
+import { EventSubscribeRequest, REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
 import { createWebCredentialVault } from "./credential-vault.ts";
 import { webDevDataDirectory } from "./data-directory.ts";
 
@@ -249,6 +249,7 @@ function sendError(
 	send(response, status, { ok: false, error: { kind, reason } }, traceId);
 }
 
+const eventResponses = new Set<ServerResponse>();
 const server = createServer(async (request, response) => {
 	const url = new URL(request.url ?? "/", "http://127.0.0.1");
 	const isRpcRequest = request.method === "POST" && url.pathname.startsWith("/rpc/");
@@ -364,6 +365,36 @@ const server = createServer(async (request, response) => {
 				request,
 				channel === "character.import:v1" ? 36 * 1024 * 1024 : undefined,
 			);
+			if (channel === "events.subscribe:v1" && request.headers.accept === "application/x-ndjson") {
+				const parsed = EventSubscribeRequest.safeParse(params);
+				if (!parsed.success) throw new HttpError(400, "invalid_request", "invalid_event_cursor");
+				response.writeHead(200, {
+					"content-type": "application/x-ndjson",
+					"cache-control": "no-store",
+					"x-accel-buffering": "no",
+				});
+				response.write(JSON.stringify({ events: [] }) + "\n");
+				eventResponses.add(response);
+				let stop: (() => void) | undefined;
+				response.once("close", () => {
+					stop?.();
+					eventResponses.delete(response);
+				});
+				stop = runtime.subscribeEvents((event) => {
+					if (response.destroyed) return;
+					if (response.writableLength > 4 * 1024 * 1024) {
+						response.destroy();
+						return;
+					}
+					response.write(JSON.stringify({ events: [event] }) + "\n");
+				}, parsed.data.afterSeq ?? 0);
+				if (response.destroyed) {
+					stop();
+					eventResponses.delete(response);
+				}
+				finishRpc();
+				return;
+			}
 			// Dispatch outcomes — success and domain failure alike — resolve as
 			// HTTP 200 with the original validated envelope so the companion
 			// client can distinguish an RPC failure from a transport rejection
@@ -376,6 +407,11 @@ const server = createServer(async (request, response) => {
 			send(response, 200, result, rpcTraceId);
 		} catch (error) {
 			rpcStatus = "error";
+			if (response.headersSent) {
+				response.destroy();
+				finishRpc();
+				return;
+			}
 			if (error instanceof HttpError) {
 				rpcErrorCategory = error.kind;
 				sendError(response, error.status, error.kind, error.reason, rpcTraceId);
@@ -448,6 +484,7 @@ const shutdown = (exitCode: number): Promise<void> => {
 	if (shutdownPromise) return shutdownPromise;
 	process.exitCode = Math.max(Number(process.exitCode ?? 0), exitCode);
 	shutdownPromise = (async () => {
+		for (const response of eventResponses) response.end();
 		try {
 			await new Promise<void>((resolve) => {
 				if (!server.listening) {
@@ -468,8 +505,9 @@ const shutdown = (exitCode: number): Promise<void> => {
 
 process.on("SIGINT", () => void shutdown(0));
 process.on("SIGTERM", () => void shutdown(0));
-process.on("uncaughtException", () => {
-	diagnostics.emit("main.uncaught_exception", {});
+process.on("uncaughtException", (error) => {
+	diagnostics.emit("main.uncaught_exception", { errorType: diagnosticErrorType(error) });
+	if (debugEnabled) console.error("[web-dev uncaught exception]", error);
 	void shutdown(1);
 });
 

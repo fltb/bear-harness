@@ -124,6 +124,13 @@ export class ContextPackCompiler {
 		if (prompt.description) blocks.push({ layer: "description", content: prompt.description });
 		if (prompt.personality) blocks.push({ layer: "personality", content: prompt.personality });
 		if (prompt.scenario) blocks.push({ layer: "scenario", content: prompt.scenario });
+		const nickname = this.getUserNickname(conversationId);
+		if (nickname) {
+			blocks.push({
+				layer: "persona",
+				content: `[用户明确指定的称呼]\n称呼用户为：${nickname}`,
+			});
+		}
 		// 2. Self Canon revision (current adopted)
 		const canon = this.getSelfCanon(conversationId);
 		if (canon) {
@@ -350,6 +357,16 @@ ${modules.join("\n")}`,
 		return character.prompt;
 	}
 
+	private getUserNickname(conversationId: string): string | null {
+		const row = this.db
+			.select({ nickname: companionIdentity.nickname })
+			.from(conversations)
+			.innerJoin(companionIdentity, eq(companionIdentity.id, conversations.companionId))
+			.where(eq(conversations.id, conversationId))
+			.get();
+		return row?.nickname?.trim() || null;
+	}
+
 	private getCharacterPackage(conversationId: string): CharacterPackage | null {
 		const row = this.db
 			.select({ packageId: companionIdentity.packageId })
@@ -552,6 +569,6 @@ function manifestSource(layer: ContextPackBlock["layer"]): string {
 	if (layer === "scene") return "scene_state_or_conversation_directives";
 	if (layer === "roleplay") return "roleplay_ledger";
 	if (layer === "relationship") return "approved_relationship_memory";
-	if (layer === "persona") return "tdai_persona_scene";
+	if (layer === "persona") return "user_identity_or_tdai_persona_scene";
 	return "host_real_context";
 }

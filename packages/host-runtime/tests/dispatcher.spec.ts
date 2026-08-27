@@ -5,6 +5,31 @@ import { describe, expect, it } from "vitest";
 import { Dispatcher, ProtocolResponseValidationError } from "../src/dispatcher.js";
 
 describe("Zod RPC dispatcher", () => {
+	it("retries a query spanning a commit but never retries a mutation", async () => {
+		let revision = 0;
+		let reads = 0;
+		const dispatcher = new Dispatcher({ syncRevision: () => ({ epoch: "host", revision }) });
+		dispatcher.registerHandler(RPC.run.list, async () => {
+			reads++;
+			if (reads === 1) revision++;
+			return { runs: [] };
+		});
+		expect(await dispatcher.dispatch(RPC.run.list.channel, {})).toEqual({
+			ok: true,
+			data: { runs: [] },
+			sync: { epoch: "host", revision: 1 },
+		});
+		expect(reads).toBe(2);
+		let writes = 0;
+		dispatcher.registerHandler(RPC.provider.logout, async () => {
+			writes++;
+			revision++;
+			return {};
+		});
+		await dispatcher.dispatch(RPC.provider.logout.channel, { providerId: "test" });
+		expect(writes).toBe(1);
+	});
+
 	it("rejects unknown endpoint registration before dispatch", () => {
 		const dispatcher = new Dispatcher();
 

@@ -3,7 +3,8 @@ import { faArrowUp, faPaperclip, faStop } from "@fortawesome/free-solid-svg-icon
 import { Button } from "@kobalte/core/button";
 import { FileField } from "@kobalte/core/file-field";
 import { TextField } from "@kobalte/core/text-field";
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createMutation } from "@tanstack/solid-query";
+import { createSignal, For, Show } from "solid-js";
 import { ModelSelector } from "./features/ModelSelector.js";
 import { Icon } from "./Icon.js";
 import { useCompanionStore } from "./stores/companion.js";
@@ -123,23 +124,32 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const workflow = useConversationWorkflow(store);
+	const nativeImport = createMutation(() => ({
+		mutationFn: (action: () => Promise<Summary[]>) => action(),
+		retry: false,
+		gcTime: 0,
+	}));
 	const [menuOpen, setMenuOpen] = createSignal(false);
 	const [dragging, setDragging] = createSignal(false);
 	let fileInput: HTMLInputElement | undefined;
 	let folderInput: HTMLInputElement | undefined;
-	createEffect(() => {
-		const id = store.activeConversationId;
-		if (id) workflow.refreshModels(id);
-	});
+
 	const pick = async (folder: boolean) => {
 		setMenuOpen(false);
 		const id = store.activeConversationId;
 		const bridge = desktopAttachments();
-		if (id && bridge)
-			workflow.addCompletedAttachments(
-				folder ? await bridge.pickFolder(id) : await bridge.pickFiles(id),
-			);
-		else (folder ? folderInput : fileInput)?.click();
+		try {
+			if (id && bridge)
+				await workflow.addCompletedAttachments(
+					await nativeImport.mutateAsync(() =>
+						folder ? bridge.pickFolder(id) : bridge.pickFiles(id),
+					),
+					id,
+				);
+			else (folder ? folderInput : fileInput)?.click();
+		} catch (error) {
+			workflow.setAttachmentError(error instanceof Error ? error.message : String(error));
+		}
 	};
 	const drop = async (event: DragEvent) => {
 		event.preventDefault();
@@ -150,7 +160,10 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 		try {
 			const bridge = desktopAttachments();
 			if (bridge) {
-				workflow.addCompletedAttachments(await bridge.importDroppedFiles(id, [...transfer.files]));
+				await workflow.addCompletedAttachments(
+					await nativeImport.mutateAsync(() => bridge.importDroppedFiles(id, [...transfer.files])),
+					id,
+				);
 				return;
 			}
 			const regularFiles: File[] = [];

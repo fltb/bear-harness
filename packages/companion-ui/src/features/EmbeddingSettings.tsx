@@ -5,8 +5,12 @@ import { RadioGroup } from "@kobalte/core/radio-group";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { createSignal, For, Show } from "solid-js";
+import { markSelectPortalTopLayer } from "../lib/select-portal.js";
+import { createStableSnapshot } from "../lib/stable-snapshot.js";
 import type { SettingsCapabilities, SettingsData } from "../stores/companion.js";
 import { useCompanionStore } from "../stores/companion.js";
+
+import { DownloadProgress } from "./DownloadProgress.js";
 
 /** Shared embedding controls bound directly to the Host-backed query state. */
 export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
@@ -36,11 +40,42 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 	const [customMirrorDraft, setCustomMirrorDraft] = createSignal<string | null>(null);
 	const settings = () => embedding.settingsQuery.data?.settings;
 	const vector = () => settings()?.memoryVectorService;
-	const capabilities = () => embedding.capabilitiesQuery.data;
+	const capabilities = createStableSnapshot(() => embedding.capabilitiesQuery.data);
 	const providerOptions = () => capabilities()?.memoryVectorProviders ?? [];
 	const candidates = () => capabilities()?.localEmbeddingCandidates ?? [];
 	const presets = () => capabilities()?.memoryVectorPresets ?? [];
 	const configuringLocal = () => embedding.localConfigureMutation.isPending;
+	const download = embedding.downloadState;
+	const [cancelling, setCancelling] = createSignal(false);
+	const [downloadError, setDownloadError] = createSignal<string | null>(null);
+
+	const cancelDownload = async () => {
+		setDownloadError(null);
+		setCancelling(true);
+		try {
+			await embedding.cancelDownload();
+		} catch (error) {
+			setDownloadError(String(error));
+		} finally {
+			setCancelling(false);
+		}
+	};
+	const downloadLabel = () => {
+		if (cancelling()) return t("settings.downloadCancelling");
+		if (download().status === "validating") return t("settings.downloadValidating");
+		if (download().status === "activating") return t("settings.downloadActivating");
+		if (download().status === "downloading") return t("settings.downloadingLocalModel");
+		return t("settings.localModelDownloadStatus");
+	};
+	const localModelOptions = createStableSnapshot(() => [
+		{ id: "builtin" as const, name: candidates()[0]?.name ?? "EmbeddingGemma" },
+		{ id: "custom" as const, name: t("settings.localModels.custom") },
+	]);
+	const downloadSourceOptions = createStableSnapshot(() => [
+		{ id: "official" as const, name: t("settings.downloadSources.official") },
+		{ id: "hf-mirror" as const, name: t("settings.downloadSources.hfMirror") },
+		{ id: "custom" as const, name: t("settings.downloadSources.custom") },
+	]);
 	const savingSettings = () => embedding.settingsMutation.isPending;
 	const providerId = () =>
 		(onboarding ? onboardingProviderId() : (settingsProviderId() ?? vector()?.provider)) as
@@ -87,6 +122,9 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 		) ?? null;
 	const actionLabel = () => {
 		if (configuringLocal()) return t("settings.downloadingLocalModel");
+		if (localSelected() && download().status === "completed") {
+			return t("settings.localModelEnabled");
+		}
 		if (localSelected()) return t("settings.downloadAndEnableLocalModel");
 		return onboarding ? t("messages.continue") : t("settings.saveNetwork");
 	};
@@ -143,6 +181,8 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 		}
 	};
 	const saveEmbedding = async (): Promise<void> => {
+		setCancelling(false);
+		setDownloadError(null);
 		const sourceType = effectiveDownloadSourceType();
 		await embedding.settingsMutation.mutateAsync(
 			sourceType === "custom"
@@ -189,17 +229,14 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 			const customPath = (customModelDraft() ?? vector()?.customPath ?? "").trim();
 			if (effectiveLocalModelMode() === "custom" && !customPath) return;
 			if (effectiveLocalModelMode() === "builtin" && !candidate) return;
-			try {
-				await embedding.localConfigureMutation.mutateAsync({
-					provider: "local",
-					...(effectiveLocalModelMode() === "custom"
-						? { customPath }
-						: { candidateId: candidate?.id }),
-				});
-			} finally {
-				setSettingsProviderId(null);
-				setSettingsCandidateId(null);
-			}
+			await embedding.localConfigureMutation.mutateAsync({
+				provider: "local",
+				...(effectiveLocalModelMode() === "custom"
+					? { customPath }
+					: { candidateId: candidate?.id }),
+			});
+			setSettingsProviderId(null);
+			setSettingsCandidateId(null);
 			return;
 		}
 		if (selectedProviderId === "none") {
@@ -224,10 +261,32 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 		setRemoteDimensionsDraft(null);
 	};
 
+	const renderAction = () => (
+		<div class="settings-actions">
+			<Button
+				type="button"
+				data-variant="primary"
+				disabled={
+					!capabilitiesReady() ||
+					savingSettings() ||
+					configuringLocal() ||
+					(localSelected() && download().status === "completed") ||
+					!onboardingChoiceReady() ||
+					!remoteChoiceReady()
+				}
+				aria-label={actionLabel()}
+				onClick={() => void saveEmbedding().catch(() => undefined)}
+			>
+				{actionLabel()}
+			</Button>
+		</div>
+	);
+
 	return (
 		<div class="embedding-settings">
 			<Show when={!onboarding}>
 				<Checkbox
+					class="settings-checkbox"
 					checked={vector()?.enabled === true}
 					onChange={(enabled) => {
 						const current = vector();
@@ -243,7 +302,9 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 					disabled={!capabilitiesReady() || savingSettings() || configuringLocal()}
 				>
 					<Checkbox.Input />
-					<Checkbox.Control />
+					<Checkbox.Control class="settings-checkbox-control">
+						<Checkbox.Indicator>✓</Checkbox.Indicator>
+					</Checkbox.Control>
 					<Checkbox.Label>{t("settings.memoryVectorEnabled")}</Checkbox.Label>
 				</Checkbox>
 			</Show>
@@ -271,7 +332,7 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 							{(provider) => (
 								<RadioGroup.Item class="settings-choice-option" value={provider.id}>
 									<RadioGroup.ItemInput />
-									<RadioGroup.ItemControl>
+									<RadioGroup.ItemControl class="settings-choice-control">
 										<RadioGroup.ItemIndicator class="settings-choice-indicator" />
 									</RadioGroup.ItemControl>
 									<RadioGroup.ItemLabel>
@@ -284,17 +345,10 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 				</RadioGroup>
 				<Show when={localSelected()}>
 					<Select
-						options={[
-							{ id: "builtin" as const, name: candidates()[0]?.name ?? "EmbeddingGemma" },
-							{ id: "custom" as const, name: t("settings.localModels.custom") },
-						]}
-						value={{
-							id: effectiveLocalModelMode(),
-							name:
-								effectiveLocalModelMode() === "custom"
-									? t("settings.localModels.custom")
-									: (candidates()[0]?.name ?? "EmbeddingGemma"),
-						}}
+						options={localModelOptions()}
+						value={
+							localModelOptions().find((option) => option.id === effectiveLocalModelMode()) ?? null
+						}
 						optionValue="id"
 						optionTextValue={(choice) => choice.name}
 						onChange={(choice) => choice && setLocalModelMode(choice.id)}
@@ -314,7 +368,7 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 								}
 							</Select.Value>
 						</Select.Trigger>
-						<Select.Portal>
+						<Select.Portal ref={markSelectPortalTopLayer}>
 							<Select.Content class="select-content">
 								<Select.Listbox class="select-listbox" />
 							</Select.Content>
@@ -324,6 +378,7 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 						<TextField class="setting-field">
 							<TextField.Label>{t("settings.localCustomPath")}</TextField.Label>
 							<TextField.Input
+								disabled={configuringLocal() || savingSettings()}
 								value={customModelDraft() ?? vector()?.customPath ?? ""}
 								onInput={(event) => setCustomModelDraft(event.currentTarget.value)}
 							/>
@@ -332,18 +387,16 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 					<p class="field-hint">{t("settings.memoryVectorLocalNote")}</p>
 					<h5>{t("settings.downloadMirrorSection")}</h5>
 					<Select
-						options={[
-							{ id: "official" as const, name: t("settings.downloadSources.official") },
-							{ id: "hf-mirror" as const, name: t("settings.downloadSources.hfMirror") },
-							{ id: "custom" as const, name: t("settings.downloadSources.custom") },
-						]}
-						value={{
-							id: effectiveDownloadSourceType(),
-							name: downloadSourceName(effectiveDownloadSourceType()),
-						}}
+						options={downloadSourceOptions()}
+						value={
+							downloadSourceOptions().find(
+								(option) => option.id === effectiveDownloadSourceType(),
+							) ?? null
+						}
 						optionValue="id"
 						optionTextValue={(source) => source.name}
 						onChange={(source) => source && setDownloadSourceType(source.id)}
+						disabled={configuringLocal() || savingSettings()}
 						itemComponent={(itemProps) => (
 							<Select.Item item={itemProps.item} class="select-item">
 								<Select.ItemLabel>{itemProps.item.rawValue.name}</Select.ItemLabel>
@@ -359,7 +412,7 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 								}
 							</Select.Value>
 						</Select.Trigger>
-						<Select.Portal>
+						<Select.Portal ref={markSelectPortalTopLayer}>
 							<Select.Content class="select-content">
 								<Select.Listbox class="select-listbox" />
 							</Select.Content>
@@ -370,10 +423,26 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 							<TextField.Label>{t("settings.downloadMirrorLabel")}</TextField.Label>
 							<TextField.Input
 								type="text"
+								disabled={configuringLocal() || savingSettings()}
 								value={customMirrorDraft() ?? storedCustomMirror()}
 								onInput={(event) => setCustomMirrorDraft(event.currentTarget.value)}
 							/>
 						</TextField>
+					</Show>
+					{renderAction()}
+					<Show when={configuringLocal()}>
+						<DownloadProgress
+							label={downloadLabel()}
+							downloadedBytes={download().downloadedBytes}
+							totalBytes={download().totalBytes}
+							cancelLabel={
+								cancelling() ? t("settings.downloadCancelling") : t("settings.downloadCancel")
+							}
+							cancelling={cancelling()}
+							onCancel={
+								download().status === "activating" ? undefined : () => void cancelDownload()
+							}
+						/>
 					</Show>
 				</Show>
 				<Show when={providerId() === "remote"}>
@@ -410,7 +479,7 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 								}}
 							</Select.Value>
 						</Select.Trigger>
-						<Select.Portal>
+						<Select.Portal ref={markSelectPortalTopLayer}>
 							<Select.Content class="select-content">
 								<Select.Listbox class="select-listbox" />
 							</Select.Content>
@@ -450,40 +519,32 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 					</TextField>
 				</Show>
 			</Show>
-			<Show when={configuringLocal()}>
-				<p class="status-line" role="status">
-					{t("settings.localModelDownloadStatus")}
-				</p>
+			<Show when={downloadError()}>
+				<p role="alert">{downloadError()}</p>
 			</Show>
 			<Show when={embedding.localConfigureMutation.isSuccess && localSelected()}>
 				<p class="status-line ok" role="status">
 					{t("settings.localModelReady")}
 				</p>
 			</Show>
-			<Show when={embedding.settingsMutation.error ?? embedding.localConfigureMutation.error}>
+			<Show when={download().status === "cancelled"}>
+				<p role="status">{t("settings.downloadCancelled")}</p>
+			</Show>
+			<Show
+				when={
+					embedding.settingsMutation.error ??
+					(download().status !== "cancelled" &&
+						!cancelling() &&
+						embedding.localConfigureMutation.error)
+				}
+			>
 				{(error) => (
 					<p class="status-line err" role="alert">
 						{String(error())}
 					</p>
 				)}
 			</Show>
-			<div class="settings-actions">
-				<Button
-					type="button"
-					class="primary-tool"
-					disabled={
-						!capabilitiesReady() ||
-						savingSettings() ||
-						configuringLocal() ||
-						!onboardingChoiceReady() ||
-						!remoteChoiceReady()
-					}
-					aria-label={actionLabel()}
-					onClick={() => void saveEmbedding().catch(() => undefined)}
-				>
-					{actionLabel()}
-				</Button>
-			</div>
+			<Show when={!localSelected()}>{renderAction()}</Show>
 		</div>
 	);
 }

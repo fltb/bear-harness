@@ -30,6 +30,8 @@ if (failpoint === "user_persisted" && !fixture.piEntryId) {
 }
 
 const database = new DatabaseSync(databasePath);
+// Crash fixture writes bypass Host dispatch; journal rows remain durable.
+database.function("bear_sync_changed", () => null);
 database.exec("PRAGMA foreign_keys = ON");
 database.exec("PRAGMA busy_timeout = 5000");
 database.exec("PRAGMA synchronous = FULL");

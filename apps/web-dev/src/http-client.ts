@@ -67,6 +67,52 @@ export function createHttpTransport(token: string): HostTransport {
 		currentToken = (await loadBootstrap()).token;
 	};
 	return {
+		listen(afterSeq, receive, fail) {
+			const abort = new AbortController();
+			void (async () => {
+				const request = () =>
+					fetch("/rpc/events.subscribe%3Av1", {
+						method: "POST",
+						headers: {
+							"content-type": "application/json",
+							accept: "application/x-ndjson",
+							"x-bear-web-dev-token": currentToken,
+						},
+						body: JSON.stringify({ afterSeq }),
+						signal: abort.signal,
+					});
+				let response = await request();
+				if (response.status === 401) {
+					await refreshToken();
+					response = await request();
+				}
+				if (!response.ok || !response.body) throw new WebDevHttpError("transport", response.status);
+				const reader = response.body.getReader();
+				const decoder = new TextDecoder();
+				let pending = "";
+				try {
+					for (;;) {
+						const { value, done } = await reader.read();
+						if (done) throw new Error("Host event stream disconnected");
+						pending += decoder.decode(value, { stream: true });
+						for (;;) {
+							const newline = pending.indexOf("\n");
+							if (newline < 0) break;
+							const frame = pending.slice(0, newline);
+							pending = pending.slice(newline + 1);
+							if (frame) receive(JSON.parse(frame));
+						}
+						if (pending.length > 4 * 1024 * 1024) throw new Error("Host event frame too large");
+					}
+				} finally {
+					await reader.cancel().catch(() => undefined);
+					reader.releaseLock();
+				}
+			})().catch((error) => {
+				if (!abort.signal.aborted) fail(error);
+			});
+			return () => abort.abort();
+		},
 		async invoke(endpoint, params) {
 			const request = () =>
 				fetch(`/rpc/${encodeURIComponent(endpoint.channel)}`, {

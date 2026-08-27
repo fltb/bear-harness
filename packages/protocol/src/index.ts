@@ -26,7 +26,8 @@ export interface IpcError {
 }
 
 /** Successful branch of the response envelope. */
-export type IpcSuccess<T> = { ok: true; data: T };
+export type SyncRevision = z.infer<typeof schema.SyncRevision>;
+export type IpcSuccess<T> = { ok: true; data: T; sync?: SyncRevision };
 
 /** Failed branch of the response envelope. */
 export type IpcFailure = { ok: false; error: IpcError };
@@ -176,6 +177,12 @@ export type ConversationAttachmentKind = z.infer<typeof schema.ConversationAttac
 export type ConversationAttachmentSummary = z.infer<typeof schema.ConversationAttachmentSummary>;
 export type ConversationAttachmentEntryKind = z.infer<
 	typeof schema.ConversationAttachmentEntryKind
+>;
+export type ConversationAttachmentUploadsRequest = z.infer<
+	typeof schema.ConversationAttachmentUploadsRequest
+>;
+export type ConversationAttachmentUploadsResponse = z.infer<
+	typeof schema.ConversationAttachmentUploadsResponse
 >;
 export type ConversationAttachmentListRequest = z.infer<
 	typeof schema.ConversationAttachmentListRequest

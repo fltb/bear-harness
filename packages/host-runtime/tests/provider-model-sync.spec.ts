@@ -230,7 +230,10 @@ describe("provider catalog model synchronization", () => {
 		const orm = {
 			select: () => ({
 				from: () => ({
-					where: () => ({ get: () => undefined }),
+					where: () => ({
+						get: () => undefined,
+						orderBy: () => ({ limit: () => ({ get: () => undefined }) }),
+					}),
 				}),
 			}),
 		};
@@ -243,8 +246,9 @@ describe("provider catalog model synchronization", () => {
 		const dispatcher = new Dispatcher();
 		wireHostHandlers(dispatcher, {
 			orm,
-			eventBus: {},
+			eventBus: { publish: vi.fn() },
 			canon: { syncPackage: vi.fn() },
+			onboarding: { initialize: vi.fn() },
 			characterLoader,
 			defaultCharacterId: "oauth-character",
 			providers,
@@ -253,7 +257,7 @@ describe("provider catalog model synchronization", () => {
 		return { dispatcher, providers, enable };
 	}
 
-	it("only synchronizes OAuth models after completed status", async () => {
+	it("keeps OAuth status queries read-only even after completion", async () => {
 		const failed = oauthDispatcher({ providerId: "oauth-relay", status: "failed" });
 		await expect(
 			failed.dispatcher.dispatch("provider.loginStatus:v1", { providerId: "oauth-relay" }),
@@ -267,7 +271,7 @@ describe("provider catalog model synchronization", () => {
 		});
 		await expect(
 			missing.dispatcher.dispatch("provider.loginStatus:v1", { providerId: "oauth-relay" }),
-		).resolves.toMatchObject({ ok: false, error: { kind: "not_found" } });
+		).resolves.toMatchObject({ ok: true, data: { providerId: "oauth-relay", status: "idle" } });
 		expect(missing.providers.listProviders).not.toHaveBeenCalled();
 		expect(missing.enable).not.toHaveBeenCalled();
 
@@ -275,12 +279,8 @@ describe("provider catalog model synchronization", () => {
 		await expect(
 			completed.dispatcher.dispatch("provider.loginStatus:v1", { providerId: "oauth-relay" }),
 		).resolves.toMatchObject({ ok: true, data: { status: "completed" } });
-		expect(completed.enable).toHaveBeenCalledWith({
-			providerId: "oauth-relay",
-			modelId: "oauth-model",
-			label: "OAuth Model",
-			supportsImages: true,
-		});
+		expect(completed.enable).not.toHaveBeenCalled();
+		expect(completed.providers.listProviders).not.toHaveBeenCalled();
 	});
 
 	it("synchronizes a model returned by the completed OAuth answer path", async () => {

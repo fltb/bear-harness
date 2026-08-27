@@ -4,6 +4,7 @@ import { Checkbox } from "@kobalte/core/checkbox";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
 import { For, Show } from "solid-js";
+import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
 import { useCompanionStore } from "../stores/companion.js";
 
@@ -152,7 +153,7 @@ export function CanonStudio() {
 						<Select.Trigger class="select-trigger" aria-label={t("canonStudio.moduleKind")}>
 							<Select.Value class="select-value" />
 						</Select.Trigger>
-						<Select.Portal>
+						<Select.Portal ref={markSelectPortalTopLayer}>
 							<Select.Content class="select-content">
 								<Select.Listbox class="select-listbox" />
 							</Select.Content>
@@ -175,7 +176,7 @@ export function CanonStudio() {
 						<Select.Trigger class="select-trigger" aria-label={t("canonStudio.moduleParent")}>
 							<Select.Value class="select-value" />
 						</Select.Trigger>
-						<Select.Portal>
+						<Select.Portal ref={markSelectPortalTopLayer}>
 							<Select.Content class="select-content">
 								<Select.Listbox class="select-listbox" />
 							</Select.Content>

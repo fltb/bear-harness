@@ -155,6 +155,7 @@ const DEFAULT_SETTINGS: SettingsData = {
 /** Minimal raw embedding binding for partial CompanionStore fixtures. */
 export function createEmbeddingBinding() {
 	return {
+		downloadState: () => ({ status: "idle", downloadedBytes: 0 }),
 		settingsQuery: {
 			data: { settings: { ...DEFAULT_SETTINGS } },
 			isPending: false,
@@ -416,6 +417,8 @@ export function createTestClient() {
 			invalidate: vi.fn(() => ok({})),
 			pin: vi.fn(() => ok(null)),
 			forget: vi.fn(() => ok(null)),
+			localEmbeddingDownloadStatus: vi.fn(() => ok({ status: "preparing", downloadedBytes: 0 })),
+			cancelLocalEmbeddingDownload: vi.fn(() => ok({})),
 			configureLocalEmbedding: vi.fn(() => ok({ ready: true })),
 			candidateApprove: vi.fn(() => ok(null)),
 			candidatesList: vi.fn(() => ok({ candidates: [] })),
@@ -460,7 +463,14 @@ export function createTestClient() {
 			routeSet: vi.fn(({ conversationId, selected }) => ok({ conversationId, selected })),
 		},
 		conversationAttachment: {
-			list: vi.fn(() => ok({ attachments: [] })),
+			uploads: vi.fn(() => ok({ uploads: [] })),
+			list: vi.fn(() =>
+				ok({
+					attachments: [
+						{ id: "attachment-1", name: "note.txt", kind: "file" as const, bytes: 3, fileCount: 1 },
+					],
+				}),
+			),
 			startUpload: vi.fn(() => ok({ uploadId: "upload-1" })),
 			appendChunk: vi.fn(() => ok(null)),
 			completeUpload: vi.fn(() =>
@@ -517,6 +527,42 @@ export function createTestClient() {
 		},
 	} as CompanionClient;
 
+	// Legacy replay tests feed controlled batches; the default fixture is a push queue.
+	const queue: Array<{ events: import("@bear-harness/protocol").DomainEvent[] }> = [];
+	let receive: ((value: ReturnType<typeof queue.shift>) => void) | undefined;
+	let seq = 0;
+	client.events.subscribe = vi.fn(async () => {
+		const batch =
+			queue.shift() ??
+			(await new Promise<ReturnType<typeof queue.shift>>((resolve) => {
+				receive = resolve;
+			}));
+		return { ok: true as const, data: batch ?? { events: [] } };
+	});
+	client.events.stream = async function* (afterSeq, signal) {
+		while (!signal.aborted) {
+			const response = await client.events.subscribe({ afterSeq });
+			if (!response.ok) throw new Error("fixture event failure");
+			if (signal.aborted) return;
+			yield response.data.events;
+			if (!response.data.events.length) {
+				await new Promise<void>((resolve) =>
+					signal.addEventListener("abort", () => resolve(), { once: true }),
+				);
+				return;
+			}
+			afterSeq = response.data.events.at(-1)?.seq ?? afterSeq;
+		}
+	};
+	HOST_EVENT_SENDERS.set(client, (kind, payload) => {
+		const batch = { events: [{ seq: ++seq, kind, payload }] };
+		if (receive) {
+			const deliver = receive;
+			receive = undefined;
+			deliver(batch);
+		} else queue.push(batch);
+	});
+
 	return {
 		client,
 		settings: () => settings,
@@ -525,4 +571,18 @@ export function createTestClient() {
 		conversationList,
 		providerList,
 	};
+}
+
+const HOST_EVENT_SENDERS = new WeakMap<
+	CompanionClient,
+	(kind: string, payload: Record<string, unknown>) => void
+>();
+export function pushHostEvent(
+	client: CompanionClient,
+	kind: string,
+	payload: Record<string, unknown>,
+): void {
+	const send = HOST_EVENT_SENDERS.get(client);
+	if (!send) throw new Error("missing fixture event channel");
+	send(kind, payload);
 }

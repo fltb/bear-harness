@@ -57,6 +57,8 @@ export interface LocalEmbeddingConfig {
 	hfEndpoint?: string;
 	/** Cancels an in-progress model download. */
 	signal?: AbortSignal;
+	onDownloadProgress?: (progress: { downloadedSize: number; totalSize: number }) => void;
+	onDownloadComplete?: () => void;
 }
 
 export type EmbeddingConfig = OpenAIEmbeddingConfig | LocalEmbeddingConfig;
@@ -180,6 +182,8 @@ export class LocalEmbeddingService implements EmbeddingService {
 	private readonly dimensions: number;
 	private readonly hfEndpoint?: string;
 	private readonly signal?: AbortSignal;
+	private readonly onDownloadProgress?: LocalEmbeddingConfig["onDownloadProgress"];
+	private readonly onDownloadComplete?: () => void;
 	private readonly logger?: Logger;
 	private readonly importLlama: ImportLlamaFn;
 
@@ -197,6 +201,8 @@ export class LocalEmbeddingService implements EmbeddingService {
 		this.dimensions = config?.dimensions ?? DEFAULT_LOCAL_DIMENSIONS;
 		this.hfEndpoint = config?.hfEndpoint?.trim();
 		this.signal = config?.signal;
+		this.onDownloadProgress = config?.onDownloadProgress;
+		this.onDownloadComplete = config?.onDownloadComplete;
 		this.logger = logger;
 		this.importLlama = importLlama ?? defaultImportLlama;
 	}
@@ -357,9 +363,12 @@ export class LocalEmbeddingService implements EmbeddingService {
 				...(this.modelCacheDir ? { directory: this.modelCacheDir } : {}),
 				...(this.hfEndpoint ? { endpoints: { huggingFace: this.hfEndpoint } } : {}),
 				...(this.signal ? { signal: this.signal } : {}),
+				onProgress: this.onDownloadProgress,
 				cli: false,
 				deleteTempFileOnCancel: true,
 			});
+			this.signal?.throwIfAborted();
+			this.onDownloadComplete?.();
 			this.logger?.debug?.(`${TAG} Model resolved: ${resolvedPath}`);
 
 			model = await (

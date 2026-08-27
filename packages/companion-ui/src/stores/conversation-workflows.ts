@@ -16,6 +16,7 @@ export interface AttachmentUploadRoot {
 export type ComposerAttachment = {
 	kind: "attachment";
 	draftId: string;
+	conversationId: string;
 	id?: string;
 	name: string;
 	attachmentKind: "file" | "folder" | "generated";
@@ -66,6 +67,52 @@ function createConversationWorkflow(store: CompanionStore) {
 		sidebarError: null,
 	});
 
+	const uploads = store.attachments?.observeUploads?.(() => store.activeConversationId);
+	const attachments = createMemo<ComposerAttachment[]>(() => {
+		const conversationId = store.activeConversationId;
+		const remoteUploads = uploads?.data()?.uploads ?? [];
+		const local = state.attachments
+			.filter((draft) => draft.conversationId === conversationId)
+			.map((draft) => {
+				const saved = draft.id ? store.attachments.data(conversationId!, draft.id) : undefined;
+				const uploading = remoteUploads.find((upload) => upload.uploadId === draft.uploadId);
+				return {
+					...draft,
+					...(saved
+						? {
+								name: saved.name,
+								attachmentKind: saved.kind,
+								bytes: saved.bytes,
+								fileCount: saved.fileCount,
+							}
+						: {}),
+					...(uploading
+						? {
+								progress:
+									uploading.totalBytes === 0 ? 0 : uploading.receivedBytes / uploading.totalBytes,
+							}
+						: {}),
+				};
+			});
+		return [
+			...local,
+			...remoteUploads
+				.filter((upload) => !local.some((draft) => draft.uploadId === upload.uploadId))
+				.map((upload) => ({
+					kind: "attachment" as const,
+					draftId: upload.uploadId,
+					conversationId: conversationId!,
+					uploadId: upload.uploadId,
+					name: upload.name,
+					attachmentKind: upload.kind,
+					bytes: upload.totalBytes,
+					fileCount: upload.fileCount,
+					uploadState: "uploading" as const,
+					progress: upload.totalBytes === 0 ? 0 : upload.receivedBytes / upload.totalBytes,
+				})),
+		];
+	});
+
 	const modelApi = createMemo(() => (store as Partial<CompanionStore>).model);
 	const models = createMemo<ConfiguredModel[]>(() => modelApi()?.models?.() ?? []);
 	const modelData = createMemo(() => modelApi()?.data?.());
@@ -106,8 +153,6 @@ function createConversationWorkflow(store: CompanionStore) {
 		const files = root.entries.flatMap((entry, fileIndex) =>
 			entry.entryKind === "file" && entry.file !== undefined ? [{ entry, fileIndex }] : [],
 		);
-		const totalBytes = files.reduce((total, item) => total + item.entry.file!.size, 0);
-		let uploadedBytes = 0;
 		setState("attachments", (draft) => draft.draftId === draftId, {
 			uploadState: "uploading",
 			progress: 0,
@@ -148,23 +193,12 @@ function createConversationWorkflow(store: CompanionStore) {
 						offset,
 						base64: binaryBase64(chunk),
 					});
-					uploadedBytes += chunk.byteLength;
-					setState("attachments", (drafts) =>
-						drafts.map((draft) =>
-							draft.draftId === draftId
-								? { ...draft, progress: totalBytes === 0 ? 1 : uploadedBytes / totalBytes }
-								: draft,
-						),
-					);
 				}
 			}
 			const { attachment } = await store.attachments.completeUpload({ conversationId, uploadId });
+			await store.attachments.list(conversationId, attachment.id);
 			setState("attachments", (draft) => draft.draftId === draftId, {
 				id: attachment.id,
-				name: attachment.name,
-				attachmentKind: attachment.kind,
-				bytes: attachment.bytes,
-				fileCount: attachment.fileCount,
 				uploadState: "complete",
 				progress: 1,
 				uploadId: undefined,
@@ -189,6 +223,7 @@ function createConversationWorkflow(store: CompanionStore) {
 				{
 					kind: "attachment",
 					draftId,
+					conversationId,
 					name: root.name,
 					attachmentKind: root.kind,
 					bytes: root.entries.reduce((total, entry) => total + (entry.bytes ?? 0), 0),
@@ -198,7 +233,12 @@ function createConversationWorkflow(store: CompanionStore) {
 					source: root,
 				},
 			]);
-			void uploadRoot(draftId, root, conversationId);
+			void uploadRoot(draftId, root, conversationId).catch((cause) =>
+				setState("attachments", (draft) => draft.draftId === draftId, {
+					uploadState: "error",
+					error: cause instanceof Error ? cause.message : String(cause),
+				}),
+			);
 		}
 	};
 	const loadFiles = async (files: File[]): Promise<void> => {
@@ -235,7 +275,7 @@ function createConversationWorkflow(store: CompanionStore) {
 				})),
 			},
 		]);
-	const addCompletedAttachments = (
+	const addCompletedAttachments = async (
 		attachments: Array<{
 			id: string;
 			name: string;
@@ -243,17 +283,23 @@ function createConversationWorkflow(store: CompanionStore) {
 			bytes: number;
 			fileCount: number;
 		}>,
-	): void => {
+		conversationId = store.activeConversationId,
+	): Promise<void> => {
+		if (!conversationId) return;
+		await Promise.all(
+			attachments.map((attachment) => store.attachments.list(conversationId, attachment.id)),
+		);
 		setState("attachments", (drafts) => [
 			...drafts,
 			...attachments.map((attachment) => ({
 				kind: "attachment" as const,
 				draftId: crypto.randomUUID(),
+				conversationId,
 				id: attachment.id,
-				name: attachment.name,
-				attachmentKind: attachment.kind,
-				bytes: attachment.bytes,
-				fileCount: attachment.fileCount,
+				name: "",
+				attachmentKind: "file" as const,
+				bytes: 0,
+				fileCount: 0,
 				uploadState: "complete" as const,
 				progress: 1,
 			})),
@@ -261,7 +307,7 @@ function createConversationWorkflow(store: CompanionStore) {
 	};
 	const cancelAttachment = async (draftId: string): Promise<void> => {
 		const conversationId = store.activeConversationId;
-		const draft = state.attachments.find((candidate) => candidate.draftId === draftId);
+		const draft = attachments().find((candidate) => candidate.draftId === draftId);
 		if (!conversationId || draft?.uploadState !== "uploading") return;
 		setState("attachments", (drafts) =>
 			drafts.map((candidate) =>
@@ -275,18 +321,23 @@ function createConversationWorkflow(store: CompanionStore) {
 	};
 	const retryAttachment = (draftId: string): void => {
 		const conversationId = store.activeConversationId;
-		const draft = state.attachments.find((candidate) => candidate.draftId === draftId);
+		const draft = attachments().find((candidate) => candidate.draftId === draftId);
 		if (
 			!conversationId ||
 			!draft?.source ||
 			(draft.uploadState !== "error" && draft.uploadState !== "cancelled")
 		)
 			return;
-		void uploadRoot(draftId, draft.source, conversationId);
+		void uploadRoot(draftId, draft.source, conversationId).catch((cause) =>
+			setState("attachments", (item) => item.draftId === draftId, {
+				uploadState: "error",
+				error: cause instanceof Error ? cause.message : String(cause),
+			}),
+		);
 	};
 	const removeAttachment = async (draftId: string): Promise<void> => {
 		const conversationId = store.activeConversationId;
-		const draft = state.attachments.find((candidate) => candidate.draftId === draftId);
+		const draft = attachments().find((candidate) => candidate.draftId === draftId);
 		if (!draft) return;
 		if (draft.uploadState === "uploading") {
 			await cancelAttachment(draftId);
@@ -304,9 +355,11 @@ function createConversationWorkflow(store: CompanionStore) {
 	};
 	const dispatchMessage = async (): Promise<void> => {
 		const value = state.composerText;
-		if (!value.trim() && state.attachments.length === 0) return;
-		const draftAttachments = state.attachments;
-		if (draftAttachments.some((file) => file.uploadState !== "complete")) return;
+		if (!value.trim() && attachments().length === 0) return;
+		const draftAttachments = state.attachments.filter(
+			(draft) => draft.conversationId === store.activeConversationId,
+		);
+		if (attachments().some((file) => file.uploadState !== "complete")) return;
 		const attachmentIds = draftAttachments.flatMap((file) => (file.id ? [file.id] : []));
 		const message = value.trim();
 		const before = store.errorMetadata;
@@ -383,7 +436,7 @@ function createConversationWorkflow(store: CompanionStore) {
 		state,
 		composerText: () => state.composerText,
 		setComposerText: (value: string) => setState("composerText", value),
-		attachments: () => state.attachments,
+		attachments,
 		setAttachmentError: (value: string | null) => setState("attachmentError", value),
 		modelError: () => state.modelError,
 		modelBusy: () => state.modelBusy,

@@ -1,5 +1,5 @@
 import { zhCN } from "@bear-harness/i18n/locales";
-import { render, screen } from "@solidjs/testing-library";
+import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { Sidebar } from "../src/Sidebar.js";
@@ -13,9 +13,9 @@ describe("sidebar conversation journey", () => {
 		const selectConversation = vi.fn(() => Promise.resolve());
 		const renameConversation = vi.fn(() => Promise.resolve());
 		const archiveConversation = vi.fn(() => Promise.resolve());
+		const restoreConversation = vi.fn(() => Promise.resolve());
 		const deleteConversation = vi.fn(() => Promise.resolve());
 		const onOpenBackstage = vi.fn();
-		vi.spyOn(window, "confirm").mockReturnValue(true);
 		const store = {
 			activeConversationId: "conversation-1",
 			conversations: [
@@ -34,10 +34,20 @@ describe("sidebar conversation journey", () => {
 					updatedAt: "2026-08-16T00:00:00Z",
 				},
 			],
+			archivedConversations: [
+				{
+					id: "conversation-archived",
+					title: "Archived project",
+					sceneTitle: "Old workshop",
+					unread: false,
+					updatedAt: "2026-08-15T00:00:00Z",
+				},
+			],
 			createConversation,
 			selectConversation,
 			renameConversation,
 			archiveConversation,
+			restoreConversation,
 			deleteConversation,
 		} as unknown as CompanionStore;
 		render(() => (
@@ -67,9 +77,36 @@ describe("sidebar conversation journey", () => {
 		expect(renameConversation).toHaveBeenCalledWith("conversation-1", "Renamed project");
 		await user.click(screen.getByRole("button", { name: zhCN.sidebar.archiveConversation }));
 		expect(archiveConversation).toHaveBeenCalledWith("conversation-1");
-		await user.click(screen.getByRole("button", { name: zhCN.sidebar.deleteConversation }));
+		await user.clear(search);
+		await user.click(screen.getByRole("button", { name: zhCN.sidebar.archivedConversations }));
+		expect(screen.getByText("Archived project")).toBeVisible();
+		await user.click(screen.getByRole("button", { name: zhCN.sidebar.restoreConversation }));
+		expect(restoreConversation).toHaveBeenCalledWith("conversation-archived");
+		await user.click(screen.getByRole("button", { name: zhCN.sidebar.activeConversations }));
+		const activeRow = screen.getByText("Alpha project").closest(".nav-item-wrap");
+		expect(activeRow).not.toBeNull();
+		await user.click(
+			within(activeRow as HTMLElement).getByRole("button", {
+				name: zhCN.sidebar.deleteConversation,
+			}),
+		);
+		const confirmation = screen.getByRole("dialog", {
+			name: zhCN.sidebar.deleteConversationTitle,
+		});
+		expect(confirmation).toHaveTextContent("Alpha project");
+		expect(deleteConversation).not.toHaveBeenCalled();
+		await user.click(
+			within(confirmation).getByRole("button", {
+				name: zhCN.sidebar.deleteConversationConfirmAction,
+			}),
+		);
 		expect(deleteConversation).toHaveBeenCalledWith("conversation-1");
-		await user.click(screen.getByRole("button", { name: zhCN.sidebar.newConversation }));
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("dialog", { name: zhCN.sidebar.deleteConversationTitle }),
+			).not.toBeInTheDocument(),
+		);
+		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.newConversation }));
 		expect(createConversation).toHaveBeenCalledOnce();
 
 		await user.click(screen.getByRole("button", { name: zhCN.sidebar.characterSettings }));

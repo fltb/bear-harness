@@ -139,6 +139,7 @@ export class CharacterBehaviorService {
 			...(projection ? { piSessionId: projection.sessionId } : {}),
 			dedupeKey: input.dedupeKey,
 		});
+		this.eventBus.publish("roleplay.choices_dismissed", { conversationId: input.conversationId });
 		const event = character.roleplay.events.find((candidate) => candidate.id === input.eventId);
 		if (event) this.applyRoleplayPresentation(input.conversationId, event.effects);
 		this.eventBus.publish("roleplay.state_changed", {

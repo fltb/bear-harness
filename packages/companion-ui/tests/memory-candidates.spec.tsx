@@ -27,10 +27,13 @@ const pendingCandidate = {
 	createdAt: "2026-01-02T00:00:00.000Z",
 };
 
-async function openMemoryTab(client: ReturnType<typeof createTestClient>["client"]) {
+async function openMemoryTab(
+	client: ReturnType<typeof createTestClient>["client"],
+	excluded = () => false,
+) {
 	const user = userEvent.setup();
 	client.memory.list = vi.fn(() =>
-		Promise.resolve({ ok: true as const, data: { entries: [entry] } }),
+		Promise.resolve({ ok: true as const, data: { entries: [{ ...entry, excluded: excluded() }] } }),
 	);
 	render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 	await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
@@ -40,32 +43,36 @@ async function openMemoryTab(client: ReturnType<typeof createTestClient>["client
 }
 
 describe("memory per-entry exclude and pending candidates", () => {
-	it("excludes an entry from recall and flips the local toggle state", async () => {
+	it("renders exclusion from the refreshed Host projection", async () => {
 		const { client } = createTestClient();
-		const exclude = vi.fn(() => Promise.resolve({ ok: true as const, data: null }));
+		let excluded = false;
+		const exclude = vi.fn((params: { excluded: boolean }) => {
+			excluded = params.excluded;
+			return Promise.resolve({ ok: true as const, data: null });
+		});
 		client.memory.exclude = exclude;
-		const { user, backstage } = await openMemoryTab(client);
+		const { user, backstage } = await openMemoryTab(client, () => excluded);
 
 		const region = await within(backstage).findByRole("region", {
 			name: zhCN.memory.defaultEntriesTitle,
 		});
 		const item = within(region).getByText(entry.text).closest("li") as HTMLElement;
-		const toggle = within(item).getByRole("button", { name: zhCN.memory.exclude });
+		const toggle = within(region).getByRole("button", { name: zhCN.memory.exclude });
 		await user.click(toggle);
 
 		await waitFor(() =>
 			expect(exclude).toHaveBeenCalledWith({ memoryId: "entry-1", excluded: true }),
 		);
 		await waitFor(() =>
-			expect(within(item).getByRole("button", { name: zhCN.memory.included })).toBeVisible(),
+			expect(within(region).getByRole("button", { name: zhCN.memory.included })).toBeVisible(),
 		);
-		expect(within(item).getByText(zhCN.memory.excludedNote)).toBeVisible();
+		expect(within(region).getByText(zhCN.memory.excludedNote)).toBeVisible();
 
-		await user.click(within(item).getByRole("button", { name: zhCN.memory.included }));
+		await user.click(within(region).getByRole("button", { name: zhCN.memory.included }));
 		await waitFor(() =>
 			expect(exclude).toHaveBeenCalledWith({ memoryId: "entry-1", excluded: false }),
 		);
-		expect(within(item).queryByText(zhCN.memory.excludedNote)).not.toBeInTheDocument();
+		expect(within(region).queryByText(zhCN.memory.excludedNote)).not.toBeInTheDocument();
 	});
 
 	it("surfaces exclude failures in the entry panel", async () => {

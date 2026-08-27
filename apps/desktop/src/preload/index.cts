@@ -102,6 +102,29 @@ contextBridge.exposeInMainWorld(
 		diagnostics: Object.freeze({ reportRendererFault }),
 		attachments,
 		transport: Object.freeze({
+			listen: (
+				afterSeq: number,
+				receive: (batch: unknown) => void,
+				fail: (error: unknown) => void,
+			) => {
+				const id = crypto.randomUUID();
+				let stopped = false;
+				const listener = (
+					_event: Electron.IpcRendererEvent,
+					message: { id: string; batch: unknown },
+				) => {
+					if (!stopped && message.id === id) receive(message.batch);
+				};
+				ipcRenderer.on("events:push:v1", listener);
+				void ipcRenderer.invoke("events:listen:v1", { id, afterSeq }).catch((error) => {
+					if (!stopped) fail(String(error));
+				});
+				return () => {
+					stopped = true;
+					ipcRenderer.removeListener("events:push:v1", listener);
+					void ipcRenderer.invoke("events:unlisten:v1", { id }).catch(() => {});
+				};
+			},
 			invoke: (channel: string, request: unknown) => {
 				if (channel.startsWith(ATTACHMENT_CHANNEL_PREFIX))
 					return Promise.reject(new Error("attachment_channel_requires_trusted_preload"));

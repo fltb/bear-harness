@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { PiLiveState, PiTimeline } from "@bear-harness/protocol/schema";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { PiSessionMessageEntry } from "../companion/pi-session-store.js";
 import { PiSessionStore } from "../companion/pi-session-store.js";
 import type { AppDatabase } from "../storage/database.js";
@@ -125,7 +125,7 @@ export class ConversationRepository {
 		};
 	}
 
-	list(companionId: string): ConversationSummary[] {
+	list(companionId: string, archived = false): ConversationSummary[] {
 		return this.db
 			.select({
 				id: conversations.id,
@@ -134,7 +134,12 @@ export class ConversationRepository {
 				updatedAt: conversations.updatedAt,
 			})
 			.from(conversations)
-			.where(and(eq(conversations.companionId, companionId), isNull(conversations.archivedAt)))
+			.where(
+				and(
+					eq(conversations.companionId, companionId),
+					archived ? isNotNull(conversations.archivedAt) : isNull(conversations.archivedAt),
+				),
+			)
 			.orderBy(desc(conversations.updatedAt), sql`conversations.rowid desc`)
 			.limit(100)
 			.all()

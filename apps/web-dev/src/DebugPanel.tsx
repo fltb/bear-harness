@@ -1,19 +1,18 @@
-import type { CompanionClient, HostTransport } from "@bear-harness/companion-client";
-import { unwrap } from "@bear-harness/companion-client";
+import type { HostTransport } from "@bear-harness/companion-client";
+import {
+	createStableSnapshot,
+	markSelectPortalTopLayer,
+	useCompanionStore,
+} from "@bear-harness/companion-ui";
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { CHANNEL_CONTRACTS, IpcResponse } from "@bear-harness/protocol/schema";
 import { Button } from "@kobalte/core/button";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
+import { createMutation, createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createSignal, Show } from "solid-js";
 import { loadDebugChannels } from "./http-client";
 import "./web-dev-debug.css";
-
-interface ProviderSummary {
-	id: string;
-	name: string;
-	credentialStatus: string;
-}
 
 function format(value: unknown): string {
 	return JSON.stringify(value, null, 2);
@@ -24,62 +23,65 @@ function format(value: unknown): string {
  * the application surface, exposes every registered RPC channel, and keeps
  * provider setup explicit rather than probing pi-ai during page bootstrap.
  */
-export function WebDevDebugPanel(props: {
-	client: CompanionClient;
-	transport: HostTransport;
-	token: string;
-}) {
+export function WebDevDebugPanel(props: { transport: HostTransport; token: string }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const [open, setOpen] = createSignal(false);
-	const [channels, setChannels] = createSignal<string[]>([]);
-	const [channel, setChannel] = createSignal("");
+	const store = useCompanionStore();
+	const cache = useQueryClient();
+	const channelsQuery = createQuery(() => ({
+		queryKey: ["webdev", "channels"],
+		queryFn: () => loadDebugChannels(props.token),
+		enabled: open(),
+		staleTime: Infinity,
+	}));
+	const channels = () => channelsQuery.data ?? [];
+	const [chosenChannel, setChannel] = createSignal("");
+	const channel = () => chosenChannel() || channels()[0] || "";
 	const [params, setParams] = createSignal("{}");
 	const [output, setOutput] = createSignal("");
 	const [error, setError] = createSignal<string | null>(null);
-	const [providers, setProviders] = createSignal<ProviderSummary[]>([]);
-	const [providerId, setProviderId] = createSignal("");
+	const providers = () => store.provider.providers();
+	const [chosenProvider, setProviderId] = createSignal("");
+	const providerId = () => chosenProvider() || providers()[0]?.id || "";
 	const [apiKey, setApiKey] = createSignal("");
-	const providerOptions = () =>
+	const providerOptions = createStableSnapshot(() =>
 		providers().map((provider) => ({
 			...provider,
 			label: `${provider.name} - ${provider.credentialStatus}`,
-		}));
-	const channelOptions = () => channels().map((id) => ({ id, label: id }));
+		})),
+	);
+	const channelOptions = createStableSnapshot(() => channels().map((id) => ({ id, label: id })));
 
-	const loadChannels = async () => {
-		try {
-			const next = await loadDebugChannels(props.token);
-			setChannels(next);
-			if (!channel() && next[0]) setChannel(next[0]);
-			setError(null);
-		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "failed to load debug channels");
-		}
-	};
-	const toggle = () => {
-		const next = !open();
-		setOpen(next);
-		if (next && channels().length === 0) void loadChannels();
-	};
-	const invokeRaw = async () => {
-		try {
-			const parsed: unknown = JSON.parse(params());
-			const endpoint = CHANNEL_CONTRACTS[channel()];
-			if (!endpoint) throw new Error("unknown RPC channel");
-			const request = endpoint.request.parse(parsed);
-			const response = await props.transport.invoke(endpoint, request);
-			const validated = IpcResponse(endpoint.response).parse(response);
-			setOutput(format(validated));
-			setError(null);
-		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : "debug RPC failed");
-		}
-	};
+	const toggle = () => setOpen((value) => !value);
+	const invocation = createMutation(() => ({
+		retry: false,
+		gcTime: 0,
+		mutationFn: async () => {
+			try {
+				const parsed: unknown = JSON.parse(params());
+				const endpoint = CHANNEL_CONTRACTS[channel()];
+				if (!endpoint) throw new Error("unknown RPC channel");
+				const request = endpoint.request.parse(parsed);
+				const response =
+					endpoint.operation === "mutation"
+						? await props.transport.invoke(endpoint, request)
+						: await cache.fetchQuery({
+								queryKey: ["webdev", "inspection", crypto.randomUUID()],
+								queryFn: () => props.transport.invoke(endpoint, request),
+								gcTime: 0,
+							});
+				const validated = IpcResponse(endpoint.response).parse(response);
+				setOutput(format(validated));
+				setError(null);
+			} catch (cause) {
+				setError(cause instanceof Error ? cause.message : "debug RPC failed");
+			}
+		},
+	}));
+	const invokeRaw = () => invocation.mutateAsync();
 	const loadProviders = async () => {
 		try {
-			const result = await unwrap<{ providers: ProviderSummary[] }>(props.client.provider.list());
-			setProviders(result.providers);
-			if (!providerId() && result.providers[0]) setProviderId(result.providers[0].id);
+			const result = await store.provider.list();
 			setOutput(format(result));
 			setError(null);
 		} catch (cause) {
@@ -88,13 +90,7 @@ export function WebDevDebugPanel(props: {
 	};
 	const setSessionKey = async () => {
 		try {
-			await unwrap(
-				props.client.provider.setApiKey({
-					providerId: providerId(),
-					apiKey: apiKey(),
-					sessionOnly: true,
-				}),
-			);
+			await store.provider.setApiKey(providerId(), apiKey(), true);
 			setApiKey("");
 			await loadProviders();
 		} catch (cause) {
@@ -138,7 +134,7 @@ export function WebDevDebugPanel(props: {
 								<Select.Trigger class="select-trigger">
 									<Select.Value class="select-value" />
 								</Select.Trigger>
-								<Select.Portal>
+								<Select.Portal ref={markSelectPortalTopLayer}>
 									<Select.Content class="select-content">
 										<Select.Listbox class="select-listbox" />
 									</Select.Content>
@@ -179,7 +175,7 @@ export function WebDevDebugPanel(props: {
 							<Select.Trigger class="select-trigger">
 								<Select.Value class="select-value" />
 							</Select.Trigger>
-							<Select.Portal>
+							<Select.Portal ref={markSelectPortalTopLayer}>
 								<Select.Content class="select-content">
 									<Select.Listbox class="select-listbox" />
 								</Select.Content>

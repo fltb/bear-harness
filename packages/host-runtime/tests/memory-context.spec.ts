@@ -168,6 +168,7 @@ describe("relationship memory context", () => {
 
 	beforeEach(() => {
 		db = new DatabaseSync(":memory:");
+		db.function("bear_sync_changed", () => null);
 		for (const migration of MIGRATIONS) db.exec(migration.up);
 		db.prepare("INSERT INTO companion_packages (id, name, version, hash) VALUES (?, ?, ?, ?)").run(
 			"jizhou",
@@ -296,7 +297,9 @@ describe("relationship memory context", () => {
 				scope: scopeFor("companion-b"),
 				query: "已激活角色",
 			});
-			expect(activatedHits.map(({ record }) => record.text)).toContain("只属于已激活角色的记忆");
+			expect(activatedHits.map(({ record }) => record.text)).toContain(
+				"用户：只属于已激活角色的记忆",
+			);
 			expect(nativeAssistantId).toBeTruthy();
 			await expect(
 				rememberConversationEntry(context, "conversation-b", "legacy-message", "user_capture"),
@@ -351,7 +354,7 @@ describe("relationship memory context", () => {
 				scope: scopeFor("jizhou"),
 				query: "最新的用户消息",
 			});
-			expect(hits.map(({ record }) => record.text)).toContain("最新的用户消息");
+			expect(hits.map(({ record }) => record.text)).toContain("用户：最新的用户消息");
 
 			const emptySession = PiSessionStore.create({
 				sessionDir: join(root, "empty-sessions"),

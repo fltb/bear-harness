@@ -35,5 +35,13 @@ export type {
 	ProviderRemoveRequest,
 	ProviderSetApiKeyRequest,
 } from "@bear-harness/protocol";
-export { type CompanionClient, createCompanionClient, type HostTransport } from "./client.js";
+export {
+	type CompanionClient,
+	createCompanionClient,
+	type HostTransport,
+	isMutationResponse,
+	responseRequestSequence,
+	responseRevision,
+	withResponseRevision,
+} from "./client.js";
 export { unwrap } from "./unwrap.js";

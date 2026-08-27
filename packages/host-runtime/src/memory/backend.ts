@@ -1,3 +1,5 @@
+import { awaitSource } from "../await-source.js";
+
 /**
  * Host-facing contract for a pluggable long-term memory provider.
  *
@@ -225,4 +227,64 @@ export interface MemoryBackend {
 	diagnostics(signal?: AbortSignal): Promise<MemoryDiagnostics>;
 
 	readonly consolidate?: (request: MemoryConsolidateRequest) => Promise<MemoryConsolidationResult>;
+}
+
+/** Host-owned bank access: serialize external operations without mirroring records.
+ * A backend may hold one opened bank: select scope inside the same queue slot as
+ * the operation, never in a separate awaited caller step.
+ * Reads cannot observe an in-flight write before its Host notification. Failed
+ * writes also invalidate: a remote error is not proof that nothing was committed.
+ */
+export function withMemoryNotifications(
+	backend: MemoryBackend,
+	notify: () => void,
+	hostSignal?: AbortSignal,
+): MemoryBackend {
+	const closeController = new AbortController();
+	const lifetime = AbortSignal.any([closeController.signal, ...(hostSignal ? [hostSignal] : [])]);
+	let pending: Promise<unknown> = Promise.resolve();
+	const scoped =
+		<Request extends { scope: MemoryBankScope; signal?: AbortSignal }, Result>(
+			operation: (request: Request) => Promise<Result>,
+			writes = false,
+			selectScope = true,
+		) =>
+		(request: Request): Promise<Result> => {
+			const signal = AbortSignal.any([lifetime, ...(request.signal ? [request.signal] : [])]);
+			const work = pending
+				.catch(() => undefined)
+				.then(async () => {
+					signal.throwIfAborted();
+					if (selectScope) await backend.open({ scope: request.scope, signal });
+					signal.throwIfAborted();
+					try {
+						const value = await operation({ ...request, signal });
+						signal.throwIfAborted();
+						return value;
+					} finally {
+						if (writes && !lifetime.aborted) notify();
+					}
+				});
+			pending = work;
+			return awaitSource(work, signal);
+		};
+	return {
+		capabilities: backend.capabilities,
+		open: scoped(backend.open.bind(backend), false, false),
+		close: (signal) => {
+			closeController.abort();
+			return backend.close(signal);
+		},
+		recall: scoped(backend.recall.bind(backend)),
+		list: scoped(backend.list.bind(backend)),
+		diagnostics: backend.diagnostics.bind(backend),
+		remember: scoped(backend.remember.bind(backend), true),
+		update: scoped(backend.update.bind(backend), true),
+		forget: scoped(backend.forget.bind(backend), true),
+		invalidate: scoped(backend.invalidate.bind(backend), true),
+		setImportance: scoped(backend.setImportance.bind(backend), true),
+		...(backend.consolidate
+			? { consolidate: scoped(backend.consolidate.bind(backend), true) }
+			: {}),
+	};
 }

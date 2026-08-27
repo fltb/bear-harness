@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-lib
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
-import { createTestClient, OFFICIAL_PRODUCT } from "./fixtures.js";
+import { createTestClient, OFFICIAL_PRODUCT, pushHostEvent } from "./fixtures.js";
 
 function selectTrigger(container: HTMLElement, label: string): HTMLElement {
 	const trigger = within(container)
@@ -79,7 +79,56 @@ describe("NetworkAndMemorySettings", () => {
 			within(embedding).getByRole("button", {
 				name: zhCN.settings.downloadAndEnableLocalModel,
 			}),
-		).toBeTruthy();
+		).toHaveAttribute("data-variant", "primary");
+		expect(
+			within(backstage).getByRole("button", { name: zhCN.settings.saveNetwork }),
+		).toHaveAttribute("data-variant", "primary");
+		expect(
+			within(embedding)
+				.getByRole("radio", { name: zhCN.settings.vectorProviders.local })
+				.parentElement?.querySelector(".settings-choice-control"),
+		).toBeInTheDocument();
+	});
+
+	it("shows a stable enabled state instead of offering to download the ready local model again", async () => {
+		const { client } = createTestClient();
+		client.settings.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					settings: {
+						relationshipMemoryEnabled: false,
+						conversationHistoryReadEnabled: false,
+						networkProxy: { mode: "direct" as const },
+						memoryVectorService: {
+							enabled: true,
+							provider: "local" as const,
+							localModel: "test-embedding",
+						},
+						modelDownloadSource: { type: "official" as const },
+					},
+				},
+			}),
+		);
+		client.memory.localEmbeddingDownloadStatus = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { status: "completed" as const, downloadedBytes: 313_400_000 },
+			}),
+		);
+
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { backstage } = await openSettings();
+		await waitForSettings(backstage);
+		const action = within(embeddingSettings(backstage)).getByRole("button", {
+			name: zhCN.settings.localModelEnabled,
+		});
+		expect(action).toBeDisabled();
+		expect(
+			within(embeddingSettings(backstage)).queryByRole("button", {
+				name: zhCN.settings.downloadAndEnableLocalModel,
+			}),
+		).not.toBeInTheDocument();
 	});
 
 	it("renders and applies only the capabilities returned by Host", async () => {
@@ -135,10 +184,10 @@ describe("NetworkAndMemorySettings", () => {
 		await user.click(selectTrigger(backstage, zhCN.settings.proxyMode));
 		await waitFor(() =>
 			expect(screen.getAllByRole("option").map((option) => option.textContent?.trim())).toEqual([
-				"manual",
+				zhCN.settings.proxyModes.manual,
 			]),
 		);
-		await user.click(screen.getByRole("option", { name: "manual" }));
+		await user.click(screen.getByRole("option", { name: zhCN.settings.proxyModes.manual }));
 
 		expect(
 			within(backstage)
@@ -211,7 +260,10 @@ describe("NetworkAndMemorySettings", () => {
 		const proxySelect = selectTrigger(backstage, "代理模式");
 		await user.click(proxySelect);
 		const manualOption = await waitFor(
-			() => [...screen.getAllByRole("option")].find((el) => el.textContent?.trim() === "manual"),
+			() =>
+				[...screen.getAllByRole("option")].find(
+					(el) => el.textContent?.trim() === zhCN.settings.proxyModes.manual,
+				),
 			{ timeout: 3000 },
 		);
 		expect(manualOption).toBeTruthy();
@@ -400,9 +452,71 @@ describe("NetworkAndMemorySettings", () => {
 		await waitFor(() => expect(client.memory.configureLocalEmbedding).toHaveBeenCalled());
 		expect(localRadio).toBeChecked();
 		expect(localRadio).toBeDisabled();
+		expect(within(backstage).getByRole("progressbar")).not.toHaveAttribute("value");
 
 		completion.resolve();
 		await waitFor(() => expect(localRadio).toBeChecked());
+	});
+
+	it("shows actual download progress, cancels, and allows retry inside embedding settings", async () => {
+		const { client } = createTestClient();
+		let finish!: () => void;
+		client.memory.configureLocalEmbedding = vi.fn(
+			() =>
+				new Promise((resolve) => {
+					finish = () =>
+						resolve({
+							ok: false,
+							error: { kind: "conflict", reason: "embedding_download_cancelled" },
+						});
+				}),
+		);
+		client.memory.localEmbeddingDownloadStatus = vi.fn().mockResolvedValue({
+			ok: true,
+			data: { status: "downloading", downloadedBytes: 1024 * 1024, totalBytes: 4 * 1024 * 1024 },
+		});
+		client.memory.cancelLocalEmbeddingDownload = vi.fn().mockImplementation(async () => {
+			vi.mocked(client.memory.localEmbeddingDownloadStatus).mockResolvedValue({
+				ok: true,
+				data: { status: "cancelled", downloadedBytes: 1024 * 1024, totalBytes: 4 * 1024 * 1024 },
+			});
+			pushHostEvent(client, "memory.embedding_download_changed", {
+				status: "cancelled",
+				downloadedBytes: 1024 * 1024,
+				totalBytes: 4 * 1024 * 1024,
+			});
+			finish();
+			return { ok: true, data: {} };
+		});
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { backstage, user } = await openSettings();
+		await waitForSettings(backstage);
+		await user.click(
+			within(backstage).getByRole("checkbox", { name: zhCN.settings.memoryVectorEnabled }),
+		);
+		await user.click(
+			within(backstage).getByRole("radio", { name: zhCN.settings.vectorProviders.local }),
+		);
+		const section = embeddingSettings(backstage);
+		await user.click(
+			within(section).getByRole("button", { name: zhCN.settings.downloadAndEnableLocalModel }),
+		);
+		pushHostEvent(client, "memory.embedding_download_changed", {
+			status: "downloading",
+			downloadedBytes: 1024 * 1024,
+			totalBytes: 4 * 1024 * 1024,
+		});
+		await waitFor(() =>
+			expect(within(section).getByRole("progressbar")).toHaveAttribute("value", "25"),
+		);
+		expect(within(section).getByText("1.0 MB / 4.0 MB (25%)")).toBeVisible();
+		await user.click(within(section).getByRole("button", { name: zhCN.settings.downloadCancel }));
+		expect(client.memory.cancelLocalEmbeddingDownload).toHaveBeenCalledOnce();
+		await waitFor(() => expect(within(section).queryByRole("progressbar")).not.toBeInTheDocument());
+		expect(within(section).getByText(zhCN.settings.downloadCancelled)).toBeVisible();
+		expect(
+			within(section).getByRole("button", { name: zhCN.settings.downloadAndEnableLocalModel }),
+		).toBeEnabled();
 	});
 
 	it("keeps the Host preset selected until settings persistence succeeds", async () => {

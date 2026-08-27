@@ -4,7 +4,7 @@ This document is the cross-package map for the current Bear Harness implementati
 
 ## 1. System shape
 
-Bear Harness is a local companion application with one authoritative Host and two delivery shells:
+Bear Harness is a local companion application with one Host state-management boundary and two delivery shells:
 
 - **Desktop:** Electron main process, preload bridge, and sandboxed renderer.
 - **WebDev:** a browser renderer served by Rsbuild and a separate Node Host bound to loopback.
@@ -68,7 +68,7 @@ A shared domain capability normally crosses protocol, Host, client, and UI. A na
 Every transport returns the complete strict envelope:
 
 ```text
-success = { ok: true, data: <endpoint response> }
+success = { ok: true, data: <endpoint response>, sync: { epoch, revision } }
 failure = { ok: false, error: { kind, reason } }
 ```
 
@@ -116,13 +116,16 @@ Browser file/folder ingestion uses `conversationAttachment.startUpload`, `append
 
 ## 4. Authority boundaries
 
-The authority order is deliberate:
+**Host is the application's state manager and the renderer's only state interface.** A domain's original authority may be Host or an external system. Pi remains the authority for its conversations, messages, branches and generation state; all upper layers are projections, never competing timelines or state machines. Host manages scoped access, projection versions, notifications and adapter lifecycle. Solid Query only caches Host projections. See [the ingress inventory, authority boundaries and complexity constraints](../host-state-authority.md).
+
+The responsibility boundaries below are managed through Host:
+
 
 1. **Host code owns application state and policy.** It validates protocol input/output, enforces conversation and companion ownership, persists canonical state, chooses model/provider routes, and controls tools and side effects.
-2. **Character packages own declarations.** A package supplies identity, scenes, expressions, onboarding, roleplay media/events/choices, skills, canon, assets, and character-specific copy. Host rejects undeclared IDs.
-3. **Models own only generated output and explicit tool requests.** The conversational role can invoke only installed Host tools; Host validates every request and resulting state transition.
-4. **Users own attachment selection, memory decisions, and explicit agent choice.** Selecting a local source creates an immutable attachment and an ephemeral source grant. Selecting Codex requires an explicit verified connection; otherwise delegated work uses the bundled Pi ACP agent.
-5. **`ExternalAgentRunService` owns run state.** Executor controllers report lifecycle, permission, evidence, and terminal events. They cannot write canonical run rows or attachment ownership directly.
+2. **Character packages provide declarations for Host validation.** A package supplies identity, scenes, expressions, onboarding, roleplay media/events/choices, skills, canon, assets, and character-specific copy. Host rejects undeclared IDs.
+3. **Models provide generated output and explicit tool requests.** The conversational role can invoke only installed Host tools; Host validates every request and resulting state transition.
+4. **Users provide attachment selection, memory decisions, and explicit agent choice.** Selecting a local source creates an immutable attachment and an ephemeral source grant. Selecting Codex requires an explicit verified connection; otherwise delegated work uses the bundled Pi ACP agent.
+5. **The Host-owned `ExternalAgentRunService` confirms run state.** Executor controllers report lifecycle, permission, evidence, and terminal events. They cannot write canonical run rows or attachment ownership directly.
 6. **Renderers own presentation only.** A renderer can request imports, sends, reads, run controls, or capability URLs, but cannot assert completion, invent ownership, or construct a local-file URL.
 
 Strict schemas are necessary but not sufficient. Path/root checks, symlink policy, capability admission, package declarations, credential access, live-source grants, and executor profile trust are enforced at Host or shell boundaries.
@@ -261,7 +264,7 @@ Relationship memory is scoped durable data. Explicit user capture records proven
 
 ### 7.3 Reactive projection
 
-The UI store boots from `snapshot.get`, seeds its event cursor, and polls `events.subscribe(afterSeq)`. It narrows event payloads, skips duplicates, and refetches after a sequence gap. Store state is a projection of native timelines, live assistant state, attachment summaries, runs, onboarding, character runtime, roleplay, and settings. SQLite, native session files, attachment ownership, and EventBus sequence remain authoritative.
+The UI store boots from `snapshot.get`, seeds its event cursor, and opens one persistent `client.events.stream(afterSeq, signal)` subscription. It narrows event payloads, skips duplicates, and refetches after a sequence gap. Store state is a projection of native timelines, live assistant state, attachment summaries, runs, onboarding, character runtime, roleplay, and settings. SQLite, native session files, attachment ownership, and EventBus sequence remain authoritative.
 
 ## 8. Security, audit, moderation, and updates
 
@@ -328,3 +331,22 @@ Desktop production builds shared product/protocol/client/Host/UI layers, emits m
 | Product identity/copy | [Product configuration](./product-config.md) or [i18n](./i18n.md) | Injected consumers and character-package copy boundary. |
 
 When ownership is unclear, follow the first authoritative durable decision: protocol defines accepted wire shape, Host defines the accepted operation and persisted result, and UI/shell layers transport or present it.
+
+### Renderer state updates: RPC and Host push
+
+All renderer state updates use the shared companion client: commands and snapshots
+are request/response RPC; subsequent changes arrive over the Host event stream.
+Web-dev streams authenticated NDJSON on the events RPC route; Electron uses a
+trusted-frame IPC subscription. Neither transport periodically requests events.
+Disconnects may retry the connection, then recover from an authoritative snapshot.
+`events.subscribe` remains a one-shot replay/debug RPC, not a subscription loop.
+
+Business UI must not use timers or query `refetchInterval` to read status. The
+`check-renderer-push.mjs` lint gate enforces this; only the connection recovery
+helper is exempt. OAuth events contain provider IDs only, never authorization
+URLs, codes, or credentials. Embedding byte progress is pushed at meaningful
+progress boundaries. Timers required inside third-party device OAuth protocols
+are separate from renderer-to-Host communication.
+
+Dynamic Select options retain identity across equal Host DTO snapshots. Required
+choices have a default and cannot be cleared by reselecting the selected option.

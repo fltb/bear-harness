@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 // @vitest-environment node
 
 import type { Dispatcher } from "@bear-harness/host-runtime";
@@ -183,5 +184,48 @@ describe("wireElectronIpcHandlers", () => {
 			error: { kind: "unavailable", reason: "no_window" },
 		});
 		expect(dispatch).not.toHaveBeenCalled();
+	});
+	it("pushes to the admitted frame and removes the subscription on navigation", async () => {
+		electron.fromWebContents.mockReturnValue({});
+		const stop = vi.fn();
+		let publish!: (event: import("@bear-harness/protocol").DomainEvent) => void;
+		const subscribeEvents = vi.fn((listener, _afterSeq) => {
+			publish = listener;
+			return stop;
+		});
+		const dispose = wireElectronIpcHandlers(
+			{ dispatch: vi.fn() } as unknown as Dispatcher,
+			setupRegistry(),
+			{ subscribeEvents },
+		);
+		const mainFrame = { url: ALLOWED_URL };
+		const sender = Object.assign(new EventEmitter(), {
+			id: 1,
+			mainFrame,
+			send: vi.fn(),
+			isDestroyed: () => false,
+		});
+		const start = electron.handlers.get("events:listen:v1")!;
+		await expect(
+			start(
+				{ sender, senderFrame: { url: "https://untrusted.example" } },
+				{ id: "stream-1", afterSeq: 4 },
+			),
+		).rejects.toThrow("untrusted");
+		expect(subscribeEvents).not.toHaveBeenCalled();
+		await start({ sender, senderFrame: mainFrame }, { id: "stream-1", afterSeq: 4 });
+		publish({ seq: 5, kind: "provider.login_changed", payload: { providerId: "openai-codex" } });
+		expect(sender.send).toHaveBeenCalledWith("events:push:v1", {
+			id: "stream-1",
+			batch: {
+				events: [
+					{ seq: 5, kind: "provider.login_changed", payload: { providerId: "openai-codex" } },
+				],
+			},
+		});
+		sender.emit("did-start-navigation");
+		expect(stop).toHaveBeenCalledOnce();
+		dispose();
+		expect(sender.listenerCount("destroyed")).toBe(0);
 	});
 });

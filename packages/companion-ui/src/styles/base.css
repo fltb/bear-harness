@@ -198,18 +198,30 @@ button[data-variant="primary"]:focus-visible {
 }
 
 .settings-choice-options {
-	@apply flex flex-wrap gap-x-4 gap-y-2;
+	@apply grid gap-2;
 }
 
 .settings-choice-option {
-	@apply inline-flex cursor-pointer items-center gap-2 text-sm;
+	@apply flex min-h-10 cursor-pointer items-center gap-3 rounded-md border px-3 text-sm;
+	border-color: var(--line);
+	background: var(--surface-alt);
 	color: var(--text);
 }
 
-.settings-choice-option [data-part="item-control"] {
-	@apply flex size-4 items-center justify-center rounded-full border;
+.settings-choice-option:hover:not([data-disabled]),
+.settings-choice-option:focus-within {
+	border-color: var(--accent);
+}
+
+.settings-choice-option[data-checked] {
+	border-color: var(--accent);
+	background: color-mix(in srgb, var(--accent) 10%, var(--surface-alt));
+}
+
+.settings-choice-control {
+	@apply flex size-4 shrink-0 items-center justify-center rounded-full border;
 	border-color: var(--line);
-	background: var(--surface-alt);
+	background: var(--surface);
 }
 
 .settings-choice-indicator {
@@ -218,6 +230,31 @@ button[data-variant="primary"]:focus-visible {
 }
 
 .settings-choice-option[data-disabled] {
+	@apply cursor-default opacity-50;
+}
+
+.settings-checkbox {
+	@apply flex min-h-10 cursor-pointer items-center gap-3 rounded-md border px-3 text-sm;
+	border-color: var(--line);
+	background: var(--surface-alt);
+	color: var(--text);
+}
+
+.settings-checkbox:hover:not([data-disabled]),
+.settings-checkbox:focus-within,
+.settings-checkbox[data-checked] {
+	border-color: var(--accent);
+}
+
+.settings-checkbox-control {
+	@apply flex size-4 shrink-0 items-center justify-center rounded border text-xs font-bold;
+	border-color: var(--line);
+	background: var(--surface);
+	--semantic-fg-role: accent;
+	color: var(--semantic-role-accent);
+}
+
+.settings-checkbox[data-disabled] {
 	@apply cursor-default opacity-50;
 }
 

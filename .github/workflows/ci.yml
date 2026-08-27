@@ -24,6 +24,12 @@ jobs:
           path: coverage/
           if-no-files-found: error
       - run: npm run build
+      - run: node scripts/release-attestation.mjs quality
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-attestation-quality
+          path: release-attestations/quality.json
+          if-no-files-found: error
 
   upstream-brand:
     runs-on: ubuntu-24.04
@@ -48,6 +54,24 @@ jobs:
       - run: npm audit --audit-level=high
       - run: npm audit signatures
 
+  recovery:
+    needs: [quality]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npm run test:release:recovery
+      - run: node scripts/release-attestation.mjs recovery
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-attestation-recovery
+          path: release-attestations/recovery.json
+          if-no-files-found: error
+
   e2e:
     needs: [quality]
     runs-on: ubuntu-24.04
@@ -64,6 +88,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgtk-3-0 libgbm1 libasound2t64 libxss1 libxshmfence1 xvfb
       - run: xvfb-run -a npm run test:e2e:electron
+      - run: node scripts/release-attestation.mjs electron-e2e
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-attestation-electron-e2e
+          path: release-attestations/electron-e2e.json
+          if-no-files-found: error
 
   web-e2e:
     needs: [quality]
@@ -76,7 +106,38 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx --no-install playwright install --with-deps chromium
-      - run: npm run test:e2e:web
+      - run: npm run test:e2e:web:required
+      - run: node scripts/release-attestation.mjs web-e2e
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-attestation-web-e2e
+          path: release-attestations/web-e2e.json
+          if-no-files-found: error
+
+  live-model:
+    needs: [quality]
+    runs-on: ubuntu-24.04
+    env:
+      BEAR_E2E_LIVE_MODEL: "1"
+      BEAR_E2E_PROVIDER_ID: ${{ secrets.BEAR_E2E_PROVIDER_ID }}
+      BEAR_E2E_MODEL_ID: ${{ secrets.BEAR_E2E_MODEL_ID }}
+      BEAR_E2E_API_KEY: ${{ secrets.BEAR_E2E_API_KEY }}
+      BEAR_E2E_CUSTOM_BASE_URL: ${{ secrets.BEAR_E2E_CUSTOM_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npx --no-install playwright install --with-deps chromium
+      - run: npm run test:e2e:web:live
+      - run: node scripts/release-attestation.mjs live-model
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-attestation-live-model
+          path: release-attestations/live-model.json
+          if-no-files-found: error
 
   package:
     needs: [quality, web-e2e, e2e]
@@ -191,8 +252,39 @@ jobs:
           else
             npm run test:e2e:packaged
           fi
+      - name: Attest packaged target
+        shell: bash
+        env:
+          RELEASE_TARGET: ${{ matrix.os-name }}-${{ matrix.arch }}
+        run: node scripts/release-attestation.mjs package
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-attestation-package-${{ matrix.os-name }}-${{ matrix.arch }}
+          path: release-attestations/package-${{ matrix.os-name }}-${{ matrix.arch }}.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: bear-harness-${{ matrix.os-name }}-${{ matrix.arch }}
           path: ${{ matrix.upload-glob }}
+          if-no-files-found: error
+
+  release-gate:
+    needs: [quality, upstream-brand, security, recovery, e2e, web-e2e, live-model, package]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - uses: actions/download-artifact@v7.0.1
+        with:
+          pattern: release-attestation-*
+          path: release-attestations
+          merge-multiple: true
+      - run: node scripts/release-attestation.mjs final
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-attestation-final
+          path: release-attestations/final.json
           if-no-files-found: error

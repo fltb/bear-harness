@@ -20,6 +20,7 @@ import { join } from "node:path";
 import type { MemoryTdaiConfig } from "@bear-harness/tdai-core";
 import { and, eq } from "drizzle-orm";
 import { ArtifactStore } from "./artifacts/index.js";
+import { awaitSource } from "./await-source.js";
 import { CanonHubService } from "./canon/service.js";
 import { CharacterBehaviorService } from "./companion/character-behavior.js";
 import { CharacterDraftService } from "./companion/character-draft-service.js";
@@ -35,6 +36,8 @@ import {
 	type HostUpdateService,
 	proposeMemoryCandidate,
 	rememberConversationEntry,
+	syncAllProviderModels,
+	syncProviderModels,
 	wireHostHandlers,
 } from "./composition.js";
 import { ConversationAttachmentService } from "./conversation-attachments/service.js";
@@ -49,7 +52,7 @@ import {
 	sanitizeExternalAgentMemoryText,
 	type TerminalRunResult,
 } from "./external-agents/run-service.js";
-import type { MemoryBackend } from "./memory/backend.js";
+import { type MemoryBackend, withMemoryNotifications } from "./memory/backend.js";
 import { namespaceFor } from "./memory/tencentdb-backend.js";
 import type { DeepPartial } from "./memory/tencentdb-runtime.js";
 import { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
@@ -148,6 +151,7 @@ export class HostRuntime {
 	readonly dispatcher: Dispatcher;
 
 	private readonly db: Database;
+	private unsubscribeSync?: () => void;
 	private readonly providers: ProviderCatalog;
 	private readonly supervisor: CompanionSupervisor;
 	private readonly characterBehavior: CharacterBehaviorService;
@@ -170,6 +174,7 @@ export class HostRuntime {
 	private readonly backgroundAttempts = new Set<BackgroundAttempt>();
 	private started = false;
 	private closed = false;
+	private readonly lifetime = new AbortController();
 	private uninstallFsProtection?: FsProtectionHandle;
 	private unsubscribeAudit?: () => void;
 	private unsubscribeProxyHotReload?: () => void;
@@ -194,7 +199,18 @@ export class HostRuntime {
 			join(dataDir, "attachment-uploads"),
 		);
 		const credentials = new CredentialStore(db.orm, options.credentialVault);
-		const providers = new ProviderCatalog(credentials, join(dataDir, "companion-runtime"));
+		const providers = new ProviderCatalog(
+			credentials,
+			join(dataDir, "companion-runtime"),
+			(providerId) => {
+				eventBus.publish("provider.login_changed", { providerId });
+				this.scheduleBackground("OAuth model reconciliation", async () => {
+					const state = await providers.getOAuthSession(providerId);
+					if (state.status === "completed")
+						await syncProviderModels(providerId, providers, this.composition.models);
+				});
+			},
+		);
 		const characterLoader = new CharacterLoader(characterSeedRoot, join(dataDir, "characters"));
 		characterLoader.bootstrapLibrary(options.productConfig.defaultCharacterId);
 		const conversationRepository = new ConversationRepository(db.orm, {
@@ -226,7 +242,11 @@ export class HostRuntime {
 			appRecord.modelDownloadSource,
 		);
 
+		const notifyMemoryChanged = () => {
+			if (!this.lifetime.signal.aborted) eventBus.publish("memory.records_changed", {});
+		};
 		const memoryRuntime = new TencentDbRuntime({
+			onRecordsChanged: notifyMemoryChanged,
 			dataDir,
 			providers,
 			models,
@@ -235,6 +255,11 @@ export class HostRuntime {
 			userId: memoryScope.userId,
 			memoryConfig,
 		});
+		const memoryBackend = withMemoryNotifications(
+			memoryRuntime.backend,
+			notifyMemoryChanged,
+			this.lifetime.signal,
+		);
 		const canon = new CanonHubService(
 			db.orm,
 			artifactStore,
@@ -246,6 +271,12 @@ export class HostRuntime {
 			finishAttachmentSend: (conversationId, nonce, nativeUserEntryId) =>
 				attachments.finishSend(conversationId, nonce, nativeUserEntryId),
 			onCorrectedTurn: async ({ conversationId, userText, assistantText, correction }) => {
+				const owner = db.orm
+					.select({ companionId: conversations.companionId })
+					.from(conversations)
+					.where(eq(conversations.id, conversationId))
+					.get();
+				if (!owner) return;
 				const correctedUserContext = `${userText}\n\n[用户纠正要求]\n${correction}`;
 				await memoryRuntime.captureTurn({
 					userText: correctedUserContext,
@@ -256,14 +287,14 @@ export class HostRuntime {
 					],
 					sessionKey: namespaceFor({
 						...memoryScope,
-						companionId: options.productConfig.defaultCharacterId,
+						companionId: owner.companionId,
 					}),
 					sessionId: conversationId,
 				});
 			},
 		});
 		const contextPack = new ContextPackCompiler(db.orm, characterLoader, canon, {
-			backend: memoryRuntime.backend,
+			backend: memoryBackend,
 			scope: memoryScope,
 			systemContext: (query) =>
 				memoryRuntime
@@ -343,7 +374,7 @@ export class HostRuntime {
 					const timestamp = Date.now();
 					const userText = sanitizeExternalAgentMemoryText(content, 6_000);
 					const assistantText = sanitizeExternalAgentMemoryText(followUp.text, 4_000);
-					await waitForRuntimeAbort(
+					await awaitSource(
 						memoryRuntime.captureTurn({
 							userText,
 							assistantText,
@@ -542,7 +573,7 @@ export class HostRuntime {
 
 		this.db = db;
 		this.memoryRuntime = memoryRuntime;
-		this.memoryBackend = memoryRuntime.backend;
+		this.memoryBackend = memoryBackend;
 		this.memoryScope = memoryScope;
 		this.artifacts = artifactStore;
 		this.attachments = attachments;
@@ -566,12 +597,13 @@ export class HostRuntime {
 			logger: this.logger,
 		});
 		this.composition = {
+			signal: this.lifetime.signal,
 			orm: db.orm,
 			eventBus,
 			onboarding,
 			turns,
 			models,
-			memoryBackend: memoryRuntime.backend,
+			memoryBackend,
 			memoryRuntime,
 			memoryScope,
 			appSettings,
@@ -595,7 +627,16 @@ export class HostRuntime {
 		};
 		// Start auditing run/roleplay events from construction.
 		this.unsubscribeAudit = wireAuditToEvents(this.auditStore, this.composition.eventBus);
+		const syncEpoch = randomUUID();
+		const syncRevision = () => ({ epoch: syncEpoch, revision: db.syncRevision() });
+		this.unsubscribeSync = db.subscribeSync((revision, sources) => {
+			eventBus.publish("sync.invalidated", {
+				sync: { epoch: syncEpoch, revision },
+				sources: sources.length > 256 ? ["all"] : sources,
+			});
+		});
 		this.dispatcher = new Dispatcher({
+			syncRevision,
 			responseValidation: options.protocolViolationMode ?? "throw",
 			onProtocolViolation: (error) => {
 				eventBus.publish("diagnostics.protocol_violation", {
@@ -610,8 +651,33 @@ export class HostRuntime {
 		wireHostHandlers(this.dispatcher, this.composition);
 	}
 
+	/** Replay every stored page, then keep delivering Host events until unsubscribed. */
+	subscribeEvents(
+		listener: (event: import("./storage/event-bus.js").HostEvent) => void,
+		afterSeq: number,
+	): () => void {
+		const stop = this.composition.eventBus.subscribe(listener);
+		try {
+			let cursor = afterSeq;
+			for (;;) {
+				const batch = this.composition.eventBus.after(cursor);
+				if (!batch.length) break;
+				for (const event of batch) {
+					listener(event);
+					cursor = event.seq;
+				}
+			}
+			return stop;
+		} catch (error) {
+			stop();
+			throw error;
+		}
+	}
+
 	/** Dispatch a protocol channel; validates and returns the shared envelope. */
 	dispatch(channel: string, params: unknown): Promise<RpcResponse> {
+		if (this.closed)
+			return Promise.resolve({ ok: false, error: { kind: "unavailable", reason: "host_closed" } });
 		return this.dispatcher.dispatch(channel, params);
 	}
 
@@ -676,8 +742,11 @@ export class HostRuntime {
 					),
 				);
 			});
+			this.scheduleBackground("provider model reconciliation", () =>
+				syncAllProviderModels(this.composition.providers, this.composition.models),
+			);
 			this.scheduleBackground("Canon embedding reconciliation", (signal) =>
-				waitForRuntimeAbort(this.composition.canon.indexPending(activeCharacterId), signal),
+				awaitSource(this.composition.canon.indexPending(activeCharacterId), signal),
 			);
 			this.scheduleBackground("pending turn reconciliation", (signal) =>
 				this.composition.turns.reconcilePendingTurns({
@@ -735,6 +804,8 @@ export class HostRuntime {
 	async close(): Promise<void> {
 		if (this.closed) return;
 		this.closed = true;
+		this.lifetime.abort();
+		this.providers.dispose();
 		this.started = false;
 		this.unsubscribeProxyHotReload?.();
 		this.unsubscribeProxyHotReload = undefined;
@@ -758,28 +829,14 @@ export class HostRuntime {
 		this.unsubscribeAudit?.();
 		this.unsubscribeAudit = undefined;
 		this.characterBehavior.dispose();
-		this.providers.dispose();
 		try {
 			await this.memoryRuntime.close();
 		} catch (error) {
 			failure ??= error;
 		}
+		this.unsubscribeSync?.();
 		this.db.close();
 		if (failure) throw failure;
-	}
-}
-
-async function waitForRuntimeAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-	if (signal.aborted) throw new Error("runtime_background_attempt_cancelled");
-	let abort: (() => void) | undefined;
-	const cancelled = new Promise<never>((_resolve, reject) => {
-		abort = () => reject(new Error("runtime_background_attempt_cancelled"));
-		signal.addEventListener("abort", abort, { once: true });
-	});
-	try {
-		return await Promise.race([work, cancelled]);
-	} finally {
-		if (abort) signal.removeEventListener("abort", abort);
 	}
 }
 

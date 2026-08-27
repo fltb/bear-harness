@@ -97,7 +97,7 @@ test("direct memory capture, scoped context, and user management stay determinis
 		const capture = capturePayload.data;
 		if (!capture) throw new Error("memory.capture succeeded without response data");
 		return {
-			content: expectedAssistantText,
+			content: `用户：${expectedAssistantText}\n角色：${expectedAssistantText}`,
 			memoryId: capture.memoryId,
 			sourceEntryId: capture.sourceEntryId,
 		};

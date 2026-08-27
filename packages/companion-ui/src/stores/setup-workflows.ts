@@ -1,5 +1,5 @@
 import type { Namespace, TFunction } from "i18next";
-import { createEffect, createMemo, createSignal } from "solid-js";
+import { createMemo, createSignal } from "solid-js";
 import type {
 	CharacterOnboardingStep,
 	CompanionStore,
@@ -116,6 +116,7 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 		if (selectedReplyModel() && !setupBusy()) setModelStepAdvanced(true);
 	};
 	const submit = async (stepId: string, answer?: string): Promise<void> => {
+		if (submittedStepId !== store.onboarding.currentStepId) submittedStepId = null;
 		if (submitting() || submittedStepId === stepId) return;
 		submittedStepId = stepId;
 		setSubmitting(true);
@@ -128,10 +129,6 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 			setSubmitting(false);
 		}
 	};
-	createEffect(() => {
-		const currentStepId = store.onboarding.currentStepId;
-		if (submittedStepId !== null && submittedStepId !== currentStepId) submittedStepId = null;
-	});
 
 	return {
 		textAnswer,
@@ -222,14 +219,6 @@ export function createConversationModelSettingsWorkflow(store: CompanionStore, t
 			t("settings.imageReaderUpdated"),
 		);
 	};
-	createEffect(() => {
-		const conversationId = store.activeConversationId;
-		if (hasMethod(store.model?.list)) {
-			void store.model
-				.list(conversationId ?? undefined)
-				.catch((cause) => setError(messageOf(cause)));
-		}
-	});
 
 	return {
 		saving,
@@ -246,12 +235,13 @@ export function createConversationModelSettingsWorkflow(store: CompanionStore, t
 }
 
 export function createNetworkMemoryWorkflow(store: CompanionStore, t: Translate) {
-	const [proxyMode, setProxyMode] = createSignal<ProxyMode>();
-	const [proxyUrl, setProxyUrl] = createSignal("");
+	const [proxyModeDraft, setProxyMode] = createSignal<ProxyMode>();
+	const proxyMode = () => proxyModeDraft() ?? store.settings.data()?.networkProxy.mode;
+	const [proxyUrlDraft, setProxyUrl] = createSignal<string>();
+	const proxyUrl = () => proxyUrlDraft() ?? store.settings.data()?.networkProxy.url ?? "";
 	const [saving, setSaving] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
 	const [feedback, setFeedback] = createSignal<string | null>(null);
-	const [initialized, setInitialized] = createSignal(false);
 	const settingsPatch = createMemo<SettingsPatch>(() => {
 		const mode = proxyMode();
 		return mode === undefined
@@ -263,15 +253,7 @@ export function createNetworkMemoryWorkflow(store: CompanionStore, t: Translate)
 					},
 				};
 	});
-	createEffect(() => {
-		const settings = store.settings;
-		if (initialized() || !settings || !hasMethod(settings.data)) return;
-		const proxy = settings.data()?.networkProxy;
-		if (!proxy) return;
-		setProxyMode(proxy.mode);
-		setProxyUrl(proxy.url ?? "");
-		setInitialized(true);
-	});
+
 	const save = async (): Promise<void> => {
 		if (proxyMode() === undefined) return;
 		setSaving(true);

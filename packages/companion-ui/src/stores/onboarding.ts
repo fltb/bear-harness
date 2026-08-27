@@ -1,8 +1,14 @@
-import type { CompanionClient } from "@bear-harness/companion-client";
+import {
+	type CompanionClient,
+	isMutationResponse,
+	responseRevision,
+} from "@bear-harness/companion-client";
 import { OnboardingResponse } from "@bear-harness/protocol/schema";
 import { QueryClient } from "@tanstack/solid-query";
 import type { DomainEvent, OnboardingData } from "./ipc.js";
 import { invoke } from "./ipc.js";
+import { withRpcMutations } from "./mutation-client.js";
+import { commitQueryValue } from "./query-sync.js";
 import { createRpcQuery, queryKeys, refreshRpcQuery } from "./rpc-query.js";
 
 const INITIAL_ONBOARDING: OnboardingData = {
@@ -36,12 +42,14 @@ export function createOnboardingStore(
 	client: CompanionClient,
 	queryClient: QueryClient = new QueryClient(),
 ): OnboardingStore {
+	client = withRpcMutations(client, queryClient);
 	const hostRequest = () => invoke(client, () => client.onboarding.get());
 	let projectionGeneration = 0;
 	let protectedGeneration: number | undefined;
 	const request = async (): Promise<OnboardingData> => {
 		const generation = projectionGeneration;
 		const value = await hostRequest();
+		if (responseRevision(value)) return value;
 		const current = queryClient.getQueryData<OnboardingData>(queryKeys.onboarding);
 		if (
 			generation !== projectionGeneration ||
@@ -69,10 +77,14 @@ export function createOnboardingStore(
 		);
 	};
 	const commit = (value: OnboardingData, force = false): void => {
+		if (responseRevision(value)) {
+			commitQueryValue(queryClient, queryKeys.onboarding, value);
+			return;
+		}
 		const current = queryClient.getQueryData<OnboardingData>(queryKeys.onboarding);
 		if (!force && current !== undefined && value.eventSeq < current.eventSeq) return;
 		projectionGeneration += 1;
-		queryClient.setQueryData(queryKeys.onboarding, value);
+		commitQueryValue(queryClient, queryKeys.onboarding, value);
 		if (force) protectedGeneration = projectionGeneration;
 	};
 
@@ -82,7 +94,9 @@ export function createOnboardingStore(
 		error: () => query.error,
 		refetch: () => {
 			protectedGeneration = undefined;
-			void refreshRpcQuery({ client: queryClient, key: queryKeys.onboarding, request });
+			void refreshRpcQuery({ client: queryClient, key: queryKeys.onboarding, request }).catch(
+				() => undefined,
+			);
 		},
 		get: hostRequest,
 		resync: async () => {
@@ -91,12 +105,19 @@ export function createOnboardingStore(
 		},
 		submit: async (stepId, answer) => {
 			const result = await invoke(client, () => client.onboarding.submit({ stepId, answer }));
-			commit(result, true);
+			if (isMutationResponse(result)) commit(await hostRequest(), true);
+			else commit(result, true);
 		},
 		_hydrate: (value) => {
 			if (value !== undefined) commit(value);
 		},
 		_applyEvent: (event) => {
+			if (responseRevision(queryClient.getQueryData(queryKeys.onboarding))) {
+				void refreshRpcQuery({ client: queryClient, key: queryKeys.onboarding, request }).catch(
+					() => undefined,
+				);
+				return;
+			}
 			if (event.kind === "onboarding.state_changed") {
 				const payload =
 					typeof event.payload === "object" && event.payload !== null

@@ -31,8 +31,21 @@ describe("ordinary-user backstage journey", () => {
 				search: vi.fn(() => Promise.resolve([])),
 				candidates: () => [],
 				listCandidates: vi.fn(() => Promise.resolve([])),
+				candidateState: () => ({ candidates: [], loading: false, error: null }),
+				observeCandidates: () => ({
+					data: () => ({ candidates: [] }),
+					loading: () => false,
+					error: () => null,
+				}),
+				listState: () => ({ entries: [], loading: false, error: null }),
+				observeList: () => ({
+					data: () => ({ entries: [] }),
+					loading: () => false,
+					error: () => null,
+				}),
 			},
 			characters: {
+				observePackage: () => ({ data: () => undefined, loading: () => false, error: () => null }),
 				characters: () => [
 					{
 						id: "imported-role",
@@ -45,6 +58,24 @@ describe("ordinary-user backstage journey", () => {
 				],
 				activate: vi.fn(() => Promise.resolve()),
 				pluginTrust,
+				observeTrust: () => ({
+					data: () => ({
+						trust: {
+							origin: "imported",
+							pluginHash: "a".repeat(64),
+							pluginsPresent: true,
+							trusted: false,
+						},
+					}),
+					loading: () => false,
+					error: () => null,
+				}),
+				pluginTrustData: () => ({
+					origin: "imported",
+					pluginHash: "a".repeat(64),
+					pluginsPresent: true,
+					trusted: false,
+				}),
 				confirmPluginTrust,
 			},
 			character: THEMED_CHARACTER,
@@ -81,9 +112,29 @@ describe("ordinary-user backstage journey", () => {
 				revision: () => 0,
 				candidates: () => [],
 				listCandidates: vi.fn(() => Promise.resolve([])),
+				candidateState: () => ({ candidates: [], loading: false, error: null }),
+				observeCandidates: () => ({
+					data: () => ({ candidates: [] }),
+					loading: () => false,
+					error: () => null,
+				}),
+				listState: () => ({ entries: [], loading: false, error: null }),
+				observeList: () => ({
+					data: () => ({ entries: [] }),
+					loading: () => false,
+					error: () => null,
+				}),
 			},
-			characters: { characters: () => [], activate: vi.fn(), import: importPackage },
-			settings: { data: () => ({ relationshipMemoryEnabled: false }), get: vi.fn() },
+			characters: {
+				observePackage: () => ({ data: () => undefined, loading: () => false, error: () => null }),
+				characters: () => [],
+				activate: vi.fn(),
+				import: importPackage,
+			},
+			settings: {
+				data: () => ({ relationshipMemoryEnabled: false, networkProxy: { mode: "direct" } }),
+				get: vi.fn(),
+			},
 			provider: { list: vi.fn(() => Promise.resolve({ providers: [] })), providers: () => [] },
 			model: {
 				list: vi.fn(() => Promise.resolve({ models: [] })),
@@ -181,9 +232,28 @@ describe("ordinary-user backstage journey", () => {
 				revision: () => 0,
 				candidates: () => [],
 				listCandidates: vi.fn(() => Promise.resolve([])),
+				candidateState: () => ({ candidates: [], loading: false, error: null }),
+				observeCandidates: () => ({
+					data: () => ({ candidates: [] }),
+					loading: () => false,
+					error: () => null,
+				}),
+				listState: () => ({ entries: [], loading: false, error: null }),
+				observeList: () => ({
+					data: () => ({ entries: [] }),
+					loading: () => false,
+					error: () => null,
+				}),
 			},
-			settings: { data: () => ({ relationshipMemoryEnabled: false }), get: vi.fn() },
-			characters: { characters: () => [], activate: vi.fn() },
+			settings: {
+				data: () => ({ relationshipMemoryEnabled: false, networkProxy: { mode: "direct" } }),
+				get: vi.fn(),
+			},
+			characters: {
+				observePackage: () => ({ data: () => undefined, loading: () => false, error: () => null }),
+				characters: () => [],
+				activate: vi.fn(),
+			},
 			character,
 		} as unknown as CompanionStore;
 		render(() => (
@@ -261,10 +331,25 @@ describe("ordinary-user backstage journey", () => {
 				exclude: vi.fn(() => Promise.resolve()),
 				candidates: () => [],
 				listCandidates: vi.fn(() => Promise.resolve([])),
+				candidateState: () => ({ candidates: [], loading: false, error: null }),
+				observeCandidates: () => ({
+					data: () => ({ candidates: [] }),
+					loading: () => false,
+					error: () => null,
+				}),
+				listState: () => ({ entries: [], loading: false, error: null }),
+				observeList: () => ({
+					data: () => ({ entries: [] }),
+					loading: () => false,
+					error: () => null,
+				}),
 				approveCandidate: vi.fn(() => Promise.resolve()),
 				rejectCandidate: vi.fn(() => Promise.resolve()),
 			},
-			characters: { characters: () => [] },
+			characters: {
+				observePackage: () => ({ data: () => undefined, loading: () => false, error: () => null }),
+				characters: () => [],
+			},
 			character,
 		} as unknown as CompanionStore;
 		render(() => (
@@ -302,17 +387,22 @@ describe("ordinary-user backstage journey", () => {
 		];
 		const search = vi.fn(() => Promise.resolve(currentEntries));
 		const list = vi.fn(() => Promise.resolve(currentEntries));
+		const [entryRevision, setEntryRevision] = createSignal(0);
 		const edit = vi.fn((entryId: string, newText: string) => {
 			currentEntries = currentEntries.map((entry) =>
 				entry.id === entryId ? { ...entry, text: newText } : entry,
 			);
+			setEntryRevision((value) => value + 1);
 			return Promise.resolve();
 		});
 		const forget = vi.fn(() => Promise.resolve());
 		const store = {
 			embedding: createEmbeddingBinding() as never,
 			runs: [],
-			characters: { characters: () => [] },
+			characters: {
+				observePackage: () => ({ data: () => undefined, loading: () => false, error: () => null }),
+				characters: () => [],
+			},
 			memory: {
 				revision: () => 0,
 				list,
@@ -321,6 +411,21 @@ describe("ordinary-user backstage journey", () => {
 				forget,
 				candidates: () => [],
 				listCandidates: vi.fn(() => Promise.resolve([])),
+				candidateState: () => ({ candidates: [], loading: false, error: null }),
+				observeCandidates: () => ({
+					data: () => ({ candidates: [] }),
+					loading: () => false,
+					error: () => null,
+				}),
+				listState: () => ({ entries: currentEntries, loading: false, error: null }),
+				observeList: () => ({
+					data: () => {
+						entryRevision();
+						return { entries: currentEntries };
+					},
+					loading: () => false,
+					error: () => null,
+				}),
 			},
 			character: THEMED_CHARACTER,
 		} as unknown as CompanionStore;

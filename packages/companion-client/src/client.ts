@@ -1,5 +1,5 @@
-import type { AnyRpcEndpoint, EnvelopeOf, RequestOf } from "@bear-harness/protocol";
-import { IpcResponse, RPC } from "@bear-harness/protocol/schema";
+import type { AnyRpcEndpoint, EnvelopeOf, RequestOf, SyncRevision } from "@bear-harness/protocol";
+import { EventSubscribeResponse, IpcResponse, RPC } from "@bear-harness/protocol/schema";
 
 /**
  * Host-owned transport boundary for RPC calls.
@@ -14,7 +14,44 @@ import { IpcResponse, RPC } from "@bear-harness/protocol/schema";
  * NOT retry mutations unless an endpoint-specific idempotency contract exists.
  */
 export interface HostTransport {
+	/** One persistent server-push subscription; no periodic requests. */
+	listen?(
+		afterSeq: number,
+		receive: (batch: unknown) => void,
+		fail: (error: unknown) => void,
+	): () => void;
 	invoke<E extends AnyRpcEndpoint>(endpoint: E, request: RequestOf<E>): Promise<unknown>;
+}
+
+const responseRevisions = new WeakMap<object, SyncRevision>();
+const mutationRevisions = new WeakSet<SyncRevision>();
+const revisionRequests = new WeakMap<SyncRevision, number>();
+let nextRequest = 0;
+export function responseRequestSequence(value: unknown): number | undefined {
+	const sync = responseRevision(value);
+	return sync ? revisionRequests.get(sync) : undefined;
+}
+/** Metadata stays outside DTOs; projections retain the provenance of their read. */
+export function responseRevision(value: unknown): SyncRevision | undefined {
+	return value !== null && typeof value === "object" ? responseRevisions.get(value) : undefined;
+}
+
+/** Commands carry a completion watermark, not a consistent read projection. */
+export function isMutationResponse(value: unknown): boolean {
+	const revision = responseRevision(value);
+	return revision !== undefined && mutationRevisions.has(revision);
+}
+
+export function withResponseRevision<T>(value: T, revision: SyncRevision | undefined): T {
+	if (!revision) return value;
+	const visit = (item: unknown): void => {
+		if (item === null || typeof item !== "object" || responseRevisions.get(item) === revision)
+			return;
+		responseRevisions.set(item, revision);
+		for (const child of Object.values(item)) visit(child);
+	};
+	visit(value);
+	return value;
 }
 
 type RpcMethod<E extends AnyRpcEndpoint> =
@@ -34,7 +71,14 @@ type ClientNode<Node> = {
  * failure envelopes. A rejected method call is a transport failure; this
  * facade does not retry or convert it into an envelope.
  */
-export type CompanionClient = ClientNode<typeof RPC>;
+export type CompanionClient = ClientNode<typeof RPC> & {
+	events: ClientNode<typeof RPC.events> & {
+		stream(
+			afterSeq: number,
+			signal: AbortSignal,
+		): AsyncIterable<ReturnType<typeof EventSubscribeResponse.parse>["events"]>;
+	};
+};
 
 function isEndpoint(value: unknown): value is AnyRpcEndpoint {
 	return typeof value === "object" && value !== null && "kind" in value && value.kind === "rpc";
@@ -48,8 +92,16 @@ function buildClientNode(node: object, transport: HostTransport): object {
 				isEndpoint(value)
 					? async (request: unknown = {}) => {
 							const parsedRequest = value.request.parse(request);
+							const requestSequence = ++nextRequest;
 							const response = await transport.invoke(value, parsedRequest as never);
-							return IpcResponse(value.response).parse(response);
+							const envelope = IpcResponse(value.response).parse(response);
+							if (envelope.ok) {
+								if (envelope.sync) revisionRequests.set(envelope.sync, requestSequence);
+								if (envelope.sync && value.operation === "mutation")
+									mutationRevisions.add(envelope.sync);
+								withResponseRevision(envelope.data, envelope.sync);
+							}
+							return envelope;
 						}
 					: buildClientNode(value as object, transport),
 			]),
@@ -65,5 +117,53 @@ function buildClientNode(node: object, transport: HostTransport): object {
  * with pass through unchanged, and no automatic retries are performed.
  */
 export function createCompanionClient(transport: HostTransport): CompanionClient {
-	return buildClientNode(RPC, transport) as CompanionClient;
+	const rpc = buildClientNode(RPC, transport) as ClientNode<typeof RPC>;
+	return Object.freeze({
+		...rpc,
+		events: Object.freeze({
+			...rpc.events,
+			async *stream(afterSeq: number, signal: AbortSignal) {
+				if (signal.aborted) return;
+				if (!transport.listen) throw new Error("Host transport does not support event push");
+				const queue: unknown[] = [];
+				let error: unknown;
+				let failed = false;
+				let wake: (() => void) | undefined;
+				const abort = () => wake?.();
+				signal.addEventListener("abort", abort, { once: true });
+				let stop: (() => void) | undefined;
+				try {
+					stop = transport.listen(
+						afterSeq,
+						(batch) => {
+							if (failed || signal.aborted) return;
+							if (queue.length >= 10000) {
+								failed = true;
+								error = new Error("Host event consumer overflow");
+							} else queue.push(batch);
+							wake?.();
+						},
+						(cause) => {
+							failed = true;
+							error = cause;
+							wake?.();
+						},
+					);
+					while (!signal.aborted) {
+						if (queue.length) {
+							yield EventSubscribeResponse.parse(queue.shift()).events;
+							continue;
+						}
+						if (failed) throw error;
+						await new Promise<void>((resolve) => {
+							wake = resolve;
+						});
+					}
+				} finally {
+					stop?.();
+					signal.removeEventListener("abort", abort);
+				}
+			},
+		}),
+	});
 }

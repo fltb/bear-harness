@@ -134,18 +134,14 @@ function RoleManager() {
 				error={workflow.selectedPackageError}
 				selectPackage={workflow.selectPackage}
 				savePackage={workflow.savePackage}
-				pluginTrust={async (id) =>
-					workflow.pluginTrust(id)() ?? {
-						origin: "official",
-						pluginHash: "",
-						pluginsPresent: false,
-						trusted: true,
-					}
-				}
+				pluginTrust={(id) => companion.characters.pluginTrust(id)}
 				confirmPluginTrust={async (id) => {
 					await companion.characters.confirmPluginTrust(id);
 					await companion.characters.list();
 				}}
+				pluginTrustData={(id) => companion.characters.pluginTrustData(id)}
+				settingsData={(id) => companion.settings.data(id)}
+				memoryCandidates={(id) => companion.memory.candidateState("pending", id).candidates}
 				settingsGet={(id) => companion.settings.get(id)}
 				settingsUpdate={(id, settings) => companion.settings.set(settings, id)}
 				listMemoryCandidates={(id) => companion.memory.listCandidates("pending", id)}

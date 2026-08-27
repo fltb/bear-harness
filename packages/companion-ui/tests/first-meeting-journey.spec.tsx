@@ -124,6 +124,7 @@ function embeddingBinding(options: EmbeddingOptions = {}) {
 			error: null,
 			isSuccess: false,
 		},
+		downloadState: () => ({ status: "idle", downloadedBytes: 0 }),
 		localConfigureMutation,
 	};
 }

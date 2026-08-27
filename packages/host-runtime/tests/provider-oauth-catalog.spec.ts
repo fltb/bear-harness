@@ -45,7 +45,7 @@ function oauthCredential(): unknown {
 
 const tempRoots: string[] = [];
 
-function makeCatalog(): ProviderCatalog {
+function makeCatalog(changed?: (providerId: string) => void): ProviderCatalog {
 	const db = new DatabaseSync(":memory:");
 	db.exec(`
 		CREATE TABLE provider_accounts (
@@ -59,7 +59,11 @@ function makeCatalog(): ProviderCatalog {
 	`);
 	const agentDir = mkdtempSync(join(tmpdir(), "bear-oauth-catalog-"));
 	tempRoots.push(agentDir);
-	return new ProviderCatalog(new CredentialStore(drizzle({ client: db }), vault), agentDir);
+	return new ProviderCatalog(
+		new CredentialStore(drizzle({ client: db }), vault),
+		agentDir,
+		changed,
+	);
 }
 
 describe("ProviderCatalog OAuth contract", () => {
@@ -69,8 +73,45 @@ describe("ProviderCatalog OAuth contract", () => {
 		for (const root of tempRoots.splice(0)) rmSync(root, { recursive: true, force: true });
 	});
 
-	it("projects pi-ai auth events (info links, progress, auth_url instructions) verbatim", async () => {
+	it("preserves the real pi Codex method selection and browser authorization URL", async () => {
+		const { ModelRuntime } = await vi.importActual<
+			typeof import("@earendil-works/pi-coding-agent")
+		>("@earendil-works/pi-coding-agent");
+		const root = mkdtempSync(join(tmpdir(), "bear-real-pi-oauth-"));
+		tempRoots.push(root);
+		const real = await ModelRuntime.create({
+			authPath: join(root, "auth.json"),
+			modelsPath: null,
+			refreshOnCreate: false,
+		});
+		runtime.login = (id, _type, interaction) => real.login(id, "oauth", interaction);
 		const catalog = makeCatalog();
+		try {
+			catalog.startOAuth("openai-codex");
+			await vi.waitFor(() =>
+				expect(catalog.getOAuthSession("openai-codex").prompt?.type).toBe("select"),
+			);
+			expect(
+				catalog.getOAuthSession("openai-codex").prompt?.options?.map((option) => option.id),
+			).toEqual(["browser", "device_code"]);
+			catalog.answerOAuth("openai-codex", "browser");
+			await vi.waitFor(() => expect(catalog.getOAuthSession("openai-codex").authUrl).toBeDefined());
+			const state = catalog.getOAuthSession("openai-codex");
+			const url = new URL(state.authUrl!);
+			expect(url.origin + url.pathname).toBe("https://auth.openai.com/oauth/authorize");
+			expect(url.searchParams.get("redirect_uri")).toBe("http://localhost:1455/auth/callback");
+			expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+			expect(url.searchParams.get("code_challenge")).toMatch(/^[A-Za-z0-9_-]{43}$/);
+			expect(url.searchParams.get("state")).toBeTruthy();
+			expect(state.prompt?.type).toBe("manual_code");
+		} finally {
+			catalog.dispose();
+		}
+	});
+
+	it("projects pi-ai auth events (info links, progress, auth_url instructions) verbatim", async () => {
+		const changed = vi.fn();
+		const catalog = makeCatalog(changed);
 		let release: (() => void) | undefined;
 		const gate = new Promise<void>((resolve) => {
 			release = resolve;
@@ -109,6 +150,7 @@ describe("ProviderCatalog OAuth contract", () => {
 			expect(catalog.getOAuthSession("openai-codex").status).toBe("completed");
 		});
 		expect(catalog.getOAuthSession("openai-codex").prompt).toBeUndefined();
+		expect(changed.mock.calls).toEqual(Array.from({ length: 4 }, () => ["openai-codex"]));
 	});
 
 	it("projects device_code metadata (verification URI, interval, expiry) verbatim", async () => {
@@ -246,6 +288,33 @@ describe("ProviderCatalog OAuth contract", () => {
 			});
 		});
 	});
+	it("ignores retired OAuth callbacks and rejects their new prompts", async () => {
+		const changed = vi.fn();
+		const catalog = makeCatalog(changed);
+		const interactions: AuthInteraction[] = [];
+		const oldLogin = Promise.withResolvers<unknown>();
+		runtime.login = async (_id, _type, interaction) => {
+			interactions.push(interaction);
+			return oldLogin.promise;
+		};
+		catalog.startOAuth("openai-codex");
+		await vi.waitFor(() => expect(interactions).toHaveLength(1));
+		catalog.cancelOAuth("openai-codex");
+		catalog.startOAuth("openai-codex");
+		await vi.waitFor(() => expect(interactions).toHaveLength(2));
+		const before = catalog.getOAuthSession("openai-codex");
+		changed.mockClear();
+		interactions[0]!.notify({ type: "info", message: "retired" });
+		await expect(
+			interactions[0]!.prompt({ type: "manual_code", message: "retired" }),
+		).rejects.toMatchObject({ name: "AbortError" });
+		expect(changed).not.toHaveBeenCalled();
+		expect(catalog.getOAuthSession("openai-codex")).toEqual(before);
+		catalog.dispose();
+		oldLogin.resolve(oauthCredential());
+		await oldLogin.promise;
+	});
+
 	it("records the real failure reason on a failed session", async () => {
 		const catalog = makeCatalog();
 		runtime.login = vi.fn(async () => {

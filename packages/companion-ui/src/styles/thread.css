@@ -43,11 +43,6 @@
 	@apply m-0 font-serif text-lg leading-relaxed;
 }
 
-.pi-context-separator {
-	@apply h-px w-full;
-	background: var(--line-soft);
-}
-
 .pi-tool-result {
 	@apply self-start border;
 	border-color: var(--line-soft);

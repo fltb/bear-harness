@@ -354,6 +354,7 @@ export class ProviderCatalog {
 	constructor(
 		private readonly credentialStore: CredentialStore,
 		private readonly agentDir: string,
+		private readonly onOAuthChanged: (providerId: string) => void = () => {},
 	) {
 		this.piCredentials = new EncryptedPiCredentialStore(credentialStore);
 	}
@@ -803,9 +804,15 @@ export class ProviderCatalog {
 		const session: OAuthSessionInternal = { providerId, status: "running" };
 		this.oauthSessions.set(providerId, session);
 		session.abort = new AbortController();
+		const isCurrent = () =>
+			this.oauthSessions.get(providerId) === session && !session.abort?.signal.aborted;
+		const changed = () => {
+			if (isCurrent()) this.onOAuthChanged(providerId);
+		};
 		void this.loginOAuth(providerId, {
 			signal: session.abort.signal,
 			notify: (event) => {
+				if (!isCurrent()) return;
 				if (event.type === "auth_url") {
 					session.authUrl = event.url;
 					session.instructions = event.instructions;
@@ -821,10 +828,18 @@ export class ProviderCatalog {
 					if (event.links?.length) session.infoLinks = event.links;
 				}
 				if (event.type === "progress") session.message = event.message;
+				changed();
 			},
-			prompt: (prompt) => waitForOAuthPrompt(session, prompt),
+			prompt: (prompt) => {
+				if (!isCurrent())
+					return Promise.reject(new DOMException("OAuth session retired", "AbortError"));
+				const answer = waitForOAuthPrompt(session, prompt);
+				changed();
+				return answer;
+			},
 		})
 			.then((result) => {
+				if (!isCurrent()) return;
 				Object.assign(session, result);
 				session.status = "completed";
 				session.message = undefined;
@@ -832,13 +847,16 @@ export class ProviderCatalog {
 				session.prompt = undefined;
 				session.resolvePrompt = undefined;
 				session.rejectPrompt = undefined;
+				changed();
 			})
 			.catch((cause) => {
+				if (!isCurrent()) return;
 				session.status = "failed";
 				session.prompt = undefined;
 				session.resolvePrompt = undefined;
 				session.rejectPrompt = undefined;
 				session.message = oauthFailureReason(cause);
+				changed();
 			});
 		return publicOAuthSession(session);
 	}

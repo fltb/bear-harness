@@ -2,9 +2,13 @@ import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
 import { Tabs } from "@kobalte/core/tabs";
 import { TextField } from "@kobalte/core/text-field";
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { parseDocument, stringify } from "yaml";
-import type { CharacterPackageDocument, MemoryCandidate } from "../stores/companion.js";
+import {
+	type CharacterPackageDocument,
+	type MemoryCandidate,
+	useCompanionStore,
+} from "../stores/companion.js";
 import { MemoryEntryList } from "./MemorySheet.js";
 
 const PROMPT_FIELDS = [
@@ -32,6 +36,15 @@ export function CurrentRolePackageManager(props: {
 	pluginTrust: (
 		id: string,
 	) => Promise<{ origin: string; pluginHash: string; pluginsPresent: boolean; trusted: boolean }>;
+	pluginTrustData: (
+		id: string,
+	) =>
+		| { origin: string; pluginHash: string; pluginsPresent: boolean; trusted: boolean }
+		| undefined;
+	settingsData: (
+		id: string,
+	) => { relationshipMemoryEnabled: boolean; conversationHistoryReadEnabled: boolean } | undefined;
+	memoryCandidates: (id: string) => MemoryCandidate[];
 	confirmPluginTrust: (id: string) => Promise<void>;
 	settingsGet: (
 		id: string,
@@ -45,24 +58,30 @@ export function CurrentRolePackageManager(props: {
 	rejectMemoryCandidate: (id: string, candidateId: string) => Promise<void>;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
-	const [selectedId, setSelectedId] = createSignal("");
-	const [raw, setRaw] = createSignal("");
-	const [savedRaw, setSavedRaw] = createSignal("");
-	const [prompt, setPrompt] = createSignal<PromptDraft>();
-	const [storage, setStorage] = createSignal("");
+	const selectedId = () => props.document()?.characterId ?? "";
+	const [drafts, setDrafts] = createSignal<
+		Record<string, { raw?: string; prompt?: PromptDraft; storage?: string }>
+	>({});
+	const draft = () => drafts()[selectedId()];
+	const raw = () => draft()?.raw ?? props.document()?.yaml ?? "";
+	const savedRaw = () => props.document()?.yaml ?? "";
+	const prompt = () =>
+		draft()?.prompt ?? (props.document() ? promptFrom(props.document()!) : undefined);
+	const storage = () =>
+		draft()?.storage ?? stringify(parseDocument(savedRaw()).get("roleplay", true) ?? {});
+	const patchDraft = (patch: { raw?: string; prompt?: PromptDraft; storage?: string }) =>
+		setDrafts((current) => ({
+			...current,
+			[selectedId()]: { ...current[selectedId()], ...patch },
+		}));
+	const setRaw = (value: string) => patchDraft({ raw: value });
+	const setPrompt = (value: PromptDraft) => patchDraft({ prompt: value });
+	const setStorage = (value: string) => patchDraft({ storage: value });
 	const [parseError, setParseError] = createSignal<string>();
 	const [saveError, setSaveError] = createSignal<string>();
 	const [saving, setSaving] = createSignal(false);
-	const [trust, setTrust] = createSignal<{
-		origin: string;
-		pluginHash: string;
-		pluginsPresent: boolean;
-		trusted: boolean;
-	}>();
-	const [relationshipSettings, setRelationshipSettings] = createSignal<{
-		relationshipMemoryEnabled: boolean;
-		conversationHistoryReadEnabled: boolean;
-	}>();
+	const trust = () => props.pluginTrustData(selectedId());
+	const relationshipSettings = () => props.settingsData(selectedId());
 	const [settingsSaving, setSettingsSaving] = createSignal(false);
 	const dirty = () => raw() !== savedRaw();
 	const load = (id: string) => {
@@ -72,23 +91,7 @@ export function CurrentRolePackageManager(props: {
 			() => !dirty() || window.confirm(t("currentRolePackage.discardConfirm")),
 		);
 	};
-	createEffect(() => {
-		const next = props.document();
-		if (!next || next.characterId === selectedId()) return;
-		setSelectedId(next.characterId);
-		setRaw(next.yaml);
-		setSavedRaw(next.yaml);
-		setPrompt(promptFrom(next));
-		setStorage(stringify(parseDocument(next.yaml).get("roleplay", true) ?? {}));
-		void props
-			.pluginTrust(next.characterId)
-			.then(setTrust)
-			.catch((error) => setSaveError(error instanceof Error ? error.message : String(error)));
-		void props
-			.settingsGet(next.characterId)
-			.then(setRelationshipSettings)
-			.catch((error) => setSaveError(error instanceof Error ? error.message : String(error)));
-	});
+
 	const updateRelationshipSetting = async (
 		key: "relationshipMemoryEnabled" | "conversationHistoryReadEnabled",
 	) => {
@@ -99,7 +102,6 @@ export function CurrentRolePackageManager(props: {
 		try {
 			const next = { ...current, [key]: !current[key] };
 			await props.settingsUpdate(characterId, { [key]: next[key] });
-			setRelationshipSettings(next);
 		} catch (error) {
 			setSaveError(error instanceof Error ? error.message : String(error));
 		} finally {
@@ -112,7 +114,7 @@ export function CurrentRolePackageManager(props: {
 		setSaving(true);
 		try {
 			await props.confirmPluginTrust(characterId);
-			setTrust(await props.pluginTrust(characterId));
+			await props.pluginTrust(characterId);
 		} catch (error) {
 			setSaveError(error instanceof Error ? error.message : String(error));
 		} finally {
@@ -147,7 +149,6 @@ export function CurrentRolePackageManager(props: {
 		const current = props.document();
 		if (!current) return;
 		setRaw(current.yaml);
-		setSavedRaw(current.yaml);
 		setPrompt(promptFrom(current));
 		setStorage(stringify(parseDocument(current.yaml).get("roleplay", true) ?? {}));
 		setParseError(undefined);
@@ -160,7 +161,6 @@ export function CurrentRolePackageManager(props: {
 		try {
 			const next = await props.savePackage(raw());
 			setRaw(next.yaml);
-			setSavedRaw(next.yaml);
 			setPrompt(promptFrom(next));
 			setStorage(stringify(parseDocument(next.yaml).get("roleplay", true) ?? {}));
 		} catch (error) {
@@ -329,6 +329,7 @@ export function CurrentRolePackageManager(props: {
 								<RoleRelationshipCandidates
 									characterId={current().characterId}
 									list={props.listMemoryCandidates}
+									data={props.memoryCandidates}
 									approve={props.approveMemoryCandidate}
 									reject={props.rejectMemoryCandidate}
 								/>
@@ -384,26 +385,29 @@ export function CurrentRolePackageManager(props: {
 function RoleRelationshipCandidates(props: {
 	characterId: string;
 	list: (characterId: string) => Promise<MemoryCandidate[]>;
+	data: (characterId: string) => MemoryCandidate[];
 	approve: (characterId: string, candidateId: string) => Promise<void>;
 	reject: (characterId: string, candidateId: string) => Promise<void>;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
-	const [candidates, setCandidates] = createSignal<MemoryCandidate[]>([]);
+	const projection = useCompanionStore().memory.observeCandidates(
+		() => props.characterId,
+		"pending",
+	);
+	const candidates = () =>
+		(projection.data()?.candidates ?? []).filter(
+			(candidate) => candidate.suggestedScope === "relationship",
+		);
 	const [error, setError] = createSignal<string>();
 	const [busyId, setBusyId] = createSignal<string>();
 	const reload = async () => {
 		try {
 			setError(undefined);
-			setCandidates(
-				(await props.list(props.characterId)).filter(
-					(candidate) => candidate.suggestedScope === "relationship",
-				),
-			);
+			await props.list(props.characterId);
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : String(cause));
 		}
 	};
-	createEffect(() => void reload());
 	const decide = async (candidateId: string, decision: "approve" | "reject") => {
 		setBusyId(candidateId);
 		try {

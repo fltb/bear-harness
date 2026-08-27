@@ -45,6 +45,13 @@ export class ModelRegistry {
 		},
 		publish: boolean,
 	): ModelRecord {
+		const existing = this.get(input.providerId, input.modelId);
+		if (
+			existing &&
+			existing.label === input.label &&
+			existing.supportsImages === input.supportsImages
+		)
+			return existing;
 		this.db
 			.insert(configuredModels)
 			.values({

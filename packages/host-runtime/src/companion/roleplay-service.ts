@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { parseKnownDomainEvent } from "@bear-harness/protocol/schema";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
-import { onboardingState, roleplayEvents, roleplayUnlocks } from "../storage/schema.js";
+import { events, onboardingState, roleplayEvents, roleplayUnlocks } from "../storage/schema.js";
 import type { CharacterPackage } from "./character-loader.js";
 import { OnboardingStateDataSchema } from "./onboarding-schema.js";
 import type { RoleplayCondition, RoleplayEffect, RoleplayValue } from "./roleplay-schema.js";
@@ -54,6 +55,57 @@ export class RoleplayService {
 			.all()
 			.map((row) => row.id);
 		return { values, unlocked };
+	}
+
+	/** Presentation is reconstructed from its persisted Host events, including dismissals. */
+	presentation(
+		character: CharacterPackage,
+		conversationId?: string,
+	): {
+		conversationId?: string;
+		mediaId?: string;
+		ambientMediaId?: string;
+		choiceSetId?: string;
+	} {
+		if (!conversationId) return {};
+		const result: {
+			conversationId: string;
+			mediaId?: string;
+			ambientMediaId?: string;
+			choiceSetId?: string;
+		} = { conversationId };
+		const rows = this.db
+			.select({ seq: events.seq, kind: events.kind, payload: events.payload })
+			.from(events)
+			.where(
+				and(
+					inArray(events.kind, [
+						"roleplay.media_presented",
+						"roleplay.media_dismissed",
+						"roleplay.choices_presented",
+						"roleplay.choices_dismissed",
+					]),
+					sql`json_extract(${events.payload}, '$.conversationId') = ${conversationId}`,
+				),
+			)
+			.orderBy(asc(events.seq))
+			.all();
+		for (const row of rows) {
+			const event = parseKnownDomainEvent(row);
+			if (!event) continue;
+			if (event.kind === "roleplay.media_presented") {
+				const media = character.roleplay.media.find((item) => item.id === event.payload.mediaId);
+				if (media?.presentation === "ambient") result.ambientMediaId = media.id;
+				else if (media) result.mediaId = media.id;
+			} else if (event.kind === "roleplay.media_dismissed") {
+				if (result.mediaId === event.payload.mediaId) delete result.mediaId;
+				if (result.ambientMediaId === event.payload.mediaId) delete result.ambientMediaId;
+			} else if (event.kind === "roleplay.choices_presented") {
+				if (character.roleplay.choice_sets.some((item) => item.id === event.payload.choiceSetId))
+					result.choiceSetId = event.payload.choiceSetId;
+			} else if (event.kind === "roleplay.choices_dismissed") delete result.choiceSetId;
+		}
+		return result;
 	}
 
 	trigger(input: {

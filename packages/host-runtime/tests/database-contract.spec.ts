@@ -63,6 +63,66 @@ afterEach(() => {
 });
 
 describe("database schema contract", () => {
+	it("covers every application table with transactional change triggers", () => {
+		const database = new Database(root());
+		database.migrate(MIGRATIONS);
+		const excluded = new Set([
+			"schema_migrations",
+			"installation_identity",
+			"events",
+			"sync_changes",
+		]);
+		const tables = database.connection
+			.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+			.all();
+		const triggers = database.connection
+			.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+			.all()
+			.map((row) => row.name);
+		for (const table of tables) {
+			const name = String(table.name);
+			// SQLite FTS/vector tables are derived indexes, never authoritative records.
+			if (excluded.has(name) || name.includes("fts") || name.includes("vec")) continue;
+			for (const operation of ["insert", "update", "delete"]) {
+				expect(triggers, `${name} ${operation} must invalidate synchronized readers`).toContain(
+					`sync_${name}_${operation}`,
+				);
+			}
+		}
+		expect(triggers).toContain("sync_events_insert");
+		database.close();
+	});
+
+	it("journals state writes atomically and only notifies committed revisions", async () => {
+		const database = new Database(root());
+		database.migrate(MIGRATIONS);
+		const delivered: Array<{ revision: number; sources: string[] }> = [];
+		database.subscribeSync((revision, sources) => delivered.push({ revision, sources }));
+		try {
+			database.connection.exec("BEGIN");
+			database.connection
+				.prepare("INSERT INTO user_decisions(id,kind) VALUES (?,?)")
+				.run("rollback", "test");
+			expect(delivered).toEqual([]);
+			database.connection.exec("ROLLBACK");
+			await Promise.resolve();
+			expect(database.syncRevision()).toBe(0);
+			expect(delivered).toEqual([]);
+			database.connection.exec("BEGIN");
+			database.connection
+				.prepare("INSERT INTO user_decisions(id,kind) VALUES (?,?)")
+				.run("commit", "test");
+			database.connection.exec("COMMIT");
+			await Promise.resolve();
+			expect(delivered).toEqual([{ revision: 1, sources: ["user_decisions"] }]);
+			expect(database.connection.prepare("SELECT id FROM user_decisions").all()).toEqual([
+				{ id: "commit" },
+			]);
+		} finally {
+			database.close();
+		}
+	});
+
 	it("automatically applies a valid pending migration", () => {
 		const database = new Database(root());
 		database.migrate(MIGRATIONS.slice(0, -1));
@@ -99,35 +159,6 @@ describe("database schema contract", () => {
 		reopened.close();
 	});
 
-	it("populates an existing database with one installation identity exactly once", () => {
-		const database = new Database(root());
-		const migrationsThrough26 = MIGRATIONS.filter((migration) => migration.id <= 26);
-		const migrationsThrough27 = MIGRATIONS.filter((migration) => migration.id <= 27);
-		database.migrate(migrationsThrough26);
-		expect(database.currentVersion()).toBe(26);
-		expect(
-			database.connection
-				.prepare(
-					"SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'installation_identity'",
-				)
-				.get(),
-		).toBeUndefined();
-
-		database.migrate(migrationsThrough27);
-		expect(database.currentVersion()).toBe(27);
-		const installationId = loadInstallationId(database.orm);
-		expect(installationId).toMatch(UUID_V4);
-		expect(
-			database.connection.prepare("SELECT COUNT(*) AS count FROM installation_identity").get(),
-		).toEqual({ count: 1 });
-		database.migrate(migrationsThrough27);
-		expect(loadInstallationId(database.orm)).toBe(installationId);
-		expect(
-			database.connection.prepare("SELECT COUNT(*) AS count FROM installation_identity").get(),
-		).toEqual({ count: 1 });
-		database.close();
-	});
-
 	it("uses the stored installation identity for the default runtime memory scope", async () => {
 		const dataDir = join(root(), "data");
 		const runtime = new HostRuntime({
@@ -159,55 +190,6 @@ describe("database schema contract", () => {
 		expect(runtime.memoryScope).toEqual(memoryScope);
 		await runtime.close();
 	});
-	it("preserves legacy run provenance while removing approval tables", () => {
-		const database = new Database(root());
-		database.migrate(MIGRATIONS.filter((migration) => migration.id <= 25));
-		database.connection.exec(`
-			INSERT INTO companion_packages (id, name, version, hash)
-				VALUES ('package-a', 'Package A', '1.0.0', 'hash-a');
-			INSERT INTO companion_identity (id, package_id, name, self_canon)
-				VALUES ('companion-a', 'package-a', 'Companion A', 'canon');
-			INSERT INTO conversations (id, companion_id, title)
-				VALUES ('conversation-a', 'companion-a', 'Conversation A');
-			INSERT INTO executor_profiles (id, profile_type)
-				VALUES ('pi-product-managed', 'product-managed');
-			INSERT INTO commissions (id, conversation_id, trigger_entry_id, status, draft_json)
-				VALUES ('commission-a', 'conversation-a', 'entry-a', 'completed',
-					'{"title":"Legacy task","description":"Legacy instruction"}');
-			INSERT INTO runs (id, commission_id, executor_profile, status, completed_at)
-				VALUES ('run-a', 'commission-a', 'pi-product-managed', 'completed', datetime('now'));
-			INSERT INTO evidence (id, run_id, kind, data)
-				VALUES ('evidence-a', 'run-a', 'result', '{}');
-		`);
-		database.migrate(MIGRATIONS);
-		expect(
-			database.connection
-				.prepare(
-					"SELECT id, conversation_id, trigger_entry_id, executor_profile, title, instruction FROM runs",
-				)
-				.get(),
-		).toEqual({
-			id: "run-a",
-			conversation_id: "conversation-a",
-			trigger_entry_id: "entry-a",
-			executor_profile: "pi-default",
-			title: "Legacy task",
-			instruction: "Legacy instruction",
-		});
-		expect(database.connection.prepare("SELECT id, run_id FROM evidence").get()).toEqual({
-			id: "evidence-a",
-			run_id: "run-a",
-		});
-		for (const table of ["commissions", "approvals"]) {
-			expect(
-				database.connection
-					.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
-					.get(table),
-			).toBeUndefined();
-		}
-		database.close();
-	});
-
 	it("creates every column required by typed runtime queries", () => {
 		const database = new Database(root());
 		database.migrate(MIGRATIONS);
@@ -434,19 +416,21 @@ describe("database schema contract", () => {
 
 	it("rejects a migration history with an applied gap", () => {
 		const database = new Database(root());
-		database.migrate(MIGRATIONS.slice(0, 3));
+		database.migrate([BASE_MIGRATION, SECOND_MIGRATION, THIRD_MIGRATION]);
 		database.connection.prepare("DELETE FROM schema_migrations WHERE id = ?").run(2);
 
-		expect(() => database.migrate(MIGRATIONS)).toThrow(/migration history gap.*2/);
+		expect(() => database.migrate([BASE_MIGRATION, SECOND_MIGRATION, THIRD_MIGRATION])).toThrow(
+			/migration history gap.*2/,
+		);
 		database.close();
 	});
 
 	it("rejects duplicate or non-contiguous migration definitions", () => {
 		const database = new Database(root());
-		expect(() => database.migrate([MIGRATIONS[0], MIGRATIONS[0]])).toThrow(
+		expect(() => database.migrate([BASE_MIGRATION, BASE_MIGRATION])).toThrow(
 			/duplicate migration id 1/,
 		);
-		expect(() => database.migrate([MIGRATIONS[0], MIGRATIONS[2]])).toThrow(
+		expect(() => database.migrate([BASE_MIGRATION, THIRD_MIGRATION])).toThrow(
 			/non-contiguous migration definitions.*2/,
 		);
 		database.close();

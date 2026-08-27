@@ -8,6 +8,7 @@ import {
 } from "@bear-harness/i18n";
 import { Select } from "@kobalte/core/select";
 import { createSignal, Show } from "solid-js";
+import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { ConversationModelSettings } from "./ConversationModelSettings.js";
 import { NetworkAndMemorySettings } from "./NetworkAndMemorySettings.js";
 import { SystemModelSettings } from "./SystemModelSettings.js";
@@ -66,7 +67,7 @@ export function SettingsSheet() {
 						}}
 					</Select.Value>
 				</Select.Trigger>
-				<Select.Portal>
+				<Select.Portal ref={markSelectPortalTopLayer}>
 					<Select.Content class="select-content">
 						<Select.Listbox class="select-listbox" />
 					</Select.Content>

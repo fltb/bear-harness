@@ -108,6 +108,35 @@ export class ConversationAttachmentService {
 		this.cleanupAbandonedDrafts();
 	}
 
+	listUploads(conversationId: string) {
+		return [...this.uploads.values()]
+			.filter(
+				(upload) => upload.conversationId === conversationId && upload.expiresAt >= Date.now(),
+			)
+			.map((upload) => {
+				let receivedBytes = 0;
+				let totalBytes = 0;
+				let fileCount = 0;
+				for (const [index, entry] of upload.entries.entries()) {
+					if (entry.entryKind !== "file") continue;
+					const stat = lstatSync(this.uploadPartPath(upload.uploadId, index));
+					if (!stat.isFile() || stat.isSymbolicLink())
+						throw { kind: "unavailable", reason: "attachment_upload_file_invalid" };
+					receivedBytes += stat.size;
+					totalBytes += entry.bytes ?? 0;
+					fileCount++;
+				}
+				return {
+					uploadId: upload.uploadId,
+					name: upload.name,
+					kind: upload.kind,
+					receivedBytes,
+					totalBytes,
+					fileCount,
+				};
+			});
+	}
+
 	startUpload(params: {
 		conversationId: string;
 		kind: "file" | "folder";

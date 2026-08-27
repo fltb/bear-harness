@@ -104,6 +104,13 @@ function visit(node, file) {
 		const first = node.arguments?.[0];
 		if (
 			(name === "registerHandler" || name === "invoke") &&
+			// Sandboxed preload cannot import runtime schemas. These two fixed
+			// transport lifecycle calls are not business RPC endpoints.
+			!(
+				file === "apps/desktop/src/preload/index.cts" &&
+				node.callee.object?.name === "ipcRenderer" &&
+				["events:listen:v1", "events:unlisten:v1"].includes(first?.value)
+			) &&
 			first?.type === "StringLiteral" &&
 			/:v\d+$/.test(first.value)
 		) {

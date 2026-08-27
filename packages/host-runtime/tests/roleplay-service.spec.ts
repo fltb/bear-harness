@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
+import { RoleplaySchema } from "../src/companion/roleplay-schema.js";
 import { RoleplayService } from "../src/companion/roleplay-service.js";
 import { Database, MIGRATIONS } from "../src/storage/database.js";
 import { EventBus } from "../src/storage/event-bus.js";
@@ -32,6 +33,68 @@ function fixture() {
 }
 
 describe("roleplay event projection", () => {
+	it("recovers scoped presentation and dismissals from Host history without replaying UI events", () => {
+		const { database, character } = fixture();
+		const configured = {
+			...character,
+			roleplay: RoleplaySchema.parse({
+				variables: [],
+				unlockables: [],
+				media: [
+					{
+						id: "image",
+						kind: "image",
+						label: "Image",
+						asset: "image.png",
+						presentation: "dialog",
+					},
+					{
+						id: "ambient",
+						kind: "audio",
+						label: "Ambient",
+						asset: "ambient.mp3",
+						captions: "ambient.vtt",
+						presentation: "ambient",
+					},
+				],
+				choice_sets: [
+					{
+						id: "reply",
+						prompt: "Reply?",
+						choices: [
+							{ id: "yes", label: "Yes", event: "answer" },
+							{ id: "no", label: "No", event: "answer" },
+						],
+					},
+				],
+				events: [{ id: "answer", label: "Answer", effects: [{ type: "media", media: "image" }] }],
+			}),
+		};
+		const bus = new EventBus(database.orm);
+		bus.publish("roleplay.media_presented", { conversationId: "conversation", mediaId: "image" });
+		bus.publish("roleplay.media_presented", { conversationId: "conversation", mediaId: "ambient" });
+		bus.publish("roleplay.choices_presented", {
+			conversationId: "conversation",
+			choiceSetId: "reply",
+		});
+		bus.publish("roleplay.media_dismissed", { conversationId: "other", mediaId: "image" });
+		const reopened = new RoleplayService(database.orm);
+		expect(reopened.presentation(configured, "conversation")).toEqual({
+			conversationId: "conversation",
+			mediaId: "image",
+			ambientMediaId: "ambient",
+			choiceSetId: "reply",
+		});
+		bus.publish("roleplay.media_dismissed", { conversationId: "conversation", mediaId: "image" });
+		bus.publish("roleplay.choices_dismissed", { conversationId: "conversation" });
+		expect(reopened.presentation(configured, "conversation")).toEqual({
+			conversationId: "conversation",
+			ambientMediaId: "ambient",
+		});
+		expect(reopened.presentation(configured, "other")).toEqual({ conversationId: "other" });
+		database.close();
+	});
+
 	it("enforces the continuity chapter order and projects its completed state", () => {
 		const { database, character, service } = fixture();
 		const trigger = (eventId: string) =>
