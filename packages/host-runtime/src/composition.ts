@@ -405,9 +405,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 
 	// --- conversation ---------------------------------------------------------
-	dispatcher.registerHandler(RPC.conversation.list, async () => {
+	dispatcher.registerHandler(RPC.conversation.list, async (_p) => {
 		const companionId = getCompanionId(s);
-		return { conversations: conversationRepository.list(companionId) };
+		const { archived } = _p as { archived?: boolean };
+		return { conversations: conversationRepository.list(companionId, archived === true) };
 	});
 	dispatcher.registerHandler(RPC.conversation.activeGet, () => {
 		const companionId = getCompanionId(s);
@@ -489,10 +490,11 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.conversation.archive, async (_p) => {
 		const { id, archived } = _p as { id: string; archived: boolean };
 		const companionId = getCompanionId(s);
-		if (!conversationRepository.get(id, companionId))
+		if (archived && !conversationRepository.get(id, companionId))
 			throw { kind: "not_found", reason: "conversation_not_found" };
 		if (archived) await s.supervisor.invalidateConversation(id);
 		const result = conversationRepository.archiveAndResolve(id, companionId, archived);
+		if (!result.found) throw { kind: "not_found", reason: "conversation_not_found" };
 		s.eventBus.publish("conversation.archived", { conversationId: id, archived });
 		return result.active ? { conversation: result.active } : {};
 	});

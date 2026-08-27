@@ -507,6 +507,7 @@ export interface CompanionStore {
 	readonly errorMetadata: CompanionErrorMetadata | null;
 	readonly onboarding: OnboardingData;
 	readonly conversations: ConversationSummary[];
+	readonly archivedConversations: ConversationSummary[];
 	readonly activeConversationId: string | null;
 	readonly activePiTimeline: PiTimeline | undefined;
 	readonly activePiLiveState: PiLiveState | undefined;
@@ -524,6 +525,7 @@ export interface CompanionStore {
 	createConversationFromEntry(entryId: string): Promise<void>;
 	renameConversation(id: string, title: string): Promise<void>;
 	archiveConversation(id: string): Promise<void>;
+	restoreConversation(id: string): Promise<void>;
 	deleteConversation(id: string): Promise<void>;
 	sendMessage(text: string, attachmentIds?: string[]): Promise<void>;
 	regenerateMessage(entryId: string): Promise<void>;
@@ -741,7 +743,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		key: queryKeys.snapshot,
 		request: snapshotRequest,
 	});
-	const conversationsRequest = () => invoke(client, () => client.conversation.list());
+	const conversationsRequest = () => invoke(client, () => client.conversation.list({}));
+	const archivedConversationsRequest = () =>
+		invoke(client, () => client.conversation.list({ archived: true }));
 	const activeConversationRequest = () => invoke(client, () => client.conversation.activeGet({}));
 	const memoryKey = (params?: MemoryListRequest): readonly unknown[] =>
 		queryKeys.memoryProjection(
@@ -753,6 +757,11 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		client: queryClient,
 		key: queryKeys.conversations,
 		request: conversationsRequest,
+	});
+	const archivedConversationsQuery = createRpcQuery({
+		client: queryClient,
+		key: queryKeys.archivedConversations,
+		request: archivedConversationsRequest,
 	});
 	const activeConversationQuery = createRpcQuery<ConversationActiveResponse>({
 		client: queryClient,
@@ -1105,6 +1114,14 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		return (
 			queryClient.getQueryData<{ conversations: ConversationSummary[] }>(queryKeys.conversations)
 				?.conversations ?? []
+		);
+	};
+	const archivedConversations = (): ConversationSummary[] => {
+		void archivedConversationsQuery.data;
+		return (
+			queryClient.getQueryData<{ conversations: ConversationSummary[] }>(
+				queryKeys.archivedConversations,
+			)?.conversations ?? []
 		);
 	};
 	const activeRuns = (): RunInfo[] => {
@@ -2387,6 +2404,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		get conversations() {
 			return activeConversations();
 		},
+		get archivedConversations() {
+			return archivedConversations();
+		},
 		get runs() {
 			return activeRuns();
 		},
@@ -2523,10 +2543,24 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				clearOperationError();
 				await Promise.all([
 					invalidateConversationList(),
+					queryClient.invalidateQueries({ queryKey: queryKeys.archivedConversations }),
 					invalidateDerivedConversationQueries(response.conversation),
 				]);
 			} catch (e) {
 				retainOperationError("conversation.archive", e);
+			}
+		},
+
+		restoreConversation: async (id) => {
+			try {
+				await invoke(client, () => client.conversation.archive({ id, archived: false }));
+				clearOperationError();
+				await Promise.all([
+					invalidateConversationList(),
+					queryClient.invalidateQueries({ queryKey: queryKeys.archivedConversations }),
+				]);
+			} catch (e) {
+				retainOperationError("conversation.restore", e);
 			}
 		},
 
@@ -2561,6 +2595,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				clearOperationError();
 				await Promise.all([
 					invalidateConversationList(),
+					queryClient.invalidateQueries({ queryKey: queryKeys.archivedConversations }),
 					invalidateDerivedConversationQueries(response.conversation),
 				]);
 			} catch (e) {

@@ -121,6 +121,209 @@ function configureSelectedModel(client: ReturnType<typeof createTestClient>["cli
 }
 
 describe("composer", () => {
+	it("uses the desktop material pickers and imports native drops", async () => {
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		configureSelectedModel(client);
+		const pickFiles = vi.fn(() =>
+			Promise.resolve([
+				{ id: "native-file", name: "native.txt", kind: "file" as const, bytes: 4, fileCount: 1 },
+			]),
+		);
+		const pickFolder = vi.fn(() =>
+			Promise.resolve([
+				{
+					id: "native-folder",
+					name: "native-folder",
+					kind: "folder" as const,
+					bytes: 8,
+					fileCount: 2,
+				},
+			]),
+		);
+		const importDroppedFiles = vi.fn(() =>
+			Promise.resolve([
+				{ id: "native-drop", name: "drop.txt", kind: "file" as const, bytes: 3, fileCount: 1 },
+			]),
+		);
+		(globalThis as typeof globalThis & { bearDesktop?: unknown }).bearDesktop = {
+			attachments: { pickFiles, pickFolder, importDroppedFiles },
+		};
+		try {
+			renderComposerWithModels(client, {
+				pool: { models: [TEST_MODEL] },
+				defaults: { vision: { mode: "auto" } },
+				route: {
+					conversationId: "conversation-1",
+					selected: { providerId: TEST_MODEL.providerId, modelId: TEST_MODEL.modelId },
+				},
+			});
+			await waitFor(() =>
+				expect(screen.getByRole("button", { name: zhCN.composer.attachLabel })).toBeEnabled(),
+			);
+			await user.click(screen.getByRole("button", { name: zhCN.composer.attachLabel }));
+			await user.click(screen.getByRole("menuitem", { name: zhCN.composer.uploadFile }));
+			await waitFor(() => expect(pickFiles).toHaveBeenCalledWith("conversation-1"));
+
+			await user.click(screen.getByRole("button", { name: zhCN.composer.attachLabel }));
+			await user.click(screen.getByRole("menuitem", { name: zhCN.composer.uploadFolder }));
+			await waitFor(() => expect(pickFolder).toHaveBeenCalledWith("conversation-1"));
+
+			const composer = screen
+				.getByRole("textbox", { name: zhCN.composer.messageInputLabel })
+				.closest("form");
+			expect(composer).not.toBeNull();
+			fireEvent.dragEnter(composer as HTMLFormElement);
+			expect(composer).toHaveAttribute("data-drag-active", "true");
+			fireEvent.dragLeave(composer as HTMLFormElement);
+			fireEvent.drop(composer as HTMLFormElement, {
+				dataTransfer: { files: [new File(["abc"], "drop.txt")], items: [] },
+			});
+			await waitFor(() =>
+				expect(importDroppedFiles).toHaveBeenCalledWith("conversation-1", [expect.any(File)]),
+			);
+		} finally {
+			delete (globalThis as typeof globalThis & { bearDesktop?: unknown }).bearDesktop;
+		}
+	});
+
+	it("enumerates modern browser file and directory drop handles", async () => {
+		const { client } = createTestClient();
+		configureSelectedModel(client);
+		renderComposerWithModels(client, {
+			pool: { models: [TEST_MODEL] },
+			defaults: { vision: { mode: "auto" } },
+			route: {
+				conversationId: "conversation-1",
+				selected: { providerId: TEST_MODEL.providerId, modelId: TEST_MODEL.modelId },
+			},
+		});
+		await waitFor(() =>
+			expect(screen.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled(),
+		);
+		const nested = new File(["nested"], "nested.txt", { type: "text/plain" });
+		const loose = new File(["loose"], "loose.txt", { type: "text/plain" });
+		const directoryHandle = {
+			kind: "directory" as const,
+			name: "modern-folder",
+			async *values() {
+				yield { kind: "file" as const, name: nested.name, getFile: async () => nested };
+			},
+		};
+		const fileHandle = { kind: "file" as const, name: loose.name, getFile: async () => loose };
+		const composer = screen
+			.getByRole("textbox", { name: zhCN.composer.messageInputLabel })
+			.closest("form");
+		fireEvent.drop(composer as HTMLFormElement, {
+			dataTransfer: {
+				files: [],
+				items: [
+					{ getAsFileSystemHandle: async () => directoryHandle },
+					{ getAsFileSystemHandle: async () => fileHandle },
+				],
+			},
+		});
+		await waitFor(() =>
+			expect(client.conversationAttachment.completeUpload).toHaveBeenCalledTimes(2),
+		);
+		expect(client.conversationAttachment.startUpload).toHaveBeenCalledWith(
+			expect.objectContaining({ kind: "folder", name: "modern-folder" }),
+		);
+		expect(client.conversationAttachment.startUpload).toHaveBeenCalledWith(
+			expect.objectContaining({ kind: "file", name: "loose.txt" }),
+		);
+	});
+
+	it("enumerates WebKit directory entries and falls back to regular dropped files", async () => {
+		const { client } = createTestClient();
+		configureSelectedModel(client);
+		renderComposerWithModels(client, {
+			pool: { models: [TEST_MODEL] },
+			defaults: { vision: { mode: "auto" } },
+			route: {
+				conversationId: "conversation-1",
+				selected: { providerId: TEST_MODEL.providerId, modelId: TEST_MODEL.modelId },
+			},
+		});
+		await waitFor(() =>
+			expect(screen.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled(),
+		);
+		const webkitFile = new File(["webkit"], "webkit.txt", { type: "text/plain" });
+		const childEntry = {
+			isFile: true,
+			isDirectory: false,
+			name: webkitFile.name,
+			file: (success: (file: File) => void) => success(webkitFile),
+		};
+		let pages = 0;
+		const directoryEntry = {
+			isFile: false,
+			isDirectory: true,
+			name: "webkit-folder",
+			createReader: () => ({
+				readEntries: (success: (entries: (typeof childEntry)[]) => void) =>
+					success(pages++ === 0 ? [childEntry] : []),
+			}),
+		};
+		const composer = screen
+			.getByRole("textbox", { name: zhCN.composer.messageInputLabel })
+			.closest("form");
+		fireEvent.drop(composer as HTMLFormElement, {
+			dataTransfer: {
+				files: [],
+				items: [{ webkitGetAsEntry: () => directoryEntry }, { webkitGetAsEntry: () => childEntry }],
+			},
+		});
+		await waitFor(() =>
+			expect(client.conversationAttachment.completeUpload).toHaveBeenCalledTimes(2),
+		);
+		expect(client.conversationAttachment.startUpload).toHaveBeenCalledWith(
+			expect.objectContaining({ kind: "folder", name: "webkit-folder" }),
+		);
+
+		fireEvent.drop(composer as HTMLFormElement, {
+			dataTransfer: {
+				files: [new File(["fallback"], "fallback.txt", { type: "text/plain" })],
+				items: [{}],
+			},
+		});
+		await waitFor(() =>
+			expect(client.conversationAttachment.completeUpload).toHaveBeenCalledTimes(3),
+		);
+		expect(client.conversationAttachment.startUpload).toHaveBeenCalledWith(
+			expect.objectContaining({ kind: "file", name: "fallback.txt" }),
+		);
+	});
+
+	it("surfaces a native picker failure without opening the hidden web picker", async () => {
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		configureSelectedModel(client);
+		const failure = new Error("native picker unavailable");
+		(globalThis as typeof globalThis & { bearDesktop?: unknown }).bearDesktop = {
+			attachments: {
+				pickFiles: vi.fn(() => Promise.reject(failure)),
+				pickFolder: vi.fn(() => Promise.resolve([])),
+				importDroppedFiles: vi.fn(() => Promise.resolve([])),
+			},
+		};
+		try {
+			renderComposerWithModels(client, {
+				pool: { models: [TEST_MODEL] },
+				defaults: { vision: { mode: "auto" } },
+				route: {
+					conversationId: "conversation-1",
+					selected: { providerId: TEST_MODEL.providerId, modelId: TEST_MODEL.modelId },
+				},
+			});
+			await user.click(await screen.findByRole("button", { name: zhCN.composer.attachLabel }));
+			await user.click(screen.getByRole("menuitem", { name: zhCN.composer.uploadFile }));
+			expect(await screen.findByRole("alert")).toHaveTextContent(failure.message);
+		} finally {
+			delete (globalThis as typeof globalThis & { bearDesktop?: unknown }).bearDesktop;
+		}
+	});
+
 	it("keeps a new conversation empty until the user explicitly chooses a model", async () => {
 		const { client } = createTestClient();
 		client.snapshot.get = vi.fn(() =>

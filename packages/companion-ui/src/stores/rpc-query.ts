@@ -19,6 +19,7 @@ type MaybeAccessor<T> = T | Accessor<T>;
 export const queryKeys = {
 	snapshot: ["snapshot"] as const,
 	conversations: ["conversations"] as const,
+	archivedConversations: ["conversations", "archived"] as const,
 	activeConversation: ["conversation", "active"] as const,
 	conversationProjection: (conversationId: string, sessionId?: string) =>
 		["conversation", "projection", conversationId, sessionId ?? null] as const,

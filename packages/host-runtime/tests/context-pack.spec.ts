@@ -58,8 +58,8 @@ describe("ContextPackCompiler character prompt layers", () => {
 			"test",
 		);
 		db.prepare(
-			"INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES (?, ?, ?, ?)",
-		).run("jizhou", "jizhou", "stored-name-is-not-used", "stored canon");
+			"INSERT INTO companion_identity (id, package_id, name, self_canon, nickname) VALUES (?, ?, ?, ?, ?)",
+		).run("jizhou", "jizhou", "stored-name-is-not-used", "stored canon", "小雪");
 		db.prepare("INSERT INTO conversations (id, companion_id, title) VALUES (?, ?, ?)").run(
 			"conversation-1",
 			"jizhou",
@@ -100,6 +100,9 @@ describe("ContextPackCompiler character prompt layers", () => {
 			{ layer: "personality", content: character.prompt.personality },
 			{ layer: "scenario", content: character.prompt.scenario },
 		]);
+		expect(pack.blocks.find((block) => block.layer === "persona")?.content).toContain(
+			"称呼用户为：小雪",
+		);
 		expect(pack.blocks.find((block) => block.layer === "roleplay")?.content).toContain(
 			'"continuity_stage":0',
 		);

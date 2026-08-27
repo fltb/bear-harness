@@ -137,3 +137,6 @@ apps/*/release/
 test-results/
 playwright-report/
 coverage/
+
+# Local UI/UX audits and screenshots are workstation evidence, not release assets.
+/artifacts/

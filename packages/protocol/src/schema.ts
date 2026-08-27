@@ -1052,7 +1052,9 @@ export const ConversationSummary = z.strictObject({
 	unread: z.boolean(),
 	updatedAt: WireTimestamp,
 });
-export const ConversationListRequest = z.strictObject({});
+export const ConversationListRequest = z.strictObject({
+	archived: z.boolean().optional(),
+});
 export const ConversationListResponse = z.strictObject({
 	conversations: z.array(ConversationSummary).max(MAX_ARRAY_LENGTH),
 });

@@ -505,8 +505,9 @@ const shutdown = (exitCode: number): Promise<void> => {
 
 process.on("SIGINT", () => void shutdown(0));
 process.on("SIGTERM", () => void shutdown(0));
-process.on("uncaughtException", () => {
-	diagnostics.emit("main.uncaught_exception", {});
+process.on("uncaughtException", (error) => {
+	diagnostics.emit("main.uncaught_exception", { errorType: diagnosticErrorType(error) });
+	if (debugEnabled) console.error("[web-dev uncaught exception]", error);
 	void shutdown(1);
 });
 

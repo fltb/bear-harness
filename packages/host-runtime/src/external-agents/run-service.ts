@@ -740,6 +740,8 @@ function sanitizeValue(value: unknown, paths: string[]): unknown {
 }
 function safeReason(error: unknown, paths: string[]): string {
 	if (typeof error === "string") return sanitizeText(error, paths).slice(0, 512);
+	if (error instanceof Error && error.message)
+		return sanitizeText(error.message, paths).slice(0, 512);
 	if (error && typeof error === "object" && "reason" in error && typeof error.reason === "string")
 		return sanitizeText(error.reason, paths).slice(0, 512);
 	return "executor_failed";

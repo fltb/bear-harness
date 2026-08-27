@@ -105,13 +105,20 @@ export const zhTW = {
 		"search": "搜尋",
 		"newConversation": "新建對話",
 		"conversations": "對話",
+		"conversationView": "對話檢視",
+		"activeConversations": "當前",
+		"archivedConversations": "已歸檔",
 		"emptyConversations": "還沒有對話。點右上角的 ＋ 開始第一段。",
+		"emptyArchivedConversations": "還沒有已歸檔的對話。",
 		"unreadMessage": "有未讀訊息",
 		"renameConversation": "重新命名對話",
 		"saveConversation": "儲存",
 		"archiveConversation": "歸檔對話",
+		"restoreConversation": "恢復對話",
 		"deleteConversation": "刪除對話",
+		"deleteConversationTitle": "永久刪除這段對話？",
 		"deleteConversationConfirm": "確定永久刪除這段對話嗎？已形成的記憶不會一起刪除。",
+		"deleteConversationConfirmAction": "永久刪除",
 		"application": "應用",
 		"characterSettings": "角色設定",
 		"roleManagement": "角色管理",
@@ -210,7 +217,10 @@ export const zhTW = {
 		"stopAmbientMedia": "停止環境媒體",
 		"stopMedia": "停止環境媒體",
 		"rememberMoment": "記住這一刻",
+		"rememberingMoment": "正在記住…",
+		"rememberedMoment": "已記住",
 		"rememberFailed": "記憶失敗，請重試",
+		"responseStopped": "已停止回覆，可以重新生成。",
 		"justNow": "剛剛",
 		"noActiveConversationError": "還沒有選中對話",
 		"userMeta": "你 · 剛剛",
@@ -251,7 +261,7 @@ export const zhTW = {
 			"scene": "場景"
 		},
 		"kinds": {
-			"fact": "Fact",
+			"fact": "事實",
 			"preference": "偏好",
 			"event": "事件",
 			"self_canon_summary": "自我設定"
@@ -338,7 +348,7 @@ export const zhTW = {
 		"vectorProvider": "服務型別",
 		"vectorProviders": {
 			"none": "關閉",
-			"remote": "遠端 OpenAI 相容",
+			"remote": "線上 API",
 			"local": "內建離線模型"
 		},
 		"vectorPreset": "常用模型",
@@ -366,6 +376,7 @@ export const zhTW = {
 			"custom": "自定義地址"
 		},
 		"downloadAndEnableLocalModel": "下載並啟用本地模型",
+		"localModelEnabled": "本地模型已啟用",
 		"downloadingLocalModel": "正在下載並載入本地模型…",
 		"localModelDownloadStatus": "正在下載所選模型並在本機載入。模型就緒前不會啟用記憶。",
 		"localModelReady": "本地模型已下載、載入並就緒。",

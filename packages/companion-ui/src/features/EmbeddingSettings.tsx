@@ -122,6 +122,9 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 		) ?? null;
 	const actionLabel = () => {
 		if (configuringLocal()) return t("settings.downloadingLocalModel");
+		if (localSelected() && download().status === "completed") {
+			return t("settings.localModelEnabled");
+		}
 		if (localSelected()) return t("settings.downloadAndEnableLocalModel");
 		return onboarding ? t("messages.continue") : t("settings.saveNetwork");
 	};
@@ -262,11 +265,12 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 		<div class="settings-actions">
 			<Button
 				type="button"
-				class="primary-tool"
+				data-variant="primary"
 				disabled={
 					!capabilitiesReady() ||
 					savingSettings() ||
 					configuringLocal() ||
+					(localSelected() && download().status === "completed") ||
 					!onboardingChoiceReady() ||
 					!remoteChoiceReady()
 				}
@@ -282,6 +286,7 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 		<div class="embedding-settings">
 			<Show when={!onboarding}>
 				<Checkbox
+					class="settings-checkbox"
 					checked={vector()?.enabled === true}
 					onChange={(enabled) => {
 						const current = vector();
@@ -297,7 +302,9 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 					disabled={!capabilitiesReady() || savingSettings() || configuringLocal()}
 				>
 					<Checkbox.Input />
-					<Checkbox.Control />
+					<Checkbox.Control class="settings-checkbox-control">
+						<Checkbox.Indicator>✓</Checkbox.Indicator>
+					</Checkbox.Control>
 					<Checkbox.Label>{t("settings.memoryVectorEnabled")}</Checkbox.Label>
 				</Checkbox>
 			</Show>
@@ -325,7 +332,7 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 							{(provider) => (
 								<RadioGroup.Item class="settings-choice-option" value={provider.id}>
 									<RadioGroup.ItemInput />
-									<RadioGroup.ItemControl>
+									<RadioGroup.ItemControl class="settings-choice-control">
 										<RadioGroup.ItemIndicator class="settings-choice-indicator" />
 									</RadioGroup.ItemControl>
 									<RadioGroup.ItemLabel>

@@ -79,7 +79,56 @@ describe("NetworkAndMemorySettings", () => {
 			within(embedding).getByRole("button", {
 				name: zhCN.settings.downloadAndEnableLocalModel,
 			}),
-		).toBeTruthy();
+		).toHaveAttribute("data-variant", "primary");
+		expect(
+			within(backstage).getByRole("button", { name: zhCN.settings.saveNetwork }),
+		).toHaveAttribute("data-variant", "primary");
+		expect(
+			within(embedding)
+				.getByRole("radio", { name: zhCN.settings.vectorProviders.local })
+				.parentElement?.querySelector(".settings-choice-control"),
+		).toBeInTheDocument();
+	});
+
+	it("shows a stable enabled state instead of offering to download the ready local model again", async () => {
+		const { client } = createTestClient();
+		client.settings.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					settings: {
+						relationshipMemoryEnabled: false,
+						conversationHistoryReadEnabled: false,
+						networkProxy: { mode: "direct" as const },
+						memoryVectorService: {
+							enabled: true,
+							provider: "local" as const,
+							localModel: "test-embedding",
+						},
+						modelDownloadSource: { type: "official" as const },
+					},
+				},
+			}),
+		);
+		client.memory.localEmbeddingDownloadStatus = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { status: "completed" as const, downloadedBytes: 313_400_000 },
+			}),
+		);
+
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { backstage } = await openSettings();
+		await waitForSettings(backstage);
+		const action = within(embeddingSettings(backstage)).getByRole("button", {
+			name: zhCN.settings.localModelEnabled,
+		});
+		expect(action).toBeDisabled();
+		expect(
+			within(embeddingSettings(backstage)).queryByRole("button", {
+				name: zhCN.settings.downloadAndEnableLocalModel,
+			}),
+		).not.toBeInTheDocument();
 	});
 
 	it("renders and applies only the capabilities returned by Host", async () => {
@@ -135,10 +184,10 @@ describe("NetworkAndMemorySettings", () => {
 		await user.click(selectTrigger(backstage, zhCN.settings.proxyMode));
 		await waitFor(() =>
 			expect(screen.getAllByRole("option").map((option) => option.textContent?.trim())).toEqual([
-				"manual",
+				zhCN.settings.proxyModes.manual,
 			]),
 		);
-		await user.click(screen.getByRole("option", { name: "manual" }));
+		await user.click(screen.getByRole("option", { name: zhCN.settings.proxyModes.manual }));
 
 		expect(
 			within(backstage)
@@ -211,7 +260,10 @@ describe("NetworkAndMemorySettings", () => {
 		const proxySelect = selectTrigger(backstage, "代理模式");
 		await user.click(proxySelect);
 		const manualOption = await waitFor(
-			() => [...screen.getAllByRole("option")].find((el) => el.textContent?.trim() === "manual"),
+			() =>
+				[...screen.getAllByRole("option")].find(
+					(el) => el.textContent?.trim() === zhCN.settings.proxyModes.manual,
+				),
 			{ timeout: 3000 },
 		);
 		expect(manualOption).toBeTruthy();

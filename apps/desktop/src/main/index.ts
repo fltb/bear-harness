@@ -54,6 +54,12 @@ const DEV_RENDERER_URL = "http://127.0.0.1:3100";
 const DEV_RENDERER_URL_WITH_SLASH = `${DEV_RENDERER_URL}/`;
 const isSourceE2E =
 	!app.isPackaged && process.env.NODE_ENV === "test" && process.env.BEAR_E2E_SOURCE === "1";
+const isPackagedE2E =
+	app.isPackaged &&
+	process.env.NODE_ENV === "test" &&
+	process.env.BEAR_E2E_PACKAGED === "1" &&
+	typeof process.env.BEAR_E2E_APP_DATA === "string" &&
+	isAbsolute(process.env.BEAR_E2E_APP_DATA);
 const migrateLegacyDataRoot =
 	!isSourceE2E ||
 	(process.env.BEAR_E2E_MIGRATE_LEGACY === "1" &&
@@ -90,7 +96,9 @@ const electronApp: {
 } = app;
 
 const appDataBase =
-	isSourceE2E && process.env.BEAR_E2E_APP_DATA && isAbsolute(process.env.BEAR_E2E_APP_DATA)
+	(isSourceE2E || isPackagedE2E) &&
+	process.env.BEAR_E2E_APP_DATA &&
+	isAbsolute(process.env.BEAR_E2E_APP_DATA)
 		? process.env.BEAR_E2E_APP_DATA
 		: app.getPath("appData");
 const canonicalDataRoot = join(appDataBase, productConfig.dataDirectoryName);
@@ -143,7 +151,9 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
 }
 
 const diagnosticsRoot =
-	isSourceE2E && process.env.BEAR_DIAGNOSTICS_ROOT && isAbsolute(process.env.BEAR_DIAGNOSTICS_ROOT)
+	(isSourceE2E || isPackagedE2E) &&
+	process.env.BEAR_DIAGNOSTICS_ROOT &&
+	isAbsolute(process.env.BEAR_DIAGNOSTICS_ROOT)
 		? process.env.BEAR_DIAGNOSTICS_ROOT
 		: join(userData, "diagnostics");
 const diagnostics: Diagnostics = createDiagnostics({

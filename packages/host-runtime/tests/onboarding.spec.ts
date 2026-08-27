@@ -186,6 +186,15 @@ describe("role-defined onboarding", () => {
 		await expect(data(runtime, "conversation.list:v1", {})).resolves.toEqual({
 			conversations: [],
 		});
+		await expect(data(runtime, "conversation.list:v1", { archived: true })).resolves.toMatchObject({
+			conversations: [{ id: conversationId }],
+		});
+		await expect(
+			data(runtime, "conversation.archive:v1", { id: conversationId, archived: false }),
+		).resolves.toBeDefined();
+		await expect(data(runtime, "conversation.list:v1", {})).resolves.toMatchObject({
+			conversations: [{ id: conversationId }],
+		});
 		await runtime.close();
 	});
 

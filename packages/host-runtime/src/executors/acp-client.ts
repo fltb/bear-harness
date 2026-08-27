@@ -88,8 +88,14 @@ export class AcpRunClient {
 		});
 		this.process = process;
 		let processError: Error | null = null;
+		let processStderr = "";
 		process.once("error", (error) => {
 			processError = error;
+		});
+		process.stderr.setEncoding("utf8");
+		process.stderr.on("data", (chunk: string) => {
+			if (processStderr.length < 4_000)
+				processStderr += chunk.slice(0, 4_000 - processStderr.length);
 		});
 		process.once("exit", (code, signal) => {
 			this.resolvePendingPermissionsAsCancelled();
@@ -97,7 +103,11 @@ export class AcpRunClient {
 			this.connection = null;
 			this.sessionId = null;
 			if (!this.stopped) {
-				this.handlers.onExit({ code, signal, error: processError?.message });
+				this.handlers.onExit({
+					code,
+					signal,
+					error: processError?.message ?? (processStderr.trim() || undefined),
+				});
 			}
 		});
 

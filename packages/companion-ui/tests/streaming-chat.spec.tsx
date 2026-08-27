@@ -367,6 +367,7 @@ describe("Pi-projection chat", () => {
 		await waitFor(() => expect(client.conversation.activeGet).toHaveBeenCalled());
 		expect(within(thread).queryByText("仅供内部使用的工具结果")).not.toBeInTheDocument();
 		expect(within(thread).queryAllByRole("article")).toHaveLength(0);
+		expect(thread.children).toHaveLength(0);
 	});
 
 	it("renders the Pi live partial assistant then the native timeline on completion", async () => {
@@ -456,6 +457,57 @@ describe("Pi-projection chat", () => {
 		await waitFor(() =>
 			expect(within(thread).getByRole("alert")).toHaveTextContent("provider unavailable"),
 		);
+	});
+
+	it("turns an aborted provider error into a recoverable user-facing state", async () => {
+		const { client } = activeClient();
+		client.conversation.activeGet = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					conversation: liveProjection({
+						entries: [
+							{
+								...assistantEntry("pi:assistant-aborted", ""),
+								stopReason: "aborted" as const,
+								errorMessage: "Request was aborted",
+							},
+						],
+					}),
+				},
+			}),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const thread = await screen.findByRole("region", { name: zhCN.messages.conversation });
+		await waitFor(() =>
+			expect(within(thread).getByRole("alert")).toHaveTextContent(zhCN.messages.responseStopped),
+		);
+		expect(within(thread).queryByText("Request was aborted")).not.toBeInTheDocument();
+	});
+
+	it("confirms a captured memory on the message action itself", async () => {
+		const user = userEvent.setup();
+		const { client } = activeClient();
+		client.conversation.activeGet = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					conversation: liveProjection({
+						entries: [userEntry("pi:user-memory", "请记住我的偏好")],
+					}),
+				},
+			}),
+		);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const action = await screen.findByRole("button", { name: zhCN.messages.rememberMoment });
+		await user.click(action);
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: zhCN.messages.rememberedMoment })).toBeDisabled(),
+		);
+		expect(client.memory.capture).toHaveBeenCalledWith({
+			conversationId: "conversation-1",
+			entryId: "pi:user-memory",
+		});
 	});
 
 	it("renders raw current_user_message text from a Pi user entry", async () => {

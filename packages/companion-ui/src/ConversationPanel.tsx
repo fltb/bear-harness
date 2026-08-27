@@ -57,9 +57,14 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 	const [editText, setEditText] = createSignal("");
 	const [correcting, setCorrecting] = createSignal(false);
 	const [correctionDetail, setCorrectionDetail] = createSignal("");
+	const [captureState, setCaptureState] = createSignal<"idle" | "saving" | "saved" | "error">(
+		"idle",
+	);
 	const entry = props.entry;
 	if (entry.kind !== "message") {
-		return <div class="pi-context-separator" data-pi-entry-id={entry.id} aria-hidden="true" />;
+		// Native Pi context entries describe internal session bookkeeping. Rendering
+		// each one as an unlabeled rule made model/level changes look like broken UI.
+		return null;
 	}
 	if (entry.role === "tool") {
 		return (
@@ -81,6 +86,8 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 	const assistant = entry.role === "assistant" ? entry : undefined;
 	const toolCalls = assistant?.toolCalls;
 	const failed = assistant?.stopReason === "error" || assistant?.stopReason === "aborted";
+	const errorText =
+		assistant?.stopReason === "aborted" ? t("messages.responseStopped") : assistant?.errorMessage;
 	return (
 		<>
 			<article
@@ -105,13 +112,9 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 						</For>
 					</ul>
 				</Show>
-				<Show
-					when={
-						failed && assistant?.errorMessage !== undefined && assistant.errorMessage.length > 0
-					}
-				>
+				<Show when={failed && errorText !== undefined && errorText.length > 0}>
 					<span class="stream-error" role="alert">
-						{assistant?.errorMessage}
+						{errorText}
 					</span>
 				</Show>
 				<Show when={editing() && isUser}>
@@ -201,8 +204,24 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 							{store.character?.character.correction.trigger_label}
 						</Button>
 					</Show>
-					<Button type="button" onClick={() => void store.memory.capture(entry.id)}>
-						{t("messages.rememberMoment")}
+					<Button
+						type="button"
+						disabled={captureState() === "saving" || captureState() === "saved"}
+						onClick={() => {
+							setCaptureState("saving");
+							void store.memory
+								.capture(entry.id)
+								.then(() => setCaptureState("saved"))
+								.catch(() => setCaptureState("error"));
+						}}
+					>
+						{captureState() === "saving"
+							? t("messages.rememberingMoment")
+							: captureState() === "saved"
+								? t("messages.rememberedMoment")
+								: captureState() === "error"
+									? t("messages.rememberFailed")
+									: t("messages.rememberMoment")}
 					</Button>
 					<Button type="button" onClick={() => void store.createConversationFromEntry(entry.id)}>
 						{t("messages.branch")}
@@ -236,7 +255,8 @@ function PiLiveAssistantMessageView() {
 				if (message === undefined) return null;
 				const stopReason = message.stopReason;
 				const failed = stopReason === "error" || stopReason === "aborted";
-				const errorText = message.errorMessage;
+				const errorText =
+					stopReason === "aborted" ? t("messages.responseStopped") : message.errorMessage;
 				return (
 					<article
 						class={`msg bear-msg streaming-message${failed ? " stream-failed" : ""}`}

@@ -169,9 +169,14 @@ export async function provisionReplyModel(window: Page) {
  */
 export async function assertProductWindow(
 	electronApp: ElectronApp,
-	_product: Readonly<ProductConfig>,
+	product: Readonly<ProductConfig>,
 ) {
 	const window = await electronApp.firstWindow();
+	await assertProductPage(window, product);
+	return window;
+}
+
+export async function assertProductPage(window: Page, _product: Readonly<ProductConfig>) {
 	await window.waitForLoadState("domcontentloaded");
 	const snapshot = await invokeRpc(window, RPC.snapshot.get, {});
 	const character = snapshot.character as CharacterProjection | undefined;
@@ -212,9 +217,7 @@ export async function assertProductWindow(
 	expect(bridge.keys).toEqual(["platform", "diagnostics", "attachments", "transport"]);
 	expect(bridge.diagnosticsKeys).toEqual(["reportRendererFault"]);
 	expect(bridge.attachmentKeys).toEqual(["pickFiles", "pickFolder", "importDroppedFiles"]);
-	expect(bridge.transportKeys).toEqual(["invoke"]);
+	expect(bridge.transportKeys).toEqual(["listen", "invoke"]);
 	expect(bridge.platform).toMatch(/^(darwin|win32|linux)$/);
 	expect(bridge.reporterType).toBe("function");
-
-	return window;
 }

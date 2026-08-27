@@ -56,7 +56,9 @@ export function NetworkAndMemorySettings() {
 						aria-label={t("settings.proxyMode")}
 						itemComponent={(props) => (
 							<Select.Item item={props.item} class="select-item">
-								<Select.ItemLabel>{props.item.rawValue.id}</Select.ItemLabel>
+								<Select.ItemLabel>
+									{t(`settings.proxyModes.${props.item.rawValue.id}`)}
+								</Select.ItemLabel>
 							</Select.Item>
 						)}
 					>
@@ -90,7 +92,7 @@ export function NetworkAndMemorySettings() {
 				<div class="settings-actions">
 					<Button
 						type="button"
-						class="primary-tool"
+						data-variant="primary"
 						disabled={saving() || !capabilitiesReady() || proxyModes().length === 0}
 						onClick={() => void save()}
 					>
