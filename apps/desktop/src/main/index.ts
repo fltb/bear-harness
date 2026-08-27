@@ -375,6 +375,7 @@ async function initializeHost(): Promise<boolean> {
 		const updater = updateService;
 		const runtime = createHostRuntime({
 			dataDir: userData,
+			diagnostics,
 			characterSeedRoot: characterSeedRoot(),
 			productConfig,
 			credentialVault: isSourceE2E ? e2eCredentialVault : electronCredentialVault,
@@ -393,6 +394,7 @@ async function initializeHost(): Promise<boolean> {
 		const disposeRouter = wireElectronIpcHandlers(runtime.dispatcher, windowRegistry, {
 			subscribeEvents: (listener, afterSeq) => runtime.subscribeEvents(listener, afterSeq),
 			attachmentProtocol,
+			diagnostics,
 		});
 		const disposeAttachmentBridge = registerConversationAttachmentBridge(
 			{

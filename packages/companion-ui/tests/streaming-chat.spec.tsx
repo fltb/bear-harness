@@ -244,10 +244,10 @@ describe("Pi-projection chat", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const thread = await screen.findByRole("region", { name: zhCN.messages.conversation });
 		const failure = await within(thread).findByRole("article", {
-			name: "model unavailable failed",
+			name: `${zhCN.messages.toolActivity.generic} failed`,
 		});
-		expect(failure).toHaveTextContent("model unavailable");
-		expect(failure).toHaveTextContent("failed");
+		expect(failure).toHaveTextContent(zhCN.messages.toolActivity.generic);
+		expect(failure).toHaveTextContent(zhCN.messages.toolActivity.failed);
 	});
 	it("renders a persisted assistant provider failure after streaming settles", async () => {
 		const { client } = activeClient();

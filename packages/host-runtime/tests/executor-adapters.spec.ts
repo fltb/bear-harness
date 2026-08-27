@@ -11,6 +11,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -18,7 +19,11 @@ import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AcpProcessSpec } from "../src/executors/acp-client.js";
-import { CodexAdapter } from "../src/executors/codex-adapter.js";
+import {
+	CodexAdapter,
+	codexCodeModeHost,
+	managedCodexExecutable,
+} from "../src/executors/codex-adapter.js";
 import { PiAcpAdapter, piModelEnvironment } from "../src/executors/pi-adapter.js";
 import type { ExecutorLaunchRequest } from "../src/executors/router.js";
 import { EventBus } from "../src/storage/event-bus.js";
@@ -70,6 +75,19 @@ function request(cwd: string, profile: ExecutorLaunchRequest["profile"]): Execut
 }
 
 describe("ACP executor adapters", () => {
+	it("resolves the managed npm Codex launcher to its exact native binary", () => {
+		const resolver = createRequire(import.meta.url);
+		const launcher = resolver.resolve("@openai/codex/bin/codex.js");
+		const executable = managedCodexExecutable(launcher);
+		expect(executable).not.toBeNull();
+		if (executable === null) throw new Error("managed Codex binary was not installed");
+		expect(executable).not.toBe(launcher);
+		expect(executable).toMatch(/[/\\]vendor[/\\].*[/\\]bin[/\\]codex(?:\.exe)?$/);
+		expect(codexCodeModeHost(executable)).toMatch(
+			/[/\\]vendor[/\\].*[/\\]bin[/\\]codex-code-mode-host(?:\.exe)?$/,
+		);
+	});
+
 	it.skipIf(!macOSConfinementAvailable)(
 		"launches confined Pi ACP with declared snapshots and records no secret manifest data",
 		async () => {
@@ -135,9 +153,15 @@ describe("ACP executor adapters", () => {
 			const cwd = join(root, "workspace");
 			mkdirSync(cwd);
 			const binary = join(cwd, "codex");
+			const codeModeHost = join(cwd, "codex-code-mode-host");
 			writeFileSync(binary, "#!/bin/sh\necho 'codex 0.147.0'\n");
+			writeFileSync(codeModeHost, "#!/bin/sh\nexit 0\n");
 			chmodSync(binary, 0o755);
+			chmodSync(codeModeHost, 0o755);
 			const hash = createHash("sha256").update(readFileSync(binary)).digest("hex");
+			const codeModeHostHash = createHash("sha256")
+				.update(readFileSync(codeModeHost))
+				.digest("hex");
 			const { db, eventBus } = createDatabase();
 			class FixtureCodexAdapter extends CodexAdapter {
 				protected override processSpec(): AcpProcessSpec {
@@ -153,6 +177,8 @@ describe("ACP executor adapters", () => {
 					canonicalPath: binary,
 					version: "0.147.0",
 					sha256: hash,
+					codeModeHostPath: codeModeHost,
+					codeModeHostSha256: codeModeHostHash,
 					codexHome: cwd,
 					consentedAt: new Date().toISOString(),
 				},

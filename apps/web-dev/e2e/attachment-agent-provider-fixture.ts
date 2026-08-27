@@ -66,28 +66,51 @@ export function attachmentAgentReply(
 ): FixtureReply | undefined {
 	const current = currentUserMessage(messages);
 	const calls = calledTools(messages);
-
-	if (current.includes("E2E_WEB_ATTACHMENT_AGENT_JOURNEY")) {
-		if (!calls.includes("host_list_attachments")) {
-			return tool("host_list_attachments", {}, record);
-		}
+	if (current.includes("E2E_MANUAL_CODEX_JOURNEY")) {
+		if (!calls.includes("host_attachment"))
+			return tool("host_attachment", { action: "list" }, record);
 		const ids = attachmentIds(toolResults(messages));
-		if (calls.filter((name) => name === "host_read_attachment").length === 0) {
-			if (!ids[0]) return { content: "E2E_ATTACHMENT_FIXTURE_MISSING_FILE_ID\n" };
-			return tool("host_read_attachment", { attachmentId: ids[0] }, record);
-		}
-		if (calls.filter((name) => name === "host_read_attachment").length === 1) {
-			if (!ids[1]) return { content: "E2E_ATTACHMENT_FIXTURE_MISSING_FOLDER_ID\n" };
+		if (!calls.includes("host_delegate")) {
+			if (!ids[0]) return { content: "E2E_MANUAL_CODEX_MISSING_ATTACHMENT\n" };
 			return tool(
-				"host_read_attachment",
-				{ attachmentId: ids[1], query: "alpha folder marker" },
+				"host_delegate",
+				{
+					agent: "codex",
+					attachmentIds: [ids[0]],
+					workspaceAttachmentId: ids[0],
+					instruction:
+						"Read brief.md and notes.txt from the immutable workspace snapshot. Create result.md beneath BEAR_OUTPUT_DIR with a concise Chinese summary preserving every source fact. Do not invent facts and do not modify the snapshot.",
+				},
 				record,
 			);
 		}
-		if (!calls.includes("host_delegate_agent")) {
+		if (/"ok"\s*:\s*false|\b(?:failed|error)\b/i.test(toolResults(messages))) {
+			return { content: "E2E_MANUAL_CODEX_FAILED\n" };
+		}
+		return { content: "E2E_MANUAL_CODEX_STARTED\n" };
+	}
+
+	if (current.includes("E2E_WEB_ATTACHMENT_AGENT_JOURNEY")) {
+		if (!calls.includes("host_attachment")) {
+			return tool("host_attachment", { action: "list" }, record);
+		}
+		const ids = attachmentIds(toolResults(messages));
+		if (calls.filter((name) => name === "host_attachment").length === 1) {
+			if (!ids[0]) return { content: "E2E_ATTACHMENT_FIXTURE_MISSING_FILE_ID\n" };
+			return tool("host_attachment", { action: "read", attachmentId: ids[0] }, record);
+		}
+		if (calls.filter((name) => name === "host_attachment").length === 2) {
+			if (!ids[1]) return { content: "E2E_ATTACHMENT_FIXTURE_MISSING_FOLDER_ID\n" };
+			return tool(
+				"host_attachment",
+				{ action: "read", attachmentId: ids[1], query: "alpha folder marker" },
+				record,
+			);
+		}
+		if (!calls.includes("host_delegate")) {
 			if (!ids[0] || !ids[1]) return { content: "E2E_ATTACHMENT_FIXTURE_MISSING_DELEGATE_IDS\n" };
 			return tool(
-				"host_delegate_agent",
+				"host_delegate",
 				{
 					agent: "pi",
 					attachmentIds: [ids[0], ids[1]],

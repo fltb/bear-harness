@@ -33,7 +33,7 @@ import {
 } from "../storage/schema.js";
 import type { CharacterLoader, CharacterPackage, CharacterPrompt } from "./character-loader.js";
 import { OnboardingStateDataSchema } from "./onboarding-schema.js";
-import { RoleplayService } from "./roleplay-service.js";
+import { CharacterStateService } from "./state-service.js";
 
 /**
  * A prompt-context block. Role-package projections and relationship memory
@@ -49,6 +49,7 @@ export interface ContextPackBlock {
 		| "scene"
 		| "relationship"
 		| "roleplay"
+		| "state"
 		| "style"
 		| "persona"
 		| "real_context";
@@ -165,10 +166,10 @@ ${modules.join("\n")}`,
 		if (sceneContext) {
 			blocks.push({ layer: "scene", content: sceneContext });
 		}
-		// Package-declared roleplay state is a Host projection of role-package
-		// storage; it must not become automatic memory or a memory-backend input.
-		const roleplay = this.getRoleplayState(conversationId);
-		if (roleplay) blocks.push({ layer: "roleplay", content: roleplay });
+		// Schema-declared state is a Host projection of package storage; it must
+		// not become automatic memory or a memory-backend input.
+		const state = this.getCharacterState(conversationId);
+		if (state) blocks.push({ layer: "state", content: state });
 
 		// Current voice mode style instruction from character package
 		const style = this.getStyleInstruction(conversationId);
@@ -401,7 +402,7 @@ ${modules.join("\n")}`,
 		return `[当前表达模式：${mode.label}]\n${mode.style_instruction}`;
 	}
 
-	private getRoleplayState(conversationId: string): string | null {
+	private getCharacterState(conversationId: string): string | null {
 		const row = this.db
 			.select({ packageId: companionIdentity.packageId })
 			.from(conversations)
@@ -411,8 +412,14 @@ ${modules.join("\n")}`,
 		if (!row) return null;
 		const character = this.characterLoader.load(row.packageId);
 		if (!character) return null;
-		const state = new RoleplayService(this.db).project(character, conversationId);
-		return `[角色包声明的剧情状态；只能通过 Host 事件修改]\n变量：${JSON.stringify(state.values)}\n已解锁：${state.unlocked.join("、") || "无"}`;
+		const state = new CharacterStateService(this.db).project(
+			character.id,
+			conversationId,
+			character.state,
+			true,
+		);
+		if (Object.keys(state.values).length === 0) return null;
+		return `[角色包声明的结构化状态；只能通过 host_state 按 schema 修改]\n${JSON.stringify(state.values)}`;
 	}
 
 	private getSelfCanon(conversationId: string): string | null {

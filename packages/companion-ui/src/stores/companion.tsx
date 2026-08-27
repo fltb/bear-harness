@@ -293,6 +293,17 @@ export interface RunApi {
 	respondPermission(runId: string, requestId: string, optionId: string): Promise<RunInfo>;
 }
 
+export interface ExternalAgentApi {
+	status(): Promise<import("./ipc.js").ExternalAgentStatusData>;
+	discover(): Promise<import("./ipc.js").ExternalAgentCandidate[]>;
+	connect(params: {
+		canonicalPath: string;
+		version: string;
+		sha256: string;
+		codexHome: string;
+	}): Promise<void>;
+}
+
 export interface AttachmentApi {
 	readData(
 		params: Parameters<AttachmentApi["read"]>[0],
@@ -548,6 +559,7 @@ export interface CompanionStore {
 	readonly embedding: EmbeddingBinding;
 	readonly attachments: AttachmentApi;
 	readonly run: RunApi;
+	readonly externalAgent: ExternalAgentApi;
 	readonly characters: CharacterApi;
 	readonly canon: CanonApi;
 }
@@ -2016,6 +2028,14 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			return data;
 		},
 	};
+	const externalAgentApi: ExternalAgentApi = {
+		status: () => invoke(client, () => client.externalAgent.status({})),
+		discover: async () =>
+			(await invoke(client, () => client.externalAgent.discoverCodex({}))).candidates,
+		connect: async (params) => {
+			await invoke(client, () => client.externalAgent.connectCodex(params));
+		},
+	};
 
 	const attachmentApi: AttachmentApi = {
 		readData: (params) => {
@@ -2370,6 +2390,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 	const trackedProviderApi = trackApi("provider", providerApi);
 	const trackedModelApi = trackApi("model", modelApi);
 	const trackedRunApi = trackApi("run", runApi);
+	const trackedExternalAgentApi = trackApi("externalAgent", externalAgentApi);
 	const trackedAttachmentApi = trackApi("conversationAttachment", attachmentApi);
 	const trackedCharacterApi = trackApi("character", characterApi);
 	const trackedCanonApi = trackApi("canon", canonApi);
@@ -2776,6 +2797,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 		get run() {
 			return trackedRunApi;
+		},
+		get externalAgent() {
+			return trackedExternalAgentApi;
 		},
 		get attachments() {
 			return trackedAttachmentApi;

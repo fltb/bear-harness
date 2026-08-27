@@ -8,7 +8,7 @@ import type { DomainEvent } from "@bear-harness/protocol";
  * channels and returns an idempotent disposer for the active registration.
  */
 
-import type { Dispatcher } from "@bear-harness/host-runtime";
+import type { Diagnostics, Dispatcher } from "@bear-harness/host-runtime";
 import { EventSubscribeRequest, REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
 import { BrowserWindow, ipcMain } from "electron";
 import { isRegisteredMainFrame, type WindowRegistration } from "./diagnostics/electron.js";
@@ -67,6 +67,7 @@ export function wireElectronIpcHandlers(
 	options?: {
 		attachmentProtocol?: RendererDispatchContext;
 		subscribeEvents?: (listener: (event: DomainEvent) => void, afterSeq: number) => () => void;
+		diagnostics?: Diagnostics;
 	},
 ): () => void {
 	const disposers: Array<() => void> = [];
@@ -76,10 +77,24 @@ export function wireElectronIpcHandlers(
 				if (!senderAllowed(event, windowRegistry)) {
 					return { ok: false, error: { kind: "unavailable", reason: "no_window" } };
 				}
+				const span = options?.diagnostics?.startSpan("rpc.request", { channel });
 				const dispatch = () => dispatcher.dispatch(channel, params);
-				return options?.attachmentProtocol
-					? options.attachmentProtocol.runForRenderer(event.sender.id, dispatch)
-					: dispatch();
+				const invoke = () =>
+					options?.attachmentProtocol
+						? options.attachmentProtocol.runForRenderer(event.sender.id, dispatch)
+						: dispatch();
+				try {
+					const result = await (span && options?.diagnostics
+						? options.diagnostics.runInSpan(span, invoke)
+						: invoke());
+					const failed =
+						typeof result === "object" && result !== null && "ok" in result && result.ok === false;
+					span?.end(failed ? "error" : "ok", failed ? { errorCategory: "rpc_error" } : {});
+					return result;
+				} catch (error) {
+					span?.end("error", { errorCategory: "internal_error" });
+					throw error;
+				}
 			}),
 		);
 	}

@@ -337,13 +337,14 @@ function projectPiTimelineEntry(entry: SessionEntry): PiTimelineEntry | undefine
 			return { ...base, kind: "message", role: "user", text: sessionMessageText(entry.message) };
 		}
 		if (entry.message.role === "toolResult") {
+			const domainFailed = toolResultDomainFailed(entry.message);
 			return {
 				...base,
 				kind: "message",
 				role: "tool",
 				toolName: entry.message.toolName,
 				toolCallId: entry.message.toolCallId,
-				status: entry.message.isError ? "failed" : "succeeded",
+				status: entry.message.isError || domainFailed ? "failed" : "succeeded",
 			};
 		}
 		const toolCalls = Array.isArray(entry.message.content)
@@ -400,6 +401,23 @@ function projectPiTimelineEntry(entry: SessionEntry): PiTimelineEntry | undefine
 		return { ...base, kind: entry.type };
 	}
 	return undefined;
+}
+
+/** Host tools return a structured domain result even when transport execution succeeded. */
+function toolResultDomainFailed(message: PiSessionMessage): boolean {
+	if (message.role !== "toolResult" || !Array.isArray(message.content)) return false;
+	for (const part of message.content) {
+		if (!part || typeof part !== "object" || !("type" in part) || part.type !== "text") continue;
+		if (!("text" in part) || typeof part.text !== "string") continue;
+		try {
+			const value: unknown = JSON.parse(part.text);
+			if (typeof value === "object" && value !== null && "ok" in value && value.ok === false)
+				return true;
+		} catch {
+			// Non-JSON tool output is valid and has no Host domain status.
+		}
+	}
+	return false;
 }
 
 function isStandardMessage(message: AgentMessage): message is PiSessionMessage {

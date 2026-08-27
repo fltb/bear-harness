@@ -15,6 +15,13 @@ export function PermissionCard(props: { permission: RunPermissionRequest }) {
 	const key = `${props.permission.runId}:${props.permission.requestId}`;
 	const state = workflow.permissionAction(key);
 	const act = (action: () => Promise<unknown>) => workflow.runPermissionAction(key, action);
+	const optionLabel = (option: RunPermissionRequest["options"][number]) => {
+		if (option.kind.includes("reject")) return t("work.timeline.permissionDeny");
+		if (option.optionId === "accept_execpolicy_amendment")
+			return t("work.timeline.permissionAllowCommand");
+		if (option.kind === "allow_always") return t("work.timeline.permissionAllowSession");
+		return t("work.timeline.permissionAllow");
+	};
 	return (
 		<div class="action-proposal needs-user" data-permission-request={props.permission.requestId}>
 			<span class="system-label">{t("work.timeline.needsYou")}</span>
@@ -36,9 +43,7 @@ export function PermissionCard(props: { permission: RunPermissionRequest }) {
 								)
 							}
 						>
-							{option.kind.includes("reject")
-								? t("work.timeline.permissionDeny")
-								: t("work.timeline.permissionAllow")}
+							{optionLabel(option)}
 						</Button>
 					)}
 				</For>

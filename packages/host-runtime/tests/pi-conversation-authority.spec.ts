@@ -21,6 +21,8 @@ import {
 } from "../src/companion/supervisor.js";
 import { TurnPipeline } from "../src/companion/turn-pipeline.js";
 import { ConversationRepository } from "../src/conversations/repository.js";
+import { createDiagnostics, type Diagnostics } from "../src/diagnostics/index.js";
+import { findLatestCompanionTurnTraceId, readDiagnosticTrace } from "../src/diagnostics/query.js";
 import { Database, MIGRATIONS } from "../src/storage/database.js";
 import { EventBus } from "../src/storage/event-bus.js";
 
@@ -59,16 +61,19 @@ interface Harness {
 	pendingTurns: PendingTurnStore;
 	attachmentBinding: { writes: number };
 	faux: FauxProviderHandle;
+	diagnostics?: Diagnostics;
 }
 
 const roots: string[] = [];
 const databases: Database[] = [];
 const pipelines: TurnPipeline[] = [];
 const runtimes: CompanionSupervisor[] = [];
+const diagnosticsInstances: Diagnostics[] = [];
 
 afterEach(async () => {
 	for (const pipeline of pipelines.splice(0)) pipeline.dispose();
 	for (const runtime of runtimes.splice(0)) await runtime.stop();
+	for (const diagnostics of diagnosticsInstances.splice(0)) await diagnostics.shutdown();
 	// Drain any microtask-scheduled pi.session.changed notifications published
 	// after stop() before the connection closes.
 	await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -86,6 +91,7 @@ async function setupHarness(
 			assistantText: string;
 			correction: string;
 		}) => Promise<void>;
+		diagnostics?: boolean;
 	} = {},
 ): Promise<Harness> {
 	const root = mkdtempSync(join(tmpdir(), "bear-pi-authority-"));
@@ -125,11 +131,24 @@ async function setupHarness(
 	});
 	const store = repository.getSession(CONVERSATION_ID);
 	const providers: CompanionModelRuntimeSource = { getModels: async () => models };
+	const diagnostics = options.diagnostics
+		? createDiagnostics({
+				app: { setAppLogsPath: () => undefined, setPath: () => undefined },
+				root: join(root, "diagnostics"),
+				launchId: "pi-authority",
+				logLevel: "trace",
+				heartbeatMs: 0,
+				pruneIntervalMs: 0,
+			})
+		: undefined;
+	if (diagnostics) diagnosticsInstances.push(diagnostics);
 	const runtime = new CompanionSupervisor(
 		root,
 		eventBus,
 		providers,
 		repository.getSessionResolver(),
+		undefined,
+		diagnostics,
 	);
 	runtimes.push(runtime);
 	repository.setLiveSessionResolver(runtime.getLiveSessionResolver());
@@ -166,6 +185,7 @@ async function setupHarness(
 		pendingTurns,
 		attachmentBinding,
 		faux,
+		diagnostics,
 	};
 }
 
@@ -209,6 +229,38 @@ function messageEntries(timeline: PiTimeline) {
 }
 
 describe("Pi conversation authority", () => {
+	it("records one queryable end-to-end trace for a real Host turn", async () => {
+		const h = await setupHarness({ diagnostics: true });
+		h.faux.setResponses([fauxAssistantMessage(REPLY_TEXT)]);
+
+		await h.pipeline.sendUserMessage(CONVERSATION_ID, "trace this turn");
+		await settleSession(h);
+		await h.diagnostics?.shutdown();
+
+		const diagnosticsRoot = join(h.root, "diagnostics");
+		const traceId = await findLatestCompanionTurnTraceId(diagnosticsRoot);
+		expect(traceId).not.toBeNull();
+		if (!traceId) throw new Error("companion turn trace missing");
+		const trace = await readDiagnosticTrace(diagnosticsRoot, traceId);
+		const names = trace.records.map((record) => record.name);
+		expect(names).toEqual(
+			expect.arrayContaining([
+				"companion.turn",
+				"model.route.resolve",
+				"model.request",
+				"trace.content",
+			]),
+		);
+		const turn = trace.records.find((record) => record.name === "companion.turn");
+		const model = trace.records.find((record) => record.name === "model.request");
+		expect(model?.parentSpanId).toBe(turn?.spanId);
+		expect(
+			trace.records
+				.filter((record) => record.name === "trace.content")
+				.map((record) => record.attributes.phase),
+		).toEqual(expect.arrayContaining(["user", "assistant"]));
+	});
+
 	it("persists the native user entry on accepted send and the native assistant entry after the final stream, with zero Host transcript writes", async () => {
 		const h = await setupHarness();
 		h.faux.setResponses([fauxAssistantMessage(REPLY_TEXT)]);

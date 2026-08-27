@@ -2,14 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { extname } from "node:path";
 import { parse } from "yaml";
 
-const visualOnlyTools = new Set([
-	"host_get_state",
-	"host_set_scene",
-	"host_set_expression",
-	"host_show_cg",
-	"host_play_media",
-	"host_present_choices",
-]);
+const visualOnlyTools = new Set(["host_visual", "host_present"]);
 
 function pngInfo(path) {
 	const bytes = readFileSync(path);

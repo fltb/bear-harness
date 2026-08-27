@@ -7,6 +7,8 @@ import type {
 	ConversationAttachmentService,
 	ConversationAttachmentSummary,
 } from "../conversation-attachments/service.js";
+import type { Diagnostics } from "../diagnostics/index.js";
+import { currentTraceContext, runInTrace, type TraceContext } from "../diagnostics/trace.js";
 import type {
 	ExecutorEvent,
 	ExecutorPermissionOption,
@@ -90,6 +92,8 @@ export class ExternalAgentRunService {
 	private readonly detachedTasks = new Set<Promise<void>>();
 	private closePromise: Promise<void> | undefined;
 	private closed = false;
+	private readonly runTraces = new Map<string, TraceContext>();
+	private readonly runAgents = new Map<string, "pi" | "codex">();
 	constructor(
 		private readonly db: AppDatabase,
 		private readonly eventBus: EventBus,
@@ -105,6 +109,7 @@ export class ExternalAgentRunService {
 			signal: AbortSignal,
 		) => TerminalReconcileResult | Promise<TerminalReconcileResult>,
 		private readonly reconciliationTimeoutMs = DEFAULT_RECONCILIATION_TIMEOUT_MS,
+		private readonly diagnostics?: Diagnostics,
 	) {
 		mkdirSync(runRoot, { recursive: true });
 	}
@@ -140,6 +145,9 @@ export class ExternalAgentRunService {
 			throw { kind: "conflict", reason: "max_active_runs" };
 
 		const runId = randomUUID();
+		const trace = currentTraceContext();
+		if (trace) this.runTraces.set(runId, trace);
+		this.runAgents.set(runId, params.agent);
 		const runDirectory = join(this.runRoot, runId);
 		const prepared = this.attachments.prepareRunInputs({
 			conversationId: params.conversationId,
@@ -173,6 +181,12 @@ export class ExternalAgentRunService {
 			triggerEntryId: params.triggerEntryId,
 			executorProfile: profile,
 		});
+		if (trace) this.recordEvidence(runId, "trace.context", trace);
+		this.diagnostics?.emit("external_agent.run", {
+			runId,
+			agent: params.agent,
+			phase: "enqueued",
+		});
 		const run: ExecutorRun = {
 			runId,
 			triggerEntryId: params.triggerEntryId,
@@ -195,11 +209,10 @@ export class ExternalAgentRunService {
 				},
 				(event) => {
 					if (this.closed) return;
-					const task = this.handleExecutorEvent(
-						runId,
-						event,
-						prepared.outputDirectory,
-						pathReplacements,
+					const task = Promise.resolve(
+						this.runWithTrace(runId, () =>
+							this.handleExecutorEvent(runId, event, prepared.outputDirectory, pathReplacements),
+						),
 					).catch((error) => {
 						if (this.closed) return;
 						try {
@@ -242,14 +255,15 @@ export class ExternalAgentRunService {
 					.where(eq(runs.id, runId))
 					.run();
 				this.eventBus.publish("run.started", { runId });
+				this.emitRunTrace(runId, "started");
 				return;
 			case "evidence":
 				this.recordEvidence(runId, event.kind, sanitizeValue(event.data, paths));
 				return;
 			case "needs_user":
-				if (run.status === "running")
+				if (run.status === "running") {
 					this.needsUser(runId, sanitizeText(event.prompt, paths), event.requestId, event.options);
-				else if (run.status !== "needs_user")
+				} else if (run.status !== "needs_user")
 					throw { kind: "conflict", reason: "executor_needs_user_invalid_run_state" };
 				return;
 			case "completed": {
@@ -297,6 +311,7 @@ export class ExternalAgentRunService {
 			.where(eq(runs.id, runId))
 			.run();
 		this.eventBus.publish("run.completed", { runId, status });
+		this.emitRunTrace(runId, status === "forced_termination" ? "failed" : status);
 		const result = summarize(this.getRun(runId));
 		void this.reconcileRun(runId, outputs);
 		return result;
@@ -306,6 +321,44 @@ export class ExternalAgentRunService {
 		const row = this.db.select().from(runs).where(eq(runs.id, runId)).get();
 		if (!row) throw { kind: "not_found", reason: "run_not_found" };
 		return row;
+	}
+
+	private runWithTrace<T>(runId: string, callback: () => T): T {
+		const trace = this.runTraces.get(runId) ?? this.loadRunTrace(runId);
+		return trace ? runInTrace(trace, callback) : callback();
+	}
+
+	private loadRunTrace(runId: string): TraceContext | undefined {
+		const row = this.db
+			.select({ data: evidence.data })
+			.from(evidence)
+			.where(and(eq(evidence.runId, runId), eq(evidence.kind, "trace.context")))
+			.orderBy(desc(evidence.createdAt))
+			.limit(1)
+			.get();
+		if (!row || !isTraceContext(row.data)) return undefined;
+		this.runTraces.set(runId, row.data);
+		return row.data;
+	}
+
+	private emitRunTrace(
+		runId: string,
+		phase:
+			| "started"
+			| "needs_user"
+			| "completed"
+			| "failed"
+			| "cancelled"
+			| "interrupted"
+			| "resumed",
+	): void {
+		this.runWithTrace(runId, () => {
+			this.diagnostics?.emit("external_agent.run", {
+				runId,
+				agent: this.runAgents.get(runId) ?? agentFromProfile(this.getRun(runId).executorProfile),
+				phase,
+			});
+		});
 	}
 
 	private reconcileRun(
@@ -435,6 +488,7 @@ export class ExternalAgentRunService {
 		if (run.status !== "running") throw { kind: "conflict", reason: "run_not_active" };
 		this.db.update(runs).set({ status: "needs_user" }).where(eq(runs.id, runId)).run();
 		this.eventBus.publish("run.needs_user", { runId, prompt, requestId, options });
+		this.emitRunTrace(runId, "needs_user");
 		return summarize(this.getRun(runId));
 	}
 	async steerRun(runId: string, instruction: string): Promise<void> {
@@ -451,6 +505,7 @@ export class ExternalAgentRunService {
 		await this.executorRouter.interrupt(this.executorRun(run));
 		this.db.update(runs).set({ status: "interrupted" }).where(eq(runs.id, runId)).run();
 		this.eventBus.publish("run.interrupted", { runId });
+		this.emitRunTrace(runId, "interrupted");
 		return summarize(this.getRun(runId));
 	}
 	async resumeRun(runId: string): Promise<RunSummary> {
@@ -460,6 +515,7 @@ export class ExternalAgentRunService {
 		await this.executorRouter.resume(this.executorRun(run));
 		this.db.update(runs).set({ status: "running" }).where(eq(runs.id, runId)).run();
 		this.eventBus.publish("run.resumed", { runId });
+		this.emitRunTrace(runId, "resumed");
 		return summarize(this.getRun(runId));
 	}
 	async respondToExecutorPermission(
@@ -473,6 +529,7 @@ export class ExternalAgentRunService {
 		await this.executorRouter.resume(this.executorRun(run), { requestId, optionId });
 		this.db.update(runs).set({ status: "running" }).where(eq(runs.id, runId)).run();
 		this.eventBus.publish("run.resumed", { runId });
+		this.emitRunTrace(runId, "resumed");
 		return summarize(this.getRun(runId));
 	}
 	async cancelRun(runId: string): Promise<RunSummary> {
@@ -552,6 +609,11 @@ export class ExternalAgentRunService {
 	}
 
 	markOrphansInterrupted(): number {
+		const orphaned = this.db
+			.select({ id: runs.id })
+			.from(runs)
+			.where(and(inArray(runs.status, ORPHANABLE), isNull(runs.completedAt)))
+			.all();
 		const result = this.db
 			.update(runs)
 			.set({
@@ -561,6 +623,7 @@ export class ExternalAgentRunService {
 			})
 			.where(and(inArray(runs.status, ORPHANABLE), isNull(runs.completedAt)))
 			.run();
+		for (const { id } of orphaned) this.emitRunTrace(id, "interrupted");
 		removeExternalAgentRunRoot(this.runRoot);
 		return Number(result.changes);
 	}
@@ -710,6 +773,25 @@ function summarize(row: RunRow): RunSummary {
 		completedAt: row.completedAt,
 		summary: row.summary,
 	};
+}
+
+function isTraceContext(value: unknown): value is TraceContext {
+	return Boolean(
+		value &&
+			typeof value === "object" &&
+			"traceId" in value &&
+			typeof value.traceId === "string" &&
+			/^[0-9a-f]{32}$/.test(value.traceId) &&
+			"spanId" in value &&
+			typeof value.spanId === "string" &&
+			/^[0-9a-f]{16}$/.test(value.spanId),
+	);
+}
+
+function agentFromProfile(profile: string): "pi" | "codex" | "unknown" {
+	if (profile.toLowerCase().includes("codex")) return "codex";
+	if (profile.toLowerCase().includes("pi")) return "pi";
+	return "unknown";
 }
 function executionInstruction(
 	instruction: string,

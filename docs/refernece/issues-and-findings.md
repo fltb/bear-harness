@@ -672,14 +672,14 @@ Every finding below is resolved. Each entry retains its original category, evide
 - **Resolution:** resolved by policy, documented — manual WebDev persistence is the documented default: without `BEAR_WEB_DEV_DATA_DIR`, WebDev uses the platform data path shared with prior WebDev/Electron sessions; the override is the documented isolation mechanism, and process-scoped E2E data remains under `test-results` for deliberate failure diagnosis (web-dev.md known-issues section). Verified by the green gate.
 
 <a id="f021"></a>
-### F021: Treat WebDev diagnostics as intentionally lossy
+### F021: Keep WebDev renderer reporting non-blocking while persisting bounded local diagnostics
 
 - **Module/path/symbol:** [web-dev.md](./web-dev.md#known-issues--findings) — installRendererFaultReporting and diagnostics route
-- **Evidence:** browser reporting is fire-and-forget and server data is reduced to one stderr line.
-- **Impact:** faults can be lost and are not durable telemetry
-- **Next action:** retain the local-diagnostics framing or add acknowledged durable collection as a separate design
+- **Evidence:** browser reporting is fire-and-forget; the Host validates allowlisted metadata and writes it through the shared local JSONL diagnostics system.
+- **Impact:** renderer delivery can still be lost, but accepted records and business traces are durable and queryable on the same machine
+- **Next action:** retain non-blocking renderer delivery, local-only storage, strict content/log-level policy, and trace export coverage
 - **Confidence:** `confirmed`
-- **Resolution:** resolved by policy, documented — diagnostics are explicitly intentional and local: renderer-fault reporting is fire-and-forget and each payload is reduced to one stderr line, useful for local diagnosis and explicitly not crash reporting or telemetry; durable collection would be a separate design (web-dev.md known-issues section). Verified by the green gate.
+- **Resolution:** resolved — renderer delivery remains fire-and-forget, while the Host persists validated metadata and end-to-end business traces locally. TRACE content is redacted and source-only; packaged apps clamp it off. Trace-id query/export is local and atomic, never telemetry. Verified by diagnostics contracts, integration tests, and the release gate.
 
 <a id="f022"></a>
 ### F022: Do not deploy the WebDev host as production

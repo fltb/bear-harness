@@ -15,7 +15,10 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
 import { afterEach, describe, expect, it } from "vitest";
+import { CharacterLoader } from "../src/companion/character-loader.js";
+import { CharacterStateService } from "../src/companion/state-service.js";
 import { type CredentialVault, createHostRuntime } from "../src/index.js";
+import { Database, MIGRATIONS } from "../src/storage/database.js";
 import {
 	DURABLE_FILE_TRANSACTION_VERSION,
 	type DurableFileTransactionMarker,
@@ -171,14 +174,31 @@ describe("character package import", () => {
 			title: "Imported role lifecycle",
 		});
 		if (!conversation.ok) throw new Error(conversation.error.reason);
-		await expect(
-			runtime.dispatch("roleplay.trigger:v1", {
-				conversationId: conversation.data.id,
-				eventId: "continuity_opened",
-				dedupeKey: "imported-role:continuity-opened",
-			}),
-		).resolves.toMatchObject({ ok: true, data: { state: { values: { continuity_stage: 1 } } } });
 		await runtime.close();
+		const database = new Database(join(dataDir, "storage"));
+		database.migrate(MIGRATIONS);
+		const importedLoader = new CharacterLoader(characterRoot, join(dataDir, "characters"));
+		const importedCharacter = importedLoader.load("imported-role");
+		if (!importedCharacter) throw new Error("imported character disappeared before state write");
+		const state = new CharacterStateService(database.orm);
+		state.stage({
+			companionId: importedCharacter.id,
+			conversationId: conversation.data.id,
+			piSessionId: "imported-role-session",
+			sourceUserEntryId: "imported-role-user",
+			definition: importedCharacter.state,
+			operations: [{ path: "continuity.stage", op: "set", value: 1 }],
+			reason: "Verify imported generic schema state survives restart.",
+		});
+		state.commitTurn({
+			companionId: importedCharacter.id,
+			conversationId: conversation.data.id,
+			piSessionId: "imported-role-session",
+			sourceUserEntryId: "imported-role-user",
+			assistantEntryId: "imported-role-assistant",
+			definition: importedCharacter.state,
+		});
+		database.close();
 
 		const restarted = createHostRuntime({
 			dataDir,
@@ -197,16 +217,33 @@ describe("character package import", () => {
 			ok: true,
 			data: { character: { id: "imported-role" } },
 		});
-		await expect(
-			restarted.dispatch("roleplay.get:v1", { conversationId: conversation.data.id }),
-		).resolves.toMatchObject({ ok: true, data: { state: { values: { continuity_stage: 1 } } } });
 		await restarted.close();
+		const recoveredDatabase = new Database(join(dataDir, "storage"));
+		recoveredDatabase.migrate(MIGRATIONS);
+		const recoveredCharacter = new CharacterLoader(characterRoot, join(dataDir, "characters")).load(
+			"imported-role",
+		);
+		if (!recoveredCharacter) throw new Error("imported character disappeared after restart");
+		expect(
+			new CharacterStateService(recoveredDatabase.orm).project(
+				recoveredCharacter.id,
+				conversation.data.id,
+				recoveredCharacter.state,
+			),
+		).toMatchObject({ values: { "continuity.stage": 1 } });
+		recoveredDatabase.close();
 	});
 
 	it("requires explicit trust for imported executable plugins and revokes it when they change", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-character-plugin-trust-"));
 		roots.push(dataDir);
 		const files = packageFiles(join(characterRoot, "jizhou"));
+		files.push({
+			path: "package/plugins/test-plugin.mjs",
+			base64: Buffer.from(
+				"export default function testPlugin(api) { api.registerTool({ name: 'test_plugin' }); }\n",
+			).toString("base64"),
+		});
 		const manifest = files.find((file) => file.path.endsWith("/character.yaml"));
 		if (!manifest) throw new Error("test character manifest missing");
 		manifest.base64 = Buffer.from(
@@ -236,7 +273,7 @@ describe("character package import", () => {
 		).resolves.toMatchObject({ ok: true, data: { trust: { trusted: true } } });
 
 		appendFileSync(
-			join(dataDir, "characters", "plugin-trust-role", "plugins", "jizhou-roleplay.mjs"),
+			join(dataDir, "characters", "plugin-trust-role", "plugins", "test-plugin.mjs"),
 			"\n// package update\n",
 		);
 		await expect(

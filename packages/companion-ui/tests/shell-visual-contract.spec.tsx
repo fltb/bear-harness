@@ -214,7 +214,7 @@ describe("shell visual and thread head contracts", () => {
 		const queueButton = screen.getByRole("button", { name: /1/ });
 		await user.click(queueButton);
 		expect(screen.getByRole("menu", { name: zhCN.threadHead.runningWork })).toHaveTextContent(
-			zhCN.threadHead.runStatuses.needs_user,
+			zhCN.work.timeline.runStatuses.needs_user,
 		);
 		await user.keyboard("{Escape}");
 		expect(

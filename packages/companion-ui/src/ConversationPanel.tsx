@@ -68,24 +68,50 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 		return null;
 	}
 	if (entry.role === "tool") {
+		const label = (() => {
+			switch (entry.toolName) {
+				case "role_skill":
+					return t("messages.toolActivity.read");
+				case "host_state":
+					return t("messages.toolActivity.state");
+				case "host_visual":
+					return t("messages.toolActivity.expression");
+				case "host_present":
+					return t("messages.toolActivity.roleplayUpdate");
+				case "host_attachment":
+					return t("messages.toolActivity.attachmentRead");
+				case "host_delegate":
+					return t("messages.toolActivity.delegate");
+				case "host_history":
+				case "host_canon":
+				case "host_memory":
+					return t("messages.toolActivity.continuity");
+				default:
+					return t("messages.toolActivity.generic");
+			}
+		})();
 		return (
 			<article
 				class="msg pi-tool-result"
 				data-pi-entry-id={entry.id}
-				aria-label={`${entry.toolName} ${entry.status}`}
+				aria-label={`${label} ${entry.status}`}
 			>
 				<div class="msg-meta">
-					<span>{entry.toolName}</span>
-					<span class="pi-tool-call-id">{entry.toolCallId}</span>
+					<span>{label}</span>
 				</div>
-				<span class="pi-tool-status">{entry.status}</span>
+				<span class="pi-tool-status">
+					{t(
+						entry.status === "succeeded"
+							? "messages.toolActivity.completed"
+							: "messages.toolActivity.failed",
+					)}
+				</span>
 			</article>
 		);
 	}
 	const isUser = entry.role === "user";
 	const characterName = store.character?.name ?? "";
 	const assistant = entry.role === "assistant" ? entry : undefined;
-	const toolCalls = assistant?.toolCalls;
 	const failed = assistant?.stopReason === "error" || assistant?.stopReason === "aborted";
 	const errorText =
 		assistant?.stopReason === "aborted" ? t("messages.responseStopped") : assistant?.errorMessage;
@@ -112,18 +138,6 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 					<p>{entry.text}</p>
 				</Show>
 				<TimelineAttachmentRows attachments={entry.attachments} />
-				<Show when={toolCalls && toolCalls.length > 0}>
-					<ul class="pi-tool-calls" aria-label="Tool calls">
-						<For each={toolCalls}>
-							{(call) => (
-								<li class="pi-tool-call" data-pi-tool-call-id={call.toolCallId}>
-									<span class="pi-tool-name">{call.toolName}</span>
-									<span class="pi-tool-call-id">{call.toolCallId}</span>
-								</li>
-							)}
-						</For>
-					</ul>
-				</Show>
 				<Show when={failed && errorText !== undefined && errorText.length > 0}>
 					<span class="stream-error" role="alert">
 						{errorText}
@@ -352,7 +366,11 @@ function RoleplayChoices() {
 								<Button
 									type="button"
 									class="roleplay-choice"
-									onClick={() => void store.triggerRoleplayEvent(choice.event)}
+									onClick={() =>
+										void ("event" in choice
+											? store.triggerRoleplayEvent(choice.event)
+											: store.sendMessage(choice.message))
+									}
 								>
 									<strong>{choice.label}</strong>
 									<Show when={choice.description}>

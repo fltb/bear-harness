@@ -34,6 +34,10 @@ type PreviewState = {
 };
 type PreviewKind = "text" | "image" | "audio" | "video" | "pdf" | "unknown";
 
+function isCollection(attachment: ConversationAttachmentSummary): boolean {
+	return attachment.kind === "folder" || attachment.kind === "generated";
+}
+
 const IMAGE_MIMES = new Set([
 	"image/png",
 	"image/jpeg",
@@ -232,7 +236,7 @@ export function AttachmentPreviewProvider(props: ParentProps) {
 		setActionError(undefined);
 		setDownloading(false);
 
-		const needsTree = attachment.kind === "folder" && !relativePath;
+		const needsTree = isCollection(attachment) && !relativePath;
 		const kind = needsTree ? "unknown" : previewKind(nextSelection);
 
 		setLoading(true);
@@ -284,14 +288,14 @@ export function AttachmentPreviewProvider(props: ParentProps) {
 	});
 	const canDownload = createMemo(() => {
 		const current = selection();
-		return Boolean(current && (current.attachment.kind !== "folder" || current.relativePath));
+		return Boolean(current && (!isCollection(current.attachment) || current.relativePath));
 	});
 	const showMetadata = createMemo(() => {
 		const current = selection();
 		return Boolean(
 			current &&
 				kind() === "unknown" &&
-				(current.attachment.kind !== "folder" || current.relativePath),
+				(!isCollection(current.attachment) || current.relativePath),
 		);
 	});
 

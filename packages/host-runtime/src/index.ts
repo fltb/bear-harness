@@ -88,6 +88,23 @@ export type {
 } from "./diagnostics/index.js";
 // Diagnostics (injected app/reporter interfaces; no Electron imports)
 export { createDiagnostics, Diagnostics } from "./diagnostics/index.js";
+export {
+	DIAGNOSTIC_LEVELS,
+	diagnosticLevelEnabled,
+	effectiveDiagnosticLevel,
+	parseDiagnosticLevel,
+} from "./diagnostics/levels.js";
+export type {
+	DiagnosticTraceQueryOptions,
+	DiagnosticTraceQueryResult,
+} from "./diagnostics/query.js";
+export {
+	exportDiagnosticTrace,
+	findLatestCompanionTurnTraceId,
+	readDiagnosticTrace,
+} from "./diagnostics/query.js";
+export type { RedactedTraceText } from "./diagnostics/redaction.js";
+export { redactTraceText } from "./diagnostics/redaction.js";
 export type { RandomSource, TraceContext } from "./diagnostics/trace.js";
 export {
 	createSpanId,

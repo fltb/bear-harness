@@ -8,6 +8,7 @@
 
 import { randomUUID } from "node:crypto";
 import { desc, eq, sql } from "drizzle-orm";
+import type { Diagnostics } from "../diagnostics/index.js";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus, HostEvent } from "../storage/event-bus.js";
 import {
@@ -18,20 +19,16 @@ import {
 } from "../storage/schema.js";
 import type { CharacterLoader, CharacterPackage } from "./character-loader.js";
 import type { RoleplayProjection, RoleplayService } from "./roleplay-service.js";
+import type { CharacterStateService } from "./state-service.js";
 export type CompanionHostToolName =
-	| "host_get_state"
-	| "host_set_scene"
-	| "host_set_expression"
-	| "host_get_roleplay_state"
-	| "host_trigger_roleplay_event"
-	| "host_play_media"
-	| "host_present_choices"
-	| "host_search_conversation_history"
-	| "host_search_canon"
-	| "host_remember"
-	| "host_list_attachments"
-	| "host_read_attachment"
-	| "host_delegate_agent";
+	| "host_state"
+	| "host_visual"
+	| "host_present"
+	| "host_history"
+	| "host_canon"
+	| "host_memory"
+	| "host_attachment"
+	| "host_delegate";
 
 export interface CompanionHostToolCall {
 	conversationId: string;
@@ -103,7 +100,6 @@ function projectTurnEntries(
 /** Host-owned, allowlisted character UI controls. */
 export class CharacterBehaviorService {
 	private readonly unsubscribe: () => void;
-	private readonly pendingRoleplayEvents = new Map<string, Array<{ eventId: string }>>();
 	private readonly modelSelectedExpression = new Set<string>();
 	private readonly seenTurnEntries = new Map<
 		string,
@@ -115,7 +111,9 @@ export class CharacterBehaviorService {
 		private readonly eventBus: EventBus,
 		private readonly characterLoader: CharacterLoader,
 		private readonly roleplay: RoleplayService,
+		private readonly characterState: CharacterStateService,
 		private readonly piProjection?: (conversationId: string) => PiTurnBranchProjection | undefined,
+		private readonly diagnostics?: Diagnostics,
 	) {
 		this.unsubscribe = this.eventBus.subscribe((event) => this.applyEventReaction(event));
 	}
@@ -139,6 +137,11 @@ export class CharacterBehaviorService {
 			...(projection ? { piSessionId: projection.sessionId } : {}),
 			dedupeKey: input.dedupeKey,
 		});
+		this.diagnostics?.emit("roleplay.state.transition", {
+			conversationId: input.conversationId,
+			eventId: input.eventId,
+			phase: "committed",
+		});
 		this.eventBus.publish("roleplay.choices_dismissed", { conversationId: input.conversationId });
 		const event = character.roleplay.events.find((candidate) => candidate.id === input.eventId);
 		if (event) this.applyRoleplayPresentation(input.conversationId, event.effects);
@@ -152,32 +155,54 @@ export class CharacterBehaviorService {
 
 	/** Execute a request from the Companion utility process. */
 	invoke(call: CompanionHostToolCall): CompanionHostToolResult {
+		const target = hostToolTarget(call.args);
+		const span = this.diagnostics?.startSpan("host.rule.evaluate", {
+			conversationId: call.conversationId,
+			tool: call.tool,
+			...(target ? { target } : {}),
+		});
+		const result =
+			span && this.diagnostics
+				? this.diagnostics.runInSpan(span, () => this.invokeAllowed(call))
+				: this.invokeAllowed(call);
+		span?.end(result.ok ? "ok" : "error", {
+			decision: result.ok ? "allowed" : "rejected",
+			...(result.code ? { resultCode: result.code } : {}),
+		});
+		return result;
+	}
+
+	private invokeAllowed(call: CompanionHostToolCall): CompanionHostToolResult {
 		switch (call.tool) {
-			case "host_get_state":
-				return this.getStateResult(call.conversationId);
-			case "host_set_scene":
-				return this.setScene(call.conversationId, stringArgument(call.args, "sceneId"));
-			case "host_set_expression":
-				return this.setExpression(
-					call.conversationId,
-					stringArgument(call.args, "visualState"),
-					"pi_tool",
-				);
-			case "host_get_roleplay_state":
-				return this.getRoleplayState(call.conversationId);
-			case "host_trigger_roleplay_event":
-				return this.queueRoleplayEvent(call.conversationId, stringArgument(call.args, "eventId"));
-			case "host_play_media":
-				return this.presentMedia(call.conversationId, stringArgument(call.args, "mediaId"));
-			case "host_present_choices":
-				return this.presentChoices(call.conversationId, stringArgument(call.args, "choiceSetId"));
+			case "host_visual": {
+				const action = stringArgument(call.args, "action");
+				if (action === "read") return this.getStateResult(call.conversationId);
+				if (action === "set_scene")
+					return this.setScene(call.conversationId, stringArgument(call.args, "sceneId"));
+				if (action === "set_expression")
+					return this.setExpression(
+						call.conversationId,
+						stringArgument(call.args, "visualState"),
+						"pi_tool",
+					);
+				break;
+			}
+			case "host_present": {
+				const action = stringArgument(call.args, "action");
+				if (action === "media")
+					return this.presentMedia(call.conversationId, stringArgument(call.args, "mediaId"));
+				if (action === "choices")
+					return this.presentChoices(call.conversationId, stringArgument(call.args, "choiceSetId"));
+				break;
+			}
 			default:
-				return {
-					ok: false,
-					code: "host_tool_not_allowed",
-					message: `Host tool is not allowlisted: ${call.tool}`,
-				};
+				break;
 		}
+		return {
+			ok: false,
+			code: "host_tool_not_allowed",
+			message: `Host tool or action is not allowlisted: ${call.tool}`,
+		};
 	}
 
 	private applyEventReaction(event: HostEvent): void {
@@ -216,9 +241,16 @@ export class CharacterBehaviorService {
 			...(lastUser ? { userEntryId: lastUser.id } : {}),
 			...(lastAssistant ? { assistantEntryId: lastAssistant.id } : {}),
 		});
-		if (!seen) return; // First observation seeds the baseline; no reaction.
+		if (!seen) {
+			// A process may restart after a model tool staged state but before the
+			// terminal Pi notification was observed. Reconcile that durable turn on
+			// the first branch projection instead of silently stranding the mutation.
+			if (lastUser && lastAssistant && entries.indexOf(lastAssistant) > entries.indexOf(lastUser))
+				this.applyStateTurnEnd(conversationId, projection.sessionId, lastAssistant, lastUser.id);
+			return;
+		}
 		if (newAssistant && lastAssistant) {
-			this.applyTurnEnd(conversationId, projection.sessionId, lastAssistant);
+			this.applyTurnEnd(conversationId, projection.sessionId, lastAssistant, lastUser?.id);
 			return;
 		}
 		if (newUser && lastUser) {
@@ -227,20 +259,45 @@ export class CharacterBehaviorService {
 		}
 	}
 
-	private applyTurnEnd(conversationId: string, sessionId: string, entry: ProjectedTurnEntry): void {
+	private applyTurnEnd(
+		conversationId: string,
+		sessionId: string,
+		entry: ProjectedTurnEntry,
+		userEntryId?: string,
+	): void {
+		if (userEntryId) this.applyStateTurnEnd(conversationId, sessionId, entry, userEntryId);
 		if (entry.stopReason === "aborted") {
-			this.pendingRoleplayEvents.delete(conversationId);
 			this.modelSelectedExpression.delete(conversationId);
 			this.applyReaction(conversationId, "message.aborted");
 			return;
 		}
-		if (entry.stopReason === "error") {
-			this.pendingRoleplayEvents.delete(conversationId);
-			return;
-		}
-		this.commitQueuedRoleplayEvents(conversationId, sessionId, entry.id);
+		if (entry.stopReason === "error") return;
 		const consumed = this.modelSelectedExpression.delete(conversationId);
 		if (!consumed) this.applyReaction(conversationId, "message_end");
+	}
+
+	private applyStateTurnEnd(
+		conversationId: string,
+		sessionId: string,
+		entry: ProjectedTurnEntry,
+		userEntryId: string,
+	): void {
+		if (entry.stopReason === "aborted" || entry.stopReason === "error") {
+			this.characterState.discardTurn(conversationId, sessionId, userEntryId);
+			return;
+		}
+		const character = this.characterForConversation(conversationId);
+		if (!character) return;
+		const result = this.characterState.commitTurn({
+			companionId: character.id,
+			conversationId,
+			piSessionId: sessionId,
+			sourceUserEntryId: userEntryId,
+			assistantEntryId: entry.id,
+			definition: character.state,
+		});
+		if (result.committed)
+			this.eventBus.publish("character.state_changed", { conversationId, state: result.state });
 	}
 
 	private applyReaction(conversationId: string, eventKind: string): void {
@@ -251,64 +308,6 @@ export class CharacterBehaviorService {
 		);
 		if (!reaction) return;
 		this.setExpression(conversationId, reaction.visual_state, `event:${eventKind}`);
-	}
-
-	private getRoleplayState(conversationId: string): CompanionHostToolResult {
-		const character = this.characterForConversation(conversationId);
-		if (!character) return unavailableConversationResult(conversationId);
-		return {
-			ok: true,
-			message: "Current roleplay state.",
-			data: this.roleplay.project(character, conversationId),
-		};
-	}
-	private queueRoleplayEvent(
-		conversationId: string,
-		eventId: string | undefined,
-	): CompanionHostToolResult {
-		const character = this.characterForConversation(conversationId);
-		if (!character) return unavailableConversationResult(conversationId);
-		if (!eventId || !character.roleplay.events.some((event) => event.id === eventId))
-			return {
-				ok: false,
-				code: "invalid_roleplay_event",
-				message: "The event is not declared by this character package.",
-			};
-		const pending = this.pendingRoleplayEvents.get(conversationId) ?? [];
-		if (!pending.some((entry) => entry.eventId === eventId)) pending.push({ eventId });
-		this.pendingRoleplayEvents.set(conversationId, pending);
-		return {
-			ok: true,
-			message: "Roleplay event accepted; effects will commit with the completed reply.",
-		};
-	}
-
-	private commitQueuedRoleplayEvents(
-		conversationId: string,
-		sessionId: string,
-		entryId: string,
-	): void {
-		const pending = this.pendingRoleplayEvents.get(conversationId);
-		if (!pending?.length) return;
-		const character = this.characterForConversation(conversationId);
-		if (!character) return;
-		for (const entry of pending) {
-			this.roleplay.trigger({
-				character,
-				eventId: entry.eventId,
-				conversationId,
-				piSessionId: sessionId,
-				sourceNativeEntryId: entryId,
-				dedupeKey: `${sessionId}:${entryId}:${entry.eventId}`,
-			});
-			const event = character.roleplay.events.find((candidate) => candidate.id === entry.eventId);
-			if (event) this.applyRoleplayPresentation(conversationId, event.effects);
-		}
-		this.pendingRoleplayEvents.delete(conversationId);
-		this.eventBus.publish("roleplay.state_changed", {
-			conversationId,
-			state: this.roleplay.project(character, conversationId),
-		});
 	}
 
 	private applyRoleplayPresentation(
@@ -398,6 +397,13 @@ export class CharacterBehaviorService {
 
 		const current = this.currentState(conversationId, character);
 		const state = this.persistState(conversationId, sceneId, current.visualState);
+		this.diagnostics?.emit("character.state.transition", {
+			conversationId,
+			state: "scene",
+			from: current.sceneId,
+			to: state.sceneId,
+			source,
+		});
 		this.eventBus.publish("character.scene_changed", {
 			conversationId,
 			characterId: character.id,
@@ -426,6 +432,13 @@ export class CharacterBehaviorService {
 
 		const current = this.currentState(conversationId, character);
 		const state = this.persistState(conversationId, current.sceneId, visualState);
+		this.diagnostics?.emit("character.state.transition", {
+			conversationId,
+			state: "expression",
+			from: current.visualState,
+			to: state.visualState,
+			source,
+		});
 		if (source === "pi_tool" || source === "roleplay_event")
 			this.modelSelectedExpression.add(conversationId);
 		this.eventBus.publish("character.visual_state_changed", {
@@ -524,6 +537,15 @@ function stringArgument(value: unknown, key: string): string | undefined {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
 	const candidate = (value as Record<string, unknown>)[key];
 	return typeof candidate === "string" && candidate.length <= 64 ? candidate : undefined;
+}
+
+function hostToolTarget(value: unknown): string | undefined {
+	if (!isRecord(value)) return undefined;
+	for (const key of ["sceneId", "visualState", "eventId", "mediaId", "choiceSetId"]) {
+		const candidate = value[key];
+		if (typeof candidate === "string" && candidate.length <= 128) return candidate;
+	}
+	return undefined;
 }
 
 function conversationIdFrom(payload: unknown): string | undefined {

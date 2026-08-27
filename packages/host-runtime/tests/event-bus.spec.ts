@@ -32,6 +32,7 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 		sceneId: "scene-1",
 		visualState: "listening",
 	},
+	"character.state_changed": { conversationId: "conversation-1", state: { values: {} } },
 	"roleplay.unlocks_reset": {},
 	"roleplay.state_changed": { conversationId: "conversation-1", state: {} },
 	"roleplay.media_presented": { conversationId: "conversation-1", mediaId: "media-1" },
@@ -91,13 +92,13 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 	"companion.tool_started": {
 		conversationId: "conversation-1",
 		toolCallId: "tool-call-1",
-		tool: "host_remember",
+		tool: "host_memory",
 		label: "Remember",
 	},
 	"companion.tool_finished": {
 		conversationId: "conversation-1",
 		toolCallId: "tool-call-1",
-		tool: "host_remember",
+		tool: "host_memory",
 		ok: true,
 		message: "Saved",
 	},

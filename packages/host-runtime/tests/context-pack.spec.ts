@@ -103,8 +103,8 @@ describe("ContextPackCompiler character prompt layers", () => {
 		expect(pack.blocks.find((block) => block.layer === "persona")?.content).toContain(
 			"称呼用户为：小雪",
 		);
-		expect(pack.blocks.find((block) => block.layer === "roleplay")?.content).toContain(
-			'"continuity_stage":0',
+		expect(pack.blocks.find((block) => block.layer === "state")?.content).toContain(
+			'"continuity.stage":0',
 		);
 		const directiveContext = pack.blocks.find((block) => block.layer === "scene")?.content ?? "";
 		orm

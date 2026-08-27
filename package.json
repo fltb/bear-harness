@@ -15,7 +15,7 @@
 	"packageManager": "npm@11.17.0",
 	"scripts": {
 		"format": "biome format --write",
-		"lint": "biome ci --diagnostic-level=error && node scripts/check-obsolete-brand.mjs && node scripts/check-release-baseline.mjs && node scripts/check-release-workflow.mjs && npm run lint:knip && node scripts/check-tailwind-atomic-styles.mjs && node scripts/check-ui-design-language.mjs && node scripts/check-ui-copy-ownership.mjs && node scripts/check-ui-controls.mjs && node scripts/check-renderer-push.mjs && node scripts/check-renderer-effects.mjs && node scripts/check-test-quality.mjs && node scripts/check-rpc-contracts.mjs && node scripts/check-data-boundaries.mjs && node scripts/check-web-dev-test-leaks.mjs && node scripts/check-roleplay-packages.mjs && node scripts/check-canon-packages.mjs && node scripts/validate-workflow.mjs && npm run lint --workspace @bear-harness/desktop",
+		"lint": "biome ci --diagnostic-level=error && node scripts/check-obsolete-brand.mjs && node scripts/check-release-baseline.mjs && node scripts/check-release-workflow.mjs && npm run lint:knip && node scripts/check-tailwind-atomic-styles.mjs && node scripts/check-ui-design-language.mjs && node scripts/check-ui-copy-ownership.mjs && node scripts/check-ui-controls.mjs && node scripts/check-renderer-push.mjs && node scripts/check-renderer-effects.mjs && node scripts/check-test-quality.mjs && node scripts/check-rpc-contracts.mjs && node scripts/check-data-boundaries.mjs && node scripts/check-web-dev-test-leaks.mjs && node scripts/check-role-tool-surface.mjs && node scripts/check-roleplay-packages.mjs && node scripts/check-canon-packages.mjs && node scripts/validate-workflow.mjs && npm run lint --workspace @bear-harness/desktop",
 		"lint:knip": "knip",
 		"typecheck": "npm run typecheck --workspace @bear-harness/product-config && npm run typecheck --workspace @bear-harness/i18n && npm run typecheck --workspace @bear-harness/schema && npm run typecheck --workspace @bear-harness/protocol && npm run typecheck --workspace @bear-harness/companion-client && npm run typecheck --workspace @bear-harness/host-runtime && npm run typecheck --workspace @bear-harness/companion-ui && npm run typecheck --workspace @bear-harness/desktop && npm run typecheck --workspace @bear-harness/web-dev",
 		"test:unit": "node --test scripts/check-renderer-effects.test.mjs scripts/check-ui-design-language.test.mjs && npm run test:unit --workspace @bear-harness/i18n && npm run test:unit --workspace @bear-harness/protocol && npm run test:unit --workspace @bear-harness/host-runtime && npm run test:unit --workspace @bear-harness/companion-ui && npm run test:unit --workspace @bear-harness/desktop && npm run test:unit --workspace @bear-harness/web-dev",
@@ -34,6 +34,7 @@
 		"package:win": "npm run package:win --workspace @bear-harness/desktop",
 		"package:linux": "npm run package:linux --workspace @bear-harness/desktop",
 		"dev:web": "npm run dev --workspace @bear-harness/web-dev",
+		"diagnostics:export": "npm run build --workspace @bear-harness/host-runtime && node scripts/export-diagnostics-trace.mjs",
 		"audit": "npm audit --audit-level=high && npm audit signatures",
 		"check": "npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run test:e2e:web",
 		"check:electron": "npm run build && npm run test:e2e:electron && npm run test:diagnostics:crash",

@@ -122,10 +122,10 @@ test("file and folder attachments survive delegation, reload, download, and rema
 	).toBe("completed");
 	const calls = trace.calls.filter((call) => call.tool.startsWith("host_")).slice(-4);
 	expect(calls.map((call) => call.tool)).toEqual([
-		"host_list_attachments",
-		"host_read_attachment",
-		"host_read_attachment",
-		"host_delegate_agent",
+		"host_attachment",
+		"host_attachment",
+		"host_attachment",
+		"host_delegate",
 	]);
 	expect(calls[3]?.args).toMatchObject({
 		agent: "pi",

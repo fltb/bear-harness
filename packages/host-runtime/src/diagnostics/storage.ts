@@ -22,8 +22,9 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { DiagnosticsPolicy, PendingRecord } from "./contracts.js";
+import type { DiagnosticLevel, DiagnosticsPolicy, PendingRecord } from "./contracts.js";
 import { DIAGNOSTIC_CATALOG, MAX_RECORD_BYTES, validateRecord } from "./contracts.js";
+import { diagnosticLevelEnabled } from "./levels.js";
 import { createSpanId, createTraceId } from "./trace.js";
 
 export interface LocalWriterOptions {
@@ -32,6 +33,7 @@ export interface LocalWriterOptions {
 	policy: Readonly<DiagnosticsPolicy>;
 	clock?: () => number;
 	stderr?: (line: string) => void;
+	minimumLevel?: DiagnosticLevel;
 }
 
 export type EnqueueResult =
@@ -59,6 +61,7 @@ export class LocalWriter {
 	private readonly policy: Readonly<DiagnosticsPolicy>;
 	private readonly clock: () => number;
 	private readonly stderr: (line: string) => void;
+	private readonly minimumLevel: DiagnosticLevel;
 
 	private queue: QueueEntry[] = [];
 	private queueBytes = 0;
@@ -75,6 +78,7 @@ export class LocalWriter {
 		this.policy = options.policy;
 		this.clock = options.clock ?? Date.now;
 		this.stderr = options.stderr ?? ((line: string) => process.stderr.write(`${line}\n`));
+		this.minimumLevel = options.minimumLevel ?? "trace";
 	}
 
 	/** Queue a record. Never throws; never rejects. */
@@ -130,6 +134,7 @@ export class LocalWriter {
 
 	/** Shutdown-timeout persistence: queue head + one synchronous append. */
 	writeShutdownTimeoutRecord(): void {
+		if (!diagnosticLevelEnabled(this.minimumLevel, "error")) return;
 		const text = JSON.stringify(
 			this.completeRecord({
 				name: "app.shutdown_timeout",
@@ -253,6 +258,7 @@ export class LocalWriter {
 		if (!this.failed) return;
 		this.failed = false;
 		this.stderrWritten = false;
+		if (!diagnosticLevelEnabled(this.minimumLevel, "warn")) return;
 		// Buffered records have flushed in order; report recovery with counts.
 		// The record whose successful write ended the outage is counted too.
 		this.enqueue({

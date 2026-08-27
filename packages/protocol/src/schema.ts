@@ -226,6 +226,10 @@ export const EventPayloadSchemas = {
 		sceneId: EventId,
 		visualState: EventText,
 	}),
+	"character.state_changed": EventPayload({
+		conversationId: EventId,
+		state: BoundedEventValue,
+	}),
 	"roleplay.unlocks_reset": EventPayload({}),
 	"roleplay.state_changed": EventPayload({
 		conversationId: EventId,
@@ -810,12 +814,20 @@ export const CharacterDisplay = z
 						prompt: CharacterCopy,
 						choices: z
 							.array(
-								z.strictObject({
-									id: CharacterIdentifier,
-									label: CharacterCopy,
-									description: z.string().max(MAX_STRING_LENGTH).optional(),
-									event: CharacterIdentifier,
-								}),
+								z.union([
+									z.strictObject({
+										id: CharacterIdentifier,
+										label: CharacterCopy,
+										description: z.string().max(MAX_STRING_LENGTH).optional(),
+										event: CharacterIdentifier,
+									}),
+									z.strictObject({
+										id: CharacterIdentifier,
+										label: CharacterCopy,
+										description: z.string().max(MAX_STRING_LENGTH).optional(),
+										message: CharacterCopy,
+									}),
+								]),
 							)
 							.min(2)
 							.max(12),
@@ -946,7 +958,7 @@ export const CharacterImportRequest = z.strictObject({
 export const CharacterPluginTrust = z.strictObject({
 	characterId: z.string().min(1).max(64),
 	origin: z.enum(["official", "local", "imported"]),
-	pluginHash: z.string().min(1).max(128),
+	pluginHash: z.string().max(128),
 	pluginsPresent: z.boolean(),
 	trusted: z.boolean(),
 });

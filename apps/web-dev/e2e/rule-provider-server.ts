@@ -53,6 +53,9 @@ function reply(payload: {
 			...latestUserContent.matchAll(/<current_user_message>\n([\s\S]*?)<\/current_user_message>/g),
 		].at(-1)?.[1] ?? latestUserContent;
 	const afterUser = latestUser ? messages.slice(messages.lastIndexOf(latestUser) + 1) : [];
+	const currentCalls = afterUser.flatMap((message) =>
+		(message.tool_calls ?? []).flatMap((call) => (call.function?.name ? [call.function.name] : [])),
+	);
 	const toolResult = afterUser.some((message) => message.role === "tool");
 	const toolText = afterUser
 		.filter((message) => message.role === "tool")
@@ -62,24 +65,82 @@ function reply(payload: {
 		calls.push({ tool, args });
 	});
 	if (attachmentFixture) return attachmentFixture;
+	const invoke = (tool: string, args: Record<string, unknown>) => {
+		calls.push({ tool, args });
+		return { tool, args };
+	};
+	if (current.includes("E2E_MANUAL_ROLE_START")) {
+		if (!currentCalls.includes("role_skill"))
+			return invoke("role_skill", { skillId: "continuity-reveal" });
+		if (!currentCalls.includes("host_state")) return invoke("host_state", { action: "read" });
+		if (currentCalls.filter((name) => name === "host_state").length === 1)
+			return invoke("host_state", {
+				action: "update",
+				operations: [{ path: "continuity.stage", op: "set", value: 1 }],
+				reason: "用户主动开启继任规程",
+			});
+		if (!currentCalls.includes("host_visual"))
+			return invoke("host_visual", { action: "set_scene", sceneId: "quiet_terminal" });
+		if (currentCalls.filter((name) => name === "host_visual").length === 1)
+			return invoke("host_visual", { action: "set_expression", visualState: "reflective" });
+		return { content: "E2E_MANUAL_ROLE_START_DONE\n" };
+	}
+	if (current.includes("E2E_MANUAL_ROLE_CONTINUE")) {
+		if (!currentCalls.includes("role_skill"))
+			return invoke("role_skill", { skillId: "continuity-reveal" });
+		if (!currentCalls.includes("host_state")) return invoke("host_state", { action: "read" });
+		if (currentCalls.filter((name) => name === "host_state").length === 1)
+			return invoke("host_state", {
+				action: "update",
+				operations: [{ path: "continuity.stage", op: "set", value: 2 }],
+				reason: "用户愿意继续继任规程",
+			});
+		if (!currentCalls.includes("host_visual"))
+			return invoke("host_visual", { action: "set_expression", visualState: "alert" });
+		if (!currentCalls.includes("host_present"))
+			return invoke("host_present", { action: "choices", choiceSetId: "continuity_response" });
+		return { content: "E2E_MANUAL_ROLE_CONTINUE_DONE\n" };
+	}
+	if (current.includes("我听见了。请按继任规程记录我的回应。")) {
+		if (!currentCalls.includes("role_skill"))
+			return invoke("role_skill", { skillId: "continuity-reveal" });
+		if (!currentCalls.includes("host_state")) return invoke("host_state", { action: "read" });
+		if (currentCalls.filter((name) => name === "host_state").length === 1)
+			return invoke("host_state", {
+				action: "update",
+				operations: [
+					{ path: "continuity.stage", op: "set", value: 3 },
+					{ path: "continuity.response", op: "set", value: "received" },
+				],
+				reason: "用户接住继任说明",
+			});
+		if (!currentCalls.includes("host_present"))
+			return invoke("host_present", { action: "media", mediaId: "continuity_light" });
+		return { content: "E2E_MANUAL_ROLE_RECEIVED_DONE\n" };
+	}
 	const memoryContextCheck = current.includes("检查记忆上下文");
 	const directMemoryText = memoryContextCheck
 		? undefined
 		: directMemoryTexts.find((value) => current.includes(value));
 	if (!toolResult && current.includes("E2E_TOOL_TRIGGER_DAMAGED_LOG")) {
+		const args = {
+			action: "update",
+			operations: [{ path: "continuity.stage", op: "set", value: 1 }],
+			reason: "E2E continuity transition",
+		};
 		calls.push({
-			tool: "host_trigger_roleplay_event",
-			args: { eventId: "continuity_opened" },
+			tool: "host_state",
+			args,
 		});
-		return { tool: "host_trigger_roleplay_event", args: { eventId: "continuity_opened" } };
+		return { tool: "host_state", args };
 	}
 	if (!toolResult && current.includes("E2E_TOOL_SEARCH_OTHER_CONVERSATION")) {
 		calls.push({
-			tool: "host_search_conversation_history",
+			tool: "host_history",
 			args: { query: "E2E_HISTORY_MARKER", limit: 2 },
 		});
 		return {
-			tool: "host_search_conversation_history",
+			tool: "host_history",
 			args: { query: "E2E_HISTORY_MARKER", limit: 2 },
 		};
 	}

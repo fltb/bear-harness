@@ -803,6 +803,102 @@ export const characterDraftRevisions = sqliteTable(
 	(table) => [primaryKey({ columns: [table.draftId, table.revision] })],
 );
 
+export const characterStateDocuments = sqliteTable(
+	"character_state_documents",
+	{
+		id: text().primaryKey(),
+		companionId: text("companion_id")
+			.notNull()
+			.references(() => companionIdentity.id, { onDelete: "cascade" }),
+		conversationId: text("conversation_id").references(() => conversations.id, {
+			onDelete: "cascade",
+		}),
+		scope: text({ enum: ["conversation", "relationship", "character"] }).notNull(),
+		stateJson: text("state_json", { mode: "json" })
+			.$type<Record<string, unknown>>()
+			.default({})
+			.notNull(),
+		revision: integer().default(0).notNull(),
+		schemaHash: text("schema_hash").notNull(),
+		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
+	},
+	(table) => [
+		unique("character_state_documents_scope").on(
+			table.companionId,
+			table.conversationId,
+			table.scope,
+		),
+		check(
+			"character_state_documents_scope_owner",
+			sql`(${table.scope} = 'conversation' AND ${table.conversationId} IS NOT NULL)
+				OR (${table.scope} IN ('relationship', 'character') AND ${table.conversationId} IS NULL)`,
+		),
+		check("character_state_documents_revision", sql`${table.revision} >= 0`),
+	],
+);
+
+export const pendingStateMutations = sqliteTable(
+	"pending_state_mutations",
+	{
+		id: text().primaryKey(),
+		companionId: text("companion_id")
+			.notNull()
+			.references(() => companionIdentity.id, { onDelete: "cascade" }),
+		conversationId: text("conversation_id")
+			.notNull()
+			.references(() => conversations.id, { onDelete: "cascade" }),
+		piSessionId: text("pi_session_id").notNull(),
+		sourceUserEntryId: text("source_user_entry_id").notNull(),
+		assistantEntryId: text("assistant_entry_id"),
+		operationsJson: text("operations_json", { mode: "json" })
+			.$type<Array<Record<string, unknown>>>()
+			.notNull(),
+		expectedRevisionsJson: text("expected_revisions_json", { mode: "json" })
+			.$type<Record<string, number>>()
+			.default({})
+			.notNull(),
+		reason: text().notNull(),
+		schemaHash: text("schema_hash").notNull(),
+		status: text({ enum: ["pending", "committed", "discarded"] })
+			.default("pending")
+			.notNull(),
+		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+		committedAt: text("committed_at"),
+	},
+	(table) => [
+		index("idx_pending_state_mutations_turn").on(
+			table.conversationId,
+			table.piSessionId,
+			table.sourceUserEntryId,
+			table.status,
+		),
+	],
+);
+
+export const stateMutationLog = sqliteTable("state_mutation_log", {
+	id: text().primaryKey(),
+	companionId: text("companion_id")
+		.notNull()
+		.references(() => companionIdentity.id, { onDelete: "cascade" }),
+	conversationId: text("conversation_id")
+		.notNull()
+		.references(() => conversations.id, { onDelete: "cascade" }),
+	piSessionId: text("pi_session_id").notNull(),
+	sourceUserEntryId: text("source_user_entry_id").notNull(),
+	assistantEntryId: text("assistant_entry_id").notNull(),
+	operationsJson: text("operations_json", { mode: "json" })
+		.$type<Array<Record<string, unknown>>>()
+		.notNull(),
+	beforeRevisionsJson: text("before_revisions_json", { mode: "json" })
+		.$type<Record<string, number>>()
+		.notNull(),
+	afterRevisionsJson: text("after_revisions_json", { mode: "json" })
+		.$type<Record<string, number>>()
+		.notNull(),
+	reason: text().notNull(),
+	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+});
+
 export const roleplayEvents = sqliteTable(
 	"roleplay_events",
 	{

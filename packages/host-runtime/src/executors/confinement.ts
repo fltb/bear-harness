@@ -46,7 +46,9 @@ const MACOS_SYSTEM_READ_PATHS = [
 	"/private/var/db/timezone",
 	"/private/var/run/resolv.conf",
 	"/opt/homebrew/Cellar",
+	"/opt/homebrew/etc/openssl@3",
 	"/usr/local/Cellar",
+	"/usr/local/etc/openssl@3",
 	"/dev",
 ] as const;
 const MACOS_SYSTEM_EXECUTABLE_PATHS = [
@@ -82,7 +84,11 @@ const WRITABLE_ENVIRONMENT_PATHS = [
 	"TEMP",
 ] as const;
 const READ_ONLY_ENVIRONMENT_PATHS = ["BEAR_PI_AUTH_DIR"] as const;
-const EXECUTABLE_ENVIRONMENT_PATHS = ["CODEX_PATH", "BEAR_PI_SHELL_PATH"] as const;
+const EXECUTABLE_ENVIRONMENT_PATHS = [
+	"CODEX_PATH",
+	"BEAR_CODEX_CODE_MODE_HOST_PATH",
+	"BEAR_PI_SHELL_PATH",
+] as const;
 
 function failInvalidPath(): never {
 	throw { kind: "validation_failed", reason: "executor_confinement_path_invalid" };

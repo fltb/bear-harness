@@ -25,8 +25,17 @@ const folderAttachment = {
 	fileCount: 2,
 	originEntryId: "entry-1",
 };
+const generatedAttachment = {
+	...folderAttachment,
+	id: "attachment-generated",
+	name: "Generated outputs",
+	kind: "generated" as const,
+	fileCount: 1,
+};
 
-function PreviewTrigger(props: { attachment: typeof textAttachment | typeof folderAttachment }) {
+function PreviewTrigger(props: {
+	attachment: typeof textAttachment | typeof folderAttachment | typeof generatedAttachment;
+}) {
 	const preview = useAttachmentPreview();
 	return (
 		<button type="button" onClick={() => void preview?.open(props.attachment)}>
@@ -36,7 +45,7 @@ function PreviewTrigger(props: { attachment: typeof textAttachment | typeof fold
 }
 
 function renderPreview(
-	attachment: typeof textAttachment | typeof folderAttachment,
+	attachment: typeof textAttachment | typeof folderAttachment | typeof generatedAttachment,
 	attachments: Pick<CompanionStore["attachments"], "read" | "url">,
 ) {
 	const [reads, setReads] = createSignal<
@@ -142,6 +151,35 @@ describe("attachment preview", () => {
 		);
 		expect(downloadedName).toBe("notes.txt");
 		click.mockRestore();
+	});
+
+	it("treats generated outputs as a browsable collection", async () => {
+		const read = vi.fn((params: { relativePath?: string }) =>
+			Promise.resolve(
+				params.relativePath
+					? { mode: "semantic" as const, content: "generated result" }
+					: {
+							mode: "semantic" as const,
+							files: [
+								{
+									relativePath: "result.md",
+									entryKind: "file" as const,
+									mime: "text/markdown",
+									bytes: 150,
+									readable: true,
+								},
+							],
+						},
+			),
+		);
+		renderPreview(generatedAttachment, {
+			read,
+			url: vi.fn(() => Promise.resolve("bear-attachment://cap/download/token")),
+		});
+		const user = userEvent.setup();
+		await user.click(screen.getByRole("button", { name: "Open Generated outputs" }));
+		await user.click(await screen.findByRole("button", { name: /result\.md文件/u }));
+		expect(await screen.findByText("generated result")).toBeVisible();
 	});
 
 	it.each([

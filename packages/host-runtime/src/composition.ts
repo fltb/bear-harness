@@ -32,6 +32,7 @@ import type { CharacterLoader } from "./companion/character-loader.js";
 import type { FirstMeetingMachine } from "./companion/first-meeting.js";
 import { type PiSessionMessageEntry, PiSessionStore } from "./companion/pi-session-store.js";
 import type { RoleplayService } from "./companion/roleplay-service.js";
+import type { CharacterStateService } from "./companion/state-service.js";
 import type { CompanionSupervisor } from "./companion/supervisor.js";
 import type { TurnPipeline } from "./companion/turn-pipeline.js";
 import type { ConversationAttachmentService } from "./conversation-attachments/service.js";
@@ -125,6 +126,7 @@ export interface HostCompositionContext {
 	characterBehavior: CharacterBehaviorService;
 	drafts: CharacterDraftService;
 	roleplay: RoleplayService;
+	characterState: CharacterStateService;
 	defaultCharacterId: string;
 	/** Product-local directory for Pi conversation session files. */
 	conversationRepository: ConversationRepository;
@@ -635,6 +637,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				attachmentSendNonce: nonce,
 				onAccepted: () => {
 					durablyAccepted = true;
+					s.eventBus.publish("roleplay.choices_dismissed", { conversationId });
 				},
 			});
 			return receipt;
@@ -1660,15 +1663,54 @@ export type MemoryCaptureCreator = "user_capture" | "assistant_tool";
 export async function proposeMemoryCandidate(
 	s: HostCompositionContext,
 	conversationId: string,
-): Promise<{ memoryId: string; sourceEntryId: string; createdBy: MemoryCaptureCreator }> {
-	// host_remember has no entry ID: resolve the most recent user message on
-	// the conversation's current native Pi branch as the suggestion source.
+): Promise<{ candidateId: string; sourceEntryId: string; status: "pending" }> {
+	// Model suggestions never write the memory backend. They create an owned,
+	// reviewable candidate from the current native Pi branch; approval remains
+	// the only path that persists relationship memory.
 	const session = s.conversationRepository.getSession(conversationId);
 	const source = session
 		? [...session.readMessageEntries()].reverse().find((entry) => entry.message.role === "user")
 		: undefined;
 	if (!source) throw { kind: "not_found", reason: "memory_source_not_found" };
-	return rememberConversationEntry(s, conversationId, source.id, "assistant_tool");
+	const conversation = s.orm
+		.select({ companionId: conversations.companionId })
+		.from(conversations)
+		.where(eq(conversations.id, conversationId))
+		.get();
+	if (!conversation) throw { kind: "not_found", reason: "conversation_not_found" };
+	const text = piEntryText(source.message).trim();
+	if (!text) throw { kind: "invalid_input", reason: "memory_source_empty" };
+	const existing = s.orm
+		.select({ id: memoryCandidates.id })
+		.from(memoryCandidates)
+		.where(
+			and(
+				eq(memoryCandidates.companionId, conversation.companionId),
+				eq(memoryCandidates.sourcePiSessionId, session?.sessionId ?? ""),
+				eq(memoryCandidates.sourceNativeEntryId, source.id),
+				eq(memoryCandidates.sourceKind, "companion_suggestion"),
+				eq(memoryCandidates.status, "pending"),
+			),
+		)
+		.get();
+	const candidateId = existing?.id ?? crypto.randomUUID();
+	if (!existing)
+		s.orm
+			.insert(memoryCandidates)
+			.values({
+				id: candidateId,
+				companionId: conversation.companionId,
+				kind: "event",
+				sourcePiSessionId: session?.sessionId,
+				sourceNativeEntryId: source.id,
+				sourceConversationId: conversationId,
+				sourceKind: "companion_suggestion",
+				normalizedText: text,
+				why: "角色建议记住当前用户消息",
+				suggestedScope: "relationship",
+			})
+			.run();
+	return { candidateId, sourceEntryId: source.id, status: "pending" };
 }
 
 /**

@@ -96,6 +96,8 @@ export type ModelListData = ModelPoolData & {
 export type RunStatus = Wire.RunStatus;
 export type RunInfo = Wire.Run;
 export type RunListData = Wire.RunListResponse;
+export type ExternalAgentStatusData = Wire.ExternalAgentStatusResponse;
+export type ExternalAgentCandidate = Wire.ExternalAgentDiscoverCodexResponse["candidates"][number];
 export interface RunPermissionOption {
 	optionId: string;
 	kind: string;

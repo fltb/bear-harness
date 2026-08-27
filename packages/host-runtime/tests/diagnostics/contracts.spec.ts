@@ -30,7 +30,7 @@ describe("DIAGNOSTICS_POLICY", () => {
 		expect(Object.isFrozen(DIAGNOSTICS_POLICY)).toBe(true);
 		expect(DIAGNOSTICS_POLICY).toEqual({
 			localOnly: true,
-			contentMode: "metadata-only",
+			contentMode: "metadata-unless-trace",
 			maxAgeDays: 30,
 			maxBytes: 209715200,
 			segmentBytes: 5242880,
@@ -68,7 +68,7 @@ describe("validateRecord", () => {
 		["non-UTC timestamp", { ...validRecord(), timestamp: "2026-08-13 00:00:00" }],
 		["zero sequence", { ...validRecord(), sequence: 0 }],
 		["bad kind", { ...validRecord(), kind: "log" }],
-		["bad level", { ...validRecord(), level: "debug" }],
+		["bad level", { ...validRecord(), level: "verbose" }],
 		["bad origin", { ...validRecord(), origin: "network" }],
 		["unknown name", { ...validRecord(), name: "custom.free_text" }],
 		["bad traceId", { ...validRecord(), traceId: "ZZZ" }],

@@ -16,7 +16,7 @@ const contractsUrl = pathToFileURL(
 
 const EXPECTED_POLICY = {
 	localOnly: true,
-	contentMode: "metadata-only",
+	contentMode: "metadata-unless-trace",
 	maxAgeDays: 30,
 	maxBytes: 209715200,
 	segmentBytes: 5242880,
@@ -33,6 +33,19 @@ const EXPECTED_NAMES = [
 	"window.session",
 	"window.load",
 	"rpc.request",
+	"companion.turn",
+	"companion.session.initialize",
+	"model.route.resolve",
+	"context.compile",
+	"model.request",
+	"skill.catalog",
+	"skill.read",
+	"tool.execute",
+	"host.rule.evaluate",
+	"character.state.transition",
+	"roleplay.state.transition",
+	"external_agent.run",
+	"trace.content",
 	"webdev.rpc_dispatch_failure",
 	"app.started",
 	"app.previous_exit_unclean",
@@ -51,15 +64,23 @@ const EXPECTED_NAMES = [
 	"main.uncaught_exception",
 ];
 
-const SPAN_NAMES = [
-	"app.session",
-	"diagnostics.prune",
-	"window.session",
-	"window.load",
-	"rpc.request",
-];
+const SPAN_LEVELS = {
+	"app.session": "info",
+	"diagnostics.prune": "info",
+	"window.session": "info",
+	"window.load": "info",
+	"rpc.request": "info",
+	"companion.turn": "info",
+	"companion.session.initialize": "debug",
+	"model.route.resolve": "info",
+	"context.compile": "debug",
+	"model.request": "info",
+	"skill.read": "debug",
+	"tool.execute": "debug",
+	"host.rule.evaluate": "debug",
+};
 const KINDS = ["event", "span"];
-const LEVELS = ["info", "warn", "error", "fatal"];
+const LEVELS = ["trace", "debug", "info", "warn", "error", "fatal"];
 const ORIGINS = ["main", "renderer", "electron"];
 const ATTRIBUTE_TYPES = ["boolean", "integer", "string"];
 
@@ -97,9 +118,9 @@ for (const name of EXPECTED_NAMES) {
 	if (!KINDS.includes(entry.kind)) fail(`${name}: bad kind ${JSON.stringify(entry.kind)}`);
 	if (!LEVELS.includes(entry.level)) fail(`${name}: bad level ${JSON.stringify(entry.level)}`);
 	if (!ORIGINS.includes(entry.origin)) fail(`${name}: bad origin ${JSON.stringify(entry.origin)}`);
-	if (SPAN_NAMES.includes(name)) {
+	if (name in SPAN_LEVELS) {
 		if (entry.kind !== "span") fail(`${name}: pinned span kind mismatch`);
-		if (entry.level !== "info") fail(`${name}: pinned span base level must be info`);
+		if (entry.level !== SPAN_LEVELS[name]) fail(`${name}: pinned span base level mismatch`);
 		if (entry.origin !== "main") fail(`${name}: pinned span origin must be main`);
 	} else if (entry.kind !== "event") {
 		fail(`${name}: expected event kind`);

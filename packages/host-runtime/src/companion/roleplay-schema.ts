@@ -133,12 +133,20 @@ export const RoleplaySchema = z.strictObject({
 				prompt: Copy,
 				choices: z
 					.array(
-						z.strictObject({
-							id: Identifier,
-							label: Copy,
-							description: z.string().max(4096).optional(),
-							event: Identifier,
-						}),
+						z.union([
+							z.strictObject({
+								id: Identifier,
+								label: Copy,
+								description: z.string().max(4096).optional(),
+								event: Identifier,
+							}),
+							z.strictObject({
+								id: Identifier,
+								label: Copy,
+								description: z.string().max(4096).optional(),
+								message: Copy,
+							}),
+						]),
 					)
 					.min(2)
 					.max(12),

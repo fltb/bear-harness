@@ -11,7 +11,7 @@ describe("Zod Core tool adapter", () => {
 			details: params,
 		}));
 		const tool = toCoreTool({
-			name: "host_set_scene",
+			name: "host_visual",
 			label: "Set scene",
 			description: "Set a declared scene.",
 			schema: z.strictObject({ sceneId: z.string().min(1).max(64) }),

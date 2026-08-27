@@ -107,19 +107,44 @@ host:
     - event: message.aborted
       visual_state: calm
 
-roleplay:
-  variables:
-    - id: continuity_stage
+state_schema:
+  version: 1
+  fields:
+    relationship.affinity:
+      type: number
+      scope: relationship
+      initial: 0
+      model_readable: true
+      model_writable: true
+      operations: [increment, decrement]
+      minimum: -100
+      maximum: 100
+      max_change_per_turn: 2
+      user_visible: false
+    continuity.stage:
       type: number
       scope: character
       initial: 0
-      display: { kind: hidden }
-    - id: continuity_response
+      model_readable: true
+      model_writable: true
+      operations: [set]
+      allowed_transitions: [[0, 1], [1, 2], [2, 3]]
+      user_visible: false
+    continuity.response:
       type: enum
       scope: character
       initial: unopened
       values: [unopened, received, set_down]
-      display: { kind: hidden }
+      model_readable: true
+      model_writable: true
+      operations: [set]
+      allowed_transitions:
+        - [unopened, received]
+        - [unopened, set_down]
+      user_visible: false
+
+roleplay:
+  variables: []
   media:
     - id: continuity_light
       kind: animation
@@ -127,64 +152,8 @@ roleplay:
       asset: assets/cg-damaged-signal-animated.webp
       poster: assets/cg-damaged-signal.png
       loop: true
-  unlockables:
-    - id: continuity_record
-      kind: cg
-      label: 继任规程
-      description: 极昼读完关于当前值守者的记录。
-      media: continuity_light
-  events:
-    - id: continuity_opened
-      label: 打开继任规程
-      effects:
-        - type: set
-          variable: continuity_stage
-          value: 1
-        - type: scene
-          scene: quiet_terminal
-        - type: expression
-          expression: reflective
-    - id: continuity_revealed
-      label: 极昼说明自己的来处
-      when:
-        variable: continuity_stage
-        equals: 1
-      effects:
-        - type: set
-          variable: continuity_stage
-          value: 2
-        - type: expression
-          expression: alert
-    - id: continuity_received
-      label: 用户接住这段说明
-      when:
-        variable: continuity_stage
-        equals: 2
-      effects:
-        - type: set
-          variable: continuity_stage
-          value: 3
-        - type: set
-          variable: continuity_response
-          value: received
-        - type: unlock
-          unlockable: continuity_record
-        - type: media
-          media: continuity_light
-    - id: continuity_set_down
-      label: 用户把问题留在桌上
-      when:
-        variable: continuity_stage
-        equals: 2
-      effects:
-        - type: set
-          variable: continuity_stage
-          value: 3
-        - type: set
-          variable: continuity_response
-          value: set_down
-        - type: expression
-          expression: calm
+  unlockables: []
+  events: []
   choice_sets:
     - id: continuity_response
       prompt: "极昼已经说明：旧极昼留下了来处，当前的极昼承担眼前这一班。你想怎样回应？"
@@ -192,11 +161,11 @@ roleplay:
         - id: receive
           label: "我听见了"
           description: 接住极昼对自己来处的说明。
-          event: continuity_received
+          message: "我听见了。请按继任规程记录我的回应。"
         - id: set_down
           label: "先放在这里"
           description: 让这个问题和书房一起安静一会儿。
-          event: continuity_set_down
+          message: "先放在这里。请按继任规程记录我想暂缓回应。"
 
 scenes:
   - id: study

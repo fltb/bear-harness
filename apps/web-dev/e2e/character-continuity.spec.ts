@@ -31,7 +31,7 @@ async function projection(page: Page, token: string, conversationId: string): Pr
 	return selected.piTimeline.entries;
 }
 
-test("committed character facts survive new conversations and edited message history", async ({
+test("committed schema state survives new conversations and edited message history", async ({
 	page,
 }) => {
 	await ensureReadyForConversation(page);
@@ -42,24 +42,27 @@ test("committed character facts survive new conversations and edited message his
 		"Character facts source",
 	);
 
-	await rpc(page, bootstrap.token, "roleplay.trigger:v1", {
+	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId: conversationA,
-		eventId: "continuity_opened",
-		dedupeKey: "e2e:continuity-opened",
+		text: "E2E_TOOL_TRIGGER_DAMAGED_LOG",
 	});
-	await rpc(page, bootstrap.token, "roleplay.trigger:v1", {
-		conversationId: conversationA,
-		eventId: "continuity_revealed",
-		dedupeKey: "e2e:continuity-revealed",
-	});
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationA))
+		.toBe("E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE");
 	const conversationB = await createFreshConversation(page, bootstrap.token, "Second context");
-	const state = await rpc<{ state: { values: Record<string, unknown> } }>(
-		page,
-		bootstrap.token,
-		"roleplay.get:v1",
-		{ conversationId: conversationB },
-	);
-	expect(state.state.values).toMatchObject({ continuity_stage: 2 });
+	await rpc(page, bootstrap.token, "message.send:v1", {
+		conversationId: conversationB,
+		text: "E2E_OK schema state projection check",
+	});
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationB))
+		.toBe("E2E_OK");
+	const promptTrace = (await (await page.request.get(`${providerUrl}/trace/prompts`)).json()) as {
+		prompts: string[];
+	};
+	expect(
+		promptTrace.prompts.findLast((prompt) => prompt.includes("schema state projection check")),
+	).toContain('"continuity.stage":1');
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId: conversationA,
@@ -83,7 +86,7 @@ test("committed character facts survive new conversations and edited message his
 	});
 });
 
-test("scripted model invokes roleplay and cross-conversation tools with exact arguments", async ({
+test("scripted model invokes schema state and authorized history tools with exact arguments", async ({
 	page,
 }) => {
 	await ensureReadyForConversation(page);
@@ -117,22 +120,9 @@ test("scripted model invokes roleplay and cross-conversation tools with exact ar
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationB))
 		.toBe("E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE");
-	await expect
-		.poll(async () =>
-			rpc<{ state: { values: Record<string, unknown> } }>(
-				page,
-				bootstrap.token,
-				"roleplay.get:v1",
-				{ conversationId: conversationB },
-			),
-		)
-		.toMatchObject({
-			state: { values: { continuity_stage: expect.any(Number) } },
-		});
-
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId: conversationB,
-		text: "E2E_TOOL_SEARCH_OTHER_CONVERSATION",
+		text: "E2E_TOOL_SEARCH_OTHER_CONVERSATION 请搜索之前的对话",
 	});
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationB))
@@ -146,7 +136,7 @@ test("scripted model invokes roleplay and cross-conversation tools with exact ar
 	});
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId: conversationB,
-		text: "E2E_TOOL_SEARCH_OTHER_CONVERSATION_ALLOWED",
+		text: "E2E_TOOL_SEARCH_OTHER_CONVERSATION_ALLOWED 请搜索之前的对话",
 	});
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationB))
@@ -157,15 +147,70 @@ test("scripted model invokes roleplay and cross-conversation tools with exact ar
 	expect(trace.calls).toEqual(
 		expect.arrayContaining([
 			expect.objectContaining({
-				tool: "host_trigger_roleplay_event",
-				args: { eventId: "continuity_opened" },
+				tool: "host_state",
+				args: expect.objectContaining({ action: "update" }),
 			}),
 			expect.objectContaining({
-				tool: "host_search_conversation_history",
+				tool: "host_history",
 				args: { query: "E2E_HISTORY_MARKER", limit: 2 },
 			}),
 		]),
 	);
+});
+
+test("presented role choices send ordinary messages and advance generic schema state", async ({
+	page,
+}) => {
+	await ensureReadyForConversation(page);
+	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	const conversationId = await createFreshConversation(
+		page,
+		bootstrap.token,
+		"Generic choice state flow",
+	);
+
+	await rpc(page, bootstrap.token, "message.send:v1", {
+		conversationId,
+		text: "E2E_MANUAL_ROLE_START",
+	});
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
+		.toBe("E2E_MANUAL_ROLE_START_DONE");
+	await rpc(page, bootstrap.token, "message.send:v1", {
+		conversationId,
+		text: "E2E_MANUAL_ROLE_CONTINUE",
+	});
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
+		.toBe("E2E_MANUAL_ROLE_CONTINUE_DONE");
+
+	const choice = page.getByRole("button", { name: /我听见了/ });
+	await expect(choice).toBeVisible();
+	await choice.click();
+	await expect(choice).toBeHidden();
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
+		.toBe("E2E_MANUAL_ROLE_RECEIVED_DONE");
+	const entries = await projection(page, bootstrap.token, conversationId);
+	expect(
+		entries.filter((entry) => entry.kind === "message" && entry.role === "user").at(-1)?.text,
+	).toBe("我听见了。请按继任规程记录我的回应。");
+
+	await rpc(page, bootstrap.token, "message.send:v1", {
+		conversationId,
+		text: "E2E_OK final generic state projection",
+	});
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
+		.toBe("E2E_OK");
+	const trace = (await (await page.request.get(`${providerUrl}/trace/prompts`)).json()) as {
+		prompts: string[];
+	};
+	const finalPrompt = trace.prompts.findLast((prompt) =>
+		prompt.includes("final generic state projection"),
+	);
+	expect(finalPrompt).toContain('"continuity.stage":3');
+	expect(finalPrompt).toContain('"continuity.response":"received"');
 });
 
 test("adopted multi-turn history and a manual edit change the next model context", async ({
@@ -262,7 +307,7 @@ test("archived conversations require an explicit search opt-in and deleted messa
 	).resolves.toMatchObject({ hits: [{ conversationId: archived.id }] });
 });
 
-test("an explicit transcript branch cannot commit roleplay facts", async ({ page }) => {
+test("a transcript branch cannot restore removed legacy roleplay facts", async ({ page }) => {
 	await ensureReadyForConversation(page);
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
 	const conversationId = await createFreshConversation(page, bootstrap.token, "Transcript branch");
@@ -290,7 +335,10 @@ test("an explicit transcript branch cannot commit roleplay facts", async ({ page
 			dedupeKey: "branch-write-must-fail",
 		},
 	});
-	await expect(response.json()).resolves.toMatchObject({ ok: true });
+	await expect(response.json()).resolves.toMatchObject({
+		ok: false,
+		error: { reason: "roleplay_event_not_found" },
+	});
 });
 
 test("conversation operations send explicit model instructions and persist revised replies", async ({
@@ -347,20 +395,6 @@ test("conversation operations send explicit model instructions and persist revis
 	).toBe("RULE_OK");
 });
 
-async function promptTrace(): Promise<string[]> {
-	const payload: unknown = await (await fetch(`${providerUrl}/trace/prompts`)).json();
-	if (
-		!payload ||
-		typeof payload !== "object" ||
-		!("prompts" in payload) ||
-		!Array.isArray(payload.prompts) ||
-		!payload.prompts.every((prompt) => typeof prompt === "string")
-	) {
-		throw new Error("rule provider returned an invalid prompt trace");
-	}
-	return payload.prompts;
-}
-
 test("imported package plugins require explicit trust before they can be enabled", async ({
 	page,
 }) => {
@@ -374,6 +408,10 @@ test("imported package plugins require explicit trust before they can be enabled
 			.toString("utf8")
 			.replace("id: jizhou", "id: e2e-plugin-trust"),
 	).toString("base64");
+	files.push({
+		path: "package/plugins/trust-fixture.mjs",
+		base64: Buffer.from("export default function register() {}\n").toString("base64"),
+	});
 
 	await expect(rpc(page, bootstrap.token, "character.import:v1", { files })).resolves.toMatchObject(
 		{

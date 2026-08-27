@@ -21,6 +21,7 @@ import type {
 import { TencentDbMemoryBackend } from "../src/memory/tencentdb-backend.js";
 import type { AppDatabase } from "../src/storage/database.js";
 import { MIGRATIONS } from "../src/storage/database.js";
+import { memoryCandidates } from "../src/storage/schema.js";
 
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 const fixedTimestamp = "2026-08-17T00:00:00.000Z";
@@ -309,7 +310,7 @@ describe("relationship memory context", () => {
 		}
 	});
 
-	it("resolves host_remember to the most recent native user entry on the current branch", async () => {
+	it("creates a reviewable host_memory candidate from the latest native user entry", async () => {
 		const root = mkdtempSync(join(tmpdir(), "bear-memory-context-remember-"));
 		try {
 			const session = PiSessionStore.create({
@@ -346,15 +347,21 @@ describe("relationship memory context", () => {
 
 			await expect(proposeMemoryCandidate(context, "conversation-1")).resolves.toMatchObject({
 				sourceEntryId: latestUser,
-				createdBy: "assistant_tool",
+				status: "pending",
 			});
 			expect(latestUser).not.toBe(firstUser);
+			expect(orm.select().from(memoryCandidates).all()).toEqual([
+				expect.objectContaining({
+					sourceNativeEntryId: latestUser,
+					sourceKind: "companion_suggestion",
+					normalizedText: "最新的用户消息",
+					status: "pending",
+				}),
+			]);
 			await backend.open({ scope: scopeFor("jizhou") });
-			const hits = await backend.recall({
-				scope: scopeFor("jizhou"),
-				query: "最新的用户消息",
-			});
-			expect(hits.map(({ record }) => record.text)).toContain("用户：最新的用户消息");
+			expect(await backend.recall({ scope: scopeFor("jizhou"), query: "最新的用户消息" })).toEqual(
+				[],
+			);
 
 			const emptySession = PiSessionStore.create({
 				sessionDir: join(root, "empty-sessions"),

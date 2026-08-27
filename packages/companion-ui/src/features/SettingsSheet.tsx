@@ -11,6 +11,7 @@ import { Select } from "@kobalte/core/select";
 import { createSignal, For, Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { ConversationModelSettings } from "./ConversationModelSettings.js";
+import { ExternalAgentSettings } from "./ExternalAgentSettings.js";
 import { NetworkAndMemorySettings } from "./NetworkAndMemorySettings.js";
 import { SystemModelSettings } from "./SystemModelSettings.js";
 
@@ -19,12 +20,13 @@ export function SettingsSheet() {
 	const [currentLocale] = useLanguage(() => i18n);
 	const [saving, setSaving] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
-	type SettingsPage = "general" | "conversation" | "providers" | "network";
+	type SettingsPage = "general" | "conversation" | "providers" | "agents" | "network";
 	const [page, setPage] = createSignal<SettingsPage>("conversation");
 	const pages = () => [
 		{ id: "general" as const, label: t("settings.language") },
 		{ id: "conversation" as const, label: t("settings.conversationModelSettings") },
 		{ id: "providers" as const, label: t("settings.systemModelSettings") },
+		{ id: "agents" as const, label: t("settings.workAgent") },
 		{
 			id: "network" as const,
 			label: `${t("settings.networkSection")} / ${t("settings.memoryVectorSection")}`,
@@ -113,6 +115,9 @@ export function SettingsSheet() {
 				</Show>
 				<Show when={page() === "providers"}>
 					<SystemModelSettings />
+				</Show>
+				<Show when={page() === "agents"}>
+					<ExternalAgentSettings />
 				</Show>
 				<Show when={page() === "network"}>
 					<NetworkAndMemorySettings />

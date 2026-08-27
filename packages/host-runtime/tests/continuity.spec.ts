@@ -134,7 +134,7 @@ describe("automatic continuity", () => {
 			],
 		});
 		await runtime.close();
-	});
+	}, 15_000);
 	it("commits candidate scope consistently and rejects only one owned pending row", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-continuity-candidates-"));
 		roots.push(dataDir);

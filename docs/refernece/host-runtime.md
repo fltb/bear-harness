@@ -23,7 +23,7 @@ The package root [`src/index.ts`](../../packages/host-runtime/src/index.ts) expo
 - `ConversationAttachmentService`, `AttachmentKind`, `ConversationAttachmentSummary`, and `ConversationAttachmentUrlFactoryRequest` for Host/shell attachment integration.
 - `ExternalAgentRunService`, `RunSummary`, direct-run contracts, `ExecutorRouter`, `AcpRunClient`, `AcpExecutorController`, `PiAcpAdapter`, `CodexAdapter`, and their profile/manifest/controller contracts.
 - `MemoryBackend` contracts, `ModelRegistry`, `ProviderCatalog`, and the `CredentialStore`/`CredentialVault` boundary.
-- Diagnostics/trace contracts and factories, `Database`, `EventBus`, `HostEvent`, and listener types.
+- Diagnostics/trace contracts and factories, log-level/redaction helpers, local trace query/export functions, `Database`, `EventBus`, `HostEvent`, and listener types.
 - Materials, codec, and filesystem-operation services as direct Host-side APIs; they are not renderer RPC groups.
 
 Attachment files use an internal `ArtifactStore` only for content-addressed bytes and provenance beneath `ConversationAttachmentService` ownership. It is not a renderer domain, role-tool identifier space, or external-agent result API.

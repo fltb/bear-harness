@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe("Pi role resource injection", () => {
-	it("loads the official Jizhou Skills and package plugin through Pi", async () => {
+	it("loads the official Jizhou Skills without a package plugin", async () => {
 		const root = mkdtempSync(join(tmpdir(), "bear-pi-jizhou-resources-"));
 		temporaryDirectories.push(root);
 		const loader = new DefaultResourceLoader({
@@ -28,7 +28,7 @@ describe("Pi role resource injection", () => {
 				{ projectTrusted: false },
 			),
 			additionalSkillPaths: [resolve(jizhouRoot, "skills")],
-			additionalExtensionPaths: [resolve(jizhouRoot, "plugins", "jizhou-roleplay.mjs")],
+			additionalExtensionPaths: [],
 			noSkills: true,
 			noExtensions: true,
 			noPromptTemplates: true,
@@ -45,7 +45,7 @@ describe("Pi role resource injection", () => {
 				.sort(),
 		).toEqual(["continuity-reveal"]);
 		expect(loader.getExtensions().errors).toEqual([]);
-		expect(loader.getExtensions().extensions).toHaveLength(1);
+		expect(loader.getExtensions().extensions).toHaveLength(0);
 	});
 
 	it("loads only explicitly supplied role Skill and plugin paths", async () => {

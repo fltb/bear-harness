@@ -24,6 +24,7 @@ type ActiveRun = {
 	request: ExecutorLaunchRequest;
 	client: AcpRunClient;
 	pendingPermissionIds: Set<string>;
+	toolCallTitles: Map<string, string>;
 	messageParts: string[];
 	settled: boolean;
 	/** A user interrupt is in flight; the next cancelled turn must pause, not settle. */
@@ -57,6 +58,7 @@ export abstract class AcpExecutorController implements ExecutorController {
 			request,
 			client,
 			pendingPermissionIds: new Set(),
+			toolCallTitles: new Map(),
 			messageParts: [],
 			settled: false,
 			interruptRequested: false,
@@ -176,6 +178,7 @@ export abstract class AcpExecutorController implements ExecutorController {
 				if (update.content.type === "text") appendCapped(active.messageParts, update.content.text);
 				return;
 			case "tool_call":
+				this.rememberToolCall(active, update);
 				active.request.emit({
 					type: "evidence",
 					kind: "acp.tool_call",
@@ -183,6 +186,7 @@ export abstract class AcpExecutorController implements ExecutorController {
 				});
 				return;
 			case "tool_call_update":
+				this.rememberToolCall(active, update);
 				active.request.emit({
 					type: "evidence",
 					kind: "acp.tool_call_update",
@@ -201,6 +205,14 @@ export abstract class AcpExecutorController implements ExecutorController {
 		}
 	}
 
+	private rememberToolCall(
+		active: ActiveRun,
+		update: { toolCallId: string; title?: string | null; name?: string | null },
+	): void {
+		const label = update.title ?? update.name;
+		if (label) active.toolCallTitles.set(update.toolCallId, label);
+	}
+
 	private handlePermissionRequest(active: ActiveRun, request: AcpPermissionRequest): void {
 		active.pendingPermissionIds.add(request.requestId);
 		active.request.emit({
@@ -209,6 +221,7 @@ export abstract class AcpExecutorController implements ExecutorController {
 			prompt:
 				request.toolCall.title ??
 				request.toolCall.name ??
+				active.toolCallTitles.get(request.toolCall.toolCallId) ??
 				"The worker needs permission to continue.",
 			options: request.options.map((option) => ({
 				optionId: option.optionId,

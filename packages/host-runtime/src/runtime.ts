@@ -18,7 +18,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { MemoryTdaiConfig } from "@bear-harness/tdai-core";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { ArtifactStore } from "./artifacts/index.js";
 import { awaitSource } from "./await-source.js";
 import { CanonHubService } from "./canon/service.js";
@@ -28,20 +28,22 @@ import { CharacterLoader } from "./companion/character-loader.js";
 import { ContextPackCompiler } from "./companion/context-pack.js";
 import { FirstMeetingMachine } from "./companion/first-meeting.js";
 import { RoleplayService } from "./companion/roleplay-service.js";
+import { CharacterStateService } from "./companion/state-service.js";
 import { CompanionSupervisor } from "./companion/supervisor.js";
+import { hasTurnAuthorization } from "./companion/turn-authorization.js";
 import { TurnPipeline } from "./companion/turn-pipeline.js";
 import {
 	type ConversationAttachmentUrlFactoryRequest,
 	type HostCompositionContext,
 	type HostUpdateService,
 	proposeMemoryCandidate,
-	rememberConversationEntry,
 	syncAllProviderModels,
 	syncProviderModels,
 	wireHostHandlers,
 } from "./composition.js";
 import { ConversationAttachmentService } from "./conversation-attachments/service.js";
 import { ConversationRepository } from "./conversations/repository.js";
+import type { Diagnostics } from "./diagnostics/index.js";
 import { Dispatcher, type RpcResponse } from "./dispatcher.js";
 import { CodexAdapter } from "./executors/codex-adapter.js";
 import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
@@ -67,7 +69,7 @@ import { findHostLocalEmbeddingCandidate } from "./settings/capabilities.js";
 import { type AppSettingsRecord, AppSettingsStore } from "./storage/app-settings-store.js";
 import { Database, loadInstallationId, MIGRATIONS } from "./storage/database.js";
 import { EventBus } from "./storage/event-bus.js";
-import { conversations, memoryCandidates } from "./storage/schema.js";
+import { conversations } from "./storage/schema.js";
 
 /** The subset of the product configuration the host runtime consumes. */
 export interface RuntimeProductConfig {
@@ -138,6 +140,8 @@ export interface HostRuntimeOptions {
 	/** Directory for the hash-chained audit store; defaults to `<dataDir>/audit`. */
 	auditDir?: string;
 	logger?: { debug?: (message: string) => void; warn?: (message: string) => void };
+	/** Host-shell diagnostics sink used for end-to-end business traces. */
+	diagnostics?: Diagnostics;
 }
 interface BackgroundAttempt {
 	controller: AbortController;
@@ -217,16 +221,26 @@ export class HostRuntime {
 			sessionDir: join(dataDir, "sessions"),
 		});
 		const sessionResolver = conversationRepository.getSessionResolver();
-		const supervisor = new CompanionSupervisor(dataDir, eventBus, providers, sessionResolver);
+		const supervisor = new CompanionSupervisor(
+			dataDir,
+			eventBus,
+			providers,
+			sessionResolver,
+			undefined,
+			options.diagnostics,
+		);
 		conversationRepository.setLiveSessionResolver(supervisor.getLiveSessionResolver());
 		const roleplay = new RoleplayService(db.orm);
+		const characterState = new CharacterStateService(db.orm);
 		const drafts = new CharacterDraftService(db.orm, characterLoader);
 		const characterBehavior = new CharacterBehaviorService(
 			db.orm,
 			eventBus,
 			characterLoader,
 			roleplay,
+			characterState,
 			(conversationId) => supervisor.getLiveSessionResolver().get(conversationId),
+			options.diagnostics,
 		);
 		const onboarding = new FirstMeetingMachine(db.orm, eventBus, characterLoader);
 		const appSettings = new AppSettingsStore(db.orm);
@@ -307,14 +321,39 @@ export class HostRuntime {
 						return undefined;
 					}),
 		});
-		supervisor.setContextHandler(async (conversationId, _includeHistory, message) =>
-			contextPack.render(
-				await contextPack.compileForTurn(conversationId, {
-					canonQuery: message,
-					memoryQuery: message,
-				}),
-			),
-		);
+		supervisor.setContextHandler(async (conversationId, includeHistory, message) => {
+			const diagnostics = options.diagnostics;
+			const span = diagnostics?.startSpan("context.compile", { conversationId });
+			try {
+				const context = await (span && diagnostics
+					? diagnostics.runInSpan(span, async () =>
+							contextPack.render(
+								await contextPack.compileForTurn(conversationId, {
+									canonQuery: message,
+									memoryQuery: message,
+								}),
+							),
+						)
+					: contextPack.render(
+							await contextPack.compileForTurn(conversationId, {
+								canonQuery: message,
+								memoryQuery: message,
+							}),
+						));
+				span?.end("ok", {
+					historyIncluded: includeHistory,
+					contextBytes: Buffer.byteLength(context, "utf8"),
+				});
+				return context;
+			} catch (error) {
+				span?.end("error", {
+					historyIncluded: includeHistory,
+					contextBytes: 0,
+					errorCode: "context_compile_failed",
+				});
+				throw error;
+			}
+		});
 		onboarding.setConversationFactory(({ companionId, title, sceneTitle, onCommit }) => {
 			const id = randomUUID();
 			const created = conversationRepository.createAndSelect({
@@ -428,6 +467,8 @@ export class HostRuntime {
 				};
 			},
 			reconcileTerminalRun,
+			undefined,
+			options.diagnostics,
 		);
 		this.unsubscribeRunResultDrain = eventBus.subscribe((event) => {
 			if (event.kind !== "conversation.selected") return;
@@ -441,8 +482,82 @@ export class HostRuntime {
 			);
 		});
 		supervisor.setHostToolHandler(async (call) => {
-			if (call.tool === "host_search_conversation_history") {
+			if (call.tool === "host_state") {
+				const conversation = db.orm
+					.select({ companionId: conversations.companionId })
+					.from(conversations)
+					.where(eq(conversations.id, call.conversationId))
+					.get();
+				if (!conversation)
+					return { ok: false, code: "conversation_not_found", message: "Conversation not found." };
+				const character = characterLoader.load(conversation.companionId);
+				if (!character)
+					return { ok: false, code: "character_not_found", message: "Character not found." };
+				const args = call.args as {
+					action?: unknown;
+					operations?: unknown;
+					expectedRevisions?: unknown;
+					reason?: unknown;
+				};
+				if (args.action === "read") {
+					return {
+						ok: true,
+						message: "Character state read.",
+						data: characterState.project(
+							conversation.companionId,
+							call.conversationId,
+							character.state,
+							true,
+						),
+					};
+				}
+				if (args.action !== "update")
+					return { ok: false, code: "state_action_invalid", message: "State action is invalid." };
+				const live = supervisor.getLiveSessionResolver().get(call.conversationId);
+				if (!live?.currentUserEntryId)
+					return {
+						ok: false,
+						code: "trigger_entry_required",
+						message: "A current user turn is required.",
+					};
+				try {
+					const result = characterState.stage({
+						companionId: conversation.companionId,
+						conversationId: call.conversationId,
+						piSessionId: live.sessionId,
+						sourceUserEntryId: live.currentUserEntryId,
+						definition: character.state,
+						operations: args.operations as never,
+						expectedRevisions: args.expectedRevisions as never,
+						reason: typeof args.reason === "string" ? args.reason : "",
+					});
+					return {
+						ok: true,
+						message: "State update staged and will commit only if this response completes.",
+						data: result,
+					};
+				} catch (error) {
+					const code =
+						error &&
+						typeof error === "object" &&
+						"reason" in error &&
+						typeof error.reason === "string"
+							? error.reason
+							: "state_update_failed";
+					return { ok: false, code, message: code };
+				}
+			}
+			if (call.tool === "host_history") {
 				const args = call.args as { query: string; limit?: number };
+				const currentUserText = supervisor
+					.getLiveSessionResolver()
+					.get(call.conversationId)?.currentUserText;
+				if (!currentUserText || !hasTurnAuthorization(currentUserText, "history"))
+					return {
+						ok: false,
+						code: "turn_authorization_required",
+						message: "The current user turn did not explicitly request conversation history.",
+					};
 				const conversation = db.orm
 					.select({ companionId: conversations.companionId })
 					.from(conversations)
@@ -476,7 +591,7 @@ export class HostRuntime {
 					data: { hits },
 				};
 			}
-			if (call.tool === "host_search_canon") {
+			if (call.tool === "host_canon") {
 				const args = call.args as { query: string; moduleId?: string };
 				const conversation = db.orm
 					.select({ companionId: conversations.companionId })
@@ -496,7 +611,7 @@ export class HostRuntime {
 					data: { citations },
 				};
 			}
-			if (call.tool === "host_remember") {
+			if (call.tool === "host_memory") {
 				// Assistant-suggested memories become user-visible candidates the user
 				// must approve before they enter relationship memory (plan §7.6).
 				const candidate = await proposeMemoryCandidate(this.composition, call.conversationId);
@@ -506,20 +621,20 @@ export class HostRuntime {
 					data: candidate,
 				};
 			}
-			if (call.tool === "host_list_attachments") {
-				return {
-					ok: true,
-					message: "Conversation attachments listed.",
-					data: { attachments: attachments.list(call.conversationId) },
-				};
-			}
-			if (call.tool === "host_read_attachment") {
+			if (call.tool === "host_attachment") {
 				const args = call.args as {
+					action: "list" | "read";
 					attachmentId: string;
 					relativePath?: string;
 					query?: string;
 					cursor?: string;
 				};
+				if (args.action === "list")
+					return {
+						ok: true,
+						message: "Conversation attachments listed.",
+						data: { attachments: attachments.list(call.conversationId) },
+					};
 				return {
 					ok: true,
 					message: "Conversation attachment read.",
@@ -529,10 +644,9 @@ export class HostRuntime {
 					}),
 				};
 			}
-			if (call.tool === "host_delegate_agent") {
-				const triggerEntryId = supervisor
-					.getLiveSessionResolver()
-					.get(call.conversationId)?.currentUserEntryId;
+			if (call.tool === "host_delegate") {
+				const liveSession = supervisor.getLiveSessionResolver().get(call.conversationId);
+				const triggerEntryId = liveSession?.currentUserEntryId;
 				if (!triggerEntryId) {
 					return {
 						ok: false,
@@ -546,6 +660,19 @@ export class HostRuntime {
 					workspaceAttachmentId?: string;
 					instruction: string;
 				};
+				const capability = args.agent === "codex" ? "delegate_codex" : "delegate_pi";
+				if (
+					!liveSession?.currentUserText ||
+					!hasTurnAuthorization(liveSession.currentUserText, capability)
+				)
+					return {
+						ok: false,
+						code: "turn_authorization_required",
+						message:
+							args.agent === "codex"
+								? "The current user turn did not explicitly request Codex delegation."
+								: "The current user turn did not explicitly request agent delegation.",
+					};
 				try {
 					const run = await externalAgentRuns.delegate({
 						conversationId: call.conversationId,
@@ -618,6 +745,7 @@ export class HostRuntime {
 			characterBehavior,
 			drafts,
 			roleplay,
+			characterState,
 			defaultCharacterId: options.productConfig.defaultCharacterId,
 			conversationRepository,
 			piSessionDir: join(dataDir, "sessions"),

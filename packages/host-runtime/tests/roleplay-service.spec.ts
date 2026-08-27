@@ -10,6 +10,7 @@ import { RoleplayService } from "../src/companion/roleplay-service.js";
 import { Database, MIGRATIONS } from "../src/storage/database.js";
 import { EventBus } from "../src/storage/event-bus.js";
 import { conversations, onboardingState } from "../src/storage/schema.js";
+import { withLegacyRoleplay } from "./fixtures/legacy-roleplay.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -22,8 +23,9 @@ function fixture() {
 	const database = new Database(root);
 	database.migrate(MIGRATIONS);
 	const loader = new CharacterLoader(resolve(import.meta.dirname, "../../../config/characters"));
-	const character = loader.load("jizhou");
-	if (!character) throw new Error("missing default character");
+	const loaded = loader.load("jizhou");
+	if (!loaded) throw new Error("missing default character");
+	const character = withLegacyRoleplay(loaded);
 	loader.seed(database.orm, new EventBus(database.orm), character);
 	database.orm
 		.insert(conversations)

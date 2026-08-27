@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import type { DiagnosticLevel } from "../../src/diagnostics/contracts.js";
 import { createDiagnostics, type DiagnosticsApp } from "../../src/diagnostics/index.js";
 import { currentTraceContext } from "../../src/diagnostics/trace.js";
 import { allJsonlText, readJsonlLines, smallPolicy } from "../utils";
@@ -32,6 +33,7 @@ function makeDiagnostics(options: {
 	launchId: string;
 	packaged?: boolean;
 	heartbeatMs?: number;
+	logLevel?: DiagnosticLevel;
 }) {
 	const { app, setAppLogsPath, setPath } = makeApp();
 	const reporter = { start: vi.fn() };
@@ -40,6 +42,7 @@ function makeDiagnostics(options: {
 		root: options.root,
 		launchId: options.launchId,
 		packaged: options.packaged ?? false,
+		...(options.logLevel ? { logLevel: options.logLevel } : {}),
 		heartbeatMs: options.heartbeatMs ?? 0,
 		pruneIntervalMs: 0,
 		policy: smallPolicy({ maxBytes: 10_000 }),
@@ -243,6 +246,77 @@ describe("Diagnostics orchestrator", () => {
 		) as { state: string };
 		expect(marker.state).toBe("clean");
 		expect(currentTraceContext()).toBeUndefined();
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it("filters DEBUG at INFO but retains a failed DEBUG span as ERROR", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-diag-level-"));
+		const { diagnostics } = makeDiagnostics({ root, launchId: "level-filter", logLevel: "info" });
+		diagnostics.emit("skill.catalog", { conversationId: "c1", count: 1, names: "sample" });
+		const failed = diagnostics.startSpan("skill.read", { conversationId: "c1", skill: "sample" });
+		failed.end("error", { ok: false, errorCode: "read_failed" });
+		await diagnostics.shutdown();
+		const records = readJsonlLines(root);
+		expect(records.some((record) => record.name === "skill.catalog")).toBe(false);
+		expect(records.find((record) => record.name === "skill.read")?.level).toBe("error");
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it("persists redacted TRACE content only for unpackaged TRACE runs", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-diag-trace-"));
+		const { diagnostics } = makeDiagnostics({ root, launchId: "trace-content", logLevel: "trace" });
+		diagnostics.traceContent("conversation-1", "user", "Bearer super-secret /Users/alice/work");
+		await diagnostics.shutdown();
+		const content = readJsonlLines(root).find((record) => record.name === "trace.content");
+		expect(content?.attributes).toMatchObject({
+			conversationId: "conversation-1",
+			phase: "user",
+			content: "[REDACTED_SECRET] [REDACTED_HOME]/work",
+		});
+		rmSync(root, { recursive: true, force: true });
+
+		const packagedRoot = mkdtempSync(join(tmpdir(), "bear-diag-packaged-trace-"));
+		const packaged = makeDiagnostics({
+			root: packagedRoot,
+			launchId: "packaged-trace",
+			logLevel: "trace",
+			packaged: true,
+		}).diagnostics;
+		expect(packaged.logLevel).toBe("debug");
+		packaged.traceContent("conversation-1", "user", "must-not-land");
+		await packaged.shutdown();
+		expect(readJsonlLines(packagedRoot).some((record) => record.name === "trace.content")).toBe(
+			false,
+		);
+		rmSync(packagedRoot, { recursive: true, force: true });
+	});
+
+	it("parents nested work under the explicitly active span", async () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-diag-business-trace-"));
+		const { diagnostics } = makeDiagnostics({
+			root,
+			launchId: "business-trace",
+			logLevel: "debug",
+		});
+		const turn = diagnostics.startSpan("companion.turn", {
+			conversationId: "c1",
+			hasImages: false,
+			includeHistory: false,
+		});
+		diagnostics.runInSpan(turn, () => {
+			const tool = diagnostics.startSpan("tool.execute", {
+				conversationId: "c1",
+				tool: "role_skill",
+			});
+			tool.end("ok", { ok: true });
+		});
+		turn.end("ok");
+		await diagnostics.shutdown();
+		const records = readJsonlLines(root);
+		const turnRecord = records.find((record) => record.name === "companion.turn");
+		const toolRecord = records.find((record) => record.name === "tool.execute");
+		expect(toolRecord?.traceId).toBe(turnRecord?.traceId);
+		expect(toolRecord?.parentSpanId).toBe(turnRecord?.spanId);
 		rmSync(root, { recursive: true, force: true });
 	});
 });

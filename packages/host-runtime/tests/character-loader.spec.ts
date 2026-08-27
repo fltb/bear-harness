@@ -463,7 +463,7 @@ describe("character package work presentation", () => {
 });
 
 describe("character package Pi resources", () => {
-	it("discovers every official Jizhou Skill and executable plugin", () => {
+	it("discovers Jizhou Skills without requiring a role plugin", () => {
 		const loader = new CharacterLoader(characterRoot);
 		const character = loader.load("jizhou");
 		if (!character) throw new Error("jizhou package is required for the official build");
@@ -471,19 +471,18 @@ describe("character package Pi resources", () => {
 		expect(resources.skillPaths).toEqual([
 			realpathSync(resolve(characterRoot, "jizhou", "skills")),
 		]);
-		expect(resources.pluginPaths).toEqual([
-			realpathSync(resolve(characterRoot, "jizhou", "plugins", "jizhou-roleplay.mjs")),
-		]);
+		expect(resources.pluginPaths).toEqual([]);
 		expect(loader.piResources(character, false).pluginPaths).toEqual([]);
-		expect(resources.hostTools).toEqual(
-			expect.arrayContaining([
-				"host_set_scene",
-				"host_set_expression",
-				"host_trigger_roleplay_event",
-				"host_play_media",
-				"host_present_choices",
-			]),
-		);
+		expect(resources.hostTools).toEqual([
+			"host_state",
+			"host_visual",
+			"host_present",
+			"host_history",
+			"host_canon",
+			"host_memory",
+			"host_attachment",
+			"host_delegate",
+		]);
 	});
 
 	it("discovers only role-owned Skills and plugins by package convention", () => {

@@ -24,6 +24,7 @@ import {
 	type CatalogEntry,
 	DIAGNOSTIC_CATALOG,
 	DIAGNOSTICS_POLICY,
+	type DiagnosticLevel,
 	type DiagnosticName,
 	type DiagnosticsPolicy,
 	type PendingRecord,
@@ -31,6 +32,12 @@ import {
 	validateAttributes,
 } from "./contracts.js";
 import { type CrashpadReporter, configureCrashpad } from "./crashpad.js";
+import {
+	diagnosticLevelEnabled,
+	effectiveDiagnosticLevel,
+	parseDiagnosticLevel,
+} from "./levels.js";
+import { redactTraceText } from "./redaction.js";
 import {
 	defaultIsPidAlive,
 	markUncleanExits,
@@ -65,6 +72,8 @@ export interface DiagnosticsOptions {
 	isPidAlive?: (pid: number) => boolean;
 	packaged?: boolean;
 	reporter?: CrashpadReporter;
+	/** Minimum persisted level. Defaults to BEAR_LOG_LEVEL, then info. */
+	logLevel?: DiagnosticLevel;
 	/** 0 disables the heartbeat; default 60000 ms. */
 	heartbeatMs?: number;
 	/** 0 disables the periodic prune; default 6 hours. */
@@ -92,6 +101,7 @@ export class Diagnostics {
 	readonly launchId: string;
 	readonly root: string;
 	readonly policy: Readonly<DiagnosticsPolicy>;
+	readonly logLevel: DiagnosticLevel;
 
 	private readonly clock: () => number;
 	private readonly random: RandomSource;
@@ -109,6 +119,11 @@ export class Diagnostics {
 		this.root = options.root;
 		this.policy = options.policy ?? DIAGNOSTICS_POLICY;
 		this.clock = options.clock ?? Date.now;
+		const packaged = options.packaged ?? false;
+		this.logLevel = effectiveDiagnosticLevel(
+			options.logLevel ?? parseDiagnosticLevel(process.env.BEAR_LOG_LEVEL),
+			packaged,
+		);
 		this.random = options.random ?? randomBytes;
 		this.stderr = options.stderr ?? ((line: string) => process.stderr.write(`${line}\n`));
 		this.isPidAlive = options.isPidAlive ?? defaultIsPidAlive;
@@ -138,6 +153,7 @@ export class Diagnostics {
 			policy: this.policy,
 			clock: this.clock,
 			stderr: this.stderr,
+			minimumLevel: this.logLevel,
 		});
 
 		this.markerFile = join(stateDir, `run-${this.launchId}.json`);
@@ -215,7 +231,6 @@ export class Diagnostics {
 
 		// Root session span + started event. `runInSession` keeps the context
 		// alive for everything the caller wires inside it (whenReady etc.).
-		const packaged = options.packaged ?? false;
 		this.sessionSpan = this.startSpan("app.session", {
 			launchId: this.launchId,
 			pid: process.pid,
@@ -238,8 +253,36 @@ export class Diagnostics {
 		return runInTrace(session.context, fn);
 	}
 
+	/** Run work inside a started span so nested diagnostics inherit its context. */
+	runInSpan<T>(span: SpanHandle, fn: () => T): T {
+		return runInTrace(span.context, fn);
+	}
+
+	isLevelEnabled(level: DiagnosticLevel): boolean {
+		return diagnosticLevelEnabled(this.logLevel, level);
+	}
+
+	/** TRACE-only, redacted content evidence. Packaged apps clamp TRACE to DEBUG. */
+	traceContent(
+		conversationId: string,
+		phase: "user" | "host_context" | "assistant" | "tool_arguments" | "tool_result",
+		value: string,
+	): void {
+		if (!this.isLevelEnabled("trace")) return;
+		const redacted = redactTraceText(value);
+		this.emit("trace.content", {
+			conversationId,
+			phase,
+			content: redacted.content,
+			originalBytes: redacted.originalBytes,
+			truncated: redacted.truncated,
+		});
+	}
+
 	/** Emit a catalog event under the current trace context (or a fresh trace). */
 	emit(name: DiagnosticName, attributes: Record<string, boolean | number | string> = {}): void {
+		const entry = DIAGNOSTIC_CATALOG[name];
+		if (!entry || !this.isLevelEnabled(entry.level)) return;
 		const parent = currentTraceContext();
 		if (parent) {
 			this.submit(name, attributes, {
@@ -294,10 +337,12 @@ export class Diagnostics {
 					this.reject("record");
 					return;
 				}
+				const level = status === "error" ? "error" : entry.level;
+				if (!this.isLevelEnabled(level)) return;
 				const pending: PendingRecord = {
 					name,
 					kind: "span",
-					level: status === "error" ? "error" : entry.level,
+					level,
 					origin: entry.origin,
 					traceId,
 					spanId,
@@ -387,6 +432,7 @@ export class Diagnostics {
 		if (!entry) {
 			throw new TypeError(`unknown diagnostics catalog entry: ${name}`);
 		}
+		if (!this.isLevelEnabled(entry.level)) return;
 		if (validateAttributes(attributes, entry).length > 0) {
 			this.reject("record");
 			return;
@@ -416,6 +462,7 @@ export class Diagnostics {
 	}
 
 	private reject(reason: "record" | "oversized"): void {
+		if (!this.isLevelEnabled("warn")) return;
 		// Fixed-field rejection event; attributes are empty so it can never
 		// recurse through enqueueOrReject.
 		this.writer.enqueue({

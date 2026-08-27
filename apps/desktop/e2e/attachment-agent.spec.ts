@@ -274,7 +274,7 @@ test("folder import delegates only its immutable snapshot after the source moves
 			`generated from immutable desktop snapshot\nworkspace=${workspacePath}\noutput=${outputPath}\nworkspace_write_denied=true\ndesktop source marker: quartz-71\nimmutable snapshot marker\n`,
 		);
 
-		expect(provider.calls.filter((call) => call.tool === "host_delegate_agent")).toHaveLength(1);
+		expect(provider.calls.filter((call) => call.tool === "host_delegate")).toHaveLength(1);
 		expect(provider.calls.filter((call) => call.tool === "bash")).toHaveLength(1);
 	} finally {
 		await app.close().catch(() => undefined);

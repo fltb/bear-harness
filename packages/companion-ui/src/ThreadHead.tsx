@@ -2,6 +2,7 @@ import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
 import { For, onCleanup, onMount, Show } from "solid-js";
 import { useShellWorkflowStore } from "./stores/shell-workflows.js";
+import { WorkRunCard } from "./WorkPanel.js";
 
 /**
  * Thread head: the current scene title and the "进行中的事" work pill
@@ -64,18 +65,7 @@ export function ThreadHead(props: { sceneTitle: string }) {
 							when={activeRuns().length > 0}
 							fallback={<div class="empty">{t("threadHead.noRunningWork")}</div>}
 						>
-							<For each={activeRuns()}>
-								{(run, index) => (
-									<div class="run">
-										<strong>
-											{t("threadHead.runningWorkItem")} {index() + 1}
-										</strong>
-										<span>
-											{t(`threadHead.runStatuses.${run.status}`) ?? t("threadHead.statusUpdating")}
-										</span>
-									</div>
-								)}
-							</For>
+							<For each={activeRuns()}>{(run) => <WorkRunCard run={run} />}</For>
 						</Show>
 					</div>
 				</Show>

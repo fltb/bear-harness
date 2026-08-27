@@ -26,6 +26,23 @@ npm run check
 
 `npm run check` 包含 lint、typecheck、coverage、两套应用 build 与 `test:e2e:web`；它不启动 Electron。
 
+## 本地追踪与日志等级
+
+Host 诊断采用 `TRACE / DEBUG / INFO / WARN / ERROR / FATAL` 等级，默认是 `INFO`。人工全流程测试需要显式以 `BEAR_LOG_LEVEL=trace npm run dev:web` 启动；`TRACE` 才会记录经过脱敏和 4096-byte 限长的用户、Host 上下文、模型回复及工具输入输出。API key、token、密码和真实本机路径会先被替换。正式打包应用会把 `TRACE` 强制收紧为 `DEBUG`，因此不能通过环境变量让发布包持久化会话内容。
+
+一次对话回合以 `companion.turn` 为根，模型路由/请求、Context Pack、Skill 读取、工具执行、Host 规则与状态切换、外部代理生命周期都沿用同一 trace id。RPC 是其上游父 span；外部代理回调与重启恢复通过持久化 trace context 续接，不以进程内异步上下文侥幸维持。
+
+构建 Host 后可把最近一次完整回合原子导出为本地 JSON 证据：
+
+```bash
+npm run diagnostics:export -- \
+  --root <data-directory>/diagnostics \
+  --latest-turn \
+  --output <local-report-directory>/latest-turn.json
+```
+
+也可用 `--trace <32位trace-id>` 精确导出。查询只读取诊断目录内受控命名的 JSONL，逐条复验契约，忽略并统计损坏/半写入行；不会上传或创建网络端报告。
+
 ## 交互契约覆盖
 
 `apps/web-dev/e2e/settings.spec.ts` 使用真实 HTTP Host 验证：

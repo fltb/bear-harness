@@ -46,6 +46,12 @@ function renderWork(overrides: Partial<CompanionStore> = {}) {
 					prompt: "Allow the operation?",
 					options: [
 						{ optionId: "allow", kind: "allow_once", name: "Allow" },
+						{ optionId: "allow_always", kind: "allow_always", name: "Allow for session" },
+						{
+							optionId: "accept_execpolicy_amendment",
+							kind: "allow_always",
+							name: "Allow command pattern",
+						},
 						{ optionId: "deny", kind: "reject_once", name: "Deny" },
 					],
 				},
@@ -85,6 +91,12 @@ describe("work timeline controls", () => {
 
 		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.permissionAllow }));
 		expect(actions.respondPermission).toHaveBeenCalledWith("needs-user", "permission-1", "allow");
+		expect(
+			screen.getByRole("button", { name: zhCN.work.timeline.permissionAllowSession }),
+		).toBeVisible();
+		expect(
+			screen.getByRole("button", { name: zhCN.work.timeline.permissionAllowCommand }),
+		).toBeVisible();
 		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.permissionDeny }));
 		expect(actions.respondPermission).toHaveBeenCalledWith("needs-user", "permission-1", "deny");
 		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.stopRun }));

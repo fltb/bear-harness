@@ -14,6 +14,7 @@ import {
 	copyFileSync,
 	createReadStream,
 	lstatSync,
+	readFileSync,
 	readlinkSync,
 	realpathSync,
 	rmSync,
@@ -22,7 +23,7 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { desc, eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
@@ -39,6 +40,20 @@ const PINNED_VERSION = "0.147.0";
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
 /** Max symlink hops while resolving a candidate chain. */
 const MAX_SYMLINK_HOPS = 8;
+const CODEX_PLATFORM_PACKAGE =
+	process.platform === "darwin" && process.arch === "arm64"
+		? { packageName: "@openai/codex-darwin-arm64", target: "aarch64-apple-darwin" }
+		: process.platform === "darwin" && process.arch === "x64"
+			? { packageName: "@openai/codex-darwin-x64", target: "x86_64-apple-darwin" }
+			: process.platform === "linux" && process.arch === "arm64"
+				? { packageName: "@openai/codex-linux-arm64", target: "aarch64-unknown-linux-musl" }
+				: process.platform === "linux" && process.arch === "x64"
+					? { packageName: "@openai/codex-linux-x64", target: "x86_64-unknown-linux-musl" }
+					: process.platform === "win32" && process.arch === "arm64"
+						? { packageName: "@openai/codex-win32-arm64", target: "aarch64-pc-windows-msvc" }
+						: process.platform === "win32" && process.arch === "x64"
+							? { packageName: "@openai/codex-win32-x64", target: "x86_64-pc-windows-msvc" }
+							: undefined;
 
 export type CodexCandidateStatus = "usable" | "version_mismatch" | "not_found" | "rejected";
 
@@ -65,6 +80,8 @@ export interface CodexConsentRequest {
 
 /** The capability record stored in `executor_profiles.capability_json`. */
 export interface CodexProfileCapability extends CodexConsentRequest {
+	codeModeHostPath?: string;
+	codeModeHostSha256?: string;
 	consentedAt: string;
 }
 
@@ -220,20 +237,23 @@ export class CodexAdapter extends AcpExecutorController {
 
 		// Reject a chain that escapes its declared install root.
 		if (!finalBin.startsWith(this.installRootOf(candidatePath) + sep)) return base;
+		const launchExecutable = managedCodexExecutable(finalBin);
+		if (!launchExecutable) return base;
 
 		let canonicalPath: string;
 		try {
-			canonicalPath = realpathSync(finalBin);
+			canonicalPath = realpathSync(launchExecutable);
 		} catch {
 			return base;
 		}
+		if (!canonicalPath.startsWith(this.installRootOf(candidatePath) + sep)) return base;
 
-		const version = probeVersion(finalBin);
+		const version = probeVersion(canonicalPath);
 		if (version === null) return base; // probe failed — no parseable version
 
 		let sha256: string;
 		try {
-			sha256 = await sha256Of(finalBin);
+			sha256 = await sha256Of(canonicalPath);
 		} catch {
 			return base;
 		}
@@ -280,6 +300,11 @@ export class CodexAdapter extends AcpExecutorController {
 			codexHome: profileConfig.codexHome,
 			consentedAt: new Date().toISOString(),
 		};
+		const codeModeHostPath = codexCodeModeHost(profileConfig.canonicalPath);
+		if (codeModeHostPath) {
+			capability.codeModeHostPath = codeModeHostPath;
+			capability.codeModeHostSha256 = await sha256Of(codeModeHostPath);
+		}
 		// Deterministic id so re-consent upserts instead of duplicating.
 		const profileId =
 			"codex-" +
@@ -310,6 +335,9 @@ export class CodexAdapter extends AcpExecutorController {
 	 */
 	override async launch(request: ExecutorLaunchRequest): Promise<void> {
 		const capability = codexCapability(request.profile.capabilities);
+		if (managedCodexExecutable(capability.canonicalPath) !== capability.canonicalPath) {
+			fail("profile_invalid", "codex profile must consent the exact native executable");
+		}
 		if (capability.version !== PINNED_VERSION) {
 			fail("profile_invalid", `codex profile version must remain ${PINNED_VERSION}`);
 		}
@@ -318,6 +346,14 @@ export class CodexAdapter extends AcpExecutorController {
 		}
 		if ((await sha256Of(capability.canonicalPath)) !== capability.sha256) {
 			fail("executor_binary_changed", "consented Codex hash no longer matches");
+		}
+		const codeModeHostPath = codexCodeModeHost(capability.canonicalPath);
+		if (
+			codeModeHostPath !== capability.codeModeHostPath ||
+			(codeModeHostPath !== null &&
+				(await sha256Of(codeModeHostPath)) !== capability.codeModeHostSha256)
+		) {
+			fail("executor_binary_changed", "consented Codex tool host no longer matches");
 		}
 
 		const manifest: CodexRunManifest = {
@@ -350,6 +386,9 @@ export class CodexAdapter extends AcpExecutorController {
 			NO_BROWSER: "1",
 			BEAR_OUTPUT_DIR: request.task.outputDirectory,
 			CODEX_PATH: capability.canonicalPath,
+			...(capability.codeModeHostPath
+				? { BEAR_CODEX_CODE_MODE_HOST_PATH: capability.codeModeHostPath }
+				: {}),
 			CODEX_HOME: codexHome,
 		});
 		return {
@@ -375,8 +414,14 @@ export class CodexAdapter extends AcpExecutorController {
 			if (
 				capability &&
 				typeof capability.consentedAt === "string" &&
+				typeof capability.canonicalPath === "string" &&
 				typeof capability.version === "string" &&
-				typeof capability.sha256 === "string"
+				typeof capability.sha256 === "string" &&
+				managedCodexExecutable(capability.canonicalPath) === capability.canonicalPath &&
+				capability.version === PINNED_VERSION &&
+				probeVersion(capability.canonicalPath) === capability.version &&
+				(await sha256Of(capability.canonicalPath).catch(() => null)) === capability.sha256 &&
+				(await validCodeModeHostCapability(capability))
 			) {
 				return {
 					available: true,
@@ -395,6 +440,74 @@ export class CodexAdapter extends AcpExecutorController {
 		}
 		return { available: false, reason: "no_codex_found" };
 	}
+}
+
+/** Resolve the npm launcher to the exact native binary the confined ACP child executes. */
+export function managedCodexExecutable(finalBin: string): string | null {
+	if (basename(finalBin) !== "codex.js" || basename(dirname(finalBin)) !== "bin") return finalBin;
+	const packageRoot = dirname(dirname(finalBin));
+	try {
+		const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
+			name?: unknown;
+		};
+		if (manifest.name !== "@openai/codex") return finalBin;
+		if (!CODEX_PLATFORM_PACKAGE) return null;
+		const resolver = createRequire(finalBin);
+		const platformManifest = realpathSync(
+			resolver.resolve(`${CODEX_PLATFORM_PACKAGE.packageName}/package.json`),
+		);
+		const platformRoot = dirname(platformManifest);
+		const executable = realpathSync(
+			join(
+				platformRoot,
+				"vendor",
+				CODEX_PLATFORM_PACKAGE.target,
+				"bin",
+				process.platform === "win32" ? "codex.exe" : "codex",
+			),
+		);
+		const child = relative(platformRoot, executable);
+		if (child === "" || child === ".." || child.startsWith(`..${sep}`) || isAbsolute(child))
+			return null;
+		const stat = lstatSync(executable);
+		return stat.isFile() && !stat.isSymbolicLink() ? executable : null;
+	} catch {
+		return null;
+	}
+}
+
+/** Resolve the exact optional native helper used by Codex code-mode tools. */
+export function codexCodeModeHost(codexExecutable: string): string | null {
+	try {
+		const candidate = realpathSync(
+			join(
+				dirname(codexExecutable),
+				process.platform === "win32" ? "codex-code-mode-host.exe" : "codex-code-mode-host",
+			),
+		);
+		const child = relative(dirname(codexExecutable), candidate);
+		if (child === "" || child === ".." || child.startsWith(`..${sep}`) || isAbsolute(child))
+			return null;
+		const stat = lstatSync(candidate);
+		return stat.isFile() && !stat.isSymbolicLink() ? candidate : null;
+	} catch {
+		return null;
+	}
+}
+
+async function validCodeModeHostCapability(
+	capability: Partial<CodexProfileCapability>,
+): Promise<boolean> {
+	if (typeof capability.canonicalPath !== "string") return false;
+	const current = codexCodeModeHost(capability.canonicalPath);
+	if (current === null) {
+		return capability.codeModeHostPath === undefined && capability.codeModeHostSha256 === undefined;
+	}
+	return (
+		capability.codeModeHostPath === current &&
+		typeof capability.codeModeHostSha256 === "string" &&
+		(await sha256Of(current).catch(() => null)) === capability.codeModeHostSha256
+	);
 }
 
 const CODEX_HOME_SNAPSHOT_FILES = ["auth.json", "config.toml"] as const;
@@ -450,5 +563,11 @@ function codexCapability(value: Record<string, unknown>): CodexProfileCapability
 		sha256: value.sha256,
 		codexHome: value.codexHome,
 		consentedAt: value.consentedAt,
+		...(typeof value.codeModeHostPath === "string" && typeof value.codeModeHostSha256 === "string"
+			? {
+					codeModeHostPath: value.codeModeHostPath,
+					codeModeHostSha256: value.codeModeHostSha256,
+				}
+			: {}),
 	};
 }

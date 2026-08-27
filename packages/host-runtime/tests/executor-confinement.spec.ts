@@ -109,6 +109,20 @@ describe("ACP process confinement", () => {
 		expect(wrapped.args.slice(-3)).toEqual([spec.command, ...spec.args]);
 	});
 
+	it("allows only the exact consented Codex code-mode helper to execute", () => {
+		const { root, spec } = fixture();
+		const helper = join(root, "codex-code-mode-host");
+		copyFileSync("/usr/bin/true", helper);
+		spec.env.BEAR_CODEX_CODE_MODE_HOST_PATH = helper;
+		const profile = createMacOSSandboxProfile(spec);
+		const executeSection = profile.slice(
+			profile.indexOf("(allow process-exec"),
+			profile.indexOf("(allow signal"),
+		);
+		expect(executeSection).toContain(`(literal ${JSON.stringify(helper)})`);
+		expect(executeSection).not.toContain(`(subpath ${JSON.stringify(root)})`);
+	});
+
 	it("builds a read-only-root bwrap invocation only after a capability probe succeeds", () => {
 		const { workspace, output, spec } = fixture();
 		const wrapped = applyProcessConfinement(spec, {

@@ -46,10 +46,7 @@ export async function loadRolePluginTools(pluginPaths: readonly string[]): Promi
 export function roleSkillPrompt(skills: readonly RoleSkill[]): string {
 	if (skills.length === 0) return "";
 	return `<role_skills>\n${skills
-		.map(
-			(skill) =>
-				`<skill name="${escapeXml(skill.name)}" path="${escapeXml(skill.filePath)}">${escapeXml(skill.description)}</skill>`,
-		)
+		.map((skill) => `<skill id="${escapeXml(skill.name)}">${escapeXml(skill.description)}</skill>`)
 		.join("\n")}\n</role_skills>`;
 }
 

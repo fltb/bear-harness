@@ -62,6 +62,7 @@ import {
 	RoleplaySchema,
 	roleplayAssetExtensions,
 } from "./roleplay-schema.js";
+import { type CharacterStateDefinition, CharacterStateSchema } from "./state-schema.js";
 import { CharacterThemeOverridesSchema, resolveCharacterTheme } from "./theme.js";
 
 // ---------------------------------------------------------------------------
@@ -174,6 +175,7 @@ export interface CharacterPackage {
 	scenes: ScenePreset[];
 	visual: CharacterVisuals;
 	host: CharacterHostBehavior;
+	state: CharacterStateDefinition;
 	roleplay: RoleplayDefinition;
 	canon: LoadedCanonPackage;
 }
@@ -677,6 +679,9 @@ export class CharacterLoader {
 			throw new Error(`character package ${id}: prompt is invalid`);
 		}
 		validateCharacterCard(parsed.character, id);
+		const state = CharacterStateSchema.parse(
+			(parsed as CharacterPackage & { state_schema?: unknown }).state_schema ?? {},
+		);
 		const roleplay = RoleplaySchema.parse(parsed.roleplay);
 		validateCharacterOnboardingFlow(parsed.character?.first_meeting, id, roleplay);
 		validateWorkPresentation(parsed.character?.work_presentation, id);
@@ -804,9 +809,10 @@ export class CharacterLoader {
 			if (new Set(set.choices.map((choice) => choice.id)).size !== set.choices.length)
 				throw new Error(`character package ${id}: duplicate choice id in ${set.id}`);
 			for (const choice of set.choices)
-				if (!eventIds.has(choice.event))
+				if ("event" in choice && !eventIds.has(choice.event))
 					throw new Error(`character package ${id}: choice ${choice.id} references missing event`);
 		}
+		parsed.state = state;
 		parsed.roleplay = roleplay;
 		parsed.canon = { manifest: canonManifest, sources: canonSources };
 		return parsed;
@@ -902,22 +908,16 @@ export class CharacterLoader {
 			pluginPaths,
 			appendSystemPrompt,
 			hostTools: [
-				"host_get_state",
-				"host_set_scene",
-				"host_set_expression",
-				"host_search_conversation_history",
-				"host_list_attachments",
-				"host_read_attachment",
-				"host_delegate_agent",
-				...(character.roleplay.variables.length ||
-				character.roleplay.unlockables.length ||
-				character.roleplay.events.length
-					? ["host_get_roleplay_state"]
+				...(Object.keys(character.state.fields).length ? ["host_state"] : []),
+				"host_visual",
+				...(character.roleplay.media.length || character.roleplay.choice_sets.length
+					? ["host_present"]
 					: []),
-				...(character.roleplay.events.length ? ["host_trigger_roleplay_event"] : []),
-				...(character.roleplay.media.length ? ["host_play_media"] : []),
-				...(character.roleplay.choice_sets.length ? ["host_present_choices"] : []),
-				...(character.canon.sources.length ? ["host_search_canon"] : []),
+				"host_history",
+				...(character.canon.sources.length ? ["host_canon"] : []),
+				"host_memory",
+				"host_attachment",
+				"host_delegate",
 			],
 		};
 	}

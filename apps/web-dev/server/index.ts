@@ -192,6 +192,7 @@ const attachmentCapabilities = new Map<string, WebAttachmentCapability>();
 
 const runtime = createHostRuntime({
 	dataDir,
+	diagnostics,
 	characterSeedRoot: resolve(repoRoot, "config/characters"),
 	productConfig,
 	credentialVault: createWebCredentialVault(dataDir),
@@ -373,7 +374,7 @@ const server = createServer(async (request, response) => {
 					"cache-control": "no-store",
 					"x-accel-buffering": "no",
 				});
-				response.write(JSON.stringify({ events: [] }) + "\n");
+				response.write(`${JSON.stringify({ events: [] })}\n`);
 				eventResponses.add(response);
 				let stop: (() => void) | undefined;
 				response.once("close", () => {
@@ -381,12 +382,12 @@ const server = createServer(async (request, response) => {
 					eventResponses.delete(response);
 				});
 				stop = runtime.subscribeEvents((event) => {
-					if (response.destroyed) return;
+					if (response.destroyed || response.writableEnded) return;
 					if (response.writableLength > 4 * 1024 * 1024) {
 						response.destroy();
 						return;
 					}
-					response.write(JSON.stringify({ events: [event] }) + "\n");
+					response.write(`${JSON.stringify({ events: [event] })}\n`);
 				}, parsed.data.afterSeq ?? 0);
 				if (response.destroyed) {
 					stop();
@@ -399,7 +400,9 @@ const server = createServer(async (request, response) => {
 			// HTTP 200 with the original validated envelope so the companion
 			// client can distinguish an RPC failure from a transport rejection
 			// and preserve the exact error reason.
-			const result = await runtime.dispatch(channel, params);
+			const result = rpcSpan
+				? await diagnostics.runInSpan(rpcSpan, () => runtime.dispatch(channel, params))
+				: await runtime.dispatch(channel, params);
 			if (!result.ok) {
 				rpcStatus = "error";
 				rpcErrorCategory = "rpc_error";

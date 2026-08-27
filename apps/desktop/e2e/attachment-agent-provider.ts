@@ -62,14 +62,18 @@ function scriptedReply(
 	};
 	const snapshotRun = current.includes("E2E_DESKTOP_SNAPSHOT_RUN");
 	if (snapshotRun) {
-		if (!tools.includes("host_list_attachments")) return choose("host_list_attachments", {});
+		if (!tools.includes("host_attachment")) return choose("host_attachment", { action: "list" });
 		const [attachmentId] = attachmentIds(messages);
 		if (!attachmentId) return { content: "E2E_DESKTOP_FIXTURE_MISSING_ATTACHMENT_ID\n" };
-		if (!tools.includes("host_read_attachment")) {
-			return choose("host_read_attachment", { attachmentId, query: "desktop source marker" });
+		if (tools.filter((tool) => tool === "host_attachment").length === 1) {
+			return choose("host_attachment", {
+				action: "read",
+				attachmentId,
+				query: "desktop source marker",
+			});
 		}
-		if (!tools.includes("host_delegate_agent")) {
-			return choose("host_delegate_agent", {
+		if (!tools.includes("host_delegate")) {
+			return choose("host_delegate", {
 				agent: "pi",
 				attachmentIds: [attachmentId],
 				workspaceAttachmentId: attachmentId,

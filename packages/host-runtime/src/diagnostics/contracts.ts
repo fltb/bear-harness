@@ -13,13 +13,13 @@
  */
 
 export type DiagnosticKind = "event" | "span";
-export type DiagnosticLevel = "info" | "warn" | "error" | "fatal";
+export type DiagnosticLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 export type DiagnosticOrigin = "main" | "renderer" | "electron";
 export type SpanStatus = "ok" | "error" | "cancelled";
 
 export interface DiagnosticsPolicy {
 	readonly localOnly: true;
-	readonly contentMode: "metadata-only";
+	readonly contentMode: "metadata-unless-trace";
 	readonly maxAgeDays: 30;
 	readonly maxBytes: 209715200;
 	readonly segmentBytes: 5242880;
@@ -32,12 +32,12 @@ export interface DiagnosticsPolicy {
 
 /**
  * Pinned diagnostics policy. `localOnly` and `contentMode` are part of the
- * privacy contract: diagnostics never leave this machine and JSONL records
- * contain metadata only. Not configurable via environment or fork config.
+ * privacy contract: diagnostics never leave this machine. Content is accepted
+ * only by the redacted TRACE catalog entry, and packaged apps clamp TRACE off.
  */
 export const DIAGNOSTICS_POLICY: Readonly<DiagnosticsPolicy> = Object.freeze({
 	localOnly: true,
-	contentMode: "metadata-only",
+	contentMode: "metadata-unless-trace",
 	maxAgeDays: 30,
 	maxBytes: 209715200,
 	segmentBytes: 5242880,
@@ -75,6 +75,7 @@ export interface CatalogEntry {
 }
 
 const str = (maxBytes = MAX_STRING_BYTES): AttributeSpec => ({ type: "string", maxBytes });
+const longStr = (maxBytes = 4096): AttributeSpec => ({ type: "string", maxBytes });
 const strEnum = (values: readonly string[]): AttributeSpec => ({ type: "string", enum: values });
 const int = (min: number, max: number, optional = false): AttributeSpec => ({
 	type: "integer",
@@ -190,6 +191,170 @@ export const DIAGNOSTIC_CATALOG: Readonly<Record<string, CatalogEntry>> = deepFr
 		attributes: {
 			channel: str(),
 			errorCategory: { type: "string", enum: RPC_ERROR_CATEGORIES, optional: true },
+		},
+	},
+	"companion.turn": {
+		kind: "span",
+		level: "info",
+		origin: "main",
+		attributes: {
+			conversationId: str(),
+			hasImages: bool(),
+			includeHistory: bool(),
+			errorCode: { type: "string", maxBytes: 128, optional: true },
+		},
+	},
+	"companion.session.initialize": {
+		kind: "span",
+		level: "debug",
+		origin: "main",
+		attributes: {
+			conversationId: str(),
+			skillCount: int(0, 256),
+			toolCount: int(0, 256),
+			errorCode: { type: "string", maxBytes: 128, optional: true },
+		},
+	},
+	"model.route.resolve": {
+		kind: "span",
+		level: "info",
+		origin: "main",
+		attributes: {
+			conversationId: str(),
+			purpose: strEnum(["reply", "vision"] as const),
+			resolution: strEnum(["selected", "fallback", "unavailable"] as const),
+			providerId: { type: "string", maxBytes: 128, optional: true },
+			modelId: { type: "string", maxBytes: 128, optional: true },
+		},
+	},
+	"context.compile": {
+		kind: "span",
+		level: "debug",
+		origin: "main",
+		attributes: {
+			conversationId: str(),
+			historyIncluded: bool(),
+			contextBytes: int(0, Number.MAX_SAFE_INTEGER),
+			errorCode: { type: "string", maxBytes: 128, optional: true },
+		},
+	},
+	"model.request": {
+		kind: "span",
+		level: "info",
+		origin: "main",
+		attributes: {
+			conversationId: str(),
+			purpose: strEnum(["reply", "vision"] as const),
+			providerId: str(),
+			modelId: str(),
+			inputBytes: int(0, Number.MAX_SAFE_INTEGER),
+			imageCount: int(0, 64),
+			outputBytes: int(0, Number.MAX_SAFE_INTEGER, true),
+			errorCode: { type: "string", maxBytes: 128, optional: true },
+		},
+	},
+	"skill.catalog": {
+		kind: "event",
+		level: "debug",
+		origin: "main",
+		attributes: {
+			conversationId: str(),
+			count: int(0, 256),
+			names: longStr(2048),
+		},
+	},
+	"skill.read": {
+		kind: "span",
+		level: "debug",
+		origin: "main",
+		attributes: {
+			conversationId: str(),
+			skill: str(),
+			ok: bool(),
+			errorCode: { type: "string", maxBytes: 128, optional: true },
+		},
+	},
+	"tool.execute": {
+		kind: "span",
+		level: "debug",
+		origin: "main",
+		attributes: {
+			conversationId: str(),
+			tool: str(),
+			ok: bool(),
+			resultCode: { type: "string", maxBytes: 128, optional: true },
+		},
+	},
+	"host.rule.evaluate": {
+		kind: "span",
+		level: "debug",
+		origin: "main",
+		attributes: {
+			conversationId: str(),
+			tool: str(),
+			decision: strEnum(["allowed", "rejected"] as const),
+			target: { type: "string", maxBytes: 128, optional: true },
+			resultCode: { type: "string", maxBytes: 128, optional: true },
+		},
+	},
+	"character.state.transition": {
+		kind: "event",
+		level: "debug",
+		origin: "main",
+		attributes: {
+			conversationId: str(),
+			state: strEnum(["scene", "expression"] as const),
+			from: str(),
+			to: str(),
+			source: str(),
+		},
+	},
+	"roleplay.state.transition": {
+		kind: "event",
+		level: "debug",
+		origin: "main",
+		attributes: {
+			conversationId: str(),
+			eventId: str(),
+			phase: strEnum(["queued", "committed", "rejected"] as const),
+			resultCode: { type: "string", maxBytes: 128, optional: true },
+		},
+	},
+	"external_agent.run": {
+		kind: "event",
+		level: "info",
+		origin: "main",
+		attributes: {
+			runId: str(),
+			agent: strEnum(["pi", "codex", "unknown"] as const),
+			phase: strEnum([
+				"enqueued",
+				"started",
+				"needs_user",
+				"completed",
+				"failed",
+				"cancelled",
+				"interrupted",
+				"resumed",
+			] as const),
+		},
+	},
+	"trace.content": {
+		kind: "event",
+		level: "trace",
+		origin: "main",
+		attributes: {
+			conversationId: str(),
+			phase: strEnum([
+				"user",
+				"host_context",
+				"assistant",
+				"tool_arguments",
+				"tool_result",
+			] as const),
+			content: longStr(),
+			originalBytes: int(0, Number.MAX_SAFE_INTEGER),
+			truncated: bool(),
 		},
 	},
 	"webdev.rpc_dispatch_failure": {
@@ -413,8 +578,8 @@ export function validateRecord(record: unknown): string[] {
 	const kind = record.kind;
 	if (kind !== "event" && kind !== "span") errors.push("kind must be event or span");
 	const level = record.level;
-	if (!["info", "warn", "error", "fatal"].includes(level as string)) {
-		errors.push("level must be info|warn|error|fatal");
+	if (!["trace", "debug", "info", "warn", "error", "fatal"].includes(level as string)) {
+		errors.push("level must be trace|debug|info|warn|error|fatal");
 	}
 	const origin = record.origin;
 	if (!["main", "renderer", "electron"].includes(origin as string)) {

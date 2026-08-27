@@ -221,6 +221,21 @@ export const zhTW = {
 		"invokeHost": "呼叫真實 Host"
 	},
 	"messages": {
+		"toolActivity": {
+			"read": "讀取角色規程",
+			"state": "讀取或更新角色狀態",
+			"roleplayState": "讀取劇情進度",
+			"roleplayUpdate": "呈現選擇或媒體",
+			"expression": "調整場景或表情",
+			"scene": "切換場景",
+			"attachmentList": "檢視附件",
+			"attachmentRead": "讀取附件",
+			"delegate": "啟動工作代理",
+			"continuity": "繼任規程",
+			"generic": "執行內部操作",
+			"completed": "已完成",
+			"failed": "未完成"
+		},
 		"closeMedia": "關閉",
 		"stopAmbientMedia": "停止環境媒體",
 		"stopMedia": "停止環境媒體",
@@ -301,6 +316,18 @@ export const zhTW = {
 		"candidateScope": "範圍"
 	},
 	"settings": {
+		"workAgent": "工作代理",
+		"workAgentHint": "連線本機已有的 Codex 登入，用於明確委託的檔案任務。登入資料保留在本機，每次執行使用隔離副本。",
+		"codexConnected": "Codex 工作代理已連線。",
+		"codexLoginDirectory": "Codex 登入目錄",
+		"codexLoginDirectoryPlaceholder": "/Users/你的使用者名稱/.codex",
+		"codexNotFound": "沒有發現相容的 Codex 命令列。請先安裝受支援版本。",
+		"codexUnknownVersion": "版本未知",
+		"codexCandidateUsable": "相容，可以連線",
+		"codexCandidateVersionMismatch": "版本不相容，當前不能連線",
+		"codexCandidateRejected": "無法驗證此安裝，當前不能連線",
+		"connectCodex": "連線此 Codex",
+		"refreshCodex": "重新檢測",
 		"systemModelSettings": "系統模型設定",
 		"systemModelSettingsHint": "管理模型服務、連線方式和可在對話中使用的模型。",
 		"providerSetupLabel": "提供方設定",
@@ -559,6 +586,8 @@ export const zhTW = {
 			"revealDetails": "檢視執行詳情與證據",
 			"resultCount": "{count} 個成果",
 			"permissionAllow": "允許這一次",
+			"permissionAllowSession": "本次任務都允許",
+			"permissionAllowCommand": "允許此類命令",
 			"permissionDeny": "不允許",
 			"stopRun": "停下來",
 			"runStatuses": {

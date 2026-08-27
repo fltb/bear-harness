@@ -28,6 +28,8 @@ import {
 import { TurnPipeline } from "../src/companion/turn-pipeline.js";
 import { ConversationAttachmentService } from "../src/conversation-attachments/service.js";
 import { ConversationRepository } from "../src/conversations/repository.js";
+import { createDiagnostics, type Diagnostics } from "../src/diagnostics/index.js";
+import { readDiagnosticTrace } from "../src/diagnostics/query.js";
 import { seedPiAcpProfile } from "../src/executors/pi-adapter.js";
 import { type ExecutorLaunchRequest, ExecutorRouter } from "../src/executors/router.js";
 import {
@@ -47,9 +49,11 @@ const databases: Database[] = [];
 const pipelines: TurnPipeline[] = [];
 const supervisors: CompanionSupervisor[] = [];
 const services: ExternalAgentRunService[] = [];
+const diagnosticsInstances: Diagnostics[] = [];
 
 afterEach(async () => {
 	for (const service of services.splice(0)) await service.close();
+	for (const diagnostics of diagnosticsInstances.splice(0)) await diagnostics.shutdown();
 	for (const pipeline of pipelines.splice(0)) pipeline.dispose();
 	for (const supervisor of supervisors.splice(0)) await supervisor.stop();
 	await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -160,6 +164,15 @@ describe("direct external-agent runs", () => {
 			resultReported: active,
 			memoryCaptured: active,
 		}));
+		const diagnostics = createDiagnostics({
+			app: { setAppLogsPath: () => undefined, setPath: () => undefined },
+			root: join(root, "diagnostics"),
+			launchId: "external-run-trace",
+			logLevel: "info",
+			heartbeatMs: 0,
+			pruneIntervalMs: 0,
+		});
+		diagnosticsInstances.push(diagnostics);
 		const service = new ExternalAgentRunService(
 			database.orm,
 			eventBus,
@@ -169,16 +182,26 @@ describe("direct external-agent runs", () => {
 			async () => "pi-default",
 			() => ({ providerId: "provider", modelId: "model" }),
 			terminal,
+			undefined,
+			diagnostics,
 		);
 		services.push(service);
 
-		const delegated = await service.delegate({
+		const turn = diagnostics.startSpan("companion.turn", {
 			conversationId: CONVERSATION_ID,
-			triggerEntryId: "native-user-entry",
-			agent: "pi",
-			attachmentIds: [input.id],
-			instruction: "Produce the requested file",
+			hasImages: false,
+			includeHistory: false,
 		});
+		const delegated = await diagnostics.runInSpan(turn, () =>
+			service.delegate({
+				conversationId: CONVERSATION_ID,
+				triggerEntryId: "native-user-entry",
+				agent: "pi",
+				attachmentIds: [input.id],
+				instruction: "Produce the requested file",
+			}),
+		);
+		turn.end("ok");
 		expect(launchAgent).toHaveBeenCalledOnce();
 		expect(launch?.profile).toMatchObject({ id: "pi-default", type: "pi" });
 		expect(launch?.task.modelRoute).toEqual({ providerId: "provider", modelId: "model" });
@@ -207,6 +230,13 @@ describe("direct external-agent runs", () => {
 		expect(terminal).toHaveBeenCalledTimes(2);
 		await service.reconcilePending(CONVERSATION_ID);
 		expect(terminal).toHaveBeenCalledTimes(2);
+		await diagnostics.shutdown();
+		const trace = await readDiagnosticTrace(join(root, "diagnostics"), turn.context.traceId);
+		expect(
+			trace.records
+				.filter((record) => record.name === "external_agent.run")
+				.map((record) => record.attributes.phase),
+		).toEqual(expect.arrayContaining(["enqueued", "started", "completed"]));
 		await service.close();
 		expect(existsSync(join(root, "runs"))).toBe(false);
 	});

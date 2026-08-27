@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
+import { get } from "node:http";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -184,34 +185,57 @@ async function waitForJsonBootstrap(url, deadline, child) {
 		const poll = async () => {
 			while (!settled && Date.now() < deadline) {
 				try {
-					const response = await fetch(url, {
-						cache: "no-store",
-						signal: AbortSignal.timeout(Math.max(1, Math.min(1_000, deadline - Date.now()))),
-					});
-					if (
-						response.ok &&
-						(response.headers.get("content-type") ?? "").includes("application/json")
-					) {
-						const payload = await response.json();
-						if (
-							payload &&
-							typeof payload === "object" &&
-							typeof payload.token === "string" &&
-							payload.product &&
-							typeof payload.product === "object"
-						) {
-							finish("ready");
-							return;
-						}
+					if (await validJsonBootstrap(url, Math.max(1, Math.min(1_000, deadline - Date.now())))) {
+						finish("ready");
+						return;
 					}
 				} catch {
 					// The target has not bound its port or has not finished proxying yet.
 				}
-				await new Promise((resume) => setImmediate(resume));
+				await new Promise((resume) => setTimeout(resume, 50));
 			}
 			finish("timeout");
 		};
 		void poll();
+	});
+}
+
+function validJsonBootstrap(url, timeoutMs) {
+	return new Promise((resolveResult, reject) => {
+		const request = get(
+			url,
+			{ agent: false, headers: { accept: "application/json", "cache-control": "no-store" } },
+			(response) => {
+				const chunks = [];
+				let bytes = 0;
+				response.on("data", (chunk) => {
+					bytes += chunk.length;
+					if (bytes > 1_048_576) request.destroy(new Error("bootstrap response too large"));
+					else chunks.push(chunk);
+				});
+				response.once("end", () => {
+					try {
+						const contentType = response.headers["content-type"] ?? "";
+						const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+						resolveResult(
+							response.statusCode !== undefined &&
+								response.statusCode >= 200 &&
+								response.statusCode < 300 &&
+								contentType.includes("application/json") &&
+								payload &&
+								typeof payload === "object" &&
+								typeof payload.token === "string" &&
+								payload.product &&
+								typeof payload.product === "object",
+						);
+					} catch (error) {
+						reject(error);
+					}
+				});
+			},
+		);
+		request.setTimeout(timeoutMs, () => request.destroy(new Error("bootstrap request timed out")));
+		request.once("error", reject);
 	});
 }
 

@@ -211,28 +211,19 @@ export function createShellWorkflowStore(input: {
 		}
 		return groups;
 	});
-	const permissionSelectors = new Map<string, Accessor<RunPermissionRequest[]>>();
-	const runSelectors = new Map<string, Accessor<RunInfo[]>>();
-	const permissionsForRun = (runId: string) => {
-		let selector = permissionSelectors.get(runId);
-		if (!selector) {
-			selector = createMemo(() => permissionGroups()[runId] ?? []);
-			permissionSelectors.set(runId, selector);
-		}
-		return selector;
-	};
-	const runsForMessage = (messageId: string) => {
-		let selector = runSelectors.get(messageId);
-		if (!selector) {
-			selector = createMemo(() =>
-				(runGroups()[messageId] ?? []).filter(
-					(run) => run.conversationId === store.activeConversationId,
-				),
+	// Return direct reactive accessors. Caching nested memos here can leave an
+	// initially-empty message or permission group detached from later query-cache
+	// replacements, hiding a newly started run until the renderer is reloaded.
+	const permissionsForRun =
+		(runId: string): Accessor<RunPermissionRequest[]> =>
+		() =>
+			permissionGroups()[runId] ?? [];
+	const runsForMessage =
+		(messageId: string): Accessor<RunInfo[]> =>
+		() =>
+			(runGroups()[messageId] ?? []).filter(
+				(run) => run.conversationId === store.activeConversationId,
 			);
-			runSelectors.set(messageId, selector);
-		}
-		return selector;
-	};
 	const permissionStates = new Map<string, ReturnType<typeof actionState>>();
 	const runStates = new Map<
 		string,

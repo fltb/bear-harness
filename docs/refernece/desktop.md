@@ -127,6 +127,8 @@ Semantic text/tree/search and exact byte ranges remain available through `conver
 
 `createDiagnostics` receives a unique launch id, the diagnostics root, packaged state, and an adapter that starts Electron `crashReporter`. `registerElectronDiagnostics` handles renderer faults and Electron process events:
 
+The minimum level is `BEAR_LOG_LEVEL` or `info`. Source builds may use `trace` for a redacted, size-bounded manual-test transcript; packaged builds clamp a requested `trace` level to `debug`, so release artifacts cannot persist conversational content. Business spans cover each Companion turn, model route/request, Context Pack, Skill/tool execution, Host-rule decision/state transition, and direct external-agent lifecycle. Local JSONL can be queried by trace id and exported atomically; it is never uploaded.
+
 - renderer-fault payloads must be a plain object with exactly `traceparent` and `fault` keys;
 - sender registration, main-frame identity, exact allowed URL, and fault shape are checked in order;
 - traceparent grammar and equality with the window registration are checked. A mismatch restarts the trace rather than accepting forged parentage;
