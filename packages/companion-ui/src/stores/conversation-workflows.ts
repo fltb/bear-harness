@@ -94,10 +94,20 @@ function createConversationWorkflow(store: CompanionStore) {
 						: {}),
 				};
 			});
+		const remoteBelongsToLocalDraft = (upload: (typeof remoteUploads)[number]) =>
+			local.some(
+				(draft) =>
+					draft.uploadId === upload.uploadId ||
+					(!draft.uploadId &&
+						draft.name === upload.name &&
+						draft.attachmentKind === upload.kind &&
+						draft.bytes === upload.totalBytes &&
+						draft.fileCount === upload.fileCount),
+			);
 		return [
 			...local,
 			...remoteUploads
-				.filter((upload) => !local.some((draft) => draft.uploadId === upload.uploadId))
+				.filter((upload) => !remoteBelongsToLocalDraft(upload))
 				.map((upload) => ({
 					kind: "attachment" as const,
 					draftId: upload.uploadId,
@@ -354,6 +364,7 @@ function createConversationWorkflow(store: CompanionStore) {
 		);
 	};
 	const dispatchMessage = async (): Promise<void> => {
+		if (state.modelBusy) return;
 		const value = state.composerText;
 		if (!value.trim() && attachments().length === 0) return;
 		const draftAttachments = state.attachments.filter(
@@ -365,6 +376,7 @@ function createConversationWorkflow(store: CompanionStore) {
 		const before = store.errorMetadata;
 		setState("sendError", null);
 		setState("modelError", null);
+		setState("modelBusy", true);
 		try {
 			await store.sendMessage(message, attachmentIds);
 			const retained = store.errorMetadata;
@@ -383,6 +395,8 @@ function createConversationWorkflow(store: CompanionStore) {
 			setState("composerText", value);
 			setState("attachments", draftAttachments);
 			setState("sendError", cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setState("modelBusy", false);
 		}
 	};
 	const selectModel = async (model: ConfiguredModel | null): Promise<void> => {

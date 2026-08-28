@@ -233,6 +233,34 @@ describe("ConversationRepository active conversation", () => {
 		});
 	});
 
+	it("keeps oversized native timelines readable through bounded pages", () => {
+		const { repository } = setup();
+		create(repository, "only");
+		const session = repository.getSession("only");
+		for (let index = 0; index < 125; index += 1) {
+			session.appendMessage({ role: "user", content: `message-${index}`, timestamp: Date.now() });
+		}
+
+		const newest = repository.get("only", "companion")?.piTimeline;
+		expect(newest).toMatchObject({
+			startOffset: 25,
+			totalEntries: 125,
+			hasMoreBefore: true,
+		});
+		expect(newest?.entries).toHaveLength(100);
+		expect(newest?.entries[0]).toMatchObject({ text: "message-25" });
+
+		const older = repository.timelinePage("only", "companion", newest?.startOffset);
+		expect(older).toMatchObject({
+			startOffset: 0,
+			totalEntries: 125,
+			hasMoreBefore: false,
+		});
+		expect(older?.entries).toHaveLength(25);
+		expect(older?.entries[0]).toMatchObject({ text: "message-0" });
+		expect(repository.timelinePage("only", "other-companion", 25)).toBeUndefined();
+	});
+
 	it("selects a restored conversation when no active selection exists", () => {
 		const { repository } = setup();
 		create(repository, "only");

@@ -32,8 +32,6 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 	const [submitting, setSubmitting] = createSignal(false);
 	const [setupError, setSetupError] = createSignal<string | null>(null);
 	const [setupBusy, setSetupBusy] = createSignal(false);
-	// Presentation-only gate; model values remain Host-backed through modelDefaults().
-	const [modelStepAdvanced, setModelStepAdvanced] = createSignal(false);
 	let submittedStepId: string | null = null;
 
 	const flow = createMemo(() => store.character?.character.first_meeting);
@@ -56,15 +54,16 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 					null)
 			: null;
 	});
+	const firstRunStage = createMemo(() => store.settings?.data?.()?.firstRunStage ?? "model");
 	const modelRequired = createMemo(
-		() => store.onboarding.status === "active" && !modelStepAdvanced() && !store.loading,
+		() => store.onboarding.status === "active" && firstRunStage() === "model" && !store.loading,
 	);
 	const modelError = createMemo(() => {
 		const error = hasMethod(store.model?.error) ? store.model.error() : null;
 		return error === null || error === undefined ? null : messageOf(error);
 	});
 	const memorySetupRequired = createMemo(
-		() => modelStepAdvanced() && !(store.embedding?.localConfigureMutation?.isSuccess ?? false),
+		() => store.onboarding.status === "active" && firstRunStage() === "embedding" && !store.loading,
 	);
 	const currentStep = createMemo<CharacterOnboardingStep | undefined>(() => {
 		const definition = flow();
@@ -113,8 +112,11 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 				: store.model.setVisionAuto(),
 		);
 	const completeModelSetup = (): void => {
-		if (selectedReplyModel() && !setupBusy()) setModelStepAdvanced(true);
+		if (selectedReplyModel() && !setupBusy()) {
+			void saveModelDefault(() => store.settings.set({ firstRunStage: "embedding" }));
+		}
 	};
+	const completeMemorySetup = (): Promise<void> => store.settings.set({ firstRunStage: "role" });
 	const submit = async (stepId: string, answer?: string): Promise<void> => {
 		if (submittedStepId !== store.onboarding.currentStepId) submittedStepId = null;
 		if (submitting() || submittedStepId === stepId) return;
@@ -152,6 +154,7 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 		selectReplyModel,
 		selectVisionModel,
 		completeModelSetup,
+		completeMemorySetup,
 		submit,
 	};
 }

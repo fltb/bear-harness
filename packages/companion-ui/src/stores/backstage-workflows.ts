@@ -11,7 +11,7 @@ import type {
 	MemoryScope,
 } from "./companion.js";
 
-export type BackstageTab = "roles" | "memory";
+export type BackstageTab = "roles" | "memory" | "canon";
 interface PluginTrust {
 	origin: "official" | "local" | "imported";
 	pluginHash: string;
@@ -189,7 +189,10 @@ export interface BackstageWorkflowStore {
 	selectedPackageLoading: Accessor<boolean>;
 	selectedPackageError: Accessor<string | undefined>;
 	selectPackage(id: string, confirmDiscard: () => boolean): void;
-	savePackage(yaml: string): Promise<import("./ipc.js").CharacterPackageDocument>;
+	savePackage(
+		yaml: string,
+		expectedSha256: string,
+	): Promise<import("./ipc.js").CharacterPackageDocument>;
 }
 
 const WORKFLOW_STORES = new WeakMap<CompanionStore, BackstageWorkflowStore>();
@@ -628,7 +631,7 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 	const store: BackstageWorkflowStore = {
 		selectedTab,
 		setSelectedTab: (value) => {
-			if (value === "roles" || value === "memory") setSelectedTabState(value);
+			if (value === "roles" || value === "memory" || value === "canon") setSelectedTabState(value);
 		},
 		syncInitialTab: (value) =>
 			setSelectedTabState(value === "settings" ? "roles" : (value ?? "roles")),
@@ -689,13 +692,13 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		selectPackage: (id, confirmDiscard) => {
 			if (id !== selectedPackageId() && confirmDiscard()) setSelectedPackageId(id);
 		},
-		savePackage: async (yaml) => {
+		savePackage: async (yaml, expectedSha256) => {
 			const current = selectedPackage();
 			if (!current) throw new Error("character_package_not_loaded");
 			const next = await companion.characters.packageUpdate(
 				current.characterId,
 				yaml,
-				current.sha256,
+				expectedSha256,
 			);
 			return next;
 		},

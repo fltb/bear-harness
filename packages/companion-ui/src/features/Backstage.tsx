@@ -6,6 +6,7 @@ import { Tabs } from "@kobalte/core/tabs";
 import { For, Show } from "solid-js";
 import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
 import { type CharacterSummary, useCompanionStore } from "../stores/companion.js";
+import { CanonStudio } from "./CanonStudio.js";
 import { CurrentRolePackageManager } from "./CurrentRolePackageManager.js";
 import { MemorySheet } from "./MemorySheet.js";
 import { SettingsSheet } from "./SettingsSheet.js";
@@ -22,6 +23,7 @@ export function Backstage(props: {
 	open: boolean;
 	onClose: () => void;
 	initialTab?: "roles" | "settings";
+	returnFocus?: () => void;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const workflow = createBackstageWorkflowStore(useCompanionStore());
@@ -36,7 +38,16 @@ export function Backstage(props: {
 			<Dialog.Portal>
 				<Dialog.Overlay class="backstage-overlay" />
 				<Dialog.Content
-					onOpenAutoFocus={(event) => event.preventDefault()}
+					onEscapeKeyDown={(event) => {
+						const target = event.target;
+						if (target instanceof Element && target.closest('[role="listbox"]')) {
+							event.preventDefault();
+						}
+					}}
+					onCloseAutoFocus={(event) => {
+						event.preventDefault();
+						props.returnFocus?.();
+					}}
 					class={
 						props.initialTab === "settings"
 							? "backstage-sheet backstage-sheet-settings settings-dialog"
@@ -74,6 +85,9 @@ export function Backstage(props: {
 								<Tabs.Trigger value="memory" class="tab">
 									{t("backstage.memory")}
 								</Tabs.Trigger>
+								<Tabs.Trigger value="canon" class="tab">
+									{t("backstage.canon")}
+								</Tabs.Trigger>
 							</Tabs.List>
 							<Tabs.Content value="roles" class="tab-panel">
 								<Show when={workflow.selectedTab() === "roles"}>
@@ -83,6 +97,11 @@ export function Backstage(props: {
 							<Tabs.Content value="memory" class="tab-panel">
 								<Show when={workflow.selectedTab() === "memory"}>
 									<MemorySheet />
+								</Show>
+							</Tabs.Content>
+							<Tabs.Content value="canon" class="tab-panel">
+								<Show when={workflow.selectedTab() === "canon"}>
+									<CanonStudio />
 								</Show>
 							</Tabs.Content>
 						</Tabs>
@@ -116,7 +135,7 @@ function RoleManager() {
 						{workflow.importing() ? t("backstage.roleImportBusy") : t("backstage.roleImport")}
 					</FileField.Trigger>
 					<FileField.HiddenInput
-						aria-label={t("backstage.roleImport")}
+						aria-label={t("backstage.roleImportInput")}
 						ref={(element) => element.setAttribute("webkitdirectory", "")}
 					/>
 				</FileField>
@@ -217,7 +236,12 @@ function RoleRow(props: { character: CharacterSummary }) {
 							</dd>
 						</dl>
 						<div class="plugin-trust-actions">
-							<Dialog.CloseButton as={Button} data-control="command" type="button">
+							<Dialog.CloseButton
+								as={Button}
+								data-control="command"
+								type="button"
+								aria-label={t("backstage.rolePluginCancel")}
+							>
 								{t("backstage.rolePluginCancel")}
 							</Dialog.CloseButton>
 							<Button

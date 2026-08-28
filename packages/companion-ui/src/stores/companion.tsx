@@ -82,6 +82,7 @@ import {
 	type OnboardingData,
 	type PiLiveState,
 	type PiTimeline,
+	type PiTimelineEntry,
 	type ProviderInfo,
 	type ProviderListData,
 	type ProviderLoginResult,
@@ -531,6 +532,7 @@ export interface CompanionStore {
 	readonly activeAmbientMediaId: string | undefined;
 	readonly activeRoleplayChoiceSetId: string | undefined;
 	refresh(): Promise<void>;
+	loadOlderMessages(): Promise<void>;
 	selectConversation(id: string): Promise<void>;
 	createConversation(title?: string): Promise<void>;
 	createConversationFromEntry(entryId: string): Promise<void>;
@@ -780,6 +782,27 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		key: queryKeys.activeConversation,
 		request: activeConversationRequest,
 	});
+	const timelinePrefixes = new Map<string, { startOffset: number; entries: PiTimelineEntry[] }>();
+	const withLoadedTimelinePrefix = (
+		projection: ConversationSelectResponse,
+	): ConversationSelectResponse => {
+		const prefix = timelinePrefixes.get(projection.id);
+		const projectedStart = projection.piTimeline.startOffset ?? 0;
+		if (!prefix || prefix.startOffset >= projectedStart) return projection;
+		const ids = new Set(prefix.entries.map((entry) => entry.id));
+		return {
+			...projection,
+			piTimeline: {
+				...projection.piTimeline,
+				entries: [
+					...prefix.entries,
+					...projection.piTimeline.entries.filter((entry) => !ids.has(entry.id)),
+				],
+				startOffset: prefix.startOffset,
+				hasMoreBefore: prefix.startOffset > 0,
+			},
+		};
+	};
 	const activeProjection = createMemo<ConversationSelectResponse | undefined>(() => {
 		cacheRevision();
 		void activeConversationQuery.data;
@@ -1440,8 +1463,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		return id;
 	};
 	const writeActiveProjection = (projection: ConversationSelectResponse | undefined): void => {
+		const projected = projection ? withLoadedTimelinePrefix(projection) : undefined;
 		const activeResponse: ConversationActiveResponse = projection
-			? { conversation: projection }
+			? { conversation: projected }
 			: {};
 		commitQueryValue(
 			queryClient,
@@ -1618,7 +1642,12 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				);
 				setMemoryRevision((revision) => revision + 1);
 				clearOperationError();
-				await refreshMemoryEntries();
+				// The durable mutation already succeeded. A projection refresh can
+				// race the Host's committed memory event; it must never turn a saved
+				// memory back into an apparent capture failure.
+				void refreshMemoryEntries().catch((error) =>
+					retainProjectionError("memory.capture", error, "projection"),
+				);
 				return result;
 			} catch (e) {
 				retainOperationError("memory.capture", e);
@@ -2460,6 +2489,23 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			} catch (e) {
 				retainOperationError("refresh.supplementary", e);
 			}
+		},
+
+		loadOlderMessages: async () => {
+			const projection = activeProjection();
+			if (!projection || projection.piTimeline.hasMoreBefore !== true) return;
+			const beforeOffset = projection.piTimeline.startOffset ?? 0;
+			const response = await invoke(client, () =>
+				client.conversation.timelinePage({ id: projection.id, beforeOffset }),
+			);
+			const page = requirePiTimeline(response.piTimeline, "conversation.timelinePage");
+			const existing = timelinePrefixes.get(projection.id)?.entries ?? [];
+			const ids = new Set(page.entries.map((entry) => entry.id));
+			timelinePrefixes.set(projection.id, {
+				startOffset: page.startOffset ?? 0,
+				entries: [...page.entries, ...existing.filter((entry) => !ids.has(entry.id))],
+			});
+			writeActiveProjection(projection);
 		},
 
 		selectConversation: async (id) => {

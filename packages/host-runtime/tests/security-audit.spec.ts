@@ -9,6 +9,7 @@ import {
 	type AuditKind,
 	AuditStore,
 	auditKindForEvent,
+	auditReasonCode,
 	wireAuditToEvents,
 } from "../src/security/audit-store.js";
 
@@ -50,6 +51,14 @@ function makeStore(
 }
 
 describe("AuditStore hash chain", () => {
+	it("keeps stable reason codes and drops arbitrary messages or local paths", () => {
+		expect(auditReasonCode("sync_read_changed")).toBe("sync_read_changed");
+		expect(auditReasonCode("remote.embedding-invalid:v1")).toBe("remote.embedding-invalid:v1");
+		expect(auditReasonCode("This operation was aborted")).toBe("handler_failed");
+		expect(auditReasonCode("failed at /Users/alice/private.txt token=secret")).toBe(
+			"handler_failed",
+		);
+	});
 	it("appends records with a verified hash chain and 0o600 segments", async () => {
 		const dir = tempDir();
 		const store = makeStore(dir);

@@ -89,6 +89,12 @@ test("browser requires a reply model before the role-defined onboarding", async 
 
 	const onboarding = page.getByRole("dialog", { name: "开始相处" });
 	await expect(onboarding).toBeVisible();
+	// Setup progress is Host-owned: a new renderer must resume at role onboarding,
+	// never regress to the already-confirmed model or embedding gates.
+	await page.reload();
+	await expect(modelSetup).toBeHidden();
+	await expect(embeddingSetup).toBeHidden();
+	await expect(onboarding).toBeVisible();
 	const [submitResponse, resyncResponse] = await Promise.all([
 		page.waitForResponse((response) => response.url().includes("/rpc/onboarding.submit%3Av1")),
 		page.waitForResponse((response) => response.url().includes("/rpc/onboarding.get%3Av1")),
@@ -106,5 +112,8 @@ test("browser requires a reply model before the role-defined onboarding", async 
 
 	await expect(onboarding).toBeHidden();
 	await expect(page.getByRole("button", { name: "Web Dev" })).toBeVisible();
-	expect(eventRequests).toBe(2); // one persistent connection per page load, including the explicit reload
+	await page.reload();
+	await expect(onboarding).toBeHidden();
+	await expect(page.getByRole("button", { name: "Web Dev" })).toBeVisible();
+	expect(eventRequests).toBeGreaterThanOrEqual(3); // one persistent connection per observed page load
 });

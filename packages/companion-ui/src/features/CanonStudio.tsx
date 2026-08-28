@@ -28,7 +28,7 @@ export function CanonStudio() {
 						state.addSource();
 					}}
 				>
-					<TextField>
+					<TextField class="setting-field">
 						<TextField.Input
 							aria-label={t("canonStudio.sourceName")}
 							placeholder={t("canonStudio.sourceName")}
@@ -36,7 +36,7 @@ export function CanonStudio() {
 							onInput={(event) => state.setSourceName(event.currentTarget.value)}
 						/>
 					</TextField>
-					<TextField>
+					<TextField class="setting-field">
 						<TextField.TextArea
 							rows={7}
 							aria-label={t("canonStudio.sourceText")}
@@ -96,7 +96,7 @@ export function CanonStudio() {
 						state.search();
 					}}
 				>
-					<TextField>
+					<TextField class="setting-field">
 						<TextField.Input
 							aria-label={t("canonStudio.search")}
 							value={state.query()}
@@ -182,7 +182,7 @@ export function CanonStudio() {
 							</Select.Content>
 						</Select.Portal>
 					</Select>
-					<TextField>
+					<TextField class="setting-field">
 						<TextField.Input
 							aria-label={t("canonStudio.moduleTitle")}
 							placeholder={t("canonStudio.moduleTitle")}
@@ -190,7 +190,7 @@ export function CanonStudio() {
 							onInput={(event) => state.setModuleTitle(event.currentTarget.value)}
 						/>
 					</TextField>
-					<TextField>
+					<TextField class="setting-field">
 						<TextField.TextArea
 							aria-label={t("canonStudio.moduleInstructions")}
 							rows={4}

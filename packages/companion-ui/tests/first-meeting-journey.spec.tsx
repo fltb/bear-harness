@@ -168,6 +168,7 @@ function firstRunStore(
 		options.models ?? [],
 	);
 	const [defaults, setDefaults] = createSignal<Record<string, unknown>>(options.defaults ?? {});
+	const [firstRunStage, setFirstRunStage] = createSignal<"model" | "embedding" | "role">("model");
 	let hostProviders: ProviderFixture[] = initialProviders;
 	let publishProviderProjection = true;
 	const setApiKey = vi.fn(async () => {
@@ -189,6 +190,24 @@ function firstRunStore(
 		},
 		error: null,
 		character: THEMED_CHARACTER,
+		settings: {
+			data: () => ({
+				firstRunStage: firstRunStage(),
+				relationshipMemoryEnabled: false,
+				conversationHistoryReadEnabled: false,
+				networkProxy: { mode: "direct" },
+				memoryVectorService: { enabled: false, provider: "none" },
+				modelDownloadSource: { type: "official" },
+			}),
+			get: vi.fn(async () => {
+				const value = store.settings?.data();
+				if (!value) throw new Error("settings unavailable");
+				return value;
+			}),
+			set: vi.fn(async (patch) => {
+				if (patch.firstRunStage) setFirstRunStage(patch.firstRunStage);
+			}),
+		},
 		provider: {
 			providers,
 			list,
@@ -229,6 +248,8 @@ function firstRunStore(
 			publishProviderProjection = true;
 			void list();
 		},
+		firstRunStage,
+		setFirstRunStage,
 	};
 }
 
@@ -306,7 +327,39 @@ describe("Host-backed first-run setup", () => {
 		const finish = within(dialog).getByRole("button", { name: zhCN.modelSetup.continue });
 		await waitFor(() => expect(finish).toBeEnabled());
 		await user.click(finish);
+		await waitFor(() => expect(setup.firstRunStage()).toBe("embedding"));
 		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+	});
+
+	it("restores the Host-owned setup stage after the renderer remounts", async () => {
+		const user = userEvent.setup();
+		const setup = firstRunStore({
+			providers: [addedProvider],
+			models: [replyModel],
+			defaults: { reply: { providerId: "relay", modelId: "reply" } },
+		});
+		const firstRender = renderMeeting(setup.store);
+		const modelDialog = await screen.findByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+		await user.click(within(modelDialog).getByRole("button", { name: zhCN.modelSetup.continue }));
+		await waitFor(() => expect(setup.firstRunStage()).toBe("embedding"));
+		firstRender.unmount();
+
+		renderMeeting(setup.store);
+		expect(
+			screen.queryByRole("dialog", { name: zhCN.modelSetup.dialogLabel }),
+		).not.toBeInTheDocument();
+		expect(
+			await screen.findByRole("dialog", { name: zhCN.settings.memoryVectorSection }),
+		).toBeVisible();
+
+		setup.setFirstRunStage("role");
+		await waitFor(() =>
+			expect(
+				screen.getByRole("dialog", {
+					name: THEMED_CHARACTER.character.first_meeting.dialog_label,
+				}),
+			).toBeVisible(),
+		);
 	});
 
 	it("supports selecting an image model and gates role onboarding on embedding success", async () => {

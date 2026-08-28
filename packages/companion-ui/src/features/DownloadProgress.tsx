@@ -21,17 +21,19 @@ export function DownloadProgress(props: {
 			<Show when={percentage() !== undefined} fallback={<progress aria-label={props.label} />}>
 				<progress aria-label={props.label} max={100} value={percentage() ?? 0} />
 			</Show>
-			<p>
-				{bytes(props.downloadedBytes)}
-				<Show when={props.totalBytes}>
-					{(total) => (
-						<>
-							{" "}
-							/ {bytes(total())} ({percentage()?.toFixed(0)}%)
-						</>
-					)}
-				</Show>
-			</p>
+			<Show when={props.downloadedBytes > 0}>
+				<p>
+					{bytes(props.downloadedBytes)}
+					<Show when={props.totalBytes}>
+						{(total) => (
+							<>
+								{" "}
+								/ {bytes(total())} ({percentage()?.toFixed(0)}%)
+							</>
+						)}
+					</Show>
+				</p>
+			</Show>
 			<Show when={props.onCancel}>
 				<Button type="button" disabled={props.cancelling} onClick={() => props.onCancel?.()}>
 					{props.cancelLabel}

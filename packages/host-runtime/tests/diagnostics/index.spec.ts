@@ -271,7 +271,7 @@ describe("Diagnostics orchestrator", () => {
 		expect(content?.attributes).toMatchObject({
 			conversationId: "conversation-1",
 			phase: "user",
-			content: "[REDACTED_SECRET] [REDACTED_HOME]/work",
+			content: "[REDACTED_SECRET] [REDACTED_HOME]",
 		});
 		rmSync(root, { recursive: true, force: true });
 

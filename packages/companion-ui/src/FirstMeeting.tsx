@@ -164,7 +164,7 @@ export function FirstMeeting() {
 							<div class="intro-step">{t("settings.memoryVectorSection")}</div>
 							<h2>{t("settings.memoryVectorEnabled")}</h2>
 							<p>{t("modelSetup.memorySetupNote")}</p>
-							<EmbeddingSettings mode="onboarding" />
+							<EmbeddingSettings mode="onboarding" onComplete={workflow.completeMemorySetup} />
 						</article>
 					</Dialog.Content>
 				</Dialog>

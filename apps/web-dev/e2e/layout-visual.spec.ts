@@ -1,6 +1,13 @@
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
 import { ensureReadyForConversation } from "./helpers";
+
+const screenshotDir = path.resolve(
+	import.meta.dirname,
+	"../../../artifacts/ux-coverage-2026-08-28",
+);
 
 const viewports = [
 	{ mode: "mobile", width: 390, height: 844 },
@@ -10,6 +17,7 @@ const viewports = [
 
 test("canonical layouts and management surfaces stay usable", async ({ page }) => {
 	test.setTimeout(60_000);
+	await mkdir(screenshotDir, { recursive: true });
 	await page.setViewportSize(viewports[1]);
 	await ensureReadyForConversation(page);
 
@@ -29,6 +37,9 @@ test("canonical layouts and management surfaces stay usable", async ({ page }) =
 
 		const navigation = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
 		await expect(application).toHaveScreenshot(`layout-${viewport.mode}.png`);
+		await application.screenshot({
+			path: path.join(screenshotDir, `23-layout-${viewport.mode}.png`),
+		});
 		if (viewport.mode === "mobile") {
 			const closedBox = await navigation.boundingBox();
 			expect(closedBox?.x).toBeLessThan(0);
@@ -51,7 +62,18 @@ test("canonical layouts and management surfaces stay usable", async ({ page }) =
 		await expect(
 			dialog.getByRole("navigation", { name: zhCN.sidebar.systemSettings }),
 		).toBeVisible();
-		await expect(dialog).toHaveScreenshot(`system-settings-${viewport.mode}.png`);
+		await page.evaluate(() => window.scrollTo(0, 0));
+		if (viewport.mode === "mobile") {
+			await expect(page).toHaveScreenshot(`system-settings-${viewport.mode}.png`);
+			await page.screenshot({
+				path: path.join(screenshotDir, `24-system-settings-${viewport.mode}.png`),
+			});
+		} else {
+			await expect(dialog).toHaveScreenshot(`system-settings-${viewport.mode}.png`);
+			await dialog.screenshot({
+				path: path.join(screenshotDir, `24-system-settings-${viewport.mode}.png`),
+			});
+		}
 
 		await dialog
 			.getByRole("button", {
@@ -69,7 +91,19 @@ test("canonical layouts and management surfaces stay usable", async ({ page }) =
 		expect((optionsBox?.x ?? 0) + (optionsBox?.width ?? 0)).toBeLessThanOrEqual(viewport.width);
 		expect((optionsBox?.y ?? 0) + (optionsBox?.height ?? 0)).toBeLessThanOrEqual(viewport.height);
 		await page.keyboard.press("Escape");
-		await expect(dialog).toHaveScreenshot(`network-memory-settings-${viewport.mode}.png`);
+		await expect(dialog).toBeVisible();
+		await page.evaluate(() => window.scrollTo(0, 0));
+		if (viewport.mode === "mobile") {
+			await expect(page).toHaveScreenshot(`network-memory-settings-${viewport.mode}.png`);
+			await page.screenshot({
+				path: path.join(screenshotDir, `25-network-memory-${viewport.mode}.png`),
+			});
+		} else {
+			await expect(dialog).toHaveScreenshot(`network-memory-settings-${viewport.mode}.png`);
+			await dialog.screenshot({
+				path: path.join(screenshotDir, `25-network-memory-${viewport.mode}.png`),
+			});
+		}
 		await dialog.getByRole("button", { name: zhCN.backstage.close }).click();
 		await expect(dialog).toBeHidden();
 	}

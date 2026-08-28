@@ -61,13 +61,23 @@ export function MemoryEntryList(props: {
 	const characterId = () => props.characterId;
 	const state = workflow.memoryEntryList(scope, query, refresh, characterId);
 	const title = () => props.title ?? t("memory.defaultEntriesTitle");
+	const entries = () => {
+		if (
+			props.characterId &&
+			props.characterId === companion.character?.id &&
+			query().length === 0
+		) {
+			return (companion.memory.entries() ?? []).filter((entry) => entry.scope === props.scope);
+		}
+		return state.entries();
+	};
 
 	return (
 		<section class="memory-section" aria-label={title()}>
 			<div class="section-head">
 				<h3>{title()}</h3>
-				<Show when={!state.loading() && state.entries().length > 0}>
-					<span class="section-count">{state.entries().length}</span>
+				<Show when={!state.loading() && entries().length > 0}>
+					<span class="section-count">{entries().length}</span>
 				</Show>
 			</div>
 			<Show when={state.feedback()}>
@@ -80,14 +90,16 @@ export function MemoryEntryList(props: {
 					{state.error()}
 				</p>
 			</Show>
-			<Show when={state.loading() && state.entries().length === 0}>
+			<Show when={state.loading() && entries().length === 0}>
 				<p class="empty-note">{t("memory.loading")}</p>
 			</Show>
-			<Show when={!state.loading() && !state.error() && state.entries().length === 0}>
-				<p class="empty-note">{t("memory.emptyEntries")}</p>
+			<Show when={!state.loading() && !state.error() && entries().length === 0}>
+				<p class="empty-note">
+					{query().length > 0 ? t("memory.noSearchResults") : t("memory.emptyEntries")}
+				</p>
 			</Show>
 			<ul class="memory-list">
-				<For each={state.entries()}>
+				<For each={entries()}>
 					{(entry) => {
 						const excluded = state.excluded(entry.id);
 						return (

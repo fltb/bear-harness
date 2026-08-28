@@ -6,9 +6,9 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 ];
 
 const USER_PATHS: readonly RegExp[] = [
-	/\/Users\/[^/\s]+/g,
-	/\/home\/[^/\s]+/g,
-	/[A-Za-z]:\\Users\\[^\\\s]+/g,
+	/\/Users\/[^/\s,"'}]+(?:\/[^\s,"'}]+)*/g,
+	/\/home\/[^/\s,"'}]+(?:\/[^\s,"'}]+)*/g,
+	/[A-Za-z]:\\Users\\[^\\\s,"'}]+(?:\\[^\s,"'}]+)*/g,
 ];
 
 const ABSOLUTE_PATHS: readonly RegExp[] = [

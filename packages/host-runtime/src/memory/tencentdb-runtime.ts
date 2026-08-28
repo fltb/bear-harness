@@ -946,6 +946,47 @@ export class TencentDbRuntime {
 		});
 	}
 
+	/** Probe a remote endpoint before replacing the active embedding configuration. */
+	async configureRemoteEmbedding(options: {
+		baseUrl: string;
+		apiKey: string;
+		model: string;
+		dimensions: number;
+		timeoutMs?: number;
+	}): Promise<{ ready: true }> {
+		const candidate = this.embeddingServiceFactory(
+			{
+				provider: "remote",
+				baseUrl: options.baseUrl,
+				apiKey: options.apiKey,
+				model: options.model,
+				dimensions: options.dimensions,
+				timeoutMs: options.timeoutMs ?? 10_000,
+			},
+			this.logger,
+		);
+		try {
+			const probe = await candidate.embed("semantic memory readiness probe", {
+				timeoutMs: options.timeoutMs ?? 10_000,
+			});
+			if (probe.length !== options.dimensions) {
+				throw new Error("dimension mismatch");
+			}
+		} catch {
+			throw { kind: "unavailable", reason: "remote_embedding_validation_failed" };
+		} finally {
+			await candidate.close?.();
+		}
+		return this.replaceEmbeddingConfig({
+			enabled: true,
+			provider: "remote",
+			baseUrl: options.baseUrl,
+			apiKey: options.apiKey,
+			model: options.model,
+			dimensions: options.dimensions,
+		});
+	}
+
 	/** Disable local embeddings without replacing an already provider-less core. */
 	async disableLocalEmbedding(): Promise<void> {
 		if (this.config.embedding.provider === "none" && this.config.embedding.modelPath === undefined)
@@ -958,6 +999,9 @@ export class TencentDbRuntime {
 			dimensions?: number;
 			modelPath?: string;
 			hfEndpoint?: string;
+			baseUrl?: string;
+			apiKey?: string;
+			model?: string;
 		},
 	): Promise<{ ready: true }> {
 		if (this.closed) throw { kind: "unavailable", reason: "memory_runtime_closed" };

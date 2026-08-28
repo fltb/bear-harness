@@ -40,9 +40,7 @@ export function unwrap<T>(result: IpcEnvelope<T>): T {
 
 function userFacingError(kind: string, reason: string): string {
 	if (reason.startsWith("local_embedding_model_prepare_failed:")) {
-		return `${i18n.t("settings.localModelFailed")}: ${reason
-			.slice("local_embedding_model_prepare_failed:".length)
-			.trim()}`;
+		return i18n.t("settings.localModelFailed");
 	}
 	switch (kind) {
 		case "not_found":

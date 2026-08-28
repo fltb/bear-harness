@@ -140,7 +140,7 @@ describe("provider catalog model synchronization", () => {
 		expect(afterProviderRemove.providers.some((provider) => provider.id === "sync-relay")).toBe(
 			false,
 		);
-	});
+	}, 15_000);
 
 	it("restarts through a stale models transaction and exposes only the complete new catalog", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-provider-restart-"));

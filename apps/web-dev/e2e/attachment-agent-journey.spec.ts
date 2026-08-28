@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, type Page, test } from "playwright/test";
@@ -6,6 +8,7 @@ import { ensureReadyForConversation, getBootstrap, sendMessage } from "./helpers
 const singleFile = fileURLToPath(new URL("./fixtures/single-note.txt", import.meta.url));
 const folder = fileURLToPath(new URL("./fixtures/web-folder", import.meta.url));
 const providerOrigin = `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}`;
+const screenshotDir = resolve(import.meta.dirname, "../../../artifacts/ux-coverage-2026-08-28");
 type Envelope<T> = { ok: true; data: T } | { ok: false; error: { kind: string; reason: string } };
 type Attachment = {
 	id: string;
@@ -49,6 +52,7 @@ test("file and folder attachments survive delegation, reload, download, and rema
 	page,
 }) => {
 	test.setTimeout(120_000);
+	mkdirSync(screenshotDir, { recursive: true });
 	await ensureReadyForConversation(page);
 	const { token } = await getBootstrap(page);
 	const first = await active(page, token);
@@ -56,6 +60,10 @@ test("file and folder attachments survive delegation, reload, download, and rema
 	await page.getByLabel(zhCN.composer.uploadFolder, { exact: true }).setInputFiles(folder);
 	await expect(page.getByText("single-note.txt", { exact: true })).toBeVisible();
 	await expect(page.getByText("web-folder", { exact: true })).toBeVisible();
+	await page.screenshot({
+		path: resolve(screenshotDir, "20-pi-attachments-ready.png"),
+		fullPage: true,
+	});
 
 	const marker =
 		"E2E_WEB_ATTACHMENT_AGENT_JOURNEY: list and read both attachments, then delegate a generated report to Pi.";
@@ -132,6 +140,10 @@ test("file and folder attachments survive delegation, reload, download, and rema
 		attachmentIds: body.attachmentIds,
 		workspaceAttachmentId: body.attachmentIds[1],
 	});
+	await page.screenshot({
+		path: resolve(screenshotDir, "21-pi-delegation-complete.png"),
+		fullPage: true,
+	});
 
 	const listed = ok(
 		await rpc<{ attachments: Attachment[] }>(page, token, "conversationAttachment.list:v1", {
@@ -150,6 +162,10 @@ test("file and folder attachments survive delegation, reload, download, and rema
 		.toBe(true);
 	await page.reload();
 	await expect(page.getByText(generated.name, { exact: true })).toBeVisible();
+	await page.screenshot({
+		path: resolve(screenshotDir, "22-pi-result-after-reload.png"),
+		fullPage: true,
+	});
 	const reloadedIds = (await active(page, token)).piTimeline.entries
 		.flatMap((entry) => entry.attachments ?? [])
 		.map((item) => item.id);

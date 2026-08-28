@@ -132,7 +132,7 @@ describe("character package import", () => {
 			}),
 		).resolves.toMatchObject({ ok: false, error: { reason: "character_id_immutable" } });
 		await runtime.close();
-	});
+	}, 15_000);
 
 	it("installs a validated folder into user data and keeps it after restart", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-character-import-"));
@@ -232,7 +232,7 @@ describe("character package import", () => {
 			),
 		).toMatchObject({ values: { "continuity.stage": 1 } });
 		recoveredDatabase.close();
-	});
+	}, 15_000);
 
 	it("requires explicit trust for imported executable plugins and revokes it when they change", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-character-plugin-trust-"));

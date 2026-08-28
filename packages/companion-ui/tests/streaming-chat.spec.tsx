@@ -280,7 +280,61 @@ describe("Pi-projection chat", () => {
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const thread = await screen.findByRole("region", { name: zhCN.messages.conversation });
-		expect(await within(thread).findByRole("alert")).toHaveTextContent("Model is unavailable");
+		expect(await within(thread).findByRole("alert")).toHaveTextContent(
+			zhCN.messages.responseFailedSaved,
+		);
+	});
+
+	it("loads earlier timeline pages without replacing the Host-projected newest page", async () => {
+		const user = userEvent.setup();
+		const { client } = activeClient();
+		const initialSnapshot = client.snapshot.get;
+		client.snapshot.get = vi.fn(async () => {
+			const result = await initialSnapshot();
+			if (!result.ok) return result;
+			return {
+				...result,
+				data: {
+					...result.data,
+					conversation: {
+						...result.data.conversation,
+						piTimeline: {
+							entries: [assistantEntry("recent-entry", "Newest projected reply")],
+							startOffset: 100,
+							totalEntries: 101,
+							hasMoreBefore: true,
+						},
+					},
+				},
+			};
+		});
+		client.conversation.timelinePage = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					piTimeline: {
+						entries: [assistantEntry("older-entry", "Earlier persisted reply")],
+						startOffset: 0,
+						totalEntries: 101,
+						hasMoreBefore: false,
+					},
+				},
+			}),
+		);
+
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const thread = await screen.findByRole("region", { name: zhCN.messages.conversation });
+		expect(await within(thread).findByText("Newest projected reply")).toBeVisible();
+		await user.click(within(thread).getByRole("button", { name: zhCN.messages.loadOlder }));
+		expect(await within(thread).findByText("Earlier persisted reply")).toBeVisible();
+		expect(within(thread).getByText("Newest projected reply")).toBeVisible();
+		expect(client.conversation.timelinePage).toHaveBeenCalledWith({
+			id: "conversation-1",
+			beforeOffset: 100,
+		});
+		expect(
+			within(thread).queryByRole("button", { name: zhCN.messages.loadOlder }),
+		).not.toBeInTheDocument();
 	});
 
 	it("does not render completed or aborted empty assistant turns as failures", async () => {
@@ -320,7 +374,8 @@ describe("Pi-projection chat", () => {
 		});
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const thread = await screen.findByRole("region", { name: zhCN.messages.conversation });
-		await waitFor(() => expect(within(thread).getAllByRole("article")).toHaveLength(2));
+		await waitFor(() => expect(client.snapshot.get).toHaveBeenCalled());
+		expect(within(thread).queryAllByRole("article")).toHaveLength(0);
 		expect(within(thread).queryByRole("alert")).not.toBeInTheDocument();
 	});
 	it("omits an internal-only persisted projection from the user-facing thread", async () => {
@@ -455,7 +510,9 @@ describe("Pi-projection chat", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const thread = await screen.findByRole("region", { name: zhCN.messages.conversation });
 		await waitFor(() =>
-			expect(within(thread).getByRole("alert")).toHaveTextContent("provider unavailable"),
+			expect(within(thread).getByRole("alert")).toHaveTextContent(
+				zhCN.messages.responseFailedSaved,
+			),
 		);
 	});
 

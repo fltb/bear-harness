@@ -290,6 +290,7 @@ export const appSettings = sqliteTable(
 	"app_settings",
 	{
 		id: integer("id").primaryKey(),
+		firstRunStage: text("first_run_stage").notNull().default("model"),
 		networkProxyJson: text("network_proxy").notNull().default('{"mode":"auto"}'),
 		memoryVectorServiceJson: text("memory_vector_service")
 			.notNull()

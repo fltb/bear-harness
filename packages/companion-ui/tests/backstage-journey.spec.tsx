@@ -155,7 +155,7 @@ describe("ordinary-user backstage journey", () => {
 		expect(
 			within(characterDialog).getByRole("tab", { name: zhCN.backstage.roleManagement }),
 		).toHaveAttribute("data-selected");
-		const input = within(characterDialog).getByLabelText(zhCN.backstage.roleImport, {
+		const input = within(characterDialog).getByLabelText(zhCN.backstage.roleImportInput, {
 			selector: "input",
 		});
 		const manifest = new File(["id: imported"], "character.yaml", { type: "text/yaml" });

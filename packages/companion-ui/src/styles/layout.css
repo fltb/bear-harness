@@ -239,11 +239,15 @@ html[data-app-layout="mobile"] .settings-navigation .drawer-note {
 }
 
 html[data-app-layout="mobile"] .settings-navigation-list {
-	@apply flex snap-x gap-1 overflow-x-auto pb-1;
+	@apply grid grid-cols-2 gap-1;
 }
 
 html[data-app-layout="mobile"] .settings-navigation-list button {
-	@apply shrink-0 snap-start whitespace-nowrap;
+	@apply min-w-0 whitespace-normal text-left;
+}
+
+html[data-app-layout="mobile"] .settings-navigation-list button:last-child {
+	@apply col-span-2;
 }
 
 html[data-app-layout="mobile"] .settings-page {

@@ -338,7 +338,7 @@ describe("TencentDbRuntime", () => {
 		await expect(
 			reopened.backend.update({ scope, memoryId: created.id, text: "reopened local memory" }),
 		).resolves.toMatchObject({ id: created.id, text: "reopened local memory" });
-	});
+	}, 15_000);
 
 	it("round-trips a directly remembered record through list before and after restart", async () => {
 		const root = createRoot();

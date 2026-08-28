@@ -57,6 +57,7 @@ export type OnboardingData = Wire.OnboardingResponse;
 export type ConversationSummary = Wire.ConversationSummary;
 export type PiLiveState = Wire.PiLiveState;
 export type PiTimeline = Wire.PiTimeline;
+export type PiTimelineEntry = Wire.PiTimelineEntry;
 export type ConversationListData = Wire.ConversationListResponse;
 export type ConversationSelectResponse = Wire.ConversationSelectResponse;
 export type ConversationActiveResponse = Wire.ConversationActiveResponse;

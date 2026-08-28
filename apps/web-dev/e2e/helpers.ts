@@ -23,7 +23,9 @@ export async function selectKobalteOption(
 }
 
 export async function ensureReadyForConversation(page: Page): Promise<void> {
-	await page.goto("/");
+	// Establish the canonical Host state before mounting a renderer. Mounting the
+	// previous default first can legitimately publish that selection back to Host
+	// while this helper is resetting the shared E2E fixture.
 	const bootstrap = await getBootstrap(page);
 	const headers = { "x-bear-web-dev-token": bootstrap.token };
 	const configureProvider = await (
@@ -52,10 +54,6 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 		})
 	).json();
 	expect(enableModel).toMatchObject({ ok: true });
-	// The previous test's renderer can flush its final model-selection event
-	// after its page closes. Let that write settle before establishing this
-	// test's canonical global route.
-	await page.waitForTimeout(250);
 	const setDefault = await (
 		await page.request.post("/rpc/model.defaults.setReply%3Av1", {
 			headers,
@@ -88,7 +86,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 			})
 		).json();
 	}
-	await page.reload();
+	await page.goto("/");
 	await expect(page.getByRole("dialog", { name: "开始相处" })).toBeHidden();
 
 	const conversations = page.getByRole("navigation", { name: zhCN.sidebar.conversations });

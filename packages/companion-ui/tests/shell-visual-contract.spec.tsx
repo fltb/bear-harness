@@ -213,9 +213,11 @@ describe("shell visual and thread head contracts", () => {
 		expect(screen.getByRole("heading", { name: "Scene title" })).toBeVisible();
 		const queueButton = screen.getByRole("button", { name: /1/ });
 		await user.click(queueButton);
-		expect(screen.getByRole("menu", { name: zhCN.threadHead.runningWork })).toHaveTextContent(
-			zhCN.work.timeline.runStatuses.needs_user,
-		);
+		const menu = screen.getByRole("menu", { name: zhCN.threadHead.runningWork });
+		expect(menu).toHaveTextContent(zhCN.work.timeline.runStatuses.needs_user);
+		expect(menu).toHaveTextContent(zhCN.threadHead.recentWork);
+		expect(menu).toHaveTextContent("Completed run");
+		expect(menu).toHaveTextContent(zhCN.work.timeline.runStatuses.completed);
 		await user.keyboard("{Escape}");
 		expect(
 			screen.queryByRole("menu", { name: zhCN.threadHead.runningWork }),

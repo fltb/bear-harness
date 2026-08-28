@@ -822,8 +822,10 @@ export class CharacterLoader {
 		const pluginsDir = join(resolve(this.packageDirectory(character.id)), "plugins");
 		if (!existsSync(pluginsDir)) return "";
 		const pluginRoot = this.characterPackagePath(character.id, "plugins");
+		const files = this.collectPluginFiles(character.id, pluginRoot);
+		if (files.length === 0) return "";
 		const hash = createHash("sha256");
-		for (const path of this.collectPluginFiles(character.id, pluginRoot)) {
+		for (const path of files) {
 			hash.update(relative(pluginRoot, path));
 			hash.update("\0");
 			hash.update(readFileSync(path));

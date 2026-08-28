@@ -10,6 +10,51 @@ import { ROLEPLAY_MEDIA_CHARACTER, THEMED_CHARACTER } from "./fixtures.js";
 
 describe("roleplay presentation", () => {
 	afterEach(() => vi.unstubAllGlobals());
+	it("does not render empty assistant rounds between visible tool results", () => {
+		const store = {
+			activePiTimeline: {
+				entries: [
+					{
+						id: "empty-assistant",
+						parentId: null,
+						timestamp: "2026-01-01T00:00:00.000Z",
+						kind: "message" as const,
+						role: "assistant" as const,
+						text: "",
+						stopReason: "toolUse" as const,
+					},
+					{
+						id: "tool-result",
+						parentId: "empty-assistant",
+						timestamp: "2026-01-01T00:00:01.000Z",
+						kind: "message" as const,
+						role: "tool" as const,
+						toolName: "host_state",
+						toolCallId: "state-1",
+						status: "succeeded" as const,
+					},
+				],
+			},
+			activeConversationId: "conversation",
+			conversations: [],
+			runs: [],
+			pendingUserText: undefined,
+			assistantStreaming: false,
+			streamingAssistantText: "",
+			activeRoleplayChoiceSetId: undefined,
+			activeRoleplayMediaId: undefined,
+			character: THEMED_CHARACTER,
+		} as unknown as CompanionStore;
+		render(() => (
+			<DesktopProvider store={store}>
+				<ConversationPanel />
+			</DesktopProvider>
+		));
+
+		const thread = screen.getByRole("region", { name: zhCN.messages.conversation });
+		expect(within(thread).getAllByRole("article")).toHaveLength(1);
+		expect(within(thread).getByRole("article")).toHaveAttribute("data-pi-entry-id", "tool-result");
+	});
 	it("presents package choices without replacing free-text chat and triggers the declared event", async () => {
 		const triggerRoleplayEvent = vi.fn(() => Promise.resolve());
 		const character = {

@@ -325,6 +325,7 @@ describe("role-defined onboarding", () => {
 
 		await expect(data(runtime, "settings.get:v1", {})).resolves.toEqual({
 			settings: {
+				firstRunStage: "model",
 				relationshipMemoryEnabled: true,
 				conversationHistoryReadEnabled: true,
 				networkProxy: { mode: "auto" },
@@ -398,6 +399,61 @@ describe("role-defined onboarding", () => {
 		).resolves.toMatchObject({
 			ok: false,
 			error: { kind: "invalid_request", reason: "local_embedding_candidate_not_found" },
+		});
+		await expect(
+			runtime.dispatch("settings.set:v1", {
+				settings: {
+					memoryVectorService: {
+						enabled: true,
+						provider: "remote",
+						baseUrl: "not-a-url",
+						apiKey: "test-key",
+						model: "fake-model",
+						dimensions: 1,
+					},
+				},
+			}),
+		).resolves.toMatchObject({ ok: false, error: { kind: "invalid_request" } });
+		await expect(
+			runtime.dispatch("settings.set:v1", {
+				settings: { networkProxy: { mode: "manual", url: "not-a-proxy" } },
+			}),
+		).resolves.toMatchObject({ ok: false, error: { kind: "invalid_request" } });
+
+		const configureRemote = vi
+			.spyOn(runtime.memoryRuntime, "configureRemoteEmbedding")
+			.mockRejectedValueOnce({ kind: "unavailable", reason: "remote_embedding_validation_failed" });
+		const remoteSettings = {
+			enabled: true as const,
+			provider: "remote" as const,
+			baseUrl: "https://embedding.example/v1",
+			apiKey: "test-key",
+			model: "test-embedding",
+			dimensions: 768,
+		};
+		await expect(
+			runtime.dispatch("settings.set:v1", {
+				settings: { memoryVectorService: remoteSettings },
+			}),
+		).resolves.toMatchObject({
+			ok: false,
+			error: { kind: "unavailable", reason: "remote_embedding_validation_failed" },
+		});
+		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
+			settings: { memoryVectorService: { provider: "local" } },
+		});
+		configureRemote.mockResolvedValue({ ready: true });
+		await data(runtime, "settings.set:v1", {
+			settings: { memoryVectorService: remoteSettings },
+		});
+		expect(configureRemote).toHaveBeenCalledWith({
+			baseUrl: "https://embedding.example/v1",
+			apiKey: "test-key",
+			model: "test-embedding",
+			dimensions: 768,
+		});
+		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
+			settings: { memoryVectorService: { provider: "remote", model: "test-embedding" } },
 		});
 		await runtime.close();
 	});

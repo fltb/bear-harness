@@ -323,7 +323,9 @@ describe("automatic continuity", () => {
 		roots.push(dataDir);
 		const first = makeRuntimeAt(dataDir);
 		await first.start();
-		await data(first, "settings.set:v1", { settings: { relationshipMemoryEnabled: true } });
+		await data(first, "settings.set:v1", {
+			settings: { relationshipMemoryEnabled: true, firstRunStage: "role" },
+		});
 		const conversation = (await data(first, "conversation.create:v1", {})) as { id: string };
 		await first.close();
 		const sourceEntryId = appendCompletedPiTurn(
@@ -334,7 +336,7 @@ describe("automatic continuity", () => {
 		const restarted = makeRuntimeAt(dataDir);
 		await restarted.start();
 		await expect(data(restarted, "settings.get:v1", {})).resolves.toMatchObject({
-			settings: { relationshipMemoryEnabled: true },
+			settings: { relationshipMemoryEnabled: true, firstRunStage: "role" },
 		});
 		const captured = (await data(restarted, "memory.capture:v1", {
 			conversationId: conversation.id,

@@ -40,6 +40,13 @@ export const en = {
 		readFailed: "This attachment could not be read.",
 		previewUnavailable: "This file cannot be previewed, but it can still be downloaded.",
 		downloadFailed: "This file could not be downloaded. Try again.",
+		retry: "Retry",
+		remove: "Remove {name}",
+		uploadStates: {
+			complete: "Ready",
+			error: "Upload failed",
+			cancelled: "Cancelled",
+		},
 		treeLabel: "Attachment files",
 		metadataLabel: "File information",
 		nameLabel: "Name",
@@ -96,10 +103,16 @@ export const en = {
 		storyProjection: "Story projection",
 		projectionCounts: "{variables} variables · {unlockables} unlockables",
 		relationshipMemory: "Relationship memory",
+		relationshipMemoryDescription:
+			"When enabled, confirmed and included relationship memories can be recalled for this character. Turning it off does not delete them.",
 		readConversationHistory: "Read conversation history",
+		readConversationHistoryDescription:
+			"When enabled, this character can use earlier conversations during recall. Turning it off does not delete conversations.",
 		relationshipMemoryTitle: "Role relationship memory",
 		unsaved: "Unsaved edits",
 		aligned: "Matches the Host role package",
+		conflict:
+			"This character package changed in another window. Your edits are preserved; compare the new version before applying them again.",
 		discard: "Discard",
 		save: "Save",
 		pendingRelationshipLabel: "Pending relationship memories",
@@ -117,6 +130,7 @@ export const en = {
 		archivedConversations: "Archived",
 		emptyConversations: "No conversations yet. Use + in the upper-right to begin.",
 		emptyArchivedConversations: "No archived conversations.",
+		noSearchResults: "No matching conversations. Try a different search.",
 		unreadMessage: "Unread messages",
 		renameConversation: "Rename conversation",
 		saveConversation: "Save",
@@ -134,6 +148,7 @@ export const en = {
 	},
 	threadHead: {
 		runningWork: "Active work",
+		recentWork: "Recent work",
 		noRunningWork: "No background work",
 		runningWorkItem: "Work in progress",
 		statusUpdating: "Updating status",
@@ -155,6 +170,7 @@ export const en = {
 		roleManagement: "Character management",
 		packageWorkshop: "Character package workshop",
 		memory: "Memory",
+		canon: "Canon",
 		systemSettings: "System settings",
 		identitySuffix: "Identity",
 		identityNote:
@@ -173,6 +189,7 @@ export const en = {
 		roleActive: "Active character",
 		roleSwitch: "Switch character",
 		roleImport: "Import character package",
+		roleImportInput: "Choose character package folder",
 		roleImportHint:
 			"Choose an extracted character package folder. It will be stored on this device and added to the character list. Packages may contain behavior extensions, so only import sources you trust.",
 		roleImportBusy: "Validating and importing...",
@@ -227,6 +244,9 @@ export const en = {
 		invokeHost: "Call live Host",
 	},
 	messages: {
+		you: "You",
+		connectionUnavailable:
+			"The app cannot reach its local service right now. Sent content is kept locally; retry after the service reconnects.",
 		toolActivity: {
 			read: "Read character guide",
 			state: "Read or update role state",
@@ -250,6 +270,8 @@ export const en = {
 		rememberedMoment: "Remembered",
 		rememberFailed: "Could not save memory. Try again.",
 		responseStopped: "Response stopped. You can regenerate it.",
+		responseFailedSaved:
+			"The response did not finish. Your message is saved and can be regenerated.",
 		justNow: "Just now",
 		noActiveConversationError: "No conversation selected",
 		userMeta: "You · Just now",
@@ -270,6 +292,8 @@ export const en = {
 		userEditBranchNote:
 			"Saving regenerates the conversation from this message. The previous version can still be restored.",
 		conversation: "Conversations",
+		loadOlder: "Load earlier messages",
+		loadingOlder: "Loading…",
 		operationFailedPrefix: "Operation failed: ",
 		correctionReasons: {
 			tone: "Wrong tone",
@@ -300,6 +324,7 @@ export const en = {
 		revised: "Revised memory saved",
 		loading: "Loading...",
 		emptyEntries: "Nothing is remembered yet.",
+		noSearchResults: "No matching memories. Try a different search or scope.",
 		defaultEntriesTitle: "Remembered",
 		fallbackConversation: "Conversations",
 		edit: "Edit",
@@ -325,7 +350,12 @@ export const en = {
 	settings: {
 		workAgent: "Work agent",
 		workAgentHint:
-			"Connect an existing local Codex login for explicitly delegated file tasks. Login data stays local and each run uses an isolated copy.",
+			"Manage work agents that can receive delegated file tasks in conversations. Built-in Pi needs no login; Codex is an optional external agent.",
+		builtInPiAgent: "Built-in Pi",
+		builtInPiReady: "Ready — no login required",
+		builtInPiHint:
+			"Characters can delegate file reading, organization, and generation tasks to Pi during a conversation.",
+		optionalCodexAgent: "Optional: Codex",
 		codexConnected: "Codex work agent is connected.",
 		codexLoginDirectory: "Codex login directory",
 		codexLoginDirectoryPlaceholder: "/Users/your-name/.codex",

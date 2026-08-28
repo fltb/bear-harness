@@ -193,6 +193,7 @@ describe("host projection validation", () => {
 		expect(isOnboardingData({ ...onboarding, stateData: {} })).toBe(false);
 
 		const settings = {
+			firstRunStage: "model" as const,
 			relationshipMemoryEnabled: true,
 			conversationHistoryReadEnabled: false,
 			networkProxy: { mode: "direct" as const },

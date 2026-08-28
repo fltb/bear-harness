@@ -173,6 +173,12 @@ export type ConversationActiveGetRequest = z.infer<typeof schema.ConversationAct
 export type ConversationActiveResponse = z.infer<typeof schema.ConversationActiveResponse>;
 export type ConversationSelectResponse = z.infer<typeof schema.ConversationSelectResponse>;
 export type PiTimelineEntry = z.infer<typeof schema.PiTimelineEntry>;
+export type ConversationTimelinePageRequest = z.infer<
+	typeof schema.ConversationTimelinePageRequest
+>;
+export type ConversationTimelinePageResponse = z.infer<
+	typeof schema.ConversationTimelinePageResponse
+>;
 export type ConversationAttachmentKind = z.infer<typeof schema.ConversationAttachmentKind>;
 export type ConversationAttachmentSummary = z.infer<typeof schema.ConversationAttachmentSummary>;
 export type ConversationAttachmentEntryKind = z.infer<

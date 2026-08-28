@@ -419,6 +419,12 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const conversation = conversationRepository.get(active.id, companionId);
 		return conversation ? { conversation } : {};
 	});
+	dispatcher.registerHandler(RPC.conversation.timelinePage, (_p) => {
+		const { id, beforeOffset } = _p as { id: string; beforeOffset?: number };
+		const piTimeline = conversationRepository.timelinePage(id, getCompanionId(s), beforeOffset);
+		if (!piTimeline) throw { kind: "not_found", reason: "conversation_not_found" };
+		return { piTimeline };
+	});
 	dispatcher.registerHandler(RPC.conversation.create, async (_p) => {
 		const companionId = getCompanionId(s);
 		const id = crypto.randomUUID();
@@ -1452,6 +1458,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const app = s.appSettings.load();
 		return {
 			settings: {
+				firstRunStage: app.firstRunStage,
 				relationshipMemoryEnabled: stateData.decisions.relationship_memory_enabled ?? false,
 				conversationHistoryReadEnabled:
 					stateData.decisions.conversation_history_read_enabled ?? false,
@@ -1469,7 +1476,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
 		if (
 			characterId &&
-			["networkProxy", "memoryVectorService", "modelDownloadSource"].some((key) => key in settings)
+			["firstRunStage", "networkProxy", "memoryVectorService", "modelDownloadSource"].some(
+				(key) => key in settings,
+			)
 		)
 			throw {
 				kind: "invalid_request",
@@ -1486,16 +1495,35 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		}
 		let app = s.appSettings.load();
 		const changed: string[] = [];
+		if ("firstRunStage" in settings) {
+			app = s.appSettings.save({ firstRunStage: settings.firstRunStage as never });
+			changed.push("firstRunStage");
+		}
 		if ("networkProxy" in settings) {
 			app = s.appSettings.save({ networkProxy: settings.networkProxy as never });
 			changed.push("networkProxy");
 		}
 		if ("memoryVectorService" in settings) {
 			const memoryVectorService = settings.memoryVectorService as
-				| { provider?: unknown }
+				| {
+						provider?: unknown;
+						enabled?: boolean;
+						baseUrl?: string;
+						apiKey?: string;
+						model?: string;
+						dimensions?: number;
+				  }
 				| undefined;
 			if (memoryVectorService?.provider === "local") {
 				throw { kind: "conflict", reason: "local_embedding_requires_transaction" };
+			}
+			if (memoryVectorService?.provider === "remote" && memoryVectorService.enabled) {
+				await s.memoryRuntime.configureRemoteEmbedding({
+					baseUrl: memoryVectorService.baseUrl!,
+					apiKey: memoryVectorService.apiKey!,
+					model: memoryVectorService.model!,
+					dimensions: memoryVectorService.dimensions!,
+				});
 			}
 			app = s.appSettings.save({ memoryVectorService: settings.memoryVectorService as never });
 			changed.push("memoryVectorService");
@@ -1506,6 +1534,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		}
 		const nextStateData = s.onboarding.getState(companionId).stateData;
 		const nextSettings = {
+			firstRunStage: app.firstRunStage,
 			relationshipMemoryEnabled: nextStateData.decisions.relationship_memory_enabled ?? false,
 			conversationHistoryReadEnabled:
 				nextStateData.decisions.conversation_history_read_enabled ?? false,

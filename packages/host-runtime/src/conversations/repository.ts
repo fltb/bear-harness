@@ -51,6 +51,8 @@ export interface ConversationRepositoryOptions {
 	readonly sessionCwd?: string;
 }
 
+const TIMELINE_PAGE_SIZE = 100;
+
 /** Resolves a conversation to its product-owned Pi session store. */
 export interface ConversationSessionResolver {
 	get(conversationId: string): PiSessionStore | undefined;
@@ -496,6 +498,16 @@ export class ConversationRepository {
 		return this.projectPi(id, title, sceneTitle, this.getSession(id));
 	}
 
+	timelinePage(id: string, companionId: string, beforeOffset?: number): PiTimeline | undefined {
+		const row = this.db
+			.select({ id: conversations.id })
+			.from(conversations)
+			.where(and(eq(conversations.id, id), eq(conversations.companionId, companionId)))
+			.get();
+		if (!row) return undefined;
+		return this.projectTimelineWindow(id, this.getSession(id), beforeOffset);
+	}
+
 	/** Resolve a selected-branch Pi timeline entry by its native SessionManager ID. */
 	getCurrentPiEntryForMessage(
 		conversationId: string,
@@ -514,6 +526,23 @@ export class ConversationRepository {
 		session: PiSessionStore,
 	): ConversationProjection {
 		const live = this.liveSessionResolver?.get(id);
+		const piTimeline = this.projectTimelineWindow(id, session);
+		return {
+			activeConversationId: id,
+			id,
+			title,
+			sceneTitle,
+			piSessionId: live?.sessionId ?? session.sessionId,
+			piLiveState: projectPiLiveState(live?.readPiLiveState()),
+			piTimeline,
+		};
+	}
+
+	private projectTimelineWindow(
+		id: string,
+		session: PiSessionStore,
+		beforeOffset?: number,
+	): PiTimeline {
 		const nativeTimeline = session.buildPiTimeline();
 		const groupedAttachments = new Map<
 			string,
@@ -543,22 +572,25 @@ export class ConversationRepository {
 			});
 			groupedAttachments.set(attachment.originEntryId, current);
 		}
-		const piTimeline: PiTimeline = {
-			...nativeTimeline,
-			entries: nativeTimeline.entries.map((entry) =>
+		const totalEntries = nativeTimeline.entries.length;
+		const endOffset = Math.min(beforeOffset ?? totalEntries, totalEntries);
+		const startOffset = Math.max(0, endOffset - TIMELINE_PAGE_SIZE);
+		const entries = nativeTimeline.entries
+			.slice(startOffset, endOffset)
+			.map((entry) =>
 				entry.kind === "message" && (entry.role === "user" || entry.role === "assistant")
 					? { ...entry, attachments: groupedAttachments.get(entry.id) ?? [] }
 					: entry,
-			),
-		};
+			);
 		return {
-			activeConversationId: id,
-			id,
-			title,
-			sceneTitle,
-			piSessionId: live?.sessionId ?? session.sessionId,
-			piLiveState: projectPiLiveState(live?.readPiLiveState()),
-			piTimeline,
+			entries,
+			...(nativeTimeline.activeLeafId &&
+			entries.some((entry) => entry.id === nativeTimeline.activeLeafId)
+				? { activeLeafId: nativeTimeline.activeLeafId }
+				: {}),
+			startOffset,
+			totalEntries,
+			hasMoreBefore: startOffset > 0,
 		};
 	}
 }

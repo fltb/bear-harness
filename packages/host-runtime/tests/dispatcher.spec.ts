@@ -5,6 +5,28 @@ import { describe, expect, it } from "vitest";
 import { Dispatcher, ProtocolResponseValidationError } from "../src/dispatcher.js";
 
 describe("Zod RPC dispatcher", () => {
+	it("reports every known RPC outcome to the audit hook without request content", async () => {
+		const outcomes: unknown[] = [];
+		const dispatcher = new Dispatcher({ onDispatchResult: (result) => outcomes.push(result) });
+		dispatcher.registerHandler(RPC.provider.logout, async () => ({}));
+		await dispatcher.dispatch(RPC.provider.logout.channel, { providerId: "secret-provider" });
+		await dispatcher.dispatch(RPC.provider.logout.channel, { unexpected: "secret-value" });
+		expect(outcomes).toEqual([
+			{
+				channel: RPC.provider.logout.channel,
+				operation: "mutation",
+				outcome: "ok",
+			},
+			{
+				channel: RPC.provider.logout.channel,
+				operation: "mutation",
+				outcome: "error",
+				error: { kind: "invalid_request", reason: "request_validation_failed" },
+			},
+		]);
+		expect(JSON.stringify(outcomes)).not.toContain("secret-provider");
+		expect(JSON.stringify(outcomes)).not.toContain("secret-value");
+	});
 	it("retries a query spanning a commit but never retries a mutation", async () => {
 		let revision = 0;
 		let reads = 0;

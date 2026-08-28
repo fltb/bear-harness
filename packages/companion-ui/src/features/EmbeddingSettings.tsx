@@ -13,7 +13,10 @@ import { useCompanionStore } from "../stores/companion.js";
 import { DownloadProgress } from "./DownloadProgress.js";
 
 /** Shared embedding controls bound directly to the Host-backed query state. */
-export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
+export function EmbeddingSettings(props: {
+	mode: "onboarding" | "settings";
+	onComplete?: () => Promise<void> | void;
+}) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const embedding = store.embedding;
@@ -28,6 +31,7 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 		SettingsCapabilities["memoryVectorProviders"][number]["id"] | null
 	>(null);
 	const [settingsCandidateId, setSettingsCandidateId] = createSignal<string | null>(null);
+	const [settingsEnabledDraft, setSettingsEnabledDraft] = createSignal<boolean | null>(null);
 	const [remoteBaseUrlDraft, setRemoteBaseUrlDraft] = createSignal<string | null>(null);
 	const [remoteApiKeyDraft, setRemoteApiKeyDraft] = createSignal<string | null>(null);
 	const [remoteModelDraft, setRemoteModelDraft] = createSignal<string | null>(null);
@@ -83,6 +87,7 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 			| undefined;
 	const localSelected = () => providerId() === "local";
 	const capabilitiesReady = () => capabilities() !== undefined;
+	const settingsEnabled = () => settingsEnabledDraft() ?? vector()?.enabled === true;
 	const selectedCandidate = () =>
 		candidates().find(
 			(candidate) =>
@@ -197,6 +202,7 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 		if (onboarding) {
 			if (onboardingProviderId() === "none") {
 				await embedding.localConfigureMutation.mutateAsync({ provider: "none" });
+				await props.onComplete?.();
 				return;
 			}
 			const candidate = selectedCandidate() ?? candidates().find((item) => item.isDefault) ?? null;
@@ -210,6 +216,8 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 						? { customPath }
 						: { candidateId: candidate?.id }),
 				});
+				await props.onComplete?.();
+				return;
 			}
 			if (onboardingProviderId() === "remote") {
 				await saveVector({
@@ -220,6 +228,7 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 					model: remoteModelDraft()?.trim(),
 					dimensions: Number(remoteDimensionsDraft()),
 				});
+				await props.onComplete?.();
 			}
 			return;
 		}
@@ -237,10 +246,12 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 			});
 			setSettingsProviderId(null);
 			setSettingsCandidateId(null);
+			setSettingsEnabledDraft(null);
 			return;
 		}
 		if (selectedProviderId === "none") {
 			await embedding.localConfigureMutation.mutateAsync({ provider: "none" });
+			setSettingsEnabledDraft(null);
 			return;
 		}
 		const baseUrl = remoteBaseUrlDraft();
@@ -259,6 +270,7 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 		setRemoteApiKeyDraft(null);
 		setRemoteModelDraft(null);
 		setRemoteDimensionsDraft(null);
+		setSettingsEnabledDraft(null);
 	};
 
 	const renderAction = () => (
@@ -295,17 +307,26 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 			<Show when={!onboarding}>
 				<Checkbox
 					class="settings-checkbox"
-					checked={vector()?.enabled === true}
+					checked={settingsEnabled()}
 					onChange={(enabled) => {
 						const current = vector();
-						if (!capabilitiesReady() || !current || enabled === current.enabled) return;
-						if (!enabled && current.provider === "local") {
-							void embedding.localConfigureMutation
-								.mutateAsync({ provider: "none" })
-								.catch(() => undefined);
+						if (!capabilitiesReady() || !current || enabled === settingsEnabled()) return;
+						setSettingsEnabledDraft(enabled);
+						if (enabled) {
+							if (current.provider === "none") {
+								setSettingsProviderId("local");
+								setSettingsCandidateId(candidates().find((item) => item.isDefault)?.id ?? null);
+							}
 							return;
 						}
-						void saveVector({ ...current, enabled }).catch(() => undefined);
+						void embedding.localConfigureMutation
+							.mutateAsync({ provider: "none" })
+							.then(() => {
+								setSettingsProviderId(null);
+								setSettingsCandidateId(null);
+								setSettingsEnabledDraft(null);
+							})
+							.catch(() => setSettingsEnabledDraft(null));
 					}}
 					disabled={!capabilitiesReady() || savingSettings() || configuringLocal()}
 				>
@@ -316,7 +337,7 @@ export function EmbeddingSettings(props: { mode: "onboarding" | "settings" }) {
 					<Checkbox.Label>{t("settings.memoryVectorEnabled")}</Checkbox.Label>
 				</Checkbox>
 			</Show>
-			<Show when={onboarding || vector()?.enabled}>
+			<Show when={onboarding || settingsEnabled()}>
 				<RadioGroup
 					class="settings-choice-group"
 					value={providerId()}

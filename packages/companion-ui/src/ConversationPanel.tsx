@@ -3,7 +3,7 @@ import type { ConversationAttachmentSummary, PiTimelineEntry } from "@bear-harne
 import { Button } from "@kobalte/core/button";
 import { Dialog } from "@kobalte/core/dialog";
 import { TextField } from "@kobalte/core/text-field";
-import { createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import { useAttachmentPreview } from "./features/AttachmentPreviewPanel.js";
 import { followTimelineScroll } from "./lib/dom-effects.js";
 import type { CharacterDisplay } from "./stores/companion.js";
@@ -62,6 +62,9 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 		"idle",
 	);
 	const entry = props.entry;
+	const capturedByHost = () =>
+		store.memory.entries()?.some((memory) => memory.sourceEntryId === entry.id) === true;
+	const captured = () => captureState() === "saved" || capturedByHost();
 	if (entry.kind !== "message") {
 		// Native Pi context entries describe internal session bookkeeping. Rendering
 		// each one as an unlabeled rule made model/level changes look like broken UI.
@@ -114,16 +117,28 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 	const assistant = entry.role === "assistant" ? entry : undefined;
 	const failed = assistant?.stopReason === "error" || assistant?.stopReason === "aborted";
 	const errorText =
-		assistant?.stopReason === "aborted" ? t("messages.responseStopped") : assistant?.errorMessage;
+		assistant?.stopReason === "aborted"
+			? t("messages.responseStopped")
+			: assistant?.errorMessage
+				? t("messages.responseFailedSaved")
+				: undefined;
+	if (
+		!isUser &&
+		(entry.text === undefined || entry.text.length === 0) &&
+		(entry.attachments?.length ?? 0) === 0 &&
+		!failed
+	) {
+		return null;
+	}
 	return (
 		<>
 			<article
 				class={`msg pi-timeline-message ${isUser ? "user" : "bear-msg"}${failed ? " stream-failed" : ""}`}
 				data-pi-entry-id={entry.id}
-				aria-label={isUser ? "user" : characterName}
+				aria-label={isUser ? t("messages.you") : characterName}
 			>
 				<div class="msg-heading">
-					<div class="msg-meta">{isUser ? "You" : characterName}</div>
+					<div class="msg-meta">{isUser ? t("messages.you") : characterName}</div>
 					<Button
 						type="button"
 						class="msg-menu-trigger"
@@ -232,7 +247,7 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 					</Show>
 					<Button
 						type="button"
-						disabled={captureState() === "saving" || captureState() === "saved"}
+						disabled={captureState() === "saving" || captured()}
 						onClick={() => {
 							setCaptureState("saving");
 							void store.memory
@@ -243,7 +258,7 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 					>
 						{captureState() === "saving"
 							? t("messages.rememberingMoment")
-							: captureState() === "saved"
+							: captured()
 								? t("messages.rememberedMoment")
 								: captureState() === "error"
 									? t("messages.rememberFailed")
@@ -260,7 +275,33 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 }
 
 function PiTimelineRenderer(props: { entries: readonly PiTimelineEntry[] }) {
-	return <For each={props.entries}>{(entry) => <PiTimelineEntryView entry={entry} />}</For>;
+	const visible = createMemo(() => {
+		const result: PiTimelineEntry[] = [];
+		let lastAssistantSignature: string | undefined;
+		for (const entry of props.entries) {
+			if (entry.kind !== "message") continue;
+			if (entry.role === "user") {
+				lastAssistantSignature = undefined;
+				result.push(entry);
+				continue;
+			}
+			if (entry.role !== "assistant") {
+				result.push(entry);
+				continue;
+			}
+			const signature = JSON.stringify({
+				text: entry.text ?? "",
+				stopReason: entry.stopReason,
+				errorMessage: entry.errorMessage ?? "",
+				attachments: entry.attachments?.map((attachment) => attachment.id) ?? [],
+			});
+			if (signature === lastAssistantSignature) continue;
+			lastAssistantSignature = signature;
+			result.push(entry);
+		}
+		return result;
+	});
+	return <For each={visible()}>{(entry) => <PiTimelineEntryView entry={entry} />}</For>;
 }
 
 /**
@@ -282,7 +323,11 @@ function PiLiveAssistantMessageView() {
 				const stopReason = message.stopReason;
 				const failed = stopReason === "error" || stopReason === "aborted";
 				const errorText =
-					stopReason === "aborted" ? t("messages.responseStopped") : message.errorMessage;
+					stopReason === "aborted"
+						? t("messages.responseStopped")
+						: message.errorMessage
+							? t("messages.responseFailedSaved")
+							: undefined;
 				return (
 					<article
 						class={`msg bear-msg streaming-message${failed ? " stream-failed" : ""}`}
@@ -313,6 +358,7 @@ export function ConversationPanel() {
 	const view = useConversationViewWorkflow(store);
 	const { sceneTitle, hasThreadContent } = view;
 	let threadRef: HTMLElement | undefined;
+	const [loadingOlder, setLoadingOlder] = createSignal(false);
 
 	followTimelineScroll(
 		() => threadRef,
@@ -332,14 +378,30 @@ export function ConversationPanel() {
 			>
 				<Show when={store.error != null}>
 					<div class="thread-error" role="alert">
-						{t("messages.operationFailedPrefix")}
-						{store.error}
+						{t("messages.connectionUnavailable")}
 					</div>
 				</Show>
 
 				<Show when={hasThreadContent()}>
 					<Show when={store.activePiTimeline}>
-						{(timeline) => <PiTimelineRenderer entries={timeline().entries} />}
+						{(timeline) => (
+							<>
+								<Show when={timeline().hasMoreBefore === true}>
+									<Button
+										type="button"
+										class="timeline-load-older"
+										disabled={loadingOlder()}
+										onClick={() => {
+											setLoadingOlder(true);
+											void store.loadOlderMessages().finally(() => setLoadingOlder(false));
+										}}
+									>
+										{loadingOlder() ? t("messages.loadingOlder") : t("messages.loadOlder")}
+									</Button>
+								</Show>
+								<PiTimelineRenderer entries={timeline().entries} />
+							</>
+						)}
 					</Show>
 					<PiLiveAssistantMessageView />
 				</Show>

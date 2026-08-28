@@ -575,6 +575,22 @@ export class TdaiCore {
 			const stores = await initStores(this.cfg, this.dataDir, this.logger);
 			this.vectorStore = stores.vectorStore;
 			this.embeddingService = stores.embeddingService;
+			if (stores.needsReindex) {
+				if (!this.vectorStore || !this.embeddingService) {
+					throw new Error("embedding reindex required but the vector store or embedding service is unavailable");
+				}
+				const result = await this.vectorStore.reindexAll((text) =>
+					this.embeddingService!.embed(text),
+				);
+				this.lastReindexResult = result;
+				if (!result.complete) {
+					throw new Error(result.error ?? "embedding reindex did not complete");
+				}
+				this.logger.info(
+					`${TAG} Embedding reindex completed before the new configuration became ready` +
+						(stores.reindexReason ? ` (${stores.reindexReason})` : ""),
+				);
+			}
 			this.logger.debug?.(
 				`${TAG} Stores initialized: backend=${this.cfg.storeBackend}, embedding=${this.cfg.embedding.provider}`,
 			);

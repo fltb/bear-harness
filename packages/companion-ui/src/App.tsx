@@ -96,6 +96,13 @@ function DesktopFrame() {
 	const [layoutMode, setLayoutMode] = createSignal<AppLayoutMode>("window");
 	const [mobileNavigationOpen, setMobileNavigationOpen] = createSignal(false);
 	let appRef: HTMLDivElement | undefined;
+	let backstageReturnFocus: HTMLElement | undefined;
+	const openBackstage = (tab: "roles" | "settings") => {
+		if (document.activeElement instanceof HTMLElement) {
+			backstageReturnFocus = document.activeElement;
+		}
+		workflow.openBackstage(tab);
+	};
 
 	onMount(() => {
 		const update = (width: number) => {
@@ -145,7 +152,7 @@ function DesktopFrame() {
 					</Show>
 					<Sidebar
 						character={workflow.character()}
-						onOpenBackstage={workflow.openBackstage}
+						onOpenBackstage={openBackstage}
 						onNavigate={() => setMobileNavigationOpen(false)}
 					/>
 					<main class="main">
@@ -183,7 +190,7 @@ function DesktopFrame() {
 						<ConversationPanel />
 						<Composer
 							placeholder={workflow.composerPlaceholder()}
-							onOpenModelSettings={() => workflow.openBackstage("settings")}
+							onOpenModelSettings={() => openBackstage("settings")}
 						/>
 						<FirstMeeting />
 					</main>
@@ -193,6 +200,7 @@ function DesktopFrame() {
 				open={workflow.backstageOpen()}
 				onClose={workflow.closeBackstage}
 				initialTab={workflow.backstageTab()}
+				returnFocus={() => backstageReturnFocus?.focus()}
 			/>
 		</div>
 	);

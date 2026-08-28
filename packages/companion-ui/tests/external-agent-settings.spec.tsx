@@ -46,6 +46,8 @@ describe("ExternalAgentSettings", () => {
 	it("shows an empty discovery result and can refresh it", async () => {
 		const { client } = createTestClient();
 		renderSettings(client);
+		expect(await screen.findByText(zhCN.settings.builtInPiReady)).toBeInTheDocument();
+		expect(screen.getByText(zhCN.settings.builtInPiHint)).toBeInTheDocument();
 		expect(await screen.findByText(zhCN.settings.codexNotFound)).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: zhCN.settings.refreshCodex }));
 		await waitFor(() => expect(client.externalAgent.discoverCodex).toHaveBeenCalledTimes(2));

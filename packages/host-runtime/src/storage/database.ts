@@ -488,6 +488,14 @@ export class Database {
 	assertSchemaContract(): void {
 		const required: Readonly<Record<string, readonly string[]>> = {
 			installation_identity: ["id", "installation_id", "created_at"],
+			app_settings: [
+				"id",
+				"first_run_stage",
+				"network_proxy",
+				"memory_vector_service",
+				"model_download_mirror",
+				"updated_at",
+			],
 			runs: [
 				"id",
 				"conversation_id",

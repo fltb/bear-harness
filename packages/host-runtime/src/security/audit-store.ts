@@ -86,6 +86,12 @@ const SEGMENT_RE = /^segment-(\d+)\.jsonl$/;
 const MAX_ACTION_LENGTH = 128;
 /** Schema `MAX_STRING_LENGTH` is 4096; stay under with headroom. */
 const MAX_DETAIL_LENGTH = 4000;
+const SAFE_AUDIT_REASON = /^[a-z][a-z0-9_.:-]{0,127}$/;
+
+/** Preserve stable reason codes while excluding arbitrary messages, paths, and user content. */
+export function auditReasonCode(reason: string): string {
+	return SAFE_AUDIT_REASON.test(reason) ? reason : "handler_failed";
+}
 
 function hashRecord(record: Omit<AuditRecord, "hash">): string {
 	return createHash("sha256")
@@ -157,6 +163,11 @@ export class AuditStore {
 			() => undefined,
 		);
 		return run;
+	}
+
+	/** Wait until every append already accepted by the store has reached disk. */
+	async flush(): Promise<void> {
+		await this.chain;
 	}
 
 	/** List entries with `seq > afterSeq`, newest first, pruned to `limit`. */
@@ -399,11 +410,17 @@ export function wireAuditToEvents(
 	eventBus: Pick<EventBus, "subscribe">,
 ): () => void {
 	const listener = (event: { kind: string; payload: unknown }): void => {
+		// Presentation dismissal is transient UI cleanup, not a durable user or
+		// model decision. Recording every dismissal flooded the trace.
+		if (event.kind === "roleplay.choices_dismissed") return;
 		const kind = auditKindForEvent(event.kind);
 		if (!kind) return;
 		const dot = event.kind.indexOf(".");
 		const action = dot >= 0 ? event.kind.slice(dot + 1) : event.kind;
-		const detail = event.payload === undefined ? "" : JSON.stringify(event.payload);
+		// Event payloads may contain prompts, local paths, or user content. The
+		// RPC trace already records outcome and reason; keep this channel as a
+		// privacy-safe event marker instead of copying arbitrary values.
+		const detail = JSON.stringify({ event: event.kind });
 		void audit.append(kind, action, detail).catch(() => {
 			// Audit is a side channel: never break the host on append failure.
 		});

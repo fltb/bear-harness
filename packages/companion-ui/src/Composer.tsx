@@ -311,16 +311,17 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 								<span>
 									{item.uploadState === "uploading"
 										? `${Math.round(item.progress * 100)}%`
-										: item.uploadState}
+										: t(`attachments.uploadStates.${item.uploadState}`)}
 								</span>
+								<Show when={item.error}>{(error) => <span role="alert">{error()}</span>}</Show>
 								<Show when={item.uploadState === "error" || item.uploadState === "cancelled"}>
 									<Button type="button" onClick={() => workflow.retryAttachment(item.draftId)}>
-										Retry
+										{t("attachments.retry")}
 									</Button>
 								</Show>
 								<Button
 									type="button"
-									aria-label={`Remove ${item.name}`}
+									aria-label={t("attachments.remove", { name: item.name })}
 									onClick={() => void workflow.removeAttachment(item.draftId)}
 								>
 									×
@@ -345,6 +346,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 						disabled={
 							!store.activeConversationId ||
 							!workflow.modelSelected() ||
+							workflow.modelBusy() ||
 							workflow.attachments().some((item) => item.uploadState !== "complete") ||
 							(!workflow.composerText().trim() && !workflow.attachments().length)
 						}

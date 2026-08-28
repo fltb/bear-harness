@@ -567,11 +567,11 @@ describe("composer", () => {
 		fireEvent.change(screen.getByLabelText(zhCN.composer.uploadFile), {
 			target: { files: [new File(["image"], "retry.png", { type: "image/png" })] },
 		});
-		await user.click(await screen.findByRole("button", { name: "Retry" }));
+		await user.click(await screen.findByRole("button", { name: zhCN.attachments.retry }));
 		await waitFor(() => expect(client.conversationAttachment.completeUpload).toHaveBeenCalled());
 		expect(client.conversationAttachment.startUpload).toHaveBeenCalledTimes(2);
 
-		await user.click(screen.getByRole("button", { name: "Remove note.txt" }));
+		await user.click(screen.getByRole("button", { name: "移除 note.txt" }));
 		await waitFor(() =>
 			expect(client.conversationAttachment.discard).toHaveBeenCalledWith({
 				conversationId: "conversation-1",
@@ -609,7 +609,7 @@ describe("composer", () => {
 			target: { files: [new File(["image"], "cancel.png", { type: "image/png" })] },
 		});
 		await waitFor(() => expect(client.conversationAttachment.appendChunk).toHaveBeenCalled());
-		await user.click(screen.getByRole("button", { name: "Remove cancel.png" }));
+		await user.click(screen.getByRole("button", { name: "移除 cancel.png" }));
 		await waitFor(() =>
 			expect(client.conversationAttachment.cancelUpload).toHaveBeenCalledWith({
 				conversationId: "conversation-1",

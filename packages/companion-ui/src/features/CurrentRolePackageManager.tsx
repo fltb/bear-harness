@@ -32,7 +32,7 @@ export function CurrentRolePackageManager(props: {
 	loading: () => boolean;
 	error: () => string | undefined;
 	selectPackage: (id: string, confirmDiscard: () => boolean) => void;
-	savePackage: (yaml: string) => Promise<CharacterPackageDocument>;
+	savePackage: (yaml: string, expectedSha256: string) => Promise<CharacterPackageDocument>;
 	pluginTrust: (
 		id: string,
 	) => Promise<{ origin: string; pluginHash: string; pluginsPresent: boolean; trusted: boolean }>;
@@ -60,7 +60,7 @@ export function CurrentRolePackageManager(props: {
 	const [t] = useTranslation(undefined, { i18n });
 	const selectedId = () => props.document()?.characterId ?? "";
 	const [drafts, setDrafts] = createSignal<
-		Record<string, { raw?: string; prompt?: PromptDraft; storage?: string }>
+		Record<string, { raw?: string; prompt?: PromptDraft; storage?: string; baseSha256?: string }>
 	>({});
 	const draft = () => drafts()[selectedId()];
 	const raw = () => draft()?.raw ?? props.document()?.yaml ?? "";
@@ -72,7 +72,11 @@ export function CurrentRolePackageManager(props: {
 	const patchDraft = (patch: { raw?: string; prompt?: PromptDraft; storage?: string }) =>
 		setDrafts((current) => ({
 			...current,
-			[selectedId()]: { ...current[selectedId()], ...patch },
+			[selectedId()]: {
+				...current[selectedId()],
+				baseSha256: current[selectedId()]?.baseSha256 ?? props.document()?.sha256,
+				...patch,
+			},
 		}));
 	const setRaw = (value: string) => patchDraft({ raw: value });
 	const setPrompt = (value: PromptDraft) => patchDraft({ prompt: value });
@@ -148,9 +152,14 @@ export function CurrentRolePackageManager(props: {
 	const discard = () => {
 		const current = props.document();
 		if (!current) return;
-		setRaw(current.yaml);
-		setPrompt(promptFrom(current));
-		setStorage(stringify(parseDocument(current.yaml).get("roleplay", true) ?? {}));
+		setDrafts((drafts) => ({
+			...drafts,
+			[current.characterId]: {
+				raw: current.yaml,
+				prompt: promptFrom(current),
+				storage: stringify(parseDocument(current.yaml).get("roleplay", true) ?? {}),
+			},
+		}));
 		setParseError(undefined);
 		setSaveError(undefined);
 	};
@@ -159,12 +168,22 @@ export function CurrentRolePackageManager(props: {
 		setSaving(true);
 		setSaveError(undefined);
 		try {
-			const next = await props.savePackage(raw());
-			setRaw(next.yaml);
-			setPrompt(promptFrom(next));
-			setStorage(stringify(parseDocument(next.yaml).get("roleplay", true) ?? {}));
+			const next = await props.savePackage(raw(), draft()?.baseSha256 ?? props.document()!.sha256);
+			setDrafts((drafts) => ({
+				...drafts,
+				[next.characterId]: {
+					raw: next.yaml,
+					prompt: promptFrom(next),
+					storage: stringify(parseDocument(next.yaml).get("roleplay", true) ?? {}),
+				},
+			}));
 		} catch (error) {
-			setSaveError(error instanceof Error ? error.message : String(error));
+			const message = error instanceof Error ? error.message : String(error);
+			setSaveError(
+				message.includes("character_package_revision_mismatch")
+					? t("currentRolePackage.conflict")
+					: message,
+			);
 		} finally {
 			setSaving(false);
 		}
@@ -244,7 +263,7 @@ export function CurrentRolePackageManager(props: {
 								<div class="current-role-package-form">
 									<For each={PROMPT_FIELDS}>
 										{(field) => (
-											<TextField class="field">
+											<TextField class="setting-field">
 												<TextField.Label class="field-label">
 													{t(`currentRolePackage.promptFields.${field}`)}
 												</TextField.Label>
@@ -278,7 +297,7 @@ export function CurrentRolePackageManager(props: {
 										</Button>
 									</Show>
 								</div>
-								<TextField class="field">
+								<TextField class="setting-field">
 									<TextField.Label class="field-label">roleplay.yaml</TextField.Label>
 									<TextField.TextArea
 										aria-label={t("currentRolePackage.storageDefinition")}
@@ -301,6 +320,7 @@ export function CurrentRolePackageManager(props: {
 							<Tabs.Content value="memory" class="tab-panel">
 								<div class="detail-card">
 									<strong>{t("currentRolePackage.relationshipMemory")}</strong>
+									<span>{t("currentRolePackage.relationshipMemoryDescription")}</span>
 									<Button
 										type="button"
 										class="switch-control"
@@ -316,6 +336,7 @@ export function CurrentRolePackageManager(props: {
 								</div>
 								<div class="detail-card">
 									<strong>{t("currentRolePackage.readConversationHistory")}</strong>
+									<span>{t("currentRolePackage.readConversationHistoryDescription")}</span>
 									<Button
 										type="button"
 										class="switch-control"
@@ -359,27 +380,27 @@ export function CurrentRolePackageManager(props: {
 								</p>
 							)}
 						</Show>
-						<div class="current-role-package-actions">
-							<span>
-								{dirty() ? t("currentRolePackage.unsaved") : t("currentRolePackage.aligned")}
-							</span>
-							<Button
-								data-control="command"
-								type="button"
-								disabled={!dirty() || saving() || !current().writable}
-								onClick={discard}
-							>
-								{t("currentRolePackage.discard")}
-							</Button>
-							<Button
-								data-variant="primary"
-								type="button"
-								disabled={!dirty() || saving() || !current().writable || Boolean(parseError())}
-								onClick={() => void save()}
-							>
-								{t("currentRolePackage.save")}
-							</Button>
-						</div>
+						<Show when={dirty() || saving() || Boolean(saveError())}>
+							<div class="current-role-package-actions">
+								<span>{t("currentRolePackage.unsaved")}</span>
+								<Button
+									data-control="command"
+									type="button"
+									disabled={!dirty() || saving() || !current().writable}
+									onClick={discard}
+								>
+									{t("currentRolePackage.discard")}
+								</Button>
+								<Button
+									data-variant="primary"
+									type="button"
+									disabled={!dirty() || saving() || !current().writable || Boolean(parseError())}
+									onClick={() => void save()}
+								>
+									{t("currentRolePackage.save")}
+								</Button>
+							</div>
+						</Show>
 					</>
 				)}
 			</Show>

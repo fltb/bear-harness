@@ -14,6 +14,8 @@ describe("TRACE content redaction", () => {
 		expect(result.content).not.toContain("bob");
 		expect(result.content).not.toContain("hidden");
 		expect(result.content).not.toContain("item.txt");
+		expect(result.content).not.toContain("project");
+		expect(result.content).not.toContain("repo");
 		expect(result.content).toContain("[REDACTED_SECRET]");
 		expect(result.content).toContain("[REDACTED_HOME]");
 		expect(result.content).toContain("[REDACTED_PATH]");

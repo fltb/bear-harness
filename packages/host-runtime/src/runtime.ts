@@ -62,7 +62,7 @@ import { ModelRegistry } from "./models/registry.js";
 import { applyProxyConfig, type SystemProxyResolver } from "./network/proxy-config.js";
 import { ProviderCatalog } from "./providers/catalog.js";
 import { CredentialStore, type CredentialVault } from "./providers/credential-store.js";
-import { AuditStore, wireAuditToEvents } from "./security/audit-store.js";
+import { AuditStore, auditReasonCode, wireAuditToEvents } from "./security/audit-store.js";
 import { type FsProtectionHandle, installFsProtection } from "./security/fs-protection.js";
 import { createModerationService, type ModerationService } from "./security/moderation.js";
 import { findHostLocalEmbeddingCandidate } from "./settings/capabilities.js";
@@ -765,8 +765,44 @@ export class HostRuntime {
 		});
 		this.dispatcher = new Dispatcher({
 			syncRevision,
+			onDispatchResult: ({ channel, operation, outcome, error }) => {
+				if (operation !== "mutation" && outcome !== "error") return;
+				const kind = channel.startsWith("run.")
+					? "run"
+					: channel.startsWith("settings.") ||
+							channel.startsWith("provider.") ||
+							channel.startsWith("model.") ||
+							channel.startsWith("character.")
+						? "config"
+						: "memory";
+				void this.auditStore
+					.append(
+						kind,
+						outcome === "ok" ? "rpc_committed" : "rpc_failed",
+						JSON.stringify({
+							channel,
+							...(error
+								? { error: { kind: error.kind, reason: auditReasonCode(error.reason) } }
+								: {}),
+						}),
+					)
+					.catch(() => undefined);
+			},
 			responseValidation: options.protocolViolationMode ?? "throw",
 			onProtocolViolation: (error) => {
+				void this.auditStore
+					.append(
+						"config",
+						"protocol_violation",
+						JSON.stringify({
+							channel: error.channel,
+							issues: error.issues.map((issue) => ({
+								path: issue.path.join("."),
+								message: issue.message,
+							})),
+						}),
+					)
+					.catch(() => undefined);
 				eventBus.publish("diagnostics.protocol_violation", {
 					channel: error.channel,
 					issues: error.issues.map((issue) => ({
@@ -956,6 +992,7 @@ export class HostRuntime {
 		this.uninstallFsProtection = undefined;
 		this.unsubscribeAudit?.();
 		this.unsubscribeAudit = undefined;
+		await this.auditStore.flush();
 		this.characterBehavior.dispose();
 		try {
 			await this.memoryRuntime.close();

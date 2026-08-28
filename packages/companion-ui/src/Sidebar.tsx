@@ -154,9 +154,11 @@ export function Sidebar(props: {
 						when={displayedConversations().length > 0}
 						fallback={
 							<div class="conversations-empty" role="note">
-								{showArchived()
-									? t("sidebar.emptyArchivedConversations")
-									: t("sidebar.emptyConversations")}
+								{workflow.query().trim()
+									? t("sidebar.noSearchResults")
+									: showArchived()
+										? t("sidebar.emptyArchivedConversations")
+										: t("sidebar.emptyConversations")}
 							</div>
 						}
 					>

@@ -1079,6 +1079,11 @@ export const ConversationSelectRequest = z.strictObject({
 	id: ConversationId,
 });
 export const ConversationActiveGetRequest = z.strictObject({});
+export const ConversationTimelinePageRequest = z.strictObject({
+	id: ConversationId,
+	/** Exclusive absolute offset. Omit to read the newest page. */
+	beforeOffset: z.number().int().safe().nonnegative().optional(),
+});
 
 export const ConversationRenameRequest = z.strictObject({
 	id: ConversationId,
@@ -1179,6 +1184,14 @@ export type PiTimelineEntry = z.infer<typeof PiTimelineEntry>;
 export const PiTimeline = z.strictObject({
 	entries: z.array(PiTimelineEntry).max(MAX_ARRAY_LENGTH),
 	activeLeafId: PiSessionEntryId.optional(),
+	/** Absolute offset of the first projected entry in the native timeline. */
+	startOffset: z.number().int().safe().nonnegative().optional(),
+	/** Total entries retained by the Host, including entries outside this window. */
+	totalEntries: z.number().int().safe().nonnegative().optional(),
+	hasMoreBefore: z.boolean().optional(),
+});
+export const ConversationTimelinePageResponse = z.strictObject({
+	piTimeline: PiTimeline,
 });
 export const ConversationSearchHit = z.strictObject({
 	conversationId: ConversationId,
@@ -2032,24 +2045,82 @@ export const RunResponse = Run;
 // Settings
 // ---------------------------------------------------------------------------
 
-export const SettingsData = z.strictObject({
-	relationshipMemoryEnabled: z.boolean(),
-	conversationHistoryReadEnabled: z.boolean(),
-	networkProxy: z.strictObject({
+const NetworkProxySettings = z
+	.strictObject({
 		mode: z.union([z.literal("direct"), z.literal("auto"), z.literal("manual")]),
 		url: z.string().min(1).max(2048).optional(),
 		bypass: z.array(z.string().min(1).max(512)).max(50).optional(),
-	}),
-	memoryVectorService: z.strictObject({
+	})
+	.superRefine((value, context) => {
+		if (value.mode !== "manual") return;
+		if (!value.url) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["url"],
+				message: "manual proxy URL is required",
+			});
+			return;
+		}
+		try {
+			const url = new URL(value.url);
+			if (!["http:", "https:"].includes(url.protocol) || url.username || url.password)
+				throw new Error();
+		} catch {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["url"],
+				message: "manual proxy URL must be HTTP(S) and cannot contain credentials",
+			});
+		}
+	});
+const MemoryVectorServiceSettings = z
+	.strictObject({
 		enabled: z.boolean(),
 		provider: z.union([z.literal("none"), z.literal("remote"), z.literal("local")]),
 		baseUrl: z.string().min(1).max(2048).optional(),
 		apiKey: z.string().min(1).max(8192).optional(),
 		model: z.string().min(1).max(200).optional(),
-		dimensions: z.number().int().safe().min(0).max(65536).optional(),
+		dimensions: z.number().int().safe().positive().max(65536).optional(),
 		localModel: z.string().min(1).max(200).optional(),
 		customPath: z.string().min(1).max(4096).optional(),
-	}),
+	})
+	.superRefine((value, context) => {
+		if (value.provider !== "remote" || !value.enabled) return;
+		for (const key of ["baseUrl", "apiKey", "model"] as const) {
+			if (!value[key])
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: [key],
+					message: `${key} is required for remote embedding`,
+				});
+		}
+		if (!value.dimensions)
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["dimensions"],
+				message: "positive dimensions are required for remote embedding",
+			});
+		if (value.baseUrl) {
+			try {
+				const url = new URL(value.baseUrl);
+				if (!["http:", "https:"].includes(url.protocol) || url.username || url.password)
+					throw new Error();
+			} catch {
+				context.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ["baseUrl"],
+					message: "remote embedding URL must be HTTP(S) and cannot contain credentials",
+				});
+			}
+		}
+	});
+
+export const SettingsData = z.strictObject({
+	firstRunStage: z.union([z.literal("model"), z.literal("embedding"), z.literal("role")]),
+	relationshipMemoryEnabled: z.boolean(),
+	conversationHistoryReadEnabled: z.boolean(),
+	networkProxy: NetworkProxySettings,
+	memoryVectorService: MemoryVectorServiceSettings,
 	modelDownloadSource: z.discriminatedUnion("type", [
 		z.strictObject({ type: z.literal("official") }),
 		z.strictObject({ type: z.literal("hf-mirror") }),
@@ -2073,10 +2144,11 @@ export const SettingsResponse = z.strictObject({
 	settings: SettingsData,
 });
 export const SettingsPatch = z.strictObject({
+	firstRunStage: SettingsData.shape.firstRunStage.optional(),
 	relationshipMemoryEnabled: z.boolean().optional(),
 	conversationHistoryReadEnabled: z.boolean().optional(),
-	networkProxy: SettingsData.shape.networkProxy.optional(),
-	memoryVectorService: SettingsData.shape.memoryVectorService.optional(),
+	networkProxy: NetworkProxySettings.optional(),
+	memoryVectorService: MemoryVectorServiceSettings.optional(),
 	modelDownloadSource: SettingsData.shape.modelDownloadSource.optional(),
 });
 export const SettingsSetRequest = z.strictObject({
@@ -2435,6 +2507,12 @@ export const RPC = {
 			"conversation.activeGet:v1",
 			ConversationActiveGetRequest,
 			ConversationActiveResponse,
+			"query",
+		),
+		timelinePage: endpoint(
+			"conversation.timelinePage:v1",
+			ConversationTimelinePageRequest,
+			ConversationTimelinePageResponse,
 			"query",
 		),
 		rename: endpoint(

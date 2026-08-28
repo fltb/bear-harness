@@ -64,6 +64,18 @@ export function ExternalAgentSettings() {
 				<h3 id="external-agent-settings-heading">{t("settings.workAgent")}</h3>
 				<p class="field-hint">{t("settings.workAgentHint")}</p>
 			</div>
+			<div class="provider-card">
+				<div class="settings-group-heading">
+					<strong>{t("settings.builtInPiAgent")}</strong>
+					<p class="field-hint">{t("settings.builtInPiHint")}</p>
+					<Show when={status()?.pi.available === true}>
+						<p class="status-line ok">{t("settings.builtInPiReady")}</p>
+					</Show>
+				</div>
+			</div>
+			<div class="settings-group-heading">
+				<h4>{t("settings.optionalCodexAgent")}</h4>
+			</div>
 			<Show when={status()?.codex.available === true}>
 				<p class="status-line ok">{t("settings.codexConnected")}</p>
 			</Show>

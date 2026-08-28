@@ -56,6 +56,12 @@ export interface DispatcherOptions {
 	 */
 	responseValidation?: "throw" | "isolate";
 	onProtocolViolation?: (error: ProtocolResponseValidationError) => void;
+	onDispatchResult?: (result: {
+		channel: string;
+		operation: "query" | "mutation";
+		outcome: "ok" | "error";
+		error?: RpcError;
+	}) => void;
 }
 
 const IPC_ERROR_KINDS: readonly IpcErrorKind[] = [
@@ -91,11 +97,13 @@ export class Dispatcher {
 	private readonly handlers = new Map<string, RpcHandler>();
 	private readonly responseValidation: "throw" | "isolate";
 	private readonly onProtocolViolation?: (error: ProtocolResponseValidationError) => void;
+	private readonly onDispatchResult?: DispatcherOptions["onDispatchResult"];
 
 	constructor(options: DispatcherOptions = {}) {
 		this.syncRevision = options.syncRevision;
 		this.responseValidation = options.responseValidation ?? "throw";
 		this.onProtocolViolation = options.onProtocolViolation;
+		this.onDispatchResult = options.onDispatchResult;
 	}
 
 	/** Register a handler for a canonical RPC endpoint. */
@@ -127,22 +135,34 @@ export class Dispatcher {
 		if (!contract) {
 			return { ok: false, error: { kind: "unavailable", reason: "handler_not_registered" } };
 		}
+		const finish = (response: RpcResponse): RpcResponse => {
+			this.onDispatchResult?.({
+				channel,
+				operation: contract.operation,
+				outcome: response.ok ? "ok" : "error",
+				...(!response.ok ? { error: response.error } : {}),
+			});
+			return response;
+		};
 
 		// Validate the request body against the schema
 		const parsed = contract.request.safeParse(params);
 		if (!parsed.success) {
-			return {
+			return finish({
 				ok: false,
 				error: {
 					kind: "invalid_request",
 					reason: "request_validation_failed",
 				},
-			};
+			});
 		}
 
 		const handler = this.handlers.get(channel);
 		if (!handler) {
-			return { ok: false, error: { kind: "unavailable", reason: "handler_not_registered" } };
+			return finish({
+				ok: false,
+				error: { kind: "unavailable", reason: "handler_not_registered" },
+			});
 		}
 
 		let data: unknown;
@@ -165,23 +185,24 @@ export class Dispatcher {
 				if (attempt >= 2) throw { kind: "conflict", reason: "sync_read_changed" };
 			}
 		} catch (error) {
-			return {
+			return finish({
 				ok: false,
 				error: normalizeHandlerError(error),
-			};
+			});
 		}
 
 		const response = contract.response.safeParse(data);
-		if (response.success) return { ok: true, data: response.data, ...(sync ? { sync } : {}) };
+		if (response.success)
+			return finish({ ok: true, data: response.data, ...(sync ? { sync } : {}) });
 		const violation = new ProtocolResponseValidationError(
 			channel as Channel,
 			response.error.issues.map((issue) => ({ path: [...issue.path], message: issue.message })),
 		);
 		this.onProtocolViolation?.(violation);
 		if (this.responseValidation === "throw") throw violation;
-		return {
+		return finish({
 			ok: false,
 			error: { kind: "internal", reason: "response_validation_failed" },
-		};
+		});
 	}
 }

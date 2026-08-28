@@ -1,6 +1,6 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Button } from "@kobalte/core/button";
-import { For, onCleanup, onMount, Show } from "solid-js";
+import { createMemo, For, onCleanup, onMount, Show } from "solid-js";
 import { useShellWorkflowStore } from "./stores/shell-workflows.js";
 import { WorkRunCard } from "./WorkPanel.js";
 
@@ -15,6 +15,9 @@ export function ThreadHead(props: { sceneTitle: string }) {
 	const workflow = useShellWorkflowStore();
 	const queueOpen = workflow.queueOpen;
 	const activeRuns = workflow.activeRuns;
+	const recentRuns = createMemo(() =>
+		workflow.host.runs.filter((run) => !["enqueued", "running", "needs_user"].includes(run.status)),
+	);
 	const [t] = useTranslation(undefined, { i18n });
 	let pillWrapRef: HTMLDivElement | undefined;
 
@@ -66,6 +69,10 @@ export function ThreadHead(props: { sceneTitle: string }) {
 							fallback={<div class="empty">{t("threadHead.noRunningWork")}</div>}
 						>
 							<For each={activeRuns()}>{(run) => <WorkRunCard run={run} />}</For>
+						</Show>
+						<Show when={recentRuns().length > 0}>
+							<h3>{t("threadHead.recentWork")}</h3>
+							<For each={recentRuns()}>{(run) => <WorkRunCard run={run} />}</For>
 						</Show>
 					</div>
 				</Show>

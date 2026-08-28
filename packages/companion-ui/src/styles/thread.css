@@ -24,6 +24,13 @@
 	@apply rounded-full;
 }
 
+.timeline-load-older {
+	@apply self-center rounded-lg border px-3 py-2 text-xs;
+	border-color: var(--line);
+	color: var(--text-soft);
+	background: var(--surface-control);
+}
+
 .msg {
 	@apply max-w-4/5 rounded-2xl px-4 py-3 text-xs leading-relaxed;
 }
@@ -47,7 +54,7 @@
 }
 
 .msg p {
-	@apply m-0 font-serif text-lg leading-relaxed;
+	@apply m-0 break-words font-serif text-lg leading-relaxed;
 }
 
 .pi-tool-result {
