@@ -54,7 +54,7 @@
 }
 
 .sidebar-tools {
-	@apply flex gap-2;
+	@apply flex items-center gap-2;
 }
 
 .search-trigger {
@@ -83,7 +83,7 @@
 }
 
 .new-conversation {
-	@apply grid size-8 shrink-0 place-items-center rounded-lg border border-line text-base;
+	@apply grid size-10 shrink-0 place-items-center rounded-lg border border-line text-base;
 	color: var(--text-soft);
 	background: var(--surface-subtle);
 }

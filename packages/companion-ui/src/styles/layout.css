@@ -254,6 +254,15 @@
 	@apply hidden;
 }
 
+.app[data-layout="mobile"] .search-trigger,
+.app[data-layout="mobile"] .new-conversation {
+	@apply min-h-11;
+}
+
+.app[data-layout="mobile"] .new-conversation {
+	@apply size-11;
+}
+
 .app[data-layout="mobile"] .mobile-navigation-close {
 	@apply absolute right-2 top-2 z-10 grid size-11 place-items-center rounded-lg border-0;
 	color: var(--text-muted);

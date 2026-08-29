@@ -81,6 +81,16 @@ test("canonical layouts and management surfaces stay usable", async ({ page }) =
 				.toBeGreaterThanOrEqual(-1);
 			await expect(navigation.getByText("Ctrl", { exact: true })).toBeHidden();
 		}
+		const [searchBox, newConversationBox] = await Promise.all([
+			page.getByRole("searchbox", { name: zhCN.sidebar.search }).locator("..").boundingBox(),
+			page.getByRole("button", { name: zhCN.sidebar.newConversation }).boundingBox(),
+		]);
+		expect(searchBox).not.toBeNull();
+		expect(newConversationBox).not.toBeNull();
+		expect(Math.abs((searchBox?.y ?? 0) - (newConversationBox?.y ?? 0))).toBeLessThanOrEqual(1);
+		expect(
+			Math.abs((searchBox?.height ?? 0) - (newConversationBox?.height ?? 0)),
+		).toBeLessThanOrEqual(1);
 
 		await page.getByRole("button", { name: zhCN.sidebar.systemSettings }).click();
 		const dialog = page.getByRole("dialog", { name: zhCN.sidebar.systemSettings });
@@ -115,6 +125,27 @@ test("canonical layouts and management surfaces stay usable", async ({ page }) =
 			await expect(dialog).toHaveScreenshot(`system-settings-${viewport.mode}.png`);
 			await dialog.screenshot({
 				path: path.join(screenshotDir, `24-system-settings-${viewport.mode}.png`),
+			});
+		}
+
+		if (viewport.mode === "mobile") {
+			await dialog
+				.getByRole("button", { name: new RegExp(`^${zhCN.sidebar.systemSettings}`) })
+				.click();
+			await page.getByRole("option", { name: zhCN.sidebar.archivedConversations }).click();
+		} else {
+			await dialog.getByRole("button", { name: zhCN.sidebar.archivedConversations }).click();
+		}
+		await expect(
+			dialog.getByRole("heading", { name: zhCN.sidebar.archivedConversations }),
+		).toBeVisible();
+		if (viewport.mode === "mobile") {
+			await page.screenshot({
+				path: path.join(screenshotDir, `24-archived-conversations-${viewport.mode}.png`),
+			});
+		} else {
+			await dialog.screenshot({
+				path: path.join(screenshotDir, `24-archived-conversations-${viewport.mode}.png`),
 			});
 		}
 
