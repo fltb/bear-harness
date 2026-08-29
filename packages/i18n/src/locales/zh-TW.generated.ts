@@ -142,6 +142,7 @@ export const zhTW = {
 		"systemSettings": "系統設定"
 	},
 	"threadHead": {
+		"conversationState": "會話狀態",
 		"runningWork": "進行中的事",
 		"recentWork": "最近完成與中斷",
 		"noRunningWork": "現在沒有後臺工作",
@@ -157,6 +158,17 @@ export const zhTW = {
 			"interrupted": "已中斷",
 			"forced_termination": "被強制終止"
 		}
+	},
+	"conversationState": {
+		"title": "會話狀態",
+		"description": "這條對話中由 Host 儲存並同步的角色狀態。",
+		"close": "關閉",
+		"revision": "狀態修訂",
+		"save": "儲存修改",
+		"saving": "儲存中",
+		"empty": "暫無",
+		"enabled": "開啟",
+		"disabled": "關閉"
 	},
 	"backstage": {
 		"title": "幕後",

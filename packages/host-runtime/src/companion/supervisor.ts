@@ -23,7 +23,12 @@ import type { Diagnostics } from "../diagnostics/index.js";
 import type { EventBus } from "../storage/event-bus.js";
 import type { CompanionHostToolCall, CompanionHostToolResult } from "./character-behavior.js";
 import { PiSessionStore } from "./pi-session-store.js";
-import { loadRolePluginTools, loadRoleSkills, roleSkillPrompt } from "./role-resources.js";
+import {
+	loadRolePluginTools,
+	loadRoleSkills,
+	readRoleSkillResource,
+	roleSkillPrompt,
+} from "./role-resources.js";
 import type { CharacterStateDefinition, CharacterStateField } from "./state-schema.js";
 export type CompanionState = "stopped" | "starting" | "running" | "unavailable";
 
@@ -110,7 +115,10 @@ type ContextHandler = (
 type SkillAccessHandler = (
 	conversationId: string,
 	skill: ReturnType<typeof loadRoleSkills>[number],
-) => "eligible" | "active" | "blocked" | "completed";
+) => {
+	status: "eligible" | "active" | "blocked" | "completed";
+	resourceIds: string[];
+};
 
 /** Host provider boundary required by the in-process Pi session. */
 export interface CompanionModelRuntimeSource {
@@ -229,7 +237,9 @@ export class CompanionSupervisor {
 	/** Mark the Host runtime available; the Pi session is loaded on first turn. */
 	async start(): Promise<void> {
 		if (this.state === "running") return;
-		const hostGlobal = globalThis as typeof globalThis & { bearHostCall?: unknown };
+		const hostGlobal = globalThis as typeof globalThis & {
+			bearHostCall?: unknown;
+		};
 		const previous = hostGlobal.bearHostCall;
 		const bridge = Object.assign(
 			(tool: string, args: unknown) => this.callHost(this.activeConversationId ?? "", tool, args),
@@ -237,7 +247,11 @@ export class CompanionSupervisor {
 		) as HostBridge;
 		hostGlobal.bearHostCall = bridge;
 		this.installedBridge = bridge;
-		bridgeRecords.set(bridge, { owner: this.bridgeOwner, previous, active: true });
+		bridgeRecords.set(bridge, {
+			owner: this.bridgeOwner,
+			previous,
+			active: true,
+		});
 		try {
 			this.state = "running";
 			this.eventBus.publish("companion.state_changed", { state: "running" });
@@ -255,7 +269,9 @@ export class CompanionSupervisor {
 		const record = bridgeRecords.get(bridge);
 		if (!record || record.owner !== this.bridgeOwner) return;
 		record.active = false;
-		const hostGlobal = globalThis as typeof globalThis & { bearHostCall?: unknown };
+		const hostGlobal = globalThis as typeof globalThis & {
+			bearHostCall?: unknown;
+		};
 		if (hostGlobal.bearHostCall !== bridge) return;
 		const previous = resolvePreviousBridge(record.previous);
 		if (typeof previous === "undefined") Reflect.deleteProperty(hostGlobal, "bearHostCall");
@@ -289,7 +305,9 @@ export class CompanionSupervisor {
 		}
 	}
 
-	public getLiveSessionResolver(): { get(conversationId: string): PiSessionHandle | undefined } {
+	public getLiveSessionResolver(): {
+		get(conversationId: string): PiSessionHandle | undefined;
+	} {
 		return { get: (conversationId) => this.sessions.get(conversationId) };
 	}
 
@@ -359,7 +377,9 @@ export class CompanionSupervisor {
 		conversationId: string,
 		signal: AbortSignal,
 	): Promise<PiSessionHandle> {
-		const span = this.diagnostics?.startSpan("companion.session.initialize", { conversationId });
+		const span = this.diagnostics?.startSpan("companion.session.initialize", {
+			conversationId,
+		});
 		try {
 			const session = await (span && this.diagnostics
 				? this.diagnostics.runInSpan(span, () =>
@@ -625,7 +645,9 @@ export class CompanionSupervisor {
 				: runTurn());
 			span?.end(errorCode ? "error" : "ok", errorCode ? { errorCode } : {});
 		} catch (error) {
-			span?.end("error", { errorCode: safeFailureReason(error, "turn_dispatch_failed") });
+			span?.end("error", {
+				errorCode: safeFailureReason(error, "turn_dispatch_failed"),
+			});
 			throw error;
 		}
 	}
@@ -704,7 +726,9 @@ export class CompanionSupervisor {
 					mainImages = undefined;
 				}
 			}
-			const internals = session.agentSession as unknown as { _baseSystemPrompt?: string };
+			const internals = session.agentSession as unknown as {
+				_baseSystemPrompt?: string;
+			};
 			const previousSystemPrompt = internals._baseSystemPrompt;
 			if (injectedContext && previousSystemPrompt !== undefined) {
 				internals._baseSystemPrompt = `${previousSystemPrompt}\n\n${injectedContext}`;
@@ -906,7 +930,7 @@ export class CompanionSupervisor {
 				conversationId,
 				"host_state",
 				"Character state",
-				"Read schema-declared character state or stage validated operations. Updates commit atomically only if the current assistant response succeeds.",
+				"Read schema-declared character state or submit schema-valid state intent. The Host binds revisions, stages the transaction, and commits atomically only if the current assistant response succeeds.",
 				toolParameters(
 					z.discriminatedUnion("action", [
 						z.strictObject({ action: z.literal("read") }),
@@ -919,7 +943,10 @@ export class CompanionSupervisor {
 									relationship: z.number().int().nonnegative().optional(),
 									character: z.number().int().nonnegative().optional(),
 								})
-								.optional(),
+								.optional()
+								.describe(
+									"Deprecated compatibility input for existing Pi sessions. The Host ignores it and binds its own authoritative revisions; omit this field.",
+								),
 							skillId: z.string().min(1).max(64).optional(),
 							evidence: z
 								.strictObject({
@@ -1084,6 +1111,18 @@ export class CompanionSupervisor {
 							)
 						: this.callHost(conversationId, name, params, toolCallId));
 					this.diagnostics?.traceContent(conversationId, "tool_result", safeJsonTrace(result));
+					if (!result.ok) {
+						const session = this.sessions.get(conversationId);
+						if (session?.sessionId && session.currentUserEntryId)
+							this.eventBus.publish("companion.turn_effect_failed", {
+								conversationId,
+								piSessionId: session.sessionId,
+								sourceUserEntryId: session.currentUserEntryId,
+								toolCallId,
+								tool: name,
+								code: result.code ?? "host_tool_failed",
+							});
+					}
 					span?.end(result.ok ? "ok" : "error", {
 						ok: result.ok,
 						...(result.code ? { resultCode: result.code } : {}),
@@ -1098,7 +1137,10 @@ export class CompanionSupervisor {
 					});
 					return this.toolResult(result);
 				} catch (error) {
-					span?.end("error", { ok: false, resultCode: "tool_execution_failed" });
+					span?.end("error", {
+						ok: false,
+						resultCode: "tool_execution_failed",
+					});
 					this.eventBus.publish("companion.tool_finished", {
 						conversationId,
 						toolCallId,
@@ -1159,7 +1201,10 @@ export class CompanionSupervisor {
 					});
 					return result;
 				} catch (error) {
-					span?.end("error", { ok: false, resultCode: "tool_execution_failed" });
+					span?.end("error", {
+						ok: false,
+						resultCode: "tool_execution_failed",
+					});
 					this.eventBus.publish("companion.tool_finished", {
 						conversationId,
 						toolCallId,
@@ -1182,13 +1227,19 @@ export class CompanionSupervisor {
 			parameters: toolParameters(
 				z.strictObject({
 					skillId: z.string().min(1).max(128),
+					resourceId: z.string().min(1).max(128).optional(),
 					offset: z.number().int().min(1).optional(),
 					limit: z.number().int().min(1).max(500).optional(),
 				}),
 			),
 			execute: async (
 				_toolCallId: string,
-				params: { skillId: string; offset?: number; limit?: number },
+				params: {
+					skillId: string;
+					resourceId?: string;
+					offset?: number;
+					limit?: number;
+				},
 			) => {
 				const skill = params.skillId;
 				const span = this.diagnostics?.startSpan("skill.read", {
@@ -1244,7 +1295,12 @@ export class CompanionSupervisor {
 		});
 	}
 
-	private readRoleSkill(params: { skillId: string; offset?: number; limit?: number }) {
+	private readRoleSkill(params: {
+		skillId: string;
+		resourceId?: string;
+		offset?: number;
+		limit?: number;
+	}) {
 		const conversationId = this.activeConversationId;
 		const skill = loadRoleSkills(this.runtimeConfig.skillPaths).find(
 			(candidate) => candidate.name === params.skillId,
@@ -1263,14 +1319,26 @@ export class CompanionSupervisor {
 				message: "A role Skill can only be read during an active conversation.",
 			});
 		}
-		const access = this.skillAccessHandler?.(conversationId, skill) ?? "eligible";
-		if (access === "blocked" || access === "completed") {
+		const access = this.skillAccessHandler?.(conversationId, skill) ?? {
+			status: "eligible" as const,
+			resourceIds: [],
+		};
+		if (access.status === "blocked" || access.status === "completed") {
 			return this.toolResult({
 				ok: false,
-				code: access === "completed" ? "skill_completed" : "skill_not_eligible",
-				message: `Role Skill ${skill.name} is ${access} for the current Host state.`,
+				code: access.status === "completed" ? "skill_completed" : "skill_not_eligible",
+				message: `Role Skill ${skill.name} is ${access.status} for the current Host state.`,
 			});
 		}
+		const resource = params.resourceId
+			? skill.resources.find((candidate) => candidate.id === params.resourceId)
+			: undefined;
+		if (params.resourceId && (!resource || !access.resourceIds.includes(resource.id)))
+			return this.toolResult({
+				ok: false,
+				code: "skill_resource_not_eligible",
+				message: `Role Skill resource ${params.resourceId} is unavailable for the current Host state.`,
+			});
 		const currentUserEntryId = this.sessions.get(conversationId)?.currentUserEntryId;
 		if (currentUserEntryId) {
 			const current = this.readSkillTurns.get(conversationId);
@@ -1289,7 +1357,11 @@ export class CompanionSupervisor {
 			typeof params.limit === "number" && Number.isSafeInteger(params.limit) && params.limit > 0
 				? Math.min(params.limit, 500)
 				: 200;
-		const lines = skill.content.split(/\r?\n/);
+		const source = resource ? readRoleSkillResource(skill, resource) : skill.content;
+		const resourceCatalog = resource
+			? ""
+			: `\n\n<eligible_resources>${access.resourceIds.join(",")}</eligible_resources>`;
+		const lines = `${source}${resourceCatalog}`.split(/\r?\n/);
 		return {
 			content: [
 				{
@@ -1300,7 +1372,11 @@ export class CompanionSupervisor {
 						.join("\n"),
 				},
 			],
-			details: { skillId: skill.name, offset },
+			details: {
+				skillId: skill.name,
+				...(resource ? { resourceId: resource.id } : {}),
+				offset,
+			},
 		};
 	}
 
@@ -1323,24 +1399,27 @@ function literalEnum(values: readonly string[]): z.ZodType<string> {
 }
 
 function stateValueSchema(field: CharacterStateField): z.ZodTypeAny {
-	if (field.type === "number") return z.number().finite();
-	if (field.type === "boolean") return z.boolean();
-	if (field.type === "string_list") return z.union([z.string().max(4096), z.array(z.string())]);
-	if (field.type === "enum") return literalEnum(field.values ?? []);
+	const schema = field.schema;
+	if (schema.type === "number" || schema.type === "integer") return z.number().finite();
+	if (schema.type === "boolean") return z.boolean();
+	if (schema.type === "array") return z.array(z.unknown()).max(100);
+	const choices = schema.oneOf
+		?.map((option) => option.const)
+		.filter((value): value is string => typeof value === "string");
+	if (choices?.length) return literalEnum(choices);
 	return z.string().max(4096);
 }
 
 function dynamicStateOperationSchema(definition: CharacterStateDefinition): z.ZodTypeAny {
 	const variants = Object.entries(definition.fields)
 		.filter(
-			([, field]) =>
-				field.write_authority === "model" || field.write_authority.startsWith("skill:"),
+			([, field]) => field.writeAuthority === "model" || field.writeAuthority.startsWith("skill:"),
 		)
 		.map(([path, field]) =>
 			z.strictObject({
 				path: z.literal(path),
-				op: literalEnum(field.operations),
-				value: stateValueSchema(field).optional(),
+				op: z.literal("replace"),
+				value: stateValueSchema(field),
 			}),
 		);
 	if (variants.length === 0) return z.never();

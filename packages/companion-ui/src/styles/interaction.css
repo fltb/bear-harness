@@ -312,6 +312,103 @@
 	color: var(--text-muted);
 }
 
+.conversation-state-trigger {
+	@apply ml-auto flex min-h-9 items-center gap-2 rounded-lg border border-line px-3 text-xs;
+	color: var(--text-soft);
+	background: var(--surface-panel);
+}
+
+.conversation-state-overlay {
+	background: var(--surface-overlay);
+	backdrop-filter: blur(4px);
+}
+
+.conversation-state-panel {
+	border-left: 1px solid var(--line);
+	background: var(--surface-panel);
+	box-shadow: var(--shadow-app);
+	container-type: inline-size;
+}
+
+.conversation-state-head,
+.conversation-state-actions {
+	@apply flex items-center justify-between gap-4 border-line p-4;
+}
+
+.conversation-state-head {
+	@apply border-b;
+}
+
+.conversation-state-head h2,
+.conversation-state-group h3,
+.conversation-state-group h4 {
+	@apply m-0;
+	color: var(--text-strong);
+}
+
+.conversation-state-group h4 {
+	@apply text-sm;
+}
+
+.conversation-state-head p,
+.conversation-state-group > p {
+	@apply mb-0 mt-1 text-xs;
+	color: var(--text-muted);
+}
+
+.conversation-state-close,
+.conversation-state-actions button {
+	@apply min-h-9 shrink-0 whitespace-nowrap rounded-lg border border-line px-3 text-xs;
+	background: var(--surface-subtle);
+}
+
+.conversation-state-scroll {
+	@apply p-4;
+}
+
+.conversation-state-fields,
+.conversation-state-group {
+	@apply grid gap-3;
+}
+
+.conversation-state-group {
+	@apply rounded-xl border border-line p-3;
+}
+
+.conversation-state-field {
+	@apply grid grid-cols-2 gap-3 rounded-lg border border-line px-3 py-2.5;
+}
+
+.conversation-state-field-copy {
+	@apply grid gap-1;
+}
+
+.conversation-state-field-copy strong {
+	@apply text-sm;
+	color: var(--text-strong);
+}
+
+.conversation-state-field-copy span,
+.conversation-state-actions {
+	@apply text-xs;
+	color: var(--text-muted);
+}
+
+.conversation-state-field output {
+	@apply self-center text-right text-sm;
+	color: var(--text);
+}
+
+.conversation-state-field input {
+	@apply min-h-9 w-full rounded-lg border border-line px-3 text-sm outline-none;
+	color: var(--text);
+	background: var(--surface);
+}
+
+.conversation-state-actions {
+	@apply border-t;
+}
+
 /* --- first meeting (intro overlay from prototype 06) --------------- */
 
 .intro {

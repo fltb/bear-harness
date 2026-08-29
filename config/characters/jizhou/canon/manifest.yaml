@@ -5,10 +5,6 @@ sources:
     title: 极昼
     path: jizhou-story.md
     kind: original_text
-  - id: undelivered_report
-    title: 未送达的回报
-    path: undelivered-report.md
-    kind: original_text
 entities: []
 modules:
   - id: station_identity
@@ -23,139 +19,26 @@ modules:
       mode: always
     bindings:
       - source: jizhou_story
-        headings: [旧极光站, 白熊的来历, 当前值守, 知识边界]
+        headings:
+          - 旧极光站
+          - 白熊的来历
+          - 当前值守
+          - 知识边界
   - id: station_background
     parent: station_identity
     kind: arc
     title: 旧站交接背景
     summary: 用户明确询问时可使用的旧站日常、三份旧交接和角色张力。
-    triggers: [旧站记录, 交接桌, 暴雪, 留言簿, 关站]
+    triggers:
+      - 旧站记录
+      - 交接桌
+      - 暴雪
+      - 留言簿
+      - 关站
     access:
       mode: when_asked
     bindings:
       - source: jizhou_story
-        headings: [三份旧交接, 极昼的张力]
-  - id: undelivered_report_entry
-    parent: station_identity
-    kind: arc
-    title: 未送达的回报
-    summary: 用户主动进入后可见的入口资料；后续章节仍由各自门禁控制。
-    triggers: [未送达的回报, 遗失的回报, 未归档回报]
-    access:
-      mode: gated
-      skill: undelivered-report
-      state:
-        path: story.undelivered_report.phase
-        values: [invited, signal_examined, route_investigated, testimonies_compared, last_shift_revealed, future_considered, resolved]
-    bindings:
-      - source: undelivered_report
-        headings: [创作边界, 序章：留言簿里的断行]
-  - id: undelivered_report_signal
-    parent: undelivered_report_entry
-    kind: event
-    title: 损坏的信号
-    summary: 用户选择检查时可读取的损坏报码、频谱和不能补全的边界。
-    triggers: [损坏信号, 报码, 频谱, 北岸三号标]
-    access:
-      mode: gated
-      skill: undelivered-report
-      state:
-        path: story.undelivered_report.phase
-        # A chapter becomes readable when the user is allowed to enter it. The
-        # Host still withholds every later chapter. Requiring the post-chapter
-        # phase here deadlocks natural dialogue: the model cannot inspect the
-        # evidence needed to perform the transition.
-        values: [invited, signal_examined, route_investigated, testimonies_compared, last_shift_revealed, future_considered, resolved]
-    bindings:
-      - source: undelivered_report
-        headings: [第一章：损坏的信号]
-  - id: undelivered_report_relay
-    parent: undelivered_report_entry
-    kind: event
-    title: 风暴中继
-    summary: 两条都无法完全确认的信号中继重建。
-    triggers: [风暴中继, 技术路径, R2, 移动台]
-    access:
-      mode: gated
-      skill: undelivered-report
-      state:
-        path: story.undelivered_report.phase
-        values: [signal_examined, route_investigated, testimonies_compared, last_shift_revealed, future_considered, resolved]
-    bindings:
-      - source: undelivered_report
-        headings: [第二章 A：风暴中继]
-  - id: undelivered_report_snowfield
-    parent: undelivered_report_entry
-    kind: event
-    title: 雪原上的脚印
-    summary: 岑岚的已确认移动记录与有限路线重建。
-    triggers: [雪原路线, 脚印, 北侧坡脚, 岑岚]
-    access:
-      mode: gated
-      skill: undelivered-report
-      state:
-        path: story.undelivered_report.phase
-        values: [signal_examined, route_investigated, testimonies_compared, last_shift_revealed, future_considered, resolved]
-    bindings:
-      - source: undelivered_report
-        headings: [第二章 B：雪原上的脚印]
-  - id: undelivered_report_testimonies
-    parent: undelivered_report_entry
-    kind: event
-    title: 两份不一致的交接
-    summary: 岑岚与闻汐各自留下的记录、时间差和证据边界。
-    triggers: [两份交接, 岑岚, 闻汐, 时间差]
-    access:
-      mode: gated
-      skill: undelivered-report
-      state:
-        path: story.undelivered_report.phase
-        values: [route_investigated, testimonies_compared, last_shift_revealed, future_considered, resolved]
-    bindings:
-      - source: undelivered_report
-        headings: [第三章：两份不一致的交接]
-  - id: undelivered_report_last_shift
-    parent: undelivered_report_entry
-    kind: event
-    title: 最后一班的错误归档
-    summary: 只有抵达揭示节点后才能检索的确定事实。
-    triggers: [最后一班, 错误归档, 最终接收方]
-    access:
-      mode: gated
-      skill: undelivered-report
-      state:
-        path: story.undelivered_report.phase
-        values: [testimonies_compared, last_shift_revealed, future_considered, resolved]
-    bindings:
-      - source: undelivered_report
-        headings: [第四章：最后一班]
-  - id: undelivered_report_future
-    parent: undelivered_report_entry
-    kind: event
-    title: 如果以后还有一座站
-    summary: 明确属于假设的未来交接制度讨论。
-    triggers: [未来航标, 未确认队列, 交接制度]
-    access:
-      mode: gated
-      skill: undelivered-report
-      state:
-        path: story.undelivered_report.phase
-        values: [last_shift_revealed, future_considered, resolved]
-    bindings:
-      - source: undelivered_report
-        headings: [第五章：如果以后还有一座站]
-  - id: undelivered_report_ending
-    parent: undelivered_report_entry
-    kind: event
-    title: 把回报放在哪里
-    summary: 交还、归档与留白三个同等有效的结局。
-    triggers: [交还, 归档, 留白, 结局]
-    access:
-      mode: gated
-      skill: undelivered-report
-      state:
-        path: story.undelivered_report.phase
-        values: [future_considered, resolved]
-    bindings:
-      - source: undelivered_report
-        headings: [终章：把回报放在哪里, 中断与恢复, 人物与指代约束, 长程稳定规则]
+        headings:
+          - 三份旧交接
+          - 极昼的张力

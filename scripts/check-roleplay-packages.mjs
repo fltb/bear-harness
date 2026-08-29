@@ -5,6 +5,16 @@ import { parse } from "yaml";
 
 const visualOnlyTools = new Set(["host_visual", "host_present"]);
 
+function schemaHasPointer(schema, pointer) {
+	let node = schema;
+	for (const escaped of pointer.slice(1).split("/")) {
+		const name = escaped.replaceAll("~1", "/").replaceAll("~0", "~");
+		node = node?.properties?.[name];
+		if (!node) return false;
+	}
+	return true;
+}
+
 function pngInfo(path) {
 	const bytes = readFileSync(path);
 	if (bytes.toString("hex", 0, 8) !== "89504e470d0a1a0a") return null;
@@ -148,28 +158,29 @@ for (const entry of readdirSync(root, { withFileTypes: true })) {
 			if (!eventIds.has(id)) failures.push(`${prefix}: official story requires event ${id}`);
 
 		const requiredStateFields = [
-			"story.undelivered_report.phase",
-			"story.undelivered_report.status",
-			"story.undelivered_report.route",
-			"story.undelivered_report.position",
-			"story.undelivered_report.resolution",
-			"story.undelivered_report.testimony_stance",
-			"story.undelivered_report.future_choice",
-			"story.undelivered_report.known_facts",
-			"story.undelivered_report.user_interpretation",
-			"narrative.frame",
-			"narrative.location",
-			"narrative.time_anchor",
-			"narrative.evidence_mode",
-			"narrative.active_story",
-			"narrative.branch",
+			"/story/undelivered_report/phase",
+			"/story/undelivered_report/status",
+			"/story/undelivered_report/route",
+			"/story/undelivered_report/position",
+			"/story/undelivered_report/resolution",
+			"/story/undelivered_report/testimony_stance",
+			"/story/undelivered_report/future_choice",
+			"/story/undelivered_report/known_facts",
+			"/story/undelivered_report/user_interpretation",
+			"/narrative/frame",
+			"/narrative/location",
+			"/narrative/time_anchor",
+			"/narrative/evidence_mode",
+			"/narrative/active_story",
+			"/narrative/branch",
 		];
 		for (const path of requiredStateFields)
-			if (!manifest.state_schema?.fields?.[path])
+			if (!schemaHasPointer(manifest.state_schema, path))
 				failures.push(`${prefix}: official story requires state field ${path}`);
 
-		const storyPath = new URL("canon/undelivered-report.md", packageRoot);
-		if (!existsSync(storyPath)) failures.push(`${prefix}: official story canon is missing`);
+		const storyPath = new URL("skills/undelivered-report/resources/story.md", packageRoot);
+		if (!existsSync(storyPath))
+			failures.push(`${prefix}: official story Skill resource is missing`);
 		else {
 			const story = readFileSync(storyPath, "utf8");
 			const requiredHeadings = [
@@ -186,7 +197,9 @@ for (const entry of readdirSync(root, { withFileTypes: true })) {
 				"## 长程稳定规则",
 			];
 			if (story.length < 6_000)
-				failures.push(`${prefix}: official story canon is an outline, not complete content`);
+				failures.push(
+					`${prefix}: official story Skill resource is an outline, not complete content`,
+				);
 			for (const heading of requiredHeadings)
 				if (!story.includes(heading))
 					failures.push(`${prefix}: official story canon requires ${heading}`);

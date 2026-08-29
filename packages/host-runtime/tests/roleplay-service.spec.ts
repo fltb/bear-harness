@@ -68,13 +68,9 @@ describe("roleplay event projection", () => {
 		])
 			trigger(eventId);
 
-		expect(characterState.project(character.id, "story", character.state).values).toMatchObject({
-			"story.undelivered_report.phase": "resolved",
-			"story.undelivered_report.route": "relay",
-			"story.undelivered_report.resolution": "left_open",
-			"narrative.frame": "present",
-			"narrative.location": "study_dawn",
-			"narrative.active_story": "none",
+		expect(characterState.project(character.id, "story", character.state).document).toMatchObject({
+			story: { undelivered_report: { phase: "resolved", route: "relay", resolution: "left_open" } },
+			narrative: { frame: "present", location: "study_dawn", active_story: "none" },
 		});
 		database.close();
 	});
@@ -108,8 +104,8 @@ describe("roleplay event projection", () => {
 						id: "reply",
 						prompt: "Reply?",
 						choices: [
-							{ id: "yes", label: "Yes", event: "answer" },
-							{ id: "no", label: "No", event: "answer" },
+							{ id: "yes", label: "Yes", event: "answer", follow_up: "I chose yes." },
+							{ id: "no", label: "No", event: "answer", follow_up: "I chose no." },
 						],
 					},
 				],

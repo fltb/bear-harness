@@ -140,6 +140,7 @@ export const zhCN = {
 		systemSettings: "系统设置",
 	},
 	threadHead: {
+		conversationState: "会话状态",
 		runningWork: "进行中的事",
 		recentWork: "最近完成与中断",
 		noRunningWork: "现在没有后台工作",
@@ -155,6 +156,17 @@ export const zhCN = {
 			interrupted: "已中断",
 			forced_termination: "被强制终止",
 		},
+	},
+	conversationState: {
+		title: "会话状态",
+		description: "这条对话中由 Host 保存并同步的角色状态。",
+		close: "关闭",
+		revision: "状态修订",
+		save: "保存修改",
+		saving: "保存中",
+		empty: "暂无",
+		enabled: "开启",
+		disabled: "关闭",
 	},
 	backstage: {
 		title: "幕后",

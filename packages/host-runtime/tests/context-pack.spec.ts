@@ -99,28 +99,10 @@ describe("ContextPackCompiler character prompt layers", () => {
 		expect(compiler.accessibleCanonModuleIds("conversation-1")).not.toContain(
 			"undelivered_report_entry",
 		);
-		expect(
-			compiler.accessibleCanonModuleIds("conversation-1", {
-				"story.undelivered_report.phase": "invited",
-			}),
-		).toEqual(
-			expect.arrayContaining([
-				"station_identity",
-				"station_background",
-				"undelivered_report_entry",
-				"undelivered_report_signal",
-			]),
-		);
-		expect(
-			compiler.accessibleCanonModuleIds("conversation-1", {
-				"story.undelivered_report.phase": "signal_examined",
-			}),
-		).toEqual(expect.arrayContaining(["undelivered_report_relay", "undelivered_report_snowfield"]));
-		expect(
-			compiler.accessibleCanonModuleIds("conversation-1", {
-				"story.undelivered_report.phase": "signal_examined",
-			}),
-		).not.toContain("undelivered_report_last_shift");
+		expect(compiler.accessibleCanonModuleIds("conversation-1")).toEqual([
+			"station_identity",
+			"station_background",
+		]);
 		expect(pack.blocks.slice(0, 4)).toEqual([
 			expect.objectContaining({ layer: "state" }),
 			{ layer: "description", content: character.prompt.description },
@@ -130,9 +112,7 @@ describe("ContextPackCompiler character prompt layers", () => {
 		expect(pack.blocks.find((block) => block.layer === "persona")?.content).toContain(
 			"称呼用户为：小雪",
 		);
-		expect(pack.blocks.find((block) => block.layer === "state")?.content).toContain(
-			'"continuity.stage": 0',
-		);
+		expect(pack.blocks.find((block) => block.layer === "state")?.content).toContain('"continuity"');
 		const stateContext = pack.blocks.find((block) => block.layer === "state")?.content ?? "";
 		expect(stateContext).toContain('"narrativeAnchor"');
 		expect(stateContext).toContain('"activeStory": null');

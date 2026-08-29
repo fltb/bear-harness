@@ -1,5 +1,6 @@
 import { parseKnownDomainEvent } from "@bear-harness/protocol/schema";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import jsonPatch from "fast-json-patch";
 import type { AppDatabase } from "../storage/database.js";
 import { events, onboardingState, roleplayEvents, roleplayUnlocks } from "../storage/schema.js";
 import type { CharacterPackage } from "./character-loader.js";
@@ -7,6 +8,8 @@ import { OnboardingStateDataSchema } from "./onboarding-schema.js";
 import type { RoleplayCondition, RoleplayEffect, RoleplayValue } from "./roleplay-schema.js";
 import type { CharacterStateOperation } from "./state-schema.js";
 import type { CharacterStateService } from "./state-service.js";
+
+const { getValueByPointer } = jsonPatch;
 
 export interface RoleplayProjection {
 	values: Record<string, RoleplayValue>;
@@ -62,7 +65,7 @@ export class RoleplayService {
 			.map((row) => row.id);
 		const state =
 			conversationId && this.characterState
-				? this.characterState.project(character.id, conversationId, character.state).values
+				? this.characterState.project(character.id, conversationId, character.state).document
 				: {};
 		return { values, state, unlocked };
 	}
@@ -253,7 +256,7 @@ function evaluateCondition(condition: RoleplayCondition, state: RoleplayProjecti
 	if ("not" in condition) return !evaluateCondition(condition.not, state);
 	if ("unlocked" in condition) return state.unlocked.includes(condition.unlocked);
 	if ("state" in condition) {
-		const value = state.state[condition.state];
+		const value = getValueByPointer(state.state, condition.state);
 		if ("equals" in condition)
 			return Array.isArray(condition.equals)
 				? condition.equals.some((candidate) => Object.is(value, candidate))

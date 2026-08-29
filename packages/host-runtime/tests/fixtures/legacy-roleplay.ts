@@ -84,8 +84,18 @@ const legacyRoleplay = RoleplaySchema.parse({
 			id: "continuity_response",
 			prompt: "Legacy response?",
 			choices: [
-				{ id: "receive", label: "Receive", event: "continuity_received" },
-				{ id: "set_down", label: "Set down", event: "continuity_set_down" },
+				{
+					id: "receive",
+					label: "Receive",
+					event: "continuity_received",
+					follow_up: "I receive this continuity record.",
+				},
+				{
+					id: "set_down",
+					label: "Set down",
+					event: "continuity_set_down",
+					follow_up: "Set this continuity record down for now.",
+				},
 			],
 		},
 	],

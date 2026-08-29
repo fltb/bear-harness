@@ -145,6 +145,7 @@ export const en = {
 		systemSettings: "System settings",
 	},
 	threadHead: {
+		conversationState: "Conversation state",
 		runningWork: "Active work",
 		recentWork: "Recent work",
 		noRunningWork: "No background work",
@@ -160,6 +161,17 @@ export const en = {
 			interrupted: "Interrupted",
 			forced_termination: "Force terminated",
 		},
+	},
+	conversationState: {
+		title: "Conversation state",
+		description: "Character state saved and synchronized by the Host for this conversation.",
+		close: "Close",
+		revision: "State revision",
+		save: "Save changes",
+		saving: "Saving",
+		empty: "None",
+		enabled: "On",
+		disabled: "Off",
 	},
 	backstage: {
 		title: "Backstage",

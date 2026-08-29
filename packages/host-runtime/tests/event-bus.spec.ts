@@ -32,7 +32,11 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 		sceneId: "scene-1",
 		visualState: "listening",
 	},
-	"character.state_changed": { conversationId: "conversation-1", state: { values: {} } },
+	"character.state_changed": {
+		conversationId: "conversation-1",
+		revisions: { conversation: 1, relationship: 0, character: 0 },
+		schemaHash: "0".repeat(64),
+	},
 	"roleplay.unlocks_reset": {},
 	"roleplay.state_changed": { conversationId: "conversation-1", state: {} },
 	"roleplay.media_presented": { conversationId: "conversation-1", mediaId: "media-1" },

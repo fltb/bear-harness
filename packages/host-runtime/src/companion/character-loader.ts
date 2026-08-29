@@ -69,7 +69,11 @@ import {
 	RoleplaySchema,
 	roleplayAssetExtensions,
 } from "./roleplay-schema.js";
-import { type CharacterStateDefinition, CharacterStateSchema } from "./state-schema.js";
+import {
+	type CharacterStateDefinition,
+	CharacterStateSchema,
+	stateFieldForPointer,
+} from "./state-schema.js";
 import { CharacterThemeOverridesSchema, resolveCharacterTheme } from "./theme.js";
 
 // ---------------------------------------------------------------------------
@@ -211,6 +215,15 @@ type CharacterDisplayMedia =
 			captionsUrl: string;
 	  });
 
+type CharacterDisplayChoiceSet = Array<{
+	id: string;
+	prompt: string;
+	choices: Array<
+		| { id: string; label: string; description?: string; event: string; followUp: string }
+		| { id: string; label: string; description?: string; message: string }
+	>;
+}>;
+
 export interface CharacterDisplay {
 	id: string;
 	name: string;
@@ -235,7 +248,7 @@ export interface CharacterDisplay {
 		variables: RoleplayDefinition["variables"];
 		media: CharacterDisplayMedia[];
 		unlockables: RoleplayDefinition["unlockables"];
-		choice_sets: RoleplayDefinition["choice_sets"];
+		choice_sets: CharacterDisplayChoiceSet;
 	};
 }
 
@@ -888,15 +901,14 @@ export class CharacterLoader {
 				);
 			for (const effect of event.effects) {
 				if (effect.type === "state") {
-					const field = state.fields[effect.path];
+					const field = stateFieldForPointer(state, effect.path);
 					if (!field)
 						throw new Error(
 							`character package ${id}: event ${event.id} references missing state path`,
 						);
 					if (
-						(field.write_authority !== effect.authority &&
-							!field.deterministic_authorities.includes(effect.authority)) ||
-						!field.operations.includes(effect.op)
+						field.writeAuthority !== effect.authority &&
+						!field.deterministicAuthorities.includes(effect.authority)
 					)
 						throw new Error(
 							`character package ${id}: event ${event.id} is not authorized for state path ${effect.path}`,
@@ -1211,7 +1223,20 @@ export class CharacterLoader {
 					}
 				}),
 				unlockables: character.roleplay.unlockables,
-				choice_sets: character.roleplay.choice_sets.map(({ when: _when, ...set }) => set),
+				choice_sets: character.roleplay.choice_sets.map(({ when: _when, ...set }) => ({
+					...set,
+					choices: set.choices.map((choice) =>
+						"event" in choice
+							? {
+									id: choice.id,
+									label: choice.label,
+									...(choice.description ? { description: choice.description } : {}),
+									event: choice.event,
+									followUp: choice.follow_up,
+								}
+							: choice,
+					),
+				})),
 			},
 		};
 	}

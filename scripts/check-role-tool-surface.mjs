@@ -37,6 +37,14 @@ function sourceFiles(directory) {
 	});
 }
 
+function schemaLeaves(schema, pointer = "", leaves = new Map()) {
+	if (!schema || typeof schema !== "object") return leaves;
+	if (schema.type !== "object" && !schema.properties) leaves.set(pointer, schema);
+	for (const [name, child] of Object.entries(schema.properties ?? {}))
+		schemaLeaves(child, `${pointer}/${name.replaceAll("~", "~0").replaceAll("/", "~1")}`, leaves);
+	return leaves;
+}
+
 for (const root of roots) {
 	for (const file of sourceFiles(root)) {
 		if (!/\.(?:ts|tsx|js|mjs|yaml|md)$/.test(file)) continue;
@@ -53,21 +61,19 @@ for (const entry of readdirSync(characterRoot, { withFileTypes: true })) {
 	const manifestPath = resolve(packageRoot, "character.yaml");
 	if (!existsSync(manifestPath)) continue;
 	const manifest = parse(readFileSync(manifestPath, "utf8"));
-	const fields = manifest.state_schema?.fields;
-	if (!fields || typeof fields !== "object")
-		failures.push(`${manifestPath}: state_schema.fields is required`);
-	for (const [path, field] of Object.entries(fields ?? {})) {
-		if (field.model_writable && !Array.isArray(field.operations))
-			failures.push(`${manifestPath}: writable state ${path} needs an operation allowlist`);
+	const stateSchema = manifest.state_schema;
+	const fields = schemaLeaves(stateSchema);
+	if (stateSchema?.type !== "object" || !stateSchema.properties || fields.size === 0)
+		failures.push(`${manifestPath}: state_schema must be a recursive object JSON Schema`);
+	for (const [path, field] of fields) {
+		if (field["x-write-authority"] === "model" && field["x-evidence-required"] !== true)
+			failures.push(`${manifestPath}: model-writable state ${path} needs evidence`);
 		if (
-			field.model_writable &&
+			field["x-write-authority"] === "model" &&
 			field.type === "number" &&
-			field.operations?.some(
-				(operation) => operation === "increment" || operation === "decrement",
-			) &&
-			field.max_change_per_turn === undefined
+			field["x-max-change-per-turn"] === undefined
 		)
-			failures.push(`${manifestPath}: writable numeric state ${path} needs max_change_per_turn`);
+			failures.push(`${manifestPath}: writable numeric state ${path} needs x-max-change-per-turn`);
 	}
 	const plugins = resolve(packageRoot, "plugins");
 	if (entry.name === "jizhou" && existsSync(plugins) && sourceFiles(plugins).length > 0)

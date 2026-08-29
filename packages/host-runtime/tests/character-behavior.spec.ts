@@ -170,6 +170,49 @@ describe("CharacterBehaviorService", () => {
 		).toMatchObject({ state: { visualState: "calm" } });
 	});
 
+	it("discards the whole turn journal when any Host effect fails", () => {
+		const fixture = createFixture();
+		fixtures.push(fixture);
+		const character = new CharacterLoader(characterRoot).load("jizhou");
+		if (!character) throw new Error("missing default character");
+		const roleplay = new RoleplayService(fixture.db.orm);
+		const userEntryId = fixture.appendUser("先告诉我发现了什么，不要替我进入调查");
+		fixture.publishChanged();
+		fixture.characterState.stage({
+			companionId: character.id,
+			conversationId: "conversation-1",
+			piSessionId: fixture.store.sessionId,
+			sourceUserEntryId: userEntryId,
+			definition: character.state,
+			operations: [{ path: "/story/undelivered_report/phase", op: "replace", value: "invited" }],
+			reason: "A state mutation was staged before a later Host rejection.",
+			skillId: "undelivered-report",
+			evidence: { source: "current_user", quote: "不要替我进入调查" },
+		});
+		fixture.eventBus.publish("companion.effect_staged", {
+			conversationId: "conversation-1",
+			piSessionId: fixture.store.sessionId,
+			sourceUserEntryId: userEntryId,
+			toolCallId: "choices-before-failure",
+			kind: "choices",
+			presentationId: "undelivered_entry",
+		});
+		fixture.eventBus.publish("companion.turn_effect_failed", {
+			conversationId: "conversation-1",
+			piSessionId: fixture.store.sessionId,
+			sourceUserEntryId: userEntryId,
+			toolCallId: "failed-state-correction",
+			tool: "host_state",
+			code: "state_transition_not_allowed",
+		});
+		fixture.appendAssistant("工具失败，状态没有改变。", "stop");
+		fixture.publishChanged();
+		expect(
+			fixture.characterState.project(character.id, "conversation-1", character.state).document,
+		).toMatchObject({ story: { undelivered_report: { phase: "dormant" } } });
+		expect(roleplay.presentation(character, "conversation-1").choiceSetId).toBeUndefined();
+	});
+
 	it("does not settle staged effects on intermediate Pi tool-use assistant entries", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);
@@ -217,12 +260,12 @@ describe("CharacterBehaviorService", () => {
 			sourceUserEntryId: userEntryId,
 			definition: character.state,
 			operations: [
-				{ path: "story.undelivered_report.phase", op: "set", value: "signal_examined" },
-				{ path: "story.undelivered_report.position", op: "set", value: "evidence" },
-				{ path: "narrative.frame", op: "set", value: "archive_record" },
-				{ path: "narrative.location", op: "set", value: "quiet_terminal" },
-				{ path: "narrative.time_anchor", op: "set", value: "damaged_signal_record" },
-				{ path: "narrative.evidence_mode", op: "set", value: "direct_record" },
+				{ path: "/story/undelivered_report/phase", op: "replace", value: "signal_examined" },
+				{ path: "/story/undelivered_report/position", op: "replace", value: "evidence" },
+				{ path: "/narrative/frame", op: "replace", value: "archive_record" },
+				{ path: "/narrative/location", op: "replace", value: "quiet_terminal" },
+				{ path: "/narrative/time_anchor", op: "replace", value: "damaged_signal_record" },
+				{ path: "/narrative/evidence_mode", op: "replace", value: "direct_record" },
 			],
 			reason: "The user asked to inspect the existing signal record.",
 			skillId: "undelivered-report",

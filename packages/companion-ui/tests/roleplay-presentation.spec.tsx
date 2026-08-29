@@ -57,6 +57,7 @@ describe("roleplay presentation", () => {
 	});
 	it("presents package choices without replacing free-text chat and triggers the declared event", async () => {
 		const triggerRoleplayEvent = vi.fn(() => Promise.resolve());
+		const sendMessage = vi.fn(() => Promise.resolve());
 		const character = {
 			...THEMED_CHARACTER,
 			roleplay: {
@@ -66,8 +67,8 @@ describe("roleplay presentation", () => {
 						id: "reply",
 						prompt: "要回应信号吗？",
 						choices: [
-							{ id: "answer", label: "回应", event: "signal" },
-							{ id: "wait", label: "等等", event: "wait" },
+							{ id: "answer", label: "回应", event: "signal", followUp: "我选择回应。" },
+							{ id: "wait", label: "等等", event: "wait", followUp: "我选择再等等。" },
 						],
 					},
 				],
@@ -84,6 +85,7 @@ describe("roleplay presentation", () => {
 			activeRoleplayChoiceSetId: "reply",
 			activeRoleplayMediaId: undefined,
 			triggerRoleplayEvent,
+			sendMessage,
 			character,
 		} as unknown as CompanionStore;
 		render(() => (
@@ -94,6 +96,10 @@ describe("roleplay presentation", () => {
 		expect(screen.getByRole("region", { name: "要回应信号吗？" })).toBeVisible();
 		await userEvent.setup().click(screen.getByRole("button", { name: "回应" }));
 		expect(triggerRoleplayEvent).toHaveBeenCalledWith("signal");
+		await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledWith("我选择回应。"));
+		expect(triggerRoleplayEvent.mock.invocationCallOrder[0]).toBeLessThan(
+			sendMessage.mock.invocationCallOrder[0] ?? 0,
+		);
 	});
 
 	it("opens package animation media from the active roleplay presentation event", async () => {

@@ -289,6 +289,9 @@ export function createTestClient() {
 			resetUnlocks: vi.fn(() => ok({})),
 			dismissMedia: vi.fn(() => ok({})),
 		},
+		characterState: {
+			patch: vi.fn(() => ok({})),
+		},
 		events: { subscribe: vi.fn(() => new Promise<never>(() => {})) },
 		onboarding: {
 			get: vi.fn(() =>

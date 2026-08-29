@@ -15,7 +15,7 @@ import {
 	invalidateCommittedQueries,
 	readQueryValue,
 } from "../src/stores/query-sync.js";
-import { createTestClient, ROLEPLAY_MEDIA_CHARACTER } from "./fixtures.js";
+import { createTestClient, pushHostEvent, ROLEPLAY_MEDIA_CHARACTER } from "./fixtures.js";
 
 type HostConversationProjection = {
 	activeConversationId: string;
@@ -104,6 +104,70 @@ function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["cli
 }
 
 describe("store RPC contract", () => {
+	it("keeps character state snapshot-owned after a patch intent and adopts it only after the Host event", async () => {
+		const { client } = createTestClient();
+		seedActiveConversation(client, hostProjection("conversation-1"));
+		const schema = {
+			$schema: "https://json-schema.org/draft/2020-12/schema",
+			type: "object",
+			properties: { note: { type: "string", default: "", "x-user-editable": true } },
+		};
+		let projectedNote = "";
+		let eventSeq = 0;
+		client.snapshot.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq,
+					conversation: {
+						activeConversationId: "conversation-1",
+						id: "conversation-1",
+						title: "conversation-1",
+						piTimeline: { entries: [] },
+					},
+					characterState: {
+						schema,
+						byConversation: {
+							"conversation-1": {
+								document: { note: projectedNote },
+								revisions: { conversation: eventSeq, relationship: 0, character: 0 },
+								schemaHash: "0".repeat(64),
+							},
+						},
+					},
+				},
+			}),
+		);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.characterState).toBeDefined());
+			await store.patchCharacterState([{ op: "replace", path: "/note", value: "saved" }]);
+			expect(client.characterState.patch).toHaveBeenCalledWith(
+				expect.objectContaining({
+					conversationId: "conversation-1",
+					expectedRevisions: { conversation: 0, relationship: 0, character: 0 },
+				}),
+			);
+			expect(store.characterState?.byConversation["conversation-1"]?.document).toEqual({
+				note: "",
+			});
+
+			projectedNote = "saved";
+			eventSeq = 1;
+			pushHostEvent(client, "character.state_changed", {
+				conversationId: "conversation-1",
+				revisions: { conversation: 1, relationship: 0, character: 0 },
+				schemaHash: "0".repeat(64),
+			});
+			await waitFor(() =>
+				expect(store.characterState?.byConversation["conversation-1"]?.document).toEqual({
+					note: "saved",
+				}),
+			);
+		} finally {
+			dispose();
+		}
+	});
 	it("rejects malformed success and failure envelopes before exposing values", () => {
 		expect(() => unwrap<{ value: string }>({ ok: true })).toThrow();
 		expect(() => unwrap({ ok: false, error: { kind: "internal", reason: 42 } })).toThrow();

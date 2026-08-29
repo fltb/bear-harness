@@ -239,7 +239,7 @@ describe("provider catalog model synchronization", () => {
 		};
 		const characterLoader = {
 			getActiveCharacterId: () => "oauth-character",
-			load: () => ({ id: "oauth-character", canon: {} }),
+			load: () => ({ id: "oauth-character", canon: {}, state: {} }),
 			seed: vi.fn(),
 			activate: vi.fn(),
 		};
@@ -250,6 +250,7 @@ describe("provider catalog model synchronization", () => {
 			canon: { syncPackage: vi.fn() },
 			onboarding: { initialize: vi.fn() },
 			characterLoader,
+			characterState: { reconcileSchema: vi.fn() },
 			defaultCharacterId: "oauth-character",
 			providers,
 			models: { enable },

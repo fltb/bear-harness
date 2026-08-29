@@ -301,7 +301,11 @@ export class CharacterBehaviorService {
 		entry: ProjectedTurnEntry,
 		userEntryId: string,
 	): void {
-		if (entry.stopReason === "aborted" || entry.stopReason === "error") {
+		if (
+			entry.stopReason === "aborted" ||
+			entry.stopReason === "error" ||
+			this.turnEffectFailed(conversationId, sessionId, userEntryId)
+		) {
 			this.characterState.discardTurn(conversationId, sessionId, userEntryId);
 			this.settleTurnEffects(conversationId, sessionId, userEntryId, entry.id, false);
 			return;
@@ -317,8 +321,34 @@ export class CharacterBehaviorService {
 			definition: character.state,
 		});
 		if (result.committed)
-			this.eventBus.publish("character.state_changed", { conversationId, state: result.state });
+			this.eventBus.publish("character.state_changed", {
+				conversationId,
+				revisions: result.state.revisions,
+				schemaHash: result.state.schemaHash,
+			});
 		this.settleTurnEffects(conversationId, sessionId, userEntryId, entry.id, true);
+	}
+
+	private turnEffectFailed(
+		conversationId: string,
+		piSessionId: string,
+		sourceUserEntryId: string,
+	): boolean {
+		return Boolean(
+			this.db
+				.select({ seq: events.seq })
+				.from(events)
+				.where(
+					and(
+						eq(events.kind, "companion.turn_effect_failed"),
+						sql`json_extract(${events.payload}, '$.conversationId') = ${conversationId}`,
+						sql`json_extract(${events.payload}, '$.piSessionId') = ${piSessionId}`,
+						sql`json_extract(${events.payload}, '$.sourceUserEntryId') = ${sourceUserEntryId}`,
+					),
+				)
+				.limit(1)
+				.get(),
+		);
 	}
 
 	private settleTurnEffects(
@@ -602,7 +632,7 @@ export class CharacterBehaviorService {
 			piSessionId: provenance.piSessionId,
 			sourceUserEntryId: provenance.triggerEntryId,
 			definition: character.state,
-		}).values;
+		}).document;
 	}
 
 	private stageEffect(

@@ -39,6 +39,19 @@
 	grid-area: header;
 }
 
+.conversation-state-overlay {
+	@apply fixed inset-0 z-60;
+}
+
+.conversation-state-panel {
+	@apply fixed bottom-0 right-0 top-0 z-60 grid min-h-0 w-full max-w-xl;
+	grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.conversation-state-scroll {
+	@apply min-h-0 overflow-y-auto;
+}
+
 .thread {
 	@apply relative z-20;
 	grid-area: thread;
@@ -395,6 +408,24 @@ html[data-app-layout="fullscreen"] .backstage-sheet {
 
 html[data-app-layout="fullscreen"] .backstage-sheet-settings {
 	inline-size: min(1400px, calc(100cqw - 64px));
+}
+
+@container (max-width: 760px) {
+	.conversation-state-trigger span {
+		@apply sr-only;
+	}
+
+	.conversation-state-panel {
+		@apply max-w-none;
+	}
+
+	.conversation-state-field {
+		@apply grid-cols-1;
+	}
+
+	.conversation-state-field output {
+		@apply text-left;
+	}
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,5 +1,8 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { createMemo, For, onCleanup, onMount, Show } from "solid-js";
+import { faSliders } from "@fortawesome/free-solid-svg-icons";
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { ConversationStatePanel } from "./ConversationStatePanel.js";
+import { Icon } from "./Icon.js";
 import { useShellWorkflowStore } from "./stores/shell-workflows.js";
 import { Button } from "./ui/primitives.js";
 import { WorkRunCard } from "./WorkPanel.js";
@@ -16,6 +19,13 @@ export function ThreadHead(props: { sceneLabel: string }) {
 	const queueOpen = workflow.queueOpen;
 	const activeRuns = workflow.activeRuns;
 	const [t] = useTranslation(undefined, { i18n });
+	const [stateOpen, setStateOpen] = createSignal(false);
+	const activeCharacterState = createMemo(() => {
+		const conversationId = workflow.host.activeConversationId;
+		return conversationId
+			? workflow.host.characterState?.byConversation[conversationId]
+			: undefined;
+	});
 	const labels = createMemo(() => workflow.character()?.character.work_presentation?.labels);
 	const recentRuns = createMemo(() =>
 		workflow.host.runs.filter(
@@ -46,6 +56,18 @@ export function ThreadHead(props: { sceneLabel: string }) {
 	return (
 		<header class="thread-head">
 			<h1 class="scene-title">{props.sceneLabel}</h1>
+			<Show when={activeCharacterState()}>
+				<Button
+					type="button"
+					class="conversation-state-trigger"
+					aria-label={t("threadHead.conversationState")}
+					title={t("threadHead.conversationState")}
+					onClick={() => setStateOpen(true)}
+				>
+					<Icon icon={faSliders} />
+					<span>{t("threadHead.conversationState")}</span>
+				</Button>
+			</Show>
 			<div class="work-pill-wrap" ref={wrapper}>
 				<Button
 					type="button"
@@ -74,6 +96,7 @@ export function ThreadHead(props: { sceneLabel: string }) {
 					</div>
 				</Show>
 			</div>
+			<ConversationStatePanel open={stateOpen()} onOpenChange={setStateOpen} />
 		</header>
 	);
 }

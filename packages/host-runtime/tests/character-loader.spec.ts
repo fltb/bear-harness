@@ -17,6 +17,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CharacterDisplay } from "@bear-harness/protocol/schema";
 import { afterEach, describe, expect, it } from "vitest";
+import { parse, stringify } from "yaml";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import {
 	DURABLE_FILE_TRANSACTION_VERSION,
@@ -100,10 +101,6 @@ describe("character package visual projection", () => {
 				language: "zh-CN",
 				sources: expect.arrayContaining([
 					expect.objectContaining({ id: "jizhou_story", path: "jizhou-story.md" }),
-					expect.objectContaining({
-						id: "undelivered_report",
-						path: "undelivered-report.md",
-					}),
 				]),
 			}),
 		);
@@ -183,9 +180,13 @@ describe("character package display validation", () => {
 		const display = loader.display(character);
 		expect(CharacterDisplay.parse(display)).toEqual(display);
 		expect(display.roleplay.unlockables).toEqual(character.roleplay.unlockables);
-		expect(display.roleplay.choice_sets).toEqual(
-			character.roleplay.choice_sets.map(({ when: _when, ...choiceSet }) => choiceSet),
+		expect(display.roleplay.choice_sets.map((choiceSet) => choiceSet.id)).toEqual(
+			character.roleplay.choice_sets.map((choiceSet) => choiceSet.id),
 		);
+		expect(display.roleplay.choice_sets[0]?.choices[0]).toMatchObject({
+			event: "story_enter",
+			followUp: "我选择进入调查。请从现有损坏信号开始，不要补全缺失内容。",
+		});
 	});
 
 	it("supplies the Host theme when an imported package declares no theme", () => {
@@ -194,13 +195,10 @@ describe("character package display validation", () => {
 		const packageDir = join(installedRoot, "default-theme-role");
 		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
 		const manifestPath = join(packageDir, "character.yaml");
-		const manifest = readFileSync(manifestPath, "utf8");
-		writeFileSync(
-			manifestPath,
-			manifest
-				.replace("id: jizhou", "id: default-theme-role")
-				.replace(/^theme:\n(?: {2}.*\n)+\n/m, ""),
-		);
+		const manifest = parse(readFileSync(manifestPath, "utf8"));
+		manifest.id = "default-theme-role";
+		delete manifest.theme;
+		writeFileSync(manifestPath, stringify(manifest));
 
 		const character = new CharacterLoader(characterRoot, installedRoot).load("default-theme-role");
 		expect(character?.theme.tokens).toEqual({
@@ -419,15 +417,15 @@ describe("character package work presentation", () => {
 		for (const [name, mutate] of [
 			[
 				"blank",
-				(manifest: string) => manifest.replace('proposal: "值守台上的方案"', 'proposal: " "'),
+				(manifest: { character: { work_presentation: { labels: Record<string, string> } } }) => {
+					manifest.character.work_presentation.labels.proposal = " ";
+				},
 			],
 			[
 				"unknown",
-				(manifest: string) =>
-					manifest.replace(
-						'      artifact_reveal: "在 Finder 中显示"',
-						'      artifact_reveal: "在 Finder 中显示"\n      unknown: "未知"',
-					),
+				(manifest: { character: { work_presentation: { labels: Record<string, string> } } }) => {
+					manifest.character.work_presentation.labels.unknown = "未知";
+				},
 			],
 		] as const) {
 			const configRoot = mkdtempSync(join(tmpdir(), `bear-character-package-${name}-`));
@@ -435,8 +433,9 @@ describe("character package work presentation", () => {
 			const packageDir = join(configRoot, "jizhou");
 			cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
 			const manifestPath = join(packageDir, "character.yaml");
-			const manifest = readFileSync(manifestPath, "utf8");
-			writeFileSync(manifestPath, mutate(manifest));
+			const manifest = parse(readFileSync(manifestPath, "utf8"));
+			mutate(manifest);
+			writeFileSync(manifestPath, stringify(manifest));
 
 			const loader = new CharacterLoader(configRoot);
 			expect(() => loader.load("jizhou")).toThrow(

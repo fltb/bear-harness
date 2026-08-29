@@ -187,7 +187,7 @@ describe("character package import", () => {
 			piSessionId: "imported-role-session",
 			sourceUserEntryId: "imported-role-user",
 			definition: importedCharacter.state,
-			operations: [{ path: "relationship.affinity", op: "increment", value: 1 }],
+			operations: [{ path: "/relationship/affinity", op: "replace", value: 1 }],
 			reason: "Verify imported generic schema state survives restart.",
 			evidence: { source: "current_user", quote: "Please keep this imported role." },
 		});
@@ -231,7 +231,7 @@ describe("character package import", () => {
 				conversation.data.id,
 				recoveredCharacter.state,
 			),
-		).toMatchObject({ values: { "relationship.affinity": 1 } });
+		).toMatchObject({ document: { relationship: { affinity: 1 } } });
 		recoveredDatabase.close();
 	}, 15_000);
 

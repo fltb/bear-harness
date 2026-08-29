@@ -19,6 +19,7 @@
  */
 
 import { and, asc, desc, eq, or } from "drizzle-orm";
+import jsonPatch from "fast-json-patch";
 import type { CanonHubService } from "../canon/service.js";
 import type { MemoryBackend, MemoryBankScope, MemoryHit } from "../memory/backend.js";
 import type { AppDatabase } from "../storage/database.js";
@@ -33,9 +34,12 @@ import {
 } from "../storage/schema.js";
 import type { CharacterLoader, CharacterPackage, CharacterPrompt } from "./character-loader.js";
 import { OnboardingStateDataSchema } from "./onboarding-schema.js";
+import { roleSkillStatus } from "./role-resources.js";
 import { RoleplayService } from "./roleplay-service.js";
 import { CharacterStateService } from "./state-service.js";
 import { hasTurnAuthorization } from "./turn-authorization.js";
+
+const { getValueByPointer } = jsonPatch;
 
 /**
  * A prompt-context block. Role-package projections and relationship memory
@@ -450,38 +454,22 @@ ${modules.join("\n")}`,
 			: {};
 		const presentation = new RoleplayService(this.db).presentation(character, conversationId);
 		const skills = character.skills
-			.map((skill) => {
-				const complete = Object.entries(skill.completion.state).every(([path, expected]) =>
-					Object.is(state.values[path], expected),
-				);
-				if (Object.keys(skill.completion.state).length > 0 && complete)
-					return { id: skill.name, status: "completed" as const };
-				const eligible = Object.entries(skill.requires.state).every(([path, values]) =>
-					values.some((value) => Object.is(value, state.values[path])),
-				);
-				if (!eligible) return { id: skill.name, status: "blocked" as const };
-				const active =
-					(skill.name === "undelivered-report" &&
-						state.values["narrative.active_story"] === "undelivered_report") ||
-					(skill.name === "continuity-reveal" &&
-						typeof state.values["continuity.stage"] === "number" &&
-						state.values["continuity.stage"] !== 0);
-				return { id: skill.name, status: active ? ("active" as const) : ("eligible" as const) };
-			})
+			.map((skill) => ({ id: skill.name, status: roleSkillStatus(skill, state.document) }))
 			.sort((left, right) => left.id.localeCompare(right.id));
 		const voiceMode =
-			typeof state.values["interaction.voice_mode"] === "string"
-				? state.values["interaction.voice_mode"]
+			typeof getValueByPointer(state.document, "/interaction/voice_mode") === "string"
+				? getValueByPointer(state.document, "/interaction/voice_mode")
 				: character.voice_modes.default;
-		const activeStory = state.values["narrative.active_story"];
+		const activeStory = getValueByPointer(state.document, "/narrative/active_story");
 		const narrativeAnchor = {
-			frame: state.values["narrative.frame"] ?? "present",
-			location: state.values["narrative.location"] ?? sceneId,
-			timeAnchor: state.values["narrative.time_anchor"] ?? "current_shift",
-			evidenceMode: state.values["narrative.evidence_mode"] ?? "direct_record",
+			frame: getValueByPointer(state.document, "/narrative/frame") ?? "present",
+			location: getValueByPointer(state.document, "/narrative/location") ?? sceneId,
+			timeAnchor: getValueByPointer(state.document, "/narrative/time_anchor") ?? "current_shift",
+			evidenceMode:
+				getValueByPointer(state.document, "/narrative/evidence_mode") ?? "direct_record",
 			activeStory: activeStory === "none" ? null : activeStory,
-			phase: state.values["story.undelivered_report.phase"] ?? "dormant",
-			branch: state.values["narrative.branch"] ?? "none",
+			phase: getValueByPointer(state.document, "/story/undelivered_report/phase") ?? "dormant",
+			branch: getValueByPointer(state.document, "/narrative/branch") ?? "none",
 		};
 		return `<companion_turn_state>\n${JSON.stringify(
 			{
@@ -493,7 +481,7 @@ ${modules.join("\n")}`,
 				},
 				visual: { sceneId, expressionId, activityExpressionId: null },
 				narrativeAnchor,
-				characterState: state.values,
+				characterState: state.document,
 				stateRevisions: state.revisions,
 				roleplay: {
 					skills,
@@ -634,7 +622,7 @@ ${modules.join("\n")}`,
 				conversationId,
 				character.state,
 				true,
-			).values;
+			).document;
 		const skillIds = new Set(character.skills.map((skill) => skill.name));
 		return character.canon.manifest.modules
 			.filter((module) => {
@@ -642,7 +630,7 @@ ${modules.join("\n")}`,
 				if (module.access.skill && !skillIds.has(module.access.skill)) return false;
 				if (!module.access.state) return true;
 				return module.access.state.values.some((value) =>
-					Object.is(value, state[module.access.state?.path ?? ""]),
+					Object.is(value, getValueByPointer(state, module.access.state?.path ?? "")),
 				);
 			})
 			.map((module) => module.id);

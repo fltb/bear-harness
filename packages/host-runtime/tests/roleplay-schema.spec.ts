@@ -42,8 +42,18 @@ describe("roleplay package schema", () => {
 					id: "signal_reply",
 					prompt: "Reply?",
 					choices: [
-						{ id: "wait", label: "Wait", event: "signal_found" },
-						{ id: "leave", label: "Leave", event: "signal_found" },
+						{
+							id: "wait",
+							label: "Wait",
+							event: "signal_found",
+							follow_up: "I chose to wait.",
+						},
+						{
+							id: "leave",
+							label: "Leave",
+							event: "signal_found",
+							follow_up: "I chose to leave.",
+						},
 					],
 				},
 			],

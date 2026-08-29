@@ -3,6 +3,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import jsonPatch from "fast-json-patch";
 import { afterEach, describe, expect, it } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import { RoleplayService } from "../src/companion/roleplay-service.js";
@@ -10,6 +11,8 @@ import { CharacterStateService } from "../src/companion/state-service.js";
 import { Database, MIGRATIONS } from "../src/storage/database.js";
 import { EventBus } from "../src/storage/event-bus.js";
 import { conversations } from "../src/storage/schema.js";
+
+const { getValueByPointer } = jsonPatch;
 
 const roots: string[] = [];
 afterEach(() => {
@@ -67,6 +70,12 @@ function requiredCase<T>(values: readonly T[], index: number): T {
 	return value;
 }
 
+function pick(document: object, pointers: readonly string[]): Record<string, unknown> {
+	return Object.fromEntries(
+		pointers.map((pointer) => [pointer, getValueByPointer(document, pointer)]),
+	);
+}
+
 describe("《未送达的回报》complete path coverage", () => {
 	it("completes 24 isolated paths without leaking state, facts, or affinity", () => {
 		const { database, character, state, roleplay } = storyFixture();
@@ -100,25 +109,38 @@ describe("《未送达的回报》complete path coverage", () => {
 			])
 				trigger(eventId);
 
-			const values = state.project(character.id, conversationId, character.state).values;
+			const values = state.project(character.id, conversationId, character.state).document;
 			expect(
-				values,
+				pick(values, [
+					"/story/undelivered_report/phase",
+					"/story/undelivered_report/status",
+					"/story/undelivered_report/route",
+					"/story/undelivered_report/testimony_stance",
+					"/story/undelivered_report/future_choice",
+					"/story/undelivered_report/resolution",
+					"/narrative/frame",
+					"/narrative/location",
+					"/narrative/time_anchor",
+					"/narrative/evidence_mode",
+					"/narrative/active_story",
+					"/relationship/affinity",
+				]),
 				`${conversationId}:${route.id}:${stance.id}:${future.id}:${ending.id}`,
 			).toMatchObject({
-				"story.undelivered_report.phase": "resolved",
-				"story.undelivered_report.status": ending.expected === "archived" ? "paused" : "completed",
-				"story.undelivered_report.route": route.expected,
-				"story.undelivered_report.testimony_stance": stance.expected,
-				"story.undelivered_report.future_choice": future.expected,
-				"story.undelivered_report.resolution": ending.expected,
-				"narrative.frame": "present",
-				"narrative.location": "study_dawn",
-				"narrative.time_anchor": "current_shift",
-				"narrative.evidence_mode": "direct_record",
-				"narrative.active_story": "none",
-				"relationship.affinity": 0,
+				"/story/undelivered_report/phase": "resolved",
+				"/story/undelivered_report/status": ending.expected === "archived" ? "paused" : "completed",
+				"/story/undelivered_report/route": route.expected,
+				"/story/undelivered_report/testimony_stance": stance.expected,
+				"/story/undelivered_report/future_choice": future.expected,
+				"/story/undelivered_report/resolution": ending.expected,
+				"/narrative/frame": "present",
+				"/narrative/location": "study_dawn",
+				"/narrative/time_anchor": "current_shift",
+				"/narrative/evidence_mode": "direct_record",
+				"/narrative/active_story": "none",
+				"/relationship/affinity": 0,
 			});
-			expect(values["story.undelivered_report.known_facts"]).toEqual([
+			expect(getValueByPointer(values, "/story/undelivered_report/known_facts")).toEqual([
 				"旧站保存着一条未归入正确目录的损坏回报。",
 				"岑岚与闻汐的记录存在数分钟时间差，不能据此确认任何一方撒谎。",
 				"关站前的清点记录确认回报被错误归档，但最终接收方仍未知。",
@@ -152,24 +174,41 @@ describe("《未送达的回报》complete path coverage", () => {
 			"story_resolve_archived",
 		])
 			trigger(eventId);
-		const archivedFacts = state.project(character.id, conversationId, character.state).values[
-			"story.undelivered_report.known_facts"
-		];
+		const archivedFacts = getValueByPointer(
+			state.project(character.id, conversationId, character.state).document,
+			"/story/undelivered_report/known_facts",
+		);
 		trigger("story_resume_archived");
-		expect(state.project(character.id, conversationId, character.state).values).toMatchObject({
-			"story.undelivered_report.phase": "resolved",
-			"story.undelivered_report.status": "active",
-			"story.undelivered_report.resolution": "archived",
-			"narrative.active_story": "undelivered_report",
-			"narrative.frame": "present",
+		expect(
+			pick(state.project(character.id, conversationId, character.state).document, [
+				"/story/undelivered_report/phase",
+				"/story/undelivered_report/status",
+				"/story/undelivered_report/resolution",
+				"/narrative/active_story",
+				"/narrative/frame",
+			]),
+		).toMatchObject({
+			"/story/undelivered_report/phase": "resolved",
+			"/story/undelivered_report/status": "active",
+			"/story/undelivered_report/resolution": "archived",
+			"/narrative/active_story": "undelivered_report",
+			"/narrative/frame": "present",
 		});
 		trigger("story_resolve_left_open");
-		expect(state.project(character.id, conversationId, character.state).values).toMatchObject({
-			"story.undelivered_report.phase": "resolved",
-			"story.undelivered_report.status": "completed",
-			"story.undelivered_report.resolution": "left_open",
-			"story.undelivered_report.known_facts": archivedFacts,
-			"narrative.active_story": "none",
+		expect(
+			pick(state.project(character.id, conversationId, character.state).document, [
+				"/story/undelivered_report/phase",
+				"/story/undelivered_report/status",
+				"/story/undelivered_report/resolution",
+				"/story/undelivered_report/known_facts",
+				"/narrative/active_story",
+			]),
+		).toMatchObject({
+			"/story/undelivered_report/phase": "resolved",
+			"/story/undelivered_report/status": "completed",
+			"/story/undelivered_report/resolution": "left_open",
+			"/story/undelivered_report/known_facts": archivedFacts,
+			"/narrative/active_story": "none",
 		});
 		database.close();
 	});
@@ -200,16 +239,16 @@ describe("《未送达的回报》complete path coverage", () => {
 
 		for (const [index, eventId] of chapters.entries()) {
 			trigger(eventId);
-			const before = state.project(character.id, conversationId, character.state).values;
+			const before = state.project(character.id, conversationId, character.state).document;
 			const preserved = {
-				phase: before["story.undelivered_report.phase"],
-				position: before["story.undelivered_report.position"],
-				route: before["story.undelivered_report.route"],
-				frame: before["narrative.frame"],
-				location: before["narrative.location"],
-				timeAnchor: before["narrative.time_anchor"],
-				evidenceMode: before["narrative.evidence_mode"],
-				branch: before["narrative.branch"],
+				phase: getValueByPointer(before, "/story/undelivered_report/phase"),
+				position: getValueByPointer(before, "/story/undelivered_report/position"),
+				route: getValueByPointer(before, "/story/undelivered_report/route"),
+				frame: getValueByPointer(before, "/narrative/frame"),
+				location: getValueByPointer(before, "/narrative/location"),
+				timeAnchor: getValueByPointer(before, "/narrative/time_anchor"),
+				evidenceMode: getValueByPointer(before, "/narrative/evidence_mode"),
+				branch: getValueByPointer(before, "/narrative/branch"),
 			};
 			const turnId = `pause-${index}`;
 			state.stage({
@@ -219,12 +258,12 @@ describe("《未送达的回报》complete path coverage", () => {
 				sourceUserEntryId: turnId,
 				definition: character.state,
 				operations: [
-					{ path: "story.undelivered_report.status", op: "set", value: "paused" },
-					{ path: "narrative.active_story", op: "set", value: "none" },
-					{ path: "narrative.frame", op: "set", value: "present" },
-					{ path: "narrative.location", op: "set", value: "quiet_terminal" },
-					{ path: "narrative.time_anchor", op: "set", value: "current_shift" },
-					{ path: "narrative.evidence_mode", op: "set", value: "direct_record" },
+					{ path: "/story/undelivered_report/status", op: "replace", value: "paused" },
+					{ path: "/narrative/active_story", op: "replace", value: "none" },
+					{ path: "/narrative/frame", op: "replace", value: "present" },
+					{ path: "/narrative/location", op: "replace", value: "quiet_terminal" },
+					{ path: "/narrative/time_anchor", op: "replace", value: "current_shift" },
+					{ path: "/narrative/evidence_mode", op: "replace", value: "direct_record" },
 				],
 				reason: "The user paused the active story for a real task.",
 				skillId: "undelivered-report",
@@ -240,14 +279,23 @@ describe("《未送达的回报》complete path coverage", () => {
 			});
 
 			const reopened = new CharacterStateService(database.orm);
-			const paused = reopened.project(character.id, conversationId, character.state).values;
-			expect(paused).toMatchObject({
-				"story.undelivered_report.status": "paused",
-				"story.undelivered_report.phase": preserved.phase,
-				"story.undelivered_report.position": preserved.position,
-				"story.undelivered_report.route": preserved.route,
-				"narrative.active_story": "none",
-				"narrative.frame": "present",
+			const paused = reopened.project(character.id, conversationId, character.state).document;
+			expect(
+				pick(paused, [
+					"/story/undelivered_report/status",
+					"/story/undelivered_report/phase",
+					"/story/undelivered_report/position",
+					"/story/undelivered_report/route",
+					"/narrative/active_story",
+					"/narrative/frame",
+				]),
+			).toMatchObject({
+				"/story/undelivered_report/status": "paused",
+				"/story/undelivered_report/phase": preserved.phase,
+				"/story/undelivered_report/position": preserved.position,
+				"/story/undelivered_report/route": preserved.route,
+				"/narrative/active_story": "none",
+				"/narrative/frame": "present",
 			});
 
 			const resumeId = `resume-${index}`;
@@ -258,13 +306,13 @@ describe("《未送达的回报》complete path coverage", () => {
 				sourceUserEntryId: resumeId,
 				definition: character.state,
 				operations: [
-					{ path: "story.undelivered_report.status", op: "set", value: "active" },
-					{ path: "narrative.active_story", op: "set", value: "undelivered_report" },
-					{ path: "narrative.frame", op: "set", value: preserved.frame },
-					{ path: "narrative.location", op: "set", value: preserved.location },
-					{ path: "narrative.time_anchor", op: "set", value: preserved.timeAnchor },
-					{ path: "narrative.evidence_mode", op: "set", value: preserved.evidenceMode },
-					{ path: "narrative.branch", op: "set", value: preserved.branch },
+					{ path: "/story/undelivered_report/status", op: "replace", value: "active" },
+					{ path: "/narrative/active_story", op: "replace", value: "undelivered_report" },
+					{ path: "/narrative/frame", op: "replace", value: preserved.frame },
+					{ path: "/narrative/location", op: "replace", value: preserved.location },
+					{ path: "/narrative/time_anchor", op: "replace", value: preserved.timeAnchor },
+					{ path: "/narrative/evidence_mode", op: "replace", value: preserved.evidenceMode },
+					{ path: "/narrative/branch", op: "replace", value: preserved.branch },
 				],
 				reason: "The user explicitly resumed from the saved story position.",
 				skillId: "undelivered-report",
@@ -278,16 +326,27 @@ describe("《未送达的回报》complete path coverage", () => {
 				assistantEntryId: `${resumeId}:assistant`,
 				definition: character.state,
 			});
-			const resumed = reopened.project(character.id, conversationId, character.state).values;
-			expect(resumed).toMatchObject({
-				"story.undelivered_report.status": "active",
-				"story.undelivered_report.phase": preserved.phase,
-				"story.undelivered_report.position": preserved.position,
-				"narrative.active_story": "undelivered_report",
-				"narrative.frame": preserved.frame,
-				"narrative.location": preserved.location,
-				"narrative.time_anchor": preserved.timeAnchor,
-				"narrative.evidence_mode": preserved.evidenceMode,
+			const resumed = reopened.project(character.id, conversationId, character.state).document;
+			expect(
+				pick(resumed, [
+					"/story/undelivered_report/status",
+					"/story/undelivered_report/phase",
+					"/story/undelivered_report/position",
+					"/narrative/active_story",
+					"/narrative/frame",
+					"/narrative/location",
+					"/narrative/time_anchor",
+					"/narrative/evidence_mode",
+				]),
+			).toMatchObject({
+				"/story/undelivered_report/status": "active",
+				"/story/undelivered_report/phase": preserved.phase,
+				"/story/undelivered_report/position": preserved.position,
+				"/narrative/active_story": "undelivered_report",
+				"/narrative/frame": preserved.frame,
+				"/narrative/location": preserved.location,
+				"/narrative/time_anchor": preserved.timeAnchor,
+				"/narrative/evidence_mode": preserved.evidenceMode,
 			});
 		}
 		database.close();

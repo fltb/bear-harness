@@ -27,6 +27,7 @@ import { CharacterDraftService } from "./companion/character-draft-service.js";
 import { CharacterLoader } from "./companion/character-loader.js";
 import { ContextPackCompiler } from "./companion/context-pack.js";
 import { FirstMeetingMachine } from "./companion/first-meeting.js";
+import { eligibleRoleSkillResources, roleSkillStatus } from "./companion/role-resources.js";
 import { RoleplayService } from "./companion/roleplay-service.js";
 import type { CharacterStateEvidence } from "./companion/state-schema.js";
 import { CharacterStateService } from "./companion/state-service.js";
@@ -140,7 +141,10 @@ export interface HostRuntimeOptions {
 	moderation?: { remoteEndpoint?: string; remoteApiKey?: string };
 	/** Directory for the hash-chained audit store; defaults to `<dataDir>/audit`. */
 	auditDir?: string;
-	logger?: { debug?: (message: string) => void; warn?: (message: string) => void };
+	logger?: {
+		debug?: (message: string) => void;
+		warn?: (message: string) => void;
+	};
 	/** Host-shell diagnostics sink used for end-to-end business traces. */
 	diagnostics?: Diagnostics;
 }
@@ -167,7 +171,10 @@ export class HostRuntime {
 	private readonly backgroundAttemptTimeoutMs: number;
 	readonly memoryRuntime: TencentDbRuntime;
 	readonly memoryBackend: MemoryBackend;
-	readonly memoryScope: { readonly installationId: string; readonly userId: string };
+	readonly memoryScope: {
+		readonly installationId: string;
+		readonly userId: string;
+	};
 	/** Content-addressed artifact store (CAS + ownership rows). */
 	readonly artifacts: ArtifactStore;
 	readonly attachments: ConversationAttachmentService;
@@ -297,8 +304,16 @@ export class HostRuntime {
 					userText: correctedUserContext,
 					assistantText,
 					messages: [
-						{ role: "user", content: correctedUserContext, timestamp: Date.now() },
-						{ role: "assistant", content: assistantText, timestamp: Date.now() + 1 },
+						{
+							role: "user",
+							content: correctedUserContext,
+							timestamp: Date.now(),
+						},
+						{
+							role: "assistant",
+							content: assistantText,
+							timestamp: Date.now() + 1,
+						},
 					],
 					sessionKey: namespaceFor({
 						...memoryScope,
@@ -315,7 +330,10 @@ export class HostRuntime {
 				memoryRuntime
 					.systemContext(
 						query,
-						namespaceFor({ ...memoryScope, companionId: options.productConfig.defaultCharacterId }),
+						namespaceFor({
+							...memoryScope,
+							companionId: options.productConfig.defaultCharacterId,
+						}),
 					)
 					.catch(() => {
 						// persona/scene injection is best-effort; L1 recall already succeeded
@@ -324,7 +342,9 @@ export class HostRuntime {
 		});
 		supervisor.setContextHandler(async (conversationId, includeHistory, message) => {
 			const diagnostics = options.diagnostics;
-			const span = diagnostics?.startSpan("context.compile", { conversationId });
+			const span = diagnostics?.startSpan("context.compile", {
+				conversationId,
+			});
 			try {
 				const context = await (span && diagnostics
 					? diagnostics.runInSpan(span, async () =>
@@ -370,30 +390,19 @@ export class HostRuntime {
 				.from(conversations)
 				.where(eq(conversations.id, conversationId))
 				.get();
-			if (!conversation) return "blocked";
+			if (!conversation) return { status: "blocked", resourceIds: [] };
 			const character = characterLoader.load(conversation.companionId);
-			if (!character) return "blocked";
+			if (!character) return { status: "blocked", resourceIds: [] };
 			const values = characterState.project(
 				conversation.companionId,
 				conversationId,
 				character.state,
 				true,
-			).values;
-			const completed = Object.entries(skill.completion.state).every(([path, expected]) =>
-				Object.is(values[path], expected),
-			);
-			if (Object.keys(skill.completion.state).length > 0 && completed) return "completed";
-			const eligible = Object.entries(skill.requires.state).every(([path, allowed]) =>
-				allowed.some((value) => Object.is(value, values[path])),
-			);
-			if (!eligible) return "blocked";
-			const active =
-				(skill.name === "undelivered-report" &&
-					values["narrative.active_story"] === "undelivered_report") ||
-				(skill.name === "continuity-reveal" &&
-					typeof values["continuity.stage"] === "number" &&
-					values["continuity.stage"] !== 0);
-			return active ? "active" : "eligible";
+			).document;
+			return {
+				status: roleSkillStatus(skill, values),
+				resourceIds: eligibleRoleSkillResources(skill, values).map((resource) => resource.id),
+			};
 		});
 		onboarding.setConversationFactory(({ companionId, title, onCommit }) => {
 			const id = randomUUID();
@@ -458,9 +467,16 @@ export class HostRuntime {
 							assistantText,
 							messages: [
 								{ role: "user", content: userText, timestamp },
-								{ role: "assistant", content: assistantText, timestamp: timestamp + 1 },
+								{
+									role: "assistant",
+									content: assistantText,
+									timestamp: timestamp + 1,
+								},
 							],
-							sessionKey: namespaceFor({ ...memoryScope, companionId: owner.companionId }),
+							sessionKey: namespaceFor({
+								...memoryScope,
+								companionId: owner.companionId,
+							}),
 							sessionId: run.conversationId,
 						}),
 						signal,
@@ -528,14 +544,21 @@ export class HostRuntime {
 					.where(eq(conversations.id, call.conversationId))
 					.get();
 				if (!conversation)
-					return { ok: false, code: "conversation_not_found", message: "Conversation not found." };
+					return {
+						ok: false,
+						code: "conversation_not_found",
+						message: "Conversation not found.",
+					};
 				const character = characterLoader.load(conversation.companionId);
 				if (!character)
-					return { ok: false, code: "character_not_found", message: "Character not found." };
+					return {
+						ok: false,
+						code: "character_not_found",
+						message: "Character not found.",
+					};
 				const args = call.args as {
 					action?: unknown;
 					operations?: unknown;
-					expectedRevisions?: unknown;
 					reason?: unknown;
 					skillId?: unknown;
 					evidence?: unknown;
@@ -553,7 +576,11 @@ export class HostRuntime {
 					};
 				}
 				if (args.action !== "update")
-					return { ok: false, code: "state_action_invalid", message: "State action is invalid." };
+					return {
+						ok: false,
+						code: "state_action_invalid",
+						message: "State action is invalid.",
+					};
 				const live = supervisor.getLiveSessionResolver().get(call.conversationId);
 				if (!live?.currentUserEntryId)
 					return {
@@ -593,7 +620,6 @@ export class HostRuntime {
 						sourceUserEntryId: live.currentUserEntryId,
 						definition: character.state,
 						operations: args.operations as never,
-						expectedRevisions: args.expectedRevisions as never,
 						reason: typeof args.reason === "string" ? args.reason : "",
 						...(skillId ? { skillId } : {}),
 						...(evidence ? { evidence } : {}),
@@ -676,7 +702,7 @@ export class HostRuntime {
 								piSessionId: call.piSessionId,
 								sourceUserEntryId: call.triggerEntryId,
 								definition: character.state,
-							}).values
+							}).document
 						: undefined;
 				const citations = await canon.retrieveHybrid(conversation.companionId, args.query, {
 					moduleId: args.moduleId,
@@ -845,7 +871,10 @@ export class HostRuntime {
 		// Start auditing run/roleplay events from construction.
 		this.unsubscribeAudit = wireAuditToEvents(this.auditStore, this.composition.eventBus);
 		const syncEpoch = randomUUID();
-		const syncRevision = () => ({ epoch: syncEpoch, revision: db.syncRevision() });
+		const syncRevision = () => ({
+			epoch: syncEpoch,
+			revision: db.syncRevision(),
+		});
 		this.unsubscribeSync = db.subscribeSync((revision, sources) => {
 			eventBus.publish("sync.invalidated", {
 				sync: { epoch: syncEpoch, revision },
@@ -871,7 +900,12 @@ export class HostRuntime {
 						JSON.stringify({
 							channel,
 							...(error
-								? { error: { kind: error.kind, reason: auditReasonCode(error.reason) } }
+								? {
+										error: {
+											kind: error.kind,
+											reason: auditReasonCode(error.reason),
+										},
+									}
 								: {}),
 						}),
 					)
@@ -930,7 +964,10 @@ export class HostRuntime {
 	/** Dispatch a protocol channel; validates and returns the shared envelope. */
 	dispatch(channel: string, params: unknown): Promise<RpcResponse> {
 		if (this.closed)
-			return Promise.resolve({ ok: false, error: { kind: "unavailable", reason: "host_closed" } });
+			return Promise.resolve({
+				ok: false,
+				error: { kind: "unavailable", reason: "host_closed" },
+			});
 		return this.dispatcher.dispatch(channel, params);
 	}
 
@@ -1036,7 +1073,9 @@ export class HostRuntime {
 		void work.catch(() => undefined);
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const cancelled = new Promise<void>((resolve) => {
-			controller.signal.addEventListener("abort", () => resolve(), { once: true });
+			controller.signal.addEventListener("abort", () => resolve(), {
+				once: true,
+			});
 			timer = setTimeout(() => controller.abort(), this.backgroundAttemptTimeoutMs);
 		});
 		const attempt = {} as BackgroundAttempt;

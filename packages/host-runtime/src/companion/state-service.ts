@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
+import jsonPatch from "fast-json-patch";
 import type { AppDatabase } from "../storage/database.js";
 import {
 	characterStateDocuments,
@@ -12,15 +13,21 @@ import {
 	type CharacterStateField,
 	type CharacterStateOperation,
 	CharacterStateOperation as CharacterStateOperationSchema,
+	compileCharacterStateSchema,
+	defaultStateDocument,
+	type JsonObject,
+	type StateScope,
+	stateFieldForPointer,
 } from "./state-schema.js";
 
-type StateScope = CharacterStateField["scope"];
 type StateRevisions = Partial<Record<StateScope, number>>;
+const { applyPatch, getValueByPointer } = jsonPatch;
 type AppTransaction = Parameters<Parameters<AppDatabase["transaction"]>[0]>[0];
+type MutationAuthority = "model" | "user_choice" | "host_event" | "user";
 
 export interface CharacterStateProjection {
-	values: Record<string, unknown>;
-	schema: Record<string, CharacterStateField>;
+	document: JsonObject;
+	schema: CharacterStateDefinition;
 	revisions: Record<StateScope, number>;
 	schemaHash: string;
 }
@@ -43,16 +50,72 @@ export interface StageStateMutationInput {
 	evidence?: CharacterStateEvidence;
 }
 
+export interface CharacterStateReconciliation {
+	status: "unchanged" | "migrated" | "reset";
+	documents: number;
+}
+
 interface DurableStateOperation {
 	operation: CharacterStateOperation;
-	authority?: "model" | "user_choice" | "host_event";
+	authority: MutationAuthority;
 	skillId?: string;
 	evidence?: CharacterStateEvidence;
 }
 
-/** Schema-authoritative state documents with durable turn-bound staging. */
+/** Recursive JSON-Schema state documents with durable, turn-bound JSON Patch staging. */
 export class CharacterStateService {
 	constructor(private readonly db: AppDatabase) {}
+
+	/**
+	 * Reconcile persisted documents when a package changes its JSON Schema.
+	 * Compatible changes retain data and only advance the schema hash. A package
+	 * must opt in explicitly before incompatible pre-release state may be reset.
+	 */
+	reconcileSchema(
+		companionId: string,
+		definition: CharacterStateDefinition,
+	): CharacterStateReconciliation {
+		const schemaHash = hashDefinition(definition);
+		const rows = this.db
+			.select()
+			.from(characterStateDocuments)
+			.where(eq(characterStateDocuments.companionId, companionId))
+			.all();
+		const incompatible = rows.filter((row) => row.schemaHash !== schemaHash);
+		if (incompatible.length === 0) return { status: "unchanged", documents: 0 };
+
+		const candidate = defaultStateDocument(definition);
+		for (const row of rows) mergeJson(candidate, row.stateJson as JsonObject);
+		const validate = compileCharacterStateSchema(definition).validate;
+		if (validate(candidate)) {
+			this.db
+				.update(characterStateDocuments)
+				.set({ schemaHash, updatedAt: sql`datetime('now')` })
+				.where(eq(characterStateDocuments.companionId, companionId))
+				.run();
+			return { status: "migrated", documents: incompatible.length };
+		}
+
+		if (definition["x-incompatible-state"] !== "reset")
+			throw { kind: "conflict", reason: "character_state_schema_changed" };
+		this.db.transaction((transaction) => {
+			transaction
+				.delete(characterStateDocuments)
+				.where(eq(characterStateDocuments.companionId, companionId))
+				.run();
+			transaction
+				.update(pendingStateMutations)
+				.set({ status: "discarded" })
+				.where(
+					and(
+						eq(pendingStateMutations.companionId, companionId),
+						eq(pendingStateMutations.status, "pending"),
+					),
+				)
+				.run();
+		});
+		return { status: "reset", documents: incompatible.length };
+	}
 
 	project(
 		companionId: string,
@@ -60,9 +123,9 @@ export class CharacterStateService {
 		definition: CharacterStateDefinition,
 		modelOnly = false,
 	): CharacterStateProjection {
+		const compiled = compileCharacterStateSchema(definition);
 		const schemaHash = hashDefinition(definition);
-		const values: Record<string, unknown> = {};
-		const schema: Record<string, CharacterStateField> = {};
+		const document = defaultStateDocument(definition);
 		const revisions: Record<StateScope, number> = {
 			conversation: 0,
 			relationship: 0,
@@ -73,71 +136,40 @@ export class CharacterStateService {
 			if (row && row.schemaHash !== schemaHash)
 				throw { kind: "conflict", reason: "character_state_schema_changed" };
 			revisions[scope] = row?.revision ?? 0;
-			for (const [path, field] of Object.entries(definition.fields)) {
-				if (field.scope !== scope || (modelOnly && !field.model_readable)) continue;
-				values[path] =
-					row && Object.hasOwn(row.stateJson, path) ? row.stateJson[path] : field.initial;
-				schema[path] = field;
-			}
+			if (row) mergeJson(document, row.stateJson as JsonObject);
 		}
-		return { values, schema, revisions, schemaHash };
+		assertValid(compiled.validate, document);
+		return {
+			document: modelOnly ? projectReadableDocument(document, definition) : document,
+			schema: definition,
+			revisions,
+			schemaHash,
+		};
 	}
 
-	stage(input: StageStateMutationInput): { mutationId: string; status: "pending" } {
-		if (input.operations.length === 0 || input.operations.length > 20)
-			throw { kind: "validation_failed", reason: "state_operations_invalid" };
-		const reason = input.reason.trim();
-		if (!reason || reason.length > 1000)
-			throw { kind: "validation_failed", reason: "state_reason_invalid" };
-		const operations = CharacterStateOperationSchema.array().min(1).max(20).parse(input.operations);
+	stage(input: StageStateMutationInput): {
+		mutationId: string;
+		status: "pending";
+	} {
+		const operations = parseOperations(input.operations);
+		const reason = validReason(input.reason);
 		const projection = this.project(input.companionId, input.conversationId, input.definition);
-		for (const [scope, expected] of Object.entries(input.expectedRevisions ?? {})) {
-			if (projection.revisions[scope as StateScope] !== expected)
-				throw { kind: "conflict", reason: "state_revision_conflict" };
-		}
-		const pending = this.db
-			.select({ operations: pendingStateMutations.operationsJson })
-			.from(pendingStateMutations)
-			.where(
-				and(
-					eq(pendingStateMutations.conversationId, input.conversationId),
-					eq(pendingStateMutations.piSessionId, input.piSessionId),
-					eq(pendingStateMutations.sourceUserEntryId, input.sourceUserEntryId),
-					eq(pendingStateMutations.status, "pending"),
-				),
-			)
-			.all()
-			.flatMap((row) => parseDurableOperations(row.operations));
-		const durableOperations = operations.map((operation) => ({
+		// Model-facing RPCs submit intent, not concurrency metadata. Bind the
+		// transaction to the Host's authoritative snapshot at receipt time.
+		const expectedRevisions = input.expectedRevisions ?? projection.revisions;
+		assertRevisions(projection.revisions, expectedRevisions);
+		const pending = this.pendingOperations(
+			input.conversationId,
+			input.piSessionId,
+			input.sourceUserEntryId,
+		);
+		const additions: DurableStateOperation[] = operations.map((operation) => ({
 			operation,
-			authority: "model" as const,
+			authority: "model",
 			...(input.skillId ? { skillId: input.skillId } : {}),
 			...(input.evidence ? { evidence: input.evidence } : {}),
 		}));
-		const turnOperations = [...pending, ...durableOperations].map((entry) => entry.operation);
-		let simulated = { ...projection.values };
-		for (const entry of pending)
-			simulated = applyOperation(
-				simulated,
-				input.definition,
-				entry.operation,
-				turnOperations,
-				entry.skillId,
-				entry.evidence,
-				entry.authority,
-				true,
-			);
-		for (const entry of durableOperations)
-			simulated = applyOperation(
-				simulated,
-				input.definition,
-				entry.operation,
-				turnOperations,
-				entry.skillId,
-				entry.evidence,
-				entry.authority,
-			);
-
+		applyOperations(projection.document, input.definition, [...pending, ...additions], false);
 		const mutationId = randomUUID();
 		this.db
 			.insert(pendingStateMutations)
@@ -147,8 +179,8 @@ export class CharacterStateService {
 				conversationId: input.conversationId,
 				piSessionId: input.piSessionId,
 				sourceUserEntryId: input.sourceUserEntryId,
-				operationsJson: durableOperations,
-				expectedRevisionsJson: input.expectedRevisions ?? {},
+				operationsJson: additions as unknown as Array<Record<string, unknown>>,
+				expectedRevisionsJson: expectedRevisions,
 				reason,
 				schemaHash: projection.schemaHash,
 			})
@@ -156,89 +188,78 @@ export class CharacterStateService {
 		return { mutationId, status: "pending" };
 	}
 
-	/** Commit a deterministic Host/user event directly; it never passes through model staging. */
+	commitUserPatch(input: {
+		companionId: string;
+		conversationId: string;
+		definition: CharacterStateDefinition;
+		expectedRevisions: StateRevisions;
+		operations: CharacterStateOperation[];
+		sourceId: string;
+	}): CharacterStateProjection {
+		return this.commitAuthoritative({
+			...input,
+			authority: "user",
+			reason: "User edited the schema-declared conversation state form.",
+		});
+	}
+
+	/** Deterministic Host/user actions commit directly, outside model turn staging. */
 	commitAuthoritative(input: {
 		companionId: string;
 		conversationId: string;
 		definition: CharacterStateDefinition;
-		authority: "user_choice" | "host_event";
+		authority: "user_choice" | "host_event" | "user";
 		sourceId: string;
 		operations: CharacterStateOperation[];
 		reason: string;
+		expectedRevisions?: StateRevisions;
 		transaction?: AppTransaction;
 	}): CharacterStateProjection {
-		const operations = CharacterStateOperationSchema.array().min(1).max(20).parse(input.operations);
-		const reason = input.reason.trim();
-		if (!reason || reason.length > 1000)
-			throw { kind: "validation_failed", reason: "state_reason_invalid" };
+		const existing = this.db
+			.select({ id: stateMutationLog.id })
+			.from(stateMutationLog)
+			.where(eq(stateMutationLog.id, input.sourceId))
+			.get();
+		if (existing) return this.project(input.companionId, input.conversationId, input.definition);
+		const operations = parseOperations(input.operations);
+		const reason = validReason(input.reason);
 		const before = this.project(input.companionId, input.conversationId, input.definition);
-		let values = { ...before.values };
-		for (const operation of operations)
-			values = applyOperation(
-				values,
-				input.definition,
-				operation,
-				operations,
-				undefined,
-				undefined,
-				input.authority,
-			);
-		const changedOperations = operations.filter(
-			(operation) => !Object.is(before.values[operation.path], values[operation.path]),
+		assertRevisions(before.revisions, input.expectedRevisions);
+		const entries = operations.map((operation) => ({
+			operation,
+			authority: input.authority,
+		}));
+		const afterDocument = applyOperations(before.document, input.definition, entries, false);
+		const changed = operations.filter(
+			(operation) =>
+				!deepEqual(
+					getValueByPointer(before.document, operationField(input.definition, operation).pointer),
+					getValueByPointer(afterDocument, operationField(input.definition, operation).pointer),
+				),
 		);
-		if (changedOperations.length === 0) return before;
-		const schemaHash = hashDefinition(input.definition);
-		const afterRevisions = { ...before.revisions };
-		const commit = (transaction: AppTransaction) => {
-			const changedScopes = new Set(
-				changedOperations.map((operation) => input.definition.fields[operation.path]?.scope),
-			);
-			for (const scope of changedScopes) {
-				if (!scope) continue;
-				const stateJson = Object.fromEntries(
-					Object.entries(input.definition.fields)
-						.filter(([, field]) => field.scope === scope)
-						.map(([path]) => [path, values[path]]),
-				);
-				const current = this.document(input.companionId, input.conversationId, scope);
-				const nextRevision = (current?.revision ?? 0) + 1;
-				transaction
-					.insert(characterStateDocuments)
-					.values({
-						id: documentId(input.companionId, input.conversationId, scope),
-						companionId: input.companionId,
-						...(scope === "conversation" ? { conversationId: input.conversationId } : {}),
-						scope,
-						stateJson,
-						revision: nextRevision,
-						schemaHash,
-					})
-					.onConflictDoUpdate({
-						target: characterStateDocuments.id,
-						set: { stateJson, revision: nextRevision, schemaHash, updatedAt: sql`datetime('now')` },
-					})
-					.run();
-				afterRevisions[scope] = nextRevision;
-			}
-			transaction
-				.insert(stateMutationLog)
-				.values({
-					id: input.sourceId,
-					companionId: input.companionId,
-					conversationId: input.conversationId,
-					piSessionId: `host:${input.authority}`,
-					sourceUserEntryId: input.sourceId,
-					assistantEntryId: input.sourceId,
-					operationsJson: changedOperations,
-					beforeRevisionsJson: before.revisions,
-					afterRevisionsJson: afterRevisions,
-					reason,
-				})
-				.onConflictDoNothing()
-				.run();
-		};
-		if (input.transaction) commit(input.transaction);
-		else this.db.transaction((transaction) => commit(transaction));
+		if (changed.length === 0) return before;
+		const persist = (transaction: AppTransaction) =>
+			this.persist({
+				transaction,
+				companionId: input.companionId,
+				conversationId: input.conversationId,
+				definition: input.definition,
+				before,
+				afterDocument,
+				operations: changed,
+				logEntries: [
+					{
+						id: input.sourceId,
+						piSessionId: `host:${input.authority}`,
+						sourceUserEntryId: input.sourceId,
+						assistantEntryId: input.sourceId,
+						operationsJson: changed as unknown as Array<Record<string, unknown>>,
+						reason,
+					},
+				],
+			});
+		if (input.transaction) persist(input.transaction);
+		else this.db.transaction((transaction) => persist(transaction));
 		return this.project(input.companionId, input.conversationId, input.definition);
 	}
 
@@ -268,68 +289,35 @@ export class CharacterStateService {
 				state: this.project(input.companionId, input.conversationId, input.definition),
 				committed: false,
 			};
-		const schemaHash = hashDefinition(input.definition);
-		if (mutations.some((mutation) => mutation.schemaHash !== schemaHash))
+		const before = this.project(input.companionId, input.conversationId, input.definition);
+		if (mutations.some((mutation) => mutation.schemaHash !== before.schemaHash))
 			throw { kind: "conflict", reason: "character_state_schema_changed" };
-
+		for (const mutation of mutations)
+			assertRevisions(before.revisions, mutation.expectedRevisionsJson as StateRevisions);
+		const entries = mutations.flatMap((mutation) =>
+			parseDurableOperations(mutation.operationsJson),
+		);
+		const afterDocument = applyOperations(before.document, input.definition, entries, true);
+		const operations = entries.map((entry) => entry.operation);
 		this.db.transaction((transaction) => {
-			const before = this.project(input.companionId, input.conversationId, input.definition);
-			for (const mutation of mutations) {
-				for (const [scope, expected] of Object.entries(mutation.expectedRevisionsJson)) {
-					if (before.revisions[scope as StateScope] !== expected)
-						throw { kind: "conflict", reason: "state_revision_conflict" };
-				}
-			}
-			let values = { ...before.values };
-			const operations = mutations.flatMap((mutation) =>
-				parseDurableOperations(mutation.operationsJson).map((entry) => entry.operation),
-			);
-			for (const operation of operations)
-				values = applyOperation(
-					values,
-					input.definition,
-					operation,
-					operations,
-					undefined,
-					undefined,
-					"model",
-					true,
-				);
-			const changedScopes = new Set(
-				operations
-					.map((operation) => input.definition.fields[operation.path]?.scope)
-					.filter(Boolean),
-			);
-			const afterRevisions = { ...before.revisions };
-			for (const scope of changedScopes) {
-				if (!scope) continue;
-				const stateJson = Object.fromEntries(
-					Object.entries(input.definition.fields)
-						.filter(([, field]) => field.scope === scope)
-						.map(([path]) => [path, values[path]]),
-				);
-				const current = this.document(input.companionId, input.conversationId, scope);
-				const nextRevision = (current?.revision ?? 0) + 1;
-				const id = documentId(input.companionId, input.conversationId, scope);
-				transaction
-					.insert(characterStateDocuments)
-					.values({
-						id,
-						companionId: input.companionId,
-						...(scope === "conversation" ? { conversationId: input.conversationId } : {}),
-						scope,
-						stateJson,
-						revision: nextRevision,
-						schemaHash,
-					})
-					.onConflictDoUpdate({
-						target: characterStateDocuments.id,
-						set: { stateJson, revision: nextRevision, schemaHash, updatedAt: sql`datetime('now')` },
-					})
-					.run();
-				afterRevisions[scope] = nextRevision;
-			}
-			for (const mutation of mutations) {
+			this.persist({
+				transaction,
+				companionId: input.companionId,
+				conversationId: input.conversationId,
+				definition: input.definition,
+				before,
+				afterDocument,
+				operations,
+				logEntries: mutations.map((mutation) => ({
+					id: mutation.id,
+					piSessionId: input.piSessionId,
+					sourceUserEntryId: input.sourceUserEntryId,
+					assistantEntryId: input.assistantEntryId,
+					operationsJson: mutation.operationsJson,
+					reason: mutation.reason,
+				})),
+			});
+			for (const mutation of mutations)
 				transaction
 					.update(pendingStateMutations)
 					.set({
@@ -339,23 +327,6 @@ export class CharacterStateService {
 					})
 					.where(eq(pendingStateMutations.id, mutation.id))
 					.run();
-				transaction
-					.insert(stateMutationLog)
-					.values({
-						id: mutation.id,
-						companionId: input.companionId,
-						conversationId: input.conversationId,
-						piSessionId: input.piSessionId,
-						sourceUserEntryId: input.sourceUserEntryId,
-						assistantEntryId: input.assistantEntryId,
-						operationsJson: mutation.operationsJson,
-						beforeRevisionsJson: before.revisions,
-						afterRevisionsJson: afterRevisions,
-						reason: mutation.reason,
-					})
-					.onConflictDoNothing()
-					.run();
-			}
 		});
 		return {
 			state: this.project(input.companionId, input.conversationId, input.definition),
@@ -378,7 +349,6 @@ export class CharacterStateService {
 			.run();
 	}
 
-	/** Preview already-validated mutations from one native Pi turn for dependent gates. */
 	previewTurn(input: {
 		companionId: string;
 		conversationId: string;
@@ -387,41 +357,98 @@ export class CharacterStateService {
 		definition: CharacterStateDefinition;
 	}): CharacterStateProjection {
 		const projection = this.project(input.companionId, input.conversationId, input.definition);
-		const mutations = this.db
-			.select({
-				operations: pendingStateMutations.operationsJson,
-				schemaHash: pendingStateMutations.schemaHash,
-			})
+		const entries = this.pendingOperations(
+			input.conversationId,
+			input.piSessionId,
+			input.sourceUserEntryId,
+		);
+		if (entries.length === 0) return projection;
+		return {
+			...projection,
+			document: applyOperations(projection.document, input.definition, entries, true),
+		};
+	}
+
+	private pendingOperations(
+		conversationId: string,
+		piSessionId: string,
+		sourceUserEntryId: string,
+	): DurableStateOperation[] {
+		return this.db
+			.select({ operations: pendingStateMutations.operationsJson })
 			.from(pendingStateMutations)
 			.where(
 				and(
-					eq(pendingStateMutations.companionId, input.companionId),
-					eq(pendingStateMutations.conversationId, input.conversationId),
-					eq(pendingStateMutations.piSessionId, input.piSessionId),
-					eq(pendingStateMutations.sourceUserEntryId, input.sourceUserEntryId),
+					eq(pendingStateMutations.conversationId, conversationId),
+					eq(pendingStateMutations.piSessionId, piSessionId),
+					eq(pendingStateMutations.sourceUserEntryId, sourceUserEntryId),
 					eq(pendingStateMutations.status, "pending"),
 				),
 			)
-			.all();
-		if (mutations.length === 0) return projection;
-		if (mutations.some((mutation) => mutation.schemaHash !== projection.schemaHash))
-			throw { kind: "conflict", reason: "character_state_schema_changed" };
-		const operations = mutations.flatMap((mutation) =>
-			parseDurableOperations(mutation.operations).map((entry) => entry.operation),
+			.all()
+			.flatMap((row) => parseDurableOperations(row.operations));
+	}
+
+	private persist(input: {
+		transaction: AppTransaction;
+		companionId: string;
+		conversationId: string;
+		definition: CharacterStateDefinition;
+		before: CharacterStateProjection;
+		afterDocument: JsonObject;
+		operations: CharacterStateOperation[];
+		logEntries: Array<{
+			id: string;
+			piSessionId: string;
+			sourceUserEntryId: string;
+			assistantEntryId: string;
+			operationsJson: Array<Record<string, unknown>>;
+			reason: string;
+		}>;
+	}): void {
+		const scopes = new Set(
+			input.operations.map((operation) => operationField(input.definition, operation).scope),
 		);
-		let values = { ...projection.values };
-		for (const operation of operations)
-			values = applyOperation(
-				values,
-				input.definition,
-				operation,
-				operations,
-				undefined,
-				undefined,
-				"model",
-				true,
-			);
-		return { ...projection, values };
+		const afterRevisions = { ...input.before.revisions };
+		for (const scope of scopes) {
+			const stateJson = scopeDocument(input.afterDocument, input.definition, scope);
+			const current = this.document(input.companionId, input.conversationId, scope);
+			const revision = (current?.revision ?? 0) + 1;
+			input.transaction
+				.insert(characterStateDocuments)
+				.values({
+					id: documentId(input.companionId, input.conversationId, scope),
+					companionId: input.companionId,
+					...(scope === "conversation" ? { conversationId: input.conversationId } : {}),
+					scope,
+					stateJson,
+					revision,
+					schemaHash: input.before.schemaHash,
+				})
+				.onConflictDoUpdate({
+					target: characterStateDocuments.id,
+					set: {
+						stateJson,
+						revision,
+						schemaHash: input.before.schemaHash,
+						updatedAt: sql`datetime('now')`,
+					},
+				})
+				.run();
+			afterRevisions[scope] = revision;
+		}
+		for (const entry of input.logEntries)
+			input.transaction
+				.insert(stateMutationLog)
+				.values({
+					...entry,
+					companionId: input.companionId,
+					conversationId: input.conversationId,
+					beforeRevisionsJson: input.before.revisions,
+					afterRevisionsJson: afterRevisions,
+				})
+				.onConflictDoNothing()
+				.run();
 	}
 
 	private document(companionId: string, conversationId: string, scope: StateScope) {
@@ -441,143 +468,193 @@ export class CharacterStateService {
 	}
 }
 
+function applyOperations(
+	base: JsonObject,
+	definition: CharacterStateDefinition,
+	entries: DurableStateOperation[],
+	prevalidated: boolean,
+): JsonObject {
+	let document = structuredClone(base);
+	for (const entry of entries) {
+		const field = operationField(definition, entry.operation);
+		if (!prevalidated) assertAuthority(field, entry);
+		const previous = structuredClone(getValueByPointer(document, field.pointer));
+		try {
+			document = applyPatch(document, [entry.operation], true, false).newDocument as JsonObject;
+		} catch {
+			throw { kind: "validation_failed", reason: "state_patch_invalid" };
+		}
+		const next = getValueByPointer(document, field.pointer);
+		if (
+			field.allowedTransitions &&
+			!deepEqual(previous, next) &&
+			!field.allowedTransitions.some(
+				([from, to]) => deepEqual(previous, from) && deepEqual(next, to),
+			)
+		)
+			throw { kind: "conflict", reason: "state_transition_not_allowed" };
+		if (
+			field.maxChangePerTurn !== undefined &&
+			typeof getValueByPointer(base, field.pointer) === "number" &&
+			typeof next === "number" &&
+			Math.abs((next as number) - (getValueByPointer(base, field.pointer) as number)) >
+				field.maxChangePerTurn
+		)
+			throw { kind: "forbidden", reason: "state_turn_change_exceeded" };
+	}
+	assertValid(compileCharacterStateSchema(definition).validate, document);
+	return document;
+}
+
+function assertAuthority(field: CharacterStateField, entry: DurableStateOperation): void {
+	if (entry.operation.op === "test") {
+		if (!field.modelReadable) throw { kind: "forbidden", reason: "state_operation_not_allowed" };
+		return;
+	}
+	const authorized =
+		field.writeAuthority === entry.authority ||
+		((entry.authority === "host_event" || entry.authority === "user_choice") &&
+			field.deterministicAuthorities.includes(entry.authority)) ||
+		(field.writeAuthority.startsWith("skill:") &&
+			field.writeAuthority.slice("skill:".length) === entry.skillId);
+	if (!authorized) throw { kind: "forbidden", reason: "state_operation_not_allowed" };
+	if (entry.authority === "model" && field.evidenceRequired && !entry.evidence)
+		throw { kind: "validation_failed", reason: "state_evidence_required" };
+}
+
+function operationField(
+	definition: CharacterStateDefinition,
+	operation: CharacterStateOperation,
+): CharacterStateField {
+	const field = stateFieldForPointer(definition, operation.path);
+	if (!field) throw { kind: "validation_failed", reason: "state_path_not_declared" };
+	return field;
+}
+
+function scopeDocument(
+	document: JsonObject,
+	definition: CharacterStateDefinition,
+	scope: StateScope,
+): JsonObject {
+	const result: JsonObject = {};
+	for (const field of compileCharacterStateSchema(definition).fields.values()) {
+		if (field.scope !== scope) continue;
+		setPointer(result, field.pointer, structuredClone(getValueByPointer(document, field.pointer)));
+	}
+	return result;
+}
+
+function projectReadableDocument(
+	document: JsonObject,
+	definition: CharacterStateDefinition,
+): JsonObject {
+	const result: JsonObject = {};
+	for (const field of compileCharacterStateSchema(definition).fields.values()) {
+		if (!field.modelReadable) continue;
+		setPointer(result, field.pointer, structuredClone(getValueByPointer(document, field.pointer)));
+	}
+	return result;
+}
+
+function setPointer(target: JsonObject, pointer: string, value: unknown): void {
+	const segments = pointer
+		.slice(1)
+		.split("/")
+		.map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"));
+	let current: JsonObject = target;
+	for (const segment of segments.slice(0, -1)) {
+		const existing = current[segment];
+		if (!existing || typeof existing !== "object" || Array.isArray(existing)) current[segment] = {};
+		current = current[segment] as JsonObject;
+	}
+	const last = segments.at(-1);
+	if (last) current[last] = value as never;
+}
+
+function mergeJson(target: JsonObject, source: JsonObject): void {
+	for (const [key, value] of Object.entries(source)) {
+		if (isJsonObject(value) && isJsonObject(target[key])) mergeJson(target[key], value);
+		else target[key] = structuredClone(value);
+	}
+}
+
+function parseOperations(value: unknown): CharacterStateOperation[] {
+	return CharacterStateOperationSchema.array().min(1).max(20).parse(value);
+}
+
 function parseDurableOperations(value: unknown): DurableStateOperation[] {
 	if (!Array.isArray(value))
 		throw { kind: "validation_failed", reason: "state_operations_invalid" };
 	return value.map((entry) => {
-		// Pre-contract rows stored bare operations. They remain readable until the
-		// pre-1.0 baseline cleanup, while every new row durably owns its authority.
 		if (!entry || typeof entry !== "object" || Array.isArray(entry) || !("operation" in entry))
-			return { operation: CharacterStateOperationSchema.parse(entry) };
+			throw { kind: "validation_failed", reason: "state_operations_invalid" };
 		const record = entry as Record<string, unknown>;
-		const skillId = typeof record.skillId === "string" ? record.skillId : undefined;
-		const authority =
-			record.authority === "model" ||
-			record.authority === "user_choice" ||
-			record.authority === "host_event"
-				? record.authority
-				: undefined;
-		const evidence = parseDurableEvidence(record.evidence);
+		const authority = record.authority;
+		if (
+			authority !== "model" &&
+			authority !== "user_choice" &&
+			authority !== "host_event" &&
+			authority !== "user"
+		)
+			throw { kind: "validation_failed", reason: "state_operations_invalid" };
 		return {
 			operation: CharacterStateOperationSchema.parse(record.operation),
-			...(authority ? { authority } : {}),
-			...(skillId ? { skillId } : {}),
-			...(evidence ? { evidence } : {}),
+			authority,
+			...(typeof record.skillId === "string" ? { skillId: record.skillId } : {}),
+			...(isEvidence(record.evidence) ? { evidence: record.evidence } : {}),
 		};
 	});
 }
 
-function parseDurableEvidence(value: unknown): CharacterStateEvidence | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+function assertRevisions(
+	actual: Record<StateScope, number>,
+	expected: StateRevisions | undefined,
+): void {
+	for (const [scope, revision] of Object.entries(expected ?? {}))
+		if (actual[scope as StateScope] !== revision)
+			throw { kind: "conflict", reason: "state_revision_conflict" };
+}
+
+function assertValid(
+	validate: ReturnType<typeof compileCharacterStateSchema>["validate"],
+	value: unknown,
+) {
+	if (!validate(value))
+		throw {
+			kind: "validation_failed",
+			reason: "state_schema_validation_failed",
+		};
+}
+
+function validReason(value: string): string {
+	const reason = value.trim();
+	if (!reason || reason.length > 1000)
+		throw { kind: "validation_failed", reason: "state_reason_invalid" };
+	return reason;
+}
+
+function isEvidence(value: unknown): value is CharacterStateEvidence {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
 	const record = value as Record<string, unknown>;
-	if (
-		(record.source !== "current_user" &&
-			record.source !== "current_assistant" &&
-			record.source !== "user_choice") ||
-		typeof record.quote !== "string"
-	)
-		return undefined;
-	return { source: record.source, quote: record.quote };
-}
-
-function applyOperation(
-	values: Record<string, unknown>,
-	definition: CharacterStateDefinition,
-	operation: CharacterStateOperation,
-	turnOperations: CharacterStateOperation[],
-	skillId?: string,
-	evidence?: CharacterStateEvidence,
-	authority: "model" | "user_choice" | "host_event" = "model",
-	prevalidated = false,
-): Record<string, unknown> {
-	const field = definition.fields[operation.path];
-	if (!field) throw { kind: "validation_failed", reason: "state_path_not_declared" };
-	const authorized =
-		field.write_authority === authority ||
-		((authority === "host_event" || authority === "user_choice") &&
-			field.deterministic_authorities.includes(authority)) ||
-		(field.write_authority.startsWith("skill:") &&
-			field.write_authority.slice("skill:".length) === skillId);
-	if ((!prevalidated && !authorized) || !field.operations.includes(operation.op))
-		throw { kind: "forbidden", reason: "state_operation_not_allowed" };
-	if (!prevalidated && authority === "model" && field.evidence_required && !evidence)
-		throw { kind: "validation_failed", reason: "state_evidence_required" };
-	const current = values[operation.path] ?? field.initial;
-	let next: unknown;
-	if (operation.op === "clear") next = field.initial;
-	else if (operation.op === "increment" || operation.op === "decrement") {
-		if (typeof current !== "number" || typeof operation.value !== "number")
-			throw { kind: "validation_failed", reason: "state_value_type_invalid" };
-		const delta = operation.op === "increment" ? operation.value : -operation.value;
-		next = current + delta;
-		if (field.max_change_per_turn !== undefined) {
-			const total = turnOperations
-				.filter((candidate) => candidate.path === operation.path)
-				.reduce((sum, candidate) => {
-					if (
-						typeof candidate.value !== "number" ||
-						(candidate.op !== "increment" && candidate.op !== "decrement")
-					)
-						return sum;
-					return sum + (candidate.op === "decrement" ? -candidate.value : candidate.value);
-				}, 0);
-			if (Math.abs(total) > field.max_change_per_turn)
-				throw { kind: "forbidden", reason: "state_turn_change_exceeded" };
-		}
-	} else if (operation.op === "append_unique" || operation.op === "remove_value") {
-		const requested =
-			typeof operation.value === "string"
-				? [operation.value]
-				: Array.isArray(operation.value) &&
-						operation.value.every((value) => typeof value === "string")
-					? operation.value
-					: null;
-		if (!Array.isArray(current) || requested === null)
-			throw { kind: "validation_failed", reason: "state_value_type_invalid" };
-		next =
-			operation.op === "append_unique"
-				? [...new Set([...current, ...requested])]
-				: current.filter((value) => !requested.includes(String(value)));
-	} else next = operation.value;
-	validateValue(field, current, next);
-	return { ...values, [operation.path]: next };
-}
-
-function validateValue(field: CharacterStateField, current: unknown, value: unknown): void {
-	const expected = field.type === "enum" || field.type === "string" ? "string" : field.type;
-	const actual = Array.isArray(value) ? "string_list" : typeof value;
-	if (actual !== expected) throw { kind: "validation_failed", reason: "state_value_type_invalid" };
-	if (
-		field.type === "string_list" &&
-		!(value as unknown[]).every((item) => typeof item === "string")
-	)
-		throw { kind: "validation_failed", reason: "state_value_type_invalid" };
-	if (field.type === "enum" && !field.values?.includes(String(value)))
-		throw { kind: "validation_failed", reason: "state_enum_invalid" };
-	if (typeof value === "number") {
-		if (field.minimum !== undefined && value < field.minimum)
-			throw { kind: "validation_failed", reason: "state_value_out_of_range" };
-		if (field.maximum !== undefined && value > field.maximum)
-			throw { kind: "validation_failed", reason: "state_value_out_of_range" };
-	}
-	// Setting the current value is a valid idempotent operation. Commit paths
-	// filter it out, so it cannot increment revisions or duplicate effects.
-	if (Object.is(current, value)) return;
-	if (
-		field.allowed_transitions &&
-		!field.allowed_transitions.some(
-			([from, to]) => Object.is(from, current) && Object.is(to, value),
-		)
-	)
-		throw { kind: "conflict", reason: "state_transition_not_allowed" };
+	return (
+		(record.source === "current_user" ||
+			record.source === "current_assistant" ||
+			record.source === "user_choice") &&
+		typeof record.quote === "string"
+	);
 }
 
 function hashDefinition(definition: CharacterStateDefinition): string {
 	return createHash("sha256").update(JSON.stringify(definition)).digest("hex");
 }
-
 function documentId(companionId: string, conversationId: string, scope: StateScope): string {
 	return scope === "conversation"
 		? `${companionId}:conversation:${conversationId}`
 		: `${companionId}:${scope}`;
+}
+function deepEqual(left: unknown, right: unknown): boolean {
+	return JSON.stringify(left) === JSON.stringify(right);
+}
+function isJsonObject(value: unknown): value is JsonObject {
+	return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

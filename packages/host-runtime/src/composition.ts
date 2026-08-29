@@ -14,6 +14,7 @@
 import { resolve } from "node:path";
 
 import type {
+	CharacterStateDocument,
 	MemoryEntry,
 	MemoryListResponse,
 	MemorySearchResponse,
@@ -405,7 +406,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			conversationId,
 			dedupeKey,
 		});
-		return { state };
+		return { state: { values: state.values, unlocked: state.unlocked } };
 	});
 	dispatcher.registerHandler(RPC.roleplay.dismissMedia, async (_p) => {
 		const { conversationId, mediaId } = _p as {
@@ -423,6 +424,35 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.roleplay.resetUnlocks, async () => {
 		s.roleplay.resetUnlocks(getCompanionId(s));
 		s.eventBus.publish("roleplay.unlocks_reset", {});
+		return {};
+	});
+	dispatcher.registerHandler(RPC.characterState.patch, async (_p) => {
+		const { conversationId, expectedRevisions, operations, dedupeKey } = _p as {
+			conversationId: string;
+			expectedRevisions: { conversation: number; relationship: number; character: number };
+			operations: Array<{
+				op: "add" | "replace" | "remove" | "test";
+				path: string;
+				value?: unknown;
+			}>;
+			dedupeKey: string;
+		};
+		await requireOwnedConversation(s, conversationId);
+		const character = s.characterLoader.load(getCompanionId(s));
+		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
+		const state = s.characterState.commitUserPatch({
+			companionId: character.id,
+			conversationId,
+			definition: character.state,
+			expectedRevisions,
+			operations: operations as never,
+			sourceId: dedupeKey,
+		});
+		s.eventBus.publish("character.state_changed", {
+			conversationId,
+			revisions: state.revisions,
+			schemaHash: state.schemaHash,
+		});
 		return {};
 	});
 
@@ -1758,6 +1788,15 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		);
 		const characterRuntimeByConversation: Record<string, { sceneId: string; visualState: string }> =
 			{};
+		const characterStateByConversation: Record<string, CharacterStateDocument> = {};
+		for (const conversationId of conversationIds) {
+			const projection = s.characterState.project(character.id, conversationId, character.state);
+			characterStateByConversation[conversationId] = {
+				document: projection.document,
+				revisions: projection.revisions,
+				schemaHash: projection.schemaHash,
+			};
+		}
 		const sceneRows = s.orm.select().from(sceneState).orderBy(desc(sceneState.updatedAt)).all();
 		for (const row of sceneRows) {
 			if (
@@ -1801,6 +1840,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				runs: s.externalAgentRuns.list(companionId).map(runWire),
 			},
 			characterRuntime: { byConversation: characterRuntimeByConversation },
+			characterState: {
+				schema: JSON.parse(JSON.stringify(character.state)),
+				byConversation: characterStateByConversation,
+			},
 			presentation: {
 				companionState: s.supervisor.currentState,
 				permissions: s.externalAgentRuns.pendingPermissions(companionId),
@@ -2160,6 +2203,7 @@ function ensureCharacterSeeded(s: HostCompositionContext): void {
 	const character = s.characterLoader.load(activeId);
 	if (!character) throw new Error(`character package missing: ${activeId}`);
 	s.characterLoader.seed(s.orm, s.eventBus, character);
+	s.characterState.reconcileSchema(character.id, character.state);
 	s.canon.syncPackage(character.id, character.canon);
 	const active = s.orm
 		.select({ characterId: activeCharacter.characterId })

@@ -11,11 +11,63 @@ triggers:
     - 用户拒绝、暂缓、换题、彻底退出或要求 OOC 技术解释
 requires:
   state:
-    story.undelivered_report.phase: [dormant, invited, signal_examined, route_investigated, testimonies_compared, last_shift_revealed, future_considered, resolved]
+    /story/undelivered_report/phase: [dormant, invited, signal_examined, route_investigated, testimonies_compared, last_shift_revealed, future_considered, resolved]
+active-when:
+  state:
+    /story/undelivered_report/status: [active]
+resources:
+  - id: entry
+    path: resources/story.md
+    headings: [创作边界, 序章：留言簿里的断行]
+    when:
+      state:
+        /story/undelivered_report/position: [entry]
+  - id: damaged-signal
+    path: resources/story.md
+    headings: [第一章：损坏的信号]
+    when:
+      state:
+        /story/undelivered_report/position: [entry, evidence]
+  - id: storm-relay
+    path: resources/story.md
+    headings: [第二章 A：风暴中继]
+    when:
+      state:
+        /story/undelivered_report/position: [relay_reconstruction]
+  - id: snow-route
+    path: resources/story.md
+    headings: [第二章 B：雪原上的脚印]
+    when:
+      state:
+        /story/undelivered_report/position: [snowfield_record]
+  - id: testimonies
+    path: resources/story.md
+    headings: [第三章：两份不一致的交接]
+    when:
+      state:
+        /story/undelivered_report/position: [testimony]
+  - id: last-shift
+    path: resources/story.md
+    headings: [第四章：最后一班]
+    when:
+      state:
+        /story/undelivered_report/position: [last_shift]
+  - id: future
+    path: resources/story.md
+    headings: [第五章：如果以后还有一座站]
+    when:
+      state:
+        /story/undelivered_report/position: [future]
+  - id: ending
+    path: resources/story.md
+    headings: [终章：把回报放在哪里, 中断与恢复, 人物与指代约束, 长程稳定规则]
+    when:
+      state:
+        /story/undelivered_report/position: [ending]
 allowed-tools: [host_state, host_visual, host_present, host_canon]
 completion:
   state:
-    story.undelivered_report.status: completed
+    /story/undelivered_report/status: completed
 priority: 100
 ---
 
@@ -25,13 +77,20 @@ priority: 100
 
 ## 每轮先确认
 
-1. 读取 `story.undelivered_report.*`、`narrative.*`、当前 scene、已呈现选择和媒体。
+1. 读取 `/story/undelivered_report/*`、`/narrative/*`、当前 scene、已呈现选择和媒体；再用 `role_skill` 读取本轮 `<eligible_resources>` 中与当前节点对应的剧情资源。资源不可用就不得提前叙述该章节。
 2. 剧情未进入时，只有用户明确进入才触发；剧情激活后，以普通自然对话为主要推进方式。追问、质疑、调查、改变方向和自然语言选择都能推进，卡片只是可选导航。
 3. 现实任务、OOC 技术解释、暂停、拒绝和换题优先。暂停后停止叙事；现实任务完成后只询问是否恢复。
 4. 每次状态推进必须让 `story phase`、`position`、`narrative anchor` 与实际 scene 保持一致；工具失败就停下并说明未改变。
 5. 展示选择后停止推进，不替用户选择；关闭卡片不等于同意或拒绝。
 6. 不把章节做成按钮流水线。先完整回应和展开当前节点；只有用户实际完成该节点的调查、比较或选择后，才用 `host_state` 携带本 Skill ID 原子提交对应状态。
 7. 剧情内的闲聊、人物追问和情绪反应可以丰富当前场景，但不会仅因“聊了几轮”机械推进 phase。
+
+## 入口原子规则
+
+- 当 `phase=dormant`，用户只是询问发现了什么、要求显示入口选择、明确说“把是否进入留给我”或尚未作出选择时，禁止调用 `host_state.update`。只读取 eligible presentation，展示 `undelivered_entry`，然后停止推进。
+- 只有用户无歧义地说“进入调查”“开始调查”或点击 `enter`，并且同一句没有否定、暂缓或保留决定，才能把剧情状态推进到 `invited/active`。
+- `想看看这条回报`可以触发入口说明，但不等于已经选择进入调查。关闭入口卡、沉默和要求简短说明同样不等于进入。
+- 如果本轮任一 Host 写入或呈现工具失败，先前暂存的状态、视觉和卡片都会由 Host 整体丢弃；不得再声称其中任何一项已生效。
 
 ## 时间与证据
 

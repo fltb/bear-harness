@@ -10,8 +10,8 @@ const AssetPath = z.string().min(1).max(512);
 const StatePath = z
 	.string()
 	.min(1)
-	.max(160)
-	.regex(/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/);
+	.max(512)
+	.regex(/^\/(?:[^/~]|~[01])+(?:\/(?:[^/~]|~[01])+)*$/u);
 
 export const RoleplayValueSchema = z.union([
 	z.string().max(4096),
@@ -58,7 +58,7 @@ export const RoleplayEffectSchema = z.discriminatedUnion("type", [
 	z.strictObject({
 		type: z.literal("state"),
 		path: StatePath,
-		op: z.enum(["set", "increment", "decrement", "append_unique", "remove_value", "clear"]),
+		op: z.enum(["add", "replace", "remove"]),
 		value: z.union([RoleplayValueSchema, z.array(z.string().max(4096)).max(100)]).optional(),
 		authority: z.enum(["user_choice", "host_event"]),
 	}),
@@ -164,6 +164,7 @@ export const RoleplaySchema = z.strictObject({
 								label: Copy,
 								description: z.string().max(4096).optional(),
 								event: Identifier,
+								follow_up: Copy,
 							}),
 							z.strictObject({
 								id: Identifier,

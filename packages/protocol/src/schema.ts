@@ -239,7 +239,12 @@ export const EventPayloadSchemas = {
 	}),
 	"character.state_changed": EventPayload({
 		conversationId: EventId,
-		state: BoundedEventValue,
+		revisions: z.strictObject({
+			conversation: z.number().int().safe().nonnegative(),
+			relationship: z.number().int().safe().nonnegative(),
+			character: z.number().int().safe().nonnegative(),
+		}),
+		schemaHash: z.string().length(64),
 	}),
 	"roleplay.unlocks_reset": EventPayload({}),
 	"roleplay.state_changed": EventPayload({
@@ -864,6 +869,7 @@ export const CharacterDisplay = z
 										label: CharacterCopy,
 										description: z.string().max(MAX_STRING_LENGTH).optional(),
 										event: CharacterIdentifier,
+										followUp: CharacterCopy,
 									}),
 									z.strictObject({
 										id: CharacterIdentifier,
@@ -2379,6 +2385,33 @@ export const CharacterRuntimeState = z.strictObject({
 export const CharacterRuntimeSnapshot = z.strictObject({
 	byConversation: boundedRecord(ConversationId, CharacterRuntimeState),
 });
+export const CharacterStateRevisions = z.strictObject({
+	conversation: z.number().int().safe().nonnegative(),
+	relationship: z.number().int().safe().nonnegative(),
+	character: z.number().int().safe().nonnegative(),
+});
+export const CharacterStateDocument = z.strictObject({
+	document: BoundedEventValue,
+	revisions: CharacterStateRevisions,
+	schemaHash: z.string().min(64).max(64),
+});
+export const CharacterStateSnapshot = z.strictObject({
+	schema: BoundedEventValue,
+	byConversation: boundedRecord(ConversationId, CharacterStateDocument),
+});
+const JsonPatchPath = z.string().min(1).max(512).regex(/^\//u);
+export const CharacterStatePatchOperation = z.discriminatedUnion("op", [
+	z.strictObject({ op: z.literal("add"), path: JsonPatchPath, value: BoundedEventValue }),
+	z.strictObject({ op: z.literal("replace"), path: JsonPatchPath, value: BoundedEventValue }),
+	z.strictObject({ op: z.literal("remove"), path: JsonPatchPath }),
+	z.strictObject({ op: z.literal("test"), path: JsonPatchPath, value: BoundedEventValue }),
+]);
+export const CharacterStatePatchRequest = z.strictObject({
+	conversationId: ConversationId,
+	expectedRevisions: CharacterStateRevisions,
+	operations: z.array(CharacterStatePatchOperation).min(1).max(20),
+	dedupeKey: z.string().uuid(),
+});
 export const RoleplayValue = z.union([
 	z.string().max(MAX_STRING_LENGTH),
 	z.number().finite(),
@@ -2413,6 +2446,7 @@ export const SnapshotResponse = z.strictObject({
 	model: ModelSnapshot.optional(),
 	run: RunListResponse.optional(),
 	characterRuntime: CharacterRuntimeSnapshot.optional(),
+	characterState: CharacterStateSnapshot.optional(),
 	presentation: z
 		.strictObject({
 			companionState: z.enum([
@@ -2567,6 +2601,14 @@ export const RPC = {
 		resetUnlocks: endpoint(
 			"roleplay.reset-unlocks:v1",
 			RoleplayResetUnlocksRequest,
+			EmptyResponse,
+			"mutation",
+		),
+	},
+	characterState: {
+		patch: endpoint(
+			"characterState.patch:v1",
+			CharacterStatePatchRequest,
 			EmptyResponse,
 			"mutation",
 		),

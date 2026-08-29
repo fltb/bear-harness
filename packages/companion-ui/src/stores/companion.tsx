@@ -64,6 +64,8 @@ import {
 	type CharacterListData,
 	type CharacterPackageDocument,
 	type CharacterRuntimeState,
+	type CharacterStatePatchOperation,
+	type CharacterStateSnapshot,
 	type CharacterSummary,
 	type ConfiguredModel,
 	type ConversationActiveResponse,
@@ -527,6 +529,7 @@ export interface CompanionStore {
 	readonly presence: PresenceState;
 	readonly character: CharacterDisplay | undefined;
 	readonly characterRuntimeByConversation: Readonly<Record<string, CharacterRuntimeState>>;
+	readonly characterState: CharacterStateSnapshot | undefined;
 	readonly roleplay: RoleplayState | undefined;
 	readonly activeRoleplayMediaId: string | undefined;
 	readonly activeAmbientMediaId: string | undefined;
@@ -540,6 +543,7 @@ export interface CompanionStore {
 	archiveConversation(id: string): Promise<void>;
 	restoreConversation(id: string): Promise<void>;
 	deleteConversation(id: string): Promise<void>;
+	patchCharacterState(operations: CharacterStatePatchOperation[]): Promise<void>;
 	sendMessage(text: string, attachmentIds?: string[]): Promise<void>;
 	regenerateMessage(entryId: string): Promise<void>;
 	editMessage(entryId: string, text: string): Promise<void>;
@@ -2680,6 +2684,19 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 				retainOperationError("conversation.delete", e);
 			}
 		},
+		patchCharacterState: async (operations) => {
+			const conversationId = requireActiveConversation();
+			const projection = snapshotValue()?.characterState?.byConversation[conversationId];
+			if (!projection) throw new Error("character_state_projection_unavailable");
+			await invoke(client, () =>
+				client.characterState.patch({
+					conversationId,
+					expectedRevisions: projection.revisions,
+					operations,
+					dedupeKey: crypto.randomUUID(),
+				}),
+			);
+		},
 		sendMessage: async (text, attachmentIds) => {
 			// No optimistic transcript state: Pi accepts the command first, then
 			// the Host projection is read back under its native session identity.
@@ -2818,6 +2835,9 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 		get characterRuntimeByConversation() {
 			return snapshotValue()?.characterRuntime?.byConversation ?? {};
+		},
+		get characterState() {
+			return snapshotValue()?.characterState;
 		},
 		get roleplay() {
 			return snapshotValue()?.roleplay;
