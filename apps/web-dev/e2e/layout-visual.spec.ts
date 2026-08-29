@@ -82,7 +82,7 @@ test("canonical layouts and management surfaces stay usable", async ({ page }) =
 			await expect(navigation.getByText("Ctrl", { exact: true })).toBeHidden();
 		}
 		const [searchBox, newConversationBox] = await Promise.all([
-			page.getByRole("searchbox", { name: zhCN.sidebar.search }).locator("..").boundingBox(),
+			page.getByTestId("sidebar-search-control").boundingBox(),
 			page.getByRole("button", { name: zhCN.sidebar.newConversation }).boundingBox(),
 		]);
 		expect(searchBox).not.toBeNull();

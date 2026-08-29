@@ -25,7 +25,6 @@ interface PersistedOnboardingRow {
 
 export interface CreatedConversation {
 	conversationId: string;
-	sceneTitle: string;
 	title: string;
 }
 export type OnboardingConversationCommit = (
@@ -34,7 +33,6 @@ export type OnboardingConversationCommit = (
 export interface OnboardingConversationCreationInput {
 	companionId: string;
 	title: string;
-	sceneTitle: string;
 	onCommit: OnboardingConversationCommit;
 }
 
@@ -339,7 +337,6 @@ export class FirstMeetingMachine {
 					conversation = this.conversationFactory({
 						companionId,
 						title: flow.completion.conversation_title,
-						sceneTitle: character.character.scene_title,
 						onCommit: (transaction) => {
 							if (nicknameValue !== undefined) {
 								transaction

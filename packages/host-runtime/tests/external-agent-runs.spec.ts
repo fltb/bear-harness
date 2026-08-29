@@ -90,7 +90,6 @@ function createDatabase(): {
 		id: CONVERSATION_ID,
 		companionId: COMPANION_ID,
 		title: "Direct run chat",
-		sceneTitle: "Scene",
 	});
 	return { root, database, repository };
 }

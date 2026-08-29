@@ -144,12 +144,14 @@ test("file and folder attachments survive delegation, reload, download, and rema
 	const triggerCard = page
 		.getByRole("article", { name: zhCN.messages.you })
 		.filter({ hasText: marker });
-	const resultMessageRow = page.locator(".timeline-entry-row").filter({
-		has: page.locator('.timeline-attachment-row[data-attachment-kind="generated"]'),
+	const resultMessageRow = page.getByTestId("timeline-entry-row").filter({
+		has: page
+			.getByTestId("timeline-attachment-row")
+			.filter({ has: page.getByRole("button", { name: "Generated outputs" }) }),
 	});
-	const resultMessage = resultMessageRow.locator("article.pi-timeline-message");
-	const resultTrigger = resultMessageRow.locator(".agent-result-trigger");
-	const resultPanel = page.locator(".agent-result-panel");
+	const resultMessage = resultMessageRow.getByTestId("timeline-message");
+	const resultTrigger = resultMessageRow.getByTestId("agent-result-trigger");
+	const resultPanel = page.getByTestId("agent-result-panel");
 	await expect(triggerCard).toBeVisible();
 	await expect(resultMessage).toBeVisible();
 	await expect(resultTrigger).toBeVisible();
@@ -178,7 +180,7 @@ test("file and folder attachments survive delegation, reload, download, and rema
 		});
 		const [mainBox, threadBox, composerBox, resultMessageBox, resultBox, presenceBox] =
 			await Promise.all([
-				stableBoundingBox(page.locator("main.main")),
+				stableBoundingBox(page.getByRole("main")),
 				stableBoundingBox(page.getByRole("region", { name: zhCN.messages.conversation })),
 				stableBoundingBox(page.getByRole("form", { name: zhCN.composer.messageInputLabel })),
 				stableBoundingBox(resultMessage),
@@ -224,7 +226,7 @@ test("file and folder attachments survive delegation, reload, download, and rema
 	);
 	await expect(resultPanel).toBeHidden();
 	await expect(resultTrigger).toBeHidden();
-	const inlineResult = resultMessageRow.locator(".agent-result-inline-card");
+	const inlineResult = resultMessageRow.getByTestId("agent-result-inline-card");
 	await expect(inlineResult).toBeVisible();
 	await inlineResult.scrollIntoViewIfNeeded();
 	const [mobileMessageBox, mobileResultBox, mobileThreadBox, mobileComposerBox, mobileAppBox] =
@@ -295,7 +297,9 @@ test("file and folder attachments survive delegation, reload, download, and rema
 		.toBe(true);
 	await page.reload();
 	await expect(
-		page.locator(".agent-result-panel").getByRole("button", { name: generated.name, exact: true }),
+		page
+			.getByTestId("agent-result-panel")
+			.getByRole("button", { name: generated.name, exact: true }),
 	).toBeVisible();
 	await page.screenshot({
 		path: resolve(screenshotDir, "22-pi-result-after-reload.png"),

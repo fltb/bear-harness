@@ -50,7 +50,6 @@ function configureActiveConversation(client: CompanionClient): void {
 					activeConversationId: "conversation-1",
 					id: "conversation-1",
 					title: "Test conversation",
-					sceneTitle: "",
 					piTimeline: { entries: [] },
 				},
 			},

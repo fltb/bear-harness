@@ -11,7 +11,7 @@ import { WorkRunCard } from "./WorkPanel.js";
  * context and top actions.
  */
 
-export function ThreadHead(props: { sceneTitle: string }) {
+export function ThreadHead(props: { sceneLabel: string }) {
 	const workflow = useShellWorkflowStore();
 	const queueOpen = workflow.queueOpen;
 	const activeRuns = workflow.activeRuns;
@@ -45,7 +45,7 @@ export function ThreadHead(props: { sceneTitle: string }) {
 
 	return (
 		<header class="thread-head">
-			<h1 class="scene-title">{props.sceneTitle}</h1>
+			<h1 class="scene-title">{props.sceneLabel}</h1>
 			<div class="work-pill-wrap" ref={wrapper}>
 				<Button
 					type="button"

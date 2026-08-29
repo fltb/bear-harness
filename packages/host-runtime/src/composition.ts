@@ -443,7 +443,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const title = requestedTitle ?? "新对话";
 		const character = s.characterLoader.load(companionId);
 		if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
-		const sceneTitle = character.character.scene_title;
 		let conversation: ConversationProjection;
 		try {
 			let forkedSession: PiSessionStore | undefined;
@@ -464,7 +463,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				id,
 				companionId,
 				title,
-				sceneTitle,
 				...(forkedSession ? { session: forkedSession } : {}),
 			});
 		} catch (e) {
@@ -1609,7 +1607,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			character.visual.expressions.map((expression) => expression.id),
 		);
 		const convRows = conversationRepository.list(companionId);
-		const conversationIds = new Set(convRows.map((row) => row.id));
+		const archivedConvRows = conversationRepository.list(companionId, true);
+		const conversationIds = new Set(
+			[...convRows, ...archivedConvRows].map((conversation) => conversation.id),
+		);
 		const characterRuntimeByConversation: Record<string, { sceneId: string; visualState: string }> =
 			{};
 		const sceneRows = s.orm.select().from(sceneState).orderBy(desc(sceneState.updatedAt)).all();
@@ -1636,7 +1637,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 					activeConversationId: activeProjection.activeConversationId,
 					id: activeProjection.id,
 					title: activeProjection.title,
-					sceneTitle: activeProjection.sceneTitle,
 					piTimeline: activeProjection.piTimeline,
 				}
 			: undefined;

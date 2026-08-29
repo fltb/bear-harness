@@ -98,9 +98,10 @@ interface CharacterProjection {
 	name: string;
 	character: {
 		subtitle: string;
-		scene_title: string;
 		composer_placeholder: string;
 	};
+	scenes: Array<{ id: string; label: string }>;
+	visual: { defaultSceneId: string };
 }
 
 export async function invokeRpc<Endpoint extends RpcEndpoint>(
@@ -181,11 +182,16 @@ export async function assertProductPage(window: Page, _product: Readonly<Product
 	const snapshot = await invokeRpc(window, RPC.snapshot.get, {});
 	const character = snapshot.character as CharacterProjection | undefined;
 	if (!character) throw new Error("character snapshot unavailable");
+	const activeConversationId = snapshot.conversation.activeConversationId;
+	const sceneId =
+		(activeConversationId
+			? snapshot.characterRuntime.byConversation[activeConversationId]?.sceneId
+			: undefined) ?? character.visual.defaultSceneId;
+	const sceneLabel = character.scenes.find((scene) => scene.id === sceneId)?.label;
+	if (!sceneLabel) throw new Error(`scene ${sceneId} unavailable in character snapshot`);
 
 	await expect(window).toHaveTitle(zhCN.shell.productName);
-	await expect(window.getByRole("heading", { level: 1 })).toHaveText(
-		character.character.scene_title,
-	);
+	await expect(window.getByRole("heading", { level: 1 })).toHaveText(sceneLabel);
 	await expect(window.getByText(character.name, { exact: true })).toBeVisible();
 	await expect(window.getByText(character.character.subtitle, { exact: true })).toBeVisible();
 

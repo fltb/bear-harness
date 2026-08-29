@@ -22,7 +22,6 @@ type HostConversationProjection = {
 	activeBranchId?: string;
 	id: string;
 	title: string;
-	sceneTitle: string;
 	piTimeline: { entries: []; activeLeafId?: string };
 	piSessionId?: string;
 	piLiveState?: {
@@ -39,7 +38,6 @@ type TestClient = Parameters<typeof createCompanionStore>[0];
 type HostConversationSummary = {
 	id: string;
 	title: string;
-	sceneTitle: string;
 	unread: boolean;
 	updatedAt: string;
 };
@@ -75,7 +73,6 @@ function hostProjection(id: string, title = id): HostConversationProjection {
 		activeConversationId: id,
 		id,
 		title,
-		sceneTitle: "",
 		piTimeline: { entries: [], activeLeafId: `${id}-leaf` },
 	};
 }
@@ -84,7 +81,6 @@ function conversationSummary(id: string, title = id): HostConversationSummary {
 	return {
 		id,
 		title,
-		sceneTitle: "",
 		unread: false,
 		updatedAt: "2026-01-01T00:00:00.000Z",
 	};

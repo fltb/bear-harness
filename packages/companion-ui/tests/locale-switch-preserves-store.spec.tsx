@@ -24,7 +24,6 @@ function loadedClient() {
 		activeConversationId: "conversation-1",
 		id: "conversation-1",
 		title: "Locale switch",
-		sceneTitle: "Scene",
 		piTimeline: {
 			activeLeafId: "assistant-1",
 			entries: [
@@ -56,7 +55,6 @@ function loadedClient() {
 						{
 							id: "conversation-1",
 							title: "Locale switch",
-							sceneTitle: "Scene",
 							unread: false,
 							updatedAt: "2026-01-01T00:00:00.000Z",
 						},

@@ -71,6 +71,13 @@ const MAX_MIGRATION_STEPS = 50;
 const RETAIN_BACKUPS = 2;
 /** Query latency threshold for logging. */
 const SLOW_QUERY_MS = 16;
+/**
+ * The sole pre-release v1 baseline shipped before `conversations.scene_title`
+ * was replaced by Host-owned `scene_state`. This is intentionally a checksum,
+ * not a loose schema probe: no unknown database is ever rewritten.
+ */
+const PRE_RELEASE_V1_SCENE_TITLE_CHECKSUM =
+	"0ac4f43cf5d1aed5e85a00bc725e57d6b9a00e3ed17386845ca76cbe4452a3ea";
 
 // ---------------------------------------------------------------------------
 // Migration type
@@ -407,6 +414,61 @@ export class Database {
 		if (rebuildsForeignKeys) this.connection.exec("PRAGMA foreign_keys = ON");
 	}
 
+	/**
+	 * Fold the one known pre-release v1 database into the final v1 baseline.
+	 *
+	 * This is deliberately not a numbered migration: release 1.0 still has one
+	 * canonical baseline. The exact old checksum and obsolete column must both
+	 * match before any write occurs. The normal verified-backup/recovery-marker
+	 * contract applies, and an interrupted or failed rewrite stays recoverable.
+	 */
+	private reconcilePreReleaseV1(migrations: readonly Migration[]): void {
+		if (migrations.length !== 1 || migrations[0]?.id !== 1) return;
+		const record = this.connection
+			.prepare("SELECT checksum FROM schema_migrations WHERE id = 1")
+			.get() as { checksum: string } | undefined;
+		if (record?.checksum !== PRE_RELEASE_V1_SCENE_TITLE_CHECKSUM) return;
+
+		const columns = new Set(
+			(
+				this.connection.prepare("PRAGMA table_info(conversations)").all() as Array<{ name: string }>
+			).map((column) => column.name),
+		);
+		if (!columns.has("scene_title")) {
+			throw new Error(
+				"known pre-release v1 checksum has an unexpected conversations schema; refusing rewrite",
+			);
+		}
+
+		const lastKnownGoodBackup = this.backupPaths()[0];
+		const backupPath = this.backupSchema(1, 1);
+		this.writeUpgradeMarker({ sourceVersion: 1, targetVersion: 1, backupPath, state: "pending" });
+		try {
+			this.connection.exec("BEGIN IMMEDIATE");
+			try {
+				this.connection.exec("ALTER TABLE conversations DROP COLUMN scene_title");
+				this.connection
+					.prepare("UPDATE schema_migrations SET checksum = ? WHERE id = 1 AND checksum = ?")
+					.run(this.checksum(migrations[0].up), PRE_RELEASE_V1_SCENE_TITLE_CHECKSUM);
+				this.connection.exec("COMMIT");
+			} catch (error) {
+				this.connection.exec("ROLLBACK");
+				throw error;
+			}
+			this.validateDatabase(this.connection, "reconciled pre-release v1 database");
+		} catch (error) {
+			throw new Error(
+				`pre-release v1 reconciliation failed: ${(error as Error)?.message ?? String(error)}; ` +
+					`verified backup at ${backupPath}; recovery marker at ${this.upgradeMarkerPath}`,
+			);
+		}
+
+		this.clearUpgradeMarker();
+		this.pruneBackups(
+			new Set(lastKnownGoodBackup ? [backupPath, lastKnownGoodBackup] : [backupPath]),
+		);
+	}
+
 	/** Run all pending migrations in order. */
 	migrate(migrations: Migration[]): void {
 		if (migrations.length > MAX_MIGRATION_STEPS) {
@@ -424,6 +486,7 @@ export class Database {
 				);
 			}
 		}
+		this.reconcilePreReleaseV1(ordered);
 
 		const current = this.currentVersion();
 		const knownIds = new Set(ordered.map((migration) => migration.id));

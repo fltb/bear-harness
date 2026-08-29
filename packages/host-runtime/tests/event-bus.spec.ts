@@ -41,7 +41,6 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 	"roleplay.choices_presented": { conversationId: "conversation-1", choiceSetId: "choices-1" },
 	"conversation.created": {
 		conversationId: "conversation-1",
-		sceneTitle: "A scene",
 		title: "A conversation",
 	},
 	"conversation.selected": { id: "conversation-1" },

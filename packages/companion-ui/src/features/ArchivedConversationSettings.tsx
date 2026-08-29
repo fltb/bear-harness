@@ -3,11 +3,13 @@ import { faBoxOpen, faTrash } from "@fortawesome/free-solid-svg-icons";
 import { createSignal, For, Show } from "solid-js";
 import { Icon } from "../Icon.js";
 import { useCompanionStore } from "../stores/companion.js";
+import { useConversationWorkflow } from "../stores/conversation-workflows.js";
 import { Button, Dialog } from "../ui/primitives.js";
 
 export function ArchivedConversationSettings() {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
+	const workflow = useConversationWorkflow(store);
 	const [deleteTarget, setDeleteTarget] = createSignal<{ id: string; title: string }>();
 	const [error, setError] = createSignal<string>();
 
@@ -21,10 +23,7 @@ export function ArchivedConversationSettings() {
 	};
 
 	return (
-		<section
-			class="settings-page-section archived-conversation-settings"
-			aria-labelledby="archived-conversations-title"
-		>
+		<section class="settings-page-section" aria-labelledby="archived-conversations-title">
 			<header class="settings-page-header">
 				<h3 id="archived-conversations-title">{t("sidebar.archivedConversations")}</h3>
 				<p>{t("settings.archivedConversationsHint")}</p>
@@ -46,7 +45,7 @@ export function ArchivedConversationSettings() {
 							<article class="archived-conversation-row">
 								<div>
 									<strong>{conversation.title}</strong>
-									<span>{conversation.sceneTitle}</span>
+									<span>{workflow.sceneLabel(conversation.id)}</span>
 								</div>
 								<div class="archived-conversation-actions">
 									<Button

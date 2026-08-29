@@ -127,7 +127,6 @@ async function setupHarness(
 		branchId: "main",
 		companionId: COMPANION_ID,
 		title: "Authority chat",
-		sceneTitle: "Scene",
 	});
 	const store = repository.getSession(CONVERSATION_ID);
 	const providers: CompanionModelRuntimeSource = { getModels: async () => models };

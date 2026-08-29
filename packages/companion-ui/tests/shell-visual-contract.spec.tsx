@@ -46,7 +46,6 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 	const summary = {
 		id: conversationId,
 		title: "Conversation",
-		sceneTitle: "",
 		unread: false,
 		updatedAt: "2026-01-01T00:00:00.000Z",
 	};
@@ -67,7 +66,6 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 				activeConversationId: conversationId,
 				id: conversationId,
 				title: summary.title,
-				sceneTitle: summary.sceneTitle,
 				piTimeline,
 			}
 		: undefined;
@@ -170,7 +168,7 @@ describe("shell visual and thread head contracts", () => {
 			<DesktopProvider
 				store={{ activeConversationId: "conversation-1", runs: [] } as CompanionStore}
 			>
-				<ThreadHead sceneTitle="Idle" />
+				<ThreadHead sceneLabel="Idle" />
 			</DesktopProvider>
 		));
 		const queue = screen.getByRole("button", { name: /0/ });
@@ -209,7 +207,7 @@ describe("shell visual and thread head contracts", () => {
 		} as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
-				<ThreadHead sceneTitle="Scene title" />
+				<ThreadHead sceneLabel="Scene title" />
 			</DesktopProvider>
 		));
 
@@ -324,7 +322,6 @@ describe("portrait layout contracts", () => {
 					activeConversationId: "conversation-1",
 					id: "conversation-1",
 					title: "Conversation",
-					sceneTitle: "",
 					piTimeline: { entries: [] },
 					piSessionId: "session-1",
 					piLiveState: { isStreaming: false },

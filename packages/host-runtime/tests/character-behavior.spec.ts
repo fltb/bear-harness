@@ -109,6 +109,7 @@ describe("CharacterBehaviorService", () => {
 	it("persists only package-declared Host scene and expression changes", () => {
 		const fixture = createFixture();
 		fixtures.push(fixture);
+		const afterSeq = fixture.eventBus.currentSeq;
 
 		const initial = fixture.behavior.invoke({
 			conversationId: "conversation-1",
@@ -156,6 +157,17 @@ describe("CharacterBehaviorService", () => {
 				.prepare("SELECT scene, state_json FROM scene_state WHERE conversation_id = ?")
 				.get("conversation-1"),
 		).toEqual({ scene: "snowfield", state_json: JSON.stringify({ visualState: "reflective" }) });
+		expect(fixture.eventBus.after(afterSeq)).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					kind: "character.scene_changed",
+					payload: expect.objectContaining({
+						conversationId: "conversation-1",
+						sceneId: "snowfield",
+					}),
+				}),
+			]),
+		);
 	});
 
 	it("applies package-declared Host lifecycle reactions from native Pi turns", () => {

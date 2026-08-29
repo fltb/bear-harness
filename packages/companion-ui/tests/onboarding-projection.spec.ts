@@ -179,7 +179,6 @@ describe("onboarding projection ordering", () => {
 			activeConversationId: "onboarding-conversation",
 			id: "onboarding-conversation",
 			title: "First meeting",
-			sceneTitle: "Arrival",
 			piTimeline: { entries: [] },
 		};
 		let completed = false;
@@ -199,7 +198,6 @@ describe("onboarding projection ordering", () => {
 								{
 									id: conversation.id,
 									title: conversation.title,
-									sceneTitle: conversation.sceneTitle,
 									unread: false,
 									updatedAt: "2026-08-22T00:00:00.000Z",
 								},

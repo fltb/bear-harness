@@ -13,7 +13,6 @@ theme:
 
 character:
   subtitle: "白熊客栈的夜班值守者"
-  scene_title: "极光书房 · 交接中"
   greeting: "极昼抬头看了一眼值守台。“你来了。今天交给我什么？”"
   composer_placeholder: "给极昼留一句话…"
   correction:

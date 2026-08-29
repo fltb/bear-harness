@@ -136,12 +136,18 @@ function createConversationWorkflow(store: CompanionStore) {
 	});
 	const modelSelected = createMemo(() => selectedModel() !== null);
 	const streaming = createMemo(() => store.activePiLiveState?.isStreaming === true);
+	const sceneLabel = (conversationId: string): string => {
+		const sceneId =
+			store.characterRuntimeByConversation?.[conversationId]?.sceneId ??
+			store.character?.visual.defaultSceneId;
+		return store.character?.scenes.find((scene) => scene.id === sceneId)?.label ?? "";
+	};
 	const visibleConversations = createMemo<ConversationSummary[]>(() => {
 		const needle = state.query.trim().toLocaleLowerCase();
 		const conversations = store.conversations ?? [];
 		if (!needle) return conversations;
 		return conversations.filter((conversation) =>
-			`${conversation.title} ${conversation.sceneTitle}`.toLocaleLowerCase().includes(needle),
+			`${conversation.title} ${sceneLabel(conversation.id)}`.toLocaleLowerCase().includes(needle),
 		);
 	});
 	const refreshModels = (conversationId: string): void => {
@@ -467,6 +473,7 @@ function createConversationWorkflow(store: CompanionStore) {
 		modelSelected,
 		selectedModel,
 		streaming,
+		sceneLabel,
 		visibleConversations,
 		loadFiles,
 		loadFolderFiles,
@@ -485,13 +492,8 @@ function createConversationWorkflow(store: CompanionStore) {
 }
 export function useConversationViewWorkflow(store: CompanionStore) {
 	const workflow = useConversationWorkflow(store);
-	const sceneTitle = createMemo(
-		() =>
-			(store.conversations ?? []).find(
-				(conversation) => conversation.id === store.activeConversationId,
-			)?.sceneTitle ??
-			store.character?.character.scene_title ??
-			"",
+	const sceneLabel = createMemo(() =>
+		store.activeConversationId ? workflow.sceneLabel(store.activeConversationId) : "",
 	);
 	const hasThreadContent = createMemo(
 		() =>
@@ -525,7 +527,7 @@ export function useConversationViewWorkflow(store: CompanionStore) {
 	});
 	return {
 		...workflow,
-		sceneTitle,
+		sceneLabel,
 		hasThreadContent,
 		roleplayChoiceSet,
 		roleplayInlineMedia,

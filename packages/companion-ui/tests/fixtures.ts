@@ -34,7 +34,6 @@ export const THEMED_CHARACTER: CharacterDisplay = {
 	},
 	character: {
 		subtitle: "Test subtitle",
-		scene_title: "Test scene",
 		greeting: "Hello",
 		composer_placeholder: "Message",
 		correction: {
@@ -234,15 +233,10 @@ export function createTestClient() {
 	const conversations: ConversationSummary[] = [];
 	let activeConversation: ConversationSelectResponse | undefined;
 	const conversationList = vi.fn(() => ok({ conversations: [...conversations] }));
-	const conversationProjection = (
-		id: string,
-		title: string,
-		sceneTitle: string,
-	): ConversationSelectResponse => ({
+	const conversationProjection = (id: string, title: string): ConversationSelectResponse => ({
 		activeConversationId: id,
 		id,
 		title,
-		sceneTitle,
 		piTimeline: { entries: [] },
 		piSessionId: `${id}-session`,
 		piLiveState: { isStreaming: false },
@@ -322,7 +316,6 @@ export function createTestClient() {
 					summary = {
 						id: "c1",
 						title: title ?? "New conversation",
-						sceneTitle: "",
 						unread: false,
 						updatedAt: "2026-01-01T00:00:00.000Z",
 					};
@@ -330,7 +323,7 @@ export function createTestClient() {
 				} else if (title !== undefined) {
 					summary.title = title;
 				}
-				activeConversation = conversationProjection("c1", summary.title, summary.sceneTitle);
+				activeConversation = conversationProjection("c1", summary.title);
 				return ok(activeConversation);
 			}),
 			select: vi.fn(({ id }: { id: string }) => {
@@ -339,17 +332,12 @@ export function createTestClient() {
 					conversation = {
 						id,
 						title: "New conversation",
-						sceneTitle: "",
 						unread: false,
 						updatedAt: "2026-01-01T00:00:00.000Z",
 					};
 					conversations.push(conversation);
 				}
-				activeConversation = conversationProjection(
-					id,
-					conversation.title,
-					conversation.sceneTitle,
-				);
+				activeConversation = conversationProjection(id, conversation.title);
 				return ok(activeConversation);
 			}),
 			activeGet: vi.fn(() =>
@@ -372,7 +360,7 @@ export function createTestClient() {
 						activeConversation =
 							replacement === undefined
 								? undefined
-								: conversationProjection(replacement.id, replacement.title, replacement.sceneTitle);
+								: conversationProjection(replacement.id, replacement.title);
 					}
 				}
 				return ok({});
@@ -385,7 +373,7 @@ export function createTestClient() {
 					activeConversation =
 						replacement === undefined
 							? undefined
-							: conversationProjection(replacement.id, replacement.title, replacement.sceneTitle);
+							: conversationProjection(replacement.id, replacement.title);
 				}
 				return ok({});
 			}),

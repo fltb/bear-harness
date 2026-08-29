@@ -39,7 +39,6 @@ function mirrorSnapshotActiveGet(client: CompanionClient): void {
 						: { activeBranchId: conversation.activeBranchId }),
 					id: conversation.id ?? activeConversationId,
 					title: conversation.title ?? "",
-					sceneTitle: conversation.sceneTitle ?? "",
 					piTimeline: conversation.piTimeline ?? { entries: [] },
 				},
 			},
@@ -65,7 +64,6 @@ function activeComposerClient() {
 						{
 							id: "conversation-1",
 							title: "New conversation",
-							sceneTitle: "",
 							unread: false,
 							updatedAt: "2026-01-01T00:00:00.000Z",
 						},
@@ -112,7 +110,6 @@ function streamingComposerClient() {
 		activeConversationId: "conversation-1",
 		id: "conversation-1",
 		title: "New conversation",
-		sceneTitle: "",
 		piTimeline: { entries: [] },
 		piSessionId: "session-1",
 		piLiveState: { isStreaming: false },

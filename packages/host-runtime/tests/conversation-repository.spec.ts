@@ -25,7 +25,6 @@ describe("ConversationRepository active conversation", () => {
 				id TEXT PRIMARY KEY,
 				companion_id TEXT NOT NULL,
 				title TEXT NOT NULL,
-				scene_title TEXT NOT NULL,
 				unread INTEGER NOT NULL DEFAULT 0,
 				archived_at TEXT,
 				created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -83,7 +82,6 @@ describe("ConversationRepository active conversation", () => {
 			id,
 			companionId: "companion",
 			title,
-			sceneTitle: "Scene",
 		});
 	}
 

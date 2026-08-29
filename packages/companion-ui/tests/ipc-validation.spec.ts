@@ -30,7 +30,6 @@ const timestamp = "2026-08-16T00:00:00Z";
 const conversation = {
 	id: "conversation-1",
 	title: "Conversation",
-	sceneTitle: "Scene",
 	unread: false,
 	updatedAt: timestamp,
 };
@@ -110,7 +109,6 @@ describe("host projection validation", () => {
 		expectRequiredFields(isConversationSummary, conversation, [
 			"id",
 			"title",
-			"sceneTitle",
 			"unread",
 			"updatedAt",
 		]);

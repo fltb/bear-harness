@@ -21,7 +21,6 @@ import {
 export interface ConversationSummary {
 	id: string;
 	title: string;
-	sceneTitle: string;
 	unread: false;
 	updatedAt: string;
 }
@@ -30,7 +29,6 @@ export interface ConversationProjection {
 	activeConversationId: string;
 	id: string;
 	title: string;
-	sceneTitle: string;
 	piTimeline: PiTimeline;
 	piSessionId: string;
 	piLiveState: PiLiveState;
@@ -132,7 +130,6 @@ export class ConversationRepository {
 			.select({
 				id: conversations.id,
 				title: conversations.title,
-				sceneTitle: conversations.sceneTitle,
 				updatedAt: conversations.updatedAt,
 			})
 			.from(conversations)
@@ -152,7 +149,6 @@ export class ConversationRepository {
 			.select({
 				id: conversations.id,
 				title: conversations.title,
-				sceneTitle: conversations.sceneTitle,
 			})
 			.from(conversations)
 			.where(
@@ -163,7 +159,7 @@ export class ConversationRepository {
 				),
 			)
 			.get();
-		return row ? this.project(row.id, row.title, row.sceneTitle) : undefined;
+		return row ? this.project(row.id, row.title) : undefined;
 	}
 
 	rename(id: string, companionId: string, title: string): boolean {
@@ -238,7 +234,6 @@ export class ConversationRepository {
 		id: string;
 		companionId: string;
 		title: string;
-		sceneTitle: string;
 		session?: PiSessionStore;
 		onCommit?: (transaction: Pick<AppDatabase, "insert" | "update">) => void;
 	}): ConversationProjection {
@@ -261,7 +256,6 @@ export class ConversationRepository {
 						id: input.id,
 						companionId: input.companionId,
 						title: input.title,
-						sceneTitle: input.sceneTitle,
 					})
 					.run();
 				if (session) {
@@ -293,7 +287,7 @@ export class ConversationRepository {
 			throw error;
 		}
 		if (session) this.sessions.set(input.id, session);
-		return this.project(input.id, input.title, input.sceneTitle);
+		return this.project(input.id, input.title);
 	}
 
 	active(companionId: string): ConversationProjection | undefined {
@@ -301,7 +295,6 @@ export class ConversationRepository {
 			.select({
 				id: conversations.id,
 				title: conversations.title,
-				sceneTitle: conversations.sceneTitle,
 			})
 			.from(activeConversations)
 			.innerJoin(conversations, eq(conversations.id, activeConversations.conversationId))
@@ -309,7 +302,7 @@ export class ConversationRepository {
 				and(eq(activeConversations.companionId, companionId), isNull(conversations.archivedAt)),
 			)
 			.get();
-		return row ? this.project(row.id, row.title, row.sceneTitle) : undefined;
+		return row ? this.project(row.id, row.title) : undefined;
 	}
 
 	select(id: string, companionId: string): ConversationProjection | undefined {
@@ -494,8 +487,8 @@ export class ConversationRepository {
 		}
 	}
 
-	project(id: string, title: string, sceneTitle: string): ConversationProjection {
-		return this.projectPi(id, title, sceneTitle, this.getSession(id));
+	project(id: string, title: string): ConversationProjection {
+		return this.projectPi(id, title, this.getSession(id));
 	}
 
 	timelinePage(id: string, companionId: string, beforeOffset?: number): PiTimeline | undefined {
@@ -519,19 +512,13 @@ export class ConversationRepository {
 			return undefined;
 		return session.getMessageEntry(messageId);
 	}
-	private projectPi(
-		id: string,
-		title: string,
-		sceneTitle: string,
-		session: PiSessionStore,
-	): ConversationProjection {
+	private projectPi(id: string, title: string, session: PiSessionStore): ConversationProjection {
 		const live = this.liveSessionResolver?.get(id);
 		const piTimeline = this.projectTimelineWindow(id, session);
 		return {
 			activeConversationId: id,
 			id,
 			title,
-			sceneTitle,
 			piSessionId: live?.sessionId ?? session.sessionId,
 			piLiveState: projectPiLiveState(live?.readPiLiveState()),
 			piTimeline,

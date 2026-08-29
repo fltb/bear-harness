@@ -90,7 +90,6 @@ export const conversations = sqliteTable(
 			.notNull()
 			.references(() => companionIdentity.id),
 		title: text().default("").notNull(),
-		sceneTitle: text("scene_title").default("").notNull(),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 		archivedAt: text("archived_at"),

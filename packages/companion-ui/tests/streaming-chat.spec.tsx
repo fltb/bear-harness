@@ -32,7 +32,6 @@ function mirrorSnapshotActiveGet(client: CompanionClient): void {
 						: { activeBranchId: conversation.activeBranchId }),
 					id: conversation.id ?? activeConversationId,
 					title: conversation.title ?? "",
-					sceneTitle: conversation.sceneTitle ?? "",
 					piTimeline: conversation.piTimeline ?? { entries: [] },
 				},
 			},
@@ -97,7 +96,6 @@ function activeClient() {
 						{
 							id: "conversation-1",
 							title: "Streaming",
-							sceneTitle: "Scene",
 							unread: false,
 							updatedAt: "2026-01-01T00:00:00.000Z",
 						},
@@ -127,7 +125,6 @@ function liveProjection(overrides: {
 		activeConversationId: "conversation-1",
 		id: "conversation-1",
 		title: "Streaming",
-		sceneTitle: "Scene",
 		piTimeline: { entries: overrides.entries ?? [] },
 		piSessionId: SESSION_ID,
 		piLiveState: { isStreaming: false, ...overrides.live },
@@ -218,7 +215,6 @@ describe("Pi-projection chat", () => {
 							{
 								id: "conversation-1",
 								title: "Streaming",
-								sceneTitle: "Scene",
 								unread: false,
 								updatedAt: "2026-01-01T00:00:00.000Z",
 							},
@@ -354,7 +350,6 @@ describe("Pi-projection chat", () => {
 							{
 								id: "conversation-1",
 								title: "Streaming",
-								sceneTitle: "Scene",
 								unread: false,
 								updatedAt: "2026-01-01T00:00:00.000Z",
 							},
@@ -392,12 +387,10 @@ describe("Pi-projection chat", () => {
 						activeConversationId: "conversation-1",
 						id: "conversation-1",
 						title: "Internal only",
-						sceneTitle: "Scene",
 						conversations: [
 							{
 								id: "conversation-1",
 								title: "Internal only",
-								sceneTitle: "Scene",
 								unread: false,
 								updatedAt: "2026-01-01T00:00:00.000Z",
 							},
@@ -601,7 +594,6 @@ describe("Pi-projection chat", () => {
 							{
 								id: "conversation-1",
 								title: "Streaming",
-								sceneTitle: "Scene",
 								unread: false,
 								updatedAt: "2026-01-01T00:00:00.000Z",
 							},

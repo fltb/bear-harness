@@ -1,6 +1,6 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import type { ConversationAttachmentSummary, PiTimelineEntry } from "@bear-harness/protocol";
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import { useAttachmentPreview } from "./features/AttachmentPreviewPanel.js";
 import { followTimelineScroll } from "./lib/dom-effects.js";
 import type { CharacterDisplay } from "./stores/companion.js";
@@ -24,6 +24,7 @@ function TimelineAttachmentRows(props: { attachments?: ConversationAttachmentSum
 					{(attachment) => (
 						<li
 							class="timeline-attachment-row"
+							data-testid="timeline-attachment-row"
 							data-attachment-id={attachment.id}
 							data-attachment-kind={attachment.kind}
 						>
@@ -155,7 +156,7 @@ function PiTimelineEntryView(props: {
 		return null;
 	}
 	return (
-		<div class="timeline-entry-row">
+		<div class="timeline-entry-row" data-testid="timeline-entry-row">
 			<Show when={!isUser && store.character !== undefined}>
 				<img
 					class="agent-message-avatar"
@@ -171,6 +172,7 @@ function PiTimelineEntryView(props: {
 				</Show>
 				<article
 					class={`msg pi-timeline-message ${isUser ? "user" : "bear-msg"}${failed ? " stream-failed" : ""}`}
+					data-testid="timeline-message"
 					data-pi-entry-id={entry.id}
 					aria-label={isUser ? t("messages.you") : characterName}
 				>
@@ -319,6 +321,7 @@ function PiTimelineEntryView(props: {
 					<Button
 						type="button"
 						class="agent-result-trigger"
+						data-testid="agent-result-trigger"
 						onClick={() => props.onOpenResult(entry.id)}
 					>
 						<span>{resultRun()?.title}</span>
@@ -326,6 +329,7 @@ function PiTimelineEntryView(props: {
 					</Button>
 					<article
 						class="agent-result-inline-card"
+						data-testid="agent-result-inline-card"
 						aria-label={`${t("work.result.title")} · ${resultRun()?.title}`}
 					>
 						<header>
@@ -426,7 +430,11 @@ function AgentResultPanel(props: {
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	return (
-		<aside class="agent-result-panel" aria-labelledby={`agent-result-title-${props.entry.id}`}>
+		<aside
+			class="agent-result-panel"
+			data-testid="agent-result-panel"
+			aria-labelledby={`agent-result-title-${props.entry.id}`}
+		>
 			<header class="agent-result-panel-header">
 				<div>
 					<span class="agent-result-eyebrow">{t("work.result.title")}</span>
@@ -531,37 +539,48 @@ export function ConversationPanel() {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const view = useConversationViewWorkflow(store);
-	const { sceneTitle, hasThreadContent } = view;
+	const { sceneLabel, hasThreadContent } = view;
 	let threadRef: HTMLElement | undefined;
 	const [loadingOlder, setLoadingOlder] = createSignal(false);
-	const [resultEntryId, setResultEntryId] = createSignal<string>();
-	let autoOpenedResultKey: string | undefined;
+	const [resultSelection, setResultSelection] = createSignal<{
+		entryId: string;
+		latestKey: string;
+	}>();
+	const [dismissedResultKey, setDismissedResultKey] = createSignal<string>();
 	const resultEntries = createMemo(() =>
 		(store.activePiTimeline?.entries ?? []).filter(
 			(entry): entry is AssistantTimelineEntry =>
 				resultRunForEntry(entry, store.runs) !== undefined,
 		),
 	);
-	const selectedResultEntry = createMemo(() =>
-		resultEntries().find((entry) => entry.id === resultEntryId()),
-	);
+	const latestResult = createMemo(() => resultEntries().at(-1));
+	const latestResultKey = createMemo(() => {
+		const latest = latestResult();
+		return latest ? `${store.activeConversationId ?? ""}:${latest.id}` : undefined;
+	});
+	const selectedResultEntry = createMemo(() => {
+		const latest = latestResult();
+		const latestKey = latestResultKey();
+		if (!latest || !latestKey || dismissedResultKey() === latestKey) return undefined;
+		const selection = resultSelection();
+		return selection?.latestKey === latestKey
+			? resultEntries().find((entry) => entry.id === selection.entryId)
+			: latest;
+	});
 	const selectedResultRun = createMemo(() => {
 		const entry = selectedResultEntry();
 		return entry ? resultRunForEntry(entry, store.runs) : undefined;
 	});
-
-	createEffect(() => {
-		const latest = resultEntries().at(-1);
-		if (!latest) {
-			setResultEntryId(undefined);
-			return;
-		}
-		const resultKey = `${store.activeConversationId ?? ""}:${latest.id}`;
-		if (autoOpenedResultKey !== resultKey) {
-			autoOpenedResultKey = resultKey;
-			setResultEntryId(latest.id);
-		}
-	});
+	const openResult = (entryId: string) => {
+		const latestKey = latestResultKey();
+		if (!latestKey) return;
+		setDismissedResultKey(undefined);
+		setResultSelection({ entryId, latestKey });
+	};
+	const closeResult = () => {
+		setDismissedResultKey(latestResultKey());
+		setResultSelection(undefined);
+	};
 
 	followTimelineScroll(
 		() => threadRef,
@@ -571,7 +590,7 @@ export function ConversationPanel() {
 
 	return (
 		<>
-			<ThreadHead sceneTitle={sceneTitle()} />
+			<ThreadHead sceneLabel={sceneLabel()} />
 			<section
 				class="thread"
 				aria-live="polite"
@@ -603,7 +622,7 @@ export function ConversationPanel() {
 										{loadingOlder() ? t("messages.loadingOlder") : t("messages.loadOlder")}
 									</Button>
 								</Show>
-								<PiTimelineRenderer entries={timeline().entries} onOpenResult={setResultEntryId} />
+								<PiTimelineRenderer entries={timeline().entries} onOpenResult={openResult} />
 							</>
 						)}
 					</Show>
@@ -619,7 +638,7 @@ export function ConversationPanel() {
 							<AgentResultPanel
 								entry={entry()}
 								run={run()}
-								onClose={() => setResultEntryId(undefined)}
+								onClose={closeResult}
 								onLocate={() => {
 									document
 										.querySelector(`[data-pi-entry-id="${entry().id}"]`)

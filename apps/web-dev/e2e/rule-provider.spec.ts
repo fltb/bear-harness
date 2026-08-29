@@ -12,6 +12,12 @@ interface ConversationProjection {
 	conversation?: { piTimeline: { entries: PiEntry[] } };
 }
 
+interface SceneSnapshot {
+	characterRuntime: {
+		byConversation: Record<string, { sceneId: string; visualState: string }>;
+	};
+}
+
 async function activeProjection(page: Page, token: string): Promise<ConversationProjection> {
 	return rpc(page, token, "conversation.activeGet:v1", {});
 }
@@ -86,6 +92,29 @@ test("rule provider exercises send and edited-history regeneration deterministic
 				.map((entry) => entry.text);
 		})
 		.toContain("EDITED_OK");
+
+	await rpc(page, bootstrap.token, "message.send:v1", {
+		conversationId: conversation.id,
+		text: "E2E_MANUAL_ROLE_START",
+	});
+	await expect
+		.poll(async () => {
+			const next = await activeProjection(page, bootstrap.token);
+			return next.conversation?.piTimeline.entries
+				.filter((entry) => entry.kind === "message" && entry.role === "assistant")
+				.at(-1)?.text;
+		})
+		.toContain("E2E_MANUAL_ROLE_START_DONE");
+	await expect
+		.poll(async () => {
+			const snapshot = await rpc<SceneSnapshot>(page, bootstrap.token, "snapshot.get:v1", {});
+			return snapshot.characterRuntime.byConversation[conversation.id]?.sceneId;
+		})
+		.toBe("quiet_terminal");
+
+	await page.reload();
+	const restored = await rpc<SceneSnapshot>(page, bootstrap.token, "snapshot.get:v1", {});
+	expect(restored.characterRuntime.byConversation[conversation.id]?.sceneId).toBe("quiet_terminal");
 });
 
 test("rule provider selects the memory matching the current query marker", async ({ page }) => {

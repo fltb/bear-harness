@@ -93,7 +93,6 @@ export interface CharacterWorkPresentation {
 
 export interface CharacterStrings {
 	subtitle: string;
-	scene_title: string;
 	greeting: string;
 	composer_placeholder: string;
 	correction: {
@@ -357,7 +356,10 @@ function validateCharacterCard(
 ): asserts value is CharacterStrings {
 	const schema = z.strictObject({
 		subtitle: z.string(),
-		scene_title: z.string(),
+		// Installed pre-release character packages may still carry this retired
+		// display copy. Accept it for package compatibility, but never expose or
+		// consume it: live scene presentation is owned by Host scene_state.
+		scene_title: z.string().optional(),
 		greeting: z.string(),
 		composer_placeholder: z.string(),
 		correction: z.strictObject({
@@ -679,6 +681,9 @@ export class CharacterLoader {
 			throw new Error(`character package ${id}: prompt is invalid`);
 		}
 		validateCharacterCard(parsed.character, id);
+		// Normalize an installed pre-release package before it crosses the Host
+		// protocol boundary. The compatibility-only key must never reach clients.
+		delete (parsed.character as CharacterStrings & { scene_title?: string }).scene_title;
 		const state = CharacterStateSchema.parse(
 			(parsed as CharacterPackage & { state_schema?: unknown }).state_schema ?? {},
 		);

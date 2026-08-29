@@ -22,14 +22,12 @@ describe("sidebar conversation journey", () => {
 				{
 					id: "conversation-1",
 					title: "Alpha project",
-					sceneTitle: "Workshop",
 					unread: true,
 					updatedAt: "2026-08-16T00:00:00Z",
 				},
 				{
 					id: "conversation-2",
 					title: "Beta notes",
-					sceneTitle: "Library",
 					unread: false,
 					updatedAt: "2026-08-16T00:00:00Z",
 				},
@@ -38,7 +36,6 @@ describe("sidebar conversation journey", () => {
 				{
 					id: "conversation-archived",
 					title: "Archived project",
-					sceneTitle: "Old workshop",
 					unread: false,
 					updatedAt: "2026-08-15T00:00:00Z",
 				},

@@ -354,19 +354,17 @@ export class HostRuntime {
 				throw error;
 			}
 		});
-		onboarding.setConversationFactory(({ companionId, title, sceneTitle, onCommit }) => {
+		onboarding.setConversationFactory(({ companionId, title, onCommit }) => {
 			const id = randomUUID();
 			const created = conversationRepository.createAndSelect({
 				id,
 				companionId,
 				title,
-				sceneTitle,
 				onCommit,
 			});
 			return {
 				conversationId: created.id,
 				title: created.title,
-				sceneTitle: created.sceneTitle,
 			};
 		});
 		onboarding.setConversationCreatedHandler((companionId, conversationId) => {

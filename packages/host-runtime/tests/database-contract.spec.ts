@@ -403,6 +403,64 @@ describe("database schema contract", () => {
 		database.close();
 	});
 
+	it("safely reconciles the sole known pre-release v1 baseline", () => {
+		const databaseDir = root();
+		const database = new Database(databaseDir);
+		database.migrate(MIGRATIONS);
+		database.connection.exec(
+			"ALTER TABLE conversations ADD COLUMN scene_title TEXT NOT NULL DEFAULT ''",
+		);
+		database.connection
+			.prepare("UPDATE schema_migrations SET checksum = ? WHERE id = 1")
+			.run("0ac4f43cf5d1aed5e85a00bc725e57d6b9a00e3ed17386845ca76cbe4452a3ea");
+		database.connection
+			.prepare(
+				"INSERT INTO companion_packages (id, name, version, hash) VALUES ('package-a', 'Package', '1.0.0', 'hash')",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES ('companion-a', 'package-a', 'Companion', '')",
+			)
+			.run();
+		database.connection
+			.prepare(
+				"INSERT INTO conversations (id, companion_id, title, scene_title) VALUES ('conversation-a', 'companion-a', 'Kept title', 'Old scene')",
+			)
+			.run();
+
+		database.migrate(MIGRATIONS);
+
+		const columns = database.connection.prepare("PRAGMA table_info(conversations)").all() as Array<{
+			name: string;
+		}>;
+		expect(columns.map((column) => column.name)).not.toContain("scene_title");
+		expect(
+			database.connection
+				.prepare("SELECT title FROM conversations WHERE id = 'conversation-a'")
+				.get(),
+		).toEqual({ title: "Kept title" });
+		expect(
+			database.connection.prepare("SELECT checksum FROM schema_migrations WHERE id = 1").get(),
+		).toEqual({ checksum: createHash("sha256").update(MIGRATIONS[0]!.up, "utf8").digest("hex") });
+		expect(existsSync(join(databaseDir, "schema-upgrade.json"))).toBe(false);
+		const backups = backupPaths(databaseDir);
+		expect(backups).toHaveLength(2);
+		const backup = new DatabaseSync(backups.at(-1)!, { readOnly: true });
+		expect(
+			(backup.prepare("PRAGMA table_info(conversations)").all() as Array<{ name: string }>).map(
+				(column) => column.name,
+			),
+		).toContain("scene_title");
+		expect(
+			backup
+				.prepare("SELECT title, scene_title FROM conversations WHERE id = 'conversation-a'")
+				.get(),
+		).toEqual({ title: "Kept title", scene_title: "Old scene" });
+		backup.close();
+		database.close();
+	});
+
 	it("rejects an unknown migration from a newer application", () => {
 		const database = new Database(root());
 		database.migrate(MIGRATIONS);

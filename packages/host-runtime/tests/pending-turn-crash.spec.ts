@@ -94,7 +94,6 @@ async function createFixture(failpoint: Failpoint): Promise<Fixture> {
 		branchId: "main",
 		companionId: COMPANION_ID,
 		title: "Pending turn crash",
-		sceneTitle: "Crash boundary",
 	});
 
 	const faux = fauxProvider({

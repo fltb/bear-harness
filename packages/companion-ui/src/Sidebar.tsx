@@ -85,7 +85,7 @@ export function Sidebar(props: {
 				</Show>
 			</div>
 			<div class="sidebar-tools">
-				<TextField class="search-trigger">
+				<TextField class="search-trigger" data-testid="sidebar-search-control">
 					<Icon icon={faMagnifyingGlass} />
 					<TextField.Input
 						ref={(element) => {
@@ -173,7 +173,7 @@ export function Sidebar(props: {
 											}}
 										>
 											<strong>{conversation.title}</strong>
-											<span>{conversation.sceneTitle}</span>
+											<span>{workflow.sceneLabel(conversation.id)}</span>
 											<Show when={conversation.unread}>
 												<span
 													class="unread-dot"

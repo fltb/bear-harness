@@ -242,7 +242,6 @@ export const EventPayloadSchemas = {
 	"roleplay.choices_dismissed": EventPayload({ conversationId: EventId }),
 	"conversation.created": EventPayload({
 		conversationId: EventId,
-		sceneTitle: EventText.optional(),
 		title: EventText.optional(),
 	}),
 	"conversation.selected": EventPayload({ id: EventId }),
@@ -729,7 +728,6 @@ export const CharacterDisplay = z
 		language: z.string().min(1).max(64),
 		character: z.strictObject({
 			subtitle: z.string().max(MAX_STRING_LENGTH),
-			scene_title: z.string().max(MAX_STRING_LENGTH),
 			greeting: z.string().max(MAX_STRING_LENGTH),
 			composer_placeholder: z.string().max(MAX_STRING_LENGTH),
 			correction: z.strictObject({
@@ -1060,7 +1058,6 @@ export const ConversationId = z.string().min(1).max(64);
 export const ConversationSummary = z.strictObject({
 	id: ConversationId,
 	title: z.string().max(MAX_STRING_LENGTH),
-	sceneTitle: z.string().max(MAX_STRING_LENGTH),
 	unread: z.boolean(),
 	updatedAt: WireTimestamp,
 });
@@ -1223,7 +1220,6 @@ export const ConversationSelectResponse = z.strictObject({
 	activeConversationId: ConversationId,
 	id: ConversationId,
 	title: z.string().max(MAX_STRING_LENGTH),
-	sceneTitle: z.string().max(MAX_STRING_LENGTH),
 	piTimeline: PiTimeline,
 	piSessionId: PiSessionId,
 	piLiveState: PiLiveState,
@@ -2265,7 +2261,6 @@ export const ConversationSnapshot = z.strictObject({
 	activeConversationId: ConversationId.optional(),
 	id: ConversationId.optional(),
 	title: z.string().max(MAX_STRING_LENGTH).optional(),
-	sceneTitle: z.string().max(MAX_STRING_LENGTH).optional(),
 	piTimeline: PiTimeline.optional(),
 });
 export const MemorySnapshot = z.strictObject({
