@@ -39,6 +39,42 @@ function scopeFor(companionId: string): MemoryBankScope {
 	return { installationId: "install-1", userId: "user-1", companionId };
 }
 
+function explicitMemoryRuntime(backend: TencentDbMemoryBackend) {
+	return {
+		captureExplicitTurn: vi.fn(async (turn: {
+			userText: string;
+			assistantText: string;
+			sessionKey: string;
+			sessionId?: string;
+			messages: Array<{ id: string; role: string; content: string }>;
+		}) => {
+			const companionId = turn.sessionKey.split(":").at(-1) ?? "jizhou";
+			const scope = scopeFor(companionId);
+			await backend.open({ scope });
+			const record = await backend.remember({
+				scope,
+				text: turn.messages
+					.map((message) => `${message.role === "user" ? "用户" : "角色"}：${message.content}`)
+					.join("\n"),
+				provenance: {
+					kind: "explicit",
+					piSessionEntryIds: turn.messages.map((message) => message.id) as [string, ...string[]],
+					sourceRef: turn.sessionId,
+				},
+			});
+			return {
+				status: "stored" as const,
+				reason: "memory_stored" as const,
+				l0RecordedCount: turn.messages.length,
+				extractedCount: 1,
+				storedCount: 1,
+				storedRecordIds: [record.id],
+				indexingStatus: { state: "complete", total: 1, completed: 1, pending: 0, failed: 0 },
+			};
+		}),
+	};
+}
+
 /** Native Pi assistant message fixture appended through SessionManager. */
 function nativeAssistantMessage(text: string): PiSessionMessage {
 	return {
@@ -287,6 +323,7 @@ describe("relationship memory context", () => {
 				canon: { syncPackage: () => undefined },
 				conversationRepository: { getSession: () => session },
 				memoryBackend: backend,
+				memoryRuntime: explicitMemoryRuntime(backend),
 				memoryScope: { installationId: "install-1", userId: "user-1" },
 			} as never;
 
@@ -342,6 +379,7 @@ describe("relationship memory context", () => {
 				canon: { syncPackage: () => undefined },
 				conversationRepository: { getSession: () => session },
 				memoryBackend: backend,
+				memoryRuntime: explicitMemoryRuntime(backend),
 				memoryScope: { installationId: "install-1", userId: "user-1" },
 			} as never;
 
@@ -453,6 +491,7 @@ describe("relationship memory context", () => {
 				canon: { syncPackage: () => undefined },
 				conversationRepository: { getSession: () => session },
 				memoryBackend: backend,
+				memoryRuntime: explicitMemoryRuntime(backend),
 				memoryScope: { installationId: "install-1", userId: "user-1" },
 			} as never;
 
@@ -539,6 +578,7 @@ describe("relationship memory context", () => {
 				canon: { syncPackage: () => undefined },
 				conversationRepository: repository,
 				memoryBackend: backend,
+				memoryRuntime: explicitMemoryRuntime(backend),
 				memoryScope: { installationId: "install-1", userId: "user-1" },
 			} as never;
 
@@ -588,6 +628,7 @@ describe("relationship memory context", () => {
 			canon: { syncPackage: () => undefined },
 			conversationRepository: { getSession: () => undefined },
 			memoryBackend: backend,
+			memoryRuntime: explicitMemoryRuntime(backend),
 			memoryScope: { installationId: "install-1", userId: "user-1" },
 		} as never;
 

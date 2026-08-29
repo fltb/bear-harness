@@ -121,10 +121,20 @@ export function EmbeddingSettings(props: {
 				preset.model === (remoteModelDraft() ?? vector()?.model) &&
 				preset.dimensions === Number(remoteDimensionsDraft() ?? vector()?.dimensions ?? 0),
 		) ?? null;
+	const localConfigurationActive = () => {
+		if (onboarding || vector()?.enabled !== true || vector()?.provider !== "local") return false;
+		if (settingsEnabledDraft() === false || providerId() !== "local") return false;
+		if (effectiveLocalModelMode() === "custom") {
+			return (customModelDraft() ?? vector()?.customPath ?? "").trim() === vector()?.customPath;
+		}
+		return selectedCandidate()?.id === vector()?.localModel;
+	};
 	const actionLabel = () => {
 		if (configuringLocal()) return t("settings.downloadingLocalModel");
 		if (localSelected() && download().status === "completed") {
-			return t("settings.localModelEnabled");
+			return localConfigurationActive()
+				? t("settings.localModelEnabled")
+				: t("settings.enableLocalModel");
 		}
 		if (localSelected()) return t("settings.downloadAndEnableLocalModel");
 		return onboarding ? t("messages.continue") : t("settings.saveEmbedding");
@@ -272,7 +282,7 @@ export function EmbeddingSettings(props: {
 	const renderAction = () => (
 		<div class="settings-actions">
 			<Show
-				when={localSelected() && download().status === "completed"}
+				when={localSelected() && download().status === "completed" && localConfigurationActive()}
 				fallback={
 					<Button
 						type="button"

@@ -43,7 +43,7 @@ describe("Pi role resource injection", () => {
 				.getSkills()
 				.skills.map((skill) => skill.name)
 				.sort(),
-		).toEqual(["continuity-reveal"]);
+		).toEqual(["continuity-reveal", "undelivered-report"]);
 		expect(loader.getExtensions().errors).toEqual([]);
 		expect(loader.getExtensions().extensions).toHaveLength(0);
 	});

@@ -140,7 +140,12 @@ export class CanonHubService {
 	retrieve(
 		companionId: string,
 		query: string,
-		options: { limit?: number; moduleId?: string; includeAdjacent?: boolean } = {},
+		options: {
+			limit?: number;
+			moduleId?: string;
+			includeAdjacent?: boolean;
+			allowedModuleIds?: readonly string[];
+		} = {},
 	): CanonChunkRecord[] {
 		const normalized = query.trim();
 		if (!normalized) return [];
@@ -150,8 +155,14 @@ export class CanonHubService {
 		const terms = [
 			...new Set([...queryTerms, ...aliases].filter((term) => term.length >= 3)),
 		].slice(0, 8);
+		const allowedPackageChunks = this.allowedPackageChunkIds(companionId, options.allowedModuleIds);
 		if (terms.length === 0)
-			return this.exactSearch(companionId, [...new Set([...queryTerms, ...aliases])], limit);
+			return this.exactSearch(
+				companionId,
+				[...new Set([...queryTerms, ...aliases])],
+				limit,
+				allowedPackageChunks,
+			);
 		const ftsQuery = terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ");
 		const routedChunkIds = this.routedChunkIds(companionId, normalized, aliases, options.moduleId);
 		const rows = this.db.all<{
@@ -179,11 +190,17 @@ export class CanonHubService {
 			LIMIT ${Math.max(limit * 3, 12)}
 		`);
 		const ranked = rows
-			.filter((row) => routedChunkIds.size === 0 || routedChunkIds.has(row.id))
+			.filter(
+				(row) =>
+					(routedChunkIds.size === 0 || routedChunkIds.has(row.id)) &&
+					(row.origin !== "package" ||
+						allowedPackageChunks === undefined ||
+						allowedPackageChunks.has(row.id)),
+			)
 			.slice(0, limit)
 			.map(toChunkRecord);
 		if (options.includeAdjacent === false) return ranked;
-		return this.expandAdjacent(ranked, limit);
+		return this.expandAdjacent(ranked, limit, allowedPackageChunks);
 	}
 
 	/**
@@ -194,26 +211,33 @@ export class CanonHubService {
 	async retrieveHybrid(
 		companionId: string,
 		query: string,
-		options: { limit?: number; moduleId?: string; includeAdjacent?: boolean } = {},
+		options: {
+			limit?: number;
+			moduleId?: string;
+			includeAdjacent?: boolean;
+			allowedModuleIds?: readonly string[];
+		} = {},
 	): Promise<CanonChunkRecord[]> {
 		const limit = Math.min(options.limit ?? 8, 30);
+		const allowedPackageChunks = this.allowedPackageChunkIds(companionId, options.allowedModuleIds);
 		const lexical = this.retrieve(companionId, query, {
 			...options,
 			limit: Math.max(limit * 3, 12),
 			includeAdjacent: false,
 		});
 		const service = this.embeddingService?.();
-		if (!service?.isReady()) return this.finalizeHybrid(lexical, limit, options.includeAdjacent);
+		if (!service?.isReady())
+			return this.finalizeHybrid(lexical, limit, options.includeAdjacent, allowedPackageChunks);
 		let queryEmbedding: Float32Array;
 		try {
 			queryEmbedding = await service.embed(query.trim());
 		} catch {
-			return this.finalizeHybrid(lexical, limit, options.includeAdjacent);
+			return this.finalizeHybrid(lexical, limit, options.includeAdjacent, allowedPackageChunks);
 		}
 		const aliases = this.matchAliases(companionId, query);
 		const routedChunkIds = this.routedChunkIds(companionId, query, aliases, options.moduleId);
 		if (!this.ensureVectorIndex(queryEmbedding.length)) {
-			return this.finalizeHybrid(lexical, limit, options.includeAdjacent);
+			return this.finalizeHybrid(lexical, limit, options.includeAdjacent, allowedPackageChunks);
 		}
 		const vectorRows = this.vectors!.searchCanonVectors(queryEmbedding, Math.max(limit * 6, 48));
 		const candidates = this.db
@@ -244,7 +268,10 @@ export class CanonHubService {
 					candidate.row !== undefined &&
 					Number.isFinite(candidate.score) &&
 					candidate.score > 0 &&
-					(routedChunkIds.size === 0 || routedChunkIds.has(candidate.row.id)),
+					(routedChunkIds.size === 0 || routedChunkIds.has(candidate.row.id)) &&
+					(candidate.row.origin !== "package" ||
+						allowedPackageChunks === undefined ||
+						allowedPackageChunks.has(candidate.row.id)),
 			);
 		const fused = new Map<string, { row: CanonChunkRecord; score: number }>();
 		for (const [rank, row] of lexical.entries())
@@ -258,6 +285,7 @@ export class CanonHubService {
 			[...fused.values()].sort((left, right) => right.score - left.score).map((hit) => hit.row),
 			limit,
 			options.includeAdjacent,
+			allowedPackageChunks,
 		);
 	}
 
@@ -631,9 +659,12 @@ export class CanonHubService {
 		ranked: CanonChunkRecord[],
 		limit: number,
 		includeAdjacent: boolean | undefined,
+		allowedPackageChunks?: ReadonlySet<string>,
 	): CanonChunkRecord[] {
 		const selected = ranked.slice(0, limit);
-		return includeAdjacent === false ? selected : this.expandAdjacent(selected, limit);
+		return includeAdjacent === false
+			? selected
+			: this.expandAdjacent(selected, limit, allowedPackageChunks);
 	}
 
 	private matchAliases(companionId: string, query: string): string[] {
@@ -646,7 +677,12 @@ export class CanonHubService {
 			.flatMap((entity) => [entity.name, ...entity.aliases]);
 	}
 
-	private exactSearch(companionId: string, terms: string[], limit: number): CanonChunkRecord[] {
+	private exactSearch(
+		companionId: string,
+		terms: string[],
+		limit: number,
+		allowedPackageChunks?: ReadonlySet<string>,
+	): CanonChunkRecord[] {
 		if (!terms.length) return [];
 		const rows = this.db
 			.select({
@@ -667,7 +703,13 @@ export class CanonHubService {
 			.orderBy(asc(canonChunks.sourceId), asc(canonChunks.ordinal))
 			.all();
 		return rows
-			.filter((row) => terms.some((term) => row.content.includes(term)))
+			.filter(
+				(row) =>
+					terms.some((term) => row.content.includes(term)) &&
+					(row.origin !== "package" ||
+						allowedPackageChunks === undefined ||
+						allowedPackageChunks.has(row.id)),
+			)
 			.slice(0, limit)
 			.map(toChunkRecord);
 	}
@@ -708,7 +750,28 @@ export class CanonHubService {
 		);
 	}
 
-	private expandAdjacent(ranked: CanonChunkRecord[], limit: number): CanonChunkRecord[] {
+	private allowedPackageChunkIds(
+		companionId: string,
+		allowedModuleIds: readonly string[] | undefined,
+	): Set<string> | undefined {
+		if (allowedModuleIds === undefined) return undefined;
+		const allowed = new Set(allowedModuleIds);
+		return new Set(
+			this.db
+				.select({ stableKey: storyModules.stableKey, sourceRefs: storyModules.sourceRefsJson })
+				.from(storyModules)
+				.where(and(eq(storyModules.companionId, companionId), eq(storyModules.origin, "package")))
+				.all()
+				.filter((module) => module.stableKey && allowed.has(module.stableKey))
+				.flatMap((module) => module.sourceRefs),
+		);
+	}
+
+	private expandAdjacent(
+		ranked: CanonChunkRecord[],
+		limit: number,
+		allowedPackageChunks?: ReadonlySet<string>,
+	): CanonChunkRecord[] {
 		const result = [...ranked];
 		const seen = new Set(result.map((row) => row.id));
 		for (const hit of ranked) {
@@ -737,7 +800,13 @@ export class CanonHubService {
 				.orderBy(asc(canonChunks.ordinal))
 				.all();
 			for (const row of rows)
-				if (!seen.has(row.id) && result.length < limit) {
+				if (
+					!seen.has(row.id) &&
+					result.length < limit &&
+					(row.origin !== "package" ||
+						allowedPackageChunks === undefined ||
+						allowedPackageChunks.has(row.id))
+				) {
 					seen.add(row.id);
 					result.push({ ...toChunkRecord(row), adjacent: true });
 				}

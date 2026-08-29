@@ -44,7 +44,9 @@ const memoryEntry = {
 	importance: 0.8,
 };
 const memoryCaptureResponse = {
-	memoryId: "memory-1",
+	status: "stored",
+	reason: "memory_stored",
+	memoryIds: ["memory-1"],
 	sourceEntryId: "entry-1",
 	createdBy: "user_capture",
 };
@@ -132,13 +134,15 @@ describe("host projection validation", () => {
 			true,
 		);
 		expectRequiredFields(isMemoryCaptureResponse, memoryCaptureResponse, [
-			"memoryId",
+			"status",
+			"reason",
+			"memoryIds",
 			"sourceEntryId",
 			"createdBy",
 		]);
-		expect(isMemoryCaptureResponse({ ...memoryCaptureResponse, memoryId: "m".repeat(129) })).toBe(
-			false,
-		);
+		expect(
+			isMemoryCaptureResponse({ ...memoryCaptureResponse, memoryIds: ["m".repeat(129)] }),
+		).toBe(false);
 		expect(
 			isMemoryCaptureResponse({ ...memoryCaptureResponse, sourceEntryId: "e".repeat(129) }),
 		).toBe(false);

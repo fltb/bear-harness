@@ -90,6 +90,26 @@ async function data(
 	return response.data;
 }
 
+async function seedMemory(
+	runtime: ReturnType<typeof createHostRuntime>,
+	text: string,
+	sourceEntryId: string,
+): Promise<string> {
+	const scope = { ...runtime.memoryScope, companionId: productConfig.defaultCharacterId };
+	await runtime.memoryBackend.open({ scope });
+	const record = await runtime.memoryBackend.remember({
+		scope,
+		text,
+		provenance: {
+			kind: "explicit",
+			piSessionEntryIds: [sourceEntryId],
+			sourceRef: sourceEntryId,
+		},
+		metadata: { sourceEntryId },
+	});
+	return record.id;
+}
+
 describe("automatic continuity", () => {
 	afterEach(() => {
 		for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -117,22 +137,21 @@ describe("automatic continuity", () => {
 		const captured = (await data(runtime, "memory.capture:v1", {
 			conversationId: conversation.id,
 			entryId: sourceEntryId,
-		})) as { memoryId: string; sourceEntryId: string; createdBy: string };
+		})) as {
+			status: string;
+			reason: string;
+			memoryIds: string[];
+			sourceEntryId: string;
+			createdBy: string;
+		};
 		expect(captured).toMatchObject({
-			memoryId: expect.any(String),
+			status: "no_extractable_memory",
+			reason: "extractor_found_no_durable_memory",
+			memoryIds: [],
 			sourceEntryId: sourceEntryId,
 			createdBy: "user_capture",
 		});
-		// Assert the Host-facing projection: provenance is keyed by the backend ID,
-		// not read from or coupled to the provider's raw metadata payload.
-		await expect(data(runtime, "memory.list:v1", {})).resolves.toMatchObject({
-			entries: [
-				{
-					id: captured.memoryId,
-					text: "用户：这条普通消息不会自动成为记忆",
-				},
-			],
-		});
+		await expect(data(runtime, "memory.list:v1", {})).resolves.toEqual({ entries: [] });
 		await runtime.close();
 	}, 15_000);
 	it("commits candidate scope consistently and rejects only one owned pending row", async () => {
@@ -285,17 +304,11 @@ describe("automatic continuity", () => {
 		runtime = makeRuntimeAt(dataDir);
 		await runtime.start();
 
-		const original = (await data(runtime, "memory.capture:v1", {
-			conversationId: conversation.id,
-			entryId: originalSourceEntryId,
-		})) as { memoryId: string };
-		await data(runtime, "memory.capture:v1", {
-			conversationId: conversation.id,
-			entryId: keptSourceEntryId,
-		});
+		const originalId = await seedMemory(runtime, "用户：原始记忆会被删除", originalSourceEntryId);
+		await seedMemory(runtime, "用户：保留的记忆", keptSourceEntryId);
 
 		const cursor = (await data(runtime, "snapshot.get:v1", {})) as { eventSeq: number };
-		await data(runtime, "memory.forget:v1", { entryId: original.memoryId });
+		await data(runtime, "memory.forget:v1", { entryId: originalId });
 		const replay = await data(runtime, "events.subscribe:v1", { afterSeq: cursor.eventSeq });
 		expect(replay).toMatchObject({
 			events: expect.arrayContaining([
@@ -313,7 +326,7 @@ describe("automatic continuity", () => {
 			entries: [expect.objectContaining({ text: "用户：保留的记忆" })],
 		});
 		await expect(data(runtime, "memory.list:v1", {})).resolves.not.toMatchObject({
-			entries: expect.arrayContaining([expect.objectContaining({ id: original.memoryId })]),
+			entries: expect.arrayContaining([expect.objectContaining({ id: originalId })]),
 		});
 		await runtime.close();
 	});
@@ -338,16 +351,8 @@ describe("automatic continuity", () => {
 		await expect(data(restarted, "settings.get:v1", {})).resolves.toMatchObject({
 			settings: { relationshipMemoryEnabled: true, firstRunStage: "role" },
 		});
-		const captured = (await data(restarted, "memory.capture:v1", {
-			conversationId: conversation.id,
-			entryId: sourceEntryId,
-		})) as { memoryId: string; sourceEntryId: string; createdBy: string };
-		expect(captured).toMatchObject({
-			memoryId: expect.any(String),
-			sourceEntryId: sourceEntryId,
-			createdBy: "user_capture",
-		});
-		await data(restarted, "memory.exclude:v1", { memoryId: captured.memoryId, excluded: true });
+		const memoryId = await seedMemory(restarted, "用户：我喜欢重启后仍然连续的记忆", sourceEntryId);
+		await data(restarted, "memory.exclude:v1", { memoryId, excluded: true });
 		await restarted.close();
 
 		const restored = makeRuntimeAt(dataDir);
@@ -355,7 +360,7 @@ describe("automatic continuity", () => {
 		await expect(data(restored, "memory.list:v1", {})).resolves.toMatchObject({
 			entries: [
 				{
-					id: captured.memoryId,
+					id: memoryId,
 					excluded: true,
 					text: "用户：我喜欢重启后仍然连续的记忆",
 				},

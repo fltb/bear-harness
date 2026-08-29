@@ -9,6 +9,7 @@ import {
 	LocalEmbeddingService,
 	type Logger,
 	type MemoryRecord as TdaiMemoryRecord,
+	VectorStore,
 } from "@bear-harness/tdai-core";
 import type { AssistantMessage, Context, ToolResultMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -130,6 +131,26 @@ describe("local embedding downloader", () => {
 	});
 });
 
+it("detects and rebuilds an incomplete vector index even when provider metadata matches", () => {
+	const root = createRoot();
+	const path = join(root, "incomplete-vectors.db");
+	const provider = { provider: "local", model: "test-embedding" };
+	const initial = new VectorStore(path, 3, logger);
+	expect(initial.init(provider).needsReindex).toBe(false);
+	expect(initial.upsertL1(storedMemory("memory-1", "scope-a", "metadata without vector"))).toBe(
+		true,
+	);
+	initial.close();
+
+	const recovered = new VectorStore(path, 3, logger);
+	const result = recovered.init(provider);
+	expect(result).toMatchObject({
+		needsReindex: true,
+		reason: "incomplete vector index: L1=0/1, L0=0/0",
+	});
+	recovered.close();
+});
+
 function createRuntime(
 	root: string,
 	companionId = "role-a",
@@ -161,6 +182,111 @@ async function remember(backend: MemoryBackend, scope: MemoryBankScope, text: st
 	await backend.open({ scope });
 	return backend.remember({ scope, text, provenance, importance: 0.7 });
 }
+
+it("embeds direct memories and recalls paraphrases through the local vector path", async () => {
+	const runtime = createRuntime(createRoot());
+	const scope = scopeFor("role-a");
+	const records = new Map<string, TdaiMemoryRecord>();
+	const upsertL1 = vi.fn((record: TdaiMemoryRecord, embedding?: Float32Array) => {
+		expect(embedding).toBeInstanceOf(Float32Array);
+		expect(embedding?.length).toBe(3);
+		records.set(record.id, record);
+		return true;
+	});
+	const searchL1Vector = vi.fn(() => {
+		const record = [...records.values()][0];
+		if (!record) return [];
+		return [
+			{
+				record_id: record.id,
+				content: record.content,
+				type: record.type,
+				priority: record.priority,
+				scene_name: record.scene_name,
+				score: 0.91,
+				timestamp_str: record.timestamps[0] ?? "",
+				timestamp_start: record.timestamps[0] ?? "",
+				timestamp_end: record.timestamps[0] ?? "",
+				session_key: record.sessionKey,
+				session_id: record.sessionId,
+				metadata_json: JSON.stringify(record.metadata),
+			},
+		];
+	});
+	const store = {
+		getCapabilities: () => ({
+			vectorSearch: true,
+			ftsSearch: false,
+			nativeHybridSearch: false,
+			sparseVectors: false,
+		}),
+		isFtsAvailable: () => false,
+		queryL1Records: ({ sessionKey }: { sessionKey?: string } = {}) =>
+			[...records.values()]
+				.filter((record) => sessionKey === undefined || record.sessionKey === sessionKey)
+				.map((record) => ({
+					record_id: record.id,
+					content: record.content,
+					type: record.type,
+					priority: record.priority,
+					scene_name: record.scene_name,
+					session_key: record.sessionKey,
+					session_id: record.sessionId,
+					timestamp_str: record.timestamps[0] ?? "",
+					timestamp_start: record.timestamps[0] ?? "",
+					timestamp_end: record.timestamps[0] ?? "",
+					created_time: record.createdAt,
+					updated_time: record.updatedAt,
+					metadata_json: JSON.stringify(record.metadata),
+				})),
+		countL1: () => records.size,
+		upsertL1,
+		deleteL1: (id: string) => records.delete(id),
+		searchL1Vector,
+		searchL1Fts: () => [],
+	};
+	const embed = vi.fn(async () => new Float32Array([0.2, 0.4, 0.8]));
+	const embedding: EmbeddingService = {
+		embed,
+		embedBatch: async (texts) => Promise.all(texts.map((text) => embed(text))),
+		getDimensions: () => 3,
+		getProviderInfo: () => ({ provider: "local", model: "test" }),
+		isReady: () => true,
+		startWarmup: () => undefined,
+	};
+	(
+		runtime as unknown as {
+			core: {
+				getVectorStore(): unknown;
+				getEmbeddingService(): EmbeddingService;
+				destroy(): Promise<void>;
+			};
+		}
+	).core = {
+		getVectorStore: () => store,
+		getEmbeddingService: () => embedding,
+		destroy: async () => undefined,
+	};
+
+	await runtime.backend.open({ scope });
+	const created = await remember(
+		runtime.backend,
+		scope,
+		"我在做深度调试时偏好先画时序图，再检查并发竞态",
+	);
+	const hits = await runtime.backend.recall({
+		scope,
+		query: "复杂故障定位的优先方法是什么？",
+		limit: 5,
+	});
+
+	expect(upsertL1).toHaveBeenCalledOnce();
+	expect(searchL1Vector).toHaveBeenCalledOnce();
+	expect(embed).toHaveBeenCalledWith("复杂故障定位的优先方法是什么？");
+	expect(hits).toEqual([
+		expect.objectContaining({ record: expect.objectContaining({ id: created.id }) }),
+	]);
+});
 
 type RuntimeStoreForTest = {
 	getCapabilities: () => {
@@ -666,6 +792,194 @@ describe("TencentDbRuntime", () => {
 		});
 	});
 	describe("automatic extraction pipeline", () => {
+		it("flushes an explicit capture through L0 and L1 and returns stored IDs", async () => {
+			const originalCompleteSimple = fakeModels.completeSimple;
+			fakeModels.completeSimple = async () => ({
+				role: "assistant",
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify([
+							{
+								scene_name: "用户说明长期写作偏好",
+								message_ids: ["explicit-user-1"],
+								memories: [
+									{
+										content: "用户习惯在午夜写长篇小说",
+										type: "persona",
+										priority: 80,
+										source_message_ids: ["explicit-user-1"],
+										metadata: {},
+									},
+								],
+							},
+						]),
+					},
+				],
+			});
+			try {
+				const root = createRoot();
+				const runtime = createRuntime(root, "role-a", {
+					pipeline: { everyNConversations: 99, enableWarmup: false },
+					extraction: { enableDedup: false },
+				});
+				await runtime.start();
+				const timestamp = Date.now() + 1000;
+				const result = await runtime.captureExplicitTurn({
+					userText: "请记住，我习惯在午夜写长篇小说",
+					assistantText: "好。",
+					messages: [
+						{
+							id: "explicit-user-1",
+							role: "user",
+							content: "请记住，我习惯在午夜写长篇小说",
+							timestamp,
+						},
+					],
+					sessionKey: namespaceFor(scopeFor("role-a")),
+					sessionId: "explicit-session-1",
+					startedAt: timestamp - 1,
+				});
+
+				expect(result).toMatchObject({
+					status: "stored",
+					reason: "memory_stored",
+					l0RecordedCount: 1,
+					extractedCount: 1,
+					storedCount: 1,
+					skippedCount: 0,
+					failedCount: 0,
+					storedRecordIds: [expect.any(String)],
+				});
+				await runtime.backend.open({ scope: scopeFor("role-a") });
+				const records = await runtime.backend.list({ scope: scopeFor("role-a") });
+				expect(records).toEqual([
+					expect.objectContaining({
+						id: result.storedRecordIds[0],
+						text: "用户习惯在午夜写长篇小说",
+					}),
+				]);
+				expect(existsSync(join(root, "memory", "conversations"))).toBe(true);
+				expect(existsSync(join(root, "memory", "records"))).toBe(true);
+			} finally {
+				fakeModels.completeSimple = originalCompleteSimple;
+			}
+		}, 15_000);
+
+		it("returns an explicit reason when the extractor finds no durable memory", async () => {
+			const originalCompleteSimple = fakeModels.completeSimple;
+			fakeModels.completeSimple = async () => ({
+				role: "assistant",
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify([
+							{
+								scene_name: "普通寒暄",
+								message_ids: ["empty-user-1"],
+								memories: [],
+							},
+						]),
+					},
+				],
+			});
+			try {
+				const runtime = createRuntime(createRoot(), "role-a", {
+					pipeline: { everyNConversations: 99, enableWarmup: false },
+					extraction: { enableDedup: false },
+				});
+				await runtime.start();
+				const timestamp = Date.now() + 1000;
+				await expect(
+					runtime.captureExplicitTurn({
+						userText: "你好",
+						assistantText: "你好。",
+						messages: [{ id: "empty-user-1", role: "user", content: "你好", timestamp }],
+						sessionKey: namespaceFor(scopeFor("role-a")),
+						sessionId: "empty-session-1",
+						startedAt: timestamp - 1,
+					}),
+				).resolves.toMatchObject({
+					status: "no_extractable_memory",
+					reason: "extractor_found_no_durable_memory",
+					extractedCount: 0,
+					storedCount: 0,
+				});
+			} finally {
+				fakeModels.completeSimple = originalCompleteSimple;
+			}
+		}, 15_000);
+
+		it("reports an equivalent explicit memory as already known instead of rejecting silently", async () => {
+			const originalCompleteSimple = fakeModels.completeSimple;
+			fakeModels.completeSimple = async (_model?: unknown, context?: unknown) => {
+				const serialized = JSON.stringify(context);
+				const newRecordId = serialized.match(/第 1 条新记忆 \(record_id: ([^)]+)\)/)?.[1];
+				const text = newRecordId
+					? JSON.stringify([
+							{
+								record_id: newRecordId,
+								action: "skip",
+								target_ids: [],
+							},
+						])
+					: JSON.stringify([
+							{
+								scene_name: "用户说明固定饮品偏好",
+								message_ids: [],
+								memories: [
+									{
+										content: "用户长期只喝无糖乌龙茶",
+										type: "persona",
+										priority: 80,
+										source_message_ids: [],
+										metadata: {},
+									},
+								],
+							},
+						]);
+				return { role: "assistant", content: [{ type: "text", text }] };
+			};
+			try {
+				const runtime = createRuntime(createRoot(), "role-a", {
+					pipeline: { everyNConversations: 99, enableWarmup: false },
+					extraction: { enableDedup: true },
+				});
+				await runtime.start();
+				const sessionKey = namespaceFor(scopeFor("role-a"));
+				const capture = (id: string, timestamp: number) =>
+					runtime.captureExplicitTurn({
+						userText: "请记住，我长期只喝无糖乌龙茶",
+						assistantText: "好。",
+						messages: [
+							{
+								id,
+								role: "user",
+								content: "请记住，我长期只喝无糖乌龙茶",
+								timestamp,
+							},
+						],
+						sessionKey,
+						sessionId: id,
+						startedAt: timestamp - 1,
+					});
+
+				await expect(capture("known-user-1", Date.now() + 1000)).resolves.toMatchObject({
+					status: "stored",
+					reason: "memory_stored",
+				});
+				await expect(capture("known-user-2", Date.now() + 3000)).resolves.toMatchObject({
+					status: "already_known",
+					reason: "equivalent_memory_already_stored",
+					extractedCount: 1,
+					storedCount: 0,
+					skippedCount: 1,
+				});
+			} finally {
+				fakeModels.completeSimple = originalCompleteSimple;
+			}
+		}, 15_000);
+
 		it("turns a settled conversation into backend memories via the L1 extractor", async () => {
 			const originalCompleteSimple = fakeModels.completeSimple;
 			let completeCalls = 0;
@@ -1144,6 +1458,10 @@ describe("TencentDbRuntime.prepareLocalEmbedding", () => {
 				events.push("reconfigure");
 			}),
 			getEmbeddingService: vi.fn(() => localService),
+			reindexAll: vi.fn(async () => {
+				events.push("reindex");
+				return { l1Count: 0, l0Count: 0, complete: true };
+			}),
 			destroy: vi.fn(async () => undefined),
 		};
 		const internals = runtime as unknown as {
@@ -1183,7 +1501,8 @@ describe("TencentDbRuntime.prepareLocalEmbedding", () => {
 		).resolves.toEqual({ ready: true });
 		expect(core.reconfigureEmbedding).toHaveBeenCalledOnce();
 		expect(core.getEmbeddingService).toHaveBeenCalledOnce();
-		expect(events).toEqual(["probe", "reconfigure"]);
+		expect(core.reindexAll).toHaveBeenCalledOnce();
+		expect(events).toEqual(["probe", "reconfigure", "reindex"]);
 	});
 
 	it("does not activate a candidate when cancellation arrives during validation", async () => {

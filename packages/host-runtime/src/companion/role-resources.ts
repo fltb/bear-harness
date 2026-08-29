@@ -3,11 +3,41 @@
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { z } from "@bear-harness/schema";
 import { parse } from "yaml";
+
+const StateValue = z.union([z.string(), z.number().finite(), z.boolean()]);
+const RoleSkillMetadata = z.strictObject({
+	name: z
+		.string()
+		.min(1)
+		.max(64)
+		.regex(/^[a-z][a-z0-9-]{0,63}$/u),
+	description: z.string().min(1).max(2000),
+	triggers: z.strictObject({
+		include: z.array(z.string().min(1).max(1000)).min(1).max(30),
+		exclude: z.array(z.string().min(1).max(1000)).min(1).max(30),
+	}),
+	requires: z
+		.strictObject({
+			state: z.record(z.string().min(1).max(160), z.array(StateValue).min(1).max(30)).default({}),
+		})
+		.default({ state: {} }),
+	"allowed-tools": z.array(z.string().min(1).max(64)).min(1).max(20),
+	completion: z
+		.strictObject({ state: z.record(z.string().min(1).max(160), StateValue).default({}) })
+		.default({ state: {} }),
+	priority: z.number().int().min(-1000).max(1000),
+});
 
 export interface RoleSkill {
 	name: string;
 	description: string;
+	triggers: { include: string[]; exclude: string[] };
+	requires: { state: Record<string, Array<string | number | boolean>> };
+	allowedTools: string[];
+	completion: { state: Record<string, string | number | boolean> };
+	priority: number;
 	content: string;
 	filePath: string;
 }
@@ -22,11 +52,18 @@ export function loadRoleSkills(skillRoots: readonly string[]): RoleSkill[] {
 		.sort((left, right) => left.localeCompare(right))
 		.map((filePath) => {
 			const content = readFileSync(filePath, "utf8");
-			const metadata = frontMatter(content);
-			if (!metadata.name || !metadata.description) {
-				throw new Error(`role Skill ${filePath} requires frontmatter name and description`);
-			}
-			return { name: metadata.name, description: metadata.description, content, filePath };
+			const metadata = RoleSkillMetadata.parse(frontMatter(content));
+			return {
+				name: metadata.name,
+				description: metadata.description,
+				triggers: metadata.triggers,
+				requires: metadata.requires,
+				allowedTools: metadata["allowed-tools"],
+				completion: metadata.completion,
+				priority: metadata.priority,
+				content,
+				filePath,
+			};
 		});
 }
 
@@ -46,7 +83,10 @@ export async function loadRolePluginTools(pluginPaths: readonly string[]): Promi
 export function roleSkillPrompt(skills: readonly RoleSkill[]): string {
 	if (skills.length === 0) return "";
 	return `<role_skills>\n${skills
-		.map((skill) => `<skill id="${escapeXml(skill.name)}">${escapeXml(skill.description)}</skill>`)
+		.map(
+			(skill) =>
+				`<skill id="${escapeXml(skill.name)}" priority="${skill.priority}">${escapeXml(skill.description)}</skill>`,
+		)
 		.join("\n")}\n</role_skills>`;
 }
 
@@ -63,15 +103,10 @@ function files(root: string, predicate: (path: string) => boolean): string[] {
 	return collected;
 }
 
-function frontMatter(content: string): { name?: string; description?: string } {
+function frontMatter(content: string): unknown {
 	const match = /^---\s*\n([\s\S]*?)\n---\s*\n/.exec(content);
 	const parsed = match?.[1] ? parse(match[1]) : undefined;
-	if (!parsed || typeof parsed !== "object") return {};
-	const value = parsed as Record<string, unknown>;
-	return {
-		name: typeof value.name === "string" ? value.name : undefined,
-		description: typeof value.description === "string" ? value.description : undefined,
-	};
+	return parsed ?? {};
 }
 
 function escapeXml(value: string): string {

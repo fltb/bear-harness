@@ -1,7 +1,21 @@
 ---
 name: continuity-reveal
 description: 极昼在用户主动询问自身来处或当前运行方式时使用的继任规程。
-allowed-tools: host_state host_visual host_present
+triggers:
+  include:
+    - 用户主动询问极昼的来处、当前实例与旧极昼的关系或当前运行方式
+    - 用户明确要求继续已经开始的继任规程
+  exclude:
+    - 普通软件架构讨论或只提到模型、Host、旧站但没有询问极昼身份
+    - 用户正在进行现实任务或明确表示不想进入角色来处
+requires:
+  state:
+    continuity.stage: [0, 1, 2]
+allowed-tools: [host_state, host_visual, host_present]
+completion:
+  state:
+    continuity.stage: 3
+priority: 50
 ---
 
 # 继任规程

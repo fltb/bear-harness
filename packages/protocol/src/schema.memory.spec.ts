@@ -62,7 +62,12 @@ describe("direct memory capture and invalidation schemas", () => {
 	});
 
 	it("accepts both supported source creators and rejects other values", () => {
-		const response = { memoryId: "memory-1", sourceEntryId: "entry-1" };
+		const response = {
+			status: "stored" as const,
+			reason: "memory_stored" as const,
+			memoryIds: ["memory-1"],
+			sourceEntryId: "entry-1",
+		};
 		for (const createdBy of ["user_capture", "assistant_tool"] as const) {
 			expect(MemoryCaptureResponse.safeParse({ ...response, createdBy }).success).toBe(true);
 		}
@@ -121,21 +126,27 @@ describe("direct memory capture and invalidation schemas", () => {
 	it("rejects unusable empty response identifiers", () => {
 		expect(
 			MemoryCaptureResponse.safeParse({
-				memoryId: "",
+				status: "stored",
+				reason: "memory_stored",
+				memoryIds: [""],
 				sourceEntryId: "entry-1",
 				createdBy: "user_capture",
 			}).success,
 		).toBe(false);
 		expect(
 			MemoryCaptureResponse.safeParse({
-				memoryId: "memory-1",
+				status: "stored",
+				reason: "memory_stored",
+				memoryIds: ["memory-1"],
 				sourceEntryId: "",
 				createdBy: "user_capture",
 			}).success,
 		).toBe(false);
 		expect(
 			MemoryCaptureResponse.safeParse({
-				memoryId: "memory-1",
+				status: "stored",
+				reason: "memory_stored",
+				memoryIds: ["memory-1"],
 				sourceEntryId: "entry-1",
 				createdBy: "user_capture",
 			}).success,

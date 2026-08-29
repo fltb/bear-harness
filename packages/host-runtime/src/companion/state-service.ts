@@ -8,6 +8,7 @@ import {
 } from "../storage/schema.js";
 import {
 	type CharacterStateDefinition,
+	type CharacterStateEvidence,
 	type CharacterStateField,
 	type CharacterStateOperation,
 	CharacterStateOperation as CharacterStateOperationSchema,
@@ -15,6 +16,7 @@ import {
 
 type StateScope = CharacterStateField["scope"];
 type StateRevisions = Partial<Record<StateScope, number>>;
+type AppTransaction = Parameters<Parameters<AppDatabase["transaction"]>[0]>[0];
 
 export interface CharacterStateProjection {
 	values: Record<string, unknown>;
@@ -37,6 +39,15 @@ export interface StageStateMutationInput {
 	operations: CharacterStateOperation[];
 	expectedRevisions?: StateRevisions;
 	reason: string;
+	skillId?: string;
+	evidence?: CharacterStateEvidence;
+}
+
+interface DurableStateOperation {
+	operation: CharacterStateOperation;
+	authority?: "model" | "user_choice" | "host_event";
+	skillId?: string;
+	evidence?: CharacterStateEvidence;
 }
 
 /** Schema-authoritative state documents with durable turn-bound staging. */
@@ -96,13 +107,36 @@ export class CharacterStateService {
 				),
 			)
 			.all()
-			.flatMap((row) => CharacterStateOperationSchema.array().parse(row.operations));
+			.flatMap((row) => parseDurableOperations(row.operations));
+		const durableOperations = operations.map((operation) => ({
+			operation,
+			authority: "model" as const,
+			...(input.skillId ? { skillId: input.skillId } : {}),
+			...(input.evidence ? { evidence: input.evidence } : {}),
+		}));
+		const turnOperations = [...pending, ...durableOperations].map((entry) => entry.operation);
 		let simulated = { ...projection.values };
-		for (const operation of [...pending, ...operations])
-			simulated = applyOperation(simulated, input.definition, operation, [
-				...pending,
-				...operations,
-			]);
+		for (const entry of pending)
+			simulated = applyOperation(
+				simulated,
+				input.definition,
+				entry.operation,
+				turnOperations,
+				entry.skillId,
+				entry.evidence,
+				entry.authority,
+				true,
+			);
+		for (const entry of durableOperations)
+			simulated = applyOperation(
+				simulated,
+				input.definition,
+				entry.operation,
+				turnOperations,
+				entry.skillId,
+				entry.evidence,
+				entry.authority,
+			);
 
 		const mutationId = randomUUID();
 		this.db
@@ -113,13 +147,99 @@ export class CharacterStateService {
 				conversationId: input.conversationId,
 				piSessionId: input.piSessionId,
 				sourceUserEntryId: input.sourceUserEntryId,
-				operationsJson: operations,
+				operationsJson: durableOperations,
 				expectedRevisionsJson: input.expectedRevisions ?? {},
 				reason,
 				schemaHash: projection.schemaHash,
 			})
 			.run();
 		return { mutationId, status: "pending" };
+	}
+
+	/** Commit a deterministic Host/user event directly; it never passes through model staging. */
+	commitAuthoritative(input: {
+		companionId: string;
+		conversationId: string;
+		definition: CharacterStateDefinition;
+		authority: "user_choice" | "host_event";
+		sourceId: string;
+		operations: CharacterStateOperation[];
+		reason: string;
+		transaction?: AppTransaction;
+	}): CharacterStateProjection {
+		const operations = CharacterStateOperationSchema.array().min(1).max(20).parse(input.operations);
+		const reason = input.reason.trim();
+		if (!reason || reason.length > 1000)
+			throw { kind: "validation_failed", reason: "state_reason_invalid" };
+		const before = this.project(input.companionId, input.conversationId, input.definition);
+		let values = { ...before.values };
+		for (const operation of operations)
+			values = applyOperation(
+				values,
+				input.definition,
+				operation,
+				operations,
+				undefined,
+				undefined,
+				input.authority,
+			);
+		const changedOperations = operations.filter(
+			(operation) => !Object.is(before.values[operation.path], values[operation.path]),
+		);
+		if (changedOperations.length === 0) return before;
+		const schemaHash = hashDefinition(input.definition);
+		const afterRevisions = { ...before.revisions };
+		const commit = (transaction: AppTransaction) => {
+			const changedScopes = new Set(
+				changedOperations.map((operation) => input.definition.fields[operation.path]?.scope),
+			);
+			for (const scope of changedScopes) {
+				if (!scope) continue;
+				const stateJson = Object.fromEntries(
+					Object.entries(input.definition.fields)
+						.filter(([, field]) => field.scope === scope)
+						.map(([path]) => [path, values[path]]),
+				);
+				const current = this.document(input.companionId, input.conversationId, scope);
+				const nextRevision = (current?.revision ?? 0) + 1;
+				transaction
+					.insert(characterStateDocuments)
+					.values({
+						id: documentId(input.companionId, input.conversationId, scope),
+						companionId: input.companionId,
+						...(scope === "conversation" ? { conversationId: input.conversationId } : {}),
+						scope,
+						stateJson,
+						revision: nextRevision,
+						schemaHash,
+					})
+					.onConflictDoUpdate({
+						target: characterStateDocuments.id,
+						set: { stateJson, revision: nextRevision, schemaHash, updatedAt: sql`datetime('now')` },
+					})
+					.run();
+				afterRevisions[scope] = nextRevision;
+			}
+			transaction
+				.insert(stateMutationLog)
+				.values({
+					id: input.sourceId,
+					companionId: input.companionId,
+					conversationId: input.conversationId,
+					piSessionId: `host:${input.authority}`,
+					sourceUserEntryId: input.sourceId,
+					assistantEntryId: input.sourceId,
+					operationsJson: changedOperations,
+					beforeRevisionsJson: before.revisions,
+					afterRevisionsJson: afterRevisions,
+					reason,
+				})
+				.onConflictDoNothing()
+				.run();
+		};
+		if (input.transaction) commit(input.transaction);
+		else this.db.transaction(commit);
+		return this.project(input.companionId, input.conversationId, input.definition);
 	}
 
 	commitTurn(input: {
@@ -162,10 +282,19 @@ export class CharacterStateService {
 			}
 			let values = { ...before.values };
 			const operations = mutations.flatMap((mutation) =>
-				CharacterStateOperationSchema.array().parse(mutation.operationsJson),
+				parseDurableOperations(mutation.operationsJson).map((entry) => entry.operation),
 			);
 			for (const operation of operations)
-				values = applyOperation(values, input.definition, operation, operations);
+				values = applyOperation(
+					values,
+					input.definition,
+					operation,
+					operations,
+					undefined,
+					undefined,
+					"model",
+					true,
+				);
 			const changedScopes = new Set(
 				operations
 					.map((operation) => input.definition.fields[operation.path]?.scope)
@@ -266,16 +395,65 @@ export class CharacterStateService {
 	}
 }
 
+function parseDurableOperations(value: unknown): DurableStateOperation[] {
+	if (!Array.isArray(value))
+		throw { kind: "validation_failed", reason: "state_operations_invalid" };
+	return value.map((entry) => {
+		// Pre-contract rows stored bare operations. They remain readable until the
+		// pre-1.0 baseline cleanup, while every new row durably owns its authority.
+		if (!entry || typeof entry !== "object" || Array.isArray(entry) || !("operation" in entry))
+			return { operation: CharacterStateOperationSchema.parse(entry) };
+		const record = entry as Record<string, unknown>;
+		const skillId = typeof record.skillId === "string" ? record.skillId : undefined;
+		const authority =
+			record.authority === "model" ||
+			record.authority === "user_choice" ||
+			record.authority === "host_event"
+				? record.authority
+				: undefined;
+		const evidence = parseDurableEvidence(record.evidence);
+		return {
+			operation: CharacterStateOperationSchema.parse(record.operation),
+			...(authority ? { authority } : {}),
+			...(skillId ? { skillId } : {}),
+			...(evidence ? { evidence } : {}),
+		};
+	});
+}
+
+function parseDurableEvidence(value: unknown): CharacterStateEvidence | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const record = value as Record<string, unknown>;
+	if (
+		(record.source !== "current_user" &&
+			record.source !== "current_assistant" &&
+			record.source !== "user_choice") ||
+		typeof record.quote !== "string"
+	)
+		return undefined;
+	return { source: record.source, quote: record.quote };
+}
+
 function applyOperation(
 	values: Record<string, unknown>,
 	definition: CharacterStateDefinition,
 	operation: CharacterStateOperation,
 	turnOperations: CharacterStateOperation[],
+	skillId?: string,
+	evidence?: CharacterStateEvidence,
+	authority: "model" | "user_choice" | "host_event" = "model",
+	prevalidated = false,
 ): Record<string, unknown> {
 	const field = definition.fields[operation.path];
 	if (!field) throw { kind: "validation_failed", reason: "state_path_not_declared" };
-	if (!field.model_writable || !field.operations.includes(operation.op))
+	const authorized =
+		field.write_authority === authority ||
+		(field.write_authority.startsWith("skill:") &&
+			field.write_authority.slice("skill:".length) === skillId);
+	if ((!prevalidated && !authorized) || !field.operations.includes(operation.op))
 		throw { kind: "forbidden", reason: "state_operation_not_allowed" };
+	if (!prevalidated && authority === "model" && field.evidence_required && !evidence)
+		throw { kind: "validation_failed", reason: "state_evidence_required" };
 	const current = values[operation.path] ?? field.initial;
 	let next: unknown;
 	if (operation.op === "clear") next = field.initial;

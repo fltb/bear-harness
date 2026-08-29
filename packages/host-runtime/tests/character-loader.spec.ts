@@ -103,11 +103,20 @@ describe("character package visual projection", () => {
 		);
 		expect(character.canon.manifest.modules).toContainEqual(
 			expect.objectContaining({
-				id: "station_record",
+				id: "station_identity",
 				kind: "root",
+				access: { mode: "always" },
 				bindings: [expect.objectContaining({ source: "jizhou_story" })],
 			}),
 		);
+		expect(character.behavior.identity.invariants).toContainEqual(
+			expect.stringContaining("不冒充岑岚"),
+		);
+		expect(character.voice_modes.default).toBe("default");
+		expect(character.skills.map((skill) => skill.name).sort()).toEqual([
+			"continuity-reveal",
+			"undelivered-report",
+		]);
 		expect(display.theme.tokens).toEqual(
 			expect.objectContaining({
 				canvas: "#07171c",
@@ -168,7 +177,9 @@ describe("character package display validation", () => {
 		const display = loader.display(character);
 		expect(CharacterDisplay.parse(display)).toEqual(display);
 		expect(display.roleplay.unlockables).toEqual(character.roleplay.unlockables);
-		expect(display.roleplay.choice_sets).toEqual(character.roleplay.choice_sets);
+		expect(display.roleplay.choice_sets).toEqual(
+			character.roleplay.choice_sets.map(({ when: _when, ...choiceSet }) => choiceSet),
+		);
 	});
 
 	it("supplies the Host theme when an imported package declares no theme", () => {
@@ -207,12 +218,6 @@ describe("character package display validation", () => {
 });
 
 describe("character package Host lifecycle reactions", () => {
-	const expectedReactions = [
-		{ event: "message.user_sent", visual_state: "attentive" },
-		{ event: "message_end", visual_state: "ready" },
-		{ event: "message.aborted", visual_state: "calm" },
-	];
-
 	function packageWithManifest(
 		prefix: string,
 		mutate: (manifest: string) => string,
@@ -229,10 +234,10 @@ describe("character package Host lifecycle reactions", () => {
 		return { configRoot, manifest: mutated };
 	}
 
-	it("loads the official package with its three Jizhou lifecycle defaults", () => {
+	it("does not overwrite semantic expression state at lifecycle boundaries", () => {
 		const character = new CharacterLoader(characterRoot).load("jizhou");
 		expect(character).not.toBeNull();
-		expect(character?.host.event_reactions).toEqual(expectedReactions);
+		expect(character?.host.event_reactions).toEqual([]);
 	});
 
 	it("accepts arbitrary Host events bound to declared visual states", () => {
@@ -240,13 +245,12 @@ describe("character package Host lifecycle reactions", () => {
 			"bear-character-package-host-reaction-generic-",
 			(manifest) =>
 				manifest.replace(
-					"    - event: message.aborted\n      visual_state: calm\n",
-					"    - event: message.aborted\n      visual_state: calm\n    - event: workflow.review_requested\n      visual_state: reflective\n",
+					"  event_reactions: []",
+					"  event_reactions:\n    - event: workflow.review_requested\n      visual_state: reflective",
 				),
 		);
 		const character = new CharacterLoader(configRoot).load("jizhou");
 		expect(character?.host.event_reactions).toEqual([
-			...expectedReactions,
 			{ event: "workflow.review_requested", visual_state: "reflective" },
 		]);
 	});
@@ -256,48 +260,48 @@ describe("character package Host lifecycle reactions", () => {
 			"duplicate event",
 			(manifest: string) =>
 				manifest.replace(
-					"    - event: message.user_sent\n      visual_state: attentive\n",
-					"    - event: message_end\n      visual_state: attentive\n",
+					"  event_reactions: []",
+					"  event_reactions:\n    - event: duplicate\n      visual_state: attentive\n    - event: duplicate\n      visual_state: calm",
 				),
 		],
 		[
 			"blank event",
 			(manifest: string) =>
 				manifest.replace(
-					"    - event: message.user_sent\n      visual_state: attentive\n",
-					'    - event: "   "\n      visual_state: attentive\n',
+					"  event_reactions: []",
+					'  event_reactions:\n    - event: "   "\n      visual_state: attentive',
 				),
 		],
 		[
 			"unknown visual state",
 			(manifest: string) =>
 				manifest.replace(
-					"    - event: message.user_sent\n      visual_state: attentive\n",
-					"    - event: message.user_sent\n      visual_state: unknown_state\n",
+					"  event_reactions: []",
+					"  event_reactions:\n    - event: message.user_sent\n      visual_state: unknown_state",
 				),
 		],
 		[
 			"extra key",
 			(manifest: string) =>
 				manifest.replace(
-					"    - event: message.user_sent\n      visual_state: attentive\n",
-					"    - event: message.user_sent\n      visual_state: attentive\n      scene: study\n",
+					"  event_reactions: []",
+					"  event_reactions:\n    - event: message.user_sent\n      visual_state: attentive\n      scene: study",
 				),
 		],
 		[
 			"media key",
 			(manifest: string) =>
 				manifest.replace(
-					"    - event: message.user_sent\n      visual_state: attentive\n",
-					"    - event: message.user_sent\n      visual_state: attentive\n      media: continuity_light\n",
+					"  event_reactions: []",
+					"  event_reactions:\n    - event: message.user_sent\n      visual_state: attentive\n      media: continuity_light",
 				),
 		],
 		[
 			"choice key",
 			(manifest: string) =>
 				manifest.replace(
-					"    - event: message.user_sent\n      visual_state: attentive\n",
-					"    - event: message.user_sent\n      visual_state: attentive\n      choice_set: continuity_response\n",
+					"  event_reactions: []",
+					"  event_reactions:\n    - event: message.user_sent\n      visual_state: attentive\n      choice_set: continuity_response",
 				),
 		],
 	] as const)("rejects %s lifecycle reaction mutation", (_name, mutate) => {
@@ -308,26 +312,6 @@ describe("character package Host lifecycle reactions", () => {
 		expect(() => new CharacterLoader(configRoot).load("jizhou")).toThrow(
 			/invalid host event reaction/,
 		);
-	});
-
-	it("accepts the Jizhou defaults in any declaration order", () => {
-		const bindings = [
-			"    - event: message.user_sent\n      visual_state: attentive\n",
-			"    - event: message_end\n      visual_state: ready\n",
-			"    - event: message.aborted\n      visual_state: calm\n",
-		];
-		const { configRoot } = packageWithManifest(
-			"bear-character-package-host-reaction-reordered-",
-			(manifest) =>
-				manifest.replace(bindings.join(""), [bindings[2], bindings[0], bindings[1]].join("")),
-		);
-		const character = new CharacterLoader(configRoot).load("jizhou");
-		expect(character).not.toBeNull();
-		expect(character?.host.event_reactions).toEqual([
-			expectedReactions[2],
-			expectedReactions[0],
-			expectedReactions[1],
-		]);
 	});
 });
 
@@ -495,7 +479,21 @@ describe("character package Pi resources", () => {
 		mkdirSync(join(packageDir, "plugins", "station-log"), { recursive: true });
 		writeFileSync(
 			join(packageDir, "skills", "station-log", "SKILL.md"),
-			"---\\nname: station-log\\ndescription: Read the station log.\\n---\\nUse the station log.\\n",
+			`---
+name: station-log
+description: Read the station log.
+triggers:
+  include: [用户明确要求查看值守日志]
+  exclude: [用户只提到日志一词]
+requires:
+  state: {}
+allowed-tools: [host_canon]
+completion:
+  state: {}
+priority: 10
+---
+Use the station log.
+`,
 		);
 		writeFileSync(
 			join(packageDir, "plugins", "station-log", "extension.ts"),
@@ -514,6 +512,37 @@ describe("character package Pi resources", () => {
 });
 
 describe("character package durable replacement", () => {
+	it("upgrades the installed default package when the bundled seed version is newer", () => {
+		const libraryRoot = mkdtempSync(join(tmpdir(), "bear-character-seed-upgrade-"));
+		temporaryDirectories.push(libraryRoot);
+		copyCharacterPackage(join(libraryRoot, "jizhou"), "jizhou", "installed-old");
+		const installedManifest = join(libraryRoot, "jizhou", "character.yaml");
+		writeFileSync(
+			installedManifest,
+			readFileSync(installedManifest, "utf8").replace("version: 4.0.0", "version: 3.0.0"),
+			"utf8",
+		);
+
+		const loader = new CharacterLoader(characterRoot, libraryRoot);
+		loader.bootstrapLibrary("jizhou");
+
+		expect(loader.load("jizhou")?.version).toBe("4.0.0");
+		expect(readFileSync(installedManifest, "utf8")).not.toContain("installed-old");
+	});
+
+	it("preserves an installed package when its version matches the bundled seed", () => {
+		const libraryRoot = mkdtempSync(join(tmpdir(), "bear-character-seed-preserve-"));
+		temporaryDirectories.push(libraryRoot);
+		copyCharacterPackage(join(libraryRoot, "jizhou"), "jizhou", "same-version-edit");
+
+		const loader = new CharacterLoader(characterRoot, libraryRoot);
+		loader.bootstrapLibrary("jizhou");
+
+		expect(readFileSync(join(libraryRoot, "jizhou", "character.yaml"), "utf8")).toContain(
+			"same-version-edit",
+		);
+	});
+
 	it("rejects an invalid staged edit without disturbing the old package", () => {
 		const libraryRoot = mkdtempSync(join(tmpdir(), "bear-character-transaction-reject-"));
 		temporaryDirectories.push(libraryRoot);

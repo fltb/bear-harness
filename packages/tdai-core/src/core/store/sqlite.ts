@@ -537,6 +537,19 @@ export class VectorStore implements IMemoryStore {
 					// Drop and re-create vector tables with new dimensions
 					this.dropVectorTables();
 					needsReindex = true;
+				} else {
+					const l1Count = this.tableRowCount("l1_records");
+					const l0Count = this.tableRowCount("l0_conversations");
+					const l1VectorCount = this.tableRowCount("l1_vec");
+					const l0VectorCount = this.tableRowCount("l0_vec");
+					if (l1Count !== l1VectorCount || l0Count !== l0VectorCount) {
+						reindexReason =
+							`incomplete vector index: L1=${l1VectorCount}/${l1Count}, ` +
+							`L0=${l0VectorCount}/${l0Count}`;
+						this.logger?.info(`${TAG} ${reindexReason}. Dropping vector tables for rebuild...`);
+						this.dropVectorTables();
+						needsReindex = true;
+					}
 				}
 			} else {
 				// No saved meta — first run or legacy DB without meta table.
@@ -950,7 +963,12 @@ export class VectorStore implements IMemoryStore {
 	}
 
 	/** Allowed table names for row counting (whitelist to prevent SQL injection). */
-	private static readonly COUNTABLE_TABLES = new Set(["l1_records", "l0_conversations"]);
+	private static readonly COUNTABLE_TABLES = new Set([
+		"l1_records",
+		"l0_conversations",
+		"l1_vec",
+		"l0_vec",
+	]);
 
 	/**
 	 * Extra rows to retrieve from vec0 KNN search to compensate for legacy

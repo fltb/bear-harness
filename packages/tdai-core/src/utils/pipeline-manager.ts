@@ -149,6 +149,16 @@ export interface PipelineConfig {
 export interface L1RunnerResult {
 	/** Number of messages successfully processed */
 	processedCount?: number;
+	/** Atomic memories emitted by extraction before deduplication. */
+	extractedCount?: number;
+	/** Records persisted after deduplication. */
+	storedCount?: number;
+	/** Extracted memories intentionally skipped as already represented. */
+	skippedCount?: number;
+	/** Extracted memories that failed persistence. */
+	failedCount?: number;
+	/** IDs persisted by this run. */
+	storedRecordIds?: string[];
 }
 
 /** L1 runner — batch-processes buffered messages for a session. */
@@ -167,7 +177,10 @@ export interface L2RunnerResult {
 }
 
 /** L2 extraction runner — processes a single session's records. */
-export type L2Runner = (sessionKey: string, cursor?: string) => Promise<L2RunnerResult | void>;
+export type L2Runner = (
+	sessionKey: string,
+	cursor?: string,
+) => Promise<L2RunnerResult | void>;
 
 /** L3 runner — generates persona from all sessions' scene data. */
 export type L3Runner = () => Promise<void>;
@@ -226,6 +239,9 @@ export class MemoryPipelineManager {
 
 	// Per-session message buffer: messages accumulated since last L1 run
 	private readonly messageBuffers = new Map<string, CapturedMessage[]>();
+	/** Last observable extraction result for an explicit/session flush. */
+	private readonly lastL1Results = new Map<string, L1RunnerResult>();
+	private readonly l1ResultRevisions = new Map<string, number>();
 
 	// Per-session L2 last run time (epoch ms, for minInterval floor)
 	private readonly l2LastRunTime = new Map<string, number>();
@@ -254,14 +270,19 @@ export class MemoryPipelineManager {
 	/** Counter for GC scheduling. */
 	private notifyCounter = 0;
 
-	constructor(config: PipelineConfig, logger?: Logger, sessionFilter?: SessionFilter) {
+	constructor(
+		config: PipelineConfig,
+		logger?: Logger,
+		sessionFilter?: SessionFilter,
+	) {
 		this.l1IdleTimeoutMs = config.l1.idleTimeoutSeconds * 1000;
 		this.everyNConversations = config.everyNConversations;
 		this.enableWarmup = config.enableWarmup;
 		this.l2DelayAfterL1Ms = config.l2.delayAfterL1Seconds * 1000;
 		this.l2MinIntervalMs = config.l2.minIntervalSeconds * 1000;
 		this.l2MaxIntervalMs = config.l2.maxIntervalSeconds * 1000;
-		this.sessionActiveWindowMs = config.l2.sessionActiveWindowHours * 60 * 60 * 1000;
+		this.sessionActiveWindowMs =
+			config.l2.sessionActiveWindowHours * 60 * 60 * 1000;
 		this.logger = logger;
 		this.sessionFilter = sessionFilter ?? new SessionFilter();
 
@@ -389,7 +410,10 @@ export class MemoryPipelineManager {
 	 * - **Path B (idle)**: reset the L1 idle timer. When the timer fires (user
 	 *   stops chatting), L1 runs with whatever has been buffered.
 	 */
-	async notifyConversation(sessionKey: string, messages: CapturedMessage[]): Promise<void> {
+	async notifyConversation(
+		sessionKey: string,
+		messages: CapturedMessage[],
+	): Promise<void> {
 		if (this.destroyed) return;
 		if (this.sessionFilter.shouldSkip(sessionKey)) return;
 
@@ -408,7 +432,9 @@ export class MemoryPipelineManager {
 
 		const effectiveThreshold = this.getEffectiveThreshold(state);
 		const warmupInfo =
-			this.enableWarmup && state.warmup_threshold > 0 ? ` (warmup: ${state.warmup_threshold})` : "";
+			this.enableWarmup && state.warmup_threshold > 0
+				? ` (warmup: ${state.warmup_threshold})`
+				: "";
 
 		this.logger?.debug?.(
 			`${TAG} [${sessionKey}] notify: conversation_count=${state.conversation_count}/${effectiveThreshold}${warmupInfo}, ` +
@@ -427,7 +453,9 @@ export class MemoryPipelineManager {
 		}
 
 		// Path B: below threshold → reset L1 idle timer (catch residual later)
-		timers.l1Idle.schedule(this.l1IdleTimeoutMs, () => this.onL1IdleTimeout(sessionKey));
+		timers.l1Idle.schedule(this.l1IdleTimeoutMs, () =>
+			this.onL1IdleTimeout(sessionKey),
+		);
 		this.logger?.debug?.(
 			`${TAG} [${sessionKey}] L1 idle timer reset (${this.l1IdleTimeoutMs / 1000}s)`,
 		);
@@ -476,12 +504,14 @@ export class MemoryPipelineManager {
 	 * have evicted the session earlier via GC, or the session may never
 	 * have produced any captures.
 	 */
-	async flushSession(sessionKey: string): Promise<void> {
-		if (this.destroyed) return;
-		if (this.sessionFilter.shouldSkip(sessionKey)) return;
+	async flushSession(sessionKey: string): Promise<L1RunnerResult | undefined> {
+		if (this.destroyed) return undefined;
+		if (this.sessionFilter.shouldSkip(sessionKey)) return undefined;
 
 		const timers = this.sessionTimers.get(sessionKey);
 		const buffer = this.messageBuffers.get(sessionKey);
+		const state = this.sessionStates.get(sessionKey);
+		const beforeRevision = this.l1ResultRevisions.get(sessionKey) ?? 0;
 
 		// Step 1: cancel the idle timer so it won't fire after we return.
 		if (timers?.l1Idle.pending) {
@@ -489,9 +519,12 @@ export class MemoryPipelineManager {
 		}
 
 		// Step 2: flush pending buffered messages through L1 if any.
-		if (buffer && buffer.length > 0) {
+		// Store-backed runners intentionally receive an empty in-memory buffer and
+		// read their pending L0 rows from the durable store. A positive conversation
+		// count is therefore also pending work and must be flushed explicitly.
+		if ((buffer && buffer.length > 0) || (state?.conversation_count ?? 0) > 0) {
 			this.logger?.debug?.(
-				`${TAG} [${sessionKey}] flushSession: enqueuing L1 for ${buffer.length} buffered message(s)`,
+				`${TAG} [${sessionKey}] flushSession: enqueuing L1 for ${buffer?.length ?? 0} buffered message(s), ${state?.conversation_count ?? 0} pending conversation(s)`,
 			);
 			this.enqueueL1(sessionKey, "flush");
 		}
@@ -504,6 +537,9 @@ export class MemoryPipelineManager {
 		await this.l1Queue.onIdle();
 
 		this.logger?.debug?.(`${TAG} [${sessionKey}] flushSession: complete`);
+		return (this.l1ResultRevisions.get(sessionKey) ?? 0) > beforeRevision
+			? this.lastL1Results.get(sessionKey)
+			: undefined;
 	}
 
 	/**
@@ -524,7 +560,9 @@ export class MemoryPipelineManager {
 		if (this.destroyed) return;
 		this.destroyed = true;
 
-		this.logger?.info(`${TAG} Destroying pipeline (timeout=${this.DESTROY_TIMEOUT_MS}ms)...`);
+		this.logger?.info(
+			`${TAG} Destroying pipeline (timeout=${this.DESTROY_TIMEOUT_MS}ms)...`,
+		);
 
 		try {
 			let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -581,13 +619,17 @@ export class MemoryPipelineManager {
 		}
 
 		// Step 2: Wait for L1 queue to drain
-		this.logger?.debug?.(`${TAG} Waiting for L1 queue to drain (size=${this.l1Queue.size})`);
+		this.logger?.debug?.(
+			`${TAG} Waiting for L1 queue to drain (size=${this.l1Queue.size})`,
+		);
 		await this.l1Queue.onIdle();
 
 		// Step 3: Flush all L2 schedule timers
 		for (const [sessionKey, timers] of this.sessionTimers) {
 			if (timers.l2Schedule.pending) {
-				this.logger?.debug?.(`${TAG} [${sessionKey}] Flush: triggering L2 schedule timer`);
+				this.logger?.debug?.(
+					`${TAG} [${sessionKey}] Flush: triggering L2 schedule timer`,
+				);
 				timers.l2Schedule.flush();
 			}
 		}
@@ -607,7 +649,10 @@ export class MemoryPipelineManager {
 		const buffer = this.messageBuffers.get(sessionKey);
 		const state = this.sessionStates.get(sessionKey);
 
-		if ((!buffer || buffer.length === 0) && (!state || state.conversation_count === 0)) {
+		if (
+			(!buffer || buffer.length === 0) &&
+			(!state || state.conversation_count === 0)
+		) {
 			this.logger?.debug?.(
 				`${TAG} [${sessionKey}] L1 idle timeout but no pending messages or conversations`,
 			);
@@ -632,7 +677,9 @@ export class MemoryPipelineManager {
 
 		// Don't double-queue
 		if (timers.l1Queued) {
-			this.logger?.debug?.(`${TAG} [${sessionKey}] L1 already queued, skipping`);
+			this.logger?.debug?.(
+				`${TAG} [${sessionKey}] L1 already queued, skipping`,
+			);
 			return;
 		}
 
@@ -640,7 +687,9 @@ export class MemoryPipelineManager {
 		timers.l1Idle.cancel();
 
 		timers.l1Queued = true;
-		this.logger?.debug?.(`${TAG} [${sessionKey}] Enqueuing L1 (queue=${this.l1Queue.name})`);
+		this.logger?.debug?.(
+			`${TAG} [${sessionKey}] Enqueuing L1 (queue=${this.l1Queue.name})`,
+		);
 
 		this.l1Queue
 			.add(async () => {
@@ -697,11 +746,16 @@ export class MemoryPipelineManager {
 		}
 
 		try {
-			await this.l1Runner({
+			const result = await this.l1Runner({
 				sessionKey,
 				msg: buffer,
 				bg_msg: [], // reserved for future use
 			});
+			this.lastL1Results.set(sessionKey, result ?? {});
+			this.l1ResultRevisions.set(
+				sessionKey,
+				(this.l1ResultRevisions.get(sessionKey) ?? 0) + 1,
+			);
 
 			this.logger?.debug?.(
 				`${TAG} [${sessionKey}] L1 complete: processed ${buffer.length} messages`,
@@ -721,7 +775,9 @@ export class MemoryPipelineManager {
 			const timers = this.getOrCreateTimers(sessionKey);
 			timers.l1RetryCount += 1;
 			if (timers.l1RetryCount <= this.L1_MAX_RETRIES) {
-				timers.l1Idle.schedule(this.L1_RETRY_DELAY_MS, () => this.onL1IdleTimeout(sessionKey));
+				timers.l1Idle.schedule(this.L1_RETRY_DELAY_MS, () =>
+					this.onL1IdleTimeout(sessionKey),
+				);
 				this.logger?.debug?.(
 					`${TAG} [${sessionKey}] L1 retry scheduled in ${this.L1_RETRY_DELAY_MS / 1000}s ` +
 						`(attempt ${timers.l1RetryCount}/${this.L1_MAX_RETRIES})`,
@@ -803,7 +859,9 @@ export class MemoryPipelineManager {
 
 		const timers = this.getOrCreateTimers(sessionKey);
 		const fireAt = Date.now() + this.l2MaxIntervalMs;
-		timers.l2Schedule.scheduleAt(fireAt, () => this.onL2TimerFired(sessionKey, "max-interval"));
+		timers.l2Schedule.scheduleAt(fireAt, () =>
+			this.onL2TimerFired(sessionKey, "max-interval"),
+		);
 
 		this.logger?.debug?.(
 			`${TAG} [${sessionKey}] L2 maxInterval timer armed: ${Math.round(this.l2MaxIntervalMs / 1000)}s`,
@@ -822,7 +880,10 @@ export class MemoryPipelineManager {
 	 *   because L1 completion itself proves recent activity.
 	 * - "max-interval": periodic timer — apply cold check normally.
 	 */
-	private onL2TimerFired(sessionKey: string, source: "delay-after-l1" | "max-interval"): void {
+	private onL2TimerFired(
+		sessionKey: string,
+		source: "delay-after-l1" | "max-interval",
+	): void {
 		const state = this.sessionStates.get(sessionKey);
 		if (!state) return;
 
@@ -831,7 +892,10 @@ export class MemoryPipelineManager {
 		// Cold session check: only applies to periodic (maxInterval) triggers.
 		// Delay-after-L1 triggers are exempt because L1 just completed, proving
 		// the session was recently active.
-		if (source === "max-interval" && now - state.last_active_time >= this.sessionActiveWindowMs) {
+		if (
+			source === "max-interval" &&
+			now - state.last_active_time >= this.sessionActiveWindowMs
+		) {
 			this.logger?.debug?.(
 				`${TAG} [${sessionKey}] L2 timer fired but session is cold ` +
 					`(inactive ${Math.round((now - state.last_active_time) / 3600_000)}h), timer stopped. ` +
@@ -1080,7 +1144,8 @@ export class MemoryPipelineManager {
 	 */
 	private gcStaleSessions(): void {
 		const now = Date.now();
-		const maxInactiveMs = this.sessionActiveWindowMs * this.SESSION_GC_INACTIVE_MULTIPLIER;
+		const maxInactiveMs =
+			this.sessionActiveWindowMs * this.SESSION_GC_INACTIVE_MULTIPLIER;
 		let evictedCount = 0;
 
 		for (const [sessionKey, state] of this.sessionStates) {
@@ -1127,7 +1192,8 @@ export class MemoryPipelineManager {
 	 */
 	private recoverPendingSessions(): void {
 		for (const [sessionKey, state] of this.sessionStates) {
-			if (state.conversation_count === 0 && state.l2_pending_l1_count === 0) continue;
+			if (state.conversation_count === 0 && state.l2_pending_l1_count === 0)
+				continue;
 
 			this.logger?.debug?.(
 				`${TAG} [${sessionKey}] Recovery: conversation_count=${state.conversation_count}, ` +
@@ -1135,7 +1201,10 @@ export class MemoryPipelineManager {
 			);
 
 			// Reset conversation_count since we can't recover the messages
-			state.l2_pending_l1_count = Math.max(state.l2_pending_l1_count, state.conversation_count);
+			state.l2_pending_l1_count = Math.max(
+				state.l2_pending_l1_count,
+				state.conversation_count,
+			);
 			state.conversation_count = 0;
 
 			// Arm L2 timer with delay (gives the system time to fully start)

@@ -402,6 +402,11 @@ describe("role-defined onboarding", () => {
 		});
 		await expect(
 			runtime.dispatch("settings.set:v1", {
+				settings: { memoryVectorService: { enabled: true, provider: "none" } },
+			}),
+		).resolves.toMatchObject({ ok: false, error: { kind: "invalid_request" } });
+		await expect(
+			runtime.dispatch("settings.set:v1", {
 				settings: {
 					memoryVectorService: {
 						enabled: true,

@@ -82,13 +82,30 @@ function PiTimelineEntryView(props: {
 	const [correcting, setCorrecting] = createSignal(false);
 	const [operationsOpen, setOperationsOpen] = createSignal(false);
 	const [correctionDetail, setCorrectionDetail] = createSignal("");
-	const [captureState, setCaptureState] = createSignal<"idle" | "saving" | "saved" | "error">(
-		"idle",
-	);
+	const [captureState, setCaptureState] = createSignal<
+		"idle" | "saving" | "saved" | "already_known" | "rejected" | "error"
+	>("idle");
+	const [captureReason, setCaptureReason] = createSignal<string | null>(null);
 	const entry = props.entry;
 	const capturedByHost = () =>
 		store.memory.entries()?.some((memory) => memory.sourceEntryId === entry.id) === true;
-	const captured = () => captureState() === "saved" || capturedByHost();
+	const captured = () =>
+		captureState() === "saved" || captureState() === "already_known" || capturedByHost();
+	const captureLabel = () => {
+		if (captureState() === "saving") return t("messages.rememberingMoment");
+		if (captureState() === "already_known") return t("messages.memoryAlreadyKnown");
+		if (captured()) return t("messages.rememberedMoment");
+		if (captureState() === "error") return t("messages.rememberFailed");
+		if (captureState() === "rejected") {
+			if (captureReason() === "extractor_found_no_durable_memory")
+				return t("messages.memoryNotExtractable");
+			if (captureReason() === "turn_already_processed") return t("messages.memoryAlreadyProcessed");
+			if (captureReason() === "memory_capture_disabled") return t("messages.memoryCaptureDisabled");
+			if (captureReason() === "memory_persistence_failed")
+				return t("messages.memoryPersistenceFailed");
+		}
+		return t("messages.rememberMoment");
+	};
 	if (entry.kind !== "message") {
 		// Native Pi context entries describe internal session bookkeeping. Rendering
 		// each one as an unlabeled rule made model/level changes look like broken UI.
@@ -291,19 +308,19 @@ function PiTimelineEntryView(props: {
 							disabled={captureState() === "saving" || captured()}
 							onClick={() => {
 								setCaptureState("saving");
+								setCaptureReason(null);
 								void store.memory
 									.capture(entry.id)
-									.then(() => setCaptureState("saved"))
+									.then((result) => {
+										setCaptureReason(result.reason);
+										if (result.status === "stored") setCaptureState("saved");
+										else if (result.status === "already_known") setCaptureState("already_known");
+										else setCaptureState("rejected");
+									})
 									.catch(() => setCaptureState("error"));
 							}}
 						>
-							{captureState() === "saving"
-								? t("messages.rememberingMoment")
-								: captured()
-									? t("messages.rememberedMoment")
-									: captureState() === "error"
-										? t("messages.rememberFailed")
-										: t("messages.rememberMoment")}
+							{captureLabel()}
 						</Button>
 						<Button type="button" onClick={() => void store.createConversationFromEntry(entry.id)}>
 							{t("messages.branch")}

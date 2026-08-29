@@ -31,13 +31,17 @@ import type {
 	DeferredIndexingRecord,
 	IndexingStatus,
 	ReindexResult,
+	ExplicitCaptureResult,
 } from "./types.js";
 import type { MemoryTdaiConfig } from "../config.js";
 import type { IMemoryStore } from "./store/types.js";
 import type { EmbeddingService } from "./store/embedding.js";
 import { performAutoRecall } from "./hooks/auto-recall.js";
 import { performAutoCapture } from "./hooks/auto-capture.js";
-import { executeMemorySearch, formatSearchResponse } from "./tools/memory-search.js";
+import {
+	executeMemorySearch,
+	formatSearchResponse,
+} from "./tools/memory-search.js";
 import {
 	executeConversationSearch,
 	formatConversationSearchResponse,
@@ -52,7 +56,10 @@ import {
 	createL2Runner,
 	createL3Runner,
 } from "../utils/pipeline-factory.js";
-import { MemoryPipelineManager } from "../utils/pipeline-manager.js";
+import {
+	MemoryPipelineManager,
+	type L1RunnerResult,
+} from "../utils/pipeline-manager.js";
 import { CheckpointManager } from "../utils/checkpoint.js";
 import { SessionFilter } from "../utils/session-filter.js";
 import { StandaloneLLMRunnerFactory } from "../adapters/standalone/llm-runner.js";
@@ -161,7 +168,9 @@ export class TdaiCore {
 	 * Must be called once before any other methods.
 	 */
 	async initialize(): Promise<void> {
-		this.logger.debug?.(`${TAG} Initializing TDAI Core: dataDir=${this.dataDir}`);
+		this.logger.debug?.(
+			`${TAG} Initializing TDAI Core: dataDir=${this.dataDir}`,
+		);
 		initDataDirectories(this.dataDir);
 
 		// Initialize stores (async)
@@ -169,7 +178,11 @@ export class TdaiCore {
 
 		// Create pipeline manager (sync — does not need store)
 		if (this.cfg.extraction.enabled) {
-			this.scheduler = createPipelineManager(this.cfg, this.logger, this.sessionFilter);
+			this.scheduler = createPipelineManager(
+				this.cfg,
+				this.logger,
+				this.sessionFilter,
+			);
 			// Wire runners after store is ready (or after store init fails — runners
 			// still work in degraded mode with JSONL fallback and no embedding)
 			this.storeReady
@@ -192,7 +205,9 @@ export class TdaiCore {
 	}
 
 	/** Replace only the vector store and embedding service without resetting the pipeline Core. */
-	async reconfigureEmbedding(embedding: MemoryTdaiConfig["embedding"]): Promise<void> {
+	async reconfigureEmbedding(
+		embedding: MemoryTdaiConfig["embedding"],
+	): Promise<void> {
 		await this.storeReady;
 		await resetStores(this.dataDir);
 		this.vectorStore = undefined;
@@ -283,7 +298,10 @@ export class TdaiCore {
 	 * Handle recall (memory retrieval) before an LLM turn.
 	 * Maps to: OpenClaw `before_prompt_build` / Hermes `prefetch()`.
 	 */
-	async handleBeforeRecall(userText: string, sessionKey: string): Promise<RecallResult> {
+	async handleBeforeRecall(
+		userText: string,
+		sessionKey: string,
+	): Promise<RecallResult> {
 		// Feature gates must run before awaiting store initialization or touching
 		// any pipeline resources. Hosts may invoke this hook unconditionally.
 		if (!this.cfg.recall.enabled) return {};
@@ -344,7 +362,8 @@ export class TdaiCore {
 			vectorStore: this.vectorStore,
 			embeddingService: this.embeddingService,
 			bgTaskRegistry: this.bgTasks,
-			onIndexingStatus: (status, records) => this.handleIndexingStatus(status, records),
+			onIndexingStatus: (status, records) =>
+				this.handleIndexingStatus(status, records),
 		}).finally(() => this.onRecordsChanged?.());
 	}
 
@@ -380,7 +399,10 @@ export class TdaiCore {
 		for (const record of records) {
 			try {
 				const embedding = await this.embeddingService.embed(record.text);
-				const ok = await this.vectorStore.updateL0Embedding(record.recordId, embedding);
+				const ok = await this.vectorStore.updateL0Embedding(
+					record.recordId,
+					embedding,
+				);
 				if (ok) {
 					this.failedIndexing.delete(record.recordId);
 					completed++;
@@ -416,7 +438,9 @@ export class TdaiCore {
 			this.lastReindexResult = result;
 			return result;
 		}
-		const result = await this.vectorStore.reindexAll((text) => this.embeddingService!.embed(text));
+		const result = await this.vectorStore.reindexAll((text) =>
+			this.embeddingService!.embed(text),
+		);
 		this.lastReindexResult = result;
 		return result;
 	}
@@ -503,15 +527,101 @@ export class TdaiCore {
 	 *                    don't have to pre-check whether the session was
 	 *                    already evicted or never produced a capture.
 	 */
-	async handleSessionEnd(sessionKey: string): Promise<void> {
+	async handleSessionEnd(
+		sessionKey: string,
+	): Promise<L1RunnerResult | undefined> {
 		// Session end is a capture/pipeline flush. A disabled capture feature must
 		// not turn an unconditional host callback into background work.
-		if (!this.cfg.capture.enabled) return;
+		if (!this.cfg.capture.enabled) return undefined;
 
-		if (!sessionKey) return;
+		if (!sessionKey) return undefined;
 		await this.storeReady?.catch(() => {});
-		if (!this.scheduler) return;
-		await this.scheduler.flushSession(sessionKey);
+		if (!this.scheduler) return undefined;
+		return this.scheduler.flushSession(sessionKey);
+	}
+
+	/**
+	 * Capture an explicitly authorized turn through the normal Tdai L0→L1
+	 * pipeline and wait for extraction/deduplication to settle. This is not a
+	 * direct L1 insert: all normal quality, scene, persistence, checkpoint and
+	 * downstream scheduling rules remain in force.
+	 */
+	async captureExplicitTurn(
+		turn: CompletedTurn,
+	): Promise<ExplicitCaptureResult> {
+		const capture = await this.handleTurnCommitted(turn);
+		if (!this.cfg.capture.enabled) {
+			return {
+				status: "capture_disabled",
+				reason: "memory_capture_disabled",
+				l0RecordedCount: 0,
+				extractedCount: 0,
+				storedCount: 0,
+				skippedCount: 0,
+				failedCount: 0,
+				storedRecordIds: [],
+				indexingStatus: capture.indexingStatus,
+			};
+		}
+		const result = await this.handleSessionEnd(turn.sessionKey);
+		const extractedCount = result?.extractedCount ?? 0;
+		const storedCount = result?.storedCount ?? 0;
+		const skippedCount = result?.skippedCount ?? 0;
+		const failedCount = result?.failedCount ?? 0;
+		const storedRecordIds = result?.storedRecordIds ?? [];
+		if (storedCount > 0) {
+			return {
+				status: "stored",
+				reason: "memory_stored",
+				l0RecordedCount: capture.l0RecordedCount,
+				extractedCount,
+				storedCount,
+				skippedCount,
+				failedCount,
+				storedRecordIds,
+				indexingStatus: capture.indexingStatus,
+			};
+		}
+		if (failedCount > 0) {
+			return {
+				status: "capture_failed",
+				reason: "memory_persistence_failed",
+				l0RecordedCount: capture.l0RecordedCount,
+				extractedCount,
+				storedCount,
+				skippedCount,
+				failedCount,
+				storedRecordIds,
+				indexingStatus: capture.indexingStatus,
+			};
+		}
+		if (skippedCount > 0) {
+			return {
+				status: "already_known",
+				reason: "equivalent_memory_already_stored",
+				l0RecordedCount: capture.l0RecordedCount,
+				extractedCount,
+				storedCount,
+				skippedCount,
+				failedCount,
+				storedRecordIds,
+				indexingStatus: capture.indexingStatus,
+			};
+		}
+		const noNewContent = capture.l0RecordedCount === 0 && result === undefined;
+		return {
+			status: noNewContent ? "no_new_content" : "no_extractable_memory",
+			reason: noNewContent
+				? "turn_already_processed"
+				: "extractor_found_no_durable_memory",
+			l0RecordedCount: capture.l0RecordedCount,
+			extractedCount,
+			storedCount,
+			skippedCount,
+			failedCount,
+			storedRecordIds,
+			indexingStatus: capture.indexingStatus,
+		};
 	}
 
 	// ============================
@@ -563,7 +673,8 @@ export class TdaiCore {
 		if (status.state === "pending") {
 			for (const record of records) this.failedIndexing.delete(record.recordId);
 		} else if (status.state === "failed") {
-			for (const record of records) this.failedIndexing.set(record.recordId, record);
+			for (const record of records)
+				this.failedIndexing.set(record.recordId, record);
 		} else if (status.state === "complete") {
 			for (const record of records) this.failedIndexing.delete(record.recordId);
 		}
@@ -577,7 +688,24 @@ export class TdaiCore {
 			this.embeddingService = stores.embeddingService;
 			if (stores.needsReindex) {
 				if (!this.vectorStore || !this.embeddingService) {
-					throw new Error("embedding reindex required but the vector store or embedding service is unavailable");
+					throw new Error(
+						"embedding reindex required but the vector store or embedding service is unavailable",
+					);
+				}
+				if (
+					this.cfg.embedding.provider === "local" &&
+					!this.embeddingService.isReady()
+				) {
+					this.embeddingService.startWarmup();
+					const readiness = this.embeddingService as EmbeddingService & {
+						waitForReady?: () => Promise<void>;
+					};
+					if (!readiness.waitForReady) {
+						throw new Error(
+							"local embedding reindex requires an observable readiness gate",
+						);
+					}
+					await readiness.waitForReady.call(this.embeddingService);
 				}
 				const result = await this.vectorStore.reindexAll((text) =>
 					this.embeddingService!.embed(text),
@@ -606,18 +734,25 @@ export class TdaiCore {
 
 		// Determine whether to use standalone LLM runner for extraction.
 		// Priority: cfg.llm.enabled (explicit override) > hostType detection.
-		const useStandaloneRunner = this.cfg.llm.enabled || this.hostAdapter.hostType !== "openclaw";
+		const useStandaloneRunner =
+			this.cfg.llm.enabled || this.hostAdapter.hostType !== "openclaw";
 
 		const openclawConfig =
 			!useStandaloneRunner && this.hostAdapter.hostType === "openclaw"
-				? (this.hostAdapter as { getOpenClawConfig?(): unknown }).getOpenClawConfig?.()
+				? (
+						this.hostAdapter as { getOpenClawConfig?(): unknown }
+					).getOpenClawConfig?.()
 				: undefined;
 
 		// When standalone runner is active, create LLM runners from the factory.
 		// If cfg.llm is configured AND we're in OpenClaw mode, build a dedicated
 		// StandaloneLLMRunnerFactory from cfg.llm to override the host runner.
 		let runnerFactory = this.runnerFactory;
-		if (useStandaloneRunner && this.cfg.llm.enabled && this.hostAdapter.hostType === "openclaw") {
+		if (
+			useStandaloneRunner &&
+			this.cfg.llm.enabled &&
+			this.hostAdapter.hostType === "openclaw"
+		) {
 			runnerFactory = new StandaloneLLMRunnerFactory({
 				config: {
 					baseUrl: this.cfg.llm.baseUrl,
@@ -673,7 +808,9 @@ export class TdaiCore {
 				instanceId: this.instanceId,
 				llmRunner: l2l3LlmRunner,
 			});
-			return l2Runner(sessionKey, cursor).finally(() => this.onRecordsChanged?.());
+			return l2Runner(sessionKey, cursor).finally(() =>
+				this.onRecordsChanged?.(),
+			);
 		});
 
 		// L3 runner

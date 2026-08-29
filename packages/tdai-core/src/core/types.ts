@@ -266,6 +266,31 @@ export interface CaptureResult {
 	}>;
 }
 
+/** Observable outcome for an explicitly authorized capture that is flushed through L0→L1. */
+export interface ExplicitCaptureResult {
+	status:
+		| "stored"
+		| "already_known"
+		| "no_extractable_memory"
+		| "no_new_content"
+		| "capture_disabled"
+		| "capture_failed";
+	reason:
+		| "memory_stored"
+		| "equivalent_memory_already_stored"
+		| "extractor_found_no_durable_memory"
+		| "turn_already_processed"
+		| "memory_capture_disabled"
+		| "memory_persistence_failed";
+	l0RecordedCount: number;
+	extractedCount: number;
+	storedCount: number;
+	skippedCount: number;
+	failedCount: number;
+	storedRecordIds: string[];
+	indexingStatus: IndexingStatus;
+}
+
 /** Search parameters for L1 memory search. */
 export interface MemorySearchParams {
 	query: string;

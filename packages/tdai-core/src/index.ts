@@ -69,6 +69,7 @@ export type {
 	DeferredIndexingRecord,
 	IndexingStatusCallback,
 	ReindexResult,
+	ExplicitCaptureResult,
 } from "./core/types.js";
 export type {
 	MemoryRecord,

@@ -197,6 +197,7 @@ const runtime = createHostRuntime({
 	productConfig,
 	credentialVault: createWebCredentialVault(dataDir),
 	protocolViolationMode: "throw",
+	logger: { warn: (message) => console.warn(message) },
 	...(piWorkerPath ? { piWorkerPath } : {}),
 	conversationAttachmentUrlFactory: (request) => {
 		const capability = randomUUID();

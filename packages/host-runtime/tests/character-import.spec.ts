@@ -96,7 +96,7 @@ describe("character package import", () => {
 		const initial = await runtime.dispatch("character.packageGet:v1", { characterId: "jizhou" });
 		if (!initial.ok) throw new Error(initial.error.reason);
 		const yaml = initial.data.package.yaml.replace(
-			"极昼正在白熊客栈的极光书房值守。",
+			"极光书房是默认日常位置；当前 Host scene 与 narrative anchor 始终优先，不能把默认场景写成不随状态变化的事实。",
 			"极昼正在新的值守室等待交接。",
 		);
 		await expect(
@@ -166,7 +166,7 @@ describe("character package import", () => {
 			ok: true,
 			data: {
 				modules: expect.arrayContaining([
-					expect.objectContaining({ stableKey: "station_record", origin: "package" }),
+					expect.objectContaining({ stableKey: "station_identity", origin: "package" }),
 				]),
 			},
 		});
@@ -187,8 +187,9 @@ describe("character package import", () => {
 			piSessionId: "imported-role-session",
 			sourceUserEntryId: "imported-role-user",
 			definition: importedCharacter.state,
-			operations: [{ path: "continuity.stage", op: "set", value: 1 }],
+			operations: [{ path: "relationship.affinity", op: "increment", value: 1 }],
 			reason: "Verify imported generic schema state survives restart.",
+			evidence: { source: "current_user", quote: "Please keep this imported role." },
 		});
 		state.commitTurn({
 			companionId: importedCharacter.id,
@@ -230,7 +231,7 @@ describe("character package import", () => {
 				conversation.data.id,
 				recoveredCharacter.state,
 			),
-		).toMatchObject({ values: { "continuity.stage": 1 } });
+		).toMatchObject({ values: { "relationship.affinity": 1 } });
 		recoveredDatabase.close();
 	}, 15_000);
 

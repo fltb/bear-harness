@@ -19,7 +19,12 @@ import {
 } from "../prompts/l1-extraction.js";
 import { batchDedup } from "./l1-dedup.js";
 import { writeMemory, generateMemoryId } from "./l1-writer.js";
-import type { ExtractedMemory, MemoryRecord, MemoryType, DedupDecision } from "./l1-writer.js";
+import type {
+	ExtractedMemory,
+	MemoryRecord,
+	MemoryType,
+	DedupDecision,
+} from "./l1-writer.js";
 import { sanitizeJsonForParse, shouldExtractL1 } from "../../utils/sanitize.js";
 import type { IMemoryStore } from "../store/types.js";
 import type { EmbeddingService } from "../store/embedding.js";
@@ -58,6 +63,10 @@ export interface L1ExtractionResult {
 	extractedCount: number;
 	/** Number of memories actually stored (after dedup) */
 	storedCount: number;
+	/** Number intentionally skipped because an equivalent memory already exists. */
+	skippedCount: number;
+	/** Number extracted but not persisted because writing failed. */
+	failedCount: number;
 	/** The memory records that were stored */
 	records: MemoryRecord[];
 	/** Scene names detected during extraction */
@@ -134,7 +143,15 @@ export async function extractL1Memories(params: {
 
 	if (messages.length === 0) {
 		logger?.debug?.(`${TAG} No messages to extract from`);
-		return { success: true, extractedCount: 0, storedCount: 0, records: [], sceneNames: [] };
+		return {
+			success: true,
+			extractedCount: 0,
+			storedCount: 0,
+			skippedCount: 0,
+			failedCount: 0,
+			records: [],
+			sceneNames: [],
+		};
 	}
 
 	// prompt injection, etc.) before sending to the LLM. L0 deliberately captures
@@ -149,14 +166,24 @@ export async function extractL1Memories(params: {
 
 	if (qualifiedMessages.length === 0) {
 		logger?.debug?.(`${TAG} All messages filtered out by L1 quality gate`);
-		return { success: true, extractedCount: 0, storedCount: 0, records: [], sceneNames: [] };
+		return {
+			success: true,
+			extractedCount: 0,
+			storedCount: 0,
+			skippedCount: 0,
+			failedCount: 0,
+			records: [],
+			sceneNames: [],
+		};
 	}
 
 	// Split messages into background (older) + new (recent)
 	const newMessages = qualifiedMessages.slice(-maxNewMessages);
 	const bgEndIdx = qualifiedMessages.length - newMessages.length;
 	const backgroundMessages =
-		bgEndIdx > 0 ? qualifiedMessages.slice(Math.max(0, bgEndIdx - maxBgMessages), bgEndIdx) : [];
+		bgEndIdx > 0
+			? qualifiedMessages.slice(Math.max(0, bgEndIdx - maxBgMessages), bgEndIdx)
+			: [];
 
 	logger?.debug?.(
 		`${TAG} Extracting from ${newMessages.length} new messages (+ ${backgroundMessages.length} background) [${qualifiedMessages.length} qualified from ${messages.length} input]`,
@@ -179,7 +206,15 @@ export async function extractL1Memories(params: {
 		logger?.error(
 			`${TAG} LLM extraction failed: ${err instanceof Error ? err.message : String(err)}`,
 		);
-		return { success: false, extractedCount: 0, storedCount: 0, records: [], sceneNames: [] };
+		return {
+			success: false,
+			extractedCount: 0,
+			storedCount: 0,
+			skippedCount: 0,
+			failedCount: 0,
+			records: [],
+			sceneNames: [],
+		};
 	}
 
 	// Flatten all memories across scenes
@@ -191,14 +226,18 @@ export async function extractL1Memories(params: {
 		for (const mem of scene.memories) {
 			const memType = normalizeType(mem.type);
 			if (!memType) {
-				logger?.warn?.(`${TAG} Skipping memory with invalid type "${mem.type}"`);
+				logger?.warn?.(
+					`${TAG} Skipping memory with invalid type "${mem.type}"`,
+				);
 				continue;
 			}
 			allExtracted.push({
 				content: mem.content,
 				type: memType,
 				priority: typeof mem.priority === "number" ? mem.priority : 50,
-				source_message_ids: Array.isArray(mem.source_message_ids) ? mem.source_message_ids : [],
+				source_message_ids: Array.isArray(mem.source_message_ids)
+					? mem.source_message_ids
+					: [],
 				metadata: mem.metadata ?? {},
 				scene_name: scene.scene_name,
 			});
@@ -214,6 +253,8 @@ export async function extractL1Memories(params: {
 			success: true,
 			extractedCount: 0,
 			storedCount: 0,
+			skippedCount: 0,
+			failedCount: 0,
 			records: [],
 			sceneNames,
 			lastSceneName: sceneNames[sceneNames.length - 1],
@@ -237,6 +278,7 @@ export async function extractL1Memories(params: {
 
 	// Step 2: Batch Conflict Detection + Write
 	let storedRecords: MemoryRecord[];
+	let skippedCount = 0;
 
 	if (enableDedup) {
 		try {
@@ -251,6 +293,9 @@ export async function extractL1Memories(params: {
 				embeddingTimeoutMs: options.embeddingTimeoutMs,
 				llmRunner: options.llmRunner,
 			});
+			skippedCount = decisions.filter(
+				(decision) => decision.action === "skip",
+			).length;
 
 			storedRecords = await applyDecisions({
 				memoriesWithIds,
@@ -296,6 +341,11 @@ export async function extractL1Memories(params: {
 		success: true,
 		extractedCount: extracted.length,
 		storedCount: storedRecords.length,
+		skippedCount,
+		failedCount: Math.max(
+			0,
+			extracted.length - storedRecords.length - skippedCount,
+		),
 		records: storedRecords,
 		sceneNames,
 		lastSceneName: sceneNames[sceneNames.length - 1],
@@ -319,8 +369,15 @@ async function callLlmExtraction(params: {
 	/** Host-neutral LLM runner — when provided, used instead of CleanContextRunner. */
 	llmRunner?: LLMRunner;
 }): Promise<SceneSegment[]> {
-	const { newMessages, backgroundMessages, previousSceneName, config, logger, model, llmRunner } =
-		params;
+	const {
+		newMessages,
+		backgroundMessages,
+		previousSceneName,
+		config,
+		logger,
+		model,
+		llmRunner,
+	} = params;
 
 	const userPrompt = formatExtractionPrompt({
 		newMessages,
@@ -330,7 +387,9 @@ async function callLlmExtraction(params: {
 
 	// The host supplies the LLM implementation through the stable interface.
 	if (!llmRunner) {
-		throw new Error("TdaiCore requires a HostAdapter LLMRunner for L1 extraction");
+		throw new Error(
+			"TdaiCore requires a HostAdapter LLMRunner for L1 extraction",
+		);
 	}
 	const result = await llmRunner.run({
 		prompt: userPrompt,
@@ -350,7 +409,9 @@ function parseExtractionResult(raw: string, logger?: Logger): SceneSegment[] {
 		// Strip markdown code block wrappers if present
 		let cleaned = raw.trim();
 		if (cleaned.startsWith("```")) {
-			cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+			cleaned = cleaned
+				.replace(/^```(?:json)?\s*\n?/, "")
+				.replace(/\n?```\s*$/, "");
 		}
 
 		// Try to extract JSON array
@@ -380,8 +441,11 @@ function parseExtractionResult(raw: string, logger?: Logger): SceneSegment[] {
 			const s = item as Record<string, unknown>;
 
 			scenes.push({
-				scene_name: typeof s.scene_name === "string" ? s.scene_name : "未知情境",
-				message_ids: Array.isArray(s.message_ids) ? s.message_ids.map(String) : [],
+				scene_name:
+					typeof s.scene_name === "string" ? s.scene_name : "未知情境",
+				message_ids: Array.isArray(s.message_ids)
+					? s.message_ids.map(String)
+					: [],
 				memories: Array.isArray(s.memories)
 					? (s.memories as Array<Record<string, unknown>>)
 							.filter(

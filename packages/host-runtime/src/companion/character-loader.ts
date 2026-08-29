@@ -62,6 +62,13 @@ import {
 	RoleplaySchema,
 	roleplayAssetExtensions,
 } from "./roleplay-schema.js";
+import { loadRoleSkills, type RoleSkill } from "./role-resources.js";
+import {
+	type CharacterBehaviorContract,
+	CharacterBehaviorSchema,
+	type VoiceModesContract,
+	VoiceModesSchema,
+} from "./behavior-schema.js";
 import { type CharacterStateDefinition, CharacterStateSchema } from "./state-schema.js";
 import { CharacterThemeOverridesSchema, resolveCharacterTheme } from "./theme.js";
 
@@ -137,13 +144,6 @@ export interface CharacterHostBehavior {
 	event_reactions: HostEventReaction[];
 }
 
-export interface VoiceMode {
-	id: string;
-	label: string;
-	description: string;
-	style_instruction: string;
-	use_when: string;
-}
 export interface CharacterPrompt {
 	description: string;
 	personality: string;
@@ -168,14 +168,16 @@ export interface CharacterPackage {
 	language: string;
 	theme: ThemeTokens;
 	character: CharacterStrings;
+	behavior: CharacterBehaviorContract;
 	prompt: CharacterPrompt;
 	self_canon: string;
-	voice_modes?: VoiceMode[];
+	voice_modes: VoiceModesContract;
 	scenes: ScenePreset[];
 	visual: CharacterVisuals;
 	host: CharacterHostBehavior;
 	state: CharacterStateDefinition;
 	roleplay: RoleplayDefinition;
+	skills: RoleSkill[];
 	canon: LoadedCanonPackage;
 }
 
@@ -381,6 +383,31 @@ function validateCharacterCard(
 		throw new Error(`character package ${characterId}: character card is invalid`);
 }
 
+function packageVersion(path: string): string | undefined {
+	try {
+		const value = parse(readFileSync(path, "utf8")) as { version?: unknown };
+		return typeof value.version === "string" ? value.version : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function comparePackageVersions(left: string, right: string): number {
+	const parseVersion = (value: string): [number, number, number] | undefined => {
+		const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value);
+		if (!match) return undefined;
+		return [Number(match[1]), Number(match[2]), Number(match[3])];
+	};
+	const leftParts = parseVersion(left);
+	const rightParts = parseVersion(right);
+	if (!leftParts || !rightParts) return 0;
+	for (let index = 0; index < leftParts.length; index += 1) {
+		const difference = leftParts[index]! - rightParts[index]!;
+		if (difference !== 0) return difference;
+	}
+	return 0;
+}
+
 /**
  * Character packages are loaded exclusively from the user-owned library.
  * The seed root is read only during bootstrap, before any package is loaded.
@@ -397,20 +424,27 @@ export class CharacterLoader {
 
 	bootstrapLibrary(defaultCharacterId: string): void {
 		this.recoverPackageTransactions();
-		const libraryHasPackage = readdirSync(this.libraryRoot, { withFileTypes: true }).some(
-			(entry) =>
-				entry.isDirectory() &&
-				!entry.name.startsWith(".") &&
-				existsSync(join(this.libraryRoot, entry.name, "character.yaml")),
-		);
-		if (libraryHasPackage) return;
 		const source = join(this.seedRoot, defaultCharacterId);
-		if (!existsSync(join(source, "character.yaml"))) {
+		const sourceManifest = join(source, "character.yaml");
+		if (!existsSync(sourceManifest)) {
 			throw new Error(`default character seed missing: ${defaultCharacterId}`);
+		}
+		const target = join(this.libraryRoot, defaultCharacterId);
+		const targetManifest = join(target, "character.yaml");
+		if (existsSync(targetManifest)) {
+			const sourceVersion = packageVersion(sourceManifest);
+			const targetVersion = packageVersion(targetManifest);
+			if (
+				!sourceVersion ||
+				!targetVersion ||
+				comparePackageVersions(sourceVersion, targetVersion) <= 0
+			) {
+				return;
+			}
 		}
 		replaceDurableFileSync({
 			root: this.libraryRoot,
-			target: join(this.libraryRoot, defaultCharacterId),
+			target,
 			stage: (staging) => cpSync(source, staging, { recursive: true, errorOnExist: true }),
 			verify: (candidate) => this.verifyPackageDirectory(defaultCharacterId, candidate),
 		});
@@ -681,6 +715,12 @@ export class CharacterLoader {
 			throw new Error(`character package ${id}: prompt is invalid`);
 		}
 		validateCharacterCard(parsed.character, id);
+		parsed.behavior = CharacterBehaviorSchema.parse(
+			(parsed as CharacterPackage & { behavior?: unknown }).behavior,
+		);
+		parsed.voice_modes = VoiceModesSchema.parse(
+			(parsed as CharacterPackage & { voice_modes?: unknown }).voice_modes,
+		);
 		// Normalize an installed pre-release package before it crosses the Host
 		// protocol boundary. The compatibility-only key must never reach clients.
 		delete (parsed.character as CharacterStrings & { scene_title?: string }).scene_title;
@@ -701,6 +741,46 @@ export class CharacterLoader {
 			...source,
 			content: readFileSync(this.characterPackagePath(id, `canon/${source.path}`), "utf8"),
 		}));
+		const skillsDir = join(resolve(this.packageDirectory(id)), "skills");
+		parsed.skills = existsSync(skillsDir)
+			? loadRoleSkills([this.characterPackagePath(id, "skills")])
+			: [];
+		const allowedHostTools = new Set([
+			"host_state",
+			"host_visual",
+			"host_present",
+			"host_history",
+			"host_canon",
+			"host_memory",
+			"host_attachment",
+			"host_delegate",
+		]);
+		for (const skill of parsed.skills) {
+			for (const tool of skill.allowedTools)
+				if (!allowedHostTools.has(tool))
+					throw new Error(
+						`character package ${id}: Skill ${skill.name} references unknown tool ${tool}`,
+					);
+			for (const path of [
+				...Object.keys(skill.requires.state),
+				...Object.keys(skill.completion.state),
+			])
+				if (!Object.hasOwn(state.fields, path))
+					throw new Error(
+						`character package ${id}: Skill ${skill.name} references missing state ${path}`,
+					);
+		}
+		const skillIds = new Set(parsed.skills.map((skill) => skill.name));
+		for (const module of canonManifest.modules) {
+			if (module.access.skill && !skillIds.has(module.access.skill))
+				throw new Error(
+					`character package ${id}: canon module ${module.id} references missing Skill ${module.access.skill}`,
+				);
+			if (module.access.state && !Object.hasOwn(state.fields, module.access.state.path))
+				throw new Error(
+					`character package ${id}: canon module ${module.id} references missing state ${module.access.state.path}`,
+				);
+		}
 		const variableIds = new Set(roleplay.variables.map((entry) => entry.id));
 		const mediaIds = new Set(roleplay.media.map((entry) => entry.id));
 		const unlockableIds = new Set(roleplay.unlockables.map((entry) => entry.id));
@@ -789,8 +869,26 @@ export class CharacterLoader {
 		}
 		for (const event of roleplay.events) {
 			if (event.when)
-				validateRoleplayConditionReferences(event.when, variableIds, unlockableIds, id, event.id);
+				validateRoleplayConditionReferences(
+					event.when,
+					variableIds,
+					unlockableIds,
+					new Set(Object.keys(state.fields)),
+					id,
+					event.id,
+				);
 			for (const effect of event.effects) {
+				if (effect.type === "state") {
+					const field = state.fields[effect.path];
+					if (!field)
+						throw new Error(
+							`character package ${id}: event ${event.id} references missing state path`,
+						);
+					if (field.write_authority !== effect.authority || !field.operations.includes(effect.op))
+						throw new Error(
+							`character package ${id}: event ${event.id} is not authorized for state path ${effect.path}`,
+						);
+				}
 				if (
 					(effect.type === "set" || effect.type === "increment") &&
 					!variableIds.has(effect.variable)
@@ -811,6 +909,15 @@ export class CharacterLoader {
 			}
 		}
 		for (const set of roleplay.choice_sets) {
+			if (set.when)
+				validateRoleplayConditionReferences(
+					set.when,
+					variableIds,
+					unlockableIds,
+					new Set(Object.keys(state.fields)),
+					id,
+					set.id,
+				);
 			if (new Set(set.choices.map((choice) => choice.id)).size !== set.choices.length)
 				throw new Error(`character package ${id}: duplicate choice id in ${set.id}`);
 			for (const choice of set.choices)
@@ -885,6 +992,12 @@ export class CharacterLoader {
 		pluginPaths: string[];
 		appendSystemPrompt: string;
 		hostTools: string[];
+		stateDefinition: CharacterStateDefinition;
+		scenes: Array<{ id: string; label: string; useWhen: string }>;
+		expressions: Array<{ id: string; label: string; useWhen: string }>;
+		mediaIds: string[];
+		choiceSetIds: string[];
+		canonModuleIds: string[];
 	} {
 		const packageDir = resolve(this.packageDirectory(character.id));
 		const skillsDir = join(packageDir, "skills");
@@ -904,16 +1017,51 @@ export class CharacterLoader {
 				block.trim().replaceAll("{{char}}", character.name).replaceAll("{{user}}", "用户"),
 			)
 			.filter(Boolean);
-		const roleExamples = mesExample
-			? `<role_examples>\n${(exampleBlocks.length > 0 ? exampleBlocks : [mesExample]).join("\n\n")}\n</role_examples>`
-			: "";
-		const appendSystemPrompt = [character.prompt.system_prompt.trim(), roleExamples]
+		const declaredExamples = character.behavior.examples.map(
+			(example) =>
+				`<example id="${example.id}">\n用户：${example.user}\n${character.name}：${example.assistant}\n</example>`,
+		);
+		const roleExamples = `<role_examples>\n${[
+			...declaredExamples,
+			...(exampleBlocks.length > 0 ? exampleBlocks : mesExample ? [mesExample] : []),
+		].join("\n\n")}\n</role_examples>`;
+		const behaviorContract = `<character_behavior_contract>\n${JSON.stringify(
+			character.behavior,
+			null,
+			2,
+		)}\n</character_behavior_contract>`;
+		const voiceContract = `<voice_modes default="${character.voice_modes.default}">\n${character.voice_modes.modes
+			.map(
+				(mode) =>
+					`<mode id="${mode.id}" use_when="${mode.use_when}">${mode.style_instruction}</mode>`,
+			)
+			.join("\n")}\n</voice_modes>`;
+		const appendSystemPrompt = [
+			behaviorContract,
+			voiceContract,
+			character.prompt.system_prompt.trim(),
+			roleExamples,
+		]
 			.filter(Boolean)
 			.join("\n\n");
 		return {
 			skillPaths,
 			pluginPaths,
 			appendSystemPrompt,
+			stateDefinition: character.state,
+			scenes: character.scenes.map((scene) => ({
+				id: scene.id,
+				label: scene.label,
+				useWhen: scene.use_when,
+			})),
+			expressions: character.visual.expressions.map((expression) => ({
+				id: expression.id,
+				label: expression.label,
+				useWhen: expression.use_when,
+			})),
+			mediaIds: character.roleplay.media.map((media) => media.id),
+			choiceSetIds: character.roleplay.choice_sets.map((set) => set.id),
+			canonModuleIds: character.canon.manifest.modules.map((module) => module.id),
 			hostTools: [
 				...(Object.keys(character.state.fields).length ? ["host_state"] : []),
 				"host_visual",
@@ -1050,7 +1198,7 @@ export class CharacterLoader {
 					}
 				}),
 				unlockables: character.roleplay.unlockables,
-				choice_sets: character.roleplay.choice_sets,
+				choice_sets: character.roleplay.choice_sets.map(({ when: _when, ...set }) => set),
 			},
 		};
 	}
@@ -1319,18 +1467,33 @@ function validateRoleplayConditionReferences(
 	condition: import("./roleplay-schema.js").RoleplayCondition,
 	variables: ReadonlySet<string>,
 	unlockables: ReadonlySet<string>,
+	statePaths: ReadonlySet<string>,
 	characterId: string,
 	eventId: string,
 ): void {
 	if ("all" in condition) {
 		condition.all.forEach((part) => {
-			validateRoleplayConditionReferences(part, variables, unlockables, characterId, eventId);
+			validateRoleplayConditionReferences(
+				part,
+				variables,
+				unlockables,
+				statePaths,
+				characterId,
+				eventId,
+			);
 		});
 		return;
 	}
 	if ("any" in condition) {
 		condition.any.forEach((part) => {
-			validateRoleplayConditionReferences(part, variables, unlockables, characterId, eventId);
+			validateRoleplayConditionReferences(
+				part,
+				variables,
+				unlockables,
+				statePaths,
+				characterId,
+				eventId,
+			);
 		});
 		return;
 	}
@@ -1339,6 +1502,7 @@ function validateRoleplayConditionReferences(
 			condition.not,
 			variables,
 			unlockables,
+			statePaths,
 			characterId,
 			eventId,
 		);
@@ -1348,6 +1512,13 @@ function validateRoleplayConditionReferences(
 		if (!unlockables.has(condition.unlocked))
 			throw new Error(
 				`character package ${characterId}: event ${eventId} condition references missing unlockable`,
+			);
+		return;
+	}
+	if ("state" in condition) {
+		if (!statePaths.has(condition.state))
+			throw new Error(
+				`character package ${characterId}: event ${eventId} condition references missing state path`,
 			);
 		return;
 	}

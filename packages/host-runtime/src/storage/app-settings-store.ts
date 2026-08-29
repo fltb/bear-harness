@@ -152,10 +152,18 @@ export class AppSettingsStore {
 
 	save(patch: Partial<AppSettingsRecord>): AppSettingsRecord {
 		const current = this.load();
+		const memoryVectorService = patch.memoryVectorService
+			? parseMemoryVectorService(JSON.stringify(patch.memoryVectorService))
+			: current.memoryVectorService;
+		if (
+			patch.memoryVectorService &&
+			JSON.stringify(memoryVectorService) !== JSON.stringify(patch.memoryVectorService)
+		)
+			throw { kind: "validation_failed", reason: "memory_vector_service_invalid" };
 		const next: AppSettingsRecord = {
 			firstRunStage: patch.firstRunStage ?? current.firstRunStage,
 			networkProxy: patch.networkProxy ?? current.networkProxy,
-			memoryVectorService: patch.memoryVectorService ?? current.memoryVectorService,
+			memoryVectorService,
 			modelDownloadSource: patch.modelDownloadSource ?? current.modelDownloadSource,
 		};
 		this.db

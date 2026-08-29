@@ -28,6 +28,7 @@ import { CharacterLoader } from "./companion/character-loader.js";
 import { ContextPackCompiler } from "./companion/context-pack.js";
 import { FirstMeetingMachine } from "./companion/first-meeting.js";
 import { RoleplayService } from "./companion/roleplay-service.js";
+import type { CharacterStateEvidence } from "./companion/state-schema.js";
 import { CharacterStateService } from "./companion/state-service.js";
 import { CompanionSupervisor } from "./companion/supervisor.js";
 import { hasTurnAuthorization } from "./companion/turn-authorization.js";
@@ -36,7 +37,7 @@ import {
 	type ConversationAttachmentUrlFactoryRequest,
 	type HostCompositionContext,
 	type HostUpdateService,
-	proposeMemoryCandidate,
+	rememberConversationEntry,
 	syncAllProviderModels,
 	syncProviderModels,
 	wireHostHandlers,
@@ -230,8 +231,8 @@ export class HostRuntime {
 			options.diagnostics,
 		);
 		conversationRepository.setLiveSessionResolver(supervisor.getLiveSessionResolver());
-		const roleplay = new RoleplayService(db.orm);
 		const characterState = new CharacterStateService(db.orm);
+		const roleplay = new RoleplayService(db.orm, characterState);
 		const drafts = new CharacterDraftService(db.orm, characterLoader);
 		const characterBehavior = new CharacterBehaviorService(
 			db.orm,
@@ -331,6 +332,7 @@ export class HostRuntime {
 								await contextPack.compileForTurn(conversationId, {
 									canonQuery: message,
 									memoryQuery: message,
+									currentUserMessage: message,
 								}),
 							),
 						)
@@ -338,6 +340,7 @@ export class HostRuntime {
 							await contextPack.compileForTurn(conversationId, {
 								canonQuery: message,
 								memoryQuery: message,
+								currentUserMessage: message,
 							}),
 						));
 				span?.end("ok", {
@@ -346,6 +349,13 @@ export class HostRuntime {
 				});
 				return context;
 			} catch (error) {
+				options.logger?.warn?.(
+					`context compile failed: ${
+						error instanceof Error
+							? error.message
+							: JSON.stringify(error, undefined, 2) || String(error)
+					}`,
+				);
 				span?.end("error", {
 					historyIncluded: includeHistory,
 					contextBytes: 0,
@@ -353,6 +363,37 @@ export class HostRuntime {
 				});
 				throw error;
 			}
+		});
+		supervisor.setSkillAccessHandler((conversationId, skill) => {
+			const conversation = db.orm
+				.select({ companionId: conversations.companionId })
+				.from(conversations)
+				.where(eq(conversations.id, conversationId))
+				.get();
+			if (!conversation) return "blocked";
+			const character = characterLoader.load(conversation.companionId);
+			if (!character) return "blocked";
+			const values = characterState.project(
+				conversation.companionId,
+				conversationId,
+				character.state,
+				true,
+			).values;
+			const completed = Object.entries(skill.completion.state).every(([path, expected]) =>
+				Object.is(values[path], expected),
+			);
+			if (Object.keys(skill.completion.state).length > 0 && completed) return "completed";
+			const eligible = Object.entries(skill.requires.state).every(([path, allowed]) =>
+				allowed.some((value) => Object.is(value, values[path])),
+			);
+			if (!eligible) return "blocked";
+			const active =
+				(skill.name === "undelivered-report" &&
+					values["narrative.active_story"] === "undelivered_report") ||
+				(skill.name === "continuity-reveal" &&
+					typeof values["continuity.stage"] === "number" &&
+					values["continuity.stage"] !== 0);
+			return active ? "active" : "eligible";
 		});
 		onboarding.setConversationFactory(({ companionId, title, onCommit }) => {
 			const id = randomUUID();
@@ -496,6 +537,8 @@ export class HostRuntime {
 					operations?: unknown;
 					expectedRevisions?: unknown;
 					reason?: unknown;
+					skillId?: unknown;
+					evidence?: unknown;
 				};
 				if (args.action === "read") {
 					return {
@@ -519,6 +562,30 @@ export class HostRuntime {
 						message: "A current user turn is required.",
 					};
 				try {
+					const skillId = typeof args.skillId === "string" ? args.skillId : undefined;
+					if (skillId && !supervisor.hasReadSkillForCurrentTurn(call.conversationId, skillId)) {
+						return {
+							ok: false,
+							code: "skill_read_required",
+							message: "The authorized role Skill must be read during the current turn.",
+						};
+					}
+					const evidence = parseStateEvidence(args.evidence);
+					if (evidence) {
+						const sourceText =
+							evidence.source === "current_user"
+								? live.currentUserText
+								: evidence.source === "current_assistant"
+									? live.currentAssistantText
+									: undefined;
+						if (evidence.source !== "user_choice" && !sourceText?.includes(evidence.quote)) {
+							return {
+								ok: false,
+								code: "state_evidence_not_found",
+								message: "The evidence quote is not present in the declared current-turn source.",
+							};
+						}
+					}
 					const result = characterState.stage({
 						companionId: conversation.companionId,
 						conversationId: call.conversationId,
@@ -528,6 +595,8 @@ export class HostRuntime {
 						operations: args.operations as never,
 						expectedRevisions: args.expectedRevisions as never,
 						reason: typeof args.reason === "string" ? args.reason : "",
+						...(skillId ? { skillId } : {}),
+						...(evidence ? { evidence } : {}),
 					});
 					return {
 						ok: true,
@@ -600,6 +669,7 @@ export class HostRuntime {
 				const citations = await canon.retrieveHybrid(conversation.companionId, args.query, {
 					moduleId: args.moduleId,
 					limit: 8,
+					allowedModuleIds: contextPack.accessibleCanonModuleIds(call.conversationId),
 				});
 				return {
 					ok: true,
@@ -610,13 +680,22 @@ export class HostRuntime {
 				};
 			}
 			if (call.tool === "host_memory") {
-				// Assistant-suggested memories become user-visible candidates the user
-				// must approve before they enter relationship memory (plan §7.6).
-				const candidate = await proposeMemoryCandidate(this.composition, call.conversationId);
+				const result = await rememberConversationEntry(
+					this.composition,
+					call.conversationId,
+					undefined,
+					"assistant_tool",
+					(call.args as { evidenceQuote: string }).evidenceQuote,
+				);
 				return {
 					ok: true,
-					message: "Memory suggestion created — approve or edit it in the memory panel.",
-					data: candidate,
+					message:
+						result.status === "stored"
+							? "Memory stored."
+							: result.status === "already_known"
+								? "Equivalent memory was already stored."
+								: `Memory was not stored: ${result.reason}.`,
+					data: result,
 				};
 			}
 			if (call.tool === "host_attachment") {
@@ -1041,6 +1120,20 @@ function mergeEmbeddingConfig(
 		embedding.dimensions = service.dimensions ?? 0;
 	}
 	return { ...base, embedding: { ...base?.embedding, ...embedding } };
+}
+
+function parseStateEvidence(value: unknown): CharacterStateEvidence | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const source = (value as Record<string, unknown>).source;
+	const quote = (value as Record<string, unknown>).quote;
+	if (
+		(source !== "current_user" && source !== "current_assistant" && source !== "user_choice") ||
+		typeof quote !== "string" ||
+		quote.length === 0 ||
+		quote.length > 2000
+	)
+		return undefined;
+	return { source, quote };
 }
 
 /** Create an instance-scoped companion host runtime. */

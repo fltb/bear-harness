@@ -266,6 +266,11 @@ export const en = {
 		rememberMoment: "Remember this moment",
 		rememberingMoment: "Saving…",
 		rememberedMoment: "Remembered",
+		memoryAlreadyKnown: "Already remembered",
+		memoryNotExtractable: "No durable memory found",
+		memoryAlreadyProcessed: "This moment was already processed",
+		memoryCaptureDisabled: "Long-term memory is off",
+		memoryPersistenceFailed: "Could not save. Try again",
 		rememberFailed: "Could not save memory. Try again.",
 		responseStopped: "Response stopped. You can regenerate it.",
 		responseFailedSaved:
@@ -418,7 +423,11 @@ export const en = {
 		searchModels: "Search model ID, name, or provider",
 		networkSection: "Network proxy",
 		proxyMode: "Proxy mode",
-		proxyModes: { direct: "Direct", auto: "Use system proxy", manual: "Manual" },
+		proxyModes: {
+			direct: "Direct",
+			auto: "Use system proxy",
+			manual: "Manual",
+		},
 		proxyUrl: "Manual proxy URL",
 		memoryVectorSection: "Memory vector service",
 		memoryVectorEnabled: "Enable semantic memory search",
@@ -454,6 +463,7 @@ export const en = {
 			custom: "Custom endpoint",
 		},
 		downloadAndEnableLocalModel: "Download and enable local model",
+		enableLocalModel: "Enable downloaded local model",
 		localModelEnabled: "Local model enabled",
 		downloadingLocalModel: "Downloading and loading local model…",
 		localModelDownloadStatus:

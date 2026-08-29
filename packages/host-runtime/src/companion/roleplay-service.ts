@@ -5,14 +5,20 @@ import { events, onboardingState, roleplayEvents, roleplayUnlocks } from "../sto
 import type { CharacterPackage } from "./character-loader.js";
 import { OnboardingStateDataSchema } from "./onboarding-schema.js";
 import type { RoleplayCondition, RoleplayEffect, RoleplayValue } from "./roleplay-schema.js";
+import type { CharacterStateOperation } from "./state-schema.js";
+import type { CharacterStateService } from "./state-service.js";
 
 export interface RoleplayProjection {
 	values: Record<string, RoleplayValue>;
+	state: Record<string, unknown>;
 	unlocked: string[];
 }
 
 export class RoleplayService {
-	constructor(private readonly db: AppDatabase) {}
+	constructor(
+		private readonly db: AppDatabase,
+		private readonly characterState?: CharacterStateService,
+	) {}
 
 	project(character: CharacterPackage, conversationId?: string): RoleplayProjection {
 		const values = Object.fromEntries(
@@ -54,7 +60,19 @@ export class RoleplayService {
 			.where(eq(roleplayUnlocks.companionId, character.id))
 			.all()
 			.map((row) => row.id);
-		return { values, unlocked };
+		const state =
+			conversationId && this.characterState
+				? this.characterState.project(character.id, conversationId, character.state).values
+				: {};
+		return { values, state, unlocked };
+	}
+
+	isEligible(
+		character: CharacterPackage,
+		conversationId: string,
+		condition?: RoleplayCondition,
+	): boolean {
+		return !condition || evaluateCondition(condition, this.project(character, conversationId));
 	}
 
 	/** Presentation is reconstructed from its persisted Host events, including dismissals. */
@@ -155,6 +173,34 @@ export class RoleplayService {
 						})
 						.onConflictDoNothing()
 						.run();
+			const stateEffects = event.effects.filter(
+				(effect): effect is Extract<RoleplayEffect, { type: "state" }> => effect.type === "state",
+			);
+			for (const authority of ["user_choice", "host_event"] as const) {
+				const operations = stateEffects
+					.filter((effect) => effect.authority === authority)
+					.map(
+						(effect) =>
+							({
+								path: effect.path,
+								op: effect.op,
+								...(effect.value === undefined ? {} : { value: effect.value }),
+							}) as CharacterStateOperation,
+					);
+				if (operations.length === 0) continue;
+				if (!input.conversationId || !this.characterState)
+					throw { kind: "conflict", reason: "roleplay_state_service_unavailable" };
+				this.characterState.commitAuthoritative({
+					companionId: input.character.id,
+					conversationId: input.conversationId,
+					definition: input.character.state,
+					authority,
+					sourceId: `${id}:${authority}`,
+					operations,
+					reason: `Deterministic roleplay event ${event.id}.`,
+					transaction,
+				});
+			}
 		});
 		return this.project(input.character, input.conversationId);
 	}
@@ -195,6 +241,15 @@ function evaluateCondition(condition: RoleplayCondition, state: RoleplayProjecti
 	if ("any" in condition) return condition.any.some((part) => evaluateCondition(part, state));
 	if ("not" in condition) return !evaluateCondition(condition.not, state);
 	if ("unlocked" in condition) return state.unlocked.includes(condition.unlocked);
+	if ("state" in condition) {
+		const value = state.state[condition.state];
+		if ("equals" in condition) return Object.is(value, condition.equals);
+		if (typeof value !== "number") return false;
+		if (condition.operator === "gt") return value > condition.value;
+		if (condition.operator === "gte") return value >= condition.value;
+		if (condition.operator === "lt") return value < condition.value;
+		return value <= condition.value;
+	}
 	if ("equals" in condition) return state.values[condition.variable] === condition.equals;
 	const value = state.values[condition.variable];
 	if (typeof value !== "number") return false;

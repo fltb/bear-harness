@@ -18,7 +18,10 @@ import { MemoryPipelineManager } from "./pipeline-manager.js";
 import type { L2Runner, L3Runner } from "./pipeline-manager.js";
 import { SessionFilter } from "./session-filter.js";
 import { extractL1Memories } from "../core/record/l1-extractor.js";
-import { queryMemoryRecords, readMemoryRecords } from "../core/record/l1-reader.js";
+import {
+	queryMemoryRecords,
+	readMemoryRecords,
+} from "../core/record/l1-reader.js";
 import { readConversationMessagesGroupedBySessionId } from "../core/conversation/l0-recorder.js";
 import type { ConversationMessage } from "../core/conversation/l0-recorder.js";
 import { CheckpointManager } from "./checkpoint.js";
@@ -36,7 +39,10 @@ import {
 import { SceneExtractor } from "../core/scene/scene-extractor.js";
 import { PersonaTrigger } from "../core/persona/persona-trigger.js";
 import { PersonaGenerator } from "../core/persona/persona-generator.js";
-import { pullProfilesToLocal, syncLocalProfilesToStore } from "../core/profile/profile-sync.js";
+import {
+	pullProfilesToLocal,
+	syncLocalProfilesToStore,
+} from "../core/profile/profile-sync.js";
 
 const TAG = "[memory-tdai] [pipeline-factory]";
 
@@ -116,7 +122,13 @@ export interface PipelineInstance {
  * Safe to call multiple times (mkdirSync with `recursive: true`).
  */
 export function initDataDirectories(dataDir: string): void {
-	const dirs = ["conversations", "records", "scene_blocks", ".metadata", ".backup"];
+	const dirs = [
+		"conversations",
+		"records",
+		"scene_blocks",
+		".metadata",
+		".backup",
+	];
 	for (const sub of dirs) {
 		fs.mkdirSync(path.join(dataDir, sub), { recursive: true });
 	}
@@ -212,7 +224,9 @@ async function _doInitStores(
 		}
 
 		if (vectorStore.isDegraded()) {
-			logger.warn(`${TAG} Store is in degraded mode, falling back to keyword dedup`);
+			logger.warn(
+				`${TAG} Store is in degraded mode, falling back to keyword dedup`,
+			);
 			vectorStore = undefined;
 			embeddingService = undefined;
 		} else {
@@ -236,7 +250,9 @@ async function _doInitStores(
 						seed: null,
 					};
 					writeManifest(pluginDataDir, manifest);
-					logger.debug?.(`${TAG} Manifest created: ${JSON.stringify(currentStoreInfo)}`);
+					logger.debug?.(
+						`${TAG} Manifest created: ${JSON.stringify(currentStoreInfo)}`,
+					);
 				} else {
 					// Compare persisted store binding against current config
 					const diffs = diffStoreBinding(existing.store, currentStoreInfo);
@@ -291,7 +307,14 @@ export function createL1Runner(opts: {
 	getInstanceId?: () => string | undefined;
 	/** Host-neutral LLM runner for L1 extraction (standalone/gateway mode). */
 	llmRunner?: import("../core/types.js").LLMRunner;
-}): (params: { sessionKey: string }) => Promise<{ processedCount: number }> {
+}): (params: { sessionKey: string }) => Promise<{
+	processedCount: number;
+	extractedCount: number;
+	storedCount: number;
+	skippedCount: number;
+	failedCount: number;
+	storedRecordIds: string[];
+}> {
 	const {
 		pluginDataDir,
 		cfg,
@@ -306,8 +329,17 @@ export function createL1Runner(opts: {
 
 	return async ({ sessionKey }) => {
 		if (!config && !llmRunner) {
-			logger.debug?.(`${TAG} [l1] No OpenClaw config and no LLM runner, skipping L1 extraction`);
-			return { processedCount: 0 };
+			logger.debug?.(
+				`${TAG} [l1] No OpenClaw config and no LLM runner, skipping L1 extraction`,
+			);
+			return {
+				processedCount: 0,
+				extractedCount: 0,
+				storedCount: 0,
+				skippedCount: 0,
+				failedCount: 0,
+				storedRecordIds: [],
+			};
 		}
 
 		const checkpoint = new CheckpointManager(pluginDataDir, logger);
@@ -323,8 +355,14 @@ export function createL1Runner(opts: {
 			let maxRecordedAtMs = 0;
 
 			if (vectorStore && !vectorStore.isDegraded()) {
-				const l1Cursor = runnerState.last_l1_cursor > 0 ? runnerState.last_l1_cursor : undefined;
-				const dbGroups = await vectorStore.queryL0GroupedBySessionId(sessionKey, l1Cursor);
+				const l1Cursor =
+					runnerState.last_l1_cursor > 0
+						? runnerState.last_l1_cursor
+						: undefined;
+				const dbGroups = await vectorStore.queryL0GroupedBySessionId(
+					sessionKey,
+					l1Cursor,
+				);
 				groups = dbGroups.map((g) => ({
 					sessionId: g.sessionId,
 					messages: g.messages.map((m) => ({
@@ -337,12 +375,15 @@ export function createL1Runner(opts: {
 				// Compute max recordedAtMs across all groups for cursor advancement
 				for (const g of dbGroups) {
 					for (const m of g.messages) {
-						if (m.recordedAtMs > maxRecordedAtMs) maxRecordedAtMs = m.recordedAtMs;
+						if (m.recordedAtMs > maxRecordedAtMs)
+							maxRecordedAtMs = m.recordedAtMs;
 					}
 				}
 				logger.debug?.(`${TAG} [l1] L0 data source: VectorStore DB`);
 			} else {
-				logger.debug?.(`${TAG} [l1] L0 data source: JSONL files (VectorStore unavailable)`);
+				logger.debug?.(
+					`${TAG} [l1] L0 data source: JSONL files (VectorStore unavailable)`,
+				);
 				const jsonlGroups = await readConversationMessagesGroupedBySessionId(
 					sessionKey,
 					pluginDataDir,
@@ -357,23 +398,39 @@ export function createL1Runner(opts: {
 				// Compute max recordedAtMs from JSONL groups
 				for (const g of jsonlGroups) {
 					for (const m of g.messages) {
-						if (m.recordedAtMs > maxRecordedAtMs) maxRecordedAtMs = m.recordedAtMs;
+						if (m.recordedAtMs > maxRecordedAtMs)
+							maxRecordedAtMs = m.recordedAtMs;
 					}
 				}
 			}
 
 			if (groups.length === 0) {
-				logger.debug?.(`${TAG} [l1] No new L0 messages for session ${sessionKey}`);
-				return { processedCount: 0 };
+				logger.debug?.(
+					`${TAG} [l1] No new L0 messages for session ${sessionKey}`,
+				);
+				return {
+					processedCount: 0,
+					extractedCount: 0,
+					storedCount: 0,
+					skippedCount: 0,
+					failedCount: 0,
+					storedRecordIds: [],
+				};
 			}
 
-			const totalMessages = groups.reduce((sum, g) => sum + g.messages.length, 0);
+			const totalMessages = groups.reduce(
+				(sum, g) => sum + g.messages.length,
+				0,
+			);
 			logger.info(
 				`${TAG} [l1] Processing ${totalMessages} L0 messages across ${groups.length} sessionId group(s) for session ${sessionKey}`,
 			);
 
 			let totalExtracted = 0;
 			let totalStored = 0;
+			let totalSkipped = 0;
+			let totalFailed = 0;
+			const storedRecordIds: string[] = [];
 			let lastSceneName: string | undefined;
 
 			for (const group of groups) {
@@ -391,11 +448,13 @@ export function createL1Runner(opts: {
 						enableDedup: cfg.extraction.enableDedup,
 						maxMemoriesPerSession: cfg.extraction.maxMemoriesPerSession,
 						model: cfg.extraction.model,
-						previousSceneName: lastSceneName ?? (runnerState.last_scene_name || undefined),
+						previousSceneName:
+							lastSceneName ?? (runnerState.last_scene_name || undefined),
 						vectorStore,
 						embeddingService,
 						conflictRecallTopK: cfg.embedding.conflictRecallTopK,
-						embeddingTimeoutMs: cfg.embedding.captureTimeoutMs ?? cfg.embedding.timeoutMs,
+						embeddingTimeoutMs:
+							cfg.embedding.captureTimeoutMs ?? cfg.embedding.timeoutMs,
 						llmRunner,
 					},
 					logger,
@@ -404,6 +463,9 @@ export function createL1Runner(opts: {
 
 				totalExtracted += l1Result.extractedCount;
 				totalStored += l1Result.storedCount;
+				totalSkipped += l1Result.skippedCount;
+				totalFailed += l1Result.failedCount;
+				storedRecordIds.push(...l1Result.records.map((record) => record.id));
 				if (l1Result.lastSceneName) {
 					lastSceneName = l1Result.lastSceneName;
 				}
@@ -420,7 +482,14 @@ export function createL1Runner(opts: {
 				`${TAG} [l1] L1 complete: extracted=${totalExtracted}, stored=${totalStored} (${groups.length} group(s))`,
 			);
 
-			return { processedCount: totalMessages };
+			return {
+				processedCount: totalMessages,
+				extractedCount: totalExtracted,
+				storedCount: totalStored,
+				skippedCount: totalSkipped,
+				failedCount: totalFailed,
+				storedRecordIds,
+			};
 		} catch (err) {
 			logger.error(
 				`${TAG} [l1] L1 failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
@@ -471,24 +540,45 @@ export function createL2Runner(opts: {
 	/** Host-neutral LLM runner for L2 scene extraction (standalone/gateway mode). Must have enableTools=true. */
 	llmRunner?: import("../core/types.js").LLMRunner;
 }): L2Runner {
-	const { pluginDataDir, cfg, openclawConfig, vectorStore, logger, instanceId, llmRunner } = opts;
+	const {
+		pluginDataDir,
+		cfg,
+		openclawConfig,
+		vectorStore,
+		logger,
+		instanceId,
+		llmRunner,
+	} = opts;
 	let profileBaseline = new Map<
 		string,
 		{ version: number; contentMd5: string; createdAtMs: number }
 	>();
 
 	return async (sessionKey: string, cursor?: string) => {
-		logger.debug?.(`${TAG} [L2] session=${sessionKey}, updatedAfter=${cursor ?? "(full)"}`);
+		logger.debug?.(
+			`${TAG} [L2] session=${sessionKey}, updatedAfter=${cursor ?? "(full)"}`,
+		);
 
 		if (!openclawConfig && !llmRunner) {
-			logger.warn(`${TAG} [L2] No OpenClaw config and no LLM runner, skipping scene extraction`);
+			logger.warn(
+				`${TAG} [L2] No OpenClaw config and no LLM runner, skipping scene extraction`,
+			);
 			return;
 		}
 
-		let records: Array<{ content: string; created_at: string; id: string; updatedAt: string }>;
+		let records: Array<{
+			content: string;
+			created_at: string;
+			id: string;
+			updatedAt: string;
+		}>;
 
 		if (vectorStore?.pullProfiles && !vectorStore.isDegraded()) {
-			profileBaseline = await pullProfilesToLocal(pluginDataDir, vectorStore, logger);
+			profileBaseline = await pullProfilesToLocal(
+				pluginDataDir,
+				vectorStore,
+				logger,
+			);
 		}
 
 		if (vectorStore && !vectorStore.isDegraded()) {
@@ -522,7 +612,11 @@ export function createL2Runner(opts: {
 			logger.debug?.(
 				`${TAG} [L2] VectorStore unavailable, falling back to JSONL read (session=${sessionKey})`,
 			);
-			let sessionRecords = await readMemoryRecords(sessionKey, pluginDataDir, logger);
+			let sessionRecords = await readMemoryRecords(
+				sessionKey,
+				pluginDataDir,
+				logger,
+			);
 
 			if (cursor) {
 				const beforeCount = sessionRecords.length;
@@ -590,8 +684,14 @@ export function createL2Runner(opts: {
 				);
 				await checkpoint.write({
 					...postState,
-					scenes_processed: Math.max(postState.scenes_processed, preScenesProcessed),
-					total_processed: Math.max(postState.total_processed, preTotalProcessed),
+					scenes_processed: Math.max(
+						postState.scenes_processed,
+						preScenesProcessed,
+					),
+					total_processed: Math.max(
+						postState.total_processed,
+						preTotalProcessed,
+					),
 					memories_since_last_persona: Math.max(
 						postState.memories_since_last_persona,
 						preMemoriesSince,
@@ -601,7 +701,12 @@ export function createL2Runner(opts: {
 			}
 
 			if (vectorStore && supportsProfileSyncWrite(vectorStore)) {
-				await syncLocalProfilesToStore(pluginDataDir, vectorStore, profileBaseline, logger);
+				await syncLocalProfilesToStore(
+					pluginDataDir,
+					vectorStore,
+					profileBaseline,
+					logger,
+				);
 			}
 			await checkpoint.incrementScenesProcessed();
 
@@ -638,7 +743,15 @@ export function createL3Runner(opts: {
 	/** Host-neutral LLM runner for L3 persona generation (standalone/gateway mode). Must have enableTools=true. */
 	llmRunner?: import("../core/types.js").LLMRunner;
 }): L3Runner {
-	const { pluginDataDir, cfg, openclawConfig, vectorStore, logger, instanceId, llmRunner } = opts;
+	const {
+		pluginDataDir,
+		cfg,
+		openclawConfig,
+		vectorStore,
+		logger,
+		instanceId,
+		llmRunner,
+	} = opts;
 
 	return async () => {
 		const trigger = new PersonaTrigger({
@@ -654,7 +767,9 @@ export function createL3Runner(opts: {
 		}
 
 		if (!openclawConfig && !llmRunner) {
-			logger.warn(`${TAG} [L3] No OpenClaw config and no LLM runner, skipping persona generation`);
+			logger.warn(
+				`${TAG} [L3] No OpenClaw config and no LLM runner, skipping persona generation`,
+			);
 			return;
 		}
 
@@ -666,7 +781,11 @@ export function createL3Runner(opts: {
 			{ version: number; contentMd5: string; createdAtMs: number }
 		>();
 		if (vectorStore?.pullProfiles && !vectorStore.isDegraded()) {
-			profileBaseline = await pullProfilesToLocal(pluginDataDir, vectorStore, logger);
+			profileBaseline = await pullProfilesToLocal(
+				pluginDataDir,
+				vectorStore,
+				logger,
+			);
 		}
 
 		logger.info(`${TAG} [L3] Starting persona generation: ${reason}`);
@@ -686,7 +805,12 @@ export function createL3Runner(opts: {
 		}
 
 		if (vectorStore && supportsProfileSyncWrite(vectorStore)) {
-			await syncLocalProfilesToStore(pluginDataDir, vectorStore, profileBaseline, logger);
+			await syncLocalProfilesToStore(
+				pluginDataDir,
+				vectorStore,
+				profileBaseline,
+				logger,
+			);
 		}
 
 		const checkpoint = new CheckpointManager(pluginDataDir, logger);
@@ -737,8 +861,17 @@ export function createPipelineManager(
  * Callers should attach L2/L3 runners after creation using `createL2Runner()`
  * and `createL3Runner()` from this module.
  */
-export async function createPipeline(opts: PipelineFactoryOptions): Promise<PipelineInstance> {
-	const { pluginDataDir, cfg, openclawConfig, logger, sessionFilter, l1LlmRunner } = opts;
+export async function createPipeline(
+	opts: PipelineFactoryOptions,
+): Promise<PipelineInstance> {
+	const {
+		pluginDataDir,
+		cfg,
+		openclawConfig,
+		logger,
+		sessionFilter,
+		l1LlmRunner,
+	} = opts;
 
 	// Ensure data directories exist
 	initDataDirectories(pluginDataDir);

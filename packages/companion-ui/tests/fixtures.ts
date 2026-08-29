@@ -395,7 +395,9 @@ export function createTestClient() {
 			list: vi.fn(() => ok({ entries: [] })),
 			capture: vi.fn(({ entryId }: { entryId: string }) =>
 				ok({
-					memoryId: `memory-${entryId}`,
+					status: "stored" as const,
+					reason: "memory_stored" as const,
+					memoryIds: [`memory-${entryId}`],
 					sourceEntryId: entryId,
 					createdBy: "user_capture" as const,
 				}),

@@ -134,6 +134,47 @@ describe("NetworkAndMemorySettings", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("offers an activation action when the model is downloaded but the provider is disabled", async () => {
+		const { client } = createTestClient();
+		client.settings.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					settings: {
+						relationshipMemoryEnabled: false,
+						conversationHistoryReadEnabled: false,
+						networkProxy: { mode: "direct" as const },
+						memoryVectorService: { enabled: false, provider: "none" as const },
+						modelDownloadSource: { type: "official" as const },
+					},
+				},
+			}),
+		);
+		client.memory.localEmbeddingDownloadStatus = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { status: "completed" as const, downloadedBytes: 313_400_000 },
+			}),
+		);
+
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { backstage, user } = await openSettings();
+		const embedding = embeddingSettings(backstage);
+		await user.click(
+			within(embedding).getByRole("checkbox", { name: zhCN.settings.memoryVectorEnabled }),
+		);
+		await user.click(
+			within(embedding).getByRole("button", { name: zhCN.settings.enableLocalModel }),
+		);
+
+		await waitFor(() =>
+			expect(client.memory.configureLocalEmbedding).toHaveBeenCalledWith({
+				provider: "local",
+				candidateId: "test-embedding",
+			}),
+		);
+	});
+
 	it("renders and applies only the capabilities returned by Host", async () => {
 		const { client, settingsSet } = createTestClient();
 		client.settings.get = vi.fn(() =>

@@ -8,6 +8,15 @@ const StatePath = z
 const StateValue = z.union([z.string().max(4096), z.number().finite(), z.boolean()]);
 export type CharacterStateValue = z.infer<typeof StateValue>;
 
+export const StateWriteAuthority = z.union([
+	z.literal("model"),
+	z.literal("host_event"),
+	z.literal("user_choice"),
+	z.literal("readonly"),
+	z.string().regex(/^skill:[a-z][a-z0-9-]{0,63}$/u),
+]);
+export type StateWriteAuthority = z.infer<typeof StateWriteAuthority>;
+
 export const StateOperationName = z.enum([
 	"set",
 	"increment",
@@ -24,8 +33,13 @@ const StateField = z
 		scope: z.enum(["conversation", "relationship", "character"]),
 		initial: z.union([StateValue, z.array(z.string().max(4096)).max(100)]),
 		model_readable: z.boolean().default(true),
-		model_writable: z.boolean().default(false),
+		write_authority: StateWriteAuthority,
 		operations: z.array(StateOperationName).max(6).default([]),
+		description: z.string().min(1).max(2000),
+		value_meanings: z.record(z.string().min(1).max(128), z.string().min(1).max(1000)).default({}),
+		update_when: z.array(z.string().min(1).max(1000)).max(30).default([]),
+		do_not_update_when: z.array(z.string().min(1).max(1000)).max(30).default([]),
+		evidence_required: z.boolean().default(false),
 		minimum: z.number().finite().optional(),
 		maximum: z.number().finite().optional(),
 		max_change_per_turn: z.number().finite().positive().optional(),
@@ -48,13 +62,13 @@ const StateField = z
 				path: ["initial"],
 				message: "enum initial is not allowed",
 			});
-		if (field.model_writable && field.operations.length === 0)
+		if (field.write_authority !== "readonly" && field.operations.length === 0)
 			context.addIssue({
 				code: "custom",
 				path: ["operations"],
 				message: "writable field needs operations",
 			});
-		if (!field.model_writable && field.operations.length > 0)
+		if (field.write_authority === "readonly" && field.operations.length > 0)
 			context.addIssue({
 				code: "custom",
 				path: ["operations"],
@@ -68,6 +82,21 @@ const StateField = z
 			});
 		if (field.minimum !== undefined && field.maximum !== undefined && field.minimum > field.maximum)
 			context.addIssue({ code: "custom", path: ["minimum"], message: "minimum exceeds maximum" });
+		if (
+			(field.write_authority === "model" || field.write_authority.startsWith("skill:")) &&
+			(field.update_when.length === 0 || field.do_not_update_when.length === 0)
+		)
+			context.addIssue({
+				code: "custom",
+				path: ["update_when"],
+				message: "model or Skill writable fields require update and exclusion semantics",
+			});
+		if (field.type === "enum" && Object.keys(field.value_meanings).length !== field.values?.length)
+			context.addIssue({
+				code: "custom",
+				path: ["value_meanings"],
+				message: "enum fields require a meaning for every value",
+			});
 	});
 
 export const CharacterStateSchema = z
@@ -89,3 +118,9 @@ export const CharacterStateOperation = z.strictObject({
 	value: z.union([StateValue, z.array(z.string().max(4096)).max(100)]).optional(),
 });
 export type CharacterStateOperation = z.infer<typeof CharacterStateOperation>;
+
+export const CharacterStateEvidence = z.strictObject({
+	source: z.enum(["current_user", "current_assistant", "user_choice"]),
+	quote: z.string().min(1).max(2000),
+});
+export type CharacterStateEvidence = z.infer<typeof CharacterStateEvidence>;

@@ -40,6 +40,7 @@ import type { ConversationProjection, ConversationRepository } from "./conversat
 import type { Dispatcher } from "./dispatcher.js";
 import type { ExternalAgentRunService, RunSummary } from "./external-agents/run-service.js";
 import type { MemoryBackend, MemoryBankScope, MemoryRecord } from "./memory/backend.js";
+import { namespaceFor } from "./memory/tencentdb-backend.js";
 import type { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import type { ModelRecord, ModelRegistry } from "./models/registry.js";
 import type { OAuthSessionState, ProviderCatalog } from "./providers/catalog.js";
@@ -247,7 +248,11 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return { package: s.characterLoader.readPackageDocument(characterId) };
 	});
 	dispatcher.registerHandler(RPC.character.packageUpdate, async (_p) => {
-		const params = _p as { characterId: string; yaml: string; expectedSha256: string };
+		const params = _p as {
+			characterId: string;
+			yaml: string;
+			expectedSha256: string;
+		};
 		let updated: ReturnType<typeof s.characterLoader.writePackageDocument>;
 		try {
 			updated = s.characterLoader.writePackageDocument(params);
@@ -280,7 +285,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		s.characterLoader.seed(s.orm, s.eventBus, character, "imported");
 		s.canon.syncPackage(character.id, character.canon);
 		const trust = s.characterLoader.pluginTrust(s.orm, character);
-		s.eventBus.publish("character.imported", { characterId: character.id, trust });
+		s.eventBus.publish("character.imported", {
+			characterId: character.id,
+			trust,
+		});
 		return { character: s.characterLoader.display(character) };
 	});
 	dispatcher.registerHandler(RPC.character.pluginTrustGet, async (_p) => {
@@ -296,7 +304,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
 		s.characterLoader.seed(s.orm, s.eventBus, character);
 		const trust = s.characterLoader.confirmPluginTrust(s.orm, character);
-		s.eventBus.publish("character.pluginsTrusted", { characterId, pluginHash: trust.pluginHash });
+		s.eventBus.publish("character.pluginsTrusted", {
+			characterId,
+			pluginHash: trust.pluginHash,
+		});
 		if (getCompanionId(s) === characterId) {
 			await s.supervisor.stop();
 			configureCharacterRuntime(s, character);
@@ -305,7 +316,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return { trust };
 	});
 	dispatcher.registerHandler(RPC.character.draftCreate, async (_p) => {
-		const { basePackageId, locale } = _p as { basePackageId?: string; locale?: string };
+		const { basePackageId, locale } = _p as {
+			basePackageId?: string;
+			locale?: string;
+		};
 		return { draft: s.drafts.create({ basePackageId, locale }) };
 	});
 	dispatcher.registerHandler(RPC.character.draftGet, async (_p) => {
@@ -338,14 +352,22 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			expectedRevision: number;
 			sourceRevision: number;
 		};
-		return { draft: s.drafts.restoreRevision(id, expectedRevision, sourceRevision) };
+		return {
+			draft: s.drafts.restoreRevision(id, expectedRevision, sourceRevision),
+		};
 	});
 	dispatcher.registerHandler(RPC.character.draftValidate, async (_p) => {
-		const { id, expectedRevision } = _p as { id: string; expectedRevision: number };
+		const { id, expectedRevision } = _p as {
+			id: string;
+			expectedRevision: number;
+		};
 		return { draft: s.drafts.validate(id, expectedRevision) };
 	});
 	dispatcher.registerHandler(RPC.character.draftPublish, async (_p) => {
-		const { id, expectedRevision } = _p as { id: string; expectedRevision: number };
+		const { id, expectedRevision } = _p as {
+			id: string;
+			expectedRevision: number;
+		};
 		const result = s.drafts.publish(id, expectedRevision);
 		s.characterLoader.activate(s.orm, s.eventBus, result.character, "local");
 		s.onboarding.initialize(result.character.id);
@@ -353,14 +375,23 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		await s.supervisor.stop();
 		configureCharacterRuntime(s, result.character);
 		await s.supervisor.start();
-		return { draft: result.draft, character: s.characterLoader.display(result.character) };
+		return {
+			draft: result.draft,
+			character: s.characterLoader.display(result.character),
+		};
 	});
 	dispatcher.registerHandler(RPC.roleplay.get, async (_p) => {
 		const companionId = getCompanionId(s);
 		const character = s.characterLoader.load(companionId);
 		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
 		return {
-			state: s.roleplay.project(character, (_p as { conversationId?: string }).conversationId),
+			state: (() => {
+				const projection = s.roleplay.project(
+					character,
+					(_p as { conversationId?: string }).conversationId,
+				);
+				return { values: projection.values, unlocked: projection.unlocked };
+			})(),
 		};
 	});
 	dispatcher.registerHandler(RPC.roleplay.trigger, async (_p) => {
@@ -377,7 +408,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return { state };
 	});
 	dispatcher.registerHandler(RPC.roleplay.dismissMedia, async (_p) => {
-		const { conversationId, mediaId } = _p as { conversationId: string; mediaId: string };
+		const { conversationId, mediaId } = _p as {
+			conversationId: string;
+			mediaId: string;
+		};
 		await requireOwnedConversation(s, conversationId);
 		const character = s.characterLoader.load(getCompanionId(s));
 		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
@@ -395,7 +429,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	// --- role-defined onboarding -----------------------------------------------
 	dispatcher.registerHandler(RPC.onboarding.get, async () => {
 		const companionId = getCompanionId(s);
-		return { ...s.onboarding.getState(companionId), eventSeq: s.eventBus.currentSeq };
+		return {
+			...s.onboarding.getState(companionId),
+			eventSeq: s.eventBus.currentSeq,
+		};
 	});
 	dispatcher.registerHandler(RPC.onboarding.submit, async (_p) => {
 		const { stepId, answer } = _p as { stepId: string; answer?: string };
@@ -410,7 +447,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.conversation.list, async (_p) => {
 		const companionId = getCompanionId(s);
 		const { archived } = _p as { archived?: boolean };
-		return { conversations: conversationRepository.list(companionId, archived === true) };
+		return {
+			conversations: conversationRepository.list(companionId, archived === true),
+		};
 	});
 	dispatcher.registerHandler(RPC.conversation.activeGet, () => {
 		const companionId = getCompanionId(s);
@@ -438,7 +477,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			sourceEntryId?: string;
 		};
 		if ((sourceConversationId === undefined) !== (sourceEntryId === undefined)) {
-			throw { kind: "invalid_request", reason: "conversation_fork_source_incomplete" };
+			throw {
+				kind: "invalid_request",
+				reason: "conversation_fork_source_incomplete",
+			};
 		}
 		const title = requestedTitle ?? "新对话";
 		const character = s.characterLoader.load(companionId);
@@ -450,7 +492,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				await requireOwnedConversation(s, sourceConversationId);
 				const source = conversationRepository.getSession(sourceConversationId);
 				if (!source.isEntryOnCurrentBranch(sourceEntryId)) {
-					throw { kind: "conflict", reason: "conversation_fork_source_not_current_branch" };
+					throw {
+						kind: "conflict",
+						reason: "conversation_fork_source_not_current_branch",
+					};
 				}
 				forkedSession = PiSessionStore.forkAt({
 					sessionDir: resolve(source.sessionFile, ".."),
@@ -490,7 +535,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const companionId = getCompanionId(s);
 		if (!conversationRepository.rename(id, companionId, title.trim()))
 			throw { kind: "not_found", reason: "conversation_not_found" };
-		s.eventBus.publish("conversation.renamed", { conversationId: id, title: title.trim() });
+		s.eventBus.publish("conversation.renamed", {
+			conversationId: id,
+			title: title.trim(),
+		});
 		return {};
 	});
 	dispatcher.registerHandler(RPC.conversation.archive, async (_p) => {
@@ -501,7 +549,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		if (archived) await s.supervisor.invalidateConversation(id);
 		const result = conversationRepository.archiveAndResolve(id, companionId, archived);
 		if (!result.found) throw { kind: "not_found", reason: "conversation_not_found" };
-		s.eventBus.publish("conversation.archived", { conversationId: id, archived });
+		s.eventBus.publish("conversation.archived", {
+			conversationId: id,
+			archived,
+		});
 		return result.active ? { conversation: result.active } : {};
 	});
 	dispatcher.registerHandler(RPC.conversation.delete, async (_p) => {
@@ -543,7 +594,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return { attachments: s.attachments.list(conversationId, attachmentId) };
 	});
 	dispatcher.registerHandler(RPC.conversationAttachment.discard, async (_p) => {
-		const { conversationId, attachmentId } = _p as { conversationId: string; attachmentId: string };
+		const { conversationId, attachmentId } = _p as {
+			conversationId: string;
+			attachmentId: string;
+		};
 		await requireOwnedConversation(s, conversationId);
 		s.attachments.discard(conversationId, attachmentId);
 		return {};
@@ -574,29 +628,48 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.conversationAttachment.startUpload, async (_p) => {
 		const { conversationId, kind, name, entries } = _p;
 		await requireOwnedConversation(s, conversationId);
-		const uploadId = s.attachments.startUpload({ conversationId, kind, name, entries });
-		s.eventBus.publish("conversationAttachment.upload_changed", { conversationId });
+		const uploadId = s.attachments.startUpload({
+			conversationId,
+			kind,
+			name,
+			entries,
+		});
+		s.eventBus.publish("conversationAttachment.upload_changed", {
+			conversationId,
+		});
 		return { uploadId };
 	});
 	dispatcher.registerHandler(RPC.conversationAttachment.cancelUpload, async (_p) => {
 		const { conversationId, uploadId } = _p;
 		await requireOwnedConversation(s, conversationId);
 		s.attachments.cancelUpload(conversationId, uploadId);
-		s.eventBus.publish("conversationAttachment.upload_changed", { conversationId });
+		s.eventBus.publish("conversationAttachment.upload_changed", {
+			conversationId,
+		});
 		return {};
 	});
 	dispatcher.registerHandler(RPC.conversationAttachment.appendChunk, async (_p) => {
 		const { conversationId, uploadId, fileIndex, offset, base64 } = _p;
 		await requireOwnedConversation(s, conversationId);
-		s.attachments.appendChunk({ conversationId, uploadId, fileIndex, offset, base64 });
-		s.eventBus.publish("conversationAttachment.upload_changed", { conversationId });
+		s.attachments.appendChunk({
+			conversationId,
+			uploadId,
+			fileIndex,
+			offset,
+			base64,
+		});
+		s.eventBus.publish("conversationAttachment.upload_changed", {
+			conversationId,
+		});
 		return {};
 	});
 	dispatcher.registerHandler(RPC.conversationAttachment.completeUpload, async (_p) => {
 		const { conversationId, uploadId } = _p;
 		await requireOwnedConversation(s, conversationId);
 		const attachment = await s.attachments.completeUpload(conversationId, uploadId);
-		s.eventBus.publish("conversationAttachment.upload_changed", { conversationId });
+		s.eventBus.publish("conversationAttachment.upload_changed", {
+			conversationId,
+		});
 		return { attachment };
 	});
 
@@ -641,7 +714,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				attachmentSendNonce: nonce,
 				onAccepted: () => {
 					durablyAccepted = true;
-					s.eventBus.publish("roleplay.choices_dismissed", { conversationId });
+					s.eventBus.publish("roleplay.choices_dismissed", {
+						conversationId,
+					});
 				},
 			});
 			return receipt;
@@ -657,13 +732,19 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.regenerate, async (_p) => {
-		const { conversationId, entryId } = _p as { conversationId: string; entryId: string };
+		const { conversationId, entryId } = _p as {
+			conversationId: string;
+			entryId: string;
+		};
 		await requireOwnedConversation(s, conversationId);
 		await s.turns.regenerate(conversationId, entryId);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.switchVersion, async (_p) => {
-		const { conversationId, leafId } = _p as { conversationId: string; leafId: string };
+		const { conversationId, leafId } = _p as {
+			conversationId: string;
+			leafId: string;
+		};
 		await requireOwnedConversation(s, conversationId);
 		await s.turns.switchVersion(conversationId, leafId);
 		return {};
@@ -702,7 +783,11 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			instruction = correction.custom_prompt_template.replaceAll("{{detail}}", detail.trim());
 		} else {
 			const preset = correction.presets.find((candidate) => candidate.id === presetId);
-			if (!preset) throw { kind: "invalid_request", reason: "correction_preset_not_found" };
+			if (!preset)
+				throw {
+					kind: "invalid_request",
+					reason: "correction_preset_not_found",
+				};
 			instruction = detail?.trim()
 				? `${preset.prompt}\n\n用户补充：${detail.trim()}`
 				: preset.prompt;
@@ -711,7 +796,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.branch, async (_p) => {
-		const { conversationId, entryId } = _p as { conversationId: string; entryId: string };
+		const { conversationId, entryId } = _p as {
+			conversationId: string;
+			entryId: string;
+		};
 		await requireOwnedConversation(s, conversationId);
 		return s.turns.branch(conversationId, entryId);
 	});
@@ -782,9 +870,16 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		}
 		const candidate = candidateId ? findHostLocalEmbeddingCandidate(candidateId) : undefined;
 		if (candidateId && !candidate)
-			throw { kind: "invalid_request", reason: "local_embedding_candidate_not_found" };
+			throw {
+				kind: "invalid_request",
+				reason: "local_embedding_candidate_not_found",
+			};
 		const modelPath = candidate?.modelPath ?? customPath?.trim();
-		if (!modelPath) throw { kind: "invalid_request", reason: "local_embedding_model_not_selected" };
+		if (!modelPath)
+			throw {
+				kind: "invalid_request",
+				reason: "local_embedding_model_not_selected",
+			};
 		const source = s.appSettings.load().modelDownloadSource;
 		const hfEndpoint =
 			source.type === "official"
@@ -794,7 +889,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 					: source.endpoint;
 		const endpointUrl = new URL(hfEndpoint);
 		if (endpointUrl.protocol !== "https:" || endpointUrl.username || endpointUrl.password) {
-			throw { kind: "invalid_request", reason: "invalid_model_download_endpoint" };
+			throw {
+				kind: "invalid_request",
+				reason: "invalid_model_download_endpoint",
+			};
 		}
 		const abort = new AbortController();
 		embeddingAbort = abort;
@@ -861,7 +959,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				.map((row) => row.id),
 		);
 	dispatcher.registerHandler(RPC.memory.search, async (_p): Promise<MemorySearchResponse> => {
-		const { characterId, query } = _p as { characterId?: string; query: string };
+		const { characterId, query } = _p as {
+			characterId?: string;
+			query: string;
+		};
 		const scope = memoryBackendScopeForCharacter(s, characterId);
 		await s.memoryBackend.open({ scope });
 		const hits = await s.memoryBackend.recall({
@@ -899,7 +1000,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 	});
 	dispatcher.registerHandler(RPC.memory.forget, async (_p) => {
-		const { characterId, entryId } = _p as { characterId?: string; entryId: string };
+		const { characterId, entryId } = _p as {
+			characterId?: string;
+			entryId: string;
+		};
 		const scope = memoryBackendScopeForCharacter(s, characterId);
 		await s.memoryBackend.open({ scope });
 		await s.memoryBackend.forget({ scope, memoryId: entryId });
@@ -1087,7 +1191,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 					)
 					.run().changes;
 				if (Number(changed) !== 1) {
-					throw { kind: "conflict", reason: "memory_candidate_already_decided" };
+					throw {
+						kind: "conflict",
+						reason: "memory_candidate_already_decided",
+					};
 				}
 				transaction
 					.insert(memoryDecisions)
@@ -1125,7 +1232,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {};
 	});
 	dispatcher.registerHandler(RPC.memory.candidateReject, async (_p) => {
-		const { characterId, candidateId } = _p as { characterId?: string; candidateId: string };
+		const { characterId, candidateId } = _p as {
+			characterId?: string;
+			candidateId: string;
+		};
 		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
 		const candidate = s.orm
 			.select({ id: memoryCandidates.id, status: memoryCandidates.status })
@@ -1168,8 +1278,13 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		sources: s.canon.listSources(_p.characterId ?? getCompanionId(s)),
 	}));
 	dispatcher.registerHandler(RPC.canon.addSource, async (_p) => {
-		const { logicalName, content } = _p as { logicalName: string; content: string };
-		return { source: s.canon.addSource(_p.characterId ?? getCompanionId(s), logicalName, content) };
+		const { logicalName, content } = _p as {
+			logicalName: string;
+			content: string;
+		};
+		return {
+			source: s.canon.addSource(_p.characterId ?? getCompanionId(s), logicalName, content),
+		};
 	});
 	dispatcher.registerHandler(RPC.canon.search, async (_p) => ({
 		chunks: await s.canon.searchHybrid(
@@ -1337,7 +1452,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 	});
 	dispatcher.registerHandler(RPC.model.disable, async (_p) => {
-		const { providerId, modelId } = _p as { providerId: string; modelId: string };
+		const { providerId, modelId } = _p as {
+			providerId: string;
+			modelId: string;
+		};
 		s.models.disable(providerId, modelId);
 		return {};
 	});
@@ -1346,7 +1464,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return modelDefaultsWire(s.models.defaults(companionId));
 	});
 	dispatcher.registerHandler(RPC.model.defaultsSetReply, async (_p) => {
-		const { reply } = _p as { reply: { providerId: string; modelId: string } | null };
+		const { reply } = _p as {
+			reply: { providerId: string; modelId: string } | null;
+		};
 		const companionId = getCompanionId(s);
 		return modelDefaultsWire(s.models.setDefaultReply(companionId, reply));
 	});
@@ -1446,7 +1566,12 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			}),
 		),
 		localEmbeddingCandidates: HOST_SETTINGS_CAPABILITIES.localEmbeddingCandidates.map(
-			({ id, name, dimensions, isDefault }) => ({ id, name, dimensions, isDefault }),
+			({ id, name, dimensions, isDefault }) => ({
+				id,
+				name,
+				dimensions,
+				isDefault,
+			}),
 		),
 	}));
 	dispatcher.registerHandler(RPC.settings.get, async (_p) => {
@@ -1494,11 +1619,15 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		let app = s.appSettings.load();
 		const changed: string[] = [];
 		if ("firstRunStage" in settings) {
-			app = s.appSettings.save({ firstRunStage: settings.firstRunStage as never });
+			app = s.appSettings.save({
+				firstRunStage: settings.firstRunStage as never,
+			});
 			changed.push("firstRunStage");
 		}
 		if ("networkProxy" in settings) {
-			app = s.appSettings.save({ networkProxy: settings.networkProxy as never });
+			app = s.appSettings.save({
+				networkProxy: settings.networkProxy as never,
+			});
 			changed.push("networkProxy");
 		}
 		if ("memoryVectorService" in settings) {
@@ -1513,7 +1642,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				  }
 				| undefined;
 			if (memoryVectorService?.provider === "local") {
-				throw { kind: "conflict", reason: "local_embedding_requires_transaction" };
+				throw {
+					kind: "conflict",
+					reason: "local_embedding_requires_transaction",
+				};
 			}
 			if (memoryVectorService?.provider === "remote" && memoryVectorService.enabled) {
 				await s.memoryRuntime.configureRemoteEmbedding({
@@ -1523,11 +1655,15 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 					dimensions: memoryVectorService.dimensions!,
 				});
 			}
-			app = s.appSettings.save({ memoryVectorService: settings.memoryVectorService as never });
+			app = s.appSettings.save({
+				memoryVectorService: settings.memoryVectorService as never,
+			});
 			changed.push("memoryVectorService");
 		}
 		if ("modelDownloadSource" in settings) {
-			app = s.appSettings.save({ modelDownloadSource: settings.modelDownloadSource as never });
+			app = s.appSettings.save({
+				modelDownloadSource: settings.modelDownloadSource as never,
+			});
 			changed.push("modelDownloadSource");
 		}
 		const nextStateData = s.onboarding.getState(companionId).stateData;
@@ -1621,7 +1757,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			) {
 				continue;
 			}
-			const state = CharacterRuntimeState.parse({ sceneId: row.scene, ...row.stateJson });
+			const state = CharacterRuntimeState.parse({
+				sceneId: row.scene,
+				...row.stateJson,
+			});
 			if (!allowedSceneIds.has(state.sceneId) || !allowedVisualStates.has(state.visualState)) {
 				throw new Error(`invalid persisted scene state for conversation ${row.conversationId}`);
 			}
@@ -1658,7 +1797,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				permissions: s.externalAgentRuns.pendingPermissions(companionId),
 				...s.roleplay.presentation(character, activeProjection?.id),
 			},
-			roleplay: s.roleplay.project(character, activeProjection?.id),
+			roleplay: (() => {
+				const projection = s.roleplay.project(character, activeProjection?.id);
+				return { values: projection.values, unlocked: projection.unlocked };
+			})(),
 		};
 	});
 }
@@ -1671,7 +1813,10 @@ function modelRouteResponse(
 	conversationId: string,
 	selected: { providerId: string; modelId: string } | undefined,
 ) {
-	return { conversationId, ...(selected ? { selected: modelRouteWire(selected) } : {}) };
+	return {
+		conversationId,
+		...(selected ? { selected: modelRouteWire(selected) } : {}),
+	};
 }
 
 function modelDefaultsWire(defaults: {
@@ -1682,7 +1827,10 @@ function modelDefaultsWire(defaults: {
 		...(defaults.reply ? { reply: modelRouteWire(defaults.reply) } : {}),
 		vision:
 			defaults.vision.mode === "manual"
-				? { mode: "manual" as const, route: modelRouteWire(defaults.vision.route) }
+				? {
+						mode: "manual" as const,
+						route: modelRouteWire(defaults.vision.route),
+					}
 				: { mode: "auto" as const },
 	};
 }
@@ -1692,6 +1840,13 @@ export type MemoryCaptureCreator = "user_capture" | "assistant_tool";
 export async function proposeMemoryCandidate(
 	s: HostCompositionContext,
 	conversationId: string,
+	proposal?: {
+		kind: "fact" | "preference" | "relationship_event";
+		suggestedScope: "self" | "relationship" | "scene";
+		normalizedText: string;
+		why: string;
+		evidenceQuote: string;
+	},
 ): Promise<{ candidateId: string; sourceEntryId: string; status: "pending" }> {
 	// Model suggestions never write the memory backend. They create an owned,
 	// reviewable candidate from the current native Pi branch; approval remains
@@ -1709,6 +1864,11 @@ export async function proposeMemoryCandidate(
 	if (!conversation) throw { kind: "not_found", reason: "conversation_not_found" };
 	const text = piEntryText(source.message).trim();
 	if (!text) throw { kind: "invalid_input", reason: "memory_source_empty" };
+	if (proposal && !text.includes(proposal.evidenceQuote))
+		throw { kind: "invalid_input", reason: "memory_evidence_not_found" };
+	const normalizedText = proposal?.normalizedText.trim() || text;
+	if (!normalizedText || normalizedText.length > 4000)
+		throw { kind: "invalid_input", reason: "memory_text_invalid" };
 	const existing = s.orm
 		.select({ id: memoryCandidates.id })
 		.from(memoryCandidates)
@@ -1729,14 +1889,14 @@ export async function proposeMemoryCandidate(
 			.values({
 				id: candidateId,
 				companionId: conversation.companionId,
-				kind: "event",
+				kind: proposal?.kind === "relationship_event" ? "event" : (proposal?.kind ?? "event"),
 				sourcePiSessionId: session?.sessionId,
 				sourceNativeEntryId: source.id,
 				sourceConversationId: conversationId,
 				sourceKind: "companion_suggestion",
-				normalizedText: text,
-				why: "角色建议记住当前用户消息",
-				suggestedScope: "relationship",
+				normalizedText,
+				why: proposal?.why.trim() || "角色建议记住当前用户消息",
+				suggestedScope: proposal?.suggestedScope ?? "relationship",
 			})
 			.run();
 	return { candidateId, sourceEntryId: source.id, status: "pending" };
@@ -1751,7 +1911,26 @@ export async function rememberConversationEntry(
 	conversationId: string,
 	entryId: string | undefined,
 	createdBy: MemoryCaptureCreator,
-): Promise<{ memoryId: string; sourceEntryId: string; createdBy: MemoryCaptureCreator }> {
+	evidenceQuote?: string,
+): Promise<{
+	status:
+		| "stored"
+		| "already_known"
+		| "no_extractable_memory"
+		| "no_new_content"
+		| "capture_disabled"
+		| "capture_failed";
+	reason:
+		| "memory_stored"
+		| "equivalent_memory_already_stored"
+		| "extractor_found_no_durable_memory"
+		| "turn_already_processed"
+		| "memory_capture_disabled"
+		| "memory_persistence_failed";
+	memoryIds: string[];
+	sourceEntryId: string;
+	createdBy: MemoryCaptureCreator;
+}> {
 	const companionId = getCompanionId(s);
 	const conversation = s.orm
 		.select({ id: conversations.id, companionId: conversations.companionId })
@@ -1762,10 +1941,13 @@ export async function rememberConversationEntry(
 		throw { kind: "not_found", reason: "conversation_not_found" };
 	}
 	const session = s.conversationRepository.getSession(conversationId);
-	const directSource =
-		session && entryId
+	const directSource = session
+		? entryId
 			? session.readMessageEntries().find((candidate) => candidate.id === entryId)
-			: undefined;
+			: [...session.readMessageEntries()]
+					.reverse()
+					.find((candidate) => candidate.message.role === "user")
+		: undefined;
 	const projectedSource =
 		session && entryId
 			? s.conversationRepository.getCurrentPiEntryForMessage?.(conversationId, entryId)
@@ -1778,42 +1960,54 @@ export async function rememberConversationEntry(
 	if (!source) {
 		throw { kind: "not_found", reason: "memory_source_not_found" };
 	}
+	if (evidenceQuote && !piEntryText(source.message).includes(evidenceQuote)) {
+		throw { kind: "invalid_input", reason: "memory_evidence_not_found" };
+	}
 	const momentEntries =
 		createdBy === "user_capture" && source.message.role === "assistant"
 			? [session?.findParentUserEntry(source.id), source].filter(
 					(candidate): candidate is PiSessionMessageEntry => candidate !== undefined,
 				)
 			: [source];
-	const text = momentEntries
-		.map((entry) => {
-			const content = piEntryText(entry.message);
-			if (!content) return "";
-			return `${entry.message.role === "user" ? "用户" : "角色"}：${content}`;
-		})
-		.filter(Boolean)
-		.join("\n");
-	if (!text) throw { kind: "invalid_input", reason: "memory_source_empty" };
-	const sourceEntryId = source.id;
-	const sourceEntryIds = momentEntries.map((entry) => entry.id) as [string, ...string[]];
-	const scope = { ...s.memoryScope, companionId };
-	await s.memoryBackend.open({ scope });
-	const record = await s.memoryBackend.remember({
-		scope,
-		text,
-		provenance: {
-			kind: createdBy === "user_capture" ? "explicit" : "inferred",
-			piSessionEntryIds: sourceEntryIds,
-			sourceRef: conversationId,
-		},
-		metadata: {
-			conversationId,
-			companionId,
-			...(session ? { sessionId: session.sessionId } : {}),
-			sourceEntryId,
-			createdBy,
-		},
+	const baseTimestamp = Date.now();
+	const messages = momentEntries.flatMap((entry, index) => {
+		const content = piEntryText(entry.message).trim();
+		if (!content) return [];
+		return [
+			{
+				id: entry.id,
+				role: entry.message.role,
+				content,
+				timestamp: baseTimestamp + index,
+			},
+		];
 	});
-	return { memoryId: record.id, sourceEntryId, createdBy };
+	if (messages.length === 0) throw { kind: "invalid_input", reason: "memory_source_empty" };
+	const sourceEntryId = source.id;
+	const result = await s.memoryRuntime.captureExplicitTurn({
+		userText: messages
+			.filter((message) => message.role === "user")
+			.map((message) => message.content)
+			.join("\n"),
+		assistantText: messages
+			.filter((message) => message.role === "assistant")
+			.map((message) => message.content)
+			.join("\n"),
+		messages,
+		sessionKey: namespaceFor({ ...s.memoryScope, companionId }),
+		sessionId: conversationId,
+		// Tdai's cold-start cursor is an exclusive floor. Keep it just before
+		// these explicitly recaptured native entries so the first one is not
+		// mistaken for pre-runtime history.
+		startedAt: baseTimestamp - 1,
+	});
+	return {
+		status: result.status,
+		reason: result.reason,
+		memoryIds: result.storedRecordIds,
+		sourceEntryId,
+		createdBy,
+	};
 }
 
 /**

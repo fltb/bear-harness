@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import { RoleplaySchema } from "../src/companion/roleplay-schema.js";
 import { RoleplayService } from "../src/companion/roleplay-service.js";
+import { CharacterStateService } from "../src/companion/state-service.js";
 import { Database, MIGRATIONS } from "../src/storage/database.js";
 import { EventBus } from "../src/storage/event-bus.js";
 import { conversations, onboardingState } from "../src/storage/schema.js";
@@ -35,6 +36,49 @@ function fixture() {
 }
 
 describe("roleplay event projection", () => {
+	it("commits the official story choice path into the single character state store", () => {
+		const root = mkdtempSync(join(tmpdir(), "bear-official-story-"));
+		roots.push(root);
+		const database = new Database(root);
+		database.migrate(MIGRATIONS);
+		const loader = new CharacterLoader(resolve(import.meta.dirname, "../../../config/characters"));
+		const character = loader.load("jizhou");
+		if (!character) throw new Error("missing default character");
+		loader.seed(database.orm, new EventBus(database.orm), character);
+		database.orm.insert(conversations).values({ id: "story", companionId: character.id }).run();
+		const characterState = new CharacterStateService(database.orm);
+		const service = new RoleplayService(database.orm, characterState);
+		const trigger = (eventId: string) =>
+			service.trigger({
+				character,
+				eventId,
+				conversationId: "story",
+				dedupeKey: `choice:${eventId}`,
+			});
+
+		expect(() => trigger("story_last_shift")).toThrow();
+		for (const eventId of [
+			"story_enter",
+			"story_signal_examined",
+			"story_route_relay",
+			"story_compare_unresolved",
+			"story_last_shift",
+			"story_future_design",
+			"story_resolve_left_open",
+		])
+			trigger(eventId);
+
+		expect(characterState.project(character.id, "story", character.state).values).toMatchObject({
+			"story.undelivered_report.phase": "resolved",
+			"story.undelivered_report.route": "relay",
+			"story.undelivered_report.resolution": "left_open",
+			"narrative.frame": "present",
+			"narrative.location": "study_dawn",
+			"narrative.active_story": "none",
+		});
+		database.close();
+	});
+
 	it("recovers scoped presentation and dismissals from Host history without replaying UI events", () => {
 		const { database, character } = fixture();
 		const configured = {

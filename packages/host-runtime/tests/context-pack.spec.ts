@@ -95,7 +95,8 @@ describe("ContextPackCompiler character prompt layers", () => {
 			.run();
 
 		const pack = new ContextPackCompiler(orm, characterLoader).compile("conversation-1");
-		expect(pack.blocks.slice(0, 3)).toEqual([
+		expect(pack.blocks.slice(0, 4)).toEqual([
+			expect.objectContaining({ layer: "state" }),
 			{ layer: "description", content: character.prompt.description },
 			{ layer: "personality", content: character.prompt.personality },
 			{ layer: "scenario", content: character.prompt.scenario },
@@ -104,7 +105,7 @@ describe("ContextPackCompiler character prompt layers", () => {
 			"称呼用户为：小雪",
 		);
 		expect(pack.blocks.find((block) => block.layer === "state")?.content).toContain(
-			'"continuity.stage":0',
+			'"continuity.stage": 0',
 		);
 		const directiveContext = pack.blocks.find((block) => block.layer === "scene")?.content ?? "";
 		orm
@@ -120,26 +121,31 @@ describe("ContextPackCompiler character prompt layers", () => {
 				.blocks.find((block) => block.layer === "scene")?.content ?? "";
 		expect(secondDirectiveContext).toContain("始终保持简洁");
 		expect(secondDirectiveContext).not.toContain("- 保持简洁");
-		expect(pack.manifest.slice(0, 3)).toEqual([
+		expect(pack.manifest.slice(0, 4)).toEqual([
 			expect.objectContaining({
 				order: 0,
+				layer: "state",
+				source: "host_real_context",
+			}),
+			expect.objectContaining({
+				order: 1,
 				layer: "description",
 				source: "character.prompt.description",
 			}),
 			expect.objectContaining({
-				order: 1,
+				order: 2,
 				layer: "personality",
 				source: "character.prompt.personality",
 			}),
 			expect.objectContaining({
-				order: 2,
+				order: 3,
 				layer: "scenario",
 				source: "character.prompt.scenario",
 			}),
 		]);
 		expect(() =>
 			new ContextPackCompiler(orm, characterLoader).compile("missing-conversation"),
-		).toThrow("conversation has no companion identity");
+		).toThrow("conversation has no character package");
 		db.close();
 	});
 

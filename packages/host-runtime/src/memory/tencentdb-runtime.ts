@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type {
 	CompletedTurn,
 	EmbeddingService,
+	ExplicitCaptureResult,
 	IMemoryStore,
 	L1RecordRow,
 	Logger,
@@ -439,13 +440,30 @@ class TdaiDirectMemoryFacade implements TencentDbMemoryCoreFacade {
 
 	constructor(
 		private readonly store: () => IMemoryStore | undefined,
+		private readonly embedding: () => EmbeddingService | undefined,
 		private readonly migrationJournalDir: string,
+		private readonly logger?: Logger,
 	) {}
 
 	private requireStore(): IMemoryStore {
 		const store = this.store();
 		if (!store) throw new Error("TencentDB memory runtime is not started");
 		return store;
+	}
+
+	private async embed(text: string): Promise<Float32Array | undefined> {
+		const service = this.embedding();
+		if (!service?.isReady()) return undefined;
+		try {
+			return await service.embed(text);
+		} catch (error) {
+			this.logger?.warn(
+				`[memory-host] Direct memory embedding failed; preserving the FTS record: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+			return undefined;
+		}
 	}
 
 	async migrateNamespace(request: TencentDbCoreNamespaceMigrationRequest): Promise<void> {
@@ -550,7 +568,8 @@ class TdaiDirectMemoryFacade implements TencentDbMemoryCoreFacade {
 			}
 
 			abortMigrationIfRequested(request.signal);
-			if (!(await store.upsertL1(migratedStoreRecord(sourceRow, request.canonicalNamespace)))) {
+			const migrated = migratedStoreRecord(sourceRow, request.canonicalNamespace);
+			if (!(await store.upsertL1(migrated, await this.embed(migrated.content)))) {
 				throw recoveryRequired(
 					`TencentDB namespace migration copy failed for memory ${sourceRow.record_id}`,
 				);
@@ -625,7 +644,8 @@ class TdaiDirectMemoryFacade implements TencentDbMemoryCoreFacade {
 
 	async remember(request: TencentDbCoreRememberRequest): Promise<TencentDbCoreRecord> {
 		const record = coreRecord(request, request.metadata ?? {});
-		const ok = await this.requireStore().upsertL1(toStoreRecord(record, request.namespace));
+		const stored = toStoreRecord(record, request.namespace);
+		const ok = await this.requireStore().upsertL1(stored, await this.embed(stored.content));
 		if (!ok) throw new Error("TencentDB memory write failed");
 		return record;
 	}
@@ -647,7 +667,13 @@ class TdaiDirectMemoryFacade implements TencentDbMemoryCoreFacade {
 			readonly session_id: string;
 			readonly metadata_json: string;
 		};
-		let nativeHits: NativeHit[] = [];
+		const candidates = new Map<string, NativeHit>();
+		const mergeHits = (hits: readonly NativeHit[]) => {
+			for (const hit of hits) {
+				const current = candidates.get(hit.record_id);
+				if (!current || hit.score > current.score) candidates.set(hit.record_id, hit);
+			}
+		};
 		if (capabilities.nativeHybridSearch && store.searchL1Hybrid) {
 			// Native search is global, while the Host bank is namespace-scoped.
 			// Expand the candidate window to include every persisted record before
@@ -656,34 +682,42 @@ class TdaiDirectMemoryFacade implements TencentDbMemoryCoreFacade {
 			try {
 				const totalRecords = await store.countL1();
 				const topK = Math.max(request.limit ?? 5, 50, totalRecords);
-				nativeHits = await store.searchL1Hybrid({ query: request.query, topK });
+				mergeHits(await store.searchL1Hybrid({ query: request.query, topK }));
 			} catch {
 				// A native provider can be temporarily unavailable.  The local FTS
 				// index remains a valid recall path when it is available.
-				nativeHits = [];
+				// The local FTS/vector paths below remain available.
 			}
 		}
-		// Native hybrid search may return only records from another Host bank
-		// (or no records at all).  Do not let that global result suppress the
-		// namespace-scoped FTS path for the active role.
-		if (
-			capabilities.ftsSearch &&
-			store.isFtsAvailable() &&
-			(nativeHits.length === 0 || !nativeHits.some((hit) => hit.session_key === request.namespace))
-		) {
+		if (capabilities.vectorSearch) {
+			try {
+				const queryEmbedding = await this.embed(request.query);
+				if (queryEmbedding) {
+					const totalRecords = await store.countL1();
+					const topK = Math.max(request.limit ?? 5, 50, totalRecords);
+					mergeHits(await store.searchL1Vector(queryEmbedding, topK, request.query));
+				}
+			} catch {
+				// FTS is the deterministic fallback when the embedder is unavailable.
+			}
+		}
+		// Always merge FTS candidates. Vector-only retrieval can miss exact IDs,
+		// while FTS-only retrieval cannot satisfy paraphrased semantic queries.
+		if (capabilities.ftsSearch && store.isFtsAvailable()) {
 			try {
 				const ftsQuery = buildFtsQuery(request.query);
 				if (ftsQuery) {
 					const totalRecords = await store.countL1();
 					const topK = Math.max(request.limit ?? 5, 50, totalRecords);
-					nativeHits = await store.searchL1Fts(ftsQuery, topK);
+					mergeHits(await store.searchL1Fts(ftsQuery, topK));
 				}
 			} catch {
-				nativeHits = [];
+				// Vector candidates remain valid if FTS parsing fails.
 			}
 		}
-		const rows = nativeHits
+		const rows = [...candidates.values()]
 			.filter((hit) => hit.session_key === request.namespace)
+			.sort((left, right) => right.score - left.score)
 			.map((hit) => ({
 				row: {
 					record_id: hit.record_id,
@@ -723,7 +757,8 @@ class TdaiDirectMemoryFacade implements TencentDbMemoryCoreFacade {
 			metadata: request.metadata ?? current.metadata,
 			updatedAt: now(),
 		};
-		if (!(await this.requireStore().upsertL1(toStoreRecord(updated, request.namespace)))) {
+		const stored = toStoreRecord(updated, request.namespace);
+		if (!(await this.requireStore().upsertL1(stored, await this.embed(stored.content)))) {
 			throw new Error("TencentDB memory update failed");
 		}
 		return updated;
@@ -793,7 +828,9 @@ export class TencentDbRuntime {
 		this.core = this.createCore(this.config);
 		const facade = new TdaiDirectMemoryFacade(
 			() => this.core.getVectorStore(),
+			() => this.core.getEmbeddingService(),
 			join(dataDir, "namespace-migrations"),
+			options.logger,
 		);
 		this.backend = new TencentDbMemoryBackend(facade, {
 			legacyInstallationId: options.legacyInstallationId,
@@ -808,6 +845,11 @@ export class TencentDbRuntime {
 	 */
 	async captureTurn(turn: CompletedTurn): Promise<void> {
 		await this.core.handleTurnCommitted(turn);
+	}
+
+	/** Explicit user capture using the complete Tdai L0→L1 pipeline. */
+	async captureExplicitTurn(turn: CompletedTurn): Promise<ExplicitCaptureResult> {
+		return this.core.captureExplicitTurn(turn);
 	}
 
 	/**
@@ -1011,6 +1053,12 @@ export class TencentDbRuntime {
 			await this.core.reconfigureEmbedding(nextConfig.embedding);
 			this.config = nextConfig;
 			if (embedding.provider === "local") await this.prepareLocalEmbedding();
+			if (embedding.provider !== "none") {
+				const reindex = await this.core.reindexAll();
+				if (!reindex.complete) {
+					throw new Error(reindex.error ?? "embedding reindex did not complete");
+				}
+			}
 			return { ready: true };
 		} catch (error) {
 			await this.core.reconfigureEmbedding(previousConfig.embedding).catch(() => undefined);

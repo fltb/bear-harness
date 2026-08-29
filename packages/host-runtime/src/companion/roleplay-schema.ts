@@ -7,6 +7,11 @@ const Identifier = z
 	.regex(/^[a-z][a-z0-9_]*$/);
 const Copy = z.string().min(1).max(4096);
 const AssetPath = z.string().min(1).max(512);
+const StatePath = z
+	.string()
+	.min(1)
+	.max(160)
+	.regex(/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/);
 
 export const RoleplayValueSchema = z.union([
 	z.string().max(4096),
@@ -21,6 +26,8 @@ export type RoleplayCondition =
 	| { not: RoleplayCondition }
 	| { variable: string; equals: RoleplayValue }
 	| { variable: string; operator: "gt" | "gte" | "lt" | "lte"; value: number }
+	| { state: string; equals: RoleplayValue | string[] }
+	| { state: string; operator: "gt" | "gte" | "lt" | "lte"; value: number }
 	| { unlocked: string };
 
 export const RoleplayConditionSchema: z.ZodType<RoleplayCondition> = z.lazy(() =>
@@ -30,7 +37,16 @@ export const RoleplayConditionSchema: z.ZodType<RoleplayCondition> = z.lazy(() =
 		z.strictObject({ not: RoleplayConditionSchema }),
 		z.strictObject({ variable: Identifier, equals: RoleplayValueSchema }),
 		z.strictObject({
+			state: StatePath,
+			equals: z.union([RoleplayValueSchema, z.array(z.string().max(4096)).max(100)]),
+		}),
+		z.strictObject({
 			variable: Identifier,
+			operator: z.enum(["gt", "gte", "lt", "lte"]),
+			value: z.number().finite(),
+		}),
+		z.strictObject({
+			state: StatePath,
 			operator: z.enum(["gt", "gte", "lt", "lte"]),
 			value: z.number().finite(),
 		}),
@@ -39,6 +55,13 @@ export const RoleplayConditionSchema: z.ZodType<RoleplayCondition> = z.lazy(() =
 );
 
 export const RoleplayEffectSchema = z.discriminatedUnion("type", [
+	z.strictObject({
+		type: z.literal("state"),
+		path: StatePath,
+		op: z.enum(["set", "increment", "decrement", "append_unique", "remove_value", "clear"]),
+		value: z.union([RoleplayValueSchema, z.array(z.string().max(4096)).max(100)]).optional(),
+		authority: z.enum(["user_choice", "host_event"]),
+	}),
 	z.strictObject({ type: z.literal("set"), variable: Identifier, value: RoleplayValueSchema }),
 	z.strictObject({ type: z.literal("increment"), variable: Identifier, by: z.number().finite() }),
 	z.strictObject({ type: z.literal("unlock"), unlockable: Identifier }),
@@ -131,6 +154,7 @@ export const RoleplaySchema = z.strictObject({
 			z.strictObject({
 				id: Identifier,
 				prompt: Copy,
+				when: RoleplayConditionSchema.optional(),
 				choices: z
 					.array(
 						z.union([

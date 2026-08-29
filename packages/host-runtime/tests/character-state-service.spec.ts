@@ -43,6 +43,7 @@ describe("CharacterStateService", () => {
 			operations: [{ path: "relationship.affinity", op: "increment", value: 2 }],
 			expectedRevisions: { relationship: 0 },
 			reason: "The user offered sustained help.",
+			evidence: { source: "current_user", quote: "I trust you with this." },
 		});
 		expect(service.project(character.id, "conversation", character.state).values).toMatchObject({
 			"relationship.affinity": 0,
@@ -82,6 +83,8 @@ describe("CharacterStateService", () => {
 			definition: character.state,
 			operations: [{ path: "continuity.stage", op: "set", value: 1 }],
 			reason: "The user chose to open the continuity record.",
+			skillId: "continuity-reveal",
+			evidence: { source: "current_user", quote: "Tell me where you came from." },
 		});
 		const recovered = new CharacterStateService(database.orm);
 		expect(
@@ -102,6 +105,8 @@ describe("CharacterStateService", () => {
 			definition: character.state,
 			operations: [{ path: "continuity.stage", op: "set", value: 2 }],
 			reason: "Staged before a failed response.",
+			skillId: "continuity-reveal",
+			evidence: { source: "current_user", quote: "Continue." },
 		});
 		recovered.discardTurn("conversation", "session", "user-failed");
 		expect(
@@ -128,6 +133,7 @@ describe("CharacterStateService", () => {
 				definition: character.state,
 				operations: [{ path: "relationship.affinity", op: "increment", value: 3 }],
 				reason: "Too large.",
+				evidence: { source: "current_user", quote: "I trust you." },
 			}),
 		).toThrow();
 		expect(() =>
@@ -139,6 +145,8 @@ describe("CharacterStateService", () => {
 				definition: character.state,
 				operations: [{ path: "continuity.stage", op: "set", value: 3 }],
 				reason: "Cannot skip stages.",
+				skillId: "continuity-reveal",
+				evidence: { source: "current_user", quote: "Skip ahead." },
 			}),
 		).toThrow();
 		service.stage({
@@ -150,6 +158,7 @@ describe("CharacterStateService", () => {
 			operations: [{ path: "relationship.affinity", op: "increment", value: 1 }],
 			expectedRevisions: { relationship: 0 },
 			reason: "First writer.",
+			evidence: { source: "current_user", quote: "First trust event." },
 		});
 		service.stage({
 			companionId: character.id,
@@ -160,6 +169,7 @@ describe("CharacterStateService", () => {
 			operations: [{ path: "relationship.affinity", op: "increment", value: 1 }],
 			expectedRevisions: { relationship: 0 },
 			reason: "Competing writer.",
+			evidence: { source: "current_user", quote: "Second trust event." },
 		});
 		service.commitTurn({
 			companionId: character.id,

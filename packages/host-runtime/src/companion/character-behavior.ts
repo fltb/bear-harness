@@ -7,7 +7,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Diagnostics } from "../diagnostics/index.js";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus, HostEvent } from "../storage/event-bus.js";
@@ -15,6 +15,7 @@ import {
 	companionIdentity,
 	companionPackages,
 	conversations,
+	events,
 	sceneState,
 } from "../storage/schema.js";
 import type { CharacterLoader, CharacterPackage } from "./character-loader.js";
@@ -33,6 +34,8 @@ export type CompanionHostToolName =
 export interface CompanionHostToolCall {
 	conversationId: string;
 	triggerEntryId?: string;
+	piSessionId?: string;
+	toolCallId?: string;
 	tool: string;
 	args: unknown;
 }
@@ -177,22 +180,32 @@ export class CharacterBehaviorService {
 			case "host_visual": {
 				const action = stringArgument(call.args, "action");
 				if (action === "read") return this.getStateResult(call.conversationId);
-				if (action === "set_scene")
-					return this.setScene(call.conversationId, stringArgument(call.args, "sceneId"));
-				if (action === "set_expression")
-					return this.setExpression(
+				if (action === "update")
+					return this.updateVisual(
 						call.conversationId,
-						stringArgument(call.args, "visualState"),
+						stringArgument(call.args, "sceneId"),
+						stringArgument(call.args, "expressionId"),
 						"pi_tool",
+						call,
 					);
 				break;
 			}
 			case "host_present": {
 				const action = stringArgument(call.args, "action");
-				if (action === "media")
-					return this.presentMedia(call.conversationId, stringArgument(call.args, "mediaId"));
-				if (action === "choices")
-					return this.presentChoices(call.conversationId, stringArgument(call.args, "choiceSetId"));
+				if (action === "read_eligible") return this.readEligiblePresentations(call.conversationId);
+				if (action === "present_media")
+					return this.presentMedia(call.conversationId, stringArgument(call.args, "mediaId"), call);
+				if (action === "present_choices")
+					return this.presentChoices(
+						call.conversationId,
+						stringArgument(call.args, "choiceSetId"),
+						call,
+					);
+				if (action === "dismiss")
+					return this.dismissPresentation(
+						call.conversationId,
+						stringArgument(call.args, "presentationId"),
+					);
 				break;
 			}
 			default:
@@ -284,6 +297,7 @@ export class CharacterBehaviorService {
 	): void {
 		if (entry.stopReason === "aborted" || entry.stopReason === "error") {
 			this.characterState.discardTurn(conversationId, sessionId, userEntryId);
+			this.settleTurnEffects(conversationId, sessionId, userEntryId, entry.id, false);
 			return;
 		}
 		const character = this.characterForConversation(conversationId);
@@ -298,6 +312,103 @@ export class CharacterBehaviorService {
 		});
 		if (result.committed)
 			this.eventBus.publish("character.state_changed", { conversationId, state: result.state });
+		this.settleTurnEffects(conversationId, sessionId, userEntryId, entry.id, true);
+	}
+
+	private settleTurnEffects(
+		conversationId: string,
+		piSessionId: string,
+		sourceUserEntryId: string,
+		assistantEntryId: string,
+		completed: boolean,
+	): void {
+		const settled = this.db
+			.select({ seq: events.seq })
+			.from(events)
+			.where(
+				and(
+					eq(events.kind, "companion.turn_effects_settled"),
+					sql`json_extract(${events.payload}, '$.conversationId') = ${conversationId}`,
+					sql`json_extract(${events.payload}, '$.piSessionId') = ${piSessionId}`,
+					sql`json_extract(${events.payload}, '$.sourceUserEntryId') = ${sourceUserEntryId}`,
+				),
+			)
+			.limit(1)
+			.get();
+		if (settled) return;
+		const staged = this.db
+			.select({ seq: events.seq, payload: events.payload })
+			.from(events)
+			.where(
+				and(
+					eq(events.kind, "companion.effect_staged"),
+					sql`json_extract(${events.payload}, '$.conversationId') = ${conversationId}`,
+					sql`json_extract(${events.payload}, '$.piSessionId') = ${piSessionId}`,
+					sql`json_extract(${events.payload}, '$.sourceUserEntryId') = ${sourceUserEntryId}`,
+				),
+			)
+			.orderBy(asc(events.seq))
+			.all();
+		if (completed) {
+			for (const row of staged) {
+				if (!isRecord(row.payload)) continue;
+				const kind = row.payload.kind;
+				const presentationId = row.payload.presentationId;
+				if (typeof presentationId !== "string") continue;
+				if (kind === "media")
+					this.eventBus.publish("roleplay.media_presented", {
+						conversationId,
+						mediaId: presentationId,
+					});
+				if (kind === "choices")
+					this.eventBus.publish("roleplay.choices_presented", {
+						conversationId,
+						choiceSetId: presentationId,
+					});
+			}
+		} else {
+			const firstVisual = staged.find(
+				(row) => isRecord(row.payload) && row.payload.kind === "visual",
+			)?.payload;
+			if (
+				isRecord(firstVisual) &&
+				typeof firstVisual.beforeSceneId === "string" &&
+				typeof firstVisual.beforeExpressionId === "string"
+			) {
+				const before = this.currentState(
+					conversationId,
+					this.characterForConversation(conversationId)!,
+				);
+				const rolledBack = this.persistState(
+					conversationId,
+					firstVisual.beforeSceneId,
+					firstVisual.beforeExpressionId,
+				);
+				if (before.sceneId !== rolledBack.sceneId)
+					this.eventBus.publish("character.scene_changed", {
+						conversationId,
+						characterId: rolledBack.characterId,
+						sceneId: rolledBack.sceneId,
+						visualState: rolledBack.visualState,
+						source: "turn_rollback",
+					});
+				if (before.visualState !== rolledBack.visualState)
+					this.eventBus.publish("character.visual_state_changed", {
+						conversationId,
+						characterId: rolledBack.characterId,
+						sceneId: rolledBack.sceneId,
+						visualState: rolledBack.visualState,
+						source: "turn_rollback",
+					});
+			}
+		}
+		this.eventBus.publish("companion.turn_effects_settled", {
+			conversationId,
+			piSessionId,
+			sourceUserEntryId,
+			assistantEntryId,
+			status: completed ? "committed" : "discarded",
+		});
 	}
 
 	private applyReaction(conversationId: string, eventKind: string): void {
@@ -325,6 +436,7 @@ export class CharacterBehaviorService {
 	private presentMedia(
 		conversationId: string,
 		mediaId: string | undefined,
+		provenance?: Pick<CompanionHostToolCall, "piSessionId" | "triggerEntryId" | "toolCallId">,
 	): CompanionHostToolResult {
 		const character = this.characterForConversation(conversationId);
 		if (!character) return unavailableConversationResult(conversationId);
@@ -345,13 +457,78 @@ export class CharacterBehaviorService {
 				code: "roleplay_media_locked",
 				message: "The requested media has not been unlocked.",
 			};
+		if (hasTurnProvenance(provenance)) {
+			this.stageEffect(conversationId, provenance, "media", media.id);
+			return { ok: true, message: `Media ${media.id} staged for this response.` };
+		}
 		this.eventBus.publish("roleplay.media_presented", { conversationId, mediaId: media.id });
 		return { ok: true, message: `Presenting media ${media.id}.` };
+	}
+
+	private readEligiblePresentations(conversationId: string): CompanionHostToolResult {
+		const character = this.characterForConversation(conversationId);
+		if (!character) return unavailableConversationResult(conversationId);
+		const unlocked = new Set(this.roleplay.project(character, conversationId).unlocked);
+		const presentation = this.roleplay.presentation(character, conversationId);
+		return {
+			ok: true,
+			message: "Eligible role presentations read.",
+			data: {
+				media: character.roleplay.media
+					.filter((media) => {
+						const gate = character.roleplay.unlockables.find((entry) => entry.media === media.id);
+						return !gate || unlocked.has(gate.id);
+					})
+					.map((media) => ({
+						id: media.id,
+						label: media.label,
+						presentation: media.presentation,
+						presented:
+							presentation.mediaId === media.id || presentation.ambientMediaId === media.id,
+					})),
+				choiceSets: character.roleplay.choice_sets
+					.filter((set) => this.roleplay.isEligible(character, conversationId, set.when))
+					.map((set) => ({
+						id: set.id,
+						prompt: set.prompt,
+						presented: presentation.choiceSetId === set.id,
+					})),
+			},
+		};
+	}
+
+	private dismissPresentation(
+		conversationId: string,
+		presentationId: string | undefined,
+	): CompanionHostToolResult {
+		const character = this.characterForConversation(conversationId);
+		if (!character) return unavailableConversationResult(conversationId);
+		const current = this.roleplay.presentation(character, conversationId);
+		if (
+			presentationId &&
+			(current.mediaId === presentationId || current.ambientMediaId === presentationId)
+		) {
+			this.eventBus.publish("roleplay.media_dismissed", {
+				conversationId,
+				mediaId: presentationId,
+			});
+			return { ok: true, message: `Dismissed media ${presentationId}.` };
+		}
+		if (presentationId && current.choiceSetId === presentationId) {
+			this.eventBus.publish("roleplay.choices_dismissed", { conversationId });
+			return { ok: true, message: `Dismissed choices ${presentationId}.` };
+		}
+		return {
+			ok: false,
+			code: "presentation_not_active",
+			message: "The requested presentation is not active.",
+		};
 	}
 
 	private presentChoices(
 		conversationId: string,
 		choiceSetId: string | undefined,
+		provenance?: Pick<CompanionHostToolCall, "piSessionId" | "triggerEntryId" | "toolCallId">,
 	): CompanionHostToolResult {
 		const character = this.characterForConversation(conversationId);
 		if (!character) return unavailableConversationResult(conversationId);
@@ -362,11 +539,39 @@ export class CharacterBehaviorService {
 				code: "invalid_roleplay_choices",
 				message: "The choice set is not declared by this character package.",
 			};
+		if (!this.roleplay.isEligible(character, conversationId, choices.when))
+			return {
+				ok: false,
+				code: "roleplay_choices_locked",
+				message: "The requested choice set is not eligible for the current state.",
+			};
+		if (hasTurnProvenance(provenance)) {
+			this.stageEffect(conversationId, provenance, "choices", choices.id);
+			return { ok: true, message: `Choices ${choices.id} staged for this response.` };
+		}
 		this.eventBus.publish("roleplay.choices_presented", {
 			conversationId,
 			choiceSetId: choices.id,
 		});
 		return { ok: true, message: `Presenting choices ${choices.id}.` };
+	}
+
+	private stageEffect(
+		conversationId: string,
+		provenance: Required<
+			Pick<CompanionHostToolCall, "piSessionId" | "triggerEntryId" | "toolCallId">
+		>,
+		kind: "media" | "choices",
+		presentationId: string,
+	): void {
+		this.eventBus.publish("companion.effect_staged", {
+			conversationId,
+			piSessionId: provenance.piSessionId,
+			sourceUserEntryId: provenance.triggerEntryId,
+			toolCallId: provenance.toolCallId,
+			kind,
+			presentationId,
+		});
 	}
 
 	private getStateResult(conversationId: string): CompanionHostToolResult {
@@ -412,6 +617,83 @@ export class CharacterBehaviorService {
 			source,
 		});
 		return { ok: true, message: `Scene changed to ${sceneId}.`, state };
+	}
+
+	private updateVisual(
+		conversationId: string,
+		sceneId: string | undefined,
+		expressionId: string | undefined,
+		source: string,
+		provenance?: Pick<CompanionHostToolCall, "piSessionId" | "triggerEntryId" | "toolCallId">,
+	): CompanionHostToolResult {
+		const character = this.characterForConversation(conversationId);
+		if (!character) return unavailableConversationResult(conversationId);
+		if (!sceneId && !expressionId)
+			return {
+				ok: false,
+				code: "visual_update_empty",
+				message: "A visual update requires a scene or expression.",
+			};
+		if (sceneId && !character.scenes.some((scene) => scene.id === sceneId))
+			return { ok: false, code: "invalid_scene", message: "Scene is not declared." };
+		if (expressionId && !visualStateIds(character).includes(expressionId))
+			return {
+				ok: false,
+				code: "invalid_visual_state",
+				message: "Expression is not declared.",
+			};
+		const before = this.currentState(conversationId, character);
+		const nextScene = sceneId ?? before.sceneId;
+		const nextExpression = expressionId ?? before.visualState;
+		if (nextScene === before.sceneId && nextExpression === before.visualState)
+			return { ok: true, message: "Visual state was already selected.", state: before };
+		if (hasTurnProvenance(provenance))
+			this.eventBus.publish("companion.effect_staged", {
+				conversationId,
+				piSessionId: provenance.piSessionId,
+				sourceUserEntryId: provenance.triggerEntryId,
+				toolCallId: provenance.toolCallId,
+				kind: "visual",
+				beforeSceneId: before.sceneId,
+				beforeExpressionId: before.visualState,
+				afterSceneId: nextScene,
+				afterExpressionId: nextExpression,
+			});
+		const state = this.persistState(conversationId, nextScene, nextExpression);
+		if (nextScene !== before.sceneId) {
+			this.diagnostics?.emit("character.state.transition", {
+				conversationId,
+				state: "scene",
+				from: before.sceneId,
+				to: nextScene,
+				source,
+			});
+			this.eventBus.publish("character.scene_changed", {
+				conversationId,
+				characterId: character.id,
+				sceneId: nextScene,
+				visualState: nextExpression,
+				source,
+			});
+		}
+		if (nextExpression !== before.visualState) {
+			this.modelSelectedExpression.add(conversationId);
+			this.diagnostics?.emit("character.state.transition", {
+				conversationId,
+				state: "expression",
+				from: before.visualState,
+				to: nextExpression,
+				source,
+			});
+			this.eventBus.publish("character.visual_state_changed", {
+				conversationId,
+				characterId: character.id,
+				sceneId: nextScene,
+				visualState: nextExpression,
+				source,
+			});
+		}
+		return { ok: true, message: "Visual state updated.", state };
 	}
 
 	private setExpression(
@@ -564,6 +846,12 @@ function parseStoredState(value: unknown): Record<string, unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function hasTurnProvenance(
+	value: Pick<CompanionHostToolCall, "piSessionId" | "triggerEntryId" | "toolCallId"> | undefined,
+): value is Required<Pick<CompanionHostToolCall, "piSessionId" | "triggerEntryId" | "toolCallId">> {
+	return Boolean(value?.piSessionId && value.triggerEntryId && value.toolCallId);
 }
 
 function findLast<T>(entries: readonly T[], predicate: (entry: T) => boolean): T | undefined {

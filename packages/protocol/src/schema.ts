@@ -174,7 +174,10 @@ const EventPayload = <const Shape extends z.core.$ZodLooseShape>(shape: Shape) =
 		.catchall(BoundedEventValue)
 		.superRefine((value, context) => {
 			if (Object.keys(value).length > MAX_ARRAY_LENGTH) {
-				context.addIssue({ code: "custom", message: "too many event payload fields" });
+				context.addIssue({
+					code: "custom",
+					message: "too many event payload fields",
+				});
 			}
 		});
 const EventStringList = z.array(EventText).max(MAX_ARRAY_LENGTH);
@@ -206,12 +209,20 @@ export const EventPayloadSchemas = {
 		sync: SyncRevision,
 		sources: z.array(z.string().min(1).max(160)).max(256),
 	}),
-	"conversationAttachment.upload_changed": z.strictObject({ conversationId: EventId }),
+	"conversationAttachment.upload_changed": z.strictObject({
+		conversationId: EventId,
+	}),
 	"provider.login_changed": z.strictObject({ providerId: EventId }),
 	"memory.embedding_download_changed": EmbeddingDownloadState,
 	"memory.records_changed": z.strictObject({}),
-	"character.imported": EventPayload({ characterId: EventId, trust: BoundedEventValue }),
-	"character.pluginsTrusted": EventPayload({ characterId: EventId, pluginHash: EventText }),
+	"character.imported": EventPayload({
+		characterId: EventId,
+		trust: BoundedEventValue,
+	}),
+	"character.pluginsTrusted": EventPayload({
+		characterId: EventId,
+		pluginHash: EventText,
+	}),
 	"character.activated": EventPayload({ characterId: EventId }),
 	"character.seeded": EventPayload({ id: EventId, name: EventText }),
 	"character.scene_changed": EventPayload({
@@ -236,17 +247,32 @@ export const EventPayloadSchemas = {
 		eventId: EventId.optional(),
 		state: BoundedEventValue,
 	}),
-	"roleplay.media_presented": EventPayload({ conversationId: EventId, mediaId: EventId }),
-	"roleplay.media_dismissed": EventPayload({ conversationId: EventId, mediaId: EventId }),
-	"roleplay.choices_presented": EventPayload({ conversationId: EventId, choiceSetId: EventId }),
+	"roleplay.media_presented": EventPayload({
+		conversationId: EventId,
+		mediaId: EventId,
+	}),
+	"roleplay.media_dismissed": EventPayload({
+		conversationId: EventId,
+		mediaId: EventId,
+	}),
+	"roleplay.choices_presented": EventPayload({
+		conversationId: EventId,
+		choiceSetId: EventId,
+	}),
 	"roleplay.choices_dismissed": EventPayload({ conversationId: EventId }),
 	"conversation.created": EventPayload({
 		conversationId: EventId,
 		title: EventText.optional(),
 	}),
 	"conversation.selected": EventPayload({ id: EventId }),
-	"conversation.renamed": EventPayload({ conversationId: EventId, title: EventText }),
-	"conversation.archived": EventPayload({ conversationId: EventId, archived: z.boolean() }),
+	"conversation.renamed": EventPayload({
+		conversationId: EventId,
+		title: EventText,
+	}),
+	"conversation.archived": EventPayload({
+		conversationId: EventId,
+		archived: z.boolean(),
+	}),
 	"conversation.deleted": EventPayload({ conversationId: EventId }),
 	"conversation.branched": EventPayload({
 		conversationId: EventId,
@@ -271,10 +297,23 @@ export const EventPayloadSchemas = {
 		companionId: EventId,
 		version: z.number().int().safe().min(1).max(MAX_SAFE_INT),
 	}),
-	"canon.source_removed": EventPayload({ companionId: EventId, sourceId: EventId }),
-	"canon.module_saved": EventPayload({ companionId: EventId, moduleId: EventId }),
-	"canon.module_removed": EventPayload({ companionId: EventId, moduleId: EventId }),
-	"evidence.collected": EventPayload({ runId: EventId, evidenceId: EventId, kind: EventText }),
+	"canon.source_removed": EventPayload({
+		companionId: EventId,
+		sourceId: EventId,
+	}),
+	"canon.module_saved": EventPayload({
+		companionId: EventId,
+		moduleId: EventId,
+	}),
+	"canon.module_removed": EventPayload({
+		companionId: EventId,
+		moduleId: EventId,
+	}),
+	"evidence.collected": EventPayload({
+		runId: EventId,
+		evidenceId: EventId,
+		kind: EventText,
+	}),
 	"run.enqueued": EventPayload({
 		runId: EventId,
 		conversationId: EventId,
@@ -446,7 +485,11 @@ export const OpaqueDomainEvent = z
 	})
 	.superRefine((event, context) => {
 		if (isKnownEventKind(event.kind)) {
-			context.addIssue({ code: "custom", path: ["kind"], message: "known kinds are not opaque" });
+			context.addIssue({
+				code: "custom",
+				path: ["kind"],
+				message: "known kinds are not opaque",
+			});
 		}
 	});
 
@@ -779,7 +822,10 @@ export const CharacterDisplay = z
 						initial: z.union([z.string(), z.number(), z.boolean()]),
 						display: z.union([
 							z.strictObject({ kind: z.literal("hidden") }),
-							z.strictObject({ kind: z.literal("exact"), label: CharacterCopy }),
+							z.strictObject({
+								kind: z.literal("exact"),
+								label: CharacterCopy,
+							}),
 							z.strictObject({
 								kind: z.literal("level"),
 								label: CharacterCopy,
@@ -940,7 +986,9 @@ export const CharacterPackageDocument = z.strictObject({
 	sha256: z.string().regex(/^[0-9a-f]{64}$/),
 	character: CharacterDisplay,
 });
-export const CharacterPackageResponse = z.strictObject({ package: CharacterPackageDocument });
+export const CharacterPackageResponse = z.strictObject({
+	package: CharacterPackageDocument,
+});
 
 export const CharacterImportRequest = z.strictObject({
 	files: z
@@ -963,7 +1011,9 @@ export const CharacterPluginTrust = z.strictObject({
 export const CharacterPluginTrustGetRequest = z.strictObject({
 	characterId: z.string().min(1).max(64),
 });
-export const CharacterPluginTrustResponse = z.strictObject({ trust: CharacterPluginTrust });
+export const CharacterPluginTrustResponse = z.strictObject({
+	trust: CharacterPluginTrust,
+});
 export const CharacterPluginTrustConfirmRequest = z.strictObject({
 	characterId: z.string().min(1).max(64),
 });
@@ -984,7 +1034,9 @@ export const CharacterDraftCreateRequest = z.strictObject({
 	basePackageId: z.string().min(1).max(64).optional(),
 	locale: z.string().min(2).max(35).optional(),
 });
-export const CharacterDraftGetRequest = z.strictObject({ id: z.string().min(1).max(64) });
+export const CharacterDraftGetRequest = z.strictObject({
+	id: z.string().min(1).max(64),
+});
 export const CharacterDraftListRevisionsRequest = CharacterDraftGetRequest;
 export const CharacterDraftPatchRequest = z
 	.strictObject({
@@ -1407,7 +1459,9 @@ export const MessageEditRequest = z.strictObject({
 	entryId: PiSessionEntryId,
 	text: z.string().min(1).max(65536),
 });
-export const MessageContinueRequest = z.strictObject({ conversationId: ConversationId });
+export const MessageContinueRequest = z.strictObject({
+	conversationId: ConversationId,
+});
 export const MessageCorrectRequest = z.strictObject({
 	conversationId: ConversationId,
 	entryId: PiSessionEntryId,
@@ -1418,8 +1472,12 @@ export const MessageBranchRequest = z.strictObject({
 	conversationId: ConversationId,
 	entryId: PiSessionEntryId,
 });
-export const MessageBranchResponse = z.strictObject({ leafId: PiSessionEntryId });
-export const MessageAbortRequest = z.strictObject({ conversationId: ConversationId });
+export const MessageBranchResponse = z.strictObject({
+	leafId: PiSessionEntryId,
+});
+export const MessageAbortRequest = z.strictObject({
+	conversationId: ConversationId,
+});
 
 // ---------------------------------------------------------------------------
 // Memory
@@ -1463,7 +1521,23 @@ export const MemoryCaptureRequest = z.strictObject({
 });
 export type MemoryCaptureRequest = z.infer<typeof MemoryCaptureRequest>;
 export const MemoryCaptureResponse = z.strictObject({
-	memoryId: MemoryBackendId,
+	status: z.enum([
+		"stored",
+		"already_known",
+		"no_extractable_memory",
+		"no_new_content",
+		"capture_disabled",
+		"capture_failed",
+	]),
+	reason: z.enum([
+		"memory_stored",
+		"equivalent_memory_already_stored",
+		"extractor_found_no_durable_memory",
+		"turn_already_processed",
+		"memory_capture_disabled",
+		"memory_persistence_failed",
+	]),
+	memoryIds: z.array(MemoryBackendId).max(100),
 	sourceEntryId: PiSessionEntryId,
 	createdBy: MemoryCaptureCreatedBy,
 });
@@ -1897,11 +1971,15 @@ export const ModelDefaultsGetResponse = z.strictObject({
 	reply: ModelRoute.optional(),
 	vision: VisionModelDefault,
 });
-export const ModelDefaultsSetReplyRequest = z.strictObject({ reply: ModelRoute.nullable() });
+export const ModelDefaultsSetReplyRequest = z.strictObject({
+	reply: ModelRoute.nullable(),
+});
 export const ModelDefaultsSetReplyResponse = ModelDefaultsGetResponse;
 export const ModelDefaultsSetVisionRequest = VisionModelDefault;
 export const ModelDefaultsSetVisionResponse = ModelDefaultsGetResponse;
-export const ModelRouteGetRequest = z.strictObject({ conversationId: ConversationId });
+export const ModelRouteGetRequest = z.strictObject({
+	conversationId: ConversationId,
+});
 export const ModelRouteGetResponse = z.strictObject({
 	conversationId: ConversationId,
 	selected: ModelRoute.optional(),
@@ -1959,7 +2037,10 @@ export const ExternalAgentConnectCodexResponse = z.strictObject({
 });
 export const ExternalAgentStatusRequest = z.strictObject({});
 export const ExternalAgentStatusResponse = z.strictObject({
-	pi: z.strictObject({ available: z.literal(true), profileId: z.literal("pi-default") }),
+	pi: z.strictObject({
+		available: z.literal(true),
+		profileId: z.literal("pi-default"),
+	}),
 	codex: z.discriminatedUnion("available", [
 		z.strictObject({
 			available: z.literal(true),
@@ -2081,6 +2162,31 @@ const MemoryVectorServiceSettings = z
 		customPath: z.string().min(1).max(4096).optional(),
 	})
 	.superRefine((value, context) => {
+		if (value.provider === "none" && value.enabled) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["enabled"],
+				message: "embedding cannot be enabled without a provider",
+			});
+		}
+		if (value.provider !== "none" && !value.enabled) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["enabled"],
+				message: "a selected embedding provider must be enabled",
+			});
+		}
+		if (
+			value.provider === "local" &&
+			value.enabled &&
+			Boolean(value.localModel) === Boolean(value.customPath)
+		) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["localModel"],
+				message: "exactly one local embedding model source is required",
+			});
+		}
 		if (value.provider !== "remote" || !value.enabled) return;
 		for (const key of ["baseUrl", "apiKey", "model"] as const) {
 			if (!value[key])
@@ -2282,7 +2388,9 @@ export const RoleplayState = z.strictObject({
 	values: boundedRecord(z.string().min(1).max(64), RoleplayValue),
 	unlocked: z.array(z.string().min(1).max(64)).max(200),
 });
-export const RoleplayGetRequest = z.strictObject({ conversationId: ConversationId.optional() });
+export const RoleplayGetRequest = z.strictObject({
+	conversationId: ConversationId.optional(),
+});
 export const RoleplayTriggerRequest = z.strictObject({
 	conversationId: ConversationId,
 	eventId: z.string().min(1).max(64),

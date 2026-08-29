@@ -7,14 +7,57 @@ sources:
     kind: original_text
 entities: []
 modules:
-  - id: station_record
+  - id: station_identity
     kind: root
-    title: 旧极光站交接
-    summary: 极昼的来处、当前运行方式与继任规程。
+    title: 极昼与旧极光站
+    summary: 当前极昼始终知道的身份边界和旧站基本背景。
     triggers:
       - 旧极光站
       - 极昼
-      - 交接单
       - 白熊客栈
+    access:
+      mode: always
     bindings:
       - source: jizhou_story
+        headings: [旧极光站, 白熊的来历, 当前值守, 知识边界]
+  - id: station_background
+    parent: station_identity
+    kind: arc
+    title: 旧站交接背景
+    summary: 用户明确询问时可使用的旧站日常、三份旧交接和角色张力。
+    triggers: [旧站记录, 交接桌, 暴雪, 留言簿, 关站]
+    access:
+      mode: when_asked
+    bindings:
+      - source: jizhou_story
+        headings: [三份旧交接, 极昼的张力]
+  - id: undelivered_report_entry
+    parent: station_identity
+    kind: arc
+    title: 未送达的回报
+    summary: 用户主动进入后可见的入口和损坏信号资料，不包含后续揭示。
+    triggers: [未送达的回报, 遗失的回报, 未归档回报]
+    access:
+      mode: gated
+      skill: undelivered-report
+      state:
+        path: story.undelivered_report.phase
+        values: [invited, signal_examined, route_investigated, testimonies_compared, last_shift_revealed, future_considered, resolved, paused]
+    bindings:
+      - source: jizhou_story
+        headings: [遗失的回报]
+  - id: undelivered_report_last_shift
+    parent: undelivered_report_entry
+    kind: event
+    title: 最后一班的错误归档
+    summary: 只有抵达揭示节点后才能检索的确定事实。
+    triggers: [最后一班, 错误归档, 最终接收方]
+    access:
+      mode: gated
+      skill: undelivered-report
+      state:
+        path: story.undelivered_report.phase
+        values: [last_shift_revealed, future_considered, resolved]
+    bindings:
+      - source: jizhou_story
+        headings: [未送达的回报：封存记录]
