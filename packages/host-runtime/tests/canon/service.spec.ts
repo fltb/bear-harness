@@ -179,7 +179,7 @@ describe("CanonHubService user workflow", () => {
 		service.removeSource("character-a", source.id);
 	});
 
-	it("syncs package canon idempotently and retrieves Chinese aliases, routed modules, and adjacent context", () => {
+	it("syncs package canon idempotently and retrieves Chinese aliases, routed modules, and adjacent context", async () => {
 		const canon = {
 			manifest: {
 				version: 1 as const,
@@ -219,6 +219,15 @@ describe("CanonHubService user workflow", () => {
 						triggers: ["风暴"],
 						bindings: [{ source: "volume_one", headings: ["风暴夜"] }],
 					},
+					{
+						id: "dawn",
+						parent: "root",
+						kind: "event" as const,
+						title: "天亮",
+						summary: "",
+						triggers: ["天亮"],
+						bindings: [{ source: "volume_one", headings: ["天亮"] }],
+					},
 				],
 			},
 			sources: [
@@ -227,7 +236,7 @@ describe("CanonHubService user workflow", () => {
 					title: "第一卷",
 					path: "volume-one.txt",
 					kind: "original_text" as const,
-					content: `# 风暴夜\n\n旧极光站的主灯在风暴里熄灭。\n\n${"守机人逐项核对备用电源。".repeat(180)}`,
+					content: `# 风暴夜\n\n旧极光站的主灯在风暴里熄灭。\n\n${"守机人逐项核对备用电源。".repeat(180)}\n\n## 天亮\n\n主灯在清晨重新点亮。`,
 				},
 			],
 		};
@@ -244,8 +253,15 @@ describe("CanonHubService user workflow", () => {
 			expect.arrayContaining([
 				expect.objectContaining({ stableKey: "root", origin: "package" }),
 				expect.objectContaining({ stableKey: "storm", sourceChunkIds: expect.any(Array) }),
+				expect.objectContaining({ stableKey: "dawn", sourceChunkIds: expect.any(Array) }),
 			]),
 		);
+		const packageModules = service.listModules("character-a");
+		const stormRefs = packageModules.find((module) => module.stableKey === "storm")?.sourceChunkIds;
+		const dawnRefs = packageModules.find((module) => module.stableKey === "dawn")?.sourceChunkIds;
+		expect(stormRefs?.length).toBeGreaterThan(0);
+		expect(dawnRefs?.length).toBeGreaterThan(0);
+		expect(stormRefs).not.toEqual(dawnRefs);
 		const citations = service.retrieve("character-a", "旧站风暴发生了什么", {
 			moduleId: "storm",
 			limit: 3,
@@ -254,6 +270,16 @@ describe("CanonHubService user workflow", () => {
 			expect.objectContaining({ sourceName: "第一卷", heading: "风暴夜", origin: "package" }),
 		);
 		expect(citations.some((citation) => citation.adjacent)).toBe(true);
+		const explicitModule = await service.retrieveHybrid("character-a", "完全不相干的检索词", {
+			moduleId: "storm",
+			allowedModuleIds: ["storm"],
+		});
+		expect(explicitModule).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ heading: "风暴夜", content: expect.stringContaining("主灯") }),
+			]),
+		);
+		expect(explicitModule.every((chunk) => chunk.heading === "风暴夜")).toBe(true);
 		expect(() =>
 			service.removeSource("character-a", service.listSources("character-a")[0]?.id ?? ""),
 		).toThrow();

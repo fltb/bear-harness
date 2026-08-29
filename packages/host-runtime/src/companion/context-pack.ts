@@ -473,6 +473,16 @@ ${modules.join("\n")}`,
 			typeof state.values["interaction.voice_mode"] === "string"
 				? state.values["interaction.voice_mode"]
 				: character.voice_modes.default;
+		const activeStory = state.values["narrative.active_story"];
+		const narrativeAnchor = {
+			frame: state.values["narrative.frame"] ?? "present",
+			location: state.values["narrative.location"] ?? sceneId,
+			timeAnchor: state.values["narrative.time_anchor"] ?? "current_shift",
+			evidenceMode: state.values["narrative.evidence_mode"] ?? "direct_record",
+			activeStory: activeStory === "none" ? null : activeStory,
+			phase: state.values["story.undelivered_report.phase"] ?? "dormant",
+			branch: state.values["narrative.branch"] ?? "none",
+		};
 		return `<companion_turn_state>\n${JSON.stringify(
 			{
 				identity: { characterId: character.id, name: character.name },
@@ -482,6 +492,7 @@ ${modules.join("\n")}`,
 					historyAuthorizedThisTurn: hasTurnAuthorization(currentUserMessage ?? "", "history"),
 				},
 				visual: { sceneId, expressionId, activityExpressionId: null },
+				narrativeAnchor,
 				characterState: state.values,
 				stateRevisions: state.revisions,
 				roleplay: {
@@ -489,6 +500,7 @@ ${modules.join("\n")}`,
 					presentedChoiceSetId: presentation.choiceSetId ?? null,
 					presentedMediaId: presentation.mediaId ?? null,
 					ambientMediaId: presentation.ambientMediaId ?? null,
+					seenMediaIds: presentation.seenMediaIds,
 				},
 				voiceMode,
 			},
@@ -609,15 +621,20 @@ ${modules.join("\n")}`,
 			);
 	}
 
-	accessibleCanonModuleIds(conversationId: string): string[] {
+	accessibleCanonModuleIds(
+		conversationId: string,
+		stateOverride?: Record<string, unknown>,
+	): string[] {
 		const character = this.getCharacterPackage(conversationId);
 		if (!character) return [];
-		const state = new CharacterStateService(this.db).project(
-			character.id,
-			conversationId,
-			character.state,
-			true,
-		).values;
+		const state =
+			stateOverride ??
+			new CharacterStateService(this.db).project(
+				character.id,
+				conversationId,
+				character.state,
+				true,
+			).values;
 		const skillIds = new Set(character.skills.map((skill) => skill.name));
 		return character.canon.manifest.modules
 			.filter((module) => {

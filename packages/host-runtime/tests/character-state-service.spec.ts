@@ -32,6 +32,92 @@ function fixture() {
 }
 
 describe("CharacterStateService", () => {
+	it("lets the active story Skill advance natural dialogue without granting ordinary model writes", () => {
+		const { database, character, service } = fixture();
+		const operations = [
+			{ path: "story.undelivered_report.phase", op: "set" as const, value: "invited" },
+			{ path: "story.undelivered_report.status", op: "set" as const, value: "active" },
+			{ path: "narrative.active_story", op: "set" as const, value: "undelivered_report" },
+		];
+		expect(() =>
+			service.stage({
+				companionId: character.id,
+				conversationId: "conversation",
+				piSessionId: "session",
+				sourceUserEntryId: "natural-entry-denied",
+				definition: character.state,
+				operations,
+				reason: "An ordinary model cannot open the story state.",
+				evidence: { source: "current_user", quote: "我想查看那条未送达的回报。" },
+			}),
+		).toThrow();
+		service.stage({
+			companionId: character.id,
+			conversationId: "conversation",
+			piSessionId: "session",
+			sourceUserEntryId: "natural-entry",
+			definition: character.state,
+			operations,
+			reason: "The user explicitly entered the story through natural dialogue.",
+			skillId: "undelivered-report",
+			evidence: { source: "current_user", quote: "我想查看那条未送达的回报。" },
+		});
+		expect(
+			service.commitTurn({
+				companionId: character.id,
+				conversationId: "conversation",
+				piSessionId: "session",
+				sourceUserEntryId: "natural-entry",
+				assistantEntryId: "natural-entry-response",
+				definition: character.state,
+			}),
+		).toMatchObject({
+			committed: true,
+			state: {
+				values: {
+					"story.undelivered_report.phase": "invited",
+					"story.undelivered_report.status": "active",
+					"narrative.active_story": "undelivered_report",
+				},
+			},
+		});
+		database.close();
+	});
+
+	it("accepts a batch of unique strings for a string-list append operation", () => {
+		const { database, character, service } = fixture();
+		service.stage({
+			companionId: character.id,
+			conversationId: "conversation",
+			piSessionId: "session",
+			sourceUserEntryId: "facts",
+			definition: character.state,
+			operations: [
+				{
+					path: "story.undelivered_report.known_facts",
+					op: "append_unique",
+					value: ["损坏边界可见。", "最终接收方未知。", "损坏边界可见。"],
+				},
+			],
+			reason: "The current chapter exposed two directly supported facts.",
+			skillId: "undelivered-report",
+			evidence: { source: "current_user", quote: "检查这份损坏信号。" },
+		});
+		const committed = service.commitTurn({
+			companionId: character.id,
+			conversationId: "conversation",
+			piSessionId: "session",
+			sourceUserEntryId: "facts",
+			assistantEntryId: "facts-response",
+			definition: character.state,
+		});
+		expect(committed.state.values["story.undelivered_report.known_facts"]).toEqual([
+			"损坏边界可见。",
+			"最终接收方未知。",
+		]);
+		database.close();
+	});
+
 	it("stages atomically and commits once only after a successful assistant entry", () => {
 		const { database, character, service } = fixture();
 		service.stage({

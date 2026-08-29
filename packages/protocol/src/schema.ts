@@ -2428,6 +2428,7 @@ export const SnapshotResponse = z.strictObject({
 			mediaId: z.string().max(64).optional(),
 			ambientMediaId: z.string().max(64).optional(),
 			choiceSetId: z.string().max(64).optional(),
+			seenMediaIds: z.array(z.string().max(64)).max(128).optional(),
 		})
 		.optional(),
 	roleplay: RoleplayState.optional(),

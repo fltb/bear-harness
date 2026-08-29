@@ -714,6 +714,15 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				attachmentSendNonce: nonce,
 				onAccepted: () => {
 					durablyAccepted = true;
+					const character = s.characterLoader.load(getCompanionId(s));
+					const activeMediaId = character
+						? s.roleplay.presentation(character, conversationId).mediaId
+						: undefined;
+					if (activeMediaId)
+						s.eventBus.publish("roleplay.media_dismissed", {
+							conversationId,
+							mediaId: activeMediaId,
+						});
 					s.eventBus.publish("roleplay.choices_dismissed", {
 						conversationId,
 					});

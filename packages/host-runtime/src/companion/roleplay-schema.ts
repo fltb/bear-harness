@@ -81,6 +81,7 @@ const RoleplayMediaSchema = z
 		poster: AssetPath.optional(),
 		captions: AssetPath.optional(),
 		loop: z.boolean().default(false),
+		when: RoleplayConditionSchema.optional(),
 	})
 	.superRefine((media, context) => {
 		if (media.presentation === "ambient" && media.kind !== "audio")

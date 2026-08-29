@@ -130,14 +130,19 @@ describe("roleplay event projection", () => {
 			mediaId: "image",
 			ambientMediaId: "ambient",
 			choiceSetId: "reply",
+			seenMediaIds: ["image", "ambient"],
 		});
 		bus.publish("roleplay.media_dismissed", { conversationId: "conversation", mediaId: "image" });
 		bus.publish("roleplay.choices_dismissed", { conversationId: "conversation" });
 		expect(reopened.presentation(configured, "conversation")).toEqual({
 			conversationId: "conversation",
 			ambientMediaId: "ambient",
+			seenMediaIds: ["image", "ambient"],
 		});
-		expect(reopened.presentation(configured, "other")).toEqual({ conversationId: "other" });
+		expect(reopened.presentation(configured, "other")).toEqual({
+			conversationId: "other",
+			seenMediaIds: [],
+		});
 		database.close();
 	});
 

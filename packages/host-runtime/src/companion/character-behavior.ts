@@ -89,6 +89,11 @@ function projectTurnEntries(
 		const message = raw.message;
 		if (!isRecord(message) || typeof message.role !== "string") continue;
 		if (message.role !== "user" && message.role !== "assistant") continue;
+		// A native Pi turn may contain several assistant tool-use messages before
+		// the terminal assistant response. Tool-use entries are not turn ends:
+		// settling here would strand state and presentation effects staged later
+		// in the same model/tool loop.
+		if (message.role === "assistant" && message.stopReason === "toolUse") continue;
 		entries.push({
 			id: raw.id,
 			role: message.role,
@@ -192,7 +197,8 @@ export class CharacterBehaviorService {
 			}
 			case "host_present": {
 				const action = stringArgument(call.args, "action");
-				if (action === "read_eligible") return this.readEligiblePresentations(call.conversationId);
+				if (action === "read_eligible")
+					return this.readEligiblePresentations(call.conversationId, call);
 				if (action === "present_media")
 					return this.presentMedia(call.conversationId, stringArgument(call.args, "mediaId"), call);
 				if (action === "present_choices")
@@ -447,6 +453,13 @@ export class CharacterBehaviorService {
 				code: "invalid_roleplay_media",
 				message: "The media is not declared by this character package.",
 			};
+		const effectiveState = this.presentationGateState(conversationId, character, provenance);
+		if (!this.roleplay.isEligible(character, conversationId, media.when, effectiveState))
+			return {
+				ok: false,
+				code: "roleplay_media_locked",
+				message: "The requested media is not eligible for the current story state.",
+			};
 		const gatedUnlock = character.roleplay.unlockables.find((entry) => entry.media === media.id);
 		if (
 			gatedUnlock &&
@@ -457,7 +470,18 @@ export class CharacterBehaviorService {
 				code: "roleplay_media_locked",
 				message: "The requested media has not been unlocked.",
 			};
+		const presentation = this.roleplay.presentation(character, conversationId);
+		if (presentation.mediaId === media.id || presentation.ambientMediaId === media.id)
+			return { ok: true, message: `Media ${media.id} is already presented.` };
+		if (presentation.seenMediaIds.includes(media.id))
+			return {
+				ok: false,
+				code: "roleplay_media_already_seen",
+				message: "This story media was already shown and cannot be automatically presented again.",
+			};
 		if (hasTurnProvenance(provenance)) {
+			if (this.isEffectStaged(conversationId, provenance, "media", media.id))
+				return { ok: true, message: `Media ${media.id} is already staged for this response.` };
 			this.stageEffect(conversationId, provenance, "media", media.id);
 			return { ok: true, message: `Media ${media.id} staged for this response.` };
 		}
@@ -465,17 +489,23 @@ export class CharacterBehaviorService {
 		return { ok: true, message: `Presenting media ${media.id}.` };
 	}
 
-	private readEligiblePresentations(conversationId: string): CompanionHostToolResult {
+	private readEligiblePresentations(
+		conversationId: string,
+		provenance?: Pick<CompanionHostToolCall, "piSessionId" | "triggerEntryId" | "toolCallId">,
+	): CompanionHostToolResult {
 		const character = this.characterForConversation(conversationId);
 		if (!character) return unavailableConversationResult(conversationId);
 		const unlocked = new Set(this.roleplay.project(character, conversationId).unlocked);
 		const presentation = this.roleplay.presentation(character, conversationId);
+		const effectiveState = this.presentationGateState(conversationId, character, provenance);
 		return {
 			ok: true,
 			message: "Eligible role presentations read.",
 			data: {
 				media: character.roleplay.media
 					.filter((media) => {
+						if (!this.roleplay.isEligible(character, conversationId, media.when, effectiveState))
+							return false;
 						const gate = character.roleplay.unlockables.find((entry) => entry.media === media.id);
 						return !gate || unlocked.has(gate.id);
 					})
@@ -483,11 +513,14 @@ export class CharacterBehaviorService {
 						id: media.id,
 						label: media.label,
 						presentation: media.presentation,
+						seen: presentation.seenMediaIds.includes(media.id),
 						presented:
 							presentation.mediaId === media.id || presentation.ambientMediaId === media.id,
 					})),
 				choiceSets: character.roleplay.choice_sets
-					.filter((set) => this.roleplay.isEligible(character, conversationId, set.when))
+					.filter((set) =>
+						this.roleplay.isEligible(character, conversationId, set.when, effectiveState),
+					)
 					.map((set) => ({
 						id: set.id,
 						prompt: set.prompt,
@@ -539,7 +572,8 @@ export class CharacterBehaviorService {
 				code: "invalid_roleplay_choices",
 				message: "The choice set is not declared by this character package.",
 			};
-		if (!this.roleplay.isEligible(character, conversationId, choices.when))
+		const effectiveState = this.presentationGateState(conversationId, character, provenance);
+		if (!this.roleplay.isEligible(character, conversationId, choices.when, effectiveState))
 			return {
 				ok: false,
 				code: "roleplay_choices_locked",
@@ -554,6 +588,21 @@ export class CharacterBehaviorService {
 			choiceSetId: choices.id,
 		});
 		return { ok: true, message: `Presenting choices ${choices.id}.` };
+	}
+
+	private presentationGateState(
+		conversationId: string,
+		character: CharacterPackage,
+		provenance?: Pick<CompanionHostToolCall, "piSessionId" | "triggerEntryId" | "toolCallId">,
+	): Record<string, unknown> | undefined {
+		if (!hasTurnProvenance(provenance)) return undefined;
+		return this.characterState.previewTurn({
+			companionId: character.id,
+			conversationId,
+			piSessionId: provenance.piSessionId,
+			sourceUserEntryId: provenance.triggerEntryId,
+			definition: character.state,
+		}).values;
 	}
 
 	private stageEffect(
@@ -572,6 +621,33 @@ export class CharacterBehaviorService {
 			kind,
 			presentationId,
 		});
+	}
+
+	private isEffectStaged(
+		conversationId: string,
+		provenance: Required<
+			Pick<CompanionHostToolCall, "piSessionId" | "triggerEntryId" | "toolCallId">
+		>,
+		kind: "media" | "choices",
+		presentationId: string,
+	): boolean {
+		return Boolean(
+			this.db
+				.select({ seq: events.seq })
+				.from(events)
+				.where(
+					and(
+						eq(events.kind, "companion.effect_staged"),
+						sql`json_extract(${events.payload}, '$.conversationId') = ${conversationId}`,
+						sql`json_extract(${events.payload}, '$.piSessionId') = ${provenance.piSessionId}`,
+						sql`json_extract(${events.payload}, '$.sourceUserEntryId') = ${provenance.triggerEntryId}`,
+						sql`json_extract(${events.payload}, '$.kind') = ${kind}`,
+						sql`json_extract(${events.payload}, '$.presentationId') = ${presentationId}`,
+					),
+				)
+				.limit(1)
+				.get(),
+		);
 	}
 
 	private getStateResult(conversationId: string): CompanionHostToolResult {

@@ -98,7 +98,13 @@ describe("character package visual projection", () => {
 			expect.objectContaining({
 				version: 1,
 				language: "zh-CN",
-				sources: [expect.objectContaining({ id: "jizhou_story", path: "jizhou-story.md" })],
+				sources: expect.arrayContaining([
+					expect.objectContaining({ id: "jizhou_story", path: "jizhou-story.md" }),
+					expect.objectContaining({
+						id: "undelivered_report",
+						path: "undelivered-report.md",
+					}),
+				]),
 			}),
 		);
 		expect(character.canon.manifest.modules).toContainEqual(
@@ -138,7 +144,7 @@ describe("character package visual projection", () => {
 		expect(display.roleplay.media).toContainEqual(
 			expect.objectContaining({
 				id: "continuity_light",
-				kind: "animation",
+				kind: "image",
 				url: expect.stringMatching(/^data:image\/webp;base64,/),
 			}),
 		);
@@ -156,7 +162,7 @@ describe("character package visual projection", () => {
 		);
 		const quietDesktop = display.scenes.find((scene) => scene.id === "quiet_terminal");
 		expect(quietDesktop).toBeDefined();
-		expect(quietDesktop?.backgroundUrl).toBeUndefined();
+		expect(quietDesktop?.backgroundUrl).toMatch(/^data:image\/webp;base64,/);
 	});
 });
 
@@ -327,30 +333,24 @@ describe("character package roleplay media presentation", () => {
 		writeFileSync(join(packageDir, "assets", "chapter-video.vtt"), "WEBVTT\n");
 		const manifestPath = join(packageDir, "character.yaml");
 		const manifest = readFileSync(manifestPath, "utf8");
-		const withPresentations = manifest
-			.replace(
-				"      asset: assets/cg-damaged-signal-animated.webp",
-				"      asset: assets/cg-damaged-signal-animated.webp\n      presentation: inline",
-			)
-			.replace(
-				"      loop: true\n  unlockables:",
-				[
-					"      loop: true",
-					"    - id: ambient_signal",
-					"      kind: audio",
-					"      label: Ambient signal",
-					"      asset: assets/ambient-signal.mp3",
-					"      captions: assets/ambient-signal.vtt",
-					"      presentation: ambient",
-					"    - id: chapter_video",
-					"      kind: video",
-					"      label: Chapter video",
-					"      asset: assets/chapter-video.mp4",
-					"      captions: assets/chapter-video.vtt",
-					"      presentation: inline",
-					"  unlockables:",
-				].join("\n"),
-			);
+		const withPresentations = manifest.replace(
+			"  unlockables:",
+			[
+				"    - id: ambient_signal",
+				"      kind: audio",
+				"      label: Ambient signal",
+				"      asset: assets/ambient-signal.mp3",
+				"      captions: assets/ambient-signal.vtt",
+				"      presentation: ambient",
+				"    - id: chapter_video",
+				"      kind: video",
+				"      label: Chapter video",
+				"      asset: assets/chapter-video.mp4",
+				"      captions: assets/chapter-video.vtt",
+				"      presentation: inline",
+				"  unlockables:",
+			].join("\n"),
+		);
 		expect(withPresentations).not.toBe(manifest);
 		writeFileSync(manifestPath, withPresentations);
 
@@ -513,20 +513,22 @@ Use the station log.
 
 describe("character package durable replacement", () => {
 	it("upgrades the installed default package when the bundled seed version is newer", () => {
+		const bundledVersion = new CharacterLoader(characterRoot).load("jizhou")?.version;
+		if (!bundledVersion) throw new Error("missing bundled Jizhou package");
 		const libraryRoot = mkdtempSync(join(tmpdir(), "bear-character-seed-upgrade-"));
 		temporaryDirectories.push(libraryRoot);
 		copyCharacterPackage(join(libraryRoot, "jizhou"), "jizhou", "installed-old");
 		const installedManifest = join(libraryRoot, "jizhou", "character.yaml");
 		writeFileSync(
 			installedManifest,
-			readFileSync(installedManifest, "utf8").replace("version: 4.0.0", "version: 3.0.0"),
+			readFileSync(installedManifest, "utf8").replace(/^version: .+$/m, "version: 3.0.0"),
 			"utf8",
 		);
 
 		const loader = new CharacterLoader(characterRoot, libraryRoot);
 		loader.bootstrapLibrary("jizhou");
 
-		expect(loader.load("jizhou")?.version).toBe("4.0.0");
+		expect(loader.load("jizhou")?.version).toBe(bundledVersion);
 		expect(readFileSync(installedManifest, "utf8")).not.toContain("installed-old");
 	});
 

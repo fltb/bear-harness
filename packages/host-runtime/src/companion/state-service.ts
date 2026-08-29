@@ -238,7 +238,7 @@ export class CharacterStateService {
 				.run();
 		};
 		if (input.transaction) commit(input.transaction);
-		else this.db.transaction(commit);
+		else this.db.transaction((transaction) => commit(transaction));
 		return this.project(input.companionId, input.conversationId, input.definition);
 	}
 
@@ -378,6 +378,52 @@ export class CharacterStateService {
 			.run();
 	}
 
+	/** Preview already-validated mutations from one native Pi turn for dependent gates. */
+	previewTurn(input: {
+		companionId: string;
+		conversationId: string;
+		piSessionId: string;
+		sourceUserEntryId: string;
+		definition: CharacterStateDefinition;
+	}): CharacterStateProjection {
+		const projection = this.project(input.companionId, input.conversationId, input.definition);
+		const mutations = this.db
+			.select({
+				operations: pendingStateMutations.operationsJson,
+				schemaHash: pendingStateMutations.schemaHash,
+			})
+			.from(pendingStateMutations)
+			.where(
+				and(
+					eq(pendingStateMutations.companionId, input.companionId),
+					eq(pendingStateMutations.conversationId, input.conversationId),
+					eq(pendingStateMutations.piSessionId, input.piSessionId),
+					eq(pendingStateMutations.sourceUserEntryId, input.sourceUserEntryId),
+					eq(pendingStateMutations.status, "pending"),
+				),
+			)
+			.all();
+		if (mutations.length === 0) return projection;
+		if (mutations.some((mutation) => mutation.schemaHash !== projection.schemaHash))
+			throw { kind: "conflict", reason: "character_state_schema_changed" };
+		const operations = mutations.flatMap((mutation) =>
+			parseDurableOperations(mutation.operations).map((entry) => entry.operation),
+		);
+		let values = { ...projection.values };
+		for (const operation of operations)
+			values = applyOperation(
+				values,
+				input.definition,
+				operation,
+				operations,
+				undefined,
+				undefined,
+				"model",
+				true,
+			);
+		return { ...projection, values };
+	}
+
 	private document(companionId: string, conversationId: string, scope: StateScope) {
 		return this.db
 			.select()
@@ -448,6 +494,8 @@ function applyOperation(
 	if (!field) throw { kind: "validation_failed", reason: "state_path_not_declared" };
 	const authorized =
 		field.write_authority === authority ||
+		((authority === "host_event" || authority === "user_choice") &&
+			field.deterministic_authorities.includes(authority)) ||
 		(field.write_authority.startsWith("skill:") &&
 			field.write_authority.slice("skill:".length) === skillId);
 	if ((!prevalidated && !authorized) || !field.operations.includes(operation.op))
@@ -477,14 +525,19 @@ function applyOperation(
 				throw { kind: "forbidden", reason: "state_turn_change_exceeded" };
 		}
 	} else if (operation.op === "append_unique" || operation.op === "remove_value") {
-		if (!Array.isArray(current) || typeof operation.value !== "string")
+		const requested =
+			typeof operation.value === "string"
+				? [operation.value]
+				: Array.isArray(operation.value) &&
+						operation.value.every((value) => typeof value === "string")
+					? operation.value
+					: null;
+		if (!Array.isArray(current) || requested === null)
 			throw { kind: "validation_failed", reason: "state_value_type_invalid" };
 		next =
 			operation.op === "append_unique"
-				? current.includes(operation.value)
-					? current
-					: [...current, operation.value]
-				: current.filter((value) => value !== operation.value);
+				? [...new Set([...current, ...requested])]
+				: current.filter((value) => !requested.includes(String(value)));
 	} else next = operation.value;
 	validateValue(field, current, next);
 	return { ...values, [operation.path]: next };
@@ -507,6 +560,9 @@ function validateValue(field: CharacterStateField, current: unknown, value: unkn
 		if (field.maximum !== undefined && value > field.maximum)
 			throw { kind: "validation_failed", reason: "state_value_out_of_range" };
 	}
+	// Setting the current value is a valid idempotent operation. Commit paths
+	// filter it out, so it cannot increment revisions or duplicate effects.
+	if (Object.is(current, value)) return;
 	if (
 		field.allowed_transitions &&
 		!field.allowed_transitions.some(

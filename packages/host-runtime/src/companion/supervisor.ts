@@ -22,9 +22,9 @@ import { awaitSource } from "../await-source.js";
 import type { Diagnostics } from "../diagnostics/index.js";
 import type { EventBus } from "../storage/event-bus.js";
 import type { CompanionHostToolCall, CompanionHostToolResult } from "./character-behavior.js";
-import type { CharacterStateDefinition, CharacterStateField } from "./state-schema.js";
 import { PiSessionStore } from "./pi-session-store.js";
 import { loadRolePluginTools, loadRoleSkills, roleSkillPrompt } from "./role-resources.js";
+import type { CharacterStateDefinition, CharacterStateField } from "./state-schema.js";
 export type CompanionState = "stopped" | "starting" | "running" | "unavailable";
 
 /** Validated, role-owned Pi resources discovered by the Host package loader. */

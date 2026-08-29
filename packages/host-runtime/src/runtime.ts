@@ -666,10 +666,22 @@ export class HostRuntime {
 					.where(eq(conversations.id, call.conversationId))
 					.get();
 				if (!conversation) throw { kind: "not_found", reason: "conversation_not_found" };
+				const character = characterLoader.load(conversation.companionId);
+				if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
+				const pendingState =
+					call.piSessionId && call.triggerEntryId
+						? characterState.previewTurn({
+								companionId: conversation.companionId,
+								conversationId: call.conversationId,
+								piSessionId: call.piSessionId,
+								sourceUserEntryId: call.triggerEntryId,
+								definition: character.state,
+							}).values
+						: undefined;
 				const citations = await canon.retrieveHybrid(conversation.companionId, args.query, {
 					moduleId: args.moduleId,
 					limit: 8,
-					allowedModuleIds: contextPack.accessibleCanonModuleIds(call.conversationId),
+					allowedModuleIds: contextPack.accessibleCanonModuleIds(call.conversationId, pendingState),
 				});
 				return {
 					ok: true,

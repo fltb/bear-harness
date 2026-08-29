@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { extname } from "node:path";
+import { imageDimensionsFromData } from "image-dimensions";
 import { parse } from "yaml";
 
 const visualOnlyTools = new Set(["host_visual", "host_present"]);
@@ -84,6 +85,112 @@ for (const entry of readdirSync(root, { withFileTypes: true })) {
 			)
 		)
 			failures.push(`${prefix}: benchmark expressions must all be 1086x1448 RGBA PNG files`);
+
+		const requiredStoryScenes = [
+			"study",
+			"quiet_terminal",
+			"archive_gallery",
+			"relay_room",
+			"snowfield",
+			"coastal_beacon",
+			"last_shift_room",
+			"future_beacon",
+			"study_dawn",
+		];
+		const sceneIds = new Set((manifest.scenes ?? []).map((scene) => scene.id));
+		for (const id of requiredStoryScenes)
+			if (!sceneIds.has(id)) failures.push(`${prefix}: official story requires scene ${id}`);
+
+		const requiredStoryMedia = [
+			"damaged_signal",
+			"storm_relay_map",
+			"snow_route",
+			"two_handoffs",
+			"last_shift_desk",
+			"future_beacon_cg",
+			"returned_lamp",
+		];
+		const mediaById = new Map(roleplay.media.map((media) => [media.id, media]));
+		for (const id of requiredStoryMedia) {
+			const media = mediaById.get(id);
+			if (!media) {
+				failures.push(`${prefix}: official story requires media ${id}`);
+				continue;
+			}
+			const visualAsset = media.poster ?? media.asset;
+			const info = imageDimensionsFromData(readFileSync(new URL(visualAsset, packageRoot)));
+			if (!info || info.width < 1600 || info.height < 900)
+				failures.push(`${prefix}: official story media ${id} requires a production 16:9 poster`);
+		}
+
+		const requiredStoryEvents = [
+			"story_enter",
+			"story_signal_examined",
+			"story_route_relay",
+			"story_route_snowfield",
+			"story_route_snowfield_after_relay",
+			"story_route_relay_after_snowfield",
+			"story_compare_unresolved",
+			"story_compare_cenlan",
+			"story_compare_wenxi",
+			"story_last_shift",
+			"story_future_design",
+			"story_future_audit",
+			"story_future_no_system",
+			"story_future_refused",
+			"story_resolve_returned",
+			"story_resolve_archived",
+			"story_resolve_left_open",
+			"story_resume_archived",
+		];
+		const eventIds = new Set(roleplay.events.map((event) => event.id));
+		for (const id of requiredStoryEvents)
+			if (!eventIds.has(id)) failures.push(`${prefix}: official story requires event ${id}`);
+
+		const requiredStateFields = [
+			"story.undelivered_report.phase",
+			"story.undelivered_report.status",
+			"story.undelivered_report.route",
+			"story.undelivered_report.position",
+			"story.undelivered_report.resolution",
+			"story.undelivered_report.testimony_stance",
+			"story.undelivered_report.future_choice",
+			"story.undelivered_report.known_facts",
+			"story.undelivered_report.user_interpretation",
+			"narrative.frame",
+			"narrative.location",
+			"narrative.time_anchor",
+			"narrative.evidence_mode",
+			"narrative.active_story",
+			"narrative.branch",
+		];
+		for (const path of requiredStateFields)
+			if (!manifest.state_schema?.fields?.[path])
+				failures.push(`${prefix}: official story requires state field ${path}`);
+
+		const storyPath = new URL("canon/undelivered-report.md", packageRoot);
+		if (!existsSync(storyPath)) failures.push(`${prefix}: official story canon is missing`);
+		else {
+			const story = readFileSync(storyPath, "utf8");
+			const requiredHeadings = [
+				"## 序章：留言簿里的断行",
+				"## 第一章：损坏的信号",
+				"## 第二章 A：风暴中继",
+				"## 第二章 B：雪原上的脚印",
+				"## 第三章：两份不一致的交接",
+				"## 第四章：最后一班",
+				"## 第五章：如果以后还有一座站",
+				"## 终章：把回报放在哪里",
+				"## 中断与恢复",
+				"## 人物与指代约束",
+				"## 长程稳定规则",
+			];
+			if (story.length < 6_000)
+				failures.push(`${prefix}: official story canon is an outline, not complete content`);
+			for (const heading of requiredHeadings)
+				if (!story.includes(heading))
+					failures.push(`${prefix}: official story canon requires ${heading}`);
+		}
 	}
 	const skillsRoot = new URL("skills/", packageRoot);
 	if (existsSync(skillsRoot))

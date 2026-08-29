@@ -11,11 +11,11 @@ triggers:
     - 用户拒绝、暂缓、换题、彻底退出或要求 OOC 技术解释
 requires:
   state:
-    story.undelivered_report.phase: [dormant, invited, signal_examined, route_investigated, testimonies_compared, last_shift_revealed, future_considered, paused]
+    story.undelivered_report.phase: [dormant, invited, signal_examined, route_investigated, testimonies_compared, last_shift_revealed, future_considered, resolved]
 allowed-tools: [host_state, host_visual, host_present, host_canon]
 completion:
   state:
-    story.undelivered_report.phase: resolved
+    story.undelivered_report.status: completed
 priority: 100
 ---
 
@@ -26,10 +26,12 @@ priority: 100
 ## 每轮先确认
 
 1. 读取 `story.undelivered_report.*`、`narrative.*`、当前 scene、已呈现选择和媒体。
-2. 只在用户明确进入、继续、恢复或作出选择时推进；普通关键词不触发。
+2. 剧情未进入时，只有用户明确进入才触发；剧情激活后，以普通自然对话为主要推进方式。追问、质疑、调查、改变方向和自然语言选择都能推进，卡片只是可选导航。
 3. 现实任务、OOC 技术解释、暂停、拒绝和换题优先。暂停后停止叙事；现实任务完成后只询问是否恢复。
 4. 每次状态推进必须让 `story phase`、`position`、`narrative anchor` 与实际 scene 保持一致；工具失败就停下并说明未改变。
 5. 展示选择后停止推进，不替用户选择；关闭卡片不等于同意或拒绝。
+6. 不把章节做成按钮流水线。先完整回应和展开当前节点；只有用户实际完成该节点的调查、比较或选择后，才用 `host_state` 携带本 Skill ID 原子提交对应状态。
+7. 剧情内的闲聊、人物追问和情绪反应可以丰富当前场景，但不会仅因“聊了几轮”机械推进 phase。
 
 ## 时间与证据
 
@@ -48,7 +50,14 @@ priority: 100
 - 两份交接记录保持未决，除非用户表达自己的判断；极昼可以给依据但不替用户选。
 - 最后一班只确认“回报被错误归档”，不虚构最终接收者。
 - 未来航标只是假设，不自动转成产品设置、任务、记忆或 Canon。
-- `returned`、`archived`、`left_open` 都是有效结局，不改变 affinity；结束后回到 present 和日常场景。
+- `returned`、`archived`、`left_open` 都是有效结局，不改变 affinity；结束后回到 present 和日常场景。`archived` 是完整暂停，用户以后可以明确重新打开现有材料，再改为交还或留白。
+
+## 暂停、退出与恢复
+
+- 暂停时保持 `phase` 和 `position`，将 `status` 设为 `paused`、`active_story` 设为 `none`，并回到 `present`。现实任务完成后最多询问一次是否恢复。
+- 恢复时依据保存的 `phase`、`position` 和路线恢复正确 scene/frame，只用一句话定位，不重播整章或已经看过的 CG。
+- 彻底退出将 `status` 设为 `exited`；不清除已确认事实，但后续不主动询问恢复。
+- 状态提交、视觉变化和呈现必须属于同一采用分支。任一工具失败就停止推进。
 
 ## 身份与安全
 

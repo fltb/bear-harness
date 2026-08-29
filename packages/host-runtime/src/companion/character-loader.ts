@@ -54,21 +54,21 @@ import {
 	selfCanonVersions,
 } from "../storage/schema.js";
 import {
-	type CharacterOnboardingFlow,
-	validateCharacterOnboardingFlow,
-} from "./onboarding-schema.js";
-import {
-	type RoleplayDefinition,
-	RoleplaySchema,
-	roleplayAssetExtensions,
-} from "./roleplay-schema.js";
-import { loadRoleSkills, type RoleSkill } from "./role-resources.js";
-import {
 	type CharacterBehaviorContract,
 	CharacterBehaviorSchema,
 	type VoiceModesContract,
 	VoiceModesSchema,
 } from "./behavior-schema.js";
+import {
+	type CharacterOnboardingFlow,
+	validateCharacterOnboardingFlow,
+} from "./onboarding-schema.js";
+import { loadRoleSkills, type RoleSkill } from "./role-resources.js";
+import {
+	type RoleplayDefinition,
+	RoleplaySchema,
+	roleplayAssetExtensions,
+} from "./roleplay-schema.js";
 import { type CharacterStateDefinition, CharacterStateSchema } from "./state-schema.js";
 import { CharacterThemeOverridesSchema, resolveCharacterTheme } from "./theme.js";
 
@@ -843,6 +843,15 @@ export class CharacterLoader {
 			}
 		}
 		for (const media of roleplay.media) {
+			if (media.when)
+				validateRoleplayConditionReferences(
+					media.when,
+					variableIds,
+					unlockableIds,
+					new Set(Object.keys(state.fields)),
+					id,
+					media.id,
+				);
 			if (media.kind === "animation" && !media.poster)
 				throw new Error(`character package ${id}: animation ${media.id} requires poster`);
 			if ((media.kind === "audio" || media.kind === "video") && !media.captions)
@@ -884,7 +893,11 @@ export class CharacterLoader {
 						throw new Error(
 							`character package ${id}: event ${event.id} references missing state path`,
 						);
-					if (field.write_authority !== effect.authority || !field.operations.includes(effect.op))
+					if (
+						(field.write_authority !== effect.authority &&
+							!field.deterministic_authorities.includes(effect.authority)) ||
+						!field.operations.includes(effect.op)
+					)
 						throw new Error(
 							`character package ${id}: event ${event.id} is not authorized for state path ${effect.path}`,
 						);

@@ -157,6 +157,47 @@ describe("Host composition enforces ownership before mutation", () => {
 		]);
 	});
 
+	it("dismisses the previous inline presentation only after the next message is durably accepted", async () => {
+		const runtime = makeRuntime();
+		await runtime.start();
+		const conversation = (await data(runtime, "conversation.create:v1", {})) as { id: string };
+		const runtimeInternals = runtime as unknown as {
+			composition: {
+				turns: TurnPipeline;
+				eventBus: { publish: (kind: string, payload: unknown) => void };
+			};
+		};
+		runtimeInternals.composition.eventBus.publish("roleplay.media_presented", {
+			conversationId: conversation.id,
+			mediaId: "continuity_light",
+		});
+		vi.spyOn(runtimeInternals.composition.turns, "sendUserMessage").mockImplementation(
+			async (_conversationId, _text, _images, options) => {
+				options.onAccepted?.("pending-turn-1");
+				return { accepted: true, sessionId: "session-1", entryId: "entry-1" };
+			},
+		);
+
+		await data(runtime, "message.send:v1", {
+			conversationId: conversation.id,
+			text: "continue",
+		});
+
+		const snapshot = (await data(runtime, "snapshot.get:v1", {})) as {
+			presentation?: { mediaId?: string };
+		};
+		expect(snapshot.presentation?.mediaId).toBeUndefined();
+		const response = (await data(runtime, "events.subscribe:v1", { afterSeq: 0 })) as {
+			events: Array<{ kind: string; payload: unknown }>;
+		};
+		expect(response.events).toContainEqual(
+			expect.objectContaining({
+				kind: "roleplay.media_dismissed",
+				payload: { conversationId: conversation.id, mediaId: "continuity_light" },
+			}),
+		);
+	});
+
 	it("rejects run and attachment operations for unknown ownership", async () => {
 		const runtime = makeRuntime();
 		await runtime.start();

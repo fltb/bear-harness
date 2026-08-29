@@ -78,9 +78,12 @@ for (const entry of readdirSync(characterRoot, { withFileTypes: true })) {
 		const source = readFileSync(file, "utf8");
 		const frontmatter = source.match(/^---\n([\s\S]*?)\n---/)?.[1];
 		const metadata = frontmatter ? parse(frontmatter) : {};
-		for (const tool of String(metadata["allowed-tools"] ?? "")
-			.split(/\s+/)
-			.filter(Boolean))
+		const declaredTools = Array.isArray(metadata["allowed-tools"])
+			? metadata["allowed-tools"]
+			: String(metadata["allowed-tools"] ?? "")
+					.split(/\s+/)
+					.filter(Boolean);
+		for (const tool of declaredTools)
 			if (!allowedHostTools.has(tool)) failures.push(`${file}: undeclared Host tool ${tool}`);
 	}
 }

@@ -29,6 +29,7 @@ interface BehaviorFixture {
 	db: Database;
 	eventBus: EventBus;
 	behavior: CharacterBehaviorService;
+	characterState: CharacterStateService;
 	/** Native Pi session used to derive turn lifecycle projections. */
 	store: PiSessionStore;
 	/** Append a native user message and return its SessionManager entry id. */
@@ -91,7 +92,16 @@ function createFixture(
 		characterState,
 		() => ({ sessionId: store.sessionId, sessionManager: store.sessionManager }),
 	);
-	return { db: database, eventBus, behavior, store, appendUser, appendAssistant, publishChanged };
+	return {
+		db: database,
+		eventBus,
+		behavior,
+		characterState,
+		store,
+		appendUser,
+		appendAssistant,
+		publishChanged,
+	};
 }
 
 describe("CharacterBehaviorService", () => {
@@ -158,6 +168,98 @@ describe("CharacterBehaviorService", () => {
 				args: { action: "read" },
 			}),
 		).toMatchObject({ state: { visualState: "calm" } });
+	});
+
+	it("does not settle staged effects on intermediate Pi tool-use assistant entries", () => {
+		const fixture = createFixture();
+		fixtures.push(fixture);
+		const character = new CharacterLoader(characterRoot).load("jizhou");
+		if (!character) throw new Error("missing default character");
+		const roleplay = new RoleplayService(fixture.db.orm);
+		const userEntryId = fixture.appendUser("打开剧情入口");
+		fixture.publishChanged();
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				piSessionId: fixture.store.sessionId,
+				triggerEntryId: userEntryId,
+				toolCallId: "choices-after-tool-use",
+				tool: "host_present",
+				args: { action: "present_choices", choiceSetId: "undelivered_entry" },
+			}),
+		).toMatchObject({ ok: true });
+		fixture.appendAssistant("calling a tool", "toolUse");
+		fixture.publishChanged();
+		expect(roleplay.presentation(character, "conversation-1").choiceSetId).toBeUndefined();
+		fixture.appendAssistant("入口已经准备好。", "stop");
+		fixture.publishChanged();
+		expect(roleplay.presentation(character, "conversation-1").choiceSetId).toBe(
+			"undelivered_entry",
+		);
+	});
+
+	it("uses pending story state for same-turn CG gates and never duplicates a staged CG", () => {
+		const fixture = createFixture();
+		fixtures.push(fixture);
+		const character = new CharacterLoader(characterRoot).load("jizhou");
+		if (!character) throw new Error("missing default character");
+		fixture.behavior.triggerUserRoleplayEvent({
+			conversationId: "conversation-1",
+			eventId: "story_enter",
+			dedupeKey: "story-enter",
+		});
+		const userEntryId = fixture.appendUser("检查现有的损坏信号。");
+		fixture.publishChanged();
+		fixture.characterState.stage({
+			companionId: character.id,
+			conversationId: "conversation-1",
+			piSessionId: fixture.store.sessionId,
+			sourceUserEntryId: userEntryId,
+			definition: character.state,
+			operations: [
+				{ path: "story.undelivered_report.phase", op: "set", value: "signal_examined" },
+				{ path: "story.undelivered_report.position", op: "set", value: "evidence" },
+				{ path: "narrative.frame", op: "set", value: "archive_record" },
+				{ path: "narrative.location", op: "set", value: "quiet_terminal" },
+				{ path: "narrative.time_anchor", op: "set", value: "damaged_signal_record" },
+				{ path: "narrative.evidence_mode", op: "set", value: "direct_record" },
+			],
+			reason: "The user asked to inspect the existing signal record.",
+			skillId: "undelivered-report",
+			evidence: { source: "current_user", quote: "检查现有的损坏信号。" },
+		});
+		const call = {
+			conversationId: "conversation-1",
+			piSessionId: fixture.store.sessionId,
+			triggerEntryId: userEntryId,
+			toolCallId: "damaged-signal-media",
+			tool: "host_present",
+			args: { action: "present_media", mediaId: "damaged_signal" },
+		};
+		expect(fixture.behavior.invoke(call)).toMatchObject({
+			ok: true,
+			message: expect.stringContaining("staged"),
+		});
+		expect(fixture.behavior.invoke(call)).toMatchObject({
+			ok: true,
+			message: expect.stringContaining("already staged"),
+		});
+		expect(
+			new RoleplayService(fixture.db.orm).presentation(character, "conversation-1").mediaId,
+		).toBeUndefined();
+		fixture.characterState.commitTurn({
+			companionId: character.id,
+			conversationId: "conversation-1",
+			piSessionId: fixture.store.sessionId,
+			sourceUserEntryId: userEntryId,
+			assistantEntryId: "assistant-signal",
+			definition: character.state,
+		});
+		fixture.appendAssistant("记录已展开。", "stop");
+		fixture.publishChanged();
+		expect(
+			new RoleplayService(fixture.db.orm).presentation(character, "conversation-1"),
+		).toMatchObject({ mediaId: "damaged_signal", seenMediaIds: ["damaged_signal"] });
 	});
 
 	it("persists only package-declared Host scene and expression changes", () => {
@@ -524,6 +626,20 @@ describe("CharacterBehaviorService", () => {
 			values: { continuity_stage: 3 },
 			unlocked: ["continuity_record"],
 		});
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_present",
+				args: { action: "dismiss", presentationId: "continuity_light" },
+			}),
+		).toMatchObject({ ok: true });
+		expect(
+			fixture.behavior.invoke({
+				conversationId: "conversation-1",
+				tool: "host_present",
+				args: { action: "present_media", mediaId: "continuity_light" },
+			}),
+		).toMatchObject({ ok: false, code: "roleplay_media_already_seen" });
 	});
 
 	it("records native session provenance for user-triggered roleplay events", () => {

@@ -43,6 +43,7 @@
 	"devDependencies": {
 		"@babel/parser": "7.29.8",
 		"@biomejs/biome": "2.5.8",
+		"image-dimensions": "^2.5.1",
 		"knip": "^6.32.2",
 		"postcss": "8.5.26",
 		"yaml": "2.9.0"

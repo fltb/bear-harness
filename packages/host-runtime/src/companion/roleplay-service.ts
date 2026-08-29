@@ -71,8 +71,14 @@ export class RoleplayService {
 		character: CharacterPackage,
 		conversationId: string,
 		condition?: RoleplayCondition,
+		stateOverride?: Record<string, unknown>,
 	): boolean {
-		return !condition || evaluateCondition(condition, this.project(character, conversationId));
+		if (!condition) return true;
+		const projection = this.project(character, conversationId);
+		return evaluateCondition(condition, {
+			...projection,
+			state: stateOverride ?? projection.state,
+		});
 	}
 
 	/** Presentation is reconstructed from its persisted Host events, including dismissals. */
@@ -84,14 +90,17 @@ export class RoleplayService {
 		mediaId?: string;
 		ambientMediaId?: string;
 		choiceSetId?: string;
+		seenMediaIds: string[];
 	} {
-		if (!conversationId) return {};
+		if (!conversationId) return { seenMediaIds: [] };
 		const result: {
 			conversationId: string;
 			mediaId?: string;
 			ambientMediaId?: string;
 			choiceSetId?: string;
-		} = { conversationId };
+			seenMediaIds: string[];
+		} = { conversationId, seenMediaIds: [] };
+		const seenMediaIds = new Set<string>();
 		const rows = this.db
 			.select({ seq: events.seq, kind: events.kind, payload: events.payload })
 			.from(events)
@@ -113,6 +122,7 @@ export class RoleplayService {
 			if (!event) continue;
 			if (event.kind === "roleplay.media_presented") {
 				const media = character.roleplay.media.find((item) => item.id === event.payload.mediaId);
+				if (media) seenMediaIds.add(media.id);
 				if (media?.presentation === "ambient") result.ambientMediaId = media.id;
 				else if (media) result.mediaId = media.id;
 			} else if (event.kind === "roleplay.media_dismissed") {
@@ -123,6 +133,7 @@ export class RoleplayService {
 					result.choiceSetId = event.payload.choiceSetId;
 			} else if (event.kind === "roleplay.choices_dismissed") delete result.choiceSetId;
 		}
+		result.seenMediaIds = [...seenMediaIds];
 		return result;
 	}
 
@@ -243,7 +254,10 @@ function evaluateCondition(condition: RoleplayCondition, state: RoleplayProjecti
 	if ("unlocked" in condition) return state.unlocked.includes(condition.unlocked);
 	if ("state" in condition) {
 		const value = state.state[condition.state];
-		if ("equals" in condition) return Object.is(value, condition.equals);
+		if ("equals" in condition)
+			return Array.isArray(condition.equals)
+				? condition.equals.some((candidate) => Object.is(value, candidate))
+				: Object.is(value, condition.equals);
 		if (typeof value !== "number") return false;
 		if (condition.operator === "gt") return value > condition.value;
 		if (condition.operator === "gte") return value >= condition.value;

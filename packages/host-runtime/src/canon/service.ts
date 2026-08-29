@@ -226,18 +226,43 @@ export class CanonHubService {
 			includeAdjacent: false,
 		});
 		const service = this.embeddingService?.();
-		if (!service?.isReady())
-			return this.finalizeHybrid(lexical, limit, options.includeAdjacent, allowedPackageChunks);
+		if (!service?.isReady()) {
+			const finalized = this.finalizeHybrid(
+				lexical,
+				limit,
+				options.includeAdjacent,
+				allowedPackageChunks,
+			);
+			return finalized.length || !options.moduleId
+				? finalized
+				: this.moduleChunks(companionId, options.moduleId, limit, allowedPackageChunks);
+		}
 		let queryEmbedding: Float32Array;
 		try {
 			queryEmbedding = await service.embed(query.trim());
 		} catch {
-			return this.finalizeHybrid(lexical, limit, options.includeAdjacent, allowedPackageChunks);
+			const finalized = this.finalizeHybrid(
+				lexical,
+				limit,
+				options.includeAdjacent,
+				allowedPackageChunks,
+			);
+			return finalized.length || !options.moduleId
+				? finalized
+				: this.moduleChunks(companionId, options.moduleId, limit, allowedPackageChunks);
 		}
 		const aliases = this.matchAliases(companionId, query);
 		const routedChunkIds = this.routedChunkIds(companionId, query, aliases, options.moduleId);
 		if (!this.ensureVectorIndex(queryEmbedding.length)) {
-			return this.finalizeHybrid(lexical, limit, options.includeAdjacent, allowedPackageChunks);
+			const finalized = this.finalizeHybrid(
+				lexical,
+				limit,
+				options.includeAdjacent,
+				allowedPackageChunks,
+			);
+			return finalized.length || !options.moduleId
+				? finalized
+				: this.moduleChunks(companionId, options.moduleId, limit, allowedPackageChunks);
 		}
 		const vectorRows = this.vectors!.searchCanonVectors(queryEmbedding, Math.max(limit * 6, 48));
 		const candidates = this.db
@@ -281,12 +306,15 @@ export class CanonHubService {
 			const score = (current?.score ?? 0) + 1 / (60 + rank + 1);
 			fused.set(hit.row.id, { row: { ...hit.row, score: hit.score }, score });
 		}
-		return this.finalizeHybrid(
+		const finalized = this.finalizeHybrid(
 			[...fused.values()].sort((left, right) => right.score - left.score).map((hit) => hit.row),
 			limit,
 			options.includeAdjacent,
 			allowedPackageChunks,
 		);
+		return finalized.length || !options.moduleId
+			? finalized
+			: this.moduleChunks(companionId, options.moduleId, limit, allowedPackageChunks);
 	}
 
 	async searchHybrid(companionId: string, query: string, limit = 12): Promise<CanonChunkRecord[]> {
@@ -767,6 +795,43 @@ export class CanonHubService {
 		);
 	}
 
+	private moduleChunks(
+		companionId: string,
+		moduleId: string,
+		limit: number,
+		allowedPackageChunks?: ReadonlySet<string>,
+	): CanonChunkRecord[] {
+		const routed = this.routedChunkIds(companionId, "", [], moduleId);
+		if (!routed.size) return [];
+		return this.db
+			.select({
+				id: canonChunks.id,
+				sourceId: canonChunks.sourceId,
+				sourceName: canonSources.logicalName,
+				ordinal: canonChunks.ordinal,
+				content: canonChunks.content,
+				heading: canonChunks.heading,
+				startOffset: canonChunks.startOffset,
+				endOffset: canonChunks.endOffset,
+				language: canonSources.language,
+				origin: canonSources.origin,
+			})
+			.from(canonChunks)
+			.innerJoin(canonSources, eq(canonSources.id, canonChunks.sourceId))
+			.where(eq(canonSources.companionId, companionId))
+			.orderBy(canonSources.logicalName, canonChunks.ordinal)
+			.all()
+			.filter(
+				(row) =>
+					routed.has(row.id) &&
+					(row.origin !== "package" ||
+						allowedPackageChunks === undefined ||
+						allowedPackageChunks.has(row.id)),
+			)
+			.slice(0, limit)
+			.map(toChunkRecord);
+	}
+
 	private expandAdjacent(
 		ranked: CanonChunkRecord[],
 		limit: number,
@@ -823,20 +888,37 @@ function splitCanon(content: string): Array<{ content: string; heading: string |
 	const chunks: Array<{ content: string; heading: string | null }> = [];
 	let current = "";
 	let heading: string | null = null;
+	const flush = () => {
+		if (!current) return;
+		chunks.push({ content: current, heading });
+		current = "";
+	};
 	for (const paragraph of paragraphs) {
-		const headingMatch = paragraph.match(/^(?:#{1,6}\s+(.+)|((?:第.{1,20}[章幕篇部卷]).*))$/);
-		if (headingMatch) heading = (headingMatch[1] ?? headingMatch[2] ?? paragraph).trim();
+		const markdownHeading = paragraph.match(/^(#{1,6})\s+(.+)$/);
+		const proseHeading = paragraph.match(/^((?:第.{1,20}[章幕篇部卷]).*)$/);
+		const startsBoundSection =
+			(markdownHeading !== null && (markdownHeading[1]?.length ?? 0) <= 2) || proseHeading !== null;
+		if (startsBoundSection) {
+			// A manifest binding names a semantic section, so never let a chunk
+			// straddle two top-level sections. H3+ subsections remain part of
+			// their H1/H2 chapter so a chapter binding receives its actual body.
+			// The old order changed `heading` before flushing and mislabeled the
+			// preceding text as the next section.
+			flush();
+			heading = (markdownHeading?.[2] ?? proseHeading?.[1] ?? paragraph).trim();
+		}
 		if (current && current.length + paragraph.length + 2 > MAX_CHUNK_CHARS) {
-			chunks.push({ content: current, heading });
-			current = "";
+			flush();
 		}
 		if (paragraph.length <= MAX_CHUNK_CHARS)
 			current = current ? `${current}\n\n${paragraph}` : paragraph;
-		else
+		else {
+			flush();
 			for (let offset = 0; offset < paragraph.length; offset += MAX_CHUNK_CHARS)
 				chunks.push({ content: paragraph.slice(offset, offset + MAX_CHUNK_CHARS), heading });
+		}
 	}
-	if (current) chunks.push({ content: current, heading });
+	flush();
 	return chunks;
 }
 

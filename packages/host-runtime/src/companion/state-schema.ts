@@ -34,6 +34,10 @@ const StateField = z
 		initial: z.union([StateValue, z.array(z.string().max(4096)).max(100)]),
 		model_readable: z.boolean().default(true),
 		write_authority: StateWriteAuthority,
+		deterministic_authorities: z
+			.array(z.enum(["host_event", "user_choice"]))
+			.max(2)
+			.default([]),
 		operations: z.array(StateOperationName).max(6).default([]),
 		description: z.string().min(1).max(2000),
 		value_meanings: z.record(z.string().min(1).max(128), z.string().min(1).max(1000)).default({}),
@@ -73,6 +77,12 @@ const StateField = z
 				code: "custom",
 				path: ["operations"],
 				message: "read-only field cannot allow operations",
+			});
+		if (field.write_authority === "readonly" && field.deterministic_authorities.length > 0)
+			context.addIssue({
+				code: "custom",
+				path: ["deterministic_authorities"],
+				message: "read-only field cannot allow deterministic event writes",
 			});
 		if ((field.minimum !== undefined || field.maximum !== undefined) && field.type !== "number")
 			context.addIssue({
