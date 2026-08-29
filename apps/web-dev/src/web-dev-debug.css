@@ -1,17 +1,43 @@
 .web-dev-debug-toggle {
 	position: fixed;
-	right: 22px;
-	bottom: 22px;
+	left: calc(22vw + 12px);
+	bottom: 12px;
 	z-index: 40;
-	border: 1px solid #8bd0bb;
+	border: 1px solid rgba(139, 208, 187, 0.38);
 	border-radius: 999px;
-	background: #102a31;
-	color: #e8f2ee;
-	padding: 8px 12px;
+	background: rgba(16, 42, 49, 0.78);
+	color: #b9ccc6;
+	padding: 6px 9px;
+	opacity: 0.58;
 	font:
 		600 12px / 1 "Avenir Next",
 		"PingFang SC",
 		sans-serif;
+}
+
+.web-dev-debug-toggle:hover,
+.web-dev-debug-toggle:focus-visible {
+	opacity: 1;
+	border-color: #8bd0bb;
+	color: #e8f2ee;
+}
+
+@media (max-width: 767px) {
+	.web-dev-debug-toggle {
+		left: 50%;
+		top: 14px;
+		bottom: auto;
+		width: 28px;
+		height: 28px;
+		padding: 0;
+		font-size: 0;
+		transform: translateX(-50%);
+	}
+
+	.web-dev-debug-toggle::after {
+		content: "D";
+		font-size: 10px;
+	}
 }
 
 .web-dev-debug-panel {

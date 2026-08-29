@@ -4,6 +4,7 @@
 		"packages/companion-ui/src/styles/base.css",
 		"packages/companion-ui/src/styles/interaction.css",
 		"packages/companion-ui/src/styles/layout.css",
+		"packages/companion-ui/src/styles/refinement.css",
 		"packages/companion-ui/src/styles/settings.css",
 		"packages/companion-ui/src/styles/shell.css",
 		"packages/companion-ui/src/styles/thread.css",
@@ -11,6 +12,7 @@
 	],
 	"layoutStyleSheet": "packages/companion-ui/src/styles/layout.css",
 	"tokenStyleSheet": "packages/companion-ui/src/styles/base.css",
+	"headlessPrimitiveFacade": "packages/companion-ui/src/ui/primitives.ts",
 	"inlineStyleAllowlist": [
 		"packages/companion-ui/src/App.tsx:workflow.themeStyle()",
 		"packages/companion-ui/src/CharacterPresence.tsx:presenceStyle(asset)"

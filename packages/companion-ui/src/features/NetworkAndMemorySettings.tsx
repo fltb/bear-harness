@@ -1,12 +1,10 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { Button } from "@kobalte/core/button";
-import { Select } from "@kobalte/core/select";
-import { TextField } from "@kobalte/core/text-field";
 import { Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { createStableSnapshot } from "../lib/stable-snapshot.js";
 import { useCompanionStore } from "../stores/companion.js";
 import { createNetworkMemoryWorkflow } from "../stores/setup-workflows.js";
+import { Button, Select, TextField } from "../ui/primitives.js";
 import { EmbeddingSettings } from "./EmbeddingSettings.js";
 
 /**

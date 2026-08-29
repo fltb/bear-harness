@@ -190,7 +190,9 @@ export function createShellWorkflowStore(input: {
 
 	const activeRuns = createMemo(() =>
 		(store.runs ?? []).filter(
-			(run) => run.status === "enqueued" || run.status === "running" || run.status === "needs_user",
+			(run) =>
+				run.conversationId === store.activeConversationId &&
+				(run.status === "enqueued" || run.status === "running" || run.status === "needs_user"),
 		),
 	);
 	const runGroups = createMemo(() => {

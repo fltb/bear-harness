@@ -275,7 +275,7 @@
 }
 
 .queue-pop {
-	@apply absolute right-0 top-full z-70 mt-2 w-72 rounded-xl p-3;
+	@apply absolute right-0 top-full z-70 mt-2 grid w-80 gap-2 rounded-xl p-3;
 	border: 1px solid var(--line);
 	background: var(--surface-panel);
 	box-shadow: var(--shadow-app);
@@ -286,23 +286,25 @@
 	color: var(--text-strong);
 }
 
-.queue-pop .run {
-	@apply grid gap-1 rounded-xl p-3;
+.queue-pop .action-proposal {
+	@apply grid w-full max-w-none gap-1 rounded-xl border p-3;
+	border-color: var(--line-soft);
 	background: var(--surface-success);
 }
 
-.queue-pop .run + .run {
-	@apply mt-2;
+.queue-pop .action-proposal h3 {
+	@apply m-0 text-xs;
 }
 
-.queue-pop .run strong {
-	@apply text-xs;
-	color: var(--text-strong);
+.queue-pop .run-controls > button,
+.queue-pop .work-actions button {
+	@apply min-h-9 w-full rounded-lg border px-2 text-xs;
+	border-color: var(--line-soft);
+	background: var(--surface-panel);
 }
 
-.queue-pop .run span {
-	@apply text-xs;
-	color: var(--text-muted);
+.queue-pop .steer-row {
+	@apply mt-2 grid gap-2;
 }
 
 .queue-pop .empty {

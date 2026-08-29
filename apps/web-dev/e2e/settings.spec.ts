@@ -122,12 +122,12 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	const backstage = page.getByRole("dialog", { name: zhCN.sidebar.systemSettings });
 	await expect(backstage).toBeVisible();
 	const settingsPanel = backstage;
-	await expect(
-		settingsPanel.getByText(zhCN.settings.systemModelSettings, { exact: true }),
-	).toBeVisible();
-	await settingsPanel
-		.getByRole("button", { name: zhCN.settings.systemModelSettings, exact: true })
-		.click();
+	const systemModelSettingsNavigation = settingsPanel.getByRole("button", {
+		name: zhCN.settings.systemModelSettings,
+		exact: true,
+	});
+	await expect(systemModelSettingsNavigation).toBeVisible();
+	await systemModelSettingsNavigation.click();
 	await expect(
 		settingsPanel.getByRole("region", { name: zhCN.settings.providerSetupLabel }),
 	).toBeVisible();
@@ -258,6 +258,9 @@ test("bottom actions open distinct character and system settings destinations", 
 	backstage = page.getByRole("dialog", { name: zhCN.sidebar.systemSettings });
 	await expect(backstage).toBeVisible();
 	await expect(
-		backstage.getByText(zhCN.settings.systemModelSettings, { exact: true }),
+		backstage.getByRole("button", {
+			name: zhCN.settings.systemModelSettings,
+			exact: true,
+		}),
 	).toBeVisible();
 });

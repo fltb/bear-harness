@@ -1,5 +1,5 @@
-import { Button } from "@kobalte/core/button";
 import { Show } from "solid-js";
+import { Button } from "../ui/primitives.js";
 
 /** Transport- and model-independent download presentation; the caller owns the task. */
 export function DownloadProgress(props: {

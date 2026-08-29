@@ -167,7 +167,9 @@ describe("shell visual and thread head contracts", () => {
 	it("shows an explicit empty state when no work is running", async () => {
 		const user = userEvent.setup();
 		render(() => (
-			<DesktopProvider store={{ runs: [] } as CompanionStore}>
+			<DesktopProvider
+				store={{ activeConversationId: "conversation-1", runs: [] } as CompanionStore}
+			>
 				<ThreadHead sceneTitle="Idle" />
 			</DesktopProvider>
 		));
@@ -185,6 +187,7 @@ describe("shell visual and thread head contracts", () => {
 	it("opens the active-run menu, maps status text, and closes with Escape", async () => {
 		const user = userEvent.setup();
 		const store = {
+			activeConversationId: "conversation-1",
 			runs: [
 				{
 					id: "run-1",
@@ -213,11 +216,11 @@ describe("shell visual and thread head contracts", () => {
 		expect(screen.getByRole("heading", { name: "Scene title" })).toBeVisible();
 		const queueButton = screen.getByRole("button", { name: /1/ });
 		await user.click(queueButton);
-		const menu = screen.getByRole("menu", { name: zhCN.threadHead.runningWork });
-		expect(menu).toHaveTextContent(zhCN.work.timeline.runStatuses.needs_user);
-		expect(menu).toHaveTextContent(zhCN.threadHead.recentWork);
-		expect(menu).toHaveTextContent("Completed run");
-		expect(menu).toHaveTextContent(zhCN.work.timeline.runStatuses.completed);
+		const workMenu = screen.getByRole("menu", { name: zhCN.threadHead.runningWork });
+		expect(workMenu).toHaveTextContent(zhCN.work.timeline.runStatuses.needs_user);
+		expect(workMenu).toHaveTextContent(zhCN.threadHead.recentWork);
+		expect(workMenu).toHaveTextContent("Completed run");
+		expect(workMenu).toHaveTextContent(zhCN.work.timeline.runStatuses.completed);
 		await user.keyboard("{Escape}");
 		expect(
 			screen.queryByRole("menu", { name: zhCN.threadHead.runningWork }),

@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, type Page, test } from "playwright/test";
 
 const providerUrl = `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}`;
@@ -183,9 +184,33 @@ test("presented role choices send ordinary messages and advance generic schema s
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("E2E_MANUAL_ROLE_CONTINUE_DONE");
+	await expect
+		.poll(async () => {
+			const snapshot = await rpc<{
+				presentation?: { conversationId?: string; choiceSetId?: string };
+			}>(page, bootstrap.token, "snapshot.get:v1", {});
+			return snapshot.presentation?.conversationId === conversationId
+				? snapshot.presentation.choiceSetId
+				: undefined;
+		})
+		.toBe("continuity_response");
 
 	const choice = page.getByRole("button", { name: /我听见了/ });
 	await expect(choice).toBeVisible();
+	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
+	await expect
+		.poll(async () => {
+			const [threadBox, choiceBox] = await Promise.all([
+				thread.boundingBox(),
+				choice.boundingBox(),
+			]);
+			if (!threadBox || !choiceBox) return false;
+			return (
+				choiceBox.y >= threadBox.y &&
+				choiceBox.y + choiceBox.height <= threadBox.y + threadBox.height
+			);
+		})
+		.toBe(true);
 	await choice.click();
 	await expect(choice).toBeHidden();
 	await expect

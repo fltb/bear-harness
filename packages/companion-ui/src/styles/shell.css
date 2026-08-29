@@ -94,30 +94,6 @@
 	scrollbar-color: var(--scroll-thumb) transparent;
 }
 
-.conversation-view-tabs {
-	@apply m-0 mb-2 grid grid-cols-2 gap-1 rounded-lg border-0 p-1;
-	background: var(--surface-subtle);
-}
-
-.conversation-view-tabs button {
-	@apply min-h-7 cursor-pointer rounded-md border-0 px-2 text-xs;
-	background: transparent;
-	color: var(--text-muted);
-}
-
-.conversation-view-tabs button[aria-pressed="true"] {
-	background: var(--surface-alt);
-	color: var(--text-strong);
-}
-
-.archived-conversation {
-	@apply pr-16;
-}
-
-.archived-actions {
-	@apply opacity-100;
-}
-
 .nav-scroll::-webkit-scrollbar {
 	@apply w-2;
 }

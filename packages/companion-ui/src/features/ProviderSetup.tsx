@@ -1,13 +1,10 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { Button } from "@kobalte/core/button";
-import { Root as Link } from "@kobalte/core/link";
-import { Select } from "@kobalte/core/select";
-import { TextField } from "@kobalte/core/text-field";
 import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { createStableSnapshot } from "../lib/stable-snapshot.js";
 import { useCompanionStore } from "../stores/companion.js";
 import type { ProviderInfo, ProviderLoginResult } from "../stores/ipc.js";
+import { Button, Link, Select, TextField } from "../ui/primitives.js";
 
 type PresentationProps = {
 	class?: string;

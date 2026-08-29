@@ -1,10 +1,9 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { Select } from "@kobalte/core/select";
-import { TextField } from "@kobalte/core/text-field";
 import { createMemo, createSignal, Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { createStableSnapshot } from "../lib/stable-snapshot.js";
 import type { ConfiguredModel } from "../stores/ipc.js";
+import { Select, TextField } from "../ui/primitives.js";
 
 export function modelRouteKey(model: Pick<ConfiguredModel, "providerId" | "modelId">): string {
 	return `${model.providerId}\u0000${model.modelId}`;

@@ -15,6 +15,7 @@ const failures = [];
 const definedClasses = new Set();
 const usedClasses = [];
 const inlineAllowlist = new Set(policy.inlineStyleAllowlist);
+const headlessPrimitiveFacade = policy.headlessPrimitiveFacade;
 
 function report(file, line, message) {
 	failures.push(`${normalize(file)}:${line ?? 1} ${message}`);
@@ -83,6 +84,18 @@ for await (const file of glob("packages/companion-ui/src/**/*.{ts,tsx}", { cwd: 
 	const ast = parse(source, { sourceType: "module", plugins: ["typescript", "jsx"] });
 	const visit = (node) => {
 		if (!node || typeof node !== "object") return;
+		if (
+			node.type === "ImportDeclaration" &&
+			typeof node.source?.value === "string" &&
+			node.source.value.startsWith("@kobalte/core/") &&
+			file !== headlessPrimitiveFacade
+		) {
+			report(
+				absolute,
+				node.loc?.start.line,
+				"headless primitives must be imported through the product UI facade",
+			);
+		}
 		if (node.type === "JSXAttribute" && node.name?.name === "class") {
 			const value =
 				node.value?.type === "JSXExpressionContainer" ? node.value.expression : node.value;

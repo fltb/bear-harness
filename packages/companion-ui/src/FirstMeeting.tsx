@@ -1,7 +1,4 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { Button } from "@kobalte/core/button";
-import { Dialog } from "@kobalte/core/dialog";
-import { TextField } from "@kobalte/core/text-field";
 import { createMemo, For, Show } from "solid-js";
 import { EmbeddingSettings } from "./features/EmbeddingSettings.js";
 import { ModelSelector } from "./features/ModelSelector.js";
@@ -9,6 +6,7 @@ import { ProviderSetup } from "./features/ProviderSetup.js";
 import type { CharacterOnboardingStep } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
 import { createFirstMeetingWorkflow } from "./stores/setup-workflows.js";
+import { Button, Dialog, TextField } from "./ui/primitives.js";
 
 /** First-run gates: provider membership → reply/image models → embedding → role onboarding. */
 export function FirstMeeting() {

@@ -6,31 +6,38 @@ import {
 	useLanguage,
 	useTranslation,
 } from "@bear-harness/i18n";
-import { Button } from "@kobalte/core/button";
-import { Select } from "@kobalte/core/select";
 import { createSignal, For, Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
+import { Button, Select } from "../ui/primitives.js";
+import { ArchivedConversationSettings } from "./ArchivedConversationSettings.js";
 import { ConversationModelSettings } from "./ConversationModelSettings.js";
 import { ExternalAgentSettings } from "./ExternalAgentSettings.js";
 import { NetworkAndMemorySettings } from "./NetworkAndMemorySettings.js";
 import { SystemModelSettings } from "./SystemModelSettings.js";
+
+type SettingsPage =
+	| "general"
+	| "conversation"
+	| "archived"
+	| "providers"
+	| "agents"
+	| "network"
+	| "memory";
 
 export function SettingsSheet() {
 	const [t] = useTranslation(undefined, { i18n });
 	const [currentLocale] = useLanguage(() => i18n);
 	const [saving, setSaving] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
-	type SettingsPage = "general" | "conversation" | "providers" | "agents" | "network";
 	const [page, setPage] = createSignal<SettingsPage>("conversation");
 	const pages = () => [
 		{ id: "general" as const, label: t("settings.language") },
 		{ id: "conversation" as const, label: t("settings.conversationModelSettings") },
+		{ id: "archived" as const, label: t("sidebar.archivedConversations") },
 		{ id: "providers" as const, label: t("settings.systemModelSettings") },
 		{ id: "agents" as const, label: t("settings.workAgent") },
-		{
-			id: "network" as const,
-			label: `${t("settings.networkSection")} / ${t("settings.memoryVectorSection")}`,
-		},
+		{ id: "network" as const, label: t("settings.networkSection") },
+		{ id: "memory" as const, label: t("settings.memoryVectorSection") },
 	];
 
 	const changeLocale = async (locale: ProductLocale): Promise<void> => {
@@ -49,6 +56,31 @@ export function SettingsSheet() {
 		<div class="settings-workbench">
 			<nav class="settings-navigation" aria-label={t("sidebar.systemSettings")}>
 				<p class="drawer-note">{t("settings.note")}</p>
+				<Select<SettingsPage>
+					options={pages().map((item) => item.id)}
+					value={page()}
+					optionTextValue={(id) => pages().find((item) => item.id === id)?.label ?? id}
+					onChange={(nextPage) => nextPage && setPage(nextPage)}
+					itemComponent={(itemProps) => (
+						<Select.Item item={itemProps.item} class="select-item">
+							<Select.ItemLabel>
+								{pages().find((item) => item.id === itemProps.item.rawValue)?.label}
+							</Select.ItemLabel>
+						</Select.Item>
+					)}
+					class="settings-mobile-picker"
+				>
+					<Select.Trigger class="select-trigger" aria-label={t("sidebar.systemSettings")}>
+						<Select.Value<SettingsPage> class="select-value">
+							{(state) => pages().find((item) => item.id === state.selectedOption())?.label}
+						</Select.Value>
+					</Select.Trigger>
+					<Select.Portal ref={markSelectPortalTopLayer}>
+						<Select.Content class="select-content">
+							<Select.Listbox class="select-listbox" />
+						</Select.Content>
+					</Select.Portal>
+				</Select>
 				<div class="settings-navigation-list">
 					<For each={pages()}>
 						{(item) => (
@@ -113,6 +145,9 @@ export function SettingsSheet() {
 				<Show when={page() === "conversation"}>
 					<ConversationModelSettings />
 				</Show>
+				<Show when={page() === "archived"}>
+					<ArchivedConversationSettings />
+				</Show>
 				<Show when={page() === "providers"}>
 					<SystemModelSettings />
 				</Show>
@@ -120,7 +155,10 @@ export function SettingsSheet() {
 					<ExternalAgentSettings />
 				</Show>
 				<Show when={page() === "network"}>
-					<NetworkAndMemorySettings />
+					<NetworkAndMemorySettings section="network" />
+				</Show>
+				<Show when={page() === "memory"}>
+					<NetworkAndMemorySettings section="memory" />
 				</Show>
 			</div>
 		</div>

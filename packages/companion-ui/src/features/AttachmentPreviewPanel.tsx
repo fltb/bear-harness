@@ -1,6 +1,5 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import type { ConversationAttachmentSummary } from "@bear-harness/protocol";
-import { Button } from "@kobalte/core/button";
 import {
 	createContext,
 	createMemo,
@@ -12,6 +11,7 @@ import {
 	useContext,
 } from "solid-js";
 import { useCompanionStore } from "../stores/companion.js";
+import { Button } from "../ui/primitives.js";
 
 type PreviewEntry = {
 	relativePath: string;

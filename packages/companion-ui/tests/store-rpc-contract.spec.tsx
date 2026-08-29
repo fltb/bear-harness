@@ -1115,6 +1115,52 @@ describe("store RPC contract", () => {
 			dispose();
 		}
 	});
+	it("performs a trailing Host snapshot read for presentation wake-ups", async () => {
+		const { client } = createTestClient();
+		let snapshotReads = 0;
+		client.snapshot.get = vi.fn(() => {
+			snapshotReads += 1;
+			return Promise.resolve({
+				ok: true as const,
+				data: {
+					eventSeq: snapshotReads === 1 ? 0 : 1,
+					presentation: {
+						companionState: "running" as const,
+						permissions: [],
+						conversationId: "conversation-1",
+						...(snapshotReads >= 3 ? { choiceSetId: "choices-1" } : {}),
+					},
+					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
+				},
+			});
+		});
+		seedActiveConversation(client, hostProjection("conversation-1"));
+		let subscription = 0;
+		client.events.subscribe = vi.fn(() => {
+			subscription += 1;
+			if (subscription > 1) return new Promise<never>(() => undefined);
+			return Promise.resolve({
+				ok: true as const,
+				data: {
+					events: [
+						{
+							seq: 1,
+							kind: "roleplay.choices_presented" as const,
+							payload: { conversationId: "conversation-1", choiceSetId: "choices-1" },
+						},
+					],
+				},
+			});
+		});
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.events.lastSeq()).toBe(1));
+			await waitFor(() => expect(snapshotReads).toBeGreaterThanOrEqual(3));
+			await waitFor(() => expect(store.activeRoleplayChoiceSetId).toBe("choices-1"));
+		} finally {
+			dispose();
+		}
+	});
 	it("projects the Pi live state and native session id from the active projection", async () => {
 		const { client } = createTestClient();
 		const entries = [

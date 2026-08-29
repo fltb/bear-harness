@@ -2,7 +2,6 @@ import type { CompanionClient } from "@bear-harness/companion-client";
 import { I18nextProvider, i18n, useLanguage, useTranslation } from "@bear-harness/i18n";
 import type { ProductConfig } from "@bear-harness/product-config";
 import { faBars } from "@fortawesome/free-solid-svg-icons";
-import { Button } from "@kobalte/core/button";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { createMemo, createSignal, type JSX, onCleanup, onMount, Show } from "solid-js";
 import { CharacterPresence, type CharacterPresenceLayoutMode } from "./CharacterPresence";
@@ -21,6 +20,8 @@ import {
 	ShellWorkflowProvider,
 	useShellWorkflowStore,
 } from "./stores/shell-workflows.js";
+import { Button } from "./ui/primitives.js";
+import { PermissionLayer } from "./WorkPanel.js";
 
 export type AppLayoutMode = "mobile" | "window" | "fullscreen";
 
@@ -31,7 +32,7 @@ export const CANONICAL_LAYOUT_VIEWPORTS = {
 	fullscreen: { width: 1920, height: 1080 },
 } as const;
 
-export const MOBILE_LAYOUT_MAX_WIDTH = 1099;
+export const MOBILE_LAYOUT_MAX_WIDTH = 767;
 export const FULLSCREEN_LAYOUT_MIN_WIDTH = 1600;
 
 export function layoutModeForWidth(width: number): AppLayoutMode {
@@ -192,6 +193,7 @@ function DesktopFrame() {
 							placeholder={workflow.composerPlaceholder()}
 							onOpenModelSettings={() => openBackstage("settings")}
 						/>
+						<PermissionLayer />
 						<FirstMeeting />
 					</main>
 				</AttachmentPreviewProvider>

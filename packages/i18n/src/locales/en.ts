@@ -125,8 +125,6 @@ export const en = {
 		search: "Search",
 		newConversation: "New conversation",
 		conversations: "Conversations",
-		conversationView: "Conversation view",
-		activeConversations: "Current",
 		archivedConversations: "Archived",
 		emptyConversations: "No conversations yet. Use + in the upper-right to begin.",
 		emptyArchivedConversations: "No archived conversations.",
@@ -348,6 +346,8 @@ export const en = {
 		candidateScope: "Scope",
 	},
 	settings: {
+		archivedConversationsHint:
+			"Archived conversations stay out of the sidebar. Restore or permanently delete them here.",
 		workAgent: "Work agent",
 		workAgentHint:
 			"Manage work agents that can receive delegated file tasks in conversations. Built-in Pi needs no login; Codex is an optional external agent.",
@@ -361,6 +361,8 @@ export const en = {
 		codexLoginDirectoryPlaceholder: "/Users/your-name/.codex",
 		codexNotFound: "No compatible Codex command line was found. Install a supported version first.",
 		codexUnknownVersion: "Unknown version",
+		codexInstallation: "Codex installation",
+		diagnosticDetails: "Diagnostic details",
 		codexCandidateUsable: "Compatible and ready to connect",
 		codexCandidateVersionMismatch: "Incompatible version; cannot connect",
 		codexCandidateRejected: "This installation could not be verified",

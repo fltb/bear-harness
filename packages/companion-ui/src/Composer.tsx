@@ -6,15 +6,13 @@ import {
 	faPaperclip,
 	faStop,
 } from "@fortawesome/free-solid-svg-icons";
-import { Button } from "@kobalte/core/button";
-import { FileField } from "@kobalte/core/file-field";
-import { TextField } from "@kobalte/core/text-field";
 import { createMutation } from "@tanstack/solid-query";
 import { createSignal, For, Show } from "solid-js";
 import { ModelSelector } from "./features/ModelSelector.js";
 import { Icon } from "./Icon.js";
 import { useCompanionStore } from "./stores/companion.js";
 import { useConversationWorkflow } from "./stores/conversation-workflows.js";
+import { Button, FileField, TextField } from "./ui/primitives.js";
 
 type Summary = {
 	id: string;
@@ -207,6 +205,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 	return (
 		<form
 			class="composer"
+			aria-label={t("composer.messageInputLabel")}
 			data-drag-active={dragging() ? "true" : undefined}
 			onSubmit={(event) => {
 				event.preventDefault();

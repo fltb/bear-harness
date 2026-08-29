@@ -1,18 +1,18 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import type { ConversationAttachmentSummary, PiTimelineEntry } from "@bear-harness/protocol";
-import { Button } from "@kobalte/core/button";
-import { Dialog } from "@kobalte/core/dialog";
-import { TextField } from "@kobalte/core/text-field";
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { useAttachmentPreview } from "./features/AttachmentPreviewPanel.js";
 import { followTimelineScroll } from "./lib/dom-effects.js";
 import type { CharacterDisplay } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
 import { useConversationViewWorkflow } from "./stores/conversation-workflows.js";
+import type { RunInfo } from "./stores/ipc.js";
 import { ThreadHead } from "./ThreadHead.js";
-import { WorkTimelineItem } from "./WorkPanel.js";
+import { Button, Dialog, TextField } from "./ui/primitives.js";
 
 /** ConversationPanel renders the active Pi timeline plus transient stream state. */
+
+type AssistantTimelineEntry = Extract<PiTimelineEntry, { kind: "message"; role: "assistant" }>;
 
 function TimelineAttachmentRows(props: { attachments?: ConversationAttachmentSummary[] }) {
 	const [t] = useTranslation(undefined, { i18n });
@@ -50,7 +50,30 @@ function TimelineAttachmentRows(props: { attachments?: ConversationAttachmentSum
 	);
 }
 
-function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
+function resultRunForEntry(entry: PiTimelineEntry, runs: readonly RunInfo[]): RunInfo | undefined {
+	if (
+		entry.kind !== "message" ||
+		entry.role !== "assistant" ||
+		!entry.attachments?.some((attachment) => attachment.kind === "generated")
+	)
+		return undefined;
+	const entryTime = Date.parse(entry.timestamp);
+	return runs
+		.filter(
+			(run) =>
+				run.status === "completed" &&
+				run.completedAt !== undefined &&
+				Date.parse(run.completedAt) <= entryTime,
+		)
+		.sort(
+			(left, right) => Date.parse(right.completedAt ?? "") - Date.parse(left.completedAt ?? ""),
+		)[0];
+}
+
+function PiTimelineEntryView(props: {
+	entry: PiTimelineEntry;
+	onOpenResult: (entryId: string) => void;
+}) {
 	const store = useCompanionStore();
 	const [t] = useTranslation(undefined, { i18n });
 	const [editing, setEditing] = createSignal(false);
@@ -115,6 +138,7 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 	const isUser = entry.role === "user";
 	const characterName = store.character?.name ?? "";
 	const assistant = entry.role === "assistant" ? entry : undefined;
+	const resultRun = createMemo(() => resultRunForEntry(entry, store.runs));
 	const failed = assistant?.stopReason === "error" || assistant?.stopReason === "aborted";
 	const errorText =
 		assistant?.stopReason === "aborted"
@@ -131,155 +155,209 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 		return null;
 	}
 	return (
-		<>
-			<article
-				class={`msg pi-timeline-message ${isUser ? "user" : "bear-msg"}${failed ? " stream-failed" : ""}`}
-				data-pi-entry-id={entry.id}
-				aria-label={isUser ? t("messages.you") : characterName}
-			>
-				<div class="msg-heading">
-					<div class="msg-meta">{isUser ? t("messages.you") : characterName}</div>
-					<Button
-						type="button"
-						class="msg-menu-trigger"
-						aria-label={t("messages.operations")}
-						aria-expanded={operationsOpen()}
-						onClick={() => setOperationsOpen((open) => !open)}
-					>
-						<span aria-hidden="true">•••</span>
-					</Button>
-				</div>
-				<Show when={entry.text !== undefined && entry.text.length > 0}>
-					<p>{entry.text}</p>
+		<div class="timeline-entry-row">
+			<Show when={!isUser && store.character !== undefined}>
+				<img
+					class="agent-message-avatar"
+					src={store.character?.visual.avatarUrl}
+					alt=""
+					aria-hidden="true"
+					draggable={false}
+				/>
+			</Show>
+			<div class={isUser ? "user-message-column" : "agent-message-column"}>
+				<Show when={!isUser}>
+					<span class="agent-message-name">{characterName}</span>
 				</Show>
-				<TimelineAttachmentRows attachments={entry.attachments} />
-				<Show when={failed && errorText !== undefined && errorText.length > 0}>
-					<span class="stream-error" role="alert">
-						{errorText}
-					</span>
-				</Show>
-				<Show when={editing() && isUser}>
-					<div class="message-inline-editor">
-						<TextField>
-							<TextField.TextArea
-								value={editText()}
-								onInput={(event) => setEditText(event.currentTarget.value)}
-								aria-label={t("messages.editLabel")}
-							/>
-						</TextField>
-						<p class="edit-branch-note">{t("messages.userEditBranchNote")}</p>
+				<article
+					class={`msg pi-timeline-message ${isUser ? "user" : "bear-msg"}${failed ? " stream-failed" : ""}`}
+					data-pi-entry-id={entry.id}
+					aria-label={isUser ? t("messages.you") : characterName}
+				>
+					<div class="msg-heading">
+						<Show when={isUser}>
+							<div class="msg-meta">{t("messages.you")}</div>
+						</Show>
 						<Button
 							type="button"
-							disabled={!editText().trim()}
-							onClick={() => {
-								void store.editMessage(entry.id, editText().trim());
-								setEditing(false);
-							}}
+							class="msg-menu-trigger"
+							aria-label={t("messages.operations")}
+							aria-expanded={operationsOpen()}
+							onClick={() => setOperationsOpen((open) => !open)}
 						>
-							{t("messages.save")}
-						</Button>
-						<Button type="button" onClick={() => setEditing(false)}>
-							{t("messages.cancel")}
+							<span aria-hidden="true">•••</span>
 						</Button>
 					</div>
-				</Show>
-				<Show when={correcting() && !isUser}>
-					<div class="message-correction-panel">
-						<strong>{store.character?.character.correction.reason_group_label}</strong>
-						<div class="message-correction-presets">
-							<For each={store.character?.character.correction.presets ?? []}>
-								{(preset) => (
-									<Button
-										type="button"
-										onClick={() => {
-											void store.correctMessage(entry.id, preset.id, correctionDetail());
-											setCorrecting(false);
-										}}
-									>
-										{preset.label}
-									</Button>
-								)}
-							</For>
+					<Show when={entry.text !== undefined && entry.text.length > 0}>
+						<p>{entry.text}</p>
+					</Show>
+					<TimelineAttachmentRows attachments={entry.attachments} />
+					<Show when={failed && errorText !== undefined && errorText.length > 0}>
+						<span class="stream-error" role="alert">
+							{errorText}
+						</span>
+					</Show>
+					<Show when={editing() && isUser}>
+						<div class="message-inline-editor">
+							<TextField>
+								<TextField.TextArea
+									value={editText()}
+									onInput={(event) => setEditText(event.currentTarget.value)}
+									aria-label={t("messages.editLabel")}
+								/>
+							</TextField>
+							<p class="edit-branch-note">{t("messages.userEditBranchNote")}</p>
+							<Button
+								type="button"
+								disabled={!editText().trim()}
+								onClick={() => {
+									void store.editMessage(entry.id, editText().trim());
+									setEditing(false);
+								}}
+							>
+								{t("messages.save")}
+							</Button>
+							<Button type="button" onClick={() => setEditing(false)}>
+								{t("messages.cancel")}
+							</Button>
 						</div>
-						<TextField>
-							<TextField.TextArea
-								value={correctionDetail()}
-								onInput={(event) => setCorrectionDetail(event.currentTarget.value)}
-								placeholder={store.character?.character.correction.custom_placeholder}
-								aria-label={store.character?.character.correction.custom_label}
-							/>
-						</TextField>
+					</Show>
+					<Show when={correcting() && !isUser}>
+						<div class="message-correction-panel">
+							<strong>{store.character?.character.correction.reason_group_label}</strong>
+							<div class="message-correction-presets">
+								<For each={store.character?.character.correction.presets ?? []}>
+									{(preset) => (
+										<Button
+											type="button"
+											onClick={() => {
+												void store.correctMessage(entry.id, preset.id, correctionDetail());
+												setCorrecting(false);
+											}}
+										>
+											{preset.label}
+										</Button>
+									)}
+								</For>
+							</div>
+							<TextField>
+								<TextField.TextArea
+									value={correctionDetail()}
+									onInput={(event) => setCorrectionDetail(event.currentTarget.value)}
+									placeholder={store.character?.character.correction.custom_placeholder}
+									aria-label={store.character?.character.correction.custom_label}
+								/>
+							</TextField>
+							<Button
+								type="button"
+								disabled={!correctionDetail().trim()}
+								onClick={() => {
+									void store.correctMessage(entry.id, "custom", correctionDetail());
+									setCorrecting(false);
+								}}
+							>
+								{store.character?.character.correction.custom_label}
+							</Button>
+							<Button type="button" onClick={() => setCorrecting(false)}>
+								{t("messages.cancel")}
+							</Button>
+						</div>
+					</Show>
+					<fieldset class="message-operations" classList={{ "is-open": operationsOpen() }}>
+						<legend>{t("messages.operations")}</legend>
+						<Show when={isUser}>
+							<Button
+								type="button"
+								onClick={() => {
+									setEditText(entry.text ?? "");
+									setEditing(true);
+								}}
+							>
+								{t("messages.edit")}
+							</Button>
+						</Show>
+						<Show when={!isUser}>
+							<Button type="button" onClick={() => void store.regenerateMessage(entry.id)}>
+								{t("messages.regenerate")}
+							</Button>
+							<Button type="button" onClick={() => setCorrecting(true)}>
+								{store.character?.character.correction.trigger_label}
+							</Button>
+						</Show>
 						<Button
 							type="button"
-							disabled={!correctionDetail().trim()}
+							disabled={captureState() === "saving" || captured()}
 							onClick={() => {
-								void store.correctMessage(entry.id, "custom", correctionDetail());
-								setCorrecting(false);
+								setCaptureState("saving");
+								void store.memory
+									.capture(entry.id)
+									.then(() => setCaptureState("saved"))
+									.catch(() => setCaptureState("error"));
 							}}
 						>
-							{store.character?.character.correction.custom_label}
+							{captureState() === "saving"
+								? t("messages.rememberingMoment")
+								: captured()
+									? t("messages.rememberedMoment")
+									: captureState() === "error"
+										? t("messages.rememberFailed")
+										: t("messages.rememberMoment")}
 						</Button>
-						<Button type="button" onClick={() => setCorrecting(false)}>
+						<Button type="button" onClick={() => void store.createConversationFromEntry(entry.id)}>
+							{t("messages.branch")}
+						</Button>
+						<Button
+							type="button"
+							class="message-operations-dismiss"
+							onClick={() => setOperationsOpen(false)}
+						>
 							{t("messages.cancel")}
 						</Button>
-					</div>
-				</Show>
-				<fieldset class="message-operations" classList={{ "is-open": operationsOpen() }}>
-					<legend>{t("messages.operations")}</legend>
-					<Show when={isUser}>
-						<Button
-							type="button"
-							onClick={() => {
-								setEditText(entry.text ?? "");
-								setEditing(true);
-							}}
-						>
-							{t("messages.edit")}
-						</Button>
-					</Show>
-					<Show when={!isUser}>
-						<Button type="button" onClick={() => void store.regenerateMessage(entry.id)}>
-							{t("messages.regenerate")}
-						</Button>
-						<Button type="button" onClick={() => setCorrecting(true)}>
-							{store.character?.character.correction.trigger_label}
-						</Button>
-					</Show>
+					</fieldset>
+				</article>
+				<Show when={!isUser && resultRun() !== undefined}>
 					<Button
 						type="button"
-						disabled={captureState() === "saving" || captured()}
-						onClick={() => {
-							setCaptureState("saving");
-							void store.memory
-								.capture(entry.id)
-								.then(() => setCaptureState("saved"))
-								.catch(() => setCaptureState("error"));
-						}}
+						class="agent-result-trigger"
+						onClick={() => props.onOpenResult(entry.id)}
 					>
-						{captureState() === "saving"
-							? t("messages.rememberingMoment")
-							: captured()
-								? t("messages.rememberedMoment")
-								: captureState() === "error"
-									? t("messages.rememberFailed")
-									: t("messages.rememberMoment")}
+						<span>{resultRun()?.title}</span>
+						<strong>{t("work.timeline.completed")}</strong>
 					</Button>
-					<Button type="button" onClick={() => void store.createConversationFromEntry(entry.id)}>
-						{t("messages.branch")}
-					</Button>
-				</fieldset>
-			</article>
-			<WorkTimelineItem messageId={entry.id} />
-		</>
+					<article
+						class="agent-result-inline-card"
+						aria-label={`${t("work.result.title")} · ${resultRun()?.title}`}
+					>
+						<header>
+							<span>{t("work.result.title")}</span>
+							<strong>{t("work.timeline.completed")}</strong>
+						</header>
+						<h3>{resultRun()?.title}</h3>
+						<TimelineAttachmentRows attachments={entry.attachments} />
+					</article>
+				</Show>
+			</div>
+		</div>
 	);
 }
 
-function PiTimelineRenderer(props: { entries: readonly PiTimelineEntry[] }) {
+function PiTimelineRenderer(props: {
+	entries: readonly PiTimelineEntry[];
+	onOpenResult: (entryId: string) => void;
+}) {
+	const [t] = useTranslation(undefined, { i18n });
 	const visible = createMemo(() => {
-		const result: PiTimelineEntry[] = [];
+		const result: Array<PiTimelineEntry | PiTimelineEntry[]> = [];
 		let lastAssistantSignature: string | undefined;
 		for (const entry of props.entries) {
 			if (entry.kind !== "message") continue;
+			if (entry.role === "tool" && entry.status === "succeeded") {
+				lastAssistantSignature = undefined;
+				const previous = result.at(-1);
+				if (Array.isArray(previous)) previous.push(entry);
+				else result.push([entry]);
+				continue;
+			}
 			if (entry.role === "user") {
 				lastAssistantSignature = undefined;
 				result.push(entry);
@@ -287,6 +365,14 @@ function PiTimelineRenderer(props: { entries: readonly PiTimelineEntry[] }) {
 			}
 			if (entry.role !== "assistant") {
 				result.push(entry);
+				continue;
+			}
+			if (
+				(entry.text === undefined || entry.text.length === 0) &&
+				(entry.attachments?.length ?? 0) === 0 &&
+				entry.stopReason !== "error" &&
+				entry.stopReason !== "aborted"
+			) {
 				continue;
 			}
 			const signature = JSON.stringify({
@@ -301,7 +387,79 @@ function PiTimelineRenderer(props: { entries: readonly PiTimelineEntry[] }) {
 		}
 		return result;
 	});
-	return <For each={visible()}>{(entry) => <PiTimelineEntryView entry={entry} />}</For>;
+	return (
+		<For each={visible()}>
+			{(item) => (
+				<Show
+					when={Array.isArray(item) && item.length > 1}
+					fallback={
+						<PiTimelineEntryView
+							entry={Array.isArray(item) ? item[0]! : item}
+							onOpenResult={props.onOpenResult}
+						/>
+					}
+				>
+					<details class="tool-activity-group">
+						<summary>
+							<span>{t("messages.toolActivity.generic")}</span>
+							<span>
+								{(item as PiTimelineEntry[]).length} · {t("messages.toolActivity.completed")}
+							</span>
+						</summary>
+						<div class="tool-activity-details">
+							<For each={item as PiTimelineEntry[]}>
+								{(entry) => <PiTimelineEntryView entry={entry} onOpenResult={props.onOpenResult} />}
+							</For>
+						</div>
+					</details>
+				</Show>
+			)}
+		</For>
+	);
+}
+
+function AgentResultPanel(props: {
+	entry: AssistantTimelineEntry;
+	run: RunInfo;
+	onClose: () => void;
+	onLocate: () => void;
+}) {
+	const [t] = useTranslation(undefined, { i18n });
+	return (
+		<aside class="agent-result-panel" aria-labelledby={`agent-result-title-${props.entry.id}`}>
+			<header class="agent-result-panel-header">
+				<div>
+					<span class="agent-result-eyebrow">{t("work.result.title")}</span>
+					<h2 id={`agent-result-title-${props.entry.id}`}>{props.run.title}</h2>
+				</div>
+				<Button
+					type="button"
+					class="agent-result-close"
+					aria-label={t("work.result.close")}
+					onClick={props.onClose}
+				>
+					<span aria-hidden="true">×</span>
+				</Button>
+			</header>
+			<div class="agent-result-panel-body">
+				<div class="agent-result-content-card">
+					<div class="agent-result-status">
+						<strong>{t("work.timeline.completed")}</strong>
+						<span>{t("work.result.sourceFrom", { summary: props.run.title })}</span>
+					</div>
+					<Show when={props.entry.text !== undefined && props.entry.text.length > 0}>
+						<p class="agent-result-summary">{props.entry.text}</p>
+					</Show>
+					<TimelineAttachmentRows attachments={props.entry.attachments} />
+				</div>
+			</div>
+			<footer class="agent-result-panel-footer">
+				<Button type="button" data-control="command" onClick={props.onLocate}>
+					{t("work.result.locate")}
+				</Button>
+			</footer>
+		</aside>
+	);
 }
 
 /**
@@ -329,23 +487,40 @@ function PiLiveAssistantMessageView() {
 							? t("messages.responseFailedSaved")
 							: undefined;
 				return (
-					<article
-						class={`msg bear-msg streaming-message${failed ? " stream-failed" : ""}`}
-						aria-label={characterName}
-					>
-						<div class="msg-meta">{characterName}</div>
-						<Show when={message.text !== undefined && message.text.length > 0}>
-							<p>{message.text}</p>
+					<div class="timeline-entry-row">
+						<Show when={store.character !== undefined}>
+							<img
+								class="agent-message-avatar"
+								src={store.character?.visual.avatarUrl}
+								alt=""
+								aria-hidden="true"
+								draggable={false}
+							/>
 						</Show>
-						<Show when={store.activePiLiveState?.isStreaming === true}>
-							<span class="streaming-status" role="status" aria-label={t("messages.responding")} />
-						</Show>
-						<Show when={failed && errorText !== undefined && errorText.length > 0}>
-							<span class="stream-error" role="alert">
-								{errorText}
-							</span>
-						</Show>
-					</article>
+						<div class="agent-message-column">
+							<span class="agent-message-name">{characterName}</span>
+							<article
+								class={`msg bear-msg streaming-message${failed ? " stream-failed" : ""}`}
+								aria-label={characterName}
+							>
+								<Show when={message.text !== undefined && message.text.length > 0}>
+									<p>{message.text}</p>
+								</Show>
+								<Show when={store.activePiLiveState?.isStreaming === true}>
+									<span
+										class="streaming-status"
+										role="status"
+										aria-label={t("messages.responding")}
+									/>
+								</Show>
+								<Show when={failed && errorText !== undefined && errorText.length > 0}>
+									<span class="stream-error" role="alert">
+										{errorText}
+									</span>
+								</Show>
+							</article>
+						</div>
+					</div>
 				);
 			}}
 		</Show>
@@ -359,10 +534,39 @@ export function ConversationPanel() {
 	const { sceneTitle, hasThreadContent } = view;
 	let threadRef: HTMLElement | undefined;
 	const [loadingOlder, setLoadingOlder] = createSignal(false);
+	const [resultEntryId, setResultEntryId] = createSignal<string>();
+	let autoOpenedResultKey: string | undefined;
+	const resultEntries = createMemo(() =>
+		(store.activePiTimeline?.entries ?? []).filter(
+			(entry): entry is AssistantTimelineEntry =>
+				resultRunForEntry(entry, store.runs) !== undefined,
+		),
+	);
+	const selectedResultEntry = createMemo(() =>
+		resultEntries().find((entry) => entry.id === resultEntryId()),
+	);
+	const selectedResultRun = createMemo(() => {
+		const entry = selectedResultEntry();
+		return entry ? resultRunForEntry(entry, store.runs) : undefined;
+	});
+
+	createEffect(() => {
+		const latest = resultEntries().at(-1);
+		if (!latest) {
+			setResultEntryId(undefined);
+			return;
+		}
+		const resultKey = `${store.activeConversationId ?? ""}:${latest.id}`;
+		if (autoOpenedResultKey !== resultKey) {
+			autoOpenedResultKey = resultKey;
+			setResultEntryId(latest.id);
+		}
+	});
 
 	followTimelineScroll(
 		() => threadRef,
-		() => store.activePiTimeline?.entries.length ?? 0,
+		() =>
+			`${store.activePiTimeline?.entries.length ?? 0}:${store.activeRoleplayChoiceSetId ?? ""}:${store.activeRoleplayMediaId ?? ""}`,
 	);
 
 	return (
@@ -399,7 +603,7 @@ export function ConversationPanel() {
 										{loadingOlder() ? t("messages.loadingOlder") : t("messages.loadOlder")}
 									</Button>
 								</Show>
-								<PiTimelineRenderer entries={timeline().entries} />
+								<PiTimelineRenderer entries={timeline().entries} onOpenResult={setResultEntryId} />
 							</>
 						)}
 					</Show>
@@ -408,6 +612,24 @@ export function ConversationPanel() {
 				<RoleplayChoices />
 				<RoleplayInlineMedia />
 			</section>
+			<Show when={selectedResultEntry()}>
+				{(entry) => (
+					<Show when={selectedResultRun()}>
+						{(run) => (
+							<AgentResultPanel
+								entry={entry()}
+								run={run()}
+								onClose={() => setResultEntryId(undefined)}
+								onLocate={() => {
+									document
+										.querySelector(`[data-pi-entry-id="${entry().id}"]`)
+										?.scrollIntoView({ behavior: "smooth", block: "center" });
+								}}
+							/>
+						)}
+					</Show>
+				)}
+			</Show>
 			<RoleplayMediaOverlays />
 		</>
 	);

@@ -9,7 +9,7 @@ export function syncDocumentTitle(title: Accessor<string>): void {
 
 export function followTimelineScroll(
 	element: Accessor<HTMLElement | undefined>,
-	entries: Accessor<number>,
+	entries: Accessor<unknown>,
 ): void {
 	createEffect(() => {
 		void entries();

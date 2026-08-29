@@ -1,14 +1,10 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { Button } from "@kobalte/core/button";
-import { Checkbox } from "@kobalte/core/checkbox";
-import { RadioGroup } from "@kobalte/core/radio-group";
-import { Select } from "@kobalte/core/select";
-import { TextField } from "@kobalte/core/text-field";
 import { createSignal, For, Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { createStableSnapshot } from "../lib/stable-snapshot.js";
 import type { SettingsCapabilities, SettingsData } from "../stores/companion.js";
 import { useCompanionStore } from "../stores/companion.js";
+import { Button, Checkbox, RadioGroup, Select, TextField } from "../ui/primitives.js";
 
 import { DownloadProgress } from "./DownloadProgress.js";
 

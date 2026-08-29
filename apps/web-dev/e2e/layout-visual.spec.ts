@@ -27,20 +27,52 @@ test("canonical layouts and management surfaces stay usable", async ({ page }) =
 		await expect(application).toHaveAttribute("data-layout", viewport.mode);
 
 		const thread = page.getByRole("region", { name: zhCN.messages.conversation });
-		const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
+		const composer = page.getByRole("form", { name: zhCN.composer.messageInputLabel });
 		const threadBox = await thread.boundingBox();
 		const composerBox = await composer.boundingBox();
 		expect(threadBox).not.toBeNull();
 		expect(composerBox).not.toBeNull();
 		expect((threadBox?.y ?? 0) + (threadBox?.height ?? 0)).toBeLessThanOrEqual(composerBox?.y ?? 0);
 		expect((composerBox?.y ?? 0) + (composerBox?.height ?? 0)).toBeLessThanOrEqual(viewport.height);
+		expect(Math.abs((threadBox?.x ?? 0) - (composerBox?.x ?? 0))).toBeLessThanOrEqual(1);
+		expect(Math.abs((threadBox?.width ?? 0) - (composerBox?.width ?? 0))).toBeLessThanOrEqual(1);
+		const [applicationOverflow, threadOverflow] = await Promise.all([
+			application.evaluate((element) => element.scrollWidth - element.clientWidth),
+			thread.evaluate((element) => element.scrollWidth - element.clientWidth),
+		]);
+		expect(applicationOverflow).toBeLessThanOrEqual(1);
+		expect(threadOverflow).toBeLessThanOrEqual(1);
 
 		const navigation = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
 		await expect(application).toHaveScreenshot(`layout-${viewport.mode}.png`);
 		await application.screenshot({
 			path: path.join(screenshotDir, `23-layout-${viewport.mode}.png`),
 		});
+
+		await page.getByRole("button", { name: new RegExp(zhCN.threadHead.runningWork) }).click();
+		const workMenu = page.getByRole("menu", { name: zhCN.threadHead.runningWork });
+		await expect(workMenu).toBeVisible();
+		await expect(workMenu.getByText(zhCN.threadHead.noRunningWork)).toBeVisible();
+		const menuBox = await workMenu.boundingBox();
+		expect(menuBox).not.toBeNull();
+		expect(menuBox?.x).toBeGreaterThanOrEqual(0);
+		expect((menuBox?.x ?? 0) + (menuBox?.width ?? 0)).toBeLessThanOrEqual(viewport.width);
+		await application.screenshot({
+			path: path.join(screenshotDir, `26-work-menu-${viewport.mode}.png`),
+		});
+		await page.keyboard.press("Escape");
+		await expect(workMenu).toBeHidden();
+
 		if (viewport.mode === "mobile") {
+			for (const target of [
+				page.getByRole("button", { name: zhCN.sidebar.conversations, exact: true }),
+				page.getByRole("button", { name: zhCN.composer.attachLabel }),
+				page.getByRole("button", { name: zhCN.composer.sendLabel }),
+			]) {
+				const box = await target.boundingBox();
+				expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+				expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+			}
 			const closedBox = await navigation.boundingBox();
 			expect(closedBox?.x).toBeLessThan(0);
 			await page.getByRole("button", { name: zhCN.sidebar.conversations, exact: true }).click();
@@ -62,6 +94,17 @@ test("canonical layouts and management surfaces stay usable", async ({ page }) =
 		await expect(
 			dialog.getByRole("navigation", { name: zhCN.sidebar.systemSettings }),
 		).toBeVisible();
+		if (viewport.mode === "mobile") {
+			await expect(
+				dialog.getByRole("button", { name: new RegExp(`^${zhCN.sidebar.systemSettings}`) }),
+			).toBeVisible();
+			await expect(dialog.getByRole("button", { name: zhCN.settings.language })).toBeHidden();
+		} else {
+			await expect(
+				dialog.getByRole("button", { name: new RegExp(`^${zhCN.sidebar.systemSettings}`) }),
+			).toBeHidden();
+			await expect(dialog.getByRole("button", { name: zhCN.settings.language })).toBeVisible();
+		}
 		await page.evaluate(() => window.scrollTo(0, 0));
 		if (viewport.mode === "mobile") {
 			await expect(page).toHaveScreenshot(`system-settings-${viewport.mode}.png`);
@@ -75,11 +118,14 @@ test("canonical layouts and management surfaces stay usable", async ({ page }) =
 			});
 		}
 
-		await dialog
-			.getByRole("button", {
-				name: `${zhCN.settings.networkSection} / ${zhCN.settings.memoryVectorSection}`,
-			})
-			.click();
+		if (viewport.mode === "mobile") {
+			await dialog
+				.getByRole("button", { name: new RegExp(`^${zhCN.sidebar.systemSettings}`) })
+				.click();
+			await page.getByRole("option", { name: zhCN.settings.networkSection }).click();
+		} else {
+			await dialog.getByRole("button", { name: zhCN.settings.networkSection }).click();
+		}
 		const proxyTrigger = dialog.getByRole("button", { name: zhCN.settings.proxyMode });
 		await proxyTrigger.click();
 		const proxyOptions = page.getByRole("listbox", { name: zhCN.settings.proxyMode });

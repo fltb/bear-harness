@@ -1,12 +1,9 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { Button } from "@kobalte/core/button";
-import { Checkbox } from "@kobalte/core/checkbox";
-import { Select } from "@kobalte/core/select";
-import { TextField } from "@kobalte/core/text-field";
 import { For, Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
 import { useCompanionStore } from "../stores/companion.js";
+import { Button, Checkbox, Select, TextField } from "../ui/primitives.js";
 
 export function CanonStudio() {
 	const [t] = useTranslation(undefined, { i18n });

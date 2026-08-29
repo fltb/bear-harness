@@ -13,24 +13,27 @@ function selectTrigger(container: HTMLElement, label: string): HTMLElement {
 	return trigger;
 }
 
-async function openSettings() {
+async function openSettings(page: "network" | "memory" = "memory") {
 	const user = userEvent.setup();
 	await user.click(screen.getByRole("button", { name: zhCN.sidebar.systemSettings }));
 	const backstage = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
 	await user.click(
 		within(backstage).getByRole("button", {
-			name: `${zhCN.settings.networkSection} / ${zhCN.settings.memoryVectorSection}`,
+			name: page === "network" ? zhCN.settings.networkSection : zhCN.settings.memoryVectorSection,
 		}),
 	);
 	return { user, backstage };
 }
 
 function waitForSettings(container: HTMLElement): Promise<void> {
-	// Kobalte Select triggers render as <button> with role=null, not combobox.
-	// Wait for the proxy mode trigger to appear.
+	// Wait for the selected split settings page to finish loading.
 	return waitFor(() => {
 		const triggers = within(container).getAllByRole("button");
-		expect(triggers.some((b) => b.getAttribute("aria-label") === "代理模式")).toBe(true);
+		const proxyReady = triggers.some((b) => b.getAttribute("aria-label") === "代理模式");
+		const memoryReady = within(container).queryByRole("region", {
+			name: zhCN.settings.memoryVectorSection,
+		});
+		expect(proxyReady || memoryReady !== null).toBe(true);
 	});
 }
 function networkSaveButton(backstage: HTMLElement): HTMLElement {
@@ -64,15 +67,15 @@ describe("NetworkAndMemorySettings", () => {
 			}),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { backstage } = await openSettings();
+		const { backstage, user } = await openSettings("network");
 		await waitForSettings(backstage);
 
 		expect(
 			within(backstage).getByRole("heading", { name: zhCN.settings.networkSection }),
 		).toBeTruthy();
-		expect(
-			within(backstage).getByRole("heading", { name: zhCN.settings.memoryVectorSection }),
-		).toBeTruthy();
+		await user.click(
+			within(backstage).getByRole("button", { name: zhCN.settings.memoryVectorSection }),
+		);
 		const embedding = embeddingSettings(backstage);
 		expect(
 			within(embedding).getByRole("heading", { name: zhCN.settings.downloadMirrorSection }),
@@ -84,9 +87,6 @@ describe("NetworkAndMemorySettings", () => {
 			within(embedding).getByRole("button", {
 				name: zhCN.settings.downloadAndEnableLocalModel,
 			}),
-		).toHaveAttribute("data-variant", "primary");
-		expect(
-			within(backstage).getByRole("button", { name: zhCN.settings.saveNetwork }),
 		).toHaveAttribute("data-variant", "primary");
 		expect(
 			within(embedding)
@@ -124,7 +124,6 @@ describe("NetworkAndMemorySettings", () => {
 
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage } = await openSettings();
-		await waitForSettings(backstage);
 		expect(within(embeddingSettings(backstage)).getByRole("status")).toHaveTextContent(
 			zhCN.settings.localModelReady,
 		);
@@ -182,16 +181,21 @@ describe("NetworkAndMemorySettings", () => {
 		);
 
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { backstage, user } = await openSettings();
-		await waitForSettings(backstage);
+		const { backstage, user } = await openSettings("network");
 
 		await user.click(selectTrigger(backstage, zhCN.settings.proxyMode));
-		await waitFor(() =>
-			expect(screen.getAllByRole("option").map((option) => option.textContent?.trim())).toEqual([
-				zhCN.settings.proxyModes.manual,
-			]),
-		);
+		await waitFor(() => {
+			const listbox = screen.getByRole("listbox", { name: zhCN.settings.proxyMode });
+			expect(
+				within(listbox)
+					.getAllByRole("option")
+					.map((option) => option.textContent?.trim()),
+			).toEqual([zhCN.settings.proxyModes.manual]);
+		});
 		await user.click(screen.getByRole("option", { name: zhCN.settings.proxyModes.manual }));
+		await user.click(
+			within(backstage).getByRole("button", { name: zhCN.settings.memoryVectorSection }),
+		);
 
 		expect(
 			within(backstage)
@@ -229,7 +233,7 @@ describe("NetworkAndMemorySettings", () => {
 			}),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { backstage } = await openSettings();
+		const { backstage } = await openSettings("network");
 		await waitForSettings(backstage);
 
 		expect(selectTrigger(backstage, "代理模式").textContent).toContain("手动");
@@ -240,7 +244,6 @@ describe("NetworkAndMemorySettings", () => {
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { backstage, user } = await openSettings();
-		await waitForSettings(backstage);
 
 		const checkbox = within(backstage).getByRole("checkbox", {
 			name: zhCN.settings.memoryVectorEnabled,
@@ -258,7 +261,7 @@ describe("NetworkAndMemorySettings", () => {
 	it("saves proxy changes via settings.set", async () => {
 		const { client, settingsSet } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { backstage, user } = await openSettings();
+		const { backstage, user } = await openSettings("network");
 		await waitForSettings(backstage);
 
 		const proxySelect = selectTrigger(backstage, "代理模式");
@@ -328,7 +331,7 @@ describe("NetworkAndMemorySettings", () => {
 	it("shows feedback on successful proxy save", async () => {
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { backstage, user } = await openSettings();
+		const { backstage, user } = await openSettings("network");
 		await waitForSettings(backstage);
 
 		await user.click(networkSaveButton(backstage));
@@ -347,7 +350,7 @@ describe("NetworkAndMemorySettings", () => {
 			}),
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { backstage, user } = await openSettings();
+		const { backstage, user } = await openSettings("network");
 		await waitForSettings(backstage);
 
 		await user.click(networkSaveButton(backstage));

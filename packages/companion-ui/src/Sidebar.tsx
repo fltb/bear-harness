@@ -1,7 +1,6 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import {
 	faBoxArchive,
-	faBoxOpen,
 	faGear,
 	faMagnifyingGlass,
 	faPen,
@@ -9,13 +8,11 @@ import {
 	faTrash,
 	faXmark,
 } from "@fortawesome/free-solid-svg-icons";
-import { Button } from "@kobalte/core/button";
-import { Dialog } from "@kobalte/core/dialog";
-import { TextField } from "@kobalte/core/text-field";
-import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { Icon } from "./Icon.js";
 import { type CharacterDisplay, useCompanionStore } from "./stores/companion.js";
 import { useConversationWorkflow } from "./stores/conversation-workflows.js";
+import { Button, Dialog, TextField } from "./ui/primitives.js";
 /**
  * Sidebar: identity, search, new-conversation, the live conversation list
  * and persistent application navigation.
@@ -29,17 +26,6 @@ export function Sidebar(props: {
 	const store = useCompanionStore();
 	const workflow = useConversationWorkflow(store);
 	const [deleteTarget, setDeleteTarget] = createSignal<{ id: string; title: string } | null>(null);
-	const [showArchived, setShowArchived] = createSignal(false);
-	const displayedConversations = createMemo(() => {
-		if (!showArchived()) return workflow.visibleConversations();
-		const needle = workflow.query().trim().toLocaleLowerCase();
-		const conversations = store.archivedConversations ?? [];
-		return needle
-			? conversations.filter((conversation) =>
-					`${conversation.title} ${conversation.sceneTitle}`.toLocaleLowerCase().includes(needle),
-				)
-			: conversations;
-	});
 	let searchRef: HTMLInputElement | undefined;
 
 	onMount(() => {
@@ -136,154 +122,103 @@ export function Sidebar(props: {
 				)}
 			</Show>
 			<div class="nav-scroll">
-				<fieldset class="conversation-view-tabs">
-					<legend class="sr-only">{t("sidebar.conversationView")}</legend>
-					<Button
-						type="button"
-						aria-pressed={!showArchived()}
-						onClick={() => setShowArchived(false)}
-					>
-						{t("sidebar.activeConversations")}
-					</Button>
-					<Button type="button" aria-pressed={showArchived()} onClick={() => setShowArchived(true)}>
-						{t("sidebar.archivedConversations")}
-					</Button>
-				</fieldset>
 				<nav class="nav-list" aria-label={t("sidebar.conversations")}>
 					<Show
-						when={displayedConversations().length > 0}
+						when={workflow.visibleConversations().length > 0}
 						fallback={
 							<div class="conversations-empty" role="note">
 								{workflow.query().trim()
 									? t("sidebar.noSearchResults")
-									: showArchived()
-										? t("sidebar.emptyArchivedConversations")
-										: t("sidebar.emptyConversations")}
+									: t("sidebar.emptyConversations")}
 							</div>
 						}
 					>
-						<For each={displayedConversations()}>
+						<For each={workflow.visibleConversations()}>
 							{(conversation) => (
 								<div class="nav-item-wrap">
-									<Show when={showArchived()}>
-										<div class="nav-item archived-conversation">
+									<Show
+										when={workflow.editingId() !== conversation.id}
+										fallback={
+											<form
+												class="conversation-rename"
+												onSubmit={(event) => {
+													event.preventDefault();
+													void workflow.saveRename(conversation.id);
+												}}
+											>
+												<TextField>
+													<TextField.Input
+														aria-label={t("sidebar.renameConversation")}
+														value={workflow.editingTitle()}
+														onInput={(event) => workflow.setEditingTitle(event.currentTarget.value)}
+													/>
+												</TextField>
+												<Button data-control="command" type="submit">
+													{t("sidebar.saveConversation")}
+												</Button>
+											</form>
+										}
+									>
+										<Button
+											type="button"
+											class="nav-item"
+											aria-current={
+												conversation.id === store.activeConversationId ? "page" : undefined
+											}
+											onClick={() => {
+												props.onNavigate?.();
+												void workflow.runSidebarAction(() =>
+													store.selectConversation(conversation.id),
+												);
+											}}
+										>
 											<strong>{conversation.title}</strong>
 											<span>{conversation.sceneTitle}</span>
-										</div>
-										<div class="conversation-actions archived-actions">
+											<Show when={conversation.unread}>
+												<span
+													class="unread-dot"
+													role="img"
+													aria-label={t("sidebar.unreadMessage")}
+												/>
+											</Show>
+										</Button>
+										<div class="conversation-actions">
 											<Button
 												data-control="command"
 												type="button"
-												title={t("sidebar.restoreConversation")}
-												aria-label={t("sidebar.restoreConversation")}
+												title={t("sidebar.renameConversation")}
+												aria-label={t("sidebar.renameConversation")}
+												onClick={() => {
+													workflow.beginRename(conversation);
+												}}
+											>
+												<Icon icon={faPen} />
+											</Button>
+											<Button
+												data-control="command"
+												type="button"
+												title={t("sidebar.archiveConversation")}
+												aria-label={t("sidebar.archiveConversation")}
 												onClick={() =>
 													void workflow.runSidebarAction(() =>
-														store.restoreConversation(conversation.id),
+														store.archiveConversation(conversation.id),
 													)
 												}
 											>
-												<Icon icon={faBoxOpen} />
+												<Icon icon={faBoxArchive} />
 											</Button>
 											<Button
 												data-control="command"
 												type="button"
 												title={t("sidebar.deleteConversation")}
 												aria-label={t("sidebar.deleteConversation")}
-												onClick={() =>
-													setDeleteTarget({ id: conversation.id, title: conversation.title })
-												}
+												onClick={() => {
+													setDeleteTarget({ id: conversation.id, title: conversation.title });
+												}}
 											>
 												<Icon icon={faTrash} />
 											</Button>
 										</div>
-									</Show>
-									<Show when={!showArchived()}>
-										<Show
-											when={workflow.editingId() !== conversation.id}
-											fallback={
-												<form
-													class="conversation-rename"
-													onSubmit={(event) => {
-														event.preventDefault();
-														void workflow.saveRename(conversation.id);
-													}}
-												>
-													<TextField>
-														<TextField.Input
-															aria-label={t("sidebar.renameConversation")}
-															value={workflow.editingTitle()}
-															onInput={(event) =>
-																workflow.setEditingTitle(event.currentTarget.value)
-															}
-														/>
-													</TextField>
-													<Button data-control="command" type="submit">
-														{t("sidebar.saveConversation")}
-													</Button>
-												</form>
-											}
-										>
-											<Button
-												type="button"
-												class="nav-item"
-												aria-current={
-													conversation.id === store.activeConversationId ? "page" : undefined
-												}
-												onClick={() => {
-													props.onNavigate?.();
-													void workflow.runSidebarAction(() =>
-														store.selectConversation(conversation.id),
-													);
-												}}
-											>
-												<strong>{conversation.title}</strong>
-												<span>{conversation.sceneTitle}</span>
-												<Show when={conversation.unread}>
-													<span
-														class="unread-dot"
-														role="img"
-														aria-label={t("sidebar.unreadMessage")}
-													/>
-												</Show>
-											</Button>
-											<div class="conversation-actions">
-												<Button
-													data-control="command"
-													type="button"
-													title={t("sidebar.renameConversation")}
-													aria-label={t("sidebar.renameConversation")}
-													onClick={() => {
-														workflow.beginRename(conversation);
-													}}
-												>
-													<Icon icon={faPen} />
-												</Button>
-												<Button
-													data-control="command"
-													type="button"
-													title={t("sidebar.archiveConversation")}
-													aria-label={t("sidebar.archiveConversation")}
-													onClick={() =>
-														void workflow.runSidebarAction(() =>
-															store.archiveConversation(conversation.id),
-														)
-													}
-												>
-													<Icon icon={faBoxArchive} />
-												</Button>
-												<Button
-													data-control="command"
-													type="button"
-													title={t("sidebar.deleteConversation")}
-													aria-label={t("sidebar.deleteConversation")}
-													onClick={() => {
-														setDeleteTarget({ id: conversation.id, title: conversation.title });
-													}}
-												>
-													<Icon icon={faTrash} />
-												</Button>
-											</div>
-										</Show>
 									</Show>
 								</div>
 							)}

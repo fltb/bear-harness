@@ -47,6 +47,7 @@
 .composer {
 	@apply relative z-30 m-4 mt-2;
 	grid-area: composer;
+	grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .mobile-navigation-trigger,
@@ -64,11 +65,27 @@
 		"stage header" 56px
 		"stage thread" minmax(0, 1fr)
 		"stage composer" auto
-		/ minmax(300px, 1fr) clamp(520px, 48cqw, 640px);
+		/ minmax(280px, 0.72fr) minmax(560px, 1fr);
 }
 
 .app[data-layout="window"] .presence-stage {
-	@apply mb-8 max-h-3/4 w-4/5;
+	@apply mb-8 max-h-2/3 w-3/4;
+}
+
+.app[data-layout="window"] .main:has(.agent-result-panel) {
+	grid-template:
+		"stage header result" 56px
+		"stage thread result" minmax(0, 1fr)
+		"stage composer result" auto
+		/ minmax(150px, 200px) minmax(340px, 0.82fr) minmax(420px, 1.18fr);
+}
+
+.app[data-layout="window"] .main:has(.agent-result-panel) .presence-stage {
+	@apply mb-8 max-h-1/2 w-3/5 opacity-100;
+}
+
+.app[data-layout="window"] .thread {
+	@apply mx-4 px-0;
 }
 
 /* Fullscreen template: 1920 x 1080 canonical viewport. */
@@ -78,10 +95,10 @@
 
 .app[data-layout="fullscreen"] .main {
 	grid-template:
-		"stage header" 64px
-		"stage thread" minmax(0, 1fr)
-		"stage composer" auto
-		/ minmax(560px, 1fr) minmax(620px, 680px);
+		"stage header rail" 64px
+		"stage thread rail" minmax(0, 1fr)
+		"stage composer rail" auto
+		/ minmax(420px, 600px) minmax(640px, 760px) minmax(120px, 1fr);
 }
 
 .app[data-layout="fullscreen"] .thread-head {
@@ -89,7 +106,7 @@
 }
 
 .app[data-layout="fullscreen"] .thread {
-	@apply px-3;
+	@apply mx-6 px-0;
 }
 
 .app[data-layout="fullscreen"] .composer {
@@ -97,7 +114,19 @@
 }
 
 .app[data-layout="fullscreen"] .presence-stage {
-	@apply mb-10 max-h-2/3 w-3/5;
+	@apply mb-10 max-h-2/3 w-3/4;
+}
+
+.app[data-layout="fullscreen"] .main:has(.agent-result-panel) {
+	grid-template:
+		"stage header result" 64px
+		"stage thread result" minmax(0, 1fr)
+		"stage composer result" auto
+		/ minmax(240px, 320px) minmax(520px, 680px) minmax(640px, 1fr);
+}
+
+.app[data-layout="fullscreen"] .main:has(.agent-result-panel) .presence-stage {
+	@apply mb-10 max-h-1/2 w-3/5 opacity-100;
 }
 
 /* Mobile template: phone, tablet portrait, and narrow desktop windows. */
@@ -114,7 +143,7 @@
 }
 
 .app[data-layout="mobile"] .mobile-navigation-trigger {
-	@apply absolute left-3 top-3 z-40 grid size-8 place-items-center rounded-md border cursor-pointer;
+	@apply absolute left-2 top-1.5 z-40 grid size-11 place-items-center rounded-lg border cursor-pointer;
 	border-color: var(--line-soft);
 	color: var(--text-strong);
 	background: var(--surface-control);
@@ -141,7 +170,7 @@
 }
 
 .app[data-layout="mobile"] .thread {
-	@apply px-3;
+	@apply mx-3 px-0;
 }
 
 .app[data-layout="mobile"] .composer {
@@ -150,15 +179,48 @@
 }
 
 .app[data-layout="mobile"] .presence-stage {
-	@apply absolute bottom-24 left-1/2 z-10 max-h-2/5 w-1/2 -translate-x-1/2 opacity-80;
+	@apply absolute bottom-24 left-1/2 z-10 max-h-2/5 w-1/2 -translate-x-1/2 opacity-100;
 }
 
-.app[data-layout="mobile"] .msg.user {
-	max-inline-size: 86%;
-}
-
+.app[data-layout="mobile"] .msg.user,
 .app[data-layout="mobile"] .bear-msg {
-	max-inline-size: 92%;
+	max-inline-size: 100%;
+}
+
+.app[data-layout="mobile"] .agent-result-panel,
+.app[data-layout="mobile"] .agent-result-trigger {
+	@apply hidden;
+}
+
+.app[data-layout="mobile"] .agent-result-inline-card {
+	@apply mt-2 grid w-full gap-3 rounded-2xl border p-4;
+	border-color: color-mix(in srgb, var(--line-strong) 72%, transparent);
+	color: var(--text-strong);
+	background: color-mix(in srgb, var(--surface-panel) 78%, transparent);
+	backdrop-filter: blur(18px) saturate(130%);
+}
+
+.app[data-layout="mobile"] .agent-result-inline-card > header {
+	@apply flex items-center justify-between gap-3 text-xs;
+}
+
+.app[data-layout="mobile"] .agent-result-inline-card > header span,
+.app[data-layout="mobile"] .agent-result-inline-card > header strong {
+	color: var(--text-action);
+}
+
+.app[data-layout="mobile"] .agent-result-inline-card h3 {
+	@apply m-0 break-words text-base font-semibold leading-snug;
+}
+
+.app[data-layout="mobile"] .agent-result-inline-card .timeline-attachments {
+	@apply m-0 grid gap-2 p-0;
+}
+
+.app[data-layout="mobile"] .agent-result-inline-card .timeline-attachment-row {
+	@apply rounded-xl border p-3;
+	border-color: var(--line-soft);
+	background: color-mix(in srgb, var(--surface-control) 82%, transparent);
 }
 
 .app[data-layout="mobile"] .message-operations:not(.is-open) {
@@ -166,11 +228,26 @@
 }
 
 .app[data-layout="mobile"] .message-operations.is-open {
-	@apply grid grid-cols-1 opacity-100;
+	@apply fixed inset-x-3 bottom-3 z-70 grid grid-cols-1 gap-2 rounded-2xl border p-3 opacity-100 shadow-app;
+	border-color: var(--line-soft);
+	background: var(--surface-panel);
+}
+
+.app[data-layout="mobile"] .message-operations.is-open button {
+	@apply min-h-11 text-sm;
+}
+
+.app[data-layout="mobile"] .message-operations.is-open .message-operations-dismiss {
+	@apply flex;
 }
 
 .app[data-layout="mobile"] .msg-menu-trigger {
-	@apply grid;
+	@apply grid size-11;
+}
+
+.app[data-layout="mobile"] .thread-head .work-pill,
+.app[data-layout="mobile"] .backstage-close {
+	@apply min-h-11;
 }
 
 .app[data-layout="mobile"] .search-trigger kbd {
@@ -178,7 +255,7 @@
 }
 
 .app[data-layout="mobile"] .mobile-navigation-close {
-	@apply absolute right-3 top-3 z-10 grid size-9 place-items-center rounded-md border-0;
+	@apply absolute right-2 top-2 z-10 grid size-11 place-items-center rounded-lg border-0;
 	color: var(--text-muted);
 	background: var(--surface-control);
 }
@@ -226,11 +303,11 @@ html[data-app-layout="mobile"] .settings-workbench {
 }
 
 html[data-app-layout="mobile"] .language-warning {
-	@apply left-3 right-3 top-14 z-40 w-auto max-w-none translate-x-0;
+	@apply left-3 right-3 top-14 z-80 w-auto max-w-none translate-x-0;
 }
 
 html[data-app-layout="mobile"] .settings-navigation {
-	@apply col-span-1 gap-3 border-b border-r-0 pb-3 pr-0;
+	@apply col-span-1 gap-3 border-b border-r-0 pb-4 pr-0;
 	border-color: var(--line);
 }
 
@@ -239,19 +316,15 @@ html[data-app-layout="mobile"] .settings-navigation .drawer-note {
 }
 
 html[data-app-layout="mobile"] .settings-navigation-list {
-	@apply grid grid-cols-2 gap-1;
+	@apply hidden;
 }
 
-html[data-app-layout="mobile"] .settings-navigation-list button {
-	@apply min-w-0 whitespace-normal text-left;
-}
-
-html[data-app-layout="mobile"] .settings-navigation-list button:last-child {
-	@apply col-span-2;
+html[data-app-layout="mobile"] .settings-mobile-picker {
+	@apply grid;
 }
 
 html[data-app-layout="mobile"] .settings-page {
-	@apply col-span-1 overflow-y-auto pr-0;
+	@apply col-span-1 overflow-y-auto px-0 pr-0;
 }
 
 html[data-app-layout="mobile"] .provider-setup-manager {
@@ -280,23 +353,39 @@ html[data-app-layout="mobile"] .provider-import > button {
 	@apply w-full;
 }
 
+html[data-app-layout="mobile"] .role-list {
+	@apply grid-cols-1;
+}
+
+html[data-app-layout="mobile"] .role-library,
+html[data-app-layout="mobile"] .role-list > .current-role-package-manager {
+	@apply col-span-1 border-r-0 pr-0;
+}
+
+html[data-app-layout="mobile"] .role-library {
+	@apply border-b pb-5;
+	border-color: var(--line-soft);
+}
+
 html[data-app-layout="window"] .backstage-sheet {
-	inline-size: min(760px, calc(100cqw - 24px));
+	inset-inline: 32px;
+	inset-block: 24px;
+	inline-size: auto;
 }
 
 html[data-app-layout="window"] .backstage-sheet-settings {
-	inline-size: min(960px, calc(100cqw - 24px));
+	inline-size: auto;
 }
 
 html[data-app-layout="fullscreen"] .backstage-sheet {
 	inset-inline: 50% auto;
 	inset-block: 32px;
-	inline-size: min(960px, calc(100cqw - 64px));
+	inline-size: min(1320px, calc(100cqw - 64px));
 	transform: translateX(-50%);
 }
 
 html[data-app-layout="fullscreen"] .backstage-sheet-settings {
-	inline-size: min(1200px, calc(100cqw - 64px));
+	inline-size: min(1400px, calc(100cqw - 64px));
 }
 
 @media (prefers-reduced-motion: reduce) {

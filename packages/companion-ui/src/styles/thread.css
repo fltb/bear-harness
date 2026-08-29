@@ -112,7 +112,6 @@
 
 .composer {
 	@apply grid min-w-0 gap-2 rounded-xl border p-2;
-	@apply grid-cols-3;
 	grid-template-areas:
 		"input input input"
 		"routing routing routing"

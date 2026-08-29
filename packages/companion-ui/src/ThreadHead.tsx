@@ -1,7 +1,7 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { Button } from "@kobalte/core/button";
 import { createMemo, For, onCleanup, onMount, Show } from "solid-js";
 import { useShellWorkflowStore } from "./stores/shell-workflows.js";
+import { Button } from "./ui/primitives.js";
 import { WorkRunCard } from "./WorkPanel.js";
 
 /**
@@ -15,11 +15,16 @@ export function ThreadHead(props: { sceneTitle: string }) {
 	const workflow = useShellWorkflowStore();
 	const queueOpen = workflow.queueOpen;
 	const activeRuns = workflow.activeRuns;
-	const recentRuns = createMemo(() =>
-		workflow.host.runs.filter((run) => !["enqueued", "running", "needs_user"].includes(run.status)),
-	);
 	const [t] = useTranslation(undefined, { i18n });
-	let pillWrapRef: HTMLDivElement | undefined;
+	const labels = createMemo(() => workflow.character()?.character.work_presentation?.labels);
+	const recentRuns = createMemo(() =>
+		workflow.host.runs.filter(
+			(run) =>
+				run.conversationId === workflow.host.activeConversationId &&
+				!activeRuns().some((activeRun) => activeRun.id === run.id),
+		),
+	);
+	let wrapper: HTMLDivElement | undefined;
 
 	onMount(() => {
 		const onKey = (event: KeyboardEvent) => {
@@ -27,11 +32,8 @@ export function ThreadHead(props: { sceneTitle: string }) {
 			if (event.key === "Escape") workflow.closeQueue();
 		};
 		const onPointerDown = (event: PointerEvent) => {
-			if (!queueOpen()) return;
-			const target = event.target;
-			if (pillWrapRef && (!(target instanceof Node) || !pillWrapRef.contains(target))) {
-				workflow.closeQueue();
-			}
+			if (!queueOpen() || wrapper?.contains(event.target as Node)) return;
+			workflow.closeQueue();
 		};
 		document.addEventListener("keydown", onKey);
 		document.addEventListener("pointerdown", onPointerDown);
@@ -44,12 +46,7 @@ export function ThreadHead(props: { sceneTitle: string }) {
 	return (
 		<header class="thread-head">
 			<h1 class="scene-title">{props.sceneTitle}</h1>
-			<div
-				class="work-pill-wrap"
-				ref={(el) => {
-					pillWrapRef = el;
-				}}
-			>
+			<div class="work-pill-wrap" ref={wrapper}>
 				<Button
 					type="button"
 					class="work-pill"
@@ -68,11 +65,11 @@ export function ThreadHead(props: { sceneTitle: string }) {
 							when={activeRuns().length > 0}
 							fallback={<div class="empty">{t("threadHead.noRunningWork")}</div>}
 						>
-							<For each={activeRuns()}>{(run) => <WorkRunCard run={run} />}</For>
+							<For each={activeRuns()}>{(run) => <WorkRunCard run={run} labels={labels()} />}</For>
 						</Show>
 						<Show when={recentRuns().length > 0}>
 							<h3>{t("threadHead.recentWork")}</h3>
-							<For each={recentRuns()}>{(run) => <WorkRunCard run={run} />}</For>
+							<For each={recentRuns()}>{(run) => <WorkRunCard run={run} labels={labels()} />}</For>
 						</Show>
 					</div>
 				</Show>

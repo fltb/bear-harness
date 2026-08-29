@@ -123,8 +123,6 @@ export const zhTW = {
 		"search": "搜尋",
 		"newConversation": "新建對話",
 		"conversations": "對話",
-		"conversationView": "對話檢視",
-		"activeConversations": "當前",
 		"archivedConversations": "已歸檔",
 		"emptyConversations": "還沒有對話。點右上角的 ＋ 開始第一段。",
 		"emptyArchivedConversations": "還沒有已歸檔的對話。",
@@ -336,6 +334,7 @@ export const zhTW = {
 		"candidateScope": "範圍"
 	},
 	"settings": {
+		"archivedConversationsHint": "歸檔對話不會出現在側欄中。你可以在這裡恢復或永久刪除它們。",
 		"workAgent": "工作代理",
 		"workAgentHint": "管理對話中可委託檔案任務的工作代理。內建 Pi 無需登入；Codex 是可選的外部代理。",
 		"builtInPiAgent": "內建 Pi",
@@ -347,6 +346,8 @@ export const zhTW = {
 		"codexLoginDirectoryPlaceholder": "/Users/你的使用者名稱/.codex",
 		"codexNotFound": "沒有發現相容的 Codex 命令列。請先安裝受支援版本。",
 		"codexUnknownVersion": "版本未知",
+		"codexInstallation": "Codex 安裝",
+		"diagnosticDetails": "診斷詳情",
 		"codexCandidateUsable": "相容，可以連線",
 		"codexCandidateVersionMismatch": "版本不相容，當前不能連線",
 		"codexCandidateRejected": "無法驗證此安裝，當前不能連線",

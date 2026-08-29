@@ -1,7 +1,4 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { Button } from "@kobalte/core/button";
-import { Tabs } from "@kobalte/core/tabs";
-import { TextField } from "@kobalte/core/text-field";
 import { createSignal, For, Show } from "solid-js";
 import { parseDocument, stringify } from "yaml";
 import {
@@ -9,6 +6,7 @@ import {
 	type MemoryCandidate,
 	useCompanionStore,
 } from "../stores/companion.js";
+import { Button, Tabs, TextField } from "../ui/primitives.js";
 import { MemoryEntryList } from "./MemorySheet.js";
 
 const PROMPT_FIELDS = [

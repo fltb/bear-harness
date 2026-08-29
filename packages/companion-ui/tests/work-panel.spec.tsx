@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
 import type { RunInfo } from "../src/stores/ipc.js";
-import { WorkTimelineItem } from "../src/WorkPanel.js";
+import { PermissionLayer, WorkTimelineItem } from "../src/WorkPanel.js";
 
 const run = (id: string, status: RunInfo["status"]): RunInfo => ({
 	id,
@@ -15,7 +15,7 @@ const run = (id: string, status: RunInfo["status"]): RunInfo => ({
 	status,
 });
 
-function renderWork(overrides: Partial<CompanionStore> = {}) {
+function renderWork(overrides: Partial<CompanionStore> = {}, showPermission = false) {
 	const steer = vi.fn(() => Promise.resolve());
 	const interrupt = vi.fn(() => Promise.resolve());
 	const resume = vi.fn(() => Promise.resolve());
@@ -62,6 +62,7 @@ function renderWork(overrides: Partial<CompanionStore> = {}) {
 	render(() => (
 		<DesktopProvider store={store}>
 			<WorkTimelineItem messageId="message-1" />
+			{showPermission ? <PermissionLayer /> : null}
 		</DesktopProvider>
 	));
 	return { store, steer, interrupt, resume, cancel, respondPermission };
@@ -71,10 +72,8 @@ describe("work timeline controls", () => {
 	it("renders every terminal state and drives steer, interrupt, resume and permissions", async () => {
 		const user = userEvent.setup();
 		const actions = renderWork();
-
 		expect(screen.getByText(zhCN.work.timeline.completed)).toBeVisible();
 		expect(screen.getAllByText(zhCN.work.timeline.failed)).toHaveLength(3);
-		expect(screen.getByText(zhCN.work.timeline.needsYou)).toBeVisible();
 
 		const steerInputs = screen.getAllByRole("textbox", { name: zhCN.work.steerInputLabel });
 		await user.type(steerInputs[0]!, "continue carefully");
@@ -88,7 +87,12 @@ describe("work timeline controls", () => {
 		expect(actions.interrupt).toHaveBeenCalledWith("running");
 		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.resume }));
 		expect(actions.resume).toHaveBeenCalledWith("interrupted");
+	});
 
+	it("keeps permission decisions in a blocking system-action card", async () => {
+		const user = userEvent.setup();
+		const actions = renderWork({}, true);
+		expect(screen.getByRole("dialog", { name: zhCN.work.timeline.needsYou })).toBeVisible();
 		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.permissionAllow }));
 		expect(actions.respondPermission).toHaveBeenCalledWith("needs-user", "permission-1", "allow");
 		expect(
@@ -107,27 +111,30 @@ describe("work timeline controls", () => {
 		const user = userEvent.setup();
 		const failure = new Error("permission rejected locally");
 		const cancel = vi.fn(() => Promise.reject(failure));
-		renderWork({
-			runs: [
-				run("needs-user", "needs_user"),
-				{ ...run("other", "running"), conversationId: "other" },
-			],
-			run: {
-				cancel,
-				respondPermission: vi.fn(() => Promise.resolve()),
-				steer: vi.fn(() => Promise.resolve()),
-				interrupt: vi.fn(() => Promise.resolve()),
-				resume: vi.fn(() => Promise.resolve()),
-				pendingPermissions: () => [
-					{
-						runId: "needs-user",
-						requestId: "permission-1",
-						prompt: "Allow the operation?",
-						options: [],
-					},
+		renderWork(
+			{
+				runs: [
+					run("needs-user", "needs_user"),
+					{ ...run("other", "running"), conversationId: "other" },
 				],
-			} as CompanionStore["run"],
-		});
+				run: {
+					cancel,
+					respondPermission: vi.fn(() => Promise.resolve()),
+					steer: vi.fn(() => Promise.resolve()),
+					interrupt: vi.fn(() => Promise.resolve()),
+					resume: vi.fn(() => Promise.resolve()),
+					pendingPermissions: () => [
+						{
+							runId: "needs-user",
+							requestId: "permission-1",
+							prompt: "Allow the operation?",
+							options: [],
+						},
+					],
+				} as CompanionStore["run"],
+			},
+			true,
+		);
 
 		expect(screen.queryByText("running task")).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: zhCN.work.timeline.stopRun }));

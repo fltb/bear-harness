@@ -1,11 +1,8 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { Button } from "@kobalte/core/button";
-import { Dialog } from "@kobalte/core/dialog";
-import { FileField } from "@kobalte/core/file-field";
-import { Tabs } from "@kobalte/core/tabs";
 import { For, Show } from "solid-js";
 import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
 import { type CharacterSummary, useCompanionStore } from "../stores/companion.js";
+import { Button, Dialog, FileField, Tabs } from "../ui/primitives.js";
 import { CanonStudio } from "./CanonStudio.js";
 import { CurrentRolePackageManager } from "./CurrentRolePackageManager.js";
 import { MemorySheet } from "./MemorySheet.js";
@@ -118,34 +115,38 @@ function RoleManager() {
 	const workflow = createBackstageWorkflowStore(companion);
 	return (
 		<div class="sheet-panel role-list">
-			<div class="role-import">
-				<p class="drawer-note">{t("backstage.roleImportHint")}</p>
-				<FileField
-					multiple
-					disabled={workflow.importing()}
-					onFileAccept={(files) =>
-						workflow.importPackage(
-							files,
-							t("backstage.roleImportDone"),
-							t("backstage.roleImportFailed"),
-						)
-					}
-				>
-					<FileField.Trigger class="button-like" aria-label={t("backstage.roleImport")}>
-						{workflow.importing() ? t("backstage.roleImportBusy") : t("backstage.roleImport")}
-					</FileField.Trigger>
-					<FileField.HiddenInput
-						aria-label={t("backstage.roleImportInput")}
-						ref={(element) => element.setAttribute("webkitdirectory", "")}
-					/>
-				</FileField>
-				<Show when={workflow.roleFeedback()}>
-					<p role="status" class="status-line">
-						{workflow.roleFeedback()}
-					</p>
-				</Show>
-			</div>
-			<For each={workflow.characters()}>{(character) => <RoleRow character={character} />}</For>
+			<aside class="role-library">
+				<div class="role-import">
+					<p class="drawer-note">{t("backstage.roleImportHint")}</p>
+					<FileField
+						multiple
+						disabled={workflow.importing()}
+						onFileAccept={(files) =>
+							workflow.importPackage(
+								files,
+								t("backstage.roleImportDone"),
+								t("backstage.roleImportFailed"),
+							)
+						}
+					>
+						<FileField.Trigger class="button-like" aria-label={t("backstage.roleImport")}>
+							{workflow.importing() ? t("backstage.roleImportBusy") : t("backstage.roleImport")}
+						</FileField.Trigger>
+						<FileField.HiddenInput
+							aria-label={t("backstage.roleImportInput")}
+							ref={(element) => element.setAttribute("webkitdirectory", "")}
+						/>
+					</FileField>
+					<Show when={workflow.roleFeedback()}>
+						<p role="status" class="status-line">
+							{workflow.roleFeedback()}
+						</p>
+					</Show>
+				</div>
+				<div class="role-library-list">
+					<For each={workflow.characters()}>{(character) => <RoleRow character={character} />}</For>
+				</div>
+			</aside>
 			<CurrentRolePackageManager
 				characters={workflow.characters}
 				selectedId={workflow.selectedPackageId}

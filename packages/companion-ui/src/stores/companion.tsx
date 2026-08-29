@@ -997,6 +997,19 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 
 	const refreshSnapshot = () =>
 		refreshRpcQuery({ client: queryClient, key: queryKeys.snapshot, request: snapshotRequest });
+	const refreshPresentationSnapshot = (operation: string): void => {
+		const refresh = () => {
+			void refreshSnapshot().catch((error) =>
+				retainProjectionError(operation, error, "projection"),
+			);
+		};
+		refresh();
+		// Presentation events are the wake-up signal for a committed Host
+		// projection. Keep one event-driven trailing read so a notification
+		// delivered while an older snapshot request is in flight cannot leave
+		// the renderer permanently one revision behind.
+		coalescedRefetch(refresh, refreshSnapshot);
+	};
 	const refreshConversations = async (): Promise<void> => {
 		await refreshRpcQuery({
 			client: queryClient,
@@ -1227,9 +1240,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			case "roleplay.media_dismissed":
 			case "roleplay.choices_presented":
 			case "roleplay.choices_dismissed":
-				void refreshSnapshot().catch((error) =>
-					retainProjectionError("snapshot.presentation", error, "projection"),
-				);
+				refreshPresentationSnapshot("snapshot.presentation");
 				return;
 			case "conversation.selected":
 				void invalidateActiveConversationQueries();

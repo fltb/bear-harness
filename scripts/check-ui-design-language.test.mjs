@@ -18,12 +18,15 @@ function fixture(overrides = {}) {
 			],
 			layoutStyleSheet: "packages/companion-ui/src/styles/layout.css",
 			tokenStyleSheet: "packages/companion-ui/src/styles/base.css",
+			headlessPrimitiveFacade: "packages/companion-ui/src/ui/primitives.ts",
 			inlineStyleAllowlist: [],
 		}),
 		"packages/companion-ui/src/styles.css": '@import "./styles/base.css";\n',
 		"packages/companion-ui/src/styles/base.css":
 			"@theme { --color-ink: #111; }\n.control { @apply p-2; }\n",
 		"packages/companion-ui/src/styles/layout.css": '.app[data-layout="mobile"] { @apply grid; }\n',
+		"packages/companion-ui/src/ui/primitives.ts":
+			'export { Button } from "@kobalte/core/button";\n',
 		"packages/companion-ui/src/View.tsx": 'export const View = () => <div class="control" />;\n',
 		...overrides,
 	};
@@ -79,4 +82,14 @@ test("rejects unstyled classes and inline visual bypasses", () => {
 	);
 	assert.match(output, /class 'missing' has no registered CSS selector/);
 	assert.match(output, /inline style is not approved/);
+});
+
+test("rejects headless primitive imports outside the product UI facade", () => {
+	const output = check(
+		fixture({
+			"packages/companion-ui/src/View.tsx":
+				'import { Button } from "@kobalte/core/button";\nexport const View = () => <Button class="control" />;\n',
+		}),
+	);
+	assert.match(output, /headless primitives must be imported through the product UI facade/);
 });

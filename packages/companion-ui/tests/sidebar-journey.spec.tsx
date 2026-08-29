@@ -13,7 +13,6 @@ describe("sidebar conversation journey", () => {
 		const selectConversation = vi.fn(() => Promise.resolve());
 		const renameConversation = vi.fn(() => Promise.resolve());
 		const archiveConversation = vi.fn(() => Promise.resolve());
-		const restoreConversation = vi.fn(() => Promise.resolve());
 		const deleteConversation = vi.fn(() => Promise.resolve());
 		const onOpenBackstage = vi.fn();
 		const onNavigate = vi.fn();
@@ -48,7 +47,6 @@ describe("sidebar conversation journey", () => {
 			selectConversation,
 			renameConversation,
 			archiveConversation,
-			restoreConversation,
 			deleteConversation,
 		} as unknown as CompanionStore;
 		render(() => (
@@ -89,11 +87,10 @@ describe("sidebar conversation journey", () => {
 		await user.click(screen.getByRole("button", { name: zhCN.sidebar.archiveConversation }));
 		expect(archiveConversation).toHaveBeenCalledWith("conversation-1");
 		await user.clear(search);
-		await user.click(screen.getByRole("button", { name: zhCN.sidebar.archivedConversations }));
-		expect(screen.getByText("Archived project")).toBeVisible();
-		await user.click(screen.getByRole("button", { name: zhCN.sidebar.restoreConversation }));
-		expect(restoreConversation).toHaveBeenCalledWith("conversation-archived");
-		await user.click(screen.getByRole("button", { name: zhCN.sidebar.activeConversations }));
+		expect(
+			screen.queryByRole("button", { name: zhCN.sidebar.archivedConversations }),
+		).not.toBeInTheDocument();
+		expect(screen.queryByText("Archived project")).not.toBeInTheDocument();
 		const activeRow = screen.getByText("Alpha project").closest(".nav-item-wrap");
 		expect(activeRow).not.toBeNull();
 		await user.click(

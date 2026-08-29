@@ -1,10 +1,9 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { Button } from "@kobalte/core/button";
-import { TextField } from "@kobalte/core/text-field";
 import { createMemo, For, Show } from "solid-js";
 import type { CharacterDisplay } from "./stores/companion.js";
 import type { RunInfo, RunPermissionRequest } from "./stores/ipc.js";
 import { useShellWorkflowStore } from "./stores/shell-workflows.js";
+import { Button, Dialog, TextField } from "./ui/primitives.js";
 
 type WorkLabels = NonNullable<CharacterDisplay["character"]["work_presentation"]>["labels"];
 const active = (status: RunInfo["status"]) =>
@@ -62,7 +61,6 @@ export function WorkRunCard(props: { run: RunInfo; labels?: WorkLabels }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const workflow = useShellWorkflowStore();
 	const state = workflow.runActionState(props.run.id);
-	const permissions = workflow.permissionsForRun(props.run.id);
 	const label = createMemo(() =>
 		props.run.status === "completed"
 			? (props.labels?.completed ?? t("work.timeline.completed"))
@@ -81,10 +79,11 @@ export function WorkRunCard(props: { run: RunInfo; labels?: WorkLabels }) {
 			state.setSteerText("");
 	};
 	return (
-		<div
+		<article
 			class="action-proposal run-controls"
 			data-run-id={props.run.id}
 			data-run-status={props.run.status}
+			aria-label={`${label()} · ${props.run.title}`}
 		>
 			<span class="system-label">{label()}</span>
 			<h3>{props.run.title}</h3>
@@ -126,19 +125,46 @@ export function WorkRunCard(props: { run: RunInfo; labels?: WorkLabels }) {
 					{t("work.timeline.resume")}
 				</Button>
 			</Show>
-			<For each={permissions()}>{(permission) => <PermissionCard permission={permission} />}</For>
-		</div>
+		</article>
 	);
 }
 export function WorkTimelineItem(props: { messageId: string }) {
 	const workflow = useShellWorkflowStore();
-	const labels = createMemo(() => workflow.character()?.character.work_presentation?.labels);
 	const runs = workflow.runsForMessage(props.messageId);
+	const labels = createMemo(() => workflow.character()?.character.work_presentation?.labels);
 	return (
 		<Show when={runs().length}>
 			<div class="work-action-line" data-message-id={props.messageId}>
 				<For each={runs()}>{(run) => <WorkRunCard run={run} labels={labels()} />}</For>
 			</div>
+		</Show>
+	);
+}
+
+export function PermissionLayer() {
+	const [t] = useTranslation(undefined, { i18n });
+	const workflow = useShellWorkflowStore();
+	const permission = createMemo(() => {
+		const runIds = new Set(
+			workflow.host.runs
+				.filter((run) => run.conversationId === workflow.host.activeConversationId)
+				.map((run) => run.id),
+		);
+		return workflow.host.run.pendingPermissions().find((item) => runIds.has(item.runId));
+	});
+	return (
+		<Show when={permission()} keyed>
+			{(current) => (
+				<Dialog open modal onOpenChange={() => undefined}>
+					<Dialog.Portal>
+						<Dialog.Overlay class="work-permission-layer" />
+						<Dialog.Content class="work-permission-dialog">
+							<Dialog.Title class="sr-only">{t("work.timeline.needsYou")}</Dialog.Title>
+							<PermissionCard permission={current} />
+						</Dialog.Content>
+					</Dialog.Portal>
+				</Dialog>
+			)}
 		</Show>
 	);
 }

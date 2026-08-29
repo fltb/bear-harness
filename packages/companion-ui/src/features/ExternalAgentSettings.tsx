@@ -1,9 +1,8 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { Button } from "@kobalte/core/button";
-import { TextField } from "@kobalte/core/text-field";
 import { createSignal, For, onMount, Show } from "solid-js";
 import { useCompanionStore } from "../stores/companion.js";
 import type { ExternalAgentCandidate, ExternalAgentStatusData } from "../stores/ipc.js";
+import { Button, TextField } from "../ui/primitives.js";
 
 /** Explicit local consent for the optional Codex work agent. */
 export function ExternalAgentSettings() {
@@ -95,11 +94,15 @@ export function ExternalAgentSettings() {
 					{(candidate) => (
 						<div class="provider-card">
 							<div class="settings-group-heading">
-								<strong>{candidate.candidatePath}</strong>
+								<strong>{t("settings.codexInstallation")}</strong>
 								<p class="field-hint">{candidate.version ?? t("settings.codexUnknownVersion")}</p>
 								<p class={candidate.status === "usable" ? "status-line ok" : "status-line err"}>
 									{candidateStatus(candidate)}
 								</p>
+								<details class="diagnostic-details">
+									<summary>{t("settings.diagnosticDetails")}</summary>
+									<code>{candidate.candidatePath}</code>
+								</details>
 							</div>
 							<Button
 								type="button"

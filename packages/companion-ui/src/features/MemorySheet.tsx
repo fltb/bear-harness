@@ -1,8 +1,4 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { Button } from "@kobalte/core/button";
-import { Select } from "@kobalte/core/select";
-import { Tabs } from "@kobalte/core/tabs";
-import { TextField } from "@kobalte/core/text-field";
 import { For, Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
@@ -12,6 +8,7 @@ import {
 	type MemoryScope,
 	useCompanionStore,
 } from "../stores/companion.js";
+import { Button, Select, Tabs, TextField } from "../ui/primitives.js";
 
 /**
  * Memory management sheet (幕后 · 记忆).

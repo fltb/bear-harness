@@ -1,0 +1,820 @@
+/*
+ * Product recipes. This final cascade layer normalizes equivalent controls
+ * and surfaces while legacy feature selectors are migrated behind recipes.
+ * Breakpoint geometry remains exclusively in layout.css.
+ */
+
+button,
+input,
+textarea,
+select {
+	font: inherit;
+}
+
+button {
+	transition:
+		background-color var(--motion-fast) ease,
+		border-color var(--motion-fast) ease,
+		color var(--motion-fast) ease,
+		transform var(--motion-fast) ease;
+}
+
+button:active:not(:disabled) {
+	@apply translate-y-px;
+}
+
+button:focus-visible,
+textarea:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[role="button"]:focus-visible,
+[role="tab"]:focus-visible {
+	@apply outline-2 outline-offset-2;
+	outline-color: var(--focus-ring);
+}
+
+button[data-control="command"],
+.button-like,
+.mini-btn,
+.backstage-close,
+.roleplay-choice,
+.provider-card-actions button,
+.provider-import > button,
+.canon-row-actions button,
+.canon-studio form > button,
+.memory-actions button,
+.candidate-actions button {
+	@apply inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-medium;
+	--semantic-fg-role: default;
+	border-color: var(--line-soft);
+	color: var(--text-strong);
+	background: var(--surface-control);
+}
+
+button[data-control="command"]:hover:not(:disabled),
+.button-like:hover,
+.mini-btn:hover:not(:disabled),
+.backstage-close:hover,
+.provider-card-actions button:hover:not(:disabled),
+.canon-studio form > button:hover:not(:disabled) {
+	border-color: var(--line-strong);
+	background: var(--surface-panel);
+}
+
+button[data-variant="primary"],
+.primary,
+.send {
+	@apply inline-flex min-h-10 items-center justify-center rounded-lg border border-transparent px-4 text-sm font-semibold;
+	--semantic-fg-role: on-action;
+	color: var(--text-on-action);
+	background: var(--surface-action);
+}
+
+button[data-variant="primary"]:hover:not(:disabled),
+.primary:hover:not(:disabled),
+.send:hover:not(:disabled) {
+	@apply brightness-110;
+}
+
+.danger-action,
+.provider-card-actions button:last-child {
+	--semantic-fg-role: danger;
+	border-color: color-mix(in srgb, var(--text-danger) 46%, transparent);
+	color: var(--text-danger);
+	background: var(--surface-danger);
+}
+
+.field,
+.setting-field,
+.setting-select,
+.intro-form {
+	@apply grid min-w-0 gap-2;
+}
+
+.field-label,
+.setting-field > label,
+.intro-form > label {
+	@apply text-sm font-medium;
+	--semantic-fg-role: default;
+	color: var(--text-strong);
+}
+
+.field-hint,
+.drawer-note,
+.memory-note,
+.edit-branch-note {
+	@apply m-0 text-sm leading-relaxed;
+	--semantic-fg-role: muted;
+	color: var(--text-muted);
+}
+
+.field input,
+.field textarea,
+.setting-field input,
+.setting-field textarea,
+.intro-form input,
+.search-input,
+.steer-input {
+	@apply box-border min-h-10 w-full rounded-lg border px-3 py-2 text-sm outline-none;
+	--semantic-fg-role: default;
+	border-color: var(--line-soft);
+	color: var(--text-strong);
+	background: var(--surface-control);
+}
+
+.field textarea,
+.setting-field textarea {
+	@apply resize-y leading-relaxed;
+}
+
+.field input:hover:not(:disabled),
+.field textarea:hover:not(:disabled),
+.setting-field input:hover:not(:disabled),
+.setting-field textarea:hover:not(:disabled),
+.select-trigger:hover:not(:disabled) {
+	border-color: var(--line-strong);
+}
+
+.select-trigger {
+	@apply inline-flex min-h-10 min-w-0 items-center justify-between gap-2 rounded-lg border px-3 text-sm;
+	--semantic-fg-role: default;
+	border-color: var(--line-soft);
+	color: var(--text-strong);
+	background: var(--surface-control);
+}
+
+.select-trigger[data-expanded] {
+	border-color: var(--line-strong);
+	background: var(--surface-panel);
+}
+
+.select-content,
+.composer-model-content {
+	@apply z-70 overflow-hidden rounded-xl border p-1 shadow-xl;
+	--semantic-fg-role: default;
+	border-color: var(--line-soft);
+	color: var(--text-strong);
+	background: var(--surface-panel);
+}
+
+.select-item,
+.composer-model-item {
+	@apply flex min-h-10 items-center rounded-lg px-3 py-2 text-sm;
+}
+
+.select-item[data-highlighted],
+.composer-model-item[data-highlighted] {
+	background: var(--surface-control);
+}
+
+.status-line {
+	@apply m-0 rounded-lg border px-3 py-2 text-sm leading-relaxed;
+}
+
+.empty-note,
+.conversations-empty,
+.queue-pop .empty {
+	@apply rounded-xl border border-dashed px-4 py-5 text-center text-sm leading-relaxed;
+	--semantic-fg-role: muted;
+	border-color: var(--line-soft);
+	color: var(--text-muted);
+	background: color-mix(in srgb, var(--surface-control) 52%, transparent);
+}
+
+.backstage-overlay {
+	background: color-mix(in srgb, var(--surface-canvas) 78%, transparent);
+	backdrop-filter: blur(10px);
+}
+
+.intro {
+	@apply fixed inset-0 z-60 grid place-items-center overflow-y-auto p-8;
+	background: var(--surface-canvas);
+	backdrop-filter: none;
+}
+
+.intro-card {
+	@apply grid w-full max-w-2xl gap-4 rounded-2xl border p-7;
+	--semantic-fg-role: default;
+	border-color: var(--line-soft);
+	color: var(--text-strong);
+	background: var(--surface-panel);
+	box-shadow: var(--shadow-overlay);
+}
+
+.intro-step {
+	@apply text-xs font-semibold;
+	--semantic-fg-role: accent;
+	color: var(--text-action);
+}
+
+.intro-card h2 {
+	@apply m-0 text-2xl font-semibold;
+	font-family: var(--font-body);
+}
+
+.intro-card p {
+	@apply m-0 text-sm leading-relaxed;
+}
+
+.intro-actions {
+	@apply mt-2 flex min-h-12 items-end justify-end border-t pt-4;
+	border-color: var(--line-soft);
+}
+
+.intro-choices,
+.intro-provider-tiles {
+	@apply my-1 grid grid-cols-1 gap-2;
+}
+
+.intro-choice,
+.intro-provider-tile {
+	@apply min-h-16 rounded-xl border p-3 text-left;
+	--semantic-fg-role: default;
+	border-color: var(--line-soft);
+	color: var(--text-strong);
+	background: var(--surface-control);
+}
+
+.intro-choice:hover,
+.intro-provider-tile:hover {
+	border-color: var(--line-strong);
+	background: var(--surface-panel);
+}
+
+.model-setup .intro-card {
+	@apply max-h-full overflow-hidden;
+}
+
+.first-meeting-provider-setup {
+	@apply min-h-0 overflow-y-auto pr-1;
+}
+
+.backstage-sheet {
+	@apply rounded-2xl border;
+	border-color: var(--line-soft);
+	background: var(--surface-panel);
+	box-shadow: var(--shadow-overlay);
+}
+
+.backstage-head {
+	@apply min-h-16 border-b px-6 py-4;
+	border-color: var(--line-soft);
+}
+
+.backstage-title {
+	@apply text-xl font-semibold;
+	font-family: var(--font-body);
+}
+
+.backstage-close {
+	@apply min-h-10;
+}
+
+.backstage-tabs,
+.standalone-settings-panel {
+	@apply min-h-0 px-6 pb-6;
+}
+
+.backstage-tabs .tabs {
+	@apply mb-5 min-h-12 items-end gap-5;
+}
+
+.tab,
+.sub-tabs .tab {
+	@apply relative min-h-11 rounded-none border-0 px-1 py-3 text-sm font-medium;
+	--semantic-fg-role: muted;
+	color: var(--text-muted);
+	background: transparent;
+}
+
+.tab[data-selected] {
+	--semantic-fg-role: default;
+	color: var(--text-strong);
+	background: transparent;
+}
+
+.tab[data-selected]::after {
+	@apply absolute bottom-0 left-0 right-0 h-0.5 rounded-full;
+	content: "";
+	background: var(--accent);
+}
+
+.settings-workbench {
+	@apply gap-0;
+}
+
+.settings-navigation {
+	@apply gap-5 pr-6;
+}
+
+.settings-navigation-list {
+	@apply gap-1;
+}
+
+.settings-navigation .settings-navigation-list button {
+	@apply min-h-11 rounded-lg border border-transparent px-3 text-left text-sm font-medium;
+	--semantic-fg-role: muted;
+	transition-property: background-color, border-color, transform;
+	color: var(--semantic-role-muted);
+	background: transparent;
+}
+
+.settings-navigation .settings-navigation-list button:hover {
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
+	background: var(--surface-control);
+}
+
+.settings-navigation .settings-navigation-list button[aria-current="page"] {
+	--semantic-fg-role: default;
+	border-color: var(--line-soft);
+	color: var(--semantic-role-default);
+	background: var(--surface-control);
+}
+
+.settings-mobile-picker {
+	@apply hidden;
+}
+
+.settings-page {
+	@apply px-6;
+}
+
+.settings-page-section,
+.model-settings {
+	@apply gap-6;
+}
+
+.settings-page-header,
+.settings-group-heading,
+.settings-section-header {
+	@apply gap-2 pb-5;
+}
+
+.settings-page-header h3,
+.settings-group-heading h3 {
+	@apply text-xl font-semibold;
+}
+
+.settings-section-header h4,
+.settings-group-heading h4 {
+	@apply m-0 text-base font-semibold;
+	--semantic-fg-role: default;
+	color: var(--text-strong);
+}
+
+.settings-stack,
+.settings-fields,
+.embedding-settings {
+	@apply gap-5;
+}
+
+.settings-section {
+	@apply gap-5 pt-6;
+}
+
+.settings-actions {
+	@apply flex justify-end border-t pt-5;
+	border-color: var(--line-soft);
+}
+
+.provider-card,
+.detail-card,
+.current-role-package-summary,
+.role-row,
+.canon-row,
+.memory-entry,
+.candidate-card {
+	@apply rounded-xl border p-4;
+	border-color: var(--line-soft);
+	background: color-mix(in srgb, var(--surface-control) 72%, transparent);
+}
+
+.role-list,
+.canon-studio,
+.memory-section,
+.current-role-package-manager,
+.current-role-package-form {
+	@apply gap-6;
+}
+
+.role-list {
+	@apply grid grid-cols-4 items-start gap-6;
+}
+
+.role-library {
+	@apply col-span-1 grid min-w-0 gap-4 border-r pr-6;
+	border-color: var(--line-soft);
+}
+
+.role-library-list {
+	@apply grid gap-2;
+}
+
+.role-list > .current-role-package-manager {
+	@apply col-span-3 min-w-0;
+}
+
+.role-library .role-row {
+	@apply grid grid-cols-1 gap-3;
+}
+
+.role-library .role-row img {
+	@apply size-10;
+}
+
+.canon-studio > section,
+.role-import,
+.current-role-package-manager,
+.memory-section {
+	@apply grid gap-4 border-t pt-6;
+	border-color: var(--line-soft);
+}
+
+.canon-studio > section:first-of-type,
+.role-import:first-child {
+	@apply border-t-0 pt-0;
+}
+
+.canon-studio form {
+	@apply grid gap-3;
+}
+
+.canon-search {
+	@apply grid grid-cols-1 gap-3;
+}
+
+.thread {
+	@apply gap-4 overflow-x-hidden rounded-none border-0 bg-none bg-transparent px-6 py-5;
+	backdrop-filter: none;
+}
+
+.msg {
+	@apply w-fit max-w-full rounded-2xl px-4 py-3 text-sm;
+	overflow-wrap: anywhere;
+}
+
+.msg.user {
+	@apply self-end;
+}
+
+.bear-msg {
+	@apply relative self-start pr-12;
+}
+
+.bear-msg {
+	border-color: var(--line-soft);
+	box-shadow: none;
+}
+
+.agent-message-avatar {
+	@apply mt-5 size-9 shrink-0 rounded-full border object-cover shadow-app;
+	border-color: var(--line-soft);
+	background: var(--surface-panel);
+}
+
+.agent-message-name {
+	@apply mb-1 block text-xs font-medium;
+	color: var(--text-muted);
+}
+
+.agent-message-column {
+	@apply flex min-w-0 max-w-full flex-1 flex-col items-start;
+}
+
+.user-message-column {
+	@apply ml-12 flex min-w-0 flex-1 justify-end pl-4;
+}
+
+.bear-msg .msg-heading {
+	@apply absolute right-2 top-2 m-0 min-h-0;
+}
+
+.msg p {
+	@apply text-base leading-relaxed;
+}
+
+.msg-heading {
+	@apply mb-1 flex min-h-6 items-start justify-between gap-3;
+}
+
+.msg-meta {
+	@apply mb-0 text-xs font-medium;
+}
+
+.msg-menu-trigger {
+	@apply grid size-7 shrink-0 place-items-center rounded-lg border border-transparent;
+	color: var(--text-muted);
+	background: transparent;
+}
+
+.msg-menu-trigger:hover,
+.msg-menu-trigger[aria-expanded="true"] {
+	border-color: var(--line-soft);
+	color: var(--text-strong);
+	background: var(--surface-control);
+}
+
+.pi-tool-result {
+	@apply max-w-2xl rounded-lg border-0 px-3 py-2;
+	color: var(--text-muted);
+	background: color-mix(in srgb, var(--surface-control) 58%, transparent);
+}
+
+.tool-activity-group {
+	@apply w-fit max-w-2xl self-start rounded-xl;
+	color: var(--text-muted);
+	background: color-mix(in srgb, var(--surface-control) 48%, transparent);
+}
+
+.tool-activity-group > summary {
+	@apply flex min-h-10 cursor-pointer list-none items-center justify-between gap-4 rounded-xl px-3 py-2 text-xs;
+}
+
+.tool-activity-group > summary::-webkit-details-marker {
+	@apply hidden;
+}
+
+.tool-activity-group > summary:hover {
+	color: var(--text-strong);
+	background: var(--surface-control);
+}
+
+.tool-activity-details {
+	@apply grid gap-1 border-t p-2;
+	border-color: var(--line-soft);
+}
+
+.tool-activity-details .pi-tool-result {
+	@apply w-full max-w-none;
+}
+
+.message-operations {
+	@apply mt-2 flex flex-wrap gap-1 border-0 p-0;
+}
+
+.message-operations legend {
+	@apply sr-only;
+}
+
+.message-operations button {
+	@apply min-h-8 rounded-lg border-0 px-2 text-xs;
+	color: var(--text-muted);
+	background: var(--surface-control);
+}
+
+.message-operations-dismiss {
+	@apply hidden;
+}
+
+.diagnostic-details {
+	@apply rounded-lg border px-3 py-2 text-xs;
+	border-color: var(--line-soft);
+	color: var(--text-muted);
+	background: var(--surface-control);
+}
+
+.diagnostic-details summary {
+	@apply cursor-pointer font-medium;
+}
+
+.diagnostic-details code {
+	@apply mt-2 block overflow-x-auto whitespace-nowrap border-t pt-2;
+	border-color: var(--line-soft);
+}
+
+.message-inline-editor,
+.message-correction-panel {
+	@apply mt-3 gap-3 rounded-xl border p-3;
+	border-color: var(--line-soft);
+	background: var(--surface-panel);
+}
+
+.composer {
+	@apply gap-2 rounded-2xl border p-3;
+	border-color: var(--line-soft);
+	background: var(--surface-panel);
+	box-shadow: var(--shadow-raised);
+}
+
+.composer textarea {
+	@apply min-h-11 px-1 py-2 text-base leading-relaxed;
+}
+
+.circle,
+.send {
+	@apply size-11 rounded-xl;
+}
+
+.composer-model-trigger {
+	@apply min-h-9 rounded-lg px-2;
+}
+
+.work-action-line,
+.action-proposal,
+.completion-card,
+.failure-card {
+	@apply max-w-2xl rounded-xl;
+}
+
+.work-action-line {
+	@apply flex flex-col gap-2;
+}
+
+.work-action-line .action-proposal {
+	@apply w-full flex-1 border p-3;
+	border-color: var(--line-soft);
+	background: color-mix(in srgb, var(--surface-control) 58%, transparent);
+}
+
+.work-action-line .action-proposal h3 {
+	@apply mt-1 text-sm;
+}
+
+.run-controls > button,
+.work-actions button {
+	@apply mt-2 min-h-10 rounded-lg border px-3 text-sm;
+	border-color: var(--line-soft);
+	background: var(--surface-panel);
+}
+
+.timeline-entry-row {
+	@apply flex w-full items-start gap-3;
+}
+
+.agent-result-trigger {
+	@apply mt-2 flex min-h-12 w-full max-w-2xl items-center justify-between gap-4 rounded-xl border px-4 py-3 text-left text-sm;
+	border-color: var(--line-soft);
+	color: var(--text-strong);
+	background: color-mix(in srgb, var(--surface-control) 70%, transparent);
+}
+
+.agent-result-trigger:hover {
+	border-color: var(--line-strong);
+	background: var(--surface-control);
+}
+
+.agent-result-trigger > span {
+	@apply min-w-0 flex-1 truncate;
+}
+
+.agent-result-trigger > strong {
+	@apply shrink-0 text-xs font-medium;
+	color: var(--text-action);
+}
+
+.agent-result-inline-card {
+	@apply hidden;
+}
+
+.agent-result-panel {
+	@apply relative z-40 m-4 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border shadow-app;
+	grid-area: result;
+	border-color: color-mix(in srgb, var(--line-strong) 72%, transparent);
+	color: var(--text-strong);
+	background: color-mix(in srgb, var(--surface-panel) 76%, transparent);
+	backdrop-filter: blur(22px) saturate(135%);
+}
+
+.agent-result-panel-header {
+	@apply flex shrink-0 items-start justify-between gap-4 border-b px-5 py-4;
+	border-color: var(--line-soft);
+}
+
+.agent-result-eyebrow {
+	@apply mb-1 block text-xs font-semibold;
+	color: var(--text-action);
+}
+
+.agent-result-panel-header h2 {
+	@apply m-0 text-xl font-semibold leading-tight;
+}
+
+.agent-result-close {
+	@apply grid size-10 shrink-0 place-items-center rounded-lg border text-2xl font-light leading-none;
+	border-color: var(--line-soft);
+	color: var(--text-muted);
+	background: var(--surface-control);
+}
+
+.agent-result-close:hover {
+	border-color: var(--line-strong);
+	color: var(--text-strong);
+}
+
+.agent-result-panel-body {
+	@apply min-h-0 flex-1 overflow-y-auto px-5 py-5;
+}
+
+.agent-result-content-card {
+	@apply min-h-full rounded-2xl border p-5;
+	border-color: var(--line-soft);
+	background: color-mix(in srgb, var(--surface-panel) 92%, transparent);
+	box-shadow: var(--shadow-raised);
+}
+
+.agent-result-status {
+	@apply mb-5 grid gap-1 rounded-xl border px-4 py-3 text-sm;
+	border-color: var(--line-soft);
+	background: color-mix(in srgb, var(--surface-control) 86%, transparent);
+}
+
+.agent-result-status strong {
+	color: var(--text-action);
+}
+
+.agent-result-status span {
+	@apply text-xs;
+	color: var(--text-muted);
+}
+
+.agent-result-summary {
+	@apply m-0 mb-5 whitespace-pre-wrap text-base leading-relaxed;
+}
+
+.agent-result-panel .timeline-attachments {
+	@apply m-0 grid gap-3 p-0;
+}
+
+.agent-result-panel .timeline-attachment-row {
+	@apply rounded-xl border p-4;
+	border-color: var(--line-soft);
+	background: color-mix(in srgb, var(--surface-control) 62%, transparent);
+}
+
+.agent-result-panel-footer {
+	@apply flex shrink-0 justify-end border-t px-5 py-4;
+	border-color: var(--line-soft);
+}
+
+.work-permission-layer {
+	@apply fixed inset-0 z-60;
+	background: var(--surface-overlay);
+	backdrop-filter: blur(6px);
+}
+
+.work-permission-dialog {
+	@apply fixed left-1/2 top-1/2 z-70 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border p-1 shadow-app;
+	border-color: var(--line-strong);
+	background: var(--surface-panel);
+}
+
+.work-permission-dialog .action-proposal {
+	@apply w-full max-w-none rounded-xl border-0 p-5;
+}
+
+.work-permission-dialog .work-actions {
+	@apply mt-4 grid grid-cols-1 gap-2;
+}
+
+.work-permission-dialog .work-actions button {
+	@apply m-0 w-full;
+}
+
+.roleplay-choices {
+	@apply mx-0 w-auto max-w-full self-stretch;
+}
+
+.identity,
+.sidebar-tools,
+.nav-list,
+.system-section {
+	@apply px-3;
+}
+
+.nav-item,
+.system-nav {
+	@apply rounded-xl;
+}
+
+.system-nav {
+	@apply min-h-11;
+}
+
+.archived-conversation-list {
+	@apply grid gap-2;
+}
+
+.archived-conversation-row {
+	@apply flex min-h-16 items-center justify-between gap-4 rounded-xl border p-4;
+	border-color: var(--line-soft);
+	background: color-mix(in srgb, var(--surface-control) 72%, transparent);
+}
+
+.archived-conversation-row > div:first-child {
+	@apply grid min-w-0 gap-1;
+}
+
+.archived-conversation-row strong,
+.archived-conversation-row span {
+	@apply truncate;
+}
+
+.archived-conversation-row span {
+	@apply text-sm;
+	color: var(--text-muted);
+}
+
+.archived-conversation-actions {
+	@apply flex shrink-0 gap-2;
+}
