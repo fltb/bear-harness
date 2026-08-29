@@ -147,7 +147,7 @@ test("file and folder attachments survive delegation, reload, download, and rema
 	const resultMessageRow = page.locator(".timeline-entry-row").filter({
 		has: page.locator('.timeline-attachment-row[data-attachment-kind="generated"]'),
 	});
-	const resultMessage = resultMessageRow.getByRole("article");
+	const resultMessage = resultMessageRow.locator("article.pi-timeline-message");
 	const resultTrigger = resultMessageRow.locator(".agent-result-trigger");
 	const resultPanel = page.locator(".agent-result-panel");
 	await expect(triggerCard).toBeVisible();
@@ -226,16 +226,29 @@ test("file and folder attachments survive delegation, reload, download, and rema
 	await expect(resultTrigger).toBeHidden();
 	const inlineResult = resultMessageRow.locator(".agent-result-inline-card");
 	await expect(inlineResult).toBeVisible();
-	const [mobileMessageBox, mobileResultBox, mobileThreadBox] = await Promise.all([
-		stableBoundingBox(resultMessage),
-		stableBoundingBox(inlineResult),
-		stableBoundingBox(page.getByRole("region", { name: zhCN.messages.conversation })),
-	]);
+	await inlineResult.scrollIntoViewIfNeeded();
+	const [mobileMessageBox, mobileResultBox, mobileThreadBox, mobileComposerBox, mobileAppBox] =
+		await Promise.all([
+			stableBoundingBox(resultMessage),
+			stableBoundingBox(inlineResult),
+			stableBoundingBox(page.getByRole("region", { name: zhCN.messages.conversation })),
+			stableBoundingBox(page.getByRole("form", { name: zhCN.composer.messageInputLabel })),
+			stableBoundingBox(page.getByRole("application", { name: zhCN.shell.productName })),
+		]);
 	expect(mobileResultBox.y).toBeGreaterThanOrEqual(mobileMessageBox.y + mobileMessageBox.height);
 	expect(mobileResultBox.x).toBeGreaterThanOrEqual(mobileThreadBox.x);
 	expect(mobileResultBox.x + mobileResultBox.width).toBeLessThanOrEqual(
 		mobileThreadBox.x + mobileThreadBox.width,
 	);
+	expect(mobileResultBox.y + mobileResultBox.height).toBeLessThanOrEqual(
+		mobileThreadBox.y + mobileThreadBox.height + 1,
+	);
+	expect(mobileComposerBox.y).toBeGreaterThanOrEqual(mobileThreadBox.y + mobileThreadBox.height);
+	expect(mobileComposerBox.y + mobileComposerBox.height).toBeLessThanOrEqual(
+		mobileAppBox.y + mobileAppBox.height,
+	);
+	expect(mobileAppBox.height).toBeLessThanOrEqual(844);
+	expect(mobileComposerBox.y + mobileComposerBox.height).toBeLessThanOrEqual(844);
 	const mobileNavigation = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
 	await expect
 		.poll(async () => {
