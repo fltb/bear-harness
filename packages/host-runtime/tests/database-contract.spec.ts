@@ -217,7 +217,7 @@ describe("database schema contract", () => {
 	it("rebuilds derived provenance and removes Host transcript mirrors", () => {
 		const database = new Database(root());
 		database.migrate(MIGRATIONS);
-		for (const table of ["relationship_memory_entries", "memory_candidates", "roleplay_events"]) {
+		for (const table of ["relationship_memory_entries", "memory_candidates"]) {
 			const columns = (
 				database.connection.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
 			).map((column) => column.name);
@@ -458,6 +458,34 @@ describe("database schema contract", () => {
 				.get(),
 		).toEqual({ title: "Kept title", scene_title: "Old scene" });
 		backup.close();
+		database.close();
+	});
+
+	it("reconciles the known unified-state preview and removes its superseded logs", () => {
+		const database = new Database(root());
+		database.migrate(MIGRATIONS);
+		database.connection.exec(`
+			CREATE TABLE companion_state_commits (id TEXT PRIMARY KEY);
+			CREATE TABLE pending_companion_effects (id TEXT PRIMARY KEY);
+			CREATE TABLE roleplay_events (id TEXT PRIMARY KEY);
+		`);
+		database.connection
+			.prepare("UPDATE schema_migrations SET checksum = ? WHERE id = 1")
+			.run("b825b5593b94c3f48b224fae6a6eb4b5b5b86fb8c3981dddd2afa94e48e23618");
+
+		database.migrate(MIGRATIONS);
+
+		const tables = (
+			database.connection
+				.prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+				.all() as Array<{ name: string }>
+		).map((row) => row.name);
+		expect(tables).not.toContain("companion_state_commits");
+		expect(tables).not.toContain("pending_companion_effects");
+		expect(tables).not.toContain("roleplay_events");
+		expect(tables).toContain("companion_state_documents");
+		expect(tables).toContain("pending_state_mutations");
+		expect(tables).toContain("state_mutation_log");
 		database.close();
 	});
 

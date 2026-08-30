@@ -285,7 +285,6 @@ export function createTestClient() {
 		},
 		roleplay: {
 			get: vi.fn(() => ok({ state: { values: {}, unlocked: [] } })),
-			trigger: vi.fn(() => ok({ state: { values: {}, unlocked: [] } })),
 			resetUnlocks: vi.fn(() => ok({})),
 			dismissMedia: vi.fn(() => ok({})),
 		},

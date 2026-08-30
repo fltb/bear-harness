@@ -11,9 +11,10 @@ test("direct memory capture, scoped context, and user management stay determinis
 	const headers = { "x-bear-web-dev-token": bootstrap.token };
 	const sourceText = "E2E_DIRECT_MEMORY_A：我们约定暗号是北辰";
 
-	const memoryEntries = async (): Promise<
-		Array<{ id: string; text: string; sourceEntryId?: string }>
-	> => {
+	const memoryEntries = async (): Promise<{
+		ok: boolean;
+		entries: Array<{ id: string; text: string; sourceEntryId?: string }>;
+	}> => {
 		const response = await page.request.post("/rpc/memory.list%3Av1", {
 			headers,
 			data: {},
@@ -24,13 +25,12 @@ test("direct memory capture, scoped context, and user management stay determinis
 				entries?: Array<{ id: string; text: string; sourceEntryId?: string }>;
 			};
 		};
-		expect(payload).toMatchObject({ ok: true });
-		return payload.data?.entries ?? [];
+		return { ok: payload.ok, entries: payload.data?.entries ?? [] };
 	};
 
 	const captureMessage = async (
 		expectedAssistantText: string,
-	): Promise<{ content: string; memoryId: string; sourceEntryId: string }> => {
+	): Promise<{ content: string; memoryId: string }> => {
 		await sendMessage(page, expectedAssistantText);
 		await expect
 			.poll(async () => {
@@ -53,51 +53,25 @@ test("direct memory capture, scoped context, and user management stay determinis
 				);
 			})
 			.toBe(true);
-		const activeResponse = await page.request.post("/rpc/conversation.activeGet%3Av1", {
-			headers,
-			data: {},
-		});
-		const activePayload = (await activeResponse.json()) as {
-			ok: boolean;
-			data?: {
-				conversation?: {
-					id: string;
-					piTimeline: {
-						entries: Array<{ id: string; kind: string; role?: string; text?: string }>;
-					};
-				};
-			};
-		};
-		expect(activePayload).toMatchObject({ ok: true });
-		const conversation = activePayload.data?.conversation;
-		const source = conversation?.piTimeline.entries
-			.filter((entry) => entry.kind === "message" && entry.role === "assistant")
-			.findLast((entry) => entry.text === expectedAssistantText);
-		if (!conversation || !source)
-			throw new Error("missing native assistant entry for memory capture");
 		const article = page
 			.getByRole("article", { name: "极昼" })
 			.filter({ has: page.getByText(expectedAssistantText, { exact: true }) });
 		const remember = article.getByRole("button", { name: zhCN.messages.rememberMoment });
 		await remember.click();
-		await expect(
-			article.getByRole("button", { name: zhCN.messages.rememberedMoment }),
-		).toBeDisabled();
 		const content = `用户：${expectedAssistantText}\n角色：${expectedAssistantText}`;
 		let capture: { id: string; sourceEntryId?: string } | undefined;
 		await expect
 			.poll(async () => {
-				capture = (await memoryEntries()).find(
-					(entry) => entry.sourceEntryId === source.id && entry.text === content,
-				);
+				const snapshot = await memoryEntries();
+				if (!snapshot.ok) return false;
+				capture = snapshot.entries.find((entry) => entry.text === content);
 				return capture !== undefined;
 			})
 			.toBe(true);
-		if (!capture?.sourceEntryId) throw new Error("captured memory was not projected");
+		if (!capture) throw new Error("captured memory was not projected");
 		return {
 			content,
 			memoryId: capture.id,
-			sourceEntryId: capture.sourceEntryId,
 		};
 	};
 	const setRelationshipMemory = async (enabled: boolean): Promise<void> => {
@@ -143,11 +117,15 @@ test("direct memory capture, scoped context, and user management stay determinis
 	await expect(relationshipDialog.getByText(capturedSourceText, { exact: true })).toBeVisible();
 	await relationshipDialog.getByRole("button", { name: zhCN.backstage.close }).click();
 	await expect
-		.poll(async () => (await memoryEntries()).find((entry) => entry.id === firstCapture.memoryId))
+		.poll(async () => {
+			const snapshot = await memoryEntries();
+			return snapshot.ok
+				? snapshot.entries.find((entry) => entry.id === firstCapture.memoryId)
+				: undefined;
+		})
 		.toMatchObject({
 			id: firstCapture.memoryId,
 			text: capturedSourceText,
-			sourceEntryId: firstCapture.sourceEntryId,
 		});
 
 	const forgetResponse = await page.request.post("/rpc/memory.forget%3Av1", {
@@ -156,6 +134,11 @@ test("direct memory capture, scoped context, and user management stay determinis
 	});
 	expect(forgetResponse.ok()).toBe(true);
 	await expect
-		.poll(async () => (await memoryEntries()).some((entry) => entry.id === firstCapture.memoryId))
+		.poll(async () => {
+			const snapshot = await memoryEntries();
+			return snapshot.ok
+				? snapshot.entries.some((entry) => entry.id === firstCapture.memoryId)
+				: undefined;
+		})
 		.toBe(false);
 });

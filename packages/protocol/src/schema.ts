@@ -252,19 +252,6 @@ export const EventPayloadSchemas = {
 		eventId: EventId.optional(),
 		state: BoundedEventValue,
 	}),
-	"roleplay.media_presented": EventPayload({
-		conversationId: EventId,
-		mediaId: EventId,
-	}),
-	"roleplay.media_dismissed": EventPayload({
-		conversationId: EventId,
-		mediaId: EventId,
-	}),
-	"roleplay.choices_presented": EventPayload({
-		conversationId: EventId,
-		choiceSetId: EventId,
-	}),
-	"roleplay.choices_dismissed": EventPayload({ conversationId: EventId }),
 	"conversation.created": EventPayload({
 		conversationId: EventId,
 		title: EventText.optional(),
@@ -361,6 +348,10 @@ export const EventPayloadSchemas = {
 	"companion.state_changed": EventPayload({
 		state: z.enum(["running", "crashed", "unavailable", "stopped"]),
 		error: EventText.optional(),
+	}),
+	"companion.snapshot_changed": EventPayload({
+		conversationId: EventId,
+		commitId: z.string().min(1).max(512),
 	}),
 	"companion.runtime_error": EventPayload({
 		conversationId: EventId.optional(),
@@ -863,21 +854,12 @@ export const CharacterDisplay = z
 						prompt: CharacterCopy,
 						choices: z
 							.array(
-								z.union([
-									z.strictObject({
-										id: CharacterIdentifier,
-										label: CharacterCopy,
-										description: z.string().max(MAX_STRING_LENGTH).optional(),
-										event: CharacterIdentifier,
-										followUp: CharacterCopy,
-									}),
-									z.strictObject({
-										id: CharacterIdentifier,
-										label: CharacterCopy,
-										description: z.string().max(MAX_STRING_LENGTH).optional(),
-										message: CharacterCopy,
-									}),
-								]),
+								z.strictObject({
+									id: CharacterIdentifier,
+									label: CharacterCopy,
+									description: z.string().max(MAX_STRING_LENGTH).optional(),
+									message: CharacterCopy,
+								}),
 							)
 							.min(2)
 							.max(12),
@@ -2385,6 +2367,42 @@ export const CharacterRuntimeState = z.strictObject({
 export const CharacterRuntimeSnapshot = z.strictObject({
 	byConversation: boundedRecord(ConversationId, CharacterRuntimeState),
 });
+export const CompanionDisplayState = z.strictObject({
+	sceneId: z.string().min(1).max(64),
+	expressionId: z.string().min(1).max(64),
+	surfaces: z.strictObject({
+		ambient: z.string().min(1).max(64).nullable(),
+		inline: z.string().min(1).max(64).nullable(),
+		modal: z.string().min(1).max(64).nullable(),
+		choices: z.string().min(1).max(64).nullable(),
+	}),
+});
+export const CompanionCollectionState = z.strictObject({
+	seenMediaIds: z.array(z.string().min(1).max(64)).max(200),
+	unlocks: z.array(z.string().min(1).max(64)).max(200),
+	factIds: z.array(z.string().min(1).max(128)).max(500),
+});
+export const CompanionConversationState = z.strictObject({
+	character: z.strictObject({
+		document: BoundedEventValue,
+		revisions: z.strictObject({
+			conversation: z.number().int().safe().nonnegative(),
+			relationship: z.number().int().safe().nonnegative(),
+			character: z.number().int().safe().nonnegative(),
+		}),
+		schemaHash: z.string().min(64).max(64),
+	}),
+	display: CompanionDisplayState,
+	collection: CompanionCollectionState,
+	revisions: z.strictObject({
+		display: z.number().int().safe().nonnegative(),
+		collection: z.number().int().safe().nonnegative(),
+	}),
+});
+export const CompanionStateSnapshot = z.strictObject({
+	schema: BoundedEventValue,
+	byConversation: boundedRecord(ConversationId, CompanionConversationState),
+});
 export const CharacterStateRevisions = z.strictObject({
 	conversation: z.number().int().safe().nonnegative(),
 	relationship: z.number().int().safe().nonnegative(),
@@ -2424,17 +2442,14 @@ export const RoleplayState = z.strictObject({
 export const RoleplayGetRequest = z.strictObject({
 	conversationId: ConversationId.optional(),
 });
-export const RoleplayTriggerRequest = z.strictObject({
-	conversationId: ConversationId,
-	eventId: z.string().min(1).max(64),
-	dedupeKey: z.string().min(1).max(128),
-});
 export const RoleplayDismissMediaRequest = z.strictObject({
 	conversationId: ConversationId,
 	mediaId: z.string().min(1).max(64),
 });
 export const RoleplayResetUnlocksRequest = z.strictObject({});
-export const RoleplayResponse = z.strictObject({ state: RoleplayState });
+export const RoleplayResponse = z.strictObject({
+	state: RoleplayState,
+});
 export const SnapshotGetRequest = z.strictObject({});
 export const SnapshotResponse = z.strictObject({
 	eventSeq: EventSeq,
@@ -2445,8 +2460,7 @@ export const SnapshotResponse = z.strictObject({
 	provider: ProviderListResponse.optional(),
 	model: ModelSnapshot.optional(),
 	run: RunListResponse.optional(),
-	characterRuntime: CharacterRuntimeSnapshot.optional(),
-	characterState: CharacterStateSnapshot.optional(),
+	companion: CompanionStateSnapshot.optional(),
 	presentation: z
 		.strictObject({
 			companionState: z.enum([
@@ -2591,7 +2605,6 @@ export const RPC = {
 	},
 	roleplay: {
 		get: endpoint("roleplay.get:v1", RoleplayGetRequest, RoleplayResponse, "query"),
-		trigger: endpoint("roleplay.trigger:v1", RoleplayTriggerRequest, RoleplayResponse, "mutation"),
 		dismissMedia: endpoint(
 			"roleplay.dismissMedia:v1",
 			RoleplayDismissMediaRequest,

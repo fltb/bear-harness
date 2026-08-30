@@ -23,7 +23,7 @@ import {
 type StateRevisions = Partial<Record<StateScope, number>>;
 const { applyPatch, getValueByPointer } = jsonPatch;
 type AppTransaction = Parameters<Parameters<AppDatabase["transaction"]>[0]>[0];
-type MutationAuthority = "model" | "user_choice" | "host_event" | "user";
+type MutationAuthority = "model" | "user";
 
 export interface CharacterStateProjection {
 	document: JsonObject;
@@ -79,8 +79,14 @@ export class CharacterStateService {
 		const rows = this.db
 			.select()
 			.from(characterStateDocuments)
-			.where(eq(characterStateDocuments.companionId, companionId))
-			.all();
+			.where(
+				and(
+					eq(characterStateDocuments.companionId, companionId),
+					eq(characterStateDocuments.domain, "character"),
+				),
+			)
+			.all()
+			.filter((mutation) => mutation.schemaHash !== "companion:v1");
 		const incompatible = rows.filter((row) => row.schemaHash !== schemaHash);
 		if (incompatible.length === 0) return { status: "unchanged", documents: 0 };
 
@@ -91,7 +97,12 @@ export class CharacterStateService {
 			this.db
 				.update(characterStateDocuments)
 				.set({ schemaHash, updatedAt: sql`datetime('now')` })
-				.where(eq(characterStateDocuments.companionId, companionId))
+				.where(
+					and(
+						eq(characterStateDocuments.companionId, companionId),
+						eq(characterStateDocuments.domain, "character"),
+					),
+				)
 				.run();
 			return { status: "migrated", documents: incompatible.length };
 		}
@@ -101,7 +112,12 @@ export class CharacterStateService {
 		this.db.transaction((transaction) => {
 			transaction
 				.delete(characterStateDocuments)
-				.where(eq(characterStateDocuments.companionId, companionId))
+				.where(
+					and(
+						eq(characterStateDocuments.companionId, companionId),
+						eq(characterStateDocuments.domain, "character"),
+					),
+				)
 				.run();
 			transaction
 				.update(pendingStateMutations)
@@ -196,19 +212,17 @@ export class CharacterStateService {
 		operations: CharacterStateOperation[];
 		sourceId: string;
 	}): CharacterStateProjection {
-		return this.commitAuthoritative({
+		return this.commitUserPatchInternal({
 			...input,
-			authority: "user",
 			reason: "User edited the schema-declared conversation state form.",
 		});
 	}
 
-	/** Deterministic Host/user actions commit directly, outside model turn staging. */
-	commitAuthoritative(input: {
+	/** Explicit user edits commit directly, outside model turn staging. */
+	private commitUserPatchInternal(input: {
 		companionId: string;
 		conversationId: string;
 		definition: CharacterStateDefinition;
-		authority: "user_choice" | "host_event" | "user";
 		sourceId: string;
 		operations: CharacterStateOperation[];
 		reason: string;
@@ -227,7 +241,7 @@ export class CharacterStateService {
 		assertRevisions(before.revisions, input.expectedRevisions);
 		const entries = operations.map((operation) => ({
 			operation,
-			authority: input.authority,
+			authority: "user" as const,
 		}));
 		const afterDocument = applyOperations(before.document, input.definition, entries, false);
 		const changed = operations.filter(
@@ -250,7 +264,7 @@ export class CharacterStateService {
 				logEntries: [
 					{
 						id: input.sourceId,
-						piSessionId: `host:${input.authority}`,
+						piSessionId: "host:user",
 						sourceUserEntryId: input.sourceId,
 						assistantEntryId: input.sourceId,
 						operationsJson: changed as unknown as Array<Record<string, unknown>>,
@@ -270,6 +284,7 @@ export class CharacterStateService {
 		sourceUserEntryId: string;
 		assistantEntryId: string;
 		definition: CharacterStateDefinition;
+		transaction?: AppTransaction;
 	}): CharacterStateCommitResult {
 		const mutations = this.db
 			.select()
@@ -283,7 +298,8 @@ export class CharacterStateService {
 					eq(pendingStateMutations.status, "pending"),
 				),
 			)
-			.all();
+			.all()
+			.filter((mutation) => mutation.schemaHash !== "companion:v1");
 		if (mutations.length === 0)
 			return {
 				state: this.project(input.companionId, input.conversationId, input.definition),
@@ -299,7 +315,7 @@ export class CharacterStateService {
 		);
 		const afterDocument = applyOperations(before.document, input.definition, entries, true);
 		const operations = entries.map((entry) => entry.operation);
-		this.db.transaction((transaction) => {
+		const persist = (transaction: AppTransaction) => {
 			this.persist({
 				transaction,
 				companionId: input.companionId,
@@ -327,7 +343,9 @@ export class CharacterStateService {
 					})
 					.where(eq(pendingStateMutations.id, mutation.id))
 					.run();
-		});
+		};
+		if (input.transaction) persist(input.transaction);
+		else this.db.transaction((transaction) => persist(transaction));
 		return {
 			state: this.project(input.companionId, input.conversationId, input.definition),
 			committed: true,
@@ -369,6 +387,96 @@ export class CharacterStateService {
 		};
 	}
 
+	/** Rebuild conversation-scoped state from mutations on one native Pi branch. */
+	forkConversation(input: {
+		companionId: string;
+		sourceConversationId: string;
+		targetConversationId: string;
+		targetPiSessionId: string;
+		definition: CharacterStateDefinition;
+		sourceEntryIds: Set<string>;
+	}): void {
+		const rows = this.db
+			.select()
+			.from(stateMutationLog)
+			.where(
+				and(
+					eq(stateMutationLog.companionId, input.companionId),
+					eq(stateMutationLog.conversationId, input.sourceConversationId),
+				),
+			)
+			.all()
+			.filter((row) => isCharacterMutationLog(row.operationsJson))
+			.map((row) => ({ row, authoritativeId: undefined as string | undefined }))
+			.filter(
+				(entry) =>
+					entry.authoritativeId !== undefined ||
+					input.sourceEntryIds.has(entry.row.sourceUserEntryId) ||
+					input.sourceEntryIds.has(entry.row.assistantEntryId),
+			)
+			.sort((left, right) => {
+				const leftRevision = (left.row.afterRevisionsJson as StateRevisions).conversation ?? 0;
+				const rightRevision = (right.row.afterRevisionsJson as StateRevisions).conversation ?? 0;
+				return (
+					leftRevision - rightRevision || left.row.createdAt.localeCompare(right.row.createdAt)
+				);
+			});
+
+		let document = defaultStateDocument(input.definition);
+		let revision = 0;
+		const selected = rows.flatMap((entry) => {
+			const raw = entry.row.operationsJson;
+			const first = raw[0];
+			if (entry.row.piSessionId.startsWith("host:host_event")) return [];
+			const operations =
+				first && "operation" in first
+					? parseDurableOperations(raw)
+					: parseOperations(raw).map((operation) => ({ operation, authority: "user" as const }));
+			const scoped = operations.filter(
+				(operation) =>
+					operationField(input.definition, operation.operation).scope === "conversation",
+			);
+			if (scoped.length === 0) return [];
+			document = applyOperations(document, input.definition, scoped, true);
+			revision = Math.max(
+				revision,
+				(entry.row.afterRevisionsJson as StateRevisions).conversation ?? revision,
+			);
+			return [entry];
+		});
+		if (selected.length === 0) return;
+
+		const schemaHash = hashDefinition(input.definition);
+		this.db.transaction((transaction) => {
+			transaction
+				.insert(characterStateDocuments)
+				.values({
+					id: documentId(input.companionId, input.targetConversationId, "conversation"),
+					companionId: input.companionId,
+					conversationId: input.targetConversationId,
+					scope: "conversation",
+					domain: "character",
+					stateJson: scopeDocument(document, input.definition, "conversation"),
+					revision,
+					schemaHash,
+				})
+				.run();
+			for (const { row, authoritativeId } of selected) {
+				const id = authoritativeId ?? randomUUID();
+				transaction
+					.insert(stateMutationLog)
+					.values({
+						...row,
+						id,
+						conversationId: input.targetConversationId,
+						piSessionId: authoritativeId ? row.piSessionId : input.targetPiSessionId,
+						...(authoritativeId ? { sourceUserEntryId: id, assistantEntryId: id } : {}),
+					})
+					.run();
+			}
+		});
+	}
+
 	private pendingOperations(
 		conversationId: string,
 		piSessionId: string,
@@ -386,6 +494,7 @@ export class CharacterStateService {
 				),
 			)
 			.all()
+			.filter((row) => row.operations.length > 0 && "operation" in row.operations[0]!)
 			.flatMap((row) => parseDurableOperations(row.operations));
 	}
 
@@ -421,6 +530,7 @@ export class CharacterStateService {
 					companionId: input.companionId,
 					...(scope === "conversation" ? { conversationId: input.conversationId } : {}),
 					scope,
+					domain: "character",
 					stateJson,
 					revision,
 					schemaHash: input.before.schemaHash,
@@ -459,6 +569,7 @@ export class CharacterStateService {
 				and(
 					eq(characterStateDocuments.companionId, companionId),
 					eq(characterStateDocuments.scope, scope),
+					eq(characterStateDocuments.domain, "character"),
 					scope === "conversation"
 						? eq(characterStateDocuments.conversationId, conversationId)
 						: isNull(characterStateDocuments.conversationId),
@@ -466,6 +577,14 @@ export class CharacterStateService {
 			)
 			.get();
 	}
+}
+
+function isCharacterMutationLog(value: unknown): value is Array<Record<string, unknown>> {
+	return (
+		Array.isArray(value) &&
+		value.length > 0 &&
+		value.every((entry) => Boolean(entry && typeof entry === "object" && "operation" in entry))
+	);
 }
 
 function applyOperations(
@@ -513,8 +632,6 @@ function assertAuthority(field: CharacterStateField, entry: DurableStateOperatio
 	}
 	const authorized =
 		field.writeAuthority === entry.authority ||
-		((entry.authority === "host_event" || entry.authority === "user_choice") &&
-			field.deterministicAuthorities.includes(entry.authority)) ||
 		(field.writeAuthority.startsWith("skill:") &&
 			field.writeAuthority.slice("skill:".length) === entry.skillId);
 	if (!authorized) throw { kind: "forbidden", reason: "state_operation_not_allowed" };
@@ -590,12 +707,7 @@ function parseDurableOperations(value: unknown): DurableStateOperation[] {
 			throw { kind: "validation_failed", reason: "state_operations_invalid" };
 		const record = entry as Record<string, unknown>;
 		const authority = record.authority;
-		if (
-			authority !== "model" &&
-			authority !== "user_choice" &&
-			authority !== "host_event" &&
-			authority !== "user"
-		)
+		if (authority !== "model" && authority !== "user")
 			throw { kind: "validation_failed", reason: "state_operations_invalid" };
 		return {
 			operation: CharacterStateOperationSchema.parse(record.operation),
@@ -637,9 +749,7 @@ function isEvidence(value: unknown): value is CharacterStateEvidence {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
 	const record = value as Record<string, unknown>;
 	return (
-		(record.source === "current_user" ||
-			record.source === "current_assistant" ||
-			record.source === "user_choice") &&
+		(record.source === "current_user" || record.source === "current_assistant") &&
 		typeof record.quote === "string"
 	);
 }

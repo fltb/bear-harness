@@ -73,11 +73,18 @@ const RETAIN_BACKUPS = 2;
 const SLOW_QUERY_MS = 16;
 /**
  * The sole pre-release v1 baseline shipped before `conversations.scene_title`
- * was replaced by Host-owned `scene_state`. This is intentionally a checksum,
+ * was replaced by Host-owned companion documents. This is intentionally a checksum,
  * not a loose schema probe: no unknown database is ever rewritten.
  */
 const PRE_RELEASE_V1_SCENE_TITLE_CHECKSUM =
 	"0ac4f43cf5d1aed5e85a00bc725e57d6b9a00e3ed17386845ca76cbe4452a3ea";
+const PRE_RELEASE_UNIFIED_STATE_CHECKSUMS = [
+	"0030cc9348a8fb92d91377bda37c7bdd734093f2b603754082bbc04325fafef4",
+	"934608282ee3908eca0f67287e128832e05db7fc1039c3cc7850357e0b173dd6",
+	"286dfe911ea362af449b68d8e6442a7925d351b07e80be22654f104e49b9dc23",
+] as const;
+const PRE_RELEASE_SINGLE_BASELINE_UNIFIED_STATE_CHECKSUM =
+	"b825b5593b94c3f48b224fae6a6eb4b5b5b86fb8c3981dddd2afa94e48e23618";
 
 // ---------------------------------------------------------------------------
 // Migration type
@@ -423,7 +430,74 @@ export class Database {
 	 * contract applies, and an interrupted or failed rewrite stays recoverable.
 	 */
 	private reconcilePreReleaseV1(migrations: readonly Migration[]): void {
-		if (migrations.length !== 1 || migrations[0]?.id !== 1) return;
+		if (migrations[0]?.id !== 1) return;
+		const applied = this.connection
+			.prepare("SELECT id, checksum FROM schema_migrations ORDER BY id")
+			.all() as Array<{ id: number; checksum: string }>;
+		const isUnifiedStatePreview =
+			(applied.length === 1 &&
+				applied[0]?.id === 1 &&
+				applied[0].checksum === PRE_RELEASE_SINGLE_BASELINE_UNIFIED_STATE_CHECKSUM) ||
+			(applied.length === PRE_RELEASE_UNIFIED_STATE_CHECKSUMS.length &&
+				applied.every(
+					(record, index) =>
+						record.id === index + 1 &&
+						record.checksum === PRE_RELEASE_UNIFIED_STATE_CHECKSUMS[index],
+				));
+		if (isUnifiedStatePreview) {
+			const tables = new Set(
+				(
+					this.connection
+						.prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+						.all() as Array<{
+						name: string;
+					}>
+				).map((row) => row.name),
+			);
+			if (
+				!tables.has("companion_state_documents") ||
+				!tables.has("pending_companion_effects") ||
+				!tables.has("companion_state_commits") ||
+				[
+					"character_state_documents",
+					"scene_state",
+					"conversation_directives",
+					"roleplay_unlocks",
+				].some((table) => tables.has(table))
+			) {
+				throw new Error(
+					"known unified-state preview has an unexpected schema; refusing rebaseline",
+				);
+			}
+			const lastKnownGoodBackup = this.backupPaths()[0];
+			const backupPath = this.backupSchema(3, 1);
+			this.writeUpgradeMarker({ sourceVersion: 3, targetVersion: 1, backupPath, state: "pending" });
+			try {
+				this.connection.exec("BEGIN IMMEDIATE");
+				this.connection.exec(`
+					DROP TABLE roleplay_events;
+					DROP TABLE pending_companion_effects;
+					DROP TABLE companion_state_commits;
+				`);
+				this.connection.prepare("DELETE FROM schema_migrations").run();
+				this.connection
+					.prepare("INSERT INTO schema_migrations (id, checksum) VALUES (1, ?)")
+					.run(this.checksum(migrations[0].up));
+				this.connection.exec("COMMIT");
+				this.validateDatabase(this.connection, "rebaselined unified-state preview database");
+			} catch (error) {
+				if (this.connection.isTransaction) this.connection.exec("ROLLBACK");
+				throw new Error(
+					`unified-state preview reconciliation failed: ${(error as Error)?.message ?? String(error)}; ` +
+						`verified backup at ${backupPath}; recovery marker at ${this.upgradeMarkerPath}`,
+				);
+			}
+			this.clearUpgradeMarker();
+			this.pruneBackups(
+				new Set(lastKnownGoodBackup ? [backupPath, lastKnownGoodBackup] : [backupPath]),
+			);
+			return;
+		}
 		const record = this.connection
 			.prepare("SELECT checksum FROM schema_migrations WHERE id = 1")
 			.get() as { checksum: string } | undefined;
@@ -601,11 +675,12 @@ export class Database {
 			],
 			relationship_memory_entries: ["source_pi_session_id", "source_native_entry_id"],
 			memory_candidates: ["source_pi_session_id", "source_native_entry_id"],
-			character_state_documents: [
+			companion_state_documents: [
 				"id",
 				"companion_id",
 				"conversation_id",
 				"scope",
+				"domain",
 				"state_json",
 				"revision",
 				"schema_hash",
@@ -622,7 +697,6 @@ export class Database {
 				"status",
 			],
 			state_mutation_log: ["id", "source_user_entry_id", "assistant_entry_id"],
-			roleplay_events: ["pi_session_id", "source_native_entry_id"],
 			memory_presentation: [
 				"backend_memory_id",
 				"installation_id",

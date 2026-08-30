@@ -69,64 +69,114 @@ function reply(payload: {
 		calls.push({ tool, args });
 		return { tool, args };
 	};
+	if (prompt.includes("情境切分与记忆提取专家")) {
+		const marker = directMemoryTexts.find((value) => prompt.includes(value));
+		const extractedMessages = [...prompt.matchAll(/^\[([^\]]+)] \[(user|assistant)] \[[^\]]+]:/gm)];
+		const messageIds = extractedMessages.map((match) => match[1]);
+		const assistantId = extractedMessages.findLast((match) => match[2] === "assistant")?.[1];
+		return {
+			content: JSON.stringify([
+				{
+					scene_name: "我在和用户保存明确要求记住的长期约定",
+					message_ids: messageIds,
+					memories: marker
+						? [
+								{
+									content: `用户：${marker}\n角色：${marker}`,
+									type: "persona",
+									priority: 80,
+									source_message_ids: assistantId ? [assistantId] : messageIds,
+									metadata: {},
+								},
+							]
+						: [],
+				},
+			]),
+		};
+	}
 	if (current.includes("E2E_MANUAL_ROLE_START")) {
 		if (!currentCalls.includes("role_skill"))
 			return invoke("role_skill", { skillId: "continuity-reveal" });
-		if (!currentCalls.includes("host_state")) return invoke("host_state", { action: "read" });
-		if (currentCalls.filter((name) => name === "host_state").length === 1)
+		if (!currentCalls.includes("host_state"))
 			return invoke("host_state", {
 				action: "update",
-				operations: [{ path: "continuity.stage", op: "set", value: 1 }],
+				operations: [{ path: "/continuity/stage", op: "replace", value: 1 }],
 				reason: "用户主动开启继任规程",
+				skillId: "continuity-reveal",
+				evidence: { source: "current_user", quote: "E2E_MANUAL_ROLE_START" },
 			});
-		if (!currentCalls.includes("host_visual"))
-			return invoke("host_visual", { action: "set_scene", sceneId: "quiet_terminal" });
-		if (currentCalls.filter((name) => name === "host_visual").length === 1)
-			return invoke("host_visual", { action: "set_expression", visualState: "reflective" });
 		return { content: "E2E_MANUAL_ROLE_START_DONE\n" };
 	}
 	if (current.includes("E2E_MANUAL_ROLE_CONTINUE")) {
 		if (!currentCalls.includes("role_skill"))
 			return invoke("role_skill", { skillId: "continuity-reveal" });
-		if (!currentCalls.includes("host_state")) return invoke("host_state", { action: "read" });
-		if (currentCalls.filter((name) => name === "host_state").length === 1)
+		if (!currentCalls.includes("host_state"))
 			return invoke("host_state", {
 				action: "update",
-				operations: [{ path: "continuity.stage", op: "set", value: 2 }],
+				operations: [{ path: "/continuity/stage", op: "replace", value: 2 }],
 				reason: "用户愿意继续继任规程",
+				skillId: "continuity-reveal",
+				evidence: { source: "current_user", quote: "E2E_MANUAL_ROLE_CONTINUE" },
 			});
-		if (!currentCalls.includes("host_visual"))
-			return invoke("host_visual", { action: "set_expression", visualState: "alert" });
-		if (!currentCalls.includes("host_present"))
-			return invoke("host_present", { action: "choices", choiceSetId: "continuity_response" });
 		return { content: "E2E_MANUAL_ROLE_CONTINUE_DONE\n" };
 	}
-	if (current.includes("我听见了。请按继任规程记录我的回应。")) {
+	if (current.includes("E2E_MANUAL_ROLE_VISUAL")) {
+		if (!currentCalls.includes("role_skill"))
+			return invoke("role_skill", { skillId: "undelivered-report" });
+		if (!currentCalls.includes("host_visual"))
+			return invoke("host_visual", {
+				action: "update",
+				sceneId: "quiet_terminal",
+				expressionId: "reflective",
+				reason: "继任规程进入专注值守场景",
+			});
+		return { content: "E2E_MANUAL_ROLE_VISUAL_DONE\n" };
+	}
+	if (current.includes("E2E_MANUAL_ROLE_PRESENT")) {
 		if (!currentCalls.includes("role_skill"))
 			return invoke("role_skill", { skillId: "continuity-reveal" });
-		if (!currentCalls.includes("host_state")) return invoke("host_state", { action: "read" });
-		if (currentCalls.filter((name) => name === "host_state").length === 1)
+		if (!currentCalls.includes("host_present"))
+			return invoke("host_present", {
+				action: "present_choices",
+				choiceSetId: "continuity_response",
+				reason: "用户明确要求呈现继任回应选项",
+			});
+		return { content: "E2E_MANUAL_ROLE_PRESENT_DONE\n" };
+	}
+	if (current.includes("我听见了，也愿意接住这份交接。")) {
+		if (!currentCalls.includes("role_skill"))
+			return invoke("role_skill", { skillId: "continuity-reveal" });
+		if (!currentCalls.includes("host_state"))
 			return invoke("host_state", {
 				action: "update",
 				operations: [
-					{ path: "continuity.stage", op: "set", value: 3 },
-					{ path: "continuity.response", op: "set", value: "received" },
+					{ path: "/continuity/stage", op: "replace", value: 3 },
+					{ path: "/continuity/response", op: "replace", value: "received" },
 				],
-				reason: "用户接住继任说明",
+				reason: "用户表达愿意接住继任说明",
+				skillId: "continuity-reveal",
+				evidence: {
+					source: "current_user",
+					quote: "我听见了，也愿意接住这份交接。",
+				},
 			});
-		if (!currentCalls.includes("host_present"))
-			return invoke("host_present", { action: "media", mediaId: "continuity_light" });
 		return { content: "E2E_MANUAL_ROLE_RECEIVED_DONE\n" };
 	}
 	const memoryContextCheck = current.includes("检查记忆上下文");
 	const directMemoryText = memoryContextCheck
 		? undefined
 		: directMemoryTexts.find((value) => current.includes(value));
-	if (!toolResult && current.includes("E2E_TOOL_TRIGGER_DAMAGED_LOG")) {
+	if (current.includes("E2E_TOOL_TRIGGER_DAMAGED_LOG")) {
+		if (!currentCalls.includes("role_skill"))
+			return invoke("role_skill", { skillId: "continuity-reveal" });
+		if (currentCalls.includes("host_state"))
+			return { content: "E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE\n" };
 		const args = {
 			action: "update",
-			operations: [{ path: "continuity.stage", op: "set", value: 1 }],
+			operations: [{ path: "/continuity/stage", op: "replace", value: 1 }],
 			reason: "E2E continuity transition",
+			skillId: "continuity-reveal",
+			evidence: { source: "current_user", quote: "E2E_TOOL_TRIGGER_DAMAGED_LOG" },
 		};
 		calls.push({
 			tool: "host_state",
@@ -145,40 +195,38 @@ function reply(payload: {
 		};
 	}
 	const content =
-		toolResult && current.includes("E2E_TOOL_TRIGGER_DAMAGED_LOG")
-			? "E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE\n"
-			: toolResult && current.includes("E2E_TOOL_SEARCH_OTHER_CONVERSATION")
-				? toolText.includes("conversation_history_read_disabled")
-					? "E2E_TOOL_SEARCH_OTHER_CONVERSATION_DENIED\n"
-					: toolText.includes("E2E_HISTORY_MARKER")
-						? "E2E_TOOL_SEARCH_OTHER_CONVERSATION_FOUND\n"
-						: "E2E_TOOL_SEARCH_OTHER_CONVERSATION_UNEXPECTED\n"
-				: image(messages)
-					? "VISUAL_OBSERVATION: a red square\n"
-					: prompt.includes("E2E_CONTEXT_T1_EDITED") && prompt.includes("E2E_CONTEXT_T2")
-						? "E2E_CONTEXT_EDITED_OK\n"
-						: prompt.includes("E2E_CONTEXT_T1_ORIGINAL") && prompt.includes("E2E_CONTEXT_T2")
-							? "E2E_CONTEXT_TWO_TURNS_OK\n"
-							: prompt.includes("VISUAL_OBSERVATION: a red square")
-								? "MAIN_USED_VISUAL_OBSERVATION\n"
-								: directMemoryText !== undefined
-									? `${directMemoryText}\n`
-									: memoryContextCheck
-										? current.includes("南星") && hostContext.includes("南星")
-											? "MEMORY_CONTEXT:我们约定暗号是南星\n"
-											: current.includes("北辰") && hostContext.includes("北辰")
-												? "MEMORY_CONTEXT:我们约定暗号是北辰\n"
-												: "MEMORY_CONTEXT:ABSENT\n"
-										: current.includes("规则：回复 EDITED_OK") ||
-												prompt.includes("规则：回复 EDITED_OK")
-											? "EDITED_OK\n"
-											: prompt.includes("STREAM_CHECK")
-												? "STREAM_ONE STREAM_TWO\n"
-												: prompt.includes("你是谁")
-													? "我是 E2E Rule Provider。\n"
-													: prompt.includes("E2E_OK")
-														? "E2E_OK\n"
-														: "RULE_OK\n";
+		toolResult && current.includes("E2E_TOOL_SEARCH_OTHER_CONVERSATION")
+			? toolText.includes("conversation_history_read_disabled")
+				? "E2E_TOOL_SEARCH_OTHER_CONVERSATION_DENIED\n"
+				: toolText.includes("E2E_HISTORY_MARKER")
+					? "E2E_TOOL_SEARCH_OTHER_CONVERSATION_FOUND\n"
+					: "E2E_TOOL_SEARCH_OTHER_CONVERSATION_UNEXPECTED\n"
+			: image(messages)
+				? "VISUAL_OBSERVATION: a red square\n"
+				: prompt.includes("E2E_CONTEXT_T1_EDITED") && prompt.includes("E2E_CONTEXT_T2")
+					? "E2E_CONTEXT_EDITED_OK\n"
+					: prompt.includes("E2E_CONTEXT_T1_ORIGINAL") && prompt.includes("E2E_CONTEXT_T2")
+						? "E2E_CONTEXT_TWO_TURNS_OK\n"
+						: prompt.includes("VISUAL_OBSERVATION: a red square")
+							? "MAIN_USED_VISUAL_OBSERVATION\n"
+							: directMemoryText !== undefined
+								? `${directMemoryText}\n`
+								: memoryContextCheck
+									? current.includes("南星") && hostContext.includes("南星")
+										? "MEMORY_CONTEXT:我们约定暗号是南星\n"
+										: current.includes("北辰") && hostContext.includes("北辰")
+											? "MEMORY_CONTEXT:我们约定暗号是北辰\n"
+											: "MEMORY_CONTEXT:ABSENT\n"
+									: current.includes("规则：回复 EDITED_OK") ||
+											prompt.includes("规则：回复 EDITED_OK")
+										? "EDITED_OK\n"
+										: prompt.includes("STREAM_CHECK")
+											? "STREAM_ONE STREAM_TWO\n"
+											: prompt.includes("你是谁")
+												? "我是 E2E Rule Provider。\n"
+												: prompt.includes("E2E_OK")
+													? "E2E_OK\n"
+													: "RULE_OK\n";
 	return { content };
 }
 

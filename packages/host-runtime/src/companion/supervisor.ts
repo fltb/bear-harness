@@ -165,6 +165,7 @@ export class CompanionSupervisor {
 	private modelSelectionHandler: ModelSelectionHandler | null = null;
 	private contextHandler: ContextHandler | null = null;
 	private skillAccessHandler: SkillAccessHandler | null = null;
+	private toolFailureHandler: ((conversationId: string, toolCallId: string) => void) | null = null;
 	private readonly readSkillTurns = new Map<string, { userEntryId: string; skills: Set<string> }>();
 	private readonly sessions = new Map<string, PiSessionHandle>();
 	private readonly sessionStores = new Map<string, PiSessionStore>();
@@ -217,6 +218,11 @@ export class CompanionSupervisor {
 
 	setModelSelectionHandler(handler: ModelSelectionHandler): void {
 		this.modelSelectionHandler = handler;
+	}
+
+	/** Mark the whole current turn failed when a package/Skill tool throws. */
+	setToolFailureHandler(handler: (conversationId: string, toolCallId: string) => void): void {
+		this.toolFailureHandler = handler;
 	}
 
 	setContextHandler(handler: ContextHandler): void {
@@ -950,7 +956,7 @@ export class CompanionSupervisor {
 							skillId: z.string().min(1).max(64).optional(),
 							evidence: z
 								.strictObject({
-									source: z.enum(["current_user", "current_assistant", "user_choice"]),
+									source: z.enum(["current_user", "current_assistant"]),
 									quote: z.string().min(1).max(2000),
 								})
 								.optional(),
@@ -1111,18 +1117,6 @@ export class CompanionSupervisor {
 							)
 						: this.callHost(conversationId, name, params, toolCallId));
 					this.diagnostics?.traceContent(conversationId, "tool_result", safeJsonTrace(result));
-					if (!result.ok) {
-						const session = this.sessions.get(conversationId);
-						if (session?.sessionId && session.currentUserEntryId)
-							this.eventBus.publish("companion.turn_effect_failed", {
-								conversationId,
-								piSessionId: session.sessionId,
-								sourceUserEntryId: session.currentUserEntryId,
-								toolCallId,
-								tool: name,
-								code: result.code ?? "host_tool_failed",
-							});
-					}
 					span?.end(result.ok ? "ok" : "error", {
 						ok: result.ok,
 						...(result.code ? { resultCode: result.code } : {}),
@@ -1135,8 +1129,10 @@ export class CompanionSupervisor {
 						ok: result.ok,
 						message: result.message.slice(0, 240),
 					});
+					if (!result.ok) this.toolFailureHandler?.(conversationId, toolCallId);
 					return this.toolResult(result);
 				} catch (error) {
+					this.toolFailureHandler?.(conversationId, toolCallId);
 					span?.end("error", {
 						ok: false,
 						resultCode: "tool_execution_failed",
@@ -1190,17 +1186,20 @@ export class CompanionSupervisor {
 						? this.diagnostics.runInSpan(span, () => execute(toolCallId, params, signal))
 						: execute(toolCallId, params, signal));
 					this.diagnostics?.traceContent(conversationId, "tool_result", safeJsonTrace(result));
-					span?.end("ok", { ok: true });
+					const failed = isToolErrorResult(result);
+					span?.end(failed ? "error" : "ok", { ok: !failed });
 					this.eventBus.publish("companion.tool_finished", {
 						conversationId,
 						toolCallId,
 						tool: name,
 						label,
-						ok: true,
-						message: "Completed.",
+						ok: !failed,
+						message: failed ? "Failed." : "Completed.",
 					});
+					if (failed) this.toolFailureHandler?.(conversationId, toolCallId);
 					return result;
 				} catch (error) {
+					this.toolFailureHandler?.(conversationId, toolCallId);
 					span?.end("error", {
 						ok: false,
 						resultCode: "tool_execution_failed",
@@ -1233,7 +1232,7 @@ export class CompanionSupervisor {
 				}),
 			),
 			execute: async (
-				_toolCallId: string,
+				toolCallId: string,
 				params: {
 					skillId: string;
 					resourceId?: string;
@@ -1252,6 +1251,8 @@ export class CompanionSupervisor {
 					ok: !failed,
 					...(failed ? { errorCode: "skill_read_denied" } : {}),
 				});
+				if (failed && this.activeConversationId)
+					this.toolFailureHandler?.(this.activeConversationId, toolCallId);
 				return result;
 			},
 		};
@@ -1323,16 +1324,19 @@ export class CompanionSupervisor {
 			status: "eligible" as const,
 			resourceIds: [],
 		};
-		if (access.status === "blocked" || access.status === "completed") {
+		const resource = params.resourceId
+			? skill.resources.find((candidate) => candidate.id === params.resourceId)
+			: undefined;
+		if (
+			access.status === "blocked" ||
+			(access.status === "completed" && (!resource || !access.resourceIds.includes(resource.id)))
+		) {
 			return this.toolResult({
 				ok: false,
 				code: access.status === "completed" ? "skill_completed" : "skill_not_eligible",
 				message: `Role Skill ${skill.name} is ${access.status} for the current Host state.`,
 			});
 		}
-		const resource = params.resourceId
-			? skill.resources.find((candidate) => candidate.id === params.resourceId)
-			: undefined;
 		if (params.resourceId && (!resource || !access.resourceIds.includes(resource.id)))
 			return this.toolResult({
 				ok: false,
@@ -1457,6 +1461,12 @@ function safeJsonTrace(value: unknown): string {
 	} catch {
 		return "[unserializable]";
 	}
+}
+
+function isToolErrorResult(value: unknown): boolean {
+	return (
+		typeof value === "object" && value !== null && "isError" in value && value.isError === true
+	);
 }
 
 export function extractLatestAssistantText(messages: readonly unknown[]): string {

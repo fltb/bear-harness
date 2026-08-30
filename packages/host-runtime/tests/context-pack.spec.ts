@@ -9,7 +9,7 @@ import type { ContextPack } from "../src/companion/context-pack.js";
 import { ContextPackCompiler } from "../src/companion/context-pack.js";
 import type { MemoryHit } from "../src/memory/backend.js";
 import { MIGRATIONS } from "../src/storage/database.js";
-import { conversationDirectives, conversations } from "../src/storage/schema.js";
+import { conversations } from "../src/storage/schema.js";
 
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 /**
@@ -70,30 +70,6 @@ describe("ContextPackCompiler character prompt layers", () => {
 		expect(character).not.toBeNull();
 		if (!character) throw new Error("jizhou package is required for the official build");
 		const orm = drizzle({ client: db });
-		orm
-			.insert(conversationDirectives)
-			.values([
-				{
-					id: "session-directive",
-					conversationId: "conversation-1",
-					directive: "保持简洁",
-					scope: "session",
-				},
-				{
-					id: "once-directive",
-					conversationId: "conversation-1",
-					directive: "只影响当前修正",
-					scope: "once",
-				},
-				{
-					id: "always-directive",
-					conversationId: "conversation-1",
-					directive: "始终保持简洁",
-					scope: "always",
-				},
-			])
-			.run();
-
 		const compiler = new ContextPackCompiler(orm, characterLoader);
 		const pack = compiler.compile("conversation-1");
 		expect(compiler.accessibleCanonModuleIds("conversation-1")).not.toContain(
@@ -117,20 +93,15 @@ describe("ContextPackCompiler character prompt layers", () => {
 		expect(stateContext).toContain('"narrativeAnchor"');
 		expect(stateContext).toContain('"activeStory": null');
 		expect(stateContext).toContain('"phase": "dormant"');
-		const directiveContext = pack.blocks.find((block) => block.layer === "scene")?.content ?? "";
 		orm
 			.insert(conversations)
 			.values({ id: "conversation-2", companionId: "jizhou", title: "second" })
 			.run();
-		expect(directiveContext).toContain("保持简洁");
-		expect(directiveContext).not.toContain("只影响当前修正");
-		expect(directiveContext).toContain("始终保持简洁");
-		const secondDirectiveContext =
+		const secondSceneContext =
 			new ContextPackCompiler(orm, characterLoader)
 				.compile("conversation-2")
 				.blocks.find((block) => block.layer === "scene")?.content ?? "";
-		expect(secondDirectiveContext).toContain("始终保持简洁");
-		expect(secondDirectiveContext).not.toContain("- 保持简洁");
+		expect(secondSceneContext).not.toContain("directive");
 		expect(pack.manifest.slice(0, 4)).toEqual([
 			expect.objectContaining({
 				order: 0,

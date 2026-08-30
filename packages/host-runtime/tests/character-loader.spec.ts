@@ -115,7 +115,6 @@ describe("character package visual projection", () => {
 		expect(character.behavior.identity.invariants).toContainEqual(
 			expect.stringContaining("不冒充岑岚"),
 		);
-		expect(character.voice_modes.default).toBe("default");
 		expect(character.skills.map((skill) => skill.name).sort()).toEqual([
 			"continuity-reveal",
 			"undelivered-report",
@@ -184,8 +183,7 @@ describe("character package display validation", () => {
 			character.roleplay.choice_sets.map((choiceSet) => choiceSet.id),
 		);
 		expect(display.roleplay.choice_sets[0]?.choices[0]).toMatchObject({
-			event: "story_enter",
-			followUp: "我选择进入调查。请从现有损坏信号开始，不要补全缺失内容。",
+			message: "我想进去看看，先从入口开始吧。",
 		});
 	});
 

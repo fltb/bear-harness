@@ -118,33 +118,6 @@ export const activeConversations = sqliteTable("active_conversations", {
 	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 });
 
-export const sceneState = sqliteTable("scene_state", {
-	id: text().primaryKey(),
-	conversationId: text("conversation_id")
-		.notNull()
-		.references(() => conversations.id),
-	scene: text().default("").notNull(),
-	stateJson: text("state_json", { mode: "json" })
-		.$type<Record<string, unknown>>()
-		.default({})
-		.notNull(),
-	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
-});
-
-export const conversationDirectives = sqliteTable(
-	"conversation_directives",
-	{
-		id: text().primaryKey(),
-		conversationId: text("conversation_id")
-			.notNull()
-			.references(() => conversations.id),
-		directive: text().notNull(),
-		scope: text().default("session").notNull(),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-	},
-	(table) => [check("conversation_directives_check_3", sql`scope IN ('once','session','always')`)],
-);
-
 export const relationshipMemoryEntries = sqliteTable(
 	"relationship_memory_entries",
 	{
@@ -803,8 +776,8 @@ export const characterDraftRevisions = sqliteTable(
 	(table) => [primaryKey({ columns: [table.draftId, table.revision] })],
 );
 
-export const characterStateDocuments = sqliteTable(
-	"character_state_documents",
+export const companionStateDocuments = sqliteTable(
+	"companion_state_documents",
 	{
 		id: text().primaryKey(),
 		companionId: text("companion_id")
@@ -814,6 +787,7 @@ export const characterStateDocuments = sqliteTable(
 			onDelete: "cascade",
 		}),
 		scope: text({ enum: ["conversation", "relationship", "character"] }).notNull(),
+		domain: text({ enum: ["character", "display", "collection"] }).notNull(),
 		stateJson: text("state_json", { mode: "json" })
 			.$type<Record<string, unknown>>()
 			.default({})
@@ -823,19 +797,23 @@ export const characterStateDocuments = sqliteTable(
 		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 	},
 	(table) => [
-		unique("character_state_documents_scope").on(
+		unique("companion_state_documents_scope").on(
 			table.companionId,
 			table.conversationId,
 			table.scope,
+			table.domain,
 		),
 		check(
-			"character_state_documents_scope_owner",
+			"companion_state_documents_scope_owner",
 			sql`(${table.scope} = 'conversation' AND ${table.conversationId} IS NOT NULL)
 				OR (${table.scope} IN ('relationship', 'character') AND ${table.conversationId} IS NULL)`,
 		),
-		check("character_state_documents_revision", sql`${table.revision} >= 0`),
+		check("companion_state_documents_revision", sql`${table.revision} >= 0`),
 	],
 );
+
+/** Compatibility type alias for call sites that only own the character domain. */
+export const characterStateDocuments = companionStateDocuments;
 
 export const pendingStateMutations = sqliteTable(
 	"pending_state_mutations",
@@ -898,46 +876,3 @@ export const stateMutationLog = sqliteTable("state_mutation_log", {
 	reason: text().notNull(),
 	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 });
-
-export const roleplayEvents = sqliteTable(
-	"roleplay_events",
-	{
-		id: text().primaryKey(),
-		companionId: text("companion_id")
-			.notNull()
-			.references(() => companionIdentity.id),
-		conversationId: text("conversation_id").references(() => conversations.id, {
-			onDelete: "cascade",
-		}),
-		/** Native Pi provenance supersedes branch/version identity after downstream cutover. */
-		piSessionId: text("pi_session_id"),
-		sourceNativeEntryId: text("source_native_entry_id"),
-		eventId: text("event_id").notNull(),
-		effectsJson: text("effects_json", { mode: "json" })
-			.$type<Array<Record<string, unknown>>>()
-			.notNull(),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-	},
-	(table) => [
-		index("idx_roleplay_events_projection").on(
-			table.companionId,
-			table.conversationId,
-			table.createdAt,
-		),
-	],
-);
-
-export const roleplayUnlocks = sqliteTable(
-	"roleplay_unlocks",
-	{
-		companionId: text("companion_id")
-			.notNull()
-			.references(() => companionIdentity.id),
-		unlockableId: text("unlockable_id").notNull(),
-		sourceEventId: text("source_event_id")
-			.notNull()
-			.references(() => roleplayEvents.id, { onDelete: "cascade" }),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-	},
-	(table) => [primaryKey({ columns: [table.companionId, table.unlockableId] })],
-);

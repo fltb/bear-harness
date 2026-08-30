@@ -25,6 +25,7 @@ import { CanonHubService } from "./canon/service.js";
 import { CharacterBehaviorService } from "./companion/character-behavior.js";
 import { CharacterDraftService } from "./companion/character-draft-service.js";
 import { CharacterLoader } from "./companion/character-loader.js";
+import { CompanionStore } from "./companion/companion-store.js";
 import { ContextPackCompiler } from "./companion/context-pack.js";
 import { FirstMeetingMachine } from "./companion/first-meeting.js";
 import { eligibleRoleSkillResources, roleSkillStatus } from "./companion/role-resources.js";
@@ -239,7 +240,8 @@ export class HostRuntime {
 		);
 		conversationRepository.setLiveSessionResolver(supervisor.getLiveSessionResolver());
 		const characterState = new CharacterStateService(db.orm);
-		const roleplay = new RoleplayService(db.orm, characterState);
+		const companionStore = new CompanionStore(db.orm);
+		const roleplay = new RoleplayService(db.orm, characterState, companionStore);
 		const drafts = new CharacterDraftService(db.orm, characterLoader);
 		const characterBehavior = new CharacterBehaviorService(
 			db.orm,
@@ -249,6 +251,10 @@ export class HostRuntime {
 			characterState,
 			(conversationId) => supervisor.getLiveSessionResolver().get(conversationId),
 			options.diagnostics,
+			companionStore,
+		);
+		supervisor.setToolFailureHandler((conversationId, toolCallId) =>
+			characterBehavior.markCurrentTurnFailed(conversationId, toolCallId),
 		);
 		const onboarding = new FirstMeetingMachine(db.orm, eventBus, characterLoader);
 		const appSettings = new AppSettingsStore(db.orm);
@@ -323,23 +329,29 @@ export class HostRuntime {
 				});
 			},
 		});
-		const contextPack = new ContextPackCompiler(db.orm, characterLoader, canon, {
-			backend: memoryBackend,
-			scope: memoryScope,
-			systemContext: (query) =>
-				memoryRuntime
-					.systemContext(
-						query,
-						namespaceFor({
-							...memoryScope,
-							companionId: options.productConfig.defaultCharacterId,
+		const contextPack = new ContextPackCompiler(
+			db.orm,
+			characterLoader,
+			canon,
+			{
+				backend: memoryBackend,
+				scope: memoryScope,
+				systemContext: (query) =>
+					memoryRuntime
+						.systemContext(
+							query,
+							namespaceFor({
+								...memoryScope,
+								companionId: options.productConfig.defaultCharacterId,
+							}),
+						)
+						.catch(() => {
+							// persona/scene injection is best-effort; L1 recall already succeeded
+							return undefined;
 						}),
-					)
-					.catch(() => {
-						// persona/scene injection is best-effort; L1 recall already succeeded
-						return undefined;
-					}),
-		});
+			},
+			companionStore,
+		);
 		supervisor.setContextHandler(async (conversationId, includeHistory, message) => {
 			const diagnostics = options.diagnostics;
 			const span = diagnostics?.startSpan("context.compile", {
@@ -605,7 +617,7 @@ export class HostRuntime {
 								: evidence.source === "current_assistant"
 									? live.currentAssistantText
 									: undefined;
-						if (evidence.source !== "user_choice" && !sourceText?.includes(evidence.quote)) {
+						if (!sourceText?.includes(evidence.quote)) {
 							return {
 								ok: false,
 								code: "state_evidence_not_found",
@@ -861,6 +873,7 @@ export class HostRuntime {
 			drafts,
 			roleplay,
 			characterState,
+			companionStore,
 			defaultCharacterId: options.productConfig.defaultCharacterId,
 			conversationRepository,
 			piSessionDir: join(dataDir, "sessions"),
@@ -1178,7 +1191,7 @@ function parseStateEvidence(value: unknown): CharacterStateEvidence | undefined 
 	const source = (value as Record<string, unknown>).source;
 	const quote = (value as Record<string, unknown>).quote;
 	if (
-		(source !== "current_user" && source !== "current_assistant" && source !== "user_choice") ||
+		(source !== "current_user" && source !== "current_assistant") ||
 		typeof quote !== "string" ||
 		quote.length === 0 ||
 		quote.length > 2000

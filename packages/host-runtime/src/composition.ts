@@ -11,6 +11,7 @@
  * protocol additions from landing without a corresponding Host handler.
  */
 
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 
 import type {
@@ -30,6 +31,7 @@ import type {
 	CharacterDraftService,
 } from "./companion/character-draft-service.js";
 import type { CharacterLoader } from "./companion/character-loader.js";
+import type { CompanionStore } from "./companion/companion-store.js";
 import type { FirstMeetingMachine } from "./companion/first-meeting.js";
 import { type PiSessionMessageEntry, PiSessionStore } from "./companion/pi-session-store.js";
 import type { RoleplayService } from "./companion/roleplay-service.js";
@@ -63,7 +65,6 @@ import {
 	memoryPresentation,
 	relationshipMemoryEntries,
 	runs,
-	sceneState,
 } from "./storage/schema.js";
 
 /** Desktop-owned update lifecycle adapter used by the optional Host wiring. */
@@ -129,6 +130,7 @@ export interface HostCompositionContext {
 	drafts: CharacterDraftService;
 	roleplay: RoleplayService;
 	characterState: CharacterStateService;
+	companionStore: CompanionStore;
 	defaultCharacterId: string;
 	/** Product-local directory for Pi conversation session files. */
 	conversationRepository: ConversationRepository;
@@ -395,19 +397,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			})(),
 		};
 	});
-	dispatcher.registerHandler(RPC.roleplay.trigger, async (_p) => {
-		const { conversationId, eventId, dedupeKey } = _p as {
-			conversationId: string;
-			eventId: string;
-			dedupeKey: string;
-		};
-		const state = s.characterBehavior.triggerUserRoleplayEvent({
-			eventId,
-			conversationId,
-			dedupeKey,
-		});
-		return { state: { values: state.values, unlocked: state.unlocked } };
-	});
 	dispatcher.registerHandler(RPC.roleplay.dismissMedia, async (_p) => {
 		const { conversationId, mediaId } = _p as {
 			conversationId: string;
@@ -418,7 +407,17 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
 		if (!character.roleplay.media.some((media) => media.id === mediaId))
 			throw { kind: "not_found", reason: "roleplay_media_not_found" };
-		s.eventBus.publish("roleplay.media_dismissed", { conversationId, mediaId });
+		const snapshot = s.companionStore.snapshot(character, conversationId);
+		const surface = snapshot.display.surfaces.inline === mediaId ? "inline" : "modal";
+		const commitId = `dismiss:${conversationId}:${mediaId}:${randomUUID()}`;
+		s.companionStore.commit({
+			character,
+			conversationId,
+			commitId,
+			authority: "user_dismiss",
+			mutations: [{ domain: "display", op: "dismiss", surface, resourceId: mediaId }],
+		});
+		s.eventBus.publish("companion.snapshot_changed", { conversationId, commitId });
 		return {};
 	});
 	dispatcher.registerHandler(RPC.roleplay.resetUnlocks, async () => {
@@ -515,9 +514,11 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const title = requestedTitle ?? "新对话";
 		const character = s.characterLoader.load(companionId);
 		if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
+		const sourceModel = sourceConversationId ? s.models.selected(sourceConversationId) : undefined;
 		let conversation: ConversationProjection;
 		try {
 			let forkedSession: PiSessionStore | undefined;
+			let sourceEntryIds: Set<string> | undefined;
 			if (sourceConversationId && sourceEntryId) {
 				await requireOwnedConversation(s, sourceConversationId);
 				const source = conversationRepository.getSession(sourceConversationId);
@@ -527,6 +528,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 						reason: "conversation_fork_source_not_current_branch",
 					};
 				}
+				sourceEntryIds = new Set(source.entryPathIds(sourceEntryId));
 				forkedSession = PiSessionStore.forkAt({
 					sessionDir: resolve(source.sessionFile, ".."),
 					cwd: source.cwd,
@@ -540,12 +542,29 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				title,
 				...(forkedSession ? { session: forkedSession } : {}),
 			});
+			if (forkedSession && sourceConversationId && sourceEntryIds) {
+				s.characterState.forkConversation({
+					companionId,
+					sourceConversationId,
+					targetConversationId: id,
+					targetPiSessionId: forkedSession.sessionId,
+					definition: character.state,
+					sourceEntryIds,
+				});
+				s.companionStore.forkConversation({
+					character,
+					sourceConversationId,
+					targetConversationId: id,
+					sourceEntryIds,
+				});
+			}
 		} catch (e) {
 			throw { kind: "internal", reason: (e as Error)?.message ?? String(e) };
 		}
 		await s.supervisor.ensureSession(id);
 		conversation = conversationRepository.get(id, companionId) ?? conversation;
-		s.models.applyDefaultToConversation(companionId, id);
+		if (sourceModel) s.models.select(id, sourceModel.providerId, sourceModel.modelId);
+		else s.models.applyDefaultToConversation(companionId, id);
 		s.eventBus.publish("conversation.created", { conversationId: id });
 		return conversation;
 	});
@@ -742,19 +761,24 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			const receipt = await s.turns.sendUserMessage(conversationId, framed, currentMessageImages, {
 				attachmentIds,
 				attachmentSendNonce: nonce,
-				onAccepted: () => {
+				onAccepted: (pendingTurnId) => {
 					durablyAccepted = true;
 					const character = s.characterLoader.load(getCompanionId(s));
-					const activeMediaId = character
-						? s.roleplay.presentation(character, conversationId).mediaId
-						: undefined;
-					if (activeMediaId)
-						s.eventBus.publish("roleplay.media_dismissed", {
-							conversationId,
-							mediaId: activeMediaId,
-						});
-					s.eventBus.publish("roleplay.choices_dismissed", {
+					if (!character) return;
+					s.companionStore.commit({
+						character,
 						conversationId,
+						commitId: `message-accepted:${pendingTurnId}`,
+						authority: "user_message",
+						mutations: [
+							{ domain: "display", op: "dismiss", surface: "inline" },
+							{ domain: "display", op: "dismiss", surface: "modal" },
+							{ domain: "display", op: "dismiss", surface: "choices" },
+						],
+					});
+					s.eventBus.publish("companion.snapshot_changed", {
+						conversationId,
+						commitId: `message-accepted:${pendingTurnId}`,
 					});
 				},
 			});
@@ -1777,44 +1801,40 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		if (!character) {
 			throw { kind: "unavailable", reason: "character_package_missing" };
 		}
-		const allowedSceneIds = new Set(character.scenes.map((scene) => scene.id));
-		const allowedVisualStates = new Set(
-			character.visual.expressions.map((expression) => expression.id),
-		);
 		const convRows = conversationRepository.list(companionId);
 		const archivedConvRows = conversationRepository.list(companionId, true);
 		const conversationIds = new Set(
 			[...convRows, ...archivedConvRows].map((conversation) => conversation.id),
 		);
-		const characterRuntimeByConversation: Record<string, { sceneId: string; visualState: string }> =
-			{};
-		const characterStateByConversation: Record<string, CharacterStateDocument> = {};
+		const companionByConversation: Record<
+			string,
+			ReturnType<typeof s.companionStore.snapshot> & { character: CharacterStateDocument }
+		> = {};
 		for (const conversationId of conversationIds) {
 			const projection = s.characterState.project(character.id, conversationId, character.state);
-			characterStateByConversation[conversationId] = {
+			const characterDocument = {
 				document: projection.document,
 				revisions: projection.revisions,
 				schemaHash: projection.schemaHash,
 			};
-		}
-		const sceneRows = s.orm.select().from(sceneState).orderBy(desc(sceneState.updatedAt)).all();
-		for (const row of sceneRows) {
-			if (
-				!conversationIds.has(row.conversationId) ||
-				characterRuntimeByConversation[row.conversationId]
-			) {
-				continue;
-			}
-			const state = CharacterRuntimeState.parse({
-				sceneId: row.scene,
-				...row.stateJson,
-			});
-			if (!allowedSceneIds.has(state.sceneId) || !allowedVisualStates.has(state.visualState)) {
-				throw new Error(`invalid persisted scene state for conversation ${row.conversationId}`);
-			}
-			characterRuntimeByConversation[row.conversationId] = {
-				sceneId: state.sceneId,
-				visualState: state.visualState,
+			const companion = s.companionStore.snapshot(character, conversationId);
+			const choiceSetId = companion.display.surfaces.choices;
+			const choiceSet = choiceSetId
+				? character.roleplay.choice_sets.find((set) => set.id === choiceSetId)
+				: undefined;
+			const display =
+				choiceSetId &&
+				(!choiceSet ||
+					!s.roleplay.isEligible(character, conversationId, choiceSet.when, projection.document))
+					? {
+							...companion.display,
+							surfaces: { ...companion.display.surfaces, choices: null },
+						}
+					: companion.display;
+			companionByConversation[conversationId] = {
+				character: characterDocument,
+				...companion,
+				display,
 			};
 		}
 		const eventSeq = s.eventBus.currentSeq;
@@ -1839,10 +1859,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			run: {
 				runs: s.externalAgentRuns.list(companionId).map(runWire),
 			},
-			characterRuntime: { byConversation: characterRuntimeByConversation },
-			characterState: {
+			companion: {
 				schema: JSON.parse(JSON.stringify(character.state)),
-				byConversation: characterStateByConversation,
+				byConversation: companionByConversation,
 			},
 			presentation: {
 				companionState: s.supervisor.currentState,

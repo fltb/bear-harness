@@ -549,7 +549,6 @@ export interface CompanionStore {
 	editMessage(entryId: string, text: string): Promise<void>;
 	correctMessage(entryId: string, presetId: string, detail?: string): Promise<void>;
 	abort(): Promise<void>;
-	triggerRoleplayEvent(eventId: string): Promise<void>;
 	dismissRoleplayMedia(): Promise<void>;
 	dismissAmbientMedia(): Promise<void>;
 	submitOnboarding(stepId: string, answer?: string): Promise<void>;
@@ -1155,10 +1154,20 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		return queryClient.getQueryData<Snapshot>(queryKeys.snapshot);
 	};
 	const currentPresentation = createMemo(() => {
-		const presentation = snapshotValue()?.presentation;
-		return presentation?.conversationId === currentActiveConversationId()
-			? presentation
-			: undefined;
+		const snapshot = snapshotValue();
+		const conversationId = currentActiveConversationId();
+		if (!conversationId) return undefined;
+		const companion = snapshot?.companion?.byConversation[conversationId];
+		if (!companion) return undefined;
+		return {
+			companionState: snapshot?.presentation?.companionState ?? "unknown",
+			permissions: snapshot?.presentation?.permissions ?? [],
+			conversationId,
+			mediaId: companion.display.surfaces.inline ?? companion.display.surfaces.modal ?? undefined,
+			ambientMediaId: companion.display.surfaces.ambient ?? undefined,
+			choiceSetId: companion.display.surfaces.choices ?? undefined,
+			seenMediaIds: companion.collection.seenMediaIds,
+		};
 	});
 
 	const activeConversations = (): ConversationSummary[] => {
@@ -1240,10 +1249,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			}
 			case "character.scene_changed":
 			case "character.visual_state_changed":
-			case "roleplay.media_presented":
-			case "roleplay.media_dismissed":
-			case "roleplay.choices_presented":
-			case "roleplay.choices_dismissed":
+			case "companion.snapshot_changed":
 				refreshPresentationSnapshot("snapshot.presentation");
 				return;
 			case "conversation.selected":
@@ -2686,7 +2692,7 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 		},
 		patchCharacterState: async (operations) => {
 			const conversationId = requireActiveConversation();
-			const projection = snapshotValue()?.characterState?.byConversation[conversationId];
+			const projection = snapshotValue()?.companion?.byConversation[conversationId]?.character;
 			if (!projection) throw new Error("character_state_projection_unavailable");
 			await invoke(client, () =>
 				client.characterState.patch({
@@ -2775,13 +2781,6 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			}
 		},
 
-		triggerRoleplayEvent: async (eventId) => {
-			const conversationId = requireActiveConversation();
-			await invoke(client, () =>
-				client.roleplay.trigger({ conversationId, eventId, dedupeKey: crypto.randomUUID() }),
-			);
-			await refreshSnapshot();
-		},
 		dismissRoleplayMedia: async () => {
 			try {
 				const conversationId = requireActiveConversation();
@@ -2834,13 +2833,38 @@ function createCompanionStoreInner(client: CompanionClient): CompanionStore {
 			return snapshotValue()?.character;
 		},
 		get characterRuntimeByConversation() {
-			return snapshotValue()?.characterRuntime?.byConversation ?? {};
+			return Object.fromEntries(
+				Object.entries(snapshotValue()?.companion?.byConversation ?? {}).map(
+					([conversationId, state]) => [
+						conversationId,
+						{
+							sceneId: state.display.sceneId,
+							visualState: state.display.expressionId,
+						},
+					],
+				),
+			);
 		},
 		get characterState() {
-			return snapshotValue()?.characterState;
+			const companion = snapshotValue()?.companion;
+			return companion
+				? {
+						schema: companion.schema,
+						byConversation: Object.fromEntries(
+							Object.entries(companion.byConversation).map(([id, state]) => [id, state.character]),
+						),
+					}
+				: undefined;
 		},
 		get roleplay() {
-			return snapshotValue()?.roleplay;
+			const snapshot = snapshotValue();
+			const conversationId = currentActiveConversationId();
+			const companion = conversationId
+				? snapshot?.companion?.byConversation[conversationId]
+				: undefined;
+			return companion
+				? { values: snapshot?.roleplay?.values ?? {}, unlocked: companion.collection.unlocks }
+				: snapshot?.roleplay;
 		},
 		get activeRoleplayMediaId() {
 			return currentPresentation()?.mediaId;

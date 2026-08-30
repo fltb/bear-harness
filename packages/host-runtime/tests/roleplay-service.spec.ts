@@ -5,13 +5,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
-import { RoleplaySchema } from "../src/companion/roleplay-schema.js";
+import { CompanionStore } from "../src/companion/companion-store.js";
 import { RoleplayService } from "../src/companion/roleplay-service.js";
 import { CharacterStateService } from "../src/companion/state-service.js";
 import { Database, MIGRATIONS } from "../src/storage/database.js";
 import { EventBus } from "../src/storage/event-bus.js";
-import { conversations, onboardingState } from "../src/storage/schema.js";
-import { withLegacyRoleplay } from "./fixtures/legacy-roleplay.js";
+import { conversations } from "../src/storage/schema.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -19,293 +18,61 @@ afterEach(() => {
 });
 
 function fixture() {
-	const root = mkdtempSync(join(tmpdir(), "bear-roleplay-"));
+	const root = mkdtempSync(join(tmpdir(), "bear-roleplay-projection-"));
 	roots.push(root);
 	const database = new Database(root);
 	database.migrate(MIGRATIONS);
 	const loader = new CharacterLoader(resolve(import.meta.dirname, "../../../config/characters"));
-	const loaded = loader.load("jizhou");
-	if (!loaded) throw new Error("missing default character");
-	const character = withLegacyRoleplay(loaded);
+	const character = loader.load("jizhou");
+	if (!character) throw new Error("missing default character");
 	loader.seed(database.orm, new EventBus(database.orm), character);
 	database.orm
 		.insert(conversations)
 		.values({ id: "conversation", companionId: character.id })
 		.run();
-	return { database, character, service: new RoleplayService(database.orm) };
+	const companionStore = new CompanionStore(database.orm);
+	return {
+		database,
+		character,
+		companionStore,
+		service: new RoleplayService(
+			database.orm,
+			new CharacterStateService(database.orm),
+			companionStore,
+		),
+	};
 }
 
-describe("roleplay event projection", () => {
-	it("commits the official story choice path into the single character state store", () => {
-		const root = mkdtempSync(join(tmpdir(), "bear-official-story-"));
-		roots.push(root);
-		const database = new Database(root);
-		database.migrate(MIGRATIONS);
-		const loader = new CharacterLoader(resolve(import.meta.dirname, "../../../config/characters"));
-		const character = loader.load("jizhou");
-		if (!character) throw new Error("missing default character");
-		loader.seed(database.orm, new EventBus(database.orm), character);
-		database.orm.insert(conversations).values({ id: "story", companionId: character.id }).run();
-		const characterState = new CharacterStateService(database.orm);
-		const service = new RoleplayService(database.orm, characterState);
-		const trigger = (eventId: string) =>
-			service.trigger({
-				character,
-				eventId,
-				conversationId: "story",
-				dedupeKey: `choice:${eventId}`,
-			});
-
-		expect(() => trigger("story_last_shift")).toThrow();
-		for (const eventId of [
-			"story_enter",
-			"story_signal_examined",
-			"story_route_relay",
-			"story_compare_unresolved",
-			"story_last_shift",
-			"story_future_design",
-			"story_resolve_left_open",
-		])
-			trigger(eventId);
-
-		expect(characterState.project(character.id, "story", character.state).document).toMatchObject({
-			story: { undelivered_report: { phase: "resolved", route: "relay", resolution: "left_open" } },
-			narrative: { frame: "present", location: "study_dawn", active_story: "none" },
-		});
-		database.close();
-	});
-
-	it("recovers scoped presentation and dismissals from Host history without replaying UI events", () => {
-		const { database, character } = fixture();
-		const configured = {
-			...character,
-			roleplay: RoleplaySchema.parse({
-				variables: [],
-				unlockables: [],
-				media: [
-					{
-						id: "image",
-						kind: "image",
-						label: "Image",
-						asset: "image.png",
-						presentation: "dialog",
-					},
-					{
-						id: "ambient",
-						kind: "audio",
-						label: "Ambient",
-						asset: "ambient.mp3",
-						captions: "ambient.vtt",
-						presentation: "ambient",
-					},
-				],
-				choice_sets: [
-					{
-						id: "reply",
-						prompt: "Reply?",
-						choices: [
-							{ id: "yes", label: "Yes", event: "answer", follow_up: "I chose yes." },
-							{ id: "no", label: "No", event: "answer", follow_up: "I chose no." },
-						],
-					},
-				],
-				events: [{ id: "answer", label: "Answer", effects: [{ type: "media", media: "image" }] }],
-			}),
-		};
-		const bus = new EventBus(database.orm);
-		bus.publish("roleplay.media_presented", { conversationId: "conversation", mediaId: "image" });
-		bus.publish("roleplay.media_presented", { conversationId: "conversation", mediaId: "ambient" });
-		bus.publish("roleplay.choices_presented", {
-			conversationId: "conversation",
-			choiceSetId: "reply",
-		});
-		bus.publish("roleplay.media_dismissed", { conversationId: "other", mediaId: "image" });
-		const reopened = new RoleplayService(database.orm);
-		expect(reopened.presentation(configured, "conversation")).toEqual({
-			conversationId: "conversation",
-			mediaId: "image",
-			ambientMediaId: "ambient",
-			choiceSetId: "reply",
-			seenMediaIds: ["image", "ambient"],
-		});
-		bus.publish("roleplay.media_dismissed", { conversationId: "conversation", mediaId: "image" });
-		bus.publish("roleplay.choices_dismissed", { conversationId: "conversation" });
-		expect(reopened.presentation(configured, "conversation")).toEqual({
-			conversationId: "conversation",
-			ambientMediaId: "ambient",
-			seenMediaIds: ["image", "ambient"],
-		});
-		expect(reopened.presentation(configured, "other")).toEqual({
-			conversationId: "other",
-			seenMediaIds: [],
-		});
-		database.close();
-	});
-
-	it("enforces the continuity chapter order and projects its completed state", () => {
+describe("roleplay read-only projection", () => {
+	it("has no executable transition path and exposes natural-language choices", () => {
 		const { database, character, service } = fixture();
-		const trigger = (eventId: string) =>
-			service.trigger({
-				character,
-				eventId,
-				conversationId: "conversation",
-				piSessionId: "session-a",
-				sourceNativeEntryId: "entry-a",
-				dedupeKey: `session-a:entry-a:${eventId}`,
-			});
-
-		expect(() => trigger("continuity_received")).toThrow();
-		trigger("continuity_opened");
-		trigger("continuity_revealed");
-		trigger("continuity_set_down");
-
-		expect(service.project(character, "conversation")).toMatchObject({
-			values: {
-				continuity_stage: 3,
-				continuity_response: "set_down",
-			},
-			unlocked: [],
-		});
-		database.close();
-	});
-
-	it("uses persisted onboarding bucket overrides as the roleplay baseline", () => {
-		const { database, character, service } = fixture();
-		database.orm
-			.insert(onboardingState)
-			.values({
-				companionId: character.id,
-				state: "complete",
-				stateJson: {
-					schema_version: 1,
-					flow_version: 5,
-					answers: {},
-					decisions: { roleplay_initial_values: { continuity_response: "received" } },
-				},
-			})
-			.run();
-
-		expect(service.project(character, "conversation").values).toMatchObject({
-			continuity_response: "received",
-		});
-		database.close();
-	});
-
-	it("commits effects atomically and deduplicates a turn event", () => {
-		const { database, character, service } = fixture();
-		service.trigger({
-			character,
-			eventId: "continuity_opened",
-			conversationId: "conversation",
-			piSessionId: "session-a",
-			sourceNativeEntryId: "entry-a",
-			dedupeKey: "session-a:entry-a:continuity_opened",
-		});
-		service.trigger({
-			character,
-			eventId: "continuity_opened",
-			conversationId: "conversation",
-			piSessionId: "session-a",
-			sourceNativeEntryId: "entry-a",
-			dedupeKey: "session-a:entry-a:continuity_opened",
-		});
-		service.trigger({
-			character,
-			eventId: "continuity_opened",
-			conversationId: "conversation",
-			piSessionId: "session-a",
-			sourceNativeEntryId: "entry-a",
-			dedupeKey: "session-a:entry-a:continuity_opened",
-		});
-		expect(service.project(character, "conversation")).toMatchObject({
-			values: { continuity_stage: 1, continuity_response: "unopened" },
-			unlocked: [],
-		});
-		database.close();
-	});
-
-	it("projects character-scoped story facts into every conversation", () => {
-		const { database, character, service } = fixture();
-		service.trigger({
-			character,
-			eventId: "continuity_opened",
-			conversationId: "conversation",
-			piSessionId: "session-a",
-			sourceNativeEntryId: "entry-a",
-			dedupeKey: "session-a:entry-a:continuity_opened",
-		});
-		database.orm.insert(conversations).values({ id: "other", companionId: character.id }).run();
-		expect(service.project(character, "other").values).toMatchObject({
-			continuity_stage: 1,
-		});
-		database.close();
-	});
-
-	it("keeps conversation-scoped variables isolated while relationship variables persist", () => {
-		const { database, character, service } = fixture();
-		const conversationScopedCharacter = structuredClone(character);
-		const continuityStage = conversationScopedCharacter.roleplay.variables.find(
-			(variable) => variable.id === "continuity_stage",
+		expect("trigger" in service).toBe(false);
+		expect("stageTransition" in service).toBe(false);
+		expect(character.roleplay.choice_sets.flatMap((set) => set.choices)).toSatisfy(
+			(choices: Array<Record<string, unknown>>) =>
+				choices.every((choice) => typeof choice.message === "string" && !("event" in choice)),
 		);
-		if (!continuityStage) throw new Error("missing continuity stage variable");
-		continuityStage.scope = "conversation";
-		database.orm.insert(conversations).values({ id: "other", companionId: character.id }).run();
-
-		service.trigger({
-			character: conversationScopedCharacter,
-			eventId: "continuity_opened",
-			conversationId: "conversation",
-			piSessionId: "session-a",
-			sourceNativeEntryId: "entry-a",
-			dedupeKey: "session-a:entry-a:continuity_opened",
-		});
-
-		expect(service.project(conversationScopedCharacter, "conversation").values).toMatchObject({
-			continuity_stage: 1,
-		});
-		expect(service.project(conversationScopedCharacter, "other").values).toMatchObject({
-			continuity_stage: 0,
+		expect(service.project(character, "conversation").state).toMatchObject({
+			continuity: { stage: 0, response: "unopened" },
 		});
 		database.close();
 	});
 
-	it("records native session provenance and retains committed state on re-delivery", () => {
-		const { database, character, service } = fixture();
-		service.trigger({
+	it("reads presentation and collection only from the unified companion snapshot", () => {
+		const { database, character, companionStore, service } = fixture();
+		companionStore.commit({
 			character,
-			eventId: "continuity_opened",
 			conversationId: "conversation",
-			piSessionId: "session-a",
-			sourceNativeEntryId: "entry-a",
-			dedupeKey: "session-a:entry-a:continuity_opened",
+			commitId: "present-damaged-signal",
+			authority: "test",
+			mutations: [
+				{ domain: "display", op: "present", surface: "inline", resourceId: "damaged_signal" },
+				{ domain: "collection", op: "add_seen_media", mediaId: "damaged_signal" },
+			],
 		});
-		service.trigger({
-			character,
-			eventId: "continuity_revealed",
-			conversationId: "conversation",
-			piSessionId: "session-a",
-			sourceNativeEntryId: "entry-b",
-			dedupeKey: "session-a:entry-b:continuity_revealed",
-		});
-		service.trigger({
-			character,
-			eventId: "continuity_received",
-			conversationId: "conversation",
-			piSessionId: "session-a",
-			sourceNativeEntryId: "entry-c",
-			dedupeKey: "session-a:entry-c:continuity_received",
-		});
-		service.trigger({
-			character,
-			eventId: "continuity_received",
-			conversationId: "conversation",
-			piSessionId: "session-a",
-			sourceNativeEntryId: "entry-c",
-			dedupeKey: "session-a:entry-c:continuity_received",
-		});
-		expect(service.project(character, "conversation")).toMatchObject({
-			values: { continuity_stage: 3, continuity_response: "received" },
-			unlocked: ["continuity_record"],
+		expect(service.presentation(character, "conversation")).toMatchObject({
+			mediaId: "damaged_signal",
+			seenMediaIds: ["damaged_signal"],
 		});
 		database.close();
 	});

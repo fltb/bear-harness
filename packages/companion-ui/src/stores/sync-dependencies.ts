@@ -9,8 +9,7 @@ const rootsByTable: Record<string, readonly string[]> = {
 	conversations: ["conversations", "conversation", "snapshot"],
 	conversation_sessions: ["conversation"],
 	active_conversations: ["conversation", "models", "snapshot"],
-	scene_state: ["snapshot", "characterRuntime"],
-	conversation_directives: ["conversation"],
+	companion_state_documents: ["snapshot", "characterRuntime", "roleplay"],
 	relationship_memory_entries: ["memory"],
 	memory_candidates: ["memory"],
 	memory_decisions: ["memory"],
@@ -55,8 +54,6 @@ const rootsByTable: Record<string, readonly string[]> = {
 	],
 	character_drafts: ["character"],
 	character_draft_revisions: ["character"],
-	roleplay_events: ["roleplay", "snapshot"],
-	roleplay_unlocks: ["roleplay", "snapshot"],
 };
 const rootsByEventDomain: Record<string, readonly string[]> = {
 	diagnostics: ["audit"],

@@ -41,7 +41,7 @@ describe("state-gated role Skill resources", () => {
 		expect(entryText).not.toContain("## 第四章：最后一班");
 
 		const lastShiftResources = eligibleRoleSkillResources(story, state("active", "last_shift"));
-		expect(lastShiftResources.map((resource) => resource.id)).toEqual(["last-shift"]);
+		expect(lastShiftResources.map((resource) => resource.id)).toEqual(["last-shift", "future"]);
 		expect(readRoleSkillResource(story, lastShiftResources[0]!)).toContain("## 第四章：最后一班");
 	});
 });

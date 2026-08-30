@@ -45,17 +45,19 @@ describe("character state RPC projection", () => {
 		try {
 			const conversation = (await data(runtime, "conversation.create:v1", {})) as { id: string };
 			const before = (await data(runtime, "snapshot.get:v1", {})) as {
-				characterState: {
+				companion: {
 					byConversation: Record<
 						string,
 						{
-							document: { story: { undelivered_report: { user_interpretation: string[] } } };
-							revisions: { conversation: number; relationship: number; character: number };
+							character: {
+								document: { story: { undelivered_report: { user_interpretation: string[] } } };
+								revisions: { conversation: number; relationship: number; character: number };
+							};
 						}
 					>;
 				};
 			};
-			const projection = before.characterState.byConversation[conversation.id];
+			const projection = before.companion.byConversation[conversation.id]?.character;
 			if (!projection) throw new Error("missing initial character-state projection");
 			expect(projection.document.story.undelivered_report.user_interpretation).toEqual([]);
 
@@ -79,19 +81,12 @@ describe("character state RPC projection", () => {
 
 			const after = (await data(runtime, "snapshot.get:v1", {})) as typeof before;
 			expect(
-				after.characterState.byConversation[conversation.id]?.document.story.undelivered_report
+				after.companion.byConversation[conversation.id]?.character.document.story.undelivered_report
 					.user_interpretation,
 			).toEqual(["两份记录都不足以确认最终接收者。"]);
-			expect(after.characterState.byConversation[conversation.id]?.revisions.conversation).toBe(
-				projection.revisions.conversation + 1,
-			);
-
-			const roleplay = (await data(runtime, "roleplay.trigger:v1", {
-				conversationId: conversation.id,
-				eventId: "story_enter",
-				dedupeKey: randomUUID(),
-			})) as { state: { values: Record<string, unknown>; unlocked: string[] } };
-			expect(roleplay).toEqual({ state: { values: {}, unlocked: [] } });
+			expect(
+				after.companion.byConversation[conversation.id]?.character.revisions.conversation,
+			).toBe(projection.revisions.conversation + 1);
 		} finally {
 			await runtime.close();
 		}

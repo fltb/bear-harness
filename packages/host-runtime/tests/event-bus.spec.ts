@@ -39,10 +39,6 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 	},
 	"roleplay.unlocks_reset": {},
 	"roleplay.state_changed": { conversationId: "conversation-1", state: {} },
-	"roleplay.media_presented": { conversationId: "conversation-1", mediaId: "media-1" },
-	"roleplay.media_dismissed": { conversationId: "conversation-1", mediaId: "media-1" },
-	"roleplay.choices_dismissed": { conversationId: "conversation-1" },
-	"roleplay.choices_presented": { conversationId: "conversation-1", choiceSetId: "choices-1" },
 	"conversation.created": {
 		conversationId: "conversation-1",
 		title: "A conversation",
@@ -106,6 +102,7 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 		message: "Saved",
 	},
 	"companion.state_changed": { state: "running" },
+	"companion.snapshot_changed": { conversationId: "conversation-1", commitId: "commit-1" },
 	"companion.runtime_error": { code: "runtime_error" },
 	"companion.runtime_ready": {
 		conversationId: "conversation-1",

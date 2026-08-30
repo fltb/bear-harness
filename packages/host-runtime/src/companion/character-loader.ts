@@ -53,12 +53,7 @@ import {
 	companionPackages,
 	selfCanonVersions,
 } from "../storage/schema.js";
-import {
-	type CharacterBehaviorContract,
-	CharacterBehaviorSchema,
-	type VoiceModesContract,
-	VoiceModesSchema,
-} from "./behavior-schema.js";
+import { type CharacterBehaviorContract, CharacterBehaviorSchema } from "./behavior-schema.js";
 import {
 	type CharacterOnboardingFlow,
 	validateCharacterOnboardingFlow,
@@ -69,11 +64,7 @@ import {
 	RoleplaySchema,
 	roleplayAssetExtensions,
 } from "./roleplay-schema.js";
-import {
-	type CharacterStateDefinition,
-	CharacterStateSchema,
-	stateFieldForPointer,
-} from "./state-schema.js";
+import { type CharacterStateDefinition, CharacterStateSchema } from "./state-schema.js";
 import { CharacterThemeOverridesSchema, resolveCharacterTheme } from "./theme.js";
 
 // ---------------------------------------------------------------------------
@@ -175,7 +166,6 @@ export interface CharacterPackage {
 	behavior: CharacterBehaviorContract;
 	prompt: CharacterPrompt;
 	self_canon: string;
-	voice_modes: VoiceModesContract;
 	scenes: ScenePreset[];
 	visual: CharacterVisuals;
 	host: CharacterHostBehavior;
@@ -218,10 +208,7 @@ type CharacterDisplayMedia =
 type CharacterDisplayChoiceSet = Array<{
 	id: string;
 	prompt: string;
-	choices: Array<
-		| { id: string; label: string; description?: string; event: string; followUp: string }
-		| { id: string; label: string; description?: string; message: string }
-	>;
+	choices: Array<{ id: string; label: string; description?: string; message: string }>;
 }>;
 
 export interface CharacterDisplay {
@@ -373,7 +360,7 @@ function validateCharacterCard(
 		subtitle: z.string(),
 		// Installed pre-release character packages may still carry this retired
 		// display copy. Accept it for package compatibility, but never expose or
-		// consume it: live scene presentation is owned by Host scene_state.
+		// consume it: live scene presentation is owned by CompanionStore display state.
 		scene_title: z.string().optional(),
 		greeting: z.string(),
 		composer_placeholder: z.string(),
@@ -731,9 +718,6 @@ export class CharacterLoader {
 		parsed.behavior = CharacterBehaviorSchema.parse(
 			(parsed as CharacterPackage & { behavior?: unknown }).behavior,
 		);
-		parsed.voice_modes = VoiceModesSchema.parse(
-			(parsed as CharacterPackage & { voice_modes?: unknown }).voice_modes,
-		);
 		// Normalize an installed pre-release package before it crosses the Host
 		// protocol boundary. The compatibility-only key must never reach clients.
 		delete (parsed.character as CharacterStrings & { scene_title?: string }).scene_title;
@@ -797,7 +781,6 @@ export class CharacterLoader {
 		const variableIds = new Set(roleplay.variables.map((entry) => entry.id));
 		const mediaIds = new Set(roleplay.media.map((entry) => entry.id));
 		const unlockableIds = new Set(roleplay.unlockables.map((entry) => entry.id));
-		const eventIds = new Set(roleplay.events.map((entry) => entry.id));
 		const reactions = parsed.host.event_reactions;
 		const invalidReaction = () => {
 			throw new Error(`character package ${id}: invalid host event reaction`);
@@ -848,7 +831,6 @@ export class CharacterLoader {
 			roleplay.variables,
 			roleplay.media,
 			roleplay.unlockables,
-			roleplay.events,
 			roleplay.choice_sets,
 		]) {
 			if (new Set(collection.map((entry) => entry.id)).size !== collection.length) {
@@ -889,50 +871,6 @@ export class CharacterLoader {
 					`character package ${id}: unlockable ${unlockable.id} references missing media`,
 				);
 		}
-		for (const event of roleplay.events) {
-			if (event.when)
-				validateRoleplayConditionReferences(
-					event.when,
-					variableIds,
-					unlockableIds,
-					new Set(Object.keys(state.fields)),
-					id,
-					event.id,
-				);
-			for (const effect of event.effects) {
-				if (effect.type === "state") {
-					const field = stateFieldForPointer(state, effect.path);
-					if (!field)
-						throw new Error(
-							`character package ${id}: event ${event.id} references missing state path`,
-						);
-					if (
-						field.writeAuthority !== effect.authority &&
-						!field.deterministicAuthorities.includes(effect.authority)
-					)
-						throw new Error(
-							`character package ${id}: event ${event.id} is not authorized for state path ${effect.path}`,
-						);
-				}
-				if (
-					(effect.type === "set" || effect.type === "increment") &&
-					!variableIds.has(effect.variable)
-				)
-					throw new Error(`character package ${id}: event ${event.id} references missing variable`);
-				if (effect.type === "unlock" && !unlockableIds.has(effect.unlockable))
-					throw new Error(
-						`character package ${id}: event ${event.id} references missing unlockable`,
-					);
-				if (effect.type === "media" && !mediaIds.has(effect.media))
-					throw new Error(`character package ${id}: event ${event.id} references missing media`);
-				if (effect.type === "scene" && !parsed.scenes.some((scene) => scene.id === effect.scene))
-					throw new Error(`character package ${id}: event ${event.id} references missing scene`);
-				if (effect.type === "expression" && !expressionIds.has(effect.expression))
-					throw new Error(
-						`character package ${id}: event ${event.id} references missing expression`,
-					);
-			}
-		}
 		for (const set of roleplay.choice_sets) {
 			if (set.when)
 				validateRoleplayConditionReferences(
@@ -945,9 +883,6 @@ export class CharacterLoader {
 				);
 			if (new Set(set.choices.map((choice) => choice.id)).size !== set.choices.length)
 				throw new Error(`character package ${id}: duplicate choice id in ${set.id}`);
-			for (const choice of set.choices)
-				if ("event" in choice && !eventIds.has(choice.event))
-					throw new Error(`character package ${id}: choice ${choice.id} references missing event`);
 		}
 		parsed.state = state;
 		parsed.roleplay = roleplay;
@@ -1055,15 +990,8 @@ export class CharacterLoader {
 			null,
 			2,
 		)}\n</character_behavior_contract>`;
-		const voiceContract = `<voice_modes default="${character.voice_modes.default}">\n${character.voice_modes.modes
-			.map(
-				(mode) =>
-					`<mode id="${mode.id}" use_when="${mode.use_when}">${mode.style_instruction}</mode>`,
-			)
-			.join("\n")}\n</voice_modes>`;
 		const appendSystemPrompt = [
 			behaviorContract,
-			voiceContract,
 			character.prompt.system_prompt.trim(),
 			roleExamples,
 		]
@@ -1223,20 +1151,7 @@ export class CharacterLoader {
 					}
 				}),
 				unlockables: character.roleplay.unlockables,
-				choice_sets: character.roleplay.choice_sets.map(({ when: _when, ...set }) => ({
-					...set,
-					choices: set.choices.map((choice) =>
-						"event" in choice
-							? {
-									id: choice.id,
-									label: choice.label,
-									...(choice.description ? { description: choice.description } : {}),
-									event: choice.event,
-									followUp: choice.follow_up,
-								}
-							: choice,
-					),
-				})),
+				choice_sets: character.roleplay.choice_sets.map(({ when: _when, ...set }) => set),
 			},
 		};
 	}

@@ -3,13 +3,7 @@ import Ajv2020Module, { type AnySchema, type ValidateFunction } from "ajv/dist/2
 import addFormatsModule from "ajv-formats";
 
 export type StateScope = "conversation" | "relationship" | "character";
-export type StateAuthority =
-	| "model"
-	| "host_event"
-	| "user_choice"
-	| "user"
-	| "readonly"
-	| `skill:${string}`;
+export type StateAuthority = "model" | "user" | "readonly" | `skill:${string}`;
 export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
 export interface JsonObject {
 	[key: string]: JsonValue;
@@ -42,7 +36,6 @@ export interface CharacterStateDefinition extends Record<string, unknown> {
 	["x-scope"]?: StateScope;
 	["x-model-readable"]?: boolean;
 	["x-write-authority"]?: StateAuthority;
-	["x-deterministic-authorities"]?: Array<"host_event" | "user_choice">;
 	["x-evidence-required"]?: boolean;
 	["x-update-when"]?: string[];
 	["x-do-not-update-when"]?: string[];
@@ -59,7 +52,6 @@ export interface CharacterStateField {
 	scope: StateScope;
 	modelReadable: boolean;
 	writeAuthority: StateAuthority;
-	deterministicAuthorities: Array<"host_event" | "user_choice">;
 	evidenceRequired: boolean;
 	maxChangePerTurn?: number;
 	allowedTransitions?: Array<[JsonValue, JsonValue]>;
@@ -76,7 +68,7 @@ export interface CompiledCharacterStateSchema {
 const Ajv2020 = Ajv2020Module.default;
 const addFormats = addFormatsModule.default;
 const compiledCache = new WeakMap<object, CompiledCharacterStateSchema>();
-const AUTHORITY = /^(?:model|host_event|user_choice|user|readonly|skill:[a-z][a-z0-9-]{0,63})$/u;
+const AUTHORITY = /^(?:model|user|readonly|skill:[a-z][a-z0-9-]{0,63})$/u;
 
 export const CharacterStateSchema = {
 	parse(input: unknown): CharacterStateDefinition {
@@ -121,7 +113,6 @@ function createAjv() {
 		"x-scope",
 		"x-model-readable",
 		"x-write-authority",
-		"x-deterministic-authorities",
 		"x-evidence-required",
 		"x-update-when",
 		"x-do-not-update-when",
@@ -168,7 +159,7 @@ export const CharacterStateOperation = z.discriminatedUnion("op", [
 export type CharacterStateOperation = z.infer<typeof CharacterStateOperation>;
 
 export const CharacterStateEvidence = z.strictObject({
-	source: z.enum(["current_user", "current_assistant", "user_choice"]),
+	source: z.enum(["current_user", "current_assistant"]),
 	quote: z.string().min(1).max(2000),
 });
 export type CharacterStateEvidence = z.infer<typeof CharacterStateEvidence>;
@@ -177,7 +168,6 @@ interface Metadata {
 	scope?: StateScope;
 	modelReadable?: boolean;
 	writeAuthority?: StateAuthority;
-	deterministicAuthorities?: Array<"host_event" | "user_choice">;
 	evidenceRequired?: boolean;
 	userEditable?: boolean;
 	hidden?: boolean;
@@ -213,7 +203,6 @@ function walk(
 		scope: metadata.scope,
 		modelReadable: metadata.modelReadable ?? true,
 		writeAuthority,
-		deterministicAuthorities: metadata.deterministicAuthorities ?? [],
 		evidenceRequired: metadata.evidenceRequired ?? false,
 		...(typeof current["x-max-change-per-turn"] === "number"
 			? { maxChangePerTurn: current["x-max-change-per-turn"] }
@@ -234,9 +223,6 @@ function inherit(parent: Metadata, node: CharacterStateDefinition): Metadata {
 			? { modelReadable: node["x-model-readable"] }
 			: {}),
 		...(node["x-write-authority"] ? { writeAuthority: node["x-write-authority"] } : {}),
-		...(node["x-deterministic-authorities"]
-			? { deterministicAuthorities: node["x-deterministic-authorities"] }
-			: {}),
 		...(typeof node["x-evidence-required"] === "boolean"
 			? { evidenceRequired: node["x-evidence-required"] }
 			: {}),

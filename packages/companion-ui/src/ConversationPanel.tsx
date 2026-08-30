@@ -686,15 +686,7 @@ function RoleplayChoices() {
 								<Button
 									type="button"
 									class="roleplay-choice"
-									onClick={() => {
-										if (!("event" in choice)) {
-											void store.sendMessage(choice.message);
-											return;
-										}
-										void store
-											.triggerRoleplayEvent(choice.event)
-											.then(() => store.sendMessage(choice.followUp));
-									}}
+									onClick={() => void store.sendMessage(choice.message)}
 								>
 									<strong>{choice.label}</strong>
 									<Show when={choice.description}>

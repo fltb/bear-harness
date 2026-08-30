@@ -13,8 +13,8 @@ interface ConversationProjection {
 }
 
 interface SceneSnapshot {
-	characterRuntime: {
-		byConversation: Record<string, { sceneId: string; visualState: string }>;
+	companion: {
+		byConversation: Record<string, { display: { sceneId: string; expressionId: string } }>;
 	};
 }
 
@@ -95,7 +95,7 @@ test("rule provider exercises send and edited-history regeneration deterministic
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId: conversation.id,
-		text: "E2E_MANUAL_ROLE_START",
+		text: "E2E_MANUAL_ROLE_VISUAL",
 	});
 	await expect
 		.poll(async () => {
@@ -104,17 +104,19 @@ test("rule provider exercises send and edited-history regeneration deterministic
 				.filter((entry) => entry.kind === "message" && entry.role === "assistant")
 				.at(-1)?.text;
 		})
-		.toContain("E2E_MANUAL_ROLE_START_DONE");
+		.toContain("E2E_MANUAL_ROLE_VISUAL_DONE");
 	await expect
 		.poll(async () => {
 			const snapshot = await rpc<SceneSnapshot>(page, bootstrap.token, "snapshot.get:v1", {});
-			return snapshot.characterRuntime.byConversation[conversation.id]?.sceneId;
+			return snapshot.companion.byConversation[conversation.id]?.display.sceneId;
 		})
 		.toBe("quiet_terminal");
 
 	await page.reload();
 	const restored = await rpc<SceneSnapshot>(page, bootstrap.token, "snapshot.get:v1", {});
-	expect(restored.characterRuntime.byConversation[conversation.id]?.sceneId).toBe("quiet_terminal");
+	expect(restored.companion.byConversation[conversation.id]?.display.sceneId).toBe(
+		"quiet_terminal",
+	);
 });
 
 test("rule provider selects the memory matching the current query marker", async ({ page }) => {

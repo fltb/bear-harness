@@ -70,33 +70,3 @@ export const CharacterBehaviorSchema = z
 	});
 
 export type CharacterBehaviorContract = z.infer<typeof CharacterBehaviorSchema>;
-
-export const VoiceModesSchema = z
-	.strictObject({
-		default: Identifier,
-		modes: z
-			.array(
-				z.strictObject({
-					id: Identifier,
-					label: Copy,
-					description: Copy,
-					style_instruction: Copy,
-					use_when: Copy,
-				}),
-			)
-			.min(1)
-			.max(20),
-	})
-	.superRefine((voice, context) => {
-		const ids = voice.modes.map((mode) => mode.id);
-		if (new Set(ids).size !== ids.length)
-			context.addIssue({ code: "custom", path: ["modes"], message: "duplicate voice mode" });
-		if (!ids.includes(voice.default))
-			context.addIssue({
-				code: "custom",
-				path: ["default"],
-				message: "default voice mode is not declared",
-			});
-	});
-
-export type VoiceModesContract = z.infer<typeof VoiceModesSchema>;

@@ -112,6 +112,11 @@ export class PiSessionStore {
 		return this.manager.getLeafEntry();
 	}
 
+	/** Stable native entry ids on the branch ending at the requested entry. */
+	entryPathIds(entryId: string): string[] {
+		return this.manager.getBranch(entryId).map((entry) => entry.id);
+	}
+
 	get metadata(): PiSessionMetadata {
 		return {
 			sessionId: this.sessionId,

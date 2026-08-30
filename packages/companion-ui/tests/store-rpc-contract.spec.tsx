@@ -85,6 +85,35 @@ function conversationSummary(id: string, title = id): HostConversationSummary {
 		updatedAt: "2026-01-01T00:00:00.000Z",
 	};
 }
+function companionSnapshot(
+	conversationId: string,
+	options: {
+		sceneId?: string;
+		expressionId?: string;
+		mediaId?: string;
+		ambientMediaId?: string;
+		choiceSetId?: string;
+	} = {},
+) {
+	return {
+		byConversation: {
+			[conversationId]: {
+				display: {
+					sceneId: options.sceneId ?? "room",
+					expressionId: options.expressionId ?? "thinking",
+					surfaces: {
+						ambient: options.ambientMediaId ?? null,
+						inline: options.mediaId ?? null,
+						modal: null,
+						choices: options.choiceSetId ?? null,
+					},
+				},
+				collection: { seenMediaIds: [], unlocks: [], factIds: [] },
+				revisions: { display: 1, collection: 1 },
+			},
+		},
+	};
+}
 function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["client"]) {
 	let dispose = () => undefined;
 	const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -125,13 +154,22 @@ describe("store RPC contract", () => {
 						title: "conversation-1",
 						piTimeline: { entries: [] },
 					},
-					characterState: {
+					companion: {
 						schema,
 						byConversation: {
 							"conversation-1": {
-								document: { note: projectedNote },
-								revisions: { conversation: eventSeq, relationship: 0, character: 0 },
-								schemaHash: "0".repeat(64),
+								character: {
+									document: { note: projectedNote },
+									revisions: { conversation: eventSeq, relationship: 0, character: 0 },
+									schemaHash: "0".repeat(64),
+								},
+								display: {
+									sceneId: "study",
+									expressionId: "calm",
+									surfaces: { ambient: null, inline: null, modal: null, choices: null },
+								},
+								collection: { seenMediaIds: [], unlocks: [], factIds: [] },
+								revisions: { display: 0, collection: 0 },
 							},
 						},
 					},
@@ -1067,10 +1105,7 @@ describe("store RPC contract", () => {
 			await waitFor(() => expect(client.conversation.list).toHaveBeenCalled());
 			expect(store.activeConversationId).toBe("conversation-1");
 			expect(client.model.routeGet).not.toHaveBeenCalledWith({ conversationId: "conversation-2" });
-			expect(store.characterRuntimeByConversation["conversation-2"]).toEqual({
-				sceneId: "room",
-				visualState: "thinking",
-			});
+			expect(store.characterRuntimeByConversation["conversation-2"]).toBeUndefined();
 			expect(store.run.pendingPermissions()).toEqual([
 				expect.objectContaining({ runId: "run-1", requestId: "permission-1" }),
 			]);
@@ -1089,14 +1124,10 @@ describe("store RPC contract", () => {
 				ok: true as const,
 				data: {
 					eventSeq: 0,
-					characterRuntime: {
-						byConversation: { "conversation-1": { sceneId: "room", visualState: "thinking" } },
-					},
+					companion: companionSnapshot("conversation-1", { choiceSetId: "choices-1" }),
 					presentation: {
 						companionState: "running" as const,
 						permissions: [],
-						conversationId: "conversation-1",
-						choiceSetId: "choices-1",
 					},
 					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
@@ -1143,8 +1174,8 @@ describe("store RPC contract", () => {
 						},
 						{
 							seq: 4,
-							kind: "roleplay.choices_presented" as const,
-							payload: { conversationId: "conversation-1", choiceSetId: "choices-1" },
+							kind: "companion.snapshot_changed" as const,
+							payload: { conversationId: "conversation-1", commitId: "choices-1" },
 						},
 						{
 							seq: 5,
@@ -1184,11 +1215,12 @@ describe("store RPC contract", () => {
 				ok: true as const,
 				data: {
 					eventSeq: snapshotReads === 1 ? 0 : 1,
+					companion: companionSnapshot("conversation-1", {
+						...(snapshotReads >= 3 ? { choiceSetId: "choices-1" } : {}),
+					}),
 					presentation: {
 						companionState: "running" as const,
 						permissions: [],
-						conversationId: "conversation-1",
-						...(snapshotReads >= 3 ? { choiceSetId: "choices-1" } : {}),
 					},
 					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
@@ -1205,8 +1237,8 @@ describe("store RPC contract", () => {
 					events: [
 						{
 							seq: 1,
-							kind: "roleplay.choices_presented" as const,
-							payload: { conversationId: "conversation-1", choiceSetId: "choices-1" },
+							kind: "companion.snapshot_changed" as const,
+							payload: { conversationId: "conversation-1", commitId: "choices-1" },
 						},
 					],
 				},
@@ -1493,12 +1525,10 @@ describe("store RPC contract", () => {
 				data: {
 					eventSeq: 0,
 					character: ROLEPLAY_MEDIA_CHARACTER,
+					companion: companionSnapshot("conversation-1", { mediaId, ambientMediaId }),
 					presentation: {
 						companionState: "running" as const,
 						permissions: [],
-						conversationId: "conversation-1",
-						mediaId,
-						ambientMediaId,
 					},
 					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
@@ -1515,43 +1545,43 @@ describe("store RPC contract", () => {
 					events: [
 						{
 							seq: 1,
-							kind: "roleplay.media_presented" as const,
-							payload: { conversationId: "conversation-1", mediaId: "dialog-image" },
+							kind: "companion.snapshot_changed" as const,
+							payload: { conversationId: "conversation-1", commitId: "media-1" },
 						},
 						{
 							seq: 2,
-							kind: "roleplay.media_presented" as const,
-							payload: { conversationId: "conversation-1", mediaId: "ambient-audio" },
+							kind: "companion.snapshot_changed" as const,
+							payload: { conversationId: "conversation-1", commitId: "media-2" },
 						},
 						{
 							seq: 3,
-							kind: "roleplay.media_presented" as const,
-							payload: { conversationId: "conversation-1", mediaId: "inline-image" },
+							kind: "companion.snapshot_changed" as const,
+							payload: { conversationId: "conversation-1", commitId: "media-3" },
 						},
 						{
 							seq: 4,
-							kind: "roleplay.media_presented" as const,
-							payload: { conversationId: "conversation-1", mediaId: "missing" },
+							kind: "companion.snapshot_changed" as const,
+							payload: { conversationId: "conversation-1", commitId: "media-4" },
 						},
 						{
 							seq: 5,
-							kind: "roleplay.media_dismissed" as const,
-							payload: { conversationId: "conversation-1", mediaId: "dialog-image" },
+							kind: "companion.snapshot_changed" as const,
+							payload: { conversationId: "conversation-1", commitId: "media-5" },
 						},
 						{
 							seq: 6,
-							kind: "roleplay.media_dismissed" as const,
-							payload: { conversationId: "conversation-1", mediaId: "ambient-audio" },
+							kind: "companion.snapshot_changed" as const,
+							payload: { conversationId: "conversation-1", commitId: "media-6" },
 						},
 						{
 							seq: 7,
-							kind: "roleplay.media_presented" as const,
-							payload: { conversationId: "conversation-1", mediaId: "ambient-audio" },
+							kind: "companion.snapshot_changed" as const,
+							payload: { conversationId: "conversation-1", commitId: "media-7" },
 						},
 						{
 							seq: 8,
-							kind: "roleplay.media_presented" as const,
-							payload: { conversationId: "conversation-1", mediaId: "missing" },
+							kind: "companion.snapshot_changed" as const,
+							payload: { conversationId: "conversation-1", commitId: "media-8" },
 						},
 					],
 				},

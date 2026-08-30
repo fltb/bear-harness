@@ -63,7 +63,7 @@ test("committed schema state survives new conversations and edited message histo
 	};
 	expect(
 		promptTrace.prompts.findLast((prompt) => prompt.includes("schema state projection check")),
-	).toContain('"continuity.stage":1');
+	).toMatch(/"continuity":\s*{\s*"stage": 1/);
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId: conversationA,
@@ -184,6 +184,13 @@ test("presented role choices send ordinary messages and advance generic schema s
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("E2E_MANUAL_ROLE_CONTINUE_DONE");
+	await rpc(page, bootstrap.token, "message.send:v1", {
+		conversationId,
+		text: "E2E_MANUAL_ROLE_PRESENT",
+	});
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
+		.toBe("E2E_MANUAL_ROLE_PRESENT_DONE");
 	await expect
 		.poll(async () => {
 			const snapshot = await rpc<{
@@ -216,10 +223,17 @@ test("presented role choices send ordinary messages and advance generic schema s
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("E2E_MANUAL_ROLE_RECEIVED_DONE");
+	const choiceTrace = (await (await page.request.get(`${providerUrl}/trace/prompts`)).json()) as {
+		prompts: string[];
+	};
+	const choicePrompt = choiceTrace.prompts.findLast((prompt) =>
+		prompt.includes("我听见了，也愿意接住这份交接。"),
+	);
+	expect(choicePrompt).toMatch(/"continuity":\s*{\s*"stage": 2,\s*"response": "unopened"/);
 	const entries = await projection(page, bootstrap.token, conversationId);
 	expect(
 		entries.filter((entry) => entry.kind === "message" && entry.role === "user").at(-1)?.text,
-	).toBe("我听见了。请按继任规程记录我的回应。");
+	).toBe("我听见了，也愿意接住这份交接。");
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId,
@@ -234,8 +248,7 @@ test("presented role choices send ordinary messages and advance generic schema s
 	const finalPrompt = trace.prompts.findLast((prompt) =>
 		prompt.includes("final generic state projection"),
 	);
-	expect(finalPrompt).toContain('"continuity.stage":3');
-	expect(finalPrompt).toContain('"continuity.response":"received"');
+	expect(finalPrompt).toMatch(/"continuity":\s*{\s*"stage": 3,\s*"response": "received"/);
 });
 
 test("adopted multi-turn history and a manual edit change the next model context", async ({
@@ -330,40 +343,6 @@ test("archived conversations require an explicit search opt-in and deleted messa
 			{ query: "E2E_ARCHIVED_SEARCH_MARKER", includeArchived: true },
 		),
 	).resolves.toMatchObject({ hits: [{ conversationId: archived.id }] });
-});
-
-test("a transcript branch cannot restore removed legacy roleplay facts", async ({ page }) => {
-	await ensureReadyForConversation(page);
-	const bootstrap = await (await page.request.get("/bootstrap")).json();
-	const conversationId = await createFreshConversation(page, bootstrap.token, "Transcript branch");
-	await rpc(page, bootstrap.token, "message.send:v1", {
-		conversationId,
-		text: "E2E_BRANCH_SOURCE",
-	});
-	await expect
-		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
-		.toBe("RULE_OK");
-	const source = (await projection(page, bootstrap.token, conversationId)).find(
-		(entry) =>
-			entry.kind === "message" && entry.role === "user" && entry.text === "E2E_BRANCH_SOURCE",
-	);
-	if (!source) throw new Error("missing native branch source entry");
-	await rpc(page, bootstrap.token, "message.branch:v1", {
-		conversationId,
-		entryId: source.id,
-	});
-	const response = await page.request.post("/rpc/roleplay.trigger%3Av1", {
-		headers: { "x-bear-web-dev-token": bootstrap.token },
-		data: {
-			conversationId,
-			eventId: "continuity_opened",
-			dedupeKey: "branch-write-must-fail",
-		},
-	});
-	await expect(response.json()).resolves.toMatchObject({
-		ok: false,
-		error: { reason: "roleplay_event_not_found" },
-	});
 });
 
 test("conversation operations send explicit model instructions and persist revised replies", async ({

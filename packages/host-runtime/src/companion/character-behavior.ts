@@ -7,18 +7,13 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Diagnostics } from "../diagnostics/index.js";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus, HostEvent } from "../storage/event-bus.js";
-import {
-	companionIdentity,
-	companionPackages,
-	conversations,
-	events,
-	sceneState,
-} from "../storage/schema.js";
+import { companionIdentity, companionPackages, conversations } from "../storage/schema.js";
 import type { CharacterLoader, CharacterPackage } from "./character-loader.js";
+import { CompanionStore } from "./companion-store.js";
 import type { RoleplayProjection, RoleplayService } from "./roleplay-service.js";
 import type { CharacterStateService } from "./state-service.js";
 export type CompanionHostToolName =
@@ -56,12 +51,6 @@ export interface CharacterRuntimeState {
 	visualStates: string[];
 	scenes: Array<{ id: string; label: string; useWhen: string }>;
 	expressions: Array<{ id: string; label: string; useWhen: string }>;
-}
-
-interface StoredSceneState {
-	id: string;
-	scene: string;
-	stateJson: unknown;
 }
 
 /**
@@ -107,12 +96,8 @@ function projectTurnEntries(
 
 /** Host-owned, allowlisted character UI controls. */
 export class CharacterBehaviorService {
+	private readonly companionStore: CompanionStore;
 	private readonly unsubscribe: () => void;
-	private readonly modelSelectedExpression = new Set<string>();
-	private readonly seenTurnEntries = new Map<
-		string,
-		{ userEntryId?: string; assistantEntryId?: string }
-	>();
 
 	constructor(
 		private readonly db: AppDatabase,
@@ -122,7 +107,9 @@ export class CharacterBehaviorService {
 		private readonly characterState: CharacterStateService,
 		private readonly piProjection?: (conversationId: string) => PiTurnBranchProjection | undefined,
 		private readonly diagnostics?: Diagnostics,
+		companionStore?: CompanionStore,
 	) {
+		this.companionStore = companionStore ?? new CompanionStore(db);
 		this.unsubscribe = this.eventBus.subscribe((event) => this.applyEventReaction(event));
 	}
 
@@ -130,35 +117,23 @@ export class CharacterBehaviorService {
 		this.unsubscribe();
 	}
 
-	triggerUserRoleplayEvent(input: {
-		conversationId: string;
-		eventId: string;
-		dedupeKey: string;
-	}): RoleplayProjection {
-		const character = this.characterForConversation(input.conversationId);
-		if (!character) throw { kind: "not_found", reason: "conversation_not_found" };
-		const projection = this.piProjection?.(input.conversationId);
-		const state = this.roleplay.trigger({
-			character,
-			eventId: input.eventId,
-			conversationId: input.conversationId,
-			...(projection ? { piSessionId: projection.sessionId } : {}),
-			dedupeKey: input.dedupeKey,
+	/** Fail the current native turn so every staged companion domain is discarded together. */
+	markCurrentTurnFailed(conversationId: string, toolCallId: string): void {
+		const projection = this.piProjection?.(conversationId);
+		if (!projection) return;
+		const lastUser = findLast(
+			projectTurnEntries(projection.sessionManager),
+			(entry) => entry.role === "user",
+		);
+		const character = this.characterForConversation(conversationId);
+		if (!lastUser || !character) return;
+		this.companionStore.markTurnFailed({
+			companionId: character.id,
+			conversationId,
+			piSessionId: projection.sessionId,
+			sourceUserEntryId: lastUser.id,
+			toolCallId,
 		});
-		this.diagnostics?.emit("roleplay.state.transition", {
-			conversationId: input.conversationId,
-			eventId: input.eventId,
-			phase: "committed",
-		});
-		this.eventBus.publish("roleplay.choices_dismissed", { conversationId: input.conversationId });
-		const event = character.roleplay.events.find((candidate) => candidate.id === input.eventId);
-		if (event) this.applyRoleplayPresentation(input.conversationId, event.effects);
-		this.eventBus.publish("roleplay.state_changed", {
-			conversationId: input.conversationId,
-			eventId: input.eventId,
-			state,
-		});
-		return state;
 	}
 
 	/** Execute a request from the Companion utility process. */
@@ -177,6 +152,17 @@ export class CharacterBehaviorService {
 			decision: result.ok ? "allowed" : "rejected",
 			...(result.code ? { resultCode: result.code } : {}),
 		});
+		if (!result.ok && call.piSessionId && call.triggerEntryId && call.toolCallId) {
+			const character = this.characterForConversation(call.conversationId);
+			if (character)
+				this.companionStore.markTurnFailed({
+					companionId: character.id,
+					conversationId: call.conversationId,
+					piSessionId: call.piSessionId,
+					sourceUserEntryId: call.triggerEntryId,
+					toolCallId: call.toolCallId,
+				});
+		}
 		return result;
 	}
 
@@ -253,46 +239,8 @@ export class CharacterBehaviorService {
 		const entries = projectTurnEntries(projection.sessionManager);
 		const lastUser = findLast(entries, (entry) => entry.role === "user");
 		const lastAssistant = findLast(entries, (entry) => entry.role === "assistant");
-		const seen = this.seenTurnEntries.get(conversationId);
-		const newUser = Boolean(lastUser && lastUser.id !== seen?.userEntryId);
-		const newAssistant = Boolean(lastAssistant && lastAssistant.id !== seen?.assistantEntryId);
-		this.seenTurnEntries.set(conversationId, {
-			...(lastUser ? { userEntryId: lastUser.id } : {}),
-			...(lastAssistant ? { assistantEntryId: lastAssistant.id } : {}),
-		});
-		if (!seen) {
-			// A process may restart after a model tool staged state but before the
-			// terminal Pi notification was observed. Reconcile that durable turn on
-			// the first branch projection instead of silently stranding the mutation.
-			if (lastUser && lastAssistant && entries.indexOf(lastAssistant) > entries.indexOf(lastUser))
-				this.applyStateTurnEnd(conversationId, projection.sessionId, lastAssistant, lastUser.id);
-			return;
-		}
-		if (newAssistant && lastAssistant) {
-			this.applyTurnEnd(conversationId, projection.sessionId, lastAssistant, lastUser?.id);
-			return;
-		}
-		if (newUser && lastUser) {
-			this.modelSelectedExpression.delete(conversationId);
-			this.applyReaction(conversationId, "message.user_sent");
-		}
-	}
-
-	private applyTurnEnd(
-		conversationId: string,
-		sessionId: string,
-		entry: ProjectedTurnEntry,
-		userEntryId?: string,
-	): void {
-		if (userEntryId) this.applyStateTurnEnd(conversationId, sessionId, entry, userEntryId);
-		if (entry.stopReason === "aborted") {
-			this.modelSelectedExpression.delete(conversationId);
-			this.applyReaction(conversationId, "message.aborted");
-			return;
-		}
-		if (entry.stopReason === "error") return;
-		const consumed = this.modelSelectedExpression.delete(conversationId);
-		if (!consumed) this.applyReaction(conversationId, "message_end");
+		if (lastUser && lastAssistant && entries.indexOf(lastAssistant) > entries.indexOf(lastUser))
+			this.applyStateTurnEnd(conversationId, projection.sessionId, lastAssistant, lastUser.id);
 	}
 
 	private applyStateTurnEnd(
@@ -307,26 +255,57 @@ export class CharacterBehaviorService {
 			this.turnEffectFailed(conversationId, sessionId, userEntryId)
 		) {
 			this.characterState.discardTurn(conversationId, sessionId, userEntryId);
-			this.settleTurnEffects(conversationId, sessionId, userEntryId, entry.id, false);
+			this.companionStore.discardTurn(conversationId, sessionId, userEntryId);
+			this.eventBus.publish("companion.turn_effects_settled", {
+				conversationId,
+				piSessionId: sessionId,
+				sourceUserEntryId: userEntryId,
+				assistantEntryId: entry.id,
+				status: "discarded",
+			});
 			return;
 		}
 		const character = this.characterForConversation(conversationId);
 		if (!character) return;
-		const result = this.characterState.commitTurn({
-			companionId: character.id,
+		let stateResult: ReturnType<CharacterStateService["commitTurn"]> | undefined;
+		let displayCommitted = false;
+		this.db.transaction((transaction) => {
+			stateResult = this.characterState.commitTurn({
+				companionId: character.id,
+				conversationId,
+				piSessionId: sessionId,
+				sourceUserEntryId: userEntryId,
+				assistantEntryId: entry.id,
+				definition: character.state,
+				transaction,
+			});
+			displayCommitted = this.companionStore.commitTurn({
+				character,
+				conversationId,
+				piSessionId: sessionId,
+				sourceUserEntryId: userEntryId,
+				assistantEntryId: entry.id,
+				transaction,
+			}).committed;
+		});
+		if (stateResult?.committed)
+			this.eventBus.publish("character.state_changed", {
+				conversationId,
+				revisions: stateResult.state.revisions,
+				schemaHash: stateResult.state.schemaHash,
+			});
+		if (stateResult?.committed || displayCommitted)
+			this.eventBus.publish("companion.snapshot_changed", {
+				conversationId,
+				commitId: `turn:${sessionId}:${userEntryId}`,
+			});
+		this.eventBus.publish("companion.turn_effects_settled", {
 			conversationId,
 			piSessionId: sessionId,
 			sourceUserEntryId: userEntryId,
 			assistantEntryId: entry.id,
-			definition: character.state,
+			status: "committed",
 		});
-		if (result.committed)
-			this.eventBus.publish("character.state_changed", {
-				conversationId,
-				revisions: result.state.revisions,
-				schemaHash: result.state.schemaHash,
-			});
-		this.settleTurnEffects(conversationId, sessionId, userEntryId, entry.id, true);
 	}
 
 	private turnEffectFailed(
@@ -334,117 +313,7 @@ export class CharacterBehaviorService {
 		piSessionId: string,
 		sourceUserEntryId: string,
 	): boolean {
-		return Boolean(
-			this.db
-				.select({ seq: events.seq })
-				.from(events)
-				.where(
-					and(
-						eq(events.kind, "companion.turn_effect_failed"),
-						sql`json_extract(${events.payload}, '$.conversationId') = ${conversationId}`,
-						sql`json_extract(${events.payload}, '$.piSessionId') = ${piSessionId}`,
-						sql`json_extract(${events.payload}, '$.sourceUserEntryId') = ${sourceUserEntryId}`,
-					),
-				)
-				.limit(1)
-				.get(),
-		);
-	}
-
-	private settleTurnEffects(
-		conversationId: string,
-		piSessionId: string,
-		sourceUserEntryId: string,
-		assistantEntryId: string,
-		completed: boolean,
-	): void {
-		const settled = this.db
-			.select({ seq: events.seq })
-			.from(events)
-			.where(
-				and(
-					eq(events.kind, "companion.turn_effects_settled"),
-					sql`json_extract(${events.payload}, '$.conversationId') = ${conversationId}`,
-					sql`json_extract(${events.payload}, '$.piSessionId') = ${piSessionId}`,
-					sql`json_extract(${events.payload}, '$.sourceUserEntryId') = ${sourceUserEntryId}`,
-				),
-			)
-			.limit(1)
-			.get();
-		if (settled) return;
-		const staged = this.db
-			.select({ seq: events.seq, payload: events.payload })
-			.from(events)
-			.where(
-				and(
-					eq(events.kind, "companion.effect_staged"),
-					sql`json_extract(${events.payload}, '$.conversationId') = ${conversationId}`,
-					sql`json_extract(${events.payload}, '$.piSessionId') = ${piSessionId}`,
-					sql`json_extract(${events.payload}, '$.sourceUserEntryId') = ${sourceUserEntryId}`,
-				),
-			)
-			.orderBy(asc(events.seq))
-			.all();
-		if (completed) {
-			for (const row of staged) {
-				if (!isRecord(row.payload)) continue;
-				const kind = row.payload.kind;
-				const presentationId = row.payload.presentationId;
-				if (typeof presentationId !== "string") continue;
-				if (kind === "media")
-					this.eventBus.publish("roleplay.media_presented", {
-						conversationId,
-						mediaId: presentationId,
-					});
-				if (kind === "choices")
-					this.eventBus.publish("roleplay.choices_presented", {
-						conversationId,
-						choiceSetId: presentationId,
-					});
-			}
-		} else {
-			const firstVisual = staged.find(
-				(row) => isRecord(row.payload) && row.payload.kind === "visual",
-			)?.payload;
-			if (
-				isRecord(firstVisual) &&
-				typeof firstVisual.beforeSceneId === "string" &&
-				typeof firstVisual.beforeExpressionId === "string"
-			) {
-				const before = this.currentState(
-					conversationId,
-					this.characterForConversation(conversationId)!,
-				);
-				const rolledBack = this.persistState(
-					conversationId,
-					firstVisual.beforeSceneId,
-					firstVisual.beforeExpressionId,
-				);
-				if (before.sceneId !== rolledBack.sceneId)
-					this.eventBus.publish("character.scene_changed", {
-						conversationId,
-						characterId: rolledBack.characterId,
-						sceneId: rolledBack.sceneId,
-						visualState: rolledBack.visualState,
-						source: "turn_rollback",
-					});
-				if (before.visualState !== rolledBack.visualState)
-					this.eventBus.publish("character.visual_state_changed", {
-						conversationId,
-						characterId: rolledBack.characterId,
-						sceneId: rolledBack.sceneId,
-						visualState: rolledBack.visualState,
-						source: "turn_rollback",
-					});
-			}
-		}
-		this.eventBus.publish("companion.turn_effects_settled", {
-			conversationId,
-			piSessionId,
-			sourceUserEntryId,
-			assistantEntryId,
-			status: completed ? "committed" : "discarded",
-		});
+		return this.companionStore.hasTurnFailure(conversationId, piSessionId, sourceUserEntryId);
 	}
 
 	private applyReaction(conversationId: string, eventKind: string): void {
@@ -455,18 +324,6 @@ export class CharacterBehaviorService {
 		);
 		if (!reaction) return;
 		this.setExpression(conversationId, reaction.visual_state, `event:${eventKind}`);
-	}
-
-	private applyRoleplayPresentation(
-		conversationId: string,
-		effects: CharacterPackage["roleplay"]["events"][number]["effects"],
-	): void {
-		for (const effect of effects) {
-			if (effect.type === "scene") this.setScene(conversationId, effect.scene);
-			if (effect.type === "expression")
-				this.setExpression(conversationId, effect.expression, "roleplay_event");
-			if (effect.type === "media") this.presentMedia(conversationId, effect.media);
-		}
 	}
 
 	private presentMedia(
@@ -509,13 +366,36 @@ export class CharacterBehaviorService {
 				code: "roleplay_media_already_seen",
 				message: "This story media was already shown and cannot be automatically presented again.",
 			};
+		const surface =
+			media.presentation === "ambient"
+				? ("ambient" as const)
+				: media.presentation === "inline"
+					? ("inline" as const)
+					: ("modal" as const);
+		const mutations = [
+			{ domain: "display" as const, op: "present" as const, surface, resourceId: media.id },
+			{ domain: "collection" as const, op: "add_seen_media" as const, mediaId: media.id },
+		];
 		if (hasTurnProvenance(provenance)) {
-			if (this.isEffectStaged(conversationId, provenance, "media", media.id))
-				return { ok: true, message: `Media ${media.id} is already staged for this response.` };
-			this.stageEffect(conversationId, provenance, "media", media.id);
+			this.companionStore.stage({
+				character,
+				conversationId,
+				piSessionId: provenance.piSessionId,
+				sourceUserEntryId: provenance.triggerEntryId,
+				toolCallId: provenance.toolCallId,
+				mutations,
+			});
 			return { ok: true, message: `Media ${media.id} staged for this response.` };
 		}
-		this.eventBus.publish("roleplay.media_presented", { conversationId, mediaId: media.id });
+		const commitId = randomUUID();
+		this.companionStore.commit({
+			character,
+			conversationId,
+			commitId,
+			authority: "host_present",
+			mutations,
+		});
+		this.eventBus.publish("companion.snapshot_changed", { conversationId, commitId });
 		return { ok: true, message: `Presenting media ${media.id}.` };
 	}
 
@@ -571,14 +451,36 @@ export class CharacterBehaviorService {
 			presentationId &&
 			(current.mediaId === presentationId || current.ambientMediaId === presentationId)
 		) {
-			this.eventBus.publish("roleplay.media_dismissed", {
+			const media = character.roleplay.media.find((item) => item.id === presentationId);
+			const surface =
+				media?.presentation === "ambient"
+					? ("ambient" as const)
+					: media?.presentation === "inline"
+						? ("inline" as const)
+						: ("modal" as const);
+			const commitId = randomUUID();
+			this.companionStore.commit({
+				character,
 				conversationId,
-				mediaId: presentationId,
+				commitId,
+				authority: "host_dismiss",
+				mutations: [{ domain: "display", op: "dismiss", surface, resourceId: presentationId }],
 			});
+			this.eventBus.publish("companion.snapshot_changed", { conversationId, commitId });
 			return { ok: true, message: `Dismissed media ${presentationId}.` };
 		}
 		if (presentationId && current.choiceSetId === presentationId) {
-			this.eventBus.publish("roleplay.choices_dismissed", { conversationId });
+			const commitId = randomUUID();
+			this.companionStore.commit({
+				character,
+				conversationId,
+				commitId,
+				authority: "host_dismiss",
+				mutations: [
+					{ domain: "display", op: "dismiss", surface: "choices", resourceId: presentationId },
+				],
+			});
+			this.eventBus.publish("companion.snapshot_changed", { conversationId, commitId });
 			return { ok: true, message: `Dismissed choices ${presentationId}.` };
 		}
 		return {
@@ -610,13 +512,32 @@ export class CharacterBehaviorService {
 				message: "The requested choice set is not eligible for the current state.",
 			};
 		if (hasTurnProvenance(provenance)) {
-			this.stageEffect(conversationId, provenance, "choices", choices.id);
+			this.companionStore.stage({
+				character,
+				conversationId,
+				piSessionId: provenance.piSessionId,
+				sourceUserEntryId: provenance.triggerEntryId,
+				toolCallId: provenance.toolCallId,
+				mutations: [
+					{
+						domain: "display",
+						op: "present",
+						surface: "choices",
+						resourceId: choices.id,
+					},
+				],
+			});
 			return { ok: true, message: `Choices ${choices.id} staged for this response.` };
 		}
-		this.eventBus.publish("roleplay.choices_presented", {
+		const commitId = randomUUID();
+		this.companionStore.commit({
+			character,
 			conversationId,
-			choiceSetId: choices.id,
+			commitId,
+			authority: "host_present",
+			mutations: [{ domain: "display", op: "present", surface: "choices", resourceId: choices.id }],
 		});
+		this.eventBus.publish("companion.snapshot_changed", { conversationId, commitId });
 		return { ok: true, message: `Presenting choices ${choices.id}.` };
 	}
 
@@ -633,51 +554,6 @@ export class CharacterBehaviorService {
 			sourceUserEntryId: provenance.triggerEntryId,
 			definition: character.state,
 		}).document;
-	}
-
-	private stageEffect(
-		conversationId: string,
-		provenance: Required<
-			Pick<CompanionHostToolCall, "piSessionId" | "triggerEntryId" | "toolCallId">
-		>,
-		kind: "media" | "choices",
-		presentationId: string,
-	): void {
-		this.eventBus.publish("companion.effect_staged", {
-			conversationId,
-			piSessionId: provenance.piSessionId,
-			sourceUserEntryId: provenance.triggerEntryId,
-			toolCallId: provenance.toolCallId,
-			kind,
-			presentationId,
-		});
-	}
-
-	private isEffectStaged(
-		conversationId: string,
-		provenance: Required<
-			Pick<CompanionHostToolCall, "piSessionId" | "triggerEntryId" | "toolCallId">
-		>,
-		kind: "media" | "choices",
-		presentationId: string,
-	): boolean {
-		return Boolean(
-			this.db
-				.select({ seq: events.seq })
-				.from(events)
-				.where(
-					and(
-						eq(events.kind, "companion.effect_staged"),
-						sql`json_extract(${events.payload}, '$.conversationId') = ${conversationId}`,
-						sql`json_extract(${events.payload}, '$.piSessionId') = ${provenance.piSessionId}`,
-						sql`json_extract(${events.payload}, '$.sourceUserEntryId') = ${provenance.triggerEntryId}`,
-						sql`json_extract(${events.payload}, '$.kind') = ${kind}`,
-						sql`json_extract(${events.payload}, '$.presentationId') = ${presentationId}`,
-					),
-				)
-				.limit(1)
-				.get(),
-		);
 	}
 
 	private getStateResult(conversationId: string): CompanionHostToolResult {
@@ -753,18 +629,24 @@ export class CharacterBehaviorService {
 		const nextExpression = expressionId ?? before.visualState;
 		if (nextScene === before.sceneId && nextExpression === before.visualState)
 			return { ok: true, message: "Visual state was already selected.", state: before };
-		if (hasTurnProvenance(provenance))
-			this.eventBus.publish("companion.effect_staged", {
+		if (hasTurnProvenance(provenance)) {
+			const preview = this.companionStore.stage({
+				character,
 				conversationId,
 				piSessionId: provenance.piSessionId,
 				sourceUserEntryId: provenance.triggerEntryId,
 				toolCallId: provenance.toolCallId,
-				kind: "visual",
-				beforeSceneId: before.sceneId,
-				beforeExpressionId: before.visualState,
-				afterSceneId: nextScene,
-				afterExpressionId: nextExpression,
+				mutations: [
+					{ domain: "display", op: "set_scene", sceneId: nextScene },
+					{ domain: "display", op: "set_expression", expressionId: nextExpression },
+				],
 			});
+			return {
+				ok: true,
+				message: "Visual state staged for this response.",
+				state: this.runtimeState(character, preview.display.sceneId, preview.display.expressionId),
+			};
+		}
 		const state = this.persistState(conversationId, nextScene, nextExpression);
 		if (nextScene !== before.sceneId) {
 			this.diagnostics?.emit("character.state.transition", {
@@ -783,7 +665,6 @@ export class CharacterBehaviorService {
 			});
 		}
 		if (nextExpression !== before.visualState) {
-			this.modelSelectedExpression.add(conversationId);
 			this.diagnostics?.emit("character.state.transition", {
 				conversationId,
 				state: "expression",
@@ -827,8 +708,6 @@ export class CharacterBehaviorService {
 			to: state.visualState,
 			source,
 		});
-		if (source === "pi_tool" || source === "roleplay_event")
-			this.modelSelectedExpression.add(conversationId);
 		this.eventBus.publish("character.visual_state_changed", {
 			conversationId,
 			characterId: character.id,
@@ -840,22 +719,19 @@ export class CharacterBehaviorService {
 	}
 
 	private currentState(conversationId: string, character: CharacterPackage): CharacterRuntimeState {
-		const stored = this.db
-			.select({ id: sceneState.id, scene: sceneState.scene, stateJson: sceneState.stateJson })
-			.from(sceneState)
-			.where(eq(sceneState.conversationId, conversationId))
-			.orderBy(desc(sceneState.updatedAt))
-			.limit(1)
-			.get() as StoredSceneState | undefined;
-		const parsed = parseStoredState(stored?.stateJson);
-		const sceneId = character.scenes.some((scene) => scene.id === stored?.scene)
-			? (stored?.scene ?? character.visual.default_scene)
-			: character.visual.default_scene;
+		const display = this.companionStore.snapshot(character, conversationId).display;
+		const sceneId = display.sceneId;
 		const allowedVisualStates = visualStateIds(character);
-		const visualState =
-			typeof parsed.visualState === "string" && allowedVisualStates.includes(parsed.visualState)
-				? parsed.visualState
-				: character.visual.default_expression;
+		const visualState = display.expressionId;
+		return this.runtimeState(character, sceneId, visualState);
+	}
+
+	private runtimeState(
+		character: CharacterPackage,
+		sceneId: string,
+		visualState: string,
+	): CharacterRuntimeState {
+		const allowedVisualStates = visualStateIds(character);
 		return {
 			characterId: character.id,
 			sceneId,
@@ -882,26 +758,16 @@ export class CharacterBehaviorService {
 	): CharacterRuntimeState {
 		const character = this.characterForConversation(conversationId);
 		if (!character) throw new Error(`conversation not found: ${conversationId}`);
-		const existing = this.db
-			.select({ id: sceneState.id })
-			.from(sceneState)
-			.where(eq(sceneState.conversationId, conversationId))
-			.orderBy(desc(sceneState.updatedAt))
-			.limit(1)
-			.get();
-		const stateJson = { visualState };
-		if (existing) {
-			this.db
-				.update(sceneState)
-				.set({ scene: sceneId, stateJson, updatedAt: sql`datetime('now')` })
-				.where(eq(sceneState.id, existing.id))
-				.run();
-		} else {
-			this.db
-				.insert(sceneState)
-				.values({ id: randomUUID(), conversationId, scene: sceneId, stateJson })
-				.run();
-		}
+		this.companionStore.commit({
+			character,
+			conversationId,
+			commitId: randomUUID(),
+			authority: "host_display",
+			mutations: [
+				{ domain: "display", op: "set_scene", sceneId },
+				{ domain: "display", op: "set_expression", expressionId: visualState },
+			],
+		});
 		return this.currentState(conversationId, character);
 	}
 

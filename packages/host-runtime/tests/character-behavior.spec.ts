@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { CharacterBehaviorService } from "../src/companion/character-behavior.js";
 import { CharacterLoader } from "../src/companion/character-loader.js";
+import { CompanionStore } from "../src/companion/companion-store.js";
 import type { PiSessionMessage } from "../src/companion/pi-session-store.js";
 import { PiSessionStore } from "../src/companion/pi-session-store.js";
 import { RoleplayService } from "../src/companion/roleplay-service.js";
@@ -30,6 +31,7 @@ interface BehaviorFixture {
 	eventBus: EventBus;
 	behavior: CharacterBehaviorService;
 	characterState: CharacterStateService;
+	companionStore: CompanionStore;
 	/** Native Pi session used to derive turn lifecycle projections. */
 	store: PiSessionStore;
 	/** Append a native user message and return its SessionManager entry id. */
@@ -84,19 +86,23 @@ function createFixture(
 		});
 
 	const characterState = new CharacterStateService(database.orm);
+	const companionStore = new CompanionStore(database.orm);
 	const behavior = new CharacterBehaviorService(
 		database.orm,
 		eventBus,
 		loader,
-		new RoleplayService(database.orm, characterState),
+		new RoleplayService(database.orm, characterState, companionStore),
 		characterState,
 		() => ({ sessionId: store.sessionId, sessionManager: store.sessionManager }),
+		undefined,
+		companionStore,
 	);
 	return {
 		db: database,
 		eventBus,
 		behavior,
 		characterState,
+		companionStore,
 		store,
 		appendUser,
 		appendAssistant,
@@ -158,7 +164,7 @@ describe("CharacterBehaviorService", () => {
 				tool: "host_visual",
 				args: { action: "read" },
 			}),
-		).toMatchObject({ state: { visualState: "reflective" } });
+		).toMatchObject({ state: { visualState: "calm" } });
 		fixture.appendAssistant("", "aborted");
 		fixture.publishChanged();
 		expect(
@@ -197,13 +203,12 @@ describe("CharacterBehaviorService", () => {
 			kind: "choices",
 			presentationId: "undelivered_entry",
 		});
-		fixture.eventBus.publish("companion.turn_effect_failed", {
+		fixture.companionStore.markTurnFailed({
+			companionId: character.id,
 			conversationId: "conversation-1",
 			piSessionId: fixture.store.sessionId,
 			sourceUserEntryId: userEntryId,
 			toolCallId: "failed-state-correction",
-			tool: "host_state",
-			code: "state_transition_not_allowed",
 		});
 		fixture.appendAssistant("工具失败，状态没有改变。", "stop");
 		fixture.publishChanged();
@@ -239,70 +244,6 @@ describe("CharacterBehaviorService", () => {
 		expect(roleplay.presentation(character, "conversation-1").choiceSetId).toBe(
 			"undelivered_entry",
 		);
-	});
-
-	it("uses pending story state for same-turn CG gates and never duplicates a staged CG", () => {
-		const fixture = createFixture();
-		fixtures.push(fixture);
-		const character = new CharacterLoader(characterRoot).load("jizhou");
-		if (!character) throw new Error("missing default character");
-		fixture.behavior.triggerUserRoleplayEvent({
-			conversationId: "conversation-1",
-			eventId: "story_enter",
-			dedupeKey: "story-enter",
-		});
-		const userEntryId = fixture.appendUser("检查现有的损坏信号。");
-		fixture.publishChanged();
-		fixture.characterState.stage({
-			companionId: character.id,
-			conversationId: "conversation-1",
-			piSessionId: fixture.store.sessionId,
-			sourceUserEntryId: userEntryId,
-			definition: character.state,
-			operations: [
-				{ path: "/story/undelivered_report/phase", op: "replace", value: "signal_examined" },
-				{ path: "/story/undelivered_report/position", op: "replace", value: "evidence" },
-				{ path: "/narrative/frame", op: "replace", value: "archive_record" },
-				{ path: "/narrative/location", op: "replace", value: "quiet_terminal" },
-				{ path: "/narrative/time_anchor", op: "replace", value: "damaged_signal_record" },
-				{ path: "/narrative/evidence_mode", op: "replace", value: "direct_record" },
-			],
-			reason: "The user asked to inspect the existing signal record.",
-			skillId: "undelivered-report",
-			evidence: { source: "current_user", quote: "检查现有的损坏信号。" },
-		});
-		const call = {
-			conversationId: "conversation-1",
-			piSessionId: fixture.store.sessionId,
-			triggerEntryId: userEntryId,
-			toolCallId: "damaged-signal-media",
-			tool: "host_present",
-			args: { action: "present_media", mediaId: "damaged_signal" },
-		};
-		expect(fixture.behavior.invoke(call)).toMatchObject({
-			ok: true,
-			message: expect.stringContaining("staged"),
-		});
-		expect(fixture.behavior.invoke(call)).toMatchObject({
-			ok: true,
-			message: expect.stringContaining("already staged"),
-		});
-		expect(
-			new RoleplayService(fixture.db.orm).presentation(character, "conversation-1").mediaId,
-		).toBeUndefined();
-		fixture.characterState.commitTurn({
-			companionId: character.id,
-			conversationId: "conversation-1",
-			piSessionId: fixture.store.sessionId,
-			sourceUserEntryId: userEntryId,
-			assistantEntryId: "assistant-signal",
-			definition: character.state,
-		});
-		fixture.appendAssistant("记录已展开。", "stop");
-		fixture.publishChanged();
-		expect(
-			new RoleplayService(fixture.db.orm).presentation(character, "conversation-1"),
-		).toMatchObject({ mediaId: "damaged_signal", seenMediaIds: ["damaged_signal"] });
 	});
 
 	it("persists only package-declared Host scene and expression changes", () => {
@@ -352,10 +293,14 @@ describe("CharacterBehaviorService", () => {
 		});
 		expect(rejected).toMatchObject({ ok: false, code: "invalid_scene" });
 		expect(
-			fixture.db.connection
-				.prepare("SELECT scene, state_json FROM scene_state WHERE conversation_id = ?")
-				.get("conversation-1"),
-		).toEqual({ scene: "snowfield", state_json: JSON.stringify({ visualState: "reflective" }) });
+			fixture.companionStore.snapshot(
+				new CharacterLoader(characterRoot).load("jizhou")!,
+				"conversation-1",
+			).display,
+		).toMatchObject({
+			sceneId: "snowfield",
+			expressionId: "reflective",
+		});
 		expect(fixture.eventBus.after(afterSeq)).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({
@@ -634,74 +579,42 @@ describe("CharacterBehaviorService", () => {
 		).toMatchObject({ state: { visualState: "repair" } });
 	});
 
-	it("applies the same declared presentation when the user chooses a roleplay event", () => {
-		const loader = new LegacyRoleplayLoader(characterRoot);
-		const fixture = createFixture(loader);
+	it("restores committed model-selected visuals on a fork path", () => {
+		const fixture = createFixture();
 		fixtures.push(fixture);
-		const presented: unknown[] = [];
-		fixture.eventBus.subscribe((event) => {
-			if (event.kind === "roleplay.media_presented") presented.push(event.payload);
+		fixture.db.orm
+			.insert(conversations)
+			.values({ id: "conversation-fork", companionId: "jizhou" })
+			.run();
+		const userEntryId = fixture.appendUser("move to the archive");
+		fixture.publishChanged();
+		fixture.behavior.invoke({
+			conversationId: "conversation-1",
+			piSessionId: fixture.store.sessionId,
+			triggerEntryId: userEntryId,
+			toolCallId: "visual-fork-source",
+			tool: "host_visual",
+			args: { action: "update", sceneId: "archive_gallery", expressionId: "alert" },
 		});
+		const assistantEntryId = fixture.appendAssistant("archive opened", "stop");
+		fixture.publishChanged();
 
-		fixture.behavior.triggerUserRoleplayEvent({
-			conversationId: "conversation-1",
-			eventId: "continuity_opened",
-			dedupeKey: "user-opened",
-		});
-		fixture.behavior.triggerUserRoleplayEvent({
-			conversationId: "conversation-1",
-			eventId: "continuity_revealed",
-			dedupeKey: "user-isolated",
-		});
-		fixture.behavior.triggerUserRoleplayEvent({
-			conversationId: "conversation-1",
-			eventId: "continuity_received",
-			dedupeKey: "user-confirmed",
-		});
-
-		expect(presented).toContainEqual({
-			conversationId: "conversation-1",
-			mediaId: "continuity_light",
-		});
-		const character = loader.load("jizhou");
+		expect(assistantEntryId).toBeTruthy();
+		const character = new CharacterLoader(characterRoot).load("jizhou");
 		if (!character) throw new Error("missing default character");
-		expect(new RoleplayService(fixture.db.orm).project(character, "conversation-1")).toMatchObject({
-			values: { continuity_stage: 3 },
-			unlocked: ["continuity_record"],
+		fixture.companionStore.forkConversation({
+			character,
+			sourceConversationId: "conversation-1",
+			targetConversationId: "conversation-fork",
+			sourceEntryIds: new Set([userEntryId, assistantEntryId]),
 		});
 		expect(
 			fixture.behavior.invoke({
-				conversationId: "conversation-1",
-				tool: "host_present",
-				args: { action: "dismiss", presentationId: "continuity_light" },
+				conversationId: "conversation-fork",
+				tool: "host_visual",
+				args: { action: "read" },
 			}),
-		).toMatchObject({ ok: true });
-		expect(
-			fixture.behavior.invoke({
-				conversationId: "conversation-1",
-				tool: "host_present",
-				args: { action: "present_media", mediaId: "continuity_light" },
-			}),
-		).toMatchObject({ ok: false, code: "roleplay_media_already_seen" });
-	});
-
-	it("records native session provenance for user-triggered roleplay events", () => {
-		const fixture = createFixture(new LegacyRoleplayLoader(characterRoot));
-		fixtures.push(fixture);
-
-		fixture.behavior.triggerUserRoleplayEvent({
-			conversationId: "conversation-1",
-			eventId: "continuity_opened",
-			dedupeKey: "user-opened",
-		});
-		const row = fixture.db.connection
-			.prepare("SELECT pi_session_id, source_native_entry_id, event_id FROM roleplay_events")
-			.get() as { pi_session_id: string; source_native_entry_id: string; event_id: string };
-		expect(row).toEqual({
-			pi_session_id: fixture.store.sessionId,
-			source_native_entry_id: null,
-			event_id: "continuity_opened",
-		});
+		).toMatchObject({ state: { sceneId: "archive_gallery", visualState: "alert" } });
 	});
 
 	it("rejects unallowlisted Host tools without mutating state", () => {
@@ -715,7 +628,9 @@ describe("CharacterBehaviorService", () => {
 		});
 		expect(result).toMatchObject({ ok: false, code: "host_tool_not_allowed" });
 		expect(
-			fixture.db.connection.prepare("SELECT COUNT(*) AS count FROM scene_state").get(),
+			fixture.db.connection
+				.prepare("SELECT COUNT(*) AS count FROM companion_state_documents WHERE domain = 'display'")
+				.get(),
 		).toEqual({
 			count: 0,
 		});
@@ -726,9 +641,11 @@ describe("CharacterBehaviorService", () => {
 		fixtures.push(fixture);
 		fixture.db.connection
 			.prepare(
-				"INSERT INTO scene_state (id, conversation_id, scene, state_json) VALUES (?, ?, ?, ?)",
+				`INSERT INTO companion_state_documents
+					(id, companion_id, conversation_id, scope, domain, state_json, schema_hash)
+				 VALUES (?, ?, ?, 'conversation', 'display', ?, 'display:v1')`,
 			)
-			.run("scene-1", "conversation-1", "study", "not-json");
+			.run("display-corrupt", "jizhou", "conversation-1", "not-json");
 
 		expect(() =>
 			fixture.behavior.invoke({

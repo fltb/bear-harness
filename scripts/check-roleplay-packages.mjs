@@ -39,7 +39,6 @@ for (const entry of readdirSync(root, { withFileTypes: true })) {
 		!roleplay ||
 		!Array.isArray(roleplay.variables) ||
 		!Array.isArray(roleplay.media) ||
-		!Array.isArray(roleplay.events) ||
 		!Array.isArray(roleplay.choice_sets)
 	) {
 		failures.push(`${prefix}: missing complete roleplay declaration`);
@@ -76,12 +75,6 @@ for (const entry of readdirSync(root, { withFileTypes: true })) {
 	for (const scene of manifest.scenes ?? [])
 		if (!scene?.id || !scene?.label || !scene?.description || !scene?.use_when)
 			failures.push(`${prefix}: each scene requires id, label, description and use_when`);
-	for (const event of roleplay.events)
-		for (const effect of event.effects ?? [])
-			if (effect.type === "expression" && !expressionIds.has(effect.expression))
-				failures.push(
-					`${prefix}: event ${event.id} references missing expression ${effect.expression}`,
-				);
 	if (entry.name === "jizhou") {
 		const expressionAssets = (expressions ?? []).map((expression) => expression.asset);
 		if (expressionAssets.length < 12 || new Set(expressionAssets).size < 12)
@@ -132,30 +125,6 @@ for (const entry of readdirSync(root, { withFileTypes: true })) {
 			if (!info || info.width < 1600 || info.height < 900)
 				failures.push(`${prefix}: official story media ${id} requires a production 16:9 poster`);
 		}
-
-		const requiredStoryEvents = [
-			"story_enter",
-			"story_signal_examined",
-			"story_route_relay",
-			"story_route_snowfield",
-			"story_route_snowfield_after_relay",
-			"story_route_relay_after_snowfield",
-			"story_compare_unresolved",
-			"story_compare_cenlan",
-			"story_compare_wenxi",
-			"story_last_shift",
-			"story_future_design",
-			"story_future_audit",
-			"story_future_no_system",
-			"story_future_refused",
-			"story_resolve_returned",
-			"story_resolve_archived",
-			"story_resolve_left_open",
-			"story_resume_archived",
-		];
-		const eventIds = new Set(roleplay.events.map((event) => event.id));
-		for (const id of requiredStoryEvents)
-			if (!eventIds.has(id)) failures.push(`${prefix}: official story requires event ${id}`);
 
 		const requiredStateFields = [
 			"/story/undelivered_report/phase",

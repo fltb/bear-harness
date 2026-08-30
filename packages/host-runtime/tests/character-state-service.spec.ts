@@ -37,6 +37,71 @@ function fixture() {
 }
 
 describe("CharacterStateService", () => {
+	it("rebuilds a fork at the selected native entry without copying later story state", () => {
+		const { database, character, service } = fixture();
+		database.orm.insert(conversations).values({ id: "fork", companionId: character.id }).run();
+		const commit = (
+			sourceUserEntryId: string,
+			assistantEntryId: string,
+			operations: Parameters<typeof service.stage>[0]["operations"],
+		) => {
+			service.stage({
+				companionId: character.id,
+				conversationId: "conversation",
+				piSessionId: "source-session",
+				sourceUserEntryId,
+				definition: character.state,
+				operations,
+				reason: "Advance the tested story branch.",
+				skillId: "undelivered-report",
+				evidence: { source: "current_user", quote: "继续。" },
+			});
+			service.commitTurn({
+				companionId: character.id,
+				conversationId: "conversation",
+				piSessionId: "source-session",
+				sourceUserEntryId,
+				assistantEntryId,
+				definition: character.state,
+			});
+		};
+		commit("user-1", "assistant-1", [
+			{ op: "replace", path: "/story/undelivered_report/phase", value: "invited" },
+			{ op: "replace", path: "/story/undelivered_report/status", value: "active" },
+			{ op: "replace", path: "/narrative/active_story", value: "undelivered_report" },
+		]);
+		commit("user-2", "assistant-2", [
+			{
+				op: "replace",
+				path: "/story/undelivered_report/phase",
+				value: "signal_examined",
+			},
+		]);
+
+		service.forkConversation({
+			companionId: character.id,
+			sourceConversationId: "conversation",
+			targetConversationId: "fork",
+			targetPiSessionId: "fork-session",
+			definition: character.state,
+			sourceEntryIds: new Set(["user-1", "assistant-1"]),
+			roleplayEventIdMap: new Map(),
+		});
+
+		expect(service.project(character.id, "fork", character.state)).toMatchObject({
+			document: {
+				story: { undelivered_report: { phase: "invited", status: "active" } },
+				narrative: { active_story: "undelivered_report" },
+			},
+			revisions: { conversation: 1 },
+		});
+		expect(
+			service.project(character.id, "conversation", character.state).document.story
+				?.undelivered_report?.phase,
+		).toBe("signal_examined");
+		database.close();
+	});
+
 	it("retains valid documents across a compatible schema hash change", () => {
 		const { database, character, service } = fixture();
 		service.commitUserPatch({

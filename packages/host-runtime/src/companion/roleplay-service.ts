@@ -1,12 +1,11 @@
-import { parseKnownDomainEvent } from "@bear-harness/protocol/schema";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import jsonPatch from "fast-json-patch";
 import type { AppDatabase } from "../storage/database.js";
-import { events, onboardingState, roleplayEvents, roleplayUnlocks } from "../storage/schema.js";
+import { onboardingState } from "../storage/schema.js";
 import type { CharacterPackage } from "./character-loader.js";
+import { CompanionStore } from "./companion-store.js";
 import { OnboardingStateDataSchema } from "./onboarding-schema.js";
-import type { RoleplayCondition, RoleplayEffect, RoleplayValue } from "./roleplay-schema.js";
-import type { CharacterStateOperation } from "./state-schema.js";
+import type { RoleplayCondition, RoleplayValue } from "./roleplay-schema.js";
 import type { CharacterStateService } from "./state-service.js";
 
 const { getValueByPointer } = jsonPatch;
@@ -17,11 +16,21 @@ export interface RoleplayProjection {
 	unlocked: string[];
 }
 
+/**
+ * Read-only compatibility projection for package variables and presentation
+ * eligibility. Story progression is normal character state written through
+ * host_state; this service has no transition or user-choice execution path.
+ */
 export class RoleplayService {
+	private readonly companionStore: CompanionStore;
+
 	constructor(
 		private readonly db: AppDatabase,
 		private readonly characterState?: CharacterStateService,
-	) {}
+		companionStore?: CompanionStore,
+	) {
+		this.companionStore = companionStore ?? new CompanionStore(db);
+	}
 
 	project(character: CharacterPackage, conversationId?: string): RoleplayProjection {
 		const values = Object.fromEntries(
@@ -41,28 +50,9 @@ export class RoleplayService {
 			if (override !== undefined && validInitialOverride(variable, override))
 				values[variable.id] = override;
 		}
-		const rows = this.db
-			.select({
-				effects: roleplayEvents.effectsJson,
-				conversationId: roleplayEvents.conversationId,
-			})
-			.from(roleplayEvents)
-			.where(eq(roleplayEvents.companionId, character.id))
-			.all();
-		for (const row of rows)
-			this.applyEffects(
-				values,
-				row.effects as RoleplayEffect[],
-				character,
-				conversationId,
-				row.conversationId ?? undefined,
-			);
-		const unlocked = this.db
-			.select({ id: roleplayUnlocks.unlockableId })
-			.from(roleplayUnlocks)
-			.where(eq(roleplayUnlocks.companionId, character.id))
-			.all()
-			.map((row) => row.id);
+		const unlocked = conversationId
+			? this.companionStore.snapshot(character, conversationId).collection.unlocks
+			: [];
 		const state =
 			conversationId && this.characterState
 				? this.characterState.project(character.id, conversationId, character.state).document
@@ -84,7 +74,6 @@ export class RoleplayService {
 		});
 	}
 
-	/** Presentation is reconstructed from its persisted Host events, including dismissals. */
 	presentation(
 		character: CharacterPackage,
 		conversationId?: string,
@@ -96,167 +85,41 @@ export class RoleplayService {
 		seenMediaIds: string[];
 	} {
 		if (!conversationId) return { seenMediaIds: [] };
-		const result: {
-			conversationId: string;
-			mediaId?: string;
-			ambientMediaId?: string;
-			choiceSetId?: string;
-			seenMediaIds: string[];
-		} = { conversationId, seenMediaIds: [] };
-		const seenMediaIds = new Set<string>();
-		const rows = this.db
-			.select({ seq: events.seq, kind: events.kind, payload: events.payload })
-			.from(events)
-			.where(
-				and(
-					inArray(events.kind, [
-						"roleplay.media_presented",
-						"roleplay.media_dismissed",
-						"roleplay.choices_presented",
-						"roleplay.choices_dismissed",
-					]),
-					sql`json_extract(${events.payload}, '$.conversationId') = ${conversationId}`,
-				),
-			)
-			.orderBy(asc(events.seq))
-			.all();
-		for (const row of rows) {
-			const event = parseKnownDomainEvent(row);
-			if (!event) continue;
-			if (event.kind === "roleplay.media_presented") {
-				const media = character.roleplay.media.find((item) => item.id === event.payload.mediaId);
-				if (media) seenMediaIds.add(media.id);
-				if (media?.presentation === "ambient") result.ambientMediaId = media.id;
-				else if (media) result.mediaId = media.id;
-			} else if (event.kind === "roleplay.media_dismissed") {
-				if (result.mediaId === event.payload.mediaId) delete result.mediaId;
-				if (result.ambientMediaId === event.payload.mediaId) delete result.ambientMediaId;
-			} else if (event.kind === "roleplay.choices_presented") {
-				if (character.roleplay.choice_sets.some((item) => item.id === event.payload.choiceSetId))
-					result.choiceSetId = event.payload.choiceSetId;
-			} else if (event.kind === "roleplay.choices_dismissed") delete result.choiceSetId;
-		}
-		result.seenMediaIds = [...seenMediaIds];
-		return result;
-	}
-
-	trigger(input: {
-		character: CharacterPackage;
-		eventId: string;
-		conversationId?: string;
-		piSessionId?: string;
-		sourceNativeEntryId?: string;
-		dedupeKey: string;
-	}): RoleplayProjection {
-		const event = input.character.roleplay.events.find(
-			(candidate) => candidate.id === input.eventId,
-		);
-		if (!event) throw { kind: "not_found", reason: "roleplay_event_not_found" };
-		const id = input.dedupeKey;
-		const existing = this.db
-			.select({ id: roleplayEvents.id })
-			.from(roleplayEvents)
-			.where(eq(roleplayEvents.id, id))
-			.get();
-		if (existing) return this.project(input.character, input.conversationId);
-		const current = this.project(input.character, input.conversationId);
-		if (event.when && !evaluateCondition(event.when, current))
-			throw { kind: "conflict", reason: "roleplay_event_condition_failed" };
-		this.db.transaction((transaction) => {
-			transaction
-				.insert(roleplayEvents)
-				.values({
-					id,
-					companionId: input.character.id,
-					conversationId: input.conversationId,
-					piSessionId: input.piSessionId,
-					sourceNativeEntryId: input.sourceNativeEntryId,
-					eventId: event.id,
-					effectsJson: event.effects,
-				})
-				.onConflictDoNothing()
-				.run();
-			for (const effect of event.effects)
-				if (effect.type === "unlock")
-					transaction
-						.insert(roleplayUnlocks)
-						.values({
-							companionId: input.character.id,
-							unlockableId: effect.unlockable,
-							sourceEventId: id,
-						})
-						.onConflictDoNothing()
-						.run();
-			const stateEffects = event.effects.filter(
-				(effect): effect is Extract<RoleplayEffect, { type: "state" }> => effect.type === "state",
-			);
-			for (const authority of ["user_choice", "host_event"] as const) {
-				const operations = stateEffects
-					.filter((effect) => effect.authority === authority)
-					.map(
-						(effect) =>
-							({
-								path: effect.path,
-								op: effect.op,
-								...(effect.value === undefined ? {} : { value: effect.value }),
-							}) as CharacterStateOperation,
-					);
-				if (operations.length === 0) continue;
-				if (!input.conversationId || !this.characterState)
-					throw { kind: "conflict", reason: "roleplay_state_service_unavailable" };
-				this.characterState.commitAuthoritative({
-					companionId: input.character.id,
-					conversationId: input.conversationId,
-					definition: input.character.state,
-					authority,
-					sourceId: `${id}:${authority}`,
-					operations,
-					reason: `Deterministic roleplay event ${event.id}.`,
-					transaction,
-				});
-			}
-		});
-		return this.project(input.character, input.conversationId);
+		const snapshot = this.companionStore.snapshot(character, conversationId);
+		const mediaId =
+			snapshot.display.surfaces.inline ?? snapshot.display.surfaces.modal ?? undefined;
+		const choiceSetId = snapshot.display.surfaces.choices ?? undefined;
+		const choiceSet = choiceSetId
+			? character.roleplay.choice_sets.find((set) => set.id === choiceSetId)
+			: undefined;
+		const eligibleChoiceSetId =
+			choiceSet &&
+			(!this.characterState || this.isEligible(character, conversationId, choiceSet.when))
+				? choiceSet.id
+				: undefined;
+		return {
+			conversationId,
+			...(mediaId ? { mediaId } : {}),
+			...(snapshot.display.surfaces.ambient
+				? { ambientMediaId: snapshot.display.surfaces.ambient }
+				: {}),
+			...(eligibleChoiceSetId ? { choiceSetId: eligibleChoiceSetId } : {}),
+			seenMediaIds: snapshot.collection.seenMediaIds,
+		};
 	}
 
 	resetUnlocks(companionId: string): void {
-		this.db.delete(roleplayUnlocks).where(eq(roleplayUnlocks.companionId, companionId)).run();
-	}
-
-	private applyEffects(
-		values: Record<string, RoleplayValue>,
-		effects: RoleplayEffect[],
-		character: CharacterPackage,
-		activeConversationId?: string,
-		eventConversationId?: string,
-	): void {
-		for (const effect of effects) {
-			const variable =
-				"variable" in effect
-					? character.roleplay.variables.find((candidate) => candidate.id === effect.variable)
-					: undefined;
-			if (variable?.scope === "conversation" && activeConversationId !== eventConversationId)
-				continue;
-			if (effect.type === "set") values[effect.variable] = effect.value;
-			if (effect.type === "increment") {
-				const current = values[effect.variable];
-				if (typeof current !== "number")
-					throw new Error(`roleplay variable ${effect.variable} is not numeric`);
-				values[effect.variable] = current + effect.by;
-			}
-		}
-		for (const variable of character.roleplay.variables)
-			if (!(variable.id in values)) values[variable.id] = variable.initial;
+		this.companionStore.resetUnlocks(companionId);
 	}
 }
 
 function evaluateCondition(condition: RoleplayCondition, state: RoleplayProjection): boolean {
-	if ("all" in condition) return condition.all.every((part) => evaluateCondition(part, state));
-	if ("any" in condition) return condition.any.some((part) => evaluateCondition(part, state));
+	if ("all" in condition) return condition.all.every((item) => evaluateCondition(item, state));
+	if ("any" in condition) return condition.any.some((item) => evaluateCondition(item, state));
 	if ("not" in condition) return !evaluateCondition(condition.not, state);
 	if ("unlocked" in condition) return state.unlocked.includes(condition.unlocked);
 	if ("state" in condition) {
-		const value = getValueByPointer(state.state, condition.state);
+		const value = safeValueByPointer(state.state, condition.state);
 		if ("equals" in condition)
 			return Array.isArray(condition.equals)
 				? condition.equals.some((candidate) => Object.is(value, candidate))
@@ -274,6 +137,14 @@ function evaluateCondition(condition: RoleplayCondition, state: RoleplayProjecti
 	if (condition.operator === "gte") return value >= condition.value;
 	if (condition.operator === "lt") return value < condition.value;
 	return value <= condition.value;
+}
+
+function safeValueByPointer(state: object, pointer: string): unknown {
+	try {
+		return getValueByPointer(state, pointer);
+	} catch {
+		return undefined;
+	}
 }
 
 function validInitialOverride(

@@ -410,9 +410,6 @@ export function wireAuditToEvents(
 	eventBus: Pick<EventBus, "subscribe">,
 ): () => void {
 	const listener = (event: { kind: string; payload: unknown }): void => {
-		// Presentation dismissal is transient UI cleanup, not a durable user or
-		// model decision. Recording every dismissal flooded the trace.
-		if (event.kind === "roleplay.choices_dismissed") return;
 		const kind = auditKindForEvent(event.kind);
 		if (!kind) return;
 		const dot = event.kind.indexOf(".");

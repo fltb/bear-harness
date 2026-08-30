@@ -54,23 +54,6 @@ export const RoleplayConditionSchema: z.ZodType<RoleplayCondition> = z.lazy(() =
 	]),
 );
 
-export const RoleplayEffectSchema = z.discriminatedUnion("type", [
-	z.strictObject({
-		type: z.literal("state"),
-		path: StatePath,
-		op: z.enum(["add", "replace", "remove"]),
-		value: z.union([RoleplayValueSchema, z.array(z.string().max(4096)).max(100)]).optional(),
-		authority: z.enum(["user_choice", "host_event"]),
-	}),
-	z.strictObject({ type: z.literal("set"), variable: Identifier, value: RoleplayValueSchema }),
-	z.strictObject({ type: z.literal("increment"), variable: Identifier, by: z.number().finite() }),
-	z.strictObject({ type: z.literal("unlock"), unlockable: Identifier }),
-	z.strictObject({ type: z.literal("scene"), scene: Identifier }),
-	z.strictObject({ type: z.literal("expression"), expression: Identifier }),
-	z.strictObject({ type: z.literal("media"), media: Identifier }),
-]);
-export type RoleplayEffect = z.infer<typeof RoleplayEffectSchema>;
-
 const RoleplayMediaSchema = z
 	.strictObject({
 		id: Identifier,
@@ -140,16 +123,6 @@ export const RoleplaySchema = z.strictObject({
 			}),
 		)
 		.max(200),
-	events: z
-		.array(
-			z.strictObject({
-				id: Identifier,
-				label: Copy,
-				when: RoleplayConditionSchema.optional(),
-				effects: z.array(RoleplayEffectSchema).min(1).max(20),
-			}),
-		)
-		.max(300),
 	choice_sets: z
 		.array(
 			z.strictObject({
@@ -158,21 +131,12 @@ export const RoleplaySchema = z.strictObject({
 				when: RoleplayConditionSchema.optional(),
 				choices: z
 					.array(
-						z.union([
-							z.strictObject({
-								id: Identifier,
-								label: Copy,
-								description: z.string().max(4096).optional(),
-								event: Identifier,
-								follow_up: Copy,
-							}),
-							z.strictObject({
-								id: Identifier,
-								label: Copy,
-								description: z.string().max(4096).optional(),
-								message: Copy,
-							}),
-						]),
+						z.strictObject({
+							id: Identifier,
+							label: Copy,
+							description: z.string().max(4096).optional(),
+							message: Copy,
+						}),
 					)
 					.min(2)
 					.max(12),

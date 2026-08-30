@@ -83,14 +83,8 @@ describe("Host composition enforces ownership before mutation", () => {
 		};
 		expect(response.events).toContainEqual(
 			expect.objectContaining({
-				kind: "roleplay.media_dismissed",
-				payload: { conversationId: conversation.id, mediaId: "continuity_light" },
-			}),
-		);
-		expect(response.events).not.toContainEqual(
-			expect.objectContaining({
-				kind: "roleplay.media_dismissed",
-				payload: { conversationId: conversation.id, mediaId: "missing_media" },
+				kind: "companion.snapshot_changed",
+				payload: expect.objectContaining({ conversationId: conversation.id }),
 			}),
 		);
 	});
@@ -164,12 +158,21 @@ describe("Host composition enforces ownership before mutation", () => {
 		const runtimeInternals = runtime as unknown as {
 			composition: {
 				turns: TurnPipeline;
+				companionStore: import("../src/companion/companion-store.js").CompanionStore;
+				characterLoader: import("../src/companion/character-loader.js").CharacterLoader;
 				eventBus: { publish: (kind: string, payload: unknown) => void };
 			};
 		};
-		runtimeInternals.composition.eventBus.publish("roleplay.media_presented", {
+		const character = runtimeInternals.composition.characterLoader.load("jizhou");
+		if (!character) throw new Error("missing character");
+		runtimeInternals.composition.companionStore.commit({
+			character,
 			conversationId: conversation.id,
-			mediaId: "continuity_light",
+			commitId: "test:present-inline",
+			authority: "test",
+			mutations: [
+				{ domain: "display", op: "present", surface: "inline", resourceId: "continuity_light" },
+			],
 		});
 		vi.spyOn(runtimeInternals.composition.turns, "sendUserMessage").mockImplementation(
 			async (_conversationId, _text, _images, options) => {
@@ -192,10 +195,36 @@ describe("Host composition enforces ownership before mutation", () => {
 		};
 		expect(response.events).toContainEqual(
 			expect.objectContaining({
-				kind: "roleplay.media_dismissed",
-				payload: { conversationId: conversation.id, mediaId: "continuity_light" },
+				kind: "companion.snapshot_changed",
+				payload: {
+					conversationId: conversation.id,
+					commitId: "message-accepted:pending-turn-1",
+				},
 			}),
 		);
+	});
+
+	it("has no executable choice-event endpoint or choice-specific persistence", async () => {
+		const runtime = makeRuntime();
+		await runtime.start();
+		const conversation = (await data(runtime, "conversation.create:v1", {})) as { id: string };
+		const runtimeInternals = runtime as unknown as {
+			db: { connection: { prepare: (sql: string) => { get: (...args: unknown[]) => unknown } } };
+		};
+		await expect(
+			runtime.dispatch("roleplay.trigger:v1", {
+				conversationId: conversation.id,
+			}),
+		).resolves.toMatchObject({
+			ok: false,
+			error: { kind: "unavailable", reason: "handler_not_registered" },
+		});
+		for (const table of ["roleplay_events", "companion_state_commits", "pending_companion_effects"])
+			expect(
+				runtimeInternals.db.connection
+					.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+					.get(table),
+			).toBeUndefined();
 	});
 
 	it("rejects run and attachment operations for unknown ownership", async () => {

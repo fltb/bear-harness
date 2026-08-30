@@ -147,6 +147,10 @@ function fakeMemoryCore(): FakeMemoryCore {
 					score: 1 - index / 100,
 				}));
 		},
+		list: async (request) =>
+			[...records.values()]
+				.filter((stored) => stored.namespace === request.namespace)
+				.map((stored) => stored.record),
 		update: async (request) => {
 			const current = getRecord(request.namespace, request.memoryId);
 			const updated: TencentDbCoreRecord = {

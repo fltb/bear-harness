@@ -62,8 +62,6 @@ describe("ConversationRepository active conversation", () => {
 				id TEXT PRIMARY KEY, source_message_version_id TEXT,
 				source_branch_id TEXT, source_conversation_id TEXT
 			);
-			CREATE TABLE scene_state (id TEXT PRIMARY KEY, conversation_id TEXT);
-			CREATE TABLE conversation_directives (id TEXT PRIMARY KEY, conversation_id TEXT);
 		`);
 		const root = mkdtempSync(join(tmpdir(), "conversation-repository-"));
 		roots.push(root);

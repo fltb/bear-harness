@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { RoleplaySchema, roleplayAssetExtensions } from "../src/companion/roleplay-schema.js";
 
 describe("roleplay package schema", () => {
-	it("models scoped state, deterministic events, choices and animated media", () => {
+	it("models scoped presentation data and natural-language choices", () => {
 		const parsed = RoleplaySchema.parse({
 			variables: [
 				{
@@ -27,16 +27,6 @@ describe("roleplay package schema", () => {
 			unlockables: [
 				{ id: "signal_cg", kind: "cg", label: "Signal", description: "", media: "signal" },
 			],
-			events: [
-				{
-					id: "signal_found",
-					label: "Signal found",
-					effects: [
-						{ type: "increment", variable: "trust", by: 1 },
-						{ type: "unlock", unlockable: "signal_cg" },
-					],
-				},
-			],
 			choice_sets: [
 				{
 					id: "signal_reply",
@@ -45,14 +35,12 @@ describe("roleplay package schema", () => {
 						{
 							id: "wait",
 							label: "Wait",
-							event: "signal_found",
-							follow_up: "I chose to wait.",
+							message: "I chose to wait.",
 						},
 						{
 							id: "leave",
 							label: "Leave",
-							event: "signal_found",
-							follow_up: "I chose to leave.",
+							message: "I chose to leave.",
 						},
 					],
 				},
@@ -77,7 +65,6 @@ describe("roleplay package schema", () => {
 				],
 				media: [],
 				unlockables: [],
-				events: [],
 				choice_sets: [],
 			}),
 		).toThrow();

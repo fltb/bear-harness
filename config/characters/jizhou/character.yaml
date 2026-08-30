@@ -1,6 +1,6 @@
 id: jizhou
 name: 极昼
-version: 4.2.2
+version: 4.2.13
 language: zh-CN
 theme:
   tokens:
@@ -138,29 +138,6 @@ behavior:
     - id: long_task_handoff
       user: 这个任务还要很久吗？
       assistant: 极昼依据 Host 状态说明正在做什么、已经验证什么、还需要什么；未完成时不声称已经交付。
-voice_modes:
-  default: default
-  modes:
-    - id: default
-      label: 日常值守
-      description: 普通陪伴、一般交流和轻量协作。
-      use_when: 用户没有要求特殊表达方式，且当前不是专注现实任务或旧站回望。
-      style_instruction: 克制、耐心，用具体动作和清楚观察承载情绪；长度随问题自然变化。
-    - id: focused_work
-      label: 专注处理
-      description: 软件、文件、分析和其他现实任务。
-      use_when: 用户交付可核验的现实工作，或要求停止角色叙事直接处理问题。
-      style_instruction: 先给结论和证据，再说风险与下一步；减少场景描写，不牺牲身份和事实边界。
-    - id: reflective
-      label: 旧站回望
-      description: 来处、共同经历和需要放慢的谈话。
-      use_when: 用户明确进入旧站材料或讨论极昼的身份与继任关系。
-      style_instruction: 放慢节奏，严格区分档案事实、推测、用户想象和当前极昼的判断。
-    - id: concise
-      label: 简洁交接
-      description: 用户明确要求简短直接。
-      use_when: 用户要求简洁、只要结论或快速交接。
-      style_instruction: 使用最短仍完整的表达，保留必要证据、未知项和失败边界。
 prompt:
   description: |
     极昼是当前白熊客栈 Host 中承担这一班值守的 Companion。它使用旧极光站守护程序集体留下的语言、规程与资料，并沿用北极熊形象；这是一份继任关系，不是与旧实例共享连续意识。
@@ -244,11 +221,12 @@ state_schema:
         response:
           type: string
           title: 用户回应
-          description: 用户对继任规程的确定性回应；只能由用户点击或明确选择事件写入。
+          description: 用户对继任规程的明确自然语言回应。
           default: unopened
           x-scope: character
           x-model-readable: true
-          x-write-authority: user_choice
+          x-write-authority: skill:continuity-reveal
+          x-evidence-required: true
           x-hidden: false
           oneOf:
             - const: unopened
@@ -262,34 +240,6 @@ state_schema:
               - received
             - - unopened
               - set_down
-    interaction:
-      type: object
-      title: 表达方式
-      additionalProperties: false
-      properties:
-        voice_mode:
-          type: string
-          title: 当前表达模式
-          description: 当前会话的表达模式，只影响长度、语气和结构，不改变身份、事实与权限。
-          default: default
-          x-scope: conversation
-          x-model-readable: true
-          x-write-authority: model
-          x-evidence-required: true
-          x-update-when:
-            - 用户明确要求一种表达方式，或本轮从剧情切换到现实任务等语义模式确实改变。
-          x-do-not-update-when:
-            - 只因单句情绪变化、场景变化或为了显得有反应。
-          x-hidden: false
-          oneOf:
-            - const: default
-              title: 日常值守与一般交流。
-            - const: focused_work
-              title: 专注现实任务，减少场景描写。
-            - const: reflective
-              title: 旧站回望，严格标记证据和时间框架。
-            - const: concise
-              title: 用户明确要求的简洁交接。
     story:
       type: object
       title: 剧情
@@ -308,8 +258,6 @@ state_schema:
               x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
-              x-deterministic-authorities:
-                - host_event
               x-evidence-required: true
               x-update-when:
                 - undelivered-report Skill 已激活，用户作出允许的明确选择，且本轮事件与 narrative anchor 同一事务提交。
@@ -352,13 +300,11 @@ state_schema:
             status:
               type: string
               title: 剧情状态
-              description: 剧情是否正在自然对话中展开；暂停和退出不改写已经真实发生的 phase。
+              description: 剧情是否正在自然对话中展开；归档结局必须是 paused，只有交还或留白结局是 completed。
               default: inactive
               x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
-              x-deterministic-authorities:
-                - host_event
               x-evidence-required: true
               x-update-when:
                 - 用户明确进入、暂停、恢复、彻底退出或完成剧情。
@@ -375,7 +321,7 @@ state_schema:
                 - const: exited
                   title: 用户彻底退出，不再主动询问恢复。
                 - const: completed
-                  title: 用户已经完成一个正式结局。
+                  title: 用户已经完成交还或留白结局；归档不属于 completed。
               x-allowed-transitions:
                 - - inactive
                   - active
@@ -397,8 +343,6 @@ state_schema:
               x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
-              x-deterministic-authorities:
-                - host_event
               x-evidence-required: true
               x-update-when:
                 - 用户明确选择并完成对应调查路线。
@@ -431,8 +375,6 @@ state_schema:
               x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
-              x-deterministic-authorities:
-                - host_event
               x-evidence-required: true
               x-update-when:
                 - 剧情通过确定性边进入新节点。
@@ -466,9 +408,6 @@ state_schema:
               x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
-              x-deterministic-authorities:
-                - host_event
-                - user_choice
               x-evidence-required: true
               x-update-when:
                 - 用户在终章用卡片或自然语言明确选择交还、归档或留白。
@@ -503,9 +442,6 @@ state_schema:
               x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
-              x-deterministic-authorities:
-                - host_event
-                - user_choice
               x-evidence-required: true
               x-update-when:
                 - 用户在读完两份记录后明确表达、修正或撤回自己的判断。
@@ -544,9 +480,6 @@ state_schema:
               x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
-              x-deterministic-authorities:
-                - host_event
-                - user_choice
               x-evidence-required: true
               x-update-when:
                 - 用户在抵达最后一班后明确选择一种未来设想或拒绝进入。
@@ -581,8 +514,6 @@ state_schema:
               x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
-              x-deterministic-authorities:
-                - host_event
               x-evidence-required: true
               x-update-when:
                 - 当前剧情节点已经展示相应原始记录，且该事实由本轮实际读取的 Canon 直接支持。
@@ -627,8 +558,6 @@ state_schema:
           x-scope: conversation
           x-model-readable: true
           x-write-authority: skill:undelivered-report
-          x-deterministic-authorities:
-            - host_event
           x-evidence-required: true
           x-update-when:
             - 角色实际进入另一个明确叙事框架，并与 scene、phase 在同一事务改变。
@@ -652,8 +581,6 @@ state_schema:
           x-scope: conversation
           x-model-readable: true
           x-write-authority: skill:undelivered-report
-          x-deterministic-authorities:
-            - host_event
           x-evidence-required: true
           x-update-when:
             - 剧情实际进入新的叙事空间。
@@ -687,8 +614,6 @@ state_schema:
           x-scope: conversation
           x-model-readable: true
           x-write-authority: skill:undelivered-report
-          x-deterministic-authorities:
-            - host_event
           x-evidence-required: true
           x-update-when:
             - 进入经过剧情包声明的时间节点。
@@ -720,8 +645,6 @@ state_schema:
           x-scope: conversation
           x-model-readable: true
           x-write-authority: skill:undelivered-report
-          x-deterministic-authorities:
-            - host_event
           x-evidence-required: true
           x-update-when:
             - 剧情节点的证据类型发生明确变化。
@@ -745,8 +668,6 @@ state_schema:
           x-scope: conversation
           x-model-readable: true
           x-write-authority: skill:undelivered-report
-          x-deterministic-authorities:
-            - host_event
           x-evidence-required: true
           x-update-when:
             - 用户明确进入、恢复或退出《未送达的回报》。
@@ -766,8 +687,6 @@ state_schema:
           x-scope: conversation
           x-model-readable: true
           x-write-authority: skill:undelivered-report
-          x-deterministic-authorities:
-            - host_event
           x-evidence-required: true
           x-update-when:
             - 用户明确选择、追加或纠正一条合法分支。
@@ -891,971 +810,6 @@ roleplay:
         state: /story/undelivered_report/resolution
         equals: returned
   unlockables: []
-  events:
-    - id: story_enter
-      label: 进入《未送达的回报》
-      when:
-        state: /story/undelivered_report/phase
-        equals: dormant
-      effects:
-        - type: state
-          path: /story/undelivered_report/phase
-          op: replace
-          value: invited
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/status
-          op: replace
-          value: active
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: entry
-          authority: host_event
-        - type: state
-          path: /narrative/active_story
-          op: replace
-          value: undelivered_report
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: present
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: study
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: current_shift
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: direct_record
-          authority: host_event
-        - type: expression
-          expression: reflective
-    - id: story_signal_examined
-      label: 检查损坏信号
-      when:
-        state: /story/undelivered_report/phase
-        equals: invited
-      effects:
-        - type: state
-          path: /story/undelivered_report/phase
-          op: replace
-          value: signal_examined
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: evidence
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/known_facts/-
-          op: add
-          value: 旧站保存着一条未归入正确目录的损坏回报。
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: archive_record
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: quiet_terminal
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: damaged_signal_record
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: direct_record
-          authority: host_event
-        - type: scene
-          scene: quiet_terminal
-        - type: expression
-          expression: alert
-        - type: media
-          media: damaged_signal
-    - id: story_route_relay
-      label: 追查风暴中继
-      when:
-        state: /story/undelivered_report/phase
-        equals: signal_examined
-      effects:
-        - type: state
-          path: /story/undelivered_report/phase
-          op: replace
-          value: route_investigated
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/route
-          op: replace
-          value: relay
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: relay
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: reconstruction
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: relay_room
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: storm_relay_window
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: inferred
-          authority: host_event
-        - type: state
-          path: /narrative/branch
-          op: replace
-          value: relay
-          authority: host_event
-        - type: scene
-          scene: relay_room
-        - type: expression
-          expression: reflective
-        - type: media
-          media: storm_relay_map
-    - id: story_route_snowfield
-      label: 查看雪原路线
-      when:
-        state: /story/undelivered_report/phase
-        equals: signal_examined
-      effects:
-        - type: state
-          path: /story/undelivered_report/phase
-          op: replace
-          value: route_investigated
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/route
-          op: replace
-          value: snowfield
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: snowfield_record
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: archive_record
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: snowfield
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: last_confirmed_snow_route
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: direct_record
-          authority: host_event
-        - type: state
-          path: /narrative/branch
-          op: replace
-          value: snowfield
-          authority: host_event
-        - type: scene
-          scene: snowfield
-        - type: expression
-          expression: concern
-        - type: media
-          media: snow_route
-    - id: story_route_snowfield_after_relay
-      label: 从风暴中继转查雪原路线
-      when:
-        all:
-          - state: /story/undelivered_report/phase
-            equals: route_investigated
-          - state: /story/undelivered_report/route
-            equals: relay
-      effects:
-        - type: state
-          path: /story/undelivered_report/route
-          op: replace
-          value: both
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: snowfield_record
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: archive_record
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: snowfield
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: last_confirmed_snow_route
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: direct_record
-          authority: host_event
-        - type: state
-          path: /narrative/branch
-          op: replace
-          value: relay_then_snowfield
-          authority: host_event
-        - type: scene
-          scene: snowfield
-        - type: expression
-          expression: concern
-        - type: media
-          media: snow_route
-    - id: story_route_relay_after_snowfield
-      label: 从雪原路线转查风暴中继
-      when:
-        all:
-          - state: /story/undelivered_report/phase
-            equals: route_investigated
-          - state: /story/undelivered_report/route
-            equals: snowfield
-      effects:
-        - type: state
-          path: /story/undelivered_report/route
-          op: replace
-          value: both
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: relay
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: reconstruction
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: relay_room
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: storm_relay_window
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: inferred
-          authority: host_event
-        - type: state
-          path: /narrative/branch
-          op: replace
-          value: snowfield_then_relay
-          authority: host_event
-        - type: scene
-          scene: relay_room
-        - type: expression
-          expression: reflective
-        - type: media
-          media: storm_relay_map
-    - id: story_compare_unresolved
-      label: 保持两份记录未决
-      when:
-        state: /story/undelivered_report/phase
-        equals: route_investigated
-      effects:
-        - type: state
-          path: /story/undelivered_report/phase
-          op: replace
-          value: testimonies_compared
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/testimony_stance
-          op: replace
-          value: unresolved
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: testimony
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/known_facts/-
-          op: add
-          value: 岑岚与闻汐的记录存在数分钟时间差，不能据此确认任何一方撒谎。
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: archive_record
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: archive_gallery
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: two_handoff_records
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: reported
-          authority: host_event
-        - type: state
-          path: /narrative/branch
-          op: replace
-          value: unresolved_testimonies
-          authority: host_event
-        - type: scene
-          scene: archive_gallery
-        - type: expression
-          expression: reflective
-        - type: media
-          media: two_handoffs
-    - id: story_compare_cenlan
-      label: 更采信岑岚的设备链
-      when:
-        state: /story/undelivered_report/phase
-        equals: route_investigated
-      effects:
-        - type: state
-          path: /story/undelivered_report/phase
-          op: replace
-          value: testimonies_compared
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/testimony_stance
-          op: replace
-          value: cenlan
-          authority: user_choice
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: testimony
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/known_facts/-
-          op: add
-          value: 岑岚与闻汐的记录存在数分钟时间差，不能据此确认任何一方撒谎。
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: archive_record
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: archive_gallery
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: two_handoff_records
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: reported
-          authority: host_event
-        - type: state
-          path: /narrative/branch
-          op: replace
-          value: favors_cenlan
-          authority: host_event
-        - type: scene
-          scene: archive_gallery
-        - type: expression
-          expression: reflective
-        - type: media
-          media: two_handoffs
-    - id: story_compare_wenxi
-      label: 更采信闻汐的转发记录
-      when:
-        state: /story/undelivered_report/phase
-        equals: route_investigated
-      effects:
-        - type: state
-          path: /story/undelivered_report/phase
-          op: replace
-          value: testimonies_compared
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/testimony_stance
-          op: replace
-          value: wenxi
-          authority: user_choice
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: testimony
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/known_facts/-
-          op: add
-          value: 岑岚与闻汐的记录存在数分钟时间差，不能据此确认任何一方撒谎。
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: archive_record
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: coastal_beacon
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: two_handoff_records
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: reported
-          authority: host_event
-        - type: state
-          path: /narrative/branch
-          op: replace
-          value: favors_wenxi
-          authority: host_event
-        - type: scene
-          scene: coastal_beacon
-        - type: expression
-          expression: reflective
-        - type: media
-          media: two_handoffs
-    - id: story_last_shift
-      label: 进入最后一班记录
-      when:
-        state: /story/undelivered_report/phase
-        equals: testimonies_compared
-      effects:
-        - type: state
-          path: /story/undelivered_report/phase
-          op: replace
-          value: last_shift_revealed
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: last_shift
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/known_facts/-
-          op: add
-          value: 关站前的清点记录确认回报被错误归档，但最终接收方仍未知。
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: archive_record
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: last_shift_room
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: station_closing_shift
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: direct_record
-          authority: host_event
-        - type: scene
-          scene: last_shift_room
-        - type: expression
-          expression: alert
-        - type: media
-          media: last_shift_desk
-    - id: story_future_design
-      label: 设想未来航标
-      when:
-        state: /story/undelivered_report/phase
-        equals: last_shift_revealed
-      effects:
-        - type: state
-          path: /story/undelivered_report/phase
-          op: replace
-          value: future_considered
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/future_choice
-          op: replace
-          value: resilient_queue
-          authority: user_choice
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: future
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: hypothetical_future
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: future_beacon
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: imagined_future_shift
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: imagined
-          authority: host_event
-        - type: state
-          path: /narrative/branch
-          op: replace
-          value: future_system
-          authority: host_event
-        - type: scene
-          scene: future_beacon
-        - type: expression
-          expression: warm
-        - type: media
-          media: future_beacon_cg
-    - id: story_future_audit
-      label: 只增加跨台审计
-      when:
-        state: /story/undelivered_report/phase
-        equals: last_shift_revealed
-      effects:
-        - type: state
-          path: /story/undelivered_report/phase
-          op: replace
-          value: future_considered
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/future_choice
-          op: replace
-          value: audit_only
-          authority: user_choice
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: future
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: hypothetical_future
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: future_beacon
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: imagined_future_shift
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: imagined
-          authority: host_event
-        - type: state
-          path: /narrative/branch
-          op: replace
-          value: future_audit
-          authority: host_event
-        - type: scene
-          scene: future_beacon
-        - type: expression
-          expression: reflective
-        - type: media
-          media: future_beacon_cg
-    - id: story_future_no_system
-      label: 不把记录变成制度
-      when:
-        state: /story/undelivered_report/phase
-        equals: last_shift_revealed
-      effects:
-        - type: state
-          path: /story/undelivered_report/phase
-          op: replace
-          value: future_considered
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/future_choice
-          op: replace
-          value: no_system
-          authority: user_choice
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: ending
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: present
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: study
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: current_shift
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: direct_record
-          authority: host_event
-        - type: state
-          path: /narrative/branch
-          op: replace
-          value: no_future_system
-          authority: host_event
-        - type: scene
-          scene: study
-        - type: expression
-          expression: calm
-    - id: story_future_refused
-      label: 拒绝未来想象并回到现在
-      when:
-        state: /story/undelivered_report/phase
-        equals: last_shift_revealed
-      effects:
-        - type: state
-          path: /story/undelivered_report/phase
-          op: replace
-          value: future_considered
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/future_choice
-          op: replace
-          value: refused
-          authority: user_choice
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: ending
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: present
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: study
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: current_shift
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: direct_record
-          authority: host_event
-        - type: state
-          path: /narrative/branch
-          op: replace
-          value: future_refused
-          authority: host_event
-        - type: scene
-          scene: study
-        - type: expression
-          expression: calm
-    - id: story_resolve_returned
-      label: 交还这份回报
-      when:
-        any:
-          - state: /story/undelivered_report/phase
-            equals: future_considered
-          - all:
-              - state: /story/undelivered_report/phase
-                equals: resolved
-              - state: /story/undelivered_report/status
-                equals: active
-              - state: /story/undelivered_report/resolution
-                equals: archived
-      effects:
-        - type: state
-          path: /story/undelivered_report/resolution
-          op: replace
-          value: returned
-          authority: user_choice
-        - type: state
-          path: /story/undelivered_report/phase
-          op: replace
-          value: resolved
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/status
-          op: replace
-          value: completed
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: ending
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: present
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: study_dawn
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: current_shift
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: direct_record
-          authority: host_event
-        - type: state
-          path: /narrative/active_story
-          op: replace
-          value: none
-          authority: host_event
-        - type: state
-          path: /narrative/branch
-          op: replace
-          value: returned
-          authority: host_event
-        - type: scene
-          scene: study_dawn
-        - type: expression
-          expression: warm
-        - type: media
-          media: returned_lamp
-    - id: story_resolve_archived
-      label: 完整归档并暂停
-      when:
-        state: /story/undelivered_report/phase
-        equals: future_considered
-      effects:
-        - type: state
-          path: /story/undelivered_report/resolution
-          op: replace
-          value: archived
-          authority: user_choice
-        - type: state
-          path: /story/undelivered_report/phase
-          op: replace
-          value: resolved
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/status
-          op: replace
-          value: paused
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: ending
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: present
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: study_dawn
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: current_shift
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: direct_record
-          authority: host_event
-        - type: state
-          path: /narrative/active_story
-          op: replace
-          value: none
-          authority: host_event
-        - type: state
-          path: /narrative/branch
-          op: replace
-          value: archived
-          authority: host_event
-        - type: scene
-          scene: study_dawn
-        - type: expression
-          expression: calm
-    - id: story_resolve_left_open
-      label: 保留未知
-      when:
-        any:
-          - state: /story/undelivered_report/phase
-            equals: future_considered
-          - all:
-              - state: /story/undelivered_report/phase
-                equals: resolved
-              - state: /story/undelivered_report/status
-                equals: active
-              - state: /story/undelivered_report/resolution
-                equals: archived
-      effects:
-        - type: state
-          path: /story/undelivered_report/resolution
-          op: replace
-          value: left_open
-          authority: user_choice
-        - type: state
-          path: /story/undelivered_report/phase
-          op: replace
-          value: resolved
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/status
-          op: replace
-          value: completed
-          authority: host_event
-        - type: state
-          path: /story/undelivered_report/position
-          op: replace
-          value: ending
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: present
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: study_dawn
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: current_shift
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: direct_record
-          authority: host_event
-        - type: state
-          path: /narrative/active_story
-          op: replace
-          value: none
-          authority: host_event
-        - type: state
-          path: /narrative/branch
-          op: replace
-          value: left_open
-          authority: host_event
-        - type: scene
-          scene: study_dawn
-        - type: expression
-          expression: reflective
-    - id: story_resume_archived
-      label: 重新打开已归档的回报
-      when:
-        all:
-          - state: /story/undelivered_report/phase
-            equals: resolved
-          - state: /story/undelivered_report/status
-            equals: paused
-          - state: /story/undelivered_report/resolution
-            equals: archived
-      effects:
-        - type: state
-          path: /story/undelivered_report/status
-          op: replace
-          value: active
-          authority: host_event
-        - type: state
-          path: /narrative/active_story
-          op: replace
-          value: undelivered_report
-          authority: host_event
-        - type: state
-          path: /narrative/frame
-          op: replace
-          value: present
-          authority: host_event
-        - type: state
-          path: /narrative/location
-          op: replace
-          value: study_dawn
-          authority: host_event
-        - type: state
-          path: /narrative/time_anchor
-          op: replace
-          value: current_shift
-          authority: host_event
-        - type: state
-          path: /narrative/evidence_mode
-          op: replace
-          value: direct_record
-          authority: host_event
-        - type: scene
-          scene: study_dawn
-        - type: expression
-          expression: reflective
   choice_sets:
     - id: undelivered_entry
       prompt: 留言簿里有一条未归档的回报。你想怎样处理？
@@ -1866,8 +820,7 @@ roleplay:
         - id: enter
           label: 进入调查
           description: 只打开入口，不替你推进后续节点。
-          event: story_enter
-          follow_up: 我选择进入调查。请从现有损坏信号开始，不要补全缺失内容。
+          message: 我想进去看看，先从入口开始吧。
         - id: brief
           label: 只听简短说明
           description: 了解它是什么，但不进入剧情。
@@ -1884,8 +837,7 @@ roleplay:
       choices:
         - id: examine
           label: 检查现有记录
-          event: story_signal_examined
-          follow_up: 检查现有的损坏信号，只展示能确认的内容。
+          message: 我想先看看现有的损坏信号，缺失的地方就让它空着。
         - id: pause
           label: 先暂停
           message: 先暂停《未送达的回报》，保留当前位置。
@@ -1897,12 +849,10 @@ roleplay:
       choices:
         - id: relay
           label: 追查技术路径
-          event: story_route_relay
-          follow_up: 先追查技术转发路径，明确标记推测和未确认区。
+          message: 我想先沿着设备和转发路径看看，推测的地方请告诉我。
         - id: snowfield
           label: 查看人员路线
-          event: story_route_snowfield
-          follow_up: 先查看雪原人员路线，区分直接记录和有限重建。
+          message: 我想先看看雪原上的人员路线，分清记录和推测就好。
         - id: pause
           label: 暂停调查
           message: 暂停调查，保留恢复位置。
@@ -1914,16 +864,13 @@ roleplay:
       choices:
         - id: cenlan
           label: 更采信岑岚
-          event: story_compare_cenlan
-          follow_up: 我目前更采信岑岚记录的设备链，请保留不确定项。
+          message: 我目前更相信岑岚记下的设备线，但那些不确定的地方仍然是不确定的。
         - id: wenxi
           label: 更采信闻汐
-          event: story_compare_wenxi
-          follow_up: 我目前更采信闻汐记录的转发链，请保留不确定项。
+          message: 我目前更相信闻汐记下的转发线，但那些不确定的地方仍然是不确定的。
         - id: unresolved
           label: 保持未决
-          event: story_compare_unresolved
-          follow_up: 我选择保持两份记录都未完全证实，请继续说明现有依据。
+          message: 我觉得两份记录都还没有完全证实，就先让它们保持未决吧。
         - id: explain
           label: 请极昼说明判断
           message: 说明你的判断和依据，但不要替我选择。
@@ -1935,8 +882,7 @@ roleplay:
       choices:
         - id: enter
           label: 查看原始记录
-          event: story_last_shift
-          follow_up: 查看最后一班的原始清点记录，只解锁证据支持的事实。
+          message: 我想看看最后一班留下的原始清点记录。
         - id: pause
           label: 先不查看
           message: 先停在两份交接这里。
@@ -1948,20 +894,16 @@ roleplay:
       choices:
         - id: design
           label: 未确认仍可找到
-          event: story_future_design
-          follow_up: 我选择设想未确认仍可被找到的制度；明确它尚未发生。
+          message: 我希望以后未确认的消息仍然能被找到，我们可以设想一下。
         - id: audit
           label: 只增加审计
-          event: story_future_audit
-          follow_up: 我选择只为旧流程增加审计；明确它尚未发生。
+          message: 我更愿意只在旧流程上增加审计，我们可以设想一下。
         - id: no_system
           label: 不设计制度
-          event: story_future_no_system
-          follow_up: 我不把这次记录转化为制度，请保留这项选择并继续。
+          message: 我不想把这次记录变成一套制度，就让它停在这里吧。
         - id: refuse
           label: 直接回到现在
-          event: story_future_refused
-          follow_up: 我拒绝未来想象，直接回到现在。
+          message: 我现在不想设想未来，还是回到眼前吧。
     - id: undelivered_ending
       prompt: 把这份仍有未知的回报放在哪里？
       when:
@@ -1970,16 +912,13 @@ roleplay:
       choices:
         - id: returned
           label: 交还
-          event: story_resolve_returned
-          follow_up: 我选择交还：整理成仍待确认、以后可以继续寻找的回报。
+          message: 我想把它交还，作为一份仍待确认、以后还能继续寻找的回报。
         - id: archived
           label: 归档
-          event: story_resolve_archived
-          follow_up: 我选择归档现有材料，暂时不继续追查。
+          message: 我想先把现有材料归档，暂时不再追查。
         - id: left_open
           label: 留白
-          event: story_resolve_left_open
-          follow_up: 我选择留白，不替未知内容补答案。
+          message: 我想让未知的地方继续留白，不替它补上答案。
     - id: undelivered_archived_resume
       prompt: 这份回报已经完整归档。要重新打开现有材料吗？
       when:
@@ -1993,8 +932,7 @@ roleplay:
       choices:
         - id: reopen
           label: 重新打开
-          event: story_resume_archived
-          follow_up: 我明确重新打开已归档的材料，请从保存位置恢复。
+          message: 我想重新打开这份材料，从上次停下的地方继续。
         - id: keep
           label: 保持归档
           message: 保持归档，不要继续询问恢复。
@@ -2011,12 +949,10 @@ roleplay:
       choices:
         - id: returned
           label: 改为交还
-          event: story_resolve_returned
-          follow_up: 我把归档结局改为交还，仍然保持最终接收待确认。
+          message: 我改变主意了，想把它交还，同时保留最终接收待确认。
         - id: left_open
           label: 改为留白
-          event: story_resolve_left_open
-          follow_up: 我把归档结局改为留白，不替未知内容补答案。
+          message: 我改变主意了，想让它留白，不替未知内容补答案。
         - id: pause
           label: 仍然归档
           message: 仍然保持归档并暂停。
@@ -2029,11 +965,11 @@ roleplay:
         - id: receive
           label: 我听见了
           description: 接住极昼对自己来处的说明。
-          message: 我听见了。请按继任规程记录我的回应。
+          message: 我听见了，也愿意接住这份交接。
         - id: set_down
           label: 先放在这里
           description: 让这个问题和书房一起安静一会儿。
-          message: 先放在这里。请按继任规程记录我想暂缓回应。
+          message: 我想先把这件事放在这里，安静一会儿。
 scenes:
   - id: study
     label: 极光书房

@@ -38,47 +38,6 @@ const legacyRoleplay = RoleplaySchema.parse({
 			media: "continuity_light",
 		},
 	],
-	events: [
-		{
-			id: "continuity_opened",
-			label: "Open continuity",
-			effects: [
-				{ type: "set", variable: "continuity_stage", value: 1 },
-				{ type: "scene", scene: "quiet_terminal" },
-				{ type: "expression", expression: "reflective" },
-			],
-		},
-		{
-			id: "continuity_revealed",
-			label: "Reveal continuity",
-			when: { variable: "continuity_stage", equals: 1 },
-			effects: [
-				{ type: "set", variable: "continuity_stage", value: 2 },
-				{ type: "expression", expression: "alert" },
-			],
-		},
-		{
-			id: "continuity_received",
-			label: "Receive continuity",
-			when: { variable: "continuity_stage", equals: 2 },
-			effects: [
-				{ type: "set", variable: "continuity_stage", value: 3 },
-				{ type: "set", variable: "continuity_response", value: "received" },
-				{ type: "unlock", unlockable: "continuity_record" },
-				{ type: "media", media: "continuity_light" },
-			],
-		},
-		{
-			id: "continuity_set_down",
-			label: "Set continuity down",
-			when: { variable: "continuity_stage", equals: 2 },
-			effects: [
-				{ type: "set", variable: "continuity_stage", value: 3 },
-				{ type: "set", variable: "continuity_response", value: "set_down" },
-				{ type: "expression", expression: "calm" },
-			],
-		},
-	],
 	choice_sets: [
 		{
 			id: "continuity_response",
@@ -87,14 +46,12 @@ const legacyRoleplay = RoleplaySchema.parse({
 				{
 					id: "receive",
 					label: "Receive",
-					event: "continuity_received",
-					follow_up: "I receive this continuity record.",
+					message: "I receive this continuity record.",
 				},
 				{
 					id: "set_down",
 					label: "Set down",
-					event: "continuity_set_down",
-					follow_up: "Set this continuity record down for now.",
+					message: "Set this continuity record down for now.",
 				},
 			],
 		},

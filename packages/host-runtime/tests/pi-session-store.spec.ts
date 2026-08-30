@@ -136,6 +136,7 @@ describe("PiSessionStore", () => {
 			sessionFile: source.sessionFile,
 			entryId: assistant,
 		});
+		expect(source.entryPathIds(assistant)).toEqual([user, assistant]);
 		expect(forked.sessionId).not.toBe(source.sessionId);
 		expect(forked.sessionFile).not.toBe(source.sessionFile);
 		expect(forked.readMessages().map((message) => message.role)).toEqual(["user", "assistant"]);

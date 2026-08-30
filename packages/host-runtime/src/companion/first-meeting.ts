@@ -70,8 +70,7 @@ export class FirstMeetingMachine {
 		const flow = this.flow(companionId);
 		const persisted = this.readPersisted(companionId);
 		const stateData = this.normalizeStateData(persisted?.stateData, flow);
-		if (persisted?.state === "complete" || persisted?.state === "voice_ready")
-			return { status: "complete", stateData };
+		if (persisted?.state === "complete") return { status: "complete", stateData };
 		const step = flow.steps.find((step) => step.id === persisted?.state) ?? flow.steps[0];
 		if (!step) throw new Error(`character package ${companionId}: first_meeting has no steps`);
 		return { status: "active", currentStepId: step.id, stateData };
@@ -83,11 +82,6 @@ export class FirstMeetingMachine {
 		const persisted = this.readPersisted(companionId);
 		const stateData = this.normalizeStateData(persisted?.stateData, flow);
 
-		if (persisted?.state === "voice_ready") {
-			// The retired voice gate never represented a user request. Complete
-			// existing rows atomically instead of exposing a dead-end state.
-			return this.persistTransition(companionId, flow, "complete", stateData);
-		}
 		if (persisted?.state === "complete") {
 			if (JSON.stringify(persisted.stateData) !== JSON.stringify(stateData)) {
 				this.persist(companionId, "complete", stateData);

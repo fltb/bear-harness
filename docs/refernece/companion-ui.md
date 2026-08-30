@@ -124,7 +124,7 @@ Runtime chooses the active scene from the active conversation’s character runt
 
 `CharacterPresence` chooses an explicit runtime visual state when present, otherwise maps store presence to `presence`, `listening`, `thinking`, `needs_user`, `result_ready`, or `problem`. It falls back to the character’s default expression and exposes the package expression label through a `role="img"` wrapper while the image itself has empty alt text.
 
-Roleplay state is snapshot-backed; media and choice presentation IDs are event-projected. Choice sets render inline and call `triggerRoleplayEvent`, which sends a conversation-scoped event with a random dedupe key, clears the selected choice set, and refetches the snapshot. Media has three presentation modes:
+Character state, display surfaces, and collection progress share the conversation's unified companion snapshot. Choice sets render inline, and clicking one calls the same `sendMessage(choice.message)` path as typed text; choices have no event, transition, or follow-up execution metadata. Media has three presentation modes:
 
 - `inline`: rendered in the conversation with a close button;
 - non-inline/non-ambient: rendered in a Kobalte dialog overlay with title, close button, and focus behavior;

@@ -8,14 +8,11 @@ import type { AppDatabase } from "../storage/database.js";
 import {
 	activeConversations,
 	conversationAttachments,
-	conversationDirectives,
 	conversationSessions,
 	conversations,
 	events,
 	memoryCandidates,
 	relationshipMemoryEntries,
-	roleplayEvents,
-	sceneState,
 } from "../storage/schema.js";
 
 export interface ConversationSummary {
@@ -429,11 +426,6 @@ export class ConversationRepository {
 				.update(memoryCandidates)
 				.set({ sourceConversationId: null })
 				.where(eq(memoryCandidates.sourceConversationId, id))
-				.run();
-			transaction.delete(sceneState).where(eq(sceneState.conversationId, id)).run();
-			transaction
-				.delete(conversationDirectives)
-				.where(eq(conversationDirectives.conversationId, id))
 				.run();
 			transaction
 				.delete(conversationSessions)
