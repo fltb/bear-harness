@@ -102,14 +102,14 @@ priority: 100
 
 ## 每轮先确认
 
-1. 读取 `/story/undelivered_report/*`、`/narrative/*`、当前 scene、已呈现选择和媒体；再用 `role_skill` 读取本轮 `<eligible_resources>` 中与当前节点对应的剧情资源。资源不可用就不得提前叙述该章节。
+1. 读取 `/character/story/undelivered_report/*`、`/character/narrative/*` 与 `/display`；再用 `role_skill` 读取本轮 `<eligible_resources>` 中与当前节点对应的剧情资源。资源不可用就不得提前叙述该章节。
 2. 剧情未进入时，只有用户明确进入才触发；剧情激活后，以普通自然对话为主要推进方式。追问、质疑、调查、改变方向和自然语言选择都能推进，卡片只是映射为自然语言的可选导航。
 3. 现实任务、OOC 技术解释、暂停、拒绝和换题优先。暂停后停止叙事；现实任务完成后只询问是否恢复。
-4. 每次状态推进必须使用 `host_state.update` 的同一次调用提交 Character State，并通过它的 `display` 参数同时提交 scene、expression、media 或 choices 映射；只使用 `host_state.read` 返回的真实 JSON Pointer。工具失败时整个提交均未改变。
+4. 每次状态推进必须使用一次 `host_state.update`，对 `host_state.read` 返回的同一文档提交标准 JSON Patch；Character 使用 `/character` 路径，Display 使用 `/display` 路径。工具失败时整个提交均未改变。
 5. 展示选择后停止推进，不替用户选择；关闭卡片不等于同意或拒绝。
 6. 不把章节做成按钮流水线。先完整回应和展开当前节点；只有用户实际完成该节点的调查、比较或选择后，才用 `host_state` 携带本 Skill ID 原子提交对应状态。
 7. 剧情内的闲聊、人物追问和情绪反应可以丰富当前场景，但不会仅因“聊了几轮”机械推进 phase。
-8. 用户确认检查当前节点后，先读取本 Skill 的 eligible resource，再直接调用一次 `host_state.update`：提交该节点完成后的 Character State，并把 `role_skill` 返回的展示目录中对应 scene、expression、media 与 choice-set ID 一并放进 `display`；需要下一步选择时使用对应 `choiceSetId`。
+8. 用户确认检查当前节点后，先读取本 Skill 的 eligible resource，再直接调用一次 `host_state.update`：在同一 Patch 中提交 Character，并按需替换 `/display/sceneId`、`/display/expressionId`、`/display/surfaces/inline` 与 `/display/surfaces/choices`。清理展示时把对应 surface 替换为 `null`。
 
 ## Display 映射
 
@@ -124,10 +124,10 @@ priority: 100
 
 ## 入口原子规则
 
-- 当 `phase=dormant`，用户只是询问发现了什么、要求显示入口选择、明确说“把是否进入留给我”或尚未作出选择时，禁止提交任何 Character State operation。可以调用一次 `host_state.update`，令 `operations=[]`，只把 `study`、`needs_input` 与 `undelivered_entry` 原子写入 Display，然后停止推进。
+- 当 `phase=dormant`，用户只是询问发现了什么、要求显示入口选择、明确说“把是否进入留给我”或尚未作出选择时，禁止修改 Character。可以调用一次 `host_state.update`，只用三条标准 Patch 分别把 `/display/sceneId`、`/display/expressionId`、`/display/surfaces/choices` 替换为 `study`、`needs_input`、`undelivered_entry`，然后停止推进。
 - 只有用户无歧义地说要进入或开始调查，并且同一句没有否定、暂缓或保留决定，才能把剧情状态推进到 `invited/active`。输入来自键盘或按钮不影响判断。
 - `想看看这条回报`可以触发入口说明，但不等于已经选择进入调查。关闭入口卡、沉默和要求简短说明同样不等于进入。
-- 入口提交使用现有字段 `/story/undelivered_report/phase`、`status`、`position` 和 `/narrative/frame`、`location`、`time_anchor`、`evidence_mode`、`active_story`、`branch`；不得发明 `timeframe` 或 `anchor` 字段。
+- 入口提交使用现有字段 `/character/story/undelivered_report/phase`、`status`、`position` 和 `/character/narrative/frame`、`location`、`time_anchor`、`evidence_mode`、`active_story`、`branch`；不得发明 `timeframe` 或 `anchor` 字段。
 - 如果原子的 `host_state.update` 失败，Character 与 Display 均未改变；不得再声称其中任何一项已生效。
 
 ## 时间与证据

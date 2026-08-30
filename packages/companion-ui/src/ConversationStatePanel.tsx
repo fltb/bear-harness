@@ -73,7 +73,7 @@ function StateEditor(props: { projection: CharacterStateDocument; schema: Schema
 		collectEditableChanges(
 			props.schema,
 			props.schema,
-			"",
+			"/character",
 			props.projection.document,
 			draft(),
 			operations,

@@ -1,16 +1,14 @@
 import { isAbsolute } from "node:path";
 import { toJsonSchema, z } from "@bear-harness/schema";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import jsonPatch from "fast-json-patch";
 import { OfficeParser } from "officeparser";
 import type { CharacterPackage } from "./character-loader.js";
-import type { CompanionMutation, CompanionStateStore } from "./companion-store.js";
+import type { CompanionStateStore } from "./companion-store.js";
 import {
 	eligibleRoleSkillResources,
 	readRoleSkillResource,
 	roleSkillStatus,
 } from "./role-resources.js";
-import type { RoleplayCondition } from "./roleplay-schema.js";
 import { CharacterStateOperation, type StateAuthority } from "./state-schema.js";
 
 type Result = { ok: boolean; code?: string; message: string; data?: unknown };
@@ -31,30 +29,16 @@ type Input = {
 	memory(query: string, limit: number): Promise<unknown>;
 };
 
-const DisplayArgs = z.strictObject({
-	sceneId: z.string().max(64).optional().describe("Declared scene id."),
-	expressionId: z.string().max(64).optional().describe("Declared expression id."),
-	mediaId: z.string().max(64).optional().describe("Declared eligible media id to present."),
-	choiceSetId: z
-		.string()
-		.max(64)
-		.optional()
-		.describe("Declared eligible choice-set id; each option remains ordinary user input."),
-	dismissPresentationId: z
-		.string()
-		.max(64)
-		.optional()
-		.describe("Currently presented media or choice-set id to dismiss."),
-});
 const StateReadArgs = z.strictObject({ action: z.literal("read") });
 const StateUpdateArgs = z.strictObject({
 	action: z.literal("update"),
 	operations: z
 		.array(CharacterStateOperation)
+		.min(1)
 		.max(50)
-		.optional()
-		.describe("RFC 6902 operations against declared Character State JSON pointers."),
-	reason: z.string().max(2000).optional(),
+		.describe(
+			"RFC 6902 operations against the document returned by host_state.read. Character paths start with /character; Display paths start with /display.",
+		),
 	skillId: z
 		.string()
 		.max(64)
@@ -64,9 +48,6 @@ const StateUpdateArgs = z.strictObject({
 		.unknown()
 		.optional()
 		.describe("Present only when the update is supported by evidence available this turn."),
-	display: DisplayArgs.optional().describe(
-		"Presentation changes committed atomically with this Character State update.",
-	),
 });
 const StateArgs = z.discriminatedUnion("action", [StateReadArgs, StateUpdateArgs]);
 const SkillArgs = z.discriminatedUnion("action", [
@@ -113,14 +94,14 @@ export function registerHostTools(input: Input): Record<string, AgentTool> {
 		role_skill: tool(
 			"role_skill",
 			"Character skill",
-			"List declared Character Skills, or read one matching the user's request. Reading returns its instructions, currently eligible resources, and the declared presentation catalog; it does not create per-turn state or grant authority beyond the Skill.",
+			"List declared Character Skills, or read one matching the user's request. Reading returns its instructions and currently eligible resources; it does not create per-turn state or grant authority beyond the Skill.",
 			SkillArgs,
 			(args) => skillTool(input, args),
 		),
 		host_state: tool(
 			"host_state",
-			"Character state",
-			"Read the semantic Character document, current Display, and declared presentation ids; or atomically update Character State and Display with RFC 6902 operations. This tool never manages Pi conversations, messages, turns, queues, streaming, branches, or lifecycle.",
+			"Companion state",
+			"Read one document containing Character and Display, or atomically apply RFC 6902 operations to that same document. Use /character paths for semantic state and /display paths for presentation. This tool never manages Pi conversations, messages, turns, queues, streaming, branches, or lifecycle.",
 			StateArgs,
 			(args) => stateTool(input, args),
 		),
@@ -307,12 +288,10 @@ function stateTool(input: Input, args: z.infer<typeof StateArgs>): Result {
 			companionId: character.id,
 			conversationId: sessionId,
 			definition: character.state,
-			operations: (args.operations ?? []) as CharacterStateOperation[],
+			operations: args.operations as CharacterStateOperation[],
 			authority,
 			evidence: args.evidence !== undefined,
 			character,
-			displayMutations: (state, currentDisplay) =>
-				displayMutations(args.display, character, state, currentDisplay),
 		});
 		return {
 			ok: true,
@@ -321,99 +300,6 @@ function stateTool(input: Input, args: z.infer<typeof StateArgs>): Result {
 	} catch (error) {
 		return failure(error, "state_update_failed");
 	}
-}
-
-function displayMutations(
-	display: z.infer<typeof StateUpdateArgs>["display"],
-	character: CharacterPackage,
-	state: Record<string, unknown>,
-	currentDisplay: ReturnType<CompanionStateStore["snapshot"]>["display"],
-): CompanionMutation[] {
-	if (!display) return [];
-	const mutations: CompanionMutation[] = [
-		...(display.sceneId
-			? [
-					{
-						domain: "display" as const,
-						op: "set_scene" as const,
-						sceneId: display.sceneId,
-					},
-				]
-			: []),
-		...(display.expressionId
-			? [
-					{
-						domain: "display" as const,
-						op: "set_expression" as const,
-						expressionId: display.expressionId,
-					},
-				]
-			: []),
-	];
-	if (display.mediaId) {
-		const media = character.roleplay.media.find((item) => item.id === display.mediaId);
-		if (!media || !eligible(media.when, state)) throw new Error("roleplay_media_locked");
-		mutations.push({
-			domain: "display",
-			op: "present",
-			surface:
-				media.presentation === "ambient"
-					? "ambient"
-					: media.presentation === "inline"
-						? "inline"
-						: "modal",
-			resourceId: media.id,
-		});
-	}
-	if (display.choiceSetId) {
-		const choices = character.roleplay.choice_sets.find((item) => item.id === display.choiceSetId);
-		if (!choices || !eligible(choices.when, state)) throw new Error("roleplay_choices_locked");
-		mutations.push({
-			domain: "display",
-			op: "present",
-			surface: "choices",
-			resourceId: choices.id,
-		});
-	}
-	if (display.dismissPresentationId) {
-		const surface = Object.entries(currentDisplay.surfaces).find(
-			([, id]) => id === display.dismissPresentationId,
-		)?.[0] as keyof typeof currentDisplay.surfaces | undefined;
-		if (!surface) throw new Error("presentation_not_active");
-		mutations.push({
-			domain: "display",
-			op: "dismiss",
-			surface,
-			resourceId: display.dismissPresentationId,
-		});
-	}
-	return mutations;
-}
-
-function eligible(
-	condition: RoleplayCondition | undefined,
-	state: Record<string, unknown>,
-): boolean {
-	if (!condition) return true;
-	if ("all" in condition) return condition.all.every((item) => eligible(item, state));
-	if ("any" in condition) return condition.any.some((item) => eligible(item, state));
-	if ("not" in condition) return !eligible(condition.not, state);
-	if ("unlocked" in condition || "variable" in condition) return false;
-	const actual = jsonPatch.getValueByPointer(state, condition.state);
-	if ("equals" in condition)
-		return Array.isArray(condition.equals)
-			? condition.equals.includes(actual as never)
-			: actual === condition.equals;
-	return (
-		typeof actual === "number" &&
-		(condition.operator === "gt"
-			? actual > condition.value
-			: condition.operator === "gte"
-				? actual >= condition.value
-				: condition.operator === "lt"
-					? actual < condition.value
-					: actual <= condition.value)
-	);
 }
 
 function failure(error: unknown, fallback: string): Result {

@@ -962,7 +962,7 @@ export class CharacterLoader {
 		)}\n</character_behavior_contract>`;
 		const hostContract = `<host_product_contract>
 Treat every user message the same way, whether it was typed or submitted by a choice button. A choice has no command semantics beyond its natural-language message.
-Use host_state only for Character or Display changes. When one user action changes both, include both in the same host_state update. Use only ids declared in the display catalog; presentation never changes implicitly.
+Use host_state only for Character or Display changes. Apply standard JSON Patch to the same document returned by host_state.read: /character contains semantic state and /display contains presentation. When one user action changes both, include both in the same update. Use only ids declared in the display catalog; presentation never changes implicitly.
 Treat external Runs as separate work. Starting a Run does not mean it finished. Treat local file paths as references to files in place; do not claim they were uploaded or copied.
 Do not infer conversation, turn, queue, streaming, tool, branch, or lifecycle state from Host data. Use Pi's own values and events for those concerns.
 </host_product_contract>`;

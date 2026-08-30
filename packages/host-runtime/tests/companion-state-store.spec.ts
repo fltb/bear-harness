@@ -80,7 +80,8 @@ describe("companion state projection", () => {
 		const stateSchema = JSON.stringify(tools.host_state?.parameters);
 		expect(stateSchema).toContain('"RFC 6902 operations');
 		expect(stateSchema).toContain('"replace"');
-		expect(stateSchema).toContain('"display"');
+		expect(stateSchema).toContain("/display");
+		expect(stateSchema).not.toContain('"display":{"type":"object"');
 	});
 
 	it("exposes natural-language choices without an event transition path", () => {
@@ -99,16 +100,17 @@ describe("companion state projection", () => {
 
 	it("reads presentation only from the unified conversation display snapshot", () => {
 		const { database, character, companionStore } = fixture();
-		companionStore.writeDisplay(character, "conversation", [
-			{
-				domain: "display",
-				op: "present",
-				surface: "inline",
-				resourceId: "damaged_signal",
-			},
-		]);
+		companionStore.writeCompanion({
+			companionId: character.id,
+			conversationId: "conversation",
+			definition: character.state,
+			operations: [{ op: "replace", path: "/display/surfaces/inline", value: "continuity_light" }],
+			authority: "model",
+			evidence: true,
+			character,
+		});
 		expect(companionStore.snapshot(character, "conversation").display.surfaces.inline).toBe(
-			"damaged_signal",
+			"continuity_light",
 		);
 		database.close();
 	});
@@ -122,17 +124,18 @@ describe("companion state projection", () => {
 			operations: [
 				{
 					op: "replace",
-					path: "/story/undelivered_report/phase",
+					path: "/character/story/undelivered_report/phase",
 					value: "invited",
 				},
 				{
 					op: "replace",
-					path: "/story/undelivered_report/status",
+					path: "/character/story/undelivered_report/status",
 					value: "active",
 				},
 			],
 			authority: "skill:undelivered-report",
 			evidence: true,
+			character,
 		});
 		const tools = registerHostTools({
 			sessionId: () => "conversation",
@@ -146,16 +149,20 @@ describe("companion state projection", () => {
 			operations: [
 				{
 					op: "replace",
-					path: "/story/undelivered_report/phase",
+					path: "/character/story/undelivered_report/phase",
 					value: "signal_examined",
 				},
 				{
 					op: "replace",
-					path: "/story/undelivered_report/position",
+					path: "/character/story/undelivered_report/position",
 					value: "evidence",
 				},
+				{
+					op: "replace",
+					path: "/display/surfaces/inline",
+					value: "damaged_signal",
+				},
 			],
-			display: { mediaId: "damaged_signal" },
 		});
 		expect(result?.details).toMatchObject({ ok: true });
 		expect(
@@ -203,9 +210,10 @@ describe("companion state projection", () => {
 			companionId: character.id,
 			conversationId: "conversation",
 			definition: character.state,
-			operations: [{ op: "replace", path: "/relationship/affinity", value: 1 }],
+			operations: [{ op: "replace", path: "/character/relationship/affinity", value: 1 }],
 			authority: "model",
 			evidence: true,
+			character,
 		});
 		companionStore.writeCompanion({
 			companionId: character.id,
@@ -214,12 +222,13 @@ describe("companion state projection", () => {
 			operations: [
 				{
 					op: "replace",
-					path: "/story/undelivered_report/phase",
+					path: "/character/story/undelivered_report/phase",
 					value: "invited",
 				},
 			],
 			authority: "skill:undelivered-report",
 			evidence: true,
+			character,
 		});
 		const second = companionStore.project(
 			character.id,

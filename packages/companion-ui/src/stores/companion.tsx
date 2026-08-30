@@ -701,16 +701,15 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		canon: trackApi("canon", canonApi, fail),
 	};
 	function dismissDisplay(mediaId?: string) {
-		return run("companionState.dismissPresentation", async () => {
-			if (!mediaId) return;
-			await invoke(client, () =>
-				client.companionState.dismissPresentation({
-					conversationId: requireConversation(),
-					mediaId,
-				}),
-			);
-			await refreshSnapshot();
-		});
+		if (!mediaId) return Promise.resolve();
+		const current = display();
+		const surface = (["ambient", "inline", "modal"] as const).find(
+			(candidate) => current?.surfaces[candidate] === mediaId,
+		);
+		if (!surface) return Promise.resolve();
+		return store.patchCompanionState([
+			{ op: "replace", path: `/display/surfaces/${surface}`, value: null },
+		]);
 	}
 	return store;
 }

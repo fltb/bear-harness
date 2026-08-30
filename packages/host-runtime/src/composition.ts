@@ -357,23 +357,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			character: s.characterLoader.display(result.character),
 		};
 	});
-	dispatcher.registerHandler(RPC.companionState.dismissPresentation, async (_p) => {
-		const { conversationId, mediaId } = _p as {
-			conversationId: string;
-			mediaId: string;
-		};
-		await requireOwnedConversation(s, conversationId);
-		const character = s.characterLoader.load(getCompanionId(s));
-		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
-		if (!character.roleplay.media.some((media) => media.id === mediaId))
-			throw { kind: "not_found", reason: "roleplay_media_not_found" };
-		const display = s.companionStore.snapshot(character, conversationId).display;
-		const surface = display.surfaces.inline === mediaId ? "inline" : "modal";
-		s.companionStore.writeDisplay(character, conversationId, [
-			{ domain: "display", op: "dismiss", surface, resourceId: mediaId },
-		]);
-		return {};
-	});
 	dispatcher.registerHandler(RPC.companionState.patch, async (_p) => {
 		const { conversationId, expectedRevisions, operations, dedupeKey } = _p as {
 			conversationId: string;
@@ -396,6 +379,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			operations: operations as never,
 			authority: "user",
 			evidence: true,
+			character,
 		});
 		s.eventBus.publish("companion.snapshot_changed", {
 			conversationId,

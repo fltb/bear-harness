@@ -83,9 +83,6 @@ export type CharacterStateRevisions = z.infer<typeof schema.CharacterStateRevisi
 export type CharacterStateDocument = z.infer<typeof schema.CharacterStateDocument>;
 export type CompanionStatePatchOperation = z.infer<typeof schema.CompanionStatePatchOperation>;
 export type CompanionStatePatchRequest = z.infer<typeof schema.CompanionStatePatchRequest>;
-export type CompanionDismissPresentationRequest = z.infer<
-	typeof schema.CompanionDismissPresentationRequest
->;
 
 // ---------------------------------------------------------------------------
 // Onboarding (first-meeting FSM)

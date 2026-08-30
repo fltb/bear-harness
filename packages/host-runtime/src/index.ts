@@ -13,11 +13,7 @@ export { ArtifactStore } from "./artifacts/index.js";
 export type { CharacterDisplay, CharacterPackage } from "./companion/character-loader.js";
 // Companion domain
 export { CharacterLoader } from "./companion/character-loader.js";
-export type {
-	CompanionMutation,
-	CompanionSnapshot,
-	DisplayState,
-} from "./companion/companion-store.js";
+export type { CompanionSnapshot, DisplayState } from "./companion/companion-store.js";
 export { CompanionStateStore } from "./companion/companion-store.js";
 export type { OnboardingStateRow, OnboardingStatus } from "./companion/first-meeting.js";
 export { FirstMeetingMachine } from "./companion/first-meeting.js";

@@ -2001,10 +2001,6 @@ export const CompanionStatePatchRequest = z.strictObject({
 	operations: z.array(CompanionStatePatchOperation).min(1).max(20),
 	dedupeKey: z.string().uuid(),
 });
-export const CompanionDismissPresentationRequest = z.strictObject({
-	conversationId: ConversationId,
-	mediaId: z.string().min(1).max(64),
-});
 export const SnapshotGetRequest = z.strictObject({});
 export const SnapshotResponse = z.strictObject({
 	eventSeq: EventSeq,
@@ -2139,12 +2135,6 @@ export const RPC = {
 		),
 	},
 	companionState: {
-		dismissPresentation: endpoint(
-			"companionState.dismissPresentation:v1",
-			CompanionDismissPresentationRequest,
-			EmptyResponse,
-			"mutation",
-		),
 		patch: endpoint(
 			"companionState.patch:v1",
 			CompanionStatePatchRequest,

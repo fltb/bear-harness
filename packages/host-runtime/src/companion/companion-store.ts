@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
+import jsonPatch from "fast-json-patch";
 import type { AppDatabase } from "../storage/database.js";
 import { companionStateDocuments } from "../storage/schema.js";
 import type { CharacterPackage } from "./character-loader.js";
 import {
 	applyCharacterStateOperations,
 	type CharacterStateDefinition,
-	type CharacterStateOperation,
+	CharacterStateOperation,
 	compileCharacterStateSchema,
 	defaultStateDocument,
 	type JsonObject,
@@ -32,15 +33,6 @@ export interface CompanionSnapshot {
 	display: DisplayState;
 	revisions: { display: number };
 }
-export type CompanionMutation =
-	| { domain: "display"; op: "set_scene"; sceneId: string }
-	| { domain: "display"; op: "set_expression"; expressionId: string }
-	| {
-			domain: "display";
-			op: "present" | "dismiss";
-			surface: keyof DisplayState["surfaces"];
-			resourceId?: string;
-	  };
 
 /** Two product documents. No Pi session, turn, message, queue, or lifecycle state. */
 export class CompanionStateStore {
@@ -83,8 +75,7 @@ export class CompanionStateStore {
 		authority: "model" | "user" | `skill:${string}`;
 		evidence?: boolean;
 		expectedRevisions?: Partial<Revisions>;
-		character?: CharacterPackage;
-		displayMutations?: (state: JsonObject, display: DisplayState) => CompanionMutation[];
+		character: CharacterPackage;
 	}) {
 		const before = this.project(input.companionId, input.conversationId, input.definition);
 		if (
@@ -94,23 +85,18 @@ export class CompanionStateStore {
 				input.expectedRevisions.conversation !== before.revisions.conversation)
 		)
 			throw { kind: "conflict", reason: "character_state_revision_conflict" };
-		const after = applyCharacterStateOperations({
+		const beforeDisplay = this.snapshot(input.character, input.conversationId);
+		const after = applyCompanionOperations({
 			definition: input.definition,
-			document: before.document,
+			character: input.character,
+			document: { character: before.document, display: beforeDisplay.display },
 			operations: input.operations,
 			authority: input.authority,
 			evidence: input.evidence === true,
 		});
-		const beforeDisplay = input.character
-			? this.snapshot(input.character, input.conversationId)
-			: undefined;
-		const nextDisplay = beforeDisplay ? structuredClone(beforeDisplay.display) : undefined;
-		if (input.character && beforeDisplay && nextDisplay)
-			for (const mutation of input.displayMutations?.(after, beforeDisplay.display) ?? [])
-				mutateDisplay(nextDisplay, mutation, input.character);
 		this.db.transaction((tx) => {
 			for (const scope of ["global", "conversation"] as const) {
-				const next = partition(after, input.definition, scope);
+				const next = partition(after.character, input.definition, scope);
 				const previous = partition(before.document, input.definition, scope);
 				if (!equal(next, previous))
 					this.save(
@@ -124,26 +110,21 @@ export class CompanionStateStore {
 						before.schemaHash,
 					);
 			}
-			if (
-				input.character &&
-				beforeDisplay &&
-				nextDisplay &&
-				!equal(beforeDisplay.display, nextDisplay)
-			)
+			if (!equal(beforeDisplay.display, after.display))
 				this.save(
 					tx,
 					input.companionId,
 					input.conversationId,
 					"conversation",
 					"display",
-					nextDisplay as unknown as Record<string, unknown>,
+					after.display as unknown as Record<string, unknown>,
 					beforeDisplay.revisions.display + 1,
 					"display:v1",
 				);
 		});
 		return {
 			character: this.project(input.companionId, input.conversationId, input.definition),
-			display: input.character ? this.snapshot(input.character, input.conversationId) : undefined,
+			display: this.snapshot(input.character, input.conversationId),
 		};
 	}
 
@@ -153,30 +134,6 @@ export class CompanionStateStore {
 			display: display(row?.stateJson, character),
 			revisions: { display: row?.revision ?? 0 },
 		};
-	}
-
-	writeDisplay(
-		character: CharacterPackage,
-		conversationId: string,
-		mutations: CompanionMutation[],
-	) {
-		const before = this.snapshot(character, conversationId);
-		const next = structuredClone(before.display);
-		for (const mutation of mutations) mutateDisplay(next, mutation, character);
-		if (!equal(before.display, next))
-			this.db.transaction((tx) =>
-				this.save(
-					tx,
-					character.id,
-					conversationId,
-					"conversation",
-					"display",
-					next as unknown as Record<string, unknown>,
-					before.revisions.display + 1,
-					"display:v1",
-				),
-			);
-		return this.snapshot(character, conversationId);
 	}
 
 	reconcileSchema(companionId: string, definition: CharacterStateDefinition) {
@@ -275,28 +232,96 @@ function display(value: unknown, character: CharacterPackage): DisplayState {
 	};
 }
 
-function mutateDisplay(
-	next: DisplayState,
-	mutation: CompanionMutation,
-	character: CharacterPackage,
-) {
-	if (mutation.op === "set_scene") {
-		if (!declared(mutation.sceneId, character.scenes)) throw invalid("display_scene_not_declared");
-		next.sceneId = mutation.sceneId;
-	} else if (mutation.op === "set_expression") {
-		if (!declared(mutation.expressionId, character.visual.expressions))
-			throw invalid("display_expression_not_declared");
-		next.expressionId = mutation.expressionId;
-	} else if (mutation.op === "present") {
-		if (!mutation.resourceId) throw invalid("display_resource_required");
-		const allowed =
-			mutation.surface === "choices"
-				? character.roleplay.choice_sets.some((item) => item.id === mutation.resourceId)
-				: character.roleplay.media.some((item) => item.id === mutation.resourceId);
-		if (!allowed) throw invalid("display_resource_not_declared");
-		next.surfaces[mutation.surface] = mutation.resourceId;
-	} else if (!mutation.resourceId || next.surfaces[mutation.surface] === mutation.resourceId)
-		next.surfaces[mutation.surface] = null;
+function applyCompanionOperations(input: {
+	definition: CharacterStateDefinition;
+	character: CharacterPackage;
+	document: { character: JsonObject; display: DisplayState };
+	operations: CharacterStateOperation[];
+	authority: "model" | "user" | `skill:${string}`;
+	evidence: boolean;
+}) {
+	const next = structuredClone(input.document);
+	for (const operation of input.operations.map((item) => CharacterStateOperation.parse(item))) {
+		if (operation.path.startsWith("/character/")) {
+			next.character = applyCharacterStateOperations({
+				definition: input.definition,
+				document: next.character,
+				operations: [{ ...operation, path: operation.path.slice("/character".length) }],
+				authority: input.authority,
+				evidence: input.evidence,
+			});
+			continue;
+		}
+		if (!DISPLAY_POINTER.test(operation.path))
+			throw { kind: "forbidden", reason: "state_write_not_authorized" };
+		jsonPatch.applyPatch(next, [operation], true, true);
+	}
+	validateDisplay(next.display, input.character, next.character);
+	return next;
+}
+
+const DISPLAY_POINTER =
+	/^\/display\/(?:sceneId|expressionId|surfaces\/(?:ambient|inline|modal|choices))$/u;
+
+function validateDisplay(value: unknown, character: CharacterPackage, state: JsonObject) {
+	if (!record(value)) throw invalid("display_state_invalid");
+	if (!declared(value.sceneId, character.scenes)) throw invalid("display_scene_not_declared");
+	if (!declared(value.expressionId, character.visual.expressions))
+		throw invalid("display_expression_not_declared");
+	if (!record(value.surfaces)) throw invalid("display_state_invalid");
+	const surfaces = value.surfaces;
+	const keys = ["ambient", "inline", "modal", "choices"] as const;
+	if (
+		Object.keys(value).some((key) => !["sceneId", "expressionId", "surfaces"].includes(key)) ||
+		Object.keys(surfaces).some((key) => !keys.includes(key as (typeof keys)[number])) ||
+		keys.some((key) => !(key in surfaces))
+	)
+		throw invalid("display_state_invalid");
+	for (const surface of keys) {
+		const resourceId = surfaces[surface];
+		if (resourceId === null) continue;
+		if (typeof resourceId !== "string" || !resourceId) throw invalid("display_state_invalid");
+		if (surface === "choices") {
+			const choices = character.roleplay.choice_sets.find((item) => item.id === resourceId);
+			if (!choices || !eligible(choices.when, state)) throw invalid("roleplay_choices_locked");
+			continue;
+		}
+		const media = character.roleplay.media.find((item) => item.id === resourceId);
+		const expected =
+			media?.presentation === "ambient"
+				? "ambient"
+				: media?.presentation === "inline"
+					? "inline"
+					: "modal";
+		if (!media || expected !== surface || !eligible(media.when, state))
+			throw invalid("roleplay_media_locked");
+	}
+}
+
+function eligible(
+	condition: CharacterPackage["roleplay"]["media"][number]["when"],
+	state: JsonObject,
+): boolean {
+	if (!condition) return true;
+	if ("all" in condition) return condition.all.every((item) => eligible(item, state));
+	if ("any" in condition) return condition.any.some((item) => eligible(item, state));
+	if ("not" in condition) return !eligible(condition.not, state);
+	if ("unlocked" in condition || "variable" in condition) return false;
+	const actual = jsonPatch.getValueByPointer(state, condition.state);
+	if ("equals" in condition)
+		return Array.isArray(condition.equals)
+			? condition.equals.includes(actual as never)
+			: actual === condition.equals;
+	return (
+		typeof actual === "number" &&
+		(condition.operator === "gt"
+			? actual > condition.value
+			: condition.operator === "gte"
+				? actual >= condition.value
+				: condition.operator === "lt"
+					? actual < condition.value
+					: actual <= condition.value)
+	);
 }
 
 function partition(document: JsonObject, definition: CharacterStateDefinition, scope: StateScope) {

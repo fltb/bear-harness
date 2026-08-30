@@ -279,7 +279,6 @@ export function createTestClient() {
 		},
 		companionState: {
 			patch: vi.fn(() => ok({})),
-			dismissPresentation: vi.fn(() => ok({})),
 		},
 		events: { subscribe: vi.fn(() => new Promise<never>(() => {})) },
 		onboarding: {

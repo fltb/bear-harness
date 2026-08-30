@@ -76,7 +76,7 @@ describe("character state RPC projection", () => {
 				operations: [
 					{
 						op: "replace",
-						path: "/story/undelivered_report/user_interpretation",
+						path: "/character/story/undelivered_report/user_interpretation",
 						value: ["两份记录都不足以确认最终接收者。"],
 					},
 				],
