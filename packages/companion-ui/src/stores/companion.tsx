@@ -4,7 +4,7 @@ import type {
 	MemoryCandidate as MemoryCandidateSchema,
 } from "@bear-harness/protocol/schema";
 import type { z } from "@bear-harness/schema";
-import { useQueryClient } from "@tanstack/solid-query";
+import { isCancelledError, useQueryClient } from "@tanstack/solid-query";
 import {
 	createContext,
 	createMemo,
@@ -179,7 +179,7 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			setOperationError(null);
 			return value;
 		} catch (cause) {
-			fail(operation, cause);
+			if (!isCancelledError(cause)) fail(operation, cause);
 			throw cause;
 		}
 	};
@@ -626,7 +626,6 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 						text,
 					}),
 				);
-				await refreshActive();
 			}),
 		regenerateMessage: (entryId) =>
 			run("message.regenerate", async () => {

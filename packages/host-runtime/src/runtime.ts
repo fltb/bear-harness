@@ -365,6 +365,11 @@ export class HostRuntime {
 			context: renderContext,
 			titleChanged: (sessionId, title) =>
 				eventBus.publish("conversation.renamed", { conversationId: sessionId, title }),
+			changed: (sessionId) =>
+				eventBus.publish("pi.session.changed", {
+					conversationId: sessionId,
+					sessionId,
+				}),
 		});
 		const sessions = new SessionCatalog(db.orm, pi);
 		seedPiAcpProfile(db.orm);

@@ -146,7 +146,7 @@ export function roleSkillPrompt(skills: readonly RoleSkill[]): string {
 	return `<role_skills>\n${skills
 		.map(
 			(skill) =>
-				`<skill id="${escapeXml(skill.name)}" priority="${skill.priority}">${escapeXml(skill.description)}</skill>`,
+				`<skill id="${escapeXml(skill.name)}" priority="${skill.priority}"><description>${escapeXml(skill.description)}</description><include>${escapeXml(JSON.stringify(skill.triggers.include))}</include><exclude>${escapeXml(JSON.stringify(skill.triggers.exclude))}</exclude></skill>`,
 		)
 		.join("\n")}\n</role_skills>`;
 }

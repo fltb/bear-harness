@@ -454,13 +454,13 @@ describe("character package Pi resources", () => {
 		]);
 		expect(resources.pluginPaths).toEqual([]);
 		expect(loader.piResources(character, false).pluginPaths).toEqual([]);
-		expect(resources.hostTools).toEqual([
-			"host_state",
-			"host_history",
-			"host_canon",
-			"host_memory",
-			"host_delegate",
-		]);
+		expect(resources.appendSystemPrompt).toContain("<role_skills>");
+		expect(resources.appendSystemPrompt).toContain("<host_display_catalog>");
+		expect(resources.appendSystemPrompt).toContain('"id": "relay_room"');
+		expect(resources.appendSystemPrompt).toContain('"id": "reflective"');
+		expect(resources.appendSystemPrompt).not.toContain("scene-relay-room.webp");
+		expect(resources.appendSystemPrompt).not.toContain("<role_examples>");
+		expect(resources.appendSystemPrompt.match(/\"id\": \"emotional_support\"/g)).toHaveLength(1);
 	});
 
 	it("discovers only role-owned Skills and plugins by package convention", () => {

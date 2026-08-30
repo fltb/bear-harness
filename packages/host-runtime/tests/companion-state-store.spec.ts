@@ -61,6 +61,9 @@ describe("companion state projection", () => {
 			type: "text",
 			text: expect.stringContaining('<resource id="entry">'),
 		});
+		const firstText = first?.content[0]?.type === "text" ? first.content[0].text : "";
+		expect(firstText).toContain("## Display 映射");
+		expect(firstText).not.toContain("scene-relay-room.webp");
 		expect(second?.content).toEqual(first?.content);
 		expect(companionStore.project(character.id, "conversation", character.state).revisions).toEqual(
 			{
@@ -69,6 +72,15 @@ describe("companion state projection", () => {
 			},
 		);
 		database.close();
+	});
+
+	it("exposes action-specific role-skill and JSON Patch state schemas", () => {
+		const tools = registerHostTools({} as never);
+		expect(JSON.stringify(tools.role_skill?.parameters)).toContain('"skillId"');
+		const stateSchema = JSON.stringify(tools.host_state?.parameters);
+		expect(stateSchema).toContain('"RFC 6902 operations');
+		expect(stateSchema).toContain('"replace"');
+		expect(stateSchema).toContain('"display"');
 	});
 
 	it("exposes natural-language choices without an event transition path", () => {
@@ -154,6 +166,24 @@ describe("companion state projection", () => {
 		expect(companionStore.snapshot(character, "conversation").display.surfaces.inline).toBe(
 			"damaged_signal",
 		);
+		database.close();
+	});
+
+	it("exposes only semantic Character and Display state without storage metadata", async () => {
+		const { database, character, companionStore } = fixture();
+		const tools = registerHostTools({
+			sessionId: () => "conversation",
+			character: () => character,
+			store: companionStore,
+		});
+		const result = await tools.host_state?.execute("read", { action: "read" });
+		const text = result?.content[0]?.type === "text" ? result.content[0].text : "";
+		expect(text).toContain('"character"');
+		expect(text).toContain('"sceneId":"study"');
+		expect(text).not.toContain('"catalog"');
+		expect(text).not.toContain("schemaHash");
+		expect(text).not.toContain("revisions");
+		expect(text).not.toContain("scene-relay-room.webp");
 		database.close();
 	});
 

@@ -94,7 +94,7 @@ describe("character package import", () => {
 		const initial = await runtime.dispatch("character.packageGet:v1", { characterId: "jizhou" });
 		if (!initial.ok) throw new Error(initial.error.reason);
 		const yaml = initial.data.package.yaml.replace(
-			"极光书房是默认日常位置；当前 Host scene 与 narrative anchor 始终优先，不能把默认场景写成不随状态变化的事实。",
+			"极光书房是默认日常位置；当前显示的场景与角色状态中的叙事位置始终优先，不能把默认场景写成不随状态变化的事实。",
 			"极昼正在新的值守室等待交接。",
 		);
 		await expect(

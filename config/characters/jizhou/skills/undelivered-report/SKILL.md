@@ -109,11 +109,22 @@ priority: 100
 5. 展示选择后停止推进，不替用户选择；关闭卡片不等于同意或拒绝。
 6. 不把章节做成按钮流水线。先完整回应和展开当前节点；只有用户实际完成该节点的调查、比较或选择后，才用 `host_state` 携带本 Skill ID 原子提交对应状态。
 7. 剧情内的闲聊、人物追问和情绪反应可以丰富当前场景，但不会仅因“聊了几轮”机械推进 phase。
-8. 用户确认检查当前节点后，先读取本 Skill 的 eligible resource，再直接调用一次 `host_state.update`：提交该节点完成后的 Character State，并把 `role_skill` 返回的展示目录中对应媒体 ID 放在 `display.mediaId`；需要下一步选择时把 choice set ID 放在 `display.choiceSetId`。
+8. 用户确认检查当前节点后，先读取本 Skill 的 eligible resource，再直接调用一次 `host_state.update`：提交该节点完成后的 Character State，并把 `role_skill` 返回的展示目录中对应 scene、expression、media 与 choice-set ID 一并放进 `display`；需要下一步选择时使用对应 `choiceSetId`。
+
+## Display 映射
+
+- 入口说明与损坏信号：`study`；展开档案时用 `reflective`，停下来等待用户选择时用 `needs_input`。
+- 风暴中继推测：`relay_room` + `reflective` + `storm_relay_map`。
+- 雪原原始记录与用户随后明确同意的有限重建：`snowfield` + `reflective` + `snow_route`。
+- 两份交接比较：`archive_gallery` + `reflective` + `two_handoffs`；等待用户判断时改为 `needs_input`。
+- 最后一班原始记录：`last_shift_room` + `reflective` + `last_shift_desk`。
+- 未来设想：`future_beacon` + `reflective` + `future_beacon_cg`；拒绝未来设想则直接恢复 `study` + `calm`。
+- 有效结局：`study_dawn`；交还使用 `ready` + `returned_lamp`，归档使用 `calm`，留白使用 `reflective`。结局提交时必须同步清理旧选择卡。
+- 暂停、退出或现实任务接管：恢复 `study`；普通暂停使用 `calm`，需要用户决定是否恢复时才使用 `needs_input`。
 
 ## 入口原子规则
 
-- 当 `phase=dormant`，用户只是询问发现了什么、要求显示入口选择、明确说“把是否进入留给我”或尚未作出选择时，禁止调用 `host_state.update`。只读取 eligible presentation，展示 `undelivered_entry`，然后停止推进。
+- 当 `phase=dormant`，用户只是询问发现了什么、要求显示入口选择、明确说“把是否进入留给我”或尚未作出选择时，禁止提交任何 Character State operation。可以调用一次 `host_state.update`，令 `operations=[]`，只把 `study`、`needs_input` 与 `undelivered_entry` 原子写入 Display，然后停止推进。
 - 只有用户无歧义地说要进入或开始调查，并且同一句没有否定、暂缓或保留决定，才能把剧情状态推进到 `invited/active`。输入来自键盘或按钮不影响判断。
 - `想看看这条回报`可以触发入口说明，但不等于已经选择进入调查。关闭入口卡、沉默和要求简短说明同样不等于进入。
 - 入口提交使用现有字段 `/story/undelivered_report/phase`、`status`、`position` 和 `/narrative/frame`、`location`、`time_anchor`、`evidence_mode`、`active_story`、`branch`；不得发明 `timeframe` 或 `anchor` 字段。
@@ -132,7 +143,7 @@ priority: 100
 
 - 入口只呈现：进入调查 / 简短说明 / 以后再说。
 - 损坏信号只展示已保存部分，不补全缺损；媒体每个节点最多展示一次。
-- 风暴中继是 `reconstruction`；雪原先 `archive_record` 后明确转为 `reconstruction`。
+- 风暴中继是 `reconstruction`；雪原先只呈现 `archive_record`，并停下来询问用户是否查看有限重建。只有用户在下一次自然语言输入中明确愿意继续，才转为 `reconstruction`；同一条用户输入不得连续完成这两个节点。
 - 两份交接记录保持未决，除非用户表达自己的判断；极昼可以给依据但不替用户选。
 - 最后一班只确认“回报被错误归档”，不虚构最终接收者。
 - 未来航标只是假设，不自动转成产品设置、任务、记忆或 Canon。

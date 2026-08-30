@@ -21,6 +21,7 @@ describe("《未送达的回报》natural-language path contract", () => {
 			"undelivered_entry",
 			"undelivered_signal",
 			"undelivered_route",
+			"undelivered_snowfield_reconstruction",
 			"undelivered_testimony",
 			"undelivered_last_shift",
 			"undelivered_future",
@@ -29,7 +30,7 @@ describe("《未送达的回报》natural-language path contract", () => {
 			"undelivered_reopened_ending",
 		]);
 		const choices = sets.flatMap((set) => set.choices);
-		expect(choices.length).toBeGreaterThanOrEqual(24);
+		expect(choices).toHaveLength(28);
 		for (const choice of choices) {
 			expect(choice.message.trim().length).toBeGreaterThan(0);
 			expect(choice).not.toHaveProperty("event");

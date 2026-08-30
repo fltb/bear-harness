@@ -33,6 +33,7 @@ export interface PiRuntimeOptions {
 	defaultModel(): { providerId: string; modelId: string } | undefined;
 	context?(sessionId: string, message: string): string | Promise<string>;
 	titleChanged?(sessionId: string, title: string): void;
+	changed?(sessionId: string): void;
 	systemPrompt?: string;
 }
 
@@ -311,6 +312,9 @@ export class PiRuntime {
 			modelRuntime: runtime,
 			baseToolsOverride: tools,
 			initialActiveToolNames: Object.keys(tools),
+		});
+		session.subscribe((event) => {
+			if (event.type !== "message_update") this.options.changed?.(manager.getSessionId());
 		});
 		if (!remembered) await session.setModel(model);
 		this.session = session;

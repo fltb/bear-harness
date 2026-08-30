@@ -92,18 +92,20 @@ describe("ContextPackCompiler character prompt layers", () => {
 		);
 		expect(pack.blocks.find((block) => block.layer === "state")?.content).toContain('"continuity"');
 		const stateContext = pack.blocks.find((block) => block.layer === "state")?.content ?? "";
-		expect(stateContext).toContain('"narrativeAnchor"');
-		expect(stateContext).toContain('"activeStory": null');
+		expect(stateContext).toContain("<host_context>");
+		expect(stateContext).toContain('"character"');
+		expect(stateContext).toContain('"display"');
 		expect(stateContext).toContain('"phase": "dormant"');
+		expect(stateContext).not.toContain('"narrativeAnchor"');
+		expect(stateContext).not.toContain('"visual"');
+		expect(stateContext).not.toContain('"resources"');
+		expect(stateContext).not.toContain('"activityExpressionId"');
 		orm
 			.insert(conversations)
 			.values({ id: "conversation-2", companionId: "jizhou", title: "second" })
 			.run();
-		const secondSceneContext =
-			new ContextPackCompiler(orm, characterLoader)
-				.compile("conversation-2")
-				.blocks.find((block) => block.layer === "scene")?.content ?? "";
-		expect(secondSceneContext).not.toContain("directive");
+		const secondPack = new ContextPackCompiler(orm, characterLoader).compile("conversation-2");
+		expect(secondPack.blocks.some((block) => block.layer === "scene")).toBe(false);
 		expect(pack.manifest.slice(0, 4)).toEqual([
 			expect.objectContaining({
 				order: 0,

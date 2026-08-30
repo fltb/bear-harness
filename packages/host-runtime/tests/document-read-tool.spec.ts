@@ -37,6 +37,26 @@ describe("document_read", () => {
 		expect(result).toMatchObject({ details: { ok: false, code: "document_type_unsupported" } });
 	});
 
+	it("rejects relative document and delegated input paths", async () => {
+		const delegate = vi.fn();
+		const tools = registerHostTools({ delegate } as never);
+		const document = await tools.document_read?.execute("relative-document", {
+			path: "brief.docx",
+		});
+		const delegated = await tools.host_delegate?.execute("relative-delegate", {
+			agent: "codex",
+			instruction: "Read it",
+			inputPaths: ["brief.docx"],
+		});
+		expect(document).toMatchObject({
+			details: { ok: false, code: "document_path_not_absolute" },
+		});
+		expect(delegated).toMatchObject({
+			details: { ok: false, code: "delegate_input_path_not_absolute" },
+		});
+		expect(delegate).not.toHaveBeenCalled();
+	});
+
 	it("delegates user-supplied paths using the current Pi identifiers", async () => {
 		const delegate = vi.fn().mockResolvedValue({ runId: "run-1", status: "running" });
 		const tools = registerHostTools({

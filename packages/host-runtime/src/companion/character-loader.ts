@@ -58,7 +58,7 @@ import {
 	type CharacterOnboardingFlow,
 	validateCharacterOnboardingFlow,
 } from "./onboarding-schema.js";
-import { loadRoleSkills, type RoleSkill } from "./role-resources.js";
+import { loadRoleSkills, type RoleSkill, roleSkillPrompt } from "./role-resources.js";
 import {
 	type RoleplayDefinition,
 	RoleplaySchema,
@@ -943,13 +943,6 @@ export class CharacterLoader {
 		skillPaths: string[];
 		pluginPaths: string[];
 		appendSystemPrompt: string;
-		hostTools: string[];
-		stateDefinition: CharacterStateDefinition;
-		scenes: Array<{ id: string; label: string; useWhen: string }>;
-		expressions: Array<{ id: string; label: string; useWhen: string }>;
-		mediaIds: string[];
-		choiceSetIds: string[];
-		canonModuleIds: string[];
 	} {
 		const packageDir = resolve(this.packageDirectory(character.id));
 		const skillsDir = join(packageDir, "skills");
@@ -962,30 +955,28 @@ export class CharacterLoader {
 			: undefined;
 		const pluginPaths =
 			pluginsEnabled && pluginRoot ? this.collectPluginFiles(character.id, pluginRoot) : [];
-		const mesExample = character.prompt.mes_example.trim();
-		const exampleBlocks = mesExample
-			.split(/^<START>\s*$/m)
-			.map((block) =>
-				block.trim().replaceAll("{{char}}", character.name).replaceAll("{{user}}", "用户"),
-			)
-			.filter(Boolean);
-		const declaredExamples = character.behavior.examples.map(
-			(example) =>
-				`<example id="${example.id}">\n用户：${example.user}\n${character.name}：${example.assistant}\n</example>`,
-		);
-		const roleExamples = `<role_examples>\n${[
-			...declaredExamples,
-			...(exampleBlocks.length > 0 ? exampleBlocks : mesExample ? [mesExample] : []),
-		].join("\n\n")}\n</role_examples>`;
 		const behaviorContract = `<character_behavior_contract>\n${JSON.stringify(
 			character.behavior,
 			null,
 			2,
 		)}\n</character_behavior_contract>`;
+		const hostContract = `<host_product_contract>
+Treat every user message the same way, whether it was typed or submitted by a choice button. A choice has no command semantics beyond its natural-language message.
+Use host_state only for Character or Display changes. When one user action changes both, include both in the same host_state update. Use only ids declared in the display catalog; presentation never changes implicitly.
+Treat external Runs as separate work. Starting a Run does not mean it finished. Treat local file paths as references to files in place; do not claim they were uploaded or copied.
+Do not infer conversation, turn, queue, streaming, tool, branch, or lifecycle state from Host data. Use Pi's own values and events for those concerns.
+</host_product_contract>`;
+		const displayCatalog = `<host_display_catalog>\n${JSON.stringify(
+			modelDisplayCatalog(character),
+			null,
+			2,
+		)}\n</host_display_catalog>`;
 		const appendSystemPrompt = [
 			behaviorContract,
 			character.prompt.system_prompt.trim(),
-			roleExamples,
+			hostContract,
+			roleSkillPrompt(character.skills),
+			displayCatalog,
 		]
 			.filter(Boolean)
 			.join("\n\n");
@@ -993,27 +984,6 @@ export class CharacterLoader {
 			skillPaths,
 			pluginPaths,
 			appendSystemPrompt,
-			stateDefinition: character.state,
-			scenes: character.scenes.map((scene) => ({
-				id: scene.id,
-				label: scene.label,
-				useWhen: scene.use_when,
-			})),
-			expressions: character.visual.expressions.map((expression) => ({
-				id: expression.id,
-				label: expression.label,
-				useWhen: expression.use_when,
-			})),
-			mediaIds: character.roleplay.media.map((media) => media.id),
-			choiceSetIds: character.roleplay.choice_sets.map((set) => set.id),
-			canonModuleIds: character.canon.manifest.modules.map((module) => module.id),
-			hostTools: [
-				...(Object.keys(character.state.fields).length ? ["host_state"] : []),
-				"host_history",
-				...(character.canon.sources.length ? ["host_canon"] : []),
-				"host_memory",
-				"host_delegate",
-			],
 		};
 	}
 
@@ -1400,6 +1370,18 @@ export class CharacterLoader {
 		});
 		eventBus.publish("character.seeded", { id: character.id, name: character.name });
 	}
+}
+
+/** Static semantic ids exposed to the model; asset paths remain renderer-only. */
+export function modelDisplayCatalog(character: CharacterPackage) {
+	return {
+		scenes: character.scenes.map(({ id, label, use_when }) => ({ id, label, useWhen: use_when })),
+		expressions: character.visual.expressions.map(({ id, label, use_when }) => ({
+			id,
+			label: label.replaceAll("{name}", character.name),
+			useWhen: use_when,
+		})),
+	};
 }
 
 function validateRoleplayConditionReferences(
