@@ -61,14 +61,6 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 	"run.interrupted": { runId: "run-1" },
 	"run.resumed": { runId: "run-1" },
 	"companion.snapshot_changed": { conversationId: "conversation-1", commitId: "commit-1" },
-	"codex.consented": {
-		profileId: "profile-1",
-		canonicalPath: "/usr/local/bin/codex",
-		version: "0.147.0",
-		sha256: "hash",
-		codexHome: "/tmp/codex",
-		consentedAt: "2026-01-01T00:00:00.000Z",
-	},
 	"codex.launched": {
 		executor: "codex",
 		profileId: "profile-1",

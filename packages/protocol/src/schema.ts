@@ -279,14 +279,6 @@ export const EventPayloadSchemas = {
 		conversationId: EventId,
 		sessionId: z.string().min(1).max(128),
 	}),
-	"codex.consented": EventPayload({
-		profileId: EventId,
-		canonicalPath: EventText,
-		version: EventText,
-		sha256: EventText,
-		codexHome: EventText,
-		consentedAt: EventText,
-	}),
 	"codex.launched": EventPayload({
 		executor: EventText,
 		profileId: EventId,
@@ -1585,12 +1577,7 @@ export const ExternalAgentCandidate = z.strictObject({
 	canonicalPath: z.string().min(1).max(MAX_PATH_LENGTH).nullable(),
 	version: z.string().min(1).max(64).nullable(),
 	sha256: z.string().length(64).nullable(),
-	status: z.union([
-		z.literal("usable"),
-		z.literal("version_mismatch"),
-		z.literal("not_found"),
-		z.literal("rejected"),
-	]),
+	status: z.union([z.literal("usable"), z.literal("not_found"), z.literal("rejected")]),
 });
 export const ExternalAgentDiscoverCodexRequest = z.strictObject({});
 export const ExternalAgentDiscoverCodexResponse = z.strictObject({
@@ -1622,8 +1609,7 @@ export const ExternalAgentStatusResponse = z.strictObject({
 		}),
 		z.strictObject({
 			available: z.literal(false),
-			reason: z.union([z.literal("no_codex_found"), z.literal("version_mismatch")]),
-			found: z.string().min(1).max(64).optional(),
+			reason: z.union([z.literal("no_codex_found"), z.literal("not_connected")]),
 		}),
 	]),
 });

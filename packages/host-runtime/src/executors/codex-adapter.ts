@@ -34,8 +34,6 @@ import { AcpExecutorController } from "./acp-executor.js";
 import { ensurePrivateDirectory, isolatedRunEnvironment, workspaceFor } from "./environment.js";
 import type { ExecutorLaunchRequest } from "./router.js";
 
-/** The only user-consented Codex CLI version the harness will run (pinned). */
-const PINNED_VERSION = "0.147.0";
 /** Bounded `codex --version` probe timeout. */
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
 /** Max symlink hops while resolving a candidate chain. */
@@ -55,7 +53,7 @@ const CODEX_PLATFORM_PACKAGE =
 							? { packageName: "@openai/codex-win32-x64", target: "x86_64-pc-windows-msvc" }
 							: undefined;
 
-export type CodexCandidateStatus = "usable" | "version_mismatch" | "not_found" | "rejected";
+export type CodexCandidateStatus = "usable" | "not_found" | "rejected";
 
 /** One discovered candidate location and its probe result. */
 export interface CodexCandidate {
@@ -99,7 +97,7 @@ export interface CodexRunManifest {
 export type CodexStatus =
 	| { available: true; profileId: string; version: string; hash: string }
 	| { available: false; reason: "no_codex_found" }
-	| { available: false; reason: "version_mismatch"; found: string };
+	| { available: false; reason: "not_connected" };
 
 /** Error convention: every adapter failure is thrown as `{kind, reason}`. */
 function fail(kind: string, reason: string): never {
@@ -263,7 +261,7 @@ export class CodexAdapter extends AcpExecutorController {
 			canonicalPath,
 			version,
 			sha256,
-			status: version === PINNED_VERSION ? "usable" : "version_mismatch",
+			status: "usable",
 		};
 	}
 
@@ -287,10 +285,7 @@ export class CodexAdapter extends AcpExecutorController {
 				c.sha256 === profileConfig.sha256,
 		);
 		if (!match) {
-			fail(
-				"validation_failed",
-				`no discovered ${PINNED_VERSION} candidate matches {canonicalPath, version, sha256}`,
-			);
+			fail("validation_failed", "no discovered candidate matches {canonicalPath, version, sha256}");
 		}
 
 		const capability: CodexProfileCapability = {
@@ -324,7 +319,6 @@ export class CodexAdapter extends AcpExecutorController {
 			})
 			.run();
 
-		this.eventBus.publish("codex.consented", { profileId, ...capability });
 		return { profileId, ...capability };
 	}
 
@@ -337,9 +331,6 @@ export class CodexAdapter extends AcpExecutorController {
 		const capability = codexCapability(request.profile.capabilities);
 		if (managedCodexExecutable(capability.canonicalPath) !== capability.canonicalPath) {
 			fail("profile_invalid", "codex profile must consent the exact native executable");
-		}
-		if (capability.version !== PINNED_VERSION) {
-			fail("profile_invalid", `codex profile version must remain ${PINNED_VERSION}`);
 		}
 		if (probeVersion(capability.canonicalPath) !== capability.version) {
 			fail("executor_binary_changed", "consented Codex version no longer matches");
@@ -418,7 +409,6 @@ export class CodexAdapter extends AcpExecutorController {
 				typeof capability.version === "string" &&
 				typeof capability.sha256 === "string" &&
 				managedCodexExecutable(capability.canonicalPath) === capability.canonicalPath &&
-				capability.version === PINNED_VERSION &&
 				probeVersion(capability.canonicalPath) === capability.version &&
 				(await sha256Of(capability.canonicalPath).catch(() => null)) === capability.sha256 &&
 				(await validCodeModeHostCapability(capability))
@@ -433,12 +423,9 @@ export class CodexAdapter extends AcpExecutorController {
 		}
 
 		const candidates = await this.discover();
-		for (const candidate of candidates) {
-			if (candidate.status === "version_mismatch" && candidate.version !== null) {
-				return { available: false, reason: "version_mismatch", found: candidate.version };
-			}
-		}
-		return { available: false, reason: "no_codex_found" };
+		return candidates.some((candidate) => candidate.status === "usable")
+			? { available: false, reason: "not_connected" }
+			: { available: false, reason: "no_codex_found" };
 	}
 }
 

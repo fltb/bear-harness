@@ -331,7 +331,6 @@ export const en = {
 		codexInstallation: "Codex installation",
 		diagnosticDetails: "Diagnostic details",
 		codexCandidateUsable: "Compatible and ready to connect",
-		codexCandidateVersionMismatch: "Incompatible version; cannot connect",
 		codexCandidateRejected: "This installation could not be verified",
 		connectCodex: "Connect this Codex",
 		refreshCodex: "Detect again",

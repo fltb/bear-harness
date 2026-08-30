@@ -687,23 +687,17 @@ function reconciliationError(error: unknown): string {
 export function externalAgentResultMessage(
 	result: Pick<TerminalRunResult, "run" | "outputs">,
 ): string {
-	const payload = {
-		runId: result.run.id,
-		status: result.run.status,
-		title: sanitizeExternalAgentMemoryText(result.run.title, 512),
-		summary: sanitizeExternalAgentMemoryText(result.run.summary ?? "", 4_000),
-		artifacts: result.outputs.slice(0, 50).map((output) => ({
-			id: output.id,
-			name: sanitizeExternalAgentMemoryText(output.logicalName, 256),
-			bytes: output.bytes,
-			mime: output.mime,
-		})),
-	};
+	const title = sanitizeExternalAgentMemoryText(result.run.title, 512);
+	const summary = sanitizeExternalAgentMemoryText(result.run.summary ?? "No result text.", 4_000);
+	const artifacts = result.outputs
+		.slice(0, 50)
+		.map((output) => sanitizeExternalAgentMemoryText(output.logicalName, 256));
 	return sanitizeExternalAgentMemoryText(
-		"An external agent run has finished. Give the user one concise role-appropriate " +
-			"follow-up based only on this result. Generated artifacts are available in the Run result " +
-			"to the conversation; do not expose local paths or internal execution logs.\n" +
-			JSON.stringify(payload),
+		[
+			`External work ${result.run.status}: ${title}`,
+			summary,
+			...artifacts.map((name) => `Artifact: ${name}`),
+		].join("\n\n"),
 		6_000,
 	);
 }

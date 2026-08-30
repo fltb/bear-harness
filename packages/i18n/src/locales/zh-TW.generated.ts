@@ -316,7 +316,6 @@ export const zhTW = {
 		"codexInstallation": "Codex 安裝",
 		"diagnosticDetails": "診斷詳情",
 		"codexCandidateUsable": "相容，可以連線",
-		"codexCandidateVersionMismatch": "版本不相容，當前不能連線",
 		"codexCandidateRejected": "無法驗證此安裝，當前不能連線",
 		"connectCodex": "連線此 Codex",
 		"refreshCodex": "重新檢測",

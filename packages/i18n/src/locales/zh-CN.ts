@@ -312,7 +312,6 @@ export const zhCN = {
 		codexInstallation: "Codex 安装",
 		diagnosticDetails: "诊断详情",
 		codexCandidateUsable: "兼容，可以连接",
-		codexCandidateVersionMismatch: "版本不兼容，当前不能连接",
 		codexCandidateRejected: "无法验证此安装，当前不能连接",
 		connectCodex: "连接此 Codex",
 		refreshCodex: "重新检测",

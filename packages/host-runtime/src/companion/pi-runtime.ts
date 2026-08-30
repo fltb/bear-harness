@@ -231,10 +231,10 @@ export class PiRuntime {
 			{
 				customType: "host_external_agent_result",
 				content,
-				display: false,
+				display: true,
 				details: { runId },
 			},
-			{ triggerTurn: true, deliverAs: "followUp" },
+			{ triggerTurn: false },
 		);
 		return { entryId: session.sessionManager.getLeafId() ?? runId };
 	}

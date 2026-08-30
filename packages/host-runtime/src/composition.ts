@@ -94,7 +94,7 @@ export interface HostCompositionContext {
 				canonicalPath: string | null;
 				version: string | null;
 				sha256: string | null;
-				status: "usable" | "version_mismatch" | "not_found" | "rejected";
+				status: "usable" | "not_found" | "rejected";
 			}>
 		>;
 		consent(params: {
@@ -106,7 +106,7 @@ export interface HostCompositionContext {
 		status(): Promise<
 			| { available: true; profileId: string; version: string; hash: string }
 			| { available: false; reason: "no_codex_found" }
-			| { available: false; reason: "version_mismatch"; found: string }
+			| { available: false; reason: "not_connected" }
 		>;
 	};
 	artifacts: ArtifactStore;

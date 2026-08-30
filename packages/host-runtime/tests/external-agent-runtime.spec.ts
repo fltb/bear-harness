@@ -20,6 +20,7 @@ import { CodexAdapter } from "../src/executors/codex-adapter.js";
 import { externalAgentEnvironment } from "../src/executors/environment.js";
 import { PiAcpAdapter } from "../src/executors/pi-adapter.js";
 import type { ExecutorLaunchRequest } from "../src/executors/router.js";
+import { externalAgentResultMessage } from "../src/external-agents/run-service.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -296,5 +297,30 @@ describe("external-agent process environments", () => {
 		writeFileSync(join(snapshotCodexHome, "auth.json"), '{"token":"run-only"}\n');
 		expect(readFileSync(join(codexHome, "auth.json"), "utf8")).toContain("canonical-secret");
 		expect(readFileSync(join(codexHome, "auth.json"), "utf8")).not.toContain("run-only");
+	});
+});
+
+describe("external-agent result delivery", () => {
+	it("returns the settled run summary verbatim instead of asking Pi to rewrite it", () => {
+		const message = externalAgentResultMessage({
+			run: {
+				id: "run-1",
+				conversationId: "conversation-1",
+				triggerEntryId: "entry-1",
+				executorProfile: "codex-profile",
+				title: "Read package.json",
+				status: "completed",
+				startedAt: "2026-08-30T00:00:00.000Z",
+				completedAt: "2026-08-30T00:00:01.000Z",
+				summary: "The top-level name is `bear-harness`.",
+				artifacts: [],
+			},
+			outputs: [],
+		});
+
+		expect(message).toBe(
+			"External work completed: Read package.json\n\nThe top-level name is `bear-harness`.",
+		);
+		expect(message).not.toContain("Give the user");
 	});
 });

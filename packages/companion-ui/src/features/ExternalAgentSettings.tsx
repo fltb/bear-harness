@@ -15,7 +15,6 @@ export function ExternalAgentSettings() {
 	const [error, setError] = createSignal<string>();
 	const candidateStatus = (candidate: ExternalAgentCandidate) => {
 		if (candidate.status === "usable") return t("settings.codexCandidateUsable");
-		if (candidate.status === "version_mismatch") return t("settings.codexCandidateVersionMismatch");
 		return t("settings.codexCandidateRejected");
 	};
 

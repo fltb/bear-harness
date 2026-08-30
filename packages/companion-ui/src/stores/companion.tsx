@@ -738,6 +738,13 @@ function projectTimeline(session?: ConversationSelectResponse): PiTimeline | und
 			parentId: typeof raw.parentId === "string" ? raw.parentId : null,
 			timestamp: raw.timestamp,
 		};
+		if (
+			raw.type === "custom_message" &&
+			raw.customType === "host_external_agent_result" &&
+			raw.display === true &&
+			typeof raw.content === "string"
+		)
+			return [{ ...base, kind: "message", role: "assistant", text: raw.content }];
 		if (raw.type !== "message" || !isRecord(raw.message) || typeof raw.message.role !== "string")
 			return [{ ...base, kind: supportedContextKind(raw.type) }];
 		const message = raw.message;

@@ -154,7 +154,7 @@ describe("ACP executor adapters", () => {
 			mkdirSync(cwd);
 			const binary = join(cwd, "codex");
 			const codeModeHost = join(cwd, "codex-code-mode-host");
-			writeFileSync(binary, "#!/bin/sh\necho 'codex 0.147.0'\n");
+			writeFileSync(binary, "#!/bin/sh\necho 'codex 0.149.1'\n");
 			writeFileSync(codeModeHost, "#!/bin/sh\nexit 0\n");
 			chmodSync(binary, 0o755);
 			chmodSync(codeModeHost, 0o755);
@@ -175,7 +175,7 @@ describe("ACP executor adapters", () => {
 				type: "codex",
 				capabilities: {
 					canonicalPath: binary,
-					version: "0.147.0",
+					version: "0.149.1",
 					sha256: hash,
 					codeModeHostPath: codeModeHost,
 					codeModeHostSha256: codeModeHostHash,
