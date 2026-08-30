@@ -72,47 +72,6 @@ function persistMarker(root: string, marker: DurableFileTransactionMarker): void
 }
 
 describe("custom OpenAI-compatible provider configuration", () => {
-	it("migrates legacy Pi auth.json credentials into the Host credential backend", async () => {
-		const root = mkdtempSync(join(tmpdir(), "bear-provider-auth-migration-"));
-		roots.push(root);
-		const legacy = {
-			type: "oauth" as const,
-			access: "legacy-access",
-			refresh: "legacy-refresh",
-			expires: Date.now() + 60_000,
-		};
-		writeFileSync(join(root, "auth.json"), JSON.stringify({ "openai-codex": legacy }), {
-			mode: 0o600,
-		});
-		let stored: Parameters<CredentialStore["set"]>[1] | undefined;
-		const credentials = {
-			list: vi.fn(async () =>
-				stored ? [{ providerId: "openai-codex", status: "stored" as const }] : [],
-			),
-			get: vi.fn(async () =>
-				stored
-					? {
-							providerId: "openai-codex",
-							...stored,
-							status: "stored" as const,
-							updatedAt: new Date().toISOString(),
-						}
-					: null,
-			),
-			getStatus: vi.fn(async () => (stored ? ("stored" as const) : ("missing" as const))),
-			set: vi.fn(async (_providerId: string, credential: Parameters<CredentialStore["set"]>[1]) => {
-				stored = credential;
-				return "stored" as const;
-			}),
-			remove: vi.fn(async () => undefined),
-		} as unknown as CredentialStore;
-
-		await new ProviderCatalog(credentials, root).listProviders();
-
-		expect(stored).toEqual({ piCredential: legacy });
-		expect(existsSync(join(root, "auth.json"))).toBe(false);
-	});
-
 	it("projects every Pi authentication method instead of collapsing OAuth-capable providers", async () => {
 		const root = mkdtempSync(join(tmpdir(), "bear-provider-auth-methods-"));
 		roots.push(root);

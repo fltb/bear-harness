@@ -71,21 +71,6 @@ const MAX_MIGRATION_STEPS = 50;
 const RETAIN_BACKUPS = 2;
 /** Query latency threshold for logging. */
 const SLOW_QUERY_MS = 16;
-/**
- * The sole pre-release v1 baseline shipped before `conversations.scene_title`
- * was replaced by Host-owned companion documents. This is intentionally a checksum,
- * not a loose schema probe: no unknown database is ever rewritten.
- */
-const PRE_RELEASE_V1_SCENE_TITLE_CHECKSUM =
-	"0ac4f43cf5d1aed5e85a00bc725e57d6b9a00e3ed17386845ca76cbe4452a3ea";
-const PRE_RELEASE_UNIFIED_STATE_CHECKSUMS = [
-	"0030cc9348a8fb92d91377bda37c7bdd734093f2b603754082bbc04325fafef4",
-	"934608282ee3908eca0f67287e128832e05db7fc1039c3cc7850357e0b173dd6",
-	"286dfe911ea362af449b68d8e6442a7925d351b07e80be22654f104e49b9dc23",
-] as const;
-const PRE_RELEASE_SINGLE_BASELINE_UNIFIED_STATE_CHECKSUM =
-	"b825b5593b94c3f48b224fae6a6eb4b5b5b86fb8c3981dddd2afa94e48e23618";
-
 // ---------------------------------------------------------------------------
 // Migration type
 // ---------------------------------------------------------------------------
@@ -421,128 +406,6 @@ export class Database {
 		if (rebuildsForeignKeys) this.connection.exec("PRAGMA foreign_keys = ON");
 	}
 
-	/**
-	 * Fold the one known pre-release v1 database into the final v1 baseline.
-	 *
-	 * This is deliberately not a numbered migration: release 1.0 still has one
-	 * canonical baseline. The exact old checksum and obsolete column must both
-	 * match before any write occurs. The normal verified-backup/recovery-marker
-	 * contract applies, and an interrupted or failed rewrite stays recoverable.
-	 */
-	private reconcilePreReleaseV1(migrations: readonly Migration[]): void {
-		if (migrations[0]?.id !== 1) return;
-		const applied = this.connection
-			.prepare("SELECT id, checksum FROM schema_migrations ORDER BY id")
-			.all() as Array<{ id: number; checksum: string }>;
-		const isUnifiedStatePreview =
-			(applied.length === 1 &&
-				applied[0]?.id === 1 &&
-				applied[0].checksum === PRE_RELEASE_SINGLE_BASELINE_UNIFIED_STATE_CHECKSUM) ||
-			(applied.length === PRE_RELEASE_UNIFIED_STATE_CHECKSUMS.length &&
-				applied.every(
-					(record, index) =>
-						record.id === index + 1 &&
-						record.checksum === PRE_RELEASE_UNIFIED_STATE_CHECKSUMS[index],
-				));
-		if (isUnifiedStatePreview) {
-			const tables = new Set(
-				(
-					this.connection
-						.prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
-						.all() as Array<{
-						name: string;
-					}>
-				).map((row) => row.name),
-			);
-			if (
-				!tables.has("companion_state_documents") ||
-				!tables.has("pending_companion_effects") ||
-				!tables.has("companion_state_commits") ||
-				[
-					"character_state_documents",
-					"scene_state",
-					"conversation_directives",
-					"roleplay_unlocks",
-				].some((table) => tables.has(table))
-			) {
-				throw new Error(
-					"known unified-state preview has an unexpected schema; refusing rebaseline",
-				);
-			}
-			const lastKnownGoodBackup = this.backupPaths()[0];
-			const backupPath = this.backupSchema(3, 1);
-			this.writeUpgradeMarker({ sourceVersion: 3, targetVersion: 1, backupPath, state: "pending" });
-			try {
-				this.connection.exec("BEGIN IMMEDIATE");
-				this.connection.exec(`
-					DROP TABLE roleplay_events;
-					DROP TABLE pending_companion_effects;
-					DROP TABLE companion_state_commits;
-				`);
-				this.connection.prepare("DELETE FROM schema_migrations").run();
-				this.connection
-					.prepare("INSERT INTO schema_migrations (id, checksum) VALUES (1, ?)")
-					.run(this.checksum(migrations[0].up));
-				this.connection.exec("COMMIT");
-				this.validateDatabase(this.connection, "rebaselined unified-state preview database");
-			} catch (error) {
-				if (this.connection.isTransaction) this.connection.exec("ROLLBACK");
-				throw new Error(
-					`unified-state preview reconciliation failed: ${(error as Error)?.message ?? String(error)}; ` +
-						`verified backup at ${backupPath}; recovery marker at ${this.upgradeMarkerPath}`,
-				);
-			}
-			this.clearUpgradeMarker();
-			this.pruneBackups(
-				new Set(lastKnownGoodBackup ? [backupPath, lastKnownGoodBackup] : [backupPath]),
-			);
-			return;
-		}
-		const record = this.connection
-			.prepare("SELECT checksum FROM schema_migrations WHERE id = 1")
-			.get() as { checksum: string } | undefined;
-		if (record?.checksum !== PRE_RELEASE_V1_SCENE_TITLE_CHECKSUM) return;
-
-		const columns = new Set(
-			(
-				this.connection.prepare("PRAGMA table_info(conversations)").all() as Array<{ name: string }>
-			).map((column) => column.name),
-		);
-		if (!columns.has("scene_title")) {
-			throw new Error(
-				"known pre-release v1 checksum has an unexpected conversations schema; refusing rewrite",
-			);
-		}
-
-		const lastKnownGoodBackup = this.backupPaths()[0];
-		const backupPath = this.backupSchema(1, 1);
-		this.writeUpgradeMarker({ sourceVersion: 1, targetVersion: 1, backupPath, state: "pending" });
-		try {
-			this.connection.exec("BEGIN IMMEDIATE");
-			try {
-				this.connection.exec("ALTER TABLE conversations DROP COLUMN scene_title");
-				this.connection
-					.prepare("UPDATE schema_migrations SET checksum = ? WHERE id = 1 AND checksum = ?")
-					.run(this.checksum(migrations[0].up), PRE_RELEASE_V1_SCENE_TITLE_CHECKSUM);
-				this.connection.exec("COMMIT");
-			} catch (error) {
-				this.connection.exec("ROLLBACK");
-				throw error;
-			}
-			this.validateDatabase(this.connection, "reconciled pre-release v1 database");
-		} catch (error) {
-			throw new Error(
-				`pre-release v1 reconciliation failed: ${(error as Error)?.message ?? String(error)}; ` +
-					`verified backup at ${backupPath}; recovery marker at ${this.upgradeMarkerPath}`,
-			);
-		}
-
-		this.clearUpgradeMarker();
-		this.pruneBackups(
-			new Set(lastKnownGoodBackup ? [backupPath, lastKnownGoodBackup] : [backupPath]),
-		);
-	}
-
 	/** Run all pending migrations in order. */
 	migrate(migrations: Migration[]): void {
 		if (migrations.length > MAX_MIGRATION_STEPS) {
@@ -560,8 +423,6 @@ export class Database {
 				);
 			}
 		}
-		this.reconcilePreReleaseV1(ordered);
-
 		const current = this.currentVersion();
 		const knownIds = new Set(ordered.map((migration) => migration.id));
 		const applied = this.connection
@@ -640,39 +501,11 @@ export class Database {
 				"executor_profile",
 				"title",
 				"instruction",
-				"input_attachment_ids",
-				"workspace_attachment_id",
+				"input_paths",
 				"status",
 				"created_at",
 			],
-			conversation_attachments: [
-				"id",
-				"conversation_id",
-				"origin_entry_id",
-				"send_nonce",
-				"kind",
-				"name",
-				"total_bytes",
-				"file_count",
-				"created_at",
-			],
-			conversation_attachment_files: [
-				"id",
-				"attachment_id",
-				"entry_kind",
-				"relative_path",
-				"artifact_id",
-				"sha256",
-			],
 			configured_models: ["provider_id", "model_id", "label", "supports_images", "created_at"],
-			conversation_model_selections: ["conversation_id", "provider_id", "model_id", "updated_at"],
-			conversation_sessions: [
-				"conversation_id",
-				"pi_session_id",
-				"session_file_path",
-				"created_at",
-				"updated_at",
-			],
 			relationship_memory_entries: ["source_pi_session_id", "source_native_entry_id"],
 			memory_candidates: ["source_pi_session_id", "source_native_entry_id"],
 			companion_state_documents: [
@@ -685,18 +518,6 @@ export class Database {
 				"revision",
 				"schema_hash",
 			],
-			pending_state_mutations: [
-				"id",
-				"companion_id",
-				"conversation_id",
-				"pi_session_id",
-				"source_user_entry_id",
-				"assistant_entry_id",
-				"operations_json",
-				"expected_revisions_json",
-				"status",
-			],
-			state_mutation_log: ["id", "source_user_entry_id", "assistant_entry_id"],
 			memory_presentation: [
 				"backend_memory_id",
 				"installation_id",
@@ -738,7 +559,7 @@ export class Database {
 // Migration definitions
 // ---------------------------------------------------------------------------
 
-/** Bear 1.0 release baseline. Add upgrade migrations only after the 1.0 artifact is published. */
+/** Canonical first-install schema. Pre-release compatibility migrations are intentionally absent. */
 export const MIGRATIONS: Migration[] = [
 	{ id: 1, description: "Bear 1.0 canonical schema", up: BASELINE_V1_SQL },
 ];

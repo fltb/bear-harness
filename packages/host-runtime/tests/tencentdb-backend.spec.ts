@@ -7,10 +7,8 @@ import {
 	withMemoryNotifications,
 } from "../src/memory/backend.js";
 import {
-	legacyNamespaceFor,
 	namespaceFor,
 	type TencentDbCoreHit,
-	type TencentDbCoreNamespaceMigrationRequest,
 	type TencentDbCoreRecord,
 	TencentDbMemoryBackend,
 	type TencentDbMemoryCoreFacade,
@@ -37,24 +35,6 @@ class FakeTencentDbCore implements TencentDbMemoryCoreFacade {
 	readonly calls: Array<{ method: string; request: Record<string, unknown> }> = [];
 	private nextId = 1;
 	private readonly records = new Map<string, Map<string, TencentDbCoreRecord>>();
-
-	migrateNamespace(request: TencentDbCoreNamespaceMigrationRequest): Promise<void> {
-		this.calls.push({ method: "migrateNamespace", request });
-		const legacy = this.forNamespace(request.legacyNamespace);
-		const canonical = this.forNamespace(request.canonicalNamespace);
-		for (const [id, record] of legacy) {
-			const existing = canonical.get(id);
-			if (existing && JSON.stringify(existing) !== JSON.stringify(record)) {
-				const error = Object.assign(new Error(`migration conflict for ${id}`), {
-					code: "recovery_required",
-				});
-				return Promise.reject(error);
-			}
-		}
-		for (const [id, record] of legacy) canonical.set(id, { ...record });
-		legacy.clear();
-		return Promise.resolve();
-	}
 
 	remember(
 		request: Parameters<TencentDbMemoryCoreFacade["remember"]>[0],
@@ -185,35 +165,8 @@ describe("TencentDB memory backend", () => {
 			core.calls.filter((call) => call.method === "remember").map((call) => call.request.namespace),
 		).toEqual(["memory:v1:install-a:user-a:companion-a", "memory:v1:install-b:user-a:companion-a"]);
 	});
-	it("derives canonical and one-time legacy namespace identities", () => {
+	it("derives the canonical namespace identity", () => {
 		expect(namespaceFor(scopeA)).toBe("memory:v1:install-a:user-a:companion-a");
-		expect(legacyNamespaceFor(scopeA)).toBe("cyber-bear:install-a:user-a:companion-a");
-		expect(legacyNamespaceFor(scopeA, "legacy-install")).toBe(
-			"cyber-bear:legacy-install:user-a:companion-a",
-		);
-	});
-
-	it("surfaces a recovery-required error for conflicting legacy and canonical IDs", async () => {
-		const core = new FakeTencentDbCore();
-		const legacyRecord: TencentDbCoreRecord = {
-			id: "shared-memory",
-			text: "legacy text",
-			provenance,
-			importance: 0.8,
-			status: "invalidated",
-			metadata: { replacementMemoryId: "replacement-memory" },
-			createdAt: "2026-01-01T00:00:00.000Z",
-			updatedAt: "2026-01-02T00:00:00.000Z",
-			invalidatedAt: "2026-01-02T00:00:00.000Z",
-		};
-		core.seed(legacyNamespaceFor(scopeA), legacyRecord);
-		core.seed(namespaceFor(scopeA), { ...legacyRecord, text: "canonical conflict" });
-
-		const backend = new TencentDbMemoryBackend(core);
-		await expect(backend.open({ scope: scopeA })).rejects.toMatchObject({
-			code: "recovery_required",
-		});
-		await expect(backend.diagnostics()).resolves.toMatchObject({ state: "closed" });
 	});
 
 	it("retains Tdai activity metadata without asserting arbitrary Host metadata", async () => {
@@ -254,23 +207,22 @@ describe("TencentDB memory backend", () => {
 		await backend.forget({ scope: scopeA, memoryId: created.id });
 
 		expect(core.calls.map((call) => call.method)).toEqual([
-			"migrateNamespace",
 			"remember",
 			"update",
 			"setImportance",
 			"invalidate",
 			"forget",
 		]);
-		for (const call of core.calls.filter((item) => item.method !== "migrateNamespace")) {
+		for (const call of core.calls) {
 			expect(call.request.namespace).toBe("memory:v1:install-a:user-a:companion-a");
 		}
-		expect(core.calls[2]?.request).toMatchObject({ memoryId: created.id, text: "updated memory" });
-		expect(core.calls[3]?.request).toMatchObject({ memoryId: created.id, importance: 0.95 });
-		expect(core.calls[4]?.request).toMatchObject({
+		expect(core.calls[1]?.request).toMatchObject({ memoryId: created.id, text: "updated memory" });
+		expect(core.calls[2]?.request).toMatchObject({ memoryId: created.id, importance: 0.95 });
+		expect(core.calls[3]?.request).toMatchObject({
 			memoryId: created.id,
 			replacementMemoryId: "replacement-memory",
 		});
-		expect(core.calls[5]?.request).toMatchObject({ memoryId: created.id });
+		expect(core.calls[4]?.request).toMatchObject({ memoryId: created.id });
 	});
 
 	it("delegates panel mutations through the direct memory contract", async () => {
@@ -289,7 +241,6 @@ describe("TencentDB memory backend", () => {
 		await backend.forget({ scope: scopeA, memoryId: created.id });
 
 		expect(core.calls.map((call) => call.method)).toEqual([
-			"migrateNamespace",
 			"remember",
 			"update",
 			"invalidate",
@@ -297,23 +248,23 @@ describe("TencentDB memory backend", () => {
 			"forget",
 		]);
 		expect(
-			core.calls
-				.filter((call) => call.method !== "migrateNamespace")
-				.every((call) => call.request.namespace === "memory:v1:install-a:user-a:companion-a"),
+			core.calls.every(
+				(call) => call.request.namespace === "memory:v1:install-a:user-a:companion-a",
+			),
 		).toBe(true);
-		expect(core.calls[2]?.request).toMatchObject({
+		expect(core.calls[1]?.request).toMatchObject({
 			memoryId: created.id,
 			text: "edited panel memory",
 		});
-		expect(core.calls[3]?.request).toMatchObject({
+		expect(core.calls[2]?.request).toMatchObject({
 			memoryId: created.id,
 			replacementMemoryId: "replacement-memory",
 		});
-		expect(core.calls[4]?.request).toMatchObject({
+		expect(core.calls[3]?.request).toMatchObject({
 			memoryId: created.id,
 			importance: 1,
 		});
-		expect(core.calls[5]?.request).toMatchObject({ memoryId: created.id });
+		expect(core.calls[4]?.request).toMatchObject({ memoryId: created.id });
 	});
 	it("rejects invalid scope and aborted requests before invoking core", async () => {
 		const core = new FakeTencentDbCore();
@@ -323,7 +274,7 @@ describe("TencentDB memory backend", () => {
 		await expect(
 			backend.remember(rememberRequest({ ...scopeA, userId: "user:ambiguous" }, "invalid scope")),
 		).rejects.toMatchObject({ code: "invalid_scope", operation: "remember" });
-		expect(core.calls).toHaveLength(1);
+		expect(core.calls).toHaveLength(0);
 
 		const controller = new AbortController();
 		controller.abort();
@@ -333,7 +284,7 @@ describe("TencentDB memory backend", () => {
 				signal: controller.signal,
 			}),
 		).rejects.toThrow("TencentDB memory operation aborted");
-		expect(core.calls).toHaveLength(1);
+		expect(core.calls).toHaveLength(0);
 	});
 
 	it("rejects ambiguous scope components", async () => {

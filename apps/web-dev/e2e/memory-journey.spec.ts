@@ -1,6 +1,6 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
-import { ensureReadyForConversation, getBootstrap, sendMessage } from "./helpers";
+import { ensureReadyForConversation, getBootstrap, projectPiEntries, sendMessage } from "./helpers";
 
 test("direct memory capture, scoped context, and user management stay deterministic", async ({
 	page,
@@ -39,24 +39,22 @@ test("direct memory capture, scoped context, and user management stay determinis
 					data: {},
 				});
 				const payload = (await response.json()) as {
-					data?: {
-						conversation?: {
-							piTimeline: { entries: Array<{ kind: string; role?: string; text?: string }> };
-						};
-					};
+					data?: { session?: { entries: unknown[] } };
 				};
-				return payload.data?.conversation?.piTimeline.entries.some(
+				return projectPiEntries(payload.data?.session?.entries ?? []).some(
 					(entry) =>
 						entry.kind === "message" &&
 						entry.role === "assistant" &&
-						entry.text === expectedAssistantText,
+						entry.text?.trim() === expectedAssistantText,
 				);
 			})
 			.toBe(true);
 		const article = page
 			.getByRole("article", { name: "极昼" })
 			.filter({ has: page.getByText(expectedAssistantText, { exact: true }) });
-		const remember = article.getByRole("button", { name: zhCN.messages.rememberMoment });
+		const remember = article.getByRole("button", {
+			name: zhCN.messages.rememberMoment,
+		});
 		await remember.click();
 		const content = `用户：${expectedAssistantText}\n角色：${expectedAssistantText}`;
 		let capture: { id: string; sourceEntryId?: string } | undefined;
@@ -81,7 +79,9 @@ test("direct memory capture, scoped context, and user management stay determinis
 		});
 		await expect(characterSettingsButton).toBeEnabled();
 		await characterSettingsButton.click();
-		const dialog = page.getByRole("dialog", { name: zhCN.sidebar.characterSettings });
+		const dialog = page.getByRole("dialog", {
+			name: zhCN.sidebar.characterSettings,
+		});
 		await expect(dialog).toBeVisible();
 		await dialog.getByRole("tab", { name: zhCN.backstage.roleManagement }).click();
 		const relationshipTab = dialog.getByRole("tab", {

@@ -34,15 +34,8 @@ const WireTimestamp = z
 	.min(1)
 	.max(64)
 	.refine((value) => Number.isFinite(Date.parse(value)), "must be a valid timestamp");
-export const MAX_MESSAGE_ATTACHMENTS = 10;
 export const MAX_MESSAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_MESSAGE_ATTACHMENT_BASE64_LENGTH = Math.ceil(MAX_MESSAGE_ATTACHMENT_BYTES / 3) * 4;
-export const MessageStatus = z.union([
-	z.literal("completed"),
-	z.literal("failed"),
-	z.literal("aborted"),
-]);
-
 const boundedRecord = <K extends z.ZodString, V extends Schema>(
 	key: K,
 	value: V,
@@ -97,11 +90,7 @@ export const EmptyResponse = z.strictObject({});
 
 export const EventSeq = z.number().int().safe().min(0).max(MAX_SAFE_INT);
 
-/**
- * Event payloads are deliberately JSON-only and bounded.  This keeps replay
- * rows safe even when an event is produced by a plugin, while still allowing
- * the opaque branch below to carry a forward-compatible event kind.
- */
+/** Event payload values that intentionally carry bounded JSON data. */
 type BoundedEventValue =
 	| string
 	| number
@@ -164,29 +153,16 @@ const BoundedEventValue = z.custom<BoundedEventValue>(
 	(value) => isBoundedEventValue(value),
 	"event payload exceeds its complexity bounds",
 );
-export const OpaqueEventPayload = BoundedEventValue;
 
 const EventId = z.string().min(1).max(1024);
 const EventText = z.string().max(MAX_STRING_LENGTH);
 const EventPayload = <const Shape extends z.core.$ZodLooseShape>(shape: Shape) =>
-	z
-		.object(shape)
-		.catchall(BoundedEventValue)
-		.superRefine((value, context) => {
-			if (Object.keys(value).length > MAX_ARRAY_LENGTH) {
-				context.addIssue({
-					code: "custom",
-					message: "too many event payload fields",
-				});
-			}
-		});
+	z.strictObject(shape);
 const EventStringList = z.array(EventText).max(MAX_ARRAY_LENGTH);
 
 /**
  * Payload contracts for every event currently emitted by Host or consumed by
- * the renderer.  Unknown kinds intentionally use the bounded opaque payload
- * branch in `DomainEvent`; known kinds always validate the fields consumers
- * read before they are persisted or projected.
+ * the renderer. Every kind and field must be declared before use.
  */
 export const EmbeddingDownloadState = z.strictObject({
 	status: z.enum([
@@ -209,9 +185,6 @@ export const EventPayloadSchemas = {
 		sync: SyncRevision,
 		sources: z.array(z.string().min(1).max(160)).max(256),
 	}),
-	"conversationAttachment.upload_changed": z.strictObject({
-		conversationId: EventId,
-	}),
 	"provider.login_changed": z.strictObject({ providerId: EventId }),
 	"memory.embedding_download_changed": EmbeddingDownloadState,
 	"memory.records_changed": z.strictObject({}),
@@ -225,33 +198,6 @@ export const EventPayloadSchemas = {
 	}),
 	"character.activated": EventPayload({ characterId: EventId }),
 	"character.seeded": EventPayload({ id: EventId, name: EventText }),
-	"character.scene_changed": EventPayload({
-		conversationId: EventId,
-		characterId: EventId,
-		sceneId: EventId,
-		visualState: EventText,
-	}),
-	"character.visual_state_changed": EventPayload({
-		conversationId: EventId,
-		characterId: EventId,
-		sceneId: EventId,
-		visualState: EventText,
-	}),
-	"character.state_changed": EventPayload({
-		conversationId: EventId,
-		revisions: z.strictObject({
-			conversation: z.number().int().safe().nonnegative(),
-			relationship: z.number().int().safe().nonnegative(),
-			character: z.number().int().safe().nonnegative(),
-		}),
-		schemaHash: z.string().length(64),
-	}),
-	"roleplay.unlocks_reset": EventPayload({}),
-	"roleplay.state_changed": EventPayload({
-		conversationId: EventId,
-		eventId: EventId.optional(),
-		state: BoundedEventValue,
-	}),
 	"conversation.created": EventPayload({
 		conversationId: EventId,
 		title: EventText.optional(),
@@ -266,16 +212,10 @@ export const EventPayloadSchemas = {
 		archived: z.boolean(),
 	}),
 	"conversation.deleted": EventPayload({ conversationId: EventId }),
-	"conversation.branched": EventPayload({
-		conversationId: EventId,
-		messageId: EventId,
-		branchId: EventId,
-	}),
 	"settings.changed": EventPayload({
 		settings: BoundedEventValue,
 		changed: EventStringList,
 	}),
-	"diagnostics.memory_capture_failed": EventPayload({ message: EventText }),
 	"diagnostics.protocol_violation": EventPayload({
 		channel: EventText,
 		issues: z.array(BoundedEventValue).max(MAX_ARRAY_LENGTH),
@@ -331,93 +271,13 @@ export const EventPayloadSchemas = {
 	"run.steered": EventPayload({ runId: EventId, instruction: EventText }),
 	"run.interrupted": EventPayload({ runId: EventId }),
 	"run.resumed": EventPayload({ runId: EventId }),
-	"run.cancelled": EventPayload({ runId: EventId }),
-	"companion.tool_started": EventPayload({
-		conversationId: EventId,
-		toolCallId: EventId,
-		tool: EventText,
-		label: EventText,
-	}),
-	"companion.tool_finished": EventPayload({
-		conversationId: EventId,
-		toolCallId: EventId,
-		tool: EventText.optional(),
-		ok: z.boolean(),
-		message: EventText.optional(),
-	}),
-	"companion.state_changed": EventPayload({
-		state: z.enum(["running", "crashed", "unavailable", "stopped"]),
-		error: EventText.optional(),
-	}),
 	"companion.snapshot_changed": EventPayload({
 		conversationId: EventId,
 		commitId: z.string().min(1).max(512),
 	}),
-	"companion.runtime_error": EventPayload({
-		conversationId: EventId.optional(),
-		code: EventText,
-		message: EventText.optional(),
-		command: EventText.optional(),
-	}),
-	"companion.runtime_ready": EventPayload({
-		conversationId: EventId,
-		skills: EventStringList,
-		tools: EventStringList,
-	}),
 	"pi.session.changed": EventPayload({
 		conversationId: EventId,
 		sessionId: z.string().min(1).max(128),
-		reason: z.enum(["message", "turn", "agent", "tool", "compaction", "queue"]),
-	}),
-	message_start: EventPayload({ conversationId: EventId }),
-	message_update: EventPayload({ conversationId: EventId, text: EventText }),
-	message_end: EventPayload({
-		conversationId: EventId,
-		failed: z.boolean().optional(),
-		status: MessageStatus.optional(),
-		reason: z.string().max(256).optional(),
-		text: EventText.optional(),
-		// Host-produced Pi assistant message. Not consumed by the renderer and
-		// structurally arbitrary JSON (streaming deltas, tool use, usage
-		// blocks), so it is deliberately opaque here; the bus JSON-roundtrips
-		// every payload before persistence, so storage stays JSON-safe.
-		message: z.unknown().optional(),
-	}),
-	"message.user_sent": EventPayload({
-		conversationId: EventId,
-		messageId: EventId.optional(),
-		versionId: EventId.optional(),
-		text: EventText.optional(),
-	}),
-	"message.aborted": EventPayload({ conversationId: EventId }),
-	"message.regenerated": EventPayload({
-		conversationId: EventId,
-		messageId: EventId,
-		versionId: EventId,
-	}),
-	"message.version_switched": EventPayload({
-		conversationId: EventId,
-		messageId: EventId,
-		versionId: EventId,
-	}),
-	"message.edited": EventPayload({
-		conversationId: EventId,
-		messageId: EventId,
-		versionId: EventId,
-	}),
-	"message.continued": EventPayload({ conversationId: EventId }),
-	"message.corrected": EventPayload({
-		conversationId: EventId,
-		reason: EventText,
-		applyScope: z.enum(["once", "session", "always"]),
-	}),
-	"message.assistant_committed": EventPayload({
-		conversationId: EventId,
-		messageId: EventId.optional(),
-		versionId: EventId,
-		failed: z.boolean().optional(),
-		status: MessageStatus.optional(),
-		reason: z.string().max(256).optional(),
 	}),
 	"codex.consented": EventPayload({
 		profileId: EventId,
@@ -472,28 +332,9 @@ export type KnownEventKind = keyof typeof EventPayloadSchemas;
 export const EventKind = z.string().min(1).max(128);
 const isKnownEventKind = (kind: string): kind is KnownEventKind =>
 	Object.hasOwn(EventPayloadSchemas, kind);
-/** Forward-compatible event variant for kinds unknown to this protocol version. */
-export const OpaqueDomainEvent = z
-	.strictObject({
-		seq: EventSeq,
-		kind: EventKind,
-		payload: OpaqueEventPayload,
-	})
-	.superRefine((event, context) => {
-		if (isKnownEventKind(event.kind)) {
-			context.addIssue({
-				code: "custom",
-				path: ["kind"],
-				message: "known kinds are not opaque",
-			});
-		}
-	});
-
 /**
- * The shared event contract. Known kinds are checked against their matching
- * payload schema (declared fields bounded, unknown extra fields bounded);
- * unknown kinds are accepted only as bounded opaque events. Payloads are
- * JSON-roundtripped by the Host before persistence.
+ * The shared event contract. Every event kind and payload must be declared.
+ * Payloads are JSON-roundtripped by the Host before persistence.
  */
 export const DomainEvent = z
 	.strictObject({
@@ -502,9 +343,11 @@ export const DomainEvent = z
 		payload: z.unknown(),
 	})
 	.superRefine((event, context) => {
-		const payloadSchema = isKnownEventKind(event.kind)
-			? EventPayloadSchemas[event.kind]
-			: OpaqueEventPayload;
+		if (!isKnownEventKind(event.kind)) {
+			context.addIssue({ code: "custom", path: ["kind"], message: "unknown event kind" });
+			return;
+		}
+		const payloadSchema = EventPayloadSchemas[event.kind];
 		const result = payloadSchema.safeParse(event.payload);
 		if (!result.success) {
 			context.addIssue({
@@ -569,14 +412,6 @@ export const OnboardingStateData = z.strictObject({
 	decisions: z.strictObject({
 		relationship_memory_enabled: z.boolean().optional(),
 		conversation_history_read_enabled: z.boolean().optional(),
-		roleplay_initial_values: boundedRecord(
-			z
-				.string()
-				.min(1)
-				.max(64)
-				.regex(/^[a-z][a-z0-9_]*$/),
-			z.union([z.string().max(MAX_STRING_LENGTH), z.number().finite(), z.boolean()]),
-		).optional(),
 	}),
 });
 export const CharacterGetRequest = z.strictObject({});
@@ -606,14 +441,6 @@ const CharacterOnboardingEffect = z.discriminatedUnion("type", [
 		type: z.literal("setting.set"),
 		setting: z.enum(["relationship_memory_enabled", "conversation_history_read_enabled"]),
 		values: boundedRecord(CharacterIdentifier, z.boolean()),
-	}),
-	z.strictObject({
-		type: z.literal("roleplay.initial"),
-		variable: CharacterIdentifier,
-		values: boundedRecord(
-			CharacterIdentifier,
-			z.union([z.string().max(MAX_STRING_LENGTH), z.number().finite(), z.boolean()]),
-		),
 	}),
 ]);
 const CharacterStepPresentation = {
@@ -814,14 +641,11 @@ export const CharacterDisplay = z
 					z.strictObject({
 						id: CharacterIdentifier,
 						type: z.enum(["number", "boolean", "enum", "string"]),
-						scope: z.enum(["conversation", "relationship", "character"]),
+						scope: z.enum(["conversation", "global"]),
 						initial: z.union([z.string(), z.number(), z.boolean()]),
 						display: z.union([
 							z.strictObject({ kind: z.literal("hidden") }),
-							z.strictObject({
-								kind: z.literal("exact"),
-								label: CharacterCopy,
-							}),
+							z.strictObject({ kind: z.literal("exact"), label: CharacterCopy }),
 							z.strictObject({
 								kind: z.literal("level"),
 								label: CharacterCopy,
@@ -902,44 +726,6 @@ export const CharacterDisplay = z
 					path: ["roleplay", "unlockables", index, "media"],
 					message: "unlockable media must reference listed media",
 				});
-			}
-		}
-		for (const [index, variable] of character.roleplay.variables.entries()) {
-			const initialType =
-				variable.type === "number"
-					? typeof variable.initial === "number"
-					: variable.type === "boolean"
-						? typeof variable.initial === "boolean"
-						: typeof variable.initial === "string";
-			if (!initialType) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					path: ["roleplay", "variables", index, "initial"],
-					message: "variable initial value must match its type",
-				});
-			}
-			if (
-				variable.type === "enum" &&
-				(!variable.values || !variable.values.includes(variable.initial as string))
-			) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					path: ["roleplay", "variables", index, "initial"],
-					message: "enum initial value must be one of values",
-				});
-			}
-			const display = variable.display;
-			if (display.kind === "level") {
-				for (let levelIndex = 1; levelIndex < display.levels.length; levelIndex += 1) {
-					if (display.levels[levelIndex - 1]!.min >= display.levels[levelIndex]!.min) {
-						context.addIssue({
-							code: z.ZodIssueCode.custom,
-							path: ["roleplay", "variables", index, "display", "levels"],
-							message: "level minimums must be strictly increasing",
-						});
-						break;
-					}
-				}
 			}
 		}
 		for (const [index, step] of character.character.first_meeting.steps.entries()) {
@@ -1098,30 +884,25 @@ export const ConversationId = z.string().min(1).max(64);
 export const ConversationSummary = z.strictObject({
 	id: ConversationId,
 	title: z.string().max(MAX_STRING_LENGTH),
-	unread: z.boolean(),
-	updatedAt: WireTimestamp,
+	created: WireTimestamp,
+	modified: WireTimestamp,
+	messageCount: z.number().int().nonnegative(),
+	firstMessage: z.string().max(MAX_STRING_LENGTH),
 });
 export const ConversationListRequest = z.strictObject({
 	archived: z.boolean().optional(),
+	title: z.string().max(1000).optional(),
 });
 export const ConversationListResponse = z.strictObject({
-	conversations: z.array(ConversationSummary).max(MAX_ARRAY_LENGTH),
+	sessions: z.array(ConversationSummary).max(MAX_ARRAY_LENGTH),
 });
 export const ConversationCreateRequest = z.strictObject({
 	title: z.string().max(MAX_STRING_LENGTH).optional(),
-	sourceConversationId: ConversationId.optional(),
-	sourceEntryId: z.string().min(1).max(128).optional(),
 });
 export const ConversationSelectRequest = z.strictObject({
 	id: ConversationId,
 });
 export const ConversationActiveGetRequest = z.strictObject({});
-export const ConversationTimelinePageRequest = z.strictObject({
-	id: ConversationId,
-	/** Exclusive absolute offset. Omit to read the newest page. */
-	beforeOffset: z.number().int().safe().nonnegative().optional(),
-});
-
 export const ConversationRenameRequest = z.strictObject({
 	id: ConversationId,
 	title: z.string().min(1).max(200),
@@ -1133,36 +914,12 @@ export const ConversationArchiveRequest = z.strictObject({
 export const ConversationDeleteRequest = z.strictObject({
 	id: ConversationId,
 });
-export const ConversationSearchRequest = z.strictObject({
-	query: z.string().min(1).max(1000),
-	includeArchived: z.boolean().optional(),
-	limit: z.number().int().min(1).max(8).optional(),
-});
-
 // ---------------------------------------------------------------------------
 // Message
 // ---------------------------------------------------------------------------
 
 export const PiSessionId = z.string().min(1).max(128);
 export const PiSessionEntryId = z.string().min(1).max(128);
-export const ConversationAttachmentKind = z.union([
-	z.literal("file"),
-	z.literal("folder"),
-	z.literal("generated"),
-]);
-export const ConversationAttachmentSummary = z.strictObject({
-	id: z.string().min(1).max(64),
-	name: z.string().min(1).max(255),
-	kind: ConversationAttachmentKind,
-	bytes: z.number().int().safe().min(0),
-	fileCount: z.number().int().safe().min(0),
-	originEntryId: PiSessionEntryId.optional(),
-});
-export const ConversationAttachmentEntryKind = z.union([
-	z.literal("file"),
-	z.literal("directory"),
-	z.literal("symlink"),
-]);
 const PiTimelineBase = {
 	id: PiSessionEntryId,
 	parentId: PiSessionEntryId.nullable(),
@@ -1190,7 +947,6 @@ const PiTimelineUserMessage = z.strictObject({
 	kind: z.literal("message"),
 	role: z.literal("user"),
 	text: z.string().max(65536),
-	attachments: z.array(ConversationAttachmentSummary).max(MAX_MESSAGE_ATTACHMENTS).optional(),
 });
 const PiTimelineAssistantMessage = z.strictObject({
 	...PiTimelineBase,
@@ -1200,7 +956,6 @@ const PiTimelineAssistantMessage = z.strictObject({
 	toolCalls: z.array(PiTimelineToolCall).max(100).optional(),
 	stopReason: z.enum(["stop", "length", "toolUse", "error", "aborted", "deferred"]).optional(),
 	errorMessage: z.string().max(4096).optional(),
-	attachments: z.array(ConversationAttachmentSummary).max(MAX_MESSAGE_ATTACHMENTS).optional(),
 });
 const PiTimelineToolResult = z.strictObject({
 	...PiTimelineBase,
@@ -1221,25 +976,6 @@ export type PiTimelineEntry = z.infer<typeof PiTimelineEntry>;
 export const PiTimeline = z.strictObject({
 	entries: z.array(PiTimelineEntry).max(MAX_ARRAY_LENGTH),
 	activeLeafId: PiSessionEntryId.optional(),
-	/** Absolute offset of the first projected entry in the native timeline. */
-	startOffset: z.number().int().safe().nonnegative().optional(),
-	/** Total entries retained by the Host, including entries outside this window. */
-	totalEntries: z.number().int().safe().nonnegative().optional(),
-	hasMoreBefore: z.boolean().optional(),
-});
-export const ConversationTimelinePageResponse = z.strictObject({
-	piTimeline: PiTimeline,
-});
-export const ConversationSearchHit = z.strictObject({
-	conversationId: ConversationId,
-	title: z.string().max(MAX_STRING_LENGTH),
-	updatedAt: WireTimestamp,
-	entryId: PiSessionEntryId,
-	role: z.union([z.literal("user"), z.literal("assistant")]),
-	excerpt: z.string().max(1000),
-});
-export const ConversationSearchResponse = z.strictObject({
-	hits: z.array(ConversationSearchHit).max(8),
 });
 
 export const PiLiveAssistantMessage = z.strictObject({
@@ -1251,189 +987,37 @@ export const PiLiveAssistantMessage = z.strictObject({
 export const PiLiveState = z.strictObject({
 	isStreaming: z.boolean(),
 	streamingMessage: PiLiveAssistantMessage.optional(),
+	queuedUserMessages: z.array(z.string().max(65536)).max(20),
 	errorMessage: z.string().max(4096).optional(),
 });
 export type PiLiveAssistantMessage = z.infer<typeof PiLiveAssistantMessage>;
 export type PiLiveState = z.infer<typeof PiLiveState>;
 export type PiTimeline = z.infer<typeof PiTimeline>;
 export const ConversationSelectResponse = z.strictObject({
-	activeConversationId: ConversationId,
-	id: ConversationId,
-	title: z.string().max(MAX_STRING_LENGTH),
-	piTimeline: PiTimeline,
-	piSessionId: PiSessionId,
-	piLiveState: PiLiveState,
+	sessionId: PiSessionId,
+	name: z.string().max(MAX_STRING_LENGTH),
+	entries: z.array(z.unknown()).max(MAX_ARRAY_LENGTH),
+	messages: z.array(z.unknown()).max(MAX_ARRAY_LENGTH),
+	isIdle: z.boolean(),
+	isStreaming: z.boolean(),
+	streamingMessage: z.unknown().optional(),
+	errorMessage: z.string().max(4096).optional(),
+	pendingMessageCount: z.number().int().nonnegative(),
+	steeringMessages: z.array(z.string().max(65536)).max(100),
+	followUpMessages: z.array(z.string().max(65536)).max(100),
 });
 export const ConversationCreateResponse = ConversationSelectResponse;
 export const ConversationActiveResponse = z.strictObject({
-	conversation: ConversationSelectResponse.optional(),
+	session: ConversationSelectResponse.optional(),
 });
-export const MessageSendRequest = z
-	.strictObject({
-		conversationId: ConversationId,
-		text: z.string().max(65536),
-		attachmentIds: z.array(z.string().min(1).max(64)).max(MAX_MESSAGE_ATTACHMENTS).optional(),
-	})
-	.superRefine((request, context) => {
-		if (request.text.length === 0 && (request.attachmentIds?.length ?? 0) === 0) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				path: ["text"],
-				message: "text or at least one attachment is required",
-			});
-		}
-	});
+export const MessageSendRequest = z.strictObject({
+	conversationId: ConversationId,
+	text: z.string().min(1).max(65536),
+});
 export const MessageSendResponse = z.strictObject({
 	accepted: z.literal(true),
-	sessionId: PiSessionId,
-	entryId: PiSessionEntryId,
 });
 
-export const ConversationAttachmentUploadsRequest = z.strictObject({
-	conversationId: ConversationId,
-});
-export const ConversationAttachmentUploadsResponse = z.strictObject({
-	uploads: z
-		.array(
-			z.strictObject({
-				uploadId: z.string().min(1).max(64),
-				name: z.string().max(255),
-				kind: z.enum(["file", "folder"]),
-				receivedBytes: z.number().int().safe().nonnegative(),
-				totalBytes: z.number().int().safe().nonnegative(),
-				fileCount: z.number().int().safe().nonnegative(),
-			}),
-		)
-		.max(MAX_ARRAY_LENGTH),
-});
-export const ConversationAttachmentListRequest = z.strictObject({
-	conversationId: ConversationId,
-	attachmentId: z.string().min(1).max(64).optional(),
-});
-export const ConversationAttachmentListResponse = z.strictObject({
-	attachments: z.array(ConversationAttachmentSummary).max(MAX_ARRAY_LENGTH),
-});
-export const ConversationAttachmentDiscardRequest = z.strictObject({
-	conversationId: ConversationId,
-	attachmentId: z.string().min(1).max(64),
-});
-const ConversationAttachmentFileView = z.strictObject({
-	relativePath: z.string().min(1).max(1024),
-	entryKind: ConversationAttachmentEntryKind,
-	mime: z.string().min(1).max(255).optional(),
-	bytes: z.number().int().safe().min(0).optional(),
-	readable: z.boolean(),
-	error: z.string().max(256).optional(),
-});
-const ConversationAttachmentSearchHit = z.strictObject({
-	relativePath: z.string().min(1).max(1024),
-	excerpt: z.string().max(1024),
-});
-const ConversationAttachmentSemanticReadRequest = z
-	.strictObject({
-		mode: z.literal("semantic"),
-		conversationId: ConversationId,
-		attachmentId: z.string().min(1).max(64),
-		relativePath: z.string().min(1).max(1024).optional(),
-		query: z.string().min(1).max(1024).optional(),
-		cursor: z.string().min(1).max(4096).optional(),
-	})
-	.superRefine((request, context) => {
-		if (request.relativePath && request.query) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				path: ["query"],
-				message: "query cannot be combined with relativePath",
-			});
-		}
-	});
-const ConversationAttachmentByteReadRequest = z.strictObject({
-	mode: z.literal("bytes"),
-	conversationId: ConversationId,
-	attachmentId: z.string().min(1).max(64),
-	relativePath: z.string().min(1).max(1024).optional(),
-	offset: z.number().int().safe().min(0),
-	length: z
-		.number()
-		.int()
-		.safe()
-		.min(1)
-		.max(1024 * 1024),
-});
-export const ConversationAttachmentReadRequest = z.union([
-	ConversationAttachmentSemanticReadRequest,
-	ConversationAttachmentByteReadRequest,
-]);
-export const ConversationAttachmentReadResponse = z.union([
-	z.strictObject({
-		mode: z.literal("semantic"),
-		files: z.array(ConversationAttachmentFileView).max(200).optional(),
-		content: z.string().max(65_536).optional(),
-		hits: z.array(ConversationAttachmentSearchHit).max(50).optional(),
-		error: z.string().max(256).optional(),
-		nextCursor: z.string().min(1).max(4096).optional(),
-	}),
-	z.strictObject({
-		mode: z.literal("bytes"),
-		relativePath: z.string().min(1).max(1024),
-		mime: z.string().min(1).max(255),
-		base64: z.string().max(1_398_104),
-		nextOffset: z.number().int().safe().min(0),
-		eof: z.boolean(),
-	}),
-]);
-
-export const ConversationAttachmentUrlRequest = z.strictObject({
-	conversationId: ConversationId,
-	attachmentId: z.string().min(1).max(64),
-	relativePath: z.string().min(1).max(1024).optional(),
-	operation: z.union([z.literal("preview"), z.literal("download")]),
-});
-export const ConversationAttachmentUrlResponse = z.strictObject({
-	url: z.string().min(1).max(4096),
-});
-export const ConversationAttachmentUploadEntry = z.strictObject({
-	entryKind: z.union([z.literal("file"), z.literal("directory")]),
-	relativePath: z.string().min(1).max(1024),
-	mime: z.string().min(1).max(255).optional(),
-	bytes: z
-		.number()
-		.int()
-		.safe()
-		.min(0)
-		.max(200 * 1024 * 1024)
-		.optional(),
-});
-export const ConversationAttachmentStartUploadRequest = z.strictObject({
-	conversationId: ConversationId,
-	kind: z.union([z.literal("file"), z.literal("folder")]),
-	name: z.string().min(1).max(255),
-	entries: z.array(ConversationAttachmentUploadEntry).min(1).max(20_000),
-});
-export const ConversationAttachmentStartUploadResponse = z.strictObject({
-	uploadId: z.string().min(1).max(64),
-});
-export const ConversationAttachmentCancelUploadRequest = z.strictObject({
-	conversationId: ConversationId,
-	uploadId: z.string().min(1).max(64),
-});
-export const ConversationAttachmentAppendChunkRequest = z.strictObject({
-	conversationId: ConversationId,
-	uploadId: z.string().min(1).max(64),
-	fileIndex: z.number().int().min(0).max(20_000),
-	offset: z.number().int().safe().min(0),
-	base64: z
-		.string()
-		.min(1)
-		.max(Math.ceil((1024 * 1024) / 3) * 4),
-});
-export const ConversationAttachmentCompleteUploadRequest = z.strictObject({
-	conversationId: ConversationId,
-	uploadId: z.string().min(1).max(64),
-});
-export const ConversationAttachmentCompleteUploadResponse = z.strictObject({
-	attachment: ConversationAttachmentSummary,
-});
 export const MessageRegenerateRequest = z.strictObject({
 	conversationId: ConversationId,
 	entryId: PiSessionEntryId,
@@ -2084,6 +1668,17 @@ export const Run = z
 		executorProfile: z.string().min(1).max(64),
 		title: z.string().min(1).max(80),
 		status: RunStatus,
+		artifacts: z
+			.array(
+				z.strictObject({
+					id: z.string().min(1).max(64),
+					name: z.string().min(1).max(1024),
+					mime: z.string().min(1).max(255),
+					bytes: z.number().int().safe().nonnegative(),
+				}),
+			)
+			.max(1000),
+		permission: EventPayloadSchemas["run.needs_user"].optional(),
 		startedAt: WireTimestamp.optional(),
 		completedAt: WireTimestamp.optional(),
 	})
@@ -2351,21 +1946,10 @@ export const ProviderOverrideBaseUrlRequest = z.strictObject({
 // ---------------------------------------------------------------------------
 
 export const ConversationSnapshot = z.strictObject({
-	conversations: z.array(ConversationSummary).max(MAX_ARRAY_LENGTH).optional(),
-	activeConversationId: ConversationId.optional(),
-	id: ConversationId.optional(),
-	title: z.string().max(MAX_STRING_LENGTH).optional(),
-	piTimeline: PiTimeline.optional(),
+	session: ConversationSelectResponse.optional(),
 });
 export const MemorySnapshot = z.strictObject({
 	entries: z.array(MemoryEntry).max(MAX_ARRAY_LENGTH).optional(),
-});
-export const CharacterRuntimeState = z.strictObject({
-	sceneId: z.string().min(1).max(64),
-	visualState: z.string().min(1).max(64),
-});
-export const CharacterRuntimeSnapshot = z.strictObject({
-	byConversation: boundedRecord(ConversationId, CharacterRuntimeState),
 });
 export const CompanionDisplayState = z.strictObject({
 	sceneId: z.string().min(1).max(64),
@@ -2377,26 +1961,18 @@ export const CompanionDisplayState = z.strictObject({
 		choices: z.string().min(1).max(64).nullable(),
 	}),
 });
-export const CompanionCollectionState = z.strictObject({
-	seenMediaIds: z.array(z.string().min(1).max(64)).max(200),
-	unlocks: z.array(z.string().min(1).max(64)).max(200),
-	factIds: z.array(z.string().min(1).max(128)).max(500),
-});
 export const CompanionConversationState = z.strictObject({
 	character: z.strictObject({
 		document: BoundedEventValue,
 		revisions: z.strictObject({
 			conversation: z.number().int().safe().nonnegative(),
-			relationship: z.number().int().safe().nonnegative(),
-			character: z.number().int().safe().nonnegative(),
+			global: z.number().int().safe().nonnegative(),
 		}),
 		schemaHash: z.string().min(64).max(64),
 	}),
 	display: CompanionDisplayState,
-	collection: CompanionCollectionState,
 	revisions: z.strictObject({
 		display: z.number().int().safe().nonnegative(),
-		collection: z.number().int().safe().nonnegative(),
 	}),
 });
 export const CompanionStateSnapshot = z.strictObject({
@@ -2405,50 +1981,29 @@ export const CompanionStateSnapshot = z.strictObject({
 });
 export const CharacterStateRevisions = z.strictObject({
 	conversation: z.number().int().safe().nonnegative(),
-	relationship: z.number().int().safe().nonnegative(),
-	character: z.number().int().safe().nonnegative(),
+	global: z.number().int().safe().nonnegative(),
 });
 export const CharacterStateDocument = z.strictObject({
 	document: BoundedEventValue,
 	revisions: CharacterStateRevisions,
 	schemaHash: z.string().min(64).max(64),
 });
-export const CharacterStateSnapshot = z.strictObject({
-	schema: BoundedEventValue,
-	byConversation: boundedRecord(ConversationId, CharacterStateDocument),
-});
 const JsonPatchPath = z.string().min(1).max(512).regex(/^\//u);
-export const CharacterStatePatchOperation = z.discriminatedUnion("op", [
+export const CompanionStatePatchOperation = z.discriminatedUnion("op", [
 	z.strictObject({ op: z.literal("add"), path: JsonPatchPath, value: BoundedEventValue }),
 	z.strictObject({ op: z.literal("replace"), path: JsonPatchPath, value: BoundedEventValue }),
 	z.strictObject({ op: z.literal("remove"), path: JsonPatchPath }),
 	z.strictObject({ op: z.literal("test"), path: JsonPatchPath, value: BoundedEventValue }),
 ]);
-export const CharacterStatePatchRequest = z.strictObject({
+export const CompanionStatePatchRequest = z.strictObject({
 	conversationId: ConversationId,
 	expectedRevisions: CharacterStateRevisions,
-	operations: z.array(CharacterStatePatchOperation).min(1).max(20),
+	operations: z.array(CompanionStatePatchOperation).min(1).max(20),
 	dedupeKey: z.string().uuid(),
 });
-export const RoleplayValue = z.union([
-	z.string().max(MAX_STRING_LENGTH),
-	z.number().finite(),
-	z.boolean(),
-]);
-export const RoleplayState = z.strictObject({
-	values: boundedRecord(z.string().min(1).max(64), RoleplayValue),
-	unlocked: z.array(z.string().min(1).max(64)).max(200),
-});
-export const RoleplayGetRequest = z.strictObject({
-	conversationId: ConversationId.optional(),
-});
-export const RoleplayDismissMediaRequest = z.strictObject({
+export const CompanionDismissPresentationRequest = z.strictObject({
 	conversationId: ConversationId,
 	mediaId: z.string().min(1).max(64),
-});
-export const RoleplayResetUnlocksRequest = z.strictObject({});
-export const RoleplayResponse = z.strictObject({
-	state: RoleplayState,
 });
 export const SnapshotGetRequest = z.strictObject({});
 export const SnapshotResponse = z.strictObject({
@@ -2459,27 +2014,7 @@ export const SnapshotResponse = z.strictObject({
 	memory: MemorySnapshot.optional(),
 	provider: ProviderListResponse.optional(),
 	model: ModelSnapshot.optional(),
-	run: RunListResponse.optional(),
 	companion: CompanionStateSnapshot.optional(),
-	presentation: z
-		.strictObject({
-			companionState: z.enum([
-				"unknown",
-				"starting",
-				"running",
-				"crashed",
-				"unavailable",
-				"stopped",
-			]),
-			permissions: z.array(EventPayloadSchemas["run.needs_user"]).max(10),
-			conversationId: ConversationId.optional(),
-			mediaId: z.string().max(64).optional(),
-			ambientMediaId: z.string().max(64).optional(),
-			choiceSetId: z.string().max(64).optional(),
-			seenMediaIds: z.array(z.string().max(64)).max(128).optional(),
-		})
-		.optional(),
-	roleplay: RoleplayState.optional(),
 	settings: SettingsData.optional(),
 });
 
@@ -2603,25 +2138,16 @@ export const RPC = {
 			"mutation",
 		),
 	},
-	roleplay: {
-		get: endpoint("roleplay.get:v1", RoleplayGetRequest, RoleplayResponse, "query"),
-		dismissMedia: endpoint(
-			"roleplay.dismissMedia:v1",
-			RoleplayDismissMediaRequest,
+	companionState: {
+		dismissPresentation: endpoint(
+			"companionState.dismissPresentation:v1",
+			CompanionDismissPresentationRequest,
 			EmptyResponse,
 			"mutation",
 		),
-		resetUnlocks: endpoint(
-			"roleplay.reset-unlocks:v1",
-			RoleplayResetUnlocksRequest,
-			EmptyResponse,
-			"mutation",
-		),
-	},
-	characterState: {
 		patch: endpoint(
-			"characterState.patch:v1",
-			CharacterStatePatchRequest,
+			"companionState.patch:v1",
+			CompanionStatePatchRequest,
 			EmptyResponse,
 			"mutation",
 		),
@@ -2668,12 +2194,6 @@ export const RPC = {
 			ConversationActiveResponse,
 			"query",
 		),
-		timelinePage: endpoint(
-			"conversation.timelinePage:v1",
-			ConversationTimelinePageRequest,
-			ConversationTimelinePageResponse,
-			"query",
-		),
 		rename: endpoint(
 			"conversation.rename:v1",
 			ConversationRenameRequest,
@@ -2690,68 +2210,6 @@ export const RPC = {
 			"conversation.delete:v1",
 			ConversationDeleteRequest,
 			ConversationActiveResponse,
-			"mutation",
-		),
-		search: endpoint(
-			"conversation.search:v1",
-			ConversationSearchRequest,
-			ConversationSearchResponse,
-			"query",
-		),
-	},
-	conversationAttachment: {
-		uploads: endpoint(
-			"conversationAttachment.uploads:v1",
-			ConversationAttachmentUploadsRequest,
-			ConversationAttachmentUploadsResponse,
-			"query",
-		),
-		list: endpoint(
-			"conversationAttachment.list:v1",
-			ConversationAttachmentListRequest,
-			ConversationAttachmentListResponse,
-			"query",
-		),
-		discard: endpoint(
-			"conversationAttachment.discard:v1",
-			ConversationAttachmentDiscardRequest,
-			EmptyResponse,
-			"mutation",
-		),
-		read: endpoint(
-			"conversationAttachment.read:v1",
-			ConversationAttachmentReadRequest,
-			ConversationAttachmentReadResponse,
-			"query",
-		),
-		url: endpoint(
-			"conversationAttachment.url:v1",
-			ConversationAttachmentUrlRequest,
-			ConversationAttachmentUrlResponse,
-			"query",
-		),
-		startUpload: endpoint(
-			"conversationAttachment.startUpload:v1",
-			ConversationAttachmentStartUploadRequest,
-			ConversationAttachmentStartUploadResponse,
-			"mutation",
-		),
-		cancelUpload: endpoint(
-			"conversationAttachment.cancelUpload:v1",
-			ConversationAttachmentCancelUploadRequest,
-			EmptyResponse,
-			"mutation",
-		),
-		appendChunk: endpoint(
-			"conversationAttachment.appendChunk:v1",
-			ConversationAttachmentAppendChunkRequest,
-			EmptyResponse,
-			"mutation",
-		),
-		completeUpload: endpoint(
-			"conversationAttachment.completeUpload:v1",
-			ConversationAttachmentCompleteUploadRequest,
-			ConversationAttachmentCompleteUploadResponse,
 			"mutation",
 		),
 	},
@@ -3017,14 +2475,3 @@ function flattenRpc(
 /** Dynamic lookup used only at inbound transport boundaries. Business code uses `RPC.*` endpoints. */
 export const CHANNEL_CONTRACTS = Object.freeze(flattenRpc(RPC));
 export type Channel = DeclaredRpcEndpoint["channel"];
-
-/**
- * Compatibility view for transport code that only enumerates request schemas.
- * This map intentionally omits each endpoint's response schema and metadata;
- * use `RPC` or `CHANNEL_CONTRACTS` for a complete endpoint contract.
- */
-export const REQUEST_SCHEMAS = Object.freeze(
-	Object.fromEntries(
-		Object.entries(CHANNEL_CONTRACTS).map(([channel, value]) => [channel, value.request]),
-	),
-);

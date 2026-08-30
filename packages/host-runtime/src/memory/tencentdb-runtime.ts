@@ -6,8 +6,7 @@
  * OpenClaw, cloud VectorDB, or ambient home-directory state is involved.
  */
 
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type {
 	CompletedTurn,
@@ -29,7 +28,6 @@ import type {
 	TencentDbCoreInvalidateRequest,
 	TencentDbCoreListRequest,
 	TencentDbCoreMutationRequest,
-	TencentDbCoreNamespaceMigrationRequest,
 	TencentDbCoreRecallRequest,
 	TencentDbCoreRecord,
 	TencentDbCoreRememberRequest,
@@ -100,22 +98,6 @@ function importedProvenance(recordId: string): MemoryProvenance {
 		piSessionEntryIds: [recordId],
 	};
 }
-const HOST_CONTEXT_PREFIX = "<host_context>\n";
-const HOST_CONTEXT_SEPARATOR = "\n</host_context>\n\n<current_user_message>\n";
-const CURRENT_USER_MESSAGE_SUFFIX = "\n</current_user_message>";
-
-function unwrapHostFraming(text: string): string {
-	if (!text.startsWith(HOST_CONTEXT_PREFIX) || !text.endsWith(CURRENT_USER_MESSAGE_SUFFIX)) {
-		return text;
-	}
-	const separatorIndex = text.indexOf(HOST_CONTEXT_SEPARATOR, HOST_CONTEXT_PREFIX.length);
-	if (separatorIndex <= HOST_CONTEXT_PREFIX.length) return text;
-	return text.slice(
-		separatorIndex + HOST_CONTEXT_SEPARATOR.length,
-		-CURRENT_USER_MESSAGE_SUFFIX.length,
-	);
-}
-
 const DIRECT_MEMORY_SESSION_ID = "direct-memory";
 
 function sourceSessionId(provenance: MemoryProvenance): string {
@@ -129,8 +111,6 @@ export interface TencentDbRuntimeOptions {
 	readonly models: ModelRegistry;
 	readonly companionId: string;
 	readonly installationId: string;
-	/** Installation identifier used by the pre-v1 namespace, when it differs from the UUID. */
-	readonly legacyInstallationId?: string;
 	readonly userId: string;
 	readonly logger?: Logger;
 	/**
@@ -274,7 +254,7 @@ function coreRecord(
 	const timestamp = now();
 	return {
 		id: randomUUID(),
-		text: unwrapHostFraming(request.text),
+		text: request.text,
 		provenance: request.provenance,
 		importance: clampImportance(request.importance ?? 0.5),
 		status: "active",
@@ -314,134 +294,10 @@ function coreFromRow(row: L1RecordRow): TencentDbCoreRecord {
 	};
 }
 
-type NamespaceMigrationState = "copying" | "verified" | "complete";
-
-interface NamespaceMigrationJournal {
-	readonly version: 1;
-	readonly legacyNamespace: string;
-	readonly canonicalNamespace: string;
-	readonly records: readonly L1RecordRow[];
-	readonly state: NamespaceMigrationState;
-}
-
-function recoveryRequired(message: string, cause?: unknown): Error {
-	const error = new Error(message, cause === undefined ? undefined : { cause }) as Error & {
-		readonly code: "recovery_required";
-		readonly retryable: false;
-	};
-	Object.defineProperties(error, {
-		code: { value: "recovery_required", enumerable: true },
-		retryable: { value: false, enumerable: true },
-	});
-	return error;
-}
-
-function migrationKey(legacyNamespace: string, canonicalNamespace: string): string {
-	return createHash("sha256")
-		.update(legacyNamespace)
-		.update("\0")
-		.update(canonicalNamespace)
-		.digest("hex");
-}
-
-function canonicalJson(value: unknown): unknown {
-	if (Array.isArray(value)) return value.map(canonicalJson);
-	if (!value || typeof value !== "object") return value;
-	return Object.fromEntries(
-		Object.entries(value)
-			.sort(([left], [right]) => left.localeCompare(right))
-			.map(([key, item]) => [key, canonicalJson(item)]),
-	);
-}
-
-function comparableRow(row: L1RecordRow): Record<string, unknown> {
-	return {
-		record_id: row.record_id,
-		content: row.content,
-		type: row.type,
-		priority: row.priority,
-		session_id: row.session_id,
-		timestamp_str: row.timestamp_str,
-		timestamp_start: row.timestamp_start,
-		timestamp_end: row.timestamp_end,
-		created_time: row.created_time,
-		updated_time: row.updated_time,
-		metadata: canonicalJson(parseJson(row.metadata_json)),
-	};
-}
-
-function rowsMatch(left: L1RecordRow, right: L1RecordRow): boolean {
-	return JSON.stringify(comparableRow(left)) === JSON.stringify(comparableRow(right));
-}
-
-function migratedStoreRecord(row: L1RecordRow, canonicalNamespace: string): TdaiMemoryRecord {
-	const metadata = parseJson(row.metadata_json);
-	if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-		throw recoveryRequired(
-			`TencentDB namespace migration cannot preserve metadata for memory ${row.record_id}`,
-		);
-	}
-	return {
-		id: row.record_id,
-		content: row.content,
-		type: row.type as TdaiMemoryRecord["type"],
-		priority: row.priority,
-		scene_name: canonicalNamespace,
-		source_message_ids: [],
-		metadata: metadata as TdaiMetadata,
-		timestamps: [row.timestamp_str, row.timestamp_start, row.timestamp_end],
-		createdAt: row.created_time,
-		updatedAt: row.updated_time,
-		sessionKey: canonicalNamespace,
-		sessionId: row.session_id,
-	};
-}
-
-function isL1RecordRow(value: unknown): value is L1RecordRow {
-	if (!value || typeof value !== "object") return false;
-	const row = value as Partial<L1RecordRow>;
-	return (
-		typeof row.record_id === "string" &&
-		typeof row.content === "string" &&
-		typeof row.type === "string" &&
-		typeof row.priority === "number" &&
-		Number.isFinite(row.priority) &&
-		typeof row.scene_name === "string" &&
-		typeof row.session_key === "string" &&
-		typeof row.session_id === "string" &&
-		typeof row.timestamp_str === "string" &&
-		typeof row.timestamp_start === "string" &&
-		typeof row.timestamp_end === "string" &&
-		typeof row.created_time === "string" &&
-		typeof row.updated_time === "string" &&
-		typeof row.metadata_json === "string"
-	);
-}
-
-function isMigrationJournal(value: unknown): value is NamespaceMigrationJournal {
-	if (!value || typeof value !== "object") return false;
-	const journal = value as Partial<NamespaceMigrationJournal>;
-	return (
-		journal.version === 1 &&
-		typeof journal.legacyNamespace === "string" &&
-		typeof journal.canonicalNamespace === "string" &&
-		Array.isArray(journal.records) &&
-		journal.records.every(isL1RecordRow) &&
-		(journal.state === "copying" || journal.state === "verified" || journal.state === "complete")
-	);
-}
-
-function abortMigrationIfRequested(signal: AbortSignal | undefined): void {
-	if (signal?.aborted) throw new Error("TencentDB memory operation aborted");
-}
-
 class TdaiDirectMemoryFacade implements TencentDbMemoryCoreFacade {
-	private readonly migrations = new Map<string, Promise<void>>();
-
 	constructor(
 		private readonly store: () => IMemoryStore | undefined,
 		private readonly embedding: () => EmbeddingService | undefined,
-		private readonly migrationJournalDir: string,
 		private readonly logger?: Logger,
 	) {}
 
@@ -463,175 +319,6 @@ class TdaiDirectMemoryFacade implements TencentDbMemoryCoreFacade {
 				}`,
 			);
 			return undefined;
-		}
-	}
-
-	async migrateNamespace(request: TencentDbCoreNamespaceMigrationRequest): Promise<void> {
-		abortMigrationIfRequested(request.signal);
-		if (request.legacyNamespace === request.canonicalNamespace) return;
-		const key = migrationKey(request.legacyNamespace, request.canonicalNamespace);
-		const existing = this.migrations.get(key);
-		if (existing) return existing;
-		const migration = this.runNamespaceMigration(request, key).finally(() => {
-			this.migrations.delete(key);
-		});
-		this.migrations.set(key, migration);
-		return migration;
-	}
-
-	private async runNamespaceMigration(
-		request: TencentDbCoreNamespaceMigrationRequest,
-		key: string,
-	): Promise<void> {
-		const store = this.requireStore();
-		const journalPath = join(this.migrationJournalDir, `${key}.json`);
-		let journal = await this.readMigrationJournal(journalPath);
-		if (journal) {
-			if (
-				journal.legacyNamespace !== request.legacyNamespace ||
-				journal.canonicalNamespace !== request.canonicalNamespace
-			) {
-				throw recoveryRequired(
-					`TencentDB namespace migration journal identity mismatch at ${journalPath}`,
-				);
-			}
-			if (journal.state === "complete") return;
-		} else {
-			abortMigrationIfRequested(request.signal);
-			const [legacyRows, canonicalRows] = await Promise.all([
-				store.queryL1Records({ sessionKey: request.legacyNamespace }),
-				store.queryL1Records({ sessionKey: request.canonicalNamespace }),
-			]);
-			const canonicalById = new Map(canonicalRows.map((row) => [row.record_id, row]));
-			for (const legacyRow of legacyRows) {
-				const canonicalRow = canonicalById.get(legacyRow.record_id);
-				if (canonicalRow && !rowsMatch(legacyRow, canonicalRow)) {
-					throw recoveryRequired(
-						`TencentDB namespace migration conflict for memory ${legacyRow.record_id}`,
-					);
-				}
-			}
-			journal = {
-				version: 1,
-				legacyNamespace: request.legacyNamespace,
-				canonicalNamespace: request.canonicalNamespace,
-				records: legacyRows,
-				state: "copying",
-			};
-			await this.writeMigrationJournal(journalPath, journal);
-		}
-
-		abortMigrationIfRequested(request.signal);
-		const canonicalRows = await store.queryL1Records({
-			sessionKey: request.canonicalNamespace,
-		});
-		const canonicalById = new Map(canonicalRows.map((row) => [row.record_id, row]));
-		for (const sourceRow of journal.records) {
-			abortMigrationIfRequested(request.signal);
-			const existing = canonicalById.get(sourceRow.record_id);
-			if (existing) {
-				if (!rowsMatch(sourceRow, existing)) {
-					throw recoveryRequired(
-						`TencentDB namespace migration conflict for memory ${sourceRow.record_id}`,
-					);
-				}
-				continue;
-			}
-
-			/*
-			 * SQLite's record_id is the primary key, but its generic upsert deliberately
-			 * leaves session_key, session_id, and created_time unchanged on conflict.
-			 * A namespace move therefore has to remove the legacy row before inserting
-			 * the canonical projection. The journal is already durable at this point,
-			 * so a crash between these operations is recoverable on the next attempt.
-			 */
-			const rowsWithId = (await store.queryL1Records()).filter(
-				(row) => row.record_id === sourceRow.record_id,
-			);
-			if (rowsWithId.length > 1) {
-				throw recoveryRequired(
-					`TencentDB namespace migration conflict for memory ${sourceRow.record_id}`,
-				);
-			}
-			const current = rowsWithId[0];
-			if (current) {
-				if (current.session_key !== request.legacyNamespace || !rowsMatch(sourceRow, current)) {
-					throw recoveryRequired(
-						`TencentDB namespace migration conflict for memory ${sourceRow.record_id}`,
-					);
-				}
-				if (!(await store.deleteL1(sourceRow.record_id))) {
-					throw recoveryRequired(
-						`TencentDB namespace migration copy failed for memory ${sourceRow.record_id}`,
-					);
-				}
-			}
-
-			abortMigrationIfRequested(request.signal);
-			const migrated = migratedStoreRecord(sourceRow, request.canonicalNamespace);
-			if (!(await store.upsertL1(migrated, await this.embed(migrated.content)))) {
-				throw recoveryRequired(
-					`TencentDB namespace migration copy failed for memory ${sourceRow.record_id}`,
-				);
-			}
-			const copiedRows = await store.queryL1Records({
-				sessionKey: request.canonicalNamespace,
-			});
-			const copied = copiedRows.find((row) => row.record_id === sourceRow.record_id);
-			if (!copied || !rowsMatch(sourceRow, copied)) {
-				throw recoveryRequired(
-					`TencentDB namespace migration verification failed for memory ${sourceRow.record_id}`,
-				);
-			}
-			canonicalById.set(copied.record_id, copied);
-		}
-
-		journal = { ...journal, state: "verified" };
-		await this.writeMigrationJournal(journalPath, journal);
-		const remainingLegacy = await store.queryL1Records({ sessionKey: request.legacyNamespace });
-		if (remainingLegacy.length > 0) {
-			throw recoveryRequired(
-				"TencentDB namespace migration requires a namespace-safe legacy delete",
-			);
-		}
-		journal = { ...journal, state: "complete" };
-		await this.writeMigrationJournal(journalPath, journal);
-	}
-
-	private async readMigrationJournal(path: string): Promise<NamespaceMigrationJournal | undefined> {
-		try {
-			const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-			if (!isMigrationJournal(parsed)) {
-				throw recoveryRequired(`TencentDB namespace migration journal is invalid at ${path}`);
-			}
-			return parsed;
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-			if ((error as { code?: unknown }).code === "recovery_required") throw error;
-			throw recoveryRequired(
-				`TencentDB namespace migration journal cannot be read at ${path}`,
-				error,
-			);
-		}
-	}
-
-	private async writeMigrationJournal(
-		path: string,
-		journal: NamespaceMigrationJournal,
-	): Promise<void> {
-		try {
-			await mkdir(this.migrationJournalDir, { recursive: true });
-			const temporaryPath = `${path}.${randomUUID()}.tmp`;
-			await writeFile(temporaryPath, `${JSON.stringify(journal)}\n`, {
-				encoding: "utf8",
-				flag: "wx",
-			});
-			await rename(temporaryPath, path);
-		} catch (error) {
-			throw recoveryRequired(
-				`TencentDB namespace migration journal cannot be written at ${path}`,
-				error,
-			);
 		}
 	}
 
@@ -829,12 +516,9 @@ export class TencentDbRuntime {
 		const facade = new TdaiDirectMemoryFacade(
 			() => this.core.getVectorStore(),
 			() => this.core.getEmbeddingService(),
-			join(dataDir, "namespace-migrations"),
 			options.logger,
 		);
-		this.backend = new TencentDbMemoryBackend(facade, {
-			legacyInstallationId: options.legacyInstallationId,
-		});
+		this.backend = new TencentDbMemoryBackend(facade);
 	}
 
 	/**

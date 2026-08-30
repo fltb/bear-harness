@@ -32,7 +32,7 @@ import {
 import { join } from "node:path";
 import { desc, eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
-import { artifactAdoptions, artifacts, conversationAttachmentFiles } from "../storage/schema.js";
+import { artifactAdoptions, artifacts } from "../storage/schema.js";
 export interface ArtifactRecord {
 	id: string;
 	logicalName: string;
@@ -553,18 +553,13 @@ export class ArtifactStore {
 		}));
 	}
 
-	/** Garbage collect blobs not referenced by attachments, adoptions, or saves. */
+	/** Garbage collect blobs not referenced by adoptions or saves. */
 	gc(options: { retentionDays: number }): number {
 		const cutoff = new Date(Date.now() - options.retentionDays * 86400000)
 			.toISOString()
 			.replace("T", " ")
 			.slice(0, 19);
 		const used = new Set([
-			...this.db
-				.selectDistinct({ sha256: conversationAttachmentFiles.sha256 })
-				.from(conversationAttachmentFiles)
-				.all()
-				.flatMap((row) => (row.sha256 ? [row.sha256] : [])),
 			...this.db
 				.selectDistinct({ sha256: artifacts.sha256 })
 				.from(artifactAdoptions)

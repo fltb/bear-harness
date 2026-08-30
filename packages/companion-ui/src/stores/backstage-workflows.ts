@@ -126,15 +126,6 @@ export interface CanonWorkflowSelectors {
 	clearModuleForm(): void;
 }
 
-export interface RoleplaySelectors {
-	visibleVariables: Accessor<CharacterDisplay["roleplay"]["variables"]>;
-	collections: Accessor<CharacterDisplay["roleplay"]["unlockables"]>;
-	mediaFor(
-		id: string | undefined,
-	): Accessor<CharacterDisplay["roleplay"]["media"][number] | undefined>;
-	displayValue(variable: CharacterDisplay["roleplay"]["variables"][number]): Accessor<string>;
-}
-
 export interface BackstageWorkflowStore {
 	selectedTab: Accessor<BackstageTab>;
 	setSelectedTab(value: string): void;
@@ -162,7 +153,6 @@ export interface BackstageWorkflowStore {
 	relationshipError: Accessor<string | undefined>;
 	toggleRelationshipMemory(enabledLabel: string, disabledLabel: string, genericError: string): void;
 	toggleHistoryRead(genericError: string): void;
-	roleplay(): RoleplaySelectors;
 	memoryScope: Accessor<MemoryScope>;
 	memoryQueryText: Accessor<string>;
 	memoryQuery: Accessor<string>;
@@ -582,52 +572,6 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		return selectors;
 	};
 
-	const roleplay = (): RoleplaySelectors => {
-		const visibleVariables = createMemo(
-			() =>
-				companion.character?.roleplay.variables.filter(
-					(variable) => variable.display.kind !== "hidden",
-				) ?? [],
-		);
-		const unlocked = createMemo(() => new Set(companion.roleplay?.unlocked ?? []));
-		const collections = createMemo(
-			() =>
-				companion.character?.roleplay.unlockables.filter((entry) => unlocked().has(entry.id)) ?? [],
-		);
-		const mediaById = createMemo(
-			() => new Map((companion.character?.roleplay.media ?? []).map((media) => [media.id, media])),
-		);
-		const mediaSelectors = new Map<
-			string | undefined,
-			Accessor<CharacterDisplay["roleplay"]["media"][number] | undefined>
-		>();
-		const mediaFor = (id: string | undefined) => {
-			const existing = mediaSelectors.get(id);
-			if (existing) return existing;
-			const selector = createMemo(() => (id === undefined ? undefined : mediaById().get(id)));
-			mediaSelectors.set(id, selector);
-			return selector;
-		};
-		const displaySelectors = new Map<string, Accessor<string>>();
-		const displayValue = (variable: CharacterDisplay["roleplay"]["variables"][number]) => {
-			const existing = displaySelectors.get(variable.id);
-			if (existing) return existing;
-			const selector = createMemo(() => {
-				const value = companion.roleplay?.values[variable.id] ?? variable.initial;
-				if (variable.display.kind !== "level" || typeof value !== "number") return String(value);
-				return (
-					[...variable.display.levels]
-						.sort((left, right) => right.min - left.min)
-						.find((level) => value >= level.min)?.label ?? String(value)
-				);
-			});
-			displaySelectors.set(variable.id, selector);
-			return selector;
-		};
-		const selectors = { visibleVariables, collections, mediaFor, displayValue };
-		return selectors;
-	};
-
 	const store: BackstageWorkflowStore = {
 		selectedTab,
 		setSelectedTab: (value) => {
@@ -733,7 +677,6 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 				.catch(() => setRelationshipError(genericError))
 				.finally(() => setRelationshipSaving(false));
 		},
-		roleplay,
 		memoryScope,
 		memoryQueryText,
 		memoryQuery,

@@ -3,8 +3,6 @@ import { extname } from "node:path";
 import { imageDimensionsFromData } from "image-dimensions";
 import { parse } from "yaml";
 
-const visualOnlyTools = new Set(["host_visual", "host_present"]);
-
 function schemaHasPointer(schema, pointer) {
 	let node = schema;
 	for (const escaped of pointer.slice(1).split("/")) {
@@ -187,13 +185,7 @@ for (const entry of readdirSync(root, { withFileTypes: true })) {
 				continue;
 			}
 			const metadata = parse(frontmatter);
-			const tools = String(metadata["allowed-tools"] ?? "")
-				.split(/\s+/)
-				.filter(Boolean);
-			if (tools.length > 0 && tools.every((tool) => visualOnlyTools.has(tool)))
-				failures.push(
-					`${prefix}: Skill ${skill.name} only wraps visual Host tools; put automatic visual selection in character.yaml`,
-				);
+			void metadata;
 		}
 }
 

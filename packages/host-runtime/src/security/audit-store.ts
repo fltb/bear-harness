@@ -388,7 +388,6 @@ export class AuditStore {
 
 const EVENT_PREFIX_MAPPING: ReadonlyArray<{ prefix: string; kind: AuditKind }> = [
 	{ prefix: "run.", kind: "run" },
-	{ prefix: "roleplay.", kind: "memory" },
 ];
 
 /** Map an event kind to an audit kind, or null to skip it. */
@@ -401,9 +400,8 @@ export function auditKindForEvent(eventKind: string): AuditKind | null {
 }
 
 /**
- * Subscribe an audit store to the host event bus. Run/evidence events map to
- * `run`; roleplay state maps to `memory`. Audit failures never throw into the
- * event bus.
+ * Subscribe an audit store to the host event bus. Audit failures never throw
+ * into the event bus.
  */
 export function wireAuditToEvents(
 	audit: Pick<AuditStore, "append">,

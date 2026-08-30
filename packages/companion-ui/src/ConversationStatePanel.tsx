@@ -2,7 +2,7 @@ import { i18n, useTranslation } from "@bear-harness/i18n";
 import { type JsonSchema, resolveSchema } from "@jsonforms/core";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { useCompanionStore } from "./stores/companion.js";
-import type { CharacterStateDocument, CharacterStatePatchOperation } from "./stores/ipc.js";
+import type { CharacterStateDocument, CompanionStatePatchOperation } from "./stores/ipc.js";
 import { Button, Dialog, Select, TextField } from "./ui/primitives.js";
 
 type SchemaNode = JsonSchema & {
@@ -23,9 +23,9 @@ export function ConversationStatePanel(props: {
 	const [t] = useTranslation(undefined, { i18n });
 	const projection = createMemo(() => {
 		const id = store.activeConversationId;
-		return id ? store.characterState?.byConversation[id] : undefined;
+		return id ? store.companionState?.byConversation[id]?.character : undefined;
 	});
-	const schema = createMemo(() => store.characterState?.schema as SchemaNode | undefined);
+	const schema = createMemo(() => store.companionState?.schema as SchemaNode | undefined);
 
 	return (
 		<Dialog open={props.open} onOpenChange={props.onOpenChange}>
@@ -64,12 +64,12 @@ function StateEditor(props: { projection: CharacterStateDocument; schema: Schema
 	const store = useCompanionStore();
 	const [t] = useTranslation(undefined, { i18n });
 	const [draft, setDraft] = createSignal(
-		structuredClone(props.projection.document) as Record<string, unknown>,
+		JSON.parse(JSON.stringify(props.projection.document)) as Record<string, unknown>,
 	);
 	const [saving, setSaving] = createSignal(false);
 	const [error, setError] = createSignal<string>();
-	const patch = createMemo<CharacterStatePatchOperation[]>(() => {
-		const operations: CharacterStatePatchOperation[] = [];
+	const patch = createMemo<CompanionStatePatchOperation[]>(() => {
+		const operations: CompanionStatePatchOperation[] = [];
 		collectEditableChanges(
 			props.schema,
 			props.schema,
@@ -85,7 +85,7 @@ function StateEditor(props: { projection: CharacterStateDocument; schema: Schema
 		setSaving(true);
 		setError(undefined);
 		try {
-			await store.patchCharacterState(patch());
+			await store.patchCompanionState(patch());
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : String(cause));
 		} finally {
@@ -277,7 +277,7 @@ function collectEditableChanges(
 	pointer: string,
 	current: unknown,
 	draft: unknown,
-	operations: CharacterStatePatchOperation[],
+	operations: CompanionStatePatchOperation[],
 ): void {
 	const node = resolveNode(schema, root);
 	if (node.type === "object" || node.properties) {

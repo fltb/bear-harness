@@ -1,4 +1,5 @@
 import { expect, test } from "playwright/test";
+import { projectPiEntries } from "./helpers";
 
 const enabled = process.env.BEAR_E2E_LIVE_MODEL === "1";
 const providerId = process.env.BEAR_E2E_PROVIDER_ID ?? "";
@@ -34,28 +35,29 @@ test("configured live model answers a WebDev smoke message", async ({ page }) =>
 		});
 	}
 	await rpc("provider.setApiKey:v1", { providerId, apiKey, sessionOnly: true });
-	await rpc("model.enable:v1", { providerId, modelId, label: "E2E live model" });
-	const conversation = await rpc<{ id: string }>("conversation.create:v1", {});
+	await rpc("model.enable:v1", {
+		providerId,
+		modelId,
+		label: "E2E live model",
+	});
+	const conversation = await rpc<{ sessionId: string }>("conversation.create:v1", {});
 	await rpc("model.route.set:v1", {
-		conversationId: conversation.id,
+		conversationId: conversation.sessionId,
 		selected: { providerId, modelId },
 	});
 	await rpc("message.send:v1", {
-		conversationId: conversation.id,
+		conversationId: conversation.sessionId,
 		text: "只回复 E2E_OK，不要添加其他内容。",
 	});
 
 	await expect
 		.poll(
 			async () => {
-				const active = await rpc<{
-					conversation?: {
-						piTimeline: {
-							entries: Array<{ kind: string; role?: string; text?: string }>;
-						};
-					};
-				}>("conversation.activeGet:v1", {});
-				return active.conversation?.piTimeline.entries
+				const active = await rpc<{ session?: { entries: unknown[] } }>(
+					"conversation.activeGet:v1",
+					{},
+				);
+				return projectPiEntries(active.session?.entries ?? [])
 					.filter((entry) => entry.kind === "message" && entry.role === "assistant")
 					.map((entry) => entry.text ?? "")
 					.join("\n");

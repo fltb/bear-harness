@@ -14,30 +14,45 @@ describe("sidebar conversation journey", () => {
 		const renameConversation = vi.fn(() => Promise.resolve());
 		const archiveConversation = vi.fn(() => Promise.resolve());
 		const deleteConversation = vi.fn(() => Promise.resolve());
+		const searchConversations = vi.fn(() => Promise.resolve());
 		const onOpenBackstage = vi.fn();
 		const onNavigate = vi.fn();
 		const store = {
 			activeConversationId: "conversation-1",
 			conversations: [
 				{
+					id: "conversation-empty",
+					title: "",
+					created: "2026-08-16T00:00:00Z",
+					modified: "2026-08-16T00:00:00Z",
+					messageCount: 0,
+					firstMessage: "",
+				},
+				{
 					id: "conversation-1",
 					title: "Alpha project",
-					unread: true,
-					updatedAt: "2026-08-16T00:00:00Z",
+					created: "2026-08-16T00:00:00Z",
+					modified: "2026-08-16T00:00:00Z",
+					messageCount: 1,
+					firstMessage: "Alpha project",
 				},
 				{
 					id: "conversation-2",
 					title: "Beta notes",
-					unread: false,
-					updatedAt: "2026-08-16T00:00:00Z",
+					created: "2026-08-16T00:00:00Z",
+					modified: "2026-08-16T00:00:00Z",
+					messageCount: 1,
+					firstMessage: "Beta notes",
 				},
 			],
 			archivedConversations: [
 				{
 					id: "conversation-archived",
 					title: "Archived project",
-					unread: false,
-					updatedAt: "2026-08-15T00:00:00Z",
+					created: "2026-08-15T00:00:00Z",
+					modified: "2026-08-15T00:00:00Z",
+					messageCount: 1,
+					firstMessage: "Archived project",
 				},
 			],
 			createConversation,
@@ -45,6 +60,8 @@ describe("sidebar conversation journey", () => {
 			renameConversation,
 			archiveConversation,
 			deleteConversation,
+			searchConversations,
+			model: { models: () => [], data: () => ({}) },
 		} as unknown as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>
@@ -66,26 +83,48 @@ describe("sidebar conversation journey", () => {
 		await user.keyboard("{Control>}k{/Control}");
 		expect(search).toHaveFocus();
 		await user.type(search, "alpha");
+		await waitFor(() => expect(searchConversations).toHaveBeenCalledWith("alpha"));
 		expect(screen.getByRole("button", { name: /Alpha project/ })).toHaveAttribute(
 			"aria-current",
 			"page",
 		);
-		expect(screen.queryByRole("button", { name: /Beta notes/ })).not.toBeInTheDocument();
-		expect(screen.getByRole("img", { name: zhCN.sidebar.unreadMessage })).toBeVisible();
+		expect(screen.getByRole("button", { name: /Beta notes/ })).toBeInTheDocument();
+		expect(
+			within(screen.getByRole("navigation", { name: zhCN.sidebar.conversations })).getByRole(
+				"button",
+				{
+					name: new RegExp(zhCN.sidebar.newConversation),
+				},
+			),
+		).toBeInTheDocument();
 
 		await user.click(screen.getByRole("button", { name: /Alpha project/ }));
 		expect(selectConversation).toHaveBeenCalledWith("conversation-1");
-		await user.click(screen.getByRole("button", { name: zhCN.sidebar.renameConversation }));
-		const rename = screen.getByRole("textbox", { name: zhCN.sidebar.renameConversation });
+		const alphaRow = screen.getByText("Alpha project").closest(".nav-item-wrap");
+		expect(alphaRow).not.toBeNull();
+		await user.click(
+			within(alphaRow as HTMLElement).getByRole("button", {
+				name: zhCN.sidebar.renameConversation,
+			}),
+		);
+		const rename = screen.getByRole("textbox", {
+			name: zhCN.sidebar.renameConversation,
+		});
 		await user.clear(rename);
 		await user.type(rename, "Renamed project");
 		await user.click(screen.getByRole("button", { name: zhCN.sidebar.saveConversation }));
 		expect(renameConversation).toHaveBeenCalledWith("conversation-1", "Renamed project");
-		await user.click(screen.getByRole("button", { name: zhCN.sidebar.archiveConversation }));
+		await user.click(
+			within(alphaRow as HTMLElement).getByRole("button", {
+				name: zhCN.sidebar.archiveConversation,
+			}),
+		);
 		expect(archiveConversation).toHaveBeenCalledWith("conversation-1");
 		await user.clear(search);
 		expect(
-			screen.queryByRole("button", { name: zhCN.sidebar.archivedConversations }),
+			screen.queryByRole("button", {
+				name: zhCN.sidebar.archivedConversations,
+			}),
 		).not.toBeInTheDocument();
 		expect(screen.queryByText("Archived project")).not.toBeInTheDocument();
 		const activeRow = screen.getByText("Alpha project").closest(".nav-item-wrap");
@@ -108,14 +147,16 @@ describe("sidebar conversation journey", () => {
 		expect(deleteConversation).toHaveBeenCalledWith("conversation-1");
 		await waitFor(() =>
 			expect(
-				screen.queryByRole("dialog", { name: zhCN.sidebar.deleteConversationTitle }),
+				screen.queryByRole("dialog", {
+					name: zhCN.sidebar.deleteConversationTitle,
+				}),
 			).not.toBeInTheDocument(),
 		);
-		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.newConversation }));
+		await user.click(await screen.findByTitle(zhCN.sidebar.newConversation));
 		expect(createConversation).toHaveBeenCalledOnce();
 		expect(onNavigate).toHaveBeenCalledTimes(3);
 
-		await user.click(screen.getByRole("button", { name: zhCN.sidebar.characterSettings }));
+		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
 		await user.click(screen.getByRole("button", { name: zhCN.sidebar.systemSettings }));
 		expect(onOpenBackstage).toHaveBeenNthCalledWith(1, "roles");
 		expect(onOpenBackstage).toHaveBeenNthCalledWith(2, "settings");
@@ -126,6 +167,8 @@ describe("sidebar conversation journey", () => {
 		const store = {
 			activeConversationId: null,
 			conversations: [],
+			searchConversations: vi.fn(() => Promise.resolve()),
+			model: { models: () => [], data: () => ({}) },
 		} as unknown as CompanionStore;
 		render(() => (
 			<DesktopProvider store={store}>

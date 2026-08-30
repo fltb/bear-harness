@@ -22,21 +22,14 @@ import { eq } from "drizzle-orm";
 import { ArtifactStore } from "./artifacts/index.js";
 import { awaitSource } from "./await-source.js";
 import { CanonHubService } from "./canon/service.js";
-import { CharacterBehaviorService } from "./companion/character-behavior.js";
 import { CharacterDraftService } from "./companion/character-draft-service.js";
 import { CharacterLoader } from "./companion/character-loader.js";
-import { CompanionStore } from "./companion/companion-store.js";
+import { CompanionStateStore } from "./companion/companion-store.js";
 import { ContextPackCompiler } from "./companion/context-pack.js";
 import { FirstMeetingMachine } from "./companion/first-meeting.js";
-import { eligibleRoleSkillResources, roleSkillStatus } from "./companion/role-resources.js";
-import { RoleplayService } from "./companion/roleplay-service.js";
-import type { CharacterStateEvidence } from "./companion/state-schema.js";
-import { CharacterStateService } from "./companion/state-service.js";
-import { CompanionSupervisor } from "./companion/supervisor.js";
-import { hasTurnAuthorization } from "./companion/turn-authorization.js";
-import { TurnPipeline } from "./companion/turn-pipeline.js";
+import { PiRuntime } from "./companion/pi-runtime.js";
+import { SessionCatalog } from "./companion/session-catalog.js";
 import {
-	type ConversationAttachmentUrlFactoryRequest,
 	type HostCompositionContext,
 	type HostUpdateService,
 	rememberConversationEntry,
@@ -44,14 +37,14 @@ import {
 	syncProviderModels,
 	wireHostHandlers,
 } from "./composition.js";
-import { ConversationAttachmentService } from "./conversation-attachments/service.js";
-import { ConversationRepository } from "./conversations/repository.js";
 import type { Diagnostics } from "./diagnostics/index.js";
 import { Dispatcher, type RpcResponse } from "./dispatcher.js";
 import { CodexAdapter } from "./executors/codex-adapter.js";
 import { PiAcpAdapter, seedPiAcpProfile } from "./executors/pi-adapter.js";
 import { ExecutorRouter } from "./executors/router.js";
 import {
+	type DelegateParams,
+	type DelegateResult,
 	ExternalAgentRunService,
 	externalAgentResultMessage,
 	sanitizeExternalAgentMemoryText,
@@ -117,8 +110,6 @@ export interface HostRuntimeOptions {
 	 * to the platform/system proxy resolvers.
 	 */
 	systemProxyResolver?: SystemProxyResolver;
-	/** Optional desktop factory for short-lived renderer-bound attachment URLs. */
-	conversationAttachmentUrlFactory?: (request: ConversationAttachmentUrlFactoryRequest) => string;
 	/** Optional verified packaged Git runtime supplied by a desktop shell. */
 	bundledGit?: { shellPath: string; pathEntries: string[] };
 	/** Optional absolute Pi ACP worker entrypoint supplied by an embedding host. */
@@ -163,8 +154,7 @@ export class HostRuntime {
 	private readonly db: Database;
 	private unsubscribeSync?: () => void;
 	private readonly providers: ProviderCatalog;
-	private readonly supervisor: CompanionSupervisor;
-	private readonly characterBehavior: CharacterBehaviorService;
+	private readonly pi: PiRuntime;
 	private readonly characterLoader: CharacterLoader;
 	private readonly composition: HostCompositionContext;
 	private readonly systemProxyResolver?: HostRuntimeOptions["systemProxyResolver"];
@@ -178,7 +168,6 @@ export class HostRuntime {
 	};
 	/** Content-addressed artifact store (CAS + ownership rows). */
 	readonly artifacts: ArtifactStore;
-	readonly attachments: ConversationAttachmentService;
 	/** Hash-chained append-only audit store (run/fsop/memory/config). */
 	readonly auditStore: AuditStore;
 	/** Text moderation: deterministic local rules + optional remote policy. */
@@ -206,11 +195,6 @@ export class HostRuntime {
 
 		const eventBus = new EventBus(db.orm);
 		const artifactStore = new ArtifactStore(db.orm, join(dataDir, "artifacts"));
-		const attachments = new ConversationAttachmentService(
-			db.orm,
-			artifactStore,
-			join(dataDir, "attachment-uploads"),
-		);
 		const credentials = new CredentialStore(db.orm, options.credentialVault);
 		const providers = new ProviderCatalog(
 			credentials,
@@ -226,36 +210,8 @@ export class HostRuntime {
 		);
 		const characterLoader = new CharacterLoader(characterSeedRoot, join(dataDir, "characters"));
 		characterLoader.bootstrapLibrary(options.productConfig.defaultCharacterId);
-		const conversationRepository = new ConversationRepository(db.orm, {
-			sessionDir: join(dataDir, "sessions"),
-		});
-		const sessionResolver = conversationRepository.getSessionResolver();
-		const supervisor = new CompanionSupervisor(
-			dataDir,
-			eventBus,
-			providers,
-			sessionResolver,
-			undefined,
-			options.diagnostics,
-		);
-		conversationRepository.setLiveSessionResolver(supervisor.getLiveSessionResolver());
-		const characterState = new CharacterStateService(db.orm);
-		const companionStore = new CompanionStore(db.orm);
-		const roleplay = new RoleplayService(db.orm, characterState, companionStore);
+		const companionStore = new CompanionStateStore(db.orm);
 		const drafts = new CharacterDraftService(db.orm, characterLoader);
-		const characterBehavior = new CharacterBehaviorService(
-			db.orm,
-			eventBus,
-			characterLoader,
-			roleplay,
-			characterState,
-			(conversationId) => supervisor.getLiveSessionResolver().get(conversationId),
-			options.diagnostics,
-			companionStore,
-		);
-		supervisor.setToolFailureHandler((conversationId, toolCallId) =>
-			characterBehavior.markCurrentTurnFailed(conversationId, toolCallId),
-		);
 		const onboarding = new FirstMeetingMachine(db.orm, eventBus, characterLoader);
 		const appSettings = new AppSettingsStore(db.orm);
 		const models = new ModelRegistry(db.orm, eventBus);
@@ -295,40 +251,6 @@ export class HostRuntime {
 			() => memoryRuntime.getEmbeddingService(),
 			db,
 		);
-		const turns = new TurnPipeline(db.orm, supervisor, eventBus, {
-			finishAttachmentSend: (conversationId, nonce, nativeUserEntryId) =>
-				attachments.finishSend(conversationId, nonce, nativeUserEntryId),
-			onCorrectedTurn: async ({ conversationId, userText, assistantText, correction }) => {
-				const owner = db.orm
-					.select({ companionId: conversations.companionId })
-					.from(conversations)
-					.where(eq(conversations.id, conversationId))
-					.get();
-				if (!owner) return;
-				const correctedUserContext = `${userText}\n\n[用户纠正要求]\n${correction}`;
-				await memoryRuntime.captureTurn({
-					userText: correctedUserContext,
-					assistantText,
-					messages: [
-						{
-							role: "user",
-							content: correctedUserContext,
-							timestamp: Date.now(),
-						},
-						{
-							role: "assistant",
-							content: assistantText,
-							timestamp: Date.now() + 1,
-						},
-					],
-					sessionKey: namespaceFor({
-						...memoryScope,
-						companionId: owner.companionId,
-					}),
-					sessionId: conversationId,
-				});
-			},
-		});
 		const contextPack = new ContextPackCompiler(
 			db.orm,
 			characterLoader,
@@ -352,7 +274,7 @@ export class HostRuntime {
 			},
 			companionStore,
 		);
-		supervisor.setContextHandler(async (conversationId, includeHistory, message) => {
+		const renderContext = async (conversationId: string, message: string) => {
 			const diagnostics = options.diagnostics;
 			const span = diagnostics?.startSpan("context.compile", {
 				conversationId,
@@ -364,7 +286,6 @@ export class HostRuntime {
 								await contextPack.compileForTurn(conversationId, {
 									canonQuery: message,
 									memoryQuery: message,
-									currentUserMessage: message,
 								}),
 							),
 						)
@@ -372,13 +293,9 @@ export class HostRuntime {
 							await contextPack.compileForTurn(conversationId, {
 								canonQuery: message,
 								memoryQuery: message,
-								currentUserMessage: message,
 							}),
 						));
-				span?.end("ok", {
-					historyIncluded: includeHistory,
-					contextBytes: Buffer.byteLength(context, "utf8"),
-				});
+				span?.end("ok", { contextBytes: Buffer.byteLength(context, "utf8") });
 				return context;
 			} catch (error) {
 				options.logger?.warn?.(
@@ -388,53 +305,68 @@ export class HostRuntime {
 							: JSON.stringify(error, undefined, 2) || String(error)
 					}`,
 				);
-				span?.end("error", {
-					historyIncluded: includeHistory,
-					contextBytes: 0,
-					errorCode: "context_compile_failed",
-				});
+				span?.end("error", { contextBytes: 0, errorCode: "context_compile_failed" });
 				throw error;
 			}
+		};
+		const activeCharacter = () => {
+			const id = characterLoader.getActiveCharacterId(
+				db.orm,
+				options.productConfig.defaultCharacterId,
+			);
+			const character = characterLoader.load(id);
+			if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
+			return character;
+		};
+		let delegateExternalAgent: ((params: DelegateParams) => Promise<DelegateResult>) | undefined;
+		const pi = new PiRuntime({
+			dataDir,
+			models: providers,
+			character: activeCharacter,
+			store: companionStore,
+			delegate: (params) => {
+				if (!delegateExternalAgent)
+					throw { kind: "unavailable", reason: "external_agent_not_ready" };
+				return delegateExternalAgent(params);
+			},
+			history: async (query, limit) => {
+				const companionId = activeCharacter().id;
+				if (!onboarding.getState(companionId).stateData.decisions.conversation_history_read_enabled)
+					throw { reason: "conversation_history_read_disabled" };
+				const current = pi.snapshot()?.sessionId;
+				const needle = query.toLocaleLowerCase();
+				return (await sessions.list(companionId))
+					.filter(
+						(session) =>
+							session.id !== current &&
+							session.allMessagesText.toLocaleLowerCase().includes(needle),
+					)
+					.slice(0, limit)
+					.map((session) => ({
+						id: session.id,
+						title: session.name,
+						text: session.allMessagesText,
+					}));
+			},
+			canon: async (query, limit) => canon.search(activeCharacter().id, query, limit),
+			memory: async (query, limit) => {
+				const companionId = activeCharacter().id;
+				if (!onboarding.getState(companionId).stateData.decisions.relationship_memory_enabled)
+					throw { reason: "relationship_memory_disabled" };
+				const scope = { ...memoryScope, companionId };
+				await memoryBackend.open({ scope });
+				return (await memoryBackend.recall({ scope, query, limit })).map(({ record, score }) => ({
+					id: record.id,
+					text: record.text,
+					score,
+				}));
+			},
+			defaultModel: () => models.defaults(activeCharacter().id).reply,
+			context: renderContext,
+			titleChanged: (sessionId, title) =>
+				eventBus.publish("conversation.renamed", { conversationId: sessionId, title }),
 		});
-		supervisor.setSkillAccessHandler((conversationId, skill) => {
-			const conversation = db.orm
-				.select({ companionId: conversations.companionId })
-				.from(conversations)
-				.where(eq(conversations.id, conversationId))
-				.get();
-			if (!conversation) return { status: "blocked", resourceIds: [] };
-			const character = characterLoader.load(conversation.companionId);
-			if (!character) return { status: "blocked", resourceIds: [] };
-			const values = characterState.project(
-				conversation.companionId,
-				conversationId,
-				character.state,
-				true,
-			).document;
-			return {
-				status: roleSkillStatus(skill, values),
-				resourceIds: eligibleRoleSkillResources(skill, values).map((resource) => resource.id),
-			};
-		});
-		onboarding.setConversationFactory(({ companionId, title, onCommit }) => {
-			const id = randomUUID();
-			const created = conversationRepository.createAndSelect({
-				id,
-				companionId,
-				title,
-				onCommit,
-			});
-			return {
-				conversationId: created.id,
-				title: created.title,
-			};
-		});
-		onboarding.setConversationCreatedHandler((companionId, conversationId) => {
-			models.applyDefaultToConversation(companionId, conversationId);
-		});
-		supervisor.setModelSelectionHandler((conversationId, requiresImages) =>
-			models.resolve(conversationId, requiresImages),
-		);
+		const sessions = new SessionCatalog(db.orm, pi);
 		seedPiAcpProfile(db.orm);
 		const executorRouter = new ExecutorRouter(db.orm);
 		executorRouter.register(
@@ -447,32 +379,19 @@ export class HostRuntime {
 			{ run, outputs, needsResultReport, needsMemoryCapture }: TerminalRunResult,
 			signal: AbortSignal,
 		) => {
-			const owner = db.orm
-				.select({ companionId: conversations.companionId })
-				.from(conversations)
-				.where(eq(conversations.id, run.conversationId))
-				.get();
-			if (!owner || conversationRepository.active(owner.companionId)?.id !== run.conversationId) {
+			if (pi.snapshot()?.sessionId !== run.conversationId) {
 				return { resultReported: false, memoryCaptured: false };
 			}
 
 			const content = externalAgentResultMessage({ run, outputs });
-			const followUp = await turns.deliverExternalAgentResult(run.conversationId, run.id, content, {
-				signal,
-				timeoutMs: this.backgroundAttemptTimeoutMs,
-			});
-			attachments.bindGenerated(
-				run.conversationId,
-				outputs.map((output) => output.id),
-				followUp.entryId,
-			);
+			await awaitSource(pi.deliverExternalResult(run.id, content), signal);
 
 			let memoryCaptured = false;
 			if (needsMemoryCapture) {
 				try {
 					const timestamp = Date.now();
 					const userText = sanitizeExternalAgentMemoryText(content, 6_000);
-					const assistantText = sanitizeExternalAgentMemoryText(followUp.text, 4_000);
+					const assistantText = "External agent result delivered to Pi.";
 					await awaitSource(
 						memoryRuntime.captureTurn({
 							userText,
@@ -487,7 +406,7 @@ export class HostRuntime {
 							],
 							sessionKey: namespaceFor({
 								...memoryScope,
-								companionId: owner.companionId,
+								companionId: activeCharacter().id,
 							}),
 							sessionId: run.conversationId,
 						}),
@@ -495,8 +414,7 @@ export class HostRuntime {
 					);
 					memoryCaptured = true;
 				} catch {
-					// Memory is a retryable side channel; native result delivery and
-					// generated attachment binding have already committed.
+					// Memory is a retryable side channel; native result delivery already committed.
 				}
 			}
 			return {
@@ -509,7 +427,7 @@ export class HostRuntime {
 			db.orm,
 			eventBus,
 			executorRouter,
-			attachments,
+			artifactStore,
 			join(dataDir, "external-agent-runs"),
 			async (agent) => {
 				if (agent === "pi") return "pi-default";
@@ -520,7 +438,7 @@ export class HostRuntime {
 				return status.profileId;
 			},
 			async (conversationId) => {
-				const route = models.resolve(conversationId, false);
+				const route = await pi.modelFor(conversationId);
 				if (!route) return undefined;
 				const credential = await credentials.get(route.providerId);
 				const apiKey =
@@ -537,303 +455,15 @@ export class HostRuntime {
 			undefined,
 			options.diagnostics,
 		);
-		this.unsubscribeRunResultDrain = eventBus.subscribe((event) => {
-			if (event.kind !== "conversation.selected") return;
-			const payload = event.payload as { id?: unknown };
-			if (typeof payload.id !== "string" || !this.started) return;
-			this.scheduleBackground("external-agent activation reconciliation", (signal) =>
-				externalAgentRuns.reconcilePending(payload.id as string, {
-					signal,
-					timeoutMs: this.backgroundAttemptTimeoutMs,
-				}),
-			);
-		});
-		supervisor.setHostToolHandler(async (call) => {
-			if (call.tool === "host_state") {
-				const conversation = db.orm
-					.select({ companionId: conversations.companionId })
-					.from(conversations)
-					.where(eq(conversations.id, call.conversationId))
-					.get();
-				if (!conversation)
-					return {
-						ok: false,
-						code: "conversation_not_found",
-						message: "Conversation not found.",
-					};
-				const character = characterLoader.load(conversation.companionId);
-				if (!character)
-					return {
-						ok: false,
-						code: "character_not_found",
-						message: "Character not found.",
-					};
-				const args = call.args as {
-					action?: unknown;
-					operations?: unknown;
-					reason?: unknown;
-					skillId?: unknown;
-					evidence?: unknown;
-				};
-				if (args.action === "read") {
-					return {
-						ok: true,
-						message: "Character state read.",
-						data: characterState.project(
-							conversation.companionId,
-							call.conversationId,
-							character.state,
-							true,
-						),
-					};
-				}
-				if (args.action !== "update")
-					return {
-						ok: false,
-						code: "state_action_invalid",
-						message: "State action is invalid.",
-					};
-				const live = supervisor.getLiveSessionResolver().get(call.conversationId);
-				if (!live?.currentUserEntryId)
-					return {
-						ok: false,
-						code: "trigger_entry_required",
-						message: "A current user turn is required.",
-					};
-				try {
-					const skillId = typeof args.skillId === "string" ? args.skillId : undefined;
-					if (skillId && !supervisor.hasReadSkillForCurrentTurn(call.conversationId, skillId)) {
-						return {
-							ok: false,
-							code: "skill_read_required",
-							message: "The authorized role Skill must be read during the current turn.",
-						};
-					}
-					const evidence = parseStateEvidence(args.evidence);
-					if (evidence) {
-						const sourceText =
-							evidence.source === "current_user"
-								? live.currentUserText
-								: evidence.source === "current_assistant"
-									? live.currentAssistantText
-									: undefined;
-						if (!sourceText?.includes(evidence.quote)) {
-							return {
-								ok: false,
-								code: "state_evidence_not_found",
-								message: "The evidence quote is not present in the declared current-turn source.",
-							};
-						}
-					}
-					const result = characterState.stage({
-						companionId: conversation.companionId,
-						conversationId: call.conversationId,
-						piSessionId: live.sessionId,
-						sourceUserEntryId: live.currentUserEntryId,
-						definition: character.state,
-						operations: args.operations as never,
-						reason: typeof args.reason === "string" ? args.reason : "",
-						...(skillId ? { skillId } : {}),
-						...(evidence ? { evidence } : {}),
-					});
-					return {
-						ok: true,
-						message: "State update staged and will commit only if this response completes.",
-						data: result,
-					};
-				} catch (error) {
-					const code =
-						error &&
-						typeof error === "object" &&
-						"reason" in error &&
-						typeof error.reason === "string"
-							? error.reason
-							: "state_update_failed";
-					return { ok: false, code, message: code };
-				}
-			}
-			if (call.tool === "host_history") {
-				const args = call.args as { query: string; limit?: number };
-				const currentUserText = supervisor
-					.getLiveSessionResolver()
-					.get(call.conversationId)?.currentUserText;
-				if (!currentUserText || !hasTurnAuthorization(currentUserText, "history"))
-					return {
-						ok: false,
-						code: "turn_authorization_required",
-						message: "The current user turn did not explicitly request conversation history.",
-					};
-				const conversation = db.orm
-					.select({ companionId: conversations.companionId })
-					.from(conversations)
-					.where(eq(conversations.id, call.conversationId))
-					.get();
-				if (!conversation)
-					return {
-						ok: false,
-						code: "conversation_not_found",
-						message: "Conversation not found.",
-					};
-				if (
-					!onboarding.getState(conversation.companionId).stateData.decisions
-						.conversation_history_read_enabled
-				)
-					return {
-						ok: false,
-						code: "conversation_history_read_disabled",
-						message: "Cross-conversation reading is disabled.",
-					};
-				const repository = new ConversationRepository(db.orm);
-				const hits = repository.search(conversation.companionId, args.query, {
-					excludeConversationId: call.conversationId,
-					limit: args.limit,
-				});
-				return {
-					ok: true,
-					message: hits.length
-						? "Conversation history found."
-						: "No matching conversation history.",
-					data: { hits },
-				};
-			}
-			if (call.tool === "host_canon") {
-				const args = call.args as { query: string; moduleId?: string };
-				const conversation = db.orm
-					.select({ companionId: conversations.companionId })
-					.from(conversations)
-					.where(eq(conversations.id, call.conversationId))
-					.get();
-				if (!conversation) throw { kind: "not_found", reason: "conversation_not_found" };
-				const character = characterLoader.load(conversation.companionId);
-				if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
-				const pendingState =
-					call.piSessionId && call.triggerEntryId
-						? characterState.previewTurn({
-								companionId: conversation.companionId,
-								conversationId: call.conversationId,
-								piSessionId: call.piSessionId,
-								sourceUserEntryId: call.triggerEntryId,
-								definition: character.state,
-							}).document
-						: undefined;
-				const citations = await canon.retrieveHybrid(conversation.companionId, args.query, {
-					moduleId: args.moduleId,
-					limit: 8,
-					allowedModuleIds: contextPack.accessibleCanonModuleIds(call.conversationId, pendingState),
-				});
-				return {
-					ok: true,
-					message: citations.length
-						? "Canon evidence retrieved."
-						: "No matching original-work evidence is installed for this character.",
-					data: { citations },
-				};
-			}
-			if (call.tool === "host_memory") {
-				const result = await rememberConversationEntry(
-					this.composition,
-					call.conversationId,
-					undefined,
-					"assistant_tool",
-					(call.args as { evidenceQuote: string }).evidenceQuote,
-				);
-				return {
-					ok: true,
-					message:
-						result.status === "stored"
-							? "Memory stored."
-							: result.status === "already_known"
-								? "Equivalent memory was already stored."
-								: `Memory was not stored: ${result.reason}.`,
-					data: result,
-				};
-			}
-			if (call.tool === "host_attachment") {
-				const args = call.args as {
-					action: "list" | "read";
-					attachmentId: string;
-					relativePath?: string;
-					query?: string;
-					cursor?: string;
-				};
-				if (args.action === "list")
-					return {
-						ok: true,
-						message: "Conversation attachments listed.",
-						data: { attachments: attachments.list(call.conversationId) },
-					};
-				return {
-					ok: true,
-					message: "Conversation attachment read.",
-					data: attachments.readForRole({
-						conversationId: call.conversationId,
-						...args,
-					}),
-				};
-			}
-			if (call.tool === "host_delegate") {
-				const liveSession = supervisor.getLiveSessionResolver().get(call.conversationId);
-				const triggerEntryId = liveSession?.currentUserEntryId;
-				if (!triggerEntryId) {
-					return {
-						ok: false,
-						code: "trigger_entry_required",
-						message: "A current user entry is required.",
-					};
-				}
-				const args = call.args as {
-					agent: "pi" | "codex";
-					attachmentIds: string[];
-					workspaceAttachmentId?: string;
-					instruction: string;
-				};
-				const capability = args.agent === "codex" ? "delegate_codex" : "delegate_pi";
-				if (
-					!liveSession?.currentUserText ||
-					!hasTurnAuthorization(liveSession.currentUserText, capability)
-				)
-					return {
-						ok: false,
-						code: "turn_authorization_required",
-						message:
-							args.agent === "codex"
-								? "The current user turn did not explicitly request Codex delegation."
-								: "The current user turn did not explicitly request agent delegation.",
-					};
-				try {
-					const run = await externalAgentRuns.delegate({
-						conversationId: call.conversationId,
-						triggerEntryId,
-						...args,
-					});
-					return {
-						ok: true,
-						message: "External agent started.",
-						data: run,
-					};
-				} catch (error) {
-					const code =
-						error &&
-						typeof error === "object" &&
-						"reason" in error &&
-						typeof error.reason === "string"
-							? error.reason
-							: "external_agent_launch_failed";
-					return { ok: false, code, message: code };
-				}
-			}
-			return characterBehavior.invoke(call);
-		});
+		delegateExternalAgent = (params) => externalAgentRuns.delegate(params);
 
 		this.db = db;
 		this.memoryRuntime = memoryRuntime;
 		this.memoryBackend = memoryBackend;
 		this.memoryScope = memoryScope;
 		this.artifacts = artifactStore;
-		this.attachments = attachments;
 		this.providers = providers;
-		this.supervisor = supervisor;
-		this.characterBehavior = characterBehavior;
+		this.pi = pi;
 		this.characterLoader = characterLoader;
 		this.systemProxyResolver = options.systemProxyResolver;
 		this.logger = options.logger;
@@ -855,7 +485,8 @@ export class HostRuntime {
 			orm: db.orm,
 			eventBus,
 			onboarding,
-			turns,
+			pi,
+			sessions,
 			models,
 			memoryBackend,
 			memoryRuntime,
@@ -864,24 +495,16 @@ export class HostRuntime {
 			externalAgentRuns,
 			externalAgents: codex,
 			artifacts: artifactStore,
-			attachments,
 			canon,
-			supervisor,
 			providers,
 			characterLoader,
-			characterBehavior,
 			drafts,
-			roleplay,
-			characterState,
 			companionStore,
 			defaultCharacterId: options.productConfig.defaultCharacterId,
-			conversationRepository,
-			piSessionDir: join(dataDir, "sessions"),
-			attachmentUrlFactory: options.conversationAttachmentUrlFactory,
 			updateService: options.updateService,
 			auditStore: this.auditStore,
 		};
-		// Start auditing run/roleplay events from construction.
+		// Start auditing Host events from construction.
 		this.unsubscribeAudit = wireAuditToEvents(this.auditStore, this.composition.eventBus);
 		const syncEpoch = randomUUID();
 		const syncRevision = () => ({
@@ -1000,10 +623,9 @@ export class HostRuntime {
 			const activeCharacter = this.characterLoader.load(activeCharacterId);
 			if (!activeCharacter) throw new Error(`character package missing: ${activeCharacterId}`);
 			const trust = this.characterLoader.pluginTrust(this.composition.orm, activeCharacter);
-			this.supervisor.configureRuntime(
-				this.characterLoader.piResources(activeCharacter, trust.trusted),
+			this.pi.configure(
+				this.characterLoader.piResources(activeCharacter, trust.trusted).appendSystemPrompt,
 			);
-
 			// Security sentinels are local lifecycle state and must be installed
 			// before the Host becomes available.
 			this.uninstallFsProtection = installFsProtection({
@@ -1019,7 +641,6 @@ export class HostRuntime {
 				// retention is best-effort at boot
 			});
 			await this.memoryRuntime.start();
-			await this.supervisor.start();
 			this.started = true;
 
 			// Every provider/model/network-dependent attempt starts only after the
@@ -1051,12 +672,6 @@ export class HostRuntime {
 			this.scheduleBackground("Canon embedding reconciliation", (signal) =>
 				awaitSource(this.composition.canon.indexPending(activeCharacterId), signal),
 			);
-			this.scheduleBackground("pending turn reconciliation", (signal) =>
-				this.composition.turns.reconcilePendingTurns({
-					signal,
-					timeoutMs: this.backgroundAttemptTimeoutMs,
-				}),
-			);
 			this.scheduleBackground("external-agent result reconciliation", (signal) =>
 				this.composition.externalAgentRuns.reconcilePending(undefined, {
 					signal,
@@ -1065,7 +680,7 @@ export class HostRuntime {
 			);
 		} catch (error) {
 			this.started = false;
-			if (this.supervisor.isRunning) await this.supervisor.stop().catch(() => undefined);
+			await this.pi.close().catch(() => undefined);
 			this.uninstallFsProtection?.uninstall();
 			this.uninstallFsProtection = undefined;
 			this.unsubscribeProxyHotReload?.();
@@ -1121,11 +736,9 @@ export class HostRuntime {
 		await Promise.allSettled(attempts.map((attempt) => attempt.settled));
 		this.backgroundAttempts.clear();
 		await this.composition.externalAgentRuns.close();
-		this.composition.turns.dispose();
-
 		let failure: unknown;
 		try {
-			await this.supervisor.stop();
+			await this.pi.close();
 		} catch (error) {
 			failure = error;
 		}
@@ -1134,7 +747,6 @@ export class HostRuntime {
 		this.unsubscribeAudit?.();
 		this.unsubscribeAudit = undefined;
 		await this.auditStore.flush();
-		this.characterBehavior.dispose();
 		try {
 			await this.memoryRuntime.close();
 		} catch (error) {
@@ -1184,20 +796,6 @@ function mergeEmbeddingConfig(
 		embedding.dimensions = service.dimensions ?? 0;
 	}
 	return { ...base, embedding: { ...base?.embedding, ...embedding } };
-}
-
-function parseStateEvidence(value: unknown): CharacterStateEvidence | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	const source = (value as Record<string, unknown>).source;
-	const quote = (value as Record<string, unknown>).quote;
-	if (
-		(source !== "current_user" && source !== "current_assistant") ||
-		typeof quote !== "string" ||
-		quote.length === 0 ||
-		quote.length > 2000
-	)
-		return undefined;
-	return { source, quote };
 }
 
 /** Create an instance-scoped companion host runtime. */

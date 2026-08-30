@@ -24,7 +24,7 @@ export default defineConfig({
 			"tests/recovery-controller.spec.ts",
 			"tests/data-root-migration.spec.ts",
 			"tests/electron-builder-config.spec.ts",
-			"tests/conversation-attachment-*.spec.ts",
+			"tests/local-file-bridge.spec.ts",
 			"tests/external-agent-runtime.spec.ts",
 			"tests/update-service.spec.ts",
 			"tests/electron-credential-vault.spec.ts",

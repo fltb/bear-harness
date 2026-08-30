@@ -13,6 +13,7 @@ const run = (id: string, status: RunInfo["status"]): RunInfo => ({
 	executorProfile: "pi-default",
 	title: `${status} task`,
 	status,
+	artifacts: [],
 });
 
 function renderWork(overrides: Partial<CompanionStore> = {}, showPermission = false) {

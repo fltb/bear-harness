@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 // @vitest-environment node
 
 import type { Dispatcher } from "@bear-harness/host-runtime";
-import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
+import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 interface InvokeEvent {
@@ -37,7 +37,7 @@ vi.mock("electron", () => ({
 import { wireElectronIpcHandlers } from "../src/main/ipc-router.js";
 
 const ALLOWED_URL = "file:///dist/renderer/index.html";
-const channel = Object.keys(REQUEST_SCHEMAS)[0];
+const channel = Object.keys(CHANNEL_CONTRACTS)[0];
 function setupRegistry() {
 	return new Map([[1, { allowedUrl: ALLOWED_URL }]]);
 }
@@ -67,7 +67,7 @@ describe("wireElectronIpcHandlers", () => {
 	it("registers every public protocol channel", () => {
 		const { dispatch } = setup();
 
-		expect([...electron.handlers.keys()].sort()).toEqual(Object.keys(REQUEST_SCHEMAS).sort());
+		expect([...electron.handlers.keys()].sort()).toEqual(Object.keys(CHANNEL_CONTRACTS).sort());
 		expect(dispatch).not.toHaveBeenCalled();
 	});
 
@@ -76,7 +76,7 @@ describe("wireElectronIpcHandlers", () => {
 			{ dispatch: vi.fn() } as unknown as Dispatcher,
 			setupRegistry(),
 		);
-		const channelCount = Object.keys(REQUEST_SCHEMAS).length;
+		const channelCount = Object.keys(CHANNEL_CONTRACTS).length;
 		const registrationRemovals = electron.removeHandler.mock.calls.length;
 
 		expect(electron.handlers.size).toBe(channelCount);
@@ -85,23 +85,6 @@ describe("wireElectronIpcHandlers", () => {
 		expect(electron.removeHandler).toHaveBeenCalledTimes(registrationRemovals + channelCount);
 		dispose();
 		expect(electron.removeHandler).toHaveBeenCalledTimes(registrationRemovals + channelCount);
-	});
-
-	it("runs admitted dispatches in the invoking renderer capability context", async () => {
-		electron.fromWebContents.mockReturnValue({});
-		const dispatch = vi.fn().mockResolvedValue({ ok: true, data: {} });
-		const runForRenderer = vi.fn((_rendererId: number, callback: () => unknown) => callback());
-		wireElectronIpcHandlers({ dispatch } as unknown as Dispatcher, setupRegistry(), {
-			attachmentProtocol: { runForRenderer },
-		});
-		const handler = electron.handlers.get(channel);
-		if (!handler) throw new Error(`handler not registered for ${channel}`);
-		const mainFrame = { url: ALLOWED_URL };
-
-		await handler(mainFrameEvent(mainFrame), { value: true });
-
-		expect(runForRenderer).toHaveBeenCalledWith(1, expect.any(Function));
-		expect(dispatch).toHaveBeenCalledWith(channel, { value: true });
 	});
 
 	it("replaces an existing registration without letting the old disposer remove it", () => {

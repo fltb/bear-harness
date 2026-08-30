@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CredentialVault, createHostRuntime } from "../src/index.js";
+import type { Database } from "../src/storage/database.js";
+import { conversations } from "../src/storage/schema.js";
 
 const roots: string[] = [];
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
@@ -43,7 +45,12 @@ describe("character state RPC projection", () => {
 		});
 		await runtime.start();
 		try {
-			const conversation = (await data(runtime, "conversation.create:v1", {})) as { id: string };
+			const conversation = { id: randomUUID() };
+			const database = Reflect.get(runtime, "db") as Database;
+			database.orm
+				.insert(conversations)
+				.values({ id: conversation.id, companionId: productConfig.defaultCharacterId })
+				.run();
 			const before = (await data(runtime, "snapshot.get:v1", {})) as {
 				companion: {
 					byConversation: Record<
@@ -51,7 +58,7 @@ describe("character state RPC projection", () => {
 						{
 							character: {
 								document: { story: { undelivered_report: { user_interpretation: string[] } } };
-								revisions: { conversation: number; relationship: number; character: number };
+								revisions: { conversation: number; global: number };
 							};
 						}
 					>;
@@ -63,7 +70,7 @@ describe("character state RPC projection", () => {
 
 			const receive = vi.fn();
 			const stop = runtime.subscribeEvents(receive, 0);
-			const response = await data(runtime, "characterState.patch:v1", {
+			const response = await data(runtime, "companionState.patch:v1", {
 				conversationId: conversation.id,
 				expectedRevisions: projection.revisions,
 				operations: [
@@ -76,7 +83,9 @@ describe("character state RPC projection", () => {
 				dedupeKey: randomUUID(),
 			});
 			expect(response).toEqual({});
-			expect(receive.mock.calls.map(([event]) => event.kind)).toContain("character.state_changed");
+			expect(receive.mock.calls.map(([event]) => event.kind)).toContain(
+				"companion.snapshot_changed",
+			);
 			stop();
 
 			const after = (await data(runtime, "snapshot.get:v1", {})) as typeof before;

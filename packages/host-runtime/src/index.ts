@@ -10,61 +10,26 @@
 
 export type { ArtifactRecord } from "./artifacts/index.js";
 export { ArtifactStore } from "./artifacts/index.js";
-export type {
-	CharacterRuntimeState,
-	CompanionHostToolCall,
-	CompanionHostToolName,
-	CompanionHostToolResult,
-} from "./companion/character-behavior.js";
-export { CharacterBehaviorService } from "./companion/character-behavior.js";
 export type { CharacterDisplay, CharacterPackage } from "./companion/character-loader.js";
 // Companion domain
 export { CharacterLoader } from "./companion/character-loader.js";
 export type {
-	CollectionState,
 	CompanionMutation,
 	CompanionSnapshot,
 	DisplayState,
 } from "./companion/companion-store.js";
-export { CompanionStore } from "./companion/companion-store.js";
+export { CompanionStateStore } from "./companion/companion-store.js";
 export type { OnboardingStateRow, OnboardingStatus } from "./companion/first-meeting.js";
 export { FirstMeetingMachine } from "./companion/first-meeting.js";
+export { registerHostTools } from "./companion/host-tool-register.js";
 export type {
 	CharacterOnboardingFlow,
 	CharacterOnboardingStep,
 	OnboardingStateData,
 } from "./companion/onboarding-schema.js";
-export type {
-	CreateAcceptedPendingTurn,
-	ListPendingTurns,
-	PendingTurnImage,
-	PendingTurnRecord,
-	PendingTurnState,
-	TransitionPendingTurn,
-} from "./companion/pending-turn-store.js";
-export {
-	MAX_PENDING_TURN_ATTACHMENTS,
-	MAX_PENDING_TURN_ERROR_BYTES,
-	MAX_PENDING_TURN_IMAGE_BYTES,
-	MAX_PENDING_TURN_IMAGE_BYTES_TOTAL,
-	MAX_PENDING_TURN_IMAGES,
-	MAX_PENDING_TURN_TEXT_BYTES,
-	PendingTurnStore,
-} from "./companion/pending-turn-store.js";
-export type {
-	CompanionModelRuntimeSource,
-	CompanionRuntimeConfig,
-	CompanionState,
-} from "./companion/supervisor.js";
-export { CompanionSupervisor } from "./companion/supervisor.js";
-export type { TurnResult } from "./companion/turn-pipeline.js";
-export { TurnPipeline } from "./companion/turn-pipeline.js";
-export type { ConversationAttachmentUrlFactoryRequest } from "./composition.js";
-export type {
-	AttachmentKind,
-	ConversationAttachmentSummary,
-} from "./conversation-attachments/service.js";
-export { ConversationAttachmentService } from "./conversation-attachments/service.js";
+export type { PiSnapshot } from "./companion/pi-runtime.js";
+export { PiRuntime } from "./companion/pi-runtime.js";
+export { SessionCatalog } from "./companion/session-catalog.js";
 export type {
 	AttributeSpec,
 	CatalogEntry,
@@ -170,11 +135,6 @@ export type {
 	FsopPlan,
 } from "./fsops/service.js";
 export { FileOpsService } from "./fsops/service.js";
-export type { CodecGenerator, CodecParser, CodecResult } from "./materials/codec.js";
-export { CodecRegistry, codecRegistry, guardCell } from "./materials/codec.js";
-export type { MaterialKind, MaterialRef, MaterialState } from "./materials/ingest.js";
-// Materials + fsops (services only; no RPC endpoints)
-export { IngestService, sanitizeName, sniffKind } from "./materials/ingest.js";
 export type {
 	MemoryBackend,
 	MemoryBackendCapabilities,

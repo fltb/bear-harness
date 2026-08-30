@@ -8,22 +8,18 @@ import {
 import type { Accessor } from "solid-js";
 import { commitQueryValue, readQueryValue } from "./query-sync.js";
 
+type MaybeAccessor<T> = T | Accessor<T>;
 interface Refresh {
 	promise: Promise<unknown>;
 	dirty: boolean;
 }
-const inFlightRefreshes = new WeakMap<QueryClient, Map<string, Refresh>>();
-
-type MaybeAccessor<T> = T | Accessor<T>;
+const refreshesByClient = new WeakMap<QueryClient, Map<string, Refresh>>();
 
 export const queryKeys = {
 	snapshot: ["snapshot"] as const,
 	conversations: ["conversations"] as const,
 	archivedConversations: ["conversations", "archived"] as const,
 	activeConversation: ["conversation", "active"] as const,
-	conversationProjection: (conversationId: string, sessionId?: string) =>
-		["conversation", "projection", conversationId, sessionId ?? null] as const,
-	memory: ["memory"] as const,
 	memoryProjection: (scope?: string, query?: string, characterId?: string) =>
 		["memory", "projection", characterId ?? null, scope ?? null, query ?? null] as const,
 	memoryCandidates: (status?: string, characterId?: string) =>
@@ -31,17 +27,17 @@ export const queryKeys = {
 	settingsCapabilities: ["settings", "capabilities"] as const,
 	runs: ["runs"] as const,
 	characters: ["characters"] as const,
-	characterPackage: (characterId: string) => ["character", "package", characterId] as const,
-	canonSources: (characterId?: string) => ["canon", "sources", characterId ?? null] as const,
-	canonModules: (characterId?: string) => ["canon", "modules", characterId ?? null] as const,
+	characterPackage: (id: string) => ["character", "package", id] as const,
+	canonSources: (id?: string) => ["canon", "sources", id ?? null] as const,
+	canonModules: (id?: string) => ["canon", "modules", id ?? null] as const,
 	onboarding: ["onboarding"] as const,
 	settings: ["settings"] as const,
 	providers: ["providers"] as const,
 	embeddingDownload: ["embedding", "download"] as const,
-	providerLogin: (providerId: string) => ["providerLogin", providerId] as const,
+	providerLogin: (id: string) => ["providerLogin", id] as const,
 	modelPool: ["models", "pool"] as const,
 	modelDefaults: ["models", "defaults"] as const,
-	modelRoute: (conversationId: string) => ["models", "route", conversationId] as const,
+	modelRoute: (id: string) => ["models", "route", id] as const,
 };
 
 export function createRpcQuery<T>(input: {
@@ -98,8 +94,8 @@ export async function refreshRpcQuery<T>(input: {
 	key: QueryKey;
 	request: () => Promise<T>;
 }): Promise<T> {
-	const refreshes = inFlightRefreshes.get(input.client) ?? new Map<string, Refresh>();
-	inFlightRefreshes.set(input.client, refreshes);
+	const refreshes = refreshesByClient.get(input.client) ?? new Map<string, Refresh>();
+	refreshesByClient.set(input.client, refreshes);
 	const refreshKey = hashKey(input.key);
 	const existing = refreshes.get(refreshKey);
 	if (existing) {
@@ -109,22 +105,23 @@ export async function refreshRpcQuery<T>(input: {
 	const refresh: Refresh = { promise: Promise.resolve(), dirty: false };
 	refreshes.set(refreshKey, refresh);
 	refresh.promise = (async () => {
-		let result: T;
+		let result!: T;
 		do {
 			refresh.dirty = false;
-			await input.client.invalidateQueries({
-				queryKey: input.key,
-				exact: true,
-				refetchType: "none",
-			});
+			await input.client.invalidateQueries(
+				{
+					queryKey: input.key,
+					exact: true,
+					refetchType: "none",
+				},
+				{ cancelRefetch: false },
+			);
 			result = await input.client.fetchQuery({
 				queryKey: input.key,
 				queryFn: () => readQueryValue(input.client, input.key, input.request),
 				structuralSharing: false,
 				staleTime: 0,
 			});
-			// A new explicit request during this read is not swallowed. This is
-			// an event-driven trailing refresh, with no timer or periodic polling.
 		} while (refresh.dirty);
 		return result;
 	})();

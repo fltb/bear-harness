@@ -27,33 +27,24 @@
 		"@bear-harness/companion-ui": "file:../../packages/companion-ui",
 		"@bear-harness/host-runtime": "file:../../packages/host-runtime",
 		"@bear-harness/i18n": "file:../../packages/i18n",
-		"node-llama-cpp": "3.16.2",
 		"@bear-harness/product-config": "file:../../packages/product-config",
-		"@bear-harness/protocol": "file:../../packages/protocol"
+		"@bear-harness/protocol": "file:../../packages/protocol",
+		"node-llama-cpp": "3.16.2"
 	},
 	"devDependencies": {
-		"@office-kit/pptx": "^0.12.0",
 		"@rsbuild/core": "2.1.11",
 		"@rsbuild/plugin-babel": "2.0.1",
 		"@rsbuild/plugin-solid": "1.2.2",
 		"@rsbuild/plugin-tailwindcss": "2.0.3",
 		"@types/node": "24.13.3",
 		"@vitest/coverage-v8": "4.1.10",
-		"docx": "^9.7.1",
 		"electron": "43.4.0",
 		"electron-builder": "26.15.3",
 		"esbuild": "0.28.2",
-		"fast-xml-parser": "^5.10.1",
-		"file-type": "^22.0.1",
-		"jszip": "^3.10.1",
-		"mammoth": "^1.12.1",
-		"pdf-lib": "^1.17.1",
-		"pdfjs-dist": "^6.2.108",
 		"playwright": "1.62.1",
 		"solid-js": "1.9.14",
 		"typescript": "7.0.2",
 		"vite": "8.2.1",
-		"vitest": "4.1.10",
-		"xlsx": "file:../../apps/desktop/vendor/xlsx-0.20.3.tgz"
+		"vitest": "4.1.10"
 	}
 }

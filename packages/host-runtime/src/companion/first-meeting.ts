@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
-import { companionIdentity, conversations, onboardingState } from "../storage/schema.js";
+import { companionIdentity, onboardingState } from "../storage/schema.js";
 import type { CharacterLoader } from "./character-loader.js";
 import type {
 	CharacterOnboardingFlow,
@@ -23,47 +23,17 @@ interface PersistedOnboardingRow {
 	stateData: unknown;
 }
 
-export interface CreatedConversation {
-	conversationId: string;
-	title: string;
-}
-export type OnboardingConversationCommit = (
-	transaction: Pick<AppDatabase, "insert" | "update">,
-) => void;
-export interface OnboardingConversationCreationInput {
-	companionId: string;
-	title: string;
-	onCommit: OnboardingConversationCommit;
-}
-
-export type OnboardingConversationFactory = (
-	input: OnboardingConversationCreationInput,
-) => CreatedConversation;
-
 /**
  * Host-owned execution engine for a role-defined onboarding flow. The role
  * package declares presentation, valid answers and a restricted effect
  * vocabulary; this class validates, persists and executes those effects.
  */
 export class FirstMeetingMachine {
-	private onConversationCreated?: (companionId: string, conversationId: string) => void;
-	private conversationFactory?: OnboardingConversationFactory;
-
 	constructor(
 		private readonly db: AppDatabase,
 		private readonly eventBus: EventBus,
 		private readonly characterLoader: CharacterLoader,
 	) {}
-
-	setConversationFactory(factory: OnboardingConversationFactory): void {
-		this.conversationFactory = factory;
-	}
-
-	setConversationCreatedHandler(
-		handler: (companionId: string, conversationId: string) => void,
-	): void {
-		this.onConversationCreated = handler;
-	}
 
 	/** Reads never normalize persisted rows or trigger lifecycle transitions. */
 	getState(companionId: string): OnboardingStateRow {
@@ -171,7 +141,6 @@ export class FirstMeetingMachine {
 				decisions: {
 					relationship_memory_enabled: true,
 					conversation_history_read_enabled: true,
-					roleplay_initial_values: {},
 				},
 			};
 		}
@@ -188,7 +157,6 @@ export class FirstMeetingMachine {
 			relationship_memory_enabled: parsedState.data.decisions.relationship_memory_enabled ?? true,
 			conversation_history_read_enabled:
 				parsedState.data.decisions.conversation_history_read_enabled ?? true,
-			roleplay_initial_values: parsedState.data.decisions.roleplay_initial_values ?? {},
 		};
 		for (const step of flow.steps) {
 			if (step.kind === "acknowledge") continue;
@@ -199,12 +167,6 @@ export class FirstMeetingMachine {
 				const value = effect.type === "identity.nickname" ? undefined : effect.values[answer];
 				if (effect.type === "setting.set" && typeof value === "boolean") {
 					decisions[effect.setting] = value;
-				}
-				if (effect.type === "roleplay.initial" && value !== undefined) {
-					decisions.roleplay_initial_values = {
-						...decisions.roleplay_initial_values,
-						[effect.variable]: value,
-					};
 				}
 			}
 		}
@@ -266,12 +228,6 @@ export class FirstMeetingMachine {
 				if (effect.type === "setting.set" && typeof value === "boolean") {
 					decisions[effect.setting] = value;
 				}
-				if (effect.type === "roleplay.initial" && value !== undefined) {
-					decisions.roleplay_initial_values = {
-						...decisions.roleplay_initial_values,
-						[effect.variable]: value,
-					};
-				}
 			}
 		}
 		return {
@@ -302,59 +258,17 @@ export class FirstMeetingMachine {
 				break;
 			}
 		}
-		let conversation: CreatedConversation | undefined;
-
 		try {
-			if (nextState === "complete") {
-				const existing = this.db
-					.select({ id: conversations.id })
-					.from(conversations)
-					.where(eq(conversations.companionId, companionId))
-					.limit(1)
-					.get();
-				if (existing) {
-					this.db.transaction((transaction) => {
-						if (nicknameValue !== undefined) {
-							transaction
-								.update(companionIdentity)
-								.set({ nickname: nicknameValue })
-								.where(eq(companionIdentity.id, companionId))
-								.run();
-						}
-						this.persist(companionId, nextState, stateData, transaction);
-					});
-				} else {
-					const character = this.characterLoader.load(companionId);
-					if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
-					if (!this.conversationFactory)
-						throw new Error("onboarding conversation factory is not configured");
-					conversation = this.conversationFactory({
-						companionId,
-						title: flow.completion.conversation_title,
-						onCommit: (transaction) => {
-							if (nicknameValue !== undefined) {
-								transaction
-									.update(companionIdentity)
-									.set({ nickname: nicknameValue })
-									.where(eq(companionIdentity.id, companionId))
-									.run();
-							}
-							this.persist(companionId, nextState, stateData, transaction);
-						},
-					});
+			this.db.transaction((transaction) => {
+				if (nicknameValue !== undefined) {
+					transaction
+						.update(companionIdentity)
+						.set({ nickname: nicknameValue })
+						.where(eq(companionIdentity.id, companionId))
+						.run();
 				}
-			} else {
-				this.db.transaction((transaction) => {
-					if (nicknameValue !== undefined) {
-						transaction
-							.update(companionIdentity)
-							.set({ nickname: nicknameValue })
-							.where(eq(companionIdentity.id, companionId))
-							.run();
-					}
-					this.persist(companionId, nextState, stateData, transaction);
-				});
-			}
+				this.persist(companionId, nextState, stateData, transaction);
+			});
 		} catch (error) {
 			throw { kind: "internal", reason: error instanceof Error ? error.message : String(error) };
 		}
@@ -364,10 +278,6 @@ export class FirstMeetingMachine {
 				? { status: "complete" as const, stateData }
 				: { status: "active" as const, currentStepId: nextState, stateData };
 		this.eventBus.publish("onboarding.state_changed", row);
-		if (conversation) {
-			this.onConversationCreated?.(companionId, conversation.conversationId);
-			this.eventBus.publish("conversation.created", conversation);
-		}
 		return row;
 	}
 

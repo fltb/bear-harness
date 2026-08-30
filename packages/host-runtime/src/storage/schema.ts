@@ -66,7 +66,6 @@ export const companionIdentity = sqliteTable("companion_identity", {
 		.notNull()
 		.references(() => companionPackages.id),
 	name: text().notNull(),
-	selfCanon: text("self_canon").notNull(),
 	nickname: text(),
 	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 });
@@ -89,7 +88,6 @@ export const conversations = sqliteTable(
 		companionId: text("companion_id")
 			.notNull()
 			.references(() => companionIdentity.id),
-		title: text().default("").notNull(),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 		archivedAt: text("archived_at"),
@@ -98,25 +96,6 @@ export const conversations = sqliteTable(
 		index("idx_conversations_active").on(table.companionId, table.archivedAt, table.updatedAt),
 	],
 );
-
-export const conversationSessions = sqliteTable("conversation_sessions", {
-	conversationId: text("conversation_id")
-		.primaryKey()
-		.references(() => conversations.id, { onDelete: "cascade" }),
-	piSessionId: text("pi_session_id").notNull(),
-	sessionFilePath: text("session_file_path").notNull(),
-	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
-});
-export const activeConversations = sqliteTable("active_conversations", {
-	companionId: text("companion_id")
-		.primaryKey()
-		.references(() => companionIdentity.id, { onDelete: "cascade" }),
-	conversationId: text("conversation_id")
-		.notNull()
-		.references(() => conversations.id, { onDelete: "cascade" }),
-	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
-});
 
 export const relationshipMemoryEntries = sqliteTable(
 	"relationship_memory_entries",
@@ -284,16 +263,7 @@ export const runs = sqliteTable(
 		executorProfile: text("executor_profile").notNull(),
 		title: text().notNull(),
 		instruction: text().notNull(),
-		inputAttachmentIds: text("input_attachment_ids", { mode: "json" })
-			.$type<string[]>()
-			.default([])
-			.notNull(),
-		workspaceAttachmentId: text("workspace_attachment_id").references(
-			() => conversationAttachments.id,
-			{
-				onDelete: "set null",
-			},
-		),
+		inputPaths: text("input_paths", { mode: "json" }).$type<string[]>().default([]).notNull(),
 		status: text({
 			enum: [
 				"enqueued",
@@ -376,132 +346,6 @@ export const artifacts = sqliteTable(
 	],
 );
 
-export const conversationAttachments = sqliteTable(
-	"conversation_attachments",
-	{
-		id: text().primaryKey(),
-		conversationId: text("conversation_id")
-			.notNull()
-			.references(() => conversations.id, { onDelete: "cascade" }),
-		originEntryId: text("origin_entry_id"),
-		sendNonce: text("send_nonce"),
-		kind: text({ enum: ["file", "folder", "generated"] }).notNull(),
-		name: text().notNull(),
-		totalBytes: integer("total_bytes").notNull(),
-		fileCount: integer("file_count").notNull(),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-	},
-	(table) => [
-		index("idx_attachments_conversation_created").on(table.conversationId, table.createdAt),
-		index("idx_attachments_conversation_entry").on(table.conversationId, table.originEntryId),
-		index("idx_attachments_conversation_nonce").on(table.conversationId, table.sendNonce),
-		check("conversation_attachments_kind", sql`kind IN ('file','folder','generated')`),
-	],
-);
-
-export const conversationAttachmentFiles = sqliteTable(
-	"conversation_attachment_files",
-	{
-		id: text().primaryKey(),
-		attachmentId: text("attachment_id")
-			.notNull()
-			.references(() => conversationAttachments.id, { onDelete: "cascade" }),
-		entryKind: text("entry_kind", { enum: ["file", "directory", "symlink"] }).notNull(),
-		relativePath: text("relative_path").notNull(),
-		artifactId: text("artifact_id").references(() => artifacts.id),
-		linkTarget: text("link_target"),
-		mime: text(),
-		materialKind: text("material_kind"),
-		bytes: integer(),
-		sha256: text(),
-		extractedText: text("extracted_text"),
-		extractionError: text("extraction_error"),
-	},
-	(table) => [
-		index("idx_attachment_files_attachment").on(table.attachmentId),
-		unique("conversation_attachment_files_relative").on(table.attachmentId, table.relativePath),
-		check("conversation_attachment_files_kind", sql`entry_kind IN ('file','directory','symlink')`),
-	],
-);
-
-export const pendingTurns = sqliteTable(
-	"pending_turns",
-	{
-		id: text().primaryKey(),
-		conversationId: text("conversation_id")
-			.notNull()
-			.references(() => conversations.id, { onDelete: "cascade" }),
-		framedText: text("framed_text").notNull(),
-		imagesJson: text("images_json").default("[]").notNull(),
-		attachmentIdsJson: text("attachment_ids_json").default("[]").notNull(),
-		attachmentSendNonce: text("attachment_send_nonce"),
-		state: text({
-			enum: ["accepted", "dispatched", "user_persisted", "completed"],
-		})
-			.default("accepted")
-			.notNull(),
-		piEntryId: text("pi_entry_id"),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
-		completedAt: text("completed_at"),
-		lastError: text("last_error"),
-	},
-	(table) => [
-		index("idx_pending_turns_conversation_state").on(
-			table.conversationId,
-			table.state,
-			table.createdAt,
-		),
-		unique("pending_turns_conversation_entry").on(table.conversationId, table.piEntryId),
-		check(
-			"pending_turns_id_uuid",
-			sql`length(id) = 36
-				AND substr(id, 9, 1) = '-'
-				AND substr(id, 14, 1) = '-'
-				AND substr(id, 19, 1) = '-'
-				AND substr(id, 24, 1) = '-'
-				AND substr(id, 15, 1) = '4'
-				AND substr(id, 20, 1) GLOB '[89ab]'
-				AND lower(id) = id
-				AND replace(id, '-', '') NOT GLOB '*[^0-9a-f]*'`,
-		),
-		check("pending_turns_framed_text", sql`length(framed_text) <= 262144`),
-		check(
-			"pending_turns_images_json",
-			sql`length(images_json) <= 139811200
-				AND json_valid(images_json)
-				AND json_type(images_json) = 'array'
-				AND json_array_length(images_json) <= 10`,
-		),
-		check(
-			"pending_turns_attachment_ids_json",
-			sql`length(attachment_ids_json) <= 681
-				AND json_valid(attachment_ids_json)
-				AND json_type(attachment_ids_json) = 'array'
-				AND json_array_length(attachment_ids_json) <= 10`,
-		),
-		check(
-			"pending_turns_attachment_nonce",
-			sql`(json_array_length(attachment_ids_json) = 0 AND attachment_send_nonce IS NULL)
-				OR (json_array_length(attachment_ids_json) > 0 AND attachment_send_nonce IS NOT NULL)`,
-		),
-		check(
-			"pending_turns_state",
-			sql`state IN ('accepted','dispatched','user_persisted','completed')`,
-		),
-		check(
-			"pending_turns_entry_state",
-			sql`(state IN ('accepted','dispatched') AND pi_entry_id IS NULL)
-				OR (state IN ('user_persisted','completed') AND pi_entry_id IS NOT NULL)`,
-		),
-		check(
-			"pending_turns_completion",
-			sql`(state = 'completed' AND completed_at IS NOT NULL)
-				OR (state <> 'completed' AND completed_at IS NULL)`,
-		),
-	],
-);
-
 export const artifactAdoptions = sqliteTable("artifact_adoptions", {
 	id: text().primaryKey(),
 	artifactId: text("artifact_id")
@@ -518,7 +362,7 @@ export const providerAccounts = sqliteTable(
 	{
 		id: text().primaryKey(),
 		providerId: text("provider_id").notNull(),
-		credentialBlob: blob("credential_blob").$type<Uint8Array>(),
+		credentialBlob: blob("credential_blob", { mode: "buffer" }).$type<Uint8Array>(),
 		credentialStatus: text("credential_status").default("missing").notNull(),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
@@ -543,27 +387,6 @@ export const configuredModels = sqliteTable(
 	(table) => [
 		primaryKey({ columns: [table.providerId, table.modelId], name: "configured_models_pk" }),
 		check("configured_models_check_18", sql`supports_images IN (0, 1)`),
-	],
-);
-
-export const conversationModelSelections = sqliteTable(
-	"conversation_model_selections",
-	{
-		conversationId: text("conversation_id")
-			.primaryKey()
-			.references(() => conversations.id, { onDelete: "cascade" }),
-		providerId: text("provider_id").notNull(),
-		modelId: text("model_id").notNull(),
-		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
-	},
-	(table) => [
-		foreignKey({
-			columns: [table.providerId, table.modelId],
-			foreignColumns: [configuredModels.providerId, configuredModels.modelId],
-			name: "fk_conversation_model_selections_provider_id_model_id_configured_models_provider_id_model_id_fk",
-		})
-			.onUpdate("no action")
-			.onDelete("cascade"),
 	],
 );
 
@@ -786,8 +609,8 @@ export const companionStateDocuments = sqliteTable(
 		conversationId: text("conversation_id").references(() => conversations.id, {
 			onDelete: "cascade",
 		}),
-		scope: text({ enum: ["conversation", "relationship", "character"] }).notNull(),
-		domain: text({ enum: ["character", "display", "collection"] }).notNull(),
+		scope: text({ enum: ["conversation", "global"] }).notNull(),
+		domain: text({ enum: ["character", "display"] }).notNull(),
 		stateJson: text("state_json", { mode: "json" })
 			.$type<Record<string, unknown>>()
 			.default({})
@@ -806,73 +629,8 @@ export const companionStateDocuments = sqliteTable(
 		check(
 			"companion_state_documents_scope_owner",
 			sql`(${table.scope} = 'conversation' AND ${table.conversationId} IS NOT NULL)
-				OR (${table.scope} IN ('relationship', 'character') AND ${table.conversationId} IS NULL)`,
+				OR (${table.scope} = 'global' AND ${table.conversationId} IS NULL)`,
 		),
 		check("companion_state_documents_revision", sql`${table.revision} >= 0`),
 	],
 );
-
-/** Compatibility type alias for call sites that only own the character domain. */
-export const characterStateDocuments = companionStateDocuments;
-
-export const pendingStateMutations = sqliteTable(
-	"pending_state_mutations",
-	{
-		id: text().primaryKey(),
-		companionId: text("companion_id")
-			.notNull()
-			.references(() => companionIdentity.id, { onDelete: "cascade" }),
-		conversationId: text("conversation_id")
-			.notNull()
-			.references(() => conversations.id, { onDelete: "cascade" }),
-		piSessionId: text("pi_session_id").notNull(),
-		sourceUserEntryId: text("source_user_entry_id").notNull(),
-		assistantEntryId: text("assistant_entry_id"),
-		operationsJson: text("operations_json", { mode: "json" })
-			.$type<Array<Record<string, unknown>>>()
-			.notNull(),
-		expectedRevisionsJson: text("expected_revisions_json", { mode: "json" })
-			.$type<Record<string, number>>()
-			.default({})
-			.notNull(),
-		reason: text().notNull(),
-		schemaHash: text("schema_hash").notNull(),
-		status: text({ enum: ["pending", "committed", "discarded"] })
-			.default("pending")
-			.notNull(),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-		committedAt: text("committed_at"),
-	},
-	(table) => [
-		index("idx_pending_state_mutations_turn").on(
-			table.conversationId,
-			table.piSessionId,
-			table.sourceUserEntryId,
-			table.status,
-		),
-	],
-);
-
-export const stateMutationLog = sqliteTable("state_mutation_log", {
-	id: text().primaryKey(),
-	companionId: text("companion_id")
-		.notNull()
-		.references(() => companionIdentity.id, { onDelete: "cascade" }),
-	conversationId: text("conversation_id")
-		.notNull()
-		.references(() => conversations.id, { onDelete: "cascade" }),
-	piSessionId: text("pi_session_id").notNull(),
-	sourceUserEntryId: text("source_user_entry_id").notNull(),
-	assistantEntryId: text("assistant_entry_id").notNull(),
-	operationsJson: text("operations_json", { mode: "json" })
-		.$type<Array<Record<string, unknown>>>()
-		.notNull(),
-	beforeRevisionsJson: text("before_revisions_json", { mode: "json" })
-		.$type<Record<string, number>>()
-		.notNull(),
-	afterRevisionsJson: text("after_revisions_json", { mode: "json" })
-		.$type<Record<string, number>>()
-		.notNull(),
-	reason: text().notNull(),
-	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-});

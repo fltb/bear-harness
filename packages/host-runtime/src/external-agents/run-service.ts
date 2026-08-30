@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, lstatSync, mkdirSync, readdirSync, rmSync, type Stats } from "node:fs";
-import { join, resolve } from "node:path";
+import {
+	chmodSync,
+	lstatSync,
+	mkdirSync,
+	readdirSync,
+	rmSync,
+	type Stats,
+	statSync,
+} from "node:fs";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { EventPayloadSchemas } from "@bear-harness/protocol/schema";
 import { and, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
-import type {
-	ConversationAttachmentService,
-	ConversationAttachmentSummary,
-} from "../conversation-attachments/service.js";
+import type { ArtifactRecord, ArtifactStore } from "../artifacts/index.js";
 import type { Diagnostics } from "../diagnostics/index.js";
 import { currentTraceContext, runInTrace, type TraceContext } from "../diagnostics/trace.js";
 import type {
@@ -51,13 +56,13 @@ export interface RunSummary {
 	startedAt: string | null;
 	completedAt: string | null;
 	summary: string | null;
+	artifacts: ArtifactRecord[];
 }
 export interface DelegateParams {
 	conversationId: string;
 	triggerEntryId: string;
 	agent: "pi" | "codex";
-	attachmentIds: string[];
-	workspaceAttachmentId?: string;
+	inputPaths: string[];
 	instruction: string;
 }
 export interface DelegateResult {
@@ -66,7 +71,7 @@ export interface DelegateResult {
 }
 export interface TerminalRunResult {
 	run: RunSummary;
-	outputs: ConversationAttachmentSummary[];
+	outputs: ArtifactRecord[];
 	needsResultReport: boolean;
 	needsMemoryCapture: boolean;
 }
@@ -98,7 +103,7 @@ export class ExternalAgentRunService {
 		private readonly db: AppDatabase,
 		private readonly eventBus: EventBus,
 		private readonly executorRouter: ExecutorRouter,
-		private readonly attachments: ConversationAttachmentService,
+		private readonly artifacts: ArtifactStore,
 		private readonly runRoot: string,
 		private readonly resolveProfile: (agent: "pi" | "codex") => Promise<string>,
 		private readonly resolvePiModel: (
@@ -118,12 +123,7 @@ export class ExternalAgentRunService {
 		const instruction = params.instruction.trim();
 		if (!instruction || instruction.length > 12_000)
 			throw { kind: "validation_failed", reason: "external_agent_instruction_invalid" };
-		if (
-			params.attachmentIds.length === 0 ||
-			params.attachmentIds.length > 10 ||
-			new Set(params.attachmentIds).size !== params.attachmentIds.length
-		)
-			throw { kind: "validation_failed", reason: "attachment_ids_invalid" };
+		const inputPaths = validateInputPaths(params.inputPaths);
 		const owner = this.db
 			.select({ id: conversations.id })
 			.from(conversations)
@@ -149,12 +149,7 @@ export class ExternalAgentRunService {
 		if (trace) this.runTraces.set(runId, trace);
 		this.runAgents.set(runId, params.agent);
 		const runDirectory = join(this.runRoot, runId);
-		const prepared = this.attachments.prepareRunInputs({
-			conversationId: params.conversationId,
-			attachmentIds: params.attachmentIds,
-			workspaceAttachmentId: params.workspaceAttachmentId,
-			runDirectory,
-		});
+		const prepared = prepareRunDirectories(runDirectory, inputPaths);
 		const title =
 			instruction
 				.split(/\r?\n/)
@@ -170,8 +165,7 @@ export class ExternalAgentRunService {
 				executorProfile: profile,
 				title,
 				instruction,
-				inputAttachmentIds: params.attachmentIds,
-				workspaceAttachmentId: params.workspaceAttachmentId ?? null,
+				inputPaths,
 				status: "enqueued",
 			})
 			.run();
@@ -271,11 +265,7 @@ export class ExternalAgentRunService {
 					? sanitizeText(event.summary, paths).slice(0, 12_000)
 					: null;
 				try {
-					const outputs = await this.attachments.captureOutputs(
-						run.conversationId,
-						runId,
-						outputDirectory,
-					);
+					const outputs = captureArtifacts(this.artifacts, runId, outputDirectory);
 					await this.terminate(runId, "completed", normalizedSummary, outputs);
 				} catch {
 					this.recordEvidence(runId, "executor.failed", { reason: "output_snapshot_failed" });
@@ -301,7 +291,7 @@ export class ExternalAgentRunService {
 		runId: string,
 		status: TerminalRunStatus,
 		summary: string | null,
-		outputs: ConversationAttachmentSummary[],
+		outputs: ArtifactRecord[],
 	): Promise<RunSummary> {
 		const run = this.getRun(runId);
 		if (run.completedAt) return summarize(run);
@@ -363,7 +353,7 @@ export class ExternalAgentRunService {
 
 	private reconcileRun(
 		runId: string,
-		capturedOutputs?: ConversationAttachmentSummary[],
+		capturedOutputs?: ArtifactRecord[],
 		options: ReconciliationAttemptOptions = {},
 	): Promise<void> {
 		if (this.closed) return Promise.resolve();
@@ -391,8 +381,7 @@ export class ExternalAgentRunService {
 						this.onTerminal(
 							{
 								run: summarize(row),
-								outputs:
-									capturedOutputs ?? this.attachments.generatedForRun(row.conversationId, row.id),
+								outputs: capturedOutputs ?? this.artifacts.list(row.id),
 								needsResultReport,
 								needsMemoryCapture,
 							},
@@ -574,7 +563,7 @@ export class ExternalAgentRunService {
 					.all()
 					.map((row) => row.run)
 			: this.db.select().from(runs).orderBy(desc(runs.createdAt)).limit(10).all();
-		return rows.map(summarize);
+		return rows.map((row) => summarize(row, this.artifacts.list(row.id)));
 	}
 	private trackDetached(task: Promise<void>): void {
 		let trackedTask: Promise<void>;
@@ -703,16 +692,16 @@ export function externalAgentResultMessage(
 		status: result.run.status,
 		title: sanitizeExternalAgentMemoryText(result.run.title, 512),
 		summary: sanitizeExternalAgentMemoryText(result.run.summary ?? "", 4_000),
-		attachments: result.outputs.slice(0, 50).map((output) => ({
+		artifacts: result.outputs.slice(0, 50).map((output) => ({
 			id: output.id,
-			name: sanitizeExternalAgentMemoryText(output.name, 256),
+			name: sanitizeExternalAgentMemoryText(output.logicalName, 256),
 			bytes: output.bytes,
-			fileCount: output.fileCount,
+			mime: output.mime,
 		})),
 	};
 	return sanitizeExternalAgentMemoryText(
 		"An external agent run has finished. Give the user one concise role-appropriate " +
-			"follow-up based only on this result. Generated attachments are already available " +
+			"follow-up based only on this result. Generated artifacts are available in the Run result " +
 			"to the conversation; do not expose local paths or internal execution logs.\n" +
 			JSON.stringify(payload),
 		6_000,
@@ -761,7 +750,7 @@ export function sanitizeExternalAgentMemoryText(value: string, maxBytes: number)
 	return sanitized.slice(0, end);
 }
 
-function summarize(row: RunRow): RunSummary {
+function summarize(row: RunRow, outputArtifacts: ArtifactRecord[] = []): RunSummary {
 	return {
 		id: row.id,
 		conversationId: row.conversationId,
@@ -772,6 +761,7 @@ function summarize(row: RunRow): RunSummary {
 		startedAt: row.startedAt,
 		completedAt: row.completedAt,
 		summary: row.summary,
+		artifacts: outputArtifacts,
 	};
 }
 
@@ -795,13 +785,89 @@ function agentFromProfile(profile: string): "pi" | "codex" | "unknown" {
 }
 function executionInstruction(
 	instruction: string,
-	inputs: Array<{ name: string; path: string; source: "snapshot" }>,
+	inputs: Array<{ name: string; path: string; source: "local" }>,
 	outputDirectory: string,
 ): string {
-	const described = inputs
-		.map((input) => `- ${input.name}: ${input.path} (immutable snapshot copy)`)
-		.join("\n");
-	return `${instruction}\n\nInputs:\n${described}\n\nWrite chat deliverables beneath ${outputDirectory}. Snapshot-copy edits must be copied there to be returned.`;
+	const described = inputs.map((input) => `- ${input.name}: ${input.path}`).join("\n");
+	return `${instruction}\n\nLocal input paths:\n${described || "(none)"}\n\nWrite deliverables beneath ${outputDirectory}.`;
+}
+
+function validateInputPaths(paths: readonly string[]): string[] {
+	if (paths.length > 10 || new Set(paths).size !== paths.length)
+		throw { kind: "validation_failed", reason: "input_paths_invalid" };
+	return paths.map((path) => {
+		if (!isAbsolute(path) || path.length > 4096)
+			throw { kind: "validation_failed", reason: "input_path_invalid" };
+		try {
+			statSync(path);
+		} catch {
+			throw { kind: "not_found", reason: "input_path_not_found" };
+		}
+		return resolve(path);
+	});
+}
+
+function prepareRunDirectories(runDirectory: string, paths: readonly string[]) {
+	const workspace = join(runDirectory, "workspace");
+	const outputDirectory = join(runDirectory, "outputs");
+	mkdirSync(workspace, { recursive: true });
+	mkdirSync(outputDirectory, { recursive: true });
+	return {
+		workspace,
+		outputDirectory,
+		inputs: paths.map((path) => ({ name: basename(path), path, source: "local" as const })),
+	};
+}
+
+function captureArtifacts(
+	store: ArtifactStore,
+	runId: string,
+	outputDirectory: string,
+): ArtifactRecord[] {
+	const pending = [outputDirectory];
+	const files: string[] = [];
+	while (pending.length) {
+		const directory = pending.pop()!;
+		for (const entry of readdirSync(directory, { withFileTypes: true })) {
+			const path = join(directory, entry.name);
+			if (entry.isSymbolicLink()) continue;
+			if (entry.isDirectory()) pending.push(path);
+			else if (entry.isFile()) files.push(path);
+			if (files.length + pending.length > 1_000) throw new Error("run_output_limit_exceeded");
+		}
+	}
+	return files.sort().map((path) => {
+		const artifact = store.createFromPathSync({
+			logicalName: relative(outputDirectory, path).replaceAll("\\", "/"),
+			path,
+			mime: outputMime(path),
+			producerRunId: runId,
+		});
+		store.markVerified(artifact.id);
+		return { ...artifact, status: "verified" as const };
+	});
+}
+
+function outputMime(path: string): string {
+	const extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+	return (
+		(
+			{
+				txt: "text/plain",
+				md: "text/markdown",
+				json: "application/json",
+				csv: "text/csv",
+				pdf: "application/pdf",
+				docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+				xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+				pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+				png: "image/png",
+				jpg: "image/jpeg",
+				jpeg: "image/jpeg",
+				webp: "image/webp",
+			} as Record<string, string>
+		)[extension] ?? "application/octet-stream"
+	);
 }
 function sanitizeText(value: string, paths: string[]): string {
 	let text = stripControlSequences(value);

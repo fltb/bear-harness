@@ -2,6 +2,49 @@ import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, type Locator, type Page } from "playwright/test";
 import { parseWebDevBootstrap, type WebDevBootstrap } from "../src/http-client";
 
+export interface ProjectedPiEntry {
+	id: string;
+	kind: string;
+	role?: string;
+	text?: string;
+}
+
+export function projectPiEntries(entries: unknown[]): ProjectedPiEntry[] {
+	return entries.flatMap((raw) => {
+		if (!raw || typeof raw !== "object" || !("id" in raw) || !("type" in raw)) return [];
+		const entry = raw as { id: unknown; type: unknown; message?: unknown };
+		if (typeof entry.id !== "string" || typeof entry.type !== "string") return [];
+		if (
+			entry.type !== "message" ||
+			!entry.message ||
+			typeof entry.message !== "object" ||
+			!("role" in entry.message)
+		)
+			return [{ id: entry.id, kind: entry.type }];
+		const message = entry.message as { role: unknown; content?: unknown };
+		return [
+			{
+				id: entry.id,
+				kind: "message",
+				role: String(message.role),
+				text: piText(message.content),
+			},
+		];
+	});
+}
+
+function piText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.flatMap((part) =>
+			part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part
+				? [String(part.text)]
+				: [],
+		)
+		.join("\n");
+}
+
 export async function getBootstrap(page: Page): Promise<WebDevBootstrap> {
 	const response = await page.request.get("/bootstrap");
 	await expect(response).toBeOK();
@@ -43,14 +86,22 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	const setKey = await (
 		await page.request.post("/rpc/provider.setApiKey%3Av1", {
 			headers,
-			data: { providerId: "e2e-rule", apiKey: "e2e-rule-key", sessionOnly: true },
+			data: {
+				providerId: "e2e-rule",
+				apiKey: "e2e-rule-key",
+				sessionOnly: true,
+			},
 		})
 	).json();
 	expect(setKey).toMatchObject({ ok: true });
 	const enableModel = await (
 		await page.request.post("/rpc/model.enable%3Av1", {
 			headers,
-			data: { providerId: "e2e-rule", modelId: "rule-model", label: "E2E Rule Provider" },
+			data: {
+				providerId: "e2e-rule",
+				modelId: "rule-model",
+				label: "E2E Rule Provider",
+			},
 		})
 	).json();
 	expect(enableModel).toMatchObject({ ok: true });
@@ -62,7 +113,10 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	).json();
 	expect(setDefault).toMatchObject({ ok: true });
 	const defaults = await (
-		await page.request.post("/rpc/model.defaults.get%3Av1", { headers, data: {} })
+		await page.request.post("/rpc/model.defaults.get%3Av1", {
+			headers,
+			data: {},
+		})
 	).json();
 	expect(defaults).toMatchObject({
 		ok: true,
@@ -89,10 +143,12 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	await page.goto("/");
 	await expect(page.getByRole("dialog", { name: "开始相处" })).toBeHidden();
 
-	const conversations = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
+	const conversations = page.getByRole("navigation", {
+		name: zhCN.sidebar.conversations,
+	});
 	const conversationItems = conversations.getByRole("button");
 	const conversationCountBefore = await conversationItems.count();
-	await page.getByRole("button", { name: zhCN.sidebar.newConversation }).click();
+	await page.getByRole("button", { name: zhCN.sidebar.newConversation, exact: true }).click();
 	await expect.poll(() => conversationItems.count()).toBeGreaterThan(conversationCountBefore);
 	await expect
 		.poll(() =>
@@ -103,9 +159,12 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 		.toBe(1);
 	await expect(page.getByRole("textbox", { name: zhCN.composer.messageInputLabel })).toBeEnabled();
 	const active = await (
-		await page.request.post("/rpc/conversation.activeGet%3Av1", { headers, data: {} })
+		await page.request.post("/rpc/conversation.activeGet%3Av1", {
+			headers,
+			data: {},
+		})
 	).json();
-	const conversationId = active.data?.conversation?.id;
+	const conversationId = active.data?.session?.sessionId;
 	if (typeof conversationId !== "string") throw new Error("new conversation was not activated");
 	const selectedRoute = await (
 		await page.request.post("/rpc/model.route.set%3Av1", {
@@ -125,7 +184,9 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 }
 
 export async function sendMessage(page: Page, text: string): Promise<void> {
-	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
+	const composer = page.getByRole("textbox", {
+		name: zhCN.composer.messageInputLabel,
+	});
 	const send = page.getByRole("button", { name: zhCN.composer.sendLabel });
 	await composer.fill(text);
 	await expect(send).toBeEnabled();

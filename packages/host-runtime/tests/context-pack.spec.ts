@@ -58,12 +58,14 @@ describe("ContextPackCompiler character prompt layers", () => {
 			"test",
 		);
 		db.prepare(
-			"INSERT INTO companion_identity (id, package_id, name, self_canon, nickname) VALUES (?, ?, ?, ?, ?)",
-		).run("jizhou", "jizhou", "stored-name-is-not-used", "stored canon", "小雪");
-		db.prepare("INSERT INTO conversations (id, companion_id, title) VALUES (?, ?, ?)").run(
+			"INSERT INTO companion_identity (id, package_id, name, nickname) VALUES (?, ?, ?, ?)",
+		).run("jizhou", "jizhou", "stored-name-is-not-used", "小雪");
+		db.prepare(
+			"INSERT INTO self_canon_versions (companion_id, canon, version, hash) VALUES (?, ?, ?, ?)",
+		).run("jizhou", "stored canon", 1, "stored-canon");
+		db.prepare("INSERT INTO conversations (id, companion_id) VALUES (?, ?)").run(
 			"conversation-1",
 			"jizhou",
-			"test",
 		);
 
 		const character = characterLoader.load("jizhou");
@@ -138,13 +140,17 @@ describe("ContextPackCompiler character prompt layers", () => {
 			db.prepare(
 				"INSERT INTO companion_packages (id, name, version, hash) VALUES (?, ?, ?, ?)",
 			).run("jizhou", "季舟", "1", "test");
+			db.prepare("INSERT INTO companion_identity (id, package_id, name) VALUES (?, ?, ?)").run(
+				"jizhou",
+				"jizhou",
+				"季舟",
+			);
 			db.prepare(
-				"INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES (?, ?, ?, ?)",
-			).run("jizhou", "jizhou", "季舟", "角色自我设定");
-			db.prepare("INSERT INTO conversations (id, companion_id, title) VALUES (?, ?, ?)").run(
+				"INSERT INTO self_canon_versions (companion_id, canon, version, hash) VALUES (?, ?, ?, ?)",
+			).run("jizhou", "角色自我设定", 1, "jizhou-canon");
+			db.prepare("INSERT INTO conversations (id, companion_id) VALUES (?, ?)").run(
 				"conversation-external-memory",
 				"jizhou",
-				"外部记忆",
 			);
 
 			const compiler = new ContextPackCompiler(drizzle({ client: db }), characterLoader);

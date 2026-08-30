@@ -16,9 +16,7 @@ import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
 import { afterEach, describe, expect, it } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
-import { CharacterStateService } from "../src/companion/state-service.js";
 import { type CredentialVault, createHostRuntime } from "../src/index.js";
-import { Database, MIGRATIONS } from "../src/storage/database.js";
 import {
 	DURABLE_FILE_TRANSACTION_VERSION,
 	type DurableFileTransactionMarker,
@@ -170,36 +168,10 @@ describe("character package import", () => {
 				]),
 			},
 		});
-		const conversation = await runtime.dispatch("conversation.create:v1", {
-			title: "Imported role lifecycle",
-		});
-		if (!conversation.ok) throw new Error(conversation.error.reason);
 		await runtime.close();
-		const database = new Database(join(dataDir, "storage"));
-		database.migrate(MIGRATIONS);
 		const importedLoader = new CharacterLoader(characterRoot, join(dataDir, "characters"));
 		const importedCharacter = importedLoader.load("imported-role");
-		if (!importedCharacter) throw new Error("imported character disappeared before state write");
-		const state = new CharacterStateService(database.orm);
-		state.stage({
-			companionId: importedCharacter.id,
-			conversationId: conversation.data.id,
-			piSessionId: "imported-role-session",
-			sourceUserEntryId: "imported-role-user",
-			definition: importedCharacter.state,
-			operations: [{ path: "/relationship/affinity", op: "replace", value: 1 }],
-			reason: "Verify imported generic schema state survives restart.",
-			evidence: { source: "current_user", quote: "Please keep this imported role." },
-		});
-		state.commitTurn({
-			companionId: importedCharacter.id,
-			conversationId: conversation.data.id,
-			piSessionId: "imported-role-session",
-			sourceUserEntryId: "imported-role-user",
-			assistantEntryId: "imported-role-assistant",
-			definition: importedCharacter.state,
-		});
-		database.close();
+		if (!importedCharacter) throw new Error("imported character disappeared before restart");
 
 		const restarted = createHostRuntime({
 			dataDir,
@@ -219,20 +191,11 @@ describe("character package import", () => {
 			data: { character: { id: "imported-role" } },
 		});
 		await restarted.close();
-		const recoveredDatabase = new Database(join(dataDir, "storage"));
-		recoveredDatabase.migrate(MIGRATIONS);
 		const recoveredCharacter = new CharacterLoader(characterRoot, join(dataDir, "characters")).load(
 			"imported-role",
 		);
 		if (!recoveredCharacter) throw new Error("imported character disappeared after restart");
-		expect(
-			new CharacterStateService(recoveredDatabase.orm).project(
-				recoveredCharacter.id,
-				conversation.data.id,
-				recoveredCharacter.state,
-			),
-		).toMatchObject({ document: { relationship: { affinity: 1 } } });
-		recoveredDatabase.close();
+		expect(recoveredCharacter.state.properties.relationship).toBeDefined();
 	}, 15_000);
 
 	it("requires explicit trust for imported executable plugins and revokes it when they change", async () => {

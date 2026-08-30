@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "playwright/test";
-import { getBootstrap } from "./helpers";
+import { getBootstrap, projectPiEntries } from "./helpers";
 
 interface PiEntry {
 	id: string;
@@ -9,7 +9,7 @@ interface PiEntry {
 }
 
 interface ConversationProjection {
-	conversation?: { piTimeline: { entries: PiEntry[] } };
+	session?: { entries: unknown[] };
 }
 
 interface SceneSnapshot {
@@ -53,68 +53,75 @@ test("rule provider exercises send and edited-history regeneration deterministic
 		modelId: "rule-model",
 		label: "E2E Rule Provider",
 	});
-	const conversation = await rpc<{ id: string }>(page, bootstrap.token, "conversation.create:v1", {
-		title: "Rule provider",
-	});
+	const conversation = await rpc<{ sessionId: string }>(
+		page,
+		bootstrap.token,
+		"conversation.create:v1",
+		{
+			title: "Rule provider",
+		},
+	);
 	await rpc(page, bootstrap.token, "model.route.set:v1", {
-		conversationId: conversation.id,
+		conversationId: conversation.sessionId,
 		selected: { providerId: "e2e-rule", modelId: "rule-model" },
 	});
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
-		conversationId: conversation.id,
+		conversationId: conversation.sessionId,
 		text: "你是谁？",
 	});
 	await expect
 		.poll(async () => {
 			const projection = await activeProjection(page, bootstrap.token);
-			return projection.conversation?.piTimeline.entries
+			return projectPiEntries(projection.session?.entries ?? [])
 				.filter((entry) => entry.kind === "message" && entry.role === "assistant")
-				.at(-1)?.text;
+				.at(-1)
+				?.text?.trim();
 		})
 		.toBe("我是 E2E Rule Provider。");
 
 	const projection = await activeProjection(page, bootstrap.token);
-	const userEntry = projection.conversation?.piTimeline.entries.find(
+	const userEntry = projectPiEntries(projection.session?.entries ?? []).find(
 		(entry) => entry.kind === "message" && entry.role === "user" && entry.text === "你是谁？",
 	);
 	if (!userEntry) throw new Error("rule provider projection has no native user entry");
 	await rpc(page, bootstrap.token, "message.edit:v1", {
-		conversationId: conversation.id,
+		conversationId: conversation.sessionId,
 		entryId: userEntry.id,
 		text: "规则：回复 EDITED_OK",
 	});
 	await expect
 		.poll(async () => {
 			const next = await activeProjection(page, bootstrap.token);
-			return next.conversation?.piTimeline.entries
+			return projectPiEntries(next.session?.entries ?? [])
 				.filter((entry) => entry.kind === "message" && entry.role === "assistant")
-				.map((entry) => entry.text);
+				.map((entry) => entry.text?.trim());
 		})
 		.toContain("EDITED_OK");
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
-		conversationId: conversation.id,
+		conversationId: conversation.sessionId,
 		text: "E2E_MANUAL_ROLE_VISUAL",
 	});
 	await expect
 		.poll(async () => {
 			const next = await activeProjection(page, bootstrap.token);
-			return next.conversation?.piTimeline.entries
+			return projectPiEntries(next.session?.entries ?? [])
 				.filter((entry) => entry.kind === "message" && entry.role === "assistant")
-				.at(-1)?.text;
+				.at(-1)
+				?.text?.trim();
 		})
 		.toContain("E2E_MANUAL_ROLE_VISUAL_DONE");
 	await expect
 		.poll(async () => {
 			const snapshot = await rpc<SceneSnapshot>(page, bootstrap.token, "snapshot.get:v1", {});
-			return snapshot.companion.byConversation[conversation.id]?.display.sceneId;
+			return snapshot.companion.byConversation[conversation.sessionId]?.display.sceneId;
 		})
 		.toBe("quiet_terminal");
 
 	await page.reload();
 	const restored = await rpc<SceneSnapshot>(page, bootstrap.token, "snapshot.get:v1", {});
-	expect(restored.companion.byConversation[conversation.id]?.display.sceneId).toBe(
+	expect(restored.companion.byConversation[conversation.sessionId]?.display.sceneId).toBe(
 		"quiet_terminal",
 	);
 });
@@ -159,107 +166,4 @@ test("rule provider selects the memory matching the current query marker", async
 	await expect(askProvider("E2E_DIRECT_MEMORY_B：我们约定暗号是北辰")).resolves.toBe(
 		"MEMORY_CONTEXT:我们约定暗号是北辰\n",
 	);
-});
-
-test("an image reader observes images while the selected text model produces the reply", async ({
-	page,
-}) => {
-	await page.goto("/");
-	const bootstrap = await getBootstrap(page);
-	const baseUrl = `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/v1`;
-	await rpc(page, bootstrap.token, "provider.importPiConfig:v1", {
-		configJson: JSON.stringify({
-			providers: {
-				"e2e-rule": {
-					name: "E2E Rule Provider",
-					baseUrl,
-					api: "openai-completions",
-					authHeader: true,
-					models: [
-						{
-							id: "rule-text",
-							name: "Rule Text",
-							input: ["text"],
-							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-							contextWindow: 8192,
-							maxTokens: 1024,
-						},
-						{
-							id: "rule-vision",
-							name: "Rule Vision",
-							input: ["text", "image"],
-							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-							contextWindow: 8192,
-							maxTokens: 1024,
-						},
-					],
-				},
-			},
-		}),
-	});
-	await rpc(page, bootstrap.token, "provider.setApiKey:v1", {
-		providerId: "e2e-rule",
-		apiKey: "e2e-rule-key",
-		sessionOnly: true,
-	});
-	const conversation = await rpc<{ id: string }>(page, bootstrap.token, "conversation.create:v1", {
-		title: "Image reader routing",
-	});
-	await rpc(page, bootstrap.token, "model.route.set:v1", {
-		conversationId: conversation.id,
-		selected: { providerId: "e2e-rule", modelId: "rule-text" },
-	});
-	await rpc(page, bootstrap.token, "model.defaults.setVision:v1", {
-		mode: "manual",
-		route: { providerId: "e2e-rule", modelId: "rule-vision" },
-	});
-	const imageBase64 = "AQID";
-	const started = await rpc<{ uploadId: string }>(
-		page,
-		bootstrap.token,
-		"conversationAttachment.startUpload:v1",
-		{
-			conversationId: conversation.id,
-			kind: "file",
-			name: "square.png",
-			entries: [
-				{
-					entryKind: "file",
-					relativePath: "square.png",
-					mime: "image/png",
-					bytes: 3,
-				},
-			],
-		},
-	);
-	await rpc(page, bootstrap.token, "conversationAttachment.appendChunk:v1", {
-		conversationId: conversation.id,
-		uploadId: started.uploadId,
-		fileIndex: 0,
-		offset: 0,
-		base64: imageBase64,
-	});
-	const completed = await rpc<{ attachment: { id: string } }>(
-		page,
-		bootstrap.token,
-		"conversationAttachment.completeUpload:v1",
-		{
-			conversationId: conversation.id,
-			uploadId: started.uploadId,
-		},
-	);
-	await rpc(page, bootstrap.token, "message.send:v1", {
-		conversationId: conversation.id,
-		text: "What is in this image?",
-		attachmentIds: [completed.attachment.id],
-	});
-
-	await expect
-		.poll(async () => {
-			const projection = await activeProjection(page, bootstrap.token);
-			return projection.conversation?.piTimeline.entries
-				.filter((entry) => entry.kind === "message" && entry.role === "assistant")
-				.at(-1)?.text;
-		})
-		.toBe("MAIN_USED_VISUAL_OBSERVATION");
 });

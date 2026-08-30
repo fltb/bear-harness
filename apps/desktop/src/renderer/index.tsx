@@ -13,6 +13,11 @@ declare global {
 			diagnostics: Readonly<{
 				reportRendererFault(input: unknown): void;
 			}>;
+			localFiles: Readonly<{
+				pickFiles(): Promise<string[]>;
+				pickFolder(): Promise<string[]>;
+				pathsForDroppedFiles(files: File[]): string[];
+			}>;
 			transport: Readonly<{
 				listen(
 					afterSeq: number,

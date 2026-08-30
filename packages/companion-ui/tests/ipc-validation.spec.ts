@@ -30,8 +30,10 @@ const timestamp = "2026-08-16T00:00:00Z";
 const conversation = {
 	id: "conversation-1",
 	title: "Conversation",
-	unread: false,
-	updatedAt: timestamp,
+	created: timestamp,
+	modified: timestamp,
+	messageCount: 1,
+	firstMessage: "Hello",
 };
 const memoryEntry = {
 	id: "memory-1",
@@ -81,6 +83,7 @@ const run = {
 	executorProfile: "pi-default",
 	title: "Direct run",
 	status: "running",
+	artifacts: [],
 	startedAt: timestamp,
 	completedAt: timestamp,
 };
@@ -111,8 +114,10 @@ describe("host projection validation", () => {
 		expectRequiredFields(isConversationSummary, conversation, [
 			"id",
 			"title",
-			"unread",
-			"updatedAt",
+			"created",
+			"modified",
+			"messageCount",
+			"firstMessage",
 		]);
 		expectRequiredFields(isMemoryEntry, memoryEntry, [
 			"id",
@@ -170,6 +175,7 @@ describe("host projection validation", () => {
 			"executorProfile",
 			"title",
 			"status",
+			"artifacts",
 		]);
 		expect(isRun({ ...run, startedAt: 3 })).toBe(false);
 		expect(isRun({ ...run, completedAt: 3 })).toBe(false);

@@ -87,6 +87,14 @@ export function WorkRunCard(props: { run: RunInfo; labels?: WorkLabels }) {
 		>
 			<span class="system-label">{label()}</span>
 			<h3>{props.run.title}</h3>
+			<Show when={props.run.artifacts.length > 0}>
+				<div>
+					<span>{t("work.timeline.resultCount", { count: props.run.artifacts.length })}</span>
+					<ul>
+						<For each={props.run.artifacts}>{(artifact) => <li>{artifact.name}</li>}</For>
+					</ul>
+				</div>
+			</Show>
 			<Show when={state.error()}>{(error) => <span role="alert">{error()}</span>}</Show>
 			<Show when={props.run.status === "running" || props.run.status === "needs_user"}>
 				<div class="steer-row">

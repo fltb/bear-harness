@@ -10,7 +10,6 @@ for (const pattern of [
 	"apps/desktop/src/renderer/**/*.{ts,tsx}",
 ]) {
 	for await (const file of glob(pattern)) {
-		if (file === "packages/companion-ui/src/lib/host-event-reconnect.ts") continue;
 		const ast = parse(await readFile(file, "utf8"), {
 			sourceType: "module",
 			plugins: ["typescript", "jsx"],

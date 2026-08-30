@@ -228,32 +228,26 @@ export function createTestClient() {
 		return ok({ settings });
 	});
 
-	/** Conversations the fixture has created; kept in sync so an active
-	 *  conversation id always has a matching list entry. */
+	/** Pi sessions created by the fixture. */
 	const conversations: ConversationSummary[] = [];
 	let activeConversation: ConversationSelectResponse | undefined;
-	const conversationList = vi.fn(() => ok({ conversations: [...conversations] }));
+	const conversationList = vi.fn(() => ok({ sessions: [...conversations] }));
 	const conversationProjection = (id: string, title: string): ConversationSelectResponse => ({
-		activeConversationId: id,
-		id,
-		title,
-		piTimeline: { entries: [] },
-		piSessionId: `${id}-session`,
-		piLiveState: { isStreaming: false },
+		sessionId: id,
+		name: title,
+		entries: [],
+		messages: [],
+		isIdle: true,
+		isStreaming: false,
+		pendingMessageCount: 0,
+		steeringMessages: [],
+		followUpMessages: [],
 	});
 	const providerList = vi.fn(() => ok({ providers: [] }));
 
 	const snapshotGet = vi.fn(() =>
 		ok({
 			eventSeq: 0,
-			...(activeConversation
-				? {
-						conversation: {
-							activeConversationId: activeConversation.activeConversationId,
-							piTimeline: activeConversation.piTimeline,
-						},
-					}
-				: {}),
 			model: {
 				pool: { models: [DEFAULT_MODEL] },
 				defaults: {
@@ -283,13 +277,9 @@ export function createTestClient() {
 			),
 			pluginTrustConfirm: vi.fn(() => ok(null)),
 		},
-		roleplay: {
-			get: vi.fn(() => ok({ state: { values: {}, unlocked: [] } })),
-			resetUnlocks: vi.fn(() => ok({})),
-			dismissMedia: vi.fn(() => ok({})),
-		},
-		characterState: {
+		companionState: {
 			patch: vi.fn(() => ok({})),
+			dismissPresentation: vi.fn(() => ok({})),
 		},
 		events: { subscribe: vi.fn(() => new Promise<never>(() => {})) },
 		onboarding: {
@@ -318,8 +308,10 @@ export function createTestClient() {
 					summary = {
 						id: "c1",
 						title: title ?? "New conversation",
-						unread: false,
-						updatedAt: "2026-01-01T00:00:00.000Z",
+						created: "2026-01-01T00:00:00.000Z",
+						modified: "2026-01-01T00:00:00.000Z",
+						messageCount: 0,
+						firstMessage: "",
 					};
 					conversations.push(summary);
 				} else if (title !== undefined) {
@@ -334,22 +326,22 @@ export function createTestClient() {
 					conversation = {
 						id,
 						title: "New conversation",
-						unread: false,
-						updatedAt: "2026-01-01T00:00:00.000Z",
+						created: "2026-01-01T00:00:00.000Z",
+						modified: "2026-01-01T00:00:00.000Z",
+						messageCount: 0,
+						firstMessage: "",
 					};
 					conversations.push(conversation);
 				}
 				activeConversation = conversationProjection(id, conversation.title);
 				return ok(activeConversation);
 			}),
-			activeGet: vi.fn(() =>
-				ok(activeConversation === undefined ? {} : { conversation: activeConversation }),
-			),
+			activeGet: vi.fn(() => ok({ session: activeConversation })),
 			rename: vi.fn(({ id, title }: { id: string; title: string }) => {
 				const conversation = conversations.find((item) => item.id === id);
 				if (conversation !== undefined) conversation.title = title;
-				if (activeConversation?.id === id) {
-					activeConversation = { ...activeConversation, title };
+				if (activeConversation?.sessionId === id) {
+					activeConversation = { ...activeConversation, name: title };
 				}
 				return ok(null);
 			}),
@@ -357,7 +349,7 @@ export function createTestClient() {
 				if (archived) {
 					const index = conversations.findIndex((conversation) => conversation.id === id);
 					if (index >= 0) conversations.splice(index, 1);
-					if (activeConversation?.id === id) {
+					if (activeConversation?.sessionId === id) {
 						const replacement = conversations.at(-1);
 						activeConversation =
 							replacement === undefined
@@ -370,7 +362,7 @@ export function createTestClient() {
 			delete: vi.fn(({ id }: { id: string }) => {
 				const index = conversations.findIndex((conversation) => conversation.id === id);
 				if (index >= 0) conversations.splice(index, 1);
-				if (activeConversation?.id === id) {
+				if (activeConversation?.sessionId === id) {
 					const replacement = conversations.at(-1);
 					activeConversation =
 						replacement === undefined
@@ -453,33 +445,6 @@ export function createTestClient() {
 			defaultsSetVision: vi.fn((vision) => ok({ vision })),
 			routeGet: vi.fn(({ conversationId }) => ok({ conversationId })),
 			routeSet: vi.fn(({ conversationId, selected }) => ok({ conversationId, selected })),
-		},
-		conversationAttachment: {
-			uploads: vi.fn(() => ok({ uploads: [] })),
-			list: vi.fn(() =>
-				ok({
-					attachments: [
-						{ id: "attachment-1", name: "note.txt", kind: "file" as const, bytes: 3, fileCount: 1 },
-					],
-				}),
-			),
-			startUpload: vi.fn(() => ok({ uploadId: "upload-1" })),
-			appendChunk: vi.fn(() => ok(null)),
-			completeUpload: vi.fn(() =>
-				ok({
-					attachment: {
-						id: "attachment-1",
-						name: "note.txt",
-						kind: "file" as const,
-						bytes: 3,
-						fileCount: 1,
-					},
-				}),
-			),
-			cancelUpload: vi.fn(() => ok(null)),
-			discard: vi.fn(() => ok(null)),
-			read: vi.fn(() => ok({ content: "" })),
-			url: vi.fn(() => ok({ url: "" })),
 		},
 		run: {
 			list: vi.fn(() => ok({ runs: [] })),

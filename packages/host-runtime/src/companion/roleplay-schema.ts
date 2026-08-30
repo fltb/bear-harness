@@ -93,7 +93,7 @@ export const RoleplaySchema = z.strictObject({
 			z.strictObject({
 				id: Identifier,
 				type: z.enum(["number", "boolean", "enum", "string"]),
-				scope: z.enum(["conversation", "relationship", "character"]),
+				scope: z.enum(["conversation", "global"]),
 				initial: RoleplayValueSchema,
 				display: z.discriminatedUnion("kind", [
 					z.strictObject({ kind: z.literal("hidden") }),

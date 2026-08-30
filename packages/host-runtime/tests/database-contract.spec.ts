@@ -198,19 +198,13 @@ describe("database schema contract", () => {
 		database.close();
 	});
 
-	it("keeps only the Pi session locator for each conversation", () => {
+	it("does not recreate the deleted Host Pi-session mirror", () => {
 		const database = new Database(root());
 		database.migrate(MIGRATIONS);
 		const columns = database.connection
 			.prepare("PRAGMA table_info(conversation_sessions)")
 			.all() as Array<{ name: string; notnull: number }>;
-		expect(columns.map((column) => column.name)).toEqual([
-			"conversation_id",
-			"pi_session_id",
-			"session_file_path",
-			"created_at",
-			"updated_at",
-		]);
+		expect(columns).toEqual([]);
 		database.close();
 	});
 
@@ -242,10 +236,8 @@ describe("database schema contract", () => {
 			.prepare("INSERT INTO companion_packages (id, name, version, hash) VALUES (?, ?, ?, ?)")
 			.run("package-a", "Package A", "1.0.0", "hash-a");
 		database.connection
-			.prepare(
-				"INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES (?, ?, ?, ?)",
-			)
-			.run("companion-a", "package-a", "Companion A", "canon");
+			.prepare("INSERT INTO companion_identity (id, package_id, name) VALUES (?, ?, ?)")
+			.run("companion-a", "package-a", "Companion A");
 
 		const columns = database.connection
 			.prepare("PRAGMA table_info(memory_presentation)")
@@ -403,92 +395,6 @@ describe("database schema contract", () => {
 		database.close();
 	});
 
-	it("safely reconciles the sole known pre-release v1 baseline", () => {
-		const databaseDir = root();
-		const database = new Database(databaseDir);
-		database.migrate(MIGRATIONS);
-		database.connection.exec(
-			"ALTER TABLE conversations ADD COLUMN scene_title TEXT NOT NULL DEFAULT ''",
-		);
-		database.connection
-			.prepare("UPDATE schema_migrations SET checksum = ? WHERE id = 1")
-			.run("0ac4f43cf5d1aed5e85a00bc725e57d6b9a00e3ed17386845ca76cbe4452a3ea");
-		database.connection
-			.prepare(
-				"INSERT INTO companion_packages (id, name, version, hash) VALUES ('package-a', 'Package', '1.0.0', 'hash')",
-			)
-			.run();
-		database.connection
-			.prepare(
-				"INSERT INTO companion_identity (id, package_id, name, self_canon) VALUES ('companion-a', 'package-a', 'Companion', '')",
-			)
-			.run();
-		database.connection
-			.prepare(
-				"INSERT INTO conversations (id, companion_id, title, scene_title) VALUES ('conversation-a', 'companion-a', 'Kept title', 'Old scene')",
-			)
-			.run();
-
-		database.migrate(MIGRATIONS);
-
-		const columns = database.connection.prepare("PRAGMA table_info(conversations)").all() as Array<{
-			name: string;
-		}>;
-		expect(columns.map((column) => column.name)).not.toContain("scene_title");
-		expect(
-			database.connection
-				.prepare("SELECT title FROM conversations WHERE id = 'conversation-a'")
-				.get(),
-		).toEqual({ title: "Kept title" });
-		expect(
-			database.connection.prepare("SELECT checksum FROM schema_migrations WHERE id = 1").get(),
-		).toEqual({ checksum: createHash("sha256").update(MIGRATIONS[0]!.up, "utf8").digest("hex") });
-		expect(existsSync(join(databaseDir, "schema-upgrade.json"))).toBe(false);
-		const backups = backupPaths(databaseDir);
-		expect(backups).toHaveLength(2);
-		const backup = new DatabaseSync(backups.at(-1)!, { readOnly: true });
-		expect(
-			(backup.prepare("PRAGMA table_info(conversations)").all() as Array<{ name: string }>).map(
-				(column) => column.name,
-			),
-		).toContain("scene_title");
-		expect(
-			backup
-				.prepare("SELECT title, scene_title FROM conversations WHERE id = 'conversation-a'")
-				.get(),
-		).toEqual({ title: "Kept title", scene_title: "Old scene" });
-		backup.close();
-		database.close();
-	});
-
-	it("reconciles the known unified-state preview and removes its superseded logs", () => {
-		const database = new Database(root());
-		database.migrate(MIGRATIONS);
-		database.connection.exec(`
-			CREATE TABLE companion_state_commits (id TEXT PRIMARY KEY);
-			CREATE TABLE pending_companion_effects (id TEXT PRIMARY KEY);
-			CREATE TABLE roleplay_events (id TEXT PRIMARY KEY);
-		`);
-		database.connection
-			.prepare("UPDATE schema_migrations SET checksum = ? WHERE id = 1")
-			.run("b825b5593b94c3f48b224fae6a6eb4b5b5b86fb8c3981dddd2afa94e48e23618");
-
-		database.migrate(MIGRATIONS);
-
-		const tables = (
-			database.connection
-				.prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
-				.all() as Array<{ name: string }>
-		).map((row) => row.name);
-		expect(tables).not.toContain("companion_state_commits");
-		expect(tables).not.toContain("pending_companion_effects");
-		expect(tables).not.toContain("roleplay_events");
-		expect(tables).toContain("companion_state_documents");
-		expect(tables).toContain("pending_state_mutations");
-		expect(tables).toContain("state_mutation_log");
-		database.close();
-	});
-
 	it("rejects an unknown migration from a newer application", () => {
 		const database = new Database(root());
 		database.migrate(MIGRATIONS);
@@ -525,7 +431,6 @@ describe("database schema contract", () => {
 	it("rejects a database missing a required runtime column", () => {
 		const database = new Database(root());
 		database.migrate(MIGRATIONS);
-		database.connection.exec("DROP TABLE conversation_model_selections");
 		database.connection.exec("DROP TABLE configured_models");
 		database.connection.exec(
 			"CREATE TABLE configured_models (provider_id TEXT, model_id TEXT, label TEXT, supports_images INTEGER)",

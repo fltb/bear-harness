@@ -9,7 +9,7 @@ import type { DomainEvent } from "@bear-harness/protocol";
  */
 
 import type { Diagnostics, Dispatcher } from "@bear-harness/host-runtime";
-import { EventSubscribeRequest, REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
+import { CHANNEL_CONTRACTS, EventSubscribeRequest } from "@bear-harness/protocol/schema";
 import { BrowserWindow, ipcMain } from "electron";
 import { isRegisteredMainFrame, type WindowRegistration } from "./diagnostics/electron.js";
 
@@ -57,32 +57,23 @@ function replaceIpcHandler(
 	};
 }
 
-interface RendererDispatchContext {
-	runForRenderer(rendererWebContentsId: number, callback: () => unknown): unknown;
-}
-
 export function wireElectronIpcHandlers(
 	dispatcher: Dispatcher,
 	windowRegistry: ReadonlyMap<number, Pick<WindowRegistration, "allowedUrl">>,
 	options?: {
-		attachmentProtocol?: RendererDispatchContext;
 		subscribeEvents?: (listener: (event: DomainEvent) => void, afterSeq: number) => () => void;
 		diagnostics?: Diagnostics;
 	},
 ): () => void {
 	const disposers: Array<() => void> = [];
-	for (const channel of Object.keys(REQUEST_SCHEMAS)) {
+	for (const channel of Object.keys(CHANNEL_CONTRACTS)) {
 		disposers.push(
 			replaceIpcHandler(channel, async (event, params: unknown) => {
 				if (!senderAllowed(event, windowRegistry)) {
 					return { ok: false, error: { kind: "unavailable", reason: "no_window" } };
 				}
 				const span = options?.diagnostics?.startSpan("rpc.request", { channel });
-				const dispatch = () => dispatcher.dispatch(channel, params);
-				const invoke = () =>
-					options?.attachmentProtocol
-						? options.attachmentProtocol.runForRenderer(event.sender.id, dispatch)
-						: dispatch();
+				const invoke = () => dispatcher.dispatch(channel, params);
 				try {
 					const result = await (span && options?.diagnostics
 						? options.diagnostics.runInSpan(span, invoke)

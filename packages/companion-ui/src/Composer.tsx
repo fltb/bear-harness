@@ -6,201 +6,55 @@ import {
 	faPaperclip,
 	faStop,
 } from "@fortawesome/free-solid-svg-icons";
-import { createMutation } from "@tanstack/solid-query";
-import { createSignal, For, Show } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import { ModelSelector } from "./features/ModelSelector.js";
 import { Icon } from "./Icon.js";
 import { useCompanionStore } from "./stores/companion.js";
 import { useConversationWorkflow } from "./stores/conversation-workflows.js";
-import { Button, FileField, TextField } from "./ui/primitives.js";
+import { Button, TextField } from "./ui/primitives.js";
 
-type Summary = {
-	id: string;
-	name: string;
-	kind: "file" | "folder" | "generated";
-	bytes: number;
-	fileCount: number;
+type LocalFiles = {
+	pickFiles(): Promise<string[]>;
+	pickFolder(): Promise<string[]>;
+	pathsForDroppedFiles(files: File[]): string[];
 };
-type DesktopAttachments = {
-	pickFiles(id: string): Promise<Summary[]>;
-	pickFolder(id: string): Promise<Summary[]>;
-	importDroppedFiles(id: string, files: File[]): Promise<Summary[]>;
-};
-const desktopAttachments = () =>
-	(globalThis as typeof globalThis & { bearDesktop?: { attachments?: DesktopAttachments } })
-		.bearDesktop?.attachments;
-
-type DroppedHandle = {
-	kind: "file" | "directory";
-	name: string;
-	getFile?: () => Promise<File>;
-	values?: () => AsyncIterable<DroppedHandle>;
-};
-type WebkitEntry = {
-	isFile: boolean;
-	isDirectory: boolean;
-	name: string;
-	file?: (success: (file: File) => void, failure: (error: DOMException) => void) => void;
-	createReader?: () => {
-		readEntries(
-			success: (entries: WebkitEntry[]) => void,
-			failure: (error: DOMException) => void,
-		): void;
-	};
-};
-
-async function enumerateHandle(
-	handle: DroppedHandle,
-	prefix = "",
-): Promise<Array<{ file: File; relativePath: string }>> {
-	if (handle.kind === "file" && handle.getFile) {
-		const file = await handle.getFile();
-		return [{ file, relativePath: `${prefix}${file.name}` }];
-	}
-	const files: Array<{ file: File; relativePath: string }> = [];
-	if (handle.kind === "directory" && handle.values) {
-		for await (const child of handle.values()) {
-			files.push(
-				...(await enumerateHandle(
-					child,
-					`${prefix}${child.kind === "directory" ? `${child.name}/` : ""}`,
-				)),
-			);
-		}
-	}
-	return files;
-}
-
-function webkitFile(entry: WebkitEntry): Promise<File> {
-	// WebKit's callback-only FileSystemEntry API requires an executor bridge.
-	return new Promise((resolve, reject) => entry.file?.(resolve, reject));
-}
-
-async function enumerateWebkitEntry(
-	entry: WebkitEntry,
-	prefix = "",
-): Promise<Array<{ file: File; relativePath: string }>> {
-	if (entry.isFile) {
-		const file = await webkitFile(entry);
-		return [{ file, relativePath: `${prefix}${file.name}` }];
-	}
-	const reader = entry.createReader?.();
-	if (!entry.isDirectory || !reader) return [];
-	const children: WebkitEntry[] = [];
-	for (;;) {
-		// WebKit exposes directory pages only through callbacks.
-		const page = await new Promise<WebkitEntry[]>((resolve, reject) =>
-			reader.readEntries(resolve, reject),
-		);
-		if (page.length === 0) break;
-		children.push(...page);
-	}
-	const files: Array<{ file: File; relativePath: string }> = [];
-	for (const child of children) {
-		files.push(
-			...(await enumerateWebkitEntry(
-				child,
-				`${prefix}${child.isDirectory ? `${child.name}/` : ""}`,
-			)),
-		);
-	}
-	return files;
-}
-
-export function folderFiles(
-	files: readonly File[],
-): Array<{ name: string; files: Array<{ file: File; relativePath: string }> }> {
-	const roots = new Map<string, Array<{ file: File; relativePath: string }>>();
-	for (const file of files) {
-		const path = (
-			(file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
-		).replaceAll("\\", "/");
-		const [root, ...parts] = path.split("/");
-		if (!root) continue;
-		const group = roots.get(root) ?? [];
-		group.push({ file, relativePath: parts.join("/") || file.name });
-		roots.set(root, group);
-	}
-	return [...roots].map(([name, grouped]) => ({ name, files: grouped }));
-}
+const localFiles = () =>
+	(globalThis as typeof globalThis & { bearDesktop?: { localFiles?: LocalFiles } }).bearDesktop
+		?.localFiles;
 
 export function Composer(props: { placeholder: string; onOpenModelSettings?: () => void }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const workflow = useConversationWorkflow(store);
-	const nativeImport = createMutation(() => ({
-		mutationFn: (action: () => Promise<Summary[]>) => action(),
-		retry: false,
-		gcTime: 0,
-	}));
 	const [menuOpen, setMenuOpen] = createSignal(false);
+	const [pathError, setPathError] = createSignal<string | null>(null);
 	const [dragging, setDragging] = createSignal(false);
-	let fileInput: HTMLInputElement | undefined;
-	let folderInput: HTMLInputElement | undefined;
 
 	const pick = async (folder: boolean) => {
 		setMenuOpen(false);
-		const id = store.activeConversationId;
-		const bridge = desktopAttachments();
+		setPathError(null);
+		const bridge = localFiles();
+		if (!bridge) {
+			setPathError(t("composer.webDevPathHint"));
+			return;
+		}
 		try {
-			if (id && bridge)
-				await workflow.addCompletedAttachments(
-					await nativeImport.mutateAsync(() =>
-						folder ? bridge.pickFolder(id) : bridge.pickFiles(id),
-					),
-					id,
-				);
-			else (folder ? folderInput : fileInput)?.click();
+			workflow.insertLocalPaths(
+				folder ? await bridge.pickFolder() : await bridge.pickFiles(),
+				folder ? t("composer.localFolderReference") : t("composer.localFileReference"),
+			);
 		} catch (error) {
-			workflow.setAttachmentError(error instanceof Error ? error.message : String(error));
+			setPathError(error instanceof Error ? error.message : String(error));
 		}
 	};
-	const drop = async (event: DragEvent) => {
+	const drop = (event: DragEvent) => {
 		event.preventDefault();
 		setDragging(false);
-		const id = store.activeConversationId;
-		const transfer = event.dataTransfer;
-		if (!id || !transfer) return;
-		try {
-			const bridge = desktopAttachments();
-			if (bridge) {
-				await workflow.addCompletedAttachments(
-					await nativeImport.mutateAsync(() => bridge.importDroppedFiles(id, [...transfer.files])),
-					id,
-				);
-				return;
-			}
-			const regularFiles: File[] = [];
-			let enumerated = false;
-			for (const item of [...transfer.items]) {
-				const extended = item as DataTransferItem & {
-					getAsFileSystemHandle?: () => Promise<DroppedHandle | null>;
-					webkitGetAsEntry?: () => WebkitEntry | null;
-				};
-				const handle = await extended.getAsFileSystemHandle?.();
-				if (handle) {
-					enumerated = true;
-					if (handle.kind === "directory") {
-						await workflow.loadFolderFiles(handle.name, await enumerateHandle(handle));
-					} else if (handle.getFile) {
-						regularFiles.push(await handle.getFile());
-					}
-					continue;
-				}
-				const entry = extended.webkitGetAsEntry?.();
-				if (!entry) continue;
-				enumerated = true;
-				if (entry.isDirectory) {
-					await workflow.loadFolderFiles(entry.name, await enumerateWebkitEntry(entry));
-				} else if (entry.isFile) {
-					regularFiles.push(await webkitFile(entry));
-				}
-			}
-			if (regularFiles.length > 0) await workflow.loadFiles(regularFiles);
-			else if (!enumerated) await workflow.loadFiles([...transfer.files]);
-		} catch (error) {
-			workflow.setAttachmentError(error instanceof Error ? error.message : String(error));
-		}
+		const bridge = localFiles();
+		const files = event.dataTransfer ? [...event.dataTransfer.files] : [];
+		const paths = bridge?.pathsForDroppedFiles(files) ?? [];
+		if (paths.length) workflow.insertLocalPaths(paths, t("composer.localFileReference"));
+		else setPathError(t("composer.localPathOnly"));
 	};
 	return (
 		<form
@@ -217,7 +71,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 			}}
 			onDragOver={(event) => event.preventDefault()}
 			onDragLeave={() => setDragging(false)}
-			onDrop={(event) => void drop(event)}
+			onDrop={drop}
 		>
 			<ModelSelector
 				models={workflow.models()}
@@ -237,32 +91,6 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 				gutter={8}
 				onModelChange={(model) => void workflow.selectModel(model)}
 			/>
-			<FileField multiple>
-				<FileField.HiddenInput
-					ref={fileInput}
-					class="material-picker"
-					aria-label={t("composer.uploadFile")}
-					onChange={(event) => {
-						void workflow.loadFiles([...(event.currentTarget.files ?? [])]);
-						event.currentTarget.value = "";
-					}}
-				/>
-			</FileField>
-			<FileField multiple>
-				<FileField.HiddenInput
-					ref={(element) => {
-						folderInput = element;
-						element.setAttribute("webkitdirectory", "");
-					}}
-					class="material-picker"
-					aria-label={t("composer.uploadFolder")}
-					onChange={(event) => {
-						for (const root of folderFiles([...(event.currentTarget.files ?? [])]))
-							void workflow.loadFolderFiles(root.name, root.files);
-						event.currentTarget.value = "";
-					}}
-				/>
-			</FileField>
 			<div class="composer-attach-menu">
 				<Button
 					type="button"
@@ -301,40 +129,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 					disabled={!store.activeConversationId || !workflow.modelSelected()}
 				/>
 			</TextField>
-			<Show when={workflow.attachments().length}>
-				<ul class="composer-attachment-tray" aria-label={t("attachments.listLabel")}>
-					<For each={workflow.attachments()}>
-						{(item) => (
-							<li class="composer-attachment-draft" data-upload-state={item.uploadState}>
-								<strong>{item.name}</strong>
-								<span>
-									{item.uploadState === "uploading"
-										? `${Math.round(item.progress * 100)}%`
-										: t(`attachments.uploadStates.${item.uploadState}`)}
-								</span>
-								<Show when={item.error}>{(error) => <span role="alert">{error()}</span>}</Show>
-								<Show when={item.uploadState === "error" || item.uploadState === "cancelled"}>
-									<Button type="button" onClick={() => workflow.retryAttachment(item.draftId)}>
-										{t("attachments.retry")}
-									</Button>
-								</Show>
-								<Button
-									type="button"
-									aria-label={t("attachments.remove", { name: item.name })}
-									onClick={() => void workflow.removeAttachment(item.draftId)}
-								>
-									×
-								</Button>
-							</li>
-						)}
-					</For>
-				</ul>
-			</Show>
-			<Show when={workflow.modelError()}>{(error) => <span role="alert">{error()}</span>}</Show>
-			<Show when={workflow.sendError()}>{(error) => <span role="alert">{error()}</span>}</Show>
-			<Show when={workflow.attachmentError()}>
-				{(error) => <span role="alert">{error()}</span>}
-			</Show>
+			<Show when={pathError()}>{(error) => <span role="alert">{error()}</span>}</Show>
 			<Show
 				when={workflow.streaming()}
 				fallback={
@@ -346,8 +141,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 							!store.activeConversationId ||
 							!workflow.modelSelected() ||
 							workflow.modelBusy() ||
-							workflow.attachments().some((item) => item.uploadState !== "complete") ||
-							(!workflow.composerText().trim() && !workflow.attachments().length)
+							!workflow.composerText().trim()
 						}
 					>
 						<Icon icon={faArrowUp} />

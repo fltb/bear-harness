@@ -7,9 +7,7 @@
  * `ipc-router`: there is no `ipcMain` and no `BrowserWindow`. A channel is
  * valid when it exists in `CHANNEL_CONTRACTS` (from
  * `@bear-harness/protocol/schema`); an unregistered-but-known channel returns
- * `handler_not_registered`, exactly like the legacy router. `REQUEST_SCHEMAS`
- * is intentionally request-only and is not used here because dispatch also
- * validates handler responses.
+ * `handler_not_registered`. Dispatch validates both request and response.
  */
 
 import {

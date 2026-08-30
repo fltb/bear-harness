@@ -12,7 +12,7 @@ export type ElectronApp = ElectronApplication;
 
 const desktopRoot = fileURLToPath(new URL("..", import.meta.url));
 const sourceE2EPiWorkerPath = realpathSync.native(
-	fileURLToPath(new URL("../../../attachment-agent-e2e-worker.mjs", import.meta.url)),
+	fileURLToPath(new URL("../../../pi-e2e-worker.mjs", import.meta.url)),
 );
 
 interface SourceAppLaunchOptions {
@@ -185,7 +185,7 @@ export async function assertProductPage(window: Page, _product: Readonly<Product
 	const activeConversationId = snapshot.conversation.activeConversationId;
 	const sceneId =
 		(activeConversationId
-			? snapshot.characterRuntime.byConversation[activeConversationId]?.sceneId
+			? snapshot.companion?.byConversation[activeConversationId]?.display.sceneId
 			: undefined) ?? character.visual.defaultSceneId;
 	const sceneLabel = character.scenes.find((scene) => scene.id === sceneId)?.label;
 	if (!sceneLabel) throw new Error(`scene ${sceneId} unavailable in character snapshot`);
@@ -199,30 +199,30 @@ export async function assertProductPage(window: Page, _product: Readonly<Product
 	await expect(composer).toBeVisible();
 	await expect(composer).toBeEnabled();
 
-	// Preload exposes only platform, diagnostics, attachments, and the schema-neutral transport.
+	// The picker only reveals paths explicitly selected by the user; files remain in place.
 	const bridge = await window.evaluate(() => {
 		const keys = Object.keys(window.bearDesktop);
 		const diagnosticsKeys = Object.keys(window.bearDesktop.diagnostics);
-		const attachmentKeys = Object.keys(
+		const localFileKeys = Object.keys(
 			(
 				window.bearDesktop as typeof window.bearDesktop & {
-					attachments: Readonly<Record<string, unknown>>;
+					localFiles: Readonly<Record<string, unknown>>;
 				}
-			).attachments,
+			).localFiles,
 		);
 		const transportKeys = Object.keys(window.bearDesktop.transport);
 		return {
 			keys,
 			diagnosticsKeys,
-			attachmentKeys,
+			localFileKeys,
 			transportKeys,
 			platform: window.bearDesktop.platform,
 			reporterType: typeof window.bearDesktop.diagnostics.reportRendererFault,
 		};
 	});
-	expect(bridge.keys).toEqual(["platform", "diagnostics", "attachments", "transport"]);
+	expect(bridge.keys).toEqual(["platform", "diagnostics", "localFiles", "transport"]);
 	expect(bridge.diagnosticsKeys).toEqual(["reportRendererFault"]);
-	expect(bridge.attachmentKeys).toEqual(["pickFiles", "pickFolder", "importDroppedFiles"]);
+	expect(bridge.localFileKeys).toEqual(["pickFiles", "pickFolder", "pathsForDroppedFiles"]);
 	expect(bridge.transportKeys).toEqual(["listen", "invoke"]);
 	expect(bridge.platform).toMatch(/^(darwin|win32|linux)$/);
 	expect(bridge.reporterType).toBe("function");

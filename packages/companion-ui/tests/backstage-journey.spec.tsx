@@ -188,7 +188,7 @@ describe("ordinary-user backstage journey", () => {
 					{
 						id: "trust",
 						type: "number" as const,
-						scope: "relationship" as const,
+						scope: "global" as const,
 						initial: 0,
 						display: {
 							kind: "level" as const,
@@ -267,7 +267,7 @@ describe("ordinary-user backstage journey", () => {
 			within(dialog).queryByRole("tab", { name: zhCN.currentRolePackage.storageTab }),
 		).not.toBeInTheDocument();
 	});
-	it("does not expose roleplay media in the global character settings", async () => {
+	it("does not expose roleplay media in character settings", async () => {
 		const user = userEvent.setup();
 		vi.stubGlobal(
 			"matchMedia",

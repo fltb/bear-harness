@@ -8,7 +8,6 @@ import { CharacterPresence, type CharacterPresenceLayoutMode } from "./Character
 import { Composer } from "./Composer";
 import { ConversationPanel } from "./ConversationPanel";
 import { FirstMeeting } from "./FirstMeeting";
-import { AttachmentPreviewProvider } from "./features/AttachmentPreviewPanel.js";
 import { Backstage } from "./features/Backstage.js";
 import { Icon } from "./Icon.js";
 import { syncDocumentTitle } from "./lib/dom-effects.js";
@@ -45,7 +44,7 @@ export function layoutModeForWidth(width: number): AppLayoutMode {
  * Desktop frame from Prototype 06, wired to the Companion store.
  *
  * The store owns the snapshot + event subscription (conversations, active
- * conversation messages, runs, onboarding, presence); this component only
+ * conversation messages, runs, and onboarding); this component only
  * composes the layout and holds the backstage sheet's open state. The
  * `client` is the injected `CompanionClient` the store is bound to.
  */
@@ -94,6 +93,15 @@ function DesktopFrame() {
 	const presenceLayout = createMemo<CharacterPresenceLayoutMode>(() =>
 		store.activeConversationId !== null ? "expanded" : "resting",
 	);
+	const activityVisualState = createMemo(() => {
+		if (store.runs.some((run) => run.status === "needs_user")) return "needs_user";
+		if (store.runs.some((run) => run.status === "enqueued" || run.status === "running"))
+			return "thinking";
+		const pi = store.activePiLiveState;
+		if (pi?.isStreaming || pi?.queuedUserMessages?.length) return "listening";
+		if (pi?.errorMessage) return "problem";
+		return "presence";
+	});
 	const [layoutMode, setLayoutMode] = createSignal<AppLayoutMode>("window");
 	const [mobileNavigationOpen, setMobileNavigationOpen] = createSignal(false);
 	let appRef: HTMLDivElement | undefined;
@@ -142,61 +150,58 @@ function DesktopFrame() {
 			aria-label={t("shell.productName")}
 		>
 			<div class="shell" data-mobile-navigation-open={mobileNavigationOpen() ? "true" : "false"}>
-				<AttachmentPreviewProvider>
-					<Show when={layoutMode() === "mobile" && mobileNavigationOpen()}>
-						<Button
-							type="button"
-							class="mobile-navigation-backdrop"
-							aria-label={t("backstage.close")}
-							onClick={() => setMobileNavigationOpen(false)}
-						/>
-					</Show>
-					<Sidebar
-						character={workflow.character()}
-						onOpenBackstage={openBackstage}
-						onNavigate={() => setMobileNavigationOpen(false)}
+				<Show when={layoutMode() === "mobile" && mobileNavigationOpen()}>
+					<Button
+						type="button"
+						class="mobile-navigation-backdrop"
+						aria-label={t("backstage.close")}
+						onClick={() => setMobileNavigationOpen(false)}
 					/>
-					<main class="main">
-						<Button
-							type="button"
-							class="mobile-navigation-trigger"
-							aria-label={t("sidebar.conversations")}
-							aria-expanded={mobileNavigationOpen()}
-							onClick={() => setMobileNavigationOpen((open) => !open)}
-						>
-							<Icon icon={faBars} />
-						</Button>
-						<Show when={workflow.showLanguageWarning()}>
-							<section class="language-warning" role="status">
-								<div>
-									<strong>{t("language.warningTitle")}</strong>
-									<p>{workflow.languageWarning()}</p>
-								</div>
-								<Button
-									data-control="command"
-									type="button"
-									onClick={workflow.dismissLanguageWarning}
-								>
-									{t("language.dismiss")}
-								</Button>
-							</section>
-						</Show>
-						<SceneBackdrop scene={workflow.scene()} />
-						<CharacterPresence
-							character={workflow.character()}
-							presence={store.presence}
-							visualState={workflow.visualState()}
-							layout={presenceLayout()}
-						/>
-						<ConversationPanel />
-						<Composer
-							placeholder={workflow.composerPlaceholder()}
-							onOpenModelSettings={() => openBackstage("settings")}
-						/>
-						<PermissionLayer />
-						<FirstMeeting />
-					</main>
-				</AttachmentPreviewProvider>
+				</Show>
+				<Sidebar
+					character={workflow.character()}
+					onOpenBackstage={openBackstage}
+					onNavigate={() => setMobileNavigationOpen(false)}
+				/>
+				<main class="main">
+					<Button
+						type="button"
+						class="mobile-navigation-trigger"
+						aria-label={t("sidebar.conversations")}
+						aria-expanded={mobileNavigationOpen()}
+						onClick={() => setMobileNavigationOpen((open) => !open)}
+					>
+						<Icon icon={faBars} />
+					</Button>
+					<Show when={workflow.showLanguageWarning()}>
+						<section class="language-warning" role="status">
+							<div>
+								<strong>{t("language.warningTitle")}</strong>
+								<p>{workflow.languageWarning()}</p>
+							</div>
+							<Button
+								data-control="command"
+								type="button"
+								onClick={workflow.dismissLanguageWarning}
+							>
+								{t("language.dismiss")}
+							</Button>
+						</section>
+					</Show>
+					<SceneBackdrop scene={workflow.scene()} />
+					<CharacterPresence
+						character={workflow.character()}
+						visualState={workflow.visualState() ?? activityVisualState()}
+						layout={presenceLayout()}
+					/>
+					<ConversationPanel />
+					<Composer
+						placeholder={workflow.composerPlaceholder()}
+						onOpenModelSettings={() => openBackstage("settings")}
+					/>
+					<PermissionLayer />
+					<FirstMeeting />
+				</main>
 			</div>
 			<Backstage
 				open={workflow.backstageOpen()}

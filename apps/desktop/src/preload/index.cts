@@ -73,26 +73,21 @@ function reportRendererFault(input: unknown): void {
 		ipcRenderer.send("diagnostics:renderer-fault:v1", { traceparent, fault: input });
 }
 
-const ATTACHMENT_CHANNEL_PREFIX = "desktop:attachment";
-async function invokeAttachment(channel: string, request: object): Promise<unknown[]> {
-	const response: unknown = await ipcRenderer.invoke(channel, request);
+async function pickLocalPaths(channel: string): Promise<string[]> {
+	const response: unknown = await ipcRenderer.invoke(channel);
 	if (!isPlainObject(response) || response.ok !== true || !isPlainObject(response.data))
-		throw new Error("attachment_import_failed");
-	const attachments = response.data.attachments;
-	if (!Array.isArray(attachments)) throw new Error("attachment_import_failed");
-	return attachments;
+		throw new Error("local_file_picker_failed");
+	const paths = response.data.paths;
+	if (!Array.isArray(paths) || !paths.every((path) => typeof path === "string"))
+		throw new Error("local_file_picker_failed");
+	return paths;
 }
 
-const attachments = Object.freeze({
-	pickFiles: (conversationId: string) =>
-		invokeAttachment("desktop:attachmentPickFiles:v1", { conversationId }),
-	pickFolder: (conversationId: string) =>
-		invokeAttachment("desktop:attachmentPickFolder:v1", { conversationId }),
-	importDroppedFiles: (conversationId: string, files: File[]) => {
-		const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean);
-		if (paths.length === 0) return Promise.resolve([]);
-		return invokeAttachment("desktop:attachmentImportDrop:v1", { conversationId, paths });
-	},
+const localFiles = Object.freeze({
+	pickFiles: () => pickLocalPaths("desktop:pickLocalFiles:v1"),
+	pickFolder: () => pickLocalPaths("desktop:pickLocalFolder:v1"),
+	pathsForDroppedFiles: (files: File[]) =>
+		files.map((file) => webUtils.getPathForFile(file)).filter(Boolean),
 });
 
 contextBridge.exposeInMainWorld(
@@ -100,7 +95,7 @@ contextBridge.exposeInMainWorld(
 	Object.freeze({
 		platform: process.platform,
 		diagnostics: Object.freeze({ reportRendererFault }),
-		attachments,
+		localFiles,
 		transport: Object.freeze({
 			listen: (
 				afterSeq: number,
@@ -126,8 +121,6 @@ contextBridge.exposeInMainWorld(
 				};
 			},
 			invoke: (channel: string, request: unknown) => {
-				if (channel.startsWith(ATTACHMENT_CHANNEL_PREFIX))
-					return Promise.reject(new Error("attachment_channel_requires_trusted_preload"));
 				return ipcRenderer.invoke(channel, request);
 			},
 		}),

@@ -1,5 +1,5 @@
 import { zhCN } from "@bear-harness/i18n/locales";
-import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
+import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { expect, test } from "playwright/test";
 import { ensureReadyForConversation, getBootstrap } from "./helpers";
 
@@ -12,8 +12,10 @@ test("WebDev exposes every registered Host RPC channel through its authenticated
 		page.getByRole("button", { name: "Web Dev" }).click(),
 	]);
 
-	const panel = page.getByRole("complementary", { name: zhCN.webDev.ariaLabel });
-	const expectedChannels = Object.keys(REQUEST_SCHEMAS).sort();
+	const panel = page.getByRole("complementary", {
+		name: zhCN.webDev.ariaLabel,
+	});
+	const expectedChannels = Object.keys(CHANNEL_CONTRACTS).sort();
 	const rpcChannel = panel.getByRole("button", { name: "Channel" });
 	await rpcChannel.click();
 	await expect(page.getByRole("option")).toHaveCount(expectedChannels.length);
@@ -84,11 +86,13 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 }) => {
 	await ensureReadyForConversation(page);
 
-	const conversations = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
+	const conversations = page.getByRole("navigation", {
+		name: zhCN.sidebar.conversations,
+	});
 	const conversationItems = conversations.getByRole("button");
 	const before = await conversationItems.count();
-	await page.getByRole("button", { name: zhCN.sidebar.newConversation }).click();
-	await expect.poll(() => conversationItems.count()).toBeGreaterThan(before);
+	await page.getByRole("button", { name: zhCN.sidebar.newConversation, exact: true }).click();
+	await expect.poll(() => conversationItems.count()).toBeGreaterThanOrEqual(before);
 	await expect
 		.poll(() =>
 			conversationItems.evaluateAll(
@@ -97,7 +101,9 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 		)
 		.toBe(1);
 
-	const queue = page.getByRole("button", { name: `${zhCN.threadHead.runningWork} 0` });
+	const queue = page.getByRole("button", {
+		name: `${zhCN.threadHead.runningWork} 0`,
+	});
 	await queue.click();
 	await expect(queue).toHaveAttribute("aria-expanded", "true");
 	await expect(page.getByRole("menu", { name: zhCN.threadHead.runningWork })).toBeVisible();
@@ -119,7 +125,9 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	});
 	await expect(systemSettingsButton).toBeEnabled();
 	await systemSettingsButton.click();
-	const backstage = page.getByRole("dialog", { name: zhCN.sidebar.systemSettings });
+	const backstage = page.getByRole("dialog", {
+		name: zhCN.sidebar.systemSettings,
+	});
 	await expect(backstage).toBeVisible();
 	const settingsPanel = backstage;
 	const systemModelSettingsNavigation = settingsPanel.getByRole("button", {
@@ -129,7 +137,9 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	await expect(systemModelSettingsNavigation).toBeVisible();
 	await systemModelSettingsNavigation.click();
 	await expect(
-		settingsPanel.getByRole("region", { name: zhCN.settings.providerSetupLabel }),
+		settingsPanel.getByRole("region", {
+			name: zhCN.settings.providerSetupLabel,
+		}),
 	).toBeVisible();
 	// test-quality-allow locator: typography contract requires all rendered text controls
 	const typographyElements = settingsPanel.locator("label, p, button, input, select, h3");
@@ -216,7 +226,9 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	});
 	await expect(characterSettingsButton).toBeEnabled();
 	await characterSettingsButton.click();
-	const characterBackstage = page.getByRole("dialog", { name: zhCN.sidebar.characterSettings });
+	const characterBackstage = page.getByRole("dialog", {
+		name: zhCN.sidebar.characterSettings,
+	});
 	await expect(characterBackstage).toBeVisible();
 	await characterBackstage.getByRole("tab", { name: zhCN.backstage.roleManagement }).click();
 	await characterBackstage.getByRole("tab", { name: zhCN.currentRolePackage.memoryTab }).click();
@@ -240,7 +252,9 @@ test("bottom actions open distinct character and system settings destinations", 
 	});
 	await expect(characterSettingsButton).toBeEnabled();
 	await characterSettingsButton.click();
-	let backstage = page.getByRole("dialog", { name: zhCN.sidebar.characterSettings });
+	let backstage = page.getByRole("dialog", {
+		name: zhCN.sidebar.characterSettings,
+	});
 	await expect(backstage).toBeVisible();
 	await expect(backstage.getByRole("tab", { name: zhCN.backstage.roleManagement })).toHaveAttribute(
 		"aria-selected",

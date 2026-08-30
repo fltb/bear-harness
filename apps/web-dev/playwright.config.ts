@@ -14,7 +14,7 @@ const baseURL = `http://127.0.0.1:${webPort}`;
 const dataScope = `${process.pid}-${randomUUID()}`;
 const dataDirectory = resolve(here, `../../test-results/web-dev-data-${dataScope}`);
 const piWorkerPath = realpathSync.native(
-	fileURLToPath(new URL("./e2e/attachment-agent-executor-fixture.mjs", import.meta.url)),
+	fileURLToPath(new URL("../../pi-e2e-worker.mjs", import.meta.url)),
 );
 const cleanupPolicy = process.env.BEAR_WEB_DEV_DATA_CLEANUP ?? "success";
 const lastRunFile = resolve(here, "../../test-results/web-dev/.last-run.json");

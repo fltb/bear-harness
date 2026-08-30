@@ -56,14 +56,14 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 	});
 	const firstRunStage = createMemo(() => store.settings?.data?.()?.firstRunStage ?? "model");
 	const modelRequired = createMemo(
-		() => store.onboarding.status === "active" && firstRunStage() === "model" && !store.loading,
+		() => store.onboarding.status === "active" && firstRunStage() === "model",
 	);
 	const modelError = createMemo(() => {
 		const error = hasMethod(store.model?.error) ? store.model.error() : null;
 		return error === null || error === undefined ? null : messageOf(error);
 	});
 	const memorySetupRequired = createMemo(
-		() => store.onboarding.status === "active" && firstRunStage() === "embedding" && !store.loading,
+		() => store.onboarding.status === "active" && firstRunStage() === "embedding",
 	);
 	const currentStep = createMemo<CharacterOnboardingStep | undefined>(() => {
 		const definition = flow();
@@ -84,7 +84,7 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 			: "";
 	});
 	const visible = createMemo(
-		() => store.onboarding.status === "active" && currentStep() !== undefined && !store.loading,
+		() => store.onboarding.status === "active" && currentStep() !== undefined,
 	);
 	const conversationVisible = createMemo(
 		() => !modelRequired() && !memorySetupRequired() && visible(),

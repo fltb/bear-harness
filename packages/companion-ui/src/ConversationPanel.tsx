@@ -1,80 +1,16 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import type { ConversationAttachmentSummary, PiTimelineEntry } from "@bear-harness/protocol";
+import type { PiTimelineEntry } from "@bear-harness/protocol";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { useAttachmentPreview } from "./features/AttachmentPreviewPanel.js";
 import { followTimelineScroll } from "./lib/dom-effects.js";
 import type { CharacterDisplay } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
 import { useConversationViewWorkflow } from "./stores/conversation-workflows.js";
-import type { RunInfo } from "./stores/ipc.js";
 import { ThreadHead } from "./ThreadHead.js";
 import { Button, Dialog, TextField } from "./ui/primitives.js";
 
 /** ConversationPanel renders the active Pi timeline plus transient stream state. */
 
-type AssistantTimelineEntry = Extract<PiTimelineEntry, { kind: "message"; role: "assistant" }>;
-
-function TimelineAttachmentRows(props: { attachments?: ConversationAttachmentSummary[] }) {
-	const [t] = useTranslation(undefined, { i18n });
-	const preview = useAttachmentPreview();
-	return (
-		<Show when={(props.attachments?.length ?? 0) > 0}>
-			<ul class="timeline-attachments" aria-label={t("attachments.listLabel")}>
-				<For each={props.attachments}>
-					{(attachment) => (
-						<li
-							class="timeline-attachment-row"
-							data-testid="timeline-attachment-row"
-							data-attachment-id={attachment.id}
-							data-attachment-kind={attachment.kind}
-						>
-							<Button type="button" onClick={() => void preview?.open(attachment)}>
-								<strong>{attachment.name}</strong>
-							</Button>
-							<span>
-								{t(`attachments.kinds.${attachment.kind}`)}
-								{" · "}
-								{t(
-									attachment.fileCount === 1
-										? "attachments.singleFile"
-										: "attachments.multipleFiles",
-									{ count: attachment.fileCount },
-								)}
-								{" · "}
-								{t("attachments.byteCount", { count: attachment.bytes })}
-							</span>
-						</li>
-					)}
-				</For>
-			</ul>
-		</Show>
-	);
-}
-
-function resultRunForEntry(entry: PiTimelineEntry, runs: readonly RunInfo[]): RunInfo | undefined {
-	if (
-		entry.kind !== "message" ||
-		entry.role !== "assistant" ||
-		!entry.attachments?.some((attachment) => attachment.kind === "generated")
-	)
-		return undefined;
-	const entryTime = Date.parse(entry.timestamp);
-	return runs
-		.filter(
-			(run) =>
-				run.status === "completed" &&
-				run.completedAt !== undefined &&
-				Date.parse(run.completedAt) <= entryTime,
-		)
-		.sort(
-			(left, right) => Date.parse(right.completedAt ?? "") - Date.parse(left.completedAt ?? ""),
-		)[0];
-}
-
-function PiTimelineEntryView(props: {
-	entry: PiTimelineEntry;
-	onOpenResult: (entryId: string) => void;
-}) {
+function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 	const store = useCompanionStore();
 	const [t] = useTranslation(undefined, { i18n });
 	const [editing, setEditing] = createSignal(false);
@@ -118,12 +54,6 @@ function PiTimelineEntryView(props: {
 					return t("messages.toolActivity.read");
 				case "host_state":
 					return t("messages.toolActivity.state");
-				case "host_visual":
-					return t("messages.toolActivity.expression");
-				case "host_present":
-					return t("messages.toolActivity.roleplayUpdate");
-				case "host_attachment":
-					return t("messages.toolActivity.attachmentRead");
 				case "host_delegate":
 					return t("messages.toolActivity.delegate");
 				case "host_history":
@@ -156,7 +86,6 @@ function PiTimelineEntryView(props: {
 	const isUser = entry.role === "user";
 	const characterName = store.character?.name ?? "";
 	const assistant = entry.role === "assistant" ? entry : undefined;
-	const resultRun = createMemo(() => resultRunForEntry(entry, store.runs));
 	const failed = assistant?.stopReason === "error" || assistant?.stopReason === "aborted";
 	const errorText =
 		assistant?.stopReason === "aborted"
@@ -164,12 +93,7 @@ function PiTimelineEntryView(props: {
 			: assistant?.errorMessage
 				? t("messages.responseFailedSaved")
 				: undefined;
-	if (
-		!isUser &&
-		(entry.text === undefined || entry.text.length === 0) &&
-		(entry.attachments?.length ?? 0) === 0 &&
-		!failed
-	) {
+	if (!isUser && (entry.text === undefined || entry.text.length === 0) && !failed) {
 		return null;
 	}
 	return (
@@ -210,7 +134,6 @@ function PiTimelineEntryView(props: {
 					<Show when={entry.text !== undefined && entry.text.length > 0}>
 						<p>{entry.text}</p>
 					</Show>
-					<TimelineAttachmentRows attachments={entry.attachments} />
 					<Show when={failed && errorText !== undefined && errorText.length > 0}>
 						<span class="stream-error" role="alert">
 							{errorText}
@@ -334,38 +257,12 @@ function PiTimelineEntryView(props: {
 						</Button>
 					</fieldset>
 				</article>
-				<Show when={!isUser && resultRun() !== undefined}>
-					<Button
-						type="button"
-						class="agent-result-trigger"
-						data-testid="agent-result-trigger"
-						onClick={() => props.onOpenResult(entry.id)}
-					>
-						<span>{resultRun()?.title}</span>
-						<strong>{t("work.timeline.completed")}</strong>
-					</Button>
-					<article
-						class="agent-result-inline-card"
-						data-testid="agent-result-inline-card"
-						aria-label={`${t("work.result.title")} · ${resultRun()?.title}`}
-					>
-						<header>
-							<span>{t("work.result.title")}</span>
-							<strong>{t("work.timeline.completed")}</strong>
-						</header>
-						<h3>{resultRun()?.title}</h3>
-						<TimelineAttachmentRows attachments={entry.attachments} />
-					</article>
-				</Show>
 			</div>
 		</div>
 	);
 }
 
-function PiTimelineRenderer(props: {
-	entries: readonly PiTimelineEntry[];
-	onOpenResult: (entryId: string) => void;
-}) {
+function PiTimelineRenderer(props: { entries: readonly PiTimelineEntry[] }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const visible = createMemo(() => {
 		const result: Array<PiTimelineEntry | PiTimelineEntry[]> = [];
@@ -390,7 +287,6 @@ function PiTimelineRenderer(props: {
 			}
 			if (
 				(entry.text === undefined || entry.text.length === 0) &&
-				(entry.attachments?.length ?? 0) === 0 &&
 				entry.stopReason !== "error" &&
 				entry.stopReason !== "aborted"
 			) {
@@ -400,7 +296,6 @@ function PiTimelineRenderer(props: {
 				text: entry.text ?? "",
 				stopReason: entry.stopReason,
 				errorMessage: entry.errorMessage ?? "",
-				attachments: entry.attachments?.map((attachment) => attachment.id) ?? [],
 			});
 			if (signature === lastAssistantSignature) continue;
 			lastAssistantSignature = signature;
@@ -413,12 +308,7 @@ function PiTimelineRenderer(props: {
 			{(item) => (
 				<Show
 					when={Array.isArray(item) && item.length > 1}
-					fallback={
-						<PiTimelineEntryView
-							entry={Array.isArray(item) ? item[0]! : item}
-							onOpenResult={props.onOpenResult}
-						/>
-					}
+					fallback={<PiTimelineEntryView entry={Array.isArray(item) ? item[0]! : item} />}
 				>
 					<details class="tool-activity-group">
 						<summary>
@@ -429,61 +319,13 @@ function PiTimelineRenderer(props: {
 						</summary>
 						<div class="tool-activity-details">
 							<For each={item as PiTimelineEntry[]}>
-								{(entry) => <PiTimelineEntryView entry={entry} onOpenResult={props.onOpenResult} />}
+								{(entry) => <PiTimelineEntryView entry={entry} />}
 							</For>
 						</div>
 					</details>
 				</Show>
 			)}
 		</For>
-	);
-}
-
-function AgentResultPanel(props: {
-	entry: AssistantTimelineEntry;
-	run: RunInfo;
-	onClose: () => void;
-	onLocate: () => void;
-}) {
-	const [t] = useTranslation(undefined, { i18n });
-	return (
-		<aside
-			class="agent-result-panel"
-			data-testid="agent-result-panel"
-			aria-labelledby={`agent-result-title-${props.entry.id}`}
-		>
-			<header class="agent-result-panel-header">
-				<div>
-					<span class="agent-result-eyebrow">{t("work.result.title")}</span>
-					<h2 id={`agent-result-title-${props.entry.id}`}>{props.run.title}</h2>
-				</div>
-				<Button
-					type="button"
-					class="agent-result-close"
-					aria-label={t("work.result.close")}
-					onClick={props.onClose}
-				>
-					<span aria-hidden="true">×</span>
-				</Button>
-			</header>
-			<div class="agent-result-panel-body">
-				<div class="agent-result-content-card">
-					<div class="agent-result-status">
-						<strong>{t("work.timeline.completed")}</strong>
-						<span>{t("work.result.sourceFrom", { summary: props.run.title })}</span>
-					</div>
-					<Show when={props.entry.text !== undefined && props.entry.text.length > 0}>
-						<p class="agent-result-summary">{props.entry.text}</p>
-					</Show>
-					<TimelineAttachmentRows attachments={props.entry.attachments} />
-				</div>
-			</div>
-			<footer class="agent-result-panel-footer">
-				<Button type="button" data-control="command" onClick={props.onLocate}>
-					{t("work.result.locate")}
-				</Button>
-			</footer>
-		</aside>
 	);
 }
 
@@ -499,10 +341,14 @@ function PiLiveAssistantMessageView() {
 	const [t] = useTranslation(undefined, { i18n });
 	const characterName = store.character?.name ?? "";
 	return (
-		<Show when={store.activePiLiveState?.streamingMessage}>
+		<Show
+			when={
+				store.activePiLiveState?.streamingMessage ??
+				(store.activePiLiveState?.isStreaming ? { stopReason: "pending" as const } : undefined)
+			}
+		>
 			{(live) => {
 				const message = live();
-				if (message === undefined) return null;
 				const stopReason = message.stopReason;
 				const failed = stopReason === "error" || stopReason === "aborted";
 				const errorText =
@@ -552,57 +398,37 @@ function PiLiveAssistantMessageView() {
 	);
 }
 
+function PiQueuedUserMessages() {
+	const [t] = useTranslation(undefined, { i18n });
+	const store = useCompanionStore();
+	return (
+		<For each={store.activePiLiveState?.queuedUserMessages ?? []}>
+			{(message) => (
+				<div class="timeline-entry-row" data-testid="pi-queued-user-message">
+					<div class="user-message-column">
+						<article class="msg pi-timeline-message user" aria-label={t("messages.you")}>
+							<div class="msg-meta">{t("messages.you")}</div>
+							<p>{message}</p>
+							<span class="streaming-status" role="status" aria-label={t("messages.queued")} />
+						</article>
+					</div>
+				</div>
+			)}
+		</For>
+	);
+}
+
 export function ConversationPanel() {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const view = useConversationViewWorkflow(store);
 	const { sceneLabel, hasThreadContent } = view;
 	let threadRef: HTMLElement | undefined;
-	const [loadingOlder, setLoadingOlder] = createSignal(false);
-	const [resultSelection, setResultSelection] = createSignal<{
-		entryId: string;
-		latestKey: string;
-	}>();
-	const [dismissedResultKey, setDismissedResultKey] = createSignal<string>();
-	const resultEntries = createMemo(() =>
-		(store.activePiTimeline?.entries ?? []).filter(
-			(entry): entry is AssistantTimelineEntry =>
-				resultRunForEntry(entry, store.runs) !== undefined,
-		),
-	);
-	const latestResult = createMemo(() => resultEntries().at(-1));
-	const latestResultKey = createMemo(() => {
-		const latest = latestResult();
-		return latest ? `${store.activeConversationId ?? ""}:${latest.id}` : undefined;
-	});
-	const selectedResultEntry = createMemo(() => {
-		const latest = latestResult();
-		const latestKey = latestResultKey();
-		if (!latest || !latestKey || dismissedResultKey() === latestKey) return undefined;
-		const selection = resultSelection();
-		return selection?.latestKey === latestKey
-			? resultEntries().find((entry) => entry.id === selection.entryId)
-			: latest;
-	});
-	const selectedResultRun = createMemo(() => {
-		const entry = selectedResultEntry();
-		return entry ? resultRunForEntry(entry, store.runs) : undefined;
-	});
-	const openResult = (entryId: string) => {
-		const latestKey = latestResultKey();
-		if (!latestKey) return;
-		setDismissedResultKey(undefined);
-		setResultSelection({ entryId, latestKey });
-	};
-	const closeResult = () => {
-		setDismissedResultKey(latestResultKey());
-		setResultSelection(undefined);
-	};
 
 	followTimelineScroll(
 		() => threadRef,
 		() =>
-			`${store.activePiTimeline?.entries.length ?? 0}:${store.activeRoleplayChoiceSetId ?? ""}:${store.activeRoleplayMediaId ?? ""}`,
+			`${store.activePiTimeline?.entries.length ?? 0}:${store.activeChoiceSetId ?? ""}:${store.activePresentationMediaId ?? ""}`,
 	);
 
 	return (
@@ -618,54 +444,20 @@ export function ConversationPanel() {
 			>
 				<Show when={store.error != null}>
 					<div class="thread-error" role="alert">
-						{t("messages.connectionUnavailable")}
+						{store.error}
 					</div>
 				</Show>
 
 				<Show when={hasThreadContent()}>
 					<Show when={store.activePiTimeline}>
-						{(timeline) => (
-							<>
-								<Show when={timeline().hasMoreBefore === true}>
-									<Button
-										type="button"
-										class="timeline-load-older"
-										disabled={loadingOlder()}
-										onClick={() => {
-											setLoadingOlder(true);
-											void store.loadOlderMessages().finally(() => setLoadingOlder(false));
-										}}
-									>
-										{loadingOlder() ? t("messages.loadingOlder") : t("messages.loadOlder")}
-									</Button>
-								</Show>
-								<PiTimelineRenderer entries={timeline().entries} onOpenResult={openResult} />
-							</>
-						)}
+						{(timeline) => <PiTimelineRenderer entries={timeline().entries} />}
 					</Show>
+					<PiQueuedUserMessages />
 					<PiLiveAssistantMessageView />
 				</Show>
 				<RoleplayChoices />
 				<RoleplayInlineMedia />
 			</section>
-			<Show when={selectedResultEntry()}>
-				{(entry) => (
-					<Show when={selectedResultRun()}>
-						{(run) => (
-							<AgentResultPanel
-								entry={entry()}
-								run={run()}
-								onClose={closeResult}
-								onLocate={() => {
-									document
-										.querySelector(`[data-pi-entry-id="${entry().id}"]`)
-										?.scrollIntoView({ behavior: "smooth", block: "center" });
-								}}
-							/>
-						)}
-					</Show>
-				)}
-			</Show>
 			<RoleplayMediaOverlays />
 		</>
 	);
@@ -686,7 +478,7 @@ function RoleplayChoices() {
 								<Button
 									type="button"
 									class="roleplay-choice"
-									onClick={() => void store.sendMessage(choice.message)}
+									onClick={() => void view.submitText(choice.message)}
 								>
 									<strong>{choice.label}</strong>
 									<Show when={choice.description}>
@@ -716,7 +508,7 @@ function RoleplayInlineMedia() {
 							data-control="command"
 							type="button"
 							aria-label={t("messages.closeMedia")}
-							onClick={() => store.dismissRoleplayMedia()}
+							onClick={() => store.dismissPresentationMedia()}
 						>
 							{t("messages.closeMedia")}
 						</Button>
@@ -738,7 +530,7 @@ function RoleplayMediaOverlays() {
 		<>
 			<Dialog
 				open={media() !== undefined}
-				onOpenChange={(open) => !open && store.dismissRoleplayMedia()}
+				onOpenChange={(open) => !open && store.dismissPresentationMedia()}
 			>
 				<Dialog.Portal>
 					<Dialog.Overlay class="roleplay-media-overlay" />

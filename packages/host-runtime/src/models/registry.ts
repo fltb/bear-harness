@@ -1,12 +1,7 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
-import {
-	configuredModels,
-	conversationModelSelections,
-	conversations,
-	modelRouteSettings,
-} from "../storage/schema.js";
+import { configuredModels, modelRouteSettings } from "../storage/schema.js";
 
 export interface ModelRecord {
 	providerId: string;
@@ -183,7 +178,6 @@ export class ModelRegistry {
 				},
 			})
 			.run();
-		if (model) this.applyDefaultToUnselectedConversations(companionId, model);
 		this.eventBus.publish("model.defaults_changed", { kind: "reply" });
 		return this.defaults(companionId);
 	}
@@ -220,78 +214,12 @@ export class ModelRegistry {
 		return this.defaults(companionId);
 	}
 
-	applyDefaultToConversation(companionId: string, conversationId: string): ModelRecord | undefined {
-		const reply = this.defaults(companionId).reply;
-		return reply ? this.select(conversationId, reply.providerId, reply.modelId) : undefined;
-	}
-
-	/** Fill only missing conversation routes when a default is first configured. */
-	private applyDefaultToUnselectedConversations(companionId: string, model: ModelRecord): void {
-		const conversationIds = this.db
-			.select({ id: conversations.id })
-			.from(conversations)
-			.where(eq(conversations.companionId, companionId))
-			.all();
-		for (const { id } of conversationIds) {
-			if (!this.selected(id)) this.select(id, model.providerId, model.modelId);
-		}
-	}
-
-	select(conversationId: string, providerId: string, modelId: string): ModelRecord {
-		const model = this.get(providerId, modelId);
-		if (!model) throw { kind: "not_found", reason: "configured_model_not_found" };
-		this.db
-			.insert(conversationModelSelections)
-			.values({ conversationId, providerId, modelId })
-			.onConflictDoUpdate({
-				target: conversationModelSelections.conversationId,
-				set: { providerId, modelId, updatedAt: sql`datetime('now')` },
-			})
-			.run();
-		this.eventBus.publish("model.selected", { conversationId, providerId, modelId });
-		return model;
-	}
-
-	resolve(conversationId: string, requiresImages: boolean): ModelRecord | undefined {
-		const selected = this.selected(conversationId);
-		if (!selected) return undefined;
-		if (!requiresImages || selected.supportsImages) return selected;
-		const companion = this.db
-			.select({ id: conversations.companionId })
-			.from(conversations)
-			.where(eq(conversations.id, conversationId))
-			.get();
-		return companion ? this.multimodalFallback(companion.id) : undefined;
-	}
-
 	multimodalFallback(companionId: string): ModelRecord | undefined {
 		const vision = this.defaults(companionId).vision;
 		return vision.mode === "manual" ? vision.route : undefined;
 	}
 
-	selected(conversationId: string): ModelRecord | undefined {
-		const row = this.db
-			.select({
-				providerId: configuredModels.providerId,
-				modelId: configuredModels.modelId,
-				label: configuredModels.label,
-				supportsImages: configuredModels.supportsImages,
-				createdAt: configuredModels.createdAt,
-			})
-			.from(conversationModelSelections)
-			.innerJoin(
-				configuredModels,
-				and(
-					eq(configuredModels.providerId, conversationModelSelections.providerId),
-					eq(configuredModels.modelId, conversationModelSelections.modelId),
-				),
-			)
-			.where(eq(conversationModelSelections.conversationId, conversationId))
-			.get();
-		return row ? toRecord(row) : undefined;
-	}
-
-	private get(providerId: string, modelId: string): ModelRecord | undefined {
+	get(providerId: string, modelId: string): ModelRecord | undefined {
 		const row = this.db
 			.select()
 			.from(configuredModels)

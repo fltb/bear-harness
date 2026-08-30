@@ -1,8 +1,9 @@
 import { z } from "@bear-harness/schema";
 import Ajv2020Module, { type AnySchema, type ValidateFunction } from "ajv/dist/2020.js";
 import addFormatsModule from "ajv-formats";
+import jsonPatch from "fast-json-patch";
 
-export type StateScope = "conversation" | "relationship" | "character";
+export type StateScope = "conversation" | "global";
 export type StateAuthority = "model" | "user" | "readonly" | `skill:${string}`;
 export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObject;
 export interface JsonObject {
@@ -14,53 +15,31 @@ export interface CharacterStateDefinition extends Record<string, unknown> {
 	/** Non-enumerable compiled pointer index attached by CharacterStateSchema.parse. */
 	readonly fields: Record<string, CharacterStateField>;
 	$schema?: string;
-	$id?: string;
 	$defs?: Record<string, CharacterStateDefinition>;
 	$ref?: string;
 	type?: string | string[];
-	title?: string;
-	description?: string;
-	$comment?: string;
 	default?: JsonValue;
 	readOnly?: boolean;
 	properties?: Record<string, CharacterStateDefinition>;
-	items?: CharacterStateDefinition;
-	prefixItems?: CharacterStateDefinition[];
-	required?: string[];
 	additionalProperties?: boolean | CharacterStateDefinition;
 	enum?: JsonValue[];
 	const?: JsonValue;
-	oneOf?: CharacterStateDefinition[];
-	anyOf?: CharacterStateDefinition[];
-	allOf?: CharacterStateDefinition[];
 	["x-scope"]?: StateScope;
-	["x-model-readable"]?: boolean;
 	["x-write-authority"]?: StateAuthority;
 	["x-evidence-required"]?: boolean;
-	["x-update-when"]?: string[];
-	["x-do-not-update-when"]?: string[];
-	["x-max-change-per-turn"]?: number;
 	["x-allowed-transitions"]?: Array<[JsonValue, JsonValue]>;
-	["x-user-editable"]?: boolean;
-	["x-hidden"]?: boolean;
 	["x-incompatible-state"]?: "reject" | "reset";
 }
 
 export interface CharacterStateField {
-	pointer: string;
-	schema: CharacterStateDefinition;
-	scope: StateScope;
-	modelReadable: boolean;
 	writeAuthority: StateAuthority;
 	evidenceRequired: boolean;
-	maxChangePerTurn?: number;
 	allowedTransitions?: Array<[JsonValue, JsonValue]>;
-	userEditable: boolean;
-	hidden: boolean;
 }
 
 export interface CompiledCharacterStateSchema {
 	definition: CharacterStateDefinition;
+	partitions: ReadonlyMap<string, StateScope>;
 	fields: ReadonlyMap<string, CharacterStateField>;
 	validate: ValidateFunction;
 }
@@ -100,14 +79,32 @@ export function compileCharacterStateSchema(
 	if (!ajv.validateSchema(definition as AnySchema))
 		throw new Error(`invalid state_schema: ${ajv.errorsText(ajv.errors)}`);
 	const fields = new Map<string, CharacterStateField>();
-	walk(definition, definition, "", {}, fields, 0);
-	const result = { definition, fields, validate: ajv.compile(definition as AnySchema) };
+	const partitions = new Map<string, StateScope>();
+	for (const [name, child] of Object.entries(definition.properties ?? {})) {
+		const scope = child["x-scope"];
+		if (!scope) throw new Error(`state partition /${escapePointer(name)} has no x-scope`);
+		const resolved = resolveRef(definition, child);
+		if (resolved.type !== "object" && !resolved.properties)
+			throw new Error(`state partition /${escapePointer(name)} must be an object`);
+		partitions.set(name, scope);
+		walk(definition, resolved, `/${escapePointer(name)}`, {}, fields, 1);
+	}
+	const result = {
+		definition,
+		partitions,
+		fields,
+		validate: ajv.compile(definition as AnySchema),
+	};
 	compiledCache.set(definition, result);
 	return result;
 }
 
 function createAjv() {
-	const instance = new Ajv2020({ allErrors: true, strict: true, allowUnionTypes: true });
+	const instance = new Ajv2020({
+		allErrors: true,
+		strict: true,
+		allowUnionTypes: true,
+	});
 	addFormats(instance);
 	for (const keyword of [
 		"x-scope",
@@ -116,7 +113,6 @@ function createAjv() {
 		"x-evidence-required",
 		"x-update-when",
 		"x-do-not-update-when",
-		"x-max-change-per-turn",
 		"x-allowed-transitions",
 		"x-user-editable",
 		"x-hidden",
@@ -132,45 +128,71 @@ export function defaultStateDocument(definition: CharacterStateDefinition): Json
 	return value as JsonObject;
 }
 
-export function stateFieldForPointer(
-	definition: CharacterStateDefinition,
-	pointer: string,
-): CharacterStateField | undefined {
-	const fields = compileCharacterStateSchema(definition).fields;
-	let candidate = pointer;
-	while (candidate) {
-		const field = fields.get(candidate);
-		if (field) return field;
-		candidate = candidate.replace(/\/[^/]+$/u, "");
-	}
-	return undefined;
-}
-
 export const CharacterStateOperation = z.discriminatedUnion("op", [
-	z.strictObject({ op: z.literal("add"), path: z.string().min(1).max(512), value: z.unknown() }),
+	z.strictObject({
+		op: z.literal("add"),
+		path: z.string().min(1).max(512),
+		value: z.unknown(),
+	}),
 	z.strictObject({
 		op: z.literal("replace"),
 		path: z.string().min(1).max(512),
 		value: z.unknown(),
 	}),
 	z.strictObject({ op: z.literal("remove"), path: z.string().min(1).max(512) }),
-	z.strictObject({ op: z.literal("test"), path: z.string().min(1).max(512), value: z.unknown() }),
+	z.strictObject({
+		op: z.literal("test"),
+		path: z.string().min(1).max(512),
+		value: z.unknown(),
+	}),
 ]);
 export type CharacterStateOperation = z.infer<typeof CharacterStateOperation>;
 
-export const CharacterStateEvidence = z.strictObject({
-	source: z.enum(["current_user", "current_assistant"]),
-	quote: z.string().min(1).max(2000),
-});
-export type CharacterStateEvidence = z.infer<typeof CharacterStateEvidence>;
+export function applyCharacterStateOperations(input: {
+	definition: CharacterStateDefinition;
+	document: JsonObject;
+	operations: CharacterStateOperation[];
+	authority: StateAuthority;
+	evidence: boolean;
+}): JsonObject {
+	const next = structuredClone(input.document);
+	const fields = compileCharacterStateSchema(input.definition).fields;
+	for (const operation of input.operations.map((item) => CharacterStateOperation.parse(item))) {
+		let candidate = operation.path;
+		let field: CharacterStateField | undefined;
+		while (candidate && !field) {
+			field = fields.get(candidate);
+			candidate = candidate.replace(/\/[^/]+$/u, "");
+		}
+		if (!field || field.writeAuthority !== input.authority)
+			throw { kind: "forbidden", reason: "state_write_not_authorized" };
+		if (field.evidenceRequired && !input.evidence)
+			throw { kind: "forbidden", reason: "state_evidence_required" };
+		const previous = jsonPatch.getValueByPointer(next, operation.path);
+		if (
+			operation.op !== "test" &&
+			field.allowedTransitions?.length &&
+			!field.allowedTransitions.some(
+				([from, to]) =>
+					JSON.stringify(from) === JSON.stringify(previous) &&
+					"value" in operation &&
+					JSON.stringify(to) === JSON.stringify(operation.value),
+			)
+		)
+			throw {
+				kind: "validation_failed",
+				reason: "state_transition_not_allowed",
+			};
+		jsonPatch.applyPatch(next, [operation], true, true);
+	}
+	if (!compileCharacterStateSchema(input.definition).validate(next))
+		throw { kind: "validation_failed", reason: "character_state_invalid" };
+	return next;
+}
 
 interface Metadata {
-	scope?: StateScope;
-	modelReadable?: boolean;
 	writeAuthority?: StateAuthority;
 	evidenceRequired?: boolean;
-	userEditable?: boolean;
-	hidden?: boolean;
 }
 
 function walk(
@@ -183,6 +205,8 @@ function walk(
 ): void {
 	if (depth > 32) throw new Error("state_schema exceeds maximum depth");
 	const current = resolveRef(root, node);
+	if (depth > 1 && current["x-scope"])
+		throw new Error(`state field ${pointer} may not override its partition x-scope`);
 	const metadata = inherit(inherited, current);
 	if (current.type === "object" || current.properties) {
 		for (const [name, child] of Object.entries(current.properties ?? {}))
@@ -190,46 +214,25 @@ function walk(
 		return;
 	}
 	if (!pointer) return;
-	if (!metadata.scope) throw new Error(`state field ${pointer} has no x-scope`);
 	const writeAuthority = current.readOnly ? "readonly" : (metadata.writeAuthority ?? "readonly");
 	if (!AUTHORITY.test(writeAuthority))
 		throw new Error(`state field ${pointer} has invalid x-write-authority`);
-	const userEditable = metadata.userEditable ?? false;
-	if (userEditable && writeAuthority !== "user")
-		throw new Error(`state field ${pointer} is editable but not user-authorized`);
 	fields.set(pointer, {
-		pointer,
-		schema: current,
-		scope: metadata.scope,
-		modelReadable: metadata.modelReadable ?? true,
 		writeAuthority,
 		evidenceRequired: metadata.evidenceRequired ?? false,
-		...(typeof current["x-max-change-per-turn"] === "number"
-			? { maxChangePerTurn: current["x-max-change-per-turn"] }
-			: {}),
 		...(current["x-allowed-transitions"]
 			? { allowedTransitions: current["x-allowed-transitions"] }
 			: {}),
-		userEditable,
-		hidden: metadata.hidden ?? false,
 	});
 }
 
 function inherit(parent: Metadata, node: CharacterStateDefinition): Metadata {
 	return {
 		...parent,
-		...(node["x-scope"] ? { scope: node["x-scope"] } : {}),
-		...(typeof node["x-model-readable"] === "boolean"
-			? { modelReadable: node["x-model-readable"] }
-			: {}),
 		...(node["x-write-authority"] ? { writeAuthority: node["x-write-authority"] } : {}),
 		...(typeof node["x-evidence-required"] === "boolean"
 			? { evidenceRequired: node["x-evidence-required"] }
 			: {}),
-		...(typeof node["x-user-editable"] === "boolean"
-			? { userEditable: node["x-user-editable"] }
-			: {}),
-		...(typeof node["x-hidden"] === "boolean" ? { hidden: node["x-hidden"] } : {}),
 	};
 }
 

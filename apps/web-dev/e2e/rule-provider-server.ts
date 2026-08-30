@@ -1,5 +1,4 @@
 import { createServer } from "node:http";
-import { attachmentAgentReply } from "./attachment-agent-provider-fixture.ts";
 
 const directMemoryTexts = [
 	"E2E_DIRECT_MEMORY_A：我们约定暗号是北辰",
@@ -61,10 +60,6 @@ function reply(payload: {
 		.filter((message) => message.role === "tool")
 		.map((message) => text(message.content))
 		.join("\n");
-	const attachmentFixture = attachmentAgentReply(messages, (tool, args) => {
-		calls.push({ tool, args });
-	});
-	if (attachmentFixture) return attachmentFixture;
 	const invoke = (tool: string, args: Record<string, unknown>) => {
 		calls.push({ tool, args });
 		return { tool, args };
@@ -96,11 +91,12 @@ function reply(payload: {
 	}
 	if (current.includes("E2E_MANUAL_ROLE_START")) {
 		if (!currentCalls.includes("role_skill"))
-			return invoke("role_skill", { skillId: "continuity-reveal" });
+			return invoke("role_skill", { action: "read", skillId: "continuity-reveal" });
 		if (!currentCalls.includes("host_state"))
 			return invoke("host_state", {
 				action: "update",
 				operations: [{ path: "/continuity/stage", op: "replace", value: 1 }],
+				display: { sceneId: "quiet_terminal", expressionId: "reflective" },
 				reason: "用户主动开启继任规程",
 				skillId: "continuity-reveal",
 				evidence: { source: "current_user", quote: "E2E_MANUAL_ROLE_START" },
@@ -109,7 +105,7 @@ function reply(payload: {
 	}
 	if (current.includes("E2E_MANUAL_ROLE_CONTINUE")) {
 		if (!currentCalls.includes("role_skill"))
-			return invoke("role_skill", { skillId: "continuity-reveal" });
+			return invoke("role_skill", { action: "read", skillId: "continuity-reveal" });
 		if (!currentCalls.includes("host_state"))
 			return invoke("host_state", {
 				action: "update",
@@ -122,30 +118,31 @@ function reply(payload: {
 	}
 	if (current.includes("E2E_MANUAL_ROLE_VISUAL")) {
 		if (!currentCalls.includes("role_skill"))
-			return invoke("role_skill", { skillId: "undelivered-report" });
-		if (!currentCalls.includes("host_visual"))
-			return invoke("host_visual", {
+			return invoke("role_skill", { action: "read", skillId: "undelivered-report" });
+		if (!currentCalls.includes("host_state"))
+			return invoke("host_state", {
 				action: "update",
-				sceneId: "quiet_terminal",
-				expressionId: "reflective",
+				operations: [],
+				display: { sceneId: "quiet_terminal", expressionId: "reflective" },
 				reason: "继任规程进入专注值守场景",
 			});
 		return { content: "E2E_MANUAL_ROLE_VISUAL_DONE\n" };
 	}
 	if (current.includes("E2E_MANUAL_ROLE_PRESENT")) {
 		if (!currentCalls.includes("role_skill"))
-			return invoke("role_skill", { skillId: "continuity-reveal" });
-		if (!currentCalls.includes("host_present"))
-			return invoke("host_present", {
-				action: "present_choices",
-				choiceSetId: "continuity_response",
+			return invoke("role_skill", { action: "read", skillId: "continuity-reveal" });
+		if (!currentCalls.includes("host_state"))
+			return invoke("host_state", {
+				action: "update",
+				operations: [],
+				display: { choiceSetId: "continuity_response" },
 				reason: "用户明确要求呈现继任回应选项",
 			});
 		return { content: "E2E_MANUAL_ROLE_PRESENT_DONE\n" };
 	}
 	if (current.includes("我听见了，也愿意接住这份交接。")) {
 		if (!currentCalls.includes("role_skill"))
-			return invoke("role_skill", { skillId: "continuity-reveal" });
+			return invoke("role_skill", { action: "read", skillId: "continuity-reveal" });
 		if (!currentCalls.includes("host_state"))
 			return invoke("host_state", {
 				action: "update",
@@ -153,6 +150,7 @@ function reply(payload: {
 					{ path: "/continuity/stage", op: "replace", value: 3 },
 					{ path: "/continuity/response", op: "replace", value: "received" },
 				],
+				display: { mediaId: "continuity_light" },
 				reason: "用户表达愿意接住继任说明",
 				skillId: "continuity-reveal",
 				evidence: {
@@ -168,7 +166,7 @@ function reply(payload: {
 		: directMemoryTexts.find((value) => current.includes(value));
 	if (current.includes("E2E_TOOL_TRIGGER_DAMAGED_LOG")) {
 		if (!currentCalls.includes("role_skill"))
-			return invoke("role_skill", { skillId: "continuity-reveal" });
+			return invoke("role_skill", { action: "read", skillId: "continuity-reveal" });
 		if (currentCalls.includes("host_state"))
 			return { content: "E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE\n" };
 		const args = {

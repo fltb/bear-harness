@@ -309,17 +309,6 @@ export const DIAGNOSTIC_CATALOG: Readonly<Record<string, CatalogEntry>> = deepFr
 			source: str(),
 		},
 	},
-	"roleplay.state.transition": {
-		kind: "event",
-		level: "debug",
-		origin: "main",
-		attributes: {
-			conversationId: str(),
-			eventId: str(),
-			phase: strEnum(["queued", "committed", "rejected"] as const),
-			resultCode: { type: "string", maxBytes: 128, optional: true },
-		},
-	},
 	"external_agent.run": {
 		kind: "event",
 		level: "info",

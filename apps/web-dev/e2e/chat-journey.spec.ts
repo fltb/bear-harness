@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
 import { ensureReadyForConversation, sendMessage } from "./helpers";
@@ -18,15 +19,28 @@ test("chat streams once and edited history regenerates once through the UI", asy
 		observer.observe(document, { childList: true, subtree: true, characterData: true });
 	});
 	await ensureReadyForConversation(page);
+	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
 
 	await sendMessage(page, "STREAM_CHECK");
-	await expect(page.getByText("STREAM_CHECK", { exact: true })).toHaveCount(1);
-	await expect(page.getByText("STREAM_ONE STREAM_TWO", { exact: true })).toHaveCount(1);
+	await expect(thread.getByText("STREAM_CHECK", { exact: true })).toHaveCount(1);
+	await expect(thread.getByText("STREAM_ONE STREAM_TWO", { exact: true })).toHaveCount(1);
 	await expect(page.getByRole("status", { name: zhCN.messages.responding })).toBeHidden();
-	await expect(page.getByText("STREAM_ONE STREAM_TWO", { exact: true })).toHaveCount(1);
+	await expect(thread.getByText("STREAM_ONE STREAM_TWO", { exact: true })).toHaveCount(1);
 	expect(gapWarnings).toEqual([]);
 	await page.reload();
-	await expect(page.getByText("STREAM_ONE STREAM_TWO", { exact: true })).toHaveCount(1);
-	await expect(page.getByText("STREAM_CHECK", { exact: true })).toHaveCount(1);
+	await expect(thread.getByText("STREAM_ONE STREAM_TWO", { exact: true })).toHaveCount(1);
+	await expect(thread.getByText("STREAM_CHECK", { exact: true })).toHaveCount(1);
 	expect(pageErrors).toEqual([]);
+});
+
+test("a local path is ordinary natural-language user input", async ({ page }) => {
+	await ensureReadyForConversation(page);
+	const path = fileURLToPath(new URL("./fixtures/local-note.txt", import.meta.url));
+	const message = `请读一下这个本机文件并告诉我重点：${path}`;
+	await sendMessage(page, message);
+	await expect(
+		page.getByRole("region", { name: zhCN.messages.conversation }).getByText(message, {
+			exact: true,
+		}),
+	).toHaveCount(1);
 });

@@ -46,27 +46,33 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 	const summary = {
 		id: conversationId,
 		title: "Conversation",
-		unread: false,
-		updatedAt: "2026-01-01T00:00:00.000Z",
+		created: "2026-01-01T00:00:00.000Z",
+		modified: "2026-01-01T00:00:00.000Z",
+		messageCount: 1,
+		firstMessage: "Show the result",
 	};
-	const piTimeline = {
+	const entries = {
 		entries: [
 			{
 				id: "message-1",
 				parentId: null,
 				timestamp: "2026-01-01T00:00:00.000Z",
-				kind: "message" as const,
-				role: "user" as const,
-				text: "Show the result",
+				type: "message" as const,
+				message: { role: "user", content: "Show the result", timestamp: 1 },
 			},
 		],
 	};
 	const activeProjection = active
 		? {
-				activeConversationId: conversationId,
-				id: conversationId,
-				title: summary.title,
-				piTimeline,
+				sessionId: conversationId,
+				name: summary.title,
+				entries: entries.entries,
+				messages: [],
+				isIdle: true,
+				isStreaming: false,
+				pendingMessageCount: 0,
+				steeringMessages: [],
+				followUpMessages: [],
 			}
 		: undefined;
 	const snapshot = {
@@ -79,14 +85,6 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 				vision: { mode: "auto" as const },
 			},
 		},
-		...(activeProjection
-			? {
-					conversation: {
-						...activeProjection,
-						conversations: [summary],
-					},
-				}
-			: {}),
 	};
 	client.snapshot.get = vi.fn(() =>
 		Promise.resolve({ ok: true as const, data: snapshot as never }),
@@ -94,13 +92,13 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 	client.conversation.activeGet = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
-			data: activeProjection === undefined ? {} : { conversation: activeProjection },
+			data: { session: activeProjection },
 		}),
 	);
 	client.conversation.list = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
-			data: { conversations: active ? [summary] : [] },
+			data: { sessions: active ? [summary] : [] },
 		}),
 	);
 	client.model.routeGet = vi.fn(({ conversationId: id }) =>
@@ -194,6 +192,7 @@ describe("shell visual and thread head contracts", () => {
 					executorProfile: "pi-default",
 					title: "Active run",
 					status: "needs_user",
+					artifacts: [],
 				},
 				{
 					id: "run-2",
@@ -202,6 +201,7 @@ describe("shell visual and thread head contracts", () => {
 					executorProfile: "pi-default",
 					title: "Completed run",
 					status: "completed",
+					artifacts: [],
 				},
 			],
 		} as CompanionStore;
@@ -246,13 +246,13 @@ describe("shell visual and thread head contracts", () => {
 						backgroundUrl: "data:image/png;base64,cm9vbQ==",
 					}}
 				/>
-				<CharacterPresence character={character} presence="thinking" />
+				<CharacterPresence character={character} visualState="thinking" />
 			</>
 		));
 		expect(screen.getByRole("img", { name: "Reading room" })).toBeVisible();
 		expect(screen.getByRole("img", { name: "Thinking" })).toBeVisible();
 
-		render(() => <CharacterPresence character={character} presence="idle" visualState="custom" />);
+		render(() => <CharacterPresence character={character} visualState="custom" />);
 		expect(screen.getByRole("img", { name: "Custom expression" })).toBeVisible();
 	});
 
@@ -318,47 +318,21 @@ describe("portrait layout contracts", () => {
 				}>();
 				client.message.send = vi.fn(() => sendGate.promise);
 			} else {
-				let projection = {
-					activeConversationId: "conversation-1",
-					id: "conversation-1",
-					title: "Conversation",
-					piTimeline: { entries: [] },
-					piSessionId: "session-1",
-					piLiveState: { isStreaming: false },
+				const projection = {
+					sessionId: "conversation-1",
+					name: "Conversation",
+					entries: [],
+					messages: [],
+					isIdle: false,
+					isStreaming: true,
+					streamingMessage: { role: "assistant", content: [{ type: "text", text: "在想了" }] },
+					pendingMessageCount: 0,
+					steeringMessages: [],
+					followUpMessages: [],
 				};
 				client.conversation.activeGet = vi.fn(() =>
-					Promise.resolve({ ok: true as const, data: { conversation: projection } }),
+					Promise.resolve({ ok: true as const, data: { session: projection } }),
 				);
-				let subscription = 0;
-				client.events.subscribe = vi.fn(() => {
-					subscription += 1;
-					if (subscription === 1) {
-						projection = {
-							...projection,
-							piLiveState: {
-								isStreaming: true,
-								streamingMessage: { text: "在想了", stopReason: "pending" as const },
-							},
-						};
-						return Promise.resolve({
-							ok: true as const,
-							data: {
-								events: [
-									{
-										seq: 1,
-										kind: "pi.session.changed" as const,
-										payload: {
-											conversationId: "conversation-1",
-											sessionId: "session-1",
-											reason: "message" as const,
-										},
-									},
-								],
-							},
-						});
-					}
-					return neverSettle();
-				});
 			}
 			render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 

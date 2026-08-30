@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ConversationRepository } from "../src/conversations/repository.js";
 import {
 	type CredentialVault,
 	createHostRuntime,
@@ -164,89 +163,11 @@ describe("role-defined onboarding", () => {
 				decisions: { relationship_memory_enabled: false },
 			},
 		});
-		const conversations = (await data(runtime, "conversation.list:v1", {})) as {
-			conversations: Array<{ id: string; title: string }>;
-		};
-		expect(conversations.conversations).toHaveLength(1);
-		expect(conversations.conversations[0]).toMatchObject({ title: "与极昼" });
-		const conversationId = conversations.conversations[0]?.id;
-		expect(conversationId).toBeTruthy();
-		await expect(data(runtime, "conversation.activeGet:v1", {})).resolves.toMatchObject({
-			conversation: { id: conversationId, title: "与极昼" },
-		});
+		await expect(data(runtime, "conversation.list:v1", {})).resolves.toEqual({ sessions: [] });
+		await expect(data(runtime, "conversation.activeGet:v1", {})).resolves.toEqual({});
 		await expect(data(runtime, "onboarding.get:v1", {})).resolves.toMatchObject({
 			status: "complete",
 		});
-		await expect(data(runtime, "conversation.list:v1", {})).resolves.toMatchObject({
-			conversations: [{ id: conversationId }],
-		});
-		await expect(
-			data(runtime, "conversation.archive:v1", { id: conversationId, archived: true }),
-		).resolves.toBeDefined();
-		await expect(data(runtime, "conversation.list:v1", {})).resolves.toEqual({
-			conversations: [],
-		});
-		await expect(data(runtime, "conversation.list:v1", { archived: true })).resolves.toMatchObject({
-			conversations: [{ id: conversationId }],
-		});
-		await expect(
-			data(runtime, "conversation.archive:v1", { id: conversationId, archived: false }),
-		).resolves.toBeDefined();
-		await expect(data(runtime, "conversation.list:v1", {})).resolves.toMatchObject({
-			conversations: [{ id: conversationId }],
-		});
-		await runtime.close();
-	});
-
-	it("rolls back repository-owned onboarding completion and retries exactly once", async () => {
-		const runtime = runtimeForTest();
-		await runtime.start();
-		const composition = Reflect.get(runtime, "composition") as {
-			conversationRepository: ConversationRepository;
-		};
-		const repository = composition.conversationRepository;
-		const createAndSelect = repository.createAndSelect.bind(repository);
-		let failCallback = true;
-		repository.createAndSelect = (input) => {
-			if (!failCallback) return createAndSelect(input);
-			failCallback = false;
-			return createAndSelect({
-				...input,
-				onCommit: (transaction) => {
-					input.onCommit?.(transaction);
-					throw new Error("injected onboarding completion failure");
-				},
-			});
-		};
-
-		await expect(completeOnboarding(runtime)).rejects.toThrow("internal");
-
-		const database = Reflect.get(runtime, "db") as {
-			connection: { prepare(sql: string): { get(): unknown } };
-		};
-		const rowCount = (table: string) => {
-			const row = database.connection.prepare(`SELECT count(*) AS count FROM ${table}`).get();
-			if (
-				typeof row !== "object" ||
-				row === null ||
-				!("count" in row) ||
-				typeof row.count !== "number"
-			) {
-				throw new Error(`unexpected count row for ${table}`);
-			}
-			return row.count;
-		};
-		expect(rowCount("conversations")).toBe(0);
-		expect(rowCount("conversation_sessions")).toBe(0);
-		expect(rowCount("active_conversations")).toBe(0);
-
-		await expect(completeOnboarding(runtime)).resolves.toMatchObject({ status: "complete" });
-		await expect(data(runtime, "conversation.list:v1", {})).resolves.toMatchObject({
-			conversations: [{ title: "与极昼" }],
-		});
-		expect(rowCount("conversations")).toBe(1);
-		expect(rowCount("conversation_sessions")).toBe(1);
-		expect(rowCount("active_conversations")).toBe(1);
 		await runtime.close();
 	});
 
@@ -282,40 +203,7 @@ describe("role-defined onboarding", () => {
 		const snapshot = (await data(runtime, "snapshot.get:v1", {})) as {
 			conversation: Record<string, unknown>;
 		};
-		expect(snapshot.conversation).toMatchObject({ activeConversationId: expect.any(String) });
-		expect(snapshot.conversation).not.toHaveProperty("piSessionId");
-		expect(snapshot.conversation).not.toHaveProperty("piLiveState");
-		await runtime.close();
-	});
-
-	it("applies the global reply default to the conversation created on completion", async () => {
-		const runtime = runtimeForTest();
-		await runtime.start();
-		const providerList = (await data(runtime, "provider.list:v1", {})) as {
-			providers: Array<{ id: string; availableModels: Array<{ id: string; name: string }> }>;
-		};
-		const provider = providerList.providers.find(
-			(candidate) => candidate.availableModels.length > 0,
-		);
-		const model = provider?.availableModels[0];
-		if (!provider || !model) throw new Error("test provider catalog has no preset model");
-		await data(runtime, "model.enable:v1", {
-			providerId: provider.id,
-			modelId: model.id,
-			label: model.name,
-		});
-		await data(runtime, "model.defaults.setReply:v1", {
-			reply: { providerId: provider.id, modelId: model.id },
-		});
-		await completeOnboarding(runtime);
-		const list = (await data(runtime, "conversation.list:v1", {})) as {
-			conversations: Array<{ id: string }>;
-		};
-		const conversationId = list.conversations[0]?.id;
-		expect(conversationId).toBeTruthy();
-		await expect(data(runtime, "model.route.get:v1", { conversationId })).resolves.toMatchObject({
-			selected: { providerId: provider.id, modelId: model.id },
-		});
+		expect(snapshot.conversation).toEqual({});
 		await runtime.close();
 	});
 
@@ -338,7 +226,7 @@ describe("role-defined onboarding", () => {
 			settings: { conversationHistoryReadEnabled: true },
 		});
 		await expect(
-			runtime.dispatch("settings.set:v1", { settings: { immersionLevel: "roleplay" } }),
+			runtime.dispatch("settings.set:v1", { settings: { immersionLevel: "resources" } }),
 		).resolves.toMatchObject({
 			ok: false,
 			error: { kind: "invalid_request" },

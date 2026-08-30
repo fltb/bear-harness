@@ -12,7 +12,6 @@ const roots: string[] = [];
 
 const representativePayloads: Record<KnownEventKind, unknown> = {
 	"sync.invalidated": { sync: { epoch: "test-host", revision: 1 }, sources: ["conversations"] },
-	"conversationAttachment.upload_changed": { conversationId: "conversation-1" },
 	"provider.login_changed": { providerId: "openai-codex" },
 	"memory.records_changed": {},
 	"memory.embedding_download_changed": { status: "downloading", downloadedBytes: 512 },
@@ -20,25 +19,6 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 	"character.pluginsTrusted": { characterId: "character-1", pluginHash: "hash" },
 	"character.activated": { characterId: "character-1" },
 	"character.seeded": { id: "character-1", name: "Character" },
-	"character.scene_changed": {
-		conversationId: "conversation-1",
-		characterId: "character-1",
-		sceneId: "scene-1",
-		visualState: "presence",
-	},
-	"character.visual_state_changed": {
-		conversationId: "conversation-1",
-		characterId: "character-1",
-		sceneId: "scene-1",
-		visualState: "listening",
-	},
-	"character.state_changed": {
-		conversationId: "conversation-1",
-		revisions: { conversation: 1, relationship: 0, character: 0 },
-		schemaHash: "0".repeat(64),
-	},
-	"roleplay.unlocks_reset": {},
-	"roleplay.state_changed": { conversationId: "conversation-1", state: {} },
 	"conversation.created": {
 		conversationId: "conversation-1",
 		title: "A conversation",
@@ -50,15 +30,8 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 	"pi.session.changed": {
 		conversationId: "conversation-1",
 		sessionId: "pi-session-1",
-		reason: "message",
-	},
-	"conversation.branched": {
-		conversationId: "conversation-1",
-		messageId: "message-1",
-		branchId: "branch-1",
 	},
 	"settings.changed": { settings: {}, changed: [] },
-	"diagnostics.memory_capture_failed": { message: "capture failed" },
 	"diagnostics.protocol_violation": { channel: "events.subscribe:v1", issues: [] },
 	"canon.source_added": {
 		companionId: "character-1",
@@ -87,64 +60,7 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 	"run.steered": { runId: "run-1", instruction: "Continue" },
 	"run.interrupted": { runId: "run-1" },
 	"run.resumed": { runId: "run-1" },
-	"run.cancelled": { runId: "run-1" },
-	"companion.tool_started": {
-		conversationId: "conversation-1",
-		toolCallId: "tool-call-1",
-		tool: "host_memory",
-		label: "Remember",
-	},
-	"companion.tool_finished": {
-		conversationId: "conversation-1",
-		toolCallId: "tool-call-1",
-		tool: "host_memory",
-		ok: true,
-		message: "Saved",
-	},
-	"companion.state_changed": { state: "running" },
 	"companion.snapshot_changed": { conversationId: "conversation-1", commitId: "commit-1" },
-	"companion.runtime_error": { code: "runtime_error" },
-	"companion.runtime_ready": {
-		conversationId: "conversation-1",
-		skills: [],
-		tools: [],
-	},
-	message_start: { conversationId: "conversation-1" },
-	message_update: { conversationId: "conversation-1", text: "Update" },
-	message_end: { conversationId: "conversation-1", text: "Done", message: {} },
-	"message.user_sent": {
-		conversationId: "conversation-1",
-		messageId: "message-1",
-		versionId: "version-1",
-		text: "Hello",
-	},
-	"message.aborted": { conversationId: "conversation-1" },
-	"message.regenerated": {
-		conversationId: "conversation-1",
-		messageId: "message-1",
-		versionId: "version-2",
-	},
-	"message.version_switched": {
-		conversationId: "conversation-1",
-		messageId: "message-1",
-		versionId: "version-1",
-	},
-	"message.edited": {
-		conversationId: "conversation-1",
-		messageId: "message-1",
-		versionId: "version-2",
-	},
-	"message.continued": { conversationId: "conversation-1" },
-	"message.corrected": {
-		conversationId: "conversation-1",
-		reason: "Correction",
-		applyScope: "once",
-	},
-	"message.assistant_committed": {
-		conversationId: "conversation-1",
-		messageId: "message-1",
-		versionId: "version-1",
-	},
 	"codex.consented": {
 		profileId: "profile-1",
 		canonicalPath: "/usr/local/bin/codex",
@@ -208,10 +124,14 @@ describe("event bus domain contract", () => {
 			const renderer: number[] = [];
 			bus.subscribe((event) => {
 				early.push(event.seq);
-				if (event.kind === "test.parent") bus.publish("test.child", {});
+				if (event.kind === "conversation.renamed")
+					bus.publish("conversation.selected", { id: "conversation-1" });
 			});
 			bus.subscribe((event) => renderer.push(event.seq));
-			bus.publish("test.parent", {});
+			bus.publish("conversation.renamed", {
+				conversationId: "conversation-1",
+				title: "parent",
+			});
 			expect(early).toEqual([1, 2]);
 			expect(renderer).toEqual([1, 2]);
 			expect(bus.after(0).map((event) => event.seq)).toEqual(renderer);
@@ -238,11 +158,15 @@ describe("event bus domain contract", () => {
 		const received: unknown[] = [];
 		bus.subscribe((event) => received.push(event));
 
-		const event = bus.publish("message_update", {
+		const event = bus.publish("conversation.renamed", {
 			conversationId: "conversation-1",
-			text: "hello",
+			title: "hello",
 		});
-		expect(event).toMatchObject({ seq: 1, kind: "message_update", payload: { text: "hello" } });
+		expect(event).toMatchObject({
+			seq: 1,
+			kind: "conversation.renamed",
+			payload: { title: "hello" },
+		});
 		expect(received).toHaveLength(1);
 		expect(database.connection.prepare("SELECT kind, payload FROM events").all()).toHaveLength(1);
 		database.close();
@@ -252,7 +176,7 @@ describe("event bus domain contract", () => {
 		const database = openDatabase();
 		const bus = new EventBus(database.orm);
 
-		expect(() => bus.publish("message_update", { conversationId: "", text: "bad" })).toThrow(
+		expect(() => bus.publish("conversation.renamed", { conversationId: "", title: "bad" })).toThrow(
 			/invalid domain event payload/,
 		);
 		expect(bus.currentSeq).toBe(0);
@@ -260,14 +184,16 @@ describe("event bus domain contract", () => {
 		database.close();
 	});
 
-	it("keeps unknown events forward-compatible only with bounded opaque payloads", () => {
+	it("rejects undeclared events without advancing the sequence", () => {
 		const database = openDatabase();
 		const bus = new EventBus(database.orm);
-		const event = bus.publish("workflow.review_requested", { conversationId: "conversation-1" });
-		expect(event.kind).toBe("workflow.review_requested");
-		expect(bus.after(0)).toEqual([event]);
+		expect(() =>
+			bus.publish("workflow.review_requested", { conversationId: "conversation-1" }),
+		).toThrow(/unknown domain event/);
+		expect(bus.currentSeq).toBe(0);
+		expect(bus.after(0)).toEqual([]);
 		expect(() => bus.publish("workflow.oversized", "x".repeat(4097))).toThrow(
-			/invalid domain event payload/,
+			/unknown domain event/,
 		);
 		database.close();
 	});
@@ -275,21 +201,21 @@ describe("event bus domain contract", () => {
 	it("surfaces malformed persisted rows instead of hiding replay gaps", () => {
 		const database = openDatabase();
 		const bus = new EventBus(database.orm);
-		const first = bus.publish("message_update", {
+		const first = bus.publish("conversation.renamed", {
 			conversationId: "conversation-1",
-			text: "first",
+			title: "first",
 		});
-		bus.publish("message_update", {
+		bus.publish("conversation.renamed", {
 			conversationId: "conversation-1",
-			text: "middle",
+			title: "middle",
 		});
-		const third = bus.publish("message_update", {
+		const third = bus.publish("conversation.renamed", {
 			conversationId: "conversation-1",
-			text: "third",
+			title: "third",
 		});
 		database.connection
 			.prepare("UPDATE events SET payload = ? WHERE seq = ?")
-			.run(JSON.stringify({ conversationId: "", text: "invalid" }), 2);
+			.run(JSON.stringify({ conversationId: "", title: "invalid" }), 2);
 
 		expect(third.seq).toBe(3);
 		expect(() => bus.after(0)).toThrow(/malformed persisted event at sequence 2/);

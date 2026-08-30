@@ -1,15 +1,7 @@
 import { createSignal, Show } from "solid-js";
-import type { CharacterDisplay, PresenceState } from "./stores/companion.js";
+import type { CharacterDisplay } from "./stores/companion.js";
 
 export type CharacterPresenceLayoutMode = "resting" | "expanded" | "compact";
-const VISUAL_STATE_BY_PRESENCE: Record<PresenceState, string> = {
-	idle: "presence",
-	listening: "listening",
-	thinking: "thinking",
-	needs_user: "needs_user",
-	result_ready: "result_ready",
-	problem: "problem",
-};
 
 /**
  * Generic package-driven character presentation. It owns only placement and
@@ -18,7 +10,6 @@ const VISUAL_STATE_BY_PRESENCE: Record<PresenceState, string> = {
  */
 export function CharacterPresence(props: {
 	character: CharacterDisplay | undefined;
-	presence: PresenceState;
 	visualState?: string;
 	layout?: CharacterPresenceLayoutMode;
 }) {
@@ -51,7 +42,7 @@ export function CharacterPresence(props: {
 	const visualState = () => {
 		const visual = props.character?.visual;
 		if (!visual) return undefined;
-		const requested = props.visualState ?? VISUAL_STATE_BY_PRESENCE[props.presence];
+		const requested = props.visualState ?? "presence";
 		return visual.expressions[requested] ? requested : visual.defaultExpressionId;
 	};
 	const source = () => {

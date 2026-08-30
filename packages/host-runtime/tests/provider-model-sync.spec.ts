@@ -250,7 +250,7 @@ describe("provider catalog model synchronization", () => {
 			canon: { syncPackage: vi.fn() },
 			onboarding: { initialize: vi.fn() },
 			characterLoader,
-			characterState: { reconcileSchema: vi.fn() },
+			companionStore: { reconcileSchema: vi.fn() },
 			defaultCharacterId: "oauth-character",
 			providers,
 			models: { enable },

@@ -4,20 +4,17 @@ import { parse } from "yaml";
 
 const allowedHostTools = new Set([
 	"host_state",
-	"host_visual",
-	"host_present",
 	"host_history",
 	"host_canon",
 	"host_memory",
-	"host_attachment",
 	"host_delegate",
 ]);
 const retired = [
 	"host_get_state",
 	"host_set_scene",
 	"host_set_expression",
-	"host_get_roleplay_state",
-	"host_trigger_roleplay_event",
+	"host_get_resources_state",
+	"host_trigger_resources_event",
 	"host_play_media",
 	"host_present_choices",
 	"host_search_conversation_history",
@@ -71,9 +68,9 @@ for (const entry of readdirSync(characterRoot, { withFileTypes: true })) {
 		if (
 			field["x-write-authority"] === "model" &&
 			field.type === "number" &&
-			field["x-max-change-per-turn"] === undefined
+			(typeof field.minimum !== "number" || typeof field.maximum !== "number")
 		)
-			failures.push(`${manifestPath}: writable numeric state ${path} needs x-max-change-per-turn`);
+			failures.push(`${manifestPath}: writable numeric state ${path} needs minimum and maximum`);
 	}
 	const plugins = resolve(packageRoot, "plugins");
 	if (entry.name === "jizhou" && existsSync(plugins) && sourceFiles(plugins).length > 0)
@@ -100,4 +97,4 @@ if (failures.length) {
 	console.error(`Role tool-surface violations:\n${failures.join("\n")}`);
 	process.exit(1);
 }
-console.log("Role tool surface valid: role_skill plus 8 conditional Host domain tools");
+console.log("Role tool surface valid: role_skill plus 6 conditional Host domain tools");

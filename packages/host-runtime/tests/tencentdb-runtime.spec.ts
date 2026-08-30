@@ -14,7 +14,7 @@ import {
 import type { AssistantMessage, Context, ToolResultMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MemoryBackend, MemoryBankScope, MemoryMetadata } from "../src/memory/backend.js";
-import { legacyNamespaceFor, namespaceFor } from "../src/memory/tencentdb-backend.js";
+import { namespaceFor } from "../src/memory/tencentdb-backend.js";
 import { BearHarnessHostAdapter } from "../src/memory/tencentdb-host-adapter.js";
 import { TencentDbRuntime } from "../src/memory/tencentdb-runtime.js";
 import type { ModelRegistry } from "../src/models/registry.js";
@@ -334,107 +334,6 @@ afterEach(async () => {
 });
 
 describe("TencentDbRuntime", () => {
-	it("migrates an old-only bank once while preserving persisted identity and metadata", async () => {
-		const root = createRoot();
-		const runtime = createRuntime(root);
-		const scope = scopeFor("role-a");
-		await runtime.start();
-		const store = runtimeStore(runtime);
-		const legacyNamespace = legacyNamespaceFor(scope);
-		const canonicalNamespace = namespaceFor(scope);
-		const metadata = {
-			provenance: "explicit:source-entry-a,source-entry-b",
-			invalidation: "replacement-memory",
-			presentation_parent: "memory-parent",
-		};
-		await store.upsertL1(storedMemory("legacy-memory", legacyNamespace, "legacy memory", metadata));
-
-		await runtime.backend.open({ scope });
-
-		const canonicalRows = await store.queryL1Records({ sessionKey: canonicalNamespace });
-		expect(canonicalRows).toHaveLength(1);
-		expect(canonicalRows[0]).toMatchObject({
-			record_id: "legacy-memory",
-			content: "legacy memory",
-			priority: 83,
-			session_key: canonicalNamespace,
-			session_id: "source-session",
-			created_time: "2026-08-01T01:02:03.000Z",
-			updated_time: "2026-08-02T04:05:06.000Z",
-		});
-		expect(JSON.parse(canonicalRows[0]!.metadata_json)).toEqual(metadata);
-		expect(await store.queryL1Records({ sessionKey: legacyNamespace })).toEqual([]);
-		await expect(runtime.backend.list({ scope })).resolves.toEqual([
-			expect.objectContaining({
-				id: "legacy-memory",
-				text: "legacy memory",
-				importance: 0.83,
-				metadata,
-				createdAt: "2026-08-01T01:02:03.000Z",
-				updatedAt: "2026-08-02T04:05:06.000Z",
-			}),
-		]);
-
-		await runtime.backend.close();
-		const originalQuery = store.queryL1Records.bind(store);
-		let legacyReads = 0;
-		store.queryL1Records = (filter) => {
-			if (filter?.sessionKey === legacyNamespace) legacyReads += 1;
-			return originalQuery(filter);
-		};
-		await runtime.backend.open({ scope });
-		await runtime.backend.list({ scope });
-		expect(legacyReads).toBe(0);
-	});
-
-	it("merges mixed old and canonical banks idempotently without duplicates", async () => {
-		const root = createRoot();
-		const runtime = createRuntime(root);
-		const scope = scopeFor("role-a");
-		await runtime.start();
-		const store = runtimeStore(runtime);
-		await store.upsertL1(
-			storedMemory("legacy-only", legacyNamespaceFor(scope), "legacy-only memory"),
-		);
-		await store.upsertL1(
-			storedMemory("canonical-only", namespaceFor(scope), "canonical-only memory"),
-		);
-
-		await runtime.backend.open({ scope });
-		await runtime.backend.close();
-		await runtime.backend.open({ scope });
-
-		const rows = await store.queryL1Records({ sessionKey: namespaceFor(scope) });
-		expect(rows.map((row) => row.record_id).sort()).toEqual(["canonical-only", "legacy-only"]);
-	});
-
-	it("retries a journaled partial copy after a migration write failure", async () => {
-		const root = createRoot();
-		const runtime = createRuntime(root);
-		const scope = scopeFor("role-a");
-		await runtime.start();
-		const store = runtimeStore(runtime);
-		await store.upsertL1(storedMemory("legacy-a", legacyNamespaceFor(scope), "legacy A"));
-		await store.upsertL1(storedMemory("legacy-b", legacyNamespaceFor(scope), "legacy B"));
-		const originalUpsert = store.upsertL1.bind(store);
-		let migrationWrites = 0;
-		store.upsertL1 = (record) => {
-			migrationWrites += 1;
-			if (migrationWrites === 2) return false;
-			return originalUpsert(record);
-		};
-
-		await expect(runtime.backend.open({ scope })).rejects.toMatchObject({
-			code: "recovery_required",
-		});
-		store.upsertL1 = originalUpsert;
-		await runtime.backend.open({ scope });
-
-		const rows = await store.queryL1Records({ sessionKey: namespaceFor(scope) });
-		expect(rows.map((row) => row.record_id).sort()).toEqual(["legacy-a", "legacy-b"]);
-		expect(await store.queryL1Records({ sessionKey: legacyNamespaceFor(scope) })).toEqual([]);
-	});
-
 	it("starts and closes an idempotent local lifecycle under the product data directory", async () => {
 		const root = createRoot();
 		const runtime = createRuntime(root);
@@ -470,17 +369,16 @@ describe("TencentDbRuntime", () => {
 		const root = createRoot();
 		const runtime = createRuntime(root);
 		const scope = scopeFor("role-a");
-		const framedText =
-			"<host_context>\nprivate context\n</host_context>\n\n<current_user_message>\nremember this exact moment\n</current_user_message>";
+		const userText = "remember this exact moment";
 		await runtime.start();
 		await runtime.backend.open({ scope });
 
 		const created = await runtime.backend.remember({
 			scope,
-			text: framedText,
+			text: userText,
 			provenance,
 		});
-		expect(created.text).toBe("remember this exact moment");
+		expect(created.text).toBe(userText);
 		await expect(runtime.backend.list({ scope })).resolves.toEqual([
 			expect.objectContaining({ id: created.id, text: created.text }),
 		]);

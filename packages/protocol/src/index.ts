@@ -49,9 +49,6 @@ export type RpcRegistry = typeof schema.RPC;
 /** Complete flattened endpoint metadata registry (channel → request/response contract). */
 export type ChannelContractRegistry = typeof schema.CHANNEL_CONTRACTS;
 
-/** Type of the request-only registry (channel name → request schema). */
-export type RequestSchemaRegistry = typeof schema.REQUEST_SCHEMAS;
-/** `RPC` and `CHANNEL_CONTRACTS` carry full endpoint metadata; `REQUEST_SCHEMAS` does not. */
 export type Channel = schema.Channel;
 export type AnyRpcEndpoint = schema.AnyRpcEndpoint;
 export type DeclaredRpcEndpoint = schema.DeclaredRpcEndpoint;
@@ -65,8 +62,6 @@ export type EnvelopeOf<E extends AnyRpcEndpoint> = IpcEnvelope<ResponseOf<E>>;
 export type EventSeq = z.infer<typeof schema.EventSeq>;
 export type EventKind = z.infer<typeof schema.EventKind>;
 export type KnownEventKind = schema.KnownEventKind;
-export type OpaqueEventPayload = z.infer<typeof schema.OpaqueEventPayload>;
-export type OpaqueDomainEvent = z.infer<typeof schema.OpaqueDomainEvent>;
 export type DomainEvent = z.infer<typeof schema.DomainEvent>;
 export type KnownDomainEvent = schema.KnownDomainEvent;
 export type EventSubscribeRequest = z.infer<typeof schema.EventSubscribeRequest>;
@@ -81,24 +76,16 @@ export type SnapshotGetRequest = z.infer<typeof schema.SnapshotGetRequest>;
 export type SnapshotResponse = z.infer<typeof schema.SnapshotResponse>;
 export type ConversationSnapshot = z.infer<typeof schema.ConversationSnapshot>;
 export type MemorySnapshot = z.infer<typeof schema.MemorySnapshot>;
-export type CharacterRuntimeState = z.infer<typeof schema.CharacterRuntimeState>;
-export type CharacterRuntimeSnapshot = z.infer<typeof schema.CharacterRuntimeSnapshot>;
 export type CompanionDisplayState = z.infer<typeof schema.CompanionDisplayState>;
-export type CompanionCollectionState = z.infer<typeof schema.CompanionCollectionState>;
 export type CompanionConversationState = z.infer<typeof schema.CompanionConversationState>;
 export type CompanionStateSnapshot = z.infer<typeof schema.CompanionStateSnapshot>;
 export type CharacterStateRevisions = z.infer<typeof schema.CharacterStateRevisions>;
 export type CharacterStateDocument = z.infer<typeof schema.CharacterStateDocument>;
-export type CharacterStateSnapshot = z.infer<typeof schema.CharacterStateSnapshot>;
-export type CharacterStatePatchOperation = z.infer<typeof schema.CharacterStatePatchOperation>;
-export type CharacterStatePatchRequest = z.infer<typeof schema.CharacterStatePatchRequest>;
-export type RoleplayState = z.infer<typeof schema.RoleplayState>;
-export type RoleplayGetRequest = z.infer<typeof schema.RoleplayGetRequest>;
-export type RoleplayDismissMediaRequest = z.infer<typeof schema.RoleplayDismissMediaRequest>;
-export type RoleplayResponse = z.infer<typeof schema.RoleplayResponse>;
-export type RoleplayGetResponse = z.infer<typeof schema.RoleplayResponse>;
-export type RoleplayResetUnlocksRequest = z.infer<typeof schema.RoleplayResetUnlocksRequest>;
-export type RoleplayResetUnlocksResponse = z.infer<typeof schema.EmptyResponse>;
+export type CompanionStatePatchOperation = z.infer<typeof schema.CompanionStatePatchOperation>;
+export type CompanionStatePatchRequest = z.infer<typeof schema.CompanionStatePatchRequest>;
+export type CompanionDismissPresentationRequest = z.infer<
+	typeof schema.CompanionDismissPresentationRequest
+>;
 
 // ---------------------------------------------------------------------------
 // Onboarding (first-meeting FSM)
@@ -180,62 +167,6 @@ export type ConversationActiveGetRequest = z.infer<typeof schema.ConversationAct
 export type ConversationActiveResponse = z.infer<typeof schema.ConversationActiveResponse>;
 export type ConversationSelectResponse = z.infer<typeof schema.ConversationSelectResponse>;
 export type PiTimelineEntry = z.infer<typeof schema.PiTimelineEntry>;
-export type ConversationTimelinePageRequest = z.infer<
-	typeof schema.ConversationTimelinePageRequest
->;
-export type ConversationTimelinePageResponse = z.infer<
-	typeof schema.ConversationTimelinePageResponse
->;
-export type ConversationAttachmentKind = z.infer<typeof schema.ConversationAttachmentKind>;
-export type ConversationAttachmentSummary = z.infer<typeof schema.ConversationAttachmentSummary>;
-export type ConversationAttachmentEntryKind = z.infer<
-	typeof schema.ConversationAttachmentEntryKind
->;
-export type ConversationAttachmentUploadsRequest = z.infer<
-	typeof schema.ConversationAttachmentUploadsRequest
->;
-export type ConversationAttachmentUploadsResponse = z.infer<
-	typeof schema.ConversationAttachmentUploadsResponse
->;
-export type ConversationAttachmentListRequest = z.infer<
-	typeof schema.ConversationAttachmentListRequest
->;
-export type ConversationAttachmentListResponse = z.infer<
-	typeof schema.ConversationAttachmentListResponse
->;
-export type ConversationAttachmentDiscardRequest = z.infer<
-	typeof schema.ConversationAttachmentDiscardRequest
->;
-export type ConversationAttachmentReadRequest = z.infer<
-	typeof schema.ConversationAttachmentReadRequest
->;
-export type ConversationAttachmentReadResponse = z.infer<
-	typeof schema.ConversationAttachmentReadResponse
->;
-export type ConversationAttachmentUrlRequest = z.infer<
-	typeof schema.ConversationAttachmentUrlRequest
->;
-export type ConversationAttachmentUrlResponse = z.infer<
-	typeof schema.ConversationAttachmentUrlResponse
->;
-export type ConversationAttachmentStartUploadRequest = z.infer<
-	typeof schema.ConversationAttachmentStartUploadRequest
->;
-export type ConversationAttachmentStartUploadResponse = z.infer<
-	typeof schema.ConversationAttachmentStartUploadResponse
->;
-export type ConversationAttachmentAppendChunkRequest = z.infer<
-	typeof schema.ConversationAttachmentAppendChunkRequest
->;
-export type ConversationAttachmentCompleteUploadRequest = z.infer<
-	typeof schema.ConversationAttachmentCompleteUploadRequest
->;
-export type ConversationAttachmentCompleteUploadResponse = z.infer<
-	typeof schema.ConversationAttachmentCompleteUploadResponse
->;
-export type ConversationAttachmentCancelUploadRequest = z.infer<
-	typeof schema.ConversationAttachmentCancelUploadRequest
->;
 export type PiTimeline = z.infer<typeof schema.PiTimeline>;
 export type PiSessionId = z.infer<typeof schema.PiSessionId>;
 export type PiLiveAssistantMessage = z.infer<typeof schema.PiLiveAssistantMessage>;
@@ -246,8 +177,6 @@ export type ConversationArchiveRequest = z.infer<typeof schema.ConversationArchi
 export type ConversationArchiveResponse = z.infer<typeof schema.ConversationActiveResponse>;
 export type ConversationDeleteRequest = z.infer<typeof schema.ConversationDeleteRequest>;
 export type ConversationDeleteResponse = z.infer<typeof schema.ConversationActiveResponse>;
-export type ConversationSearchRequest = z.infer<typeof schema.ConversationSearchRequest>;
-export type ConversationSearchResponse = z.infer<typeof schema.ConversationSearchResponse>;
 
 // ---------------------------------------------------------------------------
 // Message

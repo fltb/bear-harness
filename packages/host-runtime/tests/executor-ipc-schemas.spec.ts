@@ -1,12 +1,12 @@
 // @vitest-environment node
 
-import { REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
+import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { describe, expect, it } from "vitest";
 
 function schema(channel: string) {
-	const value = REQUEST_SCHEMAS[channel];
-	if (!value) throw new Error(`missing schema for ${channel}`);
-	return value;
+	const value = CHANNEL_CONTRACTS[channel];
+	if (!value) throw new Error(`missing contract for ${channel}`);
+	return value.request;
 }
 
 describe("executor control IPC schemas", () => {
@@ -30,7 +30,7 @@ describe("executor control IPC schemas", () => {
 				bypassConsent: true,
 			}).success,
 		).toBe(false);
-		expect(REQUEST_SCHEMAS["commission.launch:v1"]).toBeUndefined();
+		expect(CHANNEL_CONTRACTS["commission.launch:v1"]).toBeUndefined();
 	});
 
 	it("requires a concrete pending-permission request and option to resume a run", () => {

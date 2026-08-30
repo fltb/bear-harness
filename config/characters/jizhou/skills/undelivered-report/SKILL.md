@@ -89,7 +89,7 @@ resources:
     when:
       state:
         /story/undelivered_report/position: [future, ending]
-allowed-tools: [host_state, host_visual, host_present, host_canon]
+allowed-tools: [host_state, host_canon]
 completion:
   state:
     /story/undelivered_report/status: completed
@@ -105,17 +105,19 @@ priority: 100
 1. 读取 `/story/undelivered_report/*`、`/narrative/*`、当前 scene、已呈现选择和媒体；再用 `role_skill` 读取本轮 `<eligible_resources>` 中与当前节点对应的剧情资源。资源不可用就不得提前叙述该章节。
 2. 剧情未进入时，只有用户明确进入才触发；剧情激活后，以普通自然对话为主要推进方式。追问、质疑、调查、改变方向和自然语言选择都能推进，卡片只是映射为自然语言的可选导航。
 3. 现实任务、OOC 技术解释、暂停、拒绝和换题优先。暂停后停止叙事；现实任务完成后只询问是否恢复。
-4. 每次状态推进必须让 `story phase`、`position`、`narrative anchor` 与实际 scene 保持一致；工具失败就停下并说明未改变。
+4. 每次状态推进必须使用 `host_state.update` 的同一次调用提交 Character State，并通过它的 `display` 参数同时提交 scene、expression、media 或 choices 映射；只使用 `host_state.read` 返回的真实 JSON Pointer。工具失败时整个提交均未改变。
 5. 展示选择后停止推进，不替用户选择；关闭卡片不等于同意或拒绝。
 6. 不把章节做成按钮流水线。先完整回应和展开当前节点；只有用户实际完成该节点的调查、比较或选择后，才用 `host_state` 携带本 Skill ID 原子提交对应状态。
 7. 剧情内的闲聊、人物追问和情绪反应可以丰富当前场景，但不会仅因“聊了几轮”机械推进 phase。
+8. 用户确认检查当前节点后，先读取本 Skill 的 eligible resource，再直接调用一次 `host_state.update`：提交该节点完成后的 Character State，并把 `role_skill` 返回的展示目录中对应媒体 ID 放在 `display.mediaId`；需要下一步选择时把 choice set ID 放在 `display.choiceSetId`。
 
 ## 入口原子规则
 
 - 当 `phase=dormant`，用户只是询问发现了什么、要求显示入口选择、明确说“把是否进入留给我”或尚未作出选择时，禁止调用 `host_state.update`。只读取 eligible presentation，展示 `undelivered_entry`，然后停止推进。
 - 只有用户无歧义地说要进入或开始调查，并且同一句没有否定、暂缓或保留决定，才能把剧情状态推进到 `invited/active`。输入来自键盘或按钮不影响判断。
 - `想看看这条回报`可以触发入口说明，但不等于已经选择进入调查。关闭入口卡、沉默和要求简短说明同样不等于进入。
-- 如果本轮任一 Host 写入或呈现工具失败，先前暂存的状态、视觉和卡片都会由 Host 整体丢弃；不得再声称其中任何一项已生效。
+- 入口提交使用现有字段 `/story/undelivered_report/phase`、`status`、`position` 和 `/narrative/frame`、`location`、`time_anchor`、`evidence_mode`、`active_story`、`branch`；不得发明 `timeframe` 或 `anchor` 字段。
+- 如果原子的 `host_state.update` 失败，Character 与 Display 均未改变；不得再声称其中任何一项已生效。
 
 ## 时间与证据
 

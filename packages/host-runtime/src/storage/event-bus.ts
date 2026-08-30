@@ -9,11 +9,7 @@
  */
 
 import type { DomainEvent as WireDomainEvent } from "@bear-harness/protocol";
-import {
-	DomainEvent,
-	EventPayloadSchemas,
-	OpaqueEventPayload,
-} from "@bear-harness/protocol/schema";
+import { DomainEvent, EventPayloadSchemas } from "@bear-harness/protocol/schema";
 import { asc, gt, max } from "drizzle-orm";
 import type { AppDatabase } from "./database.js";
 import { events } from "./schema.js";
@@ -35,7 +31,8 @@ function validatePayload(kind: string, payload: unknown): unknown {
 		throw new TypeError(`invalid domain event payload for ${kind}`);
 	}
 	const knownSchema = EventPayloadSchemas[kind as keyof typeof EventPayloadSchemas];
-	const result = (knownSchema ?? OpaqueEventPayload).safeParse(jsonValue);
+	if (!knownSchema) throw new TypeError(`unknown domain event ${kind}`);
+	const result = knownSchema.safeParse(jsonValue);
 	if (!result.success) {
 		throw new TypeError(`invalid domain event payload for ${kind}`);
 	}

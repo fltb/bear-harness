@@ -279,7 +279,7 @@ describe("character package Host lifecycle reactions", () => {
 			(manifest: string) =>
 				manifest.replace(
 					"  event_reactions: []",
-					"  event_reactions:\n    - event: message.user_sent\n      visual_state: unknown_state",
+					"  event_reactions:\n    - event: run.started\n      visual_state: unknown_state",
 				),
 		],
 		[
@@ -287,7 +287,7 @@ describe("character package Host lifecycle reactions", () => {
 			(manifest: string) =>
 				manifest.replace(
 					"  event_reactions: []",
-					"  event_reactions:\n    - event: message.user_sent\n      visual_state: attentive\n      scene: study",
+					"  event_reactions:\n    - event: run.started\n      visual_state: attentive\n      scene: study",
 				),
 		],
 		[
@@ -295,7 +295,7 @@ describe("character package Host lifecycle reactions", () => {
 			(manifest: string) =>
 				manifest.replace(
 					"  event_reactions: []",
-					"  event_reactions:\n    - event: message.user_sent\n      visual_state: attentive\n      media: continuity_light",
+					"  event_reactions:\n    - event: run.started\n      visual_state: attentive\n      media: continuity_light",
 				),
 		],
 		[
@@ -303,7 +303,7 @@ describe("character package Host lifecycle reactions", () => {
 			(manifest: string) =>
 				manifest.replace(
 					"  event_reactions: []",
-					"  event_reactions:\n    - event: message.user_sent\n      visual_state: attentive\n      choice_set: continuity_response",
+					"  event_reactions:\n    - event: run.started\n      visual_state: attentive\n      choice_set: continuity_response",
 				),
 		],
 	] as const)("rejects %s lifecycle reaction mutation", (_name, mutate) => {
@@ -456,12 +456,9 @@ describe("character package Pi resources", () => {
 		expect(loader.piResources(character, false).pluginPaths).toEqual([]);
 		expect(resources.hostTools).toEqual([
 			"host_state",
-			"host_visual",
-			"host_present",
 			"host_history",
 			"host_canon",
 			"host_memory",
-			"host_attachment",
 			"host_delegate",
 		]);
 	});

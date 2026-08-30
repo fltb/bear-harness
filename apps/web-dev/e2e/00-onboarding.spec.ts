@@ -32,14 +32,22 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	const setKey = await (
 		await page.request.post("/rpc/provider.setApiKey%3Av1", {
 			headers,
-			data: { providerId: provider.id, apiKey: "e2e-rule-key", sessionOnly: true },
+			data: {
+				providerId: provider.id,
+				apiKey: "e2e-rule-key",
+				sessionOnly: true,
+			},
 		})
 	).json();
 	expect(setKey).toMatchObject({ ok: true });
 	const enableModel = await (
 		await page.request.post("/rpc/model.enable%3Av1", {
 			headers,
-			data: { providerId: provider.id, modelId: provider.modelId, label: provider.name },
+			data: {
+				providerId: provider.id,
+				modelId: provider.modelId,
+				label: provider.name,
+			},
 		})
 	).json();
 	expect(enableModel).toMatchObject({ ok: true });
@@ -58,7 +66,9 @@ test("browser requires a reply model before the role-defined onboarding", async 
 		}),
 	);
 	await page.goto("/");
-	const modelSetup = page.getByRole("dialog", { name: zhCN.modelSetup.dialogLabel });
+	const modelSetup = page.getByRole("dialog", {
+		name: zhCN.modelSetup.dialogLabel,
+	});
 	await expect(modelSetup).toBeVisible();
 	await expect(modelSetup.getByRole("heading", { name: zhCN.modelSetup.title })).toBeVisible();
 	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.continue })).toBeDisabled();
@@ -74,9 +84,13 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	await expect(modelSetup).toBeVisible();
 	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.continue })).toBeEnabled();
 	await modelSetup.getByRole("button", { name: zhCN.modelSetup.continue }).click();
-	const embeddingSetup = page.getByRole("dialog", { name: zhCN.settings.memoryVectorSection });
+	const embeddingSetup = page.getByRole("dialog", {
+		name: zhCN.settings.memoryVectorSection,
+	});
 	await expect(embeddingSetup).toBeVisible();
-	const embeddingContinue = embeddingSetup.getByRole("button", { name: zhCN.messages.continue });
+	const embeddingContinue = embeddingSetup.getByRole("button", {
+		name: zhCN.messages.continue,
+	});
 	await expect(embeddingContinue).toBeDisabled();
 	const noneRadio = embeddingSetup.getByRole("radio", {
 		name: zhCN.settings.vectorProviders.none,
@@ -97,7 +111,11 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	await expect(onboarding).toBeVisible();
 	const [submitResponse, resyncResponse] = await Promise.all([
 		page.waitForResponse((response) => response.url().includes("/rpc/onboarding.submit%3Av1")),
-		page.waitForResponse((response) => response.url().includes("/rpc/onboarding.get%3Av1")),
+		page.waitForResponse(async (response) => {
+			if (!response.url().includes("/rpc/onboarding.get%3Av1")) return false;
+			const payload = await response.json();
+			return payload.ok === true && payload.data?.currentStepId === "nickname";
+		}),
 		onboarding.getByRole("button", { name: "让他进来" }).click(),
 	]);
 	const submitted = await submitResponse.json();

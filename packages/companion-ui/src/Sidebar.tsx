@@ -25,7 +25,10 @@ export function Sidebar(props: {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const workflow = useConversationWorkflow(store);
-	const [deleteTarget, setDeleteTarget] = createSignal<{ id: string; title: string } | null>(null);
+	const [deleteTarget, setDeleteTarget] = createSignal<{
+		id: string;
+		title: string;
+	} | null>(null);
 	let searchRef: HTMLInputElement | undefined;
 
 	onMount(() => {
@@ -172,15 +175,8 @@ export function Sidebar(props: {
 												);
 											}}
 										>
-											<strong>{conversation.title}</strong>
+											<strong>{conversation.title || t("sidebar.newConversation")}</strong>
 											<span>{workflow.sceneLabel(conversation.id)}</span>
-											<Show when={conversation.unread}>
-												<span
-													class="unread-dot"
-													role="img"
-													aria-label={t("sidebar.unreadMessage")}
-												/>
-											</Show>
 										</Button>
 										<div class="conversation-actions">
 											<Button
@@ -213,7 +209,10 @@ export function Sidebar(props: {
 												title={t("sidebar.deleteConversation")}
 												aria-label={t("sidebar.deleteConversation")}
 												onClick={() => {
-													setDeleteTarget({ id: conversation.id, title: conversation.title });
+													setDeleteTarget({
+														id: conversation.id,
+														title: conversation.title,
+													});
 												}}
 											>
 												<Icon icon={faTrash} />

@@ -1,5 +1,4 @@
 import { z } from "@bear-harness/schema";
-import type { RoleplayDefinition, RoleplayValue } from "./roleplay-schema.js";
 
 const MAX_COPY_LENGTH = 4_096;
 const Identifier = z
@@ -15,14 +14,6 @@ const OnboardingEffectSchema = z.discriminatedUnion("type", [
 		type: z.literal("setting.set"),
 		setting: z.enum(["relationship_memory_enabled", "conversation_history_read_enabled"]),
 		values: z.record(Identifier, z.boolean()),
-	}),
-	z.strictObject({
-		type: z.literal("roleplay.initial"),
-		variable: Identifier,
-		values: z.record(
-			Identifier,
-			z.union([z.string().max(MAX_COPY_LENGTH), z.number().finite(), z.boolean()]),
-		),
 	}),
 ]);
 
@@ -93,12 +84,6 @@ export const OnboardingStateDataSchema = z.strictObject({
 	decisions: z.strictObject({
 		relationship_memory_enabled: z.boolean().optional(),
 		conversation_history_read_enabled: z.boolean().optional(),
-		roleplay_initial_values: z
-			.record(
-				Identifier,
-				z.union([z.string().max(MAX_COPY_LENGTH), z.number().finite(), z.boolean()]),
-			)
-			.optional(),
 	}),
 });
 
@@ -111,7 +96,6 @@ export type CharacterOnboardingEffect = z.infer<typeof OnboardingEffectSchema>;
 export function validateCharacterOnboardingFlow(
 	value: unknown,
 	characterId: string,
-	roleplay?: RoleplayDefinition,
 ): asserts value is CharacterOnboardingFlow {
 	const parsed = CharacterOnboardingFlowSchema.safeParse(value);
 	if (!parsed.success) {
@@ -143,9 +127,7 @@ export function validateCharacterOnboardingFlow(
 		}
 		for (const effect of step.effects ?? []) {
 			const target =
-				effect.type === "identity.nickname"
-					? effect.type
-					: `${effect.type}:${effect.type === "setting.set" ? effect.setting : effect.variable}`;
+				effect.type === "identity.nickname" ? effect.type : `${effect.type}:${effect.setting}`;
 			if (effectTargets.has(target)) {
 				throw new Error(`character package ${characterId}: first_meeting effects must be unique`);
 			}
@@ -172,32 +154,7 @@ export function validateCharacterOnboardingFlow(
 					);
 				}
 			}
-			if (effect.type === "roleplay.initial") {
-				const variable = roleplay?.variables.find((candidate) => candidate.id === effect.variable);
-				if (!variable) {
-					throw new Error(
-						`character package ${characterId}: onboarding bucket ${effect.variable} is not declared`,
-					);
-				}
-				for (const initial of Object.values(effect.values)) {
-					if (!isCompatibleRoleplayValue(variable, initial)) {
-						throw new Error(
-							`character package ${characterId}: onboarding value is invalid for bucket ${effect.variable}`,
-						);
-					}
-				}
-			}
 			effectTargets.add(target);
 		}
 	}
-}
-
-function isCompatibleRoleplayValue(
-	variable: RoleplayDefinition["variables"][number],
-	value: RoleplayValue,
-): boolean {
-	if (variable.type === "number") return typeof value === "number";
-	if (variable.type === "boolean") return typeof value === "boolean";
-	if (variable.type === "string") return typeof value === "string";
-	return typeof value === "string" && variable.values?.includes(value) === true;
 }

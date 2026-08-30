@@ -127,7 +127,7 @@ describe("onboarding projection ordering", () => {
 			expect(store.onboarding.currentStepId).toBe("introduced");
 
 			await store.refresh();
-			await waitFor(() => expect(snapshotGet).toHaveBeenCalledTimes(2));
+			await waitFor(() => expect(snapshotGet).toHaveBeenCalledTimes(3));
 			expect(store.onboarding.currentStepId).toBe("introduced");
 			expect(store.onboarding.eventSeq).toBe(8);
 		} finally {
@@ -176,10 +176,15 @@ describe("onboarding projection ordering", () => {
 			stateData: { schema_version: 1, flow_version: 1, answers: {}, decisions: {} },
 		};
 		const conversation = {
-			activeConversationId: "onboarding-conversation",
-			id: "onboarding-conversation",
-			title: "First meeting",
-			piTimeline: { entries: [] },
+			sessionId: "onboarding-conversation",
+			name: "First meeting",
+			entries: [],
+			messages: [],
+			isIdle: true,
+			isStreaming: false,
+			pendingMessageCount: 0,
+			steeringMessages: [],
+			followUpMessages: [],
 		};
 		let completed = false;
 		client.onboarding.get = vi.fn(() =>
@@ -193,13 +198,15 @@ describe("onboarding projection ordering", () => {
 			Promise.resolve({
 				ok: true as const,
 				data: {
-					conversations: completed
+					sessions: completed
 						? [
 								{
-									id: conversation.id,
-									title: conversation.title,
-									unread: false,
-									updatedAt: "2026-08-22T00:00:00.000Z",
+									id: conversation.sessionId,
+									title: conversation.name,
+									created: "2026-08-22T00:00:00.000Z",
+									modified: "2026-08-22T00:00:00.000Z",
+									messageCount: 0,
+									firstMessage: "",
 								},
 							]
 						: [],
@@ -209,7 +216,7 @@ describe("onboarding projection ordering", () => {
 		client.conversation.activeGet = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
-				data: completed ? { conversation } : {},
+				data: { session: completed ? conversation : undefined },
 			}),
 		);
 		const { store, dispose } = createStoreWithCleanup(client);
@@ -218,9 +225,9 @@ describe("onboarding projection ordering", () => {
 			await waitFor(() => expect(store.onboarding.currentStepId).toBe("memory_choice"));
 			await store.submitOnboarding("memory_choice", "disabled");
 			expect(store.onboarding.status).toBe("complete");
-			expect(store.activeConversationId).toBe(conversation.id);
+			expect(store.activeConversationId).toBe(conversation.sessionId);
 			expect(store.conversations).toEqual([
-				expect.objectContaining({ id: conversation.id, title: conversation.title }),
+				expect.objectContaining({ id: conversation.sessionId, title: conversation.name }),
 			]);
 		} finally {
 			dispose();

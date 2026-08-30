@@ -5,6 +5,7 @@ import {
 } from "@bear-harness/companion-client";
 import { OnboardingResponse } from "@bear-harness/protocol/schema";
 import { QueryClient } from "@tanstack/solid-query";
+import { IpcInvocationError } from "../lib/ipc.js";
 import type { DomainEvent, OnboardingData } from "./ipc.js";
 import { invoke } from "./ipc.js";
 import { withRpcMutations } from "./mutation-client.js";
@@ -63,7 +64,6 @@ export function createOnboardingStore(
 		client: queryClient,
 		key: queryKeys.onboarding,
 		request,
-		initialData: INITIAL_ONBOARDING,
 	});
 
 	const data = (): OnboardingData => {
@@ -104,9 +104,14 @@ export function createOnboardingStore(
 			commit(await refreshRpcQuery({ client: queryClient, key: queryKeys.onboarding, request }));
 		},
 		submit: async (stepId, answer) => {
-			const result = await invoke(client, () => client.onboarding.submit({ stepId, answer }));
-			if (isMutationResponse(result)) commit(await hostRequest(), true);
-			else commit(result, true);
+			try {
+				const result = await invoke(client, () => client.onboarding.submit({ stepId, answer }));
+				if (isMutationResponse(result)) commit(await hostRequest(), true);
+				else commit(result, true);
+			} catch (cause) {
+				if (!(cause instanceof IpcInvocationError) || cause.kind !== "conflict") throw cause;
+				commit(await hostRequest(), true);
+			}
 		},
 		_hydrate: (value) => {
 			if (value !== undefined) commit(value);

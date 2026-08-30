@@ -241,15 +241,12 @@ describe("wireAuditToEvents", () => {
 			kind: "evidence.collected",
 			payload: { runId: "r1", evidenceId: "e1", kind: "file" },
 		});
-		listener!({ kind: "roleplay.state_changed", payload: { conversationId: "v1" } });
-		listener!({ kind: "message.user_sent", payload: { text: "hi" } }); // not audited
 
 		// Appends are serialized in-process; awaiting a marker append guarantees
 		// every earlier event append has been written.
 		await store.append("config", "marker", "x");
 		const { entries } = await store.list();
 		expect(entries.filter((e) => e.action !== "marker").map((e) => [e.kind, e.action])).toEqual([
-			["memory", "state_changed"],
 			["run", "collected"],
 			["run", "interrupted"],
 			["run", "started"],
@@ -260,7 +257,5 @@ describe("wireAuditToEvents", () => {
 		expect(auditKindForEvent("commission.approved")).toBeNull();
 		expect(auditKindForEvent("run.completed")).toBe("run");
 		expect(auditKindForEvent("evidence.collected")).toBe("run");
-		expect(auditKindForEvent("roleplay.unlocks_reset")).toBe("memory");
-		expect(auditKindForEvent("message.user_sent")).toBeNull();
 	});
 });

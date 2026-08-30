@@ -23,7 +23,7 @@ export function ThreadHead(props: { sceneLabel: string }) {
 	const activeCharacterState = createMemo(() => {
 		const conversationId = workflow.host.activeConversationId;
 		return conversationId
-			? workflow.host.characterState?.byConversation[conversationId]
+			? workflow.host.companionState?.byConversation[conversationId]?.character
 			: undefined;
 	});
 	const labels = createMemo(() => workflow.character()?.character.work_presentation?.labels);

@@ -15,9 +15,8 @@
  * auth errors reported by pi-ai.
  */
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Credential as PiCredential } from "@earendil-works/pi-ai";
 import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
@@ -106,20 +105,6 @@ interface ProviderModelInfoWithProvider {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isPiCredential(value: unknown): value is PiCredential {
-	if (!isRecord(value)) return false;
-	if (value.type === "api_key") {
-		return value.key === undefined || typeof value.key === "string";
-	}
-	return (
-		value.type === "oauth" &&
-		typeof value.access === "string" &&
-		typeof value.refresh === "string" &&
-		typeof value.expires === "number" &&
-		Number.isFinite(value.expires)
-	);
 }
 
 const SECRET_KEY_PARTS = [
@@ -391,42 +376,6 @@ export class ProviderCatalog {
 		if (existsSync(modelsPath)) await this.validateModelsCandidate(modelsPath);
 	}
 
-	private async migrateLegacyPiCredentials(): Promise<void> {
-		const authPath = join(this.agentDir, "auth.json");
-		if (!existsSync(authPath)) return;
-		let document: unknown;
-		try {
-			document = JSON.parse(readFileSync(authPath, "utf8"));
-		} catch {
-			throw { kind: "conflict", reason: "pi_auth_migration_invalid" };
-		}
-		if (!isRecord(document)) {
-			throw { kind: "conflict", reason: "pi_auth_migration_invalid" };
-		}
-		const credentials = Object.entries(document);
-		for (const [, credential] of credentials) {
-			if (!isPiCredential(credential)) {
-				throw { kind: "conflict", reason: "pi_auth_migration_invalid" };
-			}
-		}
-		for (const [providerId, credential] of credentials as Array<[string, PiCredential]>) {
-			await this.piCredentials.modify(providerId, async (current) => current ?? credential);
-		}
-		const persisted = await Promise.all(
-			credentials.map(async ([providerId]) => {
-				const status = await this.credentialStore.getStatus(providerId);
-				return status === "stored" || status === "weak_storage";
-			}),
-		);
-		if (persisted.every(Boolean)) {
-			try {
-				unlinkSync(authPath);
-			} catch {
-				// The encrypted copy is authoritative; a read-only legacy file is harmless.
-			}
-		}
-	}
-
 	private async validateModelsCandidate(
 		candidatePath: string,
 		requiredRoutes: readonly { providerId: string; modelId: string }[] = [],
@@ -492,7 +441,6 @@ export class ProviderCatalog {
 
 	private async createRuntime(): Promise<ModelRuntime> {
 		await this.ensureModelsRecovered();
-		await this.migrateLegacyPiCredentials();
 		return ModelRuntime.create({
 			credentials: this.piCredentials,
 			modelsPath: join(this.agentDir, "models.json"),

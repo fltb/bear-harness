@@ -29,8 +29,8 @@ describe("CanonHubService user workflow", () => {
 		database.orm
 			.insert(companionIdentity)
 			.values([
-				{ id: "character-a", packageId: "package-a", name: "Character A", selfCanon: "A" },
-				{ id: "character-b", packageId: "package-b", name: "Character B", selfCanon: "B" },
+				{ id: "character-a", packageId: "package-a", name: "Character A" },
+				{ id: "character-b", packageId: "package-b", name: "Character B" },
 			])
 			.run();
 		eventBus = new EventBus(database.orm);

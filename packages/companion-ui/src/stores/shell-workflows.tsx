@@ -9,12 +9,7 @@ import {
 	type ParentProps,
 	useContext,
 } from "solid-js";
-import type {
-	CharacterDisplay,
-	CharacterRuntimeState,
-	CompanionStore,
-	SceneDisplay,
-} from "./companion.js";
+import type { CharacterDisplay, CompanionStore, SceneDisplay } from "./companion.js";
 import { useCompanionStore } from "./companion.js";
 import type { RunInfo, RunPermissionRequest } from "./ipc.js";
 
@@ -35,7 +30,9 @@ export interface RunWorkflowState extends WorkflowActionState {
 export interface ShellWorkflowStore {
 	readonly host: CompanionStore;
 	readonly character: Accessor<CharacterDisplay | undefined>;
-	readonly activeCharacterRuntime: Accessor<CharacterRuntimeState | undefined>;
+	readonly activeCharacterRuntime: Accessor<
+		NonNullable<CompanionStore["companionState"]>["byConversation"][string]["display"] | undefined
+	>;
 	readonly scene: Accessor<SceneDisplay | undefined>;
 	readonly visualState: Accessor<string | undefined>;
 	readonly composerPlaceholder: Accessor<string>;
@@ -114,15 +111,15 @@ export function createShellWorkflowStore(input: {
 	const { store, currentLocale, translate } = input;
 	const character = createMemo(() => store.character);
 	const activeCharacterRuntime = createMemo(() => {
-		const conversationId = store.activeConversationId;
-		return conversationId ? store.characterRuntimeByConversation?.[conversationId] : undefined;
+		const id = store.activeConversationId;
+		return id ? store.companionState?.byConversation[id]?.display : undefined;
 	});
 	const scene = createMemo(() => {
 		const identity = character();
 		const sceneId = activeCharacterRuntime()?.sceneId ?? identity?.visual.defaultSceneId;
 		return identity?.scenes.find((candidate) => candidate.id === sceneId);
 	});
-	const visualState = createMemo(() => activeCharacterRuntime()?.visualState);
+	const visualState = createMemo(() => activeCharacterRuntime()?.expressionId);
 	const composerPlaceholder = createMemo(
 		() =>
 			character()?.character.composer_placeholder ?? translate("shell.fallbackComposerPlaceholder"),

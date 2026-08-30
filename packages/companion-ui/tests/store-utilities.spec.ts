@@ -23,16 +23,16 @@ describe("cache dependency routing", () => {
 
 		const conversations = affectedQueries(["conversations"]);
 		expect(conversations(query("conversations"))).toBe(true);
-		expect(conversations(query("conversation"))).toBe(true);
-		expect(conversations(query("snapshot"))).toBe(true);
+		expect(conversations(query("conversation"))).toBe(false);
+		expect(conversations(query("snapshot"))).toBe(false);
 		expect(conversations(query("memory"))).toBe(false);
 
-		const events = affectedQueries(["event:conversation.updated", "event:run.completed"]);
+		const events = affectedQueries(["event:conversation.renamed", "event:run.completed"]);
 		expect(events(query("conversation"))).toBe(true);
 		expect(events(query("conversations"))).toBe(true);
 		expect(events(query("runs"))).toBe(true);
-		expect(events(query("permissions"))).toBe(true);
-		expect(events(query("snapshot"))).toBe(true);
+		expect(events(query("permissions"))).toBe(false);
+		expect(events(query("snapshot"))).toBe(false);
 		expect(events(query("settings"))).toBe(false);
 	});
 

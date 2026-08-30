@@ -13,7 +13,7 @@
  *
  * Role-package constants, assets, and resources are Host-owned package
  * storage (the package storage bucket). Selected package values may be
- * projected into prompt, canon, scene, or roleplay prompt layers, but
+ * projected into prompt, canon, scene, or resources prompt layers, but
  * package storage is never relationship memory and never automatic-capture,
  * memory-panel, or long-term-backend input.
  */
@@ -31,12 +31,9 @@ import {
 	selfCanonVersions,
 } from "../storage/schema.js";
 import type { CharacterLoader, CharacterPackage, CharacterPrompt } from "./character-loader.js";
-import { CompanionStore } from "./companion-store.js";
+import { CompanionStateStore } from "./companion-store.js";
 import { OnboardingStateDataSchema } from "./onboarding-schema.js";
 import { roleSkillStatus } from "./role-resources.js";
-import { RoleplayService } from "./roleplay-service.js";
-import { CharacterStateService } from "./state-service.js";
-import { hasTurnAuthorization } from "./turn-authorization.js";
 
 const { getValueByPointer } = jsonPatch;
 
@@ -53,7 +50,7 @@ export interface ContextPackBlock {
 		| "canon"
 		| "scene"
 		| "relationship"
-		| "roleplay"
+		| "resources"
 		| "state"
 		| "style"
 		| "persona"
@@ -100,20 +97,20 @@ export class ContextPackCompiler {
 	private characterLoader: CharacterLoader;
 	private canonHub?: CanonHubService;
 	private memorySource?: ContextPackMemorySource;
-	private companionStore: CompanionStore;
+	private companionStore: CompanionStateStore;
 
 	constructor(
 		db: AppDatabase,
 		characterLoader: CharacterLoader,
 		canonHub?: CanonHubService,
 		memorySource?: ContextPackMemorySource,
-		companionStore?: CompanionStore,
+		companionStore?: CompanionStateStore,
 	) {
 		this.db = db;
 		this.characterLoader = characterLoader;
 		this.canonHub = canonHub;
 		this.memorySource = memorySource;
-		this.companionStore = companionStore ?? new CompanionStore(db);
+		this.companionStore = companionStore ?? new CompanionStateStore(db);
 	}
 
 	compile(
@@ -123,14 +120,13 @@ export class ContextPackCompiler {
 			canonQuery?: string;
 			relationshipMemoryHits?: readonly MemoryHit[];
 			extraBlocks?: readonly ContextPackBlock[];
-			currentUserMessage?: string;
 		},
 	): ContextPack {
 		const blocks: ContextPackBlock[] = [];
 		let relationshipEntryCount = 0;
 		blocks.push({
 			layer: "state",
-			content: this.getTurnProjection(conversationId, options?.currentUserMessage),
+			content: this.getTurnProjection(conversationId),
 		});
 		// Package-authored permanent context layers. Empty layers are intentionally
 		// omitted so authors may remove any layer without a fallback.
@@ -203,7 +199,7 @@ ${modules.join("\n")}`,
 				layer === "personality" ||
 				layer === "scenario" ||
 				layer === "scene" ||
-				layer === "roleplay"
+				layer === "resources"
 			)
 				return 0;
 			if (layer === "canon") return 1;
@@ -254,7 +250,6 @@ ${modules.join("\n")}`,
 			includeRelationshipMemory?: boolean;
 			canonQuery?: string;
 			memoryQuery?: string;
-			currentUserMessage?: string;
 		},
 	): Promise<ContextPack> {
 		if (
@@ -384,32 +379,18 @@ ${modules.join("\n")}`,
 		return this.characterLoader.load(row.packageId) ?? null;
 	}
 
-	private getTurnProjection(conversationId: string, currentUserMessage?: string): string {
+	private getTurnProjection(conversationId: string): string {
 		const character = this.getCharacterPackage(conversationId);
 		if (!character) throw new Error(`conversation has no character package: ${conversationId}`);
-		const state = new CharacterStateService(this.db).project(
-			character.id,
-			conversationId,
-			character.state,
-			true,
-		);
+		const state = this.companionStore.project(character.id, conversationId, character.state);
 		const display = this.companionStore.snapshot(character, conversationId).display;
 		const sceneId = display.sceneId;
 		const expressionId = display.expressionId;
-		const onboarding = this.db
-			.select({ stateData: onboardingState.stateJson })
-			.from(onboardingState)
-			.where(eq(onboardingState.companionId, character.id))
-			.get();
-		const decisions = onboarding
-			? OnboardingStateDataSchema.parse(onboarding.stateData).decisions
-			: {};
-		const presentation = new RoleplayService(this.db, undefined, this.companionStore).presentation(
-			character,
-			conversationId,
-		);
 		const skills = character.skills
-			.map((skill) => ({ id: skill.name, status: roleSkillStatus(skill, state.document) }))
+			.map((skill) => ({
+				id: skill.name,
+				status: roleSkillStatus(skill, state.document),
+			}))
 			.sort((left, right) => left.id.localeCompare(right.id));
 		const activeStory = getValueByPointer(state.document, "/narrative/active_story");
 		const narrativeAnchor = {
@@ -425,22 +406,10 @@ ${modules.join("\n")}`,
 		return `<companion_turn_state>\n${JSON.stringify(
 			{
 				identity: { characterId: character.id, name: character.name },
-				permissions: {
-					relationshipMemory: decisions.relationship_memory_enabled === true,
-					historyGloballyEnabled: decisions.conversation_history_read_enabled === true,
-					historyAuthorizedThisTurn: hasTurnAuthorization(currentUserMessage ?? "", "history"),
-				},
 				visual: { sceneId, expressionId, activityExpressionId: null },
 				narrativeAnchor,
-				characterState: state.document,
-				stateRevisions: state.revisions,
-				roleplay: {
-					skills,
-					presentedChoiceSetId: presentation.choiceSetId ?? null,
-					presentedMediaId: presentation.mediaId ?? null,
-					ambientMediaId: presentation.ambientMediaId ?? null,
-					seenMediaIds: presentation.seenMediaIds,
-				},
+				companionState: state.document,
+				resources: { skills },
 			},
 			null,
 			2,
@@ -449,15 +418,14 @@ ${modules.join("\n")}`,
 
 	private getSelfCanon(conversationId: string): string | null {
 		const row = this.db
-			.select({ canon: selfCanonVersions.canon, fallbackCanon: companionIdentity.selfCanon })
+			.select({ canon: selfCanonVersions.canon })
 			.from(conversations)
-			.innerJoin(companionIdentity, eq(companionIdentity.id, conversations.companionId))
-			.leftJoin(selfCanonVersions, eq(selfCanonVersions.companionId, companionIdentity.id))
+			.leftJoin(selfCanonVersions, eq(selfCanonVersions.companionId, conversations.companionId))
 			.where(eq(conversations.id, conversationId))
 			.orderBy(desc(selfCanonVersions.version))
 			.limit(1)
 			.get();
-		return row?.canon ?? row?.fallbackCanon ?? null;
+		return row?.canon ?? null;
 	}
 
 	private getSceneState(conversationId: string): string | null {
@@ -523,12 +491,7 @@ ${modules.join("\n")}`,
 		if (!character) return [];
 		const state =
 			stateOverride ??
-			new CharacterStateService(this.db).project(
-				character.id,
-				conversationId,
-				character.state,
-				true,
-			).document;
+			this.companionStore.project(character.id, conversationId, character.state).document;
 		const skillIds = new Set(character.skills.map((skill) => skill.name));
 		return character.canon.manifest.modules
 			.filter((module) => {
@@ -576,7 +539,9 @@ ${modules.join("\n")}`,
 		return { entries: rows.map((r) => r.text) };
 	}
 
-	private getRelationshipMemoryHits(hits: readonly MemoryHit[]): { entries: string[] } {
+	private getRelationshipMemoryHits(hits: readonly MemoryHit[]): {
+		entries: string[];
+	} {
 		return {
 			entries: hits
 				.map((hit) => hit.record.text)
@@ -593,7 +558,7 @@ function manifestSource(layer: ContextPackBlock["layer"]): string {
 	if (layer === "style") return "character.prompt.style";
 	if (layer === "canon") return "self_canon_or_canon_hub";
 	if (layer === "scene") return "companion_store.display";
-	if (layer === "roleplay") return "roleplay_ledger";
+	if (layer === "resources") return "resources_ledger";
 	if (layer === "relationship") return "approved_relationship_memory";
 	if (layer === "persona") return "user_identity_or_tdai_persona_scene";
 	return "host_real_context";

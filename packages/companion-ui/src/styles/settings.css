@@ -496,53 +496,9 @@
 .canon-row-actions {
 	@apply flex gap-2;
 }
-.roleplay-archive {
-	@apply mt-5 grid gap-4;
-}
-
-.sub-tabs,
-.roleplay-status-list {
+.sub-tabs {
 	@apply flex gap-2;
 }
-
-.roleplay-status-list {
-	@apply flex-col;
-}
-
-.roleplay-status-row {
-	@apply flex min-h-11 items-center justify-between px-3 py-2;
-	border-bottom: 1px solid var(--line);
-}
-
-.collection-grid {
-	@apply grid grid-cols-3 gap-3;
-}
-
-.collection-item {
-	@apply grid min-w-0 gap-1.5;
-}
-
-.collection-item img,
-.collection-item video {
-	@apply block w-full rounded-lg object-cover;
-	aspect-ratio: 16 / 10;
-}
-
-.collection-item audio {
-	@apply w-full;
-}
-
-.collection-item p,
-.collection-item strong {
-	@apply m-0;
-}
-
-.collection-kind {
-	@apply text-sm;
-	--semantic-fg-role: muted;
-	color: var(--semantic-role-muted);
-}
-
 .roleplay-choices {
 	@apply mx-auto my-3 grid w-full max-w-2xl gap-2.5;
 }

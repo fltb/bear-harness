@@ -358,10 +358,6 @@ function validateCharacterCard(
 ): asserts value is CharacterStrings {
 	const schema = z.strictObject({
 		subtitle: z.string(),
-		// Installed pre-release character packages may still carry this retired
-		// display copy. Accept it for package compatibility, but never expose or
-		// consume it: live scene presentation is owned by CompanionStore display state.
-		scene_title: z.string().optional(),
 		greeting: z.string(),
 		composer_placeholder: z.string(),
 		correction: z.strictObject({
@@ -718,14 +714,11 @@ export class CharacterLoader {
 		parsed.behavior = CharacterBehaviorSchema.parse(
 			(parsed as CharacterPackage & { behavior?: unknown }).behavior,
 		);
-		// Normalize an installed pre-release package before it crosses the Host
-		// protocol boundary. The compatibility-only key must never reach clients.
-		delete (parsed.character as CharacterStrings & { scene_title?: string }).scene_title;
 		const state = CharacterStateSchema.parse(
 			(parsed as CharacterPackage & { state_schema?: unknown }).state_schema ?? {},
 		);
 		const roleplay = RoleplaySchema.parse(parsed.roleplay);
-		validateCharacterOnboardingFlow(parsed.character?.first_meeting, id, roleplay);
+		validateCharacterOnboardingFlow(parsed.character?.first_meeting, id);
 		validateWorkPresentation(parsed.character?.work_presentation, id);
 		const canonManifestPath = this.characterPackagePath(id, "canon/manifest.yaml");
 		const canonManifest = CanonPackageManifestSchema.parse(
@@ -744,12 +737,9 @@ export class CharacterLoader {
 			: [];
 		const allowedHostTools = new Set([
 			"host_state",
-			"host_visual",
-			"host_present",
 			"host_history",
 			"host_canon",
 			"host_memory",
-			"host_attachment",
 			"host_delegate",
 		]);
 		for (const skill of parsed.skills) {
@@ -817,23 +807,25 @@ export class CharacterLoader {
 				((variable.type === "string" || variable.type === "enum") && actualType !== "string")
 			)
 				throw new Error(
-					`character package ${id}: variable ${variable.id} initial value has the wrong type`,
+					`character package ${id}: roleplay variable ${variable.id} has invalid initial type`,
 				);
 			if (
 				variable.type === "enum" &&
-				(!variable.values || !variable.values.includes(String(variable.initial)))
+				(!variable.values ||
+					typeof variable.initial !== "string" ||
+					!variable.values.includes(variable.initial))
 			)
 				throw new Error(
 					`character package ${id}: enum variable ${variable.id} must declare and use an allowed initial value`,
 				);
 		}
-		for (const collection of [
+		for (const roleplayEntries of [
 			roleplay.variables,
 			roleplay.media,
 			roleplay.unlockables,
 			roleplay.choice_sets,
 		]) {
-			if (new Set(collection.map((entry) => entry.id)).size !== collection.length) {
+			if (new Set(roleplayEntries.map((entry) => entry.id)).size !== roleplayEntries.length) {
 				throw new Error(`character package ${id}: duplicate roleplay id`);
 			}
 		}
@@ -1017,14 +1009,9 @@ export class CharacterLoader {
 			canonModuleIds: character.canon.manifest.modules.map((module) => module.id),
 			hostTools: [
 				...(Object.keys(character.state.fields).length ? ["host_state"] : []),
-				"host_visual",
-				...(character.roleplay.media.length || character.roleplay.choice_sets.length
-					? ["host_present"]
-					: []),
 				"host_history",
 				...(character.canon.sources.length ? ["host_canon"] : []),
 				"host_memory",
-				"host_attachment",
 				"host_delegate",
 			],
 		};
@@ -1395,7 +1382,6 @@ export class CharacterLoader {
 					id: character.id,
 					packageId: character.id,
 					name: character.name,
-					selfCanon: character.self_canon,
 				})
 				.run();
 

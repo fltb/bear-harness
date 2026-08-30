@@ -1,6 +1,6 @@
 id: jizhou
 name: 极昼
-version: 4.2.13
+version: 4.2.15
 language: zh-CN
 theme:
   tokens:
@@ -169,6 +169,7 @@ state_schema:
   properties:
     relationship:
       type: object
+      x-scope: global
       title: 关系
       additionalProperties: false
       properties:
@@ -177,7 +178,6 @@ state_schema:
           title: 亲近与信任
           description: 极昼与用户之间逐渐形成的信任和亲近程度；它与剧情参与和任务成功完全独立。
           default: 0
-          x-scope: relationship
           x-model-readable: true
           x-write-authority: model
           x-evidence-required: true
@@ -190,9 +190,9 @@ state_schema:
           x-hidden: false
           minimum: -100
           maximum: 100
-          x-max-change-per-turn: 2
     continuity:
       type: object
+      x-scope: global
       title: 继任规程
       additionalProperties: false
       properties:
@@ -201,7 +201,6 @@ state_schema:
           title: 已完成阶段
           description: 继任规程当前已由用户主动开启并完成到哪一阶段。
           default: 0
-          x-scope: character
           x-model-readable: true
           x-write-authority: skill:continuity-reveal
           x-evidence-required: true
@@ -223,7 +222,6 @@ state_schema:
           title: 用户回应
           description: 用户对继任规程的明确自然语言回应。
           default: unopened
-          x-scope: character
           x-model-readable: true
           x-write-authority: skill:continuity-reveal
           x-evidence-required: true
@@ -242,6 +240,7 @@ state_schema:
               - set_down
     story:
       type: object
+      x-scope: conversation
       title: 剧情
       additionalProperties: false
       properties:
@@ -255,7 +254,6 @@ state_schema:
               title: 剧情阶段
               description: 《未送达的回报》的权威阶段；每次只能沿允许边前进，暂停不抹掉 position。
               default: dormant
-              x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
               x-evidence-required: true
@@ -302,7 +300,6 @@ state_schema:
               title: 剧情状态
               description: 剧情是否正在自然对话中展开；归档结局必须是 paused，只有交还或留白结局是 completed。
               default: inactive
-              x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
               x-evidence-required: true
@@ -340,7 +337,6 @@ state_schema:
               title: 调查路线
               description: 用户实际完成过的调查路线；后续回应必须承认，跨会话不得串线。
               default: none
-              x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
               x-evidence-required: true
@@ -372,7 +368,6 @@ state_schema:
               title: 恢复位置
               description: 剧情精确恢复位置；进入 paused 时保持不变。
               default: entry
-              x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
               x-evidence-required: true
@@ -405,7 +400,6 @@ state_schema:
               title: 结局
               description: 用户实际选择的有效结局，不存在坏结局或关系惩罚。
               default: unresolved
-              x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
               x-evidence-required: true
@@ -439,7 +433,6 @@ state_schema:
               title: 交接记录判断
               description: 用户对两份交接证据的实际判断；只记录解释立场，不修改原始 Canon。
               default: unchosen
-              x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
               x-evidence-required: true
@@ -477,7 +470,6 @@ state_schema:
               title: 未来设想
               description: 未来航标中用户实际采用的假设方向；它不是现实产品设置或已发生的历史。
               default: none
-              x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
               x-evidence-required: true
@@ -511,7 +503,6 @@ state_schema:
               title: 已确认事实
               description: 只由确定性剧情事件写入的已确认事实，不能包含推测、想象或用户观点。
               default: []
-              x-scope: conversation
               x-model-readable: true
               x-write-authority: skill:undelivered-report
               x-evidence-required: true
@@ -530,7 +521,6 @@ state_schema:
               title: 我的理解
               description: 用户明确提出或授权采用的解释，始终与 Canon facts 分开。
               default: []
-              x-scope: conversation
               x-model-readable: true
               x-write-authority: user
               x-user-editable: true
@@ -547,6 +537,7 @@ state_schema:
               uniqueItems: true
     narrative:
       type: object
+      x-scope: conversation
       title: 当前叙事锚点
       additionalProperties: false
       properties:
@@ -555,7 +546,6 @@ state_schema:
           title: frame
           description: 当前叙事时间框架；离开未来或剧情中断必须恢复 present。
           default: present
-          x-scope: conversation
           x-model-readable: true
           x-write-authority: skill:undelivered-report
           x-evidence-required: true
@@ -578,7 +568,6 @@ state_schema:
           title: location
           description: narrative anchor 的语义地点，必须与 Host scene 同步提交。
           default: study
-          x-scope: conversation
           x-model-readable: true
           x-write-authority: skill:undelivered-report
           x-evidence-required: true
@@ -611,7 +600,6 @@ state_schema:
           title: time_anchor
           description: 当前框架中的明确时间锚点，防止过去、现在和未来混线。
           default: current_shift
-          x-scope: conversation
           x-model-readable: true
           x-write-authority: skill:undelivered-report
           x-evidence-required: true
@@ -642,7 +630,6 @@ state_schema:
           title: evidence_mode
           description: 当前叙述依据类型，用于约束事实措辞和 Canon 写入。
           default: direct_record
-          x-scope: conversation
           x-model-readable: true
           x-write-authority: skill:undelivered-report
           x-evidence-required: true
@@ -665,7 +652,6 @@ state_schema:
           title: active_story
           description: 当前激活的官方剧情；现实任务、退出和完成后为 none。
           default: none
-          x-scope: conversation
           x-model-readable: true
           x-write-authority: skill:undelivered-report
           x-evidence-required: true
@@ -684,7 +670,6 @@ state_schema:
           title: branch
           description: 当前调查或判断分支；未选择时为 none。
           default: none
-          x-scope: conversation
           x-model-readable: true
           x-write-authority: skill:undelivered-report
           x-evidence-required: true

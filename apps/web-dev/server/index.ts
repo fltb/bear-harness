@@ -12,7 +12,7 @@ import {
 	RENDERER_FAULT_KINDS,
 } from "@bear-harness/host-runtime";
 import { assertProductConfig, OFFICIAL_BRAND, productConfig } from "@bear-harness/product-config";
-import { EventSubscribeRequest, REQUEST_SCHEMAS } from "@bear-harness/protocol/schema";
+import { CHANNEL_CONTRACTS, EventSubscribeRequest } from "@bear-harness/protocol/schema";
 import { createWebCredentialVault } from "./credential-vault.ts";
 import { webDevDataDirectory } from "./data-directory.ts";
 
@@ -141,7 +141,7 @@ function parseRendererFault(
 function rpcDiagnosticChannel(pathname: string): string {
 	try {
 		const channel = decodeURIComponent(pathname.slice("/rpc/".length));
-		return Object.hasOwn(REQUEST_SCHEMAS, channel) ? channel : "unknown";
+		return Object.hasOwn(CHANNEL_CONTRACTS, channel) ? channel : "unknown";
 	} catch {
 		return "invalid";
 	}
@@ -181,15 +181,6 @@ function diagnosticErrorType(
 		: "unknown";
 }
 
-type WebAttachmentCapability = {
-	conversationId: string;
-	attachmentId: string;
-	relativePath: string;
-	operation: "preview" | "download";
-	expiresAt: number;
-};
-const attachmentCapabilities = new Map<string, WebAttachmentCapability>();
-
 const runtime = createHostRuntime({
 	dataDir,
 	diagnostics,
@@ -199,17 +190,6 @@ const runtime = createHostRuntime({
 	protocolViolationMode: "throw",
 	logger: { warn: (message) => console.warn(message) },
 	...(piWorkerPath ? { piWorkerPath } : {}),
-	conversationAttachmentUrlFactory: (request) => {
-		const capability = randomUUID();
-		attachmentCapabilities.set(capability, {
-			conversationId: request.conversationId,
-			attachmentId: request.attachmentId,
-			relativePath: request.relativePath,
-			operation: request.operation,
-			expiresAt: Date.now() + 5 * 60 * 1000,
-		});
-		return `/attachment/${capability}`;
-	},
 });
 
 async function readBody(request: IncomingMessage, maxBytes = 64 * 1024): Promise<unknown> {
@@ -273,63 +253,6 @@ const server = createServer(async (request, response) => {
 		send(response, 200, { product: productConfig, token, debugEnabled });
 		return;
 	}
-	if (request.method === "GET" && url.pathname.startsWith("/attachment/")) {
-		const capability = url.pathname.slice("/attachment/".length);
-		const grant = attachmentCapabilities.get(capability);
-		if (!grant || grant.expiresAt < Date.now()) {
-			attachmentCapabilities.delete(capability);
-			response.writeHead(404).end("not found");
-			return;
-		}
-		try {
-			const file = runtime.attachments.readFile(
-				grant.conversationId,
-				grant.attachmentId,
-				grant.relativePath,
-			);
-			const previewAllowed =
-				grant.operation === "preview" &&
-				/^(image\/(?:png|jpeg|gif|webp)|audio\/|video\/|application\/pdf$)/i.test(file.mime);
-			if (grant.operation === "preview" && !previewAllowed) {
-				response
-					.writeHead(415, {
-						"Cache-Control": "no-store",
-						"X-Content-Type-Options": "nosniff",
-						"Content-Security-Policy": "default-src 'none'",
-					})
-					.end("preview unavailable");
-				return;
-			}
-			const safeName = [...file.name]
-				.map((character) => {
-					const code = character.codePointAt(0) ?? 0;
-					return code <= 0x1f ||
-						code === 0x7f ||
-						character === '"' ||
-						character === "\\" ||
-						character === "/"
-						? "_"
-						: character;
-				})
-				.join("");
-			response.writeHead(200, {
-				"Content-Type": file.mime,
-				"Content-Length": String(file.buffer.byteLength),
-				"Cache-Control": "no-store",
-				"X-Content-Type-Options": "nosniff",
-				"Content-Security-Policy": "default-src 'none'",
-				...(grant.operation === "download"
-					? {
-							"Content-Disposition": `attachment; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(safeName)}`,
-						}
-					: {}),
-			});
-			response.end(file.buffer);
-		} catch {
-			response.writeHead(404).end("not found");
-		}
-		return;
-	}
 	const suppliedToken = request.headers["x-bear-web-dev-token"];
 	if (typeof suppliedToken !== "string" || suppliedToken !== token) {
 		if (rpcSpan) {
@@ -341,7 +264,7 @@ const server = createServer(async (request, response) => {
 		return;
 	}
 	if (debugEnabled && request.method === "GET" && url.pathname === "/debug/channels") {
-		send(response, 200, { channels: Object.keys(REQUEST_SCHEMAS).sort() });
+		send(response, 200, { channels: Object.keys(CHANNEL_CONTRACTS).sort() });
 		return;
 	}
 	if (isRpcRequest) {
@@ -355,7 +278,7 @@ const server = createServer(async (request, response) => {
 			finishRpc();
 			return;
 		}
-		if (!Object.hasOwn(REQUEST_SCHEMAS, channel)) {
+		if (!Object.hasOwn(CHANNEL_CONTRACTS, channel)) {
 			rpcStatus = "error";
 			rpcErrorCategory = "unknown_channel";
 			sendError(response, 404, "unknown_channel", "unknown_channel");

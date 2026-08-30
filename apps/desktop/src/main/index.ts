@@ -18,12 +18,6 @@ import {
 } from "@bear-harness/host-runtime";
 import { productConfig } from "@bear-harness/product-config";
 import { app, BrowserWindow, crashReporter, dialog, ipcMain, shell } from "electron";
-import { registerConversationAttachmentBridge } from "./conversation-attachment-bridge.js";
-import {
-	ConversationAttachmentProtocol,
-	registerConversationAttachmentProtocol,
-	registerConversationAttachmentSchemePrivileges,
-} from "./conversation-attachment-protocol.js";
 import {
 	type DataRootMigrationResult,
 	LEGACY_DATA_DIRECTORY_NAME,
@@ -37,6 +31,7 @@ import {
 import { e2eCredentialVault } from "./e2e-vault.js";
 import { electronCredentialVault } from "./electron-credential-vault.js";
 import { wireElectronIpcHandlers } from "./ipc-router.js";
+import { registerLocalFileBridge } from "./local-file-bridge.js";
 import {
 	type NativeRecoveryInterface,
 	RecoveryController,
@@ -65,9 +60,6 @@ const migrateLegacyDataRoot =
 	(process.env.BEAR_E2E_MIGRATE_LEGACY === "1" &&
 		typeof process.env.BEAR_E2E_APP_DATA === "string" &&
 		isAbsolute(process.env.BEAR_E2E_APP_DATA));
-
-// Custom schemes must be privileged before app readiness.
-registerConversationAttachmentSchemePrivileges();
 
 const rendererHtmlPath = fileURLToPath(new URL("../renderer/index.html", import.meta.url));
 const loadFromHtml = app.isPackaged || isSourceE2E;
@@ -175,14 +167,6 @@ const windowHookDisposers = new Map<number, () => void>();
 let shutdownRequested = false;
 let shutdownComplete = false;
 let hostRuntime: HostRuntime | null = null;
-const attachmentProtocol = new ConversationAttachmentProtocol({
-	windowRegistry,
-	readFile: (conversationId, attachmentId, relativePath) => {
-		const attachments = hostRuntime?.attachments;
-		if (!attachments) throw { kind: "unavailable", reason: "attachment_service_unavailable" };
-		return attachments.readFile(conversationId, attachmentId, relativePath);
-	},
-});
 let disposeElectronIpcHandlers: (() => void) | null = null;
 let disposeElectronDiagnostics: (() => void) | null = null;
 
@@ -380,7 +364,6 @@ async function initializeHost(): Promise<boolean> {
 			productConfig,
 			credentialVault: isSourceE2E ? e2eCredentialVault : electronCredentialVault,
 			protocolViolationMode: app.isPackaged ? "isolate" : "throw",
-			conversationAttachmentUrlFactory: (request) => attachmentProtocol.mint(request),
 			updateService: updater
 				? {
 						check: () => updater.check(),
@@ -393,18 +376,11 @@ async function initializeHost(): Promise<boolean> {
 		});
 		const disposeRouter = wireElectronIpcHandlers(runtime.dispatcher, windowRegistry, {
 			subscribeEvents: (listener, afterSeq) => runtime.subscribeEvents(listener, afterSeq),
-			attachmentProtocol,
 			diagnostics,
 		});
-		const disposeAttachmentBridge = registerConversationAttachmentBridge(
-			{
-				importPaths: (conversationId, paths) =>
-					runtime.attachments.importPaths(conversationId, paths),
-			},
-			windowRegistry,
-		);
+		const disposeLocalFileBridge = registerLocalFileBridge(windowRegistry);
 		ipcHandlersDispose = () => {
-			disposeAttachmentBridge();
+			disposeLocalFileBridge();
 			disposeRouter();
 		};
 		disposeElectronIpcHandlers = ipcHandlersDispose;
@@ -460,7 +436,6 @@ function createMainWindow(): void {
 	const disposeWindowHooks = registerWindowHooks(window.webContents, diagnostics);
 	windowHookDisposers.set(webContentsId, disposeWindowHooks);
 	window.webContents.once("destroyed", () => {
-		attachmentProtocol.revokeRenderer(webContentsId);
 		windowRegistry.delete(webContentsId);
 		const dispose = windowHookDisposers.get(webContentsId);
 		windowHookDisposers.delete(webContentsId);
@@ -552,7 +527,6 @@ diagnostics.runInSession(() => {
 				);
 				return;
 			}
-			registerConversationAttachmentProtocol(attachmentProtocol);
 			// Idle update checks every 6h; the renderer can also trigger on
 			// demand via the update.check:v1 RPC. No-op while the feed is empty.
 			updateTimer = setInterval(() => {

@@ -6,32 +6,12 @@ import {
 	CHANNEL_CONTRACTS,
 	DomainEvent,
 	EmptyResponse,
-	MAX_EVENT_PAYLOAD_DEPTH,
-	MAX_EVENT_PAYLOAD_NODES,
 	MemoryCaptureRequest,
 	MemoryCaptureResponse,
 	MemoryEntry,
-	OpaqueDomainEvent,
-	OpaqueEventPayload,
 	parseKnownDomainEvent,
-	REQUEST_SCHEMAS,
 	RPC,
 } from "./schema.js";
-
-function nestedPayload(depth: number): unknown {
-	let value: unknown = null;
-	for (let index = 0; index < depth; index += 1) {
-		value = { child: value };
-	}
-	return value;
-}
-
-function payloadWithNodeCount(count: number): unknown {
-	const groups = Array.from({ length: 10 }, () => Array.from({ length: 100 }, () => null));
-	const remaining =
-		count - 1 - groups.length - groups.reduce((total, group) => total + group.length, 0);
-	return [...groups, ...Array.from({ length: remaining }, () => null)];
-}
 
 describe("direct memory capture and invalidation schemas", () => {
 	it("bounds conversation and Pi session entry IDs on capture requests", () => {
@@ -153,23 +133,7 @@ describe("direct memory capture and invalidation schemas", () => {
 		).toBe(true);
 	});
 
-	it("validates corrected message scopes and the provider empty response alias", () => {
-		for (const applyScope of ["once", "session", "always"] as const) {
-			expect(
-				DomainEvent.safeParse({
-					seq: 1,
-					kind: "message.corrected",
-					payload: { conversationId: "conversation-1", reason: "safety", applyScope },
-				}).success,
-			).toBe(true);
-		}
-		expect(
-			DomainEvent.safeParse({
-				seq: 1,
-				kind: "message.corrected",
-				payload: { conversationId: "conversation-1", reason: "safety", applyScope: "global" },
-			}).success,
-		).toBe(false);
+	it("uses the strict empty response for provider credentials", () => {
 		expect(RPC.provider.setApiKey.response).toBe(EmptyResponse);
 		expect(RPC.provider.setApiKey.response.safeParse({}).success).toBe(true);
 		expect(RPC.provider.setApiKey.response.safeParse({ status: "stored" }).success).toBe(false);
@@ -196,24 +160,10 @@ describe("direct memory capture and invalidation schemas", () => {
 		}
 	});
 
-	it("treats inherited registry keys as opaque event kinds", () => {
+	it("rejects undeclared event kinds", () => {
 		const event = { seq: 1, kind: "toString", payload: { value: true } };
-		expect(OpaqueDomainEvent.safeParse(event).success).toBe(true);
-		expect(DomainEvent.safeParse(event).success).toBe(true);
+		expect(DomainEvent.safeParse(event).success).toBe(false);
 		expect(parseKnownDomainEvent(event)).toBeUndefined();
-	});
-
-	it("bounds opaque payload depth and total nodes without recursive parsing", () => {
-		expect(OpaqueEventPayload.safeParse(nestedPayload(MAX_EVENT_PAYLOAD_DEPTH)).success).toBe(true);
-		expect(OpaqueEventPayload.safeParse(nestedPayload(MAX_EVENT_PAYLOAD_DEPTH + 1)).success).toBe(
-			false,
-		);
-		expect(
-			OpaqueEventPayload.safeParse(payloadWithNodeCount(MAX_EVENT_PAYLOAD_NODES)).success,
-		).toBe(true);
-		expect(
-			OpaqueEventPayload.safeParse(payloadWithNodeCount(MAX_EVENT_PAYLOAD_NODES + 1)).success,
-		).toBe(false);
 	});
 
 	it("registers the direct memory endpoints", () => {
@@ -229,7 +179,7 @@ describe("direct memory capture and invalidation schemas", () => {
 			const contract = CHANNEL_CONTRACTS[channel];
 			expect(contract).toBeDefined();
 			expect(contract?.channel).toBe(channel);
-			expect(REQUEST_SCHEMAS[channel]).toBe(contract?.request);
+			expect(contract?.request).toBeDefined();
 		}
 		expect(RPC.memory.capture.channel).toBe("memory.capture:v1");
 		expect(RPC.memory.edit.channel).toBe("memory.edit:v1");
