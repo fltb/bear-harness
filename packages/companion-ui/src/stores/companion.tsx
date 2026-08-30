@@ -112,9 +112,9 @@ export interface CompanionStore {
 	deleteConversation(id: string): Promise<void>;
 	patchCompanionState(operations: CompanionStatePatchOperation[]): Promise<void>;
 	sendMessage(text: string): Promise<void>;
-	regenerateMessage(entryId: string): Promise<void>;
+	regenerateMessage(entryId: string, feedback?: string): Promise<void>;
+	switchMessageVersion(leafId: string): Promise<void>;
 	editMessage(entryId: string, text: string): Promise<void>;
-	correctMessage(entryId: string, presetId: string, detail?: string): Promise<void>;
 	abort(): Promise<void>;
 	dismissPresentationMedia(): Promise<void>;
 	dismissAmbientMedia(): Promise<void>;
@@ -627,12 +627,23 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 					}),
 				);
 			}),
-		regenerateMessage: (entryId) =>
+		regenerateMessage: (entryId, feedback) =>
 			run("message.regenerate", async () => {
 				await invoke(client, () =>
 					client.message.regenerate({
 						conversationId: requireConversation(),
 						entryId,
+						feedback,
+					}),
+				);
+				await refreshActive();
+			}),
+		switchMessageVersion: (leafId) =>
+			run("message.switchVersion", async () => {
+				await invoke(client, () =>
+					client.message.switchVersion({
+						conversationId: requireConversation(),
+						leafId,
 					}),
 				);
 				await refreshActive();
@@ -644,18 +655,6 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 						conversationId: requireConversation(),
 						entryId,
 						text,
-					}),
-				);
-				await refreshActive();
-			}),
-		correctMessage: (entryId, presetId, detail) =>
-			run("message.correct", async () => {
-				await invoke(client, () =>
-					client.message.correct({
-						conversationId: requireConversation(),
-						entryId,
-						presetId,
-						detail,
 					}),
 				);
 				await refreshActive();
@@ -725,6 +724,9 @@ function textContent(value: unknown): string {
 }
 function projectTimeline(session?: ConversationSelectResponse): PiTimeline | undefined {
 	if (!session) return undefined;
+	const versions = new Map(
+		session.messageVersions.map((version) => [version.assistantEntryId, version]),
+	);
 	const entries = session.entries.flatMap((raw): PiTimelineEntry[] => {
 		if (
 			!isRecord(raw) ||
@@ -759,6 +761,7 @@ function projectTimeline(session?: ConversationSelectResponse): PiTimeline | und
 			];
 		if (message.role === "assistant") {
 			const content = Array.isArray(message.content) ? message.content : [];
+			const version = versions.get(raw.id);
 			return [
 				{
 					...base,
@@ -777,6 +780,7 @@ function projectTimeline(session?: ConversationSelectResponse): PiTimeline | und
 					...(typeof message.errorMessage === "string"
 						? { errorMessage: message.errorMessage }
 						: {}),
+					...(version ? { version: { current: version.current, leafIds: version.leafIds } } : {}),
 				},
 			];
 		}

@@ -18,19 +18,14 @@ character:
     presets:
       - id: voice
         label: 语气不像他
-        prompt: 重新回答上一条用户消息。保持极昼克制、耐心、以具体动作和清楚观察承载情绪的表达方式。直接输出修正后的回应，不要解释纠正过程。
       - id: identity
         label: 他忘了自己是谁
-        prompt: 重新回答上一条用户消息。严格遵守极昼的身份、背景、能力边界与人格设定。直接输出修正后的回应，不要解释纠正过程。
       - id: user_agency
         label: 他替我做了决定
-        prompt: 重新回答上一条用户消息。只能描述极昼自己的行为，不得替用户决定动作、想法、感受或选择。直接输出修正后的回应，不要解释纠正过程。
       - id: continuity
         label: 他忘了已经发生的事
-        prompt: 重新回答上一条用户消息。遵守当前对话和已确认记忆中的事实、共同经历与关系进展。直接输出修正后的回应，不要解释纠正过程。
     custom_label: 其他
     custom_placeholder: 具体说说哪里不像极昼……
-    custom_prompt_template: 重新回答上一条用户消息。用户指出上一条回答的问题是：{{detail}}。请遵守角色设定并直接输出修正后的回应，不要解释纠正过程。
   work_presentation:
     labels:
       proposal: 值守台上的方案

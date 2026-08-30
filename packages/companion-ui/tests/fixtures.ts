@@ -39,10 +39,9 @@ export const THEMED_CHARACTER: CharacterDisplay = {
 		correction: {
 			trigger_label: "Correct",
 			reason_group_label: "Reason",
-			presets: [{ id: "voice", label: "Voice", prompt: "Rewrite in character." }],
+			presets: [{ id: "voice", label: "Voice" }],
 			custom_label: "Other",
 			custom_placeholder: "What was wrong?",
-			custom_prompt_template: "Rewrite: {{detail}}",
 		},
 		first_meeting: {
 			version: 1,
@@ -242,6 +241,7 @@ export function createTestClient() {
 		pendingMessageCount: 0,
 		steeringMessages: [],
 		followUpMessages: [],
+		messageVersions: [],
 	});
 	const providerList = vi.fn(() => ok({ providers: [] }));
 
@@ -379,7 +379,6 @@ export function createTestClient() {
 			switchVersion: vi.fn(() => ok(null)),
 			edit: vi.fn(() => ok(null)),
 			continue: vi.fn(() => ok(null)),
-			correct: vi.fn(() => ok(null)),
 			branch: vi.fn(() => ok({ leafId: "leaf-1" })),
 			abort: vi.fn(() => ok(null)),
 		},

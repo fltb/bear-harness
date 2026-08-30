@@ -352,7 +352,7 @@ test("title query respects active, archived, and deleted session management", as
 	).resolves.toEqual({ sessions: [] });
 });
 
-test("conversation operations send explicit model instructions and persist revised replies", async ({
+test("regeneration keeps Pi-native versions and correction is visible user feedback", async ({
 	page,
 }) => {
 	await ensureReadyForConversation(page);
@@ -379,6 +379,28 @@ test("conversation operations send explicit model instructions and persist revis
 		conversationId,
 		entryId: assistant.id,
 	});
+	const selectVersions = () =>
+		rpc<{
+			messageVersions: Array<{ assistantEntryId: string; current: number; leafIds: string[] }>;
+		}>(page, bootstrap.token, "conversation.select:v1", { id: conversationId });
+	await expect.poll(async () => (await selectVersions()).messageVersions.length).toBe(1);
+	const twoVersions = await selectVersions();
+	expect(twoVersions.messageVersions).toHaveLength(1);
+	expect(twoVersions.messageVersions[0]).toMatchObject({ current: 1 });
+	expect(twoVersions.messageVersions[0]?.leafIds).toHaveLength(2);
+	await rpc(page, bootstrap.token, "message.switchVersion:v1", {
+		conversationId,
+		leafId: twoVersions.messageVersions[0]!.leafIds[0],
+	});
+	expect(
+		(await projection(page, bootstrap.token, conversationId))
+			.filter((entry) => entry.kind === "message" && entry.role === "assistant")
+			.at(-1)?.id,
+	).toBe(assistant.id);
+	await rpc(page, bootstrap.token, "message.switchVersion:v1", {
+		conversationId,
+		leafId: twoVersions.messageVersions[0]!.leafIds[1],
+	});
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("RULE_OK");
@@ -391,10 +413,10 @@ test("conversation operations send explicit model instructions and persist revis
 		.at(-1);
 	if (!regenerated) throw new Error("missing regenerated assistant entry");
 
-	await rpc(page, bootstrap.token, "message.correct:v1", {
+	await rpc(page, bootstrap.token, "message.regenerate:v1", {
 		conversationId,
 		entryId: regenerated.id,
-		presetId: "user_agency",
+		feedback: "他替我做了决定",
 	});
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
@@ -405,6 +427,16 @@ test("conversation operations send explicit model instructions and persist revis
 			.at(-1)
 			?.text?.trim(),
 	).toBe("RULE_OK");
+	const revisedProjection = await projection(page, bootstrap.token, conversationId);
+	expect(
+		revisedProjection.filter((entry) => entry.kind === "message" && entry.role === "user").at(-1)
+			?.text,
+	).toContain("重新生成反馈：他替我做了决定");
+	const threeVersions = await rpc<{
+		messageVersions: Array<{ current: number; leafIds: string[] }>;
+	}>(page, bootstrap.token, "conversation.select:v1", { id: conversationId });
+	expect(threeVersions.messageVersions[0]).toMatchObject({ current: 2 });
+	expect(threeVersions.messageVersions[0]?.leafIds).toHaveLength(3);
 });
 
 test("imported package plugins require explicit trust before they can be enabled", async ({

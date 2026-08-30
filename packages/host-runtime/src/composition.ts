@@ -465,13 +465,14 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.regenerate, async (_p) => {
-		const { conversationId, entryId } = _p as {
+		const { conversationId, entryId, feedback } = _p as {
 			conversationId: string;
 			entryId: string;
+			feedback?: string;
 		};
 		await requireOwnedConversation(s, conversationId);
 		await s.sessions.select(getCompanionId(s), conversationId);
-		await s.pi.regenerate(entryId);
+		await s.pi.regenerate(entryId, feedback);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.switchVersion, async (_p) => {
@@ -500,37 +501,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		await requireOwnedConversation(s, conversationId);
 		await s.sessions.select(getCompanionId(s), conversationId);
 		await s.pi.continue();
-		return {};
-	});
-	dispatcher.registerHandler(RPC.message.correct, async (_p) => {
-		const { conversationId, entryId, presetId, detail } = _p as {
-			conversationId: string;
-			entryId: string;
-			presetId: string;
-			detail?: string;
-		};
-		await requireOwnedConversation(s, conversationId);
-		const companionId = getCompanionId(s);
-		const character = s.characterLoader.load(companionId);
-		if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
-		const correction = character.character.correction;
-		let instruction: string;
-		if (presetId === "custom") {
-			if (!detail?.trim()) throw { kind: "invalid_request", reason: "correction_detail_required" };
-			instruction = correction.custom_prompt_template.replaceAll("{{detail}}", detail.trim());
-		} else {
-			const preset = correction.presets.find((candidate) => candidate.id === presetId);
-			if (!preset)
-				throw {
-					kind: "invalid_request",
-					reason: "correction_preset_not_found",
-				};
-			instruction = detail?.trim()
-				? `${preset.prompt}\n\n用户补充：${detail.trim()}`
-				: preset.prompt;
-		}
-		await s.sessions.select(getCompanionId(s), conversationId);
-		await s.pi.send(instruction);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.branch, async (_p) => {

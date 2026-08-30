@@ -5,8 +5,10 @@ import {
 	createReadOnlyTools,
 	DefaultResourceLoader,
 	type ModelRuntime,
+	type SessionEntry,
 	type SessionInfo,
 	SessionManager,
+	type SessionTreeNode,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type { CharacterPackage } from "./character-loader.js";
@@ -107,6 +109,7 @@ export class PiRuntime {
 			pendingMessageCount: session.pendingMessageCount,
 			steeringMessages: [...session.getSteeringMessages()],
 			followUpMessages: [...session.getFollowUpMessages()],
+			messageVersions: projectMessageVersions(session.sessionManager),
 		};
 	}
 
@@ -171,7 +174,7 @@ export class PiRuntime {
 		return result;
 	}
 
-	async regenerate(entryId: string) {
+	async regenerate(entryId: string, feedback?: string) {
 		const session = this.requireSession();
 		const entry = session.sessionManager.getEntry(entryId);
 		const user = entry?.parentId ? session.sessionManager.getEntry(entry.parentId) : undefined;
@@ -180,7 +183,10 @@ export class PiRuntime {
 		const result = await session.navigateTree(user.id, { summarize: false });
 		if (result.cancelled) return result;
 		if (!result.editorText) throw new Error("Pi navigation returned no user message to regenerate");
-		await session.prompt(result.editorText);
+		const prompt = feedback?.trim()
+			? `${result.editorText}\n\n重新生成反馈：${feedback.trim()}`
+			: result.editorText;
+		await session.prompt(prompt);
 		return result;
 	}
 
@@ -365,6 +371,54 @@ export class PiRuntime {
 	private get sessionDir() {
 		return resolve(this.options.dataDir, "sessions");
 	}
+}
+
+function projectMessageVersions(manager: SessionManager) {
+	const branch = manager.getBranch();
+	const activeIds = new Set(branch.map((entry) => entry.id));
+	const roots = manager.getTree();
+	const nodes = new Map<string, SessionTreeNode>();
+	const visit = (node: SessionTreeNode) => {
+		nodes.set(node.entry.id, node);
+		for (const child of node.children) visit(child);
+	};
+	for (const root of roots) visit(root);
+	const result: Array<{ assistantEntryId: string; current: number; leafIds: string[] }> = [];
+	for (let index = 0; index < branch.length; index += 1) {
+		const user = branch[index];
+		if (!user || !isMessage(user, "user")) continue;
+		const assistant = branch.slice(index + 1).find((entry) => isMessage(entry, "assistant"));
+		const nextUser = branch.slice(index + 1).find((entry) => isMessage(entry, "user"));
+		if (!assistant || (nextUser && branch.indexOf(nextUser) < branch.indexOf(assistant))) continue;
+		const siblings = (
+			user.parentId === null ? roots.map(({ entry }) => entry) : manager.getChildren(user.parentId)
+		)
+			.filter((entry) => isMessage(entry, "user"))
+			.sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+		if (siblings.length < 2) continue;
+		const leafIds = siblings.map((entry) =>
+			activeIds.has(entry.id) ? (manager.getLeafId() ?? entry.id) : latestLeaf(nodes.get(entry.id)),
+		);
+		result.push({
+			assistantEntryId: assistant.id,
+			current: siblings.findIndex(({ id }) => id === user.id),
+			leafIds,
+		});
+	}
+	return result;
+}
+
+function isMessage(entry: SessionEntry | undefined, role: "user" | "assistant"): boolean {
+	return entry?.type === "message" && entry.message.role === role;
+}
+
+function latestLeaf(node: SessionTreeNode | undefined): string {
+	if (!node) throw new Error("Pi tree is missing a session entry");
+	if (node.children.length === 0) return node.entry.id;
+	const latest = node.children.reduce((left, right) =>
+		left.entry.timestamp.localeCompare(right.entry.timestamp) < 0 ? right : left,
+	);
+	return latestLeaf(latest);
 }
 
 function messageText(message: unknown): string {

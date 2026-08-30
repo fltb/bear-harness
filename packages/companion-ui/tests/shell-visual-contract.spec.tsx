@@ -73,6 +73,7 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 				pendingMessageCount: 0,
 				steeringMessages: [],
 				followUpMessages: [],
+				messageVersions: [],
 			}
 		: undefined;
 	const snapshot = {
@@ -329,6 +330,7 @@ describe("portrait layout contracts", () => {
 					pendingMessageCount: 0,
 					steeringMessages: [],
 					followUpMessages: [],
+					messageVersions: [],
 				};
 				client.conversation.activeGet = vi.fn(() =>
 					Promise.resolve({ ok: true as const, data: { session: projection } }),

@@ -185,6 +185,7 @@ describe("onboarding projection ordering", () => {
 			pendingMessageCount: 0,
 			steeringMessages: [],
 			followUpMessages: [],
+			messageVersions: [],
 		};
 		let completed = false;
 		client.onboarding.get = vi.fn(() =>

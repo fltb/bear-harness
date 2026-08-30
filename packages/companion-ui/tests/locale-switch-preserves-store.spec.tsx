@@ -43,6 +43,7 @@ function loadedClient() {
 		pendingMessageCount: 0,
 		steeringMessages: [],
 		followUpMessages: [],
+		messageVersions: [],
 	};
 	fixture.client.snapshot.get = vi.fn(() =>
 		Promise.resolve({

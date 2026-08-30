@@ -100,10 +100,9 @@ export interface CharacterStrings {
 	correction: {
 		trigger_label: string;
 		reason_group_label: string;
-		presets: Array<{ id: string; label: string; prompt: string }>;
+		presets: Array<{ id: string; label: string }>;
 		custom_label: string;
 		custom_placeholder: string;
-		custom_prompt_template: string;
 	};
 	work_presentation?: CharacterWorkPresentation;
 	first_meeting: CharacterOnboardingFlow;
@@ -363,14 +362,9 @@ function validateCharacterCard(
 		correction: z.strictObject({
 			trigger_label: z.string(),
 			reason_group_label: z.string(),
-			presets: z
-				.array(
-					z.strictObject({ id: z.string().min(1), label: z.string(), prompt: z.string().min(1) }),
-				)
-				.min(1),
+			presets: z.array(z.strictObject({ id: z.string().min(1), label: z.string() })).min(1),
 			custom_label: z.string(),
 			custom_placeholder: z.string(),
-			custom_prompt_template: z.string().min(1),
 		}),
 		work_presentation: WorkPresentationSchema.optional(),
 		first_meeting: z.unknown(),

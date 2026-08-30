@@ -86,6 +86,7 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 	const isUser = entry.role === "user";
 	const characterName = store.character?.name ?? "";
 	const assistant = entry.role === "assistant" ? entry : undefined;
+	const version = assistant?.version;
 	const failed = assistant?.stopReason === "error" || assistant?.stopReason === "aborted";
 	const errorText =
 		assistant?.stopReason === "aborted"
@@ -173,7 +174,11 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 										<Button
 											type="button"
 											onClick={() => {
-												void store.correctMessage(entry.id, preset.id, correctionDetail());
+												const detail = correctionDetail().trim();
+												void store.regenerateMessage(
+													entry.id,
+													detail ? `${preset.label}：${detail}` : preset.label,
+												);
 												setCorrecting(false);
 											}}
 										>
@@ -194,7 +199,7 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 								type="button"
 								disabled={!correctionDetail().trim()}
 								onClick={() => {
-									void store.correctMessage(entry.id, "custom", correctionDetail());
+									void store.regenerateMessage(entry.id, correctionDetail().trim());
 									setCorrecting(false);
 								}}
 							>
@@ -257,6 +262,33 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 						</Button>
 					</fieldset>
 				</article>
+				<Show when={!isUser && version}>
+					{(pager) => (
+						<nav class="message-version-pager" aria-label={t("messages.versionPager")}>
+							<Button
+								type="button"
+								aria-label={t("messages.previousVersion")}
+								disabled={pager().current === 0}
+								onClick={() =>
+									void store.switchMessageVersion(pager().leafIds[pager().current - 1]!)
+								}
+							>
+								‹
+							</Button>
+							<span>{`${pager().current + 1} / ${pager().leafIds.length}`}</span>
+							<Button
+								type="button"
+								aria-label={t("messages.nextVersion")}
+								disabled={pager().current === pager().leafIds.length - 1}
+								onClick={() =>
+									void store.switchMessageVersion(pager().leafIds[pager().current + 1]!)
+								}
+							>
+								›
+							</Button>
+						</nav>
+					)}
+				</Show>
 			</div>
 		</div>
 	);

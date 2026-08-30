@@ -56,6 +56,7 @@ function configureActiveConversation(client: CompanionClient): void {
 					pendingMessageCount: 0,
 					steeringMessages: [],
 					followUpMessages: [],
+					messageVersions: [],
 				},
 			},
 		}),

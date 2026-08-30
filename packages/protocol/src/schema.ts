@@ -596,14 +596,12 @@ export const CharacterDisplay = z
 						z.strictObject({
 							id: z.string().min(1).max(64),
 							label: z.string().max(MAX_STRING_LENGTH),
-							prompt: z.string().min(1).max(65_536),
 						}),
 					)
 					.min(1)
 					.max(20),
 				custom_label: z.string().max(MAX_STRING_LENGTH),
 				custom_placeholder: z.string().max(MAX_STRING_LENGTH),
-				custom_prompt_template: z.string().min(1).max(65_536),
 			}),
 			work_presentation: CharacterWorkPresentation.optional(),
 			first_meeting: CharacterOnboardingFlow,
@@ -948,6 +946,12 @@ const PiTimelineAssistantMessage = z.strictObject({
 	toolCalls: z.array(PiTimelineToolCall).max(100).optional(),
 	stopReason: z.enum(["stop", "length", "toolUse", "error", "aborted", "deferred"]).optional(),
 	errorMessage: z.string().max(4096).optional(),
+	version: z
+		.strictObject({
+			current: z.number().int().nonnegative(),
+			leafIds: z.array(PiSessionEntryId).min(2).max(100),
+		})
+		.optional(),
 });
 const PiTimelineToolResult = z.strictObject({
 	...PiTimelineBase,
@@ -997,6 +1001,15 @@ export const ConversationSelectResponse = z.strictObject({
 	pendingMessageCount: z.number().int().nonnegative(),
 	steeringMessages: z.array(z.string().max(65536)).max(100),
 	followUpMessages: z.array(z.string().max(65536)).max(100),
+	messageVersions: z
+		.array(
+			z.strictObject({
+				assistantEntryId: PiSessionEntryId,
+				current: z.number().int().nonnegative(),
+				leafIds: z.array(PiSessionEntryId).min(2).max(100),
+			}),
+		)
+		.max(MAX_ARRAY_LENGTH),
 });
 export const ConversationCreateResponse = ConversationSelectResponse;
 export const ConversationActiveResponse = z.strictObject({
@@ -1013,6 +1026,7 @@ export const MessageSendResponse = z.strictObject({
 export const MessageRegenerateRequest = z.strictObject({
 	conversationId: ConversationId,
 	entryId: PiSessionEntryId,
+	feedback: z.string().min(1).max(65536).optional(),
 });
 export const MessageSwitchVersionRequest = z.strictObject({
 	conversationId: ConversationId,
@@ -1025,12 +1039,6 @@ export const MessageEditRequest = z.strictObject({
 });
 export const MessageContinueRequest = z.strictObject({
 	conversationId: ConversationId,
-});
-export const MessageCorrectRequest = z.strictObject({
-	conversationId: ConversationId,
-	entryId: PiSessionEntryId,
-	presetId: z.string().min(1).max(64),
-	detail: z.string().max(MAX_STRING_LENGTH).optional(),
 });
 export const MessageBranchRequest = z.strictObject({
 	conversationId: ConversationId,
@@ -2205,7 +2213,6 @@ export const RPC = {
 		),
 		edit: endpoint("message.edit:v1", MessageEditRequest, EmptyResponse, "mutation"),
 		continue: endpoint("message.continue:v1", MessageContinueRequest, EmptyResponse, "mutation"),
-		correct: endpoint("message.correct:v1", MessageCorrectRequest, EmptyResponse, "mutation"),
 		branch: endpoint("message.branch:v1", MessageBranchRequest, MessageBranchResponse, "mutation"),
 		abort: endpoint("message.abort:v1", MessageAbortRequest, EmptyResponse, "mutation"),
 	},
