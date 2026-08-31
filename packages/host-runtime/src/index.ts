@@ -1,7 +1,7 @@
 /**
  * @bear-harness/host-runtime — the instance-scoped companion host.
  *
- * The package owns the canonical database, migrations, domain services,
+ * The package owns the canonical database schemas, domain services,
  * character loading (injected character root), product config inputs, RPC
  * dispatch, and the start/close lifecycle. It has no Electron, browser, or
  * app-shell imports; platform boundaries (credential vault, diagnostics
@@ -33,7 +33,7 @@ export type {
 	DiagnosticLevel,
 	DiagnosticName,
 	DiagnosticOrigin,
-	DiagnosticRecordV1,
+	DiagnosticRecord,
 	DiagnosticsPolicy,
 	PendingRecord,
 	SpanStatus,
@@ -177,7 +177,6 @@ export type {
 	DurableFileTransactionState,
 } from "./storage/durable-file-transaction.js";
 export {
-	DURABLE_FILE_TRANSACTION_VERSION,
 	DurableFileTransactionError,
 	durableFileTransactionMarkerPath,
 	recoverDurableFileTransaction,
@@ -187,5 +186,3 @@ export type { EventListener, HostEvent } from "./storage/event-bus.js";
 export { EventBus } from "./storage/event-bus.js";
 export type { CompanionPaths } from "./storage/layout.js";
 export { RuntimeLayout, requireCompanionId } from "./storage/layout.js";
-export type { RuntimeLayoutPreparation } from "./storage/layout-migration.js";
-export { prepareRuntimeLayout } from "./storage/layout-migration.js";

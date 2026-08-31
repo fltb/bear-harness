@@ -4,32 +4,18 @@
  * Lifecycle: created at app boot, one connection, never shared across
  * worker_threads. WAL mode, foreign_keys, defensive mode, busy_timeout.
  *
- * Migrations are integer-ordered, checksummed, and recorded in an
- * append-only `schema_migrations` table. Each upgrade batch gets one verified,
- * SQLite-consistent pre-upgrade backup and a durable recovery marker.
- * Migration failure → storage unavailable (no auto-rebuild). Recovery is
- * copy-as-new only.
+ * Bear 1.0 uses one checked-in schema for each database. Existing databases
+ * must already satisfy that schema; there is no internal upgrade ladder.
  */
 
-import { createHash } from "node:crypto";
-import {
-	closeSync,
-	existsSync,
-	fsyncSync,
-	mkdirSync,
-	openSync,
-	readdirSync,
-	renameSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { mkdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import * as sqliteVec from "sqlite-vec";
 import { companionRuntimeIdentity, installationIdentity } from "./schema.js";
-import { COMPANION_BASELINE_V1_SQL, SYSTEM_BASELINE_V1_SQL } from "./split-baselines.js";
+import { COMPANION_SCHEMA_SQL, SYSTEM_SCHEMA_SQL } from "./schema-sql.js";
 
 function createAppDatabase(client: DatabaseSync) {
 	return drizzle({ client });
@@ -39,7 +25,7 @@ export type AppDatabase = ReturnType<typeof createAppDatabase>;
 
 const INSTALLATION_IDENTITY_SINGLETON_ID = 1;
 
-/** Load the durable identity created by the installation identity migration. */
+/** Load the installation's durable identity. */
 export function loadInstallationId(db: AppDatabase): string {
 	const row = db
 		.select({ installationId: installationIdentity.installationId })
@@ -68,35 +54,13 @@ export interface CanonVectorIndex {
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Max migrations to apply in one boot (safety gate). */
-const MAX_MIGRATION_STEPS = 50;
-/** Retain at least the current and preceding verified schema backups. */
-const RETAIN_BACKUPS = 2;
 /** Query latency threshold for logging. */
 const SLOW_QUERY_MS = 16;
-// ---------------------------------------------------------------------------
-// Migration type
-// ---------------------------------------------------------------------------
-
-export interface Migration {
-	readonly id: number;
-	readonly description: string;
-	readonly up: string;
-	readonly rebuildsForeignKeys?: true;
-}
-
-interface UpgradeMarker {
-	readonly sourceVersion: number;
-	readonly targetVersion: number;
-	readonly backupPath: string;
-	readonly state: "pending";
-}
 
 type SchemaContract = Readonly<Record<string, readonly string[]>>;
 
 interface DatabaseOptions {
 	readonly fileName?: string;
-	readonly backupPrefix?: string;
 	readonly schemaContract?: SchemaContract;
 }
 
@@ -152,13 +116,11 @@ export const COMPANION_SCHEMA_CONTRACT: SchemaContract = {
  * connection per runtime. The connection is never shared across
  * worker_threads. WAL mode, foreign_keys, defensive mode, busy_timeout.
  *
- * Migrations are integer-ordered, checksummed, and recorded in an
- * append-only `schema_migrations` table. Each upgrade batch gets one verified,
- * SQLite-consistent pre-upgrade backup and a durable recovery marker.
- * Migration failure → storage unavailable (no auto-rebuild). Recovery is
- * copy-as-new only.
+ * Bear 1.0 opens one final schema. A fresh database is initialized atomically;
+ * an existing database is validated instead of being interpreted as a point
+ * on an upgrade timeline.
  *
- * Unlike the legacy desktop singleton, this class owns its connection and
+ * This class owns its connection and
  * paths: each HostRuntime creates its own instance and closes it on
  * shutdown, so nothing is shared at module scope.
  */
@@ -209,20 +171,13 @@ export class Database {
 	}
 
 	readonly path: string;
-	private readonly backupDir: string;
-	private readonly upgradeMarkerPath: string;
-	private readonly backupPrefix: string;
 	private readonly schemaContract: SchemaContract;
 
 	constructor(databaseDir: string, options: DatabaseOptions = {}) {
 		const fileName = options.fileName ?? "canon.db";
 		this.path = join(databaseDir, fileName);
-		this.backupDir = join(databaseDir, "schema-backups");
-		this.upgradeMarkerPath = join(databaseDir, "schema-upgrade.json");
-		this.backupPrefix = options.backupPrefix ?? basename(fileName, ".db");
 		this.schemaContract = options.schemaContract ?? {};
 		mkdirSync(databaseDir, { recursive: true });
-		mkdirSync(this.backupDir, { recursive: true });
 
 		this.connection = new DatabaseSync(this.path, { allowExtension: true });
 		this.connection.function("bear_sync_changed", () => {
@@ -244,15 +199,6 @@ export class Database {
 		this.connection.exec("PRAGMA foreign_keys = ON");
 		this.connection.exec("PRAGMA defensive = ON");
 		this.connection.exec(`PRAGMA busy_timeout = 5000`);
-
-		// Create the schema_migrations tracking table if this is a fresh DB
-		this.connection.exec(`
-			CREATE TABLE IF NOT EXISTS schema_migrations (
-				id INTEGER PRIMARY KEY,
-				checksum TEXT NOT NULL,
-				applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-			)
-		`);
 	}
 
 	/** Close the connection. Idempotent per instance. */
@@ -347,235 +293,28 @@ export class Database {
 			.run(chunkId, Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength));
 	}
 
-	/** Get the current user_version (highest applied migration id). */
-	currentVersion(): number {
-		const row = this.connection
-			.prepare("SELECT COALESCE(MAX(id), 0) AS v FROM schema_migrations")
-			.get() as { v: number };
-		return row.v;
-	}
-
-	/** Compute a SHA-256 checksum of a migration SQL string. */
-	private checksum(sql: string): string {
-		return createHash("sha256").update(sql, "utf8").digest("hex");
-	}
-
-	/** Return verified backup files in newest-first filename order. */
-	private backupPaths(): string[] {
-		return readdirSync(this.backupDir)
-			.filter((file) => file.startsWith(`${this.backupPrefix}-`) && file.endsWith(".db"))
-			.map((file) => join(this.backupDir, file))
-			.sort()
-			.reverse();
-	}
-
-	/** Create and verify a SQLite-consistent backup of all committed data. */
-	private backupSchema(sourceVersion: number, targetVersion: number): string {
-		const timestamp = Date.now().toString().padStart(13, "0");
-		let suffix = 0;
-		let backupPath: string;
-		do {
-			const collisionSuffix = suffix === 0 ? "" : `-${suffix}`;
-			backupPath = join(
-				this.backupDir,
-				`${this.backupPrefix}-${timestamp}-v${sourceVersion}-to-v${targetVersion}${collisionSuffix}.db`,
-			);
-			suffix += 1;
-		} while (existsSync(backupPath));
-
-		const quotedPath = backupPath.replaceAll("'", "''");
-		this.connection.exec(`VACUUM INTO '${quotedPath}'`);
-		try {
-			this.validateDatabase(new DatabaseSync(backupPath, { readOnly: true }), "pre-upgrade backup");
-			this.syncDirectory(this.backupDir);
-		} catch (error) {
-			rmSync(backupPath, { force: true });
-			throw error;
-		}
-		return backupPath;
-	}
-
-	/** Validate integrity and referential consistency, closing non-primary connections. */
-	private validateDatabase(database: DatabaseSync, label: string): void {
-		const closeAfterCheck = database !== this.connection;
-		try {
-			const integrityRows = database.prepare("PRAGMA integrity_check").all() as Array<
-				Record<string, unknown>
-			>;
-			const integrityErrors = integrityRows
-				.map((row) => Object.values(row)[0])
-				.filter((result) => result !== "ok");
-			if (integrityRows.length !== 1 || integrityErrors.length > 0) {
-				throw new Error(`${label} integrity check failed: ${JSON.stringify(integrityRows)}`);
-			}
-			const foreignKeyErrors = database.prepare("PRAGMA foreign_key_check").all();
-			if (foreignKeyErrors.length > 0) {
-				throw new Error(`${label} foreign key check failed: ${JSON.stringify(foreignKeyErrors)}`);
-			}
-		} finally {
-			if (closeAfterCheck) database.close();
-		}
-	}
-
-	/** Atomically persist the recovery marker before the first schema change. */
-	private writeUpgradeMarker(marker: UpgradeMarker): void {
-		const temporaryPath = `${this.upgradeMarkerPath}.tmp-${process.pid}`;
-		writeFileSync(temporaryPath, `${JSON.stringify(marker, null, 2)}\n`, {
-			encoding: "utf8",
-			flush: true,
-		});
-		renameSync(temporaryPath, this.upgradeMarkerPath);
-		this.syncDirectory(dirname(this.upgradeMarkerPath));
-	}
-
-	/** Remove the recovery marker durably after the upgraded database is verified. */
-	private clearUpgradeMarker(): void {
-		rmSync(this.upgradeMarkerPath, { force: true });
-		this.syncDirectory(dirname(this.upgradeMarkerPath));
-	}
-
-	private syncDirectory(directoryPath: string): void {
-		let descriptor: number | undefined;
-		try {
-			descriptor = openSync(directoryPath, "r");
-			fsyncSync(descriptor);
-		} catch (error) {
-			if (process.platform !== "win32") throw error;
-		} finally {
-			if (descriptor !== undefined) closeSync(descriptor);
-		}
-	}
-
-	/** Prune old backups without removing either recovery-relevant snapshot. */
-	private pruneBackups(protectedPaths: ReadonlySet<string>): void {
-		const files = this.backupPaths();
-		const retained = new Set(files.slice(0, RETAIN_BACKUPS));
-		for (const protectedPath of protectedPaths) retained.add(protectedPath);
-		for (const old of files) {
-			if (!retained.has(old)) rmSync(old);
-		}
-	}
-
-	/** Apply a single migration inside a transaction, with checksum validation. */
-	private applyMigration(migration: Migration): void {
-		const chk = this.checksum(migration.up);
-
-		// Verify the migration hasn't been applied with a different checksum
-		const existing = this.connection
-			.prepare("SELECT checksum FROM schema_migrations WHERE id = ?")
-			.get(migration.id) as { checksum: string } | undefined;
-		if (existing) {
-			if (existing.checksum !== chk) {
-				throw new Error(
-					`migration ${migration.id} checksum mismatch: was ${existing.checksum}, current ${chk}`,
-				);
-			}
-			return; // already applied, same checksum — idempotent
-		}
-
-		// Table-rebuild migrations temporarily suspend enforcement before the
-		// transaction, rebuild every referenced identity in-place, then run
-		// SQLite's full FK check before commit and restore enforcement.
-		const rebuildsForeignKeys = migration.rebuildsForeignKeys === true;
-		if (rebuildsForeignKeys) this.connection.exec("PRAGMA foreign_keys = OFF");
-		this.connection.exec("BEGIN IMMEDIATE");
-		try {
-			this.connection.exec(migration.up);
-			if (
-				rebuildsForeignKeys &&
-				this.connection.prepare("PRAGMA foreign_key_check").all().length > 0
-			) {
-				throw new Error("foreign key check failed after table rebuild");
-			}
+	/** Initialize a fresh database from the single Bear 1.0 schema. */
+	initialize(schemaSql: string): void {
+		const tables = (
 			this.connection
-				.prepare("INSERT INTO schema_migrations (id, checksum) VALUES (?, ?)")
-				.run(migration.id, chk);
-			this.connection.exec("COMMIT");
-		} catch (e) {
-			this.connection.exec("ROLLBACK");
-			if (rebuildsForeignKeys) this.connection.exec("PRAGMA foreign_keys = ON");
-			throw new Error(`migration ${migration.id} failed: ${(e as Error)?.message ?? String(e)}`);
-		}
-		if (rebuildsForeignKeys) this.connection.exec("PRAGMA foreign_keys = ON");
-	}
-
-	/** Run all pending migrations in order. */
-	migrate(migrations: Migration[]): void {
-		if (migrations.length > MAX_MIGRATION_STEPS) {
-			throw new Error(`too many migrations (${migrations.length} > ${MAX_MIGRATION_STEPS})`);
-		}
-		const ordered = [...migrations].sort((left, right) => left.id - right.id);
-		for (const [index, migration] of ordered.entries()) {
-			if (index > 0 && ordered[index - 1]?.id === migration.id) {
-				throw new Error(`duplicate migration id ${migration.id}`);
-			}
-			const expectedId = index + 1;
-			if (migration.id !== expectedId) {
+				.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+				.all() as Array<{ name: string }>
+		).map((row) => row.name);
+		if (tables.length === 0) {
+			this.connection.exec("BEGIN IMMEDIATE");
+			try {
+				this.connection.exec(schemaSql);
+				this.connection.exec("COMMIT");
+			} catch (error) {
+				this.connection.exec("ROLLBACK");
 				throw new Error(
-					`non-contiguous migration definitions: expected ${expectedId}, received ${migration.id}`,
+					`database initialization failed: ${(error as Error)?.message ?? String(error)}`,
 				);
 			}
 		}
-		const current = this.currentVersion();
-		const knownIds = new Set(ordered.map((migration) => migration.id));
-		const applied = this.connection
-			.prepare("SELECT id, checksum FROM schema_migrations")
-			.all() as Array<{
-			id: number;
-			checksum: string;
-		}>;
-		for (const record of applied) {
-			const migration = ordered.find((candidate) => candidate.id === record.id);
-			if (!migration || !knownIds.has(record.id)) {
-				throw new Error(`unknown applied migration ${record.id}`);
-			}
-			const expected = this.checksum(migration.up);
-			if (record.checksum !== expected) {
-				throw new Error(
-					`migration ${record.id} checksum mismatch: was ${record.checksum}, current ${expected}`,
-				);
-			}
-		}
-		const appliedIds = new Set(applied.map((migration) => migration.id));
-		for (let id = 1; id <= current; id += 1) {
-			if (!appliedIds.has(id)) {
-				throw new Error(`migration history gap: missing applied migration ${id}`);
-			}
-		}
-		const pending = ordered.filter((migration) => migration.id > current);
-		if (pending.length === 0) return;
-
-		const targetVersion = pending.at(-1)?.id;
-		if (targetVersion === undefined) return;
-		const lastKnownGoodBackup = this.backupPaths()[0];
-		const backupPath = this.backupSchema(current, targetVersion);
-		this.writeUpgradeMarker({
-			sourceVersion: current,
-			targetVersion,
-			backupPath,
-			state: "pending",
-		});
-
-		try {
-			for (const migration of pending) {
-				this.applyMigration(migration);
-			}
-			this.validateDatabase(this.connection, "upgraded database");
-		} catch (error) {
-			throw new Error(
-				`database upgrade from ${current} to ${targetVersion} failed: ${
-					(error as Error)?.message ?? String(error)
-				}; verified backup at ${backupPath}; recovery marker at ${this.upgradeMarkerPath}`,
-			);
-		}
-
-		this.clearUpgradeMarker();
-		this.pruneBackups(
-			new Set(lastKnownGoodBackup ? [backupPath, lastKnownGoodBackup] : [backupPath]),
-		);
 	}
 
-	/** Refuse to start a partially compatible database. */
+	/** Refuse to start a database that does not match the current schema. */
 	assertSchemaContract(): void {
 		for (const [table, columns] of Object.entries(this.schemaContract)) {
 			const actual = new Set(
@@ -600,23 +339,12 @@ export class Database {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Migration definitions
-// ---------------------------------------------------------------------------
-
-export const SYSTEM_MIGRATIONS: Migration[] = [
-	{ id: 1, description: "Bear system settings schema", up: SYSTEM_BASELINE_V1_SQL },
-];
-
-export const COMPANION_MIGRATIONS: Migration[] = [
-	{ id: 1, description: "Bear character runtime schema", up: COMPANION_BASELINE_V1_SQL },
-];
+export { COMPANION_SCHEMA_SQL, SYSTEM_SCHEMA_SQL };
 
 export class SystemDatabase extends Database {
 	constructor(path: string) {
 		super(dirname(path), {
 			fileName: basename(path),
-			backupPrefix: "settings",
 			schemaContract: SYSTEM_SCHEMA_CONTRACT,
 		});
 	}
@@ -629,7 +357,6 @@ export class CompanionDatabase extends Database {
 	) {
 		super(dirname(path), {
 			fileName: basename(path),
-			backupPrefix: "runtime",
 			schemaContract: COMPANION_SCHEMA_CONTRACT,
 		});
 	}

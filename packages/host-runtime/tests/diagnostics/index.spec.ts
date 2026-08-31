@@ -164,7 +164,6 @@ describe("Diagnostics orchestrator", () => {
 		writeFileSync(
 			join(stateDir, "run-old-launch.json"),
 			JSON.stringify({
-				schemaVersion: 1,
 				launchId: "old-launch",
 				pid: 999_999_999,
 				startedAt: "2026-01-01T00:00:00.000Z",

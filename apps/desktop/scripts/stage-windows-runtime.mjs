@@ -92,7 +92,7 @@ await copyFile(join(gitRoot, gplSource), join(noticesRoot, "GPL-2.0.txt"));
 await copyFile(join(gitRoot, packageVersionsRelative), join(noticesRoot, "package-versions.txt"));
 writeFileSync(
 	join(noticesRoot, "component-notices.json"),
-	`${JSON.stringify({ schemaVersion: 1, files: componentNotices.map((file) => ({ ...file, path: `git/${file.path}` })) }, null, 2)}\n`,
+	`${JSON.stringify({ files: componentNotices.map((file) => ({ ...file, path: `git/${file.path}` })) }, null, 2)}\n`,
 	"utf8",
 );
 
@@ -101,7 +101,6 @@ const noticeFiles = inventory(noticesRoot).map((file) => ({
 	path: `third-party/git-for-windows/${file.path}`,
 }));
 const manifest = {
-	schemaVersion: 1,
 	release: {
 		tag: RELEASE_TAG,
 		asset: ASSET,

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactStore } from "../src/artifacts/index.js";
 import type { PiRuntime } from "../src/companion/pi-runtime.js";
 import { SessionCatalog } from "../src/companion/session-catalog.js";
-import { COMPANION_MIGRATIONS, CompanionDatabase } from "../src/storage/database.js";
+import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../src/storage/database.js";
 import {
 	artifactAdoptions,
 	artifacts,
@@ -45,7 +45,7 @@ function session(directory: string, id: string, name: string, modified: string) 
 function setup() {
 	const directory = root();
 	const database = new CompanionDatabase(join(directory, "runtime.db"), "bear");
-	database.migrate(COMPANION_MIGRATIONS);
+	database.initialize(COMPANION_SCHEMA_SQL);
 	database.ensureRuntimeIdentity();
 	const sessions = [
 		session(directory, "alpha", "Find Release Bugs", "2026-01-03T00:00:00.000Z"),

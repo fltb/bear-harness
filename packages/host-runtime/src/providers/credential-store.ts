@@ -19,7 +19,6 @@ import type {
 	CredentialStore as PiCredentialStore,
 } from "@earendil-works/pi-ai";
 import { asc, eq } from "drizzle-orm";
-import type { AppSettingsStore } from "../storage/app-settings-store.js";
 import type { AppDatabase } from "../storage/database.js";
 import { providerAccounts } from "../storage/schema.js";
 
@@ -36,7 +35,7 @@ export const REMOTE_EMBEDDING_CREDENTIAL_ID = `${INTERNAL_CREDENTIAL_PREFIX}embe
  */
 export interface CredentialVault {
 	/** OS keychain, machine-local encrypted file, or session-only storage. */
-	readonly securityLevel?: "os" | "machine" | "session";
+	readonly securityLevel: "os" | "machine" | "session";
 	isEncryptionAvailable(): boolean;
 	encryptString(plaintext: string): Buffer;
 	decryptString(blob: Buffer): string;
@@ -77,21 +76,6 @@ export class CredentialStore {
 	constructor(db: AppDatabase, vault: CredentialVault) {
 		this.db = db;
 		this.vault = vault;
-	}
-
-	/**
-	 * One-time upgrade path for the pre-vault remote embedding key. No caller
-	 * can read the key: AppSettingsStore supplies it directly to this trusted
-	 * store, then removes the plaintext only after `set` succeeds.
-	 */
-	async migrateLegacyRemoteEmbeddingCredential(
-		settings: AppSettingsStore,
-	): Promise<CredentialStatus | null> {
-		let status: CredentialStatus | undefined;
-		const migrated = await settings.migrateLegacyEmbeddingCredential(async (apiKey) => {
-			status = await this.set(REMOTE_EMBEDDING_CREDENTIAL_ID, { apiKey });
-		});
-		return migrated ? (status ?? null) : null;
 	}
 
 	/** Store a credential for a provider. */
@@ -248,9 +232,6 @@ export class CredentialStore {
 
 	private canPersistCredentials(): boolean {
 		try {
-			// `session` is used by Electron's basic_text backend. Undefined is
-			// retained for compatible injected vaults whose encryption contract
-			// predates securityLevel.
 			return this.vault.isEncryptionAvailable() && this.vault.securityLevel !== "session";
 		} catch {
 			return false;

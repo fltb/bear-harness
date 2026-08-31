@@ -5,10 +5,7 @@ import { parse } from "@babel/parser";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRoot = resolve(repoRoot, "packages/host-runtime/src");
-const allowedRawDatabaseModules = new Set([
-	resolve(sourceRoot, "storage/database.ts"),
-	resolve(sourceRoot, "storage/layout-migration.ts"),
-]);
+const allowedRawDatabaseModules = new Set([resolve(sourceRoot, "storage/database.ts")]);
 const forbidden = [
 	/import\s+(?:type\s+)?[^;]*from\s+["']node:sqlite["']/,
 	/\.prepare\s*\(/,
@@ -74,7 +71,7 @@ for (const absolutePath of sourceFiles(sourceRoot)) {
 
 if (findings.length > 0) {
 	process.stderr.write(
-		`Host business modules must use Drizzle with synchronous transactions; raw SQLite is restricted to database and one-shot layout migration modules:\n${findings.join("\n")}\n`,
+		`Host business modules must use Drizzle with synchronous transactions; raw SQLite is restricted to the database boundary:\n${findings.join("\n")}\n`,
 	);
 	process.exit(1);
 }

@@ -15,7 +15,6 @@
 | `src/companion/state-schema.ts` | `x-scope` 与 Character/Display 结构验证 |
 | `src/storage/layout.ts` | `system/characters/companions` 路径与安全组件 |
 | `src/storage/companion-storage.ts` | system DB 与每角色 DB 生命周期 |
-| `src/storage/layout-migration.ts` | 旧平面布局的一次性原子迁移 |
 | `src/models/registry.ts` / `src/providers/` | 系统模型池、角色默认 route 和凭据边界 |
 | `src/memory/` | 显式 Memory 与角色级 TDAI runtime |
 | `src/external-agents/run-service.ts` | Run 生命周期、恢复、证据与结果交付 |
@@ -26,7 +25,7 @@
 
 启动顺序：
 
-1. 验证 `<dataRoot>` 并完成/恢复目录迁移；
+1. 验证 `<dataRoot>`；
 2. 打开 `system/settings.db`；
 3. 解析并验证活动角色包；
 4. 打开 `companions/<id>/runtime.db` 和该角色的 EventBus、memory、Run、Artifact、audit/diagnostics；

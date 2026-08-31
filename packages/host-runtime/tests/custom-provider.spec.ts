@@ -9,7 +9,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderCatalog } from "../src/providers/catalog.js";
 import type { CredentialStore } from "../src/providers/credential-store.js";
 import {
-	DURABLE_FILE_TRANSACTION_VERSION,
 	type DurableFileTransactionMarker,
 	durableFileTransactionMarkerPath,
 } from "../src/storage/durable-file-transaction.js";
@@ -54,7 +53,6 @@ function transactionMarker(
 	const parent = dirname(target);
 	const base = basename(target);
 	return {
-		version: DURABLE_FILE_TRANSACTION_VERSION,
 		transactionId,
 		target,
 		staging: join(parent, `.${base}.staging-${transactionId}`),
@@ -448,7 +446,7 @@ describe("custom OpenAI-compatible provider configuration", () => {
 		const previous = providerDocument("stable-relay", "stable-model");
 		writeDocument(modelsPath, previous);
 		const markerPath = durableFileTransactionMarkerPath(root, modelsPath);
-		writeFileSync(markerPath, JSON.stringify({ version: 99, target: modelsPath }));
+		writeFileSync(markerPath, JSON.stringify({ unexpected: true, target: modelsPath }));
 
 		await expect(
 			new ProviderCatalog(emptyCredentials(), root).listProviders(),

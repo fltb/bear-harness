@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventPayloadSchemas, type KnownEventKind } from "@bear-harness/protocol/schema";
 import { afterEach, describe, expect, it } from "vitest";
-import { COMPANION_MIGRATIONS, CompanionDatabase } from "../src/storage/database.js";
+import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../src/storage/database.js";
 import { EventBus } from "../src/storage/event-bus.js";
 
 const roots: string[] = [];
@@ -32,7 +32,7 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 		sourceId: "source-1",
 		logicalName: "Source",
 	},
-	"canon.package_synced": { companionId: "character-1", version: 1 },
+	"canon.package_synced": { companionId: "character-1" },
 	"canon.source_removed": { companionId: "character-1", sourceId: "source-1" },
 	"canon.module_saved": { companionId: "character-1", moduleId: "module-1" },
 	"canon.module_removed": { companionId: "character-1", moduleId: "module-1" },
@@ -93,7 +93,7 @@ function openDatabase(): CompanionDatabase {
 	const root = mkdtempSync(join(tmpdir(), "bear-event-bus-"));
 	roots.push(root);
 	const database = new CompanionDatabase(join(root, "runtime.db"), "event-test-character");
-	database.migrate(COMPANION_MIGRATIONS);
+	database.initialize(COMPANION_SCHEMA_SQL);
 	database.ensureRuntimeIdentity();
 	return database;
 }

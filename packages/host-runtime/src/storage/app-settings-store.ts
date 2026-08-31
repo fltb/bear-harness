@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { AppDatabase } from "./database.js";
 import { appSettings } from "./schema.js";
 
@@ -157,55 +157,9 @@ function parseSystemModelDefaults(json: string): SystemModelDefaults {
 	};
 }
 
-/** Read/write the singleton app_settings row (migration 18). */
+/** Read/write the singleton app_settings row. */
 export class AppSettingsStore {
 	constructor(private readonly db: AppDatabase) {}
-
-	/**
-	 * Move the one legacy plaintext embedding key through a trusted Host-only
-	 * importer before removing it from Settings. The importer must durably store
-	 * the key or retain it for the current session before it resolves.
-	 *
-	 * Ordering is deliberately write-then-scrub: a failed import leaves the
-	 * legacy value untouched, while a crash after import is safe to retry. The
-	 * conditional update prevents a concurrent Settings change from being
-	 * overwritten by the scrub.
-	 */
-	async migrateLegacyEmbeddingCredential(
-		importCredential: (apiKey: string) => Promise<unknown>,
-	): Promise<boolean> {
-		const row = this.db
-			.select({ memoryVectorServiceJson: appSettings.memoryVectorServiceJson })
-			.from(appSettings)
-			.where(eq(appSettings.id, SINGLETON_ID))
-			.get();
-		if (!row) return false;
-		const parsed = parseJson<unknown>(row.memoryVectorServiceJson, null);
-		if (!parsed || typeof parsed !== "object" || !Object.hasOwn(parsed, "apiKey")) return false;
-		const sanitized = { ...(parsed as Record<string, unknown>) };
-		const apiKey = sanitized.apiKey;
-		if (typeof apiKey === "string" && apiKey.length > 0) {
-			await importCredential(apiKey);
-		}
-		delete sanitized.apiKey;
-		const result = this.db
-			.update(appSettings)
-			.set({
-				memoryVectorServiceJson: JSON.stringify(sanitized),
-				updatedAt: new Date().toISOString(),
-			})
-			.where(
-				and(
-					eq(appSettings.id, SINGLETON_ID),
-					eq(appSettings.memoryVectorServiceJson, row.memoryVectorServiceJson),
-				),
-			)
-			.run();
-		if (!result.changes) {
-			throw new Error("legacy embedding credential changed during migration");
-		}
-		return true;
-	}
 
 	load(): AppSettingsRecord {
 		const row = this.db
@@ -233,21 +187,6 @@ export class AppSettingsStore {
 	}
 
 	save(patch: Partial<AppSettingsRecord>): AppSettingsRecord {
-		const stored = this.db
-			.select({ memoryVectorServiceJson: appSettings.memoryVectorServiceJson })
-			.from(appSettings)
-			.where(eq(appSettings.id, SINGLETON_ID))
-			.get();
-		const rawMemorySettings = stored
-			? parseJson<unknown>(stored.memoryVectorServiceJson, null)
-			: null;
-		if (
-			rawMemorySettings &&
-			typeof rawMemorySettings === "object" &&
-			Object.hasOwn(rawMemorySettings, "apiKey")
-		) {
-			throw { kind: "unavailable", reason: "legacy_embedding_credential_migration_required" };
-		}
 		const current = this.load();
 		const memoryVectorService = patch.memoryVectorService
 			? parseMemoryVectorService(JSON.stringify(patch.memoryVectorService))

@@ -14,8 +14,8 @@ for (const entry of readdirSync(root, { withFileTypes: true })) {
 		continue;
 	}
 	const manifest = parse(readFileSync(manifestPath, "utf8"));
-	if (manifest?.version !== 1 || typeof manifest.language !== "string")
-		failures.push(`${entry.name}: canon manifest requires version 1 and language`);
+	if (typeof manifest?.language !== "string")
+		failures.push(`${entry.name}: canon manifest requires language`);
 	for (const field of ["sources", "entities", "modules"])
 		if (!Array.isArray(manifest?.[field]))
 			failures.push(`${entry.name}: canon ${field} must be an array`);

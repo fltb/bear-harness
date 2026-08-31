@@ -8,17 +8,6 @@ const obsoleteName = /cyber(?:[ -]?bear)/giu;
 
 const archivedDocsPrefix = "docs/archive/";
 
-const migrationImplementationFiles = new Set([
-	"apps/desktop/src/main/data-root-migration.ts",
-	"packages/host-runtime/src/memory/tencentdb-backend.ts",
-]);
-const migrationTestFixtures = new Set([
-	"apps/desktop/e2e/legacy-upgrade.fixture.ts",
-	"apps/desktop/tests/data-root-migration.spec.ts",
-	"packages/host-runtime/tests/tencentdb-backend.spec.ts",
-	"packages/host-runtime/tests/tencentdb-runtime.spec.ts",
-]);
-
 const textExtensions = new Set([
 	".bash",
 	".bat",
@@ -92,11 +81,6 @@ function shouldScanFile(path) {
 	);
 }
 
-function permitsMigrationLine(repoPath, line) {
-	if (migrationTestFixtures.has(repoPath)) return true;
-	return migrationImplementationFiles.has(repoPath) && /legacy/i.test(line);
-}
-
 const findings = [];
 
 for (const repoPath of repositoryFiles()) {
@@ -105,7 +89,7 @@ for (const repoPath of repositoryFiles()) {
 
 	for (const [index, line] of readFileSync(path, "utf8").split(/\r?\n/u).entries()) {
 		obsoleteName.lastIndex = 0;
-		if (obsoleteName.test(line) && !permitsMigrationLine(repoPath, line)) {
+		if (obsoleteName.test(line)) {
 			findings.push(`${repoPath}:${index + 1}`);
 		}
 	}

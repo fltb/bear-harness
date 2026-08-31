@@ -2,7 +2,7 @@ import { createReadStream, mkdirSync, renameSync, writeFileSync } from "node:fs"
 import { readdir, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
-import type { DiagnosticRecordV1 } from "./contracts.js";
+import type { DiagnosticRecord } from "./contracts.js";
 import { validateRecord } from "./contracts.js";
 
 const TRACE_ID = /^[0-9a-f]{32}$/;
@@ -11,7 +11,7 @@ const DEFAULT_MAX_RECORDS = 10_000;
 
 export interface DiagnosticTraceQueryResult {
 	traceId: string;
-	records: DiagnosticRecordV1[];
+	records: DiagnosticRecord[];
 	invalidLines: number;
 	truncated: boolean;
 }
@@ -51,7 +51,7 @@ export async function readDiagnosticTrace(
 	if (!Number.isSafeInteger(maxRecords) || maxRecords < 1 || maxRecords > DEFAULT_MAX_RECORDS) {
 		throw new RangeError(`maxRecords must be an integer from 1 to ${DEFAULT_MAX_RECORDS}`);
 	}
-	const records: DiagnosticRecordV1[] = [];
+	const records: DiagnosticRecord[] = [];
 	let invalidLines = 0;
 	let truncated = false;
 	for (const file of await diagnosticLogFiles(root)) {
@@ -72,7 +72,7 @@ export async function readDiagnosticTrace(
 				invalidLines += 1;
 				continue;
 			}
-			const record = parsed as DiagnosticRecordV1;
+			const record = parsed as DiagnosticRecord;
 			if (record.traceId !== traceId) continue;
 			if (records.length >= maxRecords) {
 				truncated = true;
@@ -86,7 +86,7 @@ export async function readDiagnosticTrace(
 
 /** Find the most recently completed companion turn in the retained local logs. */
 export async function findLatestCompanionTurnTraceId(root: string): Promise<string | null> {
-	let latest: DiagnosticRecordV1 | null = null;
+	let latest: DiagnosticRecord | null = null;
 	for (const file of await diagnosticLogFiles(root)) {
 		const lines = createInterface({
 			input: createReadStream(file, { encoding: "utf8" }),
@@ -97,7 +97,7 @@ export async function findLatestCompanionTurnTraceId(root: string): Promise<stri
 			try {
 				const parsed: unknown = JSON.parse(line);
 				if (validateRecord(parsed).length > 0) continue;
-				const record = parsed as DiagnosticRecordV1;
+				const record = parsed as DiagnosticRecord;
 				if (record.name !== "companion.turn") continue;
 				if (!latest || record.timestamp > latest.timestamp) latest = record;
 			} catch {

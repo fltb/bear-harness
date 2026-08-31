@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactStore } from "../src/artifacts/index.js";
 import type { ExecutorLaunchRequest } from "../src/executors/router.js";
 import { ExternalAgentRunService, type RunStatus } from "../src/external-agents/run-service.js";
-import { COMPANION_MIGRATIONS, CompanionDatabase } from "../src/storage/database.js";
+import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../src/storage/database.js";
 import { conversations, runs } from "../src/storage/schema.js";
 
 const roots: string[] = [];
@@ -25,7 +25,7 @@ function setup(options: { launch?: (request: ExecutorLaunchRequest) => Promise<v
 	const root = mkdtempSync(join(tmpdir(), "bear-run-restart-"));
 	roots.push(root);
 	const database = new CompanionDatabase(join(root, "runtime.db"), "bear");
-	database.migrate(COMPANION_MIGRATIONS);
+	database.initialize(COMPANION_SCHEMA_SQL);
 	database.ensureRuntimeIdentity();
 	database.orm.insert(conversations).values({ id: "conversation-1", companionId: "bear" }).run();
 	const publish = vi.fn();

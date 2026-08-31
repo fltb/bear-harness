@@ -18,7 +18,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import { type CredentialVault, createHostRuntime } from "../src/index.js";
 import {
-	DURABLE_FILE_TRANSACTION_VERSION,
 	type DurableFileTransactionMarker,
 	durableFileTransactionMarkerPath,
 } from "../src/storage/durable-file-transaction.js";
@@ -26,6 +25,7 @@ import {
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 const roots: string[] = [];
 const vault: CredentialVault = {
+	securityLevel: "session",
 	isEncryptionAvailable: () => false,
 	encryptString: (value) => Buffer.from(value),
 	decryptString: (value) => value.toString("utf8"),
@@ -55,7 +55,6 @@ function persistImportedRecoveryCopy(
 			? "30000000-0000-4000-8000-000000000001"
 			: "30000000-0000-4000-8000-000000000002";
 	const marker: DurableFileTransactionMarker = {
-		version: DURABLE_FILE_TRANSACTION_VERSION,
 		transactionId,
 		target: join(libraryRoot, characterId),
 		staging: join(libraryRoot, `.${characterId}.staging-${transactionId}`),

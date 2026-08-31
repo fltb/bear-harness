@@ -11,7 +11,6 @@ import { createSpanId, createTraceId } from "../../src/diagnostics/trace.js";
 
 function validRecord() {
 	return {
-		schemaVersion: 1,
 		timestamp: "2026-08-13T00:00:00.000Z",
 		sequence: 1,
 		launchId: "launch-1",
@@ -64,7 +63,6 @@ describe("validateRecord", () => {
 
 	it.each([
 		["unknown top-level key", { ...validRecord(), extra: 1 }],
-		["wrong schemaVersion", { ...validRecord(), schemaVersion: 2 }],
 		["non-UTC timestamp", { ...validRecord(), timestamp: "2026-08-13 00:00:00" }],
 		["zero sequence", { ...validRecord(), sequence: 0 }],
 		["bad kind", { ...validRecord(), kind: "log" }],

@@ -22,7 +22,6 @@ export default defineConfig({
 			"tests/ipc-router.spec.ts",
 			"tests/recovery-state.spec.ts",
 			"tests/recovery-controller.spec.ts",
-			"tests/data-root-migration.spec.ts",
 			"tests/electron-builder-config.spec.ts",
 			"tests/local-file-bridge.spec.ts",
 			"tests/update-service.spec.ts",
@@ -35,7 +34,6 @@ export default defineConfig({
 			reportsDirectory: fileURLToPath(new URL("../../coverage/desktop", import.meta.url)),
 			include: [
 				"src/main/artifact-presenter.ts",
-				"src/main/data-root-migration.ts",
 				"src/main/diagnostics/electron.ts",
 				"src/main/electron-credential-vault.ts",
 				"src/main/ipc-router.ts",

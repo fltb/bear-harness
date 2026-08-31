@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ArtifactStore } from "../../src/artifacts/index.js";
 import { CanonHubService } from "../../src/canon/service.js";
-import { COMPANION_MIGRATIONS, CompanionDatabase } from "../../src/storage/database.js";
+import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../../src/storage/database.js";
 import { EventBus } from "../../src/storage/event-bus.js";
 
 function vectorMetadata(database: CompanionDatabase, key: "dimensions" | "fingerprint"): string {
@@ -34,7 +34,7 @@ describe("CanonHubService user workflow", () => {
 	beforeEach(() => {
 		root = mkdtempSync(join(tmpdir(), "bear-canon-"));
 		database = new CompanionDatabase(join(root, "runtime.db"), "character-a");
-		database.migrate(COMPANION_MIGRATIONS);
+		database.initialize(COMPANION_SCHEMA_SQL);
 		database.ensureRuntimeIdentity();
 		eventBus = new EventBus(database.orm);
 		service = new CanonHubService(
@@ -166,42 +166,12 @@ describe("CanonHubService user workflow", () => {
 		expect(storedEmbedding(database)).toEqual([1, 0, 0]);
 	});
 
-	it("invalidates legacy vectors without a fingerprint before hybrid retrieval", async () => {
-		const vectorService = new CanonHubService(
-			database.orm,
-			new ArtifactStore(database.orm, join(root, "legacy-vector-cas")),
-			eventBus,
-			() => ({
-				isReady: () => true,
-				getDimensions: () => 2,
-				getProviderInfo: () => ({ provider: "remote", model: "embedding-v1" }),
-				embed: async (text: string) => new Float32Array(/moon|lunar/i.test(text) ? [1, 0] : [0, 1]),
-			}),
-			database,
-		);
-		vectorService.addSource("character-a", "legacy.txt", "The moon crosses the winter sky.");
-		await vectorService.indexPending("character-a");
-		database.connection.prepare("DELETE FROM canon_vector_meta WHERE key = 'fingerprint'").run();
-
-		await vectorService.retrieveHybrid("character-a", "lunar", { includeAdjacent: false });
-
-		expect(vectorMetadata(database, "fingerprint")).toMatch(/^[0-9a-f]{64}$/);
-		expect(
-			database.connection.prepare("SELECT embedding FROM canon_chunks").get() as {
-				embedding: Buffer | null;
-			},
-		).toEqual({ embedding: null });
-		expect(database.connection.prepare("SELECT chunk_id FROM canon_chunk_vectors").all()).toEqual(
-			[],
-		);
-	});
-
 	it("keeps vector invalidation physically isolated between character databases", async () => {
 		const roleA = new CompanionDatabase(join(root, "companions", "a", "runtime.db"), "role-a");
 		const roleB = new CompanionDatabase(join(root, "companions", "b", "runtime.db"), "role-b");
 		try {
 			for (const role of [roleA, roleB]) {
-				role.migrate(COMPANION_MIGRATIONS);
+				role.initialize(COMPANION_SCHEMA_SQL);
 				role.ensureRuntimeIdentity();
 			}
 			const createRoleService = (
@@ -300,7 +270,6 @@ describe("CanonHubService user workflow", () => {
 	it("syncs package canon idempotently and retrieves Chinese aliases, routed modules, and adjacent context", async () => {
 		const canon = {
 			manifest: {
-				version: 1 as const,
 				language: "zh-CN",
 				sources: [
 					{
@@ -363,7 +332,7 @@ describe("CanonHubService user workflow", () => {
 		expect(eventBus.after(0)).toEqual([
 			expect.objectContaining({
 				kind: "canon.package_synced",
-				payload: { companionId: "character-a", version: 1 },
+				payload: { companionId: "character-a" },
 			}),
 		]);
 		expect(service.listSources("character-a")).toHaveLength(1);

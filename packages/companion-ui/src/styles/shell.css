@@ -7,13 +7,13 @@
 	--radius-md: 12px;
 	--radius-lg: 16px;
 	--semantic-role-default: var(--text-strong);
-	--semantic-role-muted: var(--text-muted);
+	--semantic-role-muted: var(--sys-text-muted);
 	--semantic-role-accent: var(--text-action);
 	--semantic-role-danger: var(--text-danger);
 	--semantic-role-on-action: var(--text-on-action);
-	color: var(--text);
-	font-family: var(--font-body);
-	background: var(--surface);
+	color: var(--sys-text);
+	font-family: var(--font-sans);
+	background: var(--sys-surface);
 }
 
 .thread-head {
@@ -23,7 +23,7 @@
 .thread-head .scene-title {
 	@apply text-sm;
 	color: var(--text-strong);
-	font-family: var(--font-heading);
+	font-family: var(--font-serif);
 }
 
 /* ------------------------------------------------------------------ */
@@ -46,7 +46,7 @@
 
 .identity span {
 	@apply mt-1 block text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .identity-avatar {
@@ -65,7 +65,7 @@
 
 .search-trigger kbd {
 	@apply ml-auto rounded-md border border-line px-1 py-0.5 text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 	background: var(--surface-subtle);
 }
 
@@ -79,7 +79,7 @@
 }
 
 .search-trigger input::placeholder {
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .new-conversation {
@@ -137,7 +137,7 @@
 .conversation-actions button {
 	@apply size-5 border-0 p-0;
 	background: var(--surface-overlay);
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 .conversation-rename {
 	@apply flex gap-1 p-2;
@@ -184,7 +184,7 @@
 
 .role-plugin-warning {
 	@apply mt-1 block text-xs;
-	color: var(--amber);
+	color: var(--sys-warning);
 }
 
 .current-role-package-manager,
@@ -198,13 +198,13 @@
 }
 
 .current-role-package-choice[data-selected] {
-	border-color: var(--accent);
+	border-color: var(--sys-accent);
 	background: var(--surface-success);
 }
 
 .current-role-package-summary {
 	@apply grid gap-3 rounded-lg p-4;
-	border: 1px solid var(--line);
+	border: 1px solid var(--sys-border);
 	background: var(--surface-subtle);
 }
 
@@ -216,17 +216,17 @@
 .current-role-package-summary span,
 .current-role-package-summary dt {
 	@apply text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .role-package-metadata {
 	@apply border-t pt-3;
-	border-color: var(--line);
+	border-color: var(--sys-border);
 }
 
 .role-package-metadata summary {
 	@apply cursor-pointer text-xs font-semibold;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .role-package-metadata dl {
@@ -244,18 +244,18 @@
 
 .current-role-package-actions {
 	@apply sticky bottom-0 rounded-lg p-2.5;
-	border: 1px solid var(--line);
-	background: var(--surface);
+	border: 1px solid var(--sys-border);
+	background: var(--sys-surface);
 }
 
 .current-role-package-actions span {
 	@apply mr-auto text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .character-deletion-zone {
 	@apply grid gap-3 rounded-lg border p-4;
-	border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+	border-color: color-mix(in srgb, var(--sys-danger) 35%, var(--sys-border));
 	background: var(--surface-danger);
 }
 
@@ -272,12 +272,12 @@
 
 .character-deletion-zone header span,
 .character-deletion-option span {
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .character-deletion-option {
 	@apply flex items-start justify-between gap-4 border-t pt-3;
-	border-color: color-mix(in srgb, var(--danger) 24%, var(--line));
+	border-color: color-mix(in srgb, var(--sys-danger) 24%, var(--sys-border));
 }
 
 .character-deletion-option > div {
@@ -290,7 +290,7 @@
 
 .character-deletion-option button[data-variant="danger"] {
 	@apply shrink-0;
-	border-color: color-mix(in srgb, var(--danger) 50%, var(--line));
+	border-color: color-mix(in srgb, var(--sys-danger) 50%, var(--sys-border));
 	color: var(--text-danger);
 }
 
@@ -301,8 +301,8 @@
 
 .plugin-trust-dialog {
 	@apply fixed left-1/2 top-1/2 w-4/5 max-w-md -translate-x-1/2 -translate-y-1/2 rounded-md p-5;
-	border: 1px solid var(--line);
-	background: var(--surface);
+	border: 1px solid var(--sys-border);
+	background: var(--sys-surface);
 	--semantic-fg-role: default;
 	color: var(--semantic-role-default);
 }
@@ -336,9 +336,9 @@
 
 .confirmation-dialog {
 	@apply fixed left-1/2 top-1/2 w-4/5 max-w-md -translate-x-1/2 -translate-y-1/2 rounded-md border p-5;
-	border-color: var(--line);
-	background: var(--surface);
-	color: var(--text);
+	border-color: var(--sys-border);
+	background: var(--sys-surface);
+	color: var(--sys-text);
 }
 
 .confirmation-dialog h2 {
@@ -347,7 +347,7 @@
 
 .confirmation-dialog p {
 	@apply m-0 text-sm leading-relaxed;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .confirmation-actions {
@@ -355,12 +355,12 @@
 }
 
 .confirmation-actions .danger-action {
-	border-color: var(--danger);
+	border-color: var(--sys-danger);
 	color: var(--text-danger);
 }
 
 .workshop-history {
-	border-top: 1px solid var(--line);
+	border-top: 1px solid var(--sys-border);
 	@apply pt-3;
 }
 
@@ -370,7 +370,7 @@
 
 .workshop-history-row {
 	@apply flex min-h-8 items-center justify-between text-sm;
-	border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+	border-top: 1px solid color-mix(in srgb, var(--sys-border) 65%, transparent);
 	--semantic-fg-role: muted;
 	color: var(--semantic-role-muted);
 }
@@ -384,7 +384,7 @@
 }
 .canon-row {
 	@apply flex items-center justify-between gap-3 py-2.5;
-	border-top: 1px solid var(--line);
+	border-top: 1px solid var(--sys-border);
 }
 .canon-row div {
 	@apply grid min-w-0 gap-1;
@@ -414,7 +414,7 @@
 .nav-item[aria-current="page"]::before {
 	content: "";
 	@apply absolute inset-y-2.5 left-0 w-1 rounded-md;
-	background: var(--accent);
+	background: var(--sys-accent);
 }
 
 .nav-item strong {
@@ -423,7 +423,7 @@
 
 .nav-item span {
 	@apply text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .system-section {
@@ -433,7 +433,7 @@
 
 .section-label {
 	@apply mb-2 text-xs font-extrabold tracking-normal;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .system-nav {
@@ -444,7 +444,7 @@
 
 .system-nav .gear {
 	@apply mr-2;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .role-list {
@@ -457,8 +457,8 @@
 
 .button-like {
 	@apply inline-flex min-h-9 cursor-pointer items-center justify-center border border-line px-3 text-xs;
-	color: var(--text);
-	background: var(--surface-alt);
+	color: var(--sys-text);
+	background: var(--sys-surface-raised);
 }
 
 .button-like input[type="file"] {
@@ -499,7 +499,7 @@
 
 .settings-group-heading {
 	@apply grid gap-1 border-t pt-5;
-	border-color: var(--line);
+	border-color: var(--sys-border);
 }
 
 .settings-group-heading:first-child {
@@ -520,12 +520,12 @@
 
 .fallback-section-title {
 	@apply mt-2 border-t pt-5;
-	border-color: var(--line);
+	border-color: var(--sys-border);
 }
 
 .backstage-sheet {
 	--semantic-role-default: var(--text-strong);
-	--semantic-role-muted: var(--text-muted);
+	--semantic-role-muted: var(--sys-text-muted);
 	--semantic-role-accent: var(--text-action);
 	--semantic-role-danger: var(--text-danger);
 	--semantic-role-on-action: var(--text-on-action);
@@ -545,7 +545,7 @@
 .backstage-sheet option {
 	--semantic-fg-role: default;
 	color: var(--semantic-role-default);
-	background: var(--surface);
+	background: var(--sys-surface);
 }
 .backstage-sheet label:not(.field-label) {
 	--semantic-fg-role: muted;
@@ -561,10 +561,10 @@
 .model-settings input {
 	@apply w-full rounded-md px-3 py-2 text-sm outline-none;
 	@apply min-h-10;
-	border: 1px solid var(--line);
+	border: 1px solid var(--sys-border);
 	--semantic-fg-role: default;
 	color: var(--semantic-role-default);
-	background: var(--surface-alt);
+	background: var(--sys-surface-raised);
 	color-scheme: dark;
 }
 
@@ -617,7 +617,7 @@
 .provider-setup input,
 .provider-setup textarea {
 	@apply box-border w-full min-w-0 rounded-lg px-3 py-2 text-sm leading-normal outline-none;
-	border: 1px solid var(--line);
+	border: 1px solid var(--sys-border);
 	color: var(--text-strong);
 	background: var(--surface-control);
 	font: inherit;
@@ -634,19 +634,19 @@
 
 .provider-setup input::placeholder,
 .provider-setup textarea::placeholder {
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .provider-setup input:focus-visible,
 .provider-setup textarea:focus-visible {
-	border-color: var(--accent);
+	border-color: var(--sys-accent);
 	outline: 3px solid var(--focus-ring);
 	outline-offset: 2px;
 }
 
 .provider-setup-editor {
 	@apply grid min-w-0 gap-3 rounded-lg p-4;
-	border: 1px solid var(--line);
+	border: 1px solid var(--sys-border);
 	background: var(--surface-subtle);
 }
 
@@ -661,7 +661,7 @@
 .provider-setup button[data-variant="secondary"],
 .provider-setup button[data-variant="danger"] {
 	@apply min-h-10 rounded-lg px-3 text-sm font-semibold cursor-pointer;
-	border: 1px solid var(--line);
+	border: 1px solid var(--sys-border);
 	background: var(--surface-control);
 	color: var(--text-strong);
 	font: inherit;
@@ -669,20 +669,20 @@
 
 .provider-setup button[data-variant="secondary"]:hover:not(:disabled),
 .provider-setup button[data-variant="secondary"]:focus-visible {
-	border-color: var(--accent);
+	border-color: var(--sys-accent);
 	background: var(--surface-success);
 }
 
 .provider-setup button[data-variant="danger"] {
 	--semantic-fg-role: danger;
-	border-color: color-mix(in srgb, var(--danger) 40%, var(--line));
+	border-color: color-mix(in srgb, var(--sys-danger) 40%, var(--sys-border));
 	color: var(--text-danger);
 	background: var(--surface-danger);
 }
 
 .provider-setup button[data-variant="danger"]:hover:not(:disabled),
 .provider-setup button[data-variant="danger"]:focus-visible {
-	border-color: var(--danger);
+	border-color: var(--sys-danger);
 }
 
 .oauth-login {
@@ -719,7 +719,7 @@
 
 .provider-card {
 	@apply grid min-w-0 gap-2.5 rounded-lg p-4;
-	border: 1px solid var(--line);
+	border: 1px solid var(--sys-border);
 	background: var(--surface-panel);
 }
 
@@ -748,7 +748,7 @@
 
 .provider-import {
 	@apply grid min-w-0 gap-3 rounded-lg px-3 py-3;
-	border: 1px solid var(--line);
+	border: 1px solid var(--sys-border);
 	background: var(--surface-subtle);
 }
 
@@ -799,17 +799,17 @@
 }
 .provider-editor-pane {
 	@apply col-span-2 grid min-w-0 content-start gap-3 pl-6;
-	border-left: 1px solid var(--line);
+	border-left: 1px solid var(--sys-border);
 }
 .provider-card[data-selected] {
-	border-color: var(--accent);
+	border-color: var(--sys-accent);
 	background: var(--surface-control);
 }
 
 .model-settings option {
 	--semantic-fg-role: default;
 	color: var(--semantic-role-default);
-	background: var(--surface);
+	background: var(--sys-surface);
 }
 
 .model-settings label.field:has(> input[type="password"]) {
@@ -822,8 +822,8 @@
 
 .model-settings label.field:has(> input[type="password"]) > button {
 	@apply min-h-10 rounded-md px-3.5 py-2;
-	border: 1px solid var(--line);
-	background: var(--surface-alt);
+	border: 1px solid var(--sys-border);
+	background: var(--sys-surface-raised);
 }
 
 .inline-disclosure {
@@ -836,12 +836,12 @@
 
 .inline-custom-provider {
 	@apply grid gap-4 pt-4;
-	border-top: 1px solid var(--line);
+	border-top: 1px solid var(--sys-border);
 }
 
 .secondary-action {
 	@apply min-h-10 rounded-md px-3.5 py-2;
-	border: 1px solid var(--accent);
+	border: 1px solid var(--sys-accent);
 	background: var(--surface-success);
 }
 

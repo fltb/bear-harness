@@ -9,9 +9,9 @@
 
 .language-warning {
 	@apply absolute left-1/2 top-4 z-80 flex w-4/5 max-w-2xl -translate-x-1/2 items-center justify-between gap-4 rounded-lg px-3 py-2.5;
-	border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent);
-	color: var(--text);
-	background: color-mix(in srgb, var(--surface) 94%, var(--amber) 6%);
+	border: 1px solid color-mix(in srgb, var(--sys-warning) 55%, transparent);
+	color: var(--sys-text);
+	background: color-mix(in srgb, var(--sys-surface) 94%, var(--sys-warning) 6%);
 	box-shadow: 0 10px 30px var(--shadow-color);
 }
 
@@ -21,14 +21,14 @@
 
 .language-warning p {
 	@apply mt-1 text-xs leading-relaxed;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .language-warning button {
 	@apply shrink-0 rounded-md px-2.5 py-2 text-xs;
-	border: 1px solid var(--line);
-	color: var(--text);
-	background: var(--surface-alt);
+	border: 1px solid var(--sys-border);
+	color: var(--sys-text);
+	background: var(--sys-surface-raised);
 }
 
 .scene-backdrop {
@@ -82,15 +82,15 @@
 
 .tool-trace {
 	@apply w-full max-w-md self-start rounded-lg px-2.5 py-2 text-xs leading-relaxed;
-	border: 1px solid color-mix(in srgb, var(--line) 78%, var(--accent) 22%);
-	color: var(--text-muted);
-	background: color-mix(in srgb, var(--surface-alt) 85%, transparent);
+	border: 1px solid color-mix(in srgb, var(--sys-border) 78%, var(--sys-accent) 22%);
+	color: var(--sys-text-muted);
+	background: color-mix(in srgb, var(--sys-surface-raised) 85%, transparent);
 	animation: tool-trace-enter 180ms ease-out;
 }
 
 .tool-trace summary {
 	@apply cursor-pointer font-bold;
-	color: var(--text);
+	color: var(--sys-text);
 }
 
 .tool-trace ul {
@@ -103,7 +103,7 @@
 
 .tool-trace li::before {
 	content: "·";
-	color: var(--accent);
+	color: var(--sys-accent);
 }
 
 .tool-trace li[data-status="running"]::before {
@@ -113,11 +113,11 @@
 
 .tool-trace li[data-status="failed"]::before {
 	content: "×";
-	color: var(--danger);
+	color: var(--sys-danger);
 }
 
 .tool-trace li span {
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 @keyframes tool-trace-enter {

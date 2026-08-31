@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, realpathSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	createDiagnostics,
@@ -9,7 +9,6 @@ import {
 	type Diagnostics,
 	isErrorType,
 	parseTraceparent,
-	prepareRuntimeLayout,
 	RENDERER_FAULT_KINDS,
 	RuntimeLayout,
 } from "@bear-harness/host-runtime";
@@ -41,7 +40,6 @@ if (requestedHost !== "127.0.0.1" || publicIntent || productionIntent) {
 const port = Number(process.env.BEAR_WEB_DEV_HOST_PORT ?? "3201");
 const dataDir = webDevDataDirectory(productConfig.dataDirectoryName);
 mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-prepareRuntimeLayout(dataDir);
 const runtimeLayout = new RuntimeLayout(dataDir);
 const token = randomBytes(32).toString("hex");
 const debugEnabled = process.env.BEAR_WEB_DEV_DEBUG === "1";

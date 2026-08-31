@@ -74,13 +74,13 @@ describe("character package drafts", () => {
 				id: draftId,
 				expectedRevision: 2,
 				files: {
-					"character.yaml": { encoding: "utf8", content: "id: atelier-test\nversion: 2\n" },
+					"character.yaml": { encoding: "utf8", content: "id: atelier-test\n" },
 				},
 			});
 			expect(secondPatch.data.draft).toMatchObject({
 				currentRevision: 3,
 				files: {
-					"character.yaml": { encoding: "utf8", content: "id: atelier-test\nversion: 2\n" },
+					"character.yaml": { encoding: "utf8", content: "id: atelier-test\n" },
 					"locales/zh-CN.yaml": { encoding: "utf8", content: "name: 测试\n" },
 				},
 			});

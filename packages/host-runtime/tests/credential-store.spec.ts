@@ -10,7 +10,7 @@ import {
 	REMOTE_EMBEDDING_CREDENTIAL_ID,
 } from "../src/providers/credential-store.js";
 
-const BLOB_PREFIX = "vault-v1:";
+const BLOB_PREFIX = "vault:";
 
 function makeVault(overrides: Partial<CredentialVault> = {}): CredentialVault {
 	return {

@@ -1,7 +1,7 @@
 import {
-	COMPANION_MIGRATIONS,
+	COMPANION_SCHEMA_SQL,
 	CompanionDatabase,
-	SYSTEM_MIGRATIONS,
+	SYSTEM_SCHEMA_SQL,
 	SystemDatabase,
 } from "./database.js";
 import { type CompanionPaths, RuntimeLayout, requireCompanionId } from "./layout.js";
@@ -22,7 +22,7 @@ export class CompanionStorageRegistry {
 		this.layout = new RuntimeLayout(dataRoot);
 		this.layout.ensureSystemDirectories();
 		this.system = new SystemDatabase(this.layout.systemDatabase);
-		this.system.migrate(SYSTEM_MIGRATIONS);
+		this.system.initialize(SYSTEM_SCHEMA_SQL);
 		this.system.assertSchemaContract();
 	}
 
@@ -34,7 +34,7 @@ export class CompanionStorageRegistry {
 		const paths = this.layout.ensureCompanionDirectories(id);
 		const database = new CompanionDatabase(paths.database, id);
 		try {
-			database.migrate(COMPANION_MIGRATIONS);
+			database.initialize(COMPANION_SCHEMA_SQL);
 			database.ensureRuntimeIdentity();
 			database.assertSchemaContract();
 		} catch (error) {

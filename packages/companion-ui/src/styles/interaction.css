@@ -10,7 +10,7 @@
 
 .msg.user {
 	@apply max-w-2/3 self-end border;
-	border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+	border-color: color-mix(in srgb, var(--sys-accent) 35%, transparent);
 	color: var(--text-on-message);
 	background: var(--surface-message-user);
 }
@@ -26,8 +26,8 @@
 
 .streaming-status {
 	@apply inline-block size-3.5 rounded-full;
-	border: 2px solid color-mix(in srgb, var(--accent) 28%, transparent);
-	border-top-color: var(--accent);
+	border: 2px solid color-mix(in srgb, var(--sys-accent) 28%, transparent);
+	border-top-color: var(--sys-accent);
 	animation: streaming-spinner 0.75s linear infinite;
 }
 
@@ -64,7 +64,7 @@
 
 .msg-menu-trigger {
 	@apply hidden h-6 w-8 place-items-center rounded-md border-0 p-0 text-xs leading-none;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 	background: transparent;
 }
 
@@ -92,7 +92,7 @@
 
 .msg-menu-trigger:hover,
 .msg-menu-trigger:focus-visible {
-	color: var(--ink);
+	color: var(--sys-text);
 	background: var(--surface-success);
 }
 
@@ -113,13 +113,13 @@
 
 .message-operations button {
 	@apply min-h-7 rounded-md border-0 px-2 py-1 text-xs cursor-pointer;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 	background: var(--surface-control);
 }
 
 .message-operations button:hover:not(:disabled),
 .message-operations button:focus-visible {
-	color: var(--ink);
+	color: var(--sys-text);
 	background: var(--surface-success);
 }
 
@@ -154,13 +154,13 @@
 
 .version-pager span {
 	@apply text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .edit-box {
 	@apply min-h-18 w-full resize-y rounded-lg border px-2.5 py-2 text-xs leading-relaxed outline-0;
 	border-color: var(--line-strong);
-	color: var(--ink);
+	color: var(--sys-text);
 	background: var(--surface-message);
 }
 
@@ -172,7 +172,7 @@
 .msg.user .edit-box {
 	color: var(--text-on-message);
 	background: var(--surface-message-user);
-	border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+	border-color: color-mix(in srgb, var(--sys-accent) 35%, transparent);
 }
 
 .correct-panel {
@@ -203,15 +203,15 @@
 
 .correct-reasons button.selected,
 .correct-scopes button.selected {
-	border-color: var(--accent);
+	border-color: var(--sys-accent);
 	color: var(--text-action);
-	background: color-mix(in srgb, var(--accent) 18%, transparent);
+	background: color-mix(in srgb, var(--sys-accent) 18%, transparent);
 }
 
 .correct-panel input {
 	@apply rounded-lg px-2.5 py-2 text-xs outline-0;
 	border: 1px solid var(--line-strong);
-	color: var(--ink);
+	color: var(--sys-text);
 	background: var(--surface-message);
 }
 
@@ -226,7 +226,7 @@
 
 .thread-error {
 	@apply rounded-lg px-3 py-2 text-xs leading-relaxed;
-	border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+	border: 1px solid color-mix(in srgb, var(--sys-danger) 40%, transparent);
 	color: var(--text-danger);
 	background: var(--surface-danger);
 }
@@ -239,12 +239,12 @@
 
 .conversations-empty {
 	@apply px-1.5 py-3.5 text-xs leading-relaxed;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .nav-item .unread-dot {
 	@apply absolute right-2.5 top-3 size-2 rounded-full;
-	background: var(--amber);
+	background: var(--sys-warning);
 }
 
 /* --- work pill + run queue (thread head) --------------------------- */
@@ -270,13 +270,13 @@
 
 .pulse {
 	@apply size-2 rounded-full;
-	background: var(--aurora);
+	background: var(--sys-accent-hover);
 	box-shadow: 0 0 0 5px var(--surface-success);
 }
 
 .queue-pop {
 	@apply absolute right-0 top-full z-70 mt-2 grid w-80 gap-2 rounded-xl p-3;
-	border: 1px solid var(--line);
+	border: 1px solid var(--sys-border);
 	background: var(--surface-panel);
 	box-shadow: var(--shadow-app);
 }
@@ -309,7 +309,7 @@
 
 .queue-pop .empty {
 	@apply grid place-items-center px-2 py-5 text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .conversation-state-trigger {
@@ -324,7 +324,7 @@
 }
 
 .conversation-state-panel {
-	border-left: 1px solid var(--line);
+	border-left: 1px solid var(--sys-border);
 	background: var(--surface-panel);
 	box-shadow: var(--shadow-app);
 	container-type: inline-size;
@@ -353,7 +353,7 @@
 .conversation-state-head p,
 .conversation-state-group > p {
 	@apply mb-0 mt-1 text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .conversation-state-close,
@@ -391,18 +391,18 @@
 .conversation-state-field-copy span,
 .conversation-state-actions {
 	@apply text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .conversation-state-field output {
 	@apply self-center text-right text-sm;
-	color: var(--text);
+	color: var(--sys-text);
 }
 
 .conversation-state-field input {
 	@apply min-h-9 w-full rounded-lg border border-line px-3 text-sm outline-none;
-	color: var(--text);
-	background: var(--surface);
+	color: var(--sys-text);
+	background: var(--sys-surface);
 }
 
 .conversation-state-actions {
@@ -420,19 +420,19 @@
 .intro-card {
 	@apply w-3/4 max-w-2xl rounded-3xl p-6;
 	border: 1px solid var(--line-strong);
-	color: var(--text);
-	background: var(--surface);
+	color: var(--sys-text);
+	background: var(--sys-surface);
 	box-shadow: var(--shadow-app);
 }
 
 .intro-step {
 	@apply text-xs font-extrabold tracking-normal;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .intro-card h2 {
 	@apply mb-2 mt-2 text-2xl font-semibold;
-	font-family: var(--font-heading);
+	font-family: var(--font-serif);
 	color: var(--text-strong);
 }
 
@@ -443,7 +443,7 @@
 
 .intro-quote {
 	@apply mt-4 px-3 py-2.5;
-	border-left: 2px solid var(--aurora);
+	border-left: 2px solid var(--sys-accent-hover);
 	color: var(--text-strong);
 	background: var(--surface-success);
 }
@@ -458,13 +458,13 @@
 
 .intro-form label {
 	@apply text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .intro-form input {
 	@apply rounded-lg border border-line p-3 text-xs outline-0;
-	color: var(--text);
-	background: var(--surface-alt);
+	color: var(--sys-text);
+	background: var(--sys-surface-raised);
 	color-scheme: dark;
 }
 
@@ -475,14 +475,14 @@
 
 .intro-form select {
 	@apply rounded-lg border border-line p-3 text-xs outline-0;
-	color: var(--text);
-	background: var(--surface-alt);
+	color: var(--sys-text);
+	background: var(--sys-surface-raised);
 	color-scheme: dark;
 }
 
 .intro-form option {
-	color: var(--text);
-	background: var(--surface);
+	color: var(--sys-text);
+	background: var(--sys-surface);
 }
 
 .model-setup .intro-card {
@@ -503,7 +503,7 @@
 
 .intro-picker .select-trigger {
 	@apply w-full rounded-lg;
-	background: var(--surface-alt);
+	background: var(--sys-surface-raised);
 }
 .intro-provider-tiles {
 	@apply mb-1 mt-4 grid grid-cols-2 gap-2;
@@ -519,19 +519,19 @@
 }
 .intro-provider-tile {
 	@apply grid min-h-14 content-start gap-0.5 rounded-xl px-3 py-2.5 text-left;
-	border: 1px solid var(--line);
+	border: 1px solid var(--sys-border);
 	background: var(--surface-panel);
-	color: var(--text);
+	color: var(--sys-text);
 	@apply cursor-pointer;
 }
 .intro-provider-tile:hover {
-	border-color: var(--aurora);
-	background: color-mix(in srgb, var(--accent) 10%, transparent);
+	border-color: var(--sys-accent-hover);
+	background: color-mix(in srgb, var(--sys-accent) 10%, transparent);
 }
 .intro-provider-tile[data-selected] {
-	border-color: var(--aurora);
-	background: color-mix(in srgb, var(--accent) 14%, transparent);
-	box-shadow: 0 0 0 1px color-mix(in srgb, var(--aurora) 40%, transparent) inset;
+	border-color: var(--sys-accent-hover);
+	background: color-mix(in srgb, var(--sys-accent) 14%, transparent);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--sys-accent-hover) 40%, transparent) inset;
 }
 .intro-provider-tile:focus-visible {
 	outline: 3px solid var(--focus-ring);
@@ -542,7 +542,7 @@
 }
 .intro-provider-tile span {
 	@apply break-words text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .intro-choices {
@@ -551,14 +551,14 @@
 
 .intro-choice {
 	@apply min-h-16 rounded-xl p-2.5 text-left;
-	border: 1px solid var(--line);
+	border: 1px solid var(--sys-border);
 	color: var(--text-strong);
 	background: var(--surface-success);
 }
 
 .intro-choice:hover {
-	border-color: var(--aurora);
-	background: color-mix(in srgb, var(--accent) 10%, transparent);
+	border-color: var(--sys-accent-hover);
+	background: color-mix(in srgb, var(--sys-accent) 10%, transparent);
 }
 
 .intro-choice strong,
@@ -572,7 +572,7 @@
 
 .intro-choice span {
 	@apply mt-1 text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .intro-actions {
@@ -586,7 +586,7 @@
 }
 
 .intro button[data-variant="primary"]:hover:not(:disabled) {
-	background: color-mix(in srgb, var(--accent) 88%, var(--text) 12%);
+	background: color-mix(in srgb, var(--sys-accent) 88%, var(--sys-text) 12%);
 }
 
 .intro button[data-variant="primary"]:disabled {
@@ -595,14 +595,14 @@
 
 .intro button[data-variant="secondary"] {
 	@apply min-h-8 rounded-md px-3;
-	border: 1px solid var(--line);
-	color: var(--text);
-	background: var(--surface-alt);
+	border: 1px solid var(--sys-border);
+	color: var(--sys-text);
+	background: var(--sys-surface-raised);
 }
 
 .intro-error {
 	@apply mt-3 px-3 py-2 text-xs leading-relaxed;
-	border-left: 3px solid var(--danger);
+	border-left: 3px solid var(--sys-danger);
 	color: var(--text-danger);
 	background: var(--surface-danger);
 }
@@ -671,9 +671,9 @@
 @keyframes presence-amber-pulse {
 	0%,
 	100% {
-		filter: drop-shadow(0 0 0 color-mix(in srgb, var(--amber) 35%, transparent));
+		filter: drop-shadow(0 0 0 color-mix(in srgb, var(--sys-warning) 35%, transparent));
 	}
 	50% {
-		filter: drop-shadow(0 0 14px color-mix(in srgb, var(--amber) 72%, transparent));
+		filter: drop-shadow(0 0 14px color-mix(in srgb, var(--sys-warning) 72%, transparent));
 	}
 }

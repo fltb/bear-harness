@@ -4,7 +4,7 @@
 
 .thread {
 	@apply flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto rounded-t-2xl border-x px-5 pb-5 pt-3;
-	border-color: color-mix(in srgb, var(--line) 55%, transparent);
+	border-color: color-mix(in srgb, var(--sys-border) 55%, transparent);
 	background: linear-gradient(
 		to bottom,
 		color-mix(in srgb, var(--surface-canvas) 78%, transparent),
@@ -26,7 +26,7 @@
 
 .timeline-load-older {
 	@apply self-center rounded-lg border px-3 py-2 text-xs;
-	border-color: var(--line);
+	border-color: var(--sys-border);
 	color: var(--text-soft);
 	background: var(--surface-control);
 }
@@ -38,14 +38,14 @@
 .bear-msg {
 	@apply self-start border;
 	border-color: var(--line-strong);
-	color: var(--ink);
+	color: var(--sys-text);
 	background: var(--surface-message);
 	box-shadow: 0 8px 22px var(--shadow-color);
 }
 
 .msg-meta {
 	@apply mb-1 text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .bear-msg em {
@@ -70,7 +70,7 @@
 
 .pi-tool-status {
 	@apply text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .pi-tool-calls {
@@ -85,7 +85,7 @@
 
 .pi-tool-call-id {
 	@apply text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -112,7 +112,7 @@
 
 .message-version-pager {
 	@apply mt-2 flex items-center justify-center gap-2 text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .message-version-pager button {
@@ -126,7 +126,7 @@
 		"input input input"
 		"routing routing routing"
 		"attach model send";
-	border-color: var(--line);
+	border-color: var(--sys-border);
 	background: var(--surface-message);
 	box-shadow: 0 12px 30px var(--shadow-color);
 }
@@ -137,7 +137,7 @@
 
 .composer textarea {
 	@apply min-h-10 w-full resize-none border-0 bg-transparent px-1 py-2.5 outline-0;
-	color: var(--ink);
+	color: var(--sys-text);
 }
 
 .composer-model {
@@ -147,7 +147,7 @@
 
 .composer-model-trigger {
 	@apply inline-flex min-h-8 min-w-0 max-w-full items-center gap-1 rounded-md border-0 px-2 py-1 text-xs;
-	color: var(--ink);
+	color: var(--sys-text);
 	background: transparent;
 	font: inherit;
 	@apply cursor-pointer;
@@ -159,7 +159,7 @@
 }
 
 .composer-model-trigger:focus-visible {
-	outline: 2px solid var(--accent);
+	outline: 2px solid var(--sys-accent);
 	outline-offset: 1px;
 }
 
@@ -173,7 +173,7 @@
 
 .composer-model-icon {
 	@apply shrink-0 text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .composer-model-content {
@@ -249,7 +249,7 @@
 .composer-image-routing {
 	grid-area: routing;
 	@apply flex min-h-6 flex-wrap items-center gap-2 px-1.5 text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .composer-image-routing[data-state="missing"],
@@ -307,7 +307,7 @@
 }
 
 .timeline-attachment-row > span {
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .shell:has(> .attachment-preview-column) .main {
@@ -322,7 +322,7 @@
 .attachment-preview-column {
 	@apply col-span-1 grid min-h-0 min-w-0 gap-3 overflow-hidden border-l p-4;
 	grid-template-rows: auto minmax(0, 1fr) auto;
-	border-color: var(--line);
+	border-color: var(--sys-border);
 	background: var(--surface-panel);
 }
 
@@ -336,7 +336,7 @@
 
 .attachment-preview-column header small {
 	@apply truncate text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .attachment-preview-column header strong {
@@ -363,7 +363,7 @@
 }
 
 .attachment-preview-actions [role="status"] {
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .attachment-preview-actions [role="alert"] {
@@ -435,7 +435,7 @@
 }
 
 .attachment-preview-files button small {
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .attachment-preview-metadata {
@@ -449,7 +449,7 @@
 }
 
 .attachment-preview-metadata dt {
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .attachment-preview-metadata dd {

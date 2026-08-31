@@ -147,9 +147,8 @@ export class HostRuntime {
 			.from(activeCharacter)
 			.where(eq(activeCharacter.singleton, 1))
 			.get();
-		if (hasPersistedActive)
-			this.characterLoader.seed(systemDb, handle.database.orm, seedEvents, character);
-		else this.characterLoader.activate(systemDb, handle.database.orm, seedEvents, character);
+		if (hasPersistedActive) this.characterLoader.seed(systemDb, seedEvents, character);
+		else this.characterLoader.activate(systemDb, seedEvents, character);
 		this.role = this.createCharacterRuntime(character.id);
 
 		const memoryEmbedding: HostCompositionContext["memoryEmbedding"] = {
@@ -305,7 +304,6 @@ export class HostRuntime {
 		if (this.started) return;
 		if (this.closed) throw new Error("Host runtime is closed");
 		try {
-			await this.credentials.migrateLegacyRemoteEmbeddingCredential(this.appSettings);
 			this.uninstallFsProtection = installFsProtection({
 				protectedRoots: this.options.protectedRoots ?? [this.options.dataDir],
 				logger: this.options.logger,
@@ -398,24 +396,12 @@ export class HostRuntime {
 		}
 		const handle = this.storage.open(character.id);
 		const targetEvents = new EventBus(handle.database.orm);
-		this.characterLoader.seed(
-			this.storage.system.orm,
-			handle.database.orm,
-			targetEvents,
-			character,
-			origin,
-		);
+		this.characterLoader.seed(this.storage.system.orm, targetEvents, character, origin);
 		let next: CharacterRuntime | undefined;
 		try {
 			next = this.createCharacterRuntime(character.id);
 			await next.recoverExternalRuns();
-			this.characterLoader.activate(
-				this.storage.system.orm,
-				handle.database.orm,
-				next.eventBus,
-				character,
-				origin,
-			);
+			this.characterLoader.activate(this.storage.system.orm, next.eventBus, character, origin);
 		} catch (error) {
 			await next?.close().catch(() => undefined);
 			this.storage.closeCompanion(character.id);
@@ -448,13 +434,7 @@ export class HostRuntime {
 			character.id === this.role.companionId
 				? this.role.eventBus
 				: new EventBus(handle.database.orm);
-		this.characterLoader.seed(
-			this.storage.system.orm,
-			handle.database.orm,
-			events,
-			character,
-			origin,
-		);
+		this.characterLoader.seed(this.storage.system.orm, events, character, origin);
 		new ModelRegistry(
 			this.storage.system.orm,
 			handle.database.orm,

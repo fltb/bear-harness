@@ -49,12 +49,8 @@ Character packages and character runtime data are deliberately separate:
 - Character-specific diagnostics and audit material stays in the character directory. Global diagnostics may not contain character content.
 - Directory and path components must be validated before use. Renderer requests never supply authoritative filesystem paths.
 
-## Migration and deletion
+## Deletion
 
-- The old flat layout is migrated once through a staging tree, integrity checks, hashes/counts, fsync, and atomic activation.
-- Migration must fail closed on unowned Sessions, Runs, or Artifacts. Do not guess ownership.
-- There is no ongoing dual read/write or legacy fallback after activation.
-- Migration backups have an explicit retention policy. A product deletion must not silently leave indefinite transcript or memory copies in migration backups.
 - Deleting a Session is Bear-managed: validate Catalog ownership, block new routes, abort if running, dispose the exact live handle and subscriptions, move/delete the exact transcript resource, then remove character-owned associated data. The operation is idempotent.
 - Deleting a character runtime closes all Sessions, memory runtimes, Runs, and database handles before the character directory is moved to Trash or removed.
 - Character package deletion and character runtime deletion are separate decisions.
@@ -157,8 +153,8 @@ Forbidden Host state includes copied messages, entries, leaves, tool execution s
 ## Quality and release
 
 - Rebuild or remove obsolete tests and documentation together with the model they described. Do not preserve dead compatibility behavior to satisfy stale fixtures.
-- Add direct tests for Pi Registry concurrency, native streaming, event isolation, result routing/idempotency, rename/delete without selection, character path isolation, migration crash recovery, Artifact ownership/integrity/actions, and both onboarding layers.
+- Add direct tests for Pi Registry concurrency, native streaming, event isolation, result routing/idempotency, rename/delete without selection, character path isolation, Artifact ownership/integrity/actions, and both onboarding layers.
 - Required release gates: lint, typecheck, all unit tests, coverage thresholds, Web required E2E, Electron E2E, recovery suite, build, security audit/signatures, live-model validation, fresh platform packages, and packaged smoke on the same clean commit.
 - WebDev acceptance includes real browser clicks through system onboarding/settings, new-character onboarding, two concurrent Sessions, streaming while switching, background Run completion, Artifact preview/open or Web download, result workspace responsive behavior, rename/archive/delete, and restart recovery.
 - Release from a clean tree with a non-placeholder version and verifiable attestations. Public distribution additionally requires the platform signing/notarization policy.
-- The final engineering report includes module/file/line counts, ownership boundaries, migration evidence, tests, known residual risks, and an explicit release decision.
+- The final engineering report includes module/file/line counts, ownership boundaries, tests, known residual risks, and an explicit release decision.

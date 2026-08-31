@@ -16,10 +16,8 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "@bear-harness/schema";
 
-export const DURABLE_FILE_TRANSACTION_VERSION = 1 as const;
 export type DurableFileTransactionState = "staged" | "old-target-moved" | "activated";
 export interface DurableFileTransactionMarker {
-	version: typeof DURABLE_FILE_TRANSACTION_VERSION;
 	transactionId: string;
 	target: string;
 	staging: string;
@@ -101,7 +99,6 @@ interface Paths {
 	base: string;
 }
 const MarkerSchema = z.strictObject({
-	version: z.literal(DURABLE_FILE_TRANSACTION_VERSION),
 	transactionId: z.string().regex(ID_PATTERN),
 	target: z.string(),
 	staging: z.string(),
@@ -130,7 +127,6 @@ export function replaceDurableFileSync(options: DurableFileTransactionSyncOption
 	}
 	const transactionId = randomUUID();
 	const marker: DurableFileTransactionMarker = {
-		version: DURABLE_FILE_TRANSACTION_VERSION,
 		transactionId,
 		target: paths.target,
 		staging: join(paths.parent, `.${paths.base}.staging-${transactionId}`),
@@ -220,7 +216,6 @@ export async function replaceDurableFile(options: DurableFileTransactionOptions)
 	}
 	const transactionId = randomUUID();
 	const marker: DurableFileTransactionMarker = {
-		version: DURABLE_FILE_TRANSACTION_VERSION,
 		transactionId,
 		target: paths.target,
 		staging: join(paths.parent, `.${paths.base}.staging-${transactionId}`),

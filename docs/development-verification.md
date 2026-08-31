@@ -37,7 +37,6 @@ npm run test:release:recovery
 - external result 按 origin conversation + runId 投递和幂等；
 - rename/archive/delete 不依赖选择状态；
 - system/characters/companions 路径和数据库隔离；
-- staging migration 的 crash recovery、ownership failure 和原子激活；
 - Artifact ownership、hash corruption、bounded read 和 native action；
 - system onboarding 与 character onboarding 分层；
 - Character `x-scope` enum、Display conversation scope 和单事务提交。

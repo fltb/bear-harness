@@ -1,6 +1,6 @@
 /*
  * Product recipes. This final cascade layer normalizes equivalent controls
- * and surfaces while legacy feature selectors are migrated behind recipes.
+ * and surfaces.
  * Breakpoint geometry remains exclusively in layout.css.
  */
 
@@ -105,7 +105,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 .edit-branch-note {
 	@apply m-0 text-sm leading-relaxed;
 	--semantic-fg-role: muted;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .field input,
@@ -177,7 +177,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 	@apply rounded-xl border border-dashed px-4 py-5 text-center text-sm leading-relaxed;
 	--semantic-fg-role: muted;
 	border-color: var(--line-soft);
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 	background: color-mix(in srgb, var(--surface-control) 52%, transparent);
 }
 
@@ -209,7 +209,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 
 .intro-card h2 {
 	@apply m-0 text-2xl font-semibold;
-	font-family: var(--font-body);
+	font-family: var(--font-sans);
 }
 
 .intro-card p {
@@ -263,7 +263,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 
 .backstage-title {
 	@apply text-xl font-semibold;
-	font-family: var(--font-body);
+	font-family: var(--font-sans);
 }
 
 .backstage-close {
@@ -283,7 +283,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 .sub-tabs .tab {
 	@apply relative min-h-11 rounded-none border-0 px-1 py-3 text-sm font-medium;
 	--semantic-fg-role: muted;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 	background: transparent;
 }
 
@@ -296,7 +296,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 .tab[data-selected]::after {
 	@apply absolute bottom-0 left-0 right-0 h-0.5 rounded-full;
 	content: "";
-	background: var(--accent);
+	background: var(--sys-accent);
 }
 
 .settings-workbench {
@@ -475,7 +475,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 
 .agent-message-name {
 	@apply mb-1 block text-xs font-medium;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .agent-message-column {
@@ -504,7 +504,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 
 .msg-menu-trigger {
 	@apply grid size-7 shrink-0 place-items-center rounded-lg border border-transparent;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 	background: transparent;
 }
 
@@ -517,13 +517,13 @@ button[data-variant="primary"]:hover:not(:disabled),
 
 .pi-tool-result {
 	@apply max-w-2xl rounded-lg border-0 px-3 py-2;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 	background: color-mix(in srgb, var(--surface-control) 58%, transparent);
 }
 
 .tool-activity-group {
 	@apply w-fit max-w-2xl self-start rounded-xl;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 	background: color-mix(in srgb, var(--surface-control) 48%, transparent);
 }
 
@@ -559,7 +559,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 
 .message-operations button {
 	@apply min-h-8 rounded-lg border-0 px-2 text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 	background: var(--surface-control);
 }
 
@@ -570,7 +570,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 .diagnostic-details {
 	@apply rounded-lg border px-3 py-2 text-xs;
 	border-color: var(--line-soft);
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 	background: var(--surface-control);
 }
 
@@ -693,7 +693,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 .agent-result-close {
 	@apply grid size-10 shrink-0 place-items-center rounded-lg border text-2xl font-light leading-none;
 	border-color: var(--line-soft);
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 	background: var(--surface-control);
 }
 
@@ -725,7 +725,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 
 .agent-result-status span {
 	@apply text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .agent-result-summary {
@@ -812,7 +812,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 
 .archived-conversation-row span {
 	@apply text-sm;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .archived-conversation-actions {

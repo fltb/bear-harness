@@ -17,7 +17,6 @@ const sourceE2EPiWorkerPath = realpathSync.native(
 
 interface SourceAppLaunchOptions {
 	waitForWindow?: boolean;
-	migrateLegacy?: boolean;
 }
 
 async function launchSourceAppFromRoot(
@@ -33,7 +32,6 @@ async function launchSourceAppFromRoot(
 		BEAR_E2E_APP_DATA: tempRoot,
 		BEAR_DIAGNOSTICS_ROOT: tempRoot,
 		BEAR_E2E_PI_WORKER_PATH: sourceE2EPiWorkerPath,
-		...(options.migrateLegacy ? { BEAR_E2E_MIGRATE_LEGACY: "1" } : {}),
 		...extraEnv,
 	};
 	const app = await electron.launch({

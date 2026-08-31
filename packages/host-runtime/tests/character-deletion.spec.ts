@@ -22,6 +22,7 @@ import type { CompanionStorageRegistry } from "../src/storage/companion-storage.
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 const roots: string[] = [];
 const vault: CredentialVault = {
+	securityLevel: "session",
 	isEncryptionAvailable: () => false,
 	encryptString: (value) => Buffer.from(value),
 	decryptString: (value) => value.toString("utf8"),

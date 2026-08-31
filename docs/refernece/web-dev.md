@@ -31,7 +31,7 @@ durable event stream 带 seq，用于 query invalidation；Pi stream 带 session
 
 手工运行使用产品的开发数据目录；设置 `BEAR_WEB_DEV_DATA_DIR` 可以显式隔离。E2E launcher 为每个进程创建独立 scope，并根据成功/失败 retention policy 清理或保留证据。并行测试不能共享 `settings.db` 或角色 runtime。
 
-WebDev 启动也执行正式目录 layout/migration 逻辑，不能维护一套简化数据库模型。
+WebDev 与桌面端使用同一套正式目录和数据库模型。
 
 ## Artifact 的 Web 行为
 

@@ -8,15 +8,9 @@ import {
 	realpathSync,
 	rmSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 const SAFE_COMPANION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-
-export const RUNTIME_LAYOUT_VERSION = 2 as const;
-export const RUNTIME_LAYOUT_MARKER = ".runtime-layout-v2.json";
-export const RUNTIME_LAYOUT_STAGING_SUFFIX = ".runtime-layout-v2-staging";
-export const RUNTIME_LAYOUT_BACKUP_PREFIX = ".runtime-layout-v1-backup-";
-export const RUNTIME_LAYOUT_BACKUP_RETENTION_DAYS = 7;
 
 export function requireCompanionId(companionId: string): string {
 	if (
@@ -144,9 +138,6 @@ export class RuntimeLayout {
 	readonly systemDiagnostics: string;
 	readonly charactersRoot: string;
 	readonly companionsRoot: string;
-	readonly marker: string;
-	readonly stagingRoot: string;
-	readonly backupParent: string;
 
 	constructor(root: string) {
 		if (!isAbsolute(root)) throw new TypeError("runtime data root must be absolute");
@@ -160,12 +151,6 @@ export class RuntimeLayout {
 		this.systemDiagnostics = contained(this.systemRoot, "diagnostics");
 		this.charactersRoot = contained(this.root, "characters");
 		this.companionsRoot = contained(this.root, "companions");
-		this.marker = contained(this.root, RUNTIME_LAYOUT_MARKER);
-		this.backupParent = dirname(this.root);
-		this.stagingRoot = contained(
-			this.backupParent,
-			`.${basename(this.root)}${RUNTIME_LAYOUT_STAGING_SUFFIX}`,
-		);
 	}
 
 	companion(companionId: string): CompanionPaths {

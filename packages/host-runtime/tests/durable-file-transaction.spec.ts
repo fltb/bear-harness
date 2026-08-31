@@ -13,7 +13,6 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-	DURABLE_FILE_TRANSACTION_VERSION,
 	type DurableFileTransactionMarker,
 	durableFileTransactionMarkerPath,
 	recoverDurableFileTransaction,
@@ -34,14 +33,12 @@ function fixture(): { root: string; target: string } {
 }
 
 function markerFor(
-	root: string,
 	target: string,
 	state: DurableFileTransactionMarker["state"],
 ): DurableFileTransactionMarker {
 	const parent = dirname(target);
 	const base = basename(target);
 	return {
-		version: DURABLE_FILE_TRANSACTION_VERSION,
 		transactionId,
 		target,
 		staging: join(parent, `.${base}.staging-${transactionId}`),
@@ -70,7 +67,7 @@ describe("durable file transaction", () => {
 
 		expect(readFileSync(target, "utf8")).toBe("valid:new");
 		expect(existsSync(durableFileTransactionMarkerPath(root, target))).toBe(false);
-		expect(existsSync(markerFor(root, target, "activated").backup)).toBe(false);
+		expect(existsSync(markerFor(target, "activated").backup)).toBe(false);
 	});
 
 	it("durably replaces a directory tree", async () => {
@@ -110,7 +107,7 @@ describe("durable file transaction", () => {
 
 	it("completes activation after a crash following the old-target move", async () => {
 		const { root, target } = fixture();
-		const marker = markerFor(root, target, "old-target-moved");
+		const marker = markerFor(target, "old-target-moved");
 		writeFileSync(marker.staging, "valid:new");
 		writeFileSync(marker.backup, "valid:old");
 		persistMarker(root, marker);
@@ -125,7 +122,7 @@ describe("durable file transaction", () => {
 
 	it("finishes cleanup after a crash following activation", async () => {
 		const { root, target } = fixture();
-		const marker = markerFor(root, target, "activated");
+		const marker = markerFor(target, "activated");
 		writeFileSync(target, "valid:new");
 		writeFileSync(marker.backup, "valid:old");
 		persistMarker(root, marker);
@@ -140,7 +137,7 @@ describe("durable file transaction", () => {
 
 	it("reports an ambiguous layout without changing any copy", async () => {
 		const { root, target } = fixture();
-		const marker = markerFor(root, target, "old-target-moved");
+		const marker = markerFor(target, "old-target-moved");
 		writeFileSync(target, "valid:target");
 		writeFileSync(marker.staging, "valid:staging");
 		writeFileSync(marker.backup, "valid:backup");
@@ -163,7 +160,7 @@ describe("durable file transaction", () => {
 		const { root, target } = fixture();
 		writeFileSync(target, "valid:only-copy");
 		const markerPath = durableFileTransactionMarkerPath(root, target);
-		writeFileSync(markerPath, JSON.stringify({ version: 99, target }));
+		writeFileSync(markerPath, JSON.stringify({ unexpected: true, target }));
 
 		const result = await recoverDurableFileTransaction({ root, target, verify: validText });
 
@@ -198,7 +195,7 @@ describe("durable file transaction", () => {
 
 	it("does not delete the sole valid copy in an invalid recovery layout", async () => {
 		const { root, target } = fixture();
-		const marker = markerFor(root, target, "old-target-moved");
+		const marker = markerFor(target, "old-target-moved");
 		writeFileSync(marker.staging, "invalid:partial");
 		writeFileSync(marker.backup, "valid:only-copy");
 		persistMarker(root, marker);

@@ -25,7 +25,7 @@ const SYSTEM_TABLES = [
 	"user_decisions",
 ] as const;
 
-export const SYSTEM_BASELINE_V1_SQL = `
+export const SYSTEM_SCHEMA_SQL = `
 CREATE TABLE installation_identity (
 	id INTEGER PRIMARY KEY NOT NULL DEFAULT 1 CHECK (id = 1),
 	installation_id TEXT NOT NULL UNIQUE,
@@ -146,7 +146,7 @@ const COMPANION_TABLES = [
 	"story_modules",
 ] as const;
 
-export const COMPANION_BASELINE_V1_SQL = `
+export const COMPANION_SCHEMA_SQL = `
 CREATE TABLE runtime_identity (
 	id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
 	companion_id TEXT NOT NULL UNIQUE,

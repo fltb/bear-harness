@@ -7,9 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelRegistry } from "../src/models/registry.js";
 import { AppSettingsStore } from "../src/storage/app-settings-store.js";
 import {
-	COMPANION_MIGRATIONS,
+	COMPANION_SCHEMA_SQL,
 	CompanionDatabase,
-	SYSTEM_MIGRATIONS,
+	SYSTEM_SCHEMA_SQL,
 	SystemDatabase,
 } from "../src/storage/database.js";
 
@@ -23,12 +23,12 @@ describe("ModelRegistry", () => {
 	beforeEach(() => {
 		root = mkdtempSync(join(tmpdir(), "bear-model-registry-"));
 		systemDatabase = new SystemDatabase(join(root, "system", "settings.db"));
-		systemDatabase.migrate(SYSTEM_MIGRATIONS);
+		systemDatabase.initialize(SYSTEM_SCHEMA_SQL);
 		companionDatabase = new CompanionDatabase(
 			join(root, "companions", "character", "runtime.db"),
 			"character",
 		);
-		companionDatabase.migrate(COMPANION_MIGRATIONS);
+		companionDatabase.initialize(COMPANION_SCHEMA_SQL);
 		companionDatabase.ensureRuntimeIdentity();
 		publish = vi.fn();
 		models = new ModelRegistry(
@@ -189,7 +189,7 @@ describe("ModelRegistry", () => {
 			join(root, "companions", "second-character", "runtime.db"),
 			"second-character",
 		);
-		secondDatabase.migrate(COMPANION_MIGRATIONS);
+		secondDatabase.initialize(COMPANION_SCHEMA_SQL);
 		secondDatabase.ensureRuntimeIdentity();
 		try {
 			const second = new ModelRegistry(

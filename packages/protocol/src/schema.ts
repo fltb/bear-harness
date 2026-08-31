@@ -224,7 +224,6 @@ export const EventPayloadSchemas = {
 	}),
 	"canon.package_synced": EventPayload({
 		companionId: EventId,
-		version: z.number().int().safe().min(1).max(MAX_SAFE_INT),
 	}),
 	"canon.source_removed": EventPayload({
 		companionId: EventId,

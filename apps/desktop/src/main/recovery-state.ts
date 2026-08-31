@@ -15,8 +15,6 @@ import {
 } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 
-export const RECOVERY_STATE_SCHEMA_VERSION = 1 as const;
-
 export const RECOVERY_STATE_DIRECTORY_NAME = ".bear-harness-recovery-state";
 
 /**
@@ -30,18 +28,16 @@ export function recoveryStateRootForAppData(appDataRoot: string): string {
 	return resolve(appDataRoot, RECOVERY_STATE_DIRECTORY_NAME);
 }
 
-export type RecoveryIncidentKind = "database_upgrade" | "root_migration" | "filesystem_recovery";
+export type RecoveryIncidentKind = "filesystem_recovery";
 export type RecoveryIncidentStatus = "pending" | "resolved";
-export type RecoveryVerifiedResolution = "retry" | "restore_backup" | "safe_reset";
+export type RecoveryVerifiedResolution = "retry" | "safe_reset";
 
 const VERIFIED_RESOLUTION_MESSAGES: Record<RecoveryVerifiedResolution, string> = {
 	retry: "Initialization retry completed successfully",
-	restore_backup: "Verified backup restored with durable replacement",
 	safe_reset: "Verified recovery export created before safe reset",
 };
 
 interface RecoveryIncidentBase {
-	schemaVersion: typeof RECOVERY_STATE_SCHEMA_VERSION;
 	id: string;
 	kind: RecoveryIncidentKind;
 	status: RecoveryIncidentStatus;
@@ -52,20 +48,6 @@ interface RecoveryIncidentBase {
 	reason: string;
 }
 
-export interface DatabaseUpgradeRecoveryIncident extends RecoveryIncidentBase {
-	kind: "database_upgrade";
-	databasePath: string;
-	backupPath: string;
-	fromVersion: number;
-	toVersion: number;
-}
-
-export interface RootMigrationRecoveryIncident extends RecoveryIncidentBase {
-	kind: "root_migration";
-	sourceRoot: string;
-	destinationRoot: string;
-}
-
 export interface FilesystemRecoveryIncident extends RecoveryIncidentBase {
 	kind: "filesystem_recovery";
 	operation: "replace" | "move" | "delete";
@@ -73,35 +55,19 @@ export interface FilesystemRecoveryIncident extends RecoveryIncidentBase {
 	journalPath: string;
 }
 
-export type RecoveryIncident =
-	| DatabaseUpgradeRecoveryIncident
-	| RootMigrationRecoveryIncident
-	| FilesystemRecoveryIncident;
-
-export type DatabaseUpgradeRecoveryIncidentInput = Pick<
-	DatabaseUpgradeRecoveryIncident,
-	"id" | "kind" | "databasePath" | "backupPath" | "fromVersion" | "toVersion" | "reason"
->;
-export type RootMigrationRecoveryIncidentInput = Pick<
-	RootMigrationRecoveryIncident,
-	"id" | "kind" | "sourceRoot" | "destinationRoot" | "reason"
->;
+export type RecoveryIncident = FilesystemRecoveryIncident;
 export type FilesystemRecoveryIncidentInput = Pick<
 	FilesystemRecoveryIncident,
 	"id" | "kind" | "operation" | "targetPath" | "journalPath" | "reason"
 >;
-export type RecoveryIncidentInput =
-	| DatabaseUpgradeRecoveryIncidentInput
-	| RootMigrationRecoveryIncidentInput
-	| FilesystemRecoveryIncidentInput;
+export type RecoveryIncidentInput = FilesystemRecoveryIncidentInput;
 
 export interface RecoveryRequiredResult {
 	status: "recovery_required";
-	reason: "malformed_record" | "unsupported_version";
+	reason: "malformed_record";
 	id: string | null;
 	path: string;
 	message: string;
-	foundVersion?: unknown;
 }
 
 export type RecoveryGetResult =
@@ -134,7 +100,6 @@ export class RecoveryStateValidationError extends Error {
 
 const ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$/;
 const BASE_KEYS = [
-	"schemaVersion",
 	"id",
 	"kind",
 	"status",
@@ -145,21 +110,9 @@ const BASE_KEYS = [
 	"reason",
 ] as const;
 const KIND_KEYS: Record<RecoveryIncidentKind, readonly string[]> = {
-	database_upgrade: ["databasePath", "backupPath", "fromVersion", "toVersion"],
-	root_migration: ["sourceRoot", "destinationRoot"],
 	filesystem_recovery: ["operation", "targetPath", "journalPath"],
 };
 const INPUT_KEYS: Record<RecoveryIncidentKind, readonly string[]> = {
-	database_upgrade: [
-		"id",
-		"kind",
-		"databasePath",
-		"backupPath",
-		"fromVersion",
-		"toVersion",
-		"reason",
-	],
-	root_migration: ["id", "kind", "sourceRoot", "destinationRoot", "reason"],
 	filesystem_recovery: ["id", "kind", "operation", "targetPath", "journalPath", "reason"],
 };
 
@@ -176,9 +129,7 @@ function hasExactKeys(value: Record<string, unknown>, expected: readonly string[
 }
 
 function isIncidentKind(value: unknown): value is RecoveryIncidentKind {
-	return (
-		value === "database_upgrade" || value === "root_migration" || value === "filesystem_recovery"
-	);
+	return value === "filesystem_recovery";
 }
 
 function isAbsolutePath(value: unknown): value is string {
@@ -195,29 +146,11 @@ function isTimestamp(value: unknown): value is string {
 	return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
 }
 
-function isVersion(value: unknown): value is number {
-	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
-
 function validateVariantFields(
 	value: Record<string, unknown>,
 	kind: RecoveryIncidentKind,
 ): boolean {
 	switch (kind) {
-		case "database_upgrade":
-			return (
-				isAbsolutePath(value.databasePath) &&
-				isAbsolutePath(value.backupPath) &&
-				isVersion(value.fromVersion) &&
-				isVersion(value.toVersion) &&
-				value.fromVersion !== value.toVersion
-			);
-		case "root_migration":
-			return (
-				isAbsolutePath(value.sourceRoot) &&
-				isAbsolutePath(value.destinationRoot) &&
-				resolve(value.sourceRoot) !== resolve(value.destinationRoot)
-			);
 		case "filesystem_recovery":
 			return (
 				(value.operation === "replace" ||
@@ -233,7 +166,6 @@ function validateStoredRecord(value: unknown): RecoveryIncident | null {
 	if (!isPlainObject(value) || !isIncidentKind(value.kind)) return null;
 	if (!hasExactKeys(value, [...BASE_KEYS, ...KIND_KEYS[value.kind]])) return null;
 	if (
-		value.schemaVersion !== RECOVERY_STATE_SCHEMA_VERSION ||
 		typeof value.id !== "string" ||
 		!ID_PATTERN.test(value.id) ||
 		(value.status !== "pending" && value.status !== "resolved") ||
@@ -252,7 +184,6 @@ function validateStoredRecord(value: unknown): RecoveryIncident | null {
 		if (value.updatedAt !== value.resolvedAt) return null;
 	}
 	const common: Omit<RecoveryIncidentBase, "kind"> = {
-		schemaVersion: RECOVERY_STATE_SCHEMA_VERSION,
 		id: value.id,
 		status: value.status,
 		createdAt: value.createdAt,
@@ -262,38 +193,6 @@ function validateStoredRecord(value: unknown): RecoveryIncident | null {
 		reason: value.reason,
 	};
 	switch (value.kind) {
-		case "database_upgrade":
-			if (
-				!isAbsolutePath(value.databasePath) ||
-				!isAbsolutePath(value.backupPath) ||
-				!isVersion(value.fromVersion) ||
-				!isVersion(value.toVersion) ||
-				value.fromVersion === value.toVersion
-			) {
-				return null;
-			}
-			return {
-				...common,
-				kind: "database_upgrade",
-				databasePath: value.databasePath,
-				backupPath: value.backupPath,
-				fromVersion: value.fromVersion,
-				toVersion: value.toVersion,
-			};
-		case "root_migration":
-			if (
-				!isAbsolutePath(value.sourceRoot) ||
-				!isAbsolutePath(value.destinationRoot) ||
-				resolve(value.sourceRoot) === resolve(value.destinationRoot)
-			) {
-				return null;
-			}
-			return {
-				...common,
-				kind: "root_migration",
-				sourceRoot: value.sourceRoot,
-				destinationRoot: value.destinationRoot,
-			};
 		case "filesystem_recovery":
 			if (
 				(value.operation !== "replace" &&
@@ -454,7 +353,6 @@ export class RecoveryStateStore {
 		const timestamp = this.timestamp();
 		const record: RecoveryIncident = {
 			...input,
-			schemaVersion: RECOVERY_STATE_SCHEMA_VERSION,
 			status: "pending",
 			createdAt: existing.status === "ok" ? existing.record.createdAt : timestamp,
 			updatedAt:
@@ -588,22 +486,6 @@ export class RecoveryStateStore {
 			parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
 		} catch {
 			return this.malformed(id, path);
-		}
-		if (
-			isPlainObject(parsed) &&
-			typeof parsed.schemaVersion === "number" &&
-			Number.isSafeInteger(parsed.schemaVersion) &&
-			parsed.schemaVersion >= 0 &&
-			parsed.schemaVersion !== RECOVERY_STATE_SCHEMA_VERSION
-		) {
-			return {
-				status: "recovery_required",
-				reason: "unsupported_version",
-				id,
-				path,
-				message: "Recovery state record uses an unsupported schema version",
-				foundVersion: parsed.schemaVersion,
-			};
 		}
 		const record = validateStoredRecord(parsed);
 		if (!record || record.id !== id) return this.malformed(id, path);

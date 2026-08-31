@@ -562,8 +562,7 @@ export class CharacterLoader {
 	}
 
 	/**
-	 * Load and validate a character package. There is deliberately no default or
-	 * compatibility path: a missing field/asset is a package error. The returned
+	 * Load and validate a character package. A missing field or asset is a package error. The returned
 	 * `CharacterPackage` is package storage, not a memory record.
 	 */
 	load(id: string): CharacterPackage | null {
@@ -572,9 +571,6 @@ export class CharacterLoader {
 		const parsed = parse(readFileSync(path, "utf8")) as CharacterPackage;
 		if (parsed.id !== id) {
 			throw new Error(`character package ${id}: yaml id must equal directory id`);
-		}
-		if (Object.hasOwn(parsed, "host")) {
-			throw new Error(`character package ${id}: legacy host lifecycle reactions are not supported`);
 		}
 		if (!LanguageTagSchema.safeParse(parsed.language).success) {
 			throw new Error(`character package ${id}: language must be a BCP-47 language tag`);
@@ -1133,12 +1129,11 @@ Do not claim that missing an explicit request prevents TDAI capture, and do not 
 
 	activate(
 		systemDb: AppDatabase,
-		companionDb: AppDatabase,
 		eventBus: EventBus,
 		character: CharacterPackage,
 		origin?: CharacterPackageOrigin,
 	): void {
-		this.seed(systemDb, companionDb, eventBus, character, origin);
+		this.seed(systemDb, eventBus, character, origin);
 		systemDb
 			.insert(activeCharacter)
 			.values({ singleton: 1, characterId: character.id })
@@ -1153,7 +1148,6 @@ Do not claim that missing an explicit request prevents TDAI capture, and do not 
 	/** Seed identity once and refresh package provenance on every package load. */
 	seed(
 		systemDb: AppDatabase,
-		companionDb: AppDatabase,
 		eventBus: EventBus,
 		character: CharacterPackage,
 		origin: CharacterPackageOrigin = this.packageOrigin(character),

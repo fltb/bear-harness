@@ -120,7 +120,7 @@ describe("shell visual and thread head contracts", () => {
 			"--surface-action",
 			"--surface-danger",
 			"--text-strong",
-			"--text-muted",
+			"--text-soft",
 			"--focus-ring",
 		]) {
 			expect(styles).toContain(token);

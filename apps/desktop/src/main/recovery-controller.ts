@@ -4,7 +4,6 @@ import {
 	closeSync,
 	constants,
 	copyFileSync,
-	existsSync,
 	fsyncSync,
 	lstatSync,
 	mkdirSync,
@@ -25,7 +24,6 @@ import type {
 
 export type RecoveryAction =
 	| "retry"
-	| "restore_backup"
 	| "export_data"
 	| "open_data_location"
 	| "open_backup_location"
@@ -34,7 +32,6 @@ export type RecoveryAction =
 
 export const RECOVERY_ACTIONS: readonly RecoveryAction[] = [
 	"retry",
-	"restore_backup",
 	"export_data",
 	"open_data_location",
 	"open_backup_location",
@@ -102,8 +99,6 @@ type ManifestEntry =
 type TreeManifest = Map<string, ManifestEntry>;
 
 const READ_BUFFER_BYTES = 1024 * 1024;
-const CANON_DATABASE_RELATIVE_PATH = join("storage", "canon.db");
-
 function errorMessage(error: unknown): string {
 	return error instanceof Error && error.message.trim().length > 0
 		? error.message
@@ -300,14 +295,6 @@ function copyTree(source: string, destination: string): void {
 	syncDirectory(destination);
 }
 
-function copySingleFile(source: string, destination: string): void {
-	const stat = lstatSync(source);
-	if (!stat.isFile()) throw new Error("Recovery database backup is not a regular file");
-	copyFileSync(source, destination, constants.COPYFILE_EXCL);
-	chmodSync(destination, stat.mode & 0o777);
-	syncFile(destination);
-}
-
 export function verifySqliteDatabase(path: string): boolean {
 	let database: DatabaseSync | undefined;
 	try {
@@ -350,22 +337,13 @@ function suggestedExportName(dataRoot: string, now: Date): string {
 
 function backupPathFor(incident: RecoveryIncident | undefined): string | null {
 	if (!incident) return null;
-	switch (incident.kind) {
-		case "database_upgrade":
-			return incident.backupPath;
-		case "root_migration":
-			return incident.sourceRoot;
-		case "filesystem_recovery":
-			return incident.journalPath;
-	}
+	return incident.journalPath;
 }
 
 function successfulResolution(action: RecoveryAction): RecoveryVerifiedResolution | null {
 	switch (action) {
 		case "retry":
 			return "retry";
-		case "restore_backup":
-			return "restore_backup";
 		case "safe_reset":
 			return "safe_reset";
 		default:
@@ -409,10 +387,6 @@ export class RecoveryController {
 					this.resolveIncident(action);
 					return this.success(action, true);
 				}
-				case "restore_backup":
-					await this.restoreBackup();
-					this.resolveIncident(action);
-					return this.success(action, true);
 				case "export_data": {
 					const destination = await this.chooseDestination("export");
 					if (!destination) return { status: "cancelled", action };
@@ -460,56 +434,6 @@ export class RecoveryController {
 		return this.options.native.chooseDestination({
 			purpose,
 			suggestedName: suggestedExportName(this.options.dataRoot, now),
-		});
-	}
-
-	private async restoreBackup(): Promise<void> {
-		const incident = this.options.incident;
-		if (!incident) throw new Error("No verified backup is available for this incident");
-		if (incident.kind === "filesystem_recovery") {
-			throw new Error("This filesystem incident has no verified replacement backup");
-		}
-		if (incident.kind === "database_upgrade") {
-			if (!this.files.verifySqlite(incident.backupPath)) {
-				throw new Error("Database backup failed SQLite integrity or foreign-key validation");
-			}
-			const expected = hashFile(incident.backupPath);
-			await this.files.replace({
-				root: dirname(incident.databasePath),
-				target: incident.databasePath,
-				stage: (stagingPath) => copySingleFile(incident.backupPath, stagingPath),
-				verify: (candidatePath) => {
-					const actual = hashFile(candidatePath);
-					return (
-						actual.size === expected.size &&
-						actual.sha256 === expected.sha256 &&
-						this.files.verifySqlite(candidatePath)
-					);
-				},
-			});
-			return;
-		}
-
-		const source = assertAbsolute(incident.sourceRoot, "Root backup");
-		const target = assertAbsolute(incident.destinationRoot, "Root target");
-		if (!existsSync(source) || !lstatSync(source).isDirectory()) {
-			throw new Error("Root backup is not a real directory");
-		}
-		const expected = scanTree(source);
-		if (expected.size === 0) throw new Error("Root backup is empty");
-		const sourceDatabase = join(source, CANON_DATABASE_RELATIVE_PATH);
-		if (existsSync(sourceDatabase) && !this.files.verifySqlite(sourceDatabase)) {
-			throw new Error("Root backup database failed SQLite integrity or foreign-key validation");
-		}
-		await this.files.replace({
-			root: dirname(target),
-			target,
-			stage: (stagingPath) => copyTree(source, stagingPath),
-			verify: (candidatePath) => {
-				if (!manifestsEqual(expected, scanTree(candidatePath))) return false;
-				const database = join(candidatePath, CANON_DATABASE_RELATIVE_PATH);
-				return !existsSync(database) || this.files.verifySqlite(database);
-			},
 		});
 	}
 

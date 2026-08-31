@@ -16,7 +16,7 @@
 		"pretypecheck": "npm --prefix ../tdai-core run build && npm --prefix ../protocol run build",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
 		"test:unit": "npm --prefix ../tdai-core run build && npm --prefix ../protocol run build && vitest run",
-		"test:release:recovery": "npm --prefix ../tdai-core run build && npm --prefix ../protocol run build && vitest run tests/storage-crash-recovery.spec.ts tests/durable-file-transaction.spec.ts tests/character-import.spec.ts tests/companion-state-store.spec.ts tests/session-catalog.spec.ts",
+		"test:release:recovery": "npm --prefix ../tdai-core run build && npm --prefix ../protocol run build && vitest run tests/durable-file-transaction.spec.ts tests/character-import.spec.ts tests/companion-state-store.spec.ts tests/session-catalog.spec.ts",
 		"test:coverage": "npm --prefix ../tdai-core run build && npm --prefix ../protocol run build && vitest run --coverage"
 	},
 	"dependencies": {

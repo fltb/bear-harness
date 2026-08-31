@@ -478,8 +478,7 @@ function deepFreeze<T>(value: T): T {
 	return value;
 }
 
-export interface DiagnosticRecordV1 {
-	schemaVersion: 1;
+export interface DiagnosticRecord {
 	timestamp: string;
 	sequence: number;
 	launchId: string;
@@ -510,7 +509,6 @@ export interface PendingRecord {
 }
 
 const TOP_LEVEL_KEYS = new Set([
-	"schemaVersion",
 	"timestamp",
 	"sequence",
 	"launchId",
@@ -552,7 +550,6 @@ export function validateRecord(record: unknown): string[] {
 		if (!TOP_LEVEL_KEYS.has(key)) errors.push(`unknown top-level key ${JSON.stringify(key)}`);
 	}
 
-	if (record.schemaVersion !== 1) errors.push("schemaVersion must be 1");
 	if (!isValidUtcIso(record.timestamp)) errors.push("timestamp must be a UTC ISO-8601 string");
 	if (
 		typeof record.sequence !== "number" ||

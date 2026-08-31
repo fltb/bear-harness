@@ -15,17 +15,11 @@ import {
 	type Diagnostics,
 	formatTraceparent,
 	type HostRuntime,
-	prepareRuntimeLayout,
 	RuntimeLayout,
 } from "@bear-harness/host-runtime";
 import { productConfig } from "@bear-harness/product-config";
 import { app, BrowserWindow, crashReporter, dialog, ipcMain, shell } from "electron";
 import { createDesktopArtifactPresenter } from "./artifact-presenter.js";
-import {
-	type DataRootMigrationResult,
-	LEGACY_DATA_DIRECTORY_NAME,
-	resolveDataRoot,
-} from "./data-root-migration.js";
 import {
 	registerElectronDiagnostics,
 	registerWindowHooks,
@@ -58,12 +52,6 @@ const isPackagedE2E =
 	process.env.BEAR_E2E_PACKAGED === "1" &&
 	typeof process.env.BEAR_E2E_APP_DATA === "string" &&
 	isAbsolute(process.env.BEAR_E2E_APP_DATA);
-const migrateLegacyDataRoot =
-	!isSourceE2E ||
-	(process.env.BEAR_E2E_MIGRATE_LEGACY === "1" &&
-		typeof process.env.BEAR_E2E_APP_DATA === "string" &&
-		isAbsolute(process.env.BEAR_E2E_APP_DATA));
-
 const rendererHtmlPath = fileURLToPath(new URL("../renderer/index.html", import.meta.url));
 const loadFromHtml = app.isPackaged || isSourceE2E;
 const allowedUrl = loadFromHtml
@@ -97,37 +85,25 @@ const appDataBase =
 		? process.env.BEAR_E2E_APP_DATA
 		: app.getPath("appData");
 const canonicalDataRoot = join(appDataBase, productConfig.dataDirectoryName);
-const legacyDataRoot = join(appDataBase, LEGACY_DATA_DIRECTORY_NAME);
 const recoveryRoot = recoveryStateRootForAppData(appDataBase);
 let recoveryStore: RecoveryStateStore | null = null;
-let dataRoot: DataRootMigrationResult | null = null;
 let bootstrapFailureReason: string | null = null;
 let storageLayoutReady = false;
 
 try {
 	recoveryStore = new RecoveryStateStore(recoveryRoot, {
-		productDataRoots: [canonicalDataRoot, legacyDataRoot],
+		productDataRoots: [canonicalDataRoot],
 	});
-	dataRoot = resolveDataRoot({
-		appDataRoot: appDataBase,
-		canonicalDirectoryName: productConfig.dataDirectoryName,
-		migrateLegacy: migrateLegacyDataRoot,
-		recoveryStore,
-	});
-	if (dataRoot.status === "recovery_required") bootstrapFailureReason = dataRoot.message;
-	else {
-		prepareRuntimeLayout(dataRoot.root);
-		storageLayoutReady = true;
-	}
+	mkdirSync(canonicalDataRoot, { recursive: true, mode: 0o700 });
+	storageLayoutReady = true;
 } catch {
-	bootstrapFailureReason = "Failed to resolve the application data directory safely";
+	bootstrapFailureReason = "Failed to initialize the application data directory safely";
 }
 
 const defaultElectronUserData = app.getPath("userData");
-let userData =
-	dataRoot?.status === "ready" && storageLayoutReady
-		? dataRoot.root
-		: join(recoveryRoot, "recovery-electron-profile");
+let userData = storageLayoutReady
+	? canonicalDataRoot
+	: join(recoveryRoot, "recovery-electron-profile");
 try {
 	mkdirSync(join(userData, "Chromium"), { recursive: true, mode: 0o700 });
 	app.setPath("userData", userData);
@@ -197,7 +173,6 @@ function requestShutdown(exitCode: number): void {
 
 const RECOVERY_BUTTONS = [
 	"Retry",
-	"Restore verified backup",
 	"Export current data",
 	"Open data location",
 	"Open backup location",
@@ -206,7 +181,6 @@ const RECOVERY_BUTTONS = [
 ] as const;
 const RECOVERY_BUTTON_ACTIONS = [
 	"retry",
-	"restore_backup",
 	"export_data",
 	"open_data_location",
 	"open_backup_location",
@@ -252,20 +226,10 @@ function nativeRecoveryInterface(): NativeRecoveryInterface {
 }
 
 function recoveryDataRoot(): string {
-	if (dataRoot?.status === "ready") return dataRoot.root;
-	if (dataRoot?.status === "recovery_required") {
-		if (existsSync(dataRoot.canonicalRoot)) return dataRoot.canonicalRoot;
-		if (existsSync(dataRoot.legacyRoot)) return dataRoot.legacyRoot;
-		if (existsSync(dataRoot.stagingRoot)) return dataRoot.stagingRoot;
-		return dataRoot.canonicalRoot;
-	}
 	return canonicalDataRoot;
 }
 
 function firstPendingIncident(): RecoveryIncident | undefined {
-	if (dataRoot?.status === "recovery_required" && dataRoot.incident?.status === "ok") {
-		return dataRoot.incident.record;
-	}
 	if (!recoveryStore) return undefined;
 	try {
 		return recoveryStore.list().records.find((record) => record.status === "pending");
@@ -518,15 +482,7 @@ diagnostics.runInSession(() => {
 				await runRecoveryInterface(bootstrapFailureReason, () => {
 					if (!recoveryStore) return false;
 					try {
-						const retried = resolveDataRoot({
-							appDataRoot: appDataBase,
-							canonicalDirectoryName: productConfig.dataDirectoryName,
-							migrateLegacy: migrateLegacyDataRoot,
-							recoveryStore,
-						});
-						if (retried.status !== "ready") return false;
-						dataRoot = retried;
-						prepareRuntimeLayout(retried.root);
+						mkdirSync(canonicalDataRoot, { recursive: true, mode: 0o700 });
 						storageLayoutReady = true;
 						bootstrapFailureReason = null;
 						return true;

@@ -10,7 +10,7 @@
 
 .backstage-sheet {
 	@apply fixed bottom-4 right-4 top-4 z-60 flex w-full max-w-xl flex-col overflow-hidden rounded-2xl border shadow-app;
-	border-color: var(--line);
+	border-color: var(--sys-border);
 	background: var(--surface-panel);
 	@apply outline-none;
 }
@@ -56,7 +56,7 @@
 
 .backstage-tabs .tabs {
 	@apply mb-5 flex shrink-0 gap-1 border-b;
-	border-color: var(--line);
+	border-color: var(--sys-border);
 }
 
 .tab {
@@ -67,7 +67,7 @@
 }
 
 .tab[data-selected] {
-	border-color: var(--accent);
+	border-color: var(--sys-accent);
 	--semantic-fg-role: default;
 	color: var(--semantic-role-default);
 	background: var(--surface-control);
@@ -98,7 +98,7 @@
 
 .settings-navigation {
 	@apply col-span-1 flex min-h-0 flex-col gap-4 border-r pr-5;
-	border-color: var(--line);
+	border-color: var(--sys-border);
 }
 
 .settings-navigation-list {
@@ -138,7 +138,7 @@
 .settings-group-heading,
 .settings-section-header {
 	@apply grid gap-1 border-b pb-4;
-	border-color: var(--line);
+	border-color: var(--sys-border);
 }
 
 .settings-page-header h3,
@@ -156,7 +156,7 @@
 
 .settings-page-header p {
 	@apply text-sm leading-relaxed;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .drawer-note {
@@ -223,7 +223,7 @@
 
 .status-line.ok {
 	@apply border;
-	border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+	border-color: color-mix(in srgb, var(--sys-accent) 30%, transparent);
 	--semantic-fg-role: accent;
 	color: var(--semantic-role-accent);
 	background: color-mix(in srgb, var(--sys-success) 8%, var(--surface-panel));
@@ -231,7 +231,7 @@
 
 .status-line.err {
 	@apply border;
-	border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+	border-color: color-mix(in srgb, var(--sys-danger) 35%, transparent);
 	--semantic-fg-role: danger;
 	color: var(--semantic-role-danger);
 	background: var(--surface-danger);
@@ -239,8 +239,8 @@
 
 .role-active {
 	@apply rounded-full border px-2 py-1 text-xs;
-	border-color: var(--line);
-	color: var(--text-muted);
+	border-color: var(--sys-border);
+	color: var(--sys-text-muted);
 	background: var(--surface-control);
 }
 
@@ -279,7 +279,7 @@
 
 .memory-entry[data-pinned] {
 	@apply border;
-	border-color: color-mix(in srgb, var(--amber) 35%, transparent);
+	border-color: color-mix(in srgb, var(--sys-warning) 35%, transparent);
 	background: var(--surface-warning);
 }
 
@@ -337,7 +337,7 @@
 
 .mini-btn.danger {
 	@apply border;
-	border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+	border-color: color-mix(in srgb, var(--sys-danger) 35%, transparent);
 	--semantic-fg-role: danger;
 	color: var(--semantic-role-danger);
 	background: var(--surface-danger);
@@ -372,7 +372,7 @@
 }
 
 .search-input::placeholder {
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 /* ------------------------------------------------------------------ */
@@ -396,7 +396,7 @@
 
 .switch-thumb {
 	@apply absolute left-1 top-1 size-5 rounded-full;
-	background: var(--text-muted);
+	background: var(--sys-text-muted);
 }
 
 .switch-control[data-checked] .switch-thumb {
@@ -409,7 +409,7 @@
 }
 
 .action-proposal.needs-user {
-	border-left-color: var(--amber);
+	border-left-color: var(--sys-warning);
 }
 
 .steer-row {
@@ -418,37 +418,37 @@
 
 .steer-row .steer-input {
 	@apply min-w-0 flex-1 rounded-md px-2 py-1.5 text-xs;
-	border: 1px solid var(--line);
-	color: var(--text);
+	border: 1px solid var(--sys-border);
+	color: var(--sys-text);
 	background: var(--surface-subtle);
 	font: inherit;
 }
 
 .completion-card {
 	@apply grid gap-2 rounded-lg px-3 py-2.5;
-	border: 1px solid color-mix(in srgb, var(--line) 78%, var(--accent) 22%);
+	border: 1px solid color-mix(in srgb, var(--sys-border) 78%, var(--sys-accent) 22%);
 	background: var(--surface-success);
 }
 
 .completion-card .completion-count {
 	@apply m-0 text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .failure-card {
 	@apply grid gap-1 px-3 py-2;
-	border-left: 3px solid var(--danger);
+	border-left: 3px solid var(--sys-danger);
 	background: var(--surface-danger);
 }
 
 .failure-card p {
 	@apply m-0 text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .work-actions .primary-tool {
 	@apply font-bold;
-	color: var(--accent);
+	color: var(--sys-accent);
 }
 
 .artifact-list {
@@ -461,7 +461,7 @@
 
 .action-proposal {
 	@apply grid gap-2.5 px-3 py-2.5;
-	border-left: 3px solid var(--accent);
+	border-left: 3px solid var(--sys-accent);
 	background: var(--surface-success);
 }
 
@@ -474,13 +474,13 @@
 }
 .system-label {
 	@apply text-xs font-bold;
-	color: var(--accent);
+	color: var(--sys-accent);
 }
 .scope-list {
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 .scope-list strong {
-	color: var(--text);
+	color: var(--sys-text);
 	@apply mr-1;
 }
 .work-actions {
@@ -500,7 +500,7 @@
 }
 .artifact-row span {
 	@apply text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .canon-row-actions {
@@ -512,7 +512,7 @@
 .message-choices {
 	@apply mx-auto my-3 grid w-full max-w-2xl gap-2.5 rounded-xl border p-4;
 	border-color: var(--line-soft);
-	background: var(--surface-alt);
+	background: var(--sys-surface-raised);
 }
 
 .message-choice-list {
@@ -526,7 +526,7 @@
 .message-media-card {
 	@apply mx-auto my-3 flex w-full max-w-2xl items-center justify-between gap-4 rounded-xl border p-4;
 	border-color: var(--line-soft);
-	background: var(--surface-alt);
+	background: var(--sys-surface-raised);
 }
 
 .message-media-card div {
@@ -536,7 +536,7 @@
 .message-media-card p,
 .media-preview-column footer p {
 	@apply m-0 text-sm;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .message-media-card button {

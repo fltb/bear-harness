@@ -42,20 +42,6 @@
 	--sys-warning: #ffc53d;
 	--sys-danger: #ff9592;
 
-	/* Private compatibility aliases. Role packages cannot configure these. */
-	--surface: var(--sys-surface);
-	--surface-alt: var(--sys-surface-raised);
-	--text: var(--sys-text);
-	--text-muted: var(--sys-text-muted);
-	--accent: var(--sys-accent);
-	--line: var(--sys-border);
-	--danger: var(--sys-danger);
-	--amber: var(--sys-warning);
-	--ink: var(--sys-text);
-	--aurora: var(--sys-accent-hover);
-	--font-body: var(--font-sans);
-	--font-heading: var(--font-serif);
-
 	/* Component-private aliases derived from the semantic system. */
 	--surface-canvas: var(--sys-canvas);
 	--surface-sidebar: var(--sys-surface);
@@ -79,7 +65,7 @@
 	--text-danger: var(--sys-danger);
 	/* Foreground roles stay available outside the backstage sheet. */
 	--semantic-role-default: var(--text-strong);
-	--semantic-role-muted: var(--text-muted);
+	--semantic-role-muted: var(--sys-text-muted);
 	--semantic-role-accent: var(--text-action);
 	--semantic-role-danger: var(--text-danger);
 	--semantic-role-on-action: var(--text-on-action);
@@ -130,7 +116,7 @@ body {
 	background:
 		radial-gradient(
 			circle at 82% 5%,
-			color-mix(in srgb, var(--accent) 17%, transparent),
+			color-mix(in srgb, var(--sys-accent) 17%, transparent),
 			transparent 28%
 		),
 		var(--surface-canvas);
@@ -161,22 +147,22 @@ button:disabled {
 
 button[data-control="command"] {
 	@apply min-h-8 rounded-md border px-3 py-2;
-	border-color: var(--line);
-	background: var(--surface-alt);
-	color: var(--text);
+	border-color: var(--sys-border);
+	background: var(--sys-surface-raised);
+	color: var(--sys-text);
 	font: inherit;
 	@apply cursor-pointer;
 }
 
 button[data-control="command"]:hover:not(:disabled),
 button[data-control="command"]:focus-visible {
-	border-color: var(--accent);
+	border-color: var(--sys-accent);
 }
 
 button[data-variant="primary"] {
 	@apply min-h-10 rounded-md border border-transparent px-4 text-sm font-bold;
-	background: var(--accent);
-	color: var(--surface);
+	background: var(--sys-accent);
+	color: var(--sys-surface);
 	font: inherit;
 	@apply cursor-pointer;
 }
@@ -204,7 +190,7 @@ button[data-variant="primary"]:focus-visible {
 
 .settings-section {
 	@apply grid gap-4 border-t pt-5;
-	border-color: var(--line);
+	border-color: var(--sys-border);
 }
 
 .settings-section:first-of-type {
@@ -234,9 +220,9 @@ button[data-variant="primary"]:focus-visible {
 .setting-field textarea,
 .setting-select .select-trigger {
 	@apply box-border min-h-10 w-full rounded-md border px-3 py-2 text-sm outline-none;
-	border-color: var(--line);
-	background: var(--surface-alt);
-	color: var(--text);
+	border-color: var(--sys-border);
+	background: var(--sys-surface-raised);
+	color: var(--sys-text);
 	font: inherit;
 	color-scheme: dark;
 }
@@ -248,12 +234,12 @@ button[data-variant="primary"]:focus-visible {
 
 .setting-field input:focus-visible,
 .setting-field textarea:focus-visible {
-	border-color: var(--accent);
+	border-color: var(--sys-accent);
 }
 
 .setting-field input::placeholder,
 .setting-field textarea::placeholder {
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .settings-choice-group {
@@ -266,9 +252,9 @@ button[data-variant="primary"]:focus-visible {
 
 .settings-choice-option {
 	@apply flex min-h-10 cursor-pointer items-center gap-3 rounded-md border px-3 text-sm;
-	border-color: var(--line);
-	background: var(--surface-alt);
-	color: var(--text);
+	border-color: var(--sys-border);
+	background: var(--sys-surface-raised);
+	color: var(--sys-text);
 }
 
 .settings-choice-option:hover:not([data-disabled]),
@@ -277,19 +263,19 @@ button[data-variant="primary"]:focus-visible {
 }
 
 .settings-choice-option[data-checked] {
-	border-color: var(--accent);
-	background: color-mix(in srgb, var(--accent) 10%, var(--surface-alt));
+	border-color: var(--sys-accent);
+	background: color-mix(in srgb, var(--sys-accent) 10%, var(--sys-surface-raised));
 }
 
 .settings-choice-control {
 	@apply flex size-4 shrink-0 items-center justify-center rounded-full border;
-	border-color: var(--line);
-	background: var(--surface);
+	border-color: var(--sys-border);
+	background: var(--sys-surface);
 }
 
 .settings-choice-indicator {
 	@apply size-2 rounded-full;
-	background: var(--accent);
+	background: var(--sys-accent);
 }
 
 .settings-choice-option[data-disabled] {
@@ -298,9 +284,9 @@ button[data-variant="primary"]:focus-visible {
 
 .settings-checkbox {
 	@apply flex min-h-10 cursor-pointer items-center gap-3 rounded-md border px-3 text-sm;
-	border-color: var(--line);
-	background: var(--surface-alt);
-	color: var(--text);
+	border-color: var(--sys-border);
+	background: var(--sys-surface-raised);
+	color: var(--sys-text);
 }
 
 .settings-checkbox:hover:not([data-disabled]),
@@ -309,14 +295,14 @@ button[data-variant="primary"]:focus-visible {
 }
 
 .settings-checkbox[data-checked] {
-	border-color: var(--accent);
-	background: color-mix(in srgb, var(--accent) 8%, var(--surface-alt));
+	border-color: var(--sys-accent);
+	background: color-mix(in srgb, var(--sys-accent) 8%, var(--sys-surface-raised));
 }
 
 .settings-checkbox-control {
 	@apply flex size-4 shrink-0 items-center justify-center rounded border text-xs font-bold;
-	border-color: var(--line);
-	background: var(--surface);
+	border-color: var(--sys-border);
+	background: var(--sys-surface);
 	--semantic-fg-role: accent;
 	color: var(--semantic-role-accent);
 }
@@ -331,16 +317,16 @@ button[data-variant="primary"]:focus-visible {
 
 .select-trigger {
 	@apply inline-flex min-w-0 min-h-10 items-center justify-between gap-2.5 rounded-md border px-3 text-sm;
-	border-color: var(--line);
-	background: var(--surface-alt);
-	color: var(--text);
+	border-color: var(--sys-border);
+	background: var(--sys-surface-raised);
+	color: var(--sys-text);
 	font: inherit;
 	@apply cursor-pointer;
 }
 
 .select-trigger:focus-visible,
 .select-trigger[data-expanded] {
-	border-color: var(--accent);
+	border-color: var(--sys-accent);
 }
 
 .select-value {
@@ -350,14 +336,14 @@ button[data-variant="primary"]:focus-visible {
 .select-icon {
 	@apply shrink-0 text-xs;
 	--semantic-fg-role: muted;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .select-content {
 	@apply z-70 min-w-full max-w-md rounded-md border shadow-xl;
-	border-color: var(--line);
-	background: var(--surface);
-	color: var(--text);
+	border-color: var(--sys-border);
+	background: var(--sys-surface);
+	color: var(--sys-text);
 }
 
 .select-listbox {
@@ -371,7 +357,7 @@ button[data-variant="primary"]:focus-visible {
 }
 
 .select-item[data-highlighted] {
-	background: var(--surface-alt);
+	background: var(--sys-surface-raised);
 	color: var(--text-strong);
 }
 
@@ -386,7 +372,7 @@ button[data-variant="primary"]:focus-visible {
 
 .model-option-provider {
 	@apply text-xs;
-	color: var(--text-muted);
+	color: var(--sys-text-muted);
 }
 
 .material-picker {

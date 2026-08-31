@@ -17,6 +17,7 @@ import type { CompanionDatabase, SystemDatabase } from "../src/storage/database.
 const temporaryDirectories: string[] = [];
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 const vault: CredentialVault = {
+	securityLevel: "session",
 	isEncryptionAvailable: () => false,
 	encryptString: (value) => Buffer.from(value),
 	decryptString: (value) => value.toString("utf8"),

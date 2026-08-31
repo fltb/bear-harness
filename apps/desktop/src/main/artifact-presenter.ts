@@ -176,10 +176,9 @@ async function cleanupStalePresentationDirectories(
 		entries.map(async (entry) => {
 			if (!entry.isDirectory() || !entry.name.startsWith("bear-presentation-")) return;
 			const owner = /^bear-presentation-(\d+)-/.exec(entry.name)?.[1];
-			if (owner) {
-				const ownerProcessId = Number(owner);
-				if (ownerProcessId === currentProcessId || isProcessAlive(ownerProcessId)) return;
-			}
+			if (!owner) return;
+			const ownerProcessId = Number(owner);
+			if (ownerProcessId === currentProcessId || isProcessAlive(ownerProcessId)) return;
 			await rm(join(temporaryRoot, entry.name), { recursive: true, force: true }).catch(
 				() => undefined,
 			);

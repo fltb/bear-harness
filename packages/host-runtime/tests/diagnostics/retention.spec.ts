@@ -49,7 +49,6 @@ function makeUnit(
 
 	if (options.markerPid !== undefined) {
 		writeMarkerAtomic(join(stateDir, `run-${launchId}.json`), {
-			schemaVersion: 1,
 			launchId,
 			pid: options.markerPid,
 			startedAt: "2026-08-01T00:00:00.000Z",

@@ -11,7 +11,6 @@ import { type HostCompositionContext, wireHostHandlers } from "../src/compositio
 import { Dispatcher } from "../src/dispatcher.js";
 import { type CredentialVault, createHostRuntime, type HostRuntime } from "../src/index.js";
 import {
-	DURABLE_FILE_TRANSACTION_VERSION,
 	type DurableFileTransactionMarker,
 	durableFileTransactionMarkerPath,
 } from "../src/storage/durable-file-transaction.js";
@@ -21,6 +20,7 @@ const runtimes: HostRuntime[] = [];
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 const silentLogger = { debug: () => undefined, warn: () => undefined };
 const vault: CredentialVault = {
+	securityLevel: "session",
 	isEncryptionAvailable: () => false,
 	encryptString: (value) => Buffer.from(value),
 	decryptString: (value) => value.toString("utf8"),
@@ -61,7 +61,6 @@ function restartMarker(dataDir: string): DurableFileTransactionMarker {
 	const base = basename(target);
 	const transactionId = "30000000-0000-4000-8000-000000000003";
 	return {
-		version: DURABLE_FILE_TRANSACTION_VERSION,
 		transactionId,
 		target,
 		staging: join(parent, `.${base}.staging-${transactionId}`),

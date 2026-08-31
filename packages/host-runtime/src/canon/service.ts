@@ -444,7 +444,7 @@ export class CanonHubService {
 				})
 				.run();
 		});
-		this.eventBus.publish("canon.package_synced", { companionId, version: canon.manifest.version });
+		this.eventBus.publish("canon.package_synced", { companionId });
 		void this.indexPending(companionId);
 	}
 
@@ -908,7 +908,6 @@ function canonEmbeddingConfiguration(
 		if (!Number.isSafeInteger(dimensions) || dimensions <= 0) return undefined;
 		const info = service.getProviderInfo();
 		const identity = JSON.stringify({
-			v: 1,
 			provider: info.provider.trim(),
 			model: info.model.trim(),
 			dimensions,

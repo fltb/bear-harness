@@ -66,12 +66,10 @@ describe("desktop artifact presenter", () => {
 
 	it("removes abandoned presentation copies without touching a live process directory", async () => {
 		await handle.dispose();
-		const legacy = join(root, "bear-presentation-legacy");
 		const abandoned = join(root, "bear-presentation-999-abandoned");
 		const live = join(root, "bear-presentation-777-live");
-		await Promise.all([mkdir(legacy), mkdir(abandoned), mkdir(live)]);
+		await Promise.all([mkdir(abandoned), mkdir(live)]);
 		await Promise.all([
-			writeFile(join(legacy, "private.txt"), "legacy private copy"),
 			writeFile(join(abandoned, "private.txt"), "abandoned private copy"),
 			writeFile(join(live, "private.txt"), "live private copy"),
 		]);
@@ -89,7 +87,6 @@ describe("desktop artifact presenter", () => {
 		await expect(
 			handle.presenter.open?.(makeRequest(root, "report.txt", "contents")),
 		).resolves.toEqual({ outcome: "completed" });
-		await expect(stat(legacy)).rejects.toMatchObject({ code: "ENOENT" });
 		await expect(stat(abandoned)).rejects.toMatchObject({ code: "ENOENT" });
 		expect((await stat(live)).isDirectory()).toBe(true);
 	});

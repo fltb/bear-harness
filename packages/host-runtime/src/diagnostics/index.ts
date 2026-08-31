@@ -317,7 +317,7 @@ export class Diagnostics {
 		attributes: Record<string, boolean | number | string> = {},
 	): SpanHandle {
 		const entry: CatalogEntry | undefined = DIAGNOSTIC_CATALOG[name];
-		if (!entry || entry.kind !== "span") {
+		if (entry?.kind !== "span") {
 			throw new TypeError(`not a span in the diagnostics catalog: ${name}`);
 		}
 		const parent = currentTraceContext();
@@ -378,7 +378,6 @@ export class Diagnostics {
 	private writeMarker(partial: { state: string; startedAt?: string; lastSeenAt?: string }): void {
 		const nowIso = new Date(this.clock()).toISOString();
 		const marker = {
-			schemaVersion: 1,
 			launchId: this.launchId,
 			pid: process.pid,
 			startedAt: partial.startedAt ?? nowIso,

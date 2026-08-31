@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/node-sqlite";
 import { describe, expect, it } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import { ContextPackCompiler } from "../src/companion/context-pack.js";
-import { COMPANION_MIGRATIONS } from "../src/storage/database.js";
+import { COMPANION_SCHEMA_SQL } from "../src/storage/database.js";
 
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
 const characters = new CharacterLoader(characterRoot);
@@ -14,7 +14,7 @@ const characters = new CharacterLoader(characterRoot);
 function fixture() {
 	const db = new DatabaseSync(":memory:");
 	db.function("bear_sync_changed", () => null);
-	for (const migration of COMPANION_MIGRATIONS) db.exec(migration.up);
+	db.exec(COMPANION_SCHEMA_SQL);
 	db.prepare("INSERT INTO runtime_identity (id, companion_id, nickname) VALUES (1, ?, ?)").run(
 		"jizhou",
 		"小雪",

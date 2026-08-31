@@ -56,7 +56,7 @@ Bear 是一个管理型的 Pi 桌面产品，不是另一个对话引擎：
 - Artifact CAS 也是每角色独立，不跨角色硬链接或去重。
 - 删除角色包与删除角色运行数据是两个独立动作；删除会话调用 Pi 标准删除，并清理 Bear 管理的关联数据。
 
-实现入口：`packages/host-runtime/src/storage/layout.ts`、`layout-migration.ts`、`companion-storage.ts`、`split-baselines.ts`、`packages/host-runtime/src/character-runtime.ts`。
+实现入口：`packages/host-runtime/src/storage/layout.ts`、`companion-storage.ts`、`schema-sql.ts`、`packages/host-runtime/src/character-runtime.ts`。
 
 本机实际迁移已执行：`/Users/bytedance/Library/Application Support/bear-harness` 现为 layout v2，`openai-codex` OAuth、7 个 configured models 和 `jizhou` 角色运行数据均已进入上述新位置。SQLite `integrity_check=ok`、外键错误为 0。原布局的原子备份位于 `/Users/bytedance/Library/Application Support/.bear-harness.runtime-layout-v1-backup-20260831113017`，按 7 天保留策略处理。真实启动时发现并修复了旧 Onboarding 的废弃 `conversation_history_read_enabled` 字段；修复只存在于一次性迁移转换，不引入运行时兼容分支。
 

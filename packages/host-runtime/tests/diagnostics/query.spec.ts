@@ -16,7 +16,6 @@ function createTempRoot(prefix: string): string {
 
 function record(traceId: string, name = "app.started", timestamp = "2026-08-27T00:00:00.000Z") {
 	return {
-		schemaVersion: 1,
 		timestamp,
 		sequence: 1,
 		launchId: "query-test",

@@ -170,13 +170,13 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 		if (!root) return [{ tag: "ROOT", role: "missing", actual: "", expected: "" }];
 		const roles = ["default", "muted", "accent", "danger", "on-action"];
 		const requiredThemeTokens = [
-			"--surface",
-			"--surface-alt",
-			"--text",
-			"--text-muted",
-			"--accent",
-			"--danger",
-			"--line",
+			"--sys-surface",
+			"--sys-surface-raised",
+			"--sys-text",
+			"--sys-text-muted",
+			"--sys-accent",
+			"--sys-danger",
+			"--sys-border",
 		];
 		const missingTokens = requiredThemeTokens.filter(
 			(token) => getComputedStyle(root).getPropertyValue(token).trim() === "",

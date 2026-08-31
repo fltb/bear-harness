@@ -12,7 +12,7 @@ import type {
 } from "../src/artifacts/presentation.js";
 import { type HostCompositionContext, wireHostHandlers } from "../src/composition.js";
 import { Dispatcher } from "../src/dispatcher.js";
-import { COMPANION_MIGRATIONS, CompanionDatabase } from "../src/storage/database.js";
+import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../src/storage/database.js";
 import { artifacts, conversations, evidence, runs } from "../src/storage/schema.js";
 
 interface ArtifactIdentity {
@@ -33,7 +33,7 @@ describe("run-owned Artifact RPC", () => {
 	beforeEach(() => {
 		root = mkdtempSync(join(tmpdir(), "bear-artifact-rpc-"));
 		database = new CompanionDatabase(join(root, "runtime.db"), "bear");
-		database.migrate(COMPANION_MIGRATIONS);
+		database.initialize(COMPANION_SCHEMA_SQL);
 		database.ensureRuntimeIdentity();
 		store = new ArtifactStore(database.orm, join(root, "cas"));
 		first = seedRunArtifact("conversation-a", "run-a", "artifact-a.txt", "0123456789");

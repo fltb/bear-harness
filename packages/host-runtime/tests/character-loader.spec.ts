@@ -20,7 +20,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import {
-	DURABLE_FILE_TRANSACTION_VERSION,
 	type DurableFileTransactionMarker,
 	durableFileTransactionMarkerPath,
 } from "../src/storage/durable-file-transaction.js";
@@ -42,7 +41,6 @@ function characterTransaction(
 	state: DurableFileTransactionMarker["state"],
 ): DurableFileTransactionMarker {
 	return {
-		version: DURABLE_FILE_TRANSACTION_VERSION,
 		transactionId: characterTransactionId,
 		target: join(libraryRoot, characterId),
 		staging: join(libraryRoot, `.${characterId}.staging-${characterTransactionId}`),
@@ -69,22 +67,6 @@ function copyCharacterPackage(destination: string, characterId: string, label: s
 }
 
 describe("character package visual projection", () => {
-	it("rejects removed Host lifecycle reaction declarations", () => {
-		const configRoot = mkdtempSync(join(tmpdir(), "bear-character-package-legacy-host-"));
-		temporaryDirectories.push(configRoot);
-		const packageDir = join(configRoot, "jizhou");
-		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
-		const manifestPath = join(packageDir, "character.yaml");
-		const manifest = readFileSync(manifestPath, "utf8");
-		writeFileSync(
-			manifestPath,
-			manifest.replace("state_schema:", "host:\n  event_reactions: []\nstate_schema:"),
-		);
-		expect(() => new CharacterLoader(configRoot).load("jizhou")).toThrow(
-			/legacy host lifecycle reactions are not supported/,
-		);
-	});
-
 	it("projects declared SVG assets as renderer-safe data URLs", () => {
 		const loader = new CharacterLoader(characterRoot);
 		const character = loader.load("jizhou");
@@ -113,7 +95,6 @@ describe("character package visual projection", () => {
 		});
 		expect(character.canon.manifest).toEqual(
 			expect.objectContaining({
-				version: 1,
 				language: "zh-CN",
 				sources: expect.arrayContaining([
 					expect.objectContaining({ id: "jizhou_story", path: "jizhou-story.md" }),

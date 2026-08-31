@@ -3,7 +3,7 @@
  * Zod schemas, routes to the registered domain handlers, and returns the
  * shared response envelope.
  *
- * This is the runtime-independent replacement for the legacy Electron
+ * This is the runtime-independent Electron
  * `ipc-router`: there is no `ipcMain` and no `BrowserWindow`. A channel is
  * valid when it exists in `CHANNEL_CONTRACTS` (from
  * `@bear-harness/protocol/schema`); an unregistered-but-known channel returns

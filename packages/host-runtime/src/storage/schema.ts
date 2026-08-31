@@ -1,4 +1,3 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { sql } from "drizzle-orm";
 import {
 	type AnySQLiteColumn,
@@ -11,12 +10,6 @@ import {
 	text,
 	unique,
 } from "drizzle-orm/sqlite-core";
-
-export const schemaMigrations = sqliteTable("schema_migrations", {
-	id: integer().primaryKey(),
-	checksum: text().notNull(),
-	appliedAt: text("applied_at").default(sql`datetime('now')`).notNull(),
-});
 
 export const installationIdentity = sqliteTable(
 	"installation_identity",
@@ -108,7 +101,7 @@ export const appSettings = sqliteTable(
 		modelDownloadMirrorJson: text("model_download_mirror").notNull().default("{}"),
 		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 	},
-	(table) => [check("app_settings_check_18", sql`id = 1`)],
+	() => [check("app_settings_singleton", sql`id = 1`)],
 );
 
 export const runs = sqliteTable(
@@ -146,7 +139,7 @@ export const runs = sqliteTable(
 	(table) => [
 		index("idx_runs_conversation_trigger").on(table.conversationId, table.triggerEntryId),
 		check(
-			"runs_check_15",
+			"runs_status",
 			sql`status IN ('enqueued','running','needs_user','completed','failed','cancelled','interrupted','forced_termination')`,
 		),
 	],
@@ -198,7 +191,7 @@ export const artifacts = sqliteTable(
 	(table) => [
 		index("idx_artifacts_run").on(table.producerRunId),
 		check(
-			"artifacts_check_16",
+			"artifacts_status",
 			sql`status IN ('created','verified','verification_failed','adopted','saved')`,
 		),
 	],
@@ -225,9 +218,9 @@ export const providerAccounts = sqliteTable(
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 	},
-	(table) => [
+	() => [
 		check(
-			"provider_accounts_check_17",
+			"provider_accounts_credential_status",
 			sql`credential_status IN ('missing','session_only','stored','weak_storage','refreshing','invalid','unavailable')`,
 		),
 	],
@@ -244,7 +237,7 @@ export const configuredModels = sqliteTable(
 	},
 	(table) => [
 		primaryKey({ columns: [table.providerId, table.modelId], name: "configured_models_pk" }),
-		check("configured_models_check_18", sql`supports_images IN (0, 1)`),
+		check("configured_models_supports_images_boolean", sql`supports_images IN (0, 1)`),
 	],
 );
 
@@ -274,7 +267,7 @@ export const executorProfiles = sqliteTable(
 			.notNull(),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	},
-	(table) => [check("executor_profiles_check_20", sql`profile_type IN ('pi','codex')`)],
+	() => [check("executor_profiles_type", sql`profile_type IN ('pi','codex')`)],
 );
 
 export const runtimeAssets = sqliteTable("runtime_assets", {
@@ -413,7 +406,7 @@ export const storyModules = sqliteTable(
 	(table) => [
 		index("idx_story_modules_companion").on(table.companionId, table.kind),
 		check(
-			"story_modules_check_25",
+			"story_modules_kind",
 			sql`kind IN ('root','arc','event','entity','relationship','location','object','behavior')`,
 		),
 	],
@@ -428,7 +421,7 @@ export const activeCharacter = sqliteTable(
 			.references(() => companionIdentity.id),
 		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 	},
-	(table) => [check("active_character_check_26", sql`singleton = 1`)],
+	() => [check("active_character_singleton", sql`singleton = 1`)],
 );
 
 export const characterDrafts = sqliteTable("character_drafts", {

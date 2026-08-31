@@ -13,9 +13,9 @@ import {
 	compileCharacterStateSchema,
 } from "../src/companion/state-schema.js";
 import {
-	COMPANION_MIGRATIONS,
+	COMPANION_SCHEMA_SQL,
 	CompanionDatabase,
-	SYSTEM_MIGRATIONS,
+	SYSTEM_SCHEMA_SQL,
 	SystemDatabase,
 } from "../src/storage/database.js";
 import { EventBus } from "../src/storage/event-bus.js";
@@ -34,13 +34,13 @@ function fixture() {
 		join(root, "companions", "jizhou", "runtime.db"),
 		"jizhou",
 	);
-	system.migrate(SYSTEM_MIGRATIONS);
-	database.migrate(COMPANION_MIGRATIONS);
+	system.initialize(SYSTEM_SCHEMA_SQL);
+	database.initialize(COMPANION_SCHEMA_SQL);
 	database.ensureRuntimeIdentity();
 	const loader = new CharacterLoader(resolve(import.meta.dirname, "../../../config/characters"));
 	const character = loader.load("jizhou");
 	if (!character) throw new Error("missing default character");
-	loader.seed(system.orm, database.orm, new EventBus(database.orm), character);
+	loader.seed(system.orm, new EventBus(database.orm), character);
 	system.close();
 	database.orm
 		.insert(conversations)

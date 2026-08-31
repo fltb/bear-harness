@@ -50,7 +50,7 @@ for (const path of manifest.notices.componentPaths) {
 const componentIndex = JSON.parse(
 	readFileSync(resourcePath(manifest.notices.componentIndex), "utf8"),
 );
-if (componentIndex.schemaVersion !== 1 || !Array.isArray(componentIndex.files)) {
+if (!Array.isArray(componentIndex.files)) {
 	throw new Error("invalid component notice index");
 }
 const indexedPaths = componentIndex.files.map((file) => file.path);
@@ -95,7 +95,6 @@ process.stdout.write(
 );
 
 function assertManifest(value) {
-	if (value.schemaVersion !== 1) throw new Error("unexpected Git runtime manifest schema");
 	for (const [key, expected] of Object.entries(EXPECTED)) {
 		if (value.release?.[key] !== expected)
 			throw new Error(`unexpected PortableGit manifest ${key}`);
