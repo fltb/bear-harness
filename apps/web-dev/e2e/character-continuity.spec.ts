@@ -1,14 +1,18 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, type Page, test } from "playwright/test";
 
 const providerUrl = `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}`;
 
-import { ensureReadyForConversation, projectPiEntries } from "./helpers";
+import { ensureReadyForConversation, projectPiEntries, sendMessage } from "./helpers";
 
 const characterRoot = fileURLToPath(new URL("../../../config/characters/jizhou", import.meta.url));
+const storyScreenshotRoot = resolve(
+	import.meta.dirname,
+	"../../../artifacts/story-full-coverage-2026-09-01/screenshots",
+);
 
 async function rpc<T>(page: Page, token: string, channel: string, data: unknown): Promise<T> {
 	const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
@@ -215,6 +219,90 @@ test("presented role choices send ordinary messages and advance generic schema s
 	expect(finalPrompt).toMatch(
 		/"continuity":\s*{\s*"stage": 3,\s*"response": "用户愿意接住这份交接。"/,
 	);
+});
+
+test("undelivered report enters, pauses, resumes, advances every chapter, and ends", async ({
+	page,
+}) => {
+	test.setTimeout(60_000);
+	mkdirSync(storyScreenshotRoot, { recursive: true });
+	await ensureReadyForConversation(page);
+	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	const conversationId = await createFreshConversation(
+		page,
+		bootstrap.token,
+		"Undelivered report full flow",
+	);
+	const sidebar = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
+	await sidebar.getByRole("button").filter({ hasText: "Undelivered report full flow" }).click();
+
+	const send = async (text: string, expected: string) => {
+		await sendMessage(page, text);
+		await expect
+			.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
+			.toBe(expected);
+	};
+	const screenshot = async (name: string) => {
+		await page.screenshot({
+			path: join(storyScreenshotRoot, name),
+			fullPage: true,
+		});
+	};
+	const storyState = async () => {
+		const result = await rpc<{
+			state: { character: { document: { story: { active: boolean; chapter: number } } } };
+		}>(page, bootstrap.token, "companionState.get:v1", { conversationId });
+		return result.state.character.document.story;
+	};
+	const latestStoryResource = async () => {
+		const trace = (await (await page.request.get(`${providerUrl}/trace/prompts`)).json()) as {
+			prompts: string[];
+		};
+		const storyPrompt = trace.prompts.findLast((prompt) =>
+			prompt.includes('<role_skill id="undelivered-report"'),
+		);
+		const matches = [
+			...(storyPrompt ?? "").matchAll(
+				/<role_skill id="undelivered-report"[\s\S]*?<resource id="([^"]+)">/gu,
+			),
+		];
+		return matches.at(-1)?.[1];
+	};
+
+	await send("E2E_STORY_ENTRY", "E2E_STORY_ENTRY_DONE");
+	expect(await latestStoryResource()).toBe("entry");
+	const enter = page.getByRole("button", { name: "进入调查" });
+	await expect(enter).toBeVisible();
+	await screenshot("01-entry-choice.png");
+	await enter.click();
+	await expect
+		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
+		.toBe("E2E_STORY_STARTED_DONE");
+	await expect.poll(storyState).toMatchObject({ active: true, chapter: 1 });
+	await screenshot("02-entered-signal.png");
+
+	await send("先暂停《未送达的回报》。", "E2E_STORY_PAUSED_DONE");
+	expect(await latestStoryResource()).toBe("damaged-signal");
+	await expect.poll(storyState).toMatchObject({ active: false, chapter: 1 });
+	await screenshot("03-paused.png");
+	await send("继续《未送达的回报》。", "E2E_STORY_RESUMED_DONE");
+	expect(await latestStoryResource()).toBe("damaged-signal");
+	await expect.poll(storyState).toMatchObject({ active: true, chapter: 1 });
+	await screenshot("04-resumed.png");
+
+	const resources = ["damaged-signal", "routes", "testimonies", "last-shift", "future", "ending"];
+	for (const [index, resource] of resources.entries()) {
+		const chapter = index + 2;
+		await send("E2E_STORY_ADVANCE", `E2E_STORY_ADVANCE_DONE_${chapter}`);
+		expect(await latestStoryResource()).toBe(resource);
+		await expect.poll(storyState).toMatchObject({ active: chapter < 7, chapter });
+		await screenshot(`${String(chapter + 3).padStart(2, "0")}-chapter-${chapter}.png`);
+	}
+
+	await send("E2E_STORY_CHECK_END", "E2E_STORY_END_CHECK_DONE");
+	expect(await latestStoryResource()).toBe("ending");
+	await expect.poll(storyState).toMatchObject({ active: false, chapter: 7 });
+	await screenshot("11-ending-check.png");
 });
 
 test("adopted multi-turn history and a manual edit change the next model context", async ({

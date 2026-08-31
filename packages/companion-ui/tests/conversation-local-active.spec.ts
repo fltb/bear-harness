@@ -63,8 +63,8 @@ describe("renderer-local conversation selection", () => {
 				ok: true as const,
 				data: {
 					characters: [
-						{ id: "role-a", name: "A", version: "1", active: role === "a" },
-						{ id: "role-b", name: "B", version: "1", active: role === "b" },
+						{ id: "role-a", name: "A", active: role === "a" },
+						{ id: "role-b", name: "B", active: role === "b" },
 					],
 				},
 			}),

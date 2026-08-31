@@ -1,5 +1,4 @@
 import { eq } from "drizzle-orm";
-import jsonPatch from "fast-json-patch";
 import type { CanonHubService } from "../canon/service.js";
 import type { AppDatabase } from "../storage/database.js";
 import { companionRuntimeIdentity, conversations } from "../storage/schema.js";
@@ -40,7 +39,6 @@ export class ContextPackCompiler {
 		if (options.canonQuery && this.canon) {
 			const rows = await this.canon.retrieveHybrid(context.companionId, options.canonQuery, {
 				limit: 6,
-				allowedModuleIds: this.accessibleCanonModuleIds(conversationId),
 			});
 			const canon = evidence(rows);
 			if (canon) context.blocks.push(canon);
@@ -55,22 +53,6 @@ export class ContextPackCompiler {
 	sessionContext(conversationId: string): string {
 		const nickname = this.lookup(conversationId).nickname;
 		return nickname ? `<user_address>\n称呼用户为：${nickname}\n</user_address>` : "";
-	}
-
-	accessibleCanonModuleIds(conversationId: string, override?: Record<string, unknown>): string[] {
-		const { character } = this.lookup(conversationId);
-		const state =
-			override ?? this.store.project(character.id, conversationId, character.state).document;
-		const skills = new Set(character.skills.map(({ name }) => name));
-		return character.canon.manifest.modules
-			.filter((module) => {
-				if (module.access.mode !== "gated") return true;
-				if (module.access.skill && !skills.has(module.access.skill)) return false;
-				if (!module.access.state) return true;
-				const actual = jsonPatch.getValueByPointer(state, module.access.state.path);
-				return module.access.state.values.some((value) => Object.is(value, actual));
-			})
-			.map(({ id }) => id);
 	}
 
 	private base(conversationId: string): Base {

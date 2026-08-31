@@ -39,7 +39,6 @@ export const zhCN = {
 			personality: "性格",
 			scenario: "情境",
 			system_prompt: "角色规则",
-			mes_example: "对话示例",
 		},
 		storageTab: "角色包存储",
 		memoryTab: "角色记忆",

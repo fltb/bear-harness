@@ -11,7 +11,6 @@ export interface CharacterStateDefinition extends Record<string, unknown> {
 	properties?: Record<string, CharacterStateDefinition>;
 	additionalProperties?: boolean | CharacterStateDefinition;
 	"x-scope"?: StateScope;
-	"x-incompatible-state"?: "reject" | "reset";
 }
 type CompiledSchema = {
 	partitions: ReadonlyMap<string, StateScope>;

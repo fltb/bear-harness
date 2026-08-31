@@ -10,7 +10,7 @@ import { createTestClient, OFFICIAL_PRODUCT } from "./fixtures.js";
 const COMPLETE_ONBOARDING = {
 	status: "complete" as const,
 	eventSeq: 0,
-	stateData: { schema_version: 1 as const, flow_version: 1, answers: {}, decisions: {} },
+	stateData: { answers: {}, decisions: {} },
 };
 
 /**

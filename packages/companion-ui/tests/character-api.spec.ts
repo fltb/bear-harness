@@ -27,7 +27,6 @@ const ok = <T>(data: T) => Promise.resolve({ ok: true as const, data });
 const characterSummary: CharacterSummary = {
 	id: "character-one",
 	name: "Character One",
-	version: "1.0.0",
 	subtitle: "A test character",
 	avatarUrl: "data:image/svg+xml;base64,PHN2Zy8+",
 	active: true,

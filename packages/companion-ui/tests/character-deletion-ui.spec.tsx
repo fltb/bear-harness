@@ -16,7 +16,6 @@ const document = {
   personality: Test personality
   scenario: Test scenario
   system_prompt: Test system prompt
-  mes_example: ''
 media: []
 `,
 	sha256: "a".repeat(64),

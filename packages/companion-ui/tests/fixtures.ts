@@ -48,7 +48,6 @@ export const THEMED_CHARACTER: CharacterDisplay = {
 			custom_placeholder: "What was wrong?",
 		},
 		first_meeting: {
-			version: 1,
 			step_label: "Step",
 			dialog_label: "Introduction",
 			error_prefix: "Error",
@@ -61,7 +60,6 @@ export const THEMED_CHARACTER: CharacterDisplay = {
 					submit_label: "Continue",
 				},
 			],
-			completion: { conversation_title: "Test conversation" },
 		},
 	},
 	prompt: {
@@ -69,7 +67,6 @@ export const THEMED_CHARACTER: CharacterDisplay = {
 		personality: "Test personality",
 		scenario: "Test scenario",
 		system_prompt: "Test system prompt",
-		mes_example: "",
 	},
 	scenes: [{ id: "default", label: "Default", description: "Default scene" }],
 	visual: {
@@ -284,7 +281,6 @@ export function createTestClient() {
 						character: {
 							document: {},
 							revisions: { conversation: 0, global: 0 },
-							schemaHash: "0".repeat(64),
 						},
 						display: { sceneId: "default", expressionId: "default" },
 						revisions: { display: 0 },
@@ -299,14 +295,14 @@ export function createTestClient() {
 				ok({
 					status: "complete",
 					eventSeq: 0,
-					stateData: { schema_version: 1, flow_version: 1, answers: {}, decisions: {} },
+					stateData: { answers: {}, decisions: {} },
 				}),
 			),
 			submit: vi.fn(() =>
 				ok({
 					status: "complete",
 					eventSeq: 0,
-					stateData: { schema_version: 1, flow_version: 1, answers: {}, decisions: {} },
+					stateData: { answers: {}, decisions: {} },
 				}),
 			),
 		},

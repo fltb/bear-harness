@@ -89,11 +89,11 @@ function context() {
 		})),
 		configure: vi.fn(),
 		close: vi.fn(),
+		closeAll: vi.fn(async () => undefined),
 	};
 	const project = vi.fn(() => ({
 		document: { affinity: 2 },
 		revisions: { conversation: 1, global: 2 },
-		schemaHash: "a".repeat(64),
 	}));
 	const companionSnapshot = vi.fn(() => ({
 		display: {
@@ -121,7 +121,7 @@ function context() {
 			seed: vi.fn(),
 			activate: vi.fn(),
 			pluginTrust: vi.fn(() => ({ trusted: true })),
-			piResources: vi.fn(() => ({ appendSystemPrompt: "prompt" })),
+			piResources: vi.fn(() => ({ appendSystemPrompt: "prompt", pluginPaths: [] })),
 		},
 		companionStore: {
 			reconcileSchema: vi.fn(),

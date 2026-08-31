@@ -41,8 +41,7 @@ export const zhTW = {
 			"description": "角色簡介",
 			"personality": "性格",
 			"scenario": "情境",
-			"system_prompt": "角色規則",
-			"mes_example": "對話示例"
+			"system_prompt": "角色規則"
 		},
 		"storageTab": "角色包儲存",
 		"memoryTab": "角色記憶",

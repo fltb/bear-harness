@@ -135,8 +135,6 @@ describe("host projection validation", () => {
 			currentStepId: "hello",
 			eventSeq: 2,
 			stateData: {
-				schema_version: 1,
-				flow_version: 1,
 				answers: {},
 				decisions: { relationship_memory_enabled: true },
 			},

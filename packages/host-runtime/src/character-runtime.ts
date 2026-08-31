@@ -216,9 +216,7 @@ export class CharacterRuntime {
 		this.onboarding.initialize(this.companionId);
 		this.canon.syncPackage(this.companionId, character.canon);
 		const trust = options.characterLoader.pluginTrust(options.systemDb, character);
-		this.pi.configure(
-			options.characterLoader.piResources(character, trust.trusted).appendSystemPrompt,
-		);
+		this.pi.configure(options.characterLoader.piResources(character, trust.trusted));
 	}
 
 	get db() {

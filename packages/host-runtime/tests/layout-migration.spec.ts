@@ -194,8 +194,6 @@ describe("flat runtime layout migration", () => {
 					),
 				),
 			).toEqual({
-				schema_version: 1,
-				flow_version: 1,
 				answers: {},
 				decisions: { relationship_memory_enabled: true },
 			});

@@ -121,8 +121,6 @@ export class FirstMeetingMachine {
 	): OnboardingStateData {
 		if (serialized === undefined) {
 			return {
-				schema_version: 1,
-				flow_version: flow.version,
 				answers: {},
 				decisions: {
 					relationship_memory_enabled: true,
@@ -130,12 +128,8 @@ export class FirstMeetingMachine {
 			};
 		}
 		const parsedState = OnboardingStateDataSchema.safeParse(serialized);
-		if (!parsedState.success) throw parsedState.error;
-		if (parsedState.data.flow_version !== flow.version) {
-			throw new Error(
-				`character onboarding state version ${parsedState.data.flow_version} does not match flow version ${flow.version}`,
-			);
-		}
+		if (!parsedState.success)
+			return { answers: {}, decisions: { relationship_memory_enabled: true } };
 		const storedAnswers = parsedState.data.answers;
 		const answers: Record<string, string> = {};
 		const decisions: OnboardingStateData["decisions"] = {
@@ -158,8 +152,6 @@ export class FirstMeetingMachine {
 				parsedState.data.decisions.relationship_memory_enabled;
 		}
 		return {
-			schema_version: 1,
-			flow_version: flow.version,
 			answers,
 			decisions,
 		};
@@ -209,8 +201,6 @@ export class FirstMeetingMachine {
 			}
 		}
 		return {
-			schema_version: 1,
-			flow_version: stateData.flow_version,
 			answers,
 			decisions,
 		};

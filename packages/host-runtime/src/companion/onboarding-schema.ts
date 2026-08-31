@@ -65,7 +65,6 @@ const ChoiceStepSchema = z.strictObject({
  * declare arbitrary code or privileged side effects.
  */
 export const CharacterOnboardingFlowSchema = z.strictObject({
-	version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
 	step_label: Copy,
 	dialog_label: Copy,
 	error_prefix: Copy,
@@ -73,13 +72,10 @@ export const CharacterOnboardingFlowSchema = z.strictObject({
 		.array(z.discriminatedUnion("kind", [AcknowledgeStepSchema, TextStepSchema, ChoiceStepSchema]))
 		.min(1)
 		.max(12),
-	completion: z.strictObject({ conversation_title: Copy }),
 });
 
-/** Canonical, versioned persistence shape for role-defined onboarding answers. */
+/** Canonical persistence shape for role-defined onboarding answers. */
 export const OnboardingStateDataSchema = z.strictObject({
-	schema_version: z.literal(1),
-	flow_version: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
 	answers: z.record(Identifier, z.string().max(MAX_COPY_LENGTH)),
 	decisions: z.strictObject({
 		relationship_memory_enabled: z.boolean().optional(),

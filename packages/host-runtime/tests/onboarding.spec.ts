@@ -704,47 +704,23 @@ describe("role-defined onboarding", () => {
 		await restarted.close();
 	});
 
-	it("rejects persisted onboarding state from a different role flow version", async () => {
+	it("resets invalid persisted onboarding state", async () => {
 		const runtime = runtimeForTest();
 		const database = runtimeDatabases(runtime).companion;
 		database.connection
 			.prepare(
 				"INSERT INTO onboarding_state (companion_id, state, state_json, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(companion_id) DO UPDATE SET state=excluded.state, state_json=excluded.state_json, updated_at=excluded.updated_at",
 			)
-			.run(
-				productConfig.defaultCharacterId,
-				"complete",
-				JSON.stringify({
-					schema_version: 1,
-					flow_version: 1,
-					answers: { nickname: "林", relationship: "collaborator" },
-					decisions: { relationship_kind: "collaborator" },
-				}),
-			);
+			.run(productConfig.defaultCharacterId, "welcome", JSON.stringify({ decisions: {} }));
 
 		await expect(runtime.dispatch("onboarding.get:v1", {})).resolves.toMatchObject({
-			ok: false,
-			error: { kind: "internal" },
-		});
-		await runtime.close();
-	});
-
-	it("rejects corrupt current-version state instead of treating it as legacy data", async () => {
-		const runtime = runtimeForTest();
-		const database = runtimeDatabases(runtime).companion;
-		database.connection
-			.prepare(
-				"INSERT INTO onboarding_state (companion_id, state, state_json, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(companion_id) DO UPDATE SET state=excluded.state, state_json=excluded.state_json, updated_at=excluded.updated_at",
-			)
-			.run(
-				productConfig.defaultCharacterId,
-				"welcome",
-				JSON.stringify({ schema_version: 1, decisions: {} }),
-			);
-
-		await expect(runtime.dispatch("onboarding.get:v1", {})).resolves.toMatchObject({
-			ok: false,
-			error: { kind: "internal" },
+			ok: true,
+			data: {
+				stateData: {
+					answers: {},
+					decisions: { relationship_memory_enabled: true },
+				},
+			},
 		});
 		await runtime.close();
 	});

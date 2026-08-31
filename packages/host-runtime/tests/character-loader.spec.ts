@@ -124,7 +124,6 @@ describe("character package visual projection", () => {
 			expect.objectContaining({
 				id: "station_identity",
 				kind: "root",
-				access: { mode: "always" },
 				bindings: [expect.objectContaining({ source: "jizhou_story" })],
 			}),
 		);
@@ -406,7 +405,8 @@ describe("character package Pi resources", () => {
 		expect(resources.appendSystemPrompt).not.toContain("x-evidence-required");
 		expect(resources.appendSystemPrompt).not.toContain("x-allowed-transitions");
 		expect(resources.appendSystemPrompt).not.toContain("JSON Patch");
-		expect(resources.appendSystemPrompt.match(/"id": "emotional_support"/g)).toHaveLength(1);
+		expect(resources.appendSystemPrompt).not.toContain('"id": "emotional_support"');
+		expect(resources.appendSystemPrompt.match(/"user": "今天有点累。"/g)).toHaveLength(1);
 	});
 
 	it("discovers only role-owned Skills and plugins by package convention", () => {
@@ -452,27 +452,7 @@ Use the station log.
 });
 
 describe("character package durable replacement", () => {
-	it("upgrades the installed default package when the bundled seed version is newer", () => {
-		const bundledVersion = new CharacterLoader(characterRoot).load("jizhou")?.version;
-		if (!bundledVersion) throw new Error("missing bundled Jizhou package");
-		const libraryRoot = mkdtempSync(join(tmpdir(), "bear-character-seed-upgrade-"));
-		temporaryDirectories.push(libraryRoot);
-		copyCharacterPackage(join(libraryRoot, "jizhou"), "jizhou", "installed-old");
-		const installedManifest = join(libraryRoot, "jizhou", "character.yaml");
-		writeFileSync(
-			installedManifest,
-			readFileSync(installedManifest, "utf8").replace(/^version: .+$/m, "version: 3.0.0"),
-			"utf8",
-		);
-
-		const loader = new CharacterLoader(characterRoot, libraryRoot);
-		loader.bootstrapLibrary("jizhou");
-
-		expect(loader.load("jizhou")?.version).toBe(bundledVersion);
-		expect(readFileSync(installedManifest, "utf8")).not.toContain("installed-old");
-	});
-
-	it("preserves an installed package when its version matches the bundled seed", () => {
+	it("preserves an installed package", () => {
 		const libraryRoot = mkdtempSync(join(tmpdir(), "bear-character-seed-preserve-"));
 		temporaryDirectories.push(libraryRoot);
 		copyCharacterPackage(join(libraryRoot, "jizhou"), "jizhou", "same-version-edit");

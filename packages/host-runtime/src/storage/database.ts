@@ -111,7 +111,7 @@ export const SYSTEM_SCHEMA_CONTRACT: SchemaContract = {
 		"model_download_mirror",
 		"updated_at",
 	],
-	companion_packages: ["id", "name", "version", "hash", "origin", "plugin_hash"],
+	companion_packages: ["id", "name", "origin", "plugin_hash"],
 	companion_identity: ["id", "package_id", "name"],
 	provider_accounts: ["id", "provider_id", "credential_blob", "credential_status"],
 	configured_models: ["provider_id", "model_id", "label", "supports_images", "created_at"],
@@ -140,7 +140,6 @@ export const COMPANION_SCHEMA_CONTRACT: SchemaContract = {
 		"domain",
 		"state_json",
 		"revision",
-		"schema_hash",
 	],
 };
 

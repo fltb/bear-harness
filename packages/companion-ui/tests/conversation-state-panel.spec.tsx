@@ -93,7 +93,6 @@ const projection: CompanionStateData = {
 				},
 			},
 			revisions: { conversation: 7, global: 3 },
-			schemaHash: "a".repeat(64),
 		},
 		display: {
 			sceneId: "default",

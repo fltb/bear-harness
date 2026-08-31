@@ -1,13 +1,21 @@
 // @vitest-environment node
 
-import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
 	eligibleRoleSkillResources,
+	loadRolePluginTools,
 	loadRoleSkills,
 	readRoleSkillResource,
 	roleSkillStatus,
 } from "../src/companion/role-resources.js";
+
+const temporaryDirectories: string[] = [];
+afterEach(() => {
+	for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true });
+});
 
 const skills = loadRoleSkills([
 	resolve(import.meta.dirname, "../../../config/characters/jizhou/skills"),
@@ -46,5 +54,29 @@ describe("state-gated role Skill resources", () => {
 		expect(story.content).toContain("`host_choices`");
 		expect(story.content).not.toContain("branch=none");
 		expect(story.content).not.toContain("evidence_mode=inferred");
+	});
+});
+
+describe("role Plugin tools", () => {
+	it("loads tools registered by an existing role Plugin", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "bear-role-plugin-"));
+		temporaryDirectories.push(directory);
+		const pluginPath = join(directory, "plugin.mjs");
+		writeFileSync(
+			pluginPath,
+			`export default function register(api) {
+  api.registerTool({
+    name: "station_status",
+    label: "Station status",
+    description: "Read station status",
+    parameters: { type: "object", properties: {} },
+    async execute() { return { content: [{ type: "text", text: "ready" }], details: {} }; }
+  });
+}\n`,
+		);
+
+		await expect(loadRolePluginTools([pluginPath])).resolves.toMatchObject([
+			{ name: "station_status" },
+		]);
 	});
 });

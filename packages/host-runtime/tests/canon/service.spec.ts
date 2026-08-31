@@ -390,7 +390,6 @@ describe("CanonHubService user workflow", () => {
 		expect(citations.some((citation) => citation.adjacent)).toBe(true);
 		const explicitModule = await service.retrieveHybrid("character-a", "完全不相干的检索词", {
 			moduleId: "storm",
-			allowedModuleIds: ["storm"],
 		});
 		expect(explicitModule).toEqual(
 			expect.arrayContaining([

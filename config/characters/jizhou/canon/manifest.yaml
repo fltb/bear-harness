@@ -15,8 +15,6 @@ modules:
       - 旧极光站
       - 极昼
       - 白熊客栈
-    access:
-      mode: always
     bindings:
       - source: jizhou_story
         headings:
@@ -35,8 +33,6 @@ modules:
       - 暴雪
       - 留言簿
       - 关站
-    access:
-      mode: when_asked
     bindings:
       - source: jizhou_story
         headings:

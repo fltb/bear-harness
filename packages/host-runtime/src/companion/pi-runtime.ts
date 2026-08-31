@@ -17,9 +17,14 @@ import {
 import type { CharacterPackage } from "./character-loader.js";
 import type { CompanionStateStore } from "./companion-store.js";
 import { type HostToolInput, registerHostTools } from "./host-tool-register.js";
+import { loadRolePluginTools } from "./role-resources.js";
 
 type Images = NonNullable<Parameters<AgentSession["prompt"]>[1]>["images"];
 type ModelRoute = { providerId: string; modelId: string };
+export interface PiRoleResources {
+	appendSystemPrompt: string;
+	pluginPaths: string[];
+}
 export type PiSnapshot = AgentSession | undefined;
 
 export interface PiSessionEvent {
@@ -67,16 +72,19 @@ export class PiRuntime {
 	private readonly deleting = new Map<string, Promise<void>>();
 	private readonly cwd: string;
 	private readonly sessionDir: string;
-	private systemPrompt: string;
+	private roleResources: PiRoleResources;
 
 	constructor(private readonly options: PiRuntimeOptions) {
 		this.cwd = resolve(options.paths.runtime);
 		this.sessionDir = resolve(options.paths.sessions);
-		this.systemPrompt = options.systemPrompt ?? "";
+		this.roleResources = { appendSystemPrompt: options.systemPrompt ?? "", pluginPaths: [] };
 	}
 
-	configure(systemPrompt: string): void {
-		this.systemPrompt = systemPrompt;
+	configure(resources: PiRoleResources): void {
+		this.roleResources = {
+			appendSystemPrompt: resources.appendSystemPrompt,
+			pluginPaths: [...resources.pluginPaths],
+		};
 	}
 
 	async list(): Promise<SessionInfo[]> {
@@ -310,7 +318,7 @@ export class PiRuntime {
 		const explicitMemory = (await this.options.memory.explicit.read(companionId)).trim();
 		const sessionContext = (await this.options.sessionContext?.(sessionId))?.trim();
 		const baseSystemPrompt = [
-			this.systemPrompt,
+			this.roleResources.appendSystemPrompt,
 			sessionContext,
 			explicitMemory ? `<explicit_memory>\n${explicitMemory}\n</explicit_memory>` : undefined,
 		]
@@ -366,6 +374,12 @@ export class PiRuntime {
 				},
 			}),
 		};
+		const pluginTools = await loadRolePluginTools(this.roleResources.pluginPaths);
+		for (const tool of pluginTools) {
+			if (tool.name in tools)
+				throw new Error(`role plugin tool conflicts with Host tool: ${tool.name}`);
+		}
+		const allTools = [...Object.values(tools), ...pluginTools];
 		const remembered = manager.buildSessionContext().model;
 		const route = remembered
 			? { providerId: remembered.provider, modelId: remembered.modelId }
@@ -380,8 +394,8 @@ export class PiRuntime {
 			sessionManager: manager,
 			settingsManager: settings,
 			resourceLoader: loader,
-			customTools: Object.values(tools),
-			tools: Object.keys(tools),
+			customTools: allTools,
+			tools: allTools.map((tool) => tool.name),
 		});
 		session = created.session;
 		return session;

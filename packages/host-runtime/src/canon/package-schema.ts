@@ -1,32 +1,6 @@
 import { z } from "@bear-harness/schema";
 
 const IdSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
-const StateValueSchema = z.union([z.string(), z.number().finite(), z.boolean()]);
-const CanonAccessSchema = z
-	.strictObject({
-		mode: z.enum(["always", "when_asked", "gated"]),
-		skill: IdSchema.optional(),
-		state: z
-			.strictObject({
-				path: z.string().min(1).max(160),
-				values: z.array(StateValueSchema).min(1).max(30),
-			})
-			.optional(),
-	})
-	.superRefine((access, context) => {
-		if (access.mode === "gated" && !access.skill && !access.state)
-			context.addIssue({
-				code: "custom",
-				path: ["mode"],
-				message: "gated canon requires a Skill or state gate",
-			});
-		if (access.mode !== "gated" && (access.skill || access.state))
-			context.addIssue({
-				code: "custom",
-				path: ["mode"],
-				message: "only gated canon may declare Skill or state gates",
-			});
-	});
 
 export const CanonPackageManifestSchema = z.strictObject({
 	version: z.literal(1),
@@ -75,7 +49,6 @@ export const CanonPackageManifestSchema = z.strictObject({
 			title: z.string().min(1).max(200),
 			summary: z.string().max(4000).default(""),
 			triggers: z.array(z.string().min(1).max(200)).max(40).default([]),
-			access: CanonAccessSchema,
 			bindings: z
 				.array(
 					z.strictObject({

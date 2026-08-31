@@ -30,7 +30,7 @@ describe("idle homepage (official config, no bridge)", () => {
 		const activeOnboarding = {
 			status: "active" as const,
 			eventSeq: 0,
-			stateData: { schema_version: 1 as const, flow_version: 1, answers: {}, decisions: {} },
+			stateData: { answers: {}, decisions: {} },
 		};
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({

@@ -192,7 +192,7 @@ function firstRunStore(
 			status: "active",
 			currentStepId: "hello",
 			eventSeq: 1,
-			stateData: { schema_version: 1, flow_version: 1, answers: {}, decisions: {} },
+			stateData: { answers: {}, decisions: {} },
 		},
 		error: null,
 		character: THEMED_CHARACTER,

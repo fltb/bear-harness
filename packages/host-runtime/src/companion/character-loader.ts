@@ -48,12 +48,7 @@ import {
 } from "../storage/durable-file-transaction.js";
 import type { EventBus } from "../storage/event-bus.js";
 import { removeOwnedDirectorySync, requireCompanionId } from "../storage/layout.js";
-import {
-	activeCharacter,
-	companionIdentity,
-	companionPackages,
-	selfCanonVersions,
-} from "../storage/schema.js";
+import { activeCharacter, companionIdentity, companionPackages } from "../storage/schema.js";
 import { type CharacterBehaviorContract, CharacterBehaviorSchema } from "./behavior-schema.js";
 import {
 	type CharacterMediaDefinition,
@@ -139,7 +134,6 @@ export interface CharacterPrompt {
 	personality: string;
 	scenario: string;
 	system_prompt: string;
-	mes_example: string;
 }
 
 /**
@@ -154,7 +148,6 @@ export interface CharacterPrompt {
 export interface CharacterPackage {
 	id: string;
 	name: string;
-	version: string;
 	language: string;
 	theme: ThemeTokens;
 	character: CharacterStrings;
@@ -221,7 +214,6 @@ export interface CharacterDisplay {
 export interface CharacterSummary {
 	id: string;
 	name: string;
-	version: string;
 	subtitle: string;
 	avatarUrl: string;
 	active: boolean;
@@ -304,7 +296,6 @@ const CharacterPromptSchema = z.strictObject({
 	personality: PromptStringSchema,
 	scenario: PromptStringSchema,
 	system_prompt: PromptStringSchema,
-	mes_example: PromptStringSchema,
 });
 
 const ThemeTokensSchema = CharacterThemeOverridesSchema;
@@ -353,31 +344,6 @@ function validateCharacterCard(
 		throw new Error(`character package ${characterId}: character card is invalid`);
 }
 
-function packageVersion(path: string): string | undefined {
-	try {
-		const value = parse(readFileSync(path, "utf8")) as { version?: unknown };
-		return typeof value.version === "string" ? value.version : undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-function comparePackageVersions(left: string, right: string): number {
-	const parseVersion = (value: string): [number, number, number] | undefined => {
-		const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value);
-		if (!match) return undefined;
-		return [Number(match[1]), Number(match[2]), Number(match[3])];
-	};
-	const leftParts = parseVersion(left);
-	const rightParts = parseVersion(right);
-	if (!leftParts || !rightParts) return 0;
-	for (const index of [0, 1, 2] as const) {
-		const difference = leftParts[index] - rightParts[index];
-		if (difference !== 0) return difference;
-	}
-	return 0;
-}
-
 /**
  * Character packages are loaded exclusively from the user-owned library.
  * The seed root is read only during bootstrap, before any package is loaded.
@@ -401,17 +367,7 @@ export class CharacterLoader {
 		}
 		const target = join(this.libraryRoot, defaultCharacterId);
 		const targetManifest = join(target, "character.yaml");
-		if (existsSync(targetManifest)) {
-			const sourceVersion = packageVersion(sourceManifest);
-			const targetVersion = packageVersion(targetManifest);
-			if (
-				!sourceVersion ||
-				!targetVersion ||
-				comparePackageVersions(sourceVersion, targetVersion) <= 0
-			) {
-				return;
-			}
-		}
+		if (existsSync(targetManifest)) return;
 		replaceDurableFileSync({
 			root: this.libraryRoot,
 			target,
@@ -735,17 +691,6 @@ export class CharacterLoader {
 					throw new Error(
 						`character package ${id}: Skill ${skill.name} references missing state ${path}`,
 					);
-		}
-		const skillIds = new Set(parsed.skills.map((skill) => skill.name));
-		for (const module of canonManifest.modules) {
-			if (module.access.skill && !skillIds.has(module.access.skill))
-				throw new Error(
-					`character package ${id}: canon module ${module.id} references missing Skill ${module.access.skill}`,
-				);
-			if (module.access.state && !Object.hasOwn(state.fields, module.access.state.path))
-				throw new Error(
-					`character package ${id}: canon module ${module.id} references missing state ${module.access.state.path}`,
-				);
 		}
 		if (new Set(media.map((entry) => entry.id)).size !== media.length)
 			throw new Error(`character package ${id}: duplicate media id`);
@@ -1114,7 +1059,6 @@ Do not claim that missing an explicit request prevents TDAI capture, and do not 
 			.map((character) => ({
 				id: character.id,
 				name: character.name,
-				version: character.version,
 				subtitle: character.character.subtitle,
 				avatarUrl: this.characterAssetDataUrl(character.id, character.visual.avatar),
 				active: character.id === activeId,
@@ -1226,33 +1170,12 @@ Do not claim that missing an explicit request prevents TDAI capture, and do not 
 			.get();
 		const effectiveOrigin = existingPackage?.origin ?? origin;
 		systemDb.transaction((transaction) => {
-			const packageHash = createHash("sha256")
-				.update(character.id)
-				.update("\0")
-				.update(character.version)
-				.update("\0")
-				.update(character.name)
-				.update("\0")
-				.update(character.prompt.description)
-				.update("\0")
-				.update(character.prompt.personality)
-				.update("\0")
-				.update(character.prompt.scenario)
-				.update("\0")
-				.update(character.prompt.system_prompt)
-				.update("\0")
-				.update(character.prompt.mes_example)
-				.update("\0")
-				.update(character.self_canon)
-				.digest("hex");
 			const pluginHash = this.pluginHash(character);
 			transaction
 				.insert(companionPackages)
 				.values({
 					id: character.id,
 					name: character.name,
-					version: character.version,
-					hash: packageHash,
 					origin: effectiveOrigin,
 					pluginHash,
 					pluginTrustedHash: effectiveOrigin === "official" ? pluginHash : null,
@@ -1261,8 +1184,6 @@ Do not claim that missing an explicit request prevents TDAI capture, and do not 
 					target: companionPackages.id,
 					set: {
 						name: character.name,
-						version: character.version,
-						hash: packageHash,
 						origin: effectiveOrigin,
 						pluginHash,
 						pluginTrustedHash:
@@ -1281,23 +1202,6 @@ Do not claim that missing an explicit request prevents TDAI capture, and do not 
 				})
 				.run();
 		});
-		const existingCanon = companionDb
-			.select({ id: selfCanonVersions.id })
-			.from(selfCanonVersions)
-			.where(eq(selfCanonVersions.companionId, character.id))
-			.limit(1)
-			.get();
-		if (!existingCanon) {
-			companionDb
-				.insert(selfCanonVersions)
-				.values({
-					companionId: character.id,
-					canon: character.self_canon,
-					version: 1,
-					hash: createHash("sha256").update(character.self_canon).digest("hex"),
-				})
-				.run();
-		}
 		// The first meeting FSM creates the initial conversation, so we don't seed one here.
 		eventBus.publish("character.seeded", { id: character.id, name: character.name });
 	}

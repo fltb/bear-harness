@@ -4,13 +4,7 @@ import { parseDocument, stringify } from "yaml";
 import type { CharacterDeletionStatus, CharacterPackageDocument } from "../stores/companion.js";
 import { Button, Dialog, Tabs, TextField } from "../ui/primitives.js";
 
-const PROMPT_FIELDS = [
-	"description",
-	"personality",
-	"scenario",
-	"system_prompt",
-	"mes_example",
-] as const;
+const PROMPT_FIELDS = ["description", "personality", "scenario", "system_prompt"] as const;
 type PromptField = (typeof PROMPT_FIELDS)[number];
 type PromptDraft = Record<PromptField, string>;
 
@@ -301,7 +295,7 @@ export function CurrentRolePackageManager(props: {
 													{t(`currentRolePackage.promptFields.${field}`)}
 												</TextField.Label>
 												<TextField.TextArea
-													rows={field === "mes_example" ? 7 : 4}
+													rows={4}
 													disabled={!current().writable}
 													value={prompt()?.[field] ?? ""}
 													onInput={(event) => updatePrompt(field, event.currentTarget.value)}

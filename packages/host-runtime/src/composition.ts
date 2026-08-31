@@ -273,7 +273,10 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const character = updated.character;
 		s.seedCharacter(character, "local");
 		if (getCompanionId(s) === character.id) {
+			s.companionStore.reconcileSchema(character.id, character.state);
+			s.onboarding.initialize(character.id);
 			s.canon.syncPackage(character.id, character.canon);
+			await s.pi.closeAll();
 			configureCharacterRuntime(s, character);
 		}
 		return { package: s.characterLoader.readPackageDocument(character.id) };
@@ -435,7 +438,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				character: {
 					document: projection.document,
 					revisions: projection.revisions,
-					schemaHash: projection.schemaHash,
 				},
 				...s.companionStore.snapshot(character, conversationId),
 			},
@@ -1450,5 +1452,5 @@ function configureCharacterRuntime(
 	character: Parameters<CharacterLoader["piResources"]>[0],
 ): void {
 	const trust = s.characterLoader.pluginTrust(s.systemOrm, character);
-	s.pi.configure(s.characterLoader.piResources(character, trust.trusted).appendSystemPrompt);
+	s.pi.configure(s.characterLoader.piResources(character, trust.trusted));
 }

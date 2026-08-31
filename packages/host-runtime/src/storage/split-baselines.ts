@@ -34,8 +34,6 @@ CREATE TABLE installation_identity (
 CREATE TABLE companion_packages (
 	id TEXT PRIMARY KEY,
 	name TEXT NOT NULL,
-	version TEXT NOT NULL,
-	hash TEXT NOT NULL,
 	origin TEXT NOT NULL DEFAULT 'official' CHECK (origin IN ('official','local','imported')),
 	plugin_hash TEXT NOT NULL DEFAULT '',
 	plugin_trusted_hash TEXT,
@@ -145,7 +143,6 @@ const COMPANION_TABLES = [
 	"onboarding_state",
 	"run_manifests",
 	"runs",
-	"self_canon_versions",
 	"story_modules",
 ] as const;
 
@@ -321,14 +318,6 @@ CREATE TABLE story_modules (
 CREATE INDEX idx_story_modules_companion ON story_modules(companion_id, kind);
 CREATE UNIQUE INDEX idx_story_modules_package_key
 	ON story_modules(companion_id, stable_key) WHERE stable_key IS NOT NULL;
-CREATE TABLE self_canon_versions (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	companion_id TEXT NOT NULL REFERENCES runtime_identity(companion_id),
-	canon TEXT NOT NULL,
-	version INTEGER NOT NULL,
-	hash TEXT NOT NULL,
-	created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
 CREATE TABLE companion_state_documents (
 	id TEXT PRIMARY KEY,
 	companion_id TEXT NOT NULL REFERENCES runtime_identity(companion_id) ON DELETE CASCADE,
@@ -337,7 +326,6 @@ CREATE TABLE companion_state_documents (
 	domain TEXT NOT NULL CHECK (domain IN ('character','display')),
 	state_json TEXT NOT NULL DEFAULT '{}',
 	revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
-	schema_hash TEXT NOT NULL,
 	updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 	UNIQUE(companion_id, conversation_id, scope, domain),
 	CHECK ((scope = 'conversation' AND conversation_id IS NOT NULL)

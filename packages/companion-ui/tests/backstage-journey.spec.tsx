@@ -32,7 +32,6 @@ describe("ordinary-user backstage journey", () => {
 					{
 						id: "imported-role",
 						name: "Imported Role",
-						version: "1",
 						subtitle: "Imported",
 						avatarUrl: "data:image/svg+xml;base64,PHN2Zy8+",
 						active: false,

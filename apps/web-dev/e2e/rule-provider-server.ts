@@ -102,6 +102,89 @@ function reply(payload: {
 			]),
 		};
 	}
+	if (current.includes("E2E_STORY_ENTRY")) {
+		if (!currentCalls.includes("role_skill"))
+			return invoke("role_skill", { action: "read", skillId: "undelivered-report" });
+		if (!currentCalls.includes("host_choices"))
+			return invoke("host_choices", {
+				prompt: "要进入《未送达的回报》吗？",
+				choices: [
+					{ label: "进入调查", message: "进入《未送达的回报》。" },
+					{ label: "以后再说", message: "《未送达的回报》以后再说。" },
+				],
+			});
+		return { content: "E2E_STORY_ENTRY_DONE\n" };
+	}
+	if (current.includes("进入《未送达的回报》。")) {
+		if (!currentCalls.includes("role_skill"))
+			return invoke("role_skill", { action: "read", skillId: "undelivered-report" });
+		if (!currentCalls.includes("host_state"))
+			return invoke("host_state", {
+				action: "update",
+				changes: [
+					{ path: "/character/story/active", value: true },
+					{ path: "/character/story/chapter", value: 1 },
+					{ path: "/character/story/summary", value: "用户进入了未送达回报的调查。" },
+					{ path: "/character/story/current_situation", value: "正在查看损坏的信号。" },
+					{ path: "/character/story/unresolved", value: "信号为何损坏仍待确认。" },
+				],
+			});
+		return { content: "E2E_STORY_STARTED_DONE\n" };
+	}
+	if (current.includes("先暂停《未送达的回报》。")) {
+		if (!currentCalls.includes("role_skill"))
+			return invoke("role_skill", { action: "read", skillId: "undelivered-report" });
+		if (!currentCalls.includes("host_state"))
+			return invoke("host_state", {
+				action: "update",
+				changes: [
+					{ path: "/character/story/active", value: false },
+					{ path: "/character/story/current_situation", value: "调查暂停在损坏的信号处。" },
+				],
+			});
+		return { content: "E2E_STORY_PAUSED_DONE\n" };
+	}
+	if (current.includes("继续《未送达的回报》。")) {
+		if (!currentCalls.includes("role_skill"))
+			return invoke("role_skill", { action: "read", skillId: "undelivered-report" });
+		if (!currentCalls.includes("host_state"))
+			return invoke("host_state", {
+				action: "update",
+				changes: [{ path: "/character/story/active", value: true }],
+			});
+		return { content: "E2E_STORY_RESUMED_DONE\n" };
+	}
+	if (current.includes("E2E_STORY_ADVANCE")) {
+		if (!currentCalls.includes("role_skill"))
+			return invoke("role_skill", { action: "read", skillId: "undelivered-report" });
+		const chapter = Number(
+			/"story":\s*\{[\s\S]*?"chapter":\s*(\d+)/u.exec(hostContext)?.[1] ?? "0",
+		);
+		const next = Math.min(7, chapter + 1);
+		if (!currentCalls.includes("host_state"))
+			return invoke("host_state", {
+				action: "update",
+				changes: [
+					{ path: "/character/story/active", value: next < 7 },
+					{ path: "/character/story/chapter", value: next },
+					{ path: "/character/story/summary", value: `E2E 已推进至第 ${next} 阶段。` },
+					{
+						path: "/character/story/current_situation",
+						value: next < 7 ? `正在处理第 ${next} 阶段。` : "调查已经结束。",
+					},
+					{
+						path: "/character/story/unresolved",
+						value: next < 7 ? `第 ${next} 阶段仍有待确认事项。` : "当前没有未解决事项。",
+					},
+				],
+			});
+		return { content: `E2E_STORY_ADVANCE_DONE_${next}\n` };
+	}
+	if (current.includes("E2E_STORY_CHECK_END")) {
+		if (!currentCalls.includes("role_skill"))
+			return invoke("role_skill", { action: "read", skillId: "undelivered-report" });
+		return { content: "E2E_STORY_END_CHECK_DONE\n" };
+	}
 	if (current.includes("E2E_MANUAL_ROLE_START")) {
 		if (!currentCalls.includes("role_skill"))
 			return invoke("role_skill", { action: "read", skillId: "continuity-reveal" });

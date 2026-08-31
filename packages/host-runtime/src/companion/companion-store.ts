@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { CompanionConversationState, CompanionDisplayState } from "@bear-harness/protocol";
 import * as Protocol from "@bear-harness/protocol/schema";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
@@ -74,7 +73,6 @@ export class CompanionStateStore {
 					domain: "character",
 					stateJson,
 					revision: before.revisions[scope] + 1,
-					schemaHash: before.schemaHash,
 				});
 			}
 			if (equal(display, beforeDisplay.display)) return;
@@ -85,20 +83,43 @@ export class CompanionStateStore {
 				domain: "display",
 				stateJson: display as unknown as Record<string, unknown>,
 				revision: beforeDisplay.revisions.display + 1,
-				schemaHash: "display:v1",
 			});
 		});
 	}
 	reconcileSchema(companionId: string, definition: CharacterStateDefinition) {
 		const owned = and(eq(table.companionId, companionId), eq(table.domain, "character"));
 		const rows = this.db.select().from(table).where(owned).all();
-		const schemaHash = hash(definition);
-		const changed = rows.filter((row) => row.schemaHash !== schemaHash);
-		if (!changed.length) return { status: "unchanged" as const, documents: 0 };
-		if (definition["x-incompatible-state"] !== "reset")
-			throw { kind: "conflict", reason: "character_state_schema_changed" };
-		this.db.delete(table).where(owned).run();
-		return { status: "reset" as const, documents: changed.length };
+		const compiled = compileCharacterStateSchema(definition);
+		const global = rows.find((row) => row.scope === "global");
+		let retainedGlobal = global;
+		const invalidIds: string[] = [];
+		if (global) {
+			const document = { ...structuredClone(compiled.defaults), ...global.stateJson } as JsonObject;
+			if (
+				!compiled.validate(document) ||
+				!equal(global.stateJson, partition(document, definition, "global"))
+			) {
+				invalidIds.push(global.id);
+				retainedGlobal = undefined;
+			}
+		}
+		for (const row of rows.filter((candidate) => candidate.scope === "conversation")) {
+			const document = {
+				...structuredClone(compiled.defaults),
+				...(retainedGlobal?.stateJson ?? {}),
+				...row.stateJson,
+			} as JsonObject;
+			if (
+				!compiled.validate(document) ||
+				!equal(row.stateJson, partition(document, definition, "conversation"))
+			)
+				invalidIds.push(row.id);
+		}
+		if (!invalidIds.length) return { status: "unchanged" as const, documents: 0 };
+		this.db.transaction((tx) => {
+			for (const id of invalidIds) tx.delete(table).where(eq(table.id, id)).run();
+		});
+		return { status: "reset" as const, documents: invalidIds.length };
 	}
 	private rows(companionId: string, conversationId: string) {
 		const owned = and(
@@ -120,9 +141,6 @@ function projection(rows: Row[], definition: CharacterStateDefinition) {
 	const character = rows.filter((row) => row.domain === "character");
 	const global = character.find((row) => row.scope === "global");
 	const conversation = character.find((row) => row.scope === "conversation");
-	const schemaHash = hash(definition);
-	if ([global, conversation].some((row) => row && row.schemaHash !== schemaHash))
-		throw { kind: "conflict", reason: "character_state_schema_changed" };
 	const compiled = compileCharacterStateSchema(definition);
 	const document = {
 		...structuredClone(compiled.defaults),
@@ -133,7 +151,6 @@ function projection(rows: Row[], definition: CharacterStateDefinition) {
 	return {
 		document,
 		revisions: { global: global?.revision ?? 0, conversation: conversation?.revision ?? 0 },
-		schemaHash,
 	};
 }
 function displaySnapshot(rows: Row[], character: CharacterPackage): CompanionSnapshot {
@@ -161,6 +178,5 @@ function partition(document: JsonObject, definition: CharacterStateDefinition, s
 }
 const declared = (value: unknown, items: Array<{ id: string }>): value is string =>
 	typeof value === "string" && items.some((item) => item.id === value);
-const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const equal = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 const invalid = (reason: string) => ({ kind: "validation_failed", reason });

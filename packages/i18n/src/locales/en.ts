@@ -41,7 +41,6 @@ export const en = {
 			personality: "Personality",
 			scenario: "Scenario",
 			system_prompt: "Role rules",
-			mes_example: "Conversation examples",
 		},
 		storageTab: "Role storage",
 		memoryTab: "Role memory",

@@ -382,7 +382,7 @@ function copySystemDatabase(snapshotPath: string, targetPath: string): void {
 					["installation_identity", "id,installation_id,created_at"],
 					[
 						"companion_packages",
-						"id,name,version,hash,origin,plugin_hash,plugin_trusted_hash,signed_at,created_at",
+						"id,name,origin,plugin_hash,plugin_trusted_hash,signed_at,created_at",
 					],
 					["companion_identity", "id,package_id,name,created_at"],
 					["active_character", "singleton,character_id,updated_at"],
@@ -447,7 +447,7 @@ function copyCompanionDatabase(
 				const statements = [
 					`INSERT INTO conversations SELECT id,companion_id,created_at,updated_at,archived_at FROM legacy.conversations WHERE companion_id='${id}'`,
 					`INSERT INTO model_route_settings(companion_id,text_provider_id,text_model_id,vision_mode,multimodal_provider_id,multimodal_model_id,onboarding_complete,updated_at) SELECT m.companion_id,m.text_provider_id,m.text_model_id,m.vision_mode,m.multimodal_provider_id,m.multimodal_model_id,CASE WHEN EXISTS (SELECT 1 FROM legacy.configured_models c WHERE c.provider_id=m.text_provider_id AND c.model_id=m.text_model_id) THEN 1 ELSE 0 END,m.updated_at FROM legacy.model_route_settings m WHERE m.companion_id='${id}'`,
-					`INSERT INTO onboarding_state(companion_id,state,state_json,updated_at) SELECT companion_id,state,json_remove(state_json,'$.decisions.conversation_history_read_enabled'),updated_at FROM legacy.onboarding_state WHERE companion_id='${id}'`,
+					`INSERT INTO onboarding_state(companion_id,state,state_json,updated_at) SELECT companion_id,state,json_remove(state_json,'$.schema_version','$.flow_version','$.decisions.conversation_history_read_enabled'),updated_at FROM legacy.onboarding_state WHERE companion_id='${id}'`,
 					`INSERT INTO runs SELECT r.id,r.conversation_id,r.trigger_entry_id,r.executor_profile,r.title,r.instruction,r.input_paths,r.status,r.summary,r.result_reported_at,r.started_at,r.completed_at,r.created_at FROM legacy.runs r JOIN conversations c ON c.id=r.conversation_id`,
 					`INSERT INTO run_manifests SELECT m.id,m.run_id,m.manifest_json,m.created_at FROM legacy.run_manifests m JOIN runs r ON r.id=m.run_id`,
 					`INSERT INTO evidence SELECT e.id,e.run_id,e.kind,e.data,e.created_at FROM legacy.evidence e JOIN runs r ON r.id=e.run_id`,
@@ -459,8 +459,7 @@ function copyCompanionDatabase(
 					`INSERT INTO canon_relations SELECT r.id,r.from_entity_id,r.to_entity_id,r.kind,r.description,r.source_chunk_id,r.created_at FROM legacy.canon_relations r JOIN canon_entities f ON f.id=r.from_entity_id JOIN canon_entities t ON t.id=r.to_entity_id`,
 					`INSERT INTO canon_package_state SELECT companion_id,manifest_hash,updated_at FROM legacy.canon_package_state WHERE companion_id='${id}'`,
 					`INSERT INTO story_modules SELECT id,companion_id,parent_id,kind,name,description,source_refs_json,dependencies_json,origin,stable_key,triggers_json,created_at FROM legacy.story_modules WHERE companion_id='${id}'`,
-					`INSERT INTO self_canon_versions SELECT id,companion_id,canon,version,hash,created_at FROM legacy.self_canon_versions WHERE companion_id='${id}'`,
-					`INSERT INTO companion_state_documents SELECT id,companion_id,conversation_id,scope,domain,state_json,revision,schema_hash,updated_at FROM legacy.companion_state_documents WHERE companion_id='${id}'`,
+					`INSERT INTO companion_state_documents(id,companion_id,conversation_id,scope,domain,state_json,revision,updated_at) SELECT id,companion_id,conversation_id,scope,domain,state_json,revision,updated_at FROM legacy.companion_state_documents WHERE companion_id='${id}'`,
 				];
 				for (const statement of statements) database.connection.exec(statement);
 				database.connection.exec("COMMIT");
@@ -494,7 +493,6 @@ function legacyCompanionIds(snapshotPath: string): string[] {
 			"canon_entities",
 			"canon_package_state",
 			"story_modules",
-			"self_canon_versions",
 			"companion_state_documents",
 		]) {
 			if (!tableExists(database, table)) continue;

@@ -383,8 +383,6 @@ export const OnboardingSubmitRequest = z.strictObject({
 	answer: z.string().max(MAX_STRING_LENGTH).optional(),
 });
 export const OnboardingStateData = z.strictObject({
-	schema_version: z.literal(1),
-	flow_version: z.number().int().safe().min(1).max(Number.MAX_SAFE_INTEGER),
 	answers: boundedRecord(
 		z
 			.string()
@@ -402,7 +400,6 @@ const CharacterMediaUrl = z.string().min(1).max(20_000_000);
 export const CharacterSummary = z.strictObject({
 	id: z.string().min(1).max(64),
 	name: z.string().min(1).max(MAX_STRING_LENGTH),
-	version: z.string().min(1).max(64),
 	subtitle: z.string().max(MAX_STRING_LENGTH),
 	avatarUrl: CharacterMediaUrl,
 	active: z.boolean(),
@@ -435,7 +432,6 @@ const CharacterStepPresentation = {
 	effects: z.array(CharacterOnboardingEffect).max(3).optional(),
 };
 export const CharacterOnboardingFlow = z.strictObject({
-	version: z.number().int().safe().min(1).max(MAX_SAFE_INT),
 	step_label: CharacterCopy,
 	dialog_label: CharacterCopy,
 	error_prefix: CharacterCopy,
@@ -476,7 +472,6 @@ export const CharacterOnboardingFlow = z.strictObject({
 		)
 		.min(1)
 		.max(12),
-	completion: z.strictObject({ conversation_title: CharacterCopy }),
 });
 export const SystemThemeTokens = z.strictObject({
 	canvas: z.string(),
@@ -570,7 +565,6 @@ export const CharacterPrompt = z.strictObject({
 	personality: z.string().max(65_536),
 	scenario: z.string().max(65_536),
 	system_prompt: z.string().max(65_536),
-	mes_example: z.string().max(65_536),
 });
 export type CharacterPrompt = z.infer<typeof CharacterPrompt>;
 
@@ -1876,7 +1870,6 @@ export const CompanionConversationState = z.strictObject({
 			conversation: z.number().int().safe().nonnegative(),
 			global: z.number().int().safe().nonnegative(),
 		}),
-		schemaHash: z.string().min(64).max(64),
 	}),
 	display: CompanionDisplayState,
 	revisions: z.strictObject({
@@ -1897,7 +1890,6 @@ export const CharacterStateRevisions = z.strictObject({
 export const CharacterStateDocument = z.strictObject({
 	document: BoundedEventValue,
 	revisions: CharacterStateRevisions,
-	schemaHash: z.string().min(64).max(64),
 });
 const StatePath = z
 	.string()

@@ -47,8 +47,6 @@ export const installationIdentity = sqliteTable(
 export const companionPackages = sqliteTable("companion_packages", {
 	id: text().primaryKey(),
 	name: text().notNull(),
-	version: text().notNull(),
-	hash: text().notNull(),
 	origin: text({ enum: ["official", "local", "imported"] })
 		.notNull()
 		.default("official"),
@@ -78,17 +76,6 @@ export const companionRuntimeIdentity = sqliteTable(
 	},
 	(table) => [check("runtime_identity_singleton", sql`${table.id} = 1`)],
 );
-
-export const selfCanonVersions = sqliteTable("self_canon_versions", {
-	id: integer().primaryKey({ autoIncrement: true }),
-	companionId: text("companion_id")
-		.notNull()
-		.references(() => companionRuntimeIdentity.companionId),
-	canon: text().notNull(),
-	version: integer().notNull(),
-	hash: text().notNull(),
-	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-});
 
 export const conversations = sqliteTable(
 	"conversations",
@@ -488,7 +475,6 @@ export const companionStateDocuments = sqliteTable(
 			.default({})
 			.notNull(),
 		revision: integer().default(0).notNull(),
-		schemaHash: text("schema_hash").notNull(),
 		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 	},
 	(table) => [

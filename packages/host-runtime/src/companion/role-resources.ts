@@ -4,6 +4,7 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "@bear-harness/schema";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import jsonPatch from "fast-json-patch";
 import { parse } from "yaml";
 
@@ -128,9 +129,19 @@ export function readRoleSkillResource(skill: RoleSkill, resource: RoleSkillResou
 	return extractMarkdownHeadings(source, resource.headings);
 }
 
-export async function loadRolePluginTools(pluginPaths: readonly string[]): Promise<unknown[]> {
-	const tools: unknown[] = [];
-	const api: RolePluginApi = { registerTool: (tool) => tools.push(tool) };
+export async function loadRolePluginTools(pluginPaths: readonly string[]): Promise<AgentTool[]> {
+	const tools: AgentTool[] = [];
+	const names = new Set<string>();
+	const api: RolePluginApi = {
+		registerTool: (candidate) => {
+			if (!isAgentTool(candidate)) throw new Error("role plugin registered an invalid tool");
+			if (names.has(candidate.name)) {
+				throw new Error(`role plugin registered duplicate tool: ${candidate.name}`);
+			}
+			names.add(candidate.name);
+			tools.push(candidate);
+		},
+	};
 	for (const path of pluginPaths) {
 		const module = await import(pathToFileURL(path).href);
 		if (typeof module.default !== "function") {
@@ -139,6 +150,20 @@ export async function loadRolePluginTools(pluginPaths: readonly string[]): Promi
 		await module.default(api);
 	}
 	return tools;
+}
+
+function isAgentTool(candidate: unknown): candidate is AgentTool {
+	if (!candidate || typeof candidate !== "object") return false;
+	const tool = candidate as Record<string, unknown>;
+	return (
+		typeof tool.name === "string" &&
+		tool.name.length > 0 &&
+		typeof tool.label === "string" &&
+		typeof tool.description === "string" &&
+		typeof tool.parameters === "object" &&
+		tool.parameters !== null &&
+		typeof tool.execute === "function"
+	);
 }
 
 export function roleSkillPrompt(skills: readonly RoleSkill[]): string {

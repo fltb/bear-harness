@@ -23,7 +23,6 @@ describe("relationship memory switch", () => {
 						{
 							id: THEMED_CHARACTER.id,
 							name: THEMED_CHARACTER.name,
-							version: "1",
 							subtitle: THEMED_CHARACTER.character.subtitle,
 							avatarUrl: THEMED_CHARACTER.visual.avatarUrl,
 							active: true,
@@ -40,7 +39,7 @@ describe("relationship memory switch", () => {
 						characterId: THEMED_CHARACTER.id,
 						origin: "local" as const,
 						writable: true,
-						yaml: "prompt:\n  description: Test description\n  personality: Test personality\n  scenario: Test scenario\n  system_prompt: Test system prompt\n  mes_example: ''\nmedia: []\n",
+						yaml: "prompt:\n  description: Test description\n  personality: Test personality\n  scenario: Test scenario\n  system_prompt: Test system prompt\nmedia: []\n",
 						sha256: "a".repeat(64),
 						character: THEMED_CHARACTER,
 					},

@@ -12,7 +12,7 @@ function onboarding(currentStepId: string, eventSeq: number): OnboardingData {
 		status: "active",
 		currentStepId,
 		eventSeq,
-		stateData: { schema_version: 1, flow_version: 1, answers: {}, decisions: {} },
+		stateData: { answers: {}, decisions: {} },
 	};
 }
 
@@ -173,7 +173,7 @@ describe("onboarding projection ordering", () => {
 		const complete: OnboardingData = {
 			status: "complete",
 			eventSeq: 21,
-			stateData: { schema_version: 1, flow_version: 1, answers: {}, decisions: {} },
+			stateData: { answers: {}, decisions: {} },
 		};
 		const conversation = {
 			sessionId: "onboarding-conversation",

@@ -393,9 +393,7 @@ export class HostRuntime {
 			this.role.companionStore.reconcileSchema(character.id, character.state);
 			this.role.canon.syncPackage(character.id, character.canon);
 			const trust = this.characterLoader.pluginTrust(this.storage.system.orm, character);
-			this.role.pi.configure(
-				this.characterLoader.piResources(character, trust.trusted).appendSystemPrompt,
-			);
+			this.role.pi.configure(this.characterLoader.piResources(character, trust.trusted));
 			return;
 		}
 		const handle = this.storage.open(character.id);
