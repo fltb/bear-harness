@@ -23,27 +23,20 @@ function loadedClient() {
 	const activeProjection = {
 		sessionId: "conversation-1",
 		name: "Locale switch",
-		entries: [
-			{
-				id: "assistant-1",
-				parentId: null,
-				timestamp: "2026-01-01T00:00:01.000Z",
-				type: "message" as const,
-				message: {
-					role: "assistant",
-					content: [{ type: "text", text: "必须保留的记忆测试消息" }],
-					stopReason: "stop",
-					timestamp: 1,
+		timeline: {
+			entries: [
+				{
+					id: "assistant-1",
+					parentId: null,
+					timestamp: "2026-01-01T00:00:01.000Z",
+					kind: "message" as const,
+					role: "assistant" as const,
+					text: "必须保留的记忆测试消息",
+					stopReason: "stop" as const,
 				},
-			},
-		],
-		messages: [],
-		isIdle: true,
-		isStreaming: false,
-		pendingMessageCount: 0,
-		steeringMessages: [],
-		followUpMessages: [],
-		messageVersions: [],
+			],
+		},
+		live: { isStreaming: false, queuedUserMessages: [] },
 	};
 	fixture.client.snapshot.get = vi.fn(() =>
 		Promise.resolve({
@@ -59,11 +52,25 @@ function loadedClient() {
 			},
 		}),
 	);
-	fixture.client.conversation.activeGet = vi.fn(() =>
+	fixture.client.conversation.list = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
-			data: { session: activeProjection },
+			data: {
+				sessions: [
+					{
+						id: activeProjection.sessionId,
+						title: activeProjection.name,
+						created: "2026-01-01T00:00:00.000Z",
+						modified: "2026-01-01T00:00:01.000Z",
+						messageCount: 1,
+						firstMessage: "",
+					},
+				],
+			},
 		}),
+	);
+	fixture.client.conversation.open = vi.fn(() =>
+		Promise.resolve({ ok: true as const, data: activeProjection }),
 	);
 	return fixture.client;
 }

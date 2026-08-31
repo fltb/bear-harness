@@ -2,7 +2,7 @@ import { i18n, useTranslation } from "@bear-harness/i18n";
 import { type JsonSchema, resolveSchema } from "@jsonforms/core";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { useCompanionStore } from "./stores/companion.js";
-import type { CharacterStateDocument, CompanionStatePatchOperation } from "./stores/ipc.js";
+import type { CharacterStateDocument, CompanionStateChange } from "./stores/ipc.js";
 import { Button, Dialog, Select, TextField } from "./ui/primitives.js";
 
 type SchemaNode = JsonSchema & {
@@ -21,10 +21,7 @@ export function ConversationStatePanel(props: {
 }) {
 	const store = useCompanionStore();
 	const [t] = useTranslation(undefined, { i18n });
-	const projection = createMemo(() => {
-		const id = store.activeConversationId;
-		return id ? store.companionState?.byConversation[id]?.character : undefined;
-	});
+	const projection = createMemo(() => store.companionState?.state.character);
 	const schema = createMemo(() => store.companionState?.schema as SchemaNode | undefined);
 
 	return (
@@ -68,24 +65,24 @@ function StateEditor(props: { projection: CharacterStateDocument; schema: Schema
 	);
 	const [saving, setSaving] = createSignal(false);
 	const [error, setError] = createSignal<string>();
-	const patch = createMemo<CompanionStatePatchOperation[]>(() => {
-		const operations: CompanionStatePatchOperation[] = [];
+	const changes = createMemo<CompanionStateChange[]>(() => {
+		const collected: CompanionStateChange[] = [];
 		collectEditableChanges(
 			props.schema,
 			props.schema,
 			"/character",
 			props.projection.document,
 			draft(),
-			operations,
+			collected,
 		);
-		return operations;
+		return collected;
 	});
 	const save = async () => {
-		if (patch().length === 0) return;
+		if (changes().length === 0) return;
 		setSaving(true);
 		setError(undefined);
 		try {
-			await store.patchCompanionState(patch());
+			await store.updateCompanionState(changes());
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : String(cause));
 		} finally {
@@ -111,7 +108,7 @@ function StateEditor(props: { projection: CharacterStateDocument; schema: Schema
 				<Show when={error()}>{(message) => <span role="alert">{message()}</span>}</Show>
 				<Button
 					type="button"
-					disabled={saving() || patch().length === 0}
+					disabled={saving() || changes().length === 0}
 					onClick={() => void save()}
 				>
 					{saving() ? t("conversationState.saving") : t("conversationState.save")}
@@ -221,21 +218,32 @@ function StateControl(props: {
 					when={options().length > 0}
 					fallback={
 						<TextField>
-							<TextField.Input
-								value={
-									Array.isArray(props.value) ? props.value.join("\n") : String(props.value ?? "")
+							<Show
+								when={props.schema.type === "array"}
+								fallback={
+									<TextField.Input
+										value={String(props.value ?? "")}
+										onInput={(event) =>
+											props.onChange(
+												props.pointer,
+												props.schema.type === "number" || props.schema.type === "integer"
+													? Number(event.currentTarget.value)
+													: event.currentTarget.value,
+											)
+										}
+									/>
 								}
-								onInput={(event) =>
-									props.onChange(
-										props.pointer,
-										props.schema.type === "array"
-											? event.currentTarget.value.split("\n").filter(Boolean)
-											: props.schema.type === "number" || props.schema.type === "integer"
-												? Number(event.currentTarget.value)
-												: event.currentTarget.value,
-									)
-								}
-							/>
+							>
+								<TextField.TextArea
+									value={Array.isArray(props.value) ? props.value.join("\n") : ""}
+									onInput={(event) =>
+										props.onChange(
+											props.pointer,
+											event.currentTarget.value.split("\n").filter(Boolean),
+										)
+									}
+								/>
+							</Show>
 						</TextField>
 					}
 				>
@@ -277,7 +285,7 @@ function collectEditableChanges(
 	pointer: string,
 	current: unknown,
 	draft: unknown,
-	operations: CompanionStatePatchOperation[],
+	changes: CompanionStateChange[],
 ): void {
 	const node = resolveNode(schema, root);
 	if (node.type === "object" || node.properties) {
@@ -288,13 +296,13 @@ function collectEditableChanges(
 				`${pointer}/${escapePointer(name)}`,
 				objectValue(current, name),
 				objectValue(draft, name),
-				operations,
+				changes,
 			);
 		return;
 	}
 	if (node["x-user-editable"] !== true || node.readOnly === true) return;
 	if (JSON.stringify(current) !== JSON.stringify(draft))
-		operations.push({ op: "replace", path: pointer, value: draft as never });
+		changes.push({ path: pointer, value: draft as never });
 }
 
 function setDraftValue(

@@ -169,13 +169,13 @@ export interface HostAdapter {
 // CompletedTurn — represents a finished conversation turn
 // ============================
 
-/** A completed conversation turn, ready for capture/storage. */
+/** An authoritative conversation snapshot observed after a completed turn. */
 export interface CompletedTurn {
-	/** The user's original message text. */
+	/** Clean user text available to the capture adapter. */
 	userText: string;
-	/** The assistant's response text. */
+	/** Assistant text available to the capture adapter. */
 	assistantText: string;
-	/** All messages in the turn (may include tool call results, etc.). */
+	/** Full authoritative session history; the atomic capture cursor selects only new messages. */
 	messages: unknown[];
 	/** Session key for this turn. */
 	sessionKey: string;
@@ -264,31 +264,6 @@ export interface CaptureResult {
 		content: string;
 		timestamp: number;
 	}>;
-}
-
-/** Observable outcome for an explicitly authorized capture that is flushed through L0→L1. */
-export interface ExplicitCaptureResult {
-	status:
-		| "stored"
-		| "already_known"
-		| "no_extractable_memory"
-		| "no_new_content"
-		| "capture_disabled"
-		| "capture_failed";
-	reason:
-		| "memory_stored"
-		| "equivalent_memory_already_stored"
-		| "extractor_found_no_durable_memory"
-		| "turn_already_processed"
-		| "memory_capture_disabled"
-		| "memory_persistence_failed";
-	l0RecordedCount: number;
-	extractedCount: number;
-	storedCount: number;
-	skippedCount: number;
-	failedCount: number;
-	storedRecordIds: string[];
-	indexingStatus: IndexingStatus;
 }
 
 /** Search parameters for L1 memory search. */

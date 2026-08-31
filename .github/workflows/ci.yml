@@ -192,7 +192,7 @@ jobs:
         run: npm run test:diagnostics:crash
       - name: Package
         run: npm run ${{ matrix.package-cmd }}
-      - name: Verify dynamic artifact names and sizes
+      - name: Generate package hashes and CycloneDX SBOM
         run: node scripts/verify-package.mjs ${{ matrix.os-name }} ${{ matrix.arch }} ${{ matrix.exts }}
       - name: Verify macOS target architecture
         if: matrix.os-name == 'mac'
@@ -260,7 +260,10 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: release-attestation-package-${{ matrix.os-name }}-${{ matrix.arch }}
-          path: release-attestations/package-${{ matrix.os-name }}-${{ matrix.arch }}.json
+          path: |
+            release-attestations/package-${{ matrix.os-name }}-${{ matrix.arch }}.json
+            release-attestations/package-evidence-${{ matrix.os-name }}-${{ matrix.arch }}.json
+            release-attestations/sbom-${{ matrix.os-name }}-${{ matrix.arch }}.cdx.json
           if-no-files-found: error
       - uses: actions/upload-artifact@v7.0.1
         with:

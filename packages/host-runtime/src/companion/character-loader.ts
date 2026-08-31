@@ -47,6 +47,7 @@ import {
 	replaceDurableFileSync,
 } from "../storage/durable-file-transaction.js";
 import type { EventBus } from "../storage/event-bus.js";
+import { removeOwnedDirectorySync, requireCompanionId } from "../storage/layout.js";
 import {
 	activeCharacter,
 	companionIdentity,
@@ -55,16 +56,20 @@ import {
 } from "../storage/schema.js";
 import { type CharacterBehaviorContract, CharacterBehaviorSchema } from "./behavior-schema.js";
 import {
+	type CharacterMediaDefinition,
+	CharacterMediaSchema,
+	mediaAssetExtensions,
+} from "./media-schema.js";
+import {
 	type CharacterOnboardingFlow,
 	validateCharacterOnboardingFlow,
 } from "./onboarding-schema.js";
 import { loadRoleSkills, type RoleSkill, roleSkillPrompt } from "./role-resources.js";
 import {
-	type RoleplayDefinition,
-	RoleplaySchema,
-	roleplayAssetExtensions,
-} from "./roleplay-schema.js";
-import { type CharacterStateDefinition, CharacterStateSchema } from "./state-schema.js";
+	type CharacterStateDefinition,
+	CharacterStateSchema,
+	characterStatePrompt,
+} from "./state-schema.js";
 import { CharacterThemeOverridesSchema, resolveCharacterTheme } from "./theme.js";
 
 // ---------------------------------------------------------------------------
@@ -129,15 +134,6 @@ export interface CharacterVisuals {
 	expressions: CharacterExpression[];
 }
 
-export interface HostEventReaction {
-	event: string;
-	visual_state: string;
-}
-
-export interface CharacterHostBehavior {
-	event_reactions: HostEventReaction[];
-}
-
 export interface CharacterPrompt {
 	description: string;
 	personality: string;
@@ -150,7 +146,7 @@ export interface CharacterPrompt {
  * Host-owned role-package storage snapshot (the package storage bucket).
  *
  * The declared constants (`theme`, `character`, identity/canon text, scene and
- * roleplay definitions), asset references, and package resources remain
+ * media definitions), asset references, and package resources remain
  * package data even when Host projects selected values into UI or prompt
  * context. They are never relationship-memory entries or memory-backend
  * input records.
@@ -167,48 +163,37 @@ export interface CharacterPackage {
 	self_canon: string;
 	scenes: ScenePreset[];
 	visual: CharacterVisuals;
-	host: CharacterHostBehavior;
 	state: CharacterStateDefinition;
-	roleplay: RoleplayDefinition;
+	media: CharacterMediaDefinition;
 	skills: RoleSkill[];
 	canon: LoadedCanonPackage;
 }
 
 type CharacterDisplayMediaBase = Pick<
-	RoleplayDefinition["media"][number],
-	"id" | "label" | "loop"
+	CharacterMediaDefinition[number],
+	"id" | "label" | "description" | "use_when" | "loop"
 > & {
 	url: string;
 };
 type CharacterDisplayMedia =
 	| (CharacterDisplayMediaBase & {
 			kind: "image";
-			presentation: "dialog" | "inline";
 			posterUrl?: string;
 	  })
 	| (CharacterDisplayMediaBase & {
 			kind: "animation";
-			presentation: "dialog" | "inline";
 			posterUrl: string;
 	  })
 	| (CharacterDisplayMediaBase & {
 			kind: "audio";
-			presentation: "dialog" | "inline" | "ambient";
 			posterUrl?: string;
 			captionsUrl: string;
 	  })
 	| (CharacterDisplayMediaBase & {
 			kind: "video";
-			presentation: "dialog" | "inline";
 			posterUrl?: string;
 			captionsUrl: string;
 	  });
-
-type CharacterDisplayChoiceSet = Array<{
-	id: string;
-	prompt: string;
-	choices: Array<{ id: string; label: string; description?: string; message: string }>;
-}>;
 
 export interface CharacterDisplay {
 	id: string;
@@ -230,12 +215,7 @@ export interface CharacterDisplay {
 		expressions: Record<string, string>;
 		expressionLabels: Record<string, string>;
 	};
-	roleplay: {
-		variables: RoleplayDefinition["variables"];
-		media: CharacterDisplayMedia[];
-		unlockables: RoleplayDefinition["unlockables"];
-		choice_sets: CharacterDisplayChoiceSet;
-	};
+	media: CharacterDisplayMedia[];
 }
 
 export interface CharacterSummary {
@@ -391,8 +371,8 @@ function comparePackageVersions(left: string, right: string): number {
 	const leftParts = parseVersion(left);
 	const rightParts = parseVersion(right);
 	if (!leftParts || !rightParts) return 0;
-	for (let index = 0; index < leftParts.length; index += 1) {
-		const difference = leftParts[index]! - rightParts[index]!;
+	for (const index of [0, 1, 2] as const) {
+		const difference = leftParts[index] - rightParts[index];
 		if (difference !== 0) return difference;
 	}
 	return 0;
@@ -637,6 +617,9 @@ export class CharacterLoader {
 		if (parsed.id !== id) {
 			throw new Error(`character package ${id}: yaml id must equal directory id`);
 		}
+		if (Object.hasOwn(parsed, "host")) {
+			throw new Error(`character package ${id}: legacy host lifecycle reactions are not supported`);
+		}
 		if (!LanguageTagSchema.safeParse(parsed.language).success) {
 			throw new Error(`character package ${id}: language must be a BCP-47 language tag`);
 		}
@@ -697,9 +680,6 @@ export class CharacterLoader {
 				this.ensureImageAsset(id, scene.background);
 			}
 		}
-		if (!parsed.host || !Array.isArray(parsed.host.event_reactions)) {
-			throw new Error(`character package ${id}: host reactions are required`);
-		}
 		const promptResult = CharacterPromptSchema.safeParse(parsed.prompt);
 		if (!promptResult.success) {
 			throw new Error(`character package ${id}: prompt is invalid`);
@@ -711,7 +691,9 @@ export class CharacterLoader {
 		const state = CharacterStateSchema.parse(
 			(parsed as CharacterPackage & { state_schema?: unknown }).state_schema ?? {},
 		);
-		const roleplay = RoleplaySchema.parse(parsed.roleplay);
+		if ("roleplay" in parsed || "choice_sets" in parsed)
+			throw new Error(`character package ${id}: deleted roleplay fields are not supported`);
+		const media = CharacterMediaSchema.parse(parsed.media);
 		validateCharacterOnboardingFlow(parsed.character?.first_meeting, id);
 		validateWorkPresentation(parsed.character?.work_presentation, id);
 		const canonManifestPath = this.characterPackagePath(id, "canon/manifest.yaml");
@@ -731,9 +713,12 @@ export class CharacterLoader {
 			: [];
 		const allowedHostTools = new Set([
 			"host_state",
-			"host_history",
+			"host_media",
+			"host_choices",
 			"host_canon",
-			"host_memory",
+			"tdai_memory_search",
+			"tdai_conversation_search",
+			"explicit_memory",
 			"host_delegate",
 		]);
 		for (const skill of parsed.skills) {
@@ -762,116 +747,29 @@ export class CharacterLoader {
 					`character package ${id}: canon module ${module.id} references missing state ${module.access.state.path}`,
 				);
 		}
-		const variableIds = new Set(roleplay.variables.map((entry) => entry.id));
-		const mediaIds = new Set(roleplay.media.map((entry) => entry.id));
-		const unlockableIds = new Set(roleplay.unlockables.map((entry) => entry.id));
-		const reactions = parsed.host.event_reactions;
-		const invalidReaction = () => {
-			throw new Error(`character package ${id}: invalid host event reaction`);
-		};
-		const reactionEvents = new Set<string>();
-		for (const reaction of reactions) {
-			if (
-				!reaction ||
-				typeof reaction !== "object" ||
-				Array.isArray(reaction) ||
-				Object.keys(reaction).length !== 2 ||
-				!("event" in reaction) ||
-				!("visual_state" in reaction)
-			)
-				invalidReaction();
-			const event = reaction.event;
-			const visualState = reaction.visual_state;
-			if (
-				typeof event !== "string" ||
-				!event.trim() ||
-				typeof visualState !== "string" ||
-				!visualState.trim() ||
-				!expressionIds.has(visualState) ||
-				reactionEvents.has(event)
-			)
-				invalidReaction();
-			reactionEvents.add(event);
-		}
-		for (const variable of roleplay.variables) {
-			const actualType = typeof variable.initial;
-			if (
-				(variable.type === "number" && actualType !== "number") ||
-				(variable.type === "boolean" && actualType !== "boolean") ||
-				((variable.type === "string" || variable.type === "enum") && actualType !== "string")
-			)
+		if (new Set(media.map((entry) => entry.id)).size !== media.length)
+			throw new Error(`character package ${id}: duplicate media id`);
+		for (const item of media) {
+			if (item.kind === "animation" && !item.poster)
+				throw new Error(`character package ${id}: animation ${item.id} requires poster`);
+			if ((item.kind === "audio" || item.kind === "video") && !item.captions)
+				throw new Error(`character package ${id}: ${item.kind} ${item.id} requires captions`);
+			const extension = extname(item.asset).toLowerCase();
+			if (!mediaAssetExtensions(item.kind).has(extension)) {
 				throw new Error(
-					`character package ${id}: roleplay variable ${variable.id} has invalid initial type`,
-				);
-			if (
-				variable.type === "enum" &&
-				(!variable.values ||
-					typeof variable.initial !== "string" ||
-					!variable.values.includes(variable.initial))
-			)
-				throw new Error(
-					`character package ${id}: enum variable ${variable.id} must declare and use an allowed initial value`,
-				);
-		}
-		for (const roleplayEntries of [
-			roleplay.variables,
-			roleplay.media,
-			roleplay.unlockables,
-			roleplay.choice_sets,
-		]) {
-			if (new Set(roleplayEntries.map((entry) => entry.id)).size !== roleplayEntries.length) {
-				throw new Error(`character package ${id}: duplicate roleplay id`);
-			}
-		}
-		for (const media of roleplay.media) {
-			if (media.when)
-				validateRoleplayConditionReferences(
-					media.when,
-					variableIds,
-					unlockableIds,
-					new Set(Object.keys(state.fields)),
-					id,
-					media.id,
-				);
-			if (media.kind === "animation" && !media.poster)
-				throw new Error(`character package ${id}: animation ${media.id} requires poster`);
-			if ((media.kind === "audio" || media.kind === "video") && !media.captions)
-				throw new Error(`character package ${id}: ${media.kind} ${media.id} requires captions`);
-			const extension = extname(media.asset).toLowerCase();
-			if (!roleplayAssetExtensions(media.kind).has(extension)) {
-				throw new Error(
-					`character package ${id}: media ${media.id} has an invalid ${media.kind} extension`,
+					`character package ${id}: media ${item.id} has an invalid ${item.kind} extension`,
 				);
 			}
-			this.characterPackagePath(id, media.asset);
-			if (media.poster) this.ensureImageAsset(id, media.poster);
-			if (media.captions) {
-				if (extname(media.captions).toLowerCase() !== ".vtt")
-					throw new Error(`character package ${id}: media ${media.id} captions must be WebVTT`);
-				this.characterPackagePath(id, media.captions);
+			this.characterPackagePath(id, item.asset);
+			if (item.poster) this.ensureImageAsset(id, item.poster);
+			if (item.captions) {
+				if (extname(item.captions).toLowerCase() !== ".vtt")
+					throw new Error(`character package ${id}: media ${item.id} captions must be WebVTT`);
+				this.characterPackagePath(id, item.captions);
 			}
-		}
-		for (const unlockable of roleplay.unlockables) {
-			if (unlockable.media && !mediaIds.has(unlockable.media))
-				throw new Error(
-					`character package ${id}: unlockable ${unlockable.id} references missing media`,
-				);
-		}
-		for (const set of roleplay.choice_sets) {
-			if (set.when)
-				validateRoleplayConditionReferences(
-					set.when,
-					variableIds,
-					unlockableIds,
-					new Set(Object.keys(state.fields)),
-					id,
-					set.id,
-				);
-			if (new Set(set.choices.map((choice) => choice.id)).size !== set.choices.length)
-				throw new Error(`character package ${id}: duplicate choice id in ${set.id}`);
 		}
 		parsed.state = state;
-		parsed.roleplay = roleplay;
+		parsed.media = media;
 		parsed.canon = { manifest: canonManifest, sources: canonSources };
 		return parsed;
 	}
@@ -956,9 +854,12 @@ export class CharacterLoader {
 		)}\n</character_behavior_contract>`;
 		const hostContract = `<host_product_contract>
 Treat every user message the same way, whether it was typed or submitted by a choice button. A choice has no command semantics beyond its natural-language message.
-Use host_state only for Character or Display changes. Apply standard JSON Patch to the same document returned by host_state.read: /character contains semantic state and /display contains presentation. When one user action changes both, include both in the same update. Use only ids declared in the display catalog; presentation never changes implicitly.
+Use host_state for Character or Display changes. Its update action accepts one or more path/value changes under /character or /display. Use only ids declared in the display catalog.
+Use host_media with a declared media id when media would materially help the conversation. Use host_choices only for choices created for the current response; every choice is ordinary user input.
 Treat external Runs as separate work. Starting a Run does not mean it finished. Treat local file paths as references to files in place; do not claim they were uploaded or copied.
 Do not infer conversation, turn, queue, streaming, tool, branch, or lifecycle state from Host data. Use Pi's own values and events for those concerns.
+When relationship memory is enabled, completed natural conversation is captured by TDAI and may be selectively distilled; the user does not need to use a fixed command. Use explicit_memory only when the user clearly asks to remember, change, or forget exact information.
+Do not claim that missing an explicit request prevents TDAI capture, and do not promise that every natural message becomes durable structured memory. Keep automatic relationship memory and explicit MEMORY.md edits distinct.
 </host_product_contract>`;
 		const displayCatalog = `<host_display_catalog>\n${JSON.stringify(
 			modelDisplayCatalog(character),
@@ -966,11 +867,22 @@ Do not infer conversation, turn, queue, streaming, tool, branch, or lifecycle st
 			2,
 		)}\n</host_display_catalog>`;
 		const appendSystemPrompt = [
+			hostContract,
+			`<character_identity>\n${[
+				character.prompt.description,
+				character.prompt.personality,
+				character.prompt.scenario,
+			]
+				.filter(Boolean)
+				.join("\n\n")}\n</character_identity>`,
 			behaviorContract,
 			character.prompt.system_prompt.trim(),
-			hostContract,
-			roleSkillPrompt(character.skills),
+			characterStatePrompt(character.state),
 			displayCatalog,
+			roleSkillPrompt(character.skills),
+			character.self_canon.trim()
+				? `<self_canon>\n${character.self_canon.trim()}\n</self_canon>`
+				: "",
 		]
 			.filter(Boolean)
 			.join("\n\n");
@@ -1015,95 +927,82 @@ Do not infer conversation, turn, queue, streaming, tool, branch, or lifecycle st
 				),
 				expressionLabels,
 			},
-			roleplay: {
-				variables: character.roleplay.variables,
-				media: character.roleplay.media.map((media) => {
-					const url = this.characterAssetDataUrl(character.id, media.asset);
-					switch (media.kind) {
-						case "image": {
-							if (media.presentation === "ambient")
-								throw new Error(
-									`character package ${character.id}: non-audio media cannot be ambient`,
-								);
-							return {
-								id: media.id,
-								kind: "image" as const,
-								label: media.label,
-								loop: media.loop,
-								presentation: media.presentation,
-								url,
-								...(media.poster
-									? { posterUrl: this.characterAssetDataUrl(character.id, media.poster) }
-									: {}),
-							};
-						}
-						case "animation": {
-							if (!media.poster)
-								throw new Error(
-									`character package ${character.id}: animation ${media.id} requires poster`,
-								);
-							if (media.presentation === "ambient")
-								throw new Error(
-									`character package ${character.id}: non-audio media cannot be ambient`,
-								);
-							return {
-								id: media.id,
-								kind: "animation" as const,
-								label: media.label,
-								loop: media.loop,
-								presentation: media.presentation,
-								url,
-								posterUrl: this.characterAssetDataUrl(character.id, media.poster),
-							};
-						}
-						case "audio": {
-							if (!media.captions)
-								throw new Error(
-									`character package ${character.id}: audio ${media.id} requires captions`,
-								);
-							return {
-								id: media.id,
-								kind: "audio" as const,
-								label: media.label,
-								loop: media.loop,
-								presentation: media.presentation,
-								url,
-								...(media.poster
-									? { posterUrl: this.characterAssetDataUrl(character.id, media.poster) }
-									: {}),
-								captionsUrl: this.characterAssetDataUrl(character.id, media.captions),
-							};
-						}
-						case "video": {
-							if (!media.captions)
-								throw new Error(
-									`character package ${character.id}: video ${media.id} requires captions`,
-								);
-							if (media.presentation === "ambient")
-								throw new Error(
-									`character package ${character.id}: non-audio media cannot be ambient`,
-								);
-							return {
-								id: media.id,
-								kind: "video" as const,
-								label: media.label,
-
-								loop: media.loop,
-								presentation: media.presentation,
-								url,
-								...(media.poster
-									? { posterUrl: this.characterAssetDataUrl(character.id, media.poster) }
-									: {}),
-								captionsUrl: this.characterAssetDataUrl(character.id, media.captions),
-							};
-						}
-						default:
-							throw new Error(`character package ${character.id}: unsupported media kind`);
+			media: character.media.map((media) => {
+				const url = this.characterAssetDataUrl(character.id, media.asset);
+				switch (media.kind) {
+					case "image": {
+						return {
+							id: media.id,
+							kind: "image" as const,
+							label: media.label,
+							description: media.description,
+							use_when: media.use_when,
+							loop: media.loop,
+							url,
+							...(media.poster
+								? { posterUrl: this.characterAssetDataUrl(character.id, media.poster) }
+								: {}),
+						};
 					}
-				}),
-				unlockables: character.roleplay.unlockables,
-				choice_sets: character.roleplay.choice_sets.map(({ when: _when, ...set }) => set),
-			},
+					case "animation": {
+						if (!media.poster)
+							throw new Error(
+								`character package ${character.id}: animation ${media.id} requires poster`,
+							);
+						return {
+							id: media.id,
+							kind: "animation" as const,
+							label: media.label,
+							description: media.description,
+							use_when: media.use_when,
+							loop: media.loop,
+							url,
+							posterUrl: this.characterAssetDataUrl(character.id, media.poster),
+						};
+					}
+					case "audio": {
+						if (!media.captions)
+							throw new Error(
+								`character package ${character.id}: audio ${media.id} requires captions`,
+							);
+						return {
+							id: media.id,
+							kind: "audio" as const,
+							label: media.label,
+							description: media.description,
+							use_when: media.use_when,
+							loop: media.loop,
+							url,
+							...(media.poster
+								? { posterUrl: this.characterAssetDataUrl(character.id, media.poster) }
+								: {}),
+							captionsUrl: this.characterAssetDataUrl(character.id, media.captions),
+						};
+					}
+					case "video": {
+						if (!media.captions)
+							throw new Error(
+								`character package ${character.id}: video ${media.id} requires captions`,
+							);
+						return {
+							id: media.id,
+							kind: "video" as const,
+							label: media.label,
+							description: media.description,
+							use_when: media.use_when,
+
+							loop: media.loop,
+							url,
+							...(media.poster
+								? { posterUrl: this.characterAssetDataUrl(character.id, media.poster) }
+								: {}),
+							captionsUrl: this.characterAssetDataUrl(character.id, media.captions),
+						};
+					}
+					default:
+						throw new Error(`character package ${character.id}: unsupported media kind`);
+				}
+			}),
 		};
 	}
 
@@ -1172,6 +1071,36 @@ Do not infer conversation, turn, queue, streaming, tool, branch, or lifecycle st
 			.where(eq(activeCharacter.singleton, 1))
 			.get();
 		return row?.characterId ?? defaultCharacterId;
+	}
+
+	deletePackage(
+		db: AppDatabase,
+		characterId: string,
+		options: { readonly defaultCharacterId: string; readonly runtimeExists: boolean },
+	): boolean {
+		const id = requireCompanionId(characterId);
+		if (id === options.defaultCharacterId) {
+			throw { kind: "conflict", reason: "character_package_default" };
+		}
+		if (id === this.getActiveCharacterId(db, options.defaultCharacterId)) {
+			throw { kind: "conflict", reason: "character_package_active" };
+		}
+		if (options.runtimeExists) {
+			throw { kind: "conflict", reason: "character_runtime_exists" };
+		}
+		const registered =
+			db
+				.select({ id: companionPackages.id })
+				.from(companionPackages)
+				.where(eq(companionPackages.id, id))
+				.get() !== undefined;
+		let removed = false;
+		db.transaction((transaction) => {
+			removed = removeOwnedDirectorySync(this.libraryRoot, id, "character package directory");
+			transaction.delete(companionIdentity).where(eq(companionIdentity.id, id)).run();
+			transaction.delete(companionPackages).where(eq(companionPackages.id, id)).run();
+		});
+		return removed || registered;
 	}
 
 	list(db: AppDatabase, defaultCharacterId: string): CharacterSummary[] {
@@ -1259,13 +1188,15 @@ Do not infer conversation, turn, queue, streaming, tool, branch, or lifecycle st
 	}
 
 	activate(
-		db: AppDatabase,
+		systemDb: AppDatabase,
+		companionDb: AppDatabase,
 		eventBus: EventBus,
 		character: CharacterPackage,
 		origin?: CharacterPackageOrigin,
 	): void {
-		this.seed(db, eventBus, character, origin);
-		db.insert(activeCharacter)
+		this.seed(systemDb, companionDb, eventBus, character, origin);
+		systemDb
+			.insert(activeCharacter)
 			.values({ singleton: 1, characterId: character.id })
 			.onConflictDoUpdate({
 				target: activeCharacter.singleton,
@@ -1277,23 +1208,24 @@ Do not infer conversation, turn, queue, streaming, tool, branch, or lifecycle st
 
 	/** Seed identity once and refresh package provenance on every package load. */
 	seed(
-		db: AppDatabase,
+		systemDb: AppDatabase,
+		companionDb: AppDatabase,
 		eventBus: EventBus,
 		character: CharacterPackage,
 		origin: CharacterPackageOrigin = this.packageOrigin(character),
 	): void {
-		const existing = db
+		const existingIdentity = systemDb
 			.select({ id: companionIdentity.id })
 			.from(companionIdentity)
 			.where(eq(companionIdentity.id, character.id))
 			.get();
-		const existingPackage = db
+		const existingPackage = systemDb
 			.select({ origin: companionPackages.origin })
 			.from(companionPackages)
 			.where(eq(companionPackages.id, character.id))
 			.get();
 		const effectiveOrigin = existingPackage?.origin ?? origin;
-		db.transaction((transaction) => {
+		systemDb.transaction((transaction) => {
 			const packageHash = createHash("sha256")
 				.update(character.id)
 				.update("\0")
@@ -1338,7 +1270,7 @@ Do not infer conversation, turn, queue, streaming, tool, branch, or lifecycle st
 					},
 				})
 				.run();
-			if (existing) return;
+			if (existingIdentity) return;
 			// Insert the companion identity
 			transaction
 				.insert(companionIdentity)
@@ -1348,9 +1280,15 @@ Do not infer conversation, turn, queue, streaming, tool, branch, or lifecycle st
 					name: character.name,
 				})
 				.run();
-
-			// Insert the first Self Canon version
-			transaction
+		});
+		const existingCanon = companionDb
+			.select({ id: selfCanonVersions.id })
+			.from(selfCanonVersions)
+			.where(eq(selfCanonVersions.companionId, character.id))
+			.limit(1)
+			.get();
+		if (!existingCanon) {
+			companionDb
 				.insert(selfCanonVersions)
 				.values({
 					companionId: character.id,
@@ -1359,9 +1297,8 @@ Do not infer conversation, turn, queue, streaming, tool, branch, or lifecycle st
 					hash: createHash("sha256").update(character.self_canon).digest("hex"),
 				})
 				.run();
-
-			// The first meeting FSM creates the initial conversation, so we don't seed one here.
-		});
+		}
+		// The first meeting FSM creates the initial conversation, so we don't seed one here.
 		eventBus.publish("character.seeded", { id: character.id, name: character.name });
 	}
 }
@@ -1375,70 +1312,12 @@ export function modelDisplayCatalog(character: CharacterPackage) {
 			label: label.replaceAll("{name}", character.name),
 			useWhen: use_when,
 		})),
+		media: character.media.map(({ id, kind, label, description, use_when }) => ({
+			id,
+			kind,
+			label,
+			description,
+			useWhen: use_when,
+		})),
 	};
-}
-
-function validateRoleplayConditionReferences(
-	condition: import("./roleplay-schema.js").RoleplayCondition,
-	variables: ReadonlySet<string>,
-	unlockables: ReadonlySet<string>,
-	statePaths: ReadonlySet<string>,
-	characterId: string,
-	eventId: string,
-): void {
-	if ("all" in condition) {
-		condition.all.forEach((part) => {
-			validateRoleplayConditionReferences(
-				part,
-				variables,
-				unlockables,
-				statePaths,
-				characterId,
-				eventId,
-			);
-		});
-		return;
-	}
-	if ("any" in condition) {
-		condition.any.forEach((part) => {
-			validateRoleplayConditionReferences(
-				part,
-				variables,
-				unlockables,
-				statePaths,
-				characterId,
-				eventId,
-			);
-		});
-		return;
-	}
-	if ("not" in condition) {
-		validateRoleplayConditionReferences(
-			condition.not,
-			variables,
-			unlockables,
-			statePaths,
-			characterId,
-			eventId,
-		);
-		return;
-	}
-	if ("unlocked" in condition) {
-		if (!unlockables.has(condition.unlocked))
-			throw new Error(
-				`character package ${characterId}: event ${eventId} condition references missing unlockable`,
-			);
-		return;
-	}
-	if ("state" in condition) {
-		if (!statePaths.has(condition.state))
-			throw new Error(
-				`character package ${characterId}: event ${eventId} condition references missing state path`,
-			);
-		return;
-	}
-	if (!variables.has(condition.variable))
-		throw new Error(
-			`character package ${characterId}: event ${eventId} condition references missing variable`,
-		);
 }

@@ -57,7 +57,13 @@ const MAX_CHUNK_CHARS = 1600;
 export interface CanonEmbeddingService {
 	isReady(): boolean;
 	getDimensions(): number;
+	getProviderInfo(): { provider: string; model: string };
 	embed(text: string): Promise<Float32Array>;
+}
+
+interface CanonEmbeddingConfiguration {
+	dimensions: number;
+	fingerprint: string;
 }
 
 export class CanonHubService {
@@ -237,6 +243,19 @@ export class CanonHubService {
 				? finalized
 				: this.moduleChunks(companionId, options.moduleId, limit, allowedPackageChunks);
 		}
+		const configuration = canonEmbeddingConfiguration(service);
+		const vectors = this.vectors;
+		if (!configuration || !vectors || !this.ensureVectorIndex(configuration)) {
+			const finalized = this.finalizeHybrid(
+				lexical,
+				limit,
+				options.includeAdjacent,
+				allowedPackageChunks,
+			);
+			return finalized.length || !options.moduleId
+				? finalized
+				: this.moduleChunks(companionId, options.moduleId, limit, allowedPackageChunks);
+		}
 		let queryEmbedding: Float32Array;
 		try {
 			queryEmbedding = await service.embed(query.trim());
@@ -251,9 +270,12 @@ export class CanonHubService {
 				? finalized
 				: this.moduleChunks(companionId, options.moduleId, limit, allowedPackageChunks);
 		}
-		const aliases = this.matchAliases(companionId, query);
-		const routedChunkIds = this.routedChunkIds(companionId, query, aliases, options.moduleId);
-		if (!this.ensureVectorIndex(queryEmbedding.length)) {
+		const currentConfiguration = canonEmbeddingConfiguration(this.embeddingService?.());
+		if (
+			queryEmbedding.length !== configuration.dimensions ||
+			currentConfiguration?.fingerprint !== configuration.fingerprint ||
+			!this.ensureVectorIndex(configuration)
+		) {
 			const finalized = this.finalizeHybrid(
 				lexical,
 				limit,
@@ -264,7 +286,9 @@ export class CanonHubService {
 				? finalized
 				: this.moduleChunks(companionId, options.moduleId, limit, allowedPackageChunks);
 		}
-		const vectorRows = this.vectors!.searchCanonVectors(queryEmbedding, Math.max(limit * 6, 48));
+		const aliases = this.matchAliases(companionId, query);
+		const routedChunkIds = this.routedChunkIds(companionId, query, aliases, options.moduleId);
+		const vectorRows = vectors.searchCanonVectors(queryEmbedding, Math.max(limit * 6, 48));
 		const candidates = this.db
 			.select({
 				id: canonChunks.id,
@@ -642,7 +666,9 @@ export class CanonHubService {
 	async indexPending(companionId: string): Promise<void> {
 		const service = this.embeddingService?.();
 		if (!service?.isReady()) return;
-		if (!this.ensureVectorIndex(service.getDimensions())) return;
+		const configuration = canonEmbeddingConfiguration(service);
+		const vectors = this.vectors;
+		if (!configuration || !vectors || !this.ensureVectorIndex(configuration)) return;
 		const rows = this.db
 			.select({
 				id: canonChunks.id,
@@ -658,9 +684,14 @@ export class CanonHubService {
 				const embedding = row.embedding
 					? decodeEmbedding(row.embedding)
 					: await service.embed(row.content);
-				if (embedding.length === 0) continue;
-				if (!this.ensureVectorIndex(embedding.length)) return;
-				this.vectors!.upsertCanonVector(row.id, embedding);
+				const currentConfiguration = canonEmbeddingConfiguration(this.embeddingService?.());
+				if (
+					embedding.length !== configuration.dimensions ||
+					currentConfiguration?.fingerprint !== configuration.fingerprint ||
+					!this.ensureVectorIndex(configuration)
+				)
+					return;
+				vectors.upsertCanonVector(row.id, embedding);
 				if (!row.embedding) {
 					this.db
 						.update(canonChunks)
@@ -676,11 +707,8 @@ export class CanonHubService {
 		}
 	}
 
-	private ensureVectorIndex(dimensions: number): boolean {
-		if (!this.vectors || dimensions <= 0) return false;
-		const index = this.vectors.ensureCanonVectorIndex(dimensions);
-		if (index.reset) this.db.update(canonChunks).set({ embedding: null }).run();
-		return index.ready;
+	private ensureVectorIndex(configuration: CanonEmbeddingConfiguration): boolean {
+		return this.vectors?.ensureCanonVectorIndex(configuration).ready ?? false;
 	}
 
 	private finalizeHybrid(
@@ -960,6 +988,29 @@ function estimateTokens(text: string): number {
 
 function encodeEmbedding(vector: Float32Array): Buffer {
 	return Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
+}
+
+function canonEmbeddingConfiguration(
+	service: CanonEmbeddingService | undefined,
+): CanonEmbeddingConfiguration | undefined {
+	try {
+		if (!service?.isReady()) return undefined;
+		const dimensions = service.getDimensions();
+		if (!Number.isSafeInteger(dimensions) || dimensions <= 0) return undefined;
+		const info = service.getProviderInfo();
+		const identity = JSON.stringify({
+			v: 1,
+			provider: info.provider.trim(),
+			model: info.model.trim(),
+			dimensions,
+		});
+		return {
+			dimensions,
+			fingerprint: createHash("sha256").update(identity, "utf8").digest("hex"),
+		};
+	} catch {
+		return undefined;
+	}
 }
 
 function decodeEmbedding(blob: Uint8Array): Float32Array {

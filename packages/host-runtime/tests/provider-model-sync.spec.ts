@@ -56,7 +56,7 @@ function removeRuntime(runtime: HostRuntime): void {
 }
 
 function restartMarker(dataDir: string): DurableFileTransactionMarker {
-	const target = join(dataDir, "companion-runtime", "models.json");
+	const target = join(dataDir, "system", "providers", "models.json");
 	const parent = dirname(target);
 	const base = basename(target);
 	const transactionId = "30000000-0000-4000-8000-000000000003";

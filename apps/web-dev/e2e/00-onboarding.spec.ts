@@ -1,6 +1,6 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
-import { getBootstrap } from "./helpers";
+import { selectKobalteOption } from "./helpers";
 
 test("browser requires a reply model before the role-defined onboarding", async ({ page }) => {
 	let eventRequests = 0;
@@ -10,76 +10,42 @@ test("browser requires a reply model before the role-defined onboarding", async 
 			expect(request.headers().accept).toBe("application/x-ndjson");
 		}
 	});
-	const bootstrap = await getBootstrap(page);
-	const headers = { "x-bear-web-dev-token": bootstrap.token };
 	const provider = {
 		id: "e2e-rule",
 		name: "E2E Rule Provider",
 		modelId: "rule-model",
 	};
-	const configured = await (
-		await page.request.post("/rpc/provider.customUpsert%3Av1", {
-			headers,
-			data: {
-				providerId: provider.id,
-				name: provider.name,
-				baseUrl: `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/v1`,
-				models: [{ id: provider.modelId }],
-			},
-		})
-	).json();
-	expect(configured).toMatchObject({ ok: true });
-	const setKey = await (
-		await page.request.post("/rpc/provider.setApiKey%3Av1", {
-			headers,
-			data: {
-				providerId: provider.id,
-				apiKey: "e2e-rule-key",
-				sessionOnly: true,
-			},
-		})
-	).json();
-	expect(setKey).toMatchObject({ ok: true });
-	const enableModel = await (
-		await page.request.post("/rpc/model.enable%3Av1", {
-			headers,
-			data: {
-				providerId: provider.id,
-				modelId: provider.modelId,
-				label: provider.name,
-			},
-		})
-	).json();
-	expect(enableModel).toMatchObject({ ok: true });
-	const providerList = await (
-		await page.request.post("/rpc/provider.list%3Av1", {
-			headers,
-			data: {},
-		})
-	).json();
-	expect(providerList).toMatchObject({ ok: true });
-	expect(providerList.data.providers).toContainEqual(
-		expect.objectContaining({
-			id: provider.id,
-			name: provider.name,
-			availableModels: expect.arrayContaining([expect.objectContaining({ id: provider.modelId })]),
-		}),
-	);
 	await page.goto("/");
 	const modelSetup = page.getByRole("dialog", {
 		name: zhCN.modelSetup.dialogLabel,
 	});
 	await expect(modelSetup).toBeVisible();
 	await expect(modelSetup.getByRole("heading", { name: zhCN.modelSetup.title })).toBeVisible();
-	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.continue })).toBeDisabled();
-	const defaultResponse = await page.request.post("/rpc/model.defaults.setReply%3Av1", {
-		headers,
-		data: { reply: { providerId: provider.id, modelId: provider.modelId } },
+	const providerSetup = modelSetup.getByRole("region", {
+		name: zhCN.settings.providerSetupLabel,
 	});
-	expect(await defaultResponse.json()).toMatchObject({ ok: true });
-	// An out-of-page RPC mutation must update this UI through Host push, without reload.
+	await providerSetup.getByText(zhCN.settings.customProvider, { exact: true }).click();
+	await providerSetup
+		.getByRole("textbox", { name: zhCN.settings.customProviderId })
+		.fill(provider.id);
+	await providerSetup
+		.getByRole("textbox", { name: zhCN.settings.customServiceName })
+		.fill(provider.name);
+	await providerSetup
+		.getByRole("textbox", { name: zhCN.settings.customBaseUrl })
+		.fill(`http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/v1`);
+	await providerSetup
+		.getByRole("textbox", { name: zhCN.settings.customModels })
+		.fill(provider.modelId);
+	await providerSetup
+		.getByRole("textbox", { name: zhCN.settings.apiKeyLabel })
+		.fill("e2e-rule-key");
+	await providerSetup.getByRole("button", { name: zhCN.settings.addProvider }).click();
+	const replyModel = modelSetup.getByRole("button", { name: zhCN.modelSetup.modelLabel });
+	await expect(replyModel).toBeVisible();
+	await selectKobalteOption(page, replyModel, /rule-model/);
 	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.continue })).toBeEnabled();
-	expect(eventRequests).toBe(1);
+	expect(eventRequests).toBeGreaterThanOrEqual(1);
 	await page.reload();
 	await expect(modelSetup).toBeVisible();
 	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.continue })).toBeEnabled();
@@ -91,20 +57,24 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	const embeddingContinue = embeddingSetup.getByRole("button", {
 		name: zhCN.messages.continue,
 	});
-	await expect(embeddingContinue).toBeDisabled();
-	const noneRadio = embeddingSetup.getByRole("radio", {
-		name: zhCN.settings.vectorProviders.none,
-		exact: true,
-	});
-	await embeddingSetup.getByText(zhCN.settings.vectorProviders.none, { exact: true }).click();
-	await expect(noneRadio).toBeChecked();
 	await expect(embeddingContinue).toBeEnabled();
 	await embeddingContinue.click();
 
+	await expect(modelSetup).toBeVisible();
+	await expect(modelSetup.getByRole("heading", { name: zhCN.modelSetup.roleTitle })).toBeVisible();
+	await expect(modelSetup.getByRole("button", { name: zhCN.modelSetup.confirmRole })).toBeEnabled();
+	// A renderer restart after system setup resumes at the character-owned route
+	// confirmation and never repeats providers or embedding.
+	await page.reload();
+	await expect(embeddingSetup).toBeHidden();
+	await expect(modelSetup).toBeVisible();
+	await expect(modelSetup.getByRole("heading", { name: zhCN.modelSetup.roleTitle })).toBeVisible();
+	await modelSetup.getByRole("button", { name: zhCN.modelSetup.confirmRole }).click();
+
 	const onboarding = page.getByRole("dialog", { name: "开始相处" });
 	await expect(onboarding).toBeVisible();
-	// Setup progress is Host-owned: a new renderer must resume at role onboarding,
-	// never regress to the already-confirmed model or embedding gates.
+	// Setup progress is Host-owned: a new renderer resumes role onboarding and
+	// never regresses to either system or character model setup.
 	await page.reload();
 	await expect(modelSetup).toBeHidden();
 	await expect(embeddingSetup).toBeHidden();

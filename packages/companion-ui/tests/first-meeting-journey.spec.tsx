@@ -64,7 +64,6 @@ function embeddingBinding(options: EmbeddingOptions = {}) {
 	const configure = options.configure ?? vi.fn(async () => ({ ready: true }));
 	const [settings, setSettings] = createSignal<Record<string, unknown>>({
 		relationshipMemoryEnabled: false,
-		conversationHistoryReadEnabled: false,
 		networkProxy: { mode: "direct" },
 		memoryVectorService: { enabled: true, provider: "local", localModel: "test-embedding" },
 		modelDownloadSource: { type: "official" },
@@ -167,7 +166,14 @@ function firstRunStore(
 	const [models, setModels] = createSignal<Array<typeof replyModel | typeof imageModel>>(
 		options.models ?? [],
 	);
-	const [defaults, setDefaults] = createSignal<Record<string, unknown>>(options.defaults ?? {});
+	const [defaults, setDefaults] = createSignal<Record<string, unknown>>({
+		vision: { mode: "auto" },
+		onboardingComplete: false,
+	});
+	const [systemDefaults, setSystemDefaultsState] = createSignal<Record<string, unknown>>({
+		vision: { mode: "auto" },
+		...options.defaults,
+	});
 	const [firstRunStage, setFirstRunStage] = createSignal<"model" | "embedding" | "role">("model");
 	let hostProviders: ProviderFixture[] = initialProviders;
 	let publishProviderProjection = true;
@@ -194,7 +200,6 @@ function firstRunStore(
 			data: () => ({
 				firstRunStage: firstRunStage(),
 				relationshipMemoryEnabled: false,
-				conversationHistoryReadEnabled: false,
 				networkProxy: { mode: "direct" },
 				memoryVectorService: { enabled: false, provider: "none" },
 				modelDownloadSource: { type: "official" },
@@ -219,7 +224,7 @@ function firstRunStore(
 		} as never,
 		model: {
 			models,
-			data: () => ({ defaults: defaults() }),
+			data: () => ({ defaults: defaults(), systemDefaults: systemDefaults() }),
 			setDefaultReply: vi.fn(async (providerId: string, modelId: string) =>
 				setDefaults((current) => ({ ...current, reply: { providerId, modelId } })),
 			),
@@ -231,6 +236,13 @@ function firstRunStore(
 					...current,
 					vision: { mode: "manual", route: { providerId, modelId } },
 				})),
+			),
+			setSystemDefaults: vi.fn(async (reply, vision) => setSystemDefaultsState({ reply, vision })),
+			initializeDefaults: vi.fn(async () =>
+				setDefaults({ ...systemDefaults(), onboardingComplete: false }),
+			),
+			completeDefaultsOnboarding: vi.fn(async () =>
+				setDefaults((current) => ({ ...current, onboardingComplete: true })),
 			),
 		} as never,
 		embedding: (options.embedding ?? embeddingBinding()) as never,
@@ -290,7 +302,10 @@ describe("Host-backed first-run setup", () => {
 		expect(finish).toBeDisabled();
 		await selectKobalteOption(user, model, { label: "Reply (Relay)" });
 		await waitFor(() =>
-			expect(setup.store.model?.setDefaultReply).toHaveBeenCalledWith("relay", "reply"),
+			expect(setup.store.model?.setSystemDefaults).toHaveBeenCalledWith(
+				{ providerId: "relay", modelId: "reply" },
+				{ mode: "auto" },
+			),
 		);
 		expect(finish).toBeEnabled();
 	});
@@ -304,9 +319,7 @@ describe("Host-backed first-run setup", () => {
 		).not.toBeInTheDocument();
 		const reply = await within(dialog).findByLabelText(zhCN.modelSetup.modelLabel);
 		await selectKobalteOption(user, reply, { label: "Reply (Relay)" });
-		await waitFor(() =>
-			expect(setup.store.model?.setDefaultReply).toHaveBeenCalledWith("relay", "reply"),
-		);
+		await waitFor(() => expect(setup.store.model?.setSystemDefaults).toHaveBeenCalled());
 	});
 
 	it("accepts the Host-backed automatic image fallback without a second confirmation", async () => {
@@ -353,6 +366,15 @@ describe("Host-backed first-run setup", () => {
 		).toBeVisible();
 
 		setup.setFirstRunStage("role");
+		const roleModelDialog = await screen.findByRole("dialog", {
+			name: zhCN.modelSetup.dialogLabel,
+		});
+		expect(
+			within(roleModelDialog).getByRole("heading", { name: zhCN.modelSetup.roleTitle }),
+		).toBeVisible();
+		await user.click(
+			within(roleModelDialog).getByRole("button", { name: zhCN.modelSetup.confirmRole }),
+		);
 		await waitFor(() =>
 			expect(
 				screen.getByRole("dialog", {
@@ -362,7 +384,7 @@ describe("Host-backed first-run setup", () => {
 		);
 	});
 
-	it("supports selecting an image model and gates role onboarding on embedding success", async () => {
+	it("hands missing Embedding setup to Settings without embedding a system form", async () => {
 		const user = userEvent.setup();
 		const configure = vi.fn(async () => ({ ready: true }));
 		const setup = firstRunStore({ embedding: embeddingBinding({ configure }) });
@@ -376,34 +398,46 @@ describe("Host-backed first-run setup", () => {
 		await selectKobalteOption(user, within(dialog).getByLabelText(zhCN.modelSetup.modelLabel), {
 			label: "Reply (Relay)",
 		});
-		await waitFor(() =>
-			expect(setup.store.model?.setDefaultReply).toHaveBeenCalledWith("relay", "reply"),
-		);
+		await waitFor(() => expect(setup.store.model?.setSystemDefaults).toHaveBeenCalled());
 		await selectKobalteOption(user, within(dialog).getByLabelText(zhCN.settings.visionModel), {
 			label: "Image Reader (Relay)",
 		});
 		await waitFor(() =>
-			expect(setup.store.model?.setMultimodalFallback).toHaveBeenCalledWith("relay", "image"),
+			expect(setup.store.model?.setSystemDefaults).toHaveBeenLastCalledWith(
+				{ providerId: "relay", modelId: "reply" },
+				{
+					mode: "manual",
+					route: { providerId: "relay", modelId: "image" },
+				},
+			),
 		);
 		await user.click(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue }));
 		expect(
 			screen.queryByRole("dialog", { name: THEMED_CHARACTER.character.first_meeting.dialog_label }),
 		).not.toBeInTheDocument();
-		const embedding = setup.store.embedding as {
-			localConfigureMutation: {
-				mutateAsync: (params: {
-					provider: "none" | "local";
-					candidateId?: string;
-				}) => Promise<unknown>;
-				isSuccess: boolean;
-			};
-		};
-		await embedding.localConfigureMutation.mutateAsync({
-			provider: "local",
-			candidateId: "test-embedding",
+		const handoff = await screen.findByRole("dialog", {
+			name: zhCN.settings.memoryVectorSection,
 		});
-		expect(configure).toHaveBeenCalledWith({ provider: "local", candidateId: "test-embedding" });
-		expect(embedding.localConfigureMutation.isSuccess).toBe(true);
+		expect(
+			within(handoff).getByRole("button", { name: zhCN.sidebar.systemSettings }),
+		).toBeVisible();
+		expect(within(handoff).getByRole("button", { name: zhCN.messages.continue })).toBeVisible();
+		expect(within(handoff).queryByRole("combobox")).not.toBeInTheDocument();
+		expect(configure).not.toHaveBeenCalled();
+
+		await user.click(within(handoff).getByRole("button", { name: zhCN.messages.continue }));
+		await waitFor(() => expect(setup.firstRunStage()).toBe("role"));
+		const roleModelDialog = await screen.findByRole("dialog", {
+			name: zhCN.modelSetup.dialogLabel,
+		});
+		await user.click(
+			within(roleModelDialog).getByRole("button", { name: zhCN.modelSetup.confirmRole }),
+		);
+		expect(
+			await screen.findByRole("dialog", {
+				name: THEMED_CHARACTER.character.first_meeting.dialog_label,
+			}),
+		).toBeVisible();
 	});
 
 	it("selects a provider progressively, configures it, then picks reply and image readers in one model stage", async () => {

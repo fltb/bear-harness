@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "playwright/test";
@@ -12,7 +13,11 @@ const hostPort = process.env.BEAR_E2E_HOST_PORT ?? "3201";
 const providerPort = process.env.BEAR_E2E_PROVIDER_PORT ?? "3211";
 const baseURL = `http://127.0.0.1:${webPort}`;
 const dataScope = `${process.pid}-${randomUUID()}`;
-const dataDirectory = resolve(here, `../../test-results/web-dev-data-${dataScope}`);
+// Keep mutable Run roots outside the repository. The source ACP bootstrap lives
+// at the repository root, which the native sandbox mounts read-only so its
+// package imports remain available. Nesting outputs beneath that same root
+// would correctly fail the read/write overlap check before the agent starts.
+const dataDirectory = resolve(realpathSync.native(tmpdir()), `bear-harness-web-dev-${dataScope}`);
 const piWorkerPath = realpathSync.native(
 	fileURLToPath(new URL("../../pi-e2e-worker.mjs", import.meta.url)),
 );

@@ -60,9 +60,15 @@ export interface ExecutorPermissionOption {
 	name: string;
 }
 
+export type ExecutorRecovery = "attached" | "confirmed_lost" | "unknown";
+
 /** A worker implementation for one profile type. */
 export interface ExecutorController {
 	launch(request: ExecutorLaunchRequest): Promise<void>;
+	/** Query/recover the controller's live handle before startup declares a persisted run orphaned. */
+	recover(run: ExecutorRun): Promise<ExecutorRecovery>;
+	stop(run: ExecutorRun): Promise<void>;
+	close(): Promise<void>;
 	cancel?(run: ExecutorRun): Promise<void>;
 	steer?(run: ExecutorRun, instruction: string): Promise<void>;
 	interrupt?(run: ExecutorRun): Promise<void>;
@@ -122,6 +128,16 @@ export class ExecutorRouter {
 		await controller.launch({ run, task, profile, emit });
 	}
 
+	async recover(run: ExecutorRun): Promise<ExecutorRecovery> {
+		const { controller } = this.resolve(run.executorProfile);
+		return controller.recover(run);
+	}
+
+	async stop(run: ExecutorRun): Promise<void> {
+		const { controller } = this.resolve(run.executorProfile);
+		await controller.stop(run);
+	}
+
 	async cancel(run: ExecutorRun): Promise<void> {
 		const { controller } = this.resolve(run.executorProfile);
 		if (!controller.cancel) return;
@@ -144,6 +160,12 @@ export class ExecutorRouter {
 		const { controller } = this.resolve(run.executorProfile);
 		if (!controller.resume) unavailable("executor_resume_unsupported");
 		await controller.resume(run, response);
+	}
+
+	async close(): Promise<void> {
+		await Promise.all(
+			[...new Set(this.controllers.values())].map((controller) => controller.close()),
+		);
 	}
 
 	private resolve(profileId: string): { profile: ExecutorProfile; controller: ExecutorController } {

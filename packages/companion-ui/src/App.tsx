@@ -1,12 +1,13 @@
 import type { CompanionClient } from "@bear-harness/companion-client";
 import { I18nextProvider, i18n, useLanguage, useTranslation } from "@bear-harness/i18n";
 import type { ProductConfig } from "@bear-harness/product-config";
+import type { CharacterMedia } from "@bear-harness/protocol";
 import { faBars } from "@fortawesome/free-solid-svg-icons";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { createMemo, createSignal, type JSX, onCleanup, onMount, Show } from "solid-js";
 import { CharacterPresence, type CharacterPresenceLayoutMode } from "./CharacterPresence";
 import { Composer } from "./Composer";
-import { ConversationPanel } from "./ConversationPanel";
+import { ConversationPanel, MediaPreview } from "./ConversationPanel";
 import { FirstMeeting } from "./FirstMeeting";
 import { Backstage } from "./features/Backstage.js";
 import { Icon } from "./Icon.js";
@@ -20,7 +21,7 @@ import {
 	useShellWorkflowStore,
 } from "./stores/shell-workflows.js";
 import { Button } from "./ui/primitives.js";
-import { PermissionLayer } from "./WorkPanel.js";
+import { ArtifactPreview, PermissionLayer } from "./WorkPanel.js";
 
 export type AppLayoutMode = "mobile" | "window" | "fullscreen";
 
@@ -104,6 +105,16 @@ function DesktopFrame() {
 	});
 	const [layoutMode, setLayoutMode] = createSignal<AppLayoutMode>("window");
 	const [mobileNavigationOpen, setMobileNavigationOpen] = createSignal(false);
+	const [mediaSelection, setMediaSelection] = createSignal<{
+		conversationId: string;
+		media: CharacterMedia;
+	}>();
+	const previewMedia = createMemo(() => {
+		const selection = mediaSelection();
+		return !workflow.selectedArtifact() && selection?.conversationId === store.activeConversationId
+			? selection.media
+			: undefined;
+	});
 	let appRef: HTMLDivElement | undefined;
 	let backstageReturnFocus: HTMLElement | undefined;
 	const openBackstage = (tab: "roles" | "settings") => {
@@ -137,6 +148,12 @@ function DesktopFrame() {
 	onCleanup(() => {
 		delete document.documentElement.dataset.appLayout;
 	});
+	const openMedia = (media: CharacterMedia) => {
+		const conversationId = store.activeConversationId;
+		if (!conversationId) return;
+		workflow.closeArtifact();
+		setMediaSelection({ conversationId, media });
+	};
 
 	return (
 		<div
@@ -194,7 +211,7 @@ function DesktopFrame() {
 						visualState={workflow.visualState() ?? activityVisualState()}
 						layout={presenceLayout()}
 					/>
-					<ConversationPanel />
+					<ConversationPanel onPreviewMedia={openMedia} />
 					<Composer
 						placeholder={workflow.composerPlaceholder()}
 						onOpenModelSettings={() => openBackstage("settings")}
@@ -202,6 +219,9 @@ function DesktopFrame() {
 					<PermissionLayer />
 					<FirstMeeting />
 				</main>
+				<Show when={previewMedia()} fallback={<ArtifactPreview />}>
+					{(media) => <MediaPreview media={media()} onClose={() => setMediaSelection(undefined)} />}
+				</Show>
 			</div>
 			<Backstage
 				open={workflow.backstageOpen()}

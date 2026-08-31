@@ -4,10 +4,8 @@ import {
 	type AnySQLiteColumn,
 	blob,
 	check,
-	foreignKey,
 	index,
 	integer,
-	numeric,
 	primaryKey,
 	sqliteTable,
 	text,
@@ -66,15 +64,26 @@ export const companionIdentity = sqliteTable("companion_identity", {
 		.notNull()
 		.references(() => companionPackages.id),
 	name: text().notNull(),
-	nickname: text(),
 	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 });
+
+/** Immutable owner embedded in one character's physically isolated runtime database. */
+export const companionRuntimeIdentity = sqliteTable(
+	"runtime_identity",
+	{
+		id: integer().primaryKey().default(1),
+		companionId: text("companion_id").notNull().unique(),
+		nickname: text(),
+		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+	},
+	(table) => [check("runtime_identity_singleton", sql`${table.id} = 1`)],
+);
 
 export const selfCanonVersions = sqliteTable("self_canon_versions", {
 	id: integer().primaryKey({ autoIncrement: true }),
 	companionId: text("companion_id")
 		.notNull()
-		.references(() => companionIdentity.id),
+		.references(() => companionRuntimeIdentity.companionId),
 	canon: text().notNull(),
 	version: integer().notNull(),
 	hash: text().notNull(),
@@ -87,153 +96,13 @@ export const conversations = sqliteTable(
 		id: text().primaryKey(),
 		companionId: text("companion_id")
 			.notNull()
-			.references(() => companionIdentity.id),
+			.references(() => companionRuntimeIdentity.companionId),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 		archivedAt: text("archived_at"),
 	},
 	(table) => [
 		index("idx_conversations_active").on(table.companionId, table.archivedAt, table.updatedAt),
-	],
-);
-
-export const relationshipMemoryEntries = sqliteTable(
-	"relationship_memory_entries",
-	{
-		id: text().primaryKey(),
-		companionId: text("companion_id")
-			.notNull()
-			.references(() => companionIdentity.id),
-		kind: text({ enum: ["fact", "preference", "event", "self_canon_summary"] }).notNull(),
-		scope: text({ enum: ["self", "relationship", "scene"] }).notNull(),
-		text: text().notNull(),
-		normalizedText: text("normalized_text").notNull(),
-		/** Pi provenance is intentionally not a foreign key: SessionManager owns native entries. */
-		sourcePiSessionId: text("source_pi_session_id"),
-		sourceNativeEntryId: text("source_native_entry_id"),
-		sourceConversationId: text("source_conversation_id").references(() => conversations.id),
-		sourceKind: text("source_kind", {
-			enum: ["user_button", "user_request", "companion_suggestion", "extractor"],
-		})
-			.default("user_button")
-			.notNull(),
-		status: text({ enum: ["active", "excluded", "forgotten"] })
-			.default("active")
-			.notNull(),
-		pinnedAt: text("pinned_at"),
-		sceneId: text("scene_id"),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
-		forgottenAt: text("forgotten_at"),
-	},
-	(table) => [
-		index("idx_memory_entries_companion").on(table.companionId),
-		check(
-			"relationship_memory_entries_check_4",
-			sql`kind IN ('fact','preference','event','self_canon_summary')`,
-		),
-		check("relationship_memory_entries_check_5", sql`scope IN ('self','relationship','scene')`),
-		check(
-			"relationship_memory_entries_check_6",
-			sql`source_kind IN ('user_button','user_request','companion_suggestion','extractor')`,
-		),
-		check("relationship_memory_entries_check_7", sql`status IN ('active','excluded','forgotten')`),
-	],
-);
-
-export const memoryCandidates = sqliteTable(
-	"memory_candidates",
-	{
-		id: text().primaryKey(),
-		companionId: text("companion_id")
-			.notNull()
-			.references(() => companionIdentity.id),
-		kind: text({ enum: ["fact", "preference", "event", "self_canon_summary"] }).notNull(),
-		/** Pi provenance is intentionally not a foreign key: SessionManager owns native entries. */
-		sourcePiSessionId: text("source_pi_session_id"),
-		sourceNativeEntryId: text("source_native_entry_id"),
-		sourceConversationId: text("source_conversation_id").references(() => conversations.id),
-		sourceKind: text("source_kind", {
-			enum: ["user_button", "user_request", "companion_suggestion", "extractor"],
-		}).notNull(),
-		normalizedText: text("normalized_text").notNull(),
-		why: text().default("").notNull(),
-		suggestedScope: text("suggested_scope", { enum: ["self", "relationship", "scene"] }).notNull(),
-		status: text({ enum: ["pending", "approved", "rejected", "expired"] })
-			.default("pending")
-			.notNull(),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-		decidedAt: text("decided_at"),
-	},
-	(table) => [
-		index("idx_memory_candidates_companion").on(table.companionId),
-		check(
-			"memory_candidates_check_8",
-			sql`kind IN ('fact','preference','event','self_canon_summary')`,
-		),
-		check(
-			"memory_candidates_check_9",
-			sql`source_kind IN ('user_button','user_request','companion_suggestion','extractor')`,
-		),
-		check("memory_candidates_check_10", sql`suggested_scope IN ('self','relationship','scene')`),
-		check("memory_candidates_check_11", sql`status IN ('pending','approved','rejected','expired')`),
-	],
-);
-
-export const memoryDecisions = sqliteTable(
-	"memory_decisions",
-	{
-		id: text().primaryKey(),
-		candidateId: text("candidate_id")
-			.notNull()
-			.references(() => memoryCandidates.id),
-		decision: text().notNull(),
-		editedText: text("edited_text"),
-		decidedScope: text("decided_scope", {
-			enum: ["self", "relationship", "scene"],
-		}),
-		decidedByUser: numeric("decided_by_user", { mode: "number" }).default(1).notNull(),
-		decidedAt: text("decided_at").default(sql`datetime('now')`).notNull(),
-	},
-	(table) => [
-		check("memory_decisions_check_12", sql`decision IN ('approve','approve_edited','reject')`),
-		check("memory_decisions_check_13", sql`decided_scope IN ('self','relationship','scene')`),
-	],
-);
-export const memoryPresentation = sqliteTable(
-	"memory_presentation",
-	{
-		backendMemoryId: text("backend_memory_id").notNull(),
-		installationId: text("installation_id").notNull(),
-		userId: text("user_id").notNull(),
-		companionId: text("companion_id")
-			.notNull()
-			.references(() => companionIdentity.id),
-		sourcePiEntryId: text("source_pi_entry_id"),
-		createdBy: text("created_by", {
-			enum: ["user_capture", "assistant_tool", "auto_episode", "imported"],
-		}).notNull(),
-		pinned: integer("pinned", { mode: "boolean" }).default(false).notNull(),
-		replacementMemoryId: text("replacement_memory_id"),
-		excludedAt: text("excluded_at"),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
-		invalidatedAt: text("invalidated_at"),
-	},
-	(table) => [
-		primaryKey({
-			columns: [table.backendMemoryId, table.installationId, table.userId, table.companionId],
-		}),
-		index("idx_memory_presentation_scope").on(
-			table.installationId,
-			table.userId,
-			table.companionId,
-		),
-		check(
-			"memory_presentation_check_14",
-			sql`created_by IN ('user_capture','assistant_tool','auto_episode','imported')`,
-		),
-		check("memory_presentation_check_15", sql`pinned IN (0,1)`),
 	],
 );
 
@@ -246,6 +115,9 @@ export const appSettings = sqliteTable(
 		memoryVectorServiceJson: text("memory_vector_service")
 			.notNull()
 			.default('{"enabled":false,"provider":"none"}'),
+		systemModelDefaultsJson: text("system_model_defaults")
+			.notNull()
+			.default('{"vision":{"mode":"auto"}}'),
 		modelDownloadMirrorJson: text("model_download_mirror").notNull().default("{}"),
 		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 	},
@@ -279,7 +151,6 @@ export const runs = sqliteTable(
 			.default("enqueued")
 			.notNull(),
 		summary: text(),
-		memoryCapturedAt: text("memory_captured_at"),
 		resultReportedAt: text("result_reported_at"),
 		startedAt: text("started_at"),
 		completedAt: text("completed_at"),
@@ -393,12 +264,13 @@ export const configuredModels = sqliteTable(
 export const modelRouteSettings = sqliteTable("model_route_settings", {
 	companionId: text("companion_id")
 		.primaryKey()
-		.references(() => companionIdentity.id),
+		.references(() => companionRuntimeIdentity.companionId),
 	textProviderId: text("text_provider_id"),
 	textModelId: text("text_model_id"),
 	visionMode: text("vision_mode").default("auto").notNull(),
 	multimodalProviderId: text("multimodal_provider_id"),
 	multimodalModelId: text("multimodal_model_id"),
+	onboardingComplete: integer("onboarding_complete").default(0).notNull(),
 	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 });
 
@@ -447,7 +319,7 @@ export const canonSources = sqliteTable(
 		id: text().primaryKey(),
 		companionId: text("companion_id")
 			.notNull()
-			.references(() => companionIdentity.id),
+			.references(() => companionRuntimeIdentity.companionId),
 		logicalName: text("logical_name").notNull(),
 		mime: text().notNull(),
 		sha256: text().notNull(),
@@ -487,7 +359,7 @@ export const canonEntities = sqliteTable(
 		id: text().primaryKey(),
 		companionId: text("companion_id")
 			.notNull()
-			.references(() => companionIdentity.id),
+			.references(() => companionRuntimeIdentity.companionId),
 		kind: text().notNull(),
 		name: text().notNull(),
 		aliasesJson: text("aliases_json", { mode: "json" }).$type<string[]>().default([]).notNull(),
@@ -518,7 +390,7 @@ export const canonRelations = sqliteTable("canon_relations", {
 export const canonPackageState = sqliteTable("canon_package_state", {
 	companionId: text("companion_id")
 		.primaryKey()
-		.references(() => companionIdentity.id, { onDelete: "cascade" }),
+		.references(() => companionRuntimeIdentity.companionId, { onDelete: "cascade" }),
 	manifestHash: text("manifest_hash").notNull(),
 	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 });
@@ -529,7 +401,7 @@ export const storyModules = sqliteTable(
 		id: text().primaryKey(),
 		companionId: text("companion_id")
 			.notNull()
-			.references(() => companionIdentity.id),
+			.references(() => companionRuntimeIdentity.companionId),
 		parentId: text("parent_id").references((): AnySQLiteColumn => storyModules.id),
 		kind: text({
 			enum: ["root", "arc", "event", "entity", "relationship", "location", "object", "behavior"],
@@ -605,7 +477,7 @@ export const companionStateDocuments = sqliteTable(
 		id: text().primaryKey(),
 		companionId: text("companion_id")
 			.notNull()
-			.references(() => companionIdentity.id, { onDelete: "cascade" }),
+			.references(() => companionRuntimeIdentity.companionId, { onDelete: "cascade" }),
 		conversationId: text("conversation_id").references(() => conversations.id, {
 			onDelete: "cascade",
 		}),

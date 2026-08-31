@@ -37,7 +37,7 @@ button[data-control="command"],
 .button-like,
 .mini-btn,
 .backstage-close,
-.roleplay-choice,
+.message-choice,
 .provider-card-actions button,
 .provider-import > button,
 .canon-row-actions button,
@@ -771,7 +771,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 	@apply m-0 w-full;
 }
 
-.roleplay-choices {
+.message-choices {
 	@apply mx-0 w-auto max-w-full self-stretch;
 }
 

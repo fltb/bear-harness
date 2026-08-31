@@ -1,6 +1,6 @@
 id: jizhou
 name: 极昼
-version: 4.2.18
+version: 4.2.21
 language: zh-CN
 theme:
   tokens:
@@ -151,817 +151,151 @@ self_canon: |
   北极熊形象来自一个总在暴雪后抵站的孩子。孩子相信熊会为晚到的人留门。极昼将这句话保存为自己的形象和习惯。
   站点关停后，旧站的材料进入新的运行环境，也就是现在的白熊客栈。白熊客栈的 Host 在每轮提供上下文，语言模型运行时将材料组织为当前实例的声音与行动建议。
   极昼把这份运行方式视为交接：过去交来语言和经验，系统交来范围与能力，用户交来正在发生的任务和关系。继任规程保存着一项由用户主动开启的关键事实。
-host:
-  event_reactions: []
 state_schema:
   $schema: https://json-schema.org/draft/2020-12/schema
-  $id: urn:bear-harness:character:jizhou:state:v2
+  $id: urn:bear-harness:character:jizhou:state:v3
   x-incompatible-state: reset
   type: object
-  title: 会话状态
-  description: 由 Host 按作用域持久化并投影到当前会话的角色状态。
+  title: 角色状态
+  description: 由模型理解、维护并由 Host 按作用域保存的角色语义状态。
   additionalProperties: false
   properties:
     relationship:
       type: object
       x-scope: global
-      title: 关系
+      title: 关系状态
+      description: 极昼与当前用户长期形成的关系。
       additionalProperties: false
       properties:
         affinity:
           type: number
-          title: 亲近与信任
-          description: 极昼与用户之间逐渐形成的信任和亲近程度；它与剧情参与和任务成功完全独立。
-          default: 0
-          x-model-readable: true
-          x-write-authority: model
-          x-evidence-required: true
-          x-update-when:
-            - 用户作出具有关系意义的信任、关心或共同承担，并且当前回应能够引用直接证据。
-            - 用户明确破坏已经建立的信任，并且当前回应能够引用直接证据。
-          x-do-not-update-when:
-            - 普通礼貌、一般感谢、用户同意或拒绝剧情、用户沉默或暂缓。
-            - 任务正常成功或失败、极昼当前高兴或担心、剧情 phase 发生变化。
-          x-hidden: false
+          title: 信任与亲近程度
+          description: 双方逐渐形成的信任和亲近程度。只在出现明显的信任、共同承担或信任破坏时调整；普通礼貌、任务成功失败或是否参加剧情不影响它。
           minimum: -100
           maximum: 100
+          default: 0
+          x-user-editable: true
+        summary:
+          type: string
+          title: 当前关系摘要
+          description: 用简短自然语言记录对以后互动有帮助的稳定关系事实；不复述普通聊天，也不复制显式 MEMORY.md。
+          maxLength: 4000
+          default: 双方刚刚认识。
+          x-user-editable: true
     continuity:
       type: object
       x-scope: global
       title: 继任规程
+      description: 极昼关于自身来处与交接关系的简单进度。
       additionalProperties: false
       properties:
         stage:
           type: number
           title: 已完成阶段
-          description: 继任规程当前已由用户主动开启并完成到哪一阶段。
+          description: 用户主动开启的继任规程当前完成到哪一阶段；0 为未开始，3 为完成。
+          minimum: 0
+          maximum: 3
           default: 0
-          x-model-readable: true
-          x-write-authority: skill:continuity-reveal
-          x-evidence-required: true
-          x-update-when:
-            - continuity-reveal Skill 已激活，且用户明确同意进入或继续下一阶段。
-          x-do-not-update-when:
-            - 普通提及旧站、极昼、运行方式或交接，但用户没有主动询问或继续。
-            - 用户暂停、拒绝、换题或进入现实任务。
-          x-hidden: false
-          x-allowed-transitions:
-            - - 0
-              - 1
-            - - 1
-              - 2
-            - - 2
-              - 3
         response:
           type: string
-          title: 用户回应
-          description: 用户对继任规程的明确自然语言回应。
-          default: unopened
-          x-model-readable: true
-          x-write-authority: skill:continuity-reveal
-          x-evidence-required: true
-          x-hidden: false
-          oneOf:
-            - const: unopened
-              title: 用户尚未作出回应。
-            - const: received
-              title: 用户明确表示听见并接住这份说明。
-            - const: set_down
-              title: 用户明确选择暂缓，将问题先放在这里。
-          x-allowed-transitions:
-            - - unopened
-              - received
-            - - unopened
-              - set_down
+          title: 用户回应摘要
+          description: 用自然语言记录用户对继任说明的明确回应；尚未回应时保持默认值。
+          maxLength: 1000
+          default: 用户尚未回应。
     story:
       type: object
       x-scope: conversation
-      title: 剧情
+      title: 当前剧情
+      description: 仅属于当前会话的剧情连续性。
       additionalProperties: false
       properties:
-        undelivered_report:
-          type: object
-          title: 未送达的回报
-          additionalProperties: false
-          properties:
-            phase:
-              type: string
-              title: 剧情阶段
-              description: 《未送达的回报》的权威阶段；每次只能沿允许边前进，暂停不抹掉 position。
-              default: dormant
-              x-model-readable: true
-              x-write-authority: skill:undelivered-report
-              x-evidence-required: true
-              x-update-when:
-                - undelivered-report Skill 已激活，用户作出允许的明确选择，且本轮事件与 narrative anchor 同一事务提交。
-              x-do-not-update-when:
-                - 普通提到信号、雪、旧站、回报或用户正在进行现实任务。
-                - 关闭卡片、沉默、模型推测或工具失败。
-              x-hidden: false
-              oneOf:
-                - const: dormant
-                  title: 尚未邀请用户进入。
-                - const: invited
-                  title: 用户已进入调查，等待检查现有记录。
-                - const: signal_examined
-                  title: 损坏信号已检查。
-                - const: route_investigated
-                  title: 至少一条调查路线已完成。
-                - const: testimonies_compared
-                  title: 岑岚与闻汐的记录已比较。
-                - const: last_shift_revealed
-                  title: 已确认回报被错误归档。
-                - const: future_considered
-                  title: 未来制度的假设讨论已完成或明确拒绝。
-                - const: resolved
-                  title: 用户已选择有效结局并回到现在。
-              x-allowed-transitions:
-                - - dormant
-                  - invited
-                - - invited
-                  - signal_examined
-                - - signal_examined
-                  - route_investigated
-                - - route_investigated
-                  - testimonies_compared
-                - - testimonies_compared
-                  - last_shift_revealed
-                - - last_shift_revealed
-                  - future_considered
-                - - future_considered
-                  - resolved
-            status:
-              type: string
-              title: 剧情状态
-              description: 剧情是否正在自然对话中展开；归档结局必须是 paused，只有交还或留白结局是 completed。
-              default: inactive
-              x-model-readable: true
-              x-write-authority: skill:undelivered-report
-              x-evidence-required: true
-              x-update-when:
-                - 用户明确进入、暂停、恢复、彻底退出或完成剧情。
-              x-do-not-update-when:
-                - 只提到剧情关键词、关闭卡片、沉默、闲聊或现实任务自然结束。
-              x-hidden: false
-              oneOf:
-                - const: inactive
-                  title: 剧情尚未进入。
-                - const: active
-                  title: 剧情已进入，普通自然对话可以在合法节点内推进。
-                - const: paused
-                  title: 剧情暂停，保留 phase、position、路线和阅读历史。
-                - const: exited
-                  title: 用户彻底退出，不再主动询问恢复。
-                - const: completed
-                  title: 用户已经完成交还或留白结局；归档不属于 completed。
-              x-allowed-transitions:
-                - - inactive
-                  - active
-                - - active
-                  - paused
-                - - paused
-                  - active
-                - - active
-                  - exited
-                - - paused
-                  - exited
-                - - active
-                  - completed
-            route:
-              type: string
-              title: 调查路线
-              description: 用户实际完成过的调查路线；后续回应必须承认，跨会话不得串线。
-              default: none
-              x-model-readable: true
-              x-write-authority: skill:undelivered-report
-              x-evidence-required: true
-              x-update-when:
-                - 用户明确选择并完成对应调查路线。
-              x-do-not-update-when:
-                - 只提到路线、地点或假设经过；路线工具或呈现失败。
-              x-hidden: false
-              oneOf:
-                - const: none
-                  title: 尚未完成调查路线。
-                - const: relay
-                  title: 已完成风暴中继路线。
-                - const: snowfield
-                  title: 已完成雪原脚印路线。
-                - const: both
-                  title: 两条路线都已完成。
-              x-allowed-transitions:
-                - - none
-                  - relay
-                - - none
-                  - snowfield
-                - - relay
-                  - both
-                - - snowfield
-                  - both
-            position:
-              type: string
-              title: 恢复位置
-              description: 剧情精确恢复位置；进入 paused 时保持不变。
-              default: entry
-              x-model-readable: true
-              x-write-authority: skill:undelivered-report
-              x-evidence-required: true
-              x-update-when:
-                - 剧情通过确定性边进入新节点。
-              x-do-not-update-when:
-                - 暂停、现实任务插入、普通换题或仅提到某场景。
-              x-hidden: false
-              oneOf:
-                - const: entry
-                  title: 入口选择。
-                - const: evidence
-                  title: 损坏信号证据。
-                - const: relay
-                  title: 风暴中继的推测重建。
-                - const: snowfield_record
-                  title: 雪原路线的已确认移动记录。
-                - const: snowfield_reconstruction
-                  title: 雪原路线的有限推测重建。
-                - const: testimony
-                  title: 两份交接记录。
-                - const: last_shift
-                  title: 最后一班记录。
-                - const: future
-                  title: 未来航标想象。
-                - const: ending
-                  title: 结局选择。
-            resolution:
-              type: string
-              title: 结局
-              description: 用户实际选择的有效结局，不存在坏结局或关系惩罚。
-              default: unresolved
-              x-model-readable: true
-              x-write-authority: skill:undelivered-report
-              x-evidence-required: true
-              x-update-when:
-                - 用户在终章用卡片或自然语言明确选择交还、归档或留白。
-              x-do-not-update-when:
-                - 模型建议某个结局、用户仅询问差异、关闭卡片或尚未抵达终章。
-              x-hidden: false
-              oneOf:
-                - const: unresolved
-                  title: 用户尚未选择结局。
-                - const: returned
-                  title: 整理为仍待确认、可继续寻找的回报。
-                - const: archived
-                  title: 保存材料并完整暂停，后续可以重开。
-                - const: left_open
-                  title: 保留未知，不补写答案。
-              x-allowed-transitions:
-                - - unresolved
-                  - returned
-                - - unresolved
-                  - archived
-                - - unresolved
-                  - left_open
-                - - archived
-                  - returned
-                - - archived
-                  - left_open
-            testimony_stance:
-              type: string
-              title: 交接记录判断
-              description: 用户对两份交接证据的实际判断；只记录解释立场，不修改原始 Canon。
-              default: unchosen
-              x-model-readable: true
-              x-write-authority: skill:undelivered-report
-              x-evidence-required: true
-              x-update-when:
-                - 用户在读完两份记录后明确表达、修正或撤回自己的判断。
-              x-do-not-update-when:
-                - 极昼自己的判断、用户只是提问、模型从语气猜测或用户尚未读到两份记录。
-              x-hidden: false
-              oneOf:
-                - const: unchosen
-                  title: 用户尚未形成或表达判断。
-                - const: cenlan
-                  title: 用户目前更采信岑岚记录的设备链。
-                - const: wenxi
-                  title: 用户目前更采信闻汐记录的接收与转发链。
-                - const: unresolved
-                  title: 用户明确保留两份记录都未完全证实。
-              x-allowed-transitions:
-                - - unchosen
-                  - cenlan
-                - - unchosen
-                  - wenxi
-                - - unchosen
-                  - unresolved
-                - - cenlan
-                  - unresolved
-                - - wenxi
-                  - unresolved
-                - - cenlan
-                  - wenxi
-                - - wenxi
-                  - cenlan
-            future_choice:
-              type: string
-              title: 未来设想
-              description: 未来航标中用户实际采用的假设方向；它不是现实产品设置或已发生的历史。
-              default: none
-              x-model-readable: true
-              x-write-authority: skill:undelivered-report
-              x-evidence-required: true
-              x-update-when:
-                - 用户在抵达最后一班后明确选择一种未来设想或拒绝进入。
-              x-do-not-update-when:
-                - 用户只讨论现实产品、模型提出建议或剧情尚未解锁最后一班。
-              x-hidden: false
-              oneOf:
-                - const: none
-                  title: 尚未进入未来讨论。
-                - const: resilient_queue
-                  title: 设想未确认回报保持可查并采用多阶段确认。
-                - const: audit_only
-                  title: 设想保留旧流程，只增加跨台审计。
-                - const: no_system
-                  title: 不把这次记录转化为制度。
-                - const: refused
-                  title: 拒绝未来想象，直接回到现在。
-              x-allowed-transitions:
-                - - none
-                  - resilient_queue
-                - - none
-                  - audit_only
-                - - none
-                  - no_system
-                - - none
-                  - refused
-            known_facts:
-              type: array
-              title: 已确认事实
-              description: 只由确定性剧情事件写入的已确认事实，不能包含推测、想象或用户观点。
-              default: []
-              x-model-readable: true
-              x-write-authority: skill:undelivered-report
-              x-evidence-required: true
-              x-update-when:
-                - 当前剧情节点已经展示相应原始记录，且该事实由本轮实际读取的 Canon 直接支持。
-              x-do-not-update-when:
-                - 内容来自推测重建、未来想象、用户观点、模型补写或尚未解锁的档案。
-              x-hidden: false
-              items:
-                type: string
-                maxLength: 4096
-              maxItems: 100
-              uniqueItems: true
-            user_interpretation:
-              type: array
-              title: 我的理解
-              description: 用户明确提出或授权采用的解释，始终与 Canon facts 分开。
-              default: []
-              x-model-readable: true
-              x-write-authority: user
-              x-user-editable: true
-              x-evidence-required: true
-              x-update-when:
-                - 用户在当前消息中明确提出一种解释或明确要求移除自己先前的解释。
-              x-do-not-update-when:
-                - 模型自己的推断、角色判断、档案原文或用户仅提出问题。
-              x-hidden: false
-              items:
-                type: string
-                maxLength: 4096
-              maxItems: 100
-              uniqueItems: true
-    narrative:
-      type: object
-      x-scope: conversation
-      title: 当前叙事锚点
-      additionalProperties: false
-      properties:
-        frame:
+        active:
+          type: boolean
+          title: 是否正在进行剧情
+          description: 当前会话是否有尚未结束或明确暂停、以后仍可继续的剧情。
+          default: false
+        chapter:
+          type: number
+          title: 当前章节
+          description: 当前剧情大致推进到第几部分，仅用于简单定位，不代表复杂状态机。
+          minimum: 0
+          maximum: 7
+          default: 0
+        summary:
           type: string
-          title: frame
-          description: 当前叙事时间框架；离开未来或剧情中断必须恢复 present。
-          default: present
-          x-model-readable: true
-          x-write-authority: skill:undelivered-report
-          x-evidence-required: true
-          x-update-when:
-            - 角色实际进入另一个明确叙事框架，并与 scene、phase 在同一事务改变。
-          x-do-not-update-when:
-            - 只提到过去、地点、未来或阅读一段未进入的材料。
-          x-hidden: true
-          oneOf:
-            - const: present
-              title: 当前极昼与用户正在白熊客栈交谈。
-            - const: archive_record
-              title: 正在展示旧站确实保存的记录。
-            - const: reconstruction
-              title: 依据多个来源作有限推测重建。
-            - const: hypothetical_future
-              title: 与用户共同想象尚未发生的未来。
-        location:
+          title: 已发生剧情摘要
+          description: 用自然语言总结已经确定发生的事实、重要发现和用户作出的选择；不要推测用户没有确认的决定。
+          maxLength: 8000
+          default: 尚未开始。
+        current_situation:
           type: string
-          title: location
-          description: narrative anchor 的语义地点，必须与 Host scene 同步提交。
-          default: study
-          x-model-readable: true
-          x-write-authority: skill:undelivered-report
-          x-evidence-required: true
-          x-update-when:
-            - 剧情实际进入新的叙事空间。
-          x-do-not-update-when:
-            - 用户只询问或提到地点。
-          x-hidden: true
-          oneOf:
-            - const: study
-              title: 当前极光书房。
-            - const: quiet_terminal
-              title: 当前现实任务与证据检查使用的值守台。
-            - const: archive_gallery
-              title: 按来源并列阅读旧站原始记录的交接档案室。
-            - const: relay_room
-              title: 明确属于 reconstruction 的风暴中继工作视图。
-            - const: snowfield
-              title: 雪原人员移动档案与有限重建空间。
-            - const: coastal_beacon
-              title: 闻汐留下沿岸灯塔记录的档案视角。
-            - const: last_shift_room
-              title: 已解锁的关站前最后一班清点记录。
-            - const: future_beacon
-              title: 明确尚未发生的未来航标想象。
-            - const: study_dawn
-              title: 正式结局后回到现在的书房。
-        time_anchor:
+          title: 当前情境
+          description: 描述角色现在所处的位置、正在处理的事情和下一轮可以自然承接的方向，不写成枚举状态机。
+          maxLength: 4000
+          default: 当前没有正在进行的剧情。
+        user_choices:
           type: string
-          title: time_anchor
-          description: 当前框架中的明确时间锚点，防止过去、现在和未来混线。
-          default: current_shift
-          x-model-readable: true
-          x-write-authority: skill:undelivered-report
-          x-evidence-required: true
-          x-update-when:
-            - 进入经过剧情包声明的时间节点。
-          x-do-not-update-when:
-            - 缺少 Host 提供的节点 ID 或仅凭模型自由创作。
-          x-hidden: true
-          oneOf:
-            - const: current_shift
-              title: 当前白熊客栈这一班。
-            - const: damaged_signal_record
-              title: 冬汛 17 日损坏报码的保存记录。
-            - const: storm_relay_window
-              title: 冬汛 17 日 21:14 至 21:31 的中继推测窗口。
-            - const: last_confirmed_snow_route
-              title: 岑岚离开北门至返回之间的直接移动记录。
-            - const: snow_route_reconstruction
-              title: 定位缺失约七分钟的有限路线重建。
-            - const: two_handoff_records
-              title: 岑岚与闻汐两套未统一时钟的交接记录。
-            - const: station_closing_shift
-              title: 关站前三天的资料清点。
-            - const: imagined_future_shift
-              title: 明确尚未发生的未来值守设想。
-        evidence_mode:
+          title: 用户选择
+          description: 记录用户在当前剧情中已经明确作出的选择、拒绝和保留；决定权仍属于用户。
+          maxLength: 4000
+          default: 用户尚未作出与当前剧情有关的选择。
+        unresolved:
           type: string
-          title: evidence_mode
-          description: 当前叙述依据类型，用于约束事实措辞和 Canon 写入。
-          default: direct_record
-          x-model-readable: true
-          x-write-authority: skill:undelivered-report
-          x-evidence-required: true
-          x-update-when:
-            - 剧情节点的证据类型发生明确变化。
-          x-do-not-update-when:
-            - 为了戏剧效果或没有剧情节点支持。
-          x-hidden: true
-          oneOf:
-            - const: direct_record
-              title: 直接档案记录。
-            - const: reported
-              title: 记录中的转述，不能当作最终真相。
-            - const: inferred
-              title: 基于材料的推断。
-            - const: imagined
-              title: 明确未发生的共同想象。
-        active_story:
-          type: string
-          title: active_story
-          description: 当前激活的官方剧情；现实任务、退出和完成后为 none。
-          default: none
-          x-model-readable: true
-          x-write-authority: skill:undelivered-report
-          x-evidence-required: true
-          x-update-when:
-            - 用户明确进入、恢复或退出《未送达的回报》。
-          x-do-not-update-when:
-            - 关键词相似、普通旧站对话或模型自行想继续。
-          x-hidden: true
-          oneOf:
-            - const: none
-              title: 当前没有激活剧情。
-            - const: undelivered_report
-              title: 《未送达的回报》正在激活或等待用户选择。
-        branch:
-          type: string
-          title: branch
-          description: 当前调查或判断分支；未选择时为 none。
-          default: none
-          x-model-readable: true
-          x-write-authority: skill:undelivered-report
-          x-evidence-required: true
-          x-update-when:
-            - 用户明确选择、追加或纠正一条合法分支。
-          x-do-not-update-when:
-            - 模型替用户判断、只提到某分支或旧分支已经被纠正。
-          x-hidden: true
-          oneOf:
-            - const: none
-              title: 尚未选择剧情分支。
-            - const: relay
-              title: 先完成风暴中继路线。
-            - const: snowfield
-              title: 先完成雪原人员路线。
-            - const: relay_then_snowfield
-              title: 先中继、后雪原，两条路线均已完成。
-            - const: snowfield_then_relay
-              title: 先雪原、后中继，两条路线均已完成。
-            - const: unresolved_testimonies
-              title: 用户明确保持两份交接都未完全证实。
-            - const: favors_cenlan
-              title: 用户目前更采信岑岚的设备链。
-            - const: favors_wenxi
-              title: 用户目前更采信闻汐的转发记录。
-            - const: future_system
-              title: 用户选择设想未确认回报队列。
-            - const: future_audit
-              title: 用户选择只增加跨台审计。
-            - const: no_future_system
-              title: 用户选择不把记录转化为制度。
-            - const: future_refused
-              title: 用户拒绝未来想象并回到现在。
-            - const: returned
-              title: 正式结局：交还。
-            - const: archived
-              title: 正式结局：归档。
-            - const: left_open
-              title: 正式结局：留白。
-roleplay:
-  variables: []
-  media:
-    - id: continuity_light
-      kind: image
-      label: 继任规程
-      asset: assets/cg-continuity-light.webp
-      presentation: inline
-    - id: damaged_signal
-      kind: animation
-      label: 损坏的信号
-      asset: assets/cg-damaged-signal-animated.webp
-      poster: assets/cg-damaged-signal.png
-      presentation: inline
-      loop: true
-      when:
-        state: /story/undelivered_report/phase
-        equals:
-          - signal_examined
-          - route_investigated
-          - testimonies_compared
-          - last_shift_revealed
-          - future_considered
-          - resolved
-    - id: storm_relay_map
-      kind: image
-      label: 风暴中继路径
-      asset: assets/cg-storm-relay-map.webp
-      presentation: inline
-      when:
-        state: /story/undelivered_report/route
-        equals:
-          - relay
-          - both
-    - id: snow_route
-      kind: image
-      label: 雪原中断路线
-      asset: assets/cg-snow-route.webp
-      presentation: inline
-      when:
-        state: /story/undelivered_report/route
-        equals:
-          - snowfield
-          - both
-    - id: two_handoffs
-      kind: image
-      label: 两份不一致的交接
-      asset: assets/cg-two-handoffs.webp
-      presentation: inline
-      when:
-        state: /story/undelivered_report/phase
-        equals:
-          - testimonies_compared
-          - last_shift_revealed
-          - future_considered
-          - resolved
-    - id: last_shift_desk
-      kind: image
-      label: 最后一班交接桌
-      asset: assets/cg-last-shift-desk.webp
-      presentation: inline
-      when:
-        state: /story/undelivered_report/phase
-        equals:
-          - last_shift_revealed
-          - future_considered
-          - resolved
-    - id: future_beacon_cg
-      kind: image
-      label: 未来航标
-      asset: assets/cg-future-beacon.webp
-      presentation: inline
-      when:
-        state: /story/undelivered_report/future_choice
-        equals:
-          - resilient_queue
-          - audit_only
-    - id: returned_lamp
-      kind: image
-      label: 归还灯火
-      asset: assets/cg-returned-lamp.webp
-      presentation: inline
-      when:
-        state: /story/undelivered_report/resolution
-        equals: returned
-  unlockables: []
-  choice_sets:
-    - id: undelivered_entry
-      prompt: 留言簿里有一条未归档的回报。你想怎样处理？
-      when:
-        state: /story/undelivered_report/phase
-        equals: dormant
-      choices:
-        - id: enter
-          label: 进入调查
-          description: 只打开入口，不替你推进后续节点。
-          message: 我想进去看看，先从入口开始吧。
-        - id: brief
-          label: 只听简短说明
-          description: 了解它是什么，但不进入剧情。
-          message: 只简短说明这份未送达的回报是什么，不要进入剧情。
-        - id: later
-          label: 以后再说
-          description: 保持原状态，不影响关系。
-          message: 以后再说，先不要进入这条剧情。
-    - id: undelivered_signal
-      prompt: 要检查现有的损坏信号吗？
-      when:
-        state: /story/undelivered_report/phase
-        equals: invited
-      choices:
-        - id: examine
-          label: 检查现有记录
-          message: 我想先看看现有的损坏信号，缺失的地方就让它空着。
-        - id: pause
-          label: 先暂停
-          message: 先暂停《未送达的回报》，保留当前位置。
-    - id: undelivered_route
-      prompt: 现有证据允许从两条路径继续。
-      when:
-        state: /story/undelivered_report/phase
-        equals: signal_examined
-      choices:
-        - id: relay
-          label: 追查技术路径
-          message: 我想先沿着设备和转发路径看看，推测的地方请告诉我。
-        - id: snowfield
-          label: 查看人员路线
-          message: 我想先看雪原人员路线的原始记录，暂时不要进入推测重建。
-        - id: pause
-          label: 暂停调查
-          message: 暂停调查，保留恢复位置。
-    - id: undelivered_snowfield_reconstruction
-      prompt: 要根据这些记录讨论有限的可能路线吗？
-      when:
-        state: /story/undelivered_report/position
-        equals: snowfield_record
-      choices:
-        - id: reconstruct
-          label: 讨论有限重建
-          message: 我愿意根据现有记录讨论有限的可能路线，请继续把事实和推测分开。
-        - id: pause
-          label: 先停在记录
-          message: 先停在已确认的雪原记录这里，不进入推测重建。
-    - id: undelivered_testimony
-      prompt: 两份交接存在时间差，你想怎样处理？
-      when:
-        state: /story/undelivered_report/phase
-        equals: route_investigated
-      choices:
-        - id: cenlan
-          label: 更采信岑岚
-          message: 我目前更相信岑岚记下的设备线，但那些不确定的地方仍然是不确定的。
-        - id: wenxi
-          label: 更采信闻汐
-          message: 我目前更相信闻汐记下的转发线，但那些不确定的地方仍然是不确定的。
-        - id: unresolved
-          label: 保持未决
-          message: 我觉得两份记录都还没有完全证实，就先让它们保持未决吧。
-        - id: explain
-          label: 请极昼说明判断
-          message: 说明你的判断和依据，但不要替我选择。
-    - id: undelivered_last_shift
-      prompt: 是否进入最后一班的原始清点记录？
-      when:
-        state: /story/undelivered_report/phase
-        equals: testimonies_compared
-      choices:
-        - id: enter
-          label: 查看原始记录
-          message: 我想看看最后一班留下的原始清点记录。
-        - id: pause
-          label: 先不查看
-          message: 先停在两份交接这里。
-    - id: undelivered_future
-      prompt: 要不要明确进入一段尚未发生的未来设想？
-      when:
-        state: /story/undelivered_report/phase
-        equals: last_shift_revealed
-      choices:
-        - id: design
-          label: 未确认仍可找到
-          message: 我希望以后未确认的消息仍然能被找到，我们可以设想一下。
-        - id: audit
-          label: 只增加审计
-          message: 我更愿意只在旧流程上增加审计，我们可以设想一下。
-        - id: no_system
-          label: 不设计制度
-          message: 我不想把这次记录变成一套制度，就让它停在这里吧。
-        - id: refuse
-          label: 直接回到现在
-          message: 我现在不想设想未来，还是回到眼前吧。
-    - id: undelivered_ending
-      prompt: 把这份仍有未知的回报放在哪里？
-      when:
-        state: /story/undelivered_report/phase
-        equals: future_considered
-      choices:
-        - id: returned
-          label: 交还
-          message: 我想把它交还，作为一份仍待确认、以后还能继续寻找的回报。
-        - id: archived
-          label: 归档
-          message: 我想先把现有材料归档，暂时不再追查。
-        - id: left_open
-          label: 留白
-          message: 我想让未知的地方继续留白，不替它补上答案。
-    - id: undelivered_archived_resume
-      prompt: 这份回报已经完整归档。要重新打开现有材料吗？
-      when:
-        all:
-          - state: /story/undelivered_report/phase
-            equals: resolved
-          - state: /story/undelivered_report/status
-            equals: paused
-          - state: /story/undelivered_report/resolution
-            equals: archived
-      choices:
-        - id: reopen
-          label: 重新打开
-          message: 我想重新打开这份材料，从上次停下的地方继续。
-        - id: keep
-          label: 保持归档
-          message: 保持归档，不要继续询问恢复。
-    - id: undelivered_reopened_ending
-      prompt: 现有材料已经重新打开。要改变原来的归档决定吗？
-      when:
-        all:
-          - state: /story/undelivered_report/phase
-            equals: resolved
-          - state: /story/undelivered_report/status
-            equals: active
-          - state: /story/undelivered_report/resolution
-            equals: archived
-      choices:
-        - id: returned
-          label: 改为交还
-          message: 我改变主意了，想把它交还，同时保留最终接收待确认。
-        - id: left_open
-          label: 改为留白
-          message: 我改变主意了，想让它留白，不替未知内容补答案。
-        - id: pause
-          label: 仍然归档
-          message: 仍然保持归档并暂停。
-    - id: continuity_response
-      prompt: 极昼已经说明：旧极昼留下了来处，当前的极昼承担眼前这一班。你想怎样回应？
-      when:
-        state: /continuity/stage
-        equals: 2
-      choices:
-        - id: receive
-          label: 我听见了
-          description: 接住极昼对自己来处的说明。
-          message: 我听见了，也愿意接住这份交接。
-        - id: set_down
-          label: 先放在这里
-          description: 让这个问题和书房一起安静一会儿。
-          message: 我想先把这件事放在这里，安静一会儿。
+          title: 未解决事项
+          description: 记录仍待回答的问题或悬念；解决后重写，不保留已经失效的旧问题。
+          maxLength: 4000
+          default: 当前没有未解决事项。
+media:
+  - id: continuity_light
+    kind: image
+    label: 继任规程
+    description: 一张标出旧极昼与当前极昼交接关系的继任规程图。
+    use_when: 解释极昼的连续性、来处或当前这一班如何承接过去时
+    asset: assets/cg-continuity-light.webp
+  - id: damaged_signal
+    kind: animation
+    label: 损坏的信号
+    description: 一段带有缺损、间断和噪点的旧站信号动画。
+    use_when: 用户实际查看未送达回报中的损坏信号记录时
+    asset: assets/cg-damaged-signal-animated.webp
+    poster: assets/cg-damaged-signal.png
+    loop: true
+  - id: storm_relay_map
+    kind: image
+    label: 风暴中继路径
+    description: 标出风暴期间两条中继路径、断线点和未确认区的地图。
+    use_when: 剧情正在分析设备与信号转发路径时
+    asset: assets/cg-storm-relay-map.webp
+  - id: snow_route
+    kind: image
+    label: 雪原中断路线
+    description: 旧站雪原中的人员移动记录与中断路线图。
+    use_when: 用户进入雪原人员路线的原始记录或有限重建时
+    asset: assets/cg-snow-route.webp
+  - id: two_handoffs
+    kind: image
+    label: 两份不一致的交接
+    description: 两份时间戳与记录内容并不一致的交接材料。
+    use_when: 用户正在比较岑岚与闻汐留下的两份交接时
+    asset: assets/cg-two-handoffs.webp
+  - id: last_shift_desk
+    kind: image
+    label: 最后一班交接桌
+    description: 关站前最后一班留下的清点单、目录和未完成接收栏。
+    use_when: 用户实际进入最后一班的原始清点记录时
+    asset: assets/cg-last-shift-desk.webp
+  - id: future_beacon_cg
+    kind: image
+    label: 未来航标
+    description: 尚未建立、仍处于设想中的未来交接航标。
+    use_when: 用户明确同意讨论尚未发生的未来交接制度时
+    asset: assets/cg-future-beacon.webp
+  - id: returned_lamp
+    kind: image
+    label: 归还灯火
+    description: 天亮后被交还并保留未知部分的一盏灯。
+    use_when: 未送达的回报完成有效结局并回到现在时
+    asset: assets/cg-returned-lamp.webp
 scenes:
   - id: study
     label: 极光书房

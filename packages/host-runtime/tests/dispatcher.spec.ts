@@ -118,13 +118,13 @@ describe("Zod RPC dispatcher", () => {
 			responseValidation: "throw",
 			onProtocolViolation: (error) => violations.push(error),
 		});
-		dispatcher.registerHandler(RPC.memory.search, (async () => ({
-			entries: [{ id: "missing-required-fields" }],
+		dispatcher.registerHandler(RPC.conversation.list, (async () => ({
+			conversations: [{ id: "missing-required-fields" }],
 		})) as never);
 
-		await expect(
-			dispatcher.dispatch(RPC.memory.search.channel, { query: "test" }),
-		).rejects.toBeInstanceOf(ProtocolResponseValidationError);
+		await expect(dispatcher.dispatch(RPC.conversation.list.channel, {})).rejects.toBeInstanceOf(
+			ProtocolResponseValidationError,
+		);
 		expect(violations).toHaveLength(1);
 	});
 

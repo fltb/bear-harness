@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,7 @@ import {
 	HOST_SETTINGS_CAPABILITIES,
 	type HostRuntime,
 } from "../src/index.js";
+import type { CompanionDatabase, SystemDatabase } from "../src/storage/database.js";
 
 const temporaryDirectories: string[] = [];
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
@@ -21,15 +22,34 @@ const vault: CredentialVault = {
 	decryptString: (value) => value.toString("utf8"),
 };
 
-function runtimeForTest(existingDataDir?: string) {
+function runtimeForTest(existingDataDir?: string, credentialVault: CredentialVault = vault) {
 	const dataDir = existingDataDir ?? mkdtempSync(join(tmpdir(), "bear-onboarding-"));
 	if (!existingDataDir) temporaryDirectories.push(dataDir);
 	return createHostRuntime({
 		dataDir,
 		characterSeedRoot: characterRoot,
 		productConfig,
-		credentialVault: vault,
+		credentialVault,
 	});
+}
+
+function runtimeDatabases(runtime: HostRuntime): {
+	system: SystemDatabase;
+	companion: CompanionDatabase;
+} {
+	const storage = Reflect.get(runtime, "storage") as { system: SystemDatabase };
+	const role = Reflect.get(runtime, "role") as { db: CompanionDatabase };
+	return { system: storage.system, companion: role.db };
+}
+
+function roleRuntime(runtime: HostRuntime): {
+	companionId: string;
+	memoryRuntime: HostRuntime["memoryRuntime"];
+} {
+	return Reflect.get(runtime, "role") as {
+		companionId: string;
+		memoryRuntime: HostRuntime["memoryRuntime"];
+	};
 }
 
 async function data(
@@ -53,13 +73,30 @@ async function completeOnboarding(runtime: HostRuntime) {
 	return data(runtime, "onboarding.submit:v1", { stepId: "nickname", answer: "林" });
 }
 
+async function configureConversationModel(runtime: HostRuntime, providerId = "conversation-test") {
+	await data(runtime, "provider.customUpsert:v1", {
+		providerId,
+		name: "Conversation Test",
+		baseUrl: "https://example.invalid/v1",
+		models: [{ id: "test-model" }],
+	});
+	await data(runtime, "provider.setApiKey:v1", {
+		providerId,
+		apiKey: "session-key",
+		sessionOnly: true,
+	});
+	await data(runtime, "model.defaults.setReply:v1", {
+		reply: { providerId, modelId: "test-model" },
+	});
+}
+
 describe("role-defined onboarding", () => {
 	afterEach(async () => {
 		for (const directory of temporaryDirectories.splice(0))
 			rmSync(directory, { recursive: true, force: true });
 	});
 
-	it("reads model pools and completed OAuth status without writing canonical state", async () => {
+	it("reads system and conversation detail without writing either database", async () => {
 		const runtime = runtimeForTest();
 		try {
 			await data(runtime, "provider.customUpsert:v1", {
@@ -67,6 +104,14 @@ describe("role-defined onboarding", () => {
 				name: "Read only",
 				baseUrl: "https://example.invalid/v1",
 				models: [{ id: "test-model" }],
+			});
+			await data(runtime, "provider.setApiKey:v1", {
+				providerId: "read-only-test",
+				apiKey: "session-key",
+				sessionOnly: true,
+			});
+			await data(runtime, "model.defaults.setReply:v1", {
+				reply: { providerId: "read-only-test", modelId: "test-model" },
 			});
 			const composition = (
 				runtime as unknown as {
@@ -77,34 +122,28 @@ describe("role-defined onboarding", () => {
 				providerId: "read-only-test",
 				status: "completed",
 			});
-			const before = await runtime.dispatch("model.pool.get:v1", {});
-			expect(before.ok).toBe(true);
-			if (!before.ok) throw new Error("model pool unavailable");
-			for (const channel of [
-				"model.pool.get:v1",
-				"onboarding.get:v1",
-				"conversation.activeGet:v1",
-				"provider.loginStatus:v1",
-				"character.pluginTrustGet:v1",
-				"snapshot.get:v1",
-			]) {
-				const response = await runtime.dispatch(
-					channel,
-					channel === "provider.loginStatus:v1"
-						? { providerId: "read-only-test" }
-						: channel === "character.pluginTrustGet:v1"
-							? { characterId: productConfig.defaultCharacterId }
-							: {},
+			const created = (await data(runtime, "conversation.create:v1", {
+				title: "Read-only detail",
+			})) as { sessionId: string };
+			const { system, companion } = runtimeDatabases(runtime);
+			const systemRevision = system.syncRevision();
+			const companionRevision = companion.syncRevision();
+			const reads: Array<[string, Record<string, unknown>]> = [
+				["model.pool.get:v1", {}],
+				["onboarding.get:v1", {}],
+				["conversation.open:v1", { id: created.sessionId }],
+				["companionState.get:v1", { conversationId: created.sessionId }],
+				["provider.loginStatus:v1", { providerId: "read-only-test" }],
+				["character.pluginTrustGet:v1", { characterId: productConfig.defaultCharacterId }],
+				["snapshot.get:v1", {}],
+			];
+			for (const [channel, params] of reads) {
+				const response = await runtime.dispatch(channel, params);
+				expect(response, channel).toMatchObject({ ok: true });
+				expect(system.syncRevision(), `${channel} wrote system state`).toBe(systemRevision);
+				expect(companion.syncRevision(), `${channel} wrote character state`).toBe(
+					companionRevision,
 				);
-				const changes = (
-					Reflect.get(runtime, "db") as import("../src/storage/database.js").Database
-				).connection
-					.prepare("SELECT source FROM sync_changes WHERE revision > ?")
-					.all(before.sync?.revision ?? 0);
-				expect(response, `${channel}: ${JSON.stringify(changes)}`).toMatchObject({
-					ok: true,
-					sync: before.sync,
-				});
 			}
 		} finally {
 			await runtime.close();
@@ -148,7 +187,6 @@ describe("role-defined onboarding", () => {
 			stateData: {
 				decisions: {
 					relationship_memory_enabled: true,
-					conversation_history_read_enabled: true,
 				},
 			},
 		});
@@ -164,7 +202,17 @@ describe("role-defined onboarding", () => {
 			},
 		});
 		await expect(data(runtime, "conversation.list:v1", {})).resolves.toEqual({ sessions: [] });
-		await expect(data(runtime, "conversation.activeGet:v1", {})).resolves.toEqual({});
+		await configureConversationModel(runtime);
+		const created = (await data(runtime, "conversation.create:v1", {
+			title: "与极昼",
+		})) as { sessionId: string };
+		await expect(
+			data(runtime, "conversation.open:v1", { id: created.sessionId }),
+		).resolves.toMatchObject({ sessionId: created.sessionId });
+		const nickname = runtimeDatabases(runtime)
+			.companion.connection.prepare("SELECT nickname FROM runtime_identity WHERE id = 1")
+			.get();
+		expect(nickname).toEqual({ nickname: "林" });
 		await expect(data(runtime, "onboarding.get:v1", {})).resolves.toMatchObject({
 			status: "complete",
 		});
@@ -200,10 +248,9 @@ describe("role-defined onboarding", () => {
 		await runtime.start();
 		await completeOnboarding(runtime);
 
-		const snapshot = (await data(runtime, "snapshot.get:v1", {})) as {
-			conversation: Record<string, unknown>;
-		};
-		expect(snapshot.conversation).toEqual({});
+		const snapshot = (await data(runtime, "snapshot.get:v1", {})) as Record<string, unknown>;
+		expect(snapshot).not.toHaveProperty("conversation");
+		expect(snapshot).not.toHaveProperty("companion");
 		await runtime.close();
 	});
 
@@ -215,15 +262,10 @@ describe("role-defined onboarding", () => {
 			settings: {
 				firstRunStage: "model",
 				relationshipMemoryEnabled: true,
-				conversationHistoryReadEnabled: true,
 				networkProxy: { mode: "auto" },
 				memoryVectorService: { enabled: false, provider: "none" },
 				modelDownloadSource: { type: "official" },
 			},
-		});
-		await data(runtime, "settings.set:v1", { settings: { conversationHistoryReadEnabled: true } });
-		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
-			settings: { conversationHistoryReadEnabled: true },
 		});
 		await expect(
 			runtime.dispatch("settings.set:v1", { settings: { immersionLevel: "resources" } }),
@@ -254,7 +296,7 @@ describe("role-defined onboarding", () => {
 		const candidate = HOST_SETTINGS_CAPABILITIES.localEmbeddingCandidates[0];
 		expect(candidate).toBeDefined();
 		const configure = vi
-			.spyOn(runtime.memoryRuntime, "configureLocalEmbedding")
+			.spyOn(runtime.memoryEmbedding, "validateLocal")
 			.mockResolvedValue(undefined);
 		await expect(
 			data(runtime, "memory.configureLocalEmbedding:v1", {
@@ -314,7 +356,7 @@ describe("role-defined onboarding", () => {
 		).resolves.toMatchObject({ ok: false, error: { kind: "invalid_request" } });
 
 		const configureRemote = vi
-			.spyOn(runtime.memoryRuntime, "configureRemoteEmbedding")
+			.spyOn(runtime.memoryEmbedding, "validateRemote")
 			.mockRejectedValueOnce({ kind: "unavailable", reason: "remote_embedding_validation_failed" });
 		const remoteSettings = {
 			enabled: true as const,
@@ -336,8 +378,12 @@ describe("role-defined onboarding", () => {
 			settings: { memoryVectorService: { provider: "local" } },
 		});
 		configureRemote.mockResolvedValue({ ready: true });
-		await data(runtime, "settings.set:v1", {
+		const savedRemote = await data(runtime, "settings.set:v1", {
 			settings: { memoryVectorService: remoteSettings },
+		});
+		expect(JSON.stringify(savedRemote)).not.toContain("test-key");
+		expect(savedRemote).toMatchObject({
+			settings: { memoryVectorService: { provider: "remote", hasCredential: true } },
 		});
 		expect(configureRemote).toHaveBeenCalledWith({
 			baseUrl: "https://embedding.example/v1",
@@ -345,9 +391,202 @@ describe("role-defined onboarding", () => {
 			model: "test-embedding",
 			dimensions: 768,
 		});
-		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
-			settings: { memoryVectorService: { provider: "remote", model: "test-embedding" } },
+		const projected = await data(runtime, "settings.get:v1", {});
+		expect(projected).toMatchObject({
+			settings: {
+				memoryVectorService: {
+					provider: "remote",
+					model: "test-embedding",
+					hasCredential: true,
+				},
+			},
 		});
+		expect(JSON.stringify(projected)).not.toContain("test-key");
+		expect(JSON.stringify(projected)).not.toContain("apiKey");
+
+		const databases = runtimeDatabases(runtime);
+		const persistedConfig = databases.system.connection
+			.prepare("SELECT memory_vector_service FROM app_settings WHERE id = 1")
+			.get() as { memory_vector_service: string };
+		expect(persistedConfig.memory_vector_service).not.toContain("test-key");
+		expect(persistedConfig.memory_vector_service).not.toContain("apiKey");
+		const credentialRow = databases.system.connection
+			.prepare("SELECT credential_blob, credential_status FROM provider_accounts WHERE id = ?")
+			.get("$bear:embedding:remote") as {
+			credential_blob: Buffer | null;
+			credential_status: string;
+		};
+		expect(credentialRow).toEqual({ credential_blob: null, credential_status: "session_only" });
+		const embeddingEvents = databases.companion.connection
+			.prepare("SELECT payload FROM events WHERE kind = 'settings.changed'")
+			.all() as Array<{ payload: string }>;
+		expect(embeddingEvents.length).toBeGreaterThan(0);
+		for (const event of embeddingEvents) {
+			expect(event.payload).not.toContain("test-key");
+			expect(event.payload).not.toContain("apiKey");
+		}
+		const runtimeConfig = Reflect.get(Reflect.get(runtime.memoryRuntime, "core"), "cfg");
+		expect(runtimeConfig.embedding.apiKey).toBe("test-key");
+
+		configureRemote.mockClear();
+		await data(runtime, "settings.set:v1", {
+			settings: {
+				memoryVectorService: {
+					enabled: true,
+					provider: "remote",
+					baseUrl: remoteSettings.baseUrl,
+					model: "replacement-model",
+					dimensions: remoteSettings.dimensions,
+				},
+			},
+		});
+		expect(configureRemote).toHaveBeenCalledWith(
+			expect.objectContaining({ apiKey: "test-key", model: "replacement-model" }),
+		);
+		await runtime.close();
+	});
+
+	it("keeps embedding configuration global and relationship memory lazy", async () => {
+		const runtime = runtimeForTest();
+		const dataDir = temporaryDirectories.at(-1)!;
+		await runtime.start();
+		const role = roleRuntime(runtime);
+		const dormant = runtime.memoryRuntime;
+		expect(dormant.isStarted()).toBe(false);
+		expect(existsSync(join(dataDir, "memory"))).toBe(false);
+		expect(existsSync(join(dataDir, "companions", "jizhou", "memory", "tdai"))).toBe(true);
+
+		const first = runtime.memoryRuntime;
+		expect(first).toBe(dormant);
+		await first.start();
+		expect(first.isStarted()).toBe(true);
+		expect(Reflect.get(role, "memory")).toBe(first);
+		const validate = vi
+			.spyOn(runtime.memoryEmbedding, "validateRemote")
+			.mockResolvedValue({ ready: true });
+		const remote = {
+			enabled: true as const,
+			provider: "remote" as const,
+			baseUrl: "https://embedding.example/v1",
+			apiKey: "test-key",
+			model: "global-embedding",
+			dimensions: 768,
+		};
+		await data(runtime, "settings.set:v1", { settings: { memoryVectorService: remote } });
+		expect(validate).toHaveBeenCalledOnce();
+		expect(Reflect.get(role, "memory")).toBeUndefined();
+		await expect(first.start()).rejects.toThrow(/closed/);
+		const nextFirst = runtime.memoryRuntime;
+		expect(nextFirst).not.toBe(first);
+		const config = Reflect.get(Reflect.get(nextFirst, "core"), "cfg");
+		expect(config.embedding).toMatchObject({
+			provider: "remote",
+			apiKey: "test-key",
+			model: "global-embedding",
+			dimensions: 768,
+		});
+		const storedSystemConfig = runtimeDatabases(runtime)
+			.system.connection.prepare("SELECT memory_vector_service FROM app_settings WHERE id = 1")
+			.get() as { memory_vector_service: string };
+		expect(JSON.parse(storedSystemConfig.memory_vector_service)).toMatchObject({
+			provider: "remote",
+			model: "global-embedding",
+		});
+		expect(storedSystemConfig.memory_vector_service).not.toContain("apiKey");
+		expect(storedSystemConfig.memory_vector_service).not.toContain("test-key");
+		await data(runtime, "memory.configureLocalEmbedding:v1", { provider: "none" });
+
+		await data(runtime, "settings.set:v1", {
+			settings: { relationshipMemoryEnabled: true },
+		});
+		const lazyMemory = runtime.memoryRuntime;
+		await lazyMemory.start();
+		expect(lazyMemory.isStarted()).toBe(true);
+		await data(runtime, "settings.set:v1", {
+			settings: { relationshipMemoryEnabled: false },
+		});
+		expect(Reflect.get(role, "memory")).toBeUndefined();
+		await expect(lazyMemory.start()).rejects.toThrow(/closed/);
+		await runtime.close();
+	});
+
+	it("restores the remote embedding key from the encrypted vault without projecting it", async () => {
+		const secureVault: CredentialVault = {
+			securityLevel: "os",
+			isEncryptionAvailable: () => true,
+			encryptString: (value) => Buffer.from(Buffer.from(value).toString("base64")),
+			decryptString: (value) => Buffer.from(value.toString(), "base64").toString(),
+		};
+		const runtime = runtimeForTest(undefined, secureVault);
+		const dataDir = temporaryDirectories.at(-1);
+		if (!dataDir) throw new Error("test data directory missing");
+		vi.spyOn(runtime.memoryEmbedding, "validateRemote").mockResolvedValue({ ready: true });
+		await data(runtime, "settings.set:v1", {
+			settings: {
+				memoryVectorService: {
+					enabled: true,
+					provider: "remote",
+					baseUrl: "https://embedding.example/v1",
+					apiKey: "persistent-embedding-secret",
+					model: "persistent-model",
+					dimensions: 768,
+				},
+			},
+		});
+		await runtime.close();
+
+		const restarted = runtimeForTest(dataDir, secureVault);
+		const projection = await data(restarted, "settings.get:v1", {});
+		expect(projection).toMatchObject({
+			settings: { memoryVectorService: { provider: "remote", hasCredential: true } },
+		});
+		expect(JSON.stringify(projection)).not.toContain("persistent-embedding-secret");
+		const config = Reflect.get(Reflect.get(restarted.memoryRuntime, "core"), "cfg");
+		expect(config.embedding.apiKey).toBe("persistent-embedding-secret");
+		const databases = runtimeDatabases(restarted);
+		const settingsRow = databases.system.connection
+			.prepare("SELECT memory_vector_service FROM app_settings WHERE id = 1")
+			.get() as { memory_vector_service: string };
+		expect(settingsRow.memory_vector_service).not.toContain("persistent-embedding-secret");
+		const credentialRow = databases.system.connection
+			.prepare("SELECT credential_blob FROM provider_accounts WHERE id = ?")
+			.get("$bear:embedding:remote") as { credential_blob: Buffer };
+		expect(credentialRow.credential_blob.toString()).not.toContain("persistent-embedding-secret");
+		await restarted.close();
+	});
+
+	it("keeps character Run diagnostics out of the installation diagnostics sink", async () => {
+		const runtime = runtimeForTest();
+		try {
+			const role = Reflect.get(runtime, "role") as {
+				externalAgentRuns: object;
+				db: { path: string };
+			};
+			expect(Reflect.get(role.externalAgentRuns, "diagnostics")).toBeUndefined();
+			expect(role.db.path).toContain(join("companions", productConfig.defaultCharacterId));
+		} finally {
+			await runtime.close();
+		}
+	});
+
+	it("closes every character resource even when one close operation fails", async () => {
+		const runtime = runtimeForTest();
+		const role = Reflect.get(runtime, "role") as {
+			externalAgentRuns: { close(): Promise<void> };
+			pi: { closeAll(): Promise<void> };
+			memoryRuntime: { close(): Promise<void> };
+			auditStore: { flush(): Promise<void> };
+			close(): Promise<void>;
+		};
+		const firstFailure = new Error("run close failed");
+		vi.spyOn(role.externalAgentRuns, "close").mockRejectedValueOnce(firstFailure);
+		const closePi = vi.spyOn(role.pi, "closeAll");
+		const closeMemory = vi.spyOn(role.memoryRuntime, "close");
+		const flushAudit = vi.spyOn(role.auditStore, "flush");
+		await expect(role.close()).rejects.toBe(firstFailure);
+		expect(closePi).toHaveBeenCalledOnce();
+		expect(closeMemory).toHaveBeenCalledOnce();
+		expect(flushAudit).toHaveBeenCalledOnce();
 		await runtime.close();
 	});
 
@@ -357,17 +596,15 @@ describe("role-defined onboarding", () => {
 		const before = await data(runtime, "settings.get:v1", {});
 		const received = vi.fn();
 		const stop = runtime.subscribeEvents(received, 0);
-		vi.spyOn(runtime.memoryRuntime, "configureLocalEmbedding").mockImplementation(
-			async (options) => {
-				options.onProgress?.({ downloadedSize: 25, totalSize: 100 });
-				await new Promise<void>((_resolve, reject) =>
-					options.signal?.addEventListener("abort", () => reject(new Error("cancelled")), {
-						once: true,
-					}),
-				);
-				return { ready: true };
-			},
-		);
+		vi.spyOn(runtime.memoryEmbedding, "validateLocal").mockImplementation(async (options) => {
+			options.onProgress?.({ downloadedSize: 25, totalSize: 100 });
+			await new Promise<void>((_resolve, reject) =>
+				options.signal?.addEventListener("abort", () => reject(new Error("cancelled")), {
+					once: true,
+				}),
+			);
+			return { ready: true };
+		});
 		const configure = runtime.dispatch("memory.configureLocalEmbedding:v1", {
 			provider: "local",
 			customPath: "hf:test/model.gguf",
@@ -437,13 +674,11 @@ describe("role-defined onboarding", () => {
 		const dataDir = temporaryDirectories.at(-1)!;
 		await runtime.start();
 		const gate = Promise.withResolvers<void>();
-		let captured: Parameters<typeof runtime.memoryRuntime.configureLocalEmbedding>[0] | undefined;
-		vi.spyOn(runtime.memoryRuntime, "configureLocalEmbedding").mockImplementation(
-			async (options) => {
-				captured = options;
-				await gate.promise;
-			},
-		);
+		let captured: Parameters<typeof runtime.memoryEmbedding.validateLocal>[0] | undefined;
+		vi.spyOn(runtime.memoryEmbedding, "validateLocal").mockImplementation(async (options) => {
+			captured = options;
+			await gate.promise;
+		});
 		const command = runtime.dispatch("memory.configureLocalEmbedding:v1", {
 			provider: "local",
 			customPath: "hf:test/model.gguf",
@@ -471,9 +706,7 @@ describe("role-defined onboarding", () => {
 
 	it("rejects persisted onboarding state from a different role flow version", async () => {
 		const runtime = runtimeForTest();
-		const database = Reflect.get(runtime, "db") as {
-			connection: { prepare(sql: string): { run(...params: unknown[]): void } };
-		};
+		const database = runtimeDatabases(runtime).companion;
 		database.connection
 			.prepare(
 				"INSERT INTO onboarding_state (companion_id, state, state_json, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(companion_id) DO UPDATE SET state=excluded.state, state_json=excluded.state_json, updated_at=excluded.updated_at",
@@ -498,9 +731,7 @@ describe("role-defined onboarding", () => {
 
 	it("rejects corrupt current-version state instead of treating it as legacy data", async () => {
 		const runtime = runtimeForTest();
-		const database = Reflect.get(runtime, "db") as {
-			connection: { prepare(sql: string): { run(...params: unknown[]): void } };
-		};
+		const database = runtimeDatabases(runtime).companion;
 		database.connection
 			.prepare(
 				"INSERT INTO onboarding_state (companion_id, state, state_json, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(companion_id) DO UPDATE SET state=excluded.state, state_json=excluded.state_json, updated_at=excluded.updated_at",

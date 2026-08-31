@@ -1,8 +1,13 @@
 import { glob, readFile } from "node:fs/promises";
 import { parse } from "@babel/parser";
 
-// Only the transport recovery helper may schedule a connection retry. UI state
-// must arrive via RPC mutation results or Host events, never a periodic query.
+// UI state must arrive via RPC mutation results or Host events, never a
+// periodic query. The two bounded timers below do not poll state: one backs off
+// a failed Pi event transport and one releases a browser download URL.
+const allowedTimeouts = new Set([
+	"packages/companion-ui/src/stores/companion.tsx:waitForPiReconnect",
+	"packages/companion-ui/src/WorkPanel.tsx:downloadArtifactInBrowser",
+]);
 const failures = [];
 for (const pattern of [
 	"packages/companion-ui/src/**/*.{ts,tsx}",
@@ -14,8 +19,10 @@ for (const pattern of [
 			sourceType: "module",
 			plugins: ["typescript", "jsx"],
 		});
-		const visit = (node) => {
+		const visit = (node, enclosingFunction = "") => {
 			if (!node || typeof node !== "object") return;
+			const functionName =
+				node.type === "FunctionDeclaration" && node.id?.name ? node.id.name : enclosingFunction;
 			if (
 				node.type === "ImportDeclaration" &&
 				/^(?:@earendil-works\/pi-|@bear-harness\/(?:host-runtime|tdai-core)|node:)/.test(
@@ -45,12 +52,19 @@ for (const pattern of [
 					`${file}:${node.loc.start.line} cache writes must cross the committed revision gate`,
 				);
 			}
-			if (
-				node.type === "Identifier" &&
-				["setInterval", "setTimeout", "refetchInterval"].includes(node.name)
-			) {
+			if (node.type === "Identifier" && node.name === "refetchInterval") {
 				failures.push(
 					`${file}:${node.loc.start.line} ${node.name}: use Host push for state updates`,
+				);
+			}
+			if (
+				node.type === "CallExpression" &&
+				node.callee?.type === "Identifier" &&
+				["setInterval", "setTimeout"].includes(node.callee.name) &&
+				!allowedTimeouts.has(`${file}:${functionName}`)
+			) {
+				failures.push(
+					`${file}:${node.loc.start.line} ${node.callee.name}: use Host push for state updates`,
 				);
 			}
 			if (
@@ -62,8 +76,9 @@ for (const pattern of [
 				failures.push(`${file}:${node.loc.start.line} use events.stream, not replay RPC`);
 			}
 			for (const child of Object.values(node)) {
-				if (Array.isArray(child)) child.forEach(visit);
-				else if (child && typeof child === "object") visit(child);
+				if (Array.isArray(child)) {
+					for (const item of child) visit(item, functionName);
+				} else if (child && typeof child === "object") visit(child, functionName);
 			}
 		};
 		visit(ast);

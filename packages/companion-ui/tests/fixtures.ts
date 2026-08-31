@@ -1,6 +1,10 @@
 import type { CompanionClient } from "@bear-harness/companion-client";
 import { type ProductConfig, productConfig } from "@bear-harness/product-config";
-import type { ConversationSelectResponse, ConversationSummary } from "@bear-harness/protocol";
+import type {
+	ConversationDetail,
+	ConversationSummary,
+	PiSessionLiveEvent,
+} from "@bear-harness/protocol";
 import { vi } from "vitest";
 import type { CharacterDisplay, SettingsData } from "../src/index.js";
 
@@ -75,47 +79,7 @@ export const THEMED_CHARACTER: CharacterDisplay = {
 		expressions: { default: "data:image/svg+xml;base64,PHN2Zy8+" },
 		expressionLabels: { default: "Test Character" },
 	},
-	roleplay: {
-		variables: [],
-		media: [],
-		unlockables: [],
-		choice_sets: [],
-	},
-};
-
-/** Character projection with declared regular and ambient roleplay media. */
-export const ROLEPLAY_MEDIA_CHARACTER: CharacterDisplay = {
-	...THEMED_CHARACTER,
-	roleplay: {
-		...THEMED_CHARACTER.roleplay,
-		media: [
-			{
-				id: "dialog-image",
-				kind: "image",
-				label: "Dialog image",
-				presentation: "dialog",
-				url: "data:image/png;base64,ZGlhbG9n",
-				loop: false,
-			},
-			{
-				id: "inline-image",
-				kind: "image",
-				label: "Inline image",
-				presentation: "inline",
-				url: "data:image/png;base64,aW5saW5l",
-				loop: false,
-			},
-			{
-				id: "ambient-audio",
-				kind: "audio",
-				label: "Ambient audio",
-				presentation: "ambient",
-				url: "data:audio/ogg;base64,YW1iaWVudA==",
-				captionsUrl: "data:text/vtt;base64,V0VCVlRU",
-				loop: true,
-			},
-		],
-	},
+	media: [],
 };
 
 /**
@@ -144,8 +108,8 @@ export const FORK_PRODUCT: Readonly<ProductConfig> = {
 };
 
 const DEFAULT_SETTINGS: SettingsData = {
+	firstRunStage: "role",
 	relationshipMemoryEnabled: false,
-	conversationHistoryReadEnabled: false,
 	networkProxy: { mode: "direct" },
 	memoryVectorService: { enabled: false, provider: "none" },
 	modelDownloadSource: { type: "official" },
@@ -204,7 +168,7 @@ const DEFAULT_MODEL = {
  *
  * Most calls resolve a success envelope with empty domain data, so the store
  * boots into the same idle shell a missing bridge used to produce; conversation
- * creation and selection additionally expose the Host-owned active projection.
+ * creation and opening additionally return a Pi-native detail for renderer-local selection.
  * `events.subscribe` parks the subscription loop on a promise that never
  * settles — tests never race polling timers and the loop dies with the
  * store's cleanup. `settings.set` mutates the backing settings so the
@@ -229,21 +193,37 @@ export function createTestClient() {
 
 	/** Pi sessions created by the fixture. */
 	const conversations: ConversationSummary[] = [];
-	let activeConversation: ConversationSelectResponse | undefined;
 	const conversationList = vi.fn(() => ok({ sessions: [...conversations] }));
-	const conversationProjection = (id: string, title: string): ConversationSelectResponse => ({
+	const conversationDetails = new Map<string, ConversationDetail>();
+	const conversationProjection = (id: string, title: string): ConversationDetail => ({
 		sessionId: id,
 		name: title,
-		entries: [],
-		messages: [],
-		isIdle: true,
-		isStreaming: false,
-		pendingMessageCount: 0,
-		steeringMessages: [],
-		followUpMessages: [],
-		messageVersions: [],
+		timeline: { entries: [] },
+		live: { isStreaming: false, queuedUserMessages: [] },
 	});
 	const providerList = vi.fn(() => ok({ providers: [] }));
+	const piQueue: PiSessionLiveEvent[] = [];
+	let receivePi: ((event: PiSessionLiveEvent) => void) | undefined;
+	const piStream = async function* (signal: AbortSignal) {
+		while (!signal.aborted) {
+			const event =
+				piQueue.shift() ??
+				(await new Promise<PiSessionLiveEvent | undefined>((resolve) => {
+					const abort = () => {
+						if (receivePi === deliver) receivePi = undefined;
+						resolve(undefined);
+					};
+					const deliver = (next: PiSessionLiveEvent) => {
+						signal.removeEventListener("abort", abort);
+						resolve(next);
+					};
+					receivePi = deliver;
+					signal.addEventListener("abort", abort, { once: true });
+				}));
+			if (!event || signal.aborted) return;
+			yield event;
+		}
+	};
 
 	const snapshotGet = vi.fn(() =>
 		ok({
@@ -253,11 +233,13 @@ export function createTestClient() {
 				defaults: {
 					reply: { providerId: DEFAULT_MODEL.providerId, modelId: DEFAULT_MODEL.modelId },
 					vision: { mode: "auto" as const },
+					onboardingComplete: true,
 				},
 			},
 		}),
 	);
 	const client = {
+		pi: { stream: piStream },
 		snapshot: {
 			get: snapshotGet,
 		},
@@ -265,6 +247,23 @@ export function createTestClient() {
 			get: vi.fn(() => ok(null)),
 			list: vi.fn(() => ok({ characters: [] })),
 			activate: vi.fn(() => ok(null)),
+			deletionStatusGet: vi.fn(({ characterId }: { characterId: string }) =>
+				ok({
+					status: {
+						characterId,
+						active: characterId === THEMED_CHARACTER.id,
+						default: false,
+						runtimePresent: true,
+						packagePresent: true,
+					},
+				}),
+			),
+			runtimeDelete: vi.fn(({ characterId }: { characterId: string }) =>
+				ok({ characterId, target: "runtime" as const, deleted: true }),
+			),
+			packageDelete: vi.fn(({ characterId }: { characterId: string }) =>
+				ok({ characterId, target: "package" as const, deleted: true }),
+			),
 			pluginTrustGet: vi.fn(() =>
 				ok({
 					trust: {
@@ -278,6 +277,20 @@ export function createTestClient() {
 			pluginTrustConfirm: vi.fn(() => ok(null)),
 		},
 		companionState: {
+			get: vi.fn(() =>
+				ok({
+					schema: { type: "object", properties: {} },
+					state: {
+						character: {
+							document: {},
+							revisions: { conversation: 0, global: 0 },
+							schemaHash: "0".repeat(64),
+						},
+						display: { sceneId: "default", expressionId: "default" },
+						revisions: { display: 0 },
+					},
+				}),
+			),
 			patch: vi.fn(() => ok({})),
 		},
 		events: { subscribe: vi.fn(() => new Promise<never>(() => {})) },
@@ -300,8 +313,7 @@ export function createTestClient() {
 		conversation: {
 			list: conversationList,
 			create: vi.fn(({ title }: { title?: string }) => {
-				// The store activates the returned projection, so register it in the
-				// list the fixture serves back — an active conversation must be listed.
+				// The renderer activates the returned detail, so register it in the list too.
 				let summary = conversations.find((conversation) => conversation.id === "c1");
 				if (summary === undefined) {
 					summary = {
@@ -316,10 +328,11 @@ export function createTestClient() {
 				} else if (title !== undefined) {
 					summary.title = title;
 				}
-				activeConversation = conversationProjection("c1", summary.title);
-				return ok(activeConversation);
+				const detail = conversationProjection("c1", summary.title);
+				conversationDetails.set(detail.sessionId, detail);
+				return ok(detail);
 			}),
-			select: vi.fn(({ id }: { id: string }) => {
+			open: vi.fn(({ id }: { id: string }) => {
 				let conversation = conversations.find((item) => item.id === id);
 				if (conversation === undefined) {
 					conversation = {
@@ -332,79 +345,57 @@ export function createTestClient() {
 					};
 					conversations.push(conversation);
 				}
-				activeConversation = conversationProjection(id, conversation.title);
-				return ok(activeConversation);
+				const detail =
+					conversationDetails.get(id) ?? conversationProjection(id, conversation.title);
+				conversationDetails.set(id, detail);
+				return ok(detail);
 			}),
-			activeGet: vi.fn(() => ok({ session: activeConversation })),
 			rename: vi.fn(({ id, title }: { id: string; title: string }) => {
 				const conversation = conversations.find((item) => item.id === id);
 				if (conversation !== undefined) conversation.title = title;
-				if (activeConversation?.sessionId === id) {
-					activeConversation = { ...activeConversation, name: title };
-				}
+				const detail = conversationDetails.get(id);
+				if (detail) conversationDetails.set(id, { ...detail, name: title });
 				return ok(null);
 			}),
 			archive: vi.fn(({ id, archived }: { id: string; archived: boolean }) => {
 				if (archived) {
 					const index = conversations.findIndex((conversation) => conversation.id === id);
 					if (index >= 0) conversations.splice(index, 1);
-					if (activeConversation?.sessionId === id) {
-						const replacement = conversations.at(-1);
-						activeConversation =
-							replacement === undefined
-								? undefined
-								: conversationProjection(replacement.id, replacement.title);
-					}
 				}
 				return ok({});
 			}),
 			delete: vi.fn(({ id }: { id: string }) => {
 				const index = conversations.findIndex((conversation) => conversation.id === id);
 				if (index >= 0) conversations.splice(index, 1);
-				if (activeConversation?.sessionId === id) {
-					const replacement = conversations.at(-1);
-					activeConversation =
-						replacement === undefined
-							? undefined
-							: conversationProjection(replacement.id, replacement.title);
-				}
+				conversationDetails.delete(id);
 				return ok({});
 			}),
 		},
 		message: {
-			send: vi.fn(() =>
-				ok({ accepted: true as const, sessionId: "session-1", entryId: "entry-1" }),
-			),
-			regenerate: vi.fn(() => ok(null)),
-			switchVersion: vi.fn(() => ok(null)),
-			edit: vi.fn(() => ok(null)),
-			continue: vi.fn(() => ok(null)),
-			branch: vi.fn(() => ok({ leafId: "leaf-1" })),
-			abort: vi.fn(() => ok(null)),
+			send: vi.fn(() => ok({ accepted: true as const })),
+			regenerate: vi.fn(() => ok({})),
+			switchVersion: vi.fn(() => ok({})),
+			edit: vi.fn(() => ok({})),
+			continue: vi.fn(() => ok({})),
+			branch: vi.fn(() => {
+				const detail = conversationProjection("branch-1", "Branched conversation");
+				conversationDetails.set(detail.sessionId, detail);
+				conversations.push({
+					id: detail.sessionId,
+					title: detail.name,
+					created: "2026-01-01T00:00:00.000Z",
+					modified: "2026-01-01T00:00:00.000Z",
+					messageCount: 0,
+					firstMessage: "",
+				});
+				return ok(detail);
+			}),
+			abort: vi.fn(() => ok({})),
 		},
 		memory: {
-			search: vi.fn(() => ok({ entries: [] })),
-			list: vi.fn(() => ok({ entries: [] })),
-			capture: vi.fn(({ entryId }: { entryId: string }) =>
-				ok({
-					status: "stored" as const,
-					reason: "memory_stored" as const,
-					memoryIds: [`memory-${entryId}`],
-					sourceEntryId: entryId,
-					createdBy: "user_capture" as const,
-				}),
-			),
-			edit: vi.fn(() => ok(null)),
-			exclude: vi.fn(() => ok(null)),
-			invalidate: vi.fn(() => ok({})),
-			pin: vi.fn(() => ok(null)),
-			forget: vi.fn(() => ok(null)),
 			localEmbeddingDownloadStatus: vi.fn(() => ok({ status: "preparing", downloadedBytes: 0 })),
 			cancelLocalEmbeddingDownload: vi.fn(() => ok({})),
 			configureLocalEmbedding: vi.fn(() => ok({ ready: true })),
-			candidateApprove: vi.fn(() => ok(null)),
-			candidatesList: vi.fn(() => ok({ candidates: [] })),
-			candidateReject: vi.fn(() => ok(null)),
 		},
 		canon: {
 			listSources: vi.fn(() => ok({ sources: [] })),
@@ -435,12 +426,38 @@ export function createTestClient() {
 				ok({
 					reply: { providerId: DEFAULT_MODEL.providerId, modelId: DEFAULT_MODEL.modelId },
 					vision: { mode: "auto" as const },
+					onboardingComplete: true,
 				}),
 			),
 			defaultsSetReply: vi.fn(({ reply }) =>
-				ok({ ...(reply ? { reply } : {}), vision: { mode: "auto" as const } }),
+				ok({
+					...(reply ? { reply } : {}),
+					vision: { mode: "auto" as const },
+					onboardingComplete: reply !== null,
+				}),
 			),
-			defaultsSetVision: vi.fn((vision) => ok({ vision })),
+			defaultsSetVision: vi.fn((vision) => ok({ vision, onboardingComplete: true })),
+			systemDefaultsGet: vi.fn(() =>
+				ok({
+					reply: { providerId: DEFAULT_MODEL.providerId, modelId: DEFAULT_MODEL.modelId },
+					vision: { mode: "auto" as const },
+				}),
+			),
+			systemDefaultsSet: vi.fn(({ reply, vision }) => ok({ reply, vision })),
+			defaultsInitialize: vi.fn(() =>
+				ok({
+					reply: { providerId: DEFAULT_MODEL.providerId, modelId: DEFAULT_MODEL.modelId },
+					vision: { mode: "auto" as const },
+					onboardingComplete: false,
+				}),
+			),
+			defaultsCompleteOnboarding: vi.fn(() =>
+				ok({
+					reply: { providerId: DEFAULT_MODEL.providerId, modelId: DEFAULT_MODEL.modelId },
+					vision: { mode: "auto" as const },
+					onboardingComplete: true,
+				}),
+			),
 			routeGet: vi.fn(({ conversationId }) => ok({ conversationId })),
 			routeSet: vi.fn(({ conversationId, selected }) => ok({ conversationId, selected })),
 		},
@@ -451,6 +468,28 @@ export function createTestClient() {
 			resume: vi.fn(() => ok(null)),
 			cancel: vi.fn(() => ok(null)),
 			respondPermission: vi.fn(() => ok(null)),
+		},
+		artifact: {
+			read: vi.fn(({ artifactId, offset = 0 }) =>
+				ok({
+					artifact: {
+						id: artifactId,
+						name: artifactId,
+						mime: "text/plain",
+						bytes: 0,
+						sha256: "0".repeat(64),
+						status: "verified" as const,
+						createdAt: "2026-08-31T00:00:00.000Z",
+					},
+					offset,
+					nextOffset: offset,
+					eof: true,
+					base64: "",
+				}),
+			),
+			open: vi.fn(() => ok({ outcome: "completed" as const })),
+			reveal: vi.fn(() => ok({ outcome: "completed" as const })),
+			saveAs: vi.fn(() => ok({ outcome: "completed" as const })),
 		},
 		externalAgent: {
 			discoverCodex: vi.fn(() => ok({ candidates: [] })),
@@ -517,6 +556,13 @@ export function createTestClient() {
 			deliver(batch);
 		} else queue.push(batch);
 	});
+	PI_EVENT_SENDERS.set(client, (event) => {
+		if (receivePi) {
+			const deliver = receivePi;
+			receivePi = undefined;
+			deliver(event);
+		} else piQueue.push(event);
+	});
 
 	return {
 		client,
@@ -540,4 +586,17 @@ export function pushHostEvent(
 	const send = HOST_EVENT_SENDERS.get(client);
 	if (!send) throw new Error("missing fixture event channel");
 	send(kind, payload);
+}
+
+const PI_EVENT_SENDERS = new WeakMap<
+	CompanionClient,
+	(event: import("@bear-harness/protocol").PiSessionLiveEvent) => void
+>();
+export function pushPiEvent(
+	client: CompanionClient,
+	event: import("@bear-harness/protocol").PiSessionLiveEvent,
+): void {
+	const send = PI_EVENT_SENDERS.get(client);
+	if (!send) throw new Error("client does not expose the Pi event test channel");
+	send(event);
 }

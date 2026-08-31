@@ -19,15 +19,13 @@ export const queryKeys = {
 	snapshot: ["snapshot"] as const,
 	conversations: ["conversations"] as const,
 	archivedConversations: ["conversations", "archived"] as const,
-	activeConversation: ["conversation", "active"] as const,
-	memoryProjection: (scope?: string, query?: string, characterId?: string) =>
-		["memory", "projection", characterId ?? null, scope ?? null, query ?? null] as const,
-	memoryCandidates: (status?: string, characterId?: string) =>
-		["memory", "candidates", characterId ?? null, status ?? null] as const,
+	conversation: (id: string) => ["conversation", id] as const,
+	companionState: (conversationId: string) => ["companionState", conversationId] as const,
 	settingsCapabilities: ["settings", "capabilities"] as const,
 	runs: ["runs"] as const,
 	characters: ["characters"] as const,
 	characterPackage: (id: string) => ["character", "package", id] as const,
+	characterDeletionStatus: (id: string) => ["character", "deletionStatus", id] as const,
 	canonSources: (id?: string) => ["canon", "sources", id ?? null] as const,
 	canonModules: (id?: string) => ["canon", "modules", id ?? null] as const,
 	onboarding: ["onboarding"] as const,
@@ -37,6 +35,7 @@ export const queryKeys = {
 	providerLogin: (id: string) => ["providerLogin", id] as const,
 	modelPool: ["models", "pool"] as const,
 	modelDefaults: ["models", "defaults"] as const,
+	systemModelDefaults: ["models", "systemDefaults"] as const,
 	modelRoute: (id: string) => ["models", "route", id] as const,
 };
 
@@ -106,6 +105,7 @@ export async function refreshRpcQuery<T>(input: {
 	refreshes.set(refreshKey, refresh);
 	refresh.promise = (async () => {
 		let result!: T;
+		let rejected = 0;
 		do {
 			refresh.dirty = false;
 			await input.client.invalidateQueries(
@@ -116,12 +116,14 @@ export async function refreshRpcQuery<T>(input: {
 				},
 				{ cancelRefetch: false },
 			);
-			result = await input.client.fetchQuery({
-				queryKey: input.key,
-				queryFn: () => readQueryValue(input.client, input.key, input.request),
-				structuralSharing: false,
-				staleTime: 0,
-			});
+			const value = await input.request();
+			if (!commitQueryValue(input.client, input.key, value)) {
+				if (rejected >= 2) throw new Error("Host query could not commit a current revision");
+				rejected += 1;
+				refresh.dirty = true;
+				continue;
+			}
+			result = value;
 		} while (refresh.dirty);
 		return result;
 	})();

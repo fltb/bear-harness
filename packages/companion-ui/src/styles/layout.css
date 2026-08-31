@@ -282,19 +282,31 @@
 	background: var(--surface-control);
 }
 
-/* Attachment preview is a responsive management surface, not a new column
- * in the mobile/window templates. Fullscreen has enough room for a column. */
-.app[data-layout="mobile"] .attachment-preview-column,
+/* Artifact results use a full-screen surface on phones, a drawer in regular
+ * windows, and a persistent third column on wide desktop canvases. */
+.app[data-layout="mobile"] .artifact-preview-backdrop,
+.app[data-layout="window"] .artifact-preview-backdrop {
+	@apply block;
+}
+
+.app[data-layout="mobile"] .attachment-preview-column {
+	@apply fixed inset-0 z-60 size-full max-w-none border-0 shadow-app;
+}
+
 .app[data-layout="window"] .attachment-preview-column {
-	@apply fixed bottom-3 right-3 top-3 z-60 w-full max-w-md shadow-app;
+	@apply fixed bottom-0 right-0 top-0 z-60 w-full max-w-xl shadow-app;
 }
 
 .app[data-layout="fullscreen"] .shell:has(> .attachment-preview-column) {
 	grid-template-columns: 320px minmax(0, 1fr) minmax(360px, 440px);
 }
 
+.app[data-layout="fullscreen"] .shell:has(> .attachment-preview-column) > .main {
+	grid-column: 2;
+}
+
 .app[data-layout="fullscreen"] .attachment-preview-column {
-	@apply col-auto;
+	grid-column: 3;
 }
 
 /* Responsive management surfaces. Header and footer remain outside the

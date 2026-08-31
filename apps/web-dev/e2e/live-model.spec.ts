@@ -53,11 +53,10 @@ test("configured live model answers a WebDev smoke message", async ({ page }) =>
 	await expect
 		.poll(
 			async () => {
-				const active = await rpc<{ session?: { entries: unknown[] } }>(
-					"conversation.activeGet:v1",
-					{},
-				);
-				return projectPiEntries(active.session?.entries ?? [])
+				const opened = await rpc<{ timeline: { entries: unknown[] } }>("conversation.open:v1", {
+					id: conversation.sessionId,
+				});
+				return projectPiEntries(opened.timeline.entries)
 					.filter((entry) => entry.kind === "message" && entry.role === "assistant")
 					.map((entry) => entry.text ?? "")
 					.join("\n");

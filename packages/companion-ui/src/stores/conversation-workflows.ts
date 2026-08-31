@@ -39,8 +39,9 @@ function createWorkflow(store: CompanionStore) {
 	});
 	const sceneLabel = (conversationId: string) => {
 		const sceneId =
-			store.companionState?.byConversation[conversationId]?.display.sceneId ??
-			store.character?.visual.defaultSceneId;
+			(conversationId === store.activeConversationId
+				? store.companionState?.state.display.sceneId
+				: undefined) ?? store.character?.visual.defaultSceneId;
 		return store.character?.scenes.find((scene) => scene.id === sceneId)?.label ?? "";
 	};
 	const setQuery = (value: string) => {
@@ -121,7 +122,6 @@ function createWorkflow(store: CompanionStore) {
 
 export function useConversationViewWorkflow(store: CompanionStore) {
 	const workflow = useConversationWorkflow(store);
-	const roleplay = () => store.character?.roleplay;
 	return {
 		...workflow,
 		submitText: (text: string) => store.sendMessage(text),
@@ -129,25 +129,5 @@ export function useConversationViewWorkflow(store: CompanionStore) {
 			store.activeConversationId ? workflow.sceneLabel(store.activeConversationId) : "",
 		hasThreadContent: () =>
 			Boolean(store.activePiTimeline?.entries.length || store.activePiLiveState?.streamingMessage),
-		roleplayChoiceSet: () =>
-			roleplay()?.choice_sets?.find((item) => item.id === store.activeChoiceSetId),
-		roleplayInlineMedia: () =>
-			roleplay()?.media.find(
-				(item) => item.id === store.activePresentationMediaId && item.presentation === "inline",
-			),
-		roleplayOverlayMedia: () =>
-			roleplay()?.media.find(
-				(item) =>
-					item.id === store.activePresentationMediaId &&
-					item.presentation !== "inline" &&
-					item.presentation !== "ambient",
-			),
-		roleplayAmbientMedia: () =>
-			roleplay()?.media.find(
-				(item) =>
-					item.id === store.activeAmbientMediaId &&
-					item.kind === "audio" &&
-					item.presentation === "ambient",
-			),
 	};
 }

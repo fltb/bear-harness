@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventPayloadSchemas, type KnownEventKind } from "@bear-harness/protocol/schema";
 import { afterEach, describe, expect, it } from "vitest";
-import { Database, MIGRATIONS } from "../src/storage/database.js";
+import { COMPANION_MIGRATIONS, CompanionDatabase } from "../src/storage/database.js";
 import { EventBus } from "../src/storage/event-bus.js";
 
 const roots: string[] = [];
@@ -13,7 +13,6 @@ const roots: string[] = [];
 const representativePayloads: Record<KnownEventKind, unknown> = {
 	"sync.invalidated": { sync: { epoch: "test-host", revision: 1 }, sources: ["conversations"] },
 	"provider.login_changed": { providerId: "openai-codex" },
-	"memory.records_changed": {},
 	"memory.embedding_download_changed": { status: "downloading", downloadedBytes: 512 },
 	"character.imported": { characterId: "character-1", trust: {} },
 	"character.pluginsTrusted": { characterId: "character-1", pluginHash: "hash" },
@@ -23,14 +22,9 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 		conversationId: "conversation-1",
 		title: "A conversation",
 	},
-	"conversation.selected": { id: "conversation-1" },
 	"conversation.renamed": { conversationId: "conversation-1", title: "Renamed" },
 	"conversation.archived": { conversationId: "conversation-1", archived: true },
 	"conversation.deleted": { conversationId: "conversation-1" },
-	"pi.session.changed": {
-		conversationId: "conversation-1",
-		sessionId: "pi-session-1",
-	},
 	"settings.changed": { settings: {}, changed: [] },
 	"diagnostics.protocol_violation": { channel: "events.subscribe:v1", issues: [] },
 	"canon.source_added": {
@@ -60,7 +54,7 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 	"run.steered": { runId: "run-1", instruction: "Continue" },
 	"run.interrupted": { runId: "run-1" },
 	"run.resumed": { runId: "run-1" },
-	"companion.snapshot_changed": { conversationId: "conversation-1", commitId: "commit-1" },
+	"companion.snapshot_changed": { conversationId: "conversation-1" },
 	"codex.launched": {
 		executor: "codex",
 		profileId: "profile-1",
@@ -95,11 +89,12 @@ const representativePayloads: Record<KnownEventKind, unknown> = {
 	"onboarding.reset": {},
 };
 
-function openDatabase(): Database {
+function openDatabase(): CompanionDatabase {
 	const root = mkdtempSync(join(tmpdir(), "bear-event-bus-"));
 	roots.push(root);
-	const database = new Database(root);
-	database.migrate(MIGRATIONS);
+	const database = new CompanionDatabase(join(root, "runtime.db"), "event-test-character");
+	database.migrate(COMPANION_MIGRATIONS);
+	database.ensureRuntimeIdentity();
 	return database;
 }
 
@@ -117,7 +112,7 @@ describe("event bus domain contract", () => {
 			bus.subscribe((event) => {
 				early.push(event.seq);
 				if (event.kind === "conversation.renamed")
-					bus.publish("conversation.selected", { id: "conversation-1" });
+					bus.publish("conversation.created", { conversationId: "conversation-2" });
 			});
 			bus.subscribe((event) => renderer.push(event.seq));
 			bus.publish("conversation.renamed", {

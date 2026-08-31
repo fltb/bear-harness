@@ -1,5 +1,10 @@
 import type { AnyRpcEndpoint, EnvelopeOf, RequestOf, SyncRevision } from "@bear-harness/protocol";
-import { EventSubscribeResponse, IpcResponse, RPC } from "@bear-harness/protocol/schema";
+import {
+	EventSubscribeResponse,
+	IpcResponse,
+	PiEventSubscribeResponse,
+	RPC,
+} from "@bear-harness/protocol/schema";
 
 /**
  * Host-owned transport boundary for RPC calls.
@@ -20,6 +25,8 @@ export interface HostTransport {
 		receive: (batch: unknown) => void,
 		fail: (error: unknown) => void,
 	): () => void;
+	/** Transient native Pi events; there is deliberately no replay cursor. */
+	listenPi?(receive: (batch: unknown) => void, fail: (error: unknown) => void): () => void;
 	invoke<E extends AnyRpcEndpoint>(endpoint: E, request: RequestOf<E>): Promise<unknown>;
 }
 
@@ -78,7 +85,57 @@ export type CompanionClient = ClientNode<typeof RPC> & {
 			signal: AbortSignal,
 		): AsyncIterable<ReturnType<typeof EventSubscribeResponse.parse>["events"]>;
 	};
+	pi: {
+		stream(
+			signal: AbortSignal,
+		): AsyncIterable<ReturnType<typeof PiEventSubscribeResponse.parse>["events"][number]>;
+	};
 };
+
+async function* transientPiStream(
+	transport: HostTransport,
+	signal: AbortSignal,
+): AsyncIterable<ReturnType<typeof PiEventSubscribeResponse.parse>["events"][number]> {
+	if (signal.aborted) return;
+	if (!transport.listenPi) throw new Error("Host transport does not support Pi event push");
+	const queue: unknown[] = [];
+	let error: unknown;
+	let failed = false;
+	let wake: (() => void) | undefined;
+	const abort = () => wake?.();
+	signal.addEventListener("abort", abort, { once: true });
+	let stop: (() => void) | undefined;
+	try {
+		stop = transport.listenPi(
+			(batch) => {
+				if (failed || signal.aborted) return;
+				if (queue.length >= 1000) {
+					failed = true;
+					error = new Error("Pi event consumer overflow");
+				} else queue.push(batch);
+				wake?.();
+			},
+			(cause) => {
+				failed = true;
+				error = cause;
+				wake?.();
+			},
+		);
+		while (!signal.aborted) {
+			if (queue.length) {
+				for (const event of PiEventSubscribeResponse.parse(queue.shift()).events) yield event;
+				continue;
+			}
+			if (failed) throw error;
+			await new Promise<void>((resolve) => {
+				wake = resolve;
+			});
+		}
+	} finally {
+		stop?.();
+		signal.removeEventListener("abort", abort);
+	}
+}
 
 function isEndpoint(value: unknown): value is AnyRpcEndpoint {
 	return typeof value === "object" && value !== null && "kind" in value && value.kind === "rpc";
@@ -120,6 +177,9 @@ export function createCompanionClient(transport: HostTransport): CompanionClient
 	const rpc = buildClientNode(RPC, transport) as ClientNode<typeof RPC>;
 	return Object.freeze({
 		...rpc,
+		pi: Object.freeze({
+			stream: (signal: AbortSignal) => transientPiStream(transport, signal),
+		}),
 		events: Object.freeze({
 			...rpc.events,
 			async *stream(afterSeq: number, signal: AbortSignal) {

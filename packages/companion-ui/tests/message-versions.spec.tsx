@@ -12,31 +12,28 @@ describe("Pi message versions", () => {
 		const session = {
 			sessionId: "conversation-1",
 			name: "Versions",
-			entries: [
-				{
-					id: "user-2",
-					parentId: "root",
-					timestamp: "2026-01-01T00:00:00.000Z",
-					type: "message",
-					message: { role: "user", content: "Hello", timestamp: 1 },
-				},
-				{
-					id: "assistant-2",
-					parentId: "user-2",
-					timestamp: "2026-01-01T00:00:01.000Z",
-					type: "message",
-					message: { role: "assistant", content: [{ type: "text", text: "Second reply" }] },
-				},
-			],
-			messages: [],
-			isIdle: true,
-			isStreaming: false,
-			pendingMessageCount: 0,
-			steeringMessages: [],
-			followUpMessages: [],
-			messageVersions: [
-				{ assistantEntryId: "assistant-2", current: 1, leafIds: ["assistant-1", "assistant-2"] },
-			],
+			timeline: {
+				entries: [
+					{
+						id: "user-2",
+						parentId: "root",
+						timestamp: "2026-01-01T00:00:00.000Z",
+						kind: "message" as const,
+						role: "user" as const,
+						text: "Hello",
+					},
+					{
+						id: "assistant-2",
+						parentId: "user-2",
+						timestamp: "2026-01-01T00:00:01.000Z",
+						kind: "message" as const,
+						role: "assistant" as const,
+						text: "Second reply",
+						version: { current: 1, leafIds: ["assistant-1", "assistant-2"] },
+					},
+				],
+			},
+			live: { isStreaming: false, queuedUserMessages: [] },
 		};
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
@@ -51,8 +48,8 @@ describe("Pi message versions", () => {
 				} as never,
 			}),
 		);
-		client.conversation.activeGet = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { session } as never }),
+		client.conversation.open = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: session as never }),
 		);
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({

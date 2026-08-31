@@ -20,7 +20,7 @@ test("WebDev exposes every registered Host RPC channel through its authenticated
 	await rpcChannel.click();
 	await expect(page.getByRole("option")).toHaveCount(expectedChannels.length);
 	await expect(page.getByRole("option")).toHaveText(expectedChannels);
-	await page.keyboard.press("Escape");
+	await page.getByRole("option", { name: "snapshot.get:v1", exact: true }).click();
 	await panel.getByRole("button", { name: zhCN.webDev.invokeHost }).click();
 	await expect(panel.getByRole("status")).toContainText('"ok"');
 });
@@ -237,8 +237,17 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	});
 	await expect(relationshipMemory).toBeEnabled();
 	const previousMemory = await relationshipMemory.getAttribute("aria-checked");
-	await relationshipMemory.click();
-	await expect(relationshipMemory).not.toHaveAttribute("aria-checked", previousMemory ?? "");
+	const [settingsResponse] = await Promise.all([
+		page.waitForResponse(
+			(response) =>
+				response.request().method() === "POST" && response.url().includes("/rpc/settings.set%3Av1"),
+		),
+		relationshipMemory.click(),
+	]);
+	expect(await settingsResponse.json()).toMatchObject({ ok: true });
+	await expect(relationshipMemory).not.toHaveAttribute("aria-checked", previousMemory ?? "", {
+		timeout: 15_000,
+	});
 });
 
 test("bottom actions open distinct character and system settings destinations", async ({

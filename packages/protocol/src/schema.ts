@@ -28,7 +28,6 @@ const MAX_RECORD_ENTRIES = MAX_ARRAY_LENGTH;
 export const MAX_EVENT_PAYLOAD_DEPTH = 32;
 export const MAX_EVENT_PAYLOAD_NODES = 1024;
 const MAX_SAFE_INT = 9007199254740991;
-const UINT32_MAX = 4294967295;
 const WireTimestamp = z
 	.string()
 	.min(1)
@@ -187,7 +186,6 @@ export const EventPayloadSchemas = {
 	}),
 	"provider.login_changed": z.strictObject({ providerId: EventId }),
 	"memory.embedding_download_changed": EmbeddingDownloadState,
-	"memory.records_changed": z.strictObject({}),
 	"character.imported": EventPayload({
 		characterId: EventId,
 		trust: BoundedEventValue,
@@ -202,7 +200,6 @@ export const EventPayloadSchemas = {
 		conversationId: EventId,
 		title: EventText.optional(),
 	}),
-	"conversation.selected": EventPayload({ id: EventId }),
 	"conversation.renamed": EventPayload({
 		conversationId: EventId,
 		title: EventText,
@@ -273,11 +270,6 @@ export const EventPayloadSchemas = {
 	"run.resumed": EventPayload({ runId: EventId }),
 	"companion.snapshot_changed": EventPayload({
 		conversationId: EventId,
-		commitId: z.string().min(1).max(512),
-	}),
-	"pi.session.changed": EventPayload({
-		conversationId: EventId,
-		sessionId: z.string().min(1).max(128),
 	}),
 	"codex.launched": EventPayload({
 		executor: EventText,
@@ -306,7 +298,7 @@ export const EventPayloadSchemas = {
 	}),
 	"model.enabled": EventPayload({ providerId: EventId, modelId: EventId }),
 	"model.disabled": EventPayload({ providerId: EventId, modelId: EventId }),
-	"model.defaults_changed": EventPayload({ kind: z.enum(["reply", "vision"]) }),
+	"model.defaults_changed": EventPayload({ kind: z.enum(["reply", "vision", "system"]) }),
 	"model.selected": EventPayload({
 		conversationId: EventId,
 		providerId: EventId,
@@ -403,7 +395,6 @@ export const OnboardingStateData = z.strictObject({
 	),
 	decisions: z.strictObject({
 		relationship_memory_enabled: z.boolean().optional(),
-		conversation_history_read_enabled: z.boolean().optional(),
 	}),
 });
 export const CharacterGetRequest = z.strictObject({});
@@ -431,7 +422,7 @@ const CharacterOnboardingEffect = z.discriminatedUnion("type", [
 	z.strictObject({ type: z.literal("identity.nickname") }),
 	z.strictObject({
 		type: z.literal("setting.set"),
-		setting: z.enum(["relationship_memory_enabled", "conversation_history_read_enabled"]),
+		setting: z.literal("relationship_memory_enabled"),
 		values: boundedRecord(CharacterIdentifier, z.boolean()),
 	}),
 ]);
@@ -529,13 +520,14 @@ export const CharacterWorkPresentationLabels = z.strictObject({
 export const CharacterWorkPresentation = z.strictObject({
 	labels: CharacterWorkPresentationLabels,
 });
-const CharacterRoleplayMedia = z.discriminatedUnion("kind", [
+export const CharacterMedia = z.discriminatedUnion("kind", [
 	z.strictObject({
 		id: CharacterIdentifier,
 		kind: z.literal("image"),
 		label: CharacterCopy,
+		description: CharacterCopy,
+		use_when: CharacterCopy,
 		loop: z.boolean(),
-		presentation: z.enum(["dialog", "inline"]),
 		url: z.string().min(1).max(20_000_000),
 		posterUrl: CharacterMediaUrl.optional(),
 	}),
@@ -543,8 +535,9 @@ const CharacterRoleplayMedia = z.discriminatedUnion("kind", [
 		id: CharacterIdentifier,
 		kind: z.literal("animation"),
 		label: CharacterCopy,
+		description: CharacterCopy,
+		use_when: CharacterCopy,
 		loop: z.boolean(),
-		presentation: z.enum(["dialog", "inline"]),
 		url: z.string().min(1).max(20_000_000),
 		posterUrl: CharacterMediaUrl,
 	}),
@@ -552,8 +545,9 @@ const CharacterRoleplayMedia = z.discriminatedUnion("kind", [
 		id: CharacterIdentifier,
 		kind: z.literal("audio"),
 		label: CharacterCopy,
+		description: CharacterCopy,
+		use_when: CharacterCopy,
 		loop: z.boolean(),
-		presentation: z.enum(["dialog", "inline", "ambient"]),
 		url: z.string().min(1).max(20_000_000),
 		posterUrl: CharacterMediaUrl.optional(),
 		captionsUrl: CharacterMediaUrl,
@@ -562,8 +556,9 @@ const CharacterRoleplayMedia = z.discriminatedUnion("kind", [
 		id: CharacterIdentifier,
 		kind: z.literal("video"),
 		label: CharacterCopy,
+		description: CharacterCopy,
+		use_when: CharacterCopy,
 		loop: z.boolean(),
-		presentation: z.enum(["dialog", "inline"]),
 		url: z.string().min(1).max(20_000_000),
 		posterUrl: CharacterMediaUrl.optional(),
 		captionsUrl: CharacterMediaUrl,
@@ -625,62 +620,7 @@ export const CharacterDisplay = z
 			expressions: boundedRecord(z.string().min(1).max(64), CharacterMediaUrl),
 			expressionLabels: boundedRecord(z.string().min(1).max(64), z.string().max(MAX_STRING_LENGTH)),
 		}),
-		roleplay: z.strictObject({
-			variables: z
-				.array(
-					z.strictObject({
-						id: CharacterIdentifier,
-						type: z.enum(["number", "boolean", "enum", "string"]),
-						scope: z.enum(["conversation", "global"]),
-						initial: z.union([z.string(), z.number(), z.boolean()]),
-						display: z.union([
-							z.strictObject({ kind: z.literal("hidden") }),
-							z.strictObject({ kind: z.literal("exact"), label: CharacterCopy }),
-							z.strictObject({
-								kind: z.literal("level"),
-								label: CharacterCopy,
-								levels: z
-									.array(z.strictObject({ min: z.number(), label: CharacterCopy }))
-									.min(1)
-									.max(20),
-							}),
-						]),
-						values: z.array(z.string().min(1).max(128)).min(1).max(50).optional(),
-					}),
-				)
-				.max(100),
-			media: z.array(CharacterRoleplayMedia).max(200),
-			unlockables: z
-				.array(
-					z.strictObject({
-						id: CharacterIdentifier,
-						kind: z.enum(["cg", "memory", "music", "video", "achievement"]),
-						label: CharacterCopy,
-						description: z.string().max(MAX_STRING_LENGTH),
-						media: CharacterIdentifier.optional(),
-					}),
-				)
-				.max(200),
-			choice_sets: z
-				.array(
-					z.strictObject({
-						id: CharacterIdentifier,
-						prompt: CharacterCopy,
-						choices: z
-							.array(
-								z.strictObject({
-									id: CharacterIdentifier,
-									label: CharacterCopy,
-									description: z.string().max(MAX_STRING_LENGTH).optional(),
-									message: CharacterCopy,
-								}),
-							)
-							.min(2)
-							.max(12),
-					}),
-				)
-				.max(100),
-		}),
+		media: z.array(CharacterMedia).max(200),
 	})
 	.superRefine((character, context) => {
 		const sceneIds = new Set(character.scenes.map((scene) => scene.id));
@@ -705,16 +645,6 @@ export const CharacterDisplay = z
 					code: z.ZodIssueCode.custom,
 					path: ["visual", "expressionLabels", expressionId],
 					message: "expressionLabels keys must reference listed expressions",
-				});
-			}
-		}
-		const mediaIds = new Set(character.roleplay.media.map((media) => media.id));
-		for (const [index, unlockable] of character.roleplay.unlockables.entries()) {
-			if (unlockable.media && !mediaIds.has(unlockable.media)) {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					path: ["roleplay", "unlockables", index, "media"],
-					message: "unlockable media must reference listed media",
 				});
 			}
 		}
@@ -752,6 +682,38 @@ export const CharacterPackageDocument = z.strictObject({
 });
 export const CharacterPackageResponse = z.strictObject({
 	package: CharacterPackageDocument,
+});
+
+const CharacterDeletionId = z
+	.string()
+	.min(1)
+	.max(64)
+	.regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/);
+export const CharacterDeletionStatusGetRequest = z.strictObject({
+	characterId: CharacterDeletionId,
+});
+export const CharacterDeletionStatus = z.strictObject({
+	characterId: CharacterDeletionId,
+	active: z.boolean(),
+	default: z.boolean(),
+	runtimePresent: z.boolean(),
+	packagePresent: z.boolean(),
+});
+export const CharacterDeletionStatusResponse = z.strictObject({
+	status: CharacterDeletionStatus,
+});
+export const CharacterDeleteRequest = z.strictObject({
+	characterId: CharacterDeletionId,
+});
+export const CharacterRuntimeDeleteResponse = z.strictObject({
+	characterId: CharacterDeletionId,
+	target: z.literal("runtime"),
+	deleted: z.boolean(),
+});
+export const CharacterPackageDeleteResponse = z.strictObject({
+	characterId: CharacterDeletionId,
+	target: z.literal("package"),
+	deleted: z.boolean(),
 });
 
 export const CharacterImportRequest = z.strictObject({
@@ -889,10 +851,9 @@ export const ConversationListResponse = z.strictObject({
 export const ConversationCreateRequest = z.strictObject({
 	title: z.string().max(MAX_STRING_LENGTH).optional(),
 });
-export const ConversationSelectRequest = z.strictObject({
+export const ConversationOpenRequest = z.strictObject({
 	id: ConversationId,
 });
-export const ConversationActiveGetRequest = z.strictObject({});
 export const ConversationRenameRequest = z.strictObject({
 	id: ConversationId,
 	title: z.string().min(1).max(200),
@@ -953,6 +914,18 @@ const PiTimelineAssistantMessage = z.strictObject({
 		})
 		.optional(),
 });
+export const PiMessageChoices = z.strictObject({
+	prompt: CharacterCopy,
+	items: z
+		.array(
+			z.strictObject({
+				label: CharacterCopy,
+				message: CharacterCopy,
+			}),
+		)
+		.min(2)
+		.max(8),
+});
 const PiTimelineToolResult = z.strictObject({
 	...PiTimelineBase,
 	kind: z.literal("message"),
@@ -960,6 +933,8 @@ const PiTimelineToolResult = z.strictObject({
 	toolName: z.string().min(1).max(200),
 	toolCallId: z.string().min(1).max(256),
 	status: z.union([z.literal("succeeded"), z.literal("failed")]),
+	mediaId: CharacterIdentifier.optional(),
+	choices: PiMessageChoices.optional(),
 });
 /** Security-safe direct projection of one native Pi SessionManager entry. */
 export const PiTimelineEntry = z.union([
@@ -989,32 +964,58 @@ export const PiLiveState = z.strictObject({
 export type PiLiveAssistantMessage = z.infer<typeof PiLiveAssistantMessage>;
 export type PiLiveState = z.infer<typeof PiLiveState>;
 export type PiTimeline = z.infer<typeof PiTimeline>;
-export const ConversationSelectResponse = z.strictObject({
+
+/**
+ * Transient Pi event projection. These events are never written to the Host
+ * event log: reconnecting consumers replace them with a fresh Pi snapshot.
+ */
+export const PiSessionEventType = z.enum([
+	"agent_start",
+	"agent_end",
+	"agent_settled",
+	"turn_start",
+	"turn_end",
+	"message_start",
+	"message_update",
+	"message_end",
+	"tool_execution_start",
+	"tool_execution_update",
+	"tool_execution_end",
+	"queue_update",
+	"entry_appended",
+	"session_info_changed",
+	"compaction_start",
+	"compaction_end",
+	"auto_retry_start",
+	"auto_retry_end",
+	"summarization_retry_scheduled",
+	"summarization_retry_attempt_start",
+	"summarization_retry_finished",
+	"thinking_level_changed",
+	"bash_execution_update",
+]);
+export const PiToolActivity = z.strictObject({
+	toolCallId: z.string().min(1).max(256),
+	toolName: z.string().min(1).max(200),
+	status: z.enum(["running", "succeeded", "failed"]),
+});
+export const PiSessionLiveEvent = z.strictObject({
+	sessionId: PiSessionId,
+	type: PiSessionEventType,
+	live: PiLiveState,
+	tool: PiToolActivity.optional(),
+});
+export const PiEventSubscribeResponse = z.strictObject({
+	events: z.array(PiSessionLiveEvent).max(MAX_ARRAY_LENGTH),
+});
+export const ConversationDetail = z.strictObject({
 	sessionId: PiSessionId,
 	name: z.string().max(MAX_STRING_LENGTH),
-	entries: z.array(z.unknown()).max(MAX_ARRAY_LENGTH),
-	messages: z.array(z.unknown()).max(MAX_ARRAY_LENGTH),
-	isIdle: z.boolean(),
-	isStreaming: z.boolean(),
-	streamingMessage: z.unknown().optional(),
-	errorMessage: z.string().max(4096).optional(),
-	pendingMessageCount: z.number().int().nonnegative(),
-	steeringMessages: z.array(z.string().max(65536)).max(100),
-	followUpMessages: z.array(z.string().max(65536)).max(100),
-	messageVersions: z
-		.array(
-			z.strictObject({
-				assistantEntryId: PiSessionEntryId,
-				current: z.number().int().nonnegative(),
-				leafIds: z.array(PiSessionEntryId).min(2).max(100),
-			}),
-		)
-		.max(MAX_ARRAY_LENGTH),
+	timeline: PiTimeline,
+	live: PiLiveState,
 });
-export const ConversationCreateResponse = ConversationSelectResponse;
-export const ConversationActiveResponse = z.strictObject({
-	session: ConversationSelectResponse.optional(),
-});
+export const ConversationOpenResponse = ConversationDetail;
+export const ConversationCreateResponse = ConversationDetail;
 export const MessageSendRequest = z.strictObject({
 	conversationId: ConversationId,
 	text: z.string().min(1).max(65536),
@@ -1044,9 +1045,7 @@ export const MessageBranchRequest = z.strictObject({
 	conversationId: ConversationId,
 	entryId: PiSessionEntryId,
 });
-export const MessageBranchResponse = z.strictObject({
-	leafId: PiSessionEntryId,
-});
+export const MessageBranchResponse = ConversationDetail;
 export const MessageAbortRequest = z.strictObject({
 	conversationId: ConversationId,
 });
@@ -1055,144 +1054,6 @@ export const MessageAbortRequest = z.strictObject({
 // Memory
 // ---------------------------------------------------------------------------
 
-export const MemoryScope = z.union([
-	z.literal("self"),
-	z.literal("relationship"),
-	z.literal("scene"),
-]);
-export const MemoryEntry = z
-	.strictObject({
-		id: z.string().min(1).max(128),
-		sourceEntryId: z.string().min(1).max(128).optional(),
-		kind: z.string().min(1).max(64),
-		scope: MemoryScope,
-		text: z.string().max(MAX_STRING_LENGTH),
-		createdAt: WireTimestamp,
-		updatedAt: WireTimestamp,
-		importance: z.number().finite(),
-		excluded: z.boolean().optional(),
-	})
-	.superRefine((entry, context) => {
-		if (Date.parse(entry.updatedAt) < Date.parse(entry.createdAt)) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				path: ["updatedAt"],
-				message: "updatedAt must not precede createdAt",
-			});
-		}
-	});
-export const MemoryCaptureCreatedBy = z.union([
-	z.literal("user_capture"),
-	z.literal("assistant_tool"),
-]);
-export type MemoryCaptureCreatedBy = z.infer<typeof MemoryCaptureCreatedBy>;
-const MemoryBackendId = z.string().min(1).max(128);
-export const MemoryCaptureRequest = z.strictObject({
-	conversationId: ConversationId,
-	entryId: PiSessionEntryId,
-});
-export type MemoryCaptureRequest = z.infer<typeof MemoryCaptureRequest>;
-export const MemoryCaptureResponse = z.strictObject({
-	status: z.enum([
-		"stored",
-		"already_known",
-		"no_extractable_memory",
-		"no_new_content",
-		"capture_disabled",
-		"capture_failed",
-	]),
-	reason: z.enum([
-		"memory_stored",
-		"equivalent_memory_already_stored",
-		"extractor_found_no_durable_memory",
-		"turn_already_processed",
-		"memory_capture_disabled",
-		"memory_persistence_failed",
-	]),
-	memoryIds: z.array(MemoryBackendId).max(100),
-	sourceEntryId: PiSessionEntryId,
-	createdBy: MemoryCaptureCreatedBy,
-});
-export type MemoryCaptureResponse = z.infer<typeof MemoryCaptureResponse>;
-export const MemorySearchRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
-	query: z.string().max(MAX_STRING_LENGTH),
-	scope: MemoryScope.optional(),
-});
-export const MemorySearchResponse = z.strictObject({
-	entries: z.array(MemoryEntry).max(MAX_ARRAY_LENGTH),
-});
-export const MemoryListResponse = MemorySearchResponse;
-export const MemoryListRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
-	scope: MemoryScope.optional(),
-	enabled: z.boolean().optional(),
-	limit: z.number().int().safe().min(1).max(100).optional(),
-});
-export const MemoryForgetRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
-	entryId: z.string().min(1).max(128),
-});
-
-export const MemoryCandidate = z.strictObject({
-	id: z.string().min(1).max(64),
-	kind: z.union([
-		z.literal("fact"),
-		z.literal("preference"),
-		z.literal("event"),
-		z.literal("self_canon_summary"),
-	]),
-	sourceKind: z.union([
-		z.literal("user_button"),
-		z.literal("user_request"),
-		z.literal("companion_suggestion"),
-		z.literal("extractor"),
-	]),
-	normalizedText: z.string().max(MAX_STRING_LENGTH),
-	why: z.string().max(MAX_STRING_LENGTH),
-	suggestedScope: MemoryScope,
-	status: z.union([
-		z.literal("pending"),
-		z.literal("approved"),
-		z.literal("rejected"),
-		z.literal("expired"),
-	]),
-	createdAt: WireTimestamp,
-});
-export const MemoryCandidatesListRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
-	status: z
-		.union([
-			z.literal("pending"),
-			z.literal("approved"),
-			z.literal("rejected"),
-			z.literal("expired"),
-		])
-		.optional(),
-});
-export const MemoryCandidatesListResponse = z.strictObject({
-	candidates: z.array(MemoryCandidate).max(MAX_ARRAY_LENGTH),
-});
-export const MemoryCandidateApproveRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
-	candidateId: z.string().min(1).max(64),
-	editedText: z.string().max(MAX_STRING_LENGTH).optional(),
-	decidedScope: MemoryScope.optional(),
-});
-export const MemoryCandidateRejectRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
-	candidateId: z.string().min(1).max(64),
-});
-export const MemoryExcludeRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
-	memoryId: z.string().min(1).max(128),
-	excluded: z.boolean(),
-});
-export const MemoryEditRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
-	entryId: z.string().min(1).max(128),
-	newText: z.string().min(1).max(MAX_STRING_LENGTH),
-});
 export const LocalEmbeddingCandidate = z.strictObject({
 	id: z.string().min(1).max(200),
 	name: z.string().min(1).max(MAX_STRING_LENGTH),
@@ -1542,6 +1403,7 @@ export const ModelDefaultsGetRequest = z.strictObject({});
 export const ModelDefaultsGetResponse = z.strictObject({
 	reply: ModelRoute.optional(),
 	vision: VisionModelDefault,
+	onboardingComplete: z.boolean(),
 });
 export const ModelDefaultsSetReplyRequest = z.strictObject({
 	reply: ModelRoute.nullable(),
@@ -1549,6 +1411,20 @@ export const ModelDefaultsSetReplyRequest = z.strictObject({
 export const ModelDefaultsSetReplyResponse = ModelDefaultsGetResponse;
 export const ModelDefaultsSetVisionRequest = VisionModelDefault;
 export const ModelDefaultsSetVisionResponse = ModelDefaultsGetResponse;
+export const SystemModelDefaultsGetRequest = z.strictObject({});
+export const SystemModelDefaultsGetResponse = z.strictObject({
+	reply: ModelRoute.optional(),
+	vision: VisionModelDefault,
+});
+export const SystemModelDefaultsSetRequest = z.strictObject({
+	reply: ModelRoute,
+	vision: VisionModelDefault,
+});
+export const SystemModelDefaultsSetResponse = SystemModelDefaultsGetResponse;
+export const ModelDefaultsInitializeRequest = z.strictObject({});
+export const ModelDefaultsInitializeResponse = ModelDefaultsGetResponse;
+export const ModelDefaultsCompleteOnboardingRequest = z.strictObject({});
+export const ModelDefaultsCompleteOnboardingResponse = ModelDefaultsGetResponse;
 export const ModelRouteGetRequest = z.strictObject({
 	conversationId: ConversationId,
 });
@@ -1654,6 +1530,27 @@ export const RunStatus = z.union([
 	z.literal("interrupted"),
 	z.literal("forced_termination"),
 ]);
+export const ArtifactStatus = z.enum([
+	"created",
+	"verified",
+	"verification_failed",
+	"adopted",
+	"saved",
+]);
+export const RunEvidenceSummary = z.strictObject({
+	kind: z.string().min(1).max(128),
+	summary: z.string().min(1).max(512).optional(),
+	createdAt: WireTimestamp,
+});
+export const ArtifactSummary = z.strictObject({
+	id: z.string().min(1).max(64),
+	name: z.string().min(1).max(1024),
+	mime: z.string().min(1).max(255),
+	bytes: z.number().int().safe().nonnegative(),
+	sha256: z.string().regex(/^[0-9a-f]{64}$/),
+	status: ArtifactStatus,
+	createdAt: WireTimestamp,
+});
 export const Run = z
 	.strictObject({
 		id: z.string().min(1).max(64),
@@ -1662,16 +1559,9 @@ export const Run = z
 		executorProfile: z.string().min(1).max(64),
 		title: z.string().min(1).max(80),
 		status: RunStatus,
-		artifacts: z
-			.array(
-				z.strictObject({
-					id: z.string().min(1).max(64),
-					name: z.string().min(1).max(1024),
-					mime: z.string().min(1).max(255),
-					bytes: z.number().int().safe().nonnegative(),
-				}),
-			)
-			.max(1000),
+		artifacts: z.array(ArtifactSummary).max(1000),
+		summary: z.string().max(MAX_STRING_LENGTH).optional(),
+		evidence: z.array(RunEvidenceSummary).max(20),
 		permission: EventPayloadSchemas["run.needs_user"].optional(),
 		startedAt: WireTimestamp.optional(),
 		completedAt: WireTimestamp.optional(),
@@ -1694,6 +1584,33 @@ export const RunListResponse = z.strictObject({
 	runs: z.array(Run).max(10),
 });
 export const RunResponse = Run;
+
+// ---------------------------------------------------------------------------
+// Run-owned Artifacts
+// ---------------------------------------------------------------------------
+
+export const MAX_ARTIFACT_READ_BYTES = 1024 * 1024;
+export const ArtifactIdentity = z.strictObject({
+	conversationId: ConversationId,
+	runId: z.string().min(1).max(64),
+	artifactId: z.string().min(1).max(64),
+});
+export const ArtifactReadRequest = z.strictObject({
+	...ArtifactIdentity.shape,
+	offset: z.number().int().safe().nonnegative().optional(),
+	length: z.number().int().safe().min(1).max(MAX_ARTIFACT_READ_BYTES).optional(),
+});
+export const ArtifactReadResponse = z.strictObject({
+	artifact: ArtifactSummary,
+	offset: z.number().int().safe().nonnegative(),
+	nextOffset: z.number().int().safe().nonnegative(),
+	eof: z.boolean(),
+	base64: z.string().max(Math.ceil(MAX_ARTIFACT_READ_BYTES / 3) * 4 + 4),
+});
+export const ArtifactActionRequest = ArtifactIdentity;
+export const ArtifactActionResponse = z.strictObject({
+	outcome: z.enum(["completed", "cancelled", "unsupported"]),
+});
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -1727,77 +1644,83 @@ const NetworkProxySettings = z
 			});
 		}
 	});
-const MemoryVectorServiceSettings = z
-	.strictObject({
-		enabled: z.boolean(),
-		provider: z.union([z.literal("none"), z.literal("remote"), z.literal("local")]),
-		baseUrl: z.string().min(1).max(2048).optional(),
-		apiKey: z.string().min(1).max(8192).optional(),
-		model: z.string().min(1).max(200).optional(),
-		dimensions: z.number().int().safe().positive().max(65536).optional(),
-		localModel: z.string().min(1).max(200).optional(),
-		customPath: z.string().min(1).max(4096).optional(),
-	})
-	.superRefine((value, context) => {
-		if (value.provider === "none" && value.enabled) {
+const MemoryVectorServiceBase = z.strictObject({
+	enabled: z.boolean(),
+	provider: z.union([z.literal("none"), z.literal("remote"), z.literal("local")]),
+	baseUrl: z.string().min(1).max(2048).optional(),
+	model: z.string().min(1).max(200).optional(),
+	dimensions: z.number().int().safe().positive().max(65536).optional(),
+	localModel: z.string().min(1).max(200).optional(),
+	customPath: z.string().min(1).max(4096).optional(),
+});
+function validateMemoryVectorService(
+	value: z.infer<typeof MemoryVectorServiceBase>,
+	context: z.RefinementCtx<z.infer<typeof MemoryVectorServiceBase>>,
+): void {
+	if (value.provider === "none" && value.enabled) {
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			path: ["enabled"],
+			message: "embedding cannot be enabled without a provider",
+		});
+	}
+	if (value.provider !== "none" && !value.enabled) {
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			path: ["enabled"],
+			message: "a selected embedding provider must be enabled",
+		});
+	}
+	if (
+		value.provider === "local" &&
+		value.enabled &&
+		Boolean(value.localModel) === Boolean(value.customPath)
+	) {
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			path: ["localModel"],
+			message: "exactly one local embedding model source is required",
+		});
+	}
+	if (value.provider !== "remote" || !value.enabled) return;
+	for (const key of ["baseUrl", "model"] as const) {
+		if (!value[key])
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
-				path: ["enabled"],
-				message: "embedding cannot be enabled without a provider",
+				path: [key],
+				message: `${key} is required for remote embedding`,
 			});
-		}
-		if (value.provider !== "none" && !value.enabled) {
+	}
+	if (!value.dimensions)
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			path: ["dimensions"],
+			message: "positive dimensions are required for remote embedding",
+		});
+	if (value.baseUrl) {
+		try {
+			const url = new URL(value.baseUrl);
+			if (!["http:", "https:"].includes(url.protocol) || url.username || url.password)
+				throw new Error();
+		} catch {
 			context.addIssue({
 				code: z.ZodIssueCode.custom,
-				path: ["enabled"],
-				message: "a selected embedding provider must be enabled",
+				path: ["baseUrl"],
+				message: "remote embedding URL must be HTTP(S) and cannot contain credentials",
 			});
 		}
-		if (
-			value.provider === "local" &&
-			value.enabled &&
-			Boolean(value.localModel) === Boolean(value.customPath)
-		) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				path: ["localModel"],
-				message: "exactly one local embedding model source is required",
-			});
-		}
-		if (value.provider !== "remote" || !value.enabled) return;
-		for (const key of ["baseUrl", "apiKey", "model"] as const) {
-			if (!value[key])
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					path: [key],
-					message: `${key} is required for remote embedding`,
-				});
-		}
-		if (!value.dimensions)
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				path: ["dimensions"],
-				message: "positive dimensions are required for remote embedding",
-			});
-		if (value.baseUrl) {
-			try {
-				const url = new URL(value.baseUrl);
-				if (!["http:", "https:"].includes(url.protocol) || url.username || url.password)
-					throw new Error();
-			} catch {
-				context.addIssue({
-					code: z.ZodIssueCode.custom,
-					path: ["baseUrl"],
-					message: "remote embedding URL must be HTTP(S) and cannot contain credentials",
-				});
-			}
-		}
-	});
+	}
+}
+const MemoryVectorServiceSettings = MemoryVectorServiceBase.extend({
+	hasCredential: z.boolean().optional(),
+}).superRefine(validateMemoryVectorService);
+const MemoryVectorServiceInput = MemoryVectorServiceBase.extend({
+	apiKey: z.string().min(1).max(8192).optional(),
+}).superRefine(validateMemoryVectorService);
 
 export const SettingsData = z.strictObject({
 	firstRunStage: z.union([z.literal("model"), z.literal("embedding"), z.literal("role")]),
 	relationshipMemoryEnabled: z.boolean(),
-	conversationHistoryReadEnabled: z.boolean(),
 	networkProxy: NetworkProxySettings,
 	memoryVectorService: MemoryVectorServiceSettings,
 	modelDownloadSource: z.discriminatedUnion("type", [
@@ -1825,9 +1748,8 @@ export const SettingsResponse = z.strictObject({
 export const SettingsPatch = z.strictObject({
 	firstRunStage: SettingsData.shape.firstRunStage.optional(),
 	relationshipMemoryEnabled: z.boolean().optional(),
-	conversationHistoryReadEnabled: z.boolean().optional(),
 	networkProxy: NetworkProxySettings.optional(),
-	memoryVectorService: MemoryVectorServiceSettings.optional(),
+	memoryVectorService: MemoryVectorServiceInput.optional(),
 	modelDownloadSource: SettingsData.shape.modelDownloadSource.optional(),
 });
 export const SettingsSetRequest = z.strictObject({
@@ -1883,6 +1805,10 @@ export const AuditEntryKind = z.union([
 	z.literal("fsop"),
 	z.literal("memory"),
 	z.literal("config"),
+	z.literal("conversation"),
+	z.literal("companion_state"),
+	z.literal("canon"),
+	z.literal("artifact"),
 ]);
 export const AuditEntry = z.strictObject({
 	id: z.string().min(1).max(128),
@@ -1939,21 +1865,9 @@ export const ProviderOverrideBaseUrlRequest = z.strictObject({
 // Composed boot snapshot
 // ---------------------------------------------------------------------------
 
-export const ConversationSnapshot = z.strictObject({
-	session: ConversationSelectResponse.optional(),
-});
-export const MemorySnapshot = z.strictObject({
-	entries: z.array(MemoryEntry).max(MAX_ARRAY_LENGTH).optional(),
-});
 export const CompanionDisplayState = z.strictObject({
 	sceneId: z.string().min(1).max(64),
 	expressionId: z.string().min(1).max(64),
-	surfaces: z.strictObject({
-		ambient: z.string().min(1).max(64).nullable(),
-		inline: z.string().min(1).max(64).nullable(),
-		modal: z.string().min(1).max(64).nullable(),
-		choices: z.string().min(1).max(64).nullable(),
-	}),
 });
 export const CompanionConversationState = z.strictObject({
 	character: z.strictObject({
@@ -1969,9 +1883,12 @@ export const CompanionConversationState = z.strictObject({
 		display: z.number().int().safe().nonnegative(),
 	}),
 });
-export const CompanionStateSnapshot = z.strictObject({
+export const CompanionStateGetRequest = z.strictObject({
+	conversationId: ConversationId,
+});
+export const CompanionStateResponse = z.strictObject({
 	schema: BoundedEventValue,
-	byConversation: boundedRecord(ConversationId, CompanionConversationState),
+	state: CompanionConversationState,
 });
 export const CharacterStateRevisions = z.strictObject({
 	conversation: z.number().int().safe().nonnegative(),
@@ -1982,29 +1899,26 @@ export const CharacterStateDocument = z.strictObject({
 	revisions: CharacterStateRevisions,
 	schemaHash: z.string().min(64).max(64),
 });
-const JsonPatchPath = z.string().min(1).max(512).regex(/^\//u);
-export const CompanionStatePatchOperation = z.discriminatedUnion("op", [
-	z.strictObject({ op: z.literal("add"), path: JsonPatchPath, value: BoundedEventValue }),
-	z.strictObject({ op: z.literal("replace"), path: JsonPatchPath, value: BoundedEventValue }),
-	z.strictObject({ op: z.literal("remove"), path: JsonPatchPath }),
-	z.strictObject({ op: z.literal("test"), path: JsonPatchPath, value: BoundedEventValue }),
-]);
-export const CompanionStatePatchRequest = z.strictObject({
+const StatePath = z
+	.string()
+	.min(1)
+	.max(512)
+	.regex(/^\/(?:character|display)\//u);
+export const CompanionStateChange = z.strictObject({
+	path: StatePath,
+	value: BoundedEventValue,
+});
+export const CompanionStateUpdateRequest = z.strictObject({
 	conversationId: ConversationId,
-	expectedRevisions: CharacterStateRevisions,
-	operations: z.array(CompanionStatePatchOperation).min(1).max(20),
-	dedupeKey: z.string().uuid(),
+	changes: z.array(CompanionStateChange).min(1).max(50),
 });
 export const SnapshotGetRequest = z.strictObject({});
 export const SnapshotResponse = z.strictObject({
 	eventSeq: EventSeq,
 	onboarding: OnboardingResponse.optional(),
 	character: CharacterDisplay.optional(),
-	conversation: ConversationSnapshot.optional(),
-	memory: MemorySnapshot.optional(),
 	provider: ProviderListResponse.optional(),
 	model: ModelSnapshot.optional(),
-	companion: CompanionStateSnapshot.optional(),
 	settings: SettingsData.optional(),
 });
 
@@ -2064,6 +1978,24 @@ export const RPC = {
 			"character.packageUpdate:v1",
 			CharacterPackageUpdateRequest,
 			CharacterPackageResponse,
+			"mutation",
+		),
+		deletionStatusGet: endpoint(
+			"character.deletionStatusGet:v1",
+			CharacterDeletionStatusGetRequest,
+			CharacterDeletionStatusResponse,
+			"query",
+		),
+		runtimeDelete: endpoint(
+			"character.runtimeDelete:v1",
+			CharacterDeleteRequest,
+			CharacterRuntimeDeleteResponse,
+			"mutation",
+		),
+		packageDelete: endpoint(
+			"character.packageDelete:v1",
+			CharacterDeleteRequest,
+			CharacterPackageDeleteResponse,
 			"mutation",
 		),
 		import: endpoint("character.import:v1", CharacterImportRequest, CharacterResponse, "mutation"),
@@ -2129,9 +2061,15 @@ export const RPC = {
 		),
 	},
 	companionState: {
-		patch: endpoint(
-			"companionState.patch:v1",
-			CompanionStatePatchRequest,
+		get: endpoint(
+			"companionState.get:v1",
+			CompanionStateGetRequest,
+			CompanionStateResponse,
+			"query",
+		),
+		update: endpoint(
+			"companionState.update:v1",
+			CompanionStateUpdateRequest,
 			EmptyResponse,
 			"mutation",
 		),
@@ -2166,16 +2104,10 @@ export const RPC = {
 			ConversationCreateResponse,
 			"mutation",
 		),
-		select: endpoint(
-			"conversation.select:v1",
-			ConversationSelectRequest,
-			ConversationSelectResponse,
-			"mutation",
-		),
-		activeGet: endpoint(
-			"conversation.activeGet:v1",
-			ConversationActiveGetRequest,
-			ConversationActiveResponse,
+		open: endpoint(
+			"conversation.open:v1",
+			ConversationOpenRequest,
+			ConversationOpenResponse,
 			"query",
 		),
 		rename: endpoint(
@@ -2187,13 +2119,13 @@ export const RPC = {
 		archive: endpoint(
 			"conversation.archive:v1",
 			ConversationArchiveRequest,
-			ConversationActiveResponse,
+			EmptyResponse,
 			"mutation",
 		),
 		delete: endpoint(
 			"conversation.delete:v1",
 			ConversationDeleteRequest,
-			ConversationActiveResponse,
+			EmptyResponse,
 			"mutation",
 		),
 	},
@@ -2217,12 +2149,6 @@ export const RPC = {
 		abort: endpoint("message.abort:v1", MessageAbortRequest, EmptyResponse, "mutation"),
 	},
 	memory: {
-		search: endpoint("memory.search:v1", MemorySearchRequest, MemorySearchResponse, "query"),
-		list: endpoint("memory.list:v1", MemoryListRequest, MemoryListResponse, "query"),
-		capture: endpoint("memory.capture:v1", MemoryCaptureRequest, MemoryCaptureResponse, "mutation"),
-		forget: endpoint("memory.forget:v1", MemoryForgetRequest, EmptyResponse, "mutation"),
-		edit: endpoint("memory.edit:v1", MemoryEditRequest, EmptyResponse, "mutation"),
-		exclude: endpoint("memory.exclude:v1", MemoryExcludeRequest, EmptyResponse, "mutation"),
 		localEmbeddingDownloadStatus: endpoint(
 			"memory.localEmbeddingDownloadStatus:v1",
 			z.strictObject({}),
@@ -2239,24 +2165,6 @@ export const RPC = {
 			"memory.configureLocalEmbedding:v1",
 			MemoryConfigureLocalEmbeddingRequest,
 			MemoryConfigureLocalEmbeddingResponse,
-			"mutation",
-		),
-		candidatesList: endpoint(
-			"memory.candidates.list:v1",
-			MemoryCandidatesListRequest,
-			MemoryCandidatesListResponse,
-			"query",
-		),
-		candidateApprove: endpoint(
-			"memory.candidate.approve:v1",
-			MemoryCandidateApproveRequest,
-			EmptyResponse,
-			"mutation",
-		),
-		candidateReject: endpoint(
-			"memory.candidate.reject:v1",
-			MemoryCandidateRejectRequest,
-			EmptyResponse,
 			"mutation",
 		),
 	},
@@ -2369,6 +2277,30 @@ export const RPC = {
 			ModelDefaultsSetVisionResponse,
 			"mutation",
 		),
+		systemDefaultsGet: endpoint(
+			"model.systemDefaults.get:v1",
+			SystemModelDefaultsGetRequest,
+			SystemModelDefaultsGetResponse,
+			"query",
+		),
+		systemDefaultsSet: endpoint(
+			"model.systemDefaults.set:v1",
+			SystemModelDefaultsSetRequest,
+			SystemModelDefaultsSetResponse,
+			"mutation",
+		),
+		defaultsInitialize: endpoint(
+			"model.defaults.initialize:v1",
+			ModelDefaultsInitializeRequest,
+			ModelDefaultsInitializeResponse,
+			"mutation",
+		),
+		defaultsCompleteOnboarding: endpoint(
+			"model.defaults.completeOnboarding:v1",
+			ModelDefaultsCompleteOnboardingRequest,
+			ModelDefaultsCompleteOnboardingResponse,
+			"mutation",
+		),
 		routeGet: endpoint("model.route.get:v1", ModelRouteGetRequest, ModelRouteGetResponse, "query"),
 		routeSet: endpoint(
 			"model.route.set:v1",
@@ -2407,6 +2339,22 @@ export const RPC = {
 			"run.respondPermission:v1",
 			RunRespondPermissionRequest,
 			RunResponse,
+			"mutation",
+		),
+	},
+	artifact: {
+		read: endpoint("artifact.read:v1", ArtifactReadRequest, ArtifactReadResponse, "query"),
+		open: endpoint("artifact.open:v1", ArtifactActionRequest, ArtifactActionResponse, "mutation"),
+		reveal: endpoint(
+			"artifact.reveal:v1",
+			ArtifactActionRequest,
+			ArtifactActionResponse,
+			"mutation",
+		),
+		saveAs: endpoint(
+			"artifact.saveAs:v1",
+			ArtifactActionRequest,
+			ArtifactActionResponse,
 			"mutation",
 		),
 	},

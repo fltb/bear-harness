@@ -13,11 +13,6 @@
 
 export type {
 	IpcError,
-	MemoryCaptureCreatedBy,
-	MemoryCaptureRequest,
-	MemoryCaptureResponse,
-	MemoryEditRequest,
-	MemoryForgetRequest,
 	ProviderCustomUpsertRequest,
 	ProviderImportPiConfigRequest,
 	ProviderImportPiConfigResponse,

@@ -1,9 +1,39 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
+import { createSignal, Show } from "solid-js";
+import { useCompanionStore } from "../stores/companion.js";
+import { ModelSelector, modelRouteKey } from "./ModelSelector.js";
 import { ProviderSetup } from "./ProviderSetup.js";
 
-/** System-level provider membership and credentials. Model choices live in shared model fields. */
+/** Installation-wide provider membership, credentials and defaults for newly created characters. */
 export function SystemModelSettings() {
 	const [t] = useTranslation(undefined, { i18n });
+	const store = useCompanionStore();
+	const [saving, setSaving] = createSignal(false);
+	const [error, setError] = createSignal<string | null>(null);
+	const models = () => store.model.models();
+	const defaults = () => store.model.data().systemDefaults;
+	const visionRoute = () => {
+		const vision = defaults().vision;
+		return vision.mode === "manual" ? vision.route : undefined;
+	};
+	const byRoute = (route?: { providerId: string; modelId: string }) =>
+		route
+			? (models().find((model) => modelRouteKey(model) === modelRouteKey(route)) ?? null)
+			: null;
+	const save = async (
+		reply: { providerId: string; modelId: string },
+		vision: Parameters<typeof store.model.setSystemDefaults>[1],
+	) => {
+		setSaving(true);
+		setError(null);
+		try {
+			await store.model.setSystemDefaults(reply, vision);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setSaving(false);
+		}
+	};
 	return (
 		<section class="model-settings" aria-labelledby="system-model-settings-heading">
 			<div class="settings-group-heading">
@@ -11,6 +41,48 @@ export function SystemModelSettings() {
 				<p class="field-hint">{t("settings.systemModelSettingsHint")}</p>
 			</div>
 			<ProviderSetup class="system-provider-setup" />
+			<Show when={error()}>
+				{(message) => (
+					<p class="status-line err" role="alert">
+						{message()}
+					</p>
+				)}
+			</Show>
+			<ModelSelector
+				models={models()}
+				value={byRoute(defaults().reply)}
+				class="field"
+				label={t("settings.systemDefaultReplyModel")}
+				disabled={saving()}
+				onModelChange={(model) => {
+					if (model)
+						void save({ providerId: model.providerId, modelId: model.modelId }, defaults().vision);
+				}}
+			/>
+			<p class="field-hint">{t("settings.systemDefaultReplyModelHint")}</p>
+			<ModelSelector
+				models={models().filter((model) => model.supportsImages)}
+				value={byRoute(visionRoute())}
+				class="field"
+				label={t("settings.systemDefaultVisionModel")}
+				autoLabel={t("settings.noFallback")}
+				includeAuto
+				disabled={saving() || !defaults().reply}
+				onModelChange={(model) => {
+					const reply = defaults().reply;
+					if (!reply) return;
+					void save(
+						reply,
+						model
+							? {
+									mode: "manual",
+									route: { providerId: model.providerId, modelId: model.modelId },
+								}
+							: { mode: "auto" },
+					);
+				}}
+			/>
+			<p class="field-hint">{t("settings.systemDefaultVisionModelHint")}</p>
 		</section>
 	);
 }

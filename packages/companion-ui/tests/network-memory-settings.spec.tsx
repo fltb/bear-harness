@@ -54,7 +54,6 @@ describe("NetworkAndMemorySettings", () => {
 				data: {
 					settings: {
 						relationshipMemoryEnabled: false,
-						conversationHistoryReadEnabled: false,
 						networkProxy: { mode: "direct" as const },
 						memoryVectorService: {
 							enabled: true,
@@ -103,7 +102,6 @@ describe("NetworkAndMemorySettings", () => {
 				data: {
 					settings: {
 						relationshipMemoryEnabled: false,
-						conversationHistoryReadEnabled: false,
 						networkProxy: { mode: "direct" as const },
 						memoryVectorService: {
 							enabled: true,
@@ -142,7 +140,6 @@ describe("NetworkAndMemorySettings", () => {
 				data: {
 					settings: {
 						relationshipMemoryEnabled: false,
-						conversationHistoryReadEnabled: false,
 						networkProxy: { mode: "direct" as const },
 						memoryVectorService: { enabled: false, provider: "none" as const },
 						modelDownloadSource: { type: "official" as const },
@@ -183,13 +180,14 @@ describe("NetworkAndMemorySettings", () => {
 				data: {
 					settings: {
 						relationshipMemoryEnabled: false,
-						conversationHistoryReadEnabled: false,
 						networkProxy: { mode: "direct" as const },
 						memoryVectorService: {
 							enabled: true,
 							provider: "remote" as const,
+							baseUrl: "https://embedding.example/v1",
 							model: "unlisted-model",
 							dimensions: 1,
+							hasCredential: true,
 						},
 						modelDownloadSource: { type: "official" },
 					},
@@ -243,6 +241,9 @@ describe("NetworkAndMemorySettings", () => {
 				.getAllByRole("radio")
 				.map((radio) => radio.getAttribute("value")),
 		).toEqual(["remote"]);
+		const apiKeyInput = within(backstage).getByLabelText(zhCN.settings.apiKeyLabel);
+		expect(apiKeyInput).toHaveValue("");
+		expect(apiKeyInput).toHaveAttribute("placeholder", zhCN.settings.apiKeyStoredPlaceholder);
 
 		await user.click(selectTrigger(backstage, zhCN.settings.vectorPreset));
 		const preset = await screen.findByRole("option", {
@@ -259,6 +260,9 @@ describe("NetworkAndMemorySettings", () => {
 				}),
 			}),
 		);
+		const embeddingPatch = settingsSet.mock.calls.at(-1)?.[0].settings.memoryVectorService;
+		expect(embeddingPatch).not.toHaveProperty("apiKey");
+		expect(embeddingPatch).not.toHaveProperty("hasCredential");
 	});
 
 	it("loads proxy settings from the store on mount", async () => {
@@ -409,7 +413,6 @@ describe("NetworkAndMemorySettings", () => {
 				data: {
 					settings: {
 						relationshipMemoryEnabled: false,
-						conversationHistoryReadEnabled: false,
 						networkProxy: { mode: "direct" as const },
 						memoryVectorService: {
 							enabled: true,
@@ -460,7 +463,6 @@ describe("NetworkAndMemorySettings", () => {
 				data: {
 					settings: {
 						relationshipMemoryEnabled: false,
-						conversationHistoryReadEnabled: false,
 						networkProxy: { mode: "direct" as const },
 						memoryVectorService: {
 							enabled: true,
@@ -586,7 +588,6 @@ describe("NetworkAndMemorySettings", () => {
 				data: {
 					settings: {
 						relationshipMemoryEnabled: false,
-						conversationHistoryReadEnabled: false,
 						networkProxy: { mode: "direct" as const },
 						memoryVectorService: {
 							enabled: true,

@@ -9,9 +9,15 @@ import { CompanionStateStore } from "../src/companion/companion-store.js";
 import { registerHostTools } from "../src/companion/host-tool-register.js";
 import {
 	type CharacterStateDefinition,
+	characterStatePrompt,
 	compileCharacterStateSchema,
 } from "../src/companion/state-schema.js";
-import { Database, MIGRATIONS } from "../src/storage/database.js";
+import {
+	COMPANION_MIGRATIONS,
+	CompanionDatabase,
+	SYSTEM_MIGRATIONS,
+	SystemDatabase,
+} from "../src/storage/database.js";
 import { EventBus } from "../src/storage/event-bus.js";
 import { conversations } from "../src/storage/schema.js";
 
@@ -21,232 +27,199 @@ afterEach(() => {
 });
 
 function fixture() {
-	const root = mkdtempSync(join(tmpdir(), "bear-resources-projection-"));
+	const root = mkdtempSync(join(tmpdir(), "bear-state-"));
 	roots.push(root);
-	const database = new Database(root);
-	database.migrate(MIGRATIONS);
+	const system = new SystemDatabase(join(root, "system", "settings.db"));
+	const database = new CompanionDatabase(
+		join(root, "companions", "jizhou", "runtime.db"),
+		"jizhou",
+	);
+	system.migrate(SYSTEM_MIGRATIONS);
+	database.migrate(COMPANION_MIGRATIONS);
+	database.ensureRuntimeIdentity();
 	const loader = new CharacterLoader(resolve(import.meta.dirname, "../../../config/characters"));
 	const character = loader.load("jizhou");
 	if (!character) throw new Error("missing default character");
-	loader.seed(database.orm, new EventBus(database.orm), character);
+	loader.seed(system.orm, database.orm, new EventBus(database.orm), character);
+	system.close();
 	database.orm
 		.insert(conversations)
 		.values({ id: "conversation", companionId: character.id })
 		.run();
-	const companionStore = new CompanionStateStore(database.orm);
-	return {
-		database,
-		character,
-		companionStore,
-	};
+	const store = new CompanionStateStore(database.orm);
+	return { database, character, store };
 }
 
-describe("companion state projection", () => {
-	it("reads eligible Character Skill instructions without creating per-turn state", async () => {
-		const { database, character, companionStore } = fixture();
-		const tools = registerHostTools({
-			sessionId: () => "conversation",
-			character: () => character,
-			store: companionStore,
-		});
-		const first = await tools.role_skill?.execute("call-1", {
-			action: "read",
-			skillId: "undelivered-report",
-		});
-		const second = await tools.role_skill?.execute("call-2", {
-			action: "read",
-			skillId: "undelivered-report",
-		});
-		expect(first?.content[0]).toMatchObject({
-			type: "text",
-			text: expect.stringContaining('<resource id="entry">'),
-		});
-		const firstText = first?.content[0]?.type === "text" ? first.content[0].text : "";
-		expect(firstText).toContain("## Display 映射");
-		expect(firstText).not.toContain("scene-relay-room.webp");
-		expect(second?.content).toEqual(first?.content);
-		expect(companionStore.project(character.id, "conversation", character.state).revisions).toEqual(
-			{
-				global: 0,
-				conversation: 0,
-			},
-		);
-		database.close();
-	});
+function failure(run: () => unknown) {
+	try {
+		run();
+	} catch (error) {
+		return error;
+	}
+	throw new Error("expected operation to fail");
+}
 
-	it("exposes action-specific role-skill and JSON Patch state schemas", () => {
+describe("companion state", () => {
+	it("exposes a small read/update Host tool without permission protocol", () => {
 		const tools = registerHostTools({} as never);
-		expect(JSON.stringify(tools.role_skill?.parameters)).toContain('"skillId"');
-		const stateSchema = JSON.stringify(tools.host_state?.parameters);
-		expect(stateSchema).toContain('"RFC 6902 operations');
-		expect(stateSchema).toContain('"replace"');
-		expect(stateSchema).toContain("/display");
-		expect(stateSchema).not.toContain('"display":{"type":"object"');
+		const schema = JSON.stringify(tools.host_state?.parameters);
+		expect(schema).toContain('"action"');
+		expect(schema).toContain('"update"');
+		expect(schema).toContain('"changes"');
+		expect(schema).toContain('"path"');
+		expect(schema).toContain('"value"');
+		expect(schema).not.toContain("operations");
+		expect(schema).not.toContain("skillId");
+		expect(schema).not.toContain("evidence");
+		expect(schema).not.toContain("expectedRevision");
 	});
 
-	it("exposes natural-language choices without an event transition path", () => {
-		const { database, character, companionStore } = fixture();
-		expect(character.roleplay.choice_sets.flatMap((set) => set.choices)).toSatisfy(
-			(choices: Array<Record<string, unknown>>) =>
-				choices.every((choice) => typeof choice.message === "string" && !("event" in choice)),
-		);
-		expect(
-			companionStore.project(character.id, "conversation", character.state).document,
-		).toMatchObject({
-			continuity: { stage: 0, response: "unopened" },
-		});
-		database.close();
-	});
-
-	it("reads presentation only from the unified conversation display snapshot", () => {
-		const { database, character, companionStore } = fixture();
-		companionStore.writeCompanion({
-			companionId: character.id,
-			conversationId: "conversation",
-			definition: character.state,
-			operations: [{ op: "replace", path: "/display/surfaces/inline", value: "continuity_light" }],
-			authority: "model",
-			evidence: true,
-			character,
-		});
-		expect(companionStore.snapshot(character, "conversation").display.surfaces.inline).toBe(
-			"continuity_light",
-		);
-		database.close();
-	});
-
-	it("commits Character progress and its Display projection in one transaction", async () => {
-		const { database, character, companionStore } = fixture();
-		companionStore.writeCompanion({
-			companionId: character.id,
-			conversationId: "conversation",
-			definition: character.state,
-			operations: [
-				{
-					op: "replace",
-					path: "/character/story/undelivered_report/phase",
-					value: "invited",
-				},
-				{
-					op: "replace",
-					path: "/character/story/undelivered_report/status",
-					value: "active",
-				},
+	it("returns declared media and response-specific choices as stateless Pi tool details", async () => {
+		const media = {
+			id: "signal",
+			kind: "image" as const,
+			label: "Signal",
+			description: "A damaged signal.",
+			use_when: "When the user opens the signal record.",
+			loop: false,
+			url: "data:image/png;base64,aW1hZ2U=",
+		};
+		const tools = registerHostTools({ character: () => ({ media: [media] }) } as never);
+		const shown = await tools.host_media?.execute("media-call", { id: media.id });
+		expect(shown?.details).toMatchObject({ ok: true, data: { mediaId: media.id } });
+		const missing = await tools.host_media?.execute("missing-call", { id: "missing" });
+		expect(missing?.details).toMatchObject({ ok: false, code: "character_media_not_found" });
+		const choices = await tools.host_choices?.execute("choices-call", {
+			prompt: "Continue?",
+			choices: [
+				{ label: "Continue", message: "Continue." },
+				{ label: "Pause", message: "Pause." },
 			],
-			authority: "skill:undelivered-report",
-			evidence: true,
-			character,
 		});
+		expect(choices?.details).toMatchObject({
+			ok: true,
+			data: {
+				prompt: "Continue?",
+				items: [
+					{ label: "Continue", message: "Continue." },
+					{ label: "Pause", message: "Pause." },
+				],
+			},
+		});
+	});
+
+	it("updates simple Character values and Display in one optional batch", async () => {
+		const { database, character, store } = fixture();
 		const tools = registerHostTools({
 			sessionId: () => "conversation",
 			character: () => character,
-			store: companionStore,
-		});
+			store,
+		} as never);
 		const result = await tools.host_state?.execute("call", {
 			action: "update",
-			skillId: "undelivered-report",
-			evidence: { user: "inspect" },
-			operations: [
-				{
-					op: "replace",
-					path: "/character/story/undelivered_report/phase",
-					value: "signal_examined",
-				},
-				{
-					op: "replace",
-					path: "/character/story/undelivered_report/position",
-					value: "evidence",
-				},
-				{
-					op: "replace",
-					path: "/display/surfaces/inline",
-					value: "damaged_signal",
-				},
+			changes: [
+				{ path: "/character/relationship/affinity", value: 12 },
+				{ path: "/character/story/active", value: true },
+				{ path: "/character/story/summary", value: "用户发现了一份未送达记录。" },
+				{ path: "/display/expressionId", value: "reflective" },
 			],
 		});
 		expect(result?.details).toMatchObject({ ok: true });
-		expect(
-			companionStore.project(character.id, "conversation", character.state).document,
-		).toMatchObject({
-			story: { undelivered_report: { phase: "signal_examined" } },
+		expect(store.project(character.id, "conversation", character.state).document).toMatchObject({
+			relationship: { affinity: 12 },
+			story: { active: true, summary: "用户发现了一份未送达记录。" },
 		});
-		expect(companionStore.snapshot(character, "conversation").display.surfaces.inline).toBe(
-			"damaged_signal",
-		);
+		expect(store.snapshot(character, "conversation").display.expressionId).toBe("reflective");
 		database.close();
 	});
 
-	it("exposes only semantic Character and Display state without storage metadata", async () => {
-		const { database, character, companionStore } = fixture();
+	it("keeps global values across conversations and conversation values isolated", () => {
+		const { database, character, store } = fixture();
+		database.orm.insert(conversations).values({ id: "second", companionId: character.id }).run();
+		store.writeCompanion({
+			companionId: character.id,
+			conversationId: "conversation",
+			definition: character.state,
+			changes: [
+				{ path: "/character/relationship/affinity", value: 7 },
+				{ path: "/character/story/summary", value: "只属于第一条会话。" },
+			],
+			character,
+		});
+		const second = store.project(character.id, "second", character.state).document;
+		expect(second).toMatchObject({
+			relationship: { affinity: 7 },
+			story: { summary: "尚未开始。" },
+		});
+		database.close();
+	});
+
+	it("uses one basic schema validation and declared Display ids", () => {
+		const { database, character, store } = fixture();
+		const base = {
+			companionId: character.id,
+			conversationId: "conversation",
+			definition: character.state,
+			character,
+		};
+		expect(
+			failure(() =>
+				store.writeCompanion({
+					...base,
+					changes: [{ path: "/character/relationship/affinity", value: "high" }],
+				}),
+			),
+		).toMatchObject({ kind: "validation_failed", reason: "character_state_invalid" });
+		expect(
+			failure(() =>
+				store.writeCompanion({
+					...base,
+					changes: [{ path: "/display/expressionId", value: "missing" }],
+				}),
+			),
+		).toMatchObject({ kind: "validation_failed", reason: "display_expression_not_declared" });
+		database.close();
+	});
+
+	it("keeps Skill loading separate from state field descriptions", async () => {
+		const { database, character, store } = fixture();
 		const tools = registerHostTools({
 			sessionId: () => "conversation",
 			character: () => character,
-			store: companionStore,
+			store,
+		} as never);
+		const result = await tools.role_skill?.execute("call", {
+			action: "read",
+			skillId: "undelivered-report",
 		});
-		const result = await tools.host_state?.execute("read", { action: "read" });
 		const text = result?.content[0]?.type === "text" ? result.content[0].text : "";
-		expect(text).toContain('"character"');
-		expect(text).toContain('"sceneId":"study"');
-		expect(text).not.toContain('"catalog"');
-		expect(text).not.toContain("schemaHash");
-		expect(text).not.toContain("revisions");
-		expect(text).not.toContain("scene-relay-room.webp");
+		expect(text).toContain("<role_skill");
+		expect(text).not.toContain("<character_state_contract>");
+		expect(text).not.toContain("x-write-authority");
 		database.close();
 	});
 
-	it("uses disjoint top-level partitions and carries only global state into a new conversation", () => {
-		const { database, character, companionStore } = fixture();
-		database.orm
-			.insert(conversations)
-			.values({ id: "second-conversation", companionId: character.id })
-			.run();
+	it("generates model semantics from descriptions without storage metadata", () => {
+		const { database, character } = fixture();
+		const prompt = characterStatePrompt(character.state);
+		expect(prompt).toContain("路径：/character/story/summary");
+		expect(prompt).toContain("已发生剧情摘要");
+		expect(prompt).toContain("已经确定发生的事实");
+		expect(prompt).not.toContain("x-scope");
+		expect(prompt).not.toContain("revision");
+		expect(prompt).not.toContain("write-authority");
+		database.close();
+	});
+
+	it("accepts only top-level global or conversation scope", () => {
+		const { database, character } = fixture();
 		expect([...compileCharacterStateSchema(character.state).partitions]).toEqual([
 			["relationship", "global"],
 			["continuity", "global"],
 			["story", "conversation"],
-			["narrative", "conversation"],
 		]);
-		companionStore.writeCompanion({
-			companionId: character.id,
-			conversationId: "conversation",
-			definition: character.state,
-			operations: [{ op: "replace", path: "/character/relationship/affinity", value: 1 }],
-			authority: "model",
-			evidence: true,
-			character,
-		});
-		companionStore.writeCompanion({
-			companionId: character.id,
-			conversationId: "conversation",
-			definition: character.state,
-			operations: [
-				{
-					op: "replace",
-					path: "/character/story/undelivered_report/phase",
-					value: "invited",
-				},
-			],
-			authority: "skill:undelivered-report",
-			evidence: true,
-			character,
-		});
-		const second = companionStore.project(
-			character.id,
-			"second-conversation",
-			character.state,
-		).document;
-		expect(second).toMatchObject({
-			relationship: { affinity: 1 },
-			story: { undelivered_report: { phase: "dormant" } },
-		});
-		database.close();
-	});
-
-	it("rejects nested scope declarations instead of splitting arbitrary subtrees", () => {
-		const { database, character } = fixture();
 		const invalid = structuredClone(character.state) as CharacterStateDefinition;
-		const relationship = invalid.properties?.relationship;
-		const affinity = relationship?.properties?.affinity;
+		const affinity = invalid.properties?.relationship?.properties?.affinity;
 		if (!affinity) throw new Error("missing affinity schema");
 		affinity["x-scope"] = "conversation";
 		expect(() => compileCharacterStateSchema(invalid)).toThrow(

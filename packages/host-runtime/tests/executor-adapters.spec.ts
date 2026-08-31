@@ -49,10 +49,19 @@ function fixtureSpec(cwd: string): AcpProcessSpec {
 	return { command: process.execPath, args: [fixturePath], cwd, env: { PATH: process.env.PATH } };
 }
 
-function createDatabase(): { db: DatabaseSync; eventBus: EventBus } {
-	const db = new DatabaseSync(":memory:");
-	db.exec(`
-		CREATE TABLE events (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+function createDatabases() {
+	const system = new DatabaseSync(":memory:");
+	const run = new DatabaseSync(":memory:");
+	system.exec(`
+		CREATE TABLE executor_profiles (
+			id TEXT PRIMARY KEY,
+			profile_type TEXT NOT NULL,
+			capability_json TEXT NOT NULL DEFAULT '{}',
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+	`);
+	run.exec(`
+		CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
 		CREATE TABLE run_manifests (
 			id TEXT PRIMARY KEY,
 			run_id TEXT NOT NULL,
@@ -60,7 +69,9 @@ function createDatabase(): { db: DatabaseSync; eventBus: EventBus } {
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
 	`);
-	return { db, eventBus: new EventBus(drizzle({ client: db })) };
+	const systemDb = drizzle({ client: system });
+	const runDb = drizzle({ client: run });
+	return { system, run, systemDb, runDb, eventBus: new EventBus(runDb) };
 }
 
 function request(cwd: string, profile: ExecutorLaunchRequest["profile"]): ExecutorLaunchRequest {
@@ -100,12 +111,8 @@ describe("ACP executor adapters", () => {
 			mkdirSync(snapshotTwo);
 			writeFileSync(join(snapshotOne, "input.txt"), "snapshot-one");
 			writeFileSync(join(snapshotTwo, "input.txt"), "snapshot-two");
-			const { db } = createDatabase();
-			const adapter = new PiAcpAdapter(
-				drizzle({ client: db }),
-				join(root, "user-data"),
-				fixturePath,
-			);
+			const { system, run: runDatabase, runDb } = createDatabases();
+			const adapter = new PiAcpAdapter(runDb, join(root, "user-data"), fixturePath);
 			const completed = Promise.withResolvers<void>();
 			const run = request(cwd, {
 				id: "pi-default",
@@ -127,14 +134,15 @@ describe("ACP executor adapters", () => {
 
 			const manifest = JSON.parse(
 				(
-					db.prepare("SELECT manifest_json FROM run_manifests WHERE run_id = ?").get("run-1") as {
-						manifest_json: string;
-					}
+					runDatabase
+						.prepare("SELECT manifest_json FROM run_manifests WHERE run_id = ?")
+						.get("run-1") as { manifest_json: string }
 				).manifest_json,
 			) as Record<string, unknown>;
 			expect(manifest).toMatchObject({ executor: "pi-acp", workerPath: fixturePath });
 			expect(JSON.stringify(manifest)).not.toContain("apiKey");
-			db.close();
+			runDatabase.close();
+			system.close();
 		},
 	);
 
@@ -162,13 +170,13 @@ describe("ACP executor adapters", () => {
 			const codeModeHostHash = createHash("sha256")
 				.update(readFileSync(codeModeHost))
 				.digest("hex");
-			const { db, eventBus } = createDatabase();
+			const { system, run: runDatabase, systemDb, runDb, eventBus } = createDatabases();
 			class FixtureCodexAdapter extends CodexAdapter {
 				protected override processSpec(): AcpProcessSpec {
 					return fixtureSpec(cwd);
 				}
 			}
-			const adapter = new FixtureCodexAdapter(drizzle({ client: db }), eventBus);
+			const adapter = new FixtureCodexAdapter(systemDb, runDb, eventBus);
 			const completed = Promise.withResolvers<void>();
 			const run = request(cwd, {
 				id: "codex-fixture",
@@ -193,12 +201,14 @@ describe("ACP executor adapters", () => {
 			expect(
 				JSON.parse(
 					(
-						db.prepare("SELECT manifest_json FROM run_manifests WHERE run_id = ?").get("run-1") as {
-							manifest_json: string;
-						}
+						runDatabase
+							.prepare("SELECT manifest_json FROM run_manifests WHERE run_id = ?")
+							.get("run-1") as { manifest_json: string }
 					).manifest_json,
 				),
 			).toMatchObject({ executor: "codex", triggerEntryId: "entry-1", sha256: hash });
+			runDatabase.close();
+			system.close();
 		},
 	);
 });

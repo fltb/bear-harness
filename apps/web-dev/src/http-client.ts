@@ -66,52 +66,63 @@ export function createHttpTransport(token: string): HostTransport {
 	const refreshToken = async (): Promise<void> => {
 		currentToken = (await loadBootstrap()).token;
 	};
+	const listenNdjson = (
+		path: string,
+		body: object,
+		receive: (batch: unknown) => void,
+		fail: (error: unknown) => void,
+	): (() => void) => {
+		const abort = new AbortController();
+		void (async () => {
+			const request = () =>
+				fetch(path, {
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						accept: "application/x-ndjson",
+						"x-bear-web-dev-token": currentToken,
+					},
+					body: JSON.stringify(body),
+					signal: abort.signal,
+				});
+			let response = await request();
+			if (response.status === 401) {
+				await refreshToken();
+				response = await request();
+			}
+			if (!response.ok || !response.body) throw new WebDevHttpError("transport", response.status);
+			const reader = response.body.getReader();
+			const decoder = new TextDecoder();
+			let pending = "";
+			try {
+				for (;;) {
+					const { value, done } = await reader.read();
+					if (done) throw new Error("Host event stream disconnected");
+					pending += decoder.decode(value, { stream: true });
+					for (;;) {
+						const newline = pending.indexOf("\n");
+						if (newline < 0) break;
+						const frame = pending.slice(0, newline);
+						pending = pending.slice(newline + 1);
+						if (frame) receive(JSON.parse(frame));
+					}
+					if (pending.length > 4 * 1024 * 1024) throw new Error("Host event frame too large");
+				}
+			} finally {
+				await reader.cancel().catch(() => undefined);
+				reader.releaseLock();
+			}
+		})().catch((error) => {
+			if (!abort.signal.aborted) fail(error);
+		});
+		return () => abort.abort();
+	};
 	return {
 		listen(afterSeq, receive, fail) {
-			const abort = new AbortController();
-			void (async () => {
-				const request = () =>
-					fetch("/rpc/events.subscribe%3Av1", {
-						method: "POST",
-						headers: {
-							"content-type": "application/json",
-							accept: "application/x-ndjson",
-							"x-bear-web-dev-token": currentToken,
-						},
-						body: JSON.stringify({ afterSeq }),
-						signal: abort.signal,
-					});
-				let response = await request();
-				if (response.status === 401) {
-					await refreshToken();
-					response = await request();
-				}
-				if (!response.ok || !response.body) throw new WebDevHttpError("transport", response.status);
-				const reader = response.body.getReader();
-				const decoder = new TextDecoder();
-				let pending = "";
-				try {
-					for (;;) {
-						const { value, done } = await reader.read();
-						if (done) throw new Error("Host event stream disconnected");
-						pending += decoder.decode(value, { stream: true });
-						for (;;) {
-							const newline = pending.indexOf("\n");
-							if (newline < 0) break;
-							const frame = pending.slice(0, newline);
-							pending = pending.slice(newline + 1);
-							if (frame) receive(JSON.parse(frame));
-						}
-						if (pending.length > 4 * 1024 * 1024) throw new Error("Host event frame too large");
-					}
-				} finally {
-					await reader.cancel().catch(() => undefined);
-					reader.releaseLock();
-				}
-			})().catch((error) => {
-				if (!abort.signal.aborted) fail(error);
-			});
-			return () => abort.abort();
+			return listenNdjson("/rpc/events.subscribe%3Av1", { afterSeq }, receive, fail);
+		},
+		listenPi(receive, fail) {
+			return listenNdjson("/live/pi", {}, receive, fail);
 		},
 		async invoke(endpoint, params) {
 			const request = () =>

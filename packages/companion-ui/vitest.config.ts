@@ -21,7 +21,7 @@ export default defineConfig({
 			reporter: ["text", "json", "html", "lcov"],
 			reportsDirectory: fileURLToPath(new URL("../../coverage/ui", import.meta.url)),
 			include: ["src/**/*.{ts,tsx}"],
-			exclude: ["src/**/*.d.ts", "src/features/NetworkAndMemorySettings.tsx"],
+			exclude: ["src/**/*.d.ts"],
 			thresholds: {
 				statements: 80,
 				branches: 70,

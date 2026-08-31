@@ -5,6 +5,7 @@ import type {
 	CanonChunk,
 	CanonModule,
 	CanonSource,
+	CharacterDeletionStatus,
 	CharacterListData,
 	CharacterPackageDocument,
 	CharacterSummary,
@@ -22,6 +23,7 @@ interface CharacterApiContext {
 	refreshCharacters(): Promise<unknown>;
 	refreshSnapshot(): Promise<unknown>;
 	resyncOnboarding(): Promise<unknown>;
+	switchCharacterConversations(): Promise<unknown>;
 	invalidateConversations(): Promise<unknown> | void;
 	invalidateActiveConversation(): Promise<unknown> | void;
 }
@@ -63,11 +65,29 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 			});
 			return { data: () => query.data, loading: () => query.isLoading, error: () => query.error };
 		},
+		observeDeletionStatus: (characterId) => {
+			const query = createRpcQuery({
+				client: queryClient,
+				key: () => queryKeys.characterDeletionStatus(characterId() ?? ""),
+				enabled: () => Boolean(characterId()),
+				request: (key) =>
+					invoke(client, () =>
+						client.character.deletionStatusGet({ characterId: key[2] as string }),
+					),
+			});
+			return { data: () => query.data, loading: () => query.isLoading, error: () => query.error };
+		},
 		packageData: (id) => {
 			c.cacheRevision();
 			return queryClient.getQueryData<{ package: CharacterPackageDocument }>(
 				queryKeys.characterPackage(id),
 			)?.package;
+		},
+		deletionStatusData: (id) => {
+			c.cacheRevision();
+			return queryClient.getQueryData<{ status: CharacterDeletionStatus }>(
+				queryKeys.characterDeletionStatus(id),
+			)?.status;
 		},
 		pluginTrustData: (id) => {
 			c.cacheRevision();
@@ -86,13 +106,8 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 			}),
 		activate: async (characterId) => {
 			await invoke(client, () => client.character.activate({ characterId }));
-			await Promise.all([
-				c.resyncOnboarding(),
-				c.refreshCharacters(),
-				c.invalidateConversations(),
-				c.invalidateActiveConversation(),
-				c.refreshSnapshot(),
-			]);
+			await c.switchCharacterConversations();
+			await Promise.all([c.resyncOnboarding(), c.refreshCharacters(), c.refreshSnapshot()]);
 		},
 		import: async (files) => {
 			await invoke(client, () => client.character.import({ files }));
@@ -119,6 +134,28 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 				client.character.packageUpdate({ characterId, yaml, expectedSha256 }),
 			);
 			return api.packageGet(characterId);
+		},
+		deletionStatus: async (characterId) =>
+			(
+				await refreshRpcQuery({
+					client: queryClient,
+					key: queryKeys.characterDeletionStatus(characterId),
+					request: () => invoke(client, () => client.character.deletionStatusGet({ characterId })),
+				})
+			).status,
+		runtimeDelete: async (characterId) => {
+			const result = await invoke(client, () => client.character.runtimeDelete({ characterId }));
+			queryClient.removeQueries({ queryKey: ["settings", "character", characterId], exact: true });
+			queryClient.removeQueries({ queryKey: queryKeys.modelRoute(characterId), exact: true });
+			await api.deletionStatus(characterId);
+			return result;
+		},
+		packageDelete: async (characterId) => {
+			const result = await invoke(client, () => client.character.packageDelete({ characterId }));
+			queryClient.removeQueries({ queryKey: queryKeys.characterPackage(characterId), exact: true });
+			queryClient.removeQueries({ queryKey: ["character", "trust", characterId], exact: true });
+			await Promise.all([api.deletionStatus(characterId), c.refreshCharacters()]);
+			return result;
 		},
 		confirmPluginTrust: async (characterId) => {
 			await invoke(client, () => client.character.pluginTrustConfirm({ characterId }));

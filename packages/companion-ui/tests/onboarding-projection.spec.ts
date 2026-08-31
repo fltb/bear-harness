@@ -178,14 +178,8 @@ describe("onboarding projection ordering", () => {
 		const conversation = {
 			sessionId: "onboarding-conversation",
 			name: "First meeting",
-			entries: [],
-			messages: [],
-			isIdle: true,
-			isStreaming: false,
-			pendingMessageCount: 0,
-			steeringMessages: [],
-			followUpMessages: [],
-			messageVersions: [],
+			timeline: { entries: [] },
+			live: { isStreaming: false, queuedUserMessages: [] },
 		};
 		let completed = false;
 		client.onboarding.get = vi.fn(() =>
@@ -214,11 +208,8 @@ describe("onboarding projection ordering", () => {
 				},
 			}),
 		);
-		client.conversation.activeGet = vi.fn(() =>
-			Promise.resolve({
-				ok: true as const,
-				data: { session: completed ? conversation : undefined },
-			}),
+		client.conversation.open = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: conversation }),
 		);
 		const { store, dispose } = createStoreWithCleanup(client);
 

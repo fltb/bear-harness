@@ -139,8 +139,14 @@ export async function provisionReplyModel(window: Page) {
 		modelId: model.id,
 		label: model.name,
 	});
-	await invokeRpc(window, RPC.model.defaultsSetReply, {
+	await invokeRpc(window, RPC.model.systemDefaultsSet, {
 		reply: { providerId: provider.id, modelId: model.id },
+		vision: { mode: "auto" },
+	});
+	await invokeRpc(window, RPC.model.defaultsInitialize, {});
+	await invokeRpc(window, RPC.model.defaultsCompleteOnboarding, {});
+	await invokeRpc(window, RPC.settings.set, {
+		settings: { firstRunStage: "role" },
 	});
 	const snapshot = await invokeRpc(window, RPC.snapshot.get, {});
 	const steps = snapshot.character?.character.first_meeting.steps ?? [];
@@ -160,6 +166,11 @@ export async function provisionReplyModel(window: Page) {
 			...(answer ? { answer } : {}),
 		});
 	}
+	const conversation = await invokeRpc(window, RPC.conversation.create, {});
+	await invokeRpc(window, RPC.model.routeSet, {
+		conversationId: conversation.sessionId,
+		selected: { providerId: provider.id, modelId: model.id },
+	});
 	await window.reload();
 }
 
@@ -182,11 +193,7 @@ export async function assertProductPage(window: Page, _product: Readonly<Product
 	const snapshot = await invokeRpc(window, RPC.snapshot.get, {});
 	const character = snapshot.character as CharacterProjection | undefined;
 	if (!character) throw new Error("character snapshot unavailable");
-	const activeConversationId = snapshot.conversation.activeConversationId;
-	const sceneId =
-		(activeConversationId
-			? snapshot.companion?.byConversation[activeConversationId]?.display.sceneId
-			: undefined) ?? character.visual.defaultSceneId;
+	const sceneId = character.visual.defaultSceneId;
 	const sceneLabel = character.scenes.find((scene) => scene.id === sceneId)?.label;
 	if (!sceneLabel) throw new Error(`scene ${sceneId} unavailable in character snapshot`);
 
@@ -223,7 +230,7 @@ export async function assertProductPage(window: Page, _product: Readonly<Product
 	expect(bridge.keys).toEqual(["platform", "diagnostics", "localFiles", "transport"]);
 	expect(bridge.diagnosticsKeys).toEqual(["reportRendererFault"]);
 	expect(bridge.localFileKeys).toEqual(["pickFiles", "pickFolder", "pathsForDroppedFiles"]);
-	expect(bridge.transportKeys).toEqual(["listen", "invoke"]);
+	expect(bridge.transportKeys).toEqual(["listen", "listenPi", "invoke"]);
 	expect(bridge.platform).toMatch(/^(darwin|win32|linux)$/);
 	expect(bridge.reporterType).toBe("function");
 }

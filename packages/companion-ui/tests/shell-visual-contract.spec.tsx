@@ -34,11 +34,6 @@ const PORTRAIT_MODEL = {
 	supportsImages: true,
 	createdAt: "2026-01-01 00:00:00",
 };
-function neverSettle(): Promise<never> {
-	const { promise } = Promise.withResolvers<never>();
-	return promise;
-}
-
 function configurePortraitClient(options: { active?: boolean } = {}) {
 	const { client } = createTestClient();
 	const active = options.active !== false;
@@ -57,8 +52,9 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 				id: "message-1",
 				parentId: null,
 				timestamp: "2026-01-01T00:00:00.000Z",
-				type: "message" as const,
-				message: { role: "user", content: "Show the result", timestamp: 1 },
+				kind: "message" as const,
+				role: "user" as const,
+				text: "Show the result",
 			},
 		],
 	};
@@ -66,14 +62,8 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 		? {
 				sessionId: conversationId,
 				name: summary.title,
-				entries: entries.entries,
-				messages: [],
-				isIdle: true,
-				isStreaming: false,
-				pendingMessageCount: 0,
-				steeringMessages: [],
-				followUpMessages: [],
-				messageVersions: [],
+				timeline: entries,
+				live: { isStreaming: false, queuedUserMessages: [] },
 			}
 		: undefined;
 	const snapshot = {
@@ -90,12 +80,10 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 	client.snapshot.get = vi.fn(() =>
 		Promise.resolve({ ok: true as const, data: snapshot as never }),
 	);
-	client.conversation.activeGet = vi.fn(() =>
-		Promise.resolve({
-			ok: true as const,
-			data: { session: activeProjection },
-		}),
-	);
+	client.conversation.open = vi.fn(() => {
+		if (!activeProjection) throw new Error("inactive fixture cannot be opened");
+		return Promise.resolve({ ok: true as const, data: activeProjection });
+	});
 	client.conversation.list = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
@@ -140,6 +128,9 @@ describe("shell visual and thread head contracts", () => {
 		expect(styles).toContain('.app[data-layout="mobile"]');
 		expect(styles).toContain('.app[data-layout="window"]');
 		expect(styles).toContain('.app[data-layout="fullscreen"]');
+		expect(styles).toContain('.app[data-layout="mobile"] .attachment-preview-column');
+		expect(styles).toContain('.app[data-layout="window"] .attachment-preview-column');
+		expect(styles).toContain('.app[data-layout="fullscreen"] .attachment-preview-column');
 
 		render(() => (
 			<div class="app" data-layout="window" role="application" aria-label="Companion">
@@ -194,6 +185,7 @@ describe("shell visual and thread head contracts", () => {
 					title: "Active run",
 					status: "needs_user",
 					artifacts: [],
+					evidence: [],
 				},
 				{
 					id: "run-2",
@@ -203,6 +195,7 @@ describe("shell visual and thread head contracts", () => {
 					title: "Completed run",
 					status: "completed",
 					artifacts: [],
+					evidence: [],
 				},
 			],
 		} as CompanionStore;
@@ -313,27 +306,21 @@ describe("portrait layout contracts", () => {
 		async (mode) => {
 			const { client } = configurePortraitClient();
 			if (mode === "pending") {
-				const sendGate = Promise.withResolvers<{
-					ok: true;
-					data: { accepted: true; sessionId: string };
-				}>();
+				const sendGate = Promise.withResolvers<{ ok: true; data: { accepted: true } }>();
 				client.message.send = vi.fn(() => sendGate.promise);
 			} else {
 				const projection = {
 					sessionId: "conversation-1",
 					name: "Conversation",
-					entries: [],
-					messages: [],
-					isIdle: false,
-					isStreaming: true,
-					streamingMessage: { role: "assistant", content: [{ type: "text", text: "在想了" }] },
-					pendingMessageCount: 0,
-					steeringMessages: [],
-					followUpMessages: [],
-					messageVersions: [],
+					timeline: { entries: [] },
+					live: {
+						isStreaming: true,
+						streamingMessage: { text: "在想了", stopReason: "pending" as const },
+						queuedUserMessages: [],
+					},
 				};
-				client.conversation.activeGet = vi.fn(() =>
-					Promise.resolve({ ok: true as const, data: { session: projection } }),
+				client.conversation.open = vi.fn(() =>
+					Promise.resolve({ ok: true as const, data: projection }),
 				);
 			}
 			render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);

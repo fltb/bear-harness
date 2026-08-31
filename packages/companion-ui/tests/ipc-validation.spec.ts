@@ -3,8 +3,6 @@ import {
 	CharacterDisplay,
 	ConfiguredModel,
 	ConversationSummary,
-	MemoryCaptureResponse,
-	MemoryEntry,
 	OnboardingResponse,
 	ProviderInfo,
 	Run,
@@ -18,8 +16,6 @@ const guard = (schema: { safeParse(value: unknown): { success: boolean } }) => (
 const isCanonChunk = guard(CanonChunk);
 const isCharacterDisplay = guard(CharacterDisplay);
 const isConversationSummary = guard(ConversationSummary);
-const isMemoryCaptureResponse = guard(MemoryCaptureResponse);
-const isMemoryEntry = guard(MemoryEntry);
 const isOnboardingData = guard(OnboardingResponse);
 const isProviderInfo = guard(ProviderInfo);
 const isRun = guard(Run);
@@ -34,23 +30,6 @@ const conversation = {
 	modified: timestamp,
 	messageCount: 1,
 	firstMessage: "Hello",
-};
-const memoryEntry = {
-	id: "memory-1",
-	sourceEntryId: "entry-1",
-	kind: "fact",
-	scope: "relationship",
-	text: "Memory",
-	createdAt: timestamp,
-	updatedAt: timestamp,
-	importance: 0.8,
-};
-const memoryCaptureResponse = {
-	status: "stored",
-	reason: "memory_stored",
-	memoryIds: ["memory-1"],
-	sourceEntryId: "entry-1",
-	createdBy: "user_capture",
 };
 const provider = {
 	id: "provider-1",
@@ -84,6 +63,7 @@ const run = {
 	title: "Direct run",
 	status: "running",
 	artifacts: [],
+	evidence: [],
 	startedAt: timestamp,
 	completedAt: timestamp,
 };
@@ -119,39 +99,6 @@ describe("host projection validation", () => {
 			"messageCount",
 			"firstMessage",
 		]);
-		expectRequiredFields(isMemoryEntry, memoryEntry, [
-			"id",
-			"kind",
-			"scope",
-			"text",
-			"createdAt",
-			"updatedAt",
-			"importance",
-		]);
-		expect(isMemoryEntry({ ...memoryEntry, id: "m".repeat(129) })).toBe(false);
-		expect(isMemoryEntry({ ...memoryEntry, sourceEntryId: "" })).toBe(false);
-		expect(isMemoryEntry({ ...memoryEntry, sourceEntryId: 42 })).toBe(false);
-		expect(isMemoryEntry({ ...memoryEntry, sourceEntryId: "e".repeat(129) })).toBe(false);
-		expect(isMemoryEntry({ ...memoryEntry, scope: "global" })).toBe(false);
-		expect(isMemoryEntry({ ...memoryEntry, importance: Number.NaN })).toBe(false);
-		expect(isMemoryCaptureResponse(memoryCaptureResponse)).toBe(true);
-		expect(isMemoryCaptureResponse({ ...memoryCaptureResponse, createdBy: "assistant_tool" })).toBe(
-			true,
-		);
-		expectRequiredFields(isMemoryCaptureResponse, memoryCaptureResponse, [
-			"status",
-			"reason",
-			"memoryIds",
-			"sourceEntryId",
-			"createdBy",
-		]);
-		expect(
-			isMemoryCaptureResponse({ ...memoryCaptureResponse, memoryIds: ["m".repeat(129)] }),
-		).toBe(false);
-		expect(
-			isMemoryCaptureResponse({ ...memoryCaptureResponse, sourceEntryId: "e".repeat(129) }),
-		).toBe(false);
-		expect(isMemoryCaptureResponse({ ...memoryCaptureResponse, createdBy: "system" })).toBe(false);
 		expectRequiredFields(isProviderInfo, provider, [
 			"id",
 			"name",
@@ -176,6 +123,7 @@ describe("host projection validation", () => {
 			"title",
 			"status",
 			"artifacts",
+			"evidence",
 		]);
 		expect(isRun({ ...run, startedAt: 3 })).toBe(false);
 		expect(isRun({ ...run, completedAt: 3 })).toBe(false);
@@ -203,7 +151,6 @@ describe("host projection validation", () => {
 		const settings = {
 			firstRunStage: "model" as const,
 			relationshipMemoryEnabled: true,
-			conversationHistoryReadEnabled: false,
 			networkProxy: { mode: "direct" as const },
 			memoryVectorService: { enabled: false, provider: "none" as const },
 			modelDownloadSource: { type: "official" },
@@ -308,16 +255,18 @@ describe("host projection validation", () => {
 				id: "inline_image",
 				kind: "image",
 				label: "Inline image",
+				description: "An inline image.",
+				use_when: "When the image helps.",
 				loop: false,
-				presentation: "inline",
 				url: "data:image/png;base64,aW1hZ2U=",
 			},
 			{
 				id: "ambient_audio",
 				kind: "audio",
 				label: "Ambient audio",
+				description: "An audio record.",
+				use_when: "When the audio helps.",
 				loop: true,
-				presentation: "ambient",
 				url: "data:audio/mpeg;base64,YXVkaW8=",
 				captionsUrl: "data:text/vtt;base64,V0VCVlRU",
 			},
@@ -325,51 +274,40 @@ describe("host projection validation", () => {
 				id: "dialog_video",
 				kind: "video",
 				label: "Dialog video",
+				description: "A video record.",
+				use_when: "When the video helps.",
 				loop: false,
-				presentation: "dialog",
 				url: "data:video/mp4;base64,dmlkZW8=",
 				captionsUrl: "data:text/vtt;base64,V0VCVlRU",
 			},
 		] as const;
 		const mediaCharacter = {
 			...valid,
-			roleplay: { ...valid.roleplay, media },
+			media,
 		};
 		expect(isCharacterDisplay(mediaCharacter)).toBe(true);
 		expect(
 			isCharacterDisplay({
 				...valid,
-				roleplay: {
-					...valid.roleplay,
-					media: [{ ...media[0], presentation: undefined }],
-				},
+				media: [{ ...media[0], description: undefined }],
 			}),
 		).toBe(false);
 		expect(
 			isCharacterDisplay({
 				...mediaCharacter,
-				roleplay: {
-					...mediaCharacter.roleplay,
-					media: [{ ...media[0], presentation: "ambient" }],
-				},
+				media: [{ ...media[0], presentation: "ambient" }],
 			}),
 		).toBe(false);
 		expect(
 			isCharacterDisplay({
 				...mediaCharacter,
-				roleplay: {
-					...mediaCharacter.roleplay,
-					media: [{ ...media[0], unknown: true }],
-				},
+				media: [{ ...media[0], unknown: true }],
 			}),
 		).toBe(false);
 		expect(
 			isCharacterDisplay({
 				...mediaCharacter,
-				roleplay: {
-					...mediaCharacter.roleplay,
-					media: [{ ...media[0], presentation: "modal" }],
-				},
+				media: [{ ...media[0], use_when: "" }],
 			}),
 		).toBe(false);
 
@@ -440,50 +378,6 @@ describe("host projection validation", () => {
 			isCharacterDisplay({
 				...base,
 				visual: { ...base.visual, expressionLabels: { orphan: "Orphan" } },
-			}),
-		).toBe(false);
-		expect(
-			isCharacterDisplay({
-				...base,
-				roleplay: {
-					...base.roleplay,
-					media: [
-						{
-							id: "m1",
-							kind: "image",
-							label: "M1",
-							loop: false,
-							presentation: "dialog",
-							url: "data:image/png;base64,bTE=",
-						},
-					],
-					unlockables: [
-						{
-							id: "u1",
-							kind: "cg",
-							label: "U1",
-							description: "U1",
-							media: "missing-media",
-						},
-					],
-				},
-			}),
-		).toBe(false);
-		expect(
-			isCharacterDisplay({
-				...base,
-				roleplay: {
-					...base.roleplay,
-					variables: [
-						{
-							id: "trust",
-							type: "number",
-							scope: "relationship",
-							initial: "high",
-							display: { kind: "hidden" },
-						},
-					],
-				},
 			}),
 		).toBe(false);
 		expect(

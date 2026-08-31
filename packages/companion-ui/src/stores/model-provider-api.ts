@@ -13,7 +13,12 @@ export function createModelProviderApis(c: {
 	providers(): ProviderApi["providers"] extends () => infer T ? T : never;
 	models(): ConfiguredModel[];
 	defaults(): {
-		reply?: { providerId: string; modelId: string } | null;
+		reply?: { providerId: string; modelId: string };
+		vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } };
+		onboardingComplete: boolean;
+	};
+	systemDefaults(): {
+		reply?: { providerId: string; modelId: string };
 		vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } };
 	};
 	currentRoute(): ModelRouteData | undefined;
@@ -32,6 +37,12 @@ export function createModelProviderApis(c: {
 			client: queryClient,
 			key: queryKeys.modelDefaults,
 			request: () => invoke(client, () => client.model.defaultsGet()),
+		});
+	const refreshSystemDefaults = () =>
+		refreshRpcQuery({
+			client: queryClient,
+			key: queryKeys.systemModelDefaults,
+			request: () => invoke(client, () => client.model.systemDefaultsGet()),
 		});
 	const refreshRoute = (conversationId: string) =>
 		refreshRpcQuery({
@@ -124,17 +135,23 @@ export function createModelProviderApis(c: {
 				providerApi.list(),
 				refreshPool(),
 				refreshDefaults(),
+				refreshSystemDefaults(),
 				...(c.activeConversationId() ? [refreshRoute(c.activeConversationId()!)] : []),
 			]);
 		},
 	};
 	const data = () => {
 		const raw = c.defaults();
-		const defaults = { vision: raw.vision, ...(raw.reply ? { reply: raw.reply } : {}) };
+		const defaults = {
+			vision: raw.vision,
+			onboardingComplete: raw.onboardingComplete,
+			...(raw.reply ? { reply: raw.reply } : {}),
+		};
 		const selected = c.currentRoute()?.selected;
 		return {
 			models: c.models(),
 			defaults,
+			systemDefaults: c.systemDefaults(),
 			...(selected ? { selected } : {}),
 			...(defaults.vision.mode === "manual" ? { multimodalFallback: defaults.vision.route } : {}),
 		};
@@ -147,6 +164,7 @@ export function createModelProviderApis(c: {
 		refetch: () => {
 			void refreshPool().catch(c.onRefreshError);
 			void refreshDefaults().catch(c.onRefreshError);
+			void refreshSystemDefaults().catch(c.onRefreshError);
 			if (c.activeConversationId())
 				void refreshRoute(c.activeConversationId()!).catch(c.onRefreshError);
 		},
@@ -154,17 +172,18 @@ export function createModelProviderApis(c: {
 			await Promise.all([
 				refreshPool(),
 				refreshDefaults(),
+				refreshSystemDefaults(),
 				...(conversationId ? [refreshRoute(conversationId)] : []),
 			]);
 			return data();
 		},
 		enable: async (providerId, modelId, label) => {
 			await invoke(client, () => client.model.enable({ providerId, modelId, label }));
-			await Promise.all([refreshPool(), refreshDefaults()]);
+			await Promise.all([refreshPool(), refreshDefaults(), refreshSystemDefaults()]);
 		},
 		disable: async (providerId, modelId) => {
 			await invoke(client, () => client.model.disable({ providerId, modelId }));
-			await Promise.all([refreshPool(), refreshDefaults()]);
+			await Promise.all([refreshPool(), refreshDefaults(), refreshSystemDefaults()]);
 		},
 		select: async (conversationId, providerId, modelId) => {
 			await invoke(client, () =>
@@ -188,6 +207,18 @@ export function createModelProviderApis(c: {
 		},
 		setVisionAuto: async () => {
 			await invoke(client, () => client.model.defaultsSetVision({ mode: "auto" }));
+			await refreshDefaults();
+		},
+		setSystemDefaults: async (reply, vision) => {
+			await invoke(client, () => client.model.systemDefaultsSet({ reply, vision }));
+			await refreshSystemDefaults();
+		},
+		initializeDefaults: async () => {
+			await invoke(client, () => client.model.defaultsInitialize());
+			await refreshDefaults();
+		},
+		completeDefaultsOnboarding: async () => {
+			await invoke(client, () => client.model.defaultsCompleteOnboarding());
 			await refreshDefaults();
 		},
 	};

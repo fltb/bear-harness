@@ -3,16 +3,6 @@ import { extname } from "node:path";
 import { imageDimensionsFromData } from "image-dimensions";
 import { parse } from "yaml";
 
-function schemaHasPointer(schema, pointer) {
-	let node = schema;
-	for (const escaped of pointer.slice(1).split("/")) {
-		const name = escaped.replaceAll("~1", "/").replaceAll("~0", "~");
-		node = node?.properties?.[name];
-		if (!node) return false;
-	}
-	return true;
-}
-
 function pngInfo(path) {
 	const bytes = readFileSync(path);
 	if (bytes.toString("hex", 0, 8) !== "89504e470d0a1a0a") return null;
@@ -32,17 +22,16 @@ for (const entry of readdirSync(root, { withFileTypes: true })) {
 	if (!existsSync(manifestPath)) continue;
 	const manifest = parse(readFileSync(manifestPath, "utf8"));
 	const prefix = `config/characters/${entry.name}`;
-	const roleplay = manifest.roleplay;
-	if (
-		!roleplay ||
-		!Array.isArray(roleplay.variables) ||
-		!Array.isArray(roleplay.media) ||
-		!Array.isArray(roleplay.choice_sets)
-	) {
-		failures.push(`${prefix}: missing complete roleplay declaration`);
+	const mediaItems = manifest.media;
+	if (!Array.isArray(mediaItems)) {
+		failures.push(`${prefix}: missing top-level media declaration`);
 		continue;
 	}
-	for (const media of roleplay.media) {
+	if ("roleplay" in manifest || "choice_sets" in manifest)
+		failures.push(`${prefix}: deleted roleplay or choice_sets declaration remains`);
+	for (const media of mediaItems) {
+		if (!media?.id || !media?.label || !media?.description || !media?.use_when)
+			failures.push(`${prefix}: each media item requires id, label, description and use_when`);
 		for (const field of ["asset", "poster", "captions"]) {
 			if (media[field] && !existsSync(new URL(media[field], packageRoot)))
 				failures.push(`${prefix}: missing media ${field} ${media[field]}`);
@@ -77,7 +66,7 @@ for (const entry of readdirSync(root, { withFileTypes: true })) {
 		const expressionAssets = (expressions ?? []).map((expression) => expression.asset);
 		if (expressionAssets.length < 12 || new Set(expressionAssets).size < 12)
 			failures.push(`${prefix}: benchmark character requires 12 distinct expression assets`);
-		if (!roleplay.media.some((media) => media.kind === "animation"))
+		if (!mediaItems.some((media) => media.kind === "animation"))
 			failures.push(`${prefix}: benchmark character requires animated media`);
 		const expressionInfo = expressionAssets.map((asset) => pngInfo(new URL(asset, packageRoot)));
 		if (
@@ -111,7 +100,7 @@ for (const entry of readdirSync(root, { withFileTypes: true })) {
 			"future_beacon_cg",
 			"returned_lamp",
 		];
-		const mediaById = new Map(roleplay.media.map((media) => [media.id, media]));
+		const mediaById = new Map(mediaItems.map((media) => [media.id, media]));
 		for (const id of requiredStoryMedia) {
 			const media = mediaById.get(id);
 			if (!media) {
@@ -123,27 +112,6 @@ for (const entry of readdirSync(root, { withFileTypes: true })) {
 			if (!info || info.width < 1600 || info.height < 900)
 				failures.push(`${prefix}: official story media ${id} requires a production 16:9 poster`);
 		}
-
-		const requiredStateFields = [
-			"/story/undelivered_report/phase",
-			"/story/undelivered_report/status",
-			"/story/undelivered_report/route",
-			"/story/undelivered_report/position",
-			"/story/undelivered_report/resolution",
-			"/story/undelivered_report/testimony_stance",
-			"/story/undelivered_report/future_choice",
-			"/story/undelivered_report/known_facts",
-			"/story/undelivered_report/user_interpretation",
-			"/narrative/frame",
-			"/narrative/location",
-			"/narrative/time_anchor",
-			"/narrative/evidence_mode",
-			"/narrative/active_story",
-			"/narrative/branch",
-		];
-		for (const path of requiredStateFields)
-			if (!schemaHasPointer(manifest.state_schema, path))
-				failures.push(`${prefix}: official story requires state field ${path}`);
 
 		const storyPath = new URL("skills/undelivered-report/resources/story.md", packageRoot);
 		if (!existsSync(storyPath))
@@ -193,5 +161,5 @@ if (failures.length) {
 	console.error(failures.join("\n"));
 	process.exitCode = 1;
 } else {
-	console.log("Roleplay package gate passed.");
+	console.log("Character media package gate passed.");
 }

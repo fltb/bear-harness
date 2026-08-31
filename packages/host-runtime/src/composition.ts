@@ -11,40 +11,51 @@
  * protocol additions from landing without a corresponding Host handler.
  */
 
-import { randomUUID } from "node:crypto";
-
-import type {
-	CharacterStateDocument,
-	MemoryEntry,
-	MemoryListResponse,
-	MemorySearchResponse,
-	ResponseOf,
-} from "@bear-harness/protocol";
-import { EmbeddingDownloadState, RPC } from "@bear-harness/protocol/schema";
-import type {
-	SessionEntry,
-	SessionInfo,
-	SessionMessageEntry,
-} from "@earendil-works/pi-coding-agent";
+import type { ArtifactActionRequest, ResponseOf } from "@bear-harness/protocol";
+import {
+	ArtifactActionResponse,
+	EmbeddingDownloadState,
+	MAX_ARTIFACT_READ_BYTES,
+	RPC,
+} from "@bear-harness/protocol/schema";
+import type { SessionInfo } from "@earendil-works/pi-coding-agent";
 import { and, desc, eq } from "drizzle-orm";
-import type { ArtifactStore } from "./artifacts/index.js";
+import type { ArtifactRecord, ArtifactStore } from "./artifacts/index.js";
+import {
+	type ArtifactPresenter,
+	createArtifactPresentationAccess,
+} from "./artifacts/presentation.js";
 import type { CanonHubService } from "./canon/service.js";
 import type {
 	CharacterDraftFiles,
 	CharacterDraftService,
 } from "./companion/character-draft-service.js";
-import type { CharacterLoader } from "./companion/character-loader.js";
+import type {
+	CharacterLoader,
+	CharacterPackage,
+	CharacterPackageOrigin,
+} from "./companion/character-loader.js";
 import type { CompanionStateStore } from "./companion/companion-store.js";
 import type { FirstMeetingMachine } from "./companion/first-meeting.js";
+import { projectPiConversationDetail } from "./companion/pi-live-events.js";
 import type { PiRuntime } from "./companion/pi-runtime.js";
 import type { SessionCatalog } from "./companion/session-catalog.js";
 import type { Dispatcher } from "./dispatcher.js";
-import type { ExternalAgentRunService, RunSummary } from "./external-agents/run-service.js";
-import type { MemoryBackend, MemoryBankScope, MemoryRecord } from "./memory/backend.js";
-import { namespaceFor } from "./memory/tencentdb-backend.js";
-import type { TencentDbRuntime } from "./memory/tencentdb-runtime.js";
+import {
+	type ExternalAgentRunService,
+	type RunSummary,
+	sanitizeExternalAgentMemoryText,
+} from "./external-agents/run-service.js";
+import type {
+	validateLocalEmbedding,
+	validateRemoteEmbedding,
+} from "./memory/tencentdb-runtime.js";
 import type { ModelRecord, ModelRegistry } from "./models/registry.js";
 import type { OAuthSessionState, ProviderCatalog } from "./providers/catalog.js";
+import {
+	type CredentialStore,
+	REMOTE_EMBEDDING_CREDENTIAL_ID,
+} from "./providers/credential-store.js";
 import type { AuditStore } from "./security/audit-store.js";
 import {
 	findHostLocalEmbeddingCandidate,
@@ -53,17 +64,7 @@ import {
 import type { AppSettingsRecord, AppSettingsStore } from "./storage/app-settings-store.js";
 import type { AppDatabase } from "./storage/database.js";
 import type { EventBus } from "./storage/event-bus.js";
-import {
-	activeCharacter,
-	companionIdentity,
-	conversations,
-	events,
-	memoryCandidates,
-	memoryDecisions,
-	memoryPresentation,
-	relationshipMemoryEntries,
-	runs,
-} from "./storage/schema.js";
+import { artifacts, conversations, events, evidence, runs } from "./storage/schema.js";
 
 /** Desktop-owned update lifecycle adapter used by the optional Host wiring. */
 export type HostUpdateService = {
@@ -76,6 +77,7 @@ export type HostUpdateService = {
 export interface HostCompositionContext {
 	/** Host lifetime; adapters must not publish after it ends. */
 	signal: AbortSignal;
+	systemOrm: AppDatabase;
 	orm: AppDatabase;
 	eventBus: EventBus;
 	onboarding: FirstMeetingMachine;
@@ -83,9 +85,15 @@ export interface HostCompositionContext {
 	sessions: SessionCatalog;
 	models: ModelRegistry;
 	appSettings: AppSettingsStore;
-	memoryBackend: MemoryBackend;
-	memoryRuntime: TencentDbRuntime;
-	memoryScope: Pick<MemoryBankScope, "installationId" | "userId">;
+	memoryEmbedding: {
+		validateLocal(options: Parameters<typeof validateLocalEmbedding>[0]): Promise<{ ready: true }>;
+		validateRemote(
+			options: Parameters<typeof validateRemoteEmbedding>[0],
+		): Promise<{ ready: true }>;
+		resetRuntimes(): Promise<void>;
+		releaseRuntime(companionId: string): Promise<void>;
+	};
+	memoryScope: { readonly installationId: string; readonly userId: string };
 	externalAgentRuns: ExternalAgentRunService;
 	externalAgents: {
 		discover(): Promise<
@@ -110,12 +118,26 @@ export interface HostCompositionContext {
 		>;
 	};
 	artifacts: ArtifactStore;
+	/** Optional trusted OS-shell adapter; renderer code never receives artifact paths. */
+	artifactPresenter?: ArtifactPresenter;
 	canon: CanonHubService;
 	providers: ProviderCatalog;
+	credentials: CredentialStore;
 	characterLoader: CharacterLoader;
 	drafts: CharacterDraftService;
 	companionStore: CompanionStateStore;
 	defaultCharacterId: string;
+	activateCharacter(character: CharacterPackage, origin?: CharacterPackageOrigin): Promise<void>;
+	seedCharacter(character: CharacterPackage, origin?: CharacterPackageOrigin): void;
+	characterDeletionStatus(characterId: string): {
+		characterId: string;
+		active: boolean;
+		default: boolean;
+		runtimePresent: boolean;
+		packagePresent: boolean;
+	};
+	deleteCharacterRuntime(characterId: string): { deleted: boolean };
+	deleteCharacterPackage(characterId: string): { deleted: boolean };
 	/** Optional update lifecycle service (desktop only; undefined on web). */
 	updateService?: HostUpdateService;
 	/** Optional hash-chained audit store (security layer). */
@@ -179,20 +201,32 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionContext): void {
+	const projectSettings = async (companionId: string, app = s.appSettings.load()) => {
+		const stateData = s.onboarding.getState(companionId).stateData;
+		const embeddingCredential = await s.credentials.get(REMOTE_EMBEDDING_CREDENTIAL_ID);
+		return {
+			firstRunStage: app.firstRunStage,
+			relationshipMemoryEnabled: stateData.decisions.relationship_memory_enabled ?? false,
+			networkProxy: app.networkProxy,
+			memoryVectorService:
+				app.memoryVectorService.provider === "remote"
+					? {
+							...app.memoryVectorService,
+							hasCredential: Boolean(embeddingCredential?.apiKey),
+						}
+					: app.memoryVectorService,
+			modelDownloadSource: app.modelDownloadSource,
+		};
+	};
 	const saveMemoryVectorService = async (
 		memoryVectorService: AppSettingsRecord["memoryVectorService"],
 	): Promise<void> => {
+		if (memoryVectorService.provider !== "remote")
+			await s.credentials.remove(REMOTE_EMBEDDING_CREDENTIAL_ID);
 		const app = s.appSettings.save({ memoryVectorService });
-		const stateData = s.onboarding.getState(getCompanionId(s)).stateData;
+		await s.memoryEmbedding.resetRuntimes();
 		s.eventBus.publish("settings.changed", {
-			settings: {
-				relationshipMemoryEnabled: stateData.decisions.relationship_memory_enabled ?? false,
-				conversationHistoryReadEnabled:
-					stateData.decisions.conversation_history_read_enabled ?? false,
-				networkProxy: app.networkProxy,
-				memoryVectorService: app.memoryVectorService,
-				modelDownloadSource: app.modelDownloadSource,
-			},
+			settings: await projectSettings(getCompanionId(s), app),
 			changed: ["memoryVectorService"],
 		});
 	};
@@ -207,7 +241,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return { character: s.characterLoader.display(character) };
 	});
 	dispatcher.registerHandler(RPC.character.list, async () => ({
-		characters: s.characterLoader.list(s.orm, s.defaultCharacterId),
+		characters: s.characterLoader.list(s.systemOrm, s.defaultCharacterId),
 	}));
 	dispatcher.registerHandler(RPC.character.activate, async (_p) => {
 		const { characterId } = _p as { characterId: string };
@@ -216,11 +250,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		if (getCompanionId(s) === characterId) {
 			return { character: s.characterLoader.display(character) };
 		}
-		s.characterLoader.activate(s.orm, s.eventBus, character);
-		s.onboarding.initialize(character.id);
-		s.canon.syncPackage(character.id, character.canon);
-		await s.pi.close();
-		configureCharacterRuntime(s, character);
+		await s.activateCharacter(character);
 		return { character: s.characterLoader.display(character) };
 	});
 	dispatcher.registerHandler(RPC.character.packageGet, async (_p) => {
@@ -241,13 +271,32 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			throw { kind: "invalid_request", reason: "character_package_invalid" };
 		}
 		const character = updated.character;
-		s.characterLoader.seed(s.orm, s.eventBus, character, "local");
-		s.canon.syncPackage(character.id, character.canon);
+		s.seedCharacter(character, "local");
 		if (getCompanionId(s) === character.id) {
-			await s.pi.close();
+			s.canon.syncPackage(character.id, character.canon);
 			configureCharacterRuntime(s, character);
 		}
 		return { package: s.characterLoader.readPackageDocument(character.id) };
+	});
+	dispatcher.registerHandler(RPC.character.deletionStatusGet, async (_p) => {
+		const { characterId } = _p as { characterId: string };
+		return { status: s.characterDeletionStatus(characterId) };
+	});
+	dispatcher.registerHandler(RPC.character.runtimeDelete, async (_p) => {
+		const { characterId } = _p as { characterId: string };
+		return {
+			characterId,
+			target: "runtime" as const,
+			...s.deleteCharacterRuntime(characterId),
+		};
+	});
+	dispatcher.registerHandler(RPC.character.packageDelete, async (_p) => {
+		const { characterId } = _p as { characterId: string };
+		return {
+			characterId,
+			target: "package" as const,
+			...s.deleteCharacterPackage(characterId),
+		};
 	});
 	dispatcher.registerHandler(RPC.character.import, async (_p) => {
 		const { files } = _p as { files: Array<{ path: string; base64: string }> };
@@ -261,9 +310,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				reason: error instanceof Error ? error.message : "character_package_invalid",
 			};
 		}
-		s.characterLoader.seed(s.orm, s.eventBus, character, "imported");
-		s.canon.syncPackage(character.id, character.canon);
-		const trust = s.characterLoader.pluginTrust(s.orm, character);
+		s.seedCharacter(character, "imported");
+		const trust = s.characterLoader.pluginTrust(s.systemOrm, character);
 		s.eventBus.publish("character.imported", {
 			characterId: character.id,
 			trust,
@@ -275,20 +323,19 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const characterId = requestedId ?? getCompanionId(s);
 		const character = s.characterLoader.load(characterId);
 		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
-		return { trust: s.characterLoader.pluginTrust(s.orm, character) };
+		return { trust: s.characterLoader.pluginTrust(s.systemOrm, character) };
 	});
 	dispatcher.registerHandler(RPC.character.pluginTrustConfirm, async (_p) => {
 		const { characterId } = _p as { characterId: string };
 		const character = s.characterLoader.load(characterId);
 		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
-		s.characterLoader.seed(s.orm, s.eventBus, character);
-		const trust = s.characterLoader.confirmPluginTrust(s.orm, character);
+		s.seedCharacter(character);
+		const trust = s.characterLoader.confirmPluginTrust(s.systemOrm, character);
 		s.eventBus.publish("character.pluginsTrusted", {
 			characterId,
 			pluginHash: trust.pluginHash,
 		});
 		if (getCompanionId(s) === characterId) {
-			await s.pi.close();
 			configureCharacterRuntime(s, character);
 		}
 		return { trust };
@@ -347,26 +394,19 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			expectedRevision: number;
 		};
 		const result = s.drafts.publish(id, expectedRevision);
-		s.characterLoader.activate(s.orm, s.eventBus, result.character, "local");
-		s.onboarding.initialize(result.character.id);
-		s.canon.syncPackage(result.character.id, result.character.canon);
-		await s.pi.close();
-		configureCharacterRuntime(s, result.character);
+		await s.activateCharacter(result.character, "local");
 		return {
 			draft: result.draft,
 			character: s.characterLoader.display(result.character),
 		};
 	});
-	dispatcher.registerHandler(RPC.companionState.patch, async (_p) => {
-		const { conversationId, expectedRevisions, operations, dedupeKey } = _p as {
+	dispatcher.registerHandler(RPC.companionState.update, async (_p) => {
+		const { conversationId, changes } = _p as {
 			conversationId: string;
-			expectedRevisions: { conversation: number; global: number };
-			operations: Array<{
-				op: "add" | "replace" | "remove" | "test";
+			changes: Array<{
 				path: string;
-				value?: unknown;
+				value: unknown;
 			}>;
-			dedupeKey: string;
 		};
 		await requireOwnedConversation(s, conversationId);
 		const character = s.characterLoader.load(getCompanionId(s));
@@ -375,17 +415,31 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			companionId: character.id,
 			conversationId,
 			definition: character.state,
-			expectedRevisions,
-			operations: operations as never,
-			authority: "user",
-			evidence: true,
+			changes,
 			character,
 		});
 		s.eventBus.publish("companion.snapshot_changed", {
 			conversationId,
-			commitId: dedupeKey,
 		});
 		return {};
+	});
+	dispatcher.registerHandler(RPC.companionState.get, async (_p) => {
+		const { conversationId } = _p as { conversationId: string };
+		await requireOwnedConversation(s, conversationId);
+		const character = s.characterLoader.load(getCompanionId(s));
+		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
+		const projection = s.companionStore.project(character.id, conversationId, character.state);
+		return {
+			schema: JSON.parse(JSON.stringify(character.state)),
+			state: {
+				character: {
+					document: projection.document,
+					revisions: projection.revisions,
+					schemaHash: projection.schemaHash,
+				},
+				...s.companionStore.snapshot(character, conversationId),
+			},
+		};
 	});
 
 	// --- role-defined onboarding -----------------------------------------------
@@ -409,22 +463,18 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.conversation.list, async ({ archived, title }) => ({
 		sessions: (await s.sessions.list(getCompanionId(s), { archived, title })).map(sessionWire),
 	}));
-	dispatcher.registerHandler(RPC.conversation.activeGet, () => ({
-		session: s.pi.snapshot(),
-	}));
 	dispatcher.registerHandler(RPC.conversation.create, async ({ title }) => {
 		const session = await s.sessions.create(getCompanionId(s), title);
 		s.eventBus.publish("conversation.created", {
 			conversationId: session.sessionId,
 			...(title ? { title } : {}),
 		});
-		return session;
+		return projectPiConversationDetail(session);
 	});
-	dispatcher.registerHandler(RPC.conversation.select, async (_p) => {
+	dispatcher.registerHandler(RPC.conversation.open, async (_p) => {
 		const { id } = _p as { id: string };
-		const session = await s.sessions.select(getCompanionId(s), id);
-		s.eventBus.publish("conversation.selected", { id });
-		return session;
+		const session = await s.sessions.open(getCompanionId(s), id);
+		return projectPiConversationDetail(session);
 	});
 	dispatcher.registerHandler(RPC.conversation.rename, async (_p) => {
 		const { id, title } = _p as { id: string; title: string };
@@ -436,32 +486,30 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {};
 	});
 	dispatcher.registerHandler(RPC.conversation.archive, async ({ id, archived }) => {
-		const session = await s.sessions.archive(getCompanionId(s), id, archived);
+		await s.sessions.archive(getCompanionId(s), id, archived);
 		s.eventBus.publish("conversation.archived", {
 			conversationId: id,
 			archived,
 		});
-		return { session };
+		return {};
 	});
 	dispatcher.registerHandler(RPC.conversation.delete, async ({ id }) => {
-		const session = await s.sessions.delete(getCompanionId(s), id);
+		await s.sessions.delete(getCompanionId(s), id);
 		s.eventBus.publish("conversation.deleted", { conversationId: id });
-		return { session };
+		return {};
 	});
 
 	// --- message ----------------------------------------------------------------
 	dispatcher.registerHandler(RPC.message.send, async (_p) => {
 		const { conversationId, text } = _p as { conversationId: string; text: string };
 		await requireOwnedConversation(s, conversationId);
-		await s.sessions.select(getCompanionId(s), conversationId);
-		await s.pi.send(text);
+		await s.pi.send(conversationId, text);
 		return { accepted: true as const };
 	});
 	dispatcher.registerHandler(RPC.message.abort, async (_p) => {
 		const { conversationId } = _p as { conversationId: string };
 		await requireOwnedConversation(s, conversationId);
-		await s.sessions.select(getCompanionId(s), conversationId);
-		await s.pi.abort();
+		await s.pi.abort(conversationId);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.regenerate, async (_p) => {
@@ -471,8 +519,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			feedback?: string;
 		};
 		await requireOwnedConversation(s, conversationId);
-		await s.sessions.select(getCompanionId(s), conversationId);
-		await s.pi.regenerate(entryId, feedback);
+		await s.pi.regenerate(conversationId, entryId, feedback);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.switchVersion, async (_p) => {
@@ -481,8 +528,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			leafId: string;
 		};
 		await requireOwnedConversation(s, conversationId);
-		await s.sessions.select(getCompanionId(s), conversationId);
-		await s.pi.navigate(leafId);
+		await s.pi.navigate(conversationId, leafId);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.edit, async (_p) => {
@@ -492,15 +538,13 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			text: string;
 		};
 		await requireOwnedConversation(s, conversationId);
-		await s.sessions.select(getCompanionId(s), conversationId);
-		await s.pi.edit(entryId, text);
+		await s.pi.edit(conversationId, entryId, text);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.continue, async (_p) => {
 		const { conversationId } = _p as { conversationId: string };
 		await requireOwnedConversation(s, conversationId);
-		await s.sessions.select(getCompanionId(s), conversationId);
-		await s.pi.continue();
+		await s.pi.continue(conversationId);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.message.branch, async (_p) => {
@@ -510,13 +554,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 		await requireOwnedConversation(s, conversationId);
 		const session = await s.sessions.fork(getCompanionId(s), conversationId, entryId);
-		return { leafId: session.entries.at(-1)?.id ?? session.sessionId };
+		return projectPiConversationDetail(session);
 	});
-	dispatcher.registerHandler(RPC.memory.capture, async (_p) => {
-		const params = _p as { conversationId: string; entryId: string };
-		return rememberConversationEntry(s, params.conversationId, params.entryId, "user_capture");
-	});
-
 	const previousDownload = s.orm
 		.select({ payload: events.payload })
 		.from(events)
@@ -572,9 +611,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 		if (embeddingAbort) throw { kind: "conflict", reason: "embedding_download_in_progress" };
 		if (provider === "none") {
-			await s.memoryRuntime.disableLocalEmbedding();
-			s.signal?.throwIfAborted();
 			await saveMemoryVectorService({ enabled: false, provider: "none" });
+			s.signal?.throwIfAborted();
 			return { ready: true as const };
 		}
 		const candidate = candidateId ? findHostLocalEmbeddingCandidate(candidateId) : undefined;
@@ -610,7 +648,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		if (s.signal?.aborted) abort.abort();
 		updateEmbeddingDownload({ status: "preparing", downloadedBytes: 0 });
 		try {
-			await s.memoryRuntime.configureLocalEmbedding({
+			await s.memoryEmbedding.validateLocal({
 				modelPath,
 				dimensions: 768,
 				hfEndpoint: endpointUrl.href.replace(/\/$/, ""),
@@ -648,340 +686,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			if (embeddingAbort === abort) embeddingAbort = undefined;
 		}
 	});
-	const excludedMemoryIds = (companionId: string): Set<string> =>
-		new Set(
-			s.orm
-				.select({
-					id: memoryPresentation.backendMemoryId,
-					excludedAt: memoryPresentation.excludedAt,
-				})
-				.from(memoryPresentation)
-				.where(
-					and(
-						eq(memoryPresentation.installationId, s.memoryScope.installationId),
-						eq(memoryPresentation.userId, s.memoryScope.userId),
-						eq(memoryPresentation.companionId, companionId),
-					),
-				)
-				.all()
-				.filter((row) => row.excludedAt !== null)
-				.map((row) => row.id),
-		);
-	dispatcher.registerHandler(RPC.memory.search, async (_p): Promise<MemorySearchResponse> => {
-		const { characterId, query } = _p as {
-			characterId?: string;
-			query: string;
-		};
-		const scope = memoryBackendScopeForCharacter(s, characterId);
-		await s.memoryBackend.open({ scope });
-		const hits = await s.memoryBackend.recall({
-			scope,
-			query,
-			limit: 50,
-		});
-		const excluded = excludedMemoryIds(scope.companionId);
-		return {
-			entries: hits.map(({ record }) => ({
-				...projectMemoryEntry(record),
-				excluded: excluded.has(record.id),
-			})),
-		};
-	});
-	dispatcher.registerHandler(RPC.memory.list, async (_p): Promise<MemoryListResponse> => {
-		const {
-			characterId,
-			enabled = true,
-			limit,
-		} = _p as { characterId?: string; enabled?: boolean; limit?: number };
-		if (!enabled) return { entries: [] };
-		const scope = memoryBackendScopeForCharacter(s, characterId);
-		await s.memoryBackend.open({ scope });
-		const records = await s.memoryBackend.list({
-			scope,
-			limit: limit ?? 50,
-		});
-		const excluded = excludedMemoryIds(scope.companionId);
-		return {
-			entries: records.map((record) => ({
-				...projectMemoryEntry(record),
-				excluded: excluded.has(record.id),
-			})),
-		};
-	});
-	dispatcher.registerHandler(RPC.memory.forget, async (_p) => {
-		const { characterId, entryId } = _p as {
-			characterId?: string;
-			entryId: string;
-		};
-		const scope = memoryBackendScopeForCharacter(s, characterId);
-		await s.memoryBackend.open({ scope });
-		await s.memoryBackend.forget({ scope, memoryId: entryId });
-		return {};
-	});
-	dispatcher.registerHandler(RPC.memory.edit, async (_p) => {
-		const { characterId, entryId, newText } = _p as {
-			characterId?: string;
-			entryId: string;
-			newText: string;
-		};
-		const scope = memoryBackendScopeForCharacter(s, characterId);
-		await s.memoryBackend.open({ scope });
-		await s.memoryBackend.update({ scope, memoryId: entryId, text: newText });
-		return {};
-	});
-	dispatcher.registerHandler(RPC.memory.exclude, async (_p) => {
-		const { characterId, memoryId, excluded } = _p as {
-			characterId?: string;
-			memoryId: string;
-			excluded: boolean;
-		};
-		const { installationId, userId } = s.memoryScope;
-		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
-		if (excluded) {
-			const now = new Date().toISOString();
-			const existing = s.orm
-				.select({ backendMemoryId: memoryPresentation.backendMemoryId })
-				.from(memoryPresentation)
-				.where(
-					and(
-						eq(memoryPresentation.backendMemoryId, memoryId),
-						eq(memoryPresentation.installationId, installationId),
-						eq(memoryPresentation.userId, userId),
-						eq(memoryPresentation.companionId, companionId),
-					),
-				)
-				.get();
-			if (existing) {
-				s.orm
-					.update(memoryPresentation)
-					.set({ excludedAt: now })
-					.where(
-						and(
-							eq(memoryPresentation.backendMemoryId, memoryId),
-							eq(memoryPresentation.installationId, installationId),
-							eq(memoryPresentation.userId, userId),
-							eq(memoryPresentation.companionId, companionId),
-						),
-					)
-					.run();
-			} else {
-				s.orm
-					.insert(memoryPresentation)
-					.values({
-						backendMemoryId: memoryId,
-						installationId,
-						userId,
-						companionId,
-						sourcePiEntryId: null,
-						createdBy: "auto_episode",
-						pinned: false,
-						excludedAt: now,
-					})
-					.onConflictDoUpdate({
-						target: [
-							memoryPresentation.backendMemoryId,
-							memoryPresentation.installationId,
-							memoryPresentation.userId,
-							memoryPresentation.companionId,
-						],
-						set: { excludedAt: now },
-					})
-					.run();
-			}
-		} else {
-			s.orm
-				.update(memoryPresentation)
-				.set({ excludedAt: null })
-				.where(
-					and(
-						eq(memoryPresentation.backendMemoryId, memoryId),
-						eq(memoryPresentation.installationId, installationId),
-						eq(memoryPresentation.userId, userId),
-						eq(memoryPresentation.companionId, companionId),
-					),
-				)
-				.run();
-		}
-		return {};
-	});
-	dispatcher.registerHandler(RPC.memory.candidatesList, async (_p) => {
-		const { characterId, status } = _p as {
-			characterId?: string;
-			status?: "pending" | "approved" | "rejected" | "expired";
-		};
-		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
-		const rows = s.orm
-			.select({
-				id: memoryCandidates.id,
-				kind: memoryCandidates.kind,
-				sourceKind: memoryCandidates.sourceKind,
-				normalizedText: memoryCandidates.normalizedText,
-				why: memoryCandidates.why,
-				suggestedScope: memoryCandidates.suggestedScope,
-				status: memoryCandidates.status,
-				createdAt: memoryCandidates.createdAt,
-			})
-			.from(memoryCandidates)
-			.where(
-				and(
-					eq(memoryCandidates.companionId, companionId),
-					eq(memoryCandidates.status, status ?? "pending"),
-				),
-			)
-			.orderBy(desc(memoryCandidates.createdAt))
-			.all();
-		return {
-			candidates: rows.map((row) => ({
-				...row,
-				kind: row.kind,
-				sourceKind: row.sourceKind,
-				suggestedScope: row.suggestedScope,
-				status: row.status,
-			})),
-		};
-	});
-	dispatcher.registerHandler(RPC.memory.candidateApprove, async (_p) => {
-		const { characterId, candidateId, editedText, decidedScope } = _p as {
-			characterId?: string;
-			candidateId: string;
-			editedText?: string;
-			decidedScope?: "self" | "relationship" | "scene";
-		};
-		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
-		const candidate = s.orm
-			.select()
-			.from(memoryCandidates)
-			.where(
-				and(
-					eq(memoryCandidates.id, candidateId),
-					eq(memoryCandidates.companionId, companionId),
-					eq(memoryCandidates.status, "pending"),
-				),
-			)
-			.get();
-		if (!candidate) throw { kind: "not_found", reason: "memory_candidate_not_found" };
-		const effectiveScope = decidedScope ?? candidate.suggestedScope;
-		const finalText = editedText?.trim() || candidate.normalizedText;
-		const decisionId = crypto.randomUUID();
-		const entryId = crypto.randomUUID();
-		const now = new Date().toISOString();
-		const backendScope: MemoryBankScope = { ...s.memoryScope, companionId };
-
-		// Stage the provider record first. If the owned pending-row transition
-		// loses a race, compensate this provider write and leave Host rows
-		// untouched.
-		await s.memoryBackend.open({ scope: backendScope });
-		const backendRecord = await s.memoryBackend.remember({
-			scope: backendScope,
-			text: finalText,
-			importance: 1.0,
-			provenance: {
-				kind: "inferred",
-				piSessionEntryIds: [candidate.sourceNativeEntryId ?? candidate.id],
-				sourceRef: candidate.id,
-			},
-			metadata: { scope: effectiveScope },
-		});
-
-		try {
-			// Candidate state, decision audit, and relationship projection are one
-			// database transition. A concurrent approve/reject cannot leave a
-			// decision row without exactly one corresponding pending transition.
-			s.orm.transaction((transaction) => {
-				const changed = transaction
-					.update(memoryCandidates)
-					.set({ status: "approved", decidedAt: now })
-					.where(
-						and(
-							eq(memoryCandidates.id, candidateId),
-							eq(memoryCandidates.companionId, companionId),
-							eq(memoryCandidates.status, "pending"),
-						),
-					)
-					.run().changes;
-				if (Number(changed) !== 1) {
-					throw {
-						kind: "conflict",
-						reason: "memory_candidate_already_decided",
-					};
-				}
-				transaction
-					.insert(memoryDecisions)
-					.values({
-						id: decisionId,
-						candidateId,
-						decision: editedText?.trim() ? "approve_edited" : "approve",
-						editedText: editedText?.trim() || null,
-						decidedScope: effectiveScope,
-					})
-					.run();
-				transaction
-					.insert(relationshipMemoryEntries)
-					.values({
-						id: entryId,
-						companionId,
-						kind: candidate.kind,
-						scope: effectiveScope,
-						text: finalText,
-						normalizedText: finalText,
-						sourcePiSessionId: candidate.sourcePiSessionId,
-						sourceNativeEntryId: candidate.sourceNativeEntryId,
-						sourceConversationId: candidate.sourceConversationId,
-						sourceKind: candidate.sourceKind,
-						status: "active",
-					})
-					.run();
-			});
-		} catch (error) {
-			await s.memoryBackend
-				.forget({ scope: backendScope, memoryId: backendRecord.id })
-				.catch(() => undefined);
-			throw error;
-		}
-		return {};
-	});
-	dispatcher.registerHandler(RPC.memory.candidateReject, async (_p) => {
-		const { characterId, candidateId } = _p as {
-			characterId?: string;
-			candidateId: string;
-		};
-		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
-		const candidate = s.orm
-			.select({ id: memoryCandidates.id, status: memoryCandidates.status })
-			.from(memoryCandidates)
-			.where(
-				and(eq(memoryCandidates.id, candidateId), eq(memoryCandidates.companionId, companionId)),
-			)
-			.get();
-		if (!candidate) throw { kind: "not_found", reason: "memory_candidate_not_found" };
-		if (candidate.status !== "pending") {
-			throw { kind: "conflict", reason: "memory_candidate_already_decided" };
-		}
-		const decisionId = crypto.randomUUID();
-		const now = new Date().toISOString();
-		s.orm.transaction((transaction) => {
-			const changed = transaction
-				.update(memoryCandidates)
-				.set({ status: "rejected", decidedAt: now })
-				.where(
-					and(
-						eq(memoryCandidates.id, candidateId),
-						eq(memoryCandidates.companionId, companionId),
-						eq(memoryCandidates.status, "pending"),
-					),
-				)
-				.run().changes;
-			if (Number(changed) !== 1) {
-				throw { kind: "conflict", reason: "memory_candidate_already_decided" };
-			}
-			transaction
-				.insert(memoryDecisions)
-				.values({ id: decisionId, candidateId, decision: "reject" })
-				.run();
-		});
-		return {};
-	});
-
 	// --- canon hub (advanced authoring) ---------------------------------------------
 	dispatcher.registerHandler(RPC.canon.listSources, async (_p) => ({
 		sources: s.canon.listSources(_p.characterId ?? getCompanionId(s)),
@@ -1036,7 +740,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 		await s.providers.upsertCustomProvider(input);
 		await syncProviderModels(input.providerId, s.providers, s.models);
-		await s.pi.close();
 		return {};
 	});
 	dispatcher.registerHandler(RPC.provider.importPiConfig, async (_p) => {
@@ -1051,13 +754,11 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				[...providerIds].map((providerId) => syncProviderModels(providerId, s.providers, s.models)),
 			)
 		).flat();
-		await s.pi.close();
 		return { models };
 	});
 	dispatcher.registerHandler(RPC.provider.overrideBaseUrl, async (_p) => {
 		const input = _p as { providerId: string; baseUrl: string };
 		await s.providers.overrideProviderBaseUrl(input);
-		await s.pi.close();
 		return {};
 	});
 	dispatcher.registerHandler(RPC.provider.setApiKey, async (_p) => {
@@ -1068,7 +769,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 		await s.providers.setApiKey(providerId, apiKey, sessionOnly);
 		await syncProviderModels(providerId, s.providers, s.models);
-		await s.pi.close();
 		return {};
 	});
 	dispatcher.registerHandler(RPC.provider.login, async (_p) => {
@@ -1115,7 +815,6 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			.filter((candidate) => candidate.providerId === providerId)) {
 			s.models.disable(model.providerId, model.modelId);
 		}
-		await s.pi.close();
 		return {};
 	});
 	dispatcher.registerHandler(RPC.provider.logout, async (_p) => {
@@ -1183,10 +882,35 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			),
 		);
 	});
+	dispatcher.registerHandler(RPC.model.systemDefaultsGet, async () =>
+		systemModelDefaultsWire(s.models.systemDefaults()),
+	);
+	dispatcher.registerHandler(RPC.model.systemDefaultsSet, async (_p) =>
+		systemModelDefaultsWire(
+			s.models.setSystemDefaults(
+				_p as {
+					reply: { providerId: string; modelId: string };
+					vision:
+						| { mode: "auto" }
+						| { mode: "manual"; route: { providerId: string; modelId: string } };
+				},
+			),
+		),
+	);
+	dispatcher.registerHandler(RPC.model.defaultsInitialize, async () => {
+		const companionId = getCompanionId(s);
+		if (s.models.seedFromSystemDefaults(companionId) === "missing_system_default") {
+			throw { kind: "unavailable", reason: "system_default_model_required" };
+		}
+		return modelDefaultsWire(s.models.defaults(companionId));
+	});
+	dispatcher.registerHandler(RPC.model.defaultsCompleteOnboarding, async () => {
+		const companionId = getCompanionId(s);
+		return modelDefaultsWire(s.models.completeOnboarding(companionId));
+	});
 	dispatcher.registerHandler(RPC.model.routeGet, async (_p) => {
 		const { conversationId } = _p as { conversationId: string };
 		await requireOwnedConversation(s, conversationId);
-		await s.sessions.select(getCompanionId(s), conversationId);
 		const selected = await s.pi.modelFor(conversationId);
 		return {
 			conversationId,
@@ -1199,8 +923,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			selected: { providerId: string; modelId: string };
 		};
 		await requireOwnedConversation(s, conversationId);
-		await s.sessions.select(getCompanionId(s), conversationId);
-		const model = await s.pi.setModel(selected.providerId, selected.modelId);
+		const model = await s.pi.setModel(conversationId, selected.providerId, selected.modelId);
 		s.eventBus.publish("model.selected", { conversationId, ...model });
 		return { conversationId, selected: model };
 	});
@@ -1229,7 +952,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return {
 			runs: s.externalAgentRuns
 				.list(companionId)
-				.map((run) => runWire(run, permissions.get(run.id))),
+				.map((run) => runWire(s, run, permissions.get(run.id))),
 		};
 	});
 	dispatcher.registerHandler(RPC.run.steer, async (_p) => {
@@ -1241,17 +964,17 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.run.interrupt, async (_p) => {
 		const { runId } = _p as { runId: string };
 		await requireOwnedRun(s, runId);
-		return runWire(await s.externalAgentRuns.interruptRun(runId));
+		return runWire(s, await s.externalAgentRuns.interruptRun(runId));
 	});
 	dispatcher.registerHandler(RPC.run.resume, async (_p) => {
 		const { runId } = _p as { runId: string };
 		await requireOwnedRun(s, runId);
-		return runWire(await s.externalAgentRuns.resumeRun(runId));
+		return runWire(s, await s.externalAgentRuns.resumeRun(runId));
 	});
 	dispatcher.registerHandler(RPC.run.cancel, async (_p) => {
 		const { runId } = _p as { runId: string };
 		await requireOwnedRun(s, runId);
-		return runWire(await s.externalAgentRuns.cancelRun(runId));
+		return runWire(s, await s.externalAgentRuns.cancelRun(runId));
 	});
 	dispatcher.registerHandler(RPC.run.respondPermission, async (_p) => {
 		const { runId, requestId, optionId } = _p as {
@@ -1261,9 +984,28 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		};
 		await requireOwnedRun(s, runId);
 		return runWire(
+			s,
 			await s.externalAgentRuns.respondToExecutorPermission(runId, requestId, optionId),
 		);
 	});
+
+	// --- run-owned artifacts -------------------------------------------------------
+	dispatcher.registerHandler(RPC.artifact.read, async (_p) => {
+		const { offset = 0, length = MAX_ARTIFACT_READ_BYTES } = _p;
+		const artifact = requireOwnedArtifact(s, _p);
+		const range = s.artifacts.readBlobRange(artifact.id, offset, length);
+		if (!range) throw { kind: "not_found", reason: "artifact_not_found" };
+		return {
+			artifact: artifactWire(artifact),
+			offset,
+			nextOffset: range.nextOffset,
+			eof: range.eof,
+			base64: range.buffer.toString("base64"),
+		};
+	});
+	dispatcher.registerHandler(RPC.artifact.open, async (_p) => presentArtifact(s, "open", _p));
+	dispatcher.registerHandler(RPC.artifact.reveal, async (_p) => presentArtifact(s, "reveal", _p));
+	dispatcher.registerHandler(RPC.artifact.saveAs, async (_p) => presentArtifact(s, "saveAs", _p));
 
 	// --- settings ----------------------------------------------------------------------
 	dispatcher.registerHandler(RPC.settings.capabilitiesGet, async () => ({
@@ -1292,27 +1034,15 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	}));
 	dispatcher.registerHandler(RPC.settings.get, async (_p) => {
 		const { characterId } = _p as { characterId?: string };
-		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
-		const stateData = s.onboarding.getState(companionId).stateData;
-		const app = s.appSettings.load();
-		return {
-			settings: {
-				firstRunStage: app.firstRunStage,
-				relationshipMemoryEnabled: stateData.decisions.relationship_memory_enabled ?? false,
-				conversationHistoryReadEnabled:
-					stateData.decisions.conversation_history_read_enabled ?? false,
-				networkProxy: app.networkProxy,
-				memoryVectorService: app.memoryVectorService,
-				modelDownloadSource: app.modelDownloadSource,
-			},
-		};
+		const companionId = companionIdForCharacter(s, characterId);
+		return { settings: await projectSettings(companionId) };
 	});
 	dispatcher.registerHandler(RPC.settings.set, async (_p) => {
 		const { characterId, settings } = _p as {
 			characterId?: string;
 			settings: Record<string, unknown>;
 		};
-		const companionId = memoryBackendScopeForCharacter(s, characterId).companionId;
+		const companionId = companionIdForCharacter(s, characterId);
 		if (
 			characterId &&
 			["firstRunStage", "networkProxy", "memoryVectorService", "modelDownloadSource"].some(
@@ -1324,13 +1054,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				reason: "character_settings_may_only_change_relationship_options",
 			};
 		if ("relationshipMemoryEnabled" in settings) {
-			s.onboarding.setRelationshipMemory(companionId, Boolean(settings.relationshipMemoryEnabled));
-		}
-		if ("conversationHistoryReadEnabled" in settings) {
-			s.onboarding.setConversationHistoryRead(
-				companionId,
-				Boolean(settings.conversationHistoryReadEnabled),
-			);
+			const enabled = Boolean(settings.relationshipMemoryEnabled);
+			s.onboarding.setRelationshipMemory(companionId, enabled);
+			if (!enabled) await s.memoryEmbedding.releaseRuntime(companionId);
 		}
 		let app = s.appSettings.load();
 		const changed: string[] = [];
@@ -1364,16 +1090,34 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 				};
 			}
 			if (memoryVectorService?.provider === "remote" && memoryVectorService.enabled) {
-				await s.memoryRuntime.configureRemoteEmbedding({
-					baseUrl: memoryVectorService.baseUrl!,
-					apiKey: memoryVectorService.apiKey!,
-					model: memoryVectorService.model!,
-					dimensions: memoryVectorService.dimensions!,
+				const replacementApiKey = memoryVectorService.apiKey?.trim();
+				const storedApiKey = (await s.credentials.get(REMOTE_EMBEDDING_CREDENTIAL_ID))?.apiKey;
+				const apiKey = replacementApiKey || storedApiKey;
+				if (
+					!memoryVectorService.baseUrl ||
+					!apiKey ||
+					!memoryVectorService.model ||
+					!memoryVectorService.dimensions
+				)
+					throw { kind: "invalid_request", reason: "remote_embedding_config_incomplete" };
+				await s.memoryEmbedding.validateRemote({
+					baseUrl: memoryVectorService.baseUrl,
+					apiKey,
+					model: memoryVectorService.model,
+					dimensions: memoryVectorService.dimensions,
 				});
+				if (replacementApiKey)
+					await s.credentials.set(REMOTE_EMBEDDING_CREDENTIAL_ID, {
+						apiKey: replacementApiKey,
+					});
+			} else if (memoryVectorService?.provider !== "remote") {
+				await s.credentials.remove(REMOTE_EMBEDDING_CREDENTIAL_ID);
 			}
+			const { apiKey: _apiKey, ...persistedMemoryVectorService } = memoryVectorService ?? {};
 			app = s.appSettings.save({
-				memoryVectorService: settings.memoryVectorService as never,
+				memoryVectorService: persistedMemoryVectorService as never,
 			});
+			await s.memoryEmbedding.resetRuntimes();
 			changed.push("memoryVectorService");
 		}
 		if ("modelDownloadSource" in settings) {
@@ -1382,16 +1126,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			});
 			changed.push("modelDownloadSource");
 		}
-		const nextStateData = s.onboarding.getState(companionId).stateData;
-		const nextSettings = {
-			firstRunStage: app.firstRunStage,
-			relationshipMemoryEnabled: nextStateData.decisions.relationship_memory_enabled ?? false,
-			conversationHistoryReadEnabled:
-				nextStateData.decisions.conversation_history_read_enabled ?? false,
-			networkProxy: app.networkProxy,
-			memoryVectorService: app.memoryVectorService,
-			modelDownloadSource: app.modelDownloadSource,
-		};
+		const nextSettings = await projectSettings(companionId, app);
 		s.eventBus.publish("settings.changed", { settings: nextSettings, changed });
 		return { settings: nextSettings };
 	});
@@ -1454,42 +1189,12 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		if (!character) {
 			throw { kind: "unavailable", reason: "character_package_missing" };
 		}
-		const conversationIds = s.orm
-			.select({ id: conversations.id })
-			.from(conversations)
-			.where(eq(conversations.companionId, companionId))
-			.all()
-			.map((row) => row.id);
-		const companionByConversation: Record<
-			string,
-			ReturnType<typeof s.companionStore.snapshot> & {
-				character: CharacterStateDocument;
-			}
-		> = {};
-		for (const conversationId of conversationIds) {
-			const projection = s.companionStore.project(character.id, conversationId, character.state);
-			const characterDocument = {
-				document: projection.document,
-				revisions: projection.revisions,
-				schemaHash: projection.schemaHash,
-			};
-			const companion = s.companionStore.snapshot(character, conversationId);
-			companionByConversation[conversationId] = {
-				character: characterDocument,
-				...companion,
-			};
-		}
 		const eventSeq = s.eventBus.currentSeq;
 
 		return {
 			eventSeq,
 			onboarding: { ...onboarding, eventSeq },
 			character: s.characterLoader.display(character),
-			conversation: { session: s.pi.snapshot() },
-			companion: {
-				schema: JSON.parse(JSON.stringify(character.state)),
-				byConversation: companionByConversation,
-			},
 		};
 	});
 }
@@ -1510,19 +1215,10 @@ function sessionWire(session: SessionInfo) {
 	};
 }
 
-function modelRouteResponse(
-	conversationId: string,
-	selected: { providerId: string; modelId: string } | undefined,
-) {
-	return {
-		conversationId,
-		...(selected ? { selected: modelRouteWire(selected) } : {}),
-	};
-}
-
 function modelDefaultsWire(defaults: {
 	reply?: { providerId: string; modelId: string };
 	vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } };
+	onboardingComplete: boolean;
 }) {
 	return {
 		...(defaults.reply ? { reply: modelRouteWire(defaults.reply) } : {}),
@@ -1533,220 +1229,37 @@ function modelDefaultsWire(defaults: {
 						route: modelRouteWire(defaults.vision.route),
 					}
 				: { mode: "auto" as const },
+		onboardingComplete: defaults.onboardingComplete,
 	};
 }
 
-export type MemoryCaptureCreator = "user_capture" | "assistant_tool";
-
-export async function proposeMemoryCandidate(
-	s: HostCompositionContext,
-	conversationId: string,
-	proposal?: {
-		kind: "fact" | "preference" | "relationship_event";
-		suggestedScope: "self" | "relationship" | "scene";
-		normalizedText: string;
-		why: string;
-		evidenceQuote: string;
-	},
-): Promise<{ candidateId: string; sourceEntryId: string; status: "pending" }> {
-	// Model suggestions never write the memory backend. They create an owned,
-	// reviewable candidate from the current native Pi branch; approval remains
-	// the only path that persists relationship memory.
-	await s.sessions.select(getCompanionId(s), conversationId);
-	const snapshot = s.pi.snapshot();
-	const entries = snapshot?.entries.filter(isPiMessageEntry) ?? [];
-	const source = [...entries].reverse().find((entry) => entry.message.role === "user");
-	if (!source) throw { kind: "not_found", reason: "memory_source_not_found" };
-	const conversation = s.orm
-		.select({ companionId: conversations.companionId })
-		.from(conversations)
-		.where(eq(conversations.id, conversationId))
-		.get();
-	if (!conversation) throw { kind: "not_found", reason: "conversation_not_found" };
-	const text = piEntryText(source.message).trim();
-	if (!text) throw { kind: "invalid_input", reason: "memory_source_empty" };
-	if (proposal && !text.includes(proposal.evidenceQuote))
-		throw { kind: "invalid_input", reason: "memory_evidence_not_found" };
-	const normalizedText = proposal?.normalizedText.trim() || text;
-	if (!normalizedText || normalizedText.length > 4000)
-		throw { kind: "invalid_input", reason: "memory_text_invalid" };
-	const existing = s.orm
-		.select({ id: memoryCandidates.id })
-		.from(memoryCandidates)
-		.where(
-			and(
-				eq(memoryCandidates.companionId, conversation.companionId),
-				eq(memoryCandidates.sourcePiSessionId, snapshot?.sessionId ?? ""),
-				eq(memoryCandidates.sourceNativeEntryId, source.id),
-				eq(memoryCandidates.sourceKind, "companion_suggestion"),
-				eq(memoryCandidates.status, "pending"),
-			),
-		)
-		.get();
-	const candidateId = existing?.id ?? crypto.randomUUID();
-	if (!existing)
-		s.orm
-			.insert(memoryCandidates)
-			.values({
-				id: candidateId,
-				companionId: conversation.companionId,
-				kind: proposal?.kind === "relationship_event" ? "event" : (proposal?.kind ?? "event"),
-				sourcePiSessionId: snapshot?.sessionId,
-				sourceNativeEntryId: source.id,
-				sourceConversationId: conversationId,
-				sourceKind: "companion_suggestion",
-				normalizedText,
-				why: proposal?.why.trim() || "角色建议记住当前用户消息",
-				suggestedScope: proposal?.suggestedScope ?? "relationship",
-			})
-			.run();
-	return { candidateId, sourceEntryId: source.id, status: "pending" };
-}
-
-/**
- * A source must resolve to a native Pi SessionManager entry on the
- * conversation's active branch; Host SQLite messages are not a projection.
- */
-export async function rememberConversationEntry(
-	s: HostCompositionContext,
-	conversationId: string,
-	entryId: string | undefined,
-	createdBy: MemoryCaptureCreator,
-	evidenceQuote?: string,
-): Promise<{
-	status:
-		| "stored"
-		| "already_known"
-		| "no_extractable_memory"
-		| "no_new_content"
-		| "capture_disabled"
-		| "capture_failed";
-	reason:
-		| "memory_stored"
-		| "equivalent_memory_already_stored"
-		| "extractor_found_no_durable_memory"
-		| "turn_already_processed"
-		| "memory_capture_disabled"
-		| "memory_persistence_failed";
-	memoryIds: string[];
-	sourceEntryId: string;
-	createdBy: MemoryCaptureCreator;
-}> {
-	const companionId = getCompanionId(s);
-	const conversation = s.orm
-		.select({ id: conversations.id, companionId: conversations.companionId })
-		.from(conversations)
-		.where(eq(conversations.id, conversationId))
-		.get();
-	if (!conversation || conversation.companionId !== companionId) {
-		throw { kind: "not_found", reason: "conversation_not_found" };
-	}
-	await s.sessions.select(companionId, conversationId);
-	const snapshot = s.pi.snapshot();
-	const entries = snapshot?.entries.filter(isPiMessageEntry) ?? [];
-	const source = entryId
-		? entries.find((candidate) => candidate.id === entryId)
-		: [...entries].reverse().find((candidate) => candidate.message.role === "user");
-	if (!source) {
-		throw { kind: "not_found", reason: "memory_source_not_found" };
-	}
-	if (evidenceQuote && !piEntryText(source.message).includes(evidenceQuote)) {
-		throw { kind: "invalid_input", reason: "memory_evidence_not_found" };
-	}
-	const byId = new Map(entries.map((candidate) => [candidate.id, candidate]));
-	const parent = source.parentId ? byId.get(source.parentId) : undefined;
-	const momentEntries =
-		createdBy === "user_capture" && source.message.role === "assistant" && parent
-			? [parent, source]
-			: [source];
-	const baseTimestamp = Date.now();
-	const messages = momentEntries.flatMap((entry, index) => {
-		const content = piEntryText(entry.message).trim();
-		if (!content) return [];
-		return [
-			{
-				id: entry.id,
-				role: entry.message.role,
-				content,
-				timestamp: baseTimestamp + index,
-			},
-		];
-	});
-	if (messages.length === 0) throw { kind: "invalid_input", reason: "memory_source_empty" };
-	const sourceEntryId = source.id;
-	const result = await s.memoryRuntime.captureExplicitTurn({
-		userText: messages
-			.filter((message) => message.role === "user")
-			.map((message) => message.content)
-			.join("\n"),
-		assistantText: messages
-			.filter((message) => message.role === "assistant")
-			.map((message) => message.content)
-			.join("\n"),
-		messages,
-		sessionKey: namespaceFor({ ...s.memoryScope, companionId }),
-		sessionId: conversationId,
-		// Tdai's cold-start cursor is an exclusive floor. Keep it just before
-		// these explicitly recaptured native entries so the first one is not
-		// mistaken for pre-runtime history.
-		startedAt: baseTimestamp - 1,
-	});
+function systemModelDefaultsWire(defaults: {
+	reply?: { providerId: string; modelId: string };
+	vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } };
+}) {
 	return {
-		status: result.status,
-		reason: result.reason,
-		memoryIds: result.storedRecordIds,
-		sourceEntryId,
-		createdBy,
+		...(defaults.reply ? { reply: modelRouteWire(defaults.reply) } : {}),
+		vision:
+			defaults.vision.mode === "manual"
+				? { mode: "manual" as const, route: modelRouteWire(defaults.vision.route) }
+				: { mode: "auto" as const },
 	};
 }
 
-/**
- * Extract text from a native Pi message for memory provenance.
- */
-function isPiMessageEntry(entry: SessionEntry): entry is SessionMessageEntry {
-	return entry.type === "message";
-}
-
-function piEntryText(message: unknown): string {
-	if (!message || typeof message !== "object" || !("content" in message)) return "";
-	const content = message.content;
-	const text =
-		typeof content === "string"
-			? content
-			: Array.isArray(content)
-				? content
-						.map((part) => {
-							if (!part || typeof part !== "object" || !("type" in part) || !("text" in part))
-								return "";
-							const type = part.type;
-							const value = part.text;
-							return type === "text" && typeof value === "string" ? value : "";
-						})
-						.filter(Boolean)
-						.join("\n")
-				: "";
-	return text.trim();
-}
-
-function memoryBackendScopeForCharacter(
-	s: HostCompositionContext,
-	characterId?: string,
-): MemoryBankScope {
-	const resolvedId = characterId ?? getActiveCompanionId(s);
+function companionIdForCharacter(s: HostCompositionContext, characterId?: string): string {
+	const activeId = getActiveCompanionId(s);
+	const resolvedId = characterId ?? activeId;
 	const character = s.characterLoader.load(resolvedId);
 	if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
-	return { ...s.memoryScope, companionId: resolvedId };
+	if (resolvedId !== activeId) throw { kind: "conflict", reason: "character_runtime_not_active" };
+	return resolvedId;
 }
 
 function getActiveCompanionId(s: HostCompositionContext): string {
-	const packageId = s.characterLoader.getActiveCharacterId(s.orm, s.defaultCharacterId);
-	const seeded = s.orm
-		.select({ id: companionIdentity.id })
-		.from(companionIdentity)
-		.where(eq(companionIdentity.id, packageId))
-		.get();
-	if (!seeded) throw { kind: "unavailable", reason: "character_package_missing" };
-	return seeded.id;
+	const packageId = s.characterLoader.getActiveCharacterId(s.systemOrm, s.defaultCharacterId);
+	if (!s.characterLoader.load(packageId))
+		throw { kind: "unavailable", reason: "character_package_missing" };
+	return packageId;
 }
 
 async function requireOwnedConversation(
@@ -1772,7 +1285,82 @@ async function requireOwnedRun(s: HostCompositionContext, runId: string): Promis
 	await requireOwnedConversation(s, row.conversationId);
 }
 
+function requireOwnedArtifact(
+	s: HostCompositionContext,
+	identity: ArtifactActionRequest,
+): ArtifactRecord {
+	const conversation = s.orm
+		.select({ id: conversations.id })
+		.from(conversations)
+		.where(eq(conversations.id, identity.conversationId))
+		.get();
+	if (!conversation) throw { kind: "not_found", reason: "conversation_not_found" };
+
+	const run = s.orm
+		.select({ id: runs.id, conversationId: runs.conversationId })
+		.from(runs)
+		.where(eq(runs.id, identity.runId))
+		.get();
+	if (!run || run.conversationId !== identity.conversationId)
+		throw { kind: "not_found", reason: "run_not_found" };
+
+	const binding = s.orm
+		.select({ id: artifacts.id, producerRunId: artifacts.producerRunId })
+		.from(artifacts)
+		.where(eq(artifacts.id, identity.artifactId))
+		.get();
+	if (!binding || binding.producerRunId !== identity.runId)
+		throw { kind: "not_found", reason: "artifact_not_found" };
+
+	const record = s.artifacts.get(identity.artifactId);
+	if (!record || record.producerRunId !== identity.runId)
+		throw { kind: "not_found", reason: "artifact_not_found" };
+	return record;
+}
+
+async function presentArtifact(
+	s: HostCompositionContext,
+	action: "open" | "reveal" | "saveAs",
+	identity: ArtifactActionRequest,
+): Promise<{ outcome: "completed" | "cancelled" | "unsupported" }> {
+	const artifact = requireOwnedArtifact(s, identity);
+	if (!s.artifacts.readBlobRange(artifact.id, 0, 1))
+		throw { kind: "not_found", reason: "artifact_not_found" };
+	const presenter = s.artifactPresenter;
+	const present = presenter?.[action];
+	if (!presenter || !present) return { outcome: "unsupported" };
+
+	const scoped = createArtifactPresentationAccess(s.artifacts, artifact);
+	let result: Awaited<ReturnType<NonNullable<typeof present>>>;
+	try {
+		result = await present.call(presenter, {
+			artifact: Object.freeze({ ...artifact }),
+			access: scoped.access,
+		});
+	} finally {
+		await scoped.close();
+	}
+	const response = ArtifactActionResponse.parse(result);
+	if (action === "saveAs" && response.outcome === "completed") {
+		s.artifacts.markSaved(artifact.id);
+	}
+	return response;
+}
+
+function artifactWire(artifact: ArtifactRecord) {
+	return {
+		id: artifact.id,
+		name: artifact.logicalName,
+		mime: artifact.mime,
+		bytes: artifact.bytes,
+		sha256: artifact.sha256,
+		status: artifact.status,
+		createdAt: artifact.createdAt,
+	};
+}
+
 function runWire(
+	s: HostCompositionContext,
 	run: RunSummary,
 	permission?: ReturnType<ExternalAgentRunService["pendingPermissions"]>[number],
 ) {
@@ -1783,66 +1371,76 @@ function runWire(
 		executorProfile: run.executorProfile,
 		title: run.title,
 		status: run.status,
-		artifacts: run.artifacts.map((artifact) => ({
-			id: artifact.id,
-			name: artifact.logicalName,
-			mime: artifact.mime,
-			bytes: artifact.bytes,
-		})),
+		artifacts: run.artifacts.map(artifactWire),
+		...(run.summary ? { summary: safeWireSummary(run.summary, 4_096) } : {}),
+		evidence: evidenceWire(s, run.id),
 		...(permission ? { permission } : {}),
 		startedAt: run.startedAt ?? undefined,
 		completedAt: run.completedAt ?? undefined,
 	};
 }
 
-function projectMemoryEntry(record: MemoryRecord): MemoryEntry {
-	const metadata = record.metadata;
-	const kind = typeof metadata.kind === "string" ? metadata.kind : "fact";
-	const scope: MemoryEntry["scope"] =
-		metadata.scope === "self" || metadata.scope === "scene" ? metadata.scope : "relationship";
-	const sourceEntryId =
-		typeof metadata.sourceEntryId === "string" &&
-		metadata.sourceEntryId.length > 0 &&
-		metadata.sourceEntryId.length <= 128
-			? metadata.sourceEntryId
-			: undefined;
-	return {
-		id: record.id,
-		kind,
-		scope,
-		text: record.text,
-		createdAt: record.createdAt,
-		updatedAt: record.updatedAt,
-		importance: record.importance,
-		...(sourceEntryId ? { sourceEntryId } : {}),
-	};
+const SAFE_EVIDENCE_KEYS = ["kind", "name", "status", "title", "used", "size", "cost"] as const;
+
+function evidenceWire(s: HostCompositionContext, runId: string) {
+	return s.orm
+		.select({ kind: evidence.kind, data: evidence.data, createdAt: evidence.createdAt })
+		.from(evidence)
+		.where(eq(evidence.runId, runId))
+		.orderBy(desc(evidence.createdAt))
+		.limit(20)
+		.all()
+		.reverse()
+		.map((item) => {
+			const summary = summarizeEvidence(item.data);
+			return {
+				kind: safeWireSummary(item.kind, 128) || "evidence",
+				...(summary ? { summary } : {}),
+				createdAt: item.createdAt,
+			};
+		});
+}
+
+function summarizeEvidence(data: unknown): string | undefined {
+	if (typeof data === "string" || typeof data === "number" || typeof data === "boolean")
+		return safeWireSummary(String(data), 512) || undefined;
+	if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
+	const record = data as Record<string, unknown>;
+	const parts = SAFE_EVIDENCE_KEYS.flatMap((key) => {
+		const value = record[key];
+		return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+			? [`${key}: ${String(value)}`]
+			: [];
+	});
+	if (parts.length === 0) return undefined;
+	return safeWireSummary(parts.join(" · "), 512) || undefined;
+}
+
+function safeWireSummary(value: string, maxBytes: number): string {
+	return sanitizeExternalAgentMemoryText(value, maxBytes)
+		.replace(/\bBearer\s+[A-Za-z0-9._~+/-]{8,}=*\b/gi, "Bearer <redacted>")
+		.replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "<redacted>")
+		.replace(
+			/\b(authorization|api[-_ ]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi,
+			"$1: <redacted>",
+		)
+		.trim();
 }
 
 function getCompanionId(s: HostCompositionContext): string {
-	const packageId = s.characterLoader.getActiveCharacterId(s.orm, s.defaultCharacterId);
-	const seeded = s.orm
-		.select({ id: companionIdentity.id })
-		.from(companionIdentity)
-		.where(eq(companionIdentity.id, packageId))
-		.get();
-	if (!seeded) throw { kind: "unavailable", reason: "character_package_missing" };
-	return seeded.id;
+	const packageId = s.characterLoader.getActiveCharacterId(s.systemOrm, s.defaultCharacterId);
+	if (!s.characterLoader.load(packageId))
+		throw { kind: "unavailable", reason: "character_package_missing" };
+	return packageId;
 }
 
 /** Seed the active character package if it has not been seeded yet. */
 function ensureCharacterSeeded(s: HostCompositionContext): void {
-	const activeId = s.characterLoader.getActiveCharacterId(s.orm, s.defaultCharacterId);
+	const activeId = s.characterLoader.getActiveCharacterId(s.systemOrm, s.defaultCharacterId);
 	const character = s.characterLoader.load(activeId);
 	if (!character) throw new Error(`character package missing: ${activeId}`);
-	s.characterLoader.seed(s.orm, s.eventBus, character);
 	s.companionStore.reconcileSchema(character.id, character.state);
 	s.canon.syncPackage(character.id, character.canon);
-	const active = s.orm
-		.select({ characterId: activeCharacter.characterId })
-		.from(activeCharacter)
-		.where(eq(activeCharacter.singleton, 1))
-		.get();
-	if (!active) s.characterLoader.activate(s.orm, s.eventBus, character);
 	s.onboarding.initialize(character.id);
 }
 
@@ -1851,6 +1449,6 @@ function configureCharacterRuntime(
 	s: HostCompositionContext,
 	character: Parameters<CharacterLoader["piResources"]>[0],
 ): void {
-	const trust = s.characterLoader.pluginTrust(s.orm, character);
+	const trust = s.characterLoader.pluginTrust(s.systemOrm, character);
 	s.pi.configure(s.characterLoader.piResources(character, trust.trusted).appendSystemPrompt);
 }

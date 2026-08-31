@@ -51,6 +51,20 @@ describe("idle homepage (official config, no bridge)", () => {
 		client.onboarding.get = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: activeOnboarding }),
 		);
+		client.settings.get = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					settings: {
+						firstRunStage: "model" as const,
+						relationshipMemoryEnabled: false,
+						networkProxy: { mode: "direct" as const },
+						memoryVectorService: { enabled: false, provider: "none" as const },
+						modelDownloadSource: { type: "official" as const },
+					},
+				},
+			}),
+		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		await waitFor(() => expect(conversationList).toHaveBeenCalled());
@@ -84,7 +98,6 @@ describe("idle homepage (official config, no bridge)", () => {
 			await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings }),
 		).toBeInTheDocument();
 		expect(screen.getByRole("tab", { name: zhCN.backstage.roleManagement })).toBeInTheDocument();
-		expect(screen.getByRole("tab", { name: zhCN.backstage.memory })).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: zhCN.backstage.close }));
 		await waitFor(() =>
 			expect(

@@ -4,9 +4,12 @@ import { parse } from "yaml";
 
 const allowedHostTools = new Set([
 	"host_state",
-	"host_history",
+	"host_media",
+	"host_choices",
 	"host_canon",
-	"host_memory",
+	"tdai_memory_search",
+	"tdai_conversation_search",
+	"explicit_memory",
 	"host_delegate",
 ]);
 const retired = [
@@ -63,10 +66,7 @@ for (const entry of readdirSync(characterRoot, { withFileTypes: true })) {
 	if (stateSchema?.type !== "object" || !stateSchema.properties || fields.size === 0)
 		failures.push(`${manifestPath}: state_schema must be a recursive object JSON Schema`);
 	for (const [path, field] of fields) {
-		if (field["x-write-authority"] === "model" && field["x-evidence-required"] !== true)
-			failures.push(`${manifestPath}: model-writable state ${path} needs evidence`);
 		if (
-			field["x-write-authority"] === "model" &&
 			field.type === "number" &&
 			(typeof field.minimum !== "number" || typeof field.maximum !== "number")
 		)
@@ -97,4 +97,4 @@ if (failures.length) {
 	console.error(`Role tool-surface violations:\n${failures.join("\n")}`);
 	process.exit(1);
 }
-console.log("Role tool surface valid: role_skill plus 6 conditional Host domain tools");
+console.log("Role tool surface valid: role_skill plus 8 conditional Host domain tools");

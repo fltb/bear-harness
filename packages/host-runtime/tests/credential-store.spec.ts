@@ -7,6 +7,7 @@ import {
 	CredentialStore,
 	type CredentialVault,
 	EncryptedPiCredentialStore,
+	REMOTE_EMBEDDING_CREDENTIAL_ID,
 } from "../src/providers/credential-store.js";
 
 const BLOB_PREFIX = "vault-v1:";
@@ -94,6 +95,20 @@ describe("CredentialStore security policy", () => {
 			apiKey: "os-secret",
 			status: "stored",
 		});
+		db.close();
+	});
+
+	it("keeps the internal embedding credential out of Pi provider enumeration", async () => {
+		const db = createDb();
+		const store = new CredentialStore(drizzle({ client: db }), makeVault());
+		await store.set(REMOTE_EMBEDDING_CREDENTIAL_ID, { apiKey: "embedding-secret" });
+		await store.set("provider-visible", { apiKey: "provider-secret" });
+
+		expect(store.read(REMOTE_EMBEDDING_CREDENTIAL_ID)?.apiKey).toBe("embedding-secret");
+		expect(await store.list()).toEqual([{ providerId: "provider-visible", status: "stored" }]);
+		expect(
+			storedBlob(db, REMOTE_EMBEDDING_CREDENTIAL_ID).credential_blob?.toString("utf8"),
+		).not.toContain("embedding-secret");
 		db.close();
 	});
 

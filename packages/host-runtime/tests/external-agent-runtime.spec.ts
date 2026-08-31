@@ -187,7 +187,7 @@ describe("external-agent process environments", () => {
 		const home = realpathSync(join(runRoot, "home"));
 		const temporary = realpathSync(join(runRoot, "tmp"));
 		const piSessionDirectory = realpathSync(join(runRoot, "pi-session"));
-		const piAuthDirectory = realpathSync(join(root, "user-data", "companion-runtime"));
+		const piAuthDirectory = realpathSync(join(root, "user-data"));
 		expect(environment).toMatchObject({
 			PATH: "/safe/runtime/bin",
 			LANG: "en_US.UTF-8",
@@ -247,7 +247,7 @@ describe("external-agent process environments", () => {
 				consentedAt: "2026-08-26T00:00:00.000Z",
 			},
 		});
-		const adapter = new InspectableCodexAdapter(null as never, null as never);
+		const adapter = new InspectableCodexAdapter(null as never, null as never, null as never);
 		const spec = adapter.inspect(launch);
 		const environment = spec.env;
 		const runRoot = realpathSync(join(root, "run-1"));

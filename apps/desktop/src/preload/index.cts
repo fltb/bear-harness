@@ -90,6 +90,28 @@ const localFiles = Object.freeze({
 		files.map((file) => webUtils.getPathForFile(file)).filter(Boolean),
 });
 
+function listenToHostPush(
+	channels: { listen: string; push: string; unlisten: string },
+	params: Record<string, unknown>,
+	receive: (batch: unknown) => void,
+	fail: (error: unknown) => void,
+): () => void {
+	const id = crypto.randomUUID();
+	let stopped = false;
+	const listener = (_event: Electron.IpcRendererEvent, message: { id: string; batch: unknown }) => {
+		if (!stopped && message.id === id) receive(message.batch);
+	};
+	ipcRenderer.on(channels.push, listener);
+	void ipcRenderer.invoke(channels.listen, { id, ...params }).catch((error) => {
+		if (!stopped) fail(String(error));
+	});
+	return () => {
+		stopped = true;
+		ipcRenderer.removeListener(channels.push, listener);
+		void ipcRenderer.invoke(channels.unlisten, { id }).catch(() => {});
+	};
+}
+
 contextBridge.exposeInMainWorld(
 	"bearDesktop",
 	Object.freeze({
@@ -101,25 +123,28 @@ contextBridge.exposeInMainWorld(
 				afterSeq: number,
 				receive: (batch: unknown) => void,
 				fail: (error: unknown) => void,
-			) => {
-				const id = crypto.randomUUID();
-				let stopped = false;
-				const listener = (
-					_event: Electron.IpcRendererEvent,
-					message: { id: string; batch: unknown },
-				) => {
-					if (!stopped && message.id === id) receive(message.batch);
-				};
-				ipcRenderer.on("events:push:v1", listener);
-				void ipcRenderer.invoke("events:listen:v1", { id, afterSeq }).catch((error) => {
-					if (!stopped) fail(String(error));
-				});
-				return () => {
-					stopped = true;
-					ipcRenderer.removeListener("events:push:v1", listener);
-					void ipcRenderer.invoke("events:unlisten:v1", { id }).catch(() => {});
-				};
-			},
+			) =>
+				listenToHostPush(
+					{
+						listen: "events:listen:v1",
+						push: "events:push:v1",
+						unlisten: "events:unlisten:v1",
+					},
+					{ afterSeq },
+					receive,
+					fail,
+				),
+			listenPi: (receive: (batch: unknown) => void, fail: (error: unknown) => void) =>
+				listenToHostPush(
+					{
+						listen: "pi-events:listen:v1",
+						push: "pi-events:push:v1",
+						unlisten: "pi-events:unlisten:v1",
+					},
+					{},
+					receive,
+					fail,
+				),
 			invoke: (channel: string, request: unknown) => {
 				return ipcRenderer.invoke(channel, request);
 			},

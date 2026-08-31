@@ -15,9 +15,12 @@ import {
 	type Diagnostics,
 	formatTraceparent,
 	type HostRuntime,
+	prepareRuntimeLayout,
+	RuntimeLayout,
 } from "@bear-harness/host-runtime";
 import { productConfig } from "@bear-harness/product-config";
 import { app, BrowserWindow, crashReporter, dialog, ipcMain, shell } from "electron";
+import { createDesktopArtifactPresenter } from "./artifact-presenter.js";
 import {
 	type DataRootMigrationResult,
 	LEGACY_DATA_DIRECTORY_NAME,
@@ -99,6 +102,7 @@ const recoveryRoot = recoveryStateRootForAppData(appDataBase);
 let recoveryStore: RecoveryStateStore | null = null;
 let dataRoot: DataRootMigrationResult | null = null;
 let bootstrapFailureReason: string | null = null;
+let storageLayoutReady = false;
 
 try {
 	recoveryStore = new RecoveryStateStore(recoveryRoot, {
@@ -111,13 +115,19 @@ try {
 		recoveryStore,
 	});
 	if (dataRoot.status === "recovery_required") bootstrapFailureReason = dataRoot.message;
+	else {
+		prepareRuntimeLayout(dataRoot.root);
+		storageLayoutReady = true;
+	}
 } catch {
 	bootstrapFailureReason = "Failed to resolve the application data directory safely";
 }
 
 const defaultElectronUserData = app.getPath("userData");
 let userData =
-	dataRoot?.status === "ready" ? dataRoot.root : join(recoveryRoot, "recovery-electron-profile");
+	dataRoot?.status === "ready" && storageLayoutReady
+		? dataRoot.root
+		: join(recoveryRoot, "recovery-electron-profile");
 try {
 	mkdirSync(join(userData, "Chromium"), { recursive: true, mode: 0o700 });
 	app.setPath("userData", userData);
@@ -147,7 +157,9 @@ const diagnosticsRoot =
 	process.env.BEAR_DIAGNOSTICS_ROOT &&
 	isAbsolute(process.env.BEAR_DIAGNOSTICS_ROOT)
 		? process.env.BEAR_DIAGNOSTICS_ROOT
-		: join(userData, "diagnostics");
+		: storageLayoutReady
+			? new RuntimeLayout(userData).systemDiagnostics
+			: join(userData, "diagnostics");
 const diagnostics: Diagnostics = createDiagnostics({
 	app: {
 		setAppLogsPath: (path) => app.setAppLogsPath(path),
@@ -169,6 +181,12 @@ let shutdownComplete = false;
 let hostRuntime: HostRuntime | null = null;
 let disposeElectronIpcHandlers: (() => void) | null = null;
 let disposeElectronDiagnostics: (() => void) | null = null;
+const artifactPresentation = createDesktopArtifactPresenter({
+	showSaveDialog: (options) => dialog.showSaveDialog(options),
+	openPath: (path) => shell.openPath(path),
+	showItemInFolder: (path) => shell.showItemInFolder(path),
+	documentsDirectory: () => app.getPath("documents"),
+});
 
 function requestShutdown(exitCode: number): void {
 	process.exitCode = Math.max(Number(process.exitCode ?? 0), exitCode);
@@ -290,6 +308,7 @@ async function runRecoveryInterface(
 
 app.on("before-quit", (event) => {
 	if (shutdownComplete) return;
+	event.preventDefault();
 	if (updateTimer) {
 		clearInterval(updateTimer);
 		updateTimer = null;
@@ -304,7 +323,7 @@ app.on("before-quit", (event) => {
 	windowHookDisposers.clear();
 	for (const span of windowSpans.splice(0)) span.end("cancelled");
 	const closeHost = hostRuntime ? hostRuntime.close() : Promise.resolve();
-	void closeHost.finally(() => {
+	void Promise.allSettled([closeHost, artifactPresentation.dispose()]).finally(() => {
 		void diagnostics.shutdown().then(() => {
 			shutdownComplete = true;
 			app.quit();
@@ -359,7 +378,6 @@ async function initializeHost(): Promise<boolean> {
 		const updater = updateService;
 		const runtime = createHostRuntime({
 			dataDir: userData,
-			diagnostics,
 			characterSeedRoot: characterSeedRoot(),
 			productConfig,
 			credentialVault: isSourceE2E ? e2eCredentialVault : electronCredentialVault,
@@ -373,9 +391,11 @@ async function initializeHost(): Promise<boolean> {
 				: undefined,
 			bundledGit: bundledGitRuntime(),
 			piWorkerPath: sourceE2EPiWorkerPath(),
+			artifactPresenter: artifactPresentation.presenter,
 		});
 		const disposeRouter = wireElectronIpcHandlers(runtime.dispatcher, windowRegistry, {
 			subscribeEvents: (listener, afterSeq) => runtime.subscribeEvents(listener, afterSeq),
+			subscribePiEvents: (listener) => runtime.subscribePiEvents(listener),
 			diagnostics,
 		});
 		const disposeLocalFileBridge = registerLocalFileBridge(windowRegistry);
@@ -506,6 +526,8 @@ diagnostics.runInSession(() => {
 						});
 						if (retried.status !== "ready") return false;
 						dataRoot = retried;
+						prepareRuntimeLayout(retried.root);
+						storageLayoutReady = true;
 						bootstrapFailureReason = null;
 						return true;
 					} catch {
@@ -517,7 +539,7 @@ diagnostics.runInSession(() => {
 			updateService = new UpdateService({
 				feedUrl: productConfig.updateFeedUrl ?? "",
 				currentVersion: app.getVersion(),
-				stagingDir: join(userData, "updates"),
+				stagingDir: new RuntimeLayout(userData).systemUpdates,
 				publisherPolicy: productConfig.updatePublisher,
 			});
 			if (!(await initializeHost()) || !hostRuntime) {

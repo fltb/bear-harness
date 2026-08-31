@@ -1,152 +1,164 @@
 # Bear Harness engineering authority
 
-These rules apply to the entire repository. They are hard project constraints, not suggestions.
+These rules apply to the entire repository. They describe the product architecture approved for the current release and are hard constraints.
 
-## User authority and scope
+## Product boundary
 
-- Implement only the behavior and file surface explicitly approved by the user for the current round.
-- Do not broaden a task because of reliability, completeness, best practices, future needs, compatibility, or convenience.
-- If a change would add a table, persisted field, state enum, state machine, queue, recovery mechanism, compatibility path, fallback, cache, service, abstraction, or authority boundary, stop and obtain explicit user approval first.
-- Report out-of-scope findings without changing them.
-- Do not use refactors, migrations, compatibility shims, dual reads/writes, aliases, or temporary bridges to preserve a model the user ordered removed.
-- Options and choice buttons are ordinary user input. They must not have a separate command protocol, state machine, or privileged semantics.
+- Bear is a managed local desktop product built around Pi Coding Agent.
+- Pi remains authoritative for conversation content and agent execution: transcript entries, branches, messages, model changes, idle/streaming/error state, steering/follow-up queues, abort/edit/retry/navigation, tools, and native lifecycle events.
+- Bear owns product and resource management: character packages, character runtime directories, session membership, archive/delete/rename orchestration, live `AgentSession` handles, explicit routing, Character/Display state, memory configuration and data placement, External Runs, Artifacts, security, and UI projection.
+- A thin wrapper is still a manager. It may open, retain, route to, close, rename, archive, and delete Pi sessions. It must not reconstruct a competing copy of Pi-owned state.
+- Do not add compatibility shims, dual reads/writes, aliases, fallback authority, or temporary state machines for models that this release removes.
 
-## Absolute Pi passthrough boundary
+## Local physical layout
 
-Pi Coding Agent is the sole authority for every conversation concern. Host and UI are forbidden from managing conversations in any form; they may only call Pi public APIs and expose Pi-native values and events without reinterpretation.
+Character packages and character runtime data are deliberately separate:
 
-Pi owns:
+```text
+<dataRoot>/
+  system/
+    settings.db
+    security/
+    providers/
+    models/embeddings/
+    updates/
+  characters/<companionId>/
+    character.yaml
+    STORY.md
+    assets/
+    canon/
+    plugins/
+    skills/
+  companions/<companionId>/
+    runtime.db
+    sessions/
+    memory/MEMORY.md
+    memory/tdai/
+    runs/<runId>/
+    artifacts/<sha256>
+    audit/
+    diagnostics/
+```
 
-- sessions, agent runtime state, turns, messages, titles, branches, and transcript persistence;
-- idle/streaming/error state and streaming content;
-- steering and follow-up queues;
-- abort, edit, retry, navigation, and continuation behavior;
-- agent, turn, message, tool, queue, and lifecycle events.
+- Every character's runtime files and character-scoped settings live below exactly one `companions/<companionId>/` directory.
+- Character runtime data must not be stored in the installation database or another character's directory.
+- The system database contains installation identity, application settings, provider accounts, the configured model pool, embedding configuration, update configuration, package registry/trust, and other genuinely installation-wide data only.
+- The character database contains its Session Catalog, Character/Display state, character model defaults, character onboarding, Canon/Story runtime data, External Runs, Artifact metadata, and other character-owned records.
+- SQLite foreign keys may not pretend to cross the system/character database boundary. A character database has its own immutable runtime identity.
+- Artifact CAS is per character. Do not deduplicate or hard-link Artifact bytes across character directories.
+- Character-specific diagnostics and audit material stays in the character directory. Global diagnostics may not contain character content.
+- Directory and path components must be validated before use. Renderer requests never supply authoritative filesystem paths.
 
-Host and UI may call Pi and render a direct reactive projection of Pi. They must not reconstruct, persist, mirror, reclassify, infer, buffer, settle, gate, block, recover, or coordinate a competing version of Pi-owned state.
+## Migration and deletion
 
-Specifically prohibited:
+- The old flat layout is migrated once through a staging tree, integrity checks, hashes/counts, fsync, and atomic activation.
+- Migration must fail closed on unowned Sessions, Runs, or Artifacts. Do not guess ownership.
+- There is no ongoing dual read/write or legacy fallback after activation.
+- Migration backups have an explicit retention policy. A product deletion must not silently leave indefinite transcript or memory copies in migration backups.
+- Deleting a Session is Bear-managed: validate Catalog ownership, block new routes, abort if running, dispose the exact live handle and subscriptions, move/delete the exact transcript resource, then remove character-owned associated data. The operation is idempotent.
+- Deleting a character runtime closes all Sessions, memory runtimes, Runs, and database handles before the character directory is moved to Trash or removed.
+- Character package deletion and character runtime deletion are separate decisions.
 
-- `CompanionSupervisor` runtime state that mirrors Pi session or agent state;
-- UI `sending` state that mirrors `isStreaming` or `pendingMessageCount`;
-- Host lifecycle events used as a second authority over Pi events;
-- reconstructed tool execution state when Pi already emits tool events;
-- timeline scans that infer whether a Pi turn settled;
-- direct assignment to `agent.state.messages`;
-- manual branch/leaf/message synchronization when a complete Pi API exists;
-- mutable global conversation routing such as `activeConversationId`;
-- per-turn skill-read gates or other hidden Host turn state;
-- companion permissions sourced from external Runs;
-- Host-owned pending user-turn persistence, replay, markers, or recovery.
-- Host-owned conversation, turn, message, response, tool-loop, or lifecycle managers of any name;
-- per-conversation or per-turn Host state keyed by Pi session IDs, message IDs, entry IDs, tool-call IDs, or inferred current turns;
-- Host turn journals, effect buffers, failed-turn flags, completion settlement, abort cleanup, or transaction lifetimes spanning multiple Pi tool calls;
-- using a Host tool result to block, cancel, roll back, reinterpret, or otherwise control later Pi calls;
-- subscribing to Pi events in order to decide when Host conversation work commits or rolls back;
-- temporary conversation projections or compatibility layers, even when described as recovery, atomicity, synchronization, UX, or safety.
+## Conversation runtime
 
-`pending_turns`, `PendingTurnStore`, `host_pending_turn`, and their states, reconciliation, retry, crash recovery, sync triggers, tests, and compatibility paths must be deleted completely. The older proposal to retain `pending_turns` for crash recovery is superseded by this rule.
+- One Host process may hold multiple real Pi `AgentSession` instances concurrently.
+- The Registry may retain only actual handles, open de-duplication promises, event unsubscribe/dispose callbacks, and deletion exclusion needed to manage those resources.
+- `active` means the conversation displayed by one Renderer window. It is UI-local and is not a Host or persisted global router.
+- `open` means a live `AgentSession` handle exists in the Host process. It is ephemeral.
+- `running` and `streaming` are Pi-native values derived from the corresponding `AgentSession`; Bear must not persist or mirror them.
+- Switching the active UI conversation must never abort, dispose, or otherwise change another Session.
+- Every conversation command and every External Run result is routed with an explicit `conversationId`.
+- Concurrent open of the same Session is de-duplicated. Different Sessions may run different models simultaneously.
+- Rename does not select a Session. Archive does not stop unrelated Sessions. Delete targets exactly one Session.
+- External Run results are delivered to `run.conversationId`, including while that Session is running, using Pi native custom-message/follow-up behavior with `runId` idempotency.
 
-Permitted Host-owned state is limited to:
+Forbidden Host state includes copied messages, entries, leaves, tool execution state, queue contents, idle/streaming/error flags, inferred current turns, completion settlement, pending user turns, transcript journals, or a mutable global active conversation.
 
-- Character State: product and narrative semantics the model can understand;
-- Display: the current conversation's Host/UI presentation mapping;
-- generated artifacts owned by an external Run;
-- external Run state that belongs to the external Run aggregate and is never inserted into companion state;
-- the total-session catalog's minimal `Pi session id -> companion id, archived at` binding.
+## Native streaming and UI projection
 
-Every Character or Display mutation must be validated and committed atomically inside that single Host tool invocation. It may use the `conversationId` supplied by Pi only as the product-data scope key. It must not retain Pi session, turn, entry, message, or tool lifecycle identifiers after the invocation, and must not wait for any later Pi event. One Host tool result has no authority over any other Pi call.
+- The UI is a direct reactive projection of Pi snapshots and Pi native transient events.
+- Preserve `message_update`, tool execution, queue, error, and settled events and tag each transported event with its Session id.
+- Token/tool streaming does not pass through the durable SQLite EventBus.
+- Reconnection uses an authoritative Session snapshot to replace the projection; events are not treated as a durable second transcript.
+- UI timeline grouping, derived display labels, and other presentation calculations are allowed when they use one Pi source and remain reactive.
+- UI may not introduce `sending` or other runtime flags that compete with Pi values.
 
-## Character and Display model
+## Session Catalog
 
-- `roleplay` is a first-class character-package semantic domain. It contains narrative variables, conditions, media, unlockables, and natural-language choice sets; it must not be renamed to or flattened into generic `resources`.
-- `resources` remains the existing static/runtime asset concept (for example skill resources). It must not replace `roleplay`, and restoring `roleplay` must not rename legitimate resource APIs.
+- A character's Catalog owns Session membership and archive metadata. Pi owns title, messages, branches, model history, counts, and runtime state.
+- Search joins Catalog membership with Pi-native title information without persisting a title copy.
+- Catalog list rows are lightweight and paginated where necessary.
+- Conversation open/get is non-destructive. Do not persist `conversation.selected` or implement Host `activeGet`.
 
-- `CompanionStateStore` and `CharacterDocumentEngine` are part of this round's mandatory core cleanup. They may not remain as two overlapping stores or as a facade that forwards one store while independently implementing another.
-- Character and Display must use one storage/projection mechanism with one reactive snapshot path. UI is a projection of that path, not another authority.
-- `CompanionStateSnapshot` may contain only Character State, conversation-scoped Display, and the schema/revision metadata strictly required to update those two domains.
-- Delete `runtimeState` and `permissions` from `CompanionStateSnapshot`, Host snapshot assembly, protocol schemas, UI reads, query invalidation, fixtures, and tests. Moving these fields from the old `presentation` object into companion state was an error, not a valid consolidation.
-- Runtime/streaming/error/queue information is projected directly from Pi. External permission requests are projected only from their owning Run. Neither may be copied into companion state.
-- Delete UI `sending` and any presence derivation that treats it as an authority. UI loading and streaming indicators must be pure projections of Pi-native state.
-- The UI `packages/companion-ui/src/stores/companion.tsx` is part of this round's mandatory Companion Store cleanup. It must not retain duplicate conversation runtime fields or absorb unrelated Run permissions.
-- State has only `conversation` and `global` scopes.
-- `global` means the current installation/user and companion pair. It is not cross-user, cross-character, or cloud-global.
-- Character scope is a top-level static partition. Every direct child of the Character State root declares exactly one `x-scope`; descendants inherit it and may not declare or override scope.
-- Global and conversation top-level keys are disjoint. Reconstruct Character State by shallowly composing defaults, global partitions, and conversation partitions. Recursive scope splitting, recursive scope merging, and scope override priority are forbidden.
-- The model sees one semantic Character document and one Display document. Scope names, per-scope revisions, schema hashes, storage ids, and merge order are Host/UI metadata and must not be injected into model context.
-- Delete the old `relationship` and `character` storage scopes. Do not retain aliases, migration reads, fallback merge order, or compatibility branches for them.
-- Character fields declare whether they are conversation or global fields.
+## Character and Display
+
+- `media`, `scenes`, and `visual` are top-level sibling character-package fields. The removed top-level `roleplay` wrapper, `choice_sets`, conditions, presentation modes, compatibility reads, and aliases must not return.
+- Each media item declares asset metadata plus natural-language `description` and `use_when`. Host does not interpret `use_when` as a condition or permission.
+- `host_media({ id })` resolves one declared media item. `host_choices({ prompt, choices })` creates choices only for the current response. Both remain ordinary Pi tool results at their native transcript positions and never write Character, Display, another table, or presentation history.
+- Choice-button clicks send their natural-language message as ordinary user input. Choices have no ids, commands, callbacks, consumption state, lifecycle, or privileged semantics.
+- Media and Artifact may share the same responsive preview column, but never ownership. Media belongs to its character package and Pi tool result; Artifact belongs to its External Run. Opening and closing a preview is UI-local and is not persisted or sent to Host.
+- Character and Display share one storage/update mechanism and one reactive snapshot path while remaining separate semantic domains.
+- Character State has only `global` and `conversation` scopes. Here `global` means the current installation/user and character pair.
+- Every direct child of the Character root declares exactly one `x-scope`, restricted to the enum `global | conversation`; descendants inherit and cannot override it.
+- Global and conversation top-level keys are disjoint and are composed shallowly.
 - Display is conversation-scoped only.
-- Keep Character and Display as separate domains in the same reactive data model and storage system.
-- Delete the independent `collection` domain.
-- Delete collection mutations, revisions, schemas, persistence, sync sources, tool exposure, model context, and writable APIs; do not merely hide collection from the UI.
-- Narrative progress and user-known story facts belong in Character State, Canon, or memory as appropriate.
-- Resource unlocks are derived from Character State and resource conditions.
-- Displayed-media deduplication is internal presentation history; it is not injected into the model as Character State.
-- Any gallery or collection UI is a read-only projection of Character State and presentation history.
-- Delete durable `pending_state_mutations`, in-memory turn journals, Pi-bound effect accumulation, turn-settlement inference, completion commits, and abort/error rollback handlers. Host product-data writes end with the individual Host tool call.
+- `host_state.read` reads the current documents. `host_state.update` accepts one or more `{ path, value }` changes and returns after validation and persistence.
+- Standard JSON Schema `title` and `description` carry each field's model-facing meaning and update guidance. Simple numbers, booleans, and small independent enums are valid fields; interdependent narrative progress should normally be represented by natural-language summaries instead of coupled enum state machines.
+- Runtime, queue, permission, Run, and Artifact state never enters Character/Display.
+- UI may compute any reactive presentation projection from the authoritative Character/Display snapshot.
 
-## Explicit Host side domains
+## Two-layer onboarding and settings
 
-There is no generic sidecar store, sidecar payload, collection, or `{domain,type,status,payload}` bucket. The only data adjacent to a Pi session is managed by these named authorities:
+- System onboarding configures installation-wide capabilities: providers, credentials, configured model pool, default system models, network, embedding, download source, and local model acquisition.
+- Character onboarding configures only a new character: first meeting, relationship choices, character memory consent, character default route selected from configured system models, and package-defined first-use choices.
+- A new character never repeats provider, network, or embedding setup. Missing system prerequisites link to System Settings.
+- Completed character onboarding is stored only in that character's runtime database.
+- Embedding configuration and local embedding model cache are installation-wide Settings. API secrets stay in the credential vault.
+- Embedding vectors, records, indexes, checkpoints, and explicit `MEMORY.md` remain physically isolated per character.
+- Changing the embedding model or dimensions invalidates/rebuilds each character index independently and never mixes character data.
 
-1. **Companion State** owns Character and Display only. Character uses the top-level global/conversation partitions above; Display is conversation-only. `host_state` is the only model write entry and commits Character and Display atomically inside one tool call.
-2. **Local files and Artifacts** are deliberately asymmetric. Local input files remain at their original absolute paths; the picker inserts those paths into ordinary user text and creates no upload, copy, attachment id, entry binding, persistence, or lifecycle. Pi's native read-only tools read ordinary files, while the stateless `document_read` Host tool parses PDF, DOCX, XLSX, and PPTX. Generated outputs belong only to their external Run as Artifacts.
-3. **External Runs** own their executor lifecycle, permissions, evidence, and result artifacts. A Run records its originating conversation and trigger entry as immutable references. It cannot alter Pi lifecycle state or Companion State. Completed results return through a Pi custom message.
-4. **Session Catalog** owns only companion membership and archive metadata for the total list of Pi sessions. Archive/restore changes that metadata; delete calls Pi and removes associated Host data; search is a read-only projection over Pi titles. It may not persist or reconstruct title, messages, counts, leaf, streaming, error, queue, runtime, or model state.
+## Memory
 
-Cross-domain rules:
+- Explicit Memory and automatic TDAI memory are distinct domains.
+- The role package, behavior, Character field descriptions, Skill catalog, Self Canon, user address, and Explicit Memory form the Session's stable system context when the real Pi `AgentSession` is opened. Explicit Memory edits do not hot-rebuild an already running Session; the tool result remains in that Session and the file is reloaded on the next open.
+- Current Character/Display and retrieved Canon/TDAI recall are temporary per-turn system context supplied through Pi's `before_agent_start`; they are not appended as transcript messages. Bear does not impose a character-count truncation or replace Pi's native context window and compaction behavior.
+- `MEMORY.md` is edited only on an explicit user request to remember, change, or forget something; writes are bounded, locked, fsynced, and atomic.
+- Automatic relationship memory follows the character's consent and uses the installation embedding configuration.
+- Explicit Memory wins when it conflicts with inferred automatic memory.
+- Deleting one Session does not delete character memory. Deleting the character runtime does.
 
-- Domains link by immutable ids and never copy another domain's state.
-- UI joins authoritative reads; events are invalidation notices only, not replicated business data or lifecycle transitions.
-- No mutable global active-conversation router may select a target for tools, attachments, or Runs.
-- Deleting a conversation removes its conversation Character partition, Display, attachment data according to attachment retention rules, Run data according to Run retention rules, and catalog binding. Global Character remains.
+## External Runs and Artifacts
 
-## Current core-reduction release gate
+- External Runs own executor lifecycle, permissions, evidence, temporary workspace, outputs, and result delivery. They never control Pi lifecycle or Character/Display commits.
+- `active` and `running` are distinct. A result may be delivered to any target Session, including a running one.
+- User interrupt and loss of an unrecoverable executor are distinct: user interrupt is resumable when the executor remains; confirmed controller loss becomes `forced_termination`.
+- On startup, query or reattach an existing executor when the protocol supports it. Use `forced_termination` only when controller loss is confirmed and recovery is impossible; otherwise preserve the Run without inventing another product status.
+- Generated outputs are Run-owned Artifacts. Capture validates path, symlinks, limits, MIME, size, and hash before committing to the character CAS.
+- Artifact actions take immutable ids, validate `conversation -> run -> artifact` ownership and content integrity, and never accept arbitrary renderer paths.
+- Artifact UI supports metadata, safe preview, open, reveal, Save As, provenance/evidence, and clear corruption/unavailability errors.
+- Opening/revealing materializes a safely named presentation copy or uses an opaque capability; internal CAS paths are never exposed to Renderer code.
+- Save As uses a native destination picker and does not persist the user's destination path.
 
-This round does not pass unless the conversation-flow core is reduced by at least 50 percent. This is a mandatory net-reduction gate.
+## Result workspace and responsive layout
 
-The locked baseline is the current physical line count of these production files:
+- Starting a Run does not force a split layout. Progress stays in the conversation timeline and the "current work" surface.
+- Completing a Run signals that a result is ready but does not steal focus.
+- Selecting a completed Run, Artifact, or timeline MediaCard opens the shared preview workspace. This layout reuse does not change domain ownership.
+- At widths `>= 1600px`, conversation and result preview are adjacent columns. At `768..1599px`, the result is a right-side overlay/drawer. At `<= 767px`, it is a full-screen result view.
+- Closing the result or switching to a conversation that does not own it returns to the normal conversation layout.
 
-| File | Baseline lines |
-| --- | ---: |
-| `packages/host-runtime/src/companion/supervisor.ts` | 1,624 |
-| `packages/host-runtime/src/companion/turn-pipeline.ts` | 953 |
-| `packages/host-runtime/src/companion/pi-session-store.ts` | 411 |
-| `packages/host-runtime/src/companion/character-behavior.ts` | 859 |
-| `packages/host-runtime/src/companion/pending-turn-store.ts` | 510 |
-| `packages/host-runtime/src/companion/companion-store.ts` | 758 |
-| `packages/host-runtime/src/companion/state-service.ts` | 793 |
-| `packages/companion-ui/src/stores/companion.tsx` | 2,906 |
-| **Total** | **8,814** |
+## Events and snapshots
 
-At final review, the surviving conversation-flow and companion-state implementation across these files must total at most **4,407 physical lines**. A deleted file counts as zero.
+- Durable product events are invalidation/audit notices, not replicated business state.
+- Pi native events are transient runtime signals and are not written to SQLite as a parallel lifecycle.
+- Bootstrap contains installation/global information. Conversation data is fetched for the selected Session. Do not build an O(N) full Character/Display snapshot for every conversation.
+- Lists are lightweight; detail endpoints are explicit and bounded.
 
-This numeric gate may not be bypassed by:
+## Quality and release
 
-- moving or copying conversation-flow logic to another file, package, generated source, helper, adapter, compatibility layer, or test;
-- renaming files or symbols;
-- replacing code with data-driven state machines, schemas, generated code, metaprogramming, or opaque wrappers;
-- excluding newly created conversation-flow files from the count;
-- deleting comments, whitespace, types, validation, or tests while retaining equivalent duplicate runtime logic;
-- weakening tests or changing the measurement baseline.
-
-Any new or relocated conversation-flow or companion-state implementation outside the eight baseline files must be added to the final line total. The architectural prohibitions above must also pass; meeting the number alone is insufficient.
-
-The final report must include:
-
-1. baseline and final physical line counts for every counted file;
-2. any additional conversation-flow files added to the total;
-3. deleted duplicate authorities and their Pi-native replacements;
-4. proof that no prohibited pending-turn, lifecycle, queue, tool, permission, skill-read, UI-sending, collection, legacy scope, duplicate companion store, or inferred turn-settlement authority remains;
-5. focused tests plus the full relevant test suite.
-
-Until both the architectural checks and the 50 percent net-reduction gate pass, the work must be reported as incomplete.
-
-## Rebuilt Host-core aggregate size gate
-
-- The entire Host core deleted and rebuilt in this cleanup must total at most **1,500 physical lines**. This is the normal pass line, not an aspirational target.
-- The aggregate includes all production code implementing Pi passthrough, conversation entry/routing, Character/Display tools, and Character/Display storage. It includes rebuilt code under the former `supervisor.ts`, `turn-pipeline.ts`, `pi-session-store.ts`, `conversations/repository.ts`, `character-behavior.ts`, and `companion-store.ts` responsibilities.
-- Any replacement or relocated implementation in `runtime.ts`, `composition.ts`, another existing file, a new helper, adapter, schema-driven engine, or generated source is added to the same aggregate total.
-- Splitting the implementation across files does not reset the count. Dense formatting, metaprogramming, embedded state-machine data, compatibility facades, generated code, aliases, or forwarding wrappers may not be used to evade the aggregate.
-- Any total above **1,500 lines** fails this cleanup. A combined total of **2,000 lines or more** is also conclusive evidence that Host authority has expanded beyond the approved boundary; it cannot pass even when tests pass.
+- Rebuild or remove obsolete tests and documentation together with the model they described. Do not preserve dead compatibility behavior to satisfy stale fixtures.
+- Add direct tests for Pi Registry concurrency, native streaming, event isolation, result routing/idempotency, rename/delete without selection, character path isolation, migration crash recovery, Artifact ownership/integrity/actions, and both onboarding layers.
+- Required release gates: lint, typecheck, all unit tests, coverage thresholds, Web required E2E, Electron E2E, recovery suite, build, security audit/signatures, live-model validation, fresh platform packages, and packaged smoke on the same clean commit.
+- WebDev acceptance includes real browser clicks through system onboarding/settings, new-character onboarding, two concurrent Sessions, streaming while switching, background Run completion, Artifact preview/open or Web download, result workspace responsive behavior, rename/archive/delete, and restart recovery.
+- Release from a clean tree with a non-placeholder version and verifiable attestations. Public distribution additionally requires the platform signing/notarization policy.
+- The final engineering report includes module/file/line counts, ownership boundaries, migration evidence, tests, known residual risks, and an explicit release decision.

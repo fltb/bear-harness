@@ -1,13 +1,8 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { createSignal, For, Show } from "solid-js";
 import { parseDocument, stringify } from "yaml";
-import {
-	type CharacterPackageDocument,
-	type MemoryCandidate,
-	useCompanionStore,
-} from "../stores/companion.js";
-import { Button, Tabs, TextField } from "../ui/primitives.js";
-import { MemoryEntryList } from "./MemorySheet.js";
+import type { CharacterDeletionStatus, CharacterPackageDocument } from "../stores/companion.js";
+import { Button, Dialog, Tabs, TextField } from "../ui/primitives.js";
 
 const PROMPT_FIELDS = [
 	"description",
@@ -39,21 +34,14 @@ export function CurrentRolePackageManager(props: {
 	) =>
 		| { origin: string; pluginHash: string; pluginsPresent: boolean; trusted: boolean }
 		| undefined;
-	settingsData: (
-		id: string,
-	) => { relationshipMemoryEnabled: boolean; conversationHistoryReadEnabled: boolean } | undefined;
-	memoryCandidates: (id: string) => MemoryCandidate[];
+	settingsData: (id: string) => { relationshipMemoryEnabled: boolean } | undefined;
 	confirmPluginTrust: (id: string) => Promise<void>;
-	settingsGet: (
-		id: string,
-	) => Promise<{ relationshipMemoryEnabled: boolean; conversationHistoryReadEnabled: boolean }>;
-	settingsUpdate: (
-		id: string,
-		settings: { relationshipMemoryEnabled?: boolean; conversationHistoryReadEnabled?: boolean },
-	) => Promise<void>;
-	listMemoryCandidates: (id: string) => Promise<MemoryCandidate[]>;
-	approveMemoryCandidate: (id: string, candidateId: string) => Promise<void>;
-	rejectMemoryCandidate: (id: string, candidateId: string) => Promise<void>;
+	settingsUpdate: (id: string, settings: { relationshipMemoryEnabled?: boolean }) => Promise<void>;
+	deletionStatus: () => CharacterDeletionStatus | undefined;
+	deletionStatusLoading: () => boolean;
+	deletionStatusError: () => string | undefined;
+	deleteRuntime: (id: string) => Promise<{ deleted: boolean }>;
+	deletePackage: (id: string) => Promise<{ deleted: boolean }>;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const selectedId = () => props.document()?.characterId ?? "";
@@ -66,7 +54,7 @@ export function CurrentRolePackageManager(props: {
 	const prompt = () =>
 		draft()?.prompt ?? (props.document() ? promptFrom(props.document()!) : undefined);
 	const storage = () =>
-		draft()?.storage ?? stringify(parseDocument(savedRaw()).get("roleplay", true) ?? {});
+		draft()?.storage ?? stringify(parseDocument(savedRaw()).get("media", true) ?? []);
 	const patchDraft = (patch: { raw?: string; prompt?: PromptDraft; storage?: string }) =>
 		setDrafts((current) => ({
 			...current,
@@ -85,6 +73,9 @@ export function CurrentRolePackageManager(props: {
 	const trust = () => props.pluginTrustData(selectedId());
 	const relationshipSettings = () => props.settingsData(selectedId());
 	const [settingsSaving, setSettingsSaving] = createSignal(false);
+	const [pendingDeletion, setPendingDeletion] = createSignal<"runtime" | "package">();
+	const [deleting, setDeleting] = createSignal(false);
+	const [deletionFeedback, setDeletionFeedback] = createSignal<string>();
 	const dirty = () => raw() !== savedRaw();
 	const load = (id: string) => {
 		if (id === selectedId()) return;
@@ -94,16 +85,15 @@ export function CurrentRolePackageManager(props: {
 		);
 	};
 
-	const updateRelationshipSetting = async (
-		key: "relationshipMemoryEnabled" | "conversationHistoryReadEnabled",
-	) => {
+	const updateRelationshipSetting = async () => {
 		const current = relationshipSettings();
 		const characterId = selectedId();
 		if (!current || !characterId) return;
 		setSettingsSaving(true);
 		try {
-			const next = { ...current, [key]: !current[key] };
-			await props.settingsUpdate(characterId, { [key]: next[key] });
+			await props.settingsUpdate(characterId, {
+				relationshipMemoryEnabled: !current.relationshipMemoryEnabled,
+			});
 		} catch (error) {
 			setSaveError(error instanceof Error ? error.message : String(error));
 		} finally {
@@ -143,7 +133,7 @@ export function CurrentRolePackageManager(props: {
 		}
 		const yaml = parseDocument(raw());
 		if (yaml.errors.length > 0) return;
-		yaml.set("roleplay", storageDocument.toJSON());
+		yaml.set("media", storageDocument.toJSON());
 		setRaw(String(yaml));
 		setParseError(undefined);
 	};
@@ -155,7 +145,7 @@ export function CurrentRolePackageManager(props: {
 			[current.characterId]: {
 				raw: current.yaml,
 				prompt: promptFrom(current),
-				storage: stringify(parseDocument(current.yaml).get("roleplay", true) ?? {}),
+				storage: stringify(parseDocument(current.yaml).get("media", true) ?? []),
 			},
 		}));
 		setParseError(undefined);
@@ -172,7 +162,7 @@ export function CurrentRolePackageManager(props: {
 				[next.characterId]: {
 					raw: next.yaml,
 					prompt: promptFrom(next),
-					storage: stringify(parseDocument(next.yaml).get("roleplay", true) ?? {}),
+					storage: stringify(parseDocument(next.yaml).get("media", true) ?? []),
 				},
 			}));
 		} catch (error) {
@@ -184,6 +174,51 @@ export function CurrentRolePackageManager(props: {
 			);
 		} finally {
 			setSaving(false);
+		}
+	};
+	const deletionErrorMessage = (error: unknown): string => {
+		const reason =
+			typeof error === "object" && error !== null && "reason" in error ? String(error.reason) : "";
+		switch (reason) {
+			case "character_runtime_active":
+			case "character_package_active":
+				return t("currentRolePackage.deleteBlockedActive");
+			case "character_package_default":
+				return t("currentRolePackage.deleteBlockedDefault");
+			case "character_runtime_exists":
+				return t("currentRolePackage.deleteBlockedRuntimePresent");
+			default:
+				return error instanceof Error ? error.message : String(error);
+		}
+	};
+	const confirmDeletion = async () => {
+		const target = pendingDeletion();
+		const current = props.document();
+		if (!target || !current) return;
+		setDeleting(true);
+		setDeletionFeedback(undefined);
+		try {
+			const result =
+				target === "runtime"
+					? await props.deleteRuntime(current.characterId)
+					: await props.deletePackage(current.characterId);
+			setPendingDeletion(undefined);
+			setDeletionFeedback(
+				t(
+					target === "runtime"
+						? result.deleted
+							? "currentRolePackage.runtimeDeleted"
+							: "currentRolePackage.runtimeAlreadyAbsent"
+						: result.deleted
+							? "currentRolePackage.packageDeleted"
+							: "currentRolePackage.packageAlreadyAbsent",
+					{ name: current.character.name },
+				),
+			);
+		} catch (error) {
+			setDeletionFeedback(deletionErrorMessage(error));
+		} finally {
+			setDeleting(false);
 		}
 	};
 	return (
@@ -296,7 +331,7 @@ export function CurrentRolePackageManager(props: {
 									</Show>
 								</div>
 								<TextField class="setting-field">
-									<TextField.Label class="field-label">roleplay.yaml</TextField.Label>
+									<TextField.Label class="field-label">media.yaml</TextField.Label>
 									<TextField.TextArea
 										aria-label={t("currentRolePackage.storageDefinition")}
 										rows={18}
@@ -309,8 +344,7 @@ export function CurrentRolePackageManager(props: {
 									<strong>{t("currentRolePackage.storyProjection")}</strong>
 									<span>
 										{t("currentRolePackage.projectionCounts", {
-											variables: current().character.roleplay.variables.length,
-											unlockables: current().character.roleplay.unlockables.length,
+											media: current().character.media.length,
 										})}
 									</span>
 								</div>
@@ -327,41 +361,11 @@ export function CurrentRolePackageManager(props: {
 										aria-checked={relationshipSettings()?.relationshipMemoryEnabled || false}
 										data-checked={relationshipSettings()?.relationshipMemoryEnabled || undefined}
 										disabled={settingsSaving()}
-										onClick={() => void updateRelationshipSetting("relationshipMemoryEnabled")}
+										onClick={() => void updateRelationshipSetting()}
 									>
 										<span class="switch-thumb" />
 									</Button>
 								</div>
-								<div class="detail-card">
-									<strong>{t("currentRolePackage.readConversationHistory")}</strong>
-									<span>{t("currentRolePackage.readConversationHistoryDescription")}</span>
-									<Button
-										type="button"
-										class="switch-control"
-										role="switch"
-										aria-label={t("currentRolePackage.readConversationHistory")}
-										aria-checked={relationshipSettings()?.conversationHistoryReadEnabled || false}
-										data-checked={
-											relationshipSettings()?.conversationHistoryReadEnabled || undefined
-										}
-										disabled={settingsSaving()}
-										onClick={() => void updateRelationshipSetting("conversationHistoryReadEnabled")}
-									>
-										<span class="switch-thumb" />
-									</Button>
-								</div>
-								<RoleRelationshipCandidates
-									characterId={current().characterId}
-									list={props.listMemoryCandidates}
-									data={props.memoryCandidates}
-									approve={props.approveMemoryCandidate}
-									reject={props.rejectMemoryCandidate}
-								/>
-								<MemoryEntryList
-									scope="relationship"
-									title={t("currentRolePackage.relationshipMemoryTitle")}
-									characterId={current().characterId}
-								/>
 							</Tabs.Content>
 						</Tabs>
 						<Show when={parseError()}>
@@ -399,94 +403,138 @@ export function CurrentRolePackageManager(props: {
 								</Button>
 							</div>
 						</Show>
+						<section
+							class="character-deletion-zone"
+							aria-label={t("currentRolePackage.localDataTitle")}
+						>
+							<header>
+								<strong>{t("currentRolePackage.localDataTitle")}</strong>
+								<span>{t("currentRolePackage.localDataDescription")}</span>
+							</header>
+							<Show when={props.deletionStatusLoading()}>
+								<p class="status-line" role="status">
+									{t("currentRolePackage.deletionStatusLoading")}
+								</p>
+							</Show>
+							<div class="character-deletion-option">
+								<div>
+									<strong>{t("currentRolePackage.deleteRuntime")}</strong>
+									<span>{t("currentRolePackage.deleteRuntimeDescription")}</span>
+									<Show when={props.deletionStatus()?.active}>
+										<small>{t("currentRolePackage.deleteBlockedActive")}</small>
+									</Show>
+									<Show when={props.deletionStatus() && !props.deletionStatus()?.runtimePresent}>
+										<small>{t("currentRolePackage.runtimeAlreadyAbsent")}</small>
+									</Show>
+								</div>
+								<Button
+									data-variant="danger"
+									type="button"
+									disabled={
+										deleting() ||
+										!props.deletionStatus() ||
+										props.deletionStatus()?.active ||
+										!props.deletionStatus()?.runtimePresent
+									}
+									onClick={() => setPendingDeletion("runtime")}
+								>
+									{t("currentRolePackage.deleteRuntime")}
+								</Button>
+							</div>
+							<div class="character-deletion-option">
+								<div>
+									<strong>{t("currentRolePackage.deletePackage")}</strong>
+									<span>{t("currentRolePackage.deletePackageDescription")}</span>
+									<Show when={props.deletionStatus()?.active}>
+										<small>{t("currentRolePackage.deleteBlockedActive")}</small>
+									</Show>
+									<Show when={props.deletionStatus()?.default}>
+										<small>{t("currentRolePackage.deleteBlockedDefault")}</small>
+									</Show>
+									<Show when={props.deletionStatus()?.runtimePresent}>
+										<small>{t("currentRolePackage.deleteBlockedRuntimePresent")}</small>
+									</Show>
+									<Show when={dirty()}>
+										<small>{t("currentRolePackage.deleteBlockedUnsaved")}</small>
+									</Show>
+								</div>
+								<Button
+									data-variant="danger"
+									type="button"
+									disabled={
+										deleting() ||
+										dirty() ||
+										!props.deletionStatus() ||
+										props.deletionStatus()?.active ||
+										props.deletionStatus()?.default ||
+										props.deletionStatus()?.runtimePresent ||
+										!props.deletionStatus()?.packagePresent
+									}
+									onClick={() => setPendingDeletion("package")}
+								>
+									{t("currentRolePackage.deletePackage")}
+								</Button>
+							</div>
+							<Show when={props.deletionStatusError()}>
+								{(message) => (
+									<p class="status-line err" role="alert">
+										{message()}
+									</p>
+								)}
+							</Show>
+							<Show when={deletionFeedback()}>
+								{(message) => (
+									<p class="status-line" role="status">
+										{message()}
+									</p>
+								)}
+							</Show>
+						</section>
+						<Dialog
+							open={pendingDeletion() !== undefined}
+							onOpenChange={(open) => {
+								if (!open && !deleting()) setPendingDeletion(undefined);
+							}}
+						>
+							<Dialog.Portal>
+								<Dialog.Overlay class="confirmation-overlay" />
+								<Dialog.Content class="confirmation-dialog">
+									<Dialog.Title>
+										{t(
+											pendingDeletion() === "runtime"
+												? "currentRolePackage.deleteRuntimeConfirmTitle"
+												: "currentRolePackage.deletePackageConfirmTitle",
+										)}
+									</Dialog.Title>
+									<Dialog.Description>
+										{t(
+											pendingDeletion() === "runtime"
+												? "currentRolePackage.deleteRuntimeConfirmDescription"
+												: "currentRolePackage.deletePackageConfirmDescription",
+											{ name: current().character.name },
+										)}
+									</Dialog.Description>
+									<div class="confirmation-actions">
+										<Dialog.CloseButton as={Button} type="button" disabled={deleting()}>
+											{t("currentRolePackage.deleteCancel")}
+										</Dialog.CloseButton>
+										<Button
+											class="danger-action"
+											type="button"
+											disabled={deleting()}
+											onClick={() => void confirmDeletion()}
+										>
+											{deleting()
+												? t("currentRolePackage.deleting")
+												: t("currentRolePackage.deleteConfirmAction")}
+										</Button>
+									</div>
+								</Dialog.Content>
+							</Dialog.Portal>
+						</Dialog>
 					</>
 				)}
 			</Show>
-		</section>
-	);
-}
-
-function RoleRelationshipCandidates(props: {
-	characterId: string;
-	list: (characterId: string) => Promise<MemoryCandidate[]>;
-	data: (characterId: string) => MemoryCandidate[];
-	approve: (characterId: string, candidateId: string) => Promise<void>;
-	reject: (characterId: string, candidateId: string) => Promise<void>;
-}) {
-	const [t] = useTranslation(undefined, { i18n });
-	const projection = useCompanionStore().memory.observeCandidates(
-		() => props.characterId,
-		"pending",
-	);
-	const candidates = () =>
-		(projection.data()?.candidates ?? []).filter(
-			(candidate) => candidate.suggestedScope === "relationship",
-		);
-	const [error, setError] = createSignal<string>();
-	const [busyId, setBusyId] = createSignal<string>();
-	const reload = async () => {
-		try {
-			setError(undefined);
-			await props.list(props.characterId);
-		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : String(cause));
-		}
-	};
-	const decide = async (candidateId: string, decision: "approve" | "reject") => {
-		setBusyId(candidateId);
-		try {
-			if (decision === "approve") await props.approve(props.characterId, candidateId);
-			else await props.reject(props.characterId, candidateId);
-			await reload();
-		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : String(cause));
-		} finally {
-			setBusyId(undefined);
-		}
-	};
-	return (
-		<section class="memory-section" aria-label={t("currentRolePackage.pendingRelationshipLabel")}>
-			<div class="section-head">
-				<h3>{t("currentRolePackage.pendingRelationshipTitle")}</h3>
-			</div>
-			<Show when={error()}>
-				{(message) => (
-					<p class="status-line err" role="alert">
-						{message()}
-					</p>
-				)}
-			</Show>
-			<Show when={candidates().length === 0}>
-				<p class="empty-note">{t("currentRolePackage.noPendingRelationship")}</p>
-			</Show>
-			<ul class="candidate-list">
-				<For each={candidates()}>
-					{(candidate) => (
-						<li class="candidate-card">
-							<p class="candidate-text">{candidate.normalizedText}</p>
-							<p class="candidate-why">{candidate.why}</p>
-							<div class="candidate-actions">
-								<Button
-									type="button"
-									class="mini-btn primary"
-									disabled={busyId() === candidate.id}
-									onClick={() => void decide(candidate.id, "approve")}
-								>
-									{t("currentRolePackage.keep")}
-								</Button>
-								<Button
-									type="button"
-									class="mini-btn"
-									disabled={busyId() === candidate.id}
-									onClick={() => void decide(candidate.id, "reject")}
-								>
-									{t("currentRolePackage.ignore")}
-								</Button>
-							</div>
-						</li>
-					)}
-				</For>
-			</ul>
 		</section>
 	);
 }

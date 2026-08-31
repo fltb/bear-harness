@@ -324,6 +324,7 @@ export const DIAGNOSTIC_CATALOG: Readonly<Record<string, CatalogEntry>> = deepFr
 				"failed",
 				"cancelled",
 				"interrupted",
+				"forced_termination",
 				"resumed",
 			] as const),
 		},

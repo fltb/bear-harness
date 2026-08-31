@@ -6,11 +6,17 @@
  * deliberately advertises no Host filesystem or terminal callbacks.
  */
 import type * as acp from "@agentclientprotocol/sdk";
-import { type AcpPermissionRequest, type AcpProcessSpec, AcpRunClient } from "./acp-client.js";
+import {
+	type AcpPermissionRequest,
+	type AcpProcessExit,
+	type AcpProcessSpec,
+	AcpRunClient,
+} from "./acp-client.js";
 import type {
 	ExecutorController,
 	ExecutorLaunchRequest,
 	ExecutorPermissionResponse,
+	ExecutorRecovery,
 	ExecutorRun,
 } from "./router.js";
 
@@ -75,6 +81,33 @@ export abstract class AcpExecutorController implements ExecutorController {
 
 		request.emit({ type: "started" });
 		void this.runPrompt(active);
+	}
+
+	async recover(run: ExecutorRun): Promise<ExecutorRecovery> {
+		const active = this.activeRuns.get(run.runId);
+		if (active) return active.client.recoveryState();
+		// ACP is an anonymous stdio transport. After a Host restart there is no
+		// inherited pipe, reattach token, or durable process identity to query.
+		// Absence from this process-local map therefore proves nothing about the
+		// earlier worker and must fail closed as unknown.
+		return "unknown";
+	}
+
+	async close(): Promise<void> {
+		const activeRuns = [...this.activeRuns.values()];
+		for (const active of activeRuns) {
+			active.settled = true;
+			this.activeRuns.delete(active.request.run.runId);
+		}
+		await Promise.all(activeRuns.map((active) => active.client.stop()));
+	}
+
+	async stop(run: ExecutorRun): Promise<void> {
+		const active = this.activeRuns.get(run.runId);
+		if (!active) return;
+		active.settled = true;
+		this.activeRuns.delete(run.runId);
+		await active.client.stop();
 	}
 
 	async cancel(run: ExecutorRun): Promise<void> {
@@ -167,7 +200,7 @@ export abstract class AcpExecutorController implements ExecutorController {
 				});
 			}
 		} catch (error) {
-			this.settle(active, { type: "failed", reason: errorMessage(error) });
+			this.settle(active, { type: "failed", reason: executorFailureCode(error) });
 		}
 	}
 
@@ -246,14 +279,11 @@ export abstract class AcpExecutorController implements ExecutorController {
 		});
 	}
 
-	private handleProcessExit(
-		active: ActiveRun,
-		result: { code: number | null; signal: NodeJS.Signals | null; error?: string },
-	): void {
+	private handleProcessExit(active: ActiveRun, result: AcpProcessExit): void {
 		if (active.settled) return;
 		this.settle(active, {
 			type: "failed",
-			reason: result.error ?? `acp_agent_exited:${result.code ?? result.signal ?? "unknown"}`,
+			reason: acpExitReason(result),
 		});
 	}
 
@@ -302,10 +332,21 @@ function compactToolUpdate(update: {
 	};
 }
 
-function errorMessage(error: unknown): string {
-	if (error instanceof Error && error.message) return error.message.slice(0, 500);
-	if (error && typeof error === "object" && "reason" in error && typeof error.reason === "string") {
-		return error.reason.slice(0, 500);
-	}
+function executorFailureCode(error: unknown): string {
+	if (
+		error &&
+		typeof error === "object" &&
+		"reason" in error &&
+		(error.reason === "acp_start_failed" || error.reason === "acp_process_spawn_failed")
+	)
+		return error.reason;
 	return "acp_executor_failed";
+}
+
+function acpExitReason(result: AcpProcessExit): string {
+	if (result.errorCode) return result.errorCode;
+	if (result.code !== null && Number.isSafeInteger(result.code))
+		return `acp_agent_exit_code:${result.code}`;
+	if (result.signal) return "acp_agent_terminated_by_signal";
+	return "acp_agent_exit_unknown";
 }

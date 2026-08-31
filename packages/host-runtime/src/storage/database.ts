@@ -23,13 +23,13 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-sqlite";
 import * as sqliteVec from "sqlite-vec";
-import { BASELINE_V1_SQL } from "./baseline-v1.js";
-import { installationIdentity } from "./schema.js";
+import { companionRuntimeIdentity, installationIdentity } from "./schema.js";
+import { COMPANION_BASELINE_V1_SQL, SYSTEM_BASELINE_V1_SQL } from "./split-baselines.js";
 
 function createAppDatabase(client: DatabaseSync) {
 	return drizzle({ client });
@@ -50,7 +50,10 @@ export function loadInstallationId(db: AppDatabase): string {
 	return row.installationId;
 }
 export interface CanonVectorIndex {
-	ensureCanonVectorIndex(dimensions: number): { ready: boolean; reset: boolean };
+	ensureCanonVectorIndex(configuration: { dimensions: number; fingerprint: string }): {
+		ready: boolean;
+		reset: boolean;
+	};
 	searchCanonVectors(
 		embedding: Float32Array,
 		limit: number,
@@ -88,6 +91,58 @@ interface UpgradeMarker {
 	readonly backupPath: string;
 	readonly state: "pending";
 }
+
+type SchemaContract = Readonly<Record<string, readonly string[]>>;
+
+interface DatabaseOptions {
+	readonly fileName?: string;
+	readonly backupPrefix?: string;
+	readonly schemaContract?: SchemaContract;
+}
+
+export const SYSTEM_SCHEMA_CONTRACT: SchemaContract = {
+	installation_identity: ["id", "installation_id", "created_at"],
+	app_settings: [
+		"id",
+		"first_run_stage",
+		"network_proxy",
+		"memory_vector_service",
+		"system_model_defaults",
+		"model_download_mirror",
+		"updated_at",
+	],
+	companion_packages: ["id", "name", "version", "hash", "origin", "plugin_hash"],
+	companion_identity: ["id", "package_id", "name"],
+	provider_accounts: ["id", "provider_id", "credential_blob", "credential_status"],
+	configured_models: ["provider_id", "model_id", "label", "supports_images", "created_at"],
+	executor_profiles: ["id", "profile_type", "capability_json"],
+};
+
+export const COMPANION_SCHEMA_CONTRACT: SchemaContract = {
+	runtime_identity: ["id", "companion_id", "nickname", "created_at"],
+	events: ["seq", "kind", "payload", "created_at"],
+	conversations: ["id", "companion_id", "archived_at"],
+	model_route_settings: [
+		"companion_id",
+		"text_provider_id",
+		"text_model_id",
+		"vision_mode",
+		"onboarding_complete",
+	],
+	onboarding_state: ["companion_id", "state", "state_json"],
+	runs: ["id", "conversation_id", "trigger_entry_id", "executor_profile", "status"],
+	artifacts: ["id", "sha256", "producer_run_id", "status"],
+	companion_state_documents: [
+		"id",
+		"companion_id",
+		"conversation_id",
+		"scope",
+		"domain",
+		"state_json",
+		"revision",
+		"schema_hash",
+	],
+};
 
 // ---------------------------------------------------------------------------
 // Database
@@ -154,18 +209,23 @@ export class Database {
 		});
 	}
 
-	private readonly dbPath: string;
+	readonly path: string;
 	private readonly backupDir: string;
 	private readonly upgradeMarkerPath: string;
+	private readonly backupPrefix: string;
+	private readonly schemaContract: SchemaContract;
 
-	constructor(databaseDir: string) {
-		this.dbPath = join(databaseDir, "canon.db");
+	constructor(databaseDir: string, options: DatabaseOptions = {}) {
+		const fileName = options.fileName ?? "canon.db";
+		this.path = join(databaseDir, fileName);
 		this.backupDir = join(databaseDir, "schema-backups");
 		this.upgradeMarkerPath = join(databaseDir, "schema-upgrade.json");
+		this.backupPrefix = options.backupPrefix ?? basename(fileName, ".db");
+		this.schemaContract = options.schemaContract ?? {};
 		mkdirSync(databaseDir, { recursive: true });
 		mkdirSync(this.backupDir, { recursive: true });
 
-		this.connection = new DatabaseSync(this.dbPath, { allowExtension: true });
+		this.connection = new DatabaseSync(this.path, { allowExtension: true });
 		this.connection.function("bear_sync_changed", () => {
 			this.scheduleSyncNotification();
 			return 0;
@@ -202,17 +262,36 @@ export class Database {
 		this.syncListeners.clear();
 		this.connection.close();
 	}
-	ensureCanonVectorIndex(dimensions: number): { ready: boolean; reset: boolean } {
-		if (!Number.isSafeInteger(dimensions) || dimensions <= 0) return { ready: false, reset: false };
+	ensureCanonVectorIndex(configuration: { dimensions: number; fingerprint: string }): {
+		ready: boolean;
+		reset: boolean;
+	} {
+		const { dimensions, fingerprint } = configuration;
+		if (!Number.isSafeInteger(dimensions) || dimensions <= 0 || !/^[0-9a-f]{64}$/.test(fingerprint))
+			return { ready: false, reset: false };
+		let savepointOpen = false;
 		try {
+			this.connection.exec("SAVEPOINT canon_vector_configuration");
+			savepointOpen = true;
 			this.connection.exec(
 				"CREATE TABLE IF NOT EXISTS canon_vector_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
 			);
-			const row = this.connection
-				.prepare("SELECT value FROM canon_vector_meta WHERE key = 'dimensions'")
-				.get() as { value: string } | undefined;
-			const reset = Boolean(row && Number(row.value) !== dimensions);
-			if (reset) this.connection.exec("DROP TABLE IF EXISTS canon_chunk_vectors");
+			const metadata = new Map(
+				(
+					this.connection
+						.prepare(
+							"SELECT key, value FROM canon_vector_meta WHERE key IN ('dimensions', 'fingerprint')",
+						)
+						.all() as Array<{ key: string; value: string }>
+				).map((row) => [row.key, row.value]),
+			);
+			const reset =
+				metadata.get("dimensions") !== String(dimensions) ||
+				metadata.get("fingerprint") !== fingerprint;
+			if (reset) {
+				this.connection.exec("DROP TABLE IF EXISTS canon_chunk_vectors");
+				this.connection.exec("UPDATE canon_chunks SET embedding = NULL");
+			}
 			this.connection.exec(
 				`CREATE VIRTUAL TABLE IF NOT EXISTS canon_chunk_vectors USING vec0(
 					chunk_id TEXT PRIMARY KEY,
@@ -224,8 +303,23 @@ export class Database {
 					"INSERT INTO canon_vector_meta (key, value) VALUES ('dimensions', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
 				)
 				.run(String(dimensions));
+			this.connection
+				.prepare(
+					"INSERT INTO canon_vector_meta (key, value) VALUES ('fingerprint', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+				)
+				.run(fingerprint);
+			this.connection.exec("RELEASE canon_vector_configuration");
+			savepointOpen = false;
 			return { ready: true, reset };
 		} catch {
+			if (savepointOpen) {
+				try {
+					this.connection.exec("ROLLBACK TO canon_vector_configuration");
+				} catch {}
+				try {
+					this.connection.exec("RELEASE canon_vector_configuration");
+				} catch {}
+			}
 			return { ready: false, reset: false };
 		}
 	}
@@ -270,7 +364,7 @@ export class Database {
 	/** Return verified backup files in newest-first filename order. */
 	private backupPaths(): string[] {
 		return readdirSync(this.backupDir)
-			.filter((file) => file.startsWith("canon-") && file.endsWith(".db"))
+			.filter((file) => file.startsWith(`${this.backupPrefix}-`) && file.endsWith(".db"))
 			.map((file) => join(this.backupDir, file))
 			.sort()
 			.reverse();
@@ -285,7 +379,7 @@ export class Database {
 			const collisionSuffix = suffix === 0 ? "" : `-${suffix}`;
 			backupPath = join(
 				this.backupDir,
-				`canon-${timestamp}-v${sourceVersion}-to-v${targetVersion}${collisionSuffix}.db`,
+				`${this.backupPrefix}-${timestamp}-v${sourceVersion}-to-v${targetVersion}${collisionSuffix}.db`,
 			);
 			suffix += 1;
 		} while (existsSync(backupPath));
@@ -484,55 +578,7 @@ export class Database {
 
 	/** Refuse to start a partially compatible database. */
 	assertSchemaContract(): void {
-		const required: Readonly<Record<string, readonly string[]>> = {
-			installation_identity: ["id", "installation_id", "created_at"],
-			app_settings: [
-				"id",
-				"first_run_stage",
-				"network_proxy",
-				"memory_vector_service",
-				"model_download_mirror",
-				"updated_at",
-			],
-			runs: [
-				"id",
-				"conversation_id",
-				"trigger_entry_id",
-				"executor_profile",
-				"title",
-				"instruction",
-				"input_paths",
-				"status",
-				"created_at",
-			],
-			configured_models: ["provider_id", "model_id", "label", "supports_images", "created_at"],
-			relationship_memory_entries: ["source_pi_session_id", "source_native_entry_id"],
-			memory_candidates: ["source_pi_session_id", "source_native_entry_id"],
-			companion_state_documents: [
-				"id",
-				"companion_id",
-				"conversation_id",
-				"scope",
-				"domain",
-				"state_json",
-				"revision",
-				"schema_hash",
-			],
-			memory_presentation: [
-				"backend_memory_id",
-				"installation_id",
-				"user_id",
-				"companion_id",
-				"source_pi_entry_id",
-				"created_by",
-				"pinned",
-				"replacement_memory_id",
-				"created_at",
-				"updated_at",
-				"invalidated_at",
-			],
-		};
-		for (const [table, columns] of Object.entries(required)) {
+		for (const [table, columns] of Object.entries(this.schemaContract)) {
 			const actual = new Set(
 				(
 					this.connection.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
@@ -559,7 +605,50 @@ export class Database {
 // Migration definitions
 // ---------------------------------------------------------------------------
 
-/** Canonical first-install schema. Pre-release compatibility migrations are intentionally absent. */
-export const MIGRATIONS: Migration[] = [
-	{ id: 1, description: "Bear 1.0 canonical schema", up: BASELINE_V1_SQL },
+export const SYSTEM_MIGRATIONS: Migration[] = [
+	{ id: 1, description: "Bear system settings schema", up: SYSTEM_BASELINE_V1_SQL },
 ];
+
+export const COMPANION_MIGRATIONS: Migration[] = [
+	{ id: 1, description: "Bear character runtime schema", up: COMPANION_BASELINE_V1_SQL },
+];
+
+export class SystemDatabase extends Database {
+	constructor(path: string) {
+		super(dirname(path), {
+			fileName: basename(path),
+			backupPrefix: "settings",
+			schemaContract: SYSTEM_SCHEMA_CONTRACT,
+		});
+	}
+}
+
+export class CompanionDatabase extends Database {
+	constructor(
+		path: string,
+		readonly companionId: string,
+	) {
+		super(dirname(path), {
+			fileName: basename(path),
+			backupPrefix: "runtime",
+			schemaContract: COMPANION_SCHEMA_CONTRACT,
+		});
+	}
+
+	ensureRuntimeIdentity(): void {
+		const existing = this.orm
+			.select({ companionId: companionRuntimeIdentity.companionId })
+			.from(companionRuntimeIdentity)
+			.where(eq(companionRuntimeIdentity.id, 1))
+			.get();
+		if (existing && existing.companionId !== this.companionId) {
+			throw new Error("character runtime database identity does not match its directory");
+		}
+		if (!existing) {
+			this.orm
+				.insert(companionRuntimeIdentity)
+				.values({ id: 1, companionId: this.companionId })
+				.run();
+		}
+	}
+}

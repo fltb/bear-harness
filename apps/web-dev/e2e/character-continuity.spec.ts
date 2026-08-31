@@ -20,13 +20,24 @@ async function rpc<T>(page: Page, token: string, channel: string, data: unknown)
 	return envelope.data as T;
 }
 
-type PiEntry = { id: string; kind: string; role?: string; text?: string };
+type PiEntry = {
+	id: string;
+	kind: string;
+	role?: string;
+	text?: string;
+	version?: { current: number; leafIds: string[] };
+};
 
 async function projection(page: Page, token: string, conversationId: string): Promise<PiEntry[]> {
-	const selected = await rpc<{ entries: unknown[] }>(page, token, "conversation.select:v1", {
-		id: conversationId,
-	});
-	return projectPiEntries(selected.entries) as PiEntry[];
+	const opened = await rpc<{ timeline: { entries: unknown[] } }>(
+		page,
+		token,
+		"conversation.open:v1",
+		{
+			id: conversationId,
+		},
+	);
+	return projectPiEntries(opened.timeline.entries) as PiEntry[];
 }
 
 test("committed schema state survives new conversations and edited message history", async ({
@@ -85,35 +96,11 @@ test("committed schema state survives new conversations and edited message histo
 				}),
 			],
 		});
-
-	await rpc(page, bootstrap.token, "settings.set:v1", {
-		settings: { conversationHistoryReadEnabled: true },
-	});
-	await expect(rpc(page, bootstrap.token, "settings.get:v1", {})).resolves.toMatchObject({
-		settings: { conversationHistoryReadEnabled: true },
-	});
 });
 
-test("scripted model invokes schema state and authorized history tools with exact arguments", async ({
-	page,
-}) => {
+test("scripted model invokes the schema state tool with exact arguments", async ({ page }) => {
 	await ensureReadyForConversation(page);
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
-	await rpc(page, bootstrap.token, "settings.set:v1", {
-		settings: { conversationHistoryReadEnabled: false },
-	});
-	const conversationA = await createFreshConversation(
-		page,
-		bootstrap.token,
-		"Tool-call history source",
-	);
-	await rpc(page, bootstrap.token, "message.send:v1", {
-		conversationId: conversationA,
-		text: "E2E_HISTORY_MARKER: the first conversation is searchable.",
-	});
-	await expect
-		.poll(async () => latestAssistant(page, bootstrap.token, conversationA))
-		.toBe("RULE_OK");
 	const conversationB = await createFreshConversation(
 		page,
 		bootstrap.token,
@@ -127,27 +114,6 @@ test("scripted model invokes schema state and authorized history tools with exac
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationB))
 		.toBe("E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE");
-	await rpc(page, bootstrap.token, "message.send:v1", {
-		conversationId: conversationB,
-		text: "E2E_TOOL_SEARCH_OTHER_CONVERSATION 请搜索之前的对话",
-	});
-	await expect
-		.poll(async () => latestAssistant(page, bootstrap.token, conversationB))
-		.toBe("E2E_TOOL_SEARCH_OTHER_CONVERSATION_DENIED");
-
-	await rpc(page, bootstrap.token, "settings.set:v1", {
-		settings: { conversationHistoryReadEnabled: true },
-	});
-	await expect(rpc(page, bootstrap.token, "settings.get:v1", {})).resolves.toMatchObject({
-		settings: { conversationHistoryReadEnabled: true },
-	});
-	await rpc(page, bootstrap.token, "message.send:v1", {
-		conversationId: conversationB,
-		text: "E2E_TOOL_SEARCH_OTHER_CONVERSATION_ALLOWED 请搜索之前的对话",
-	});
-	await expect
-		.poll(async () => latestAssistant(page, bootstrap.token, conversationB))
-		.toBe("E2E_TOOL_SEARCH_OTHER_CONVERSATION_FOUND");
 	const trace = (await (await page.request.get(`${providerUrl}/trace/tools`)).json()) as {
 		calls: Array<{ tool: string; args: Record<string, unknown> }>;
 	};
@@ -156,10 +122,6 @@ test("scripted model invokes schema state and authorized history tools with exac
 			expect.objectContaining({
 				tool: "host_state",
 				args: expect.objectContaining({ action: "update" }),
-			}),
-			expect.objectContaining({
-				tool: "host_history",
-				args: { query: "E2E_HISTORY_MARKER", limit: 2 },
 			}),
 		]),
 	);
@@ -175,6 +137,8 @@ test("presented role choices send ordinary messages and advance generic schema s
 		bootstrap.token,
 		"Generic choice state flow",
 	);
+	const sidebar = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
+	await sidebar.getByRole("button").filter({ hasText: "Generic choice state flow" }).click();
 
 	await rpc(page, bootstrap.token, "message.send:v1", {
 		conversationId,
@@ -197,17 +161,6 @@ test("presented role choices send ordinary messages and advance generic schema s
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("E2E_MANUAL_ROLE_PRESENT_DONE");
-	await expect
-		.poll(async () => {
-			const snapshot = await rpc<{
-				companion?: {
-					byConversation: Record<string, { display: { surfaces: { choices: string | null } } }>;
-				};
-			}>(page, bootstrap.token, "snapshot.get:v1", {});
-			return snapshot.companion?.byConversation[conversationId]?.display.surfaces.choices;
-		})
-		.toBe("continuity_response");
-
 	const choice = page.getByRole("button", { name: /我听见了/ });
 	await expect(choice).toBeVisible();
 	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
@@ -228,13 +181,18 @@ test("presented role choices send ordinary messages and advance generic schema s
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("E2E_MANUAL_ROLE_RECEIVED_DONE");
+	const mediaCard = page.getByRole("region", { name: "继任规程" });
+	await expect(mediaCard).toBeVisible();
+	await mediaCard.getByRole("button", { name: zhCN.messages.openMedia }).click();
+	await expect(page.getByRole("complementary", { name: "继任规程" })).toBeVisible();
 	const choiceTrace = (await (await page.request.get(`${providerUrl}/trace/prompts`)).json()) as {
 		prompts: string[];
 	};
-	const choicePrompt = choiceTrace.prompts.findLast((prompt) =>
-		prompt.includes("我听见了，也愿意接住这份交接。"),
+	const choicePrompt = choiceTrace.prompts.findLast(
+		(prompt) =>
+			prompt.includes("我听见了，也愿意接住这份交接。") && prompt.includes("<host_context>"),
 	);
-	expect(choicePrompt).toMatch(/"continuity":\s*{\s*"stage": 2,\s*"response": "unopened"/);
+	expect(choicePrompt).toMatch(/"continuity":\s*{\s*"stage": 2,\s*"response": "用户尚未回应。"/);
 	const entries = await projection(page, bootstrap.token, conversationId);
 	expect(
 		entries.filter((entry) => entry.kind === "message" && entry.role === "user").at(-1)?.text,
@@ -250,10 +208,13 @@ test("presented role choices send ordinary messages and advance generic schema s
 	const trace = (await (await page.request.get(`${providerUrl}/trace/prompts`)).json()) as {
 		prompts: string[];
 	};
-	const finalPrompt = trace.prompts.findLast((prompt) =>
-		prompt.includes("final generic state projection"),
+	const finalPrompt = trace.prompts.findLast(
+		(prompt) =>
+			prompt.includes("final generic state projection") && prompt.includes("<host_context>"),
 	);
-	expect(finalPrompt).toMatch(/"continuity":\s*{\s*"stage": 3,\s*"response": "received"/);
+	expect(finalPrompt).toMatch(
+		/"continuity":\s*{\s*"stage": 3,\s*"response": "用户愿意接住这份交接。"/,
+	);
 });
 
 test("adopted multi-turn history and a manual edit change the next model context", async ({
@@ -379,18 +340,18 @@ test("regeneration keeps Pi-native versions and correction is visible user feedb
 		conversationId,
 		entryId: assistant.id,
 	});
-	const selectVersions = () =>
-		rpc<{
-			messageVersions: Array<{ assistantEntryId: string; current: number; leafIds: string[] }>;
-		}>(page, bootstrap.token, "conversation.select:v1", { id: conversationId });
-	await expect.poll(async () => (await selectVersions()).messageVersions.length).toBe(1);
-	const twoVersions = await selectVersions();
-	expect(twoVersions.messageVersions).toHaveLength(1);
-	expect(twoVersions.messageVersions[0]).toMatchObject({ current: 1 });
-	expect(twoVersions.messageVersions[0]?.leafIds).toHaveLength(2);
+	const versionedAssistant = async () =>
+		(await projection(page, bootstrap.token, conversationId)).find(
+			(entry) => entry.kind === "message" && entry.role === "assistant" && entry.version,
+		);
+	await expect.poll(async () => (await versionedAssistant())?.version?.leafIds.length).toBe(2);
+	const twoVersions = (await versionedAssistant())?.version;
+	if (!twoVersions) throw new Error("missing Pi-native version projection");
+	expect(twoVersions).toMatchObject({ current: 1 });
+	expect(twoVersions.leafIds).toHaveLength(2);
 	await rpc(page, bootstrap.token, "message.switchVersion:v1", {
 		conversationId,
-		leafId: twoVersions.messageVersions[0]!.leafIds[0],
+		leafId: twoVersions.leafIds[0],
 	});
 	expect(
 		(await projection(page, bootstrap.token, conversationId))
@@ -399,7 +360,7 @@ test("regeneration keeps Pi-native versions and correction is visible user feedb
 	).toBe(assistant.id);
 	await rpc(page, bootstrap.token, "message.switchVersion:v1", {
 		conversationId,
-		leafId: twoVersions.messageVersions[0]!.leafIds[1],
+		leafId: twoVersions.leafIds[1],
 	});
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
@@ -432,11 +393,9 @@ test("regeneration keeps Pi-native versions and correction is visible user feedb
 		revisedProjection.filter((entry) => entry.kind === "message" && entry.role === "user").at(-1)
 			?.text,
 	).toContain("重新生成反馈：他替我做了决定");
-	const threeVersions = await rpc<{
-		messageVersions: Array<{ current: number; leafIds: string[] }>;
-	}>(page, bootstrap.token, "conversation.select:v1", { id: conversationId });
-	expect(threeVersions.messageVersions[0]).toMatchObject({ current: 2 });
-	expect(threeVersions.messageVersions[0]?.leafIds).toHaveLength(3);
+	const threeVersions = (await versionedAssistant())?.version;
+	expect(threeVersions).toMatchObject({ current: 2 });
+	expect(threeVersions?.leafIds).toHaveLength(3);
 });
 
 test("imported package plugins require explicit trust before they can be enabled", async ({
@@ -495,9 +454,6 @@ function packageFiles(root: string, directory = root): Array<{ path: string; bas
 async function createFreshConversation(page: Page, token: string, title: string): Promise<string> {
 	const conversation = await rpc<{ sessionId: string }>(page, token, "conversation.create:v1", {
 		title,
-	});
-	await rpc(page, token, "conversation.select:v1", {
-		id: conversation.sessionId,
 	});
 	return conversation.sessionId;
 }

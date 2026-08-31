@@ -4,13 +4,14 @@ import {
 	lstatSync,
 	mkdirSync,
 	readdirSync,
+	realpathSync,
 	rmSync,
 	type Stats,
 	statSync,
 } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { EventPayloadSchemas } from "@bear-harness/protocol/schema";
-import { and, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { ArtifactRecord, ArtifactStore } from "../artifacts/index.js";
 import type { Diagnostics } from "../diagnostics/index.js";
 import { currentTraceContext, runInTrace, type TraceContext } from "../diagnostics/trace.js";
@@ -24,9 +25,13 @@ import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
 import { conversations, events, evidence, runs } from "../storage/schema.js";
 
-export const MAX_ACTIVE_RUNS = 2;
+export const MAX_CONCURRENT_RUNS = 2;
 const MAX_RUN_CLEANUP_ENTRIES = 10_000;
 const MAX_RUN_CLEANUP_DEPTH = 64;
+const MAX_RUN_OUTPUT_ENTRIES = 1_000;
+const MAX_RUN_OUTPUT_DEPTH = 32;
+const MAX_RUN_ARTIFACT_BYTES = 512 * 1024 * 1024;
+const MAX_RUN_OUTPUT_BYTES = 1024 * 1024 * 1024;
 export type RunStatus =
 	| "enqueued"
 	| "running"
@@ -42,8 +47,14 @@ export type TerminalRunStatus =
 	| "cancelled"
 	| "interrupted"
 	| "forced_termination";
-const ACTIVE: readonly RunStatus[] = ["enqueued", "running", "needs_user"];
-const ORPHANABLE: readonly RunStatus[] = [...ACTIVE, "interrupted"];
+/** Resource occupancy only; this does not reclassify interrupted as running or active. */
+const EXECUTOR_RESOURCE_STATUSES: readonly RunStatus[] = [
+	"enqueued",
+	"running",
+	"needs_user",
+	"interrupted",
+];
+const UNRECOVERABLE_AFTER_RESTART = EXECUTOR_RESOURCE_STATUSES;
 
 type RunRow = typeof runs.$inferSelect;
 export interface RunSummary {
@@ -73,11 +84,9 @@ export interface TerminalRunResult {
 	run: RunSummary;
 	outputs: ArtifactRecord[];
 	needsResultReport: boolean;
-	needsMemoryCapture: boolean;
 }
 export interface TerminalReconcileResult {
 	resultReported: boolean;
-	memoryCaptured: boolean;
 }
 export interface ReconciliationAttemptOptions {
 	signal?: AbortSignal;
@@ -136,13 +145,13 @@ export class ExternalAgentRunService {
 			params.agent === "pi" ? await this.resolvePiModel(params.conversationId) : undefined;
 		if (params.agent === "pi" && !modelRoute)
 			throw { kind: "unavailable", reason: "pi_model_unavailable" };
-		const active = this.db
+		const resourceOwners = this.db
 			.select({ n: count() })
 			.from(runs)
-			.where(inArray(runs.status, ACTIVE))
+			.where(and(inArray(runs.status, EXECUTOR_RESOURCE_STATUSES), isNull(runs.completedAt)))
 			.get();
-		if (Number(active?.n ?? 0) >= MAX_ACTIVE_RUNS)
-			throw { kind: "conflict", reason: "max_active_runs" };
+		if (Number(resourceOwners?.n ?? 0) >= MAX_CONCURRENT_RUNS)
+			throw { kind: "conflict", reason: "max_concurrent_runs" };
 
 		const runId = randomUUID();
 		const trace = currentTraceContext();
@@ -205,7 +214,13 @@ export class ExternalAgentRunService {
 					if (this.closed) return;
 					const task = Promise.resolve(
 						this.runWithTrace(runId, () =>
-							this.handleExecutorEvent(runId, event, prepared.outputDirectory, pathReplacements),
+							this.handleExecutorEvent(
+								runId,
+								event,
+								prepared.outputDirectory,
+								prepared.canonicalOutputDirectory,
+								pathReplacements,
+							),
 						),
 					).catch((error) => {
 						if (this.closed) return;
@@ -235,6 +250,7 @@ export class ExternalAgentRunService {
 		runId: string,
 		event: ExecutorEvent,
 		outputDirectory: string,
+		canonicalOutputDirectory: string,
 		paths: string[],
 	): Promise<void> {
 		const run = this.getRun(runId);
@@ -265,7 +281,12 @@ export class ExternalAgentRunService {
 					? sanitizeText(event.summary, paths).slice(0, 12_000)
 					: null;
 				try {
-					const outputs = captureArtifacts(this.artifacts, runId, outputDirectory);
+					const outputs = captureArtifacts(
+						this.artifacts,
+						runId,
+						outputDirectory,
+						canonicalOutputDirectory,
+					);
 					await this.terminate(runId, "completed", normalizedSummary, outputs);
 				} catch {
 					this.recordEvidence(runId, "executor.failed", { reason: "output_snapshot_failed" });
@@ -274,7 +295,7 @@ export class ExternalAgentRunService {
 				return;
 			}
 			case "failed":
-				await this.terminate(runId, "failed", safeReason(event.reason, paths), []);
+				await this.terminate(runId, "failed", safeExecutorFailureReason(event.reason), []);
 				return;
 			case "cancelled":
 				await this.terminate(
@@ -301,7 +322,7 @@ export class ExternalAgentRunService {
 			.where(eq(runs.id, runId))
 			.run();
 		this.eventBus.publish("run.completed", { runId, status });
-		this.emitRunTrace(runId, status === "forced_termination" ? "failed" : status);
+		this.emitRunTrace(runId, status);
 		const result = summarize(this.getRun(runId));
 		void this.reconcileRun(runId, outputs);
 		return result;
@@ -340,6 +361,7 @@ export class ExternalAgentRunService {
 			| "failed"
 			| "cancelled"
 			| "interrupted"
+			| "forced_termination"
 			| "resumed",
 	): void {
 		this.runWithTrace(runId, () => {
@@ -367,15 +389,10 @@ export class ExternalAgentRunService {
 		const task = (async () => {
 			try {
 				const row = this.getRun(runId);
-				if (
-					!row.completedAt ||
-					(row.resultReportedAt && row.memoryCapturedAt) ||
-					!this.onTerminal
-				) {
+				if (!row.completedAt || row.resultReportedAt || !this.onTerminal) {
 					return;
 				}
 				const needsResultReport = !row.resultReportedAt;
-				const needsMemoryCapture = !row.memoryCapturedAt;
 				const outcome = await waitForReconciliationAttempt(
 					Promise.resolve(
 						this.onTerminal(
@@ -383,7 +400,6 @@ export class ExternalAgentRunService {
 								run: summarize(row),
 								outputs: capturedOutputs ?? this.artifacts.list(row.id),
 								needsResultReport,
-								needsMemoryCapture,
 							},
 							controller.signal,
 						),
@@ -392,13 +408,9 @@ export class ExternalAgentRunService {
 					timeoutMs,
 				);
 				if (controller.signal.aborted || this.closed) return;
-				const update: {
-					resultReportedAt?: string;
-					memoryCapturedAt?: string;
-				} = {};
+				const update: { resultReportedAt?: string } = {};
 				const now = new Date().toISOString();
 				if (needsResultReport && outcome.resultReported) update.resultReportedAt = now;
-				if (needsMemoryCapture && outcome.memoryCaptured) update.memoryCapturedAt = now;
 				if (Object.keys(update).length > 0) {
 					this.db.update(runs).set(update).where(eq(runs.id, runId)).run();
 				}
@@ -443,7 +455,7 @@ export class ExternalAgentRunService {
 						"forced_termination",
 					]),
 					isNotNull(runs.completedAt),
-					or(isNull(runs.resultReportedAt), isNull(runs.memoryCapturedAt)),
+					isNull(runs.resultReportedAt),
 					...(conversationId ? [eq(runs.conversationId, conversationId)] : []),
 				),
 			)
@@ -576,8 +588,86 @@ export class ExternalAgentRunService {
 	close(): Promise<void> {
 		if (this.closePromise) return this.closePromise;
 		this.closed = true;
-		this.closePromise = this.drainDetachedTasks();
+		this.closePromise = this.stopExecutorsAndDrain();
 		return this.closePromise;
+	}
+
+	private async stopExecutorsAndDrain(): Promise<void> {
+		const unfinished = this.db
+			.select()
+			.from(runs)
+			.where(and(inArray(runs.status, UNRECOVERABLE_AFTER_RESTART), isNull(runs.completedAt)))
+			.all();
+		const attached = new Set<string>();
+		const confirmedLost = new Set<string>();
+		for (const row of unfinished) {
+			try {
+				const recovery = await this.executorRouter.recover(this.executorRun(row));
+				if (recovery === "attached") attached.add(row.id);
+				if (recovery === "confirmed_lost") confirmedLost.add(row.id);
+			} catch {
+				// A failed probe has the same fail-closed meaning as unknown.
+			}
+		}
+
+		let failure: unknown;
+		try {
+			await this.executorRouter.close();
+		} catch (error) {
+			failure = error;
+		}
+		await this.drainDetachedTasks();
+		const stoppableIds = [
+			...confirmedLost,
+			// A successful close proves that handles attached to this Host were
+			// stopped. If close failed, their final process state is unknown.
+			...(failure ? [] : attached),
+		];
+		const stopped =
+			stoppableIds.length > 0
+				? this.db
+						.select({ id: runs.id })
+						.from(runs)
+						.where(
+							and(
+								inArray(runs.id, stoppableIds),
+								inArray(runs.status, UNRECOVERABLE_AFTER_RESTART),
+								isNull(runs.completedAt),
+							),
+						)
+						.all()
+				: [];
+		if (stopped.length > 0) {
+			this.db
+				.update(runs)
+				.set({
+					status: "forced_termination",
+					completedAt: new Date().toISOString(),
+					summary: "External agent execution stopped because Host closed.",
+				})
+				.where(
+					and(
+						inArray(
+							runs.id,
+							stopped.map(({ id }) => id),
+						),
+						inArray(runs.status, UNRECOVERABLE_AFTER_RESTART),
+						isNull(runs.completedAt),
+					),
+				)
+				.run();
+			for (const { id } of stopped) {
+				this.emitRunTrace(id, "forced_termination");
+				removeExternalAgentRunRoot(join(this.runRoot, id));
+			}
+		}
+		const remaining = this.db
+			.select({ n: count() })
+			.from(runs)
+			.where(and(inArray(runs.status, EXECUTOR_RESOURCE_STATUSES), isNull(runs.completedAt)))
+			.get();
+		if (Number(remaining?.n ?? 0) === 0) removeExternalAgentRunRoot(this.runRoot);
+		if (failure) throw failure;
 	}
 
 	private async drainDetachedTasks(): Promise<void> {
@@ -589,32 +679,88 @@ export class ExternalAgentRunService {
 		]);
 		this.reconciliationTasks.clear();
 		this.detachedTasks.clear();
-		const active = this.db
+		const resourceOwners = this.db
 			.select({ n: count() })
 			.from(runs)
-			.where(inArray(runs.status, ACTIVE))
+			.where(and(inArray(runs.status, EXECUTOR_RESOURCE_STATUSES), isNull(runs.completedAt)))
 			.get();
-		if (Number(active?.n ?? 0) === 0) removeExternalAgentRunRoot(this.runRoot);
+		if (Number(resourceOwners?.n ?? 0) === 0) removeExternalAgentRunRoot(this.runRoot);
 	}
 
-	markOrphansInterrupted(): number {
-		const orphaned = this.db
-			.select({ id: runs.id })
+	async recoverUnfinishedRuns(): Promise<number> {
+		const unrecoverable = this.db
+			.select()
 			.from(runs)
-			.where(and(inArray(runs.status, ORPHANABLE), isNull(runs.completedAt)))
+			.where(and(inArray(runs.status, UNRECOVERABLE_AFTER_RESTART), isNull(runs.completedAt)))
 			.all();
-		const result = this.db
-			.update(runs)
-			.set({
-				status: "interrupted",
-				completedAt: new Date().toISOString(),
-				summary: "External agent process was interrupted by Host restart.",
-			})
-			.where(and(inArray(runs.status, ORPHANABLE), isNull(runs.completedAt)))
-			.run();
-		for (const { id } of orphaned) this.emitRunTrace(id, "interrupted");
-		removeExternalAgentRunRoot(this.runRoot);
-		return Number(result.changes);
+		let forced = 0;
+		for (const row of unrecoverable) {
+			const run = this.executorRun(row);
+			let recovery: "attached" | "confirmed_lost" | "unknown";
+			try {
+				recovery = await this.executorRouter.recover(run);
+			} catch (error) {
+				this.recordEvidence(row.id, "run.recovery_deferred", { reason: safeReason(error, []) });
+				continue;
+			}
+			if (recovery !== "confirmed_lost") continue;
+			const result = this.db
+				.update(runs)
+				.set({
+					status: "forced_termination",
+					completedAt: new Date().toISOString(),
+					summary: "External agent execution could not be recovered after Host restart.",
+				})
+				.where(and(eq(runs.id, row.id), isNull(runs.completedAt)))
+				.run();
+			if (!result.changes) continue;
+			forced += Number(result.changes);
+			this.emitRunTrace(row.id, "forced_termination");
+		}
+		const remaining = this.db
+			.select({ n: count() })
+			.from(runs)
+			.where(and(inArray(runs.status, UNRECOVERABLE_AFTER_RESTART), isNull(runs.completedAt)))
+			.get();
+		if (Number(remaining?.n ?? 0) === 0) removeExternalAgentRunRoot(this.runRoot);
+		return forced;
+	}
+
+	async prepareConversationDeletion(conversationId: string): Promise<void> {
+		const owned = this.db.select().from(runs).where(eq(runs.conversationId, conversationId)).all();
+		const unfinished = owned.filter(
+			(row) => !row.completedAt && UNRECOVERABLE_AFTER_RESTART.includes(row.status as RunStatus),
+		);
+		for (const row of unfinished) {
+			const run = this.executorRun(row);
+			try {
+				await this.executorRouter.cancel(run);
+			} catch {
+				// A missing live handle is still stopped idempotently below.
+			}
+			await this.executorRouter.stop(run);
+		}
+		await Promise.allSettled([...this.detachedTasks]);
+		if (unfinished.length > 0) {
+			this.db
+				.update(runs)
+				.set({
+					status: "cancelled",
+					completedAt: new Date().toISOString(),
+					summary: "External agent execution stopped because its conversation was deleted.",
+				})
+				.where(
+					and(
+						inArray(
+							runs.id,
+							unfinished.map(({ id }) => id),
+						),
+						isNull(runs.completedAt),
+					),
+				)
+				.run();
+		}
+		for (const { id } of owned) removeExternalAgentRunRoot(join(this.runRoot, id));
 	}
 }
 
@@ -627,7 +773,8 @@ export function removeExternalAgentRunRoot(runRoot: string): void {
 	const pending: Array<{ path: string; depth: number }> = [{ path: root, depth: 0 }];
 	let visited = 0;
 	while (pending.length > 0) {
-		const current = pending.pop()!;
+		const current = pending.pop();
+		if (!current) break;
 		visited += 1;
 		if (visited > MAX_RUN_CLEANUP_ENTRIES || current.depth > MAX_RUN_CLEANUP_DEPTH) {
 			throw new Error("external_agent_run_cleanup_limit_exceeded");
@@ -809,6 +956,7 @@ function prepareRunDirectories(runDirectory: string, paths: readonly string[]) {
 	return {
 		workspace,
 		outputDirectory,
+		canonicalOutputDirectory: realpathSync.native(outputDirectory),
 		inputs: paths.map((path) => ({ name: basename(path), path, source: "local" as const })),
 	};
 }
@@ -817,33 +965,124 @@ function captureArtifacts(
 	store: ArtifactStore,
 	runId: string,
 	outputDirectory: string,
+	expectedRoot: string,
 ): ArtifactRecord[] {
-	const pending = [outputDirectory];
-	const files: string[] = [];
+	const initialRoot = lstatSync(outputDirectory);
+	if (initialRoot.isSymbolicLink() || !initialRoot.isDirectory()) {
+		throw new Error("run_output_root_invalid");
+	}
+	const root = realpathSync.native(outputDirectory);
+	if (root !== expectedRoot) throw new Error("run_output_root_changed");
+	const rootStat = lstatSync(root);
+	if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+		throw new Error("run_output_root_invalid");
+	}
+	const pending = [{ path: root, depth: 0 }];
+	const files: Array<{ path: string; logicalName: string; stat: Stats }> = [];
+	let visited = 0;
+	let totalBytes = 0;
 	while (pending.length) {
-		const directory = pending.pop()!;
-		for (const entry of readdirSync(directory, { withFileTypes: true })) {
-			const path = join(directory, entry.name);
-			if (entry.isSymbolicLink()) continue;
-			if (entry.isDirectory()) pending.push(path);
-			else if (entry.isFile()) files.push(path);
-			if (files.length + pending.length > 1_000) throw new Error("run_output_limit_exceeded");
+		const directory = pending.pop();
+		if (!directory) break;
+		const directoryStat = lstatSync(directory.path);
+		if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
+			throw new Error("run_output_directory_invalid");
+		}
+		if (!within(root, realpathSync.native(directory.path))) throw new Error("run_output_escape");
+		for (const entry of readdirSync(directory.path, { withFileTypes: true })) {
+			visited += 1;
+			if (visited > MAX_RUN_OUTPUT_ENTRIES) throw new Error("run_output_entry_limit_exceeded");
+			const path = join(directory.path, entry.name);
+			const stat = lstatSync(path);
+			if (stat.isSymbolicLink()) continue;
+			if (stat.isDirectory()) {
+				if (directory.depth >= MAX_RUN_OUTPUT_DEPTH) {
+					throw new Error("run_output_depth_limit_exceeded");
+				}
+				pending.push({ path, depth: directory.depth + 1 });
+				continue;
+			}
+			if (!stat.isFile()) throw new Error("run_output_entry_invalid");
+			const canonical = realpathSync.native(path);
+			if (!within(root, canonical)) throw new Error("run_output_escape");
+			if (stat.size > MAX_RUN_ARTIFACT_BYTES) throw new Error("run_output_file_too_large");
+			totalBytes += stat.size;
+			if (!Number.isSafeInteger(totalBytes) || totalBytes > MAX_RUN_OUTPUT_BYTES) {
+				throw new Error("run_output_total_too_large");
+			}
+			files.push({
+				path: canonical,
+				logicalName: relative(root, canonical).replaceAll("\\", "/"),
+				stat,
+			});
 		}
 	}
-	return files.sort().map((path) => {
-		const artifact = store.createFromPathSync({
-			logicalName: relative(outputDirectory, path).replaceAll("\\", "/"),
-			path,
-			mime: outputMime(path),
-			producerRunId: runId,
+	return files
+		.sort((a, b) => a.logicalName.localeCompare(b.logicalName))
+		.map((file) => {
+			const current = lstatSync(file.path);
+			if (!sameFile(current, file.stat)) throw new Error("run_output_changed_before_capture");
+			const artifact = store.createFromPathSync({
+				logicalName: file.logicalName,
+				path: file.path,
+				mime: "application/octet-stream",
+				sniffMime: (header) => outputMime(file.path, header),
+				producerRunId: runId,
+				maxBytes: MAX_RUN_ARTIFACT_BYTES,
+			});
+			store.markVerified(artifact.id);
+			return { ...artifact, status: "verified" as const };
 		});
-		store.markVerified(artifact.id);
-		return { ...artifact, status: "verified" as const };
-	});
 }
 
-function outputMime(path: string): string {
+function within(root: string, candidate: string): boolean {
+	const child = relative(root, candidate);
+	return (
+		child === "" ||
+		(!isAbsolute(child) && child !== ".." && !child.startsWith("../") && !child.startsWith("..\\"))
+	);
+}
+
+function sameFile(left: Stats, right: Stats): boolean {
+	return (
+		left.isFile() &&
+		left.dev === right.dev &&
+		left.ino === right.ino &&
+		left.size === right.size &&
+		left.mtimeMs === right.mtimeMs
+	);
+}
+
+function outputMime(path: string, header: Uint8Array): string {
+	const bytes = Buffer.from(header.buffer, header.byteOffset, header.byteLength);
 	const extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+	if (bytes.subarray(0, 5).equals(Buffer.from("%PDF-"))) return "application/pdf";
+	if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])))
+		return "image/png";
+	if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+	if (
+		bytes.subarray(0, 6).toString("ascii") === "GIF87a" ||
+		bytes.subarray(0, 6).toString("ascii") === "GIF89a"
+	)
+		return "image/gif";
+	if (
+		bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+		bytes.subarray(8, 12).toString("ascii") === "WEBP"
+	)
+		return "image/webp";
+	if (
+		bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+		bytes.subarray(8, 12).toString("ascii") === "WAVE"
+	)
+		return "audio/wav";
+	if (
+		bytes.subarray(0, 3).toString("ascii") === "ID3" ||
+		(bytes[0] === 0xff && ((bytes[1] ?? 0) & 0xe0) === 0xe0)
+	)
+		return "audio/mpeg";
+	if (bytes.subarray(4, 8).toString("ascii") === "ftyp") return "video/mp4";
+	if (bytes.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) return "video/webm";
+	const zip = bytes[0] === 0x50 && bytes[1] === 0x4b && [0x03, 0x05, 0x07].includes(bytes[2] ?? -1);
 	return (
 		(
 			{
@@ -851,14 +1090,13 @@ function outputMime(path: string): string {
 				md: "text/markdown",
 				json: "application/json",
 				csv: "text/csv",
-				pdf: "application/pdf",
-				docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-				xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-				pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-				png: "image/png",
-				jpg: "image/jpeg",
-				jpeg: "image/jpeg",
-				webp: "image/webp",
+				...(zip
+					? {
+							docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+							xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+							pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+						}
+					: {}),
 			} as Record<string, string>
 		)[extension] ?? "application/octet-stream"
 	);
@@ -886,5 +1124,16 @@ function safeReason(error: unknown, paths: string[]): string {
 		return sanitizeText(error.message, paths).slice(0, 512);
 	if (error && typeof error === "object" && "reason" in error && typeof error.reason === "string")
 		return sanitizeText(error.reason, paths).slice(0, 512);
+	return "executor_failed";
+}
+
+function safeExecutorFailureReason(reason: string): string {
+	if (
+		/^(?:acp_executor_failed|acp_start_failed|acp_process_spawn_failed|acp_process_stdio_failed|acp_agent_terminated_by_signal|acp_agent_exit_unknown)$/.test(
+			reason,
+		) ||
+		/^acp_agent_exit_code:-?\d{1,10}$/.test(reason)
+	)
+		return reason;
 	return "executor_failed";
 }

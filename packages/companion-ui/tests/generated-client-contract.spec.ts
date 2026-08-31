@@ -44,45 +44,6 @@ describe("schema-derived companion client", () => {
 		second.clear();
 	});
 
-	it("preserves nested read provenance and distinguishes command completion watermarks", async () => {
-		const sync = { epoch: "host-a", revision: 8 };
-		const client = createCompanionClient({
-			invoke: async (endpoint) => ({
-				ok: true,
-				sync,
-				data: endpoint.operation === "query" ? { entries: [] } : { ready: true },
-			}),
-		});
-		const read = await client.memory.list();
-		if (!read.ok) throw new Error("expected read success");
-		expect(responseRevision(read.data.entries)).toEqual(sync);
-		expect(isMutationResponse(read.data)).toBe(false);
-		const command = await client.memory.configureLocalEmbedding({ provider: "none" });
-		if (!command.ok) throw new Error("expected command success");
-		expect(isMutationResponse(command.data)).toBe(true);
-	});
-
-	it("uses endpoint objects and rejects malformed Host success data", async () => {
-		const invoke = vi.fn(async () => ({ ok: true, data: { entries: [{ id: "missing-fields" }] } }));
-		const client = createCompanionClient({ invoke });
-
-		await expect(client.memory.search({ query: "remember" })).rejects.toMatchObject({
-			name: "ZodError",
-		});
-		expect(invoke.mock.calls[0]?.[0]).toMatchObject({
-			kind: "rpc",
-			channel: "memory.search:v1",
-		});
-	});
-
-	it("rejects invalid requests before transport invocation", async () => {
-		const invoke = vi.fn();
-		const client = createCompanionClient({ invoke });
-		await expect(
-			client.memory.search({ query: "test", scope: "invalid" as never }),
-		).rejects.toMatchObject({ name: "ZodError" });
-		expect(invoke).not.toHaveBeenCalled();
-	});
 	it("keeps one push subscription open, validates batches, and unsubscribes on abort", async () => {
 		let receive!: (batch: unknown) => void;
 		const stop = vi.fn();

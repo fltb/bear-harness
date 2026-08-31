@@ -31,7 +31,6 @@ import type {
 	DeferredIndexingRecord,
 	IndexingStatus,
 	ReindexResult,
-	ExplicitCaptureResult,
 } from "./types.js";
 import type { MemoryTdaiConfig } from "../config.js";
 import type { IMemoryStore } from "./store/types.js";
@@ -358,7 +357,7 @@ export class TdaiCore {
 			scheduler: this.scheduler,
 			originalUserText: turn.userText,
 			originalUserMessageCount: turn.originalUserMessageCount,
-			pluginStartTimestamp: turn.startedAt ?? Date.now(),
+			pluginStartTimestamp: turn.startedAt,
 			vectorStore: this.vectorStore,
 			embeddingService: this.embeddingService,
 			bgTaskRegistry: this.bgTasks,
@@ -538,90 +537,6 @@ export class TdaiCore {
 		await this.storeReady?.catch(() => {});
 		if (!this.scheduler) return undefined;
 		return this.scheduler.flushSession(sessionKey);
-	}
-
-	/**
-	 * Capture an explicitly authorized turn through the normal Tdai L0→L1
-	 * pipeline and wait for extraction/deduplication to settle. This is not a
-	 * direct L1 insert: all normal quality, scene, persistence, checkpoint and
-	 * downstream scheduling rules remain in force.
-	 */
-	async captureExplicitTurn(
-		turn: CompletedTurn,
-	): Promise<ExplicitCaptureResult> {
-		const capture = await this.handleTurnCommitted(turn);
-		if (!this.cfg.capture.enabled) {
-			return {
-				status: "capture_disabled",
-				reason: "memory_capture_disabled",
-				l0RecordedCount: 0,
-				extractedCount: 0,
-				storedCount: 0,
-				skippedCount: 0,
-				failedCount: 0,
-				storedRecordIds: [],
-				indexingStatus: capture.indexingStatus,
-			};
-		}
-		const result = await this.handleSessionEnd(turn.sessionKey);
-		const extractedCount = result?.extractedCount ?? 0;
-		const storedCount = result?.storedCount ?? 0;
-		const skippedCount = result?.skippedCount ?? 0;
-		const failedCount = result?.failedCount ?? 0;
-		const storedRecordIds = result?.storedRecordIds ?? [];
-		if (storedCount > 0) {
-			return {
-				status: "stored",
-				reason: "memory_stored",
-				l0RecordedCount: capture.l0RecordedCount,
-				extractedCount,
-				storedCount,
-				skippedCount,
-				failedCount,
-				storedRecordIds,
-				indexingStatus: capture.indexingStatus,
-			};
-		}
-		if (failedCount > 0) {
-			return {
-				status: "capture_failed",
-				reason: "memory_persistence_failed",
-				l0RecordedCount: capture.l0RecordedCount,
-				extractedCount,
-				storedCount,
-				skippedCount,
-				failedCount,
-				storedRecordIds,
-				indexingStatus: capture.indexingStatus,
-			};
-		}
-		if (skippedCount > 0) {
-			return {
-				status: "already_known",
-				reason: "equivalent_memory_already_stored",
-				l0RecordedCount: capture.l0RecordedCount,
-				extractedCount,
-				storedCount,
-				skippedCount,
-				failedCount,
-				storedRecordIds,
-				indexingStatus: capture.indexingStatus,
-			};
-		}
-		const noNewContent = capture.l0RecordedCount === 0 && result === undefined;
-		return {
-			status: noNewContent ? "no_new_content" : "no_extractable_memory",
-			reason: noNewContent
-				? "turn_already_processed"
-				: "extractor_found_no_durable_memory",
-			l0RecordedCount: capture.l0RecordedCount,
-			extractedCount,
-			storedCount,
-			skippedCount,
-			failedCount,
-			storedRecordIds,
-			indexingStatus: capture.indexingStatus,
-		};
 	}
 
 	// ============================

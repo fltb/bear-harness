@@ -1,25 +1,24 @@
-import type {
-	EmbeddingDownloadState,
-	MemoryCandidate as MemoryCandidateSchema,
-} from "@bear-harness/protocol/schema";
-import type { z } from "@bear-harness/schema";
+import type { EmbeddingDownloadState } from "@bear-harness/protocol/schema";
 import type { Accessor } from "solid-js";
 import type {
+	ArtifactActionResponse,
+	ArtifactIdentity,
+	ArtifactReadRequest,
+	ArtifactReadResponse,
 	CanonChunk,
 	CanonModule,
 	CanonModuleKind,
 	CanonSource,
+	CharacterDeletionStatus,
 	CharacterDraft,
 	CharacterDraftFiles,
 	CharacterDraftRevision,
 	CharacterListData,
+	CharacterPackageDeleteResponse,
 	CharacterPackageDocument,
+	CharacterRuntimeDeleteResponse,
 	CharacterSummary,
 	ConfiguredModel,
-	MemoryCaptureResponse,
-	MemoryEntry,
-	MemoryListRequest,
-	MemoryScope,
 	ModelListData,
 	OnboardingData,
 	ProviderInfo,
@@ -34,9 +33,8 @@ import type {
 	Snapshot,
 } from "./ipc.js";
 
-type MemoryCandidate = z.infer<typeof MemoryCandidateSchema>;
 export type EmbeddingSettingsValue =
-	| SettingsData["memoryVectorService"]
+	| NonNullable<SettingsPatch["memoryVectorService"]>
 	| SettingsData["modelDownloadSource"];
 interface RpcQueryBinding<T> {
 	readonly data: T | undefined;
@@ -49,6 +47,11 @@ interface RpcMutationBinding<T> {
 	readonly error: unknown;
 	readonly isSuccess: boolean;
 }
+export interface QueryView<T> {
+	data(): T | undefined;
+	loading(): boolean;
+	error(): unknown;
+}
 export interface EmbeddingBinding {
 	downloadState(): EmbeddingDownloadState;
 	cancelDownload(): Promise<unknown>;
@@ -60,59 +63,6 @@ export interface EmbeddingBinding {
 		candidateId?: string;
 		customPath?: string;
 	}>;
-}
-
-export interface QueryView<T> {
-	data(): T | undefined;
-	loading(): boolean;
-	error(): unknown;
-}
-
-export interface MemoryApi {
-	observeList(
-		scope: Accessor<MemoryScope>,
-		query: Accessor<string>,
-		characterId?: Accessor<string | undefined>,
-	): QueryView<{ entries: MemoryEntry[] }>;
-	observeCandidates(
-		characterId: Accessor<string | undefined>,
-		status?: MemoryCandidate["status"],
-	): QueryView<{ candidates: MemoryCandidate[] }>;
-	listState(
-		scope?: MemoryScope,
-		query?: string,
-		characterId?: string,
-	): { entries: MemoryEntry[]; loading: boolean; error: string | null };
-	candidateState(
-		status?: MemoryCandidate["status"],
-		characterId?: string,
-	): { candidates: MemoryCandidate[]; loading: boolean; error: string | null };
-	entries(): MemoryEntry[] | undefined;
-	revision(): number;
-	search(query: string, scope?: MemoryScope, characterId?: string): Promise<MemoryEntry[]>;
-	list(params?: MemoryListRequest): Promise<MemoryEntry[]>;
-	capture(entryId: string): Promise<MemoryCaptureResponse>;
-	configureLocalEmbedding(
-		provider: "none" | "local",
-		candidateId?: string,
-		customPath?: string,
-	): Promise<{ ready: true }>;
-	forget(entryId: string, characterId?: string): Promise<void>;
-	edit(entryId: string, newText: string, characterId?: string): Promise<void>;
-	exclude(memoryId: string, excluded: boolean, characterId?: string): Promise<void>;
-	/** Pending candidates awaiting user confirmation (reactive list). */
-	candidates(): MemoryCandidate[] | undefined;
-	listCandidates(
-		status?: MemoryCandidate["status"],
-		characterId?: string,
-	): Promise<MemoryCandidate[]>;
-	approveCandidate(
-		candidateId: string,
-		editedText?: string,
-		decidedScope?: MemoryScope,
-		characterId?: string,
-	): Promise<void>;
-	rejectCandidate(candidateId: string, characterId?: string): Promise<void>;
 }
 
 export interface SettingsApi {
@@ -157,6 +107,12 @@ export interface ModelApi {
 	setDefaultReply(providerId: string, modelId: string): Promise<void>;
 	clearDefaultReply(): Promise<void>;
 	setVisionAuto(): Promise<void>;
+	setSystemDefaults(
+		reply: { providerId: string; modelId: string },
+		vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } },
+	): Promise<void>;
+	initializeDefaults(): Promise<void>;
+	completeDefaultsOnboarding(): Promise<void>;
 }
 
 export interface RunApi {
@@ -167,6 +123,13 @@ export interface RunApi {
 	resume(runId: string): Promise<RunInfo>;
 	cancel(runId: string): Promise<RunInfo>;
 	respondPermission(runId: string, requestId: string, optionId: string): Promise<RunInfo>;
+}
+
+export interface ArtifactApi {
+	read(request: ArtifactReadRequest): Promise<ArtifactReadResponse>;
+	open(identity: ArtifactIdentity): Promise<ArtifactActionResponse>;
+	reveal(identity: ArtifactIdentity): Promise<ArtifactActionResponse>;
+	saveAs(identity: ArtifactIdentity): Promise<ArtifactActionResponse>;
 }
 
 export interface ExternalAgentApi {
@@ -187,7 +150,11 @@ export interface CharacterApi {
 	observePackage(
 		characterId: Accessor<string | undefined>,
 	): QueryView<{ package: CharacterPackageDocument }>;
+	observeDeletionStatus(
+		characterId: Accessor<string | undefined>,
+	): QueryView<{ status: CharacterDeletionStatus }>;
 	packageData(characterId: string): CharacterPackageDocument | undefined;
+	deletionStatusData(characterId: string): CharacterDeletionStatus | undefined;
 	pluginTrustData(
 		characterId: string,
 	): Awaited<ReturnType<CharacterApi["pluginTrust"]>> | undefined;
@@ -209,6 +176,9 @@ export interface CharacterApi {
 		yaml: string,
 		expectedSha256: string,
 	): Promise<CharacterPackageDocument>;
+	deletionStatus(characterId: string): Promise<CharacterDeletionStatus>;
+	runtimeDelete(characterId: string): Promise<CharacterRuntimeDeleteResponse>;
+	packageDelete(characterId: string): Promise<CharacterPackageDeleteResponse>;
 	draftCreate(params?: { basePackageId?: string; locale?: string }): Promise<CharacterDraft>;
 	draftGet(id: string): Promise<CharacterDraft>;
 	draftPatch(

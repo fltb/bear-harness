@@ -9,17 +9,19 @@ interface PiEntry {
 }
 
 interface ConversationProjection {
-	session?: { entries: unknown[] };
+	timeline: { entries: unknown[] };
 }
 
-interface SceneSnapshot {
-	companion: {
-		byConversation: Record<string, { display: { sceneId: string; expressionId: string } }>;
-	};
+interface CompanionStateProjection {
+	state: { display: { sceneId: string; expressionId: string } };
 }
 
-async function activeProjection(page: Page, token: string): Promise<ConversationProjection> {
-	return rpc(page, token, "conversation.activeGet:v1", {});
+async function conversationProjection(
+	page: Page,
+	token: string,
+	conversationId: string,
+): Promise<ConversationProjection> {
+	return rpc(page, token, "conversation.open:v1", { id: conversationId });
 }
 
 async function rpc<T>(page: Page, token: string, channel: string, data: unknown): Promise<T> {
@@ -72,16 +74,20 @@ test("rule provider exercises send and edited-history regeneration deterministic
 	});
 	await expect
 		.poll(async () => {
-			const projection = await activeProjection(page, bootstrap.token);
-			return projectPiEntries(projection.session?.entries ?? [])
+			const projection = await conversationProjection(
+				page,
+				bootstrap.token,
+				conversation.sessionId,
+			);
+			return projectPiEntries(projection.timeline.entries)
 				.filter((entry) => entry.kind === "message" && entry.role === "assistant")
 				.at(-1)
 				?.text?.trim();
 		})
 		.toBe("我是 E2E Rule Provider。");
 
-	const projection = await activeProjection(page, bootstrap.token);
-	const userEntry = projectPiEntries(projection.session?.entries ?? []).find(
+	const projection = await conversationProjection(page, bootstrap.token, conversation.sessionId);
+	const userEntry = projectPiEntries(projection.timeline.entries).find(
 		(entry) => entry.kind === "message" && entry.role === "user" && entry.text === "你是谁？",
 	);
 	if (!userEntry) throw new Error("rule provider projection has no native user entry");
@@ -92,8 +98,8 @@ test("rule provider exercises send and edited-history regeneration deterministic
 	});
 	await expect
 		.poll(async () => {
-			const next = await activeProjection(page, bootstrap.token);
-			return projectPiEntries(next.session?.entries ?? [])
+			const next = await conversationProjection(page, bootstrap.token, conversation.sessionId);
+			return projectPiEntries(next.timeline.entries)
 				.filter((entry) => entry.kind === "message" && entry.role === "assistant")
 				.map((entry) => entry.text?.trim());
 		})
@@ -105,8 +111,8 @@ test("rule provider exercises send and edited-history regeneration deterministic
 	});
 	await expect
 		.poll(async () => {
-			const next = await activeProjection(page, bootstrap.token);
-			return projectPiEntries(next.session?.entries ?? [])
+			const next = await conversationProjection(page, bootstrap.token, conversation.sessionId);
+			return projectPiEntries(next.timeline.entries)
 				.filter((entry) => entry.kind === "message" && entry.role === "assistant")
 				.at(-1)
 				?.text?.trim();
@@ -114,16 +120,24 @@ test("rule provider exercises send and edited-history regeneration deterministic
 		.toContain("E2E_MANUAL_ROLE_VISUAL_DONE");
 	await expect
 		.poll(async () => {
-			const snapshot = await rpc<SceneSnapshot>(page, bootstrap.token, "snapshot.get:v1", {});
-			return snapshot.companion.byConversation[conversation.sessionId]?.display.sceneId;
+			const projection = await rpc<CompanionStateProjection>(
+				page,
+				bootstrap.token,
+				"companionState.get:v1",
+				{ conversationId: conversation.sessionId },
+			);
+			return projection.state.display.sceneId;
 		})
 		.toBe("quiet_terminal");
 
 	await page.reload();
-	const restored = await rpc<SceneSnapshot>(page, bootstrap.token, "snapshot.get:v1", {});
-	expect(restored.companion.byConversation[conversation.sessionId]?.display.sceneId).toBe(
-		"quiet_terminal",
+	const restored = await rpc<CompanionStateProjection>(
+		page,
+		bootstrap.token,
+		"companionState.get:v1",
+		{ conversationId: conversation.sessionId },
 	);
+	expect(restored.state.display.sceneId).toBe("quiet_terminal");
 });
 
 test("rule provider selects the memory matching the current query marker", async ({ page }) => {

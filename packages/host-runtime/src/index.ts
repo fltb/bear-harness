@@ -122,7 +122,7 @@ export type {
 	TerminalRunResult,
 	TerminalRunStatus,
 } from "./external-agents/run-service.js";
-export { ExternalAgentRunService, MAX_ACTIVE_RUNS } from "./external-agents/run-service.js";
+export { ExternalAgentRunService, MAX_CONCURRENT_RUNS } from "./external-agents/run-service.js";
 export type {
 	FsopJournal,
 	FsopJournalStatus,
@@ -131,34 +131,6 @@ export type {
 	FsopPlan,
 } from "./fsops/service.js";
 export { FileOpsService } from "./fsops/service.js";
-export type {
-	MemoryBackend,
-	MemoryBackendCapabilities,
-	MemoryBackendError,
-	MemoryBackendErrorCode,
-	MemoryBackendOperation,
-	MemoryBankRequest,
-	MemoryBankScope,
-	MemoryConsolidateRequest,
-	MemoryConsolidationResult,
-	MemoryDiagnostics,
-	MemoryForgetRequest,
-	MemoryHit,
-	MemoryId,
-	MemoryInvalidateRequest,
-	MemoryMetadata,
-	MemoryMetadataValue,
-	MemoryMutationTarget,
-	MemoryOpenRequest,
-	MemoryProvenance,
-	MemoryProvenanceKind,
-	MemoryRecallRequest,
-	MemoryRecord,
-	MemoryRecordStatus,
-	MemoryRememberRequest,
-	MemorySetImportanceRequest,
-	MemoryUpdateRequest,
-} from "./memory/backend.js";
 export type { ModelRecord } from "./models/registry.js";
 export { ModelRegistry } from "./models/registry.js";
 export type {
@@ -191,7 +163,9 @@ export {
 	findHostLocalEmbeddingCandidate,
 	HOST_SETTINGS_CAPABILITIES,
 } from "./settings/capabilities.js";
-export { Database } from "./storage/database.js";
+export type { CompanionStorageHandle } from "./storage/companion-storage.js";
+export { CompanionStorageRegistry } from "./storage/companion-storage.js";
+export { CompanionDatabase, SystemDatabase } from "./storage/database.js";
 // Storage
 export type {
 	DurableCopyStatus,
@@ -211,3 +185,7 @@ export {
 } from "./storage/durable-file-transaction.js";
 export type { EventListener, HostEvent } from "./storage/event-bus.js";
 export { EventBus } from "./storage/event-bus.js";
+export type { CompanionPaths } from "./storage/layout.js";
+export { RuntimeLayout, requireCompanionId } from "./storage/layout.js";
+export type { RuntimeLayoutPreparation } from "./storage/layout-migration.js";
+export { prepareRuntimeLayout } from "./storage/layout-migration.js";

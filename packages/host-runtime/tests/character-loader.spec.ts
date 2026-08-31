@@ -69,6 +69,22 @@ function copyCharacterPackage(destination: string, characterId: string, label: s
 }
 
 describe("character package visual projection", () => {
+	it("rejects removed Host lifecycle reaction declarations", () => {
+		const configRoot = mkdtempSync(join(tmpdir(), "bear-character-package-legacy-host-"));
+		temporaryDirectories.push(configRoot);
+		const packageDir = join(configRoot, "jizhou");
+		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
+		const manifestPath = join(packageDir, "character.yaml");
+		const manifest = readFileSync(manifestPath, "utf8");
+		writeFileSync(
+			manifestPath,
+			manifest.replace("state_schema:", "host:\n  event_reactions: []\nstate_schema:"),
+		);
+		expect(() => new CharacterLoader(configRoot).load("jizhou")).toThrow(
+			/legacy host lifecycle reactions are not supported/,
+		);
+	});
+
 	it("projects declared SVG assets as renderer-safe data URLs", () => {
 		const loader = new CharacterLoader(characterRoot);
 		const character = loader.load("jizhou");
@@ -137,10 +153,12 @@ describe("character package visual projection", () => {
 		expect(new Set(character.visual.expressions.map((expression) => expression.asset)).size).toBe(
 			12,
 		);
-		expect(display.roleplay.media).toContainEqual(
+		expect(display.media).toContainEqual(
 			expect.objectContaining({
 				id: "continuity_light",
 				kind: "image",
+				description: expect.any(String),
+				use_when: expect.any(String),
 				url: expect.stringMatching(/^data:image\/webp;base64,/),
 			}),
 		);
@@ -178,13 +196,9 @@ describe("character package display validation", () => {
 		if (!character) throw new Error("imported test package failed to load");
 		const display = loader.display(character);
 		expect(CharacterDisplay.parse(display)).toEqual(display);
-		expect(display.roleplay.unlockables).toEqual(character.roleplay.unlockables);
-		expect(display.roleplay.choice_sets.map((choiceSet) => choiceSet.id)).toEqual(
-			character.roleplay.choice_sets.map((choiceSet) => choiceSet.id),
+		expect(display.media.map((media) => media.id)).toEqual(
+			character.media.map((media) => media.id),
 		);
-		expect(display.roleplay.choice_sets[0]?.choices[0]).toMatchObject({
-			message: "我想进去看看，先从入口开始吧。",
-		});
 	});
 
 	it("supplies the Host theme when an imported package declares no theme", () => {
@@ -219,107 +233,9 @@ describe("character package display validation", () => {
 	});
 });
 
-describe("character package Host lifecycle reactions", () => {
-	function packageWithManifest(
-		prefix: string,
-		mutate: (manifest: string) => string,
-	): { configRoot: string; manifest: string } {
-		const configRoot = mkdtempSync(join(tmpdir(), prefix));
-		temporaryDirectories.push(configRoot);
-		const packageDir = join(configRoot, "jizhou");
-		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
-		const manifestPath = join(packageDir, "character.yaml");
-		const manifest = readFileSync(manifestPath, "utf8");
-		const mutated = mutate(manifest);
-		expect(mutated).not.toBe(manifest);
-		writeFileSync(manifestPath, mutated);
-		return { configRoot, manifest: mutated };
-	}
-
-	it("does not overwrite semantic expression state at lifecycle boundaries", () => {
-		const character = new CharacterLoader(characterRoot).load("jizhou");
-		expect(character).not.toBeNull();
-		expect(character?.host.event_reactions).toEqual([]);
-	});
-
-	it("accepts arbitrary Host events bound to declared visual states", () => {
-		const { configRoot } = packageWithManifest(
-			"bear-character-package-host-reaction-generic-",
-			(manifest) =>
-				manifest.replace(
-					"  event_reactions: []",
-					"  event_reactions:\n    - event: workflow.review_requested\n      visual_state: reflective",
-				),
-		);
-		const character = new CharacterLoader(configRoot).load("jizhou");
-		expect(character?.host.event_reactions).toEqual([
-			{ event: "workflow.review_requested", visual_state: "reflective" },
-		]);
-	});
-
-	it.each([
-		[
-			"duplicate event",
-			(manifest: string) =>
-				manifest.replace(
-					"  event_reactions: []",
-					"  event_reactions:\n    - event: duplicate\n      visual_state: attentive\n    - event: duplicate\n      visual_state: calm",
-				),
-		],
-		[
-			"blank event",
-			(manifest: string) =>
-				manifest.replace(
-					"  event_reactions: []",
-					'  event_reactions:\n    - event: "   "\n      visual_state: attentive',
-				),
-		],
-		[
-			"unknown visual state",
-			(manifest: string) =>
-				manifest.replace(
-					"  event_reactions: []",
-					"  event_reactions:\n    - event: run.started\n      visual_state: unknown_state",
-				),
-		],
-		[
-			"extra key",
-			(manifest: string) =>
-				manifest.replace(
-					"  event_reactions: []",
-					"  event_reactions:\n    - event: run.started\n      visual_state: attentive\n      scene: study",
-				),
-		],
-		[
-			"media key",
-			(manifest: string) =>
-				manifest.replace(
-					"  event_reactions: []",
-					"  event_reactions:\n    - event: run.started\n      visual_state: attentive\n      media: continuity_light",
-				),
-		],
-		[
-			"choice key",
-			(manifest: string) =>
-				manifest.replace(
-					"  event_reactions: []",
-					"  event_reactions:\n    - event: run.started\n      visual_state: attentive\n      choice_set: continuity_response",
-				),
-		],
-	] as const)("rejects %s lifecycle reaction mutation", (_name, mutate) => {
-		const { configRoot } = packageWithManifest(
-			`bear-character-package-host-reaction-${_name.replace(/\s+/g, "-")}-`,
-			mutate,
-		);
-		expect(() => new CharacterLoader(configRoot).load("jizhou")).toThrow(
-			/invalid host event reaction/,
-		);
-	});
-});
-
-describe("character package roleplay media presentation", () => {
-	it("projects explicit presentations and defaults omitted presentation to dialog", () => {
-		const configRoot = mkdtempSync(join(tmpdir(), "bear-character-package-media-presentation-"));
+describe("character package media", () => {
+	it("projects audio and video metadata without presentation state", () => {
+		const configRoot = mkdtempSync(join(tmpdir(), "bear-character-package-media-"));
 		temporaryDirectories.push(configRoot);
 		const packageDir = join(configRoot, "jizhou");
 		cpSync(resolve(characterRoot, "jizhou"), packageDir, { recursive: true });
@@ -329,26 +245,28 @@ describe("character package roleplay media presentation", () => {
 		writeFileSync(join(packageDir, "assets", "chapter-video.vtt"), "WEBVTT\n");
 		const manifestPath = join(packageDir, "character.yaml");
 		const manifest = readFileSync(manifestPath, "utf8");
-		const withPresentations = manifest.replace(
-			"  unlockables:",
+		const withMedia = manifest.replace(
+			"scenes:",
 			[
-				"    - id: ambient_signal",
-				"      kind: audio",
-				"      label: Ambient signal",
-				"      asset: assets/ambient-signal.mp3",
-				"      captions: assets/ambient-signal.vtt",
-				"      presentation: ambient",
-				"    - id: chapter_video",
-				"      kind: video",
-				"      label: Chapter video",
-				"      asset: assets/chapter-video.mp4",
-				"      captions: assets/chapter-video.vtt",
-				"      presentation: inline",
-				"  unlockables:",
+				"  - id: ambient_signal",
+				"    kind: audio",
+				"    label: Ambient signal",
+				"    description: A damaged ambient signal.",
+				"    use_when: When the user opens the signal record.",
+				"    asset: assets/ambient-signal.mp3",
+				"    captions: assets/ambient-signal.vtt",
+				"  - id: chapter_video",
+				"    kind: video",
+				"    label: Chapter video",
+				"    description: A chapter recording.",
+				"    use_when: When the user asks to view the recording.",
+				"    asset: assets/chapter-video.mp4",
+				"    captions: assets/chapter-video.vtt",
+				"scenes:",
 			].join("\n"),
 		);
-		expect(withPresentations).not.toBe(manifest);
-		writeFileSync(manifestPath, withPresentations);
+		expect(withMedia).not.toBe(manifest);
+		writeFileSync(manifestPath, withMedia);
 
 		const loader = new CharacterLoader(configRoot);
 		const character = loader.load("jizhou");
@@ -356,21 +274,18 @@ describe("character package roleplay media presentation", () => {
 		if (!character) throw new Error("test package failed to load");
 		const display = loader.display(character);
 		expect(CharacterDisplay.parse(display)).toEqual(display);
-		const media = display.roleplay.media;
-		expect(media.find((entry) => entry.id === "continuity_light")).toEqual(
-			expect.objectContaining({ presentation: "inline" }),
-		);
+		const media = display.media;
 		expect(media.find((entry) => entry.id === "ambient_signal")).toEqual(
-			expect.objectContaining({ kind: "audio", presentation: "ambient" }),
+			expect.objectContaining({ kind: "audio", description: "A damaged ambient signal." }),
 		);
 		expect(media.find((entry) => entry.id === "chapter_video")).toEqual(
-			expect.objectContaining({ kind: "video", presentation: "inline" }),
+			expect.objectContaining({ kind: "video", use_when: expect.any(String) }),
 		);
 	});
 
-	it("rejects ambient presentation for image media", () => {
+	it("rejects the deleted presentation field", () => {
 		const configRoot = mkdtempSync(
-			join(tmpdir(), "bear-character-package-invalid-media-presentation-"),
+			join(tmpdir(), "bear-character-package-deleted-media-presentation-"),
 		);
 		temporaryDirectories.push(configRoot);
 		const packageDir = join(configRoot, "jizhou");
@@ -378,8 +293,8 @@ describe("character package roleplay media presentation", () => {
 		const manifestPath = join(packageDir, "character.yaml");
 		const manifest = readFileSync(manifestPath, "utf8");
 		const invalidManifest = manifest.replace(
-			"      asset: assets/cg-damaged-signal-animated.webp",
-			"      asset: assets/cg-damaged-signal-animated.webp\n      presentation: ambient",
+			"    asset: assets/cg-damaged-signal-animated.webp",
+			"    asset: assets/cg-damaged-signal-animated.webp\n    presentation: inline",
 		);
 		expect(invalidManifest).not.toBe(manifest);
 		writeFileSync(manifestPath, invalidManifest);
@@ -456,11 +371,42 @@ describe("character package Pi resources", () => {
 		expect(loader.piResources(character, false).pluginPaths).toEqual([]);
 		expect(resources.appendSystemPrompt).toContain("<role_skills>");
 		expect(resources.appendSystemPrompt).toContain("<host_display_catalog>");
+		expect(resources.appendSystemPrompt).toContain("<character_identity>");
+		expect(resources.appendSystemPrompt).toContain("<character_state_contract>");
+		expect(resources.appendSystemPrompt).toContain("<self_canon>");
+		expect(resources.appendSystemPrompt).toContain(
+			"用简短自然语言记录对以后互动有帮助的稳定关系事实",
+		);
+		expect(resources.appendSystemPrompt).toContain(
+			"用自然语言总结已经确定发生的事实、重要发现和用户作出的选择",
+		);
+		expect(resources.appendSystemPrompt).toContain(
+			"completed natural conversation is captured by TDAI and may be selectively distilled",
+		);
+		expect(resources.appendSystemPrompt).toContain(
+			"Keep automatic relationship memory and explicit MEMORY.md edits distinct",
+		);
 		expect(resources.appendSystemPrompt).toContain('"id": "relay_room"');
 		expect(resources.appendSystemPrompt).toContain('"id": "reflective"');
+		expect(resources.appendSystemPrompt).toContain('"id": "continuity_light"');
+		expect(resources.appendSystemPrompt).toContain(
+			'"description": "一张标出旧极昼与当前极昼交接关系的继任规程图。"',
+		);
+		expect(resources.appendSystemPrompt).toContain(
+			'"useWhen": "解释极昼的连续性、来处或当前这一班如何承接过去时"',
+		);
+		expect(resources.appendSystemPrompt).toContain("Use host_media");
+		expect(resources.appendSystemPrompt).toContain("Use host_choices");
+		expect(resources.appendSystemPrompt).not.toContain("/display/surfaces");
+		expect(resources.appendSystemPrompt).not.toContain("choice_sets");
 		expect(resources.appendSystemPrompt).not.toContain("scene-relay-room.webp");
 		expect(resources.appendSystemPrompt).not.toContain("<role_examples>");
-		expect(resources.appendSystemPrompt.match(/\"id\": \"emotional_support\"/g)).toHaveLength(1);
+		expect(resources.appendSystemPrompt).not.toContain("x-scope");
+		expect(resources.appendSystemPrompt).not.toContain("x-write-authority");
+		expect(resources.appendSystemPrompt).not.toContain("x-evidence-required");
+		expect(resources.appendSystemPrompt).not.toContain("x-allowed-transitions");
+		expect(resources.appendSystemPrompt).not.toContain("JSON Patch");
+		expect(resources.appendSystemPrompt.match(/"id": "emotional_support"/g)).toHaveLength(1);
 	});
 
 	it("discovers only role-owned Skills and plugins by package convention", () => {

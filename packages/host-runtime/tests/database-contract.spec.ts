@@ -10,10 +10,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { CredentialVault } from "../src/providers/credential-store.js";
 import { HostRuntime } from "../src/runtime.js";
 import {
+	COMPANION_MIGRATIONS,
+	CompanionDatabase,
 	Database,
 	loadInstallationId,
-	MIGRATIONS,
 	type Migration,
+	SYSTEM_MIGRATIONS,
+	SystemDatabase,
 } from "../src/storage/database.js";
 
 const roots: string[] = [];
@@ -63,39 +66,49 @@ afterEach(() => {
 });
 
 describe("database schema contract", () => {
-	it("covers every application table with transactional change triggers", () => {
-		const database = new Database(root());
-		database.migrate(MIGRATIONS);
-		const excluded = new Set([
-			"schema_migrations",
-			"installation_identity",
-			"events",
-			"sync_changes",
-		]);
-		const tables = database.connection
-			.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
-			.all();
-		const triggers = database.connection
-			.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'")
-			.all()
-			.map((row) => row.name);
-		for (const table of tables) {
-			const name = String(table.name);
-			// SQLite FTS/vector tables are derived indexes, never authoritative records.
-			if (excluded.has(name) || name.includes("fts") || name.includes("vec")) continue;
-			for (const operation of ["insert", "update", "delete"]) {
-				expect(triggers, `${name} ${operation} must invalidate synchronized readers`).toContain(
-					`sync_${name}_${operation}`,
-				);
+	it("covers system and character application tables with independent change triggers", () => {
+		const databaseRoot = root();
+		const system = new SystemDatabase(join(databaseRoot, "system", "settings.db"));
+		const companion = new CompanionDatabase(
+			join(databaseRoot, "companions", "jizhou", "runtime.db"),
+			"jizhou",
+		);
+		system.migrate(SYSTEM_MIGRATIONS);
+		companion.migrate(COMPANION_MIGRATIONS);
+		companion.ensureRuntimeIdentity();
+
+		for (const [database, excluded] of [
+			[system, new Set<string>(["schema_migrations", "installation_identity", "sync_changes"])],
+			[
+				companion,
+				new Set<string>(["schema_migrations", "runtime_identity", "events", "sync_changes"]),
+			],
+		] as const) {
+			const tables = database.connection
+				.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+				.all();
+			const triggers = database.connection
+				.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+				.all()
+				.map((row) => row.name);
+			for (const table of tables) {
+				const name = String(table.name);
+				if (excluded.has(name) || name.includes("fts") || name.includes("vec")) continue;
+				for (const operation of ["insert", "update", "delete"]) {
+					expect(
+						triggers,
+						`${name} ${operation} must invalidate readers of its owning database`,
+					).toContain(`sync_${name}_${operation}`);
+				}
 			}
 		}
-		expect(triggers).toContain("sync_events_insert");
-		database.close();
+		system.close();
+		companion.close();
 	});
 
 	it("journals state writes atomically and only notifies committed revisions", async () => {
-		const database = new Database(root());
-		database.migrate(MIGRATIONS);
+		const database = new SystemDatabase(join(root(), "system", "settings.db"));
+		database.migrate(SYSTEM_MIGRATIONS);
 		const delivered: Array<{ revision: number; sources: string[] }> = [];
 		database.subscribeSync((revision, sources) => delivered.push({ revision, sources }));
 		try {
@@ -125,18 +138,23 @@ describe("database schema contract", () => {
 
 	it("automatically applies a valid pending migration", () => {
 		const database = new Database(root());
-		database.migrate(MIGRATIONS.slice(0, -1));
-		database.migrate(MIGRATIONS);
+		database.migrate([BASE_MIGRATION]);
+		database.migrate([BASE_MIGRATION, SECOND_MIGRATION]);
 
-		expect(database.currentVersion()).toBe(MIGRATIONS.at(-1)?.id);
-		expect(() => database.assertSchemaContract()).not.toThrow();
+		expect(database.currentVersion()).toBe(SECOND_MIGRATION.id);
+		expect(
+			database.connection
+				.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='upgraded_first'")
+				.get(),
+		).toEqual({ name: "upgraded_first" });
 		database.close();
 	});
 
 	it("creates one UUID identity and preserves it when the database is reopened", () => {
 		const databaseDir = root();
-		const database = new Database(databaseDir);
-		database.migrate(MIGRATIONS);
+		const databasePath = join(databaseDir, "system", "settings.db");
+		const database = new SystemDatabase(databasePath);
+		database.migrate(SYSTEM_MIGRATIONS);
 
 		const installationId = loadInstallationId(database.orm);
 		expect(installationId).toMatch(UUID_V4);
@@ -150,8 +168,8 @@ describe("database schema contract", () => {
 		).toThrow();
 		database.close();
 
-		const reopened = new Database(databaseDir);
-		reopened.migrate(MIGRATIONS);
+		const reopened = new SystemDatabase(databasePath);
+		reopened.migrate(SYSTEM_MIGRATIONS);
 		expect(loadInstallationId(reopened.orm)).toBe(installationId);
 		expect(
 			reopened.connection.prepare("SELECT COUNT(*) AS count FROM installation_identity").get(),
@@ -172,8 +190,8 @@ describe("database schema contract", () => {
 		expect(runtime.memoryScope.userId).toBe("default-user");
 		await runtime.close();
 
-		const database = new Database(join(dataDir, "storage"));
-		database.migrate(MIGRATIONS);
+		const database = new SystemDatabase(join(dataDir, "system", "settings.db"));
+		database.migrate(SYSTEM_MIGRATIONS);
 		expect(loadInstallationId(database.orm)).toBe(installationId);
 		database.close();
 	});
@@ -191,16 +209,41 @@ describe("database schema contract", () => {
 		await runtime.close();
 	});
 	it("creates every column required by typed runtime queries", () => {
-		const database = new Database(root());
-		database.migrate(MIGRATIONS);
-		expect(() => database.assertSchemaContract()).not.toThrow();
-		expect(database.connection.prepare("SELECT created_at FROM runs LIMIT 1").all()).toEqual([]);
-		database.close();
+		const databaseRoot = root();
+		const system = new SystemDatabase(join(databaseRoot, "system", "settings.db"));
+		const companion = new CompanionDatabase(
+			join(databaseRoot, "companions", "jizhou", "runtime.db"),
+			"jizhou",
+		);
+		system.migrate(SYSTEM_MIGRATIONS);
+		companion.migrate(COMPANION_MIGRATIONS);
+		companion.ensureRuntimeIdentity();
+		expect(() => system.assertSchemaContract()).not.toThrow();
+		expect(() => companion.assertSchemaContract()).not.toThrow();
+		expect(companion.connection.prepare("SELECT created_at FROM runs LIMIT 1").all()).toEqual([]);
+		expect(
+			system.connection.prepare("SELECT created_at FROM configured_models LIMIT 1").all(),
+		).toEqual([]);
+		expect(
+			system.connection
+				.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runs'")
+				.get(),
+		).toBeUndefined();
+		expect(
+			companion.connection
+				.prepare(
+					"SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'configured_models'",
+				)
+				.get(),
+		).toBeUndefined();
+		system.close();
+		companion.close();
 	});
 
 	it("does not recreate the deleted Host Pi-session mirror", () => {
-		const database = new Database(root());
-		database.migrate(MIGRATIONS);
+		const database = new CompanionDatabase(join(root(), "runtime.db"), "jizhou");
+		database.migrate(COMPANION_MIGRATIONS);
+		database.ensureRuntimeIdentity();
 		const columns = database.connection
 			.prepare("PRAGMA table_info(conversation_sessions)")
 			.all() as Array<{ name: string; notnull: number }>;
@@ -208,18 +251,21 @@ describe("database schema contract", () => {
 		database.close();
 	});
 
-	it("rebuilds derived provenance and removes Host transcript mirrors", () => {
-		const database = new Database(root());
-		database.migrate(MIGRATIONS);
-		for (const table of ["relationship_memory_entries", "memory_candidates"]) {
-			const columns = (
-				database.connection.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
-			).map((column) => column.name);
-			expect(columns).toContain("source_native_entry_id");
-			expect(columns).not.toContain("source_message_version_id");
-			expect(columns).not.toContain("source_branch_id");
-		}
-		for (const table of ["branches", "messages", "message_versions", "turns"]) {
+	it("does not recreate deleted Host transcript or memory authorities", () => {
+		const database = new CompanionDatabase(join(root(), "runtime.db"), "jizhou");
+		database.migrate(COMPANION_MIGRATIONS);
+		database.ensureRuntimeIdentity();
+		for (const table of [
+			"branches",
+			"messages",
+			"message_versions",
+			"turns",
+			"relationship_memory_entries",
+			"memory_candidates",
+			"memory_decisions",
+			"memory_presentation",
+			"memory_fts",
+		]) {
 			expect(
 				database.connection
 					.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
@@ -227,159 +273,6 @@ describe("database schema contract", () => {
 			).toBeUndefined();
 		}
 		expect(() => database.assertSchemaContract()).not.toThrow();
-		database.close();
-	});
-	it("stores presentation metadata by backend id and complete memory scope", () => {
-		const database = new Database(root());
-		database.migrate(MIGRATIONS);
-		database.connection
-			.prepare("INSERT INTO companion_packages (id, name, version, hash) VALUES (?, ?, ?, ?)")
-			.run("package-a", "Package A", "1.0.0", "hash-a");
-		database.connection
-			.prepare("INSERT INTO companion_identity (id, package_id, name) VALUES (?, ?, ?)")
-			.run("companion-a", "package-a", "Companion A");
-
-		const columns = database.connection
-			.prepare("PRAGMA table_info(memory_presentation)")
-			.all() as Array<{ name: string; notnull: number }>;
-		expect(columns.map((column) => column.name)).toEqual([
-			"backend_memory_id",
-			"installation_id",
-			"user_id",
-			"companion_id",
-			"source_pi_entry_id",
-			"created_by",
-			"pinned",
-			"replacement_memory_id",
-			"created_at",
-			"updated_at",
-			"invalidated_at",
-			"excluded_at",
-		]);
-		expect(columns.some((column) => column.name === "text" || column.name === "content")).toBe(
-			false,
-		);
-		expect(
-			columns
-				.filter((column) =>
-					[
-						"backend_memory_id",
-						"installation_id",
-						"user_id",
-						"companion_id",
-						"created_by",
-						"pinned",
-						"created_at",
-						"updated_at",
-					].includes(column.name),
-				)
-				.every((column) => column.notnull),
-		).toBe(true);
-
-		const insert = database.connection.prepare(`
-			INSERT INTO memory_presentation (
-				backend_memory_id, installation_id, user_id, companion_id,
-				source_pi_entry_id, created_by, pinned, replacement_memory_id, invalidated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`);
-		insert.run(
-			"memory-1",
-			"install-a",
-			"user-a",
-			"companion-a",
-			"pi-entry-1",
-			"user_capture",
-			1,
-			null,
-			null,
-		);
-		insert.run(
-			"memory-1",
-			"install-a",
-			"user-b",
-			"companion-a",
-			null,
-			"imported",
-			0,
-			"memory-2",
-			null,
-		);
-		insert.run(
-			"memory-2",
-			"install-a",
-			"user-c",
-			"companion-a",
-			null,
-			"assistant_tool",
-			0,
-			null,
-			"2026-08-18T12:00:00.000Z",
-		);
-
-		const rows = database.connection
-			.prepare(
-				`SELECT backend_memory_id, installation_id, user_id, companion_id,
-					source_pi_entry_id, created_by, pinned, replacement_memory_id, invalidated_at
-				 FROM memory_presentation ORDER BY user_id`,
-			)
-			.all();
-		expect(rows).toEqual([
-			{
-				backend_memory_id: "memory-1",
-				installation_id: "install-a",
-				user_id: "user-a",
-				companion_id: "companion-a",
-				source_pi_entry_id: "pi-entry-1",
-				created_by: "user_capture",
-				pinned: 1,
-				replacement_memory_id: null,
-				invalidated_at: null,
-			},
-			{
-				backend_memory_id: "memory-1",
-				installation_id: "install-a",
-				user_id: "user-b",
-				companion_id: "companion-a",
-				source_pi_entry_id: null,
-				created_by: "imported",
-				pinned: 0,
-				replacement_memory_id: "memory-2",
-				invalidated_at: null,
-			},
-			{
-				backend_memory_id: "memory-2",
-				installation_id: "install-a",
-				user_id: "user-c",
-				companion_id: "companion-a",
-				source_pi_entry_id: null,
-				created_by: "assistant_tool",
-				pinned: 0,
-				replacement_memory_id: null,
-				invalidated_at: "2026-08-18T12:00:00.000Z",
-			},
-		]);
-		expect(() =>
-			insert.run(
-				"memory-4",
-				"install-a",
-				"user-a",
-				"companion-a",
-				null,
-				"imported",
-				0,
-				null,
-				"bad-timestamp",
-			),
-		).not.toThrow();
-		expect(() =>
-			insert.run("memory-1", "install-a", "user-a", "companion-a", null, "imported", 0, null),
-		).toThrow();
-		expect(() =>
-			insert.run("memory-2", "install-a", "user-a", "companion-a", null, "invalid", 0, null),
-		).toThrow();
-		expect(() =>
-			insert.run("memory-3", "install-a", "user-a", "companion-a", null, "imported", 2, null),
-		).toThrow();
 		database.close();
 	});
 
@@ -391,18 +284,18 @@ describe("database schema contract", () => {
 			.prepare("INSERT INTO schema_migrations (id, checksum) VALUES (?, ?)")
 			.run(1, createHash("sha256").update(staleSql, "utf8").digest("hex"));
 
-		expect(() => database.migrate(MIGRATIONS)).toThrow(/migration 1 checksum mismatch/);
+		expect(() => database.migrate([BASE_MIGRATION])).toThrow(/migration 1 checksum mismatch/);
 		database.close();
 	});
 
 	it("rejects an unknown migration from a newer application", () => {
 		const database = new Database(root());
-		database.migrate(MIGRATIONS);
+		database.migrate([BASE_MIGRATION]);
 		database.connection
 			.prepare("INSERT INTO schema_migrations (id, checksum) VALUES (?, ?)")
 			.run(10_000, "newer-application");
 
-		expect(() => database.migrate(MIGRATIONS)).toThrow(/unknown applied migration 10000/);
+		expect(() => database.migrate([BASE_MIGRATION])).toThrow(/unknown applied migration 10000/);
 		database.close();
 	});
 
@@ -429,8 +322,8 @@ describe("database schema contract", () => {
 	});
 
 	it("rejects a database missing a required runtime column", () => {
-		const database = new Database(root());
-		database.migrate(MIGRATIONS);
+		const database = new SystemDatabase(join(root(), "settings.db"));
+		database.migrate(SYSTEM_MIGRATIONS);
 		database.connection.exec("DROP TABLE configured_models");
 		database.connection.exec(
 			"CREATE TABLE configured_models (provider_id TEXT, model_id TEXT, label TEXT, supports_images INTEGER)",

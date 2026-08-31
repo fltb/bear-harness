@@ -134,16 +134,16 @@ function probeVersion(finalBin: string): string | null {
 }
 
 export class CodexAdapter extends AcpExecutorController {
-	private db: AppDatabase;
-	private eventBus: EventBus;
 	private readonly adapterPath = createRequire(import.meta.url).resolve(
 		"@agentclientprotocol/codex-acp",
 	);
 
-	constructor(db: AppDatabase, eventBus: EventBus) {
+	constructor(
+		private readonly systemDb: AppDatabase,
+		private readonly runDb: AppDatabase,
+		private readonly eventBus: EventBus,
+	) {
 		super();
-		this.db = db;
-		this.eventBus = eventBus;
 	}
 
 	/**
@@ -310,7 +310,7 @@ export class CodexAdapter extends AcpExecutorController {
 				.digest("hex")
 				.slice(0, 16);
 
-		this.db
+		this.systemDb
 			.insert(executorProfiles)
 			.values({ id: profileId, profileType: "codex", capabilityJson: { ...capability } })
 			.onConflictDoUpdate({
@@ -356,7 +356,7 @@ export class CodexAdapter extends AcpExecutorController {
 			sha256: capability.sha256,
 			launchedAt: new Date().toISOString(),
 		};
-		this.db
+		this.runDb
 			.insert(runManifests)
 			.values({ id: randomUUID(), runId: request.run.runId, manifestJson: { ...manifest } })
 			.run();
@@ -393,7 +393,7 @@ export class CodexAdapter extends AcpExecutorController {
 
 	/** Current Codex availability. */
 	async status(): Promise<CodexStatus> {
-		const row = this.db
+		const row = this.systemDb
 			.select({ id: executorProfiles.id, capability: executorProfiles.capabilityJson })
 			.from(executorProfiles)
 			.where(eq(executorProfiles.profileType, "codex"))

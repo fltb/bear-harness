@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import { type CredentialVault, createHostRuntime } from "../src/index.js";
 import {
@@ -154,12 +154,25 @@ describe("character package import", () => {
 			ok: true,
 			data: { character: { id: "imported-role" } },
 		});
+		const previousRole = Reflect.get(runtime, "role") as {
+			companionId: string;
+			close(): Promise<void>;
+		};
+		const originalClose = previousRole.close.bind(previousRole);
+		const closePrevious = vi.spyOn(previousRole, "close").mockImplementationOnce(async () => {
+			await originalClose();
+			throw new Error("cleanup failed after closing resources");
+		});
 		await expect(
 			runtime.dispatch("character.activate:v1", { characterId: "imported-role" }),
 		).resolves.toMatchObject({
 			ok: true,
 			data: { character: { id: "imported-role" } },
 		});
+		const activeRole = Reflect.get(runtime, "role") as { companionId: string };
+		expect(activeRole).not.toBe(previousRole);
+		expect(activeRole.companionId).toBe("imported-role");
+		expect(closePrevious).toHaveBeenCalledOnce();
 		await expect(runtime.dispatch("canon.listModules:v1", {})).resolves.toMatchObject({
 			ok: true,
 			data: {
@@ -197,6 +210,82 @@ describe("character package import", () => {
 		if (!recoveredCharacter) throw new Error("imported character disappeared after restart");
 		expect(recoveredCharacter.state.properties.relationship).toBeDefined();
 	}, 15_000);
+
+	it("seeds a new character from the system model once, then opens Pi with isolated role defaults", async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "bear-character-model-seed-"));
+		roots.push(dataDir);
+		const runtime = createHostRuntime({
+			dataDir,
+			characterSeedRoot: characterRoot,
+			productConfig,
+			credentialVault: vault,
+		});
+		const call = async (channel: string, params: unknown) => {
+			const response = await runtime.dispatch(channel, params);
+			if (!response.ok) throw new Error(`${response.error.kind}: ${response.error.reason}`);
+			return response.data;
+		};
+		await runtime.start();
+		await call("provider.customUpsert:v1", {
+			providerId: "seed-models",
+			name: "Seed models",
+			baseUrl: "https://example.invalid/v1",
+			models: [{ id: "a" }, { id: "b" }, { id: "c" }],
+		});
+		await call("provider.setApiKey:v1", {
+			providerId: "seed-models",
+			apiKey: "session-key",
+			sessionOnly: true,
+		});
+		await call("model.systemDefaults.set:v1", {
+			reply: { providerId: "seed-models", modelId: "a" },
+			vision: { mode: "auto" },
+		});
+		await call("model.defaults.initialize:v1", {});
+		await call("model.defaults.completeOnboarding:v1", {});
+
+		await call("model.systemDefaults.set:v1", {
+			reply: { providerId: "seed-models", modelId: "b" },
+			vision: { mode: "auto" },
+		});
+		const files = packageFiles(join(characterRoot, "jizhou"));
+		const manifest = files.find((file) => file.path.endsWith("/character.yaml"));
+		if (!manifest) throw new Error("test character manifest missing");
+		manifest.base64 = Buffer.from(
+			Buffer.from(manifest.base64, "base64")
+				.toString("utf8")
+				.replace("id: jizhou", "id: seeded-role"),
+		).toString("base64");
+		await call("character.import:v1", { files });
+		await call("character.activate:v1", { characterId: "seeded-role" });
+		await expect(call("model.defaults.get:v1", {})).resolves.toMatchObject({
+			reply: { providerId: "seed-models", modelId: "b" },
+			onboardingComplete: false,
+		});
+		await call("model.defaults.setReply:v1", {
+			reply: { providerId: "seed-models", modelId: "c" },
+		});
+		await call("model.defaults.completeOnboarding:v1", {});
+		const secondConversation = (await call("conversation.create:v1", {
+			title: "Second role",
+		})) as { sessionId: string };
+		await expect(
+			call("model.route.get:v1", { conversationId: secondConversation.sessionId }),
+		).resolves.toMatchObject({ selected: { providerId: "seed-models", modelId: "c" } });
+
+		await call("character.activate:v1", { characterId: "jizhou" });
+		await expect(call("model.defaults.get:v1", {})).resolves.toMatchObject({
+			reply: { providerId: "seed-models", modelId: "a" },
+			onboardingComplete: true,
+		});
+		const firstConversation = (await call("conversation.create:v1", {
+			title: "First role",
+		})) as { sessionId: string };
+		await expect(
+			call("model.route.get:v1", { conversationId: firstConversation.sessionId }),
+		).resolves.toMatchObject({ selected: { providerId: "seed-models", modelId: "a" } });
+		await runtime.close();
+	}, 20_000);
 
 	it("requires explicit trust for imported executable plugins and revokes it when they change", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-character-plugin-trust-"));

@@ -1,16 +1,19 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import type { PiTimelineEntry } from "@bear-harness/protocol";
+import type { CharacterMedia, PiTimelineEntry } from "@bear-harness/protocol";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { followTimelineScroll } from "./lib/dom-effects.js";
-import type { CharacterDisplay } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
 import { useConversationViewWorkflow } from "./stores/conversation-workflows.js";
 import { ThreadHead } from "./ThreadHead.js";
-import { Button, Dialog, TextField } from "./ui/primitives.js";
+import { Button, TextField } from "./ui/primitives.js";
+import { WorkTimelineItem } from "./WorkPanel.js";
 
 /** ConversationPanel renders the active Pi timeline plus transient stream state. */
 
-function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
+function PiTimelineEntryView(props: {
+	entry: PiTimelineEntry;
+	onPreviewMedia(media: CharacterMedia): void;
+}) {
 	const store = useCompanionStore();
 	const [t] = useTranslation(undefined, { i18n });
 	const [editing, setEditing] = createSignal(false);
@@ -18,48 +21,57 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 	const [correcting, setCorrecting] = createSignal(false);
 	const [operationsOpen, setOperationsOpen] = createSignal(false);
 	const [correctionDetail, setCorrectionDetail] = createSignal("");
-	const [captureState, setCaptureState] = createSignal<
-		"idle" | "saving" | "saved" | "already_known" | "rejected" | "error"
-	>("idle");
-	const [captureReason, setCaptureReason] = createSignal<string | null>(null);
 	const entry = props.entry;
-	const capturedByHost = () =>
-		store.memory.entries()?.some((memory) => memory.sourceEntryId === entry.id) === true;
-	const captured = () =>
-		captureState() === "saved" || captureState() === "already_known" || capturedByHost();
-	const captureLabel = () => {
-		if (captureState() === "saving") return t("messages.rememberingMoment");
-		if (captureState() === "already_known") return t("messages.memoryAlreadyKnown");
-		if (captured()) return t("messages.rememberedMoment");
-		if (captureState() === "error") return t("messages.rememberFailed");
-		if (captureState() === "rejected") {
-			if (captureReason() === "extractor_found_no_durable_memory")
-				return t("messages.memoryNotExtractable");
-			if (captureReason() === "turn_already_processed") return t("messages.memoryAlreadyProcessed");
-			if (captureReason() === "memory_capture_disabled") return t("messages.memoryCaptureDisabled");
-			if (captureReason() === "memory_persistence_failed")
-				return t("messages.memoryPersistenceFailed");
-		}
-		return t("messages.rememberMoment");
-	};
 	if (entry.kind !== "message") {
 		// Native Pi context entries describe internal session bookkeeping. Rendering
 		// each one as an unlabeled rule made model/level changes look like broken UI.
 		return null;
 	}
 	if (entry.role === "tool") {
+		const media =
+			entry.toolName === "host_media" && entry.mediaId
+				? store.character?.media.find((item) => item.id === entry.mediaId)
+				: undefined;
+		if (media)
+			return <MediaTimelineCard media={media} onOpen={() => props.onPreviewMedia(media)} />;
+		if (entry.toolName === "host_choices" && entry.choices)
+			return (
+				<section class="message-choices" aria-label={entry.choices.prompt}>
+					<strong>{entry.choices.prompt}</strong>
+					<div class="message-choice-list">
+						<For each={entry.choices.items}>
+							{(choice) => (
+								<Button
+									type="button"
+									class="message-choice"
+									onClick={() => void store.sendMessage(choice.message)}
+								>
+									{choice.label}
+								</Button>
+							)}
+						</For>
+					</div>
+				</section>
+			);
 		const label = (() => {
 			switch (entry.toolName) {
 				case "role_skill":
 					return t("messages.toolActivity.read");
 				case "host_state":
 					return t("messages.toolActivity.state");
+				case "host_media":
+				case "host_choices":
+					return t("messages.toolActivity.generic");
 				case "host_delegate":
 					return t("messages.toolActivity.delegate");
-				case "host_history":
 				case "host_canon":
-				case "host_memory":
-					return t("messages.toolActivity.continuity");
+					return t("messages.toolActivity.canon");
+				case "tdai_memory_search":
+					return t("messages.toolActivity.memorySearch");
+				case "tdai_conversation_search":
+					return t("messages.toolActivity.conversationSearch");
+				case "explicit_memory":
+					return t("messages.toolActivity.explicitMemory");
 				default:
 					return t("messages.toolActivity.generic");
 			}
@@ -233,22 +245,12 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 						</Show>
 						<Button
 							type="button"
-							disabled={captureState() === "saving" || captured()}
 							onClick={() => {
-								setCaptureState("saving");
-								setCaptureReason(null);
-								void store.memory
-									.capture(entry.id)
-									.then((result) => {
-										setCaptureReason(result.reason);
-										if (result.status === "stored") setCaptureState("saved");
-										else if (result.status === "already_known") setCaptureState("already_known");
-										else setCaptureState("rejected");
-									})
-									.catch(() => setCaptureState("error"));
+								setOperationsOpen(false);
+								void store.sendMessage(t("messages.rememberMoment"));
 							}}
 						>
-							{captureLabel()}
+							{t("messages.rememberMoment")}
 						</Button>
 						<Button type="button" onClick={() => void store.createConversationFromEntry(entry.id)}>
 							{t("messages.branch")}
@@ -294,14 +296,22 @@ function PiTimelineEntryView(props: { entry: PiTimelineEntry }) {
 	);
 }
 
-function PiTimelineRenderer(props: { entries: readonly PiTimelineEntry[] }) {
+function PiTimelineRenderer(props: {
+	entries: readonly PiTimelineEntry[];
+	onPreviewMedia(media: CharacterMedia): void;
+}) {
 	const [t] = useTranslation(undefined, { i18n });
 	const visible = createMemo(() => {
 		const result: Array<PiTimelineEntry | PiTimelineEntry[]> = [];
 		let lastAssistantSignature: string | undefined;
 		for (const entry of props.entries) {
 			if (entry.kind !== "message") continue;
-			if (entry.role === "tool" && entry.status === "succeeded") {
+			if (
+				entry.role === "tool" &&
+				entry.status === "succeeded" &&
+				!entry.mediaId &&
+				!entry.choices
+			) {
 				lastAssistantSignature = undefined;
 				const previous = result.at(-1);
 				if (Array.isArray(previous)) previous.push(entry);
@@ -317,13 +327,6 @@ function PiTimelineRenderer(props: { entries: readonly PiTimelineEntry[] }) {
 				result.push(entry);
 				continue;
 			}
-			if (
-				(entry.text === undefined || entry.text.length === 0) &&
-				entry.stopReason !== "error" &&
-				entry.stopReason !== "aborted"
-			) {
-				continue;
-			}
 			const signature = JSON.stringify({
 				text: entry.text ?? "",
 				stopReason: entry.stopReason,
@@ -337,26 +340,36 @@ function PiTimelineRenderer(props: { entries: readonly PiTimelineEntry[] }) {
 	});
 	return (
 		<For each={visible()}>
-			{(item) => (
-				<Show
-					when={Array.isArray(item) && item.length > 1}
-					fallback={<PiTimelineEntryView entry={Array.isArray(item) ? item[0]! : item} />}
-				>
-					<details class="tool-activity-group">
-						<summary>
-							<span>{t("messages.toolActivity.generic")}</span>
-							<span>
-								{(item as PiTimelineEntry[]).length} · {t("messages.toolActivity.completed")}
-							</span>
-						</summary>
-						<div class="tool-activity-details">
-							<For each={item as PiTimelineEntry[]}>
-								{(entry) => <PiTimelineEntryView entry={entry} />}
-							</For>
-						</div>
-					</details>
-				</Show>
-			)}
+			{(item) => {
+				const entries = Array.isArray(item) ? item : [item];
+				const first = entries[0];
+				if (!first) return null;
+				return (
+					<>
+						<Show
+							when={entries.length > 1}
+							fallback={<PiTimelineEntryView entry={first} onPreviewMedia={props.onPreviewMedia} />}
+						>
+							<details class="tool-activity-group">
+								<summary>
+									<span>{t("messages.toolActivity.generic")}</span>
+									<span>
+										{entries.length} · {t("messages.toolActivity.completed")}
+									</span>
+								</summary>
+								<div class="tool-activity-details">
+									<For each={entries}>
+										{(entry) => (
+											<PiTimelineEntryView entry={entry} onPreviewMedia={props.onPreviewMedia} />
+										)}
+									</For>
+								</div>
+							</details>
+						</Show>
+						<For each={entries}>{(entry) => <WorkTimelineItem messageId={entry.id} />}</For>
+					</>
+				);
+			}}
 		</For>
 	);
 }
@@ -450,7 +463,7 @@ function PiQueuedUserMessages() {
 	);
 }
 
-export function ConversationPanel() {
+export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia): void }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
 	const view = useConversationViewWorkflow(store);
@@ -460,7 +473,7 @@ export function ConversationPanel() {
 	followTimelineScroll(
 		() => threadRef,
 		() =>
-			`${store.activePiTimeline?.entries.length ?? 0}:${store.activeChoiceSetId ?? ""}:${store.activePresentationMediaId ?? ""}`,
+			`${store.activePiTimeline?.entries.length ?? 0}:${store.activePiLiveState?.streamingMessage?.text?.length ?? 0}:${store.activePiLiveState?.queuedUserMessages.length ?? 0}`,
 	);
 
 	return (
@@ -482,150 +495,46 @@ export function ConversationPanel() {
 
 				<Show when={hasThreadContent()}>
 					<Show when={store.activePiTimeline}>
-						{(timeline) => <PiTimelineRenderer entries={timeline().entries} />}
+						{(timeline) => (
+							<PiTimelineRenderer
+								entries={timeline().entries}
+								onPreviewMedia={props.onPreviewMedia}
+							/>
+						)}
 					</Show>
 					<PiQueuedUserMessages />
 					<PiLiveAssistantMessageView />
 				</Show>
-				<RoleplayChoices />
-				<RoleplayInlineMedia />
 			</section>
-			<RoleplayMediaOverlays />
 		</>
 	);
 }
 
-function RoleplayChoices() {
-	const store = useCompanionStore();
-	const view = useConversationViewWorkflow(store);
-	const choiceSet = view.roleplayChoiceSet;
-	return (
-		<Show when={choiceSet()}>
-			{(set) => (
-				<section class="roleplay-choices" aria-label={set().prompt}>
-					<strong>{set().prompt}</strong>
-					<div class="roleplay-choice-list">
-						<For each={set().choices}>
-							{(choice) => (
-								<Button
-									type="button"
-									class="roleplay-choice"
-									onClick={() => void view.submitText(choice.message)}
-								>
-									<strong>{choice.label}</strong>
-									<Show when={choice.description}>
-										{(description) => <span>{description()}</span>}
-									</Show>
-								</Button>
-							)}
-						</For>
-					</div>
-				</section>
-			)}
-		</Show>
-	);
-}
-
-function RoleplayInlineMedia() {
+function MediaTimelineCard(props: { media: CharacterMedia; onOpen(): void }) {
 	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
-	const media = useConversationViewWorkflow(store).roleplayInlineMedia;
 	return (
-		<Show when={media()}>
-			{(item) => (
-				<section class="roleplay-media-inline" aria-labelledby="roleplay-inline-media-label">
-					<header class="roleplay-media-header">
-						<h3 id="roleplay-inline-media-label">{item().label}</h3>
-						<Button
-							data-control="command"
-							type="button"
-							aria-label={t("messages.closeMedia")}
-							onClick={() => store.dismissPresentationMedia()}
-						>
-							{t("messages.closeMedia")}
-						</Button>
-					</header>
-					<RoleplayConversationMedia media={item()} />
-				</section>
-			)}
-		</Show>
+		<section class="message-media-card" aria-label={props.media.label}>
+			<div>
+				<strong>{props.media.label}</strong>
+				<p>{props.media.description}</p>
+			</div>
+			<Button type="button" onClick={props.onOpen}>
+				{t("messages.openMedia")}
+			</Button>
+		</section>
 	);
 }
 
-function RoleplayMediaOverlays() {
-	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
-	const view = useConversationViewWorkflow(store);
-	const media = view.roleplayOverlayMedia;
-	const ambientMedia = view.roleplayAmbientMedia;
-	return (
-		<>
-			<Dialog
-				open={media() !== undefined}
-				onOpenChange={(open) => !open && store.dismissPresentationMedia()}
-			>
-				<Dialog.Portal>
-					<Dialog.Overlay class="roleplay-media-overlay" />
-					<Dialog.Content class="roleplay-media-dialog">
-						<Show when={media()}>
-							{(item) => (
-								<>
-									<Dialog.Title class="sr-only">{item().label}</Dialog.Title>
-									<RoleplayConversationMedia media={item()} />
-								</>
-							)}
-						</Show>
-						<Dialog.CloseButton
-							as={Button}
-							class="roleplay-media-close"
-							aria-label={t("messages.closeMedia")}
-						>
-							{t("messages.closeMedia")}
-						</Dialog.CloseButton>
-					</Dialog.Content>
-				</Dialog.Portal>
-			</Dialog>
-			<Show when={ambientMedia()}>
-				{(item) => (
-					<section class="roleplay-media-ambient" aria-labelledby="roleplay-ambient-media-label">
-						<div class="roleplay-media-ambient-heading">
-							<strong id="roleplay-ambient-media-label">{item().label}</strong>
-							<Button
-								data-control="command"
-								type="button"
-								aria-label={t("messages.stopMedia")}
-								onClick={() => store.dismissAmbientMedia()}
-							>
-								{t("messages.stopMedia")}
-							</Button>
-						</div>
-						<RoleplayConversationMedia media={item()} />
-					</section>
-				)}
-			</Show>
-		</>
-	);
-}
-
-function RoleplayConversationMedia(props: {
-	media: CharacterDisplay["roleplay"]["media"][number];
-}) {
+function CharacterMediaContent(props: { media: CharacterMedia }) {
 	if (props.media.kind === "audio")
 		return (
-			<audio
-				autoplay
-				controls
-				loop={props.media.loop}
-				src={props.media.url}
-				aria-label={props.media.label}
-			>
+			<audio controls loop={props.media.loop} src={props.media.url} aria-label={props.media.label}>
 				<track kind="captions" src={props.media.captionsUrl} srclang="und" default />
 			</audio>
 		);
 	if (props.media.kind === "video")
 		return (
 			<video
-				autoplay
 				controls
 				loop={props.media.loop}
 				poster={props.media.posterUrl}
@@ -638,8 +547,40 @@ function RoleplayConversationMedia(props: {
 	const source =
 		props.media.kind === "animation" &&
 		props.media.posterUrl &&
+		typeof window.matchMedia === "function" &&
 		window.matchMedia("(prefers-reduced-motion: reduce)").matches
 			? props.media.posterUrl
 			: props.media.url;
 	return <img src={source} alt={props.media.label} />;
+}
+
+export function MediaPreview(props: { media: CharacterMedia; onClose(): void }) {
+	const [t] = useTranslation(undefined, { i18n });
+	return (
+		<>
+			<Button
+				type="button"
+				class="artifact-preview-backdrop"
+				aria-label={t("messages.closeMedia")}
+				onClick={props.onClose}
+			/>
+			<aside class="attachment-preview-column media-preview-column" aria-label={props.media.label}>
+				<header>
+					<div class="attachment-preview-heading">
+						<small>{props.media.kind}</small>
+						<strong>{props.media.label}</strong>
+					</div>
+					<Button type="button" aria-label={t("messages.closeMedia")} onClick={props.onClose}>
+						×
+					</Button>
+				</header>
+				<section class="attachment-preview-media media-preview-content">
+					<CharacterMediaContent media={props.media} />
+				</section>
+				<footer class="attachment-preview-actions">
+					<p>{props.media.description}</p>
+				</footer>
+			</aside>
+		</>
+	);
 }

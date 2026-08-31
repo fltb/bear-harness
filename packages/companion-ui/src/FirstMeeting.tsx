@@ -1,21 +1,25 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { createMemo, For, Show } from "solid-js";
-import { EmbeddingSettings } from "./features/EmbeddingSettings.js";
 import { ModelSelector } from "./features/ModelSelector.js";
 import { ProviderSetup } from "./features/ProviderSetup.js";
 import type { CharacterOnboardingStep } from "./stores/companion.js";
 import { useCompanionStore } from "./stores/companion.js";
 import { createFirstMeetingWorkflow } from "./stores/setup-workflows.js";
+import { useShellWorkflowStore } from "./stores/shell-workflows.js";
 import { Button, Dialog, TextField } from "./ui/primitives.js";
 
-/** First-run gates: provider membership → reply/image models → embedding → role onboarding. */
+/** First-run gates: system model setup → system-settings handoff → role onboarding. */
 export function FirstMeeting() {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
+	const shell = useShellWorkflowStore();
 	const workflow = createFirstMeetingWorkflow(store);
 	const providerAdded = createMemo(() =>
 		store.provider.providers().some((provider) => provider.added),
 	);
+	const openMemorySettings = async () => {
+		if (await workflow.completeMemorySetup()) shell.openBackstage("settings");
+	};
 	const renderControl = (step: CharacterOnboardingStep) => {
 		if (step.kind === "acknowledge")
 			return (
@@ -81,17 +85,23 @@ export function FirstMeeting() {
 	};
 	return (
 		<>
-			<Show when={workflow.modelRequired()}>
-				<Dialog open={workflow.modelRequired()}>
+			<Show when={workflow.modelRequired() || workflow.roleModelRequired()}>
+				<Dialog open={workflow.modelRequired() || workflow.roleModelRequired()}>
 					<Dialog.Content class="intro model-setup" aria-label={t("modelSetup.dialogLabel")}>
 						<article class="intro-card">
 							<div class="intro-step">{t("modelSetup.dialogLabel")}</div>
-							<h2>{t("modelSetup.title")}</h2>
-							<p>{t("modelSetup.description")}</p>
-							<Show when={!providerAdded()}>
+							<h2>
+								{workflow.roleModelRequired() ? t("modelSetup.roleTitle") : t("modelSetup.title")}
+							</h2>
+							<p>
+								{workflow.roleModelRequired()
+									? t("modelSetup.roleDescription")
+									: t("modelSetup.description")}
+							</p>
+							<Show when={workflow.modelRequired() && !providerAdded()}>
 								<ProviderSetup class="first-meeting-provider-setup" />
 							</Show>
-							<Show when={providerAdded()}>
+							<Show when={providerAdded() || workflow.roleModelRequired()}>
 								<Show when={workflow.modelError()}>
 									<p class="intro-error" role="alert">
 										{String(workflow.modelError())}
@@ -127,7 +137,7 @@ export function FirstMeeting() {
 									label={t("settings.visionModel")}
 									autoLabel={t("settings.noFallback")}
 									includeAuto
-									disabled={workflow.setupBusy()}
+									disabled={workflow.setupBusy() || !workflow.selectedReplyModel()}
 									placement="bottom-start"
 									onModelChange={(model) => void workflow.selectVisionModel(model)}
 								/>
@@ -139,7 +149,9 @@ export function FirstMeeting() {
 										disabled={workflow.setupBusy() || !workflow.selectedReplyModel()}
 										onClick={workflow.completeModelSetup}
 									>
-										{t("modelSetup.continue")}
+										{workflow.roleModelRequired()
+											? t("modelSetup.confirmRole")
+											: t("modelSetup.continue")}
 									</Button>
 								</div>
 							</Show>
@@ -162,12 +174,33 @@ export function FirstMeeting() {
 							<div class="intro-step">{t("settings.memoryVectorSection")}</div>
 							<h2>{t("settings.memoryVectorEnabled")}</h2>
 							<p>{t("modelSetup.memorySetupNote")}</p>
-							<EmbeddingSettings mode="onboarding" onComplete={workflow.completeMemorySetup} />
+							<div class="intro-actions">
+								<Button
+									type="button"
+									data-variant="primary"
+									disabled={workflow.setupBusy()}
+									onClick={() => void openMemorySettings()}
+								>
+									{t("sidebar.systemSettings")}
+								</Button>
+								<Button
+									type="button"
+									disabled={workflow.setupBusy()}
+									onClick={() => void workflow.completeMemorySetup()}
+								>
+									{t("messages.continue")}
+								</Button>
+							</div>
+							<Show when={workflow.setupError()}>
+								<p class="intro-error" role="alert">
+									{workflow.setupError()}
+								</p>
+							</Show>
 						</article>
 					</Dialog.Content>
 				</Dialog>
 			</Show>
-			<Show when={workflow.conversationVisible()}>
+			<Show when={workflow.conversationVisible() && !shell.backstageOpen()}>
 				<Dialog open={workflow.conversationVisible()}>
 					<Dialog.Content
 						class="intro"

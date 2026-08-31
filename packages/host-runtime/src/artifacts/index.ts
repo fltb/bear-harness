@@ -183,6 +183,7 @@ export class ArtifactStore {
 		logicalName: string;
 		path: string;
 		mime: string;
+		sniffMime?: (header: Uint8Array) => string;
 		producerRunId?: string;
 		maxBytes?: number;
 	}): Promise<ArtifactRecord> {
@@ -198,6 +199,7 @@ export class ArtifactStore {
 		logicalName: string;
 		path: string;
 		mime: string;
+		sniffMime?: (header: Uint8Array) => string;
 		producerRunId?: string;
 		maxBytes?: number;
 	}): ArtifactRecord {
@@ -229,9 +231,11 @@ export class ArtifactStore {
 			const hash = createHash("sha256");
 			const chunk = this.hashChunk;
 			let bytes = 0;
+			let mime: string | undefined;
 			for (;;) {
 				const read = readSync(sourceFd, chunk, 0, chunk.byteLength, null);
 				if (read === 0) break;
+				mime ??= params.sniffMime?.(chunk.subarray(0, read));
 				bytes += read;
 				if (params.maxBytes !== undefined && bytes > params.maxBytes) {
 					throw new Error("artifact_source_too_large");
@@ -242,6 +246,7 @@ export class ArtifactStore {
 					written += writeSync(tempFd, chunk, written, read - written);
 				}
 			}
+			mime ??= params.sniffMime?.(new Uint8Array()) ?? params.mime;
 			const finalSourceStat = fstatSync(sourceFd);
 			if (
 				finalSourceStat.dev !== sourceStat.dev ||
@@ -269,7 +274,7 @@ export class ArtifactStore {
 				.values({
 					id,
 					logicalName: params.logicalName,
-					mime: params.mime,
+					mime,
 					bytes,
 					sha256,
 					status: "created",
@@ -279,7 +284,7 @@ export class ArtifactStore {
 			return {
 				id,
 				logicalName: params.logicalName,
-				mime: params.mime,
+				mime,
 				bytes,
 				sha256,
 				status: "created",
@@ -553,26 +558,46 @@ export class ArtifactStore {
 		}));
 	}
 
-	/** Garbage collect blobs not referenced by adoptions or saves. */
+	/** Remove CAS bytes only after every metadata reference to each hash is gone. */
+	purgeUnreferenced(hashes: Iterable<string>): number {
+		let removed = 0;
+		for (const sha256 of new Set(hashes)) {
+			if (!SHA256_PATTERN.test(sha256)) continue;
+			if (
+				this.db
+					.select({ id: artifacts.id })
+					.from(artifacts)
+					.where(eq(artifacts.sha256, sha256))
+					.get()
+			) {
+				continue;
+			}
+			const path = join(this.casDir, sha256);
+			let stat: Stats;
+			try {
+				stat = lstatSync(path);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+				throw error;
+			}
+			if (stat.isSymbolicLink() || !stat.isFile()) throw new ArtifactCorruptedError();
+			rmSync(path);
+			removed += 1;
+		}
+		if (removed > 0) this.syncDirectoryHook(this.casDir);
+		return removed;
+	}
+
+	/** Garbage collect only CAS blobs with no surviving artifact metadata. */
 	gc(options: { retentionDays: number }): number {
-		const cutoff = new Date(Date.now() - options.retentionDays * 86400000)
-			.toISOString()
-			.replace("T", " ")
-			.slice(0, 19);
-		const used = new Set([
-			...this.db
-				.selectDistinct({ sha256: artifacts.sha256 })
-				.from(artifactAdoptions)
-				.innerJoin(artifacts, eq(artifactAdoptions.artifactId, artifacts.id))
-				.all()
-				.map((row) => row.sha256),
-			...this.db
+		const cutoffTime = Date.now() - options.retentionDays * 86400000;
+		const used = new Set(
+			this.db
 				.selectDistinct({ sha256: artifacts.sha256 })
 				.from(artifacts)
-				.where(eq(artifacts.status, "saved"))
 				.all()
 				.map((row) => row.sha256),
-		]);
+		);
 
 		let removed = 0;
 		const staleTempBefore = Date.now() - 24 * 60 * 60 * 1000;
@@ -585,13 +610,7 @@ export class ArtifactStore {
 				continue;
 			}
 			if (used.has(file)) continue;
-			const newest = this.db
-				.select({ createdAt: artifacts.createdAt })
-				.from(artifacts)
-				.where(eq(artifacts.sha256, file))
-				.orderBy(desc(artifacts.createdAt))
-				.get();
-			if (newest && newest.createdAt < cutoff) {
+			if (lstatSync(path).mtimeMs < cutoffTime) {
 				rmSync(path);
 				removed += 1;
 			}

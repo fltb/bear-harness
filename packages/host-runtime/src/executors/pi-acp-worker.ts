@@ -55,7 +55,7 @@ class PiAcpAgent {
 				loadSession: false,
 				promptCapabilities: { image: false, audio: false, embeddedContext: false },
 			},
-			agentInfo: { name: "bear-pi-worker", title: "Bear Pi worker", version: "0.0.0" },
+			agentInfo: { name: "bear-pi-worker", title: "Bear Pi worker", version: "1.0.0" },
 		};
 	}
 

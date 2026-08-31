@@ -211,4 +211,48 @@ describe("wireElectronIpcHandlers", () => {
 		dispose();
 		expect(sender.listenerCount("destroyed")).toBe(0);
 	});
+
+	it("keeps transient Pi events on their dedicated non-replay channel", async () => {
+		electron.fromWebContents.mockReturnValue({});
+		const stop = vi.fn();
+		let publish!: (event: import("@bear-harness/protocol").PiSessionLiveEvent) => void;
+		const subscribePiEvents = vi.fn((listener) => {
+			publish = listener;
+			return stop;
+		});
+		const dispose = wireElectronIpcHandlers(
+			{ dispatch: vi.fn() } as unknown as Dispatcher,
+			setupRegistry(),
+			{ subscribePiEvents },
+		);
+		const mainFrame = { url: ALLOWED_URL };
+		const sender = Object.assign(new EventEmitter(), {
+			id: 1,
+			mainFrame,
+			send: vi.fn(),
+			isDestroyed: () => false,
+		});
+		const start = electron.handlers.get("pi-events:listen:v1")!;
+		await start({ sender, senderFrame: mainFrame }, { id: "pi-stream-1" });
+		publish({
+			sessionId: "session-1",
+			type: "message_update",
+			live: { isStreaming: true, queuedUserMessages: [] },
+		});
+		expect(sender.send).toHaveBeenCalledWith("pi-events:push:v1", {
+			id: "pi-stream-1",
+			batch: {
+				events: [
+					{
+						sessionId: "session-1",
+						type: "message_update",
+						live: { isStreaming: true, queuedUserMessages: [] },
+					},
+				],
+			},
+		});
+		sender.emit("destroyed");
+		expect(stop).toHaveBeenCalledOnce();
+		dispose();
+	});
 });

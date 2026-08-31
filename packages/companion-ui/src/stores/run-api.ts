@@ -11,7 +11,6 @@ export function createRunApi(input: {
 	runsRequest(): Promise<RunListData>;
 	activeRuns(): RunInfo[];
 	refreshRuns(): Promise<unknown>;
-	refreshSnapshot(): Promise<unknown>;
 	onRefreshError(error: unknown): void;
 }): RunApi {
 	const refresh = () => input.refreshRuns().catch(input.onRefreshError);
@@ -39,7 +38,6 @@ export function createRunApi(input: {
 		},
 		cancel: async (runId) => {
 			const data = await invoke(input.client, () => input.client.run.cancel({ runId }));
-			await input.refreshSnapshot();
 			void refresh();
 			return data;
 		},
@@ -47,7 +45,6 @@ export function createRunApi(input: {
 			const data = await invoke(input.client, () =>
 				input.client.run.respondPermission({ runId, requestId, optionId }),
 			);
-			await input.refreshSnapshot();
 			void refresh();
 			return data;
 		},

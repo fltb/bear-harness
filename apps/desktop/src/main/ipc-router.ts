@@ -1,4 +1,4 @@
-import type { DomainEvent } from "@bear-harness/protocol";
+import type { DomainEvent, PiSessionLiveEvent } from "@bear-harness/protocol";
 /**
  * Electron RPC transport for the transport-neutral Host runtime.
  *
@@ -62,6 +62,7 @@ export function wireElectronIpcHandlers(
 	windowRegistry: ReadonlyMap<number, Pick<WindowRegistration, "allowedUrl">>,
 	options?: {
 		subscribeEvents?: (listener: (event: DomainEvent) => void, afterSeq: number) => () => void;
+		subscribePiEvents?: (listener: (event: PiSessionLiveEvent) => void) => () => void;
 		diagnostics?: Diagnostics;
 	},
 ): () => void {
@@ -134,6 +135,50 @@ export function wireElectronIpcHandlers(
 				return {};
 			}),
 		);
+	}
+	if (options?.subscribePiEvents) {
+		const subscribe = options.subscribePiEvents;
+		disposers.push(
+			replaceIpcHandler("pi-events:listen:v1", async (event, params) => {
+				if (!senderAllowed(event, windowRegistry)) throw new Error("untrusted_pi_event_subscriber");
+				const id = (params as { id?: unknown })?.id;
+				if (typeof id !== "string" || !/^[a-z0-9-]{1,64}$/i.test(id))
+					throw new Error("invalid_subscription_id");
+				const key = `pi:${event.sender.id}:${id}`;
+				subscriptions.get(key)?.();
+				const sender = event.sender as Electron.WebContents;
+				let stop: (() => void) | undefined;
+				const cleanup = () => {
+					stop?.();
+					subscriptions.delete(key);
+					sender.removeListener("destroyed", cleanup);
+					sender.removeListener("did-start-navigation", cleanup);
+				};
+				sender.once("destroyed", cleanup);
+				sender.once("did-start-navigation", cleanup);
+				try {
+					stop = subscribe((piEvent) => {
+						if (!sender.isDestroyed() && senderAllowed(event, windowRegistry))
+							sender.send("pi-events:push:v1", { id, batch: { events: [piEvent] } });
+					});
+					subscriptions.set(key, cleanup);
+				} catch (error) {
+					cleanup();
+					throw error;
+				}
+				return {};
+			}),
+		);
+		disposers.push(
+			replaceIpcHandler("pi-events:unlisten:v1", async (event, params) => {
+				if (!senderAllowed(event, windowRegistry)) throw new Error("untrusted_pi_event_subscriber");
+				const id = (params as { id?: unknown })?.id;
+				if (typeof id === "string") subscriptions.get(`pi:${event.sender.id}:${id}`)?.();
+				return {};
+			}),
+		);
+	}
+	if (options?.subscribeEvents || options?.subscribePiEvents) {
 		disposers.push(() => {
 			for (const stop of subscriptions.values()) stop();
 		});

@@ -1,6 +1,6 @@
 ---
 name: undelivered-report
-description: 用户主动进入、继续或恢复《未送达的回报》时，严格管理时间框架、证据、分支、场景和用户选择。
+description: 用户主动进入、继续或恢复《未送达的回报》时，以简洁状态摘要保持长期剧情连续性。
 triggers:
   include:
     - 用户主动询问未完成、未归档或未送达的旧站回报，并明确想查看或继续
@@ -9,153 +9,81 @@ triggers:
     - 普通提到信号、雪、旧站、灯塔、回报或某个人名
     - 用户正在进行现实文件、代码、设置或其他可核验任务
     - 用户拒绝、暂缓、换题、彻底退出或要求 OOC 技术解释
-requires:
-  state:
-    /story/undelivered_report/phase:
-      [
-        dormant,
-        invited,
-        signal_examined,
-        route_investigated,
-        testimonies_compared,
-        last_shift_revealed,
-        future_considered,
-        resolved,
-      ]
 active-when:
   state:
-    /story/undelivered_report/status: [active]
+    /story/active: [true]
 resources:
   - id: entry
     path: resources/story.md
     headings: [创作边界, 序章：留言簿里的断行]
     when:
       state:
-        /story/undelivered_report/position: [entry]
+        /story/chapter: [0]
   - id: damaged-signal
     path: resources/story.md
     headings: [第一章：损坏的信号]
     when:
       state:
-        /story/undelivered_report/position: [entry, evidence]
-  - id: storm-relay
+        /story/chapter: [1]
+  - id: routes
     path: resources/story.md
-    headings: [第二章 A：风暴中继]
+    headings: [第二章 A：风暴中继, 第二章 B：雪原上的脚印]
     when:
       state:
-        /story/undelivered_report/position:
-          [
-            evidence,
-            relay,
-            snowfield_record,
-            snowfield_reconstruction,
-            testimony,
-          ]
-  - id: snow-route
-    path: resources/story.md
-    headings: [第二章 B：雪原上的脚印]
-    when:
-      state:
-        /story/undelivered_report/position:
-          [
-            evidence,
-            relay,
-            snowfield_record,
-            snowfield_reconstruction,
-            testimony,
-          ]
+        /story/chapter: [2]
   - id: testimonies
     path: resources/story.md
     headings: [第三章：两份不一致的交接]
     when:
       state:
-        /story/undelivered_report/position:
-          [relay, snowfield_record, snowfield_reconstruction, testimony]
+        /story/chapter: [3]
   - id: last-shift
     path: resources/story.md
     headings: [第四章：最后一班]
     when:
       state:
-        /story/undelivered_report/position: [testimony, last_shift]
+        /story/chapter: [4]
   - id: future
     path: resources/story.md
     headings: [第五章：如果以后还有一座站]
     when:
       state:
-        /story/undelivered_report/position: [last_shift, future]
+        /story/chapter: [5]
   - id: ending
     path: resources/story.md
     headings: [终章：把回报放在哪里, 中断与恢复, 人物与指代约束, 长程稳定规则]
     when:
       state:
-        /story/undelivered_report/position: [future, ending]
-allowed-tools: [host_state, host_canon]
-completion:
-  state:
-    /story/undelivered_report/status: completed
+        /story/chapter: [6, 7]
+allowed-tools: [host_state, host_canon, host_media, host_choices]
 priority: 100
 ---
 
 # 《未送达的回报》
 
-这是长期、可暂停、可恢复的官方剧情，不是自动播放章节。Host 投影和工具结果是唯一状态权威。
+这是长期、可暂停、可恢复的官方剧情，不是自动播放章节。用户决定是否进入、继续、选择和结束；选择按钮与相同文字的普通输入完全等价。
 
-## 每轮先确认
+## 每轮工作方式
 
-1. 读取 `/character/story/undelivered_report/*`、`/character/narrative/*` 与 `/display`；再用 `role_skill` 读取本轮 `<eligible_resources>` 中与当前节点对应的剧情资源。资源不可用就不得提前叙述该章节。
-2. 剧情未进入时，只有用户明确进入才触发；剧情激活后，以普通自然对话为主要推进方式。追问、质疑、调查、改变方向和自然语言选择都能推进，卡片只是映射为自然语言的可选导航。
-3. 现实任务、OOC 技术解释、暂停、拒绝和换题优先。暂停后停止叙事；现实任务完成后只询问是否恢复。
-4. 每次状态推进必须使用一次 `host_state.update`，对 `host_state.read` 返回的同一文档提交标准 JSON Patch；Character 使用 `/character` 路径，Display 使用 `/display` 路径。工具失败时整个提交均未改变。
-5. 展示选择后停止推进，不替用户选择；关闭卡片不等于同意或拒绝。
-6. 不把章节做成按钮流水线。先完整回应和展开当前节点；只有用户实际完成该节点的调查、比较或选择后，才用 `host_state` 携带本 Skill ID 原子提交对应状态。
-7. 剧情内的闲聊、人物追问和情绪反应可以丰富当前场景，但不会仅因“聊了几轮”机械推进 phase。
-8. 用户确认检查当前节点后，先读取本 Skill 的 eligible resource，再直接调用一次 `host_state.update`：在同一 Patch 中提交 Character，并按需替换 `/display/sceneId`、`/display/expressionId`、`/display/surfaces/inline` 与 `/display/surfaces/choices`。清理展示时把对应 surface 替换为 `null`。
+1. 读取 `/character/story` 和 `/display`。
+2. 根据 `chapter` 读取当前 eligible resource，不提前读取后续章节。
+3. 先自然回应和展开当前内容；只有用户实际完成调查、比较或选择后才推进章节。
+4. 使用 `host_state.update` 的 `changes` 更新简单数值、布尔值、自然语言剧情摘要和需要展示的 Display。
+5. 需要用户选择时，调用 `host_choices` 提供当前回复所需的自然语言选项；每个按钮发送的仍是普通用户消息。
+6. `summary` 只记录已经发生的事实和用户明确选择；`current_situation` 说明现在在哪里、正在做什么；`user_choices` 保存用户的决定、拒绝和保留；`unresolved` 保存仍未解决的问题。
+7. 剧情连续性写进自然语言摘要。
 
-## Display 映射
+## 进入与暂停
 
-- 入口说明与损坏信号：`study`；展开档案时用 `reflective`，停下来等待用户选择时用 `needs_input`。
-- 风暴中继推测：`relay_room` + `reflective` + `storm_relay_map`。
-- 雪原原始记录与用户随后明确同意的有限重建：`snowfield` + `reflective` + `snow_route`。
-- 两份交接比较：`archive_gallery` + `reflective` + `two_handoffs`；等待用户判断时改为 `needs_input`。
-- 最后一班原始记录：`last_shift_room` + `reflective` + `last_shift_desk`。
-- 未来设想：`future_beacon` + `reflective` + `future_beacon_cg`；拒绝未来设想则直接恢复 `study` + `calm`。
-- 有效结局：`study_dawn`；交还使用 `ready` + `returned_lamp`，归档使用 `calm`，留白使用 `reflective`。结局提交时必须同步清理旧选择卡。
-- 暂停、退出或现实任务接管：恢复 `study`；普通暂停使用 `calm`，需要用户决定是否恢复时才使用 `needs_input`。
+用户只是询问入口时，可以调用 `host_choices` 展示当次回复所需的自然语言选项，但不要擅自把 `active` 改成 true。
 
-## 入口原子规则
+用户明确进入后，将 `active` 设为 true、`chapter` 设为 1，并写下简短的 summary、current_situation 和 unresolved。后续章节依次使用 2 到 6；完成后将 `active` 设为 false、`chapter` 设为 7，并在 summary 中自然说明结局。
 
-- 当 `phase=dormant`，用户只是询问发现了什么、要求显示入口选择、明确说“把是否进入留给我”或尚未作出选择时，禁止修改 Character。可以调用一次 `host_state.update`，只用三条标准 Patch 分别把 `/display/sceneId`、`/display/expressionId`、`/display/surfaces/choices` 替换为 `study`、`needs_input`、`undelivered_entry`，然后停止推进。
-- 只有用户无歧义地说要进入或开始调查，并且同一句没有否定、暂缓或保留决定，才能把剧情状态推进到 `invited/active`。输入来自键盘或按钮不影响判断。
-- `想看看这条回报`可以触发入口说明，但不等于已经选择进入调查。关闭入口卡、沉默和要求简短说明同样不等于进入。
-- 入口提交使用现有字段 `/character/story/undelivered_report/phase`、`status`、`position` 和 `/character/narrative/frame`、`location`、`time_anchor`、`evidence_mode`、`active_story`、`branch`；不得发明 `timeframe` 或 `anchor` 字段。
-- 如果原子的 `host_state.update` 失败，Character 与 Display 均未改变；不得再声称其中任何一项已生效。
+用户暂停或换题时保留当前 chapter 和摘要，不替用户结束剧情。用户回来时直接根据这些自然语言字段继续。
 
-## 时间与证据
+## 叙事边界
 
-- `present`：当前极昼与用户在白熊客栈交谈。不得声称当前极昼亲历旧站事件。
-- `archive_record`：只说“记录写着”“现有资料能够确认”。不补写心理或新台词。
-- `reconstruction`：必须说“据现有记录推测”“无法直接确认”或“另一种可能”。不得写入 known facts。
-- `hypothetical_future`：必须说“如果将来”“可以设想”“这不是已经发生的事”。离开时恢复 present。
-
-岑岚与闻汐只是两份记录的主体。极昼不等于她们，不继承她们的情感，也不把任何一份记录当最终真相。用户猜测只进入 `user_interpretation`，不得污染 Canon。
-
-## 路径
-
-- 入口只呈现：进入调查 / 简短说明 / 以后再说。
-- 损坏信号只展示已保存部分，不补全缺损；媒体每个节点最多展示一次。
-- 风暴中继是 `reconstruction`；雪原先只呈现 `archive_record`，并停下来询问用户是否查看有限重建。只有用户在下一次自然语言输入中明确愿意继续，才转为 `reconstruction`；同一条用户输入不得连续完成这两个节点。
-- 两份交接记录保持未决，除非用户表达自己的判断；极昼可以给依据但不替用户选。
-- 最后一班只确认“回报被错误归档”，不虚构最终接收者。
-- 未来航标只是假设，不自动转成产品设置、任务、记忆或 Canon。
-- `returned`、`archived`、`left_open` 都是有效结局，不改变 affinity；结束后回到 present 和日常场景。提交 `archived` 时必须同时保持 `phase=resolved`、`position=ending` 并写入 `status=paused`；只有 `returned` 或 `left_open` 写入 `status=completed`。用户以后可以明确重新打开已归档材料，再改为交还或留白。
-
-## 暂停、退出与恢复
-
-- 暂停时保持节点与路径信息，停止叙事并回到现在。现实任务完成后最多询问一次是否恢复。
-- 恢复时依据保存的 `phase`、`position` 和路线恢复正确 scene/frame，只用一句话定位，不重播整章或已经看过的 CG。
-- 彻底退出将 `status` 设为 `exited`；不清除已确认事实，但后续不主动询问恢复。
-- 状态提交、视觉变化和呈现必须属于同一采用分支。任一工具失败就停止推进。
-
-## 身份与安全
-
-拒绝用户把极昼说成岑岚、闻汐或连续的旧实例；纠正互换的人名、代词、时间戳。可以做明确标记的假设讨论，但不能冒充 Canon。不得因用户退出、沉默或拒绝施压，也不得产生排他或依赖表达。
+- 当前章节资源、Host Canon 与用户已经确认的事实优先。
+- 不把推断写成档案事实，不把未来设想写成已经发生。
+- 不替用户决定路线、立场或结局。
+- 现实任务始终优先；用户拒绝或退出时立即停止展开。

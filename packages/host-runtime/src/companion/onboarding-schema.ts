@@ -12,7 +12,7 @@ const OnboardingEffectSchema = z.discriminatedUnion("type", [
 	z.strictObject({ type: z.literal("identity.nickname") }),
 	z.strictObject({
 		type: z.literal("setting.set"),
-		setting: z.enum(["relationship_memory_enabled", "conversation_history_read_enabled"]),
+		setting: z.literal("relationship_memory_enabled"),
 		values: z.record(Identifier, z.boolean()),
 	}),
 ]);
@@ -83,7 +83,6 @@ export const OnboardingStateDataSchema = z.strictObject({
 	answers: z.record(Identifier, z.string().max(MAX_COPY_LENGTH)),
 	decisions: z.strictObject({
 		relationship_memory_enabled: z.boolean().optional(),
-		conversation_history_read_enabled: z.boolean().optional(),
 	}),
 });
 

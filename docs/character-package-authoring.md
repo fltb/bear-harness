@@ -1,108 +1,86 @@
 # 角色包创作指南
 
-这份指南面向社区创作者。角色包是内容格式，不是可执行代码，也不是可以绕过系统限制的提示词集合。数据、工具、权限、记忆和对话历史始终由 Host 管理。
-角色包声明的内容属于 Host 的 **role-package storage bucket**，不是用户记忆。包内的常量、素材和资源由 Host 读取、校验、投影和隔离；作者不能把它们当作关系档案或记忆输入。
+## 包与 runtime 分离
 
-## 从最小包开始
+一个发布角色包位于 `characters/<companionId>/`：
 
 ```text
-my-character/
-  character.yaml
-  assets/
-    avatar.png
+character.yaml
+STORY.md
+assets/
+canon/
+plugins/
+skills/
 ```
 
-最小可用包应声明 ASCII `id`、显示名称、头像、`identity_core`、`style`、`character`、一个场景和一个表情。完整范例见 `config/characters/jizhou/character.yaml`。
+用户与角色的会话、设置、记忆、Runs、Artifacts 和 diagnostics 不属于包，统一写入 `companions/<companionId>/`。更新/删除包不能隐式删除 runtime；删除 runtime 也不能隐式卸载包。
 
-`identity_core` 只写稳定事实：角色是谁、知道什么、不能跨越什么边界。说话习惯写进 `style`。不要写入用户隐私、临时剧情结果、其他会话内容、密钥，或试图覆盖 Host 策略的指令。
+开发仓库中的默认包入口是 [`config/characters/jizhou/character.yaml`](../config/characters/jizhou/character.yaml)。
 
-## Host 生命周期反应
+## `character.yaml`
 
-`host.event_reactions` 是一个通用的 Host 事件到角色视觉状态（`visual_state`）的绑定表。它不是角色包自定义事件，也不是展示编排：Host 只会在可信的 Host 事件发生时，按包中声明的映射切换 standee 的视觉状态。角色包可以将 `event_reactions` 声明为空数组，也可以声明任意数量的映射；事件名不受某组三项全局事件的白名单限制。
+最小包至少定义稳定的 ASCII kebab-case `id`、显示名称、semver、语言、角色文案、prompt/behavior 和可验证的 state schema。所有资源引用必须是包内相对路径，不能使用 `..`、绝对路径或 symlink 逃逸。
 
-例如，极昼包当前把常见的 Host 生命周期事件映射为：
+产品 UI 文案不要写进角色包；角色 greeting、first meeting、scene、expression、work presentation label 等角色语义文案应留在包中。
 
-| Event | `visual_state` |
-| --- | --- |
-| `message.user_sent` | `attentive` |
-| `message_end` | `ready` |
-| `message.aborted` | `calm` |
+## Character State
 
-上表是极昼包的默认示例，不是所有角色包都必须复制的固定绑定。只要事件名是非空且唯一的 Host 事件，包也可以绑定其他事件（例如 Host 提供 `message.retrying` 时绑定到 `reflective`），前提是 `visual_state` 已在该角色包中声明。每项必须且只能设置 `event` 与 `visual_state`；不得添加 `scene`、`media`、`choice_set` 或其他效果键。场景切换、媒体展示和选择集展示必须由模型调用相应 Host 工具，或由已声明的 roleplay event effects 决定。
+state root 的每个 direct child 必须且只能声明一个 scope：
 
+```yaml
+state_schema:
+  type: object
+  properties:
+    relationship:
+      type: object
+      x-scope: global
+    story:
+      type: object
+      x-scope: conversation
+```
 
-## 会进入上下文的内容
+`x-scope` 枚举只有 `global | conversation`；子孙字段继承且不能覆盖。不同 scope 的顶层 key 不能重名。每个可写叶子字段应使用标准 JSON Schema `title` 和 `description` 明确告诉模型：字段表示什么、什么情况下更新、值应如何概括。Host 负责路径和最终 schema 校验。
 
-每轮按以下顺序编译：
+简单数字、布尔值和小型独立枚举可以直接存储，并设置合理的 default/bounds。需要多个枚举互相配合才能表达的剧情或关系状态，优先使用自然语言 `string` 摘要；真正必须严格执行的确定性状态机应做成用途明确的 Plugin，而不是藏在通用 Character State 协议里。
 
-1. `identity`：角色包的 `identity_core`。
-2. `canon`：角色自传与检索到的原作证据。
-3. `story`：当前分支已确认的故事变化。
-4. `scene`：本会话场景和表情状态。
-5. `roleplay`：声明的剧情变量和解锁项。
-6. `relationship`：用户已批准且已开启的关系记忆。
-7. `conversation`：当前采用分支的消息历史。
+Display 是 conversation-only，不要把 streaming、Run、Artifact、permission 或工具状态编码成 Character 字段。
 
-当前用户消息单独附加。编辑用户消息会创建新采用分支，旧分支 transcript 不得进入下一轮请求。其他会话不会自动注入；只有用户明确要求且开启授权后，角色才能调用 `host_search_conversation_history` 检索。
+`state_schema` 是角色可变语义字段的唯一声明。`media`、`scenes`、`visual` 是顶层同级字段；角色包没有 `roleplay` 包装或 `choice_sets`。每个 media 项目使用 `description` 说明内容、使用 `use_when` 说明适用情境。模型通过 `host_media({ id })` 展示已声明媒体，通过 `host_choices` 创建当前回复的一次性自然语言选择。两者都是 Pi transcript 中的普通工具结果，不写入 Character 或 Display。角色包也不得声明 `host.event_reactions`：Pi 生命周期不会驱动 Character 或 Display 写入。模型用 `host_state.update` 提交一个或多个 `{ path, value }`；需要修改三项时既可一次提交三项，也可分别调用三次，UI 都从同一快照路径响应。
 
-## 角色包存储与关系记忆边界
+## First meeting
 
-`character.yaml` 及其包目录是 Host-owned role-package storage。以下内容都属于角色包存储：
+角色包可以声明第一次见面的步骤、关系选择、nickname、记忆 consent 和角色自有首次选择。它不能要求用户重复 provider credential、网络、embedding 下载或系统模型池配置。角色默认模型必须从已配置的系统模型中选择；系统缺项时 UI 链接到 System Settings。
 
-- **常量**：`theme`、`character`、`identity_core`、`self_canon`、场景、视觉、`host`、`companion` 和 `roleplay` 声明。
-- **素材**：头像、表情、场景背景，以及 `roleplay.media` 引用的媒体、海报和字幕。
-- **资源**：`canon/`、`skills/`、`plugins/` 及其包内文件。
+完成标记只保存在该角色的 `runtime.db`。升级 first-meeting version 要明确已有 runtime 的行为，不能静默重写用户已完成的关系选择。
 
-Host 可以把选定的包内容投影到指定的 `identity`、`canon`、`scene` 或 `roleplay` 上下文层，也可以把素材投影给渲染器、把 Skill/插件资源提供给 Pi；这不会改变它们的存储归属。包声明的常量、素材和资源 **不得** 写入 `relationship` 记忆、自动记忆捕获（automatic memory capture）、用户记忆面板记录（user memory panel records），也不得作为长期记忆后端输入（long-term memory backend inputs）。它们不能成为待批准的记忆候选，也不能通过记忆编辑、置顶、排除或召回入口出现。
+## Story、Canon 与素材
 
-关系记忆是用户明确批准后由 Host 单独保存的共同经历、称呼和偏好。它与角色包目录、包内文件和包声明值是两个不同的数据来源；关闭关系记忆只影响关系记忆，不删除或改变角色包存储。
+- `STORY.md` 描述可维护的故事结构和创作意图；
+- `canon/manifest.yaml` 声明 Canon 文档、版本和引用；
+- `assets/` 保存 scene、expression、media 及 attribution/provenance；
+- unlock 条件由 Character State 推导，不创建独立收藏写模型；
+- audio/video 需要真实、可访问的字幕策略。
 
-## 初始设置版本
+包内事实、用户与角色的关系事实、现实工作结果要保持不同语义。模型不得把推测或普通任务成功自动写成 Canon/关系升级。
 
-`character.first_meeting` 的完成状态按角色包 `id` 存入独立的 Host storage bucket。`first_meeting.version` 是该桶的兼容性版本：Host 将它和每条 onboarding 状态一起保存。作者修改步骤 ID、答案值或 effect 语义时必须递增这个版本；已存状态的版本与当前包不一致时，Host 明确报错，不会猜测、转换或静默重置用户设置。
+## Skills 与 plugins
 
-## 变量与剧情
-
-`roleplay.variables` 只有三种 scope：
-
-| Scope | 含义 | 适用内容 |
-| --- | --- | --- |
-| `conversation` | 仅当前会话可见。 | 临时场景、局部谜题。 |
-| `relationship` | 同一角色的所有会话共享。 | 信任、熟悉度、共同偏好。 |
-| `character` | 角色的持久事实。 | 已完成章节、已发现世界事实。 |
-
-`global` 非法，会被拒绝。事件是 append-only 的 Host 账本：只能修改已声明变量、解锁已声明素材、切换已声明展示。事件不能访问文件、网络、权限或创建未声明变量。只有 `main` transcript 可以提交角色事实；其他分支仅用于文本探索。
-
-## 记忆、技能与素材
-
-关系记忆归用户所有。角色包不能强制批准，不能读取待审核或被拒绝的条目。`skills/<name>/SKILL.md` 应只描述边界明确的任务，并且不得在工具成功前声称状态已改变。所有场景、表情和媒体都必须先声明，并且只能引用包内相对路径。
+Skill 是声明性角色能力和上下文资源；Plugin 是可执行边界，需要包信任和显式 allowlist。包安装不自动授予操作系统权限，不得用 plugin 绕过 Host 路径、Artifact、Run 或 credential 边界。
 
 ## 发布前检查
 
-- 通过导入流程校验包结构。
-- 验证身份、风格、场景、剧情状态确实进入首轮上下文。
-- 按顺序触发每个事件，检查值和解锁项。
-- 编辑旧用户消息，确认旧分支不影响下一轮。
-- 新建第二会话：`relationship`、`character` 应连续，`conversation` 应隔离。
-- 关闭关系记忆，确认它从下一轮上下文消失但未被删除。
-- 确认每个素材、Skill 和媒体引用都被打包。
-- 确认角色包常量、素材和资源只作为包存储或指定上下文/渲染/Pi 投影，未进入自动记忆捕获、记忆面板或长期记忆后端。
+- ID/version/schema/manifest 解析通过；
+- 所有 asset/canon/skill/plugin 引用在包内且存在；
+- state direct-child scope 完整且后代无覆盖；
+- first meeting 只包含角色设置；
+- user agency、知识边界和失败表达有明确 behavior；
+- 素材 provenance、license、MIME、尺寸与字幕完整；
+- 新角色 runtime 建立在独立 `companions/<id>/`；
+- 至少跑角色包、media schema、loader、onboarding 和 WebDev first-use 测试。
 
-## 工坊草稿与发布
-
-工坊不会直接覆写角色库中的目录。每次创建得到一个草稿和 revision `1`；保存文件会产生新的不可变 revision。编辑器提交时必须携带自己读取到的 `expectedRevision`。若其他编辑先保存过，Host 返回 `character_draft_revision_mismatch`，编辑器必须重新读取，而不能静默覆盖。
-
-工坊直接选择、预览和替换图片。图片沿用对话附件的 `path + mime + base64` 传输约定；文本编辑器只处理文本。Host 在草稿 revision 内部保留精确字节，因此预览、校验和发布使用同一份素材，不会因字符串转换损坏 PNG、WebP 等文件。
-
-推荐的工坊操作顺序：
-
-1. `character.draftCreate:v1` 创建草稿，可记录原型角色的 `basePackageId`。
-2. `character.draftPatch:v1` 保存一批文件，得到新的 `currentRevision`。
-3. `character.draftValidate:v1` 携带该 revision。Host 会在临时目录按正式导入规则完整解析，成功后状态变为 `ready_to_publish`。
-4. `character.draftPublish:v1` 再次携带同一 revision。Host 会再次校验、原子安装角色包、将草稿置为 `published`，并激活新角色。
-
-校验不写入角色库，发布才是副作用边界。发布中的同名角色包会报冲突，不能覆盖已经安装的包；请使用新的稳定 ID 和版本，而不是把不同人物伪装成一次更新。工坊 Agent 只能调用这些受限 Host 操作来形成建议或补丁，不能自行发布、读取本地文件或改写其他对话。
-
-## 社区约定
-
-使用稳定的创作者前缀 ID，明确维护版本和改动记录，标注文字与视觉素材来源。角色包不得暗示自己能读取用户文件、账户、私密对话或执行现实工具。一个社区包应可独立审查：所有状态转移和素材引用都能从包内容直接看见。
+```sh
+node scripts/check-character-media.mjs
+node scripts/check-canon-packages.mjs
+npm run test:unit --workspace @bear-harness/host-runtime
+npm run test:e2e:web:required
+```

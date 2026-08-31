@@ -5,18 +5,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FileOpsService, guardCell } from "../../src/fsops/service.js";
-import { Database, MIGRATIONS } from "../../src/storage/database.js";
+import { COMPANION_MIGRATIONS, CompanionDatabase } from "../../src/storage/database.js";
 import { EventBus } from "../../src/storage/event-bus.js";
 
 describe("FileOpsService user file workflow", () => {
 	let root: string;
-	let database: Database;
+	let database: CompanionDatabase;
 	let service: FileOpsService;
 
 	beforeEach(() => {
 		root = mkdtempSync(join(tmpdir(), "bear-fsops-"));
-		database = new Database(join(root, "database"));
-		database.migrate(MIGRATIONS);
+		database = new CompanionDatabase(join(root, "runtime.db"), "fsops-test-character");
+		database.migrate(COMPANION_MIGRATIONS);
+		database.ensureRuntimeIdentity();
 		service = new FileOpsService(database.orm, new EventBus(database.orm));
 	});
 

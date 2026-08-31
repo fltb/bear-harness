@@ -6,6 +6,7 @@ import {
 	rmSync,
 	symlinkSync,
 	truncateSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -41,7 +42,13 @@ function openFixture(hooks: ArtifactStoreHooks = {}): {
 				CHECK (status IN ('created','verified','verification_failed','adopted','saved')),
 			producer_run_id TEXT,
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
-		)
+		);
+		CREATE TABLE artifact_adoptions (
+			id TEXT PRIMARY KEY,
+			artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+			run_id TEXT NOT NULL,
+			adopted_at TEXT NOT NULL DEFAULT (datetime('now'))
+		);
 	`);
 	roots.push(root);
 	databases.push(database);
@@ -199,5 +206,36 @@ describe("ArtifactStore CAS integrity", () => {
 
 		store.create({ logicalName: "second.bin", buffer, mime: "application/octet-stream" });
 		expect(syncDirectory).toHaveBeenCalledOnce();
+	});
+
+	it("collects an expired CAS blob after its final metadata row is deleted", () => {
+		const { store, database, casDir } = openFixture();
+		const artifact = store.create({
+			logicalName: "deleted-run.txt",
+			buffer: Buffer.from("orphan after conversation deletion"),
+			mime: "text/plain",
+		});
+		database.prepare("DELETE FROM artifacts WHERE id = ?").run(artifact.id);
+		const path = join(casDir, artifact.sha256);
+		const expired = new Date(Date.now() - 8 * 86_400_000);
+		utimesSync(path, expired, expired);
+
+		expect(store.gc({ retentionDays: 7 })).toBe(1);
+		expect(readdirSync(casDir)).toEqual([]);
+	});
+
+	it("retains an expired CAS blob while any artifact metadata survives", () => {
+		const { store, casDir } = openFixture();
+		const artifact = store.create({
+			logicalName: "still-owned.txt",
+			buffer: Buffer.from("owned by an ordinary run artifact"),
+			mime: "text/plain",
+		});
+		const path = join(casDir, artifact.sha256);
+		const expired = new Date(Date.now() - 8 * 86_400_000);
+		utimesSync(path, expired, expired);
+
+		expect(store.gc({ retentionDays: 7 })).toBe(0);
+		expect(readFileSync(path)).toEqual(Buffer.from("owned by an ordinary run artifact"));
 	});
 });

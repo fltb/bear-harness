@@ -5,7 +5,6 @@ import { type CharacterSummary, useCompanionStore } from "../stores/companion.js
 import { Button, Dialog, FileField, Tabs } from "../ui/primitives.js";
 import { CanonStudio } from "./CanonStudio.js";
 import { CurrentRolePackageManager } from "./CurrentRolePackageManager.js";
-import { MemorySheet } from "./MemorySheet.js";
 import { SettingsSheet } from "./SettingsSheet.js";
 
 /**
@@ -79,9 +78,6 @@ export function Backstage(props: {
 								<Tabs.Trigger value="roles" class="tab">
 									{t("backstage.roleManagement")}
 								</Tabs.Trigger>
-								<Tabs.Trigger value="memory" class="tab">
-									{t("backstage.memory")}
-								</Tabs.Trigger>
 								<Tabs.Trigger value="canon" class="tab">
 									{t("backstage.canon")}
 								</Tabs.Trigger>
@@ -89,11 +85,6 @@ export function Backstage(props: {
 							<Tabs.Content value="roles" class="tab-panel">
 								<Show when={workflow.selectedTab() === "roles"}>
 									<RoleManager />
-								</Show>
-							</Tabs.Content>
-							<Tabs.Content value="memory" class="tab-panel">
-								<Show when={workflow.selectedTab() === "memory"}>
-									<MemorySheet />
 								</Show>
 							</Tabs.Content>
 							<Tabs.Content value="canon" class="tab-panel">
@@ -113,6 +104,13 @@ function RoleManager() {
 	const [t] = useTranslation(undefined, { i18n });
 	const companion = useCompanionStore();
 	const workflow = createBackstageWorkflowStore(companion);
+	const deletionQuery = companion.characters.observeDeletionStatus?.(
+		workflow.selectedPackageId,
+	) ?? {
+		data: () => undefined,
+		loading: () => false,
+		error: () => undefined,
+	};
 	return (
 		<div class="sheet-panel role-list">
 			<aside class="role-library">
@@ -162,16 +160,19 @@ function RoleManager() {
 				}}
 				pluginTrustData={(id) => companion.characters.pluginTrustData(id)}
 				settingsData={(id) => companion.settings.data(id)}
-				memoryCandidates={(id) => companion.memory.candidateState("pending", id).candidates}
-				settingsGet={(id) => companion.settings.get(id)}
 				settingsUpdate={(id, settings) => companion.settings.set(settings, id)}
-				listMemoryCandidates={(id) => companion.memory.listCandidates("pending", id)}
-				approveMemoryCandidate={(id, candidateId) =>
-					companion.memory.approveCandidate(candidateId, undefined, "relationship", id)
-				}
-				rejectMemoryCandidate={(id, candidateId) =>
-					companion.memory.rejectCandidate(candidateId, id)
-				}
+				deletionStatus={() => deletionQuery.data()?.status}
+				deletionStatusLoading={deletionQuery.loading}
+				deletionStatusError={() => {
+					const error = deletionQuery.error();
+					return error instanceof Error ? error.message : error ? String(error) : undefined;
+				}}
+				deleteRuntime={(id) => companion.characters.runtimeDelete(id)}
+				deletePackage={async (id) => {
+					const result = await companion.characters.packageDelete(id);
+					workflow.packageDeleted(id);
+					return result;
+				}}
 			/>
 		</div>
 	);

@@ -6,12 +6,9 @@ import type {
 	CharacterDisplay,
 	CharacterSummary,
 	CompanionStore,
-	MemoryCandidate,
-	MemoryEntry,
-	MemoryScope,
 } from "./companion.js";
 
-export type BackstageTab = "roles" | "memory" | "canon";
+export type BackstageTab = "roles" | "canon";
 interface PluginTrust {
 	origin: "official" | "local" | "imported";
 	pluginHash: string;
@@ -34,62 +31,9 @@ const CANON_KINDS: readonly CanonModuleKind[] = [
 	"object",
 	"behavior",
 ];
-const MEMORY_SCOPES: readonly MemoryScope[] = ["self", "relationship", "scene"];
-const CLIENT_QUERY_LIMIT = 512;
 
 function messageOf(value: unknown): string {
 	return value instanceof Error ? value.message : String(value);
-}
-
-interface MemoryListState {
-	error: string | null;
-	feedback: string | null;
-	busyId: string | null;
-	editingEntryId: string | null;
-	editedEntryText: string;
-}
-const EMPTY_MEMORY_LIST: MemoryListState = {
-	error: null,
-	feedback: null,
-	busyId: null,
-	editingEntryId: null,
-	editedEntryText: "",
-};
-
-interface CandidateState {
-	editedText: string;
-	decidedScope: MemoryScope;
-	busy: boolean;
-	error: string | null;
-}
-
-export interface MemoryEntryListSelectors {
-	entries: Accessor<MemoryEntry[]>;
-	loading: Accessor<boolean>;
-	error: Accessor<string | null>;
-	excluded(entryId: string): Accessor<boolean>;
-	feedback: Accessor<string | null>;
-	busyId: Accessor<string | null>;
-	editingEntryId: Accessor<string | null>;
-	editedEntryText: Accessor<string>;
-	excludedIds: Accessor<ReadonlySet<string>>;
-	setEditedEntryText(value: string): void;
-	startEditing(entry: MemoryEntry): void;
-	cancelEditing(): void;
-	forget(entry: MemoryEntry, success: string): void;
-	toggleExclude(entry: MemoryEntry, included: string, excluded: string): void;
-	saveEdit(entry: MemoryEntry, success: string): void;
-}
-
-export interface MemoryCandidateSelectors {
-	editedText: Accessor<string>;
-	decidedScope: Accessor<MemoryScope>;
-	busy: Accessor<boolean>;
-	error: Accessor<string | null>;
-	setEditedText(value: string): void;
-	setDecidedScope(value: MemoryScope): void;
-	approve(): void;
-	reject(): void;
 }
 
 export interface CanonWorkflowSelectors {
@@ -146,39 +90,17 @@ export interface BackstageWorkflowStore {
 		kindLabel: (kind: CanonModuleKind) => string,
 	): CanonWorkflowSelectors;
 	relationshipEnabled: Accessor<boolean>;
-	historyReadEnabled: Accessor<boolean>;
 	settingsAvailable: Accessor<boolean>;
 	relationshipSaving: Accessor<boolean>;
 	relationshipFeedback: Accessor<string | undefined>;
 	relationshipError: Accessor<string | undefined>;
 	toggleRelationshipMemory(enabledLabel: string, disabledLabel: string, genericError: string): void;
-	toggleHistoryRead(genericError: string): void;
-	memoryScope: Accessor<MemoryScope>;
-	memoryQueryText: Accessor<string>;
-	memoryQuery: Accessor<string>;
-	memoryRefreshKey: Accessor<number>;
-	memoryScopeTabs(
-		label: (scope: MemoryScope) => string,
-	): Accessor<Array<{ value: MemoryScope; label: string }>>;
-	setMemoryQueryText(value: string): void;
-	submitMemorySearch(): void;
-	clearMemorySearch(): void;
-	changeMemoryScope(value: string): void;
-	memoryEntryList(
-		scope: Accessor<MemoryScope>,
-		query: Accessor<string>,
-		refresh: Accessor<number>,
-		characterId?: Accessor<string | undefined>,
-	): MemoryEntryListSelectors;
-	memoryCandidates: Accessor<MemoryCandidate[]>;
-	memoryCandidatesLoading: Accessor<boolean>;
-	memoryCandidatesError: Accessor<string | null>;
-	memoryCandidate(candidate: Accessor<MemoryCandidate>): MemoryCandidateSelectors;
 	selectedPackageId: Accessor<string | undefined>;
 	selectedPackage: Accessor<import("./ipc.js").CharacterPackageDocument | undefined>;
 	selectedPackageLoading: Accessor<boolean>;
 	selectedPackageError: Accessor<string | undefined>;
 	selectPackage(id: string, confirmDiscard: () => boolean): void;
+	packageDeleted(id: string): void;
 	savePackage(
 		yaml: string,
 		expectedSha256: string,
@@ -214,9 +136,6 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 	const [relationshipError, setRelationshipError] = createSignal<string>();
 	const settingsData = createMemo(() => companion.settings?.data?.());
 	const relationshipEnabled = createMemo(() => settingsData()?.relationshipMemoryEnabled ?? false);
-	const historyReadEnabled = createMemo(
-		() => settingsData()?.conversationHistoryReadEnabled ?? false,
-	);
 	const settingsAvailable = createMemo(() => settingsData() !== undefined);
 
 	const [canonSourceName, setCanonSourceName] = createSignal("");
@@ -373,209 +292,10 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		return selectors;
 	};
 
-	const [memoryScope, setMemoryScope] = createSignal<MemoryScope>("self");
-	const [memoryQueryText, setMemoryQueryText] = createSignal("");
-	const [memoryQuery, setMemoryQuery] = createSignal("");
-	const [memoryRefreshKey, setMemoryRefreshKey] = createSignal(0);
-	const memoryScopeTabs = new Map<string, Accessor<Array<{ value: MemoryScope; label: string }>>>();
-	const memoryScopeTabSelector = (label: (scope: MemoryScope) => string) => {
-		const key = label.toString();
-		const existingSelector = memoryScopeTabs.get(key);
-		if (existingSelector) return existingSelector;
-		const selector = createMemo(() =>
-			MEMORY_SCOPES.map((value) => ({ value, label: label(value) })),
-		);
-		memoryScopeTabs.set(key, selector);
-		return selector;
-	};
-	const changeMemoryScope = (value: string): void => {
-		const next = MEMORY_SCOPES.find((candidate) => candidate === value);
-		if (!next) return;
-		setMemoryScope(next);
-		setMemoryQueryText("");
-		setMemoryQuery("");
-		setMemoryRefreshKey((key) => key + 1);
-	};
-	const submitMemorySearch = (): void => {
-		setMemoryQuery(memoryQueryText().trim().slice(0, CLIENT_QUERY_LIMIT));
-	};
-	const clearMemorySearch = (): void => {
-		setMemoryQueryText("");
-		setMemoryQuery("");
-	};
-
-	const [memoryLists, setMemoryLists] = createSignal<Record<string, MemoryListState>>({});
-	const listKey = (scope: MemoryScope, query: string, characterId?: string): string =>
-		`${characterId ?? "active"}\u0000${scope}\u0000${query}`;
-	const patchMemoryList = (key: string, patch: Partial<MemoryListState>): void => {
-		setMemoryLists((current) => ({
-			...current,
-			[key]: { ...(current[key] ?? EMPTY_MEMORY_LIST), ...patch },
-		}));
-	};
-	const reloadMemoryList = async (
-		scope: MemoryScope,
-		query: string,
-		characterId?: string,
-	): Promise<void> => {
-		const id =
-			characterId ?? companion.characters?.characters().find((character) => character.active)?.id;
-		if (query) await companion.memory.search(query, scope, id);
-		else await companion.memory.list({ scope, ...(id ? { characterId: id } : {}) });
-	};
-	const memoryListSelectors = new Map<string, MemoryEntryListSelectors>();
-	const memoryEntryList = (
-		scope: Accessor<MemoryScope>,
-		query: Accessor<string>,
-		refresh: Accessor<number>,
-		characterId?: Accessor<string | undefined>,
-	): MemoryEntryListSelectors => {
-		const identity = `${scope.toString()}|${query.toString()}|${refresh.toString()}|${characterId?.toString() ?? "active"}`;
-		const existingSelectors = memoryListSelectors.get(identity);
-		if (existingSelectors) return existingSelectors;
-		const currentKey = createMemo(() => listKey(scope(), query().trim(), characterId?.()));
-		const currentState = createMemo(() => {
-			const local = memoryLists()[currentKey()] ?? EMPTY_MEMORY_LIST;
-			const remote = companion.memory.listState(scope(), query().trim(), characterId?.());
-			return { ...local, ...remote, error: local.error ?? remote.error };
-		});
-		const projection = companion.memory.observeList(scope, query, characterId);
-
-		const excludedIds = createMemo(
-			() =>
-				new Set(
-					(projection.data()?.entries ?? [])
-						.filter((entry) => entry.excluded)
-						.map((entry) => entry.id),
-				),
-		);
-		const selectors: MemoryEntryListSelectors = {
-			entries: createMemo(() => projection.data()?.entries ?? []),
-			loading: projection.loading,
-			excluded: (entryId) => createMemo(() => excludedIds().has(entryId)),
-			error: createMemo(() => currentState().error),
-			feedback: createMemo(() => currentState().feedback),
-			busyId: createMemo(() => currentState().busyId),
-			editingEntryId: createMemo(() => currentState().editingEntryId),
-			editedEntryText: createMemo(() => currentState().editedEntryText),
-			excludedIds,
-			setEditedEntryText: (value) => patchMemoryList(currentKey(), { editedEntryText: value }),
-			startEditing: (entry) =>
-				patchMemoryList(currentKey(), { editingEntryId: entry.id, editedEntryText: entry.text }),
-			cancelEditing: () => patchMemoryList(currentKey(), { editingEntryId: null }),
-			forget: (entry, success) => {
-				const api = companion.memory;
-				if (!api?.forget) return;
-				const key = currentKey();
-				patchMemoryList(key, { busyId: entry.id, error: null, feedback: null });
-				void Promise.resolve()
-					.then(() => api.forget(entry.id, characterId?.()))
-					.then(() => {
-						patchMemoryList(key, { feedback: success });
-						return reloadMemoryList(scope(), query().trim(), characterId?.());
-					})
-					.catch((error) => patchMemoryList(key, { error: messageOf(error) }))
-					.finally(() => patchMemoryList(key, { busyId: null }));
-			},
-			toggleExclude: (entry, included, excluded) => {
-				const api = companion.memory;
-				if (!api?.exclude) return;
-				const key = currentKey();
-				const next = !excludedIds().has(entry.id);
-				patchMemoryList(key, { busyId: entry.id, error: null, feedback: null });
-				void Promise.resolve()
-					.then(() => api.exclude(entry.id, next, characterId?.()))
-					.then(() => {
-						patchMemoryList(key, { feedback: next ? excluded : included });
-						return reloadMemoryList(scope(), query().trim(), characterId?.());
-					})
-					.catch((error) => patchMemoryList(key, { error: messageOf(error) }))
-					.finally(() => patchMemoryList(key, { busyId: null }));
-			},
-			saveEdit: (entry, success) => {
-				const api = companion.memory;
-				const key = currentKey();
-				const text = currentState().editedEntryText.trim();
-				if (!text || !api?.edit) return;
-				patchMemoryList(key, { busyId: entry.id, error: null, feedback: null });
-				void Promise.resolve()
-					.then(() => api.edit(entry.id, text, characterId?.()))
-					.then(() => reloadMemoryList(scope(), query().trim(), characterId?.()))
-					.then(() => patchMemoryList(key, { feedback: success, editingEntryId: null }))
-					.catch((error) => patchMemoryList(key, { error: messageOf(error) }))
-					.finally(() => patchMemoryList(key, { busyId: null }));
-			},
-		};
-		memoryListSelectors.set(identity, selectors);
-		return selectors;
-	};
-
-	const [candidateValues, setCandidateValues] = createSignal<Record<string, CandidateState>>({});
-	const memoryCandidates = () => companion.memory.candidateState().candidates;
-	const memoryCandidatesLoading = () => companion.memory.candidateState().loading;
-	const memoryCandidatesError = () => companion.memory.candidateState().error;
-
-	const candidateSelectors = new Map<string, MemoryCandidateSelectors>();
-	const memoryCandidate = (candidate: Accessor<MemoryCandidate>): MemoryCandidateSelectors => {
-		const id = candidate().id;
-		const existingSelector = candidateSelectors.get(id);
-		if (existingSelector) return existingSelector;
-		const state = createMemo(
-			() =>
-				candidateValues()[id] ?? {
-					editedText: candidate().normalizedText,
-					decidedScope: candidate().suggestedScope,
-					busy: false,
-					error: null,
-				},
-		);
-		const ensureState = (): CandidateState =>
-			candidateValues()[id] ?? {
-				editedText: candidate().normalizedText,
-				decidedScope: candidate().suggestedScope,
-				busy: false,
-				error: null,
-			};
-		const update = (patch: Partial<CandidateState>): void => {
-			setCandidateValues((current) => ({ ...current, [id]: { ...ensureState(), ...patch } }));
-		};
-		const selectors: MemoryCandidateSelectors = {
-			editedText: createMemo(() => state().editedText),
-			decidedScope: createMemo(() => state().decidedScope),
-			busy: createMemo(() => state().busy),
-			error: createMemo(() => state().error),
-			setEditedText: (value) => update({ editedText: value }),
-			setDecidedScope: (value) => update({ decidedScope: value }),
-			approve: () => {
-				const api = companion.memory;
-				if (!api?.approveCandidate) return;
-				const current = ensureState();
-				update({ busy: true, error: null });
-				const text = current.editedText.trim();
-				const edited = text && text !== candidate().normalizedText ? text : undefined;
-				void Promise.resolve()
-					.then(() => api.approveCandidate(id, edited, current.decidedScope))
-					.catch((error) => update({ error: messageOf(error) }))
-					.finally(() => update({ busy: false }));
-			},
-			reject: () => {
-				const api = companion.memory;
-				if (!api?.rejectCandidate) return;
-				update({ busy: true, error: null });
-				void Promise.resolve()
-					.then(() => api.rejectCandidate(id))
-					.catch((error) => update({ error: messageOf(error) }))
-					.finally(() => update({ busy: false }));
-			},
-		};
-		candidateSelectors.set(id, selectors);
-		return selectors;
-	};
-
 	const store: BackstageWorkflowStore = {
 		selectedTab,
 		setSelectedTab: (value) => {
-			if (value === "roles" || value === "memory" || value === "canon") setSelectedTabState(value);
+			if (value === "roles" || value === "canon") setSelectedTabState(value);
 		},
 		syncInitialTab: (value) =>
 			setSelectedTabState(value === "settings" ? "roles" : (value ?? "roles")),
@@ -636,6 +356,9 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		selectPackage: (id, confirmDiscard) => {
 			if (id !== selectedPackageId() && confirmDiscard()) setSelectedPackageId(id);
 		},
+		packageDeleted: (id) => {
+			if (id === selectedPackageId()) setSelectedPackageId(undefined);
+		},
 		savePackage: async (yaml, expectedSha256) => {
 			const current = selectedPackage();
 			if (!current) throw new Error("character_package_not_loaded");
@@ -648,7 +371,6 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		},
 		canon: createCanonSelectors,
 		relationshipEnabled,
-		historyReadEnabled,
 		settingsAvailable,
 		relationshipSaving,
 		relationshipFeedback,
@@ -666,31 +388,6 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 				.catch(() => setRelationshipError(genericError))
 				.finally(() => setRelationshipSaving(false));
 		},
-		toggleHistoryRead: (genericError) => {
-			const api = companion.settings;
-			if (!api?.set) return;
-			setRelationshipSaving(true);
-			setRelationshipFeedback(undefined);
-			setRelationshipError(undefined);
-			void Promise.resolve()
-				.then(() => api.set({ conversationHistoryReadEnabled: !historyReadEnabled() }))
-				.catch(() => setRelationshipError(genericError))
-				.finally(() => setRelationshipSaving(false));
-		},
-		memoryScope,
-		memoryQueryText,
-		memoryQuery,
-		memoryRefreshKey,
-		memoryScopeTabs: memoryScopeTabSelector,
-		setMemoryQueryText,
-		submitMemorySearch,
-		clearMemorySearch,
-		changeMemoryScope,
-		memoryEntryList,
-		memoryCandidates,
-		memoryCandidatesLoading,
-		memoryCandidatesError,
-		memoryCandidate,
 	};
 	WORKFLOW_STORES.set(companion, store);
 	return store;

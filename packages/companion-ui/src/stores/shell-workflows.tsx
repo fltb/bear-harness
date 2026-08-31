@@ -27,11 +27,16 @@ export interface RunWorkflowState extends WorkflowActionState {
 	setSteerText(value: string): void;
 }
 
+export interface SelectedArtifact {
+	readonly run: RunInfo;
+	readonly artifact: RunInfo["artifacts"][number];
+}
+
 export interface ShellWorkflowStore {
 	readonly host: CompanionStore;
 	readonly character: Accessor<CharacterDisplay | undefined>;
 	readonly activeCharacterRuntime: Accessor<
-		NonNullable<CompanionStore["companionState"]>["byConversation"][string]["display"] | undefined
+		NonNullable<CompanionStore["companionState"]>["state"]["display"] | undefined
 	>;
 	readonly scene: Accessor<SceneDisplay | undefined>;
 	readonly visualState: Accessor<string | undefined>;
@@ -52,6 +57,9 @@ export interface ShellWorkflowStore {
 	closeQueue(): void;
 	readonly activeRuns: Accessor<RunInfo[]>;
 	readonly runGroups: Accessor<Readonly<Record<string, RunInfo[]>>>;
+	readonly selectedArtifact: Accessor<SelectedArtifact | undefined>;
+	selectArtifact(runId: string, artifactId: string): void;
+	closeArtifact(): void;
 	permissionsForRun(runId: string): Accessor<RunPermissionRequest[]>;
 	runsForMessage(messageId: string): Accessor<RunInfo[]>;
 	permissionAction(id: string): WorkflowActionState;
@@ -110,10 +118,7 @@ export function createShellWorkflowStore(input: {
 }): ShellWorkflowStore {
 	const { store, currentLocale, translate } = input;
 	const character = createMemo(() => store.character);
-	const activeCharacterRuntime = createMemo(() => {
-		const id = store.activeConversationId;
-		return id ? store.companionState?.byConversation[id]?.display : undefined;
-	});
+	const activeCharacterRuntime = createMemo(() => store.companionState?.state.display);
 	const scene = createMemo(() => {
 		const identity = character();
 		const sceneId = activeCharacterRuntime()?.sceneId ?? identity?.visual.defaultSceneId;
@@ -201,6 +206,23 @@ export function createShellWorkflowStore(input: {
 		}
 		return groups;
 	});
+	const [artifactSelection, setArtifactSelection] = createSignal<{
+		runId: string;
+		artifactId: string;
+	}>();
+	const selectedArtifact = createMemo<SelectedArtifact | undefined>(() => {
+		const selection = artifactSelection();
+		if (!selection) return undefined;
+		const run = (store.runs ?? []).find(
+			(candidate) =>
+				candidate.id === selection.runId && candidate.conversationId === store.activeConversationId,
+		);
+		const artifact = run?.artifacts.find((candidate) => candidate.id === selection.artifactId);
+		return run && artifact ? { run, artifact } : undefined;
+	});
+	const selectArtifact = (runId: string, artifactId: string) =>
+		setArtifactSelection({ runId, artifactId });
+	const closeArtifact = () => setArtifactSelection(undefined);
 	const permissionGroups = createMemo(() => {
 		const groups: Record<string, RunPermissionRequest[]> = {};
 		for (const permission of store.run?.pendingPermissions?.() ?? []) {
@@ -308,6 +330,9 @@ export function createShellWorkflowStore(input: {
 		closeQueue,
 		activeRuns,
 		runGroups,
+		selectedArtifact,
+		selectArtifact,
+		closeArtifact,
 		permissionsForRun,
 		runsForMessage,
 		permissionAction: getPermissionState,

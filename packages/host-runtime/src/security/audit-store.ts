@@ -32,8 +32,43 @@ import type { EventBus } from "../storage/event-bus.js";
 // Captured before any fs-protection install can wrap delete APIs.
 const unlinkFile = fsp.unlink;
 
-export const AUDIT_KINDS = ["run", "permission", "fsop", "memory", "config"] as const;
+export const AUDIT_KINDS = [
+	"run",
+	"permission",
+	"fsop",
+	"memory",
+	"config",
+	"conversation",
+	"companion_state",
+	"canon",
+	"artifact",
+] as const;
 export type AuditKind = (typeof AUDIT_KINDS)[number];
+
+const RPC_PREFIX_KINDS: ReadonlyArray<readonly [string, AuditKind]> = [
+	["character.", "config"],
+	["onboarding.", "config"],
+	["provider.", "config"],
+	["model.", "config"],
+	["externalAgent.", "config"],
+	["settings.", "config"],
+	["update.", "config"],
+	["companionState.", "companion_state"],
+	["conversation.", "conversation"],
+	["message.", "conversation"],
+	["memory.", "memory"],
+	["canon.", "canon"],
+	["artifact.", "artifact"],
+	["run.", "run"],
+];
+
+/** Every mutating RPC must resolve to one explicit product-domain audit kind. */
+export function auditKindForRpcMutation(channel: string): AuditKind {
+	if (channel === "run.respondPermission:v1") return "permission";
+	const match = RPC_PREFIX_KINDS.find(([prefix]) => channel.startsWith(prefix));
+	if (!match) throw new TypeError(`unclassified mutating RPC channel: ${channel}`);
+	return match[1];
+}
 
 export interface AuditRecord {
 	id: string;

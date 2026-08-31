@@ -20,12 +20,7 @@ export function ThreadHead(props: { sceneLabel: string }) {
 	const activeRuns = workflow.activeRuns;
 	const [t] = useTranslation(undefined, { i18n });
 	const [stateOpen, setStateOpen] = createSignal(false);
-	const activeCharacterState = createMemo(() => {
-		const conversationId = workflow.host.activeConversationId;
-		return conversationId
-			? workflow.host.companionState?.byConversation[conversationId]?.character
-			: undefined;
-	});
+	const activeCharacterState = createMemo(() => workflow.host.companionState?.state.character);
 	const labels = createMemo(() => workflow.character()?.character.work_presentation?.labels);
 	const recentRuns = createMemo(() =>
 		workflow.host.runs.filter(

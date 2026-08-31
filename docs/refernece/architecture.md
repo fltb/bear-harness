@@ -1,352 +1,217 @@
-# System architecture
+# 系统架构
 
-This document is the cross-package map for the current Bear Harness implementation. The directory name `docs/refernece/` is intentional. It describes the shipping runtime rather than a future interaction design.
+## 1. 设计结论
 
-## 1. System shape
+Bear 是 Pi Coding Agent 的本地桌面管理产品。Pi 与 Bear 的边界不是“谁写了更多代码”，而是谁对某类事实拥有最终解释权：
 
-Bear Harness is a local companion application with one Host state-management boundary and two delivery shells:
-
-- **Desktop:** Electron main process, preload bridge, and sandboxed renderer.
-- **WebDev:** a browser renderer served by Rsbuild and a separate Node Host bound to loopback.
-
-Both shells use the same protocol registry, Host runtime, companion client, and companion UI. The Host owns durable state and policy. Renderers receive projections, submit typed requests, and hold only presentation state.
-
-```mermaid
-flowchart LR
-    Config["product-config"] --> Shells["Desktop or WebDev shell"]
-    Schema["schema"] --> Protocol["protocol RPC registry"]
-    Protocol --> Client["companion-client"]
-    Protocol --> Host["host-runtime dispatcher"]
-    Tdai["tdai-core memory"] --> Host
-    I18n["i18n product copy"] --> UI["companion-ui"]
-    Client --> UI
-    UI --> Client
-    Shells --> Host
-    Shells --> Client
-```
-
-These arrows show dependency and injection direction, not authority. The UI and client cannot become the source of truth for conversations, attachments, runs, memory, character declarations, or provider credentials.
-
-## 2. Package dependency layers
-
-### Layer 1: shared contracts and product inputs
-
-- [`@bear-harness/schema`](./protocol-schema.md#shared-schema-package) provides shared Zod/JSON-Schema utilities.
-- [`@bear-harness/protocol`](./protocol-schema.md) owns runtime validators and the nested `RPC` registry. Runtime consumers use its `/schema` subpath.
-- [`@bear-harness/product-config`](./product-config.md) provides compile-time release identity, brand metadata, the default character ID, data-directory name, icons, and update-feed configuration.
-- [`@bear-harness/i18n`](./i18n.md) provides product catalogs and locale lifecycle. Character-package language is not product UI copy.
-
-The protocol layer has no Electron, DOM, or Host-service dependency. Product configuration is injected at application boundaries instead of being loaded from an arbitrary runtime file.
-
-### Layer 2: Host services
-
-- [`@bear-harness/tdai-core`](./tdai-core.md) is host-neutral relationship-memory infrastructure: capture, extraction, scenes, persona, stores, embeddings, checkpoints, and recall.
-- [`@bear-harness/host-runtime`](./host-runtime.md) composes SQLite, EventBus, character/package services, the conversation and Pi turn pipeline, provider/model routing, Tdai memory, immutable conversation attachments, direct external-agent runs, audit/moderation, and the protocol dispatcher.
-
-Host Runtime supplies stable installation/user/companion scope to Tdai and owns application policy that memory algorithms intentionally do not own.
-
-### Layer 3: renderer contract and presentation
-
-- [`@bear-harness/companion-client`](./companion-client.md) maps the registry into a frozen typed client and validates complete response envelopes.
-- [`@bear-harness/companion-ui`](./companion-ui.md) composes the Solid application, reactive store, conversation/composer, attachment tray and previews, onboarding, settings, roleplay, and message-scoped run presentation.
-
-The client is transport-neutral and has no Electron, DOM, Solid, or Node imports. The UI receives a read-only product configuration and an injected client; it does not read Host files, resolve local paths, or create a transport.
-
-### Layer 4: delivery shells
-
-- [`@bear-harness/desktop`](./desktop.md) supplies Electron lifecycle, context-isolated preload APIs, IPC admission, native file/folder selection, short-lived attachment capabilities, native credential storage, diagnostics, updates, and packaging.
-- [`@bear-harness/web-dev`](./web-dev.md) supplies a loopback Node Host, browser bootstrap, HTTP transport/proxy, upload transport, debug routes, isolated data directories, and deterministic Playwright support.
-
-A shared domain capability normally crosses protocol, Host, client, and UI. A native-only capability belongs in Desktop or in an injected Host option; it must not leak Node or Electron APIs into shared client/UI code.
-
-## 3. Protocol boundary and transport topology
-
-### 3.1 One registry, two adapters
-
-`packages/protocol/src/schema.ts` is the runtime wire source of truth. Each endpoint has a versioned channel, strict request schema, and response payload schema. `RPC`, `CHANNEL_CONTRACTS`, and `REQUEST_SCHEMAS` are derived from that tree, so transports do not maintain a second channel list.
-
-Every transport returns the complete strict envelope:
-
-```text
-success = { ok: true, data: <endpoint response>, sync: { epoch, revision } }
-failure = { ok: false, error: { kind, reason } }
-```
-
-`Dispatcher` validates requests, invokes a registered handler, maps safe domain errors, and validates response data. The companion client validates the envelope again. Error reasons are bounded and must not expose paths, SQL, credentials, provider responses, or external-agent process details.
-
-### 3.2 Electron topology
-
-```mermaid
-flowchart LR
-    R["Sandboxed renderer\nCompanionApp"] --> C["CompanionClient"]
-    C --> P["Preload\nwindow.bearDesktop.transport"]
-    P --> I["ipcRenderer.invoke"]
-    I --> M["Electron main\nipcMain admission"]
-    M --> D["HostRuntime.dispatch"]
-    D --> DB[("SQLite")]
-    D --> EV["EventBus"]
-    R --> N["Native attachment picker/drop bridge"]
-    N --> AS["ConversationAttachmentService"]
-    AS --> CAP["five-minute bear-attachment capability"]
-    CAP --> R
-```
-
-The preload exposes a frozen bridge. Main-process routing admits only the registered window, its main frame, and its exact allowed URL before dispatching shared RPC or native attachment-import calls. Renderer code has no Node integration and never receives a source filesystem path.
-
-Desktop selection/drop is a shell capability: trusted main resolves the selected file or folder, creates an immutable conversation-owned snapshot, and retains any live-source grant only in Host process memory. Preview/download URLs are opaque `bear-attachment://cap/<operation>/<token>` capabilities, not stable identifiers. They expire after five minutes, are bound to the invoking renderer and operation, require the registered renderer referrer, and are revoked when that renderer is removed. The protocol handler re-resolves attachment ownership and bytes before responding.
-
-### 3.3 WebDev topology
-
-```mermaid
-flowchart LR
-    B["Browser renderer\nCompanionApp"] -->|"GET /bootstrap"| U["Rsbuild UI origin\n127.0.0.1:3200"]
-    B -->|"POST /rpc/<encoded channel>\nX-Bear-Web-Dev-Token"| U
-    U -->|"proxy /bootstrap /rpc /debug /diagnostics"| W["Node WebDev Host\n127.0.0.1:3201"]
-    W --> D["HostRuntime.dispatch"]
-    D --> DB[("selected data directory")]
-    D --> EV["EventBus"]
-    E["Playwright"] --> U
-    E --> RP["deterministic rule provider\n127.0.0.1:3211"]
-    RP -->|"OpenAI-compatible JSON/SSE"| D
-```
-
-WebDev creates one random in-memory bootstrap token per Host process. `/bootstrap` is intentionally open so a fresh local browser can obtain it; RPC, debug, and diagnostics routes require the exact token and remain loopback-bound. This is local-development authorization, not an account boundary.
-
-Browser file/folder ingestion uses `conversationAttachment.startUpload`, `appendChunk`, `completeUpload`, and `cancelUpload`. The Host validates a bounded manifest and chunks, then creates the same immutable conversation-owned attachment representation used by Desktop. WebDev has no native source grant and no attachment URL factory; previews use semantic or bounded byte reads.
-
-## 4. Authority boundaries
-
-**Host is the application's state manager and the renderer's only state interface.** A domain's original authority may be Host or an external system. Pi remains the authority for its conversations, messages, branches and generation state; all upper layers are projections, never competing timelines or state machines. Host manages scoped access, projection versions, notifications and adapter lifecycle. Solid Query only caches Host projections. See [the ingress inventory, authority boundaries and complexity constraints](../host-state-authority.md).
-
-The responsibility boundaries below are managed through Host:
-
-
-1. **Host code owns application state and policy.** It validates protocol input/output, enforces conversation and companion ownership, persists canonical state, chooses model/provider routes, and controls tools and side effects.
-2. **Character packages provide declarations for Host validation.** A package supplies identity, scenes, expressions, onboarding, roleplay media/events/choices, skills, canon, assets, and character-specific copy. Host rejects undeclared IDs.
-3. **Models provide generated output and explicit tool requests.** The conversational role can invoke only installed Host tools; Host validates every request and resulting state transition.
-4. **Users provide attachment selection, memory decisions, and explicit agent choice.** Selecting a local source creates an immutable attachment and an ephemeral source grant. Selecting Codex requires an explicit verified connection; otherwise delegated work uses the bundled Pi ACP agent.
-5. **The Host-owned `ExternalAgentRunService` confirms run state.** Executor controllers report lifecycle, permission, evidence, and terminal events. They cannot write canonical run rows or attachment ownership directly.
-6. **Renderers own presentation only.** A renderer can request imports, sends, reads, run controls, or capability URLs, but cannot assert completion, invent ownership, or construct a local-file URL.
-
-Strict schemas are necessary but not sufficient. Path/root checks, symlink policy, capability admission, package declarations, credential access, live-source grants, and executor profile trust are enforced at Host or shell boundaries.
-
-## 5. Conversation, attachments, models, and roleplay
-
-### 5.1 Conversation and turn lifecycle
-
-The Host stores a compact projection separately from native Pi session files: conversations and branches identify narrative state; message/version and turn rows support Host transitions; session files remain the native timeline source. A normal send follows this path:
-
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant UI as Companion UI
-    participant C as Companion Client
-    participant D as Host Dispatcher
-    participant A as ConversationAttachmentService
-    participant TP as TurnPipeline
-    participant S as CompanionSupervisor
-    participant P as Native Pi session
-    participant DB as SQLite + EventBus
-    participant Mem as Tdai memory
-
-    U->>UI: send text with selected attachment IDs
-    UI->>C: message.send({ conversationId, text, attachmentIds })
-    C->>D: validated request
-    D->>A: validate ownership and reserve send nonce
-    D->>TP: persist native user entry
-    TP->>S: queue prompt, attachment references, and current images
-    S->>P: compile Host context and prompt
-    P->>D: optional allowlisted Host tool calls
-    P-->>S: message_start / update / end
-    TP->>DB: commit turn projection and lifecycle events
-    D->>A: bind attachments to returned user entry ID
-    TP->>Mem: capture committed turn side channel
-    DB-->>UI: events.subscribe projection
-```
-
-`TurnPipeline` enforces one active turn per conversation and returns an asynchronous receipt. `CompanionSupervisor` serializes prompts, initializes one native Pi session per conversation, compiles package/canon and memory context, chooses the configured route, and streams updates. Abort, regenerate, edit, continue, correction, version switching, and branch operations are Host transitions, not renderer-local changes to canonical history.
-
-### 5.2 Attachment ownership and message binding
-
-Attachments are immutable, conversation-scoped roots of kind `file`, `folder`, or `generated`. Each root owns normalized entries and immutable file bytes. User-selected roots initially have no timeline owner. `message.send` carries attachment IDs, and `beginSend` atomically reserves those exact IDs with a nonce. Success binds them to the returned native user entry; failure clears the nonce so the draft remains usable. An attachment cannot be sent across conversations, sent twice as a new user attachment, or rebound by the renderer.
-
-The conversational role receives attachment IDs and names, never local paths. Its attachment/work surface is:
-
-- `host_list_attachments` for conversation-owned metadata;
-- `host_read_attachment` for bounded semantic list/read/search/page operations;
-- `host_delegate_agent` to start independent work on selected attachment IDs.
-
-Image files selected for the current message are additionally routed as image content. If the reply route lacks image support, the configured vision route produces explicitly untrusted observations for the normal reply route. There is no silent text-only fallback.
-
-### 5.3 Roleplay and presentation authority
-
-Roleplay has two paths:
-
-- **Host lifecycle reactions:** `CharacterBehaviorService` maps committed Host events to package-declared visual states. These are deterministic presentation reactions, not model tool calls.
-- **Model-decided tools:** allowlisted tools can read roleplay state, set declared scene/expression IDs, play declared media, present declared choices, or trigger declared events. Host validates lock and package state before persistence.
-
-User roleplay RPCs are canonical conversation operations. Models cannot invent package declarations or write roleplay tables. Character prose stays in package data; neutral product/fallback copy stays in i18n.
-
-## 6. Message-scoped direct work
-
-Direct work has a small durable association:
-
-```text
-triggerEntryId -> runId
-runId -> inputAttachmentIds + optional workspaceAttachmentId
-a completed run -> generated conversation attachment IDs
-```
-
-`conversationId` alone is insufficient: multiple user entries in one conversation can start independent runs. `triggerEntryId` is captured from the current native user entry by the Host role-tool handler; neither UI recency nor text matching establishes ownership.
-
-```mermaid
-sequenceDiagram
-    participant Role as Conversational role
-    participant H as Host tool handler
-    participant Runs as ExternalAgentRunService
-    participant Attach as ConversationAttachmentService
-    participant ACP as Independent ACP agent
-    participant TP as TurnPipeline
-    participant UI as Companion UI
-
-    Role->>H: host_delegate_agent(agent, attachmentIds, instruction)
-    H->>Runs: delegate with conversationId + triggerEntryId
-    Runs->>Attach: validate ownership and prepare inputs
-    Attach-->>Runs: live grants where valid, immutable snapshots otherwise
-    Runs->>ACP: launch standalone Pi or connected Codex
-    ACP-->>Runs: started / evidence / needs_user / terminal
-    Runs->>Attach: snapshot declared output directory
-    Attach-->>Runs: generated attachment IDs
-    Runs->>TP: hidden idempotent result notification
-    TP-->>Role: native follow-up turn
-    TP->>Attach: bind generated attachments to assistant entry
-    Runs-->>UI: EventBus + run.list projection
-```
-
-There is no pre-launch draft state. A successful role-tool call means the run started or was enqueued, not that it completed. Pi is the default and is launched as a dedicated ACP child with its own session and native tools; it never reuses the conversational Pi session. Codex is available only after discovery and explicit connection of a version/hash-verified local installation. `externalAgent.*` RPCs manage that connection, while `run.*` RPCs list and control already-created runs.
-
-Input preparation always materializes immutable snapshots. For a Desktop-selected file/folder whose in-memory grant is still valid, the agent may instead receive the real source path. That grant is ephemeral, is never persisted or exposed to the renderer, and is deliberately unsandboxed: the agent may change the selected source, and the product provides no rollback. After restart or grant invalidation, the immutable snapshot is the fallback. Generated attachments are never live workspaces.
-
-Executors write reportable output beneath the run output directory. Host captures that directory with file/count/byte/symlink limits as a generated conversation attachment. Terminal delivery is idempotent: the Host sends a hidden run-keyed custom message to the active conversational role, the role produces the user-visible assistant follow-up, and generated attachments are bound to that assistant entry. If delivery or memory capture cannot occur immediately, reconciliation retries when the runtime starts or the conversation becomes active without rewriting the settled run result.
-
-## 7. Persistence, packages, and relationship memory
-
-### 7.1 Host storage map
-
-Host Runtime uses one SQLite database at `<dataDir>/storage` plus dedicated directories for native Pi sessions, external-agent run state, attachment uploads, immutable bytes, installed character packages, provider runtime data, and audit segments. Relevant current tables include conversations/session mappings, message/turn projections, events, character/onboarding/roleplay/story/canon state, provider/model settings, relationship-memory decisions, `runs`, `run_manifests`, `evidence`, `conversation_attachments`, and `conversation_attachment_files`.
-
-`ConversationAttachmentService` is the attachment ownership boundary. The internal `ArtifactStore` exists only as content-addressed bytes and provenance beneath that ownership; renderers and role tools never address it directly.
-
-EventBus persists each event before notifying listeners, gives it a monotonic sequence, and supports replay after a sequence. `snapshot.get` composes the current active-character, onboarding, conversation/native timeline, run, roleplay, model, settings, and event-sequence projections. Attachment summaries travel on their bound native timeline entries.
-
-### 7.2 Character packages are not relationship memory
-
-```mermaid
-flowchart LR
-    Root["character seed/library\ncharacter.yaml + assets"] --> Loader["CharacterLoader\nvalidate declarations"]
-    Loader --> PackageDB[("package and active-character metadata")]
-    PackageDB --> Runtime["scene / roleplay / onboarding"]
-    Runtime --> UI["Companion UI"]
-
-    Turns["committed conversation turns"] --> Tdai["TdaiCore\ninstallation/user/companion scope"]
-    Tdai --> Recall["recall context + memory search"]
-    Suggest["assistant host_remember"] --> Candidates[("pending memory candidates")]
-    Candidates --> Decision{"User decision"}
-    Decision -->|accept| Rel[("relationship entries + backend memory")]
-    Decision -->|reject| Rejected["recorded decision"]
-    Explicit["user memory.capture"] --> Rel
-    Rel --> Recall
-```
-
-Character packages are declarative role content: identity, scenes, expressions, onboarding, roleplay declarations, canon, assets, skills, and optional trusted plugins. Host validates and projects them. Package canon is neither product localization nor a user relationship record.
-
-Relationship memory is scoped durable data. Explicit user capture records provenance. Assistant `host_remember` creates a pending candidate; the user's decision controls whether it becomes a relationship entry and backend record. Tdai owns capture/extraction/recall and its own durable structures; Host owns scope, consent state, and turn hooks.
-
-### 7.3 Reactive projection
-
-The UI store boots from `snapshot.get`, seeds its event cursor, and opens one persistent `client.events.stream(afterSeq, signal)` subscription. It narrows event payloads, skips duplicates, and refetches after a sequence gap. Store state is a projection of native timelines, live assistant state, attachment summaries, runs, onboarding, character runtime, roleplay, and settings. SQLite, native session files, attachment ownership, and EventBus sequence remain authoritative.
-
-## 8. Security, audit, moderation, and updates
-
-### Renderer and transport security
-
-- **Electron:** context isolation, sandboxing, disabled Node integration, exact allowed renderer URL, denied navigation/window creation/permission prompts, and main-frame/sender checks protect shared RPC and native import channels.
-- **WebDev:** loopback binding and the per-process bootstrap token protect non-bootstrap routes. It is not a production web security model.
-- **Protocol:** strict bounded schemas and safe envelopes reject malformed wire input but do not authorize paths, credentials, capabilities, package declarations, or executor profiles by themselves.
-
-### Attachments, credentials, and external agents
-
-Attachment ingestion rejects unsupported roots and path changes, bounds root/file count and bytes, snapshots content before use, and resolves ownership on every read. Semantic reads expose bounded extracted/list/search content; byte reads are offset/length bounded. Desktop capabilities use `no-store`, `default-src 'none'`, `nosniff`, recorded MIME, actual byte length, operation scoping, and a preview MIME allowlist.
-
-The Host receives an injected `CredentialVault`; Desktop normally uses Electron `safeStorage`, while WebDev uses its local vault implementation. Credentials are not returned to renderers or persisted in run manifests. Pi model-route credentials are injected into the child process only. External-agent evidence and failure reasons are sanitized to remove local run/source paths.
-
-### Audit and moderation
-
-`AuditStore` is append-only hash-chained JSONL with bounded segments and best-effort retention. Current automatic wiring records run/evidence lifecycle, roleplay events, and protected-root deletion sentinel hits. `audit.list` returns bounded records; `audit.export` returns lines plus chain verification. Audit is a side channel: an append failure does not roll back canonical EventBus state.
-
-`ModerationService` always applies deterministic local rules and can call an optional remote policy service. Remote failures fail open by configuration. Provider secrets remain behind `CredentialVault` and are not sourced from ambient environment by `ProviderCatalog`.
-
-### Updates
-
-The Host accepts an optional shell-owned update lifecycle adapter for `update.check`, `update.discard`, and `update.apply`; absent adapters return a disabled result. Update transport and installation authority remain shell responsibilities.
-
-## 9. Verification, build, and release topology
-
-The root workspace builds shared dependencies before Host/UI/shell consumers. Focused verification should follow the observable boundary changed:
-
-| Area | Required evidence |
+| 领域 | 权威 |
 | --- | --- |
-| Protocol/client | Registry and envelope validation for the changed request/response shape. |
-| Host conversation attachments | Ownership, immutable snapshot, send nonce/binding, semantic/byte reads, and generated-output binding. |
-| Direct agents | Dedicated Pi/Codex launch, live-grant versus snapshot input, permission/control FSM, terminal reconciliation, and sanitized evidence. |
-| Companion UI | Composer import/send, message-bound attachment presentation, preview/download recovery, and run result notification. |
-| Desktop | Main-frame IPC admission, picker/drop import, five-minute renderer capability checks, Electron E2E, and packaged E2E. |
-| WebDev | Chunk upload through shared RPC, loopback token admission, and browser E2E. |
+| 会话内容、消息、分支、模型历史、工具和生成生命周期 | Pi `AgentSession` |
+| 会话属于哪个角色、归档状态、资源关闭与删除编排 | Bear Session Catalog / Pi Registry |
+| Character 与 Display | 角色 `runtime.db` 中的统一事务机制 |
+| 系统供应商、模型池、网络、embedding 配置 | `system/settings.db` |
+| 显式与自动记忆数据 | 角色的 `memory/` 目录 |
+| 外部执行工作、权限、证据与产物 | External Run |
+| 生成文件身份、完整性和预览动作 | Run-owned Artifact 与角色 CAS |
+| 当前窗口显示哪个会话 | Renderer 本地交互状态 |
 
-Root scripts expose typecheck, unit/coverage, WebDev E2E, Electron E2E, packaged E2E, crash smoke, builds, and platform packaging. The two attachment journeys are shell-specific end-to-end gates: browser upload/send/read and Desktop native selection/send/capability preview.
+Bear 可以管理 Pi 资源，但不能依据事件重建另一套消息、队列、流式或完成状态。
 
-Windows packaging runs `stage-windows-runtime.mjs` before the build, pins the PortableGit release asset and SHA-256, extracts a bounded inventory, and stages executable paths plus license/source notices. Windows CI then runs `verify-windows-runtime.mjs` against unpacked resources and smokes the bundled Git executables. `PiAcpAdapter` receives the verified shell/path entries from Desktop; it does not discover an ambient Git installation for the packaged runtime.
+## 2. 分层
 
-Desktop production builds shared product/protocol/client/Host/UI layers, emits main/preload/renderer output, stages platform resources, and packages Electron targets. WebDev builds browser assets as a local browser/E2E harness; it does not become a public Node Host deployment.
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ Electron Desktop / WebDev                                   │
+│ 原生能力、进程生命周期、回环开发服务                          │
+├─────────────────────────────────────────────────────────────┤
+│ Companion UI                                                │
+│ Renderer-local active + Pi/Character/Display reactive view  │
+├─────────────────────────────────────────────────────────────┤
+│ Companion Client + Protocol                                 │
+│ validated RPC + durable invalidations + transient Pi stream │
+├─────────────────────────────────────────────────────────────┤
+│ Host Runtime                                                │
+│ Pi Registry │ Session Catalog │ Character/Display │ Runs    │
+│ Memory      │ Artifacts       │ Providers/Models  │ Security│
+├─────────────────────────────────────────────────────────────┤
+│ system/settings.db │ companions/*/runtime.db │ Pi sessions │
+│ character packages │ memory/* │ run workspaces │ artifact CAS│
+└─────────────────────────────────────────────────────────────┘
+```
 
-## 10. Extension seams and maintainer decisions
+依赖方向是从外壳和 UI 指向契约，再由 Host 组合具体服务。Renderer 不导入 Node/Electron API；Host 不导入 UI。
 
-- Implement `CredentialVault` at the platform secure-storage boundary.
-- Inject `systemProxyResolver`, `conversationAttachmentUrlFactory`, `bundledGit`, `updateService`, audit logging, remote moderation, or Tdai configuration through `HostRuntimeOptions`.
-- Add an executor profile/controller through `ExecutorRouter`; keep `ExternalAgentRunService` as the only run-state writer.
-- Extend attachment ingestion/read behavior inside `ConversationAttachmentService`; keep conversation ownership above internal CAS/provenance.
-- Add a shared RPC only by updating the protocol registry, Host handler, companion client, UI projection, and both transport adapters as applicable.
-- Add work-facing role capabilities through the supervisor's explicit allowlist and Host handler; never expose raw local paths or executor controllers to the conversational model.
-- Subscribe to EventBus with replay/snapshot recovery instead of assuming listeners never miss events.
+## 3. 物理隔离
 
-| Requested change | Authoritative owner | Inspect next |
+```text
+<dataRoot>/
+  system/
+    settings.db
+    security/
+    providers/
+    models/embeddings/
+    updates/
+  characters/<companionId>/
+    character.yaml
+    STORY.md
+    assets/
+    canon/
+    plugins/
+    skills/
+  companions/<companionId>/
+    runtime.db
+    sessions/
+    memory/MEMORY.md
+    memory/tdai/
+    runs/<runId>/
+    artifacts/<sha256>
+    audit/
+    diagnostics/
+```
+
+三棵目录的含义不同：
+
+- `system/` 是当前安装的共享配置，不保存角色内容。
+- `characters/` 是可安装、替换、发布的角色包。
+- `companions/` 是用户与某个角色共同形成的运行数据；一个角色一个文件夹，不跨目录复用数据库或 Artifact 字节。
+
+所有 ID 在参与路径拼接前必须通过安全组件验证。Renderer 请求携带不可变 ID，不携带权威本地路径。SQLite 外键只约束单个数据库内部，不伪装跨库事务。
+
+## 4. 会话资源模型
+
+需要严格区分四个词：
+
+| 词 | 含义 | 保存位置 |
 | --- | --- | --- |
-| Wire shape or channel | [Protocol/schema](./protocol-schema.md) | Host handler, client, UI guards, both shell routes. |
-| Conversation or run transition | [Host runtime](./host-runtime.md) | SQLite migration, EventBus event, snapshot, audit, UI projection. |
-| Attachment import/read/ownership | `ConversationAttachmentService` plus shell adapter | Composer, timeline binding, direct-agent inputs, capability policy. |
-| External-agent implementation | `ExternalAgentRunService` and executor controller | Profile trust, manifests, permission/control events, output capture. |
-| Memory algorithm/backend | [Tdai core](./tdai-core.md) | Host scope, capture hook, recall compiler, lifecycle. |
-| Character declaration/asset | Character package and Host loader | Display projection, onboarding/roleplay UI, package-vs-product copy. |
-| Native transport/security | [Desktop](./desktop.md) or [WebDev](./web-dev.md) | Preserve envelope semantics and Host authority. |
-| Product identity/copy | [Product configuration](./product-config.md) or [i18n](./i18n.md) | Injected consumers and character-package copy boundary. |
+| `active` | 某个窗口正在显示的会话 | Renderer 内存 |
+| `open` | Host 进程持有该会话的真实 `AgentSession` | Host Registry 内存 |
+| `running` | Pi 正在处理该会话 | Pi 原生状态 |
+| `streaming` | Pi 正在产生可流式展示的内容 | Pi 原生状态 |
 
-When ownership is unclear, follow the first authoritative durable decision: protocol defines accepted wire shape, Host defines the accepted operation and persisted result, and UI/shell layers transport or present it.
+一个 Host 可以同时持有多个真实会话；同一会话并发打开会被去重，不同会话可以同时使用不同模型。每条命令都带明确的 `conversationId`。界面切换只改变本窗口的 `active`，不会终止、关闭或改动其他会话。
 
-### Renderer state updates: RPC and Host push
+Session Catalog 只保存角色成员关系和归档元数据。标题来自 Pi；搜索时即时连接 Catalog 成员与 Pi 标题，不能在 Catalog 复制标题、消息数、叶节点或运行状态。
 
-All renderer state updates use the shared companion client: commands and snapshots
-are request/response RPC; subsequent changes arrive over the Host event stream.
-Web-dev streams authenticated NDJSON on the events RPC route; Electron uses a
-trusted-frame IPC subscription. Neither transport periodically requests events.
-Disconnects may retry the connection, then recover from an authoritative snapshot.
-`events.subscribe` remains a one-shot replay/debug RPC, not a subscription loop.
+## 5. 对话与原生流数据流
 
-Business UI must not use timers or query `refetchInterval` to read status. The
-`check-renderer-push.mjs` lint gate enforces this; only the connection recovery
-helper is exempt. OAuth events contain provider IDs only, never authorization
-URLs, codes, or credentials. Embedding byte progress is pushed at meaningful
-progress boundaries. Timers required inside third-party device OAuth protocols
-are separate from renderer-to-Host communication.
+```text
+Renderer 选择会话
+  -> conversation open/get(conversationId)
+  -> Host 打开或复用真实 AgentSession
+  -> 返回该会话权威 snapshot
+  -> Renderer 用 snapshot 整体替换这一会话的投影
 
-Dynamic Select options retain identity across equal Host DTO snapshots. Required
-choices have a default and cannot be cleared by reselecting the selected option.
+Renderer 发送命令(conversationId)
+  -> Host 显式路由到 Registry 中对应 AgentSession
+  -> Pi 写自己的 transcript 并发出原生事件
+  -> Host 给事件加 sessionId 后走临时流
+  -> UI 响应式更新 token、工具、队列、error、settled
+```
+
+`message_update`、工具执行、队列、错误和 settled 信号不能进入 SQLite EventBus。断线重连时重新读取权威 Session snapshot；临时事件既不回放为第二份 transcript，也不负责提交业务事务。
+
+UI 可以从一个 Pi 源计算时间线分组、标签和展示状态。禁止持久化或维护竞争性的发送中、流式、队列或当前 turn 标志。
+
+## 6. Character 与 Display
+
+Character 是模型能理解的角色语义文档，Display 是当前会话的展示指令。两者是不同语义域，但共享角色数据库、事务提交和同一条响应式快照路径。
+
+Character 根节点的每个直接子项必须声明一次 `x-scope`：
+
+```yaml
+relationship:
+  x-scope: global
+  # 当前用户与当前角色共享
+scene_progress:
+  x-scope: conversation
+  # 仅当前会话
+```
+
+枚举只允许 `global | conversation`。后代继承作用域，不能再次声明；两类顶层 key 必须互斥。读取时对默认值、global 分区和当前 conversation 分区做浅层组合。Display 只有 conversation 分区。
+
+模型只有 `host_state` 一个写入口。一次调用在一个事务内验证并提交 Character 与 Display；它不会等待后续 Pi 事件，也不能触发或回滚其他 Pi 调用。Run、Artifact、权限和运行状态不会进入这份快照。
+
+## 7. 双层设置与 onboarding
+
+系统第一次使用时完成 System Onboarding：
+
+- provider 与凭据；
+- 配置模型池及系统默认模型；
+- 网络与下载源；
+- embedding 配置和本地 embedding 模型获取。
+
+新建角色只完成 Character Onboarding：
+
+- 第一次见面；
+- 关系起点和角色包声明的首次选择；
+- 自动关系记忆许可；
+- 从系统已配置模型池选择角色默认 route。
+
+如果系统先决条件缺失，角色流程打开 System Settings 补齐，然后返回原位置；不会复制一份 provider、网络或 embedding 表单。角色 onboarding 的完成状态只写入该角色的 `runtime.db`。
+
+## 8. 记忆数据流
+
+显式 Memory 和自动 TDAI Memory 是两个域：
+
+- 用户明确要求记住、修改或遗忘时，Host 才以有界、加锁、fsync、原子替换方式更新 `memory/MEMORY.md`。
+- 自动关系记忆受该角色的 consent 控制，使用系统 embedding 配置，但把记录、向量、索引和 checkpoint 写入该角色 `memory/tdai/`。
+- 冲突时显式 Memory 优先。
+
+系统切换 embedding 模型或维度后，每个角色分别失效和重建索引。删除单个会话不删除角色记忆；删除角色 runtime 才关闭并移除其记忆资源。
+
+## 9. External Run 与 Artifact 数据流
+
+```text
+Pi/用户请求工作
+  -> 创建 Run(origin conversationId + trigger entry)
+  -> executor 在 Run workspace 执行
+  -> 权限、证据、进度由 Run 持有
+  -> 捕获输出：路径/链接/MIME/大小/hash 校验
+  -> 写入 companions/<id>/artifacts/<sha256>
+  -> Artifact metadata 绑定 conversationId/runId/artifactId
+  -> 结果以 runId 幂等地投递给原会话
+```
+
+目标会话正在运行也可以接收结果，Host 使用 Pi 原生 custom-message/follow-up 行为，不依赖 UI 是否显示它。用户中断且执行器仍存在时可以恢复；启动时发现失联只是检测条件，必须先 reattach/query，确认不可恢复后才记为 `forced_termination`。
+
+Artifact 操作验证完整的 `conversation -> run -> artifact` 所有权链和内容哈希：
+
+- preview/read 返回有界内容或字节范围；
+- open/reveal 使用安全命名的 presentation copy 或不透明 capability；
+- Save As 使用原生目标选择器，不持久化用户目标路径；
+- 内部 CAS 路径不进入 Renderer。
+
+## 10. 结果工作区
+
+Run 开始、进行中和完成都不自动抢占会话。只有用户选择完成的 Run 或 Artifact 才打开结果工作区：
+
+| 视口宽度 | 展示 |
+| --- | --- |
+| `>= 1600px` | 会话与结果相邻双列 |
+| `768..1599px` | 右侧 overlay/drawer |
+| `<= 767px` | 全屏结果视图 |
+
+关闭结果，或切换到不拥有该结果的会话，恢复普通会话布局。
+
+## 11. 持久事件、快照与列表
+
+- durable product event 是失效/审计通知，业务值仍从 owning service 重读。
+- Pi native event 是临时运行信号，不写入 durable event 表。
+- bootstrap 只返回安装级/全局信息。
+- conversation detail 通过显式、按 ID、有界接口读取。
+- Catalog、Runs 和 Artifacts 使用轻量列表；需要完整内容时再读取 detail。
+- 不允许为了初始化 UI 遍历每个会话并拼接全量 Character/Display 数据。
+
+## 12. 迁移与删除
+
+旧平面目录通过 staging tree 一次性迁移：复制与归属解析、数量/哈希检查、SQLite integrity、fsync、原子切换。遇到无法归属的 Session、Run 或 Artifact 必须失败关闭；激活后没有旧路径读取。
+
+会话删除的顺序是：验证 Catalog 所有权、阻止新路由、必要时 abort、释放精确的 live handle 与订阅、移动/删除精确 transcript、清理该会话的角色数据并移除 Catalog binding。操作必须幂等且不得影响其他会话。
+
+角色 runtime 删除先关闭其全部 Sessions、memory runtime、Runs 和数据库句柄，再把 `companions/<id>` 移到 Trash 或删除。角色包与角色 runtime 是两个独立选择。
+
+## 13. 发布边界
+
+发布结论只来自同一干净提交上的门禁证据：lint、typecheck、单测与覆盖率、Web required E2E、Electron E2E、恢复测试、build、security audit/signature、真实模型验证、各平台新包和 packaged smoke。公开分发还要求平台签名与 notarization。
+
+具体命令和人工点击清单见[开发与发布验证](../development-verification.md)。

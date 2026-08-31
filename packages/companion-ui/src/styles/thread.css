@@ -311,7 +311,12 @@
 }
 
 .shell:has(> .attachment-preview-column) .main {
-	@apply col-span-2;
+	@apply col-span-1;
+}
+
+.artifact-preview-backdrop {
+	@apply fixed inset-0 z-50 hidden border-0 p-0;
+	background: var(--surface-overlay);
 }
 
 .attachment-preview-column {
@@ -325,12 +330,21 @@
 	@apply flex min-w-0 items-center justify-between gap-3;
 }
 
+.attachment-preview-heading {
+	@apply grid min-w-0 gap-1;
+}
+
+.attachment-preview-column header small {
+	@apply truncate text-xs;
+	color: var(--text-muted);
+}
+
 .attachment-preview-column header strong {
 	@apply min-w-0 truncate;
 }
 
 .attachment-preview-column header button,
-.attachment-preview-column > button {
+.attachment-preview-actions button {
 	@apply shrink-0 rounded-md border px-3 py-2 text-xs cursor-pointer;
 	border-color: var(--line-soft);
 	color: var(--text-strong);
@@ -338,10 +352,22 @@
 	font: inherit;
 }
 
-.attachment-preview-column > button {
-	@apply w-full;
-	color: var(--text-on-action);
-	background: var(--surface-action);
+.attachment-preview-actions {
+	@apply flex flex-wrap items-center gap-2 border-t pt-3;
+	border-color: var(--line-soft);
+}
+
+.attachment-preview-actions [role="status"],
+.attachment-preview-actions [role="alert"] {
+	@apply w-full text-xs;
+}
+
+.attachment-preview-actions [role="status"] {
+	color: var(--text-muted);
+}
+
+.attachment-preview-actions [role="alert"] {
+	color: var(--text-danger);
 }
 
 .attachment-preview-body {
@@ -378,12 +404,13 @@
 }
 
 .attachment-preview-media audio,
-.attachment-preview-media object {
+.attachment-preview-media iframe {
 	@apply w-full;
 }
 
-.attachment-preview-media object {
+.attachment-preview-media iframe {
 	@apply min-h-96;
+	border: 0;
 }
 
 .attachment-preview-files {

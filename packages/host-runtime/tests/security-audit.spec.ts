@@ -4,11 +4,13 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	type AuditKind,
 	AuditStore,
 	auditKindForEvent,
+	auditKindForRpcMutation,
 	auditReasonCode,
 	wireAuditToEvents,
 } from "../src/security/audit-store.js";
@@ -257,5 +259,19 @@ describe("wireAuditToEvents", () => {
 		expect(auditKindForEvent("commission.approved")).toBeNull();
 		expect(auditKindForEvent("run.completed")).toBe("run");
 		expect(auditKindForEvent("evidence.collected")).toBe("run");
+	});
+
+	it("classifies every mutating RPC by product semantics without a fallback", () => {
+		const mutations = Object.entries(CHANNEL_CONTRACTS).filter(
+			([, contract]) => contract.operation === "mutation",
+		);
+		expect(mutations.length).toBeGreaterThan(0);
+		for (const [channel] of mutations) expect(() => auditKindForRpcMutation(channel)).not.toThrow();
+		expect(auditKindForRpcMutation("conversation.delete:v1")).toBe("conversation");
+		expect(auditKindForRpcMutation("message.send:v1")).toBe("conversation");
+		expect(auditKindForRpcMutation("companionState.update:v1")).toBe("companion_state");
+		expect(auditKindForRpcMutation("canon.addSource:v1")).toBe("canon");
+		expect(auditKindForRpcMutation("run.respondPermission:v1")).toBe("permission");
+		expect(() => auditKindForRpcMutation("unknown.changed:v1")).toThrow(/unclassified/);
 	});
 });

@@ -23,15 +23,6 @@ const TEST_MODEL = {
 	createdAt: "2026-01-01",
 };
 
-const TEXT_MODEL = {
-	providerId: "text-relay",
-	providerName: "Text Relay",
-	modelId: "text",
-	label: "Text Model",
-	supportsImages: false,
-	createdAt: "2026-01-01",
-};
-
 const VISION_MODEL = {
 	providerId: "vision-relay",
 	providerName: "Vision Relay",
@@ -42,22 +33,31 @@ const VISION_MODEL = {
 };
 
 function configureActiveConversation(client: CompanionClient): void {
-	client.conversation.activeGet = vi.fn(() =>
+	client.conversation.list = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
 			data: {
-				session: {
-					sessionId: "conversation-1",
-					name: "Test conversation",
-					entries: [],
-					messages: [],
-					isIdle: true,
-					isStreaming: false,
-					pendingMessageCount: 0,
-					steeringMessages: [],
-					followUpMessages: [],
-					messageVersions: [],
-				},
+				sessions: [
+					{
+						id: "conversation-1",
+						title: "Test conversation",
+						created: "2026-01-01T00:00:00.000Z",
+						modified: "2026-01-01T00:00:00.000Z",
+						messageCount: 0,
+						firstMessage: "",
+					},
+				],
+			},
+		}),
+	);
+	client.conversation.open = vi.fn(() =>
+		Promise.resolve({
+			ok: true as const,
+			data: {
+				sessionId: "conversation-1",
+				name: "Test conversation",
+				timeline: { entries: [] },
+				live: { isStreaming: false, queuedUserMessages: [] },
 			},
 		}),
 	);
@@ -94,7 +94,11 @@ function renderComposerWithModels(
 	client.model.defaultsGet = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
-			data: { ...modelState.defaults, reply: modelState.route.selected },
+			data: {
+				...modelState.defaults,
+				reply: modelState.route.selected,
+				onboardingComplete: true,
+			},
 		}),
 	);
 	client.model.routeGet = vi.fn(() =>
@@ -163,7 +167,6 @@ describe("composer", () => {
 				data: {
 					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
 		);
@@ -192,7 +195,6 @@ describe("composer", () => {
 				data: {
 					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 					model: {
 						pool: {
 							models: [
@@ -293,7 +295,6 @@ describe("composer", () => {
 				data: {
 					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
 		);
@@ -333,7 +334,6 @@ describe("composer", () => {
 				data: {
 					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
-					conversation: { activeConversationId: "conversation-1", piTimeline: { entries: [] } },
 				},
 			}),
 		);

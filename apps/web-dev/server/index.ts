@@ -9,7 +9,9 @@ import {
 	type Diagnostics,
 	isErrorType,
 	parseTraceparent,
+	prepareRuntimeLayout,
 	RENDERER_FAULT_KINDS,
+	RuntimeLayout,
 } from "@bear-harness/host-runtime";
 import { assertProductConfig, OFFICIAL_BRAND, productConfig } from "@bear-harness/product-config";
 import { CHANNEL_CONTRACTS, EventSubscribeRequest } from "@bear-harness/protocol/schema";
@@ -39,6 +41,8 @@ if (requestedHost !== "127.0.0.1" || publicIntent || productionIntent) {
 const port = Number(process.env.BEAR_WEB_DEV_HOST_PORT ?? "3201");
 const dataDir = webDevDataDirectory(productConfig.dataDirectoryName);
 mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+prepareRuntimeLayout(dataDir);
+const runtimeLayout = new RuntimeLayout(dataDir);
 const token = randomBytes(32).toString("hex");
 const debugEnabled = process.env.BEAR_WEB_DEV_DEBUG === "1";
 const configuredPiWorkerPath = process.env.BEAR_WEB_DEV_PI_WORKER_PATH;
@@ -53,7 +57,7 @@ const diagnostics: Diagnostics = createDiagnostics({
 		setAppLogsPath: () => undefined,
 		setPath: () => undefined,
 	},
-	root: join(dataDir, "diagnostics"),
+	root: runtimeLayout.systemDiagnostics,
 	launchId: randomUUID(),
 	packaged: false,
 });
@@ -183,10 +187,9 @@ function diagnosticErrorType(
 
 const runtime = createHostRuntime({
 	dataDir,
-	diagnostics,
 	characterSeedRoot: resolve(repoRoot, "config/characters"),
 	productConfig,
-	credentialVault: createWebCredentialVault(dataDir),
+	credentialVault: createWebCredentialVault(runtimeLayout.systemRoot),
 	protocolViolationMode: "throw",
 	logger: { warn: (message) => console.warn(message) },
 	...(piWorkerPath ? { piWorkerPath } : {}),
@@ -265,6 +268,46 @@ const server = createServer(async (request, response) => {
 	}
 	if (debugEnabled && request.method === "GET" && url.pathname === "/debug/channels") {
 		send(response, 200, { channels: Object.keys(CHANNEL_CONTRACTS).sort() });
+		return;
+	}
+	if (
+		request.method === "POST" &&
+		url.pathname === "/live/pi" &&
+		request.headers.accept === "application/x-ndjson"
+	) {
+		try {
+			const body = await readBody(request);
+			if (!isPlainObject(body) || !hasExactKeys(body, [])) {
+				throw new HttpError(400, "invalid_request", "invalid_pi_subscription");
+			}
+			response.writeHead(200, {
+				"content-type": "application/x-ndjson",
+				"cache-control": "no-store",
+				"x-accel-buffering": "no",
+			});
+			response.write(`${JSON.stringify({ events: [] })}\n`);
+			eventResponses.add(response);
+			let stop: (() => void) | undefined;
+			response.once("close", () => {
+				stop?.();
+				eventResponses.delete(response);
+			});
+			stop = runtime.subscribePiEvents((event) => {
+				if (response.destroyed || response.writableEnded) return;
+				if (response.writableLength > 4 * 1024 * 1024) {
+					response.destroy();
+					return;
+				}
+				response.write(`${JSON.stringify({ events: [event] })}\n`);
+			});
+			if (response.destroyed) {
+				stop();
+				eventResponses.delete(response);
+			}
+		} catch (error) {
+			if (error instanceof HttpError) sendError(response, error.status, error.kind, error.reason);
+			else sendError(response, 500, "internal_error", "internal_subscription_failure");
+		}
 		return;
 	}
 	if (isRpcRequest) {

@@ -74,15 +74,14 @@ export type SnapshotGetResponse = z.infer<typeof schema.SnapshotResponse>;
 
 export type SnapshotGetRequest = z.infer<typeof schema.SnapshotGetRequest>;
 export type SnapshotResponse = z.infer<typeof schema.SnapshotResponse>;
-export type ConversationSnapshot = z.infer<typeof schema.ConversationSnapshot>;
-export type MemorySnapshot = z.infer<typeof schema.MemorySnapshot>;
 export type CompanionDisplayState = z.infer<typeof schema.CompanionDisplayState>;
 export type CompanionConversationState = z.infer<typeof schema.CompanionConversationState>;
-export type CompanionStateSnapshot = z.infer<typeof schema.CompanionStateSnapshot>;
+export type CompanionStateGetRequest = z.infer<typeof schema.CompanionStateGetRequest>;
+export type CompanionStateResponse = z.infer<typeof schema.CompanionStateResponse>;
 export type CharacterStateRevisions = z.infer<typeof schema.CharacterStateRevisions>;
 export type CharacterStateDocument = z.infer<typeof schema.CharacterStateDocument>;
-export type CompanionStatePatchOperation = z.infer<typeof schema.CompanionStatePatchOperation>;
-export type CompanionStatePatchRequest = z.infer<typeof schema.CompanionStatePatchRequest>;
+export type CompanionStateChange = z.infer<typeof schema.CompanionStateChange>;
+export type CompanionStateUpdateRequest = z.infer<typeof schema.CompanionStateUpdateRequest>;
 
 // ---------------------------------------------------------------------------
 // Onboarding (first-meeting FSM)
@@ -105,6 +104,16 @@ export type CharacterPackageDocument = z.infer<typeof schema.CharacterPackageDoc
 export type CharacterPackageGetRequest = z.infer<typeof schema.CharacterPackageGetRequest>;
 export type CharacterPackageUpdateRequest = z.infer<typeof schema.CharacterPackageUpdateRequest>;
 export type CharacterPackageResponse = z.infer<typeof schema.CharacterPackageResponse>;
+export type CharacterDeletionStatusGetRequest = z.infer<
+	typeof schema.CharacterDeletionStatusGetRequest
+>;
+export type CharacterDeletionStatus = z.infer<typeof schema.CharacterDeletionStatus>;
+export type CharacterDeletionStatusResponse = z.infer<
+	typeof schema.CharacterDeletionStatusResponse
+>;
+export type CharacterDeleteRequest = z.infer<typeof schema.CharacterDeleteRequest>;
+export type CharacterRuntimeDeleteResponse = z.infer<typeof schema.CharacterRuntimeDeleteResponse>;
+export type CharacterPackageDeleteResponse = z.infer<typeof schema.CharacterPackageDeleteResponse>;
 export type CharacterDraft = z.infer<typeof schema.CharacterDraft>;
 export type CharacterGetResponse = z.infer<typeof schema.CharacterResponse>;
 export type CharacterActivateResponse = z.infer<typeof schema.CharacterResponse>;
@@ -159,21 +168,26 @@ export type ConversationListRequest = z.infer<typeof schema.ConversationListRequ
 export type ConversationListResponse = z.infer<typeof schema.ConversationListResponse>;
 export type ConversationCreateRequest = z.infer<typeof schema.ConversationCreateRequest>;
 export type ConversationCreateResponse = z.infer<typeof schema.ConversationCreateResponse>;
-export type ConversationSelectRequest = z.infer<typeof schema.ConversationSelectRequest>;
-export type ConversationActiveGetRequest = z.infer<typeof schema.ConversationActiveGetRequest>;
-export type ConversationActiveResponse = z.infer<typeof schema.ConversationActiveResponse>;
-export type ConversationSelectResponse = z.infer<typeof schema.ConversationSelectResponse>;
+export type ConversationOpenRequest = z.infer<typeof schema.ConversationOpenRequest>;
+export type ConversationOpenResponse = z.infer<typeof schema.ConversationOpenResponse>;
+export type ConversationDetail = z.infer<typeof schema.ConversationDetail>;
 export type PiTimelineEntry = z.infer<typeof schema.PiTimelineEntry>;
+export type CharacterMedia = z.infer<typeof schema.CharacterMedia>;
+export type PiMessageChoices = z.infer<typeof schema.PiMessageChoices>;
 export type PiTimeline = z.infer<typeof schema.PiTimeline>;
 export type PiSessionId = z.infer<typeof schema.PiSessionId>;
 export type PiLiveAssistantMessage = z.infer<typeof schema.PiLiveAssistantMessage>;
 export type PiLiveState = z.infer<typeof schema.PiLiveState>;
+export type PiSessionEventType = z.infer<typeof schema.PiSessionEventType>;
+export type PiToolActivity = z.infer<typeof schema.PiToolActivity>;
+export type PiSessionLiveEvent = z.infer<typeof schema.PiSessionLiveEvent>;
+export type PiEventSubscribeResponse = z.infer<typeof schema.PiEventSubscribeResponse>;
 export type ConversationRenameRequest = z.infer<typeof schema.ConversationRenameRequest>;
 export type ConversationRenameResponse = z.infer<typeof schema.EmptyResponse>;
 export type ConversationArchiveRequest = z.infer<typeof schema.ConversationArchiveRequest>;
-export type ConversationArchiveResponse = z.infer<typeof schema.ConversationActiveResponse>;
+export type ConversationArchiveResponse = z.infer<typeof schema.EmptyResponse>;
 export type ConversationDeleteRequest = z.infer<typeof schema.ConversationDeleteRequest>;
-export type ConversationDeleteResponse = z.infer<typeof schema.ConversationActiveResponse>;
+export type ConversationDeleteResponse = z.infer<typeof schema.EmptyResponse>;
 
 // ---------------------------------------------------------------------------
 // Message
@@ -198,27 +212,6 @@ export type MessageAbortRequest = z.infer<typeof schema.MessageAbortRequest>;
 // Memory
 // ---------------------------------------------------------------------------
 
-export type MemoryScope = z.infer<typeof schema.MemoryScope>;
-export type MemoryEntry = z.infer<typeof schema.MemoryEntry>;
-export type MemoryCaptureCreatedBy = z.infer<typeof schema.MemoryCaptureCreatedBy>;
-export type MemoryCaptureRequest = z.infer<typeof schema.MemoryCaptureRequest>;
-export type MemoryCaptureResponse = z.infer<typeof schema.MemoryCaptureResponse>;
-export type MemorySearchRequest = z.infer<typeof schema.MemorySearchRequest>;
-export type MemorySearchResponse = z.infer<typeof schema.MemorySearchResponse>;
-export type MemoryListRequest = z.infer<typeof schema.MemoryListRequest>;
-export type MemoryListResponse = z.infer<typeof schema.MemoryListResponse>;
-export type MemoryForgetRequest = z.infer<typeof schema.MemoryForgetRequest>;
-export type MemoryEditRequest = z.infer<typeof schema.MemoryEditRequest>;
-export type MemoryForgetResponse = z.infer<typeof schema.EmptyResponse>;
-export type MemoryEditResponse = z.infer<typeof schema.EmptyResponse>;
-export type MemoryExcludeRequest = z.infer<typeof schema.MemoryExcludeRequest>;
-export type MemoryExcludeResponse = z.infer<typeof schema.EmptyResponse>;
-export type MemoryCandidatesListRequest = z.infer<typeof schema.MemoryCandidatesListRequest>;
-export type MemoryCandidatesListResponse = z.infer<typeof schema.MemoryCandidatesListResponse>;
-export type MemoryCandidateApproveRequest = z.infer<typeof schema.MemoryCandidateApproveRequest>;
-export type MemoryCandidateApproveResponse = z.infer<typeof schema.EmptyResponse>;
-export type MemoryCandidateRejectRequest = z.infer<typeof schema.MemoryCandidateRejectRequest>;
-export type MemoryCandidateRejectResponse = z.infer<typeof schema.EmptyResponse>;
 export type MemoryConfigureLocalEmbeddingRequest = z.infer<
 	typeof schema.MemoryConfigureLocalEmbeddingRequest
 >;
@@ -288,6 +281,20 @@ export type ModelDefaultsSetReplyRequest = z.infer<typeof schema.ModelDefaultsSe
 export type ModelDefaultsSetReplyResponse = z.infer<typeof schema.ModelDefaultsSetReplyResponse>;
 export type ModelDefaultsSetVisionRequest = z.infer<typeof schema.ModelDefaultsSetVisionRequest>;
 export type ModelDefaultsSetVisionResponse = z.infer<typeof schema.ModelDefaultsSetVisionResponse>;
+export type SystemModelDefaultsGetRequest = z.infer<typeof schema.SystemModelDefaultsGetRequest>;
+export type SystemModelDefaultsGetResponse = z.infer<typeof schema.SystemModelDefaultsGetResponse>;
+export type SystemModelDefaultsSetRequest = z.infer<typeof schema.SystemModelDefaultsSetRequest>;
+export type SystemModelDefaultsSetResponse = z.infer<typeof schema.SystemModelDefaultsSetResponse>;
+export type ModelDefaultsInitializeRequest = z.infer<typeof schema.ModelDefaultsInitializeRequest>;
+export type ModelDefaultsInitializeResponse = z.infer<
+	typeof schema.ModelDefaultsInitializeResponse
+>;
+export type ModelDefaultsCompleteOnboardingRequest = z.infer<
+	typeof schema.ModelDefaultsCompleteOnboardingRequest
+>;
+export type ModelDefaultsCompleteOnboardingResponse = z.infer<
+	typeof schema.ModelDefaultsCompleteOnboardingResponse
+>;
 export type ModelRouteGetRequest = z.infer<typeof schema.ModelRouteGetRequest>;
 export type ModelRouteGetResponse = z.infer<typeof schema.ModelRouteGetResponse>;
 export type ModelRouteSetRequest = z.infer<typeof schema.ModelRouteSetRequest>;
@@ -333,10 +340,18 @@ export type RunRespondPermissionResponse = z.infer<typeof schema.RunResponse>;
 // ---------------------------------------------------------------------------
 
 export type RunStatus = z.infer<typeof schema.RunStatus>;
+export type ArtifactStatus = z.infer<typeof schema.ArtifactStatus>;
+export type RunEvidenceSummary = z.infer<typeof schema.RunEvidenceSummary>;
 export type Run = z.infer<typeof schema.Run>;
 export type RunListRequest = z.infer<typeof schema.RunListRequest>;
 export type RunListResponse = z.infer<typeof schema.RunListResponse>;
 export type RunResponse = z.infer<typeof schema.RunResponse>;
+export type ArtifactSummary = z.infer<typeof schema.ArtifactSummary>;
+export type ArtifactIdentity = z.infer<typeof schema.ArtifactIdentity>;
+export type ArtifactReadRequest = z.infer<typeof schema.ArtifactReadRequest>;
+export type ArtifactReadResponse = z.infer<typeof schema.ArtifactReadResponse>;
+export type ArtifactActionRequest = z.infer<typeof schema.ArtifactActionRequest>;
+export type ArtifactActionResponse = z.infer<typeof schema.ArtifactActionResponse>;
 
 // ---------------------------------------------------------------------------
 // Settings

@@ -42,8 +42,8 @@ export function seedPiAcpProfile(db: AppDatabase): void {
 /** Packaged Pi external agent. */
 export class PiAcpAdapter extends AcpExecutorController {
 	constructor(
-		private readonly db: AppDatabase,
-		private readonly userDataDir: string,
+		private readonly runDb: AppDatabase,
+		private readonly authDir: string,
 		private readonly workerPath = fileURLToPath(new URL("./pi-acp-worker.js", import.meta.url)),
 		private readonly bundledGit?: { shellPath: string; pathEntries: string[] },
 	) {
@@ -59,7 +59,7 @@ export class PiAcpAdapter extends AcpExecutorController {
 			workerPath: realpathSync.native(this.workerPath),
 			launchedAt: new Date().toISOString(),
 		};
-		this.db
+		this.runDb
 			.insert(runManifests)
 			.values({ id: randomUUID(), runId: request.run.runId, manifestJson: { ...manifest } })
 			.run();
@@ -69,7 +69,7 @@ export class PiAcpAdapter extends AcpExecutorController {
 	protected processSpec(request: ExecutorLaunchRequest): AcpProcessSpec {
 		const cwd = workspaceFor(request);
 		const runRoot = dirname(resolve(request.task.outputDirectory));
-		const authDir = ensurePrivateDirectory(resolve(this.userDataDir, "companion-runtime"));
+		const authDir = ensurePrivateDirectory(resolve(this.authDir));
 		const sessionDir = ensurePrivateDirectory(resolve(runRoot, "pi-session"));
 		return {
 			command: realpathSync.native(process.execPath),

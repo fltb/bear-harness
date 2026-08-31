@@ -2,7 +2,7 @@ import { i18n, useTranslation } from "@bear-harness/i18n";
 import { createSignal, For, Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { createStableSnapshot } from "../lib/stable-snapshot.js";
-import type { SettingsCapabilities, SettingsData } from "../stores/companion.js";
+import type { SettingsCapabilities, SettingsPatch } from "../stores/companion.js";
 import { useCompanionStore } from "../stores/companion.js";
 import { Button, Checkbox, RadioGroup, Select, TextField } from "../ui/primitives.js";
 
@@ -107,6 +107,7 @@ export function EmbeddingSettings(props: {
 	const remoteChoiceReady = () =>
 		providerId() !== "remote" ||
 		(Boolean((remoteBaseUrlDraft() ?? vector()?.baseUrl)?.trim()) &&
+			(Boolean(remoteApiKeyDraft()?.trim()) || vector()?.hasCredential === true) &&
 			Boolean((remoteModelDraft() ?? vector()?.model)?.trim()) &&
 			Number(remoteDimensionsDraft() ?? vector()?.dimensions) > 0);
 	const onboardingChoiceReady = () =>
@@ -139,7 +140,7 @@ export function EmbeddingSettings(props: {
 		if (localSelected()) return t("settings.downloadAndEnableLocalModel");
 		return onboarding ? t("messages.continue") : t("settings.saveEmbedding");
 	};
-	const saveVector = (value: SettingsData["memoryVectorService"]): Promise<unknown> =>
+	const saveVector = (value: NonNullable<SettingsPatch["memoryVectorService"]>): Promise<unknown> =>
 		embedding.settingsMutation.mutateAsync(value);
 	const selectPreset = async (
 		preset: SettingsCapabilities["memoryVectorPresets"][number],
@@ -150,11 +151,13 @@ export function EmbeddingSettings(props: {
 			return;
 		}
 		const current = vector();
-		if (!current) return;
+		if (current?.provider !== "remote") return;
 		setRequestedPresetId(preset.id);
 		try {
 			await embedding.settingsMutation.mutateAsync({
-				...current,
+				enabled: true,
+				provider: "remote",
+				baseUrl: current.baseUrl,
 				model: preset.model,
 				dimensions: preset.dimensions,
 			});
@@ -264,13 +267,12 @@ export function EmbeddingSettings(props: {
 		const model = remoteModelDraft();
 		const dimensions = remoteDimensionsDraft();
 		await saveVector({
-			...current,
 			enabled: true,
 			provider: "remote",
-			...(baseUrl !== null ? { baseUrl } : {}),
+			baseUrl: baseUrl ?? current.baseUrl,
 			...(remoteApiKeyDraft() !== null ? { apiKey: remoteApiKeyDraft() || undefined } : {}),
-			...(model !== null ? { model } : {}),
-			...(dimensions !== null ? { dimensions: Number(dimensions) || 0 } : {}),
+			model: model ?? current.model,
+			dimensions: dimensions !== null ? Number(dimensions) || 0 : current.dimensions,
 		});
 		setRemoteBaseUrlDraft(null);
 		setRemoteApiKeyDraft(null);
@@ -533,7 +535,10 @@ export function EmbeddingSettings(props: {
 						<TextField.Label>{t("settings.apiKeyLabel")}</TextField.Label>
 						<TextField.Input
 							type="password"
-							value={remoteApiKeyDraft() ?? vector()?.apiKey ?? ""}
+							value={remoteApiKeyDraft() ?? ""}
+							placeholder={
+								vector()?.hasCredential ? t("settings.apiKeyStoredPlaceholder") : undefined
+							}
 							onInput={(event) => setRemoteApiKeyDraft(event.currentTarget.value)}
 						/>
 					</TextField>

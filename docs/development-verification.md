@@ -1,76 +1,103 @@
-# 开发验证
+# 开发与发布验证
 
-## 默认路径：WebDev
+## 日常开发
 
-日常开发和功能 E2E 默认使用真实的 loopback Host 与浏览器 UI，而不是 Electron：
+从最窄的 owning package 开始，再扩大范围：
 
-```bash
+```sh
+npm run lint
+npm run typecheck
+npm run test:unit
+npm run test:coverage
+npm run build
+```
+
+WebDev 是默认交互验证入口：
+
+```sh
 npm run dev:web
-npm run check
+npm run test:e2e:web:required
 ```
 
-`npm run dev:web` 启动：
+不要把 schema/unit 测试当作 UI 验收。影响会话、流式、onboarding、Run、Artifact 或响应式布局的改动需要浏览器真实点击和视口验证。
 
-- Rsbuild 浏览器入口：`http://127.0.0.1:3200`
-- 同一 `HostRuntime` 的 loopback HTTP transport：`127.0.0.1:3201`
-- 角色包：`config/characters`
-- 随机 bearer token；HTTP Host 只绑定 loopback
-- 默认使用当前用户数据目录下的产品专属 data directory；可用 `BEAR_WEB_DEV_DATA_DIR` 显式指定另一处目录。
+## 定向测试
 
-页面右下角的 **Web Dev** 面板可：
-
-- 在用户打开系统设置后才读取模型服务目录；启动和首次引导不会主动请求 Pi 配置。
-- 使用机器本地 AES-GCM vault 保存 API key。默认密钥文件权限为 `0600`；也可通过 `BEAR_WEB_DEV_MASTER_KEY` 注入开发环境密钥。
-- 支持 API key 服务和浏览器/设备码 OAuth 登录；OAuth 授权页在浏览器中完成，Host 会话持续轮询其结果。
-- 调用当前 Host 注册的任意 RPC channel，并显示原始 response envelope。
-
-`npm run check` 包含 lint、typecheck、coverage、两套应用 build 与 `test:e2e:web`；它不启动 Electron。
-
-## 本地追踪与日志等级
-
-Host 诊断采用 `TRACE / DEBUG / INFO / WARN / ERROR / FATAL` 等级，默认是 `INFO`。人工全流程测试需要显式以 `BEAR_LOG_LEVEL=trace npm run dev:web` 启动；`TRACE` 才会记录经过脱敏和 4096-byte 限长的用户、Host 上下文、模型回复及工具输入输出。API key、token、密码和真实本机路径会先被替换。正式打包应用会把 `TRACE` 强制收紧为 `DEBUG`，因此不能通过环境变量让发布包持久化会话内容。
-
-一次对话回合以 `companion.turn` 为根，模型路由/请求、Context Pack、Skill 读取、工具执行、Host 规则与状态切换、外部代理生命周期都沿用同一 trace id。RPC 是其上游父 span；外部代理回调与重启恢复通过持久化 trace context 续接，不以进程内异步上下文侥幸维持。
-
-构建 Host 后可把最近一次完整回合原子导出为本地 JSON 证据：
-
-```bash
-npm run diagnostics:export -- \
-  --root <data-directory>/diagnostics \
-  --latest-turn \
-  --output <local-report-directory>/latest-turn.json
+```sh
+npm run test:unit --workspace @bear-harness/host-runtime
+npm run test:unit --workspace @bear-harness/companion-ui
+npm run test:unit --workspace @bear-harness/desktop
+npm run test:release:recovery
 ```
 
-也可用 `--trace <32位trace-id>` 精确导出。查询只读取诊断目录内受控命名的 JSONL，逐条复验契约，忽略并统计损坏/半写入行；不会上传或创建网络端报告。
+关键覆盖面：
 
-## 交互契约覆盖
+- 多个真实 Pi Session 并发、same-id open 去重和 event isolation；
+- stream 中切换 active，不 abort 后台 Session；
+- external result 按 origin conversation + runId 投递和幂等；
+- rename/archive/delete 不依赖选择状态；
+- system/characters/companions 路径和数据库隔离；
+- staging migration 的 crash recovery、ownership failure 和原子激活；
+- Artifact ownership、hash corruption、bounded read 和 native action；
+- system onboarding 与 character onboarding 分层；
+- Character `x-scope` enum、Display conversation scope 和单事务提交。
 
-`apps/web-dev/e2e/settings.spec.ts` 使用真实 HTTP Host 验证：
+## WebDev 真实交互
 
-| 交互 | 断言 |
-| --- | --- |
-| 首次见面 | 双击只提交一次；步骤在 500 ms 后仍保持为 Host 返回的下一步；完整流程会创建首个对话。 |
-| 对话 | 新建和选择对话更新真实 Host projection 与侧栏选中状态。 |
-| 幕后与设置 | 工作队列开合；drawer/tab 导航；关系记忆开关真实持久化并重新读取。 |
-| Web Dev | 枚举每个注册 RPC channel，并发送一次 authenticated 真 Host 调用。 |
-| 日常入口 | 搜索真实过滤会话；材料以文本内容随消息提交；关系档案、故事档案、角色管理、系统设置均使用真实 Host 数据。 |
-| Canon Hub | 高级角色包工坊可加入原作资料、检索分段原文、建立可编辑的层级剧情模块；根入口与当前话题相关模块会进入 Context Pack。 |
-| 工作闭环 | 角色提出的行动必须先展示读写/联网范围；完成后获准写入的普通文件会作为可下载成果登记。 |
+自动化与人工验收都应覆盖：
 
-`packages/companion-ui` 单元测试覆盖 UI 到 transport 的参数契约：composer 的提交/Shift+Enter、消息版本/再生成/编辑/继续/分支、记忆批准/置顶/搜索，以及旧 snapshot 与跨 renderer stale submit 的恢复。
+1. System Settings 完成 provider/model/network/embedding；
+2. 创建新角色，只进入角色第一次见面与 consent/route；
+3. 启动两个会话并同时生成；
+4. 流式过程中反复切换会话，确认 token/tool/queue/error 不串线；
+5. 后台 Run 完成但不抢焦点；
+6. 点击结果后展示 Artifact metadata、preview、provenance 和 Web download；
+7. 检查三个结果 workspace breakpoint；
+8. rename、archive、restore、delete 精确作用于目标会话；
+9. 重启并检查 Catalog、角色设置、memory 和 Run recovery。
 
-系统设置包含有真实 Host effect 的关系记忆和模型服务选择。普通用户入口不展示原始 prompt、module、scope 或 provider runtime 等实现术语；这些只在角色包工坊和模型设置中按需出现。
+## Desktop 与恢复
 
-## Electron：发布前验证
-
-Electron 仍是唯一生产壳。它负责 preload/context isolation、safeStorage、Crashpad、file/asar、原生窗口和安装包；WebDev 不替代这些验证。
-
-本机需要验证原生壳时：
-
-```bash
+```sh
 npm run check:electron
-npm run package:linux
 npm run test:e2e:packaged
+npm run test:release:recovery
+npm run test:diagnostics:crash
 ```
 
-macOS 和 Windows 使用对应的 `package:mac` / `package:win`。CI 在每个 push/PR 同时运行 WebDev 完整旅程和 Electron source smoke；只有原生 package、Crashpad smoke 与 packaged-app smoke 保留在 `workflow_dispatch` 或 published release。
+Desktop 额外验证 IPC sender/frame/origin、credential vault、local file picker、Artifact open/reveal/save-as、presentation copy cleanup、窗口销毁后的 subscription cleanup 和平台更新策略。
+
+## Release gate
+
+`npm run release:gate` 只允许在受保护的 `CI=true` 矩阵运行。它覆盖 lint、typecheck、coverage、build、recovery、Web required E2E 和 Electron E2E；发布工作流还必须提供：
+
+- `npm audit --audit-level=high` 与 `npm audit signatures`；
+- 真实 provider/model 的 live E2E；
+- 非 placeholder 版本；
+- 干净且唯一的 release commit；
+- 每个平台从该提交新构建的包；
+- packaged smoke、hash、SBOM/attestation；
+- 公开发行所需的代码签名和 notarization。
+
+任何必需阶段未运行、跳过、运行在不同提交或缺少可核对证据，release decision 都是 **NO-GO**。
+
+发布证据按平台拆分并由 final gate 二次核验：
+
+- `verify-package.mjs` 要求目标平台的完整安装包集合，逐个记录字节数与 SHA-256；
+- 同一步使用 `npm sbom --package-lock-only --omit=dev` 生成独立 CycloneDX SBOM，并绑定根 `package-lock.json` 的 SHA-256；
+- `release-attestation.mjs package` 在 packaged smoke 之后重新读取安装包、SBOM 与 lockfile，任何字节变化都会拒绝出证；
+- 每个平台上传 `package-<target>.json`、`package-evidence-<target>.json` 和 `sbom-<target>.cdx.json`；final gate 校验其 commit、schema、文件摘要和完整平台集合；
+- attestation 只忽略自身的 `release-attestations/` 输出目录。其他 tracked 或 untracked 变化都被视为 dirty tree，任何阶段均拒绝生成通过记录。
+
+这些摘要和 SBOM 是可核验的构建证据，不是代码签名。没有平台证书、签名和 notarization 时，公开发行仍然是 **NO-GO**，不得用 attestation 替代或宣称已经签名。
+
+## 审计报告证据
+
+最终工程报告至少记录：
+
+- 每个模块的 production/test/file/physical-line counts；
+- authority、模块分层和读写数据流；
+- system/character 数据与物理路径边界；
+- 迁移、删除、恢复和 Artifact 完整性证据；
+- lint/typecheck/test/coverage/build/E2E/package 的命令、提交和结果；
+- 残余风险、外部先决条件与明确 GO/NO-GO。

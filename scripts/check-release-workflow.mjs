@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { parse } from "yaml";
 
 const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
+const rootPackage = JSON.parse(readFileSync("package.json", "utf8"));
 const jobs = workflow?.jobs ?? {};
 const requiredJobs = [
 	"quality",
@@ -53,7 +54,15 @@ const requiredCommands = new Map([
 	["e2e", ["npm run test:e2e:electron"]],
 	["web-e2e", ["npm run test:e2e:web:required"]],
 	["live-model", ["npm run test:e2e:web:live"]],
-	["package", ["npm run test:diagnostics:crash", "npm run test:e2e:packaged"]],
+	[
+		"package",
+		[
+			"npm run test:diagnostics:crash",
+			"node scripts/verify-package.mjs",
+			"npm run test:e2e:packaged",
+			"node scripts/release-attestation.mjs package",
+		],
+	],
 	["release-gate", ["node scripts/release-attestation.mjs final"]],
 ]);
 for (const [job, expected] of requiredCommands) {
@@ -64,6 +73,37 @@ for (const [job, expected] of requiredCommands) {
 	}
 }
 
+const packageEvidenceUpload = jobs.package.steps.find(
+	(step) =>
+		typeof step?.uses === "string" &&
+		step.uses.startsWith("actions/upload-artifact@") &&
+		typeof step?.with?.name === "string" &&
+		step.with.name.startsWith("release-attestation-package-"),
+);
+if (!packageEvidenceUpload) throw new Error("package job must upload release evidence");
+const packageEvidencePaths = String(packageEvidenceUpload.with.path ?? "");
+const matrixOs = ["$", "{{ matrix.os-name }}"].join("");
+const matrixArch = ["$", "{{ matrix.arch }}"].join("");
+for (const required of [
+	`release-attestations/package-${matrixOs}-${matrixArch}.json`,
+	`release-attestations/package-evidence-${matrixOs}-${matrixArch}.json`,
+	`release-attestations/sbom-${matrixOs}-${matrixArch}.cdx.json`,
+]) {
+	if (!packageEvidencePaths.includes(required)) {
+		throw new Error(`package evidence upload is missing: ${required}`);
+	}
+}
+
+const lintCommand = rootPackage.scripts?.lint;
+if (typeof lintCommand !== "string") throw new Error("root lint script is missing");
+for (const contract of [
+	"node scripts/check-release-baseline.mjs",
+	"node scripts/check-release-version.mjs",
+]) {
+	if (!lintCommand.includes(contract))
+		throw new Error(`CI quality lint does not execute release contract: ${contract}`);
+}
+
 console.log(
-	"Release workflow contract passed: required jobs, commands, dependencies and targets present",
+	"Release workflow contract passed: required jobs, commands, dependencies, targets and version gates present",
 );

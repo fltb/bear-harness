@@ -21,10 +21,18 @@ export interface AcpPermissionRequest {
 	options: acp.PermissionOption[];
 }
 
+export type AcpProcessFailureCode = "acp_process_spawn_failed" | "acp_process_stdio_failed";
+
+export interface AcpProcessExit {
+	code: number | null;
+	signal: NodeJS.Signals | null;
+	errorCode?: AcpProcessFailureCode;
+}
+
 export interface AcpClientHandlers {
 	onSessionUpdate(notification: acp.SessionNotification): void;
 	onPermissionRequest(request: AcpPermissionRequest): void;
-	onExit(result: { code: number | null; signal: NodeJS.Signals | null; error?: string }): void;
+	onExit(result: AcpProcessExit): void;
 	readTextFile?: (request: acp.ReadTextFileRequest) => Promise<acp.ReadTextFileResponse>;
 	writeTextFile?: (request: acp.WriteTextFileRequest) => Promise<acp.WriteTextFileResponse>;
 	createTerminal?: (request: acp.CreateTerminalRequest) => Promise<acp.CreateTerminalResponse>;
@@ -43,6 +51,8 @@ type PendingPermission = {
 
 /** codex-acp extension method that steers a live session (`_session/steering`). */
 const SESSION_STEERING_METHOD = "_session/steering";
+const PROCESS_GRACEFUL_STOP_MS = 250;
+const PROCESS_STOP_TIMEOUT_MS = 2_000;
 
 /** JSON-RPC code for "Method not found", returned for unregistered extension methods. */
 function isMethodNotFound(error: unknown): boolean {
@@ -77,36 +87,63 @@ export class AcpRunClient {
 		return this.sessionId;
 	}
 
+	/**
+	 * Report only transport state that this client can prove from its own
+	 * process and ACP handles. A missing client/process is not evidence that a
+	 * worker owned by an earlier Host instance exited.
+	 */
+	recoveryState(): "attached" | "confirmed_lost" | "unknown" {
+		const process = this.process;
+		if (!process) return "unknown";
+		if (process.exitCode !== null || process.signalCode !== null) {
+			return "confirmed_lost";
+		}
+		if (!this.stopped && !process.killed && this.connection !== null && this.sessionId !== null) {
+			return "attached";
+		}
+		return "unknown";
+	}
+
 	async start(): Promise<void> {
 		if (this.connection) throw new Error("ACP run client already started");
 
 		const confined = applyProcessConfinement(this.spec);
-		const process = spawn(confined.command, confined.args, {
-			cwd: this.spec.cwd,
-			env: this.spec.env,
-			stdio: ["pipe", "pipe", "pipe"],
-		});
+		let process: ChildProcessWithoutNullStreams;
+		try {
+			process = spawn(confined.command, confined.args, {
+				cwd: this.spec.cwd,
+				env: this.spec.env,
+				stdio: ["pipe", "pipe", "pipe"],
+			});
+		} catch {
+			throw { kind: "unavailable", reason: "acp_process_spawn_failed" };
+		}
 		this.process = process;
-		let processError: Error | null = null;
-		let processStderr = "";
-		process.once("error", (error) => {
-			processError = error;
+		let processFailure: AcpProcessFailureCode | undefined;
+		process.once("error", () => {
+			processFailure = "acp_process_spawn_failed";
 		});
-		process.stderr.setEncoding("utf8");
-		process.stderr.on("data", (chunk: string) => {
-			if (processStderr.length < 4_000)
-				processStderr += chunk.slice(0, 4_000 - processStderr.length);
+		process.stdout.on("error", () => {
+			if (!this.stopped) processFailure ??= "acp_process_stdio_failed";
+		});
+		process.stdin.on("error", () => {
+			if (!this.stopped) processFailure ??= "acp_process_stdio_failed";
+		});
+		// Keep the pipe drained so a noisy worker cannot block, but never retain
+		// stderr: it can contain provider credentials or arbitrary user data.
+		process.stderr.on("data", () => undefined);
+		process.stderr.on("error", () => {
+			if (!this.stopped) processFailure ??= "acp_process_stdio_failed";
 		});
 		process.once("exit", (code, signal) => {
 			this.resolvePendingPermissionsAsCancelled();
-			this.connection?.close();
 			this.connection = null;
 			this.sessionId = null;
 			if (!this.stopped) {
 				this.handlers.onExit({
 					code,
 					signal,
-					error: processError?.message ?? (processStderr.trim() || undefined),
+					...(processFailure ? { errorCode: processFailure } : {}),
 				});
 			}
 		});
@@ -120,7 +157,7 @@ export class AcpRunClient {
 			const initialized = await this.connection.agent.request(acp.methods.agent.initialize, {
 				protocolVersion: acp.PROTOCOL_VERSION,
 				clientCapabilities: this.clientCapabilities(),
-				clientInfo: { name: "bear-harness", title: "Bear Harness", version: "0.0.0" },
+				clientInfo: { name: "bear-harness", title: "Bear Harness", version: "1.0.0" },
 			});
 			if (initialized.protocolVersion !== acp.PROTOCOL_VERSION) {
 				throw new Error(`ACP version mismatch: agent selected ${initialized.protocolVersion}`);
@@ -130,9 +167,13 @@ export class AcpRunClient {
 				mcpServers: [],
 			});
 			this.sessionId = session.sessionId;
-		} catch (error) {
-			await this.stop();
-			throw error;
+		} catch {
+			try {
+				await this.stop();
+			} catch {
+				// Startup failure is reported with one stable code below.
+			}
+			throw { kind: "unavailable", reason: "acp_start_failed" };
 		}
 	}
 
@@ -185,12 +226,18 @@ export class AcpRunClient {
 	async stop(): Promise<void> {
 		this.stopped = true;
 		this.resolvePendingPermissionsAsCancelled();
-		this.connection?.close();
 		this.connection = null;
 		this.sessionId = null;
 		const process = this.process;
-		this.process = null;
-		if (process && !process.killed) process.kill();
+		if (!process || process.exitCode !== null || process.signalCode !== null) return;
+		process.stdin.end();
+		if (await waitForProcessExit(process, PROCESS_GRACEFUL_STOP_MS)) return;
+		if (!process.killed) process.kill();
+		if (await waitForProcessExit(process, PROCESS_STOP_TIMEOUT_MS)) return;
+		process.kill("SIGKILL");
+		if (!(await waitForProcessExit(process, PROCESS_STOP_TIMEOUT_MS))) {
+			throw new Error("acp_process_stop_timeout");
+		}
 	}
 
 	private createClientApp(): acp.ClientApp {
@@ -283,4 +330,22 @@ export class AcpRunClient {
 		if (!this.sessionId) throw { kind: "conflict", reason: "executor_session_not_ready" };
 		return this.sessionId;
 	}
+}
+
+function waitForProcessExit(
+	process: ChildProcessWithoutNullStreams,
+	timeoutMs: number,
+): Promise<boolean> {
+	if (process.exitCode !== null || process.signalCode !== null) return Promise.resolve(true);
+	return new Promise((resolve) => {
+		const exited = () => {
+			clearTimeout(timer);
+			resolve(true);
+		};
+		const timer = setTimeout(() => {
+			process.off("exit", exited);
+			resolve(process.exitCode !== null || process.signalCode !== null);
+		}, timeoutMs);
+		process.once("exit", exited);
+	});
 }

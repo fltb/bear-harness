@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
 import type { EventBus } from "../storage/event-bus.js";
-import { companionIdentity, onboardingState } from "../storage/schema.js";
+import { companionRuntimeIdentity, onboardingState } from "../storage/schema.js";
 import type { CharacterLoader } from "./character-loader.js";
 import type {
 	CharacterOnboardingFlow,
@@ -101,20 +101,6 @@ export class FirstMeetingMachine {
 		);
 	}
 
-	setConversationHistoryRead(companionId: string, enabled: boolean): OnboardingStateRow {
-		const current = this.initialize(companionId);
-		const flow = this.flow(companionId);
-		return this.persistTransition(
-			companionId,
-			flow,
-			current.status === "complete" ? "complete" : (current.currentStepId ?? "complete"),
-			{
-				...current.stateData,
-				decisions: { ...current.stateData.decisions, conversation_history_read_enabled: enabled },
-			},
-		);
-	}
-
 	private flow(companionId: string): CharacterOnboardingFlow {
 		const character = this.characterLoader.load(companionId);
 		if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
@@ -140,7 +126,6 @@ export class FirstMeetingMachine {
 				answers: {},
 				decisions: {
 					relationship_memory_enabled: true,
-					conversation_history_read_enabled: true,
 				},
 			};
 		}
@@ -155,8 +140,6 @@ export class FirstMeetingMachine {
 		const answers: Record<string, string> = {};
 		const decisions: OnboardingStateData["decisions"] = {
 			relationship_memory_enabled: parsedState.data.decisions.relationship_memory_enabled ?? true,
-			conversation_history_read_enabled:
-				parsedState.data.decisions.conversation_history_read_enabled ?? true,
 		};
 		for (const step of flow.steps) {
 			if (step.kind === "acknowledge") continue;
@@ -174,11 +157,6 @@ export class FirstMeetingMachine {
 			decisions.relationship_memory_enabled =
 				parsedState.data.decisions.relationship_memory_enabled;
 		}
-		if (typeof parsedState.data.decisions.conversation_history_read_enabled === "boolean") {
-			decisions.conversation_history_read_enabled =
-				parsedState.data.decisions.conversation_history_read_enabled;
-		}
-
 		return {
 			schema_version: 1,
 			flow_version: flow.version,
@@ -262,9 +240,9 @@ export class FirstMeetingMachine {
 			this.db.transaction((transaction) => {
 				if (nicknameValue !== undefined) {
 					transaction
-						.update(companionIdentity)
+						.update(companionRuntimeIdentity)
 						.set({ nickname: nicknameValue })
-						.where(eq(companionIdentity.id, companionId))
+						.where(eq(companionRuntimeIdentity.companionId, companionId))
 						.run();
 				}
 				this.persist(companionId, nextState, stateData, transaction);

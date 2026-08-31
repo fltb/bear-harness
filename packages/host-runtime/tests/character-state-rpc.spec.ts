@@ -1,6 +1,5 @@
 // @vitest-environment node
 
-import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,8 +7,6 @@ import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type CredentialVault, createHostRuntime } from "../src/index.js";
-import type { Database } from "../src/storage/database.js";
-import { conversations } from "../src/storage/schema.js";
 
 const roots: string[] = [];
 const characterRoot = fileURLToPath(new URL("../../../config/characters", import.meta.url));
@@ -33,8 +30,25 @@ async function data(
 	return response.data;
 }
 
+async function configureConversationModel(runtime: ReturnType<typeof createHostRuntime>) {
+	await data(runtime, "provider.customUpsert:v1", {
+		providerId: "state-test",
+		name: "State Test",
+		baseUrl: "https://example.invalid/v1",
+		models: [{ id: "state-model" }],
+	});
+	await data(runtime, "provider.setApiKey:v1", {
+		providerId: "state-test",
+		apiKey: "session-key",
+		sessionOnly: true,
+	});
+	await data(runtime, "model.defaults.setReply:v1", {
+		reply: { providerId: "state-test", modelId: "state-model" },
+	});
+}
+
 describe("character state RPC projection", () => {
-	it("commits an intent, publishes an event, and exposes the result only through the next snapshot", async () => {
+	it("commits an intent, publishes an event, and exposes it through explicit conversation detail", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "bear-character-state-rpc-"));
 		roots.push(dataDir);
 		const runtime = createHostRuntime({
@@ -45,42 +59,33 @@ describe("character state RPC projection", () => {
 		});
 		await runtime.start();
 		try {
-			const conversation = { id: randomUUID() };
-			const database = Reflect.get(runtime, "db") as Database;
-			database.orm
-				.insert(conversations)
-				.values({ id: conversation.id, companionId: productConfig.defaultCharacterId })
-				.run();
-			const before = (await data(runtime, "snapshot.get:v1", {})) as {
-				companion: {
-					byConversation: Record<
-						string,
-						{
-							character: {
-								document: { story: { undelivered_report: { user_interpretation: string[] } } };
-								revisions: { conversation: number; global: number };
-							};
-						}
-					>;
+			await configureConversationModel(runtime);
+			const conversation = (await data(runtime, "conversation.create:v1", {
+				title: "State projection",
+			})) as { sessionId: string };
+			const before = (await data(runtime, "companionState.get:v1", {
+				conversationId: conversation.sessionId,
+			})) as {
+				state: {
+					character: {
+						document: { story: { summary: string } };
+						revisions: { conversation: number; global: number };
+					};
 				};
 			};
-			const projection = before.companion.byConversation[conversation.id]?.character;
-			if (!projection) throw new Error("missing initial character-state projection");
-			expect(projection.document.story.undelivered_report.user_interpretation).toEqual([]);
+			const projection = before.state.character;
+			expect(projection.document.story.summary).toBe("尚未开始。");
 
 			const receive = vi.fn();
 			const stop = runtime.subscribeEvents(receive, 0);
-			const response = await data(runtime, "companionState.patch:v1", {
-				conversationId: conversation.id,
-				expectedRevisions: projection.revisions,
-				operations: [
+			const response = await data(runtime, "companionState.update:v1", {
+				conversationId: conversation.sessionId,
+				changes: [
 					{
-						op: "replace",
-						path: "/character/story/undelivered_report/user_interpretation",
-						value: ["两份记录都不足以确认最终接收者。"],
+						path: "/character/story/summary",
+						value: "两份记录都不足以确认最终接收者。",
 					},
 				],
-				dedupeKey: randomUUID(),
 			});
 			expect(response).toEqual({});
 			expect(receive.mock.calls.map(([event]) => event.kind)).toContain(
@@ -88,14 +93,13 @@ describe("character state RPC projection", () => {
 			);
 			stop();
 
-			const after = (await data(runtime, "snapshot.get:v1", {})) as typeof before;
-			expect(
-				after.companion.byConversation[conversation.id]?.character.document.story.undelivered_report
-					.user_interpretation,
-			).toEqual(["两份记录都不足以确认最终接收者。"]);
-			expect(
-				after.companion.byConversation[conversation.id]?.character.revisions.conversation,
-			).toBe(projection.revisions.conversation + 1);
+			const after = (await data(runtime, "companionState.get:v1", {
+				conversationId: conversation.sessionId,
+			})) as typeof before;
+			expect(after.state.character.document.story.summary).toBe("两份记录都不足以确认最终接收者。");
+			expect(after.state.character.revisions.conversation).toBe(
+				projection.revisions.conversation + 1,
+			);
 		} finally {
 			await runtime.close();
 		}

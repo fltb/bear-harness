@@ -1,5 +1,5 @@
 /**
- * CredentialStore — persists provider API keys and OAuth tokens through an
+ * CredentialStore — persists trusted Host API keys and OAuth tokens through an
  * injected platform vault.
  *
  * The vault abstracts the OS-backed encryption layer (Electron's safeStorage
@@ -19,8 +19,13 @@ import type {
 	CredentialStore as PiCredentialStore,
 } from "@earendil-works/pi-ai";
 import { asc, eq } from "drizzle-orm";
+import type { AppSettingsStore } from "../storage/app-settings-store.js";
 import type { AppDatabase } from "../storage/database.js";
 import { providerAccounts } from "../storage/schema.js";
+
+const INTERNAL_CREDENTIAL_PREFIX = "$bear:";
+/** Reserved vault entry for the installation-wide remote embedding service. */
+export const REMOTE_EMBEDDING_CREDENTIAL_ID = `${INTERNAL_CREDENTIAL_PREFIX}embedding:remote`;
 
 /**
  * Platform credential encryption boundary. The desktop app injects an
@@ -74,6 +79,21 @@ export class CredentialStore {
 		this.vault = vault;
 	}
 
+	/**
+	 * One-time upgrade path for the pre-vault remote embedding key. No caller
+	 * can read the key: AppSettingsStore supplies it directly to this trusted
+	 * store, then removes the plaintext only after `set` succeeds.
+	 */
+	async migrateLegacyRemoteEmbeddingCredential(
+		settings: AppSettingsStore,
+	): Promise<CredentialStatus | null> {
+		let status: CredentialStatus | undefined;
+		const migrated = await settings.migrateLegacyEmbeddingCredential(async (apiKey) => {
+			status = await this.set(REMOTE_EMBEDDING_CREDENTIAL_ID, { apiKey });
+		});
+		return migrated ? (status ?? null) : null;
+	}
+
 	/** Store a credential for a provider. */
 	async set(
 		providerId: string,
@@ -111,6 +131,11 @@ export class CredentialStore {
 
 	/** Retrieve a credential for a provider. */
 	async get(providerId: string): Promise<ProviderCredential | null> {
+		return this.read(providerId);
+	}
+
+	/** Trusted Host-only synchronous read for constructors that consume configuration synchronously. */
+	read(providerId: string): ProviderCredential | null {
 		const session = this.sessionCredentials.get(providerId);
 		if (session) {
 			return {
@@ -204,6 +229,7 @@ export class CredentialStore {
 			.all();
 		const result: Array<{ providerId: string; status: CredentialStatus }> = [];
 		for (const row of rows) {
+			if (row.id.startsWith(INTERNAL_CREDENTIAL_PREFIX)) continue;
 			const status = row.status as CredentialStatus;
 			if ((status === "stored" || status === "weak_storage") && !this.canPersistCredentials()) {
 				result.push({ providerId: row.id, status: "unavailable" });
@@ -212,6 +238,7 @@ export class CredentialStore {
 			result.push({ providerId: row.id, status });
 		}
 		for (const [providerId] of this.sessionCredentials) {
+			if (providerId.startsWith(INTERNAL_CREDENTIAL_PREFIX)) continue;
 			if (!result.some((r) => r.providerId === providerId)) {
 				result.push({ providerId, status: "session_only" });
 			}

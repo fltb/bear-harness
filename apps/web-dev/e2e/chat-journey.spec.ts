@@ -33,6 +33,31 @@ test("chat streams once and edited history regenerates once through the UI", asy
 	expect(pageErrors).toEqual([]);
 });
 
+test("two Pi sessions can run concurrently, switch locally, and finish without stealing focus", async ({
+	page,
+}) => {
+	await ensureReadyForConversation(page);
+	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
+	await sendMessage(page, "STREAM_HOLD_A");
+	await expect(page.getByRole("status", { name: zhCN.messages.responding })).toBeVisible();
+	await expect(thread.getByText(/HOLD_ONE/)).toBeVisible();
+
+	await page.getByRole("button", { name: zhCN.sidebar.newConversation, exact: true }).click();
+	await expect(thread.getByText(/HOLD_ONE/)).toBeHidden();
+	await sendMessage(page, "E2E_OK session B stays focused");
+	await expect(thread.getByText("E2E_OK", { exact: true })).toBeVisible();
+
+	const sessionA = page
+		.getByRole("navigation", { name: zhCN.sidebar.conversations })
+		.getByRole("button", { name: /HOLD_ONE HOLD_TWO/ });
+	await expect(sessionA).toBeVisible();
+	await expect(thread.getByText("E2E_OK", { exact: true })).toBeVisible();
+	await expect(thread.getByText("HOLD_ONE HOLD_TWO", { exact: true })).toBeHidden();
+	await sessionA.click();
+	await expect(thread.getByText("HOLD_ONE HOLD_TWO", { exact: true })).toBeVisible();
+	await expect(page.getByRole("status", { name: zhCN.messages.responding })).toBeHidden();
+});
+
 test("a local path is ordinary natural-language user input", async ({ page }) => {
 	await ensureReadyForConversation(page);
 	const path = fileURLToPath(new URL("./fixtures/local-note.txt", import.meta.url));

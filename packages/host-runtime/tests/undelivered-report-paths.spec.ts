@@ -12,80 +12,43 @@ import {
 const characterRoot = resolve(process.cwd(), "../../config/characters");
 
 describe("《未送达的回报》natural-language path contract", () => {
-	it("exposes every story branch as ordinary user text with no executable choice metadata", () => {
+	it("keeps choices out of the package and delegates response-specific choices to the tool", () => {
 		const character = new CharacterLoader(characterRoot).load("jizhou");
 		expect(character).not.toBeNull();
 		if (!character) return;
-		const sets = character.roleplay.choice_sets.filter((set) => set.id.startsWith("undelivered_"));
-		expect(sets.map((set) => set.id)).toEqual([
-			"undelivered_entry",
-			"undelivered_signal",
-			"undelivered_route",
-			"undelivered_snowfield_reconstruction",
-			"undelivered_testimony",
-			"undelivered_last_shift",
-			"undelivered_future",
-			"undelivered_ending",
-			"undelivered_archived_resume",
-			"undelivered_reopened_ending",
-		]);
-		const choices = sets.flatMap((set) => set.choices);
-		expect(choices).toHaveLength(28);
-		for (const choice of choices) {
-			expect(choice.message.trim().length).toBeGreaterThan(0);
-			expect(choice).not.toHaveProperty("event");
-			expect(choice).not.toHaveProperty("follow_up");
-		}
+		expect(character).not.toHaveProperty("roleplay");
+		expect(character).not.toHaveProperty("choice_sets");
+		const [skill] = loadRoleSkills([resolve(characterRoot, "jizhou/skills/undelivered-report")]);
+		expect(skill?.content).toContain("`host_choices`");
 	});
 
-	it("keeps all three endings and the archived reopening path available as natural language", () => {
-		const character = new CharacterLoader(characterRoot).load("jizhou");
-		if (!character) throw new Error("jizhou package missing");
-		const byId = new Map(character.roleplay.choice_sets.map((set) => [set.id, set]));
-		expect(byId.get("undelivered_ending")?.choices.map((choice) => choice.id)).toEqual([
-			"returned",
-			"archived",
-			"left_open",
-		]);
-		expect(
-			byId.get("undelivered_archived_resume")?.choices.find((choice) => choice.id === "reopen")
-				?.message,
-		).toContain("重新打开");
-		expect(byId.get("undelivered_reopened_ending")?.choices.map((choice) => choice.id)).toEqual([
-			"returned",
-			"left_open",
-			"pause",
-		]);
-	});
-
-	it("makes each next chapter readable before committing its destination position", () => {
+	it("selects one chapter resource from a simple number", () => {
 		const [skill] = loadRoleSkills([resolve(characterRoot, "jizhou/skills/undelivered-report")]);
 		if (!skill) throw new Error("undelivered-report skill missing");
-		const eligibleAt = (position: string) =>
+		const eligibleAt = (chapter: number) =>
 			eligibleRoleSkillResources(skill, {
-				story: { undelivered_report: { position } },
+				story: { chapter },
 			}).map((resource) => resource.id);
 
-		expect(eligibleAt("evidence")).toEqual(expect.arrayContaining(["storm-relay", "snow-route"]));
-		expect(eligibleAt("snowfield_reconstruction")).toContain("testimonies");
-		expect(eligibleAt("relay")).toContain("testimonies");
-		expect(eligibleAt("testimony")).toContain("last-shift");
-		expect(eligibleAt("last_shift")).toContain("future");
-		expect(eligibleAt("future")).toContain("ending");
+		expect(eligibleAt(0)).toEqual(["entry"]);
+		expect(eligibleAt(1)).toEqual(["damaged-signal"]);
+		expect(eligibleAt(2)).toEqual(["routes"]);
+		expect(eligibleAt(4)).toEqual(["last-shift"]);
+		expect(eligibleAt(7)).toEqual(["ending"]);
 	});
 
-	it("keeps an archived ending reopenable instead of marking the Skill completed", () => {
+	it("uses a single boolean for active versus resumable", () => {
 		const [skill] = loadRoleSkills([resolve(characterRoot, "jizhou/skills/undelivered-report")]);
 		if (!skill) throw new Error("undelivered-report skill missing");
 		expect(
 			roleSkillStatus(skill, {
-				story: { undelivered_report: { phase: "resolved", status: "paused" } },
+				story: { active: false, chapter: 7 },
 			}),
 		).toBe("eligible");
 		expect(
 			roleSkillStatus(skill, {
-				story: { undelivered_report: { phase: "resolved", status: "completed" } },
+				story: { active: true, chapter: 7 },
 			}),
-		).toBe("completed");
+		).toBe("active");
 	});
 });

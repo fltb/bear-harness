@@ -253,6 +253,47 @@
 	color: var(--text-muted);
 }
 
+.character-deletion-zone {
+	@apply grid gap-3 rounded-lg border p-4;
+	border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+	background: var(--surface-danger);
+}
+
+.character-deletion-zone header,
+.character-deletion-option > div {
+	@apply grid gap-1;
+}
+
+.character-deletion-zone header span,
+.character-deletion-option span,
+.character-deletion-option small {
+	@apply text-xs leading-relaxed;
+}
+
+.character-deletion-zone header span,
+.character-deletion-option span {
+	color: var(--text-muted);
+}
+
+.character-deletion-option {
+	@apply flex items-start justify-between gap-4 border-t pt-3;
+	border-color: color-mix(in srgb, var(--danger) 24%, var(--line));
+}
+
+.character-deletion-option > div {
+	@apply min-w-0;
+}
+
+.character-deletion-option small {
+	color: var(--text-danger);
+}
+
+.character-deletion-option button[data-variant="danger"] {
+	@apply shrink-0;
+	border-color: color-mix(in srgb, var(--danger) 50%, var(--line));
+	color: var(--text-danger);
+}
+
 .plugin-trust-overlay {
 	@apply fixed inset-0;
 	background: var(--surface-overlay);

@@ -230,7 +230,6 @@ describe("settings workflows", () => {
 	it("builds proxy patches, trims manual URLs, and remains retryable after failure", async () => {
 		const [settings, setSettings] = createSignal<SettingsData>({
 			networkProxy: { mode: "system" },
-			memory: { embeddingMode: "local" },
 		} as SettingsData);
 		const set = vi
 			.fn()

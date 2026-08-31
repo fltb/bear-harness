@@ -24,6 +24,7 @@ declare global {
 					receive: (batch: unknown) => void,
 					fail: (error: unknown) => void,
 				): () => void;
+				listenPi(receive: (batch: unknown) => void, fail: (error: unknown) => void): () => void;
 				invoke(channel: string, request: unknown): Promise<unknown>;
 			}>;
 		}>;
@@ -37,6 +38,7 @@ installRendererFaultReporting((fault) => window.bearDesktop.diagnostics.reportRe
 
 const client: CompanionClient = createCompanionClient({
 	listen: (afterSeq, receive, fail) => window.bearDesktop.transport.listen(afterSeq, receive, fail),
+	listenPi: (receive, fail) => window.bearDesktop.transport.listenPi(receive, fail),
 	invoke: <E extends AnyRpcEndpoint>(endpoint: E, request: RequestOf<E>) =>
 		window.bearDesktop.transport.invoke(endpoint.channel, request),
 });

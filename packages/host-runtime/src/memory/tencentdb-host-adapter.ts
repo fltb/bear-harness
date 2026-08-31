@@ -64,10 +64,10 @@ const MAX_TOOL_ITERATIONS = 20;
 
 function defaultLogger(): Logger {
 	return {
-		debug: (message) => console.debug(message),
-		info: (message) => console.info(message),
-		warn: (message) => console.warn(message),
-		error: (message) => console.error(message),
+		debug: () => undefined,
+		info: () => undefined,
+		warn: () => undefined,
+		error: () => undefined,
 	};
 }
 
