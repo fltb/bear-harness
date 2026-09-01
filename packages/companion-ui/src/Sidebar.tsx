@@ -140,13 +140,13 @@ export function Sidebar(props: {
 							{(conversation) => (
 								<div class="nav-item-wrap">
 									<Show
-										when={workflow.editingId() !== conversation.id}
+										when={workflow.editingId() !== conversation.conversationId}
 										fallback={
 											<form
 												class="conversation-rename"
 												onSubmit={(event) => {
 													event.preventDefault();
-													void workflow.saveRename(conversation.id);
+													void workflow.saveRename(conversation.conversationId);
 												}}
 											>
 												<TextField>
@@ -165,18 +165,44 @@ export function Sidebar(props: {
 										<Button
 											type="button"
 											class="nav-item"
+											data-conversation-id={conversation.conversationId}
 											aria-current={
-												conversation.id === store.activeConversationId ? "page" : undefined
+												conversation.conversationId === store.activeConversationId
+													? "page"
+													: undefined
 											}
 											onClick={() => {
 												props.onNavigate?.();
 												void workflow.runSidebarAction(() =>
-													store.selectConversation(conversation.id),
+													store.selectConversation(conversation.conversationId),
 												);
 											}}
 										>
-											<strong>{conversation.title || t("sidebar.newConversation")}</strong>
-											<span>{workflow.sceneLabel(conversation.id)}</span>
+											<strong>
+												{conversation.name ||
+													conversation.firstMessage ||
+													t("sidebar.newConversation")}
+												<Show when={conversation.isStreaming}>
+													<span
+														class="conversation-running"
+														role="status"
+														aria-label={t("messages.responding")}
+													/>
+												</Show>
+												<Show
+													when={
+														!conversation.isStreaming &&
+														store.completedConversationIds.has(conversation.conversationId)
+													}
+												>
+													<span
+														class="conversation-completed"
+														role="status"
+														aria-label={t("sidebar.responseReady")}
+													/>
+												</Show>
+											</strong>
+											<span>{workflow.sceneLabel(conversation.conversationId)}</span>
 										</Button>
 										<div class="conversation-actions">
 											<Button
@@ -197,7 +223,7 @@ export function Sidebar(props: {
 												aria-label={t("sidebar.archiveConversation")}
 												onClick={() =>
 													void workflow.runSidebarAction(() =>
-														store.archiveConversation(conversation.id),
+														store.archiveConversation(conversation.conversationId),
 													)
 												}
 											>
@@ -210,8 +236,8 @@ export function Sidebar(props: {
 												aria-label={t("sidebar.deleteConversation")}
 												onClick={() => {
 													setDeleteTarget({
-														id: conversation.id,
-														title: conversation.title,
+														id: conversation.conversationId,
+														title: conversation.name ?? conversation.firstMessage,
 													});
 												}}
 											>

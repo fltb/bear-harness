@@ -99,7 +99,7 @@ function DesktopFrame() {
 		if (store.runs.some((run) => run.status === "enqueued" || run.status === "running"))
 			return "thinking";
 		const pi = store.activePiLiveState;
-		if (pi?.isStreaming || pi?.queuedUserMessages?.length) return "listening";
+		if (pi?.isStreaming || pi?.steering.length || pi?.followUp.length) return "listening";
 		if (pi?.errorMessage) return "problem";
 		return "presence";
 	});

@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
+import { CacheKey } from "@bear-harness/protocol/schema";
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { ArtifactStore } from "../artifacts/index.js";
 import type { AppDatabase, CanonVectorIndex } from "../storage/database.js";
-import type { EventBus } from "../storage/event-bus.js";
+import type { InvalidationHub } from "../storage/invalidation-hub.js";
 import {
 	canonChunks,
 	canonEntities,
@@ -70,7 +71,7 @@ export class CanonHubService {
 	constructor(
 		private readonly db: AppDatabase,
 		private readonly artifacts: ArtifactStore,
-		private readonly eventBus: EventBus,
+		private readonly invalidations: InvalidationHub,
 		private readonly embeddingService?: () => CanonEmbeddingService | undefined,
 		private readonly vectors?: CanonVectorIndex,
 	) {}
@@ -111,7 +112,7 @@ export class CanonHubService {
 			});
 			if (values.length > 0) transaction.insert(canonChunks).values(values).run();
 		});
-		this.eventBus.publish("canon.source_added", { companionId, sourceId: id, logicalName });
+		this.invalidations.invalidate(CacheKey.canonSources(companionId));
 		const source = this.getSource(id);
 		if (!source) throw { kind: "internal", reason: "canon_source_not_persisted" };
 		void this.indexPending(companionId);
@@ -444,7 +445,10 @@ export class CanonHubService {
 				})
 				.run();
 		});
-		this.eventBus.publish("canon.package_synced", { companionId });
+		this.invalidations.invalidate(
+			CacheKey.canonSources(companionId),
+			CacheKey.canonModules(companionId),
+		);
 		void this.indexPending(companionId);
 	}
 
@@ -461,7 +465,7 @@ export class CanonHubService {
 			.where(and(eq(canonSources.id, sourceId), eq(canonSources.companionId, companionId)))
 			.run();
 		if (result.changes === 0) throw { kind: "not_found", reason: "canon_source_not_found" };
-		this.eventBus.publish("canon.source_removed", { companionId, sourceId });
+		this.invalidations.invalidate(CacheKey.canonSources(companionId));
 	}
 
 	listModules(companionId: string): StoryModuleRecord[] {
@@ -552,7 +556,7 @@ export class CanonHubService {
 				},
 			})
 			.run();
-		this.eventBus.publish("canon.module_saved", { companionId: params.companionId, moduleId: id });
+		this.invalidations.invalidate(CacheKey.canonModules(params.companionId));
 		const saved = this.listModules(params.companionId).find((module) => module.id === id);
 		if (!saved) throw { kind: "internal", reason: "story_module_not_persisted" };
 		return saved;
@@ -598,7 +602,7 @@ export class CanonHubService {
 			.where(and(eq(storyModules.id, id), eq(storyModules.companionId, companionId)))
 			.run();
 		if (result.changes === 0) throw { kind: "not_found", reason: "story_module_not_found" };
-		this.eventBus.publish("canon.module_removed", { companionId, moduleId: id });
+		this.invalidations.invalidate(CacheKey.canonModules(companionId));
 	}
 
 	private getSource(id: string): CanonSourceRecord | null {

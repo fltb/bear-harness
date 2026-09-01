@@ -1,3 +1,4 @@
+import { CacheKey } from "@bear-harness/protocol/schema";
 import {
 	createMutation,
 	createQuery,
@@ -6,7 +7,6 @@ import {
 	type QueryKey,
 } from "@tanstack/solid-query";
 import type { Accessor } from "solid-js";
-import { commitQueryValue, readQueryValue } from "./query-sync.js";
 
 type MaybeAccessor<T> = T | Accessor<T>;
 interface Refresh {
@@ -16,27 +16,27 @@ interface Refresh {
 const refreshesByClient = new WeakMap<QueryClient, Map<string, Refresh>>();
 
 export const queryKeys = {
-	snapshot: ["snapshot"] as const,
-	conversations: ["conversations"] as const,
-	archivedConversations: ["conversations", "archived"] as const,
-	conversation: (id: string) => ["conversation", id] as const,
-	companionState: (conversationId: string) => ["companionState", conversationId] as const,
-	settingsCapabilities: ["settings", "capabilities"] as const,
-	runs: ["runs"] as const,
-	characters: ["characters"] as const,
-	characterPackage: (id: string) => ["character", "package", id] as const,
-	characterDeletionStatus: (id: string) => ["character", "deletionStatus", id] as const,
+	snapshot: CacheKey.snapshot(),
+	conversations: CacheKey.conversations(),
+	archivedConversations: [...CacheKey.conversations(), "archived"] as const,
+	conversation: CacheKey.conversation,
+	companionState: CacheKey.companionState,
+	settingsCapabilities: CacheKey.settingsCapabilities(),
+	runs: CacheKey.runs(),
+	characters: CacheKey.characters(),
+	characterPackage: CacheKey.characterPackage,
+	characterDeletionStatus: CacheKey.characterDeletionStatus,
 	canonSources: (id?: string) => ["canon", "sources", id ?? null] as const,
 	canonModules: (id?: string) => ["canon", "modules", id ?? null] as const,
 	onboarding: ["onboarding"] as const,
-	settings: ["settings"] as const,
-	providers: ["providers"] as const,
-	embeddingDownload: ["embedding", "download"] as const,
-	providerLogin: (id: string) => ["providerLogin", id] as const,
-	modelPool: ["models", "pool"] as const,
-	modelDefaults: ["models", "defaults"] as const,
-	systemModelDefaults: ["models", "systemDefaults"] as const,
-	modelRoute: (id: string) => ["models", "route", id] as const,
+	settings: CacheKey.settings(),
+	providers: CacheKey.providers(),
+	embeddingDownload: CacheKey.embeddingDownload(),
+	providerLogin: CacheKey.providerLogin,
+	modelPool: CacheKey.modelPool(),
+	modelDefaults: CacheKey.modelDefaults(),
+	systemModelDefaults: CacheKey.systemModelDefaults(),
+	modelRoute: CacheKey.modelRoute,
 };
 
 export function createRpcQuery<T>(input: {
@@ -49,8 +49,7 @@ export function createRpcQuery<T>(input: {
 	return createQuery(
 		() => ({
 			queryKey: typeof input.key === "function" ? (input.key as Accessor<QueryKey>)() : input.key,
-			queryFn: ({ queryKey }) =>
-				readQueryValue(input.client, queryKey, () => input.request(queryKey)),
+			queryFn: ({ queryKey }) => input.request(queryKey),
 			structuralSharing: false,
 			initialData: input.initialData,
 			enabled:
@@ -85,7 +84,7 @@ export function createRpcMutation<TVariables, TResult = unknown>(input: {
 }
 
 export function hydrateRpcQuery<T>(client: QueryClient, key: QueryKey, value: T): void {
-	commitQueryValue(client, key, value);
+	client.setQueryData(key, value);
 }
 
 export async function refreshRpcQuery<T>(input: {
@@ -105,7 +104,6 @@ export async function refreshRpcQuery<T>(input: {
 	refreshes.set(refreshKey, refresh);
 	refresh.promise = (async () => {
 		let result!: T;
-		let rejected = 0;
 		do {
 			refresh.dirty = false;
 			await input.client.invalidateQueries(
@@ -117,12 +115,7 @@ export async function refreshRpcQuery<T>(input: {
 				{ cancelRefetch: false },
 			);
 			const value = await input.request();
-			if (!commitQueryValue(input.client, input.key, value)) {
-				if (rejected >= 2) throw new Error("Host query could not commit a current revision");
-				rejected += 1;
-				refresh.dirty = true;
-				continue;
-			}
+			input.client.setQueryData(input.key, value);
 			result = value;
 		} while (refresh.dirty);
 		return result;

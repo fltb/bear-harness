@@ -18,7 +18,6 @@ import {
 	SYSTEM_SCHEMA_SQL,
 	SystemDatabase,
 } from "../src/storage/database.js";
-import { EventBus } from "../src/storage/event-bus.js";
 import { conversations } from "../src/storage/schema.js";
 
 const roots: string[] = [];
@@ -40,7 +39,7 @@ function fixture() {
 	const loader = new CharacterLoader(resolve(import.meta.dirname, "../../../config/characters"));
 	const character = loader.load("jizhou");
 	if (!character) throw new Error("missing default character");
-	loader.seed(system.orm, new EventBus(database.orm), character);
+	loader.seed(system.orm, character);
 	system.close();
 	database.orm
 		.insert(conversations)

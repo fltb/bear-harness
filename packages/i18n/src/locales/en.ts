@@ -43,7 +43,6 @@ export const en = {
 			system_prompt: "Role rules",
 		},
 		storageTab: "Role storage",
-		memoryTab: "Role memory",
 		pluginTrust: "Plugin trust",
 		pluginTrusted: "Trusted",
 		pluginDisabled: "Not enabled",
@@ -52,13 +51,6 @@ export const en = {
 		storageDefinition: "Role package storage definition",
 		storyProjection: "Story projection",
 		projectionCounts: "{media} presentation resources",
-		relationshipMemory: "Relationship memory",
-		relationshipMemoryDescription:
-			"When enabled, confirmed and included relationship memories can be recalled for this character. Turning it off does not delete them.",
-		readConversationHistory: "Read conversation history",
-		readConversationHistoryDescription:
-			"When enabled, this character can use earlier conversations during recall. Turning it off does not delete conversations.",
-		relationshipMemoryTitle: "Role relationship memory",
 		unsaved: "Unsaved edits",
 		aligned: "Matches the Host role package",
 		conflict:
@@ -107,6 +99,7 @@ export const en = {
 		emptyArchivedConversations: "No archived conversations.",
 		noSearchResults: "No matching conversations. Try a different search.",
 		unreadMessage: "Unread messages",
+		responseReady: "Response completed",
 		renameConversation: "Rename conversation",
 		saveConversation: "Save",
 		archiveConversation: "Archive conversation",

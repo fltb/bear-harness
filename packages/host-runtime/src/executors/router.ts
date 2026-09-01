@@ -37,7 +37,7 @@ export interface ExecutorTask {
 export type ExecutorEvent =
 	| { type: "started" }
 	| { type: "evidence"; kind: string; data: unknown }
-	| { type: "needs_user"; prompt: string; requestId?: string; options?: ExecutorPermissionOption[] }
+	| { type: "needs_user"; prompt: string; requestId: string; options?: ExecutorPermissionOption[] }
 	| { type: "completed"; summary?: string }
 	| { type: "failed"; reason: string }
 	| { type: "cancelled"; reason?: string };

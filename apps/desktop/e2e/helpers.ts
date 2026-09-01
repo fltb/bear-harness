@@ -166,7 +166,7 @@ export async function provisionReplyModel(window: Page) {
 	}
 	const conversation = await invokeRpc(window, RPC.conversation.create, {});
 	await invokeRpc(window, RPC.model.routeSet, {
-		conversationId: conversation.sessionId,
+		conversationId: conversation.conversationId,
 		selected: { providerId: provider.id, modelId: model.id },
 	});
 	await window.reload();
@@ -228,7 +228,7 @@ export async function assertProductPage(window: Page, _product: Readonly<Product
 	expect(bridge.keys).toEqual(["platform", "diagnostics", "localFiles", "transport"]);
 	expect(bridge.diagnosticsKeys).toEqual(["reportRendererFault"]);
 	expect(bridge.localFileKeys).toEqual(["pickFiles", "pickFolder", "pathsForDroppedFiles"]);
-	expect(bridge.transportKeys).toEqual(["listen", "listenPi", "invoke"]);
+	expect(bridge.transportKeys).toEqual(["listenInvalidations", "subscribeLive", "invoke"]);
 	expect(bridge.platform).toMatch(/^(darwin|win32|linux)$/);
 	expect(bridge.reporterType).toBe("function");
 }

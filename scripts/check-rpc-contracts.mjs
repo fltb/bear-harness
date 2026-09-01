@@ -56,10 +56,6 @@ function collectProtocolContract(node, file, source) {
 					`${file}:${channel.loc?.start.line ?? 0}: duplicate RPC channel ${JSON.stringify(channel.value)} (already declared at line ${previous})`,
 				);
 			else rpcChannels.set(channel.value, channel.loc?.start.line ?? 0);
-			if (!/:v\d+$/.test(channel.value))
-				failures.push(
-					`${file}:${channel.loc?.start.line ?? 0}: RPC channel ${JSON.stringify(channel.value)} must end with :vN`,
-				);
 			rpcEndpointSchemas.set(channel.value, {
 				request: request.name,
 				response: response.name,
@@ -104,15 +100,19 @@ function visit(node, file) {
 		const first = node.arguments?.[0];
 		if (
 			(name === "registerHandler" || name === "invoke") &&
-			// Sandboxed preload cannot import runtime schemas. These two fixed
+			// Sandboxed preload cannot import runtime schemas. These fixed
 			// transport lifecycle calls are not business RPC endpoints.
 			!(
 				file === "apps/desktop/src/preload/index.cts" &&
 				node.callee.object?.name === "ipcRenderer" &&
-				["events:listen:v1", "events:unlisten:v1"].includes(first?.value)
+				[
+					"host:invalidations:listen",
+					"host:invalidations:unlisten",
+					"host:live:listen",
+					"host:live:unlisten",
+				].includes(first?.value)
 			) &&
-			first?.type === "StringLiteral" &&
-			/:v\d+$/.test(first.value)
+			first?.type === "StringLiteral"
 		) {
 			failures.push(
 				`${file}:${first.loc?.start.line ?? 0}: use an RPC endpoint object, not ${JSON.stringify(first.value)}`,

@@ -3,13 +3,13 @@ import { getBootstrap, projectPiEntries } from "./helpers";
 
 interface PiEntry {
 	id: string;
-	kind: string;
+	type: string;
 	role?: string;
 	text?: string;
 }
 
 interface ConversationProjection {
-	timeline: { entries: unknown[] };
+	branch: { entries: unknown[] };
 }
 
 interface CompanionStateProjection {
@@ -21,7 +21,7 @@ async function conversationProjection(
 	token: string,
 	conversationId: string,
 ): Promise<ConversationProjection> {
-	return rpc(page, token, "conversation.open:v1", { id: conversationId });
+	return rpc(page, token, "conversation.open", { conversationId });
 }
 
 async function rpc<T>(page: Page, token: string, channel: string, data: unknown): Promise<T> {
@@ -39,37 +39,37 @@ test("rule provider exercises send and edited-history regeneration deterministic
 }) => {
 	await page.goto("/");
 	const bootstrap = await getBootstrap(page);
-	await rpc(page, bootstrap.token, "provider.customUpsert:v1", {
+	await rpc(page, bootstrap.token, "provider.customUpsert", {
 		providerId: "e2e-rule",
 		name: "E2E Rule Provider",
 		baseUrl: `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/v1`,
 		models: [{ id: "rule-model" }],
 	});
-	await rpc(page, bootstrap.token, "provider.setApiKey:v1", {
+	await rpc(page, bootstrap.token, "provider.setApiKey", {
 		providerId: "e2e-rule",
 		apiKey: "e2e-rule-key",
 		sessionOnly: true,
 	});
-	await rpc(page, bootstrap.token, "model.enable:v1", {
+	await rpc(page, bootstrap.token, "model.enable", {
 		providerId: "e2e-rule",
 		modelId: "rule-model",
 		label: "E2E Rule Provider",
 	});
-	const conversation = await rpc<{ sessionId: string }>(
+	const conversation = await rpc<{ conversationId: string }>(
 		page,
 		bootstrap.token,
-		"conversation.create:v1",
+		"conversation.create",
 		{
 			title: "Rule provider",
 		},
 	);
-	await rpc(page, bootstrap.token, "model.route.set:v1", {
-		conversationId: conversation.sessionId,
+	await rpc(page, bootstrap.token, "model.route.set", {
+		conversationId: conversation.conversationId,
 		selected: { providerId: "e2e-rule", modelId: "rule-model" },
 	});
 
-	await rpc(page, bootstrap.token, "message.send:v1", {
-		conversationId: conversation.sessionId,
+	await rpc(page, bootstrap.token, "message.send", {
+		conversationId: conversation.conversationId,
 		text: "你是谁？",
 	});
 	await expect
@@ -77,43 +77,47 @@ test("rule provider exercises send and edited-history regeneration deterministic
 			const projection = await conversationProjection(
 				page,
 				bootstrap.token,
-				conversation.sessionId,
+				conversation.conversationId,
 			);
-			return projectPiEntries(projection.timeline.entries)
-				.filter((entry) => entry.kind === "message" && entry.role === "assistant")
+			return projectPiEntries(projection.branch.entries)
+				.filter((entry) => entry.type === "message" && entry.role === "assistant")
 				.at(-1)
 				?.text?.trim();
 		})
 		.toBe("我是 E2E Rule Provider。");
 
-	const projection = await conversationProjection(page, bootstrap.token, conversation.sessionId);
-	const userEntry = projectPiEntries(projection.timeline.entries).find(
-		(entry) => entry.kind === "message" && entry.role === "user" && entry.text === "你是谁？",
+	const projection = await conversationProjection(
+		page,
+		bootstrap.token,
+		conversation.conversationId,
+	);
+	const userEntry = projectPiEntries(projection.branch.entries).find(
+		(entry) => entry.type === "message" && entry.role === "user" && entry.text === "你是谁？",
 	);
 	if (!userEntry) throw new Error("rule provider projection has no native user entry");
-	await rpc(page, bootstrap.token, "message.edit:v1", {
-		conversationId: conversation.sessionId,
+	await rpc(page, bootstrap.token, "message.edit", {
+		conversationId: conversation.conversationId,
 		entryId: userEntry.id,
 		text: "规则：回复 EDITED_OK",
 	});
 	await expect
 		.poll(async () => {
-			const next = await conversationProjection(page, bootstrap.token, conversation.sessionId);
-			return projectPiEntries(next.timeline.entries)
-				.filter((entry) => entry.kind === "message" && entry.role === "assistant")
+			const next = await conversationProjection(page, bootstrap.token, conversation.conversationId);
+			return projectPiEntries(next.branch.entries)
+				.filter((entry) => entry.type === "message" && entry.role === "assistant")
 				.map((entry) => entry.text?.trim());
 		})
 		.toContain("EDITED_OK");
 
-	await rpc(page, bootstrap.token, "message.send:v1", {
-		conversationId: conversation.sessionId,
+	await rpc(page, bootstrap.token, "message.send", {
+		conversationId: conversation.conversationId,
 		text: "E2E_MANUAL_ROLE_VISUAL",
 	});
 	await expect
 		.poll(async () => {
-			const next = await conversationProjection(page, bootstrap.token, conversation.sessionId);
-			return projectPiEntries(next.timeline.entries)
-				.filter((entry) => entry.kind === "message" && entry.role === "assistant")
+			const next = await conversationProjection(page, bootstrap.token, conversation.conversationId);
+			return projectPiEntries(next.branch.entries)
+				.filter((entry) => entry.type === "message" && entry.role === "assistant")
 				.at(-1)
 				?.text?.trim();
 		})
@@ -123,8 +127,8 @@ test("rule provider exercises send and edited-history regeneration deterministic
 			const projection = await rpc<CompanionStateProjection>(
 				page,
 				bootstrap.token,
-				"companionState.get:v1",
-				{ conversationId: conversation.sessionId },
+				"companionState.get",
+				{ conversationId: conversation.conversationId },
 			);
 			return projection.state.display.sceneId;
 		})
@@ -134,8 +138,8 @@ test("rule provider exercises send and edited-history regeneration deterministic
 	const restored = await rpc<CompanionStateProjection>(
 		page,
 		bootstrap.token,
-		"companionState.get:v1",
-		{ conversationId: conversation.sessionId },
+		"companionState.get",
+		{ conversationId: conversation.conversationId },
 	);
 	expect(restored.state.display.sceneId).toBe("quiet_terminal");
 });

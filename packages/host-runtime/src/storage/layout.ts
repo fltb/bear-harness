@@ -123,7 +123,6 @@ export interface CompanionPaths {
 	readonly runs: string;
 	readonly artifacts: string;
 	readonly audit: string;
-	readonly diagnostics: string;
 }
 
 /** One authoritative path assembly point for all installation and character data. */
@@ -131,7 +130,6 @@ export class RuntimeLayout {
 	readonly root: string;
 	readonly systemRoot: string;
 	readonly systemDatabase: string;
-	readonly systemSecurity: string;
 	readonly systemProviders: string;
 	readonly systemEmbeddingModels: string;
 	readonly systemUpdates: string;
@@ -144,7 +142,6 @@ export class RuntimeLayout {
 		this.root = resolve(root);
 		this.systemRoot = contained(this.root, "system");
 		this.systemDatabase = contained(this.systemRoot, "settings.db");
-		this.systemSecurity = contained(this.systemRoot, "security");
 		this.systemProviders = contained(this.systemRoot, "providers");
 		this.systemEmbeddingModels = contained(this.systemRoot, "models", "embeddings");
 		this.systemUpdates = contained(this.systemRoot, "updates");
@@ -168,7 +165,6 @@ export class RuntimeLayout {
 			runs: contained(root, "runs"),
 			artifacts: contained(root, "artifacts"),
 			audit: contained(root, "audit"),
-			diagnostics: contained(root, "diagnostics"),
 		});
 	}
 
@@ -192,7 +188,6 @@ export class RuntimeLayout {
 		assertRealDirectory(this.root, "runtime data root");
 		for (const directory of [
 			this.systemRoot,
-			this.systemSecurity,
 			this.systemProviders,
 			this.systemEmbeddingModels,
 			this.systemUpdates,
@@ -214,7 +209,6 @@ export class RuntimeLayout {
 			paths.runs,
 			paths.artifacts,
 			paths.audit,
-			paths.diagnostics,
 		]) {
 			assertRealDirectory(directory, "companion runtime directory");
 		}

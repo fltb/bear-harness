@@ -17,7 +17,7 @@
 
 import type { CompanionClient } from "@bear-harness/companion-client";
 import type * as Wire from "@bear-harness/protocol";
-import type { IpcEnvelope } from "@bear-harness/protocol";
+import type { RpcEnvelope } from "@bear-harness/protocol";
 import { unwrap } from "../lib/ipc.js";
 
 // ---------------------------------------------------------------------------
@@ -32,7 +32,7 @@ import { unwrap } from "../lib/ipc.js";
  */
 export async function invoke<T>(
 	_client: CompanionClient,
-	call: () => Promise<IpcEnvelope<T>>,
+	call: () => Promise<RpcEnvelope<T>>,
 ): Promise<T> {
 	return unwrap(await call());
 }
@@ -55,9 +55,8 @@ export type OnboardingStatus = Wire.OnboardingStatus;
 export type OnboardingStateData = Wire.OnboardingStateData;
 export type OnboardingData = Wire.OnboardingResponse;
 export type ConversationSummary = Wire.ConversationSummary;
-export type PiLiveState = Wire.PiLiveState;
-export type PiTimeline = Wire.PiTimeline;
-export type PiTimelineEntry = Wire.PiTimelineEntry;
+export type PiLiveState = Wire.PiLiveSnapshot;
+export type PiSessionEntry = Wire.PiSessionEntry;
 export type ConversationListData = Wire.ConversationListResponse;
 export type ConversationDetail = Wire.ConversationDetail;
 export type CharacterStateDocument = Wire.CharacterStateDocument;
@@ -115,11 +114,8 @@ export type SettingsCapabilities = Wire.SettingsCapabilities;
 export type SettingsResponseData = Wire.SettingsResponse;
 
 // ---------------------------------------------------------------------------
-// Snapshot + events
+// Snapshot
 // ---------------------------------------------------------------------------
-
-export type DomainEvent = Wire.DomainEvent;
-export type EventBatch = Wire.EventSubscribeResponse;
 
 export type SceneDisplay = Wire.CharacterDisplay["scenes"][number];
 export type CharacterOnboardingStep = Wire.CharacterOnboardingFlow["steps"][number];

@@ -26,22 +26,16 @@ async function rpc<T>(page: Page, token: string, channel: string, data: unknown)
 
 type PiEntry = {
 	id: string;
-	kind: string;
+	type: string;
 	role?: string;
 	text?: string;
-	version?: { current: number; leafIds: string[] };
 };
 
 async function projection(page: Page, token: string, conversationId: string): Promise<PiEntry[]> {
-	const opened = await rpc<{ timeline: { entries: unknown[] } }>(
-		page,
-		token,
-		"conversation.open:v1",
-		{
-			id: conversationId,
-		},
-	);
-	return projectPiEntries(opened.timeline.entries) as PiEntry[];
+	const opened = await rpc<{ branch: { entries: unknown[] } }>(page, token, "conversation.open", {
+		conversationId,
+	});
+	return projectPiEntries(opened.branch.entries) as PiEntry[];
 }
 
 test("committed schema state survives new conversations and edited message history", async ({
@@ -55,7 +49,7 @@ test("committed schema state survives new conversations and edited message histo
 		"Character facts source",
 	);
 
-	await rpc(page, bootstrap.token, "message.send:v1", {
+	await rpc(page, bootstrap.token, "message.send", {
 		conversationId: conversationA,
 		text: "E2E_TOOL_TRIGGER_DAMAGED_LOG",
 	});
@@ -63,7 +57,7 @@ test("committed schema state survives new conversations and edited message histo
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationA))
 		.toBe("E2E_TOOL_TRIGGER_DAMAGED_LOG_DONE");
 	const conversationB = await createFreshConversation(page, bootstrap.token, "Second context");
-	await rpc(page, bootstrap.token, "message.send:v1", {
+	await rpc(page, bootstrap.token, "message.send", {
 		conversationId: conversationB,
 		text: "E2E_OK schema state projection check",
 	});
@@ -77,26 +71,26 @@ test("committed schema state survives new conversations and edited message histo
 		promptTrace.prompts.findLast((prompt) => prompt.includes("schema state projection check")),
 	).toMatch(/"continuity":\s*{\s*"stage": 1/);
 
-	await rpc(page, bootstrap.token, "conversation.rename:v1", {
-		id: conversationA,
+	await rpc(page, bootstrap.token, "conversation.rename", {
+		conversationId: conversationA,
 		title: "历史搜索锚点 7F-19",
 	});
 	await expect
 		.poll(async () =>
-			rpc<{ sessions: Array<{ id: string; title: string }> }>(
+			rpc<{ conversations: Array<{ conversationId: string; name?: string }> }>(
 				page,
 				bootstrap.token,
-				"conversation.list:v1",
+				"conversation.list",
 				{
 					title: "7F-19",
 				},
 			),
 		)
 		.toMatchObject({
-			sessions: [
+			conversations: [
 				expect.objectContaining({
-					id: conversationA,
-					title: expect.stringContaining("7F-19"),
+					conversationId: conversationA,
+					name: expect.stringContaining("7F-19"),
 				}),
 			],
 		});
@@ -111,7 +105,7 @@ test("scripted model invokes the schema state tool with exact arguments", async 
 		"Tool-call verification",
 	);
 
-	await rpc(page, bootstrap.token, "message.send:v1", {
+	await rpc(page, bootstrap.token, "message.send", {
 		conversationId: conversationB,
 		text: "E2E_TOOL_TRIGGER_DAMAGED_LOG",
 	});
@@ -144,21 +138,21 @@ test("presented role choices send ordinary messages and advance generic schema s
 	const sidebar = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
 	await sidebar.getByRole("button").filter({ hasText: "Generic choice state flow" }).click();
 
-	await rpc(page, bootstrap.token, "message.send:v1", {
+	await rpc(page, bootstrap.token, "message.send", {
 		conversationId,
 		text: "E2E_MANUAL_ROLE_START",
 	});
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("E2E_MANUAL_ROLE_START_DONE");
-	await rpc(page, bootstrap.token, "message.send:v1", {
+	await rpc(page, bootstrap.token, "message.send", {
 		conversationId,
 		text: "E2E_MANUAL_ROLE_CONTINUE",
 	});
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("E2E_MANUAL_ROLE_CONTINUE_DONE");
-	await rpc(page, bootstrap.token, "message.send:v1", {
+	await rpc(page, bootstrap.token, "message.send", {
 		conversationId,
 		text: "E2E_MANUAL_ROLE_PRESENT",
 	});
@@ -199,10 +193,10 @@ test("presented role choices send ordinary messages and advance generic schema s
 	expect(choicePrompt).toMatch(/"continuity":\s*{\s*"stage": 2,\s*"response": "用户尚未回应。"/);
 	const entries = await projection(page, bootstrap.token, conversationId);
 	expect(
-		entries.filter((entry) => entry.kind === "message" && entry.role === "user").at(-1)?.text,
+		entries.filter((entry) => entry.type === "message" && entry.role === "user").at(-1)?.text,
 	).toBe("我听见了，也愿意接住这份交接。");
 
-	await rpc(page, bootstrap.token, "message.send:v1", {
+	await rpc(page, bootstrap.token, "message.send", {
 		conversationId,
 		text: "E2E_OK final generic state projection",
 	});
@@ -234,7 +228,11 @@ test("undelivered report enters, pauses, resumes, advances every chapter, and en
 		"Undelivered report full flow",
 	);
 	const sidebar = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
-	await sidebar.getByRole("button").filter({ hasText: "Undelivered report full flow" }).click();
+	const conversationButton = sidebar
+		.getByRole("button")
+		.filter({ hasText: "Undelivered report full flow" });
+	await conversationButton.click();
+	await expect(conversationButton).toHaveAttribute("aria-current", "page");
 
 	const send = async (text: string, expected: string) => {
 		await sendMessage(page, text);
@@ -251,7 +249,7 @@ test("undelivered report enters, pauses, resumes, advances every chapter, and en
 	const storyState = async () => {
 		const result = await rpc<{
 			state: { character: { document: { story: { active: boolean; chapter: number } } } };
-		}>(page, bootstrap.token, "companionState.get:v1", { conversationId });
+		}>(page, bootstrap.token, "companionState.get", { conversationId });
 		return result.state.character.document.story;
 	};
 	const latestStoryResource = async () => {
@@ -312,14 +310,14 @@ test("adopted multi-turn history and a manual edit change the next model context
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
 	const conversationId = await createFreshConversation(page, bootstrap.token, "Multi-turn context");
 
-	await rpc(page, bootstrap.token, "message.send:v1", {
+	await rpc(page, bootstrap.token, "message.send", {
 		conversationId,
 		text: "E2E_CONTEXT_T1_ORIGINAL",
 	});
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("RULE_OK");
-	await rpc(page, bootstrap.token, "message.send:v1", {
+	await rpc(page, bootstrap.token, "message.send", {
 		conversationId,
 		text: "E2E_CONTEXT_T2",
 	});
@@ -329,10 +327,10 @@ test("adopted multi-turn history and a manual edit change the next model context
 
 	const firstUser = (await projection(page, bootstrap.token, conversationId)).find(
 		(entry) =>
-			entry.kind === "message" && entry.role === "user" && entry.text === "E2E_CONTEXT_T1_ORIGINAL",
+			entry.type === "message" && entry.role === "user" && entry.text === "E2E_CONTEXT_T1_ORIGINAL",
 	);
 	if (!firstUser) throw new Error("missing original native context entry");
-	await rpc(page, bootstrap.token, "message.edit:v1", {
+	await rpc(page, bootstrap.token, "message.edit", {
 		conversationId,
 		entryId: firstUser.id,
 		text: "E2E_CONTEXT_T1_EDITED",
@@ -340,7 +338,7 @@ test("adopted multi-turn history and a manual edit change the next model context
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("RULE_OK");
-	await rpc(page, bootstrap.token, "message.send:v1", {
+	await rpc(page, bootstrap.token, "message.send", {
 		conversationId,
 		text: "E2E_CONTEXT_T2_AFTER_EDIT",
 	});
@@ -360,48 +358,63 @@ test("adopted multi-turn history and a manual edit change the next model context
 
 test("title query respects active, archived, and deleted session management", async ({ page }) => {
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
-	const archived = await rpc<{ sessionId: string }>(
+	const archived = await rpc<{ conversationId: string }>(
 		page,
 		bootstrap.token,
-		"conversation.create:v1",
+		"conversation.create",
 		{
 			title: "Archive search boundary",
 		},
 	);
-	await rpc(page, bootstrap.token, "message.send:v1", {
-		conversationId: archived.sessionId,
+	await rpc(page, bootstrap.token, "message.send", {
+		conversationId: archived.conversationId,
 		text: "E2E_ARCHIVED_SEARCH_MARKER",
 	});
 	await expect
-		.poll(async () => latestAssistant(page, bootstrap.token, archived.sessionId))
+		.poll(async () => latestAssistant(page, bootstrap.token, archived.conversationId))
 		.toBe("RULE_OK");
-	await rpc(page, bootstrap.token, "conversation.archive:v1", {
-		id: archived.sessionId,
+	await rpc(page, bootstrap.token, "conversation.archive", {
+		conversationId: archived.conversationId,
 		archived: true,
 	});
 	await expect(
-		rpc<{ sessions: Array<{ id: string }> }>(page, bootstrap.token, "conversation.list:v1", {
-			title: "Archive search",
-		}),
-	).resolves.toEqual({ sessions: [] });
+		rpc<{ conversations: Array<{ conversationId: string }> }>(
+			page,
+			bootstrap.token,
+			"conversation.list",
+			{
+				title: "Archive search",
+			},
+		),
+	).resolves.toEqual({ conversations: [] });
 	await expect(
-		rpc<{ sessions: Array<{ id: string }> }>(page, bootstrap.token, "conversation.list:v1", {
-			title: "Archive search",
-			archived: true,
-		}),
-	).resolves.toMatchObject({ sessions: [{ id: archived.sessionId }] });
-	await rpc(page, bootstrap.token, "conversation.delete:v1", {
-		id: archived.sessionId,
+		rpc<{ conversations: Array<{ conversationId: string }> }>(
+			page,
+			bootstrap.token,
+			"conversation.list",
+			{
+				title: "Archive search",
+				archived: true,
+			},
+		),
+	).resolves.toMatchObject({ conversations: [{ conversationId: archived.conversationId }] });
+	await rpc(page, bootstrap.token, "conversation.delete", {
+		conversationId: archived.conversationId,
 	});
 	await expect(
-		rpc<{ sessions: Array<{ id: string }> }>(page, bootstrap.token, "conversation.list:v1", {
-			title: "Archive search",
-			archived: true,
-		}),
-	).resolves.toEqual({ sessions: [] });
+		rpc<{ conversations: Array<{ conversationId: string }> }>(
+			page,
+			bootstrap.token,
+			"conversation.list",
+			{
+				title: "Archive search",
+				archived: true,
+			},
+		),
+	).resolves.toEqual({ conversations: [] });
 });
 
-test("regeneration keeps Pi-native versions and correction is visible user feedback", async ({
+test("regeneration switches native leaves and correction is visible user feedback", async ({
 	page,
 }) => {
 	await ensureReadyForConversation(page);
@@ -412,7 +425,7 @@ test("regeneration keeps Pi-native versions and correction is visible user feedb
 		"Conversation operations",
 	);
 
-	await rpc(page, bootstrap.token, "message.send:v1", {
+	await rpc(page, bootstrap.token, "message.send", {
 		conversationId,
 		text: "E2E_OPERATION_PARENT",
 	});
@@ -420,49 +433,49 @@ test("regeneration keeps Pi-native versions and correction is visible user feedb
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("RULE_OK");
 	const assistant = (await projection(page, bootstrap.token, conversationId)).find(
-		(entry) => entry.kind === "message" && entry.role === "assistant",
+		(entry) => entry.type === "message" && entry.role === "assistant",
 	);
 	if (!assistant) throw new Error("missing native assistant entry");
 
-	await rpc(page, bootstrap.token, "message.regenerate:v1", {
+	await rpc(page, bootstrap.token, "message.regenerate", {
 		conversationId,
 		entryId: assistant.id,
 	});
-	const versionedAssistant = async () =>
-		(await projection(page, bootstrap.token, conversationId)).find(
-			(entry) => entry.kind === "message" && entry.role === "assistant" && entry.version,
-		);
-	await expect.poll(async () => (await versionedAssistant())?.version?.leafIds.length).toBe(2);
-	const twoVersions = (await versionedAssistant())?.version;
-	if (!twoVersions) throw new Error("missing Pi-native version projection");
-	expect(twoVersions).toMatchObject({ current: 1 });
-	expect(twoVersions.leafIds).toHaveLength(2);
-	await rpc(page, bootstrap.token, "message.switchVersion:v1", {
+	await expect
+		.poll(
+			async () =>
+				(await projection(page, bootstrap.token, conversationId))
+					.filter((entry) => entry.type === "message" && entry.role === "assistant")
+					.at(-1)?.id,
+		)
+		.not.toBe(assistant.id);
+	const regeneratedId = (await projection(page, bootstrap.token, conversationId))
+		.filter((entry) => entry.type === "message" && entry.role === "assistant")
+		.at(-1)?.id;
+	if (!regeneratedId) throw new Error("missing regenerated native assistant entry");
+	await rpc(page, bootstrap.token, "message.switchVersion", {
 		conversationId,
-		leafId: twoVersions.leafIds[0],
+		leafId: assistant.id,
 	});
 	expect(
 		(await projection(page, bootstrap.token, conversationId))
-			.filter((entry) => entry.kind === "message" && entry.role === "assistant")
+			.filter((entry) => entry.type === "message" && entry.role === "assistant")
 			.at(-1)?.id,
 	).toBe(assistant.id);
-	await rpc(page, bootstrap.token, "message.switchVersion:v1", {
+	await rpc(page, bootstrap.token, "message.switchVersion", {
 		conversationId,
-		leafId: twoVersions.leafIds[1],
+		leafId: regeneratedId,
 	});
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("RULE_OK");
 
-	await expect(
-		rpc(page, bootstrap.token, "message.continue:v1", { conversationId }),
-	).rejects.toThrow("Cannot continue from message role: assistant");
 	const regenerated = (await projection(page, bootstrap.token, conversationId))
-		.filter((entry) => entry.kind === "message" && entry.role === "assistant")
+		.filter((entry) => entry.type === "message" && entry.role === "assistant")
 		.at(-1);
 	if (!regenerated) throw new Error("missing regenerated assistant entry");
 
-	await rpc(page, bootstrap.token, "message.regenerate:v1", {
+	await rpc(page, bootstrap.token, "message.regenerate", {
 		conversationId,
 		entryId: regenerated.id,
 		feedback: "他替我做了决定",
@@ -472,18 +485,15 @@ test("regeneration keeps Pi-native versions and correction is visible user feedb
 		.toBe("RULE_OK");
 	expect(
 		(await projection(page, bootstrap.token, conversationId))
-			.filter((entry) => entry.kind === "message" && entry.role === "assistant")
+			.filter((entry) => entry.type === "message" && entry.role === "assistant")
 			.at(-1)
 			?.text?.trim(),
 	).toBe("RULE_OK");
 	const revisedProjection = await projection(page, bootstrap.token, conversationId);
 	expect(
-		revisedProjection.filter((entry) => entry.kind === "message" && entry.role === "user").at(-1)
+		revisedProjection.filter((entry) => entry.type === "message" && entry.role === "user").at(-1)
 			?.text,
 	).toContain("重新生成反馈：他替我做了决定");
-	const threeVersions = (await versionedAssistant())?.version;
-	expect(threeVersions).toMatchObject({ current: 2 });
-	expect(threeVersions?.leafIds).toHaveLength(3);
 });
 
 test("imported package plugins require explicit trust before they can be enabled", async ({
@@ -504,22 +514,20 @@ test("imported package plugins require explicit trust before they can be enabled
 		base64: Buffer.from("export default function register() {}\n").toString("base64"),
 	});
 
-	await expect(rpc(page, bootstrap.token, "character.import:v1", { files })).resolves.toMatchObject(
-		{
-			character: { id: "e2e-plugin-trust" },
-		},
-	);
+	await expect(rpc(page, bootstrap.token, "character.import", { files })).resolves.toMatchObject({
+		character: { id: "e2e-plugin-trust" },
+	});
 	await expect(
 		rpc<{
 			trust: { origin: string; pluginsPresent: boolean; trusted: boolean };
-		}>(page, bootstrap.token, "character.pluginTrustGet:v1", {
+		}>(page, bootstrap.token, "character.pluginTrustGet", {
 			characterId: "e2e-plugin-trust",
 		}),
 	).resolves.toMatchObject({
 		trust: { origin: "imported", pluginsPresent: true, trusted: false },
 	});
 	await expect(
-		rpc<{ trust: { trusted: boolean } }>(page, bootstrap.token, "character.pluginTrustConfirm:v1", {
+		rpc<{ trust: { trusted: boolean } }>(page, bootstrap.token, "character.pluginTrustConfirm", {
 			characterId: "e2e-plugin-trust",
 		}),
 	).resolves.toMatchObject({ trust: { trusted: true } });
@@ -540,10 +548,13 @@ function packageFiles(root: string, directory = root): Array<{ path: string; bas
 }
 
 async function createFreshConversation(page: Page, token: string, title: string): Promise<string> {
-	const conversation = await rpc<{ sessionId: string }>(page, token, "conversation.create:v1", {
+	const conversation = await rpc<{ conversationId: string }>(page, token, "conversation.create", {
 		title,
 	});
-	return conversation.sessionId;
+	// Invalidations are deliberately transient and have no replay. Reconcile this
+	// test-only out-of-band RPC mutation through the authoritative list read.
+	await page.reload();
+	return conversation.conversationId;
 }
 
 async function latestAssistant(
@@ -552,7 +563,7 @@ async function latestAssistant(
 	conversationId: string,
 ): Promise<string | undefined> {
 	return (await projection(page, token, conversationId))
-		.filter((entry) => entry.kind === "message" && entry.role === "assistant")
+		.filter((entry) => entry.type === "message" && entry.role === "assistant")
 		.at(-1)
 		?.text?.trim();
 }

@@ -1,8 +1,8 @@
 import type {
 	ConversationDetail,
 	ConversationSummary,
-	PiSessionEventType,
-	PiSessionLiveEvent,
+	LivePush,
+	PiSessionEntry,
 } from "@bear-harness/protocol";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { waitFor } from "@testing-library/dom";
@@ -11,20 +11,29 @@ import { describe, expect, it, vi } from "vitest";
 import { createCompanionStore } from "../src/stores/companion.js";
 import { createTestClient, pushPiEvent } from "./fixtures.js";
 
-const summary = (id: string): ConversationSummary => ({
-	id,
-	title: `Conversation ${id}`,
+const summary = (conversationId: string): ConversationSummary => ({
+	conversationId,
+	name: `Conversation ${conversationId}`,
 	created: "2026-01-01T00:00:00.000Z",
 	modified: "2026-01-01T00:00:00.000Z",
 	messageCount: 0,
 	firstMessage: "",
+	isStreaming: false,
 });
 
-const detail = (id: string): ConversationDetail => ({
-	sessionId: id,
-	name: `Conversation ${id}`,
-	timeline: { entries: [] },
-	live: { isStreaming: false, queuedUserMessages: [] },
+const detail = (conversationId: string, entries: PiSessionEntry[] = []): ConversationDetail => ({
+	conversationId,
+	name: `Conversation ${conversationId}`,
+	branch: { entries, hasMoreBefore: false, activeLeafId: entries.at(-1)?.id },
+	live: { isStreaming: false, steering: [], followUp: [] },
+});
+
+const userEntry = (id: string, text: string): PiSessionEntry => ({
+	type: "message",
+	id,
+	parentId: null,
+	timestamp: "2026-01-01T00:00:00.000Z",
+	message: { role: "user", content: text, timestamp: 1 },
 });
 
 function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["client"]) {
@@ -33,9 +42,7 @@ function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["cli
 	createRoot((cleanup) => {
 		dispose = cleanup;
 		createComponent(QueryClientProvider, {
-			client: new QueryClient({
-				defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
-			}),
+			client: new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } }),
 			get children() {
 				store = createCompanionStore(client);
 				return undefined;
@@ -47,360 +54,184 @@ function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["cli
 }
 
 describe("renderer-local conversation selection", () => {
-	it("clears the old role selection before loading and selecting the new role's conversations", async () => {
+	it("selects, archives, and deletes explicit conversations without aborting another session", async () => {
 		const { client } = createTestClient();
-		let role: "a" | "b" = "a";
-		const byRole = {
-			a: [summary("a-session")],
-			b: [summary("b-session")],
-		};
-		client.character.activate = vi.fn(({ characterId }) => {
-			role = characterId === "role-b" ? "b" : "a";
-			return Promise.resolve({ ok: true as const, data: null });
-		});
-		client.character.list = vi.fn(() =>
+		const conversations = [summary("a"), summary("b")];
+		client.conversation.list = vi.fn(({ archived = false }) =>
 			Promise.resolve({
 				ok: true as const,
-				data: {
-					characters: [
-						{ id: "role-a", name: "A", active: role === "a" },
-						{ id: "role-b", name: "B", active: role === "b" },
-					],
-				},
+				data: { conversations: archived ? [] : [...conversations] },
 			}),
 		);
-		client.conversation.list = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { sessions: byRole[role] } }),
+		client.conversation.open = vi.fn(({ conversationId }) =>
+			Promise.resolve({ ok: true as const, data: detail(conversationId) }),
 		);
-		client.conversation.open = vi.fn(({ id }) => {
-			const valid = byRole[role].some((item) => item.id === id);
-			if (!valid) {
-				return Promise.resolve({
-					ok: false as const,
-					error: { kind: "not_found" as const, message: "conversation_not_found" },
-				});
-			}
-			return Promise.resolve({ ok: true as const, data: detail(id) });
-		});
-		const { store, dispose } = createStoreWithCleanup(client);
-
-		try {
-			await waitFor(() => expect(store.activeConversationId).toBe("a-session"));
-			const opensBeforeSwitch = vi.mocked(client.conversation.open).mock.calls.length;
-			await store.characters.activate("role-b");
-			expect(store.activeConversationId).toBe("b-session");
-			expect(
-				vi
-					.mocked(client.conversation.open)
-					.mock.calls.slice(opensBeforeSwitch)
-					.map(([request]) => request.id),
-			).not.toContain("a-session");
-		} finally {
-			dispose();
-		}
-	});
-
-	it("opens details locally and selects a remaining conversation after archive or delete", async () => {
-		const { client } = createTestClient();
-		const available = [summary("a"), summary("b")];
-		const details = new Map(available.map((item) => [item.id, detail(item.id)]));
-		const archived = new Set<string>();
-		client.conversation.list = vi.fn(({ archived: wantArchived = false }) =>
-			Promise.resolve({
-				ok: true as const,
-				data: {
-					sessions: available.filter((item) => archived.has(item.id) === wantArchived),
-				},
-			}),
-		);
-		client.conversation.open = vi.fn(({ id }) => {
-			const projection = details.get(id);
-			if (!projection) throw new Error(`missing conversation ${id}`);
-			return Promise.resolve({ ok: true as const, data: projection });
-		});
-		client.conversation.create = vi.fn(() => {
-			const projection = detail("c");
-			details.set("c", projection);
-			available.push(summary("c"));
-			return Promise.resolve({ ok: true as const, data: projection });
-		});
-		client.message.branch = vi.fn(() => {
-			const projection = detail("d");
-			details.set("d", projection);
-			available.push(summary("d"));
-			return Promise.resolve({ ok: true as const, data: projection });
-		});
-		client.conversation.archive = vi.fn(({ id, archived: value }) => {
-			if (value) archived.add(id);
-			else archived.delete(id);
+		client.conversation.archive = vi.fn(({ conversationId }) => {
+			const index = conversations.findIndex((item) => item.conversationId === conversationId);
+			if (index >= 0) conversations.splice(index, 1);
 			return Promise.resolve({ ok: true as const, data: {} });
 		});
-		client.conversation.delete = vi.fn(({ id }) => {
-			const index = available.findIndex((item) => item.id === id);
-			if (index >= 0) available.splice(index, 1);
-			details.delete(id);
+		client.conversation.delete = vi.fn(({ conversationId }) => {
+			const index = conversations.findIndex((item) => item.conversationId === conversationId);
+			if (index >= 0) conversations.splice(index, 1);
 			return Promise.resolve({ ok: true as const, data: {} });
 		});
 		const { store, dispose } = createStoreWithCleanup(client);
-
 		try {
 			await waitFor(() => expect(store.activeConversationId).toBe("a"));
-			await waitFor(() =>
-				expect(client.companionState.get).toHaveBeenCalledWith({ conversationId: "a" }),
-			);
-
 			await store.selectConversation("b");
 			expect(store.activeConversationId).toBe("b");
-			expect(client.message.abort).not.toHaveBeenCalled();
-
-			await store.createConversation("Third");
-			expect(store.activeConversationId).toBe("c");
-
-			await store.createConversationFromEntry("entry-1");
-			expect(client.message.branch).toHaveBeenCalledWith({
-				conversationId: "c",
-				entryId: "entry-1",
-			});
-			expect(store.activeConversationId).toBe("d");
-
-			await store.archiveConversation("d");
+			await store.archiveConversation("b");
 			expect(store.activeConversationId).toBe("a");
-			expect(client.conversation.open).toHaveBeenCalledWith({ id: "a" });
-
-			await store.selectConversation("b");
-			await store.deleteConversation("b");
-			expect(store.activeConversationId).toBe("a");
+			await store.deleteConversation("a");
 			expect(client.message.abort).not.toHaveBeenCalled();
 		} finally {
 			dispose();
 		}
 	});
 
-	it("keeps live projections per session and refreshes active details at Pi commit points", async () => {
+	it("projects Pi native events per conversation and marks background completion", async () => {
 		const { client } = createTestClient();
-		const sessions = [summary("a"), summary("b")];
-		const details = new Map(sessions.map((item) => [item.id, detail(item.id)]));
-		client.conversation.list = vi.fn(({ archived = false }) =>
-			Promise.resolve({
-				ok: true as const,
-				data: { sessions: archived ? [] : sessions },
-			}),
+		const conversations = [summary("a"), summary("b")];
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversations } }),
 		);
-		client.conversation.open = vi.fn(({ id }) => {
-			const projection = details.get(id);
-			if (!projection) throw new Error(`missing conversation ${id}`);
-			return Promise.resolve({ ok: true as const, data: projection });
-		});
-		const { store, dispose } = createStoreWithCleanup(client);
-
-		try {
-			await waitFor(() => expect(store.activeConversationId).toBe("a"));
-			pushPiEvent(client, {
-				sessionId: "a",
-				type: "message_update",
-				live: {
-					isStreaming: true,
-					streamingMessage: { text: "token one", stopReason: "pending" },
-					queuedUserMessages: [],
-				},
-			});
-			await waitFor(() =>
-				expect(store.activePiLiveState?.streamingMessage?.text).toBe("token one"),
-			);
-
-			const refreshTypes: PiSessionEventType[] = [
-				"message_end",
-				"entry_appended",
-				"session_info_changed",
-				"agent_settled",
-			];
-			for (const [index, type] of refreshTypes.entries()) {
-				const entryId = `entry-${index}`;
-				details.set("a", {
-					...detail("a"),
-					timeline: {
-						entries: [
-							{
-								id: entryId,
-								parentId: null,
-								timestamp: "2026-01-01T00:00:00.000Z",
-								kind: "message",
-								role: "user",
-								text: entryId,
-							},
-						],
-					},
-				});
-				const callsBefore = vi.mocked(client.conversation.open).mock.calls.length;
-				pushPiEvent(client, {
-					sessionId: "a",
-					type,
-					live: {
-						isStreaming: type !== "agent_settled",
-						streamingMessage: { text: `token ${index + 2}`, stopReason: "pending" },
-						queuedUserMessages: [],
-					},
-				});
-				await waitFor(() =>
-					expect(vi.mocked(client.conversation.open).mock.calls.length).toBeGreaterThan(
-						callsBefore,
-					),
-				);
-				await waitFor(() => expect(store.activePiTimeline?.entries[0]?.id).toBe(entryId));
-				expect(store.activePiLiveState?.streamingMessage?.text).toBe(`token ${index + 2}`);
-			}
-
-			const callsBeforeInactive = vi.mocked(client.conversation.open).mock.calls.length;
-			details.set("b", {
-				...detail("b"),
-				live: {
-					isStreaming: true,
-					streamingMessage: { text: "inactive token", stopReason: "pending" },
-					queuedUserMessages: [],
-				},
-			});
-			pushPiEvent(client, {
-				sessionId: "b",
-				type: "message_end",
-				live: {
-					isStreaming: true,
-					streamingMessage: { text: "inactive token", stopReason: "pending" },
-					queuedUserMessages: [],
-				},
-			});
-			await new Promise((resolve) => setTimeout(resolve, 10));
-			expect(vi.mocked(client.conversation.open).mock.calls).toHaveLength(callsBeforeInactive);
-			await store.selectConversation("b");
-			expect(store.activePiLiveState?.streamingMessage?.text).toBe("inactive token");
-			expect(client.message.abort).not.toHaveBeenCalled();
-		} finally {
-			dispose();
-		}
-	});
-
-	it("reconciles from Pi and reconnects without using active selection as a global router", async () => {
-		const { client } = createTestClient();
-		const sessions = [summary("a"), summary("b")];
-		const details = new Map(sessions.map((item) => [item.id, detail(item.id)]));
-		client.conversation.list = vi.fn(({ archived = false }) =>
-			Promise.resolve({ ok: true as const, data: { sessions: archived ? [] : sessions } }),
+		client.conversation.open = vi.fn(({ conversationId }) =>
+			Promise.resolve({ ok: true as const, data: detail(conversationId) }),
 		);
-		client.conversation.open = vi.fn(({ id }) => {
-			const projection = details.get(id);
-			if (!projection) throw new Error(`missing conversation ${id}`);
-			return Promise.resolve({ ok: true as const, data: projection });
-		});
-
-		let releaseFirst = () => undefined;
-		const firstGate = new Promise<void>((resolve) => {
-			releaseFirst = resolve;
-		});
-		let releaseReconnected = () => undefined;
-		const reconnectedGate = new Promise<void>((resolve) => {
-			releaseReconnected = resolve;
-		});
-		let attempts = 0;
-		client.pi.stream = vi.fn(async function* (signal): AsyncIterable<PiSessionLiveEvent> {
-			const attempt = ++attempts;
-			if (attempt === 1) {
-				await firstGate;
-				if (signal.aborted) return;
-				yield {
-					sessionId: "a",
-					type: "message_update",
-					live: {
-						isStreaming: true,
-						streamingMessage: { text: "transient before disconnect", stopReason: "pending" },
-						queuedUserMessages: [],
-					},
-				};
-				details.set("a", {
-					...detail("a"),
-					live: {
-						isStreaming: true,
-						streamingMessage: { text: "authoritative after disconnect", stopReason: "pending" },
-						queuedUserMessages: [],
-					},
-				});
-				throw new Error("transport disconnected");
-			}
-			await reconnectedGate;
-			if (signal.aborted) return;
-			yield {
-				sessionId: "b",
-				type: "message_update",
-				live: {
-					isStreaming: true,
-					streamingMessage: { text: "stream after reconnect", stopReason: "pending" },
-					queuedUserMessages: [],
-				},
-			};
-			await new Promise<void>((resolve) => {
-				if (signal.aborted) resolve();
-				else signal.addEventListener("abort", () => resolve(), { once: true });
-			});
-		});
-
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => expect(store.activeConversationId).toBe("a"));
-			releaseFirst();
-			await waitFor(() =>
-				expect(store.activePiLiveState?.streamingMessage?.text).toBe(
-					"authoritative after disconnect",
-				),
-			);
-
-			details.set("b", {
-				...detail("b"),
-				live: {
-					isStreaming: true,
-					streamingMessage: { text: "authoritative b", stopReason: "pending" },
-					queuedUserMessages: [],
-				},
+			pushPiEvent(client, { type: "pi", conversationId: "a", event: { type: "agent_start" } });
+			await waitFor(() => expect(store.activePiLiveState?.isStreaming).toBe(true));
+			const entry = userEntry("entry-a", "native entry");
+			pushPiEvent(client, {
+				type: "pi",
+				conversationId: "a",
+				event: { type: "entry_appended", entry },
 			});
+			await waitFor(() => expect(store.activePiEntries?.at(-1)?.id).toBe("entry-a"));
+			pushPiEvent(client, { type: "pi", conversationId: "b", event: { type: "agent_start" } });
+			pushPiEvent(client, { type: "pi", conversationId: "b", event: { type: "agent_settled" } });
+			await waitFor(() => expect(store.completedConversationIds.has("b")).toBe(true));
 			await store.selectConversation("b");
-			expect(store.activePiLiveState?.streamingMessage?.text).toBe("authoritative b");
-			expect(client.message.abort).not.toHaveBeenCalled();
-
-			await waitFor(() => expect(client.pi.stream).toHaveBeenCalledTimes(2));
-			const opensForA = vi
-				.mocked(client.conversation.open)
-				.mock.calls.filter(([request]) => request.id === "a").length;
-			await new Promise((resolve) => setTimeout(resolve, 20));
-			expect(
-				vi.mocked(client.conversation.open).mock.calls.filter(([request]) => request.id === "a")
-					.length,
-			).toBe(opensForA);
-			releaseReconnected();
-			await waitFor(() =>
-				expect(store.activePiLiveState?.streamingMessage?.text).toBe("stream after reconnect"),
-			);
+			expect(store.completedConversationIds.has("b")).toBe(false);
 		} finally {
 			dispose();
 		}
 	});
 
-	it("cancels a pending reconnect immediately when the store is disposed", async () => {
+	it("reconnects and replaces the active projection from Pi", async () => {
 		const { client } = createTestClient();
 		client.conversation.list = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { sessions: [] } }),
+			Promise.resolve({ ok: true as const, data: { conversations: [summary("a")] } }),
 		);
-		const signals: AbortSignal[] = [];
-		client.pi.stream = vi.fn((signal): AsyncIterable<PiSessionLiveEvent> => {
-			signals.push(signal);
+		let authoritative = detail("a");
+		client.conversation.open = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: authoritative }),
+		);
+		let subscriptions = 0;
+		client.live.subscribe = vi.fn(async (signal): Promise<AsyncIterable<LivePush>> => {
+			subscriptions += 1;
+			if (subscriptions === 1) {
+				authoritative = detail("a", [userEntry("reconciled", "from snapshot")]);
+				throw new Error("disconnect");
+			}
 			return {
-				[Symbol.asyncIterator]: () => ({
-					next: () => Promise.resolve({ done: true, value: undefined }),
-				}),
+				async *[Symbol.asyncIterator]() {
+					await new Promise<void>((resolve) =>
+						signal.addEventListener("abort", () => resolve(), { once: true }),
+					);
+				},
 			};
 		});
-		const { dispose } = createStoreWithCleanup(client);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activePiEntries?.at(-1)?.id).toBe("reconciled"));
+			await waitFor(() => expect(client.live.subscribe).toHaveBeenCalledTimes(2));
+		} finally {
+			dispose();
+		}
+	});
 
-		await waitFor(() => expect(client.pi.stream).toHaveBeenCalledTimes(1));
+	it("does not send before the live subscription and initial Pi projection are ready", async () => {
+		const { client } = createTestClient();
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversations: [summary("a")] } }),
+		);
+		client.conversation.open = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: detail("a") }),
+		);
+		let connect!: (events: AsyncIterable<LivePush>) => void;
+		client.live.subscribe = vi.fn(
+			() =>
+				new Promise<AsyncIterable<LivePush>>((resolve) => {
+					connect = resolve;
+				}),
+		);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activeConversationId).toBe("a"));
+			await waitFor(() => expect(client.live.subscribe).toHaveBeenCalledOnce());
+			const sending = store.sendMessage("hello");
+			await Promise.resolve();
+			expect(client.message.send).not.toHaveBeenCalled();
+			connect({
+				async *[Symbol.asyncIterator]() {
+					await new Promise<void>(() => undefined);
+				},
+			});
+			await sending;
+			expect(client.message.send).toHaveBeenCalledWith({ conversationId: "a", text: "hello" });
+		} finally {
+			dispose();
+		}
+	});
+
+	it("applies an event retained between subscription establishment and snapshot replacement", async () => {
+		const { client } = createTestClient();
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversations: [summary("a")] } }),
+		);
+		const snapshot = Promise.withResolvers<{
+			ok: true;
+			data: ConversationDetail;
+		}>();
+		client.conversation.open = vi.fn(() => snapshot.promise);
+		client.live.subscribe = vi.fn(
+			async (signal): Promise<AsyncIterable<LivePush>> => ({
+				async *[Symbol.asyncIterator]() {
+					yield { type: "pi", conversationId: "a", event: { type: "agent_start" } };
+					await new Promise<void>((resolve) =>
+						signal.addEventListener("abort", () => resolve(), { once: true }),
+					);
+				},
+			}),
+		);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(client.live.subscribe).toHaveBeenCalledOnce());
+			await waitFor(() => expect(client.conversation.open).toHaveBeenCalled());
+			expect(store.activePiLiveState?.isStreaming).not.toBe(true);
+
+			snapshot.resolve({ ok: true, data: detail("a") });
+			await waitFor(() => expect(store.activeConversationId).toBe("a"));
+			await waitFor(() => expect(store.activePiLiveState?.isStreaming).toBe(true));
+		} finally {
+			dispose();
+		}
+	});
+
+	it("aborts pending stream waits when disposed", async () => {
+		const { client } = createTestClient();
+		const signals: AbortSignal[] = [];
+		client.live.subscribe = vi.fn(async (signal): Promise<AsyncIterable<LivePush>> => {
+			signals.push(signal);
+			return { [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => undefined) }) };
+		});
+		const { dispose } = createStoreWithCleanup(client);
+		await waitFor(() => expect(client.live.subscribe).toHaveBeenCalledOnce());
 		dispose();
 		expect(signals[0]?.aborted).toBe(true);
-		await new Promise((resolve) => setTimeout(resolve, 150));
-		expect(client.pi.stream).toHaveBeenCalledTimes(1);
 	});
 });

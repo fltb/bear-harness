@@ -98,7 +98,7 @@ export const appSettings = sqliteTable(
 		systemModelDefaultsJson: text("system_model_defaults")
 			.notNull()
 			.default('{"vision":{"mode":"auto"}}'),
-		modelDownloadMirrorJson: text("model_download_mirror").notNull().default("{}"),
+		modelDownloadMirrorJson: text("model_download_mirror").notNull().default('{"type":"official"}'),
 		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 	},
 	() => [check("app_settings_singleton", sql`id = 1`)],
@@ -130,6 +130,12 @@ export const runs = sqliteTable(
 		})
 			.default("enqueued")
 			.notNull(),
+		permissionJson: text("permission_json", { mode: "json" }).$type<{
+			runId: string;
+			prompt: string;
+			requestId: string;
+			options: Array<{ optionId: string; kind: string; name: string }>;
+		}>(),
 		summary: text(),
 		resultReportedAt: text("result_reported_at"),
 		startedAt: text("started_at"),
@@ -156,17 +162,6 @@ export const runManifests = sqliteTable("run_manifests", {
 		.notNull(),
 	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 });
-
-export const events = sqliteTable(
-	"events",
-	{
-		seq: integer().primaryKey({ autoIncrement: true }),
-		kind: text().notNull(),
-		payload: text({ mode: "json" }).default({}).notNull(),
-		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-	},
-	(table) => [index("idx_events_seq").on(table.seq)],
-);
 
 export const evidence = sqliteTable("evidence", {
 	id: text().primaryKey(),
@@ -270,22 +265,6 @@ export const executorProfiles = sqliteTable(
 	() => [check("executor_profiles_type", sql`profile_type IN ('pi','codex')`)],
 );
 
-export const runtimeAssets = sqliteTable("runtime_assets", {
-	id: text().primaryKey(),
-	assetType: text("asset_type").notNull(),
-	version: text().notNull(),
-	path: text().notNull(),
-	hash: text().notNull(),
-	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-});
-
-export const userDecisions = sqliteTable("user_decisions", {
-	id: text().primaryKey(),
-	kind: text().notNull(),
-	decisionData: text("decision_data", { mode: "json" }).default({}).notNull(),
-	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-});
-
 export const onboardingState = sqliteTable("onboarding_state", {
 	companionId: text("companion_id").primaryKey(),
 	state: text().notNull(),
@@ -352,20 +331,6 @@ export const canonEntities = sqliteTable(
 	},
 	(table) => [index("idx_canon_entities_companion").on(table.companionId, table.name)],
 );
-
-export const canonRelations = sqliteTable("canon_relations", {
-	id: text().primaryKey(),
-	fromEntityId: text("from_entity_id")
-		.notNull()
-		.references(() => canonEntities.id, { onDelete: "cascade" }),
-	toEntityId: text("to_entity_id")
-		.notNull()
-		.references(() => canonEntities.id, { onDelete: "cascade" }),
-	kind: text().notNull(),
-	description: text().default("").notNull(),
-	sourceChunkId: text("source_chunk_id").references(() => canonChunks.id),
-	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
-});
 
 export const canonPackageState = sqliteTable("canon_package_state", {
 	companionId: text("companion_id")

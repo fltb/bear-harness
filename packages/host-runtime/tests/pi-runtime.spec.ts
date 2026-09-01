@@ -101,6 +101,14 @@ function setup(dataDir: string) {
 	const discarded: string[] = [];
 	const runtime = new PiRuntime({
 		paths: { runtime: join(dataDir, "runtime"), sessions: join(dataDir, "sessions") },
+		models: {
+			getModels: async () => ({
+				getModel: (providerId: string, modelId: string) => ({
+					provider: providerId,
+					id: modelId,
+				}),
+			}),
+		},
 		sessionEvent: (event: PiSessionEvent) => nativeEvents.push(event),
 		sessionDiscarded: (sessionId: string) => discarded.push(sessionId),
 	} as unknown as PiRuntimeOptions);
@@ -214,6 +222,245 @@ describe("PiRuntime session registry", () => {
 
 		finishRemoval();
 		await deleting;
+	});
+
+	it("serializes deletion behind Pi prompt preflight for the same session", async () => {
+		const dataDir = root();
+		const id = persistedSession(dataDir, "Alpha");
+		const { runtime, built } = setup(dataDir);
+		const session = await runtime.open(id);
+		let accept!: (ok: boolean) => void;
+		const turn = Promise.withResolvers<void>();
+		Object.assign(session, {
+			prompt: vi.fn((_text, options) => {
+				accept = options.preflightResult;
+				return turn.promise;
+			}),
+		});
+
+		const sending = runtime.send(id, "hello");
+		await vi.waitFor(() => expect(session.prompt).toHaveBeenCalledOnce());
+		const deleting = runtime.delete(id, () => undefined);
+		expect(built.get(id)?.abort).not.toHaveBeenCalled();
+
+		accept(true);
+		await sending;
+		await deleting;
+		expect(built.get(id)?.abort).toHaveBeenCalledOnce();
+		turn.resolve();
+	});
+
+	const commandDeletionCases = [
+		{
+			name: "abort",
+			start(runtime: PiRuntime, id: string, session: AgentSession, gate: Promise<void>) {
+				const entered = vi.fn(() => gate);
+				Object.assign(session, { abort: entered });
+				return { entered, command: runtime.abort(id) };
+			},
+		},
+		{
+			name: "navigate",
+			start(runtime: PiRuntime, id: string, session: AgentSession, gate: Promise<void>) {
+				const entered = vi.fn(async () => {
+					await gate;
+					return { cancelled: false };
+				});
+				Object.assign(session, { navigateTree: entered });
+				return { entered, command: runtime.navigate(id, "entry") };
+			},
+		},
+		{
+			name: "edit",
+			start(runtime: PiRuntime, id: string, session: AgentSession, gate: Promise<void>) {
+				const entered = vi.fn(async () => {
+					await gate;
+					return { cancelled: false };
+				});
+				Object.assign(session, {
+					navigateTree: entered,
+					sendUserMessage: vi.fn(async () => undefined),
+				});
+				return { entered, command: runtime.edit(id, "entry", "replacement") };
+			},
+		},
+		{
+			name: "regenerate",
+			start(runtime: PiRuntime, id: string, session: AgentSession, gate: Promise<void>) {
+				const userId = session.sessionManager.appendMessage({
+					role: "user",
+					content: "original",
+					timestamp: 1,
+				});
+				const entryId = session.sessionManager.appendCustomEntry("race-target", { userId });
+				const entered = vi.fn(async () => {
+					await gate;
+					return { cancelled: false, editorText: "original" };
+				});
+				Object.assign(session, {
+					navigateTree: entered,
+					prompt: vi.fn(async (_text, options) => {
+						options.preflightResult(true);
+					}),
+				});
+				return { entered, command: runtime.regenerate(id, entryId) };
+			},
+		},
+		{
+			name: "setModel",
+			start(runtime: PiRuntime, id: string, session: AgentSession, gate: Promise<void>) {
+				const entered = vi.fn(() => gate);
+				Object.assign(session, { setModel: entered });
+				return { entered, command: runtime.setModel(id, "provider", "model") };
+			},
+		},
+		{
+			name: "deliverExternalResult",
+			start(runtime: PiRuntime, id: string, session: AgentSession, gate: Promise<void>) {
+				const entered = vi.fn(async () => {
+					await gate;
+					session.sessionManager.appendCustomMessageEntry(
+						"host_external_agent_result",
+						"done",
+						true,
+						{ runId: "run-race" },
+					);
+				});
+				Object.assign(session, { sendCustomMessage: entered });
+				return { entered, command: runtime.deliverExternalResult(id, "run-race", "done") };
+			},
+		},
+	] as const;
+
+	it.each(commandDeletionCases)(
+		"orders $name before deletion once that command has entered its Session sequence",
+		async ({ start }) => {
+			const dataDir = root();
+			const id = persistedSession(dataDir, "Alpha");
+			const { runtime, built } = setup(dataDir);
+			const session = await runtime.open(id);
+			const gate = Promise.withResolvers<void>();
+			const { entered, command } = start(runtime, id, session, gate.promise);
+			await vi.waitFor(() => expect(entered).toHaveBeenCalledOnce());
+			const remove = vi.fn();
+			const deleting = runtime.delete(id, remove);
+
+			await Promise.resolve();
+			expect(remove).not.toHaveBeenCalled();
+			expect(built.get(id)?.dispose).not.toHaveBeenCalled();
+
+			gate.resolve();
+			await command;
+			await deleting;
+			expect(remove).toHaveBeenCalledOnce();
+			expect(built.get(id)?.dispose).toHaveBeenCalledOnce();
+		},
+	);
+
+	const blockedDuringDeletion = [
+		["open", (runtime: PiRuntime, id: string) => runtime.open(id)],
+		["send", (runtime: PiRuntime, id: string) => runtime.send(id, "hello")],
+		["fork", (runtime: PiRuntime, id: string) => runtime.fork(id, "entry")],
+		["abort", (runtime: PiRuntime, id: string) => runtime.abort(id)],
+		["navigate", (runtime: PiRuntime, id: string) => runtime.navigate(id, "entry")],
+		["edit", (runtime: PiRuntime, id: string) => runtime.edit(id, "entry", "replacement")],
+		["regenerate", (runtime: PiRuntime, id: string) => runtime.regenerate(id, "entry")],
+		["continue", (runtime: PiRuntime, id: string) => runtime.continue(id)],
+		["rename", (runtime: PiRuntime, id: string) => runtime.rename(id, "Blocked")],
+		["setModel", (runtime: PiRuntime, id: string) => runtime.setModel(id, "provider", "model")],
+		["modelFor", (runtime: PiRuntime, id: string) => runtime.modelFor(id)],
+		[
+			"deliverExternalResult",
+			(runtime: PiRuntime, id: string) => runtime.deliverExternalResult(id, "run", "done"),
+		],
+		["close", (runtime: PiRuntime, id: string) => runtime.close(id)],
+	] as const;
+
+	it.each(blockedDuringDeletion)(
+		"rejects $0 while managed deletion owns the Session",
+		async (_name, invoke) => {
+			const dataDir = root();
+			const id = persistedSession(dataDir, "Alpha");
+			const { runtime } = setup(dataDir);
+			await runtime.open(id);
+			const removal = Promise.withResolvers<void>();
+			const remove = vi.fn(() => removal.promise);
+			const deleting = runtime.delete(id, remove);
+			await vi.waitFor(() => expect(remove).toHaveBeenCalledOnce());
+
+			await expect(invoke(runtime, id)).rejects.toMatchObject({
+				reason: "pi_session_deleting",
+			});
+
+			removal.resolve();
+			await deleting;
+		},
+	);
+
+	it("lets an accepted open finish, then deletes it, while rejecting later opens", async () => {
+		const dataDir = root();
+		const id = persistedSession(dataDir, "Alpha");
+		const { runtime } = setup(dataDir);
+		const built = Promise.withResolvers<void>();
+		let fake: FakeSession | undefined;
+		const buildSession = vi.fn(async (manager: SessionManager) => {
+			fake = fakeSession(manager);
+			await built.promise;
+			return fake.session;
+		});
+		Object.assign(runtime, { buildSession });
+
+		const opening = runtime.open(id);
+		await vi.waitFor(() => expect(buildSession).toHaveBeenCalledOnce());
+		const remove = vi.fn();
+		const deleting = runtime.delete(id, remove);
+		await expect(runtime.open(id)).rejects.toMatchObject({ reason: "pi_session_deleting" });
+		expect(remove).not.toHaveBeenCalled();
+
+		built.resolve();
+		await expect(opening).resolves.toMatchObject({ sessionId: id });
+		await deleting;
+		expect(fake?.dispose).toHaveBeenCalledOnce();
+		expect(remove).toHaveBeenCalledOnce();
+	});
+
+	it("continues the Session sequence after a command rejects", async () => {
+		const dataDir = root();
+		const id = persistedSession(dataDir, "Before");
+		const { runtime } = setup(dataDir);
+		const session = await runtime.open(id);
+		Object.assign(session, {
+			navigateTree: vi.fn(async () => Promise.reject(new Error("failed"))),
+		});
+
+		await expect(runtime.navigate(id, "entry")).rejects.toThrow("failed");
+		await expect(runtime.rename(id, "After")).resolves.toBeUndefined();
+		expect((await runtime.list()).find((item) => item.id === id)?.name).toBe("After");
+	});
+
+	it("does not serialize commands for different sessions", async () => {
+		const dataDir = root();
+		const alpha = persistedSession(dataDir, "Alpha");
+		const beta = persistedSession(dataDir, "Beta");
+		const { runtime, built } = setup(dataDir);
+		const [alphaSession] = await Promise.all([runtime.open(alpha), runtime.open(beta)]);
+		let accept!: (ok: boolean) => void;
+		const turn = Promise.withResolvers<void>();
+		Object.assign(alphaSession, {
+			prompt: vi.fn((_text, options) => {
+				accept = options.preflightResult;
+				return turn.promise;
+			}),
+		});
+
+		const sending = runtime.send(alpha, "hello");
+		await vi.waitFor(() => expect(alphaSession.prompt).toHaveBeenCalledOnce());
+		await runtime.abort(beta);
+		expect(built.get(beta)?.abort).toHaveBeenCalledOnce();
+		expect(built.get(alpha)?.abort).not.toHaveBeenCalled();
+		accept(true);
+		await sending;
+		turn.resolve();
 	});
 
 	it("renames a closed session without opening it", async () => {

@@ -43,8 +43,6 @@ describe("Bear 1.0 database schema", () => {
 			system.initialize(SYSTEM_SCHEMA_SQL);
 			companion.initialize(COMPANION_SCHEMA_SQL);
 			companion.ensureRuntimeIdentity();
-			system.assertSchemaContract();
-			companion.assertSchemaContract();
 
 			const systemTables = tableNames(system);
 			const companionTables = tableNames(companion);
@@ -76,7 +74,6 @@ describe("Bear 1.0 database schema", () => {
 		const reopened = new SystemDatabase(path);
 		try {
 			reopened.initialize(SYSTEM_SCHEMA_SQL);
-			reopened.assertSchemaContract();
 			expect(
 				reopened.connection
 					.prepare("SELECT label FROM configured_models WHERE provider_id = 'openai-codex'")
@@ -84,20 +81,6 @@ describe("Bear 1.0 database schema", () => {
 			).toEqual({ label: "Sol" });
 		} finally {
 			reopened.close();
-		}
-	});
-
-	it("rejects an existing database that is not the current schema", () => {
-		const root = temporaryRoot();
-		const database = new SystemDatabase(join(root, "settings.db"));
-		try {
-			database.connection.exec("CREATE TABLE obsolete_state(id TEXT PRIMARY KEY)");
-			database.initialize(SYSTEM_SCHEMA_SQL);
-			expect(() => database.assertSchemaContract()).toThrow(
-				/incompatible database schema: missing installation_identity\.id/,
-			);
-		} finally {
-			database.close();
 		}
 	});
 });

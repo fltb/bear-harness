@@ -81,7 +81,14 @@ export class SessionCatalog {
 	async fork(companionId: string, sourceSessionId: string, entryId: string) {
 		this.requireOwned(companionId, sourceSessionId);
 		const session = await this.pi.fork(sourceSessionId, entryId);
-		this.db.insert(conversations).values({ id: session.sessionId, companionId }).run();
+		try {
+			this.db.insert(conversations).values({ id: session.sessionId, companionId }).run();
+		} catch (error) {
+			await this.pi.delete(session.sessionId, async () => {
+				if (session.sessionFile) await deleteSessionFile(session.sessionFile);
+			});
+			throw error;
+		}
 		return session;
 	}
 

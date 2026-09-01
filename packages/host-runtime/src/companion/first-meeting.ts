@@ -1,6 +1,5 @@
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
-import type { EventBus } from "../storage/event-bus.js";
 import { companionRuntimeIdentity, onboardingState } from "../storage/schema.js";
 import type { CharacterLoader } from "./character-loader.js";
 import type {
@@ -31,7 +30,6 @@ interface PersistedOnboardingRow {
 export class FirstMeetingMachine {
 	constructor(
 		private readonly db: AppDatabase,
-		private readonly eventBus: EventBus,
 		private readonly characterLoader: CharacterLoader,
 	) {}
 
@@ -245,7 +243,6 @@ export class FirstMeetingMachine {
 			nextState === "complete"
 				? { status: "complete" as const, stateData }
 				: { status: "active" as const, currentStepId: nextState, stateData };
-		this.eventBus.publish("onboarding.state_changed", row);
 		return row;
 	}
 

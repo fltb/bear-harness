@@ -11,10 +11,10 @@
  * envelope and is converted to a user-facing `Error` here.
  */
 
-import { IpcResponse } from "@bear-harness/protocol/schema";
+import { RpcResponse } from "@bear-harness/protocol/schema";
 import { z } from "@bear-harness/schema";
 
-const AnyEnvelope = IpcResponse(z.unknown());
+const AnyEnvelope = RpcResponse(z.unknown());
 
 /** Unwrap an RPC response envelope; malformed envelopes throw a validation error. */
 export function unwrap<T>(result: unknown): T {

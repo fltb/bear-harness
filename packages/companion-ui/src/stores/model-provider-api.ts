@@ -51,30 +51,21 @@ export function createModelProviderApis(c: {
 			request: () => invoke(client, () => client.model.routeGet({ conversationId })),
 		});
 	const settingsApi: SettingsApi = {
-		data: (characterId) => {
+		data: () => {
 			c.cacheRevision();
-			return characterId
-				? queryClient.getQueryData<{ settings: SettingsData }>([
-						"settings",
-						"character",
-						characterId,
-					])?.settings
-				: c.settings()?.settings;
+			return c.settings()?.settings;
 		},
-		get: async (characterId) =>
+		get: async () =>
 			(
 				await refreshRpcQuery({
 					client: queryClient,
-					key: characterId ? ["settings", "character", characterId] : queryKeys.settings,
-					request: () =>
-						invoke(client, () => client.settings.get(characterId ? { characterId } : undefined)),
+					key: queryKeys.settings,
+					request: () => invoke(client, () => client.settings.get()),
 				})
 			).settings,
-		set: async (settings, characterId) => {
-			await invoke(client, () =>
-				client.settings.set({ ...(characterId ? { characterId } : {}), settings }),
-			);
-			await settingsApi.get(characterId);
+		set: async (settings) => {
+			await invoke(client, () => client.settings.set({ settings }));
+			await settingsApi.get();
 		},
 	};
 	const providerApi: ProviderApi = {
@@ -104,11 +95,11 @@ export function createModelProviderApis(c: {
 			await invoke(client, () => client.provider.setApiKey({ providerId, apiKey, sessionOnly }));
 		},
 		login: async (providerId) => {
-			const receipt = await invoke(client, () =>
+			const state = await invoke(client, () =>
 				client.provider.login({ providerId, authType: "oauth" }),
 			);
-			void providerApi.loginStatus(providerId).catch(c.onRefreshError);
-			return receipt;
+			queryClient.setQueryData(queryKeys.providerLogin(providerId), state);
+			return state;
 		},
 		loginStatus: (providerId) =>
 			refreshRpcQuery({
@@ -117,12 +108,13 @@ export function createModelProviderApis(c: {
 				request: () => invoke(client, () => client.provider.loginStatus({ providerId })),
 			}),
 		loginAnswer: async (providerId, answer) => {
-			await invoke(client, () => client.provider.loginAnswer({ providerId, answer }));
-			return providerApi.loginStatus(providerId);
+			const state = await invoke(client, () => client.provider.loginAnswer({ providerId, answer }));
+			queryClient.setQueryData(queryKeys.providerLogin(providerId), state);
+			return state;
 		},
 		loginCancel: async (providerId) => {
 			await invoke(client, () => client.provider.loginCancel({ providerId }));
-			await providerApi.loginStatus(providerId);
+			queryClient.removeQueries({ queryKey: queryKeys.providerLogin(providerId), exact: true });
 		},
 		logout: async (providerId) => {
 			await invoke(client, () => client.provider.logout({ providerId }));

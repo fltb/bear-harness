@@ -1,5 +1,17 @@
 /** Minimal sandbox preload. Runtime contract parsing lives in the renderer client bundle. */
+
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+
+const INVALIDATION_CHANNELS = {
+	listen: "host:invalidations:listen",
+	push: "host:invalidations:push",
+	unlisten: "host:invalidations:unlisten",
+} as const;
+const LIVE_CHANNELS = {
+	listen: "host:live:listen",
+	push: "host:live:push",
+	unlisten: "host:live:unlisten",
+} as const;
 
 type ErrorType =
 	| "Error"
@@ -70,7 +82,7 @@ function validFault(input: unknown): input is FaultInput {
 
 function reportRendererFault(input: unknown): void {
 	if (validFault(input))
-		ipcRenderer.send("diagnostics:renderer-fault:v1", { traceparent, fault: input });
+		ipcRenderer.send("diagnostics:renderer-fault", { traceparent, fault: input });
 }
 
 async function pickLocalPaths(channel: string): Promise<string[]> {
@@ -84,8 +96,8 @@ async function pickLocalPaths(channel: string): Promise<string[]> {
 }
 
 const localFiles = Object.freeze({
-	pickFiles: () => pickLocalPaths("desktop:pickLocalFiles:v1"),
-	pickFolder: () => pickLocalPaths("desktop:pickLocalFolder:v1"),
+	pickFiles: () => pickLocalPaths("desktop:pickLocalFiles"),
+	pickFolder: () => pickLocalPaths("desktop:pickLocalFolder"),
 	pathsForDroppedFiles: (files: File[]) =>
 		files.map((file) => webUtils.getPathForFile(file)).filter(Boolean),
 });
@@ -95,21 +107,28 @@ function listenToHostPush(
 	params: Record<string, unknown>,
 	receive: (batch: unknown) => void,
 	fail: (error: unknown) => void,
-): () => void {
+): { registered: Promise<void>; stop: () => void } {
 	const id = crypto.randomUUID();
 	let stopped = false;
 	const listener = (_event: Electron.IpcRendererEvent, message: { id: string; batch: unknown }) => {
 		if (!stopped && message.id === id) receive(message.batch);
 	};
 	ipcRenderer.on(channels.push, listener);
-	void ipcRenderer.invoke(channels.listen, { id, ...params }).catch((error) => {
-		if (!stopped) fail(String(error));
-	});
-	return () => {
+	const stop = () => {
+		if (stopped) return;
 		stopped = true;
 		ipcRenderer.removeListener(channels.push, listener);
 		void ipcRenderer.invoke(channels.unlisten, { id }).catch(() => {});
 	};
+	const registered = ipcRenderer.invoke(channels.listen, { id, ...params }).then(
+		() => undefined,
+		(error: unknown) => {
+			if (!stopped) fail(String(error));
+			stop();
+			throw error;
+		},
+	);
+	return { registered, stop };
 }
 
 contextBridge.exposeInMainWorld(
@@ -119,32 +138,16 @@ contextBridge.exposeInMainWorld(
 		diagnostics: Object.freeze({ reportRendererFault }),
 		localFiles,
 		transport: Object.freeze({
-			listen: (
-				afterSeq: number,
-				receive: (batch: unknown) => void,
-				fail: (error: unknown) => void,
-			) =>
-				listenToHostPush(
-					{
-						listen: "events:listen:v1",
-						push: "events:push:v1",
-						unlisten: "events:unlisten:v1",
-					},
-					{ afterSeq },
-					receive,
-					fail,
-				),
-			listenPi: (receive: (batch: unknown) => void, fail: (error: unknown) => void) =>
-				listenToHostPush(
-					{
-						listen: "pi-events:listen:v1",
-						push: "pi-events:push:v1",
-						unlisten: "pi-events:unlisten:v1",
-					},
-					{},
-					receive,
-					fail,
-				),
+			listenInvalidations: (receive: (batch: unknown) => void, fail: (error: unknown) => void) => {
+				const subscription = listenToHostPush(INVALIDATION_CHANNELS, {}, receive, fail);
+				void subscription.registered.catch(() => undefined);
+				return subscription.stop;
+			},
+			subscribeLive: async (receive: (batch: unknown) => void, fail: (error: unknown) => void) => {
+				const subscription = listenToHostPush(LIVE_CHANNELS, {}, receive, fail);
+				await subscription.registered;
+				return subscription.stop;
+			},
 			invoke: (channel: string, request: unknown) => {
 				return ipcRenderer.invoke(channel, request);
 			},

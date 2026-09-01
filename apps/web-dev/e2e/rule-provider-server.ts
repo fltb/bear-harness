@@ -69,6 +69,11 @@ function reply(payload: {
 			});
 		return { content: "E2E_DELEGATED\n" };
 	}
+	if (!externalRun && current.includes("E2E_MEDIA_PREVIEW")) {
+		if (!currentCalls.includes("host_media"))
+			return invoke("host_media", { id: "continuity_light" });
+		return { content: "E2E_MEDIA_READY\n" };
+	}
 	if (externalRun && current.includes("E2E_EXTERNAL_WRITE_ARTIFACT")) {
 		if (!currentCalls.includes("bash"))
 			return invoke("bash", {
@@ -367,7 +372,10 @@ createServer(async (request, response) => {
 			response.write(
 				`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant", content: "HOLD_ONE " }, finish_reason: null }] })}\n\n`,
 			);
-			await new Promise((resolve) => setTimeout(resolve, 1_500));
+			// Keep the first Session running long enough to create and activate a
+			// second real Session before this one settles, so the sidebar completion
+			// marker is exercised deterministically.
+			await new Promise((resolve) => setTimeout(resolve, 4_000));
 			response.write(
 				`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "HOLD_TWO\n" }, finish_reason: null }] })}\n\n`,
 			);

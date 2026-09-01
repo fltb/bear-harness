@@ -191,7 +191,6 @@ function firstRunStore(
 		onboarding: {
 			status: "active",
 			currentStepId: "hello",
-			eventSeq: 1,
 			stateData: { answers: {}, decisions: {} },
 		},
 		error: null,

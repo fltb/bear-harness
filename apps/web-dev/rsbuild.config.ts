@@ -27,6 +27,7 @@ export default defineConfig({
 		proxy: {
 			"/bootstrap": hostTarget,
 			"/rpc": hostTarget,
+			"/events": hostTarget,
 			"/attachment": hostTarget,
 			"/diagnostics": hostTarget,
 			"/debug": hostTarget,

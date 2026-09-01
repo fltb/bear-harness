@@ -32,18 +32,18 @@ async function data(
 }
 
 async function configureConversationModel(runtime: ReturnType<typeof createHostRuntime>) {
-	await data(runtime, "provider.customUpsert:v1", {
+	await data(runtime, "provider.customUpsert", {
 		providerId: "state-test",
 		name: "State Test",
 		baseUrl: "https://example.invalid/v1",
 		models: [{ id: "state-model" }],
 	});
-	await data(runtime, "provider.setApiKey:v1", {
+	await data(runtime, "provider.setApiKey", {
 		providerId: "state-test",
 		apiKey: "session-key",
 		sessionOnly: true,
 	});
-	await data(runtime, "model.defaults.setReply:v1", {
+	await data(runtime, "model.defaults.setReply", {
 		reply: { providerId: "state-test", modelId: "state-model" },
 	});
 }
@@ -61,11 +61,11 @@ describe("character state RPC projection", () => {
 		await runtime.start();
 		try {
 			await configureConversationModel(runtime);
-			const conversation = (await data(runtime, "conversation.create:v1", {
+			const conversation = (await data(runtime, "conversation.create", {
 				title: "State projection",
-			})) as { sessionId: string };
-			const before = (await data(runtime, "companionState.get:v1", {
-				conversationId: conversation.sessionId,
+			})) as { conversationId: string };
+			const before = (await data(runtime, "companionState.get", {
+				conversationId: conversation.conversationId,
 			})) as {
 				state: {
 					character: {
@@ -78,9 +78,9 @@ describe("character state RPC projection", () => {
 			expect(projection.document.story.summary).toBe("尚未开始。");
 
 			const receive = vi.fn();
-			const stop = runtime.subscribeEvents(receive, 0);
-			const response = await data(runtime, "companionState.update:v1", {
-				conversationId: conversation.sessionId,
+			const stop = runtime.subscribeLivePush(receive);
+			const response = await data(runtime, "companionState.update", {
+				conversationId: conversation.conversationId,
 				changes: [
 					{
 						path: "/character/story/summary",
@@ -89,13 +89,16 @@ describe("character state RPC projection", () => {
 				],
 			});
 			expect(response).toEqual({});
-			expect(receive.mock.calls.map(([event]) => event.kind)).toContain(
-				"companion.snapshot_changed",
+			expect(receive).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: "companionState",
+					conversationId: conversation.conversationId,
+				}),
 			);
 			stop();
 
-			const after = (await data(runtime, "companionState.get:v1", {
-				conversationId: conversation.sessionId,
+			const after = (await data(runtime, "companionState.get", {
+				conversationId: conversation.conversationId,
 			})) as typeof before;
 			expect(after.state.character.document.story.summary).toBe("两份记录都不足以确认最终接收者。");
 			expect(after.state.character.revisions.conversation).toBe(

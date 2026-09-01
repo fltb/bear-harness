@@ -48,9 +48,10 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, resolve, sep } from "node:path";
+import { CacheKey } from "@bear-harness/protocol/schema";
 import { and, eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
-import type { EventBus } from "../storage/event-bus.js";
+import type { InvalidationHub } from "../storage/invalidation-hub.js";
 import { evidence } from "../storage/schema.js";
 
 // ---------------------------------------------------------------------------
@@ -226,11 +227,11 @@ interface StoredFsopPlan {
 
 export class FileOpsService {
 	private db: AppDatabase;
-	private eventBus: EventBus;
+	private invalidations: InvalidationHub;
 
-	constructor(db: AppDatabase, eventBus: EventBus) {
+	constructor(db: AppDatabase, invalidations: InvalidationHub) {
 		this.db = db;
-		this.eventBus = eventBus;
+		this.invalidations = invalidations;
 	}
 
 	// -----------------------------------------------------------------------
@@ -252,7 +253,7 @@ export class FileOpsService {
 		const id = randomUUID();
 		const stored: StoredFsopPlan = { id, ops: storedOps, authorizedRoots: roots };
 		this.db.insert(evidence).values({ id, kind: PLAN_KIND, data: stored }).run();
-		this.eventBus.publish("fsops.plan_created", { planId: id, opCount: storedOps.length });
+		this.invalidations.invalidate(CacheKey.audit());
 		return { id, ops: params.ops, authorizedRoots: roots };
 	}
 
@@ -276,12 +277,7 @@ export class FileOpsService {
 			if (!op) break;
 			const entry = this.executeOp(stored, opIndex, op);
 			this.appendJournal(entry);
-			this.eventBus.publish("fsops.journal_entry", {
-				entryId: entry.id,
-				planId,
-				opIndex,
-				status: entry.status,
-			});
+			this.invalidations.invalidate(CacheKey.audit());
 			journal.push(entry);
 			if (entry.status === "error") {
 				errors.push(`op ${opIndex} (${op.kind}): ${entry.error ?? "unknown"}`);
@@ -312,12 +308,7 @@ export class FileOpsService {
 			const entry = entries[i]!;
 			const undoEntry = this.undoOne(entry);
 			this.appendJournal(undoEntry, UNDO_KIND);
-			this.eventBus.publish("fsops.undo_entry", {
-				entryId: undoEntry.id,
-				planId,
-				opIndex: entry.opIndex,
-				status: undoEntry.status,
-			});
+			this.invalidations.invalidate(CacheKey.audit());
 			undoJournal.push(undoEntry);
 		}
 		return undoJournal;

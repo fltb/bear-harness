@@ -62,15 +62,15 @@ describe("Host update IPC handlers", () => {
 		const runtime = makeRuntime(updateService);
 		try {
 			await runtime.start();
-			expect(await runtime.dispatch("update.check:v1", {})).toMatchObject({
+			expect(await runtime.dispatch("update.check", {})).toMatchObject({
 				ok: true,
 				data: { state: "available", currentVersion: "1.0.0", latestVersion: "2.0.0" },
 			});
-			expect(await runtime.dispatch("update.discard:v1", {})).toMatchObject({
+			expect(await runtime.dispatch("update.discard", {})).toMatchObject({
 				ok: true,
 				data: { state: "idle", discarded: true },
 			});
-			expect(await runtime.dispatch("update.apply:v1", {})).toMatchObject({
+			expect(await runtime.dispatch("update.apply", {})).toMatchObject({
 				ok: true,
 				data: { state: "ready", applyUnsupported: true },
 			});
@@ -84,15 +84,15 @@ describe("Host update IPC handlers", () => {
 		const runtime = makeRuntime();
 		try {
 			await runtime.start();
-			expect(await runtime.dispatch("update.check:v1", {})).toMatchObject({
+			expect(await runtime.dispatch("update.check", {})).toMatchObject({
 				ok: true,
 				data: { state: "disabled" },
 			});
-			expect(await runtime.dispatch("update.discard:v1", {})).toMatchObject({
+			expect(await runtime.dispatch("update.discard", {})).toMatchObject({
 				ok: true,
 				data: { state: "disabled", discarded: false },
 			});
-			expect(await runtime.dispatch("update.apply:v1", {})).toMatchObject({
+			expect(await runtime.dispatch("update.apply", {})).toMatchObject({
 				ok: true,
 				data: { state: "disabled", applyUnsupported: true },
 			});

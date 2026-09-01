@@ -2,7 +2,7 @@
 
 ## 责任
 
-`@bear-harness/schema` 提供共享的 Zod 约束工具；`@bear-harness/protocol` 在 [`packages/protocol/src/schema.ts`](../../packages/protocol/src/schema.ts) 定义 RPC、响应包、领域类型、durable events 和 Pi transient events。这里是跨进程数据形状的唯一来源。
+`@bear-harness/schema` 提供共享的 Zod 约束工具；`@bear-harness/protocol` 在 [`packages/protocol/src/schema.ts`](../../packages/protocol/src/schema.ts) 定义 RPC、响应包、领域类型、临时失效通知和 Pi 临时事件。这里是跨进程数据形状的唯一来源。
 
 协议只保证形状、范围和枚举；领域所有权、路径 containment、凭据授权和内容哈希仍由 Host handler 验证。
 

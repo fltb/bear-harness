@@ -43,7 +43,6 @@ const EXPECTED_NAMES = [
 	"tool.execute",
 	"host.rule.evaluate",
 	"character.state.transition",
-	"external_agent.run",
 	"trace.content",
 	"webdev.rpc_dispatch_failure",
 	"app.started",

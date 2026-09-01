@@ -10,6 +10,8 @@
  */
 
 import type { z } from "@bear-harness/schema";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentSessionEvent, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type * as schema from "./schema.js";
 
 // ---------------------------------------------------------------------------
@@ -17,26 +19,25 @@ import type * as schema from "./schema.js";
 // ---------------------------------------------------------------------------
 
 /** Localizable reason codes for wire errors. */
-export type IpcErrorKind = z.infer<typeof schema.IpcErrorKind>;
+export type RpcErrorKind = z.infer<typeof schema.RpcErrorKind>;
 
 /** Error body of a failed wire response. */
-export interface IpcError {
-	kind: IpcErrorKind;
+export interface RpcError {
+	kind: RpcErrorKind;
 	reason: string;
 }
 
 /** Successful branch of the response envelope. */
-export type SyncRevision = z.infer<typeof schema.SyncRevision>;
-export type IpcSuccess<T> = { ok: true; data: T; sync?: SyncRevision };
+export type RpcSuccess<T> = { ok: true; data: T };
 
 /** Failed branch of the response envelope. */
-export type IpcFailure = { ok: false; error: IpcError };
+export type RpcFailure = { ok: false; error: RpcError };
 
 /**
  * Wire response envelope — `{ ok: true, data } | { ok: false, error }`,
- * mirroring the `IpcResponse` factory in `./schema.ts`.
+ * mirroring the `RpcResponse` factory in `./schema.ts`.
  */
-export type IpcEnvelope<T> = IpcSuccess<T> | IpcFailure;
+export type RpcEnvelope<T> = RpcSuccess<T> | RpcFailure;
 
 /** Empty payload used by command-style RPC responses. */
 export type EmptyResponse = z.infer<typeof schema.EmptyResponse>;
@@ -54,18 +55,13 @@ export type AnyRpcEndpoint = schema.AnyRpcEndpoint;
 export type DeclaredRpcEndpoint = schema.DeclaredRpcEndpoint;
 export type RequestOf<E extends AnyRpcEndpoint> = schema.RequestOf<E>;
 export type ResponseOf<E extends AnyRpcEndpoint> = schema.ResponseOf<E>;
-export type EnvelopeOf<E extends AnyRpcEndpoint> = IpcEnvelope<ResponseOf<E>>;
+export type EnvelopeOf<E extends AnyRpcEndpoint> = RpcEnvelope<ResponseOf<E>>;
 
-// ---------------------------------------------------------------------------
-// Event bus
-// ---------------------------------------------------------------------------
-export type EventSeq = z.infer<typeof schema.EventSeq>;
-export type EventKind = z.infer<typeof schema.EventKind>;
-export type KnownEventKind = schema.KnownEventKind;
-export type DomainEvent = z.infer<typeof schema.DomainEvent>;
-export type KnownDomainEvent = schema.KnownDomainEvent;
-export type EventSubscribeRequest = z.infer<typeof schema.EventSubscribeRequest>;
-export type EventSubscribeResponse = z.infer<typeof schema.EventSubscribeResponse>;
+export type InvalidationNotice = z.infer<typeof schema.InvalidationNotice>;
+export type InvalidationBatch = z.infer<typeof schema.InvalidationBatch>;
+export type CacheKey = z.infer<typeof schema.CacheKeySchema>;
+export type LivePush = z.infer<typeof schema.LivePush>;
+export type LivePushBatch = z.infer<typeof schema.LivePushBatch>;
 
 // ---------------------------------------------------------------------------
 // Snapshot
@@ -171,17 +167,14 @@ export type ConversationCreateResponse = z.infer<typeof schema.ConversationCreat
 export type ConversationOpenRequest = z.infer<typeof schema.ConversationOpenRequest>;
 export type ConversationOpenResponse = z.infer<typeof schema.ConversationOpenResponse>;
 export type ConversationDetail = z.infer<typeof schema.ConversationDetail>;
-export type PiTimelineEntry = z.infer<typeof schema.PiTimelineEntry>;
 export type CharacterMedia = z.infer<typeof schema.CharacterMedia>;
 export type PiMessageChoices = z.infer<typeof schema.PiMessageChoices>;
-export type PiTimeline = z.infer<typeof schema.PiTimeline>;
-export type PiSessionId = z.infer<typeof schema.PiSessionId>;
-export type PiLiveAssistantMessage = z.infer<typeof schema.PiLiveAssistantMessage>;
-export type PiLiveState = z.infer<typeof schema.PiLiveState>;
-export type PiSessionEventType = z.infer<typeof schema.PiSessionEventType>;
-export type PiToolActivity = z.infer<typeof schema.PiToolActivity>;
-export type PiSessionLiveEvent = z.infer<typeof schema.PiSessionLiveEvent>;
-export type PiEventSubscribeResponse = z.infer<typeof schema.PiEventSubscribeResponse>;
+export type PiSessionEntry = SessionEntry;
+export type PiAgentMessage = AgentMessage;
+export type PiAgentSessionEvent = AgentSessionEvent;
+export type PiLiveSnapshot = z.infer<typeof schema.PiLiveSnapshot>;
+export type ConversationHistoryRequest = z.infer<typeof schema.ConversationHistoryRequest>;
+export type ConversationHistoryResponse = z.infer<typeof schema.ConversationHistoryResponse>;
 export type ConversationRenameRequest = z.infer<typeof schema.ConversationRenameRequest>;
 export type ConversationRenameResponse = z.infer<typeof schema.EmptyResponse>;
 export type ConversationArchiveRequest = z.infer<typeof schema.ConversationArchiveRequest>;
@@ -196,11 +189,11 @@ export type ConversationDeleteResponse = z.infer<typeof schema.EmptyResponse>;
 export type MessageSendRequest = z.infer<typeof schema.MessageSendRequest>;
 export type MessageSendResponse = z.infer<typeof schema.MessageSendResponse>;
 export type MessageRegenerateRequest = z.infer<typeof schema.MessageRegenerateRequest>;
-export type MessageRegenerateResponse = z.infer<typeof schema.MessageSendResponse>;
-export type MessageSwitchVersionResponse = z.infer<typeof schema.EmptyResponse>;
-export type MessageEditResponse = z.infer<typeof schema.EmptyResponse>;
-export type MessageContinueResponse = z.infer<typeof schema.EmptyResponse>;
-export type MessageAbortResponse = z.infer<typeof schema.EmptyResponse>;
+export type MessageRegenerateResponse = ResponseOf<typeof schema.RPC.message.regenerate>;
+export type MessageSwitchVersionResponse = ResponseOf<typeof schema.RPC.message.switchVersion>;
+export type MessageEditResponse = ResponseOf<typeof schema.RPC.message.edit>;
+export type MessageContinueResponse = ResponseOf<typeof schema.RPC.message.continue>;
+export type MessageAbortResponse = ResponseOf<typeof schema.RPC.message.abort>;
 export type MessageSwitchVersionRequest = z.infer<typeof schema.MessageSwitchVersionRequest>;
 export type MessageEditRequest = z.infer<typeof schema.MessageEditRequest>;
 export type MessageContinueRequest = z.infer<typeof schema.MessageContinueRequest>;
@@ -342,6 +335,7 @@ export type RunRespondPermissionResponse = z.infer<typeof schema.RunResponse>;
 export type RunStatus = z.infer<typeof schema.RunStatus>;
 export type ArtifactStatus = z.infer<typeof schema.ArtifactStatus>;
 export type RunEvidenceSummary = z.infer<typeof schema.RunEvidenceSummary>;
+export type RunPermission = z.infer<typeof schema.RunPermission>;
 export type Run = z.infer<typeof schema.Run>;
 export type RunListRequest = z.infer<typeof schema.RunListRequest>;
 export type RunListResponse = z.infer<typeof schema.RunListResponse>;

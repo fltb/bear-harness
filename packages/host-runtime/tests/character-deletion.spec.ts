@@ -69,7 +69,7 @@ function thrown(run: () => unknown): unknown {
 }
 
 async function importCharacter(runtime: HostRuntime, characterId: string): Promise<void> {
-	const response = await runtime.dispatch("character.import:v1", {
+	const response = await runtime.dispatch("character.import", {
 		files: packageFiles(join(characterRoot, "jizhou"), characterId),
 	});
 	if (!response.ok) throw new Error(`${response.error.kind}: ${response.error.reason}`);
@@ -96,7 +96,7 @@ describe("physical character deletion", () => {
 		expect(existsSync(runtimePath)).toBe(true);
 		expect(existsSync(packagePath)).toBe(true);
 		expect(
-			await runtime.dispatch("character.deletionStatusGet:v1", {
+			await runtime.dispatch("character.deletionStatusGet", {
 				characterId: "deletable-role",
 			}),
 		).toMatchObject({
@@ -119,7 +119,7 @@ describe("physical character deletion", () => {
 		const handle = registry.open("deletable-role");
 		const closeDatabase = vi.spyOn(handle.database, "close");
 		expect(
-			await runtime.dispatch("character.runtimeDelete:v1", { characterId: "deletable-role" }),
+			await runtime.dispatch("character.runtimeDelete", { characterId: "deletable-role" }),
 		).toMatchObject({
 			ok: true,
 			data: { characterId: "deletable-role", target: "runtime", deleted: true },
@@ -130,7 +130,7 @@ describe("physical character deletion", () => {
 		expect(runtime.deleteCharacterRuntime("deletable-role")).toEqual({ deleted: false });
 
 		expect(
-			await runtime.dispatch("character.packageDelete:v1", { characterId: "deletable-role" }),
+			await runtime.dispatch("character.packageDelete", { characterId: "deletable-role" }),
 		).toMatchObject({
 			ok: true,
 			data: { characterId: "deletable-role", target: "package", deleted: true },
@@ -170,7 +170,7 @@ describe("physical character deletion", () => {
 		).toMatchObject({ kind: "conflict", reason: "character_package_default" });
 
 		await importCharacter(runtime, "active-role");
-		const activated = await runtime.dispatch("character.activate:v1", {
+		const activated = await runtime.dispatch("character.activate", {
 			characterId: "active-role",
 		});
 		if (!activated.ok) throw new Error(`${activated.error.kind}: ${activated.error.reason}`);

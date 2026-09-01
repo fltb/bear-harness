@@ -10,11 +10,11 @@ import {
 	statSync,
 } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
-import { EventPayloadSchemas } from "@bear-harness/protocol/schema";
-import { and, count, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import type { Run as WireRun } from "@bear-harness/protocol";
+import { RunPermission } from "@bear-harness/protocol/schema";
+import { and, count, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import PQueue from "p-queue";
 import type { ArtifactRecord, ArtifactStore } from "../artifacts/index.js";
-import type { Diagnostics } from "../diagnostics/index.js";
-import { currentTraceContext, runInTrace, type TraceContext } from "../diagnostics/trace.js";
 import type {
 	ExecutorEvent,
 	ExecutorPermissionOption,
@@ -22,8 +22,7 @@ import type {
 	ExecutorRun,
 } from "../executors/router.js";
 import type { AppDatabase } from "../storage/database.js";
-import type { EventBus } from "../storage/event-bus.js";
-import { conversations, events, evidence, runs } from "../storage/schema.js";
+import { conversations, evidence, runs } from "../storage/schema.js";
 
 export const MAX_CONCURRENT_RUNS = 2;
 const MAX_RUN_CLEANUP_ENTRIES = 10_000;
@@ -102,15 +101,14 @@ const DEFAULT_RECONCILIATION_TIMEOUT_MS = 15_000;
 
 /** Direct external-agent ownership/FSM boundary. There is no proposal or approval phase. */
 export class ExternalAgentRunService {
+	private readonly events = new PQueue({ concurrency: 1 });
+	private readonly changeListeners = new Set<(run: WireRun) => void>();
 	private readonly reconciliationTasks = new Map<string, ReconciliationAttempt>();
 	private readonly detachedTasks = new Set<Promise<void>>();
 	private closePromise: Promise<void> | undefined;
 	private closed = false;
-	private readonly runTraces = new Map<string, TraceContext>();
-	private readonly runAgents = new Map<string, "pi" | "codex">();
 	constructor(
 		private readonly db: AppDatabase,
-		private readonly eventBus: EventBus,
 		private readonly executorRouter: ExecutorRouter,
 		private readonly artifacts: ArtifactStore,
 		private readonly runRoot: string,
@@ -123,9 +121,13 @@ export class ExternalAgentRunService {
 			signal: AbortSignal,
 		) => TerminalReconcileResult | Promise<TerminalReconcileResult>,
 		private readonly reconciliationTimeoutMs = DEFAULT_RECONCILIATION_TIMEOUT_MS,
-		private readonly diagnostics?: Diagnostics,
 	) {
 		mkdirSync(runRoot, { recursive: true });
+	}
+
+	subscribeChanges(listener: (run: WireRun) => void): () => void {
+		this.changeListeners.add(listener);
+		return () => this.changeListeners.delete(listener);
 	}
 
 	async delegate(params: DelegateParams): Promise<DelegateResult> {
@@ -145,50 +147,38 @@ export class ExternalAgentRunService {
 			params.agent === "pi" ? await this.resolvePiModel(params.conversationId) : undefined;
 		if (params.agent === "pi" && !modelRoute)
 			throw { kind: "unavailable", reason: "pi_model_unavailable" };
-		const resourceOwners = this.db
-			.select({ n: count() })
-			.from(runs)
-			.where(and(inArray(runs.status, EXECUTOR_RESOURCE_STATUSES), isNull(runs.completedAt)))
-			.get();
-		if (Number(resourceOwners?.n ?? 0) >= MAX_CONCURRENT_RUNS)
-			throw { kind: "conflict", reason: "max_concurrent_runs" };
-
 		const runId = randomUUID();
-		const trace = currentTraceContext();
-		if (trace) this.runTraces.set(runId, trace);
-		this.runAgents.set(runId, params.agent);
 		const runDirectory = join(this.runRoot, runId);
-		const prepared = prepareRunDirectories(runDirectory, inputPaths);
 		const title =
 			instruction
 				.split(/\r?\n/)
 				.find((line) => line.trim())
 				?.trim()
 				.slice(0, 80) ?? "External agent task";
-		this.db
-			.insert(runs)
-			.values({
-				id: runId,
-				conversationId: params.conversationId,
-				triggerEntryId: params.triggerEntryId,
-				executorProfile: profile,
-				title,
-				instruction,
-				inputPaths,
-				status: "enqueued",
-			})
-			.run();
-		this.eventBus.publish("run.enqueued", {
-			runId,
-			conversationId: params.conversationId,
-			triggerEntryId: params.triggerEntryId,
-			executorProfile: profile,
-		});
-		if (trace) this.recordEvidence(runId, "trace.context", trace);
-		this.diagnostics?.emit("external_agent.run", {
-			runId,
-			agent: params.agent,
-			phase: "enqueued",
+		const prepared = await this.enqueueEvent(() => {
+			const resourceOwners = this.db
+				.select({ n: count() })
+				.from(runs)
+				.where(and(inArray(runs.status, EXECUTOR_RESOURCE_STATUSES), isNull(runs.completedAt)))
+				.get();
+			if (Number(resourceOwners?.n ?? 0) >= MAX_CONCURRENT_RUNS)
+				throw { kind: "conflict", reason: "max_concurrent_runs" };
+			const directories = prepareRunDirectories(runDirectory, inputPaths);
+			this.db
+				.insert(runs)
+				.values({
+					id: runId,
+					conversationId: params.conversationId,
+					triggerEntryId: params.triggerEntryId,
+					executorProfile: profile,
+					title,
+					instruction,
+					inputPaths,
+					status: "enqueued",
+				})
+				.run();
+			this.changed(runId);
+			return directories;
 		});
 		const run: ExecutorRun = {
 			runId,
@@ -212,21 +202,21 @@ export class ExternalAgentRunService {
 				},
 				(event) => {
 					if (this.closed) return;
-					const task = Promise.resolve(
-						this.runWithTrace(runId, () =>
-							this.handleExecutorEvent(
-								runId,
-								event,
-								prepared.outputDirectory,
-								prepared.canonicalOutputDirectory,
-								pathReplacements,
-							),
+					const task = this.enqueueEvent(() =>
+						this.applyExecutorEvent(
+							runId,
+							event,
+							prepared.outputDirectory,
+							prepared.canonicalOutputDirectory,
+							pathReplacements,
 						),
-					).catch((error) => {
+					).catch(async (error) => {
 						if (this.closed) return;
 						try {
-							this.recordEvidence(runId, "executor.event_failed", {
-								reason: reconciliationError(error),
+							await this.enqueueEvent(() => {
+								this.recordEvidence(runId, "executor.event_failed", {
+									reason: reconciliationError(error),
+								});
 							});
 						} catch {
 							// Executor callbacks are detached; diagnostics failure
@@ -238,15 +228,17 @@ export class ExternalAgentRunService {
 			);
 		} catch (error) {
 			const reason = safeReason(error, pathReplacements);
-			this.recordEvidence(runId, "executor.launch_failed", { reason });
-			if (!this.getRun(runId).completedAt) await this.terminate(runId, "failed", reason, []);
+			await this.enqueueEvent(async () => {
+				this.recordEvidence(runId, "executor.launch_failed", { reason });
+				this.terminate(runId, "failed", reason, []);
+			});
 			throw error;
 		}
 		const persisted = this.getRun(runId);
 		return { runId, status: persisted.status === "running" ? "running" : "enqueued" };
 	}
 
-	private async handleExecutorEvent(
+	private async applyExecutorEvent(
 		runId: string,
 		event: ExecutorEvent,
 		outputDirectory: string,
@@ -264,8 +256,7 @@ export class ExternalAgentRunService {
 					.set({ status: "running", startedAt: new Date().toISOString() })
 					.where(eq(runs.id, runId))
 					.run();
-				this.eventBus.publish("run.started", { runId });
-				this.emitRunTrace(runId, "started");
+				this.changed(runId);
 				return;
 			case "evidence":
 				this.recordEvidence(runId, event.kind, sanitizeValue(event.data, paths));
@@ -287,18 +278,18 @@ export class ExternalAgentRunService {
 						outputDirectory,
 						canonicalOutputDirectory,
 					);
-					await this.terminate(runId, "completed", normalizedSummary, outputs);
+					this.terminate(runId, "completed", normalizedSummary, outputs);
 				} catch {
 					this.recordEvidence(runId, "executor.failed", { reason: "output_snapshot_failed" });
-					await this.terminate(runId, "failed", "output_snapshot_failed", []);
+					this.terminate(runId, "failed", "output_snapshot_failed", []);
 				}
 				return;
 			}
 			case "failed":
-				await this.terminate(runId, "failed", safeExecutorFailureReason(event.reason), []);
+				this.terminate(runId, "failed", safeExecutorFailureReason(event.reason), []);
 				return;
 			case "cancelled":
-				await this.terminate(
+				this.terminate(
 					runId,
 					"cancelled",
 					event.reason ? safeReason(event.reason, paths) : null,
@@ -308,69 +299,88 @@ export class ExternalAgentRunService {
 		}
 	}
 
-	private async terminate(
+	private terminate(
 		runId: string,
 		status: TerminalRunStatus,
 		summary: string | null,
 		outputs: ArtifactRecord[],
-	): Promise<RunSummary> {
+	): RunSummary {
 		const run = this.getRun(runId);
 		if (run.completedAt) return summarize(run);
-		this.db
+		const update = this.db
 			.update(runs)
-			.set({ status, summary, completedAt: new Date().toISOString() })
-			.where(eq(runs.id, runId))
+			.set({ status, summary, permissionJson: null, completedAt: new Date().toISOString() })
+			.where(and(eq(runs.id, runId), isNull(runs.completedAt)))
 			.run();
-		this.eventBus.publish("run.completed", { runId, status });
-		this.emitRunTrace(runId, status);
+		if (!update.changes) return summarize(this.getRun(runId));
+		this.changed(runId);
 		const result = summarize(this.getRun(runId));
 		void this.reconcileRun(runId, outputs);
 		return result;
+	}
+
+	project(run: RunSummary): WireRun {
+		const row = this.getRun(run.id);
+		const permission = row.permissionJson ? RunPermission.safeParse(row.permissionJson) : undefined;
+		return {
+			id: run.id,
+			conversationId: run.conversationId,
+			triggerEntryId: run.triggerEntryId,
+			executorProfile: run.executorProfile,
+			title: run.title,
+			status: run.status,
+			artifacts: run.artifacts.map((artifact) => ({
+				id: artifact.id,
+				name: artifact.logicalName,
+				mime: artifact.mime,
+				bytes: artifact.bytes,
+				sha256: artifact.sha256,
+				status: artifact.status,
+				createdAt: artifact.createdAt,
+			})),
+			...(run.summary ? { summary: safeRunText(run.summary, 4_096) } : {}),
+			evidence: this.db
+				.select({ kind: evidence.kind, data: evidence.data, createdAt: evidence.createdAt })
+				.from(evidence)
+				.where(eq(evidence.runId, run.id))
+				.orderBy(desc(evidence.createdAt))
+				.limit(20)
+				.all()
+				.reverse()
+				.map((item) => {
+					const summary = summarizeEvidence(item.data);
+					return {
+						kind: safeRunText(item.kind, 128) || "evidence",
+						...(summary ? { summary } : {}),
+						createdAt: item.createdAt,
+					};
+				}),
+			...(permission?.success ? { permission: permission.data } : {}),
+			...(run.startedAt ? { startedAt: run.startedAt } : {}),
+			...(run.completedAt ? { completedAt: run.completedAt } : {}),
+		};
+	}
+
+	private changed(runId: string): void {
+		const wire = this.project(summarize(this.getRun(runId), this.artifacts.list(runId)));
+		for (const listener of [...this.changeListeners]) {
+			try {
+				listener(wire);
+			} catch {
+				// A live projection consumer cannot interrupt the committed Run transition.
+			}
+		}
+	}
+
+	private async enqueueEvent<T>(event: () => T | Promise<T>): Promise<T> {
+		const result = await this.events.add(event);
+		return result as T;
 	}
 
 	private getRun(runId: string): RunRow {
 		const row = this.db.select().from(runs).where(eq(runs.id, runId)).get();
 		if (!row) throw { kind: "not_found", reason: "run_not_found" };
 		return row;
-	}
-
-	private runWithTrace<T>(runId: string, callback: () => T): T {
-		const trace = this.runTraces.get(runId) ?? this.loadRunTrace(runId);
-		return trace ? runInTrace(trace, callback) : callback();
-	}
-
-	private loadRunTrace(runId: string): TraceContext | undefined {
-		const row = this.db
-			.select({ data: evidence.data })
-			.from(evidence)
-			.where(and(eq(evidence.runId, runId), eq(evidence.kind, "trace.context")))
-			.orderBy(desc(evidence.createdAt))
-			.limit(1)
-			.get();
-		if (!row || !isTraceContext(row.data)) return undefined;
-		this.runTraces.set(runId, row.data);
-		return row.data;
-	}
-
-	private emitRunTrace(
-		runId: string,
-		phase:
-			| "started"
-			| "needs_user"
-			| "completed"
-			| "failed"
-			| "cancelled"
-			| "interrupted"
-			| "forced_termination"
-			| "resumed",
-	): void {
-		this.runWithTrace(runId, () => {
-			this.diagnostics?.emit("external_agent.run", {
-				runId,
-				agent: this.runAgents.get(runId) ?? agentFromProfile(this.getRun(runId).executorProfile),
-				phase,
-			});
-		});
 	}
 
 	private reconcileRun(
@@ -411,16 +421,23 @@ export class ExternalAgentRunService {
 				const update: { resultReportedAt?: string } = {};
 				const now = new Date().toISOString();
 				if (needsResultReport && outcome.resultReported) update.resultReportedAt = now;
-				if (Object.keys(update).length > 0) {
-					this.db.update(runs).set(update).where(eq(runs.id, runId)).run();
-				}
+				if (Object.keys(update).length > 0)
+					await this.enqueueEvent(() => {
+						this.db
+							.update(runs)
+							.set(update)
+							.where(and(eq(runs.id, runId), isNull(runs.resultReportedAt)))
+							.run();
+					});
 			} catch (error) {
 				// Null reconciliation timestamps are the durable pending state. Keep
 				// a bounded failure record without rewriting the settled raw result.
 				if (!this.closed && !controller.signal.aborted) {
 					try {
-						this.recordEvidence(runId, "run.reconciliation_pending", {
-							reason: reconciliationError(error),
+						await this.enqueueEvent(() => {
+							this.recordEvidence(runId, "run.reconciliation_pending", {
+								reason: reconciliationError(error),
+							});
 						});
 					} catch {
 						// The null timestamps remain the durable retry signal even
@@ -442,24 +459,26 @@ export class ExternalAgentRunService {
 		options: ReconciliationAttemptOptions = {},
 	): Promise<number> {
 		if (this.closed || options.signal?.aborted) return 0;
-		const pending = this.db
-			.select({ id: runs.id })
-			.from(runs)
-			.where(
-				and(
-					inArray(runs.status, [
-						"completed",
-						"failed",
-						"cancelled",
-						"interrupted",
-						"forced_termination",
-					]),
-					isNotNull(runs.completedAt),
-					isNull(runs.resultReportedAt),
-					...(conversationId ? [eq(runs.conversationId, conversationId)] : []),
-				),
-			)
-			.all();
+		const pending = await this.enqueueEvent(() =>
+			this.db
+				.select({ id: runs.id })
+				.from(runs)
+				.where(
+					and(
+						inArray(runs.status, [
+							"completed",
+							"failed",
+							"cancelled",
+							"interrupted",
+							"forced_termination",
+						]),
+						isNotNull(runs.completedAt),
+						isNull(runs.resultReportedAt),
+						...(conversationId ? [eq(runs.conversationId, conversationId)] : []),
+					),
+				)
+				.all(),
+		);
 		await Promise.all(pending.map(({ id }) => this.reconcileRun(id, undefined, options)));
 		return pending.length;
 	}
@@ -476,90 +495,135 @@ export class ExternalAgentRunService {
 			.insert(evidence)
 			.values({ id: evidenceId, runId, kind: kind.slice(0, 128), data })
 			.run();
-		this.eventBus.publish("evidence.collected", { runId, evidenceId, kind: kind.slice(0, 128) });
+		this.changed(runId);
 	}
 
-	needsUser(
+	private needsUser(
 		runId: string,
 		prompt: string,
-		requestId?: string,
+		requestId: string,
 		options: ExecutorPermissionOption[] = [],
 	): RunSummary {
 		const run = this.getRun(runId);
 		if (run.status !== "running") throw { kind: "conflict", reason: "run_not_active" };
-		this.db.update(runs).set({ status: "needs_user" }).where(eq(runs.id, runId)).run();
-		this.eventBus.publish("run.needs_user", { runId, prompt, requestId, options });
-		this.emitRunTrace(runId, "needs_user");
+		const permission = RunPermission.parse({ runId, prompt, requestId, options });
+		this.db
+			.update(runs)
+			.set({ status: "needs_user", permissionJson: permission })
+			.where(eq(runs.id, runId))
+			.run();
+		this.changed(runId);
 		return summarize(this.getRun(runId));
 	}
 	async steerRun(runId: string, instruction: string): Promise<void> {
-		const run = this.getRun(runId);
-		if (run.status !== "running" && run.status !== "needs_user")
-			throw { kind: "conflict", reason: "run_not_steerable" };
+		const run = await this.enqueueEvent(() => {
+			const current = this.getRun(runId);
+			if (current.status !== "running" && current.status !== "needs_user")
+				throw { kind: "conflict", reason: "run_not_steerable" };
+			return current;
+		});
 		await this.executorRouter.steer(this.executorRun(run), instruction);
-		this.eventBus.publish("run.steered", { runId, instruction });
+		this.changed(runId);
 	}
 	async interruptRun(runId: string): Promise<RunSummary> {
-		const run = this.getRun(runId);
-		if (run.status !== "running" && run.status !== "needs_user")
-			throw { kind: "conflict", reason: "run_not_interruptible" };
+		const run = await this.enqueueEvent(() => {
+			const current = this.getRun(runId);
+			if (current.status !== "running" && current.status !== "needs_user")
+				throw { kind: "conflict", reason: "run_not_interruptible" };
+			return current;
+		});
 		await this.executorRouter.interrupt(this.executorRun(run));
-		this.db.update(runs).set({ status: "interrupted" }).where(eq(runs.id, runId)).run();
-		this.eventBus.publish("run.interrupted", { runId });
-		this.emitRunTrace(runId, "interrupted");
-		return summarize(this.getRun(runId));
+		return this.enqueueEvent(() => {
+			const update = this.db
+				.update(runs)
+				.set({ status: "interrupted", permissionJson: null })
+				.where(
+					and(
+						eq(runs.id, runId),
+						inArray(runs.status, ["running", "needs_user"]),
+						isNull(runs.completedAt),
+					),
+				)
+				.run();
+			if (update.changes) this.changed(runId);
+			return summarize(this.getRun(runId));
+		});
 	}
 	async resumeRun(runId: string): Promise<RunSummary> {
-		const run = this.getRun(runId);
-		if (run.status !== "interrupted" || run.completedAt)
-			throw { kind: "conflict", reason: "run_not_resumable" };
+		const run = await this.enqueueEvent(() => {
+			const current = this.getRun(runId);
+			if (current.status !== "interrupted" || current.completedAt)
+				throw { kind: "conflict", reason: "run_not_resumable" };
+			return current;
+		});
 		await this.executorRouter.resume(this.executorRun(run));
-		this.db.update(runs).set({ status: "running" }).where(eq(runs.id, runId)).run();
-		this.eventBus.publish("run.resumed", { runId });
-		this.emitRunTrace(runId, "resumed");
-		return summarize(this.getRun(runId));
+		return this.enqueueEvent(() => {
+			const update = this.db
+				.update(runs)
+				.set({ status: "running", permissionJson: null })
+				.where(and(eq(runs.id, runId), eq(runs.status, "interrupted"), isNull(runs.completedAt)))
+				.run();
+			if (update.changes) this.changed(runId);
+			return summarize(this.getRun(runId));
+		});
 	}
 	async respondToExecutorPermission(
 		runId: string,
 		requestId: string,
 		optionId: string,
 	): Promise<RunSummary> {
-		const run = this.getRun(runId);
-		if (run.status !== "needs_user" || run.completedAt)
-			throw { kind: "conflict", reason: "run_not_awaiting_permission" };
+		const run = await this.enqueueEvent(() => {
+			const current = this.getRun(runId);
+			if (current.status !== "needs_user" || current.completedAt)
+				throw { kind: "conflict", reason: "run_not_awaiting_permission" };
+			const permission = RunPermission.parse(current.permissionJson);
+			if (
+				permission.requestId !== requestId ||
+				!permission.options.some((option) => option.optionId === optionId)
+			)
+				throw { kind: "conflict", reason: "run_permission_response_invalid" };
+			return current;
+		});
 		await this.executorRouter.resume(this.executorRun(run), { requestId, optionId });
-		this.db.update(runs).set({ status: "running" }).where(eq(runs.id, runId)).run();
-		this.eventBus.publish("run.resumed", { runId });
-		this.emitRunTrace(runId, "resumed");
-		return summarize(this.getRun(runId));
+		return this.enqueueEvent(() => {
+			const current = this.getRun(runId);
+			const permission = current.permissionJson
+				? RunPermission.safeParse(current.permissionJson)
+				: undefined;
+			const matches =
+				permission?.success === true &&
+				permission.data.requestId === requestId &&
+				permission.data.options.some((option) => option.optionId === optionId);
+			const update = matches
+				? this.db
+						.update(runs)
+						.set({ status: "running", permissionJson: null })
+						.where(and(eq(runs.id, runId), eq(runs.status, "needs_user"), isNull(runs.completedAt)))
+						.run()
+				: { changes: 0 };
+			if (update.changes) this.changed(runId);
+			return summarize(this.getRun(runId));
+		});
 	}
 	async cancelRun(runId: string): Promise<RunSummary> {
-		const run = this.getRun(runId);
-		if (
-			run.completedAt ||
-			!["enqueued", "running", "needs_user", "interrupted"].includes(run.status)
-		)
-			throw { kind: "conflict", reason: "run_not_cancellable" };
+		const run = await this.enqueueEvent(() => {
+			const current = this.getRun(runId);
+			if (
+				current.completedAt ||
+				!["enqueued", "running", "needs_user", "interrupted"].includes(current.status)
+			)
+				throw { kind: "conflict", reason: "run_not_cancellable" };
+			return current;
+		});
 		await this.executorRouter.cancel(this.executorRun(run));
-		return this.terminate(runId, "cancelled", null, []);
+		return this.enqueueEvent(() => this.terminate(runId, "cancelled", null, []));
 	}
 	pendingPermissions(companionId: string) {
 		return this.list(companionId)
 			.filter((run) => run.status === "needs_user")
 			.flatMap((run) => {
-				const row = this.db
-					.select({ payload: events.payload })
-					.from(events)
-					.where(
-						and(
-							eq(events.kind, "run.needs_user"),
-							sql`json_extract(${events.payload}, '$.runId') = ${run.id}`,
-						),
-					)
-					.orderBy(desc(events.seq))
-					.limit(1)
-					.get();
-				return row ? [EventPayloadSchemas["run.needs_user"].parse(row.payload)] : [];
+				const permission = this.getRun(run.id).permissionJson;
+				return permission ? [RunPermission.parse(permission)] : [];
 			});
 	}
 
@@ -593,11 +657,13 @@ export class ExternalAgentRunService {
 	}
 
 	private async stopExecutorsAndDrain(): Promise<void> {
-		const unfinished = this.db
-			.select()
-			.from(runs)
-			.where(and(inArray(runs.status, UNRECOVERABLE_AFTER_RESTART), isNull(runs.completedAt)))
-			.all();
+		const unfinished = await this.enqueueEvent(() =>
+			this.db
+				.select()
+				.from(runs)
+				.where(and(inArray(runs.status, UNRECOVERABLE_AFTER_RESTART), isNull(runs.completedAt)))
+				.all(),
+		);
 		const attached = new Set<string>();
 		const confirmedLost = new Set<string>();
 		for (const row of unfinished) {
@@ -623,50 +689,49 @@ export class ExternalAgentRunService {
 			// stopped. If close failed, their final process state is unknown.
 			...(failure ? [] : attached),
 		];
-		const stopped =
-			stoppableIds.length > 0
-				? this.db
-						.select({ id: runs.id })
-						.from(runs)
-						.where(
-							and(
-								inArray(runs.id, stoppableIds),
-								inArray(runs.status, UNRECOVERABLE_AFTER_RESTART),
-								isNull(runs.completedAt),
+		await this.enqueueEvent(() => {
+			const stopped =
+				stoppableIds.length > 0
+					? this.db
+							.select({ id: runs.id })
+							.from(runs)
+							.where(
+								and(
+									inArray(runs.id, stoppableIds),
+									inArray(runs.status, UNRECOVERABLE_AFTER_RESTART),
+									isNull(runs.completedAt),
+								),
+							)
+							.all()
+					: [];
+			if (stopped.length > 0) {
+				this.db
+					.update(runs)
+					.set({
+						status: "forced_termination",
+						completedAt: new Date().toISOString(),
+						summary: "External agent execution stopped because Host closed.",
+					})
+					.where(
+						and(
+							inArray(
+								runs.id,
+								stopped.map(({ id }) => id),
 							),
-						)
-						.all()
-				: [];
-		if (stopped.length > 0) {
-			this.db
-				.update(runs)
-				.set({
-					status: "forced_termination",
-					completedAt: new Date().toISOString(),
-					summary: "External agent execution stopped because Host closed.",
-				})
-				.where(
-					and(
-						inArray(
-							runs.id,
-							stopped.map(({ id }) => id),
+							inArray(runs.status, UNRECOVERABLE_AFTER_RESTART),
+							isNull(runs.completedAt),
 						),
-						inArray(runs.status, UNRECOVERABLE_AFTER_RESTART),
-						isNull(runs.completedAt),
-					),
-				)
-				.run();
-			for (const { id } of stopped) {
-				this.emitRunTrace(id, "forced_termination");
-				removeExternalAgentRunRoot(join(this.runRoot, id));
+					)
+					.run();
+				for (const { id } of stopped) removeExternalAgentRunRoot(join(this.runRoot, id));
 			}
-		}
-		const remaining = this.db
-			.select({ n: count() })
-			.from(runs)
-			.where(and(inArray(runs.status, EXECUTOR_RESOURCE_STATUSES), isNull(runs.completedAt)))
-			.get();
-		if (Number(remaining?.n ?? 0) === 0) removeExternalAgentRunRoot(this.runRoot);
+			const remaining = this.db
+				.select({ n: count() })
+				.from(runs)
+				.where(and(inArray(runs.status, EXECUTOR_RESOURCE_STATUSES), isNull(runs.completedAt)))
+				.get();
+			if (Number(remaining?.n ?? 0) === 0) removeExternalAgentRunRoot(this.runRoot);
+		});
 		if (failure) throw failure;
 	}
 
@@ -679,20 +744,16 @@ export class ExternalAgentRunService {
 		]);
 		this.reconciliationTasks.clear();
 		this.detachedTasks.clear();
-		const resourceOwners = this.db
-			.select({ n: count() })
-			.from(runs)
-			.where(and(inArray(runs.status, EXECUTOR_RESOURCE_STATUSES), isNull(runs.completedAt)))
-			.get();
-		if (Number(resourceOwners?.n ?? 0) === 0) removeExternalAgentRunRoot(this.runRoot);
 	}
 
 	async recoverUnfinishedRuns(): Promise<number> {
-		const unrecoverable = this.db
-			.select()
-			.from(runs)
-			.where(and(inArray(runs.status, UNRECOVERABLE_AFTER_RESTART), isNull(runs.completedAt)))
-			.all();
+		const unrecoverable = await this.enqueueEvent(() =>
+			this.db
+				.select()
+				.from(runs)
+				.where(and(inArray(runs.status, UNRECOVERABLE_AFTER_RESTART), isNull(runs.completedAt)))
+				.all(),
+		);
 		let forced = 0;
 		for (const row of unrecoverable) {
 			const run = this.executorRun(row);
@@ -700,34 +761,41 @@ export class ExternalAgentRunService {
 			try {
 				recovery = await this.executorRouter.recover(run);
 			} catch (error) {
-				this.recordEvidence(row.id, "run.recovery_deferred", { reason: safeReason(error, []) });
+				await this.enqueueEvent(() => {
+					this.recordEvidence(row.id, "run.recovery_deferred", { reason: safeReason(error, []) });
+				});
 				continue;
 			}
 			if (recovery !== "confirmed_lost") continue;
-			const result = this.db
-				.update(runs)
-				.set({
-					status: "forced_termination",
-					completedAt: new Date().toISOString(),
-					summary: "External agent execution could not be recovered after Host restart.",
-				})
-				.where(and(eq(runs.id, row.id), isNull(runs.completedAt)))
-				.run();
+			const result = await this.enqueueEvent(() =>
+				this.db
+					.update(runs)
+					.set({
+						status: "forced_termination",
+						completedAt: new Date().toISOString(),
+						summary: "External agent execution could not be recovered after Host restart.",
+					})
+					.where(and(eq(runs.id, row.id), isNull(runs.completedAt)))
+					.run(),
+			);
 			if (!result.changes) continue;
 			forced += Number(result.changes);
-			this.emitRunTrace(row.id, "forced_termination");
 		}
-		const remaining = this.db
-			.select({ n: count() })
-			.from(runs)
-			.where(and(inArray(runs.status, UNRECOVERABLE_AFTER_RESTART), isNull(runs.completedAt)))
-			.get();
-		if (Number(remaining?.n ?? 0) === 0) removeExternalAgentRunRoot(this.runRoot);
+		await this.enqueueEvent(() => {
+			const remaining = this.db
+				.select({ n: count() })
+				.from(runs)
+				.where(and(inArray(runs.status, UNRECOVERABLE_AFTER_RESTART), isNull(runs.completedAt)))
+				.get();
+			if (Number(remaining?.n ?? 0) === 0) removeExternalAgentRunRoot(this.runRoot);
+		});
 		return forced;
 	}
 
 	async prepareConversationDeletion(conversationId: string): Promise<void> {
-		const owned = this.db.select().from(runs).where(eq(runs.conversationId, conversationId)).all();
+		const owned = await this.enqueueEvent(() =>
+			this.db.select().from(runs).where(eq(runs.conversationId, conversationId)).all(),
+		);
 		const unfinished = owned.filter(
 			(row) => !row.completedAt && UNRECOVERABLE_AFTER_RESTART.includes(row.status as RunStatus),
 		);
@@ -740,27 +808,29 @@ export class ExternalAgentRunService {
 			}
 			await this.executorRouter.stop(run);
 		}
-		await Promise.allSettled([...this.detachedTasks]);
-		if (unfinished.length > 0) {
-			this.db
-				.update(runs)
-				.set({
-					status: "cancelled",
-					completedAt: new Date().toISOString(),
-					summary: "External agent execution stopped because its conversation was deleted.",
-				})
-				.where(
-					and(
-						inArray(
-							runs.id,
-							unfinished.map(({ id }) => id),
+		await this.events.onIdle();
+		await this.enqueueEvent(() => {
+			if (unfinished.length > 0) {
+				this.db
+					.update(runs)
+					.set({
+						status: "cancelled",
+						completedAt: new Date().toISOString(),
+						summary: "External agent execution stopped because its conversation was deleted.",
+					})
+					.where(
+						and(
+							inArray(
+								runs.id,
+								unfinished.map(({ id }) => id),
+							),
+							isNull(runs.completedAt),
 						),
-						isNull(runs.completedAt),
-					),
-				)
-				.run();
-		}
-		for (const { id } of owned) removeExternalAgentRunRoot(join(this.runRoot, id));
+					)
+					.run();
+			}
+			for (const { id } of owned) removeExternalAgentRunRoot(join(this.runRoot, id));
+		});
 	}
 }
 
@@ -891,6 +961,33 @@ export function sanitizeExternalAgentMemoryText(value: string, maxBytes: number)
 	return sanitized.slice(0, end);
 }
 
+const SAFE_EVIDENCE_KEYS = ["kind", "name", "status", "title", "used", "size", "cost"] as const;
+
+function summarizeEvidence(data: unknown): string | undefined {
+	if (typeof data === "string" || typeof data === "number" || typeof data === "boolean")
+		return safeRunText(String(data), 512) || undefined;
+	if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
+	const record = data as Record<string, unknown>;
+	const parts = SAFE_EVIDENCE_KEYS.flatMap((key) => {
+		const value = record[key];
+		return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+			? [`${key}: ${String(value)}`]
+			: [];
+	});
+	return parts.length ? safeRunText(parts.join(" · "), 512) || undefined : undefined;
+}
+
+function safeRunText(value: string, maxBytes: number): string {
+	return sanitizeExternalAgentMemoryText(value, maxBytes)
+		.replace(/\bBearer\s+[A-Za-z0-9._~+/-]{8,}=*\b/gi, "Bearer <redacted>")
+		.replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "<redacted>")
+		.replace(
+			/\b(authorization|api[-_ ]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi,
+			"$1: <redacted>",
+		)
+		.trim();
+}
+
 function summarize(row: RunRow, outputArtifacts: ArtifactRecord[] = []): RunSummary {
 	return {
 		id: row.id,
@@ -906,24 +1003,6 @@ function summarize(row: RunRow, outputArtifacts: ArtifactRecord[] = []): RunSumm
 	};
 }
 
-function isTraceContext(value: unknown): value is TraceContext {
-	return Boolean(
-		value &&
-			typeof value === "object" &&
-			"traceId" in value &&
-			typeof value.traceId === "string" &&
-			/^[0-9a-f]{32}$/.test(value.traceId) &&
-			"spanId" in value &&
-			typeof value.spanId === "string" &&
-			/^[0-9a-f]{16}$/.test(value.spanId),
-	);
-}
-
-function agentFromProfile(profile: string): "pi" | "codex" | "unknown" {
-	if (profile.toLowerCase().includes("codex")) return "codex";
-	if (profile.toLowerCase().includes("pi")) return "pi";
-	return "unknown";
-}
 function executionInstruction(
 	instruction: string,
 	inputs: Array<{ name: string; path: string; source: "local" }>,

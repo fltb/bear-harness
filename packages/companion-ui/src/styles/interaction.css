@@ -247,6 +247,18 @@
 	background: var(--sys-warning);
 }
 
+.conversation-running {
+	@apply ml-2 inline-block size-3 rounded-full align-middle;
+	border: 2px solid color-mix(in srgb, var(--sys-accent) 28%, transparent);
+	border-top-color: var(--sys-accent);
+	animation: streaming-spinner 0.75s linear infinite;
+}
+
+.conversation-completed {
+	@apply ml-2 inline-block size-2 rounded-full align-middle;
+	background: var(--sys-accent);
+}
+
 /* --- work pill + run queue (thread head) --------------------------- */
 
 .work-pill-wrap {

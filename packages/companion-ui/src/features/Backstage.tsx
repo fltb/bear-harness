@@ -159,8 +159,6 @@ function RoleManager() {
 					await companion.characters.list();
 				}}
 				pluginTrustData={(id) => companion.characters.pluginTrustData(id)}
-				settingsData={(id) => companion.settings.data(id)}
-				settingsUpdate={(id, settings) => companion.settings.set(settings, id)}
 				deletionStatus={() => deletionQuery.data()?.status}
 				deletionStatusLoading={deletionQuery.loading}
 				deletionStatusError={() => {

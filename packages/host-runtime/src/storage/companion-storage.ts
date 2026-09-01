@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import {
 	COMPANION_SCHEMA_SQL,
 	CompanionDatabase,
@@ -23,7 +24,6 @@ export class CompanionStorageRegistry {
 		this.layout.ensureSystemDirectories();
 		this.system = new SystemDatabase(this.layout.systemDatabase);
 		this.system.initialize(SYSTEM_SCHEMA_SQL);
-		this.system.assertSchemaContract();
 	}
 
 	open(companionId: string): CompanionStorageHandle {
@@ -36,7 +36,6 @@ export class CompanionStorageRegistry {
 		try {
 			database.initialize(COMPANION_SCHEMA_SQL);
 			database.ensureRuntimeIdentity();
-			database.assertSchemaContract();
 		} catch (error) {
 			database.close();
 			throw error;
@@ -66,6 +65,20 @@ export class CompanionStorageRegistry {
 		const id = requireCompanionId(companionId);
 		this.closeCompanion(id);
 		return this.layout.removeCompanionRuntime(id);
+	}
+
+	forEachCompanionDatabase(visit: (database: CompanionDatabase["orm"]) => void): void {
+		for (const entry of readdirSync(this.layout.companionsRoot, { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			const id = requireCompanionId(entry.name);
+			const existing = this.handles.get(id);
+			const handle = existing ?? this.open(id);
+			try {
+				visit(handle.database.orm);
+			} finally {
+				if (!existing) this.closeCompanion(id);
+			}
+		}
 	}
 
 	close(): void {

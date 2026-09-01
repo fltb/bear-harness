@@ -44,8 +44,8 @@ export function ArchivedConversationSettings() {
 						{(conversation) => (
 							<article class="archived-conversation-row">
 								<div>
-									<strong>{conversation.title}</strong>
-									<span>{workflow.sceneLabel(conversation.id)}</span>
+									<strong>{conversation.name ?? conversation.firstMessage}</strong>
+									<span>{workflow.sceneLabel(conversation.conversationId)}</span>
 								</div>
 								<div class="archived-conversation-actions">
 									<Button
@@ -53,7 +53,9 @@ export function ArchivedConversationSettings() {
 										type="button"
 										aria-label={t("sidebar.restoreConversation")}
 										title={t("sidebar.restoreConversation")}
-										onClick={() => void run(() => store.restoreConversation(conversation.id))}
+										onClick={() =>
+											void run(() => store.restoreConversation(conversation.conversationId))
+										}
 									>
 										<Icon icon={faBoxOpen} />
 									</Button>
@@ -64,7 +66,10 @@ export function ArchivedConversationSettings() {
 										aria-label={t("sidebar.deleteConversation")}
 										title={t("sidebar.deleteConversation")}
 										onClick={() =>
-											setDeleteTarget({ id: conversation.id, title: conversation.title })
+											setDeleteTarget({
+												id: conversation.conversationId,
+												title: conversation.name ?? conversation.firstMessage,
+											})
 										}
 									>
 										<Icon icon={faTrash} />
@@ -89,7 +94,12 @@ export function ArchivedConversationSettings() {
 							{t("sidebar.deleteConversationConfirm")}
 						</Dialog.Description>
 						<div class="confirmation-actions">
-							<Dialog.CloseButton as={Button} data-control="command" type="button">
+							<Dialog.CloseButton
+								as={Button}
+								data-control="command"
+								type="button"
+								aria-label={t("messages.cancel")}
+							>
 								{t("messages.cancel")}
 							</Dialog.CloseButton>
 							<Dialog.CloseButton
@@ -97,6 +107,7 @@ export function ArchivedConversationSettings() {
 								data-control="command"
 								class="danger-action"
 								type="button"
+								aria-label={t("sidebar.deleteConversationConfirmAction")}
 								onClick={() => {
 									const target = deleteTarget();
 									if (target) void run(() => store.deleteConversation(target.id));

@@ -295,12 +295,12 @@
 }
 
 .plugin-trust-overlay {
-	@apply fixed inset-0;
+	@apply fixed inset-0 z-70;
 	background: var(--surface-overlay);
 }
 
 .plugin-trust-dialog {
-	@apply fixed left-1/2 top-1/2 w-4/5 max-w-md -translate-x-1/2 -translate-y-1/2 rounded-md p-5;
+	@apply fixed left-1/2 top-1/2 z-80 w-4/5 max-w-md -translate-x-1/2 -translate-y-1/2 rounded-md p-5;
 	border: 1px solid var(--sys-border);
 	background: var(--sys-surface);
 	--semantic-fg-role: default;
@@ -330,12 +330,12 @@
 }
 
 .confirmation-overlay {
-	@apply fixed inset-0;
+	@apply fixed inset-0 z-70;
 	background: var(--surface-overlay);
 }
 
 .confirmation-dialog {
-	@apply fixed left-1/2 top-1/2 w-4/5 max-w-md -translate-x-1/2 -translate-y-1/2 rounded-md border p-5;
+	@apply fixed left-1/2 top-1/2 z-80 w-4/5 max-w-md -translate-x-1/2 -translate-y-1/2 rounded-md border p-5;
 	border-color: var(--sys-border);
 	background: var(--sys-surface);
 	color: var(--sys-text);

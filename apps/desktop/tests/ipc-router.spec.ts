@@ -171,15 +171,15 @@ describe("wireElectronIpcHandlers", () => {
 	it("pushes to the admitted frame and removes the subscription on navigation", async () => {
 		electron.fromWebContents.mockReturnValue({});
 		const stop = vi.fn();
-		let publish!: (event: import("@bear-harness/protocol").DomainEvent) => void;
-		const subscribeEvents = vi.fn((listener, _afterSeq) => {
+		let publish!: (notice: import("@bear-harness/protocol").InvalidationNotice) => void;
+		const subscribeInvalidations = vi.fn((listener) => {
 			publish = listener;
 			return stop;
 		});
 		const dispose = wireElectronIpcHandlers(
 			{ dispatch: vi.fn() } as unknown as Dispatcher,
 			setupRegistry(),
-			{ subscribeEvents },
+			{ subscribeInvalidations },
 		);
 		const mainFrame = { url: ALLOWED_URL };
 		const sender = Object.assign(new EventEmitter(), {
@@ -188,23 +188,16 @@ describe("wireElectronIpcHandlers", () => {
 			send: vi.fn(),
 			isDestroyed: () => false,
 		});
-		const start = electron.handlers.get("events:listen:v1")!;
+		const start = electron.handlers.get("host:invalidations:listen")!;
 		await expect(
-			start(
-				{ sender, senderFrame: { url: "https://untrusted.example" } },
-				{ id: "stream-1", afterSeq: 4 },
-			),
+			start({ sender, senderFrame: { url: "https://untrusted.example" } }, { id: "stream-1" }),
 		).rejects.toThrow("untrusted");
-		expect(subscribeEvents).not.toHaveBeenCalled();
-		await start({ sender, senderFrame: mainFrame }, { id: "stream-1", afterSeq: 4 });
-		publish({ seq: 5, kind: "provider.login_changed", payload: { providerId: "openai-codex" } });
-		expect(sender.send).toHaveBeenCalledWith("events:push:v1", {
+		expect(subscribeInvalidations).not.toHaveBeenCalled();
+		await start({ sender, senderFrame: mainFrame }, { id: "stream-1" });
+		publish({ keys: [["providers"]] });
+		expect(sender.send).toHaveBeenCalledWith("host:invalidations:push", {
 			id: "stream-1",
-			batch: {
-				events: [
-					{ seq: 5, kind: "provider.login_changed", payload: { providerId: "openai-codex" } },
-				],
-			},
+			batch: { notices: [{ keys: [["providers"]] }] },
 		});
 		sender.emit("did-start-navigation");
 		expect(stop).toHaveBeenCalledOnce();
@@ -215,15 +208,15 @@ describe("wireElectronIpcHandlers", () => {
 	it("keeps transient Pi events on their dedicated non-replay channel", async () => {
 		electron.fromWebContents.mockReturnValue({});
 		const stop = vi.fn();
-		let publish!: (event: import("@bear-harness/protocol").PiSessionLiveEvent) => void;
-		const subscribePiEvents = vi.fn((listener) => {
+		let publish!: (event: import("@bear-harness/protocol").LivePush) => void;
+		const subscribeLivePush = vi.fn((listener) => {
 			publish = listener;
 			return stop;
 		});
 		const dispose = wireElectronIpcHandlers(
 			{ dispatch: vi.fn() } as unknown as Dispatcher,
 			setupRegistry(),
-			{ subscribePiEvents },
+			{ subscribeLivePush },
 		);
 		const mainFrame = { url: ALLOWED_URL };
 		const sender = Object.assign(new EventEmitter(), {
@@ -232,21 +225,21 @@ describe("wireElectronIpcHandlers", () => {
 			send: vi.fn(),
 			isDestroyed: () => false,
 		});
-		const start = electron.handlers.get("pi-events:listen:v1")!;
+		const start = electron.handlers.get("host:live:listen")!;
 		await start({ sender, senderFrame: mainFrame }, { id: "pi-stream-1" });
 		publish({
-			sessionId: "session-1",
-			type: "message_update",
-			live: { isStreaming: true, queuedUserMessages: [] },
+			type: "pi",
+			conversationId: "session-1",
+			event: { type: "agent_start" },
 		});
-		expect(sender.send).toHaveBeenCalledWith("pi-events:push:v1", {
+		expect(sender.send).toHaveBeenCalledWith("host:live:push", {
 			id: "pi-stream-1",
 			batch: {
 				events: [
 					{
-						sessionId: "session-1",
-						type: "message_update",
-						live: { isStreaming: true, queuedUserMessages: [] },
+						type: "pi",
+						conversationId: "session-1",
+						event: { type: "agent_start" },
 					},
 				],
 			},

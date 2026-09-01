@@ -76,8 +76,8 @@ function createWorkflow(store: CompanionStore) {
 		setEditingTitle: (value: string) => setState("editingTitle", value),
 		sidebarError: () => state.sidebarError,
 		beginRename: (conversation: ConversationSummary) => {
-			setState("editingId", conversation.id);
-			setState("editingTitle", conversation.title);
+			setState("editingId", conversation.conversationId);
+			setState("editingTitle", conversation.name ?? conversation.firstMessage);
 		},
 		saveRename: async (id: string) => {
 			const title = state.editingTitle.trim();
@@ -128,6 +128,6 @@ export function useConversationViewWorkflow(store: CompanionStore) {
 		sceneLabel: () =>
 			store.activeConversationId ? workflow.sceneLabel(store.activeConversationId) : "",
 		hasThreadContent: () =>
-			Boolean(store.activePiTimeline?.entries.length || store.activePiLiveState?.streamingMessage),
+			Boolean(store.activePiEntries?.length || store.activePiLiveState?.streamingMessage),
 	};
 }

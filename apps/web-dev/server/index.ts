@@ -13,9 +13,10 @@ import {
 	RuntimeLayout,
 } from "@bear-harness/host-runtime";
 import { assertProductConfig, OFFICIAL_BRAND, productConfig } from "@bear-harness/product-config";
-import { CHANNEL_CONTRACTS, EventSubscribeRequest } from "@bear-harness/protocol/schema";
+import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { createWebCredentialVault } from "./credential-vault.ts";
 import { webDevDataDirectory } from "./data-directory.ts";
+import { MAX_RPC_REQUEST_BYTES } from "./http-contract.ts";
 
 // Fail fast on an invalid product identity before serving it: the shared
 // shape/fork-identity contract is enforced here (filesystem checks are the
@@ -26,6 +27,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
 const requestedHost =
 	process.env.BEAR_WEB_DEV_LISTEN ?? process.env.BEAR_WEB_DEV_HOST ?? "127.0.0.1";
+const INVALIDATION_PATH = "/events/invalidations";
+const LIVE_PATH = "/events/live";
 const publicIntent = ["1", "true", "yes"].includes(
 	(process.env.BEAR_WEB_DEV_PUBLIC ?? "").trim().toLowerCase(),
 );
@@ -188,7 +191,6 @@ const runtime = createHostRuntime({
 	characterSeedRoot: resolve(repoRoot, "config/characters"),
 	productConfig,
 	credentialVault: createWebCredentialVault(runtimeLayout.systemRoot),
-	protocolViolationMode: "throw",
 	logger: { warn: (message) => console.warn(message) },
 	...(piWorkerPath ? { piWorkerPath } : {}),
 });
@@ -270,14 +272,48 @@ const server = createServer(async (request, response) => {
 	}
 	if (
 		request.method === "POST" &&
-		url.pathname === "/live/pi" &&
+		url.pathname === INVALIDATION_PATH &&
 		request.headers.accept === "application/x-ndjson"
 	) {
 		try {
-			const body = await readBody(request);
-			if (!isPlainObject(body) || !hasExactKeys(body, [])) {
-				throw new HttpError(400, "invalid_request", "invalid_pi_subscription");
+			await readBody(request);
+			response.writeHead(200, {
+				"content-type": "application/x-ndjson",
+				"cache-control": "no-store",
+				"x-accel-buffering": "no",
+			});
+			response.write(`${JSON.stringify({ notices: [] })}\n`);
+			eventResponses.add(response);
+			let stop: (() => void) | undefined;
+			response.once("close", () => {
+				stop?.();
+				eventResponses.delete(response);
+			});
+			stop = runtime.subscribeInvalidations((notice) => {
+				if (response.destroyed || response.writableEnded) return;
+				if (response.writableLength > 4 * 1024 * 1024) {
+					response.destroy();
+					return;
+				}
+				response.write(`${JSON.stringify({ notices: [notice] })}\n`);
+			});
+			if (response.destroyed) {
+				stop();
+				eventResponses.delete(response);
 			}
+		} catch (error) {
+			if (error instanceof HttpError) sendError(response, error.status, error.kind, error.reason);
+			else sendError(response, 500, "internal_error", "internal_subscription_failure");
+		}
+		return;
+	}
+	if (
+		request.method === "POST" &&
+		url.pathname === LIVE_PATH &&
+		request.headers.accept === "application/x-ndjson"
+	) {
+		try {
+			await readBody(request);
 			response.writeHead(200, {
 				"content-type": "application/x-ndjson",
 				"cache-control": "no-store",
@@ -290,7 +326,7 @@ const server = createServer(async (request, response) => {
 				stop?.();
 				eventResponses.delete(response);
 			});
-			stop = runtime.subscribePiEvents((event) => {
+			stop = runtime.subscribeLivePush((event) => {
 				if (response.destroyed || response.writableEnded) return;
 				if (response.writableLength > 4 * 1024 * 1024) {
 					response.destroy();
@@ -327,40 +363,7 @@ const server = createServer(async (request, response) => {
 			return;
 		}
 		try {
-			const params = await readBody(
-				request,
-				channel === "character.import:v1" ? 36 * 1024 * 1024 : undefined,
-			);
-			if (channel === "events.subscribe:v1" && request.headers.accept === "application/x-ndjson") {
-				const parsed = EventSubscribeRequest.safeParse(params);
-				if (!parsed.success) throw new HttpError(400, "invalid_request", "invalid_event_cursor");
-				response.writeHead(200, {
-					"content-type": "application/x-ndjson",
-					"cache-control": "no-store",
-					"x-accel-buffering": "no",
-				});
-				response.write(`${JSON.stringify({ events: [] })}\n`);
-				eventResponses.add(response);
-				let stop: (() => void) | undefined;
-				response.once("close", () => {
-					stop?.();
-					eventResponses.delete(response);
-				});
-				stop = runtime.subscribeEvents((event) => {
-					if (response.destroyed || response.writableEnded) return;
-					if (response.writableLength > 4 * 1024 * 1024) {
-						response.destroy();
-						return;
-					}
-					response.write(`${JSON.stringify({ events: [event] })}\n`);
-				}, parsed.data.afterSeq ?? 0);
-				if (response.destroyed) {
-					stop();
-					eventResponses.delete(response);
-				}
-				finishRpc();
-				return;
-			}
+			const params = await readBody(request, MAX_RPC_REQUEST_BYTES);
 			// Dispatch outcomes — success and domain failure alike — resolve as
 			// HTTP 200 with the original validated envelope so the companion
 			// client can distinguish an RPC failure from a transport rejection
@@ -481,13 +484,13 @@ process.on("uncaughtException", (error) => {
 
 await runtime.start();
 if (process.env.BEAR_PROVIDER_OVERRIDE_ID && process.env.BEAR_PROVIDER_OVERRIDE_BASE_URL) {
-	await runtime.dispatch("provider.overrideBaseUrl:v1", {
+	await runtime.dispatch("provider.overrideBaseUrl", {
 		providerId: process.env.BEAR_PROVIDER_OVERRIDE_ID,
 		baseUrl: process.env.BEAR_PROVIDER_OVERRIDE_BASE_URL,
 	});
 }
 if (process.env.BEAR_PROVIDER_CREDENTIAL_ID && process.env.BEAR_PROVIDER_API_KEY) {
-	await runtime.dispatch("provider.setApiKey:v1", {
+	await runtime.dispatch("provider.setApiKey", {
 		providerId: process.env.BEAR_PROVIDER_CREDENTIAL_ID,
 		apiKey: process.env.BEAR_PROVIDER_API_KEY,
 	});
@@ -499,7 +502,7 @@ if (
 ) {
 	const providerId = process.env.BEAR_CUSTOM_PROVIDER_ID;
 	const modelId = process.env.BEAR_CUSTOM_MODEL_ID;
-	const configured = await runtime.dispatch("provider.customUpsert:v1", {
+	const configured = await runtime.dispatch("provider.customUpsert", {
 		providerId,
 		name: process.env.BEAR_CUSTOM_PROVIDER_NAME ?? providerId,
 		baseUrl: process.env.BEAR_CUSTOM_BASE_URL,
@@ -507,7 +510,7 @@ if (
 		models: [{ id: modelId }],
 	});
 	if (!configured.ok) throw new Error(`custom provider setup failed: ${configured.error.reason}`);
-	const enabled = await runtime.dispatch("model.enable:v1", {
+	const enabled = await runtime.dispatch("model.enable", {
 		providerId,
 		modelId,
 		label: process.env.BEAR_CUSTOM_PROVIDER_NAME ?? providerId,

@@ -199,7 +199,7 @@ export interface StoreCapabilities {
 
 /** Canonical L2/L3 profile row shared between local cache and remote store. */
 export interface ProfileRecord {
-	/** Stable ID: `profile:v1:${sha256(scope + "\0" + type + "\0" + filename)}`. */
+	/** Stable ID: `profile:${sha256(scope + "\0" + type + "\0" + filename)}`. */
 	id: string;
 	type: "l2" | "l3";
 	filename: string;

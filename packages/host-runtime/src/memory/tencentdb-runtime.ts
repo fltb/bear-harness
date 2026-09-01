@@ -28,7 +28,7 @@ export function namespaceFor(scope: {
 	userId: string;
 	companionId: string;
 }): string {
-	return `memory:v1:${scope.installationId}:${scope.userId}:${scope.companionId}`;
+	return `memory:${scope.installationId}:${scope.userId}:${scope.companionId}`;
 }
 
 function deepMerge<T>(base: T, patch: DeepPartial<T> | undefined): T {

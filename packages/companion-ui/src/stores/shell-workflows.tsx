@@ -1,4 +1,4 @@
-import { i18n } from "@bear-harness/i18n";
+import { i18n, useLanguage } from "@bear-harness/i18n";
 import type { Namespace, TFunction } from "i18next";
 import {
 	type Accessor,
@@ -41,7 +41,6 @@ export interface ShellWorkflowStore {
 	readonly scene: Accessor<SceneDisplay | undefined>;
 	readonly visualState: Accessor<string | undefined>;
 	readonly composerPlaceholder: Accessor<string>;
-	readonly preferredLanguage: Accessor<string>;
 	readonly languageWarningKey: Accessor<string>;
 	readonly hasLanguageMismatch: Accessor<boolean>;
 	readonly languageWarning: Accessor<string>;
@@ -92,9 +91,10 @@ export function useShellWorkflowStore(): ShellWorkflowStore {
 	const store = useCompanionStore();
 	const existing = shellWorkflows.get(store);
 	if (existing !== undefined) return existing;
+	const [currentLocale] = useLanguage(() => i18n);
 	const workflow = createShellWorkflowStore({
 		store,
-		currentLocale: () => i18n.language,
+		currentLocale,
 		translate: ((key: string) => i18n.t(key as never)) as Translate,
 	});
 	shellWorkflows.set(store, workflow);
@@ -129,23 +129,18 @@ export function createShellWorkflowStore(input: {
 		() =>
 			character()?.character.composer_placeholder ?? translate("shell.fallbackComposerPlaceholder"),
 	);
-	const preferredLanguage = createMemo(
-		() => globalThis.navigator?.languages?.[0] ?? globalThis.navigator?.language ?? currentLocale(),
-	);
-	const languageWarningKey = createMemo(
-		() => `${character()?.language ?? ""}|${preferredLanguage()}`,
-	);
+	const languageWarningKey = createMemo(() => `${character()?.language ?? ""}|${currentLocale()}`);
 	const hasLanguageMismatch = createMemo(() => {
 		const roleLanguage = character()?.language;
 		if (!roleLanguage) return false;
 		return (
-			roleLanguage.split("-")[0]?.toLowerCase() !== preferredLanguage().split("-")[0]?.toLowerCase()
+			roleLanguage.split("-")[0]?.toLowerCase() !== currentLocale().split("-")[0]?.toLowerCase()
 		);
 	});
 	const languageWarning = createMemo(() =>
 		translate("language.warningBody")
 			.replace("{roleLanguage}", character()?.language ?? "")
-			.replace("{userLanguage}", preferredLanguage()),
+			.replace("{userLanguage}", currentLocale()),
 	);
 	const themeStyle = createMemo((): JSX.CSSProperties => {
 		const theme = character()?.theme;
@@ -314,7 +309,6 @@ export function createShellWorkflowStore(input: {
 		scene,
 		visualState,
 		composerPlaceholder,
-		preferredLanguage,
 		languageWarningKey,
 		hasLanguageMismatch,
 		languageWarning,

@@ -29,14 +29,12 @@ describe("idle homepage (official config, no bridge)", () => {
 		const { client, conversationList, providerList } = createTestClient();
 		const activeOnboarding = {
 			status: "active" as const,
-			eventSeq: 0,
 			stateData: { answers: {}, decisions: {} },
 		};
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
 				data: {
-					eventSeq: 0,
 					onboarding: activeOnboarding,
 					model: { pool: { models: [] }, defaults: { vision: { mode: "auto" } } },
 				},
@@ -142,7 +140,6 @@ describe("idle homepage (official config, no bridge)", () => {
 			Promise.resolve({
 				ok: true as const,
 				data: {
-					eventSeq: 0,
 					character: THEMED_CHARACTER,
 					model: {
 						models: [
@@ -167,7 +164,7 @@ describe("idle homepage (official config, no bridge)", () => {
 
 		const warning = await screen.findByRole("status");
 		expect(warning).toHaveTextContent("ja-JP");
-		expect(warning).toHaveTextContent("en-US");
+		expect(warning).toHaveTextContent("zh-CN");
 		const app = screen.getByRole("application", { name: zhCN.shell.productName });
 		expect(app?.style.getPropertyValue("--sys-accent")).toBe("#42c7a5");
 		expect(screen.getByPlaceholderText("Message")).toBeInTheDocument();

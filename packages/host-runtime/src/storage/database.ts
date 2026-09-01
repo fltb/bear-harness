@@ -50,62 +50,9 @@ export interface CanonVectorIndex {
 	upsertCanonVector(chunkId: string, embedding: Float32Array): void;
 }
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Query latency threshold for logging. */
-const SLOW_QUERY_MS = 16;
-
-type SchemaContract = Readonly<Record<string, readonly string[]>>;
-
 interface DatabaseOptions {
 	readonly fileName?: string;
-	readonly schemaContract?: SchemaContract;
 }
-
-export const SYSTEM_SCHEMA_CONTRACT: SchemaContract = {
-	installation_identity: ["id", "installation_id", "created_at"],
-	app_settings: [
-		"id",
-		"first_run_stage",
-		"network_proxy",
-		"memory_vector_service",
-		"system_model_defaults",
-		"model_download_mirror",
-		"updated_at",
-	],
-	companion_packages: ["id", "name", "origin", "plugin_hash"],
-	companion_identity: ["id", "package_id", "name"],
-	provider_accounts: ["id", "provider_id", "credential_blob", "credential_status"],
-	configured_models: ["provider_id", "model_id", "label", "supports_images", "created_at"],
-	executor_profiles: ["id", "profile_type", "capability_json"],
-};
-
-export const COMPANION_SCHEMA_CONTRACT: SchemaContract = {
-	runtime_identity: ["id", "companion_id", "nickname", "created_at"],
-	events: ["seq", "kind", "payload", "created_at"],
-	conversations: ["id", "companion_id", "archived_at"],
-	model_route_settings: [
-		"companion_id",
-		"text_provider_id",
-		"text_model_id",
-		"vision_mode",
-		"onboarding_complete",
-	],
-	onboarding_state: ["companion_id", "state", "state_json"],
-	runs: ["id", "conversation_id", "trigger_entry_id", "executor_profile", "status"],
-	artifacts: ["id", "sha256", "producer_run_id", "status"],
-	companion_state_documents: [
-		"id",
-		"companion_id",
-		"conversation_id",
-		"scope",
-		"domain",
-		"state_json",
-		"revision",
-	],
-};
 
 // ---------------------------------------------------------------------------
 // Database
@@ -116,9 +63,7 @@ export const COMPANION_SCHEMA_CONTRACT: SchemaContract = {
  * connection per runtime. The connection is never shared across
  * worker_threads. WAL mode, foreign_keys, defensive mode, busy_timeout.
  *
- * Bear 1.0 opens one final schema. A fresh database is initialized atomically;
- * an existing database is validated instead of being interpreted as a point
- * on an upgrade timeline.
+ * Bear 1.0 opens one final schema. A fresh database is initialized atomically.
  *
  * This class owns its connection and
  * paths: each HostRuntime creates its own instance and closes it on
@@ -130,60 +75,13 @@ export class Database {
 	/** The typed application query interface. */
 	readonly orm: AppDatabase;
 
-	private readonly syncListeners = new Set<(revision: number, tables: string[]) => void>();
-	private syncNotificationQueued = false;
-	private syncClosed = false;
-	private deliveredSyncRevision = 0;
-
-	/** Durable watermark; SQLite rolls it back together with the business write. */
-	syncRevision(): number {
-		return Number(
-			this.connection.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'sync_changes'").get()
-				?.seq ?? 0,
-		);
-	}
-
-	subscribeSync(listener: (revision: number, tables: string[]) => void): () => void {
-		this.syncListeners.add(listener);
-		return () => this.syncListeners.delete(listener);
-	}
-
-	private scheduleSyncNotification(): void {
-		if (this.syncNotificationQueued || this.syncClosed) return;
-		this.syncNotificationQueued = true;
-		queueMicrotask(() => {
-			this.syncNotificationQueued = false;
-			if (this.syncClosed) return;
-			// SQL triggers run inside the caller's transaction. Delivery runs only
-			// after the synchronous transaction has committed or rolled back.
-			if (this.connection.isTransaction) return;
-			const revision = this.syncRevision();
-			if (revision <= this.deliveredSyncRevision) return;
-			const tables = this.connection
-				.prepare("SELECT DISTINCT source FROM sync_changes WHERE revision > ? AND revision <= ?")
-				.all(this.deliveredSyncRevision, revision)
-				.map((row) => String(row.source));
-			this.deliveredSyncRevision = revision;
-			// Retain a bounded diagnostic tail; sqlite_sequence preserves the watermark.
-			this.connection.prepare("DELETE FROM sync_changes WHERE revision <= ?").run(revision - 10000);
-			for (const listener of this.syncListeners) listener(revision, tables);
-		});
-	}
-
 	readonly path: string;
-	private readonly schemaContract: SchemaContract;
-
 	constructor(databaseDir: string, options: DatabaseOptions = {}) {
 		const fileName = options.fileName ?? "canon.db";
 		this.path = join(databaseDir, fileName);
-		this.schemaContract = options.schemaContract ?? {};
 		mkdirSync(databaseDir, { recursive: true });
 
 		this.connection = new DatabaseSync(this.path, { allowExtension: true });
-		this.connection.function("bear_sync_changed", () => {
-			this.scheduleSyncNotification();
-			return 0;
-		});
 		this.orm = createAppDatabase(this.connection);
 		try {
 			this.connection.enableLoadExtension(true);
@@ -203,8 +101,6 @@ export class Database {
 
 	/** Close the connection. Idempotent per instance. */
 	close(): void {
-		this.syncClosed = true;
-		this.syncListeners.clear();
 		this.connection.close();
 	}
 	ensureCanonVectorIndex(configuration: { dimensions: number; fingerprint: string }): {
@@ -313,40 +209,13 @@ export class Database {
 			}
 		}
 	}
-
-	/** Refuse to start a database that does not match the current schema. */
-	assertSchemaContract(): void {
-		for (const [table, columns] of Object.entries(this.schemaContract)) {
-			const actual = new Set(
-				(
-					this.connection.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
-				).map((column) => column.name),
-			);
-			for (const column of columns) {
-				if (!actual.has(column)) {
-					throw new Error(`incompatible database schema: missing ${table}.${column}`);
-				}
-			}
-		}
-	}
-
-	/** Record a latency observation for a query. */
-	recordLatency(operation: string, elapsedMs: number): void {
-		if (elapsedMs > SLOW_QUERY_MS) {
-			// Logged via diagnostics; for now just a console.warn (M1 diagnostics integration later)
-			console.warn(`slow query [${elapsedMs.toFixed(1)}ms]: ${operation.slice(0, 120)}`);
-		}
-	}
 }
 
 export { COMPANION_SCHEMA_SQL, SYSTEM_SCHEMA_SQL };
 
 export class SystemDatabase extends Database {
 	constructor(path: string) {
-		super(dirname(path), {
-			fileName: basename(path),
-			schemaContract: SYSTEM_SCHEMA_CONTRACT,
-		});
+		super(dirname(path), { fileName: basename(path) });
 	}
 }
 
@@ -355,10 +224,7 @@ export class CompanionDatabase extends Database {
 		path: string,
 		readonly companionId: string,
 	) {
-		super(dirname(path), {
-			fileName: basename(path),
-			schemaContract: COMPANION_SCHEMA_CONTRACT,
-		});
+		super(dirname(path), { fileName: basename(path) });
 	}
 
 	ensureRuntimeIdentity(): void {

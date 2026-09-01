@@ -13,7 +13,6 @@ const characters = new CharacterLoader(characterRoot);
 
 function fixture() {
 	const db = new DatabaseSync(":memory:");
-	db.function("bear_sync_changed", () => null);
 	db.exec(COMPANION_SCHEMA_SQL);
 	db.prepare("INSERT INTO runtime_identity (id, companion_id, nickname) VALUES (1, ?, ?)").run(
 		"jizhou",

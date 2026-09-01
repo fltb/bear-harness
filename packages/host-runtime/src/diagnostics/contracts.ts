@@ -309,26 +309,6 @@ export const DIAGNOSTIC_CATALOG: Readonly<Record<string, CatalogEntry>> = deepFr
 			source: str(),
 		},
 	},
-	"external_agent.run": {
-		kind: "event",
-		level: "info",
-		origin: "main",
-		attributes: {
-			runId: str(),
-			agent: strEnum(["pi", "codex", "unknown"] as const),
-			phase: strEnum([
-				"enqueued",
-				"started",
-				"needs_user",
-				"completed",
-				"failed",
-				"cancelled",
-				"interrupted",
-				"forced_termination",
-				"resumed",
-			] as const),
-		},
-	},
 	"trace.content": {
 		kind: "event",
 		level: "trace",

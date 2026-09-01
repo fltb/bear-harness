@@ -20,16 +20,15 @@
  * - A time source and id source can be injected for deterministic tests.
  *
  * Internal segment deletions use an unlink reference captured at module
- * load, so the fs-protection sentinel (which may be installed later over
+ * load, so the filesystem audit hook (which may be installed later over
  * the data dir this store lives in) does not re-audit retention prunes.
  */
 
 import { createHash, randomUUID } from "node:crypto";
 import * as fsp from "node:fs/promises";
 import { join } from "node:path";
-import type { EventBus } from "../storage/event-bus.js";
 
-// Captured before any fs-protection install can wrap delete APIs.
+// Captured before any filesystem audit install can wrap delete APIs.
 const unlinkFile = fsp.unlink;
 
 export const AUDIT_KINDS = [
@@ -64,7 +63,7 @@ const RPC_PREFIX_KINDS: ReadonlyArray<readonly [string, AuditKind]> = [
 
 /** Every mutating RPC must resolve to one explicit product-domain audit kind. */
 export function auditKindForRpcMutation(channel: string): AuditKind {
-	if (channel === "run.respondPermission:v1") return "permission";
+	if (channel === "run.respondPermission") return "permission";
 	const match = RPC_PREFIX_KINDS.find(([prefix]) => channel.startsWith(prefix));
 	if (!match) throw new TypeError(`unclassified mutating RPC channel: ${channel}`);
 	return match[1];
@@ -415,45 +414,4 @@ export class AuditStore {
 		this.lastHash = record.hash;
 		return record;
 	}
-}
-
-// ---------------------------------------------------------------------------
-// EventBus wiring (kept string-based so it survives type churn)
-// ---------------------------------------------------------------------------
-
-const EVENT_PREFIX_MAPPING: ReadonlyArray<{ prefix: string; kind: AuditKind }> = [
-	{ prefix: "run.", kind: "run" },
-];
-
-/** Map an event kind to an audit kind, or null to skip it. */
-export function auditKindForEvent(eventKind: string): AuditKind | null {
-	if (eventKind === "evidence.collected") return "run";
-	for (const { prefix, kind } of EVENT_PREFIX_MAPPING) {
-		if (eventKind.startsWith(prefix)) return kind;
-	}
-	return null;
-}
-
-/**
- * Subscribe an audit store to the host event bus. Audit failures never throw
- * into the event bus.
- */
-export function wireAuditToEvents(
-	audit: Pick<AuditStore, "append">,
-	eventBus: Pick<EventBus, "subscribe">,
-): () => void {
-	const listener = (event: { kind: string; payload: unknown }): void => {
-		const kind = auditKindForEvent(event.kind);
-		if (!kind) return;
-		const dot = event.kind.indexOf(".");
-		const action = dot >= 0 ? event.kind.slice(dot + 1) : event.kind;
-		// Event payloads may contain prompts, local paths, or user content. The
-		// RPC trace already records outcome and reason; keep this channel as a
-		// privacy-safe event marker instead of copying arbitrary values.
-		const detail = JSON.stringify({ event: event.kind });
-		void audit.append(kind, action, detail).catch(() => {
-			// Audit is a side channel: never break the host on append failure.
-		});
-	};
-	return eventBus.subscribe(listener);
 }

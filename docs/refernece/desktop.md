@@ -23,11 +23,10 @@ Renderer 启用 context isolation 和 sandbox，关闭 Node integration；它不
 ## 启动
 
 1. 在 renderer 创建前确定 product-scoped data root；
-2. 完成/恢复一次性目录迁移；
-3. 建立凭据、diagnostics、recovery 和 update 服务；
-4. 创建并启动 HostRuntime；
-5. 注册 versioned RPC、durable event、Pi transient event 及 native action handlers；
-6. 创建 main window 并只接受固定 source/E2E 或 loopback dev origin。
+2. 建立凭据、diagnostics、recovery 和 update 服务；
+3. 创建并启动 HostRuntime；
+4. 注册 versioned RPC、临时失效通知、Pi transient event 及 native action handlers；
+5. 创建 main window 并只接受固定 source/E2E 或 loopback dev origin。
 
 shutdown 先停止新 IPC，清理 window listeners 与 push subscriptions，再关闭 HostRuntime 和 diagnostics。窗口销毁必须撤销属于该 Renderer 的临时资源。
 
@@ -41,7 +40,7 @@ shutdown 先停止新 IPC，清理 window listeners 与 push subscriptions，再
 - request/response 通过 schema；
 - runtime 已启动且未关闭。
 
-durable event 与 Pi live event 使用两个独立 push channel；后一种不写数据库。每个 listener 有随机本地 id，unlisten、window destroy 和 teardown 都会释放它。
+失效通知与 Pi live event 使用两个独立的临时 push channel，两者都不写数据库。每个 listener 有随机本地 id，unlisten、window destroy 和 teardown 都会释放它。
 
 ## 本地输入文件
 

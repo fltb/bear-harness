@@ -9,10 +9,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	type AuditKind,
 	AuditStore,
-	auditKindForEvent,
 	auditKindForRpcMutation,
 	auditReasonCode,
-	wireAuditToEvents,
 } from "../src/security/audit-store.js";
 
 const sha256 = (input: string) => createHash("sha256").update(input).digest("hex");
@@ -55,7 +53,7 @@ function makeStore(
 describe("AuditStore hash chain", () => {
 	it("keeps stable reason codes and drops arbitrary messages or local paths", () => {
 		expect(auditReasonCode("sync_read_changed")).toBe("sync_read_changed");
-		expect(auditReasonCode("remote.embedding-invalid:v1")).toBe("remote.embedding-invalid:v1");
+		expect(auditReasonCode("remote.embedding-invalid")).toBe("remote.embedding-invalid");
 		expect(auditReasonCode("This operation was aborted")).toBe("handler_failed");
 		expect(auditReasonCode("failed at /Users/alice/private.txt token=secret")).toBe(
 			"handler_failed",
@@ -221,57 +219,18 @@ describe("AuditStore retention", () => {
 	});
 });
 
-describe("wireAuditToEvents", () => {
-	it("maps event kinds to audit entries and ignores unrelated events", async () => {
-		const dir = tempDir();
-		const store = makeStore(dir);
-		let listener: ((event: { kind: string; payload: unknown }) => void) | undefined;
-		const eventBus = {
-			subscribe: (fn: (event: { kind: string; payload: unknown }) => void) => {
-				listener = fn;
-				return () => {
-					listener = undefined;
-				};
-			},
-		};
-		const unsubscribe = wireAuditToEvents(store, eventBus);
-		expect(typeof unsubscribe).toBe("function");
-
-		listener!({ kind: "run.started", payload: { runId: "r1" } });
-		listener!({ kind: "run.interrupted", payload: { runId: "r1" } });
-		listener!({
-			kind: "evidence.collected",
-			payload: { runId: "r1", evidenceId: "e1", kind: "file" },
-		});
-
-		// Appends are serialized in-process; awaiting a marker append guarantees
-		// every earlier event append has been written.
-		await store.append("config", "marker", "x");
-		const { entries } = await store.list();
-		expect(entries.filter((e) => e.action !== "marker").map((e) => [e.kind, e.action])).toEqual([
-			["run", "collected"],
-			["run", "interrupted"],
-			["run", "started"],
-		]);
-	});
-
-	it("auditKindForEvent covers the documented mapping", () => {
-		expect(auditKindForEvent("commission.approved")).toBeNull();
-		expect(auditKindForEvent("run.completed")).toBe("run");
-		expect(auditKindForEvent("evidence.collected")).toBe("run");
-	});
-
+describe("RPC audit classification", () => {
 	it("classifies every mutating RPC by product semantics without a fallback", () => {
 		const mutations = Object.entries(CHANNEL_CONTRACTS).filter(
 			([, contract]) => contract.operation === "mutation",
 		);
 		expect(mutations.length).toBeGreaterThan(0);
 		for (const [channel] of mutations) expect(() => auditKindForRpcMutation(channel)).not.toThrow();
-		expect(auditKindForRpcMutation("conversation.delete:v1")).toBe("conversation");
-		expect(auditKindForRpcMutation("message.send:v1")).toBe("conversation");
-		expect(auditKindForRpcMutation("companionState.update:v1")).toBe("companion_state");
-		expect(auditKindForRpcMutation("canon.addSource:v1")).toBe("canon");
-		expect(auditKindForRpcMutation("run.respondPermission:v1")).toBe("permission");
-		expect(() => auditKindForRpcMutation("unknown.changed:v1")).toThrow(/unclassified/);
+		expect(auditKindForRpcMutation("conversation.delete")).toBe("conversation");
+		expect(auditKindForRpcMutation("message.send")).toBe("conversation");
+		expect(auditKindForRpcMutation("companionState.update")).toBe("companion_state");
+		expect(auditKindForRpcMutation("canon.addSource")).toBe("canon");
+		expect(auditKindForRpcMutation("run.respondPermission")).toBe("permission");
+		expect(() => auditKindForRpcMutation("unknown.changed")).toThrow(/unclassified/);
 	});
 });

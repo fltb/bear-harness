@@ -10,9 +10,9 @@
  */
 
 import { i18n } from "@bear-harness/i18n";
-import type { IpcEnvelope } from "@bear-harness/protocol";
+import type { RpcEnvelope } from "@bear-harness/protocol";
 
-export interface IpcError {
+export interface RpcError {
 	kind: string;
 	reason: string;
 }
@@ -29,7 +29,7 @@ export class IpcInvocationError extends Error {
 }
 
 /** Unwrap the envelope already validated by the generated client. */
-export function unwrap<T>(result: IpcEnvelope<T>): T {
+export function unwrap<T>(result: RpcEnvelope<T>): T {
 	if (result.ok) return result.data;
 	throw new IpcInvocationError(
 		result.error.kind,

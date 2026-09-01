@@ -182,7 +182,10 @@ export {
 	recoverDurableFileTransaction,
 	replaceDurableFile,
 } from "./storage/durable-file-transaction.js";
-export type { EventListener, HostEvent } from "./storage/event-bus.js";
-export { EventBus } from "./storage/event-bus.js";
+export type {
+	InvalidationListener,
+	InvalidationNotice,
+} from "./storage/invalidation-hub.js";
+export { InvalidationHub } from "./storage/invalidation-hub.js";
 export type { CompanionPaths } from "./storage/layout.js";
 export { RuntimeLayout, requireCompanionId } from "./storage/layout.js";

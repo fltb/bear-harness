@@ -11,8 +11,8 @@
 环境实现最小传输能力：
 
 - `invoke(channel, request, signal?)`：一次 RPC；
-- durable product event 订阅；
-- Pi transient event 订阅。
+- cache invalidation 订阅；
+- transient live push 订阅。
 
 Electron adapter 使用 preload IPC；WebDev adapter 使用 authenticated HTTP/NDJSON。两者共享同一份 schema 和错误语义，UI 不需要知道当前外壳。
 
@@ -30,9 +30,9 @@ UI domain action
 
 transport rejection 代表请求没有得到可信 Host 响应，例如连接中断或 abort。Host error envelope 代表可信 Host 拒绝/失败，例如 not found、conflict、unauthorized 或 unavailable。调用者不得把两者都当成可安全重试的业务失败。
 
-## Pi stream
+## Live stream
 
-`pi.stream(signal)` 暴露 `AsyncIterable<PiSessionLiveEvent>`。实现会验证每个 batch、限制内存队列，并在 abort/断线时清理 listener。消费者按事件的 session id 更新对应 projection，而不是更新一个进程级当前会话。
+`live.stream(signal)` 暴露 `AsyncIterable<LivePush>`。Pi 事件保持原生形状，只在外层附带 `conversationId`；Character/Display、Run、embedding 下载和 provider 登录也沿这条即时通道推送。实现会验证每个 batch、限制内存队列，并在 abort/断线时清理 listener。
 
 事件只用于即时 UI；流连接重新建立后，UI 对可见/打开的 conversation 请求权威 detail 并整体替换。
 

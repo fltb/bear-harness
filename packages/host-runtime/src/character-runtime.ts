@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import type { PiSessionLiveEvent } from "@bear-harness/protocol";
+import type { LivePush } from "@bear-harness/protocol";
+import { CacheKey } from "@bear-harness/protocol/schema";
 import type { MemoryTdaiConfig } from "@bear-harness/tdai-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { eq } from "drizzle-orm";
@@ -10,7 +10,6 @@ import type { CharacterLoader, CharacterPackage } from "./companion/character-lo
 import { CompanionStateStore } from "./companion/companion-store.js";
 import { ContextPackCompiler } from "./companion/context-pack.js";
 import { FirstMeetingMachine } from "./companion/first-meeting.js";
-import { projectPiSessionLiveEvent } from "./companion/pi-live-events.js";
 import { PiRuntime } from "./companion/pi-runtime.js";
 import { SessionCatalog } from "./companion/session-catalog.js";
 import { CodexAdapter } from "./executors/codex-adapter.js";
@@ -27,11 +26,11 @@ import { namespaceFor, TencentDbRuntime } from "./memory/tencentdb-runtime.js";
 import { ModelRegistry } from "./models/registry.js";
 import type { ProviderCatalog } from "./providers/catalog.js";
 import type { CredentialStore } from "./providers/credential-store.js";
-import { AuditStore, wireAuditToEvents } from "./security/audit-store.js";
+import { AuditStore } from "./security/audit-store.js";
 import type { AppSettingsStore } from "./storage/app-settings-store.js";
 import type { CompanionStorageHandle } from "./storage/companion-storage.js";
 import type { AppDatabase } from "./storage/database.js";
-import { EventBus } from "./storage/event-bus.js";
+import { InvalidationHub } from "./storage/invalidation-hub.js";
 import { conversations } from "./storage/schema.js";
 
 export interface CharacterRuntimeOptions {
@@ -43,18 +42,19 @@ export interface CharacterRuntimeOptions {
 	providers: ProviderCatalog;
 	credentials: CredentialStore;
 	appSettings: AppSettingsStore;
+	forEachCompanionDatabase(visit: (database: AppDatabase) => void): void;
 	memoryScope: { readonly installationId: string; readonly userId: string };
 	memoryConfig(): DeepPartial<MemoryTdaiConfig> | undefined;
 	piWorkerPath?: string;
 	bundledGit?: { shellPath: string; pathEntries: string[] };
 	logger?: { debug?: (message: string) => void; warn?: (message: string) => void };
-	onPiEvent(event: PiSessionLiveEvent): void;
+	onLivePush(event: LivePush): void;
 }
 
 /** All mutable state and live resources owned by exactly one character. */
 export class CharacterRuntime {
 	readonly companionId: string;
-	readonly eventBus: EventBus;
+	readonly invalidations: InvalidationHub;
 	readonly artifacts: ArtifactStore;
 	readonly models: ModelRegistry;
 	readonly companionStore: CompanionStateStore;
@@ -65,11 +65,9 @@ export class CharacterRuntime {
 	readonly externalAgentRuns: ExternalAgentRunService;
 	readonly externalAgents: CodexAdapter;
 	readonly auditStore: AuditStore;
-	readonly syncEpoch = randomUUID();
 	private readonly explicitMemoryFile: ExplicitMemoryFile;
 	private memory?: TencentDbRuntime;
-	private unsubscribeSync?: () => void;
-	private unsubscribeAudit?: () => void;
+	private unsubscribeRunChanges?: () => void;
 	private closed = false;
 
 	constructor(private readonly options: CharacterRuntimeOptions) {
@@ -82,16 +80,22 @@ export class CharacterRuntime {
 			options.memoryScope.userId,
 			character.id,
 		);
-		this.eventBus = new EventBus(db);
+		this.invalidations = new InvalidationHub();
 		this.artifacts = new ArtifactStore(db, paths.artifacts);
-		this.models = new ModelRegistry(options.systemDb, db, this.eventBus, options.appSettings);
+		this.models = new ModelRegistry(
+			options.systemDb,
+			db,
+			this.invalidations,
+			options.appSettings,
+			options.forEachCompanionDatabase,
+		);
 		this.models.seedFromSystemDefaults(this.companionId);
 		this.companionStore = new CompanionStateStore(db);
-		this.onboarding = new FirstMeetingMachine(db, this.eventBus, options.characterLoader);
+		this.onboarding = new FirstMeetingMachine(db, options.characterLoader);
 		this.canon = new CanonHubService(
 			db,
 			this.artifacts,
-			this.eventBus,
+			this.invalidations,
 			() => this.memoryRuntime.getEmbeddingService(),
 			database,
 		);
@@ -150,11 +154,13 @@ export class CharacterRuntime {
 				return contextPack.render(context);
 			},
 			sessionContext: (conversationId) => contextPack.sessionContext(conversationId),
-			titleChanged: (sessionId, title) =>
-				this.eventBus.publish("conversation.renamed", { conversationId: sessionId, title }),
+			titleChanged: () => this.invalidations.invalidate(CacheKey.conversations()),
 			sessionEvent: (envelope) => {
-				const event = projectPiSessionLiveEvent(envelope, this.pi.snapshot(envelope.sessionId));
-				if (event) options.onPiEvent(event);
+				options.onLivePush({
+					type: "pi",
+					conversationId: envelope.sessionId,
+					event: envelope.event,
+				});
 			},
 		});
 		seedPiAcpProfile(options.systemDb);
@@ -163,11 +169,10 @@ export class CharacterRuntime {
 			"pi",
 			new PiAcpAdapter(db, options.systemProviderDir, options.piWorkerPath, options.bundledGit),
 		);
-		this.externalAgents = new CodexAdapter(options.systemDb, db, this.eventBus);
+		this.externalAgents = new CodexAdapter(options.systemDb, db, this.invalidations);
 		executorRouter.register("codex", this.externalAgents);
 		this.externalAgentRuns = new ExternalAgentRunService(
 			db,
-			this.eventBus,
 			executorRouter,
 			this.artifacts,
 			paths.runs,
@@ -198,7 +203,9 @@ export class CharacterRuntime {
 				);
 				return { resultReported: needsResultReport };
 			},
-			undefined,
+		);
+		this.unsubscribeRunChanges = this.externalAgentRuns.subscribeChanges((run) =>
+			options.onLivePush({ type: "run", run }),
 		);
 		this.sessions = new SessionCatalog(db, this.pi, {
 			beforeDelete: (sessionId) => this.externalAgentRuns.prepareConversationDeletion(sessionId),
@@ -206,13 +213,6 @@ export class CharacterRuntime {
 		});
 
 		this.auditStore = new AuditStore({ dir: paths.audit, logger: options.logger });
-		this.unsubscribeAudit = wireAuditToEvents(this.auditStore, this.eventBus);
-		this.unsubscribeSync = database.subscribeSync((revision, sources) => {
-			this.eventBus.publish("sync.invalidated", {
-				sync: { epoch: this.syncEpoch, revision },
-				sources: sources.length > 256 ? ["all"] : sources,
-			});
-		});
 		this.onboarding.initialize(this.companionId);
 		this.canon.syncPackage(this.companionId, character.canon);
 		const trust = options.characterLoader.pluginTrust(options.systemDb, character);
@@ -238,10 +238,6 @@ export class CharacterRuntime {
 		return this.memory;
 	}
 
-	syncRevision() {
-		return { epoch: this.syncEpoch, revision: this.db.syncRevision() };
-	}
-
 	async resetMemory(): Promise<void> {
 		const current = this.memory;
 		this.memory = undefined;
@@ -255,6 +251,7 @@ export class CharacterRuntime {
 	async close(): Promise<void> {
 		if (this.closed) return;
 		this.closed = true;
+		this.unsubscribeRunChanges?.();
 		let failure: unknown;
 		try {
 			await this.externalAgentRuns.close();
@@ -268,8 +265,6 @@ export class CharacterRuntime {
 				failure ??= error;
 			}
 		}
-		this.unsubscribeSync?.();
-		this.unsubscribeAudit?.();
 		try {
 			await this.auditStore.flush();
 		} catch (error) {

@@ -103,11 +103,13 @@ function context() {
 		revisions: { display: 3 },
 	}));
 	const character = { id: "bear", state: { type: "object" }, canon: {} };
-	const eventBus = { currentSeq: 7, publish: vi.fn(), after: vi.fn(() => []) };
+	const invalidations = { invalidate: vi.fn() };
+	const livePush = vi.fn();
 	const value = {
 		signal: new AbortController().signal,
 		orm: { select: () => ({ from: (table: unknown) => queryResult(table) }) },
-		eventBus,
+		invalidations,
+		livePush,
 		onboarding: {
 			initialize: vi.fn(),
 			getState: vi.fn(() => ({ status: "completed", stateData: { decisions: {} } })),
@@ -134,7 +136,7 @@ function context() {
 		models: {},
 		providers: {},
 	} as unknown as HostCompositionContext;
-	return { value, sessions, pi, eventBus, project, companionSnapshot, snapshots };
+	return { value, sessions, pi, invalidations, project, companionSnapshot, snapshots };
 }
 
 function handler(dispatcher: Dispatcher, channel: string): RpcHandler {
@@ -155,11 +157,19 @@ describe("Host conversation projection and routing", () => {
 	});
 
 	it("opens and branches into security-safe ConversationDetail values", async () => {
-		const opened = await handler(dispatcher, RPC.conversation.open.channel)({ id: "alpha" });
+		const opened = await handler(
+			dispatcher,
+			RPC.conversation.open.channel,
+		)({
+			conversationId: "alpha",
+		});
 		expect(opened).toMatchObject({
-			sessionId: "alpha",
+			conversationId: "alpha",
 			name: "Alpha",
-			timeline: { activeLeafId: "alpha-user", entries: [{ role: "user" }] },
+			branch: {
+				activeLeafId: "alpha-user",
+				entries: [{ type: "message", message: { role: "user" } }],
+			},
 			live: { isStreaming: false },
 		});
 		const branch = await handler(
@@ -169,7 +179,7 @@ describe("Host conversation projection and routing", () => {
 			conversationId: "alpha",
 			entryId: "alpha-user",
 		});
-		expect(branch).toMatchObject({ sessionId: "beta", name: "Beta" });
+		expect(branch).toMatchObject({ conversationId: "beta", name: "Beta" });
 		expect(fixture.sessions.fork).toHaveBeenCalledWith("bear", "alpha", "alpha-user");
 		expect(fixture.pi.close).not.toHaveBeenCalled();
 	});
@@ -224,7 +234,8 @@ describe("Host conversation projection and routing", () => {
 		expect(fixture.pi.continue).toHaveBeenCalledWith("alpha");
 		expect(fixture.pi.modelFor).toHaveBeenCalledWith("beta");
 		expect(fixture.pi.setModel).toHaveBeenCalledWith("alpha", "provider", "model");
-		expect(fixture.sessions.open).not.toHaveBeenCalled();
+		expect(fixture.sessions.open).toHaveBeenCalledWith("bear", "beta");
+		expect(fixture.sessions.open).toHaveBeenCalledWith("bear", "alpha");
 		expect(fixture.pi.close).not.toHaveBeenCalled();
 	});
 
@@ -251,7 +262,7 @@ describe("Host conversation projection and routing", () => {
 		fixture.project.mockClear();
 		fixture.companionSnapshot.mockClear();
 		const snapshot = await handler(dispatcher, RPC.snapshot.get.channel)({});
-		expect(snapshot).toMatchObject({ eventSeq: 7 });
+		expect(snapshot).toHaveProperty("onboarding");
 		expect(snapshot).not.toHaveProperty("conversation");
 		expect(snapshot).not.toHaveProperty("companion");
 		expect(fixture.project).not.toHaveBeenCalled();
@@ -260,9 +271,17 @@ describe("Host conversation projection and routing", () => {
 
 	it("returns Empty for archive/delete without changing another open session", async () => {
 		expect(
-			await handler(dispatcher, RPC.conversation.archive.channel)({ id: "alpha", archived: true }),
+			await handler(
+				dispatcher,
+				RPC.conversation.archive.channel,
+			)({
+				conversationId: "alpha",
+				archived: true,
+			}),
 		).toEqual({});
-		expect(await handler(dispatcher, RPC.conversation.delete.channel)({ id: "beta" })).toEqual({});
+		expect(
+			await handler(dispatcher, RPC.conversation.delete.channel)({ conversationId: "beta" }),
+		).toEqual({});
 		expect(fixture.sessions.archive).toHaveBeenCalledWith("bear", "alpha", true);
 		expect(fixture.sessions.delete).toHaveBeenCalledWith("bear", "beta");
 		expect(fixture.pi.close).not.toHaveBeenCalled();

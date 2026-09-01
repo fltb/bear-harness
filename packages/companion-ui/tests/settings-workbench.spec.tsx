@@ -11,7 +11,6 @@ const setProductLocale = vi.hoisted(() => vi.fn());
 vi.mock("@bear-harness/i18n", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@bear-harness/i18n")>()),
 	setProductLocale,
-	useLanguage: () => [() => "unsupported-locale"],
 }));
 
 it("reports both Error and non-Error language update failures", async () => {

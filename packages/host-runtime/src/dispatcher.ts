@@ -14,22 +14,19 @@ import {
 	type AnyRpcEndpoint,
 	CHANNEL_CONTRACTS,
 	type Channel,
-	type IpcErrorKind,
 	type RequestOf,
 	type ResponseOf,
-	type SyncRevision,
+	type RpcErrorKind,
 } from "@bear-harness/protocol/schema";
 
 /** Wire error body: a protocol kind plus a localizable reason string. */
 export interface RpcError {
-	kind: IpcErrorKind;
+	kind: RpcErrorKind;
 	reason: string;
 }
 
 /** The shared response envelope — every dispatch returns exactly this shape. */
-export type RpcResponse =
-	| { ok: true; data: unknown; sync?: SyncRevision }
-	| { ok: false; error: RpcError };
+export type RpcResponse = { ok: true; data: unknown } | { ok: false; error: RpcError };
 
 /** A domain handler: validated request params in, response data out. */
 export type RpcHandler = (params: unknown) => unknown | Promise<unknown>;
@@ -46,13 +43,6 @@ export class ProtocolResponseValidationError extends Error {
 }
 
 export interface DispatcherOptions {
-	syncRevision?: () => SyncRevision;
-	/**
-	 * Host-owned behavior for handler response-schema violations:
-	 * `throw` rejects dispatch with ProtocolResponseValidationError;
-	 * `isolate` returns a protocol internal-error envelope.
-	 */
-	responseValidation?: "throw" | "isolate";
 	onProtocolViolation?: (error: ProtocolResponseValidationError) => void;
 	onDispatchResult?: (result: {
 		channel: string;
@@ -62,7 +52,7 @@ export interface DispatcherOptions {
 	}) => void;
 }
 
-const IPC_ERROR_KINDS: readonly IpcErrorKind[] = [
+const IPC_ERROR_KINDS: readonly RpcErrorKind[] = [
 	"invalid_request",
 	"not_found",
 	"conflict",
@@ -77,29 +67,20 @@ function normalizeHandlerError(error: unknown): RpcError {
 			? (error as { kind?: unknown; reason?: unknown; message?: unknown })
 			: undefined;
 	const rawKind = thrown?.kind;
-	const kind = IPC_ERROR_KINDS.includes(rawKind as IpcErrorKind)
-		? (rawKind as IpcErrorKind)
+	const kind = IPC_ERROR_KINDS.includes(rawKind as RpcErrorKind)
+		? (rawKind as RpcErrorKind)
 		: "internal";
-	const rawReason =
-		typeof thrown?.reason === "string"
-			? thrown.reason
-			: typeof thrown?.message === "string"
-				? thrown.message
-				: "handler_failed";
+	const rawReason = typeof thrown?.reason === "string" ? thrown.reason : "handler_failed";
 	const reason = rawReason.slice(0, MAX_ERROR_REASON_LENGTH);
 	return { kind, reason };
 }
 
 export class Dispatcher {
-	private readonly syncRevision?: () => SyncRevision;
 	private readonly handlers = new Map<string, RpcHandler>();
-	private readonly responseValidation: "throw" | "isolate";
 	private readonly onProtocolViolation?: (error: ProtocolResponseValidationError) => void;
 	private readonly onDispatchResult?: DispatcherOptions["onDispatchResult"];
 
 	constructor(options: DispatcherOptions = {}) {
-		this.syncRevision = options.syncRevision;
-		this.responseValidation = options.responseValidation ?? "throw";
 		this.onProtocolViolation = options.onProtocolViolation;
 		this.onDispatchResult = options.onDispatchResult;
 	}
@@ -164,24 +145,9 @@ export class Dispatcher {
 		}
 
 		let data: unknown;
-		let sync: SyncRevision | undefined;
 		try {
-			for (let attempt = 0; ; attempt++) {
-				const before = this.syncRevision?.();
-				const result = handler(parsed.data);
-				data = result instanceof Promise ? await result : result;
-				sync = this.syncRevision?.();
-				if (
-					contract.operation !== "query" ||
-					!before ||
-					!sync ||
-					(before.epoch === sync.epoch && before.revision === sync.revision)
-				)
-					break;
-				// A query spanning a commit cannot claim a single revision. Never
-				// retry mutations, and never publish a mixed-version read as success.
-				if (attempt >= 2) throw { kind: "conflict", reason: "sync_read_changed" };
-			}
+			const result = handler(parsed.data);
+			data = result instanceof Promise ? await result : result;
 		} catch (error) {
 			return finish({
 				ok: false,
@@ -190,17 +156,12 @@ export class Dispatcher {
 		}
 
 		const response = contract.response.safeParse(data);
-		if (response.success)
-			return finish({ ok: true, data: response.data, ...(sync ? { sync } : {}) });
+		if (response.success) return finish({ ok: true, data: response.data });
 		const violation = new ProtocolResponseValidationError(
 			channel as Channel,
 			response.error.issues.map((issue) => ({ path: [...issue.path], message: issue.message })),
 		);
 		this.onProtocolViolation?.(violation);
-		if (this.responseValidation === "throw") throw violation;
-		return finish({
-			ok: false,
-			error: { kind: "internal", reason: "response_validation_failed" },
-		});
+		throw violation;
 	}
 }

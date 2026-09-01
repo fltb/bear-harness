@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FileOpsService, guardCell } from "../../src/fsops/service.js";
 import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../../src/storage/database.js";
-import { EventBus } from "../../src/storage/event-bus.js";
+import { InvalidationHub } from "../../src/storage/invalidation-hub.js";
 
 describe("FileOpsService user file workflow", () => {
 	let root: string;
@@ -18,7 +18,7 @@ describe("FileOpsService user file workflow", () => {
 		database = new CompanionDatabase(join(root, "runtime.db"), "fsops-test-character");
 		database.initialize(COMPANION_SCHEMA_SQL);
 		database.ensureRuntimeIdentity();
-		service = new FileOpsService(database.orm, new EventBus(database.orm));
+		service = new FileOpsService(database.orm, new InvalidationHub());
 	});
 
 	afterEach(() => {

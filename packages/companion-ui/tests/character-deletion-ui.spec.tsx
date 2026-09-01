@@ -64,11 +64,7 @@ function renderManager(
 				pluginsPresent: false,
 				trusted: true,
 			})}
-			settingsData={() => ({
-				relationshipMemoryEnabled: false,
-			})}
 			confirmPluginTrust={() => Promise.resolve()}
-			settingsUpdate={() => Promise.resolve()}
 			deletionStatus={status}
 			deletionStatusLoading={() => false}
 			deletionStatusError={() => undefined}

@@ -99,7 +99,7 @@ export interface ElectronDiagnosticsOptions {
 	clock?: () => number;
 }
 
-const FAULT_CHANNEL = "diagnostics:renderer-fault:v1";
+const FAULT_CHANNEL = "diagnostics:renderer-fault";
 const RATE_WINDOW_MS = 60_000;
 
 const GONE_REASONS: Record<string, true> = {

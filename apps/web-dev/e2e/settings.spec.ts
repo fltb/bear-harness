@@ -1,6 +1,7 @@
 import { zhCN } from "@bear-harness/i18n/locales";
 import { CHANNEL_CONTRACTS } from "@bear-harness/protocol/schema";
 import { expect, test } from "playwright/test";
+import { MAX_RPC_REQUEST_BYTES } from "../server/http-contract";
 import { ensureReadyForConversation, getBootstrap } from "./helpers";
 
 test("WebDev exposes every registered Host RPC channel through its authenticated console", async ({
@@ -20,7 +21,7 @@ test("WebDev exposes every registered Host RPC channel through its authenticated
 	await rpcChannel.click();
 	await expect(page.getByRole("option")).toHaveCount(expectedChannels.length);
 	await expect(page.getByRole("option")).toHaveText(expectedChannels);
-	await page.getByRole("option", { name: "snapshot.get:v1", exact: true }).click();
+	await page.getByRole("option", { name: "snapshot.get", exact: true }).click();
 	await panel.getByRole("button", { name: zhCN.webDev.invokeHost }).click();
 	await expect(panel.getByRole("status")).toContainText('"ok"');
 });
@@ -38,7 +39,7 @@ test("WebDev keeps authentication and HTTP request failure categories distinct",
 		error: { kind: "unauthorized", reason: "invalid_token" },
 	});
 
-	const unknownChannel = await page.request.post("/rpc/not-registered%3Av1", {
+	const unknownChannel = await page.request.post("/rpc/not-registered", {
 		headers,
 		data: {},
 	});
@@ -48,7 +49,7 @@ test("WebDev keeps authentication and HTTP request failure categories distinct",
 		error: { kind: "unknown_channel", reason: "unknown_channel" },
 	});
 
-	const malformedJson = await page.request.post("/rpc/onboarding.get%3Av1", {
+	const malformedJson = await page.request.post("/rpc/onboarding.get", {
 		headers: { ...headers, "content-type": "application/json" },
 		data: Buffer.from("{", "utf8"),
 	});
@@ -58,7 +59,7 @@ test("WebDev keeps authentication and HTTP request failure categories distinct",
 		error: { kind: "malformed_json", reason: "malformed_json" },
 	});
 
-	const invalidRequest = await page.request.post("/rpc/onboarding.get%3Av1", {
+	const invalidRequest = await page.request.post("/rpc/onboarding.get", {
 		headers,
 		data: { unexpected: true },
 	});
@@ -70,9 +71,9 @@ test("WebDev keeps authentication and HTTP request failure categories distinct",
 		error: { kind: "invalid_request", reason: "request_validation_failed" },
 	});
 
-	const oversized = await page.request.post("/rpc/onboarding.get%3Av1", {
+	const oversized = await page.request.post("/rpc/onboarding.get", {
 		headers: { ...headers, "content-type": "application/json" },
-		data: "x".repeat(64 * 1024 + 1),
+		data: "x".repeat(MAX_RPC_REQUEST_BYTES + 1),
 	});
 	expect(oversized.status()).toBe(413);
 	expect(await oversized.json()).toEqual({
@@ -220,34 +221,6 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 		"every backstage foreground must resolve through its declared semantic role",
 	).toEqual([]);
 	await backstage.getByRole("button", { name: zhCN.backstage.close }).click();
-	const characterSettingsButton = page.getByRole("button", {
-		name: zhCN.sidebar.characterSettings,
-		exact: true,
-	});
-	await expect(characterSettingsButton).toBeEnabled();
-	await characterSettingsButton.click();
-	const characterBackstage = page.getByRole("dialog", {
-		name: zhCN.sidebar.characterSettings,
-	});
-	await expect(characterBackstage).toBeVisible();
-	await characterBackstage.getByRole("tab", { name: zhCN.backstage.roleManagement }).click();
-	await characterBackstage.getByRole("tab", { name: zhCN.currentRolePackage.memoryTab }).click();
-	const relationshipMemory = characterBackstage.getByRole("switch", {
-		name: zhCN.currentRolePackage.relationshipMemory,
-	});
-	await expect(relationshipMemory).toBeEnabled();
-	const previousMemory = await relationshipMemory.getAttribute("aria-checked");
-	const [settingsResponse] = await Promise.all([
-		page.waitForResponse(
-			(response) =>
-				response.request().method() === "POST" && response.url().includes("/rpc/settings.set%3Av1"),
-		),
-		relationshipMemory.click(),
-	]);
-	expect(await settingsResponse.json()).toMatchObject({ ok: true });
-	await expect(relationshipMemory).not.toHaveAttribute("aria-checked", previousMemory ?? "", {
-		timeout: 15_000,
-	});
 });
 
 test("bottom actions open distinct character and system settings destinations", async ({

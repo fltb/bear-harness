@@ -38,8 +38,20 @@ test("two Pi sessions can run concurrently, switch locally, and finish without s
 }) => {
 	await ensureReadyForConversation(page);
 	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
+	const sidebar = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
+	const sessionAId = await sidebar
+		.getByRole("button")
+		.evaluateAll((buttons) =>
+			buttons
+				.find((button) => button.getAttribute("aria-current") === "page")
+				?.getAttribute("data-conversation-id"),
+		);
+	if (!sessionAId) throw new Error("active conversation has no identity");
 	await sendMessage(page, "STREAM_HOLD_A");
-	await expect(page.getByRole("status", { name: zhCN.messages.responding })).toBeVisible();
+	await expect(
+		sidebar.locator(`[data-conversation-id="${sessionAId}"] .conversation-running`),
+	).toBeVisible();
+	await expect(thread.getByRole("status", { name: zhCN.messages.responding })).toBeVisible();
 	await expect(thread.getByText(/HOLD_ONE/)).toBeVisible();
 
 	await page.getByRole("button", { name: zhCN.sidebar.newConversation, exact: true }).click();
@@ -47,12 +59,13 @@ test("two Pi sessions can run concurrently, switch locally, and finish without s
 	await sendMessage(page, "E2E_OK session B stays focused");
 	await expect(thread.getByText("E2E_OK", { exact: true })).toBeVisible();
 
-	const sessionA = page
-		.getByRole("navigation", { name: zhCN.sidebar.conversations })
-		.getByRole("button", { name: /HOLD_ONE HOLD_TWO/ });
+	const sessionA = sidebar.locator(`[data-conversation-id="${sessionAId}"]`);
 	await expect(sessionA).toBeVisible();
 	await expect(thread.getByText("E2E_OK", { exact: true })).toBeVisible();
 	await expect(thread.getByText("HOLD_ONE HOLD_TWO", { exact: true })).toBeHidden();
+	await expect(sessionA.getByRole("status", { name: zhCN.sidebar.responseReady })).toBeVisible({
+		timeout: 15_000,
+	});
 	await sessionA.click();
 	await expect(thread.getByText("HOLD_ONE HOLD_TWO", { exact: true })).toBeVisible();
 	await expect(page.getByRole("status", { name: zhCN.messages.responding })).toBeHidden();

@@ -46,7 +46,6 @@ import {
 	recoverDurableFileTransactionSync,
 	replaceDurableFileSync,
 } from "../storage/durable-file-transaction.js";
-import type { EventBus } from "../storage/event-bus.js";
 import { removeOwnedDirectorySync, requireCompanionId } from "../storage/layout.js";
 import { activeCharacter, companionIdentity, companionPackages } from "../storage/schema.js";
 import { type CharacterBehaviorContract, CharacterBehaviorSchema } from "./behavior-schema.js";
@@ -1129,11 +1128,10 @@ Do not claim that missing an explicit request prevents TDAI capture, and do not 
 
 	activate(
 		systemDb: AppDatabase,
-		eventBus: EventBus,
 		character: CharacterPackage,
 		origin?: CharacterPackageOrigin,
 	): void {
-		this.seed(systemDb, eventBus, character, origin);
+		this.seed(systemDb, character, origin);
 		systemDb
 			.insert(activeCharacter)
 			.values({ singleton: 1, characterId: character.id })
@@ -1142,13 +1140,11 @@ Do not claim that missing an explicit request prevents TDAI capture, and do not 
 				set: { characterId: character.id, updatedAt: sql`datetime('now')` },
 			})
 			.run();
-		eventBus.publish("character.activated", { characterId: character.id });
 	}
 
 	/** Seed identity once and refresh package provenance on every package load. */
 	seed(
 		systemDb: AppDatabase,
-		eventBus: EventBus,
 		character: CharacterPackage,
 		origin: CharacterPackageOrigin = this.packageOrigin(character),
 	): void {
@@ -1197,7 +1193,6 @@ Do not claim that missing an explicit request prevents TDAI capture, and do not 
 				.run();
 		});
 		// The first meeting FSM creates the initial conversation, so we don't seed one here.
-		eventBus.publish("character.seeded", { id: character.id, name: character.name });
 	}
 }
 

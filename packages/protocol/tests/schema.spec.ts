@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
 	ArtifactReadRequest,
 	ArtifactSummary,
+	CacheKey,
+	CHANNEL_CONTRACTS,
+	LivePush,
+	LivePushBatch,
 	MAX_ARTIFACT_READ_BYTES,
-	PiSessionLiveEvent,
 	RPC,
 	Run,
 } from "../src/schema.js";
@@ -20,34 +23,33 @@ describe("protocol authority boundaries", () => {
 	it("does not expose Host-owned conversation memory mutation endpoints", () => {
 		const channels = JSON.stringify(RPC);
 		for (const obsolete of [
-			"memory.capture:v1",
-			"memory.edit:v1",
-			"memory.exclude:v1",
-			"memory.forget:v1",
-			"memory.list:v1",
-			"memory.search:v1",
+			"memory.capture",
+			"memory.edit",
+			"memory.exclude",
+			"memory.forget",
+			"memory.list",
+			"memory.search",
 		]) {
 			expect(channels).not.toContain(obsolete);
 		}
 	});
 
-	it("keeps Pi streaming on a bounded transient projection", () => {
+	it("forwards native Pi events with only conversation routing", () => {
 		expect(
-			PiSessionLiveEvent.parse({
-				sessionId: "session-1",
-				type: "message_update",
-				live: {
-					isStreaming: true,
-					streamingMessage: { text: "partial", stopReason: "pending" },
-					queuedUserMessages: [],
-				},
+			LivePush.parse({
+				type: "pi",
+				conversationId: "session-1",
+				event: { type: "agent_settled" },
 			}),
-		).toMatchObject({ sessionId: "session-1", type: "message_update" });
+		).toEqual({
+			type: "pi",
+			conversationId: "session-1",
+			event: { type: "agent_settled" },
+		});
 		expect(
-			PiSessionLiveEvent.safeParse({
-				sessionId: "session-1",
-				type: "host_reconstructed_turn",
-				live: { isStreaming: false, queuedUserMessages: [] },
+			LivePush.safeParse({
+				type: "pi",
+				event: { type: "agent_settled" },
 			}),
 		).toMatchObject({ success: false });
 	});
@@ -136,6 +138,24 @@ describe("protocol authority boundaries", () => {
 				},
 			}),
 		).toMatchObject({ success: false });
+	});
+
+	it("changes one settings domain per mutation", () => {
+		expect(
+			RPC.settings.set.request.safeParse({ settings: { firstRunStage: "model" } }),
+		).toMatchObject({ success: true });
+		expect(
+			RPC.settings.set.request.safeParse({
+				settings: { firstRunStage: "model", relationshipMemoryEnabled: true },
+			}),
+		).toMatchObject({ success: false });
+		expect(RPC.settings.set.request.safeParse({ settings: {} })).toMatchObject({ success: false });
+	});
+
+	it("keeps transport mechanics out of the shared protocol", () => {
+		expect(CHANNEL_CONTRACTS["character.import"]).not.toHaveProperty("maxRequestBytes");
+		expect(LivePushBatch.safeParse({ events: [] })).toMatchObject({ success: true });
+		expect(CacheKey.conversation("conversation-1")).toEqual(["conversation", "conversation-1"]);
 	});
 
 	it("models character runtime and package deletion as separate guarded operations", () => {

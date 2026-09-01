@@ -34,8 +34,9 @@ describe("ModelRegistry", () => {
 		models = new ModelRegistry(
 			systemDatabase.orm,
 			companionDatabase.orm,
-			{ publish } as never,
+			{ invalidate: publish } as never,
 			new AppSettingsStore(systemDatabase.orm),
+			(visit) => visit(companionDatabase.orm),
 		);
 	});
 
@@ -117,6 +118,7 @@ describe("ModelRegistry", () => {
 			mode: "manual",
 			route: { providerId: "relay", modelId: "vision" },
 		});
+		publish.mockClear();
 
 		models.disable("relay", "vision");
 		expect(() => models.disable("relay", "vision")).not.toThrow();
@@ -126,7 +128,9 @@ describe("ModelRegistry", () => {
 			onboardingComplete: false,
 		});
 		expect(models.get("relay", "vision")).toBeUndefined();
-		expect(publish.mock.calls.filter(([kind]) => kind === "model.disabled")).toHaveLength(1);
+		expect(
+			publish.mock.calls.filter(([first]) => JSON.stringify(first) === '["models","pool"]'),
+		).toHaveLength(1);
 	});
 
 	it("does not pretend the cross-database disable sequence is atomic", () => {
@@ -195,8 +199,12 @@ describe("ModelRegistry", () => {
 			const second = new ModelRegistry(
 				systemDatabase.orm,
 				secondDatabase.orm,
-				{ publish } as never,
+				{ invalidate: publish } as never,
 				new AppSettingsStore(systemDatabase.orm),
+				(visit) => {
+					visit(companionDatabase.orm);
+					visit(secondDatabase.orm);
+				},
 			);
 			expect(second.seedFromSystemDefaults("second-character")).toBe("seeded");
 			expect(second.defaults("second-character").reply?.modelId).toBe("b");
@@ -208,6 +216,13 @@ describe("ModelRegistry", () => {
 			});
 			expect(models.defaults("character").reply?.modelId).toBe("a");
 			expect(models.systemDefaults().reply?.modelId).toBe("b");
+
+			second.disable("relay", "c");
+			expect(second.defaults("second-character")).toMatchObject({
+				onboardingComplete: false,
+			});
+			expect(second.defaults("second-character").reply).toBeUndefined();
+			expect(models.defaults("character").reply?.modelId).toBe("a");
 		} finally {
 			secondDatabase.close();
 		}

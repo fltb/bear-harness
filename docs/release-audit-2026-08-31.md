@@ -58,8 +58,6 @@ Bear 是一个管理型的 Pi 桌面产品，不是另一个对话引擎：
 
 实现入口：`packages/host-runtime/src/storage/layout.ts`、`companion-storage.ts`、`schema-sql.ts`、`packages/host-runtime/src/character-runtime.ts`。
 
-本机实际迁移已执行：`/Users/bytedance/Library/Application Support/bear-harness` 现为 layout v2，`openai-codex` OAuth、7 个 configured models 和 `jizhou` 角色运行数据均已进入上述新位置。SQLite `integrity_check=ok`、外键错误为 0。原布局的原子备份位于 `/Users/bytedance/Library/Application Support/.bear-harness.runtime-layout-v1-backup-20260831113017`，按 7 天保留策略处理。真实启动时发现并修复了旧 Onboarding 的废弃 `conversation_history_read_enabled` 字段；修复只存在于一次性迁移转换，不引入运行时兼容分支。
-
 ## 3. 模块分层和实现路径
 
 | 层 | 主要职责 | 核心路径 |
@@ -94,7 +92,7 @@ Bear 是一个管理型的 Pi 桌面产品，不是另一个对话引擎：
   -> UI 查询缓存/时间线响应式投影
 ```
 
-流式事件不写入 Host SQLite，也不经 durable EventBus 重建。断线后以 Pi 权威 Snapshot 替换 UI 投影。UI 没有 `sending` 第二状态。
+流式事件不写入 Host SQLite。断线后以 Pi 权威 Snapshot 替换 UI 投影。UI 没有 `sending` 第二状态。
 
 ### Character / Display
 

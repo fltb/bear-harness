@@ -43,7 +43,7 @@ describe("companion storage registry", () => {
 				first.database.connection
 					.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='events'")
 					.get(),
-			).toEqual({ name: "events" });
+			).toBeUndefined();
 			expect(
 				second.database.connection.prepare("SELECT companion_id FROM runtime_identity").get(),
 			).toEqual({ companion_id: "role-b" });

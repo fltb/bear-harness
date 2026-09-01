@@ -7,11 +7,10 @@ import type { OnboardingData } from "../src/stores/ipc.js";
 import { createOnboardingStore } from "../src/stores/onboarding.js";
 import { createTestClient } from "./fixtures.js";
 
-function onboarding(currentStepId: string, eventSeq: number): OnboardingData {
+function onboarding(currentStepId: string): OnboardingData {
 	return {
 		status: "active",
 		currentStepId,
-		eventSeq,
 		stateData: { answers: {}, decisions: {} },
 	};
 }
@@ -33,11 +32,11 @@ function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["cli
 	return { store, dispose };
 }
 
-describe("onboarding projection ordering", () => {
-	it("adopts a successful submit response even after an unrelated higher snapshot sequence", async () => {
+describe("onboarding projection", () => {
+	it("adopts a successful submit response", async () => {
 		const { client } = createTestClient();
-		const doorClosed = onboarding("door_closed", 100);
-		const introduced = onboarding("introduced", 8);
+		const doorClosed = onboarding("door_closed");
+		const introduced = onboarding("introduced");
 		let onboardingGetCount = 0;
 		client.onboarding.get = vi.fn(() =>
 			Promise.resolve({
@@ -65,10 +64,10 @@ describe("onboarding projection ordering", () => {
 		}
 	});
 
-	it("ignores stale and unrelated events, projects state changes, and resets from Host", async () => {
+	it("hydrates snapshots and resynchronizes from Host", async () => {
 		const { client } = createTestClient();
-		const initial = onboarding("door_closed", 4);
-		const reset = onboarding("reset_step", 7);
+		const initial = onboarding("door_closed");
+		const reset = onboarding("reset_step");
 		client.onboarding.get = vi.fn(() => Promise.resolve({ ok: true as const, data: reset }));
 		let dispose = () => undefined;
 		let store: ReturnType<typeof createOnboardingStore> | undefined;
@@ -81,31 +80,20 @@ describe("onboarding projection ordering", () => {
 		try {
 			store._hydrate(initial);
 			store._hydrate(undefined);
-			store._hydrate(onboarding("stale", 3));
 			expect(store.data().currentStepId).toBe("door_closed");
-
-			store._applyEvent({ kind: "conversation.updated", seq: 5, payload: {} });
-			expect(store.data().currentStepId).toBe("door_closed");
-			store._applyEvent({
-				kind: "onboarding.state_changed",
-				seq: 6,
-				payload: onboarding("introduced", 0),
-			});
-			expect(store.data().currentStepId).toBe("introduced");
-
-			store._applyEvent({ kind: "onboarding.reset", seq: 7, payload: null });
+			await store.resync();
 			await waitFor(() => expect(store?.data().currentStepId).toBe("reset_step"));
 		} finally {
 			dispose();
 		}
 	});
 
-	it("keeps an accepted transition when an older snapshot arrives afterwards", async () => {
+	it("keeps an accepted transition when the boot snapshot refetches", async () => {
 		const { client } = createTestClient();
-		const doorClosed = onboarding("door_closed", 7);
-		const introduced = onboarding("introduced", 8);
+		const doorClosed = onboarding("door_closed");
+		const introduced = onboarding("introduced");
 		const snapshotGet = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { eventSeq: 7, onboarding: doorClosed } }),
+			Promise.resolve({ ok: true as const, data: { onboarding: doorClosed } }),
 		);
 		client.snapshot.get = snapshotGet;
 		let onboardingGetCount = 0;
@@ -127,9 +115,8 @@ describe("onboarding projection ordering", () => {
 			expect(store.onboarding.currentStepId).toBe("introduced");
 
 			await store.refresh();
-			await waitFor(() => expect(snapshotGet).toHaveBeenCalledTimes(3));
+			await waitFor(() => expect(snapshotGet).toHaveBeenCalledTimes(2));
 			expect(store.onboarding.currentStepId).toBe("introduced");
-			expect(store.onboarding.eventSeq).toBe(8);
 		} finally {
 			dispose();
 		}
@@ -137,10 +124,10 @@ describe("onboarding projection ordering", () => {
 
 	it("resynchronizes from the Host after another renderer advances the current step", async () => {
 		const { client } = createTestClient();
-		const doorClosed = onboarding("door_closed", 11);
-		const introduced = onboarding("introduced", 12);
+		const doorClosed = onboarding("door_closed");
+		const introduced = onboarding("introduced");
 		client.snapshot.get = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { eventSeq: 11, onboarding: doorClosed } }),
+			Promise.resolve({ ok: true as const, data: { onboarding: doorClosed } }),
 		);
 		let getCount = 0;
 		client.onboarding.get = vi.fn(() =>
@@ -160,7 +147,6 @@ describe("onboarding projection ordering", () => {
 			await store.submitOnboarding("door_closed");
 
 			await waitFor(() => expect(store.onboarding.currentStepId).toBe("introduced"));
-			expect(store.onboarding.eventSeq).toBe(12);
 			expect(store.error).toBeNull();
 		} finally {
 			dispose();
@@ -169,17 +155,16 @@ describe("onboarding projection ordering", () => {
 
 	it("projects the canonical conversation created by onboarding completion", async () => {
 		const { client } = createTestClient();
-		const initial = onboarding("memory_choice", 20);
+		const initial = onboarding("memory_choice");
 		const complete: OnboardingData = {
 			status: "complete",
-			eventSeq: 21,
 			stateData: { answers: {}, decisions: {} },
 		};
 		const conversation = {
-			sessionId: "onboarding-conversation",
+			conversationId: "onboarding-conversation",
 			name: "First meeting",
-			timeline: { entries: [] },
-			live: { isStreaming: false, queuedUserMessages: [] },
+			branch: { entries: [], hasMoreBefore: false },
+			live: { isStreaming: false, steering: [], followUp: [] },
 		};
 		let completed = false;
 		client.onboarding.get = vi.fn(() =>
@@ -193,15 +178,16 @@ describe("onboarding projection ordering", () => {
 			Promise.resolve({
 				ok: true as const,
 				data: {
-					sessions: completed
+					conversations: completed
 						? [
 								{
-									id: conversation.sessionId,
-									title: conversation.name,
+									conversationId: conversation.conversationId,
+									name: conversation.name,
 									created: "2026-08-22T00:00:00.000Z",
 									modified: "2026-08-22T00:00:00.000Z",
 									messageCount: 0,
 									firstMessage: "",
+									isStreaming: false,
 								},
 							]
 						: [],
@@ -217,9 +203,12 @@ describe("onboarding projection ordering", () => {
 			await waitFor(() => expect(store.onboarding.currentStepId).toBe("memory_choice"));
 			await store.submitOnboarding("memory_choice", "disabled");
 			expect(store.onboarding.status).toBe("complete");
-			expect(store.activeConversationId).toBe(conversation.sessionId);
+			expect(store.activeConversationId).toBe(conversation.conversationId);
 			expect(store.conversations).toEqual([
-				expect.objectContaining({ id: conversation.sessionId, title: conversation.name }),
+				expect.objectContaining({
+					conversationId: conversation.conversationId,
+					name: conversation.name,
+				}),
 			]);
 		} finally {
 			dispose();

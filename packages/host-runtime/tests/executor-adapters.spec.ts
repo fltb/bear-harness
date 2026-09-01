@@ -26,7 +26,7 @@ import {
 } from "../src/executors/codex-adapter.js";
 import { PiAcpAdapter, piModelEnvironment } from "../src/executors/pi-adapter.js";
 import type { ExecutorLaunchRequest } from "../src/executors/router.js";
-import { EventBus } from "../src/storage/event-bus.js";
+import { InvalidationHub } from "../src/storage/invalidation-hub.js";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/acp-agent.mjs", import.meta.url));
 const macOSConfinementAvailable =
@@ -61,7 +61,6 @@ function createDatabases() {
 		);
 	`);
 	run.exec(`
-		CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
 		CREATE TABLE run_manifests (
 			id TEXT PRIMARY KEY,
 			run_id TEXT NOT NULL,
@@ -71,7 +70,7 @@ function createDatabases() {
 	`);
 	const systemDb = drizzle({ client: system });
 	const runDb = drizzle({ client: run });
-	return { system, run, systemDb, runDb, eventBus: new EventBus(runDb) };
+	return { system, run, systemDb, runDb, invalidations: new InvalidationHub() };
 }
 
 function request(cwd: string, profile: ExecutorLaunchRequest["profile"]): ExecutorLaunchRequest {
@@ -170,13 +169,13 @@ describe("ACP executor adapters", () => {
 			const codeModeHostHash = createHash("sha256")
 				.update(readFileSync(codeModeHost))
 				.digest("hex");
-			const { system, run: runDatabase, systemDb, runDb, eventBus } = createDatabases();
+			const { system, run: runDatabase, systemDb, runDb, invalidations } = createDatabases();
 			class FixtureCodexAdapter extends CodexAdapter {
 				protected override processSpec(): AcpProcessSpec {
 					return fixtureSpec(cwd);
 				}
 			}
-			const adapter = new FixtureCodexAdapter(systemDb, runDb, eventBus);
+			const adapter = new FixtureCodexAdapter(systemDb, runDb, invalidations);
 			const completed = Promise.withResolvers<void>();
 			const run = request(cwd, {
 				id: "codex-fixture",

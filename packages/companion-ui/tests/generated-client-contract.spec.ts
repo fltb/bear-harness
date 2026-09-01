@@ -1,8 +1,4 @@
-import {
-	createCompanionClient,
-	isMutationResponse,
-	responseRevision,
-} from "@bear-harness/companion-client";
+import { createCompanionClient } from "@bear-harness/companion-client";
 import { QueryClient } from "@tanstack/solid-query";
 import { describe, expect, it, vi } from "vitest";
 import { withRpcMutations } from "../src/stores/mutation-client.js";
@@ -44,38 +40,28 @@ describe("schema-derived companion client", () => {
 		second.clear();
 	});
 
-	it("keeps one push subscription open, validates batches, and unsubscribes on abort", async () => {
+	it("keeps one invalidation subscription open, validates shared cache keys, and unsubscribes", async () => {
 		let receive!: (batch: unknown) => void;
 		const stop = vi.fn();
 		const invoke = vi.fn();
-		const listen = vi.fn((_cursor, callback) => {
+		const listenInvalidations = vi.fn((callback) => {
 			receive = callback;
 			return stop;
 		});
-		const client = createCompanionClient({ invoke, listen });
+		const client = createCompanionClient({ invoke, listenInvalidations });
 		const controller = new AbortController();
-		const stream = client.events.stream(12, controller.signal)[Symbol.asyncIterator]();
+		const stream = client.invalidations.stream(controller.signal)[Symbol.asyncIterator]();
 		const first = stream.next();
 		receive({
-			events: [
-				{ seq: 13, kind: "provider.login_changed", payload: { providerId: "openai-codex" } },
-			],
+			notices: [{ keys: [["providers"]] }],
 		});
-		expect((await first).value).toEqual([
-			{ seq: 13, kind: "provider.login_changed", payload: { providerId: "openai-codex" } },
-		]);
+		expect((await first).value).toEqual({ keys: [["providers"]] });
 		const next = stream.next();
 		receive({
-			events: [
-				{
-					seq: 14,
-					kind: "memory.embedding_download_changed",
-					payload: { status: "downloading", downloadedBytes: 32 },
-				},
-			],
+			notices: [{ keys: [["settings"]] }],
 		});
-		expect((await next).value?.[0]?.seq).toBe(14);
-		expect(listen).toHaveBeenCalledTimes(1);
+		expect((await next).value?.keys).toEqual([["settings"]]);
+		expect(listenInvalidations).toHaveBeenCalledTimes(1);
 		expect(invoke).not.toHaveBeenCalled();
 		const pending = stream.next();
 		controller.abort();
@@ -87,22 +73,22 @@ describe("schema-derived companion client", () => {
 		const stop = vi.fn();
 		const client = createCompanionClient({
 			invoke: vi.fn(),
-			listen: (_cursor, receive) => {
-				receive({ events: [{ seq: 1, kind: "provider.login_changed", payload: {} }] });
+			listenInvalidations: (receive) => {
+				receive({ notices: [{ keys: [] }] });
 				return stop;
 			},
 		});
 		await expect(
-			client.events.stream(0, new AbortController().signal)[Symbol.asyncIterator]().next(),
+			client.invalidations.stream(new AbortController().signal)[Symbol.asyncIterator]().next(),
 		).rejects.toMatchObject({ name: "ZodError" });
 		expect(stop).toHaveBeenCalledOnce();
 		const invoke = vi.fn();
 		await expect(
 			createCompanionClient({ invoke })
-				.events.stream(0, new AbortController().signal)
+				.invalidations.stream(new AbortController().signal)
 				[Symbol.asyncIterator]()
 				.next(),
-		).rejects.toThrow("does not support event push");
+		).rejects.toThrow("does not support invalidation push");
 		expect(invoke).not.toHaveBeenCalled();
 	});
 });

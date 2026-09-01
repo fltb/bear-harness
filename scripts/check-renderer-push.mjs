@@ -43,15 +43,6 @@ for (const pattern of [
 					`${file}:${node.loc.start.line} network access belongs to the Host transport adapter`,
 				);
 			}
-			if (
-				node.type === "Identifier" &&
-				node.name === "setQueryData" &&
-				file !== "packages/companion-ui/src/stores/query-sync.ts"
-			) {
-				failures.push(
-					`${file}:${node.loc.start.line} cache writes must cross the committed revision gate`,
-				);
-			}
 			if (node.type === "Identifier" && node.name === "refetchInterval") {
 				failures.push(
 					`${file}:${node.loc.start.line} ${node.name}: use Host push for state updates`,

@@ -27,40 +27,15 @@ describe("Zod RPC dispatcher", () => {
 		expect(JSON.stringify(outcomes)).not.toContain("secret-provider");
 		expect(JSON.stringify(outcomes)).not.toContain("secret-value");
 	});
-	it("retries a query spanning a commit but never retries a mutation", async () => {
-		let revision = 0;
-		let reads = 0;
-		const dispatcher = new Dispatcher({ syncRevision: () => ({ epoch: "host", revision }) });
-		dispatcher.registerHandler(RPC.run.list, async () => {
-			reads++;
-			if (reads === 1) revision++;
-			return { runs: [] };
-		});
-		expect(await dispatcher.dispatch(RPC.run.list.channel, {})).toEqual({
-			ok: true,
-			data: { runs: [] },
-			sync: { epoch: "host", revision: 1 },
-		});
-		expect(reads).toBe(2);
-		let writes = 0;
-		dispatcher.registerHandler(RPC.provider.logout, async () => {
-			writes++;
-			revision++;
-			return {};
-		});
-		await dispatcher.dispatch(RPC.provider.logout.channel, { providerId: "test" });
-		expect(writes).toBe(1);
-	});
-
 	it("rejects unknown endpoint registration before dispatch", () => {
 		const dispatcher = new Dispatcher();
 
 		expect(() =>
 			dispatcher.registerHandler(
-				{ kind: "rpc", channel: "unknown.endpoint:v1" } as never,
+				{ kind: "rpc", channel: "unknown.endpoint" } as never,
 				(() => ({})) as never,
 			),
-		).toThrow("unknown RPC endpoint: unknown.endpoint:v1");
+		).toThrow("unknown RPC endpoint: unknown.endpoint");
 	});
 
 	it("rejects duplicate channel registration", () => {
@@ -69,13 +44,13 @@ describe("Zod RPC dispatcher", () => {
 
 		expect(() =>
 			dispatcher.registerHandler(RPC.settings.get, async () => ({ settings: {} })),
-		).toThrow("duplicate RPC handler registration: settings.get:v1");
+		).toThrow("duplicate RPC handler registration: settings.get");
 	});
 
 	it("rejects unknown fields without leaking validation internals", async () => {
 		const dispatcher = new Dispatcher();
 		dispatcher.registerHandler(RPC.settings.get, async () => ({ settings: {} }));
-		await expect(dispatcher.dispatch("settings.get:v1", { bypass: true })).resolves.toEqual({
+		await expect(dispatcher.dispatch("settings.get", { bypass: true })).resolves.toEqual({
 			ok: false,
 			error: { kind: "invalid_request", reason: "request_validation_failed" },
 		});
@@ -112,10 +87,9 @@ describe("Zod RPC dispatcher", () => {
 		});
 	});
 
-	it("throws on malformed responses when throw mode is explicit", async () => {
+	it("throws on malformed responses", async () => {
 		const violations: ProtocolResponseValidationError[] = [];
 		const dispatcher = new Dispatcher({
-			responseValidation: "throw",
 			onProtocolViolation: (error) => violations.push(error),
 		});
 		dispatcher.registerHandler(RPC.conversation.list, (async () => ({
@@ -128,16 +102,16 @@ describe("Zod RPC dispatcher", () => {
 		expect(violations).toHaveLength(1);
 	});
 
-	it("isolates malformed responses in isolate mode", async () => {
-		const dispatcher = new Dispatcher({ responseValidation: "isolate" });
-		dispatcher.registerHandler(RPC.message.send, (async () => ({
-			messageId: "only-one-field",
-		})) as never);
+	it("does not expose ordinary Error messages", async () => {
+		const dispatcher = new Dispatcher();
+		dispatcher.registerHandler(RPC.message.send, async () => {
+			throw new Error("/private/secret/database.sqlite failed");
+		});
 		await expect(
 			dispatcher.dispatch(RPC.message.send.channel, { conversationId: "c1", text: "hello" }),
 		).resolves.toEqual({
 			ok: false,
-			error: { kind: "internal", reason: "response_validation_failed" },
+			error: { kind: "internal", reason: "handler_failed" },
 		});
 	});
 });

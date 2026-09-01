@@ -90,14 +90,14 @@ describe("character package import", () => {
 			credentialVault: vault,
 		});
 		await runtime.start();
-		const initial = await runtime.dispatch("character.packageGet:v1", { characterId: "jizhou" });
+		const initial = await runtime.dispatch("character.packageGet", { characterId: "jizhou" });
 		if (!initial.ok) throw new Error(initial.error.reason);
 		const yaml = initial.data.package.yaml.replace(
 			"极光书房是默认日常位置；当前显示的场景与角色状态中的叙事位置始终优先，不能把默认场景写成不随状态变化的事实。",
 			"极昼正在新的值守室等待交接。",
 		);
 		await expect(
-			runtime.dispatch("character.packageUpdate:v1", {
+			runtime.dispatch("character.packageUpdate", {
 				characterId: "jizhou",
 				yaml,
 				expectedSha256: initial.data.package.sha256,
@@ -113,16 +113,16 @@ describe("character package import", () => {
 			},
 		});
 		await expect(
-			runtime.dispatch("character.packageUpdate:v1", {
+			runtime.dispatch("character.packageUpdate", {
 				characterId: "jizhou",
 				yaml,
 				expectedSha256: initial.data.package.sha256,
 			}),
 		).resolves.toMatchObject({ ok: false, error: { kind: "conflict" } });
-		const refreshed = await runtime.dispatch("character.packageGet:v1", { characterId: "jizhou" });
+		const refreshed = await runtime.dispatch("character.packageGet", { characterId: "jizhou" });
 		if (!refreshed.ok) throw new Error(refreshed.error.reason);
 		await expect(
-			runtime.dispatch("character.packageUpdate:v1", {
+			runtime.dispatch("character.packageUpdate", {
 				characterId: "jizhou",
 				yaml: yaml.replace("id: jizhou", "id: another-role"),
 				expectedSha256: refreshed.data.package.sha256,
@@ -149,11 +149,14 @@ describe("character package import", () => {
 			credentialVault: vault,
 		});
 		await runtime.start();
-		await expect(runtime.dispatch("character.import:v1", { files })).resolves.toMatchObject({
+		await expect(runtime.dispatch("character.import", { files })).resolves.toMatchObject({
 			ok: true,
 			data: { character: { id: "imported-role" } },
 		});
-		const previousRole = Reflect.get(runtime, "role") as {
+		const lifecycle = Reflect.get(runtime, "lifecycle") as {
+			active(): { runtime: { companionId: string; close(): Promise<void> } };
+		};
+		const previousRole = lifecycle.active().runtime as {
 			companionId: string;
 			close(): Promise<void>;
 		};
@@ -163,16 +166,16 @@ describe("character package import", () => {
 			throw new Error("cleanup failed after closing resources");
 		});
 		await expect(
-			runtime.dispatch("character.activate:v1", { characterId: "imported-role" }),
+			runtime.dispatch("character.activate", { characterId: "imported-role" }),
 		).resolves.toMatchObject({
 			ok: true,
 			data: { character: { id: "imported-role" } },
 		});
-		const activeRole = Reflect.get(runtime, "role") as { companionId: string };
+		const activeRole = lifecycle.active().runtime;
 		expect(activeRole).not.toBe(previousRole);
 		expect(activeRole.companionId).toBe("imported-role");
 		expect(closePrevious).toHaveBeenCalledOnce();
-		await expect(runtime.dispatch("canon.listModules:v1", {})).resolves.toMatchObject({
+		await expect(runtime.dispatch("canon.listModules", {})).resolves.toMatchObject({
 			ok: true,
 			data: {
 				modules: expect.arrayContaining([
@@ -192,13 +195,13 @@ describe("character package import", () => {
 			credentialVault: vault,
 		});
 		await restarted.start();
-		await expect(restarted.dispatch("character.list:v1", {})).resolves.toMatchObject({
+		await expect(restarted.dispatch("character.list", {})).resolves.toMatchObject({
 			ok: true,
 			data: {
 				characters: expect.arrayContaining([expect.objectContaining({ id: "imported-role" })]),
 			},
 		});
-		await expect(restarted.dispatch("character.get:v1", {})).resolves.toMatchObject({
+		await expect(restarted.dispatch("character.get", {})).resolves.toMatchObject({
 			ok: true,
 			data: { character: { id: "imported-role" } },
 		});
@@ -225,25 +228,25 @@ describe("character package import", () => {
 			return response.data;
 		};
 		await runtime.start();
-		await call("provider.customUpsert:v1", {
+		await call("provider.customUpsert", {
 			providerId: "seed-models",
 			name: "Seed models",
 			baseUrl: "https://example.invalid/v1",
 			models: [{ id: "a" }, { id: "b" }, { id: "c" }],
 		});
-		await call("provider.setApiKey:v1", {
+		await call("provider.setApiKey", {
 			providerId: "seed-models",
 			apiKey: "session-key",
 			sessionOnly: true,
 		});
-		await call("model.systemDefaults.set:v1", {
+		await call("model.systemDefaults.set", {
 			reply: { providerId: "seed-models", modelId: "a" },
 			vision: { mode: "auto" },
 		});
-		await call("model.defaults.initialize:v1", {});
-		await call("model.defaults.completeOnboarding:v1", {});
+		await call("model.defaults.initialize", {});
+		await call("model.defaults.completeOnboarding", {});
 
-		await call("model.systemDefaults.set:v1", {
+		await call("model.systemDefaults.set", {
 			reply: { providerId: "seed-models", modelId: "b" },
 			vision: { mode: "auto" },
 		});
@@ -255,33 +258,33 @@ describe("character package import", () => {
 				.toString("utf8")
 				.replace("id: jizhou", "id: seeded-role"),
 		).toString("base64");
-		await call("character.import:v1", { files });
-		await call("character.activate:v1", { characterId: "seeded-role" });
-		await expect(call("model.defaults.get:v1", {})).resolves.toMatchObject({
+		await call("character.import", { files });
+		await call("character.activate", { characterId: "seeded-role" });
+		await expect(call("model.defaults.get", {})).resolves.toMatchObject({
 			reply: { providerId: "seed-models", modelId: "b" },
 			onboardingComplete: false,
 		});
-		await call("model.defaults.setReply:v1", {
+		await call("model.defaults.setReply", {
 			reply: { providerId: "seed-models", modelId: "c" },
 		});
-		await call("model.defaults.completeOnboarding:v1", {});
-		const secondConversation = (await call("conversation.create:v1", {
+		await call("model.defaults.completeOnboarding", {});
+		const secondConversation = (await call("conversation.create", {
 			title: "Second role",
-		})) as { sessionId: string };
+		})) as { conversationId: string };
 		await expect(
-			call("model.route.get:v1", { conversationId: secondConversation.sessionId }),
+			call("model.route.get", { conversationId: secondConversation.conversationId }),
 		).resolves.toMatchObject({ selected: { providerId: "seed-models", modelId: "c" } });
 
-		await call("character.activate:v1", { characterId: "jizhou" });
-		await expect(call("model.defaults.get:v1", {})).resolves.toMatchObject({
+		await call("character.activate", { characterId: "jizhou" });
+		await expect(call("model.defaults.get", {})).resolves.toMatchObject({
 			reply: { providerId: "seed-models", modelId: "a" },
 			onboardingComplete: true,
 		});
-		const firstConversation = (await call("conversation.create:v1", {
+		const firstConversation = (await call("conversation.create", {
 			title: "First role",
-		})) as { sessionId: string };
+		})) as { conversationId: string };
 		await expect(
-			call("model.route.get:v1", { conversationId: firstConversation.sessionId }),
+			call("model.route.get", { conversationId: firstConversation.conversationId }),
 		).resolves.toMatchObject({ selected: { providerId: "seed-models", modelId: "a" } });
 		await runtime.close();
 	}, 20_000);
@@ -310,18 +313,18 @@ describe("character package import", () => {
 			credentialVault: vault,
 		});
 		await runtime.start();
-		await expect(runtime.dispatch("character.import:v1", { files })).resolves.toMatchObject({
+		await expect(runtime.dispatch("character.import", { files })).resolves.toMatchObject({
 			ok: true,
 			data: { character: { id: "plugin-trust-role" } },
 		});
 		await expect(
-			runtime.dispatch("character.pluginTrustGet:v1", { characterId: "plugin-trust-role" }),
+			runtime.dispatch("character.pluginTrustGet", { characterId: "plugin-trust-role" }),
 		).resolves.toMatchObject({
 			ok: true,
 			data: { trust: { origin: "imported", pluginsPresent: true, trusted: false } },
 		});
 		await expect(
-			runtime.dispatch("character.pluginTrustConfirm:v1", { characterId: "plugin-trust-role" }),
+			runtime.dispatch("character.pluginTrustConfirm", { characterId: "plugin-trust-role" }),
 		).resolves.toMatchObject({ ok: true, data: { trust: { trusted: true } } });
 
 		appendFileSync(
@@ -329,7 +332,7 @@ describe("character package import", () => {
 			"\n// package update\n",
 		);
 		await expect(
-			runtime.dispatch("character.pluginTrustGet:v1", { characterId: "plugin-trust-role" }),
+			runtime.dispatch("character.pluginTrustGet", { characterId: "plugin-trust-role" }),
 		).resolves.toMatchObject({ ok: true, data: { trust: { trusted: false } } });
 		await runtime.close();
 	});
@@ -345,12 +348,12 @@ describe("character package import", () => {
 		});
 		await runtime.start();
 		await expect(
-			runtime.dispatch("character.import:v1", {
+			runtime.dispatch("character.import", {
 				files: [{ path: "package/readme.txt", base64: Buffer.from("hello").toString("base64") }],
 			}),
 		).resolves.toMatchObject({ ok: false, error: { reason: "character_manifest_missing" } });
 		await expect(
-			runtime.dispatch("character.import:v1", {
+			runtime.dispatch("character.import", {
 				files: [{ path: "../character.yaml", base64: Buffer.from("id: bad").toString("base64") }],
 			}),
 		).resolves.toMatchObject({ ok: false, error: { reason: "character_package_path_invalid" } });
@@ -380,7 +383,7 @@ describe("character package import", () => {
 			credentialVault: vault,
 		});
 		await restarted.start();
-		await expect(restarted.dispatch("character.list:v1", {})).resolves.toMatchObject({
+		await expect(restarted.dispatch("character.list", {})).resolves.toMatchObject({
 			ok: true,
 			data: {
 				characters: expect.arrayContaining([

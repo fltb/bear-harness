@@ -1,6 +1,9 @@
 import type { HostTransport } from "@bear-harness/companion-client";
 import { type ProductConfig, validateProductConfig } from "@bear-harness/product-config";
 
+const INVALIDATION_PATH = "/events/invalidations";
+const LIVE_PATH = "/events/live";
+
 export interface WebDevBootstrap {
 	product: Readonly<ProductConfig>;
 	token: string;
@@ -66,32 +69,33 @@ export function createHttpTransport(token: string): HostTransport {
 	const refreshToken = async (): Promise<void> => {
 		currentToken = (await loadBootstrap()).token;
 	};
-	const listenNdjson = (
+	const requestNdjson = async (
 		path: string,
 		body: object,
-		receive: (batch: unknown) => void,
-		fail: (error: unknown) => void,
-	): (() => void) => {
-		const abort = new AbortController();
-		void (async () => {
-			const request = () =>
-				fetch(path, {
-					method: "POST",
-					headers: {
-						"content-type": "application/json",
-						accept: "application/x-ndjson",
-						"x-bear-web-dev-token": currentToken,
-					},
-					body: JSON.stringify(body),
-					signal: abort.signal,
-				});
-			let response = await request();
-			if (response.status === 401) {
-				await refreshToken();
-				response = await request();
-			}
-			if (!response.ok || !response.body) throw new WebDevHttpError("transport", response.status);
-			const reader = response.body.getReader();
+		signal: AbortSignal,
+	): Promise<ReadableStream<Uint8Array>> => {
+		const request = () =>
+			fetch(path, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					accept: "application/x-ndjson",
+					"x-bear-web-dev-token": currentToken,
+				},
+				body: JSON.stringify(body),
+				signal,
+			});
+		let response = await request();
+		if (response.status === 401) {
+			await refreshToken();
+			response = await request();
+		}
+		if (!response.ok || !response.body) throw new WebDevHttpError("transport", response.status);
+		return response.body;
+	};
+	const readNdjson = (body: ReadableStream<Uint8Array>): AsyncIterable<unknown> => ({
+		async *[Symbol.asyncIterator]() {
+			const reader = body.getReader();
 			const decoder = new TextDecoder();
 			let pending = "";
 			try {
@@ -104,7 +108,7 @@ export function createHttpTransport(token: string): HostTransport {
 						if (newline < 0) break;
 						const frame = pending.slice(0, newline);
 						pending = pending.slice(newline + 1);
-						if (frame) receive(JSON.parse(frame));
+						if (frame) yield JSON.parse(frame);
 					}
 					if (pending.length > 4 * 1024 * 1024) throw new Error("Host event frame too large");
 				}
@@ -112,17 +116,29 @@ export function createHttpTransport(token: string): HostTransport {
 				await reader.cancel().catch(() => undefined);
 				reader.releaseLock();
 			}
+		},
+	});
+	const listenNdjson = (
+		path: string,
+		body: object,
+		receive: (batch: unknown) => void,
+		fail: (error: unknown) => void,
+	): (() => void) => {
+		const abort = new AbortController();
+		void (async () => {
+			const stream = readNdjson(await requestNdjson(path, body, abort.signal));
+			for await (const batch of stream) receive(batch);
 		})().catch((error) => {
 			if (!abort.signal.aborted) fail(error);
 		});
 		return () => abort.abort();
 	};
 	return {
-		listen(afterSeq, receive, fail) {
-			return listenNdjson("/rpc/events.subscribe%3Av1", { afterSeq }, receive, fail);
+		listenInvalidations(receive, fail) {
+			return listenNdjson(INVALIDATION_PATH, {}, receive, fail);
 		},
-		listenPi(receive, fail) {
-			return listenNdjson("/live/pi", {}, receive, fail);
+		async subscribeLive(signal) {
+			return readNdjson(await requestNdjson(LIVE_PATH, {}, signal));
 		},
 		async invoke(endpoint, params) {
 			const request = () =>

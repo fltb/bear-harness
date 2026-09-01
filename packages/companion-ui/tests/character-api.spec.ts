@@ -162,7 +162,7 @@ describe("character store API", () => {
 		expect(client.character.deletionStatusGet).toHaveBeenCalledWith({
 			characterId: characterSummary.id,
 		});
-		expect(client.settings.get).toHaveBeenCalledWith({ characterId: characterSummary.id });
+		expect(client.settings.get).not.toHaveBeenCalled();
 	});
 
 	it("routes every character and draft mutation and refreshes all affected projections", async () => {
@@ -348,12 +348,10 @@ describe("canon store API", () => {
 		expect(client.canon.addSource).toHaveBeenCalledWith({
 			logicalName: "STORY.md",
 			content: "Once upon a time",
-			characterId: characterSummary.id,
 		});
 		expect(await api.search("opening")).toEqual([chunk]);
 		expect(client.canon.search).toHaveBeenCalledWith({
 			query: "opening",
-			characterId: characterSummary.id,
 		});
 		await api.removeSource(source.id);
 		expect(refreshSources).toHaveBeenCalledTimes(3);
@@ -368,7 +366,6 @@ describe("canon store API", () => {
 		await api.upsertModule(upsert);
 		expect(client.canon.upsertModule).toHaveBeenCalledWith({
 			...upsert,
-			characterId: characterSummary.id,
 		});
 		await api.deleteModule(module.id);
 		expect(refreshModules).toHaveBeenCalledTimes(3);

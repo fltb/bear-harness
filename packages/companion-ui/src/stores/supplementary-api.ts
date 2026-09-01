@@ -66,9 +66,9 @@ export interface EmbeddingBinding {
 }
 
 export interface SettingsApi {
-	data(characterId?: string): SettingsData | undefined;
-	get(characterId?: string): Promise<SettingsData>;
-	set(settings: SettingsPatch, characterId?: string): Promise<void>;
+	data(): SettingsData | undefined;
+	get(): Promise<SettingsData>;
+	set(settings: SettingsPatch): Promise<void>;
 }
 
 export interface ProviderApi {

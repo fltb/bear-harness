@@ -32,7 +32,7 @@ test("documents Provider credentials independently from endpoint overrides", () 
 test("provisions the custom provider from WebDev environment variables", async ({ page }) => {
 	await page.goto("/");
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
-	const response = await page.request.post("/rpc/provider.list%3Av1", {
+	const response = await page.request.post("/rpc/provider.list", {
 		headers: { "x-bear-web-dev-token": bootstrap.token },
 		data: {},
 	});

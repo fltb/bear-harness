@@ -5,8 +5,8 @@
  * safe-integer bounds. The same schemas validate IPC and HTTP requests and
  * generate Draft 2020-12 JSON Schema for package tooling.
  *
- * Every channel name ends with `:v1`. Wire errors are limited to the
- * `IpcErrorKind` enum plus a localizable `reason` string — never raw paths,
+ * Wire errors are limited to the `RpcErrorKind` enum plus a localizable
+ * `reason` string — never raw paths,
  * SQL, secrets, or provider error text.
  *
  * This module is transport- and runtime-neutral (no Electron, DOM, or Node
@@ -16,6 +16,8 @@
  */
 
 import { type Schema, z } from "@bear-harness/schema";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentSessionEvent, SessionEntry } from "@earendil-works/pi-coding-agent";
 
 // ---------------------------------------------------------------------------
 // Shared wire types
@@ -50,61 +52,48 @@ const boundedRecord = <K extends z.ZodString, V extends Schema>(
 	});
 
 /** Localizable reason codes for wire errors. */
-export const IpcErrorKind = z.union([
+export const RpcErrorKind = z.union([
 	z.literal("invalid_request"),
 	z.literal("not_found"),
 	z.literal("conflict"),
 	z.literal("unavailable"),
 	z.literal("internal"),
 ]);
-export type IpcErrorKind = z.infer<typeof IpcErrorKind>;
-
-export const SyncRevision = z.strictObject({
-	epoch: z.string().min(1).max(128),
-	revision: z.number().int().safe().nonnegative(),
-});
-export type SyncRevision = z.infer<typeof SyncRevision>;
+export type RpcErrorKind = z.infer<typeof RpcErrorKind>;
 
 /** Every IPC response body is either data or an error with this shape. */
-export const IpcResponse = <T extends Schema>(data: T) =>
+export const RpcResponse = <T extends Schema>(data: T) =>
 	z.union([
 		z.strictObject({
 			ok: z.literal(true),
 			data,
-			sync: SyncRevision.optional(),
 		}),
 		z.strictObject({
 			ok: z.literal(false),
 			error: z.strictObject({
-				kind: IpcErrorKind,
+				kind: RpcErrorKind,
 				reason: z.string().max(MAX_STRING_LENGTH),
 			}),
 		}),
 	]);
 export const EmptyResponse = z.strictObject({});
 
-// ---------------------------------------------------------------------------
-// Event bus
-// ---------------------------------------------------------------------------
-
-export const EventSeq = z.number().int().safe().min(0).max(MAX_SAFE_INT);
-
-/** Event payload values that intentionally carry bounded JSON data. */
-type BoundedEventValue =
+/** JSON values accepted by bounded Character and Display documents. */
+type BoundedJsonValue =
 	| string
 	| number
 	| boolean
 	| null
-	| BoundedEventValue[]
-	| { [key: string]: BoundedEventValue };
+	| BoundedJsonValue[]
+	| { [key: string]: BoundedJsonValue };
 
 /**
- * Validate JSON-like event values iteratively. A recursive Zod schema would
+ * Validate JSON-like values iteratively. A recursive Zod schema would
  * recurse once per container and can overflow before its own bounds reject an
  * adversarial payload, so depth and node limits are checked in the same pass
  * as the scalar, breadth, and key bounds.
  */
-function isBoundedEventValue(value: unknown): value is BoundedEventValue {
+function isBoundedJsonValue(value: unknown): value is BoundedJsonValue {
 	const pending: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
 	const seen = new Set<object>();
 	let nodes = 0;
@@ -148,21 +137,11 @@ function isBoundedEventValue(value: unknown): value is BoundedEventValue {
 	return true;
 }
 
-const BoundedEventValue = z.custom<BoundedEventValue>(
-	(value) => isBoundedEventValue(value),
-	"event payload exceeds its complexity bounds",
+const BoundedJsonValue = z.custom<BoundedJsonValue>(
+	(value) => isBoundedJsonValue(value),
+	"JSON value exceeds its complexity bounds",
 );
 
-const EventId = z.string().min(1).max(1024);
-const EventText = z.string().max(MAX_STRING_LENGTH);
-const EventPayload = <const Shape extends z.core.$ZodLooseShape>(shape: Shape) =>
-	z.strictObject(shape);
-const EventStringList = z.array(EventText).max(MAX_ARRAY_LENGTH);
-
-/**
- * Payload contracts for every event currently emitted by Host or consumed by
- * the renderer. Every kind and field must be declared before use.
- */
 export const EmbeddingDownloadState = z.strictObject({
 	status: z.enum([
 		"idle",
@@ -179,195 +158,60 @@ export const EmbeddingDownloadState = z.strictObject({
 });
 export type EmbeddingDownloadState = z.infer<typeof EmbeddingDownloadState>;
 
-export const EventPayloadSchemas = {
-	"sync.invalidated": z.strictObject({
-		sync: SyncRevision,
-		sources: z.array(z.string().min(1).max(160)).max(256),
-	}),
-	"provider.login_changed": z.strictObject({ providerId: EventId }),
-	"memory.embedding_download_changed": EmbeddingDownloadState,
-	"character.imported": EventPayload({
-		characterId: EventId,
-		trust: BoundedEventValue,
-	}),
-	"character.pluginsTrusted": EventPayload({
-		characterId: EventId,
-		pluginHash: EventText,
-	}),
-	"character.activated": EventPayload({ characterId: EventId }),
-	"character.seeded": EventPayload({ id: EventId, name: EventText }),
-	"conversation.created": EventPayload({
-		conversationId: EventId,
-		title: EventText.optional(),
-	}),
-	"conversation.renamed": EventPayload({
-		conversationId: EventId,
-		title: EventText,
-	}),
-	"conversation.archived": EventPayload({
-		conversationId: EventId,
-		archived: z.boolean(),
-	}),
-	"conversation.deleted": EventPayload({ conversationId: EventId }),
-	"settings.changed": EventPayload({
-		settings: BoundedEventValue,
-		changed: EventStringList,
-	}),
-	"diagnostics.protocol_violation": EventPayload({
-		channel: EventText,
-		issues: z.array(BoundedEventValue).max(MAX_ARRAY_LENGTH),
-	}),
-	"canon.source_added": EventPayload({
-		companionId: EventId,
-		sourceId: EventId,
-		logicalName: EventText,
-	}),
-	"canon.package_synced": EventPayload({
-		companionId: EventId,
-	}),
-	"canon.source_removed": EventPayload({
-		companionId: EventId,
-		sourceId: EventId,
-	}),
-	"canon.module_saved": EventPayload({
-		companionId: EventId,
-		moduleId: EventId,
-	}),
-	"canon.module_removed": EventPayload({
-		companionId: EventId,
-		moduleId: EventId,
-	}),
-	"evidence.collected": EventPayload({
-		runId: EventId,
-		evidenceId: EventId,
-		kind: EventText,
-	}),
-	"run.enqueued": EventPayload({
-		runId: EventId,
-		conversationId: EventId,
-		triggerEntryId: EventId,
-		executorProfile: EventText,
-	}),
-	"run.started": EventPayload({ runId: EventId }),
-	"run.completed": EventPayload({ runId: EventId, status: EventText }),
-	"run.needs_user": EventPayload({
-		runId: EventId,
-		prompt: EventText,
-		requestId: EventId,
-		options: z
-			.array(
-				EventPayload({
-					optionId: EventId,
-					kind: EventText,
-					name: EventText,
-				}),
-			)
-			.max(MAX_ARRAY_LENGTH),
-	}),
-	"run.steered": EventPayload({ runId: EventId, instruction: EventText }),
-	"run.interrupted": EventPayload({ runId: EventId }),
-	"run.resumed": EventPayload({ runId: EventId }),
-	"companion.snapshot_changed": EventPayload({
-		conversationId: EventId,
-	}),
-	"codex.launched": EventPayload({
-		executor: EventText,
-		profileId: EventId,
-		runId: EventId,
-		triggerEntryId: EventId,
-		version: EventText,
-		sha256: EventText,
-		launchedAt: EventText,
-	}),
-	"fsops.plan_created": EventPayload({
-		planId: EventId,
-		opCount: z.number().int().safe().min(0).max(MAX_SAFE_INT),
-	}),
-	"fsops.journal_entry": EventPayload({
-		entryId: EventId,
-		planId: EventId,
-		opIndex: z.number().int().safe().min(0).max(MAX_SAFE_INT),
-		status: z.enum(["done", "error", "needs_user", "undone"]),
-	}),
-	"fsops.undo_entry": EventPayload({
-		entryId: EventId,
-		planId: EventId,
-		opIndex: z.number().int().safe().min(0).max(MAX_SAFE_INT),
-		status: z.enum(["done", "error", "needs_user", "undone"]),
-	}),
-	"model.enabled": EventPayload({ providerId: EventId, modelId: EventId }),
-	"model.disabled": EventPayload({ providerId: EventId, modelId: EventId }),
-	"model.defaults_changed": EventPayload({ kind: z.enum(["reply", "vision", "system"]) }),
-	"model.selected": EventPayload({
-		conversationId: EventId,
-		providerId: EventId,
-		modelId: EventId,
-	}),
-	"onboarding.state_changed": EventPayload({
-		status: z.enum(["active", "complete"]),
-		currentStepId: EventId.optional(),
-		stateData: BoundedEventValue,
-	}),
-	"onboarding.reset": EventPayload({}),
-} as const;
-
-export type KnownEventKind = keyof typeof EventPayloadSchemas;
-export const EventKind = z.string().min(1).max(128);
-const isKnownEventKind = (kind: string): kind is KnownEventKind =>
-	Object.hasOwn(EventPayloadSchemas, kind);
-/**
- * The shared event contract. Every event kind and payload must be declared.
- * Payloads are JSON-roundtripped by the Host before persistence.
- */
-export const DomainEvent = z
-	.strictObject({
-		seq: EventSeq,
-		kind: EventKind,
-		payload: z.unknown(),
-	})
-	.superRefine((event, context) => {
-		if (!isKnownEventKind(event.kind)) {
-			context.addIssue({ code: "custom", path: ["kind"], message: "unknown event kind" });
-			return;
-		}
-		const payloadSchema = EventPayloadSchemas[event.kind];
-		const result = payloadSchema.safeParse(event.payload);
-		if (!result.success) {
-			context.addIssue({
-				code: "custom",
-				path: ["payload"],
-				message: "event payload does not match its contract",
-			});
-		}
-	});
-
-export type KnownDomainEvent = {
-	[K in KnownEventKind]: {
-		seq: number;
-		kind: K;
-		payload: z.infer<(typeof EventPayloadSchemas)[K]>;
-	};
-}[KnownEventKind];
-
-/** Parse and narrow a known event for consumers such as the renderer. */
-export function parseKnownDomainEvent(value: unknown): KnownDomainEvent | undefined {
-	const result = DomainEvent.safeParse(value);
-	if (!result.success || !isKnownEventKind(result.data.kind)) return undefined;
-	const payloadSchema = EventPayloadSchemas[result.data.kind];
-	const payload = payloadSchema.safeParse(result.data.payload);
-	if (!payload.success) return undefined;
-	return {
-		seq: result.data.seq,
-		kind: result.data.kind as KnownEventKind,
-		payload: payload.data,
-	} as KnownDomainEvent;
-}
-
-export const EventSubscribeRequest = z.strictObject({
-	afterSeq: EventSeq.optional(),
+/** Transient cache invalidation; it has no cursor or replay contract. */
+export const CacheKey = Object.freeze({
+	snapshot: () => ["snapshot"] as const,
+	conversations: () => ["conversations"] as const,
+	conversation: (conversationId: string) => ["conversation", conversationId] as const,
+	companionState: (conversationId: string) => ["companionState", conversationId] as const,
+	settings: () => ["settings"] as const,
+	settingsCapabilities: () => ["settings", "capabilities"] as const,
+	characters: () => ["characters"] as const,
+	characterPackage: (characterId: string) => ["character", "package", characterId] as const,
+	characterDeletionStatus: (characterId: string) =>
+		["character", "deletionStatus", characterId] as const,
+	canonSources: (characterId: string) => ["canon", "sources", characterId] as const,
+	canonModules: (characterId: string) => ["canon", "modules", characterId] as const,
+	providers: () => ["providers"] as const,
+	providerLogin: (providerId: string) => ["providerLogin", providerId] as const,
+	modelPool: () => ["models", "pool"] as const,
+	modelDefaults: () => ["models", "defaults"] as const,
+	systemModelDefaults: () => ["models", "systemDefaults"] as const,
+	modelRoute: (conversationId: string) => ["models", "route", conversationId] as const,
+	runs: () => ["runs"] as const,
+	embeddingDownload: () => ["embedding", "download"] as const,
+	audit: () => ["audit"] as const,
 });
-export const EventSubscribeResponse = z.strictObject({
-	events: z.array(DomainEvent).max(MAX_ARRAY_LENGTH),
+const CacheIdentity = z.string().min(1).max(128);
+export const CacheKeySchema = z.union([
+	z.tuple([z.literal("snapshot")]),
+	z.tuple([z.literal("conversations")]),
+	z.tuple([z.literal("conversation"), CacheIdentity]),
+	z.tuple([z.literal("companionState"), CacheIdentity]),
+	z.tuple([z.literal("settings")]),
+	z.tuple([z.literal("settings"), z.literal("capabilities")]),
+	z.tuple([z.literal("characters")]),
+	z.tuple([z.literal("character"), z.literal("package"), CacheIdentity]),
+	z.tuple([z.literal("character"), z.literal("deletionStatus"), CacheIdentity]),
+	z.tuple([z.literal("canon"), z.literal("sources"), CacheIdentity]),
+	z.tuple([z.literal("canon"), z.literal("modules"), CacheIdentity]),
+	z.tuple([z.literal("providers")]),
+	z.tuple([z.literal("providerLogin"), CacheIdentity]),
+	z.tuple([z.literal("models"), z.literal("pool")]),
+	z.tuple([z.literal("models"), z.literal("defaults")]),
+	z.tuple([z.literal("models"), z.literal("systemDefaults")]),
+	z.tuple([z.literal("models"), z.literal("route"), CacheIdentity]),
+	z.tuple([z.literal("runs")]),
+	z.tuple([z.literal("embedding"), z.literal("download")]),
+	z.tuple([z.literal("audit")]),
+]);
+export type CacheKey = z.infer<typeof CacheKeySchema>;
+
+export const InvalidationNotice = z.strictObject({
+	keys: z.array(CacheKeySchema).min(1).max(256),
+});
+export const InvalidationBatch = z.strictObject({
+	notices: z.array(InvalidationNotice).max(MAX_ARRAY_LENGTH),
 });
 
 export const OnboardingStatus = z.union([z.literal("active"), z.literal("complete")]);
@@ -816,8 +660,6 @@ export const OnboardingResponse = z.strictObject({
 		.max(64)
 		.regex(/^[a-z][a-z0-9_]*$/)
 		.optional(),
-	/** Monotonic Host event cursor for ordering concurrent projections. */
-	eventSeq: z.number().int().safe().min(0).max(Number.MAX_SAFE_INTEGER),
 	stateData: OnboardingStateData,
 });
 
@@ -825,88 +667,48 @@ export const OnboardingResponse = z.strictObject({
 // Conversation
 // ---------------------------------------------------------------------------
 
-export const ConversationId = z.string().min(1).max(64);
+export const ConversationId = z.string().min(1).max(128);
 export const ConversationSummary = z.strictObject({
-	id: ConversationId,
-	title: z.string().max(MAX_STRING_LENGTH),
+	conversationId: ConversationId,
+	name: z.string().max(MAX_STRING_LENGTH).optional(),
 	created: WireTimestamp,
 	modified: WireTimestamp,
 	messageCount: z.number().int().nonnegative(),
 	firstMessage: z.string().max(MAX_STRING_LENGTH),
+	isStreaming: z.boolean(),
 });
 export const ConversationListRequest = z.strictObject({
 	archived: z.boolean().optional(),
 	title: z.string().max(1000).optional(),
+	cursor: z.string().min(1).max(512).optional(),
+	limit: z.number().int().min(1).max(100).default(50),
 });
 export const ConversationListResponse = z.strictObject({
-	sessions: z.array(ConversationSummary).max(MAX_ARRAY_LENGTH),
+	conversations: z.array(ConversationSummary).max(MAX_ARRAY_LENGTH),
+	nextCursor: z.string().min(1).max(512).optional(),
 });
 export const ConversationCreateRequest = z.strictObject({
 	title: z.string().max(MAX_STRING_LENGTH).optional(),
 });
 export const ConversationOpenRequest = z.strictObject({
-	id: ConversationId,
+	conversationId: ConversationId,
 });
 export const ConversationRenameRequest = z.strictObject({
-	id: ConversationId,
+	conversationId: ConversationId,
 	title: z.string().min(1).max(200),
 });
 export const ConversationArchiveRequest = z.strictObject({
-	id: ConversationId,
+	conversationId: ConversationId,
 	archived: z.boolean(),
 });
 export const ConversationDeleteRequest = z.strictObject({
-	id: ConversationId,
+	conversationId: ConversationId,
 });
 // ---------------------------------------------------------------------------
 // Message
 // ---------------------------------------------------------------------------
 
-export const PiSessionId = z.string().min(1).max(128);
 export const PiSessionEntryId = z.string().min(1).max(128);
-const PiTimelineBase = {
-	id: PiSessionEntryId,
-	parentId: PiSessionEntryId.nullable(),
-	timestamp: WireTimestamp,
-} as const;
-export const PiTimelineToolCall = z.strictObject({
-	toolName: z.string().min(1).max(200),
-	toolCallId: z.string().min(1).max(256),
-});
-const PiTimelineContextEntry = z.strictObject({
-	...PiTimelineBase,
-	kind: z.union([
-		z.literal("thinking_level_change"),
-		z.literal("model_change"),
-		z.literal("compaction"),
-		z.literal("branch_summary"),
-		z.literal("custom"),
-		z.literal("custom_message"),
-		z.literal("label"),
-		z.literal("session_info"),
-	]),
-});
-const PiTimelineUserMessage = z.strictObject({
-	...PiTimelineBase,
-	kind: z.literal("message"),
-	role: z.literal("user"),
-	text: z.string().max(65536),
-});
-const PiTimelineAssistantMessage = z.strictObject({
-	...PiTimelineBase,
-	kind: z.literal("message"),
-	role: z.literal("assistant"),
-	text: z.string().max(65536).optional(),
-	toolCalls: z.array(PiTimelineToolCall).max(100).optional(),
-	stopReason: z.enum(["stop", "length", "toolUse", "error", "aborted", "deferred"]).optional(),
-	errorMessage: z.string().max(4096).optional(),
-	version: z
-		.strictObject({
-			current: z.number().int().nonnegative(),
-			leafIds: z.array(PiSessionEntryId).min(2).max(100),
-		})
-		.optional(),
-});
 export const PiMessageChoices = z.strictObject({
 	prompt: CharacterCopy,
 	items: z
@@ -919,103 +721,58 @@ export const PiMessageChoices = z.strictObject({
 		.min(2)
 		.max(8),
 });
-const PiTimelineToolResult = z.strictObject({
-	...PiTimelineBase,
-	kind: z.literal("message"),
-	role: z.literal("tool"),
-	toolName: z.string().min(1).max(200),
-	toolCallId: z.string().min(1).max(256),
-	status: z.union([z.literal("succeeded"), z.literal("failed")]),
-	mediaId: CharacterIdentifier.optional(),
-	choices: PiMessageChoices.optional(),
-});
-/** Security-safe direct projection of one native Pi SessionManager entry. */
-export const PiTimelineEntry = z.union([
-	PiTimelineUserMessage,
-	PiTimelineAssistantMessage,
-	PiTimelineToolResult,
-	PiTimelineContextEntry,
-]);
-export type PiTimelineEntry = z.infer<typeof PiTimelineEntry>;
-export const PiTimeline = z.strictObject({
-	entries: z.array(PiTimelineEntry).max(MAX_ARRAY_LENGTH),
-	activeLeafId: PiSessionEntryId.optional(),
-});
+function isPiWireValue(value: unknown): boolean {
+	try {
+		const encoded = JSON.stringify(value);
+		return encoded !== undefined && encoded.length <= 8 * 1024 * 1024;
+	} catch {
+		return false;
+	}
+}
 
-export const PiLiveAssistantMessage = z.strictObject({
-	text: z.string().max(65536).optional(),
-	toolCalls: z.array(PiTimelineToolCall).max(100).optional(),
-	stopReason: z.enum(["pending", "stop", "length", "toolUse", "error", "aborted", "deferred"]),
-	errorMessage: z.string().max(4096).optional(),
-});
-export const PiLiveState = z.strictObject({
+/** Pi owns these shapes; Bear validates only that they can cross the wire. */
+export const PiSessionEntry = z.custom<SessionEntry>(isPiWireValue, "Pi entry is not serializable");
+export const PiAgentMessage = z.custom<AgentMessage>(
+	isPiWireValue,
+	"Pi message is not serializable",
+);
+export const PiAgentSessionEvent = z.custom<AgentSessionEvent>(
+	isPiWireValue,
+	"Pi event is not serializable",
+);
+export const PiLiveSnapshot = z.strictObject({
 	isStreaming: z.boolean(),
-	streamingMessage: PiLiveAssistantMessage.optional(),
-	queuedUserMessages: z.array(z.string().max(65536)).max(20),
+	streamingMessage: PiAgentMessage.optional(),
+	steering: z.array(z.string().max(65536)).max(100),
+	followUp: z.array(z.string().max(65536)).max(100),
 	errorMessage: z.string().max(4096).optional(),
-});
-export type PiLiveAssistantMessage = z.infer<typeof PiLiveAssistantMessage>;
-export type PiLiveState = z.infer<typeof PiLiveState>;
-export type PiTimeline = z.infer<typeof PiTimeline>;
-
-/**
- * Transient Pi event projection. These events are never written to the Host
- * event log: reconnecting consumers replace them with a fresh Pi snapshot.
- */
-export const PiSessionEventType = z.enum([
-	"agent_start",
-	"agent_end",
-	"agent_settled",
-	"turn_start",
-	"turn_end",
-	"message_start",
-	"message_update",
-	"message_end",
-	"tool_execution_start",
-	"tool_execution_update",
-	"tool_execution_end",
-	"queue_update",
-	"entry_appended",
-	"session_info_changed",
-	"compaction_start",
-	"compaction_end",
-	"auto_retry_start",
-	"auto_retry_end",
-	"summarization_retry_scheduled",
-	"summarization_retry_attempt_start",
-	"summarization_retry_finished",
-	"thinking_level_changed",
-	"bash_execution_update",
-]);
-export const PiToolActivity = z.strictObject({
-	toolCallId: z.string().min(1).max(256),
-	toolName: z.string().min(1).max(200),
-	status: z.enum(["running", "succeeded", "failed"]),
-});
-export const PiSessionLiveEvent = z.strictObject({
-	sessionId: PiSessionId,
-	type: PiSessionEventType,
-	live: PiLiveState,
-	tool: PiToolActivity.optional(),
-});
-export const PiEventSubscribeResponse = z.strictObject({
-	events: z.array(PiSessionLiveEvent).max(MAX_ARRAY_LENGTH),
 });
 export const ConversationDetail = z.strictObject({
-	sessionId: PiSessionId,
-	name: z.string().max(MAX_STRING_LENGTH),
-	timeline: PiTimeline,
-	live: PiLiveState,
+	conversationId: ConversationId,
+	name: z.string().max(MAX_STRING_LENGTH).optional(),
+	branch: z.strictObject({
+		activeLeafId: PiSessionEntryId.optional(),
+		entries: z.array(PiSessionEntry).max(MAX_ARRAY_LENGTH),
+		hasMoreBefore: z.boolean(),
+	}),
+	live: PiLiveSnapshot,
 });
 export const ConversationOpenResponse = ConversationDetail;
 export const ConversationCreateResponse = ConversationDetail;
+export const ConversationHistoryRequest = z.strictObject({
+	conversationId: ConversationId,
+	beforeEntryId: PiSessionEntryId.optional(),
+	limit: z.number().int().min(1).max(100).default(50),
+});
+export const ConversationHistoryResponse = z.strictObject({
+	entries: z.array(PiSessionEntry).max(MAX_ARRAY_LENGTH),
+	nextCursor: PiSessionEntryId.optional(),
+});
 export const MessageSendRequest = z.strictObject({
 	conversationId: ConversationId,
 	text: z.string().min(1).max(65536),
 });
-export const MessageSendResponse = z.strictObject({
-	accepted: z.literal(true),
-});
+export const MessageSendResponse = EmptyResponse;
 
 export const MessageRegenerateRequest = z.strictObject({
 	conversationId: ConversationId,
@@ -1144,20 +901,15 @@ export const CanonChunk = z
 			});
 		}
 	});
-export const CanonListSourcesRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
-});
+export const CanonListSourcesRequest = z.strictObject({});
 export const CanonAddSourceRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
 	logicalName: z.string().min(1).max(255),
 	content: z.string().min(1).max(1_048_576),
 });
 export const CanonSearchRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
 	query: z.string().min(1).max(1000),
 });
 export const CanonRemoveSourceRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
 	sourceId: z.string().min(1).max(64),
 });
 export const CanonModuleKind = z.union([
@@ -1182,11 +934,8 @@ export const CanonModule = z.strictObject({
 	stableKey: z.string().max(64).optional(),
 	triggers: z.array(z.string().max(200)).max(40),
 });
-export const CanonListModulesRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
-});
+export const CanonListModulesRequest = z.strictObject({});
 export const CanonUpsertModuleRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
 	id: z.string().min(1).max(64).optional(),
 	parentId: z.string().min(1).max(64).optional(),
 	kind: CanonModuleKind,
@@ -1195,7 +944,6 @@ export const CanonUpsertModuleRequest = z.strictObject({
 	sourceChunkIds: z.array(z.string().min(1).max(64)).max(100),
 });
 export const CanonDeleteModuleRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
 	id: z.string().min(1).max(64),
 });
 export const CanonListSourcesResponse = z.strictObject({
@@ -1303,7 +1051,6 @@ export const ProviderLoginRequest = z.strictObject({
 export const ProviderLoginResponse = z.strictObject({
 	providerId: z.string().min(1).max(64),
 	status: z.union([
-		z.literal("idle"),
 		z.literal("running"),
 		z.literal("waiting_input"),
 		z.literal("completed"),
@@ -1544,6 +1291,20 @@ export const ArtifactSummary = z.strictObject({
 	status: ArtifactStatus,
 	createdAt: WireTimestamp,
 });
+export const RunPermission = z.strictObject({
+	runId: z.string().min(1).max(1024),
+	prompt: z.string().max(MAX_STRING_LENGTH),
+	requestId: z.string().min(1).max(1024),
+	options: z
+		.array(
+			z.strictObject({
+				optionId: z.string().min(1).max(1024),
+				kind: z.string().max(MAX_STRING_LENGTH),
+				name: z.string().max(MAX_STRING_LENGTH),
+			}),
+		)
+		.max(MAX_ARRAY_LENGTH),
+});
 export const Run = z
 	.strictObject({
 		id: z.string().min(1).max(64),
@@ -1555,7 +1316,7 @@ export const Run = z
 		artifacts: z.array(ArtifactSummary).max(1000),
 		summary: z.string().max(MAX_STRING_LENGTH).optional(),
 		evidence: z.array(RunEvidenceSummary).max(20),
-		permission: EventPayloadSchemas["run.needs_user"].optional(),
+		permission: RunPermission.optional(),
 		startedAt: WireTimestamp.optional(),
 		completedAt: WireTimestamp.optional(),
 	})
@@ -1732,21 +1493,27 @@ export const SettingsData = z.strictObject({
 		}),
 	]),
 });
-export const SettingsGetRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
-});
+export const SettingsGetRequest = z.strictObject({});
 export const SettingsResponse = z.strictObject({
 	settings: SettingsData,
 });
-export const SettingsPatch = z.strictObject({
-	firstRunStage: SettingsData.shape.firstRunStage.optional(),
-	relationshipMemoryEnabled: z.boolean().optional(),
-	networkProxy: NetworkProxySettings.optional(),
-	memoryVectorService: MemoryVectorServiceInput.optional(),
-	modelDownloadSource: SettingsData.shape.modelDownloadSource.optional(),
-});
+export const SettingsPatch = z
+	.strictObject({
+		firstRunStage: SettingsData.shape.firstRunStage.optional(),
+		relationshipMemoryEnabled: z.boolean().optional(),
+		networkProxy: NetworkProxySettings.optional(),
+		memoryVectorService: MemoryVectorServiceInput.optional(),
+		modelDownloadSource: SettingsData.shape.modelDownloadSource.optional(),
+	})
+	.superRefine((settings, context) => {
+		if (Object.keys(settings).length !== 1) {
+			context.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "settings.set changes exactly one settings domain",
+			});
+		}
+	});
 export const SettingsSetRequest = z.strictObject({
-	characterId: z.string().min(1).max(64).optional(),
 	settings: SettingsPatch,
 });
 
@@ -1864,7 +1631,7 @@ export const CompanionDisplayState = z.strictObject({
 });
 export const CompanionConversationState = z.strictObject({
 	character: z.strictObject({
-		document: BoundedEventValue,
+		document: BoundedJsonValue,
 		revisions: z.strictObject({
 			conversation: z.number().int().safe().nonnegative(),
 			global: z.number().int().safe().nonnegative(),
@@ -1879,7 +1646,7 @@ export const CompanionStateGetRequest = z.strictObject({
 	conversationId: ConversationId,
 });
 export const CompanionStateResponse = z.strictObject({
-	schema: BoundedEventValue,
+	schema: BoundedJsonValue,
 	state: CompanionConversationState,
 });
 export const CharacterStateRevisions = z.strictObject({
@@ -1887,7 +1654,7 @@ export const CharacterStateRevisions = z.strictObject({
 	global: z.number().int().safe().nonnegative(),
 });
 export const CharacterStateDocument = z.strictObject({
-	document: BoundedEventValue,
+	document: BoundedJsonValue,
 	revisions: CharacterStateRevisions,
 });
 const StatePath = z
@@ -1897,7 +1664,7 @@ const StatePath = z
 	.regex(/^\/(?:character|display)\//u);
 export const CompanionStateChange = z.strictObject({
 	path: StatePath,
-	value: BoundedEventValue,
+	value: BoundedJsonValue,
 });
 export const CompanionStateUpdateRequest = z.strictObject({
 	conversationId: ConversationId,
@@ -1905,12 +1672,32 @@ export const CompanionStateUpdateRequest = z.strictObject({
 });
 export const SnapshotGetRequest = z.strictObject({});
 export const SnapshotResponse = z.strictObject({
-	eventSeq: EventSeq,
-	onboarding: OnboardingResponse.optional(),
-	character: CharacterDisplay.optional(),
-	provider: ProviderListResponse.optional(),
-	model: ModelSnapshot.optional(),
-	settings: SettingsData.optional(),
+	onboarding: OnboardingResponse,
+	character: CharacterDisplay,
+});
+
+/** Process-local live updates. Nothing in this union is persisted or replayed. */
+export const LivePush = z.discriminatedUnion("type", [
+	z.strictObject({
+		type: z.literal("pi"),
+		conversationId: ConversationId,
+		event: PiAgentSessionEvent,
+	}),
+	z.strictObject({
+		type: z.literal("companionState"),
+		conversationId: ConversationId,
+		state: CompanionStateResponse,
+	}),
+	z.strictObject({ type: z.literal("run"), run: Run }),
+	z.strictObject({ type: z.literal("embeddingDownload"), state: EmbeddingDownloadState }),
+	z.strictObject({
+		type: z.literal("providerLogin"),
+		providerId: z.string().min(1).max(200),
+		state: ProviderLoginResponse,
+	}),
+]);
+export const LivePushBatch = z.strictObject({
+	events: z.array(LivePush).max(MAX_ARRAY_LENGTH),
 });
 
 // ---------------------------------------------------------------------------
@@ -1918,7 +1705,7 @@ export const SnapshotResponse = z.strictObject({
 // ---------------------------------------------------------------------------
 
 export interface RpcEndpoint<
-	ChannelName extends `${string}:v1` = `${string}:v1`,
+	ChannelName extends string = string,
 	Request extends Schema = Schema,
 	Response extends Schema = Schema,
 > {
@@ -1929,7 +1716,7 @@ export interface RpcEndpoint<
 	readonly response: Response;
 }
 const endpoint = <
-	const ChannelName extends `${string}:v1`,
+	const ChannelName extends string,
 	Request extends Schema,
 	Response extends Schema,
 >(
@@ -1948,212 +1735,180 @@ const endpoint = <
 /** The sole runtime and type-level source of truth for every Host RPC channel. */
 export const RPC = {
 	snapshot: {
-		get: endpoint("snapshot.get:v1", SnapshotGetRequest, SnapshotResponse, "query"),
+		get: endpoint("snapshot.get", SnapshotGetRequest, SnapshotResponse, "query"),
 	},
 	character: {
-		get: endpoint("character.get:v1", CharacterGetRequest, CharacterResponse, "query"),
-		list: endpoint("character.list:v1", CharacterListRequest, CharacterListResponse, "query"),
+		get: endpoint("character.get", CharacterGetRequest, CharacterResponse, "query"),
+		list: endpoint("character.list", CharacterListRequest, CharacterListResponse, "query"),
 		activate: endpoint(
-			"character.activate:v1",
+			"character.activate",
 			CharacterActivateRequest,
 			CharacterResponse,
 			"mutation",
 		),
 		packageGet: endpoint(
-			"character.packageGet:v1",
+			"character.packageGet",
 			CharacterPackageGetRequest,
 			CharacterPackageResponse,
 			"query",
 		),
 		packageUpdate: endpoint(
-			"character.packageUpdate:v1",
+			"character.packageUpdate",
 			CharacterPackageUpdateRequest,
 			CharacterPackageResponse,
 			"mutation",
 		),
 		deletionStatusGet: endpoint(
-			"character.deletionStatusGet:v1",
+			"character.deletionStatusGet",
 			CharacterDeletionStatusGetRequest,
 			CharacterDeletionStatusResponse,
 			"query",
 		),
 		runtimeDelete: endpoint(
-			"character.runtimeDelete:v1",
+			"character.runtimeDelete",
 			CharacterDeleteRequest,
 			CharacterRuntimeDeleteResponse,
 			"mutation",
 		),
 		packageDelete: endpoint(
-			"character.packageDelete:v1",
+			"character.packageDelete",
 			CharacterDeleteRequest,
 			CharacterPackageDeleteResponse,
 			"mutation",
 		),
-		import: endpoint("character.import:v1", CharacterImportRequest, CharacterResponse, "mutation"),
+		import: endpoint("character.import", CharacterImportRequest, CharacterResponse, "mutation"),
 		pluginTrustGet: endpoint(
-			"character.pluginTrustGet:v1",
+			"character.pluginTrustGet",
 			CharacterPluginTrustGetRequest,
 			CharacterPluginTrustResponse,
 			"query",
 		),
 		pluginTrustConfirm: endpoint(
-			"character.pluginTrustConfirm:v1",
+			"character.pluginTrustConfirm",
 			CharacterPluginTrustConfirmRequest,
 			CharacterPluginTrustResponse,
 			"mutation",
 		),
 		draftCreate: endpoint(
-			"character.draftCreate:v1",
+			"character.draftCreate",
 			CharacterDraftCreateRequest,
 			CharacterDraftResponse,
 			"mutation",
 		),
 		draftGet: endpoint(
-			"character.draftGet:v1",
+			"character.draftGet",
 			CharacterDraftGetRequest,
 			CharacterDraftResponse,
 			"query",
 		),
 		draftPatch: endpoint(
-			"character.draftPatch:v1",
+			"character.draftPatch",
 			CharacterDraftPatchRequest,
 			CharacterDraftResponse,
 			"mutation",
 		),
 		draftUploadAssets: endpoint(
-			"character.draftUploadAssets:v1",
+			"character.draftUploadAssets",
 			CharacterDraftUploadAssetsRequest,
 			CharacterDraftResponse,
 			"mutation",
 		),
 		draftListRevisions: endpoint(
-			"character.draftListRevisions:v1",
+			"character.draftListRevisions",
 			CharacterDraftListRevisionsRequest,
 			CharacterDraftListRevisionsResponse,
 			"query",
 		),
 		draftRestoreRevision: endpoint(
-			"character.draftRestoreRevision:v1",
+			"character.draftRestoreRevision",
 			CharacterDraftRestoreRevisionRequest,
 			CharacterDraftResponse,
 			"mutation",
 		),
 		draftValidate: endpoint(
-			"character.draftValidate:v1",
+			"character.draftValidate",
 			CharacterDraftValidateRequest,
 			CharacterDraftResponse,
 			"mutation",
 		),
 		draftPublish: endpoint(
-			"character.draftPublish:v1",
+			"character.draftPublish",
 			CharacterDraftPublishRequest,
 			CharacterDraftPublishResponse,
 			"mutation",
 		),
 	},
 	companionState: {
-		get: endpoint(
-			"companionState.get:v1",
-			CompanionStateGetRequest,
-			CompanionStateResponse,
-			"query",
-		),
+		get: endpoint("companionState.get", CompanionStateGetRequest, CompanionStateResponse, "query"),
 		update: endpoint(
-			"companionState.update:v1",
+			"companionState.update",
 			CompanionStateUpdateRequest,
 			EmptyResponse,
 			"mutation",
 		),
 	},
-	events: {
-		subscribe: endpoint(
-			"events.subscribe:v1",
-			EventSubscribeRequest,
-			EventSubscribeResponse,
-			"query",
-		),
-	},
 	onboarding: {
-		get: endpoint("onboarding.get:v1", OnboardingGetRequest, OnboardingResponse, "query"),
-		submit: endpoint(
-			"onboarding.submit:v1",
-			OnboardingSubmitRequest,
-			OnboardingResponse,
-			"mutation",
-		),
+		get: endpoint("onboarding.get", OnboardingGetRequest, OnboardingResponse, "query"),
+		submit: endpoint("onboarding.submit", OnboardingSubmitRequest, OnboardingResponse, "mutation"),
 	},
 	conversation: {
-		list: endpoint(
-			"conversation.list:v1",
-			ConversationListRequest,
-			ConversationListResponse,
-			"query",
-		),
+		list: endpoint("conversation.list", ConversationListRequest, ConversationListResponse, "query"),
 		create: endpoint(
-			"conversation.create:v1",
+			"conversation.create",
 			ConversationCreateRequest,
 			ConversationCreateResponse,
 			"mutation",
 		),
-		open: endpoint(
-			"conversation.open:v1",
-			ConversationOpenRequest,
-			ConversationOpenResponse,
+		open: endpoint("conversation.open", ConversationOpenRequest, ConversationOpenResponse, "query"),
+		history: endpoint(
+			"conversation.history",
+			ConversationHistoryRequest,
+			ConversationHistoryResponse,
 			"query",
 		),
-		rename: endpoint(
-			"conversation.rename:v1",
-			ConversationRenameRequest,
-			EmptyResponse,
-			"mutation",
-		),
+		rename: endpoint("conversation.rename", ConversationRenameRequest, EmptyResponse, "mutation"),
 		archive: endpoint(
-			"conversation.archive:v1",
+			"conversation.archive",
 			ConversationArchiveRequest,
 			EmptyResponse,
 			"mutation",
 		),
-		delete: endpoint(
-			"conversation.delete:v1",
-			ConversationDeleteRequest,
-			EmptyResponse,
-			"mutation",
-		),
+		delete: endpoint("conversation.delete", ConversationDeleteRequest, EmptyResponse, "mutation"),
 	},
 	message: {
-		send: endpoint("message.send:v1", MessageSendRequest, MessageSendResponse, "mutation"),
+		send: endpoint("message.send", MessageSendRequest, MessageSendResponse, "mutation"),
 		regenerate: endpoint(
-			"message.regenerate:v1",
+			"message.regenerate",
 			MessageRegenerateRequest,
-			EmptyResponse,
+			ConversationDetail,
 			"mutation",
 		),
 		switchVersion: endpoint(
-			"message.switchVersion:v1",
+			"message.switchVersion",
 			MessageSwitchVersionRequest,
-			EmptyResponse,
+			ConversationDetail,
 			"mutation",
 		),
-		edit: endpoint("message.edit:v1", MessageEditRequest, EmptyResponse, "mutation"),
-		continue: endpoint("message.continue:v1", MessageContinueRequest, EmptyResponse, "mutation"),
-		branch: endpoint("message.branch:v1", MessageBranchRequest, MessageBranchResponse, "mutation"),
-		abort: endpoint("message.abort:v1", MessageAbortRequest, EmptyResponse, "mutation"),
+		edit: endpoint("message.edit", MessageEditRequest, ConversationDetail, "mutation"),
+		continue: endpoint("message.continue", MessageContinueRequest, EmptyResponse, "mutation"),
+		branch: endpoint("message.branch", MessageBranchRequest, MessageBranchResponse, "mutation"),
+		abort: endpoint("message.abort", MessageAbortRequest, EmptyResponse, "mutation"),
 	},
 	memory: {
 		localEmbeddingDownloadStatus: endpoint(
-			"memory.localEmbeddingDownloadStatus:v1",
+			"memory.localEmbeddingDownloadStatus",
 			z.strictObject({}),
 			EmbeddingDownloadState,
 			"query",
 		),
 		cancelLocalEmbeddingDownload: endpoint(
-			"memory.cancelLocalEmbeddingDownload:v1",
+			"memory.cancelLocalEmbeddingDownload",
 			z.strictObject({}),
 			EmptyResponse,
 			"mutation",
 		),
 		configureLocalEmbedding: endpoint(
-			"memory.configureLocalEmbedding:v1",
+			"memory.configureLocalEmbedding",
 			MemoryConfigureLocalEmbeddingRequest,
 			MemoryConfigureLocalEmbeddingResponse,
 			"mutation",
@@ -2161,212 +1916,192 @@ export const RPC = {
 	},
 	canon: {
 		listSources: endpoint(
-			"canon.listSources:v1",
+			"canon.listSources",
 			CanonListSourcesRequest,
 			CanonListSourcesResponse,
 			"query",
 		),
 		addSource: endpoint(
-			"canon.addSource:v1",
+			"canon.addSource",
 			CanonAddSourceRequest,
 			CanonAddSourceResponse,
 			"mutation",
 		),
-		search: endpoint("canon.search:v1", CanonSearchRequest, CanonSearchResponse, "query"),
+		search: endpoint("canon.search", CanonSearchRequest, CanonSearchResponse, "query"),
 		removeSource: endpoint(
-			"canon.removeSource:v1",
+			"canon.removeSource",
 			CanonRemoveSourceRequest,
 			EmptyResponse,
 			"mutation",
 		),
 		listModules: endpoint(
-			"canon.listModules:v1",
+			"canon.listModules",
 			CanonListModulesRequest,
 			CanonListModulesResponse,
 			"query",
 		),
 		upsertModule: endpoint(
-			"canon.upsertModule:v1",
+			"canon.upsertModule",
 			CanonUpsertModuleRequest,
 			CanonUpsertModuleResponse,
 			"mutation",
 		),
 		deleteModule: endpoint(
-			"canon.deleteModule:v1",
+			"canon.deleteModule",
 			CanonDeleteModuleRequest,
 			EmptyResponse,
 			"mutation",
 		),
 	},
 	provider: {
-		list: endpoint("provider.list:v1", ProviderListRequest, ProviderListResponse, "query"),
+		list: endpoint("provider.list", ProviderListRequest, ProviderListResponse, "query"),
 		customUpsert: endpoint(
-			"provider.customUpsert:v1",
+			"provider.customUpsert",
 			ProviderCustomUpsertRequest,
 			EmptyResponse,
 			"mutation",
 		),
 		importPiConfig: endpoint(
-			"provider.importPiConfig:v1",
+			"provider.importPiConfig",
 			ProviderImportPiConfigRequest,
 			ProviderImportPiConfigResponse,
 			"mutation",
 		),
 		overrideBaseUrl: endpoint(
-			"provider.overrideBaseUrl:v1",
+			"provider.overrideBaseUrl",
 			ProviderOverrideBaseUrlRequest,
 			EmptyResponse,
 			"mutation",
 		),
-		setApiKey: endpoint(
-			"provider.setApiKey:v1",
-			ProviderSetApiKeyRequest,
-			EmptyResponse,
-			"mutation",
-		),
-		login: endpoint("provider.login:v1", ProviderLoginRequest, ProviderLoginResponse, "mutation"),
+		setApiKey: endpoint("provider.setApiKey", ProviderSetApiKeyRequest, EmptyResponse, "mutation"),
+		login: endpoint("provider.login", ProviderLoginRequest, ProviderLoginResponse, "mutation"),
 		loginStatus: endpoint(
-			"provider.loginStatus:v1",
+			"provider.loginStatus",
 			ProviderLoginStatusRequest,
 			ProviderLoginResponse,
 			"query",
 		),
 		loginCancel: endpoint(
-			"provider.loginCancel:v1",
+			"provider.loginCancel",
 			ProviderLoginCancelRequest,
 			ProviderLoginCancelResponse,
 			"mutation",
 		),
 		loginAnswer: endpoint(
-			"provider.loginAnswer:v1",
+			"provider.loginAnswer",
 			ProviderLoginAnswerRequest,
 			ProviderLoginResponse,
 			"mutation",
 		),
-		logout: endpoint("provider.logout:v1", ProviderLogoutRequest, EmptyResponse, "mutation"),
-		remove: endpoint("provider.remove:v1", ProviderRemoveRequest, EmptyResponse, "mutation"),
+		logout: endpoint("provider.logout", ProviderLogoutRequest, EmptyResponse, "mutation"),
+		remove: endpoint("provider.remove", ProviderRemoveRequest, EmptyResponse, "mutation"),
 	},
 	model: {
-		poolGet: endpoint("model.pool.get:v1", ModelPoolGetRequest, ModelPoolGetResponse, "query"),
-		enable: endpoint("model.enable:v1", ModelEnableRequest, ModelEnableResponse, "mutation"),
-		disable: endpoint("model.disable:v1", ModelDisableRequest, EmptyResponse, "mutation"),
+		poolGet: endpoint("model.pool.get", ModelPoolGetRequest, ModelPoolGetResponse, "query"),
+		enable: endpoint("model.enable", ModelEnableRequest, ModelEnableResponse, "mutation"),
+		disable: endpoint("model.disable", ModelDisableRequest, EmptyResponse, "mutation"),
 		defaultsGet: endpoint(
-			"model.defaults.get:v1",
+			"model.defaults.get",
 			ModelDefaultsGetRequest,
 			ModelDefaultsGetResponse,
 			"query",
 		),
 		defaultsSetReply: endpoint(
-			"model.defaults.setReply:v1",
+			"model.defaults.setReply",
 			ModelDefaultsSetReplyRequest,
 			ModelDefaultsSetReplyResponse,
 			"mutation",
 		),
 		defaultsSetVision: endpoint(
-			"model.defaults.setVision:v1",
+			"model.defaults.setVision",
 			ModelDefaultsSetVisionRequest,
 			ModelDefaultsSetVisionResponse,
 			"mutation",
 		),
 		systemDefaultsGet: endpoint(
-			"model.systemDefaults.get:v1",
+			"model.systemDefaults.get",
 			SystemModelDefaultsGetRequest,
 			SystemModelDefaultsGetResponse,
 			"query",
 		),
 		systemDefaultsSet: endpoint(
-			"model.systemDefaults.set:v1",
+			"model.systemDefaults.set",
 			SystemModelDefaultsSetRequest,
 			SystemModelDefaultsSetResponse,
 			"mutation",
 		),
 		defaultsInitialize: endpoint(
-			"model.defaults.initialize:v1",
+			"model.defaults.initialize",
 			ModelDefaultsInitializeRequest,
 			ModelDefaultsInitializeResponse,
 			"mutation",
 		),
 		defaultsCompleteOnboarding: endpoint(
-			"model.defaults.completeOnboarding:v1",
+			"model.defaults.completeOnboarding",
 			ModelDefaultsCompleteOnboardingRequest,
 			ModelDefaultsCompleteOnboardingResponse,
 			"mutation",
 		),
-		routeGet: endpoint("model.route.get:v1", ModelRouteGetRequest, ModelRouteGetResponse, "query"),
-		routeSet: endpoint(
-			"model.route.set:v1",
-			ModelRouteSetRequest,
-			ModelRouteSetResponse,
-			"mutation",
-		),
+		routeGet: endpoint("model.route.get", ModelRouteGetRequest, ModelRouteGetResponse, "query"),
+		routeSet: endpoint("model.route.set", ModelRouteSetRequest, ModelRouteSetResponse, "mutation"),
 	},
 	externalAgent: {
 		discoverCodex: endpoint(
-			"externalAgent.discoverCodex:v1",
+			"externalAgent.discoverCodex",
 			ExternalAgentDiscoverCodexRequest,
 			ExternalAgentDiscoverCodexResponse,
 			"query",
 		),
 		connectCodex: endpoint(
-			"externalAgent.connectCodex:v1",
+			"externalAgent.connectCodex",
 			ExternalAgentConnectCodexRequest,
 			ExternalAgentConnectCodexResponse,
 			"mutation",
 		),
 		status: endpoint(
-			"externalAgent.status:v1",
+			"externalAgent.status",
 			ExternalAgentStatusRequest,
 			ExternalAgentStatusResponse,
 			"query",
 		),
 	},
 	run: {
-		list: endpoint("run.list:v1", RunListRequest, RunListResponse, "query"),
-		steer: endpoint("run.steer:v1", RunSteerRequest, EmptyResponse, "mutation"),
-		interrupt: endpoint("run.interrupt:v1", RunInterruptRequest, RunResponse, "mutation"),
-		resume: endpoint("run.resume:v1", RunResumeRequest, RunResponse, "mutation"),
-		cancel: endpoint("run.cancel:v1", RunCancelRequest, RunResponse, "mutation"),
+		list: endpoint("run.list", RunListRequest, RunListResponse, "query"),
+		steer: endpoint("run.steer", RunSteerRequest, EmptyResponse, "mutation"),
+		interrupt: endpoint("run.interrupt", RunInterruptRequest, RunResponse, "mutation"),
+		resume: endpoint("run.resume", RunResumeRequest, RunResponse, "mutation"),
+		cancel: endpoint("run.cancel", RunCancelRequest, RunResponse, "mutation"),
 		respondPermission: endpoint(
-			"run.respondPermission:v1",
+			"run.respondPermission",
 			RunRespondPermissionRequest,
 			RunResponse,
 			"mutation",
 		),
 	},
 	artifact: {
-		read: endpoint("artifact.read:v1", ArtifactReadRequest, ArtifactReadResponse, "query"),
-		open: endpoint("artifact.open:v1", ArtifactActionRequest, ArtifactActionResponse, "mutation"),
-		reveal: endpoint(
-			"artifact.reveal:v1",
-			ArtifactActionRequest,
-			ArtifactActionResponse,
-			"mutation",
-		),
-		saveAs: endpoint(
-			"artifact.saveAs:v1",
-			ArtifactActionRequest,
-			ArtifactActionResponse,
-			"mutation",
-		),
+		read: endpoint("artifact.read", ArtifactReadRequest, ArtifactReadResponse, "query"),
+		open: endpoint("artifact.open", ArtifactActionRequest, ArtifactActionResponse, "mutation"),
+		reveal: endpoint("artifact.reveal", ArtifactActionRequest, ArtifactActionResponse, "mutation"),
+		saveAs: endpoint("artifact.saveAs", ArtifactActionRequest, ArtifactActionResponse, "mutation"),
 	},
 	settings: {
-		get: endpoint("settings.get:v1", SettingsGetRequest, SettingsResponse, "query"),
-		set: endpoint("settings.set:v1", SettingsSetRequest, SettingsResponse, "mutation"),
+		get: endpoint("settings.get", SettingsGetRequest, SettingsResponse, "query"),
+		set: endpoint("settings.set", SettingsSetRequest, SettingsResponse, "mutation"),
 		capabilitiesGet: endpoint(
-			"settings.capabilitiesGet:v1",
+			"settings.capabilitiesGet",
 			SettingsCapabilitiesGetRequest,
 			SettingsCapabilitiesGetResponse,
 			"query",
 		),
 	},
 	update: {
-		check: endpoint("update.check:v1", UpdateCheckRequest, UpdateCheckResponse, "mutation"),
-		discard: endpoint("update.discard:v1", UpdateDiscardRequest, UpdateDiscardResponse, "mutation"),
-		apply: endpoint("update.apply:v1", UpdateApplyRequest, UpdateApplyResponse, "mutation"),
+		check: endpoint("update.check", UpdateCheckRequest, UpdateCheckResponse, "mutation"),
+		discard: endpoint("update.discard", UpdateDiscardRequest, UpdateDiscardResponse, "mutation"),
+		apply: endpoint("update.apply", UpdateApplyRequest, UpdateApplyResponse, "mutation"),
 	},
 	audit: {
-		list: endpoint("audit.list:v1", AuditListRequest, AuditListResponse, "query"),
-		export: endpoint("audit.export:v1", AuditExportRequest, AuditExportResponse, "query"),
+		list: endpoint("audit.list", AuditListRequest, AuditListResponse, "query"),
+		export: endpoint("audit.export", AuditExportRequest, AuditExportResponse, "query"),
 	},
 } as const;
 export type AnyRpcEndpoint = RpcEndpoint;

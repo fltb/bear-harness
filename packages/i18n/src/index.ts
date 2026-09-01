@@ -18,7 +18,7 @@ const initialLocale: ProductLocale = isProductLocale(storedLocale) ? storedLocal
 if (globalThis.document) globalThis.document.documentElement.lang = initialLocale;
 
 export const i18n = i18next.createInstance();
-void i18n.init({
+await i18n.init({
 	resources,
 	lng: initialLocale,
 	fallbackLng: "zh-CN",

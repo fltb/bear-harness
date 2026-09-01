@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { AppSettingsStore, defaultAppSettings } from "../src/storage/app-settings-store.js";
+import { AppSettingsStore } from "../src/storage/app-settings-store.js";
 import { SYSTEM_SCHEMA_SQL, SystemDatabase } from "../src/storage/database.js";
 
 const roots: string[] = [];
@@ -15,8 +15,6 @@ afterEach(() => {
 
 describe("network proxy defaults", () => {
 	it("defaults fresh installations to the system proxy", () => {
-		expect(defaultAppSettings().networkProxy).toEqual({ mode: "auto" });
-
 		const root = mkdtempSync(join(tmpdir(), "bear-proxy-default-"));
 		roots.push(root);
 		const database = new SystemDatabase(join(root, "system", "settings.db"));

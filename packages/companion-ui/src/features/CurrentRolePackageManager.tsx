@@ -28,9 +28,7 @@ export function CurrentRolePackageManager(props: {
 	) =>
 		| { origin: string; pluginHash: string; pluginsPresent: boolean; trusted: boolean }
 		| undefined;
-	settingsData: (id: string) => { relationshipMemoryEnabled: boolean } | undefined;
 	confirmPluginTrust: (id: string) => Promise<void>;
-	settingsUpdate: (id: string, settings: { relationshipMemoryEnabled?: boolean }) => Promise<void>;
 	deletionStatus: () => CharacterDeletionStatus | undefined;
 	deletionStatusLoading: () => boolean;
 	deletionStatusError: () => string | undefined;
@@ -65,8 +63,6 @@ export function CurrentRolePackageManager(props: {
 	const [saveError, setSaveError] = createSignal<string>();
 	const [saving, setSaving] = createSignal(false);
 	const trust = () => props.pluginTrustData(selectedId());
-	const relationshipSettings = () => props.settingsData(selectedId());
-	const [settingsSaving, setSettingsSaving] = createSignal(false);
 	const [pendingDeletion, setPendingDeletion] = createSignal<"runtime" | "package">();
 	const [deleting, setDeleting] = createSignal(false);
 	const [deletionFeedback, setDeletionFeedback] = createSignal<string>();
@@ -79,21 +75,6 @@ export function CurrentRolePackageManager(props: {
 		);
 	};
 
-	const updateRelationshipSetting = async () => {
-		const current = relationshipSettings();
-		const characterId = selectedId();
-		if (!current || !characterId) return;
-		setSettingsSaving(true);
-		try {
-			await props.settingsUpdate(characterId, {
-				relationshipMemoryEnabled: !current.relationshipMemoryEnabled,
-			});
-		} catch (error) {
-			setSaveError(error instanceof Error ? error.message : String(error));
-		} finally {
-			setSettingsSaving(false);
-		}
-	};
 	const enablePlugins = async () => {
 		const characterId = selectedId();
 		if (!characterId) return;
@@ -282,9 +263,6 @@ export function CurrentRolePackageManager(props: {
 								<Tabs.Trigger value="storage" class="tab">
 									{t("currentRolePackage.storageTab")}
 								</Tabs.Trigger>
-								<Tabs.Trigger value="memory" class="tab">
-									{t("currentRolePackage.memoryTab")}
-								</Tabs.Trigger>
 							</Tabs.List>
 							<Tabs.Content value="package" class="tab-panel">
 								<div class="current-role-package-form">
@@ -341,24 +319,6 @@ export function CurrentRolePackageManager(props: {
 											media: current().character.media.length,
 										})}
 									</span>
-								</div>
-							</Tabs.Content>
-							<Tabs.Content value="memory" class="tab-panel">
-								<div class="detail-card">
-									<strong>{t("currentRolePackage.relationshipMemory")}</strong>
-									<span>{t("currentRolePackage.relationshipMemoryDescription")}</span>
-									<Button
-										type="button"
-										class="switch-control"
-										role="switch"
-										aria-label={t("currentRolePackage.relationshipMemory")}
-										aria-checked={relationshipSettings()?.relationshipMemoryEnabled || false}
-										data-checked={relationshipSettings()?.relationshipMemoryEnabled || undefined}
-										disabled={settingsSaving()}
-										onClick={() => void updateRelationshipSetting()}
-									>
-										<span class="switch-thumb" />
-									</Button>
 								</div>
 							</Tabs.Content>
 						</Tabs>

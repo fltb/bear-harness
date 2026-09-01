@@ -16,7 +16,7 @@
 Browser UI
   ├─ GET /bootstrap
   ├─ POST /rpc/<versioned-channel>
-  ├─ POST durable event NDJSON subscription
+  ├─ POST transient invalidation NDJSON subscription
   └─ POST /live/pi (transient NDJSON)
          │ process-local bearer token
          ▼
@@ -25,7 +25,7 @@ Loopback Node Host -> Dispatcher -> HostRuntime
 
 bootstrap 只用于交换产品配置和进程级 bearer token，不包含所有 conversation detail。除了 bootstrap，Host route 都必须验证 token。RPC error 分类与 Electron 保持一致。
 
-durable event stream 带 seq，用于 query invalidation；Pi stream 带 session id，不持久化且不承诺重播。流断开时 server 清理 response/listener；browser 重连后读取可见会话 snapshot。
+invalidation stream 只带受影响的数据源，不保存也不重播；Pi stream 带 session id，同样不持久化。流断开时 server 清理 response/listener；browser 重连后重新读取权威 snapshot 和查询。
 
 ## 数据目录
 

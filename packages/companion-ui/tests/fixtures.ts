@@ -3,7 +3,9 @@ import { type ProductConfig, productConfig } from "@bear-harness/product-config"
 import type {
 	ConversationDetail,
 	ConversationSummary,
-	PiSessionLiveEvent,
+	EmbeddingDownloadState,
+	LivePush,
+	ProviderLoginResponse,
 } from "@bear-harness/protocol";
 import { vi } from "vitest";
 import type { CharacterDisplay, SettingsData } from "../src/index.js";
@@ -166,8 +168,8 @@ const DEFAULT_MODEL = {
  * Most calls resolve a success envelope with empty domain data, so the store
  * boots into the same idle shell a missing bridge used to produce; conversation
  * creation and opening additionally return a Pi-native detail for renderer-local selection.
- * `events.subscribe` parks the subscription loop on a promise that never
- * settles — tests never race polling timers and the loop dies with the
+ * the invalidation stream parks on a promise that never settles — tests never
+ * race polling timers and the loop dies with the
  * store's cleanup. `settings.set` mutates the backing settings so the
  * follow-up `settings.get` re-read reflects the patch, mirroring the host's
  * canonical-settings contract.
@@ -190,31 +192,31 @@ export function createTestClient() {
 
 	/** Pi sessions created by the fixture. */
 	const conversations: ConversationSummary[] = [];
-	const conversationList = vi.fn(() => ok({ sessions: [...conversations] }));
+	const conversationList = vi.fn(() => ok({ conversations: [...conversations] }));
 	const conversationDetails = new Map<string, ConversationDetail>();
 	const conversationProjection = (id: string, title: string): ConversationDetail => ({
-		sessionId: id,
+		conversationId: id,
 		name: title,
-		timeline: { entries: [] },
-		live: { isStreaming: false, queuedUserMessages: [] },
+		branch: { entries: [], hasMoreBefore: false },
+		live: { isStreaming: false, steering: [], followUp: [] },
 	});
 	const providerList = vi.fn(() => ok({ providers: [] }));
-	const piQueue: PiSessionLiveEvent[] = [];
-	let receivePi: ((event: PiSessionLiveEvent) => void) | undefined;
+	const liveQueue: LivePush[] = [];
+	let receiveLive: ((event: LivePush) => void) | undefined;
 	const piStream = async function* (signal: AbortSignal) {
 		while (!signal.aborted) {
 			const event =
-				piQueue.shift() ??
-				(await new Promise<PiSessionLiveEvent | undefined>((resolve) => {
+				liveQueue.shift() ??
+				(await new Promise<LivePush | undefined>((resolve) => {
 					const abort = () => {
-						if (receivePi === deliver) receivePi = undefined;
+						if (receiveLive === deliver) receiveLive = undefined;
 						resolve(undefined);
 					};
-					const deliver = (next: PiSessionLiveEvent) => {
+					const deliver = (next: LivePush) => {
 						signal.removeEventListener("abort", abort);
 						resolve(next);
 					};
-					receivePi = deliver;
+					receiveLive = deliver;
 					signal.addEventListener("abort", abort, { once: true });
 				}));
 			if (!event || signal.aborted) return;
@@ -224,19 +226,16 @@ export function createTestClient() {
 
 	const snapshotGet = vi.fn(() =>
 		ok({
-			eventSeq: 0,
-			model: {
-				pool: { models: [DEFAULT_MODEL] },
-				defaults: {
-					reply: { providerId: DEFAULT_MODEL.providerId, modelId: DEFAULT_MODEL.modelId },
-					vision: { mode: "auto" as const },
-					onboardingComplete: true,
-				},
+			onboarding: {
+				status: "complete" as const,
+				stateData: { answers: {}, decisions: {} },
 			},
+			character: THEMED_CHARACTER,
 		}),
 	);
 	const client = {
-		pi: { stream: piStream },
+		live: { subscribe: async (signal: AbortSignal) => piStream(signal) },
+		invalidations: { stream: async function* () {} },
 		snapshot: {
 			get: snapshotGet,
 		},
@@ -294,14 +293,12 @@ export function createTestClient() {
 			get: vi.fn(() =>
 				ok({
 					status: "complete",
-					eventSeq: 0,
 					stateData: { answers: {}, decisions: {} },
 				}),
 			),
 			submit: vi.fn(() =>
 				ok({
 					status: "complete",
-					eventSeq: 0,
 					stateData: { answers: {}, decisions: {} },
 				}),
 			),
@@ -310,79 +307,89 @@ export function createTestClient() {
 			list: conversationList,
 			create: vi.fn(({ title }: { title?: string }) => {
 				// The renderer activates the returned detail, so register it in the list too.
-				let summary = conversations.find((conversation) => conversation.id === "c1");
+				let summary = conversations.find((conversation) => conversation.conversationId === "c1");
 				if (summary === undefined) {
 					summary = {
-						id: "c1",
-						title: title ?? "New conversation",
+						conversationId: "c1",
+						name: title ?? "New conversation",
 						created: "2026-01-01T00:00:00.000Z",
 						modified: "2026-01-01T00:00:00.000Z",
 						messageCount: 0,
 						firstMessage: "",
+						isStreaming: false,
 					};
 					conversations.push(summary);
 				} else if (title !== undefined) {
-					summary.title = title;
+					summary.name = title;
 				}
-				const detail = conversationProjection("c1", summary.title);
-				conversationDetails.set(detail.sessionId, detail);
+				const detail = conversationProjection("c1", summary.name ?? summary.firstMessage);
+				conversationDetails.set(detail.conversationId, detail);
 				return ok(detail);
 			}),
-			open: vi.fn(({ id }: { id: string }) => {
-				let conversation = conversations.find((item) => item.id === id);
+			open: vi.fn(({ conversationId }: { conversationId: string }) => {
+				let conversation = conversations.find((item) => item.conversationId === conversationId);
 				if (conversation === undefined) {
 					conversation = {
-						id,
-						title: "New conversation",
+						conversationId,
+						name: "New conversation",
 						created: "2026-01-01T00:00:00.000Z",
 						modified: "2026-01-01T00:00:00.000Z",
 						messageCount: 0,
 						firstMessage: "",
+						isStreaming: false,
 					};
 					conversations.push(conversation);
 				}
 				const detail =
-					conversationDetails.get(id) ?? conversationProjection(id, conversation.title);
-				conversationDetails.set(id, detail);
+					conversationDetails.get(conversationId) ??
+					conversationProjection(conversationId, conversation.name ?? conversation.firstMessage);
+				conversationDetails.set(conversationId, detail);
 				return ok(detail);
 			}),
-			rename: vi.fn(({ id, title }: { id: string; title: string }) => {
-				const conversation = conversations.find((item) => item.id === id);
-				if (conversation !== undefined) conversation.title = title;
-				const detail = conversationDetails.get(id);
-				if (detail) conversationDetails.set(id, { ...detail, name: title });
+			rename: vi.fn(({ conversationId, title }: { conversationId: string; title: string }) => {
+				const conversation = conversations.find((item) => item.conversationId === conversationId);
+				if (conversation !== undefined) conversation.name = title;
+				const detail = conversationDetails.get(conversationId);
+				if (detail) conversationDetails.set(conversationId, { ...detail, name: title });
 				return ok(null);
 			}),
-			archive: vi.fn(({ id, archived }: { id: string; archived: boolean }) => {
-				if (archived) {
-					const index = conversations.findIndex((conversation) => conversation.id === id);
-					if (index >= 0) conversations.splice(index, 1);
-				}
-				return ok({});
-			}),
-			delete: vi.fn(({ id }: { id: string }) => {
-				const index = conversations.findIndex((conversation) => conversation.id === id);
+			archive: vi.fn(
+				({ conversationId, archived }: { conversationId: string; archived: boolean }) => {
+					if (archived) {
+						const index = conversations.findIndex(
+							(conversation) => conversation.conversationId === conversationId,
+						);
+						if (index >= 0) conversations.splice(index, 1);
+					}
+					return ok({});
+				},
+			),
+			delete: vi.fn(({ conversationId }: { conversationId: string }) => {
+				const index = conversations.findIndex(
+					(conversation) => conversation.conversationId === conversationId,
+				);
 				if (index >= 0) conversations.splice(index, 1);
-				conversationDetails.delete(id);
+				conversationDetails.delete(conversationId);
 				return ok({});
 			}),
 		},
 		message: {
-			send: vi.fn(() => ok({ accepted: true as const })),
-			regenerate: vi.fn(() => ok({})),
-			switchVersion: vi.fn(() => ok({})),
-			edit: vi.fn(() => ok({})),
+			send: vi.fn(() => ok({})),
+			regenerate: vi.fn(({ conversationId }) => ok(conversationDetails.get(conversationId)!)),
+			switchVersion: vi.fn(({ conversationId }) => ok(conversationDetails.get(conversationId)!)),
+			edit: vi.fn(({ conversationId }) => ok(conversationDetails.get(conversationId)!)),
 			continue: vi.fn(() => ok({})),
 			branch: vi.fn(() => {
 				const detail = conversationProjection("branch-1", "Branched conversation");
-				conversationDetails.set(detail.sessionId, detail);
+				conversationDetails.set(detail.conversationId, detail);
 				conversations.push({
-					id: detail.sessionId,
-					title: detail.name,
+					conversationId: detail.conversationId,
+					name: detail.name,
 					created: "2026-01-01T00:00:00.000Z",
 					modified: "2026-01-01T00:00:00.000Z",
 					messageCount: 0,
 					firstMessage: "",
+					isStreaming: false,
 				});
 				return ok(detail);
 			}),
@@ -517,47 +524,44 @@ export function createTestClient() {
 		},
 	} as CompanionClient;
 
-	// Legacy replay tests feed controlled batches; the default fixture is a push queue.
-	const queue: Array<{ events: import("@bear-harness/protocol").DomainEvent[] }> = [];
-	let receive: ((value: ReturnType<typeof queue.shift>) => void) | undefined;
-	let seq = 0;
-	client.events.subscribe = vi.fn(async () => {
-		const batch =
-			queue.shift() ??
-			(await new Promise<ReturnType<typeof queue.shift>>((resolve) => {
-				receive = resolve;
-			}));
-		return { ok: true as const, data: batch ?? { events: [] } };
-	});
-	client.events.stream = async function* (afterSeq, signal) {
+	const queue: Array<{ keys: Array<["snapshot"]> }> = [];
+	let receive: ((value: { keys: Array<["snapshot"]> } | undefined) => void) | undefined;
+	client.invalidations.stream = async function* (signal) {
 		while (!signal.aborted) {
-			const response = await client.events.subscribe({ afterSeq });
-			if (!response.ok) throw new Error("fixture event failure");
+			const notice =
+				queue.shift() ??
+				(await new Promise<{ keys: Array<["snapshot"]> } | undefined>((resolve) => {
+					receive = resolve;
+					signal.addEventListener("abort", () => resolve(undefined), { once: true });
+				}));
 			if (signal.aborted) return;
-			yield response.data.events;
-			if (!response.data.events.length) {
-				await new Promise<void>((resolve) =>
-					signal.addEventListener("abort", () => resolve(), { once: true }),
-				);
-				return;
-			}
-			afterSeq = response.data.events.at(-1)?.seq ?? afterSeq;
+			if (notice) yield notice;
 		}
 	};
 	HOST_EVENT_SENDERS.set(client, (kind, payload) => {
-		const batch = { events: [{ seq: ++seq, kind, payload }] };
-		if (receive) {
-			const deliver = receive;
-			receive = undefined;
-			deliver(batch);
-		} else queue.push(batch);
+		const event: LivePush =
+			kind === "memory.embedding_download_changed"
+				? {
+						type: "embeddingDownload",
+						state: payload as EmbeddingDownloadState,
+					}
+				: {
+						type: "providerLogin",
+						providerId: String(payload.providerId),
+						state: payload as ProviderLoginResponse,
+					};
+		const deliver = receiveLive;
+		if (deliver) {
+			receiveLive = undefined;
+			deliver(event);
+		} else liveQueue.push(event);
 	});
 	PI_EVENT_SENDERS.set(client, (event) => {
-		if (receivePi) {
-			const deliver = receivePi;
-			receivePi = undefined;
+		if (receiveLive) {
+			const deliver = receiveLive;
+			receiveLive = undefined;
 			deliver(event);
-		} else piQueue.push(event);
+		} else liveQueue.push(event);
 	});
 
 	return {
@@ -584,14 +588,8 @@ export function pushHostEvent(
 	send(kind, payload);
 }
 
-const PI_EVENT_SENDERS = new WeakMap<
-	CompanionClient,
-	(event: import("@bear-harness/protocol").PiSessionLiveEvent) => void
->();
-export function pushPiEvent(
-	client: CompanionClient,
-	event: import("@bear-harness/protocol").PiSessionLiveEvent,
-): void {
+const PI_EVENT_SENDERS = new WeakMap<CompanionClient, (event: LivePush) => void>();
+export function pushPiEvent(client: CompanionClient, event: LivePush): void {
 	const send = PI_EVENT_SENDERS.get(client);
 	if (!send) throw new Error("client does not expose the Pi event test channel");
 	send(event);

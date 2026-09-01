@@ -535,10 +535,6 @@ describe("NetworkAndMemorySettings", () => {
 				downloadedBytes: 1024 * 1024,
 				totalBytes: 4 * 1024 * 1024,
 			});
-			pushHostEvent(client, "sync.invalidated", {
-				sync: { epoch: "embedding-download", revision: 2 },
-				sources: ["event:memory.embedding_download_changed"],
-			});
 			finish();
 			return { ok: true, data: {} };
 		});
@@ -559,10 +555,6 @@ describe("NetworkAndMemorySettings", () => {
 			status: "downloading",
 			downloadedBytes: 1024 * 1024,
 			totalBytes: 4 * 1024 * 1024,
-		});
-		pushHostEvent(client, "sync.invalidated", {
-			sync: { epoch: "embedding-download", revision: 1 },
-			sources: ["event:memory.embedding_download_changed"],
 		});
 		await waitFor(() =>
 			expect(within(section).getByRole("progressbar")).toHaveAttribute("value", "25"),

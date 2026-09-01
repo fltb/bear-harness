@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { productConfig } from "@bear-harness/product-config";
+import { CacheKey } from "@bear-harness/protocol/schema";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	type CredentialVault,
@@ -39,18 +40,24 @@ function runtimeDatabases(runtime: HostRuntime): {
 	companion: CompanionDatabase;
 } {
 	const storage = Reflect.get(runtime, "storage") as { system: SystemDatabase };
-	const role = Reflect.get(runtime, "role") as { db: CompanionDatabase };
+	const role = roleRuntime(runtime);
 	return { system: storage.system, companion: role.db };
 }
 
 function roleRuntime(runtime: HostRuntime): {
 	companionId: string;
+	db: CompanionDatabase;
 	memoryRuntime: HostRuntime["memoryRuntime"];
+	externalAgentRuns: object;
+	invalidations: import("../src/storage/invalidation-hub.js").InvalidationHub;
+	pi: { closeAll(): Promise<void> };
+	auditStore: { flush(): Promise<void> };
+	close(): Promise<void>;
 } {
-	return Reflect.get(runtime, "role") as {
-		companionId: string;
-		memoryRuntime: HostRuntime["memoryRuntime"];
+	const lifecycle = Reflect.get(runtime, "lifecycle") as {
+		active(): { runtime: unknown };
 	};
+	return lifecycle.active().runtime as ReturnType<typeof roleRuntime>;
 }
 
 async function data(
@@ -64,29 +71,29 @@ async function data(
 }
 
 async function completeOnboarding(runtime: HostRuntime) {
-	const current = (await data(runtime, "onboarding.get:v1", {})) as {
+	const current = (await data(runtime, "onboarding.get", {})) as {
 		status: string;
 		currentStepId?: string;
 	};
 	if (current.status === "complete") return current;
 	if (current.currentStepId === "welcome")
-		await data(runtime, "onboarding.submit:v1", { stepId: "welcome" });
-	return data(runtime, "onboarding.submit:v1", { stepId: "nickname", answer: "林" });
+		await data(runtime, "onboarding.submit", { stepId: "welcome" });
+	return data(runtime, "onboarding.submit", { stepId: "nickname", answer: "林" });
 }
 
 async function configureConversationModel(runtime: HostRuntime, providerId = "conversation-test") {
-	await data(runtime, "provider.customUpsert:v1", {
+	await data(runtime, "provider.customUpsert", {
 		providerId,
 		name: "Conversation Test",
 		baseUrl: "https://example.invalid/v1",
 		models: [{ id: "test-model" }],
 	});
-	await data(runtime, "provider.setApiKey:v1", {
+	await data(runtime, "provider.setApiKey", {
 		providerId,
 		apiKey: "session-key",
 		sessionOnly: true,
 	});
-	await data(runtime, "model.defaults.setReply:v1", {
+	await data(runtime, "model.defaults.setReply", {
 		reply: { providerId, modelId: "test-model" },
 	});
 }
@@ -97,82 +104,21 @@ describe("role-defined onboarding", () => {
 			rmSync(directory, { recursive: true, force: true });
 	});
 
-	it("reads system and conversation detail without writing either database", async () => {
+	it("pushes only live invalidations until disposed", async () => {
 		const runtime = runtimeForTest();
 		try {
-			await data(runtime, "provider.customUpsert:v1", {
-				providerId: "read-only-test",
-				name: "Read only",
-				baseUrl: "https://example.invalid/v1",
-				models: [{ id: "test-model" }],
-			});
-			await data(runtime, "provider.setApiKey:v1", {
-				providerId: "read-only-test",
-				apiKey: "session-key",
-				sessionOnly: true,
-			});
-			await data(runtime, "model.defaults.setReply:v1", {
-				reply: { providerId: "read-only-test", modelId: "test-model" },
-			});
-			const composition = (
-				runtime as unknown as {
-					composition: { providers: { getOAuthSession: (id: string) => unknown } };
-				}
-			).composition;
-			vi.spyOn(composition.providers, "getOAuthSession").mockReturnValue({
-				providerId: "read-only-test",
-				status: "completed",
-			});
-			const created = (await data(runtime, "conversation.create:v1", {
-				title: "Read-only detail",
-			})) as { sessionId: string };
-			const { system, companion } = runtimeDatabases(runtime);
-			const systemRevision = system.syncRevision();
-			const companionRevision = companion.syncRevision();
-			const reads: Array<[string, Record<string, unknown>]> = [
-				["model.pool.get:v1", {}],
-				["onboarding.get:v1", {}],
-				["conversation.open:v1", { id: created.sessionId }],
-				["companionState.get:v1", { conversationId: created.sessionId }],
-				["provider.loginStatus:v1", { providerId: "read-only-test" }],
-				["character.pluginTrustGet:v1", { characterId: productConfig.defaultCharacterId }],
-				["snapshot.get:v1", {}],
-			];
-			for (const [channel, params] of reads) {
-				const response = await runtime.dispatch(channel, params);
-				expect(response, channel).toMatchObject({ ok: true });
-				expect(system.syncRevision(), `${channel} wrote system state`).toBe(systemRevision);
-				expect(companion.syncRevision(), `${channel} wrote character state`).toBe(
-					companionRevision,
-				);
-			}
-		} finally {
-			await runtime.close();
-		}
-	});
-
-	it("replays from zero across pages then pushes live events until disposed", async () => {
-		const runtime = runtimeForTest();
-		try {
-			const bus = (
-				runtime as unknown as {
-					composition: { eventBus: import("../src/storage/event-bus.js").EventBus };
-				}
-			).composition.eventBus;
-			for (let index = 0; index < 105; index++)
-				bus.publish("provider.login_changed", { providerId: "openai-codex" });
+			const bus = roleRuntime(runtime).invalidations;
+			bus.invalidate(CacheKey.providers());
 			const receive = vi.fn();
-			const stop = runtime.subscribeEvents(receive, 0);
-			const replayCount = receive.mock.calls.length;
-			expect(replayCount).toBeGreaterThanOrEqual(105);
-			const next = bus.publish("memory.embedding_download_changed", {
-				status: "downloading",
-				downloadedBytes: 1024,
+			const stop = runtime.subscribeInvalidations(receive);
+			expect(receive).not.toHaveBeenCalled();
+			bus.invalidate(CacheKey.settings());
+			expect(receive).toHaveBeenLastCalledWith({
+				keys: [["settings"]],
 			});
-			expect(receive).toHaveBeenLastCalledWith(next);
 			stop();
-			bus.publish("provider.login_changed", { providerId: "openai-codex" });
-			expect(receive).toHaveBeenCalledTimes(replayCount + 1);
+			bus.invalidate(CacheKey.providers());
+			expect(receive).toHaveBeenCalledTimes(1);
 		} finally {
 			await runtime.close();
 		}
@@ -182,7 +128,7 @@ describe("role-defined onboarding", () => {
 		const runtime = runtimeForTest();
 		await runtime.start();
 
-		await expect(data(runtime, "onboarding.get:v1", {})).resolves.toMatchObject({
+		await expect(data(runtime, "onboarding.get", {})).resolves.toMatchObject({
 			status: "active",
 			currentStepId: "welcome",
 			stateData: {
@@ -195,52 +141,42 @@ describe("role-defined onboarding", () => {
 			status: "complete",
 			stateData: { answers: { nickname: "林" } },
 		});
-		await data(runtime, "settings.set:v1", { settings: { relationshipMemoryEnabled: false } });
-		await expect(data(runtime, "onboarding.get:v1", {})).resolves.toMatchObject({
+		await data(runtime, "settings.set", { settings: { relationshipMemoryEnabled: false } });
+		await expect(data(runtime, "onboarding.get", {})).resolves.toMatchObject({
 			stateData: {
 				answers: { nickname: "林" },
 				decisions: { relationship_memory_enabled: false },
 			},
 		});
-		await expect(data(runtime, "conversation.list:v1", {})).resolves.toEqual({ sessions: [] });
+		await expect(data(runtime, "conversation.list", {})).resolves.toEqual({ conversations: [] });
 		await configureConversationModel(runtime);
-		const created = (await data(runtime, "conversation.create:v1", {
+		const created = (await data(runtime, "conversation.create", {
 			title: "与极昼",
-		})) as { sessionId: string };
+		})) as { conversationId: string };
 		await expect(
-			data(runtime, "conversation.open:v1", { id: created.sessionId }),
-		).resolves.toMatchObject({ sessionId: created.sessionId });
+			data(runtime, "conversation.open", { conversationId: created.conversationId }),
+		).resolves.toMatchObject({ conversationId: created.conversationId });
 		const nickname = runtimeDatabases(runtime)
 			.companion.connection.prepare("SELECT nickname FROM runtime_identity WHERE id = 1")
 			.get();
 		expect(nickname).toEqual({ nickname: "林" });
-		await expect(data(runtime, "onboarding.get:v1", {})).resolves.toMatchObject({
+		await expect(data(runtime, "onboarding.get", {})).resolves.toMatchObject({
 			status: "complete",
 		});
 		await runtime.close();
 	});
 
-	it("pairs onboarding and snapshot projections with a monotonic event cursor", async () => {
+	it("returns onboarding directly in the boot snapshot", async () => {
 		const runtime = runtimeForTest();
 		await runtime.start();
 
-		const initial = (await data(runtime, "onboarding.get:v1", {})) as { eventSeq: number };
-		const transitioned = (await completeOnboarding(runtime)) as {
-			status: string;
-			eventSeq: number;
-		};
-		const snapshot = (await data(runtime, "snapshot.get:v1", {})) as {
-			eventSeq: number;
-			onboarding: { status: string; eventSeq: number };
+		const transitioned = (await completeOnboarding(runtime)) as { status: string };
+		const snapshot = (await data(runtime, "snapshot.get", {})) as {
+			onboarding: { status: string };
 		};
 
 		expect(transitioned).toMatchObject({ status: "complete" });
-		expect(transitioned.eventSeq).toBeGreaterThan(initial.eventSeq);
-		expect(snapshot.onboarding).toMatchObject({
-			status: "complete",
-			eventSeq: snapshot.eventSeq,
-		});
-		expect(snapshot.eventSeq).toBeGreaterThanOrEqual(transitioned.eventSeq);
+		expect(snapshot.onboarding).toMatchObject({ status: "complete" });
 		await runtime.close();
 	});
 
@@ -249,7 +185,7 @@ describe("role-defined onboarding", () => {
 		await runtime.start();
 		await completeOnboarding(runtime);
 
-		const snapshot = (await data(runtime, "snapshot.get:v1", {})) as Record<string, unknown>;
+		const snapshot = (await data(runtime, "snapshot.get", {})) as Record<string, unknown>;
 		expect(snapshot).not.toHaveProperty("conversation");
 		expect(snapshot).not.toHaveProperty("companion");
 		await runtime.close();
@@ -259,7 +195,7 @@ describe("role-defined onboarding", () => {
 		const runtime = runtimeForTest();
 		await runtime.start();
 
-		await expect(data(runtime, "settings.get:v1", {})).resolves.toEqual({
+		await expect(data(runtime, "settings.get", {})).resolves.toEqual({
 			settings: {
 				firstRunStage: "model",
 				relationshipMemoryEnabled: true,
@@ -269,7 +205,7 @@ describe("role-defined onboarding", () => {
 			},
 		});
 		await expect(
-			runtime.dispatch("settings.set:v1", { settings: { immersionLevel: "resources" } }),
+			runtime.dispatch("settings.set", { settings: { immersionLevel: "resources" } }),
 		).resolves.toMatchObject({
 			ok: false,
 			error: { kind: "invalid_request" },
@@ -281,7 +217,7 @@ describe("role-defined onboarding", () => {
 		const runtime = runtimeForTest();
 		await runtime.start();
 
-		await expect(data(runtime, "settings.capabilitiesGet:v1", {})).resolves.toEqual({
+		await expect(data(runtime, "settings.capabilitiesGet", {})).resolves.toEqual({
 			networkProxyModes: HOST_SETTINGS_CAPABILITIES.networkProxyModes.map(({ id }) => ({ id })),
 			memoryVectorProviders: HOST_SETTINGS_CAPABILITIES.memoryVectorProviders.map(
 				({ id, onboarding }) => ({ id, onboarding }),
@@ -300,7 +236,7 @@ describe("role-defined onboarding", () => {
 			.spyOn(runtime.memoryEmbedding, "validateLocal")
 			.mockResolvedValue(undefined);
 		await expect(
-			data(runtime, "memory.configureLocalEmbedding:v1", {
+			data(runtime, "memory.configureLocalEmbedding", {
 				provider: "local",
 				candidateId: candidate?.id,
 			}),
@@ -313,7 +249,7 @@ describe("role-defined onboarding", () => {
 			onProgress: expect.any(Function),
 			onPhase: expect.any(Function),
 		});
-		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
+		await expect(data(runtime, "settings.get", {})).resolves.toMatchObject({
 			settings: {
 				memoryVectorService: {
 					enabled: true,
@@ -323,7 +259,7 @@ describe("role-defined onboarding", () => {
 			},
 		});
 		await expect(
-			runtime.dispatch("memory.configureLocalEmbedding:v1", {
+			runtime.dispatch("memory.configureLocalEmbedding", {
 				provider: "local",
 				candidateId: "not-in-the-host-catalog",
 			}),
@@ -332,12 +268,12 @@ describe("role-defined onboarding", () => {
 			error: { kind: "invalid_request", reason: "local_embedding_candidate_not_found" },
 		});
 		await expect(
-			runtime.dispatch("settings.set:v1", {
+			runtime.dispatch("settings.set", {
 				settings: { memoryVectorService: { enabled: true, provider: "none" } },
 			}),
 		).resolves.toMatchObject({ ok: false, error: { kind: "invalid_request" } });
 		await expect(
-			runtime.dispatch("settings.set:v1", {
+			runtime.dispatch("settings.set", {
 				settings: {
 					memoryVectorService: {
 						enabled: true,
@@ -351,7 +287,7 @@ describe("role-defined onboarding", () => {
 			}),
 		).resolves.toMatchObject({ ok: false, error: { kind: "invalid_request" } });
 		await expect(
-			runtime.dispatch("settings.set:v1", {
+			runtime.dispatch("settings.set", {
 				settings: { networkProxy: { mode: "manual", url: "not-a-proxy" } },
 			}),
 		).resolves.toMatchObject({ ok: false, error: { kind: "invalid_request" } });
@@ -368,18 +304,18 @@ describe("role-defined onboarding", () => {
 			dimensions: 768,
 		};
 		await expect(
-			runtime.dispatch("settings.set:v1", {
+			runtime.dispatch("settings.set", {
 				settings: { memoryVectorService: remoteSettings },
 			}),
 		).resolves.toMatchObject({
 			ok: false,
 			error: { kind: "unavailable", reason: "remote_embedding_validation_failed" },
 		});
-		await expect(data(runtime, "settings.get:v1", {})).resolves.toMatchObject({
+		await expect(data(runtime, "settings.get", {})).resolves.toMatchObject({
 			settings: { memoryVectorService: { provider: "local" } },
 		});
 		configureRemote.mockResolvedValue({ ready: true });
-		const savedRemote = await data(runtime, "settings.set:v1", {
+		const savedRemote = await data(runtime, "settings.set", {
 			settings: { memoryVectorService: remoteSettings },
 		});
 		expect(JSON.stringify(savedRemote)).not.toContain("test-key");
@@ -392,7 +328,7 @@ describe("role-defined onboarding", () => {
 			model: "test-embedding",
 			dimensions: 768,
 		});
-		const projected = await data(runtime, "settings.get:v1", {});
+		const projected = await data(runtime, "settings.get", {});
 		expect(projected).toMatchObject({
 			settings: {
 				memoryVectorService: {
@@ -418,19 +354,15 @@ describe("role-defined onboarding", () => {
 			credential_status: string;
 		};
 		expect(credentialRow).toEqual({ credential_blob: null, credential_status: "session_only" });
-		const embeddingEvents = databases.companion.connection
-			.prepare("SELECT payload FROM events WHERE kind = 'settings.changed'")
-			.all() as Array<{ payload: string }>;
-		expect(embeddingEvents.length).toBeGreaterThan(0);
-		for (const event of embeddingEvents) {
-			expect(event.payload).not.toContain("test-key");
-			expect(event.payload).not.toContain("apiKey");
-		}
+		const eventTable = databases.companion.connection
+			.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'events'")
+			.get();
+		expect(eventTable).toBeUndefined();
 		const runtimeConfig = Reflect.get(Reflect.get(runtime.memoryRuntime, "core"), "cfg");
 		expect(runtimeConfig.embedding.apiKey).toBe("test-key");
 
 		configureRemote.mockClear();
-		await data(runtime, "settings.set:v1", {
+		await data(runtime, "settings.set", {
 			settings: {
 				memoryVectorService: {
 					enabled: true,
@@ -473,7 +405,7 @@ describe("role-defined onboarding", () => {
 			model: "global-embedding",
 			dimensions: 768,
 		};
-		await data(runtime, "settings.set:v1", { settings: { memoryVectorService: remote } });
+		await data(runtime, "settings.set", { settings: { memoryVectorService: remote } });
 		expect(validate).toHaveBeenCalledOnce();
 		expect(Reflect.get(role, "memory")).toBeUndefined();
 		await expect(first.start()).rejects.toThrow(/closed/);
@@ -495,15 +427,15 @@ describe("role-defined onboarding", () => {
 		});
 		expect(storedSystemConfig.memory_vector_service).not.toContain("apiKey");
 		expect(storedSystemConfig.memory_vector_service).not.toContain("test-key");
-		await data(runtime, "memory.configureLocalEmbedding:v1", { provider: "none" });
+		await data(runtime, "memory.configureLocalEmbedding", { provider: "none" });
 
-		await data(runtime, "settings.set:v1", {
+		await data(runtime, "settings.set", {
 			settings: { relationshipMemoryEnabled: true },
 		});
 		const lazyMemory = runtime.memoryRuntime;
 		await lazyMemory.start();
 		expect(lazyMemory.isStarted()).toBe(true);
-		await data(runtime, "settings.set:v1", {
+		await data(runtime, "settings.set", {
 			settings: { relationshipMemoryEnabled: false },
 		});
 		expect(Reflect.get(role, "memory")).toBeUndefined();
@@ -522,7 +454,7 @@ describe("role-defined onboarding", () => {
 		const dataDir = temporaryDirectories.at(-1);
 		if (!dataDir) throw new Error("test data directory missing");
 		vi.spyOn(runtime.memoryEmbedding, "validateRemote").mockResolvedValue({ ready: true });
-		await data(runtime, "settings.set:v1", {
+		await data(runtime, "settings.set", {
 			settings: {
 				memoryVectorService: {
 					enabled: true,
@@ -537,7 +469,7 @@ describe("role-defined onboarding", () => {
 		await runtime.close();
 
 		const restarted = runtimeForTest(dataDir, secureVault);
-		const projection = await data(restarted, "settings.get:v1", {});
+		const projection = await data(restarted, "settings.get", {});
 		expect(projection).toMatchObject({
 			settings: { memoryVectorService: { provider: "remote", hasCredential: true } },
 		});
@@ -559,7 +491,7 @@ describe("role-defined onboarding", () => {
 	it("keeps character Run diagnostics out of the installation diagnostics sink", async () => {
 		const runtime = runtimeForTest();
 		try {
-			const role = Reflect.get(runtime, "role") as {
+			const role = roleRuntime(runtime) as {
 				externalAgentRuns: object;
 				db: { path: string };
 			};
@@ -572,7 +504,7 @@ describe("role-defined onboarding", () => {
 
 	it("closes every character resource even when one close operation fails", async () => {
 		const runtime = runtimeForTest();
-		const role = Reflect.get(runtime, "role") as {
+		const role = roleRuntime(runtime) as {
 			externalAgentRuns: { close(): Promise<void> };
 			pi: { closeAll(): Promise<void> };
 			memoryRuntime: { close(): Promise<void> };
@@ -594,9 +526,9 @@ describe("role-defined onboarding", () => {
 	it("reports embedding download bytes and cancels without saving the candidate", async () => {
 		const runtime = runtimeForTest();
 		await runtime.start();
-		const before = await data(runtime, "settings.get:v1", {});
+		const before = await data(runtime, "settings.get", {});
 		const received = vi.fn();
-		const stop = runtime.subscribeEvents(received, 0);
+		const stop = runtime.subscribeLivePush(received);
 		vi.spyOn(runtime.memoryEmbedding, "validateLocal").mockImplementation(async (options) => {
 			options.onProgress?.({ downloadedSize: 25, totalSize: 100 });
 			await new Promise<void>((_resolve, reject) =>
@@ -606,64 +538,63 @@ describe("role-defined onboarding", () => {
 			);
 			return { ready: true };
 		});
-		const configure = runtime.dispatch("memory.configureLocalEmbedding:v1", {
+		const configure = runtime.dispatch("memory.configureLocalEmbedding", {
 			provider: "local",
 			customPath: "hf:test/model.gguf",
 		});
 		await vi.waitFor(async () =>
-			expect(await data(runtime, "memory.localEmbeddingDownloadStatus:v1", {})).toEqual({
+			expect(await data(runtime, "memory.localEmbeddingDownloadStatus", {})).toEqual({
 				status: "downloading",
 				downloadedBytes: 25,
 				totalBytes: 100,
 			}),
 		);
-		expect(received).toHaveBeenCalledWith(
-			expect.objectContaining({
-				kind: "memory.embedding_download_changed",
-				payload: { status: "downloading", downloadedBytes: 25, totalBytes: 100 },
-			}),
-		);
+		expect(received).toHaveBeenCalledWith(expect.objectContaining({ type: "embeddingDownload" }));
 		await expect(
-			runtime.dispatch("memory.configureLocalEmbedding:v1", { provider: "none" }),
+			runtime.dispatch("memory.configureLocalEmbedding", { provider: "none" }),
 		).resolves.toMatchObject({ ok: false, error: { reason: "embedding_download_in_progress" } });
-		await data(runtime, "memory.cancelLocalEmbeddingDownload:v1", {});
+		await data(runtime, "memory.cancelLocalEmbeddingDownload", {});
 		await expect(configure).resolves.toMatchObject({
 			ok: false,
 			error: { reason: "embedding_download_cancelled" },
 		});
-		expect(await data(runtime, "memory.localEmbeddingDownloadStatus:v1", {})).toMatchObject({
+		expect(await data(runtime, "memory.localEmbeddingDownloadStatus", {})).toMatchObject({
 			status: "cancelled",
 		});
-		expect(await data(runtime, "settings.get:v1", {})).toEqual(before);
-		expect(received).toHaveBeenCalledWith(
-			expect.objectContaining({
-				kind: "memory.embedding_download_changed",
-				payload: { status: "cancelled", downloadedBytes: 25, totalBytes: 100 },
-			}),
-		);
+		expect(await data(runtime, "settings.get", {})).toEqual(before);
+		expect(received).toHaveBeenCalledWith(expect.objectContaining({ type: "embeddingDownload" }));
 		stop();
 		await runtime.close();
 	});
 
-	it("projects an absent or cancelled OAuth session as idle with a Host invalidation", async () => {
+	it("reports an absent or cancelled OAuth session and emits cancellation invalidation", async () => {
 		const runtime = runtimeForTest();
 		const changed = vi.fn();
-		const stop = runtime.subscribeEvents(changed, 0);
+		const stop = runtime.subscribeLivePush(changed);
 		try {
 			await expect(
-				data(runtime, "provider.loginStatus:v1", { providerId: "openai-codex" }),
-			).resolves.toEqual({ providerId: "openai-codex", status: "idle" });
+				runtime.dispatch("provider.loginStatus", { providerId: "openai-codex" }),
+			).resolves.toMatchObject({
+				ok: false,
+				error: { kind: "not_found", reason: "oauth_session_not_found" },
+			});
 			vi.spyOn(runtime.providers, "cancelOAuth").mockImplementation(() => undefined);
-			await data(runtime, "provider.loginCancel:v1", { providerId: "openai-codex" });
-			expect(changed).toHaveBeenCalledWith(
-				expect.objectContaining({
-					kind: "provider.login_changed",
-					payload: { providerId: "openai-codex" },
-				}),
-			);
+			await data(runtime, "provider.loginCancel", { providerId: "openai-codex" });
+			expect(changed).toHaveBeenCalledWith({
+				type: "providerLogin",
+				providerId: "openai-codex",
+				state: {
+					providerId: "openai-codex",
+					status: "failed",
+					message: "cancelled",
+				},
+			});
 			await expect(
-				data(runtime, "provider.loginStatus:v1", { providerId: "openai-codex" }),
-			).resolves.toMatchObject({ status: "idle" });
+				runtime.dispatch("provider.loginStatus", { providerId: "openai-codex" }),
+			).resolves.toMatchObject({
+				ok: false,
+				error: { kind: "not_found", reason: "oauth_session_not_found" },
+			});
 		} finally {
 			stop();
 			await runtime.close();
@@ -674,13 +605,16 @@ describe("role-defined onboarding", () => {
 		const runtime = runtimeForTest();
 		const dataDir = temporaryDirectories.at(-1)!;
 		await runtime.start();
-		const gate = Promise.withResolvers<void>();
 		let captured: Parameters<typeof runtime.memoryEmbedding.validateLocal>[0] | undefined;
 		vi.spyOn(runtime.memoryEmbedding, "validateLocal").mockImplementation(async (options) => {
 			captured = options;
-			await gate.promise;
+			await new Promise<void>((_resolve, reject) =>
+				options.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+					once: true,
+				}),
+			);
 		});
-		const command = runtime.dispatch("memory.configureLocalEmbedding:v1", {
+		const command = runtime.dispatch("memory.configureLocalEmbedding", {
 			provider: "local",
 			customPath: "hf:test/model.gguf",
 		});
@@ -689,19 +623,18 @@ describe("role-defined onboarding", () => {
 		expect(captured!.signal!.aborted).toBe(true);
 		captured!.onProgress?.({ downloadedSize: 100, totalSize: 100 });
 		captured!.onPhase?.("activating");
-		gate.resolve();
 		await expect(command).resolves.toMatchObject({
 			ok: false,
 			error: { reason: "embedding_download_cancelled" },
 		});
-		await expect(runtime.dispatch("settings.get:v1", {})).resolves.toMatchObject({
+		await expect(runtime.dispatch("settings.get", {})).resolves.toMatchObject({
 			ok: false,
 			error: { reason: "host_closed" },
 		});
 		const restarted = runtimeForTest(dataDir);
-		await expect(
-			data(restarted, "memory.localEmbeddingDownloadStatus:v1", {}),
-		).resolves.toMatchObject({ status: "cancelled" });
+		await expect(data(restarted, "memory.localEmbeddingDownloadStatus", {})).resolves.toMatchObject(
+			{ status: "idle" },
+		);
 		await restarted.close();
 	});
 
@@ -714,7 +647,7 @@ describe("role-defined onboarding", () => {
 			)
 			.run(productConfig.defaultCharacterId, "welcome", JSON.stringify({ decisions: {} }));
 
-		await expect(runtime.dispatch("onboarding.get:v1", {})).resolves.toMatchObject({
+		await expect(runtime.dispatch("onboarding.get", {})).resolves.toMatchObject({
 			ok: true,
 			data: {
 				stateData: {
@@ -731,7 +664,7 @@ describe("role-defined onboarding", () => {
 		await runtime.start();
 
 		await expect(
-			runtime.dispatch("onboarding.submit:v1", { stepId: "welcome", answer: "invalid" }),
+			runtime.dispatch("onboarding.submit", { stepId: "welcome", answer: "invalid" }),
 		).resolves.toEqual({
 			ok: false,
 			error: { kind: "invalid_request", reason: "onboarding_answer_unexpected" },

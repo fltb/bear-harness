@@ -5,12 +5,11 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ConfiguredModel } from "../src/index.js";
 import { CompanionApp } from "../src/index.js";
-import { createTestClient, OFFICIAL_PRODUCT } from "./fixtures.js";
+import { createTestClient, OFFICIAL_PRODUCT, THEMED_CHARACTER } from "./fixtures.js";
 import { selectKobalteOption } from "./kobalte-helpers.js";
 
 const COMPLETE_ONBOARDING = {
 	status: "complete" as const,
-	eventSeq: 0,
 	stateData: { answers: {}, decisions: {} },
 };
 
@@ -37,14 +36,15 @@ function configureActiveConversation(client: CompanionClient): void {
 		Promise.resolve({
 			ok: true as const,
 			data: {
-				sessions: [
+				conversations: [
 					{
-						id: "conversation-1",
-						title: "Test conversation",
+						conversationId: "conversation-1",
+						name: "Test conversation",
 						created: "2026-01-01T00:00:00.000Z",
 						modified: "2026-01-01T00:00:00.000Z",
 						messageCount: 0,
 						firstMessage: "",
+						isStreaming: false,
 					},
 				],
 			},
@@ -54,10 +54,10 @@ function configureActiveConversation(client: CompanionClient): void {
 		Promise.resolve({
 			ok: true as const,
 			data: {
-				sessionId: "conversation-1",
+				conversationId: "conversation-1",
 				name: "Test conversation",
-				timeline: { entries: [] },
-				live: { isStreaming: false, queuedUserMessages: [] },
+				branch: { entries: [], hasMoreBefore: false },
+				live: { isStreaming: false, steering: [], followUp: [] },
 			},
 		}),
 	);
@@ -77,9 +77,8 @@ function renderComposerWithModels(
 		Promise.resolve({
 			ok: true as const,
 			data: {
-				eventSeq: 0,
 				onboarding: COMPLETE_ONBOARDING,
-				model: modelState,
+				character: THEMED_CHARACTER,
 			},
 		}),
 	);
@@ -165,8 +164,8 @@ describe("composer", () => {
 			Promise.resolve({
 				ok: true as const,
 				data: {
-					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
+					character: THEMED_CHARACTER,
 				},
 			}),
 		);
@@ -193,35 +192,8 @@ describe("composer", () => {
 			Promise.resolve({
 				ok: true as const,
 				data: {
-					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
-					model: {
-						pool: {
-							models: [
-								{
-									providerId: "relay",
-									providerName: "Relay Service",
-									modelId: "fast",
-									label: "Fast",
-									supportsImages: false,
-									createdAt: "2026-01-01",
-								},
-								{
-									providerId: "relay",
-									providerName: "Relay Service",
-									modelId: "deep",
-									label: "Deep",
-									supportsImages: true,
-									createdAt: "2026-01-02",
-								},
-							],
-						},
-						defaults: { vision: { mode: "auto" } },
-						route: {
-							conversationId: "conversation-1",
-							selected: { providerId: "relay", modelId: "fast" },
-						},
-					},
+					character: THEMED_CHARACTER,
 				},
 			}),
 		);
@@ -285,16 +257,14 @@ describe("composer", () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		configureSelectedModel(client);
-		const messageSend = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { messageId: "m1" } }),
-		);
+		const messageSend = vi.fn(() => Promise.resolve({ ok: true as const, data: {} }));
 		client.message.send = messageSend;
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
 				data: {
-					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
+					character: THEMED_CHARACTER,
 				},
 			}),
 		);
@@ -324,16 +294,14 @@ describe("composer", () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		configureSelectedModel(client);
-		const messageSend = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: { messageId: "m1" } }),
-		);
+		const messageSend = vi.fn(() => Promise.resolve({ ok: true as const, data: {} }));
 		client.message.send = messageSend;
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
 				data: {
-					eventSeq: 0,
 					onboarding: COMPLETE_ONBOARDING,
+					character: THEMED_CHARACTER,
 				},
 			}),
 		);
@@ -386,7 +354,7 @@ describe("composer", () => {
 			.mockRejectedValueOnce(new Error("send unavailable"))
 			.mockResolvedValueOnce({
 				ok: true as const,
-				data: { accepted: true as const, sessionId: "session-1", entryId: "entry-1" },
+				data: {},
 			});
 		client.message.send = messageSend;
 		renderComposerWithModels(client, {

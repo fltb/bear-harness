@@ -25,9 +25,10 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
+import { CacheKey } from "@bear-harness/protocol/schema";
 import { desc, eq } from "drizzle-orm";
 import type { AppDatabase } from "../storage/database.js";
-import type { EventBus } from "../storage/event-bus.js";
+import type { InvalidationHub } from "../storage/invalidation-hub.js";
 import { executorProfiles, runManifests } from "../storage/schema.js";
 import type { AcpProcessSpec } from "./acp-client.js";
 import { AcpExecutorController } from "./acp-executor.js";
@@ -141,7 +142,7 @@ export class CodexAdapter extends AcpExecutorController {
 	constructor(
 		private readonly systemDb: AppDatabase,
 		private readonly runDb: AppDatabase,
-		private readonly eventBus: EventBus,
+		private readonly invalidations: InvalidationHub,
 	) {
 		super();
 	}
@@ -360,7 +361,7 @@ export class CodexAdapter extends AcpExecutorController {
 			.insert(runManifests)
 			.values({ id: randomUUID(), runId: request.run.runId, manifestJson: { ...manifest } })
 			.run();
-		this.eventBus.publish("codex.launched", manifest);
+		this.invalidations.invalidate(CacheKey.audit());
 		await super.launch(request);
 	}
 

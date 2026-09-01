@@ -1,10 +1,11 @@
+import { CacheKey } from "@bear-harness/protocol/schema";
 import { and, asc, eq, sql } from "drizzle-orm";
-import {
-	type AppSettingsStore,
-	type SystemModelDefaults as StoredSystemModelDefaults,
+import type {
+	AppSettingsStore,
+	SystemModelDefaults as StoredSystemModelDefaults,
 } from "../storage/app-settings-store.js";
 import type { AppDatabase } from "../storage/database.js";
-import type { EventBus } from "../storage/event-bus.js";
+import type { InvalidationHub } from "../storage/invalidation-hub.js";
 import { appSettings, configuredModels, modelRouteSettings } from "../storage/schema.js";
 
 export interface ModelRecord {
@@ -27,8 +28,9 @@ export class ModelRegistry {
 	constructor(
 		private readonly systemDb: AppDatabase,
 		private readonly companionDb: AppDatabase,
-		private readonly eventBus: EventBus,
+		private readonly invalidations: InvalidationHub,
 		private readonly appSettings: AppSettingsStore,
+		private readonly forEachCompanionDatabase: (visit: (database: AppDatabase) => void) => void,
 	) {}
 
 	list(): ModelRecord[] {
@@ -72,10 +74,7 @@ export class ModelRegistry {
 		const model = this.get(input.providerId, input.modelId);
 		if (!model) throw new Error("configured model was not persisted");
 		if (publish) {
-			this.eventBus.publish("model.enabled", {
-				providerId: input.providerId,
-				modelId: input.modelId,
-			});
+			this.invalidations.invalidate(CacheKey.modelPool());
 		}
 		return model;
 	}
@@ -102,36 +101,43 @@ export class ModelRegistry {
 	disable(providerId: string, modelId: string): void {
 		// These databases cannot share a transaction. Clear this companion's
 		// references first so a failed system delete never leaves a dangling route.
-		const reply = this.companionDb
-			.update(modelRouteSettings)
-			.set({
-				textProviderId: null,
-				textModelId: null,
-				onboardingComplete: 0,
-				updatedAt: sql`datetime('now')`,
-			})
-			.where(
-				and(
-					eq(modelRouteSettings.textProviderId, providerId),
-					eq(modelRouteSettings.textModelId, modelId),
-				),
-			)
-			.run();
-		const vision = this.companionDb
-			.update(modelRouteSettings)
-			.set({
-				visionMode: "auto",
-				multimodalProviderId: null,
-				multimodalModelId: null,
-				updatedAt: sql`datetime('now')`,
-			})
-			.where(
-				and(
-					eq(modelRouteSettings.multimodalProviderId, providerId),
-					eq(modelRouteSettings.multimodalModelId, modelId),
-				),
-			)
-			.run();
+		let companionChanges = 0;
+		this.forEachCompanionDatabase((database) => {
+			companionChanges += Number(
+				database
+					.update(modelRouteSettings)
+					.set({
+						textProviderId: null,
+						textModelId: null,
+						onboardingComplete: 0,
+						updatedAt: sql`datetime('now')`,
+					})
+					.where(
+						and(
+							eq(modelRouteSettings.textProviderId, providerId),
+							eq(modelRouteSettings.textModelId, modelId),
+						),
+					)
+					.run().changes,
+			);
+			companionChanges += Number(
+				database
+					.update(modelRouteSettings)
+					.set({
+						visionMode: "auto",
+						multimodalProviderId: null,
+						multimodalModelId: null,
+						updatedAt: sql`datetime('now')`,
+					})
+					.where(
+						and(
+							eq(modelRouteSettings.multimodalProviderId, providerId),
+							eq(modelRouteSettings.multimodalModelId, modelId),
+						),
+					)
+					.run().changes,
+			);
+		});
 		const currentSystemDefaults = this.appSettings.load().systemModelDefaults;
 		const replyDisabled = routeEquals(currentSystemDefaults.reply, providerId, modelId);
 		const visionDisabled =
@@ -162,8 +168,8 @@ export class ModelRegistry {
 				)
 				.run();
 		});
-		if (reply.changes || vision.changes || removed.changes) {
-			this.eventBus.publish("model.disabled", { providerId, modelId });
+		if (companionChanges || removed.changes) {
+			this.invalidations.invalidate(CacheKey.modelPool(), CacheKey.systemModelDefaults());
 		}
 	}
 
@@ -203,7 +209,7 @@ export class ModelRegistry {
 			reply: value.reply,
 			vision: value.vision,
 		});
-		this.eventBus.publish("model.defaults_changed", { kind: "system" });
+		this.invalidations.invalidate(CacheKey.systemModelDefaults());
 		return this.systemDefaults();
 	}
 
@@ -231,7 +237,7 @@ export class ModelRegistry {
 				onboardingComplete: 0,
 			})
 			.run();
-		this.eventBus.publish("model.defaults_changed", { kind: "reply" });
+		this.invalidations.invalidate(CacheKey.modelDefaults());
 		return "seeded";
 	}
 
@@ -283,7 +289,7 @@ export class ModelRegistry {
 				},
 			})
 			.run();
-		this.eventBus.publish("model.defaults_changed", { kind: "reply" });
+		this.invalidations.invalidate(CacheKey.modelDefaults());
 		return this.defaults(companionId);
 	}
 
@@ -296,7 +302,7 @@ export class ModelRegistry {
 			.where(eq(modelRouteSettings.companionId, companionId))
 			.run();
 		if (!updated.changes) throw { kind: "unavailable", reason: "character_default_model_required" };
-		this.eventBus.publish("model.defaults_changed", { kind: "reply" });
+		this.invalidations.invalidate(CacheKey.modelDefaults());
 		return this.defaults(companionId);
 	}
 
@@ -328,7 +334,7 @@ export class ModelRegistry {
 				},
 			})
 			.run();
-		this.eventBus.publish("model.defaults_changed", { kind: "vision" });
+		this.invalidations.invalidate(CacheKey.modelDefaults());
 		return this.defaults(companionId);
 	}
 

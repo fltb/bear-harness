@@ -108,7 +108,7 @@ Renderer 发送命令(conversationId)
   -> UI 响应式更新 token、工具、队列、error、settled
 ```
 
-`message_update`、工具执行、队列、错误和 settled 信号不能进入 SQLite EventBus。断线重连时重新读取权威 Session snapshot；临时事件既不回放为第二份 transcript，也不负责提交业务事务。
+`message_update`、工具执行、队列、错误和 settled 信号只走 Pi 的临时直播通道。断线重连时重新读取权威 Session snapshot；临时事件既不回放为第二份 transcript，也不负责提交业务事务。
 
 UI 可以从一个 Pi 源计算时间线分组、标签和展示状态。禁止持久化或维护竞争性的发送中、流式、队列或当前 turn 标志。
 
@@ -193,18 +193,15 @@ Run 开始、进行中和完成都不自动抢占会话。只有用户选择完�
 
 关闭结果，或切换到不拥有该结果的会话，恢复普通会话布局。
 
-## 11. 持久事件、快照与列表
+## 11. 快照与列表
 
-- durable product event 是失效/审计通知，业务值仍从 owning service 重读。
-- Pi native event 是临时运行信号，不写入 durable event 表。
+- Pi native event 是临时运行信号，不写入数据库。
 - bootstrap 只返回安装级/全局信息。
 - conversation detail 通过显式、按 ID、有界接口读取。
 - Catalog、Runs 和 Artifacts 使用轻量列表；需要完整内容时再读取 detail。
 - 不允许为了初始化 UI 遍历每个会话并拼接全量 Character/Display 数据。
 
-## 12. 迁移与删除
-
-旧平面目录通过 staging tree 一次性迁移：复制与归属解析、数量/哈希检查、SQLite integrity、fsync、原子切换。遇到无法归属的 Session、Run 或 Artifact 必须失败关闭；激活后没有旧路径读取。
+## 12. 删除
 
 会话删除的顺序是：验证 Catalog 所有权、阻止新路由、必要时 abort、释放精确的 live handle 与订阅、移动/删除精确 transcript、清理该会话的角色数据并移除 Catalog binding。操作必须幂等且不得影响其他会话。
 

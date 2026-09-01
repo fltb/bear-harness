@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ArtifactStore } from "../../src/artifacts/index.js";
 import { CanonHubService } from "../../src/canon/service.js";
 import { COMPANION_SCHEMA_SQL, CompanionDatabase } from "../../src/storage/database.js";
-import { EventBus } from "../../src/storage/event-bus.js";
+import { InvalidationHub } from "../../src/storage/invalidation-hub.js";
 
 function vectorMetadata(database: CompanionDatabase, key: "dimensions" | "fingerprint"): string {
 	const row = database.connection
@@ -30,17 +30,17 @@ describe("CanonHubService user workflow", () => {
 	let root: string;
 	let database: CompanionDatabase;
 	let service: CanonHubService;
-	let eventBus: EventBus;
+	let invalidations: InvalidationHub;
 	beforeEach(() => {
 		root = mkdtempSync(join(tmpdir(), "bear-canon-"));
 		database = new CompanionDatabase(join(root, "runtime.db"), "character-a");
 		database.initialize(COMPANION_SCHEMA_SQL);
 		database.ensureRuntimeIdentity();
-		eventBus = new EventBus(database.orm);
+		invalidations = new InvalidationHub();
 		service = new CanonHubService(
 			database.orm,
 			new ArtifactStore(database.orm, join(root, "cas")),
-			eventBus,
+			invalidations,
 		);
 	});
 
@@ -71,7 +71,7 @@ describe("CanonHubService user workflow", () => {
 		const vectorService = new CanonHubService(
 			database.orm,
 			new ArtifactStore(database.orm, join(root, "vector-cas")),
-			eventBus,
+			invalidations,
 			() => ({
 				isReady: () => true,
 				getDimensions: () => 2,
@@ -115,7 +115,7 @@ describe("CanonHubService user workflow", () => {
 		const sameDimensionModelChange = new CanonHubService(
 			database.orm,
 			new ArtifactStore(database.orm, join(root, "same-dimension-model-cas")),
-			eventBus,
+			invalidations,
 			() => ({
 				isReady: () => true,
 				getDimensions: () => 2,
@@ -132,7 +132,7 @@ describe("CanonHubService user workflow", () => {
 		const sameDimensionProviderChange = new CanonHubService(
 			database.orm,
 			new ArtifactStore(database.orm, join(root, "same-dimension-provider-cas")),
-			eventBus,
+			invalidations,
 			() => ({
 				isReady: () => true,
 				getDimensions: () => 2,
@@ -148,7 +148,7 @@ describe("CanonHubService user workflow", () => {
 		const reconfiguredService = new CanonHubService(
 			database.orm,
 			new ArtifactStore(database.orm, join(root, "reconfigured-cas")),
-			eventBus,
+			invalidations,
 			() => ({
 				isReady: () => true,
 				getDimensions: () => 3,
@@ -183,7 +183,7 @@ describe("CanonHubService user workflow", () => {
 				new CanonHubService(
 					role.orm,
 					new ArtifactStore(role.orm, join(root, "companions", roleId, "artifacts")),
-					new EventBus(role.orm),
+					new InvalidationHub(),
 					() => ({
 						isReady: () => true,
 						getDimensions: () => vector.length,
@@ -327,14 +327,16 @@ describe("CanonHubService user workflow", () => {
 				},
 			],
 		};
+		const notices: Array<{ keys: readonly (readonly string[])[] }> = [];
+		invalidations.subscribe((notice) => notices.push(notice));
 		service.syncPackage("character-a", canon);
 		service.syncPackage("character-a", canon);
-		expect(eventBus.after(0)).toEqual([
-			expect.objectContaining({
-				kind: "canon.package_synced",
-				payload: { companionId: "character-a" },
-			}),
-		]);
+		expect(notices).toContainEqual({
+			keys: [
+				["canon", "sources", "character-a"],
+				["canon", "modules", "character-a"],
+			],
+		});
 		expect(service.listSources("character-a")).toHaveLength(1);
 		expect(service.listModules("character-a")).toEqual(
 			expect.arrayContaining([

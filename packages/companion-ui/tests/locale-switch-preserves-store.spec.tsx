@@ -5,11 +5,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/index.js";
 import { createCompanionStore } from "../src/stores/companion.js";
-import { createTestClient, OFFICIAL_PRODUCT } from "./fixtures.js";
+import { createTestClient, OFFICIAL_PRODUCT, THEMED_CHARACTER } from "./fixtures.js";
 
 const COMPLETE_ONBOARDING = {
 	status: "complete" as const,
-	eventSeq: 0,
 	stateData: { answers: {}, decisions: {} },
 };
 
@@ -21,34 +20,43 @@ const COMPLETE_ONBOARDING = {
 function loadedClient() {
 	const fixture = createTestClient();
 	const activeProjection = {
-		sessionId: "conversation-1",
+		conversationId: "conversation-1",
 		name: "Locale switch",
-		timeline: {
+		branch: {
 			entries: [
 				{
+					type: "message" as const,
 					id: "assistant-1",
 					parentId: null,
 					timestamp: "2026-01-01T00:00:01.000Z",
-					kind: "message" as const,
-					role: "assistant" as const,
-					text: "必须保留的记忆测试消息",
-					stopReason: "stop" as const,
+					message: {
+						role: "assistant" as const,
+						content: [{ type: "text" as const, text: "必须保留的记忆测试消息" }],
+						provider: "test",
+						model: "test",
+						timestamp: 1,
+						stopReason: "stop" as const,
+						usage: {
+							input: 0,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 0,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						},
+					},
 				},
 			],
+			hasMoreBefore: false,
 		},
-		live: { isStreaming: false, queuedUserMessages: [] },
+		live: { isStreaming: false, steering: [], followUp: [] },
 	};
 	fixture.client.snapshot.get = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
 			data: {
-				eventSeq: 0,
 				onboarding: COMPLETE_ONBOARDING,
-				model: {
-					pool: { models: [] },
-					defaults: { vision: { mode: "auto" } },
-					route: null,
-				},
+				character: THEMED_CHARACTER,
 			},
 		}),
 	);
@@ -56,14 +64,15 @@ function loadedClient() {
 		Promise.resolve({
 			ok: true as const,
 			data: {
-				sessions: [
+				conversations: [
 					{
-						id: activeProjection.sessionId,
-						title: activeProjection.name,
+						conversationId: activeProjection.conversationId,
+						name: activeProjection.name,
 						created: "2026-01-01T00:00:00.000Z",
 						modified: "2026-01-01T00:00:01.000Z",
 						messageCount: 1,
 						firstMessage: "",
+						isStreaming: false,
 					},
 				],
 			},

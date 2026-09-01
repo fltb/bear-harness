@@ -12,7 +12,6 @@
  */
 
 export type {
-	IpcError,
 	ProviderCustomUpsertRequest,
 	ProviderImportPiConfigRequest,
 	ProviderImportPiConfigResponse,
@@ -29,14 +28,11 @@ export type {
 	ProviderOverrideBaseUrlRequest,
 	ProviderRemoveRequest,
 	ProviderSetApiKeyRequest,
+	RpcError,
 } from "@bear-harness/protocol";
 export {
 	type CompanionClient,
 	createCompanionClient,
 	type HostTransport,
-	isMutationResponse,
-	responseRequestSequence,
-	responseRevision,
-	withResponseRevision,
 } from "./client.js";
 export { unwrap } from "./unwrap.js";

@@ -202,7 +202,7 @@ describe("registerElectronDiagnostics — renderer fault channel", () => {
 		const { app, ipcMain, dispose } = makeFakes();
 		dispose();
 		expect(ipcMain.removeListener).toHaveBeenCalledWith(
-			"diagnostics:renderer-fault:v1",
+			"diagnostics:renderer-fault",
 			expect.any(Function),
 		);
 		expect(app.removeListener).toHaveBeenCalledWith("render-process-gone", expect.any(Function));

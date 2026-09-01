@@ -1,30 +1,3 @@
-function syncTriggers(tables: readonly string[]): string {
-	return tables
-		.flatMap((table) =>
-			(["insert", "update", "delete"] as const).map(
-				(
-					operation,
-				) => `CREATE TRIGGER sync_${table}_${operation} AFTER ${operation.toUpperCase()} ON "${table}" BEGIN
-INSERT INTO sync_changes(source) VALUES ('${table}'); SELECT bear_sync_changed(); END;`,
-			),
-		)
-		.join("\n");
-}
-
-const SYSTEM_TABLES = [
-	"active_character",
-	"app_settings",
-	"character_draft_revisions",
-	"character_drafts",
-	"companion_identity",
-	"companion_packages",
-	"configured_models",
-	"executor_profiles",
-	"provider_accounts",
-	"runtime_assets",
-	"user_decisions",
-] as const;
-
 export const SYSTEM_SCHEMA_SQL = `
 CREATE TABLE installation_identity (
 	id INTEGER PRIMARY KEY NOT NULL DEFAULT 1 CHECK (id = 1),
@@ -57,7 +30,7 @@ CREATE TABLE app_settings (
 	network_proxy TEXT NOT NULL DEFAULT '{"mode":"auto"}',
 	memory_vector_service TEXT NOT NULL DEFAULT '{"enabled":false,"provider":"none"}',
 	system_model_defaults TEXT NOT NULL DEFAULT '{"vision":{"mode":"auto"}}',
-	model_download_mirror TEXT NOT NULL DEFAULT '{}',
+	model_download_mirror TEXT NOT NULL DEFAULT '{"type":"official"}',
 	updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE provider_accounts (
@@ -83,20 +56,6 @@ CREATE TABLE executor_profiles (
 	capability_json TEXT NOT NULL DEFAULT '{}',
 	created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE TABLE runtime_assets (
-	id TEXT PRIMARY KEY,
-	asset_type TEXT NOT NULL,
-	version TEXT NOT NULL,
-	path TEXT NOT NULL,
-	hash TEXT NOT NULL,
-	created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE TABLE user_decisions (
-	id TEXT PRIMARY KEY,
-	kind TEXT NOT NULL,
-	decision_data TEXT NOT NULL DEFAULT '{}',
-	created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
 CREATE TABLE character_drafts (
 	id TEXT PRIMARY KEY,
 	base_package_id TEXT,
@@ -114,7 +73,6 @@ CREATE TABLE character_draft_revisions (
 	created_at TEXT NOT NULL DEFAULT (datetime('now')),
 	PRIMARY KEY (draft_id, revision)
 );
-CREATE TABLE sync_changes (revision INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL);
 INSERT INTO app_settings (id) VALUES (1);
 INSERT INTO executor_profiles (id, profile_type, capability_json)
 	VALUES ('pi-default', 'pi', '{}');
@@ -125,26 +83,7 @@ VALUES (1, lower(
 	substr('89ab', (random() & 3) + 1, 1) || substr(hex(randomblob(2)), 2) || '-' ||
 	hex(randomblob(6))
 ));
-${syncTriggers(SYSTEM_TABLES)}
 `;
-
-const COMPANION_TABLES = [
-	"artifact_adoptions",
-	"artifacts",
-	"canon_chunks",
-	"canon_entities",
-	"canon_package_state",
-	"canon_relations",
-	"canon_sources",
-	"companion_state_documents",
-	"conversations",
-	"evidence",
-	"model_route_settings",
-	"onboarding_state",
-	"run_manifests",
-	"runs",
-	"story_modules",
-] as const;
 
 export const COMPANION_SCHEMA_SQL = `
 CREATE TABLE runtime_identity (
@@ -153,13 +92,6 @@ CREATE TABLE runtime_identity (
 	nickname TEXT,
 	created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE TABLE events (
-	seq INTEGER PRIMARY KEY AUTOINCREMENT,
-	kind TEXT NOT NULL,
-	payload TEXT NOT NULL DEFAULT '{}',
-	created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX idx_events_seq ON events(seq);
 CREATE TABLE conversations (
 	id TEXT PRIMARY KEY,
 	companion_id TEXT NOT NULL REFERENCES runtime_identity(companion_id),
@@ -194,6 +126,7 @@ CREATE TABLE runs (
 	input_paths TEXT NOT NULL DEFAULT '[]',
 	status TEXT NOT NULL DEFAULT 'enqueued'
 		CHECK (status IN ('enqueued','running','needs_user','completed','failed','cancelled','interrupted','forced_termination')),
+	permission_json TEXT,
 	summary TEXT,
 	result_reported_at TEXT,
 	started_at TEXT,
@@ -287,15 +220,6 @@ CREATE TABLE canon_entities (
 CREATE INDEX idx_canon_entities_companion ON canon_entities(companion_id, name);
 CREATE UNIQUE INDEX idx_canon_entities_package_key
 	ON canon_entities(companion_id, stable_key) WHERE stable_key IS NOT NULL;
-CREATE TABLE canon_relations (
-	id TEXT PRIMARY KEY,
-	from_entity_id TEXT NOT NULL REFERENCES canon_entities(id) ON DELETE CASCADE,
-	to_entity_id TEXT NOT NULL REFERENCES canon_entities(id) ON DELETE CASCADE,
-	kind TEXT NOT NULL,
-	description TEXT NOT NULL DEFAULT '',
-	source_chunk_id TEXT REFERENCES canon_chunks(id),
-	created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
 CREATE TABLE canon_package_state (
 	companion_id TEXT PRIMARY KEY REFERENCES runtime_identity(companion_id) ON DELETE CASCADE,
 	manifest_hash TEXT NOT NULL,
@@ -332,8 +256,4 @@ CREATE TABLE companion_state_documents (
 		OR (scope = 'global' AND conversation_id IS NULL))
 );
 CREATE TABLE canon_vector_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE sync_changes (revision INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL);
-CREATE TRIGGER sync_events_insert AFTER INSERT ON events WHEN NEW.kind != 'sync.invalidated' BEGIN
-	INSERT INTO sync_changes(source) VALUES ('event:' || NEW.kind); SELECT bear_sync_changed(); END;
-${syncTriggers(COMPANION_TABLES)}
 `;

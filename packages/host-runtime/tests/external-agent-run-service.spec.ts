@@ -21,7 +21,12 @@ import { conversations, runs } from "../src/storage/schema.js";
 
 const roots: string[] = [];
 
-function setup(options: { launch?: (request: ExecutorLaunchRequest) => Promise<void> } = {}) {
+function setup(
+	options: {
+		launch?: (request: ExecutorLaunchRequest) => Promise<void>;
+		interrupt?: () => Promise<void>;
+	} = {},
+) {
 	const root = mkdtempSync(join(tmpdir(), "bear-run-restart-"));
 	roots.push(root);
 	const database = new CompanionDatabase(join(root, "runtime.db"), "bear");
@@ -29,7 +34,7 @@ function setup(options: { launch?: (request: ExecutorLaunchRequest) => Promise<v
 	database.ensureRuntimeIdentity();
 	database.orm.insert(conversations).values({ id: "conversation-1", companionId: "bear" }).run();
 	const publish = vi.fn();
-	const interrupt = vi.fn(async () => undefined);
+	const interrupt = vi.fn(async () => options.interrupt?.());
 	const resume = vi.fn(async () => undefined);
 	const recover = vi.fn(async (_run: ExecutorLaunchRequest["run"]) => "confirmed_lost" as const);
 	const launch = vi.fn(
@@ -49,11 +54,9 @@ function setup(options: { launch?: (request: ExecutorLaunchRequest) => Promise<v
 	const controllerClose = vi.fn(async () => undefined);
 	const cancel = vi.fn(async () => undefined);
 	const stop = vi.fn(async () => undefined);
-	const emit = vi.fn();
 	const runRoot = join(root, "runs");
 	const service = new ExternalAgentRunService(
 		database.orm,
-		{ publish } as never,
 		{
 			interrupt,
 			resume,
@@ -70,8 +73,8 @@ function setup(options: { launch?: (request: ExecutorLaunchRequest) => Promise<v
 		async () => undefined,
 		undefined,
 		15_000,
-		{ emit } as never,
 	);
+	service.subscribeChanges(publish);
 	return {
 		database,
 		service,
@@ -84,7 +87,6 @@ function setup(options: { launch?: (request: ExecutorLaunchRequest) => Promise<v
 		controllerClose,
 		cancel,
 		stop,
-		emit,
 	};
 }
 
@@ -140,16 +142,6 @@ describe("ExternalAgentRunService restart recovery", () => {
 			expect(
 				database.orm.select().from(runs).where(eq(runs.id, "old-interrupted")).get()?.status,
 			).toBe("interrupted");
-			expect(
-				emit.mock.calls
-					.filter(([name]) => name === "external_agent.run")
-					.map(([, attributes]) => attributes),
-			).toEqual(
-				expect.arrayContaining([
-					expect.objectContaining({ runId: "running", phase: "forced_termination" }),
-					expect.objectContaining({ runId: "interrupted", phase: "forced_termination" }),
-				]),
-			);
 			expect(existsSync(runRoot)).toBe(false);
 		} finally {
 			database.close();
@@ -238,6 +230,45 @@ describe("ExternalAgentRunService restart recovery", () => {
 			expect(resumed).toMatchObject({ status: "running", completedAt: null });
 			expect(resume).toHaveBeenCalledOnce();
 		} finally {
+			database.close();
+		}
+	});
+
+	it("keeps a terminal executor event when an earlier interrupt call returns late", async () => {
+		let emit: ExecutorLaunchRequest["emit"] | undefined;
+		let finishInterrupt: (() => void) | undefined;
+		const interruptPending = new Promise<void>((resolve) => {
+			finishInterrupt = resolve;
+		});
+		const { database, service } = setup({
+			launch: async (request) => {
+				emit = request.emit;
+				request.emit({ type: "started" });
+			},
+			interrupt: async () => interruptPending,
+		});
+		try {
+			const delegated = await service.delegate({
+				conversationId: "conversation-1",
+				triggerEntryId: "entry-race",
+				agent: "codex",
+				inputPaths: [],
+				instruction: "Exercise terminal ordering.",
+			});
+			await vi.waitFor(() => expect(service.list()[0]?.status).toBe("running"));
+
+			const interrupting = service.interruptRun(delegated.runId);
+			await vi.waitFor(() => expect(emit).toBeDefined());
+			emit?.({ type: "failed", reason: "executor ended" });
+			await vi.waitFor(() => expect(service.list()[0]?.status).toBe("failed"));
+			finishInterrupt?.();
+
+			await expect(interrupting).resolves.toMatchObject({
+				status: "failed",
+				completedAt: expect.any(String),
+			});
+		} finally {
+			await service.close();
 			database.close();
 		}
 	});
@@ -346,7 +377,6 @@ describe("ExternalAgentRunService output capture", () => {
 			const persisted = {
 				run: fixture.database.orm.select().from(runs).where(eq(runs.id, delegated.runId)).get(),
 				events: fixture.publish.mock.calls,
-				diagnostics: fixture.emit.mock.calls,
 			};
 			expect(JSON.stringify(persisted)).not.toContain(secret);
 		} finally {

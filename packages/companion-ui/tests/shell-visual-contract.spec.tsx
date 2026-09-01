@@ -17,7 +17,7 @@ import { Icon } from "../src/Icon.js";
 import { SceneBackdrop } from "../src/SceneBackdrop.js";
 import { type CompanionStore, DesktopProvider } from "../src/stores/companion.js";
 import { ThreadHead } from "../src/ThreadHead.js";
-import { createTestClient, OFFICIAL_PRODUCT, THEMED_CHARACTER } from "./fixtures.js";
+import { createTestClient, OFFICIAL_PRODUCT, pushPiEvent, THEMED_CHARACTER } from "./fixtures.js";
 
 const stylesDirectory = resolve(process.cwd(), "src/styles");
 const styles = [
@@ -39,43 +39,37 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 	const active = options.active !== false;
 	const conversationId = "conversation-1";
 	const summary = {
-		id: conversationId,
-		title: "Conversation",
+		conversationId,
+		name: "Conversation",
 		created: "2026-01-01T00:00:00.000Z",
 		modified: "2026-01-01T00:00:00.000Z",
 		messageCount: 1,
 		firstMessage: "Show the result",
+		isStreaming: false,
 	};
-	const entries = {
+	const branch = {
 		entries: [
 			{
+				type: "message" as const,
 				id: "message-1",
 				parentId: null,
 				timestamp: "2026-01-01T00:00:00.000Z",
-				kind: "message" as const,
-				role: "user" as const,
-				text: "Show the result",
+				message: { role: "user" as const, content: "Show the result", timestamp: 1 },
 			},
 		],
+		hasMoreBefore: false,
 	};
 	const activeProjection = active
 		? {
-				sessionId: conversationId,
-				name: summary.title,
-				timeline: entries,
-				live: { isStreaming: false, queuedUserMessages: [] },
+				conversationId,
+				name: summary.name,
+				branch,
+				live: { isStreaming: false, steering: [], followUp: [] },
 			}
 		: undefined;
 	const snapshot = {
-		eventSeq: 0,
+		onboarding: { status: "complete" as const, stateData: { answers: {}, decisions: {} } },
 		character: THEMED_CHARACTER,
-		model: {
-			pool: { models: [PORTRAIT_MODEL] },
-			defaults: {
-				reply: { providerId: PORTRAIT_MODEL.providerId, modelId: PORTRAIT_MODEL.modelId },
-				vision: { mode: "auto" as const },
-			},
-		},
 	};
 	client.snapshot.get = vi.fn(() =>
 		Promise.resolve({ ok: true as const, data: snapshot as never }),
@@ -87,7 +81,7 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 	client.conversation.list = vi.fn(() =>
 		Promise.resolve({
 			ok: true as const,
-			data: { sessions: active ? [summary] : [] },
+			data: { conversations: active ? [summary] : [] },
 		}),
 	);
 	client.model.routeGet = vi.fn(({ conversationId: id }) =>
@@ -306,17 +300,17 @@ describe("portrait layout contracts", () => {
 		async (mode) => {
 			const { client } = configurePortraitClient();
 			if (mode === "pending") {
-				const sendGate = Promise.withResolvers<{ ok: true; data: { accepted: true } }>();
+				const sendGate = Promise.withResolvers<{ ok: true; data: Record<string, never> }>();
 				client.message.send = vi.fn(() => sendGate.promise);
 			} else {
 				const projection = {
-					sessionId: "conversation-1",
+					conversationId: "conversation-1",
 					name: "Conversation",
-					timeline: { entries: [] },
+					branch: { entries: [], hasMoreBefore: false },
 					live: {
 						isStreaming: true,
-						streamingMessage: { text: "在想了", stopReason: "pending" as const },
-						queuedUserMessages: [],
+						steering: [],
+						followUp: [],
 					},
 				};
 				client.conversation.open = vi.fn(() =>
@@ -340,6 +334,11 @@ describe("portrait layout contracts", () => {
 				// the Pi preflight accepts the send.
 				await waitFor(() => expect(composer).toHaveValue("Keep the portrait open"));
 			} else {
+				pushPiEvent(client, {
+					type: "pi",
+					conversationId: "conversation-1",
+					event: { type: "agent_start" },
+				});
 				await waitFor(() =>
 					expect(
 						screen.getByRole("status", { name: zhCN.messages.responding }),

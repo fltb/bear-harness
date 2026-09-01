@@ -19,12 +19,14 @@ declare global {
 				pathsForDroppedFiles(files: File[]): string[];
 			}>;
 			transport: Readonly<{
-				listen(
-					afterSeq: number,
+				listenInvalidations(
 					receive: (batch: unknown) => void,
 					fail: (error: unknown) => void,
 				): () => void;
-				listenPi(receive: (batch: unknown) => void, fail: (error: unknown) => void): () => void;
+				subscribeLive(
+					receive: (batch: unknown) => void,
+					fail: (error: unknown) => void,
+				): Promise<() => void>;
 				invoke(channel: string, request: unknown): Promise<unknown>;
 			}>;
 		}>;
@@ -37,8 +39,35 @@ if (!root) throw new Error("missing #root element");
 installRendererFaultReporting((fault) => window.bearDesktop.diagnostics.reportRendererFault(fault));
 
 const client: CompanionClient = createCompanionClient({
-	listen: (afterSeq, receive, fail) => window.bearDesktop.transport.listen(afterSeq, receive, fail),
-	listenPi: (receive, fail) => window.bearDesktop.transport.listenPi(receive, fail),
+	listenInvalidations: (receive, fail) =>
+		window.bearDesktop.transport.listenInvalidations(receive, fail),
+	async subscribeLive(signal) {
+		let controller!: ReadableStreamDefaultController<unknown>;
+		let stop: () => void = () => {};
+		const stream = new ReadableStream<unknown>({
+			start(next) {
+				controller = next;
+			},
+		});
+		stop = await window.bearDesktop.transport.subscribeLive(
+			(batch) => controller.enqueue(batch),
+			(error) => {
+				stop();
+				controller.error(error);
+			},
+		);
+		const abort = () => {
+			stop();
+			try {
+				controller.close();
+			} catch {
+				// The stream already failed or closed.
+			}
+		};
+		if (signal.aborted) abort();
+		else signal.addEventListener("abort", abort, { once: true });
+		return stream;
+	},
 	invoke: <E extends AnyRpcEndpoint>(endpoint: E, request: RequestOf<E>) =>
 		window.bearDesktop.transport.invoke(endpoint.channel, request),
 });

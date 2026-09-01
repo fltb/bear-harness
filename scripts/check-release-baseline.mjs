@@ -38,9 +38,7 @@ for (const required of ["installation_identity", "app_settings", "companion_pack
 for (const required of ["runtime_identity", "conversations", "companion_state_documents"])
 	if (!companionTables.has(required)) throw new Error(`companion schema is missing ${required}`);
 
-const sharedTables = [...systemTables].filter(
-	(table) => companionTables.has(table) && table !== "sync_changes",
-);
+const sharedTables = [...systemTables].filter((table) => companionTables.has(table));
 if (sharedTables.length > 0)
 	throw new Error(`system and companion schemas overlap: ${sharedTables.join(", ")}`);
 

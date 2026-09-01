@@ -5,7 +5,7 @@ import { selectKobalteOption } from "./helpers";
 test("browser requires a reply model before the role-defined onboarding", async ({ page }) => {
 	let eventRequests = 0;
 	page.on("request", (request) => {
-		if (request.url().includes("/rpc/events.subscribe%3Av1")) {
+		if (request.url().includes("/events/invalidations")) {
 			eventRequests++;
 			expect(request.headers().accept).toBe("application/x-ndjson");
 		}
@@ -79,21 +79,13 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	await expect(modelSetup).toBeHidden();
 	await expect(embeddingSetup).toBeHidden();
 	await expect(onboarding).toBeVisible();
-	const [submitResponse, resyncResponse] = await Promise.all([
-		page.waitForResponse((response) => response.url().includes("/rpc/onboarding.submit%3Av1")),
-		page.waitForResponse(async (response) => {
-			if (!response.url().includes("/rpc/onboarding.get%3Av1")) return false;
-			const payload = await response.json();
-			return payload.ok === true && payload.data?.currentStepId === "nickname";
-		}),
+	const [submitResponse] = await Promise.all([
+		page.waitForResponse((response) => response.url().includes("/rpc/onboarding.submit")),
 		onboarding.getByRole("button", { name: "让他进来" }).click(),
 	]);
 	const submitted = await submitResponse.json();
-	const resynced = await resyncResponse.json();
 	expect(submitted.ok).toBe(true);
 	expect(submitted.data.currentStepId).toBe("nickname");
-	expect(resynced.ok).toBe(true);
-	expect(resynced.data.currentStepId).toBe("nickname");
 	await expect.poll(() => onboarding.getAttribute("data-onboarding-step")).toBe("nickname");
 	await onboarding.getByRole("textbox", { name: "你的称呼" }).fill("林");
 	await onboarding.getByRole("button", { name: "告诉他" }).click();

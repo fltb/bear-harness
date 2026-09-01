@@ -1,4 +1,5 @@
-import type { PiSessionLiveEvent } from "@bear-harness/protocol";
+import type { LivePush } from "@bear-harness/protocol";
+import { CacheKey, ProviderLoginResponse } from "@bear-harness/protocol/schema";
 import type { MemoryTdaiConfig } from "@bear-harness/tdai-core";
 import { eq } from "drizzle-orm";
 import type { ArtifactStore } from "./artifacts/index.js";
@@ -18,6 +19,7 @@ import {
 	wireHostHandlers,
 } from "./composition.js";
 import { Dispatcher, type RpcResponse } from "./dispatcher.js";
+import { HostEventLoop, type RuntimeResource } from "./host-event-loop.js";
 import {
 	type DeepPartial,
 	type TencentDbRuntime,
@@ -37,13 +39,12 @@ import {
 	auditKindForRpcMutation,
 	auditReasonCode,
 } from "./security/audit-store.js";
-import { type FsProtectionHandle, installFsProtection } from "./security/fs-protection.js";
-import { createModerationService, type ModerationService } from "./security/moderation.js";
+import { type FsAuditHandle, installFsAudit } from "./security/fs-audit.js";
 import { findHostLocalEmbeddingCandidate } from "./settings/capabilities.js";
 import { type AppSettingsRecord, AppSettingsStore } from "./storage/app-settings-store.js";
 import { CompanionStorageRegistry } from "./storage/companion-storage.js";
 import { loadInstallationId } from "./storage/database.js";
-import { EventBus, type HostEvent } from "./storage/event-bus.js";
+import type { InvalidationListener } from "./storage/invalidation-hub.js";
 import { activeCharacter } from "./storage/schema.js";
 
 export interface RuntimeProductConfig {
@@ -55,32 +56,32 @@ export interface HostRuntimeOptions {
 	characterSeedRoot: string;
 	productConfig: RuntimeProductConfig;
 	credentialVault: CredentialVault;
-	protocolViolationMode?: "throw" | "isolate";
 	memoryScope?: { readonly installationId: string; readonly userId: string };
 	memoryConfig?: DeepPartial<MemoryTdaiConfig>;
-	backgroundAttemptTimeoutMs?: number;
 	systemProxyResolver?: SystemProxyResolver;
 	bundledGit?: { shellPath: string; pathEntries: string[] };
 	piWorkerPath?: string;
 	updateService?: HostUpdateService;
 	artifactPresenter?: ArtifactPresenter;
-	protectedRoots?: string[];
-	moderation?: { remoteEndpoint?: string; remoteApiKey?: string };
+	auditRoots?: string[];
 	logger?: { debug?: (message: string) => void; warn?: (message: string) => void };
 }
 
-interface EventSubscription {
-	listener: (event: HostEvent) => void;
+interface InvalidationSubscription {
+	listener: InvalidationListener;
 	stop?: () => void;
 }
 
-const DEFAULT_BACKGROUND_ATTEMPT_TIMEOUT_MS = 15_000;
+interface RoleResource extends RuntimeResource {
+	readonly runtime: CharacterRuntime;
+	readonly dispatcher: Dispatcher;
+	readonly memoryEmbedding: HostCompositionContext["memoryEmbedding"];
+}
 
 /** Installation services plus one physically isolated, replaceable character runtime. */
 export class HostRuntime {
-	readonly dispatcher: Dispatcher;
+	readonly dispatcher: Pick<Dispatcher, "dispatch">;
 	readonly memoryScope: { readonly installationId: string; readonly userId: string };
-	readonly moderation: ModerationService;
 	private readonly options: HostRuntimeOptions;
 	private readonly storage: CompanionStorageRegistry;
 	private readonly providers: ProviderCatalog;
@@ -89,12 +90,11 @@ export class HostRuntime {
 	private readonly appSettings: AppSettingsStore;
 	private readonly drafts: CharacterDraftService;
 	private readonly lifetime = new AbortController();
-	private readonly backgroundAttempts = new Map<AbortController, Promise<void>>();
-	private readonly eventSubscriptions = new Set<EventSubscription>();
-	private readonly piEventListeners = new Set<(event: PiSessionLiveEvent) => void>();
-	private readonly composition: HostCompositionContext;
-	private role: CharacterRuntime;
-	private uninstallFsProtection?: FsProtectionHandle;
+	private readonly backgroundAttempts = new Set<Promise<void>>();
+	private readonly invalidationSubscriptions = new Set<InvalidationSubscription>();
+	private readonly livePushListeners = new Set<(event: LivePush) => void>();
+	private readonly lifecycle: HostEventLoop<RoleResource>;
+	private uninstallFsAudit?: FsAuditHandle;
 	private unsubscribeProxyHotReload?: () => void;
 	private started = false;
 	private closed = false;
@@ -103,9 +103,8 @@ export class HostRuntime {
 		this.options = options;
 		this.storage = new CompanionStorageRegistry(options.dataDir);
 		const systemDb = this.storage.system.orm;
-		const characterSeedRoot = process.env.BEAR_CONFIG_DIR ?? options.characterSeedRoot;
 		this.characterLoader = new CharacterLoader(
-			characterSeedRoot,
+			options.characterSeedRoot,
 			this.storage.layout.charactersRoot,
 		);
 		this.characterLoader.bootstrapLibrary(options.productConfig.defaultCharacterId);
@@ -115,20 +114,24 @@ export class HostRuntime {
 			installationId: loadInstallationId(systemDb),
 			userId: "default-user",
 		};
-		this.moderation = createModerationService({
-			remoteEndpoint: options.moderation?.remoteEndpoint,
-			remoteApiKey: options.moderation?.remoteApiKey,
-			logger: options.logger,
-		});
 		this.providers = new ProviderCatalog(
 			this.credentials,
 			this.storage.layout.systemProviders,
 			(providerId) => {
-				this.role?.eventBus.publish("provider.login_changed", { providerId });
 				this.scheduleBackground("OAuth model reconciliation", async () => {
 					const state = await this.providers.getOAuthSession(providerId);
+					for (const listener of this.livePushListeners)
+						listener({
+							type: "providerLogin",
+							providerId,
+							state: ProviderLoginResponse.parse(state),
+						});
 					if (state.status === "completed")
-						await syncProviderModels(providerId, this.providers, this.role.models);
+						await syncProviderModels(
+							providerId,
+							this.providers,
+							this.lifecycle.active().runtime.models,
+						);
 				});
 			},
 		);
@@ -140,128 +143,53 @@ export class HostRuntime {
 		);
 		const character = this.characterLoader.load(activeId);
 		if (!character) throw new Error(`character package missing: ${activeId}`);
-		const handle = this.storage.open(character.id);
-		const seedEvents = new EventBus(handle.database.orm);
 		const hasPersistedActive = systemDb
 			.select({ id: activeCharacter.characterId })
 			.from(activeCharacter)
 			.where(eq(activeCharacter.singleton, 1))
 			.get();
-		if (hasPersistedActive) this.characterLoader.seed(systemDb, seedEvents, character);
-		else this.characterLoader.activate(systemDb, seedEvents, character);
-		this.role = this.createCharacterRuntime(character.id);
-
-		const memoryEmbedding: HostCompositionContext["memoryEmbedding"] = {
-			validateLocal: (input) => validateLocalEmbedding({ ...input, logger: this.memoryLogger }),
-			validateRemote: (input) => validateRemoteEmbedding({ ...input, logger: this.memoryLogger }),
-			resetRuntimes: () => this.role.resetMemory(),
-			releaseRuntime: (companionId) =>
-				companionId === this.role.companionId ? this.role.resetMemory() : Promise.resolve(),
-		};
-		this.composition = {
-			signal: this.lifetime.signal,
-			systemOrm: systemDb,
-			orm: this.role.db.orm,
-			eventBus: this.role.eventBus,
-			onboarding: this.role.onboarding,
-			pi: this.role.pi,
-			sessions: this.role.sessions,
-			models: this.role.models,
-			memoryEmbedding,
-			memoryScope: this.memoryScope,
-			appSettings: this.appSettings,
-			credentials: this.credentials,
-			externalAgentRuns: this.role.externalAgentRuns,
-			externalAgents: this.role.externalAgents,
-			artifacts: this.role.artifacts,
-			artifactPresenter: options.artifactPresenter,
-			canon: this.role.canon,
-			providers: this.providers,
-			characterLoader: this.characterLoader,
-			drafts: this.drafts,
-			companionStore: this.role.companionStore,
-			defaultCharacterId: options.productConfig.defaultCharacterId,
-			updateService: options.updateService,
-			auditStore: this.role.auditStore,
-			activateCharacter: (next, origin) => this.activateCharacter(next, origin),
-			seedCharacter: (next, origin) => this.seedCharacter(next, origin),
-			characterDeletionStatus: (characterId) => this.characterDeletionStatus(characterId),
-			deleteCharacterRuntime: (characterId) => this.deleteCharacterRuntime(characterId),
-			deleteCharacterPackage: (characterId) => this.deleteCharacterPackage(characterId),
-		};
-		this.dispatcher = new Dispatcher({
-			syncRevision: () => this.role.syncRevision(),
-			onDispatchResult: ({ channel, operation, outcome, error }) => {
-				if (operation !== "mutation") return;
-				void this.role.auditStore
-					.append(
-						auditKindForRpcMutation(channel),
-						outcome === "ok" ? "rpc_committed" : "rpc_failed",
-						JSON.stringify({
-							channel,
-							...(error
-								? { error: { kind: error.kind, reason: auditReasonCode(error.reason) } }
-								: {}),
-						}),
-					)
-					.catch(() => undefined);
-			},
-			responseValidation: options.protocolViolationMode ?? "throw",
-			onProtocolViolation: (error) => {
-				void this.role.auditStore
-					.append(
-						"config",
-						"protocol_violation",
-						JSON.stringify({
-							channel: error.channel,
-							issues: error.issues.map((issue) => ({
-								path: issue.path.join("."),
-								message: issue.message,
-							})),
-						}),
-					)
-					.catch(() => undefined);
-				this.role.eventBus.publish("diagnostics.protocol_violation", {
-					channel: error.channel,
-					issues: error.issues,
-				});
-			},
+		if (hasPersistedActive) this.characterLoader.seed(systemDb, character);
+		else this.characterLoader.activate(systemDb, character);
+		const initialRuntime = this.createCharacterRuntime(character.id);
+		const initial = this.createRoleResource(`${character.id}:1`, initialRuntime);
+		this.lifecycle = new HostEventLoop(initial);
+		this.dispatcher = Object.freeze({
+			dispatch: (channel: string, params: unknown) => this.dispatch(channel, params),
 		});
-		wireHostHandlers(this.dispatcher, this.composition);
 	}
 
 	get artifacts(): ArtifactStore {
-		return this.role.artifacts;
+		return this.lifecycle.active().runtime.artifacts;
 	}
 	get auditStore(): AuditStore {
-		return this.role.auditStore;
+		return this.lifecycle.active().runtime.auditStore;
 	}
 	get memoryRuntime(): TencentDbRuntime {
-		return this.role.memoryRuntime;
+		return this.lifecycle.active().runtime.memoryRuntime;
 	}
 	get memoryEmbedding(): HostCompositionContext["memoryEmbedding"] {
-		return this.composition.memoryEmbedding;
+		return this.lifecycle.active().memoryEmbedding;
 	}
 
-	subscribeEvents(listener: (event: HostEvent) => void, afterSeq: number): () => void {
-		const subscription: EventSubscription = { listener };
-		this.eventSubscriptions.add(subscription);
-		this.bindEventSubscription(subscription, afterSeq);
+	subscribeInvalidations(listener: InvalidationListener): () => void {
+		const subscription: InvalidationSubscription = { listener };
+		this.invalidationSubscriptions.add(subscription);
+		this.bindInvalidationSubscription(subscription);
 		return () => {
 			subscription.stop?.();
-			this.eventSubscriptions.delete(subscription);
+			this.invalidationSubscriptions.delete(subscription);
 		};
 	}
 
-	subscribePiEvents(listener: (event: PiSessionLiveEvent) => void): () => void {
-		this.piEventListeners.add(listener);
-		return () => this.piEventListeners.delete(listener);
+	subscribeLivePush(listener: (event: LivePush) => void): () => void {
+		this.livePushListeners.add(listener);
+		return () => this.livePushListeners.delete(listener);
 	}
 
 	dispatch(channel: string, params: unknown): Promise<RpcResponse> {
 		if (this.closed)
 			return Promise.resolve({ ok: false, error: { kind: "unavailable", reason: "host_closed" } });
-		return this.dispatcher.dispatch(channel, params);
+		return this.lifecycle.route((resource) => resource.dispatcher.dispatch(channel, params));
 	}
 
 	characterDeletionStatus(characterId: string): {
@@ -275,7 +203,7 @@ export class HostRuntime {
 		const runtimePresent = this.storage.hasCompanionRuntime(characterId);
 		return {
 			characterId,
-			active: characterId === this.role.companionId,
+			active: characterId === this.lifecycle.active().characterId,
 			default: characterId === this.options.productConfig.defaultCharacterId,
 			runtimePresent,
 			packagePresent: this.characterLoader.load(characterId) !== null,
@@ -284,7 +212,7 @@ export class HostRuntime {
 
 	deleteCharacterRuntime(characterId: string): { deleted: boolean } {
 		if (this.closed) throw { kind: "unavailable", reason: "host_closed" };
-		if (characterId === this.role.companionId) {
+		if (characterId === this.lifecycle.active().characterId) {
 			throw { kind: "conflict", reason: "character_runtime_active" };
 		}
 		return { deleted: this.storage.deleteCompanionRuntime(characterId) };
@@ -303,27 +231,29 @@ export class HostRuntime {
 	async start(): Promise<void> {
 		if (this.started) return;
 		if (this.closed) throw new Error("Host runtime is closed");
+		const role = this.lifecycle.active().runtime;
 		try {
-			this.uninstallFsProtection = installFsProtection({
-				protectedRoots: this.options.protectedRoots ?? [this.options.dataDir],
+			this.uninstallFsAudit = installFsAudit({
+				auditRoots: this.options.auditRoots ?? [this.options.dataDir],
 				logger: this.options.logger,
 				onHit: (hit) => {
-					void this.role.auditStore
-						.append("fsop", "delete_attempt", JSON.stringify(hit))
+					void this.lifecycle
+						.active()
+						.runtime.auditStore.append("fsop", "delete_attempt", JSON.stringify(hit))
 						.catch(() => undefined);
 				},
 			});
-			await this.role.recoverExternalRuns();
+			await role.recoverExternalRuns();
 			this.started = true;
 			this.bindRoleInternalSubscriptions();
-			void this.role.auditStore.prune().catch(() => undefined);
+			void role.auditStore.prune().catch(() => undefined);
 			this.reconcileProxy("network proxy reconciliation");
 			this.scheduleRoleReconciliation();
 		} catch (error) {
 			this.started = false;
-			await this.role.pi.closeAll().catch(() => undefined);
-			this.uninstallFsProtection?.uninstall();
-			this.uninstallFsProtection = undefined;
+			await role.pi.closeAll().catch(() => undefined);
+			this.uninstallFsAudit?.uninstall();
+			this.uninstallFsAudit = undefined;
 			throw error;
 		}
 	}
@@ -335,21 +265,121 @@ export class HostRuntime {
 		this.started = false;
 		this.providers.dispose();
 		this.unsubscribeProxyHotReload?.();
-		for (const subscription of this.eventSubscriptions) subscription.stop?.();
-		this.eventSubscriptions.clear();
-		this.piEventListeners.clear();
-		for (const controller of this.backgroundAttempts.keys()) controller.abort();
+		for (const subscription of this.invalidationSubscriptions) subscription.stop?.();
+		this.invalidationSubscriptions.clear();
+		this.livePushListeners.clear();
 		await Promise.allSettled(this.backgroundAttempts.values());
 		this.backgroundAttempts.clear();
 		let failure: unknown;
 		try {
-			await this.role.close();
+			await this.lifecycle.close();
 		} catch (error) {
 			failure = error;
 		}
-		this.uninstallFsProtection?.uninstall();
+		this.uninstallFsAudit?.uninstall();
 		this.storage.close();
 		if (failure) throw failure;
+	}
+
+	private createRoleResource(runtimeId: string, runtime: CharacterRuntime): RoleResource {
+		const memoryEmbedding: HostCompositionContext["memoryEmbedding"] = {
+			validateLocal: (input) => validateLocalEmbedding({ ...input, logger: this.memoryLogger }),
+			validateRemote: (input) => validateRemoteEmbedding({ ...input, logger: this.memoryLogger }),
+			resetRuntimes: () => runtime.resetMemory(),
+			releaseRuntime: (companionId) =>
+				companionId === runtime.companionId ? runtime.resetMemory() : Promise.resolve(),
+		};
+		const context: HostCompositionContext = Object.freeze({
+			signal: this.lifetime.signal,
+			systemOrm: this.storage.system.orm,
+			orm: runtime.db.orm,
+			invalidations: runtime.invalidations,
+			livePush: (event: LivePush) => {
+				for (const listener of this.livePushListeners) listener(event);
+			},
+			onboarding: runtime.onboarding,
+			pi: runtime.pi,
+			sessions: runtime.sessions,
+			models: runtime.models,
+			memoryEmbedding,
+			memoryScope: this.memoryScope,
+			appSettings: this.appSettings,
+			credentials: this.credentials,
+			externalAgentRuns: runtime.externalAgentRuns,
+			externalAgents: runtime.externalAgents,
+			artifacts: runtime.artifacts,
+			artifactPresenter: this.options.artifactPresenter,
+			canon: runtime.canon,
+			providers: this.providers,
+			characterLoader: this.characterLoader,
+			drafts: this.drafts,
+			companionStore: runtime.companionStore,
+			defaultCharacterId: this.options.productConfig.defaultCharacterId,
+			updateService: this.options.updateService,
+			auditStore: runtime.auditStore,
+			activateCharacter: (next: CharacterPackage, origin?: CharacterPackageOrigin) =>
+				this.activateCharacter(next, origin),
+			seedCharacter: (next: CharacterPackage, origin?: CharacterPackageOrigin) =>
+				this.seedCharacter(next, origin, runtime),
+			characterDeletionStatus: (characterId: string) => this.characterDeletionStatus(characterId),
+			deleteCharacterRuntime: (characterId: string) => this.deleteCharacterRuntime(characterId),
+			deleteCharacterPackage: (characterId: string) => this.deleteCharacterPackage(characterId),
+		});
+		const dispatcher = new Dispatcher({
+			onDispatchResult: ({ channel, operation, outcome, error }) => {
+				if (operation !== "mutation") return;
+				void runtime.auditStore
+					.append(
+						auditKindForRpcMutation(channel),
+						outcome === "ok" ? "rpc_committed" : "rpc_failed",
+						JSON.stringify({
+							channel,
+							...(error
+								? { error: { kind: error.kind, reason: auditReasonCode(error.reason) } }
+								: {}),
+						}),
+					)
+					.catch(() => undefined);
+			},
+			onProtocolViolation: (error) => {
+				void runtime.auditStore
+					.append(
+						"config",
+						"protocol_violation",
+						JSON.stringify({
+							channel: error.channel,
+							issues: error.issues.map((issue) => ({
+								path: issue.path.join("."),
+								message: issue.message,
+							})),
+						}),
+					)
+					.catch(() => undefined);
+				runtime.invalidations.invalidate(CacheKey.audit());
+			},
+		});
+		wireHostHandlers(dispatcher, context);
+		return Object.freeze({
+			runtimeId,
+			characterId: runtime.companionId,
+			runtime,
+			dispatcher,
+			memoryEmbedding,
+			close: async () => {
+				let failure: unknown;
+				try {
+					await runtime.close();
+				} catch (error) {
+					failure = error;
+				}
+				try {
+					this.storage.closeCompanion(runtime.companionId);
+				} catch (error) {
+					failure ??= error;
+				}
+				if (failure) throw failure;
+			},
+		});
 	}
 
 	private createCharacterRuntime(companionId: string): CharacterRuntime {
@@ -362,6 +392,7 @@ export class HostRuntime {
 			providers: this.providers,
 			credentials: this.credentials,
 			appSettings: this.appSettings,
+			forEachCompanionDatabase: (visit) => this.storage.forEachCompanionDatabase(visit),
 			memoryScope: this.memoryScope,
 			memoryConfig: () => {
 				const settings = this.appSettings.load();
@@ -376,8 +407,8 @@ export class HostRuntime {
 			piWorkerPath: this.options.piWorkerPath,
 			bundledGit: this.options.bundledGit,
 			logger: this.options.logger,
-			onPiEvent: (event) => {
-				for (const listener of this.piEventListeners) listener(event);
+			onLivePush: (event) => {
+				for (const listener of this.livePushListeners) listener(event);
 			},
 		});
 	}
@@ -386,103 +417,73 @@ export class HostRuntime {
 		character: CharacterPackage,
 		origin?: CharacterPackageOrigin,
 	): Promise<void> {
-		if (character.id === this.role.companionId) {
-			this.seedCharacter(character, origin);
-			this.role.companionStore.reconcileSchema(character.id, character.state);
-			this.role.canon.syncPackage(character.id, character.canon);
-			const trust = this.characterLoader.pluginTrust(this.storage.system.orm, character);
-			this.role.pi.configure(this.characterLoader.piResources(character, trust.trusted));
-			return;
-		}
-		const handle = this.storage.open(character.id);
-		const targetEvents = new EventBus(handle.database.orm);
-		this.characterLoader.seed(this.storage.system.orm, targetEvents, character, origin);
-		let next: CharacterRuntime | undefined;
-		try {
-			next = this.createCharacterRuntime(character.id);
-			await next.recoverExternalRuns();
-			this.characterLoader.activate(this.storage.system.orm, next.eventBus, character, origin);
-		} catch (error) {
-			await next?.close().catch(() => undefined);
-			this.storage.closeCompanion(character.id);
-			throw error;
-		}
-		const previous = this.role;
-		this.role = next;
-		this.applyRoleToComposition();
-		for (const subscription of this.eventSubscriptions) {
+		const previousRuntimeId = this.lifecycle.snapshot().activeRuntimeId;
+		await this.lifecycle.activate(
+			character.id,
+			async (runtimeId) => {
+				this.characterLoader.seed(this.storage.system.orm, character, origin);
+				let runtime: CharacterRuntime | undefined;
+				try {
+					runtime = this.createCharacterRuntime(character.id);
+					await runtime.recoverExternalRuns();
+					this.characterLoader.activate(this.storage.system.orm, character, origin);
+					return this.createRoleResource(runtimeId, runtime);
+				} catch (error) {
+					await runtime?.close().catch(() => undefined);
+					this.storage.closeCompanion(character.id);
+					throw error;
+				}
+			},
+			(resource) => {
+				this.seedCharacter(character, origin, resource.runtime);
+				resource.runtime.companionStore.reconcileSchema(character.id, character.state);
+				resource.runtime.canon.syncPackage(character.id, character.canon);
+				const trust = this.characterLoader.pluginTrust(this.storage.system.orm, character);
+				resource.runtime.pi.configure(this.characterLoader.piResources(character, trust.trusted));
+			},
+		);
+		if (this.lifecycle.snapshot().activeRuntimeId === previousRuntimeId) return;
+		for (const subscription of this.invalidationSubscriptions) {
 			subscription.stop?.();
-			this.bindEventSubscription(subscription, 0);
+			this.bindInvalidationSubscription(subscription);
 		}
 		this.bindRoleInternalSubscriptions();
-		try {
-			await previous.close();
-		} catch {
-			this.options.logger?.warn?.("previous character runtime cleanup failed after activation");
-		}
-		try {
-			this.storage.closeCompanion(previous.companionId);
-		} catch {
-			this.options.logger?.warn?.("previous character database cleanup failed after activation");
-		}
 		if (this.started) this.scheduleRoleReconciliation();
 	}
 
-	private seedCharacter(character: CharacterPackage, origin?: CharacterPackageOrigin): void {
+	private seedCharacter(
+		character: CharacterPackage,
+		origin?: CharacterPackageOrigin,
+		owner = this.lifecycle.active().runtime,
+	): void {
 		const handle = this.storage.open(character.id);
-		const events =
-			character.id === this.role.companionId
-				? this.role.eventBus
-				: new EventBus(handle.database.orm);
-		this.characterLoader.seed(this.storage.system.orm, events, character, origin);
+		this.characterLoader.seed(this.storage.system.orm, character, origin);
+		const invalidations = owner.invalidations;
 		new ModelRegistry(
 			this.storage.system.orm,
 			handle.database.orm,
-			events,
+			invalidations,
 			this.appSettings,
+			(visit) => this.storage.forEachCompanionDatabase(visit),
 		).seedFromSystemDefaults(character.id);
-		if (character.id !== this.role.companionId) this.storage.closeCompanion(character.id);
+		if (character.id !== owner.companionId) this.storage.closeCompanion(character.id);
 	}
 
-	private applyRoleToComposition(): void {
-		Object.assign(this.composition, {
-			orm: this.role.db.orm,
-			eventBus: this.role.eventBus,
-			onboarding: this.role.onboarding,
-			pi: this.role.pi,
-			sessions: this.role.sessions,
-			models: this.role.models,
-			externalAgentRuns: this.role.externalAgentRuns,
-			externalAgents: this.role.externalAgents,
-			artifacts: this.role.artifacts,
-			canon: this.role.canon,
-			companionStore: this.role.companionStore,
-			auditStore: this.role.auditStore,
-		});
-	}
-
-	private bindEventSubscription(subscription: EventSubscription, afterSeq: number): void {
-		const bus = this.role.eventBus;
-		subscription.stop = bus.subscribe(subscription.listener);
-		let cursor = afterSeq;
-		for (;;) {
-			const batch = bus.after(cursor);
-			if (!batch.length) break;
-			for (const event of batch) {
-				subscription.listener(event);
-				cursor = event.seq;
-			}
-		}
+	private bindInvalidationSubscription(subscription: InvalidationSubscription): void {
+		subscription.stop = this.lifecycle
+			.active()
+			.runtime.invalidations.subscribe(subscription.listener);
 	}
 
 	private bindRoleInternalSubscriptions(): void {
 		this.unsubscribeProxyHotReload?.();
 		if (!this.started) return;
-		this.unsubscribeProxyHotReload = this.role.eventBus.subscribe((event) => {
-			const payload = event.payload as { changed?: string[] } | undefined;
-			if (event.kind !== "settings.changed" || !payload?.changed?.includes("networkProxy")) return;
-			this.reconcileProxy("network proxy hot reload");
-		});
+		this.unsubscribeProxyHotReload = this.lifecycle
+			.active()
+			.runtime.invalidations.subscribe(({ keys }) => {
+				if (!keys.some((key) => key[0] === "settings")) return;
+				this.reconcileProxy("network proxy hot reload");
+			});
 	}
 
 	private reconcileProxy(label: string): void {
@@ -496,7 +497,7 @@ export class HostRuntime {
 	}
 
 	private scheduleRoleReconciliation(): void {
-		const role = this.role;
+		const role = this.lifecycle.active().runtime;
 		this.scheduleBackground("provider model reconciliation", () =>
 			syncAllProviderModels(this.providers, role.models),
 		);
@@ -504,32 +505,24 @@ export class HostRuntime {
 			role.canon.indexPending(role.companionId),
 		);
 		this.scheduleBackground("external-agent result reconciliation", (signal) =>
-			role.externalAgentRuns.reconcilePending(undefined, {
-				signal,
-				timeoutMs: this.backgroundAttemptTimeoutMs,
-			}),
+			role.externalAgentRuns.reconcilePending(undefined, { signal }),
 		);
 	}
 
 	private scheduleBackground(label: string, run: (signal: AbortSignal) => unknown): void {
 		if (this.closed) return;
-		const controller = new AbortController();
-		const work = Promise.resolve().then(() => run(controller.signal));
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const cancelled = new Promise<void>((resolve) => {
-			controller.signal.addEventListener("abort", () => resolve(), { once: true });
-			timer = setTimeout(() => controller.abort(), this.backgroundAttemptTimeoutMs);
-		});
-		const settled = Promise.race([work.then(() => undefined), cancelled])
+		let settled: Promise<void>;
+		settled = Promise.resolve()
+			.then(() => run(this.lifetime.signal))
+			.then(() => undefined)
 			.catch((error) => {
 				const detail = error instanceof Error ? error.message : String(error);
 				this.options.logger?.warn?.(`${label} failed: ${detail.slice(0, 1_024)}`);
 			})
 			.finally(() => {
-				clearTimeout(timer);
-				this.backgroundAttempts.delete(controller);
+				this.backgroundAttempts.delete(settled);
 			});
-		this.backgroundAttempts.set(controller, settled);
+		this.backgroundAttempts.add(settled);
 	}
 
 	private get memoryLogger() {
@@ -540,10 +533,6 @@ export class HostRuntime {
 			warn: logger?.warn ?? (() => undefined),
 			error: logger?.warn ?? (() => undefined),
 		};
-	}
-
-	private get backgroundAttemptTimeoutMs(): number {
-		return this.options.backgroundAttemptTimeoutMs ?? DEFAULT_BACKGROUND_ATTEMPT_TIMEOUT_MS;
 	}
 }
 
@@ -564,7 +553,7 @@ function mergeEmbeddingConfig(
 			? findHostLocalEmbeddingCandidate(service.localModel)
 			: undefined;
 		embedding.provider = "local";
-		embedding.dimensions = candidate?.dimensions ?? 768;
+		embedding.dimensions = candidate?.dimensions;
 		embedding.modelPath = candidate?.modelPath ?? service.customPath;
 		embedding.hfEndpoint =
 			downloadSource.type === "official"
@@ -574,10 +563,10 @@ function mergeEmbeddingConfig(
 					: downloadSource.endpoint;
 	} else {
 		embedding.provider = "remote";
-		embedding.baseUrl = service.baseUrl ?? "";
-		embedding.apiKey = embeddingApiKey ?? "";
-		embedding.model = service.model ?? "";
-		embedding.dimensions = service.dimensions ?? 0;
+		embedding.baseUrl = service.baseUrl;
+		embedding.apiKey = embeddingApiKey;
+		embedding.model = service.model;
+		embedding.dimensions = service.dimensions;
 	}
 	return { ...base, embedding: { ...base?.embedding, ...embedding } };
 }

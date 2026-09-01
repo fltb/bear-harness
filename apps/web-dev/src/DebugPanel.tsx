@@ -5,7 +5,7 @@ import {
 	useCompanionStore,
 } from "@bear-harness/companion-ui";
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { CHANNEL_CONTRACTS, IpcResponse } from "@bear-harness/protocol/schema";
+import { CHANNEL_CONTRACTS, RpcResponse } from "@bear-harness/protocol/schema";
 import { Button } from "@kobalte/core/button";
 import { Select } from "@kobalte/core/select";
 import { TextField } from "@kobalte/core/text-field";
@@ -70,7 +70,7 @@ export function WebDevDebugPanel(props: { transport: HostTransport; token: strin
 								queryFn: () => props.transport.invoke(endpoint, request),
 								gcTime: 0,
 							});
-				const validated = IpcResponse(endpoint.response).parse(response);
+				const validated = RpcResponse(endpoint.response).parse(response);
 				setOutput(format(validated));
 				setError(null);
 			} catch (cause) {

@@ -1,8 +1,8 @@
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import { isRegisteredMainFrame, type WindowRegistration } from "./diagnostics/electron.js";
 
-export const PICK_FILES_CHANNEL = "desktop:pickLocalFiles:v1";
-export const PICK_FOLDER_CHANNEL = "desktop:pickLocalFolder:v1";
+export const PICK_FILES_CHANNEL = "desktop:pickLocalFiles";
+export const PICK_FOLDER_CHANNEL = "desktop:pickLocalFolder";
 
 interface InvokeEvent {
 	sender: { id: number; mainFrame: { url: string } };

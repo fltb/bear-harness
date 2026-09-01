@@ -74,7 +74,7 @@ Forbidden Host state includes copied messages, entries, leaves, tool execution s
 
 - The UI is a direct reactive projection of Pi snapshots and Pi native transient events.
 - Preserve `message_update`, tool execution, queue, error, and settled events and tag each transported event with its Session id.
-- Token/tool streaming does not pass through the durable SQLite EventBus.
+- Token/tool streaming stays on Pi's transient live-event channel.
 - Reconnection uses an authoritative Session snapshot to replace the projection; events are not treated as a durable second transcript.
 - UI timeline grouping, derived display labels, and other presentation calculations are allowed when they use one Pi source and remain reactive.
 - UI may not introduce `sending` or other runtime flags that compete with Pi values.
@@ -145,7 +145,7 @@ Forbidden Host state includes copied messages, entries, leaves, tool execution s
 
 ## Events and snapshots
 
-- Durable product events are invalidation/audit notices, not replicated business state.
+- Product cache invalidations are transient process-local notices with no cursor or replay.
 - Pi native events are transient runtime signals and are not written to SQLite as a parallel lifecycle.
 - Bootstrap contains installation/global information. Conversation data is fetched for the selected Session. Do not build an O(N) full Character/Display snapshot for every conversation.
 - Lists are lightweight; detail endpoints are explicit and bounded.

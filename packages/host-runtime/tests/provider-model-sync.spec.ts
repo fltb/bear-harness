@@ -88,9 +88,9 @@ describe("provider catalog model synchronization", () => {
 			],
 		};
 
-		await data(runtime, "provider.customUpsert:v1", input);
-		await data(runtime, "provider.customUpsert:v1", input);
-		const pool = (await data(runtime, "model.pool.get:v1", {})) as {
+		await data(runtime, "provider.customUpsert", input);
+		await data(runtime, "provider.customUpsert", input);
+		const pool = (await data(runtime, "model.pool.get", {})) as {
 			models: Array<{
 				providerId: string;
 				modelId: string;
@@ -104,36 +104,36 @@ describe("provider catalog model synchronization", () => {
 		]);
 		expect(pool.models.filter((model) => model.providerId === "sync-relay")).toHaveLength(2);
 
-		await data(runtime, "provider.setApiKey:v1", {
+		await data(runtime, "provider.setApiKey", {
 			providerId: "sync-relay",
 			apiKey: "session-key",
 		});
-		const afterKey = (await data(runtime, "model.pool.get:v1", {})) as typeof pool;
+		const afterKey = (await data(runtime, "model.pool.get", {})) as typeof pool;
 		expect(afterKey.models.filter((model) => model.providerId === "sync-relay")).toHaveLength(2);
-		const listed = (await data(runtime, "provider.list:v1", {})) as {
+		const listed = (await data(runtime, "provider.list", {})) as {
 			providers: Array<{ id: string; source: string; added: boolean }>;
 		};
 		expect(listed.providers.find((provider) => provider.id === "sync-relay")).toMatchObject({
 			source: "custom",
 			added: true,
 		});
-		await data(runtime, "model.defaults.setReply:v1", {
+		await data(runtime, "model.defaults.setReply", {
 			reply: { providerId: "sync-relay", modelId: "text" },
 		});
-		await data(runtime, "model.defaults.setVision:v1", {
+		await data(runtime, "model.defaults.setVision", {
 			mode: "manual",
 			route: { providerId: "sync-relay", modelId: "vision" },
 		});
-		await data(runtime, "provider.remove:v1", { providerId: "sync-relay" });
-		const afterRemove = (await data(runtime, "model.pool.get:v1", {})) as typeof pool;
+		await data(runtime, "provider.remove", { providerId: "sync-relay" });
+		const afterRemove = (await data(runtime, "model.pool.get", {})) as typeof pool;
 		expect(afterRemove.models.some((model) => model.providerId === "sync-relay")).toBe(false);
-		const defaults = (await data(runtime, "model.defaults.get:v1", {})) as {
+		const defaults = (await data(runtime, "model.defaults.get", {})) as {
 			reply?: { providerId: string; modelId: string };
 			vision: { mode: string };
 		};
 		expect(defaults.reply).toBeUndefined();
 		expect(defaults.vision).toEqual({ mode: "auto" });
-		const afterProviderRemove = (await data(runtime, "provider.list:v1", {})) as {
+		const afterProviderRemove = (await data(runtime, "provider.list", {})) as {
 			providers: Array<{ id: string }>;
 		};
 		expect(afterProviderRemove.providers.some((provider) => provider.id === "sync-relay")).toBe(
@@ -146,7 +146,7 @@ describe("provider catalog model synchronization", () => {
 		roots.push(dataDir);
 		const first = makeRuntimeAt(dataDir);
 		await first.start();
-		await data(first, "provider.customUpsert:v1", {
+		await data(first, "provider.customUpsert", {
 			providerId: "restart-relay",
 			name: "Restart Relay",
 			baseUrl: "https://relay.example/v1",
@@ -175,7 +175,7 @@ describe("provider catalog model synchronization", () => {
 
 		const restarted = makeRuntimeAt(dataDir);
 		await restarted.start();
-		const listed = (await data(restarted, "provider.list:v1", {})) as {
+		const listed = (await data(restarted, "provider.list", {})) as {
 			providers: Array<{ id: string; availableModels: Array<{ id: string }> }>;
 		};
 
@@ -191,7 +191,7 @@ describe("provider catalog model synchronization", () => {
 	it("imports all catalog models when a provider fragment has no explicit model routes", async () => {
 		const runtime = makeRuntime();
 		await runtime.start();
-		const listed = (await data(runtime, "provider.list:v1", {})) as {
+		const listed = (await data(runtime, "provider.list", {})) as {
 			providers: Array<{ id: string; availableModels: Array<{ id: string }> }>;
 		};
 		const provider = listed.providers.find((candidate) => candidate.availableModels.length > 0);
@@ -200,9 +200,9 @@ describe("provider catalog model synchronization", () => {
 		const configJson = JSON.stringify({
 			providers: { [provider.id]: { baseUrl: "https://relay.example/v1" } },
 		});
-		await data(runtime, "provider.importPiConfig:v1", { configJson });
-		await data(runtime, "provider.importPiConfig:v1", { configJson });
-		const pool = (await data(runtime, "model.pool.get:v1", {})) as {
+		await data(runtime, "provider.importPiConfig", { configJson });
+		await data(runtime, "provider.importPiConfig", { configJson });
+		const pool = (await data(runtime, "model.pool.get", {})) as {
 			models: Array<{ providerId: string; modelId: string }>;
 		};
 		const importedIds = pool.models
@@ -245,7 +245,8 @@ describe("provider catalog model synchronization", () => {
 		const dispatcher = new Dispatcher();
 		wireHostHandlers(dispatcher, {
 			orm,
-			eventBus: { publish: vi.fn() },
+			invalidations: { invalidate: vi.fn() },
+			livePush: vi.fn(),
 			canon: { syncPackage: vi.fn() },
 			onboarding: { initialize: vi.fn() },
 			characterLoader,
@@ -260,7 +261,7 @@ describe("provider catalog model synchronization", () => {
 	it("keeps OAuth status queries read-only even after completion", async () => {
 		const failed = oauthDispatcher({ providerId: "oauth-relay", status: "failed" });
 		await expect(
-			failed.dispatcher.dispatch("provider.loginStatus:v1", { providerId: "oauth-relay" }),
+			failed.dispatcher.dispatch("provider.loginStatus", { providerId: "oauth-relay" }),
 		).resolves.toMatchObject({ ok: true, data: { status: "failed" } });
 		expect(failed.providers.listProviders).not.toHaveBeenCalled();
 		expect(failed.enable).not.toHaveBeenCalled();
@@ -270,14 +271,17 @@ describe("provider catalog model synchronization", () => {
 			reason: "oauth_session_not_found",
 		});
 		await expect(
-			missing.dispatcher.dispatch("provider.loginStatus:v1", { providerId: "oauth-relay" }),
-		).resolves.toMatchObject({ ok: true, data: { providerId: "oauth-relay", status: "idle" } });
+			missing.dispatcher.dispatch("provider.loginStatus", { providerId: "oauth-relay" }),
+		).resolves.toMatchObject({
+			ok: false,
+			error: { kind: "not_found", reason: "oauth_session_not_found" },
+		});
 		expect(missing.providers.listProviders).not.toHaveBeenCalled();
 		expect(missing.enable).not.toHaveBeenCalled();
 
 		const completed = oauthDispatcher({ providerId: "oauth-relay", status: "completed" });
 		await expect(
-			completed.dispatcher.dispatch("provider.loginStatus:v1", { providerId: "oauth-relay" }),
+			completed.dispatcher.dispatch("provider.loginStatus", { providerId: "oauth-relay" }),
 		).resolves.toMatchObject({ ok: true, data: { status: "completed" } });
 		expect(completed.enable).not.toHaveBeenCalled();
 		expect(completed.providers.listProviders).not.toHaveBeenCalled();
@@ -289,7 +293,7 @@ describe("provider catalog model synchronization", () => {
 			{ providerId: "oauth-relay", status: "completed" },
 		);
 		await expect(
-			dispatcher.dispatch("provider.loginAnswer:v1", {
+			dispatcher.dispatch("provider.loginAnswer", {
 				providerId: "oauth-relay",
 				answer: "finished",
 			}),

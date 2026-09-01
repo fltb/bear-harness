@@ -8,49 +8,10 @@ import {
 	createFirstMeetingWorkflow,
 	createNetworkMemoryWorkflow,
 } from "../src/stores/setup-workflows.js";
-import { affectedQueries } from "../src/stores/sync-dependencies.js";
+import { createShellWorkflowStore } from "../src/stores/shell-workflows.js";
+import { THEMED_CHARACTER } from "./fixtures.js";
 
 const t = ((key: string) => key) as never;
-
-function query(key: string) {
-	return [key] as const;
-}
-
-describe("cache dependency routing", () => {
-	it("keeps audit subscribed and maps tables and event domains narrowly", () => {
-		expect(affectedQueries([])(query("audit"))).toBe(true);
-		expect(affectedQueries([])(query("conversation"))).toBe(false);
-
-		const conversations = affectedQueries(["conversations"]);
-		expect(conversations(query("conversations"))).toBe(true);
-		expect(conversations(query("conversation"))).toBe(false);
-		expect(conversations(query("snapshot"))).toBe(false);
-		expect(conversations(query("memory"))).toBe(false);
-
-		const events = affectedQueries(["event:conversation.renamed", "event:run.completed"]);
-		expect(events(query("conversation"))).toBe(true);
-		expect(events(query("conversations"))).toBe(true);
-		expect(events(query("runs"))).toBe(true);
-		expect(events(query("permissions"))).toBe(false);
-		expect(events(query("snapshot"))).toBe(false);
-		expect(events(query("settings"))).toBe(false);
-	});
-
-	it("handles special login and embedding events without invalidating unrelated data", () => {
-		const embedding = affectedQueries(["event:memory.embedding_download_changed"]);
-		expect(embedding(query("embedding"))).toBe(true);
-		expect(embedding(query("memory"))).toBe(false);
-
-		const login = affectedQueries(["event:provider.login_changed"]);
-		expect(login(query("providerLogin"))).toBe(true);
-		expect(login(query("providers"))).toBe(false);
-	});
-
-	it("fails safe by invalidating every query for unknown sources", () => {
-		expect(affectedQueries(["future_table"])(query("anything"))).toBe(true);
-		expect(affectedQueries(["event:future.changed"])(query("anything"))).toBe(true);
-	});
-});
 
 describe("store IPC helpers", () => {
 	it("accepts only non-null records and string payload fields", () => {
@@ -76,6 +37,28 @@ describe("store IPC helpers", () => {
 		).rejects.toBeInstanceOf(IpcInvocationError);
 		const transport = new Error("transport down");
 		await expect(invoke(client, async () => Promise.reject(transport))).rejects.toBe(transport);
+	});
+});
+
+describe("character language warning", () => {
+	it("compares the character language with the app language, not navigator.language", () => {
+		createRoot((dispose) => {
+			const [locale, setLocale] = createSignal("ja-JP");
+			const store = { character: THEMED_CHARACTER } as unknown as CompanionStore;
+			const translate = ((key: string) =>
+				key === "language.warningBody" ? "{roleLanguage}|{userLanguage}" : key) as never;
+			const workflow = createShellWorkflowStore({
+				store,
+				currentLocale: locale,
+				translate,
+			});
+
+			expect(workflow.hasLanguageMismatch()).toBe(false);
+			setLocale("zh-CN");
+			expect(workflow.hasLanguageMismatch()).toBe(true);
+			expect(workflow.languageWarning()).toContain("zh-CN");
+			dispose();
+		});
 	});
 });
 

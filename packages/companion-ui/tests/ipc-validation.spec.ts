@@ -24,12 +24,13 @@ const isConfiguredModel = guard(ConfiguredModel);
 
 const timestamp = "2026-08-16T00:00:00Z";
 const conversation = {
-	id: "conversation-1",
-	title: "Conversation",
+	conversationId: "conversation-1",
+	name: "Conversation",
 	created: timestamp,
 	modified: timestamp,
 	messageCount: 1,
 	firstMessage: "Hello",
+	isStreaming: false,
 };
 const provider = {
 	id: "provider-1",
@@ -92,12 +93,12 @@ function expectRequiredFields(
 describe("host projection validation", () => {
 	it("rejects every corrupted required field in public domain records", () => {
 		expectRequiredFields(isConversationSummary, conversation, [
-			"id",
-			"title",
+			"conversationId",
 			"created",
 			"modified",
 			"messageCount",
 			"firstMessage",
+			"isStreaming",
 		]);
 		expectRequiredFields(isProviderInfo, provider, [
 			"id",
@@ -133,7 +134,6 @@ describe("host projection validation", () => {
 		const onboarding = {
 			status: "active",
 			currentStepId: "hello",
-			eventSeq: 2,
 			stateData: {
 				answers: {},
 				decisions: { relationship_memory_enabled: true },
@@ -141,8 +141,6 @@ describe("host projection validation", () => {
 		};
 		expect(isOnboardingData(onboarding)).toBe(true);
 		expect(isOnboardingData({ ...onboarding, status: "unknown" })).toBe(false);
-		expect(isOnboardingData({ ...onboarding, eventSeq: -1 })).toBe(false);
-		expect(isOnboardingData({ ...onboarding, eventSeq: 1.5 })).toBe(false);
 		expect(isOnboardingData({ ...onboarding, currentStepId: 3 })).toBe(false);
 		expect(isOnboardingData({ ...onboarding, stateData: {} })).toBe(false);
 

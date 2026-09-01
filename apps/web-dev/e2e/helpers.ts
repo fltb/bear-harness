@@ -4,42 +4,41 @@ import { parseWebDevBootstrap, type WebDevBootstrap } from "../src/http-client";
 
 export interface ProjectedPiEntry {
 	id: string;
-	kind: string;
+	type: string;
 	role?: string;
 	text?: string;
-	version?: {
-		current: number;
-		leafIds: string[];
-	};
 }
 
 export function projectPiEntries(entries: unknown[]): ProjectedPiEntry[] {
 	return entries.flatMap((raw) => {
-		if (!raw || typeof raw !== "object" || !("id" in raw) || !("kind" in raw)) return [];
+		if (!raw || typeof raw !== "object" || !("id" in raw) || !("type" in raw)) return [];
 		const entry = raw as Record<string, unknown>;
-		if (typeof entry.id !== "string" || typeof entry.kind !== "string") return [];
+		if (typeof entry.id !== "string" || typeof entry.type !== "string") return [];
+		const message =
+			entry.message && typeof entry.message === "object"
+				? (entry.message as Record<string, unknown>)
+				: undefined;
 		return [
 			{
 				id: entry.id,
-				kind: entry.kind,
-				...(typeof entry.role === "string" ? { role: entry.role } : {}),
-				...(typeof entry.text === "string" ? { text: entry.text } : {}),
-				...(isVersion(entry.version) ? { version: entry.version } : {}),
+				type: entry.type,
+				...(typeof message?.role === "string" ? { role: message.role } : {}),
+				...(message ? { text: messageText(message.content) } : {}),
 			},
 		];
 	});
 }
 
-function isVersion(value: unknown): value is { current: number; leafIds: string[] } {
-	return Boolean(
-		value &&
-			typeof value === "object" &&
-			"current" in value &&
-			typeof value.current === "number" &&
-			"leafIds" in value &&
-			Array.isArray(value.leafIds) &&
-			value.leafIds.every((id) => typeof id === "string"),
-	);
+function messageText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.flatMap((part) =>
+			part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part
+				? [String(part.text)]
+				: [],
+		)
+		.join("\n");
 }
 
 export async function getBootstrap(page: Page): Promise<WebDevBootstrap> {
@@ -68,8 +67,22 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	// while this helper is resetting the shared E2E fixture.
 	const bootstrap = await getBootstrap(page);
 	const headers = { "x-bear-web-dev-token": bootstrap.token };
+	const characters = (await (
+		await page.request.post("/rpc/character.list", { headers, data: {} })
+	).json()) as { data: { characters: Array<{ id: string }> } };
+	if (characters.data.characters.some((character) => character.id === "e2e-plugin-trust")) {
+		for (const channel of ["character.runtimeDelete", "character.packageDelete"] as const) {
+			const deleted = await (
+				await page.request.post(`/rpc/${channel}`, {
+					headers,
+					data: { characterId: "e2e-plugin-trust" },
+				})
+			).json();
+			expect(deleted).toMatchObject({ ok: true });
+		}
+	}
 	const configureProvider = await (
-		await page.request.post("/rpc/provider.customUpsert%3Av1", {
+		await page.request.post("/rpc/provider.customUpsert", {
 			headers,
 			data: {
 				providerId: "e2e-rule",
@@ -81,7 +94,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	).json();
 	expect(configureProvider).toMatchObject({ ok: true });
 	const setKey = await (
-		await page.request.post("/rpc/provider.setApiKey%3Av1", {
+		await page.request.post("/rpc/provider.setApiKey", {
 			headers,
 			data: {
 				providerId: "e2e-rule",
@@ -92,7 +105,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	).json();
 	expect(setKey).toMatchObject({ ok: true });
 	const enableModel = await (
-		await page.request.post("/rpc/model.enable%3Av1", {
+		await page.request.post("/rpc/model.enable", {
 			headers,
 			data: {
 				providerId: "e2e-rule",
@@ -103,7 +116,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	).json();
 	expect(enableModel).toMatchObject({ ok: true });
 	const setDefault = await (
-		await page.request.post("/rpc/model.systemDefaults.set%3Av1", {
+		await page.request.post("/rpc/model.systemDefaults.set", {
 			headers,
 			data: {
 				reply: { providerId: "e2e-rule", modelId: "rule-model" },
@@ -113,7 +126,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	).json();
 	expect(setDefault).toMatchObject({ ok: true });
 	const systemDefaults = await (
-		await page.request.post("/rpc/model.systemDefaults.get%3Av1", {
+		await page.request.post("/rpc/model.systemDefaults.get", {
 			headers,
 			data: {},
 		})
@@ -123,7 +136,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 		data: { reply: { providerId: "e2e-rule", modelId: "rule-model" } },
 	});
 	const initializedDefaults = await (
-		await page.request.post("/rpc/model.defaults.initialize%3Av1", {
+		await page.request.post("/rpc/model.defaults.initialize", {
 			headers,
 			data: {},
 		})
@@ -136,7 +149,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 		},
 	});
 	const completeRoleModel = await (
-		await page.request.post("/rpc/model.defaults.completeOnboarding%3Av1", {
+		await page.request.post("/rpc/model.defaults.completeOnboarding", {
 			headers,
 			data: {},
 		})
@@ -146,7 +159,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 		data: { onboardingComplete: true },
 	});
 	const completeSystemSetup = await (
-		await page.request.post("/rpc/settings.set%3Av1", {
+		await page.request.post("/rpc/settings.set", {
 			headers,
 			data: { settings: { firstRunStage: "role" } },
 		})
@@ -157,7 +170,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	});
 
 	let onboardingState = await (
-		await page.request.post("/rpc/onboarding.get%3Av1", { headers, data: {} })
+		await page.request.post("/rpc/onboarding.get", { headers, data: {} })
 	).json();
 	const onboardingAnswers: Record<string, string | undefined> = {
 		welcome: undefined,
@@ -167,7 +180,7 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 		const stepId = onboardingState.data.currentStepId as string;
 		if (!(stepId in onboardingAnswers)) throw new Error(`Unhandled onboarding step: ${stepId}`);
 		onboardingState = await (
-			await page.request.post("/rpc/onboarding.submit%3Av1", {
+			await page.request.post("/rpc/onboarding.submit", {
 				headers,
 				data: { stepId, answer: onboardingAnswers[stepId] },
 			})
@@ -179,16 +192,16 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 	// the bounded Catalog limit or inheriting a stale UI-local selection.
 	for (const archived of [false, true]) {
 		const previous = (await (
-			await page.request.post("/rpc/conversation.list%3Av1", {
+			await page.request.post("/rpc/conversation.list", {
 				headers,
 				data: archived ? { archived: true } : {},
 			})
-		).json()) as { data: { sessions: Array<{ id: string }> } };
-		for (const session of previous.data.sessions) {
+		).json()) as { data: { conversations: Array<{ conversationId: string }> } };
+		for (const conversation of previous.data.conversations) {
 			const deleted = await (
-				await page.request.post("/rpc/conversation.delete%3Av1", {
+				await page.request.post("/rpc/conversation.delete", {
 					headers,
-					data: { id: session.id },
+					data: { conversationId: conversation.conversationId },
 				})
 			).json();
 			expect(deleted).toMatchObject({ ok: true });
@@ -201,30 +214,42 @@ export async function ensureReadyForConversation(page: Page): Promise<void> {
 		name: zhCN.sidebar.conversations,
 	});
 	const conversationItems = conversations.getByRole("button");
-	const [createResponse] = await Promise.all([
-		page.waitForResponse(
-			(response) =>
-				response.request().method() === "POST" &&
-				response.url().includes("/rpc/conversation.create%3Av1"),
-		),
-		page
-			.getByRole("button", {
-				name: zhCN.sidebar.newConversation,
-				description: zhCN.sidebar.newConversation,
-				exact: true,
-			})
-			.click(),
-	]);
-	const created = (await createResponse.json()) as {
+	const application = page.getByRole("application", { name: zhCN.shell.productName });
+	await expect(application).toHaveAttribute("data-layout", /^(fullscreen|window|mobile)$/);
+	const mobileNavigation = (await application.getAttribute("data-layout")) === "mobile";
+	const created = (
+		mobileNavigation
+			? await (
+					await page.request.post("/rpc/conversation.create", {
+						headers,
+						data: {},
+					})
+				).json()
+			: await (
+					await Promise.all([
+						page.waitForResponse(
+							(response) =>
+								response.request().method() === "POST" &&
+								response.url().includes("/rpc/conversation.create"),
+						),
+						page
+							.getByRole("button", {
+								name: zhCN.sidebar.newConversation,
+								exact: true,
+							})
+							.click(),
+					])
+				)[0].json()
+	) as {
 		ok: boolean;
-		data?: { sessionId?: string };
+		data?: { conversationId?: string };
 		error?: unknown;
 	};
-	expect(created).toMatchObject({ ok: true, data: { sessionId: expect.any(String) } });
-	const conversationId = created.data?.sessionId;
+	expect(created).toMatchObject({ ok: true, data: { conversationId: expect.any(String) } });
+	const conversationId = created.data?.conversationId;
 	if (!conversationId) throw new Error("new conversation response omitted its session id");
 	const selectedRoute = await (
-		await page.request.post("/rpc/model.route.set%3Av1", {
+		await page.request.post("/rpc/model.route.set", {
 			headers,
 			data: {
 				conversationId,
@@ -266,8 +291,7 @@ export async function sendMessage(page: Page, text: string): Promise<void> {
 	const [response] = await Promise.all([
 		page.waitForResponse(
 			(candidate) =>
-				candidate.request().method() === "POST" &&
-				candidate.url().includes("/rpc/message.send%3Av1"),
+				candidate.request().method() === "POST" && candidate.url().includes("/rpc/message.send"),
 		),
 		send.click(),
 	]);

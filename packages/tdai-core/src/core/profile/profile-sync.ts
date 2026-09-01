@@ -28,7 +28,7 @@ export interface ProfileBaseline {
 
 export function buildProfileStableId(scope: string, type: "l2" | "l3", filename: string): string {
 	const hash = createHash("sha256").update(`${scope}\u0000${type}\u0000${filename}`).digest("hex");
-	return `profile:v1:${hash}`;
+	return `profile:${hash}`;
 }
 
 function md5(text: string): string {

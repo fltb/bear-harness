@@ -345,7 +345,6 @@ async function initializeHost(): Promise<boolean> {
 			characterSeedRoot: characterSeedRoot(),
 			productConfig,
 			credentialVault: isSourceE2E ? e2eCredentialVault : electronCredentialVault,
-			protocolViolationMode: app.isPackaged ? "isolate" : "throw",
 			updateService: updater
 				? {
 						check: () => updater.check(),
@@ -358,8 +357,8 @@ async function initializeHost(): Promise<boolean> {
 			artifactPresenter: artifactPresentation.presenter,
 		});
 		const disposeRouter = wireElectronIpcHandlers(runtime.dispatcher, windowRegistry, {
-			subscribeEvents: (listener, afterSeq) => runtime.subscribeEvents(listener, afterSeq),
-			subscribePiEvents: (listener) => runtime.subscribePiEvents(listener),
+			subscribeInvalidations: (listener) => runtime.subscribeInvalidations(listener),
+			subscribeLivePush: (listener) => runtime.subscribeLivePush(listener),
 			diagnostics,
 		});
 		const disposeLocalFileBridge = registerLocalFileBridge(windowRegistry);
@@ -506,7 +505,7 @@ diagnostics.runInSession(() => {
 				return;
 			}
 			// Idle update checks every 6h; the renderer can also trigger on
-			// demand via the update.check:v1 RPC. No-op while the feed is empty.
+			// demand via the update.check RPC. No-op while the feed is empty.
 			updateTimer = setInterval(() => {
 				void updateService?.check().catch(() => {
 					// The state machine carries the error; the timer keeps running.

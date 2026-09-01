@@ -97,6 +97,6 @@ Desktop 额外验证 IPC sender/frame/origin、credential vault、local file pic
 - 每个模块的 production/test/file/physical-line counts；
 - authority、模块分层和读写数据流；
 - system/character 数据与物理路径边界；
-- 迁移、删除、恢复和 Artifact 完整性证据；
+- 删除、恢复和 Artifact 完整性证据；
 - lint/typecheck/test/coverage/build/E2E/package 的命令、提交和结果；
 - 残余风险、外部先决条件与明确 GO/NO-GO。

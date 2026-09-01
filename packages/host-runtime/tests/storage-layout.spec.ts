@@ -35,7 +35,6 @@ describe("runtime physical layout", () => {
 			runs: join(dataRoot, "companions", "jizhou", "runs"),
 			artifacts: join(dataRoot, "companions", "jizhou", "artifacts"),
 			audit: join(dataRoot, "companions", "jizhou", "audit"),
-			diagnostics: join(dataRoot, "companions", "jizhou", "diagnostics"),
 		});
 	});
 

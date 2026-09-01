@@ -119,6 +119,23 @@ describe("SessionCatalog", () => {
 		}
 	});
 
+	it("deletes the exact Pi fork when Catalog ownership cannot be committed", async () => {
+		const { catalog, database, pi, sessions } = setup();
+		try {
+			const forkPath = sessions[0]!.path;
+			vi.mocked(pi.fork).mockResolvedValue({
+				sessionId: "alpha",
+				sessionFile: forkPath,
+			} as never);
+
+			await expect(catalog.fork("bear", "alpha", "entry-1")).rejects.toThrow();
+			expect(pi.delete).toHaveBeenCalledWith("alpha", expect.any(Function));
+			expect(existsSync(forkPath)).toBe(false);
+		} finally {
+			database.close();
+		}
+	});
+
 	it("lists only the companion's Pi sessions in Pi modification order", async () => {
 		const { catalog, database } = setup();
 		try {

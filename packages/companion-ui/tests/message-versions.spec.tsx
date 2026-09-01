@@ -5,64 +5,77 @@ import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/App.js";
 import { createTestClient, OFFICIAL_PRODUCT, THEMED_CHARACTER } from "./fixtures.js";
 
-describe("Pi message versions", () => {
-	it("switches native leaves and sends correction labels through regeneration", async () => {
+describe("Pi message actions", () => {
+	it("sends correction labels through native regeneration", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		const session = {
-			sessionId: "conversation-1",
+			conversationId: "conversation-1",
 			name: "Versions",
-			timeline: {
+			branch: {
 				entries: [
 					{
+						type: "message" as const,
 						id: "user-2",
 						parentId: "root",
 						timestamp: "2026-01-01T00:00:00.000Z",
-						kind: "message" as const,
-						role: "user" as const,
-						text: "Hello",
+						message: { role: "user" as const, content: "Hello", timestamp: 1 },
 					},
 					{
+						type: "message" as const,
 						id: "assistant-2",
 						parentId: "user-2",
 						timestamp: "2026-01-01T00:00:01.000Z",
-						kind: "message" as const,
-						role: "assistant" as const,
-						text: "Second reply",
-						version: { current: 1, leafIds: ["assistant-1", "assistant-2"] },
+						message: {
+							role: "assistant" as const,
+							content: [{ type: "text" as const, text: "Second reply" }],
+							provider: "test",
+							model: "test",
+							timestamp: 2,
+							stopReason: "stop" as const,
+							usage: {
+								input: 0,
+								output: 0,
+								cacheRead: 0,
+								cacheWrite: 0,
+								totalTokens: 0,
+								cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+							},
+						},
 					},
 				],
+				hasMoreBefore: false,
 			},
-			live: { isStreaming: false, queuedUserMessages: [] },
+			live: { isStreaming: false, steering: [], followUp: [] },
 		};
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
 				data: {
-					eventSeq: 0,
+					onboarding: { status: "complete" as const, stateData: { answers: {}, decisions: {} } },
 					character: THEMED_CHARACTER,
-					model: {
-						pool: { models: [] },
-						defaults: { vision: { mode: "auto" as const } },
-					},
 				} as never,
 			}),
 		);
 		client.conversation.open = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: session as never }),
 		);
+		client.message.regenerate = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: session as never }),
+		);
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
 				data: {
-					sessions: [
+					conversations: [
 						{
-							id: "conversation-1",
-							title: "Versions",
+							conversationId: "conversation-1",
+							name: "Versions",
 							created: "2026-01-01T00:00:00.000Z",
 							modified: "2026-01-01T00:00:01.000Z",
 							messageCount: 2,
 							firstMessage: "Hello",
+							isStreaming: false,
 						},
 					],
 				},
@@ -71,16 +84,7 @@ describe("Pi message versions", () => {
 
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		expect(await screen.findByText("2 / 2")).toBeVisible();
-		await user.click(screen.getByRole("button", { name: zhCN.messages.previousVersion }));
-		await waitFor(() =>
-			expect(client.message.switchVersion).toHaveBeenCalledWith({
-				conversationId: "conversation-1",
-				leafId: "assistant-1",
-			}),
-		);
-
-		const message = screen.getByText("Second reply").closest("article") as HTMLElement;
+		const message = (await screen.findByText("Second reply")).closest("article") as HTMLElement;
 		await user.click(within(message).getByRole("button", { name: zhCN.messages.operations }));
 		await user.click(within(message).getByRole("button", { name: "Correct" }));
 		await user.click(within(message).getByRole("button", { name: "Voice" }));

@@ -56,10 +56,8 @@ export function ProviderSetup(props: PresentationProps) {
 	const [customBaseUrl, setCustomBaseUrl] = createSignal("");
 	const [piConfigJson, setPiConfigJson] = createSignal("");
 	const [oauthProviderId, setOauthProviderId] = createSignal("");
-	const oauth = () => {
-		const state = oauthProviderId() ? store.provider.loginState(oauthProviderId()) : undefined;
-		return state?.status === "idle" ? null : (state ?? null);
-	};
+	const oauth = () =>
+		oauthProviderId() ? (store.provider.loginState(oauthProviderId()) ?? null) : null;
 	const oauthPrompt = createStableSnapshot(() => oauth()?.prompt);
 	const [answerDraft, setAnswerDraft] = createSignal<{ prompt: unknown; value: string }>();
 	const oauthAnswer = () => {

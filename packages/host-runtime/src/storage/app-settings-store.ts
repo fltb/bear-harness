@@ -38,125 +38,6 @@ export interface AppSettingsRecord {
 
 const SINGLETON_ID = 1;
 
-export function defaultAppSettings(): AppSettingsRecord {
-	return {
-		firstRunStage: "model",
-		networkProxy: { mode: "auto" },
-		memoryVectorService: { enabled: false, provider: "none" },
-		systemModelDefaults: { vision: { mode: "auto" } },
-		modelDownloadSource: { type: "official" },
-	};
-}
-
-function parseJson<T>(json: string, fallback: T): T {
-	try {
-		const parsed = JSON.parse(json) as T;
-		return parsed && typeof parsed === "object" ? parsed : fallback;
-	} catch {
-		return fallback;
-	}
-}
-
-function parseModelDownloadSource(json: string): AppSettingsRecord["modelDownloadSource"] {
-	const parsed = parseJson<unknown>(json, null);
-	if (!parsed || typeof parsed !== "object") return { type: "official" };
-	const value = parsed as { type?: unknown; endpoint?: unknown };
-	if (value.type === "hf-mirror") return { type: "hf-mirror" };
-	if (value.type === "custom" && typeof value.endpoint === "string")
-		return { type: "custom", endpoint: value.endpoint };
-	if (typeof value.endpoint === "string") return { type: "custom", endpoint: value.endpoint };
-	return { type: "official" };
-}
-
-function safeHttpUrl(value: unknown): string | undefined {
-	if (typeof value !== "string") return undefined;
-	try {
-		const url = new URL(value);
-		if (!["http:", "https:"].includes(url.protocol) || url.username || url.password)
-			return undefined;
-		return value;
-	} catch {
-		return undefined;
-	}
-}
-
-function parseNetworkProxy(json: string): AppSettingsRecord["networkProxy"] {
-	const parsed = parseJson<unknown>(json, null);
-	if (!parsed || typeof parsed !== "object") return { mode: "auto" };
-	const value = parsed as { mode?: unknown; url?: unknown; bypass?: unknown };
-	if (value.mode === "direct" || value.mode === "auto") {
-		return {
-			mode: value.mode,
-			...(Array.isArray(value.bypass) && value.bypass.every((item) => typeof item === "string")
-				? { bypass: value.bypass }
-				: {}),
-		};
-	}
-	const url = safeHttpUrl(value.url);
-	return value.mode === "manual" && url ? { mode: "manual", url } : { mode: "auto" };
-}
-
-function parseMemoryVectorService(json: string): AppSettingsRecord["memoryVectorService"] {
-	const parsed = parseJson<unknown>(json, null);
-	if (!parsed || typeof parsed !== "object") return { enabled: false, provider: "none" };
-	const value = parsed as Record<string, unknown>;
-	if (value.provider === "local" && value.enabled === true) {
-		if (typeof value.localModel === "string") {
-			return { enabled: true, provider: "local", localModel: value.localModel };
-		}
-		if (typeof value.customPath === "string") {
-			return { enabled: true, provider: "local", customPath: value.customPath };
-		}
-	}
-	if (value.provider === "remote" && value.enabled === true) {
-		const baseUrl = safeHttpUrl(value.baseUrl);
-		if (
-			baseUrl &&
-			typeof value.model === "string" &&
-			value.model.length > 0 &&
-			typeof value.dimensions === "number" &&
-			Number.isSafeInteger(value.dimensions) &&
-			value.dimensions > 0
-		) {
-			return {
-				enabled: true,
-				provider: "remote",
-				baseUrl,
-				model: value.model,
-				dimensions: value.dimensions,
-			};
-		}
-	}
-	return { enabled: false, provider: "none" };
-}
-
-function parseRoute(value: unknown): ModelRouteSetting | undefined {
-	if (!value || typeof value !== "object") return undefined;
-	const route = value as { providerId?: unknown; modelId?: unknown };
-	return typeof route.providerId === "string" &&
-		route.providerId.length > 0 &&
-		typeof route.modelId === "string" &&
-		route.modelId.length > 0
-		? { providerId: route.providerId, modelId: route.modelId }
-		: undefined;
-}
-
-function parseSystemModelDefaults(json: string): SystemModelDefaults {
-	const parsed = parseJson<unknown>(json, null);
-	if (!parsed || typeof parsed !== "object") return { vision: { mode: "auto" } };
-	const value = parsed as { reply?: unknown; vision?: unknown };
-	const reply = parseRoute(value.reply);
-	const visionValue = value.vision as { mode?: unknown; route?: unknown } | undefined;
-	const visionRoute = visionValue?.mode === "manual" ? parseRoute(visionValue.route) : undefined;
-	return {
-		...(reply ? { reply } : {}),
-		vision:
-			visionValue?.mode === "manual" && visionRoute
-				? { mode: "manual", route: visionRoute }
-				: { mode: "auto" },
-	};
-}
-
 /** Read/write the singleton app_settings row. */
 export class AppSettingsStore {
 	constructor(private readonly db: AppDatabase) {}
@@ -173,33 +54,26 @@ export class AppSettingsStore {
 			.from(appSettings)
 			.where(eq(appSettings.id, SINGLETON_ID))
 			.get();
-		if (!row) return defaultAppSettings();
+		if (!row) throw new Error("app settings are missing");
 		return {
-			firstRunStage:
-				row.firstRunStage === "embedding" || row.firstRunStage === "role"
-					? row.firstRunStage
-					: "model",
-			networkProxy: parseNetworkProxy(row.networkProxyJson),
-			memoryVectorService: parseMemoryVectorService(row.memoryVectorServiceJson),
-			systemModelDefaults: parseSystemModelDefaults(row.systemModelDefaultsJson),
-			modelDownloadSource: parseModelDownloadSource(row.modelDownloadMirrorJson),
+			firstRunStage: row.firstRunStage as AppSettingsRecord["firstRunStage"],
+			networkProxy: JSON.parse(row.networkProxyJson) as AppSettingsRecord["networkProxy"],
+			memoryVectorService: JSON.parse(
+				row.memoryVectorServiceJson,
+			) as AppSettingsRecord["memoryVectorService"],
+			systemModelDefaults: JSON.parse(row.systemModelDefaultsJson) as SystemModelDefaults,
+			modelDownloadSource: JSON.parse(
+				row.modelDownloadMirrorJson,
+			) as AppSettingsRecord["modelDownloadSource"],
 		};
 	}
 
 	save(patch: Partial<AppSettingsRecord>): AppSettingsRecord {
 		const current = this.load();
-		const memoryVectorService = patch.memoryVectorService
-			? parseMemoryVectorService(JSON.stringify(patch.memoryVectorService))
-			: current.memoryVectorService;
-		if (
-			patch.memoryVectorService &&
-			JSON.stringify(memoryVectorService) !== JSON.stringify(patch.memoryVectorService)
-		)
-			throw { kind: "validation_failed", reason: "memory_vector_service_invalid" };
 		const next: AppSettingsRecord = {
 			firstRunStage: patch.firstRunStage ?? current.firstRunStage,
 			networkProxy: patch.networkProxy ?? current.networkProxy,
-			memoryVectorService,
+			memoryVectorService: patch.memoryVectorService ?? current.memoryVectorService,
 			systemModelDefaults: patch.systemModelDefaults ?? current.systemModelDefaults,
 			modelDownloadSource: patch.modelDownloadSource ?? current.modelDownloadSource,
 		};
@@ -219,10 +93,6 @@ export class AppSettingsStore {
 	}
 
 	saveSystemModelDefaults(defaults: SystemModelDefaults): SystemModelDefaults {
-		const normalized = parseSystemModelDefaults(JSON.stringify(defaults));
-		if (JSON.stringify(normalized) !== JSON.stringify(defaults)) {
-			throw { kind: "validation_failed", reason: "system_model_defaults_invalid" };
-		}
 		this.db
 			.update(appSettings)
 			.set({

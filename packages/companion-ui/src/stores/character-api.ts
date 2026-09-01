@@ -56,13 +56,6 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 				request: (key) =>
 					invoke(client, () => client.character.pluginTrustGet({ characterId: key[2] as string })),
 			});
-			createRpcQuery({
-				client: queryClient,
-				key: () => ["settings", "character", characterId() ?? ""],
-				enabled,
-				request: (key) =>
-					invoke(client, () => client.settings.get({ characterId: key[2] as string })),
-			});
 			return { data: () => query.data, loading: () => query.isLoading, error: () => query.error };
 		},
 		observeDeletionStatus: (characterId) => {
@@ -145,7 +138,6 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 			).status,
 		runtimeDelete: async (characterId) => {
 			const result = await invoke(client, () => client.character.runtimeDelete({ characterId }));
-			queryClient.removeQueries({ queryKey: ["settings", "character", characterId], exact: true });
 			queryClient.removeQueries({ queryKey: queryKeys.modelRoute(characterId), exact: true });
 			await api.deletionStatus(characterId);
 			return result;
@@ -253,9 +245,7 @@ export function createCanonApi(c: CanonApiContext): CanonApi {
 			await c.refreshSources();
 		},
 		addSource: async (logicalName, content) => {
-			await invoke(c.client, () =>
-				c.client.canon.addSource({ logicalName, content, characterId: c.currentCharacterId() }),
-			);
+			await invoke(c.client, () => c.client.canon.addSource({ logicalName, content }));
 			await c.refreshSources();
 		},
 		search: async (query) =>
@@ -263,31 +253,22 @@ export function createCanonApi(c: CanonApiContext): CanonApi {
 				await refreshRpcQuery({
 					client: c.queryClient,
 					key: ["canon", "search", c.currentCharacterId() ?? null, query],
-					request: () =>
-						invoke(c.client, () =>
-							c.client.canon.search({ query, characterId: c.currentCharacterId() }),
-						),
+					request: () => invoke(c.client, () => c.client.canon.search({ query })),
 				})
 			).chunks,
 		removeSource: async (sourceId) => {
-			await invoke(c.client, () =>
-				c.client.canon.removeSource({ sourceId, characterId: c.currentCharacterId() }),
-			);
+			await invoke(c.client, () => c.client.canon.removeSource({ sourceId }));
 			await c.refreshSources();
 		},
 		listModules: async () => {
 			await c.refreshModules();
 		},
 		upsertModule: async (params) => {
-			await invoke(c.client, () =>
-				c.client.canon.upsertModule({ ...params, characterId: c.currentCharacterId() }),
-			);
+			await invoke(c.client, () => c.client.canon.upsertModule(params));
 			await c.refreshModules();
 		},
 		deleteModule: async (id) => {
-			await invoke(c.client, () =>
-				c.client.canon.deleteModule({ id, characterId: c.currentCharacterId() }),
-			);
+			await invoke(c.client, () => c.client.canon.deleteModule({ id }));
 			await c.refreshModules();
 		},
 	};

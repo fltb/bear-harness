@@ -14,6 +14,7 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import PQueue from "p-queue";
 import type { CharacterPackage } from "./character-loader.js";
 import type { CompanionStateStore } from "./companion-store.js";
 import { type HostToolInput, registerHostTools } from "./host-tool-register.js";
@@ -70,6 +71,7 @@ export class PiRuntime {
 	private readonly sessions = new Map<string, OpenSession>();
 	private readonly opening = new Map<string, Promise<AgentSession>>();
 	private readonly deleting = new Map<string, Promise<void>>();
+	private readonly sessionEvents = new Map<string, PQueue>();
 	private readonly cwd: string;
 	private readonly sessionDir: string;
 	private roleResources: PiRoleResources;
@@ -118,9 +120,7 @@ export class PiRuntime {
 	}
 
 	async open(sessionId: string): Promise<AgentSession> {
-		this.requireAvailable(sessionId);
-		const current = await this.current(sessionId);
-		return current ?? this.openManager(await this.loadManager(sessionId));
+		return this.inSessionSequence(sessionId, () => this.openNow(sessionId));
 	}
 
 	snapshot(sessionId: string): PiSnapshot {
@@ -128,108 +128,134 @@ export class PiRuntime {
 	}
 
 	async send(sessionId: string, text: string, images?: Images): Promise<void> {
-		const session = await this.requireSession(sessionId);
-		const shouldName =
-			!session.sessionName && !session.messages.some(({ role }) => role === "user");
-		let turn!: Promise<void>;
-		await new Promise<void>((accepted, rejected) => {
-			turn = session.prompt(text, {
-				...(images?.length ? { images } : {}),
-				streamingBehavior: "followUp",
-				preflightResult: (ok) =>
-					ok ? accepted() : rejected({ kind: "unavailable", reason: "pi_prompt_rejected" }),
+		return this.inSessionSequence(sessionId, async () => {
+			const session = await this.requireSessionNow(sessionId);
+			const shouldName =
+				!session.sessionName && !session.messages.some(({ role }) => role === "user");
+			let turn!: Promise<void>;
+			await new Promise<void>((accepted, rejected) => {
+				turn = session.prompt(text, {
+					...(images?.length ? { images } : {}),
+					streamingBehavior: "followUp",
+					preflightResult: (ok) =>
+						ok ? accepted() : rejected({ kind: "unavailable", reason: "pi_prompt_rejected" }),
+				});
+				void turn.catch(rejected);
 			});
-			void turn.catch(rejected);
+			if (shouldName)
+				void turn.then(() => this.nameFirstTurn(session, text)).catch(() => undefined);
 		});
-		if (shouldName) void turn.then(() => this.nameFirstTurn(session, text)).catch(() => undefined);
 	}
 
 	async fork(sessionId: string, entryId: string): Promise<AgentSession> {
-		const source = await this.requireSession(sessionId);
-		const path = source.sessionManager.createBranchedSession(entryId);
-		if (!path) throw { kind: "unavailable", reason: "pi_session_not_persisted" };
-		return this.openManager(SessionManager.open(path, this.sessionDir, this.cwd));
+		return this.inSessionSequence(sessionId, async () => {
+			const source = await this.requireSessionNow(sessionId);
+			const path = source.sessionManager.createBranchedSession(entryId);
+			if (!path) throw { kind: "unavailable", reason: "pi_session_not_persisted" };
+			return this.openManager(SessionManager.open(path, this.sessionDir, this.cwd));
+		});
 	}
 
 	async abort(sessionId: string) {
-		return (await this.requireSession(sessionId)).abort();
+		return this.inSessionSequence(sessionId, async () =>
+			(await this.requireSessionNow(sessionId)).abort(),
+		);
 	}
 
 	async navigate(sessionId: string, entryId: string) {
-		return (await this.requireSession(sessionId)).navigateTree(entryId, { summarize: false });
+		return this.inSessionSequence(sessionId, async () =>
+			(await this.requireSessionNow(sessionId)).navigateTree(entryId, { summarize: false }),
+		);
 	}
 
 	async edit(sessionId: string, entryId: string, text: string) {
-		const session = await this.requireSession(sessionId);
-		const result = await session.navigateTree(entryId, { summarize: false });
-		if (!result.cancelled) await session.sendUserMessage(text, { deliverAs: "followUp" });
-		return result;
+		return this.inSessionSequence(sessionId, async () => {
+			const session = await this.requireSessionNow(sessionId);
+			const result = await session.navigateTree(entryId, { summarize: false });
+			if (!result.cancelled) await session.sendUserMessage(text, { deliverAs: "followUp" });
+			return result;
+		});
 	}
 
 	async regenerate(sessionId: string, entryId: string, feedback?: string) {
-		const session = await this.requireSession(sessionId);
-		const entry = session.sessionManager.getEntry(entryId);
-		const user = entry?.parentId ? session.sessionManager.getEntry(entry.parentId) : undefined;
-		if (user?.type !== "message" || user.message.role !== "user") {
-			throw { kind: "not_found", reason: "pi_user_message_not_found" };
-		}
-		const result = await session.navigateTree(user.id, { summarize: false });
-		if (result.cancelled) return result;
-		if (!result.editorText) throw new Error("Pi navigation returned no user message");
-		const prompt = feedback?.trim()
-			? `${result.editorText}\n\n重新生成反馈：${feedback.trim()}`
-			: result.editorText;
-		await session.prompt(prompt);
-		return result;
+		return this.inSessionSequence(sessionId, async () => {
+			const session = await this.requireSessionNow(sessionId);
+			const entry = session.sessionManager.getEntry(entryId);
+			const user = entry?.parentId ? session.sessionManager.getEntry(entry.parentId) : undefined;
+			if (user?.type !== "message" || user.message.role !== "user") {
+				throw { kind: "not_found", reason: "pi_user_message_not_found" };
+			}
+			const result = await session.navigateTree(user.id, { summarize: false });
+			if (result.cancelled) return result;
+			if (!result.editorText) throw new Error("Pi navigation returned no user message");
+			const prompt = feedback?.trim()
+				? `${result.editorText}\n\n重新生成反馈：${feedback.trim()}`
+				: result.editorText;
+			await this.promptAccepted(session, prompt);
+			return result;
+		});
 	}
 
 	async continue(sessionId: string) {
-		return (await this.requireSession(sessionId)).agent.continue();
+		return this.inSessionSequence(sessionId, async () => {
+			const turn = (await this.requireSessionNow(sessionId)).agent.continue();
+			void turn.catch(() => undefined);
+		});
 	}
 
 	async rename(sessionId: string, name: string): Promise<void> {
-		this.requireAvailable(sessionId);
-		const open = await this.current(sessionId);
-		if (open) open.setSessionName(name);
-		else (await this.loadManager(sessionId)).appendSessionInfo(name);
+		return this.inSessionSequence(sessionId, async () => {
+			const open = await this.current(sessionId);
+			if (open) open.setSessionName(name);
+			else (await this.loadManager(sessionId)).appendSessionInfo(name);
+		});
 	}
 
 	async setModel(sessionId: string, providerId: string, modelId: string): Promise<ModelRoute> {
-		const model = (await this.options.models.getModels()).getModel(providerId, modelId);
-		if (!model) throw { kind: "not_found", reason: "configured_model_not_found" };
-		await (await this.requireSession(sessionId)).setModel(model);
-		return { providerId: model.provider, modelId: model.id };
+		return this.inSessionSequence(sessionId, async () => {
+			const model = (await this.options.models.getModels()).getModel(providerId, modelId);
+			if (!model) throw { kind: "not_found", reason: "configured_model_not_found" };
+			await (await this.requireSessionNow(sessionId)).setModel(model);
+			return { providerId: model.provider, modelId: model.id };
+		});
 	}
 
 	async modelFor(sessionId: string): Promise<ModelRoute | undefined> {
-		this.requireAvailable(sessionId);
-		const open = await this.current(sessionId);
-		if (open?.model) return { providerId: open.model.provider, modelId: open.model.id };
-		const remembered = (await this.loadManager(sessionId)).buildSessionContext().model;
-		return remembered
-			? { providerId: remembered.provider, modelId: remembered.modelId }
-			: this.options.defaultModel(this.options.character().id);
+		return this.inSessionSequence(sessionId, async () => {
+			const open = await this.current(sessionId);
+			if (open?.model) return { providerId: open.model.provider, modelId: open.model.id };
+			const remembered = (await this.loadManager(sessionId)).buildSessionContext().model;
+			return remembered
+				? { providerId: remembered.provider, modelId: remembered.modelId }
+				: this.options.defaultModel(this.options.character().id);
+		});
 	}
 
 	async deliverExternalResult(sessionId: string, runId: string, content: string) {
-		const session = await this.requireSession(sessionId);
-		const existing = session.sessionManager
-			.getEntries()
-			.find((entry) => isExternalResult(entry, runId));
-		if (existing) return { entryId: existing.id };
-		await session.sendCustomMessage(
-			{
-				customType: "host_external_agent_result",
-				content,
-				display: true,
-				details: { runId },
-			},
-			{ triggerTurn: true, deliverAs: "followUp" },
-		);
-		return { entryId: session.sessionManager.getLeafId() ?? runId };
+		return this.inSessionSequence(sessionId, async () => {
+			const session = await this.requireSessionNow(sessionId);
+			const existing = session.sessionManager
+				.getEntries()
+				.find((entry) => isExternalResult(entry, runId));
+			if (existing) return { entryId: existing.id };
+			await session.sendCustomMessage(
+				{
+					customType: "host_external_agent_result",
+					content,
+					display: true,
+					details: { runId },
+				},
+				{ triggerTurn: true, deliverAs: "followUp" },
+			);
+			return { entryId: session.sessionManager.getLeafId() ?? runId };
+		});
 	}
 
 	async close(sessionId: string): Promise<void> {
+		return this.inSessionSequence(sessionId, () => this.closeNow(sessionId));
+	}
+
+	private async closeNow(sessionId: string): Promise<void> {
 		const session = await this.current(sessionId).catch(() => undefined);
 		if (!session) return;
 		const discarded = Boolean(session.sessionFile && !existsSync(session.sessionFile));
@@ -246,15 +272,24 @@ export class PiRuntime {
 
 	async closeAll(): Promise<void> {
 		const ids = new Set([...this.sessions.keys(), ...this.opening.keys()]);
-		await Promise.all([...ids].map((id) => this.close(id)));
+		await Promise.all([
+			...this.deleting.values(),
+			...[...ids].filter((id) => !this.deleting.has(id)).map((id) => this.close(id)),
+		]);
 	}
 
 	async delete(sessionId: string, remove: () => void | Promise<void>): Promise<void> {
 		const pending = this.deleting.get(sessionId);
 		if (pending) return pending;
 		const deletion = (async () => {
-			await this.close(sessionId);
-			await remove();
+			await this.inSessionSequence(
+				sessionId,
+				async () => {
+					await this.closeNow(sessionId);
+					await remove();
+				},
+				true,
+			);
 		})().finally(() => this.deleting.delete(sessionId));
 		this.deleting.set(sessionId, deletion);
 		return deletion;
@@ -274,11 +309,46 @@ export class PiRuntime {
 		return SessionManager.open(match.path, this.sessionDir, this.cwd);
 	}
 
-	private async requireSession(sessionId: string): Promise<AgentSession> {
-		this.requireAvailable(sessionId);
+	private async requireSessionNow(sessionId: string): Promise<AgentSession> {
 		const open = await this.current(sessionId);
 		if (open) return open;
-		return this.open(sessionId);
+		return this.openNow(sessionId);
+	}
+
+	private async openNow(sessionId: string): Promise<AgentSession> {
+		const current = await this.current(sessionId);
+		return current ?? this.openManager(await this.loadManager(sessionId));
+	}
+
+	private async promptAccepted(session: AgentSession, text: string): Promise<void> {
+		let turn!: Promise<void>;
+		await new Promise<void>((accepted, rejected) => {
+			turn = session.prompt(text, {
+				streamingBehavior: "followUp",
+				preflightResult: (ok) =>
+					ok ? accepted() : rejected({ kind: "unavailable", reason: "pi_prompt_rejected" }),
+			});
+			void turn.catch(rejected);
+		});
+	}
+
+	private async inSessionSequence<T>(
+		sessionId: string,
+		run: () => T | Promise<T>,
+		allowDeleting = false,
+	): Promise<T> {
+		if (!allowDeleting) this.requireAvailable(sessionId);
+		const queue = this.sessionEvents.get(sessionId) ?? new PQueue({ concurrency: 1 });
+		this.sessionEvents.set(sessionId, queue);
+		try {
+			const result = await queue.add(async () => {
+				if (!allowDeleting) this.requireAvailable(sessionId);
+				return run();
+			});
+			return result as T;
+		} finally {
+			if (queue.pending === 0 && queue.size === 0) this.sessionEvents.delete(sessionId);
+		}
 	}
 
 	private current(sessionId: string): Promise<AgentSession | undefined> {
@@ -348,9 +418,9 @@ export class PiRuntime {
 							systemPrompt: `${event.systemPrompt}\n\n${additions.join("\n\n")}`,
 						};
 					});
-					pi.on("agent_settled", () =>
-						this.options.memory.capture(companionId, sessionId, session.messages),
-					);
+					pi.on("agent_settled", () => {
+						return this.options.memory.capture(companionId, sessionId, session.messages);
+					});
 				},
 			],
 		});
