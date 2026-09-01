@@ -22,8 +22,14 @@ export class CompanionStorageRegistry {
 	constructor(dataRoot: string) {
 		this.layout = new RuntimeLayout(dataRoot);
 		this.layout.ensureSystemDirectories();
-		this.system = new SystemDatabase(this.layout.systemDatabase);
-		this.system.initialize(SYSTEM_SCHEMA_SQL);
+		const system = new SystemDatabase(this.layout.systemDatabase);
+		try {
+			system.initialize(SYSTEM_SCHEMA_SQL);
+		} catch (error) {
+			system.close();
+			throw error;
+		}
+		this.system = system;
 	}
 
 	open(companionId: string): CompanionStorageHandle {

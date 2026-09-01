@@ -163,6 +163,20 @@ export {
 	findHostLocalEmbeddingCandidate,
 	HOST_SETTINGS_CAPABILITIES,
 } from "./settings/capabilities.js";
+export type {
+	BootstrapFatalIssue,
+	BootstrapHealth,
+	BootstrapInspectionOptions,
+} from "./storage/bootstrap-recovery.js";
+export {
+	completePendingProductResets,
+	inspectBootstrapHealth,
+	repairCompanionDatabase,
+	repairSystemDatabase,
+	resetProductData,
+	restoreDefaultCharacterPackage,
+	selectDefaultCharacter,
+} from "./storage/bootstrap-recovery.js";
 export type { CompanionStorageHandle } from "./storage/companion-storage.js";
 export { CompanionStorageRegistry } from "./storage/companion-storage.js";
 export { CompanionDatabase, SystemDatabase } from "./storage/database.js";

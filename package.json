@@ -25,7 +25,7 @@
 		"test:e2e:web": "npm run test:e2e --workspace @bear-harness/web-dev",
 		"test:e2e:web:required": "npm run test:e2e:required --workspace @bear-harness/web-dev",
 		"test:e2e:web:live": "npm run test:e2e:live --workspace @bear-harness/web-dev",
-		"test:release:recovery": "npm run test:release:recovery --workspace @bear-harness/host-runtime",
+		"test:release:recovery": "npm run test:release:recovery --workspace @bear-harness/host-runtime && npm run test:release:recovery --workspace @bear-harness/desktop",
 		"test:e2e:packaged": "npm run test:e2e:packaged --workspace @bear-harness/desktop",
 		"test:diagnostics:crash": "npm run test:diagnostics:crash --workspace @bear-harness/desktop",
 		"build": "npm run build --workspace @bear-harness/desktop && npm run build --workspace @bear-harness/web-dev",

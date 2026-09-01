@@ -23,12 +23,19 @@ Renderer 启用 context isolation 和 sandbox，关闭 Node integration；它不
 ## 启动
 
 1. 在 renderer 创建前确定 product-scoped data root；
-2. 建立凭据、diagnostics、recovery 和 update 服务；
-3. 创建并启动 HostRuntime；
-4. 注册 versioned RPC、临时失效通知、Pi transient event 及 native action handlers；
-5. 创建 main window 并只接受固定 source/E2E 或 loopback dev origin。
+2. 在 Host 和产品 IPC 创建前检查目录骨架、系统库、当前角色包及当前角色库；
+3. 建立凭据、diagnostics、recovery 和 update 服务；
+4. 创建并启动 HostRuntime；
+5. 注册 versioned RPC、临时失效通知、Pi transient event 及 native action handlers；
+6. 创建 main window 并只接受固定 source/E2E 或 loopback dev origin。
 
 shutdown 先停止新 IPC，清理 window listeners 与 push subscriptions，再关闭 HostRuntime 和 diagnostics。窗口销毁必须撤销属于该 Renderer 的临时资源。
+
+## 启动恢复
+
+Recovery 是一个不加载 preload、Node 或产品 IPC 的独立最小窗口，只在产品无法安全启动时出现。它只处理四类全局启动阻断：`settings.db`、当前角色的 `runtime.db`、当前角色包（含默认包）以及文件系统骨架。非当前角色损坏、单个 Session/transcript、Run 或 Artifact 的局部错误不会把整个应用导入 Recovery，应由正常界面的切换或删除流程处理。
+
+数据库修复先建立并校验新库，逐行迁移仍满足当前 schema 的数据，再以同目录 rename 激活；旧库、WAL 和 SHM 保留在隔离目录。默认角色包从随应用发布的可信 seed 重新复制，旧包同样保留。文件系统异常只提供“保存并清空”或开发协助；清空仅移动 Bear 的 `system/characters/companions`，不依赖额外 marker 文件，也不清除 Electron Profile。所有进行中的修复和清空都能仅根据临时目录状态在下次启动继续完成。
 
 ## IPC
 

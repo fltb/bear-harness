@@ -5,7 +5,12 @@ import { parse } from "@babel/parser";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRoot = resolve(repoRoot, "packages/host-runtime/src");
-const allowedRawDatabaseModules = new Set([resolve(sourceRoot, "storage/database.ts")]);
+const allowedRawDatabaseModules = new Set([
+	resolve(sourceRoot, "storage/database.ts"),
+	// Bootstrap repair must inspect and salvage databases whose schema/rows may be
+	// too damaged to construct the normal Drizzle-backed storage layer.
+	resolve(sourceRoot, "storage/bootstrap-recovery.ts"),
+]);
 const forbidden = [
 	/import\s+(?:type\s+)?[^;]*from\s+["']node:sqlite["']/,
 	/\.prepare\s*\(/,

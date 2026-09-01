@@ -66,6 +66,8 @@ npm run test:diagnostics:crash
 
 Desktop 额外验证 IPC sender/frame/origin、credential vault、local file picker、Artifact open/reveal/save-as、presentation copy cleanup、窗口销毁后的 subscription cleanup 和平台更新策略。
 
+恢复验收还要覆盖：损坏 `settings.db` 后进入独立 Recovery 并重建重启；当前角色 `runtime.db` 重建；非默认角色包切回默认角色；默认角色包从 seed 恢复；清空事务在每个目录移动阶段被 kill 后可继续。另设反向用例，证明非当前角色库/包和单个坏 transcript 不会触发全局 Recovery。
+
 ## Release gate
 
 `npm run release:gate` 只允许在受保护的 `CI=true` 矩阵运行。它覆盖 lint、typecheck、coverage、build、recovery、Web required E2E 和 Electron E2E；发布工作流还必须提供：

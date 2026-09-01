@@ -348,6 +348,7 @@ function validateCharacterCard(
  * The seed root is read only during bootstrap, before any package is loaded.
  */
 export class CharacterLoader {
+	private readonly packageRecoveryFailures = new Map<string, unknown>();
 	constructor(
 		private readonly seedRoot: string,
 		private readonly libraryRoot: string = seedRoot,
@@ -394,28 +395,14 @@ export class CharacterLoader {
 					verify: (candidate) => this.verifyPackageDirectory(characterId, candidate),
 				});
 			} catch (error) {
-				throw {
-					kind: "conflict",
-					reason: "recovery_required",
-					details: {
-						characterId,
-						transaction: {
-							status: "recovery-required",
-							reason:
-								error instanceof Error
-									? error.message
-									: "character package transaction cannot be recovered",
-						},
-					},
-				};
+				this.packageRecoveryFailures.set(characterId, error);
+				continue;
 			}
 			if (result.status === "recovery-required") {
-				throw {
-					kind: "conflict",
-					reason: "recovery_required",
-					details: { characterId, transaction: result },
-				};
+				this.packageRecoveryFailures.set(characterId, result);
+				continue;
 			}
+			this.packageRecoveryFailures.delete(characterId);
 		}
 	}
 
@@ -565,6 +552,14 @@ export class CharacterLoader {
 	 * `CharacterPackage` is package storage, not a memory record.
 	 */
 	load(id: string): CharacterPackage | null {
+		const recoveryFailure = this.packageRecoveryFailures.get(id);
+		if (recoveryFailure) {
+			throw {
+				kind: "conflict",
+				reason: "recovery_required",
+				details: { characterId: id, transaction: recoveryFailure },
+			};
+		}
 		const path = join(this.packageDirectory(id), "character.yaml");
 		if (!existsSync(path)) return null;
 		const parsed = parse(readFileSync(path, "utf8")) as CharacterPackage;
@@ -1049,7 +1044,13 @@ Do not claim that missing an explicit request prevents TDAI capture, and do not 
 			.filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
 			.map((entry) => entry.name);
 		return ids
-			.map((id) => this.load(id))
+			.map((id) => {
+				try {
+					return this.load(id);
+				} catch {
+					return null;
+				}
+			})
 			.filter((character): character is CharacterPackage => character !== null)
 			.map((character) => ({
 				id: character.id,

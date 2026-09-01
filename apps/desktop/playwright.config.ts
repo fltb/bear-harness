@@ -11,7 +11,7 @@ const here = dirname(fileURLToPath(import.meta.url));
  */
 export default defineConfig({
 	testDir: "./e2e",
-	testMatch: /(app|diagnostics|attachment-agent)\.spec\.ts/,
+	testMatch: /(app|diagnostics|attachment-agent|recovery)\.spec\.ts/,
 	timeout: 90_000,
 	workers: 1,
 	reporter: [["list"]],

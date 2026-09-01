@@ -170,4 +170,47 @@ describe("RecoveryController", () => {
 		expect(result).toMatchObject({ status: "succeeded", incidentResolved: true });
 		expect(order).toEqual(["export", "reset"]);
 	});
+
+	it("runs only the explicitly configured fatal-recovery action", async () => {
+		const root = temporaryRoot();
+		mkdirSync(join(root, "data"));
+		const repaired: string[] = [];
+		const recovery = new RecoveryController({
+			reason: "settings database is damaged",
+			dataRoot: join(root, "data"),
+			actions: ["repair_database", "exit"],
+			native: native(),
+			retry: () => false,
+			repairDatabase: () => {
+				repaired.push("database");
+			},
+		});
+		expect(recovery.prompt().actions).toEqual(["repair_database", "exit"]);
+		expect(await recovery.execute("repair_database")).toMatchObject({
+			status: "succeeded",
+			restartRequired: true,
+		});
+		expect(repaired).toEqual(["database"]);
+	});
+
+	it("uses the scoped clear callback after a verified export", async () => {
+		const root = temporaryRoot();
+		const dataRoot = join(root, "data");
+		const destination = join(root, "export-before-clear");
+		mkdirSync(dataRoot);
+		writeFileSync(join(dataRoot, "state"), "valuable");
+		const calls: string[] = [];
+		const recovery = new RecoveryController({
+			reason: "filesystem is damaged",
+			dataRoot,
+			native: native({ destination }),
+			retry: () => false,
+			clearData: () => {
+				calls.push("clear");
+			},
+		});
+		expect(await recovery.execute("safe_reset")).toMatchObject({ status: "succeeded" });
+		expect(existsSync(join(destination, "state"))).toBe(true);
+		expect(calls).toEqual(["clear"]);
+	});
 });

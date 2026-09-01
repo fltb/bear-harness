@@ -14,6 +14,7 @@
 		"build": "node scripts/build.mjs",
 		"test:unit": "vitest run",
 		"test:coverage": "vitest run --coverage",
+		"test:release:recovery": "vitest run tests/recovery-controller.spec.ts tests/recovery-state.spec.ts",
 		"test:e2e": "npm run build && playwright test",
 		"test:e2e:packaged": "node scripts/resolve-packaged-binary.mjs",
 		"test:diagnostics:crash": "node scripts/crash-smoke.mjs",

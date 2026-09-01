@@ -10,12 +10,20 @@ import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+	type BootstrapFatalIssue,
+	completePendingProductResets,
 	createDiagnostics,
 	createHostRuntime,
 	type Diagnostics,
 	formatTraceparent,
 	type HostRuntime,
+	inspectBootstrapHealth,
 	RuntimeLayout,
+	repairCompanionDatabase,
+	repairSystemDatabase,
+	resetProductData,
+	restoreDefaultCharacterPackage,
+	selectDefaultCharacter,
 } from "@bear-harness/host-runtime";
 import { productConfig } from "@bear-harness/product-config";
 import { app, BrowserWindow, crashReporter, dialog, ipcMain, shell } from "electron";
@@ -40,6 +48,7 @@ import {
 	RecoveryStateStore,
 	recoveryStateRootForAppData,
 } from "./recovery-state.js";
+import { chooseRecoveryAction } from "./recovery-window.js";
 import { UpdateService } from "./update-service.js";
 
 const DEV_RENDERER_URL = "http://127.0.0.1:3100";
@@ -171,38 +180,10 @@ function requestShutdown(exitCode: number): void {
 	app.quit();
 }
 
-const RECOVERY_BUTTONS = [
-	"Retry",
-	"Export current data",
-	"Open data location",
-	"Open backup location",
-	"Safe reset",
-	"Exit",
-] as const;
-const RECOVERY_BUTTON_ACTIONS = [
-	"retry",
-	"export_data",
-	"open_data_location",
-	"open_backup_location",
-	"safe_reset",
-	"exit",
-] as const;
-
 function nativeRecoveryInterface(): NativeRecoveryInterface {
 	return {
-		chooseAction: async (prompt: RecoveryPrompt) => {
-			const result = await dialog.showMessageBox({
-				type: "warning",
-				title: `${productConfig.productName} Recovery`,
-				message: "Application recovery is required",
-				detail: prompt.reason,
-				buttons: [...RECOVERY_BUTTONS],
-				defaultId: 0,
-				cancelId: RECOVERY_BUTTONS.length - 1,
-				noLink: true,
-			});
-			return RECOVERY_BUTTON_ACTIONS[result.response] ?? "exit";
-		},
+		chooseAction: (prompt: RecoveryPrompt) =>
+			chooseRecoveryAction(productConfig.productName, prompt),
 		chooseDestination: async (request: RecoveryDestinationRequest) => {
 			const result = await dialog.showSaveDialog({
 				title:
@@ -241,8 +222,40 @@ function firstPendingIncident(): RecoveryIncident | undefined {
 async function runRecoveryInterface(
 	reason: string,
 	retry: () => boolean | Promise<boolean>,
+	issue?: BootstrapFatalIssue,
 ): Promise<void> {
 	const incident = firstPendingIncident();
+	const bootstrap = {
+		dataDir: canonicalDataRoot,
+		characterSeedRoot: characterSeedRoot(),
+		defaultCharacterId: productConfig.defaultCharacterId,
+	};
+	const actions = issue
+		? issue.kind === "settings_database"
+			? (["repair_database", "export_data", "open_data_location", "safe_reset", "exit"] as const)
+			: issue.kind === "companion_database"
+				? ([
+						"repair_database",
+						...(issue.characterId === productConfig.defaultCharacterId
+							? []
+							: (["use_default_character"] as const)),
+						"export_data",
+						"open_data_location",
+						"safe_reset",
+						"exit",
+					] as const)
+				: issue.kind === "character_package"
+					? issue.defaultCharacter
+						? ([
+								"restore_default_character",
+								"export_data",
+								"open_data_location",
+								"safe_reset",
+								"exit",
+							] as const)
+						: (["use_default_character", "export_data", "open_data_location", "exit"] as const)
+					: (["export_data", "open_data_location", "safe_reset", "exit"] as const)
+		: (["retry", "export_data", "open_data_location", "exit"] as const);
 	const recovery = new RecoveryController({
 		reason,
 		dataRoot: recoveryDataRoot(),
@@ -250,6 +263,27 @@ async function runRecoveryInterface(
 		...(incident && recoveryStore ? { incident, stateStore: recoveryStore } : {}),
 		native: nativeRecoveryInterface(),
 		retry,
+		...(actions ? { actions } : {}),
+		...(issue?.kind === "settings_database"
+			? {
+					repairDatabase: () => {
+						repairSystemDatabase(canonicalDataRoot);
+					},
+				}
+			: issue?.kind === "companion_database"
+				? {
+						repairDatabase: () => {
+							repairCompanionDatabase(canonicalDataRoot, issue.characterId);
+						},
+					}
+				: {}),
+		useDefaultCharacter: () => selectDefaultCharacter(bootstrap),
+		restoreDefaultCharacter: () => {
+			restoreDefaultCharacterPackage(bootstrap);
+		},
+		clearData: () => {
+			resetProductData(canonicalDataRoot, recoveryRoot);
+		},
 	});
 	for (;;) {
 		const result = await recovery.present();
@@ -264,7 +298,7 @@ async function runRecoveryInterface(
 			continue;
 		}
 		if (result.status === "succeeded" && !result.restartRequired) continue;
-		if (result.status === "succeeded") app.relaunch();
+		if (result.status === "succeeded" && !isSourceE2E) app.relaunch();
 		requestShutdown(result.status === "succeeded" ? 0 : 1);
 		return;
 	}
@@ -338,9 +372,10 @@ function sourceE2EPiWorkerPath(): string | undefined {
 
 async function initializeHost(): Promise<boolean> {
 	let ipcHandlersDispose: (() => void) | null = null;
+	let runtime: ReturnType<typeof createHostRuntime> | null = null;
 	try {
 		const updater = updateService;
-		const runtime = createHostRuntime({
+		const createdRuntime = createHostRuntime({
 			dataDir: userData,
 			characterSeedRoot: characterSeedRoot(),
 			productConfig,
@@ -356,9 +391,10 @@ async function initializeHost(): Promise<boolean> {
 			piWorkerPath: sourceE2EPiWorkerPath(),
 			artifactPresenter: artifactPresentation.presenter,
 		});
-		const disposeRouter = wireElectronIpcHandlers(runtime.dispatcher, windowRegistry, {
-			subscribeInvalidations: (listener) => runtime.subscribeInvalidations(listener),
-			subscribeLivePush: (listener) => runtime.subscribeLivePush(listener),
+		runtime = createdRuntime;
+		const disposeRouter = wireElectronIpcHandlers(createdRuntime.dispatcher, windowRegistry, {
+			subscribeInvalidations: (listener) => createdRuntime.subscribeInvalidations(listener),
+			subscribeLivePush: (listener) => createdRuntime.subscribeLivePush(listener),
 			diagnostics,
 		});
 		const disposeLocalFileBridge = registerLocalFileBridge(windowRegistry);
@@ -367,12 +403,13 @@ async function initializeHost(): Promise<boolean> {
 			disposeRouter();
 		};
 		disposeElectronIpcHandlers = ipcHandlersDispose;
-		await runtime.start();
-		hostRuntime = runtime;
+		await createdRuntime.start();
+		hostRuntime = createdRuntime;
 		return true;
 	} catch (error) {
 		ipcHandlersDispose?.();
 		if (disposeElectronIpcHandlers === ipcHandlersDispose) disposeElectronIpcHandlers = null;
+		await runtime?.close().catch(() => {});
 		process.stderr.write(`storage unavailable: ${(error as Error)?.message ?? String(error)}\n`);
 		return false;
 	}
@@ -478,17 +515,47 @@ diagnostics.runInSession(() => {
 		.whenReady()
 		.then(async () => {
 			if (bootstrapFailureReason) {
-				await runRecoveryInterface(bootstrapFailureReason, () => {
-					if (!recoveryStore) return false;
-					try {
-						mkdirSync(canonicalDataRoot, { recursive: true, mode: 0o700 });
-						storageLayoutReady = true;
-						bootstrapFailureReason = null;
-						return true;
-					} catch {
-						return false;
-					}
-				});
+				await runRecoveryInterface(
+					bootstrapFailureReason,
+					() => {
+						if (!recoveryStore) return false;
+						try {
+							mkdirSync(canonicalDataRoot, { recursive: true, mode: 0o700 });
+							storageLayoutReady = true;
+							bootstrapFailureReason = null;
+							return true;
+						} catch {
+							return false;
+						}
+					},
+					{ kind: "filesystem", message: bootstrapFailureReason },
+				);
+				return;
+			}
+			try {
+				completePendingProductResets(canonicalDataRoot, recoveryRoot);
+			} catch (error) {
+				await runRecoveryInterface(
+					error instanceof Error ? error.message : "Product data reset could not be completed",
+					() => false,
+					{
+						kind: "filesystem",
+						message: error instanceof Error ? error.message : String(error),
+					},
+				);
+				return;
+			}
+			const bootstrapHealth = inspectBootstrapHealth({
+				dataDir: canonicalDataRoot,
+				characterSeedRoot: characterSeedRoot(),
+				defaultCharacterId: productConfig.defaultCharacterId,
+			});
+			if (bootstrapHealth.status === "fatal") {
+				await runRecoveryInterface(
+					bootstrapHealth.issue.message,
+					() => false,
+					bootstrapHealth.issue,
+				);
 				return;
 			}
 			updateService = new UpdateService({

@@ -515,9 +515,9 @@ describe("character package durable replacement", () => {
 		copyCharacterPackage(marker.backup, "jizhou", "backup");
 		persistCharacterTransaction(libraryRoot, marker);
 
-		expect(() =>
-			new CharacterLoader(characterRoot, libraryRoot).bootstrapLibrary("jizhou"),
-		).toThrow(
+		const loader = new CharacterLoader(characterRoot, libraryRoot);
+		loader.bootstrapLibrary("jizhou");
+		expect(() => loader.load("jizhou")).toThrow(
 			expect.objectContaining({
 				kind: "conflict",
 				reason: "recovery_required",
@@ -535,5 +535,23 @@ describe("character package durable replacement", () => {
 			);
 		}
 		expect(existsSync(durableFileTransactionMarkerPath(libraryRoot, marker.target))).toBe(true);
+	});
+
+	it("does not let an inactive package recovery failure block the default package", () => {
+		const libraryRoot = mkdtempSync(join(tmpdir(), "bear-character-inactive-recovery-"));
+		temporaryDirectories.push(libraryRoot);
+		copyCharacterPackage(join(libraryRoot, "jizhou"), "jizhou", "default");
+		const marker = characterTransaction(libraryRoot, "inactive-role", "old-target-moved");
+		copyCharacterPackage(marker.target, "inactive-role", "target");
+		copyCharacterPackage(marker.staging, "inactive-role", "staging");
+		copyCharacterPackage(marker.backup, "inactive-role", "backup");
+		persistCharacterTransaction(libraryRoot, marker);
+
+		const loader = new CharacterLoader(characterRoot, libraryRoot);
+		loader.bootstrapLibrary("jizhou");
+		expect(loader.load("jizhou")?.id).toBe("jizhou");
+		expect(() => loader.load("inactive-role")).toThrow(
+			expect.objectContaining({ reason: "recovery_required" }),
+		);
 	});
 });

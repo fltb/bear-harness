@@ -24,6 +24,9 @@ import type {
 
 export type RecoveryAction =
 	| "retry"
+	| "repair_database"
+	| "use_default_character"
+	| "restore_default_character"
 	| "export_data"
 	| "open_data_location"
 	| "open_backup_location"
@@ -87,6 +90,11 @@ export interface RecoveryControllerOptions {
 	stateStore?: Pick<RecoveryStateStore, "resolveVerified">;
 	native: NativeRecoveryInterface;
 	retry(): boolean | Promise<boolean>;
+	actions?: readonly RecoveryAction[];
+	repairDatabase?(): void | Promise<void>;
+	useDefaultCharacter?(): void | Promise<void>;
+	restoreDefaultCharacter?(): void | Promise<void>;
+	clearData?(): void | Promise<void>;
 	files?: Partial<RecoveryFileOperations>;
 	now?: () => Date;
 }
@@ -370,7 +378,7 @@ export class RecoveryController {
 	}
 
 	prompt(): RecoveryPrompt {
-		return { reason: this.options.reason, actions: RECOVERY_ACTIONS };
+		return { reason: this.options.reason, actions: this.options.actions ?? RECOVERY_ACTIONS };
 	}
 
 	async present(): Promise<RecoveryActionResult> {
@@ -387,6 +395,20 @@ export class RecoveryController {
 					this.resolveIncident(action);
 					return this.success(action, true);
 				}
+				case "repair_database":
+					if (!this.options.repairDatabase) throw new Error("Database repair is unavailable");
+					await this.options.repairDatabase();
+					return this.success(action, true);
+				case "use_default_character":
+					if (!this.options.useDefaultCharacter)
+						throw new Error("Default character recovery is unavailable");
+					await this.options.useDefaultCharacter();
+					return this.success(action, true);
+				case "restore_default_character":
+					if (!this.options.restoreDefaultCharacter)
+						throw new Error("Default character package recovery is unavailable");
+					await this.options.restoreDefaultCharacter();
+					return this.success(action, true);
 				case "export_data": {
 					const destination = await this.chooseDestination("export");
 					if (!destination) return { status: "cancelled", action };
@@ -406,12 +428,14 @@ export class RecoveryController {
 					const destination = await this.chooseDestination("safe_reset");
 					if (!destination) return { status: "cancelled", action };
 					this.files.exportData(this.options.dataRoot, destination);
-					await this.files.replace({
-						root: dirname(this.options.resetTarget ?? this.options.dataRoot),
-						target: this.options.resetTarget ?? this.options.dataRoot,
-						stage: (stagingPath) => mkdirSync(stagingPath, { mode: 0o700 }),
-						verify: (candidatePath) => scanTree(candidatePath).size === 0,
-					});
+					if (this.options.clearData) await this.options.clearData();
+					else
+						await this.files.replace({
+							root: dirname(this.options.resetTarget ?? this.options.dataRoot),
+							target: this.options.resetTarget ?? this.options.dataRoot,
+							stage: (stagingPath) => mkdirSync(stagingPath, { mode: 0o700 }),
+							verify: (candidatePath) => scanTree(candidatePath).size === 0,
+						});
 					this.resolveIncident(action);
 					return this.success(action, true);
 				}

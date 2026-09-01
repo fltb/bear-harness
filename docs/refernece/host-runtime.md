@@ -16,6 +16,7 @@
 | `src/companion/state-schema.ts` | `x-scope` 与 Character/Display 结构验证 |
 | `src/storage/layout.ts` | `system/characters/companions` 路径与安全组件 |
 | `src/storage/companion-storage.ts` | system DB 与每角色 DB 生命周期 |
+| `src/storage/bootstrap-recovery.ts` | 启动致命状态检查、数据库重建和可中断恢复 |
 | `src/models/registry.ts` / `src/providers/` | 系统模型池、角色默认 route 和凭据边界 |
 | `src/memory/` | 显式 Memory 与角色级 TDAI runtime |
 | `src/external-agents/run-service.ts` | Run 生命周期、恢复、证据与结果交付 |
@@ -61,6 +62,8 @@ Character 顶层 child 恰好一个 `x-scope: global | conversation`，后代不
 ## 存储
 
 系统与角色数据库由不同 handle 管理。系统模型删除先清理每个角色数据库中的对应 route，再删除系统模型记录，不虚构跨 SQLite 文件事务，也不保留旧结构兼容路径。
+
+启动预检只打开会阻止产品整体启动的持久化状态：系统库、当前角色包和当前角色库。数据库同时检查 SQLite integrity、foreign keys、必需 schema、单例/身份以及启动阶段会读取的 JSON。修复建立当前最终 schema，迁移可验证的行并让坏行回到默认值；新库完整校验并 fsync 后才替换目标，原始数据库及 sidecar 永不原地修改。角色包事务的恢复失败按角色隔离，不能因为一个非当前角色损坏而阻止默认或当前健康角色启动。
 
 ## Memory
 
