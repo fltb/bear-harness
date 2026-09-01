@@ -11,7 +11,12 @@
  * protocol additions from landing without a corresponding Host handler.
  */
 
-import type { ArtifactActionRequest, LivePush, ResponseOf } from "@bear-harness/protocol";
+import type {
+	ArtifactActionRequest,
+	LivePush,
+	ProviderLoginResponse,
+	ResponseOf,
+} from "@bear-harness/protocol";
 import {
 	ArtifactActionResponse,
 	CacheKey,
@@ -141,10 +146,17 @@ export interface HostCompositionContext {
 	auditStore: Pick<AuditStore, "append" | "list" | "exportLines">;
 }
 
-function oauthWire(state: OAuthSessionState) {
+function oauthWire(state: OAuthSessionState): ProviderLoginResponse {
 	return {
 		...state,
-		infoLinks: state.infoLinks ? state.infoLinks.map((link) => ({ ...link })) : undefined,
+		events: state.events.map((event) => {
+			if (event.type === "info")
+				return {
+					...event,
+					links: event.links?.map((link) => ({ ...link })),
+				};
+			return { ...event };
+		}),
 		prompt: state.prompt
 			? {
 					...state.prompt,
@@ -185,6 +197,7 @@ export async function syncAllProviderModels(
 }
 
 export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionContext): void {
+	const acceptedMessages = new Map<string, Promise<Awaited<ReturnType<typeof s.pi.send>>>>();
 	const projectSettings = async (companionId: string, app = s.appSettings.load()) => {
 		const stateData = s.onboarding.getState(companionId).stateData;
 		const embeddingCredential = await s.credentials.get(REMOTE_EMBEDDING_CREDENTIAL_ID);
@@ -445,11 +458,25 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 
 	// --- message ----------------------------------------------------------------
-	dispatcher.registerHandler(RPC.message.send, async ({ conversationId, text }) => {
+	dispatcher.registerHandler(
+		RPC.message.send,
+		async ({ conversationId, text, clientMessageId }) => {
 		await requireOwnedConversation(s, conversationId);
-		await s.pi.send(conversationId, text);
+		const key = `${conversationId}:${clientMessageId}`;
+		let accepted = acceptedMessages.get(key);
+		if (!accepted) {
+			accepted = s.pi.send(conversationId, text);
+			acceptedMessages.set(key, accepted);
+			void accepted.catch(() => acceptedMessages.delete(key));
+			if (acceptedMessages.size > 1_000) {
+				const oldest = acceptedMessages.keys().next().value;
+				if (oldest) acceptedMessages.delete(oldest);
+			}
+		}
+		await accepted;
 		return {};
-	});
+		},
+	);
 	dispatcher.registerHandler(RPC.message.abort, async ({ conversationId }) => {
 		await requireOwnedConversation(s, conversationId);
 		await s.pi.abort(conversationId);
@@ -653,7 +680,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		},
 	);
 	dispatcher.registerHandler(RPC.provider.login, async ({ providerId }) => {
-		const state = await s.providers.startOAuth(providerId);
+		const state = s.providers.startOAuth(providerId);
 		s.livePush({ type: "providerLogin", providerId, state: oauthWire(state) });
 		return oauthWire(state);
 	});
@@ -662,7 +689,7 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		s.livePush({
 			type: "providerLogin",
 			providerId,
-			state: { providerId, status: "failed", message: "cancelled" },
+			state: { providerId, status: "failed", events: [], error: "cancelled" },
 		});
 		return {};
 	});

@@ -103,10 +103,10 @@ describe("Pi native tool rendering", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		await user.click(await screen.findByRole("button", { name: "Investigate" }));
-		expect(client.message.send).toHaveBeenCalledWith({
+		expect(client.message.send).toHaveBeenCalledWith(expect.objectContaining({
 			conversationId: "conversation-1",
 			text: "Continue investigating.",
-		});
+		}));
 		await user.click(screen.getByRole("button", { name: zhCN.messages.openMedia }));
 		expect(screen.getByRole("complementary", { name: "损坏的信号" })).toBeVisible();
 	});

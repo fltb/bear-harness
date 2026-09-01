@@ -222,8 +222,8 @@ describe("provider catalog model synchronization", () => {
 			availableModels: [{ id: "oauth-model", name: "OAuth Model", supportsImages: true }],
 		};
 		const providers = {
-			getOAuthSession: vi.fn(async () => state),
-			answerOAuth: vi.fn(() => answerState),
+			getOAuthSession: vi.fn(async () => ({ ...state, events: [] })),
+			answerOAuth: vi.fn(() => ({ ...answerState, events: [] })),
 			listProviders: vi.fn(async () => [provider]),
 		};
 		const orm = {

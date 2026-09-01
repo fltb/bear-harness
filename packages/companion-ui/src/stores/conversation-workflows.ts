@@ -21,6 +21,7 @@ export function useConversationWorkflow(store: CompanionStore) {
 }
 
 function createWorkflow(store: CompanionStore) {
+	let submitting = false;
 	const [state, setState] = createStore<State>({
 		composerText: "",
 		modelBusy: false,
@@ -111,11 +112,15 @@ function createWorkflow(store: CompanionStore) {
 		},
 		dispatchMessage: async () => {
 			const message = state.composerText.trim();
-			if (!message) return;
+			if (!message || submitting) return;
+			submitting = true;
+			setState("composerText", "");
 			try {
 				await store.sendMessage(message);
-				setState("composerText", "");
-			} catch {}
+			} catch {
+			} finally {
+				submitting = false;
+			}
 		},
 	};
 }
@@ -128,6 +133,10 @@ export function useConversationViewWorkflow(store: CompanionStore) {
 		sceneLabel: () =>
 			store.activeConversationId ? workflow.sceneLabel(store.activeConversationId) : "",
 		hasThreadContent: () =>
-			Boolean(store.activePiEntries?.length || store.activePiLiveState?.streamingMessage),
+			Boolean(
+				store.activePiEntries?.length ||
+					store.pendingUserMessages.length ||
+					store.activePiLiveState?.streamingMessage,
+			),
 	};
 }

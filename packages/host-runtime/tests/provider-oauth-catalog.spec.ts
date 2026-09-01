@@ -95,9 +95,15 @@ describe("ProviderCatalog OAuth contract", () => {
 				catalog.getOAuthSession("openai-codex").prompt?.options?.map((option) => option.id),
 			).toEqual(["browser", "device_code"]);
 			catalog.answerOAuth("openai-codex", "browser");
-			await vi.waitFor(() => expect(catalog.getOAuthSession("openai-codex").authUrl).toBeDefined());
+			await vi.waitFor(() =>
+				expect(
+					catalog.getOAuthSession("openai-codex").events.some((event) => event.type === "auth_url"),
+				).toBe(true),
+			);
 			const state = catalog.getOAuthSession("openai-codex");
-			const url = new URL(state.authUrl!);
+			const authEvent = state.events.find((event) => event.type === "auth_url");
+			if (!authEvent || authEvent.type !== "auth_url") throw new Error("auth_url event missing");
+			const url = new URL(authEvent.url);
 			expect(url.origin + url.pathname).toBe("https://auth.openai.com/oauth/authorize");
 			expect(url.searchParams.get("redirect_uri")).toBe("http://localhost:1455/auth/callback");
 			expect(url.searchParams.get("code_challenge_method")).toBe("S256");
@@ -133,17 +139,24 @@ describe("ProviderCatalog OAuth contract", () => {
 		});
 		catalog.startOAuth("openai-codex");
 		await vi.waitFor(() => {
-			expect(catalog.getOAuthSession("openai-codex").authUrl).toBe(
-				"https://auth.example/start?client=1",
-			);
+			expect(catalog.getOAuthSession("openai-codex").events).toHaveLength(3);
 		});
 		expect(catalog.getOAuthSession("openai-codex")).toMatchObject({
 			providerId: "openai-codex",
 			status: "running",
-			authUrl: "https://auth.example/start?client=1",
-			instructions: "Open the page and finish there.",
-			message: "Waiting for authorization…",
-			infoLinks: [{ url: "https://help.example/oauth", label: "Help" }],
+			events: [
+				{
+					type: "info",
+					message: "Complete login in your browser.",
+					links: [{ url: "https://help.example/oauth", label: "Help" }],
+				},
+				{ type: "progress", message: "Waiting for authorization…" },
+				{
+					type: "auth_url",
+					url: "https://auth.example/start?client=1",
+					instructions: "Open the page and finish there.",
+				},
+			],
 		});
 		release!();
 		await vi.waitFor(() => {
@@ -167,13 +180,18 @@ describe("ProviderCatalog OAuth contract", () => {
 		});
 		catalog.startOAuth("openai-codex");
 		await vi.waitFor(() => {
-			expect(catalog.getOAuthSession("openai-codex").deviceCode).toBe("ABCD-EFGH");
+			expect(catalog.getOAuthSession("openai-codex").events).toHaveLength(1);
 		});
 		expect(catalog.getOAuthSession("openai-codex")).toMatchObject({
-			deviceCode: "ABCD-EFGH",
-			verificationUri: "https://auth.example/device",
-			intervalSeconds: 5,
-			expiresInSeconds: 600,
+			events: [
+				{
+					type: "device_code",
+					userCode: "ABCD-EFGH",
+					verificationUri: "https://auth.example/device",
+					intervalSeconds: 5,
+					expiresInSeconds: 600,
+				},
+			],
 		});
 	});
 
@@ -324,7 +342,7 @@ describe("ProviderCatalog OAuth contract", () => {
 		await vi.waitFor(() => {
 			expect(catalog.getOAuthSession("openai-codex").status).toBe("failed");
 		});
-		expect(catalog.getOAuthSession("openai-codex").message).toBe(
+		expect(catalog.getOAuthSession("openai-codex").error).toBe(
 			"token exchange failed: invalid_grant",
 		);
 	});
@@ -338,7 +356,7 @@ describe("ProviderCatalog OAuth contract", () => {
 		await vi.waitFor(() => {
 			expect(catalog.getOAuthSession("openai-codex").status).toBe("failed");
 		});
-		expect(catalog.getOAuthSession("openai-codex").message).toBe("login_not_supported");
+		expect(catalog.getOAuthSession("openai-codex").error).toBe("login_not_supported");
 	});
 
 	it("returns the in-flight session when reauth collides with an active flow", async () => {
@@ -350,7 +368,10 @@ describe("ProviderCatalog OAuth contract", () => {
 		});
 		const first = catalog.startOAuth("openai-codex");
 		await vi.waitFor(() => {
-			expect(catalog.getOAuthSession("openai-codex").message).toBe("polling device code…");
+			expect(catalog.getOAuthSession("openai-codex").events).toContainEqual({
+				type: "progress",
+				message: "polling device code…",
+			});
 		});
 		const second = catalog.startOAuth("openai-codex");
 		expect(second).toMatchObject({ providerId: "openai-codex", status: "running" });

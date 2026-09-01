@@ -6,6 +6,7 @@ import { Button, Dialog, FileField, Tabs } from "../ui/primitives.js";
 import { CanonStudio } from "./CanonStudio.js";
 import { CurrentRolePackageManager } from "./CurrentRolePackageManager.js";
 import { SettingsSheet } from "./SettingsSheet.js";
+import type { SettingsPage } from "./SettingsSheet.js";
 
 /**
  * 幕后 — the backstage right-side sheet.
@@ -19,6 +20,7 @@ export function Backstage(props: {
 	open: boolean;
 	onClose: () => void;
 	initialTab?: "roles" | "settings";
+	initialSettingsPage?: SettingsPage;
 	returnFocus?: () => void;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
@@ -64,7 +66,7 @@ export function Backstage(props: {
 						when={props.initialTab !== "settings"}
 						fallback={
 							<div class="standalone-settings-panel">
-								<SettingsSheet />
+								<SettingsSheet initialPage={props.initialSettingsPage} />
 							</div>
 						}
 					>

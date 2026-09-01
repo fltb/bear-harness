@@ -163,8 +163,10 @@ describe("sidebar conversation journey", () => {
 
 		await user.click(await screen.findByRole("button", { name: zhCN.sidebar.characterSettings }));
 		await user.click(screen.getByRole("button", { name: zhCN.sidebar.systemSettings }));
+		await user.click(screen.getByRole("button", { name: /已归档\s*1/ }));
 		expect(onOpenBackstage).toHaveBeenNthCalledWith(1, "roles");
 		expect(onOpenBackstage).toHaveBeenNthCalledWith(2, "settings");
+		expect(onOpenBackstage).toHaveBeenNthCalledWith(3, "archived");
 	});
 
 	it("keeps Cmd/Ctrl+K accessible in the application landmark without hijacking editing contexts", async () => {

@@ -330,9 +330,10 @@ describe("portrait layout contracts", () => {
 				await waitFor(() => expect(composer).toBeEnabled());
 				await user.type(composer, "Keep the portrait open");
 				await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
-				// No optimistic message: the draft stays in the composer until
-				// the Pi preflight accepts the send.
-				await waitFor(() => expect(composer).toHaveValue("Keep the portrait open"));
+				await waitFor(() => expect(composer).toHaveValue(""));
+				expect(screen.getByTestId("pending-user-message")).toHaveTextContent(
+					"Keep the portrait open",
+				);
 			} else {
 				pushPiEvent(client, {
 					type: "pi",

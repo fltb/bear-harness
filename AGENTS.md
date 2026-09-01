@@ -2,6 +2,11 @@
 
 These rules apply to the entire repository. They describe the product architecture approved for the current release and are hard constraints.
 
+## Local development toolchain
+
+- Run all Node.js and npm commands through `fnm exec --using=.nvmrc`, for example `fnm exec --using=.nvmrc npm install` and `fnm exec --using=.nvmrc npm run dev:web`.
+- Do not rely on the shell's default `node`, `npm`, `npx`, or package-manager binaries. The version selected by `.nvmrc` must match the versions declared in `package.json`.
+
 ## Product boundary
 
 - Bear is a managed local desktop product built around Pi Coding Agent.

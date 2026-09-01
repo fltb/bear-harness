@@ -137,10 +137,21 @@ export function FirstMeeting() {
 									label={t("settings.visionModel")}
 									autoLabel={t("settings.noFallback")}
 									includeAuto
-									disabled={workflow.setupBusy() || !workflow.selectedReplyModel()}
+									disabled={
+										workflow.setupBusy() ||
+										!workflow.selectedReplyModel() ||
+										workflow.selectedReplyModel()?.supportsImages === true
+									}
 									placement="bottom-start"
 									onModelChange={(model) => void workflow.selectVisionModel(model)}
 								/>
+								<p class="field-hint">
+									{t(
+										workflow.selectedReplyModel()?.supportsImages
+											? "settings.visionModelNative"
+											: "settings.visionModelHint",
+									)}
+								</p>
 								<div class="intro-actions">
 									<Button
 										type="button"

@@ -78,3 +78,21 @@ describe("document_read", () => {
 		});
 	});
 });
+
+describe("read_image fallback skill tool", () => {
+	it("is exposed only when a fallback reader is supplied and returns its description", async () => {
+		const imageRead = vi.fn().mockResolvedValue({
+			path: "/tmp/photo.png",
+			mimeType: "image/png",
+			description: "A white bear beside a window.",
+		});
+		const tools = registerHostTools({ imageRead } as never);
+		expect(tools.read_image).toBeDefined();
+		const result = await tools.read_image?.execute("image-1", { path: "/tmp/photo.png" });
+		expect(imageRead).toHaveBeenCalledWith("/tmp/photo.png");
+		expect(result).toMatchObject({
+			details: { ok: true, data: { description: "A white bear beside a window." } },
+		});
+		expect(registerHostTools({} as never).read_image).toBeUndefined();
+	});
+});

@@ -4,6 +4,7 @@ import type { EmbeddingDownloadState } from "@bear-harness/protocol/schema";
 import { isCancelledError, useQueryClient } from "@tanstack/solid-query";
 import {
 	createContext,
+	createEffect,
 	createMemo,
 	createSignal,
 	onCleanup,
@@ -64,6 +65,14 @@ export interface CompanionErrorMetadata {
 	source: "transport" | "domain" | "projection";
 	kind?: string;
 }
+export interface PendingUserMessage {
+	clientMessageId: string;
+	conversationId: string;
+	text: string;
+	createdAt: number;
+	state: "pending" | "failed";
+	error?: string;
+}
 export interface SnapshotApi {
 	data(): Snapshot | undefined;
 	loading(): boolean;
@@ -84,6 +93,7 @@ export interface CompanionStore {
 	readonly activePiEntries: PiSessionEntry[] | undefined;
 	readonly completedConversationIds: ReadonlySet<string>;
 	readonly activePiLiveState: PiLiveState | undefined;
+	readonly pendingUserMessages: readonly PendingUserMessage[];
 	readonly runs: RunInfo[];
 	readonly character: CharacterDisplay | undefined;
 	readonly companionState: CompanionStateData | undefined;
@@ -98,6 +108,8 @@ export interface CompanionStore {
 	deleteConversation(id: string): Promise<void>;
 	updateCompanionState(changes: CompanionStateChange[]): Promise<void>;
 	sendMessage(text: string): Promise<void>;
+	retryPendingMessage(clientMessageId: string): Promise<void>;
+	dismissPendingMessage(clientMessageId: string): void;
 	regenerateMessage(entryId: string, feedback?: string): Promise<void>;
 	switchMessageVersion(leafId: string): Promise<void>;
 	editMessage(entryId: string, text: string): Promise<void>;
@@ -189,6 +201,7 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	const [completedConversationIds, setCompletedConversationIds] = createSignal<ReadonlySet<string>>(
 		new Set(),
 	);
+	const [pendingUserMessages, setPendingUserMessages] = createSignal<PendingUserMessage[]>([]);
 	onCleanup(queryClient.getQueryCache().subscribe(() => setCacheRevision((value) => value + 1)));
 	const fail = (operation: string, cause: unknown) => {
 		setOperationError({
@@ -389,31 +402,24 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		});
 	};
 	let initialConversationSelected = false;
-	onCleanup(
-		queryClient.getQueryCache().subscribe((event) => {
-			if (
-				initialConversationSelected ||
-				event.type !== "updated" ||
-				event.action.type !== "success" ||
-				event.query.queryKey[0] !== queryKeys.conversations[0] ||
-				event.query.queryKey[1] !== ""
-			)
-				return;
+	createEffect(() => {
+		if (
+			initialConversationSelected ||
+			onboarding.data().status !== "complete" ||
+			!conversationsQuery.data
+		)
+			return;
 			if (activeConversationId() !== null) {
 				initialConversationSelected = true;
 				return;
 			}
-			const available = event.query.state.data as
-				| { conversations?: ConversationSummary[] }
-				| undefined;
-			const first = available?.conversations?.[0];
+			const first = conversationsQuery.data.conversations[0];
 			if (!first) return;
 			initialConversationSelected = true;
 			void openAndActivate(first.conversationId).catch((cause) =>
 				fail("conversation.initialize", cause),
 			);
-		}),
-	);
+	});
 	const refreshRuns = () =>
 		refreshRpcQuery({
 			client: queryClient,
@@ -477,14 +483,31 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 					};
 					break;
 				case "message_end":
+					{
+						const responseId =
+							event.message.role === "assistant" ? event.message.responseId : undefined;
+						const persisted =
+							event.message.role === "assistant" &&
+							queryClient
+								.getQueryData<ConversationDetail>(queryKeys.conversation(conversationId))
+								?.branch.entries.some(
+									(entry) =>
+										entry.type === "message" &&
+										entry.message.role === "assistant" &&
+										((entry.message.responseId && entry.message.responseId === responseId) ||
+											entry.message.timestamp === event.message.timestamp),
+								);
 					nextLive = {
 						...previous,
-						streamingMessage: undefined,
+						// Keep the completed transient message visible until Pi appends the
+						// authoritative transcript entry. Clearing it here creates a visible gap.
+						streamingMessage: persisted ? undefined : event.message,
 						...(event.message.role === "assistant" && event.message.errorMessage
 							? { errorMessage: event.message.errorMessage }
 							: {}),
 					};
 					break;
+					}
 				case "queue_update":
 					nextLive = {
 						...previous,
@@ -493,7 +516,7 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 					};
 					break;
 				case "agent_settled":
-					nextLive = { ...previous, isStreaming: false, streamingMessage: undefined };
+					nextLive = { ...previous, isStreaming: false };
 					break;
 			}
 			if (nextLive === previous) return current;
@@ -502,6 +525,32 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			return next;
 		});
 		if (event.type === "entry_appended") {
+			if (event.entry.type === "message" && event.entry.message.role === "user") {
+				const text =
+					typeof event.entry.message.content === "string"
+						? event.entry.message.content
+						: event.entry.message.content
+								.filter((part) => part.type === "text")
+								.map((part) => part.text)
+								.join("\n");
+				setPendingUserMessages((current) => {
+					const match = current.find(
+						(item) => item.conversationId === conversationId && item.text === text,
+					);
+					return match
+						? current.filter((item) => item.clientMessageId !== match.clientMessageId)
+						: current;
+				});
+			}
+			if (event.entry.type === "message" && event.entry.message.role === "assistant") {
+				setPiLiveBySession((current) => {
+					const previous = current.get(conversationId);
+					if (!previous?.streamingMessage) return current;
+					const next = new Map(current);
+					next.set(conversationId, { ...previous, streamingMessage: undefined });
+					return next;
+				});
+			}
 			queryClient.setQueryData<ConversationDetail>(
 				queryKeys.conversation(conversationId),
 				(current) => {
@@ -772,6 +821,10 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			const id = activeConversationId();
 			return id ? (piLiveBySession().get(id) ?? activeDetail()?.live) : undefined;
 		},
+		get pendingUserMessages() {
+			const id = activeConversationId();
+			return id ? pendingUserMessages().filter((message) => message.conversationId === id) : [];
+		},
 		get runs() {
 			return runsQuery.data?.runs ?? [];
 		},
@@ -876,16 +929,56 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 				);
 				await refreshCompanionState(id);
 			}),
-		sendMessage: (text) =>
-			run("message.send", async () => {
+		sendMessage: (text) => {
+			const conversationId = requireConversation();
+			const clientMessageId = crypto.randomUUID();
+			setPendingUserMessages((current) => [
+				...current,
+				{ clientMessageId, conversationId, text, createdAt: Date.now(), state: "pending" },
+			]);
+			return run("message.send", async () => {
 				await initialLiveProjection;
-				await invoke(client, () =>
+				try {
+					await invoke(client, () =>
 					client.message.send({
-						conversationId: requireConversation(),
+						conversationId,
 						text,
+						clientMessageId,
 					}),
-				);
-			}),
+					);
+					setPendingUserMessages((current) =>
+						current.filter((item) => item.clientMessageId !== clientMessageId),
+					);
+				} catch (cause) {
+					setPendingUserMessages((current) =>
+						current.map((item) =>
+							item.clientMessageId === clientMessageId
+								? {
+									...item,
+									state: "failed",
+									error: cause instanceof Error ? cause.message : String(cause),
+								}
+								: item,
+						),
+					);
+					throw cause;
+				}
+			});
+		},
+		retryPendingMessage: async (clientMessageId) => {
+			const message = pendingUserMessages().find(
+				(item) => item.clientMessageId === clientMessageId,
+			);
+			if (!message) return;
+			setPendingUserMessages((current) =>
+				current.filter((item) => item.clientMessageId !== clientMessageId),
+			);
+			await store.sendMessage(message.text);
+		},
+		dismissPendingMessage: (clientMessageId) =>
+			setPendingUserMessages((current) =>
+				current.filter((item) => item.clientMessageId !== clientMessageId),
+			),
 		regenerateMessage: (entryId, feedback) =>
 			run("message.regenerate", async () => {
 				const detail = await invoke(client, () =>

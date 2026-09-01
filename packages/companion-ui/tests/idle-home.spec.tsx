@@ -17,7 +17,8 @@ describe("idle homepage (official config, no bridge)", () => {
 		// Without a bridge, character data is absent — the shell shows the
 		// scene area and accessible controls but no character-specific copy.
 		expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
-		expect(screen.getByPlaceholderText(zhCN.shell.fallbackComposerPlaceholder)).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: zhCN.sidebar.noConversationTitle })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: zhCN.sidebar.createConversation })).toBeEnabled();
 
 		await setProductLocale("en");
 
@@ -115,6 +116,16 @@ describe("idle homepage (official config, no bridge)", () => {
 		expect(screen.queryByRole("button", { name: zhCN.settings.addModel })).not.toBeInTheDocument();
 	});
 
+	it("opens archived conversations directly from the sidebar", async () => {
+		const user = userEvent.setup();
+		const { client } = createTestClient();
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+
+		await user.click(screen.getByRole("button", { name: zhCN.sidebar.archivedConversations }));
+		const settings = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
+		expect(settings).toHaveTextContent(zhCN.settings.archivedConversationsHint);
+	});
+
 	it("switches the interface language from the settings workbench", async () => {
 		await setProductLocale("zh-CN");
 		const user = userEvent.setup();
@@ -167,7 +178,7 @@ describe("idle homepage (official config, no bridge)", () => {
 		expect(warning).toHaveTextContent("zh-CN");
 		const app = screen.getByRole("application", { name: zhCN.shell.productName });
 		expect(app?.style.getPropertyValue("--sys-accent")).toBe("#42c7a5");
-		expect(screen.getByPlaceholderText("Message")).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: zhCN.sidebar.noConversationTitle })).toBeInTheDocument();
 		expect(warning).not.toHaveAttribute("aria-modal");
 
 		await user.click(screen.getByRole("button", { name: zhCN.language.dismiss }));

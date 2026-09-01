@@ -164,8 +164,7 @@ describe("breaking provider and model settings contract", () => {
 		expect(candidateHeading).toBeVisible();
 		expect(providerSelect).toBeVisible();
 		expect(within(addedProviders).getByText(PROVIDER.name)).toBeVisible();
-		expect(detailsSummary(setup, zhCN.settings.piConfigLabel)).toBeVisible();
-		expect(detailsSummary(setup, zhCN.settings.customProvider)).toBeVisible();
+		expect(detailsSummary(setup, zhCN.settings.advancedToggle)).toBeVisible();
 
 		await selectKobalteOption(user, providerSelect, "openai");
 		const editor = providerEditorForAction(setup, "openai", zhCN.settings.addProvider);
@@ -261,6 +260,7 @@ describe("breaking provider and model settings contract", () => {
 				data: {
 					providerId: "oauth",
 					status: "waiting_input" as const,
+					events: [],
 					prompt: {
 						type: "select" as const,
 						message: "Choose account",
@@ -272,13 +272,13 @@ describe("breaking provider and model settings contract", () => {
 		client.provider.loginAnswer = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
-				data: { providerId: "oauth", status: "running" as const },
+				data: { providerId: "oauth", status: "running" as const, events: [] },
 			}),
 		);
 		client.provider.loginStatus = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
-				data: { providerId: "oauth", status: "completed" as const },
+				data: { providerId: "oauth", status: "completed" as const, events: [] },
 			}),
 		);
 		// The status endpoint, not the command receipt, owns the visible session.
@@ -309,6 +309,7 @@ describe("breaking provider and model settings contract", () => {
 		pushHostEvent(client, "provider.login_changed", {
 			providerId: "oauth",
 			status: "completed",
+			events: [],
 		});
 		await waitFor(() => expect(client.provider.list).toHaveBeenCalledTimes(1), { timeout: 2500 });
 		expect(client.model.poolGet).toHaveBeenCalledTimes(1);
@@ -321,9 +322,9 @@ describe("breaking provider and model settings contract", () => {
 		const { client } = configuredClient();
 		let revision = 0;
 		const state = () => ({
-			message: `Host status ${++revision}`,
 			providerId: "oauth",
 			status: "waiting_input" as const,
+			events: [{ type: "progress" as const, message: `Host status ${++revision}` }],
 			prompt: {
 				type: "select" as const,
 				message: "Select OpenAI Codex login method:",
@@ -358,11 +359,44 @@ describe("breaking provider and model settings contract", () => {
 		expect(trigger).toHaveTextContent("Device code login (headless)");
 	});
 
+	it("does not let a late OAuth command receipt overwrite a newer pushed state", async () => {
+		const { client } = configuredClient();
+		client.provider.login = vi.fn(async () => {
+			pushHostEvent(client, "provider.login_changed", {
+				providerId: "oauth",
+				status: "waiting_input",
+				events: [],
+				prompt: {
+					type: "select",
+					message: "Select OpenAI Codex login method:",
+					options: [{ id: "browser", label: "Browser login (default)" }],
+				},
+			});
+			await Promise.resolve();
+			return {
+				ok: true as const,
+				data: { providerId: "oauth", status: "running" as const, events: [] },
+			};
+		});
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		const { user, backstage } = await openSettings();
+		const setup = providerSetup(backstage);
+		const card = within(setup).getByText(OAUTH.name).closest("article")!;
+		await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
+		expect(within(setup).getByLabelText("Select OpenAI Codex login method:")).toHaveTextContent(
+			"Browser login (default)",
+		);
+		expect(within(setup).queryByText(zhCN.settings.oauthWaiting)).not.toBeInTheDocument();
+	});
+
 	it("discards a late OAuth status response after switching providers and cancels the old flow", async () => {
 		const { client } = configuredClient();
 		client.provider.login = vi
 			.fn()
-			.mockResolvedValue({ ok: true, data: { providerId: "oauth", status: "running" } });
+			.mockResolvedValue({
+				ok: true,
+				data: { providerId: "oauth", status: "running", events: [] },
+			});
 		client.provider.loginStatus = vi.fn();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
@@ -378,14 +412,14 @@ describe("breaking provider and model settings contract", () => {
 		pushHostEvent(client, "provider.login_changed", {
 			providerId: "oauth",
 			status: "waiting_input",
-			authUrl: "https://auth.example/stale",
+			events: [{ type: "auth_url", url: "https://auth.example/stale" }],
 			prompt: { type: "manual_code", message: "Stale callback" },
 		});
 		await user.click(
 			within(oauthCard).getByRole("button", { name: zhCN.settings.editProviderKey }),
 		);
 		expect(
-			within(setup).queryByRole("button", { name: zhCN.settings.oauthOpen }),
+			within(setup).queryByRole("link", { name: zhCN.settings.oauthOpen }),
 		).not.toBeInTheDocument();
 		expect(within(setup).queryByText("Stale callback")).not.toBeInTheDocument();
 		expect(
@@ -401,7 +435,12 @@ describe("breaking provider and model settings contract", () => {
 				data: {
 					providerId: "oauth",
 					status: "waiting_input" as const,
-					authUrl: "https://auth.example/authorize",
+					events: [
+						{
+							type: "auth_url" as const,
+							url: "https://auth.example/authorize?client_id=test&state=exact%2Bvalue",
+						},
+					],
 					prompt: { type: "manual_code" as const, message: "Paste the callback URL" },
 				},
 			}),
@@ -411,7 +450,12 @@ describe("breaking provider and model settings contract", () => {
 			configurable: true,
 			value: {},
 		});
-		const open = vi.spyOn(window, "open").mockReturnValue(null);
+		const authWindow = {
+			close: vi.fn(),
+			opener: window,
+			location: { href: "about:blank" },
+		} as unknown as Window;
+		const open = vi.spyOn(window, "open").mockReturnValue(authWindow);
 		try {
 			render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 			const { user, backstage } = await openSettings();
@@ -419,17 +463,22 @@ describe("breaking provider and model settings contract", () => {
 			const card = within(setup).getByText(OAUTH.name).closest("article")!;
 			client.provider.list.mockClear();
 			await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
-			const authorize = await within(setup).findByRole("button", { name: zhCN.settings.oauthOpen });
-			expect(open).not.toHaveBeenCalled();
-			await user.click(authorize);
-			expect(open).toHaveBeenCalledWith(
-				"https://auth.example/authorize",
-				"_blank",
-				"noopener,noreferrer",
+			const authorize = await within(setup).findByRole("link", { name: zhCN.settings.oauthOpen });
+			expect(authorize).toHaveAttribute(
+				"href",
+				"https://auth.example/authorize?client_id=test&state=exact%2Bvalue",
 			);
+			expect(authorize).toHaveAttribute("target", "_blank");
+			expect(authorize).toHaveAttribute("rel", "noreferrer");
+			expect(open).toHaveBeenCalledWith("about:blank", "_blank");
+			expect(authWindow.location.href).toBe(
+				"https://auth.example/authorize?client_id=test&state=exact%2Bvalue",
+			);
+			expect(authWindow.opener).toBeNull();
 			pushHostEvent(client, "provider.login_changed", {
 				providerId: "oauth",
 				status: "completed",
+				events: [],
 			});
 			await waitFor(() => expect(client.provider.list).toHaveBeenCalledTimes(1), {
 				timeout: 3000,
@@ -449,18 +498,31 @@ describe("breaking provider and model settings contract", () => {
 				data: {
 					providerId: "oauth",
 					status: "running" as const,
-					deviceCode: "ABCD-EFGH",
-					verificationUri: "https://github.com/login/device",
-					instructions: "Open the page and enter the code.",
-					message: "Waiting for authorization…",
-					infoLinks: [{ url: "https://docs.example/oauth-help", label: "OAuth help" }],
+					events: [
+						{
+							type: "device_code" as const,
+							userCode: "ABCD-EFGH",
+							verificationUri: "https://github.com/login/device",
+						},
+						{
+							type: "auth_url" as const,
+							url: "https://unused.example",
+							instructions: "Open the page and enter the code.",
+						},
+						{ type: "progress" as const, message: "Waiting for authorization…" },
+						{
+							type: "info" as const,
+							message: "Waiting for authorization…",
+							links: [{ url: "https://docs.example/oauth-help", label: "OAuth help" }],
+						},
+					],
 				},
 			}),
 		);
 		client.provider.loginStatus = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
-				data: { providerId: "oauth", status: "running" as const },
+				data: { providerId: "oauth", status: "running" as const, events: [] },
 			}),
 		);
 		vi.mocked(client.provider.loginStatus).mockResolvedValue(
@@ -478,14 +540,13 @@ describe("breaking provider and model settings contract", () => {
 		await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
 		const editor = providerEditorForAction(setup, "oauth", zhCN.settings.oauthCancel);
 		expect(within(editor).getByText("ABCD-EFGH")).toBeVisible();
-		const open = vi.spyOn(window, "open").mockReturnValue(null);
-		await user.click(within(editor).getByRole("button", { name: zhCN.settings.oauthOpen }));
-		expect(open).toHaveBeenCalledWith(
-			"https://github.com/login/device",
-			"_blank",
-			"noopener,noreferrer",
-		);
-		open.mockRestore();
+		const authorize = within(editor).getByRole("link", {
+			name: zhCN.settings.oauthOpenVerification,
+		});
+		expect(authorize).toHaveAttribute("href", "https://github.com/login/device");
+		expect(authorize).toHaveAttribute("target", "_blank");
+		expect(authorize).toHaveAttribute("rel", "noreferrer");
+		expect(within(editor).getByRole("button", { name: zhCN.settings.oauthCopyCode })).toBeVisible();
 		expect(within(editor).getByText("Open the page and enter the code.")).toBeVisible();
 		expect(within(editor).getByText("Waiting for authorization…")).toBeVisible();
 		expect(within(editor).getByRole("link", { name: "OAuth help" })).toHaveAttribute(
@@ -507,7 +568,7 @@ describe("breaking provider and model settings contract", () => {
 		client.provider.login = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
-				data: { providerId: "oauth", status: "running" as const },
+				data: { providerId: "oauth", status: "running" as const, events: [] },
 			}),
 		);
 		client.provider.loginStatus = vi.fn(() =>
@@ -516,8 +577,8 @@ describe("breaking provider and model settings contract", () => {
 				data: {
 					providerId: "oauth",
 					status: "failed" as const,
-					message: "token exchange failed: invalid_grant",
-					authUrl: "https://auth.example/expired",
+					events: [{ type: "auth_url" as const, url: "https://auth.example/expired" }],
+					error: "token exchange failed: invalid_grant",
 				},
 			}),
 		);
@@ -532,8 +593,8 @@ describe("breaking provider and model settings contract", () => {
 		pushHostEvent(client, "provider.login_changed", {
 			providerId: "oauth",
 			status: "failed",
-			message: "token exchange failed: invalid_grant",
-			authUrl: "https://auth.example/expired",
+			events: [{ type: "auth_url", url: "https://auth.example/expired" }],
+			error: "token exchange failed: invalid_grant",
 		});
 		await waitFor(
 			() => expect(within(setup).getByText("token exchange failed: invalid_grant")).toBeVisible(),
@@ -544,7 +605,7 @@ describe("breaking provider and model settings contract", () => {
 		expect(client.model.defaultsGet).not.toHaveBeenCalled();
 		const editor = providerEditorForAction(setup, "oauth", zhCN.settings.reauthProvider);
 		expect(
-			within(editor).queryByRole("button", { name: zhCN.settings.oauthOpen }),
+			within(editor).queryByRole("link", { name: zhCN.settings.oauthOpen }),
 		).not.toBeInTheDocument();
 		await user.click(within(editor).getByRole("button", { name: zhCN.settings.reauthProvider }));
 		expect(client.provider.login).toHaveBeenCalledTimes(2);
@@ -588,7 +649,7 @@ describe("breaking provider and model settings contract", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
 		const setup = providerSetup(backstage);
-		await user.click(detailsSummary(setup, zhCN.settings.piConfigLabel));
+		await user.click(detailsSummary(setup, zhCN.settings.advancedToggle));
 		// Empty drafts are intentionally ignored; submit an actual Pi document.
 		fireEvent.input(within(setup).getByLabelText(zhCN.settings.piConfigLabel), {
 			target: { value: '{"providers":{"pi-local":{"models":[{"id":"local"}]}}}' },
@@ -597,7 +658,6 @@ describe("breaking provider and model settings contract", () => {
 		expect(client.provider.importPiConfig).toHaveBeenCalledWith({
 			configJson: '{"providers":{"pi-local":{"models":[{"id":"local"}]}}}',
 		});
-		await user.click(detailsSummary(setup, zhCN.settings.customProvider));
 		await user.type(within(setup).getByLabelText(zhCN.settings.customProviderId), "custom-relay");
 		await user.type(within(setup).getByLabelText(zhCN.settings.customServiceName), "Custom Relay");
 		await user.type(

@@ -36,6 +36,31 @@ const userEntry = (id: string, text: string): PiSessionEntry => ({
 	message: { role: "user", content: text, timestamp: 1 },
 });
 
+const assistantEntry = (id: string, text: string): PiSessionEntry => ({
+	type: "message",
+	id,
+	parentId: null,
+	timestamp: "2026-01-01T00:00:00.000Z",
+	message: {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: "openai-responses",
+		provider: "relay",
+		model: "model",
+		usage: {
+			input: 1,
+			output: 1,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 2,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp: 2,
+		responseId: "response-1",
+	},
+});
+
 function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["client"]) {
 	let dispose = () => undefined;
 	let store: ReturnType<typeof createCompanionStore> | undefined;
@@ -54,6 +79,24 @@ function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["cli
 }
 
 describe("renderer-local conversation selection", () => {
+	it("keeps the catalog empty until the user explicitly creates a conversation", async () => {
+		const { client } = createTestClient();
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversations: [] } }),
+		);
+		client.conversation.create = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: detail("first") }),
+		);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(client.conversation.list).toHaveBeenCalled());
+			expect(store.activeConversationId).toBeNull();
+			expect(client.conversation.create).not.toHaveBeenCalled();
+		} finally {
+			dispose();
+		}
+	});
+
 	it("selects, archives, and deletes explicit conversations without aborting another session", async () => {
 		const { client } = createTestClient();
 		const conversations = [summary("a"), summary("b")];
@@ -121,6 +164,35 @@ describe("renderer-local conversation selection", () => {
 		}
 	});
 
+	it("does not re-add a completed live reply after its transcript entry is present", async () => {
+		const { client } = createTestClient();
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversations: [summary("a")] } }),
+		);
+		client.conversation.open = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: detail("a") }),
+		);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activeConversationId).toBe("a"));
+			const entry = assistantEntry("assistant-1", "done");
+			pushPiEvent(client, {
+				type: "pi",
+				conversationId: "a",
+				event: { type: "entry_appended", entry },
+			});
+			pushPiEvent(client, {
+				type: "pi",
+				conversationId: "a",
+				event: { type: "message_end", message: entry.message },
+			});
+			await waitFor(() => expect(store.activePiEntries?.at(-1)?.id).toBe("assistant-1"));
+			expect(store.activePiLiveState?.streamingMessage).toBeUndefined();
+		} finally {
+			dispose();
+		}
+	});
+
 	it("reconnects and replaces the active projection from Pi", async () => {
 		const { client } = createTestClient();
 		client.conversation.list = vi.fn(() =>
@@ -169,6 +241,9 @@ describe("renderer-local conversation selection", () => {
 					connect = resolve;
 				}),
 		);
+		client.message.send = vi.fn(({ text }) =>
+			Promise.resolve({ ok: true as const, data: { entry: userEntry("accepted", text) } }),
+		);
 		const { store, dispose } = createStoreWithCleanup(client);
 		try {
 			await waitFor(() => expect(store.activeConversationId).toBe("a"));
@@ -182,7 +257,9 @@ describe("renderer-local conversation selection", () => {
 				},
 			});
 			await sending;
-			expect(client.message.send).toHaveBeenCalledWith({ conversationId: "a", text: "hello" });
+			expect(client.message.send).toHaveBeenCalledWith(
+				expect.objectContaining({ conversationId: "a", text: "hello" }),
+			);
 		} finally {
 			dispose();
 		}

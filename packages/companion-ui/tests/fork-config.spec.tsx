@@ -14,7 +14,8 @@ describe("idle homepage (fork config injection, no bridge)", () => {
 		// Character content comes only from the character package via the
 		// bridge — no hardcoded fork strings in product.config.
 		expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
-		expect(screen.getByPlaceholderText(zhCN.shell.fallbackComposerPlaceholder)).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: zhCN.sidebar.noConversationTitle })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: zhCN.sidebar.createConversation })).toBeEnabled();
 	});
 
 	it("renders the fork-identity shell with accessibility landmarks", () => {

@@ -65,7 +65,7 @@ describe("Zod RPC dispatcher", () => {
 			});
 
 			await expect(
-				dispatcher.dispatch(RPC.message.send.channel, { conversationId: "c1", text: "hello" }),
+				dispatcher.dispatch(RPC.message.send.channel, { conversationId: "c1", text: "hello", clientMessageId: "00000000-0000-4000-8000-000000000001" }),
 			).resolves.toEqual({
 				ok: false,
 				error: { kind, reason: "safe_reason" },
@@ -80,7 +80,7 @@ describe("Zod RPC dispatcher", () => {
 		});
 
 		await expect(
-			dispatcher.dispatch(RPC.message.send.channel, { conversationId: "c1", text: "hello" }),
+			dispatcher.dispatch(RPC.message.send.channel, { conversationId: "c1", text: "hello", clientMessageId: "00000000-0000-4000-8000-000000000001" }),
 		).resolves.toEqual({
 			ok: false,
 			error: { kind: "internal", reason: "safe_reason" },
@@ -108,7 +108,7 @@ describe("Zod RPC dispatcher", () => {
 			throw new Error("/private/secret/database.sqlite failed");
 		});
 		await expect(
-			dispatcher.dispatch(RPC.message.send.channel, { conversationId: "c1", text: "hello" }),
+			dispatcher.dispatch(RPC.message.send.channel, { conversationId: "c1", text: "hello", clientMessageId: "00000000-0000-4000-8000-000000000001" }),
 		).resolves.toEqual({
 			ok: false,
 			error: { kind: "internal", reason: "handler_failed" },

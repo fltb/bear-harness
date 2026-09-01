@@ -186,8 +186,8 @@ describe("Host conversation projection and routing", () => {
 
 	it("routes concurrent message and model operations only by explicit conversation id", async () => {
 		await Promise.all([
-			handler(dispatcher, RPC.message.send.channel)({ conversationId: "alpha", text: "one" }),
-			handler(dispatcher, RPC.message.send.channel)({ conversationId: "beta", text: "two" }),
+			handler(dispatcher, RPC.message.send.channel)({ conversationId: "alpha", text: "one", clientMessageId: "00000000-0000-4000-8000-000000000001" }),
+			handler(dispatcher, RPC.message.send.channel)({ conversationId: "beta", text: "two", clientMessageId: "00000000-0000-4000-8000-000000000002" }),
 		]);
 		await handler(dispatcher, RPC.message.abort.channel)({ conversationId: "alpha" });
 		await handler(
@@ -237,6 +237,20 @@ describe("Host conversation projection and routing", () => {
 		expect(fixture.sessions.open).toHaveBeenCalledWith("bear", "beta");
 		expect(fixture.sessions.open).toHaveBeenCalledWith("bear", "alpha");
 		expect(fixture.pi.close).not.toHaveBeenCalled();
+	});
+
+	it("deduplicates repeated client message ids before calling Pi", async () => {
+		const request = {
+			conversationId: "alpha",
+			text: "only once",
+			clientMessageId: "00000000-0000-4000-8000-000000000099",
+		};
+		await Promise.all([
+			handler(dispatcher, RPC.message.send.channel)(request),
+			handler(dispatcher, RPC.message.send.channel)(request),
+		]);
+		expect(fixture.pi.send).toHaveBeenCalledTimes(1);
+		expect(fixture.pi.send).toHaveBeenCalledWith("alpha", "only once");
 	});
 
 	it("moves companion state to its targeted read and keeps boot snapshot O(1)", async () => {

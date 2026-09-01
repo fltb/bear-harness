@@ -64,13 +64,19 @@ export function ConversationModelSettings() {
 				label={t("settings.visionModel")}
 				autoLabel={t("settings.visionModelAuto")}
 				includeAuto
-				disabled={workflow.saving()}
+				disabled={workflow.saving() || currentModel()?.supportsImages === true}
 				onModelChange={(model) => {
 					const id = model ? modelRouteKey(model) : "reply";
 					if (id !== workflow.selectedVisionOption()) void workflow.setVisionModel(id);
 				}}
 			/>
-			<p class="field-hint">{t("settings.visionModelHint")}</p>
+			<p class="field-hint">
+				{t(
+					currentModel()?.supportsImages
+						? "settings.visionModelNative"
+						: "settings.visionModelHint",
+				)}
+			</p>
 		</section>
 	);
 }

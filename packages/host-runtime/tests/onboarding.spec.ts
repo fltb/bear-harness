@@ -586,7 +586,8 @@ describe("role-defined onboarding", () => {
 				state: {
 					providerId: "openai-codex",
 					status: "failed",
-					message: "cancelled",
+					events: [],
+					error: "cancelled",
 				},
 			});
 			await expect(
@@ -595,6 +596,54 @@ describe("role-defined onboarding", () => {
 				ok: false,
 				error: { kind: "not_found", reason: "oauth_session_not_found" },
 			});
+		} finally {
+			stop();
+			await runtime.close();
+		}
+	});
+
+	it("pushes the initial OAuth state before a prompt produced in the next microtask", async () => {
+		const runtime = runtimeForTest();
+		const providers = Reflect.get(runtime, "providers") as {
+			runtime: Promise<{
+				login(
+					providerId: string,
+					type: string,
+					interaction: {
+						prompt(input: {
+							type: "select";
+							message: string;
+							options: { id: string; label: string }[];
+						}): Promise<string>;
+					},
+				): Promise<never>;
+			}> | null;
+		};
+		providers.runtime = Promise.resolve({
+			async login(_providerId, _type, interaction) {
+				await interaction.prompt({
+					type: "select",
+					message: "Select OpenAI Codex login method:",
+					options: [{ id: "browser", label: "Browser login (default)" }],
+				});
+				return await new Promise<never>(() => undefined);
+			},
+		});
+		const pushed: unknown[] = [];
+		const stop = runtime.subscribeLivePush((event) => pushed.push(event));
+		try {
+			await data(runtime, "provider.login", {
+				providerId: "openai-codex",
+				authType: "oauth",
+			});
+			await vi.waitFor(() =>
+				expect(pushed.at(-1)).toMatchObject({
+					type: "providerLogin",
+					state: { status: "waiting_input", prompt: { type: "select" } },
+				}),
+			);
+			expect(pushed).toHaveLength(2);
+			expect(pushed[0]).toMatchObject({ type: "providerLogin", state: { status: "running" } });
 		} finally {
 			stop();
 			await runtime.close();

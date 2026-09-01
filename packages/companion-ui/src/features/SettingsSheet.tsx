@@ -6,7 +6,7 @@ import {
 	useLanguage,
 	useTranslation,
 } from "@bear-harness/i18n";
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { Button, Select } from "../ui/primitives.js";
 import { ArchivedConversationSettings } from "./ArchivedConversationSettings.js";
@@ -15,7 +15,7 @@ import { ExternalAgentSettings } from "./ExternalAgentSettings.js";
 import { NetworkAndMemorySettings } from "./NetworkAndMemorySettings.js";
 import { SystemModelSettings } from "./SystemModelSettings.js";
 
-type SettingsPage =
+export type SettingsPage =
 	| "general"
 	| "conversation"
 	| "archived"
@@ -24,12 +24,15 @@ type SettingsPage =
 	| "network"
 	| "memory";
 
-export function SettingsSheet() {
+export function SettingsSheet(props: { initialPage?: SettingsPage } = {}) {
 	const [t] = useTranslation(undefined, { i18n });
 	const [currentLocale] = useLanguage(() => i18n);
 	const [saving, setSaving] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
-	const [page, setPage] = createSignal<SettingsPage>("conversation");
+	const [page, setPage] = createSignal<SettingsPage>(props.initialPage ?? "conversation");
+	createEffect(() => {
+		if (props.initialPage) setPage(props.initialPage);
+	});
 	const pages = () => [
 		{ id: "general" as const, label: t("settings.language") },
 		{ id: "conversation" as const, label: t("settings.conversationModelSettings") },

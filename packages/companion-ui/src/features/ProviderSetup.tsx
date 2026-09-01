@@ -1,5 +1,5 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { createStableSnapshot } from "../lib/stable-snapshot.js";
 import { useCompanionStore } from "../stores/companion.js";
@@ -12,6 +12,8 @@ type PresentationProps = {
 	/** "stack" = single-column onboarding surface; "manager" = Pattern 01 two-column settings. */
 	layout?: "stack" | "manager";
 };
+
+type OAuthEvent = ProviderLoginResult["events"][number];
 
 function credentialed(provider: ProviderInfo): boolean {
 	return ["stored", "session_only", "weak_storage", "refreshing"].includes(
@@ -31,7 +33,7 @@ function safeHttpsUrl(value: string | undefined): string | undefined {
 	if (!value) return undefined;
 	try {
 		const url = new URL(value);
-		return url.protocol === "https:" ? url.toString() : undefined;
+		return url.protocol === "https:" ? value : undefined;
 	} catch {
 		return undefined;
 	}
@@ -58,8 +60,27 @@ export function ProviderSetup(props: PresentationProps) {
 	const [oauthProviderId, setOauthProviderId] = createSignal("");
 	const oauth = () =>
 		oauthProviderId() ? (store.provider.loginState(oauthProviderId()) ?? null) : null;
+	const oauthEvents = () => oauth()?.events ?? [];
+	const latestOAuthEvent = <T extends OAuthEvent["type"]>(type: T) => {
+		const events = oauthEvents();
+		for (let index = events.length - 1; index >= 0; index--) {
+			const event = events[index];
+			if (event?.type === type) return event as Extract<OAuthEvent, { type: T }>;
+		}
+	};
+	const authUrlEvent = () => latestOAuthEvent("auth_url");
+	const deviceCodeEvent = () => latestOAuthEvent("device_code");
+	const oauthInfoEvent = () => latestOAuthEvent("info");
+	const oauthMessageEvent = () => {
+		const events = oauthEvents();
+		for (let index = events.length - 1; index >= 0; index--) {
+			const event = events[index];
+			if (event?.type === "info" || event?.type === "progress") return event;
+		}
+	};
 	const oauthPrompt = createStableSnapshot(() => oauth()?.prompt);
 	const [answerDraft, setAnswerDraft] = createSignal<{ prompt: unknown; value: string }>();
+	const [copiedDeviceCode, setCopiedDeviceCode] = createSignal("");
 	const oauthAnswer = () => {
 		const prompt = oauthPrompt();
 		const draft = answerDraft();
@@ -75,7 +96,7 @@ export function ProviderSetup(props: PresentationProps) {
 	const [actionError, setError] = createSignal<string | null>(null);
 	const error = () =>
 		actionError() ??
-		(oauth()?.status === "failed" ? (oauth()?.message ?? t("settings.oauthFailed")) : null);
+		(oauth()?.status === "failed" ? (oauth()?.error ?? t("settings.oauthFailed")) : null);
 	const [customName, setCustomName] = createSignal("");
 	const [customId, setCustomId] = createSignal("");
 	const [customUrl, setCustomUrl] = createSignal("");
@@ -83,10 +104,34 @@ export function ProviderSetup(props: PresentationProps) {
 	const [customKey, setCustomKey] = createSignal("");
 	const [customBusy, setCustomBusy] = createSignal(false);
 	const [customError, setCustomError] = createSignal<string | null>(null);
-	const [piOpen, setPiOpen] = createSignal(false);
 	let disposed = false;
 	let oauthGeneration = 0;
 	let oauthCleanup = Promise.resolve();
+	let pendingAuthWindow: Window | null = null;
+	let openedAuthTarget = "";
+
+	const prepareAuthWindow = (): void => {
+		pendingAuthWindow?.close();
+		pendingAuthWindow = window.open("about:blank", "_blank");
+		if (pendingAuthWindow) pendingAuthWindow.opener = null;
+	};
+
+	createEffect(() => {
+		const target = safeHttpsUrl(authUrlEvent()?.url ?? deviceCodeEvent()?.verificationUri);
+		if (target && target !== openedAuthTarget) {
+			openedAuthTarget = target;
+			const targetWindow = pendingAuthWindow ?? window.open("about:blank", "_blank");
+			pendingAuthWindow = null;
+			if (targetWindow) {
+				targetWindow.opener = null;
+				targetWindow.location.href = target;
+			}
+		}
+		if (oauthPrompt()?.type === "select" && pendingAuthWindow) {
+			pendingAuthWindow.close();
+			pendingAuthWindow = null;
+		}
+	});
 
 	const abandonOauth = (): void => {
 		oauthGeneration++;
@@ -102,6 +147,7 @@ export function ProviderSetup(props: PresentationProps) {
 
 	onCleanup(() => {
 		disposed = true;
+		pendingAuthWindow?.close();
 		abandonOauth();
 	});
 
@@ -214,7 +260,10 @@ export function ProviderSetup(props: PresentationProps) {
 	const beginOauth = async (flowProviderId: string): Promise<void> => {
 		if (!flowProviderId || busy() || disposed) return;
 		const generation = ++oauthGeneration;
+		prepareAuthWindow();
+		openedAuthTarget = "";
 		setOauthAnswer("");
+		setCopiedDeviceCode("");
 		setOauthProviderId(flowProviderId);
 		await oauthCleanup;
 		if (disposed || generation !== oauthGeneration) return;
@@ -230,6 +279,7 @@ export function ProviderSetup(props: PresentationProps) {
 		const answer = oauthAnswer();
 		const flowProviderId = oauthProviderId() || providerId();
 		if (!flowProviderId || !answer) return;
+		prepareAuthWindow();
 		setOauthAnswer("");
 		const request = ++statusRequest;
 		const state = await runOauthRequest(() => store.provider.loginAnswer(flowProviderId, answer));
@@ -247,8 +297,11 @@ export function ProviderSetup(props: PresentationProps) {
 			if (!disposed) setError(cause instanceof Error ? cause.message : String(cause));
 		}
 		if (disposed || generation !== oauthGeneration) return;
+		pendingAuthWindow?.close();
+		pendingAuthWindow = null;
 		setOauthProviderId("");
 		setOauthAnswer("");
+		setCopiedDeviceCode("");
 	};
 
 	const importPiConfig = async (): Promise<void> => {
@@ -312,20 +365,18 @@ export function ProviderSetup(props: PresentationProps) {
 							<div class="oauth-login" aria-live="polite">
 								<Show
 									when={
+										!deviceCodeEvent() &&
 										(state().status === "running" || state().status === "waiting_input") &&
-										safeHttpsUrl(state().authUrl ?? state().verificationUri)
+										safeHttpsUrl(authUrlEvent()?.url)
 									}
 								>
 									{(url) => (
-										<Button
-											type="button"
-											onClick={() => window.open(url(), "_blank", "noopener,noreferrer")}
-										>
+										<Link href={url()} target="_blank" rel="noreferrer">
 											{t("settings.oauthOpen")}
-										</Button>
+										</Link>
 									)}
 								</Show>
-								<Show when={state().status === "running" && !state().message}>
+								<Show when={state().status === "running" && !oauthMessageEvent()}>
 									<p>{t("settings.oauthWaiting")}</p>
 								</Show>
 								<Show when={state().status === "completed"}>
@@ -340,20 +391,40 @@ export function ProviderSetup(props: PresentationProps) {
 										{t("settings.reauthProvider")}
 									</Button>
 								</Show>
-								<Show when={state().deviceCode}>
-									<p>
-										{t("settings.oauthCode")}: <strong>{state().deviceCode}</strong>
-									</p>
+								<Show when={deviceCodeEvent()}>
+									{(event) => (
+										<div class="oauth-device-code">
+											<span>{t("settings.oauthCode")}</span>
+											<strong>{event().userCode}</strong>
+											<Button
+												type="button"
+												data-variant="secondary"
+												onClick={() => {
+													void navigator.clipboard?.writeText(event().userCode);
+													setCopiedDeviceCode(event().userCode);
+												}}
+											>
+												{copiedDeviceCode() === event().userCode
+													? t("settings.oauthCodeCopied")
+													: t("settings.oauthCopyCode")}
+											</Button>
+										</div>
+									)}
 								</Show>
-								<Show when={state().instructions && provider.id !== "openai-codex"}>
-									<p class="field-hint">{state().instructions}</p>
+								<Show when={safeHttpsUrl(deviceCodeEvent()?.verificationUri)}>
+									{(url) => (
+										<Link href={url()} target="_blank" rel="noreferrer">
+											{t("settings.oauthOpenVerification")}
+										</Link>
+									)}
 								</Show>
-								<Show when={state().message && state().status !== "failed"}>
-									<p>{state().message}</p>
+								<Show when={authUrlEvent()?.instructions}>
+									<p class="field-hint">{authUrlEvent()?.instructions}</p>
 								</Show>
-								<Show when={state().infoLinks?.length}>
+								<Show when={oauthMessageEvent()}>{(event) => <p>{event().message}</p>}</Show>
+								<Show when={oauthInfoEvent()?.links?.length}>
 									<ul class="oauth-info-links">
-										<For each={state().infoLinks}>
+										<For each={oauthInfoEvent()?.links}>
 											{(link) => (
 												<li>
 													<Link href={link.url} target="_blank" rel="noreferrer">
@@ -366,69 +437,92 @@ export function ProviderSetup(props: PresentationProps) {
 								</Show>
 								<Show when={oauthPrompt()}>
 									{(prompt) => (
-										<TextField class="field">
-											<TextField.Label class="field-label">
-												{provider.id === "openai-codex" && prompt().type === "manual_code"
-													? t("settings.oauthCallbackLabel")
-													: prompt().message}
-											</TextField.Label>
-											<Show
-												when={provider.id === "openai-codex" && prompt().type === "manual_code"}
-											>
-												<p class="field-hint">{t("settings.oauthManualHint")}</p>
-											</Show>
-											<Show
-												when={prompt().type === "select"}
-												fallback={
+										<Show
+											when={prompt().type === "manual_code" && Boolean(authUrlEvent())}
+											fallback={
+												<TextField class="field">
+													<TextField.Label class="field-label">{prompt().message}</TextField.Label>
+													<Show
+														when={prompt().type === "select"}
+														fallback={
+															<TextField.Input
+																type={prompt().type === "secret" ? "password" : "text"}
+																placeholder={prompt().placeholder}
+																value={oauthAnswer()}
+																onInput={(event) => setOauthAnswer(event.currentTarget.value)}
+															/>
+														}
+													>
+														<Select
+															disallowEmptySelection
+															options={prompt().options ?? []}
+															value={
+																prompt().options?.find((option) => option.id === oauthAnswer()) ??
+																null
+															}
+															optionValue="id"
+															optionTextValue="label"
+															onChange={(option) => {
+																if (option) setOauthAnswer(option.id);
+															}}
+															itemComponent={(itemProps) => (
+																<Select.Item item={itemProps.item} class="select-item">
+																	<Select.ItemLabel>
+																		{itemProps.item.rawValue.label}
+																	</Select.ItemLabel>
+																</Select.Item>
+															)}
+														>
+															<Select.Trigger class="select-trigger" aria-label={prompt().message}>
+																<Select.Value class="select-value">
+																	{
+																		prompt().options?.find((option) => option.id === oauthAnswer())
+																			?.label
+																	}
+																</Select.Value>
+															</Select.Trigger>
+															<Select.Portal ref={markSelectPortalTopLayer}>
+																<Select.Content class="select-content">
+																	<Select.Listbox class="select-listbox" />
+																</Select.Content>
+															</Select.Portal>
+														</Select>
+													</Show>
+													<Button
+														type="button"
+														data-variant="secondary"
+														disabled={busy() || !oauthAnswer()}
+														onClick={() => void answerOauth()}
+													>
+														{t("settings.oauthSubmit")}
+													</Button>
+												</TextField>
+											}
+										>
+											<details class="oauth-manual-fallback">
+												<summary>{t("settings.oauthManualFallback")}</summary>
+												<TextField class="field">
+													<TextField.Label class="field-label">
+														{t("settings.oauthCallbackLabel")}
+													</TextField.Label>
+													<p class="field-hint">{t("settings.oauthManualHint")}</p>
 													<TextField.Input
-														type={prompt().type === "secret" ? "password" : "text"}
+														type="text"
 														placeholder={prompt().placeholder}
 														value={oauthAnswer()}
 														onInput={(event) => setOauthAnswer(event.currentTarget.value)}
 													/>
-												}
-											>
-												<Select
-													disallowEmptySelection
-													options={prompt().options ?? []}
-													value={
-														prompt().options?.find((option) => option.id === oauthAnswer()) ?? null
-													}
-													optionValue="id"
-													optionTextValue="label"
-													onChange={(option) => {
-														if (option) setOauthAnswer(option.id);
-													}}
-													itemComponent={(itemProps) => (
-														<Select.Item item={itemProps.item} class="select-item">
-															<Select.ItemLabel>{itemProps.item.rawValue.label}</Select.ItemLabel>
-														</Select.Item>
-													)}
-												>
-													<Select.Trigger class="select-trigger" aria-label={prompt().message}>
-														<Select.Value class="select-value">
-															{
-																prompt().options?.find((option) => option.id === oauthAnswer())
-																	?.label
-															}
-														</Select.Value>
-													</Select.Trigger>
-													<Select.Portal ref={markSelectPortalTopLayer}>
-														<Select.Content class="select-content">
-															<Select.Listbox class="select-listbox" />
-														</Select.Content>
-													</Select.Portal>
-												</Select>
-											</Show>
-											<Button
-												type="button"
-												data-variant="secondary"
-												disabled={busy() || !oauthAnswer()}
-												onClick={() => void answerOauth()}
-											>
-												{t("settings.oauthSubmit")}
-											</Button>
-										</TextField>
+													<Button
+														type="button"
+														data-variant="secondary"
+														disabled={busy() || !oauthAnswer().trim()}
+														onClick={() => void answerOauth()}
+													>
+														{t("settings.oauthManualSubmit")}
+													</Button>
+												</TextField>
+											</details>
+										</Show>
 									)}
 								</Show>
 								<Show when={state().status === "running" || state().status === "waiting_input"}>
@@ -661,13 +755,10 @@ export function ProviderSetup(props: PresentationProps) {
 	);
 
 	const renderImports = () => (
-		<>
-			<details
-				open={piOpen()}
-				onToggle={(event) => setPiOpen(event.currentTarget.open)}
-				class="provider-import provider-import-pi"
-			>
-				<summary>{t("settings.piConfigLabel")}</summary>
+		<details class="provider-import provider-import-advanced">
+			<summary>{t("settings.advancedToggle")}</summary>
+			<section class="provider-import-section provider-import-pi">
+				<h5>{t("settings.piConfigLabel")}</h5>
 				<TextField class="field">
 					<TextField.Label class="field-label">{t("settings.piConfigLabel")}</TextField.Label>
 					<span class="field-hint">{t("settings.piConfigHint")}</span>
@@ -687,9 +778,9 @@ export function ProviderSetup(props: PresentationProps) {
 				>
 					{t("settings.piConfigImport")}
 				</Button>
-			</details>
-			<details class="provider-import provider-import-custom">
-				<summary>{t("settings.customProvider")}</summary>
+			</section>
+			<section class="provider-import-section provider-import-custom">
+				<h5>{t("settings.customProvider")}</h5>
 				<TextField class="field">
 					<TextField.Label class="field-label">{t("settings.customProviderId")}</TextField.Label>
 					<TextField.Input
@@ -751,8 +842,8 @@ export function ProviderSetup(props: PresentationProps) {
 						</p>
 					)}
 				</Show>
-			</details>
-		</>
+			</section>
+		</details>
 	);
 
 	return (

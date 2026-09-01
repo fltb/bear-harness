@@ -31,6 +31,14 @@ const VISION_MODEL = {
 	createdAt: "2026-01-02",
 };
 
+const acceptedUserEntry = (text: string) => ({
+	type: "message" as const,
+	id: crypto.randomUUID(),
+	parentId: null,
+	timestamp: new Date().toISOString(),
+	message: { role: "user" as const, content: text, timestamp: Date.now() },
+});
+
 function configureActiveConversation(client: CompanionClient): void {
 	client.conversation.list = vi.fn(() =>
 		Promise.resolve({
@@ -257,7 +265,9 @@ describe("composer", () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		configureSelectedModel(client);
-		const messageSend = vi.fn(() => Promise.resolve({ ok: true as const, data: {} }));
+		const messageSend = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { entry: acceptedUserEntry("测试消息") } }),
+		);
 		client.message.send = messageSend;
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
@@ -279,13 +289,13 @@ describe("composer", () => {
 		});
 		await waitFor(() => expect(composer).toBeEnabled());
 		await user.type(composer, "  测试消息  ");
-		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
+		await user.keyboard("{Enter}");
 
 		await waitFor(() =>
-			expect(messageSend).toHaveBeenCalledWith({
+			expect(messageSend).toHaveBeenCalledWith(expect.objectContaining({
 				conversationId: "conversation-1",
 				text: "测试消息",
-			}),
+			})),
 		);
 		expect(composer).toHaveValue("");
 	});
@@ -294,7 +304,9 @@ describe("composer", () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		configureSelectedModel(client);
-		const messageSend = vi.fn(() => Promise.resolve({ ok: true as const, data: {} }));
+		const messageSend = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { entry: acceptedUserEntry("unused") } }),
+		);
 		client.message.send = messageSend;
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
@@ -347,14 +359,14 @@ describe("composer", () => {
 		expect(alerts[0]).toHaveTextContent("model unavailable");
 	});
 
-	it("keeps a failed message draft and allows an explicit resubmit", async () => {
+	it("keeps a failed pending message and allows an explicit retry", async () => {
 		const { client } = createTestClient();
 		const messageSend = vi
 			.fn()
 			.mockRejectedValueOnce(new Error("send unavailable"))
 			.mockResolvedValueOnce({
 				ok: true as const,
-				data: {},
+				data: { entry: acceptedUserEntry("稍后再试") },
 			});
 		client.message.send = messageSend;
 		renderComposerWithModels(client, {
@@ -374,15 +386,12 @@ describe("composer", () => {
 		await user.type(composer, "稍后再试");
 		await user.click(screen.getByRole("button", { name: zhCN.composer.sendLabel }));
 
-		const alerts = await screen.findAllByRole("alert");
-		expect(alerts).toHaveLength(1);
-		expect(alerts[0]).toHaveTextContent("send unavailable");
-		expect(composer).toHaveValue("稍后再试");
-		const retry = screen.getByRole("button", { name: zhCN.composer.sendLabel });
+		await screen.findByText(zhCN.messages.sendFailed);
+		expect(composer).toHaveValue("");
+		const retry = screen.getByRole("button", { name: zhCN.messages.retry });
 		expect(retry).toBeEnabled();
 		await user.click(retry);
 		await waitFor(() => expect(messageSend).toHaveBeenCalledTimes(2));
-		await waitFor(() => expect(composer).toHaveValue(""));
-		expect(screen.queryByText("send unavailable")).not.toBeInTheDocument();
+		await waitFor(() => expect(screen.queryByText(zhCN.messages.sendFailed)).not.toBeInTheDocument());
 	});
 });

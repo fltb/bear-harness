@@ -771,6 +771,7 @@ export const ConversationHistoryResponse = z.strictObject({
 export const MessageSendRequest = z.strictObject({
 	conversationId: ConversationId,
 	text: z.string().min(1).max(65536),
+	clientMessageId: z.string().uuid(),
 });
 export const MessageSendResponse = EmptyResponse;
 
@@ -1048,6 +1049,37 @@ export const ProviderLoginRequest = z.strictObject({
 	providerId: z.string().min(1).max(64),
 	authType: z.literal("oauth"),
 });
+const ProviderAuthEvent = z.union([
+	z.strictObject({
+		type: z.literal("info"),
+		message: z.string().max(MAX_STRING_LENGTH),
+		links: z
+			.array(
+				z.strictObject({
+					url: z.string().max(2048),
+					label: z.string().max(MAX_STRING_LENGTH).optional(),
+				}),
+			)
+			.max(10)
+			.optional(),
+	}),
+	z.strictObject({
+		type: z.literal("auth_url"),
+		url: z.string().max(2048),
+		instructions: z.string().max(MAX_STRING_LENGTH).optional(),
+	}),
+	z.strictObject({
+		type: z.literal("device_code"),
+		userCode: z.string().max(128),
+		verificationUri: z.string().max(2048),
+		intervalSeconds: z.number().int().positive().max(3600).optional(),
+		expiresInSeconds: z.number().int().positive().max(86400).optional(),
+	}),
+	z.strictObject({
+		type: z.literal("progress"),
+		message: z.string().max(MAX_STRING_LENGTH),
+	}),
+]);
 export const ProviderLoginResponse = z.strictObject({
 	providerId: z.string().min(1).max(64),
 	status: z.union([
@@ -1056,22 +1088,8 @@ export const ProviderLoginResponse = z.strictObject({
 		z.literal("completed"),
 		z.literal("failed"),
 	]),
-	authUrl: z.string().max(2048).optional(),
-	instructions: z.string().max(MAX_STRING_LENGTH).optional(),
-	deviceCode: z.string().max(128).optional(),
-	verificationUri: z.string().max(2048).optional(),
-	intervalSeconds: z.number().int().positive().max(3600).optional(),
-	expiresInSeconds: z.number().int().positive().max(86400).optional(),
-	message: z.string().max(MAX_STRING_LENGTH).optional(),
-	infoLinks: z
-		.array(
-			z.strictObject({
-				url: z.string().max(2048),
-				label: z.string().max(MAX_STRING_LENGTH).optional(),
-			}),
-		)
-		.max(10)
-		.optional(),
+	events: z.array(ProviderAuthEvent).max(100),
+	error: z.string().max(MAX_STRING_LENGTH).optional(),
 	prompt: z
 		.strictObject({
 			type: z.union([

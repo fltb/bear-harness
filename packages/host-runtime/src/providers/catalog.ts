@@ -17,6 +17,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { AuthEvent, AuthInteraction, AuthPrompt } from "@earendil-works/pi-ai";
 import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
@@ -44,37 +45,7 @@ function isBuiltinProvider(providerId: string): boolean {
 const BLOCKED_PROVIDER_ID_PATTERN =
 	/bedrock|vertex|radius|copilot|nvidia|cerebras|huggingface|fireworks|together|baseten|cloudflare|azure|xiaomi|qwen-token/i;
 
-/** Auth events emitted by provider login flows (mirrors pi-ai's AuthEvent). */
-export type AuthEvent =
-	| { type: "info"; message: string; links?: readonly { url: string; label?: string }[] }
-	| { type: "auth_url"; url: string; instructions?: string }
-	| {
-			type: "device_code";
-			userCode: string;
-			verificationUri: string;
-			intervalSeconds?: number;
-			expiresInSeconds?: number;
-	  }
-	| { type: "progress"; message: string };
-
-/** Prompt shapes the host's dialog layer must support (mirrors pi-ai). */
-export type AuthPrompt = { signal?: AbortSignal } & (
-	| { type: "text"; message: string; placeholder?: string }
-	| { type: "secret"; message: string; placeholder?: string }
-	| {
-			type: "select";
-			message: string;
-			options: readonly { id: string; label: string; description?: string }[];
-	  }
-	| { type: "manual_code"; message: string; placeholder?: string }
-);
-
-/** Login interaction contract passed through to pi-ai verbatim. */
-export interface AuthInteraction {
-	signal?: AbortSignal;
-	prompt(prompt: AuthPrompt): Promise<string>;
-	notify(event: AuthEvent): void;
-}
+export type { AuthEvent, AuthInteraction, AuthPrompt } from "@earendil-works/pi-ai";
 
 /** Credential status reported by the catalog, mapped from pi-ai auth status. */
 export type ProviderCredentialStatus = "missing" | "session_only" | "stored" | "unavailable";
@@ -263,22 +234,12 @@ export interface ProviderInfo {
 	unavailable: string[];
 }
 
-/** Host-level summary of an OAuth login flow. */
-export interface OAuthLoginResult {
-	authUrl?: string;
-	instructions?: string;
-	deviceCode?: string;
-	verificationUri?: string;
-	intervalSeconds?: number;
-	expiresInSeconds?: number;
-}
-
-export interface OAuthSessionState extends OAuthLoginResult {
+export interface OAuthSessionState {
 	providerId: string;
 	status: "running" | "waiting_input" | "completed" | "failed";
-	message?: string;
-	/** Links from pi-ai `info` events (e.g. help/terms pages). */
-	infoLinks?: readonly { url: string; label?: string }[];
+	/** Pi auth events in emission order, with their original discriminants and field names. */
+	events: readonly AuthEvent[];
+	error?: string;
 	prompt?: {
 		type: "text" | "secret" | "select" | "manual_code";
 		message: string;
@@ -704,44 +665,14 @@ export class ProviderCatalog {
 	}
 
 	/** Run a provider's OAuth flow, surfacing the auth URL / device code. */
-	async loginOAuth(providerId: string, interaction: AuthInteraction): Promise<OAuthLoginResult> {
+	async loginOAuth(providerId: string, interaction: AuthInteraction): Promise<void> {
 		assertAllowedProvider(providerId);
 		const runtime = await this.getRuntime();
-		let authUrl: string | undefined;
-		let instructions: string | undefined;
-		let deviceCode: string | undefined;
-		let verificationUri: string | undefined;
-		let intervalSeconds: number | undefined;
-		let expiresInSeconds: number | undefined;
-		const capturingInteraction: AuthInteraction = {
-			signal: interaction.signal,
-			prompt: interaction.prompt,
-			notify: (event) => {
-				if (event.type === "auth_url") {
-					authUrl = event.url;
-					instructions = event.instructions;
-				} else if (event.type === "device_code") {
-					deviceCode = event.userCode;
-					verificationUri = event.verificationUri;
-					intervalSeconds = event.intervalSeconds;
-					expiresInSeconds = event.expiresInSeconds;
-				}
-				interaction.notify(event);
-			},
-		};
 		try {
-			await runtime.login(providerId, "oauth", capturingInteraction);
+			await runtime.login(providerId, "oauth", interaction);
 		} catch (error) {
 			throw toHostError(error, providerId);
 		}
-		return {
-			authUrl,
-			instructions,
-			deviceCode,
-			verificationUri,
-			intervalSeconds,
-			expiresInSeconds,
-		};
 	}
 
 	startOAuth(providerId: string): OAuthSessionState {
@@ -749,7 +680,7 @@ export class ProviderCatalog {
 		if (current && (current.status === "running" || current.status === "waiting_input")) {
 			return publicOAuthSession(current);
 		}
-		const session: OAuthSessionInternal = { providerId, status: "running" };
+		const session: OAuthSessionInternal = { providerId, status: "running", events: [] };
 		this.oauthSessions.set(providerId, session);
 		session.abort = new AbortController();
 		const isCurrent = () =>
@@ -761,21 +692,7 @@ export class ProviderCatalog {
 			signal: session.abort.signal,
 			notify: (event) => {
 				if (!isCurrent()) return;
-				if (event.type === "auth_url") {
-					session.authUrl = event.url;
-					session.instructions = event.instructions;
-				}
-				if (event.type === "device_code") {
-					session.deviceCode = event.userCode;
-					session.verificationUri = event.verificationUri;
-					session.intervalSeconds = event.intervalSeconds;
-					session.expiresInSeconds = event.expiresInSeconds;
-				}
-				if (event.type === "info") {
-					session.message = event.message;
-					if (event.links?.length) session.infoLinks = event.links;
-				}
-				if (event.type === "progress") session.message = event.message;
+				session.events = [...session.events, event];
 				changed();
 			},
 			prompt: (prompt) => {
@@ -786,12 +703,9 @@ export class ProviderCatalog {
 				return answer;
 			},
 		})
-			.then((result) => {
+			.then(() => {
 				if (!isCurrent()) return;
-				Object.assign(session, result);
 				session.status = "completed";
-				session.message = undefined;
-				session.infoLinks = undefined;
 				session.prompt = undefined;
 				session.resolvePrompt = undefined;
 				session.rejectPrompt = undefined;
@@ -803,7 +717,7 @@ export class ProviderCatalog {
 				session.prompt = undefined;
 				session.resolvePrompt = undefined;
 				session.rejectPrompt = undefined;
-				session.message = oauthFailureReason(cause);
+				session.error = oauthFailureReason(cause);
 				changed();
 			});
 		return publicOAuthSession(session);

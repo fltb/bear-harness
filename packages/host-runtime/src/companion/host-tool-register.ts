@@ -29,6 +29,7 @@ export interface HostToolInput {
 	canon: Search;
 	memorySearch: Search;
 	conversationSearch: Search;
+	imageRead?(path: string): Promise<unknown>;
 	explicitMemory: {
 		read(): Promise<string>;
 		edit(oldText: string | undefined, newText: string): Promise<string>;
@@ -72,6 +73,7 @@ const DocumentArgs = z.strictObject({
 	offset: z.number().int().min(0).optional(),
 	limit: z.number().int().min(1).max(50_000).optional(),
 });
+const ImageArgs = z.strictObject({ path: z.string().min(1).max(4096) });
 const DelegateArgs = z.strictObject({
 	agent: z.enum(["pi", "codex"]),
 	instruction: z.string().min(1).max(12_000),
@@ -137,6 +139,17 @@ export function registerHostTools(input: HostToolInput): Record<string, AgentToo
 			readDocument,
 			"Parse an absolute PDF, DOCX, XLSX, or PPTX path.",
 		),
+		...(input.imageRead
+			? {
+					read_image: tool(
+						"read_image",
+						"Read image",
+						ImageArgs,
+						async ({ path }) => attempt(() => input.imageRead!(path), "image_read_failed"),
+						"Use only for an absolute image path explicitly included in the user's current message. This fallback is for reply models without native image support.",
+					),
+				}
+			: {}),
 		host_delegate: tool(
 			"host_delegate",
 			"Delegate work",

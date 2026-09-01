@@ -10,6 +10,7 @@ import { Composer } from "./Composer";
 import { ConversationPanel, MediaPreview } from "./ConversationPanel";
 import { FirstMeeting } from "./FirstMeeting";
 import { Backstage } from "./features/Backstage.js";
+import type { SettingsPage } from "./features/SettingsSheet.js";
 import { Icon } from "./Icon.js";
 import { syncDocumentTitle } from "./lib/dom-effects.js";
 import { SceneBackdrop } from "./SceneBackdrop";
@@ -109,6 +110,7 @@ function DesktopFrame() {
 		conversationId: string;
 		media: CharacterMedia;
 	}>();
+	const [settingsPage, setSettingsPage] = createSignal<SettingsPage>("conversation");
 	const previewMedia = createMemo(() => {
 		const selection = mediaSelection();
 		return !workflow.selectedArtifact() && selection?.conversationId === store.activeConversationId
@@ -117,10 +119,16 @@ function DesktopFrame() {
 	});
 	let appRef: HTMLDivElement | undefined;
 	let backstageReturnFocus: HTMLElement | undefined;
-	const openBackstage = (tab: "roles" | "settings") => {
+	const openBackstage = (tab: "roles" | "settings" | "archived") => {
 		if (document.activeElement instanceof HTMLElement) {
 			backstageReturnFocus = document.activeElement;
 		}
+		if (tab === "archived") {
+			setSettingsPage("archived");
+			workflow.openBackstage("settings");
+			return;
+		}
+		if (tab === "settings") setSettingsPage("conversation");
 		workflow.openBackstage(tab);
 	};
 
@@ -211,11 +219,16 @@ function DesktopFrame() {
 						visualState={workflow.visualState() ?? activityVisualState()}
 						layout={presenceLayout()}
 					/>
-					<ConversationPanel onPreviewMedia={openMedia} />
-					<Composer
-						placeholder={workflow.composerPlaceholder()}
-						onOpenModelSettings={() => openBackstage("settings")}
-					/>
+					<Show
+						when={store.activeConversationId !== null}
+						fallback={<EmptyConversationState onCreate={() => void store.createConversation()} />}
+					>
+						<ConversationPanel onPreviewMedia={openMedia} />
+						<Composer
+							placeholder={workflow.composerPlaceholder()}
+							onOpenModelSettings={() => openBackstage("settings")}
+						/>
+					</Show>
 					<PermissionLayer />
 					<FirstMeeting />
 				</main>
@@ -227,8 +240,24 @@ function DesktopFrame() {
 				open={workflow.backstageOpen()}
 				onClose={workflow.closeBackstage}
 				initialTab={workflow.backstageTab()}
+				initialSettingsPage={settingsPage()}
 				returnFocus={() => backstageReturnFocus?.focus()}
 			/>
 		</div>
+	);
+}
+
+function EmptyConversationState(props: { onCreate(): void }) {
+	const [t] = useTranslation(undefined, { i18n });
+	return (
+		<section class="conversation-empty-state" aria-labelledby="conversation-empty-title">
+			<div class="conversation-empty-card">
+				<h1 id="conversation-empty-title">{t("sidebar.noConversationTitle")}</h1>
+				<p>{t("sidebar.noConversationHint")}</p>
+				<Button type="button" data-variant="primary" onClick={props.onCreate}>
+					{t("sidebar.createConversation")}
+				</Button>
+			</div>
+		</section>
 	);
 }

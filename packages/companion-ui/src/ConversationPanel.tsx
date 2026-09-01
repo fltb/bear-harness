@@ -395,7 +395,21 @@ function PiLiveAssistantMessageView() {
 	const store = useCompanionStore();
 	const [t] = useTranslation(undefined, { i18n });
 	const characterName = store.character?.name ?? "";
-	const message = () => store.activePiLiveState?.streamingMessage;
+	const message = () => {
+		const current = store.activePiLiveState?.streamingMessage;
+		if (current?.role !== "assistant") return undefined;
+		const text = messageText(current.content);
+		const persisted = store.activePiEntries?.some(
+			(entry) =>
+				entry.type === "message" &&
+				entry.message.role === "assistant" &&
+				((current.responseId && entry.message.responseId === current.responseId) ||
+					(current.timestamp === entry.message.timestamp &&
+						messageText(entry.message.content) === text) ||
+					(text.length > 0 && messageText(entry.message.content) === text)),
+		);
+		return persisted ? undefined : current;
+	};
 	const stopReason = () => {
 		const current = message();
 		return current?.role === "assistant" ? current.stopReason : undefined;
@@ -473,6 +487,49 @@ function PiQueuedUserMessages() {
 	);
 }
 
+function PendingUserMessages() {
+	const [t] = useTranslation(undefined, { i18n });
+	const store = useCompanionStore();
+	const visible = () =>
+		store.pendingUserMessages.filter(
+			(pending) =>
+				!store.activePiEntries?.some(
+					(entry) =>
+						entry.type === "message" &&
+						entry.message.role === "user" &&
+						messageText(entry.message.content) === pending.text,
+				),
+		);
+	return (
+		<For each={visible()}>
+			{(message) => (
+				<div class="timeline-entry-row" data-testid="pending-user-message">
+					<div class="user-message-column">
+						<article class={`msg pi-timeline-message user${message.state === "failed" ? " stream-failed" : ""}`}>
+							<div class="msg-meta">{t("messages.you")}</div>
+							<p>{message.text}</p>
+							<Show
+								when={message.state === "failed"}
+								fallback={<span class="streaming-status" role="status">{t("messages.sending")}</span>}
+							>
+								<span class="stream-error" role="alert">{t("messages.sendFailed")}</span>
+								<div class="message-inline-actions">
+									<Button type="button" onClick={() => void store.retryPendingMessage(message.clientMessageId)}>
+										{t("messages.retry")}
+									</Button>
+									<Button type="button" onClick={() => store.dismissPendingMessage(message.clientMessageId)}>
+										{t("messages.discard")}
+									</Button>
+								</div>
+							</Show>
+						</article>
+					</div>
+				</div>
+			)}
+		</For>
+	);
+}
+
 export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia): void }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
@@ -483,7 +540,7 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 	followTimelineScroll(
 		() => threadRef,
 		() =>
-			`${store.activePiEntries?.length ?? 0}:${
+			`${store.activePiEntries?.length ?? 0}:${store.pendingUserMessages.length}:${
 				store.activePiLiveState?.streamingMessage &&
 				"content" in store.activePiLiveState.streamingMessage
 					? messageText(store.activePiLiveState.streamingMessage.content).length
@@ -515,6 +572,7 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 						)}
 					</Show>
 					<PiQueuedUserMessages />
+					<PendingUserMessages />
 					<PiLiveAssistantMessageView />
 				</Show>
 			</section>

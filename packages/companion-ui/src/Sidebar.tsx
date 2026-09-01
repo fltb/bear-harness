@@ -19,7 +19,7 @@ import { Button, Dialog, TextField } from "./ui/primitives.js";
  */
 export function Sidebar(props: {
 	character: CharacterDisplay | undefined;
-	onOpenBackstage: (tab: "roles" | "settings") => void;
+	onOpenBackstage: (tab: "roles" | "settings" | "archived") => void;
 	onNavigate?: () => void;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
@@ -209,6 +209,7 @@ export function Sidebar(props: {
 												data-control="command"
 												type="button"
 												title={t("sidebar.renameConversation")}
+												data-tooltip={t("sidebar.renameConversation")}
 												aria-label={t("sidebar.renameConversation")}
 												onClick={() => {
 													workflow.beginRename(conversation);
@@ -220,6 +221,7 @@ export function Sidebar(props: {
 												data-control="command"
 												type="button"
 												title={t("sidebar.archiveConversation")}
+												data-tooltip={t("sidebar.archiveConversation")}
 												aria-label={t("sidebar.archiveConversation")}
 												onClick={() =>
 													void workflow.runSidebarAction(() =>
@@ -233,6 +235,7 @@ export function Sidebar(props: {
 												data-control="command"
 												type="button"
 												title={t("sidebar.deleteConversation")}
+												data-tooltip={t("sidebar.deleteConversation")}
 												aria-label={t("sidebar.deleteConversation")}
 												onClick={() => {
 													setDeleteTarget({
@@ -252,6 +255,22 @@ export function Sidebar(props: {
 				</nav>
 				<div class="system-section">
 					<div class="section-label">{t("sidebar.application")}</div>
+					<Button
+						type="button"
+						class="system-nav"
+						onClick={() => {
+							props.onNavigate?.();
+							props.onOpenBackstage("archived");
+						}}
+					>
+						<span class="gear" aria-hidden="true">
+							<Icon icon={faBoxArchive} />
+						</span>
+						{t("sidebar.archivedConversations")}
+						<Show when={(store.archivedConversations?.length ?? 0) > 0}>
+							<span class="nav-count">{store.archivedConversations?.length ?? 0}</span>
+						</Show>
+					</Button>
 					<Button
 						type="button"
 						class="system-nav"

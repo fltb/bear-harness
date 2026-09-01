@@ -121,9 +121,9 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 					value={workflow.composerText()}
 					onInput={(event) => workflow.setComposerText(event.currentTarget.value)}
 					onKeyDown={(event) => {
-						if (event.key === "Enter" && !event.shiftKey) {
+						if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
 							event.preventDefault();
-							event.currentTarget.form?.requestSubmit();
+							void workflow.dispatchMessage();
 						}
 					}}
 					disabled={!store.activeConversationId || !workflow.modelSelected()}

@@ -95,10 +95,14 @@ export function createModelProviderApis(c: {
 			await invoke(client, () => client.provider.setApiKey({ providerId, apiKey, sessionOnly }));
 		},
 		login: async (providerId) => {
+			const key = queryKeys.providerLogin(providerId);
+			const before = queryClient.getQueryData<ProviderLoginResult>(key);
 			const state = await invoke(client, () =>
 				client.provider.login({ providerId, authType: "oauth" }),
 			);
-			queryClient.setQueryData(queryKeys.providerLogin(providerId), state);
+			queryClient.setQueryData<ProviderLoginResult>(key, (current) =>
+				current === before ? state : current,
+			);
 			return state;
 		},
 		loginStatus: (providerId) =>
@@ -108,8 +112,12 @@ export function createModelProviderApis(c: {
 				request: () => invoke(client, () => client.provider.loginStatus({ providerId })),
 			}),
 		loginAnswer: async (providerId, answer) => {
+			const key = queryKeys.providerLogin(providerId);
+			const before = queryClient.getQueryData<ProviderLoginResult>(key);
 			const state = await invoke(client, () => client.provider.loginAnswer({ providerId, answer }));
-			queryClient.setQueryData(queryKeys.providerLogin(providerId), state);
+			queryClient.setQueryData<ProviderLoginResult>(key, (current) =>
+				current === before ? state : current,
+			);
 			return state;
 		},
 		loginCancel: async (providerId) => {

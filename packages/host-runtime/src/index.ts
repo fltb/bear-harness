@@ -137,7 +137,6 @@ export type {
 	AuthEvent,
 	AuthInteraction,
 	AuthPrompt,
-	OAuthLoginResult,
 	ProviderCredentialStatus,
 	ProviderInfo,
 	ProviderModelCost,
