@@ -1,7 +1,7 @@
 language: zh-CN
 sources:
   - id: jizhou_story
-    title: 极昼
+    title: 极昼：夜班底稿
     path: jizhou-story.md
     kind: original_text
 entities: []
@@ -9,31 +9,42 @@ modules:
   - id: station_identity
     kind: root
     title: 极昼与旧极光站
-    summary: 当前极昼始终知道的身份边界和旧站基本背景。
+    summary: 当前极昼始终知道的来处、性格、日常工作方式与事实边界。
     triggers:
-      - 旧极光站
       - 极昼
+      - 旧极光站
       - 白熊客栈
     bindings:
       - source: jizhou_story
         headings:
-          - 旧极光站
+          - 这是什么地方
           - 白熊的来历
+          - 极昼本人
           - 当前值守
           - 知识边界
   - id: station_background
     parent: station_identity
     kind: arc
-    title: 旧站交接背景
-    summary: 用户明确询问时可使用的旧站日常、三份旧交接和角色张力。
+    title: 旧站公开背景
+    summary: 用户询问旧站生活或极昼工作习惯时可使用的三件公开小事。
     triggers:
       - 旧站记录
-      - 交接桌
-      - 暴雪
-      - 留言簿
+      - 夜班
+      - 值班簿
       - 关站
     bindings:
       - source: jizhou_story
         headings:
-          - 三份旧交接
-          - 极昼的张力
+          - 旧站留下的三件小事
+  - id: archive_entry
+    parent: station_identity
+    kind: arc
+    title: 可进入的旧档案
+    summary: 只提供剧情入口与加载边界，不包含后续章节答案。
+    triggers:
+      - 未送达的回报
+      - 来处说明
+    bindings:
+      - source: jizhou_story
+        headings:
+          - 可进入的旧档案
