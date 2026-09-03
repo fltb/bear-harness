@@ -509,6 +509,36 @@
 .sub-tabs {
 	@apply flex gap-2;
 }
+
+.provider-settings-heading {
+	@apply flex items-center justify-between gap-4;
+}
+
+.provider-add-dialog {
+	@apply fixed left-1/2 top-1/2 z-50 grid max-h-[85vh] w-[min(44rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-2xl border p-5;
+	border-color: var(--line-soft);
+	background: var(--surface-panel);
+	box-shadow: var(--shadow-raised);
+}
+
+.provider-add-dialog > h2 {
+	@apply m-0 text-lg;
+}
+
+.manifest-object-field {
+	@apply grid min-w-0 gap-4 rounded-xl border p-4;
+	border-color: var(--line-soft);
+}
+
+.manifest-object-field > legend {
+	@apply px-1 text-sm font-semibold;
+	color: var(--sys-text-muted);
+}
+
+.manifest-field textarea,
+.manifest-field input {
+	@apply w-full;
+}
 .message-choices {
 	@apply mx-auto my-3 grid w-full max-w-2xl gap-2.5 rounded-xl border p-4;
 	border-color: var(--line-soft);

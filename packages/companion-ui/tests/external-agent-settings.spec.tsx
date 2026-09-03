@@ -1,5 +1,5 @@
 import { zhCN } from "@bear-harness/i18n/locales";
-import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { render, screen, waitFor } from "@solidjs/testing-library";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -46,26 +46,17 @@ describe("ExternalAgentSettings", () => {
 	it("shows an empty discovery result and can refresh it", async () => {
 		const { client } = createTestClient();
 		renderSettings(client);
-		expect(await screen.findByText(zhCN.settings.builtInPiReady)).toBeInTheDocument();
-		expect(screen.getByText(zhCN.settings.builtInPiHint)).toBeInTheDocument();
 		expect(await screen.findByText(zhCN.settings.codexNotFound)).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: zhCN.settings.refreshCodex }));
 		await waitFor(() => expect(client.externalAgent.discoverCodex).toHaveBeenCalledTimes(2));
 	});
 
-	it("filters missing candidates and connects a usable Codex installation", async () => {
+	it("connects the single discovered Codex installation without a user-supplied home", async () => {
 		const { client } = createTestClient();
 		client.externalAgent.discoverCodex = vi.fn(async () => ({
 			ok: true as const,
 			data: {
 				candidates: [
-					{
-						candidatePath: "/missing/codex",
-						canonicalPath: null,
-						version: null,
-						sha256: null,
-						status: "not_found" as const,
-					},
 					{
 						candidatePath: "/opt/codex",
 						canonicalPath: "/opt/codex",
@@ -100,12 +91,7 @@ describe("ExternalAgentSettings", () => {
 		renderSettings(client);
 		expect(await screen.findByText("/opt/codex")).toBeInTheDocument();
 		expect(screen.getByText(zhCN.settings.codexCandidateUsable)).toBeInTheDocument();
-		expect(screen.queryByText("/missing/codex")).not.toBeInTheDocument();
 		const connect = screen.getByRole("button", { name: zhCN.settings.connectCodex });
-		expect(connect).toBeDisabled();
-		fireEvent.input(screen.getByLabelText(zhCN.settings.codexLoginDirectory), {
-			target: { value: "  /private/codex-home  " },
-		});
 		expect(connect).toBeEnabled();
 		await userEvent.click(connect);
 		await waitFor(() =>
@@ -113,7 +99,6 @@ describe("ExternalAgentSettings", () => {
 				canonicalPath: "/opt/codex",
 				version: "1.2.3",
 				sha256: "a".repeat(64),
-				codexHome: "/private/codex-home",
 			}),
 		);
 		expect(await screen.findByText(zhCN.settings.codexConnected)).toBeInTheDocument();
@@ -172,9 +157,6 @@ describe("ExternalAgentSettings", () => {
 		expect(await screen.findByText("/broken/codex")).toBeInTheDocument();
 		expect(screen.getByText(zhCN.settings.codexUnknownVersion)).toBeInTheDocument();
 		expect(screen.getByText(zhCN.settings.codexCandidateRejected)).toBeInTheDocument();
-		fireEvent.input(screen.getByLabelText(zhCN.settings.codexLoginDirectory), {
-			target: { value: "/private/codex-home" },
-		});
 		expect(screen.getByRole("button", { name: zhCN.settings.connectCodex })).toBeDisabled();
 	});
 
@@ -199,9 +181,6 @@ describe("ExternalAgentSettings", () => {
 		});
 		renderSettings(client);
 		await screen.findByText("/opt/codex");
-		fireEvent.input(screen.getByLabelText(zhCN.settings.codexLoginDirectory), {
-			target: { value: "/private/codex-home" },
-		});
 		await userEvent.click(screen.getByRole("button", { name: zhCN.settings.connectCodex }));
 		expect(await screen.findByText("connection rejected")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: zhCN.settings.connectCodex })).toBeEnabled();
@@ -239,11 +218,10 @@ describe("ExternalAgentSettings", () => {
 		}));
 		renderSettings(client);
 		await screen.findByText("/unverified/codex");
-		fireEvent.input(screen.getByLabelText(zhCN.settings.codexLoginDirectory), {
-			target: { value: "/private/codex-home" },
-		});
-		for (const button of screen.getAllByRole("button", { name: zhCN.settings.connectCodex }))
-			await userEvent.click(button);
+		expect(screen.getAllByRole("button", { name: zhCN.settings.connectCodex })).toHaveLength(1);
+		expect(screen.queryByText("/unversioned/codex")).not.toBeInTheDocument();
+		expect(screen.queryByText("/unhashed/codex")).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: zhCN.settings.connectCodex }));
 		expect(client.externalAgent.connectCodex).not.toHaveBeenCalled();
 	});
 });

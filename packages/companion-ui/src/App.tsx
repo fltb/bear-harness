@@ -110,7 +110,7 @@ function DesktopFrame() {
 		conversationId: string;
 		media: CharacterMedia;
 	}>();
-	const [settingsPage, setSettingsPage] = createSignal<SettingsPage>("conversation");
+	const [settingsPage, setSettingsPage] = createSignal<SettingsPage>("general");
 	const previewMedia = createMemo(() => {
 		const selection = mediaSelection();
 		return !workflow.selectedArtifact() && selection?.conversationId === store.activeConversationId
@@ -128,7 +128,7 @@ function DesktopFrame() {
 			workflow.openBackstage("settings");
 			return;
 		}
-		if (tab === "settings") setSettingsPage("conversation");
+		if (tab === "settings") setSettingsPage("general");
 		workflow.openBackstage(tab);
 	};
 

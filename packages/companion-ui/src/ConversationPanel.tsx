@@ -1,8 +1,10 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import type { CharacterMedia, PiSessionEntry } from "@bear-harness/protocol";
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { faCodeBranch, faCopy, faPen, faRotateRight } from "@fortawesome/free-solid-svg-icons";
+import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
+import { Icon } from "./Icon.js";
 import { followTimelineScroll } from "./lib/dom-effects.js";
-import { useCompanionStore } from "./stores/companion.js";
+import { type TimelineProjectionItem, useCompanionStore } from "./stores/companion.js";
 import { useConversationViewWorkflow } from "./stores/conversation-workflows.js";
 import { ThreadHead } from "./ThreadHead.js";
 import { Button, TextField } from "./ui/primitives.js";
@@ -46,14 +48,18 @@ function hostChoices(payload: Record<string, unknown> | undefined) {
 function PiTimelineEntryView(props: {
 	entry: PiSessionEntry;
 	onPreviewMedia(media: CharacterMedia): void;
+	canEdit: boolean;
+	canRegenerate: boolean;
 }) {
 	const store = useCompanionStore();
 	const [t] = useTranslation(undefined, { i18n });
 	const [editing, setEditing] = createSignal(false);
 	const [editText, setEditText] = createSignal("");
 	const [correcting, setCorrecting] = createSignal(false);
-	const [operationsOpen, setOperationsOpen] = createSignal(false);
 	const [correctionDetail, setCorrectionDetail] = createSignal("");
+	const [actionBusy, setActionBusy] = createSignal(false);
+	const [actionError, setActionError] = createSignal<string | null>(null);
+	const [copied, setCopied] = createSignal(false);
 	const entry = props.entry;
 	if (entry.type !== "message") {
 		// Native Pi context entries describe internal session bookkeeping. Rendering
@@ -63,6 +69,7 @@ function PiTimelineEntryView(props: {
 	const message = entry.message;
 	if (message.role === "toolResult") {
 		const toolPayload = hostToolPayload(message.details);
+		if (message.toolName === "explicit_memory" && toolPayload?.changed === false) return null;
 		const mediaId =
 			message.toolName === "host_media" && typeof toolPayload?.mediaId === "string"
 				? toolPayload.mediaId
@@ -145,6 +152,39 @@ function PiTimelineEntryView(props: {
 	if (!isUser && text.length === 0 && !failed) {
 		return null;
 	}
+	const runAction = async (action: () => Promise<void>) => {
+		setActionBusy(true);
+		setActionError(null);
+		try {
+			await action();
+		} catch (cause) {
+			setActionError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setActionBusy(false);
+		}
+	};
+	const commitEdit = async () => {
+		const value = editText().trim();
+		if (!value || value === text) {
+			setEditing(false);
+			return;
+		}
+		await runAction(() => store.editMessage(entry.id, value));
+		if (!actionError()) setEditing(false);
+	};
+	const submitCorrection = async (feedback: string) => {
+		const value = feedback.trim();
+		if (!value) return;
+		await runAction(() => store.regenerateMessage(entry.id, value));
+		setCorrectionDetail("");
+		setCorrecting(false);
+	};
+	const copyMessage = async () => {
+		if (typeof navigator === "undefined" || !navigator.clipboard) return;
+		await navigator.clipboard.writeText(text);
+		setCopied(true);
+		setTimeout(() => setCopied(false), 1_500);
+	};
 	return (
 		<div class="timeline-entry-row" data-testid="timeline-entry-row">
 			<Show when={!isUser && store.character !== undefined}>
@@ -170,135 +210,216 @@ function PiTimelineEntryView(props: {
 						<Show when={isUser}>
 							<div class="msg-meta">{t("messages.you")}</div>
 						</Show>
-						<Button
-							type="button"
-							class="msg-menu-trigger"
-							aria-label={t("messages.operations")}
-							aria-expanded={operationsOpen()}
-							onClick={() => setOperationsOpen((open) => !open)}
-						>
-							<span aria-hidden="true">•••</span>
-						</Button>
+						<div class="message-direct-actions">
+							<Show when={props.canEdit && isUser}>
+								<Button
+									type="button"
+									class="msg-inline-action"
+									aria-label={t("messages.edit")}
+									title={t("messages.edit")}
+									onClick={() => {
+										setEditText(text);
+										setEditing(true);
+									}}
+								>
+									<Icon icon={faPen} />
+								</Button>
+							</Show>
+							<Button
+								type="button"
+								class="msg-inline-action"
+								aria-label={copied() ? t("messages.copied") : t("messages.copy")}
+								title={copied() ? t("messages.copied") : t("messages.copy")}
+								onClick={() => void copyMessage()}
+							>
+								<Icon icon={faCopy} />
+							</Button>
+						</div>
 					</div>
-					<Show when={text.length > 0}>
+					<Show when={text.length > 0 && !editing()}>
 						<p>{text}</p>
+					</Show>
+					<Show when={editing() && isUser}>
+						<TextField class="message-inline-editor">
+							<TextField.TextArea
+								autofocus
+								value={editText()}
+								onInput={(event) => setEditText(event.currentTarget.value)}
+								onBlur={() => void commitEdit()}
+								onKeyDown={(event) => {
+									if (event.key === "Escape") {
+										event.preventDefault();
+										setEditing(false);
+									}
+									if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+										event.preventDefault();
+										void commitEdit();
+									}
+								}}
+								aria-label={t("messages.editLabel")}
+							/>
+						</TextField>
 					</Show>
 					<Show when={failed && errorText !== undefined && errorText.length > 0}>
 						<span class="stream-error" role="alert">
 							{errorText}
 						</span>
 					</Show>
-					<Show when={editing() && isUser}>
-						<div class="message-inline-editor">
-							<TextField>
-								<TextField.TextArea
-									value={editText()}
-									onInput={(event) => setEditText(event.currentTarget.value)}
-									aria-label={t("messages.editLabel")}
-								/>
-							</TextField>
-							<p class="edit-branch-note">{t("messages.userEditBranchNote")}</p>
+					<Show when={props.canRegenerate && !isUser}>
+						<div class="message-primary-actions">
 							<Button
 								type="button"
-								disabled={!editText().trim()}
-								onClick={() => {
-									void store.editMessage(entry.id, editText().trim());
-									setEditing(false);
-								}}
+								disabled={actionBusy()}
+								onClick={() => void runAction(() => store.regenerateMessage(entry.id))}
 							>
-								{t("messages.save")}
+								<Icon icon={faRotateRight} />
+								{t("messages.regenerate")}
 							</Button>
-							<Button type="button" onClick={() => setEditing(false)}>
-								{t("messages.cancel")}
+							<Button type="button" disabled={actionBusy()} onClick={() => setCorrecting(true)}>
+								{store.character?.character.correction.trigger_label}
+							</Button>
+							<Button
+								type="button"
+								disabled={actionBusy()}
+								onClick={() => void runAction(() => store.createConversationFromEntry(entry.id))}
+							>
+								<Icon icon={faCodeBranch} />
+								{t("messages.branch")}
 							</Button>
 						</div>
 					</Show>
-					<Show when={correcting() && !isUser}>
-						<div class="message-correction-panel">
-							<strong>{store.character?.character.correction.reason_group_label}</strong>
+					<Show when={correcting() && props.canRegenerate && !isUser}>
+						<Button
+							type="button"
+							class="correction-popover-backdrop"
+							aria-label={t("messages.cancel")}
+							onClick={() => setCorrecting(false)}
+						/>
+						<div class="message-correction-popover" role="menu">
 							<div class="message-correction-presets">
 								<For each={store.character?.character.correction.presets ?? []}>
 									{(preset) => (
 										<Button
 											type="button"
-											onClick={() => {
-												const detail = correctionDetail().trim();
-												void store.regenerateMessage(
-													entry.id,
-													detail ? `${preset.label}：${detail}` : preset.label,
-												);
-												setCorrecting(false);
-											}}
+											role="menuitem"
+											onClick={() => void submitCorrection(preset.label)}
 										>
 											{preset.label}
 										</Button>
 									)}
 								</For>
 							</div>
-							<TextField>
-								<TextField.TextArea
+							<form
+								class="message-correction-custom"
+								onSubmit={(event) => {
+									event.preventDefault();
+									void submitCorrection(correctionDetail());
+								}}
+							>
+								<TextField>
+									<TextField.Input
 									value={correctionDetail()}
 									onInput={(event) => setCorrectionDetail(event.currentTarget.value)}
 									placeholder={store.character?.character.correction.custom_placeholder}
 									aria-label={store.character?.character.correction.custom_label}
-								/>
-							</TextField>
-							<Button
-								type="button"
-								disabled={!correctionDetail().trim()}
-								onClick={() => {
-									void store.regenerateMessage(entry.id, correctionDetail().trim());
-									setCorrecting(false);
-								}}
-							>
-								{store.character?.character.correction.custom_label}
+									/>
+								</TextField>
+								<Button type="submit" disabled={!correctionDetail().trim() || actionBusy()}>
+									{store.character?.character.correction.custom_label}
+								</Button>
+							</form>
+						</div>
+					</Show>
+					<Show when={actionError()}>{(error) => <span class="stream-error" role="alert">{error()}</span>}</Show>
+				</article>
+			</div>
+		</div>
+	);
+}
+
+function OptimisticUserProjection(props: {
+	item: Extract<TimelineProjectionItem, { kind: "optimistic-user" }>;
+}) {
+	const [t] = useTranslation(undefined, { i18n });
+	const store = useCompanionStore();
+	const message = () => props.item.message;
+	return (
+		<div class="timeline-entry-row" data-testid="pending-user-message">
+			<div class="user-message-column">
+				<article class={`msg pi-timeline-message user${message().state === "failed" ? " stream-failed" : ""}`}>
+					<div class="msg-meta">{t("messages.you")}</div>
+					<p>{message().text}</p>
+					<Show
+						when={message().state === "failed"}
+						fallback={
+							<span class="message-send-status" role="status">
+								<span class="streaming-status" aria-hidden="true" />
+								<span>{t("messages.sending")}</span>
+							</span>
+						}
+					>
+						<span class="stream-error" role="alert">{t("messages.sendFailed")}</span>
+						<div class="message-inline-actions">
+							<Button type="button" onClick={() => void store.retryPendingMessage(message().clientMessageId)}>
+								{t("messages.retry")}
 							</Button>
-							<Button type="button" onClick={() => setCorrecting(false)}>
-								{t("messages.cancel")}
+							<Button type="button" onClick={() => store.dismissPendingMessage(message().clientMessageId)}>
+								{t("messages.discard")}
 							</Button>
 						</div>
 					</Show>
-					<fieldset class="message-operations" classList={{ "is-open": operationsOpen() }}>
-						<legend>{t("messages.operations")}</legend>
-						<Show when={isUser}>
-							<Button
-								type="button"
-								onClick={() => {
-									setEditText(text);
-									setEditing(true);
-								}}
-							>
-								{t("messages.edit")}
-							</Button>
-						</Show>
-						<Show when={!isUser}>
-							<Button type="button" onClick={() => void store.regenerateMessage(entry.id)}>
-								{t("messages.regenerate")}
-							</Button>
-							<Button type="button" onClick={() => setCorrecting(true)}>
-								{store.character?.character.correction.trigger_label}
-							</Button>
-						</Show>
-						<Button
-							type="button"
-							onClick={() => {
-								setOperationsOpen(false);
-								void store.sendMessage(t("messages.rememberMoment"));
-							}}
-						>
-							{t("messages.rememberMoment")}
-						</Button>
-						<Button type="button" onClick={() => void store.createConversationFromEntry(entry.id)}>
-							{t("messages.branch")}
-						</Button>
-						<Button
-							type="button"
-							class="message-operations-dismiss"
-							onClick={() => setOperationsOpen(false)}
-						>
-							{t("messages.cancel")}
-						</Button>
-					</fieldset>
+					</article>
+				</div>
+			</div>
+	);
+}
+
+function QueuedUserProjection(props: { text: string }) {
+	const [t] = useTranslation(undefined, { i18n });
+	return (
+		<div class="timeline-entry-row" data-testid="pi-queued-user-message">
+			<div class="user-message-column">
+				<article class="msg pi-timeline-message user" aria-label={t("messages.you")}>
+					<div class="msg-meta">{t("messages.you")}</div>
+					<p>{props.text}</p>
+					<span class="message-send-status" role="status">
+						<span class="streaming-status" aria-hidden="true" />
+						<span>{t("messages.queued")}</span>
+					</span>
+				</article>
+			</div>
+		</div>
+	);
+}
+
+function StreamingAssistantProjection(props: {
+	item: Extract<TimelineProjectionItem, { kind: "streaming-assistant" }>;
+}) {
+	const [t] = useTranslation(undefined, { i18n });
+	const store = useCompanionStore();
+	const message = () => props.item.message;
+	const text = () => ("content" in message() ? messageText(message().content) : "");
+	const failed = () => message().stopReason === "error" || message().stopReason === "aborted";
+	const errorText = () =>
+		message().stopReason === "aborted"
+			? t("messages.responseStopped")
+			: message().errorMessage
+				? t("messages.responseFailedSaved")
+				: undefined;
+	const characterName = () => store.character?.name ?? "";
+	return (
+		<div class="timeline-entry-row" data-testid="streaming-assistant-message">
+			<Show when={store.character !== undefined}>
+				<img class="agent-message-avatar" src={store.character?.visual.avatarUrl} alt="" aria-hidden="true" draggable={false} />
+			</Show>
+			<div class="agent-message-column">
+				<span class="agent-message-name">{characterName()}</span>
+				<article class={`msg bear-msg streaming-message${failed() ? " stream-failed" : ""}`} aria-label={characterName()}>
+					<p>{text()}</p>
+					<Show when={store.activePiLiveState?.isStreaming === true}>
+						<span class="streaming-status" role="status" aria-label={t("messages.responding")} />
+					</Show>
+					<Show when={failed() && errorText()}>{(error) => <span class="stream-error" role="alert">{error()}</span>}</Show>
 				</article>
 			</div>
 		</div>
@@ -306,225 +427,58 @@ function PiTimelineEntryView(props: {
 }
 
 function PiTimelineRenderer(props: {
-	entries: readonly PiSessionEntry[];
+	items: readonly TimelineProjectionItem[];
 	onPreviewMedia(media: CharacterMedia): void;
 }) {
-	const [t] = useTranslation(undefined, { i18n });
-	const visible = createMemo(() => {
-		const result: Array<PiSessionEntry | PiSessionEntry[]> = [];
-		let lastAssistantSignature: string | undefined;
-		for (const entry of props.entries) {
-			if (entry.type !== "message") continue;
-			const message = entry.message;
-			if (
-				message.role === "toolResult" &&
-				!message.isError &&
-				message.toolName !== "host_media" &&
-				message.toolName !== "host_choices"
-			) {
-				lastAssistantSignature = undefined;
-				const previous = result.at(-1);
-				if (Array.isArray(previous)) previous.push(entry);
-				else result.push([entry]);
-				continue;
-			}
-			if (message.role === "user") {
-				lastAssistantSignature = undefined;
-				result.push(entry);
-				continue;
-			}
-			if (message.role !== "assistant") {
-				result.push(entry);
-				continue;
-			}
-			const signature = JSON.stringify({
-				text: messageText(message.content),
-				stopReason: message.stopReason,
-				errorMessage: message.errorMessage ?? "",
-			});
-			if (signature === lastAssistantSignature) continue;
-			lastAssistantSignature = signature;
-			result.push(entry);
-		}
-		return result;
-	});
-	return (
-		<For each={visible()}>
-			{(item) => {
-				const entries = Array.isArray(item) ? item : [item];
-				const first = entries[0];
-				if (!first) return null;
-				return (
-					<>
-						<Show
-							when={entries.length > 1}
-							fallback={<PiTimelineEntryView entry={first} onPreviewMedia={props.onPreviewMedia} />}
-						>
-							<details class="tool-activity-group">
-								<summary>
-									<span>{t("messages.toolActivity.generic")}</span>
-									<span>
-										{entries.length} · {t("messages.toolActivity.completed")}
-									</span>
-								</summary>
-								<div class="tool-activity-details">
-									<For each={entries}>
-										{(entry) => (
-											<PiTimelineEntryView entry={entry} onPreviewMedia={props.onPreviewMedia} />
-										)}
-									</For>
-								</div>
-							</details>
-						</Show>
-						<For each={entries}>{(entry) => <WorkTimelineItem messageId={entry.id} />}</For>
-					</>
-				);
-			}}
-		</For>
-	);
-}
-
-/**
- * Partial assistant content from the Pi live state. Rendered until the
- * assistant `message_end` persists a native timeline entry, at which point the
- * projection naturally switches to the durable timeline (plan §5.2: no local
- * dedupe, text merge, or snapshot patch). A final `error`/`aborted` message is
- * kept visible with its Pi-provided error text.
- */
-function PiLiveAssistantMessageView() {
 	const store = useCompanionStore();
-	const [t] = useTranslation(undefined, { i18n });
-	const characterName = store.character?.name ?? "";
-	const message = () => {
-		const current = store.activePiLiveState?.streamingMessage;
-		if (current?.role !== "assistant") return undefined;
-		const text = messageText(current.content);
-		const persisted = store.activePiEntries?.some(
-			(entry) =>
-				entry.type === "message" &&
-				entry.message.role === "assistant" &&
-				((current.responseId && entry.message.responseId === current.responseId) ||
-					(current.timestamp === entry.message.timestamp &&
-						messageText(entry.message.content) === text) ||
-					(text.length > 0 && messageText(entry.message.content) === text)),
-		);
-		return persisted ? undefined : current;
-	};
-	const stopReason = () => {
-		const current = message();
-		return current?.role === "assistant" ? current.stopReason : undefined;
-	};
-	const text = () => {
-		const current = message();
-		return current && "content" in current ? messageText(current.content) : "";
-	};
-	const failed = () => stopReason() === "error" || stopReason() === "aborted";
-	const errorText = () => {
-		if (stopReason() === "aborted") return t("messages.responseStopped");
-		const current = message();
-		return current?.role === "assistant" && current.errorMessage
-			? t("messages.responseFailedSaved")
-			: undefined;
-	};
-	return (
-		<Show when={store.activePiLiveState?.isStreaming || store.activePiLiveState?.streamingMessage}>
-			<div class="timeline-entry-row">
-				<Show when={store.character !== undefined}>
-					<img
-						class="agent-message-avatar"
-						src={store.character?.visual.avatarUrl}
-						alt=""
-						aria-hidden="true"
-						draggable={false}
-					/>
-				</Show>
-				<div class="agent-message-column">
-					<span class="agent-message-name">{characterName}</span>
-					<article
-						class={`msg bear-msg streaming-message${failed() ? " stream-failed" : ""}`}
-						aria-label={characterName}
-					>
-						<Show when={text().length > 0}>
-							<p>{text()}</p>
-						</Show>
-						<Show when={store.activePiLiveState?.isStreaming === true}>
-							<span class="streaming-status" role="status" aria-label={t("messages.responding")} />
-						</Show>
-						<Show when={failed() && errorText()}>
-							<span class="stream-error" role="alert">
-								{errorText()}
-							</span>
-						</Show>
-					</article>
-				</div>
-			</div>
-		</Show>
+	const turnActive = () => store.activePiLiveState?.isStreaming === true;
+	const latestUserId = createMemo(() =>
+		[...props.items]
+			.reverse()
+			.find(
+				(item) =>
+					item.kind === "entry" &&
+					item.entry.type === "message" &&
+					item.entry.message.role === "user",
+			)?.id,
 	);
-}
-
-function PiQueuedUserMessages() {
-	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
-	return (
-		<For
-			each={[
-				...(store.activePiLiveState?.steering ?? []),
-				...(store.activePiLiveState?.followUp ?? []),
-			]}
-		>
-			{(message) => (
-				<div class="timeline-entry-row" data-testid="pi-queued-user-message">
-					<div class="user-message-column">
-						<article class="msg pi-timeline-message user" aria-label={t("messages.you")}>
-							<div class="msg-meta">{t("messages.you")}</div>
-							<p>{message}</p>
-							<span class="streaming-status" role="status" aria-label={t("messages.queued")} />
-						</article>
-					</div>
-				</div>
-			)}
-		</For>
+	const latestAssistantId = createMemo(() =>
+		[...props.items]
+			.reverse()
+			.find(
+				(item) =>
+					item.kind === "entry" &&
+					item.entry.type === "message" &&
+					item.entry.message.role === "assistant",
+			)?.id,
 	);
-}
-
-function PendingUserMessages() {
-	const [t] = useTranslation(undefined, { i18n });
-	const store = useCompanionStore();
-	const visible = () =>
-		store.pendingUserMessages.filter(
-			(pending) =>
-				!store.activePiEntries?.some(
-					(entry) =>
-						entry.type === "message" &&
-						entry.message.role === "user" &&
-						messageText(entry.message.content) === pending.text,
-				),
-		);
 	return (
-		<For each={visible()}>
-			{(message) => (
-				<div class="timeline-entry-row" data-testid="pending-user-message">
-					<div class="user-message-column">
-						<article class={`msg pi-timeline-message user${message.state === "failed" ? " stream-failed" : ""}`}>
-							<div class="msg-meta">{t("messages.you")}</div>
-							<p>{message.text}</p>
-							<Show
-								when={message.state === "failed"}
-								fallback={<span class="streaming-status" role="status">{t("messages.sending")}</span>}
-							>
-								<span class="stream-error" role="alert">{t("messages.sendFailed")}</span>
-								<div class="message-inline-actions">
-									<Button type="button" onClick={() => void store.retryPendingMessage(message.clientMessageId)}>
-										{t("messages.retry")}
-									</Button>
-									<Button type="button" onClick={() => store.dismissPendingMessage(message.clientMessageId)}>
-										{t("messages.discard")}
-									</Button>
-								</div>
-							</Show>
-						</article>
-					</div>
-				</div>
+		<For each={props.items}>
+			{(item) => (
+				<Switch>
+					<Match when={item.kind === "entry" && item}>
+						{(entryItem) => (
+							<>
+								<PiTimelineEntryView
+									entry={entryItem().entry}
+									onPreviewMedia={props.onPreviewMedia}
+									canEdit={!turnActive() && entryItem().id === latestUserId()}
+									canRegenerate={!turnActive() && entryItem().id === latestAssistantId()}
+								/>
+								<WorkTimelineItem messageId={entryItem().id} />
+							</>
+						)}
+					</Match>
+					<Match when={item.kind === "optimistic-user" && item}>
+						{(optimistic) => <OptimisticUserProjection item={optimistic()} />}
+					</Match>
+					<Match when={item.kind === "queued-user" && item}>
+						{(queued) => <QueuedUserProjection text={queued().text} />}
+					</Match>
+					<Match when={item.kind === "streaming-assistant" && item}>
+						{(streaming) => <StreamingAssistantProjection item={streaming()} />}
+					</Match>
+				</Switch>
 			)}
 		</For>
 	);
@@ -539,13 +493,7 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 
 	followTimelineScroll(
 		() => threadRef,
-		() =>
-			`${store.activePiEntries?.length ?? 0}:${store.pendingUserMessages.length}:${
-				store.activePiLiveState?.streamingMessage &&
-				"content" in store.activePiLiveState.streamingMessage
-					? messageText(store.activePiLiveState.streamingMessage.content).length
-					: 0
-			}:${(store.activePiLiveState?.steering.length ?? 0) + (store.activePiLiveState?.followUp.length ?? 0)}`,
+		() => store.activeTimeline.map((item) => item.id).join(":"),
 	);
 
 	return (
@@ -566,14 +514,7 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 				</Show>
 
 				<Show when={hasThreadContent()}>
-					<Show when={store.activePiEntries}>
-						{(entries) => (
-							<PiTimelineRenderer entries={entries()} onPreviewMedia={props.onPreviewMedia} />
-						)}
-					</Show>
-					<PiQueuedUserMessages />
-					<PendingUserMessages />
-					<PiLiveAssistantMessageView />
+					<PiTimelineRenderer items={store.activeTimeline} onPreviewMedia={props.onPreviewMedia} />
 				</Show>
 			</section>
 		</>

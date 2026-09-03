@@ -10,14 +10,12 @@ import { createEffect, createSignal, For, Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { Button, Select } from "../ui/primitives.js";
 import { ArchivedConversationSettings } from "./ArchivedConversationSettings.js";
-import { ConversationModelSettings } from "./ConversationModelSettings.js";
 import { ExternalAgentSettings } from "./ExternalAgentSettings.js";
 import { NetworkAndMemorySettings } from "./NetworkAndMemorySettings.js";
 import { SystemModelSettings } from "./SystemModelSettings.js";
 
 export type SettingsPage =
 	| "general"
-	| "conversation"
 	| "archived"
 	| "providers"
 	| "agents"
@@ -29,13 +27,12 @@ export function SettingsSheet(props: { initialPage?: SettingsPage } = {}) {
 	const [currentLocale] = useLanguage(() => i18n);
 	const [saving, setSaving] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
-	const [page, setPage] = createSignal<SettingsPage>(props.initialPage ?? "conversation");
+	const [page, setPage] = createSignal<SettingsPage>(props.initialPage ?? "general");
 	createEffect(() => {
 		if (props.initialPage) setPage(props.initialPage);
 	});
 	const pages = () => [
 		{ id: "general" as const, label: t("settings.language") },
-		{ id: "conversation" as const, label: t("settings.conversationModelSettings") },
 		{ id: "archived" as const, label: t("sidebar.archivedConversations") },
 		{ id: "providers" as const, label: t("settings.systemModelSettings") },
 		{ id: "agents" as const, label: t("settings.workAgent") },
@@ -144,9 +141,6 @@ export function SettingsSheet(props: { initialPage?: SettingsPage } = {}) {
 							</Select.Portal>
 						</Select>
 					</section>
-				</Show>
-				<Show when={page() === "conversation"}>
-					<ConversationModelSettings />
 				</Show>
 				<Show when={page() === "archived"}>
 					<ArchivedConversationSettings />

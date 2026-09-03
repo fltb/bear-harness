@@ -2,8 +2,7 @@ import { i18n, useTranslation } from "@bear-harness/i18n";
 import { For, Show } from "solid-js";
 import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
 import { type CharacterSummary, useCompanionStore } from "../stores/companion.js";
-import { Button, Dialog, FileField, Tabs } from "../ui/primitives.js";
-import { CanonStudio } from "./CanonStudio.js";
+import { Button, Dialog, FileField } from "../ui/primitives.js";
 import { CurrentRolePackageManager } from "./CurrentRolePackageManager.js";
 import { SettingsSheet } from "./SettingsSheet.js";
 import type { SettingsPage } from "./SettingsSheet.js";
@@ -70,31 +69,7 @@ export function Backstage(props: {
 							</div>
 						}
 					>
-						<Tabs
-							value={workflow.selectedTab()}
-							onChange={workflow.setSelectedTab}
-							class="backstage-tabs"
-							aria-label={t("backstage.tabsLabel")}
-						>
-							<Tabs.List class="tabs">
-								<Tabs.Trigger value="roles" class="tab">
-									{t("backstage.roleManagement")}
-								</Tabs.Trigger>
-								<Tabs.Trigger value="canon" class="tab">
-									{t("backstage.canon")}
-								</Tabs.Trigger>
-							</Tabs.List>
-							<Tabs.Content value="roles" class="tab-panel">
-								<Show when={workflow.selectedTab() === "roles"}>
-									<RoleManager />
-								</Show>
-							</Tabs.Content>
-							<Tabs.Content value="canon" class="tab-panel">
-								<Show when={workflow.selectedTab() === "canon"}>
-									<CanonStudio />
-								</Show>
-							</Tabs.Content>
-						</Tabs>
+						<RoleManager />
 					</Show>
 				</Dialog.Content>
 			</Dialog.Portal>
@@ -155,6 +130,7 @@ function RoleManager() {
 				error={workflow.selectedPackageError}
 				selectPackage={workflow.selectPackage}
 				savePackage={workflow.savePackage}
+				revealPackage={(id) => companion.characters.packageReveal(id)}
 				pluginTrust={(id) => companion.characters.pluginTrust(id)}
 				confirmPluginTrust={async (id) => {
 					await companion.characters.confirmPluginTrust(id);

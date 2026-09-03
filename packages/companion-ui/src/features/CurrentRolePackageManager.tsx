@@ -2,14 +2,115 @@ import { i18n, useTranslation } from "@bear-harness/i18n";
 import { createSignal, For, Show } from "solid-js";
 import { parseDocument, stringify } from "yaml";
 import type { CharacterDeletionStatus, CharacterPackageDocument } from "../stores/companion.js";
-import { Button, Dialog, Tabs, TextField } from "../ui/primitives.js";
+import { Button, Dialog, TextField } from "../ui/primitives.js";
 
-const PROMPT_FIELDS = ["description", "personality", "scenario", "system_prompt"] as const;
-type PromptField = (typeof PROMPT_FIELDS)[number];
-type PromptDraft = Record<PromptField, string>;
+function record(value: unknown): Record<string, unknown> | undefined {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: undefined;
+}
 
-function promptFrom(document: CharacterPackageDocument): PromptDraft {
-	return { ...document.character.prompt };
+function ManifestField(props: {
+	name: string;
+	path: string[];
+	schema: unknown;
+	value: unknown;
+	disabled: boolean;
+	onChange(path: string[], value: unknown): void;
+	onInvalid(message: string): void;
+}) {
+	const schema = () => record(props.schema) ?? {};
+	const properties = () => record(schema().properties);
+	const type = () => schema().type;
+	return (
+		<Show
+			when={properties()}
+			fallback={
+				<Show
+					when={Array.isArray(props.value) || type() === "array"}
+					fallback={
+						<Show
+							when={typeof props.value === "boolean" || type() === "boolean"}
+							fallback={
+								<TextField class="setting-field manifest-field">
+									<TextField.Label class="field-label">{props.name}</TextField.Label>
+									<Show
+										when={typeof props.value === "string" && props.value.includes("\n")}
+										fallback={
+											<TextField.Input
+												disabled={props.disabled}
+												value={props.value == null ? "" : String(props.value)}
+												onInput={(event) =>
+													props.onChange(
+														props.path,
+														type() === "number" || type() === "integer"
+															? Number(event.currentTarget.value)
+															: event.currentTarget.value,
+													)
+												}
+											/>
+										}
+									>
+										<TextField.TextArea
+											rows={4}
+											disabled={props.disabled}
+											value={String(props.value ?? "")}
+											onInput={(event) => props.onChange(props.path, event.currentTarget.value)}
+										/>
+									</Show>
+								</TextField>
+							}
+						>
+							<div class="setting-field manifest-field">
+								<span class="field-label">{props.name}</span>
+								<Button
+									type="button"
+									aria-pressed={Boolean(props.value)}
+									disabled={props.disabled}
+									onClick={() => props.onChange(props.path, !props.value)}
+								>
+									{String(Boolean(props.value))}
+								</Button>
+							</div>
+						</Show>
+					}
+				>
+					<TextField class="setting-field manifest-field manifest-array-field">
+						<TextField.Label class="field-label">{props.name}</TextField.Label>
+						<TextField.TextArea
+							rows={Math.min(12, Math.max(3, Array.isArray(props.value) ? props.value.length * 2 : 3))}
+							disabled={props.disabled}
+							value={stringify(props.value ?? [])}
+							onInput={(event) => {
+								const parsed = parseDocument(event.currentTarget.value);
+								if (parsed.errors[0]) props.onInvalid(parsed.errors[0].message);
+								else props.onChange(props.path, parsed.toJSON());
+							}}
+						/>
+					</TextField>
+				</Show>
+			}
+		>
+			{(fields) => (
+				<fieldset class="manifest-object-field">
+					<legend>{props.name}</legend>
+					<For each={Object.entries(fields())}>
+						{([name, childSchema]) => (
+							<ManifestField
+								name={name}
+								path={[...props.path, name]}
+								schema={childSchema}
+								value={record(props.value)?.[name]}
+								disabled={props.disabled}
+								onChange={props.onChange}
+								onInvalid={props.onInvalid}
+							/>
+						)}
+					</For>
+				</fieldset>
+			)}
+		</Show>
+	);
 }
 
 export function CurrentRolePackageManager(props: {
@@ -20,6 +121,7 @@ export function CurrentRolePackageManager(props: {
 	error: () => string | undefined;
 	selectPackage: (id: string, confirmDiscard: () => boolean) => void;
 	savePackage: (yaml: string, expectedSha256: string) => Promise<CharacterPackageDocument>;
+	revealPackage: (id: string) => Promise<void>;
 	pluginTrust: (
 		id: string,
 	) => Promise<{ origin: string; pluginHash: string; pluginsPresent: boolean; trusted: boolean }>;
@@ -38,16 +140,12 @@ export function CurrentRolePackageManager(props: {
 	const [t] = useTranslation(undefined, { i18n });
 	const selectedId = () => props.document()?.characterId ?? "";
 	const [drafts, setDrafts] = createSignal<
-		Record<string, { raw?: string; prompt?: PromptDraft; storage?: string; baseSha256?: string }>
+		Record<string, { raw?: string; baseSha256?: string }>
 	>({});
 	const draft = () => drafts()[selectedId()];
 	const raw = () => draft()?.raw ?? props.document()?.yaml ?? "";
 	const savedRaw = () => props.document()?.yaml ?? "";
-	const prompt = () =>
-		draft()?.prompt ?? (props.document() ? promptFrom(props.document()!) : undefined);
-	const storage = () =>
-		draft()?.storage ?? stringify(parseDocument(savedRaw()).get("media", true) ?? []);
-	const patchDraft = (patch: { raw?: string; prompt?: PromptDraft; storage?: string }) =>
+	const patchDraft = (patch: { raw?: string }) =>
 		setDrafts((current) => ({
 			...current,
 			[selectedId()]: {
@@ -57,8 +155,10 @@ export function CurrentRolePackageManager(props: {
 			},
 		}));
 	const setRaw = (value: string) => patchDraft({ raw: value });
-	const setPrompt = (value: PromptDraft) => patchDraft({ prompt: value });
-	const setStorage = (value: string) => patchDraft({ storage: value });
+	const manifest = () => {
+		const document = parseDocument(raw());
+		return document.errors.length ? undefined : document.toJSON();
+	};
 	const [parseError, setParseError] = createSignal<string>();
 	const [saveError, setSaveError] = createSignal<string>();
 	const [saving, setSaving] = createSignal(false);
@@ -88,27 +188,13 @@ export function CurrentRolePackageManager(props: {
 			setSaving(false);
 		}
 	};
-	const updatePrompt = (field: PromptField, value: string) => {
-		const current = prompt();
-		if (!current) return;
-		const next = { ...current, [field]: value };
+	const updateManifest = (path: string[], value: unknown) => {
 		const yaml = parseDocument(raw());
-		if (yaml.errors.length > 0) return;
-		for (const key of PROMPT_FIELDS) yaml.setIn(["prompt", key], next[key]);
-		setPrompt(next);
-		setRaw(String(yaml));
-		setParseError(undefined);
-	};
-	const updateStorage = (value: string) => {
-		setStorage(value);
-		const storageDocument = parseDocument(value);
-		if (storageDocument.errors.length > 0) {
-			setParseError(storageDocument.errors[0]?.message ?? t("currentRolePackage.invalidStorage"));
+		if (yaml.errors.length > 0) {
+			setParseError(yaml.errors[0]?.message ?? t("currentRolePackage.invalidStorage"));
 			return;
 		}
-		const yaml = parseDocument(raw());
-		if (yaml.errors.length > 0) return;
-		yaml.set("media", storageDocument.toJSON());
+		yaml.setIn(path, value);
 		setRaw(String(yaml));
 		setParseError(undefined);
 	};
@@ -119,8 +205,6 @@ export function CurrentRolePackageManager(props: {
 			...drafts,
 			[current.characterId]: {
 				raw: current.yaml,
-				prompt: promptFrom(current),
-				storage: stringify(parseDocument(current.yaml).get("media", true) ?? []),
 			},
 		}));
 		setParseError(undefined);
@@ -136,8 +220,6 @@ export function CurrentRolePackageManager(props: {
 				...drafts,
 				[next.characterId]: {
 					raw: next.yaml,
-					prompt: promptFrom(next),
-					storage: stringify(parseDocument(next.yaml).get("media", true) ?? []),
 				},
 			}));
 		} catch (error) {
@@ -254,74 +336,36 @@ export function CurrentRolePackageManager(props: {
 									</dd>
 								</dl>
 							</details>
+							<Button type="button" onClick={() => void props.revealPackage(current().characterId)}>
+								{t("currentRolePackage.revealPackage")}
+							</Button>
 						</header>
-						<Tabs defaultValue="package" class="current-role-package-tabs">
-							<Tabs.List class="sub-tabs">
-								<Tabs.Trigger value="package" class="tab">
-									{t("currentRolePackage.packageTab")}
-								</Tabs.Trigger>
-								<Tabs.Trigger value="storage" class="tab">
-									{t("currentRolePackage.storageTab")}
-								</Tabs.Trigger>
-							</Tabs.List>
-							<Tabs.Content value="package" class="tab-panel">
-								<div class="current-role-package-form">
-									<For each={PROMPT_FIELDS}>
-										{(field) => (
-											<TextField class="setting-field">
-												<TextField.Label class="field-label">
-													{t(`currentRolePackage.promptFields.${field}`)}
-												</TextField.Label>
-												<TextField.TextArea
-													rows={4}
-													disabled={!current().writable}
-													value={prompt()?.[field] ?? ""}
-													onInput={(event) => updatePrompt(field, event.currentTarget.value)}
-												/>
-											</TextField>
-										)}
-									</For>
-								</div>
-							</Tabs.Content>
-							<Tabs.Content value="storage" class="tab-panel">
-								<div class="detail-card">
-									<strong>{t("currentRolePackage.pluginTrust")}</strong>
-									<span>
-										{trust()?.pluginsPresent
-											? `${trust()?.trusted ? t("currentRolePackage.pluginTrusted") : t("currentRolePackage.pluginDisabled")} · ${trust()?.pluginHash.slice(0, 12)}`
-											: t("currentRolePackage.noPlugins")}
-									</span>
-									<Show when={trust()?.pluginsPresent && !trust()?.trusted}>
-										<Button
-											data-control="command"
-											type="button"
-											disabled={saving()}
-											onClick={() => void enablePlugins()}
-										>
-											{t("currentRolePackage.enablePlugins")}
-										</Button>
-									</Show>
-								</div>
-								<TextField class="setting-field">
-									<TextField.Label class="field-label">media.yaml</TextField.Label>
-									<TextField.TextArea
-										aria-label={t("currentRolePackage.storageDefinition")}
-										rows={18}
-										disabled={!current().writable}
-										value={storage()}
-										onInput={(event) => updateStorage(event.currentTarget.value)}
-									/>
-								</TextField>
-								<div class="detail-card">
-									<strong>{t("currentRolePackage.storyProjection")}</strong>
-									<span>
-										{t("currentRolePackage.projectionCounts", {
-											media: current().character.media.length,
-										})}
-									</span>
-								</div>
-							</Tabs.Content>
-						</Tabs>
+						<div class="detail-card">
+							<strong>{t("currentRolePackage.pluginTrust")}</strong>
+							<span>
+								{trust()?.pluginsPresent
+									? `${trust()?.trusted ? t("currentRolePackage.pluginTrusted") : t("currentRolePackage.pluginDisabled")} · ${trust()?.pluginHash.slice(0, 12)}`
+									: t("currentRolePackage.noPlugins")}
+							</span>
+							<Show when={trust()?.pluginsPresent && !trust()?.trusted}>
+								<Button type="button" disabled={saving()} onClick={() => void enablePlugins()}>
+									{t("currentRolePackage.enablePlugins")}
+								</Button>
+							</Show>
+						</div>
+						<Show when={manifest()}>
+							{(value) => (
+								<ManifestField
+									name={t("currentRolePackage.manifest")}
+									path={[]}
+									schema={current().manifestSchema}
+									value={value()}
+									disabled={!current().writable}
+									onChange={updateManifest}
+									onInvalid={(message) => setParseError(message)}
+								/>
+							)}
+						</Show>
 						<Show when={parseError()}>
 							{(message) => (
 								<p class="status-line err" role="alert">

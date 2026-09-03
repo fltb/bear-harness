@@ -74,11 +74,11 @@ export interface CodexConsentRequest {
 	canonicalPath: string;
 	version: string;
 	sha256: string;
-	codexHome: string;
 }
 
 /** The capability record stored in `executor_profiles.capability_json`. */
 export interface CodexProfileCapability extends CodexConsentRequest {
+	codexHome: string;
 	codeModeHostPath?: string;
 	codeModeHostSha256?: string;
 	consentedAt: string;
@@ -152,14 +152,6 @@ export class CodexAdapter extends AcpExecutorController {
 	 * location is reported with a status, including absences (`not_found`).
 	 */
 	async discover(): Promise<CodexCandidate[]> {
-		const candidates: CodexCandidate[] = [];
-		const seen = new Set<string>();
-		const probeIfNew = async (candidatePath: string): Promise<void> => {
-			if (seen.has(candidatePath)) return;
-			seen.add(candidatePath);
-			candidates.push(await this.probe(candidatePath));
-		};
-
 		// (1) PATH entries.
 		const home = homedir();
 		const binaryName = process.platform === "win32" ? "codex.exe" : "codex";
@@ -171,7 +163,7 @@ export class CodexAdapter extends AcpExecutorController {
 				continue;
 			}
 			try {
-				if (statSync(entry).isFile()) await probeIfNew(entry);
+				if (statSync(entry).isFile()) return [await this.probe(entry)];
 			} catch {
 				/* not present — not a candidate */
 			}
@@ -179,10 +171,11 @@ export class CodexAdapter extends AcpExecutorController {
 
 		// (2) Official standalone default entry (macOS/Linux).
 		if (process.platform !== "win32") {
-			await probeIfNew(join(home, ".local", "bin", "codex"));
+			const fallback = join(home, ".local", "bin", "codex");
+			return [await this.probe(fallback)];
 		}
 
-		return candidates;
+		return [];
 	}
 
 	/** The declared install root for a candidate entry, used for symlink-escape rejection. */
@@ -273,10 +266,6 @@ export class CodexAdapter extends AcpExecutorController {
 	async consent(
 		profileConfig: CodexConsentRequest,
 	): Promise<CodexProfileCapability & { profileId: string }> {
-		if (typeof profileConfig.codexHome !== "string" || profileConfig.codexHome.length === 0) {
-			fail("validation_failed", "codexHome must be a non-empty string");
-		}
-
 		const candidates = await this.discover();
 		const match = candidates.find(
 			(c) =>
@@ -293,7 +282,7 @@ export class CodexAdapter extends AcpExecutorController {
 			canonicalPath: profileConfig.canonicalPath,
 			version: profileConfig.version,
 			sha256: profileConfig.sha256,
-			codexHome: profileConfig.codexHome,
+			codexHome: resolve(process.env.CODEX_HOME || join(homedir(), ".codex")),
 			consentedAt: new Date().toISOString(),
 		};
 		const codeModeHostPath = codexCodeModeHost(profileConfig.canonicalPath);

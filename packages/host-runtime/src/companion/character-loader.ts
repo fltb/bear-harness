@@ -32,7 +32,7 @@ import {
 } from "node:fs";
 import { dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import type { CharacterTheme } from "@bear-harness/protocol/schema";
-import { z } from "@bear-harness/schema";
+import { toJsonSchema, z } from "@bear-harness/schema";
 import { eq, sql } from "drizzle-orm";
 import { parse } from "yaml";
 import {
@@ -56,6 +56,7 @@ import {
 } from "./media-schema.js";
 import {
 	type CharacterOnboardingFlow,
+	CharacterOnboardingFlowSchema,
 	validateCharacterOnboardingFlow,
 } from "./onboarding-schema.js";
 import { loadRoleSkills, type RoleSkill, roleSkillPrompt } from "./role-resources.js";
@@ -299,6 +300,93 @@ const CharacterPromptSchema = z.strictObject({
 
 const ThemeTokensSchema = CharacterThemeOverridesSchema;
 
+const CharacterIdentifierSchema = z
+	.string()
+	.min(1)
+	.max(64)
+	.regex(/^[a-z][a-z0-9_]*$/);
+const CharacterCardSchema = z.strictObject({
+	subtitle: z.string().max(4096),
+	greeting: z.string().max(16_384),
+	composer_placeholder: z.string().max(4096),
+	correction: z.strictObject({
+		trigger_label: z.string().min(1).max(4096),
+		reason_group_label: z.string().min(1).max(4096),
+		presets: z
+			.array(z.strictObject({ id: CharacterIdentifierSchema, label: z.string().min(1).max(4096) }))
+			.min(1)
+			.max(20),
+		custom_label: z.string().min(1).max(4096),
+		custom_placeholder: z.string().min(1).max(4096),
+	}),
+	work_presentation: WorkPresentationSchema.optional(),
+	first_meeting: CharacterOnboardingFlowSchema,
+});
+const ScenePresetSchema = z.strictObject({
+	id: CharacterIdentifierSchema,
+	label: z.string().min(1).max(4096),
+	background: z.string().min(1).max(512).nullable(),
+	description: z.string().min(1).max(16_384),
+	use_when: z.string().min(1).max(16_384),
+});
+const CharacterExpressionSchema = z.strictObject({
+	id: CharacterIdentifierSchema,
+	label: z.string().min(1).max(4096),
+	asset: z.string().min(1).max(512),
+	use_when: z.string().min(1).max(16_384),
+});
+
+/** The single runtime contract for character.yaml; UI and Host consume this schema. */
+export const CharacterManifestSchema = z
+	.strictObject({
+		id: CharacterIdentifierSchema,
+		name: z.string().min(1).max(4096),
+		language: LanguageTagSchema,
+		theme: ThemeTokensSchema,
+		character: CharacterCardSchema,
+		behavior: CharacterBehaviorSchema,
+		prompt: CharacterPromptSchema,
+		self_canon: z.string().max(65_536),
+		scenes: z.array(ScenePresetSchema).min(1).max(100),
+		visual: z.strictObject({
+			default_scene: CharacterIdentifierSchema,
+			default_expression: CharacterIdentifierSchema,
+			avatar: z.string().min(1).max(512),
+			expressions: z.array(CharacterExpressionSchema).min(1).max(100),
+		}),
+		state_schema: z.record(z.string(), z.unknown()).default({}),
+		media: CharacterMediaSchema,
+	})
+	.superRefine((manifest, context) => {
+		const unique = (values: string[]) => new Set(values).size === values.length;
+		if (!unique(manifest.scenes.map((scene) => scene.id)))
+			context.addIssue({ code: "custom", path: ["scenes"], message: "scene ids must be unique" });
+		if (!unique(manifest.visual.expressions.map((expression) => expression.id)))
+			context.addIssue({
+				code: "custom",
+				path: ["visual", "expressions"],
+				message: "expression ids must be unique",
+			});
+		if (!manifest.scenes.some((scene) => scene.id === manifest.visual.default_scene))
+			context.addIssue({
+				code: "custom",
+				path: ["visual", "default_scene"],
+				message: "default scene must reference a declared scene",
+			});
+		if (
+			!manifest.visual.expressions.some(
+				(expression) => expression.id === manifest.visual.default_expression,
+			)
+		)
+			context.addIssue({
+				code: "custom",
+				path: ["visual", "default_expression"],
+				message: "default expression must reference a declared expression",
+			});
+	});
+export type CharacterManifest = z.infer<typeof CharacterManifestSchema>;
+type CharacterManifestJson = z.infer<ReturnType<typeof z.json>>;
+
 function validateWorkPresentation(
 	value: unknown,
 	characterId: string,
@@ -321,28 +409,6 @@ function resolveTheme(value: unknown, characterId: string): ThemeTokens {
 		);
 	}
 }
-function validateCharacterCard(
-	value: unknown,
-	characterId: string,
-): asserts value is CharacterStrings {
-	const schema = z.strictObject({
-		subtitle: z.string(),
-		greeting: z.string(),
-		composer_placeholder: z.string(),
-		correction: z.strictObject({
-			trigger_label: z.string(),
-			reason_group_label: z.string(),
-			presets: z.array(z.strictObject({ id: z.string().min(1), label: z.string() })).min(1),
-			custom_label: z.string(),
-			custom_placeholder: z.string(),
-		}),
-		work_presentation: WorkPresentationSchema.optional(),
-		first_meeting: z.unknown(),
-	});
-	if (!schema.safeParse(value).success)
-		throw new Error(`character package ${characterId}: character card is invalid`);
-}
-
 /**
  * Character packages are loaded exclusively from the user-owned library.
  * The seed root is read only during bootstrap, before any package is loaded.
@@ -562,14 +628,21 @@ export class CharacterLoader {
 		}
 		const path = join(this.packageDirectory(id), "character.yaml");
 		if (!existsSync(path)) return null;
-		const parsed = parse(readFileSync(path, "utf8")) as CharacterPackage;
+		const manifestResult = CharacterManifestSchema.safeParse(parse(readFileSync(path, "utf8")));
+		if (!manifestResult.success) {
+			const issue = manifestResult.error.issues[0];
+			throw new Error(
+				`character package ${id}: manifest ${issue?.path.join(".") || "root"} ${issue?.message ?? "is invalid"}`,
+			);
+		}
+		const parsed = manifestResult.data;
 		if (parsed.id !== id) {
 			throw new Error(`character package ${id}: yaml id must equal directory id`);
 		}
 		if (!LanguageTagSchema.safeParse(parsed.language).success) {
 			throw new Error(`character package ${id}: language must be a BCP-47 language tag`);
 		}
-		parsed.theme = resolveTheme(parsed.theme, id);
+		const theme = resolveTheme(parsed.theme, id);
 		if (!Array.isArray(parsed.scenes)) {
 			throw new Error(`character package ${id}: scenes is required array`);
 		}
@@ -626,20 +699,11 @@ export class CharacterLoader {
 				this.ensureImageAsset(id, scene.background);
 			}
 		}
-		const promptResult = CharacterPromptSchema.safeParse(parsed.prompt);
-		if (!promptResult.success) {
-			throw new Error(`character package ${id}: prompt is invalid`);
-		}
-		validateCharacterCard(parsed.character, id);
-		parsed.behavior = CharacterBehaviorSchema.parse(
-			(parsed as CharacterPackage & { behavior?: unknown }).behavior,
-		);
-		const state = CharacterStateSchema.parse(
-			(parsed as CharacterPackage & { state_schema?: unknown }).state_schema ?? {},
-		);
+		const behavior = parsed.behavior;
+		const state = CharacterStateSchema.parse(parsed.state_schema);
 		if ("roleplay" in parsed || "choice_sets" in parsed)
 			throw new Error(`character package ${id}: deleted roleplay fields are not supported`);
-		const media = CharacterMediaSchema.parse(parsed.media);
+		const media = parsed.media;
 		validateCharacterOnboardingFlow(parsed.character?.first_meeting, id);
 		validateWorkPresentation(parsed.character?.work_presentation, id);
 		const canonManifestPath = this.characterPackagePath(id, "canon/manifest.yaml");
@@ -654,7 +718,7 @@ export class CharacterLoader {
 			content: readFileSync(this.characterPackagePath(id, `canon/${source.path}`), "utf8"),
 		}));
 		const skillsDir = join(resolve(this.packageDirectory(id)), "skills");
-		parsed.skills = existsSync(skillsDir)
+		const skills = existsSync(skillsDir)
 			? loadRoleSkills([this.characterPackagePath(id, "skills")])
 			: [];
 		const allowedHostTools = new Set([
@@ -667,7 +731,7 @@ export class CharacterLoader {
 			"explicit_memory",
 			"host_delegate",
 		]);
-		for (const skill of parsed.skills) {
+		for (const skill of skills) {
 			for (const tool of skill.allowedTools)
 				if (!allowedHostTools.has(tool))
 					throw new Error(
@@ -703,10 +767,22 @@ export class CharacterLoader {
 				this.characterPackagePath(id, item.captions);
 			}
 		}
-		parsed.state = state;
-		parsed.media = media;
-		parsed.canon = { manifest: canonManifest, sources: canonSources };
-		return parsed;
+		return {
+			id: parsed.id,
+			name: parsed.name,
+			language: parsed.language,
+			theme,
+			character: parsed.character,
+			behavior,
+			prompt: parsed.prompt,
+			self_canon: parsed.self_canon,
+			scenes: parsed.scenes,
+			visual: parsed.visual,
+			state,
+			media,
+			skills,
+			canon: { manifest: canonManifest, sources: canonSources },
+		};
 	}
 
 	pluginHash(character: CharacterPackage): string {
@@ -948,10 +1024,13 @@ Do not claim that missing an explicit request prevents TDAI capture, and do not 
 		yaml: string;
 		sha256: string;
 		character: CharacterDisplay;
+		manifest: CharacterManifestJson;
+		manifestSchema: CharacterManifestJson;
 	} {
 		const character = this.load(characterId);
 		if (!character) throw { kind: "not_found", reason: "character_package_not_found" };
 		const yaml = readFileSync(join(this.packageDirectory(characterId), "character.yaml"), "utf8");
+		const manifest = CharacterManifestSchema.parse(parse(yaml));
 		return {
 			characterId,
 			origin: this.packageOrigin(character),
@@ -959,7 +1038,14 @@ Do not claim that missing an explicit request prevents TDAI capture, and do not 
 			yaml,
 			sha256: createHash("sha256").update(yaml).digest("hex"),
 			character: this.display(character),
+			manifest: JSON.parse(JSON.stringify(manifest)) as CharacterManifestJson,
+			manifestSchema: toJsonSchema(CharacterManifestSchema) as CharacterManifestJson,
 		};
+	}
+
+	packageLocation(characterId: string): string {
+		if (!this.load(characterId)) throw { kind: "not_found", reason: "character_package_not_found" };
+		return this.packageDirectory(characterId);
 	}
 
 	writePackageDocument(params: { characterId: string; yaml: string; expectedSha256: string }): {

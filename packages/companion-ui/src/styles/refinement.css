@@ -583,13 +583,6 @@ button[data-variant="primary"]:hover:not(:disabled),
 	border-color: var(--line-soft);
 }
 
-.message-inline-editor,
-.message-correction-panel {
-	@apply mt-3 gap-3 rounded-xl border p-3;
-	border-color: var(--line-soft);
-	background: var(--surface-panel);
-}
-
 .composer {
 	@apply gap-2 rounded-2xl border p-3;
 	border-color: var(--line-soft);

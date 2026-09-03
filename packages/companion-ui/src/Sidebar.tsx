@@ -219,10 +219,10 @@ export function Sidebar(props: {
 											</Button>
 											<Button
 												data-control="command"
-												type="button"
-												title={t("sidebar.archiveConversation")}
-												data-tooltip={t("sidebar.archiveConversation")}
-												aria-label={t("sidebar.archiveConversation")}
+									type="button"
+									title={t("sidebar.archiveConversationHint")}
+									data-tooltip={t("sidebar.archiveConversationHint")}
+									aria-label={t("sidebar.archiveConversationHint")}
 												onClick={() =>
 													void workflow.runSidebarAction(() =>
 														store.archiveConversation(conversation.conversationId),
@@ -255,22 +255,6 @@ export function Sidebar(props: {
 				</nav>
 				<div class="system-section">
 					<div class="section-label">{t("sidebar.application")}</div>
-					<Button
-						type="button"
-						class="system-nav"
-						onClick={() => {
-							props.onNavigate?.();
-							props.onOpenBackstage("archived");
-						}}
-					>
-						<span class="gear" aria-hidden="true">
-							<Icon icon={faBoxArchive} />
-						</span>
-						{t("sidebar.archivedConversations")}
-						<Show when={(store.archivedConversations?.length ?? 0) > 0}>
-							<span class="nav-count">{store.archivedConversations?.length ?? 0}</span>
-						</Show>
-					</Button>
 					<Button
 						type="button"
 						class="system-nav"

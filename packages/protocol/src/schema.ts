@@ -516,10 +516,14 @@ export const CharacterPackageDocument = z.strictObject({
 	yaml: z.string().max(1_048_576),
 	sha256: z.string().regex(/^[0-9a-f]{64}$/),
 	character: CharacterDisplay,
+	manifest: BoundedJsonValue,
+	manifestSchema: BoundedJsonValue,
 });
 export const CharacterPackageResponse = z.strictObject({
 	package: CharacterPackageDocument,
 });
+export const CharacterPackageRevealRequest = CharacterPackageGetRequest;
+export const CharacterPackageRevealResponse = z.strictObject({ revealed: z.literal(true) });
 
 const CharacterDeletionId = z
 	.string()
@@ -750,6 +754,12 @@ export const PiLiveSnapshot = z.strictObject({
 export const ConversationDetail = z.strictObject({
 	conversationId: ConversationId,
 	name: z.string().max(MAX_STRING_LENGTH).optional(),
+	selectedModel: z
+		.strictObject({
+			providerId: z.string().min(1).max(64),
+			modelId: z.string().min(1).max(128),
+		})
+		.optional(),
 	branch: z.strictObject({
 		activeLeafId: PiSessionEntryId.optional(),
 		entries: z.array(PiSessionEntry).max(MAX_ARRAY_LENGTH),
@@ -1229,7 +1239,6 @@ export const ExternalAgentConnectCodexRequest = z.strictObject({
 	canonicalPath: z.string().min(1).max(MAX_PATH_LENGTH),
 	version: z.string().min(1).max(64),
 	sha256: z.string().length(64),
-	codexHome: z.string().min(1).max(MAX_PATH_LENGTH),
 });
 export const ExternalAgentConnectCodexResponse = z.strictObject({
 	profileId: z.string().min(1).max(64),
@@ -1774,6 +1783,12 @@ export const RPC = {
 			"character.packageUpdate",
 			CharacterPackageUpdateRequest,
 			CharacterPackageResponse,
+			"mutation",
+		),
+		packageReveal: endpoint(
+			"character.packageReveal",
+			CharacterPackageRevealRequest,
+			CharacterPackageRevealResponse,
 			"mutation",
 		),
 		deletionStatusGet: endpoint(

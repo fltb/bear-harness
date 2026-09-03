@@ -147,7 +147,7 @@ export class CharacterRuntime {
 				},
 			},
 			defaultModel: () => this.models.defaults(this.companionId).reply,
-			multimodalFallback: () => this.models.multimodalFallback(this.companionId),
+			multimodalFallback: () => this.models.multimodalFallback(),
 			sessionDiscarded: (sessionId) =>
 				db.delete(conversations).where(eq(conversations.id, sessionId)).run(),
 			context: async (conversationId, message) => {

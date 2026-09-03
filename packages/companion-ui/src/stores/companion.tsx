@@ -70,9 +70,19 @@ export interface PendingUserMessage {
 	conversationId: string;
 	text: string;
 	createdAt: number;
+	anchorEntryId?: string;
 	state: "pending" | "failed";
 	error?: string;
 }
+export type TimelineProjectionItem =
+	| { kind: "entry"; id: string; entry: PiSessionEntry }
+	| { kind: "optimistic-user"; id: string; message: PendingUserMessage }
+	| { kind: "queued-user"; id: string; text: string }
+	| {
+			kind: "streaming-assistant";
+			id: string;
+			message: Extract<NonNullable<PiLiveState["streamingMessage"]>, { role: "assistant" }>;
+		  };
 export interface SnapshotApi {
 	data(): Snapshot | undefined;
 	loading(): boolean;
@@ -94,6 +104,7 @@ export interface CompanionStore {
 	readonly completedConversationIds: ReadonlySet<string>;
 	readonly activePiLiveState: PiLiveState | undefined;
 	readonly pendingUserMessages: readonly PendingUserMessage[];
+	readonly activeTimeline: readonly TimelineProjectionItem[];
 	readonly runs: RunInfo[];
 	readonly character: CharacterDisplay | undefined;
 	readonly companionState: CompanionStateData | undefined;
@@ -144,6 +155,18 @@ export function useCompanionStore(): CompanionStore {
 const stores = new WeakMap<CompanionClient, CompanionStore>();
 const PI_RECONNECT_MIN_DELAY_MS = 100;
 const PI_RECONNECT_MAX_DELAY_MS = 5_000;
+
+function piMessageText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.flatMap((part) =>
+			part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part
+				? [String(part.text)]
+				: [],
+		)
+		.join("\n");
+}
 
 function waitForPiReconnect(signal: AbortSignal, delayMs: number): Promise<boolean> {
 	if (signal.aborted) return Promise.resolve(false);
@@ -201,7 +224,9 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	const [completedConversationIds, setCompletedConversationIds] = createSignal<ReadonlySet<string>>(
 		new Set(),
 	);
-	const [pendingUserMessages, setPendingUserMessages] = createSignal<PendingUserMessage[]>([]);
+	const [optimisticUserBySession, setOptimisticUserBySession] = createSignal<
+		ReadonlyMap<string, PendingUserMessage>
+	>(new Map());
 	onCleanup(queryClient.getQueryCache().subscribe(() => setCacheRevision((value) => value + 1)));
 	const fail = (operation: string, cause: unknown) => {
 		setOperationError({
@@ -335,6 +360,27 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	});
 
 	const activeDetail = () => activeDetailQuery.data;
+	const removeOptimisticUser = (conversationId: string) =>
+		setOptimisticUserBySession((current) => {
+			if (!current.has(conversationId)) return current;
+			const next = new Map(current);
+			next.delete(conversationId);
+			return next;
+		});
+	const reconcileOptimisticUser = (detail: ConversationDetail) => {
+		const optimistic = optimisticUserBySession().get(detail.conversationId);
+		if (!optimistic) return;
+		const anchorIndex = optimistic.anchorEntryId
+			? detail.branch.entries.findIndex((entry) => entry.id === optimistic.anchorEntryId)
+			: -1;
+		const acknowledged = detail.branch.entries.slice(anchorIndex + 1).some(
+			(entry) =>
+				entry.type === "message" &&
+				entry.message.role === "user" &&
+				piMessageText(entry.message.content) === optimistic.text,
+		);
+		if (acknowledged) removeOptimisticUser(detail.conversationId);
+	};
 	const refreshSnapshot = () =>
 		refreshRpcQuery({
 			client: queryClient,
@@ -374,6 +420,11 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	};
 	const activateDetail = (detail: ConversationDetail) => {
 		hydrateRpcQuery(queryClient, queryKeys.conversation(detail.conversationId), detail);
+		if (detail.selectedModel)
+			hydrateRpcQuery(queryClient, queryKeys.modelRoute(detail.conversationId), {
+				selected: detail.selectedModel,
+			});
+		reconcileOptimisticUser(detail);
 		setActiveConversationId(detail.conversationId);
 		setCompletedConversationIds((current) => {
 			if (!current.has(detail.conversationId)) return current;
@@ -525,23 +576,6 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			return next;
 		});
 		if (event.type === "entry_appended") {
-			if (event.entry.type === "message" && event.entry.message.role === "user") {
-				const text =
-					typeof event.entry.message.content === "string"
-						? event.entry.message.content
-						: event.entry.message.content
-								.filter((part) => part.type === "text")
-								.map((part) => part.text)
-								.join("\n");
-				setPendingUserMessages((current) => {
-					const match = current.find(
-						(item) => item.conversationId === conversationId && item.text === text,
-					);
-					return match
-						? current.filter((item) => item.clientMessageId !== match.clientMessageId)
-						: current;
-				});
-			}
 			if (event.entry.type === "message" && event.entry.message.role === "assistant") {
 				setPiLiveBySession((current) => {
 					const previous = current.get(conversationId);
@@ -565,6 +599,13 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 					};
 				},
 			);
+			if (
+				event.entry.type === "message" &&
+				event.entry.message.role === "user" &&
+				optimisticUserBySession().get(conversationId)?.text ===
+					piMessageText(event.entry.message.content)
+			)
+				removeOptimisticUser(conversationId);
 		}
 		if (event.type === "session_info_changed") {
 			queryClient.setQueryData<ConversationDetail>(
@@ -625,6 +666,11 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			if (!detail || liveAbort.signal.aborted) return;
 			dropPiLive(conversationId);
 			hydrateRpcQuery(queryClient, queryKeys.conversation(conversationId), detail);
+			if (detail.selectedModel)
+				hydrateRpcQuery(queryClient, queryKeys.modelRoute(conversationId), {
+					selected: detail.selectedModel,
+				});
+			reconcileOptimisticUser(detail);
 			replacePiLive(detail);
 		};
 		const applyLiveEvent = (event: LivePush) => {
@@ -823,7 +869,42 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		},
 		get pendingUserMessages() {
 			const id = activeConversationId();
-			return id ? pendingUserMessages().filter((message) => message.conversationId === id) : [];
+			const message = id ? optimisticUserBySession().get(id) : undefined;
+			return message ? [message] : [];
+		},
+		get activeTimeline() {
+			const detail = activeDetail();
+			const id = activeConversationId();
+			if (!detail || !id) return [];
+			const result: TimelineProjectionItem[] = detail.branch.entries.map((entry) => ({
+				kind: "entry",
+				id: entry.id,
+				entry,
+			}));
+			const optimistic = optimisticUserBySession().get(id);
+			if (optimistic) result.push({ kind: "optimistic-user", id: optimistic.clientMessageId, message: optimistic });
+			const live = piLiveBySession().get(id) ?? detail.live;
+			for (const [index, text] of [...live.steering, ...live.followUp].entries())
+				result.push({ kind: "queued-user", id: `pi-queue-${index}-${text}`, text });
+			const streaming = live.streamingMessage;
+			if (streaming?.role === "assistant") {
+				const text = piMessageText(streaming.content);
+				const failed = streaming.stopReason === "error" || streaming.stopReason === "aborted";
+				const persisted = detail.branch.entries.some(
+					(entry) =>
+						entry.type === "message" &&
+						entry.message.role === "assistant" &&
+						((streaming.responseId && entry.message.responseId === streaming.responseId) ||
+							entry.message.timestamp === streaming.timestamp),
+				);
+				if (!persisted && (text.length > 0 || failed))
+					result.push({
+						kind: "streaming-assistant",
+						id: `pi-stream-${streaming.responseId ?? streaming.timestamp}`,
+						message: streaming,
+					});
+			}
+			return result;
 		},
 		get runs() {
 			return runsQuery.data?.runs ?? [];
@@ -931,11 +1012,21 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			}),
 		sendMessage: (text) => {
 			const conversationId = requireConversation();
+			if (optimisticUserBySession().has(conversationId))
+				return Promise.reject(new Error("message_send_pending"));
 			const clientMessageId = crypto.randomUUID();
-			setPendingUserMessages((current) => [
-				...current,
-				{ clientMessageId, conversationId, text, createdAt: Date.now(), state: "pending" },
-			]);
+			setOptimisticUserBySession((current) => {
+				const next = new Map(current);
+				next.set(conversationId, {
+					clientMessageId,
+					conversationId,
+					text,
+					createdAt: Date.now(),
+					anchorEntryId: activeDetail()?.branch.activeLeafId,
+					state: "pending",
+				});
+				return next;
+			});
 			return run("message.send", async () => {
 				await initialLiveProjection;
 				try {
@@ -946,39 +1037,36 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 						clientMessageId,
 					}),
 					);
-					setPendingUserMessages((current) =>
-						current.filter((item) => item.clientMessageId !== clientMessageId),
-					);
 				} catch (cause) {
-					setPendingUserMessages((current) =>
-						current.map((item) =>
-							item.clientMessageId === clientMessageId
-								? {
-									...item,
-									state: "failed",
-									error: cause instanceof Error ? cause.message : String(cause),
-								}
-								: item,
-						),
-					);
+					setOptimisticUserBySession((current) => {
+						const item = current.get(conversationId);
+						if (item?.clientMessageId !== clientMessageId) return current;
+						const next = new Map(current);
+						next.set(conversationId, {
+							...item,
+							state: "failed",
+							error: cause instanceof Error ? cause.message : String(cause),
+						});
+						return next;
+					});
 					throw cause;
 				}
 			});
 		},
 		retryPendingMessage: async (clientMessageId) => {
-			const message = pendingUserMessages().find(
+			const message = [...optimisticUserBySession().values()].find(
 				(item) => item.clientMessageId === clientMessageId,
 			);
 			if (!message) return;
-			setPendingUserMessages((current) =>
-				current.filter((item) => item.clientMessageId !== clientMessageId),
-			);
+			removeOptimisticUser(message.conversationId);
 			await store.sendMessage(message.text);
 		},
-		dismissPendingMessage: (clientMessageId) =>
-			setPendingUserMessages((current) =>
-				current.filter((item) => item.clientMessageId !== clientMessageId),
-			),
+		dismissPendingMessage: (clientMessageId) => {
+			const message = [...optimisticUserBySession().values()].find(
+				(item) => item.clientMessageId === clientMessageId,
+			);
+			if (message) removeOptimisticUser(message.conversationId);
+		},
 		regenerateMessage: (entryId, feedback) =>
 			run("message.regenerate", async () => {
 				const detail = await invoke(client, () =>

@@ -74,6 +74,7 @@ export class ExplicitMemoryFile {
 			if (oldText === undefined) {
 				const addition = newText.trim();
 				if (!addition) throw new Error("Explicit memory text is empty");
+				if (current.includes(addition)) return current;
 				next = current.trimEnd() ? `${current.trimEnd()}\n${addition}\n` : `${addition}\n`;
 			} else {
 				if (!oldText) throw new Error("oldText must be omitted for append or contain exact text");

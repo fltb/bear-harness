@@ -100,10 +100,7 @@ function createWorkflow(store: CompanionStore) {
 			if (!model || !id) return;
 			setState("modelBusy", true);
 			try {
-				await Promise.all([
-					store.model.select(id, model.providerId, model.modelId),
-					store.model.setDefaultReply(model.providerId, model.modelId),
-				]);
+				await store.model.select(id, model.providerId, model.modelId);
 			} catch {
 				// The store exposes the failed operation once; the composer must not mirror it.
 			} finally {
@@ -133,10 +130,6 @@ export function useConversationViewWorkflow(store: CompanionStore) {
 		sceneLabel: () =>
 			store.activeConversationId ? workflow.sceneLabel(store.activeConversationId) : "",
 		hasThreadContent: () =>
-			Boolean(
-				store.activePiEntries?.length ||
-					store.pendingUserMessages.length ||
-					store.activePiLiveState?.streamingMessage,
-			),
+			store.activeTimeline.length > 0,
 	};
 }

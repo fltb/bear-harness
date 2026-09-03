@@ -31,6 +31,11 @@
 	animation: streaming-spinner 0.75s linear infinite;
 }
 
+.message-send-status {
+	@apply mt-2 inline-flex items-center gap-2 text-xs;
+	color: var(--text-soft);
+}
+
 @keyframes streaming-spinner {
 	to {
 		transform: rotate(360deg);
@@ -88,6 +93,79 @@
 .msg-inline-action:focus-visible {
 	color: var(--text-on-message);
 	background: var(--surface-success);
+}
+
+.message-direct-actions,
+.message-primary-actions {
+	@apply flex items-center gap-1;
+}
+
+.message-primary-actions {
+	@apply mt-2 flex-wrap;
+}
+
+.message-primary-actions button {
+	@apply inline-flex min-h-8 items-center gap-1.5 rounded-lg border-0 px-2 text-xs;
+	color: var(--sys-text-muted);
+	background: var(--surface-control);
+}
+
+.message-inline-editor {
+	@apply m-0 block w-full border-0 p-0;
+	background: transparent;
+}
+
+.message-inline-editor textarea {
+	@apply min-h-20 w-full resize-y rounded-lg border px-2 py-1;
+	border-color: var(--line-soft);
+	color: inherit;
+	background: transparent;
+}
+
+.correction-popover-backdrop {
+	@apply fixed inset-0 z-30 cursor-default border-0 bg-transparent p-0;
+}
+
+.message-correction-popover {
+	@apply absolute right-0 z-40 mt-2 grid min-w-64 gap-1 rounded-xl border p-2;
+	border-color: var(--line-soft);
+	background: var(--surface-panel);
+	box-shadow: var(--shadow-raised);
+}
+
+.message-correction-presets {
+	@apply grid gap-1;
+}
+
+.message-correction-presets button {
+	@apply min-h-9 justify-start rounded-lg border-0 px-3 text-left text-sm;
+	background: transparent;
+}
+
+.message-correction-presets button:hover,
+.message-correction-presets button:focus-visible {
+	background: var(--surface-control);
+}
+
+.message-correction-custom {
+	@apply mt-1 flex items-center gap-1 border-t pt-2;
+	border-color: var(--line-soft);
+}
+
+.message-correction-custom label {
+	@apply min-w-0 flex-1;
+}
+
+.message-correction-custom input {
+	@apply min-h-9 w-full rounded-lg border px-2 text-sm;
+	border-color: var(--line-soft);
+	background: var(--surface-control);
+}
+
+.message-correction-custom button {
+	@apply min-h-9 shrink-0 rounded-lg border-0 px-3 text-sm;
+	background: var(--sys-accent);
+	color: var(--text-on-accent);
 }
 
 .msg-menu-trigger:hover,

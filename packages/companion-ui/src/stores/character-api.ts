@@ -128,6 +128,9 @@ export function createCharacterApi(c: CharacterApiContext): CharacterApi {
 			);
 			return api.packageGet(characterId);
 		},
+		packageReveal: async (characterId) => {
+			await invoke(client, () => client.character.packageReveal({ characterId }));
+		},
 		deletionStatus: async (characterId) =>
 			(
 				await refreshRpcQuery({

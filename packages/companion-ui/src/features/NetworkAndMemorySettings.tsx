@@ -1,7 +1,6 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
-import { createStableSnapshot } from "../lib/stable-snapshot.js";
 import { useCompanionStore } from "../stores/companion.js";
 import { createNetworkMemoryWorkflow } from "../stores/setup-workflows.js";
 import { Button, Select, TextField } from "../ui/primitives.js";
@@ -18,11 +17,8 @@ export function NetworkAndMemorySettings(props: { section?: "network" | "memory"
 	const workflow = createNetworkMemoryWorkflow(store, t);
 	const { proxyMode, proxyUrl, setProxyMode, setProxyUrl, saving, error, feedback, save } =
 		workflow;
-	const proxyModes = createStableSnapshot(
-		() => store.embedding.capabilitiesQuery.data?.networkProxyModes ?? [],
-	);
+	const proxyModes = () => [{ id: "direct" as const }, { id: "auto" as const }, { id: "manual" as const }];
 	const selectedProxyMode = () => proxyModes().find((mode) => mode.id === proxyMode()) ?? null;
-	const capabilitiesReady = () => store.embedding.capabilitiesQuery.data !== undefined;
 
 	return (
 		<div class="settings-stack">
@@ -53,7 +49,7 @@ export function NetworkAndMemorySettings(props: { section?: "network" | "memory"
 							optionValue="id"
 							optionTextValue={(mode) => t(`settings.proxyModes.${mode.id}`)}
 							onChange={(mode) => mode && setProxyMode(mode.id)}
-							disabled={!capabilitiesReady() || proxyModes().length === 0}
+							disabled={saving()}
 							placeholder={t("settings.proxyMode")}
 							aria-label={t("settings.proxyMode")}
 							itemComponent={(props) => (
@@ -85,7 +81,7 @@ export function NetworkAndMemorySettings(props: { section?: "network" | "memory"
 									type="text"
 									placeholder="http://127.0.0.1:7890"
 									value={proxyUrl()}
-									disabled={!capabilitiesReady()}
+									disabled={saving()}
 									onInput={(event) => setProxyUrl(event.currentTarget.value)}
 								/>
 							</TextField>
@@ -95,7 +91,7 @@ export function NetworkAndMemorySettings(props: { section?: "network" | "memory"
 						<Button
 							type="button"
 							data-variant="primary"
-							disabled={saving() || !capabilitiesReady() || proxyModes().length === 0}
+							disabled={saving()}
 							onClick={() => void save()}
 						>
 							{t("settings.saveNetwork")}

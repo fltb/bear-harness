@@ -63,6 +63,7 @@ export interface HostRuntimeOptions {
 	piWorkerPath?: string;
 	updateService?: HostUpdateService;
 	artifactPresenter?: ArtifactPresenter;
+	characterPackagePresenter?: { reveal(directory: string): Promise<void> };
 	auditRoots?: string[];
 	logger?: { debug?: (message: string) => void; warn?: (message: string) => void };
 }
@@ -309,6 +310,7 @@ export class HostRuntime {
 			externalAgents: runtime.externalAgents,
 			artifacts: runtime.artifacts,
 			artifactPresenter: this.options.artifactPresenter,
+			characterPackagePresenter: this.options.characterPackagePresenter,
 			canon: runtime.canon,
 			providers: this.providers,
 			characterLoader: this.characterLoader,

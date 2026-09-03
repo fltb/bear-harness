@@ -10,7 +10,6 @@ export function createExternalAgentApi(client: CompanionClient) {
 			canonicalPath: string;
 			version: string;
 			sha256: string;
-			codexHome: string;
 		}) => {
 			await invoke(client, () => client.externalAgent.connectCodex(params));
 		},

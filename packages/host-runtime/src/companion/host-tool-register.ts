@@ -183,6 +183,7 @@ export function registerHostTools(input: HostToolInput): Record<string, AgentToo
 			"Explicit user memory",
 			MemoryArgs,
 			async (args) => {
+				const before = await input.explicitMemory.read();
 				const result = await attempt(
 					() =>
 						args.action === "read"
@@ -192,7 +193,11 @@ export function registerHostTools(input: HostToolInput): Record<string, AgentToo
 				);
 				if (!result.ok) return result;
 				const content = result.data as string;
-				return { ok: true, message: content || "MEMORY.md is empty.", data: { content } };
+				return {
+					ok: true,
+					message: content || "MEMORY.md is empty.",
+					data: { content, changed: content !== before },
+				};
 			},
 			"Read or exactly edit MEMORY.md only on the user's request.",
 		),

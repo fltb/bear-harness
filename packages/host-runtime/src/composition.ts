@@ -98,7 +98,7 @@ export interface HostCompositionContext {
 	};
 	memoryScope: { readonly installationId: string; readonly userId: string };
 	externalAgentRuns: ExternalAgentRunService;
-	externalAgents: {
+		externalAgents: {
 		discover(): Promise<
 			Array<{
 				candidatePath: string;
@@ -112,7 +112,6 @@ export interface HostCompositionContext {
 			canonicalPath: string;
 			version: string;
 			sha256: string;
-			codexHome: string;
 		}): Promise<{ profileId: string; version: string; sha256: string }>;
 		status(): Promise<
 			| { available: true; profileId: string; version: string; hash: string }
@@ -123,6 +122,7 @@ export interface HostCompositionContext {
 	artifacts: ArtifactStore;
 	/** Optional trusted OS-shell adapter; renderer code never receives artifact paths. */
 	artifactPresenter?: ArtifactPresenter;
+	characterPackagePresenter?: { reveal(directory: string): Promise<void> };
 	canon: CanonHubService;
 	providers: ProviderCatalog;
 	credentials: CredentialStore;
@@ -267,6 +267,12 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			configureCharacterRuntime(s, character);
 		}
 		return { package: s.characterLoader.readPackageDocument(character.id) };
+	});
+	dispatcher.registerHandler(RPC.character.packageReveal, async ({ characterId }) => {
+		const presenter = s.characterPackagePresenter;
+		if (!presenter) throw { kind: "unavailable", reason: "character_package_reveal_unavailable" };
+		await presenter.reveal(s.characterLoader.packageLocation(characterId));
+		return { revealed: true as const };
 	});
 	dispatcher.registerHandler(RPC.character.deletionStatusGet, async ({ characterId }) => {
 		return { status: s.characterDeletionStatus(characterId) };

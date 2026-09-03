@@ -36,6 +36,8 @@ export const en = {
 		revision: "Revision",
 		advancedDetails: "Advanced details",
 		packageTab: "Role package",
+		manifest: "Character manifest",
+		revealPackage: "Open in system folder",
 		promptFields: {
 			description: "Role description",
 			personality: "Personality",
@@ -106,6 +108,7 @@ export const en = {
 		renameConversation: "Rename conversation",
 		saveConversation: "Save",
 		archiveConversation: "Archive conversation",
+		archiveConversationHint: "Archive conversation; view it later in System Settings → Archived",
 		restoreConversation: "Restore conversation",
 		deleteConversation: "Delete conversation",
 		deleteConversationTitle: "Permanently delete this conversation?",
@@ -276,6 +279,8 @@ export const en = {
 		edit: "Edit",
 		continue: "Continue",
 		branch: "Start a new conversation here",
+		copy: "Copy",
+		copied: "Copied",
 		userEditBranchNote:
 			"Saving regenerates the conversation from this message. The previous version can still be restored.",
 		conversation: "Conversations",
@@ -324,7 +329,7 @@ export const en = {
 		systemDefaultReplyModelHint:
 			"Copied once when a character is created; later changes do not affect existing characters.",
 		systemDefaultVisionModel: "Default image model for new characters",
-		systemDefaultVisionModelHint: "Optional, and also copied only once at character creation.",
+		systemDefaultVisionModelHint: "Installation-wide image reader used directly when the reply model cannot read images.",
 		providerSetupLabel: "Provider setup",
 		addProvider: "Add provider",
 		addProviderHint: "Add one provider at a time. Built-in catalogs cannot be changed.",

@@ -1,8 +1,9 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { createSignal, Show } from "solid-js";
 import { useCompanionStore } from "../stores/companion.js";
+import { Button, Dialog } from "../ui/primitives.js";
 import { ModelSelector, modelRouteKey } from "./ModelSelector.js";
-import { ProviderSetup } from "./ProviderSetup.js";
+import { AddProviderForm, ProviderList } from "./ProviderSetup.js";
 
 /** Installation-wide provider membership, credentials and defaults for newly created characters. */
 export function SystemModelSettings() {
@@ -10,6 +11,7 @@ export function SystemModelSettings() {
 	const store = useCompanionStore();
 	const [saving, setSaving] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
+	const [addingProvider, setAddingProvider] = createSignal(false);
 	const models = () => store.model.models();
 	const defaults = () => store.model.data().systemDefaults;
 	const visionRoute = () => {
@@ -40,7 +42,23 @@ export function SystemModelSettings() {
 				<h3 id="system-model-settings-heading">{t("settings.systemModelSettings")}</h3>
 				<p class="field-hint">{t("settings.systemModelSettingsHint")}</p>
 			</div>
-			<ProviderSetup class="system-provider-setup" />
+			<div class="settings-group-heading provider-settings-heading">
+				<h4>{t("settings.providerSetupLabel")}</h4>
+				<Button type="button" data-variant="primary" onClick={() => setAddingProvider(true)}>
+					{t("settings.addProvider")}
+				</Button>
+			</div>
+			<ProviderList />
+			<Dialog open={addingProvider()} onOpenChange={setAddingProvider}>
+				<Dialog.Portal>
+					<Dialog.Overlay class="confirmation-overlay" />
+					<Dialog.Content class="provider-add-dialog">
+						<Dialog.Title>{t("settings.addProvider")}</Dialog.Title>
+						<AddProviderForm onAdded={() => setAddingProvider(false)} />
+						<Dialog.CloseButton>{t("backstage.close")}</Dialog.CloseButton>
+					</Dialog.Content>
+				</Dialog.Portal>
+			</Dialog>
 			<Show when={error()}>
 				{(message) => (
 					<p class="status-line err" role="alert">

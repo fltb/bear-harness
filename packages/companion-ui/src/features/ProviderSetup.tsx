@@ -11,7 +11,17 @@ type PresentationProps = {
 
 	/** "stack" = single-column onboarding surface; "manager" = Pattern 01 two-column settings. */
 	layout?: "stack" | "manager";
+	surface?: "all" | "list" | "add";
+	onAdded?: () => void;
 };
+
+export function ProviderList() {
+	return <ProviderSetup surface="list" class="system-provider-list" />;
+}
+
+export function AddProviderForm(props: { onAdded?: () => void }) {
+	return <ProviderSetup surface="add" class="system-provider-add" onAdded={props.onAdded} />;
+}
 
 type OAuthEvent = ProviderLoginResult["events"][number];
 
@@ -240,6 +250,7 @@ export function ProviderSetup(props: PresentationProps) {
 				});
 			}
 			await refresh();
+			props.onAdded?.();
 		});
 	};
 
@@ -270,7 +281,10 @@ export function ProviderSetup(props: PresentationProps) {
 		const request = ++statusRequest;
 		const initial = await runOauthRequest(() => store.provider.login(flowProviderId));
 		if (initial && !disposed && generation === oauthGeneration && request === statusRequest) {
-			if (initial.status === "completed") await refresh();
+			if (initial.status === "completed") {
+				await refresh();
+				props.onAdded?.();
+			}
 		}
 	};
 
@@ -284,7 +298,10 @@ export function ProviderSetup(props: PresentationProps) {
 		const request = ++statusRequest;
 		const state = await runOauthRequest(() => store.provider.loginAnswer(flowProviderId, answer));
 		if (state && !disposed && generation === oauthGeneration && request === statusRequest)
-			if (state.status === "completed") await refresh();
+			if (state.status === "completed") {
+				await refresh();
+				props.onAdded?.();
+			}
 	};
 
 	const cancelOauth = async (): Promise<void> => {
@@ -310,6 +327,7 @@ export function ProviderSetup(props: PresentationProps) {
 			await store.provider.importPiConfig(piConfigJson().trim());
 			setPiConfigJson("");
 			await refresh();
+			props.onAdded?.();
 		});
 	};
 
@@ -337,6 +355,7 @@ export function ProviderSetup(props: PresentationProps) {
 			setCustomModels("");
 			setCustomKey("");
 			await refresh();
+			props.onAdded?.();
 		} catch (cause) {
 			if (!disposed) setCustomError(cause instanceof Error ? cause.message : String(cause));
 		} finally {
@@ -846,6 +865,28 @@ export function ProviderSetup(props: PresentationProps) {
 		</details>
 	);
 
+	if (props.surface === "list")
+		return (
+			<section class={`provider-setup ${props.class ?? ""}`} aria-label={t("settings.addedProviders")}>
+				<Show when={error()}>
+					{(message) => (
+						<p class="status-line err" role="alert">
+							{message()}
+						</p>
+					)}
+				</Show>
+				<div class="provider-card-list">
+					{renderProviderCards(true)}
+				</div>
+			</section>
+		);
+	if (props.surface === "add")
+		return (
+			<section class={`provider-setup ${props.class ?? ""}`} aria-label={t("settings.addProvider")}>
+				{renderCandidateSection(true)}
+				{renderImports()}
+			</section>
+		);
 	return (
 		<section
 			class={`provider-setup ${managerLayout ? "provider-setup-manager" : ""} ${props.class ?? ""}`}

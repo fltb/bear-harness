@@ -115,9 +115,7 @@ describe("ordinary-user backstage journey", () => {
 		const characterDialog = await screen.findByRole("dialog", {
 			name: zhCN.sidebar.characterSettings,
 		});
-		expect(
-			within(characterDialog).getByRole("tab", { name: zhCN.backstage.roleManagement }),
-		).toHaveAttribute("data-selected");
+		expect(within(characterDialog).queryByRole("tablist")).not.toBeInTheDocument();
 		const input = within(characterDialog).getByLabelText(zhCN.backstage.roleImportInput, {
 			selector: "input",
 		});
@@ -142,7 +140,6 @@ describe("ordinary-user backstage journey", () => {
 	});
 
 	it("does not expose package media in the lightweight character settings view", async () => {
-		const user = userEvent.setup();
 		vi.stubGlobal(
 			"matchMedia",
 			vi.fn(() => ({ matches: true })),
@@ -193,7 +190,6 @@ describe("ordinary-user backstage journey", () => {
 			</DesktopProvider>
 		));
 		const dialog = await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings });
-		await user.click(within(dialog).getByRole("tab", { name: zhCN.backstage.roleManagement }));
 		expect(
 			within(dialog).queryByRole("tab", { name: zhCN.currentRolePackage.storageTab }),
 		).not.toBeInTheDocument();

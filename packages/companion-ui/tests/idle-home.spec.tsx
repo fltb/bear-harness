@@ -96,7 +96,7 @@ describe("idle homepage (official config, no bridge)", () => {
 		expect(
 			await screen.findByRole("dialog", { name: zhCN.sidebar.characterSettings }),
 		).toBeInTheDocument();
-		expect(screen.getByRole("tab", { name: zhCN.backstage.roleManagement })).toBeInTheDocument();
+		expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: zhCN.backstage.close }));
 		await waitFor(() =>
 			expect(
@@ -111,18 +111,24 @@ describe("idle homepage (official config, no bridge)", () => {
 			within(settings).getByRole("button", { name: zhCN.settings.systemModelSettings }),
 		);
 		expect(
-			screen.getByRole("region", { name: zhCN.settings.providerSetupLabel }),
-		).toBeInTheDocument();
+			screen.getAllByRole("region", { name: zhCN.settings.addedProviders }).length,
+		).toBeGreaterThan(0);
 		expect(screen.queryByRole("button", { name: zhCN.settings.addModel })).not.toBeInTheDocument();
 	});
 
-	it("opens archived conversations directly from the sidebar", async () => {
+	it("keeps archived conversations in system settings instead of the homepage", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
-		await user.click(screen.getByRole("button", { name: zhCN.sidebar.archivedConversations }));
+		expect(
+			screen.queryByRole("button", { name: zhCN.sidebar.archivedConversations }),
+		).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: zhCN.sidebar.systemSettings }));
 		const settings = await screen.findByRole("dialog", { name: zhCN.sidebar.systemSettings });
+		await user.click(
+			within(settings).getByRole("button", { name: zhCN.sidebar.archivedConversations }),
+		);
 		expect(settings).toHaveTextContent(zhCN.settings.archivedConversationsHint);
 	});
 

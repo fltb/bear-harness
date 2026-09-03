@@ -338,8 +338,8 @@ export class ModelRegistry {
 		return this.defaults(companionId);
 	}
 
-	multimodalFallback(companionId: string): ModelRecord | undefined {
-		const vision = this.defaults(companionId).vision;
+	multimodalFallback(): ModelRecord | undefined {
+		const vision = this.systemDefaults().vision;
 		return vision.mode === "manual" ? vision.route : undefined;
 	}
 

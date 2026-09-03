@@ -390,6 +390,12 @@ async function initializeHost(): Promise<boolean> {
 			bundledGit: bundledGitRuntime(),
 			piWorkerPath: sourceE2EPiWorkerPath(),
 			artifactPresenter: artifactPresentation.presenter,
+			characterPackagePresenter: {
+				reveal: async (directory) => {
+					const error = await shell.openPath(directory);
+					if (error) throw new Error("character_package_reveal_failed");
+				},
+			},
 		});
 		runtime = createdRuntime;
 		const disposeRouter = wireElectronIpcHandlers(createdRuntime.dispatcher, windowRegistry, {

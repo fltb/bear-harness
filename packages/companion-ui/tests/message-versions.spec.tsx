@@ -85,9 +85,8 @@ describe("Pi message actions", () => {
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 
 		const message = (await screen.findByText("Second reply")).closest("article") as HTMLElement;
-		await user.click(within(message).getByRole("button", { name: zhCN.messages.operations }));
 		await user.click(within(message).getByRole("button", { name: "Correct" }));
-		await user.click(within(message).getByRole("button", { name: "Voice" }));
+		await user.click(within(message).getByRole("menuitem", { name: "Voice" }));
 		await waitFor(() =>
 			expect(client.message.regenerate).toHaveBeenCalledWith({
 				conversationId: "conversation-1",

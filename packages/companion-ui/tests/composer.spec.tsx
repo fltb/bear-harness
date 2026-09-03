@@ -256,9 +256,7 @@ describe("composer", () => {
 				selected: { providerId: "relay", modelId: "deep" },
 			}),
 		);
-		expect(client.model.defaultsSetReply).toHaveBeenCalledWith({
-			reply: { providerId: "relay", modelId: "deep" },
-		});
+		expect(client.model.defaultsSetReply).not.toHaveBeenCalled();
 	});
 
 	it("submits trimmed text to the active conversation and clears only after dispatch", async () => {

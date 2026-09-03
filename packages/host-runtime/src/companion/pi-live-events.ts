@@ -19,6 +19,9 @@ export function projectPiConversationDetail(
 	return {
 		conversationId: session.sessionId,
 		...(session.sessionName ? { name: session.sessionName } : {}),
+		...(session.model
+			? { selectedModel: { providerId: session.model.provider, modelId: session.model.id } }
+			: {}),
 		branch: {
 			...(activeLeafId ? { activeLeafId } : {}),
 			entries,

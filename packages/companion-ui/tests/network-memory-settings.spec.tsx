@@ -229,7 +229,11 @@ describe("NetworkAndMemorySettings", () => {
 				within(listbox)
 					.getAllByRole("option")
 					.map((option) => option.textContent?.trim()),
-			).toEqual([zhCN.settings.proxyModes.manual]);
+			).toEqual([
+				zhCN.settings.proxyModes.direct,
+				zhCN.settings.proxyModes.auto,
+				zhCN.settings.proxyModes.manual,
+			]);
 		});
 		await user.click(screen.getByRole("option", { name: zhCN.settings.proxyModes.manual }));
 		await user.click(

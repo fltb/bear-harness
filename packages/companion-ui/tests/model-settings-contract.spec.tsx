@@ -109,7 +109,15 @@ async function openSettings() {
 }
 
 function providerSetup(backstage: HTMLElement): HTMLElement {
-	return within(backstage).getByRole("region", { name: zhCN.settings.providerSetupLabel });
+	return backstage;
+}
+
+async function openAddProvider(user: ReturnType<typeof userEvent.setup>, backstage: HTMLElement) {
+	const trigger = await waitFor(() =>
+		within(backstage).getByRole("button", { name: zhCN.settings.addProvider }),
+	);
+	await user.click(trigger);
+	return screen.findByRole("dialog", { name: zhCN.settings.addProvider });
 }
 function detailsSummary(container: HTMLElement, label: string): HTMLElement {
 	const summary = within(container)
@@ -134,15 +142,17 @@ function providerEditorForAction(
 }
 
 describe("breaking provider and model settings contract", () => {
-	it("shows only current reply and optional image controls, not old default or model-pool controls", async () => {
+	it("keeps model defaults installation-wide and removes the per-conversation settings page", async () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
-		const { user, backstage } = await openSettings();
-		await user.click(
-			within(backstage).getByRole("button", { name: zhCN.settings.conversationModelSettings }),
-		);
-		expect(within(backstage).getByText(zhCN.settings.currentReplyModel)).toBeVisible();
-		expect(within(backstage).getByText(zhCN.settings.visionModel)).toBeVisible();
+		const { backstage } = await openSettings();
+		expect(
+			within(backstage).queryByRole("button", {
+				name: zhCN.settings.conversationModelSettings,
+			}),
+		).not.toBeInTheDocument();
+		expect(within(backstage).getByText(zhCN.settings.systemDefaultReplyModel)).toBeVisible();
+		expect(within(backstage).getByText(zhCN.settings.systemDefaultVisionModel)).toBeVisible();
 		expect(within(backstage).queryByText("新对话默认模型")).not.toBeInTheDocument();
 		expect(within(backstage).queryByText(zhCN.settings.addModel)).not.toBeInTheDocument();
 		expect(within(backstage).queryByText(zhCN.settings.removeModel)).not.toBeInTheDocument();
@@ -152,12 +162,12 @@ describe("breaking provider and model settings contract", () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		const setup = providerSetup(backstage);
-		const candidateHeading = within(setup).getByRole("heading", {
+		const setup = await openAddProvider(user, backstage);
+		const candidateHeading = within(setup).getAllByRole("heading", {
 			name: zhCN.settings.addProvider,
-		});
+		})[1];
 		const providerSelect = within(setup).getByLabelText(zhCN.settings.providerLabel);
-		const addedProviders = within(setup).getByRole("region", {
+		const addedProviders = within(backstage).getByRole("region", {
 			name: zhCN.settings.addedProviders,
 		});
 
@@ -179,7 +189,7 @@ describe("breaking provider and model settings contract", () => {
 		const { client } = configuredClient();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		const setup = providerSetup(backstage);
+		const setup = await openAddProvider(user, backstage);
 		await selectKobalteOption(
 			user,
 			within(setup).getByLabelText(zhCN.settings.providerLabel),
@@ -208,9 +218,7 @@ describe("breaking provider and model settings contract", () => {
 		await waitFor(() => expect(client.provider.list).toHaveBeenCalled());
 		expect(client.model.poolGet).toHaveBeenCalled();
 		expect(client.model.defaultsGet).toHaveBeenCalled();
-		await waitFor(() =>
-			expect(within(setup).getAllByText(CANDIDATE.name).length).toBeGreaterThan(0),
-		);
+		await waitFor(() => expect(within(backstage).getByText(CANDIDATE.name)).toBeVisible());
 	});
 
 	it("edits an added provider key and URL from its card", async () => {
@@ -590,6 +598,7 @@ describe("breaking provider and model settings contract", () => {
 		client.model.poolGet.mockClear();
 		client.model.defaultsGet.mockClear();
 		await user.click(within(card).getByRole("button", { name: zhCN.settings.reauthProvider }));
+		await waitFor(() => expect(within(setup).getByText(zhCN.settings.oauthWaiting)).toBeVisible());
 		pushHostEvent(client, "provider.login_changed", {
 			providerId: "oauth",
 			status: "failed",
@@ -648,7 +657,7 @@ describe("breaking provider and model settings contract", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();
-		const setup = providerSetup(backstage);
+		let setup = await openAddProvider(user, backstage);
 		await user.click(detailsSummary(setup, zhCN.settings.advancedToggle));
 		// Empty drafts are intentionally ignored; submit an actual Pi document.
 		fireEvent.input(within(setup).getByLabelText(zhCN.settings.piConfigLabel), {
@@ -658,6 +667,8 @@ describe("breaking provider and model settings contract", () => {
 		expect(client.provider.importPiConfig).toHaveBeenCalledWith({
 			configJson: '{"providers":{"pi-local":{"models":[{"id":"local"}]}}}',
 		});
+		setup = await openAddProvider(user, backstage);
+		await user.click(detailsSummary(setup, zhCN.settings.advancedToggle));
 		await user.type(within(setup).getByLabelText(zhCN.settings.customProviderId), "custom-relay");
 		await user.type(within(setup).getByLabelText(zhCN.settings.customServiceName), "Custom Relay");
 		await user.type(

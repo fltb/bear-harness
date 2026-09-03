@@ -139,7 +139,6 @@ export interface ExternalAgentApi {
 		canonicalPath: string;
 		version: string;
 		sha256: string;
-		codexHome: string;
 	}): Promise<void>;
 }
 
@@ -176,6 +175,7 @@ export interface CharacterApi {
 		yaml: string,
 		expectedSha256: string,
 	): Promise<CharacterPackageDocument>;
+	packageReveal(characterId: string): Promise<void>;
 	deletionStatus(characterId: string): Promise<CharacterDeletionStatus>;
 	runtimeDelete(characterId: string): Promise<CharacterRuntimeDeleteResponse>;
 	packageDelete(characterId: string): Promise<CharacterPackageDeleteResponse>;

@@ -4,7 +4,6 @@ import { IpcInvocationError } from "../src/lib/ipc.js";
 import type { CompanionStore, SettingsData } from "../src/stores/companion.js";
 import { invoke, isRecord, payloadString } from "../src/stores/ipc.js";
 import {
-	createConversationModelSettingsWorkflow,
 	createFirstMeetingWorkflow,
 	createNetworkMemoryWorkflow,
 } from "../src/stores/setup-workflows.js";
@@ -63,130 +62,18 @@ describe("character language warning", () => {
 });
 
 describe("settings workflows", () => {
-	it("selects conversation and vision routes and exposes successful feedback", async () => {
-		const models = [
-			{
-				providerId: "relay",
-				modelId: "reply",
-				label: "Reply",
-				supportsImages: false,
-				createdAt: "2026-01-01",
-			},
-			{
-				providerId: "relay",
-				modelId: "vision",
-				label: "Vision",
-				supportsImages: true,
-				createdAt: "2026-01-02",
-			},
-		];
-		const select = vi.fn(async () => undefined);
-		const setMultimodalFallback = vi.fn(async () => undefined);
-		const setVisionAuto = vi.fn(async () => undefined);
-		const store = {
-			activeConversationId: "conversation-1",
-			model: {
-				data: () => ({
-					models,
-					selected: { providerId: "relay", modelId: "reply" },
-					defaults: {
-						vision: {
-							mode: "manual",
-							route: { providerId: "relay", modelId: "vision" },
-						},
-					},
-				}),
-				models: () => [],
-				select,
-				setMultimodalFallback,
-				setVisionAuto,
-			},
-		} as unknown as CompanionStore;
-
-		await new Promise<void>((resolve, reject) => {
-			createRoot((dispose) => {
-				const workflow = createConversationModelSettingsWorkflow(store, t);
-				expect(workflow.configured()).toEqual(models);
-				expect(workflow.selectedCurrentReplyOption()).toBe("relay\0reply");
-				expect(workflow.selectedVisionOption()).toBe("relay\0vision");
-				expect(workflow.visionOptions()).toEqual(["reply", "relay\0vision"]);
-				expect(workflow.modelByOptionId("relay\0missing")).toBeUndefined();
-				void (async () => {
-					await workflow.selectCurrentReply("relay\0reply");
-					expect(select).toHaveBeenCalledWith("conversation-1", "relay", "reply");
-					expect(workflow.feedback()).toBe("settings.modelSaved");
-					await workflow.setVisionModel("relay\0vision");
-					expect(setMultimodalFallback).toHaveBeenCalledWith("relay", "vision");
-					await workflow.setVisionModel("reply");
-					expect(setVisionAuto).toHaveBeenCalled();
-					dispose();
-					resolve();
-				})().catch(reject);
-			});
-		});
-	});
-
-	it("uses model fallbacks, ignores invalid selection, and reports structured failures", async () => {
-		const fallback = {
-			providerId: "fallback",
-			modelId: "one",
-			label: "Fallback",
-			supportsImages: true,
-			createdAt: "2026-01-01",
-		};
-		const failure = Object.assign(new Error("save failed"), { reason: "host rejected it" });
-		const store = {
-			activeConversationId: null,
-			model: {
-				data: () => ({ models: [], defaults: { vision: { mode: "auto" } } }),
-				models: () => [fallback],
-				select: vi.fn(),
-				setMultimodalFallback: vi.fn(async () => Promise.reject(failure)),
-				setVisionAuto: vi.fn(async () => Promise.reject("plain failure")),
-			},
-		} as unknown as CompanionStore;
-
-		await new Promise<void>((resolve, reject) => {
-			createRoot((dispose) => {
-				const workflow = createConversationModelSettingsWorkflow(store, t);
-				expect(workflow.configured()).toEqual([fallback]);
-				expect(workflow.selectedCurrentReplyOption()).toBeNull();
-				expect(workflow.selectedVisionOption()).toBe("reply");
-				void (async () => {
-					await workflow.selectCurrentReply(null);
-					await workflow.selectCurrentReply("fallback\0one");
-					expect(store.model.select).not.toHaveBeenCalled();
-					await workflow.setVisionModel("fallback\0one");
-					expect(workflow.error()).toBe("save failed (host rejected it)");
-					await workflow.setVisionModel(null);
-					expect(workflow.error()).toBe("plain failure");
-					dispose();
-					resolve();
-				})().catch(reject);
-			});
-		});
-	});
-
 	it("stays safe when optional model projections are not installed yet", async () => {
-		const setVisionAuto = vi.fn(async () => Promise.reject({ message: "bad shape", reason: 42 }));
 		const store = {
-			activeConversationId: "conversation-1",
-			model: { setVisionAuto },
 			onboarding: { status: "inactive", currentStepId: null },
 			loading: false,
 			character: undefined,
 			embedding: undefined,
 			error: null,
+			model: {},
 		} as unknown as CompanionStore;
 
 		await new Promise<void>((resolve, reject) => {
 			createRoot((dispose) => {
-				const conversation = createConversationModelSettingsWorkflow(store, t);
-				expect(conversation.configured()).toEqual([]);
-				expect(conversation.selectedCurrentReplyOption()).toBeNull();
-				expect(conversation.selectedVisionOption()).toBe("reply");
-				expect(conversation.modelByOptionId("missing")).toBeUndefined();
-
 				const firstMeeting = createFirstMeetingWorkflow(store);
 				expect(firstMeeting.configuredModels()).toEqual([]);
 				expect(firstMeeting.selectedReplyModel()).toBeNull();
@@ -197,15 +84,8 @@ describe("settings workflows", () => {
 				expect(firstMeeting.currentStepLabel()).toBe("");
 				expect(firstMeeting.visible()).toBe(false);
 
-				void conversation.setVisionModel(null).then(() => {
-					try {
-						expect(conversation.error()).toBe("[object Object]");
-						dispose();
-						resolve();
-					} catch (cause) {
-						reject(cause);
-					}
-				});
+				dispose();
+				resolve();
 			});
 		});
 	});
