@@ -616,6 +616,7 @@ test("configured live model answers a natural story with scene expression media 
 
 	const firstTurnStart = await send("我想看看那条没归档的回报。别先给摘要，我想从原件开始查。");
 	await waitForTool(firstTurnStart, "host_media", "damaged_signal");
+	await waitForTool(firstTurnStart, "host_choices", "转发台");
 	const firstChapterText = projectPiEntries((await open()).branch.entries)
 		.filter((entry) => entry.type === "message" && entry.role === "assistant")
 		.map((entry) => entry.text ?? "")
@@ -640,8 +641,6 @@ test("configured live model answers a natural story with scene expression media 
 	await expect(page.getByRole("complementary", { name: "残缺报码" })).toBeVisible();
 	await page.getByRole("button", { name: zhCN.messages.closeMedia }).last().click();
 
-	const choiceTurnStart = await send("这两条路我一时拿不准。把现在能走的方向摆出来，我自己选。");
-	await waitForTool(choiceTurnStart, "host_choices", "转发台");
 	const relayChoice = thread.getByRole("button", {
 		name: /^(?:A：)?(?:查|查看)转发台登记页$/,
 	});
