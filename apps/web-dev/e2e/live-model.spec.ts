@@ -637,8 +637,9 @@ test("configured live model answers a natural story with scene expression media 
 	const damagedSignal = thread.getByRole("region", { name: "残缺报码" });
 	await expect(damagedSignal).toBeVisible();
 	await damagedSignal.getByRole("button", { name: zhCN.messages.openMedia }).click();
-	await expect(page.getByRole("complementary", { name: "残缺报码" })).toBeVisible();
-	await page.getByRole("button", { name: zhCN.messages.closeMedia }).last().click();
+	const damagedSignalPreview = page.getByRole("complementary", { name: "残缺报码" });
+	await expect(damagedSignalPreview).toBeVisible();
+	await damagedSignalPreview.getByRole("button", { name: zhCN.messages.closeMedia }).click();
 
 	const relayChoice = thread.getByRole("button", {
 		name: /^(?:A：)?(?:查|查看)转发台登记页$/,
