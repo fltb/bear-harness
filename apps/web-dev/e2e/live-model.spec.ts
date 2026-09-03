@@ -579,32 +579,43 @@ test("configured live model answers a natural story with scene expression media 
 		rpc<StoryOpen>("conversation.open", { conversationId: conversation.conversationId });
 	const state = () =>
 		rpc<StoryState>("companionState.get", { conversationId: conversation.conversationId });
-	const send = (text: string) =>
-		rpc("message.send", {
+	const send = async (text: string) => {
+		const startIndex = (await open()).branch.entries.length;
+		await rpc("message.send", {
 			conversationId: conversation.conversationId,
 			text,
 			clientMessageId: crypto.randomUUID(),
 		});
-	const waitForTool = async (toolName: string, payloadMarker: string) => {
+		return startIndex;
+	};
+	const waitForTool = async (startIndex: number, toolName: string, payloadMarker: string) => {
 		await expect
-			.poll(async () => {
-				const snapshot = await open();
-				const entries = JSON.stringify(snapshot.branch.entries);
-				if (entries.includes('"stopReason":"error"')) {
-					throw new Error(`Live model settled with an error before ${toolName}: ${entries}`);
-				}
-				return entries.includes(`"toolName":"${toolName}"`) && entries.includes(payloadMarker);
-			}, {
-				timeout: liveReplyTimeout,
-			})
+			.poll(
+				async () => {
+					const snapshot = await open();
+					const turnEntries = snapshot.branch.entries.slice(startIndex);
+					const entries = JSON.stringify(turnEntries);
+					const hasExpectedTool =
+						entries.includes(`"toolName":"${toolName}"`) && entries.includes(payloadMarker);
+					if (hasExpectedTool) return true;
+					const lastEntry = JSON.stringify(turnEntries.at(-1));
+					if (!snapshot.live.isStreaming && lastEntry.includes('"stopReason":"error"')) {
+						throw new Error(`Live model settled with an error before ${toolName}: ${lastEntry}`);
+					}
+					return false;
+				},
+				{
+					timeout: liveReplyTimeout,
+				},
+			)
 			.toBe(true);
 		await expect
 			.poll(async () => (await open()).live.isStreaming, { timeout: liveReplyTimeout })
 			.toBe(false);
 	};
 
-	await send("我想看看那条没归档的回报。别先给摘要，我想从原件开始查。");
-	await waitForTool("host_media", "damaged_signal");
+	const firstTurnStart = await send("我想看看那条没归档的回报。别先给摘要，我想从原件开始查。");
+	await waitForTool(firstTurnStart, "host_media", "damaged_signal");
 	const firstChapterText = projectPiEntries((await open()).branch.entries)
 		.filter((entry) => entry.type === "message" && entry.role === "assistant")
 		.map((entry) => entry.text ?? "")
@@ -629,15 +640,16 @@ test("configured live model answers a natural story with scene expression media 
 	await expect(page.getByRole("complementary", { name: "残缺报码" })).toBeVisible();
 	await page.getByRole("button", { name: zhCN.messages.closeMedia }).last().click();
 
-	await send("这两条路我一时拿不准。把现在能走的方向摆出来，我自己选。");
-	await waitForTool("host_choices", "转发台");
+	const choiceTurnStart = await send("这两条路我一时拿不准。把现在能走的方向摆出来，我自己选。");
+	await waitForTool(choiceTurnStart, "host_choices", "转发台");
 	const relayChoice = thread.getByRole("button", {
 		name: /^(?:A：)?(?:查|查看)转发台登记页$/,
 	});
 	await expect(relayChoice).toHaveCount(1);
+	const relayTurnStart = (await open()).branch.entries.length;
 	await relayChoice.click();
 
-	await waitForTool("host_media", "storm_relay_map");
+	await waitForTool(relayTurnStart, "host_media", "storm_relay_map");
 	const relayText = projectPiEntries((await open()).branch.entries)
 		.filter((entry) => entry.type === "message" && entry.role === "assistant")
 		.map((entry) => entry.text ?? "")
