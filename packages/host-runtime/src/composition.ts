@@ -98,7 +98,7 @@ export interface HostCompositionContext {
 	};
 	memoryScope: { readonly installationId: string; readonly userId: string };
 	externalAgentRuns: ExternalAgentRunService;
-		externalAgents: {
+	externalAgents: {
 		discover(): Promise<
 			Array<{
 				candidatePath: string;
@@ -467,20 +467,20 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(
 		RPC.message.send,
 		async ({ conversationId, text, clientMessageId }) => {
-		await requireOwnedConversation(s, conversationId);
-		const key = `${conversationId}:${clientMessageId}`;
-		let accepted = acceptedMessages.get(key);
-		if (!accepted) {
-			accepted = s.pi.send(conversationId, text);
-			acceptedMessages.set(key, accepted);
-			void accepted.catch(() => acceptedMessages.delete(key));
-			if (acceptedMessages.size > 1_000) {
-				const oldest = acceptedMessages.keys().next().value;
-				if (oldest) acceptedMessages.delete(oldest);
+			await requireOwnedConversation(s, conversationId);
+			const key = `${conversationId}:${clientMessageId}`;
+			let accepted = acceptedMessages.get(key);
+			if (!accepted) {
+				accepted = s.pi.send(conversationId, text);
+				acceptedMessages.set(key, accepted);
+				void accepted.catch(() => acceptedMessages.delete(key));
+				if (acceptedMessages.size > 1_000) {
+					const oldest = acceptedMessages.keys().next().value;
+					if (oldest) acceptedMessages.delete(oldest);
+				}
 			}
-		}
-		await accepted;
-		return {};
+			await accepted;
+			return {};
 		},
 	);
 	dispatcher.registerHandler(RPC.message.abort, async ({ conversationId }) => {

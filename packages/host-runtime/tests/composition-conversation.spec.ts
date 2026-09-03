@@ -105,6 +105,7 @@ function context() {
 	const character = { id: "bear", state: { type: "object" }, canon: {} };
 	const invalidations = { invalidate: vi.fn() };
 	const livePush = vi.fn();
+	const characterPackagePresenter = { reveal: vi.fn(async () => undefined) };
 	const value = {
 		signal: new AbortController().signal,
 		orm: { select: () => ({ from: (table: unknown) => queryResult(table) }) },
@@ -124,7 +125,9 @@ function context() {
 			activate: vi.fn(),
 			pluginTrust: vi.fn(() => ({ trusted: true })),
 			piResources: vi.fn(() => ({ appendSystemPrompt: "prompt", pluginPaths: [] })),
+			packageLocation: vi.fn((characterId: string) => `/safe/characters/${characterId}`),
 		},
+		characterPackagePresenter,
 		companionStore: {
 			reconcileSchema: vi.fn(),
 			project,
@@ -136,7 +139,16 @@ function context() {
 		models: {},
 		providers: {},
 	} as unknown as HostCompositionContext;
-	return { value, sessions, pi, invalidations, project, companionSnapshot, snapshots };
+	return {
+		value,
+		sessions,
+		pi,
+		invalidations,
+		project,
+		companionSnapshot,
+		snapshots,
+		characterPackagePresenter,
+	};
 }
 
 function handler(dispatcher: Dispatcher, channel: string): RpcHandler {
@@ -184,10 +196,32 @@ describe("Host conversation projection and routing", () => {
 		expect(fixture.pi.close).not.toHaveBeenCalled();
 	});
 
+	it("reveals only the Host-resolved package location for a validated character id", async () => {
+		await expect(
+			handler(dispatcher, RPC.character.packageReveal.channel)({ characterId: "bear" }),
+		).resolves.toEqual({ revealed: true });
+		expect(fixture.value.characterLoader.packageLocation).toHaveBeenCalledWith("bear");
+		expect(fixture.characterPackagePresenter.reveal).toHaveBeenCalledWith("/safe/characters/bear");
+	});
+
 	it("routes concurrent message and model operations only by explicit conversation id", async () => {
 		await Promise.all([
-			handler(dispatcher, RPC.message.send.channel)({ conversationId: "alpha", text: "one", clientMessageId: "00000000-0000-4000-8000-000000000001" }),
-			handler(dispatcher, RPC.message.send.channel)({ conversationId: "beta", text: "two", clientMessageId: "00000000-0000-4000-8000-000000000002" }),
+			handler(
+				dispatcher,
+				RPC.message.send.channel,
+			)({
+				conversationId: "alpha",
+				text: "one",
+				clientMessageId: "00000000-0000-4000-8000-000000000001",
+			}),
+			handler(
+				dispatcher,
+				RPC.message.send.channel,
+			)({
+				conversationId: "beta",
+				text: "two",
+				clientMessageId: "00000000-0000-4000-8000-000000000002",
+			}),
 		]);
 		await handler(dispatcher, RPC.message.abort.channel)({ conversationId: "alpha" });
 		await handler(

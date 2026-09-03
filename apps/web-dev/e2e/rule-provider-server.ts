@@ -34,6 +34,7 @@ function image(value: unknown): boolean {
 }
 
 function reply(payload: {
+	model?: string;
 	messages?: Array<{
 		role?: string;
 		content?: unknown;
@@ -60,6 +61,9 @@ function reply(payload: {
 		calls.push({ tool, args });
 		return { tool, args };
 	};
+	if (current.includes("E2E_MODEL_ID")) {
+		return { content: `E2E_MODEL_ID:${payload.model ?? "missing"}\n` };
+	}
 	if (!externalRun && current.includes("E2E_DELEGATE_ARTIFACT")) {
 		if (!currentCalls.includes("host_delegate"))
 			return invoke("host_delegate", {

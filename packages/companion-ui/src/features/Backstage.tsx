@@ -4,8 +4,8 @@ import { createBackstageWorkflowStore } from "../stores/backstage-workflows.js";
 import { type CharacterSummary, useCompanionStore } from "../stores/companion.js";
 import { Button, Dialog, FileField } from "../ui/primitives.js";
 import { CurrentRolePackageManager } from "./CurrentRolePackageManager.js";
-import { SettingsSheet } from "./SettingsSheet.js";
 import type { SettingsPage } from "./SettingsSheet.js";
+import { SettingsSheet } from "./SettingsSheet.js";
 
 /**
  * 幕后 — the backstage right-side sheet.
@@ -20,6 +20,7 @@ export function Backstage(props: {
 	onClose: () => void;
 	initialTab?: "roles" | "settings";
 	initialSettingsPage?: SettingsPage;
+	onSettingsPageChange?: (page: SettingsPage) => void;
 	returnFocus?: () => void;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
@@ -65,7 +66,10 @@ export function Backstage(props: {
 						when={props.initialTab !== "settings"}
 						fallback={
 							<div class="standalone-settings-panel">
-								<SettingsSheet initialPage={props.initialSettingsPage} />
+								<SettingsSheet
+									initialPage={props.initialSettingsPage}
+									onPageChange={props.onSettingsPageChange}
+								/>
 							</div>
 						}
 					>

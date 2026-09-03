@@ -119,18 +119,18 @@ describe("SessionCatalog", () => {
 		}
 	});
 
-	it("deletes the exact Pi fork when Catalog ownership cannot be committed", async () => {
-		const { catalog, database, pi, sessions } = setup();
+	it("rolls back fork ownership when Pi cannot finish opening the branch", async () => {
+		const { catalog, database, pi } = setup();
 		try {
-			const forkPath = sessions[0]!.path;
-			vi.mocked(pi.fork).mockResolvedValue({
-				sessionId: "alpha",
-				sessionFile: forkPath,
-			} as never);
+			vi.mocked(pi.fork).mockImplementation(async (_sourceId, _entryId, beforeOpen) => {
+				beforeOpen?.("failed-fork");
+				throw new Error("model unavailable");
+			});
 
-			await expect(catalog.fork("bear", "alpha", "entry-1")).rejects.toThrow();
-			expect(pi.delete).toHaveBeenCalledWith("alpha", expect.any(Function));
-			expect(existsSync(forkPath)).toBe(false);
+			await expect(catalog.fork("bear", "alpha", "entry-1")).rejects.toThrow("model unavailable");
+			expect(
+				database.connection.prepare("SELECT id FROM conversations WHERE id = 'failed-fork'").get(),
+			).toBeUndefined();
 		} finally {
 			database.close();
 		}

@@ -1,5 +1,5 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { markSelectPortalTopLayer } from "../lib/select-portal.js";
 import { createStableSnapshot } from "../lib/stable-snapshot.js";
 import { useCompanionStore } from "../stores/companion.js";
@@ -71,8 +71,10 @@ export function ProviderSetup(props: PresentationProps) {
 	const oauth = () =>
 		oauthProviderId() ? (store.provider.loginState(oauthProviderId()) ?? null) : null;
 	const oauthEvents = () => oauth()?.events ?? [];
-	const latestOAuthEvent = <T extends OAuthEvent["type"]>(type: T) => {
-		const events = oauthEvents();
+	const latestOAuthEvent = <T extends OAuthEvent["type"]>(
+		type: T,
+		events: readonly OAuthEvent[] = oauthEvents(),
+	) => {
 		for (let index = events.length - 1; index >= 0; index--) {
 			const event = events[index];
 			if (event?.type === type) return event as Extract<OAuthEvent, { type: T }>;
@@ -126,8 +128,16 @@ export function ProviderSetup(props: PresentationProps) {
 		if (pendingAuthWindow) pendingAuthWindow.opener = null;
 	};
 
-	createEffect(() => {
-		const target = safeHttpsUrl(authUrlEvent()?.url ?? deviceCodeEvent()?.verificationUri);
+	const syncAuthWindow = (state: ProviderLoginResult): void => {
+		const authUrl = latestOAuthEvent("auth_url", state.events);
+		const deviceCode = latestOAuthEvent("device_code", state.events);
+		const target = safeHttpsUrl(
+			authUrl?.type === "auth_url"
+				? authUrl.url
+				: deviceCode?.type === "device_code"
+					? deviceCode.verificationUri
+					: undefined,
+		);
 		if (target && target !== openedAuthTarget) {
 			openedAuthTarget = target;
 			const targetWindow = pendingAuthWindow ?? window.open("about:blank", "_blank");
@@ -137,11 +147,11 @@ export function ProviderSetup(props: PresentationProps) {
 				targetWindow.location.href = target;
 			}
 		}
-		if (oauthPrompt()?.type === "select" && pendingAuthWindow) {
+		if (state.prompt?.type === "select" && pendingAuthWindow) {
 			pendingAuthWindow.close();
 			pendingAuthWindow = null;
 		}
-	});
+	};
 
 	const abandonOauth = (): void => {
 		oauthGeneration++;
@@ -281,6 +291,7 @@ export function ProviderSetup(props: PresentationProps) {
 		const request = ++statusRequest;
 		const initial = await runOauthRequest(() => store.provider.login(flowProviderId));
 		if (initial && !disposed && generation === oauthGeneration && request === statusRequest) {
+			syncAuthWindow(initial);
 			if (initial.status === "completed") {
 				await refresh();
 				props.onAdded?.();
@@ -297,11 +308,13 @@ export function ProviderSetup(props: PresentationProps) {
 		setOauthAnswer("");
 		const request = ++statusRequest;
 		const state = await runOauthRequest(() => store.provider.loginAnswer(flowProviderId, answer));
-		if (state && !disposed && generation === oauthGeneration && request === statusRequest)
+		if (state && !disposed && generation === oauthGeneration && request === statusRequest) {
+			syncAuthWindow(state);
 			if (state.status === "completed") {
 				await refresh();
 				props.onAdded?.();
 			}
+		}
 	};
 
 	const cancelOauth = async (): Promise<void> => {
@@ -691,8 +704,8 @@ export function ProviderSetup(props: PresentationProps) {
 					</div>
 				</Show>
 			</Show>
-			<Show when={embeddedEditor && selected() && !selected()!.added}>
-				{renderProviderEditor(selected()!, true)}
+			<Show when={embeddedEditor && !selected()?.added ? selected() : undefined}>
+				{(provider) => renderProviderEditor(provider(), true)}
 			</Show>
 		</div>
 	);
@@ -867,7 +880,10 @@ export function ProviderSetup(props: PresentationProps) {
 
 	if (props.surface === "list")
 		return (
-			<section class={`provider-setup ${props.class ?? ""}`} aria-label={t("settings.addedProviders")}>
+			<section
+				class={`provider-setup ${props.class ?? ""}`}
+				aria-label={t("settings.addedProviders")}
+			>
 				<Show when={error()}>
 					{(message) => (
 						<p class="status-line err" role="alert">
@@ -875,9 +891,7 @@ export function ProviderSetup(props: PresentationProps) {
 						</p>
 					)}
 				</Show>
-				<div class="provider-card-list">
-					{renderProviderCards(true)}
-				</div>
+				<div class="provider-card-list">{renderProviderCards(true)}</div>
 			</section>
 		);
 	if (props.surface === "add")
@@ -914,8 +928,8 @@ export function ProviderSetup(props: PresentationProps) {
 					</section>
 				</div>
 				<div class="provider-editor-pane">
-					<Show when={selected() && !selected()!.added}>
-						{renderProviderEditor(selected()!, true)}
+					<Show when={!selected()?.added ? selected() : undefined}>
+						{(provider) => renderProviderEditor(provider(), true)}
 					</Show>
 					<Show when={added().find((provider) => provider.id === expandedProvider())}>
 						{(provider) => renderProviderEditor(provider(), false)}

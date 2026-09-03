@@ -99,7 +99,8 @@ export const en = {
 		archivedConversations: "Archived",
 		emptyConversations: "No conversations yet. Use + in the upper-right to begin.",
 		noConversationTitle: "Start a new conversation",
-		noConversationHint: "There is no conversation to display. Create one to start messaging this character.",
+		noConversationHint:
+			"There is no conversation to display. Create one to start messaging this character.",
 		createConversation: "Create conversation",
 		emptyArchivedConversations: "No archived conversations.",
 		noSearchResults: "No matching conversations. Try a different search.",
@@ -329,7 +330,8 @@ export const en = {
 		systemDefaultReplyModelHint:
 			"Copied once when a character is created; later changes do not affect existing characters.",
 		systemDefaultVisionModel: "Default image model for new characters",
-		systemDefaultVisionModelHint: "Installation-wide image reader used directly when the reply model cannot read images.",
+		systemDefaultVisionModelHint:
+			"Installation-wide image reader used directly when the reply model cannot read images.",
 		providerSetupLabel: "Provider setup",
 		addProvider: "Add provider",
 		addProviderHint: "Add one provider at a time. Built-in catalogs cannot be changed.",

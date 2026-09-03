@@ -4,7 +4,6 @@ import type { EmbeddingDownloadState } from "@bear-harness/protocol/schema";
 import { isCancelledError, useQueryClient } from "@tanstack/solid-query";
 import {
 	createContext,
-	createEffect,
 	createMemo,
 	createSignal,
 	onCleanup,
@@ -82,7 +81,7 @@ export type TimelineProjectionItem =
 			kind: "streaming-assistant";
 			id: string;
 			message: Extract<NonNullable<PiLiveState["streamingMessage"]>, { role: "assistant" }>;
-		  };
+	  };
 export interface SnapshotApi {
 	data(): Snapshot | undefined;
 	loading(): boolean;
@@ -373,12 +372,14 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		const anchorIndex = optimistic.anchorEntryId
 			? detail.branch.entries.findIndex((entry) => entry.id === optimistic.anchorEntryId)
 			: -1;
-		const acknowledged = detail.branch.entries.slice(anchorIndex + 1).some(
-			(entry) =>
-				entry.type === "message" &&
-				entry.message.role === "user" &&
-				piMessageText(entry.message.content) === optimistic.text,
-		);
+		const acknowledged = detail.branch.entries
+			.slice(anchorIndex + 1)
+			.some(
+				(entry) =>
+					entry.type === "message" &&
+					entry.message.role === "user" &&
+					piMessageText(entry.message.content) === optimistic.text,
+			);
 		if (acknowledged) removeOptimisticUser(detail.conversationId);
 	};
 	const refreshSnapshot = () =>
@@ -389,11 +390,13 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		});
 	const refreshConversation = async (conversationId = activeConversationId()) => {
 		if (!conversationId) return undefined;
-		return refreshRpcQuery({
+		const detail = await refreshRpcQuery({
 			client: queryClient,
 			key: queryKeys.conversation(conversationId),
 			request: () => invoke(client, () => client.conversation.open({ conversationId })),
 		});
+		if (detail) reconcileOptimisticUser(detail);
+		return detail;
 	};
 	const refreshCompanionState = async (conversationId = activeConversationId()) => {
 		if (!conversationId) return undefined;
@@ -452,25 +455,24 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			request: () => invoke(client, () => client.conversation.list({ archived: true, limit: 100 })),
 		});
 	};
-	let initialConversationSelected = false;
-	createEffect(() => {
-		if (
-			initialConversationSelected ||
-			onboarding.data().status !== "complete" ||
-			!conversationsQuery.data
-		)
-			return;
-			if (activeConversationId() !== null) {
-				initialConversationSelected = true;
-				return;
-			}
-			const first = conversationsQuery.data.conversations[0];
+	void Promise.all([
+		queryClient.fetchQuery({ queryKey: queryKeys.onboarding, queryFn: onboarding.get }),
+		queryClient.fetchQuery({
+			queryKey: [...queryKeys.conversations, titleQuery()],
+			queryFn: conversationsRequest,
+		}),
+	])
+		.then(([onboardingData, conversations]) => {
+			if (onboardingData.status !== "complete" || activeConversationId() !== null) return;
+			const first = conversations.conversations[0];
 			if (!first) return;
-			initialConversationSelected = true;
-			void openAndActivate(first.conversationId).catch((cause) =>
-				fail("conversation.initialize", cause),
-			);
-	});
+			return invoke(client, () =>
+				client.conversation.open({ conversationId: first.conversationId }),
+			).then((detail) => {
+				if (activeConversationId() === null) activateDetail(detail);
+			});
+		})
+		.catch((cause) => fail("conversation.initialize", cause));
 	const refreshRuns = () =>
 		refreshRpcQuery({
 			client: queryClient,
@@ -533,21 +535,20 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 						streamingMessage: event.message,
 					};
 					break;
-				case "message_end":
-					{
-						const responseId =
-							event.message.role === "assistant" ? event.message.responseId : undefined;
-						const persisted =
-							event.message.role === "assistant" &&
-							queryClient
-								.getQueryData<ConversationDetail>(queryKeys.conversation(conversationId))
-								?.branch.entries.some(
-									(entry) =>
-										entry.type === "message" &&
-										entry.message.role === "assistant" &&
-										((entry.message.responseId && entry.message.responseId === responseId) ||
-											entry.message.timestamp === event.message.timestamp),
-								);
+				case "message_end": {
+					const responseId =
+						event.message.role === "assistant" ? event.message.responseId : undefined;
+					const persisted =
+						event.message.role === "assistant" &&
+						queryClient
+							.getQueryData<ConversationDetail>(queryKeys.conversation(conversationId))
+							?.branch.entries.some(
+								(entry) =>
+									entry.type === "message" &&
+									entry.message.role === "assistant" &&
+									((entry.message.responseId && entry.message.responseId === responseId) ||
+										entry.message.timestamp === event.message.timestamp),
+							);
 					nextLive = {
 						...previous,
 						// Keep the completed transient message visible until Pi appends the
@@ -558,7 +559,7 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 							: {}),
 					};
 					break;
-					}
+				}
 				case "queue_update":
 					nextLive = {
 						...previous,
@@ -623,9 +624,10 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		}
 		if (event.type === "agent_settled") {
 			if (conversationId === activeConversationId())
-				void refreshConversation(conversationId).catch((cause) =>
-					fail("conversation.settled", cause),
-				);
+				void Promise.all([
+					refreshConversation(conversationId),
+					refreshCompanionState(conversationId),
+				]).catch((cause) => fail("conversation.settled", cause));
 			else setCompletedConversationIds((current) => new Set(current).add(conversationId));
 		}
 	};
@@ -882,7 +884,12 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 				entry,
 			}));
 			const optimistic = optimisticUserBySession().get(id);
-			if (optimistic) result.push({ kind: "optimistic-user", id: optimistic.clientMessageId, message: optimistic });
+			if (optimistic)
+				result.push({
+					kind: "optimistic-user",
+					id: optimistic.clientMessageId,
+					message: optimistic,
+				});
 			const live = piLiveBySession().get(id) ?? detail.live;
 			for (const [index, text] of [...live.steering, ...live.followUp].entries())
 				result.push({ kind: "queued-user", id: `pi-queue-${index}-${text}`, text });
@@ -1031,11 +1038,11 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 				await initialLiveProjection;
 				try {
 					await invoke(client, () =>
-					client.message.send({
-						conversationId,
-						text,
-						clientMessageId,
-					}),
+						client.message.send({
+							conversationId,
+							text,
+							clientMessageId,
+						}),
 					);
 				} catch (cause) {
 					setOptimisticUserBySession((current) => {

@@ -78,13 +78,13 @@ describe("character package visual projection", () => {
 		expect(display.language).toBe("zh-CN");
 		expect(display.character.work_presentation).toEqual({
 			labels: {
-				proposal: "值守台上的方案",
+				proposal: "处理方案",
 				running: "正在处理",
-				needs_user: "交给你确认",
-				interrupted: "交接停在这里",
-				completed: "交回的结果",
-				failed: "这一步需要重做",
-				steer_placeholder: "补充处理方式",
+				needs_user: "等你确认",
+				interrupted: "已暂停",
+				completed: "处理结果",
+				failed: "处理失败",
+				steer_placeholder: "补充要求",
 				interrupt: "暂停",
 				resume: "继续",
 				approve: "开始处理",
@@ -109,7 +109,7 @@ describe("character package visual projection", () => {
 			}),
 		);
 		expect(character.behavior.identity.invariants).toContainEqual(
-			expect.stringContaining("不冒充岑岚"),
+			expect.stringContaining("旧档案中的人只能由原文代表"),
 		);
 		expect(character.skills.map((skill) => skill.name).sort()).toEqual([
 			"continuity-reveal",
@@ -332,7 +332,7 @@ describe("character package work presentation", () => {
 
 			const loader = new CharacterLoader(configRoot);
 			expect(() => loader.load("jizhou")).toThrow(
-				/character package jizhou: (work presentation labels|character card) is invalid/,
+				/character package jizhou: manifest character\.work_presentation\.labels/,
 			);
 		}
 	});
@@ -370,10 +370,10 @@ describe("character package Pi resources", () => {
 		expect(resources.appendSystemPrompt).toContain('"id": "reflective"');
 		expect(resources.appendSystemPrompt).toContain('"id": "continuity_light"');
 		expect(resources.appendSystemPrompt).toContain(
-			'"description": "一张标出旧极昼与当前极昼交接关系的继任规程图。"',
+			'"description": "一张区分角色资料、当前会话与当前极昼经历的示意图。"',
 		);
 		expect(resources.appendSystemPrompt).toContain(
-			'"useWhen": "解释极昼的连续性、来处或当前这一班如何承接过去时"',
+			'"useWhen": "用户询问极昼的连续性并明确想看图示时"',
 		);
 		expect(resources.appendSystemPrompt).toContain("Use host_media");
 		expect(resources.appendSystemPrompt).toContain("Use host_choices");

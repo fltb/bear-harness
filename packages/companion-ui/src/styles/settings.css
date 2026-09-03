@@ -515,7 +515,7 @@
 }
 
 .provider-add-dialog {
-	@apply fixed left-1/2 top-1/2 z-50 grid max-h-[85vh] w-[min(44rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-2xl border p-5;
+	@apply fixed left-1/2 top-1/2 z-50 grid max-h-5/6 w-11/12 max-w-2xl -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-2xl border p-5;
 	border-color: var(--line-soft);
 	background: var(--surface-panel);
 	box-shadow: var(--shadow-raised);
@@ -533,6 +533,18 @@
 .manifest-object-field > legend {
 	@apply px-1 text-sm font-semibold;
 	color: var(--sys-text-muted);
+}
+
+.manifest-array-field,
+.system-provider-list,
+.system-provider-add,
+.provider-import-pi,
+.provider-import-custom {
+	@apply min-w-0;
+}
+
+.provider-import-advanced {
+	@apply grid gap-4;
 }
 
 .manifest-field textarea,

@@ -498,8 +498,11 @@ function createMainWindow(): void {
 		},
 	);
 	window.once("ready-to-show", () => {
-		if (process.env.BEAR_E2E_SOURCE === "1") window.showInactive();
-		else window.show();
+		// CI source E2E drives the BrowserWindow through Playwright while keeping it
+		// fully hidden. Local interactive E2E remains visible without taking focus.
+		if (process.env.BEAR_E2E_SOURCE === "1") {
+			if (process.env.CI !== "1") window.showInactive();
+		} else window.show();
 	});
 	if (loadFromHtml) void window.loadFile(rendererHtmlPath);
 	else void window.loadURL(DEV_RENDERER_URL);

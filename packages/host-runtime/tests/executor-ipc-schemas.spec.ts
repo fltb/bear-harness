@@ -18,7 +18,6 @@ describe("executor control IPC schemas", () => {
 				canonicalPath: "/usr/local/bin/codex",
 				version: "0.147.0",
 				sha256: "a".repeat(64),
-				codexHome: "/home/user/.codex",
 			}).success,
 		).toBe(true);
 		expect(

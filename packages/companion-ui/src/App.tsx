@@ -241,6 +241,7 @@ function DesktopFrame() {
 				onClose={workflow.closeBackstage}
 				initialTab={workflow.backstageTab()}
 				initialSettingsPage={settingsPage()}
+				onSettingsPageChange={setSettingsPage}
 				returnFocus={() => backstageReturnFocus?.focus()}
 			/>
 		</div>

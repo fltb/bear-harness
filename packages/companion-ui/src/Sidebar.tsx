@@ -219,10 +219,10 @@ export function Sidebar(props: {
 											</Button>
 											<Button
 												data-control="command"
-									type="button"
-									title={t("sidebar.archiveConversationHint")}
-									data-tooltip={t("sidebar.archiveConversationHint")}
-									aria-label={t("sidebar.archiveConversationHint")}
+												type="button"
+												title={t("sidebar.archiveConversationHint")}
+												data-tooltip={t("sidebar.archiveConversationHint")}
+												aria-label={t("sidebar.archiveConversationHint")}
 												onClick={() =>
 													void workflow.runSidebarAction(() =>
 														store.archiveConversation(conversation.conversationId),

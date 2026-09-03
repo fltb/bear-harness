@@ -132,7 +132,9 @@ export function WebDevDebugPanel(props: { transport: HostTransport; token: strin
 							>
 								<Select.Label>Provider</Select.Label>
 								<Select.Trigger class="select-trigger">
-									<Select.Value class="select-value" />
+									<Select.Value<{ id: string; label: string }> class="select-value">
+										{(state) => state.selectedOption()?.label ?? ""}
+									</Select.Value>
 								</Select.Trigger>
 								<Select.Portal ref={markSelectPortalTopLayer}>
 									<Select.Content class="select-content">
@@ -173,7 +175,9 @@ export function WebDevDebugPanel(props: { transport: HostTransport; token: strin
 						>
 							<Select.Label>Channel</Select.Label>
 							<Select.Trigger class="select-trigger">
-								<Select.Value class="select-value" />
+								<Select.Value<{ id: string; label: string }> class="select-value">
+									{(state) => state.selectedOption()?.label ?? ""}
+								</Select.Value>
 							</Select.Trigger>
 							<Select.Portal ref={markSelectPortalTopLayer}>
 								<Select.Content class="select-content">

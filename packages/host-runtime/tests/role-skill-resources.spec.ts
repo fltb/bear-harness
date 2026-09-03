@@ -37,14 +37,14 @@ describe("state-gated role Skill resources", () => {
 		const entry = entryResources[0];
 		if (!entry) throw new Error("entry resource is required");
 		const entryText = readRoleSkillResource(story, entry);
-		expect(entryText).toContain("## 序章：留言簿里的断行");
-		expect(entryText).not.toContain("## 第四章：最后一班");
+		expect(entryText).toContain("## 序章：目录里的冲突");
+		expect(entryText).not.toContain("## 第四章：关站清点");
 
 		const lastShiftResources = eligibleRoleSkillResources(story, state(true, 4));
 		expect(lastShiftResources.map((resource) => resource.id)).toEqual(["last-shift"]);
 		const lastShift = lastShiftResources[0];
 		if (!lastShift) throw new Error("last-shift resource is required");
-		expect(readRoleSkillResource(story, lastShift)).toContain("## 第四章：最后一班");
+		expect(readRoleSkillResource(story, lastShift)).toContain("## 第四章：关站清点");
 	});
 
 	it("uses simple scalars and natural-language summaries instead of an enum state machine", () => {

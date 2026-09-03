@@ -2,11 +2,13 @@ import { glob, readFile } from "node:fs/promises";
 import { parse } from "@babel/parser";
 
 // UI state must arrive via RPC mutation results or Host events, never a
-// periodic query. The two bounded timers below do not poll state: one backs off
-// a failed Pi event transport and one releases a browser download URL.
+// periodic query. The bounded timers below do not poll state: one backs off a
+// failed Pi event transport, one releases a browser download URL, and one
+// clears transient copy feedback.
 const allowedTimeouts = new Set([
 	"packages/companion-ui/src/stores/companion.tsx:waitForPiReconnect",
 	"packages/companion-ui/src/WorkPanel.tsx:downloadArtifactInBrowser",
+	"packages/companion-ui/src/ConversationPanel.tsx:PiTimelineEntryView",
 ]);
 const failures = [];
 for (const pattern of [

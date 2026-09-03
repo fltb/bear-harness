@@ -21,8 +21,12 @@ test("WebDev exposes every registered Host RPC channel through its authenticated
 	await rpcChannel.click();
 	await expect(page.getByRole("option")).toHaveCount(expectedChannels.length);
 	await expect(page.getByRole("option")).toHaveText(expectedChannels);
-	await page.getByRole("option", { name: "snapshot.get", exact: true }).click();
-	await panel.getByRole("button", { name: zhCN.webDev.invokeHost }).click();
+	await page.getByRole("option", { name: "settings.get", exact: true }).click();
+	await expect(rpcChannel).toContainText("settings.get");
+	await Promise.all([
+		page.waitForResponse((response) => response.url().includes("/rpc/settings.get")),
+		panel.getByRole("button", { name: zhCN.webDev.invokeHost }).click(),
+	]);
 	await expect(panel.getByRole("status")).toContainText('"ok"');
 });
 
@@ -138,9 +142,7 @@ test("browser drives conversation, search, materials, backstage, settings and qu
 	await expect(systemModelSettingsNavigation).toBeVisible();
 	await systemModelSettingsNavigation.click();
 	await expect(
-		settingsPanel.getByRole("region", {
-			name: zhCN.settings.providerSetupLabel,
-		}),
+		settingsPanel.getByRole("region", { name: zhCN.settings.systemModelSettings }),
 	).toBeVisible();
 	// test-quality-allow locator: typography contract requires all rendered text controls
 	const typographyElements = settingsPanel.locator("label, p, button, input, select, h3");
@@ -238,10 +240,9 @@ test("bottom actions open distinct character and system settings destinations", 
 		name: zhCN.sidebar.characterSettings,
 	});
 	await expect(backstage).toBeVisible();
-	await expect(backstage.getByRole("tab", { name: zhCN.backstage.roleManagement })).toHaveAttribute(
-		"aria-selected",
-		"true",
-	);
+	await expect(
+		backstage.getByRole("region", { name: zhCN.currentRolePackage.selectorLabel }),
+	).toBeVisible();
 	await expect(backstage.getByText(zhCN.backstage.roleImport, { exact: true })).toBeVisible();
 	await backstage.getByRole("button", { name: zhCN.backstage.close }).click();
 

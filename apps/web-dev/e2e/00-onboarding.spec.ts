@@ -24,7 +24,7 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	const providerSetup = modelSetup.getByRole("region", {
 		name: zhCN.settings.providerSetupLabel,
 	});
-	await providerSetup.getByText(zhCN.settings.customProvider, { exact: true }).click();
+	await providerSetup.getByText(zhCN.settings.advancedToggle, { exact: true }).click();
 	await providerSetup
 		.getByRole("textbox", { name: zhCN.settings.customProviderId })
 		.fill(provider.id);
@@ -81,7 +81,7 @@ test("browser requires a reply model before the role-defined onboarding", async 
 	await expect(onboarding).toBeVisible();
 	const [submitResponse] = await Promise.all([
 		page.waitForResponse((response) => response.url().includes("/rpc/onboarding.submit")),
-		onboarding.getByRole("button", { name: "让他进来" }).click(),
+		onboarding.getByRole("button", { name: "认识一下" }).click(),
 	]);
 	const submitted = await submitResponse.json();
 	expect(submitted.ok).toBe(true);

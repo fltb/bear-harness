@@ -498,19 +498,24 @@ export const CharacterDisplay = z
 export const CharacterResponse = z.strictObject({
 	character: CharacterDisplay,
 });
+const CharacterPackageId = z
+	.string()
+	.min(1)
+	.max(64)
+	.regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/);
 export const CharacterActivateRequest = z.strictObject({
-	characterId: z.string().min(1).max(64),
+	characterId: CharacterPackageId,
 });
 export const CharacterPackageGetRequest = z.strictObject({
-	characterId: z.string().min(1).max(64),
+	characterId: CharacterPackageId,
 });
 export const CharacterPackageUpdateRequest = z.strictObject({
-	characterId: z.string().min(1).max(64),
+	characterId: CharacterPackageId,
 	yaml: z.string().max(1_048_576),
 	expectedSha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
 export const CharacterPackageDocument = z.strictObject({
-	characterId: z.string().min(1).max(64),
+	characterId: CharacterPackageId,
 	origin: z.enum(["official", "local", "imported"]),
 	writable: z.boolean(),
 	yaml: z.string().max(1_048_576),
@@ -525,11 +530,7 @@ export const CharacterPackageResponse = z.strictObject({
 export const CharacterPackageRevealRequest = CharacterPackageGetRequest;
 export const CharacterPackageRevealResponse = z.strictObject({ revealed: z.literal(true) });
 
-const CharacterDeletionId = z
-	.string()
-	.min(1)
-	.max(64)
-	.regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/);
+const CharacterDeletionId = CharacterPackageId;
 export const CharacterDeletionStatusGetRequest = z.strictObject({
 	characterId: CharacterDeletionId,
 });
@@ -569,20 +570,20 @@ export const CharacterImportRequest = z.strictObject({
 		.max(500),
 });
 export const CharacterPluginTrust = z.strictObject({
-	characterId: z.string().min(1).max(64),
+	characterId: CharacterPackageId,
 	origin: z.enum(["official", "local", "imported"]),
 	pluginHash: z.string().max(128),
 	pluginsPresent: z.boolean(),
 	trusted: z.boolean(),
 });
 export const CharacterPluginTrustGetRequest = z.strictObject({
-	characterId: z.string().min(1).max(64),
+	characterId: CharacterPackageId,
 });
 export const CharacterPluginTrustResponse = z.strictObject({
 	trust: CharacterPluginTrust,
 });
 export const CharacterPluginTrustConfirmRequest = z.strictObject({
-	characterId: z.string().min(1).max(64),
+	characterId: CharacterPackageId,
 });
 const CharacterDraftFile = z.strictObject({
 	encoding: z.enum(["utf8", "base64"]),

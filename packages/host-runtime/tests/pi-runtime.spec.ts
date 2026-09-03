@@ -37,6 +37,28 @@ function persistedSession(dataDir: string, name: string): string {
 	return manager.getSessionId();
 }
 
+function persistedConversation(dataDir: string): { sessionId: string; assistantId: string } {
+	const manager = SessionManager.create(join(dataDir, "runtime"), join(dataDir, "sessions"));
+	manager.appendMessage({ role: "user", content: "hello", timestamp: 1 });
+	const assistantId = manager.appendMessage({
+		role: "assistant",
+		content: [{ type: "text", text: "reply" }],
+		provider: "provider",
+		model: "model",
+		timestamp: 2,
+		stopReason: "stop",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+	});
+	return { sessionId: manager.getSessionId(), assistantId };
+}
+
 interface FakeSession {
 	session: AgentSession;
 	abort: ReturnType<typeof vi.fn>;
@@ -166,6 +188,21 @@ describe("PiRuntime session registry", () => {
 		expect(built.get(alpha)?.abort).not.toHaveBeenCalled();
 		expect(runtime.snapshot(alpha)?.sessionId).toBe(alpha);
 		expect(runtime.snapshot(beta)?.sessionId).toBe(beta);
+	});
+
+	it("forks from a separately loaded manager without mutating the source handle", async () => {
+		const dataDir = root();
+		const { sessionId, assistantId } = persistedConversation(dataDir);
+		const { runtime } = setup(dataDir);
+		const source = await runtime.open(sessionId);
+
+		const branch = await runtime.fork(sessionId, assistantId);
+
+		expect(branch.sessionId).not.toBe(sessionId);
+		expect(source.sessionId).toBe(sessionId);
+		expect(source.sessionManager.getSessionId()).toBe(sessionId);
+		expect(runtime.snapshot(sessionId)).toBe(source);
+		expect(runtime.snapshot(branch.sessionId)).toBe(branch);
 	});
 
 	it("tags every native Pi event and does not drop message updates", async () => {

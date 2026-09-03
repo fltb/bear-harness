@@ -80,16 +80,16 @@ export class SessionCatalog {
 
 	async fork(companionId: string, sourceSessionId: string, entryId: string) {
 		this.requireOwned(companionId, sourceSessionId);
-		const session = await this.pi.fork(sourceSessionId, entryId);
+		let sessionId: string | undefined;
 		try {
-			this.db.insert(conversations).values({ id: session.sessionId, companionId }).run();
-		} catch (error) {
-			await this.pi.delete(session.sessionId, async () => {
-				if (session.sessionFile) await deleteSessionFile(session.sessionFile);
+			return await this.pi.fork(sourceSessionId, entryId, (id) => {
+				sessionId = id;
+				this.db.insert(conversations).values({ id, companionId }).run();
 			});
+		} catch (error) {
+			if (sessionId) this.db.delete(conversations).where(eq(conversations.id, sessionId)).run();
 			throw error;
 		}
-		return session;
 	}
 
 	async archive(companionId: string, sessionId: string, archived: boolean) {

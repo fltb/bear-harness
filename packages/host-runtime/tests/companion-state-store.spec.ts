@@ -3,7 +3,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CharacterLoader } from "../src/companion/character-loader.js";
 import { CompanionStateStore } from "../src/companion/companion-store.js";
 import { registerHostTools } from "../src/companion/host-tool-register.js";
@@ -105,6 +105,30 @@ describe("companion state", () => {
 				],
 			},
 		});
+	});
+
+	it("marks repeated explicit-memory output unchanged so the UI can suppress duplicate updates", async () => {
+		let content = "";
+		const explicitMemory = {
+			read: vi.fn(async () => content),
+			edit: vi.fn(async (_oldText: string | undefined, newText: string) => {
+				content = newText;
+				return content;
+			}),
+		};
+		const tools = registerHostTools({ explicitMemory } as never);
+		const first = await tools.explicit_memory?.execute("memory-1", {
+			action: "edit",
+			newText: "用户明确要求记住北辰。",
+		});
+		const repeated = await tools.explicit_memory?.execute("memory-2", {
+			action: "edit",
+			newText: "用户明确要求记住北辰。",
+		});
+
+		expect(first?.details).toMatchObject({ ok: true, data: { changed: true } });
+		expect(repeated?.details).toMatchObject({ ok: true, data: { changed: false } });
+		expect(explicitMemory.edit).toHaveBeenCalledTimes(2);
 	});
 
 	it("updates simple Character values and Display in one optional batch", async () => {

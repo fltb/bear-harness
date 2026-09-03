@@ -312,7 +312,8 @@ export const zhCN = {
 		systemDefaultReplyModel: "新角色默认回复模型",
 		systemDefaultReplyModelHint: "新角色创建时复制一次；之后修改不会影响已有角色。",
 		systemDefaultVisionModel: "新角色默认图片模型",
-		systemDefaultVisionModelHint: "安装级图片读取模型；所有角色在当前回复模型不支持图片时直接使用。",
+		systemDefaultVisionModelHint:
+			"安装级图片读取模型；所有角色在当前回复模型不支持图片时直接使用。",
 		providerSetupLabel: "提供方设置",
 		addProvider: "添加提供方",
 		addProviderHint: "一次添加一个提供方。内置目录不可修改。",
@@ -401,8 +402,7 @@ export const zhCN = {
 		saveEmbedding: "保存记忆向量设置",
 		saved: "已保存。网络、向量服务和下载源设置立即生效。",
 		visionModel: "图片读取后备模型",
-		visionModelHint:
-			"仅在当前回复模型不支持图片时，由图片读取 Skill 使用。",
+		visionModelHint: "仅在当前回复模型不支持图片时，由图片读取 Skill 使用。",
 		visionModelNative: "当前回复模型支持图片，可直接读取，无需后备模型。",
 		visionModelAuto: "不指定后备模型",
 		addModel: "加入可用模型",

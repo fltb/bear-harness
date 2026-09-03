@@ -135,11 +135,7 @@ export interface ArtifactApi {
 export interface ExternalAgentApi {
 	status(): Promise<import("./ipc.js").ExternalAgentStatusData>;
 	discover(): Promise<import("./ipc.js").ExternalAgentCandidate[]>;
-	connect(params: {
-		canonicalPath: string;
-		version: string;
-		sha256: string;
-	}): Promise<void>;
+	connect(params: { canonicalPath: string; version: string; sha256: string }): Promise<void>;
 }
 
 export interface CharacterApi {

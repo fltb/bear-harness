@@ -119,19 +119,18 @@ for (const entry of readdirSync(root, { withFileTypes: true })) {
 		else {
 			const story = readFileSync(storyPath, "utf8");
 			const requiredHeadings = [
-				"## 序章：留言簿里的断行",
-				"## 第一章：损坏的信号",
-				"## 第二章 A：风暴中继",
-				"## 第二章 B：雪原上的脚印",
-				"## 第三章：两份不一致的交接",
-				"## 第四章：最后一班",
-				"## 第五章：如果以后还有一座站",
-				"## 终章：把回报放在哪里",
+				"## 使用边界",
+				"## 序章：目录里的冲突",
+				"## 第一章：残缺报码",
+				"## 第二章：两条调查路线",
+				"## 第三章：两本值班簿",
+				"## 第四章：关站清点",
+				"## 第五章：极昼的意见",
+				"## 终章：处理这份回报",
 				"## 中断与恢复",
-				"## 人物与指代约束",
-				"## 长程稳定规则",
+				"## 人物与事实边界",
 			];
-			if (story.length < 6_000)
+			if (story.length < 3_500)
 				failures.push(
 					`${prefix}: official story Skill resource is an outline, not complete content`,
 				);

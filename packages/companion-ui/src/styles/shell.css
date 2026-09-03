@@ -147,10 +147,7 @@
 	color: var(--text-strong);
 }
 .conversation-actions button svg {
-	display: block;
-	width: 14px;
-	height: 14px;
-	flex: none;
+	@apply block size-3.5 shrink-0;
 }
 .conversation-actions button[data-tooltip]::after {
 	content: attr(data-tooltip);
@@ -159,13 +156,15 @@
 	z-index: 20;
 	background: var(--sys-text);
 	color: var(--sys-canvas);
-	box-shadow: 0 6px 18px rgb(0 0 0 / 24%);
+	box-shadow: var(--shadow-tooltip);
 	transform: translateY(-2px);
-	transition: opacity 120ms ease, transform 120ms ease;
+	transition:
+		opacity 120ms ease,
+		transform 120ms ease;
 }
 .conversation-actions button[data-tooltip]:hover::after,
 .conversation-actions button[data-tooltip]:focus-visible::after {
-	opacity: 1;
+	@apply opacity-100;
 	transform: translateY(0);
 }
 .conversation-rename {
@@ -193,7 +192,7 @@
 	@apply grid max-w-md justify-items-center gap-4 rounded-2xl border p-8 text-center;
 	border-color: var(--line-soft);
 	background: color-mix(in srgb, var(--surface-panel) 90%, transparent);
-	box-shadow: 0 18px 48px rgb(0 0 0 / 16%);
+	box-shadow: var(--shadow-empty-state);
 }
 
 .conversation-empty-card h1 {

@@ -133,6 +133,36 @@ describe("renderer-local conversation selection", () => {
 		}
 	});
 
+	it("does not let a delayed startup open overwrite an explicit user selection", async () => {
+		const { client } = createTestClient();
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { conversations: [summary("a"), summary("b")] },
+			}),
+		);
+		let resolveStartup: ((value: { ok: true; data: ConversationDetail }) => void) | undefined;
+		client.conversation.open = vi.fn(({ conversationId }) => {
+			if (conversationId === "a") {
+				return new Promise((resolve) => {
+					resolveStartup = resolve;
+				});
+			}
+			return Promise.resolve({ ok: true as const, data: detail(conversationId) });
+		});
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(resolveStartup).toBeTypeOf("function"));
+			await store.selectConversation("b");
+			expect(store.activeConversationId).toBe("b");
+			resolveStartup?.({ ok: true, data: detail("a") });
+			await waitFor(() => expect(client.conversation.open).toHaveBeenCalledTimes(2));
+			expect(store.activeConversationId).toBe("b");
+		} finally {
+			dispose();
+		}
+	});
+
 	it("projects Pi native events per conversation and marks background completion", async () => {
 		const { client } = createTestClient();
 		const conversations = [summary("a"), summary("b")];
@@ -159,6 +189,31 @@ describe("renderer-local conversation selection", () => {
 			await waitFor(() => expect(store.completedConversationIds.has("b")).toBe(true));
 			await store.selectConversation("b");
 			expect(store.completedConversationIds.has("b")).toBe(false);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("refreshes authoritative Character and Display state when the active agent settles", async () => {
+		const { client } = createTestClient();
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { conversations: [summary("a")] },
+			}),
+		);
+		client.conversation.open = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: detail("a") }),
+		);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activeConversationId).toBe("a"));
+			await waitFor(() => expect(client.companionState.get).toHaveBeenCalled());
+			const readsBeforeSettle = vi.mocked(client.companionState.get).mock.calls.length;
+			pushPiEvent(client, { type: "pi", conversationId: "a", event: { type: "agent_settled" } });
+			await waitFor(() =>
+				expect(client.companionState.get).toHaveBeenCalledTimes(readsBeforeSettle + 1),
+			);
 		} finally {
 			dispose();
 		}

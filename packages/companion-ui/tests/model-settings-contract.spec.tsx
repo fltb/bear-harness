@@ -399,12 +399,10 @@ describe("breaking provider and model settings contract", () => {
 
 	it("discards a late OAuth status response after switching providers and cancels the old flow", async () => {
 		const { client } = configuredClient();
-		client.provider.login = vi
-			.fn()
-			.mockResolvedValue({
-				ok: true,
-				data: { providerId: "oauth", status: "running", events: [] },
-			});
+		client.provider.login = vi.fn().mockResolvedValue({
+			ok: true,
+			data: { providerId: "oauth", status: "running", events: [] },
+		});
 		client.provider.loginStatus = vi.fn();
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		const { user, backstage } = await openSettings();

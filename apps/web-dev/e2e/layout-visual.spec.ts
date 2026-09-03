@@ -18,15 +18,6 @@ const settingsPages = [
 			dialog.getByRole("heading", { name: zhCN.settings.language, exact: true }),
 	},
 	{
-		id: "conversation",
-		label: zhCN.settings.conversationModelSettings,
-		landmark: (dialog: Locator) =>
-			dialog.getByRole("heading", {
-				name: zhCN.settings.conversationModelSettings,
-				exact: true,
-			}),
-	},
-	{
 		id: "archived",
 		label: zhCN.sidebar.archivedConversations,
 		landmark: (dialog: Locator) =>
@@ -36,7 +27,7 @@ const settingsPages = [
 		id: "providers",
 		label: zhCN.settings.systemModelSettings,
 		landmark: (dialog: Locator) =>
-			dialog.getByRole("region", { name: zhCN.settings.providerSetupLabel }),
+			dialog.getByRole("region", { name: zhCN.settings.systemModelSettings }),
 	},
 	{
 		id: "agents",
@@ -217,30 +208,16 @@ async function visitCharacterSettings(page: Page, viewport: Viewport): Promise<v
 	await page.getByRole("button", { name: zhCN.sidebar.characterSettings, exact: true }).click();
 	const dialog = page.getByRole("dialog", { name: zhCN.sidebar.characterSettings });
 	await expect(dialog).toBeVisible();
-	await expect(dialog.getByRole("tab", { name: zhCN.backstage.roleManagement })).toHaveAttribute(
-		"aria-selected",
-		"true",
-	);
-	await capture(page, viewport, "character-role-package");
-
-	await dialog.getByRole("tab", { name: zhCN.currentRolePackage.storageTab }).click();
 	await expect(
-		dialog.getByRole("textbox", { name: zhCN.currentRolePackage.storageDefinition }),
+		dialog.getByRole("region", { name: zhCN.currentRolePackage.selectorLabel }),
 	).toBeVisible();
-	await capture(page, viewport, "character-package-storage");
+	await expect(dialog.getByRole("group", { name: zhCN.currentRolePackage.manifest })).toBeVisible();
+	await capture(page, viewport, "character-role-package");
 
 	const localData = dialog.getByRole("region", { name: zhCN.currentRolePackage.localDataTitle });
 	await localData.scrollIntoViewIfNeeded();
 	await expect(localData).toBeVisible();
 	await capture(page, viewport, "character-local-data");
-
-	await dialog.getByRole("tab", { name: zhCN.backstage.canon }).click();
-	await expect(dialog.getByRole("heading", { name: zhCN.canonStudio.sources })).toBeVisible();
-	await capture(page, viewport, "canon-sources");
-	const modules = dialog.getByRole("heading", { name: zhCN.canonStudio.modules });
-	await modules.scrollIntoViewIfNeeded();
-	await expect(modules).toBeVisible();
-	await capture(page, viewport, "canon-modules");
 	await dialog.getByRole("button", { name: zhCN.backstage.close }).click();
 }
 
@@ -276,13 +253,20 @@ async function visitConversationContent(page: Page, viewport: Viewport): Promise
 	const choices = page.getByRole("region", { name: "要进入《未送达的回报》吗？" });
 	await expect(choices).toBeVisible();
 	await capture(page, viewport, "conversation-choices");
-	await choices.getByRole("button", { name: "以后再说" }).click();
+	const [choiceResponse] = await Promise.all([
+		page.waitForResponse(
+			(response) =>
+				response.request().method() === "POST" && response.url().includes("/rpc/message.send"),
+		),
+		choices.getByRole("button", { name: "以后再说" }).click(),
+	]);
+	expect(await choiceResponse.json()).toMatchObject({ ok: true });
 
 	await sendMessage(page, "E2E_MEDIA_PREVIEW");
-	const mediaCard = page.getByRole("region", { name: "继任规程" });
+	const mediaCard = page.getByRole("region", { name: "极昼的来处" });
 	await expect(mediaCard).toBeVisible();
 	await mediaCard.getByRole("button", { name: zhCN.messages.openMedia }).click();
-	const mediaPreview = page.getByRole("complementary", { name: "继任规程" });
+	const mediaPreview = page.getByRole("complementary", { name: "极昼的来处" });
 	await expect(mediaPreview).toBeVisible();
 	await capture(page, viewport, "media-preview");
 	await mediaPreview.getByRole("button", { name: zhCN.messages.closeMedia }).click();

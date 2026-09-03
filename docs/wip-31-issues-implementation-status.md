@@ -2,7 +2,7 @@
 
 更新时间：2026-09-03
 
-当前结论：31 项均已有对应实现落点，前端单元测试已通过（27 个测试文件、150 项测试）；Host、协议、桌面构建和 E2E 仍在最终回归，因此本文件随 WIP commit 提交，不作为发布完成声明。
+当前结论：31 项均已有对应实现落点，相关代码、单元测试、构建以及必需 Web/Desktop E2E 已完成本轮回归。本文件记录的是 WIP 功能完成与验证状态，不替代正式发布报告及其余发布门禁。
 
 1. **主页归档入口** — 已从主页侧栏移除“已归档”入口，归档管理只保留在系统设置。实现位于 `packages/companion-ui/src/Sidebar.tsx` 与 `packages/companion-ui/src/features/SettingsSheet.tsx`。
 2. **归档 tooltip** — 归档按钮现在明确提示“可在系统设置 → 已归档中查看”。文案与测试位于 `packages/i18n/src/locales/*`、`packages/companion-ui/tests/sidebar-journey.spec.tsx`。
@@ -30,15 +30,44 @@
 24. **编辑消息错误弹出表单** — 最新用户消息使用 `内容 | 编辑图标` 的原位编辑，textarea 直接替换当前正文。Enter 保存、Shift+Enter 换行、Escape 取消、失焦提交，不再另起表单面板。
 25. **非目标消息也出现编辑/分支操作** — 历史消息只显示复制，编辑只允许最新用户消息，重新生成/纠正/fork 只允许最新助手回复。流式期间最新回复的变更操作也会隐藏，避免对不稳定 turn 操作。
 26. **所有消息的无用三点菜单** — 已彻底删除消息右上角三点菜单和通用 operations fieldset。允许的动作改为直接、紧凑、按消息资格显示的图标或按钮。
-27. **从此处新建对话是死按钮** — fork 直接调用 Pi 原生 `conversation.fork` workflow，并只在最新稳定助手回复上显示。执行失败会在原消息就地显示错误，不再无反馈。
-28. **切换对话丢模型** — `ConversationDetail` 现在携带该 Pi Session 的 `selectedModel`，激活会话和重连 snapshot 都会原子恢复 route query。切换 active UI conversation 不再覆盖、清空或借用另一会话模型。
+27. **从此处新建对话是死按钮** — fork 直接调用 Pi 原生 `conversation.fork` workflow，并只在最新稳定助手回复上显示。执行失败会在原消息就地显示错误，不再无反馈。本轮真实 UI E2E 发现并修复了两处更深层问题：分支改为使用独立加载的 Pi manager，避免改写源 Session handle；Catalog 在构造新 Session 前预登记 ownership，失败时回滚记录并删除精确的新 transcript。
+28. **切换对话丢模型** — `ConversationDetail` 现在携带该 Pi Session 的 `selectedModel`，激活会话和重连 snapshot 都会原子恢复 route query。切换 active UI conversation 不再覆盖、清空或借用另一会话模型。后台 E2E 使用两个不同模型 ID 并发发送、切换、重载 Renderer 后再次发送，四次请求均命中各自模型。真实模型旅程还发现并修复了启动竞态：默认会话的迟到 `open` 结果不再覆盖用户已经明确选中的另一会话。
 29. **唯一用户乐观更新 + 实时 Pi 流式拼接** — `activeTimeline` 是单一投影：durable Pi entries、一个 optimistic user handoff、Pi 原生队列和一个 streaming assistant item。流式 token 实时渲染在同一个稳定 assistant 投影项中，durable entry 到达后接管而不是再添气泡。
 30. **仅最近一轮允许重新生成/fork 等操作** — 时间线计算最新 user/assistant entry ID，并以此限制编辑、重新生成、纠正与 fork。历史 turn 不再暴露会改变分支的操作，只保留无副作用复制。
 31. **缺失复制按钮** — 所有可见用户和助手文本消息均新增直接复制按钮，并提供“已复制”短暂反馈。复制不依赖三点菜单，也不会创建 Pi 状态或新分支。
 
 ## 当前验证状态
 
-- 已通过：`@bear-harness/companion-ui` 单元测试，27 个测试文件、150 项测试。
-- 已通过：本轮分别执行过 protocol、host-runtime、companion-ui TypeScript typecheck；最终全仓 typecheck 尚待 WIP 后继续复跑。
-- 进行中：Host 单元测试、协议生成目录清理、Desktop/Web 构建、必需 E2E 与完整 lint。
-- 提交边界：极昼角色内容及其连续性测试是工作区原有/并行改动，不纳入本 WIP commit。
+- 已通过：全仓 lint 与全仓 TypeScript typecheck。
+- 已通过：全仓单元测试，包括 scripts 11 项、i18n 9 项、protocol 10 项、Host 421 项、Companion UI 152 项、Desktop 121 项、WebDev 4 项。
+- 已通过：Desktop 与 Web 构建。
+- 已通过：Web 必需 E2E 28 项，全部使用 Playwright 后台无头模式；包含系统/角色 onboarding、并发 Session、原生流式切换、真实 UI fork、双 Session 不同模型及重载隔离、External Run/Artifact、响应式结果区、重命名/归档/删除与角色连续性。
+- 已通过：Desktop 源码 E2E 3 项，覆盖真实 Electron 启动、诊断与损坏设置恢复；本轮在 CI 后台隐藏窗口模式执行，没有打开前台测试窗口。
+- 已通过：Host/Desktop 恢复套件 56 项。
+- 已通过：使用当前本机 Pi/Codex 配置完成完整 live-model 套件 3/3。`gpt-5.6-sol` 覆盖真实回复 smoke，以及普通陈述不调用 `explicit_memory`、明确“记住”会调用该工具、后续角色身份仍为“极昼”；完整旅程同时使用 `gpt-5.6-sol` 与 `gpt-5.6-terra`，真实走过两个 Session 的不同模型路由、UI 会话切换、单一消息投影、复制、原位编辑并重生成、重新生成时的侧栏/停止按钮流式状态、原生 fork、分支继续回复、Renderer 重载和路由复核。密钥只在 Host 进程内注入测试 Provider，不写入日志或测试产物。
+- 本轮回归同时修复：合法连字符角色包 ID 的严格校验、阻断 traversal 角色 ID、角色包 reveal 的 Host 路径授权、显式记忆幂等、Pi fork 源句柄隔离与 Catalog ownership 时序、Renderer 启动默认会话迟到结果覆盖用户选择的竞态、调试 RPC 选择状态、可选 theme 默认、乐观用户消息在权威 settled snapshot 后的交接，以及已经移除/改版页面对应的陈旧 E2E 契约和视觉基线。
+- live-model 探索记录：一次以 `gpt-5.6-luna` 作为第二模型的并发请求返回了空白 assistant 内容；正式完整旅程改用 `gpt-5.6-terra` 并通过。这一现象尚不足以归因于 Bear，作为当前模型端点的兼容性/稳定性观察保留，不纳入已通过声明。
+- 尚未声明正式发布：覆盖率阈值、安全审计/签名、全平台新鲜打包及同一 clean commit 的 packaged smoke 仍需按发布流程单独执行。
+
+## 证明索引
+
+以下证据与上面的 31 项一一对应；“真实模型”只用于模型行为，不替代可重复的系统验证。
+
+| 项 | 主要实现证明 | 自动化证明 |
+|---:|---|---|
+| 1–2 | `Sidebar.tsx`、`SettingsSheet.tsx`、i18n 文案 | `sidebar-journey.spec.tsx`；Web 设置/侧栏旅程 |
+| 3–5 | `SettingsSheet.tsx`、`ProviderSetup.tsx`、Host model registry | `model-settings-contract.spec.tsx`；onboarding、rule-provider E2E |
+| 6–7 | 独立 `ProviderList` / `AddProviderForm` 与添加对话框 | Provider UI 单测；三尺寸视觉 E2E |
+| 8–10 | `Backstage.tsx`、External Agent RPC/Host discovery | External Agent Host/UI 单测；Web backstage 旅程 |
+| 11 | `NetworkAndMemorySettings.tsx` | `network-memory-settings.spec.tsx`；Host proxy tests |
+| 12–16 | `CurrentRolePackageManager.tsx`、严格 `CharacterManifestSchema`、`character.packageReveal` | character loader/draft/import、protocol schema、composition reveal 测试；角色包视觉 E2E |
+| 17–19 | `companion.tsx` 的 optimistic/durable/streaming 单一投影 | composer/UI 单测；chat streaming E2E |
+| 20 | 显式记忆内容幂等与 `changed:false` 隐藏 | `companion-state-store.spec.ts`、`tool-activity.spec.tsx` |
+| 21–22 | `explicit_memory` 工具边界与 Session 稳定上下文 | 真实 `gpt-5.6-sol` live-model E2E：普通陈述不写、明确请求写、角色身份保持 |
+| 23–26 | `ConversationPanel.tsx` 紧凑纠正、原位编辑、资格过滤、移除三点菜单 | `message-versions.spec.tsx` 与三尺寸视觉 E2E |
+| 27 | PiRuntime 独立 manager fork、Catalog ownership 预登记/失败回滚 | `pi-runtime.spec.ts`、`session-catalog.spec.ts`、真实 UI fork 后台 E2E |
+| 28 | Session snapshot 的 `selectedModel` 恢复；迟到的启动默认 `open` 只能在仍无 active Session 时激活 | 延迟回包竞态单测；两个真实模型/Session 的切换与重载 live-model E2E；确定性并发 E2E |
+| 29–30 | 单一 `activeTimeline` 与 latest-entry 资格计算 | streaming/edit E2E；`message-versions.spec.tsx` |
+| 31 | 所有文本消息直接复制及反馈 | clipboard mock 精确断言复制正文；`message-versions.spec.tsx` |
+
+受“不启动前台 E2E”的约束，系统文件夹 reveal 没有真的弹出 Finder；已验证 Renderer 不能传路径、协议拒绝 traversal ID、Host 只解析角色包可信路径，以及 Desktop 将该可信路径交给系统 shell。这个限制不影响路径授权逻辑的证明，但不把“肉眼看到 Finder 窗口”伪报为已测。

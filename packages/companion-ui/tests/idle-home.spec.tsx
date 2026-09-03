@@ -17,7 +17,9 @@ describe("idle homepage (official config, no bridge)", () => {
 		// Without a bridge, character data is absent — the shell shows the
 		// scene area and accessible controls but no character-specific copy.
 		expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: zhCN.sidebar.noConversationTitle })).toBeInTheDocument();
+		expect(
+			screen.getByRole("heading", { name: zhCN.sidebar.noConversationTitle }),
+		).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: zhCN.sidebar.createConversation })).toBeEnabled();
 
 		await setProductLocale("en");
@@ -184,7 +186,9 @@ describe("idle homepage (official config, no bridge)", () => {
 		expect(warning).toHaveTextContent("zh-CN");
 		const app = screen.getByRole("application", { name: zhCN.shell.productName });
 		expect(app?.style.getPropertyValue("--sys-accent")).toBe("#42c7a5");
-		expect(screen.getByRole("heading", { name: zhCN.sidebar.noConversationTitle })).toBeInTheDocument();
+		expect(
+			screen.getByRole("heading", { name: zhCN.sidebar.noConversationTitle }),
+		).toBeInTheDocument();
 		expect(warning).not.toHaveAttribute("aria-modal");
 
 		await user.click(screen.getByRole("button", { name: zhCN.language.dismiss }));

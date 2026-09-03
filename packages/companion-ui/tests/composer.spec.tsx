@@ -290,10 +290,12 @@ describe("composer", () => {
 		await user.keyboard("{Enter}");
 
 		await waitFor(() =>
-			expect(messageSend).toHaveBeenCalledWith(expect.objectContaining({
-				conversationId: "conversation-1",
-				text: "测试消息",
-			})),
+			expect(messageSend).toHaveBeenCalledWith(
+				expect.objectContaining({
+					conversationId: "conversation-1",
+					text: "测试消息",
+				}),
+			),
 		);
 		expect(composer).toHaveValue("");
 	});
@@ -390,6 +392,8 @@ describe("composer", () => {
 		expect(retry).toBeEnabled();
 		await user.click(retry);
 		await waitFor(() => expect(messageSend).toHaveBeenCalledTimes(2));
-		await waitFor(() => expect(screen.queryByText(zhCN.messages.sendFailed)).not.toBeInTheDocument());
+		await waitFor(() =>
+			expect(screen.queryByText(zhCN.messages.sendFailed)).not.toBeInTheDocument(),
+		);
 	});
 });

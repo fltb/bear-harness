@@ -91,6 +91,7 @@ function PiTimelineEntryView(props: {
 								<Button
 									type="button"
 									class="message-choice"
+									disabled={store.pendingUserMessages.length > 0}
 									onClick={() => void store.sendMessage(choice.message)}
 								>
 									{choice.label}
@@ -318,10 +319,10 @@ function PiTimelineEntryView(props: {
 							>
 								<TextField>
 									<TextField.Input
-									value={correctionDetail()}
-									onInput={(event) => setCorrectionDetail(event.currentTarget.value)}
-									placeholder={store.character?.character.correction.custom_placeholder}
-									aria-label={store.character?.character.correction.custom_label}
+										value={correctionDetail()}
+										onInput={(event) => setCorrectionDetail(event.currentTarget.value)}
+										placeholder={store.character?.character.correction.custom_placeholder}
+										aria-label={store.character?.character.correction.custom_label}
 									/>
 								</TextField>
 								<Button type="submit" disabled={!correctionDetail().trim() || actionBusy()}>
@@ -330,7 +331,13 @@ function PiTimelineEntryView(props: {
 							</form>
 						</div>
 					</Show>
-					<Show when={actionError()}>{(error) => <span class="stream-error" role="alert">{error()}</span>}</Show>
+					<Show when={actionError()}>
+						{(error) => (
+							<span class="stream-error" role="alert">
+								{error()}
+							</span>
+						)}
+					</Show>
 				</article>
 			</div>
 		</div>
@@ -346,7 +353,9 @@ function OptimisticUserProjection(props: {
 	return (
 		<div class="timeline-entry-row" data-testid="pending-user-message">
 			<div class="user-message-column">
-				<article class={`msg pi-timeline-message user${message().state === "failed" ? " stream-failed" : ""}`}>
+				<article
+					class={`msg pi-timeline-message user${message().state === "failed" ? " stream-failed" : ""}`}
+				>
 					<div class="msg-meta">{t("messages.you")}</div>
 					<p>{message().text}</p>
 					<Show
@@ -358,19 +367,27 @@ function OptimisticUserProjection(props: {
 							</span>
 						}
 					>
-						<span class="stream-error" role="alert">{t("messages.sendFailed")}</span>
+						<span class="stream-error" role="alert">
+							{t("messages.sendFailed")}
+						</span>
 						<div class="message-inline-actions">
-							<Button type="button" onClick={() => void store.retryPendingMessage(message().clientMessageId)}>
+							<Button
+								type="button"
+								onClick={() => void store.retryPendingMessage(message().clientMessageId)}
+							>
 								{t("messages.retry")}
 							</Button>
-							<Button type="button" onClick={() => store.dismissPendingMessage(message().clientMessageId)}>
+							<Button
+								type="button"
+								onClick={() => store.dismissPendingMessage(message().clientMessageId)}
+							>
 								{t("messages.discard")}
 							</Button>
 						</div>
 					</Show>
-					</article>
-				</div>
+				</article>
 			</div>
+		</div>
 	);
 }
 
@@ -410,16 +427,31 @@ function StreamingAssistantProjection(props: {
 	return (
 		<div class="timeline-entry-row" data-testid="streaming-assistant-message">
 			<Show when={store.character !== undefined}>
-				<img class="agent-message-avatar" src={store.character?.visual.avatarUrl} alt="" aria-hidden="true" draggable={false} />
+				<img
+					class="agent-message-avatar"
+					src={store.character?.visual.avatarUrl}
+					alt=""
+					aria-hidden="true"
+					draggable={false}
+				/>
 			</Show>
 			<div class="agent-message-column">
 				<span class="agent-message-name">{characterName()}</span>
-				<article class={`msg bear-msg streaming-message${failed() ? " stream-failed" : ""}`} aria-label={characterName()}>
+				<article
+					class={`msg bear-msg streaming-message${failed() ? " stream-failed" : ""}`}
+					aria-label={characterName()}
+				>
 					<p>{text()}</p>
 					<Show when={store.activePiLiveState?.isStreaming === true}>
 						<span class="streaming-status" role="status" aria-label={t("messages.responding")} />
 					</Show>
-					<Show when={failed() && errorText()}>{(error) => <span class="stream-error" role="alert">{error()}</span>}</Show>
+					<Show when={failed() && errorText()}>
+						{(error) => (
+							<span class="stream-error" role="alert">
+								{error()}
+							</span>
+						)}
+					</Show>
 				</article>
 			</div>
 		</div>
@@ -432,25 +464,27 @@ function PiTimelineRenderer(props: {
 }) {
 	const store = useCompanionStore();
 	const turnActive = () => store.activePiLiveState?.isStreaming === true;
-	const latestUserId = createMemo(() =>
-		[...props.items]
-			.reverse()
-			.find(
-				(item) =>
-					item.kind === "entry" &&
-					item.entry.type === "message" &&
-					item.entry.message.role === "user",
-			)?.id,
+	const latestUserId = createMemo(
+		() =>
+			[...props.items]
+				.reverse()
+				.find(
+					(item) =>
+						item.kind === "entry" &&
+						item.entry.type === "message" &&
+						item.entry.message.role === "user",
+				)?.id,
 	);
-	const latestAssistantId = createMemo(() =>
-		[...props.items]
-			.reverse()
-			.find(
-				(item) =>
-					item.kind === "entry" &&
-					item.entry.type === "message" &&
-					item.entry.message.role === "assistant",
-			)?.id,
+	const latestAssistantId = createMemo(
+		() =>
+			[...props.items]
+				.reverse()
+				.find(
+					(item) =>
+						item.kind === "entry" &&
+						item.entry.type === "message" &&
+						item.entry.message.role === "assistant",
+				)?.id,
 	);
 	return (
 		<For each={props.items}>

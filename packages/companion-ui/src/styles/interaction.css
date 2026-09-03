@@ -96,7 +96,8 @@
 }
 
 .message-direct-actions,
-.message-primary-actions {
+.message-primary-actions,
+.message-inline-actions {
 	@apply flex items-center gap-1;
 }
 

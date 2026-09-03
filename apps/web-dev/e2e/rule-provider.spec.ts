@@ -25,13 +25,28 @@ async function conversationProjection(
 }
 
 async function rpc<T>(page: Page, token: string, channel: string, data: unknown): Promise<T> {
+	const requestData =
+		channel === "message.send" && data && typeof data === "object"
+			? { ...data, clientMessageId: crypto.randomUUID() }
+			: data;
 	const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
 		headers: { "x-bear-web-dev-token": token },
-		data,
+		data: requestData,
 	});
 	const envelope = await response.json();
 	if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);
 	return envelope.data as T;
+}
+
+async function assistantMessages(page: Page, token: string, conversationId: string) {
+	const projection = await conversationProjection(page, token, conversationId);
+	return (projectPiEntries(projection.branch.entries) as PiEntry[])
+		.filter((entry) => entry.type === "message" && entry.role === "assistant")
+		.map((entry) => entry.text?.trim() ?? "");
+}
+
+async function latestAssistant(page: Page, token: string, conversationId: string) {
+	return (await assistantMessages(page, token, conversationId)).at(-1);
 }
 
 test("rule provider exercises send and edited-history regeneration deterministically", async ({
@@ -54,6 +69,9 @@ test("rule provider exercises send and edited-history regeneration deterministic
 		providerId: "e2e-rule",
 		modelId: "rule-model",
 		label: "E2E Rule Provider",
+	});
+	await rpc(page, bootstrap.token, "model.defaults.setReply", {
+		reply: { providerId: "e2e-rule", modelId: "rule-model" },
 	});
 	const conversation = await rpc<{ conversationId: string }>(
 		page,
@@ -142,6 +160,103 @@ test("rule provider exercises send and edited-history regeneration deterministic
 		{ conversationId: conversation.conversationId },
 	);
 	expect(restored.state.display.sceneId).toBe("quiet_terminal");
+});
+
+test("two sessions keep different native models through renderer restart", async ({ page }) => {
+	await page.goto("/");
+	const bootstrap = await getBootstrap(page);
+	await rpc(page, bootstrap.token, "provider.customUpsert", {
+		providerId: "e2e-rule",
+		name: "E2E Rule Provider",
+		baseUrl: `http://127.0.0.1:${process.env.BEAR_E2E_PROVIDER_PORT ?? "3211"}/v1`,
+		models: [{ id: "rule-model" }, { id: "alternate-model" }],
+	});
+	await rpc(page, bootstrap.token, "provider.setApiKey", {
+		providerId: "e2e-rule",
+		apiKey: "e2e-rule-key",
+		sessionOnly: true,
+	});
+	for (const modelId of ["rule-model", "alternate-model"]) {
+		await rpc(page, bootstrap.token, "model.enable", {
+			providerId: "e2e-rule",
+			modelId,
+			label: modelId,
+		});
+	}
+	await rpc(page, bootstrap.token, "model.defaults.setReply", {
+		reply: { providerId: "e2e-rule", modelId: "rule-model" },
+	});
+	const alpha = await rpc<{ conversationId: string }>(
+		page,
+		bootstrap.token,
+		"conversation.create",
+		{ title: "Model alpha" },
+	);
+	const beta = await rpc<{ conversationId: string }>(page, bootstrap.token, "conversation.create", {
+		title: "Model beta",
+	});
+	await Promise.all([
+		rpc(page, bootstrap.token, "model.route.set", {
+			conversationId: alpha.conversationId,
+			selected: { providerId: "e2e-rule", modelId: "rule-model" },
+		}),
+		rpc(page, bootstrap.token, "model.route.set", {
+			conversationId: beta.conversationId,
+			selected: { providerId: "e2e-rule", modelId: "alternate-model" },
+		}),
+	]);
+
+	const sendModelMarker = (conversationId: string) =>
+		rpc(page, bootstrap.token, "message.send", {
+			conversationId,
+			text: "E2E_MODEL_ID",
+		});
+	await Promise.all([sendModelMarker(alpha.conversationId), sendModelMarker(beta.conversationId)]);
+	await expect
+		.poll(() => latestAssistant(page, bootstrap.token, alpha.conversationId))
+		.toBe("E2E_MODEL_ID:rule-model");
+	await expect
+		.poll(() => latestAssistant(page, bootstrap.token, beta.conversationId))
+		.toBe("E2E_MODEL_ID:alternate-model");
+
+	await page.reload();
+	const [openedAlpha, openedBeta] = await Promise.all([
+		rpc<{ selectedModel?: { providerId: string; modelId: string } }>(
+			page,
+			bootstrap.token,
+			"conversation.open",
+			{ conversationId: alpha.conversationId },
+		),
+		rpc<{ selectedModel?: { providerId: string; modelId: string } }>(
+			page,
+			bootstrap.token,
+			"conversation.open",
+			{ conversationId: beta.conversationId },
+		),
+	]);
+	expect(openedAlpha.selectedModel).toEqual({ providerId: "e2e-rule", modelId: "rule-model" });
+	expect(openedBeta.selectedModel).toEqual({
+		providerId: "e2e-rule",
+		modelId: "alternate-model",
+	});
+
+	await Promise.all([sendModelMarker(alpha.conversationId), sendModelMarker(beta.conversationId)]);
+	await expect
+		.poll(
+			async () =>
+				(await assistantMessages(page, bootstrap.token, alpha.conversationId)).filter(
+					(text) => text === "E2E_MODEL_ID:rule-model",
+				).length,
+		)
+		.toBe(2);
+	await expect
+		.poll(
+			async () =>
+				(await assistantMessages(page, bootstrap.token, beta.conversationId)).filter(
+					(text) => text === "E2E_MODEL_ID:alternate-model",
+				).length,
+		)
+		.toBe(2);
 });
 
 test("rule provider selects the memory matching the current query marker", async ({ page }) => {

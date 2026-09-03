@@ -15,9 +15,13 @@ const storyScreenshotRoot = resolve(
 );
 
 async function rpc<T>(page: Page, token: string, channel: string, data: unknown): Promise<T> {
+	const requestData =
+		channel === "message.send" && data && typeof data === "object"
+			? { ...data, clientMessageId: crypto.randomUUID() }
+			: data;
 	const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
 		headers: { "x-bear-web-dev-token": token },
-		data,
+		data: requestData,
 	});
 	const envelope = await response.json();
 	if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);
@@ -179,10 +183,10 @@ test("presented role choices send ordinary messages and advance generic schema s
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("E2E_MANUAL_ROLE_RECEIVED_DONE");
-	const mediaCard = page.getByRole("region", { name: "继任规程" });
+	const mediaCard = page.getByRole("region", { name: "极昼的来处" });
 	await expect(mediaCard).toBeVisible();
 	await mediaCard.getByRole("button", { name: zhCN.messages.openMedia }).click();
-	await expect(page.getByRole("complementary", { name: "继任规程" })).toBeVisible();
+	await expect(page.getByRole("complementary", { name: "极昼的来处" })).toBeVisible();
 	const choiceTrace = (await (await page.request.get(`${providerUrl}/trace/prompts`)).json()) as {
 		prompts: string[];
 	};
@@ -288,7 +292,7 @@ test("undelivered report enters, pauses, resumes, advances every chapter, and en
 	await expect.poll(storyState).toMatchObject({ active: true, chapter: 1 });
 	await screenshot("04-resumed.png");
 
-	const resources = ["damaged-signal", "routes", "testimonies", "last-shift", "future", "ending"];
+	const resources = ["damaged-signal", "routes", "testimonies", "last-shift", "opinion", "ending"];
 	for (const [index, resource] of resources.entries()) {
 		const chapter = index + 2;
 		await send("E2E_STORY_ADVANCE", `E2E_STORY_ADVANCE_DONE_${chapter}`);

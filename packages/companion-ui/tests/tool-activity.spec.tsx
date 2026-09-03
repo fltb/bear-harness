@@ -103,10 +103,12 @@ describe("Pi native tool rendering", () => {
 		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
 		await user.click(await screen.findByRole("button", { name: "Investigate" }));
-		expect(client.message.send).toHaveBeenCalledWith(expect.objectContaining({
-			conversationId: "conversation-1",
-			text: "Continue investigating.",
-		}));
+		expect(client.message.send).toHaveBeenCalledWith(
+			expect.objectContaining({
+				conversationId: "conversation-1",
+				text: "Continue investigating.",
+			}),
+		);
 		await user.click(screen.getByRole("button", { name: zhCN.messages.openMedia }));
 		expect(screen.getByRole("complementary", { name: "损坏的信号" })).toBeVisible();
 	});
@@ -129,5 +131,22 @@ describe("Pi native tool rendering", () => {
 				await screen.findByRole("article", { name: `${label} succeeded` }),
 			).toBeInTheDocument();
 		}
+	});
+
+	it("suppresses an unchanged explicit-memory result instead of rendering a duplicate update", async () => {
+		const { client } = createTestClient();
+		configure(client, [
+			toolEntry("memory", "explicit_memory", {
+				ok: true,
+				data: { content: "用户明确要求记住北辰。", changed: false },
+			}),
+		]);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await screen.findByRole("region", { name: zhCN.messages.conversation });
+		expect(
+			screen.queryByRole("article", {
+				name: `${zhCN.messages.toolActivity.explicitMemory} succeeded`,
+			}),
+		).not.toBeInTheDocument();
 	});
 });

@@ -129,7 +129,6 @@ export function useConversationViewWorkflow(store: CompanionStore) {
 		submitText: (text: string) => store.sendMessage(text),
 		sceneLabel: () =>
 			store.activeConversationId ? workflow.sceneLabel(store.activeConversationId) : "",
-		hasThreadContent: () =>
-			store.activeTimeline.length > 0,
+		hasThreadContent: () => store.activeTimeline.length > 0,
 	};
 }

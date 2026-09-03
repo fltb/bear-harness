@@ -17,7 +17,11 @@ export function NetworkAndMemorySettings(props: { section?: "network" | "memory"
 	const workflow = createNetworkMemoryWorkflow(store, t);
 	const { proxyMode, proxyUrl, setProxyMode, setProxyUrl, saving, error, feedback, save } =
 		workflow;
-	const proxyModes = () => [{ id: "direct" as const }, { id: "auto" as const }, { id: "manual" as const }];
+	const proxyModes = () => [
+		{ id: "direct" as const },
+		{ id: "auto" as const },
+		{ id: "manual" as const },
+	];
 	const selectedProxyMode = () => proxyModes().find((mode) => mode.id === proxyMode()) ?? null;
 
 	return (

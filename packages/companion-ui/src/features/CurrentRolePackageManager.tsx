@@ -78,7 +78,10 @@ function ManifestField(props: {
 					<TextField class="setting-field manifest-field manifest-array-field">
 						<TextField.Label class="field-label">{props.name}</TextField.Label>
 						<TextField.TextArea
-							rows={Math.min(12, Math.max(3, Array.isArray(props.value) ? props.value.length * 2 : 3))}
+							rows={Math.min(
+								12,
+								Math.max(3, Array.isArray(props.value) ? props.value.length * 2 : 3),
+							)}
 							disabled={props.disabled}
 							value={stringify(props.value ?? [])}
 							onInput={(event) => {
@@ -139,9 +142,9 @@ export function CurrentRolePackageManager(props: {
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const selectedId = () => props.document()?.characterId ?? "";
-	const [drafts, setDrafts] = createSignal<
-		Record<string, { raw?: string; baseSha256?: string }>
-	>({});
+	const [drafts, setDrafts] = createSignal<Record<string, { raw?: string; baseSha256?: string }>>(
+		{},
+	);
 	const draft = () => drafts()[selectedId()];
 	const raw = () => draft()?.raw ?? props.document()?.yaml ?? "";
 	const savedRaw = () => props.document()?.yaml ?? "";

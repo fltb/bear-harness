@@ -305,6 +305,11 @@ const CharacterIdentifierSchema = z
 	.min(1)
 	.max(64)
 	.regex(/^[a-z][a-z0-9_]*$/);
+const CharacterPackageIdSchema = z
+	.string()
+	.min(1)
+	.max(128)
+	.regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
 const CharacterCardSchema = z.strictObject({
 	subtitle: z.string().max(4096),
 	greeting: z.string().max(16_384),
@@ -339,10 +344,10 @@ const CharacterExpressionSchema = z.strictObject({
 /** The single runtime contract for character.yaml; UI and Host consume this schema. */
 export const CharacterManifestSchema = z
 	.strictObject({
-		id: CharacterIdentifierSchema,
+		id: CharacterPackageIdSchema,
 		name: z.string().min(1).max(4096),
 		language: LanguageTagSchema,
-		theme: ThemeTokensSchema,
+		theme: ThemeTokensSchema.optional(),
 		character: CharacterCardSchema,
 		behavior: CharacterBehaviorSchema,
 		prompt: CharacterPromptSchema,

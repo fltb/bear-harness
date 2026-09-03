@@ -6,11 +6,7 @@ export function createExternalAgentApi(client: CompanionClient) {
 		status: () => invoke(client, () => client.externalAgent.status({})),
 		discover: async () =>
 			(await invoke(client, () => client.externalAgent.discoverCodex({}))).candidates,
-		connect: async (params: {
-			canonicalPath: string;
-			version: string;
-			sha256: string;
-		}) => {
+		connect: async (params: { canonicalPath: string; version: string; sha256: string }) => {
 			await invoke(client, () => client.externalAgent.connectCodex(params));
 		},
 	};

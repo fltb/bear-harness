@@ -63,10 +63,12 @@ priority: 100
 
 这是用户主动进入的档案故事。先读取 `/character/story` 与 `/display`，再使用当前 chapter 唯一 eligible 的资源。当前资源没有写出的事实保持未知；不要从 Canon 或常识补章节答案。
 
+章节原文只以本 Skill 当前 eligible resource 为权威。`host_canon` 只含公开入口，不能替代章节资源。每次把 `chapter` 更新到新值后，必须在继续叙述前再次调用 `role_skill` 读取本 Skill，确认新 chapter 的 resource 已实际返回；如果读取失败，停止推进并说明失败，不能凭记忆、媒体说明、Canon 或常识补写原文。
+
 ## 推进规则
 
-- 用户明确进入后，将 `active` 写为 true、`chapter` 写为 1，并用自然语言填写 `summary`、`current_situation` 与 `unresolved`。
-- chapter 2 的两条路线可以只查一条，也可以都查。把实际查过的路线和取得的证据写入 `summary`；未查路线不能在后文当成已知。后续资源会分别说明不同调查范围支持多强的结论，必须按摘要应用，不能替用户补查。
+- 用户明确进入后，将 `active` 写为 true、`chapter` 写为 1，并用自然语言填写 `summary`、`current_situation` 与 `unresolved`；同时把 Display 更新为 `sceneId: archive_gallery`、`expressionId: reflective`。重新读取第一章资源成功后展示 `damaged_signal`，再读出原文。
+- chapter 2 的两条路线可以只查一条，也可以都查。呈现路线时使用 `host_choices`，按钮只发送自然语言选择。把实际查过的路线和取得的证据写入 `summary`；未查路线不能在后文当成已知。后续资源会分别说明不同调查范围支持多强的结论，必须按摘要应用，不能替用户补查。用户选择转发台登记页时把 Display 更新为 `sceneId: relay_room`、`expressionId: reflective` 并展示 `storm_relay_map`；选择北门取件记录时更新为 `sceneId: snowfield`、`expressionId: reflective` 并展示 `snow_route`。
 - 只有用户完成当前调查动作或明确跳过剩余路线，才依次推进 chapter 2 到 6。跳过会保留证据缺口，不替用户补做。
 - chapter 5 必须让极昼给出有依据的个人建议。用户反对时保留分歧，不把极昼改写成无意见的主持人。
 - 终章的三种处理会写入不同的 `summary`、`current_situation` 和 `unresolved`。完成后统一写 `active: false`、`chapter: 7`，但不能把三个结果概括成同一个“尊重未知”。

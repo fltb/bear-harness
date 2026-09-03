@@ -199,4 +199,19 @@ describe("protocol authority boundaries", () => {
 			RPC.character.runtimeDelete.request.safeParse({ characterId: "../outside" }),
 		).toMatchObject({ success: false });
 	});
+
+	it("accepts only a validated character id for package reveal", () => {
+		expect(
+			RPC.character.packageReveal.request.safeParse({ characterId: "trusted-character" }),
+		).toMatchObject({ success: true });
+		expect(
+			RPC.character.packageReveal.request.safeParse({
+				characterId: "trusted-character",
+				path: "/renderer/chosen/path",
+			}),
+		).toMatchObject({ success: false });
+		expect(
+			RPC.character.packageReveal.request.safeParse({ characterId: "../outside" }),
+		).toMatchObject({ success: false });
+	});
 });

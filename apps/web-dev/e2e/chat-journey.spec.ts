@@ -24,7 +24,7 @@ test("chat streams once and edited history regenerates once through the UI", asy
 	await sendMessage(page, "STREAM_CHECK");
 	await expect(thread.getByText("STREAM_CHECK", { exact: true })).toHaveCount(1);
 	await expect(thread.getByText("STREAM_ONE STREAM_TWO", { exact: true })).toHaveCount(1);
-	await expect(page.getByRole("status", { name: zhCN.messages.responding })).toBeHidden();
+	await expect(thread.getByRole("status", { name: zhCN.messages.responding })).toBeHidden();
 	await expect(thread.getByText("STREAM_ONE STREAM_TWO", { exact: true })).toHaveCount(1);
 	expect(gapWarnings).toEqual([]);
 	await page.reload();
@@ -54,7 +54,7 @@ test("two Pi sessions can run concurrently, switch locally, and finish without s
 	await expect(thread.getByRole("status", { name: zhCN.messages.responding })).toBeVisible();
 	await expect(thread.getByText(/HOLD_ONE/)).toBeVisible();
 
-	await page.getByRole("button", { name: zhCN.sidebar.newConversation, exact: true }).click();
+	await page.getByTitle(zhCN.sidebar.newConversation, { exact: true }).click();
 	await expect(thread.getByText(/HOLD_ONE/)).toBeHidden();
 	await sendMessage(page, "E2E_OK session B stays focused");
 	await expect(thread.getByText("E2E_OK", { exact: true })).toBeVisible();
@@ -81,4 +81,50 @@ test("a local path is ordinary natural-language user input", async ({ page }) =>
 			exact: true,
 		}),
 	).toHaveCount(1);
+});
+
+test("latest assistant reply branches through the UI and activates the native fork", async ({
+	page,
+}) => {
+	await ensureReadyForConversation(page);
+	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
+	const sidebar = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
+	const activeConversationId = async () =>
+		sidebar
+			.getByRole("button")
+			.evaluateAll((buttons) =>
+				buttons
+					.find((button) => button.getAttribute("aria-current") === "page")
+					?.getAttribute("data-conversation-id"),
+			);
+	const previousConversationId = await activeConversationId();
+	await page.getByTitle(zhCN.sidebar.newConversation, { exact: true }).click();
+	await expect
+		.poll(async () => {
+			const current = await activeConversationId();
+			return Boolean(current && current !== previousConversationId);
+		})
+		.toBe(true);
+	const sourceConversationId = await activeConversationId();
+	if (!sourceConversationId) throw new Error("source conversation has no identity");
+
+	await sendMessage(page, "E2E_OK branch source");
+	const reply = thread.getByText("E2E_OK", { exact: true });
+	await expect(reply).toBeVisible();
+	await thread.getByRole("button", { name: zhCN.messages.branch }).click();
+
+	await expect
+		.poll(async () => {
+			const current = await activeConversationId();
+			return Boolean(current && current !== sourceConversationId);
+		})
+		.toBe(true);
+	const forkConversationId = await activeConversationId();
+	if (!forkConversationId) throw new Error("fork conversation has no identity");
+	await expect(thread.getByText("E2E_OK", { exact: true })).toBeVisible();
+	await expect(sidebar.locator(`[data-conversation-id="${sourceConversationId}"]`)).toBeVisible();
+	await expect(sidebar.locator(`[data-conversation-id="${forkConversationId}"]`)).toHaveAttribute(
+		"aria-current",
+		"page",
+	);
 });

@@ -100,6 +100,8 @@ export type CharacterPackageDocument = z.infer<typeof schema.CharacterPackageDoc
 export type CharacterPackageGetRequest = z.infer<typeof schema.CharacterPackageGetRequest>;
 export type CharacterPackageUpdateRequest = z.infer<typeof schema.CharacterPackageUpdateRequest>;
 export type CharacterPackageResponse = z.infer<typeof schema.CharacterPackageResponse>;
+export type CharacterPackageRevealRequest = z.infer<typeof schema.CharacterPackageRevealRequest>;
+export type CharacterPackageRevealResponse = z.infer<typeof schema.CharacterPackageRevealResponse>;
 export type CharacterDeletionStatusGetRequest = z.infer<
 	typeof schema.CharacterDeletionStatusGetRequest
 >;
