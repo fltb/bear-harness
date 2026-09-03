@@ -39,14 +39,15 @@
 ## 当前验证状态
 
 - 已通过：全仓 lint 与全仓 TypeScript typecheck。
-- 已通过：全仓单元测试，包括 scripts 11 项、i18n 9 项、protocol 10 项、Host 421 项、Companion UI 152 项、Desktop 121 项、WebDev 4 项。
+- 已通过：全仓单元测试，包括 scripts 11 项、i18n 9 项、protocol 10 项、Host 421 项、Companion UI 153 项、Desktop 121 项、WebDev 4 项。
 - 已通过：Desktop 与 Web 构建。
 - 已通过：Web 必需 E2E 28 项，全部使用 Playwright 后台无头模式；包含系统/角色 onboarding、并发 Session、原生流式切换、真实 UI fork、双 Session 不同模型及重载隔离、External Run/Artifact、响应式结果区、重命名/归档/删除与角色连续性。
 - 已通过：Desktop 源码 E2E 3 项，覆盖真实 Electron 启动、诊断与损坏设置恢复；本轮在 CI 后台隐藏窗口模式执行，没有打开前台测试窗口。
 - 已通过：Host/Desktop 恢复套件 56 项。
-- 已通过：使用当前本机 Pi/Codex 配置完成完整 live-model 套件 3/3。`gpt-5.6-sol` 覆盖真实回复 smoke，以及普通陈述不调用 `explicit_memory`、明确“记住”会调用该工具、后续角色身份仍为“极昼”；完整旅程同时使用 `gpt-5.6-sol` 与 `gpt-5.6-terra`，真实走过两个 Session 的不同模型路由、UI 会话切换、单一消息投影、复制、原位编辑并重生成、重新生成时的侧栏/停止按钮流式状态、原生 fork、分支继续回复、Renderer 重载和路由复核。密钥只在 Host 进程内注入测试 Provider，不写入日志或测试产物。
-- 本轮回归同时修复：合法连字符角色包 ID 的严格校验、阻断 traversal 角色 ID、角色包 reveal 的 Host 路径授权、显式记忆幂等、Pi fork 源句柄隔离与 Catalog ownership 时序、Renderer 启动默认会话迟到结果覆盖用户选择的竞态、调试 RPC 选择状态、可选 theme 默认、乐观用户消息在权威 settled snapshot 后的交接，以及已经移除/改版页面对应的陈旧 E2E 契约和视觉基线。
-- live-model 探索记录：一次以 `gpt-5.6-luna` 作为第二模型的并发请求返回了空白 assistant 内容；正式完整旅程改用 `gpt-5.6-terra` 并通过。这一现象尚不足以归因于 Bear，作为当前模型端点的兼容性/稳定性观察保留，不纳入已通过声明。
+- 已通过：使用当前本机 Pi/Codex 配置完成完整 live-model 套件 4/4。`gpt-5.6-terra` 覆盖真实回复 smoke，以及普通陈述不调用 `explicit_memory`、明确“记住”会调用该工具、后续角色身份仍为“极昼”；完整旅程同时使用 `gpt-5.6-terra` 与 `gpt-5.6-sol`，真实走过两个 Session 的不同模型路由、UI 会话切换、单一消息投影、复制、原位编辑并重生成、重新生成时的侧栏/停止按钮流式状态、原生 fork、分支继续回复、Renderer 重载和路由复核。密钥只在 Host 进程内注入测试 Provider，不写入日志或测试产物。
+- 已通过：自然语言剧情 live-model E2E。用户只说“我想看看那条没归档的回报。别先给摘要，我想从原件开始查。”；模型必须自行读取生产角色 Skill，并在真实 Pi transcript 中产生 `host_state`、`host_media` 与 `host_choices`。浏览器验证“残缺报码”与“转发台登记”两张 CG 的打开/关闭和原生位置，验证“交接档案室 → 转发台资料室”背景、“极昼在核对”表情、模型生成的普通自然语言选择按钮，以及 `K-4`、`未获复述` 等权威剧情事实；同时明确拒绝未在资源中出现的 `06:40`、风向等补写。若模型没有主动给出选择，测试仅以自然语言追问现有方向，并要求该新回合实际调用 `host_choices`，不接受纯文字冒充交互卡。
+- 本轮回归同时修复：合法连字符角色包 ID 的严格校验、阻断 traversal 角色 ID、角色包 reveal 的 Host 路径授权、显式记忆幂等、Pi fork 源句柄隔离与 Catalog ownership 时序、Renderer 启动默认会话迟到结果覆盖用户选择的竞态、调试 RPC 选择状态、可选 theme 默认、乐观用户消息在权威 settled snapshot 后的交接，以及已经移除/改版页面对应的陈旧 E2E 契约和视觉基线。真实剧情测试另外发现并修复两处系统问题：章节更新后必须重新读取新 chapter 唯一 eligible 的剧情资源，禁止用 Canon/常识补写；活动 Session settle 后 UI 同时刷新权威 Conversation 与 Character/Display 状态，避免 Host 已切换场景但背景仍停留在旧值。
+- live-model 探索记录：一次以 `gpt-5.6-luna` 作为第二模型的并发请求返回了空白 assistant 内容；`gpt-5.6-terra-pro` 虽出现在本地清单，但当前账号组返回不支持；`sol/terra` 探索运行还遇到过上游 502 或工具后长时间不 settle。测试不会把这些情况计为通过。随后正式完整套件以 `gpt-5.6-terra` 为主模型、`gpt-5.6-sol` 为第二模型完成 4/4，这些现象作为当前模型端点兼容性/稳定性观察保留。
 - 尚未声明正式发布：覆盖率阈值、安全审计/签名、全平台新鲜打包及同一 clean commit 的 packaged smoke 仍需按发布流程单独执行。
 
 ## 证明索引
