@@ -648,5 +648,5 @@ test("configured live model answers a natural story with scene expression media 
 	await expect.poll(async () => (await state()).state.display.expressionId).toBe("reflective");
 	await expect(page.getByRole("img", { name: "转发台资料室" })).toBeVisible();
 	await expect(page.getByRole("img", { name: "极昼在核对" })).toBeVisible();
-	await expect(thread.getByRole("region", { name: "转发台登记" })).toBeVisible();
+	await expect(thread.getByRole("region", { name: "转发台登记", exact: true })).toBeVisible();
 });
