@@ -587,15 +587,17 @@ test("configured live model answers a natural story with scene expression media 
 		});
 	const waitForTool = async (toolName: string, payloadMarker: string) => {
 		await expect
-			.poll(async () => JSON.stringify((await open()).branch.entries), {
+			.poll(async () => {
+				const snapshot = await open();
+				const entries = JSON.stringify(snapshot.branch.entries);
+				if (entries.includes('"stopReason":"error"')) {
+					throw new Error(`Live model settled with an error before ${toolName}: ${entries}`);
+				}
+				return entries.includes(`"toolName":"${toolName}"`) && entries.includes(payloadMarker);
+			}, {
 				timeout: liveReplyTimeout,
 			})
-			.toContain(`"toolName":"${toolName}"`);
-		await expect
-			.poll(async () => JSON.stringify((await open()).branch.entries), {
-				timeout: liveReplyTimeout,
-			})
-			.toContain(payloadMarker);
+			.toBe(true);
 		await expect
 			.poll(async () => (await open()).live.isStreaming, { timeout: liveReplyTimeout })
 			.toBe(false);
