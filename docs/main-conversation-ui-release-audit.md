@@ -228,7 +228,7 @@ P0 已解除。正式发布前仍需完成 P1-1 至 P1-5 的实现和自动化�
 - lint、全仓 typecheck、全仓 build：通过。
 - 全量单测：747 项通过；Host 422、Companion UI 170、Desktop 121，其余协议/国际化/仓库门禁 34。
 - 后台 Web required E2E：30/30 通过；最终对话专项后台复跑 6/6 通过。
-- 真实模型 E2E：使用当前 Pi/Codex 配置的 `gpt-5.6-terra` 与 `gpt-5.6-luna`，完整 5/5 连续通过；覆盖基础应答、角色与显式记忆边界、原生会话旅程、自然剧情的 CG/场景/表情/选择、自然富内容及刷新恢复。
+- 真实模型 E2E：使用当前 Pi/Codex 配置的 `gpt-5.6-terra` 与 `gpt-5.6-luna`，五条能力路径均通过；覆盖基础应答、角色与显式记忆边界、原生会话旅程、自然剧情的 CG/场景/表情/选择、自然富内容及刷新恢复。最终提交后的完整套件为 4/5，剧情首轮遇到一次上游零 token `Upstream request failed`；同提交单项重试后剧情 1/1 通过，失败被保留为外部模型服务证据而非隐藏。
 - UI 覆盖门禁：statements 83.90%、branches 70.43%、functions 84.27%、lines 86.32%，通过声明阈值。
 - Host 覆盖：statements 77.66%、branches 64.77%、functions 79.23%、lines 80.97%，通过该包声明阈值。
 - 已知仓库级残留：Desktop 覆盖结果 statements 78.73%、branches 66.49%，低于其 80%/70% 声明阈值，因此根级 coverage 不能记为通过。此次审计发现并修复的 presentation dispose 竞态已连续两次专项通过，Desktop 全套 121 项也通过。
