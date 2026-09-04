@@ -299,7 +299,7 @@ describe("Host-backed first-run setup", () => {
 		const model = await within(dialog).findByLabelText(zhCN.modelSetup.modelLabel);
 		const finish = within(dialog).getByRole("button", { name: zhCN.modelSetup.continue });
 		expect(finish).toBeDisabled();
-		await selectKobalteOption(user, model, { label: "Reply (Relay)" });
+		await selectKobalteOption(user, model, { label: "Reply · Relay" });
 		await waitFor(() =>
 			expect(setup.store.model?.setSystemDefaults).toHaveBeenCalledWith(
 				{ providerId: "relay", modelId: "reply" },
@@ -317,7 +317,7 @@ describe("Host-backed first-run setup", () => {
 			within(dialog).queryByRole("region", { name: zhCN.settings.providerSetupLabel }),
 		).not.toBeInTheDocument();
 		const reply = await within(dialog).findByLabelText(zhCN.modelSetup.modelLabel);
-		await selectKobalteOption(user, reply, { label: "Reply (Relay)" });
+		await selectKobalteOption(user, reply, { label: "Reply · Relay" });
 		await waitFor(() => expect(setup.store.model?.setSystemDefaults).toHaveBeenCalled());
 	});
 
@@ -335,7 +335,7 @@ describe("Host-backed first-run setup", () => {
 		expect(
 			within(dialog).queryByRole("button", { name: zhCN.messages.continue }),
 		).not.toBeInTheDocument();
-		await selectKobalteOption(user, model, { label: "Reply (Relay)" });
+		await selectKobalteOption(user, model, { label: "Reply · Relay" });
 		const finish = within(dialog).getByRole("button", { name: zhCN.modelSetup.continue });
 		await waitFor(() => expect(finish).toBeEnabled());
 		await user.click(finish);
@@ -395,11 +395,11 @@ describe("Host-backed first-run setup", () => {
 			first(within(dialog).getAllByRole("button", { name: zhCN.settings.addProvider })),
 		);
 		await selectKobalteOption(user, within(dialog).getByLabelText(zhCN.modelSetup.modelLabel), {
-			label: "Reply (Relay)",
+			label: "Reply · Relay",
 		});
 		await waitFor(() => expect(setup.store.model?.setSystemDefaults).toHaveBeenCalled());
 		await selectKobalteOption(user, within(dialog).getByLabelText(zhCN.settings.visionModel), {
-			label: "Image Reader (Relay)",
+			label: "Image Reader · Relay",
 		});
 		await waitFor(() =>
 			expect(setup.store.model?.setSystemDefaults).toHaveBeenLastCalledWith(
@@ -464,7 +464,7 @@ describe("Host-backed first-run setup", () => {
 		expect(
 			within(dialog).queryByRole("region", { name: zhCN.settings.providerSetupLabel }),
 		).not.toBeInTheDocument();
-		await selectKobalteOption(user, reply, { label: "Reply (Relay)" });
+		await selectKobalteOption(user, reply, { label: "Reply · Relay" });
 		expect(within(dialog).getByLabelText(zhCN.settings.visionModel)).toBeInTheDocument();
 		expect(within(dialog).getByRole("button", { name: zhCN.modelSetup.continue })).toBeEnabled();
 	});

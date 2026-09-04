@@ -3,6 +3,7 @@ import { zhCN } from "@bear-harness/i18n/locales";
 import { render, screen, waitFor } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { configuredModelLabel } from "../src/features/ModelSelector.js";
 import type { ConfiguredModel } from "../src/index.js";
 import { CompanionApp } from "../src/index.js";
 import { createTestClient, OFFICIAL_PRODUCT, THEMED_CHARACTER } from "./fixtures.js";
@@ -136,6 +137,15 @@ function configureSelectedModel(client: ReturnType<typeof createTestClient>["cli
 }
 
 describe("composer", () => {
+	it("does not repeat a provider name that is already the model label", () => {
+		expect(
+			configuredModelLabel({
+				...TEST_MODEL,
+				label: "Relay Service",
+			}),
+		).toBe("Relay Service");
+	});
+
 	it("inserts desktop file paths into ordinary user text", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
@@ -249,7 +259,7 @@ describe("composer", () => {
 			name: new RegExp(zhCN.composer.modelLabel),
 		});
 		await waitFor(() => expect(selector).toBeEnabled());
-		await selectKobalteOption(userEvent.setup(), selector, { label: "Deep (Relay Service)" });
+		await selectKobalteOption(userEvent.setup(), selector, { label: "Deep · Relay Service" });
 		await waitFor(() =>
 			expect(client.model.routeSet).toHaveBeenCalledWith({
 				conversationId: "conversation-1",
@@ -351,7 +361,7 @@ describe("composer", () => {
 		});
 		await waitFor(() => expect(selector).toBeEnabled());
 		await selectKobalteOption(userEvent.setup(), selector, {
-			label: "Vision Model (Vision Relay)",
+			label: "Vision Model · Vision Relay",
 		});
 
 		const alerts = await screen.findAllByRole("alert");

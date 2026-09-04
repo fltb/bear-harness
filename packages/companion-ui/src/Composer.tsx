@@ -9,6 +9,8 @@ import {
 import { createSignal, Show } from "solid-js";
 import { ModelSelector } from "./features/ModelSelector.js";
 import { Icon } from "./Icon.js";
+import { fitTextareaToContent } from "./lib/textarea-sizing.js";
+import { notifyTimelineUserSent } from "./lib/timeline-scroll.js";
 import { useCompanionStore } from "./stores/companion.js";
 import { useConversationWorkflow } from "./stores/conversation-workflows.js";
 import { Button, TextField } from "./ui/primitives.js";
@@ -29,6 +31,18 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 	const [menuOpen, setMenuOpen] = createSignal(false);
 	const [pathError, setPathError] = createSignal<string | null>(null);
 	const [dragging, setDragging] = createSignal(false);
+	let textareaRef: HTMLTextAreaElement | undefined;
+	const queueComposerResize = () => {
+		queueMicrotask(() => {
+			if (textareaRef) fitTextareaToContent(textareaRef);
+		});
+	};
+	const dispatchMessage = () => {
+		if (store.activeConversationId) notifyTimelineUserSent(store.activeConversationId);
+		const pending = workflow.dispatchMessage();
+		queueComposerResize();
+		return pending;
+	};
 
 	const pick = async (folder: boolean) => {
 		setMenuOpen(false);
@@ -43,6 +57,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 				folder ? await bridge.pickFolder() : await bridge.pickFiles(),
 				folder ? t("composer.localFolderReference") : t("composer.localFileReference"),
 			);
+			queueComposerResize();
 		} catch (error) {
 			setPathError(error instanceof Error ? error.message : String(error));
 		}
@@ -53,8 +68,10 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 		const bridge = localFiles();
 		const files = event.dataTransfer ? [...event.dataTransfer.files] : [];
 		const paths = bridge?.pathsForDroppedFiles(files) ?? [];
-		if (paths.length) workflow.insertLocalPaths(paths, t("composer.localFileReference"));
-		else setPathError(t("composer.localPathOnly"));
+		if (paths.length) {
+			workflow.insertLocalPaths(paths, t("composer.localFileReference"));
+			queueComposerResize();
+		} else setPathError(t("composer.localPathOnly"));
 	};
 	return (
 		<form
@@ -63,7 +80,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 			data-drag-active={dragging() ? "true" : undefined}
 			onSubmit={(event) => {
 				event.preventDefault();
-				void workflow.dispatchMessage();
+				void dispatchMessage();
 			}}
 			onDragEnter={(event) => {
 				event.preventDefault();
@@ -115,15 +132,22 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 			</div>
 			<TextField class="composer-input">
 				<TextField.TextArea
+					ref={(element) => {
+						textareaRef = element;
+						fitTextareaToContent(element);
+					}}
 					rows={1}
 					placeholder={props.placeholder}
 					aria-label={t("composer.messageInputLabel")}
 					value={workflow.composerText()}
-					onInput={(event) => workflow.setComposerText(event.currentTarget.value)}
+					onInput={(event) => {
+						workflow.setComposerText(event.currentTarget.value);
+						fitTextareaToContent(event.currentTarget);
+					}}
 					onKeyDown={(event) => {
 						if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
 							event.preventDefault();
-							void workflow.dispatchMessage();
+							void dispatchMessage();
 						}
 					}}
 					disabled={!store.activeConversationId || !workflow.modelSelected()}

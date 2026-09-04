@@ -10,7 +10,10 @@ export function modelRouteKey(model: Pick<ConfiguredModel, "providerId" | "model
 }
 
 export function configuredModelLabel(model: ConfiguredModel): string {
-	return `${model.label} (${model.providerName ?? model.providerId})`;
+	const provider = model.providerName ?? model.providerId;
+	return model.label.localeCompare(provider, undefined, { sensitivity: "accent" }) === 0
+		? model.label
+		: `${model.label} · ${provider}`;
 }
 
 type AutoModelOption = { kind: "auto" };

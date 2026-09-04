@@ -191,6 +191,10 @@
 	max-block-size: 40dvh;
 }
 
+.app[data-layout="mobile"] .composer textarea {
+	@apply max-h-40;
+}
+
 .app[data-layout="mobile"] .presence-stage {
 	@apply absolute bottom-24 left-1/2 z-10 max-h-2/5 w-1/2 -translate-x-1/2 opacity-100;
 }
@@ -256,6 +260,10 @@
 
 .app[data-layout="mobile"] .msg-menu-trigger {
 	@apply grid size-11;
+}
+
+.app[data-layout="mobile"] .msg-inline-action {
+	@apply opacity-100;
 }
 
 .app[data-layout="mobile"] .thread-head .work-pill,

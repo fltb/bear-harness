@@ -251,6 +251,7 @@ export const zhCN = {
 		noActiveConversationError: "还没有选中对话",
 		userMeta: "你 · 刚刚",
 		responding: "正在回复",
+		returnToLatest: "回到最新",
 		queued: "已排队",
 		sending: "发送中",
 		sendFailed: "发送失败",

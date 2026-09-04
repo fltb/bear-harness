@@ -248,6 +248,7 @@ export const zhTW = {
 		"noActiveConversationError": "還沒有選中對話",
 		"userMeta": "你 · 剛剛",
 		"responding": "正在回覆",
+		"returnToLatest": "回到最新",
 		"queued": "已排隊",
 		"sending": "傳送中",
 		"sendFailed": "傳送失敗",

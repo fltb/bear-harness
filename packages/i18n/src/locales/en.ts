@@ -263,6 +263,7 @@ export const en = {
 		noActiveConversationError: "No conversation selected",
 		userMeta: "You · Just now",
 		responding: "Responding",
+		returnToLatest: "Jump to latest",
 		queued: "Queued",
 		sending: "Sending",
 		sendFailed: "Could not send",

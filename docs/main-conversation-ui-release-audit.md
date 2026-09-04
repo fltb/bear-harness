@@ -6,7 +6,7 @@
 
 主对话路径的富内容阻塞项已经实现并通过确定性测试、后台浏览器 E2E 和真实模型验收：稳定回复与流式回复共用无状态 `MessageContent`，支持经过净化的 GFM、代码高亮和 KaTeX；角色稳定上下文也已加入自然的 Markdown/代码/公式表达约定。
 
-当前仍不建议直接进入正式发布候选。Composer 自动增高、阅读位置保护、辅助技术播报范围、触屏操作尺寸以及完整的字体/动效收敛尚未完成。本文保留首次审计发现，并在已经完成的条目上标记修复状态。
+主对话功能性可用性阻塞项现已解除：Composer 自动增高、分会话阅读位置保护、窄域辅助技术播报、触屏操作尺寸和正文排版所有权均已实现，并通过后台 Chromium 验收。首 token 入场和减少动效也已有统一规则；更广泛的角色动效降噪与长回复阅读导航仍属于后续视觉精修，不阻塞本轮主路径功能验收。
 
 ## 本轮实施更新
 
@@ -20,6 +20,11 @@
 - 已完成：Run/权限操作状态缓存上限为 32；复制反馈每条消息最多一个计时器并在组件卸载时清理。
 - 已完成：Desktop Artifact presenter 的 `dispose()` 现在等待已经启动的旧展示目录清理，已释放实例不会再继续删除随后创建的目录。
 - 已完成：Pi 原生工具 start/update/end 进入分会话瞬态投影；权威快照携带 `pendingToolCallIds`，刷新或重连可恢复运行中工具提示。
+- 已完成：Composer 从单行增长到桌面 12rem、移动端 10rem 上限，超过上限后才内部滚动；发送清空、文件插入和普通输入都会重新计算展示高度。
+- 已完成：时间线只在贴近底部或用户主动发送时跟随；用户上滚后保持 detached，并提供“回到最新”。阅读位置按会话隔离，控制器卸载时释放 Observer、事件监听与位置表。
+- 已完成：时间线不再是 live region；独立原子状态节点只播报“正在回复”，流式正文变化不会逐 chunk 触发读屏播报。
+- 已完成：消息复制、编辑、重生成、校正和分支操作达到 44px 触控高度；移动端复制/编辑不再依赖 hover 才可见。
+- 已完成：正文排版统一由 `MessageContent` 样式拥有；模型名与 Provider 同名时去重；首 token/乐观消息只做一次 120ms 入场，settled 权威交接不二次入场，并遵守 reduced-motion。
 - 约束证明：本轮实现未新增正则，也没有自建 Markdown 检测器或 HTML 转义器；解析与净化交给通用库。
 
 ## 审计范围与方法
@@ -65,7 +70,7 @@
 
 ## 高优先级可用性与功能问题
 
-### P1-1：长输入框不会自动增高
+### P1-1：长输入框不会自动增高（已修复）
 
 Composer 固定 `rows={1}`，没有自动高度逻辑，CSS 同时设置 `resize: none`。移动端输入 8 行后，实测 textarea `clientHeight=44px`、`scrollHeight=224px`，用户一次只能看到约 1–2 行，只能在小框中内部滚动，难以复核长 prompt、代码或多行上下文。
 
@@ -73,7 +78,9 @@ Composer 固定 `rows={1}`，没有自动高度逻辑，CSS 同时设置 `resize
 
 证据：`packages/companion-ui/src/Composer.tsx:116`、`packages/companion-ui/src/styles/thread.css:138`。
 
-### P1-2：流式更新会强制抢走用户的阅读位置
+修复：输入框按实际 `scrollHeight` 增长，桌面上限 12rem、移动端上限 10rem；达到上限后才启用内部滚动。发送清空和路径插入也走同一无状态 DOM 尺寸函数。
+
+### P1-2：流式更新会强制抢走用户的阅读位置（已修复）
 
 当前滚动副作用在时间线变化时无条件执行 `scrollTop = scrollHeight`，没有“用户是否位于底部附近”的判断，也没有“回到底部/有新消息”提示。
 
@@ -88,13 +95,17 @@ Composer 固定 `rows={1}`，没有自动高度逻辑，CSS 同时设置 `resize
 
 证据：`packages/companion-ui/src/lib/dom-effects.ts:10`、`packages/companion-ui/src/ConversationPanel.tsx:528`。
 
-### P1-3：发送中与模型已开始回复可短暂同时出现
+修复：滚轮、触摸、键盘和滚动条操作后记录 UI 阅读位置；距离底部超过 72px 即 detached。流式 DOM 更新、浏览器滚动锚定和 optimistic→authoritative 节点替换都不会恢复跟随。位置以 `conversationId` 分开管理，主动发送或点击“回到最新”才恢复跟随。
+
+### P1-3：发送中与模型已开始回复可短暂同时出现（已修复）
 
 第一轮 900ms 截图中，用户气泡仍显示“发送中”，同时助手气泡已经出现正文和“正在回复”。这会让用户误以为请求尚未送达，尤其在网络慢或发生重试时难以判断真实状态。
 
 建议以 Pi 权威 user entry 到达作为乐观消息交接点；助手 `message_update` 已出现时，用户项不应继续显示发送中。为该顺序增加可控事件测试，不以最终 settled snapshot 掩盖瞬态错误。
 
-### P1-4：整个对话容器使用 `aria-live="polite"`
+修复：Pi 权威 user entry 到达即替换同一乐观项；后台流式 E2E 在首 chunk 可见时明确断言 `pending-user-message` 数量为 0。
+
+### P1-4：整个对话容器使用 `aria-live="polite"`（已修复）
 
 流式文本在同一个 `<p>` 中持续变化，而整个 thread 是 live region。辅助技术可能在每个 token/chunk 到达时重复宣读大段内容，稳定消息、工具卡和错误也混在同一个播报范围内。
 
@@ -102,7 +113,9 @@ Composer 固定 `rows={1}`，没有自动高度逻辑，CSS 同时设置 `resize
 
 证据：`packages/companion-ui/src/ConversationPanel.tsx:536`。
 
-### P1-5：触屏操作目标偏小且操作依赖 hover
+修复：对话历史已移出 live region；独立的 `role=status`、`aria-live=polite`、`aria-atomic=true` 节点只投影稳定的“正在回复”状态，正文 chunk 和工具卡不会借由整个 thread 重复播报。
+
+### P1-5：触屏操作目标偏小且操作依赖 hover（已修复）
 
 - 复制/编辑图标为 24×24px，默认透明，仅 hover、focus-within 或 focus-visible 时出现。
 - 重生成、纠正、分支按钮实测高度 32px。
@@ -112,9 +125,11 @@ Composer 固定 `rows={1}`，没有自动高度逻辑，CSS 同时设置 `resize
 
 证据：`packages/companion-ui/src/styles/interaction.css:76`、`packages/companion-ui/src/styles/interaction.css:104`。
 
+修复：直接消息操作和主要回复操作统一为至少 44px；移动端直接操作保持可见。390×844 后台浏览器用真实布局盒验证复制和重生成均不小于 44×44px。
+
 ## 中优先级视觉与动效问题
 
-### P2-1：消息字号规则存在层叠冲突
+### P2-1：消息字号规则存在层叠冲突（已修复）
 
 `thread.css` 把正文定义为 `font-serif text-lg`，后加载的 `refinement.css` 又把 `.msg p` 改成 `text-base`。浏览器最终值为 16px/26px，而不是前一层声明表达的 18px 意图。`.msg` 本身也先后经历 `text-xs` 与 `text-sm` 覆盖。
 
@@ -128,7 +143,9 @@ Composer 固定 `rows={1}`，没有自动高度逻辑，CSS 同时设置 `resize
 
 证据：`packages/companion-ui/src/styles/thread.css:34`、`packages/companion-ui/src/styles/thread.css:56`、`packages/companion-ui/src/styles/refinement.css:452`、`packages/companion-ui/src/styles/refinement.css:493`。
 
-### P2-2：主对话动效语言不完整
+修复：正文的字体、16px 字号和行高只由 `.message-content` 持有；Markdown 子结构继承正文规则，代码和公式继续使用各自专用样式，不再由后加载 `.msg p` 覆盖。
+
+### P2-2：主对话动效语言不完整（核心交接已修复，持续精修）
 
 当前可见动效主要是：
 
@@ -150,9 +167,13 @@ Composer 固定 `rows={1}`，没有自动高度逻辑，CSS 同时设置 `resize
 
 证据：`packages/companion-ui/src/styles/interaction.css:27`、`packages/companion-ui/src/styles/interaction.css:707`、`packages/companion-ui/src/styles/visuals.css:56`、`packages/companion-ui/src/styles/layout.css:443`。
 
-### P2-3：模型选择器主路径文案可能重复
+本轮修复：乐观用户消息、排队消息和流式首 token 使用已有 `--motion-fast` 的一次性轻微淡入/位移；settled 权威消息不带入场类，因此不会二次跳动。后台浏览器已验证 `prefers-reduced-motion: reduce` 时动画名为 `none`。角色持续动效幅度以及编辑/错误的专门过渡仍可继续做主观视觉精修。
+
+### P2-3：模型选择器主路径文案可能重复（已修复）
 
 隔离 Provider 的 Composer 显示为 `UI Audit Provider (UI Audit Provider)`。当模型 label 与 Provider 描述相同，会形成重复文案并挤压移动端宽度。应定义稳定显示规则，例如“模型名 · Provider”，相同字段去重，辅助名称放 tooltip 或二级文字。
+
+修复：同名时只显示一次；不同时显示“模型名 · Provider”，并有确定性组件测试。
 
 ### P2-4：长回复是一个巨型气泡，缺少阅读导航
 
@@ -219,16 +240,22 @@ Composer 固定 `rows={1}`，没有自动高度逻辑，CSS 同时设置 `resize
 
 ## 发布决定
 
-当前决定：**富内容与会话投影修复通过本轮工程验收，但主对话 UI 整体仍不通过正式发布审查**。
+当前决定：**主对话富内容、会话投影和功能性 UI 可用性通过本轮工程验收；整体产品仍未达到正式发布条件**。
 
-P0 已解除。正式发布前仍需完成 P1-1 至 P1-5 的实现和自动化证明，并补齐滚动、Composer、可访问性与专门动效 E2E。P2 可以分批精修，但字体层级和动效规范至少要先收敛为单一可维护规则，不能继续依赖后加载样式覆盖。
+P0、P1、P2-1 和 P2-3 已解除，并补齐滚动、Composer、可访问性、触控尺寸与 reduced-motion 后台 E2E。P2-2 的基础交接规则已收敛，P2-4 仍可作为长内容体验精修。仓库级正式发布决定仍受 Desktop 覆盖率和其余完整发布门禁约束，不能由本报告单独放行。
 
 ## 本轮验证结果
 
 - lint、全仓 typecheck、全仓 build：通过。
-- 全量单测：747 项通过；Host 422、Companion UI 170、Desktop 121，其余协议/国际化/仓库门禁 34。
-- 后台 Web required E2E：30/30 通过；最终对话专项后台复跑 6/6 通过。
+- 全量单测：750 项通过；Host 422、Companion UI 173、Desktop 121，其余协议/国际化/仓库门禁 34。
+- 后台 Web required E2E：32/32 通过；新增可用性专项 2/2、对话与可用性合并复跑 8/8、三档视觉基线 3/3 通过。
 - 真实模型 E2E：使用当前 Pi/Codex 配置的 `gpt-5.6-terra` 与 `gpt-5.6-luna`，五条能力路径均通过；覆盖基础应答、角色与显式记忆边界、原生会话旅程、自然剧情的 CG/场景/表情/选择、自然富内容及刷新恢复。最终提交后的完整套件为 4/5，剧情首轮遇到一次上游零 token `Upstream request failed`；同提交单项重试后剧情 1/1 通过，失败被保留为外部模型服务证据而非隐藏。
-- UI 覆盖门禁：statements 83.90%、branches 70.43%、functions 84.27%、lines 86.32%，通过声明阈值。
+- UI 覆盖门禁：statements 84.10%、branches 70.49%、functions 84.34%、lines 86.51%，通过声明阈值。
 - Host 覆盖：statements 77.66%、branches 64.77%、functions 79.23%、lines 80.97%，通过该包声明阈值。
 - 已知仓库级残留：Desktop 覆盖结果 statements 78.73%、branches 66.49%，低于其 80%/70% 声明阈值，因此根级 coverage 不能记为通过。此次审计发现并修复的 presentation dispose 竞态已连续两次专项通过，Desktop 全套 121 项也通过。
+
+## 关键模块规模与所有权
+
+- 主实现 5 个文件、1,165 行：`Composer.tsx` 186、`ConversationPanel.tsx` 744、`ModelSelector.tsx` 140、`textarea-sizing.ts` 5、`timeline-scroll.ts` 90。
+- 新增专项证明 2 个文件、173 行：DOM 单元测试 86 行、后台浏览器可用性 E2E 87 行；另同步现有对话 E2E、组件契约测试和 4 张受影响视觉基线。
+- Pi 继续拥有消息、流、settled 与会话权威；`MessageContent` 只投影上层响应式文本；新增尺寸与滚动控制器只操作当前 DOM，分会话位置表只存在于控制器生命周期内，`dispose()` 会清空并解绑全部监听，不进入 Store、Host 或持久化。

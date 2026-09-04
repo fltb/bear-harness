@@ -6,14 +6,3 @@ export function syncDocumentTitle(title: Accessor<string>): void {
 		document.title = title();
 	});
 }
-
-export function followTimelineScroll(
-	element: Accessor<HTMLElement | undefined>,
-	entries: Accessor<unknown>,
-): void {
-	createEffect(() => {
-		void entries();
-		const target = element();
-		if (target) target.scrollTop = target.scrollHeight;
-	});
-}

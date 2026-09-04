@@ -74,7 +74,7 @@
 }
 
 .msg-inline-action {
-	@apply grid size-6 place-items-center rounded-md border-0 p-0 text-base leading-none opacity-0;
+	@apply grid size-11 place-items-center rounded-lg border-0 p-0 text-base leading-none opacity-0;
 	color: var(--text-soft);
 	background: transparent;
 	transition:
@@ -106,7 +106,7 @@
 }
 
 .message-primary-actions button {
-	@apply inline-flex min-h-8 items-center gap-1.5 rounded-lg border-0 px-2 text-xs;
+	@apply inline-flex min-h-11 items-center gap-1.5 rounded-lg border-0 px-3 text-xs;
 	color: var(--sys-text-muted);
 	background: var(--surface-control);
 }
@@ -191,7 +191,7 @@
 }
 
 .message-operations button {
-	@apply min-h-7 rounded-md border-0 px-2 py-1 text-xs cursor-pointer;
+	@apply min-h-11 rounded-md border-0 px-3 py-1 text-xs cursor-pointer;
 	color: var(--sys-text-muted);
 	background: var(--surface-control);
 }

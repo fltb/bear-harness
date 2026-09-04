@@ -3,7 +3,10 @@ import type { CharacterMedia, PiSessionEntry } from "@bear-harness/protocol";
 import { faCodeBranch, faCopy, faPen, faRotateRight } from "@fortawesome/free-solid-svg-icons";
 import { createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
 import { Icon } from "./Icon.js";
-import { followTimelineScroll } from "./lib/dom-effects.js";
+import {
+	installTimelineScrollProtection,
+	type TimelineScrollController,
+} from "./lib/timeline-scroll.js";
 import { MessageContent } from "./MessageContent.js";
 import { type TimelineProjectionItem, useCompanionStore } from "./stores/companion.js";
 import { useConversationViewWorkflow } from "./stores/conversation-workflows.js";
@@ -372,7 +375,7 @@ function OptimisticUserProjection(props: {
 	const store = useCompanionStore();
 	const message = () => props.item.message;
 	return (
-		<div class="timeline-entry-row" data-testid="pending-user-message">
+		<div class="timeline-entry-row timeline-entry-enter" data-testid="pending-user-message">
 			<div class="user-message-column">
 				<article
 					class={`msg pi-timeline-message user${message().state === "failed" ? " stream-failed" : ""}`}
@@ -415,7 +418,7 @@ function OptimisticUserProjection(props: {
 function QueuedUserProjection(props: { text: string }) {
 	const [t] = useTranslation(undefined, { i18n });
 	return (
-		<div class="timeline-entry-row" data-testid="pi-queued-user-message">
+		<div class="timeline-entry-row timeline-entry-enter" data-testid="pi-queued-user-message">
 			<div class="user-message-column">
 				<article class="msg pi-timeline-message user" aria-label={t("messages.you")}>
 					<div class="msg-meta">{t("messages.you")}</div>
@@ -477,7 +480,7 @@ function StreamingAssistantProjection(props: {
 				: undefined;
 	const characterName = () => store.character?.name ?? "";
 	return (
-		<div class="timeline-entry-row" data-testid="streaming-assistant-message">
+		<div class="timeline-entry-row timeline-entry-enter" data-testid="streaming-assistant-message">
 			<Show when={store.character !== undefined}>
 				<img
 					class="agent-message-avatar"
@@ -499,7 +502,7 @@ function StreamingAssistantProjection(props: {
 						streaming={store.activePiLiveState?.isStreaming === true}
 					/>
 					<Show when={store.activePiLiveState?.isStreaming === true}>
-						<span class="streaming-status" role="status" aria-label={t("messages.responding")} />
+						<span class="streaming-status" aria-hidden="true" />
 					</Show>
 					<Show when={failed() && errorText()}>
 						{(error) => (
@@ -607,21 +610,27 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 	const view = useConversationViewWorkflow(store);
 	const { sceneLabel, hasThreadContent } = view;
 	let threadRef: HTMLElement | undefined;
-
-	followTimelineScroll(
-		() => threadRef,
-		() => store.activeTimeline.map((item) => item.id).join(":"),
+	let jumpButtonRef: HTMLButtonElement | undefined;
+	let timelineScroll: TimelineScrollController | undefined;
+	const announcement = createMemo(() =>
+		store.activePiLiveState?.isStreaming === true ? t("messages.responding") : "",
 	);
+	const connectTimelineScroll = () => {
+		if (!timelineScroll && threadRef && jumpButtonRef)
+			timelineScroll = installTimelineScrollProtection(threadRef, jumpButtonRef);
+	};
+	onCleanup(() => timelineScroll?.dispose());
 
 	return (
 		<>
 			<ThreadHead sceneLabel={sceneLabel()} />
 			<section
 				class="thread"
-				aria-live="polite"
 				aria-label={t("messages.conversation")}
+				data-conversation-id={store.activeConversationId ?? ""}
 				ref={(el) => {
 					threadRef = el;
+					connectTimelineScroll();
 				}}
 			>
 				<Show when={store.error != null}>
@@ -634,6 +643,27 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 					<PiTimelineRenderer items={store.activeTimeline} onPreviewMedia={props.onPreviewMedia} />
 				</Show>
 			</section>
+			<div
+				class="sr-only"
+				role="status"
+				aria-live="polite"
+				aria-atomic="true"
+				data-testid="conversation-announcement"
+			>
+				{announcement()}
+			</div>
+			<Button
+				type="button"
+				class="timeline-jump-latest"
+				hidden
+				ref={(element) => {
+					jumpButtonRef = element;
+					connectTimelineScroll();
+				}}
+				onClick={() => timelineScroll?.scrollToLatest()}
+			>
+				{t("messages.returnToLatest")}
+			</Button>
 		</>
 	);
 }

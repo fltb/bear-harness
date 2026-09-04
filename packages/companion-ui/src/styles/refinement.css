@@ -490,10 +490,6 @@ button[data-variant="primary"]:hover:not(:disabled),
 	@apply absolute right-2 top-2 m-0 min-h-0;
 }
 
-.msg p {
-	@apply text-base leading-relaxed;
-}
-
 .msg-heading {
 	@apply mb-1 flex min-h-6 items-start justify-between gap-3;
 }
@@ -558,7 +554,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 }
 
 .message-operations button {
-	@apply min-h-8 rounded-lg border-0 px-2 text-xs;
+	@apply min-h-11 rounded-lg border-0 px-3 text-xs;
 	color: var(--sys-text-muted);
 	background: var(--surface-control);
 }
@@ -633,6 +629,21 @@ button[data-variant="primary"]:hover:not(:disabled),
 
 .timeline-entry-row {
 	@apply flex w-full items-start gap-3;
+}
+
+.timeline-entry-enter {
+	animation: timeline-entry-in var(--motion-fast) cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes timeline-entry-in {
+	from {
+		opacity: 0;
+		transform: translateY(3px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
 }
 
 .agent-result-trigger {

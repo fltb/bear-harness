@@ -71,11 +71,12 @@ test("refreshing a running conversation restores its authoritative stream", asyn
 	await page.reload();
 
 	await expect(thread.getByText("HOLD_ONE", { exact: false })).toBeVisible();
-	await expect(thread.getByRole("status", { name: zhCN.messages.responding })).toBeVisible();
+	const announcement = page.getByTestId("conversation-announcement");
+	await expect(announcement).toHaveText(zhCN.messages.responding);
 	await expect(thread.getByText("HOLD_ONE HOLD_TWO", { exact: true })).toBeVisible({
 		timeout: 15_000,
 	});
-	await expect(thread.getByRole("status", { name: zhCN.messages.responding })).toBeHidden();
+	await expect(announcement).toHaveText("");
 });
 
 test("two Pi sessions can run concurrently, switch locally, and finish without stealing focus", async ({
@@ -96,7 +97,7 @@ test("two Pi sessions can run concurrently, switch locally, and finish without s
 	await expect(
 		sidebar.locator(`[data-conversation-id="${sessionAId}"] .conversation-running`),
 	).toBeVisible();
-	await expect(thread.getByRole("status", { name: zhCN.messages.responding })).toBeVisible();
+	await expect(page.getByTestId("conversation-announcement")).toHaveText(zhCN.messages.responding);
 	await expect(thread.getByText(/HOLD_ONE/)).toBeVisible();
 
 	await page.getByTitle(zhCN.sidebar.newConversation, { exact: true }).click();

@@ -732,8 +732,8 @@ describe("shared model selector contract", () => {
 			"aria-expanded",
 			"true",
 		);
-		await waitFor(() => expect(screen.getByText("Vision Name (Provider Two)")).toBeVisible());
-		expect(screen.getByText("Text Name (Provider One)")).not.toBeVisible();
+		await waitFor(() => expect(screen.getByText("Vision Name · Provider Two")).toBeVisible());
+		expect(screen.getByText("Text Name · Provider One")).not.toBeVisible();
 		view.unmount();
 	});
 });

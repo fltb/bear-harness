@@ -11,6 +11,7 @@
 		color-mix(in srgb, var(--surface-canvas) 48%, transparent)
 	);
 	backdrop-filter: blur(5px);
+	overflow-anchor: none;
 	scrollbar-width: thin;
 	scrollbar-color: var(--scroll-thumb) transparent;
 }
@@ -54,15 +55,15 @@
 }
 
 .msg p {
-	@apply m-0 break-words font-serif text-lg leading-relaxed;
+	@apply m-0 break-words;
 }
 
 .message-content {
-	@apply min-w-0;
+	@apply min-w-0 font-serif text-base leading-relaxed;
 }
 
 .message-markdown {
-	@apply min-w-0 break-words font-serif text-lg leading-relaxed;
+	@apply min-w-0 break-words;
 }
 
 .message-markdown > :first-child {
@@ -265,8 +266,16 @@
 }
 
 .composer textarea {
-	@apply min-h-10 w-full resize-none border-0 bg-transparent px-1 py-2.5 outline-0;
+	@apply min-h-10 max-h-48 w-full resize-none overflow-y-hidden border-0 bg-transparent px-1 py-2.5 outline-0;
 	color: var(--sys-text);
+}
+
+.timeline-jump-latest {
+	grid-area: thread;
+	@apply z-20 mb-4 min-h-11 self-end justify-self-center rounded-full border px-4 text-sm shadow-app;
+	border-color: var(--line-strong);
+	color: var(--sys-text);
+	background: var(--surface-panel);
 }
 
 .composer-model {
