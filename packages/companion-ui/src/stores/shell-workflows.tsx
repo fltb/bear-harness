@@ -69,6 +69,7 @@ export interface ShellWorkflowStore {
 
 export const ShellWorkflowContext = createContext<ShellWorkflowStore | undefined>(undefined);
 const shellWorkflows = new WeakMap<CompanionStore, ShellWorkflowStore>();
+const MAX_ACTION_STATE_CACHE_ENTRIES = 32;
 
 /**
  * Components normally receive the app-owned workflow through this context.
@@ -252,6 +253,10 @@ export function createShellWorkflowStore(input: {
 		let state = permissionStates.get(id);
 		if (!state) {
 			state = actionState();
+			if (permissionStates.size >= MAX_ACTION_STATE_CACHE_ENTRIES) {
+				const oldest = permissionStates.keys().next().value;
+				if (oldest !== undefined) permissionStates.delete(oldest);
+			}
 			permissionStates.set(id, state);
 		}
 		return state;
@@ -262,6 +267,10 @@ export function createShellWorkflowStore(input: {
 			const base = actionState();
 			const [steerText, setSteerText] = createSignal("");
 			state = { ...base, steerText, setSteerText };
+			if (runStates.size >= MAX_ACTION_STATE_CACHE_ENTRIES) {
+				const oldest = runStates.keys().next().value;
+				if (oldest !== undefined) runStates.delete(oldest);
+			}
 			runStates.set(id, state);
 		}
 		return state;

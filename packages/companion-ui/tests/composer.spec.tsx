@@ -65,7 +65,7 @@ function configureActiveConversation(client: CompanionClient): void {
 				conversationId: "conversation-1",
 				name: "Test conversation",
 				branch: { entries: [], hasMoreBefore: false },
-				live: { isStreaming: false, steering: [], followUp: [] },
+				live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
 			},
 		}),
 	);

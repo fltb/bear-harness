@@ -288,25 +288,47 @@ function reply(payload: {
 				? "E2E_CONTEXT_TWO_TURNS_OK\n"
 				: prompt.includes("VISUAL_OBSERVATION: a red square")
 					? "MAIN_USED_VISUAL_OBSERVATION\n"
-					: directMemoryText !== undefined
-						? `${directMemoryText}\n`
-						: memoryContextCheck
-							? current.includes("南星") && hostContext.includes("南星")
-								? "MEMORY_CONTEXT:我们约定暗号是南星\n"
-								: current.includes("北辰") && hostContext.includes("北辰")
-									? "MEMORY_CONTEXT:我们约定暗号是北辰\n"
-									: "MEMORY_CONTEXT:ABSENT\n"
-							: current.includes("规则：回复 EDITED_OK") || prompt.includes("规则：回复 EDITED_OK")
-								? "EDITED_OK\n"
-								: prompt.includes("STREAM_HOLD_A")
-									? "HOLD_ONE HOLD_TWO\n"
-									: prompt.includes("STREAM_CHECK")
-										? "STREAM_ONE STREAM_TWO\n"
-										: prompt.includes("你是谁")
-											? "我是 E2E Rule Provider。\n"
-											: prompt.includes("E2E_OK")
-												? "E2E_OK\n"
-												: "RULE_OK\n";
+					: prompt.includes("RICH_CONTENT_STREAM")
+						? `# 交接结果
+
+**状态：完成**
+
+- 权威快照已读取
+- 流事件已续接
+
+| 层 | 来源 |
+| --- | --- |
+| 展示 | 响应式投影 |
+| 内容 | Pi |
+
+\`\`\`ts
+const total = price * nights;
+\`\`\`
+
+$$
+E = mc^2
+$$
+`
+						: directMemoryText !== undefined
+							? `${directMemoryText}\n`
+							: memoryContextCheck
+								? current.includes("南星") && hostContext.includes("南星")
+									? "MEMORY_CONTEXT:我们约定暗号是南星\n"
+									: current.includes("北辰") && hostContext.includes("北辰")
+										? "MEMORY_CONTEXT:我们约定暗号是北辰\n"
+										: "MEMORY_CONTEXT:ABSENT\n"
+								: current.includes("规则：回复 EDITED_OK") ||
+										prompt.includes("规则：回复 EDITED_OK")
+									? "EDITED_OK\n"
+									: prompt.includes("STREAM_HOLD_A")
+										? "HOLD_ONE HOLD_TWO\n"
+										: prompt.includes("STREAM_CHECK")
+											? "STREAM_ONE STREAM_TWO\n"
+											: prompt.includes("你是谁")
+												? "我是 E2E Rule Provider。\n"
+												: prompt.includes("E2E_OK")
+													? "E2E_OK\n"
+													: "RULE_OK\n";
 	return { content };
 }
 
@@ -372,6 +394,25 @@ createServer(async (request, response) => {
 	}
 	if (payload.stream) {
 		response.writeHead(200, { "content-type": "text/event-stream" });
+		if (result.content.includes("# 交接结果")) {
+			const pieces = [
+				"# 交接结果\n\n**状态",
+				result.content.slice("# 交接结果\n\n**状态".length, result.content.indexOf("```ts") + 5),
+				result.content.slice(result.content.indexOf("```ts") + 5, result.content.indexOf("$$") + 1),
+				result.content.slice(result.content.indexOf("$$") + 1),
+			];
+			for (const [index, piece] of pieces.entries()) {
+				response.write(
+					`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { ...(index === 0 ? { role: "assistant" } : {}), content: piece }, finish_reason: null }] })}\n\n`,
+				);
+				await new Promise((resolve) => setTimeout(resolve, 120));
+			}
+			response.write(
+				`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`,
+			);
+			response.end("data: [DONE]\n\n");
+			return;
+		}
 		if (result.content === "HOLD_ONE HOLD_TWO\n") {
 			response.write(
 				`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant", content: "HOLD_ONE " }, finish_reason: null }] })}\n\n`,

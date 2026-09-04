@@ -33,6 +33,51 @@ test("chat streams once and edited history regenerates once through the UI", asy
 	expect(pageErrors).toEqual([]);
 });
 
+test("one MessageContent projection renders rich streaming output and the settled snapshot", async ({
+	page,
+}) => {
+	await ensureReadyForConversation(page);
+	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
+	await sendMessage(page, "RICH_CONTENT_STREAM");
+
+	const response = thread.getByRole("article", { name: "极昼" }).filter({ hasText: "交接结果" });
+	await expect(response.getByRole("heading", { name: "交接结果" })).toBeVisible();
+	expect(await response.getByText("状态：完成").evaluate((element) => element.tagName)).toBe(
+		"STRONG",
+	);
+	await expect(response.getByRole("listitem")).toHaveCount(2);
+	await expect(response.getByRole("table")).toBeVisible();
+	expect(
+		await response
+			.getByText("const total = price * nights;")
+			.evaluate((element) => [element.parentElement?.tagName, element.tagName]),
+	).toEqual(["PRE", "CODE"]);
+	await expect(response.getByRole("math")).toBeVisible();
+	await expect(response.getByTestId("message-content")).not.toHaveAttribute("aria-busy", "true");
+
+	await page.reload();
+	const settled = thread.getByRole("article", { name: "极昼" }).filter({ hasText: "交接结果" });
+	await expect(settled.getByRole("heading", { name: "交接结果" })).toBeVisible();
+	await expect(settled.getByText("const total = price * nights;")).toBeVisible();
+	await expect(settled.getByRole("math")).toBeVisible();
+});
+
+test("refreshing a running conversation restores its authoritative stream", async ({ page }) => {
+	await ensureReadyForConversation(page);
+	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
+	await sendMessage(page, "STREAM_HOLD_A");
+	await expect(thread.getByText("HOLD_ONE", { exact: false })).toBeVisible();
+
+	await page.reload();
+
+	await expect(thread.getByText("HOLD_ONE", { exact: false })).toBeVisible();
+	await expect(thread.getByRole("status", { name: zhCN.messages.responding })).toBeVisible();
+	await expect(thread.getByText("HOLD_ONE HOLD_TWO", { exact: true })).toBeVisible({
+		timeout: 15_000,
+	});
+	await expect(thread.getByRole("status", { name: zhCN.messages.responding })).toBeHidden();
+});
+
 test("two Pi sessions can run concurrently, switch locally, and finish without stealing focus", async ({
 	page,
 }) => {

@@ -236,6 +236,7 @@ export const zhCN = {
 			conversationSearch: "查找记得的原话",
 			explicitMemory: "更新明确记忆",
 			generic: "执行内部操作",
+			running: "正在处理",
 			completed: "已完成",
 			failed: "未完成",
 		},

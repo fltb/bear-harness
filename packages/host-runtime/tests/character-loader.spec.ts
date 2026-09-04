@@ -366,6 +366,15 @@ describe("character package Pi resources", () => {
 		expect(resources.appendSystemPrompt).toContain(
 			"Keep automatic relationship memory and explicit MEMORY.md edits distinct",
 		);
+		expect(resources.appendSystemPrompt).toContain(
+			"fenced code blocks with a language tag for code",
+		);
+		expect(resources.appendSystemPrompt).toContain(
+			"do not put arithmetic or formulas in inline-code backticks",
+		);
+		expect(resources.appendSystemPrompt).toContain(
+			"Never emit raw HTML, Markdown images, or text that imitates product buttons",
+		);
 		expect(resources.appendSystemPrompt).toContain('"id": "relay_room"');
 		expect(resources.appendSystemPrompt).toContain('"id": "reflective"');
 		expect(resources.appendSystemPrompt).toContain('"id": "continuity_light"');

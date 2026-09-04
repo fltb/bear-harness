@@ -154,6 +154,7 @@ export function createDesktopArtifactPresenter(
 		async dispose() {
 			if (closed) return;
 			closed = true;
+			await cleanupPromise.catch(() => undefined);
 			await Promise.allSettled([...active]);
 			const directory = await directoryPromise?.catch(() => undefined);
 			if (directory) await rm(directory, { recursive: true, force: true });

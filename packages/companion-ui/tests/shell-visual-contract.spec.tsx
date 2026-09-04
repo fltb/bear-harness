@@ -64,7 +64,7 @@ function configurePortraitClient(options: { active?: boolean } = {}) {
 				conversationId,
 				name: summary.name,
 				branch,
-				live: { isStreaming: false, steering: [], followUp: [] },
+				live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
 			}
 		: undefined;
 	const snapshot = {
@@ -309,6 +309,7 @@ describe("portrait layout contracts", () => {
 					branch: { entries: [], hasMoreBefore: false },
 					live: {
 						isStreaming: true,
+						pendingToolCallIds: [],
 						steering: [],
 						followUp: [],
 					},

@@ -12,6 +12,7 @@ import {
 	useContext,
 } from "solid-js";
 import { IpcInvocationError } from "../lib/ipc.js";
+import { appendPiProjectionEvent } from "../lib/pi-event-replay.js";
 import { createCanonApi, createCharacterApi } from "./character-api.js";
 import { createExternalAgentApi } from "./external-agent-api.js";
 import type {
@@ -78,6 +79,13 @@ export type TimelineProjectionItem =
 	| { kind: "optimistic-user"; id: string; message: PendingUserMessage }
 	| { kind: "queued-user"; id: string; text: string }
 	| {
+			kind: "tool-execution";
+			id: string;
+			toolCallId: string;
+			toolName: string;
+			status: "running" | "completed" | "failed";
+	  }
+	| {
 			kind: "streaming-assistant";
 			id: string;
 			message: Extract<NonNullable<PiLiveState["streamingMessage"]>, { role: "assistant" }>;
@@ -138,6 +146,7 @@ export interface CompanionStore {
 }
 
 export const CompanionStoreContext = createContext<CompanionStore>();
+const MAX_DELETED_CONVERSATION_TOMBSTONES = 128;
 export function DesktopProvider(props: ParentProps<{ store: CompanionStore }>) {
 	return (
 		<CompanionStoreContext.Provider value={props.store}>
@@ -226,6 +235,24 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	const [optimisticUserBySession, setOptimisticUserBySession] = createSignal<
 		ReadonlyMap<string, PendingUserMessage>
 	>(new Map());
+	const [toolExecutionsBySession, setToolExecutionsBySession] = createSignal<
+		ReadonlyMap<
+			string,
+			ReadonlyMap<
+				string,
+				{ toolCallId: string; toolName: string; status: "running" | "completed" | "failed" }
+			>
+		>
+	>(new Map());
+	const piEventCaptures = new Map<string, Set<AgentSessionEvent[]>>();
+	const deletedConversationIds = new Set<string>();
+	const markConversationDeleted = (conversationId: string) => {
+		deletedConversationIds.delete(conversationId);
+		deletedConversationIds.add(conversationId);
+		if (deletedConversationIds.size <= MAX_DELETED_CONVERSATION_TOMBSTONES) return;
+		const oldest = deletedConversationIds.values().next().value;
+		if (oldest !== undefined) deletedConversationIds.delete(oldest);
+	};
 	onCleanup(queryClient.getQueryCache().subscribe(() => setCacheRevision((value) => value + 1)));
 	const fail = (operation: string, cause: unknown) => {
 		setOperationError({
@@ -390,13 +417,20 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		});
 	const refreshConversation = async (conversationId = activeConversationId()) => {
 		if (!conversationId) return undefined;
-		const detail = await refreshRpcQuery({
-			client: queryClient,
-			key: queryKeys.conversation(conversationId),
-			request: () => invoke(client, () => client.conversation.open({ conversationId })),
-		});
-		if (detail) reconcileOptimisticUser(detail);
-		return detail;
+		return withPiEventReplay(
+			conversationId,
+			() =>
+				refreshRpcQuery({
+					client: queryClient,
+					key: queryKeys.conversation(conversationId),
+					request: () => invoke(client, () => client.conversation.open({ conversationId })),
+				}),
+			(detail) => {
+				reconcileOptimisticUser(detail);
+				dropPiLive(detail.conversationId);
+				replaceToolExecutions(detail);
+			},
+		);
 	};
 	const refreshCompanionState = async (conversationId = activeConversationId()) => {
 		if (!conversationId) return undefined;
@@ -404,13 +438,6 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			client: queryClient,
 			key: queryKeys.companionState(conversationId),
 			request: () => invoke(client, () => client.companionState.get({ conversationId })),
-		});
-	};
-	const replacePiLive = (detail: ConversationDetail) => {
-		setPiLiveBySession((current) => {
-			const next = new Map(current);
-			next.set(detail.conversationId, detail.live);
-			return next;
 		});
 	};
 	const dropPiLive = (conversationId: string) => {
@@ -421,14 +448,62 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			return next;
 		});
 	};
+	const dropToolExecutions = (conversationId: string) => {
+		setToolExecutionsBySession((current) => {
+			if (!current.has(conversationId)) return current;
+			const next = new Map(current);
+			next.delete(conversationId);
+			return next;
+		});
+	};
+	const replaceToolExecutions = (detail: ConversationDetail) => {
+		const pending = new Set(detail.live.pendingToolCallIds);
+		const executions = new Map<
+			string,
+			{ toolCallId: string; toolName: string; status: "running" }
+		>();
+		const message = detail.live.streamingMessage;
+		if (message?.role === "assistant" && Array.isArray(message.content)) {
+			for (const part of message.content) {
+				if (part.type !== "toolCall" || !pending.has(part.id)) continue;
+				executions.set(part.id, {
+					toolCallId: part.id,
+					toolName: part.name,
+					status: "running",
+				});
+			}
+		}
+		for (const toolCallId of pending) {
+			if (!executions.has(toolCallId))
+				executions.set(toolCallId, { toolCallId, toolName: "tool", status: "running" });
+		}
+		setToolExecutionsBySession((current) => {
+			const next = new Map(current);
+			if (executions.size === 0) next.delete(detail.conversationId);
+			else next.set(detail.conversationId, executions);
+			return next;
+		});
+	};
 	const activateDetail = (detail: ConversationDetail) => {
+		const previousId = activeConversationId();
 		hydrateRpcQuery(queryClient, queryKeys.conversation(detail.conversationId), detail);
 		if (detail.selectedModel)
 			hydrateRpcQuery(queryClient, queryKeys.modelRoute(detail.conversationId), {
 				selected: detail.selectedModel,
 			});
 		reconcileOptimisticUser(detail);
+		dropPiLive(detail.conversationId);
+		replaceToolExecutions(detail);
 		setActiveConversationId(detail.conversationId);
+		if (previousId && previousId !== detail.conversationId) {
+			const previousOptimistic = optimisticUserBySession().get(previousId);
+			if (previousOptimistic?.state === "failed") removeOptimisticUser(previousId);
+			if (piLiveBySession().get(previousId)?.isStreaming !== true) dropPiLive(previousId);
+			if (piLiveBySession().get(previousId)?.isStreaming !== true) dropToolExecutions(previousId);
+			queryClient.removeQueries({ queryKey: queryKeys.conversation(previousId), exact: true });
+			queryClient.removeQueries({ queryKey: queryKeys.companionState(previousId), exact: true });
+			queryClient.removeQueries({ queryKey: queryKeys.modelRoute(previousId), exact: true });
+		}
 		setCompletedConversationIds((current) => {
 			if (!current.has(detail.conversationId)) return current;
 			const next = new Set(current);
@@ -436,17 +511,20 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			return next;
 		});
 	};
-	const openAndActivate = async (id: string) => {
-		const detail = await invoke(client, () => client.conversation.open({ conversationId: id }));
-		activateDetail(detail);
-		return detail;
-	};
 	const refreshConversations = async () => {
-		return refreshRpcQuery({
+		const result = await refreshRpcQuery({
 			client: queryClient,
 			key: [...queryKeys.conversations, titleQuery()],
 			request: conversationsRequest,
 		});
+		const available = new Set(
+			result.conversations.map((conversation) => conversation.conversationId),
+		);
+		setCompletedConversationIds((current) => {
+			const next = new Set([...current].filter((id) => available.has(id)));
+			return next.size === current.size ? current : next;
+		});
+		return result;
 	};
 	const refreshArchived = async () => {
 		return refreshRpcQuery({
@@ -466,11 +544,7 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			if (onboardingData.status !== "complete" || activeConversationId() !== null) return;
 			const first = conversations.conversations[0];
 			if (!first) return;
-			return invoke(client, () =>
-				client.conversation.open({ conversationId: first.conversationId }),
-			).then((detail) => {
-				if (activeConversationId() === null) activateDetail(detail);
-			});
+			return openAndActivate(first.conversationId, () => activeConversationId() === null);
 		})
 		.catch((cause) => fail("conversation.initialize", cause));
 	const refreshRuns = () =>
@@ -515,13 +589,24 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		activeConversationId,
 		onRefreshError: (cause) => fail("model.refresh", cause),
 	});
-	const applyPiEvent = (conversationId: string, event: AgentSessionEvent) => {
+	const applyPiEvent = (
+		conversationId: string,
+		event: AgentSessionEvent,
+		options: { capture: boolean } = { capture: true },
+	) => {
+		if (deletedConversationIds.has(conversationId)) return;
+		if (options.capture)
+			for (const capture of piEventCaptures.get(conversationId) ?? [])
+				appendPiProjectionEvent(capture, event);
 		setPiLiveBySession((current) => {
-			const previous = current.get(conversationId) ?? {
-				isStreaming: false,
-				steering: [],
-				followUp: [],
-			};
+			const previous = current.get(conversationId) ??
+				queryClient.getQueryData<ConversationDetail>(queryKeys.conversation(conversationId))
+					?.live ?? {
+					isStreaming: false,
+					pendingToolCallIds: [],
+					steering: [],
+					followUp: [],
+				};
 			let nextLive = previous;
 			switch (event.type) {
 				case "agent_start":
@@ -567,8 +652,23 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 						followUp: [...event.followUp],
 					};
 					break;
+				case "tool_execution_start":
+				case "tool_execution_update":
+					nextLive = {
+						...previous,
+						pendingToolCallIds: [...new Set([...previous.pendingToolCallIds, event.toolCallId])],
+					};
+					break;
+				case "tool_execution_end":
+					nextLive = {
+						...previous,
+						pendingToolCallIds: previous.pendingToolCallIds.filter(
+							(toolCallId) => toolCallId !== event.toolCallId,
+						),
+					};
+					break;
 				case "agent_settled":
-					nextLive = { ...previous, isStreaming: false };
+					nextLive = { ...previous, isStreaming: false, pendingToolCallIds: [] };
 					break;
 			}
 			if (nextLive === previous) return current;
@@ -576,6 +676,28 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			next.set(conversationId, nextLive);
 			return next;
 		});
+		if (
+			event.type === "tool_execution_start" ||
+			event.type === "tool_execution_update" ||
+			event.type === "tool_execution_end"
+		) {
+			setToolExecutionsBySession((current) => {
+				const executions = new Map(current.get(conversationId) ?? []);
+				executions.set(event.toolCallId, {
+					toolCallId: event.toolCallId,
+					toolName: event.toolName,
+					status:
+						event.type !== "tool_execution_end"
+							? "running"
+							: event.isError
+								? "failed"
+								: "completed",
+				});
+				const next = new Map(current);
+				next.set(conversationId, executions);
+				return next;
+			});
+		}
 		if (event.type === "entry_appended") {
 			if (event.entry.type === "message" && event.entry.message.role === "assistant") {
 				setPiLiveBySession((current) => {
@@ -607,6 +729,22 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 					piMessageText(event.entry.message.content)
 			)
 				removeOptimisticUser(conversationId);
+			const completedToolCallId =
+				event.entry.type === "message" && event.entry.message.role === "toolResult"
+					? event.entry.message.toolCallId
+					: undefined;
+			if (completedToolCallId) {
+				setToolExecutionsBySession((current) => {
+					const existing = current.get(conversationId);
+					if (!existing?.has(completedToolCallId)) return current;
+					const executions = new Map(existing);
+					executions.delete(completedToolCallId);
+					const next = new Map(current);
+					if (executions.size === 0) next.delete(conversationId);
+					else next.set(conversationId, executions);
+					return next;
+				});
+			}
 		}
 		if (event.type === "session_info_changed") {
 			queryClient.setQueryData<ConversationDetail>(
@@ -623,14 +761,58 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			});
 		}
 		if (event.type === "agent_settled") {
+			dropToolExecutions(conversationId);
 			if (conversationId === activeConversationId())
 				void Promise.all([
 					refreshConversation(conversationId),
 					refreshCompanionState(conversationId),
 				]).catch((cause) => fail("conversation.settled", cause));
-			else setCompletedConversationIds((current) => new Set(current).add(conversationId));
+			else {
+				dropPiLive(conversationId);
+				removeOptimisticUser(conversationId);
+				const available = conversationsQuery.data?.conversations.some(
+					(conversation) => conversation.conversationId === conversationId,
+				);
+				if (available)
+					setCompletedConversationIds((current) => new Set(current).add(conversationId));
+			}
 		}
 	};
+	async function withPiEventReplay(
+		conversationId: string,
+		request: () => Promise<ConversationDetail | undefined>,
+		commit: (detail: ConversationDetail) => void,
+	): Promise<ConversationDetail | undefined> {
+		const capture: AgentSessionEvent[] = [];
+		const captures = piEventCaptures.get(conversationId) ?? new Set<AgentSessionEvent[]>();
+		captures.add(capture);
+		piEventCaptures.set(conversationId, captures);
+		let committed = false;
+		try {
+			const detail = await request();
+			if (!detail || deletedConversationIds.has(conversationId)) return undefined;
+			commit(detail);
+			committed = true;
+			return detail;
+		} finally {
+			captures.delete(capture);
+			if (captures.size === 0) piEventCaptures.delete(conversationId);
+			if (committed && !deletedConversationIds.has(conversationId))
+				for (const event of capture) applyPiEvent(conversationId, event, { capture: false });
+		}
+	}
+	async function openAndActivate(
+		conversationId: string,
+		shouldActivate: () => boolean = () => true,
+	): Promise<ConversationDetail | undefined> {
+		return withPiEventReplay(
+			conversationId,
+			() => invoke(client, () => client.conversation.open({ conversationId })),
+			(detail) => {
+				if (shouldActivate()) activateDetail(detail);
+			},
+		);
+	}
 	const invalidationAbort = new AbortController();
 	onCleanup(() => invalidationAbort.abort());
 	void (async () => {
@@ -673,7 +855,8 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 					selected: detail.selectedModel,
 				});
 			reconcileOptimisticUser(detail);
-			replacePiLive(detail);
+			dropPiLive(detail.conversationId);
+			replaceToolExecutions(detail);
 		};
 		const applyLiveEvent = (event: LivePush) => {
 			if (event.type === "pi") applyPiEvent(event.conversationId, event.event);
@@ -780,7 +963,16 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		switchCharacterConversations: async () => {
 			setActiveConversationId(null);
 			setPiLiveBySession(new Map());
-			const available = await refreshConversations();
+			setToolExecutionsBySession(new Map());
+			setOptimisticUserBySession(new Map());
+			setCompletedConversationIds(new Set<string>());
+			piEventCaptures.clear();
+			deletedConversationIds.clear();
+			queryClient.removeQueries({ queryKey: ["conversation"] });
+			queryClient.removeQueries({ queryKey: ["companionState"] });
+			queryClient.removeQueries({ queryKey: ["models", "route"] });
+			queryClient.removeQueries({ queryKey: queryKeys.runs, exact: true });
+			const [available] = await Promise.all([refreshConversations(), refreshArchived()]);
 			const first = available.conversations[0];
 			if (first) await openAndActivate(first.conversationId);
 		},
@@ -847,10 +1039,15 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		},
 		get conversations() {
 			const live = piLiveBySession();
+			const activeId = activeConversationId();
+			const active = activeDetail();
 			completedConversationIds();
 			return (conversationsQuery.data?.conversations ?? []).map((conversation) => ({
 				...conversation,
-				isStreaming: live.get(conversation.conversationId)?.isStreaming ?? conversation.isStreaming,
+				isStreaming:
+					live.get(conversation.conversationId)?.isStreaming ??
+					(activeId === conversation.conversationId ? active?.live.isStreaming : undefined) ??
+					conversation.isStreaming,
 			}));
 		},
 		get archivedConversations() {
@@ -893,6 +1090,12 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			const live = piLiveBySession().get(id) ?? detail.live;
 			for (const [index, text] of [...live.steering, ...live.followUp].entries())
 				result.push({ kind: "queued-user", id: `pi-queue-${index}-${text}`, text });
+			for (const execution of toolExecutionsBySession().get(id)?.values() ?? [])
+				result.push({
+					kind: "tool-execution",
+					id: `pi-tool-${execution.toolCallId}`,
+					...execution,
+				});
 			const streaming = live.streamingMessage;
 			if (streaming?.role === "assistant") {
 				const text = piMessageText(streaming.content);
@@ -972,8 +1175,21 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 					client.conversation.archive({ conversationId: id, archived: true }),
 				);
 				const [available] = await Promise.all([refreshConversations(), refreshArchived()]);
+				setCompletedConversationIds((current) => {
+					if (!current.has(id)) return current;
+					const next = new Set(current);
+					next.delete(id);
+					return next;
+				});
 				if (wasActive) {
 					setActiveConversationId(null);
+					if (piLiveBySession().get(id)?.isStreaming !== true) {
+						dropPiLive(id);
+						dropToolExecutions(id);
+					}
+					queryClient.removeQueries({ queryKey: queryKeys.conversation(id), exact: true });
+					queryClient.removeQueries({ queryKey: queryKeys.companionState(id), exact: true });
+					queryClient.removeQueries({ queryKey: queryKeys.modelRoute(id), exact: true });
 					const next = available.conversations.find(
 						(conversation) => conversation.conversationId !== id,
 					);
@@ -991,13 +1207,21 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			run("conversation.delete", async () => {
 				const wasActive = activeConversationId() === id;
 				await invoke(client, () => client.conversation.delete({ conversationId: id }));
+				markConversationDeleted(id);
+				piEventCaptures.delete(id);
 				const [available] = await Promise.all([refreshConversations(), refreshArchived()]);
-				setPiLiveBySession((current) => {
+				dropPiLive(id);
+				dropToolExecutions(id);
+				removeOptimisticUser(id);
+				setCompletedConversationIds((current) => {
 					if (!current.has(id)) return current;
-					const next = new Map(current);
+					const next = new Set(current);
 					next.delete(id);
 					return next;
 				});
+				queryClient.removeQueries({ queryKey: queryKeys.conversation(id), exact: true });
+				queryClient.removeQueries({ queryKey: queryKeys.companionState(id), exact: true });
+				queryClient.removeQueries({ queryKey: queryKeys.modelRoute(id), exact: true });
 				if (wasActive) {
 					setActiveConversationId(null);
 					const next = available.conversations.find(
@@ -1045,6 +1269,10 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 						}),
 					);
 				} catch (cause) {
+					if (activeConversationId() !== conversationId) {
+						removeOptimisticUser(conversationId);
+						throw cause;
+					}
 					setOptimisticUserBySession((current) => {
 						const item = current.get(conversationId);
 						if (item?.clientMessageId !== clientMessageId) return current;
@@ -1076,35 +1304,31 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		},
 		regenerateMessage: (entryId, feedback) =>
 			run("message.regenerate", async () => {
-				const detail = await invoke(client, () =>
-					client.message.regenerate({
-						conversationId: requireConversation(),
-						entryId,
-						feedback,
-					}),
+				const conversationId = requireConversation();
+				await withPiEventReplay(
+					conversationId,
+					() =>
+						invoke(client, () => client.message.regenerate({ conversationId, entryId, feedback })),
+					activateDetail,
 				);
-				activateDetail(detail);
 			}),
 		switchMessageVersion: (leafId) =>
 			run("message.switchVersion", async () => {
-				const detail = await invoke(client, () =>
-					client.message.switchVersion({
-						conversationId: requireConversation(),
-						leafId,
-					}),
+				const conversationId = requireConversation();
+				await withPiEventReplay(
+					conversationId,
+					() => invoke(client, () => client.message.switchVersion({ conversationId, leafId })),
+					activateDetail,
 				);
-				activateDetail(detail);
 			}),
 		editMessage: (entryId, text) =>
 			run("message.edit", async () => {
-				const detail = await invoke(client, () =>
-					client.message.edit({
-						conversationId: requireConversation(),
-						entryId,
-						text,
-					}),
+				const conversationId = requireConversation();
+				await withPiEventReplay(
+					conversationId,
+					() => invoke(client, () => client.message.edit({ conversationId, entryId, text })),
+					activateDetail,
 				);
-				activateDetail(detail);
 			}),
 		abort: () =>
 			run("message.abort", async () => {

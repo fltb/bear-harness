@@ -46,6 +46,10 @@ export default defineConfig({
 	},
 	use: {
 		baseURL,
+		// Exercise the complete Chromium browser in its background headless mode.
+		// The reduced headless-shell binary has a reproducible renderer SIGTRAP on
+		// longer native-model journeys and is less representative of production.
+		channel: "chromium",
 		colorScheme: "dark",
 	},
 	webServer: [

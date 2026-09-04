@@ -57,6 +57,135 @@
 	@apply m-0 break-words font-serif text-lg leading-relaxed;
 }
 
+.message-content {
+	@apply min-w-0;
+}
+
+.message-markdown {
+	@apply min-w-0 break-words font-serif text-lg leading-relaxed;
+}
+
+.message-markdown > :first-child {
+	@apply mt-0;
+}
+
+.message-markdown > :last-child {
+	@apply mb-0;
+}
+
+.message-markdown p,
+.message-markdown ul,
+.message-markdown ol,
+.message-markdown blockquote,
+.message-markdown pre,
+.message-markdown table,
+.message-markdown .katex-display {
+	@apply my-3;
+}
+
+.message-markdown h1,
+.message-markdown h2,
+.message-markdown h3,
+.message-markdown h4 {
+	@apply mb-2 mt-5 font-semibold leading-tight;
+	font-family: var(--font-sans);
+}
+
+.message-markdown h1 {
+	@apply text-2xl;
+}
+
+.message-markdown h2 {
+	@apply text-xl;
+}
+
+.message-markdown h3,
+.message-markdown h4 {
+	@apply text-lg;
+}
+
+.message-markdown ul,
+.message-markdown ol {
+	@apply grid gap-1 pl-6;
+}
+
+.message-markdown ul {
+	@apply list-disc;
+}
+
+.message-markdown ol {
+	@apply list-decimal;
+}
+
+.message-markdown blockquote {
+	@apply border-l-3 pl-3;
+	border-color: var(--line-strong);
+	color: var(--text-soft);
+}
+
+.message-markdown a {
+	color: var(--text-action);
+	text-decoration: underline;
+	text-underline-offset: 0.15em;
+}
+
+.message-markdown code {
+	@apply rounded px-1 py-0.5 text-sm;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	background: var(--surface-control);
+}
+
+.message-markdown pre {
+	@apply max-w-full overflow-x-auto rounded-xl border p-3 text-sm leading-relaxed;
+	border-color: var(--line-soft);
+	background: color-mix(in srgb, var(--surface-canvas) 82%, black 18%);
+}
+
+.message-markdown pre code {
+	@apply bg-transparent p-0;
+}
+
+.message-markdown table {
+	@apply block max-w-full overflow-x-auto border-collapse text-sm;
+}
+
+.message-markdown th,
+.message-markdown td {
+	@apply border px-3 py-2 text-left align-top;
+	border-color: var(--line-soft);
+}
+
+.message-markdown th {
+	background: var(--surface-control);
+}
+
+.message-markdown .katex-display {
+	@apply max-w-full overflow-x-auto overflow-y-hidden py-1;
+}
+
+.message-markdown .hljs-keyword,
+.message-markdown .hljs-selector-tag,
+.message-markdown .hljs-literal {
+	color: var(--text-action);
+}
+
+.message-markdown .hljs-string,
+.message-markdown .hljs-attr,
+.message-markdown .hljs-template-variable {
+	color: var(--text-success);
+}
+
+.message-markdown .hljs-comment,
+.message-markdown .hljs-quote {
+	color: var(--sys-text-muted);
+}
+
+.message-markdown .hljs-number,
+.message-markdown .hljs-built_in,
+.message-markdown .hljs-title {
+	color: var(--text-warning);
+}
+
 .pi-tool-result {
 	@apply self-start border;
 	border-color: var(--line-soft);

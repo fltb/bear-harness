@@ -10,6 +10,7 @@ import type { CharacterLoader, CharacterPackage } from "./companion/character-lo
 import { CompanionStateStore } from "./companion/companion-store.js";
 import { ContextPackCompiler } from "./companion/context-pack.js";
 import { FirstMeetingMachine } from "./companion/first-meeting.js";
+import { projectPiTransientEvent } from "./companion/pi-live-events.js";
 import { PiRuntime } from "./companion/pi-runtime.js";
 import { SessionCatalog } from "./companion/session-catalog.js";
 import { CodexAdapter } from "./executors/codex-adapter.js";
@@ -157,10 +158,12 @@ export class CharacterRuntime {
 			sessionContext: (conversationId) => contextPack.sessionContext(conversationId),
 			titleChanged: () => this.invalidations.invalidate(CacheKey.conversations()),
 			sessionEvent: (envelope) => {
+				const event = projectPiTransientEvent(envelope.event);
+				if (!event) return;
 				options.onLivePush({
 					type: "pi",
 					conversationId: envelope.sessionId,
-					event: envelope.event,
+					event,
 				});
 			},
 		});

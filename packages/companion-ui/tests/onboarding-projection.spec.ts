@@ -164,7 +164,7 @@ describe("onboarding projection", () => {
 			conversationId: "onboarding-conversation",
 			name: "First meeting",
 			branch: { entries: [], hasMoreBefore: false },
-			live: { isStreaming: false, steering: [], followUp: [] },
+			live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
 		};
 		let completed = false;
 		client.onboarding.get = vi.fn(() =>

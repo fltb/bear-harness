@@ -1,12 +1,20 @@
 import type {
 	ConversationDetail,
 	ConversationHistoryResponse,
+	PiAgentSessionEvent,
 	PiLiveSnapshot,
 } from "@bear-harness/protocol";
 import type { PiSnapshot } from "./pi-runtime.js";
 
 type Session = NonNullable<PiSnapshot>;
 const DEFAULT_PAGE_SIZE = 50;
+
+/** `agent_end.messages` duplicates the authoritative session transcript and has no UI projection. */
+export function projectPiTransientEvent(
+	event: PiAgentSessionEvent,
+): Exclude<PiAgentSessionEvent, { type: "agent_end" }> | undefined {
+	return event.type === "agent_end" ? undefined : event;
+}
 
 /** A bounded initial/reconnect view over Pi-owned session state. */
 export function projectPiConversationDetail(
@@ -54,6 +62,7 @@ export function projectPiLiveSnapshot(session: Session): PiLiveSnapshot {
 	return {
 		isStreaming: session.isStreaming,
 		...(streamingMessage ? { streamingMessage } : {}),
+		pendingToolCallIds: [...session.state.pendingToolCalls],
 		steering: [...session.getSteeringMessages()],
 		followUp: [...session.getFollowUpMessages()],
 		...(session.state.errorMessage ? { errorMessage: session.state.errorMessage } : {}),

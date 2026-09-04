@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	projectPiConversationDetail,
 	projectPiConversationHistory,
+	projectPiTransientEvent,
 } from "../src/companion/pi-live-events.js";
 
 function session(
@@ -17,7 +18,11 @@ function session(
 		sessionId: "session-1",
 		sessionName: "Native Pi session",
 		isStreaming: true,
-		state: { streamingMessage: undefined, errorMessage: undefined },
+		state: {
+			streamingMessage: undefined,
+			errorMessage: undefined,
+			pendingToolCalls: new Set(["tool-1"]),
+		},
 		getSteeringMessages: () => ["steer"],
 		getFollowUpMessages: () => ["follow"],
 		sessionManager: {
@@ -36,6 +41,7 @@ describe("native Pi conversation projection", () => {
 		expect(detail.branch.hasMoreBefore).toBe(true);
 		expect(detail.live).toEqual({
 			isStreaming: true,
+			pendingToolCallIds: ["tool-1"],
 			steering: ["steer"],
 			followUp: ["follow"],
 		});
@@ -51,5 +57,13 @@ describe("native Pi conversation projection", () => {
 			"entry-9",
 		]);
 		expect(history.nextCursor).toBe("entry-5");
+	});
+
+	it("does not transport the duplicate transcript carried by agent_end", () => {
+		expect(
+			projectPiTransientEvent({ type: "agent_end", messages: [{ role: "user" }] } as never),
+		).toBeUndefined();
+		const settled = { type: "agent_settled" as const };
+		expect(projectPiTransientEvent(settled)).toBe(settled);
 	});
 });

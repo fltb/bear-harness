@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor, within } from "@solidjs/testing-libra
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/App.js";
-import { createTestClient, OFFICIAL_PRODUCT, THEMED_CHARACTER } from "./fixtures.js";
+import { createTestClient, OFFICIAL_PRODUCT, pushPiEvent, THEMED_CHARACTER } from "./fixtures.js";
 
 describe("Pi message actions", () => {
 	it("sends correction labels through native regeneration", async () => {
@@ -81,7 +81,7 @@ describe("Pi message actions", () => {
 				],
 				hasMoreBefore: false,
 			},
-			live: { isStreaming: false, steering: [], followUp: [] },
+			live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
 		};
 		client.snapshot.get = vi.fn(() =>
 			Promise.resolve({
@@ -143,6 +143,26 @@ describe("Pi message actions", () => {
 		expect(
 			within(firstAssistant).getByRole("button", { name: zhCN.messages.copied }),
 		).toBeVisible();
+		pushPiEvent(client, {
+			type: "pi",
+			conversationId: "conversation-1",
+			event: { type: "agent_start" },
+		});
+		await screen.findByRole("status", { name: zhCN.messages.responding });
+		await waitFor(() => expect(document.body.contains(firstAssistant)).toBe(true));
+		pushPiEvent(client, {
+			type: "pi",
+			conversationId: "conversation-1",
+			event: { type: "agent_settled" },
+		});
+		await waitFor(() =>
+			expect(screen.queryByRole("status", { name: zhCN.messages.responding })).toBeNull(),
+		);
+		await waitFor(() =>
+			expect(
+				within(firstAssistant).getByRole("button", { name: zhCN.messages.copied }),
+			).toBeVisible(),
+		);
 		if (clipboardDescriptor) Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
 		else Reflect.deleteProperty(navigator, "clipboard");
 		await user.click(within(message).getByRole("button", { name: "Correct" }));

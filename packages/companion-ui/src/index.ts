@@ -35,4 +35,5 @@ export {
 } from "./diagnostics.js";
 export { markSelectPortalTopLayer } from "./lib/select-portal.js";
 export { createStableSnapshot } from "./lib/stable-snapshot.js";
+export { MessageContent, type MessageContentProps } from "./MessageContent.js";
 export * from "./stores/companion.js";

@@ -25,7 +25,7 @@ const detail = (conversationId: string, entries: PiSessionEntry[] = []): Convers
 	conversationId,
 	name: `Conversation ${conversationId}`,
 	branch: { entries, hasMoreBefore: false, activeLeafId: entries.at(-1)?.id },
-	live: { isStreaming: false, steering: [], followUp: [] },
+	live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
 });
 
 const userEntry = (id: string, text: string): PiSessionEntry => ({
@@ -61,13 +61,35 @@ const assistantEntry = (id: string, text: string): PiSessionEntry => ({
 	},
 });
 
+const streamingAssistant = (text: string) => ({
+	role: "assistant" as const,
+	content: [{ type: "text" as const, text }],
+	api: "openai-responses" as const,
+	provider: "relay",
+	model: "model",
+	usage: {
+		input: 1,
+		output: 1,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 2,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	},
+	stopReason: "stop" as const,
+	timestamp: 2,
+	responseId: "stream-response",
+});
+
 function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["client"]) {
 	let dispose = () => undefined;
 	let store: ReturnType<typeof createCompanionStore> | undefined;
+	const queryClient = new QueryClient({
+		defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+	});
 	createRoot((cleanup) => {
 		dispose = cleanup;
 		createComponent(QueryClientProvider, {
-			client: new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } }),
+			client: queryClient,
 			get children() {
 				store = createCompanionStore(client);
 				return undefined;
@@ -75,7 +97,7 @@ function createStoreWithCleanup(client: ReturnType<typeof createTestClient>["cli
 		});
 	});
 	if (!store) throw new Error("store was not created inside QueryClientProvider");
-	return { store, dispose };
+	return { store, queryClient, dispose };
 }
 
 describe("renderer-local conversation selection", () => {
@@ -163,6 +185,41 @@ describe("renderer-local conversation selection", () => {
 		}
 	});
 
+	it("does not let a delayed open reactivate a deleted conversation", async () => {
+		const { client } = createTestClient();
+		const conversations = [summary("a"), summary("b")];
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversations: [...conversations] } }),
+		);
+		const openingB = Promise.withResolvers<{ ok: true; data: ConversationDetail }>();
+		client.conversation.open = vi.fn(({ conversationId }) =>
+			conversationId === "b"
+				? openingB.promise
+				: Promise.resolve({ ok: true as const, data: detail(conversationId) }),
+		);
+		client.conversation.delete = vi.fn(({ conversationId }) => {
+			const index = conversations.findIndex((item) => item.conversationId === conversationId);
+			if (index >= 0) conversations.splice(index, 1);
+			return Promise.resolve({ ok: true as const, data: {} });
+		});
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activeConversationId).toBe("a"));
+			const selecting = store.selectConversation("b");
+			await waitFor(() =>
+				expect(client.conversation.open).toHaveBeenCalledWith({ conversationId: "b" }),
+			);
+			await store.deleteConversation("b");
+			openingB.resolve({ ok: true, data: detail("b") });
+			await selecting;
+
+			expect(store.activeConversationId).toBe("a");
+			expect(store.conversations.some((item) => item.conversationId === "b")).toBe(false);
+		} finally {
+			dispose();
+		}
+	});
+
 	it("projects Pi native events per conversation and marks background completion", async () => {
 		const { client } = createTestClient();
 		const conversations = [summary("a"), summary("b")];
@@ -189,6 +246,242 @@ describe("renderer-local conversation selection", () => {
 			await waitFor(() => expect(store.completedConversationIds.has("b")).toBe(true));
 			await store.selectConversation("b");
 			expect(store.completedConversationIds.has("b")).toBe(false);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("isolates transient tool execution by conversation and clears it on settlement", async () => {
+		const { client } = createTestClient();
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversations: [summary("a"), summary("b")] } }),
+		);
+		client.conversation.open = vi.fn(({ conversationId }) =>
+			Promise.resolve({ ok: true as const, data: detail(conversationId) }),
+		);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activeConversationId).toBe("a"));
+			pushPiEvent(client, {
+				type: "pi",
+				conversationId: "b",
+				event: {
+					type: "tool_execution_start",
+					toolCallId: "tool-b",
+					toolName: "host_media",
+					args: { id: "portrait" },
+				},
+			});
+			expect(store.activeTimeline.some((item) => item.kind === "tool-execution")).toBe(false);
+
+			pushPiEvent(client, {
+				type: "pi",
+				conversationId: "a",
+				event: {
+					type: "tool_execution_start",
+					toolCallId: "tool-a",
+					toolName: "host_state",
+					args: {},
+				},
+			});
+			await waitFor(() =>
+				expect(store.activeTimeline).toContainEqual({
+					kind: "tool-execution",
+					id: "pi-tool-tool-a",
+					toolCallId: "tool-a",
+					toolName: "host_state",
+					status: "running",
+				}),
+			);
+			pushPiEvent(client, {
+				type: "pi",
+				conversationId: "a",
+				event: {
+					type: "tool_execution_update",
+					toolCallId: "tool-a",
+					toolName: "host_state",
+					args: {},
+					partialResult: { content: [{ type: "text", text: "working" }] },
+				},
+			});
+			pushPiEvent(client, {
+				type: "pi",
+				conversationId: "a",
+				event: {
+					type: "tool_execution_end",
+					toolCallId: "tool-a",
+					toolName: "host_state",
+					result: { content: [{ type: "text", text: "done" }] },
+					isError: false,
+				},
+			});
+			await waitFor(() =>
+				expect(store.activeTimeline).toContainEqual(
+					expect.objectContaining({ toolCallId: "tool-a", status: "completed" }),
+				),
+			);
+			pushPiEvent(client, {
+				type: "pi",
+				conversationId: "a",
+				event: {
+					type: "tool_execution_end",
+					toolCallId: "tool-failed",
+					toolName: "host_media",
+					result: { content: [{ type: "text", text: "failed" }] },
+					isError: true,
+				},
+			});
+			await waitFor(() =>
+				expect(store.activeTimeline).toContainEqual(
+					expect.objectContaining({ toolCallId: "tool-failed", status: "failed" }),
+				),
+			);
+
+			pushPiEvent(client, { type: "pi", conversationId: "a", event: { type: "agent_settled" } });
+			await waitFor(() =>
+				expect(store.activeTimeline.some((item) => item.kind === "tool-execution")).toBe(false),
+			);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("ignores late Pi events after a conversation is deleted", async () => {
+		const { client } = createTestClient();
+		const conversations = [summary("a"), summary("b")];
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversations: [...conversations] } }),
+		);
+		client.conversation.open = vi.fn(({ conversationId }) =>
+			Promise.resolve({ ok: true as const, data: detail(conversationId) }),
+		);
+		client.conversation.delete = vi.fn(({ conversationId }) => {
+			const index = conversations.findIndex((item) => item.conversationId === conversationId);
+			if (index >= 0) conversations.splice(index, 1);
+			return Promise.resolve({ ok: true as const, data: {} });
+		});
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activeConversationId).toBe("a"));
+			await store.deleteConversation("b");
+			pushPiEvent(client, { type: "pi", conversationId: "b", event: { type: "agent_start" } });
+			pushPiEvent(client, { type: "pi", conversationId: "b", event: { type: "agent_settled" } });
+			expect(store.completedConversationIds.has("b")).toBe(false);
+			expect(store.conversations.some((item) => item.conversationId === "b")).toBe(false);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("releases every conversation projection when switching characters", async () => {
+		const { client } = createTestClient();
+		let switched = false;
+		client.character.activate = vi.fn(() => {
+			switched = true;
+			return Promise.resolve({ ok: true as const, data: null });
+		});
+		client.conversation.list = vi.fn(({ archived = false }) =>
+			Promise.resolve({
+				ok: true as const,
+				data: {
+					conversations: archived ? [] : switched ? [summary("c")] : [summary("a"), summary("b")],
+				},
+			}),
+		);
+		client.conversation.open = vi.fn(({ conversationId }) =>
+			Promise.resolve({ ok: true as const, data: detail(conversationId) }),
+		);
+		const { store, queryClient, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activeConversationId).toBe("a"));
+			pushPiEvent(client, {
+				type: "pi",
+				conversationId: "a",
+				event: {
+					type: "tool_execution_start",
+					toolCallId: "tool-a",
+					toolName: "host_state",
+					args: {},
+				},
+			});
+			pushPiEvent(client, { type: "pi", conversationId: "b", event: { type: "agent_start" } });
+			pushPiEvent(client, { type: "pi", conversationId: "b", event: { type: "agent_settled" } });
+			await waitFor(() => expect(store.completedConversationIds.has("b")).toBe(true));
+			queryClient.setQueryData(["companionState", "a"], { character: {}, display: {} });
+			queryClient.setQueryData(["models", "route", "a"], { selected: null });
+			queryClient.setQueryData(["runs"], { runs: [{ id: "old-run" }] });
+
+			await store.characters.activate("other-character");
+
+			expect(store.activeConversationId).toBe("c");
+			expect(store.completedConversationIds.size).toBe(0);
+			expect(store.activeTimeline.some((item) => item.kind === "tool-execution")).toBe(false);
+			expect(queryClient.getQueryData(["conversation", "a"])).toBeUndefined();
+			expect(queryClient.getQueryData(["companionState", "a"])).toBeUndefined();
+			expect(queryClient.getQueryData(["models", "route", "a"])).toBeUndefined();
+			expect(queryClient.getQueryData(["runs"])).toBeUndefined();
+		} finally {
+			dispose();
+		}
+	});
+
+	it("replaces a stale inactive live projection with the authoritative snapshot when selected", async () => {
+		const { client } = createTestClient();
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversations: [summary("a"), summary("b")] } }),
+		);
+		client.conversation.open = vi.fn(({ conversationId }) =>
+			Promise.resolve({ ok: true as const, data: detail(conversationId) }),
+		);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activeConversationId).toBe("a"));
+			pushPiEvent(client, { type: "pi", conversationId: "b", event: { type: "agent_start" } });
+			await waitFor(() => expect(store.conversations[1]?.isStreaming).toBe(true));
+
+			await store.selectConversation("b");
+
+			expect(store.activePiLiveState?.isStreaming).toBe(false);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("replays Pi events received while an authoritative conversation snapshot is opening", async () => {
+		const { client } = createTestClient();
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversations: [summary("a"), summary("b")] } }),
+		);
+		const openingB = Promise.withResolvers<{ ok: true; data: ConversationDetail }>();
+		client.conversation.open = vi.fn(({ conversationId }) =>
+			conversationId === "b"
+				? openingB.promise
+				: Promise.resolve({ ok: true as const, data: detail(conversationId) }),
+		);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activeConversationId).toBe("a"));
+			const selecting = store.selectConversation("b");
+			await waitFor(() =>
+				expect(client.conversation.open).toHaveBeenCalledWith({ conversationId: "b" }),
+			);
+			pushPiEvent(client, {
+				type: "pi",
+				conversationId: "b",
+				event: { type: "message_update", message: streamingAssistant("partial reply") },
+			});
+			await waitFor(() => expect(store.conversations[1]?.isStreaming).toBe(true));
+			expect(store.activeConversationId).toBe("a");
+			expect(store.activePiLiveState?.isStreaming).toBe(false);
+			expect(store.activeTimeline).toEqual([]);
+			openingB.resolve({ ok: true, data: detail("b") });
+			await selecting;
+
+			expect(store.activePiLiveState?.isStreaming).toBe(true);
+			expect(store.activeTimeline.at(-1)).toMatchObject({
+				kind: "streaming-assistant",
+				message: { content: [{ type: "text", text: "partial reply" }] },
+			});
 		} finally {
 			dispose();
 		}
@@ -315,6 +608,65 @@ describe("renderer-local conversation selection", () => {
 			expect(client.message.send).toHaveBeenCalledWith(
 				expect.objectContaining({ conversationId: "a", text: "hello" }),
 			);
+		} finally {
+			dispose();
+		}
+	});
+
+	it("replaces the optimistic user message when Pi appends its authoritative entry", async () => {
+		const { client } = createTestClient();
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversations: [summary("a")] } }),
+		);
+		client.conversation.open = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: detail("a") }),
+		);
+		const accepted = Promise.withResolvers<{ ok: true; data: Record<string, never> }>();
+		client.message.send = vi.fn(() => accepted.promise);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activeConversationId).toBe("a"));
+			const sending = store.sendMessage("hello");
+			await waitFor(() => expect(store.pendingUserMessages).toHaveLength(1));
+
+			pushPiEvent(client, {
+				type: "pi",
+				conversationId: "a",
+				event: { type: "entry_appended", entry: userEntry("pi-user", "hello") },
+			});
+
+			await waitFor(() => expect(store.pendingUserMessages).toHaveLength(0));
+			expect(store.activeTimeline).toHaveLength(1);
+			expect(store.activeTimeline[0]).toMatchObject({ kind: "entry", id: "pi-user" });
+			accepted.resolve({ ok: true, data: {} });
+			await sending;
+		} finally {
+			dispose();
+		}
+	});
+
+	it("releases an optimistic failure that arrives after the user switches conversations", async () => {
+		const { client } = createTestClient();
+		client.conversation.list = vi.fn(() =>
+			Promise.resolve({ ok: true as const, data: { conversations: [summary("a"), summary("b")] } }),
+		);
+		client.conversation.open = vi.fn(({ conversationId }) =>
+			Promise.resolve({ ok: true as const, data: detail(conversationId) }),
+		);
+		const accepted = Promise.withResolvers<{ ok: true; data: Record<string, never> }>();
+		client.message.send = vi.fn(() => accepted.promise);
+		const { store, dispose } = createStoreWithCleanup(client);
+		try {
+			await waitFor(() => expect(store.activeConversationId).toBe("a"));
+			const sending = store.sendMessage("hello");
+			await waitFor(() => expect(store.pendingUserMessages).toHaveLength(1));
+			await store.selectConversation("b");
+			accepted.reject(new Error("send failed"));
+
+			await expect(sending).rejects.toThrow("send failed");
+			expect(store.pendingUserMessages).toHaveLength(0);
+			await store.selectConversation("a");
+			expect(store.pendingUserMessages).toHaveLength(0);
 		} finally {
 			dispose();
 		}

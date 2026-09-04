@@ -233,6 +233,7 @@ export const zhTW = {
 			"conversationSearch": "查詢記得的原話",
 			"explicitMemory": "更新明確記憶",
 			"generic": "執行內部操作",
+			"running": "正在處理",
 			"completed": "已完成",
 			"failed": "未完成"
 		},

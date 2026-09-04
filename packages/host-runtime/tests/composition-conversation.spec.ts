@@ -34,7 +34,11 @@ function piSnapshot(sessionId: string, name = sessionId) {
 			getLeafId: () => `${sessionId}-user`,
 		},
 		isStreaming: false,
-		state: { streamingMessage: undefined, errorMessage: undefined },
+		state: {
+			streamingMessage: undefined,
+			errorMessage: undefined,
+			pendingToolCalls: new Set<string>(),
+		},
 		getSteeringMessages: () => [],
 		getFollowUpMessages: () => [],
 	};

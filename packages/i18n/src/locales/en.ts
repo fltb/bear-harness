@@ -247,6 +247,7 @@ export const en = {
 			conversationSearch: "Search remembered wording",
 			explicitMemory: "Update explicit memory",
 			generic: "Run internal action",
+			running: "Working",
 			completed: "Completed",
 			failed: "Not completed",
 		},

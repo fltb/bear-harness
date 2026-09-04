@@ -1,9 +1,10 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import type { CharacterMedia, PiSessionEntry } from "@bear-harness/protocol";
 import { faCodeBranch, faCopy, faPen, faRotateRight } from "@fortawesome/free-solid-svg-icons";
-import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
+import { createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
 import { Icon } from "./Icon.js";
 import { followTimelineScroll } from "./lib/dom-effects.js";
+import { MessageContent } from "./MessageContent.js";
 import { type TimelineProjectionItem, useCompanionStore } from "./stores/companion.js";
 import { useConversationViewWorkflow } from "./stores/conversation-workflows.js";
 import { ThreadHead } from "./ThreadHead.js";
@@ -45,6 +46,30 @@ function hostChoices(payload: Record<string, unknown> | undefined) {
 	return items.length ? { prompt: payload.prompt, items } : undefined;
 }
 
+function toolActivityKey(toolName: string) {
+	switch (toolName) {
+		case "role_skill":
+			return "messages.toolActivity.read" as const;
+		case "host_state":
+			return "messages.toolActivity.state" as const;
+		case "host_media":
+		case "host_choices":
+			return "messages.toolActivity.generic" as const;
+		case "host_delegate":
+			return "messages.toolActivity.delegate" as const;
+		case "host_canon":
+			return "messages.toolActivity.canon" as const;
+		case "tdai_memory_search":
+			return "messages.toolActivity.memorySearch" as const;
+		case "tdai_conversation_search":
+			return "messages.toolActivity.conversationSearch" as const;
+		case "explicit_memory":
+			return "messages.toolActivity.explicitMemory" as const;
+		default:
+			return "messages.toolActivity.generic" as const;
+	}
+}
+
 function PiTimelineEntryView(props: {
 	entry: PiSessionEntry;
 	onPreviewMedia(media: CharacterMedia): void;
@@ -60,6 +85,10 @@ function PiTimelineEntryView(props: {
 	const [actionBusy, setActionBusy] = createSignal(false);
 	const [actionError, setActionError] = createSignal<string | null>(null);
 	const [copied, setCopied] = createSignal(false);
+	let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+	onCleanup(() => {
+		if (copiedTimer !== undefined) clearTimeout(copiedTimer);
+	});
 	const entry = props.entry;
 	if (entry.type !== "message") {
 		// Native Pi context entries describe internal session bookkeeping. Rendering
@@ -101,29 +130,7 @@ function PiTimelineEntryView(props: {
 					</div>
 				</section>
 			);
-		const label = (() => {
-			switch (message.toolName) {
-				case "role_skill":
-					return t("messages.toolActivity.read");
-				case "host_state":
-					return t("messages.toolActivity.state");
-				case "host_media":
-				case "host_choices":
-					return t("messages.toolActivity.generic");
-				case "host_delegate":
-					return t("messages.toolActivity.delegate");
-				case "host_canon":
-					return t("messages.toolActivity.canon");
-				case "tdai_memory_search":
-					return t("messages.toolActivity.memorySearch");
-				case "tdai_conversation_search":
-					return t("messages.toolActivity.conversationSearch");
-				case "explicit_memory":
-					return t("messages.toolActivity.explicitMemory");
-				default:
-					return t("messages.toolActivity.generic");
-			}
-		})();
+		const label = t(toolActivityKey(message.toolName));
 		return (
 			<article
 				class="msg pi-tool-result"
@@ -140,17 +147,27 @@ function PiTimelineEntryView(props: {
 		);
 	}
 	const isUser = message.role === "user";
-	const characterName = store.character?.name ?? "";
-	const assistant = message.role === "assistant" ? message : undefined;
-	const text = "content" in message ? messageText(message.content) : "";
-	const failed = assistant?.stopReason === "error" || assistant?.stopReason === "aborted";
-	const errorText =
-		assistant?.stopReason === "aborted"
+	const characterName = () => store.character?.name ?? "";
+	const currentMessage = () => {
+		const current = props.entry;
+		return current.type === "message" ? current.message : message;
+	};
+	const assistant = () => {
+		const current = currentMessage();
+		return current.role === "assistant" ? current : undefined;
+	};
+	const text = () => {
+		const current = currentMessage();
+		return "content" in current ? messageText(current.content) : "";
+	};
+	const failed = () => assistant()?.stopReason === "error" || assistant()?.stopReason === "aborted";
+	const errorText = () =>
+		assistant()?.stopReason === "aborted"
 			? t("messages.responseStopped")
-			: assistant?.errorMessage
+			: assistant()?.errorMessage
 				? t("messages.responseFailedSaved")
 				: undefined;
-	if (!isUser && text.length === 0 && !failed) {
+	if (!isUser && text().length === 0 && !failed()) {
 		return null;
 	}
 	const runAction = async (action: () => Promise<void>) => {
@@ -166,7 +183,7 @@ function PiTimelineEntryView(props: {
 	};
 	const commitEdit = async () => {
 		const value = editText().trim();
-		if (!value || value === text) {
+		if (!value || value === text()) {
 			setEditing(false);
 			return;
 		}
@@ -182,9 +199,13 @@ function PiTimelineEntryView(props: {
 	};
 	const copyMessage = async () => {
 		if (typeof navigator === "undefined" || !navigator.clipboard) return;
-		await navigator.clipboard.writeText(text);
+		await navigator.clipboard.writeText(text());
 		setCopied(true);
-		setTimeout(() => setCopied(false), 1_500);
+		if (copiedTimer !== undefined) clearTimeout(copiedTimer);
+		copiedTimer = setTimeout(() => {
+			copiedTimer = undefined;
+			setCopied(false);
+		}, 1_500);
 	};
 	return (
 		<div class="timeline-entry-row" data-testid="timeline-entry-row">
@@ -199,13 +220,13 @@ function PiTimelineEntryView(props: {
 			</Show>
 			<div class={isUser ? "user-message-column" : "agent-message-column"}>
 				<Show when={!isUser}>
-					<span class="agent-message-name">{characterName}</span>
+					<span class="agent-message-name">{characterName()}</span>
 				</Show>
 				<article
-					class={`msg pi-timeline-message ${isUser ? "user" : "bear-msg"}${failed ? " stream-failed" : ""}`}
+					class={`msg pi-timeline-message ${isUser ? "user" : "bear-msg"}${failed() ? " stream-failed" : ""}`}
 					data-testid="timeline-message"
 					data-pi-entry-id={entry.id}
-					aria-label={isUser ? t("messages.you") : characterName}
+					aria-label={isUser ? t("messages.you") : characterName()}
 				>
 					<div class="msg-heading">
 						<Show when={isUser}>
@@ -219,7 +240,7 @@ function PiTimelineEntryView(props: {
 									aria-label={t("messages.edit")}
 									title={t("messages.edit")}
 									onClick={() => {
-										setEditText(text);
+										setEditText(text());
 										setEditing(true);
 									}}
 								>
@@ -237,8 +258,8 @@ function PiTimelineEntryView(props: {
 							</Button>
 						</div>
 					</div>
-					<Show when={text.length > 0 && !editing()}>
-						<p>{text}</p>
+					<Show when={text().length > 0 && !editing()}>
+						<MessageContent text={text()} format={isUser ? "plain" : "markdown"} />
 					</Show>
 					<Show when={editing() && isUser}>
 						<TextField class="message-inline-editor">
@@ -261,9 +282,9 @@ function PiTimelineEntryView(props: {
 							/>
 						</TextField>
 					</Show>
-					<Show when={failed && errorText !== undefined && errorText.length > 0}>
+					<Show when={failed() && (errorText()?.length ?? 0) > 0}>
 						<span class="stream-error" role="alert">
-							{errorText}
+							{errorText()}
 						</span>
 					</Show>
 					<Show when={props.canRegenerate && !isUser}>
@@ -357,7 +378,7 @@ function OptimisticUserProjection(props: {
 					class={`msg pi-timeline-message user${message().state === "failed" ? " stream-failed" : ""}`}
 				>
 					<div class="msg-meta">{t("messages.you")}</div>
-					<p>{message().text}</p>
+					<MessageContent text={message().text} format="plain" />
 					<Show
 						when={message().state === "failed"}
 						fallback={
@@ -398,7 +419,7 @@ function QueuedUserProjection(props: { text: string }) {
 			<div class="user-message-column">
 				<article class="msg pi-timeline-message user" aria-label={t("messages.you")}>
 					<div class="msg-meta">{t("messages.you")}</div>
-					<p>{props.text}</p>
+					<MessageContent text={props.text} format="plain" />
 					<span class="message-send-status" role="status">
 						<span class="streaming-status" aria-hidden="true" />
 						<span>{t("messages.queued")}</span>
@@ -406,6 +427,37 @@ function QueuedUserProjection(props: { text: string }) {
 				</article>
 			</div>
 		</div>
+	);
+}
+
+function ToolExecutionProjection(props: {
+	item: Extract<TimelineProjectionItem, { kind: "tool-execution" }>;
+}) {
+	const [t] = useTranslation(undefined, { i18n });
+	const label = () => t(toolActivityKey(props.item.toolName));
+	const status = () =>
+		props.item.status === "running"
+			? t("messages.toolActivity.running")
+			: props.item.status === "completed"
+				? t("messages.toolActivity.completed")
+				: t("messages.toolActivity.failed");
+	return (
+		<article
+			class="msg pi-tool-result"
+			aria-label={`${label()} ${status()}`}
+			data-status={props.item.status}
+			data-tool-call-id={props.item.toolCallId}
+		>
+			<div class="msg-meta">
+				<span>{label()}</span>
+			</div>
+			<span class="pi-tool-status" role="status">
+				<Show when={props.item.status === "running"}>
+					<span class="streaming-status" aria-hidden="true" />
+				</Show>
+				{status()}
+			</span>
+		</article>
 	);
 }
 
@@ -441,7 +493,11 @@ function StreamingAssistantProjection(props: {
 					class={`msg bear-msg streaming-message${failed() ? " stream-failed" : ""}`}
 					aria-label={characterName()}
 				>
-					<p>{text()}</p>
+					<MessageContent
+						text={text()}
+						format="markdown"
+						streaming={store.activePiLiveState?.isStreaming === true}
+					/>
 					<Show when={store.activePiLiveState?.isStreaming === true}>
 						<span class="streaming-status" role="status" aria-label={t("messages.responding")} />
 					</Show>
@@ -486,34 +542,61 @@ function PiTimelineRenderer(props: {
 						item.entry.message.role === "assistant",
 				)?.id,
 	);
+	const itemIds = createMemo(() => props.items.map((item) => item.id));
 	return (
-		<For each={props.items}>
-			{(item) => (
-				<Switch>
-					<Match when={item.kind === "entry" && item}>
-						{(entryItem) => (
-							<>
-								<PiTimelineEntryView
-									entry={entryItem().entry}
-									onPreviewMedia={props.onPreviewMedia}
-									canEdit={!turnActive() && entryItem().id === latestUserId()}
-									canRegenerate={!turnActive() && entryItem().id === latestAssistantId()}
-								/>
-								<WorkTimelineItem messageId={entryItem().id} />
-							</>
-						)}
-					</Match>
-					<Match when={item.kind === "optimistic-user" && item}>
-						{(optimistic) => <OptimisticUserProjection item={optimistic()} />}
-					</Match>
-					<Match when={item.kind === "queued-user" && item}>
-						{(queued) => <QueuedUserProjection text={queued().text} />}
-					</Match>
-					<Match when={item.kind === "streaming-assistant" && item}>
-						{(streaming) => <StreamingAssistantProjection item={streaming()} />}
-					</Match>
-				</Switch>
-			)}
+		<For each={itemIds()}>
+			{(itemId) => {
+				const item = () => props.items.find((candidate) => candidate.id === itemId);
+				const entryItem = () => {
+					const value = item();
+					return value?.kind === "entry" ? value : undefined;
+				};
+				const optimisticItem = () => {
+					const value = item();
+					return value?.kind === "optimistic-user" ? value : undefined;
+				};
+				const queuedItem = () => {
+					const value = item();
+					return value?.kind === "queued-user" ? value : undefined;
+				};
+				const toolExecutionItem = () => {
+					const value = item();
+					return value?.kind === "tool-execution" ? value : undefined;
+				};
+				const streamingItem = () => {
+					const value = item();
+					return value?.kind === "streaming-assistant" ? value : undefined;
+				};
+				return (
+					<Switch>
+						<Match when={entryItem()}>
+							{(entryItem) => (
+								<>
+									<PiTimelineEntryView
+										entry={entryItem().entry}
+										onPreviewMedia={props.onPreviewMedia}
+										canEdit={!turnActive() && entryItem().id === latestUserId()}
+										canRegenerate={!turnActive() && entryItem().id === latestAssistantId()}
+									/>
+									<WorkTimelineItem messageId={entryItem().id} />
+								</>
+							)}
+						</Match>
+						<Match when={optimisticItem()}>
+							{(optimistic) => <OptimisticUserProjection item={optimistic()} />}
+						</Match>
+						<Match when={queuedItem()}>
+							{(queued) => <QueuedUserProjection text={queued().text} />}
+						</Match>
+						<Match when={toolExecutionItem()}>
+							{(execution) => <ToolExecutionProjection item={execution()} />}
+						</Match>
+						<Match when={streamingItem()}>
+							{(streaming) => <StreamingAssistantProjection item={streaming()} />}
+						</Match>
+					</Switch>
+				);
+			}}
 		</For>
 	);
 }

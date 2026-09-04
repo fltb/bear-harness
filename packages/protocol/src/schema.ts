@@ -748,6 +748,7 @@ export const PiAgentSessionEvent = z.custom<AgentSessionEvent>(
 export const PiLiveSnapshot = z.strictObject({
 	isStreaming: z.boolean(),
 	streamingMessage: PiAgentMessage.optional(),
+	pendingToolCallIds: z.array(z.string().min(1).max(256)).max(100),
 	steering: z.array(z.string().max(65536)).max(100),
 	followUp: z.array(z.string().max(65536)).max(100),
 	errorMessage: z.string().max(4096).optional(),

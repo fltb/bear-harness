@@ -61,6 +61,34 @@ describe("character language warning", () => {
 	});
 });
 
+describe("shell action state retention", () => {
+	it("evicts old Run and permission state instead of growing for the app lifetime", () => {
+		createRoot((dispose) => {
+			const store = {
+				character: THEMED_CHARACTER,
+				runs: [],
+				run: { pendingPermissions: () => [] },
+			} as unknown as CompanionStore;
+			const workflow = createShellWorkflowStore({
+				store,
+				currentLocale: () => "zh-CN",
+				translate: t,
+			});
+			const firstRun = workflow.runActionState("run-0");
+			firstRun.setSteerText("retained only while cached");
+			const firstPermission = workflow.permissionAction("permission-0");
+			for (let index = 1; index <= 32; index += 1) {
+				workflow.runActionState(`run-${index}`);
+				workflow.permissionAction(`permission-${index}`);
+			}
+
+			expect(workflow.runActionState("run-0").steerText()).toBe("");
+			expect(workflow.permissionAction("permission-0")).not.toBe(firstPermission);
+			dispose();
+		});
+	});
+});
+
 describe("settings workflows", () => {
 	it("stays safe when optional model projections are not installed yet", async () => {
 		const store = {

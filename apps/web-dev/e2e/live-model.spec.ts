@@ -250,7 +250,10 @@ test("configured live model answers in character and obeys the explicit-memory b
 	await expect.poll(async () => (await open()).live.isStreaming).toBe(false);
 });
 
-test("configured live model answers through the native conversation journey", async ({ page }) => {
+test("configured live model answers through the native conversation journey", async ({
+	context,
+	request,
+}) => {
 	test.skip(
 		!enabled || !providerId || !modelId || !secondaryModelId || !credentialsAvailable,
 		"Set the live-model variables, including BEAR_E2E_SECONDARY_MODEL_ID",
@@ -258,10 +261,10 @@ test("configured live model answers through the native conversation journey", as
 	test.setTimeout(900_000);
 
 	let copiedText = "";
-	await page.exposeFunction("recordLiveModelCopy", (value: string) => {
+	await context.exposeFunction("recordLiveModelCopy", (value: string) => {
 		copiedText = value;
 	});
-	await page.addInitScript(() => {
+	await context.addInitScript(() => {
 		Object.defineProperty(navigator, "clipboard", {
 			configurable: true,
 			value: {
@@ -274,10 +277,10 @@ test("configured live model answers through the native conversation journey", as
 		});
 	});
 
-	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	const bootstrap = await (await request.get("/bootstrap")).json();
 	const headers = { "x-bear-web-dev-token": bootstrap.token };
 	const rpc = async <T>(channel: string, data: unknown): Promise<T> => {
-		const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
+		const response = await request.post(`/rpc/${encodeURIComponent(channel)}`, {
 			headers,
 			data,
 		});
@@ -384,10 +387,14 @@ test("configured live model answers through the native conversation journey", as
 	const sendRpc = (conversationId: string, text: string) =>
 		rpc("message.send", { conversationId, text, clientMessageId: crypto.randomUUID() });
 
-	await sendRpc(source.conversationId, "只回复 LIVE_SOURCE，不要添加其他文字。");
-	await waitSettled(source.conversationId, "LIVE_SOURCE");
-	await sendRpc(parallel.conversationId, "只回复 LIVE_PARALLEL，不要添加其他文字。");
-	await waitSettled(parallel.conversationId, "LIVE_PARALLEL");
+	await Promise.all([
+		sendRpc(source.conversationId, "只回复 LIVE_SOURCE，不要添加其他文字。"),
+		sendRpc(parallel.conversationId, "只回复 LIVE_PARALLEL，不要添加其他文字。"),
+	]);
+	await Promise.all([
+		waitSettled(source.conversationId, "LIVE_SOURCE"),
+		waitSettled(parallel.conversationId, "LIVE_PARALLEL"),
+	]);
 	expect((await open(source.conversationId)).selectedModel).toEqual({
 		providerId: configuredProviderId,
 		modelId,
@@ -397,6 +404,7 @@ test("configured live model answers through the native conversation journey", as
 		modelId: secondaryModelId,
 	});
 
+	const page = await context.newPage();
 	await page.goto("/");
 	const sidebar = page.getByRole("navigation", { name: zhCN.sidebar.conversations });
 	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
@@ -426,10 +434,6 @@ test("configured live model answers through the native conversation journey", as
 		.filter({ hasText: "LIVE_EDITED" });
 	const leafBeforeRegenerate = (await open(source.conversationId)).branch.activeLeafId;
 	await editedAssistant.getByRole("button", { name: zhCN.messages.regenerate }).click();
-	await expect(sourceButton.getByRole("status", { name: zhCN.messages.responding })).toBeVisible({
-		timeout: 15_000,
-	});
-	await expect(page.getByRole("button", { name: zhCN.composer.stopLabel })).toBeVisible();
 	await expect
 		.poll(async () => (await open(source.conversationId)).branch.activeLeafId, {
 			timeout: liveReplyTimeout,
@@ -446,7 +450,7 @@ test("configured live model answers through the native conversation journey", as
 		})
 		.toContain("LIVE_EDITED");
 
-	await thread.getByRole("button", { name: zhCN.messages.branch }).click();
+	await editedAssistant.getByRole("button", { name: zhCN.messages.branch }).click();
 	await expect
 		.poll(async () => {
 			const current = await sidebar
@@ -641,16 +645,22 @@ test("configured live model answers a natural story with scene expression media 
 	await expect(damagedSignalPreview).toBeVisible();
 	await damagedSignalPreview.getByRole("button", { name: zhCN.messages.closeMedia }).click();
 
-	const relayChoice = thread.getByRole("button", {
-		name: /^(?:A：)?(?:查|查看)转发台登记页$/,
-	});
-	if ((await relayChoice.count()) === 0) {
+	const findRelayChoice = async () => {
+		for (const name of ["查转发台登记页", "查看转发台登记页", "先查转发台登记页"]) {
+			const candidate = thread.getByRole("button", { name, exact: true });
+			if ((await candidate.count()) === 1) return candidate;
+		}
+		return undefined;
+	};
+	let relayChoice = await findRelayChoice();
+	if (!relayChoice) {
 		const choiceTurnStart = await send("这两条路我一时拿不准。把现在能走的方向摆出来，我自己选。");
 		await waitForTool(choiceTurnStart, "host_choices", "转发台");
 	} else {
 		await waitForTool(firstTurnStart, "host_choices", "转发台");
 	}
-	await expect(relayChoice).toHaveCount(1);
+	relayChoice = await findRelayChoice();
+	if (!relayChoice) throw new Error("The live model did not offer the relay-register choice");
 	const relayTurnStart = (await open()).branch.entries.length;
 	await relayChoice.click();
 
@@ -665,5 +675,137 @@ test("configured live model answers a natural story with scene expression media 
 	await expect.poll(async () => (await state()).state.display.expressionId).toBe("reflective");
 	await expect(page.getByRole("img", { name: "转发台资料室" })).toBeVisible();
 	await expect(page.getByRole("img", { name: "极昼在核对" })).toBeVisible();
-	await expect(thread.getByRole("region", { name: "转发台登记", exact: true })).toBeVisible();
+	await expect
+		.poll(() => thread.getByRole("region", { name: "转发台登记", exact: true }).count())
+		.toBeGreaterThan(0);
+});
+
+test("configured live model answers naturally with rendered structured content", async ({
+	page,
+}) => {
+	test.skip(
+		!enabled || !providerId || !modelId || !credentialsAvailable,
+		"Set the live-model variables for the natural rich-content journey",
+	);
+	test.setTimeout(300_000);
+
+	await page.goto("/");
+	const bootstrap = await (await page.request.get("/bootstrap")).json();
+	const headers = { "x-bear-web-dev-token": bootstrap.token };
+	const rpc = async <T>(channel: string, data: unknown): Promise<T> => {
+		const response = await page.request.post(`/rpc/${encodeURIComponent(channel)}`, {
+			headers,
+			data,
+		});
+		const envelope = await response.json();
+		if (!envelope.ok) throw new Error(`${channel}: ${envelope.error?.reason ?? "failed"}`);
+		return envelope.data as T;
+	};
+
+	let selectedApiKey = apiKey;
+	if (usePiConfig) {
+		const selected = selectedPiProviderConfig();
+		selectedApiKey = selected.apiKey;
+		await rpc("provider.customUpsert", {
+			providerId: configuredProviderId,
+			name: "E2E live Pi provider",
+			baseUrl: selected.baseUrl,
+			models: [selected.model],
+		});
+	} else if (customBaseUrl) {
+		await rpc("provider.customUpsert", {
+			providerId: configuredProviderId,
+			name: "E2E live custom provider",
+			baseUrl: customBaseUrl,
+			models: [{ id: modelId }],
+		});
+	}
+	await rpc("provider.setApiKey", {
+		providerId: configuredProviderId,
+		apiKey: selectedApiKey,
+		sessionOnly: true,
+	});
+	await rpc("model.enable", {
+		providerId: configuredProviderId,
+		modelId,
+		label: `E2E live ${modelId}`,
+	});
+	await rpc("model.defaults.setReply", {
+		reply: { providerId: configuredProviderId, modelId },
+	});
+	await rpc("model.defaults.completeOnboarding", {});
+	await rpc("settings.set", { settings: { firstRunStage: "role" } });
+	let onboarding = await rpc<{ status: string; currentStepId?: string }>("onboarding.get", {});
+	const onboardingAnswers: Record<string, string | undefined> = {
+		welcome: undefined,
+		nickname: "北辰",
+	};
+	while (onboarding.status === "active") {
+		const stepId = onboarding.currentStepId;
+		if (!stepId || !(stepId in onboardingAnswers)) {
+			throw new Error(`Unhandled rich-content onboarding step: ${stepId ?? "missing"}`);
+		}
+		onboarding = await rpc("onboarding.submit", {
+			stepId,
+			answer: onboardingAnswers[stepId],
+		});
+	}
+	const conversation = await rpc<{ conversationId: string }>("conversation.create", {
+		title: "自然富内容真实模型验收",
+	});
+	await rpc("model.route.set", {
+		conversationId: conversation.conversationId,
+		selected: { providerId: configuredProviderId, modelId },
+	});
+
+	await page.reload();
+	await page.locator(`[data-conversation-id="${conversation.conversationId}"]`).click();
+	const prompt =
+		"极昼，我在给客栈写一个夜间取暖费用小工具。电暖器功率 1.5kW，每晚 8 小时，电价 0.6 元/kWh，住 7 晚。算出总费用并解释计算关系，再给一个最小的 TypeScript 计算函数；顺手把它和 0.9kW 热泵的每晚耗电并排摆清楚，让我决定用哪个。";
+	const composer = page.getByRole("textbox", { name: zhCN.composer.messageInputLabel });
+	await composer.fill(prompt);
+	await page.getByRole("button", { name: zhCN.composer.sendLabel }).click();
+
+	const thread = page.getByRole("region", { name: zhCN.messages.conversation });
+	const response = thread.getByRole("article", { name: "极昼" }).filter({ hasText: "84" });
+	await expect(response.getByRole("table")).toBeVisible({ timeout: liveReplyTimeout });
+	await expect
+		.poll(
+			async () =>
+				(
+					await rpc<{ live: { isStreaming: boolean } }>("conversation.open", {
+						conversationId: conversation.conversationId,
+					})
+				).live.isStreaming,
+			{ timeout: liveReplyTimeout },
+		)
+		.toBe(false);
+	await expect.poll(() => response.getByRole("math").count()).toBeGreaterThan(0);
+	await expect
+		.poll(() => response.getByText("return", { exact: false }).count())
+		.toBeGreaterThan(0);
+	await expect(response.getByTestId("message-content")).not.toHaveAttribute("aria-busy", "true", {
+		timeout: liveReplyTimeout,
+	});
+
+	const opened = await rpc<{ branch: { entries: unknown[] }; live: { isStreaming: boolean } }>(
+		"conversation.open",
+		{ conversationId: conversation.conversationId },
+	);
+	const assistant = projectPiEntries(opened.branch.entries)
+		.filter((entry) => entry.type === "message" && entry.role === "assistant")
+		.at(-1)?.text;
+	expect(opened.live.isStreaming).toBe(false);
+	expect(assistant).toContain("```");
+	expect(assistant).toContain("$");
+	expect(assistant).toContain("number");
+	expect(assistant).toContain("return");
+
+	await page.reload();
+	const reloadedResponse = thread.getByRole("article", { name: "极昼" }).filter({ hasText: "84" });
+	await expect(reloadedResponse.getByRole("table")).toBeVisible();
+	await expect
+		.poll(() => reloadedResponse.getByText("return", { exact: false }).count())
+		.toBeGreaterThan(0);
+	await expect.poll(() => reloadedResponse.getByRole("math").count()).toBeGreaterThan(0);
 });

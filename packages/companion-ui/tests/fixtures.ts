@@ -198,7 +198,7 @@ export function createTestClient() {
 		conversationId: id,
 		name: title,
 		branch: { entries: [], hasMoreBefore: false },
-		live: { isStreaming: false, steering: [], followUp: [] },
+		live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
 	});
 	const providerList = vi.fn(() => ok({ providers: [] }));
 	const liveQueue: LivePush[] = [];

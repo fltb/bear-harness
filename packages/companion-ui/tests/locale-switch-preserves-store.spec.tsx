@@ -49,7 +49,7 @@ function loadedClient() {
 			],
 			hasMoreBefore: false,
 		},
-		live: { isStreaming: false, steering: [], followUp: [] },
+		live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
 	};
 	fixture.client.snapshot.get = vi.fn(() =>
 		Promise.resolve({

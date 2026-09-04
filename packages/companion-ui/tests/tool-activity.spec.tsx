@@ -4,7 +4,7 @@ import { render, screen } from "@solidjs/testing-library";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CompanionApp } from "../src/App.js";
-import { createTestClient, OFFICIAL_PRODUCT, THEMED_CHARACTER } from "./fixtures.js";
+import { createTestClient, OFFICIAL_PRODUCT, pushPiEvent, THEMED_CHARACTER } from "./fixtures.js";
 
 const toolEntry = (
 	id: string,
@@ -65,13 +65,70 @@ function configure(
 				conversationId: "conversation-1",
 				name: "Native Pi tools",
 				branch: { entries, hasMoreBefore: false },
-				live: { isStreaming: false, steering: [], followUp: [] },
+				live: { isStreaming: false, pendingToolCallIds: [], steering: [], followUp: [] },
 			},
 		}),
 	);
 }
 
 describe("Pi native tool rendering", () => {
+	it("renders running, completed, and failed native tool events", async () => {
+		const { client } = createTestClient();
+		configure(client, []);
+		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={client} />);
+		await screen.findByRole("region", { name: zhCN.messages.conversation });
+
+		pushPiEvent(client, {
+			type: "pi",
+			conversationId: "conversation-1",
+			event: {
+				type: "tool_execution_start",
+				toolCallId: "state-call",
+				toolName: "host_state",
+				args: {},
+			},
+		});
+		expect(
+			await screen.findByRole("article", {
+				name: `${zhCN.messages.toolActivity.state} ${zhCN.messages.toolActivity.running}`,
+			}),
+		).toHaveAttribute("data-status", "running");
+
+		pushPiEvent(client, {
+			type: "pi",
+			conversationId: "conversation-1",
+			event: {
+				type: "tool_execution_end",
+				toolCallId: "state-call",
+				toolName: "host_state",
+				result: { content: [] },
+				isError: false,
+			},
+		});
+		expect(
+			await screen.findByRole("article", {
+				name: `${zhCN.messages.toolActivity.state} ${zhCN.messages.toolActivity.completed}`,
+			}),
+		).toHaveAttribute("data-status", "completed");
+
+		pushPiEvent(client, {
+			type: "pi",
+			conversationId: "conversation-1",
+			event: {
+				type: "tool_execution_end",
+				toolCallId: "failed-call",
+				toolName: "host_media",
+				result: { content: [] },
+				isError: true,
+			},
+		});
+		expect(
+			await screen.findByRole("article", {
+				name: `${zhCN.messages.toolActivity.generic} ${zhCN.messages.toolActivity.failed}`,
+			}),
+		).toHaveAttribute("data-status", "failed");
+	});
+
 	it("renders choices and media directly from native tool-result entries", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();

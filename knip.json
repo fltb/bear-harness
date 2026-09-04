@@ -41,7 +41,7 @@
 		},
 		"packages/companion-ui": {
 			"entry": ["tests/**/*.tsx"],
-			"project": ["src/**/*.{ts,tsx}", "src/**/*.css", "tests/**/*.tsx"]
+			"project": ["src/**/*.{js,ts,tsx}", "src/**/*.css", "tests/**/*.tsx"]
 		},
 		"packages/host-runtime": {
 			"entry": ["tests/**/*.ts"],
