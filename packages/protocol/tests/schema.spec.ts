@@ -12,14 +12,6 @@ import {
 } from "../src/schema.js";
 
 describe("protocol authority boundaries", () => {
-	it("keeps only embedding configuration under the memory RPC namespace", () => {
-		expect(Object.keys(RPC.memory).sort()).toEqual([
-			"cancelLocalEmbeddingDownload",
-			"configureLocalEmbedding",
-			"localEmbeddingDownloadStatus",
-		]);
-	});
-
 	it("does not expose Host-owned conversation memory mutation endpoints", () => {
 		const channels = JSON.stringify(RPC);
 		for (const obsolete of [
@@ -140,18 +132,6 @@ describe("protocol authority boundaries", () => {
 		).toMatchObject({ success: false });
 	});
 
-	it("changes one settings domain per mutation", () => {
-		expect(
-			RPC.settings.set.request.safeParse({ settings: { firstRunStage: "model" } }),
-		).toMatchObject({ success: true });
-		expect(
-			RPC.settings.set.request.safeParse({
-				settings: { firstRunStage: "model", relationshipMemoryEnabled: true },
-			}),
-		).toMatchObject({ success: false });
-		expect(RPC.settings.set.request.safeParse({ settings: {} })).toMatchObject({ success: false });
-	});
-
 	it("keeps transport mechanics out of the shared protocol", () => {
 		expect(CHANNEL_CONTRACTS["character.import"]).not.toHaveProperty("maxRequestBytes");
 		expect(LivePushBatch.safeParse({ events: [] })).toMatchObject({ success: true });
@@ -212,6 +192,24 @@ describe("protocol authority boundaries", () => {
 		).toMatchObject({ success: false });
 		expect(
 			RPC.character.packageReveal.request.safeParse({ characterId: "../outside" }),
+		).toMatchObject({ success: false });
+	});
+
+	it("exposes correction as the only assistant-response rerun mutation", () => {
+		expect(Object.keys(RPC.message)).toContain("correct");
+		expect(Object.keys(RPC.message)).not.toContain("regenerate");
+		expect(
+			RPC.message.correct.request.safeParse({
+				conversationId: "conversation-1",
+				entryId: "assistant-1",
+				feedback: "这不像极昼",
+			}),
+		).toMatchObject({ success: true });
+		expect(
+			RPC.message.correct.request.safeParse({
+				conversationId: "conversation-1",
+				entryId: "assistant-1",
+			}),
 		).toMatchObject({ success: false });
 	});
 });

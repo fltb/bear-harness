@@ -6,7 +6,7 @@ import { CompanionApp } from "../src/App.js";
 import { createTestClient, OFFICIAL_PRODUCT, pushPiEvent, THEMED_CHARACTER } from "./fixtures.js";
 
 describe("Pi message actions", () => {
-	it("sends correction labels through native regeneration", async () => {
+	it("edits and corrects every native message through authoritative conversation mutations", async () => {
 		const user = userEvent.setup();
 		const { client } = createTestClient();
 		const session = {
@@ -95,9 +95,17 @@ describe("Pi message actions", () => {
 		client.conversation.open = vi.fn(() =>
 			Promise.resolve({ ok: true as const, data: session as never }),
 		);
-		client.message.regenerate = vi.fn(() =>
-			Promise.resolve({ ok: true as const, data: session as never }),
+		client.conversation.activeGet = vi.fn(() =>
+			Promise.resolve({
+				ok: true as const,
+				data: { activeConversation: session } as never,
+			}),
 		);
+		const correctionRequest = Promise.withResolvers<{
+			ok: true;
+			data: never;
+		}>();
+		client.message.correct = vi.fn(() => correctionRequest.promise);
 		client.conversation.list = vi.fn(() =>
 			Promise.resolve({
 				ok: true as const,
@@ -123,15 +131,27 @@ describe("Pi message actions", () => {
 		const firstAssistant = screen.getByText("First reply").closest("article") as HTMLElement;
 		const latestUser = screen.getByText("Hello").closest("article") as HTMLElement;
 		const message = screen.getByText("Second reply").closest("article") as HTMLElement;
-		expect(within(firstUser).queryByRole("button", { name: zhCN.messages.edit })).toBeNull();
-		expect(
-			within(firstAssistant).queryByRole("button", { name: zhCN.messages.regenerate }),
-		).toBeNull();
-		expect(within(firstAssistant).queryByRole("button", { name: "Correct" })).toBeNull();
+		expect(within(firstUser).getByRole("button", { name: zhCN.messages.edit })).toBeVisible();
+		expect(within(firstAssistant).getByRole("button", { name: "Correct" })).toBeVisible();
 		expect(within(firstAssistant).queryByRole("button", { name: zhCN.messages.branch })).toBeNull();
 		expect(within(firstAssistant).getByRole("button", { name: zhCN.messages.copy })).toBeVisible();
 		expect(within(latestUser).getByRole("button", { name: zhCN.messages.edit })).toBeVisible();
-		expect(within(message).getByRole("button", { name: zhCN.messages.regenerate })).toBeVisible();
+		expect(within(message).getByRole("button", { name: "Correct" })).toBeVisible();
+		await user.click(within(firstUser).getByRole("button", { name: zhCN.messages.edit }));
+		const historicalEditor = within(firstUser).getByRole("textbox", {
+			name: zhCN.messages.editLabel,
+		});
+		await user.clear(historicalEditor);
+		await user.type(historicalEditor, "Revised first question");
+		await user.click(within(firstUser).getByRole("button", { name: zhCN.messages.save }));
+		await waitFor(() =>
+			expect(client.message.edit).toHaveBeenCalledWith({
+				conversationId: "conversation-1",
+				entryId: "user-1",
+				text: "Revised first question",
+			}),
+		);
+		expect(screen.getByText("First question")).toBeVisible();
 		const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 		const writeText = vi.fn(() => Promise.resolve());
 		Object.defineProperty(navigator, "clipboard", {
@@ -166,13 +186,26 @@ describe("Pi message actions", () => {
 		if (clipboardDescriptor) Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
 		else Reflect.deleteProperty(navigator, "clipboard");
 		await user.click(within(message).getByRole("button", { name: "Correct" }));
-		await user.click(within(message).getByRole("menuitem", { name: "Voice" }));
+		await user.click(screen.getByRole("button", { name: "Voice" }));
 		await waitFor(() =>
-			expect(client.message.regenerate).toHaveBeenCalledWith({
+			expect(client.message.correct).toHaveBeenCalledWith({
 				conversationId: "conversation-1",
 				entryId: "assistant-2",
 				feedback: "Voice",
 			}),
+		);
+		expect(
+			within(firstUser).getByRole("button", { name: zhCN.messages.edit, hidden: true }),
+		).toBeDisabled();
+		expect(
+			within(message).getByRole("button", { name: zhCN.messages.branch, hidden: true }),
+		).toBeDisabled();
+		expect(
+			screen.getByRole("button", { name: zhCN.composer.attachLabel, hidden: true }),
+		).toBeDisabled();
+		correctionRequest.resolve({ ok: true, data: session as never });
+		await waitFor(() =>
+			expect(within(message).getByRole("button", { name: zhCN.messages.branch })).toBeEnabled(),
 		);
 		await user.click(within(message).getByRole("button", { name: zhCN.messages.branch }));
 		await waitFor(() =>
@@ -187,13 +220,30 @@ describe("Pi message actions", () => {
 		const { client: failingClient } = createTestClient();
 		failingClient.snapshot.get = client.snapshot.get;
 		failingClient.conversation.open = client.conversation.open;
+		failingClient.conversation.activeGet = client.conversation.activeGet;
 		failingClient.conversation.list = client.conversation.list;
 		failingClient.message.branch = vi.fn(() => Promise.reject(new Error("fork unavailable")));
+		failingClient.message.correct = vi.fn(() =>
+			Promise.reject(new Error("correction unavailable")),
+		);
 		render(() => <CompanionApp product={OFFICIAL_PRODUCT} client={failingClient} />);
 		const sourceMessage = (await screen.findByText("Second reply")).closest(
 			"article",
 		) as HTMLElement;
-		await user.click(within(sourceMessage).getByRole("button", { name: zhCN.messages.branch }));
+		await user.click(within(sourceMessage).getByRole("button", { name: "Correct" }));
+		await user.click(screen.getByRole("button", { name: "Voice" }));
+		const correctionDialog = screen.getByRole("dialog", { name: "Correct" });
+		expect(await within(correctionDialog).findByRole("alert")).toHaveTextContent(
+			"correction unavailable",
+		);
+		expect(within(sourceMessage).getByText("Second reply")).toBeVisible();
+		expect(within(correctionDialog).getByRole("button", { name: "Voice" })).toBeVisible();
+		await user.keyboard("{Escape}");
+		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Correct" })).toBeNull());
+		const branchAction = await within(sourceMessage).findByRole("button", {
+			name: zhCN.messages.branch,
+		});
+		await user.click(branchAction);
 		expect(await within(sourceMessage).findByRole("alert")).toHaveTextContent("fork unavailable");
 		expect(screen.getByText("Second reply")).toBeVisible();
 	});

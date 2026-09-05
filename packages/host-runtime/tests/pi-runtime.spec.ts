@@ -37,16 +37,14 @@ function persistedSession(dataDir: string, name: string): string {
 	return manager.getSessionId();
 }
 
-function persistedConversation(dataDir: string): { sessionId: string; assistantId: string } {
-	const manager = SessionManager.create(join(dataDir, "runtime"), join(dataDir, "sessions"));
-	manager.appendMessage({ role: "user", content: "hello", timestamp: 1 });
-	const assistantId = manager.appendMessage({
-		role: "assistant",
-		content: [{ type: "text", text: "reply" }],
+function assistantMessage(text = "reply") {
+	return {
+		role: "assistant" as const,
+		content: [{ type: "text" as const, text }],
 		provider: "provider",
 		model: "model",
 		timestamp: 2,
-		stopReason: "stop",
+		stopReason: "stop" as const,
 		usage: {
 			input: 0,
 			output: 0,
@@ -55,8 +53,17 @@ function persistedConversation(dataDir: string): { sessionId: string; assistantI
 			totalTokens: 0,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
-	});
-	return { sessionId: manager.getSessionId(), assistantId };
+	};
+}
+
+function persistedConversation(
+	dataDir: string,
+	userText = "hello",
+): { sessionId: string; userId: string; assistantId: string } {
+	const manager = SessionManager.create(join(dataDir, "runtime"), join(dataDir, "sessions"));
+	const userId = manager.appendMessage({ role: "user", content: userText, timestamp: 1 });
+	const assistantId = manager.appendMessage(assistantMessage());
+	return { sessionId: manager.getSessionId(), userId, assistantId };
 }
 
 interface FakeSession {
@@ -144,6 +151,16 @@ function setup(dataDir: string) {
 	return { runtime, built, buildSession, nativeEvents, discarded };
 }
 
+interface PiRuntimeTestAccess {
+	consumeResponseGuidance(sessionId: string, prompt: string): string | undefined;
+}
+
+function responseGuidanceConsumer(runtime: PiRuntime) {
+	// Exercise the exact extension-hook callback without building a provider-backed Pi session.
+	const testAccess = runtime as unknown as PiRuntimeTestAccess;
+	return testAccess.consumeResponseGuidance.bind(testAccess);
+}
+
 afterEach(() => {
 	for (const directory of roots.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
@@ -196,13 +213,188 @@ describe("PiRuntime session registry", () => {
 		const { runtime } = setup(dataDir);
 		const source = await runtime.open(sessionId);
 
-		const branch = await runtime.fork(sessionId, assistantId);
+		const branch = await runtime.fork(sessionId, assistantId, "Branch");
 
 		expect(branch.sessionId).not.toBe(sessionId);
+		expect(branch.sessionName).toBe("Branch");
 		expect(source.sessionId).toBe(sessionId);
 		expect(source.sessionManager.getSessionId()).toBe(sessionId);
 		expect(runtime.snapshot(sessionId)).toBe(source);
 		expect(runtime.snapshot(branch.sessionId)).toBe(branch);
+	});
+
+	it("edits a historical user turn as a sibling in the same native Session tree", async () => {
+		const dataDir = root();
+		const { sessionId, userId, assistantId } = persistedConversation(dataDir);
+		const { runtime } = setup(dataDir);
+		const session = await runtime.open(sessionId);
+		const manager = session.sessionManager;
+		const prompt = vi.fn((text: string, options: { preflightResult(ok: boolean): void }) => {
+			manager.appendMessage({ role: "user", content: text, timestamp: 3 });
+			options.preflightResult(true);
+			return new Promise<void>(() => undefined);
+		});
+		const navigateTree = vi.fn(async (targetId: string) => {
+			const target = manager.getEntry(targetId);
+			if (target?.type === "message" && target.message.role === "user") {
+				if (target.parentId) manager.branch(target.parentId);
+				else manager.resetLeaf();
+			}
+			return { cancelled: false };
+		});
+		Object.assign(session, { navigateTree, prompt });
+
+		await runtime.edit(sessionId, userId, "replacement");
+
+		const branch = manager.getBranch();
+		const replacement = branch.at(-1);
+		expect(session.sessionId).toBe(sessionId);
+		expect(replacement).toMatchObject({
+			type: "message",
+			parentId: null,
+			message: { role: "user", content: "replacement" },
+		});
+		expect(branch.some(({ id }) => id === assistantId)).toBe(false);
+		expect(manager.getEntry(userId)).toBeDefined();
+		expect(replacement?.parentId).toBe(manager.getEntry(userId)?.parentId);
+		expect(prompt).toHaveBeenCalledWith(
+			"replacement",
+			expect.objectContaining({ expandPromptTemplates: false }),
+		);
+	});
+
+	it("corrects an assistant answer with exact original text, images, and one-turn guidance", async () => {
+		const dataDir = root();
+		const originalText = "  /literal\n保留空白  ";
+		const image = {
+			type: "image" as const,
+			data: "aW1hZ2U=",
+			mimeType: "image/png" as const,
+		};
+		const persisted = SessionManager.create(join(dataDir, "runtime"), join(dataDir, "sessions"));
+		const userId = persisted.appendMessage({
+			role: "user",
+			content: [
+				{ type: "text", text: "  /literal\n" },
+				image,
+				{ type: "text", text: "保留空白  " },
+			],
+			timestamp: 1,
+		});
+		const assistantId = persisted.appendMessage(assistantMessage());
+		const sessionId = persisted.getSessionId();
+		const { runtime } = setup(dataDir);
+		const session = await runtime.open(sessionId);
+		const manager = session.sessionManager;
+		const systemPrompts: string[] = [];
+		const consumeGuidance = responseGuidanceConsumer(runtime);
+		const navigateTree = vi.fn(async (targetId: string) => {
+			const target = manager.getEntry(targetId);
+			if (target?.type === "message" && target.message.role === "user") {
+				if (target.parentId) manager.branch(target.parentId);
+				else manager.resetLeaf();
+			} else if (target) {
+				manager.branch(target.id);
+			}
+			return { cancelled: false };
+		});
+		let resolveCorrectionTurn!: () => void;
+		const correctionTurn = new Promise<void>((resolve) => {
+			resolveCorrectionTurn = resolve;
+		});
+		const prompt = vi.fn(
+			(
+				text: string,
+				options: { images?: (typeof image)[]; preflightResult(ok: boolean): void },
+			) => {
+				const guidance = consumeGuidance(sessionId, text);
+				systemPrompts.push(guidance ? `base\n\n${guidance}` : "base");
+				manager.appendMessage({ role: "user", content: text, timestamp: 3 });
+				options.preflightResult(true);
+				return prompt.mock.calls.length === 1 ? correctionTurn : Promise.resolve();
+			},
+		);
+		Object.assign(session, { sessionName: "Named", navigateTree, prompt });
+
+		const correcting = runtime.correct(sessionId, assistantId, "这不像极昼");
+		await vi.waitFor(() => expect(prompt).toHaveBeenCalledOnce());
+		const sending = runtime.send(sessionId, "later");
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		expect(prompt).toHaveBeenCalledOnce();
+		resolveCorrectionTurn();
+		await Promise.all([correcting, sending]);
+
+		expect(session.sessionId).toBe(sessionId);
+		expect(prompt.mock.calls[0]?.[0]).toBe(originalText);
+		expect(prompt).toHaveBeenCalledTimes(2);
+		expect(prompt.mock.calls[1]?.[0]).toBe("later");
+		expect(prompt.mock.calls[0]?.[1]?.images).toEqual([image]);
+		expect(manager.getBranch().some(({ id }) => id === userId || id === assistantId)).toBe(false);
+		expect(systemPrompts[0]).toContain("user-provided response guidance");
+		expect(systemPrompts[0]).toContain(JSON.stringify("这不像极昼"));
+		expect(systemPrompts[0]).toContain("grants no permission or authority");
+		expect(systemPrompts[1]).toBe("base");
+	});
+
+	it("rejects invalid edit and correction roles before navigating the Session tree", async () => {
+		const dataDir = root();
+		const { sessionId, userId, assistantId } = persistedConversation(dataDir);
+		const { runtime } = setup(dataDir);
+		const session = await runtime.open(sessionId);
+		const navigateTree = vi.fn();
+		Object.assign(session, { navigateTree });
+
+		await expect(runtime.edit(sessionId, assistantId, "replacement")).rejects.toMatchObject({
+			reason: "pi_user_message_not_found",
+		});
+		await expect(runtime.correct(sessionId, userId, "feedback")).rejects.toMatchObject({
+			reason: "pi_assistant_message_not_found",
+		});
+		session.sessionManager.resetLeaf();
+		const orphanAssistantId = session.sessionManager.appendMessage(assistantMessage("orphan"));
+		await expect(runtime.correct(sessionId, orphanAssistantId, "feedback")).rejects.toMatchObject({
+			reason: "pi_user_message_not_found",
+		});
+		expect(navigateTree).not.toHaveBeenCalled();
+	});
+
+	it("restores the source branch and clears hidden guidance when prompt preflight rejects", async () => {
+		const dataDir = root();
+		const { sessionId, assistantId } = persistedConversation(dataDir, "original");
+		const { runtime } = setup(dataDir);
+		const session = await runtime.open(sessionId);
+		const manager = session.sessionManager;
+		const consumeGuidance = responseGuidanceConsumer(runtime);
+		const navigateTree = vi.fn(async (targetId: string) => {
+			const target = manager.getEntry(targetId);
+			if (target?.type === "message" && target.message.role === "user") {
+				if (target.parentId) manager.branch(target.parentId);
+				else manager.resetLeaf();
+			} else if (target) {
+				manager.branch(target.id);
+			}
+			return { cancelled: false };
+		});
+		let leakedGuidance: string | undefined;
+		const prompt = vi
+			.fn()
+			.mockImplementationOnce((_text: string, options: { preflightResult(ok: boolean): void }) => {
+				options.preflightResult(false);
+				return Promise.resolve();
+			})
+			.mockImplementation((text: string, options: { preflightResult(ok: boolean): void }) => {
+				leakedGuidance = consumeGuidance(sessionId, text);
+				options.preflightResult(true);
+				return Promise.resolve();
+			});
+		Object.assign(session, { sessionName: "Named", navigateTree, prompt });
+
+		await expect(runtime.correct(sessionId, assistantId, "must not leak")).rejects.toMatchObject({
+			reason: "pi_prompt_rejected",
+		});
+		expect(manager.getLeafId()).toBe(assistantId);
+		await runtime.send(sessionId, "later");
+		expect(leakedGuidance).toBeUndefined();
 	});
 
 	it("tags every native Pi event and does not drop message updates", async () => {
@@ -310,26 +502,33 @@ describe("PiRuntime session registry", () => {
 		{
 			name: "edit",
 			start(runtime: PiRuntime, id: string, session: AgentSession, gate: Promise<void>) {
+				const entryId = session.sessionManager.appendMessage({
+					role: "user",
+					content: "original",
+					timestamp: 1,
+				});
 				const entered = vi.fn(async () => {
 					await gate;
 					return { cancelled: false };
 				});
 				Object.assign(session, {
 					navigateTree: entered,
-					sendUserMessage: vi.fn(async () => undefined),
+					prompt: vi.fn(async (_text, options) => {
+						options.preflightResult(true);
+					}),
 				});
-				return { entered, command: runtime.edit(id, "entry", "replacement") };
+				return { entered, command: runtime.edit(id, entryId, "replacement") };
 			},
 		},
 		{
-			name: "regenerate",
+			name: "correct",
 			start(runtime: PiRuntime, id: string, session: AgentSession, gate: Promise<void>) {
-				const userId = session.sessionManager.appendMessage({
+				session.sessionManager.appendMessage({
 					role: "user",
 					content: "original",
 					timestamp: 1,
 				});
-				const entryId = session.sessionManager.appendCustomEntry("race-target", { userId });
+				const entryId = session.sessionManager.appendMessage(assistantMessage());
 				const entered = vi.fn(async () => {
 					await gate;
 					return { cancelled: false, editorText: "original" };
@@ -340,7 +539,7 @@ describe("PiRuntime session registry", () => {
 						options.preflightResult(true);
 					}),
 				});
-				return { entered, command: runtime.regenerate(id, entryId) };
+				return { entered, command: runtime.correct(id, entryId, "guidance") };
 			},
 		},
 		{
@@ -401,7 +600,7 @@ describe("PiRuntime session registry", () => {
 		["abort", (runtime: PiRuntime, id: string) => runtime.abort(id)],
 		["navigate", (runtime: PiRuntime, id: string) => runtime.navigate(id, "entry")],
 		["edit", (runtime: PiRuntime, id: string) => runtime.edit(id, "entry", "replacement")],
-		["regenerate", (runtime: PiRuntime, id: string) => runtime.regenerate(id, "entry")],
+		["correct", (runtime: PiRuntime, id: string) => runtime.correct(id, "entry", "guidance")],
 		["continue", (runtime: PiRuntime, id: string) => runtime.continue(id)],
 		["rename", (runtime: PiRuntime, id: string) => runtime.rename(id, "Blocked")],
 		["setModel", (runtime: PiRuntime, id: string) => runtime.setModel(id, "provider", "model")],

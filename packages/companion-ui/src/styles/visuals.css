@@ -3,7 +3,7 @@
 /* ------------------------------------------------------------------ */
 
 .main {
-	@apply relative min-h-0 min-w-0 overflow-hidden;
+	@apply relative min-h-0 min-w-0;
 	background: var(--surface-canvas);
 }
 

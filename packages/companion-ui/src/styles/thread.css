@@ -3,7 +3,7 @@
 /* ------------------------------------------------------------------ */
 
 .thread {
-	@apply flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto rounded-t-2xl border-x px-5 pb-5 pt-3;
+	@apply flex min-w-0 flex-col gap-3 rounded-t-2xl border-x px-5 pb-5 pt-3;
 	border-color: color-mix(in srgb, var(--sys-border) 55%, transparent);
 	background: linear-gradient(
 		to bottom,
@@ -12,19 +12,7 @@
 	);
 	backdrop-filter: blur(5px);
 	overflow-anchor: none;
-	scrollbar-width: thin;
-	scrollbar-color: var(--scroll-thumb) transparent;
 }
-
-.thread::-webkit-scrollbar {
-	@apply w-2;
-}
-
-.thread::-webkit-scrollbar-thumb {
-	background: var(--scroll-thumb);
-	@apply rounded-full;
-}
-
 .timeline-load-older {
 	@apply self-center rounded-lg border px-3 py-2 text-xs;
 	border-color: var(--sys-border);
@@ -277,7 +265,7 @@
 
 .timeline-jump-latest {
 	grid-area: thread;
-	@apply z-20 mb-4 min-h-11 self-end justify-self-center rounded-full border px-4 text-sm shadow-app;
+	@apply sticky bottom-28 z-20 mb-4 min-h-11 self-end justify-self-center rounded-full border px-4 text-sm shadow-app;
 	border-color: var(--line-strong);
 	color: var(--sys-text);
 	background: var(--surface-panel);

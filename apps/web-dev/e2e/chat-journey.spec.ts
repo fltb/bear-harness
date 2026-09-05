@@ -3,7 +3,7 @@ import { zhCN } from "@bear-harness/i18n/locales";
 import { expect, test } from "playwright/test";
 import { ensureReadyForConversation, sendMessage } from "./helpers";
 
-test("chat streams once and edited history regenerates once through the UI", async ({ page }) => {
+test("chat streams once and preserves edited history through the UI", async ({ page }) => {
 	const gapWarnings: string[] = [];
 	const pageErrors: string[] = [];
 	page.on("pageerror", (error) => pageErrors.push(error.message));

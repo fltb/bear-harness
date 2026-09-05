@@ -157,6 +157,8 @@
 
 .message-correction-presets button {
 	@apply min-h-9 justify-start rounded-lg border-0 px-3 text-left text-sm;
+	--semantic-fg-role: default;
+	color: var(--semantic-role-default);
 	background: transparent;
 }
 
@@ -176,14 +178,17 @@
 
 .message-correction-custom input {
 	@apply min-h-9 w-full rounded-lg border px-2 text-sm;
+	--semantic-fg-role: default;
 	border-color: var(--line-soft);
+	color: var(--semantic-role-default);
 	background: var(--surface-control);
 }
 
 .message-correction-custom button {
 	@apply min-h-9 shrink-0 rounded-lg border-0 px-3 text-sm;
+	--semantic-fg-role: on-action;
 	background: var(--sys-accent);
-	color: var(--text-on-accent);
+	color: var(--semantic-role-on-action);
 }
 
 .msg-menu-trigger:hover,

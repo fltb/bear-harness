@@ -74,6 +74,7 @@ function context() {
 		list: vi.fn(async () => []),
 		create: vi.fn(async () => snapshots.alpha),
 		open: vi.fn(async (_companionId: string, id: "alpha" | "beta") => snapshots[id]),
+		activeGet: vi.fn(async () => undefined),
 		rename: vi.fn(async () => undefined),
 		archive: vi.fn(async () => undefined),
 		delete: vi.fn(async () => undefined),
@@ -82,7 +83,7 @@ function context() {
 	const pi = {
 		send: vi.fn(async () => undefined),
 		abort: vi.fn(async () => undefined),
-		regenerate: vi.fn(async () => undefined),
+		correct: vi.fn(async () => undefined),
 		navigate: vi.fn(async () => undefined),
 		edit: vi.fn(async () => undefined),
 		continue: vi.fn(async () => undefined),
@@ -230,7 +231,7 @@ describe("Host conversation projection and routing", () => {
 		await handler(dispatcher, RPC.message.abort.channel)({ conversationId: "alpha" });
 		await handler(
 			dispatcher,
-			RPC.message.regenerate.channel,
+			RPC.message.correct.channel,
 		)({
 			conversationId: "beta",
 			entryId: "entry",
@@ -266,7 +267,7 @@ describe("Host conversation projection and routing", () => {
 			["beta", "two"],
 		]);
 		expect(fixture.pi.abort).toHaveBeenCalledWith("alpha");
-		expect(fixture.pi.regenerate).toHaveBeenCalledWith("beta", "entry", "again");
+		expect(fixture.pi.correct).toHaveBeenCalledWith("beta", "entry", "again");
 		expect(fixture.pi.navigate).toHaveBeenCalledWith("alpha", "leaf");
 		expect(fixture.pi.edit).toHaveBeenCalledWith("beta", "entry", "edited");
 		expect(fixture.pi.continue).toHaveBeenCalledWith("alpha");
@@ -321,7 +322,7 @@ describe("Host conversation projection and routing", () => {
 		expect(fixture.companionSnapshot).not.toHaveBeenCalled();
 	});
 
-	it("returns Empty for archive/delete without changing another open session", async () => {
+	it("returns the authoritative active projection after archive and delete", async () => {
 		expect(
 			await handler(
 				dispatcher,
@@ -330,10 +331,10 @@ describe("Host conversation projection and routing", () => {
 				conversationId: "alpha",
 				archived: true,
 			}),
-		).toEqual({});
+		).toEqual({ activeConversation: null });
 		expect(
 			await handler(dispatcher, RPC.conversation.delete.channel)({ conversationId: "beta" }),
-		).toEqual({});
+		).toEqual({ activeConversation: null });
 		expect(fixture.sessions.archive).toHaveBeenCalledWith("bear", "alpha", true);
 		expect(fixture.sessions.delete).toHaveBeenCalledWith("bear", "beta");
 		expect(fixture.pi.close).not.toHaveBeenCalled();

@@ -375,7 +375,7 @@ export function createTestClient() {
 		},
 		message: {
 			send: vi.fn(() => ok({})),
-			regenerate: vi.fn(({ conversationId }) => ok(conversationDetails.get(conversationId)!)),
+			correct: vi.fn(({ conversationId }) => ok(conversationDetails.get(conversationId)!)),
 			switchVersion: vi.fn(({ conversationId }) => ok(conversationDetails.get(conversationId)!)),
 			edit: vi.fn(({ conversationId }) => ok(conversationDetails.get(conversationId)!)),
 			continue: vi.fn(() => ok({})),

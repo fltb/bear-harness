@@ -779,10 +779,10 @@ export const MessageSendRequest = z.strictObject({
 });
 export const MessageSendResponse = EmptyResponse;
 
-export const MessageRegenerateRequest = z.strictObject({
+export const MessageCorrectRequest = z.strictObject({
 	conversationId: ConversationId,
 	entryId: PiSessionEntryId,
-	feedback: z.string().min(1).max(65536).optional(),
+	feedback: z.string().min(1).max(65536),
 });
 export const MessageSwitchVersionRequest = z.strictObject({
 	conversationId: ConversationId,
@@ -2027,12 +2027,7 @@ export const RPC = {
 	},
 	message: {
 		send: endpoint("message.send", MessageSendRequest, MessageSendResponse, "mutation"),
-		regenerate: endpoint(
-			"message.regenerate",
-			MessageRegenerateRequest,
-			ConversationDetail,
-			"mutation",
-		),
+		correct: endpoint("message.correct", MessageCorrectRequest, ConversationDetail, "mutation"),
 		switchVersion: endpoint(
 			"message.switchVersion",
 			MessageSwitchVersionRequest,

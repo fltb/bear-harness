@@ -418,9 +418,7 @@ test("title query respects active, archived, and deleted session management", as
 	).resolves.toEqual({ conversations: [] });
 });
 
-test("regeneration switches native leaves and correction is visible user feedback", async ({
-	page,
-}) => {
+test("correction creates a native leaf while feedback stays hidden", async ({ page }) => {
 	await ensureReadyForConversation(page);
 	const bootstrap = await (await page.request.get("/bootstrap")).json();
 	const conversationId = await createFreshConversation(
@@ -441,9 +439,10 @@ test("regeneration switches native leaves and correction is visible user feedbac
 	);
 	if (!assistant) throw new Error("missing native assistant entry");
 
-	await rpc(page, bootstrap.token, "message.regenerate", {
+	await rpc(page, bootstrap.token, "message.correct", {
 		conversationId,
 		entryId: assistant.id,
+		feedback: "这不像极昼",
 	});
 	await expect
 		.poll(
@@ -453,10 +452,11 @@ test("regeneration switches native leaves and correction is visible user feedbac
 					.at(-1)?.id,
 		)
 		.not.toBe(assistant.id);
-	const regeneratedId = (await projection(page, bootstrap.token, conversationId))
+	const correctedId = (await projection(page, bootstrap.token, conversationId))
 		.filter((entry) => entry.type === "message" && entry.role === "assistant")
 		.at(-1)?.id;
-	if (!regeneratedId) throw new Error("missing regenerated native assistant entry");
+	if (!correctedId) throw new Error("missing corrected native assistant entry");
+
 	await rpc(page, bootstrap.token, "message.switchVersion", {
 		conversationId,
 		leafId: assistant.id,
@@ -468,36 +468,19 @@ test("regeneration switches native leaves and correction is visible user feedbac
 	).toBe(assistant.id);
 	await rpc(page, bootstrap.token, "message.switchVersion", {
 		conversationId,
-		leafId: regeneratedId,
+		leafId: correctedId,
 	});
 	await expect
 		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
 		.toBe("RULE_OK");
 
-	const regenerated = (await projection(page, bootstrap.token, conversationId))
-		.filter((entry) => entry.type === "message" && entry.role === "assistant")
-		.at(-1);
-	if (!regenerated) throw new Error("missing regenerated assistant entry");
-
-	await rpc(page, bootstrap.token, "message.regenerate", {
-		conversationId,
-		entryId: regenerated.id,
-		feedback: "他替我做了决定",
-	});
-	await expect
-		.poll(async () => latestAssistant(page, bootstrap.token, conversationId))
-		.toBe("RULE_OK");
-	expect(
-		(await projection(page, bootstrap.token, conversationId))
-			.filter((entry) => entry.type === "message" && entry.role === "assistant")
-			.at(-1)
-			?.text?.trim(),
-	).toBe("RULE_OK");
 	const revisedProjection = await projection(page, bootstrap.token, conversationId);
-	expect(
-		revisedProjection.filter((entry) => entry.type === "message" && entry.role === "user").at(-1)
-			?.text,
-	).toContain("重新生成反馈：他替我做了决定");
+	const visibleUsers = revisedProjection.filter(
+		(entry) => entry.type === "message" && entry.role === "user",
+	);
+	expect(visibleUsers).toHaveLength(1);
+	expect(visibleUsers[0]?.text).toBe("E2E_OPERATION_PARENT");
+	expect(visibleUsers[0]?.text).not.toContain("这不像极昼");
 });
 
 test("imported package plugins require explicit trust before they can be enabled", async ({

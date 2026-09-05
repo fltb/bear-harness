@@ -193,8 +193,8 @@ export type ConversationDeleteResponse = z.infer<typeof schema.ConversationActiv
 
 export type MessageSendRequest = z.infer<typeof schema.MessageSendRequest>;
 export type MessageSendResponse = z.infer<typeof schema.MessageSendResponse>;
-export type MessageRegenerateRequest = z.infer<typeof schema.MessageRegenerateRequest>;
-export type MessageRegenerateResponse = ResponseOf<typeof schema.RPC.message.regenerate>;
+export type MessageCorrectRequest = z.infer<typeof schema.MessageCorrectRequest>;
+export type MessageCorrectResponse = ResponseOf<typeof schema.RPC.message.correct>;
 export type MessageSwitchVersionResponse = ResponseOf<typeof schema.RPC.message.switchVersion>;
 export type MessageEditResponse = ResponseOf<typeof schema.RPC.message.edit>;
 export type MessageContinueResponse = ResponseOf<typeof schema.RPC.message.continue>;

@@ -22,6 +22,17 @@
 	--shadow-app: 0 25px 70px rgba(0, 10, 13, 0.4);
 	--font-sans: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
 	--font-serif: "Songti SC", "STSong", Georgia, serif;
+	--container-message-mobile: 92%;
+	--container-message-tablet: 84%;
+	--container-message-desktop: 80%;
+	--container-message-wide: 76%;
+	--spacing-conversation-left-medium: 5%;
+	--spacing-conversation-left-large: 8%;
+	--spacing-conversation-left-wide: 10%;
+	--spacing-conversation-right-small: 8%;
+	--spacing-conversation-right-medium: 18%;
+	--spacing-conversation-right-large: 30%;
+	--spacing-conversation-right-wide: 32%;
 }
 
 :root {
@@ -111,11 +122,15 @@
 html,
 body,
 #root {
-	@apply size-full;
+	@apply min-h-full w-full overflow-x-clip;
+}
+
+body,
+#root {
+	@apply min-h-screen;
 }
 
 body {
-	@apply min-h-screen overflow-hidden;
 	color-scheme: dark;
 	background:
 		radial-gradient(

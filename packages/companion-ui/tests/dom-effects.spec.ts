@@ -35,52 +35,91 @@ describe("presentation-only DOM effects", () => {
 		expect(textarea.style.overflowY).toBe("hidden");
 	});
 
-	it("protects detached reading and restores an independent position per conversation", async () => {
+	it("protects detached document reading and restores a position per conversation", async () => {
 		const thread = document.createElement("section");
-		Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 1_000 });
-		Object.defineProperty(thread, "clientHeight", { configurable: true, value: 200 });
+		const scrollingElement = document.documentElement;
 		const jumpButton = document.createElement("button");
+		const originalDocumentScroller = Object.getOwnPropertyDescriptor(document, "scrollingElement");
+		const originalScrollHeight = Object.getOwnPropertyDescriptor(scrollingElement, "scrollHeight");
+		const originalClientHeight = Object.getOwnPropertyDescriptor(scrollingElement, "clientHeight");
+		const originalScrollTop = Object.getOwnPropertyDescriptor(scrollingElement, "scrollTop");
+		let documentScrollTop = 0;
+		Object.defineProperty(document, "scrollingElement", {
+			configurable: true,
+			value: scrollingElement,
+		});
+		Object.defineProperty(scrollingElement, "scrollHeight", {
+			configurable: true,
+			value: 1_000,
+		});
+		Object.defineProperty(scrollingElement, "clientHeight", {
+			configurable: true,
+			value: 200,
+		});
+		Object.defineProperty(scrollingElement, "scrollTop", {
+			configurable: true,
+			get: () => documentScrollTop,
+			set: (value: number) => {
+				documentScrollTop = value;
+			},
+		});
 		thread.dataset.conversationId = "a";
 		const controller = installTimelineScrollProtection(thread, jumpButton);
 
-		await flushEffects();
-		expect(thread.scrollTop).toBe(1_000);
+		try {
+			await flushEffects();
+			expect(scrollingElement.scrollTop).toBe(800);
+			expect(thread.scrollTop).toBe(0);
 
-		thread.scrollTop = 240;
-		thread.dispatchEvent(new WheelEvent("wheel"));
-		await flushEffects();
-		expect(jumpButton.hidden).toBe(false);
-		thread.append(document.createElement("article"));
-		await flushEffects();
-		expect(thread.scrollTop).toBe(240);
-		thread.scrollTop = 425;
-		thread.append(document.createTextNode("stream settled"));
-		await flushEffects();
-		expect(thread.scrollTop).toBe(240);
+			scrollingElement.scrollTop = 240;
+			window.dispatchEvent(new WheelEvent("wheel"));
+			await flushEffects();
+			expect(jumpButton.hidden).toBe(false);
+			thread.append(document.createElement("article"));
+			await flushEffects();
+			expect(scrollingElement.scrollTop).toBe(240);
+			scrollingElement.scrollTop = 425;
+			thread.append(document.createTextNode("stream settled"));
+			await flushEffects();
+			expect(scrollingElement.scrollTop).toBe(240);
 
-		notifyTimelineUserSent("a");
-		await flushEffects();
-		expect(thread.scrollTop).toBe(1_000);
-		expect(jumpButton.hidden).toBe(true);
+			notifyTimelineUserSent("a");
+			await flushEffects();
+			expect(scrollingElement.scrollTop).toBe(800);
+			expect(jumpButton.hidden).toBe(true);
 
-		thread.scrollTop = 320;
-		thread.dispatchEvent(new WheelEvent("wheel"));
-		await flushEffects();
-		thread.dataset.conversationId = "b";
-		await flushEffects();
-		expect(thread.scrollTop).toBe(1_000);
+			scrollingElement.scrollTop = 320;
+			window.dispatchEvent(new WheelEvent("wheel"));
+			await flushEffects();
+			thread.dataset.conversationId = "b";
+			await flushEffects();
+			expect(scrollingElement.scrollTop).toBe(800);
 
-		thread.scrollTop = 120;
-		thread.dispatchEvent(new WheelEvent("wheel"));
-		await flushEffects();
-		thread.dataset.conversationId = "a";
-		await flushEffects();
-		expect(thread.scrollTop).toBe(320);
-		expect(jumpButton.hidden).toBe(false);
+			scrollingElement.scrollTop = 120;
+			window.dispatchEvent(new WheelEvent("wheel"));
+			await flushEffects();
+			thread.dataset.conversationId = "a";
+			await flushEffects();
+			expect(scrollingElement.scrollTop).toBe(320);
+			expect(jumpButton.hidden).toBe(false);
 
-		controller.scrollToLatest();
-		expect(thread.scrollTop).toBe(1_000);
-		expect(jumpButton.hidden).toBe(true);
-		controller.dispose();
+			controller.scrollToLatest();
+			expect(scrollingElement.scrollTop).toBe(800);
+			expect(jumpButton.hidden).toBe(true);
+		} finally {
+			controller.dispose();
+			if (originalDocumentScroller)
+				Object.defineProperty(document, "scrollingElement", originalDocumentScroller);
+			else Reflect.deleteProperty(document, "scrollingElement");
+			if (originalScrollHeight)
+				Object.defineProperty(scrollingElement, "scrollHeight", originalScrollHeight);
+			else Reflect.deleteProperty(scrollingElement, "scrollHeight");
+			if (originalClientHeight)
+				Object.defineProperty(scrollingElement, "clientHeight", originalClientHeight);
+			else Reflect.deleteProperty(scrollingElement, "clientHeight");
+			if (originalScrollTop)
+				Object.defineProperty(scrollingElement, "scrollTop", originalScrollTop);
+			else Reflect.deleteProperty(scrollingElement, "scrollTop");
+		}
 	});
 });

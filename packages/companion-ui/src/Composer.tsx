@@ -43,6 +43,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 		});
 	};
 	const dispatchMessage = () => {
+		if (store.conversationMutationBusy) return;
 		if (store.activeConversationId) notifyTimelineUserSent(store.activeConversationId);
 		const pending = workflow.dispatchMessage();
 		queueComposerResize();
@@ -68,6 +69,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 	};
 
 	const pick = async (folder: boolean) => {
+		if (store.conversationMutationBusy) return;
 		setMenuOpen(false);
 		const bridge = localFiles();
 		if (!bridge) {
@@ -90,6 +92,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 	const drop = (event: DragEvent) => {
 		event.preventDefault();
 		setDragging(false);
+		if (store.conversationMutationBusy) return;
 		const bridge = localFiles();
 		const files = event.dataTransfer ? [...event.dataTransfer.files] : [];
 		const paths = bridge?.pathsForDroppedFiles(files) ?? [];
@@ -130,7 +133,10 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 				placeholder={t("composer.chooseModel")}
 				labelClass="sr-only"
 				disabled={
-					workflow.modelBusy() || !store.activeConversationId || workflow.models().length === 0
+					store.conversationMutationBusy ||
+					workflow.modelBusy() ||
+					!store.activeConversationId ||
+					workflow.models().length === 0
 				}
 				triggerClass="composer-model-trigger"
 				contentClass="composer-model-content"
@@ -138,7 +144,9 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 				itemClass="composer-model-item"
 				placement="top-start"
 				gutter={8}
-				onModelChange={(model) => void workflow.selectModel(model)}
+				onModelChange={(model) => {
+					if (!store.conversationMutationBusy) void workflow.selectModel(model);
+				}}
 			/>
 			<div class="composer-attach-menu">
 				<Button
@@ -148,17 +156,28 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 					type="button"
 					class="circle"
 					aria-label={t("composer.attachLabel")}
+					disabled={store.conversationMutationBusy}
 					onClick={() => setMenuOpen((open) => !open)}
 				>
 					<Icon icon={faPaperclip} />
 				</Button>
 				<Show when={menuOpen()}>
 					<div class="composer-attach-options" role="menu">
-						<Button type="button" role="menuitem" onClick={() => void pick(false)}>
+						<Button
+							type="button"
+							role="menuitem"
+							disabled={store.conversationMutationBusy}
+							onClick={() => void pick(false)}
+						>
 							<Icon icon={faFile} />
 							{t("composer.uploadFile")}
 						</Button>
-						<Button type="button" role="menuitem" onClick={() => void pick(true)}>
+						<Button
+							type="button"
+							role="menuitem"
+							disabled={store.conversationMutationBusy}
+							onClick={() => void pick(true)}
+						>
 							<Icon icon={faFolderOpen} />
 							{t("composer.uploadFolder")}
 						</Button>
@@ -185,7 +204,11 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 							void dispatchMessage();
 						}
 					}}
-					disabled={!store.activeConversationId || !workflow.modelSelected()}
+					disabled={
+						store.conversationMutationBusy ||
+						!store.activeConversationId ||
+						!workflow.modelSelected()
+					}
 				/>
 			</TextField>
 			<Show when={attachmentNotice()}>
@@ -215,6 +238,7 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 							!store.activeConversationId ||
 							!workflow.modelSelected() ||
 							workflow.modelBusy() ||
+							store.conversationMutationBusy ||
 							!workflow.composerText().trim()
 						}
 					>

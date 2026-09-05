@@ -432,13 +432,14 @@ test("configured live model answers through the native conversation journey", as
 	const editedAssistant = thread
 		.getByRole("article", { name: "极昼" })
 		.filter({ hasText: "LIVE_EDITED" });
-	const leafBeforeRegenerate = (await open(source.conversationId)).branch.activeLeafId;
-	await editedAssistant.getByRole("button", { name: zhCN.messages.regenerate }).click();
+	const leafBeforeCorrection = (await open(source.conversationId)).branch.activeLeafId;
+	await editedAssistant.getByRole("button", { name: "这不像极昼" }).click();
+	await page.getByRole("button", { name: "语气不像他" }).click();
 	await expect
 		.poll(async () => (await open(source.conversationId)).branch.activeLeafId, {
 			timeout: liveReplyTimeout,
 		})
-		.not.toBe(leafBeforeRegenerate);
+		.not.toBe(leafBeforeCorrection);
 	await expect
 		.poll(async () => (await open(source.conversationId)).live.isStreaming, {
 			timeout: liveReplyTimeout,

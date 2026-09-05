@@ -34,12 +34,21 @@ test("mobile composer, live announcements, touch targets and detached scrolling 
 	await expect(page.getByTestId("streaming-assistant-message")).toContainText("HOLD_ONE");
 	await expect(page.getByTestId("pending-user-message")).toHaveCount(0);
 	await expect
-		.poll(() => thread.evaluate((element) => element.scrollHeight > element.clientHeight))
+		.poll(() =>
+			page.evaluate(() => {
+				const scrollingElement = document.scrollingElement;
+				return Boolean(
+					scrollingElement && scrollingElement.scrollHeight > scrollingElement.clientHeight,
+				);
+			}),
+		)
 		.toBe(true);
 
-	await thread.evaluate((element) => {
-		element.scrollTop = 0;
-		element.dispatchEvent(new WheelEvent("wheel"));
+	await page.evaluate(() => {
+		const scrollingElement = document.scrollingElement;
+		if (!scrollingElement) throw new Error("missing document scrolling element");
+		scrollingElement.scrollTop = 0;
+		window.dispatchEvent(new WheelEvent("wheel"));
 	});
 	const jumpToLatest = page.getByRole("button", { name: zhCN.messages.returnToLatest });
 	await expect(jumpToLatest).toBeVisible();
@@ -48,14 +57,22 @@ test("mobile composer, live announcements, touch targets and detached scrolling 
 			timeout: 8_000,
 		})
 		.toBe(true);
-	expect(await thread.evaluate((element) => element.scrollTop)).toBeLessThanOrEqual(72);
+	expect(
+		await page.evaluate(() => document.scrollingElement?.scrollTop ?? Number.POSITIVE_INFINITY),
+	).toBeLessThanOrEqual(72);
 	await expect(announcement).toHaveText("");
 
 	await jumpToLatest.click();
 	await expect(jumpToLatest).toBeHidden();
 	await expect
 		.poll(() =>
-			thread.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop),
+			page.evaluate(() => {
+				const scrollingElement = document.scrollingElement;
+				if (!scrollingElement) return Number.POSITIVE_INFINITY;
+				return (
+					scrollingElement.scrollHeight - scrollingElement.clientHeight - scrollingElement.scrollTop
+				);
+			}),
 		)
 		.toBeLessThanOrEqual(1);
 
@@ -63,9 +80,9 @@ test("mobile composer, live announcements, touch targets and detached scrolling 
 		.getByTestId("timeline-entry-row")
 		.filter({ hasText: "HOLD_ONE HOLD_TWO" });
 	const copyAction = completedReply.getByRole("button", { name: zhCN.messages.copy });
-	const regenerateAction = page.getByRole("button", { name: zhCN.messages.regenerate });
+	const correctionAction = page.getByRole("button", { name: "这不像极昼" });
 	await expect(copyAction).toHaveCSS("opacity", "1");
-	for (const action of [copyAction, regenerateAction]) {
+	for (const action of [copyAction, correctionAction]) {
 		const box = await action.boundingBox();
 		expect(box?.width).toBeGreaterThanOrEqual(44);
 		expect(box?.height).toBeGreaterThanOrEqual(44);

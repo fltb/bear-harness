@@ -547,14 +547,11 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		await s.pi.abort(conversationId);
 		return {};
 	});
-	dispatcher.registerHandler(
-		RPC.message.regenerate,
-		async ({ conversationId, entryId, feedback }) => {
-			await requireOwnedConversation(s, conversationId);
-			await s.pi.regenerate(conversationId, entryId, feedback);
-			return projectPiConversationDetail(await s.sessions.open(getCompanionId(s), conversationId));
-		},
-	);
+	dispatcher.registerHandler(RPC.message.correct, async ({ conversationId, entryId, feedback }) => {
+		await requireOwnedConversation(s, conversationId);
+		await s.pi.correct(conversationId, entryId, feedback);
+		return projectPiConversationDetail(await s.sessions.open(getCompanionId(s), conversationId));
+	});
 	dispatcher.registerHandler(RPC.message.switchVersion, async ({ conversationId, leafId }) => {
 		await requireOwnedConversation(s, conversationId);
 		await s.pi.navigate(conversationId, leafId);

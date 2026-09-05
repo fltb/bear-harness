@@ -107,6 +107,7 @@ export interface CompanionStore {
 	readonly completedConversationIds: ReadonlySet<string>;
 	readonly activePiLiveState: PiLiveState | undefined;
 	readonly pendingUserMessages: readonly PendingUserMessage[];
+	readonly conversationMutationBusy: boolean;
 	readonly activeTimeline: readonly TimelineProjectionItem[];
 	readonly runs: RunInfo[];
 	readonly character: CharacterDisplay | undefined;
@@ -124,7 +125,7 @@ export interface CompanionStore {
 	sendMessage(text: string): Promise<void>;
 	retryPendingMessage(clientMessageId: string): Promise<void>;
 	dismissPendingMessage(clientMessageId: string): void;
-	regenerateMessage(entryId: string, feedback?: string): Promise<void>;
+	correctMessage(entryId: string, feedback: string): Promise<void>;
 	switchMessageVersion(leafId: string): Promise<void>;
 	editMessage(entryId: string, text: string): Promise<void>;
 	abort(): Promise<void>;
@@ -219,6 +220,7 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 	const client = withRpcMutations(source, queryClient);
 	const [cacheRevision, setCacheRevision] = createSignal(0);
 	const [operationError, setOperationError] = createSignal<CompanionErrorMetadata | null>(null);
+	const [conversationMutationBusy, setConversationMutationBusy] = createSignal(false);
 	const [titleQuery, setTitleQuery] = createSignal("");
 	const [piLiveBySession, setPiLiveBySession] = createSignal<ReadonlyMap<string, PiLiveState>>(
 		new Map(),
@@ -264,6 +266,18 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 		} catch (cause) {
 			if (!isCancelledError(cause)) fail(operation, cause);
 			throw cause;
+		}
+	};
+	const runConversationMutation = async <T,>(
+		operation: string,
+		action: () => Promise<T>,
+	): Promise<T> => {
+		if (conversationMutationBusy()) throw new Error("conversation_mutation_pending");
+		setConversationMutationBusy(true);
+		try {
+			return await run(operation, action);
+		} finally {
+			setConversationMutationBusy(false);
 		}
 	};
 
@@ -537,6 +551,18 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			queryClient.removeQueries({ queryKey: queryKeys.companionState(previousId), exact: true });
 			queryClient.removeQueries({ queryKey: queryKeys.modelRoute(previousId), exact: true });
 		}
+	};
+	const commitConversationDetailIfCurrent = (
+		conversationId: string,
+		detail: ConversationDetail,
+	) => {
+		hydrateRpcQuery(queryClient, queryKeys.conversation(conversationId), detail);
+		if (detail.selectedModel)
+			hydrateRpcQuery(queryClient, queryKeys.modelRoute(conversationId), {
+				selected: detail.selectedModel,
+			});
+		if (activeConversationId() === conversationId)
+			applyActiveProjection({ activeConversation: detail });
 	};
 
 	const refreshActiveConversation = async () => {
@@ -1137,6 +1163,9 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			const message = id ? optimisticUserBySession().get(id) : undefined;
 			return message ? [message] : [];
 		},
+		get conversationMutationBusy() {
+			return conversationMutationBusy();
+		},
 		get activeTimeline() {
 			const detail = activeDetail();
 			const id = activeConversationId();
@@ -1217,7 +1246,7 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 				await refreshConversations();
 			}),
 		createConversationFromEntry: (entryId) =>
-			run("message.branch", async () => {
+			runConversationMutation("message.branch", async () => {
 				const generation = beginActiveMutation();
 				const conversationId = requireConversation();
 				const detail = await invoke(client, () =>
@@ -1284,6 +1313,8 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 				await refreshCompanionState(id);
 			}),
 		sendMessage: (text) => {
+			if (conversationMutationBusy())
+				return Promise.reject(new Error("conversation_mutation_pending"));
 			const conversationId = requireConversation();
 			if (optimisticUserBySession().has(conversationId))
 				return Promise.reject(new Error("message_send_pending"));
@@ -1344,32 +1375,31 @@ function createStoreForClient(source: CompanionClient): CompanionStore {
 			);
 			if (message) removeOptimisticUser(message.conversationId);
 		},
-		regenerateMessage: (entryId, feedback) =>
-			run("message.regenerate", async () => {
+		correctMessage: (entryId, feedback) =>
+			runConversationMutation("message.correct", async () => {
 				const conversationId = requireConversation();
 				await withPiEventReplay(
 					conversationId,
-					() =>
-						invoke(client, () => client.message.regenerate({ conversationId, entryId, feedback })),
-					(detail) => applyActiveProjection({ activeConversation: detail }),
+					() => invoke(client, () => client.message.correct({ conversationId, entryId, feedback })),
+					(detail) => commitConversationDetailIfCurrent(conversationId, detail),
 				);
 			}),
 		switchMessageVersion: (leafId) =>
-			run("message.switchVersion", async () => {
+			runConversationMutation("message.switchVersion", async () => {
 				const conversationId = requireConversation();
 				await withPiEventReplay(
 					conversationId,
 					() => invoke(client, () => client.message.switchVersion({ conversationId, leafId })),
-					(detail) => applyActiveProjection({ activeConversation: detail }),
+					(detail) => commitConversationDetailIfCurrent(conversationId, detail),
 				);
 			}),
 		editMessage: (entryId, text) =>
-			run("message.edit", async () => {
+			runConversationMutation("message.edit", async () => {
 				const conversationId = requireConversation();
 				await withPiEventReplay(
 					conversationId,
 					() => invoke(client, () => client.message.edit({ conversationId, entryId, text })),
-					(detail) => applyActiveProjection({ activeConversation: detail }),
+					(detail) => commitConversationDetailIfCurrent(conversationId, detail),
 				);
 			}),
 		abort: () =>

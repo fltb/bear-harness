@@ -49,9 +49,7 @@ async function latestAssistant(page: Page, token: string, conversationId: string
 	return (await assistantMessages(page, token, conversationId)).at(-1);
 }
 
-test("rule provider exercises send and edited-history regeneration deterministically", async ({
-	page,
-}) => {
+test("rule provider exercises send and historical edits deterministically", async ({ page }) => {
 	await page.goto("/");
 	const bootstrap = await getBootstrap(page);
 	await rpc(page, bootstrap.token, "provider.customUpsert", {

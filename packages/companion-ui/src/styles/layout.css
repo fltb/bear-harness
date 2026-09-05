@@ -9,20 +9,20 @@
  */
 
 .app {
-	@apply relative m-0 size-full min-h-0 overflow-hidden rounded-none border-0;
+	@apply relative m-0 min-h-screen w-full overflow-x-clip rounded-none border-0;
 	container-type: inline-size;
 }
 
 .shell {
-	@apply grid size-full min-h-0 min-w-0 overflow-hidden;
+	@apply grid min-h-screen w-full min-w-0 overflow-x-clip;
 }
 
 .main {
-	@apply relative grid min-h-0 min-w-0 overflow-hidden;
+	@apply relative grid min-h-screen min-w-0;
 }
 
 .sidebar {
-	@apply min-w-0;
+	@apply sticky top-0 h-dvh max-h-dvh min-w-0 self-start;
 }
 
 .scene-backdrop {
@@ -30,13 +30,14 @@
 }
 
 .presence-stage {
-	@apply z-10 pointer-events-none self-end justify-self-center;
+	@apply sticky bottom-0 z-10 pointer-events-none self-end justify-self-center;
 	grid-area: stage;
 }
 
 .thread-head {
-	@apply relative z-30 min-w-0 px-4;
+	@apply sticky top-0 z-30 min-w-0 px-4;
 	grid-area: header;
+	background: var(--surface-canvas);
 }
 
 .conversation-state-overlay {
@@ -58,7 +59,7 @@
 }
 
 .composer {
-	@apply relative z-30 m-4 mt-2;
+	@apply sticky bottom-0 z-30 m-4 mt-2;
 	grid-area: composer;
 	grid-template-columns: auto minmax(0, 1fr) auto;
 }
@@ -76,7 +77,7 @@
 .app[data-layout="window"] .main {
 	grid-template:
 		"stage header" 56px
-		"stage thread" minmax(0, 1fr)
+		"stage thread" minmax(min-content, 1fr)
 		"stage composer" auto
 		/ minmax(280px, 0.72fr) minmax(560px, 1fr);
 }
@@ -88,7 +89,7 @@
 .app[data-layout="window"] .main:has(.agent-result-panel) {
 	grid-template:
 		"stage header result" 56px
-		"stage thread result" minmax(0, 1fr)
+		"stage thread result" minmax(min-content, 1fr)
 		"stage composer result" auto
 		/ minmax(150px, 200px) minmax(340px, 0.82fr) minmax(420px, 1.18fr);
 }
@@ -98,6 +99,10 @@
 }
 
 .app[data-layout="window"] .thread {
+	@apply px-0;
+}
+
+.app[data-layout="window"] .main:has(.agent-result-panel) .thread {
 	@apply mx-4 px-0;
 }
 
@@ -109,7 +114,7 @@
 .app[data-layout="fullscreen"] .main {
 	grid-template:
 		"stage header rail" 64px
-		"stage thread rail" minmax(0, 1fr)
+		"stage thread rail" minmax(min-content, 1fr)
 		"stage composer rail" auto
 		/ minmax(420px, 600px) minmax(640px, 760px) minmax(120px, 1fr);
 }
@@ -119,6 +124,10 @@
 }
 
 .app[data-layout="fullscreen"] .thread {
+	@apply px-0;
+}
+
+.app[data-layout="fullscreen"] .main:has(.agent-result-panel) .thread {
 	@apply mx-6 px-0;
 }
 
@@ -133,7 +142,7 @@
 .app[data-layout="fullscreen"] .main:has(.agent-result-panel) {
 	grid-template:
 		"stage header result" 64px
-		"stage thread result" minmax(0, 1fr)
+		"stage thread result" minmax(min-content, 1fr)
 		"stage composer result" auto
 		/ minmax(240px, 320px) minmax(520px, 680px) minmax(640px, 1fr);
 }
@@ -150,13 +159,13 @@
 .app[data-layout="mobile"] .main {
 	grid-template:
 		"header" 56px
-		"thread" minmax(0, 1fr)
+		"thread" minmax(min-content, 1fr)
 		"composer" auto
 		/ minmax(0, 1fr);
 }
 
 .app[data-layout="mobile"] .mobile-navigation-trigger {
-	@apply absolute left-2 top-1.5 z-40 grid size-11 place-items-center rounded-lg border cursor-pointer;
+	@apply fixed left-2 top-1.5 z-40 grid size-11 place-items-center rounded-lg border cursor-pointer;
 	border-color: var(--line-soft);
 	color: var(--text-strong);
 	background: var(--surface-control);
@@ -200,12 +209,12 @@
 }
 
 .app[data-layout="mobile"] .presence-stage {
-	@apply absolute bottom-24 left-1/2 z-10 max-h-2/5 w-1/2 -translate-x-1/2 opacity-100;
+	@apply fixed bottom-24 left-1/2 z-10 max-h-2/5 w-1/2 -translate-x-1/2 opacity-100;
 }
 
-.app[data-layout="mobile"] .msg.user,
-.app[data-layout="mobile"] .bear-msg {
-	max-inline-size: 100%;
+.app[data-layout="mobile"] .pi-timeline-message,
+.app[data-layout="mobile"] .streaming-message {
+	@apply max-w-message-mobile;
 }
 
 .app[data-layout="mobile"] .agent-result-panel,
@@ -292,6 +301,80 @@
 	@apply absolute right-2 top-2 z-10 grid size-11 place-items-center rounded-lg border-0;
 	color: var(--sys-text-muted);
 	background: var(--surface-control);
+}
+
+/*
+ * The single-column conversation narrows progressively without changing the
+ * stage allocation or any result-preview template.
+ */
+@media (min-width: 768px) {
+	.app .main:not(:has(.agent-result-panel)) > .thread-head,
+	.app .main:not(:has(.agent-result-panel)) > .thread,
+	.app .main:not(:has(.agent-result-panel)) > .composer,
+	.app .main:not(:has(.agent-result-panel)) > .timeline-jump-latest {
+		@apply ml-4 mr-4;
+	}
+
+	.app .pi-timeline-message,
+	.app .streaming-message {
+		@apply max-w-message-tablet;
+	}
+}
+
+@media (min-width: 1200px) and (max-width: 1359px) {
+	.app .main:not(:has(.agent-result-panel)) > .thread-head,
+	.app .main:not(:has(.agent-result-panel)) > .thread,
+	.app .main:not(:has(.agent-result-panel)) > .composer,
+	.app .main:not(:has(.agent-result-panel)) > .timeline-jump-latest {
+		@apply ml-4 mr-conversation-right-small;
+	}
+
+	.app .pi-timeline-message,
+	.app .streaming-message {
+		@apply max-w-message-desktop;
+	}
+}
+
+@media (min-width: 1360px) and (max-width: 1479px) {
+	.app .main:not(:has(.agent-result-panel)) > .thread-head,
+	.app .main:not(:has(.agent-result-panel)) > .thread,
+	.app .main:not(:has(.agent-result-panel)) > .composer,
+	.app .main:not(:has(.agent-result-panel)) > .timeline-jump-latest {
+		@apply ml-conversation-left-medium mr-conversation-right-medium;
+	}
+
+	.app .pi-timeline-message,
+	.app .streaming-message {
+		@apply max-w-message-desktop;
+	}
+}
+
+@media (min-width: 1480px) and (max-width: 1599px) {
+	.app .main:not(:has(.agent-result-panel)) > .thread-head,
+	.app .main:not(:has(.agent-result-panel)) > .thread,
+	.app .main:not(:has(.agent-result-panel)) > .composer,
+	.app .main:not(:has(.agent-result-panel)) > .timeline-jump-latest {
+		@apply ml-conversation-left-large mr-conversation-right-large;
+	}
+
+	.app .pi-timeline-message,
+	.app .streaming-message {
+		@apply max-w-message-desktop;
+	}
+}
+
+@media (min-width: 1600px) {
+	.app .main:not(:has(.agent-result-panel)) > .thread-head,
+	.app .main:not(:has(.agent-result-panel)) > .thread,
+	.app .main:not(:has(.agent-result-panel)) > .composer,
+	.app .main:not(:has(.agent-result-panel)) > .timeline-jump-latest {
+		@apply ml-conversation-left-wide mr-conversation-right-wide;
+	}
+
+	.app .pi-timeline-message,
+	.app .streaming-message {
+		@apply max-w-message-wide;
+	}
 }
 
 /* Artifact results use a full-screen surface on phones, a drawer in regular

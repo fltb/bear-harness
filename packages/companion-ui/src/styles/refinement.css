@@ -11,6 +11,13 @@ select {
 	font: inherit;
 }
 
+select,
+option {
+	color-scheme: dark;
+	color: var(--sys-text);
+	background-color: var(--sys-surface);
+}
+
 button {
 	transition:
 		background-color var(--motion-fast) ease,
@@ -450,7 +457,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 }
 
 .thread {
-	@apply gap-4 overflow-x-hidden rounded-none border-0 bg-none bg-transparent px-6 py-5;
+	@apply gap-4 overflow-x-clip rounded-none border-0 bg-none bg-transparent px-6 py-5;
 	backdrop-filter: none;
 }
 
@@ -677,7 +684,7 @@ button[data-variant="primary"]:hover:not(:disabled),
 }
 
 .agent-result-panel {
-	@apply relative z-40 m-4 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border shadow-app;
+	@apply sticky top-0 z-40 mx-4 my-0 flex h-dvh min-h-0 min-w-0 self-start overflow-hidden rounded-2xl border shadow-app;
 	grid-area: result;
 	border-color: color-mix(in srgb, var(--line-strong) 72%, transparent);
 	color: var(--text-strong);

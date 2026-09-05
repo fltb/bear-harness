@@ -6,7 +6,6 @@ import {
 	faCodeBranch,
 	faCopy,
 	faPen,
-	faRotateRight,
 } from "@fortawesome/free-solid-svg-icons";
 import { createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
 import { Icon } from "./Icon.js";
@@ -88,7 +87,8 @@ function PiTimelineEntryView(props: {
 	entry: PiSessionEntry;
 	onPreviewMedia(media: CharacterMedia): void;
 	canEdit: boolean;
-	canRegenerate: boolean;
+	canCorrect: boolean;
+	canBranch: boolean;
 	versionPager?: {
 		leafIds: readonly PiSessionEntryId[];
 		activeLeafId: PiSessionEntryId;
@@ -104,6 +104,7 @@ function PiTimelineEntryView(props: {
 	const [correctionDetail, setCorrectionDetail] = createSignal("");
 	const [correctionError, setCorrectionError] = createSignal<string | null>(null);
 	const [actionBusy, setActionBusy] = createSignal(false);
+	const messageActionBusy = () => actionBusy() || store.conversationMutationBusy;
 	const [actionError, setActionError] = createSignal<string | null>(null);
 	const [copied, setCopied] = createSignal(false);
 	let editOpener: HTMLButtonElement | undefined;
@@ -144,7 +145,7 @@ function PiTimelineEntryView(props: {
 								<Button
 									type="button"
 									class="message-choice"
-									disabled={store.pendingUserMessages.length > 0}
+									disabled={store.pendingUserMessages.length > 0 || store.conversationMutationBusy}
 									onClick={() => void store.sendMessage(choice.message)}
 								>
 									{choice.label}
@@ -198,6 +199,7 @@ function PiTimelineEntryView(props: {
 		action: () => Promise<void>,
 		setError: (value: string | null) => void = setActionError,
 	) => {
+		if (messageActionBusy()) return false;
 		setActionBusy(true);
 		setError(null);
 		try {
@@ -230,14 +232,14 @@ function PiTimelineEntryView(props: {
 		if (await runAction(() => store.editMessage(entry.id, value), setEditError)) dismissEdit();
 	};
 	const dismissCorrection = () => {
-		if (actionBusy()) return;
+		if (messageActionBusy()) return;
 		setCorrecting(false);
 		setCorrectionError(null);
 	};
 	const submitCorrection = async (feedback: string) => {
 		const value = feedback.trim();
 		if (!value) return;
-		if (await runAction(() => store.regenerateMessage(entry.id, value), setCorrectionError)) {
+		if (await runAction(() => store.correctMessage(entry.id, value), setCorrectionError)) {
 			setCorrectionDetail("");
 			setCorrecting(false);
 		}
@@ -259,7 +261,7 @@ function PiTimelineEntryView(props: {
 	const switchVersion = (offset: -1 | 1) => {
 		const pager = props.versionPager;
 		const target = pager?.leafIds[selectedVersionIndex() + offset];
-		if (!target || pager.disabled || actionBusy()) return;
+		if (!target || pager.disabled || messageActionBusy()) return;
 		void runAction(() => store.switchMessageVersion(target));
 	};
 	return (
@@ -298,6 +300,7 @@ function PiTimelineEntryView(props: {
 									aria-label={t("messages.edit")}
 									data-message-action="edit"
 									title={t("messages.edit")}
+									disabled={messageActionBusy()}
 									onClick={() => {
 										setEditText(text());
 										setEditError(null);
@@ -312,6 +315,7 @@ function PiTimelineEntryView(props: {
 								class="msg-inline-action"
 								aria-label={copied() ? t("messages.copied") : t("messages.copy")}
 								title={copied() ? t("messages.copied") : t("messages.copy")}
+								disabled={messageActionBusy()}
 								onClick={() => void copyMessage()}
 							>
 								<Icon icon={faCopy} />
@@ -329,12 +333,13 @@ function PiTimelineEntryView(props: {
 									value={editText()}
 									onInput={(event) => setEditText(event.currentTarget.value)}
 									onKeyDown={(event) => {
-										if (event.key === "Escape" && !actionBusy()) {
+										if (event.key === "Escape" && !messageActionBusy()) {
 											event.preventDefault();
 											dismissEdit();
 										}
 									}}
 									aria-label={t("messages.editLabel")}
+									disabled={messageActionBusy()}
 								/>
 							</TextField>
 							<Show when={editError()}>
@@ -345,12 +350,12 @@ function PiTimelineEntryView(props: {
 								)}
 							</Show>
 							<div class="message-inline-edit-actions">
-								<Button type="button" disabled={actionBusy()} onClick={dismissEdit}>
+								<Button type="button" disabled={messageActionBusy()} onClick={dismissEdit}>
 									{t("messages.cancel")}
 								</Button>
 								<Button
 									type="button"
-									disabled={actionBusy() || !editText().trim()}
+									disabled={messageActionBusy() || !editText().trim()}
 									onClick={() => void commitEdit()}
 								>
 									{t("messages.save")}
@@ -363,41 +368,37 @@ function PiTimelineEntryView(props: {
 							{errorText()}
 						</span>
 					</Show>
-					<Show when={props.canRegenerate && !isUser}>
+					<Show when={(props.canCorrect || props.canBranch) && !isUser}>
 						<div class="message-primary-actions">
-							<Button
-								type="button"
-								disabled={actionBusy()}
-								onClick={() => void runAction(() => store.regenerateMessage(entry.id))}
-							>
-								<Icon icon={faRotateRight} />
-								{t("messages.regenerate")}
-							</Button>
-							<Button
-								ref={(element) => {
-									correctionOpener = element;
-								}}
-								type="button"
-								disabled={actionBusy()}
-								onClick={() => {
-									setCorrectionDetail("");
-									setCorrectionError(null);
-									setCorrecting(true);
-								}}
-							>
-								{store.character?.character.correction.trigger_label}
-							</Button>
-							<Button
-								type="button"
-								disabled={actionBusy()}
-								onClick={() => void runAction(() => store.createConversationFromEntry(entry.id))}
-							>
-								<Icon icon={faCodeBranch} />
-								{t("messages.branch")}
-							</Button>
+							<Show when={props.canCorrect}>
+								<Button
+									ref={(element) => {
+										correctionOpener = element;
+									}}
+									type="button"
+									disabled={messageActionBusy()}
+									onClick={() => {
+										setCorrectionDetail("");
+										setCorrectionError(null);
+										setCorrecting(true);
+									}}
+								>
+									{store.character?.character.correction.trigger_label}
+								</Button>
+							</Show>
+							<Show when={props.canBranch}>
+								<Button
+									type="button"
+									disabled={messageActionBusy()}
+									onClick={() => void runAction(() => store.createConversationFromEntry(entry.id))}
+								>
+									<Icon icon={faCodeBranch} />
+									{t("messages.branch")}
+								</Button>
+							</Show>
 						</div>
 					</Show>
-					<Show when={props.canRegenerate && !isUser}>
+					<Show when={props.canCorrect && !isUser}>
 						<Dialog
 							open={correcting()}
 							modal
@@ -428,7 +429,7 @@ function PiTimelineEntryView(props: {
 											{(preset) => (
 												<Button
 													type="button"
-													disabled={actionBusy()}
+													disabled={messageActionBusy()}
 													onClick={() => void submitCorrection(preset.label)}
 												>
 													{preset.label}
@@ -455,9 +456,13 @@ function PiTimelineEntryView(props: {
 												onInput={(event) => setCorrectionDetail(event.currentTarget.value)}
 												placeholder={store.character?.character.correction.custom_placeholder}
 												aria-label={store.character?.character.correction.custom_label}
+												disabled={messageActionBusy()}
 											/>
 										</TextField>
-										<Button type="submit" disabled={!correctionDetail().trim() || actionBusy()}>
+										<Button
+											type="submit"
+											disabled={!correctionDetail().trim() || messageActionBusy()}
+										>
 											{store.character?.character.correction.custom_label}
 										</Button>
 									</form>
@@ -486,7 +491,7 @@ function PiTimelineEntryView(props: {
 							<Button
 								type="button"
 								aria-label={t("messages.previousVersion")}
-								disabled={pager().disabled || actionBusy() || selectedVersionIndex() <= 0}
+								disabled={pager().disabled || messageActionBusy() || selectedVersionIndex() <= 0}
 								onClick={() => switchVersion(-1)}
 							>
 								<Icon icon={faChevronLeft} />
@@ -499,7 +504,7 @@ function PiTimelineEntryView(props: {
 								aria-label={t("messages.nextVersion")}
 								disabled={
 									pager().disabled ||
-									actionBusy() ||
+									messageActionBusy() ||
 									selectedVersionIndex() >= pager().leafIds.length - 1
 								}
 								onClick={() => switchVersion(1)}
@@ -670,18 +675,8 @@ function PiTimelineRenderer(props: {
 	latestLeafIds: readonly PiSessionEntryId[];
 }) {
 	const store = useCompanionStore();
-	const turnActive = () => store.activePiLiveState?.isStreaming === true;
-	const latestUserId = createMemo(
-		() =>
-			[...props.items]
-				.reverse()
-				.find(
-					(item) =>
-						item.kind === "entry" &&
-						item.entry.type === "message" &&
-						item.entry.message.role === "user",
-				)?.id,
-	);
+	const turnActive = () =>
+		store.activePiLiveState?.isStreaming === true || store.pendingUserMessages.length > 0;
 	const latestAssistantId = createMemo(
 		() =>
 			[...props.items]
@@ -726,8 +721,9 @@ function PiTimelineRenderer(props: {
 									<PiTimelineEntryView
 										entry={entryItem().entry}
 										onPreviewMedia={props.onPreviewMedia}
-										canEdit={!turnActive() && entryItem().id === latestUserId()}
-										canRegenerate={!turnActive() && entryItem().id === latestAssistantId()}
+										canEdit={!turnActive()}
+										canCorrect={!turnActive()}
+										canBranch={!turnActive() && entryItem().id === latestAssistantId()}
 										versionPager={
 											entryItem().id === latestAssistantId() &&
 											props.latestLeafIds.length > 1 &&
