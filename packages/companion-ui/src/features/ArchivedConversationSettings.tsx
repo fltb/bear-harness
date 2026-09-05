@@ -12,6 +12,14 @@ export function ArchivedConversationSettings() {
 	const workflow = useConversationWorkflow(store);
 	const [deleteTarget, setDeleteTarget] = createSignal<{ id: string; title: string }>();
 	const [error, setError] = createSignal<string>();
+	let deleteReturnFocus: HTMLButtonElement | undefined;
+
+	const closeDeleteDialog = () => {
+		setDeleteTarget(undefined);
+		queueMicrotask(() => {
+			if (deleteReturnFocus?.isConnected) deleteReturnFocus.focus();
+		});
+	};
 
 	const run = async (action: () => Promise<unknown>): Promise<void> => {
 		setError(undefined);
@@ -65,12 +73,13 @@ export function ArchivedConversationSettings() {
 										type="button"
 										aria-label={t("sidebar.deleteConversation")}
 										title={t("sidebar.deleteConversation")}
-										onClick={() =>
+										onClick={(event) => {
+											deleteReturnFocus = event.currentTarget;
 											setDeleteTarget({
 												id: conversation.conversationId,
 												title: conversation.name ?? conversation.firstMessage,
-											})
-										}
+											});
+										}}
 									>
 										<Icon icon={faTrash} />
 									</Button>
@@ -82,7 +91,7 @@ export function ArchivedConversationSettings() {
 			</Show>
 			<Dialog
 				open={deleteTarget() !== undefined}
-				onOpenChange={(open) => !open && setDeleteTarget(undefined)}
+				onOpenChange={(open) => !open && closeDeleteDialog()}
 			>
 				<Dialog.Portal>
 					<Dialog.Overlay class="confirmation-overlay" />

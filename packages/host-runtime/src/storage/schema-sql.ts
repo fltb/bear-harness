@@ -26,7 +26,12 @@ CREATE TABLE active_character (
 );
 CREATE TABLE app_settings (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
-	first_run_stage TEXT NOT NULL DEFAULT 'model',
+	system_model_onboarding_complete INTEGER NOT NULL DEFAULT 0
+		CHECK (system_model_onboarding_complete IN (0, 1)),
+	embedding_onboarding_complete INTEGER NOT NULL DEFAULT 0
+		CHECK (embedding_onboarding_complete IN (0, 1)),
+	relationship_memory_enabled INTEGER NOT NULL DEFAULT 0
+		CHECK (relationship_memory_enabled IN (0, 1)),
 	network_proxy TEXT NOT NULL DEFAULT '{"mode":"auto"}',
 	memory_vector_service TEXT NOT NULL DEFAULT '{"enabled":false,"provider":"none"}',
 	system_model_defaults TEXT NOT NULL DEFAULT '{"vision":{"mode":"auto"}}',
@@ -42,11 +47,16 @@ CREATE TABLE provider_accounts (
 	created_at TEXT NOT NULL DEFAULT (datetime('now')),
 	updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE provider_removal_journal (
+	provider_id TEXT PRIMARY KEY,
+	created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE configured_models (
 	provider_id TEXT NOT NULL,
 	model_id TEXT NOT NULL,
 	label TEXT NOT NULL,
 	supports_images INTEGER NOT NULL DEFAULT 0 CHECK (supports_images IN (0, 1)),
+	enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
 	created_at TEXT NOT NULL DEFAULT (datetime('now')),
 	PRIMARY KEY (provider_id, model_id)
 );
@@ -98,6 +108,11 @@ CREATE TABLE conversations (
 	created_at TEXT NOT NULL DEFAULT (datetime('now')),
 	updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 	archived_at TEXT
+);
+CREATE TABLE active_conversations (
+	companion_id TEXT PRIMARY KEY REFERENCES runtime_identity(companion_id) ON DELETE CASCADE,
+	conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+	updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX idx_conversations_active ON conversations(companion_id, archived_at, updated_at);
 CREATE TABLE model_route_settings (

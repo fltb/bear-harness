@@ -1,4 +1,4 @@
-import type { EmbeddingDownloadState } from "@bear-harness/protocol/schema";
+import type { LocalEmbeddingAcquisitionState } from "@bear-harness/protocol";
 import type { Accessor } from "solid-js";
 import type {
 	ArtifactActionResponse,
@@ -36,13 +36,43 @@ import type {
 export type EmbeddingSettingsValue =
 	| NonNullable<SettingsPatch["memoryVectorService"]>
 	| SettingsData["modelDownloadSource"];
+export type LocalEmbeddingTargetValue =
+	| { kind: "candidate"; candidateId: string }
+	| { kind: "custom"; customPath: string; dimensions: number };
+export type ModelDownloadSourceValue =
+	| { type: "official" }
+	| { type: "hf-mirror" }
+	| { type: "custom"; endpoint: string };
+export interface LocalEmbeddingInventoryData {
+	candidates: Array<{
+		id: string;
+		name: string;
+		dimensions: number;
+		isDefault: boolean;
+		target: LocalEmbeddingTargetValue;
+		installed: boolean;
+	}>;
+	activeTarget?: LocalEmbeddingTargetValue;
+}
+export type CompleteEmbeddingValue =
+	| { choice: "none" }
+	| { choice: "local"; target: LocalEmbeddingTargetValue }
+	| {
+			choice: "remote";
+			configuration: {
+				baseUrl: string;
+				model: string;
+				dimensions: number;
+				apiKey?: string;
+			};
+	  };
 interface RpcQueryBinding<T> {
 	readonly data: T | undefined;
 	readonly isPending: boolean;
 	readonly error: unknown;
 }
-interface RpcMutationBinding<T> {
-	readonly mutateAsync: (variables: T) => Promise<unknown>;
+interface RpcMutationBinding<T, TResult = unknown> {
+	readonly mutateAsync: (variables: T) => Promise<TResult>;
 	readonly isPending: boolean;
 	readonly error: unknown;
 	readonly isSuccess: boolean;
@@ -53,16 +83,25 @@ export interface QueryView<T> {
 	error(): unknown;
 }
 export interface EmbeddingBinding {
-	downloadState(): EmbeddingDownloadState;
-	cancelDownload(): Promise<unknown>;
+	acquisitionState(): LocalEmbeddingAcquisitionState;
+	cancelAcquisition(): Promise<LocalEmbeddingAcquisitionState>;
 	readonly settingsQuery: RpcQueryBinding<{ settings: SettingsData }>;
 	readonly capabilitiesQuery: RpcQueryBinding<SettingsCapabilities>;
+	readonly inventoryQuery: RpcQueryBinding<LocalEmbeddingInventoryData>;
+	readonly acquisitionQuery: RpcQueryBinding<LocalEmbeddingAcquisitionState>;
 	readonly settingsMutation: RpcMutationBinding<EmbeddingSettingsValue>;
-	readonly localConfigureMutation: RpcMutationBinding<{
-		provider: "none" | "local";
-		candidateId?: string;
-		customPath?: string;
-	}>;
+	readonly acquisitionStartMutation: RpcMutationBinding<
+		{ target: LocalEmbeddingTargetValue; source: ModelDownloadSourceValue },
+		LocalEmbeddingAcquisitionState
+	>;
+	readonly activateLocalMutation: RpcMutationBinding<
+		LocalEmbeddingTargetValue,
+		{ settings: SettingsData }
+	>;
+	readonly completeEmbeddingMutation: RpcMutationBinding<
+		CompleteEmbeddingValue,
+		{ settings: SettingsData }
+	>;
 }
 
 export interface SettingsApi {
@@ -113,6 +152,10 @@ export interface ModelApi {
 	): Promise<void>;
 	initializeDefaults(): Promise<void>;
 	completeDefaultsOnboarding(): Promise<void>;
+	completeSystemOnboarding(
+		reply: { providerId: string; modelId: string },
+		vision: { mode: "auto" } | { mode: "manual"; route: { providerId: string; modelId: string } },
+	): Promise<void>;
 }
 
 export interface RunApi {

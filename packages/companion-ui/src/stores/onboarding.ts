@@ -8,7 +8,7 @@ import { createRpcQuery, queryKeys, refreshRpcQuery } from "./rpc-query.js";
 
 const INITIAL_ONBOARDING: OnboardingData = {
 	status: "complete",
-	stateData: { answers: {}, decisions: {} },
+	stateData: { answers: {} },
 };
 
 export interface OnboardingStore {

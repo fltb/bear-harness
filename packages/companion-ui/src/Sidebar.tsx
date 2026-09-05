@@ -21,6 +21,7 @@ export function Sidebar(props: {
 	character: CharacterDisplay | undefined;
 	onOpenBackstage: (tab: "roles" | "settings" | "archived") => void;
 	onNavigate?: () => void;
+	navigationHidden?: boolean;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
@@ -29,7 +30,57 @@ export function Sidebar(props: {
 		id: string;
 		title: string;
 	} | null>(null);
+	const [deleteBusy, setDeleteBusy] = createSignal(false);
+	const [renameBusy, setRenameBusy] = createSignal(false);
 	let searchRef: HTMLInputElement | undefined;
+	let newConversationRef: HTMLButtonElement | undefined;
+	let deleteReturnFocus: HTMLButtonElement | undefined;
+	let renameInputRef: HTMLInputElement | undefined;
+	let renameReturnId: string | undefined;
+	const conversationRefs = new Map<string, HTMLButtonElement>();
+	const renameTriggerRefs = new Map<string, HTMLButtonElement>();
+	const focusAfterRender = (target: () => HTMLElement | undefined) => {
+		queueMicrotask(() => target()?.focus());
+	};
+	const cancelRename = () => {
+		if (renameBusy()) return;
+		const id = renameReturnId;
+		workflow.cancelRename();
+		focusAfterRender(() => (id ? renameTriggerRefs.get(id) : undefined));
+	};
+	const saveRename = async (conversationId: string) => {
+		if (renameBusy()) return;
+		setRenameBusy(true);
+		try {
+			const saved = await workflow.saveRename(conversationId);
+			if (!saved) {
+				focusAfterRender(() => renameInputRef);
+				return;
+			}
+			const id = renameReturnId;
+			focusAfterRender(() => (id ? renameTriggerRefs.get(id) : undefined));
+		} finally {
+			setRenameBusy(false);
+		}
+	};
+	const cancelDelete = () => {
+		setDeleteTarget(null);
+		setDeleteBusy(false);
+		focusAfterRender(() => deleteReturnFocus);
+	};
+	const confirmDelete = async () => {
+		const target = deleteTarget();
+		if (!target || deleteBusy()) return;
+		setDeleteBusy(true);
+		const deleted = await workflow.runSidebarAction(() => store.deleteConversation(target.id));
+		setDeleteBusy(false);
+		if (!deleted) return;
+		setDeleteTarget(null);
+		focusAfterRender(() => {
+			const activeId = store.activeConversationId;
+			return (activeId ? conversationRefs.get(activeId) : undefined) ?? newConversationRef;
+		});
+	};
 
 	onMount(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -59,7 +110,12 @@ export function Sidebar(props: {
 	});
 
 	return (
-		<aside class="sidebar">
+		<aside
+			id="conversation-navigation"
+			class="sidebar"
+			aria-hidden={props.navigationHidden ? "true" : undefined}
+			inert={props.navigationHidden ? true : undefined}
+		>
 			<Button
 				type="button"
 				class="mobile-navigation-close"
@@ -106,6 +162,9 @@ export function Sidebar(props: {
 				<Button
 					type="button"
 					class="new-conversation"
+					ref={(element) => {
+						newConversationRef = element;
+					}}
 					aria-label={t("sidebar.newConversation")}
 					title={t("sidebar.newConversation")}
 					onClick={() => {
@@ -116,7 +175,7 @@ export function Sidebar(props: {
 					<Icon icon={faPlus} />
 				</Button>
 			</div>
-			<Show when={workflow.sidebarError()}>
+			<Show when={deleteTarget() === null ? workflow.sidebarError() : null}>
 				{(message) => (
 					<p class="status-line err" role="alert">
 						{t("messages.operationFailedPrefix")}
@@ -144,20 +203,58 @@ export function Sidebar(props: {
 										fallback={
 											<form
 												class="conversation-rename"
+												onKeyDown={(event) => {
+													if (event.key !== "Escape") return;
+													event.preventDefault();
+													event.stopPropagation();
+													cancelRename();
+												}}
 												onSubmit={(event) => {
 													event.preventDefault();
-													void workflow.saveRename(conversation.conversationId);
+													void saveRename(conversation.conversationId);
 												}}
 											>
-												<TextField>
-													<TextField.Input
-														aria-label={t("sidebar.renameConversation")}
-														value={workflow.editingTitle()}
-														onInput={(event) => workflow.setEditingTitle(event.currentTarget.value)}
-													/>
-												</TextField>
-												<Button data-control="command" type="submit">
+												<div class="conversation-rename-field">
+													<TextField>
+														<TextField.Input
+															ref={(element) => {
+																renameInputRef = element;
+																queueMicrotask(() => element.focus());
+															}}
+															aria-label={t("sidebar.renameConversation")}
+															aria-invalid={workflow.renameRequired() || undefined}
+															aria-describedby={
+																workflow.renameRequired()
+																	? `conversation-rename-error-${conversation.conversationId}`
+																	: undefined
+															}
+															value={workflow.editingTitle()}
+															disabled={renameBusy()}
+															onInput={(event) =>
+																workflow.setEditingTitle(event.currentTarget.value)
+															}
+														/>
+													</TextField>
+													<Show when={workflow.renameRequired()}>
+														<p
+															id={`conversation-rename-error-${conversation.conversationId}`}
+															class="conversation-rename-error"
+															role="alert"
+														>
+															{t("errors.invalidRequest")}
+														</p>
+													</Show>
+												</div>
+												<Button data-control="command" type="submit" disabled={renameBusy()}>
 													{t("sidebar.saveConversation")}
+												</Button>
+												<Button
+													data-control="command"
+													type="button"
+													disabled={renameBusy()}
+													onClick={cancelRename}
+												>
+													{t("messages.cancel")}
 												</Button>
 											</form>
 										}
@@ -166,6 +263,9 @@ export function Sidebar(props: {
 											type="button"
 											class="nav-item"
 											data-conversation-id={conversation.conversationId}
+											ref={(element) => {
+												conversationRefs.set(conversation.conversationId, element);
+											}}
 											aria-current={
 												conversation.conversationId === store.activeConversationId
 													? "page"
@@ -208,10 +308,14 @@ export function Sidebar(props: {
 											<Button
 												data-control="command"
 												type="button"
+												ref={(element) => {
+													renameTriggerRefs.set(conversation.conversationId, element);
+												}}
 												title={t("sidebar.renameConversation")}
 												data-tooltip={t("sidebar.renameConversation")}
 												aria-label={t("sidebar.renameConversation")}
 												onClick={() => {
+													renameReturnId = conversation.conversationId;
 													workflow.beginRename(conversation);
 												}}
 											>
@@ -237,7 +341,8 @@ export function Sidebar(props: {
 												title={t("sidebar.deleteConversation")}
 												data-tooltip={t("sidebar.deleteConversation")}
 												aria-label={t("sidebar.deleteConversation")}
-												onClick={() => {
+												onClick={(event) => {
+													deleteReturnFocus = event.currentTarget;
 													setDeleteTarget({
 														id: conversation.conversationId,
 														title: conversation.name ?? conversation.firstMessage,
@@ -259,7 +364,6 @@ export function Sidebar(props: {
 						type="button"
 						class="system-nav"
 						onClick={() => {
-							props.onNavigate?.();
 							props.onOpenBackstage("roles");
 						}}
 					>
@@ -272,7 +376,6 @@ export function Sidebar(props: {
 						type="button"
 						class="system-nav"
 						onClick={() => {
-							props.onNavigate?.();
 							props.onOpenBackstage("settings");
 						}}
 					>
@@ -286,7 +389,7 @@ export function Sidebar(props: {
 			<Dialog
 				open={deleteTarget() !== null}
 				onOpenChange={(open) => {
-					if (!open) setDeleteTarget(null);
+					if (!open && deleteTarget() && !deleteBusy()) cancelDelete();
 				}}
 			>
 				<Dialog.Portal>
@@ -298,29 +401,34 @@ export function Sidebar(props: {
 							<br />
 							{t("sidebar.deleteConversationConfirm")}
 						</Dialog.Description>
+						<Show when={workflow.sidebarError()}>
+							{(message) => (
+								<p class="status-line err" role="alert">
+									{t("messages.operationFailedPrefix")}
+									{message()}
+								</p>
+							)}
+						</Show>
 						<div class="confirmation-actions">
-							<Dialog.CloseButton
-								as={Button}
+							<Button
 								data-control="command"
 								type="button"
 								aria-label={t("messages.cancel")}
+								disabled={deleteBusy()}
+								onClick={cancelDelete}
 							>
 								{t("messages.cancel")}
-							</Dialog.CloseButton>
-							<Dialog.CloseButton
-								as={Button}
+							</Button>
+							<Button
 								data-control="command"
 								class="danger-action"
 								type="button"
 								aria-label={t("sidebar.deleteConversationConfirmAction")}
-								onClick={() => {
-									const target = deleteTarget();
-									if (!target) return;
-									void workflow.runSidebarAction(() => store.deleteConversation(target.id));
-								}}
+								disabled={deleteBusy()}
+								onClick={() => void confirmDelete()}
 							>
 								{t("sidebar.deleteConversationConfirmAction")}
-							</Dialog.CloseButton>
+							</Button>
 						</div>
 					</Dialog.Content>
 				</Dialog.Portal>

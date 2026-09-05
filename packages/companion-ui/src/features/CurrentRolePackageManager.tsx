@@ -1,119 +1,28 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { createSignal, For, Show } from "solid-js";
-import { parseDocument, stringify } from "yaml";
+import { parseDocument } from "yaml";
 import type { CharacterDeletionStatus, CharacterPackageDocument } from "../stores/companion.js";
 import { Button, Dialog, TextField } from "../ui/primitives.js";
 
-function record(value: unknown): Record<string, unknown> | undefined {
-	return value && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: undefined;
-}
+const PROMPT_FIELDS = ["description", "personality", "scenario", "system_prompt"] as const;
+type PromptField = (typeof PROMPT_FIELDS)[number];
 
-function ManifestField(props: {
-	name: string;
-	path: string[];
-	schema: unknown;
-	value: unknown;
-	disabled: boolean;
-	onChange(path: string[], value: unknown): void;
-	onInvalid(message: string): void;
-}) {
-	const schema = () => record(props.schema) ?? {};
-	const properties = () => record(schema().properties);
-	const type = () => schema().type;
-	return (
-		<Show
-			when={properties()}
-			fallback={
-				<Show
-					when={Array.isArray(props.value) || type() === "array"}
-					fallback={
-						<Show
-							when={typeof props.value === "boolean" || type() === "boolean"}
-							fallback={
-								<TextField class="setting-field manifest-field">
-									<TextField.Label class="field-label">{props.name}</TextField.Label>
-									<Show
-										when={typeof props.value === "string" && props.value.includes("\n")}
-										fallback={
-											<TextField.Input
-												disabled={props.disabled}
-												value={props.value == null ? "" : String(props.value)}
-												onInput={(event) =>
-													props.onChange(
-														props.path,
-														type() === "number" || type() === "integer"
-															? Number(event.currentTarget.value)
-															: event.currentTarget.value,
-													)
-												}
-											/>
-										}
-									>
-										<TextField.TextArea
-											rows={4}
-											disabled={props.disabled}
-											value={String(props.value ?? "")}
-											onInput={(event) => props.onChange(props.path, event.currentTarget.value)}
-										/>
-									</Show>
-								</TextField>
-							}
-						>
-							<div class="setting-field manifest-field">
-								<span class="field-label">{props.name}</span>
-								<Button
-									type="button"
-									aria-pressed={Boolean(props.value)}
-									disabled={props.disabled}
-									onClick={() => props.onChange(props.path, !props.value)}
-								>
-									{String(Boolean(props.value))}
-								</Button>
-							</div>
-						</Show>
-					}
-				>
-					<TextField class="setting-field manifest-field manifest-array-field">
-						<TextField.Label class="field-label">{props.name}</TextField.Label>
-						<TextField.TextArea
-							rows={Math.min(
-								12,
-								Math.max(3, Array.isArray(props.value) ? props.value.length * 2 : 3),
-							)}
-							disabled={props.disabled}
-							value={stringify(props.value ?? [])}
-							onInput={(event) => {
-								const parsed = parseDocument(event.currentTarget.value);
-								if (parsed.errors[0]) props.onInvalid(parsed.errors[0].message);
-								else props.onChange(props.path, parsed.toJSON());
-							}}
-						/>
-					</TextField>
-				</Show>
-			}
-		>
-			{(fields) => (
-				<fieldset class="manifest-object-field">
-					<legend>{props.name}</legend>
-					<For each={Object.entries(fields())}>
-						{([name, childSchema]) => (
-							<ManifestField
-								name={name}
-								path={[...props.path, name]}
-								schema={childSchema}
-								value={record(props.value)?.[name]}
-								disabled={props.disabled}
-								onChange={props.onChange}
-								onInvalid={props.onInvalid}
-							/>
-						)}
-					</For>
-				</fieldset>
-			)}
-		</Show>
-	);
+type PromptDraft = Record<PromptField, string>;
+
+type PluginTrust = {
+	origin: CharacterPackageDocument["origin"];
+	pluginHash: string;
+	pluginsPresent: boolean;
+	trusted: boolean;
+};
+
+function desktopBridgeAvailable(): boolean {
+	const bridge = (
+		globalThis as typeof globalThis & {
+			bearDesktop?: { platform?: unknown; transport?: { invoke?: unknown } };
+		}
+	).bearDesktop;
+	return typeof bridge?.platform === "string" && typeof bridge.transport?.invoke === "function";
 }
 
 export function CurrentRolePackageManager(props: {
@@ -125,14 +34,8 @@ export function CurrentRolePackageManager(props: {
 	selectPackage: (id: string, confirmDiscard: () => boolean) => void;
 	savePackage: (yaml: string, expectedSha256: string) => Promise<CharacterPackageDocument>;
 	revealPackage: (id: string) => Promise<void>;
-	pluginTrust: (
-		id: string,
-	) => Promise<{ origin: string; pluginHash: string; pluginsPresent: boolean; trusted: boolean }>;
-	pluginTrustData: (
-		id: string,
-	) =>
-		| { origin: string; pluginHash: string; pluginsPresent: boolean; trusted: boolean }
-		| undefined;
+	pluginTrust: (id: string) => Promise<PluginTrust>;
+	pluginTrustData: (id: string) => PluginTrust | undefined;
 	confirmPluginTrust: (id: string) => Promise<void>;
 	deletionStatus: () => CharacterDeletionStatus | undefined;
 	deletionStatusLoading: () => boolean;
@@ -141,37 +44,52 @@ export function CurrentRolePackageManager(props: {
 	deletePackage: (id: string) => Promise<{ deleted: boolean }>;
 }) {
 	const [t] = useTranslation(undefined, { i18n });
-	const selectedId = () => props.document()?.characterId ?? "";
-	const [drafts, setDrafts] = createSignal<Record<string, { raw?: string; baseSha256?: string }>>(
-		{},
-	);
-	const draft = () => drafts()[selectedId()];
-	const raw = () => draft()?.raw ?? props.document()?.yaml ?? "";
-	const savedRaw = () => props.document()?.yaml ?? "";
-	const patchDraft = (patch: { raw?: string }) =>
-		setDrafts((current) => ({
-			...current,
-			[selectedId()]: {
-				...current[selectedId()],
-				baseSha256: current[selectedId()]?.baseSha256 ?? props.document()?.sha256,
-				...patch,
-			},
-		}));
-	const setRaw = (value: string) => patchDraft({ raw: value });
-	const manifest = () => {
-		const document = parseDocument(raw());
-		return document.errors.length ? undefined : document.toJSON();
+	const documentId = () => props.document()?.characterId ?? "";
+	const [drafts, setDrafts] = createSignal<
+		Record<string, { prompt: PromptDraft; baseSha256: string }>
+	>({});
+	const draft = () => drafts()[documentId()];
+	const prompt = (): PromptDraft =>
+		draft()?.prompt ??
+		props.document()?.character.prompt ?? {
+			description: "",
+			personality: "",
+			scenario: "",
+			system_prompt: "",
+		};
+	const updatePrompt = (field: PromptField, value: string) => {
+		const current = props.document();
+		if (!current) return;
+		setDrafts((drafts) => {
+			const existing = drafts[current.characterId];
+			return {
+				...drafts,
+				[current.characterId]: {
+					baseSha256: existing?.baseSha256 ?? current.sha256,
+					prompt: {
+						...(existing?.prompt ?? current.character.prompt),
+						[field]: value,
+					},
+				},
+			};
+		});
 	};
 	const [parseError, setParseError] = createSignal<string>();
 	const [saveError, setSaveError] = createSignal<string>();
+	const [revealError, setRevealError] = createSignal<string>();
 	const [saving, setSaving] = createSignal(false);
-	const trust = () => props.pluginTrustData(selectedId());
+	const trust = () => props.pluginTrustData(documentId());
 	const [pendingDeletion, setPendingDeletion] = createSignal<"runtime" | "package">();
 	const [deleting, setDeleting] = createSignal(false);
 	const [deletionFeedback, setDeletionFeedback] = createSignal<string>();
-	const dirty = () => raw() !== savedRaw();
+	const dirty = () => {
+		const current = props.document();
+		return Boolean(
+			current && PROMPT_FIELDS.some((field) => prompt()[field] !== current.character.prompt[field]),
+		);
+	};
 	const load = (id: string) => {
-		if (id === selectedId()) return;
+		if (id === props.selectedId()) return;
 		props.selectPackage(
 			id,
 			() => !dirty() || window.confirm(t("currentRolePackage.discardConfirm")),
@@ -179,7 +97,7 @@ export function CurrentRolePackageManager(props: {
 	};
 
 	const enablePlugins = async () => {
-		const characterId = selectedId();
+		const characterId = documentId();
 		if (!characterId) return;
 		setSaving(true);
 		try {
@@ -191,38 +109,35 @@ export function CurrentRolePackageManager(props: {
 			setSaving(false);
 		}
 	};
-	const updateManifest = (path: string[], value: unknown) => {
-		const yaml = parseDocument(raw());
-		if (yaml.errors.length > 0) {
-			setParseError(yaml.errors[0]?.message ?? t("currentRolePackage.invalidStorage"));
-			return;
-		}
-		yaml.setIn(path, value);
-		setRaw(String(yaml));
-		setParseError(undefined);
-	};
 	const discard = () => {
 		const current = props.document();
 		if (!current) return;
-		setDrafts((drafts) => ({
-			...drafts,
-			[current.characterId]: {
-				raw: current.yaml,
-			},
-		}));
+		setDrafts((drafts) => {
+			const next = { ...drafts };
+			delete next[current.characterId];
+			return next;
+		});
 		setParseError(undefined);
 		setSaveError(undefined);
 	};
 	const save = async () => {
-		if (!props.document() || !dirty() || parseError()) return;
+		const current = props.document();
+		if (!current || !dirty() || parseError()) return;
 		setSaving(true);
 		setSaveError(undefined);
 		try {
-			const next = await props.savePackage(raw(), draft()?.baseSha256 ?? props.document()!.sha256);
+			const yaml = parseDocument(current.yaml);
+			if (yaml.errors.length > 0) {
+				setParseError(yaml.errors[0]?.message ?? t("currentRolePackage.invalidStorage"));
+				return;
+			}
+			for (const field of PROMPT_FIELDS) yaml.setIn(["prompt", field], prompt()[field]);
+			const next = await props.savePackage(String(yaml), draft()?.baseSha256 ?? current.sha256);
 			setDrafts((drafts) => ({
 				...drafts,
 				[next.characterId]: {
-					raw: next.yaml,
+					baseSha256: next.sha256,
+					prompt: { ...next.character.prompt },
 				},
 			}));
 		} catch (error) {
@@ -234,6 +149,16 @@ export function CurrentRolePackageManager(props: {
 			);
 		} finally {
 			setSaving(false);
+		}
+	};
+	const reveal = async () => {
+		const characterId = documentId();
+		if (!characterId) return;
+		setRevealError(undefined);
+		try {
+			await props.revealPackage(characterId);
+		} catch (error) {
+			setRevealError(error instanceof Error ? error.message : String(error));
 		}
 	};
 	const deletionErrorMessage = (error: unknown): string => {
@@ -292,7 +217,7 @@ export function CurrentRolePackageManager(props: {
 						<Button
 							data-control="command"
 							class="current-role-package-choice"
-							data-selected={character.id === selectedId() || undefined}
+							data-selected={character.id === props.selectedId() || undefined}
 							type="button"
 							onClick={() => void load(character.id)}
 						>
@@ -339,36 +264,54 @@ export function CurrentRolePackageManager(props: {
 									</dd>
 								</dl>
 							</details>
-							<Button type="button" onClick={() => void props.revealPackage(current().characterId)}>
-								{t("currentRolePackage.revealPackage")}
-							</Button>
-						</header>
-						<div class="detail-card">
-							<strong>{t("currentRolePackage.pluginTrust")}</strong>
-							<span>
-								{trust()?.pluginsPresent
-									? `${trust()?.trusted ? t("currentRolePackage.pluginTrusted") : t("currentRolePackage.pluginDisabled")} · ${trust()?.pluginHash.slice(0, 12)}`
-									: t("currentRolePackage.noPlugins")}
-							</span>
-							<Show when={trust()?.pluginsPresent && !trust()?.trusted}>
-								<Button type="button" disabled={saving()} onClick={() => void enablePlugins()}>
-									{t("currentRolePackage.enablePlugins")}
+							<Show when={desktopBridgeAvailable()}>
+								<Button type="button" onClick={() => void reveal()}>
+									{t("currentRolePackage.revealPackage")}
 								</Button>
 							</Show>
-						</div>
-						<Show when={manifest()}>
-							{(value) => (
-								<ManifestField
-									name={t("currentRolePackage.manifest")}
-									path={[]}
-									schema={current().manifestSchema}
-									value={value()}
-									disabled={!current().writable}
-									onChange={updateManifest}
-									onInvalid={(message) => setParseError(message)}
-								/>
+						</header>
+						<Show when={revealError()}>
+							{(message) => (
+								<p class="status-line err" role="alert">
+									{message()}
+								</p>
 							)}
 						</Show>
+						<Show when={trust()?.pluginsPresent}>
+							<div class="detail-card">
+								<strong>{t("currentRolePackage.pluginTrust")}</strong>
+								<span>
+									{`${trust()?.trusted ? t("currentRolePackage.pluginTrusted") : t("currentRolePackage.pluginDisabled")} · ${trust()?.pluginHash.slice(0, 12)}`}
+								</span>
+								<Show when={!trust()?.trusted}>
+									<Button type="button" disabled={saving()} onClick={() => void enablePlugins()}>
+										{t("currentRolePackage.enablePlugins")}
+									</Button>
+								</Show>
+							</div>
+						</Show>
+						<fieldset class="detail-card current-role-prompt-editor">
+							<legend>{t("currentRolePackage.promptEditor")}</legend>
+							<p class="field-help">{t("currentRolePackage.promptEditorDescription")}</p>
+							<For each={PROMPT_FIELDS}>
+								{(field) => (
+									<TextField
+										value={prompt()[field]}
+										disabled={!current().writable}
+										class="prompt-field"
+									>
+										<TextField.Label>
+											{t(`currentRolePackage.promptFields.${field}`)}
+										</TextField.Label>
+										<TextField.TextArea
+											class="prompt-textarea"
+											rows={field === "system_prompt" ? 7 : 4}
+											onInput={(event) => updatePrompt(field, event.currentTarget.value)}
+										/>
+									</TextField>
+								)}
+							</For>
+						</fieldset>
 						<Show when={parseError()}>
 							{(message) => (
 								<p class="status-line err" role="alert">

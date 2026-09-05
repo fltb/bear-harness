@@ -90,7 +90,6 @@ export class CharacterRuntime {
 			options.appSettings,
 			options.forEachCompanionDatabase,
 		);
-		this.models.seedFromSystemDefaults(this.companionId);
 		this.companionStore = new CompanionStateStore(db);
 		this.onboarding = new FirstMeetingMachine(db, options.characterLoader);
 		this.canon = new CanonHubService(
@@ -147,8 +146,10 @@ export class CharacterRuntime {
 					},
 				},
 			},
-			defaultModel: () => this.models.defaults(this.companionId).reply,
-			multimodalFallback: () => this.models.multimodalFallback(),
+			defaultModel: () =>
+				this.models.defaults(this.companionId, options.providers.modelProjectionFacts()).reply,
+			multimodalFallback: () =>
+				this.models.multimodalFallback(options.providers.modelProjectionFacts()),
 			sessionDiscarded: (sessionId) =>
 				db.delete(conversations).where(eq(conversations.id, sessionId)).run(),
 			context: async (conversationId, message) => {
@@ -211,7 +212,7 @@ export class CharacterRuntime {
 		this.unsubscribeRunChanges = this.externalAgentRuns.subscribeChanges((run) =>
 			options.onLivePush({ type: "run", run }),
 		);
-		this.sessions = new SessionCatalog(db, this.pi, {
+		this.sessions = new SessionCatalog(db, this.pi, this.companionStore, {
 			beforeDelete: (sessionId) => this.externalAgentRuns.prepareConversationDeletion(sessionId),
 			artifacts: this.artifacts,
 		});
@@ -300,9 +301,7 @@ export class CharacterRuntime {
 	}
 
 	private memoryEnabled(): boolean {
-		return Boolean(
-			this.onboarding.getState(this.companionId).stateData.decisions.relationship_memory_enabled,
-		);
+		return this.options.appSettings.load().memoryVectorService.enabled;
 	}
 
 	private requireMemoryEnabled(): void {

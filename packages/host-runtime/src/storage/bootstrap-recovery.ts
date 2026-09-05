@@ -13,7 +13,7 @@ import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { SettingsData, SystemModelDefaultsGetResponse } from "@bear-harness/protocol/schema";
 import { CharacterLoader } from "../companion/character-loader.js";
-import { SystemDatabase } from "./database.js";
+import { CompanionDatabase, SystemDatabase } from "./database.js";
 import { RuntimeLayout, requireCompanionId } from "./layout.js";
 import { COMPANION_SCHEMA_SQL, SYSTEM_SCHEMA_SQL } from "./schema-sql.js";
 
@@ -25,6 +25,7 @@ const SYSTEM_TABLES = [
 	"app_settings",
 	"provider_accounts",
 	"configured_models",
+	"provider_removal_journal",
 	"executor_profiles",
 	"character_drafts",
 	"character_draft_revisions",
@@ -33,6 +34,7 @@ const SYSTEM_TABLES = [
 const COMPANION_TABLES = [
 	"runtime_identity",
 	"conversations",
+	"active_conversations",
 	"model_route_settings",
 	"onboarding_state",
 	"runs",
@@ -200,11 +202,16 @@ function validateSystemSingletons(path: string): boolean {
 			.get() as { installation_id?: unknown } | undefined;
 		const settings = database
 			.prepare(
-				"SELECT first_run_stage, network_proxy, memory_vector_service, system_model_defaults, model_download_mirror FROM app_settings WHERE id = 1",
+				"SELECT system_model_onboarding_complete, embedding_onboarding_complete, relationship_memory_enabled, network_proxy, memory_vector_service, system_model_defaults, model_download_mirror FROM app_settings WHERE id = 1",
 			)
 			.get() as Record<string, unknown> | undefined;
 		if (typeof identity?.installation_id !== "string" || !settings) return false;
-		if (!SettingsData.shape.firstRunStage.safeParse(settings.first_run_stage).success) return false;
+		if (
+			![0, 1].includes(Number(settings.system_model_onboarding_complete)) ||
+			![0, 1].includes(Number(settings.embedding_onboarding_complete)) ||
+			![0, 1].includes(Number(settings.relationship_memory_enabled))
+		)
+			return false;
 		const network = JSON.parse(String(settings.network_proxy)) as unknown;
 		const memory = JSON.parse(String(settings.memory_vector_service)) as unknown;
 		const defaults = JSON.parse(String(settings.system_model_defaults)) as unknown;
@@ -264,6 +271,25 @@ function validateCompanionIdentity(path: string, companionId: string): boolean {
 		database?.close();
 	}
 }
+function upgradeSystemDatabase(path: string): void {
+	if (!existsSync(path)) return;
+	const database = new SystemDatabase(path);
+	try {
+		database.initialize(SYSTEM_SCHEMA_SQL);
+	} finally {
+		database.close();
+	}
+}
+
+function upgradeCompanionDatabase(path: string, companionId: string): void {
+	if (!existsSync(path)) return;
+	const database = new CompanionDatabase(path, companionId);
+	try {
+		database.initialize(COMPANION_SCHEMA_SQL);
+	} finally {
+		database.close();
+	}
+}
 
 /** Inspect only state that can prevent the Host from opening at all. */
 export function inspectBootstrapHealth(options: BootstrapInspectionOptions): BootstrapHealth {
@@ -274,6 +300,18 @@ export function inspectBootstrapHealth(options: BootstrapInspectionOptions): Boo
 		recoverPendingDatabaseRepairs(layout.systemRoot, "settings.db", SYSTEM_TABLES);
 	} catch (error) {
 		return { status: "fatal", issue: { kind: "filesystem", message: message(error) } };
+	}
+	try {
+		upgradeSystemDatabase(layout.systemDatabase);
+	} catch (error) {
+		return {
+			status: "fatal",
+			issue: {
+				kind: "settings_database",
+				path: layout.systemDatabase,
+				message: message(error),
+			},
+		};
 	}
 	if (
 		!databaseIntegrity(layout.systemDatabase, SYSTEM_TABLES) ||
@@ -330,6 +368,19 @@ export function inspectBootstrapHealth(options: BootstrapInspectionOptions): Boo
 		recoverPendingDatabaseRepairs(companion.root, "runtime.db", COMPANION_TABLES);
 	} catch (error) {
 		return { status: "fatal", issue: { kind: "filesystem", message: message(error) } };
+	}
+	try {
+		upgradeCompanionDatabase(companion.database, activeCharacterId);
+	} catch (error) {
+		return {
+			status: "fatal",
+			issue: {
+				kind: "companion_database",
+				characterId: activeCharacterId,
+				path: companion.database,
+				message: message(error),
+			},
+		};
 	}
 	if (
 		!databaseIntegrity(companion.database, COMPANION_TABLES) ||
@@ -408,7 +459,9 @@ function validJsonColumns(row: Record<string, unknown>): boolean {
 function validAppSettingsRow(row: Record<string, unknown>): boolean {
 	try {
 		return (
-			SettingsData.shape.firstRunStage.safeParse(row.first_run_stage).success &&
+			[0, 1].includes(Number(row.system_model_onboarding_complete)) &&
+			[0, 1].includes(Number(row.embedding_onboarding_complete)) &&
+			[0, 1].includes(Number(row.relationship_memory_enabled)) &&
 			SettingsData.shape.networkProxy.safeParse(JSON.parse(String(row.network_proxy))).success &&
 			SettingsData.shape.memoryVectorService.safeParse(
 				JSON.parse(String(row.memory_vector_service)),

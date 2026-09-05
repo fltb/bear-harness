@@ -1,5 +1,7 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
+import { faXmark } from "@fortawesome/free-solid-svg-icons";
 import { createSignal, Show } from "solid-js";
+import { Icon } from "../Icon.js";
 import { useCompanionStore } from "../stores/companion.js";
 import { Button, Dialog } from "../ui/primitives.js";
 import { ModelSelector, modelRouteKey } from "./ModelSelector.js";
@@ -12,7 +14,8 @@ export function SystemModelSettings() {
 	const [saving, setSaving] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
 	const [addingProvider, setAddingProvider] = createSignal(false);
-	const models = () => store.model.models();
+	const models = () =>
+		store.model.models().filter((model) => model.enabled && model.readiness === "ready");
 	const defaults = () => store.model.data().systemDefaults;
 	const visionRoute = () => {
 		const vision = defaults().vision;
@@ -22,6 +25,7 @@ export function SystemModelSettings() {
 		route
 			? (models().find((model) => modelRouteKey(model) === modelRouteKey(route)) ?? null)
 			: null;
+	const replyModel = () => byRoute(defaults().reply);
 	const save = async (
 		reply: { providerId: string; modelId: string },
 		vision: Parameters<typeof store.model.setSystemDefaults>[1],
@@ -55,7 +59,12 @@ export function SystemModelSettings() {
 					<Dialog.Content class="provider-add-dialog">
 						<Dialog.Title>{t("settings.addProvider")}</Dialog.Title>
 						<AddProviderForm onAdded={() => setAddingProvider(false)} />
-						<Dialog.CloseButton>{t("backstage.close")}</Dialog.CloseButton>
+						<Dialog.CloseButton
+							class="backstage-close provider-add-dialog-close"
+							aria-label={t("backstage.close")}
+						>
+							<Icon icon={faXmark} />
+						</Dialog.CloseButton>
 					</Dialog.Content>
 				</Dialog.Portal>
 			</Dialog>
@@ -68,39 +77,47 @@ export function SystemModelSettings() {
 			</Show>
 			<ModelSelector
 				models={models()}
-				value={byRoute(defaults().reply)}
+				value={replyModel()}
 				class="field"
 				label={t("settings.systemDefaultReplyModel")}
 				disabled={saving()}
 				onModelChange={(model) => {
 					if (model)
-						void save({ providerId: model.providerId, modelId: model.modelId }, defaults().vision);
+						void save(
+							{ providerId: model.providerId, modelId: model.modelId },
+							model.supportsImages ? { mode: "auto" } : defaults().vision,
+						);
 				}}
 			/>
 			<p class="field-hint">{t("settings.systemDefaultReplyModelHint")}</p>
-			<ModelSelector
-				models={models().filter((model) => model.supportsImages)}
-				value={byRoute(visionRoute())}
-				class="field"
-				label={t("settings.systemDefaultVisionModel")}
-				autoLabel={t("settings.noFallback")}
-				includeAuto
-				disabled={saving() || !defaults().reply}
-				onModelChange={(model) => {
-					const reply = defaults().reply;
-					if (!reply) return;
-					void save(
-						reply,
-						model
-							? {
-									mode: "manual",
-									route: { providerId: model.providerId, modelId: model.modelId },
-								}
-							: { mode: "auto" },
-					);
-				}}
-			/>
-			<p class="field-hint">{t("settings.systemDefaultVisionModelHint")}</p>
+			<Show when={defaults().reply && replyModel()?.supportsImages !== true}>
+				<ModelSelector
+					models={models().filter((model) => model.supportsImages)}
+					value={byRoute(visionRoute())}
+					class="field"
+					label={t("settings.systemDefaultVisionModel")}
+					autoLabel={t("settings.noFallback")}
+					includeAuto
+					disabled={saving()}
+					onModelChange={(model) => {
+						const reply = defaults().reply;
+						if (!reply) return;
+						void save(
+							reply,
+							model
+								? {
+										mode: "manual",
+										route: { providerId: model.providerId, modelId: model.modelId },
+									}
+								: { mode: "auto" },
+						);
+					}}
+				/>
+				<p class="field-hint">{t("settings.systemDefaultVisionModelHint")}</p>
+			</Show>
+			<Show when={replyModel()?.supportsImages === true}>
+				<p class="field-hint">{t("settings.visionModelNative")}</p>
+			</Show>
 		</section>
 	);
 }

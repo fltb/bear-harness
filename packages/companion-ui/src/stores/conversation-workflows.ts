@@ -8,6 +8,7 @@ interface State {
 	query: string;
 	editingId?: string;
 	editingTitle: string;
+	renameRequired: boolean;
 	sidebarError: string | null;
 }
 
@@ -27,6 +28,7 @@ function createWorkflow(store: CompanionStore) {
 		modelBusy: false,
 		query: "",
 		editingTitle: "",
+		renameRequired: false,
 		sidebarError: null,
 	});
 	const models = createMemo(() => store.model.models());
@@ -49,12 +51,14 @@ function createWorkflow(store: CompanionStore) {
 		setState("query", value);
 		void store.searchConversations(value);
 	};
-	const runSidebarAction = async (action: () => Promise<void>) => {
+	const runSidebarAction = async (action: () => Promise<void>): Promise<boolean> => {
 		setState("sidebarError", null);
 		try {
 			await action();
+			return true;
 		} catch (cause) {
 			setState("sidebarError", cause instanceof Error ? cause.message : String(cause));
+			return false;
 		}
 	};
 	return {
@@ -74,19 +78,34 @@ function createWorkflow(store: CompanionStore) {
 		visibleConversations: () => store.conversations,
 		editingId: () => state.editingId,
 		editingTitle: () => state.editingTitle,
-		setEditingTitle: (value: string) => setState("editingTitle", value),
+		setEditingTitle: (value: string) => {
+			setState("editingTitle", value);
+			setState("renameRequired", false);
+		},
+		renameRequired: () => state.renameRequired,
 		sidebarError: () => state.sidebarError,
 		beginRename: (conversation: ConversationSummary) => {
 			setState("editingId", conversation.conversationId);
 			setState("editingTitle", conversation.name ?? conversation.firstMessage);
+			setState("renameRequired", false);
 		},
-		saveRename: async (id: string) => {
+		cancelRename: () => {
+			setState("editingId", undefined);
+			setState("editingTitle", "");
+			setState("renameRequired", false);
+		},
+		saveRename: async (id: string): Promise<boolean> => {
 			const title = state.editingTitle.trim();
-			if (!title) return;
-			await runSidebarAction(async () => {
-				await store.renameConversation(id, title);
-				setState("editingId", undefined);
-			});
+			if (!title) {
+				setState("renameRequired", true);
+				return false;
+			}
+			setState("renameRequired", false);
+			const saved = await runSidebarAction(() => store.renameConversation(id, title));
+			if (!saved) return false;
+			setState("editingId", undefined);
+			setState("editingTitle", "");
+			return true;
 		},
 		runSidebarAction,
 		sceneLabel,

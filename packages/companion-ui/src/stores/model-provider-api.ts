@@ -2,7 +2,7 @@ import type { CompanionClient } from "@bear-harness/companion-client";
 import type { QueryClient } from "@tanstack/solid-query";
 import type { ConfiguredModel, ModelRouteData, ProviderLoginResult, SettingsData } from "./ipc.js";
 import { invoke } from "./ipc.js";
-import { queryKeys, refreshRpcQuery } from "./rpc-query.js";
+import { hydrateRpcQuery, queryKeys, refreshRpcQuery } from "./rpc-query.js";
 import type { ModelApi, ProviderApi, SettingsApi } from "./supplementary-api.js";
 
 export function createModelProviderApis(c: {
@@ -220,6 +220,13 @@ export function createModelProviderApis(c: {
 		completeDefaultsOnboarding: async () => {
 			await invoke(client, () => client.model.defaultsCompleteOnboarding());
 			await refreshDefaults();
+		},
+		completeSystemOnboarding: async (reply, vision) => {
+			const result = await invoke(client, () =>
+				client.systemOnboarding.completeModel({ reply, vision }),
+			);
+			hydrateRpcQuery(queryClient, queryKeys.settings, { settings: result.settings });
+			hydrateRpcQuery(queryClient, queryKeys.systemModelDefaults, result.defaults);
 		},
 	};
 	return { settingsApi, providerApi, modelApi };

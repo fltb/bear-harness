@@ -55,6 +55,8 @@ export interface LocalEmbeddingConfig {
 	dimensions?: number;
 	/** Explicit Hugging Face-compatible endpoint used for this download. */
 	hfEndpoint?: string;
+	/** Model resolution policy. Set to false to require an already-cached file. */
+	download?: "auto" | false;
 	/** Cancels an in-progress model download. */
 	signal?: AbortSignal;
 	onDownloadProgress?: (progress: { downloadedSize: number; totalSize: number }) => void;
@@ -181,6 +183,7 @@ export class LocalEmbeddingService implements EmbeddingService {
 	private readonly modelCacheDir?: string;
 	private readonly dimensions: number;
 	private readonly hfEndpoint?: string;
+	private readonly download?: LocalEmbeddingConfig["download"];
 	private readonly signal?: AbortSignal;
 	private readonly onDownloadProgress?: LocalEmbeddingConfig["onDownloadProgress"];
 	private readonly onDownloadComplete?: () => void;
@@ -200,6 +203,7 @@ export class LocalEmbeddingService implements EmbeddingService {
 		this.modelCacheDir = config?.modelCacheDir?.trim();
 		this.dimensions = config?.dimensions ?? DEFAULT_LOCAL_DIMENSIONS;
 		this.hfEndpoint = config?.hfEndpoint?.trim();
+		this.download = config?.download;
 		this.signal = config?.signal;
 		this.onDownloadProgress = config?.onDownloadProgress;
 		this.onDownloadComplete = config?.onDownloadComplete;
@@ -362,6 +366,7 @@ export class LocalEmbeddingService implements EmbeddingService {
 			const resolvedPath = await resolveModelFile(this.modelPath, {
 				...(this.modelCacheDir ? { directory: this.modelCacheDir } : {}),
 				...(this.hfEndpoint ? { endpoints: { huggingFace: this.hfEndpoint } } : {}),
+				...(this.download !== undefined ? { download: this.download } : {}),
 				...(this.signal ? { signal: this.signal } : {}),
 				onProgress: this.onDownloadProgress,
 				cli: false,

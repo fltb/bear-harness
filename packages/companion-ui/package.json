@@ -8,6 +8,10 @@
 			"types": "./src/index.ts",
 			"import": "./src/index.ts"
 		},
+		"./layout": {
+			"types": "./src/layout.ts",
+			"import": "./src/layout.ts"
+		},
 		"./styles.css": {
 			"types": "./src/styles.d.ts",
 			"default": "./src/styles.css"

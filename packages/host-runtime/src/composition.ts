@@ -20,7 +20,6 @@ import type {
 import {
 	ArtifactActionResponse,
 	CacheKey,
-	type EmbeddingDownloadState,
 	MAX_ARTIFACT_READ_BYTES,
 	RPC,
 } from "@bear-harness/protocol/schema";
@@ -48,6 +47,7 @@ import type { PiRuntime } from "./companion/pi-runtime.js";
 import type { SessionCatalog } from "./companion/session-catalog.js";
 import type { Dispatcher } from "./dispatcher.js";
 import type { ExternalAgentRunService, RunSummary } from "./external-agents/run-service.js";
+import type { LocalEmbeddingAcquisitionService } from "./memory/local-embedding-acquisition.js";
 import type {
 	validateLocalEmbedding,
 	validateRemoteEmbedding,
@@ -59,10 +59,7 @@ import {
 	REMOTE_EMBEDDING_CREDENTIAL_ID,
 } from "./providers/credential-store.js";
 import type { AuditStore } from "./security/audit-store.js";
-import {
-	findHostLocalEmbeddingCandidate,
-	HOST_SETTINGS_CAPABILITIES,
-} from "./settings/capabilities.js";
+import { HOST_SETTINGS_CAPABILITIES } from "./settings/capabilities.js";
 import type { AppSettingsRecord, AppSettingsStore } from "./storage/app-settings-store.js";
 import type { AppDatabase } from "./storage/database.js";
 import type { InvalidationHub } from "./storage/invalidation-hub.js";
@@ -88,6 +85,7 @@ export interface HostCompositionContext {
 	sessions: SessionCatalog;
 	models: ModelRegistry;
 	appSettings: AppSettingsStore;
+	localEmbeddingAcquisition: LocalEmbeddingAcquisitionService;
 	memoryEmbedding: {
 		validateLocal(options: Parameters<typeof validateLocalEmbedding>[0]): Promise<{ ready: true }>;
 		validateRemote(
@@ -169,41 +167,63 @@ export async function syncProviderModels(
 	providerId: string,
 	providers: ProviderCatalog,
 	models: ModelRegistry,
-	publish = true,
 ): Promise<ModelRecord[]> {
 	const provider = (await providers.listProviders()).find(
 		(candidate) => candidate.id === providerId,
-	)!;
-	return provider.availableModels.map((model) => {
-		const input = {
-			providerId,
-			modelId: model.id,
-			label: model.name,
-			supportsImages: model.supportsImages,
-		};
-		return publish ? models.enable(input) : models.sync(input);
-	});
+	);
+	if (!provider) throw { kind: "not_found", reason: "provider_not_found" };
+	const facts = providers.modelProjectionFacts();
+	return provider.availableModels.map((model) =>
+		models.sync(
+			{
+				providerId,
+				modelId: model.id,
+				label: model.name,
+				supportsImages: model.supportsImages,
+			},
+			facts,
+		),
+	);
 }
+
 export async function syncAllProviderModels(
 	providers: ProviderCatalog,
 	models: ModelRegistry,
 ): Promise<ModelRecord[]> {
 	const providerList = (await providers.listProviders()).filter((provider) => provider.added);
-	return (
-		await Promise.all(
-			providerList.map((provider) => syncProviderModels(provider.id, providers, models, false)),
-		)
-	).flat();
+	const facts = providers.modelProjectionFacts();
+	return providerList.flatMap((provider) =>
+		provider.availableModels.map((model) =>
+			models.sync(
+				{
+					providerId: provider.id,
+					modelId: model.id,
+					label: model.name,
+					supportsImages: model.supportsImages,
+				},
+				facts,
+			),
+		),
+	);
+}
+
+export async function recoverProviderRemovals(
+	providers: ProviderCatalog,
+	models: ModelRegistry,
+): Promise<void> {
+	for (const providerId of models.listPendingProviderRemovalIds()) {
+		await providers.removeProvider(providerId);
+		models.finalizeProviderRemoval(providerId);
+	}
 }
 
 export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionContext): void {
 	const acceptedMessages = new Map<string, Promise<Awaited<ReturnType<typeof s.pi.send>>>>();
-	const projectSettings = async (companionId: string, app = s.appSettings.load()) => {
-		const stateData = s.onboarding.getState(companionId).stateData;
+	const projectSettings = async (app = s.appSettings.load()) => {
 		const embeddingCredential = await s.credentials.get(REMOTE_EMBEDDING_CREDENTIAL_ID);
 		return {
 			firstRunStage: app.firstRunStage,
-			relationshipMemoryEnabled: stateData.decisions.relationship_memory_enabled ?? false,
+			relationshipMemoryEnabled: app.memoryVectorService.enabled,
 			networkProxy: app.networkProxy,
 			memoryVectorService:
 				app.memoryVectorService.provider === "remote"
@@ -215,14 +235,41 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			modelDownloadSource: app.modelDownloadSource,
 		};
 	};
-	const saveMemoryVectorService = async (
+	const persistMemoryVectorService = async (
 		memoryVectorService: AppSettingsRecord["memoryVectorService"],
-	): Promise<void> => {
-		if (memoryVectorService.provider !== "remote")
-			await s.credentials.remove(REMOTE_EMBEDDING_CREDENTIAL_ID);
-		const app = s.appSettings.save({ memoryVectorService });
+		options: { completeOnboarding: boolean; replacementApiKey?: string },
+	): Promise<AppSettingsRecord> => {
+		const previousCredential = await s.credentials.get(REMOTE_EMBEDDING_CREDENTIAL_ID);
+		let credentialChanged = false;
+		let app: AppSettingsRecord;
+		try {
+			if (memoryVectorService.provider !== "remote") {
+				await s.credentials.remove(REMOTE_EMBEDDING_CREDENTIAL_ID);
+				credentialChanged = true;
+			} else if (options.replacementApiKey) {
+				await s.credentials.set(REMOTE_EMBEDDING_CREDENTIAL_ID, {
+					apiKey: options.replacementApiKey,
+				});
+				credentialChanged = true;
+			}
+			app = options.completeOnboarding
+				? s.appSettings.completeEmbeddingOnboarding({ memoryVectorService })
+				: s.appSettings.save({ memoryVectorService });
+		} catch (error) {
+			if (credentialChanged) {
+				if (previousCredential?.apiKey) {
+					await s.credentials.set(REMOTE_EMBEDDING_CREDENTIAL_ID, {
+						apiKey: previousCredential.apiKey,
+					});
+				} else {
+					await s.credentials.remove(REMOTE_EMBEDDING_CREDENTIAL_ID);
+				}
+			}
+			throw error;
+		}
 		await s.memoryEmbedding.resetRuntimes();
 		s.invalidations.invalidate(CacheKey.settings());
+		return app;
 	};
 	// Load and seed the active character package from the character root once.
 	ensureCharacterSeeded(s);
@@ -431,8 +478,20 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			...(hasMore && page.at(-1) ? { nextCursor: page.at(-1)?.id } : {}),
 		};
 	});
+	const activeConversation = async () => {
+		const session = await s.sessions.activeGet(getCompanionId(s));
+		return {
+			activeConversation: session ? projectPiConversationDetail(session) : null,
+		};
+	};
+	dispatcher.registerHandler(RPC.conversation.activeGet, activeConversation);
+	dispatcher.registerHandler(RPC.conversation.select, async ({ conversationId }) => ({
+		activeConversation: projectPiConversationDetail(
+			await s.sessions.select(getCompanionId(s), conversationId),
+		),
+	}));
 	dispatcher.registerHandler(RPC.conversation.create, async ({ title }) => {
-		const session = await s.sessions.create(getCompanionId(s), title);
+		const session = await s.sessions.createAndSelect(getCompanionId(s), title);
 		s.invalidations.invalidate(CacheKey.conversations());
 		return projectPiConversationDetail(session);
 	});
@@ -455,12 +514,12 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.conversation.archive, async ({ conversationId, archived }) => {
 		await s.sessions.archive(getCompanionId(s), conversationId, archived);
 		s.invalidations.invalidate(CacheKey.conversations());
-		return {};
+		return activeConversation();
 	});
 	dispatcher.registerHandler(RPC.conversation.delete, async ({ conversationId }) => {
 		await s.sessions.delete(getCompanionId(s), conversationId);
 		s.invalidations.invalidate(CacheKey.conversations());
-		return {};
+		return activeConversation();
 	});
 
 	// --- message ----------------------------------------------------------------
@@ -514,121 +573,57 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	dispatcher.registerHandler(RPC.message.branch, async ({ conversationId, entryId }) => {
 		await requireOwnedConversation(s, conversationId);
 		const session = await s.sessions.fork(getCompanionId(s), conversationId, entryId);
+		s.invalidations.invalidate(CacheKey.conversations());
 		return projectPiConversationDetail(session);
 	});
-	let embeddingDownload: EmbeddingDownloadState = { status: "idle", downloadedBytes: 0 };
-	const updateEmbeddingDownload = (next: EmbeddingDownloadState) => {
-		if (s.signal.aborted) return;
-		const previous = embeddingDownload;
-		embeddingDownload = next;
-		// Notify only at meaningful byte/percent boundaries, never on a timer.
-		if (
-			next.status !== previous.status ||
-			next.totalBytes !== previous.totalBytes ||
-			Math.floor(
-				next.downloadedBytes / (next.totalBytes ? Math.max(1, next.totalBytes / 100) : 1048576),
-			) !==
-				Math.floor(
-					previous.downloadedBytes /
-						(next.totalBytes ? Math.max(1, next.totalBytes / 100) : 1048576),
-				)
-		) {
-			s.livePush({ type: "embeddingDownload", state: next });
+	const configuredLocalTarget = () => {
+		const memory = s.appSettings.load().memoryVectorService;
+		if (memory.provider !== "local" || !memory.enabled) return undefined;
+		if (memory.localModel) {
+			return { kind: "candidate" as const, candidateId: memory.localModel };
 		}
+		if (memory.customPath && memory.dimensions) {
+			return {
+				kind: "custom" as const,
+				customPath: memory.customPath,
+				dimensions: memory.dimensions,
+			};
+		}
+		return undefined;
 	};
-	let embeddingAbort: AbortController | undefined;
-	dispatcher.registerHandler(RPC.memory.localEmbeddingDownloadStatus, async () => ({
-		...embeddingDownload,
-	}));
-	dispatcher.registerHandler(RPC.memory.cancelLocalEmbeddingDownload, async () => {
-		if (!embeddingAbort) throw { kind: "conflict", reason: "embedding_download_not_running" };
-		if (embeddingDownload.status === "activating")
-			throw { kind: "conflict", reason: "embedding_activation_in_progress" };
-		embeddingAbort.abort();
-		return {};
-	});
-	dispatcher.registerHandler(
-		RPC.memory.configureLocalEmbedding,
-		async ({ provider, candidateId, customPath }) => {
-			if (embeddingAbort) throw { kind: "conflict", reason: "embedding_download_in_progress" };
-			if (provider === "none") {
-				await saveMemoryVectorService({ enabled: false, provider: "none" });
-				s.signal.throwIfAborted();
-				return { ready: true as const };
-			}
-			const candidate = candidateId ? findHostLocalEmbeddingCandidate(candidateId) : undefined;
-			if (candidateId && !candidate)
-				throw {
-					kind: "invalid_request",
-					reason: "local_embedding_candidate_not_found",
-				};
-			const modelPath = candidate?.modelPath ?? customPath?.trim();
-			if (!modelPath)
-				throw {
-					kind: "invalid_request",
-					reason: "local_embedding_model_not_selected",
-				};
-			const source = s.appSettings.load().modelDownloadSource;
-			const hfEndpoint =
-				source.type === "official"
-					? "https://huggingface.co"
-					: source.type === "hf-mirror"
-						? "https://hf-mirror.com"
-						: source.endpoint;
-			const endpointUrl = new URL(hfEndpoint);
-			if (endpointUrl.protocol !== "https:" || endpointUrl.username || endpointUrl.password) {
-				throw {
-					kind: "invalid_request",
-					reason: "invalid_model_download_endpoint",
-				};
-			}
-			const abort = new AbortController();
-			embeddingAbort = abort;
-			const abortOnClose = () => abort.abort();
-			s.signal.addEventListener("abort", abortOnClose, { once: true });
-			if (s.signal.aborted) abort.abort();
-			updateEmbeddingDownload({ status: "preparing", downloadedBytes: 0 });
-			try {
-				await s.memoryEmbedding.validateLocal({
-					modelPath,
-					dimensions: 768,
-					hfEndpoint: endpointUrl.href.replace(/\/$/, ""),
-					signal: abort.signal,
-					onProgress: ({ downloadedSize, totalSize }) => {
-						if (abort.signal.aborted || embeddingAbort !== abort) return;
-						updateEmbeddingDownload({
-							status: "downloading",
-							downloadedBytes: downloadedSize,
-							...(totalSize > 0 ? { totalBytes: totalSize } : {}),
-						});
-					},
-					onPhase: (status) => {
-						if (abort.signal.aborted || embeddingAbort !== abort) return;
-						updateEmbeddingDownload({ ...embeddingDownload, status });
-					},
-				});
-				abort.signal.throwIfAborted();
-				await saveMemoryVectorService({
-					enabled: true,
-					provider: "local",
-					...(candidate ? { localModel: candidate.id } : { customPath: modelPath }),
-				});
-				updateEmbeddingDownload({ ...embeddingDownload, status: "completed" });
-				return { ready: true as const };
-			} catch (error) {
-				updateEmbeddingDownload({
-					...embeddingDownload,
-					status: abort.signal.aborted ? "cancelled" : "failed",
-				});
-				if (abort.signal.aborted)
-					throw { kind: "conflict", reason: "embedding_download_cancelled" };
-				throw error;
-			} finally {
-				s.signal.removeEventListener("abort", abortOnClose);
-				if (embeddingAbort === abort) embeddingAbort = undefined;
-			}
-		},
+	dispatcher.registerHandler(RPC.memory.localEmbeddingInventory, async () =>
+		s.localEmbeddingAcquisition.inventory(configuredLocalTarget()),
 	);
+	dispatcher.registerHandler(RPC.memory.localEmbeddingAcquisitionStart, async (request) =>
+		s.localEmbeddingAcquisition.start(request),
+	);
+	dispatcher.registerHandler(RPC.memory.localEmbeddingAcquisitionStatus, async () =>
+		s.localEmbeddingAcquisition.status(),
+	);
+	dispatcher.registerHandler(RPC.memory.localEmbeddingAcquisitionCancel, async (request) =>
+		s.localEmbeddingAcquisition.cancel(request),
+	);
+	dispatcher.registerHandler(RPC.memory.activateLocalEmbedding, async ({ target }) => {
+		const resolved = await s.localEmbeddingAcquisition.resolveInstalledTarget(target);
+		await s.memoryEmbedding.validateLocal({
+			modelPath: resolved.modelPath,
+			dimensions: resolved.dimensions,
+			download: false,
+			signal: s.signal,
+		});
+		const app = await persistMemoryVectorService(
+			{
+				enabled: true,
+				provider: "local",
+				dimensions: resolved.dimensions,
+				...(target.kind === "candidate"
+					? { localModel: target.candidateId }
+					: { customPath: resolved.modelPath }),
+			},
+			{ completeOnboarding: false },
+		);
+		return { settings: await projectSettings(app) };
+	});
 	// --- canon hub (advanced authoring) ---------------------------------------------
 	dispatcher.registerHandler(RPC.canon.listSources, async () => ({
 		sources: s.canon.listSources(getCompanionId(s)),
@@ -711,12 +706,9 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		return oauthWire(state);
 	});
 	dispatcher.registerHandler(RPC.provider.remove, async ({ providerId }) => {
+		s.models.prepareProviderRemoval(providerId);
 		await s.providers.removeProvider(providerId);
-		for (const model of s.models
-			.list()
-			.filter((candidate) => candidate.providerId === providerId)) {
-			s.models.disable(model.providerId, model.modelId);
-		}
+		s.models.finalizeProviderRemoval(providerId);
 		return {};
 	});
 	dispatcher.registerHandler(RPC.provider.logout, async ({ providerId }) => {
@@ -726,15 +718,8 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 
 	// --- configured models ------------------------------------------------------------
 	dispatcher.registerHandler(RPC.model.poolGet, async () => {
-		const providerNames = new Map(
-			(await s.providers.listProviders()).map((provider) => [provider.id, provider.name]),
-		);
-		return {
-			models: s.models.list().map((model) => ({
-				...model,
-				providerName: providerNames.get(model.providerId) ?? model.providerId,
-			})),
-		};
+		await s.providers.listProviders();
+		return { models: s.models.list(s.providers.modelProjectionFacts()) };
 	});
 	dispatcher.registerHandler(RPC.model.enable, async ({ providerId, modelId, label }) => {
 		const provider = (await s.providers.listProviders()).find((item) => item.id === providerId);
@@ -742,12 +727,15 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 		const catalogModel = provider.availableModels.find((model) => model.id === modelId);
 		if (!catalogModel) throw { kind: "not_found", reason: "model_not_found" };
 		return {
-			model: s.models.enable({
-				providerId,
-				modelId,
-				label: label ?? catalogModel.name,
-				supportsImages: catalogModel.supportsImages,
-			}),
+			model: s.models.enable(
+				{
+					providerId,
+					modelId,
+					label: label ?? catalogModel.name,
+					supportsImages: catalogModel.supportsImages,
+				},
+				s.providers.modelProjectionFacts(),
+			),
 		};
 	});
 	dispatcher.registerHandler(RPC.model.disable, async ({ providerId, modelId }) => {
@@ -756,32 +744,58 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 	});
 	dispatcher.registerHandler(RPC.model.defaultsGet, async () => {
 		const companionId = getCompanionId(s);
-		return modelDefaultsWire(s.models.defaults(companionId));
+		return modelDefaultsWire(s.models.defaults(companionId, s.providers.modelProjectionFacts()));
 	});
 	dispatcher.registerHandler(RPC.model.defaultsSetReply, async ({ reply }) => {
 		const companionId = getCompanionId(s);
-		return modelDefaultsWire(s.models.setDefaultReply(companionId, reply));
+		return modelDefaultsWire(
+			s.models.setDefaultReply(companionId, reply, s.providers.modelProjectionFacts()),
+		);
 	});
 	dispatcher.registerHandler(RPC.model.defaultsSetVision, async (vision) => {
 		const companionId = getCompanionId(s);
-		return modelDefaultsWire(s.models.setVisionDefault(companionId, vision));
+		return modelDefaultsWire(
+			s.models.setVisionDefault(companionId, vision, s.providers.modelProjectionFacts()),
+		);
 	});
 	dispatcher.registerHandler(RPC.model.systemDefaultsGet, async () =>
-		systemModelDefaultsWire(s.models.systemDefaults()),
+		systemModelDefaultsWire(s.models.systemDefaults(s.providers.modelProjectionFacts())),
 	);
 	dispatcher.registerHandler(RPC.model.systemDefaultsSet, async (defaults) =>
-		systemModelDefaultsWire(s.models.setSystemDefaults(defaults)),
+		systemModelDefaultsWire(
+			s.models.setSystemDefaults(defaults, s.providers.modelProjectionFacts()),
+		),
 	);
 	dispatcher.registerHandler(RPC.model.defaultsInitialize, async () => {
 		const companionId = getCompanionId(s);
-		if (s.models.seedFromSystemDefaults(companionId) === "missing_system_default") {
+		const facts = s.providers.modelProjectionFacts();
+		if (s.models.seedFromSystemDefaults(companionId, facts) === "missing_system_default") {
 			throw { kind: "unavailable", reason: "system_default_model_required" };
 		}
-		return modelDefaultsWire(s.models.defaults(companionId));
+		return modelDefaultsWire(s.models.defaults(companionId, facts));
 	});
 	dispatcher.registerHandler(RPC.model.defaultsCompleteOnboarding, async () => {
 		const companionId = getCompanionId(s);
-		return modelDefaultsWire(s.models.completeOnboarding(companionId));
+		return modelDefaultsWire(
+			s.models.completeOnboarding(companionId, s.providers.modelProjectionFacts()),
+		);
+	});
+	dispatcher.registerHandler(RPC.systemOnboarding.completeModel, async (defaults) => {
+		const completed = s.models.completeSystemModelOnboarding(
+			defaults,
+			s.providers.modelProjectionFacts(),
+		);
+		const companionId = getCompanionId(s);
+		if (
+			s.models.seedFromSystemDefaults(companionId, s.providers.modelProjectionFacts()) ===
+			"missing_system_default"
+		) {
+			throw { kind: "unavailable", reason: "system_default_model_required" };
+		}
+		return {
+			settings: await projectSettings(),
+			defaults: systemModelDefaultsWire(completed),
+		};
 	});
 	dispatcher.registerHandler(RPC.model.routeGet, async ({ conversationId }) => {
 		await requireOwnedConversation(s, conversationId);
@@ -888,46 +902,22 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 			}),
 		),
 	}));
-	dispatcher.registerHandler(RPC.settings.get, async () => {
-		const companionId = getCompanionId(s);
-		return { settings: await projectSettings(companionId) };
-	});
+	dispatcher.registerHandler(RPC.settings.get, async () => ({
+		settings: await projectSettings(),
+	}));
 	dispatcher.registerHandler(RPC.settings.set, async ({ settings }) => {
-		const companionId = getCompanionId(s);
-		if ("relationshipMemoryEnabled" in settings) {
-			const enabled = Boolean(settings.relationshipMemoryEnabled);
-			if (!enabled) await s.memoryEmbedding.releaseRuntime(companionId);
-			s.onboarding.setRelationshipMemory(companionId, enabled);
-		}
 		let app = s.appSettings.load();
-		if ("firstRunStage" in settings) {
-			app = s.appSettings.save({
-				firstRunStage: settings.firstRunStage as never,
-			});
-		}
-		if ("networkProxy" in settings) {
-			app = s.appSettings.save({
-				networkProxy: settings.networkProxy as never,
-			});
-		}
-		if ("memoryVectorService" in settings) {
-			const memoryVectorService = settings.memoryVectorService as
-				| {
-						provider?: unknown;
-						enabled?: boolean;
-						baseUrl?: string;
-						apiKey?: string;
-						model?: string;
-						dimensions?: number;
-				  }
-				| undefined;
-			if (memoryVectorService?.provider === "local") {
+		if (settings.networkProxy) {
+			app = s.appSettings.save({ networkProxy: settings.networkProxy });
+		} else if (settings.memoryVectorService) {
+			const memoryVectorService = settings.memoryVectorService;
+			if (memoryVectorService.provider === "local") {
 				throw {
 					kind: "conflict",
-					reason: "local_embedding_requires_transaction",
+					reason: "local_embedding_requires_activation",
 				};
 			}
-			if (memoryVectorService?.provider === "remote" && memoryVectorService.enabled) {
+			if (memoryVectorService.provider === "remote") {
 				const replacementApiKey = memoryVectorService.apiKey?.trim();
 				const storedApiKey = (await s.credentials.get(REMOTE_EMBEDDING_CREDENTIAL_ID))?.apiKey;
 				const apiKey = replacementApiKey || storedApiKey;
@@ -936,35 +926,89 @@ export function wireHostHandlers(dispatcher: Dispatcher, s: HostCompositionConte
 					!apiKey ||
 					!memoryVectorService.model ||
 					!memoryVectorService.dimensions
-				)
+				) {
 					throw { kind: "invalid_request", reason: "remote_embedding_config_incomplete" };
+				}
 				await s.memoryEmbedding.validateRemote({
 					baseUrl: memoryVectorService.baseUrl,
 					apiKey,
 					model: memoryVectorService.model,
 					dimensions: memoryVectorService.dimensions,
 				});
-				if (replacementApiKey)
-					await s.credentials.set(REMOTE_EMBEDDING_CREDENTIAL_ID, {
-						apiKey: replacementApiKey,
-					});
-			} else if (memoryVectorService?.provider !== "remote") {
-				await s.credentials.remove(REMOTE_EMBEDDING_CREDENTIAL_ID);
+				const { apiKey: _apiKey, ...persisted } = memoryVectorService;
+				app = await persistMemoryVectorService(persisted, {
+					completeOnboarding: false,
+					...(replacementApiKey ? { replacementApiKey } : {}),
+				});
+			} else {
+				const { apiKey: _apiKey, ...persisted } = memoryVectorService;
+				app = await persistMemoryVectorService(persisted, {
+					completeOnboarding: false,
+				});
 			}
-			const { apiKey: _apiKey, ...persistedMemoryVectorService } = memoryVectorService ?? {};
+		} else if (settings.modelDownloadSource) {
 			app = s.appSettings.save({
-				memoryVectorService: persistedMemoryVectorService as never,
-			});
-			await s.memoryEmbedding.resetRuntimes();
-		}
-		if ("modelDownloadSource" in settings) {
-			app = s.appSettings.save({
-				modelDownloadSource: settings.modelDownloadSource as never,
+				modelDownloadSource: settings.modelDownloadSource,
 			});
 		}
-		const nextSettings = await projectSettings(companionId, app);
 		s.invalidations.invalidate(CacheKey.settings());
-		return { settings: nextSettings };
+		return { settings: await projectSettings(app) };
+	});
+
+	dispatcher.registerHandler(RPC.systemOnboarding.completeEmbedding, async (request) => {
+		let app: AppSettingsRecord;
+		if (request.choice === "none") {
+			app = await persistMemoryVectorService(
+				{ enabled: false, provider: "none" },
+				{ completeOnboarding: true },
+			);
+		} else if (request.choice === "local") {
+			const resolved = await s.localEmbeddingAcquisition.resolveInstalledTarget(request.target);
+			await s.memoryEmbedding.validateLocal({
+				modelPath: resolved.modelPath,
+				dimensions: resolved.dimensions,
+				download: false,
+				signal: s.signal,
+			});
+			app = await persistMemoryVectorService(
+				{
+					enabled: true,
+					provider: "local",
+					dimensions: resolved.dimensions,
+					...(request.target.kind === "candidate"
+						? { localModel: request.target.candidateId }
+						: { customPath: resolved.modelPath }),
+				},
+				{ completeOnboarding: true },
+			);
+		} else {
+			const replacementApiKey = request.configuration.apiKey?.trim();
+			const storedApiKey = (await s.credentials.get(REMOTE_EMBEDDING_CREDENTIAL_ID))?.apiKey;
+			const apiKey = replacementApiKey || storedApiKey;
+			if (!apiKey) {
+				throw { kind: "invalid_request", reason: "remote_embedding_config_incomplete" };
+			}
+			await s.memoryEmbedding.validateRemote({
+				baseUrl: request.configuration.baseUrl,
+				apiKey,
+				model: request.configuration.model,
+				dimensions: request.configuration.dimensions,
+			});
+			app = await persistMemoryVectorService(
+				{
+					enabled: true,
+					provider: "remote",
+					baseUrl: request.configuration.baseUrl,
+					model: request.configuration.model,
+					dimensions: request.configuration.dimensions,
+				},
+				{
+					completeOnboarding: true,
+					...(replacementApiKey ? { replacementApiKey } : {}),
+				},
+			);
+		}
+		return { settings: await projectSettings(app) };
 	});
 
 	// --- update --------------------------------------------------------------------------

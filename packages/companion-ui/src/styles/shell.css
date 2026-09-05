@@ -130,10 +130,12 @@
 .conversation-actions {
 	@apply absolute right-2 top-2 flex gap-1 opacity-0;
 	z-index: 2;
+	pointer-events: none;
 }
 .nav-item-wrap:hover .conversation-actions,
 .conversation-actions:focus-within {
 	@apply opacity-100;
+	pointer-events: auto;
 }
 .conversation-actions button[data-control="command"] {
 	@apply relative flex size-7 min-h-0 items-center justify-center rounded-md border p-0;
@@ -168,13 +170,20 @@
 	transform: translateY(0);
 }
 .conversation-rename {
-	@apply flex gap-1 p-2;
+	@apply flex items-start gap-1 p-2;
+}
+.conversation-rename-field {
+	@apply grid min-w-0 flex-1 gap-1;
 }
 .conversation-rename input {
-	@apply min-w-0 flex-1;
+	@apply w-full min-w-0;
 }
 .conversation-rename button {
 	@apply px-2 py-1;
+}
+.conversation-rename-error {
+	@apply m-0 text-xs;
+	color: var(--text-danger);
 }
 
 .nav-count {
@@ -386,12 +395,14 @@
 }
 
 .confirmation-overlay {
-	@apply fixed inset-0 z-70;
+	@apply fixed inset-0;
+	z-index: 110;
 	background: var(--surface-overlay);
 }
 
 .confirmation-dialog {
-	@apply fixed left-1/2 top-1/2 z-80 w-4/5 max-w-md -translate-x-1/2 -translate-y-1/2 rounded-md border p-5;
+	@apply fixed left-1/2 top-1/2 w-4/5 max-w-md -translate-x-1/2 -translate-y-1/2 rounded-md border p-5;
+	z-index: 120;
 	border-color: var(--sys-border);
 	background: var(--sys-surface);
 	color: var(--sys-text);

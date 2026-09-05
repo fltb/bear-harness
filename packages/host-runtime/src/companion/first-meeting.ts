@@ -11,11 +11,16 @@ import { OnboardingStateDataSchema } from "./onboarding-schema.js";
 
 export type OnboardingStatus = "active" | "complete";
 
-export interface OnboardingStateRow {
-	status: OnboardingStatus;
-	currentStepId?: string;
-	stateData: OnboardingStateData;
-}
+export type OnboardingStateRow =
+	| {
+			status: "active";
+			currentStepId: string;
+			stateData: OnboardingStateData;
+	  }
+	| {
+			status: "complete";
+			stateData: OnboardingStateData;
+	  };
 
 interface PersistedOnboardingRow {
 	state: string;
@@ -85,20 +90,6 @@ export class FirstMeetingMachine {
 		return this.persistTransition(companionId, flow, nextStep?.id ?? "complete", nextData);
 	}
 
-	setRelationshipMemory(companionId: string, enabled: boolean): OnboardingStateRow {
-		const current = this.initialize(companionId);
-		const flow = this.flow(companionId);
-		return this.persistTransition(
-			companionId,
-			flow,
-			current.status === "complete" ? "complete" : (current.currentStepId ?? "complete"),
-			{
-				...current.stateData,
-				decisions: { ...current.stateData.decisions, relationship_memory_enabled: enabled },
-			},
-		);
-	}
-
 	private flow(companionId: string): CharacterOnboardingFlow {
 		const character = this.characterLoader.load(companionId);
 		if (!character) throw { kind: "unavailable", reason: "character_package_missing" };
@@ -117,42 +108,18 @@ export class FirstMeetingMachine {
 		serialized: unknown,
 		flow: CharacterOnboardingFlow,
 	): OnboardingStateData {
-		if (serialized === undefined) {
-			return {
-				answers: {},
-				decisions: {
-					relationship_memory_enabled: true,
-				},
-			};
-		}
+		if (serialized === undefined) return { answers: {} };
 		const parsedState = OnboardingStateDataSchema.safeParse(serialized);
-		if (!parsedState.success)
-			return { answers: {}, decisions: { relationship_memory_enabled: true } };
+		if (!parsedState.success) return { answers: {} };
 		const storedAnswers = parsedState.data.answers;
 		const answers: Record<string, string> = {};
-		const decisions: OnboardingStateData["decisions"] = {
-			relationship_memory_enabled: parsedState.data.decisions.relationship_memory_enabled ?? true,
-		};
 		for (const step of flow.steps) {
 			if (step.kind === "acknowledge") continue;
 			const answer = storedAnswers[step.answer_key];
 			if (!this.isValidStoredAnswer(step, answer)) continue;
 			answers[step.answer_key] = answer;
-			for (const effect of step.effects ?? []) {
-				const value = effect.type === "identity.nickname" ? undefined : effect.values[answer];
-				if (effect.type === "setting.set" && typeof value === "boolean") {
-					decisions[effect.setting] = value;
-				}
-			}
 		}
-		if (typeof parsedState.data.decisions.relationship_memory_enabled === "boolean") {
-			decisions.relationship_memory_enabled =
-				parsedState.data.decisions.relationship_memory_enabled;
-		}
-		return {
-			answers,
-			decisions,
-		};
+		return { answers };
 	}
 
 	private isValidStoredAnswer(
@@ -188,20 +155,10 @@ export class FirstMeetingMachine {
 		stateData: OnboardingStateData,
 	): OnboardingStateData {
 		const answers = { ...stateData.answers };
-		const decisions = { ...stateData.decisions };
 		if (step.kind !== "acknowledge" && answer !== undefined) {
 			answers[step.answer_key] = answer;
-			for (const effect of step.effects ?? []) {
-				const value = effect.type === "identity.nickname" ? undefined : effect.values[answer];
-				if (effect.type === "setting.set" && typeof value === "boolean") {
-					decisions[effect.setting] = value;
-				}
-			}
 		}
-		return {
-			answers,
-			decisions,
-		};
+		return { answers };
 	}
 
 	private persistTransition(

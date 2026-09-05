@@ -30,11 +30,25 @@ export function ThreadHead(props: { sceneLabel: string }) {
 		),
 	);
 	let wrapper: HTMLDivElement | undefined;
+	let queueTrigger: HTMLButtonElement | undefined;
+	let conversationStateTrigger: HTMLButtonElement | undefined;
+	const setConversationStateOpen = (open: boolean) => {
+		setStateOpen(open);
+		if (!open) {
+			queueMicrotask(() => {
+				if (conversationStateTrigger?.isConnected) conversationStateTrigger.focus();
+			});
+		}
+	};
 
 	onMount(() => {
 		const onKey = (event: KeyboardEvent) => {
-			if (!queueOpen()) return;
-			if (event.key === "Escape") workflow.closeQueue();
+			if (!queueOpen() || event.key !== "Escape") return;
+			event.preventDefault();
+			workflow.closeQueue();
+			queueMicrotask(() => {
+				if (queueTrigger?.isConnected) queueTrigger.focus();
+			});
 		};
 		const onPointerDown = (event: PointerEvent) => {
 			if (!queueOpen() || wrapper?.contains(event.target as Node)) return;
@@ -53,11 +67,14 @@ export function ThreadHead(props: { sceneLabel: string }) {
 			<h1 class="scene-title">{props.sceneLabel}</h1>
 			<Show when={activeCharacterState()}>
 				<Button
+					ref={(element) => {
+						conversationStateTrigger = element;
+					}}
 					type="button"
 					class="conversation-state-trigger"
 					aria-label={t("threadHead.conversationState")}
 					title={t("threadHead.conversationState")}
-					onClick={() => setStateOpen(true)}
+					onClick={() => setConversationStateOpen(true)}
 				>
 					<Icon icon={faSliders} />
 					<span>{t("threadHead.conversationState")}</span>
@@ -65,6 +82,9 @@ export function ThreadHead(props: { sceneLabel: string }) {
 			</Show>
 			<div class="work-pill-wrap" ref={wrapper}>
 				<Button
+					ref={(element) => {
+						queueTrigger = element;
+					}}
 					type="button"
 					class="work-pill"
 					aria-expanded={queueOpen()}
@@ -91,7 +111,7 @@ export function ThreadHead(props: { sceneLabel: string }) {
 					</div>
 				</Show>
 			</div>
-			<ConversationStatePanel open={stateOpen()} onOpenChange={setStateOpen} />
+			<ConversationStatePanel open={stateOpen()} onOpenChange={setConversationStateOpen} />
 		</header>
 	);
 }

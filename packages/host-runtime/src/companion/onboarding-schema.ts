@@ -8,14 +8,7 @@ const Identifier = z
 	.regex(/^[a-z][a-z0-9_]*$/);
 const Copy = z.string().min(1).max(MAX_COPY_LENGTH);
 
-const OnboardingEffectSchema = z.discriminatedUnion("type", [
-	z.strictObject({ type: z.literal("identity.nickname") }),
-	z.strictObject({
-		type: z.literal("setting.set"),
-		setting: z.literal("relationship_memory_enabled"),
-		values: z.record(Identifier, z.boolean()),
-	}),
-]);
+const OnboardingEffectSchema = z.strictObject({ type: z.literal("identity.nickname") });
 
 const StepPresentationSchema = {
 	id: Identifier,
@@ -61,8 +54,8 @@ const ChoiceStepSchema = z.strictObject({
 
 /**
  * Role-package DSL for the first meeting. It contains presentation, valid
- * answers and a small, Host-owned effect vocabulary; role packages cannot
- * declare arbitrary code or privileged side effects.
+ * answers and the Host-owned nickname effect; role packages cannot declare
+ * arbitrary code or privileged side effects.
  */
 export const CharacterOnboardingFlowSchema = z.strictObject({
 	step_label: Copy,
@@ -77,9 +70,6 @@ export const CharacterOnboardingFlowSchema = z.strictObject({
 /** Canonical persistence shape for role-defined onboarding answers. */
 export const OnboardingStateDataSchema = z.strictObject({
 	answers: z.record(Identifier, z.string().max(MAX_COPY_LENGTH)),
-	decisions: z.strictObject({
-		relationship_memory_enabled: z.boolean().optional(),
-	}),
 });
 
 export type OnboardingStateData = z.infer<typeof OnboardingStateDataSchema>;
@@ -121,35 +111,13 @@ export function validateCharacterOnboardingFlow(
 			answerKeys.add(step.answer_key);
 		}
 		for (const effect of step.effects ?? []) {
-			const target =
-				effect.type === "identity.nickname" ? effect.type : `${effect.type}:${effect.setting}`;
-			if (effectTargets.has(target)) {
+			if (effectTargets.has(effect.type)) {
 				throw new Error(`character package ${characterId}: first_meeting effects must be unique`);
 			}
-			if (effect.type === "identity.nickname" && step.kind !== "text") {
+			if (step.kind !== "text") {
 				throw new Error(`character package ${characterId}: nickname effect requires a text step`);
 			}
-			if (effect.type !== "identity.nickname") {
-				if (step.kind !== "choice") {
-					throw new Error(
-						`character package ${characterId}: declarative onboarding bindings require a choice step`,
-					);
-				}
-				const values = new Set(step.choices.map((choice) => choice.value));
-				for (const value of Object.keys(effect.values)) {
-					if (!values.has(value)) {
-						throw new Error(
-							`character package ${characterId}: onboarding binding references unknown choice ${value}`,
-						);
-					}
-				}
-				if (Object.keys(effect.values).length !== values.size) {
-					throw new Error(
-						`character package ${characterId}: onboarding binding must map every choice`,
-					);
-				}
-			}
-			effectTargets.add(target);
+			effectTargets.add(effect.type);
 		}
 	}
 }

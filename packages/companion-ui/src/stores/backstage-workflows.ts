@@ -78,6 +78,7 @@ export interface BackstageWorkflowStore {
 	importing: Accessor<boolean>;
 	roleFeedback: Accessor<string | undefined>;
 	importPackage(files: File[], done: string, failed: string): void;
+	rejectPackageImport(failed: string): void;
 	characters: Accessor<CharacterSummary[]>;
 	pluginTrust(id: string): Accessor<PluginTrust | undefined>;
 	pluginTrustLoading(id: string): Accessor<boolean>;
@@ -91,10 +92,6 @@ export interface BackstageWorkflowStore {
 	): CanonWorkflowSelectors;
 	relationshipEnabled: Accessor<boolean>;
 	settingsAvailable: Accessor<boolean>;
-	relationshipSaving: Accessor<boolean>;
-	relationshipFeedback: Accessor<string | undefined>;
-	relationshipError: Accessor<string | undefined>;
-	toggleRelationshipMemory(enabledLabel: string, disabledLabel: string, genericError: string): void;
 	selectedPackageId: Accessor<string | undefined>;
 	selectedPackage: Accessor<import("./ipc.js").CharacterPackageDocument | undefined>;
 	selectedPackageLoading: Accessor<boolean>;
@@ -131,9 +128,6 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 	const selectedPackageError = () =>
 		packageQuery.error() ? messageOf(packageQuery.error()) : undefined;
 
-	const [relationshipSaving, setRelationshipSaving] = createSignal(false);
-	const [relationshipFeedback, setRelationshipFeedback] = createSignal<string>();
-	const [relationshipError, setRelationshipError] = createSignal<string>();
 	const settingsData = createMemo(() => companion.settings?.data?.());
 	const relationshipEnabled = createMemo(() => settingsData()?.relationshipMemoryEnabled ?? false);
 	const settingsAvailable = createMemo(() => settingsData() !== undefined);
@@ -321,6 +315,7 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 				.catch((error) => setRoleFeedback(`${failed}${messageOf(error)}`))
 				.finally(() => setImporting(false));
 		},
+		rejectPackageImport: (failed) => setRoleFeedback(failed),
 		characters: createMemo(() => companion.characters?.characters?.() ?? []),
 		pluginTrust: (id) => {
 			const query = companion.characters.observeTrust(() => id);
@@ -372,22 +367,6 @@ export function createBackstageWorkflowStore(companion: CompanionStore): Backsta
 		canon: createCanonSelectors,
 		relationshipEnabled,
 		settingsAvailable,
-		relationshipSaving,
-		relationshipFeedback,
-		relationshipError,
-		toggleRelationshipMemory: (enabledLabel, disabledLabel, genericError) => {
-			const api = companion.settings;
-			if (!api?.set) return;
-			setRelationshipSaving(true);
-			setRelationshipFeedback(undefined);
-			setRelationshipError(undefined);
-			const next = !relationshipEnabled();
-			void Promise.resolve()
-				.then(() => api.set({ relationshipMemoryEnabled: next }))
-				.then(() => setRelationshipFeedback(next ? enabledLabel : disabledLabel))
-				.catch(() => setRelationshipError(genericError))
-				.finally(() => setRelationshipSaving(false));
-		},
 	};
 	WORKFLOW_STORES.set(companion, store);
 	return store;

@@ -121,7 +121,7 @@ Forbidden Host state includes copied messages, entries, leaves, tool execution s
 ## Memory
 
 - Explicit Memory and automatic TDAI memory are distinct domains.
-- The role package, behavior, Character field descriptions, Skill catalog, Self Canon, user address, and Explicit Memory form the Session's stable system context when the real Pi `AgentSession` is opened. Explicit Memory edits do not hot-rebuild an already running Session; the tool result remains in that Session and the file is reloaded on the next open.
+- The role package, behavior (including `behavior.identity`, the single stable identity authority), Character field descriptions, Skill catalog, user address, and Explicit Memory form the Session's stable system context when the real Pi `AgentSession` is opened. Explicit Memory edits do not hot-rebuild an already running Session; the tool result remains in that Session and the file is reloaded on the next open.
 - Current Character/Display and retrieved Canon/TDAI recall are temporary per-turn system context supplied through Pi's `before_agent_start`; they are not appended as transcript messages. Bear does not impose a character-count truncation or replace Pi's native context window and compaction behavior.
 - `MEMORY.md` is edited only on an explicit user request to remember, change, or forget something; writes are bounded, locked, fsynced, and atomic.
 - Automatic relationship memory follows the character's consent and uses the installation embedding configuration.

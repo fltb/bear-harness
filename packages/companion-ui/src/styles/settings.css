@@ -73,19 +73,26 @@
 	background: var(--surface-control);
 }
 
-.tab-panel {
+.tab-panel,
+.role-settings-scroll {
 	@apply min-h-0 flex-1 overflow-y-auto pr-1;
 	scrollbar-width: thin;
 	scrollbar-color: var(--scroll-thumb) transparent;
 }
 
-.tab-panel::-webkit-scrollbar {
+.tab-panel::-webkit-scrollbar,
+.role-settings-scroll::-webkit-scrollbar {
 	@apply w-2;
 }
 
-.tab-panel::-webkit-scrollbar-thumb {
+.tab-panel::-webkit-scrollbar-thumb,
+.role-settings-scroll::-webkit-scrollbar-thumb {
 	background: var(--scroll-thumb);
 	@apply rounded-full;
+}
+
+.role-settings-scroll {
+	@apply px-5 pb-5 pt-4;
 }
 
 .sheet-panel {
@@ -515,41 +522,36 @@
 }
 
 .provider-add-dialog {
-	@apply fixed left-1/2 top-1/2 z-50 grid max-h-5/6 w-11/12 max-w-2xl -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-2xl border p-5;
+	@apply fixed left-1/2 top-1/2 grid max-h-5/6 w-11/12 max-w-2xl -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-2xl border p-5;
+	z-index: calc(var(--layer-top-overlay) - 1);
 	border-color: var(--line-soft);
 	background: var(--surface-panel);
 	box-shadow: var(--shadow-raised);
 }
 
 .provider-add-dialog > h2 {
-	@apply m-0 text-lg;
+	@apply m-0 pr-14 text-lg;
 }
 
-.manifest-object-field {
-	@apply grid min-w-0 gap-4 rounded-xl border p-4;
-	border-color: var(--line-soft);
+.provider-add-dialog-close {
+	@apply absolute right-3 top-3 grid size-10 place-items-center p-0;
 }
 
-.manifest-object-field > legend {
+.current-role-prompt-editor {
+	@apply grid min-w-0 gap-4;
+}
+
+.current-role-prompt-editor > legend {
 	@apply px-1 text-sm font-semibold;
 	color: var(--sys-text-muted);
 }
 
-.manifest-array-field,
-.system-provider-list,
-.system-provider-add,
-.provider-import-pi,
-.provider-import-custom {
-	@apply min-w-0;
+.prompt-field {
+	@apply grid min-w-0 gap-2;
 }
 
-.provider-import-advanced {
-	@apply grid gap-4;
-}
-
-.manifest-field textarea,
-.manifest-field input {
-	@apply w-full;
+.prompt-textarea {
+	@apply min-h-24 w-full resize-y;
 }
 .message-choices {
 	@apply mx-auto my-3 grid w-full max-w-2xl gap-2.5 rounded-xl border p-4;

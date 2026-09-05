@@ -14,11 +14,9 @@ export function FirstMeeting() {
 	const store = useCompanionStore();
 	const shell = useShellWorkflowStore();
 	const workflow = createFirstMeetingWorkflow(store);
-	const providerAdded = createMemo(() =>
-		store.provider.providers().some((provider) => provider.added),
-	);
-	const openMemorySettings = async () => {
-		if (await workflow.completeMemorySetup()) shell.openBackstage("settings");
+	const hasConfiguredModels = createMemo(() => workflow.configuredModels().length > 0);
+	const openMemorySettings = () => {
+		shell.openBackstage("settings", "memory");
 	};
 	const renderControl = (step: CharacterOnboardingStep) => {
 		if (step.kind === "acknowledge")
@@ -98,10 +96,10 @@ export function FirstMeeting() {
 									? t("modelSetup.roleDescription")
 									: t("modelSetup.description")}
 							</p>
-							<Show when={workflow.modelRequired() && !providerAdded()}>
+							<Show when={workflow.modelRequired() && !hasConfiguredModels()}>
 								<ProviderSetup class="first-meeting-provider-setup" />
 							</Show>
-							<Show when={providerAdded() || workflow.roleModelRequired()}>
+							<Show when={hasConfiguredModels() || workflow.roleModelRequired()}>
 								<Show when={workflow.modelError()}>
 									<p class="intro-error" role="alert">
 										{String(workflow.modelError())}
@@ -130,28 +128,28 @@ export function FirstMeeting() {
 										if (model) void workflow.selectReplyModel(model);
 									}}
 								/>
-								<ModelSelector
-									models={workflow.configuredModels().filter((model) => model.supportsImages)}
-									value={workflow.selectedVisionModel()}
-									class="intro-picker"
-									label={t("settings.visionModel")}
-									autoLabel={t("settings.noFallback")}
-									includeAuto
-									disabled={
-										workflow.setupBusy() ||
-										!workflow.selectedReplyModel() ||
-										workflow.selectedReplyModel()?.supportsImages === true
+								<Show
+									when={
+										workflow.selectedReplyModel() &&
+										workflow.selectedReplyModel()?.supportsImages !== true
 									}
-									placement="bottom-start"
-									onModelChange={(model) => void workflow.selectVisionModel(model)}
-								/>
-								<p class="field-hint">
-									{t(
-										workflow.selectedReplyModel()?.supportsImages
-											? "settings.visionModelNative"
-											: "settings.visionModelHint",
-									)}
-								</p>
+								>
+									<ModelSelector
+										models={workflow.configuredModels().filter((model) => model.supportsImages)}
+										value={workflow.selectedVisionModel()}
+										class="intro-picker"
+										label={t("settings.visionModel")}
+										autoLabel={t("settings.noFallback")}
+										includeAuto
+										disabled={workflow.setupBusy()}
+										placement="bottom-start"
+										onModelChange={(model) => void workflow.selectVisionModel(model)}
+									/>
+									<p class="field-hint">{t("settings.visionModelHint")}</p>
+								</Show>
+								<Show when={workflow.selectedReplyModel()?.supportsImages === true}>
+									<p class="field-hint">{t("settings.visionModelNative")}</p>
+								</Show>
 								<div class="intro-actions">
 									<Button
 										type="button"
@@ -190,7 +188,7 @@ export function FirstMeeting() {
 									type="button"
 									data-variant="primary"
 									disabled={workflow.setupBusy()}
-									onClick={() => void openMemorySettings()}
+									onClick={openMemorySettings}
 								>
 									{t("sidebar.systemSettings")}
 								</Button>

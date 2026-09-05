@@ -32,11 +32,21 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 	const [submitting, setSubmitting] = createSignal(false);
 	const [setupError, setSetupError] = createSignal<string | null>(null);
 	const [setupBusy, setSetupBusy] = createSignal(false);
+	const [systemReplyDraft, setSystemReplyDraft] = createSignal<{
+		providerId: string;
+		modelId: string;
+	}>();
+	const [systemVisionDraft, setSystemVisionDraft] = createSignal<{
+		providerId: string;
+		modelId: string;
+	} | null>();
 	let submittedStepId: string | null = null;
 
 	const flow = createMemo(() => store.character?.character.first_meeting);
 	const configuredModels = createMemo(() =>
-		hasMethod(store.model?.models) ? store.model.models() : [],
+		(hasMethod(store.model?.models) ? store.model.models() : []).filter(
+			(model) => model.enabled && model.readiness === "ready",
+		),
 	);
 	const modelData = createMemo(() =>
 		hasMethod(store.model?.data) ? store.model.data() : undefined,
@@ -51,16 +61,26 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 			(!modelDefaults()?.reply || modelDefaults()?.onboardingComplete !== true),
 	);
 	const selectedReplyModel = createMemo(() => {
-		const reply = (modelRequired() ? systemModelDefaults() : modelDefaults())?.reply;
+		const reply = modelRequired()
+			? (systemReplyDraft() ?? systemModelDefaults()?.reply)
+			: modelDefaults()?.reply;
 		return reply
 			? (configuredModels().find((model) => routeOptionId(model) === routeOptionId(reply)) ?? null)
 			: null;
 	});
 	const selectedVisionModel = createMemo(() => {
-		const vision = (modelRequired() ? systemModelDefaults() : modelDefaults())?.vision;
-		return vision?.mode === "manual"
-			? (configuredModels().find((model) => routeOptionId(model) === routeOptionId(vision.route)) ??
-					null)
+		const persistedVision = (modelRequired() ? systemModelDefaults() : modelDefaults())?.vision;
+		const vision = modelRequired()
+			? systemVisionDraft() === undefined
+				? persistedVision?.mode === "manual"
+					? persistedVision.route
+					: null
+				: systemVisionDraft()
+			: persistedVision?.mode === "manual"
+				? persistedVision.route
+				: null;
+		return vision
+			? (configuredModels().find((model) => routeOptionId(model) === routeOptionId(vision)) ?? null)
 			: null;
 	});
 	const modelError = createMemo(() => {
@@ -68,9 +88,12 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 		return error === null || error === undefined ? null : messageOf(error);
 	});
 	const memorySetupRequired = createMemo(() => firstRunStage() === "embedding");
+	const currentOnboardingStepId = createMemo(() =>
+		store.onboarding.status === "active" ? store.onboarding.currentStepId : undefined,
+	);
 	const currentStep = createMemo<CharacterOnboardingStep | undefined>(() => {
 		const definition = flow();
-		return definition?.steps.find((step) => step.id === store.onboarding.currentStepId);
+		return definition?.steps.find((step) => step.id === currentOnboardingStepId());
 	});
 	const currentStepIndex = createMemo(() => {
 		const definition = flow();
@@ -108,46 +131,57 @@ export function createFirstMeetingWorkflow(store: CompanionStore) {
 			setSetupBusy(false);
 		}
 	};
-	const selectReplyModel = (model: ConfiguredModel): Promise<boolean> =>
-		saveModelDefault(() => {
-			if (!modelRequired()) return store.model.setDefaultReply(model.providerId, model.modelId);
-			return store.model.setSystemDefaults(
-				{ providerId: model.providerId, modelId: model.modelId },
-				systemModelDefaults()?.vision ?? { mode: "auto" },
-			);
-		});
-	const selectVisionModel = (model: ConfiguredModel | null): Promise<boolean> =>
-		saveModelDefault(() => {
-			const vision = model
-				? ({
-						mode: "manual",
-						route: { providerId: model.providerId, modelId: model.modelId },
-					} as const)
-				: ({ mode: "auto" } as const);
-			if (!modelRequired())
-				return model
-					? store.model.setMultimodalFallback(model.providerId, model.modelId)
-					: store.model.setVisionAuto();
-			const reply = systemModelDefaults()?.reply;
-			if (!reply) throw new Error("system_default_reply_required");
-			return store.model.setSystemDefaults(reply, vision);
-		});
-	const completeModelSetup = (): void => {
-		if (selectedReplyModel() && !setupBusy()) {
-			void saveModelDefault(async () => {
-				if (modelRequired()) {
-					await store.model.initializeDefaults();
-					await store.settings.set({ firstRunStage: "embedding" });
-					return;
-				}
-				await store.model.completeDefaultsOnboarding();
-			});
+	const selectReplyModel = (model: ConfiguredModel): Promise<boolean> => {
+		if (modelRequired()) {
+			setSystemReplyDraft({ providerId: model.providerId, modelId: model.modelId });
+			if (model.supportsImages) setSystemVisionDraft(null);
+			return Promise.resolve(true);
 		}
+		return saveModelDefault(() => store.model.setDefaultReply(model.providerId, model.modelId));
+	};
+	const selectVisionModel = (model: ConfiguredModel | null): Promise<boolean> => {
+		if (modelRequired()) {
+			setSystemVisionDraft(model ? { providerId: model.providerId, modelId: model.modelId } : null);
+			return Promise.resolve(true);
+		}
+		return saveModelDefault(() =>
+			model
+				? store.model.setMultimodalFallback(model.providerId, model.modelId)
+				: store.model.setVisionAuto(),
+		);
+	};
+	const completeModelSetup = (): void => {
+		const selectedReply = selectedReplyModel();
+		if (!selectedReply || setupBusy()) return;
+		void saveModelDefault(async () => {
+			if (modelRequired()) {
+				const reply = {
+					providerId: selectedReply.providerId,
+					modelId: selectedReply.modelId,
+				};
+				const selectedVision = selectedVisionModel();
+				const vision =
+					selectedReply.supportsImages || !selectedVision
+						? ({ mode: "auto" } as const)
+						: ({
+								mode: "manual",
+								route: {
+									providerId: selectedVision.providerId,
+									modelId: selectedVision.modelId,
+								},
+							} as const);
+				await store.model.completeSystemOnboarding(reply, vision);
+				return;
+			}
+			await store.model.completeDefaultsOnboarding();
+		});
 	};
 	const completeMemorySetup = (): Promise<boolean> =>
-		saveModelDefault(() => store.settings.set({ firstRunStage: "role" }));
+		saveModelDefault(async () => {
+			await store.embedding.completeEmbeddingMutation.mutateAsync({ choice: "none" });
+		});
 	const submit = async (stepId: string, answer?: string): Promise<void> => {
-		if (submittedStepId !== store.onboarding.currentStepId) submittedStepId = null;
+		if (submittedStepId !== currentOnboardingStepId()) submittedStepId = null;
 		if (submitting() || submittedStepId === stepId) return;
 		submittedStepId = stepId;
 		setSubmitting(true);
@@ -216,6 +250,8 @@ export function createNetworkMemoryWorkflow(store: CompanionStore, t: Translate)
 		setFeedback(null);
 		try {
 			await store.settings.set(settingsPatch());
+			setProxyMode(undefined);
+			setProxyUrl(undefined);
 			setFeedback(t("settings.saved"));
 		} catch (cause) {
 			setError(messageOf(cause));

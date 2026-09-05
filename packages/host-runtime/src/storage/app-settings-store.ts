@@ -12,9 +12,14 @@ export interface SystemModelDefaults {
 	vision: { mode: "auto" } | { mode: "manual"; route: ModelRouteSetting };
 }
 
+export type FirstRunStage = "model" | "embedding" | "role";
+
 /** Product-level settings persisted outside role onboarding decisions. */
 export interface AppSettingsRecord {
-	firstRunStage: "model" | "embedding" | "role";
+	firstRunStage: FirstRunStage;
+	systemModelOnboardingComplete: boolean;
+	embeddingOnboardingComplete: boolean;
+	relationshipMemoryEnabled: boolean;
 	networkProxy: {
 		mode: "direct" | "auto" | "manual";
 		url?: string;
@@ -36,6 +41,17 @@ export interface AppSettingsRecord {
 		| { type: "custom"; endpoint: string };
 }
 
+export type AppSettingsPatch = Partial<
+	Pick<
+		AppSettingsRecord,
+		"networkProxy" | "memoryVectorService" | "systemModelDefaults" | "modelDownloadSource"
+	>
+>;
+
+export interface EmbeddingOnboardingCompletion {
+	memoryVectorService: AppSettingsRecord["memoryVectorService"];
+}
+
 const SINGLETON_ID = 1;
 
 /** Read/write the singleton app_settings row. */
@@ -45,7 +61,9 @@ export class AppSettingsStore {
 	load(): AppSettingsRecord {
 		const row = this.db
 			.select({
-				firstRunStage: appSettings.firstRunStage,
+				systemModelOnboardingComplete: appSettings.systemModelOnboardingComplete,
+				embeddingOnboardingComplete: appSettings.embeddingOnboardingComplete,
+				relationshipMemoryEnabled: appSettings.relationshipMemoryEnabled,
 				networkProxyJson: appSettings.networkProxyJson,
 				memoryVectorServiceJson: appSettings.memoryVectorServiceJson,
 				systemModelDefaultsJson: appSettings.systemModelDefaultsJson,
@@ -55,12 +73,22 @@ export class AppSettingsStore {
 			.where(eq(appSettings.id, SINGLETON_ID))
 			.get();
 		if (!row) throw new Error("app settings are missing");
+		const systemModelOnboardingComplete = row.systemModelOnboardingComplete === 1;
+		const embeddingOnboardingComplete = row.embeddingOnboardingComplete === 1;
+		const memoryVectorService = JSON.parse(
+			row.memoryVectorServiceJson,
+		) as AppSettingsRecord["memoryVectorService"];
 		return {
-			firstRunStage: row.firstRunStage as AppSettingsRecord["firstRunStage"],
+			firstRunStage: systemModelOnboardingComplete
+				? embeddingOnboardingComplete
+					? "role"
+					: "embedding"
+				: "model",
+			systemModelOnboardingComplete,
+			embeddingOnboardingComplete,
+			relationshipMemoryEnabled: memoryVectorService.enabled,
 			networkProxy: JSON.parse(row.networkProxyJson) as AppSettingsRecord["networkProxy"],
-			memoryVectorService: JSON.parse(
-				row.memoryVectorServiceJson,
-			) as AppSettingsRecord["memoryVectorService"],
+			memoryVectorService,
 			systemModelDefaults: JSON.parse(row.systemModelDefaultsJson) as SystemModelDefaults,
 			modelDownloadSource: JSON.parse(
 				row.modelDownloadMirrorJson,
@@ -68,28 +96,76 @@ export class AppSettingsStore {
 		};
 	}
 
-	save(patch: Partial<AppSettingsRecord>): AppSettingsRecord {
+	save(patch: AppSettingsPatch): AppSettingsRecord {
 		const current = this.load();
-		const next: AppSettingsRecord = {
-			firstRunStage: patch.firstRunStage ?? current.firstRunStage,
-			networkProxy: patch.networkProxy ?? current.networkProxy,
-			memoryVectorService: patch.memoryVectorService ?? current.memoryVectorService,
-			systemModelDefaults: patch.systemModelDefaults ?? current.systemModelDefaults,
-			modelDownloadSource: patch.modelDownloadSource ?? current.modelDownloadSource,
-		};
+		const memoryVectorService = patch.memoryVectorService ?? current.memoryVectorService;
 		this.db
 			.update(appSettings)
 			.set({
-				firstRunStage: next.firstRunStage,
-				networkProxyJson: JSON.stringify(next.networkProxy),
-				memoryVectorServiceJson: JSON.stringify(next.memoryVectorService),
-				systemModelDefaultsJson: JSON.stringify(next.systemModelDefaults),
-				modelDownloadMirrorJson: JSON.stringify(next.modelDownloadSource),
+				networkProxyJson: JSON.stringify(patch.networkProxy ?? current.networkProxy),
+				memoryVectorServiceJson: JSON.stringify(memoryVectorService),
+				systemModelDefaultsJson: JSON.stringify(
+					patch.systemModelDefaults ?? current.systemModelDefaults,
+				),
+				modelDownloadMirrorJson: JSON.stringify(
+					patch.modelDownloadSource ?? current.modelDownloadSource,
+				),
+				relationshipMemoryEnabled: memoryVectorService.enabled ? 1 : 0,
 				updatedAt: new Date().toISOString(),
 			})
 			.where(eq(appSettings.id, SINGLETON_ID))
 			.run();
-		return next;
+		return this.load();
+	}
+
+	completeSystemModelOnboarding(defaults: SystemModelDefaults): AppSettingsRecord {
+		this.db.transaction((transaction) => {
+			transaction
+				.update(appSettings)
+				.set({
+					systemModelDefaultsJson: JSON.stringify(defaults),
+					systemModelOnboardingComplete: 1,
+					updatedAt: new Date().toISOString(),
+				})
+				.where(eq(appSettings.id, SINGLETON_ID))
+				.run();
+		});
+		return this.load();
+	}
+
+	clearSystemModelOnboarding(): AppSettingsRecord {
+		this.db.transaction((transaction) => {
+			transaction
+				.update(appSettings)
+				.set({
+					systemModelDefaultsJson: JSON.stringify({ vision: { mode: "auto" } }),
+					systemModelOnboardingComplete: 0,
+					updatedAt: new Date().toISOString(),
+				})
+				.where(eq(appSettings.id, SINGLETON_ID))
+				.run();
+		});
+		return this.load();
+	}
+
+	completeEmbeddingOnboarding(completion: EmbeddingOnboardingCompletion): AppSettingsRecord {
+		this.db.transaction((transaction) => {
+			transaction
+				.update(appSettings)
+				.set({
+					memoryVectorServiceJson: JSON.stringify(completion.memoryVectorService),
+					relationshipMemoryEnabled:
+						completion.memoryVectorService.enabled &&
+						completion.memoryVectorService.provider !== "none"
+							? 1
+							: 0,
+					embeddingOnboardingComplete: 1,
+					updatedAt: new Date().toISOString(),
+				})
+				.where(eq(appSettings.id, SINGLETON_ID))
+				.run();
+		});
+		return this.load();
 	}
 
 	saveSystemModelDefaults(defaults: SystemModelDefaults): SystemModelDefaults {

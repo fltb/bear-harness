@@ -31,6 +31,7 @@ export type LlamaModule = {
 		model: string,
 		options?: {
 			directory?: string;
+			download?: "auto" | false;
 			cli?: boolean;
 			endpoints?: { huggingFace?: string };
 			signal?: AbortSignal;

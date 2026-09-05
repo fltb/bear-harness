@@ -93,12 +93,13 @@ function RoleManager() {
 		error: () => undefined,
 	};
 	return (
-		<div class="sheet-panel role-list">
+		<div class="sheet-panel role-list role-settings-scroll">
 			<aside class="role-library">
 				<div class="role-import">
 					<p class="drawer-note">{t("backstage.roleImportHint")}</p>
 					<FileField
 						multiple
+						maxFiles={Number.POSITIVE_INFINITY}
 						disabled={workflow.importing()}
 						onFileAccept={(files) =>
 							workflow.importPackage(
@@ -107,6 +108,7 @@ function RoleManager() {
 								t("backstage.roleImportFailed"),
 							)
 						}
+						onFileReject={() => workflow.rejectPackageImport(t("backstage.roleImportFailed"))}
 					>
 						<FileField.Trigger class="button-like" aria-label={t("backstage.roleImport")}>
 							{workflow.importing() ? t("backstage.roleImportBusy") : t("backstage.roleImport")}
@@ -165,6 +167,7 @@ function RoleRow(props: { character: CharacterSummary }) {
 	const confirming = workflow.confirmingPlugins(props.character.id);
 	const disabled = () => workflow.roleBusyId() !== undefined;
 	const blocked = () => trust()?.pluginsPresent && !trust()?.trusted;
+	let pluginTrustOpener: HTMLElement | undefined;
 	return (
 		<div class="role-row">
 			<img src={props.character.avatarUrl} alt="" aria-hidden="true" />
@@ -175,36 +178,45 @@ function RoleRow(props: { character: CharacterSummary }) {
 					<span class="role-plugin-warning">{t("backstage.rolePluginsDisabled")}</span>
 				</Show>
 			</div>
-			<Show when={blocked()}>
-				<Button
-					data-control="command"
-					type="button"
-					disabled={disabled()}
-					onClick={() => workflow.setConfirmingPlugins(props.character.id, true)}
-				>
-					{t("backstage.roleEnablePlugins")}
-				</Button>
-			</Show>
-			<Show
-				when={!props.character.active}
-				fallback={<span class="role-active">{t("backstage.roleActive")}</span>}
-			>
-				<Button
-					data-control="command"
-					type="button"
-					disabled={disabled()}
-					onClick={() => workflow.activateRole(props.character.id)}
-				>
-					{t("backstage.roleSwitch")}
-				</Button>
-			</Show>
 			<Dialog
 				open={confirming()}
 				onOpenChange={(value) => workflow.setConfirmingPlugins(props.character.id, value)}
 			>
+				<Show when={blocked()}>
+					<Dialog.Trigger
+						as={Button}
+						ref={(element) => {
+							pluginTrustOpener = element;
+						}}
+						data-control="command"
+						type="button"
+						disabled={disabled()}
+					>
+						{t("backstage.roleEnablePlugins")}
+					</Dialog.Trigger>
+				</Show>
+				<Show
+					when={!props.character.active}
+					fallback={<span class="role-active">{t("backstage.roleActive")}</span>}
+				>
+					<Button
+						data-control="command"
+						type="button"
+						disabled={disabled()}
+						onClick={() => workflow.activateRole(props.character.id)}
+					>
+						{t("backstage.roleSwitch")}
+					</Button>
+				</Show>
 				<Dialog.Portal>
 					<Dialog.Overlay class="plugin-trust-overlay" />
-					<Dialog.Content class="plugin-trust-dialog">
+					<Dialog.Content
+						class="plugin-trust-dialog"
+						onCloseAutoFocus={(event) => {
+							event.preventDefault();
+							if (pluginTrustOpener?.isConnected) pluginTrustOpener.focus();
+						}}
+					>
 						<Dialog.Title>{t("backstage.rolePluginTrustTitle")}</Dialog.Title>
 						<Dialog.Description>
 							{t("backstage.rolePluginTrustDescription", { name: props.character.name })}

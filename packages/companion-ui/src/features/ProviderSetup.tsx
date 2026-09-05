@@ -6,12 +6,16 @@ import { useCompanionStore } from "../stores/companion.js";
 import type { ProviderInfo, ProviderLoginResult } from "../stores/ipc.js";
 import { Button, Link, Select, TextField } from "../ui/primitives.js";
 
-type PresentationProps = {
+export type ProviderSetupLayout = "stack" | "manager";
+export type ProviderSetupSurface = "all" | "list" | "add";
+
+export type ProviderSetupProps = {
 	class?: string;
 
-	/** "stack" = single-column onboarding surface; "manager" = Pattern 01 two-column settings. */
-	layout?: "stack" | "manager";
-	surface?: "all" | "list" | "add";
+	/** Defaults to "stack"; use "manager" for the Pattern 01 two-column settings layout. */
+	layout?: ProviderSetupLayout;
+	/** Defaults to "all"; narrower settings surfaces can render only the list or add form. */
+	surface?: ProviderSetupSurface;
 	onAdded?: () => void;
 };
 
@@ -54,22 +58,25 @@ function safeHttpsUrl(value: string | undefined): string | undefined {
  * Provider catalogs, credentials, and configured models all come from Host;
  * only form drafts and the currently expanded card live here.
  */
-export function ProviderSetup(props: PresentationProps) {
+export function ProviderSetup(props: ProviderSetupProps) {
 	const [t] = useTranslation(undefined, { i18n });
 	const store = useCompanionStore();
-	const managerLayout =
-		props.layout === "manager" ||
-		props.class?.split(/\s+/u).includes("system-provider-setup") === true;
-	const onboardingLayout =
-		props.class?.split(/\s+/u).includes("first-meeting-provider-setup") === true;
+	const layout = props.layout ?? "stack";
+	const surface = props.surface ?? "all";
+	const managerLayout = layout === "manager";
+	const prominentSelector = layout === "stack" && surface === "all";
 	const [expandedProvider, setExpandedProvider] = createSignal("");
 	const [providerId, setProviderId] = createSignal("");
 	const [apiKey, setApiKey] = createSignal("");
 	const [customBaseUrl, setCustomBaseUrl] = createSignal("");
 	const [piConfigJson, setPiConfigJson] = createSignal("");
 	const [oauthProviderId, setOauthProviderId] = createSignal("");
-	const oauth = () =>
-		oauthProviderId() ? (store.provider.loginState(oauthProviderId()) ?? null) : null;
+	const oauth = () => {
+		const owner = oauthProviderId();
+		if (!owner) return null;
+		const state = store.provider.loginState(owner);
+		return state?.providerId === owner ? state : null;
+	};
 	const oauthEvents = () => oauth()?.events ?? [];
 	const latestOAuthEvent = <T extends OAuthEvent["type"]>(
 		type: T,
@@ -119,39 +126,6 @@ export function ProviderSetup(props: PresentationProps) {
 	let disposed = false;
 	let oauthGeneration = 0;
 	let oauthCleanup = Promise.resolve();
-	let pendingAuthWindow: Window | null = null;
-	let openedAuthTarget = "";
-
-	const prepareAuthWindow = (): void => {
-		pendingAuthWindow?.close();
-		pendingAuthWindow = window.open("about:blank", "_blank");
-		if (pendingAuthWindow) pendingAuthWindow.opener = null;
-	};
-
-	const syncAuthWindow = (state: ProviderLoginResult): void => {
-		const authUrl = latestOAuthEvent("auth_url", state.events);
-		const deviceCode = latestOAuthEvent("device_code", state.events);
-		const target = safeHttpsUrl(
-			authUrl?.type === "auth_url"
-				? authUrl.url
-				: deviceCode?.type === "device_code"
-					? deviceCode.verificationUri
-					: undefined,
-		);
-		if (target && target !== openedAuthTarget) {
-			openedAuthTarget = target;
-			const targetWindow = pendingAuthWindow ?? window.open("about:blank", "_blank");
-			pendingAuthWindow = null;
-			if (targetWindow) {
-				targetWindow.opener = null;
-				targetWindow.location.href = target;
-			}
-		}
-		if (state.prompt?.type === "select" && pendingAuthWindow) {
-			pendingAuthWindow.close();
-			pendingAuthWindow = null;
-		}
-	};
 
 	const abandonOauth = (): void => {
 		oauthGeneration++;
@@ -167,7 +141,6 @@ export function ProviderSetup(props: PresentationProps) {
 
 	onCleanup(() => {
 		disposed = true;
-		pendingAuthWindow?.close();
 		abandonOauth();
 	});
 
@@ -198,6 +171,14 @@ export function ProviderSetup(props: PresentationProps) {
 		setOauthAnswer("");
 		setError(null);
 		if (managerLayout) setExpandedProvider("");
+		if (
+			provider &&
+			!provider.added &&
+			supportsAuth(provider, "oauth") &&
+			!supportsAuth(provider, "api_key")
+		) {
+			void beginOauth(provider.id);
+		}
 	};
 
 	const run = async (action: () => Promise<void>): Promise<void> => {
@@ -281,8 +262,6 @@ export function ProviderSetup(props: PresentationProps) {
 	const beginOauth = async (flowProviderId: string): Promise<void> => {
 		if (!flowProviderId || busy() || disposed) return;
 		const generation = ++oauthGeneration;
-		prepareAuthWindow();
-		openedAuthTarget = "";
 		setOauthAnswer("");
 		setCopiedDeviceCode("");
 		setOauthProviderId(flowProviderId);
@@ -290,8 +269,12 @@ export function ProviderSetup(props: PresentationProps) {
 		if (disposed || generation !== oauthGeneration) return;
 		const request = ++statusRequest;
 		const initial = await runOauthRequest(() => store.provider.login(flowProviderId));
-		if (initial && !disposed && generation === oauthGeneration && request === statusRequest) {
-			syncAuthWindow(initial);
+		if (
+			initial?.providerId === flowProviderId &&
+			!disposed &&
+			generation === oauthGeneration &&
+			request === statusRequest
+		) {
 			if (initial.status === "completed") {
 				await refresh();
 				props.onAdded?.();
@@ -302,14 +285,17 @@ export function ProviderSetup(props: PresentationProps) {
 	const answerOauth = async (): Promise<void> => {
 		const generation = oauthGeneration;
 		const answer = oauthAnswer();
-		const flowProviderId = oauthProviderId() || providerId();
+		const flowProviderId = oauthProviderId();
 		if (!flowProviderId || !answer) return;
-		prepareAuthWindow();
 		setOauthAnswer("");
 		const request = ++statusRequest;
 		const state = await runOauthRequest(() => store.provider.loginAnswer(flowProviderId, answer));
-		if (state && !disposed && generation === oauthGeneration && request === statusRequest) {
-			syncAuthWindow(state);
+		if (
+			state?.providerId === flowProviderId &&
+			!disposed &&
+			generation === oauthGeneration &&
+			request === statusRequest
+		) {
 			if (state.status === "completed") {
 				await refresh();
 				props.onAdded?.();
@@ -318,7 +304,7 @@ export function ProviderSetup(props: PresentationProps) {
 	};
 
 	const cancelOauth = async (): Promise<void> => {
-		const flowProviderId = oauthProviderId() || providerId();
+		const flowProviderId = oauthProviderId();
 		if (!flowProviderId || disposed) return;
 		const generation = ++oauthGeneration;
 		try {
@@ -327,8 +313,6 @@ export function ProviderSetup(props: PresentationProps) {
 			if (!disposed) setError(cause instanceof Error ? cause.message : String(cause));
 		}
 		if (disposed || generation !== oauthGeneration) return;
-		pendingAuthWindow?.close();
-		pendingAuthWindow = null;
 		setOauthProviderId("");
 		setOauthAnswer("");
 		setCopiedDeviceCode("");
@@ -616,9 +600,11 @@ export function ProviderSetup(props: PresentationProps) {
 	);
 	const renderCandidateSection = (embeddedEditor: boolean) => (
 		<div class="provider-candidate-section">
-			<div class="settings-group-heading">
-				<h4>{t("settings.addProvider")}</h4>
-			</div>
+			<Show when={surface !== "add"}>
+				<div class="settings-group-heading">
+					<h4>{t("settings.addProvider")}</h4>
+				</div>
+			</Show>
 			<Show when={error()}>
 				{(message) => (
 					<p class="status-line err" role="alert">
@@ -631,7 +617,7 @@ export function ProviderSetup(props: PresentationProps) {
 				fallback={<p class="field-hint">{t("settings.noProviderCandidates")}</p>}
 			>
 				<Show
-					when={onboardingLayout}
+					when={prominentSelector}
 					fallback={
 						<div class="provider-selector">
 							<Select<ProviderInfo>
@@ -878,7 +864,7 @@ export function ProviderSetup(props: PresentationProps) {
 		</details>
 	);
 
-	if (props.surface === "list")
+	if (surface === "list")
 		return (
 			<section
 				class={`provider-setup ${props.class ?? ""}`}
@@ -894,7 +880,7 @@ export function ProviderSetup(props: PresentationProps) {
 				<div class="provider-card-list">{renderProviderCards(true)}</div>
 			</section>
 		);
-	if (props.surface === "add")
+	if (surface === "add")
 		return (
 			<section class={`provider-setup ${props.class ?? ""}`} aria-label={t("settings.addProvider")}>
 				{renderCandidateSection(true)}

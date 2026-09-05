@@ -29,8 +29,13 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 	const store = useCompanionStore();
 	const workflow = useConversationWorkflow(store);
 	const [menuOpen, setMenuOpen] = createSignal(false);
-	const [pathError, setPathError] = createSignal<string | null>(null);
+	const [attachmentNotice, setAttachmentNotice] = createSignal<{
+		message: string;
+		restoreAttachFocus: boolean;
+	} | null>(null);
 	const [dragging, setDragging] = createSignal(false);
+	let attachTrigger: HTMLButtonElement | undefined;
+	let noticeClose: HTMLButtonElement | undefined;
 	let textareaRef: HTMLTextAreaElement | undefined;
 	const queueComposerResize = () => {
 		queueMicrotask(() => {
@@ -44,22 +49,42 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 		return pending;
 	};
 
+	const showAttachmentNotice = (message: string, restoreAttachFocus: boolean) => {
+		setAttachmentNotice({ message, restoreAttachFocus });
+		if (restoreAttachFocus) {
+			queueMicrotask(() => {
+				if (noticeClose?.isConnected) noticeClose.focus();
+			});
+		}
+	};
+	const dismissAttachmentNotice = () => {
+		const restoreAttachFocus = attachmentNotice()?.restoreAttachFocus;
+		setAttachmentNotice(null);
+		if (restoreAttachFocus) {
+			queueMicrotask(() => {
+				if (attachTrigger?.isConnected) attachTrigger.focus();
+			});
+		}
+	};
+
 	const pick = async (folder: boolean) => {
 		setMenuOpen(false);
-		setPathError(null);
 		const bridge = localFiles();
 		if (!bridge) {
-			setPathError(t("composer.webDevPathHint"));
+			showAttachmentNotice(t("composer.webDevPathHint"), true);
 			return;
 		}
 		try {
+			const paths = folder ? await bridge.pickFolder() : await bridge.pickFiles();
+			setAttachmentNotice(null);
+			if (paths.length === 0) return;
 			workflow.insertLocalPaths(
-				folder ? await bridge.pickFolder() : await bridge.pickFiles(),
+				paths,
 				folder ? t("composer.localFolderReference") : t("composer.localFileReference"),
 			);
 			queueComposerResize();
-		} catch (error) {
-			setPathError(error instanceof Error ? error.message : String(error));
+		} catch {
+			showAttachmentNotice(t("composer.localPickerFailed"), true);
 		}
 	};
 	const drop = (event: DragEvent) => {
@@ -69,9 +94,10 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 		const files = event.dataTransfer ? [...event.dataTransfer.files] : [];
 		const paths = bridge?.pathsForDroppedFiles(files) ?? [];
 		if (paths.length) {
+			setAttachmentNotice(null);
 			workflow.insertLocalPaths(paths, t("composer.localFileReference"));
 			queueComposerResize();
-		} else setPathError(t("composer.localPathOnly"));
+		} else showAttachmentNotice(t("composer.localPathOnly"), false);
 	};
 	return (
 		<form
@@ -81,6 +107,12 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 			onSubmit={(event) => {
 				event.preventDefault();
 				void dispatchMessage();
+			}}
+			onKeyDown={(event) => {
+				if (event.key !== "Escape" || !attachmentNotice()) return;
+				event.preventDefault();
+				event.stopPropagation();
+				dismissAttachmentNotice();
 			}}
 			onDragEnter={(event) => {
 				event.preventDefault();
@@ -110,6 +142,9 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 			/>
 			<div class="composer-attach-menu">
 				<Button
+					ref={(element) => {
+						attachTrigger = element;
+					}}
 					type="button"
 					class="circle"
 					aria-label={t("composer.attachLabel")}
@@ -153,7 +188,22 @@ export function Composer(props: { placeholder: string; onOpenModelSettings?: () 
 					disabled={!store.activeConversationId || !workflow.modelSelected()}
 				/>
 			</TextField>
-			<Show when={pathError()}>{(error) => <span role="alert">{error()}</span>}</Show>
+			<Show when={attachmentNotice()}>
+				{(notice) => (
+					<div class="composer-attachment-notice" role="alert">
+						<span>{notice().message}</span>
+						<Button
+							ref={(element) => {
+								noticeClose = element;
+							}}
+							type="button"
+							onClick={dismissAttachmentNotice}
+						>
+							{t("composer.closeAttachmentNotice")}
+						</Button>
+					</div>
+				)}
+			</Show>
 			<Show
 				when={workflow.streaming()}
 				fallback={

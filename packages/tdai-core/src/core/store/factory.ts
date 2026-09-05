@@ -116,6 +116,9 @@ export function createStoreBundle(
 								: {}),
 							dimensions: config.embedding.dimensions,
 							...(config.embedding.hfEndpoint ? { hfEndpoint: config.embedding.hfEndpoint } : {}),
+							...(config.embedding.download !== undefined
+								? { download: config.embedding.download }
+								: {}),
 						},
 						logger,
 					);

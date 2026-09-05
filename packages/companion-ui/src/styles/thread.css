@@ -247,7 +247,12 @@
 
 .message-version-pager button {
 	@apply size-7 rounded-md border-0 p-0;
+	color: var(--semantic-role-default);
 	background: var(--surface-control);
+}
+
+.message-version-pager button:hover:not(:disabled) {
+	background: var(--surface-panel);
 }
 
 .composer {
@@ -366,6 +371,23 @@
 	grid-column: 1 / -1;
 }
 
+.composer-attachment-notice {
+	@apply flex min-w-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-xs;
+	background: var(--surface-control);
+	color: var(--sys-text-muted);
+}
+
+.composer-attachment-notice span {
+	@apply min-w-0;
+}
+
+.composer-attachment-notice button {
+	@apply min-h-9 shrink-0 rounded-md border px-3;
+	border-color: var(--line-soft);
+	background: var(--surface-panel);
+	color: var(--sys-text);
+}
+
 .composer-attachment-tray {
 	@apply m-0 grid max-h-32 list-none gap-1 overflow-y-auto p-0;
 }
@@ -452,7 +474,8 @@
 	@apply col-span-1;
 }
 
-.artifact-preview-backdrop {
+.artifact-preview-backdrop,
+.media-preview-backdrop {
 	@apply fixed inset-0 z-50 hidden border-0 p-0;
 	background: var(--surface-overlay);
 }

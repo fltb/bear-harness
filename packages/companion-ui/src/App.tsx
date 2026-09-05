@@ -10,8 +10,8 @@ import { Composer } from "./Composer";
 import { ConversationPanel, MediaPreview } from "./ConversationPanel";
 import { FirstMeeting } from "./FirstMeeting";
 import { Backstage } from "./features/Backstage.js";
-import type { SettingsPage } from "./features/SettingsSheet.js";
 import { Icon } from "./Icon.js";
+import { type AppLayoutMode, layoutModeForWidth } from "./layout.js";
 import { syncDocumentTitle } from "./lib/dom-effects.js";
 import { SceneBackdrop } from "./SceneBackdrop";
 import { Sidebar } from "./Sidebar";
@@ -24,23 +24,13 @@ import {
 import { Button } from "./ui/primitives.js";
 import { ArtifactPreview, PermissionLayer } from "./WorkPanel.js";
 
-export type AppLayoutMode = "mobile" | "window" | "fullscreen";
-
-/** Canonical visual-gate viewports. Compatibility sizes are tested separately. */
-export const CANONICAL_LAYOUT_VIEWPORTS = {
-	mobile: { width: 390, height: 844 },
-	window: { width: 1280, height: 800 },
-	fullscreen: { width: 1920, height: 1080 },
-} as const;
-
-export const MOBILE_LAYOUT_MAX_WIDTH = 767;
-export const FULLSCREEN_LAYOUT_MIN_WIDTH = 1600;
-
-export function layoutModeForWidth(width: number): AppLayoutMode {
-	if (width <= MOBILE_LAYOUT_MAX_WIDTH) return "mobile";
-	if (width >= FULLSCREEN_LAYOUT_MIN_WIDTH) return "fullscreen";
-	return "window";
-}
+export type { AppLayoutMode } from "./layout.js";
+export {
+	CANONICAL_LAYOUT_VIEWPORTS,
+	FULLSCREEN_LAYOUT_MIN_WIDTH,
+	layoutModeForWidth,
+	MOBILE_LAYOUT_MAX_WIDTH,
+} from "./layout.js";
 
 /**
  * Desktop frame from Prototype 06, wired to the Companion store.
@@ -110,7 +100,6 @@ function DesktopFrame() {
 		conversationId: string;
 		media: CharacterMedia;
 	}>();
-	const [settingsPage, setSettingsPage] = createSignal<SettingsPage>("general");
 	const previewMedia = createMemo(() => {
 		const selection = mediaSelection();
 		return !workflow.selectedArtifact() && selection?.conversationId === store.activeConversationId
@@ -118,17 +107,28 @@ function DesktopFrame() {
 			: undefined;
 	});
 	let appRef: HTMLDivElement | undefined;
+	let mobileNavigationTriggerRef: HTMLButtonElement | undefined;
 	let backstageReturnFocus: HTMLElement | undefined;
+	const closeMobileNavigation = (restoreFocus: boolean) => {
+		if (!mobileNavigationOpen()) return;
+		setMobileNavigationOpen(false);
+		if (restoreFocus) {
+			queueMicrotask(() => {
+				if (layoutMode() === "mobile") mobileNavigationTriggerRef?.focus();
+			});
+		}
+	};
 	const openBackstage = (tab: "roles" | "settings" | "archived") => {
-		if (document.activeElement instanceof HTMLElement) {
+		if (layoutMode() === "mobile") {
+			backstageReturnFocus = mobileNavigationTriggerRef;
+			closeMobileNavigation(false);
+		} else if (document.activeElement instanceof HTMLElement) {
 			backstageReturnFocus = document.activeElement;
 		}
 		if (tab === "archived") {
-			setSettingsPage("archived");
-			workflow.openBackstage("settings");
+			workflow.openBackstage("settings", "archived");
 			return;
 		}
-		if (tab === "settings") setSettingsPage("general");
 		workflow.openBackstage(tab);
 	};
 
@@ -137,11 +137,11 @@ function DesktopFrame() {
 			const mode = layoutModeForWidth(width);
 			setLayoutMode(mode);
 			document.documentElement.dataset.appLayout = mode;
-			if (mode !== "mobile") setMobileNavigationOpen(false);
+			if (mode !== "mobile") closeMobileNavigation(false);
 		};
-		update(appRef?.clientWidth ?? window.innerWidth);
+		update(appRef?.clientWidth || window.innerWidth);
 		if (typeof ResizeObserver === "undefined" || !appRef) {
-			const onResize = () => update(appRef?.clientWidth ?? window.innerWidth);
+			const onResize = () => update(appRef?.clientWidth || window.innerWidth);
 			window.addEventListener("resize", onResize);
 			onCleanup(() => window.removeEventListener("resize", onResize));
 			return;
@@ -152,6 +152,22 @@ function DesktopFrame() {
 		});
 		observer.observe(appRef);
 		onCleanup(() => observer.disconnect());
+	});
+	onMount(() => {
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (
+				event.key !== "Escape" ||
+				event.defaultPrevented ||
+				!mobileNavigationOpen() ||
+				document.querySelector('[role="dialog"], [aria-modal="true"]')
+			) {
+				return;
+			}
+			event.preventDefault();
+			closeMobileNavigation(true);
+		};
+		document.addEventListener("keydown", onKeyDown);
+		onCleanup(() => document.removeEventListener("keydown", onKeyDown));
 	});
 	onCleanup(() => {
 		delete document.documentElement.dataset.appLayout;
@@ -180,21 +196,37 @@ function DesktopFrame() {
 						type="button"
 						class="mobile-navigation-backdrop"
 						aria-label={t("backstage.close")}
-						onClick={() => setMobileNavigationOpen(false)}
+						onClick={() => closeMobileNavigation(true)}
 					/>
 				</Show>
 				<Sidebar
 					character={workflow.character()}
 					onOpenBackstage={openBackstage}
-					onNavigate={() => setMobileNavigationOpen(false)}
+					navigationHidden={layoutMode() === "mobile" && !mobileNavigationOpen()}
+					onNavigate={() => closeMobileNavigation(true)}
 				/>
 				<main class="main">
 					<Button
 						type="button"
 						class="mobile-navigation-trigger"
+						ref={(element) => {
+							mobileNavigationTriggerRef = element;
+						}}
+						aria-controls="conversation-navigation"
 						aria-label={t("sidebar.conversations")}
 						aria-expanded={mobileNavigationOpen()}
-						onClick={() => setMobileNavigationOpen((open) => !open)}
+						onClick={() => {
+							if (mobileNavigationOpen()) {
+								closeMobileNavigation(true);
+								return;
+							}
+							setMobileNavigationOpen(true);
+							queueMicrotask(() => {
+								document
+									.querySelector<HTMLElement>("#conversation-navigation .mobile-navigation-close")
+									?.focus();
+							});
+						}}
 					>
 						<Icon icon={faBars} />
 					</Button>
@@ -233,16 +265,28 @@ function DesktopFrame() {
 					<FirstMeeting />
 				</main>
 				<Show when={previewMedia()} fallback={<ArtifactPreview />}>
-					{(media) => <MediaPreview media={media()} onClose={() => setMediaSelection(undefined)} />}
+					{(media) => (
+						<MediaPreview
+							media={media()}
+							layout={layoutMode()}
+							onClose={() => setMediaSelection(undefined)}
+						/>
+					)}
 				</Show>
 			</div>
 			<Backstage
 				open={workflow.backstageOpen()}
 				onClose={workflow.closeBackstage}
 				initialTab={workflow.backstageTab()}
-				initialSettingsPage={settingsPage()}
-				onSettingsPageChange={setSettingsPage}
-				returnFocus={() => backstageReturnFocus?.focus()}
+				initialSettingsPage={workflow.settingsPage()}
+				onSettingsPageChange={workflow.setSettingsPage}
+				returnFocus={() => {
+					if (layoutMode() === "mobile") {
+						mobileNavigationTriggerRef?.focus();
+						return;
+					}
+					backstageReturnFocus?.focus();
+				}}
 			/>
 		</div>
 	);

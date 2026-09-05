@@ -111,6 +111,20 @@
 	background: var(--surface-control);
 }
 
+.message-inline-edit {
+	@apply grid gap-2;
+}
+
+.message-inline-edit-actions {
+	@apply flex justify-end gap-2;
+}
+
+.message-inline-edit-actions button {
+	@apply min-h-9 rounded-lg border px-3 text-sm;
+	border-color: var(--line-soft);
+	background: var(--surface-control);
+}
+
 .message-inline-editor {
 	@apply m-0 block w-full border-0 p-0;
 	background: transparent;
@@ -124,11 +138,14 @@
 }
 
 .correction-popover-backdrop {
-	@apply fixed inset-0 z-30 cursor-default border-0 bg-transparent p-0;
+	@apply fixed inset-0 cursor-default border-0 p-0;
+	z-index: 110;
+	background: color-mix(in srgb, var(--surface-overlay) 58%, transparent);
 }
 
 .message-correction-popover {
-	@apply absolute right-0 z-40 mt-2 grid min-w-64 gap-1 rounded-xl border p-2;
+	@apply fixed left-1/2 top-1/2 grid w-11/12 max-w-md -translate-x-1/2 -translate-y-1/2 gap-1 rounded-xl border p-3;
+	z-index: 120;
 	border-color: var(--line-soft);
 	background: var(--surface-panel);
 	box-shadow: var(--shadow-raised);
@@ -214,26 +231,6 @@
 .msg.user .message-operations button:hover:not(:disabled),
 .msg.user .message-operations button:focus-visible {
 	color: var(--text-on-message);
-}
-
-.version-pager {
-	@apply mt-2 flex items-center gap-2;
-}
-
-.version-pager button {
-	@apply rounded-md border px-2 py-1 text-xs;
-	border-color: var(--line-strong);
-	color: var(--text-soft);
-	background: transparent;
-}
-
-.version-pager button:disabled {
-	@apply opacity-40;
-}
-
-.version-pager span {
-	@apply text-xs;
-	color: var(--sys-text-muted);
 }
 
 .edit-box {

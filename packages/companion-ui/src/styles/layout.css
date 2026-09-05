@@ -172,10 +172,14 @@
 	max-inline-size: 86cqw;
 	transform: translateX(-100%);
 	transition: transform 180ms ease-out;
+	pointer-events: none;
+	visibility: hidden;
 }
 
 .app[data-layout="mobile"] .shell[data-mobile-navigation-open="true"] .sidebar {
 	transform: translateX(0);
+	pointer-events: auto;
+	visibility: visible;
 }
 
 .app[data-layout="mobile"] .thread-head {

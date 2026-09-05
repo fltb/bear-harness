@@ -3,11 +3,9 @@
  *
  * Lifecycle: created at app boot, one connection, never shared across
  * worker_threads. WAL mode, foreign_keys, defensive mode, busy_timeout.
- *
- * Bear 1.0 uses one checked-in schema for each database. Existing databases
- * must already satisfy that schema; there is no internal upgrade ladder.
+ * Bear uses one final schema for each database. Database opening performs only
+ * deterministic in-place upgrades from the immediately preceding schema.
  */
-
 import { mkdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -58,16 +56,140 @@ interface DatabaseOptions {
 // Database
 // ---------------------------------------------------------------------------
 
+/** Upgrade only the immediately preceding, explicitly recognized schema. */
+function tableExists(connection: DatabaseSync, table: string): boolean {
+	return Boolean(
+		connection.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table),
+	);
+}
+
+function columnNames(connection: DatabaseSync, table: string): Set<string> {
+	return new Set(
+		(
+			connection.prepare(`PRAGMA table_info("${table.replaceAll('"', '""')}")`).all() as Array<{
+				name: string;
+			}>
+		).map((column) => column.name),
+	);
+}
+
+function upgradeSystemSchema(connection: DatabaseSync): void {
+	if (!tableExists(connection, "app_settings") || !tableExists(connection, "configured_models"))
+		return;
+	const appColumns = columnNames(connection, "app_settings");
+	const hasLegacyStage = appColumns.has("first_run_stage");
+	const completionColumns = [
+		"system_model_onboarding_complete",
+		"embedding_onboarding_complete",
+		"relationship_memory_enabled",
+	] as const;
+	const hasAllCompletionColumns = completionColumns.every((column) => appColumns.has(column));
+	const hasAnyCompletionColumn = completionColumns.some((column) => appColumns.has(column));
+	const legacyOnboardingSchema = hasLegacyStage && !hasAnyCompletionColumn;
+	const currentOnboardingSchema = !hasLegacyStage && hasAllCompletionColumns;
+	if (!legacyOnboardingSchema && !currentOnboardingSchema)
+		throw new Error("unsupported app_settings onboarding schema");
+	if (legacyOnboardingSchema) {
+		const invalid = connection
+			.prepare(
+				"SELECT 1 FROM app_settings WHERE first_run_stage NOT IN ('model', 'embedding', 'role') LIMIT 1",
+			)
+			.get();
+		if (invalid) throw new Error("unsupported app_settings first_run_stage");
+	}
+
+	connection.exec("BEGIN IMMEDIATE");
+	try {
+		if (hasLegacyStage) {
+			connection.exec(`
+				ALTER TABLE app_settings RENAME TO app_settings_legacy_onboarding;
+				CREATE TABLE app_settings (
+					id INTEGER PRIMARY KEY CHECK (id = 1),
+					system_model_onboarding_complete INTEGER NOT NULL DEFAULT 0
+						CHECK (system_model_onboarding_complete IN (0, 1)),
+					embedding_onboarding_complete INTEGER NOT NULL DEFAULT 0
+						CHECK (embedding_onboarding_complete IN (0, 1)),
+					relationship_memory_enabled INTEGER NOT NULL DEFAULT 0
+						CHECK (relationship_memory_enabled IN (0, 1)),
+					network_proxy TEXT NOT NULL DEFAULT '{"mode":"auto"}',
+					memory_vector_service TEXT NOT NULL DEFAULT '{"enabled":false,"provider":"none"}',
+					system_model_defaults TEXT NOT NULL DEFAULT '{"vision":{"mode":"auto"}}',
+					model_download_mirror TEXT NOT NULL DEFAULT '{"type":"official"}',
+					updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+				);
+				INSERT INTO app_settings (
+					id,
+					system_model_onboarding_complete,
+					embedding_onboarding_complete,
+					relationship_memory_enabled,
+					network_proxy,
+					memory_vector_service,
+					system_model_defaults,
+					model_download_mirror,
+					updated_at
+				)
+				SELECT
+					id,
+					CASE first_run_stage WHEN 'model' THEN 0 ELSE 1 END,
+					CASE first_run_stage WHEN 'role' THEN 1 ELSE 0 END,
+					0,
+					network_proxy,
+					memory_vector_service,
+					system_model_defaults,
+					model_download_mirror,
+					updated_at
+				FROM app_settings_legacy_onboarding;
+				DROP TABLE app_settings_legacy_onboarding;
+			`);
+		}
+		if (!columnNames(connection, "configured_models").has("enabled")) {
+			connection.exec(
+				"ALTER TABLE configured_models ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))",
+			);
+		}
+		connection.exec(`
+			CREATE TABLE IF NOT EXISTS provider_removal_journal (
+				provider_id TEXT PRIMARY KEY,
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			)
+		`);
+		connection.exec("COMMIT");
+	} catch (error) {
+		connection.exec("ROLLBACK");
+		throw new Error(
+			`system database upgrade failed: ${(error as Error)?.message ?? String(error)}`,
+		);
+	}
+}
+
+function upgradeCompanionSchema(connection: DatabaseSync): void {
+	if (
+		!tableExists(connection, "runtime_identity") ||
+		!tableExists(connection, "conversations") ||
+		tableExists(connection, "active_conversations")
+	)
+		return;
+	connection.exec("BEGIN IMMEDIATE");
+	try {
+		connection.exec(`
+			CREATE TABLE active_conversations (
+				companion_id TEXT PRIMARY KEY REFERENCES runtime_identity(companion_id) ON DELETE CASCADE,
+				conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+				updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+			)
+		`);
+		connection.exec("COMMIT");
+	} catch (error) {
+		connection.exec("ROLLBACK");
+		throw new Error(
+			`companion database upgrade failed: ${(error as Error)?.message ?? String(error)}`,
+		);
+	}
+}
+
 /**
- * Instance-scoped canonical database — one `node:sqlite DatabaseSync`
- * connection per runtime. The connection is never shared across
- * worker_threads. WAL mode, foreign_keys, defensive mode, busy_timeout.
- *
- * Bear 1.0 opens one final schema. A fresh database is initialized atomically.
- *
- * This class owns its connection and
- * paths: each HostRuntime creates its own instance and closes it on
- * shutdown, so nothing is shared at module scope.
+ * Instance-scoped canonical database. Each HostRuntime owns one connection,
+ * and opening initializes or upgrades its schema before domain services use it.
  */
 export class Database {
 	/** The underlying SQLite connection handed to domain services. */
@@ -189,7 +311,7 @@ export class Database {
 			.run(chunkId, Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength));
 	}
 
-	/** Initialize a fresh database from the single Bear 1.0 schema. */
+	/** Initialize a fresh database or upgrade the immediately preceding schema. */
 	initialize(schemaSql: string): void {
 		const tables = (
 			this.connection
@@ -207,6 +329,12 @@ export class Database {
 					`database initialization failed: ${(error as Error)?.message ?? String(error)}`,
 				);
 			}
+			return;
+		}
+		if (schemaSql === SYSTEM_SCHEMA_SQL) {
+			upgradeSystemSchema(this.connection);
+		} else if (schemaSql === COMPANION_SCHEMA_SQL) {
+			upgradeCompanionSchema(this.connection);
 		}
 	}
 }

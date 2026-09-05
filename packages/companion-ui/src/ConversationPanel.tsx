@@ -1,18 +1,29 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import type { CharacterMedia, PiSessionEntry } from "@bear-harness/protocol";
-import { faCodeBranch, faCopy, faPen, faRotateRight } from "@fortawesome/free-solid-svg-icons";
-import { createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
+import {
+	faChevronLeft,
+	faChevronRight,
+	faCodeBranch,
+	faCopy,
+	faPen,
+	faRotateRight,
+} from "@fortawesome/free-solid-svg-icons";
+import { createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
 import { Icon } from "./Icon.js";
+import type { AppLayoutMode } from "./layout.js";
 import {
 	installTimelineScrollProtection,
 	type TimelineScrollController,
 } from "./lib/timeline-scroll.js";
 import { MessageContent } from "./MessageContent.js";
 import { type TimelineProjectionItem, useCompanionStore } from "./stores/companion.js";
+
 import { useConversationViewWorkflow } from "./stores/conversation-workflows.js";
 import { ThreadHead } from "./ThreadHead.js";
-import { Button, TextField } from "./ui/primitives.js";
+import { Button, Dialog, TextField } from "./ui/primitives.js";
 import { WorkTimelineItem } from "./WorkPanel.js";
+
+type PiSessionEntryId = PiSessionEntry["id"];
 
 /** ConversationPanel renders the active Pi timeline plus transient stream state. */
 
@@ -78,16 +89,26 @@ function PiTimelineEntryView(props: {
 	onPreviewMedia(media: CharacterMedia): void;
 	canEdit: boolean;
 	canRegenerate: boolean;
+	versionPager?: {
+		leafIds: readonly PiSessionEntryId[];
+		activeLeafId: PiSessionEntryId;
+		disabled: boolean;
+	};
 }) {
 	const store = useCompanionStore();
 	const [t] = useTranslation(undefined, { i18n });
 	const [editing, setEditing] = createSignal(false);
 	const [editText, setEditText] = createSignal("");
+	const [editError, setEditError] = createSignal<string | null>(null);
 	const [correcting, setCorrecting] = createSignal(false);
 	const [correctionDetail, setCorrectionDetail] = createSignal("");
+	const [correctionError, setCorrectionError] = createSignal<string | null>(null);
 	const [actionBusy, setActionBusy] = createSignal(false);
 	const [actionError, setActionError] = createSignal<string | null>(null);
 	const [copied, setCopied] = createSignal(false);
+	let editOpener: HTMLButtonElement | undefined;
+	let correctionOpener: HTMLButtonElement | undefined;
+	let correctionInput: HTMLInputElement | undefined;
 	let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 	onCleanup(() => {
 		if (copiedTimer !== undefined) clearTimeout(copiedTimer);
@@ -173,32 +194,53 @@ function PiTimelineEntryView(props: {
 	if (!isUser && text().length === 0 && !failed()) {
 		return null;
 	}
-	const runAction = async (action: () => Promise<void>) => {
+	const runAction = async (
+		action: () => Promise<void>,
+		setError: (value: string | null) => void = setActionError,
+	) => {
 		setActionBusy(true);
-		setActionError(null);
+		setError(null);
 		try {
 			await action();
+			return true;
 		} catch (cause) {
-			setActionError(cause instanceof Error ? cause.message : String(cause));
+			setError(cause instanceof Error ? cause.message : String(cause));
+			return false;
 		} finally {
 			setActionBusy(false);
 		}
 	};
+	const dismissEdit = () => {
+		setEditing(false);
+		setEditError(null);
+		queueMicrotask(() => {
+			const focusTarget = editOpener?.isConnected
+				? editOpener
+				: document.querySelector<HTMLButtonElement>('[data-message-action="edit"]');
+			focusTarget?.focus();
+		});
+	};
 	const commitEdit = async () => {
 		const value = editText().trim();
-		if (!value || value === text()) {
-			setEditing(false);
+		if (!value) return;
+		if (value === text()) {
+			dismissEdit();
 			return;
 		}
-		await runAction(() => store.editMessage(entry.id, value));
-		if (!actionError()) setEditing(false);
+		if (await runAction(() => store.editMessage(entry.id, value), setEditError)) dismissEdit();
+	};
+	const dismissCorrection = () => {
+		if (actionBusy()) return;
+		setCorrecting(false);
+		setCorrectionError(null);
 	};
 	const submitCorrection = async (feedback: string) => {
 		const value = feedback.trim();
 		if (!value) return;
-		await runAction(() => store.regenerateMessage(entry.id, value));
-		setCorrectionDetail("");
-		setCorrecting(false);
+		if (await runAction(() => store.regenerateMessage(entry.id, value), setCorrectionError)) {
+			setCorrectionDetail("");
+			setCorrecting(false);
+		}
 	};
 	const copyMessage = async () => {
 		if (typeof navigator === "undefined" || !navigator.clipboard) return;
@@ -209,6 +251,16 @@ function PiTimelineEntryView(props: {
 			copiedTimer = undefined;
 			setCopied(false);
 		}, 1_500);
+	};
+	const selectedVersionIndex = () => {
+		const pager = props.versionPager;
+		return pager ? pager.leafIds.indexOf(pager.activeLeafId) : -1;
+	};
+	const switchVersion = (offset: -1 | 1) => {
+		const pager = props.versionPager;
+		const target = pager?.leafIds[selectedVersionIndex() + offset];
+		if (!target || pager.disabled || actionBusy()) return;
+		void runAction(() => store.switchMessageVersion(target));
 	};
 	return (
 		<div class="timeline-entry-row" data-testid="timeline-entry-row">
@@ -238,12 +290,17 @@ function PiTimelineEntryView(props: {
 						<div class="message-direct-actions">
 							<Show when={props.canEdit && isUser}>
 								<Button
+									ref={(element) => {
+										editOpener = element;
+									}}
 									type="button"
 									class="msg-inline-action"
 									aria-label={t("messages.edit")}
+									data-message-action="edit"
 									title={t("messages.edit")}
 									onClick={() => {
 										setEditText(text());
+										setEditError(null);
 										setEditing(true);
 									}}
 								>
@@ -265,25 +322,41 @@ function PiTimelineEntryView(props: {
 						<MessageContent text={text()} format={isUser ? "plain" : "markdown"} />
 					</Show>
 					<Show when={editing() && isUser}>
-						<TextField class="message-inline-editor">
-							<TextField.TextArea
-								autofocus
-								value={editText()}
-								onInput={(event) => setEditText(event.currentTarget.value)}
-								onBlur={() => void commitEdit()}
-								onKeyDown={(event) => {
-									if (event.key === "Escape") {
-										event.preventDefault();
-										setEditing(false);
-									}
-									if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-										event.preventDefault();
-										void commitEdit();
-									}
-								}}
-								aria-label={t("messages.editLabel")}
-							/>
-						</TextField>
+						<div class="message-inline-edit">
+							<TextField class="message-inline-editor">
+								<TextField.TextArea
+									autofocus
+									value={editText()}
+									onInput={(event) => setEditText(event.currentTarget.value)}
+									onKeyDown={(event) => {
+										if (event.key === "Escape" && !actionBusy()) {
+											event.preventDefault();
+											dismissEdit();
+										}
+									}}
+									aria-label={t("messages.editLabel")}
+								/>
+							</TextField>
+							<Show when={editError()}>
+								{(error) => (
+									<span class="stream-error" role="alert">
+										{error()}
+									</span>
+								)}
+							</Show>
+							<div class="message-inline-edit-actions">
+								<Button type="button" disabled={actionBusy()} onClick={dismissEdit}>
+									{t("messages.cancel")}
+								</Button>
+								<Button
+									type="button"
+									disabled={actionBusy() || !editText().trim()}
+									onClick={() => void commitEdit()}
+								>
+									{t("messages.save")}
+								</Button>
+							</div>
+						</div>
 					</Show>
 					<Show when={failed() && (errorText()?.length ?? 0) > 0}>
 						<span class="stream-error" role="alert">
@@ -300,7 +373,18 @@ function PiTimelineEntryView(props: {
 								<Icon icon={faRotateRight} />
 								{t("messages.regenerate")}
 							</Button>
-							<Button type="button" disabled={actionBusy()} onClick={() => setCorrecting(true)}>
+							<Button
+								ref={(element) => {
+									correctionOpener = element;
+								}}
+								type="button"
+								disabled={actionBusy()}
+								onClick={() => {
+									setCorrectionDetail("");
+									setCorrectionError(null);
+									setCorrecting(true);
+								}}
+							>
 								{store.character?.character.correction.trigger_label}
 							</Button>
 							<Button
@@ -313,47 +397,80 @@ function PiTimelineEntryView(props: {
 							</Button>
 						</div>
 					</Show>
-					<Show when={correcting() && props.canRegenerate && !isUser}>
-						<Button
-							type="button"
-							class="correction-popover-backdrop"
-							aria-label={t("messages.cancel")}
-							onClick={() => setCorrecting(false)}
-						/>
-						<div class="message-correction-popover" role="menu">
-							<div class="message-correction-presets">
-								<For each={store.character?.character.correction.presets ?? []}>
-									{(preset) => (
-										<Button
-											type="button"
-											role="menuitem"
-											onClick={() => void submitCorrection(preset.label)}
-										>
-											{preset.label}
+					<Show when={props.canRegenerate && !isUser}>
+						<Dialog
+							open={correcting()}
+							modal
+							onOpenChange={(open) => {
+								if (!open) dismissCorrection();
+							}}
+						>
+							<Dialog.Portal>
+								<Dialog.Overlay class="correction-popover-backdrop" />
+								<Dialog.Content
+									class="message-correction-popover"
+									onOpenAutoFocus={(event) => {
+										event.preventDefault();
+										queueMicrotask(() => {
+											if (correctionInput?.isConnected) correctionInput.focus();
+										});
+									}}
+									onCloseAutoFocus={(event) => {
+										event.preventDefault();
+										if (correctionOpener?.isConnected) correctionOpener.focus();
+									}}
+								>
+									<Dialog.Title class="sr-only">
+										{store.character?.character.correction.trigger_label}
+									</Dialog.Title>
+									<div class="message-correction-presets">
+										<For each={store.character?.character.correction.presets ?? []}>
+											{(preset) => (
+												<Button
+													type="button"
+													disabled={actionBusy()}
+													onClick={() => void submitCorrection(preset.label)}
+												>
+													{preset.label}
+												</Button>
+											)}
+										</For>
+									</div>
+									<form
+										class="message-correction-custom"
+										onSubmit={(event) => {
+											event.preventDefault();
+											void submitCorrection(correctionDetail());
+										}}
+									>
+										<TextField>
+											<TextField.Input
+												ref={(element) => {
+													correctionInput = element;
+													queueMicrotask(() => {
+														if (correcting() && element.isConnected) element.focus();
+													});
+												}}
+												value={correctionDetail()}
+												onInput={(event) => setCorrectionDetail(event.currentTarget.value)}
+												placeholder={store.character?.character.correction.custom_placeholder}
+												aria-label={store.character?.character.correction.custom_label}
+											/>
+										</TextField>
+										<Button type="submit" disabled={!correctionDetail().trim() || actionBusy()}>
+											{store.character?.character.correction.custom_label}
 										</Button>
-									)}
-								</For>
-							</div>
-							<form
-								class="message-correction-custom"
-								onSubmit={(event) => {
-									event.preventDefault();
-									void submitCorrection(correctionDetail());
-								}}
-							>
-								<TextField>
-									<TextField.Input
-										value={correctionDetail()}
-										onInput={(event) => setCorrectionDetail(event.currentTarget.value)}
-										placeholder={store.character?.character.correction.custom_placeholder}
-										aria-label={store.character?.character.correction.custom_label}
-									/>
-								</TextField>
-								<Button type="submit" disabled={!correctionDetail().trim() || actionBusy()}>
-									{store.character?.character.correction.custom_label}
-								</Button>
-							</form>
-						</div>
+									</form>
+									<Show when={correctionError()}>
+										{(error) => (
+											<span class="stream-error" role="alert">
+												{error()}
+											</span>
+										)}
+									</Show>
+								</Dialog.Content>
+							</Dialog.Portal>
+						</Dialog>
 					</Show>
 					<Show when={actionError()}>
 						{(error) => (
@@ -363,6 +480,35 @@ function PiTimelineEntryView(props: {
 						)}
 					</Show>
 				</article>
+				<Show when={props.versionPager}>
+					{(pager) => (
+						<nav class="message-version-pager" aria-label={t("messages.versionPager")}>
+							<Button
+								type="button"
+								aria-label={t("messages.previousVersion")}
+								disabled={pager().disabled || actionBusy() || selectedVersionIndex() <= 0}
+								onClick={() => switchVersion(-1)}
+							>
+								<Icon icon={faChevronLeft} />
+							</Button>
+							<span aria-live="polite">
+								{selectedVersionIndex() + 1} / {pager().leafIds.length}
+							</span>
+							<Button
+								type="button"
+								aria-label={t("messages.nextVersion")}
+								disabled={
+									pager().disabled ||
+									actionBusy() ||
+									selectedVersionIndex() >= pager().leafIds.length - 1
+								}
+								onClick={() => switchVersion(1)}
+							>
+								<Icon icon={faChevronRight} />
+							</Button>
+						</nav>
+					)}
+				</Show>
 			</div>
 		</div>
 	);
@@ -520,6 +666,8 @@ function StreamingAssistantProjection(props: {
 function PiTimelineRenderer(props: {
 	items: readonly TimelineProjectionItem[];
 	onPreviewMedia(media: CharacterMedia): void;
+	activeLeafId?: PiSessionEntryId;
+	latestLeafIds: readonly PiSessionEntryId[];
 }) {
 	const store = useCompanionStore();
 	const turnActive = () => store.activePiLiveState?.isStreaming === true;
@@ -580,6 +728,18 @@ function PiTimelineRenderer(props: {
 										onPreviewMedia={props.onPreviewMedia}
 										canEdit={!turnActive() && entryItem().id === latestUserId()}
 										canRegenerate={!turnActive() && entryItem().id === latestAssistantId()}
+										versionPager={
+											entryItem().id === latestAssistantId() &&
+											props.latestLeafIds.length > 1 &&
+											props.activeLeafId !== undefined &&
+											props.latestLeafIds.includes(props.activeLeafId)
+												? {
+														leafIds: props.latestLeafIds,
+														activeLeafId: props.activeLeafId,
+														disabled: turnActive(),
+													}
+												: undefined
+										}
 									/>
 									<WorkTimelineItem messageId={entryItem().id} />
 								</>
@@ -640,7 +800,12 @@ export function ConversationPanel(props: { onPreviewMedia(media: CharacterMedia)
 				</Show>
 
 				<Show when={hasThreadContent()}>
-					<PiTimelineRenderer items={store.activeTimeline} onPreviewMedia={props.onPreviewMedia} />
+					<PiTimelineRenderer
+						items={store.activeTimeline}
+						activeLeafId={store.activePiBranch?.activeLeafId}
+						latestLeafIds={store.activePiBranch?.latestLeafIds ?? []}
+						onPreviewMedia={props.onPreviewMedia}
+					/>
 				</Show>
 			</section>
 			<div
@@ -712,23 +877,121 @@ function CharacterMediaContent(props: { media: CharacterMedia }) {
 	return <img src={source} alt={props.media.label} />;
 }
 
-export function MediaPreview(props: { media: CharacterMedia; onClose(): void }) {
+function MediaPreviewModalIsolation(props: { preview(): HTMLElement | undefined }) {
+	const isolated: Array<{
+		element: HTMLElement;
+		inert: boolean;
+		ariaHidden: string | null;
+	}> = [];
+	onMount(() => {
+		const preview = props.preview();
+		const shell = preview?.closest(".shell");
+		if (!preview || !shell) return;
+		for (const child of shell.children) {
+			if (
+				!(child instanceof HTMLElement) ||
+				child === preview ||
+				child.classList.contains("artifact-preview-backdrop")
+			)
+				continue;
+			isolated.push({
+				element: child,
+				inert: child.inert,
+				ariaHidden: child.getAttribute("aria-hidden"),
+			});
+			child.inert = true;
+			child.setAttribute("aria-hidden", "true");
+		}
+	});
+	onCleanup(() => {
+		for (const item of isolated) {
+			item.element.inert = item.inert;
+			if (item.ariaHidden === null) item.element.removeAttribute("aria-hidden");
+			else item.element.setAttribute("aria-hidden", item.ariaHidden);
+		}
+	});
+	return null;
+}
+
+export function MediaPreview(props: {
+	media: CharacterMedia;
+	layout: AppLayoutMode;
+	onClose(): void;
+}) {
 	const [t] = useTranslation(undefined, { i18n });
+	const modal = () => props.layout !== "fullscreen";
+	const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+	let preview: HTMLElement | undefined;
+	let closeButton: HTMLButtonElement | undefined;
+	let closed = false;
+	const close = () => {
+		if (closed) return;
+		closed = true;
+		props.onClose();
+		queueMicrotask(() => {
+			if (opener?.isConnected) opener.focus();
+		});
+	};
+	onMount(() => {
+		closeButton?.focus();
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape") {
+				event.preventDefault();
+				close();
+				return;
+			}
+			if (!modal() || event.key !== "Tab" || !preview) return;
+			const focusable = Array.from(
+				preview.querySelectorAll<HTMLElement>(
+					'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+				),
+			).filter((element) => !element.hidden);
+			if (focusable.length === 0) return;
+			const first = focusable[0];
+			const last = focusable[focusable.length - 1];
+			if (event.shiftKey && document.activeElement === first) {
+				event.preventDefault();
+				last?.focus();
+			} else if (!event.shiftKey && document.activeElement === last) {
+				event.preventDefault();
+				first?.focus();
+			}
+		};
+		document.addEventListener("keydown", onKeyDown);
+		onCleanup(() => document.removeEventListener("keydown", onKeyDown));
+	});
 	return (
 		<>
-			<Button
-				type="button"
-				class="artifact-preview-backdrop"
-				aria-label={t("messages.closeMedia")}
-				onClick={props.onClose}
-			/>
-			<aside class="attachment-preview-column media-preview-column" aria-label={props.media.label}>
+			<Show when={props.layout === "window"}>
+				<Button
+					type="button"
+					class="artifact-preview-backdrop media-preview-backdrop"
+					aria-label={t("messages.closeMedia")}
+					onClick={close}
+				/>
+			</Show>
+			<aside
+				ref={(element) => {
+					preview = element;
+				}}
+				class="attachment-preview-column media-preview-column"
+				role={modal() ? "dialog" : "complementary"}
+				{...(modal() ? { "aria-modal": "true" } : {})}
+				aria-label={props.media.label}
+			>
 				<header>
 					<div class="attachment-preview-heading">
 						<small>{props.media.kind}</small>
 						<strong>{props.media.label}</strong>
 					</div>
-					<Button type="button" aria-label={t("messages.closeMedia")} onClick={props.onClose}>
+					<Button
+						ref={(element) => {
+							closeButton = element;
+						}}
+						type="button"
+						aria-label={t("messages.closeMedia")}
+						onClick={close}
+					>
 						×
 					</Button>
 				</header>
@@ -739,6 +1002,9 @@ export function MediaPreview(props: { media: CharacterMedia; onClose(): void }) 
 					<p>{props.media.description}</p>
 				</footer>
 			</aside>
+			<Show when={modal()}>
+				<MediaPreviewModalIsolation preview={() => preview} />
+			</Show>
 		</>
 	);
 }

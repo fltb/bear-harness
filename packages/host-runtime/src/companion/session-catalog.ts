@@ -5,6 +5,7 @@ import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import type { ArtifactStore } from "../artifacts/index.js";
 import type { AppDatabase } from "../storage/database.js";
 import {
+	activeConversations,
 	artifactAdoptions,
 	artifacts,
 	canonSources,
@@ -13,6 +14,7 @@ import {
 	runManifests,
 	runs,
 } from "../storage/schema.js";
+import type { CompanionStateStore, CompanionStateTransaction } from "./companion-store.js";
 import type { PiRuntime } from "./pi-runtime.js";
 
 export interface SessionCatalogQuery {
@@ -30,8 +32,10 @@ export class SessionCatalog {
 	constructor(
 		private readonly db: AppDatabase,
 		private readonly pi: PiRuntime,
+		private readonly state: CompanionStateStore,
 		private readonly options: SessionCatalogOptions = {},
 	) {}
+	private selectionTail: Promise<void> = Promise.resolve();
 
 	async list(companionId: string, query: SessionCatalogQuery = {}) {
 		const rows = this.db
@@ -55,22 +59,42 @@ export class SessionCatalog {
 			.sort((left, right) => right.modified.getTime() - left.modified.getTime());
 	}
 
-	async create(companionId: string, title = "") {
-		let sessionId: string | undefined;
-		try {
-			return await this.pi.create(title, (id) => {
-				sessionId = id;
-				this.db.insert(conversations).values({ id, companionId }).run();
-			});
-		} catch (error) {
-			if (sessionId) this.db.delete(conversations).where(eq(conversations.id, sessionId)).run();
-			throw error;
-		}
+	async createAndSelect(companionId: string, title = "") {
+		return this.enqueueSelectionMutation(async () => {
+			const previousConversationId = this.activeConversationId(companionId);
+			let sessionId: string | undefined;
+			let registered = false;
+			try {
+				return await this.pi.create(title, (id) => {
+					sessionId = id;
+					this.registerAndSelect(companionId, id);
+					registered = true;
+				});
+			} catch (error) {
+				if (registered && sessionId)
+					this.rollbackRegistration(companionId, sessionId, previousConversationId);
+				throw error;
+			}
+		});
 	}
 
 	async open(companionId: string, sessionId: string) {
 		this.requireOwned(companionId, sessionId);
 		return this.pi.open(sessionId);
+	}
+
+	async activeGet(companionId: string) {
+		const sessionId = this.activeConversationId(companionId);
+		return sessionId ? this.pi.open(sessionId) : undefined;
+	}
+
+	async select(companionId: string, sessionId: string) {
+		return this.enqueueSelectionMutation(async () => {
+			this.requireSelectable(companionId, sessionId);
+			const session = await this.pi.open(sessionId);
+			this.persistActive(companionId, sessionId);
+			return session;
+		});
 	}
 
 	async rename(companionId: string, sessionId: string, title: string) {
@@ -79,45 +103,83 @@ export class SessionCatalog {
 	}
 
 	async fork(companionId: string, sourceSessionId: string, entryId: string) {
-		this.requireOwned(companionId, sourceSessionId);
-		let sessionId: string | undefined;
-		try {
-			return await this.pi.fork(sourceSessionId, entryId, (id) => {
-				sessionId = id;
-				this.db.insert(conversations).values({ id, companionId }).run();
-			});
-		} catch (error) {
-			if (sessionId) this.db.delete(conversations).where(eq(conversations.id, sessionId)).run();
-			throw error;
-		}
-	}
-
-	async archive(companionId: string, sessionId: string, archived: boolean) {
-		this.requireOwned(companionId, sessionId);
-		this.db
-			.update(conversations)
-			.set({ archivedAt: archived ? new Date().toISOString() : null })
-			.where(eq(conversations.id, sessionId))
-			.run();
-		if (archived) await this.pi.close(sessionId);
-		return this.pi.snapshot(sessionId);
-	}
-
-	async delete(companionId: string, sessionId: string) {
-		const owner = this.ownerOf(sessionId);
-		if (!owner) return;
-		if (owner !== companionId) throw { kind: "not_found", reason: "conversation_not_found" };
-		await this.pi.delete(sessionId, async () => {
-			const session = (await this.pi.list()).find((candidate) => candidate.id === sessionId);
-			await this.options.beforeDelete?.(sessionId);
-			if (session?.path) await deleteSessionFile(session.path);
-			this.options.artifacts?.purgeUnreferenced(this.deleteOwnedData(companionId, sessionId));
+		return this.enqueueSelectionMutation(async () => {
+			this.requireOwned(companionId, sourceSessionId);
+			const piSessions = await this.pi.list();
+			const sourceTitle = piSessions.find((session) => session.id === sourceSessionId)?.name ?? "";
+			const titles = new Set(piSessions.map((session) => session.name));
+			let suffix = 1;
+			while (titles.has(`${sourceTitle}(${suffix})`)) {
+				suffix += 1;
+			}
+			const forkTitle = `${sourceTitle}(${suffix})`;
+			const previousConversationId = this.activeConversationId(companionId);
+			let sessionId: string | undefined;
+			let registered = false;
+			try {
+				return await this.pi.fork(sourceSessionId, entryId, forkTitle, (id) => {
+					sessionId = id;
+					this.registerAndSelect(companionId, id, (tx) =>
+						this.state.cloneConversationState(tx, companionId, sourceSessionId, id),
+					);
+					registered = true;
+				});
+			} catch (error) {
+				if (registered && sessionId)
+					this.rollbackRegistration(companionId, sessionId, previousConversationId);
+				throw error;
+			}
 		});
-		return this.pi.snapshot(sessionId);
+	}
+
+	async archive(companionId: string, sessionId: string, archived: boolean): Promise<void> {
+		return this.enqueueSelectionMutation(async () => {
+			this.requireOwned(companionId, sessionId);
+			if (archived) await this.pi.close(sessionId, "preserve");
+			this.db.transaction((tx) => {
+				tx.update(conversations)
+					.set({ archivedAt: archived ? new Date().toISOString() : null })
+					.where(eq(conversations.id, sessionId))
+					.run();
+				if (archived) {
+					tx.delete(activeConversations)
+						.where(
+							and(
+								eq(activeConversations.companionId, companionId),
+								eq(activeConversations.conversationId, sessionId),
+							),
+						)
+						.run();
+				}
+			});
+		});
+	}
+
+	async delete(companionId: string, sessionId: string): Promise<void> {
+		return this.enqueueSelectionMutation(async () => {
+			const owner = this.ownerOf(sessionId);
+			if (!owner) return;
+			if (owner !== companionId) throw { kind: "not_found", reason: "conversation_not_found" };
+			await this.pi.delete(sessionId, async () => {
+				const session = (await this.pi.list()).find((candidate) => candidate.id === sessionId);
+				await this.options.beforeDelete?.(sessionId);
+				if (session?.path) await deleteSessionFile(session.path);
+				const hashes = this.deleteOwnedData(companionId, sessionId);
+				this.options.artifacts?.purgeUnreferenced(hashes);
+			});
+		});
 	}
 
 	private deleteOwnedData(companionId: string, sessionId: string): string[] {
 		return this.db.transaction((tx) => {
+			tx.delete(activeConversations)
+				.where(
+					and(
+						eq(activeConversations.companionId, companionId),
+						eq(activeConversations.conversationId, sessionId),
+					),
+				)
+				.run();
 			const ownedRuns = tx
 				.select({ id: runs.id })
 				.from(runs)
@@ -153,6 +215,98 @@ export class SessionCatalog {
 				.run();
 			return hashes;
 		});
+	}
+
+	private enqueueSelectionMutation<T>(mutation: () => Promise<T>): Promise<T> {
+		const result = this.selectionTail.then(mutation, mutation);
+		this.selectionTail = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
+	}
+
+	private registerAndSelect(
+		companionId: string,
+		sessionId: string,
+		initialize?: (tx: CompanionStateTransaction) => void,
+	): void {
+		this.db.transaction((tx) => {
+			tx.insert(conversations).values({ id: sessionId, companionId }).run();
+			initialize?.(tx);
+			tx.insert(activeConversations)
+				.values({
+					companionId,
+					conversationId: sessionId,
+					updatedAt: new Date().toISOString(),
+				})
+				.onConflictDoUpdate({
+					target: activeConversations.companionId,
+					set: {
+						conversationId: sessionId,
+						updatedAt: new Date().toISOString(),
+					},
+				})
+				.run();
+		});
+	}
+
+	private rollbackRegistration(
+		companionId: string,
+		sessionId: string,
+		previousConversationId: string | undefined,
+	): void {
+		this.db.transaction((tx) => {
+			const cleared = tx
+				.delete(activeConversations)
+				.where(
+					and(
+						eq(activeConversations.companionId, companionId),
+						eq(activeConversations.conversationId, sessionId),
+					),
+				)
+				.run();
+			tx.delete(conversations).where(eq(conversations.id, sessionId)).run();
+			if (cleared.changes && previousConversationId) {
+				tx.insert(activeConversations)
+					.values({
+						companionId,
+						conversationId: previousConversationId,
+						updatedAt: new Date().toISOString(),
+					})
+					.run();
+			}
+		});
+	}
+
+	private persistActive(companionId: string, sessionId: string): void {
+		const updatedAt = new Date().toISOString();
+		this.db
+			.insert(activeConversations)
+			.values({ companionId, conversationId: sessionId, updatedAt })
+			.onConflictDoUpdate({
+				target: activeConversations.companionId,
+				set: { conversationId: sessionId, updatedAt },
+			})
+			.run();
+	}
+
+	private activeConversationId(companionId: string): string | undefined {
+		return this.db
+			.select({ conversationId: activeConversations.conversationId })
+			.from(activeConversations)
+			.where(eq(activeConversations.companionId, companionId))
+			.get()?.conversationId;
+	}
+
+	private requireSelectable(companionId: string, sessionId: string): void {
+		const conversation = this.db
+			.select({ archivedAt: conversations.archivedAt })
+			.from(conversations)
+			.where(and(eq(conversations.id, sessionId), eq(conversations.companionId, companionId)))
+			.get();
+		if (!conversation) throw { kind: "not_found", reason: "conversation_not_found" };
+		if (conversation.archivedAt) throw { kind: "conflict", reason: "conversation_archived" };
 	}
 
 	private requireOwned(companionId: string, sessionId: string) {

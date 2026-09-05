@@ -3,9 +3,9 @@
  * `config/characters/<id>/character.yaml`.
  *
  * This is the SINGLE source of truth for all character-specific content:
- * Canon, Identity Core, Self Canon, theme tokens, scene titles, first
- * meeting text, visual states, asset manifests — every string that belongs
- * to the character lives here, never in product code.
+ * Canon, behavior identity, theme tokens, scene titles, first meeting text,
+ * visual states, asset manifests — every string that belongs to the character
+ * lives here, never in product code.
  *
  * Package-declared constants, asset paths/content, and Pi resources are
  * Host-owned role-package storage (the package storage bucket). They are not
@@ -153,7 +153,6 @@ export interface CharacterPackage {
 	character: CharacterStrings;
 	behavior: CharacterBehaviorContract;
 	prompt: CharacterPrompt;
-	self_canon: string;
 	scenes: ScenePreset[];
 	visual: CharacterVisuals;
 	state: CharacterStateDefinition;
@@ -351,7 +350,6 @@ export const CharacterManifestSchema = z
 		character: CharacterCardSchema,
 		behavior: CharacterBehaviorSchema,
 		prompt: CharacterPromptSchema,
-		self_canon: z.string().max(65_536),
 		scenes: z.array(ScenePresetSchema).min(1).max(100),
 		visual: z.strictObject({
 			default_scene: CharacterIdentifierSchema,
@@ -780,7 +778,6 @@ export class CharacterLoader {
 			character: parsed.character,
 			behavior,
 			prompt: parsed.prompt,
-			self_canon: parsed.self_canon,
 			scenes: parsed.scenes,
 			visual: parsed.visual,
 			state,
@@ -897,9 +894,6 @@ Do not claim that missing an explicit request prevents TDAI capture, and do not 
 			characterStatePrompt(character.state),
 			displayCatalog,
 			roleSkillPrompt(character.skills),
-			character.self_canon.trim()
-				? `<self_canon>\n${character.self_canon.trim()}\n</self_canon>`
-				: "",
 		]
 			.filter(Boolean)
 			.join("\n\n");

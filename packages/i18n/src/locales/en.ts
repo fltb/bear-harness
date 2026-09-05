@@ -12,6 +12,9 @@ export const en = {
 		uploadFolder: "Choose local folder",
 		webDevPathHint: "In WebDev, paste the absolute local path directly into the message.",
 		localPathOnly: "Only local file paths are accepted here. In WebDev, paste an absolute path.",
+		localPickerFailed:
+			"The local file picker could not be opened. Try again or paste an absolute path.",
+		closeAttachmentNotice: "Close",
 		localFileReference: "Local file",
 		localFolderReference: "Local folder",
 		messageInputLabel: "Send message",
@@ -36,7 +39,9 @@ export const en = {
 		revision: "Revision",
 		advancedDetails: "Advanced details",
 		packageTab: "Role package",
-		manifest: "Character manifest",
+		promptEditor: "Prompt editor",
+		promptEditorDescription:
+			"Only these four prompt text fields are editable here. All other character package configuration stays unchanged.",
 		revealPackage: "Open in system folder",
 		promptFields: {
 			description: "Role description",
@@ -48,7 +53,6 @@ export const en = {
 		pluginTrust: "Plugin trust",
 		pluginTrusted: "Trusted",
 		pluginDisabled: "Not enabled",
-		noPlugins: "No role plugins",
 		enablePlugins: "Enable role plugins",
 		storageDefinition: "Role package storage definition",
 		storyProjection: "Story projection",
@@ -480,7 +484,7 @@ export const en = {
 		keySaved: "API key saved; provider models refreshed",
 		logout: "Sign out",
 		loggedOut: "Provider signed out",
-		loginWithBrowser: "Sign in and choose a method",
+		loginWithBrowser: "Sign in",
 		oauthWaiting: "Waiting for authorization...",
 		oauthManualFallback: "Didn't connect automatically?",
 		oauthManualHint: "Paste the complete link from your browser's address bar.",

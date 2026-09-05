@@ -200,7 +200,8 @@ export class TencentDbRuntime {
 export async function validateLocalEmbedding(options: {
 	modelPath: string;
 	dimensions: number;
-	hfEndpoint: string;
+	hfEndpoint?: string;
+	download?: "auto" | false;
 	signal?: AbortSignal;
 	onProgress?: (progress: { downloadedSize: number; totalSize: number }) => void;
 	onPhase?: (phase: "validating" | "activating") => void;
@@ -221,6 +222,7 @@ export async function validateLocalEmbedding(options: {
 			modelPath: options.modelPath,
 			dimensions: options.dimensions,
 			hfEndpoint: options.hfEndpoint,
+			...(options.download !== undefined ? { download: options.download } : {}),
 			signal,
 			onDownloadProgress: options.onProgress,
 			onDownloadComplete: () => options.onPhase?.("validating"),

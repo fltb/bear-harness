@@ -166,6 +166,9 @@ export type ConversationListRequest = z.infer<typeof schema.ConversationListRequ
 export type ConversationListResponse = z.infer<typeof schema.ConversationListResponse>;
 export type ConversationCreateRequest = z.infer<typeof schema.ConversationCreateRequest>;
 export type ConversationCreateResponse = z.infer<typeof schema.ConversationCreateResponse>;
+export type ConversationActiveGetRequest = z.infer<typeof schema.ConversationActiveGetRequest>;
+export type ConversationActiveResponse = z.infer<typeof schema.ConversationActiveResponse>;
+export type ConversationSelectRequest = z.infer<typeof schema.ConversationSelectRequest>;
 export type ConversationOpenRequest = z.infer<typeof schema.ConversationOpenRequest>;
 export type ConversationOpenResponse = z.infer<typeof schema.ConversationOpenResponse>;
 export type ConversationDetail = z.infer<typeof schema.ConversationDetail>;
@@ -180,9 +183,9 @@ export type ConversationHistoryResponse = z.infer<typeof schema.ConversationHist
 export type ConversationRenameRequest = z.infer<typeof schema.ConversationRenameRequest>;
 export type ConversationRenameResponse = z.infer<typeof schema.EmptyResponse>;
 export type ConversationArchiveRequest = z.infer<typeof schema.ConversationArchiveRequest>;
-export type ConversationArchiveResponse = z.infer<typeof schema.EmptyResponse>;
+export type ConversationArchiveResponse = z.infer<typeof schema.ConversationActiveResponse>;
 export type ConversationDeleteRequest = z.infer<typeof schema.ConversationDeleteRequest>;
-export type ConversationDeleteResponse = z.infer<typeof schema.EmptyResponse>;
+export type ConversationDeleteResponse = z.infer<typeof schema.ConversationActiveResponse>;
 
 // ---------------------------------------------------------------------------
 // Message
@@ -207,12 +210,40 @@ export type MessageAbortRequest = z.infer<typeof schema.MessageAbortRequest>;
 // Memory
 // ---------------------------------------------------------------------------
 
-export type MemoryConfigureLocalEmbeddingRequest = z.infer<
-	typeof schema.MemoryConfigureLocalEmbeddingRequest
+export type LocalEmbeddingTarget = z.infer<typeof schema.LocalEmbeddingTarget>;
+export type LocalEmbeddingInventoryItem = z.infer<typeof schema.LocalEmbeddingInventoryItem>;
+export type LocalEmbeddingInventoryRequest = RequestOf<
+	typeof schema.RPC.memory.localEmbeddingInventory
 >;
-export type MemoryConfigureLocalEmbeddingResponse = z.infer<
-	typeof schema.MemoryConfigureLocalEmbeddingResponse
+export type LocalEmbeddingInventoryResponse = ResponseOf<
+	typeof schema.RPC.memory.localEmbeddingInventory
 >;
+export type LocalEmbeddingAcquisitionState = z.infer<typeof schema.LocalEmbeddingAcquisitionState>;
+export type LocalEmbeddingAcquisitionStartRequest = z.infer<
+	typeof schema.LocalEmbeddingAcquisitionStartRequest
+>;
+export type LocalEmbeddingAcquisitionStartResponse = ResponseOf<
+	typeof schema.RPC.memory.localEmbeddingAcquisitionStart
+>;
+export type LocalEmbeddingAcquisitionStatusRequest = RequestOf<
+	typeof schema.RPC.memory.localEmbeddingAcquisitionStatus
+>;
+export type LocalEmbeddingAcquisitionStatusResponse = ResponseOf<
+	typeof schema.RPC.memory.localEmbeddingAcquisitionStatus
+>;
+export type LocalEmbeddingAcquisitionCancelRequest = z.infer<
+	typeof schema.LocalEmbeddingAcquisitionCancelRequest
+>;
+export type LocalEmbeddingAcquisitionCancelResponse = ResponseOf<
+	typeof schema.RPC.memory.localEmbeddingAcquisitionCancel
+>;
+export type MemoryActivateLocalEmbeddingRequest = z.infer<
+	typeof schema.MemoryActivateLocalEmbeddingRequest
+>;
+export type MemoryActivateLocalEmbeddingResponse = ResponseOf<
+	typeof schema.RPC.memory.activateLocalEmbedding
+>;
+export type ModelDownloadSource = z.infer<typeof schema.ModelDownloadSource>;
 
 export type CanonListSourcesRequest = z.infer<typeof schema.CanonListSourcesRequest>;
 export type CanonListSourcesResponse = z.infer<typeof schema.CanonListSourcesResponse>;
@@ -248,6 +279,8 @@ export type ProviderLoginCancelRequest = z.infer<typeof schema.ProviderLoginCanc
 export type ProviderLoginCancelResponse = z.infer<typeof schema.ProviderLoginCancelResponse>;
 export type ProviderLoginStatusRequest = z.infer<typeof schema.ProviderLoginStatusRequest>;
 export type ProviderLoginAnswerRequest = z.infer<typeof schema.ProviderLoginAnswerRequest>;
+export type ProviderLoginSessionsRequest = z.infer<typeof schema.ProviderLoginSessionsRequest>;
+export type ProviderLoginSessionsResponse = z.infer<typeof schema.ProviderLoginSessionsResponse>;
 export type ProviderLogoutRequest = z.infer<typeof schema.ProviderLogoutRequest>;
 export type ProviderRemoveRequest = z.infer<typeof schema.ProviderRemoveRequest>;
 export type ProviderCustomUpsertRequest = z.infer<typeof schema.ProviderCustomUpsertRequest>;
@@ -268,6 +301,7 @@ export type ProviderOverrideBaseUrlResponse = z.infer<typeof schema.EmptyRespons
 
 export type ModelRoute = z.infer<typeof schema.ModelRoute>;
 export type ConfiguredModel = z.infer<typeof schema.ConfiguredModel>;
+export type ModelReadiness = z.infer<typeof schema.ModelReadiness>;
 export type ModelPoolGetRequest = z.infer<typeof schema.ModelPoolGetRequest>;
 export type ModelPoolGetResponse = z.infer<typeof schema.ModelPoolGetResponse>;
 export type ModelDefaultsGetRequest = z.infer<typeof schema.ModelDefaultsGetRequest>;
@@ -369,6 +403,21 @@ export type NetworkProxyModeCapability = z.infer<typeof schema.NetworkProxyModeC
 export type MemoryVectorProviderCapability = z.infer<typeof schema.MemoryVectorProviderCapability>;
 export type MemoryVectorPresetCapability = z.infer<typeof schema.MemoryVectorPresetCapability>;
 export type LocalEmbeddingCandidate = z.infer<typeof schema.LocalEmbeddingCandidate>;
+export type SystemOnboardingCompleteModelRequest = z.infer<
+	typeof schema.SystemOnboardingCompleteModelRequest
+>;
+export type SystemOnboardingCompleteModelResponse = z.infer<
+	typeof schema.SystemOnboardingCompleteModelResponse
+>;
+export type RemoteEmbeddingOnboardingConfiguration = z.infer<
+	typeof schema.RemoteEmbeddingOnboardingConfiguration
+>;
+export type SystemOnboardingCompleteEmbeddingRequest = z.infer<
+	typeof schema.SystemOnboardingCompleteEmbeddingRequest
+>;
+export type SystemOnboardingCompleteEmbeddingResponse = z.infer<
+	typeof schema.SystemOnboardingCompleteEmbeddingResponse
+>;
 export type UpdateCheckRequest = z.infer<typeof schema.UpdateCheckRequest>;
 export type UpdateCheckResponse = z.infer<typeof schema.UpdateCheckResponse>;
 export type UpdateDiscardRequest = z.infer<typeof schema.UpdateDiscardRequest>;

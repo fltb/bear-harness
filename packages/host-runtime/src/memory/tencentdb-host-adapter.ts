@@ -71,7 +71,12 @@ function defaultLogger(): Logger {
 	};
 }
 
-function modelRoute(modelRef: string | undefined, models: ModelRegistry, companionId: string) {
+function modelRoute(
+	modelRef: string | undefined,
+	models: ModelRegistry,
+	providers: ProviderCatalog,
+	companionId: string,
+) {
 	if (modelRef) {
 		const slash = modelRef.indexOf("/");
 		if (slash <= 0 || slash === modelRef.length - 1) {
@@ -79,7 +84,7 @@ function modelRoute(modelRef: string | undefined, models: ModelRegistry, compani
 		}
 		return { providerId: modelRef.slice(0, slash), modelId: modelRef.slice(slash + 1) };
 	}
-	const route = models.defaults(companionId).reply;
+	const route = models.defaults(companionId, providers.modelProjectionFacts()).reply;
 	if (!route) {
 		throw new Error("no configured Companion model is available for memory processing");
 	}
@@ -221,7 +226,7 @@ class BearHarnessLLMRunner implements LLMRunner {
 	) {}
 
 	private async resolveModel(): Promise<{ models: Models; model: Model<Api> }> {
-		const route = modelRoute(this.modelRef, this.models, this.companionId);
+		const route = modelRoute(this.modelRef, this.models, this.providers, this.companionId);
 		const runtime = await this.providers.getModels();
 		const model =
 			runtime.getModel(route.providerId, route.modelId) ??

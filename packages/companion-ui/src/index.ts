@@ -19,20 +19,20 @@
  */
 
 export type { BrandLicense, ProductConfig } from "@bear-harness/product-config";
-export type { AppLayoutMode } from "./App.js";
-export {
-	CANONICAL_LAYOUT_VIEWPORTS,
-	CompanionApp,
-	FULLSCREEN_LAYOUT_MIN_WIDTH,
-	layoutModeForWidth,
-	MOBILE_LAYOUT_MAX_WIDTH,
-} from "./App.js";
+export { CompanionApp } from "./App.js";
 export {
 	installRendererFaultReporting,
 	type RendererErrorType,
 	type RendererFault,
 	type RendererFaultReporter,
 } from "./diagnostics.js";
+export type { AppLayoutMode } from "./layout.js";
+export {
+	CANONICAL_LAYOUT_VIEWPORTS,
+	FULLSCREEN_LAYOUT_MIN_WIDTH,
+	layoutModeForWidth,
+	MOBILE_LAYOUT_MAX_WIDTH,
+} from "./layout.js";
 export { markSelectPortalTopLayer } from "./lib/select-portal.js";
 export { createStableSnapshot } from "./lib/stable-snapshot.js";
 export { MessageContent, type MessageContentProps } from "./MessageContent.js";

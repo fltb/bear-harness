@@ -1,6 +1,7 @@
 import type { LivePush } from "@bear-harness/protocol";
 import { CacheKey, ProviderLoginResponse } from "@bear-harness/protocol/schema";
 import type { MemoryTdaiConfig } from "@bear-harness/tdai-core";
+import type { Provider } from "@earendil-works/pi-ai";
 import { eq } from "drizzle-orm";
 import type { ArtifactStore } from "./artifacts/index.js";
 import type { ArtifactPresenter } from "./artifacts/presentation.js";
@@ -14,19 +15,20 @@ import {
 import {
 	type HostCompositionContext,
 	type HostUpdateService,
+	recoverProviderRemovals,
 	syncAllProviderModels,
 	syncProviderModels,
 	wireHostHandlers,
 } from "./composition.js";
 import { Dispatcher, type RpcResponse } from "./dispatcher.js";
 import { HostEventLoop, type RuntimeResource } from "./host-event-loop.js";
+import { LocalEmbeddingAcquisitionService } from "./memory/local-embedding-acquisition.js";
 import {
 	type DeepPartial,
 	type TencentDbRuntime,
 	validateLocalEmbedding,
 	validateRemoteEmbedding,
 } from "./memory/tencentdb-runtime.js";
-import { ModelRegistry } from "./models/registry.js";
 import { applyProxyConfig, type SystemProxyResolver } from "./network/proxy-config.js";
 import { ProviderCatalog } from "./providers/catalog.js";
 import {
@@ -57,6 +59,7 @@ export interface HostRuntimeOptions {
 	productConfig: RuntimeProductConfig;
 	credentialVault: CredentialVault;
 	memoryScope?: { readonly installationId: string; readonly userId: string };
+	nativeProviders?: readonly Provider[];
 	memoryConfig?: DeepPartial<MemoryTdaiConfig>;
 	systemProxyResolver?: SystemProxyResolver;
 	bundledGit?: { shellPath: string; pathEntries: string[] };
@@ -90,6 +93,7 @@ export class HostRuntime {
 	private readonly characterLoader: CharacterLoader;
 	private readonly appSettings: AppSettingsStore;
 	private readonly drafts: CharacterDraftService;
+	private readonly localEmbeddingAcquisition: LocalEmbeddingAcquisitionService;
 	private readonly lifetime = new AbortController();
 	private readonly backgroundAttempts = new Set<Promise<void>>();
 	private readonly invalidationSubscriptions = new Set<InvalidationSubscription>();
@@ -111,6 +115,13 @@ export class HostRuntime {
 		this.characterLoader.bootstrapLibrary(options.productConfig.defaultCharacterId);
 		this.credentials = new CredentialStore(systemDb, options.credentialVault);
 		this.appSettings = new AppSettingsStore(systemDb);
+		this.localEmbeddingAcquisition = new LocalEmbeddingAcquisitionService({
+			layout: this.storage.layout,
+			onStateChange: (state) => {
+				for (const listener of this.livePushListeners)
+					listener({ type: "embeddingAcquisition", state });
+			},
+		});
 		this.memoryScope = options.memoryScope ?? {
 			installationId: loadInstallationId(systemDb),
 			userId: "default-user",
@@ -135,6 +146,7 @@ export class HostRuntime {
 						);
 				});
 			},
+			options.nativeProviders,
 		);
 		this.drafts = new CharacterDraftService(systemDb, this.characterLoader);
 
@@ -238,12 +250,18 @@ export class HostRuntime {
 				auditRoots: this.options.auditRoots ?? [this.options.dataDir],
 				logger: this.options.logger,
 				onHit: (hit) => {
-					void this.lifecycle
-						.active()
-						.runtime.auditStore.append("fsop", "delete_attempt", JSON.stringify(hit))
-						.catch(() => undefined);
+					try {
+						const auditStore = this.lifecycle.active().runtime.auditStore;
+						void auditStore
+							.append("fsop", "delete_attempt", JSON.stringify(hit))
+							.catch(() => undefined);
+					} catch {
+						// Role shutdown can race with a late filesystem callback.
+					}
 				},
 			});
+			await recoverProviderRemovals(this.providers, role.models);
+			await syncAllProviderModels(this.providers, role.models);
 			await role.recoverExternalRuns();
 			this.started = true;
 			this.bindRoleInternalSubscriptions();
@@ -264,6 +282,12 @@ export class HostRuntime {
 		this.closed = true;
 		this.lifetime.abort();
 		this.started = false;
+		let failure: unknown;
+		try {
+			await this.localEmbeddingAcquisition.close();
+		} catch (error) {
+			failure = error;
+		}
 		this.providers.dispose();
 		this.unsubscribeProxyHotReload?.();
 		for (const subscription of this.invalidationSubscriptions) subscription.stop?.();
@@ -271,11 +295,10 @@ export class HostRuntime {
 		this.livePushListeners.clear();
 		await Promise.allSettled(this.backgroundAttempts.values());
 		this.backgroundAttempts.clear();
-		let failure: unknown;
 		try {
 			await this.lifecycle.close();
 		} catch (error) {
-			failure = error;
+			failure ??= error;
 		}
 		this.uninstallFsAudit?.uninstall();
 		this.storage.close();
@@ -303,6 +326,7 @@ export class HostRuntime {
 			sessions: runtime.sessions,
 			models: runtime.models,
 			memoryEmbedding,
+			localEmbeddingAcquisition: this.localEmbeddingAcquisition,
 			memoryScope: this.memoryScope,
 			appSettings: this.appSettings,
 			credentials: this.credentials,
@@ -322,7 +346,7 @@ export class HostRuntime {
 			activateCharacter: (next: CharacterPackage, origin?: CharacterPackageOrigin) =>
 				this.activateCharacter(next, origin),
 			seedCharacter: (next: CharacterPackage, origin?: CharacterPackageOrigin) =>
-				this.seedCharacter(next, origin, runtime),
+				this.seedCharacter(next, origin),
 			characterDeletionStatus: (characterId: string) => this.characterDeletionStatus(characterId),
 			deleteCharacterRuntime: (characterId: string) => this.deleteCharacterRuntime(characterId),
 			deleteCharacterPackage: (characterId: string) => this.deleteCharacterPackage(characterId),
@@ -404,6 +428,7 @@ export class HostRuntime {
 					settings.memoryVectorService,
 					settings.modelDownloadSource,
 					embeddingApiKey,
+					(candidateId) => this.localEmbeddingAcquisition.resolveCandidatePath(candidateId),
 				);
 			},
 			piWorkerPath: this.options.piWorkerPath,
@@ -427,6 +452,10 @@ export class HostRuntime {
 				let runtime: CharacterRuntime | undefined;
 				try {
 					runtime = this.createCharacterRuntime(character.id);
+					runtime.models.seedFromSystemDefaults(
+						character.id,
+						this.providers.modelProjectionFacts(),
+					);
 					await runtime.recoverExternalRuns();
 					this.characterLoader.activate(this.storage.system.orm, character, origin);
 					return this.createRoleResource(runtimeId, runtime);
@@ -437,7 +466,7 @@ export class HostRuntime {
 				}
 			},
 			(resource) => {
-				this.seedCharacter(character, origin, resource.runtime);
+				this.seedCharacter(character, origin);
 				resource.runtime.companionStore.reconcileSchema(character.id, character.state);
 				resource.runtime.canon.syncPackage(character.id, character.canon);
 				const trust = this.characterLoader.pluginTrust(this.storage.system.orm, character);
@@ -453,22 +482,8 @@ export class HostRuntime {
 		if (this.started) this.scheduleRoleReconciliation();
 	}
 
-	private seedCharacter(
-		character: CharacterPackage,
-		origin?: CharacterPackageOrigin,
-		owner = this.lifecycle.active().runtime,
-	): void {
-		const handle = this.storage.open(character.id);
+	private seedCharacter(character: CharacterPackage, origin?: CharacterPackageOrigin): void {
 		this.characterLoader.seed(this.storage.system.orm, character, origin);
-		const invalidations = owner.invalidations;
-		new ModelRegistry(
-			this.storage.system.orm,
-			handle.database.orm,
-			invalidations,
-			this.appSettings,
-			(visit) => this.storage.forEachCompanionDatabase(visit),
-		).seedFromSystemDefaults(character.id);
-		if (character.id !== owner.companionId) this.storage.closeCompanion(character.id);
 	}
 
 	private bindInvalidationSubscription(subscription: InvalidationSubscription): void {
@@ -542,7 +557,8 @@ function mergeEmbeddingConfig(
 	base: DeepPartial<MemoryTdaiConfig> | undefined,
 	service: AppSettingsRecord["memoryVectorService"],
 	downloadSource: AppSettingsRecord["modelDownloadSource"],
-	embeddingApiKey?: string,
+	embeddingApiKey: string | undefined,
+	resolveCandidatePath: (candidateId: string) => string,
 ): DeepPartial<MemoryTdaiConfig> | undefined {
 	if (!service.enabled || service.provider === "none") return base;
 	const embedding: DeepPartial<MemoryTdaiConfig>["embedding"] = {
@@ -556,7 +572,8 @@ function mergeEmbeddingConfig(
 			: undefined;
 		embedding.provider = "local";
 		embedding.dimensions = candidate?.dimensions;
-		embedding.modelPath = candidate?.modelPath ?? service.customPath;
+		embedding.modelPath = candidate ? resolveCandidatePath(candidate.id) : service.customPath;
+		embedding.download = false;
 		embedding.hfEndpoint =
 			downloadSource.type === "official"
 				? "https://huggingface.co"

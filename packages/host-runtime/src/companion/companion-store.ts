@@ -14,7 +14,7 @@ import {
 	type StateScope,
 } from "./state-schema.js";
 
-type Tx = Parameters<Parameters<AppDatabase["transaction"]>[0]>[0];
+export type CompanionStateTransaction = Parameters<Parameters<AppDatabase["transaction"]>[0]>[0];
 const table = companionStateDocuments;
 type Row = typeof table.$inferSelect;
 type Write = Omit<typeof table.$inferInsert, "id">;
@@ -36,6 +36,34 @@ export class CompanionStateStore {
 	}
 	snapshot(character: CharacterPackage, conversationId: string): CompanionSnapshot {
 		return displaySnapshot(this.rows(character.id, conversationId), character);
+	}
+	cloneConversationState(
+		tx: CompanionStateTransaction,
+		companionId: string,
+		sourceConversationId: string,
+		targetConversationId: string,
+	): void {
+		const rows = tx
+			.select()
+			.from(table)
+			.where(
+				and(
+					eq(table.companionId, companionId),
+					eq(table.conversationId, sourceConversationId),
+					eq(table.scope, "conversation"),
+				),
+			)
+			.all();
+		for (const row of rows) {
+			this.save(tx, {
+				companionId,
+				conversationId: targetConversationId,
+				scope: "conversation",
+				domain: row.domain,
+				stateJson: structuredClone(row.stateJson),
+				revision: row.revision,
+			});
+		}
 	}
 	writeCompanion(input: WriteInput) {
 		const rows = this.rows(input.companionId, input.conversationId);
@@ -128,7 +156,7 @@ export class CompanionStateStore {
 		);
 		return this.db.select().from(table).where(owned).all();
 	}
-	private save(tx: Tx, values: Write) {
+	private save(tx: CompanionStateTransaction, values: Write) {
 		const id = `${values.companionId}:${values.domain}:${values.conversationId ?? "global"}`;
 		const set = { ...values, updatedAt: sql`datetime('now')` };
 		tx.insert(table)

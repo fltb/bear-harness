@@ -50,6 +50,7 @@ const RPC_PREFIX_KINDS: ReadonlyArray<readonly [string, AuditKind]> = [
 	["provider.", "config"],
 	["model.", "config"],
 	["externalAgent.", "config"],
+	["systemOnboarding.", "config"],
 	["settings.", "config"],
 	["update.", "config"],
 	["companionState.", "companion_state"],
@@ -117,6 +118,11 @@ export interface AuditStoreOptions {
 const DAY_MS = 86_400_000;
 const HASH_EMPTY = createHash("sha256").update("").digest("hex");
 const SEGMENT_RE = /^segment-(\d+)\.jsonl$/;
+function segmentIndex(name: string): number {
+	const index = SEGMENT_RE.exec(name)?.[1];
+	return index === undefined ? 0 : Number(index);
+}
+
 const MAX_ACTION_LENGTH = 128;
 /** Schema `MAX_STRING_LENGTH` is 4096; stay under with headroom. */
 const MAX_DETAIL_LENGTH = 4000;
@@ -212,9 +218,12 @@ export class AuditStore {
 		const names = await this.segmentNames();
 		const entries: AuditRecord[] = [];
 		for (let i = names.length - 1; i >= 0 && entries.length < limit; i -= 1) {
-			const records = await this.readRecords(join(this.dir, names[i]!));
+			const name = names[i];
+			if (name === undefined) continue;
+			const records = await this.readRecords(join(this.dir, name));
 			for (let j = records.length - 1; j >= 0 && entries.length < limit; j -= 1) {
-				const record = records[j]!;
+				const record = records[j];
+				if (record === undefined) continue;
 				if (record.seq > afterSeq) entries.push(record);
 			}
 		}
@@ -262,7 +271,8 @@ export class AuditStore {
 
 		const prunedFiles: string[] = [];
 		const cutoffMs = this.now().getTime() - this.maxAgeDays * DAY_MS;
-		const active = names[names.length - 1]!;
+		const active = names.at(-1);
+		if (active === undefined) return { prunedFiles, remainingBytes: 0 };
 		for (const name of names) {
 			if (name === active) continue;
 			const file = join(this.dir, name);
@@ -279,7 +289,8 @@ export class AuditStore {
 		names = (await this.segmentNames()).filter((name) => !prunedFiles.includes(name));
 		let total = await this.sumBytes(names);
 		while (total > this.maxTotalBytes && names.length > 1) {
-			const oldest = names[0]!;
+			const oldest = names[0];
+			if (oldest === undefined) break;
 			if (oldest === active) break;
 			const file = join(this.dir, oldest);
 			try {
@@ -314,14 +325,20 @@ export class AuditStore {
 		await fsp.mkdir(this.dir, { recursive: true });
 		const names = await this.segmentNames();
 		if (names.length === 0) return;
-		this.segment = Number(SEGMENT_RE.exec(names[names.length - 1]!)![1]);
+		const active = names.at(-1);
+		if (active === undefined) return;
+		this.segment = segmentIndex(active);
 		// Scan newest → oldest until a record is found (an empty segment can
 		// only exist as the newest, created by a rotation before any append).
 		for (let i = names.length - 1; i >= 0; i -= 1) {
-			const records = await this.readRecords(join(this.dir, names[i]!));
+			const name = names[i];
+			if (name === undefined) continue;
+			const records = await this.readRecords(join(this.dir, name));
 			if (records.length > 0) {
-				this.seq = records[records.length - 1]!.seq;
-				this.lastHash = records[records.length - 1]!.hash;
+				const latest = records.at(-1);
+				if (latest === undefined) continue;
+				this.seq = latest.seq;
+				this.lastHash = latest.hash;
 				return;
 			}
 		}
@@ -340,7 +357,7 @@ export class AuditStore {
 		}
 		return names
 			.filter((name) => SEGMENT_RE.test(name))
-			.sort((a, b) => Number(SEGMENT_RE.exec(a)![1]) - Number(SEGMENT_RE.exec(b)![1]));
+			.sort((a, b) => segmentIndex(a) - segmentIndex(b));
 	}
 
 	private async readRecords(file: string): Promise<AuditRecord[]> {
@@ -375,7 +392,8 @@ export class AuditStore {
 		const names = await this.segmentNames();
 		for (const name of names) {
 			const records = await this.readRecords(join(this.dir, name));
-			if (records.length > 0) return records[0]!.seq;
+			const first = records[0];
+			if (first !== undefined) return first.seq;
 		}
 		return 0;
 	}
@@ -407,7 +425,7 @@ export class AuditStore {
 		record.hash = hashRecord(record);
 		const line = JSON.stringify(record);
 		await this.rotateIfNeeded(line.length);
-		await fsp.appendFile(this.currentPath(), line + "\n", {
+		await fsp.appendFile(this.currentPath(), `${line}\n`, {
 			flag: "a",
 			mode: 0o600,
 		});

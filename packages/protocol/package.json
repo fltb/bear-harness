@@ -16,7 +16,7 @@
 	"scripts": {
 		"build": "tsc -p tsconfig.json",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test:unit": "vitest run"
+		"test:unit": "vitest run tests"
 	},
 	"dependencies": {
 		"@bear-harness/schema": "file:../schema",

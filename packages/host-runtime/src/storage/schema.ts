@@ -85,12 +85,23 @@ export const conversations = sqliteTable(
 		index("idx_conversations_active").on(table.companionId, table.archivedAt, table.updatedAt),
 	],
 );
+export const activeConversations = sqliteTable("active_conversations", {
+	companionId: text("companion_id")
+		.primaryKey()
+		.references(() => companionRuntimeIdentity.companionId, { onDelete: "cascade" }),
+	conversationId: text("conversation_id")
+		.notNull()
+		.references(() => conversations.id, { onDelete: "cascade" }),
+	updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
+});
 
 export const appSettings = sqliteTable(
 	"app_settings",
 	{
 		id: integer("id").primaryKey(),
-		firstRunStage: text("first_run_stage").notNull().default("model"),
+		systemModelOnboardingComplete: integer("system_model_onboarding_complete").notNull().default(0),
+		embeddingOnboardingComplete: integer("embedding_onboarding_complete").notNull().default(0),
+		relationshipMemoryEnabled: integer("relationship_memory_enabled").notNull().default(0),
 		networkProxyJson: text("network_proxy").notNull().default('{"mode":"auto"}'),
 		memoryVectorServiceJson: text("memory_vector_service")
 			.notNull()
@@ -101,7 +112,21 @@ export const appSettings = sqliteTable(
 		modelDownloadMirrorJson: text("model_download_mirror").notNull().default('{"type":"official"}'),
 		updatedAt: text("updated_at").default(sql`datetime('now')`).notNull(),
 	},
-	() => [check("app_settings_singleton", sql`id = 1`)],
+	() => [
+		check(
+			"app_settings_system_model_onboarding_complete_boolean",
+			sql`system_model_onboarding_complete IN (0, 1)`,
+		),
+		check(
+			"app_settings_embedding_onboarding_complete_boolean",
+			sql`embedding_onboarding_complete IN (0, 1)`,
+		),
+		check(
+			"app_settings_relationship_memory_enabled_boolean",
+			sql`relationship_memory_enabled IN (0, 1)`,
+		),
+		check("app_settings_singleton", sql`id = 1`),
+	],
 );
 
 export const runs = sqliteTable(
@@ -220,6 +245,10 @@ export const providerAccounts = sqliteTable(
 		),
 	],
 );
+export const providerRemovalJournal = sqliteTable("provider_removal_journal", {
+	providerId: text("provider_id").primaryKey(),
+	createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
+});
 
 export const configuredModels = sqliteTable(
 	"configured_models",
@@ -228,11 +257,13 @@ export const configuredModels = sqliteTable(
 		modelId: text("model_id").notNull(),
 		label: text().notNull(),
 		supportsImages: integer("supports_images").default(0).notNull(),
+		enabled: integer().default(1).notNull(),
 		createdAt: text("created_at").default(sql`datetime('now')`).notNull(),
 	},
 	(table) => [
 		primaryKey({ columns: [table.providerId, table.modelId], name: "configured_models_pk" }),
 		check("configured_models_supports_images_boolean", sql`supports_images IN (0, 1)`),
+		check("configured_models_enabled_boolean", sql`enabled IN (0, 1)`),
 	],
 );
 

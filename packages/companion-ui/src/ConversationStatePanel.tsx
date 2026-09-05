@@ -1,6 +1,7 @@
 import { i18n, useTranslation } from "@bear-harness/i18n";
 import { type JsonSchema, resolveSchema } from "@jsonforms/core";
 import { createMemo, createSignal, For, Show } from "solid-js";
+import { markSelectPortalTopLayer } from "./lib/select-portal.js";
 import { useCompanionStore } from "./stores/companion.js";
 import type { CharacterStateDocument, CompanionStateChange } from "./stores/ipc.js";
 import { Button, Dialog, Select, TextField } from "./ui/primitives.js";
@@ -182,7 +183,7 @@ function StateControl(props: {
 }) {
 	const [t] = useTranslation(undefined, { i18n });
 	const editable = () => props.schema["x-user-editable"] === true && props.schema.readOnly !== true;
-	const options = () =>
+	const options = createMemo(() =>
 		(
 			props.schema.oneOf ??
 			(props.schema.type === "boolean"
@@ -193,7 +194,12 @@ function StateControl(props: {
 				: [])
 		)
 			.filter((option) => option.const !== undefined)
-			.map((option) => ({ value: option.const, label: option.title ?? String(option.const) }));
+			.map((option, index) => ({
+				key: `option-${index}`,
+				value: option.const,
+				label: option.title ?? String(option.const),
+			})),
+	);
 	return (
 		<div class="conversation-state-field">
 			<div class="conversation-state-field-copy">
@@ -249,7 +255,7 @@ function StateControl(props: {
 				>
 					<Select
 						options={options()}
-						optionValue="value"
+						optionValue="key"
 						optionTextValue="label"
 						value={options().find((option) => Object.is(option.value, props.value))}
 						onChange={(option) => option && props.onChange(props.pointer, option.value)}
@@ -260,9 +266,11 @@ function StateControl(props: {
 						)}
 					>
 						<Select.Trigger class="select-trigger">
-							<Select.Value<{ value: unknown; label: string }> class="select-value" />
+							<Select.Value<{ key: string; value: unknown; label: string }> class="select-value">
+								{(state) => state.selectedOption()?.label ?? ""}
+							</Select.Value>
 						</Select.Trigger>
-						<Select.Portal>
+						<Select.Portal ref={markSelectPortalTopLayer}>
 							<Select.Content class="select-content">
 								<Select.Listbox class="select-listbox" />
 							</Select.Content>

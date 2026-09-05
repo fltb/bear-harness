@@ -74,6 +74,8 @@
 	--focus-ring: var(--sys-border-focus);
 	--scroll-thumb: var(--sys-border);
 	--shadow-color: color-mix(in srgb, var(--sys-canvas) 55%, transparent);
+	/* Top-layer portals must remain above the mobile navigation (z-index 100). */
+	--layer-top-overlay: 120;
 
 	/* Global design language: raw scales stay here; feature CSS consumes aliases. */
 	--space-1: 0.25rem;
@@ -132,7 +134,8 @@ input:focus-visible {
 }
 
 [data-kb-top-layer] {
-	@apply relative z-70;
+	@apply relative;
+	z-index: var(--layer-top-overlay);
 }
 
 button {
@@ -342,7 +345,8 @@ button[data-variant="primary"]:focus-visible {
 }
 
 .select-content {
-	@apply z-70 min-w-full max-w-md rounded-md border shadow-xl;
+	@apply min-w-full max-w-md rounded-md border shadow-xl;
+	z-index: var(--layer-top-overlay);
 	border-color: var(--sys-border);
 	background: var(--sys-surface);
 	color: var(--sys-text);

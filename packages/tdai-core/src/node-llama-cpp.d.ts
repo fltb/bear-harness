@@ -17,6 +17,7 @@ declare module "node-llama-cpp" {
 		model: string,
 		options?: {
 			directory?: string;
+			download?: "auto" | false;
 			cli?: boolean;
 			endpoints?: { huggingFace?: string };
 			signal?: AbortSignal;

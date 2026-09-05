@@ -33,6 +33,7 @@
 		"package:mac:x64": "npm run package:mac:x64 --workspace @bear-harness/desktop",
 		"package:win": "npm run package:win --workspace @bear-harness/desktop",
 		"package:linux": "npm run package:linux --workspace @bear-harness/desktop",
+		"dev": "npm run dev:web",
 		"dev:web": "npm run dev --workspace @bear-harness/web-dev",
 		"diagnostics:export": "npm run build --workspace @bear-harness/host-runtime && node scripts/export-diagnostics-trace.mjs",
 		"audit": "npm audit --audit-level=high && npm audit signatures",
@@ -62,6 +63,7 @@
 		"fsevents@2.3.2": true,
 		"fsevents@2.3.3": true,
 		"node-llama-cpp@3.16.2": true,
-		"protobufjs@7.6.5": true
+		"protobufjs@7.6.5": true,
+		"tesseract.js": false
 	}
 }

@@ -142,22 +142,6 @@ const BoundedJsonValue = z.custom<BoundedJsonValue>(
 	"JSON value exceeds its complexity bounds",
 );
 
-export const EmbeddingDownloadState = z.strictObject({
-	status: z.enum([
-		"idle",
-		"preparing",
-		"downloading",
-		"validating",
-		"activating",
-		"completed",
-		"cancelled",
-		"failed",
-	]),
-	downloadedBytes: z.number().nonnegative(),
-	totalBytes: z.number().nonnegative().optional(),
-});
-export type EmbeddingDownloadState = z.infer<typeof EmbeddingDownloadState>;
-
 /** Transient cache invalidation; it has no cursor or replay contract. */
 export const CacheKey = Object.freeze({
 	snapshot: () => ["snapshot"] as const,
@@ -174,12 +158,14 @@ export const CacheKey = Object.freeze({
 	canonModules: (characterId: string) => ["canon", "modules", characterId] as const,
 	providers: () => ["providers"] as const,
 	providerLogin: (providerId: string) => ["providerLogin", providerId] as const,
+	providerLoginSessions: () => ["providerLoginSessions"] as const,
 	modelPool: () => ["models", "pool"] as const,
 	modelDefaults: () => ["models", "defaults"] as const,
+	embeddingInventory: () => ["embedding", "inventory"] as const,
+	embeddingAcquisition: () => ["embedding", "acquisition"] as const,
 	systemModelDefaults: () => ["models", "systemDefaults"] as const,
 	modelRoute: (conversationId: string) => ["models", "route", conversationId] as const,
 	runs: () => ["runs"] as const,
-	embeddingDownload: () => ["embedding", "download"] as const,
 	audit: () => ["audit"] as const,
 });
 const CacheIdentity = z.string().min(1).max(128);
@@ -202,7 +188,8 @@ export const CacheKeySchema = z.union([
 	z.tuple([z.literal("models"), z.literal("systemDefaults")]),
 	z.tuple([z.literal("models"), z.literal("route"), CacheIdentity]),
 	z.tuple([z.literal("runs")]),
-	z.tuple([z.literal("embedding"), z.literal("download")]),
+	z.tuple([z.literal("embedding"), z.literal("inventory")]),
+	z.tuple([z.literal("embedding"), z.literal("acquisition")]),
 	z.tuple([z.literal("audit")]),
 ]);
 export type CacheKey = z.infer<typeof CacheKeySchema>;
@@ -234,9 +221,6 @@ export const OnboardingStateData = z.strictObject({
 			.regex(/^[a-z][a-z0-9_]*$/),
 		z.string().max(MAX_STRING_LENGTH),
 	),
-	decisions: z.strictObject({
-		relationship_memory_enabled: z.boolean().optional(),
-	}),
 });
 export const CharacterGetRequest = z.strictObject({});
 const CharacterMediaUrl = z.string().min(1).max(20_000_000);
@@ -258,14 +242,9 @@ const CharacterIdentifier = z
 	.min(1)
 	.max(64)
 	.regex(/^[a-z][a-z0-9_]*$/);
-const CharacterOnboardingEffect = z.discriminatedUnion("type", [
-	z.strictObject({ type: z.literal("identity.nickname") }),
-	z.strictObject({
-		type: z.literal("setting.set"),
-		setting: z.literal("relationship_memory_enabled"),
-		values: boundedRecord(CharacterIdentifier, z.boolean()),
-	}),
-]);
+const CharacterOnboardingEffect = z.strictObject({
+	type: z.literal("identity.nickname"),
+});
 const CharacterStepPresentation = {
 	id: CharacterIdentifier,
 	heading: CharacterCopy,
@@ -657,16 +636,21 @@ export const CharacterDraftPublishResponse = z.strictObject({
 	draft: CharacterDraft,
 	character: CharacterDisplay,
 });
-export const OnboardingResponse = z.strictObject({
-	status: OnboardingStatus,
-	currentStepId: z
-		.string()
-		.min(1)
-		.max(64)
-		.regex(/^[a-z][a-z0-9_]*$/)
-		.optional(),
-	stateData: OnboardingStateData,
-});
+export const OnboardingResponse = z.discriminatedUnion("status", [
+	z.strictObject({
+		status: z.literal("active"),
+		currentStepId: z
+			.string()
+			.min(1)
+			.max(64)
+			.regex(/^[a-z][a-z0-9_]*$/),
+		stateData: OnboardingStateData,
+	}),
+	z.strictObject({
+		status: z.literal("complete"),
+		stateData: OnboardingStateData,
+	}),
+]);
 
 // ---------------------------------------------------------------------------
 // Conversation
@@ -694,6 +678,10 @@ export const ConversationListResponse = z.strictObject({
 });
 export const ConversationCreateRequest = z.strictObject({
 	title: z.string().max(MAX_STRING_LENGTH).optional(),
+});
+export const ConversationActiveGetRequest = z.strictObject({});
+export const ConversationSelectRequest = z.strictObject({
+	conversationId: ConversationId,
 });
 export const ConversationOpenRequest = z.strictObject({
 	conversationId: ConversationId,
@@ -764,10 +752,14 @@ export const ConversationDetail = z.strictObject({
 		.optional(),
 	branch: z.strictObject({
 		activeLeafId: PiSessionEntryId.optional(),
+		latestLeafIds: z.array(PiSessionEntryId).max(MAX_ARRAY_LENGTH),
 		entries: z.array(PiSessionEntry).max(MAX_ARRAY_LENGTH),
 		hasMoreBefore: z.boolean(),
 	}),
 	live: PiLiveSnapshot,
+});
+export const ConversationActiveResponse = z.strictObject({
+	activeConversation: ConversationDetail.nullable(),
 });
 export const ConversationOpenResponse = ConversationDetail;
 export const ConversationCreateResponse = ConversationDetail;
@@ -823,6 +815,98 @@ export const LocalEmbeddingCandidate = z.strictObject({
 	dimensions: z.number().int().safe().positive().max(65536),
 	isDefault: z.boolean(),
 });
+export const LocalEmbeddingTarget = z.discriminatedUnion("kind", [
+	z.strictObject({
+		kind: z.literal("candidate"),
+		candidateId: z.string().min(1).max(200),
+	}),
+	z.strictObject({
+		kind: z.literal("custom"),
+		customPath: z.string().min(1).max(4096),
+		dimensions: z.number().int().safe().positive().max(65536),
+	}),
+]);
+export const ModelDownloadSource = z.discriminatedUnion("type", [
+	z.strictObject({ type: z.literal("official") }),
+	z.strictObject({ type: z.literal("hf-mirror") }),
+	z.strictObject({
+		type: z.literal("custom"),
+		endpoint: z
+			.string()
+			.url()
+			.max(2048)
+			.refine((value) => {
+				const url = new URL(value);
+				return url.protocol === "https:" && !url.username && !url.password;
+			}, "custom model endpoint must be HTTPS and cannot contain credentials"),
+	}),
+]);
+export const LocalEmbeddingInventoryItem = z.strictObject({
+	...LocalEmbeddingCandidate.shape,
+	target: LocalEmbeddingTarget,
+	installed: z.boolean(),
+});
+export const LocalEmbeddingInventoryResponse = z.strictObject({
+	candidates: z.array(LocalEmbeddingInventoryItem).min(1).max(20),
+	activeTarget: LocalEmbeddingTarget.optional(),
+});
+export const LocalEmbeddingAcquisitionErrorCode = z.enum([
+	"local_embedding_download_failed",
+	"local_embedding_validation_failed",
+	"local_embedding_target_invalid",
+	"local_embedding_io_failed",
+	"local_embedding_interrupted",
+]);
+const LocalEmbeddingAcquisitionBase = {
+	revision: z.number().int().safe().nonnegative(),
+	downloadedBytes: z.number().int().safe().nonnegative(),
+	totalBytes: z.number().int().safe().nonnegative().optional(),
+};
+const LocalEmbeddingOperationBase = {
+	...LocalEmbeddingAcquisitionBase,
+	operationId: z.string().min(1).max(64),
+	target: LocalEmbeddingTarget,
+	sourceFingerprint: z
+		.string()
+		.regex(/^[0-9a-f]{64}$/)
+		.optional(),
+};
+export const LocalEmbeddingAcquisitionState = z.discriminatedUnion("phase", [
+	z.strictObject({
+		revision: LocalEmbeddingAcquisitionBase.revision,
+		phase: z.literal("idle"),
+		downloadedBytes: LocalEmbeddingAcquisitionBase.downloadedBytes,
+	}),
+	z.strictObject({
+		...LocalEmbeddingOperationBase,
+		phase: z.enum(["preparing", "downloading", "validating"]),
+	}),
+	z.strictObject({
+		...LocalEmbeddingOperationBase,
+		phase: z.enum(["completed", "cancelled"]),
+	}),
+	z.strictObject({
+		...LocalEmbeddingOperationBase,
+		phase: z.literal("failed"),
+		errorCode: LocalEmbeddingAcquisitionErrorCode.exclude(["local_embedding_interrupted"]),
+	}),
+	z.strictObject({
+		...LocalEmbeddingOperationBase,
+		phase: z.literal("interrupted"),
+		errorCode: z.literal("local_embedding_interrupted"),
+	}),
+]);
+export type LocalEmbeddingAcquisitionState = z.infer<typeof LocalEmbeddingAcquisitionState>;
+export const LocalEmbeddingAcquisitionStartRequest = z.strictObject({
+	target: LocalEmbeddingTarget,
+	source: ModelDownloadSource,
+});
+export const LocalEmbeddingAcquisitionCancelRequest = z.strictObject({
+	operationId: z.string().min(1).max(64),
+});
+export const MemoryActivateLocalEmbeddingRequest = z.strictObject({
+	target: LocalEmbeddingTarget,
+});
 export const NetworkProxyModeCapability = z.strictObject({
 	id: z.union([z.literal("direct"), z.literal("auto"), z.literal("manual")]),
 });
@@ -847,34 +931,6 @@ export type NetworkProxyModeCapability = z.infer<typeof NetworkProxyModeCapabili
 export type MemoryVectorProviderCapability = z.infer<typeof MemoryVectorProviderCapability>;
 export type MemoryVectorPresetCapability = z.infer<typeof MemoryVectorPresetCapability>;
 export type LocalEmbeddingCandidate = z.infer<typeof LocalEmbeddingCandidate>;
-export const MemoryConfigureLocalEmbeddingRequest = z
-	.strictObject({
-		provider: z.union([z.literal("none"), z.literal("local")]),
-		candidateId: z.string().min(1).max(200).optional(),
-		customPath: z.string().min(1).max(4096).optional(),
-	})
-	.superRefine((value, context) => {
-		if (value.provider === "local" && Boolean(value.candidateId) === Boolean(value.customPath)) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				path: ["candidateId"],
-				message: "exactly one of candidateId or customPath is required for local embedding",
-			});
-		}
-		if (
-			value.provider === "none" &&
-			(value.candidateId !== undefined || value.customPath !== undefined)
-		) {
-			context.addIssue({
-				code: z.ZodIssueCode.custom,
-				path: ["candidateId"],
-				message: "model selection is not valid for disabled embedding",
-			});
-		}
-	});
-export const MemoryConfigureLocalEmbeddingResponse = z.strictObject({
-	ready: z.literal(true),
-});
 // ---------------------------------------------------------------------------
 // Canon Hub (advanced package authoring)
 // ---------------------------------------------------------------------------
@@ -1125,6 +1181,10 @@ export const ProviderLoginResponse = z.strictObject({
 		})
 		.optional(),
 });
+export const ProviderLoginSessionsRequest = z.strictObject({});
+export const ProviderLoginSessionsResponse = z.strictObject({
+	sessions: z.array(ProviderLoginResponse).max(30),
+});
 export const ProviderLoginCancelRequest = z.strictObject({
 	providerId: z.string().min(1).max(64),
 });
@@ -1151,12 +1211,21 @@ export const ModelRoute = z.strictObject({
 	providerId: z.string().min(1).max(64),
 	modelId: z.string().min(1).max(128),
 });
+export const ModelReadiness = z.enum([
+	"ready",
+	"disabled",
+	"catalog_missing",
+	"provider_auth_required",
+	"provider_removing",
+]);
 export const ConfiguredModel = z.strictObject({
 	...ModelRoute.shape,
 	label: z.string().max(MAX_STRING_LENGTH),
 	providerName: z.string().max(MAX_STRING_LENGTH).optional(),
 	supportsImages: z.boolean(),
 	createdAt: WireTimestamp,
+	enabled: z.boolean(),
+	readiness: ModelReadiness,
 });
 export const ProviderImportPiConfigResponse = z.strictObject({
 	models: z.array(ConfiguredModel).max(100),
@@ -1501,26 +1570,21 @@ const MemoryVectorServiceInput = MemoryVectorServiceBase.extend({
 	apiKey: z.string().min(1).max(8192).optional(),
 }).superRefine(validateMemoryVectorService);
 
-export const SettingsData = z.strictObject({
+const SettingsDataBase = z.strictObject({
 	firstRunStage: z.union([z.literal("model"), z.literal("embedding"), z.literal("role")]),
 	relationshipMemoryEnabled: z.boolean(),
 	networkProxy: NetworkProxySettings,
 	memoryVectorService: MemoryVectorServiceSettings,
-	modelDownloadSource: z.discriminatedUnion("type", [
-		z.strictObject({ type: z.literal("official") }),
-		z.strictObject({ type: z.literal("hf-mirror") }),
-		z.strictObject({
-			type: z.literal("custom"),
-			endpoint: z
-				.string()
-				.url()
-				.max(2048)
-				.refine((value) => {
-					const url = new URL(value);
-					return url.protocol === "https:" && !url.username && !url.password;
-				}, "custom model endpoint must be HTTPS and cannot contain credentials"),
-		}),
-	]),
+	modelDownloadSource: ModelDownloadSource,
+});
+export const SettingsData = SettingsDataBase.superRefine((settings, context) => {
+	if (settings.relationshipMemoryEnabled !== settings.memoryVectorService.enabled) {
+		context.addIssue({
+			code: z.ZodIssueCode.custom,
+			path: ["relationshipMemoryEnabled"],
+			message: "relationship memory state must match the configured embedding service",
+		});
+	}
 });
 export const SettingsGetRequest = z.strictObject({});
 export const SettingsResponse = z.strictObject({
@@ -1528,11 +1592,9 @@ export const SettingsResponse = z.strictObject({
 });
 export const SettingsPatch = z
 	.strictObject({
-		firstRunStage: SettingsData.shape.firstRunStage.optional(),
-		relationshipMemoryEnabled: z.boolean().optional(),
 		networkProxy: NetworkProxySettings.optional(),
 		memoryVectorService: MemoryVectorServiceInput.optional(),
-		modelDownloadSource: SettingsData.shape.modelDownloadSource.optional(),
+		modelDownloadSource: ModelDownloadSource.optional(),
 	})
 	.superRefine((settings, context) => {
 		if (Object.keys(settings).length !== 1) {
@@ -1545,6 +1607,39 @@ export const SettingsPatch = z
 export const SettingsSetRequest = z.strictObject({
 	settings: SettingsPatch,
 });
+export const SystemOnboardingCompleteModelRequest = z.strictObject({
+	reply: ModelRoute,
+	vision: VisionModelDefault,
+});
+export const SystemOnboardingCompleteModelResponse = z.strictObject({
+	settings: SettingsData,
+	defaults: SystemModelDefaultsGetResponse,
+});
+export const RemoteEmbeddingOnboardingConfiguration = z.strictObject({
+	baseUrl: z
+		.string()
+		.url()
+		.max(2048)
+		.refine((value) => {
+			const url = new URL(value);
+			return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
+		}, "remote embedding URL must be HTTP(S) and cannot contain credentials"),
+	model: z.string().min(1).max(200),
+	dimensions: z.number().int().safe().positive().max(65536),
+	apiKey: z.string().min(1).max(8192).optional(),
+});
+export const SystemOnboardingCompleteEmbeddingRequest = z.discriminatedUnion("choice", [
+	z.strictObject({ choice: z.literal("none") }),
+	z.strictObject({
+		choice: z.literal("local"),
+		target: LocalEmbeddingTarget,
+	}),
+	z.strictObject({
+		choice: z.literal("remote"),
+		configuration: RemoteEmbeddingOnboardingConfiguration,
+	}),
+]);
+export const SystemOnboardingCompleteEmbeddingResponse = SettingsResponse;
 
 // ---------------------------------------------------------------------------
 // Update
@@ -1718,7 +1813,10 @@ export const LivePush = z.discriminatedUnion("type", [
 		state: CompanionStateResponse,
 	}),
 	z.strictObject({ type: z.literal("run"), run: Run }),
-	z.strictObject({ type: z.literal("embeddingDownload"), state: EmbeddingDownloadState }),
+	z.strictObject({
+		type: z.literal("embeddingAcquisition"),
+		state: LocalEmbeddingAcquisitionState,
+	}),
 	z.strictObject({
 		type: z.literal("providerLogin"),
 		providerId: z.string().min(1).max(200),
@@ -1888,6 +1986,18 @@ export const RPC = {
 	},
 	conversation: {
 		list: endpoint("conversation.list", ConversationListRequest, ConversationListResponse, "query"),
+		activeGet: endpoint(
+			"conversation.activeGet",
+			ConversationActiveGetRequest,
+			ConversationActiveResponse,
+			"query",
+		),
+		select: endpoint(
+			"conversation.select",
+			ConversationSelectRequest,
+			ConversationActiveResponse,
+			"mutation",
+		),
 		create: endpoint(
 			"conversation.create",
 			ConversationCreateRequest,
@@ -1905,10 +2015,15 @@ export const RPC = {
 		archive: endpoint(
 			"conversation.archive",
 			ConversationArchiveRequest,
-			EmptyResponse,
+			ConversationActiveResponse,
 			"mutation",
 		),
-		delete: endpoint("conversation.delete", ConversationDeleteRequest, EmptyResponse, "mutation"),
+		delete: endpoint(
+			"conversation.delete",
+			ConversationDeleteRequest,
+			ConversationActiveResponse,
+			"mutation",
+		),
 	},
 	message: {
 		send: endpoint("message.send", MessageSendRequest, MessageSendResponse, "mutation"),
@@ -1930,22 +2045,48 @@ export const RPC = {
 		abort: endpoint("message.abort", MessageAbortRequest, EmptyResponse, "mutation"),
 	},
 	memory: {
-		localEmbeddingDownloadStatus: endpoint(
-			"memory.localEmbeddingDownloadStatus",
+		localEmbeddingInventory: endpoint(
+			"memory.localEmbeddingInventory",
 			z.strictObject({}),
-			EmbeddingDownloadState,
+			LocalEmbeddingInventoryResponse,
 			"query",
 		),
-		cancelLocalEmbeddingDownload: endpoint(
-			"memory.cancelLocalEmbeddingDownload",
-			z.strictObject({}),
-			EmptyResponse,
+		localEmbeddingAcquisitionStart: endpoint(
+			"memory.localEmbeddingAcquisitionStart",
+			LocalEmbeddingAcquisitionStartRequest,
+			LocalEmbeddingAcquisitionState,
 			"mutation",
 		),
-		configureLocalEmbedding: endpoint(
-			"memory.configureLocalEmbedding",
-			MemoryConfigureLocalEmbeddingRequest,
-			MemoryConfigureLocalEmbeddingResponse,
+		localEmbeddingAcquisitionStatus: endpoint(
+			"memory.localEmbeddingAcquisitionStatus",
+			z.strictObject({}),
+			LocalEmbeddingAcquisitionState,
+			"query",
+		),
+		localEmbeddingAcquisitionCancel: endpoint(
+			"memory.localEmbeddingAcquisitionCancel",
+			LocalEmbeddingAcquisitionCancelRequest,
+			LocalEmbeddingAcquisitionState,
+			"mutation",
+		),
+		activateLocalEmbedding: endpoint(
+			"memory.activateLocalEmbedding",
+			MemoryActivateLocalEmbeddingRequest,
+			SettingsResponse,
+			"mutation",
+		),
+	},
+	systemOnboarding: {
+		completeModel: endpoint(
+			"systemOnboarding.completeModel",
+			SystemOnboardingCompleteModelRequest,
+			SystemOnboardingCompleteModelResponse,
+			"mutation",
+		),
+		completeEmbedding: endpoint(
+			"systemOnboarding.completeEmbedding",
+			SystemOnboardingCompleteEmbeddingRequest,
+			SystemOnboardingCompleteEmbeddingResponse,
 			"mutation",
 		),
 	},
@@ -2027,6 +2168,12 @@ export const RPC = {
 			ProviderLoginAnswerRequest,
 			ProviderLoginResponse,
 			"mutation",
+		),
+		loginSessions: endpoint(
+			"provider.loginSessions",
+			ProviderLoginSessionsRequest,
+			ProviderLoginSessionsResponse,
+			"query",
 		),
 		logout: endpoint("provider.logout", ProviderLogoutRequest, EmptyResponse, "mutation"),
 		remove: endpoint("provider.remove", ProviderRemoveRequest, EmptyResponse, "mutation"),

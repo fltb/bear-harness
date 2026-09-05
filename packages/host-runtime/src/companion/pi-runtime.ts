@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { lstat, readFile, unlink } from "node:fs/promises";
+import { lstat, readFile, unlink, writeFile } from "node:fs/promises";
 import { extname, isAbsolute, resolve } from "node:path";
 import type { RecallResult } from "@bear-harness/tdai-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -28,6 +28,7 @@ export interface PiRoleResources {
 	pluginPaths: string[];
 }
 export type PiSnapshot = AgentSession | undefined;
+export type PiSessionCloseDisposition = "discard-unpersisted" | "preserve";
 
 export interface PiSessionEvent {
 	sessionId: string;
@@ -153,6 +154,7 @@ export class PiRuntime {
 	async fork(
 		sessionId: string,
 		entryId: string,
+		name: string,
 		beforeOpen?: (sessionId: string) => void,
 	): Promise<AgentSession> {
 		return this.inSessionSequence(sessionId, async () => {
@@ -162,13 +164,15 @@ export class PiRuntime {
 			const source = await this.loadManager(sessionId);
 			const path = source.createBranchedSession(entryId);
 			if (!path) throw { kind: "unavailable", reason: "pi_session_not_persisted" };
-			const manager = SessionManager.open(path, this.sessionDir, this.cwd);
-			const branchId = manager.getSessionId();
+			let branchId: string | undefined;
 			try {
+				const manager = SessionManager.open(path, this.sessionDir, this.cwd);
+				branchId = manager.getSessionId();
+				manager.appendSessionInfo(name);
 				beforeOpen?.(branchId);
 				return await this.openManager(manager);
 			} catch (error) {
-				await this.closeNow(branchId);
+				if (branchId) await this.closeNow(branchId);
 				await unlink(path).catch(() => undefined);
 				throw error;
 			}
@@ -270,22 +274,40 @@ export class PiRuntime {
 		});
 	}
 
-	async close(sessionId: string): Promise<void> {
-		return this.inSessionSequence(sessionId, () => this.closeNow(sessionId));
+	async close(
+		sessionId: string,
+		disposition: PiSessionCloseDisposition = "discard-unpersisted",
+	): Promise<void> {
+		return this.inSessionSequence(sessionId, () => this.closeNow(sessionId, disposition));
 	}
 
-	private async closeNow(sessionId: string): Promise<void> {
+	private async closeNow(
+		sessionId: string,
+		disposition: PiSessionCloseDisposition = "discard-unpersisted",
+	): Promise<void> {
 		const session = await this.current(sessionId).catch(() => undefined);
 		if (!session) return;
-		const discarded = Boolean(session.sessionFile && !existsSync(session.sessionFile));
+		const manager = session.sessionManager;
+		const sessionFile = manager.getSessionFile();
+		const unmaterialized = Boolean(sessionFile && !existsSync(sessionFile));
+		let aborted = false;
+		if (disposition === "preserve") {
+			if (!sessionFile) throw { kind: "unavailable", reason: "pi_session_not_persistable" };
+			if (unmaterialized) {
+				await session.abort();
+				aborted = true;
+				await materializeSession(manager, sessionFile);
+			}
+		}
 		const handle = this.sessions.get(sessionId);
 		this.sessions.delete(sessionId);
 		try {
-			await session.abort();
+			if (!aborted) await session.abort();
 		} finally {
 			handle?.unsubscribe();
 			session.dispose();
-			if (discarded) this.options.sessionDiscarded?.(sessionId);
+			if (disposition === "discard-unpersisted" && unmaterialized)
+				this.options.sessionDiscarded?.(sessionId);
 		}
 	}
 
@@ -517,8 +539,7 @@ export class PiRuntime {
 		if (!route) throw new Error("image_fallback_model_not_configured");
 		const runtime = await this.options.models.getModels();
 		const model = runtime.getModel(route.providerId, route.modelId);
-		if (!model || !model.input?.includes("image"))
-			throw new Error("image_fallback_model_unavailable");
+		if (!model?.input?.includes("image")) throw new Error("image_fallback_model_unavailable");
 		const data = (await readFile(path)).toString("base64");
 		const result = await runtime.completeSimple(
 			model,
@@ -568,6 +589,17 @@ export class PiRuntime {
 		if (!title || session.sessionName) return;
 		session.setSessionName(title);
 		this.options.titleChanged?.(session.sessionId, title);
+	}
+}
+
+async function materializeSession(manager: SessionManager, sessionFile: string): Promise<void> {
+	const header = manager.getHeader();
+	if (!header) throw { kind: "unavailable", reason: "pi_session_header_missing" };
+	const body = [header, ...manager.getEntries()].map((entry) => JSON.stringify(entry)).join("\n");
+	try {
+		await writeFile(sessionFile, `${body}\n`, { encoding: "utf8", flag: "wx" });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
 	}
 }
 

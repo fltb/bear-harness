@@ -108,6 +108,8 @@ export interface EmbeddingConfig {
 	modelCacheDir?: string;
 	/** Explicit Hugging Face-compatible model download endpoint. */
 	hfEndpoint?: string;
+	/** Model resolution policy for local embeddings. `false` forbids implicit downloads. */
+	download?: "auto" | false;
 	/** API Base URL (required for remote provider). */
 	baseUrl: string;
 	/** API Key (required for remote provider). */
@@ -358,6 +360,12 @@ export function parseConfig(raw: Record<string, unknown> | undefined): MemoryTda
 	const embeddingModelRaw = str(embeddingGroup, "model") ?? "";
 	const embeddingModelPath = optStr(embeddingGroup, "modelPath");
 	const embeddingModelCacheDir = optStr(embeddingGroup, "modelCacheDir");
+	const embeddingDownload =
+		embeddingGroup.download === false
+			? false
+			: str(embeddingGroup, "download") === "auto"
+				? "auto"
+				: undefined;
 	const embeddingDimensionsRaw = num(embeddingGroup, "dimensions");
 	const embeddingProxyUrl = str(embeddingGroup, "proxyUrl");
 
@@ -514,6 +522,7 @@ export function parseConfig(raw: Record<string, unknown> | undefined): MemoryTda
 			model: str(embeddingGroup, "model") ?? defaultModel,
 			modelPath: embeddingModelPath,
 			modelCacheDir: embeddingModelCacheDir,
+			download: embeddingDownload,
 			dimensions: num(embeddingGroup, "dimensions") ?? defaultDimensions,
 			sendDimensions: bool(embeddingGroup, "sendDimensions") ?? true,
 			conflictRecallTopK: num(embeddingGroup, "conflictRecallTopK") ?? 5,

@@ -14,6 +14,13 @@ import { useCompanionStore } from "./companion.js";
 import type { RunInfo, RunPermissionRequest } from "./ipc.js";
 
 export type BackstageTab = "roles" | "settings";
+export type SystemSettingsPage =
+	| "general"
+	| "archived"
+	| "providers"
+	| "agents"
+	| "network"
+	| "memory";
 
 type Translate = TFunction<Namespace, undefined>;
 
@@ -49,7 +56,9 @@ export interface ShellWorkflowStore {
 	dismissLanguageWarning(): void;
 	readonly backstageOpen: Accessor<boolean>;
 	readonly backstageTab: Accessor<BackstageTab>;
-	openBackstage(tab?: BackstageTab): void;
+	readonly settingsPage: Accessor<SystemSettingsPage>;
+	setSettingsPage(page: SystemSettingsPage): void;
+	openBackstage(tab?: BackstageTab, settingsPage?: SystemSettingsPage): void;
 	closeBackstage(): void;
 	readonly queueOpen: Accessor<boolean>;
 	toggleQueue(): void;
@@ -177,8 +186,13 @@ export function createShellWorkflowStore(input: {
 
 	const [backstageOpen, setBackstageOpen] = createSignal(false);
 	const [backstageTab, setBackstageTab] = createSignal<BackstageTab>("roles");
-	const openBackstage = (tab: BackstageTab = "roles") => {
+	const [settingsPage, setSettingsPage] = createSignal<SystemSettingsPage>("general");
+	const openBackstage = (
+		tab: BackstageTab = "roles",
+		requestedSettingsPage: SystemSettingsPage = "general",
+	) => {
 		setBackstageTab(tab);
+		if (tab === "settings") setSettingsPage(requestedSettingsPage);
 		setBackstageOpen(true);
 	};
 	const closeBackstage = () => setBackstageOpen(false);
@@ -326,6 +340,8 @@ export function createShellWorkflowStore(input: {
 		dismissLanguageWarning,
 		backstageOpen,
 		backstageTab,
+		settingsPage,
+		setSettingsPage,
 		openBackstage,
 		closeBackstage,
 		queueOpen,

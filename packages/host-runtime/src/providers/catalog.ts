@@ -17,9 +17,10 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AuthEvent, AuthInteraction, AuthPrompt } from "@earendil-works/pi-ai";
+import type { AuthEvent, AuthInteraction, AuthPrompt, Provider } from "@earendil-works/pi-ai";
 import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { ModelProjectionFacts } from "../models/registry.js";
 import {
 	DurableFileTransactionError,
 	recoverDurableFileTransaction,
@@ -234,6 +235,31 @@ export interface ProviderInfo {
 	unavailable: string[];
 }
 
+function projectModelFacts(providers: readonly ProviderInfo[]): ModelProjectionFacts {
+	return Object.freeze({
+		providers: Object.freeze(
+			providers.map((provider) =>
+				Object.freeze({
+					providerId: provider.id,
+					providerName: provider.name,
+					authenticated:
+						(provider.credentialStatus === "stored" ||
+							provider.credentialStatus === "session_only") &&
+						provider.unavailable.length === 0,
+				}),
+			),
+		),
+		catalogModels: Object.freeze(
+			providers.flatMap((provider) =>
+				provider.availableModels.map((model) =>
+					Object.freeze({ providerId: provider.id, modelId: model.id }),
+				),
+			),
+		),
+		removingProviderIds: Object.freeze([]),
+	});
+}
+
 export interface OAuthSessionState {
 	providerId: string;
 	status: "running" | "waiting_input" | "completed" | "failed";
@@ -296,13 +322,34 @@ export class ProviderCatalog {
 	private runtime: Promise<ModelRuntime> | null = null;
 	private oauthSessions = new Map<string, OAuthSessionInternal>();
 	private readonly piCredentials: EncryptedPiCredentialStore;
+	private readonly nativeProviders: ReadonlyMap<string, Provider>;
+	private projectionFacts: ModelProjectionFacts = Object.freeze({
+		providers: Object.freeze([]),
+		catalogModels: Object.freeze([]),
+		removingProviderIds: Object.freeze([]),
+	});
 
 	constructor(
 		private readonly credentialStore: CredentialStore,
 		private readonly agentDir: string,
 		private readonly onOAuthChanged: (providerId: string) => void = () => {},
+		nativeProviders: readonly Provider[] = [],
 	) {
+		this.nativeProviders = validateNativeProviders(nativeProviders, agentDir);
 		this.piCredentials = new EncryptedPiCredentialStore(credentialStore);
+	}
+
+	/**
+	 * Return the latest successful provider projection synchronously.
+	 * ModelRegistry merges its durable provider-removal journal into this
+	 * installation-scoped catalog snapshot.
+	 */
+	modelProjectionFacts(): ModelProjectionFacts {
+		return this.projectionFacts;
+	}
+
+	private async refreshModelProjectionFacts(): Promise<void> {
+		await this.listProviders();
 	}
 	private modelsRecovery: Promise<void> | null = null;
 
@@ -342,28 +389,30 @@ export class ProviderCatalog {
 		requiredRoutes: readonly { providerId: string; modelId: string }[] = [],
 	): Promise<ProviderModelInfoWithProvider[]> {
 		const { providers } = readProviderDocument(candidatePath);
-		const runtime = await ModelRuntime.create({
-			credentials: this.piCredentials,
+		const runtime = await this.createRegisteredRuntime({
 			modelsPath: candidatePath,
-			refreshOnCreate: false,
 		});
-		const configured = configuredRoutes(providers);
-		const projected = new Map<string, ProviderModelInfoWithProvider>();
-		for (const route of configured) {
-			const model = runtime.getModel(route.providerId, route.modelId);
-			if (!model) throw new Error(`Pi did not register ${route.providerId}/${route.modelId}`);
-			projected.set(`${route.providerId}\0${route.modelId}`, {
-				providerId: route.providerId,
-				modelId: model.id,
-				name: model.name,
-				supportsImages: model.input.includes("image"),
+		try {
+			const configured = configuredRoutes(providers);
+			const projected = new Map<string, ProviderModelInfoWithProvider>();
+			for (const route of configured) {
+				const model = runtime.getModel(route.providerId, route.modelId);
+				if (!model) throw new Error(`Pi did not register ${route.providerId}/${route.modelId}`);
+				projected.set(`${route.providerId}\0${route.modelId}`, {
+					providerId: route.providerId,
+					modelId: model.id,
+					name: model.name,
+					supportsImages: model.input.includes("image"),
+				});
+			}
+			return requiredRoutes.map((route) => {
+				const model = projected.get(`${route.providerId}\0${route.modelId}`);
+				if (!model) throw new Error(`Pi did not register ${route.providerId}/${route.modelId}`);
+				return model;
 			});
+		} finally {
+			disposeIfSupported(runtime);
 		}
-		return requiredRoutes.map((route) => {
-			const model = projected.get(`${route.providerId}\0${route.modelId}`);
-			if (!model) throw new Error(`Pi did not register ${route.providerId}/${route.modelId}`);
-			return model;
-		});
 	}
 
 	private async replaceModelsDocument(
@@ -384,8 +433,30 @@ export class ProviderCatalog {
 				return true;
 			},
 		});
-		this.runtime = null;
+		this.retireRuntime();
 		return activatedModels ?? [];
+	}
+
+	private async createRegisteredRuntime(options: { modelsPath: string }): Promise<ModelRuntime> {
+		const runtime = await ModelRuntime.create({
+			credentials: this.piCredentials,
+			modelsPath: options.modelsPath,
+			refreshOnCreate: false,
+		});
+		try {
+			for (const provider of this.nativeProviders.values())
+				runtime.registerNativeProvider(provider);
+			return runtime;
+		} catch (error) {
+			disposeIfSupported(runtime);
+			throw error;
+		}
+	}
+
+	private retireRuntime(): void {
+		const runtime = this.runtime;
+		this.runtime = null;
+		if (runtime) void runtime.then(disposeIfSupported, () => undefined);
 	}
 
 	/** Lazily create (and cache) the pi-ai runtime; never refresh on create. */
@@ -402,10 +473,8 @@ export class ProviderCatalog {
 
 	private async createRuntime(): Promise<ModelRuntime> {
 		await this.ensureModelsRecovered();
-		return ModelRuntime.create({
-			credentials: this.piCredentials,
+		return this.createRegisteredRuntime({
 			modelsPath: join(this.agentDir, "models.json"),
-			refreshOnCreate: false,
 		});
 	}
 
@@ -422,6 +491,7 @@ export class ProviderCatalog {
 		apiKey?: string;
 	}): Promise<void> {
 		assertCustomProviderId(input.providerId);
+		this.assertMutableProvider(input.providerId);
 		assertAllowedProvider(input.providerId);
 		const endpoint = parseHttpEndpoint(input.baseUrl);
 		const modelsPath = join(this.agentDir, "models.json");
@@ -450,8 +520,9 @@ export class ProviderCatalog {
 				},
 			},
 		});
-		this.runtime = null;
+		this.retireRuntime();
 		if (input.apiKey) await this.setApiKey(input.providerId, input.apiKey);
+		else await this.refreshModelProjectionFacts();
 	}
 
 	async importPiConfig(configJson: string): Promise<ProviderModelInfoWithProvider[]> {
@@ -468,6 +539,7 @@ export class ProviderCatalog {
 			throw { kind: "invalid_request", reason: "pi_model_config_must_not_contain_api_key" };
 		}
 		for (const [providerId, config] of Object.entries(fragment.providers)) {
+			this.assertImportableProvider(providerId);
 			if (
 				isBuiltinProvider(providerId) &&
 				isRecord(config) &&
@@ -491,12 +563,14 @@ export class ProviderCatalog {
 		const modelsPath = join(this.agentDir, "models.json");
 		const { document, providers } = readProviderDocument(modelsPath);
 		try {
-			return await this.replaceModelsDocument(
+			const imported = await this.replaceModelsDocument(
 				{ ...document, providers: { ...providers, ...fragment.providers } },
 				importedRoutes,
 			);
+			await this.refreshModelProjectionFacts();
+			return imported;
 		} catch (error) {
-			this.runtime = null;
+			this.retireRuntime();
 			if (error instanceof DurableFileTransactionError && error.code === "verification-failed") {
 				throw { kind: "invalid_request", reason: "pi_model_config_rejected" };
 			}
@@ -506,6 +580,7 @@ export class ProviderCatalog {
 
 	async overrideProviderBaseUrl(input: { providerId: string; baseUrl: string }): Promise<void> {
 		assertAllowedProvider(input.providerId);
+		this.assertMutableProvider(input.providerId);
 		const endpoint = parseHttpEndpoint(input.baseUrl);
 		const modelsPath = join(this.agentDir, "models.json");
 		await this.ensureModelsRecovered();
@@ -525,7 +600,8 @@ export class ProviderCatalog {
 				},
 			},
 		});
-		this.runtime = null;
+		this.retireRuntime();
+		await this.refreshModelProjectionFacts();
 	}
 
 	/** List providers visible to the product, with models and credential status. */
@@ -559,12 +635,17 @@ export class ProviderCatalog {
 				hostStatus === "weak_storage" ||
 				hostStatus === "session_only" ||
 				(runtimeAuthStatus.configured && runtimeAuthStatus.source !== "environment");
-			const added = Object.hasOwn(persistedProviders, provider.id) || hasExplicitCredential;
+			const added =
+				this.nativeProviders.has(provider.id) ||
+				Object.hasOwn(persistedProviders, provider.id) ||
+				hasExplicitCredential;
 			providers.push({
 				id: provider.id,
 				name: provider.name,
-				source: isBuiltinProvider(provider.id) ? "builtin" : "custom",
-				added,
+				source:
+					isBuiltinProvider(provider.id) || this.nativeProviders.has(provider.id)
+						? "builtin"
+						: "custom",
 				authMethods: [
 					...(provider.auth.apiKey
 						? [{ type: "api_key" as const, name: provider.auth.apiKey.name }]
@@ -585,6 +666,7 @@ export class ProviderCatalog {
 						: []),
 				],
 				credentialStatus,
+				added,
 				baseUrl: safeBaseUrl(provider.baseUrl),
 				availableModels: runtime.getModels(provider.id).map((model) => ({
 					id: model.id,
@@ -595,6 +677,7 @@ export class ProviderCatalog {
 				unavailable: errored.has(provider.id) ? [provider.id] : [],
 			});
 		}
+		this.projectionFacts = projectModelFacts(providers);
 		return providers;
 	}
 
@@ -617,6 +700,7 @@ export class ProviderCatalog {
 		} finally {
 			this.piCredentials.setSessionOnly(providerId, false);
 		}
+		await this.refreshModelProjectionFacts();
 	}
 
 	/**
@@ -627,6 +711,7 @@ export class ProviderCatalog {
 	 */
 	async removeProvider(providerId: string): Promise<void> {
 		assertAllowedProvider(providerId);
+		this.assertMutableProvider(providerId);
 		this.abortOAuthSession(providerId);
 		const runtime = await this.getRuntime();
 		const logoutOptions = { revokeAccessToken: false } as { signal?: AbortSignal };
@@ -646,7 +731,8 @@ export class ProviderCatalog {
 				await this.replaceModelsDocument({ ...document, providers: remainingProviders });
 			}
 		}
-		this.runtime = null;
+		this.retireRuntime();
+		await this.refreshModelProjectionFacts();
 	}
 	/** Local logout: clear runtime + host credentials; never revoke tokens. */
 	async logout(providerId: string): Promise<void> {
@@ -662,6 +748,7 @@ export class ProviderCatalog {
 			// Best-effort: host credentials are still removed below.
 		}
 		await this.piCredentials.delete(providerId);
+		await this.refreshModelProjectionFacts();
 	}
 
 	/** Run a provider's OAuth flow, surfacing the auth URL / device code. */
@@ -673,6 +760,7 @@ export class ProviderCatalog {
 		} catch (error) {
 			throw toHostError(error, providerId);
 		}
+		await this.refreshModelProjectionFacts();
 	}
 
 	startOAuth(providerId: string): OAuthSessionState {
@@ -741,10 +829,18 @@ export class ProviderCatalog {
 		this.oauthSessions.delete(providerId);
 	}
 
-	/** Drop the cached runtime and abort every in-flight OAuth flow (window teardown). */
+	/** Drop owned runtime/provider state and abort every in-flight OAuth flow. */
 	dispose(): void {
 		for (const providerId of [...this.oauthSessions.keys()]) this.abortOAuthSession(providerId);
-		this.runtime = null;
+		this.retireRuntime();
+		for (const provider of this.nativeProviders.values()) disposeIfSupported(provider);
+	}
+
+	/** Current OAuth sessions, projected without exposing mutable internal state. */
+	listOAuthSessions(): OAuthSessionState[] {
+		return [...this.oauthSessions.values()]
+			.sort((left, right) => left.providerId.localeCompare(right.providerId))
+			.map(publicOAuthSession);
 	}
 
 	getOAuthSession(providerId: string): OAuthSessionState {
@@ -767,6 +863,21 @@ export class ProviderCatalog {
 		return publicOAuthSession(session);
 	}
 
+	private assertMutableProvider(providerId: string): void {
+		if (this.nativeProviders.has(providerId)) {
+			throw { kind: "invalid_request", reason: "native_provider_immutable" };
+		}
+	}
+
+	private assertImportableProvider(providerId: string): void {
+		if (this.nativeProviders.has(providerId)) {
+			throw {
+				kind: "invalid_request",
+				reason: "pi_model_config_builtin_catalog_forbidden",
+			};
+		}
+	}
+
 	/** Host credential status for a provider (from the CredentialStore). */
 	async authStatus(providerId: string): Promise<CredentialStatus> {
 		return this.credentialStore.getStatus(providerId);
@@ -781,6 +892,42 @@ function publicOAuthSession(session: OAuthSessionInternal): OAuthSessionState {
 		...result
 	} = session;
 	return result;
+}
+
+function validateNativeProviders(
+	providers: readonly Provider[],
+	agentDir: string,
+): ReadonlyMap<string, Provider> {
+	const persisted = readProviderDocument(join(agentDir, "models.json")).providers;
+	const result = new Map<string, Provider>();
+	for (const provider of providers) {
+		if (
+			result.has(provider.id) ||
+			isBuiltinProvider(provider.id) ||
+			Object.hasOwn(persisted, provider.id)
+		) {
+			throw { kind: "invalid_request", reason: "native_provider_id_collision" };
+		}
+		result.set(provider.id, provider);
+	}
+	return result;
+}
+
+function disposeIfSupported(value: unknown): void {
+	if (
+		typeof value !== "object" ||
+		value === null ||
+		!("dispose" in value) ||
+		typeof value.dispose !== "function"
+	) {
+		return;
+	}
+	try {
+		const result: unknown = value.dispose();
+		if (result instanceof Promise) void result.catch(() => undefined);
+	} catch {
+		// Disposal is best-effort for runtimes and externally supplied providers.
+	}
 }
 
 function assertCustomProviderId(providerId: string): void {

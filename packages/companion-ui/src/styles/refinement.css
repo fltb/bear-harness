@@ -51,6 +51,10 @@ button[data-control="command"],
 	background: var(--surface-control);
 }
 
+.message-choice {
+	color: var(--semantic-role-default);
+}
+
 button[data-control="command"]:hover:not(:disabled),
 .button-like:hover,
 .mini-btn:hover:not(:disabled),
@@ -150,7 +154,8 @@ button[data-variant="primary"]:hover:not(:disabled),
 
 .select-content,
 .composer-model-content {
-	@apply z-70 overflow-hidden rounded-xl border p-1 shadow-xl;
+	@apply overflow-hidden rounded-xl border p-1 shadow-xl;
+	z-index: var(--layer-top-overlay);
 	--semantic-fg-role: default;
 	border-color: var(--line-soft);
 	color: var(--text-strong);
@@ -821,4 +826,13 @@ button[data-variant="primary"]:hover:not(:disabled),
 
 .archived-conversation-actions {
 	@apply flex shrink-0 gap-2;
+}
+
+/* Nested trust confirmation stays above the backstage sheet and mobile navigation. */
+.plugin-trust-overlay {
+	z-index: calc(var(--layer-top-overlay) - 2);
+}
+
+.plugin-trust-dialog {
+	z-index: calc(var(--layer-top-overlay) - 1);
 }
