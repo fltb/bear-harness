@@ -106,7 +106,8 @@ export class SessionCatalog {
 		return this.enqueueSelectionMutation(async () => {
 			this.requireOwned(companionId, sourceSessionId);
 			const piSessions = await this.pi.list();
-			const sourceTitle = piSessions.find((session) => session.id === sourceSessionId)?.name ?? "";
+			const source = piSessions.find((session) => session.id === sourceSessionId);
+			const sourceTitle = source?.name || source?.firstMessage || "";
 			const titles = new Set(piSessions.map((session) => session.name));
 			let suffix = 1;
 			while (titles.has(`${sourceTitle}(${suffix})`)) {
