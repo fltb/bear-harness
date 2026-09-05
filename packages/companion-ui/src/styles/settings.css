@@ -533,6 +533,17 @@
 	@apply m-0 pr-14 text-lg;
 }
 
+.system-provider-list,
+.system-provider-add,
+.provider-import-pi,
+.provider-import-custom {
+	@apply min-w-0;
+}
+
+.provider-import-advanced {
+	@apply grid gap-4;
+}
+
 .provider-add-dialog-close {
 	@apply absolute right-3 top-3 grid size-10 place-items-center p-0;
 }

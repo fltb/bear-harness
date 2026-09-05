@@ -292,7 +292,7 @@ export function CurrentRolePackageManager(props: {
 						</Show>
 						<fieldset class="detail-card current-role-prompt-editor">
 							<legend>{t("currentRolePackage.promptEditor")}</legend>
-							<p class="field-help">{t("currentRolePackage.promptEditorDescription")}</p>
+							<p class="field-hint">{t("currentRolePackage.promptEditorDescription")}</p>
 							<For each={PROMPT_FIELDS}>
 								{(field) => (
 									<TextField
